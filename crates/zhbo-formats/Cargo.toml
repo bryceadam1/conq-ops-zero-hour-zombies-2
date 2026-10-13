@@ -1,0 +1,8 @@
+[package]
+name = "zhbo-formats"
+description = "Readers for Zero Hour (.big) and Black Ops 2 (.sabs/.sabl) container formats, operating on the user's own installs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

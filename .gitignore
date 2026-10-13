@@ -1,0 +1,10 @@
+/target
+# Local engine build tree and any extracted game data must never be committed.
+/build
+/work
+*.big
+*.ff
+*.sabs
+*.sabl
+*.ipak
+*.dmp

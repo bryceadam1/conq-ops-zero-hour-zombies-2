@@ -1,0 +1,12 @@
+[package]
+name = "zhbo-core"
+description = "Black Ops 2-style first-person General gameplay, linked into a source-built Zero Hour."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+# staticlib: linked into generalszh.exe by host/zhbo/CMakeLists.txt. rlib: unit tests and tools.
+crate-type = ["staticlib", "rlib"]
+
+[dependencies]
