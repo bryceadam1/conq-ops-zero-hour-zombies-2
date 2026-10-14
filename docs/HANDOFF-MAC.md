@@ -35,9 +35,16 @@ macOS/Linux plus installers) is next, and that is this handoff.
 xcode-select --install
 brew install cmake ninja pkgconf ffmpeg dylibbundler steamcmd   # steamcmd: or Valve's tarball
 curl https://sh.rustup.rs -sSf | sh                             # stable Rust
-git clone --recursive <this repo> && cd <repo>
+cd ~/Documents/Projects/conq-ops-zero-hour-zombies-2            # see below
+git submodule update --init                                     # host/GeneralsGameCode
 cargo xtask doctor
 ```
+
+The Windows VM worked on this same folder through Parallels' shared home (`\\psf\Home`), so the
+Mac already has the repository, the engine submodule included. The remote is
+`github.com/bryceadam1/conq-ops-zero-hour-zombies-2`. Build output from the VM is not there: the
+Rust target dir and the engine work tree were on the VM's `C:` drive, so the first Mac build starts
+fresh.
 
 The engine's macOS preset targets macOS 15 or later (`CMAKE_OSX_DEPLOYMENT_TARGET`).
 
