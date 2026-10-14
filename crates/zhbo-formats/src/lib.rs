@@ -9,6 +9,7 @@ pub mod ipak;
 pub mod iwi;
 pub mod lzo;
 pub mod sab;
+pub mod t6zone;
 pub mod xanim;
 pub mod xmodel;
 

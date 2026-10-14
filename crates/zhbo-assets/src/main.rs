@@ -144,10 +144,9 @@ fn run(args: &[String]) -> Result<(), String> {
         }
         "model" => {
             let usage = "model <ff> <name> [--png out.png]";
-            let zone = open_zone(args.get(1).ok_or(usage)?)?;
-            let index = zone.index().map_err(|e| e.to_string())?;
+            let zone = load_full_zone(args.get(1).ok_or(usage)?)?;
             let name = args.get(2).ok_or(usage)?;
-            let model = zhbo_formats::xmodel::find(&zone.data, &index.script_strings, name).map_err(|e| e.to_string())?;
+            let model = zhbo_formats::xmodel::find(&zone, name).map_err(|e| e.to_string())?;
             println!("{}: {} bones, {} surfaces, {} lods, bounds {:?}..{:?}", model.name, model.bones.len(), model.surfaces.len(), model.lods.len(), model.mins, model.maxs);
             for (i, l) in model.lods.iter().enumerate() {
                 let surfs = &model.surfaces[l.first_surface..l.first_surface + l.surface_count];
@@ -157,6 +156,27 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             let names: Vec<&str> = model.bones.iter().take(12).map(|b| b.name.as_str()).collect();
             println!("  bones: {} ...", names.join(" "));
+            let paks = image_paks()?;
+            for (i, m) in model.materials.iter().enumerate().take(model.lods[0].surface_count) {
+                match m {
+                    None => println!("  surface {i}: material shared or unreadable"),
+                    Some(m) => {
+                        println!("  surface {i}: {}", m.name);
+                        for t in &m.textures {
+                            match &t.image {
+                                Some(img) => {
+                                    let find = |h: u32| paks.iter().find(|(_, _, g)| g.contains_key(&h)).map(|(n, _, _)| n.as_str()).unwrap_or("-");
+                                    println!(
+                                        "      semantic {:>2}: {} {}x{} hash {:#010x} in {}, stream hash {:#010x} ({} parts) in {}",
+                                        t.semantic, img.name, img.width, img.height, img.hash, find(img.hash), img.stream_hash, img.streamed_parts, find(img.stream_hash)
+                                    );
+                                }
+                                None => println!("      semantic {:>2}: (shared image)", t.semantic),
+                            }
+                        }
+                    }
+                }
+            }
             if args.iter().any(|a| a == "--bones") {
                 for (i, b) in model.bones.iter().enumerate() {
                     println!("  bone {i:>3} {:<24} parent {:>4} pos {:>7.2?} rot {:>6.3?}", b.name, b.parent.map_or(-1, |p| p as i64), b.position, b.rotation);
@@ -171,7 +191,8 @@ fn run(args: &[String]) -> Result<(), String> {
                 }
             }
             if let Some(out) = flag(args, "--png") {
-                preview::render(&model, Path::new(out)).map_err(|e| e.to_string())?;
+                let textures = color_maps(&model, &paks);
+                preview::render(&model, &textures, Path::new(out)).map_err(|e| e.to_string())?;
                 println!("wrote {out}");
             }
             Ok(())
@@ -187,9 +208,9 @@ fn run(args: &[String]) -> Result<(), String> {
             let mut zones: ZoneCache = Default::default();
             let (anim_ff, anim_name) = split(args.get(3).ok_or(usage)?)?;
             load_zone(&mut zones, &anim_ff)?;
-            let (z, s) = &zones[&anim_ff];
-            let anim = zhbo_formats::xanim::find(&z.data, s, &anim_name).map_err(|e| e.to_string())?;
+            let anim = zhbo_formats::xanim::find(&zones[&anim_ff], &anim_name).map_err(|e| e.to_string())?;
             println!("{}: {} frames at {} fps, {} bones", anim.name, anim.num_frames, anim.frame_rate, anim.bones.len());
+            let paks = image_paks()?;
             let mut models = Vec::new();
             for spec in &args[4..] {
                 let (ff, rest) = split(spec)?;
@@ -198,13 +219,60 @@ fn run(args: &[String]) -> Result<(), String> {
                     None => (rest, None),
                 };
                 load_zone(&mut zones, &ff)?;
-                let (z, s) = &zones[&ff];
-                models.push((zhbo_formats::xmodel::find(&z.data, s, &name).map_err(|e| e.to_string())?, tag));
+                let model = zhbo_formats::xmodel::find(&zones[&ff], &name).map_err(|e| e.to_string())?;
+                let textures = color_maps(&model, &paks);
+                models.push((model, textures, tag));
             }
-            let refs: Vec<(&zhbo_formats::xmodel::Model, Option<&str>)> = models.iter().map(|(m, t)| (m, t.as_deref())).collect();
+            let refs: Vec<(&zhbo_formats::xmodel::Model, &preview::Textures, Option<&str>)> =
+                models.iter().map(|(m, x, t)| (m, x, t.as_deref())).collect();
             let meshes = preview::pose(&refs, &anim, frame);
             preview::render_meshes(&meshes, Path::new(out)).map_err(|e| e.to_string())?;
             println!("wrote {out}");
+            Ok(())
+        }
+        "walk" => {
+            // Fully load zones (every asset, every pointer) and report.
+            let names: Vec<String> = if args.len() > 1 {
+                args[1..].to_vec()
+            } else {
+                let mut v: Vec<String> = fs::read_dir(bo2_dir()?.join("zone").join("all"))
+                    .map_err(|e| e.to_string())?
+                    .flatten()
+                    .map(|e| e.file_name().to_string_lossy().into_owned())
+                    .filter(|n| n.ends_with(".ff"))
+                    .collect();
+                v.sort();
+                v
+            };
+            let mut failed = 0;
+            for name in names {
+                let zone = open_zone(&name)?;
+                match zhbo_formats::t6zone::load(&zone) {
+                    Ok(z) => println!("{name:<36} ok   {:>6} assets, {} bytes left over", z.assets.len(), z.trailing_bytes),
+                    Err(e) => {
+                        failed += 1;
+                        println!("{name:<36} FAIL {e}");
+                    }
+                }
+            }
+            if failed > 0 {
+                return Err(format!("{failed} zones failed"));
+            }
+            Ok(())
+        }
+        "anim" => {
+            // anim <ff> <name>: tracks per bone.
+            let zone = load_full_zone(args.get(1).ok_or("anim <ff> <name>")?)?;
+            let anim = zhbo_formats::xanim::find(&zone, args.get(2).ok_or("anim <ff> <name>")?).map_err(|e| e.to_string())?;
+            println!("{}: {} frames at {} fps, loop {}, {} bones", anim.name, anim.num_frames, anim.frame_rate, anim.looping, anim.bones.len());
+            for b in &anim.bones {
+                let r = b.rotation.as_ref().map_or("-".to_string(), |t| format!("{} keys, first {:.3?}", t.len(), t[0].1));
+                let t = b.translation.as_ref().map_or("-".to_string(), |t| format!("{} keys, first {:.2?}", t.len(), t[0].1));
+                println!("  {:<24} rot {r:<44} pos {t}", b.name);
+            }
+            for n in &anim.notifies {
+                println!("  notify {:.3} {}", n.time, n.name);
+            }
             Ok(())
         }
         "dump" => {
@@ -363,16 +431,54 @@ fn open_bank(name: &str) -> Result<SoundBank, String> {
     SoundBank::open(&path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-/// Decrypted zones with their script strings, by file name.
-type ZoneCache = std::collections::HashMap<String, (fastfile::Zone, Vec<String>)>;
+type Paks = Vec<(String, Ipak, std::collections::BTreeMap<u32, Vec<zhbo_formats::ipak::IpakEntry>>)>;
+
+/// The colour map of each surface's material, decoded from the image packs.
+fn color_maps(model: &zhbo_formats::xmodel::Model, paks: &Paks) -> preview::Textures {
+    model
+        .materials
+        .iter()
+        .map(|m| {
+            let img = m.as_ref()?.color_map()?;
+            let (_, pak, groups) = paks.iter().find(|(_, _, g)| g.contains_key(&img.stream_hash))?;
+            images::load(pak, &groups[&img.stream_hash]).ok().map(std::rc::Rc::new)
+        })
+        .collect()
+}
+
+/// Every image pack with its entries grouped by name hash.
+fn image_paks() -> Result<Paks, String> {
+    let dir = bo2_dir()?.join("zone").join("all");
+    let mut names: Vec<String> = fs::read_dir(&dir)
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".ipak"))
+        .collect();
+    names.sort();
+    let mut out = Vec::new();
+    for n in names {
+        let pak = open_pak(&n)?;
+        let groups = images::group_by_name(&pak);
+        out.push((n, pak, groups));
+    }
+    Ok(out)
+}
+
+/// Fully loaded zones, by file name.
+type ZoneCache = std::collections::HashMap<String, zhbo_formats::t6zone::Zone>;
 
 fn load_zone(zones: &mut ZoneCache, name: &str) -> Result<(), String> {
     if !zones.contains_key(name) {
-        let z = open_zone(name)?;
-        let strings = z.index().map_err(|e| e.to_string())?.script_strings;
-        zones.insert(name.to_string(), (z, strings));
+        zones.insert(name.to_string(), load_full_zone(name)?);
     }
     Ok(())
+}
+
+/// Decrypt a fastfile and load every asset in it.
+fn load_full_zone(name: &str) -> Result<zhbo_formats::t6zone::Zone, String> {
+    let zone = open_zone(name)?;
+    zhbo_formats::t6zone::load(&zone).map_err(|e| format!("{name}: {e}"))
 }
 
 fn open_zone(name: &str) -> Result<fastfile::Zone, String> {

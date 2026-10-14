@@ -1,9 +1,8 @@
 //! Black Ops II (T6) `XAnimParts` animations, read out of a decrypted zone (`fastfile::Zone`).
 //!
-//! Like `xmodel`, an animation is found by its name, the first data after its 104-byte struct.
-//! The data that follows is, in order: bone names (script strings), notifies, the delta (root
-//! motion) part, then the pools `dataByte`, `dataShort`, `dataInt`, `randomDataShort`,
-//! `randomDataByte`, `randomDataInt` and the frame `indices`.
+//! Read from a fully loaded zone (`t6zone::Zone`): the struct's pointers lead to the bone names
+//! (script strings), notifies, and the pools `dataByte`, `dataShort`, `dataInt`, `randomDataShort`,
+//! `randomDataByte` and the frame `indices`.
 //!
 //! Bones come grouped by rotation kind (none, half, full, half constant, full constant) in name
 //! order; translations name their bone with a byte. Animated tracks are keyframes: a frame index
@@ -12,13 +11,11 @@
 //! (8-bit) or 65535 (16-bit). Values are local to the parent bone.
 //!
 //! Layout and decoding from OpenAssetTools (`T6_Assets.h`, `XAnimParts.txt`, `FlatXAnimReader.cpp`,
-//! GPL-3.0). Animations with a delta part (root motion) are not supported yet.
+//! GPL-3.0). The delta part (root motion) is not decoded; the bone tracks are.
 
-use crate::fastfile::{PTR_FOLLOWING, PTR_INSERT};
+use crate::t6zone::Zone;
 use crate::FormatError;
 
-const XANIM_SIZE: usize = 104;
-const NOTIFY_SIZE: usize = 8;
 // boneCount[] slots (PART_TYPE_*).
 const NO_QUAT: usize = 0;
 const HALF_QUAT: usize = 1;
@@ -71,13 +68,6 @@ fn f32_at(b: &[u8], at: usize) -> f32 {
     f32::from_bits(u32_at(b, at))
 }
 
-fn follows(ptr: u32, field: &str) -> Result<bool, FormatError> {
-    match ptr {
-        0 => Ok(false),
-        PTR_FOLLOWING | PTR_INSERT => Ok(true),
-        _ => Err(FormatError::Corrupt(format!("{field} refers to data shared with an earlier asset ({ptr:#x})"))),
-    }
-}
 
 /// One of the typed data pools, consumed front to back.
 struct Pool<'a> {
@@ -146,84 +136,57 @@ fn shorts(b: &[u8], n: usize, at: usize) -> Vec<i16> {
     (0..n).map(|i| u16_at(b, at + 2 * i) as i16).collect()
 }
 
-/// Find an animation by name in a decrypted zone.
-pub fn find(data: &[u8], script_strings: &[String], name: &str) -> Result<Anim, FormatError> {
-    let mut needle = name.as_bytes().to_vec();
-    needle.push(0);
-    let mut start = 0;
-    while let Some(rel) = data[start..].windows(needle.len()).position(|w| w == needle.as_slice()) {
-        let at = start + rel;
-        start = at + 1;
-        if at < XANIM_SIZE {
-            continue;
-        }
-        let h = &data[at - XANIM_SIZE..at];
-        let counts: Vec<usize> = (0..10).map(|i| h[24 + i] as usize).collect();
-        let quats: usize = counts[NO_QUAT..=FULL_QUAT_NO_SIZE].iter().sum();
-        let trans: usize = counts[SMALL_TRANS..=NO_TRANS].iter().sum();
-        if u32_at(h, 0) != PTR_FOLLOWING || counts[ALL] == 0 || quats != counts[ALL] || trans != counts[ALL] {
-            continue;
-        }
-        return read(data, at, h, &counts, script_strings);
-    }
-    Err(FormatError::Corrupt(format!("no animation named {name} in this zone")))
+/// Find an animation by name in a loaded zone.
+pub fn find(zone: &Zone, name: &str) -> Result<Anim, FormatError> {
+    let asset = zone
+        .find(crate::fastfile::ASSET_XANIM, name)
+        .ok_or_else(|| FormatError::Corrupt(format!("no animation named {name} in zone {}", zone.name)))?;
+    read(zone, asset.addr)
 }
 
-fn read(data: &[u8], at: usize, h: &[u8], counts: &[usize], strings: &[String]) -> Result<Anim, FormatError> {
-    let mut pos = at;
-    let take = |pos: &mut usize, n: usize, what: &'static str| -> Result<&[u8], FormatError> {
-        let s = data.get(*pos..*pos + n).ok_or(FormatError::Truncated(what))?;
-        *pos += n;
-        Ok(s)
-    };
-    let len = data[pos..].iter().position(|&b| b == 0).ok_or(FormatError::Truncated("anim name"))?;
-    let name = String::from_utf8_lossy(&data[pos..pos + len]).into_owned();
-    pos += len + 1;
-
-    let data_byte_count = u16_at(h, 4) as usize;
-    let data_short_count = u16_at(h, 6) as usize;
-    let data_int_count = u16_at(h, 8) as usize;
-    let random_byte_count = u16_at(h, 10) as usize;
-    let random_int_count = u16_at(h, 12) as usize;
-    let num_frames = u16_at(h, 14);
-    let looping = h[16] != 0;
-    let notify_count = h[34] as usize;
-    let random_short_count = u32_at(h, 40) as usize;
-    let index_count = u32_at(h, 44) as usize;
-    let frame_rate = f32_at(h, 48);
+/// Read the animation whose struct is at `h`.
+pub fn read(z: &Zone, h: u32) -> Result<Anim, FormatError> {
+    let name = z.str_ptr(h).trim_start_matches(',').to_string();
+    let counts: Vec<usize> = (0..10).map(|i| z.u8(h + 24 + i) as usize).collect();
+    let data_byte_count = z.u16(h + 4) as usize;
+    let data_short_count = z.u16(h + 6) as usize;
+    let data_int_count = z.u16(h + 8) as usize;
+    let random_byte_count = z.u16(h + 10) as usize;
+    let num_frames = z.u16(h + 14);
+    let looping = z.u8(h + 16) != 0;
+    let notify_count = z.u8(h + 34) as u32;
+    let random_short_count = z.u32(h + 40) as usize;
+    let index_count = z.u32(h + 44) as usize;
+    let frame_rate = z.f32(h + 48);
     let byte_indices = num_frames < 256;
     let bone_count = counts[ALL];
 
-    let names: Vec<String> = if follows(u32_at(h, 64), "names")? {
-        let b = take(&mut pos, 2 * bone_count, "bone names")?;
-        (0..bone_count).map(|i| strings.get(u16_at(b, 2 * i) as usize).cloned().unwrap_or_default()).collect()
+    let names_ptr = z.u32(h + 64);
+    let names: Vec<String> = (0..bone_count as u32)
+        .map(|i| if names_ptr != 0 { z.script_string(z.u16(names_ptr + 2 * i)).to_string() } else { String::new() })
+        .collect();
+    let notify_ptr = z.u32(h + 96);
+    let notifies = if notify_ptr == 0 {
+        Vec::new()
     } else {
-        vec![String::new(); bone_count]
+        (0..notify_count)
+            .map(|i| Notify { name: z.script_string(z.u16(notify_ptr + 8 * i)).to_string(), time: z.f32(notify_ptr + 8 * i + 4) })
+            .collect()
     };
-    let mut notifies = Vec::new();
-    if follows(u32_at(h, 96), "notify")? {
-        let b = take(&mut pos, NOTIFY_SIZE * notify_count, "notifies")?;
-        for i in 0..notify_count {
-            let n = &b[NOTIFY_SIZE * i..];
-            notifies.push(Notify { name: strings.get(u16_at(n, 0) as usize).cloned().unwrap_or_default(), time: f32_at(n, 4) });
-        }
-    }
-    if u32_at(h, 100) != 0 {
-        return Err(FormatError::Corrupt(format!("animation {name} has root motion (a delta part); not supported yet")));
-    }
-    let mut pool = |ptr_at: usize, count: usize, elem: usize, what: &'static str| -> Result<Pool, FormatError> {
-        let d = if follows(u32_at(h, ptr_at), what)? { take(&mut pos, count * elem, what)? } else { &[][..] };
-        Ok(Pool { d, elem, name: what })
+    let pool = |ptr_at: u32, count: usize, elem: usize, what: &'static str| -> Pool {
+        let ptr = z.u32(h + ptr_at);
+        let d = if ptr != 0 { z.bytes(ptr, count * elem) } else { &[][..] };
+        Pool { d, elem, name: what }
     };
-    let byte = pool(68, data_byte_count, 1, "dataByte")?;
-    let short = pool(72, data_short_count, 2, "dataShort")?;
-    let int = pool(76, data_int_count, 4, "dataInt")?;
-    let random_short = pool(80, random_short_count, 2, "randomDataShort")?;
-    let random_byte = pool(84, random_byte_count, 1, "randomDataByte")?;
-    let _random_int = pool(88, random_int_count, 4, "randomDataInt")?;
-    let indices = pool(92, index_count, if byte_indices { 1 } else { 2 }, "indices")?;
-    let mut p = Pools { byte, short, int, random_short, random_byte, indices, byte_indices };
-
+    let mut p = Pools {
+        byte: pool(68, data_byte_count, 1, "dataByte"),
+        short: pool(72, data_short_count, 2, "dataShort"),
+        int: pool(76, data_int_count, 4, "dataInt"),
+        random_short: pool(80, random_short_count, 2, "randomDataShort"),
+        random_byte: pool(84, random_byte_count, 1, "randomDataByte"),
+        indices: pool(92, index_count, if byte_indices { 1 } else { 2 }, "indices"),
+        byte_indices,
+    };
     let mut bones: Vec<BoneTrack> = names.into_iter().map(|name| BoneTrack { name, ..Default::default() }).collect();
     let mut b = 0usize;
     b += counts[NO_QUAT];
@@ -348,9 +311,8 @@ mod tests {
     fn reads_a_viewmodel_animation() {
         let dir = std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR");
         let file = std::fs::read(std::path::Path::new(&dir).join("zone/all/common_mp.ff")).unwrap();
-        let zone = crate::fastfile::read(&file).unwrap();
-        let index = zone.index().unwrap();
-        let anim = find(&zone.data, &index.script_strings, "viewmodel_mp7_reload").unwrap();
+        let zone = crate::t6zone::load(&crate::fastfile::read(&file).unwrap()).unwrap();
+        let anim = find(&zone, "viewmodel_mp7_reload").unwrap();
         assert!(anim.num_frames > 30 && anim.frame_rate > 0.0, "{} frames at {}", anim.num_frames, anim.frame_rate);
         assert!(anim.bones.iter().any(|b| b.name == "j_gun"));
         assert!(anim.bones.iter().any(|b| b.rotation.as_ref().is_some_and(|r| r.len() > 1)), "something is keyed");
