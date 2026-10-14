@@ -37,7 +37,7 @@ fn publish_controlled(sim: &Sim) {
     }
 }
 
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
 const _: () = {
@@ -47,7 +47,7 @@ const _: () = {
     assert!(size_of::<ClientIn>() == 316);
     assert!(size_of::<ClientOut>() == 88);
     assert!(size_of::<LogicApi>() == 11 * size_of::<usize>());
-    assert!(size_of::<ClientApi>() == 4 * size_of::<usize>());
+    assert!(size_of::<ClientApi>() == 7 * size_of::<usize>());
 };
 
 /// Returns the ABI version; the glue refuses to run if it does not match its header.
@@ -172,7 +172,7 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
 pub extern "C" fn zhbo_client_draw_hud(local_player: i32) {
     with_state(|s| {
         let player = s.sim.player(local_player);
-        crate::hud::draw(&s.client_host, &s.client, player);
+        crate::hud::draw(&s.client_host, &s.client, player, local_player);
     });
 }
 

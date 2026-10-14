@@ -40,7 +40,7 @@ for ($attempt = 0; $attempt -lt 3 -and -not $entered; $attempt++) {
 if (-not $entered) { throw "the General never entered first person; see $log" }
 
 # Autopilot timeline (seconds in first person): walk 1-3, turn 3-4, aim 4.5-8, fire 5-7.5, crouch, jump 10, field computer 11.
-foreach ($shot in @(@(2.5, "walk"), @(3.5, "fire"), @(2.5, "reload"), @(4.5, "field-computer"), @(2.0, "rts"), @(5.0, "re-entry"))) {
+foreach ($shot in @(@(2.5, "walk"), @(2.3, "aim"), @(1.0, "fire"), @(0.8, "fire-2"), @(1.9, "reload"), @(2.6, "field-computer"), @(2.0, "rts"), @(5.0, "re-entry"))) {
     Start-Sleep $shot[0]
     um win shot --exe generalszh.exe (Join-Path $Out "$($shot[1]).png") --scale 0.5 | Out-Null
 }

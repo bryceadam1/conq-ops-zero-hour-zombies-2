@@ -5,11 +5,17 @@
 //! cargo xtask pack  [--dist DIR]           only repack data/ into ConquerOps.big
 //! cargo xtask run   [--log] [-- ARGS]      build, then start the game through the launcher
 //! cargo xtask patch                        prepare the patched engine checkout only
+//! cargo xtask doctor                       list missing build prerequisites for this OS
 //! ```
 //!
-//! The engine is built out of the repository (the repo may live on a slow network share) in
-//! `%LOCALAPPDATA%\ConquerOps\work`, or `ZHBO_WORK_DIR`. The engine source is the commit pinned by the
-//! `host/GeneralsGameCode` submodule, with `host/patches/*.patch` applied on top.
+//! The engine is built out of the repository (the repo may live on a slow network share) in a
+//! per-user work folder (`%LOCALAPPDATA%\ConquerOps\work`, `~/.local/share/ConquerOps/work`,
+//! `~/Library/Application Support/ConquerOps/work`), or `ZHBO_WORK_DIR`. The engine source is the
+//! commit pinned by the `host/GeneralsGameCode` submodule, with `host/patches/*.patch` applied on top.
+//!
+//! Windows builds with Visual Studio 2022. Linux and macOS cross-compile the same Windows game with
+//! MinGW-w64 (the upstream `mingw-w64-i686` preset, Rust target `i686-pc-windows-gnu`) and build a
+//! native launcher that runs it through Proton, Wine, CrossOver or Whisky.
 
 use std::env;
 use std::fs;
@@ -29,7 +35,7 @@ struct Opts {
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let Some(cmd) = args.first().cloned() else {
-        eprintln!("usage: cargo xtask <build|pack|run|patch> [--log] [--dist DIR] [-- GAME_ARGS]");
+        eprintln!("usage: cargo xtask <build|pack|run|patch|doctor> [--log] [--dist DIR] [-- GAME_ARGS]");
         return ExitCode::FAILURE;
     };
     let mut opts = Opts { log_build: false, dist: None, game_args: Vec::new() };
@@ -50,6 +56,7 @@ fn main() -> ExitCode {
         "pack" => pack(&dist_dir(&opts)).map(|_| ()),
         "run" => build(&opts).and_then(|dist| run(&dist, &opts.game_args)),
         "patch" => prepare_engine().map(|_| ()),
+        "doctor" => doctor(),
         other => Err(format!("unknown command {other}")),
     };
     match result {
@@ -69,8 +76,15 @@ fn work_dir() -> PathBuf {
     if let Some(d) = env::var_os("ZHBO_WORK_DIR") {
         return PathBuf::from(d);
     }
-    let base = env::var_os("LOCALAPPDATA").map(PathBuf::from).unwrap_or_else(env::temp_dir);
-    base.join("ConquerOps").join("work")
+    let home = || env::var_os("HOME").map(PathBuf::from);
+    let base = if cfg!(windows) {
+        env::var_os("LOCALAPPDATA").map(PathBuf::from)
+    } else if cfg!(target_os = "macos") {
+        home().map(|h| h.join("Library/Application Support"))
+    } else {
+        env::var_os("XDG_DATA_HOME").map(PathBuf::from).or_else(|| home().map(|h| h.join(".local/share")))
+    };
+    base.unwrap_or_else(env::temp_dir).join("ConquerOps").join("work")
 }
 
 fn dist_dir(opts: &Opts) -> PathBuf {
@@ -230,47 +244,189 @@ fn rust_target_dir() -> PathBuf {
     env::var_os("CARGO_TARGET_DIR").map(PathBuf::from).unwrap_or_else(|| repo_root().join("target"))
 }
 
+fn on_path(program: &str) -> bool {
+    env::var_os("PATH").is_some_and(|p| {
+        env::split_paths(&p).any(|d| d.join(program).is_file() || d.join(format!("{program}.exe")).is_file())
+    })
+}
+
+/// How the 32-bit Windows game is compiled on this machine.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Toolchain {
+    /// Visual Studio 2022 on Windows.
+    Msvc,
+    /// MinGW-w64 cross compilers on Linux/macOS (upstream preset `mingw-w64-i686`).
+    MinGw,
+}
+
+impl Toolchain {
+    fn host() -> Self {
+        if cfg!(windows) {
+            Toolchain::Msvc
+        } else {
+            Toolchain::MinGw
+        }
+    }
+
+    /// Rust target for the core that links into generalszh.exe.
+    fn core_target(self) -> &'static str {
+        match self {
+            Toolchain::Msvc => "i686-pc-windows-msvc",
+            Toolchain::MinGw => "i686-pc-windows-gnu",
+        }
+    }
+
+    fn core_lib_name(self) -> &'static str {
+        match self {
+            Toolchain::Msvc => "zhbo_core.lib",
+            Toolchain::MinGw => "libzhbo_core.a",
+        }
+    }
+
+    /// Launcher: 32-bit Windows next to the game on Windows, native elsewhere.
+    fn launcher_target(self) -> Option<&'static str> {
+        match self {
+            Toolchain::Msvc => Some("i686-pc-windows-msvc"),
+            Toolchain::MinGw => None,
+        }
+    }
+
+    fn launcher_file(self) -> (&'static str, &'static str) {
+        match self {
+            Toolchain::Msvc => ("zhbo-launcher.exe", "ConquerOps.exe"),
+            Toolchain::MinGw => ("zhbo-launcher", "conquerops"),
+        }
+    }
+
+    /// Missing prerequisites, as human-readable fixes.
+    fn problems(self) -> Vec<String> {
+        let mut out = Vec::new();
+        if !on_path("git") {
+            out.push("git is not on PATH".into());
+        }
+        let installed = capture(Command::new("rustup").args(["target", "list", "--installed"])).unwrap_or_default();
+        if !installed.lines().any(|l| l.trim() == self.core_target()) {
+            out.push(format!("Rust target missing: rustup target add {}", self.core_target()));
+        }
+        match self {
+            Toolchain::Msvc => {
+                if let Err(e) = vcvars() {
+                    out.push(format!("{e} (needs the C++ x86/x64 tools, CMake, ATL and MFC components)"));
+                }
+            }
+            Toolchain::MinGw => {
+                if !on_path("cmake") {
+                    out.push("cmake (3.25 or newer) is not on PATH".into());
+                }
+                if !on_path("i686-w64-mingw32-g++") {
+                    out.push(
+                        "MinGW-w64 i686 compilers are missing (Debian/Ubuntu: apt install g++-mingw-w64-i686 \
+                         mingw-w64-tools; Fedora: dnf install mingw32-gcc-c++; macOS: brew install mingw-w64)"
+                            .into(),
+                    );
+                }
+                if !on_path("make") {
+                    out.push("make is not on PATH".into());
+                }
+            }
+        }
+        out
+    }
+}
+
 // ------------------------------------------------------------------------------------------------
 // Commands
 // ------------------------------------------------------------------------------------------------
 
+fn doctor() -> Result<()> {
+    let tc = Toolchain::host();
+    eprintln!("toolchain: {tc:?} (core target {})", tc.core_target());
+    eprintln!("work dir:  {}", work_dir().display());
+    let problems = tc.problems();
+    if problems.is_empty() {
+        eprintln!("all build prerequisites found");
+        Ok(())
+    } else {
+        Err(format!("missing build prerequisites:\n  {}", problems.join("\n  ")))
+    }
+}
+
 fn build(opts: &Opts) -> Result<PathBuf> {
     let root = repo_root();
-    run_cmd(cargo().current_dir(&root).args(["build", "--release", "-p", "zhbo-core", "-p", "zhbo-launcher"]))?;
-    let release = rust_target_dir().join("i686-pc-windows-msvc").join("release");
-    let core_lib = release.join("zhbo_core.lib");
+    let tc = Toolchain::host();
+    let problems = tc.problems();
+    if !problems.is_empty() {
+        return Err(format!("missing build prerequisites:\n  {}", problems.join("\n  ")));
+    }
+    run_cmd(cargo().current_dir(&root).args(["build", "--release", "-p", "zhbo-core", "--target", tc.core_target()]))?;
+    let mut launcher = cargo();
+    launcher.current_dir(&root).args(["build", "--release", "-p", "zhbo-launcher"]);
+    if let Some(t) = tc.launcher_target() {
+        launcher.args(["--target", t]);
+    }
+    run_cmd(&mut launcher)?;
+    let core_lib = rust_target_dir().join(tc.core_target()).join("release").join(tc.core_lib_name());
+    let launcher_dir = match tc.launcher_target() {
+        Some(t) => rust_target_dir().join(t).join("release"),
+        None => rust_target_dir().join("release"),
+    };
 
     let engine = prepare_engine()?;
     let glue = work_dir().join("zhbo-glue");
     copy_dir_if_changed(&root.join("host/zhbo"), &glue)?;
-
-    let preset_dir = if opts.log_build { "win32-zhbo-log" } else { "win32-zhbo" };
     let fwd = |p: &Path| p.to_string_lossy().replace('\\', "/");
-    let extra = if opts.log_build { " -DRTS_DEBUG_LOGGING=ON -DRTS_DEBUG_CRASHING=ON" } else { "" };
-    let script = work_dir().join("build-engine.cmd");
-    fs::write(
-        &script,
-        format!(
-            "@echo off\r\ncall \"{vcvars}\" >nul\r\ncd /d \"{engine}\"\r\n\
-             cmake --preset win32 -B build/{preset_dir} -DZHBO_GLUE_DIR={glue} -DZHBO_CORE_LIB={lib}{extra}\r\n\
-             if errorlevel 1 exit /b 1\r\n\
-             cmake --build build/{preset_dir} --config Release --target z_generals\r\n",
-            vcvars = vcvars()?.display(),
-            engine = engine.display(),
-            glue = fwd(&glue),
-            lib = fwd(&core_lib),
-        ),
-    )
-    .map_err(|e| e.to_string())?;
-    run_cmd(Command::new("cmd").arg("/c").arg(&script).current_dir(work_dir()))?;
+    let mut defs = vec![format!("-DZHBO_GLUE_DIR={}", fwd(&glue)), format!("-DZHBO_CORE_LIB={}", fwd(&core_lib))];
+    if opts.log_build {
+        defs.push("-DRTS_DEBUG_LOGGING=ON".into());
+        defs.push("-DRTS_DEBUG_CRASHING=ON".into());
+    }
+
+    let exe_dir = match tc {
+        Toolchain::Msvc => {
+            let build_dir = if opts.log_build { "win32-zhbo-log" } else { "win32-zhbo" };
+            let script = work_dir().join("build-engine.cmd");
+            fs::write(
+                &script,
+                format!(
+                    "@echo off\r\ncall \"{vcvars}\" >nul\r\ncd /d \"{engine}\"\r\n\
+                     cmake --preset win32 -B build/{build_dir} {defs}\r\n\
+                     if errorlevel 1 exit /b 1\r\n\
+                     cmake --build build/{build_dir} --config Release --target z_generals\r\n",
+                    vcvars = vcvars()?.display(),
+                    engine = engine.display(),
+                    defs = defs.join(" "),
+                ),
+            )
+            .map_err(|e| e.to_string())?;
+            run_cmd(Command::new("cmd").arg("/c").arg(&script).current_dir(work_dir()))?;
+            engine.join("build").join(build_dir).join("GeneralsMD").join("Release")
+        }
+        Toolchain::MinGw => {
+            let build_dir = if opts.log_build { "mingw-zhbo-log" } else { "mingw-zhbo" };
+            let jobs = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).to_string();
+            run_cmd(
+                Command::new("cmake")
+                    .current_dir(&engine)
+                    .args(["--preset", "mingw-w64-i686", "-B", &format!("build/{build_dir}")])
+                    .args(&defs),
+            )?;
+            run_cmd(
+                Command::new("cmake")
+                    .current_dir(&engine)
+                    .args(["--build", &format!("build/{build_dir}"), "--target", "z_generals", "-j", &jobs]),
+            )?;
+            engine.join("build").join(build_dir).join("GeneralsMD")
+        }
+    };
 
     let dist = dist_dir(opts);
     fs::create_dir_all(&dist).map_err(|e| e.to_string())?;
-    let exe_dir = engine.join("build").join(preset_dir).join("GeneralsMD").join("Release");
-    for f in ["generalszh.exe", "generalszh.pdb"] {
-        fs::copy(exe_dir.join(f), dist.join(f)).map_err(|e| format!("copy {f}: {e}"))?;
+    fs::copy(exe_dir.join("generalszh.exe"), dist.join("generalszh.exe")).map_err(|e| format!("copy generalszh.exe: {e}"))?;
+    if exe_dir.join("generalszh.pdb").is_file() {
+        fs::copy(exe_dir.join("generalszh.pdb"), dist.join("generalszh.pdb")).map_err(|e| e.to_string())?;
     }
-    fs::copy(release.join("zhbo-launcher.exe"), dist.join("ConquerOps.exe")).map_err(|e| format!("copy launcher: {e}"))?;
+    let (from, to) = tc.launcher_file();
+    fs::copy(launcher_dir.join(from), dist.join(to)).map_err(|e| format!("copy launcher: {e}"))?;
     pack(&dist)?;
     eprintln!("Conquer Ops staged in {}", dist.display());
     Ok(dist)
@@ -304,5 +460,6 @@ fn collect(root: &Path, dir: &Path, out: &mut Vec<(String, Vec<u8>)>) -> Result<
 }
 
 fn run(dist: &Path, game_args: &[String]) -> Result<()> {
-    run_cmd(Command::new(dist.join("ConquerOps.exe")).args(game_args))
+    let (_, launcher) = Toolchain::host().launcher_file();
+    run_cmd(Command::new(dist.join(launcher)).args(game_args))
 }

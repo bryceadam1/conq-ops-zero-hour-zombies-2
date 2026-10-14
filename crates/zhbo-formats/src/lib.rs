@@ -4,6 +4,9 @@
 //! embeds or redistributes game data.
 
 pub mod big;
+pub mod ipak;
+pub mod iwi;
+pub mod lzo;
 pub mod sab;
 
 use std::fmt;

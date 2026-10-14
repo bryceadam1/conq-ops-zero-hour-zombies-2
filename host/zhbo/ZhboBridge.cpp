@@ -26,6 +26,7 @@
 #include "GameClient/Drawable.h"
 #include "GameClient/GameFont.h"
 #include "GameClient/GUICallbacks.h"
+#include "GameClient/Image.h"
 #include "GameClient/InGameUI.h"
 #include "GameClient/KeyDefs.h"
 #include "GameClient/Mouse.h"
@@ -298,6 +299,36 @@ void cbLine(float x0, float y0, float x1, float y1, float width, uint32_t argb)
 	TheDisplay->drawLine((Int)x0, (Int)y0, (Int)x1, (Int)y1, width, argb);
 }
 
+// BO2's HUD type is a narrow DIN-like face. Its font only exists inside BO2's encrypted fastfiles,
+// so use Bahnschrift (a DIN family that ships with Windows 10 and later) and fall back to Arial,
+// e.g. under Wine where Bahnschrift is usually absent.
+const char *hudFontName()
+{
+	static const char *name = nullptr;
+	if (!name)
+	{
+		LOGFONTA lf;
+		memset(&lf, 0, sizeof(lf));
+		lf.lfCharSet = DEFAULT_CHARSET;
+		strcpy(lf.lfFaceName, "Bahnschrift");
+		struct Probe
+		{
+			static int CALLBACK found(const LOGFONTA *, const TEXTMETRICA *, DWORD, LPARAM param)
+			{
+				*(Bool *)param = TRUE;
+				return 0;
+			}
+		};
+		Bool present = FALSE;
+		HDC dc = GetDC(nullptr);
+		EnumFontFamiliesExA(dc, &lf, (FONTENUMPROCA)Probe::found, (LPARAM)&present, 0);
+		ReleaseDC(nullptr, dc);
+		name = present ? "Bahnschrift" : "Arial";
+		logf("HUD font: %s", name);
+	}
+	return name;
+}
+
 DisplayString *cachedText(const char *utf8, Int size)
 {
 	for (size_t i = 0; i < s_texts.size(); ++i)
@@ -311,7 +342,7 @@ DisplayString *cachedText(const char *utf8, Int size)
 	DisplayString *ds = TheDisplayStringManager->newDisplayString();
 	if (!ds)
 		return nullptr;
-	ds->setFont(TheFontLibrary->getFont("Arial", size, TRUE));
+	ds->setFont(TheFontLibrary->getFont(hudFontName(), size, TRUE));
 	UnicodeString text;
 	text.translate(AsciiString(utf8));
 	ds->setText(text);
@@ -348,6 +379,33 @@ void cbText(float x, float y, const char *utf8, uint32_t argb, int32_t size, int
 	else if (align == 2) px -= w;
 	const UnsignedInt shadow = (argb & 0xFF000000u) >> 1 & 0xFF000000u;
 	ds->draw(px, (Int)y, argb, shadow);
+}
+
+int32_t cbImage(const char *name, float x, float y, float w, float h, uint32_t argb)
+{
+	// Mapped images live for the whole session; cache lookups (including misses).
+	static std::map<std::string, const Image *> s_images;
+	std::map<std::string, const Image *>::iterator it = s_images.find(name);
+	const Image *image;
+	if (it == s_images.end())
+	{
+		image = TheMappedImageCollection ? TheMappedImageCollection->findImageByName(name) : nullptr;
+		s_images[name] = image;
+	}
+	else
+	{
+		image = it->second;
+	}
+	if (!image)
+		return 0;
+	TheDisplay->drawImage(image, (Int)x, (Int)y, (Int)(x + w + 0.5f), (Int)(y + h + 0.5f), argb);
+	return 1;
+}
+
+int32_t cbCash(int32_t player)
+{
+	Player *p = ThePlayerList ? ThePlayerList->getNthPlayer(player) : nullptr;
+	return p ? (int32_t)p->getMoney()->countMoney() : 0;
 }
 
 // --------------------------------------------------------------------------------------------
@@ -673,7 +731,7 @@ void Zhbo_Init()
 		cbLog, cbGroundHeight, cbIsWalkable, cbExtent, cbObject, cbQuery,
 		cbSetPose, cbSetControlled, cbFireFx, cbDamage, cbHeal,
 	};
-	static const ZhboClientApi clientApi = { cbScreenSize, cbFillRect, cbLine, cbText };
+	static const ZhboClientApi clientApi = { cbScreenSize, cbFillRect, cbLine, cbText, cbImage, cbQuery, cbCash };
 	zhbo_init(&logicApi, &clientApi);
 
 	if (TheControlBar)

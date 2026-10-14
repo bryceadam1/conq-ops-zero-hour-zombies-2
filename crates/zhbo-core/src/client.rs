@@ -88,6 +88,11 @@ pub const ENTER_TIME: f32 = 0.9;
 pub const LEAVE_TIME: f32 = 1.1;
 pub const HITMARKER_TIME: f32 = 0.25;
 pub const DEATH_BANNER_TIME: f32 = 3.0;
+/// BO2's "+100" kill popup stays up this long; kills inside the window add up.
+pub const SCORE_POPUP_TIME: f32 = 1.4;
+pub const KILL_POINTS: u32 = 100;
+/// Fraction of weapon recoil that permanently moves the aim (the rest recovers).
+pub const RECOIL_PERMANENT: f32 = 0.35;
 
 /// Horizontal FOV for a BO2 `cg_fov` (defined at 4:3) at the given aspect ratio (Hor+).
 pub fn horizontal_fov(cg_fov_deg: f32, aspect: f32) -> f32 {
@@ -178,6 +183,8 @@ pub struct HudTimers {
     pub view_kick_pitch: f32,
     pub view_kick_yaw: f32,
     pub muzzle: f32,
+    pub score_popup: f32,
+    pub score_points: u32,
 }
 
 /// Scripted input for in-game verification (`ZHBO_AUTOPILOT=1`): walks, turns, aims and fires,
@@ -489,13 +496,21 @@ impl Client {
                     self.hud.hitmarker = HITMARKER_TIME;
                     self.hud.hitmarker_kill = kill;
                     self.hud.hitmarker_head = headshot;
+                    if kill {
+                        if self.hud.score_popup <= 0.0 {
+                            self.hud.score_points = 0;
+                        }
+                        self.hud.score_points += KILL_POINTS;
+                        self.hud.score_popup = SCORE_POPUP_TIME;
+                    }
                 }
                 EventKind::Recoil { pitch_deg, yaw_deg } => {
-                    // BO2 recoil moves the real aim; a little extra visual kick decays on top.
-                    self.pitch = (self.pitch + pitch_deg.to_radians()).clamp(-MAX_PITCH, MAX_PITCH);
-                    self.yaw = wrap_angle(self.yaw + yaw_deg.to_radians());
-                    self.hud.view_kick_pitch += pitch_deg * 0.5;
-                    self.hud.view_kick_yaw += yaw_deg * 0.5;
+                    // BO2 assault rifles mostly recover: part of each kick moves the real aim, the
+                    // rest is a visual kick that settles back.
+                    self.pitch = (self.pitch + (pitch_deg * RECOIL_PERMANENT).to_radians()).clamp(-MAX_PITCH, MAX_PITCH);
+                    self.yaw = wrap_angle(self.yaw + (yaw_deg * RECOIL_PERMANENT).to_radians());
+                    self.hud.view_kick_pitch += pitch_deg * (1.0 - RECOIL_PERMANENT);
+                    self.hud.view_kick_yaw += yaw_deg * (1.0 - RECOIL_PERMANENT);
                     self.hud.muzzle = 0.05;
                 }
                 EventKind::Damaged { amount } => {
@@ -522,6 +537,7 @@ impl Client {
         h.damage_flash = (h.damage_flash - dt * 0.6).max(0.0);
         h.death_banner = (h.death_banner - dt).max(0.0);
         h.muzzle = (h.muzzle - dt).max(0.0);
+        h.score_popup = (h.score_popup - dt).max(0.0);
         let decay = (1.0 - dt * 12.0).max(0.0);
         h.view_kick_pitch *= decay;
         h.view_kick_yaw *= decay;

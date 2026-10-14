@@ -77,6 +77,13 @@ pub trait ClientHost {
     fn line(&self, x0: f32, y0: f32, x1: f32, y1: f32, width: f32, argb: u32);
     /// `align`: 0 left, 1 centre, 2 right. `size`: font point size.
     fn text(&self, x: f32, y: f32, text: &str, argb: u32, size: i32, align: i32);
+    /// Draw a MappedImage (e.g. BO2 art from `ConquerOps_BO2.big`) tinted by `argb`.
+    /// Returns false if the image is not available, so callers can fall back to primitives.
+    fn image(&self, name: &str, x: f32, y: f32, w: f32, h: f32, argb: u32) -> bool;
+    /// Objects near `center`, relationship relative to `viewer` (read-only, for the minimap).
+    fn query(&self, center: Vec3, radius: f32, viewer: u32, out: &mut Vec<ObjInfo>);
+    /// A player's current funds.
+    fn cash(&self, player: i32) -> i32;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -106,6 +113,9 @@ pub struct ClientApi {
     pub fill_rect: Option<extern "C" fn(x: f32, y: f32, w: f32, h: f32, argb: u32)>,
     pub line: Option<extern "C" fn(x0: f32, y0: f32, x1: f32, y1: f32, width: f32, argb: u32)>,
     pub text: Option<extern "C" fn(x: f32, y: f32, utf8: *const c_char, argb: u32, size: i32, align: i32)>,
+    pub image: Option<extern "C" fn(name: *const c_char, x: f32, y: f32, w: f32, h: f32, argb: u32) -> i32>,
+    pub query: Option<extern "C" fn(center: *const Vec3, radius: f32, viewer: u32, out: *mut ObjInfo, cap: i32) -> i32>,
+    pub cash: Option<extern "C" fn(player: i32) -> i32>,
 }
 
 fn cstring(s: &str) -> CString {
@@ -145,12 +155,7 @@ impl LogicHost for CLogicHost {
     }
 
     fn query(&self, center: Vec3, radius: f32, viewer: u32, out: &mut Vec<ObjInfo>) {
-        let Some(f) = self.0.query else { return };
-        const CAP: usize = 512;
-        let start = out.len();
-        out.resize(start + CAP, ObjInfo::default());
-        let n = f(&center, radius, viewer, out[start..].as_mut_ptr(), CAP as i32).clamp(0, CAP as i32) as usize;
-        out.truncate(start + n);
+        query_into(self.0.query, center, radius, viewer, out);
     }
 
     fn set_pose(&self, id: u32, pos: Vec3, yaw: f32, moving: bool) {
@@ -210,4 +215,27 @@ impl ClientHost for CClientHost {
             f(x, y, cstring(text).as_ptr(), argb, size, align);
         }
     }
+
+    fn image(&self, name: &str, x: f32, y: f32, w: f32, h: f32, argb: u32) -> bool {
+        self.0.image.map_or(false, |f| f(cstring(name).as_ptr(), x, y, w, h, argb) != 0)
+    }
+
+    fn query(&self, center: Vec3, radius: f32, viewer: u32, out: &mut Vec<ObjInfo>) {
+        query_into(self.0.query, center, radius, viewer, out);
+    }
+
+    fn cash(&self, player: i32) -> i32 {
+        self.0.cash.map_or(0, |f| f(player))
+    }
+}
+
+type QueryFn = extern "C" fn(*const Vec3, f32, u32, *mut ObjInfo, i32) -> i32;
+
+fn query_into(f: Option<QueryFn>, center: Vec3, radius: f32, viewer: u32, out: &mut Vec<ObjInfo>) {
+    let Some(f) = f else { return };
+    const CAP: usize = 512;
+    let start = out.len();
+    out.resize(start + CAP, ObjInfo::default());
+    let n = f(&center, radius, viewer, out[start..].as_mut_ptr(), CAP as i32).clamp(0, CAP as i32) as usize;
+    out.truncate(start + n);
 }

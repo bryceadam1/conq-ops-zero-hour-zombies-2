@@ -1,6 +1,3 @@
-[build]
-# Zero Hour is a 32-bit x86 game; everything we ship links into or sits beside it.
-target = "i686-pc-windows-msvc"
-
 [alias]
+# Builds: cargo xtask build | pack | run | patch | doctor  (see xtask/src/main.rs)
 xtask = "run --quiet --package xtask --"

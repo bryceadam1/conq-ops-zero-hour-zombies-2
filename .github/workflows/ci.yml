@@ -1,0 +1,58 @@
+# Builds and tests Conquer Ops on Windows (MSVC), Linux and macOS (MinGW-w64 cross builds of the same
+# Windows game plus a native launcher). No game data is involved: tests that need the real games are
+# marked #[ignore], and the in-game autotest only runs locally.
+name: ci
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  windows:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: rustup target add i686-pc-windows-msvc
+      - run: cargo test --workspace
+      - run: cargo xtask doctor
+      - run: cargo xtask build
+        env:
+          ZHBO_WORK_DIR: ${{ runner.temp }}\conquerops-work
+      - uses: actions/upload-artifact@v4
+        with:
+          name: conquerops-windows
+          path: ~\AppData\Local\ConquerOps\dist
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-i686 mingw-w64-tools cmake make
+      - run: rustup target add i686-pc-windows-gnu
+      - run: cargo test --workspace
+      - run: cargo xtask doctor
+      - run: cargo xtask build --dist dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: conquerops-linux
+          path: dist
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - run: brew install mingw-w64
+      - run: rustup target add i686-pc-windows-gnu
+      - run: cargo test --workspace
+      - run: cargo xtask doctor
+      - run: cargo xtask build --dist dist
+      - uses: actions/upload-artifact@v4
+        with:
+          name: conquerops-macos
+          path: dist

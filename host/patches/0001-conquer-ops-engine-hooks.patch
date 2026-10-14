@@ -195,7 +195,7 @@ index 4772d17..52dcfb3 100644
  
  				// draw the mouse
 diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
-index 37be366..3f6dd0d 100644
+index 37be366..d2760b3 100644
 --- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
 +++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
 @@ -34,6 +34,7 @@
@@ -227,7 +227,7 @@ index 37be366..3f6dd0d 100644
 +		// The RTS near plane (one map cell) is as far away as the General's eye height.
 +		float zhboNear, zhboFar;
 +		m_3DCamera->Get_Clip_Planes(zhboNear, zhboFar);
-+		m_3DCamera->Set_Clip_Planes(0.5f, max(zhboFar, 2000.0f));
++		m_3DCamera->Set_Clip_Planes(0.5f, std::max(zhboFar, 2000.0f));
 +		m_recalcCamera = false;
 +		s_zhboCameraWasOverridden = true;
 +	}

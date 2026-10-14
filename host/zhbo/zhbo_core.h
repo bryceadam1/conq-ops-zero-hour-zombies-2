@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 1u
+#define ZHBO_ABI_VERSION 2u
 
 #ifdef __cplusplus
 extern "C" {
@@ -78,6 +78,9 @@ typedef struct ZhboClientApi
 	void (*fill_rect)(float x, float y, float w, float h, uint32_t argb);
 	void (*line)(float x0, float y0, float x1, float y1, float width, uint32_t argb);
 	void (*text)(float x, float y, const char *utf8, uint32_t argb, int32_t size, int32_t align);
+	int32_t (*image)(const char *name, float x, float y, float w, float h, uint32_t argb);
+	int32_t (*query)(const ZhboVec3 *center, float radius, uint32_t viewer, ZhboObjInfo *out, int32_t cap);
+	int32_t (*cash)(int32_t player);
 } ZhboClientApi;
 
 typedef struct ZhboClientIn
@@ -132,5 +135,5 @@ static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.
 static_assert(sizeof(ZhboClientIn) == 316, "ZhboClientIn layout must match client.rs");
 static_assert(sizeof(ZhboClientOut) == 88, "ZhboClientOut layout must match client.rs");
 static_assert(sizeof(ZhboLogicApi) == 11 * sizeof(void *), "ZhboLogicApi layout must match host.rs");
-static_assert(sizeof(ZhboClientApi) == 4 * sizeof(void *), "ZhboClientApi layout must match host.rs");
+static_assert(sizeof(ZhboClientApi) == 7 * sizeof(void *), "ZhboClientApi layout must match host.rs");
 #endif
