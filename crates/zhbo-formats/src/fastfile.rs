@@ -56,6 +56,11 @@ pub const ASSET_TYPE_NAMES: &[&str] = &[
 pub const ASSET_XANIM: u32 = 4;
 pub const ASSET_XMODEL: u32 = 5;
 
+/// The asset type id for a name from `ASSET_TYPE_NAMES`.
+pub fn asset_type_id(name: &str) -> Option<u32> {
+    ASSET_TYPE_NAMES.iter().position(|n| *n == name).map(|i| i as u32)
+}
+
 pub fn asset_type_name(t: u32) -> &'static str {
     ASSET_TYPE_NAMES.get(t as usize).copied().unwrap_or("unknown")
 }

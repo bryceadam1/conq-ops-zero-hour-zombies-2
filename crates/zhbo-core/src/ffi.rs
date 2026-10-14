@@ -37,17 +37,17 @@ fn publish_controlled(sim: &Sim) {
     }
 }
 
-pub const ABI_VERSION: u32 = 6;
+pub const ABI_VERSION: u32 = 7;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
 const _: () = {
     use std::mem::size_of;
-    assert!(size_of::<crate::host::ObjInfo>() == 52);
+    assert!(size_of::<crate::host::ObjInfo>() == 56);
     assert!(size_of::<FpsInput>() == 20);
     assert!(size_of::<ClientIn>() == 316);
     assert!(size_of::<ClientOut>() == 124);
     assert!(size_of::<LogicApi>() == 11 * size_of::<usize>());
-    assert!(size_of::<ClientApi>() == 8 * size_of::<usize>());
+    assert!(size_of::<ClientApi>() == 9 * size_of::<usize>());
 };
 
 /// Returns the ABI version; the glue refuses to run if it does not match its header.

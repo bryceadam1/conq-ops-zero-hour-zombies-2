@@ -261,7 +261,14 @@ fn read_surface(z: &Zone, sh: u32) -> Surface {
     Surface { vertices, triangles }
 }
 
-fn read_material(z: &Zone, m: u32) -> Material {
+/// A material asset by name (2D HUD art is a material too), or `None` if the zone has none.
+pub fn find_material(z: &Zone, name: &str) -> Option<Material> {
+    let kind = crate::fastfile::asset_type_id("material")?;
+    let asset = z.find(kind, name).or_else(|| z.find(kind, &format!(",{name}")))?;
+    Some(read_material(z, asset.addr))
+}
+
+pub fn read_material(z: &Zone, m: u32) -> Material {
     let name = z.str_ptr(m).trim_start_matches(',').to_string();
     let count = z.u8(m + 84) as u32;
     let table = z.u32(m + 96);

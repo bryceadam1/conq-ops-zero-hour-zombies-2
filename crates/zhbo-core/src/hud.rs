@@ -3,13 +3,15 @@
 //! Layout follows BO2's multiplayer HUD: the minimap top-left with the compass strip under it; the
 //! team panel bottom-left (emblem and stacked numbers: here, funds), with the active scorestreak's
 //! name above it; bottom-right, the scorestreak column (the field computer is the ready streak),
-//! the weapon name in a slanted box with its fire mode, and the ammo in BO2's slanted numerals. In
+//! the weapon name in BO2's title box with its fire mode, and the ammo in BO2's slanted numerals. In
 //! the middle, a four-line crosshair that opens with spread, four-stroke hit markers, a "+100"
 //! kill popup, and blood at the screen edges when hurt. There is no health bar. While the tablet is
 //! up the HUD stays, as in BO2, without the crosshair.
 //!
-//! BO2 art comes from `ConquerOps_BO2.big`, which the launcher builds from the player's own install
-//! (`zhbo_assets::hud::SPRITES`). Every sprite has a drawn fallback, so the HUD works without it.
+//! Every piece is BO2's own art where BO2 has it, from `ConquerOps_BO2.big`, which the launcher builds
+//! from the player's own install (`zhbo_assets::hud::SPRITES`). The exceptions are Zero Hour's: the
+//! team emblem is the player's faction logo, and minimap dots carry each owner's team colour, as on
+//! Zero Hour's radar. Without the BO2 art the HUD falls back to drawn shapes and the engine font.
 
 use crate::client::{Client, ViewMode, HITMARKER_TIME};
 use crate::host::{objflags, ClientHost, ObjInfo};
@@ -33,11 +35,30 @@ pub mod sprites {
     pub const SLASH: &str = "ZHBO_BO2_Slash";
     pub const BLOOD: &str = "ZHBO_BO2_Blood";
     pub const RED_DOT: &str = "ZHBO_BO2_RedDot";
-    pub const BRACKET: &str = "ZHBO_BO2_Bracket";
-    pub const ALL: [&str; 14] = [
+    pub const HIT_MARKER: &str = "ZHBO_BO2_HitMarker";
+    pub const PLAYER_ARROW: &str = "ZHBO_BO2_PlayerArrow";
+    pub const DOT: &str = "ZHBO_BO2_Dot";
+    pub const COMPASS: &str = "ZHBO_BO2_Compass";
+    pub const LEFT_LOWER: &str = "ZHBO_BO2_LeftLower";
+    pub const LEFT_LOWER_BACK: &str = "ZHBO_BO2_LeftLowerBack";
+    pub const FACTION_BACKING: &str = "ZHBO_BO2_FactionBacking";
+    pub const FACTION_LIGHT: &str = "ZHBO_BO2_FactionLight";
+    pub const RIGHT_LOWER: &str = "ZHBO_BO2_RightLower";
+    pub const GUN_TITLE: [&str; 3] = ["ZHBO_BO2_GunTitleLeft", "ZHBO_BO2_GunTitleMid", "ZHBO_BO2_GunTitleRight"];
+    pub const STREAK_BAR: &str = "ZHBO_BO2_StreakBar";
+    pub const STREAK_BAR_BACK: &str = "ZHBO_BO2_StreakBarBack";
+    pub const STREAK_BOX: &str = "ZHBO_BO2_StreakBox";
+    pub const STREAK_BOX_LIT: &str = "ZHBO_BO2_StreakBoxLit";
+    pub const STREAK_GLOW: &str = "ZHBO_BO2_StreakGlow";
+    pub const STREAK_VSAT: &str = "ZHBO_BO2_StreakVsat";
+    pub const ALL: [&str; 31] = [
         DIGITS[0], DIGITS[1], DIGITS[2], DIGITS[3], DIGITS[4], DIGITS[5], DIGITS[6], DIGITS[7], DIGITS[8],
-        DIGITS[9], SLASH, BLOOD, RED_DOT, BRACKET,
+        DIGITS[9], SLASH, BLOOD, RED_DOT, HIT_MARKER, PLAYER_ARROW, DOT, COMPASS, LEFT_LOWER, LEFT_LOWER_BACK,
+        FACTION_BACKING, FACTION_LIGHT, RIGHT_LOWER, GUN_TITLE[0], GUN_TITLE[1], GUN_TITLE[2], STREAK_BAR,
+        STREAK_BAR_BACK, STREAK_BOX, STREAK_BOX_LIT, STREAK_GLOW, STREAK_VSAT,
     ];
+    /// Not BO2 art: Zero Hour's faction logo for the local player (the bridge resolves it).
+    pub const TEAM_LOGO: &str = "ZHBO_TeamLogo";
 }
 
 const WHITE: u32 = 0xF2FF_FFFF;
@@ -45,7 +66,6 @@ const DIM: u32 = 0xA0FF_FFFF;
 const RED: u32 = 0xF0E8_3A2E;
 const AMBER: u32 = 0xF0F2_B233;
 const SCORE_YELLOW: u32 = 0xFFF5_D53A;
-const FRIEND: u32 = 0xF04F_C3F7;
 /// BO2's player arrow and ready-streak gold.
 const GOLD: u32 = 0xFFF2_C230;
 /// Panel fills and outlines.
@@ -53,7 +73,6 @@ const PANEL: u32 = 0x9010_1214;
 const OUTLINE: u32 = 0xB0C8_CCD0;
 /// Horizontal lean of BO2's slanted boxes, as a share of their height.
 const SLANT: f32 = 0.35;
-const ENEMY: u32 = 0xF0E8_3A2E;
 
 /// Minimap radius in world units.
 const MINIMAP_RANGE: f32 = 320.0;
@@ -154,6 +173,11 @@ fn draw_hitmarker(host: &dyn ClientHost, w: f32, h: f32, s: f32, client: &Client
     let a = ((t / HITMARKER_TIME).min(1.0) * 255.0) as u32;
     let rgb = if client.hud.hitmarker_kill { 0x00E8_3A2E } else { 0x00FF_FFFF };
     let col = (a << 24) | rgb;
+    // BO2's `damage_feedback`: the X fills the top half of the image.
+    let size = 30.0 * s;
+    if host.image(sprites::HIT_MARKER, cx - size * 0.5, cy - size * 0.5, size, size * 2.0, col) {
+        return;
+    }
     let (inner, outer) = (6.0 * s, 14.0 * s);
     for (dx, dy) in [(1.0, 1.0), (-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)] {
         host.line(cx + dx * inner, cy + dy * inner, cx + dx * outer, cy + dy * outer, 2.0 * s, col);
@@ -208,63 +232,68 @@ fn draw_minimap(host: &dyn ClientHost, s: f32, yaw: f32, p: &PlayerSim) -> f32 {
     let inside = |x: f32, y: f32, r: f32| x - r >= x0 && x + r <= x0 + size && y - r >= y0 && y + r <= y0 + size;
     for o in objs.iter().filter(|o| o.id != p.general && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE)) {
         let (x, y) = to_screen(o.pos);
-        let col = if o.has(objflags::ENEMY) { ENEMY } else if o.has(objflags::ALLY) { FRIEND } else { 0x90C8_C8C8 };
+        // Zero Hour's radar rule: everything in its owner's team colour.
+        let team = o.color & 0x00FF_FFFF;
         if o.has(objflags::STRUCTURE) {
             let r = (o.major_radius * scale).clamp(3.0 * s, 14.0 * s);
             if inside(x, y, r) {
-                host.fill_rect(x - r, y - r, r * 2.0, r * 2.0, (col & 0x00FF_FFFF) | 0x6000_0000);
+                host.fill_rect(x - r, y - r, r * 2.0, r * 2.0, team | 0x9000_0000);
             }
         } else {
-            let r = if o.has(objflags::INFANTRY) { 2.0 * s } else { 3.0 * s };
-            if inside(x, y, r) {
-                host.fill_rect(x - r, y - r, r * 2.0, r * 2.0, col);
+            // BO2's minimap dot, tinted.
+            let r = if o.has(objflags::INFANTRY) { 3.5 * s } else { 4.5 * s };
+            if inside(x, y, r) && !host.image(sprites::DOT, x - r, y - r, r * 2.0, r * 2.0, team | 0xFF00_0000) {
+                host.fill_rect(x - r * 0.6, y - r * 0.6, r * 1.2, r * 1.2, team | 0xFF00_0000);
             }
         }
     }
-    // You: BO2's gold outlined triangle pointing up.
-    let a = 7.0 * s;
-    let (tip, l, r) = ((cx, cy - a), (cx - a * 0.8, cy + a * 0.7), (cx + a * 0.8, cy + a * 0.7));
-    for ((ax, ay), (bx, by)) in [(tip, l), (l, r), (r, tip)] {
-        host.line(ax, ay, bx, by, 2.0 * s, GOLD);
+    // You: BO2's player arrow, pointing up.
+    let a = 18.0 * s;
+    if !host.image(sprites::PLAYER_ARROW, cx - a * 0.5, cy - a * 0.5, a, a, 0xFFFF_FFFF) {
+        let a = a * 0.4;
+        let (tip, l, r) = ((cx, cy - a), (cx - a * 0.8, cy + a * 0.7), (cx + a * 0.8, cy + a * 0.7));
+        for ((ax, ay), (bx, by)) in [(tip, l), (l, r), (r, tip)] {
+            host.line(ax, ay, bx, by, 2.0 * s, GOLD);
+        }
     }
     y0 + size
 }
 
-/// BO2's compass strip under the minimap: ticks every 15 degrees, letters at the cardinal and
-/// intercardinal points, the view heading in the middle.
+/// BO2's compass strip under the minimap (`hud_horizontal_compass_minimap`: a full turn, N at the
+/// left), scrolled so the view heading is in the middle of the window.
 fn draw_compass(host: &dyn ClientHost, s: f32, yaw: f32, top: f32) {
-    let (x0, width, height) = (14.0 * s, 150.0 * s, 18.0 * s);
+    let (x0, width, height) = (14.0 * s, 150.0 * s, 22.0 * s);
     let y0 = top + 2.0 * s;
-    host.fill_rect(x0, y0, width, height, 0xA018_1A1C);
+    host.fill_rect(x0, y0, width, height, 0x8018_1A1C);
     let cx = x0 + width * 0.5;
     // Heading in compass degrees: yaw 0 is east (+x), north is +y.
     let heading = (90.0 - yaw.to_degrees()).rem_euclid(360.0);
-    let span = 100.0; // degrees across the strip
-    let px_per_deg = width / span;
-    let first = ((heading - span * 0.5) / 15.0).ceil() as i32;
-    let last = ((heading + span * 0.5) / 15.0).floor() as i32;
-    for i in first..=last {
+    // The window shows half a turn; the art's N sits 8/512 in from its left edge.
+    let strip = width * 2.0;
+    let north_x = cx - heading / 360.0 * strip;
+    let left = north_x - strip * 8.0 / 512.0;
+    host.clip(Some((x0, y0, width, height)));
+    let mut drew = false;
+    for k in -1..=1 {
+        drew |= host.image(sprites::COMPASS, left + k as f32 * strip, y0, strip, height, 0xFFFF_FFFF);
+    }
+    host.clip(None);
+    if drew {
+        return;
+    }
+    // Fallback: ticks and letters.
+    let px_per_deg = width / 180.0;
+    for i in ((heading - 90.0) / 15.0).ceil() as i32..=((heading + 90.0) / 15.0).floor() as i32 {
         let deg = i as f32 * 15.0;
         let x = cx + (deg - heading) * px_per_deg;
-        let name = match (deg.rem_euclid(360.0) as i32 + 360) % 360 {
-            0 => "N",
-            45 => "NE",
-            90 => "E",
-            135 => "SE",
-            180 => "S",
-            225 => "SW",
-            270 => "W",
-            315 => "NW",
-            _ => "",
-        };
-        if name.is_empty() {
-            host.line(x, y0 + height * 0.65, x, y0 + height - 2.0 * s, 1.0, DIM);
-        } else {
-            host.text(x, y0 + 2.0 * s, name, WHITE, (11.0 * s) as i32, 1);
+        match (deg.rem_euclid(360.0) as i32 + 360) % 360 {
+            0 => host.text(x, y0 + 4.0 * s, "N", WHITE, (11.0 * s) as i32, 1),
+            90 => host.text(x, y0 + 4.0 * s, "E", WHITE, (11.0 * s) as i32, 1),
+            180 => host.text(x, y0 + 4.0 * s, "S", WHITE, (11.0 * s) as i32, 1),
+            270 => host.text(x, y0 + 4.0 * s, "W", WHITE, (11.0 * s) as i32, 1),
+            _ => host.line(x, y0 + 2.0 * s, x, y0 + 7.0 * s, 1.0, DIM),
         }
     }
-    // The heading mark.
-    host.line(cx, y0 + height - 4.0 * s, cx, y0 + height, 2.0 * s, GOLD);
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -294,36 +323,38 @@ fn slant_box(host: &dyn ClientHost, x: f32, y: f32, w: f32, h: f32, fill: u32, e
     }
 }
 
-/// BO2's team panel, bottom-left: an emblem and the team's numbers stacked on a slanted plate.
-/// Conquer Ops shows the player's funds there; above it, BO2 names the scorestreak in use.
+/// BO2's team panel, bottom-left: its frame, the emblem plate, and the team's numbers. The emblem is
+/// Zero Hour's logo for the player's faction, and the number is the player's funds. Above it, BO2
+/// names the scorestreak in use.
 fn draw_team_panel(host: &dyn ClientHost, h: f32, s: f32, local_player: i32, tablet_up: bool) {
-    let (x, bottom) = (18.0 * s, h - 14.0 * s);
-    let (pw, ph) = (170.0 * s, 64.0 * s);
-    let top = bottom - ph;
-    slant_box(host, x, top, pw, ph, PANEL, None);
-    // Emblem: BO2-style wings around a chevron.
-    let (ex, ey, e) = (x + 40.0 * s, top + ph * 0.52, 20.0 * s);
-    let emblem = 0xE0D8_E4F0;
-    host.line(ex - e * 0.45, ey - e * 0.3, ex, ey + e * 0.25, 3.0 * s, emblem);
-    host.line(ex + e * 0.45, ey - e * 0.3, ex, ey + e * 0.25, 3.0 * s, emblem);
-    for k in 0..3 {
-        let dy = k as f32 * 5.0 * s;
-        host.line(ex - e * 0.55, ey - e * 0.35 + dy, ex - e * 1.35, ey - e * 0.7 + dy, 2.0 * s, emblem);
-        host.line(ex + e * 0.55, ey - e * 0.35 + dy, ex + e * 1.35, ey - e * 0.7 + dy, 2.0 * s, emblem);
+    let (fw, fh) = (176.0 * s, 88.0 * s);
+    let (x, top) = (8.0 * s, h - fh - 4.0 * s);
+    let framed = host.image(sprites::LEFT_LOWER_BACK, x, top, fw, fh, 0xC0FF_FFFF);
+    host.image(sprites::LEFT_LOWER, x, top, fw, fh, 0xFFFF_FFFF);
+    if !framed {
+        slant_box(host, x + 10.0 * s, top + 20.0 * s, fw - 20.0 * s, fh - 26.0 * s, PANEL, None);
     }
-    // Funds in BO2's numerals, with a small label under them.
+    // The emblem plate and the faction logo on it.
+    let plate = 62.0 * s;
+    let (px, py) = (x + 14.0 * s, top + fh - plate - 4.0 * s);
+    host.image(sprites::FACTION_LIGHT, px, py, plate, plate, 0x90FF_FFFF);
+    host.image(sprites::FACTION_BACKING, px, py, plate, plate, 0xFFFF_FFFF);
+    let logo = plate * 0.68;
+    host.image(sprites::TEAM_LOGO, px + (plate - logo) * 0.5, py + (plate - logo) * 0.5, logo, logo, 0xFFFF_FFFF);
+
+    // Funds in BO2's numerals on the frame's upper line, labelled under it.
     let cash = host.cash(local_player).max(0) as u32;
-    let right = x + pw - 6.0 * s;
+    let right = x + fw - 14.0 * s;
     let height = 30.0 * s;
-    let left = draw_number(host, cash, right, top + 8.0 * s, height, WHITE);
-    host.text(left - 9.0 * s, top + 8.0 * s + height * 0.22, "$", WHITE, (16.0 * s) as i32, 2);
-    host.line(x + 74.0 * s, top + 8.0 * s + height + 3.0 * s, right, top + 8.0 * s + height + 3.0 * s, 1.0, DIM);
-    host.text(right, top + 8.0 * s + height + 6.0 * s, "FUNDS", DIM, (10.0 * s) as i32, 2);
+    let num_top = top + 22.0 * s;
+    let left = draw_number(host, cash, right, num_top, height, WHITE);
+    host.text(left - 9.0 * s, num_top + height * 0.22, "$", WHITE, (16.0 * s) as i32, 2);
+    host.text(right, num_top + height + 4.0 * s, "FUNDS", DIM, (10.0 * s) as i32, 2);
 
     // The scorestreak in use, BO2's big bold name with its status under it.
     if tablet_up {
-        host.text(x, top - 62.0 * s, "FIELD COMPUTER", WHITE, (30.0 * s) as i32, 0);
-        host.text(x + 2.0 * s, top - 22.0 * s, "Establishing tactical view", WHITE, (12.0 * s) as i32, 0);
+        host.text(x + 6.0 * s, top - 50.0 * s, "FIELD COMPUTER", WHITE, (30.0 * s) as i32, 0);
+        host.text(x + 8.0 * s, top - 12.0 * s, "Establishing tactical view", WHITE, (12.0 * s) as i32, 0);
     }
 }
 
@@ -331,58 +362,77 @@ fn draw_team_panel(host: &dyn ClientHost, h: f32, s: f32, local_player: i32, tab
 // Scorestreaks (bottom right, above the weapon)
 // ------------------------------------------------------------------------------------------------
 
-/// BO2's scorestreak column. Conquer Ops' one streak is the field computer, always ready (gold);
-/// its name sits beside it like BO2's selected streak, with the key.
+/// BO2's scorestreak column. Conquer Ops' one streak is the field computer (BO2's orbital VSAT icon),
+/// always ready, so its box is lit; its name sits beside it like BO2's selected streak, with the key.
 fn draw_streaks(host: &dyn ClientHost, w: f32, h: f32, s: f32, active: bool) {
-    let (bw, bh) = (44.0 * s, 32.0 * s);
-    let x = w - 18.0 * s - bw;
-    let y = h - 196.0 * s;
-    slant_box(host, x, y, bw, bh, if active { 0xE0C8_9A2A } else { 0xB0A8_8228 }, Some(GOLD));
-    // The tablet glyph.
-    let (gx, gy, gw, gh) = (x + bw * 0.30, y + bh * 0.22, bw * 0.5, bh * 0.56);
-    outline_rect(host, gx, gy, gw, gh, 2.0 * s, 0xF020_1A10);
-    host.fill_rect(gx + 4.0 * s, gy + 4.0 * s, gw - 8.0 * s, gh - 8.0 * s, 0x9020_1A10);
-    // Thin rule to the left, as BO2 draws beside the column.
-    host.fill_rect(x - 12.0 * s, y - 4.0 * s, 2.0 * s, bh + 34.0 * s, 0x90FF_FFFF);
-    host.text(x - 18.0 * s, y + bh + 6.0 * s, "FIELD COMPUTER  [F]", WHITE, (12.0 * s) as i32, 2);
+    // The box art is a wide slanted box across the middle half of a square image.
+    let b = 64.0 * s;
+    let x = w - 14.0 * s - b;
+    let y = h - 206.0 * s;
+    // The bar to the left of the column.
+    let (bw, bh) = (24.0 * s, 48.0 * s);
+    let bx = x - bw + 6.0 * s;
+    let by = y + (b - bh) * 0.5;
+    host.image(sprites::STREAK_BAR_BACK, bx, by, bw, bh, 0xFFFF_FFFF);
+    let bar = host.image(sprites::STREAK_BAR, bx, by, bw, bh, 0xFFFF_FFFF);
+    // The streak's box: glow, lit fill, icon, outline.
+    let glow = b * 1.1;
+    host.image(sprites::STREAK_GLOW, x + (b - glow) * 0.5, y + (b - glow) * 0.5, glow, glow, if active { 0xC0FF_FFFF } else { 0x70FF_FFFF });
+    let lit = host.image(sprites::STREAK_BOX_LIT, x, y, b, b, 0xFFFF_FFFF);
+    let icon = b * 0.46;
+    host.image(sprites::STREAK_VSAT, x + (b - icon) * 0.5, y + (b - icon) * 0.5, icon, icon, 0xFFFF_FFFF);
+    host.image(sprites::STREAK_BOX, x, y, b, b, 0xFFFF_FFFF);
+    if !lit {
+        slant_box(host, x, y + b * 0.2, b, b * 0.6, 0xB0A8_8228, Some(GOLD));
+    }
+    if !bar {
+        host.fill_rect(bx + bw * 0.5, y, 2.0 * s, b, 0x90FF_FFFF);
+    }
+    host.text(bx - 4.0 * s, y + b * 0.5 - 7.0 * s, "FIELD COMPUTER  [F]", WHITE, (12.0 * s) as i32, 2);
 }
-
-// ------------------------------------------------------------------------------------------------
-// Ammo (bottom right)
-// ------------------------------------------------------------------------------------------------
 
 fn draw_ammo(host: &dyn ClientHost, w: f32, h: f32, s: f32, p: &PlayerSim, prompts: bool) {
     let wpn = p.arsenal.current();
-    let right = w - 26.0 * s;
-    let base = h - 26.0 * s;
-    // BO2 draws the magazine and the reserve nearly the same size.
-    let big = 40.0 * s;
-    let small = 34.0 * s;
+    // BO2's weapon panel frame, bottom-right.
+    let (fw, fh) = (176.0 * s, 88.0 * s);
+    let (fx, ftop) = (w - fw - 8.0 * s, h - fh - 4.0 * s);
+    host.image(sprites::RIGHT_LOWER, fx, ftop, fw, fh, 0xFFFF_FFFF);
 
+    let right = w - 24.0 * s;
+    let base = h - 16.0 * s;
+    // BO2 draws the magazine and the reserve nearly the same size.
+    let big = 38.0 * s;
+    let small = 32.0 * s;
     let low = (wpn.ammo as f32) < wpn.def.mag_size as f32 * 0.3;
     let mag_col = if wpn.ammo == 0 { RED } else if low { AMBER } else { WHITE };
-
     let reserve_left = draw_number(host, wpn.reserve as u32, right, base - small, small, WHITE);
     let slash_w = small * 0.5;
     if !host.image(sprites::SLASH, reserve_left - slash_w - 1.0 * s, base - small, slash_w, small, WHITE) {
         host.text(reserve_left - slash_w * 0.5, base - small, "/", WHITE, (small * 0.75) as i32, 1);
     }
-    let mag_left = draw_number(host, wpn.ammo as u32, reserve_left - slash_w - 3.0 * s, base - big, big, mag_col);
+    draw_number(host, wpn.ammo as u32, reserve_left - slash_w - 3.0 * s, base - big, big, mag_col);
 
-    // The weapon's name in a slanted box, and its fire mode beside it.
+    // The weapon's name in BO2's title box (its box is rows 22-40 of the 64-pixel art), with the
+    // fire mode beside it.
     let mode = match wpn.def.mode {
         crate::weapons::FireMode::Auto => "FULL-AUTO",
         crate::weapons::FireMode::Semi => "SEMI-AUTO",
         crate::weapons::FireMode::Burst(_) => "BURST",
     };
-    let row = base - big - 26.0 * s;
-    host.text(right, row + 3.0 * s, mode, WHITE, (12.0 * s) as i32, 2);
-    let (nw, nh) = (78.0 * s, 20.0 * s);
-    let nx = right - 92.0 * s - nw;
-    slant_box(host, nx, row, nw, nh, 0x8030_3438, Some(OUTLINE));
-    host.text(nx + nw * 0.5 + nh * SLANT * 0.5, row + 3.0 * s, wpn.def.display_name, WHITE, (13.0 * s) as i32, 1);
-    // BO2's thin upright bar to the left of the ammo.
-    host.fill_rect(mag_left.min(nx) - 10.0 * s, row, 2.0 * s, base - row, 0x90FF_FFFF);
+    let row = ftop + 4.0 * s; // the box's top
+    host.text(right, row + 1.0 * s, mode, WHITE, (12.0 * s) as i32, 2);
+    let art = 20.0 * s / (18.0 / 64.0); // art height for a 20-pixel box
+    let art_top = row - art * 22.0 / 64.0;
+    let text_w = 44.0 * s;
+    let box_right = right - 82.0 * s;
+    let mid_left = box_right - art * 0.5 - text_w;
+    let titled = host.image(sprites::GUN_TITLE[1], mid_left, art_top, text_w, art, 0xFFFF_FFFF);
+    host.image(sprites::GUN_TITLE[0], mid_left - art, art_top, art, art, 0xFFFF_FFFF);
+    host.image(sprites::GUN_TITLE[2], mid_left + text_w, art_top, art, art, 0xFFFF_FFFF);
+    if !titled {
+        slant_box(host, mid_left - 10.0 * s, row, text_w + 20.0 * s, 20.0 * s, 0x8030_3438, Some(OUTLINE));
+    }
+    host.text(mid_left + text_w * 0.5, row + 3.0 * s, wpn.def.display_name, WHITE, (13.0 * s) as i32, 1);
 
     if !prompts {
         return;
@@ -512,7 +562,10 @@ mod tests {
         assert!(texts.iter().any(|t| t == "FULL-AUTO"), "BO2 fire mode beside the weapon name");
         assert!(texts.iter().any(|t| t == "FUNDS") && images.contains(&"ZHBO_BO2_Digit1".to_string()), "funds in BO2 numerals");
         assert!(texts.iter().any(|t| t.starts_with("FIELD COMPUTER")), "the ready scorestreak");
-        assert!(texts.iter().any(|t| t == "NE" || t == "N" || t == "E" || t == "SE" || t == "S" || t == "SW" || t == "W" || t == "NW"), "compass");
+        for art in [sprites::COMPASS, sprites::PLAYER_ARROW, sprites::DOT, sprites::LEFT_LOWER, sprites::RIGHT_LOWER, sprites::STREAK_VSAT, sprites::GUN_TITLE[1]] {
+            assert!(images.contains(&art.to_string()), "BO2 art {art}");
+        }
+        assert!(images.contains(&sprites::TEAM_LOGO.to_string()), "Zero Hour's faction logo");
         assert!(!texts.iter().any(|t| t == "3" || t == "0"), "no font fallback when art exists");
     }
 

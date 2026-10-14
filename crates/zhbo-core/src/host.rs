@@ -42,6 +42,8 @@ pub struct ObjInfo {
     pub height: f32,
     pub health: f32,
     pub max_health: f32,
+    /// The owner's team colour (ARGB), as Zero Hour's radar shows it.
+    pub color: u32,
 }
 
 impl ObjInfo {
@@ -86,6 +88,8 @@ pub trait ClientHost {
     fn cash(&self, player: i32) -> i32;
     /// Play a sound event (`sounds::*`), at `at` for positional sounds.
     fn sound(&self, _event: &str, _at: Option<Vec3>) {}
+    /// Clip later 2D images to a screen rectangle; `None` turns clipping off.
+    fn clip(&self, _rect: Option<(f32, f32, f32, f32)>) {}
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -119,6 +123,7 @@ pub struct ClientApi {
     pub query: Option<extern "C" fn(center: *const Vec3, radius: f32, viewer: u32, out: *mut ObjInfo, cap: i32) -> i32>,
     pub cash: Option<extern "C" fn(player: i32) -> i32>,
     pub sound: Option<extern "C" fn(event: *const c_char, at: *const Vec3)>,
+    pub clip: Option<extern "C" fn(x: f32, y: f32, w: f32, h: f32)>,
 }
 
 fn cstring(s: &str) -> CString {
@@ -238,6 +243,13 @@ impl ClientHost for CClientHost {
                 Some(p) => f(name.as_ptr(), &p),
                 None => f(name.as_ptr(), std::ptr::null()),
             }
+        }
+    }
+
+    fn clip(&self, rect: Option<(f32, f32, f32, f32)>) {
+        if let Some(f) = self.0.clip {
+            let (x, y, w, h) = rect.unwrap_or((0.0, 0.0, 0.0, 0.0));
+            f(x, y, w, h);
         }
     }
 }

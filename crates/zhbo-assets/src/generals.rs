@@ -96,7 +96,7 @@ pub const ANIMS: &[(&str, &str)] = &[
     ("ZHBO_PLR_DTB", "pb_death_flyback"),
 ];
 
-fn load_zone(bo2_dir: &Path, name: &str) -> Result<Zone, String> {
+pub(crate) fn load_zone(bo2_dir: &Path, name: &str) -> Result<Zone, String> {
     let path = bo2_dir.join("zone").join("all").join(format!("{name}.ff"));
     let file = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
     let zone = fastfile::read(&file).map_err(|e| format!("{name}: {e}"))?;
@@ -104,12 +104,12 @@ fn load_zone(bo2_dir: &Path, name: &str) -> Result<Zone, String> {
 }
 
 /// Image packs, opened on demand, with their entries grouped by name hash.
-struct Paks {
+pub(crate) struct Paks {
     paks: Vec<(Ipak, BTreeMap<u32, Vec<IpakEntry>>)>,
 }
 
 impl Paks {
-    fn open(bo2_dir: &Path) -> Result<Paks, String> {
+    pub(crate) fn open(bo2_dir: &Path) -> Result<Paks, String> {
         let dir = bo2_dir.join("zone").join("all");
         let mut names: Vec<_> = std::fs::read_dir(&dir)
             .map_err(|e| e.to_string())?
@@ -127,13 +127,13 @@ impl Paks {
         Ok(Paks { paks })
     }
 
-    fn image(&self, hash: u32) -> Option<Rgba> {
+    pub(crate) fn image(&self, hash: u32) -> Option<Rgba> {
         self.paks.iter().find_map(|(pak, groups)| groups.get(&hash).and_then(|parts| images::load(pak, parts).ok()))
     }
 }
 
 /// Halve an image until it fits `max` (box filter).
-fn shrink(mut img: Rgba, max: u32) -> Rgba {
+pub(crate) fn shrink(mut img: Rgba, max: u32) -> Rgba {
     while img.width > max || img.height > max {
         let (w, h) = ((img.width / 2).max(1), (img.height / 2).max(1));
         let mut out = vec![0u8; (w * h * 4) as usize];

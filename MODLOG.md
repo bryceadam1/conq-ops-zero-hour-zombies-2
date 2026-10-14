@@ -221,6 +221,16 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     reflection stage washes it out. BO2 has no wrist-datapad animations in `common_mp`; the
     `viewmodel_pda_hacker_*` clips are Black Hat's.
 
+57. BO2 HUD art is now found by *material* name in the decrypted zones (`zhbo-assets material <ff> <dir>
+    <name>...` exports a material's images, also over dark grey). Most HUD materials are in
+    `common_mp` (`compassping_*`, `hud_horizontal_compass_minimap`, `hud_mp_vis_*`, `damage_feedback`),
+    and the in-game streak icons are `hud_ks_*_big` in `code_post_gfx_mp`. The `ui_mp` menu icons keep
+    their pixels in the zone (lost with the temp block). Art BO2 blends additively (bright on opaque
+    black) gets brightness as alpha. Zero Hour's faction logos are `USA_Logo`/`China_Logo`/`GLA_Logo`
+    (by `PlayerTemplate::getBaseSide()`). `Display::setClipRegion` clips `drawImage` with UV
+    adjustment, which the scrolling compass uses (ClientApi `clip`, ABI 7; ObjInfo gains the owner's
+    colour).
+
 ## Verification log
 
 * Baseline source build (no mod) runs against Steam data with `-useCwd -win`: intro video plays (screenshot).

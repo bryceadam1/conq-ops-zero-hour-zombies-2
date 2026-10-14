@@ -23,6 +23,7 @@
 #include "Common/MessageStream.h"
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
+#include "Common/PlayerTemplate.h"
 #include "Common/Team.h"
 #include "Common/ThingFactory.h"
 #include "Common/ThingTemplate.h"
@@ -128,6 +129,7 @@ void fillInfo(const Object *obj, const Object *viewer, ZhboObjInfo *out)
 	out->id = (uint32_t)obj->getID();
 	const Player *owner = obj->getControllingPlayer();
 	out->owner_player = owner ? owner->getPlayerIndex() : -1;
+	out->color = owner ? (uint32_t)owner->getPlayerColor() : 0xFFC8C8C8u;
 
 	uint32_t flags = 0;
 	if (obj->isKindOf(KINDOF_STRUCTURE)) flags |= ZHBO_OBJ_STRUCTURE;
@@ -393,15 +395,26 @@ void cbText(float x, float y, const char *utf8, uint32_t argb, int32_t size, int
 	ds->draw(px, (Int)y, argb, shadow);
 }
 
-int32_t cbImage(const char *name, float x, float y, float w, float h, uint32_t argb)
+int32_t cbImage(const char *name_, float x, float y, float w, float h, uint32_t argb)
 {
+	// "ZHBO_TeamLogo" is the local player's faction emblem from Zero Hour's own art (USA_Logo,
+	// China_Logo, GLA_Logo), by the base side of their general.
+	std::string name = name_;
+	if (name == "ZHBO_TeamLogo")
+	{
+		const Player *local = ThePlayerList ? ThePlayerList->getLocalPlayer() : nullptr;
+		const PlayerTemplate *pt = local ? local->getPlayerTemplate() : nullptr;
+		if (!pt || pt->getBaseSide().isEmpty())
+			return 0;
+		name = std::string(pt->getBaseSide().str()) + "_Logo";
+	}
 	// Mapped images live for the whole session; cache lookups (including misses).
 	static std::map<std::string, const Image *> s_images;
 	std::map<std::string, const Image *>::iterator it = s_images.find(name);
 	const Image *image;
 	if (it == s_images.end())
 	{
-		image = TheMappedImageCollection ? TheMappedImageCollection->findImageByName(name) : nullptr;
+		image = TheMappedImageCollection ? TheMappedImageCollection->findImageByName(name.c_str()) : nullptr;
 		s_images[name] = image;
 	}
 	else
@@ -412,6 +425,24 @@ int32_t cbImage(const char *name, float x, float y, float w, float h, uint32_t a
 		return 0;
 	TheDisplay->drawImage(image, (Int)x, (Int)y, (Int)(x + w + 0.5f), (Int)(y + h + 0.5f), argb);
 	return 1;
+}
+
+void cbClip(float x, float y, float w, float h)
+{
+	if (!TheDisplay)
+		return;
+	if (w <= 0.0f || h <= 0.0f)
+	{
+		TheDisplay->enableClipping(FALSE);
+		return;
+	}
+	IRegion2D region;
+	region.lo.x = (Int)x;
+	region.lo.y = (Int)y;
+	region.hi.x = (Int)(x + w + 0.5f);
+	region.hi.y = (Int)(y + h + 0.5f);
+	TheDisplay->setClipRegion(&region);
+	TheDisplay->enableClipping(TRUE);
 }
 
 int32_t cbCash(int32_t player)
@@ -766,7 +797,7 @@ void Zhbo_Init()
 		cbLog, cbGroundHeight, cbIsWalkable, cbExtent, cbObject, cbQuery,
 		cbSetPose, cbSetControlled, cbFireFx, cbDamage, cbHeal,
 	};
-	static const ZhboClientApi clientApi = { cbScreenSize, cbFillRect, cbLine, cbText, cbImage, cbQuery, cbCash, cbSound };
+	static const ZhboClientApi clientApi = { cbScreenSize, cbFillRect, cbLine, cbText, cbImage, cbQuery, cbCash, cbSound, cbClip };
 	zhbo_init(&logicApi, &clientApi);
 
 	if (TheControlBar)

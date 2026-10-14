@@ -272,6 +272,44 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             Ok(())
         }
+        "material" => {
+            // material <ff> <out dir> <name>...: a material's images as PNGs (HUD art is materials).
+            let usage = "material <ff> <out dir> <name>...";
+            let zone = load_full_zone(args.get(1).ok_or(usage)?)?;
+            let out = PathBuf::from(args.get(2).ok_or(usage)?);
+            fs::create_dir_all(&out).map_err(|e| e.to_string())?;
+            let paks = image_paks()?;
+            for name in &args[3..] {
+                let Some(m) = zhbo_formats::xmodel::find_material(&zone, name) else {
+                    println!("{name}: not in this zone");
+                    continue;
+                };
+                for (i, t) in m.textures.iter().enumerate() {
+                    let Some(img) = &t.image else { continue };
+                    let found = paks.iter().find_map(|(n, pak, g)| g.get(&img.stream_hash).map(|parts| (n, images::load(pak, parts))));
+                    match found {
+                        Some((pak, Ok(rgba))) => {
+                            let file = out.join(format!("{name}_{i}.png"));
+                            images::write_png(&file, &rgba)?;
+                            // Also over dark grey, since most HUD art is white on clear.
+                            let mut dark = rgba.clone();
+                            for px in dark.pixels.chunks_exact_mut(4) {
+                                let a = px[3] as u32;
+                                for c in &mut px[..3] {
+                                    *c = ((*c as u32 * a + 40 * (255 - a)) / 255) as u8;
+                                }
+                                px[3] = 255;
+                            }
+                            images::write_png(&out.join(format!("{name}_{i}_dark.png")), &dark)?;
+                            println!("{name} [{i}] semantic {} {} {}x{} {pak} {:#010x}", t.semantic, img.name, rgba.width, rgba.height, img.stream_hash);
+                        }
+                        Some((_, Err(e))) => println!("{name} [{i}] {}: {e}", img.name),
+                        None => println!("{name} [{i}] {} {}x{}: not in the packs (hash {:#010x})", img.name, img.width, img.height, img.stream_hash),
+                    }
+                }
+            }
+            Ok(())
+        }
         "probes" => {
             // probes <ff>: a map's reflection probes (GfxWorld::draw, at +396) and their images.
             let zone = load_full_zone(args.get(1).ok_or("probes <ff>")?)?;
