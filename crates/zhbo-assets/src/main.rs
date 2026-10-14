@@ -11,14 +11,18 @@
 //! zhbo-assets sheets <pak> <out-dir> [--formats ..] [--max-size N] [--hashes a,b] [--per-sheet 64] [--cell 96]
 //!                                                     numbered contact sheets + index, to identify art by eye
 //! zhbo-assets image <pak> <hash> <out.png>            export one image
+//! zhbo-assets zones                                   list fastfiles
+//! zhbo-assets zone <ff>                               decrypt a fastfile; asset counts by type
+//! zhbo-assets find <text> [<ff> ...]                  names containing <text>, in every (or the given) zone
 //! ```
-//! `<bank>`/`<pak>` are file names inside the BO2 install (`sound\`, `zone\all\`) or full paths.
+//! `<bank>`/`<pak>`/`<ff>` are file names inside the BO2 install (`sound\`, `zone\all\`) or full paths.
 //! Everything exported is the player's own game data: keep it local, never redistribute it.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use zhbo_assets::{images, sounds};
+use zhbo_formats::fastfile;
 use zhbo_formats::ipak::Ipak;
 use zhbo_formats::iwi::Format;
 use zhbo_formats::sab::{SoundBank, FORMAT_FLAC, FORMAT_PCM16};
@@ -104,6 +108,54 @@ fn run(args: &[String]) -> Result<(), String> {
     match args.first().map(String::as_str).unwrap_or("") {
         "banks" => list_dir(bo2_dir()?.join("sound"), &[".sabs", ".sabl"]),
         "paks" => list_dir(bo2_dir()?.join("zone").join("all"), &[".ipak"]),
+        "zones" => list_dir(bo2_dir()?.join("zone").join("all"), &[".ff"]),
+        "zone" => {
+            let zone = open_zone(args.get(1).ok_or("zone <ff>")?)?;
+            let index = zone.index().map_err(|e| e.to_string())?;
+            println!("zone {}: {} bytes, {} script strings, {} assets", zone.name, zone.data.len(), index.script_strings.len(), index.assets.len());
+            let mut counts = std::collections::BTreeMap::new();
+            for &(t, _) in &index.assets {
+                *counts.entry(t).or_insert(0usize) += 1;
+            }
+            for (t, n) in counts {
+                println!("{:>6}  {}", n, fastfile::asset_type_name(t));
+            }
+            Ok(())
+        }
+        "find" => {
+            let needle = args.get(1).ok_or("find <text> [zone.ff ...]")?.to_ascii_lowercase();
+            let zones: Vec<PathBuf> = if args.len() > 2 {
+                args[2..].iter().map(|z| resolve(z, &["zone", "all"])).collect::<Result<_, _>>()?
+            } else {
+                let mut v: Vec<PathBuf> = fs::read_dir(bo2_dir()?.join("zone").join("all"))
+                    .map_err(|e| e.to_string())?
+                    .flatten()
+                    .map(|e| e.path())
+                    .filter(|p| p.extension().is_some_and(|x| x == "ff"))
+                    .collect();
+                v.sort();
+                v
+            };
+            for path in zones {
+                let zone = match fs::read(&path).map_err(|e| e.to_string()).and_then(|f| fastfile::read(&f).map_err(|e| e.to_string())) {
+                    Ok(z) => z,
+                    Err(e) => {
+                        eprintln!("{}: {e}", path.display());
+                        continue;
+                    }
+                };
+                let mut seen = std::collections::BTreeSet::new();
+                for s in zone.data.split(|&b| b == 0) {
+                    if s.len() >= 4 && s.iter().all(|&b| (0x20..0x7f).contains(&b)) {
+                        let text = String::from_utf8_lossy(s);
+                        if text.to_ascii_lowercase().contains(&needle) && seen.insert(text.to_string()) {
+                            println!("{}: {text}", zone.name);
+                        }
+                    }
+                }
+            }
+            Ok(())
+        }
         "list" => {
             let bank = open_bank(args.get(1).ok_or("list <bank>")?)?;
             println!("{:>10}  {:>7}  {:>2}  {:>6}  format", "id", "seconds", "ch", "rate");
@@ -202,6 +254,12 @@ fn run(args: &[String]) -> Result<(), String> {
 fn open_bank(name: &str) -> Result<SoundBank, String> {
     let path = resolve(name, &["sound"])?;
     SoundBank::open(&path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+fn open_zone(name: &str) -> Result<fastfile::Zone, String> {
+    let path = resolve(name, &["zone", "all"])?;
+    let file = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    fastfile::read(&file).map_err(|e| format!("{}: {e}", path.display()))
 }
 
 fn open_pak(name: &str) -> Result<Ipak, String> {

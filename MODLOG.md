@@ -136,6 +136,13 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
 38. macOS tests skip the menus with the fork's `-loadsave` (made once with `-saveatframe 90 -saveto`).
     `ConquerOps.log` survives between runs, so delete it before launching, or a wait for "entered
     first-person" matches the previous run and input is sent during the loading screen.
+39. BO2 fastfiles (`TAff0100`, version 147) decrypt with `zhbo_formats::fastfile` (format from
+    OpenAssetTools, GPL-3.0): 4 round-robin chunk streams, Salsa20 with an IV ring seeded by the zone
+    name and advanced by each chunk's SHA-1, then raw deflate. The zone's declared size excludes
+    the 8-byte sizes and the 32-byte block-size table. All 115 zones in `zone/all` decrypt.
+    MP characters are per map (`mp_raid.ff`: `c_usa_mp_fbi_assault_fb` bodies,
+    `c_usa_mp_fbi_longsleeve_viewhands` arms); guns (`t6_wpn_*_view`/`_world`), `viewmodel_*` and
+    third-person player animations are in `common_mp.ff` (481 models, 4233 anims).
 
 ## Verification log
 

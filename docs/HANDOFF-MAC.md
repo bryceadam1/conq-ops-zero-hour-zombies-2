@@ -66,7 +66,7 @@ export ZHBO_ZH_DIR=~/Games/ZeroHour ZHBO_BO2_DIR=~/Games/BlackOps2
 Zero Hour's depot includes base Generals (`ZH_Generals/`). The engine fork's own guide,
 `host/GeneralsGameCode/docs/BUILD/GETTING_THE_GAME_FILES.md`, describes other ways to get the
 files. BO2 is large; the mod only reads
-`sound/*.sabs|*.sabl` and `zone/all/*.ipak` from it. **Rule: BO2 is never launched, hooked or
+`sound/*.sabs|*.sabl`, `zone/all/*.ipak` and (for models) `zone/all/*.ff` from it. **Rule: BO2 is never launched, hooked or
 connected to.**
 
 ## 3. Build
@@ -172,7 +172,9 @@ mouse events with `scripts/macos/drive.swift` and needs Accessibility permission
 
 * **No piracy.** The mod refuses to run unless both Zero Hour and Black Ops II are installed. It
   ships no game files; assets are converted from the player's own installs at run time.
-* **Never bypass anti-cheat or DRM. Never launch, hook or connect to BO2.** Only its files are read.
+* **Never bypass anti-cheat. Never launch, hook or connect to BO2.** Only its files are read.
+  Since 2026-10-14 (the user's decision) the mod decrypts BO2 fastfiles from the player's own
+  install, to convert models and animations; output stays local and is never shipped.
 * **Rust wherever possible.** C++ is limited to the engine hooks (`host/patches`), the bridge and
   the bgfx adapter.
 * **Native builds, no Wine.** On macOS and Linux the install fetches the Windows depots for their

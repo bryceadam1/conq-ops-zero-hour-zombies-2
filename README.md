@@ -20,8 +20,9 @@ otherwise.
 * Call of Duty: Black Ops II (Steam)
 
 No files from either game are shipped with this mod or written into the games' folders. Black Ops II is
-never launched; the mod only reads its sound banks and image packs (compressed, not encrypted) from
-your install. Its encrypted fastfiles are never read.
+never launched, hooked or connected to. The mod reads its sound banks and image packs, and decrypts
+fastfiles (`zone/all/*.ff`) from your own install to convert BO2's 3D models and animations. That
+only works with the game installed, and the converted files stay in your local Conquer Ops folder.
 
 Set `ZHBO_ZH_DIR` / `ZHBO_BO2_DIR` to point at installs the detector does not find.
 
@@ -100,8 +101,8 @@ The two scripts take `-Dist` to test a given build.
 
 ## Status and known limits
 
-* No weapon viewmodel: BO2's 3D models live only in its encrypted fastfiles, which this mod does not
-  decrypt. The HUD art comes from the unencrypted image packs.
+* No weapon viewmodel yet. Reading BO2's models and animations from its fastfiles is in progress
+  (`zhbo-assets zone`/`find` decrypt and list them); converting them is next.
 * BO2's HUD font also lives in the fastfiles, so text uses Bahnschrift (Windows' DIN-style font),
   falling back to Arial. macOS asks for DIN Alternate, which has not been checked yet.
 * Weapon sounds are Zero Hour's. `zhbo-assets` can export your BO2 sounds, but BO2 banks identify sounds

@@ -1,8 +1,11 @@
 [package]
 name = "zhbo-formats"
-description = "Readers for Zero Hour (.big) and Black Ops 2 (.sabs/.sabl) container formats, operating on the user's own installs."
+description = "Readers for Zero Hour (.big) and Black Ops 2 (.sabs/.sabl, .ipak, .ff) container formats, operating on the user's own installs."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
 [dependencies]
+miniz_oxide = "0.8"
+salsa20 = "0.10"
+sha1 = "0.10"

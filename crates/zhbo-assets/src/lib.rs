@@ -1,8 +1,8 @@
 //! Converters that read Black Ops II content from the player's own install.
 //!
 //! Output is private to the player: it is written into their local Conquer Ops folder and must never
-//! be redistributed. Nothing here decrypts anything: sound banks and `.ipak` image packs are only
-//! compressed, and the encrypted fastfiles are not read.
+//! be redistributed. Sound banks and `.ipak` image packs are only compressed; fastfiles are
+//! decrypted by `zhbo_formats::fastfile` from the player's own install.
 
 pub mod hud;
 pub mod images;

@@ -4,6 +4,7 @@
 //! embeds or redistributes game data.
 
 pub mod big;
+pub mod fastfile;
 pub mod ipak;
 pub mod iwi;
 pub mod lzo;
