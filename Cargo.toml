@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/zhbo-core", "crates/zhbo-assets", "crates/zhbo-formats", "crates/zhbo-requirements", "crates/zhbo-launcher", "xtask"]
+members = ["crates/zhbo-core", "crates/zhbo-assets", "crates/zhbo-formats", "crates/zhbo-gfx", "crates/zhbo-requirements", "crates/zhbo-launcher", "xtask"]
 
 [workspace.package]
 version = "0.1.0"
