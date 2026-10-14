@@ -1,6 +1,9 @@
-# Builds and tests Conquer Ops on Windows (MSVC), Linux and macOS (MinGW-w64 cross builds of the same
-# Windows game plus a native launcher). No game data is involved: tests that need the real games are
-# marked #[ignore], and the in-game autotest only runs locally.
+# Builds and tests Conquer Ops. No game data is involved: tests that need the real games are marked
+# #[ignore], and the in-game tests (scripts/autotest.ps1, scripts/inputtest.ps1) only run locally.
+#
+# Windows builds both games (32-bit DX8 and 64-bit SDL3 on the wgpu renderer). macOS and Linux build
+# the native SDL3 + wgpu game; those build steps are allowed to fail until the first native build has
+# been made to work locally (see docs/HANDOFF-MAC.md), after which `continue-on-error` should go.
 name: ci
 
 on:
@@ -14,16 +17,21 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
-      - run: rustup target add i686-pc-windows-msvc
+      - run: rustup target add i686-pc-windows-msvc x86_64-pc-windows-msvc
       - run: cargo test --workspace
       - run: cargo xtask doctor
-      - run: cargo xtask build
+      - run: cargo xtask build --dist dist-dx8
+        env:
+          ZHBO_WORK_DIR: ${{ runner.temp }}\conquerops-work
+      - run: cargo xtask build --wgpu --dist dist-wgpu
         env:
           ZHBO_WORK_DIR: ${{ runner.temp }}\conquerops-work
       - uses: actions/upload-artifact@v4
         with:
           name: conquerops-windows
-          path: ~\AppData\Local\ConquerOps\dist
+          path: |
+            dist-dx8
+            dist-wgpu
 
   linux:
     runs-on: ubuntu-24.04
@@ -31,28 +39,41 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
-      - run: sudo apt-get update && sudo apt-get install -y g++-mingw-w64-i686 mingw-w64-tools cmake make mesa-vulkan-drivers  # lavapipe: zhbo-gfx headless test
-      - run: rustup target add i686-pc-windows-gnu
+      - run: |
+          sudo apt-get update
+          # mesa-vulkan-drivers: lavapipe, so the headless renderer test has an adapter.
+          # The rest mirrors the engine fork's linux job, plus FFmpeg's development files.
+          sudo apt-get install -y --no-install-recommends \
+            build-essential cmake ninja-build pkg-config mesa-vulkan-drivers \
+            libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev \
+            libxinerama-dev libxfixes-dev libxrender-dev libxss-dev libxtst-dev \
+            libxkbcommon-dev libwayland-dev wayland-protocols libdecor-0-dev \
+            libgl1-mesa-dev libegl1-mesa-dev libvulkan-dev \
+            libfreetype6-dev libfontconfig1-dev libasound2-dev libpulse-dev \
+            libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
       - run: cargo test --workspace
       - run: cargo xtask doctor
       - run: cargo xtask build --dist dist
+        continue-on-error: true
       - uses: actions/upload-artifact@v4
         with:
           name: conquerops-linux
           path: dist
+          if-no-files-found: ignore
 
   macos:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
         with:
           submodules: true
-      - run: brew install mingw-w64
-      - run: rustup target add i686-pc-windows-gnu
+      - run: brew install cmake ninja pkgconf ffmpeg dylibbundler
       - run: cargo test --workspace
       - run: cargo xtask doctor
       - run: cargo xtask build --dist dist
+        continue-on-error: true
       - uses: actions/upload-artifact@v4
         with:
           name: conquerops-macos
           path: dist
+          if-no-files-found: ignore

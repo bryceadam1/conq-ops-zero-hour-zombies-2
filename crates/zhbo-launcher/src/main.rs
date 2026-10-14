@@ -3,20 +3,22 @@
 //! 1. Refuses to start unless both Command & Conquer Generals: Zero Hour and Call of Duty: Black Ops II
 //!    are installed (the in-game core checks again, so the engine cannot be started around this).
 //! 2. Builds `ConquerOps_BO2.big` (BO2 HUD art) from the player's own Black Ops II install if needed.
-//! 3. Starts the mod's `generalszh.exe` (next to this launcher) with the Zero Hour install as working
-//!    directory and this folder as the `-mod` directory. On Linux/macOS it goes through Proton,
-//!    Wine, CrossOver or Whisky (see `runner.rs`). Nothing is written into either game's folder.
+//! 3. Starts the mod's game executable (`generalszh.exe` on Windows, `generalszh` on macOS/Linux,
+//!    next to this launcher) with the Zero Hour install as working directory and this folder as the
+//!    `-mod` directory. The game is a native build everywhere, so no Wine is involved; it reads the
+//!    Windows release's data files (on macOS/Linux, the Windows depots fetched through SteamCMD).
+//!    Nothing is written into either game's folder.
 //!
 //! `--check` prints what was found and how the game would be started, without starting it.
 //! Other arguments are passed to the game, e.g. `-win -xres 1280 -yres 720`.
 
 #![cfg_attr(all(windows, not(test)), windows_subsystem = "windows")]
 
-mod runner;
-
-use runner::Runner;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{Command, ExitCode};
+
+/// The game executable staged next to the launcher by `cargo xtask build`.
+const GAME_EXE: &str = if cfg!(windows) { "generalszh.exe" } else { "generalszh" };
 
 fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -48,13 +50,12 @@ fn launch(game_args: &[String], check_only: bool) -> Result<(), String> {
     }
     let zh = req.zero_hour.clone().unwrap();
     let bo2 = req.black_ops2.clone().unwrap();
-    let runner = Runner::detect(&zh, &env)?;
 
     let here = std::env::current_exe()
         .ok()
         .and_then(|p| p.parent().map(PathBuf::from))
         .ok_or("cannot locate the Conquer Ops folder")?;
-    let game = here.join("generalszh.exe");
+    let game = here.join(GAME_EXE);
     if !game.is_file() {
         return Err(format!("{} is missing. Rebuild with `cargo xtask build`.", game.display()));
     }
@@ -63,20 +64,25 @@ fn launch(game_args: &[String], check_only: bool) -> Result<(), String> {
     }
     prepare_bo2_art(&here, &bo2.path);
 
-    let mut mod_dir = runner.windows_path(&here);
-    if !mod_dir.ends_with('\\') {
-        mod_dir.push('\\');
+    let mut mod_dir = here.to_string_lossy().into_owned();
+    if !mod_dir.ends_with(std::path::MAIN_SEPARATOR) {
+        mod_dir.push(std::path::MAIN_SEPARATOR);
     }
-    let mut args = vec!["-useCwd".to_string(), "-mod".to_string(), mod_dir];
-    args.extend_from_slice(game_args);
-    let mut cmd = runner.command(&game, &args);
-    // The in-game requirements check runs inside the (possibly emulated) Windows process: tell it
-    // where the games are, in the paths it can see.
-    cmd.current_dir(&zh.path)
-        .env("ZHBO_ZH_DIR", runner.windows_path(&zh.path))
-        .env("ZHBO_BO2_DIR", runner.windows_path(&bo2.path));
+    let mut cmd = Command::new(&game);
+    cmd.args(["-useCwd", "-mod", &mod_dir]).args(game_args);
+    // The in-game requirements check reuses what was found here.
+    cmd.current_dir(&zh.path).env("ZHBO_ZH_DIR", &zh.path).env("ZHBO_BO2_DIR", &bo2.path);
+    // Linux builds ship their non-system shared libraries in libs/ (the engine's deploy script).
+    let libs = here.join("libs");
+    if cfg!(target_os = "linux") && libs.is_dir() {
+        let mut path = libs.into_os_string();
+        if let Some(old) = std::env::var_os("LD_LIBRARY_PATH") {
+            path.push(":");
+            path.push(old);
+        }
+        cmd.env("LD_LIBRARY_PATH", path);
+    }
     if check_only {
-        println!("Runner:         {runner:?}");
         println!("Command:        {cmd:?}");
         return Ok(());
     }

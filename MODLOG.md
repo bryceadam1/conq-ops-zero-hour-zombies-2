@@ -110,6 +110,13 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
 29. Unaligned dynamic index updates (`write_buffer` offset 438) and failed R32F render targets
     made buildings vanish in RTS and the whole world vanish in first person. Both were silent in
     the game; only `zhbo-gfx.log` showed them.
+30. The fork's SDL builds use `StdBIGFileSystem`, not `Win32BIGFileSystem`, so the `ZH_Generals`
+    fallback in patch 0001 only matters for the DX8 build. `StdBIGFileSystem` finds base Generals
+    by itself: it checks `CNC_GENERALS_INSTALLPATH`, then the registry, then searches relative paths.
+31. The autopilot replaces all input inside the Rust core, so `autotest.ps1` never exercises the
+    OS input path. `ZHBO_AUTOPILOT=manual` sets up the scene without scripted input, and
+    `scripts/inputtest.ps1` drives real keys and mouse through it. `um win drive "hold"` needs a hex
+    VK code (`hold 0x57 2500`), and SDL needs `scanmode on`.
 
 ## Verification log
 
@@ -127,6 +134,12 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
 * Cross-platform: all crates type-check for x86_64-unknown-linux-gnu and aarch64-apple-darwin; core
   builds for i686-pc-windows-gnu; discovery unit-tested against a simulated CrossOver bottle.
 * Re-base onto bobtista's fork (2026-10-14): DX8 build, autotest 7/7 PASS.
+* **Platform layer and native build path (2026-10-14)**: the bridge's OS calls moved to
+  `host/zhbo/ZhboPlatform.cpp` (SDL3 or Win32). The launcher starts the native game directly, and
+  the Wine/Proton runner is gone. `cargo xtask build` on macOS/Linux uses the fork's presets and
+  deploy scripts. On Windows, both builds pass `autotest.ps1` (7/7) and `inputtest.ps1` (W moves
+  the General about 77-81 units; the mouse turns the view). The macOS/Linux build has not been
+  run yet.
 * **wgpu build in game (2026-10-14)**: `cargo xtask build --wgpu` gives a 64-bit SDL3 `generalszh.exe`
   on the Rust renderer. It runs here on Parallels' GL adapter (M1). The intro video, shell map (3D
   water, battleship, particles) and menus render. The autotest passes 7/7, and screenshots show the
@@ -138,6 +151,9 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
   Parallels GL adapter (M1, CPU BC decode).
 
 ## Next steps
+
+**Continuing on macOS: start at `docs/HANDOFF-MAC.md`.** It covers state, setup, the expected
+first-build problems, verification and the task list. The list below is the older gameplay backlog.
 
 1. Manual playtest by a human with real mouse/keyboard (the autotest injects input inside the mod).
 2. Weapon viewmodel (a gun in hand), muzzle flash near the camera, hit/kill sounds.

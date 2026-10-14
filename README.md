@@ -43,54 +43,67 @@ Set `ZHBO_ZH_DIR` / `ZHBO_BO2_DIR` to point at installs the detector does not fi
 
 ## Platforms
 
-Windows is built and tested. Linux (Proton/Wine) and macOS (CrossOver/Whisky/Wine) have the groundwork
-in place: install discovery, a native launcher, and a MinGW-w64 cross build. They have not been run in
-game yet. See [docs/PLATFORMS.md](docs/PLATFORMS.md).
+The game is built natively from source on every platform; there is no Wine. On Windows there are two
+builds: the 32-bit DX8 reference and the 64-bit SDL3 build on the mod's Rust wgpu renderer
+([docs/RENDERER.md](docs/RENDERER.md)). Both are built and tested in game. macOS and Linux use the
+same SDL3 + wgpu build. Their build path is written but has not been run yet; continuing on a Mac
+starts at [docs/HANDOFF-MAC.md](docs/HANDOFF-MAC.md). See [docs/PLATFORMS.md](docs/PLATFORMS.md).
 
 ## Building
 
 On Windows (on Linux/macOS see [docs/PLATFORMS.md](docs/PLATFORMS.md)), you need:
 
-* Rust (`rustup`, plus `rustup target add i686-pc-windows-msvc`)
+* Rust (`rustup`, plus `rustup target add i686-pc-windows-msvc x86_64-pc-windows-msvc`)
 * Visual Studio 2022 Build Tools with: C++ x86/x64 tools, CMake, ATL, MFC, Windows 11 SDK
   (on ARM64 Windows also the ARM64 C++ tools)
 * git
 
 ```
 git clone --recursive <this repo>
-cargo xtask build        # Rust core + patched engine + ConquerOps.big + launcher
+cargo xtask build        # 32-bit DX8 build: Rust core + patched engine + ConquerOps.big + launcher
+cargo xtask build --wgpu # 64-bit SDL3 build on the Rust wgpu renderer (downloads FFmpeg once)
 cargo xtask run -- -win -xres 1280 -yres 720
 ```
 
-`cargo xtask doctor` lists anything missing. `cargo xtask build` checks out the Zero Hour engine source (TheSuperHackers GeneralsGameCode, the commit
-pinned by `host/GeneralsGameCode`) into `%LOCALAPPDATA%\ConquerOps\work`, applies
+`cargo xtask doctor` lists anything missing. `cargo xtask build` checks out the Zero Hour engine source
+(bobtista's fork of TheSuperHackers GeneralsGameCode, at the commit pinned by
+`host/GeneralsGameCode`) into `%LOCALAPPDATA%\ConquerOps\work`, applies
 `host/patches/*.patch`, builds it with the Rust core linked in, and stages everything in
 `%LOCALAPPDATA%\ConquerOps\dist`. Start the mod with `dist\ConquerOps.exe`.
 
-Tests: `cargo test --workspace` (headless simulation, formats, detection) and
-`scripts/autotest.ps1` (starts a skirmish and verifies the full first-person loop in the real game).
+Tests:
+* `cargo test --workspace`: headless simulation, formats, detection, shader translation, and a
+  headless renderer frame with pixel checks.
+* `scripts/autotest.ps1`: starts a skirmish and verifies the full first-person loop in the real
+  game.
+* `scripts/inputtest.ps1`: real keyboard and mouse input in first person.
+
+The two scripts take `-Dist` to test a given build.
 
 ## Layout
 
 | Path | What |
 |---|---|
 | `crates/zhbo-core` | The Rust gameplay core: BO2 movement, weapons, hitscan, field computer, camera, HUD |
-| `crates/zhbo-requirements` | Finds and validates both game installs (Steam, Proton, Wine, CrossOver, Whisky) |
+| `crates/zhbo-gfx` | The renderer: the engine's bgfx API subset on wgpu, plus the build-time shader translator |
+| `crates/zhbo-requirements` | Finds and validates both game installs (Steam libraries, SteamCMD folders, Wine/CrossOver/Proton prefixes) |
 | `crates/zhbo-launcher` | `ConquerOps.exe` / `conquerops`: requirement check, BO2 art, starting the game |
 | `crates/zhbo-formats` | `.big` (Zero Hour); `.sabs`/`.sabl` sound banks, `.ipak` image packs, `IWi` images, LZO1X (Black Ops II) |
 | `crates/zhbo-assets` | BO2 HUD art converter, plus a CLI to list/export your BO2 sounds and images |
-| `host/zhbo` | C++ bridge compiled into the engine |
-| `host/patches` | The engine hooks (~120 lines) |
+| `host/zhbo` | C++ compiled into the engine: bridge, platform layer (SDL3/Win32), bgfx-on-wgpu adapter |
+| `host/patches` | The engine hooks (~120 lines) and the `wgpu` renderer option for the engine's CMake |
 | `data/` | Mod INI files, packed into `ConquerOps.big` |
 | `docs/CONTRACT.md` | Engine ↔ Rust ownership, units, timing, lifecycle |
+| `docs/RENDERER.md`, `docs/PLATFORMS.md` | The wgpu renderer; platforms and native builds |
+| `docs/HANDOFF-MAC.md` | Where the work stands and how to continue it on macOS |
 | `MODLOG.md` | Development journal and gotchas |
 
 ## Status and known limits
 
 * No weapon viewmodel: BO2's 3D models live only in its encrypted fastfiles, which this mod does not
   decrypt. The HUD art comes from the unencrypted image packs.
-* BO2's HUD font also lives in the fastfiles, so text uses Bahnschrift (Windows' DIN-style font) and
-  falls back to Arial.
+* BO2's HUD font also lives in the fastfiles, so text uses Bahnschrift (Windows' DIN-style font),
+  falling back to Arial. macOS asks for DIN Alternate, which has not been checked yet.
 * Weapon sounds are Zero Hour's. `zhbo-assets` can export your BO2 sounds, but BO2 banks identify sounds
   by hash only, so picking which sound is the MTAR is a manual step.
 * First-person state is not saved in save games. Multiplayer is designed to be lockstep-safe but untested.

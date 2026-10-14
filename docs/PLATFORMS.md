@@ -1,90 +1,96 @@
-# Platforms: Windows, Linux, macOS
+# Platforms: Windows, macOS, Linux
 
-Zero Hour and Black Ops II are Windows games, and Conquer Ops' game executable (`generalszh.exe`, the
-source-built engine with the Rust core linked in) is a 32-bit Windows program on every platform. On
-Linux and macOS it runs the same way the games themselves do there: through Proton or Wine. Everything
-around it (install discovery, the launcher, the BO2 art converter, the build tooling) is native Rust.
+Conquer Ops builds the Zero Hour engine from source, so it runs **natively** everywhere, with no
+Wine. It builds on bobtista's fork of the SuperHackers source (SDL3, OpenAL, 64-bit). Rendering
+goes through the mod's own wgpu renderer (`crates/zhbo-gfx`, see [RENDERER.md](RENDERER.md)), so
+the same renderer drives Metal on macOS, Vulkan or GL on Linux, and D3D12 or GL on Windows. The
+games' data files come from their Windows releases. On macOS and Linux, those are the Windows
+depots fetched with SteamCMD.
 
-| | Windows | Linux | macOS |
+| | Windows | macOS | Linux |
 |---|---|---|---|
-| Game executable | native | Proton (preferred) or Wine | CrossOver, Whisky or Wine |
-| Launcher | `ConquerOps.exe` | `conquerops` (native) | `conquerops` (native) |
-| Build | Visual Studio 2022 | MinGW-w64 cross compile | MinGW-w64 cross compile |
-| Status | built and tested in game | groundwork; not yet run in game | groundwork; not yet run in game |
+| Game executable | `generalszh.exe`: 32-bit DX8 (`cargo xtask build`) or 64-bit SDL3 + wgpu (`--wgpu`) | `generalszh`, SDL3 + wgpu on Metal | `generalszh`, SDL3 + wgpu on Vulkan/GL |
+| Launcher | `ConquerOps.exe` | `conquerops` | `conquerops` |
+| Build | Visual Studio 2022 | Xcode CLT + Homebrew (`cargo xtask build`) | gcc/clang + distro packages (`cargo xtask build`) |
+| Status | both builds pass the in-game autotest and real-input test | build path written, **not yet built** (see [HANDOFF-MAC.md](HANDOFF-MAC.md)) | build path written, not yet built |
 
 ## Where the games are found
 
 `crates/zhbo-requirements` searches, in order:
 
-1. `ZHBO_ZH_DIR` / `ZHBO_BO2_DIR` (explicit override).
+1. `ZHBO_ZH_DIR` / `ZHBO_BO2_DIR`, the explicit override. Use these for SteamCMD's
+   `force_install_dir` folders.
 2. Steam libraries, via each Steam client's `libraryfolders.vdf` and `appmanifest_<appid>.acf`
    (Zero Hour: 2732960; Black Ops II: 202970, 202990, 212910):
    * Windows: registry `SteamPath`/`InstallPath`, `C:\Program Files (x86)\Steam`.
-   * Linux: `~/.steam/steam`, `~/.steam/root`, `~/.local/share/Steam`, Flatpak
-     (`~/.var/app/com.valvesoftware.Steam/...`), Snap (`~/snap/steam/...`).
    * macOS: `~/Library/Application Support/Steam`.
-   * Windows Steam clients inside prefixes (below). Their Windows library paths (`D:\SteamLibrary`) are
-     mapped back to host paths through the prefix's `drive_c` / `dosdevices`.
+   * Linux: `~/.steam/steam`, `~/.steam/root`, `~/.local/share/Steam`, Flatpak, Snap.
+   * Windows Steam clients inside Wine/CrossOver/Whisky/Proton prefixes. Games there are ordinary
+     folders the native build can read, and their library paths are mapped back to host paths.
 3. Windows only: the EA registry key.
 
-Prefixes searched: `$WINEPREFIX`, `~/.wine`, `~/.local/share/wineprefixes/*`, `~/Games/*` (Lutris),
-CrossOver bottles (`~/Library/Application Support/CrossOver/Bottles/*`), Whisky bottles
-(`~/Library/Containers/com.isaacmarovitz.Whisky/Bottles/*`), and Proton prefixes
-(`steamapps/compatdata/*/pfx`). File checks are case-insensitive, since Linux filesystems are not.
+Zero Hour's Steam release includes the original Generals data (`ZH_Generals\`). The engine finds it
+by itself: it checks `CNC_GENERALS_INSTALLPATH`, then the registry, then searches relative to the
+working directory. The launcher's working directory is the Zero Hour folder.
+
+## Getting the Windows game files on macOS/Linux
+
+Steam's own client installs the macOS/Linux builds where they exist, and BO2 has none. SteamCMD can
+fetch the Windows depots directly. The account must own both games:
+
+```
+steamcmd +@sSteamCmdForcePlatformType windows +force_install_dir ~/Games/ZeroHour \
+         +login <steam-user> +app_update 2732960 validate +quit
+steamcmd +@sSteamCmdForcePlatformType windows +force_install_dir ~/Games/BlackOps2 \
+         +login <steam-user> +app_update 202970 validate +quit
+export ZHBO_ZH_DIR=~/Games/ZeroHour ZHBO_BO2_DIR=~/Games/BlackOps2
+```
+
+The mod reads only Black Ops II's sound banks and image packs. BO2 is never run, and the mod never
+connects to it. A guided installer script that wraps this is still to do.
 
 ## How the launcher starts the game
 
-`crates/zhbo-launcher/src/runner.rs`:
+`conquerops` (or `ConquerOps.exe`):
+1. Checks that both games are installed.
+2. Builds `ConquerOps_BO2.big` from BO2's art if needed.
+3. Starts `generalszh` from its own folder with the Zero Hour install as the working directory,
+   `-useCwd -mod <its folder>`, and `ZHBO_ZH_DIR`/`ZHBO_BO2_DIR` set.
 
-| Zero Hour found in | Runner |
-|---|---|
-| a native Steam library (Linux) | newest Proton (`steamapps/common/Proton*`, `compatibilitytools.d/*`), with Zero Hour's own Proton prefix (`compatdata/2732960`) |
-| a Proton prefix | newest Proton, that prefix |
-| a CrossOver bottle | `/Applications/CrossOver.app/.../bin/wine --bottle <name>` |
-| a Whisky bottle | Whisky's `wine64` with `WINEPREFIX` |
-| a Wine prefix | `wine` from `PATH` with `WINEPREFIX` |
+On Linux it adds `libs/` (staged by the engine's deploy script) to `LD_LIBRARY_PATH`. Run
+`conquerops --check` to print what was found and the exact command, without starting anything.
 
-Overrides: `ZHBO_PROTON=/path/to/proton`, `ZHBO_WINE=/path/to/wine`.
-
-The launcher passes Windows-style paths to the game (`C:\...` inside the prefix, `Z:\...` for host
-paths), including `ZHBO_ZH_DIR`/`ZHBO_BO2_DIR` so the requirements check inside the game process sees
-the same installs. `conquerops --check` prints what was found and the exact command, without starting
-anything.
-
-## Building on Linux and macOS
+## Building on macOS and Linux
 
 ```
-# Debian/Ubuntu
-sudo apt install g++-mingw-w64-i686 mingw-w64-tools cmake make git
-# Fedora
-sudo dnf install mingw32-gcc-c++ mingw32-widl cmake make git
 # macOS
-brew install mingw-w64 cmake
+xcode-select --install
+brew install cmake ninja pkgconf ffmpeg dylibbundler
+# Debian/Ubuntu (plus the engine fork's SDL3/X11/Wayland/audio dev packages, see
+# its .github/workflows/bgfx-builds.yml "linux" job)
+sudo apt install build-essential cmake ninja-build pkg-config \
+     libavcodec-dev libavformat-dev libavutil-dev libswscale-dev
 
-rustup target add i686-pc-windows-gnu
 cargo xtask doctor    # lists anything still missing
-cargo xtask build     # core (i686-pc-windows-gnu) + engine (preset mingw-w64-i686) + native launcher
+cargo xtask build     # core (host) + zhbo-shaderc + engine (fork's preset, wgpu) + launcher
 ```
 
-The engine uses TheSuperHackers' own MinGW-w64 preset (`mingw-w64-i686`, which disables the MFC tools).
-It needs `widl` (the IDL compiler from mingw-w64-tools) and fetches ReactOS's ATL headers on first
-configure (a ~250 MB shallow clone).
-The Rust core is built for `i686-pc-windows-gnu` and linked as `libzhbo_core.a`; `host/zhbo/CMakeLists.txt`
-handles both toolchains.
+`cargo xtask build` on macOS/Linux:
+1. Builds `zhbo-core` for the host with `--features renderer`, and builds `zhbo-shaderc`.
+2. Configures the engine with the fork's `macos-generalsmd-sdl3-bgfx` or
+   `linux-generalsmd-sdl3-bgfx` preset, plus `-DGGC_BGFX_RENDERER=wgpu -DZHBO_SHADERC=...`.
+3. Builds `z_generals`.
+4. Stages the binary and its libraries with the fork's `scripts/build/<os>/deploy-*.sh` into the
+   work dir, then copies them to dist.
 
-## Verified so far
+The work dir is `~/Library/Application Support/ConquerOps/work` or `~/.local/share/ConquerOps/work`;
+dist is the `dist` folder next to it.
 
-* Windows (MSVC): full build, in-game autotest 7/7.
-* The Rust crates type-check for `x86_64-unknown-linux-gnu` and `aarch64-apple-darwin`; the core builds
-  for `i686-pc-windows-gnu`.
-* Install discovery is unit-tested against a simulated CrossOver bottle with a second Steam library.
-* MinGW-w64 build of the patched engine with the bridge: see MODLOG.md for the latest result.
+## Tests
 
-## Known gaps
-
-* Not yet run under Proton/Wine/CrossOver. Expected issues to check first: mouse capture (the bridge
-  re-centres the cursor with `SetCursorPos`; Wine on Wayland and macOS can be unreliable), and Direct3D 8
-  translation (Proton uses DXVK/d8vk; CrossOver uses its own D3D translation).
-* The in-game autotest (`scripts/autotest.ps1`) is Windows-only (it drives input with `um win`).
-* Apple Silicon runs the game through Rosetta and Wine's 32-bit support (CrossOver / Whisky with
-  Wine 8+'s WoW64 mode); performance is untested.
+* `cargo test --workspace`: simulation, formats, discovery, shader translation, and a headless
+  renderer frame with pixel checks. The renderer test uses whatever GPU or software adapter wgpu
+  finds and skips when there is none.
+* `scripts/autotest.ps1` (scripted first-person loop) and `scripts/inputtest.ps1` (real keyboard and
+  mouse) are Windows-only, because they drive the game with `um win`. A macOS equivalent is one of
+  the open tasks in [HANDOFF-MAC.md](HANDOFF-MAC.md).

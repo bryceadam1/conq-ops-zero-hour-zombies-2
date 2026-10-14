@@ -71,9 +71,15 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
     };
     use crate::host::LogicHost;
     state.logic.log(&format!("zhbo-core {} initialised (ABI {ABI_VERSION})", env!("CARGO_PKG_VERSION")));
-    if std::env::var_os("ZHBO_AUTOPILOT").is_some() {
-        state.client.autopilot = Some(crate::client::Autopilot::default());
-        state.logic.log("autopilot enabled (ZHBO_AUTOPILOT)");
+    // ZHBO_AUTOPILOT=1 scripts the first-person input; =manual only sets up the test scene (the
+    // bridge spawns the General and takes control) and leaves input to the player or a test driver.
+    match std::env::var("ZHBO_AUTOPILOT").ok().as_deref() {
+        None => {}
+        Some("manual") => state.logic.log("autopilot scene enabled, manual input (ZHBO_AUTOPILOT=manual)"),
+        Some(_) => {
+            state.client.autopilot = Some(crate::client::Autopilot::default());
+            state.logic.log("autopilot enabled (ZHBO_AUTOPILOT)");
+        }
     }
     *STATE.lock().unwrap_or_else(|e| e.into_inner()) = Some(state);
 }

@@ -3,7 +3,8 @@
 //! ```text
 //! cargo xtask build [--log] [--wgpu] [--dist DIR]
 //!                                          Rust core + patched Zero Hour + ConquerOps.big + launcher;
-//!                                          --wgpu: 64-bit SDL3 build on the Rust wgpu renderer
+//!                                          --wgpu (Windows): 64-bit SDL3 build on the Rust renderer
+//!                                          (always the case on macOS/Linux)
 //! cargo xtask pack  [--dist DIR]           only repack data/ into ConquerOps.big
 //! cargo xtask run   [--log] [-- ARGS]      build, then start the game through the launcher
 //! cargo xtask patch                        prepare the patched engine checkout only
@@ -15,9 +16,11 @@
 //! `~/Library/Application Support/ConquerOps/work`), or `ZHBO_WORK_DIR`. The engine source is the
 //! commit pinned by the `host/GeneralsGameCode` submodule, with `host/patches/*.patch` applied on top.
 //!
-//! Windows builds with Visual Studio 2022. Linux and macOS cross-compile the same Windows game with
-//! MinGW-w64 (the upstream `mingw-w64-i686` preset, Rust target `i686-pc-windows-gnu`) and build a
-//! native launcher that runs it through Proton, Wine, CrossOver or Whisky.
+//! Windows builds with Visual Studio 2022: the 32-bit DX8 game (preset `win32`), or with `--wgpu`
+//! the 64-bit SDL3 game on the Rust wgpu renderer (preset `win64`). macOS and Linux build the SDL3
+//! game natively with the host compilers (presets `macos-generalsmd-sdl3-bgfx` /
+//! `linux-generalsmd-sdl3-bgfx`), always on the wgpu renderer, and stage it with the engine's
+//! deploy scripts. No Wine is involved anywhere; the games' Windows data files are read directly.
 
 use std::env;
 use std::fs;
@@ -284,13 +287,15 @@ fn on_path(program: &str) -> bool {
     })
 }
 
-/// How the 32-bit Windows game is compiled on this machine.
+/// How the game is compiled on this machine.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Toolchain {
-    /// Visual Studio 2022 on Windows.
+    /// Visual Studio 2022 on Windows: the 32-bit DX8 build (preset `win32`), or with `--wgpu` the
+    /// 64-bit SDL3 build on the Rust renderer (preset `win64`).
     Msvc,
-    /// MinGW-w64 cross compilers on Linux/macOS (upstream preset `mingw-w64-i686`).
-    MinGw,
+    /// The host's own compilers on macOS or Linux: always the SDL3 build on the Rust renderer
+    /// (the engine fork's `macos-generalsmd-sdl3-bgfx` / `linux-generalsmd-sdl3-bgfx` presets).
+    Native,
 }
 
 impl Toolchain {
@@ -298,38 +303,52 @@ impl Toolchain {
         if cfg!(windows) {
             Toolchain::Msvc
         } else {
-            Toolchain::MinGw
+            Toolchain::Native
         }
     }
 
-    /// Rust target for the core that links into generalszh.exe.
-    fn core_target(self, wgpu: bool) -> &'static str {
+    /// macOS and Linux have no DX8 build.
+    fn wgpu(self, requested: bool) -> bool {
+        requested || self == Toolchain::Native
+    }
+
+    /// Rust target for the core that links into the game (`None`: the host, as on macOS/Linux).
+    fn core_target(self, wgpu: bool) -> Option<&'static str> {
         match (self, wgpu) {
-            (Toolchain::Msvc, true) => "x86_64-pc-windows-msvc",
-            (Toolchain::Msvc, false) => "i686-pc-windows-msvc",
-            (Toolchain::MinGw, _) => "i686-pc-windows-gnu",
+            (Toolchain::Msvc, true) => Some("x86_64-pc-windows-msvc"),
+            (Toolchain::Msvc, false) => Some("i686-pc-windows-msvc"),
+            (Toolchain::Native, _) => None,
         }
     }
 
     fn core_lib_name(self) -> &'static str {
         match self {
             Toolchain::Msvc => "zhbo_core.lib",
-            Toolchain::MinGw => "libzhbo_core.a",
+            Toolchain::Native => "libzhbo_core.a",
         }
     }
 
-    /// Launcher: 32-bit Windows next to the game on Windows, native elsewhere.
+    /// Launcher: 32-bit Windows next to the game on Windows (it runs either build), native elsewhere.
     fn launcher_target(self) -> Option<&'static str> {
         match self {
             Toolchain::Msvc => Some("i686-pc-windows-msvc"),
-            Toolchain::MinGw => None,
+            Toolchain::Native => None,
         }
     }
 
     fn launcher_file(self) -> (&'static str, &'static str) {
         match self {
             Toolchain::Msvc => ("zhbo-launcher.exe", "ConquerOps.exe"),
-            Toolchain::MinGw => ("zhbo-launcher", "conquerops"),
+            Toolchain::Native => ("zhbo-launcher", "conquerops"),
+        }
+    }
+
+    /// The engine preset for the native build.
+    fn native_preset() -> &'static str {
+        if cfg!(target_os = "macos") {
+            "macos-generalsmd-sdl3-bgfx"
+        } else {
+            "linux-generalsmd-sdl3-bgfx"
         }
     }
 
@@ -339,12 +358,11 @@ impl Toolchain {
         if !on_path("git") {
             out.push("git is not on PATH".into());
         }
-        let installed = capture(Command::new("rustup").args(["target", "list", "--installed"])).unwrap_or_default();
-        if !installed.lines().any(|l| l.trim() == self.core_target(wgpu)) {
-            out.push(format!("Rust target missing: rustup target add {}", self.core_target(wgpu)));
-        }
-        if wgpu && self != Toolchain::Msvc {
-            out.push("--wgpu builds are Windows-only until the native macOS/Linux builds land".into());
+        if let Some(target) = self.core_target(wgpu) {
+            let installed = capture(Command::new("rustup").args(["target", "list", "--installed"])).unwrap_or_default();
+            if !installed.lines().any(|l| l.trim() == target) {
+                out.push(format!("Rust target missing: rustup target add {target}"));
+            }
         }
         match self {
             Toolchain::Msvc => {
@@ -352,26 +370,38 @@ impl Toolchain {
                     out.push(format!("{e} (needs the C++ x86/x64 tools, CMake, ATL and MFC components)"));
                 }
             }
-            Toolchain::MinGw => {
-                if !on_path("cmake") {
-                    out.push("cmake (3.25 or newer) is not on PATH".into());
+            Toolchain::Native => {
+                let mac = cfg!(target_os = "macos");
+                for (tool, mac_fix, linux_fix) in [
+                    ("cmake", "brew install cmake", "apt install cmake"),
+                    ("ninja", "brew install ninja", "apt install ninja-build"),
+                    ("pkg-config", "brew install pkgconf", "apt install pkg-config"),
+                ] {
+                    if !on_path(tool) {
+                        out.push(format!("{tool} is not on PATH ({})", if mac { mac_fix } else { linux_fix }));
+                    }
                 }
-                if !on_path("i686-w64-mingw32-g++") {
+                // OpenAL audio and video playback decode with FFmpeg, found through pkg-config.
+                let ffmpeg = Command::new("pkg-config")
+                    .args(["--exists", "libavcodec", "libavformat", "libavutil", "libswscale"])
+                    .status()
+                    .is_ok_and(|s| s.success());
+                if !ffmpeg {
                     out.push(
-                        "MinGW-w64 i686 compilers are missing (Debian/Ubuntu: apt install g++-mingw-w64-i686 \
-                         mingw-w64-tools; Fedora: dnf install mingw32-gcc-c++; macOS: brew install mingw-w64)"
-                            .into(),
+                        if mac {
+                            "FFmpeg development files not found by pkg-config (brew install ffmpeg)"
+                        } else {
+                            "FFmpeg development files not found by pkg-config (apt install libavcodec-dev \
+                             libavformat-dev libavutil-dev libswscale-dev)"
+                        }
+                        .into(),
                     );
                 }
-                if !on_path("make") {
-                    out.push("make is not on PATH".into());
+                if mac && !on_path("xcrun") {
+                    out.push("Xcode command line tools are missing (xcode-select --install)".into());
                 }
-                if !on_path("i686-w64-mingw32-widl") && !on_path("widl") {
-                    out.push(
-                        "widl (IDL compiler, needed by the engine) is missing (Debian/Ubuntu: apt install \
-                         mingw-w64-tools; Fedora: dnf install mingw32-widl; macOS: included in brew's mingw-w64)"
-                            .into(),
-                    );
+                if mac && !on_path("dylibbundler") {
+                    out.push("dylibbundler is not on PATH (brew install dylibbundler; used to stage dylibs)".into());
                 }
             }
         }
@@ -385,9 +415,10 @@ impl Toolchain {
 
 fn doctor(opts: &Opts) -> Result<()> {
     let tc = Toolchain::host();
-    eprintln!("toolchain: {tc:?} (core target {})", tc.core_target(opts.wgpu));
+    let wgpu = tc.wgpu(opts.wgpu);
+    eprintln!("toolchain: {tc:?} (renderer {}, core target {})", if wgpu { "wgpu" } else { "dx8" }, tc.core_target(wgpu).unwrap_or("host"));
     eprintln!("work dir:  {}", work_dir().display());
-    let problems = tc.problems(opts.wgpu);
+    let problems = tc.problems(wgpu);
     if problems.is_empty() {
         eprintln!("all build prerequisites found");
         Ok(())
@@ -399,20 +430,24 @@ fn doctor(opts: &Opts) -> Result<()> {
 fn build(opts: &Opts) -> Result<PathBuf> {
     let root = repo_root();
     let tc = Toolchain::host();
-    let problems = tc.problems(opts.wgpu);
+    let wgpu = tc.wgpu(opts.wgpu);
+    let problems = tc.problems(wgpu);
     if !problems.is_empty() {
         return Err(format!("missing build prerequisites:\n  {}", problems.join("\n  ")));
     }
-    let core_target = tc.core_target(opts.wgpu);
+    let core_target = tc.core_target(wgpu);
     let mut core = cargo();
-    core.current_dir(&root).args(["build", "--release", "-p", "zhbo-core", "--target", core_target]);
-    if opts.wgpu {
+    core.current_dir(&root).args(["build", "--release", "-p", "zhbo-core"]);
+    if let Some(t) = core_target {
+        core.args(["--target", t]);
+    }
+    if wgpu {
         core.args(["--features", "renderer"]);
     }
     run_cmd(&mut core)?;
     // zhbo-shaderc runs on the build machine, translating the engine's shaders to WGSL.
     let shaderc = rust_target_dir().join("release").join(if cfg!(windows) { "zhbo-shaderc.exe" } else { "zhbo-shaderc" });
-    if opts.wgpu {
+    if wgpu {
         run_cmd(cargo().current_dir(&root).args(["build", "--release", "-p", "zhbo-gfx", "--bin", "zhbo-shaderc"]))?;
     }
     let mut launcher = cargo();
@@ -421,7 +456,12 @@ fn build(opts: &Opts) -> Result<PathBuf> {
         launcher.args(["--target", t]);
     }
     run_cmd(&mut launcher)?;
-    let core_lib = rust_target_dir().join(core_target).join("release").join(tc.core_lib_name());
+    let core_lib = match core_target {
+        Some(t) => rust_target_dir().join(t),
+        None => rust_target_dir(),
+    }
+    .join("release")
+    .join(tc.core_lib_name());
     let launcher_dir = match tc.launcher_target() {
         Some(t) => rust_target_dir().join(t).join("release"),
         None => rust_target_dir().join("release"),
@@ -436,14 +476,16 @@ fn build(opts: &Opts) -> Result<PathBuf> {
         defs.push("-DRTS_DEBUG_LOGGING=ON".into());
         defs.push("-DRTS_DEBUG_CRASHING=ON".into());
     }
-    if opts.wgpu {
+    if wgpu {
         defs.push("-DGGC_BGFX_RENDERER=wgpu".into());
         defs.push(format!("-DZHBO_SHADERC={}", fwd(&shaderc)));
     }
 
-    let exe_dir = match tc {
+    let dist = dist_dir(opts);
+    fs::create_dir_all(&dist).map_err(|e| e.to_string())?;
+    match tc {
         Toolchain::Msvc => {
-            let (preset, build_dir) = match (opts.wgpu, opts.log_build) {
+            let (preset, build_dir) = match (wgpu, opts.log_build) {
                 (true, true) => ("win64", "win64-zhbo-log"),
                 (true, false) => ("win64", "win64-zhbo"),
                 (false, true) => ("win32", "win32-zhbo-log"),
@@ -454,7 +496,7 @@ fn build(opts: &Opts) -> Result<PathBuf> {
             let sh_path = git_sh_dir()
                 .map(|d| format!("set \"PATH=%PATH%;{}\"\r\n", d.display()))
                 .unwrap_or_default();
-            if opts.wgpu {
+            if wgpu {
                 // The SDL3/OpenAL audio device decodes with FFmpeg; the win64 preset points
                 // FFMPEG_ROOT at <engine>/.deps-cache/ffmpeg-x64.
                 ensure_ffmpeg_win64(&engine)?;
@@ -466,57 +508,70 @@ fn build(opts: &Opts) -> Result<PathBuf> {
                      cmake --preset {preset} -B build/{build_dir} {defs}\r\n\
                      if errorlevel 1 exit /b 1\r\n\
                      cmake --build build/{build_dir} --config Release --target z_generals\r\n",
-                    vcvars = vcvars(opts.wgpu)?.display(),
+                    vcvars = vcvars(wgpu)?.display(),
                     engine = engine.display(),
                     defs = defs.join(" "),
                 ),
             )
             .map_err(|e| e.to_string())?;
             run_cmd(Command::new("cmd").arg("/c").arg(&script).current_dir(work_dir()))?;
-            engine.join("build").join(build_dir).join("GeneralsMD").join("Release")
-        }
-        Toolchain::MinGw => {
-            let build_dir = if opts.log_build { "mingw-zhbo-log" } else { "mingw-zhbo" };
-            let jobs = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).to_string();
-            run_cmd(
-                Command::new("cmake")
-                    .current_dir(&engine)
-                    .args(["--preset", "mingw-w64-i686", "-B", &format!("build/{build_dir}")])
-                    .args(&defs),
-            )?;
-            run_cmd(
-                Command::new("cmake")
-                    .current_dir(&engine)
-                    .args(["--build", &format!("build/{build_dir}"), "--target", "z_generals", "-j", &jobs]),
-            )?;
-            engine.join("build").join(build_dir).join("GeneralsMD")
-        }
-    };
+            let exe_dir = engine.join("build").join(build_dir).join("GeneralsMD").join("Release");
 
-    let dist = dist_dir(opts);
-    fs::create_dir_all(&dist).map_err(|e| e.to_string())?;
-    fs::copy(exe_dir.join("generalszh.exe"), dist.join("generalszh.exe")).map_err(|e| format!("copy generalszh.exe: {e}"))?;
-    if exe_dir.join("generalszh.pdb").is_file() {
-        fs::copy(exe_dir.join("generalszh.pdb"), dist.join("generalszh.pdb")).map_err(|e| e.to_string())?;
-    }
-    if opts.wgpu {
-        // Runtime DLLs: SDL3 and OpenAL from the engine's fetched dependencies (Release config),
-        // FFmpeg from the prebuilt package.
-        let deps = exe_dir.parent().and_then(Path::parent).map(|b| b.join("_deps")).unwrap_or_default();
-        let mut dlls = Vec::new();
-        find_files(&deps, &mut |p| {
-            let name = p.file_name().unwrap_or_default().to_string_lossy().to_ascii_lowercase();
-            let release = p.components().any(|c| c.as_os_str().eq_ignore_ascii_case("Release"));
-            release && name.ends_with(".dll") && (name.starts_with("sdl3") || name.starts_with("openal32"))
-        }, &mut dlls);
-        if dlls.is_empty() {
-            return Err(format!("no SDL3/OpenAL runtime DLLs under {}", deps.display()));
+            fs::copy(exe_dir.join("generalszh.exe"), dist.join("generalszh.exe")).map_err(|e| format!("copy generalszh.exe: {e}"))?;
+            if exe_dir.join("generalszh.pdb").is_file() {
+                fs::copy(exe_dir.join("generalszh.pdb"), dist.join("generalszh.pdb")).map_err(|e| e.to_string())?;
+            }
+            if wgpu {
+                // Runtime DLLs: SDL3 and OpenAL from the engine's fetched dependencies (Release
+                // config), FFmpeg from the prebuilt package.
+                let deps = engine.join("build").join(build_dir).join("_deps");
+                let mut dlls = Vec::new();
+                find_files(&deps, &mut |p| {
+                    let name = p.file_name().unwrap_or_default().to_string_lossy().to_ascii_lowercase();
+                    let release = p.components().any(|c| c.as_os_str().eq_ignore_ascii_case("Release"));
+                    release && name.ends_with(".dll") && (name.starts_with("sdl3") || name.starts_with("openal32"))
+                }, &mut dlls);
+                if dlls.is_empty() {
+                    return Err(format!("no SDL3/OpenAL runtime DLLs under {}", deps.display()));
+                }
+                find_files(&ensure_ffmpeg_win64(&engine)?.join("bin"), &mut |p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("dll")), &mut dlls);
+                for dll in dlls {
+                    fs::copy(&dll, dist.join(dll.file_name().unwrap())).map_err(|e| format!("copy {}: {e}", dll.display()))?;
+                }
+            }
         }
-        find_files(&ensure_ffmpeg_win64(&engine)?.join("bin"), &mut |p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("dll")), &mut dlls);
-        for dll in dlls {
-            fs::copy(&dll, dist.join(dll.file_name().unwrap())).map_err(|e| format!("copy {}: {e}", dll.display()))?;
+        Toolchain::Native => {
+            // The engine's deploy scripts expect the preset's default build dir (build/<preset>).
+            let preset = Toolchain::native_preset();
+            let jobs = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4).to_string();
+            run_cmd(Command::new("cmake").current_dir(&engine).args(["--preset", preset]).args(&defs))?;
+            run_cmd(Command::new("cmake").current_dir(&engine).args([
+                "--build",
+                &format!("build/{preset}"),
+                "--config",
+                "Release",
+                "--target",
+                "z_generals",
+                "-j",
+                &jobs,
+            ]))?;
+            // Stage the binary with its non-system libraries (dylibs with rewritten install names
+            // on macOS, libs/ on Linux) using the engine's own deploy script, then copy into dist.
+            let stage = work_dir().join("stage");
+            let _ = fs::remove_dir_all(&stage);
+            let (script, env_var) = if cfg!(target_os = "macos") {
+                ("scripts/build/macos/deploy-macos-generalsmd.sh", "GGC_MACOS_RUNTIME_DIR")
+            } else {
+                ("scripts/build/linux/deploy-linux-generalsmd.sh", "GGC_LINUX_RUNTIME_DIR")
+            };
+            run_cmd(Command::new("bash").current_dir(&engine).arg(script).args([preset, "Release"]).env(env_var, &stage))?;
+            if !stage.join("generalszh").is_file() {
+                return Err(format!("the deploy script did not stage generalszh into {}", stage.display()));
+            }
+            copy_dir_if_changed(&stage, &dist)?;
         }
     }
+
     let (from, to) = tc.launcher_file();
     fs::copy(launcher_dir.join(from), dist.join(to)).map_err(|e| format!("copy launcher: {e}"))?;
     pack(&dist)?;

@@ -1,10 +1,11 @@
 # Conquer Ops engine glue. Added to the GeneralsGameCode build by host/patches (root CMakeLists.txt)
 # when ZHBO_GLUE_DIR is set; `cargo xtask build` sets it together with ZHBO_CORE_LIB.
 #
-# Toolchains:
-#   MSVC (Windows):      ZHBO_CORE_LIB = .../i686-pc-windows-msvc/release/zhbo_core.lib
-#   MinGW-w64 (Linux/macOS cross build, preset mingw-w64-i686):
-#                        ZHBO_CORE_LIB = .../i686-pc-windows-gnu/release/libzhbo_core.a
+# Builds:
+#   Windows x86 DX8 (preset win32):   ZHBO_CORE_LIB = .../i686-pc-windows-msvc/release/zhbo_core.lib
+#   Windows x64 wgpu (preset win64):  ZHBO_CORE_LIB = .../x86_64-pc-windows-msvc/release/zhbo_core.lib
+#   macOS / Linux wgpu (native):      ZHBO_CORE_LIB = .../<host triple>/release/libzhbo_core.a
+# The wgpu builds also need the core built with `--features renderer` (see below).
 
 if(NOT ZHBO_CORE_LIB)
     message(FATAL_ERROR "ZHBO_CORE_LIB must point at the zhbo-core static library built by cargo")
@@ -13,6 +14,8 @@ endif()
 target_sources(z_gameengine PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/ZhboBridge.cpp
     ${CMAKE_CURRENT_LIST_DIR}/ZhboBridge.h
+    ${CMAKE_CURRENT_LIST_DIR}/ZhboPlatform.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/ZhboPlatform.h
     ${CMAKE_CURRENT_LIST_DIR}/zhbo_core.h
 )
 
@@ -20,9 +23,24 @@ target_sources(z_gameengine PRIVATE
 target_include_directories(z_gameengine PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 target_include_directories(z_gameenginedevice PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 
-# The Rust core and the system libraries Rust's std needs (`cargo rustc -- --print native-static-libs`;
-# identical for the msvc and gnu targets with panic=abort).
-target_link_libraries(z_gameengine PUBLIC ${ZHBO_CORE_LIB} advapi32 ntdll userenv ws2_32 dbghelp)
+# ZhboPlatform uses SDL3 for window focus, keys and mouse capture where the engine runs on SDL3.
+if(SAGE_USE_SDL3)
+    target_link_libraries(z_gameengine PRIVATE sdl3lib)
+endif()
+
+# The Rust core and the system libraries it needs, from
+# `cargo rustc -p zhbo-core --release [--features renderer] --target <triple> --crate-type staticlib
+#  -- --print native-static-libs` (panic=abort).
+if(WIN32)
+    # opengl32: wgpu's GL backend (only linked by the renderer, harmless otherwise).
+    target_link_libraries(z_gameengine PUBLIC ${ZHBO_CORE_LIB} advapi32 ntdll userenv ws2_32 dbghelp opengl32)
+elseif(APPLE)
+    target_link_libraries(z_gameengine PUBLIC ${ZHBO_CORE_LIB}
+        "-framework QuartzCore" "-framework CoreGraphics" "-framework Metal"
+        "-framework Foundation" "-framework CoreFoundation" objc iconv)
+else()
+    target_link_libraries(z_gameengine PUBLIC ${ZHBO_CORE_LIB} dl pthread m rt util)
+endif()
 
 # GGC_BGFX_RENDERER=wgpu: the bgfx API on the Rust renderer (zhbo-gfx, inside ZHBO_CORE_LIB, built
 # with `--features renderer`). corei_ww3d2 links zhbo_bgfx_wgpu instead of the bgfx library (see
@@ -37,9 +55,6 @@ if(GGC_RENDER_BACKEND STREQUAL "bgfx" AND GGC_BGFX_RENDERER STREQUAL "wgpu")
     target_link_libraries(zhbo_bgfx_wgpu PUBLIC ${ZHBO_CORE_LIB} bx)
     # core_config carries the engine-wide defines (SAGE_USE_SDL3, ...).
     target_link_libraries(zhbo_bgfx_wgpu PRIVATE core_config)
-    if(WIN32)
-        target_link_libraries(zhbo_bgfx_wgpu PUBLIC opengl32)
-    endif()
     if(SAGE_USE_SDL3)
         target_link_libraries(zhbo_bgfx_wgpu PRIVATE sdl3lib)
     endif()

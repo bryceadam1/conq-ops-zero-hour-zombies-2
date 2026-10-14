@@ -10,6 +10,7 @@
 // Precompiled engine headers are force-included by the z_gameengine target.
 #include "ZhboBridge.h"
 #include "zhbo_core.h"
+#include "ZhboPlatform.h"
 #if defined(GGC_BGFX_RENDERER_WGPU)
 #include "zhbo_gfx.h"
 #endif
@@ -48,8 +49,6 @@
 #include <string>
 #include <vector>
 
-extern HWND ApplicationHWnd;
-
 namespace
 {
 
@@ -62,7 +61,7 @@ Bool s_mouseCaptured = FALSE;
 Bool s_rtsUiHidden = FALSE;
 ObjectID s_hiddenObject = INVALID_ID;
 Real s_wheelAccum = 0.0f;
-LARGE_INTEGER s_lastTick = {};
+double s_lastTick = 0.0;
 
 // One engine Weapon per FX template: fireWeaponTemplate needs a firing Weapon instance.
 std::map<std::string, Weapon *> s_fxWeapons;
@@ -302,31 +301,12 @@ void cbLine(float x0, float y0, float x1, float y1, float width, uint32_t argb)
 	TheDisplay->drawLine((Int)x0, (Int)y0, (Int)x1, (Int)y1, width, argb);
 }
 
-// BO2's HUD type is a narrow DIN-like face. Its font only exists inside BO2's encrypted fastfiles,
-// so use Bahnschrift (a DIN family that ships with Windows 10 and later) and fall back to Arial,
-// e.g. under Wine where Bahnschrift is usually absent.
 const char *hudFontName()
 {
 	static const char *name = nullptr;
 	if (!name)
 	{
-		LOGFONTA lf;
-		memset(&lf, 0, sizeof(lf));
-		lf.lfCharSet = DEFAULT_CHARSET;
-		strcpy(lf.lfFaceName, "Bahnschrift");
-		struct Probe
-		{
-			static int CALLBACK found(const LOGFONTA *, const TEXTMETRICA *, DWORD, LPARAM param)
-			{
-				*(Bool *)param = TRUE;
-				return 0;
-			}
-		};
-		Bool present = FALSE;
-		HDC dc = GetDC(nullptr);
-		EnumFontFamiliesExA(dc, &lf, (FONTENUMPROCA)Probe::found, (LPARAM)&present, 0);
-		ReleaseDC(nullptr, dc);
-		name = present ? "Bahnschrift" : "Arial";
+		name = zhbo_platform::hudFontName();
 		logf("HUD font: %s", name);
 	}
 	return name;
@@ -442,38 +422,13 @@ public:
 	}
 };
 
-POINT windowCenter()
-{
-	RECT rc;
-	GetClientRect(ApplicationHWnd, &rc);
-	POINT c = { (rc.right - rc.left) / 2, (rc.bottom - rc.top) / 2 };
-	ClientToScreen(ApplicationHWnd, &c);
-	return c;
-}
-
 void setMouseCapture(Bool capture)
 {
 	if (capture == s_mouseCaptured)
 		return;
 	s_mouseCaptured = capture;
-	if (capture)
-	{
-		RECT rc;
-		GetClientRect(ApplicationHWnd, &rc);
-		POINT tl = { rc.left, rc.top }, br = { rc.right, rc.bottom };
-		ClientToScreen(ApplicationHWnd, &tl);
-		ClientToScreen(ApplicationHWnd, &br);
-		RECT clip = { tl.x, tl.y, br.x, br.y };
-		ClipCursor(&clip);
-		POINT c = windowCenter();
-		SetCursorPos(c.x, c.y);
-		if (TheMouse) TheMouse->setVisibility(FALSE);
-	}
-	else
-	{
-		ClipCursor(nullptr);
-		if (TheMouse) TheMouse->setVisibility(TRUE);
-	}
+	zhbo_platform::setMouseCapture(capture != FALSE);
+	if (TheMouse) TheMouse->setVisibility(capture ? FALSE : TRUE);
 }
 
 void setHiddenObject(ObjectID id)
@@ -726,7 +681,7 @@ void Zhbo_Init()
 		char text[1200];
 		snprintf(text, sizeof(text), "Conquer Ops requires both Command & Conquer Generals: Zero Hour and "
 			"Call of Duty: Black Ops II to be installed.\n\n%s", problems);
-		MessageBoxA(nullptr, text, "Conquer Ops", MB_OK | MB_ICONERROR);
+		zhbo_platform::errorBox("Conquer Ops", text);
 		ExitProcess(1);
 	}
 
@@ -742,7 +697,7 @@ void Zhbo_Init()
 
 	s_autopilot.enabled = getenv("ZHBO_AUTOPILOT") != nullptr;
 
-	QueryPerformanceCounter(&s_lastTick);
+	s_lastTick = zhbo_platform::now();
 	s_ready = TRUE;
 }
 
@@ -819,13 +774,11 @@ void Zhbo_ClientFrame()
 
 	autopilotFrame();
 
-	LARGE_INTEGER now, freq;
-	QueryPerformanceCounter(&now);
-	QueryPerformanceFrequency(&freq);
-	const float dt = (float)((double)(now.QuadPart - s_lastTick.QuadPart) / (double)freq.QuadPart);
+	const double now = zhbo_platform::now();
+	const float dt = (float)(now - s_lastTick);
 	s_lastTick = now;
 
-	const Bool focused = GetForegroundWindow() == ApplicationHWnd;
+	const Bool focused = zhbo_platform::windowFocused();
 	const Bool menuUp = TheInGameUI->isQuitMenuVisible() || TheGameLogic->isGamePaused();
 
 	ZhboClientIn in;
@@ -835,17 +788,11 @@ void Zhbo_ClientFrame()
 	in.logic_frame = TheGameLogic->getFrame();
 	if (focused && !menuUp)
 	{
-		for (int vk = 0; vk < 256; ++vk)
-			in.keys[vk] = (GetAsyncKeyState(vk) & 0x8000) ? 1 : 0;
+		zhbo_platform::readKeys(in.keys);
 	}
 	if (s_mouseCaptured && focused)
 	{
-		POINT c = windowCenter();
-		POINT p;
-		GetCursorPos(&p);
-		in.mouse_dx = (float)(p.x - c.x);
-		in.mouse_dy = (float)(p.y - c.y);
-		SetCursorPos(c.x, c.y);
+		zhbo_platform::mouseDelta(in.mouse_dx, in.mouse_dy);
 	}
 	in.wheel = s_wheelAccum;
 	s_wheelAccum = 0.0f;
