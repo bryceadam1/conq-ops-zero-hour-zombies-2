@@ -181,6 +181,14 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     or launchers keep the old archive.
 48. `ZHBO_AUTOPILOT=showcase` (with `ZHBO_SHOWCASE_OBJECT/_ZOOM/_PITCH/_ANGLE`) films a General close
     up: idle, a walk out and back, death. `scripts/autotest-mac.sh --showcase [object]`.
+49. An attached model (a gun on `tag_weapon`, its magazine on `j_gun`) must have *all* its bones
+    placed relative to the tag, not only its root; otherwise child bones (barrel, sights, flash)
+    float at their model-space positions. `zhbo-assets posew3d` renders converted data through the
+    engine's pivot formula, which is how this was found.
+50. The first-person viewmodel is a W3D render object added straight to `W3DDisplay::m_3DScene`
+    (`host/zhbo/ZhboViewmodel.cpp`, in z_gameenginedevice; hook in patch 0004), posed with
+    `Set_Animation(..., ANIM_MODE_MANUAL)` at the clip and time zhbo-core picks
+    (`zhbo_core::viewmodel`, ClientOut ABI 3). Aiming slides it so `tag_sights` is on the view axis.
 
 ## Verification log
 
@@ -226,6 +234,9 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
   from the player's install (USA SEAL Team 6, China PLA, GLA PMC; 18-23 meshes each with the
   AN-94, 30 textures, one shared hierarchy, idle/run/aim/2 deaths from `pb_*`). Showcase captures
   show them standing, running and dying correctly; the autopilot test still passes 7/7.
+* **First-person viewmodel (2026-10-14)**: each faction's BO2 arms hold the AN-94 with its
+  magazine, playing BO2's idle, fire, reload, empty reload, sprint and raise clips. In game the
+  autopilot shows hip fire, a reload and aiming through the iron sights; 7/7 still pass.
 
 ## Next steps
 

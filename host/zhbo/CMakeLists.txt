@@ -19,6 +19,11 @@ target_sources(z_gameengine PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/zhbo_core.h
 )
 
+# The first-person viewmodel draws through WW3D, so it lives in the device library.
+target_sources(z_gameenginedevice PRIVATE
+    ${CMAKE_CURRENT_LIST_DIR}/ZhboViewmodel.cpp
+)
+
 # Patched engine files in z_gameengine and z_gameenginedevice include ZhboBridge.h.
 target_include_directories(z_gameengine PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 target_include_directories(z_gameenginedevice PUBLIC ${CMAKE_CURRENT_LIST_DIR})

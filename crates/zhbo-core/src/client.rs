@@ -7,6 +7,7 @@ use crate::input::{buttons, pack_move, FpsInput, MAX_PITCH};
 use crate::math::{basis_xy, dir_from_angles, smoothstep, wrap_angle, Vec3};
 use crate::sim::{EventKind, Mode, Sim};
 use crate::units::LOGIC_DT;
+use crate::viewmodel::{self, Viewmodel};
 
 /// Windows virtual-key codes.
 pub mod vk {
@@ -163,6 +164,12 @@ pub struct ClientOut {
     /// One-shot: centre the RTS camera on `rts_look_at` (end of the field computer transition).
     pub rts_look_at_valid: i32,
     pub rts_look_at: Vec3,
+    /// First-person viewmodel clip (`viewmodel::IDLE`..), or `viewmodel::NONE` to hide it.
+    pub viewmodel: i32,
+    /// Seconds into the viewmodel clip.
+    pub viewmodel_time: f32,
+    /// 0..1: how far the weapon is raised to aim down the sights.
+    pub viewmodel_ads: f32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -244,6 +251,9 @@ pub struct Client {
     seen_frame: u32,
     since_logic: f32,
     pub last_hfov: f32,
+    /// First-person viewmodel animation, and this frame's weapon events for it.
+    vm: Viewmodel,
+    vm_events: viewmodel::Events,
 }
 
 impl Default for Client {
@@ -270,6 +280,8 @@ impl Client {
             seen_frame: 0,
             since_logic: 0.0,
             last_hfov: 1.0,
+            vm: Viewmodel::default(),
+            vm_events: viewmodel::Events::default(),
         }
     }
 
@@ -328,7 +340,7 @@ impl Client {
             }
             None => inp,
         };
-        let mut out = ClientOut { hfov: self.last_hfov, ..Default::default() };
+        let mut out = ClientOut { hfov: self.last_hfov, viewmodel: viewmodel::NONE, ..Default::default() };
         let player = sim.player(inp.local_player).cloned();
 
         // Track logic frames for eye interpolation.
@@ -402,6 +414,13 @@ impl Client {
                     out.hide_rts_ui = 1;
                     out.hide_object = self.general;
                     out.capture_mouse = allowed as i32;
+                    let events = std::mem::take(&mut self.vm_events);
+                    if !in_fc {
+                        let (clip, time) = self.vm.update(dt, p, events);
+                        out.viewmodel = clip;
+                        out.viewmodel_time = time;
+                        out.viewmodel_ads = p.arsenal.ads;
+                    }
                     self.build_input(inp, &mut out, allowed && !in_fc);
                 }
             }
@@ -430,6 +449,7 @@ impl Client {
 
     fn start_entering(&mut self, inp: &ClientIn, general: u32, yaw: f32, eye: Vec3) {
         self.general = general;
+        self.vm = Viewmodel::default(); // the weapon comes up as first person starts
         self.yaw = yaw;
         self.pitch = 0.0;
         self.eye_prev = eye;
@@ -516,10 +536,10 @@ impl Client {
                 EventKind::Damaged { amount } => {
                     self.hud.damage_flash = (self.hud.damage_flash + amount / 60.0).min(1.0);
                 }
-                EventKind::FieldComputerOpened
-                | EventKind::Shot { .. }
-                | EventKind::ReloadStarted
-                | EventKind::Swapped => {}
+                EventKind::Shot { .. } => self.vm_events.shot = true,
+                EventKind::ReloadStarted => self.vm_events.reload_started = true,
+                EventKind::Swapped => self.vm_events.swapped = true,
+                EventKind::FieldComputerOpened => {}
             }
         }
     }

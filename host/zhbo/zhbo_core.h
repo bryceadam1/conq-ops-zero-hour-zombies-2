@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 2u
+#define ZHBO_ABI_VERSION 3u
 
 #ifdef __cplusplus
 extern "C" {
@@ -113,7 +113,20 @@ typedef struct ZhboClientOut
 	ZhboFpsInput input;
 	int32_t rts_look_at_valid;
 	ZhboVec3 rts_look_at;
+	int32_t viewmodel;      /* ZHBO_VM_* clip, or ZHBO_VM_NONE */
+	float viewmodel_time;   /* seconds into the clip */
+	float viewmodel_ads;    /* 0..1 aim-down-sights */
 } ZhboClientOut;
+
+/* Viewmodel clips (zhbo_core::viewmodel). */
+#define ZHBO_VM_NONE (-1)
+#define ZHBO_VM_IDLE 0
+#define ZHBO_VM_FIRE 1
+#define ZHBO_VM_RELOAD 2
+#define ZHBO_VM_RELOAD_EMPTY 3
+#define ZHBO_VM_SPRINT 4
+#define ZHBO_VM_RAISE 5
+#define ZHBO_VM_COUNT 6
 
 uint32_t zhbo_abi_version(void);
 void zhbo_init(const ZhboLogicApi *logic, const ZhboClientApi *client);
@@ -133,7 +146,7 @@ int32_t zhbo_check_requirements(char *msg, uint32_t cap);
 static_assert(sizeof(ZhboObjInfo) == 52, "ZhboObjInfo layout must match host.rs");
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
 static_assert(sizeof(ZhboClientIn) == 316, "ZhboClientIn layout must match client.rs");
-static_assert(sizeof(ZhboClientOut) == 88, "ZhboClientOut layout must match client.rs");
+static_assert(sizeof(ZhboClientOut) == 100, "ZhboClientOut layout must match client.rs");
 static_assert(sizeof(ZhboLogicApi) == 11 * sizeof(void *), "ZhboLogicApi layout must match host.rs");
 static_assert(sizeof(ZhboClientApi) == 7 * sizeof(void *), "ZhboClientApi layout must match host.rs");
 #endif

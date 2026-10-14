@@ -70,6 +70,24 @@ impl PlayerSim {
     pub fn is_first_person(&self) -> bool {
         matches!(self.mode, Mode::Fps | Mode::FieldComputer { .. })
     }
+
+    #[cfg(test)]
+    pub fn spawn_for_tests() -> PlayerSim {
+        PlayerSim {
+            general: 1,
+            mode: Mode::Fps,
+            body: Body::new(Vec3::ZERO, &MoveTuning::default()),
+            yaw: 0.0,
+            pitch: 0.0,
+            arsenal: Arsenal::new(),
+            rng: Rng::new(1),
+            input: FpsInput::default(),
+            pressed_accum: 0,
+            health: 500.0,
+            max_health: 500.0,
+            regen_wait: 0.0,
+        }
+    }
 }
 
 pub struct Sim {

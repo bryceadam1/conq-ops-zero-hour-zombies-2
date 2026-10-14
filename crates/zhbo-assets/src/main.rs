@@ -291,6 +291,42 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             Ok(())
         }
+        "posew3d" => {
+            // posew3d <out.png> <frame> <ff>:<anim> <ff>:<base>[ <ff>:<model>@<tag> ...]: render through
+            // the W3D conversion (rig, skin, animation) as the engine would draw it.
+            let usage = "posew3d <out.png> <frame> <ff>:<anim> <ff>:<base> [<ff>:<model>@<tag> ...]";
+            let out = args.get(1).ok_or(usage)?;
+            let frame: usize = args.get(2).and_then(|v| v.parse().ok()).ok_or(usage)?;
+            let split = |s: &str| -> Result<(String, String), String> {
+                s.split_once(':').map(|(a, b)| (a.to_string(), b.to_string())).ok_or_else(|| usage.to_string())
+            };
+            let mut zones: ZoneCache = Default::default();
+            let (anim_ff, anim_name) = split(args.get(3).ok_or(usage)?)?;
+            load_zone(&mut zones, &anim_ff)?;
+            let anim = zhbo_formats::xanim::find(&zones[&anim_ff], &anim_name).map_err(|e| e.to_string())?;
+            let mut models = Vec::new();
+            for spec in &args[4..] {
+                let (ff, rest) = split(spec)?;
+                let (name, tag) = match rest.split_once('@') {
+                    Some((n, t)) => (n.to_string(), Some(t.to_string())),
+                    None => (rest, None),
+                };
+                load_zone(&mut zones, &ff)?;
+                models.push((zhbo_formats::xmodel::find(&zones[&ff], &name).map_err(|e| e.to_string())?, tag));
+            }
+            let attachments: Vec<(&zhbo_formats::xmodel::Model, &str)> =
+                models[1..].iter().map(|(m, t)| (m, t.as_deref().unwrap_or(""))).collect();
+            let rig = zhbo_assets::character::Rig::new(&models[0].0, &attachments);
+            let mut meshes = Vec::new();
+            for (m, _) in &models {
+                meshes.extend(zhbo_assets::character::skin(&rig, m, "X", &[]));
+            }
+            let (_, channels) = zhbo_assets::character::animate(&rig, &anim);
+            let posed = preview::pose_w3d(&rig.pivots, &meshes, &channels, frame);
+            preview::render_meshes(&posed, Path::new(out)).map_err(|e| e.to_string())?;
+            println!("wrote {out}");
+            Ok(())
+        }
         "dump" => {
             // Hex dump around each occurrence of a string in a zone, for format work.
             let zone = open_zone(args.get(1).ok_or("dump <ff> <text> [before] [after]")?)?;

@@ -11,6 +11,7 @@
 #include "Lib/BaseType.h"
 #include "Common/GameType.h"
 
+class AsciiString;
 class GameMessage;
 class GameMessageTranslator;
 class Object;
@@ -33,6 +34,12 @@ Bool Zhbo_IsControlled(ObjectID id);
 void Zhbo_ClientFrame();
 /// W3DView::update: returns true and fills the camera when first person owns the camera.
 Bool Zhbo_GetCameraOverride(Coord3D *eye, Coord3D *dir, Real *horizontalFov);
+/// The first-person viewmodel this frame: clip (ZHBO_VM_*), seconds into it, aim-down-sights 0..1,
+/// and the W3D model for the local General's faction. False when none should show.
+Bool Zhbo_GetViewmodel(Int *clip, Real *time, Real *ads, AsciiString *model);
+/// Device side (ZhboViewmodel.cpp): place, pose or hide the viewmodel. W3DView::update calls it
+/// every frame with the first-person camera, or with `active` false.
+void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir);
 /// After the in-game UI is drawn.
 void Zhbo_DrawHud();
 /// Before the 3D views are drawn: paints a sky gradient while first person owns the camera.
@@ -41,6 +48,9 @@ void Zhbo_DrawSky();
 GameMessageTranslator *Zhbo_CreateTranslator();
 /// "Take Control" command button pressed with `obj` selected.
 void Zhbo_RequestTakeControl(Object *obj);
+
+/// A printf-style line in ConquerOps.log.
+void Zhbo_Log(const char *fmt, ...);
 
 // --- Data --------------------------------------------------------------------------------------
 /// Text for the mod's string labels; null if the label is not one of ours.

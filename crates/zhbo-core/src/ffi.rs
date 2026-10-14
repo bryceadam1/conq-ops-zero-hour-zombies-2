@@ -37,7 +37,7 @@ fn publish_controlled(sim: &Sim) {
     }
 }
 
-pub const ABI_VERSION: u32 = 2;
+pub const ABI_VERSION: u32 = 3;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
 const _: () = {
@@ -45,7 +45,7 @@ const _: () = {
     assert!(size_of::<crate::host::ObjInfo>() == 52);
     assert!(size_of::<FpsInput>() == 20);
     assert!(size_of::<ClientIn>() == 316);
-    assert!(size_of::<ClientOut>() == 88);
+    assert!(size_of::<ClientOut>() == 100);
     assert!(size_of::<LogicApi>() == 11 * size_of::<usize>());
     assert!(size_of::<ClientApi>() == 7 * size_of::<usize>());
 };

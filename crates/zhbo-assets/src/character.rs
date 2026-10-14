@@ -19,8 +19,8 @@ use zhbo_formats::xmodel::Model;
 /// BO2 inches to Zero Hour world units: a 72" soldier becomes 11 units tall, like stock infantry.
 pub const SCALE: f32 = 11.0 / 72.0;
 pub const HIERARCHY: &str = "ZHBO_PLR_SKL";
-/// The bone the third-person weapon hangs from.
-const WEAPON_TAG: &str = "tag_weapon_right";
+/// The bone a third-person weapon hangs from.
+pub const WEAPON_TAG: &str = "tag_weapon_right";
 
 /// The shared hierarchy: its pivots and each pivot's bind transform in model space.
 pub struct Rig {
@@ -29,6 +29,8 @@ pub struct Rig {
     pub bind: Vec<Xf>,
     /// Full BO2 bone name per pivot (W3D cuts pivot names to 15 characters).
     pub names: Vec<String>,
+    /// The model's own local offset per pivot (scaled): BO2 animated translations are added to it.
+    pub anim_base: Vec<[f32; 3]>,
 }
 
 fn scaled(p: [f32; 3]) -> [f32; 3] {
@@ -36,17 +38,20 @@ fn scaled(p: [f32; 3]) -> [f32; 3] {
 }
 
 impl Rig {
-    /// Build from a body and, optionally, the weapon it holds.
-    pub fn new(body: &Model, weapon: Option<&Model>) -> Rig {
+    /// Build from a base model (a body or a pair of arms) and models hung from its bones, e.g. a
+    /// weapon on `tag_weapon_right`, or a viewmodel gun on `tag_weapon` with its magazine on `j_gun`.
+    /// Attachments are added in order, so a later one may hang from an earlier one's bone.
+    pub fn new(base: &Model, attachments: &[(&Model, &str)]) -> Rig {
         let mut rig = Rig {
             pivots: vec![Pivot { name: "ROOTTRANSFORM".into(), parent: None, translation: [0.0; 3], rotation: [0.0, 0.0, 0.0, 1.0] }],
             bind: vec![xf::IDENTITY],
             names: vec!["ROOTTRANSFORM".into()],
+            anim_base: vec![[0.0; 3]],
         };
-        rig.add_bones(body, None);
-        if let Some(w) = weapon {
-            let tag = rig.pivot(WEAPON_TAG);
-            rig.add_bones(w, tag);
+        rig.add_bones(base, None);
+        for (model, tag) in attachments {
+            let tag = rig.pivot(tag);
+            rig.add_bones(model, tag);
         }
         rig
     }
@@ -55,19 +60,20 @@ impl Rig {
     /// from the root transform.
     fn add_bones(&mut self, model: &Model, attach: Option<usize>) {
         let first = self.pivots.len();
+        // An attached model's origin sits exactly on its tag in the bind pose, so all of its bones
+        // are placed relative to the tag.
+        let origin = attach.map_or(xf::IDENTITY, |tag| self.bind[tag]);
         for b in &model.bones {
-            let (parent, world) = match b.parent {
-                Some(p) => (first + p, (b.rotation, scaled(b.position))),
-                None => match attach {
-                    // An attached root sits exactly on its tag in the bind pose.
-                    Some(tag) => (tag, self.bind[tag]),
-                    None => (0, (b.rotation, scaled(b.position))),
-                },
+            let world = xf::compose(origin, (b.rotation, scaled(b.position)));
+            let parent = match b.parent {
+                Some(p) => first + p,
+                None => attach.unwrap_or(0),
             };
             let local = xf::compose(xf::inverse(self.bind[parent]), world);
             self.pivots.push(Pivot { name: b.name.clone(), parent: Some(parent), translation: local.1, rotation: local.0 });
             self.bind.push(world);
             self.names.push(b.name.clone());
+            self.anim_base.push(if b.parent.is_some() { scaled(b.local_position) } else { [0.0; 3] });
         }
     }
 
@@ -75,8 +81,8 @@ impl Rig {
         self.names.iter().position(|n| n == name)
     }
 
-    pub fn hierarchy_file(&self) -> Vec<u8> {
-        w3d::hierarchy(HIERARCHY, &self.pivots)
+    pub fn hierarchy_file(&self, name: &str) -> Vec<u8> {
+        w3d::hierarchy(name, &self.pivots)
     }
 }
 
@@ -146,10 +152,11 @@ pub fn animate(rig: &Rig, anim: &Anim) -> (u32, Vec<Channel>) {
         let mut ch = Channel { pivot: pivot as u16, translations: Vec::new(), rotations: Vec::new() };
         for f in 0..frames {
             let frame = f as f32;
-            // BO2 translations are offsets added to the bone's local offset; rotations replace.
+            // BO2 translations are offsets added to the model's local offset; rotations replace.
+            let ab = rig.anim_base[pivot];
             let p = track.translation_at(frame).map_or(base.translation, |t| {
                 let t = scaled(t);
-                [base.translation[0] + t[0], base.translation[1] + t[1], base.translation[2] + t[2]]
+                [ab[0] + t[0], ab[1] + t[1], ab[2] + t[2]]
             });
             let q = track.rotation_at(frame).unwrap_or(base.rotation);
             let d = [p[0] - base.translation[0], p[1] - base.translation[1], p[2] - base.translation[2]];
@@ -175,7 +182,11 @@ mod tests {
         let s = std::f32::consts::FRAC_1_SQRT_2;
         Model {
             name: "m".into(),
-            bones: vec![bone("root", None, [0.0; 3], [0.0, 0.0, 0.0, 1.0]), bone("arm", Some(0), [72.0, 0.0, 0.0], [0.0, 0.0, s, s])],
+            bones: vec![bone("root", None, [0.0; 3], [0.0, 0.0, 0.0, 1.0]), {
+                let mut b = bone("arm", Some(0), [72.0, 0.0, 0.0], [0.0, 0.0, s, s]);
+                b.local_position = [72.0, 0.0, 0.0];
+                b
+            }],
             surfaces: vec![Surface {
                 vertices: vec![
                     Vertex { position: [72.0, 0.0, 0.0], normal: [0.0, 0.0, 1.0], uv: [0.0, 0.0], weights: vec![(1, 1.0)] },
@@ -195,7 +206,7 @@ mod tests {
     #[test]
     fn rig_reproduces_the_bind_pose() {
         let model = two_bone_model();
-        let rig = Rig::new(&model, None);
+        let rig = Rig::new(&model, &[]);
         assert_eq!(rig.pivots.len(), 3);
         // Composing base transforms down the hierarchy gives back each bone's bind transform.
         let mut world = vec![xf::IDENTITY];
@@ -220,9 +231,25 @@ mod tests {
     }
 
     #[test]
+    fn attached_models_follow_their_tag() {
+        let body = two_bone_model();
+        // A "gun" whose child bone sits 10" in front of its root.
+        let mut gun = two_bone_model();
+        gun.bones = vec![bone("g_root", None, [0.0; 3], [0.0, 0.0, 0.0, 1.0]), bone("g_tip", Some(0), [10.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0])];
+        let rig = Rig::new(&body, &[(&gun, "arm")]);
+        let arm = rig.pivot("arm").unwrap();
+        let tip = rig.pivot("g_tip").unwrap();
+        // The tip is 10" along the arm's (rotated) x axis from the arm, not at the origin.
+        let expected = xf::apply(rig.bind[arm], [10.0 * SCALE, 0.0, 0.0]);
+        for k in 0..3 {
+            assert!((rig.bind[tip].1[k] - expected[k]).abs() < 1e-4, "{:?} vs {expected:?}", rig.bind[tip].1);
+        }
+    }
+
+    #[test]
     fn animation_channels_are_deltas_from_the_base_pose() {
         let model = two_bone_model();
-        let rig = Rig::new(&model, None);
+        let rig = Rig::new(&model, &[]);
         // An animation that holds the bind pose (bind rotation, no extra offset) gives identity deltas.
         let base = &rig.pivots[2];
         let anim = Anim {

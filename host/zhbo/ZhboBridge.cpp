@@ -923,6 +923,33 @@ Bool Zhbo_GetCameraOverride(Coord3D *eye, Coord3D *dir, Real *horizontalFov)
 	return TRUE;
 }
 
+Bool Zhbo_GetViewmodel(Int *clip, Real *time, Real *ads, AsciiString *model)
+{
+	if (!s_ready || !s_out.camera_override || s_out.viewmodel < 0 || !s_out.hide_object)
+		return FALSE;
+	const Object *general = TheGameLogic->findObjectByID((ObjectID)s_out.hide_object);
+	if (!general)
+		return FALSE;
+	// One viewmodel per faction (zhbo_assets::generals::FACTIONS).
+	const AsciiString &name = general->getTemplate()->getName();
+	const char *vm = name == "ZHBO_General_China" ? "ZHBO_VMCHN_SKN" : name == "ZHBO_General_GLA" ? "ZHBO_VMGLA_SKN" : "ZHBO_VMUSA_SKN";
+	*clip = s_out.viewmodel;
+	*time = s_out.viewmodel_time;
+	*ads = s_out.viewmodel_ads;
+	model->set(vm);
+	return TRUE;
+}
+
+void Zhbo_Log(const char *fmt, ...)
+{
+	char buf[512];
+	va_list args;
+	va_start(args, fmt);
+	vsnprintf(buf, sizeof(buf), fmt, args);
+	va_end(args);
+	logLine(buf);
+}
+
 void Zhbo_DrawHud()
 {
 	if (!s_ready || !TheGameLogic->isInGame() || TheGameLogic->isInShellGame())

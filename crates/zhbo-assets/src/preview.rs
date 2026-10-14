@@ -185,3 +185,33 @@ fn fill(rgb: &mut [u8], depth: &mut [f32], view: usize, p: [[f32; 3]; 3], shade:
         }
     }
 }
+
+/// Pose converted W3D data the way the engine does (`parent * base * T(t) * R(q)`, vertices at
+/// `bone * vertex`), to check a conversion without the game.
+pub fn pose_w3d(
+    pivots: &[zhbo_formats::w3d::Pivot],
+    meshes: &[zhbo_formats::w3d::SkinMesh],
+    channels: &[zhbo_formats::w3d::Channel],
+    frame: usize,
+) -> Vec<Mesh> {
+    let mut world: Vec<Xf> = Vec::with_capacity(pivots.len());
+    for (i, p) in pivots.iter().enumerate() {
+        let parent = p.parent.map_or(([0.0, 0.0, 0.0, 1.0], [0.0; 3]), |q| world[q]);
+        let mut xf = compose(parent, (p.rotation, p.translation));
+        if let Some(ch) = channels.iter().find(|c| c.pivot as usize == i) {
+            let f = frame.min(ch.translations.len().saturating_sub(1));
+            xf = compose(xf, ([0.0, 0.0, 0.0, 1.0], ch.translations[f]));
+            xf = compose(xf, (ch.rotations[f], [0.0; 3]));
+        }
+        world.push(xf);
+    }
+    meshes
+        .iter()
+        .map(|m| Mesh {
+            positions: m.positions.iter().zip(&m.bones).map(|(v, &b)| apply(world[b as usize], *v)).collect(),
+            uvs: m.uvs.clone(),
+            triangles: m.triangles.iter().map(|t| t.map(|i| i as u16)).collect(),
+            texture: None,
+        })
+        .collect()
+}

@@ -26,13 +26,50 @@ pub struct Faction {
     pub body: &'static str,
     /// W3D model name (at most 15 characters).
     pub model: &'static str,
+    /// First-person arms, and the viewmodel W3D name (`ZhboViewmodel.cpp` picks it by object).
+    pub hands: &'static str,
+    pub viewmodel: &'static str,
 }
 
 pub const FACTIONS: &[Faction] = &[
-    Faction { object: "ZHBO_General_USA", zone: "faction_seals_mp", body: "c_usa_mp_seal6_assault_fb", model: "ZHBO_USA_SKN" },
-    Faction { object: "ZHBO_General_China", zone: "faction_pla_mp", body: "c_chn_mp_pla_assault_fb", model: "ZHBO_CHN_SKN" },
-    Faction { object: "ZHBO_General_GLA", zone: "faction_pmc_mp", body: "c_mul_mp_pmc_assault_fb", model: "ZHBO_GLA_SKN" },
+    Faction {
+        object: "ZHBO_General_USA",
+        zone: "faction_seals_mp",
+        body: "c_usa_mp_seal6_assault_fb",
+        model: "ZHBO_USA_SKN",
+        hands: "c_usa_mp_seal6_longsleeve_viewhands",
+        viewmodel: "ZHBO_VMUSA_SKN",
+    },
+    Faction {
+        object: "ZHBO_General_China",
+        zone: "faction_pla_mp",
+        body: "c_chn_mp_pla_assault_fb",
+        model: "ZHBO_CHN_SKN",
+        hands: "c_chn_mp_pla_longsleeve_viewhands",
+        viewmodel: "ZHBO_VMCHN_SKN",
+    },
+    Faction {
+        object: "ZHBO_General_GLA",
+        zone: "faction_pmc_mp",
+        body: "c_mul_mp_pmc_assault_fb",
+        model: "ZHBO_GLA_SKN",
+        hands: "c_mul_mp_pmc_longsleeve_viewhands",
+        viewmodel: "ZHBO_VMGLA_SKN",
+    },
 ];
+
+pub const VM_HIERARCHY: &str = "ZHBO_VM_SKL";
+/// Viewmodel clips, in `zhbo_core::viewmodel` order (IDLE, FIRE, RELOAD, RELOAD_EMPTY, SPRINT, RAISE).
+pub const VM_ANIMS: &[(&str, &str)] = &[
+    ("ZHBO_VM_IDL", "viewmodel_an94_idle"),
+    ("ZHBO_VM_FIR", "viewmodel_an94_fire"),
+    ("ZHBO_VM_RLD", "viewmodel_an94_reload"),
+    ("ZHBO_VM_RLE", "viewmodel_an94_reload_empty"),
+    ("ZHBO_VM_SPR", "viewmodel_an94_sprint_loop"),
+    ("ZHBO_VM_RAI", "viewmodel_an94_pullout"),
+];
+const VM_WEAPON: &str = "t6_wpn_ar_an94_view";
+const VM_MAGAZINE: &str = "t6_attach_mag_an94_view";
 
 /// (W3D animation name, BO2 animation in common_mp).
 pub const ANIMS: &[(&str, &str)] = &[
@@ -172,6 +209,36 @@ pub fn replace_draw(ini: &str, object: &str, draw: &str) -> Result<String, Strin
     Ok(format!("{}{}{}", &ini[..draw_at], draw, &ini[end..]))
 }
 
+/// The first-person viewmodels: each faction's arms holding the AN-94 and its magazine, on one
+/// shared hierarchy, with the clips the core's viewmodel state machine plays.
+fn viewmodels(common: &Zone, zones: &[Zone], paks: &Paks, out: &mut BTreeMap<String, Vec<u8>>) -> Result<String, String> {
+    let gun = xmodel::find(common, VM_WEAPON).map_err(|e| e.to_string())?;
+    let mag = xmodel::find(common, VM_MAGAZINE).map_err(|e| e.to_string())?;
+    let mut rig: Option<Rig> = None;
+    let mut made = Vec::new();
+    for (f, zone) in FACTIONS.iter().zip(zones) {
+        let hands = xmodel::find(zone, f.hands).map_err(|e| e.to_string())?;
+        let rig = rig.get_or_insert_with(|| Rig::new(&hands, &[(&gun, "tag_weapon"), (&mag, "j_gun")]));
+        let hands_tex = textures(&hands, paks, out);
+        let gun_tex = textures(&gun, paks, out);
+        let mag_tex = textures(&mag, paks, out);
+        let mut meshes = character::skin(rig, &hands, "H", &hands_tex);
+        meshes.extend(character::skin(rig, &gun, "G", &gun_tex));
+        meshes.extend(character::skin(rig, &mag, "M", &mag_tex));
+        out.insert(format!("Art\\W3D\\{}.w3d", f.viewmodel), w3d::skin_model(f.viewmodel, VM_HIERARCHY, &meshes));
+        made.push(f.viewmodel);
+    }
+    let rig = rig.ok_or("no viewmodel arms")?;
+    out.insert(format!("Art\\W3D\\{VM_HIERARCHY}.w3d"), rig.hierarchy_file(VM_HIERARCHY));
+    for (w3d_name, bo2_name) in VM_ANIMS {
+        let anim = xanim::find(common, bo2_name).map_err(|e| e.to_string())?;
+        let (frames, channels) = character::animate(&rig, &anim);
+        let fps = anim.frame_rate.round().max(1.0) as u32;
+        out.insert(format!("Art\\W3D\\{w3d_name}.w3d"), w3d::animation(w3d_name, VM_HIERARCHY, frames, fps, &channels));
+    }
+    Ok(format!("viewmodels {}", made.join(", ")))
+}
+
 /// Convert everything; returns the archive files and a one-line summary.
 pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String> {
     let common = load_zone(bo2_dir, "common_mp")?;
@@ -182,10 +249,11 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
     let mut rig: Option<Rig> = None;
     let mut summary = Vec::new();
 
+    let mut zones = Vec::new();
     for f in FACTIONS {
         let zone = load_zone(bo2_dir, f.zone)?;
         let body = xmodel::find(&zone, f.body).map_err(|e| e.to_string())?;
-        let rig = rig.get_or_insert_with(|| Rig::new(&body, Some(&weapon)));
+        let rig = rig.get_or_insert_with(|| Rig::new(&body, &[(&weapon, character::WEAPON_TAG)]));
         let body_tex = textures(&body, &paks, &mut out);
         let weapon_tex = textures(&weapon, &paks, &mut out);
         let mut meshes = character::skin(rig, &body, "B", &body_tex);
@@ -193,15 +261,17 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
         out.insert(format!("Art\\W3D\\{}.w3d", f.model), w3d::skin_model(f.model, HIERARCHY, &meshes));
         ini = replace_draw(&ini, f.object, &draw_module(f.model))?;
         summary.push(format!("{} = {} ({} meshes)", f.object, f.body, meshes.len()));
+        zones.push(zone);
     }
     let rig = rig.ok_or("no bodies")?;
-    out.insert(format!("Art\\W3D\\{HIERARCHY}.w3d"), rig.hierarchy_file());
+    out.insert(format!("Art\\W3D\\{HIERARCHY}.w3d"), rig.hierarchy_file(HIERARCHY));
     for (w3d_name, bo2_name) in ANIMS {
         let anim = xanim::find(&common, bo2_name).map_err(|e| e.to_string())?;
         let (frames, channels) = character::animate(&rig, &anim);
         let fps = anim.frame_rate.round().max(1.0) as u32;
         out.insert(format!("Art\\W3D\\{w3d_name}.w3d"), w3d::animation(w3d_name, HIERARCHY, frames, fps, &channels));
     }
+    summary.push(viewmodels(&common, &zones, &paks, &mut out)?);
     out.insert(INI_PATH.to_string(), ini.into_bytes());
     let textures = out.keys().filter(|k| k.ends_with(".tga")).count();
     Ok((out.into_iter().collect(), format!("{}; {textures} textures, {} animations", summary.join(", "), ANIMS.len())))
