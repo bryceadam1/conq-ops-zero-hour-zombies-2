@@ -12,7 +12,7 @@ use zhbo_formats::ipak::Ipak;
 use zhbo_formats::iwi::Rgba;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive.
-pub const VERSION: u32 = 1;
+pub const VERSION: u32 = 4;
 pub const ARCHIVE_NAME: &str = "ConquerOps_BO2.big";
 pub const VERSION_FILE: &str = "Data\\ConquerOps\\bo2_hud_version.txt";
 const TEXTURE: &str = "zhbo_bo2_hud.tga";
@@ -58,6 +58,8 @@ pub const SPRITES: &[Sprite] = &[
 pub struct Report {
     pub found: Vec<&'static str>,
     pub missing: Vec<(&'static str, String)>,
+    /// The BO2 Generals: what was converted, or why not.
+    pub generals: Option<Result<String, String>>,
 }
 
 /// Read the sprites from the BO2 install at `bo2_dir` and return the archive bytes.
@@ -103,11 +105,19 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
         ));
         report.found.push(s.name);
     }
-    let files = vec![
+    let mut files = vec![
         (format!("Art\\Textures\\{TEXTURE}"), images::tga_bytes(&atlas)),
         ("Data\\INI\\MappedImages\\HandCreated\\ZHBO_BO2.ini".to_string(), ini.into_bytes()),
         (VERSION_FILE.to_string(), VERSION.to_string().into_bytes()),
     ];
+    // The Generals as BO2 soldiers. On failure they keep their Zero Hour art.
+    report.generals = Some(match crate::generals::files(bo2_dir) {
+        Ok((general_files, summary)) => {
+            files.extend(general_files);
+            Ok(summary)
+        }
+        Err(e) => Err(e),
+    });
     Ok((write_archive(&files), report))
 }
 

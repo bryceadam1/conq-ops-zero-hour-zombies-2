@@ -474,6 +474,8 @@ void setRtsUiHidden(Bool hidden)
 struct Autopilot
 {
 	Bool enabled;
+	// ZHBO_AUTOPILOT=showcase: the General alone, filmed close up in RTS (idle, a walk, death).
+	Bool showcase;
 	Bool spawned;
 	ObjectID general;
 	UnsignedInt releasedFrame;
@@ -526,10 +528,16 @@ void autopilotSpawn()
 	const Coord3D *ccPos = cc->getPosition();
 	Coord3D pos;
 	pos.set(ccPos->x + c * 90.0f, ccPos->y + s * 90.0f, 0.0f);
-	Object *general = spawnAt("ZHBO_General_USA", local->getDefaultTeam(), pos, yaw);
+	const char *showcaseObject = getenv("ZHBO_SHOWCASE_OBJECT");
+	Object *general = spawnAt(s_autopilot.showcase && showcaseObject ? showcaseObject : "ZHBO_General_USA", local->getDefaultTeam(), pos, yaw);
 	if (!general)
 		return;
 	s_autopilot.general = general->getID();
+	if (s_autopilot.showcase)
+	{
+		logf("autopilot: showcase General %u at (%.0f, %.0f)", (unsigned)s_autopilot.general, pos.x, pos.y);
+		return;
+	}
 
 	// Three enemy riflemen ahead of the General (inside rifle range, outside the base).
 	if (enemy)
@@ -549,6 +557,41 @@ void autopilotSpawn()
 	Zhbo_RequestTakeControl(general);
 }
 
+// Showcase: keep the camera close on the General; walk out and back, then die.
+void showcaseFrame(UnsignedInt frame)
+{
+	Object *general = TheGameLogic->findObjectByID(s_autopilot.general);
+	if (!general)
+		return;
+	const Coord3D *pos = general->getPosition();
+	// ZHBO_SHOWCASE_ZOOM / ZHBO_SHOWCASE_PITCH (radians) / ZHBO_SHOWCASE_ANGLE (radians, around the General).
+	const char *zoomEnv = getenv("ZHBO_SHOWCASE_ZOOM");
+	const char *pitchEnv = getenv("ZHBO_SHOWCASE_PITCH");
+	const char *angleEnv = getenv("ZHBO_SHOWCASE_ANGLE");
+	TheTacticalView->setZoomLimited(FALSE);
+	TheTacticalView->lookAt(pos);
+	TheTacticalView->setZoom(zoomEnv ? (Real)atof(zoomEnv) : 0.12f);
+	if (pitchEnv)
+		TheTacticalView->setPitch((Real)atof(pitchEnv));
+	if (angleEnv)
+		TheTacticalView->setAngle(general->getOrientation() + (Real)atof(angleEnv));
+	AIUpdateInterface *ai = general->getAIUpdateInterface();
+	const Real yaw = general->getOrientation();
+	if (ai && (frame == 180 || frame == 300))
+	{
+		const Real d = frame == 180 ? 60.0f : -60.0f;
+		Coord3D dest;
+		dest.set(pos->x + Cos(yaw) * d, pos->y + Sin(yaw) * d, pos->z);
+		ai->aiMoveToPosition(&dest, CMD_FROM_AI);
+		logf("showcase: walking %s", d > 0 ? "out" : "back");
+	}
+	if (frame == 480 && !general->isEffectivelyDead())
+	{
+		logLine("showcase: killing the General");
+		general->kill();
+	}
+}
+
 void autopilotFrame()
 {
 	if (!s_autopilot.enabled)
@@ -556,6 +599,11 @@ void autopilotFrame()
 	const UnsignedInt frame = TheGameLogic->getFrame();
 	if (!s_autopilot.spawned)
 		return; // the spawn itself happens in Zhbo_LogicStep
+	if (s_autopilot.showcase)
+	{
+		showcaseFrame(frame);
+		return;
+	}
 	// After the field computer hands the General back, take control again once (tests re-entry).
 	Object *general = TheGameLogic->findObjectByID(s_autopilot.general);
 	if (!general || s_autopilot.retakes >= 1)
@@ -696,6 +744,7 @@ void Zhbo_Init()
 		ZhboControlBarAccess::injectConstructButtons();
 
 	s_autopilot.enabled = getenv("ZHBO_AUTOPILOT") != nullptr;
+	s_autopilot.showcase = s_autopilot.enabled && strcmp(getenv("ZHBO_AUTOPILOT"), "showcase") == 0;
 
 	s_lastTick = zhbo_platform::now();
 	s_ready = TRUE;
@@ -707,8 +756,10 @@ void Zhbo_Reset()
 		return;
 	releaseClientState();
 	const Bool autopilot = s_autopilot.enabled;
+	const Bool showcase = s_autopilot.showcase;
 	memset(&s_autopilot, 0, sizeof(s_autopilot));
 	s_autopilot.enabled = autopilot;
+	s_autopilot.showcase = showcase;
 	for (std::map<std::string, Weapon *>::iterator it = s_fxWeapons.begin(); it != s_fxWeapons.end(); ++it)
 		deleteInstance(it->second);
 	s_fxWeapons.clear();

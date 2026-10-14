@@ -10,6 +10,7 @@ pub mod iwi;
 pub mod lzo;
 pub mod sab;
 pub mod t6zone;
+pub mod w3d;
 pub mod xanim;
 pub mod xmodel;
 

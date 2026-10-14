@@ -167,6 +167,20 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
 44. A viewmodel's in-gun magazine is a separate attachment model (`t6_attach_mag_an94_view`, root
     bone `tag_clip`) hung on the gun's `j_gun`; `tag_clip1` is the spare used by reloads, which the
     idle animation parks out of view below the camera.
+45. W3D (from the engine source): skin vertices are stored relative to their bone's bind transform
+    (drawn at `bone * vertex`), one bone per vertex; pivots are `parent * base * T(t) * R(q)`, so
+    animation channels are deltas from the base pose; texture V is stored flipped; names are 15
+    characters. Animation `SKL.ANIM` loads from `Art/W3D/ANIM.w3d`.
+46. BO2 animation translations are offsets added to the bone's local offset; rotations replace it
+    (`pb_death_faceplant` keys `j_mainroot` z from -5.8" to -32.3"). Treating translations as
+    absolute sank the General to the hips. Viewhands have zero local offsets, so there both
+    readings agree.
+47. The General's BO2 art is generated into `ConquerOps_BO2.big` with a same-path
+    `ZZZ_ZHBO_General.ini`; mod archives load in name order with overwrite, so it replaces
+    `ConquerOps.big`'s Burton fallback. Bump `hud::VERSION` whenever converter output changes,
+    or launchers keep the old archive.
+48. `ZHBO_AUTOPILOT=showcase` (with `ZHBO_SHOWCASE_OBJECT/_ZOOM/_PITCH/_ANGLE`) films a General close
+    up: idle, a walk out and back, death. `scripts/autotest-mac.sh --showcase [object]`.
 
 ## Verification log
 
@@ -208,6 +222,10 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
   passes 7/7, and `--input` passes (real W reaches the game, the General moves, the mouse turns the view).
   In this save the General dies at frame ~496 before re-entry, so the "re-entered" check only
   proves the line is logged.
+* **BO2 Generals in game (2026-10-14)**: the three Generals are BO2 MP soldiers converted at launch
+  from the player's install (USA SEAL Team 6, China PLA, GLA PMC; 18-23 meshes each with the
+  AN-94, 30 textures, one shared hierarchy, idle/run/aim/2 deaths from `pb_*`). Showcase captures
+  show them standing, running and dying correctly; the autopilot test still passes 7/7.
 
 ## Next steps
 

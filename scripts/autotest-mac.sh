@@ -3,6 +3,8 @@
 #
 #   scripts/autotest-mac.sh            autopilot test (ZHBO_AUTOPILOT=1, scripted inside the mod)
 #   scripts/autotest-mac.sh --input    real-input test (ZHBO_AUTOPILOT=manual; holds W, moves the mouse)
+#   scripts/autotest-mac.sh --showcase [object]
+#                                      close-up captures of a General (idle, walk, death), no checks
 #
 # Both load a saved skirmish instead of clicking through the menus. Make the save once: start
 #   conquerops -win -xres 1280 -yres 720 -quickstart -saveatframe 90 -saveto zhbo-autotest.sav
@@ -17,6 +19,7 @@ set -euo pipefail
 
 mode=autopilot
 [[ "${1:-}" == "--input" ]] && mode=input
+[[ "${1:-}" == "--showcase" ]] && mode=showcase
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="$HOME/Library/Application Support/ConquerOps/dist"
@@ -54,6 +57,18 @@ finish() {
 trap finish EXIT
 
 export GGC_BGFX_SCREENSHOT_AFTER=60 GGC_BGFX_SCREENSHOT_INTERVAL=150 GGC_BGFX_SCREENSHOT_PATH="$out/shot.bmp"
+if [[ $mode == showcase ]]; then
+    export ZHBO_AUTOPILOT=showcase GGC_AUTO_EXIT_SECONDS=30 GGC_BGFX_SCREENSHOT_INTERVAL=45
+    [[ -n "${2:-}" ]] && export ZHBO_SHOWCASE_OBJECT="$2"
+    "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
+    wait_for_log "showcase General" 90 || { echo "the showcase never started; see $log" >&2; exit 1; }
+    for _ in $(seq 45); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
+    finish
+    trap - EXIT
+    grep -E "showcase" "$out/ConquerOps.log"
+    echo "captures: $out"
+    exit 0
+fi
 if [[ $mode == autopilot ]]; then
     # Autopilot timeline: enters first person about 3 s in, field computer about 12 s after that.
     export ZHBO_AUTOPILOT=1 GGC_AUTO_EXIT_SECONDS=45

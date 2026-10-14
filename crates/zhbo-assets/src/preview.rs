@@ -43,35 +43,7 @@ pub fn render(model: &Model, textures: &Textures, out: &Path) -> std::io::Result
     render_meshes(&meshes, out)
 }
 
-// --- rigid transforms: (rotation quaternion xyzw, translation) ---
-
-type Xf = ([f32; 4], [f32; 3]);
-
-fn qmul(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
-    [
-        a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
-        a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
-        a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
-        a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
-    ]
-}
-fn qrot(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
-    let p = qmul(qmul(q, [v[0], v[1], v[2], 0.0]), [-q[0], -q[1], -q[2], q[3]]);
-    [p[0], p[1], p[2]]
-}
-fn compose(parent: Xf, local: Xf) -> Xf {
-    let t = qrot(parent.0, local.1);
-    (qmul(parent.0, local.0), [parent.1[0] + t[0], parent.1[1] + t[1], parent.1[2] + t[2]])
-}
-fn inverse(x: Xf) -> Xf {
-    let q = [-x.0[0], -x.0[1], -x.0[2], x.0[3]];
-    let t = qrot(q, x.1);
-    (q, [-t[0], -t[1], -t[2]])
-}
-fn apply(x: Xf, v: [f32; 3]) -> [f32; 3] {
-    let r = qrot(x.0, v);
-    [r[0] + x.1[0], r[1] + x.1[1], r[2] + x.1[2]]
-}
+use zhbo_assets::xf::{apply, compose, inverse, Xf};
 
 /// Skin `models` with `anim` at `frame`. Each model may hang its root bone from a named bone of
 /// an earlier model (a gun's `j_gun` on the arms' `tag_weapon`).
@@ -86,7 +58,11 @@ pub fn pose(models: &[(&Model, &Textures, Option<&str>)], anim: &Anim, frame: f3
             let rot = track.and_then(|t| t.rotation_at(frame));
             let pos = track.and_then(|t| t.translation_at(frame));
             let xf = match b.parent {
-                Some(p) => compose(world[p], (rot.unwrap_or(b.local_rotation), pos.unwrap_or(b.local_position))),
+                // Animated translations are offsets from the bone's local offset; rotations replace.
+                Some(p) => compose(
+                    world[p],
+                    (rot.unwrap_or(b.local_rotation), pos.map_or(b.local_position, |t| [0, 1, 2].map(|k| b.local_position[k] + t[k]))),
+                ),
                 None => match attach_xf {
                     // An attached root follows its tag, plus whatever the animation does to it.
                     Some(tag) => compose(tag, (rot.unwrap_or([0.0, 0.0, 0.0, 1.0]), pos.unwrap_or([0.0; 3]))),

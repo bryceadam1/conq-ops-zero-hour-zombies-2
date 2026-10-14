@@ -7,3 +7,6 @@
 pub mod hud;
 pub mod images;
 pub mod sounds;
+pub mod xf;
+pub mod character;
+pub mod generals;

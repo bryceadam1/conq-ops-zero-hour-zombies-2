@@ -179,7 +179,7 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             if args.iter().any(|a| a == "--bones") {
                 for (i, b) in model.bones.iter().enumerate() {
-                    println!("  bone {i:>3} {:<24} parent {:>4} pos {:>7.2?} rot {:>6.3?}", b.name, b.parent.map_or(-1, |p| p as i64), b.position, b.rotation);
+                    println!("  bone {i:>3} {:<24} parent {:>4} pos {:>7.2?} rot {:>6.3?} local {:>7.2?}", b.name, b.parent.map_or(-1, |p| p as i64), b.position, b.rotation, b.local_position);
                 }
                 for (i, s) in model.surfaces.iter().enumerate().take(model.lods[0].surface_count) {
                     let mut bones: Vec<u16> = s.vertices.iter().flat_map(|v| v.weights.iter().map(|w| w.0)).collect();
@@ -260,6 +260,18 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             Ok(())
         }
+        "assets" => {
+            // assets <ff> [type]: names of every asset (of a type, e.g. xanim) in a zone.
+            let zone = load_full_zone(args.get(1).ok_or("assets <ff> [type]")?)?;
+            let want = args.get(2).map(String::as_str);
+            for a in &zone.assets {
+                let kind = fastfile::asset_type_name(a.kind);
+                if want.is_none_or(|w| w == kind) {
+                    println!("{kind:<14} {}", zone.asset_name(a).unwrap_or_default());
+                }
+            }
+            Ok(())
+        }
         "anim" => {
             // anim <ff> <name>: tracks per bone.
             let zone = load_full_zone(args.get(1).ok_or("anim <ff> <name>")?)?;
@@ -267,7 +279,11 @@ fn run(args: &[String]) -> Result<(), String> {
             println!("{}: {} frames at {} fps, loop {}, {} bones", anim.name, anim.num_frames, anim.frame_rate, anim.looping, anim.bones.len());
             for b in &anim.bones {
                 let r = b.rotation.as_ref().map_or("-".to_string(), |t| format!("{} keys, first {:.3?}", t.len(), t[0].1));
-                let t = b.translation.as_ref().map_or("-".to_string(), |t| format!("{} keys, first {:.2?}", t.len(), t[0].1));
+                let t = b.translation.as_ref().map_or("-".to_string(), |t| {
+                    let lo = (0..3).map(|k| t.iter().map(|x| x.1[k]).fold(f32::MAX, f32::min)).collect::<Vec<_>>();
+                    let hi = (0..3).map(|k| t.iter().map(|x| x.1[k]).fold(f32::MIN, f32::max)).collect::<Vec<_>>();
+                    format!("{} keys, first {:.2?}, range {:.2?}..{:.2?}", t.len(), t[0].1, lo, hi)
+                });
                 println!("  {:<24} rot {r:<44} pos {t}", b.name);
             }
             for n in &anim.notifies {
