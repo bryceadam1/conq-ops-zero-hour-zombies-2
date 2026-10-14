@@ -1,8 +1,12 @@
 //! Black Ops II multiplayer-style HUD, drawn after Zero Hour's in-game UI.
 //!
-//! Layout follows BO2: minimap top-left, score/funds bottom-left, weapon name and ammo in BO2's
-//! slanted numerals bottom-right, a four-line crosshair that opens with spread, four-stroke hit
-//! markers, a "+100" kill popup, and blood at the screen edges when hurt. There is no health bar.
+//! Layout follows BO2's multiplayer HUD: the minimap top-left with the compass strip under it; the
+//! team panel bottom-left (emblem and stacked numbers: here, funds), with the active scorestreak's
+//! name above it; bottom-right, the scorestreak column (the field computer is the ready streak),
+//! the weapon name in a slanted box with its fire mode, and the ammo in BO2's slanted numerals. In
+//! the middle, a four-line crosshair that opens with spread, four-stroke hit markers, a "+100"
+//! kill popup, and blood at the screen edges when hurt. There is no health bar. While the tablet is
+//! up the HUD stays, as in BO2, without the crosshair.
 //!
 //! BO2 art comes from `ConquerOps_BO2.big`, which the launcher builds from the player's own install
 //! (`zhbo_assets::hud::SPRITES`). Every sprite has a drawn fallback, so the HUD works without it.
@@ -42,6 +46,13 @@ const RED: u32 = 0xF0E8_3A2E;
 const AMBER: u32 = 0xF0F2_B233;
 const SCORE_YELLOW: u32 = 0xFFF5_D53A;
 const FRIEND: u32 = 0xF04F_C3F7;
+/// BO2's player arrow and ready-streak gold.
+const GOLD: u32 = 0xFFF2_C230;
+/// Panel fills and outlines.
+const PANEL: u32 = 0x9010_1214;
+const OUTLINE: u32 = 0xB0C8_CCD0;
+/// Horizontal lean of BO2's slanted boxes, as a share of their height.
+const SLANT: f32 = 0.35;
 const ENEMY: u32 = 0xF0E8_3A2E;
 
 /// Minimap radius in world units.
@@ -60,17 +71,19 @@ pub fn draw(host: &dyn ClientHost, client: &Client, player: Option<&PlayerSim>, 
 
     draw_damage(host, w, h, client.hud.damage_flash, p);
 
-    // Using the field computer: the tablet viewmodel is the whole show (zhbo_core::viewmodel).
-    if let Mode::FieldComputer { .. } = p.mode {
-        return;
+    // Using the field computer, the tablet is up (zhbo_core::viewmodel): no crosshair, and its
+    // name shows bottom-left like a BO2 scorestreak in use.
+    let tablet_up = matches!(p.mode, Mode::FieldComputer { .. });
+    if !tablet_up {
+        draw_crosshair(host, w, h, s, client, p);
+        draw_hitmarker(host, w, h, s, client);
+        draw_score_popup(host, w, h, s, client);
     }
-
-    draw_crosshair(host, w, h, s, client, p);
-    draw_hitmarker(host, w, h, s, client);
-    draw_score_popup(host, w, h, s, client);
-    draw_minimap(host, s, client.yaw, p);
-    draw_funds(host, h, s, local_player);
-    draw_ammo(host, w, h, s, p);
+    let map_bottom = draw_minimap(host, s, client.yaw, p);
+    draw_compass(host, s, client.yaw, map_bottom);
+    draw_team_panel(host, h, s, local_player, tablet_up);
+    draw_streaks(host, w, h, s, tablet_up);
+    draw_ammo(host, w, h, s, p, !tablet_up);
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -171,22 +184,15 @@ fn draw_score_popup(host: &dyn ClientHost, w: f32, h: f32, s: f32, client: &Clie
 // ------------------------------------------------------------------------------------------------
 
 /// Rotating minimap: you at the centre facing up, friendlies blue, enemies red (your army acts as
-/// a permanent UAV), structures as squares.
-fn draw_minimap(host: &dyn ClientHost, s: f32, yaw: f32, p: &PlayerSim) {
-    let size = 176.0 * s;
-    // Below Zero Hour's message line (EVA notices print at the top left).
-    let (x0, y0) = (22.0 * s, 52.0 * s);
+/// a permanent UAV), structures as squares. Returns its bottom edge.
+fn draw_minimap(host: &dyn ClientHost, s: f32, yaw: f32, p: &PlayerSim) -> f32 {
+    let size = 150.0 * s;
+    // BO2 keeps it tight in the corner; just below Zero Hour's message line (EVA notices).
+    let (x0, y0) = (14.0 * s, 30.0 * s);
     let (cx, cy) = (x0 + size * 0.5, y0 + size * 0.5);
-    host.fill_rect(x0, y0, size, size, 0x9010_1418);
-    // Hairline frame with BO2's slightly brighter corners.
-    for (ax, ay, bx, by) in [(x0, y0, x0 + size, y0), (x0, y0 + size, x0 + size, y0 + size), (x0, y0, x0, y0 + size), (x0 + size, y0, x0 + size, y0 + size)] {
-        host.line(ax, ay, bx, by, 1.0, 0x50FF_FFFF);
-    }
-    let corner = 10.0 * s;
-    for (x, y, dx, dy) in [(x0, y0, 1.0, 1.0), (x0 + size, y0, -1.0, 1.0), (x0, y0 + size, 1.0, -1.0), (x0 + size, y0 + size, -1.0, -1.0)] {
-        host.line(x, y, x + dx * corner, y, 2.0 * s, DIM);
-        host.line(x, y, x, y + dy * corner, 2.0 * s, DIM);
-    }
+    host.fill_rect(x0, y0, size, size, 0xB02A_2E33);
+    // BO2's thin light frame.
+    outline_rect(host, x0, y0, size, size, 1.5 * s, OUTLINE);
 
     let mut objs: Vec<ObjInfo> = Vec::new();
     host.query(p.body.pos, MINIMAP_RANGE * 1.42, p.general, &mut objs);
@@ -215,55 +221,172 @@ fn draw_minimap(host: &dyn ClientHost, s: f32, yaw: f32, p: &PlayerSim) {
             }
         }
     }
-    // You: a white chevron pointing up.
+    // You: BO2's gold outlined triangle pointing up.
     let a = 7.0 * s;
-    host.line(cx, cy - a, cx - a * 0.7, cy + a * 0.7, 2.0 * s, WHITE);
-    host.line(cx, cy - a, cx + a * 0.7, cy + a * 0.7, 2.0 * s, WHITE);
-    // North marker on the rim.
-    let (nx, ny) = to_screen(p.body.pos + Vec3::new(0.0, MINIMAP_RANGE * 0.88, 0.0));
-    if inside(nx, ny, 6.0 * s) {
-        host.text(nx, ny - 7.0 * s, "N", DIM, (11.0 * s) as i32, 1);
+    let (tip, l, r) = ((cx, cy - a), (cx - a * 0.8, cy + a * 0.7), (cx + a * 0.8, cy + a * 0.7));
+    for ((ax, ay), (bx, by)) in [(tip, l), (l, r), (r, tip)] {
+        host.line(ax, ay, bx, by, 2.0 * s, GOLD);
+    }
+    y0 + size
+}
+
+/// BO2's compass strip under the minimap: ticks every 15 degrees, letters at the cardinal and
+/// intercardinal points, the view heading in the middle.
+fn draw_compass(host: &dyn ClientHost, s: f32, yaw: f32, top: f32) {
+    let (x0, width, height) = (14.0 * s, 150.0 * s, 18.0 * s);
+    let y0 = top + 2.0 * s;
+    host.fill_rect(x0, y0, width, height, 0xA018_1A1C);
+    let cx = x0 + width * 0.5;
+    // Heading in compass degrees: yaw 0 is east (+x), north is +y.
+    let heading = (90.0 - yaw.to_degrees()).rem_euclid(360.0);
+    let span = 100.0; // degrees across the strip
+    let px_per_deg = width / span;
+    let first = ((heading - span * 0.5) / 15.0).ceil() as i32;
+    let last = ((heading + span * 0.5) / 15.0).floor() as i32;
+    for i in first..=last {
+        let deg = i as f32 * 15.0;
+        let x = cx + (deg - heading) * px_per_deg;
+        let name = match (deg.rem_euclid(360.0) as i32 + 360) % 360 {
+            0 => "N",
+            45 => "NE",
+            90 => "E",
+            135 => "SE",
+            180 => "S",
+            225 => "SW",
+            270 => "W",
+            315 => "NW",
+            _ => "",
+        };
+        if name.is_empty() {
+            host.line(x, y0 + height * 0.65, x, y0 + height - 2.0 * s, 1.0, DIM);
+        } else {
+            host.text(x, y0 + 2.0 * s, name, WHITE, (11.0 * s) as i32, 1);
+        }
+    }
+    // The heading mark.
+    host.line(cx, y0 + height - 4.0 * s, cx, y0 + height, 2.0 * s, GOLD);
+}
+
+// ------------------------------------------------------------------------------------------------
+// BO2 shapes
+// ------------------------------------------------------------------------------------------------
+
+fn outline_rect(host: &dyn ClientHost, x: f32, y: f32, w: f32, h: f32, t: f32, argb: u32) {
+    host.fill_rect(x, y, w, t, argb);
+    host.fill_rect(x, y + h - t, w, t, argb);
+    host.fill_rect(x, y, t, h, argb);
+    host.fill_rect(x + w - t, y, t, h, argb);
+}
+
+/// BO2's slanted box: a parallelogram leaning right, `x` its bottom-left corner's left edge.
+fn slant_box(host: &dyn ClientHost, x: f32, y: f32, w: f32, h: f32, fill: u32, edge: Option<u32>) {
+    let lean = h * SLANT;
+    let rows = h.ceil().max(1.0) as i32;
+    for i in 0..rows {
+        let f = i as f32 / rows as f32;
+        host.fill_rect(x + lean * (1.0 - f), y + i as f32, w, 1.0, fill);
+    }
+    if let Some(c) = edge {
+        let (tl, tr, bl, br) = ((x + lean, y), (x + lean + w, y), (x, y + h), (x + w, y + h));
+        for ((ax, ay), (bx, by)) in [(tl, tr), (bl, br), (tl, bl), (tr, br)] {
+            host.line(ax, ay, bx, by, 1.5, c);
+        }
     }
 }
 
-fn draw_funds(host: &dyn ClientHost, h: f32, s: f32, local_player: i32) {
-    let (x, y) = (22.0 * s, h - 64.0 * s);
-    host.fill_rect(x, y, 176.0 * s, 40.0 * s, 0x7010_1418);
-    host.fill_rect(x, y, 3.0 * s, 40.0 * s, FRIEND);
-    host.text(x + 12.0 * s, y + 3.0 * s, "FUNDS", DIM, (9.0 * s) as i32, 0);
+/// BO2's team panel, bottom-left: an emblem and the team's numbers stacked on a slanted plate.
+/// Conquer Ops shows the player's funds there; above it, BO2 names the scorestreak in use.
+fn draw_team_panel(host: &dyn ClientHost, h: f32, s: f32, local_player: i32, tablet_up: bool) {
+    let (x, bottom) = (18.0 * s, h - 14.0 * s);
+    let (pw, ph) = (170.0 * s, 64.0 * s);
+    let top = bottom - ph;
+    slant_box(host, x, top, pw, ph, PANEL, None);
+    // Emblem: BO2-style wings around a chevron.
+    let (ex, ey, e) = (x + 40.0 * s, top + ph * 0.52, 20.0 * s);
+    let emblem = 0xE0D8_E4F0;
+    host.line(ex - e * 0.45, ey - e * 0.3, ex, ey + e * 0.25, 3.0 * s, emblem);
+    host.line(ex + e * 0.45, ey - e * 0.3, ex, ey + e * 0.25, 3.0 * s, emblem);
+    for k in 0..3 {
+        let dy = k as f32 * 5.0 * s;
+        host.line(ex - e * 0.55, ey - e * 0.35 + dy, ex - e * 1.35, ey - e * 0.7 + dy, 2.0 * s, emblem);
+        host.line(ex + e * 0.55, ey - e * 0.35 + dy, ex + e * 1.35, ey - e * 0.7 + dy, 2.0 * s, emblem);
+    }
+    // Funds in BO2's numerals, with a small label under them.
     let cash = host.cash(local_player).max(0) as u32;
-    host.text(x + 12.0 * s, y + 14.0 * s, &format!("$ {cash}"), WHITE, (17.0 * s) as i32, 0);
+    let right = x + pw - 6.0 * s;
+    let height = 30.0 * s;
+    let left = draw_number(host, cash, right, top + 8.0 * s, height, WHITE);
+    host.text(left - 9.0 * s, top + 8.0 * s + height * 0.22, "$", WHITE, (16.0 * s) as i32, 2);
+    host.line(x + 74.0 * s, top + 8.0 * s + height + 3.0 * s, right, top + 8.0 * s + height + 3.0 * s, 1.0, DIM);
+    host.text(right, top + 8.0 * s + height + 6.0 * s, "FUNDS", DIM, (10.0 * s) as i32, 2);
+
+    // The scorestreak in use, BO2's big bold name with its status under it.
+    if tablet_up {
+        host.text(x, top - 62.0 * s, "FIELD COMPUTER", WHITE, (30.0 * s) as i32, 0);
+        host.text(x + 2.0 * s, top - 22.0 * s, "Establishing tactical view", WHITE, (12.0 * s) as i32, 0);
+    }
+}
+
+// ------------------------------------------------------------------------------------------------
+// Scorestreaks (bottom right, above the weapon)
+// ------------------------------------------------------------------------------------------------
+
+/// BO2's scorestreak column. Conquer Ops' one streak is the field computer, always ready (gold);
+/// its name sits beside it like BO2's selected streak, with the key.
+fn draw_streaks(host: &dyn ClientHost, w: f32, h: f32, s: f32, active: bool) {
+    let (bw, bh) = (44.0 * s, 32.0 * s);
+    let x = w - 18.0 * s - bw;
+    let y = h - 196.0 * s;
+    slant_box(host, x, y, bw, bh, if active { 0xE0C8_9A2A } else { 0xB0A8_8228 }, Some(GOLD));
+    // The tablet glyph.
+    let (gx, gy, gw, gh) = (x + bw * 0.30, y + bh * 0.22, bw * 0.5, bh * 0.56);
+    outline_rect(host, gx, gy, gw, gh, 2.0 * s, 0xF020_1A10);
+    host.fill_rect(gx + 4.0 * s, gy + 4.0 * s, gw - 8.0 * s, gh - 8.0 * s, 0x9020_1A10);
+    // Thin rule to the left, as BO2 draws beside the column.
+    host.fill_rect(x - 12.0 * s, y - 4.0 * s, 2.0 * s, bh + 34.0 * s, 0x90FF_FFFF);
+    host.text(x - 18.0 * s, y + bh + 6.0 * s, "FIELD COMPUTER  [F]", WHITE, (12.0 * s) as i32, 2);
 }
 
 // ------------------------------------------------------------------------------------------------
 // Ammo (bottom right)
 // ------------------------------------------------------------------------------------------------
 
-fn draw_ammo(host: &dyn ClientHost, w: f32, h: f32, s: f32, p: &PlayerSim) {
+fn draw_ammo(host: &dyn ClientHost, w: f32, h: f32, s: f32, p: &PlayerSim, prompts: bool) {
     let wpn = p.arsenal.current();
-    let right = w - 34.0 * s;
-    let base = h - 34.0 * s;
-    let big = 58.0 * s;
-    let small = 28.0 * s;
+    let right = w - 26.0 * s;
+    let base = h - 26.0 * s;
+    // BO2 draws the magazine and the reserve nearly the same size.
+    let big = 40.0 * s;
+    let small = 34.0 * s;
 
     let low = (wpn.ammo as f32) < wpn.def.mag_size as f32 * 0.3;
     let mag_col = if wpn.ammo == 0 { RED } else if low { AMBER } else { WHITE };
 
-    // Reserve (small numerals) at the far right, magazine (big) to its left, BO2 order.
-    let reserve_left = draw_number(host, wpn.reserve as u32, right, base - small, small, DIM);
+    let reserve_left = draw_number(host, wpn.reserve as u32, right, base - small, small, WHITE);
     let slash_w = small * 0.5;
-    if !host.image(sprites::SLASH, reserve_left - slash_w - 2.0 * s, base - small, slash_w, small, DIM) {
-        host.text(reserve_left - slash_w * 0.5, base - small, "/", DIM, (small * 0.75) as i32, 1);
+    if !host.image(sprites::SLASH, reserve_left - slash_w - 1.0 * s, base - small, slash_w, small, WHITE) {
+        host.text(reserve_left - slash_w * 0.5, base - small, "/", WHITE, (small * 0.75) as i32, 1);
     }
-    let mag_left = draw_number(host, wpn.ammo as u32, reserve_left - slash_w - 6.0 * s, base - big, big, mag_col);
+    let mag_left = draw_number(host, wpn.ammo as u32, reserve_left - slash_w - 3.0 * s, base - big, big, mag_col);
 
-    // Weapon name above, and a hairline under the whole block.
-    host.text(right, base - big - 22.0 * s, wpn.def.display_name, WHITE, (13.0 * s) as i32, 2);
-    host.fill_rect(mag_left, base + 5.0 * s, right - mag_left, 1.5 * s, 0x60FF_FFFF);
+    // The weapon's name in a slanted box, and its fire mode beside it.
+    let mode = match wpn.def.mode {
+        crate::weapons::FireMode::Auto => "FULL-AUTO",
+        crate::weapons::FireMode::Semi => "SEMI-AUTO",
+        crate::weapons::FireMode::Burst(_) => "BURST",
+    };
+    let row = base - big - 26.0 * s;
+    host.text(right, row + 3.0 * s, mode, WHITE, (12.0 * s) as i32, 2);
+    let (nw, nh) = (78.0 * s, 20.0 * s);
+    let nx = right - 92.0 * s - nw;
+    slant_box(host, nx, row, nw, nh, 0x8030_3438, Some(OUTLINE));
+    host.text(nx + nw * 0.5 + nh * SLANT * 0.5, row + 3.0 * s, wpn.def.display_name, WHITE, (13.0 * s) as i32, 1);
+    // BO2's thin upright bar to the left of the ammo.
+    host.fill_rect(mag_left.min(nx) - 10.0 * s, row, 2.0 * s, base - row, 0x90FF_FFFF);
 
-    // Field computer, shown like a ready scorestreak above the weapon name.
-    host.text(right, base - big - 46.0 * s, "[F]  FIELD COMPUTER", 0xC0F2_B233, (11.0 * s) as i32, 2);
-
+    if !prompts {
+        return;
+    }
     let prompt = if wpn.is_reloading() {
         Some(("Reloading...", DIM))
     } else if wpn.ammo == 0 && wpn.reserve == 0 {
@@ -386,7 +509,10 @@ mod tests {
         assert!(images.contains(&sprites::SLASH.to_string()));
         let texts = rec.texts.borrow();
         assert!(texts.iter().any(|t| t == "MTAR"));
-        assert!(texts.iter().any(|t| t == "$ 10000"));
+        assert!(texts.iter().any(|t| t == "FULL-AUTO"), "BO2 fire mode beside the weapon name");
+        assert!(texts.iter().any(|t| t == "FUNDS") && images.contains(&"ZHBO_BO2_Digit1".to_string()), "funds in BO2 numerals");
+        assert!(texts.iter().any(|t| t.starts_with("FIELD COMPUTER")), "the ready scorestreak");
+        assert!(texts.iter().any(|t| t == "NE" || t == "N" || t == "E" || t == "SE" || t == "S" || t == "SW" || t == "W" || t == "NW"), "compass");
         assert!(!texts.iter().any(|t| t == "3" || t == "0"), "no font fallback when art exists");
     }
 

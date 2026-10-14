@@ -277,6 +277,11 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
 * **Scorestreak tablet (2026-10-14)**: F brings up BO2's tablet (pullout, then a moment on its screen)
   before the camera leaves for the overhead view; taking control again puts it away, then the AN-94
   comes up. Captures show the raise, the lit screen and the putaway; 7/7 pass.
+* **BO2 HUD layout (2026-10-14)**: matched to BO2 MP screenshots. Changes: minimap tight top-left with
+  BO2's gold player triangle and a compass strip; bottom-left team panel (emblem, funds in BO2
+  numerals) with the scorestreak name above it while the tablet is up; bottom-right scorestreak
+  column (field computer, gold), the weapon name in a slanted box with its fire mode, and mag/reserve
+  at similar sizes. The HUD stays up while the tablet is up, without the crosshair. 7/7 pass.
 
 ## Next steps
 
