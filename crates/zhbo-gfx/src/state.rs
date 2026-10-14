@@ -317,6 +317,10 @@ pub enum Conversion {
     Bgr5a1ToBgra8,
     /// D3D `A4R4G4B4` (`a << 12 | r << 8 | g << 4 | b`), expanded to BGRA8.
     Bgra4ToBgra8,
+    /// BC1/BC2/BC3 (DXT1/3/5) decoded to RGBA8 on the CPU, for GPUs without BC sampling.
+    Bc1ToRgba8,
+    Bc2ToRgba8,
+    Bc3ToRgba8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -331,9 +335,113 @@ impl FormatPlan {
         match self.conversion {
             Conversion::A8ToRgba8 => 1,
             Conversion::R5g6b5ToBgra8 | Conversion::Bgr5a1ToBgra8 | Conversion::Bgra4ToBgra8 => 2,
+            Conversion::Bc1ToRgba8 | Conversion::Bc2ToRgba8 | Conversion::Bc3ToRgba8 => 0,
             Conversion::None => self.format.block_copy_size(None).filter(|_| self.format.block_dimensions() == (1, 1)).unwrap_or(0),
         }
     }
+}
+
+impl FormatPlan {
+    /// For block-compressed source data: (block dimension, bytes per block).
+    pub fn source_block(&self) -> Option<(u32, u32)> {
+        match self.conversion {
+            Conversion::Bc1ToRgba8 => Some((4, 8)),
+            Conversion::Bc2ToRgba8 | Conversion::Bc3ToRgba8 => Some((4, 16)),
+            Conversion::None if self.format.block_dimensions() != (1, 1) => {
+                Some((self.format.block_dimensions().0, self.format.block_copy_size(None).unwrap_or(16)))
+            }
+            _ => None,
+        }
+    }
+}
+
+/// The plan on a GPU without BC sampling: BC1-3 decode to RGBA8 (the game does not use BC4/5).
+pub fn without_bc(plan: FormatPlan) -> FormatPlan {
+    let decode = |conversion| FormatPlan { format: TextureFormat::Rgba8Unorm, conversion };
+    match plan.format {
+        TextureFormat::Bc1RgbaUnorm => decode(Conversion::Bc1ToRgba8),
+        TextureFormat::Bc2RgbaUnorm => decode(Conversion::Bc2ToRgba8),
+        TextureFormat::Bc3RgbaUnorm => decode(Conversion::Bc3ToRgba8),
+        _ => plan,
+    }
+}
+
+fn rgb565(c: u16) -> [u8; 3] {
+    let (r, g, b) = (c >> 11, (c >> 5) & 0x3F, c & 0x1F);
+    [((r << 3) | (r >> 2)) as u8, ((g << 2) | (g >> 4)) as u8, ((b << 3) | (b >> 2)) as u8]
+}
+
+/// Decode one BC1-style colour block into 16 RGBA texels. `four_colour` forces the 4-colour
+/// palette, as inside BC2/BC3 blocks.
+fn decode_colour_block(b: &[u8], four_colour: bool, out: &mut [[u8; 4]; 16]) {
+    let c0 = u16::from_le_bytes([b[0], b[1]]);
+    let c1 = u16::from_le_bytes([b[2], b[3]]);
+    let (p0, p1) = (rgb565(c0), rgb565(c1));
+    let mix = |wa: u16, wb: u16| -> [u8; 4] {
+        let m = |a: u8, b: u8| ((a as u16 * wa + b as u16 * wb) / (wa + wb)) as u8;
+        [m(p0[0], p1[0]), m(p0[1], p1[1]), m(p0[2], p1[2]), 255]
+    };
+    let mut pal = [[p0[0], p0[1], p0[2], 255], [p1[0], p1[1], p1[2], 255], [0; 4], [0; 4]];
+    if four_colour || c0 > c1 {
+        pal[2] = mix(2, 1);
+        pal[3] = mix(1, 2);
+    } else {
+        pal[2] = mix(1, 1);
+        pal[3] = [0, 0, 0, 0];
+    }
+    let bits = u32::from_le_bytes([b[4], b[5], b[6], b[7]]);
+    for (i, t) in out.iter_mut().enumerate() {
+        *t = pal[((bits >> (2 * i)) & 3) as usize];
+    }
+}
+
+/// Decode `bw` x `bh` blocks of BC1/2/3 data (block rows `pitch` bytes apart) into RGBA8 rows of
+/// `bw * 4` texels.
+pub fn decode_bc(conversion: Conversion, data: &[u8], pitch: u32, bw: u32, bh: u32) -> Vec<u8> {
+    let block_bytes = if conversion == Conversion::Bc1ToRgba8 { 8 } else { 16 };
+    let row_texels = (bw * 4) as usize;
+    let mut out = vec![0u8; row_texels * 4 * (bh * 4) as usize];
+    let mut texels = [[0u8; 4]; 16];
+    for by in 0..bh as usize {
+        for bx in 0..bw as usize {
+            let at = by * pitch as usize + bx * block_bytes;
+            let Some(b) = data.get(at..at + block_bytes) else { continue };
+            match conversion {
+                Conversion::Bc1ToRgba8 => decode_colour_block(b, false, &mut texels),
+                Conversion::Bc2ToRgba8 => {
+                    decode_colour_block(&b[8..], true, &mut texels);
+                    for (i, t) in texels.iter_mut().enumerate() {
+                        t[3] = ((b[i / 2] >> (4 * (i % 2))) & 0xF) * 17;
+                    }
+                }
+                _ => {
+                    decode_colour_block(&b[8..], true, &mut texels);
+                    let (a0, a1) = (b[0] as u16, b[1] as u16);
+                    let mut alpha = [a0, a1, 0, 0, 0, 0, 0, 0];
+                    if a0 > a1 {
+                        for i in 1..7u16 {
+                            alpha[i as usize + 1] = ((7 - i) * a0 + i * a1) / 7;
+                        }
+                    } else {
+                        for i in 1..5u16 {
+                            alpha[i as usize + 1] = ((5 - i) * a0 + i * a1) / 5;
+                        }
+                        alpha[7] = 255;
+                    }
+                    let bits = u64::from_le_bytes([b[2], b[3], b[4], b[5], b[6], b[7], 0, 0]);
+                    for (i, t) in texels.iter_mut().enumerate() {
+                        t[3] = alpha[((bits >> (3 * i)) & 7) as usize] as u8;
+                    }
+                }
+            }
+            for (i, t) in texels.iter().enumerate() {
+                let (x, y) = (bx * 4 + i % 4, by * 4 + i / 4);
+                let o = (y * row_texels + x) * 4;
+                out[o..o + 4].copy_from_slice(t);
+            }
+        }
+    }
+    out
 }
 
 /// The wgpu format and upload conversion for a bgfx format, or `None` if unsupported.
@@ -374,7 +482,7 @@ pub fn convert_texels(conversion: Conversion, src: &[u8]) -> std::borrow::Cow<'_
     let expand4 = |v: u16| (v * 17) as u8;
     let words = || src.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]]));
     match conversion {
-        Conversion::None => Cow::Borrowed(src),
+        Conversion::None | Conversion::Bc1ToRgba8 | Conversion::Bc2ToRgba8 | Conversion::Bc3ToRgba8 => Cow::Borrowed(src),
         Conversion::A8ToRgba8 => Cow::Owned(src.iter().flat_map(|&a| [0, 0, 0, a]).collect()),
         Conversion::R5g6b5ToBgra8 => Cow::Owned(
             words().flat_map(|w| [expand5(w & 0x1F), expand6((w >> 5) & 0x3F), expand5(w >> 11), 0xFF]).collect(),
@@ -408,7 +516,7 @@ pub fn vertex_format(attrib_type: u8, num: u8, normalized: bool, as_int: bool) -
     use wgpu::VertexFormat as V;
     Some(match (attrib_type, num, normalized, as_int) {
         // Uint8 is only addressable in groups of 2 or 4; bgfx's 3-component colours are padded.
-        (1, 4, true, _) => V::Unorm8x4,
+        (1, 3 | 4, true, _) => V::Unorm8x4,
         // Unnormalised integers read as floats have no wgpu format; they are unsupported.
         (1, 4, false, true) => V::Uint8x4,
         (1, 2, true, _) => V::Unorm8x2,
@@ -555,6 +663,22 @@ mod tests {
         let half_red4444 = (0x8F00u16).to_le_bytes();
         assert_eq!(&*convert_texels(Conversion::Bgra4ToBgra8, &half_red4444), &[0, 0, 255, 0x88]);
         assert_eq!(&*convert_texels(Conversion::A8ToRgba8, &[7]), &[0, 0, 0, 7]);
+    }
+
+    #[test]
+    fn bc_decoding() {
+        // BC1: solid green, then 3-colour mode (c0 <= c1) where index 3 is transparent.
+        let green = decode_bc(Conversion::Bc1ToRgba8, &[0xE0, 0x07, 0xE0, 0x07, 0, 0, 0, 0], 8, 1, 1);
+        assert_eq!(&green[..4], &[0, 255, 0, 255]);
+        let clear = decode_bc(Conversion::Bc1ToRgba8, &[0, 0, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF], 8, 1, 1);
+        assert_eq!(clear[3], 0);
+        // BC3: alpha endpoints 255 and 0, index 1 (= a1 = 0) everywhere, over red.
+        let b = [255u8, 0, 0x49, 0x92, 0x24, 0x49, 0x92, 0x24, 0x00, 0xF8, 0x00, 0xF8, 0, 0, 0, 0];
+        assert_eq!(&decode_bc(Conversion::Bc3ToRgba8, &b, 16, 1, 1)[..4], &[255, 0, 0, 0]);
+        // BC2: explicit 4-bit alpha 8 on texel 0.
+        let b = [0x08u8, 0, 0, 0, 0, 0, 0, 0, 0x00, 0xF8, 0x00, 0xF8, 0, 0, 0, 0];
+        assert_eq!(&decode_bc(Conversion::Bc2ToRgba8, &b, 16, 1, 1)[..4], &[255, 0, 0, 136]);
+        assert_eq!(without_bc(map_format(bgfx_format::BC1).unwrap()).source_block(), Some((4, 8)));
     }
 
     #[test]

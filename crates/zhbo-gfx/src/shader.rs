@@ -6,7 +6,9 @@
 //! `uniform vec4/mat4` declarations, `mul()`, `vecN_splat()`, `gl_FragColor`, and predefined view
 //! and model uniforms. This module rewrites that dialect into Vulkan-style GLSL 450:
 //!
-//! * every loose uniform (predefined or user) goes into one std140 block, `@group(0) @binding(0)`;
+//! * every loose uniform (predefined or user) goes into one std140 block per stage, at
+//!   `@group(0) @binding(0)` for the vertex stage and `@binding(1)` for the fragment stage (bgfx
+//!   gives each stage its own constant buffer, so the two layouts differ);
 //! * `SAMPLER2D(name, slot)` becomes a texture at `@group(1) @binding(slot * 2)` and a sampler at
 //!   `@binding(slot * 2 + 1)`, and the sampling calls are rewritten to combine them;
 //! * vertex attributes get locations from their semantic, varyings from their `varying.def.sc` order.
@@ -407,7 +409,7 @@ pub fn translate(src: &str, varyings: &[VaryingDef], stage: Stage, defines: &[(&
     glsl.push_str(PRELUDE_MACROS);
 
     if !uniforms.is_empty() {
-        glsl.push_str("layout(set = 0, binding = 0, std140) uniform ZhboUniforms {\n");
+        let _ = writeln!(glsl, "layout(set = 0, binding = {}, std140) uniform ZhboUniforms {{", uniform_binding(stage));
         for u in &uniforms {
             let ty = match u.kind {
                 UniformKind::Vec4 => "vec4",
@@ -458,6 +460,14 @@ pub fn translate(src: &str, varyings: &[VaryingDef], stage: Stage, defines: &[(&
 
     samplers.sort_by_key(|s| s.slot);
     Ok(Translated { stage, glsl, uniforms, uniform_block_size: block_size, samplers, attributes })
+}
+
+/// The `@group(0)` binding of a stage's uniform block.
+pub fn uniform_binding(stage: Stage) -> u32 {
+    match stage {
+        Stage::Vertex => 0,
+        Stage::Fragment => 1,
+    }
 }
 
 /// Compile translated GLSL with naga and validate it.

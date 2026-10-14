@@ -8,3 +8,4 @@ license.workspace = true
 [dependencies]
 naga = { version = "30.0.1", features = ["glsl-in", "wgsl-out"] }
 wgpu = "30.0.1"
+raw-window-handle = "0.6.2"
