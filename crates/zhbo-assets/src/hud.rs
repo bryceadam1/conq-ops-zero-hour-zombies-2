@@ -15,7 +15,7 @@ use zhbo_formats::iwi::Rgba;
 use zhbo_formats::t6zone::Zone;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive.
-pub const VERSION: u32 = 15;
+pub const VERSION: u32 = 16;
 pub const ARCHIVE_NAME: &str = "ConquerOps_BO2.big";
 pub const VERSION_FILE: &str = "Data\\ConquerOps\\bo2_hud_version.txt";
 const TEXTURE: &str = "zhbo_bo2_hud.tga";
@@ -67,6 +67,7 @@ pub const SPRITES: &[Sprite] = &[
     mat("ZHBO_BO2_HitMarker", "damage_feedback", 128),
     // Minimap: your arrow, the dot for everyone else (tinted with their team colour), the compass.
     mat("ZHBO_BO2_PlayerArrow", "compassping_player", 32),
+    mat("ZHBO_BO2_PlayerBracket", "compassping_player_bracket", 128),
     mat("ZHBO_BO2_Dot", "compassping_enemy", 16),
     mat("ZHBO_BO2_Compass", "hud_horizontal_compass_minimap", 512),
     // Bottom-left team panel: frame, its fill, and the emblem plate with its light.

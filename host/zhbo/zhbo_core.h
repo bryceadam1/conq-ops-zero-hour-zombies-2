@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 7u
+#define ZHBO_ABI_VERSION 8u
 
 #ifdef __cplusplus
 extern "C" {
@@ -84,6 +84,9 @@ typedef struct ZhboClientApi
 	int32_t (*cash)(int32_t player);
 	void (*sound)(const char *event, const ZhboVec3 *at); /* at: null for the player's own sounds */
 	void (*clip)(float x, float y, float w, float h); /* clip later images; w <= 0 turns it off */
+	/* Zero Hour's radar in a screen rectangle; 0 if the local player has no radar. you_px gets
+	   where the world point `you` is on it (x, y). */
+	int32_t (*radar)(float x, float y, float w, float h, const ZhboVec3 *you, ZhboVec3 *you_px);
 } ZhboClientApi;
 
 typedef struct ZhboClientIn
@@ -157,5 +160,5 @@ static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.
 static_assert(sizeof(ZhboClientIn) == 316, "ZhboClientIn layout must match client.rs");
 static_assert(sizeof(ZhboClientOut) == 124, "ZhboClientOut layout must match client.rs");
 static_assert(sizeof(ZhboLogicApi) == 11 * sizeof(void *), "ZhboLogicApi layout must match host.rs");
-static_assert(sizeof(ZhboClientApi) == 9 * sizeof(void *), "ZhboClientApi layout must match host.rs");
+static_assert(sizeof(ZhboClientApi) == 10 * sizeof(void *), "ZhboClientApi layout must match host.rs");
 #endif

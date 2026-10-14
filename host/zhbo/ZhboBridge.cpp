@@ -24,6 +24,7 @@
 #include "Common/Player.h"
 #include "Common/PlayerList.h"
 #include "Common/PlayerTemplate.h"
+#include "Common/Radar.h"
 #include "Common/Team.h"
 #include "Common/ThingFactory.h"
 #include "Common/ThingTemplate.h"
@@ -445,6 +446,28 @@ void cbClip(float x, float y, float w, float h)
 	TheDisplay->enableClipping(TRUE);
 }
 
+int32_t cbRadar(float x, float y, float w, float h, const ZhboVec3 *you, ZhboVec3 *youPx)
+{
+	// The same rule as the control bar's radar window (W3DLeftHUDDraw).
+	if (!TheRadar || !rts::localPlayerHasRadar())
+		return 0;
+	// No tactical-view box: in first person it collapses to a stray line (patch 0005).
+	TheRadar->setDrawViewBox(FALSE);
+	TheRadar->draw((Int)x, (Int)y, (Int)w, (Int)h);
+	TheRadar->setDrawViewBox(TRUE);
+	// Where `you` lands: radar cells inside the aspect-preserving square the radar drew in.
+	ICoord2D ul, lr, cell;
+	TheRadar->findDrawPositions((Int)x, (Int)y, (Int)w, (Int)h, &ul, &lr);
+	Coord3D world;
+	world.set(you->x, you->y, you->z);
+	if (youPx && TheRadar->worldToRadar(&world, &cell))
+	{
+		youPx->x = ul.x + (cell.x + 0.5f) * (lr.x - ul.x) / (Real)RADAR_CELL_WIDTH;
+		youPx->y = lr.y - (cell.y + 0.5f) * (lr.y - ul.y) / (Real)RADAR_CELL_HEIGHT;
+	}
+	return 1;
+}
+
 int32_t cbCash(int32_t player)
 {
 	Player *p = ThePlayerList ? ThePlayerList->getNthPlayer(player) : nullptr;
@@ -569,6 +592,9 @@ Object *spawnAt(const char *templateName, Team *team, const Coord3D &pos, Real y
 void autopilotSpawn()
 {
 	Player *local = ThePlayerList->getLocalPlayer();
+	// ZHBO_FORCE_RADAR: give the test player radar, to film the Tab map.
+	if (getenv("ZHBO_FORCE_RADAR") && TheRadar)
+		TheRadar->forceOn(local->getPlayerIndex(), TRUE);
 	Object *cc = nullptr;
 	local->iterateObjects(findCommandCenter, &cc);
 	if (!cc)
@@ -797,7 +823,7 @@ void Zhbo_Init()
 		cbLog, cbGroundHeight, cbIsWalkable, cbExtent, cbObject, cbQuery,
 		cbSetPose, cbSetControlled, cbFireFx, cbDamage, cbHeal,
 	};
-	static const ZhboClientApi clientApi = { cbScreenSize, cbFillRect, cbLine, cbText, cbImage, cbQuery, cbCash, cbSound, cbClip };
+	static const ZhboClientApi clientApi = { cbScreenSize, cbFillRect, cbLine, cbText, cbImage, cbQuery, cbCash, cbSound, cbClip, cbRadar };
 	zhbo_init(&logicApi, &clientApi);
 
 	if (TheControlBar)

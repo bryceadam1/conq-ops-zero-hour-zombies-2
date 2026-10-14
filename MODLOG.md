@@ -231,6 +231,14 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     adjustment, which the scrolling compass uses (ClientApi `clip`, ABI 7; ObjInfo gains the owner's
     colour).
 
+58. Tab (BO2's scoreboard key) holds up Zero Hour's own radar as the whole-map view: ClientApi `radar`
+    (ABI 8) calls `TheRadar->draw` under the control bar's rule (`rts::localPlayerHasRadar`), and
+    returns the General's spot via `worldToRadar` + `findDrawPositions` for BO2's player bracket.
+    The tactical-view box collapses to a stray line in first person, so patch 0005 adds
+    `Radar::setDrawViewBox`. A long red line on it is Zero Hour's "under attack" radar event
+    shrinking onto its spot, not a bug. `ZHBO_FORCE_RADAR=1` gives the autopilot player radar.
+    The SDL key reader maps Tab (0x09).
+
 ## Verification log
 
 * Baseline source build (no mod) runs against Steam data with `-useCwd -win`: intro video plays (screenshot).

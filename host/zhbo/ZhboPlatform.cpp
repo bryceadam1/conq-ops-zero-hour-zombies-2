@@ -38,6 +38,7 @@ namespace zhbo_platform
 		keys[0x10] = (state[SDL_SCANCODE_LSHIFT] || state[SDL_SCANCODE_RSHIFT]) ? 1 : 0;
 		keys[0x11] = (state[SDL_SCANCODE_LCTRL] || state[SDL_SCANCODE_RCTRL]) ? 1 : 0;
 		keys[0x20] = state[SDL_SCANCODE_SPACE] ? 1 : 0;
+		keys[0x09] = state[SDL_SCANCODE_TAB] ? 1 : 0;
 		const SDL_MouseButtonFlags buttons = SDL_GetMouseState(nullptr, nullptr);
 		keys[0x01] = (buttons & SDL_BUTTON_LMASK) ? 1 : 0;
 		keys[0x02] = (buttons & SDL_BUTTON_RMASK) ? 1 : 0;

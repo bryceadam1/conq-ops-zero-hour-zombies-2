@@ -40,6 +40,7 @@ Set `ZHBO_ZH_DIR` / `ZHBO_BO2_DIR` to point at installs the detector does not fi
 | Switch weapon (MTAR ⇄ B23R) | 1 or mouse wheel |
 | Knife | V |
 | Field computer (back to RTS) | F |
+| Whole map (Zero Hour's radar, needs radar) | Tab (hold) |
 | Game menu | Esc |
 
 ## Platforms

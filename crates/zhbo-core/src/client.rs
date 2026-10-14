@@ -16,6 +16,7 @@ pub mod vk {
     pub const RBUTTON: u8 = 0x02;
     pub const SHIFT: u8 = 0x10;
     pub const CONTROL: u8 = 0x11;
+    pub const TAB: u8 = 0x09;
     pub const SPACE: u8 = 0x20;
     pub const KEY_1: u8 = 0x31;
     pub const KEY_2: u8 = 0x32;
@@ -46,6 +47,8 @@ pub struct Bindings {
     pub swap: u8,
     pub melee: u8,
     pub field_computer: u8,
+    /// Held: the whole map (BO2's scoreboard key).
+    pub map: u8,
 }
 
 impl Default for Bindings {
@@ -66,6 +69,7 @@ impl Default for Bindings {
             swap: vk::KEY_1,
             melee: vk::V,
             field_computer: vk::F,
+            map: vk::TAB,
         }
     }
 }
@@ -196,10 +200,13 @@ pub struct HudTimers {
     pub muzzle: f32,
     pub score_popup: f32,
     pub score_points: u32,
+    /// The map key is held: Zero Hour's radar over the view.
+    pub map_open: bool,
 }
 
 /// Scripted input for in-game verification (`ZHBO_AUTOPILOT=1`): walks, turns, aims and fires,
-/// changes stance, jumps, then opens the field computer. Times are seconds in first person.
+/// changes stance, jumps, glances at the map, then opens the field computer. Times are seconds in
+/// first person.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Autopilot {
     pub t: f32,
@@ -231,6 +238,9 @@ impl Autopilot {
         }
         if (10.0..10.1).contains(&t) {
             keys.push(b.jump);
+        }
+        if (10.3..10.8).contains(&t) {
+            keys.push(b.map);
         }
         if (11.0..11.1).contains(&t) {
             keys.push(b.field_computer);
@@ -350,6 +360,7 @@ impl Client {
             None => inp,
         };
         let mut out = ClientOut { hfov: self.last_hfov, viewmodel: viewmodel::NONE, ..Default::default() };
+        self.hud.map_open = false;
         let player = sim.player(inp.local_player).cloned();
 
         // Track logic frames for eye interpolation.
@@ -423,6 +434,7 @@ impl Client {
                     out.hide_rts_ui = 1;
                     out.hide_object = self.general;
                     out.capture_mouse = allowed as i32;
+                    self.hud.map_open = allowed && !in_fc && inp.keys[self.cfg.bindings.map as usize] != 0;
                     let events = std::mem::take(&mut self.vm_events);
                     let pose = self.vm_motion.update(dt, self.yaw, self.pitch, p, events.shot);
                     out.viewmodel_offset = pose.offset;
@@ -659,6 +671,25 @@ mod tests {
         let pos = host.get(1).pos;
         let heading = pos.y.atan2(pos.x);
         assert!((heading - yaw).abs() < 0.05, "walked along view yaw {yaw}, heading {heading}");
+    }
+
+    #[test]
+    fn holding_tab_opens_the_map() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn::default();
+        inp.input_allowed = 1;
+        sim.take_control(&host, 0, 1);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        assert!(!client.hud.map_open);
+        inp.keys[vk::TAB as usize] = 0x80;
+        frame_with(&mut client, &mut sim, &host, &mut inp, 1);
+        assert!(client.hud.map_open);
+        inp.keys[vk::TAB as usize] = 0;
+        frame_with(&mut client, &mut sim, &host, &mut inp, 1);
+        assert!(!client.hud.map_open);
     }
 
     #[test]

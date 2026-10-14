@@ -37,6 +37,7 @@ pub mod sprites {
     pub const RED_DOT: &str = "ZHBO_BO2_RedDot";
     pub const HIT_MARKER: &str = "ZHBO_BO2_HitMarker";
     pub const PLAYER_ARROW: &str = "ZHBO_BO2_PlayerArrow";
+    pub const PLAYER_BRACKET: &str = "ZHBO_BO2_PlayerBracket";
     pub const DOT: &str = "ZHBO_BO2_Dot";
     pub const COMPASS: &str = "ZHBO_BO2_Compass";
     pub const LEFT_LOWER: &str = "ZHBO_BO2_LeftLower";
@@ -51,11 +52,11 @@ pub mod sprites {
     pub const STREAK_BOX_LIT: &str = "ZHBO_BO2_StreakBoxLit";
     pub const STREAK_GLOW: &str = "ZHBO_BO2_StreakGlow";
     pub const STREAK_VSAT: &str = "ZHBO_BO2_StreakVsat";
-    pub const ALL: [&str; 31] = [
+    pub const ALL: [&str; 32] = [
         DIGITS[0], DIGITS[1], DIGITS[2], DIGITS[3], DIGITS[4], DIGITS[5], DIGITS[6], DIGITS[7], DIGITS[8],
         DIGITS[9], SLASH, BLOOD, RED_DOT, HIT_MARKER, PLAYER_ARROW, DOT, COMPASS, LEFT_LOWER, LEFT_LOWER_BACK,
         FACTION_BACKING, FACTION_LIGHT, RIGHT_LOWER, GUN_TITLE[0], GUN_TITLE[1], GUN_TITLE[2], STREAK_BAR,
-        STREAK_BAR_BACK, STREAK_BOX, STREAK_BOX_LIT, STREAK_GLOW, STREAK_VSAT,
+        STREAK_BAR_BACK, STREAK_BOX, STREAK_BOX_LIT, STREAK_GLOW, STREAK_VSAT, PLAYER_BRACKET,
     ];
     /// Not BO2 art: Zero Hour's faction logo for the local player (the bridge resolves it).
     pub const TEAM_LOGO: &str = "ZHBO_TeamLogo";
@@ -93,7 +94,8 @@ pub fn draw(host: &dyn ClientHost, client: &Client, player: Option<&PlayerSim>, 
     // Using the field computer, the tablet is up (zhbo_core::viewmodel): no crosshair, and its
     // name shows bottom-left like a BO2 scorestreak in use.
     let tablet_up = matches!(p.mode, Mode::FieldComputer { .. });
-    if !tablet_up {
+    let map_open = client.hud.map_open;
+    if !tablet_up && !map_open {
         draw_crosshair(host, w, h, s, client, p);
         draw_hitmarker(host, w, h, s, client);
         draw_score_popup(host, w, h, s, client);
@@ -102,7 +104,32 @@ pub fn draw(host: &dyn ClientHost, client: &Client, player: Option<&PlayerSim>, 
     draw_compass(host, s, client.yaw, map_bottom);
     draw_team_panel(host, h, s, local_player, tablet_up);
     draw_streaks(host, w, h, s, tablet_up);
-    draw_ammo(host, w, h, s, p, !tablet_up);
+    draw_ammo(host, w, h, s, p, !tablet_up && !map_open);
+    if map_open {
+        draw_map(host, w, h, s, p);
+    }
+}
+
+/// Held map key (Tab, BO2's scoreboard key): Zero Hour's own radar over the middle of the view,
+/// with the whole map, shroud, team colours and radar events, and BO2's player bracket on you. Zero
+/// Hour's rule applies: no radar, no map.
+fn draw_map(host: &dyn ClientHost, w: f32, h: f32, s: f32, p: &PlayerSim) {
+    let side = (h * 0.74).min(w * 0.8);
+    let (x, y) = ((w - side) * 0.5, (h - side) * 0.5 + 8.0 * s);
+    host.fill_rect(x - 6.0 * s, y - 30.0 * s, side + 12.0 * s, side + 36.0 * s, 0xD010_1214);
+    outline_rect(host, x - 6.0 * s, y - 30.0 * s, side + 12.0 * s, side + 36.0 * s, 1.5 * s, OUTLINE);
+    host.text(x, y - 24.0 * s, "TACTICAL MAP", WHITE, (14.0 * s) as i32, 0);
+    host.text(x + side, y - 22.0 * s, "RELEASE  [TAB]", DIM, (11.0 * s) as i32, 2);
+    match host.radar(x, y, side, side, p.body.pos) {
+        Some((px, py)) => {
+            let (bw, bh) = (30.0 * s, 15.0 * s);
+            host.image(sprites::PLAYER_BRACKET, px - bw * 0.5, py - bh * 0.5, bw, bh, 0xFFF2_C230);
+        }
+        None => {
+            host.text(x + side * 0.5, y + side * 0.45, "NO RADAR", WHITE, (20.0 * s) as i32, 1);
+            host.text(x + side * 0.5, y + side * 0.45 + 28.0 * s, "Your side has no radar to show the map", DIM, (12.0 * s) as i32, 1);
+        }
+    }
 }
 
 // ------------------------------------------------------------------------------------------------
@@ -567,6 +594,17 @@ mod tests {
         }
         assert!(images.contains(&sprites::TEAM_LOGO.to_string()), "Zero Hour's faction logo");
         assert!(!texts.iter().any(|t| t == "3" || t == "0"), "no font fallback when art exists");
+    }
+
+    #[test]
+    fn map_key_shows_the_radar_or_says_there_is_none() {
+        let (sim, mut client) = fps_state();
+        client.hud.map_open = true;
+        let rec = Recorder { has_art: true, ..Default::default() };
+        draw(&rec, &client, sim.player(0), 0);
+        let texts = rec.texts.borrow();
+        assert!(texts.iter().any(|t| t == "TACTICAL MAP"));
+        assert!(texts.iter().any(|t| t == "NO RADAR"), "the fake host has no radar");
     }
 
     #[test]

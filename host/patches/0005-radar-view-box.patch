@@ -1,0 +1,30 @@
+--- a/Core/GameEngine/Include/Common/Radar.h
++++ b/Core/GameEngine/Include/Common/Radar.h
+@@ -200,6 +200,7 @@ public:
+ 	// forcing the radar on/off regardless of player situation
+ 	void forceOn( Int playerIndex, Bool force ) { m_radarForceOn[playerIndex] = force; } ///< force the radar to be on
+ 	Bool isRadarForced( Int playerIndex ) { return m_radarForceOn[playerIndex]; } ///< is radar forced on?
++	void setDrawViewBox( Bool draw ) { m_drawViewBox = draw; } ///< ZHBO: off while the first-person map shows the radar
+ 
+ 	/// refresh the water values for the radar
+ 	virtual void refreshTerrain( TerrainLogic *terrain );
+@@ -258,6 +259,7 @@ protected:
+ 
+ 	Bool m_radarHidden[MAX_PLAYER_COUNT]; ///< true when radar is not visible
+ 	Bool m_radarForceOn[MAX_PLAYER_COUNT]; ///< true when radar is forced to be on
++	Bool m_drawViewBox = TRUE;  ///< ZHBO: draw the tactical view's box on the radar
+ 
+ 	RadarObject *m_objectList;						///< list of objects in the radar
+ 	RadarObject *m_localObjectList;				/** list of objects for the local player, sorted
+--- a/Core/GameEngineDevice/Source/W3DDevice/Common/System/W3DRadar.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/Common/System/W3DRadar.cpp
+@@ -1533,7 +1533,8 @@ void W3DRadar::draw( Int pixelX, Int pixelY, Int width, Int height )
+ 	}
+ 
+ 	// draw the view region on top of the radar reconstructing if necessary
+-	drawViewBox( ul.x, ul.y, scaledWidth, scaledHeight );
++	if( m_drawViewBox )
++		drawViewBox( ul.x, ul.y, scaledWidth, scaledHeight );
+ 
+ }
+ 

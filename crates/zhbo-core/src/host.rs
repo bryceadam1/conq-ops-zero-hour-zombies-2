@@ -90,6 +90,11 @@ pub trait ClientHost {
     fn sound(&self, _event: &str, _at: Option<Vec3>) {}
     /// Clip later 2D images to a screen rectangle; `None` turns clipping off.
     fn clip(&self, _rect: Option<(f32, f32, f32, f32)>) {}
+    /// Draw Zero Hour's own radar (the whole map) in a screen rectangle, if the local player has
+    /// radar. Returns where `you` (a world point) is on it, or `None` when there is no radar.
+    fn radar(&self, _x: f32, _y: f32, _w: f32, _h: f32, _you: Vec3) -> Option<(f32, f32)> {
+        None
+    }
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -124,6 +129,7 @@ pub struct ClientApi {
     pub cash: Option<extern "C" fn(player: i32) -> i32>,
     pub sound: Option<extern "C" fn(event: *const c_char, at: *const Vec3)>,
     pub clip: Option<extern "C" fn(x: f32, y: f32, w: f32, h: f32)>,
+    pub radar: Option<extern "C" fn(x: f32, y: f32, w: f32, h: f32, you: *const Vec3, you_px: *mut Vec3) -> i32>,
 }
 
 fn cstring(s: &str) -> CString {
@@ -244,6 +250,12 @@ impl ClientHost for CClientHost {
                 None => f(name.as_ptr(), std::ptr::null()),
             }
         }
+    }
+
+    fn radar(&self, x: f32, y: f32, w: f32, h: f32, you: Vec3) -> Option<(f32, f32)> {
+        let f = self.0.radar?;
+        let mut px = Vec3::default();
+        (f(x, y, w, h, &you, &mut px) != 0).then_some((px.x, px.y))
     }
 
     fn clip(&self, rect: Option<(f32, f32, f32, f32)>) {
