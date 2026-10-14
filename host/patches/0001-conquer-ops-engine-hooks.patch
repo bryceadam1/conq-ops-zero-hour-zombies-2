@@ -1,8 +1,8 @@
 diff --git a/CMakeLists.txt b/CMakeLists.txt
-index eef5514..1a0947d 100644
+index 6c555e9..bc58b57 100644
 --- a/CMakeLists.txt
 +++ b/CMakeLists.txt
-@@ -93,6 +93,10 @@ add_subdirectory(Core)
+@@ -118,6 +118,10 @@ add_subdirectory(Core)
  # Add main build targets
  if(RTS_BUILD_ZEROHOUR)
      add_subdirectory(GeneralsMD)
@@ -27,7 +27,7 @@ index e5dc1fc..be15aa4 100644
  		MSG_BEGIN_DEBUG_NETWORK_MESSAGES = 1900,		///< network messages that exist only in debug/internal builds. all grouped separately.
  
 diff --git a/Core/GameEngine/Include/GameClient/ControlBar.h b/Core/GameEngine/Include/GameClient/ControlBar.h
-index 446277a..11faba2 100644
+index eb5b7a2..55a9e39 100644
 --- a/Core/GameEngine/Include/GameClient/ControlBar.h
 +++ b/Core/GameEngine/Include/GameClient/ControlBar.h
 @@ -214,6 +214,8 @@ enum GUICommandType CPP_11(: Int)
@@ -55,7 +55,7 @@ index 446277a..11faba2 100644
  
  	MEMORY_POOL_GLUE_WITH_USERLOOKUP_CREATE( CommandSet, "CommandSet" )
  
-@@ -1007,6 +1011,8 @@ private:
+@@ -1008,6 +1012,8 @@ private:
  	/// find existing command set
  	CommandSet *findNonConstCommandSet( const AsciiString& name );
  
@@ -104,7 +104,7 @@ index 5e2c41a..ae1cdd0 100644
  		{
  			Player* localPlayer = ThePlayerList->getLocalPlayer();
 diff --git a/Core/GameEngine/Source/GameClient/GameText.cpp b/Core/GameEngine/Source/GameClient/GameText.cpp
-index 9ada81d..fec1f9c 100644
+index ea367cd..e3010ee 100644
 --- a/Core/GameEngine/Source/GameClient/GameText.cpp
 +++ b/Core/GameEngine/Source/GameClient/GameText.cpp
 @@ -44,6 +44,7 @@
@@ -115,7 +115,7 @@ index 9ada81d..fec1f9c 100644
  
  #include "GameClient/GameText.h"
  #include "Common/Language.h"
-@@ -1267,6 +1268,17 @@ UnicodeString GameTextManager::fetch( const Char *label, Bool *exists )
+@@ -1280,6 +1281,17 @@ UnicodeString GameTextManager::fetch( const Char *label, Bool *exists )
  		lookUp = (StringLookUp *) bsearch( &key, (void*) m_mapStringLUT, m_mapTextCount, sizeof(StringLookUp), compareLUT );
  	}
  
@@ -134,7 +134,7 @@ index 9ada81d..fec1f9c 100644
  	{
  
 diff --git a/Core/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp b/Core/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp
-index aeb559b..52aec9d 100644
+index 472aee9..8a38139 100644
 --- a/Core/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp
 +++ b/Core/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp
 @@ -29,6 +29,7 @@
@@ -164,18 +164,18 @@ index aeb559b..52aec9d 100644
  		{
  			onDoWeaponAtLocation(msg, currentlySelectedGroup);
 diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp
-index 4772d17..52dcfb3 100644
+index 0c20a28..010875d 100644
 --- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp
 +++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp
 @@ -35,6 +35,7 @@ static void drawFramerateBar();
  
  // SYSTEM INCLUDES ////////////////////////////////////////////////////////////
- #include <numeric>
+ #include <cstdio>
 +#include "ZhboBridge.h" // ZHBO
+ #include <numeric>
  #include <stdlib.h>
  #include <windows.h>
- #include <io.h>
-@@ -2043,12 +2044,18 @@ AGAIN:
+@@ -2265,6 +2266,9 @@ AGAIN:
  				if (numRenderTargetPolygons || numRenderTargetVertices)
  					Debug_Statistics::Record_DX8_Polys_And_Vertices(numRenderTargetPolygons,numRenderTargetVertices,ShaderClass::_PresetOpaqueShader);
  
@@ -183,8 +183,9 @@ index 4772d17..52dcfb3 100644
 +				Zhbo_DrawSky();
 +
  				// draw all views of the world
- 				drawViews();
- 
+ 				{
+ 					GGC_RPROFILE(DRAW_VIEWS);
+@@ -2276,6 +2280,9 @@ AGAIN:
  				// draw the user interface
  				TheInGameUI->DRAW();
  
@@ -195,18 +196,18 @@ index 4772d17..52dcfb3 100644
  
  				// draw the mouse
 diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
-index 37be366..d2760b3 100644
+index 1ee5828..1783c7e 100644
 --- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
 +++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
 @@ -34,6 +34,7 @@
  
  // SYSTEM INCLUDES ////////////////////////////////////////////////////////////////////////////////
- #include <stdlib.h>
+ #include <stdio.h>
 +#include "ZhboBridge.h" // ZHBO
+ #include <stdlib.h>
  #include <windows.h>
  
- // USER INCLUDES //////////////////////////////////////////////////////////////////////////////////
-@@ -1676,8 +1677,40 @@ void W3DView::update()
+@@ -1678,8 +1679,40 @@ void W3DView::update()
  		updateCameraAreaConstraints();
  	}
  
@@ -249,10 +250,10 @@ index 37be366..d2760b3 100644
  		updateCameraTransform();
  		m_recalcCamera = false;
 diff --git a/Core/GameEngineDevice/Source/Win32Device/Common/Win32BIGFileSystem.cpp b/Core/GameEngineDevice/Source/Win32Device/Common/Win32BIGFileSystem.cpp
-index 95448f7..b20656a 100644
+index b75c13d..5997cfe 100644
 --- a/Core/GameEngineDevice/Source/Win32Device/Common/Win32BIGFileSystem.cpp
 +++ b/Core/GameEngineDevice/Source/Win32Device/Common/Win32BIGFileSystem.cpp
-@@ -63,6 +63,13 @@ void Win32BIGFileSystem::init() {
+@@ -123,6 +123,13 @@ void Win32BIGFileSystem::init() {
      // load original Generals assets
      AsciiString installPath;
      GetStringFromGeneralsRegistry("", "InstallPath", installPath );
@@ -267,7 +268,7 @@ index 95448f7..b20656a 100644
      DEBUG_ASSERTCRASH(!installPath.isEmpty(), ("Be 1337! Go install Generals!"));
      if (!installPath.isEmpty())
 diff --git a/GeneralsMD/Code/GameEngine/Source/Common/GameEngine.cpp b/GeneralsMD/Code/GameEngine/Source/Common/GameEngine.cpp
-index 5d7b450..d89f6c6 100644
+index 9206319..f846b39 100644
 --- a/GeneralsMD/Code/GameEngine/Source/Common/GameEngine.cpp
 +++ b/GeneralsMD/Code/GameEngine/Source/Common/GameEngine.cpp
 @@ -27,6 +27,7 @@
@@ -278,7 +279,7 @@ index 5d7b450..d89f6c6 100644
  
  #include "Common/ActionManager.h"
  #include "Common/AudioAffect.h"
-@@ -745,6 +746,9 @@ void GameEngine::init()
+@@ -772,6 +773,9 @@ void GameEngine::init()
  			}
  		}
  
@@ -289,7 +290,7 @@ index 5d7b450..d89f6c6 100644
  	catch (ErrorCode ec)
  	{
 diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/GameClient.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/GameClient.cpp
-index 983845c..c0c2cd7 100644
+index bddadc5..b8f5e8e 100644
 --- a/GeneralsMD/Code/GameEngine/Source/GameClient/GameClient.cpp
 +++ b/GeneralsMD/Code/GameEngine/Source/GameClient/GameClient.cpp
 @@ -29,6 +29,7 @@
@@ -308,7 +309,7 @@ index 983845c..c0c2cd7 100644
  		m_translators[ m_numTranslators++ ] =	TheMessageStream->attachTranslator( MSGNEW("GameClientSubsystem") WindowTranslator,     10 );
  		m_translators[ m_numTranslators++ ] =	TheMessageStream->attachTranslator( MSGNEW("GameClientSubsystem") MetaEventTranslator,	20 );
  		m_translators[ m_numTranslators++ ] =	TheMessageStream->attachTranslator( MSGNEW("GameClientSubsystem") HotKeyTranslator,	25 );
-@@ -704,6 +706,9 @@ void GameClient::update()
+@@ -710,6 +712,9 @@ void GameClient::update()
  	}
  #endif
  
@@ -319,7 +320,7 @@ index 983845c..c0c2cd7 100644
  	{
  		TheTerrainVisual->UPDATE();
 diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/AIUpdate.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/AIUpdate.cpp
-index c6abb30..e80c4fa 100644
+index df2f6d9..89e2fca 100644
 --- a/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/AIUpdate.cpp
 +++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/AIUpdate.cpp
 @@ -28,6 +28,7 @@
@@ -342,7 +343,7 @@ index c6abb30..e80c4fa 100644
  
  	USE_PERF_TIMER(AIUpdateInterface_update)
 diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/PhysicsUpdate.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/PhysicsUpdate.cpp
-index ae2f459..c82c886 100644
+index 9e1d055..cf63102 100644
 --- a/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/PhysicsUpdate.cpp
 +++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/PhysicsUpdate.cpp
 @@ -27,6 +27,7 @@
@@ -365,7 +366,7 @@ index ae2f459..c82c886 100644
  
  	Object*														obj = getObject();
 diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp
-index afe0b87..b5198e0 100644
+index 5342a8b..37ca2f4 100644
 --- a/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp
 +++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp
 @@ -28,6 +28,7 @@
@@ -376,7 +377,7 @@ index afe0b87..b5198e0 100644
  
  #include "Common/AudioAffect.h"
  #include "Common/AudioHandleSpecialValues.h"
-@@ -404,6 +405,7 @@ void GameLogic::init()
+@@ -676,6 +677,7 @@ void GameLogic::init()
  //-------------------------------------------------------------------------------------------------
  void GameLogic::reset()
  {
@@ -384,7 +385,7 @@ index afe0b87..b5198e0 100644
  	m_thingTemplateBuildableOverrides.clear();
  	m_controlBarOverrides.clear();
  
-@@ -1126,6 +1128,7 @@ void GameLogic::setGameMode( GameMode mode )
+@@ -1470,6 +1472,7 @@ void GameLogic::setGameMode( GameMode mode )
  // ------------------------------------------------------------------------------------------------
  void GameLogic::startNewGame( Bool loadingSaveGame )
  {
@@ -392,13 +393,13 @@ index afe0b87..b5198e0 100644
  	try
  	{
  		tryStartNewGame(loadingSaveGame);
-@@ -3794,6 +3797,9 @@ void GameLogic::update()
+@@ -4264,6 +4267,9 @@ void GameLogic::update()
  		processCommandList( TheCommandList );
  	}
  
 +	// ZHBO: first-person Generals move and shoot after this frame's input messages are applied
 +	Zhbo_LogicStep( m_frame );
 +
- #ifdef ALLOW_NONSLEEPY_UPDATES
- 	{
- 		for (std::list<UpdateModulePtr>::const_iterator it = m_normalUpdates.begin(); it != m_normalUpdates.end(); ++it)
+ #if !defined(_WIN32) && (defined(RTS_DEBUG) || defined(GGC_ENABLE_GAMEPLAY_DIAGNOSTIC_ENV_HOOKS))
+ 	ggcMaybeTriggerSpecialPowerDiagnostic();
+ #endif

@@ -66,6 +66,20 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
 16. GLA rebels spawned next to the General preferred to shoot the nearby base; ordered onto the
     General they hit it (5 dmg/round) and the HUD's damage flash and regen engage.
 
+17. BO2 `.ipak` image packs (`zone\all\*.ipak`) are LZO1X-compressed, **not encrypted**: `KAPI` v0x50000,
+    sections {type 1 index, type 2 data}, 16-byte index entries {name hash, data hash, offset, size},
+    data in 0x80-aligned blocks with up to 31 commands (`size | flag<<24`, flag 1 = LZO1X). Each entry
+    is a whole `IWi` v27 image: 0x40 header (format, w, h, mip end offsets at 0x20), mips smallest
+    first. Formats: 1 ARGB32, 11 DXT1, 12 DXT3, 13 DXT5, 14 BC5. Names are hashes; art identified by eye
+    with `zhbo-assets sheets`.
+18. Real BO2 HUD art found in `mp.ipak`: slanted numerals 0-9 and "/" (32x64), red-dot glow, cyan lock
+    bracket, blood splatter (hashes in `crates/zhbo-assets/src/hud.rs`). The small glyph atlas in
+    `base.ipak` is a font page, but its metrics are in the fastfiles, so text uses Bahnschrift.
+19. Zero Hour `MappedImage` `Coords` are inclusive; extra files in `Data\INI\MappedImages\HandCreated\`
+    load automatically.
+20. MinGW: the Rust core for `i686-pc-windows-gnu` needs only the same system libs as MSVC
+    (panic=abort). MSYS2's MinGW has prefixed compilers but unprefixed binutils.
+
 ## Verification log
 
 * Baseline source build (no mod) runs against Steam data with `-useCwd -win`: intro video plays (screenshot).
@@ -76,6 +90,11 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
   moved, killed a rebel, opened the field computer, returned to RTS, re-entered, took enemy fire.
   Screenshots confirm eye-level camera, HUD (compass, health/stance, ammo, reload), sky, RTS hand-back.
 * `zhbo-assets` decodes real BO2 banks: 34 short MP effects exported from `mpl_common.all.sabl` as valid WAV.
+* BO2 HUD (2026-10-14): launcher built `ConquerOps_BO2.big` with 14/14 sprites; autotest 7/7 PASS;
+  screenshots show BO2 numerals ("22 / 120", amber when low), "+100" kill popup, red-dot reticle,
+  blood overlay, minimap, funds panel, Bahnschrift text.
+* Cross-platform: all crates type-check for x86_64-unknown-linux-gnu and aarch64-apple-darwin; core
+  builds for i686-pc-windows-gnu; discovery unit-tested against a simulated CrossOver bottle.
 
 ## Next steps
 

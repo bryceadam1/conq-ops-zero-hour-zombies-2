@@ -24,7 +24,9 @@ use std::process::{Command, ExitCode};
 
 type Result<T> = std::result::Result<T, String>;
 
-const ENGINE_URL: &str = "https://github.com/TheSuperHackers/GeneralsGameCode.git";
+/// bobtista's fork of TheSuperHackers/GeneralsGameCode: adds the pluggable render backend
+/// (IRenderBackend), SDL3, OpenAL and 64-bit builds that the wgpu renderer plugs into.
+const ENGINE_URL: &str = "https://github.com/bobtista/GeneralsGameCode.git";
 
 struct Opts {
     log_build: bool,
@@ -121,6 +123,15 @@ fn git(dir: &Path) -> Command {
 // ------------------------------------------------------------------------------------------------
 
 fn pinned_engine_commit() -> Result<String> {
+    // The submodule's current checkout wins, so a bumped-but-uncommitted pin builds as expected.
+    let sub = repo_root().join("host/GeneralsGameCode");
+    if sub.join(".git").exists() {
+        if let Ok(head) = capture(git(&sub).args(["rev-parse", "HEAD"])) {
+            if head.len() == 40 {
+                return Ok(head);
+            }
+        }
+    }
     let out = capture(git(&repo_root()).args(["ls-tree", "HEAD", "host/GeneralsGameCode"]))?;
     // "160000 commit <sha>\thost/GeneralsGameCode"
     out.split_whitespace()
@@ -327,6 +338,13 @@ impl Toolchain {
                 }
                 if !on_path("make") {
                     out.push("make is not on PATH".into());
+                }
+                if !on_path("i686-w64-mingw32-widl") && !on_path("widl") {
+                    out.push(
+                        "widl (IDL compiler, needed by the engine) is missing (Debian/Ubuntu: apt install \
+                         mingw-w64-tools; Fedora: dnf install mingw32-widl; macOS: included in brew's mingw-w64)"
+                            .into(),
+                    );
                 }
             }
         }

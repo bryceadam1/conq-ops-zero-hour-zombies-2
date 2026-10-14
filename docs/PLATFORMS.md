@@ -57,7 +57,7 @@ anything.
 # Debian/Ubuntu
 sudo apt install g++-mingw-w64-i686 mingw-w64-tools cmake make git
 # Fedora
-sudo dnf install mingw32-gcc-c++ cmake make git
+sudo dnf install mingw32-gcc-c++ mingw32-widl cmake make git
 # macOS
 brew install mingw-w64 cmake
 
@@ -67,6 +67,8 @@ cargo xtask build     # core (i686-pc-windows-gnu) + engine (preset mingw-w64-i6
 ```
 
 The engine uses TheSuperHackers' own MinGW-w64 preset (`mingw-w64-i686`, which disables the MFC tools).
+It needs `widl` (the IDL compiler from mingw-w64-tools) and fetches ReactOS's ATL headers on first
+configure (a ~250 MB shallow clone).
 The Rust core is built for `i686-pc-windows-gnu` and linked as `libzhbo_core.a`; `host/zhbo/CMakeLists.txt`
 handles both toolchains.
 
