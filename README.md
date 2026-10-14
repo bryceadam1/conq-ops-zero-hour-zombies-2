@@ -101,8 +101,10 @@ The two scripts take `-Dist` to test a given build.
 
 ## Status and known limits
 
-* No weapon viewmodel yet. Reading BO2's models and animations from its fastfiles is in progress
-  (`zhbo-assets zone`/`find` decrypt and list them); converting them is next.
+* The General and the first-person arms and AN-94 are BO2 models converted at launch from your
+  install (`ConquerOps_BO2.big`). W3D skins take one bone per vertex, so joints bend a little less
+  smoothly than in BO2, and the viewmodel can poke into walls or enemies standing very close.
+  Only the AN-94 is converted so far.
 * BO2's HUD font also lives in the fastfiles, so text uses Bahnschrift (Windows' DIN-style font),
   falling back to Arial. macOS asks for DIN Alternate, which has not been checked yet.
 * Weapon sounds are Zero Hour's. `zhbo-assets` can export your BO2 sounds, but BO2 banks identify sounds
