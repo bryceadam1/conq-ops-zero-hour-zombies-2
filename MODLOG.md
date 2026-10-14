@@ -117,6 +117,12 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     OS input path. `ZHBO_AUTOPILOT=manual` sets up the scene without scripted input, and
     `scripts/inputtest.ps1` drives real keys and mouse through it. `um win drive "hold"` needs a hex
     VK code (`hold 0x57 2500`), and SDL needs `scanmode on`.
+32. macOS first build: wgpu 30 needs a recent Rust (1.76 fails; 1.99 works). The only compile
+    error was a leftover `ExitProcess` in `ZhboBridge.cpp`, now `zhbo_platform::exitProcess`.
+33. xtask's `copy_dir_if_changed` used `fs::write`, which dropped the execute bit on `generalszh`
+    when copying the stage into dist. It now copies permissions as well.
+34. On macOS/Linux, the launcher's error path pops an `osascript`/`zenity` dialog and waits for it,
+    so `conquerops --check` looked hung when the games were missing. `--check` now only prints.
 
 ## Verification log
 
@@ -149,6 +155,10 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
   `tests/headless.rs` draws a frame (transient + static buffers, BC1 + R5G6B5 textures, model
   transform, partial clear, alpha blend) and checks read-back pixels - PASS on D3D12 WARP and on the
   Parallels GL adapter (M1, CPU BC decode).
+* **Native macOS build (2026-10-14)**: `cargo xtask build --log` configures, compiles, links and
+  stages on macOS 15.7 (M1 Pro, arm64), with the dylibs bundled into dist. `cargo test --workspace`
+  passes 73 tests, the headless renderer test included, now on Metal. Not run in game yet: the game
+  files are not on the Mac yet.
 
 ## Next steps
 

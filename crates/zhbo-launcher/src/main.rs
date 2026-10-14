@@ -27,7 +27,12 @@ fn main() -> ExitCode {
     match launch(&game_args, check_only) {
         Ok(()) => ExitCode::SUCCESS,
         Err(msg) => {
-            show_error(&msg);
+            // --check is run from a terminal; a modal dialog would only block it.
+            if check_only {
+                eprintln!("Conquer Ops: {msg}");
+            } else {
+                show_error(&msg);
+            }
             ExitCode::FAILURE
         }
     }

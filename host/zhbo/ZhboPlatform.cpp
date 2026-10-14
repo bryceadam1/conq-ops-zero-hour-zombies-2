@@ -1,6 +1,7 @@
 // Conquer Ops: OS services for the bridge. See ZhboPlatform.h.
 #include "ZhboPlatform.h"
 
+#include <cstdlib>
 #include <cstring>
 
 #if defined(SAGE_USE_SDL3)
@@ -195,6 +196,15 @@ namespace zhbo_platform
 #else
 		// TODO(linux): pick a condensed face that the engine's Linux font path finds.
 		return "DejaVu Sans Condensed";
+#endif
+	}
+
+	void exitProcess(int code)
+	{
+#if defined(_WIN32)
+		ExitProcess(code);
+#else
+		std::_Exit(code);
 #endif
 	}
 }

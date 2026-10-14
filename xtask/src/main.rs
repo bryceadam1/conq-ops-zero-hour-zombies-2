@@ -219,6 +219,9 @@ fn copy_dir_if_changed(src: &Path, dst: &Path) -> Result<()> {
             if fs::read(&to).ok().as_deref() != Some(data.as_slice()) {
                 fs::write(&to, data).map_err(|e| e.to_string())?;
             }
+            // Keep the execute bit (generalszh, run.sh on macOS/Linux).
+            let perms = entry.metadata().map_err(|e| e.to_string())?.permissions();
+            fs::set_permissions(&to, perms).map_err(|e| format!("{}: {e}", to.display()))?;
         }
     }
     Ok(())

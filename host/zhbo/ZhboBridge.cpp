@@ -682,7 +682,7 @@ void Zhbo_Init()
 		snprintf(text, sizeof(text), "Conquer Ops requires both Command & Conquer Generals: Zero Hour and "
 			"Call of Duty: Black Ops II to be installed.\n\n%s", problems);
 		zhbo_platform::errorBox("Conquer Ops", text);
-		ExitProcess(1);
+		zhbo_platform::exitProcess(1);
 	}
 
 	static const ZhboLogicApi logicApi = {

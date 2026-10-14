@@ -25,6 +25,9 @@ namespace zhbo_platform
 
 	void errorBox(const char *title, const char *text);
 
+	// End the process at once, without running the engine's shutdown.
+	[[noreturn]] void exitProcess(int code);
+
 	// A narrow DIN-like face for the BO2 HUD that exists on this system.
 	const char *hudFontName();
 }
