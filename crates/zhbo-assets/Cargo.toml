@@ -1,0 +1,11 @@
+[package]
+name = "zhbo-assets"
+description = "Lists and exports Black Ops II sound bank entries from the player's own install, for private use."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zhbo-formats = { path = "../zhbo-formats" }
+zhbo-requirements = { path = "../zhbo-requirements" }
+claxon = "0.4"

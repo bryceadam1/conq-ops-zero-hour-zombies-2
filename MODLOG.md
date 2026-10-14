@@ -51,19 +51,37 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
 9. Rust `windows-sys` makes the staticlib depend on `windows.0.52.0.lib`, which the C++ link can't
    find → declare the few Win32 functions directly (`advapi32`, `user32`).
 10. Rust build scripts compile for the ARM64 host → MSVC ARM64 tools component is required.
-11. BO2 `.sabs` entries are `{id, size, offset, frames, rate_idx, channels, loop, format}`; format 8 payloads
-    are plain FLAC. Names are hashes only → need alias tables from fastfiles (next step).
+11. BO2 `.sabs`/`.sabl` entries are `{id, size, offset, frames, rate_idx, channels, loop, format}`.
+    `.sabs` (streamed, long) = format 8, plain FLAC. `.sabl` (loaded, short effects incl. gunshots) =
+    format 0, raw 16-bit PCM. Names are hashes only; the name tables are in the encrypted fastfiles,
+    which we deliberately do not decrypt.
+12. Objects must be created inside `GameLogic::update`. W3DModelDraw resolves weapon barrel bones only
+    while the logic updates; an object spawned from the client update gets a zero-sized recoil vector
+    and crashes in `W3DModelDraw::handleWeaponFireFX` the first time it fires.
+13. The VM runs at 200% DPI: a 1280x720 game window reports a 640x360 client rect, so `um win drive`
+    click coordinates equal the half-scale screenshot coordinates.
+14. The RTS camera never shows sky, and `new_skybox` is drawn only by the water renderer, so first
+    person paints its own gradient before the 3D pass (which clears depth but not colour).
+15. After the camera override, reset pitch/zoom/pivot (`resetPivotToGround`) or the RTS camera stays low.
+16. GLA rebels spawned next to the General preferred to shoot the nearby base; ordered onto the
+    General they hit it (5 dmg/round) and the HUD's damage flash and regen engage.
 
 ## Verification log
 
 * Baseline source build (no mod) runs against Steam data with `-useCwd -win`: intro video plays (screenshot).
 * `cargo test --workspace`: 41 tests (movement, weapons, hitscan, sim, client, HUD, formats, requirements).
 * Requirements check on this machine: ZH found via Steam app 2732960, BO2 via Steam app 202970.
-* Patched engine + Rust core: compiles and links (first try).
+* Patched engine + Rust core: compiles and links.
+* `scripts/autotest.ps1` (skirmish, Alpine Assault vs. Medium AI): 7/7 PASS - entered first person,
+  moved, killed a rebel, opened the field computer, returned to RTS, re-entered, took enemy fire.
+  Screenshots confirm eye-level camera, HUD (compass, health/stance, ammo, reload), sky, RTS hand-back.
+* `zhbo-assets` decodes real BO2 banks: 34 short MP effects exported from `mpl_common.all.sabl` as valid WAV.
 
 ## Next steps
 
-1. In-game verification: skirmish → build General → Take Control → walk/shoot → F → RTS → back.
-2. BO2 assets: resolve `.sabs` name hashes (alias tables in fastfiles) → convert MTAR/B23R/knife sounds
-   with a converter run on the player's install; weapon viewmodels from xmodels (fastfile parsing).
-3. Save/load of first-person state; multiplayer test with two clients.
+1. Manual playtest by a human with real mouse/keyboard (the autotest injects input inside the mod).
+2. Weapon viewmodel (a gun in hand), muzzle flash near the camera, hit/kill sounds.
+3. BO2 audio: audition exported bank entries, map ids to weapon slots, and have a converter build a
+   private `ConquerOps_BO2.big` with AudioEvents that override the ZH fallbacks.
+4. Save/load of first-person state; two-client multiplayer test.
+5. Strike Force (`so_rts_*`) content as a natural next theme.

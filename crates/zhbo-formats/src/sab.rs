@@ -16,7 +16,8 @@
 //! entry (20 bytes): u32 id, u32 size, u32 offset, u32 frame_count,
 //!                   u8 frame_rate_index, u8 channels, u8 looping, u8 format
 //! ```
-//! Payloads with `format == 8` are complete FLAC streams (they start with `fLaC`).
+//! Payloads with `format == 8` are complete FLAC streams (they start with `fLaC`); `format == 0` is raw
+//! 16-bit PCM (all entries in the `.sabl` banks, which hold the short effects such as gunshots).
 //! Entries are keyed by a name hash only; resolving names needs the sound alias tables
 //! from the fastfiles (see docs/BO2_ASSETS.md).
 
@@ -26,6 +27,8 @@ use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 
 pub const MAGIC: u32 = 0x2358_5532;
+/// Raw little-endian 16-bit PCM (`size == frame_count * 2 * channels`); used by the `.sabl` loaded banks.
+pub const FORMAT_PCM16: u8 = 0;
 pub const FORMAT_FLAC: u8 = 8;
 
 /// T6 frame-rate table indexed by `frame_rate_index`.
