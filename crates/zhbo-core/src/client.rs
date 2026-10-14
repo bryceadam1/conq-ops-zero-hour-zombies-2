@@ -428,7 +428,12 @@ impl Client {
                     out.viewmodel_offset = pose.offset;
                     out.viewmodel_angles = pose.angles;
                     self.cues.update(dt, p, p.input.held & buttons::FIRE != 0);
-                    if !in_fc {
+                    if let Mode::FieldComputer { t } = p.mode {
+                        // A scorestreak: the tablet comes up before the view leaves.
+                        let (clip, time) = viewmodel::tablet_up(t);
+                        out.viewmodel = clip;
+                        out.viewmodel_time = time;
+                    } else {
                         let (clip, time) = self.vm.update(dt, p, events);
                         out.viewmodel = clip;
                         out.viewmodel_time = time;
@@ -668,7 +673,7 @@ mod tests {
         inp.keys[vk::F as usize] = 0x80;
         frame_with(&mut client, &mut sim, &host, &mut inp, 2);
         inp.keys[vk::F as usize] = 0;
-        frame_with(&mut client, &mut sim, &host, &mut inp, 30);
+        frame_with(&mut client, &mut sim, &host, &mut inp, (crate::sim::FIELD_COMPUTER_RAISE / LOGIC_DT) as usize + 5);
         assert!(matches!(client.view, ViewMode::Leaving { .. }), "{:?}", client.view);
         let mut look = None;
         for _ in 0..120 {

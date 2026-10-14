@@ -173,6 +173,8 @@ pub struct SkinMesh {
     /// A world-space environment map added over the texture, weighted by the texture's alpha (its
     /// shine): `colour + alpha * environment`. Needs a texture without alpha test.
     pub env_map: Option<String>,
+    /// Self-lit at full brightness, whatever the scene's lights (screens, glowing buttons).
+    pub emissive: bool,
 }
 
 fn mesh_chunk(container: &str, m: &SkinMesh) -> Chunk {
@@ -265,10 +267,10 @@ fn mesh_chunk(container: &str, m: &SkinMesh) -> Chunk {
         .u32(if env.is_some() { VERTMAT_STAGE1_MAPPING_WS_ENVIRONMENT } else { 0 }) // attributes
         // Untextured surfaces (BO2 materials drawn by special shaders, such as screens) get a dark
         // grey instead of plain white.
-        .u32(if textured { 0xFFFF_FFFF } else { 0x0040_4040 }) // ambient (RGB + pad)
-        .u32(if textured { 0xFFFF_FFFF } else { 0x0040_4040 }) // diffuse
+        .u32(if m.emissive { 0 } else if textured { 0xFFFF_FFFF } else { 0x0040_4040 }) // ambient (RGB + pad)
+        .u32(if m.emissive { 0 } else if textured { 0xFFFF_FFFF } else { 0x0040_4040 }) // diffuse
         .u32(0) // specular
-        .u32(0) // emissive
+        .u32(if m.emissive { 0xFFFF_FFFF } else { 0 }) // emissive
         .f32(1.0) // shininess
         .f32(1.0) // opacity
         .f32(0.0); // translucency
@@ -459,6 +461,7 @@ mod tests {
             texture: Some("t.tga".into()),
             alpha_test: false,
             env_map: None,
+            emissive: false,
         };
         let d = skin_model("TEST_SKN", "TEST_SKL", &[m]);
         let top = chunks(&d);

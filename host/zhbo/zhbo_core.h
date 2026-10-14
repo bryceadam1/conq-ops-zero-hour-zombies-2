@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 5u
+#define ZHBO_ABI_VERSION 6u
 
 #ifdef __cplusplus
 extern "C" {
@@ -129,7 +129,11 @@ typedef struct ZhboClientOut
 #define ZHBO_VM_RELOAD_EMPTY 3
 #define ZHBO_VM_SPRINT 4
 #define ZHBO_VM_RAISE 5
-#define ZHBO_VM_COUNT 6
+/* The scorestreak tablet (its own model: the weapon viewmodel's name with _TAB for _SKN). */
+#define ZHBO_VM_TABLET_PULLOUT 6
+#define ZHBO_VM_TABLET_IDLE 7
+#define ZHBO_VM_TABLET_PUTAWAY 8
+#define ZHBO_VM_COUNT 9
 
 uint32_t zhbo_abi_version(void);
 void zhbo_init(const ZhboLogicApi *logic, const ZhboClientApi *client);

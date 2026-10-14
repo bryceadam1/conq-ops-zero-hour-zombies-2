@@ -33,7 +33,16 @@ namespace
 		"ZHBO_VM_SKL.ZHBO_VM_RLE", // ZHBO_VM_RELOAD_EMPTY
 		"ZHBO_VM_SKL.ZHBO_VM_SPR", // ZHBO_VM_SPRINT
 		"ZHBO_VM_SKL.ZHBO_VM_RAI", // ZHBO_VM_RAISE
+		"ZHBO_VMT_SKL.ZHBO_VMT_PUL", // ZHBO_VM_TABLET_PULLOUT
+		"ZHBO_VMT_SKL.ZHBO_VMT_IDL", // ZHBO_VM_TABLET_IDLE
+		"ZHBO_VMT_SKL.ZHBO_VMT_PUT", // ZHBO_VM_TABLET_PUTAWAY
 	};
+
+	// Whether a clip belongs to the tablet model's hierarchy rather than the weapon's.
+	Bool isTabletClip(int clip)
+	{
+		return clip >= ZHBO_VM_TABLET_PULLOUT;
+	}
 
 	RenderObjClass *s_model = nullptr;
 	AsciiString s_modelName;
@@ -141,8 +150,12 @@ namespace
 			return FALSE;
 		}
 		W3DDisplay::m_3DScene->Add_Render_Object(s_model);
+		// Only this model's clips: the weapon and the tablet models have different hierarchies.
+		const Bool tablet = name.endsWith("_TAB");
 		for (int i = 0; i < ZHBO_VM_COUNT; ++i)
 		{
+			if (isTabletClip(i) != tablet)
+				continue;
 			s_anims[i] = assets->Get_HAnim(k_clips[i]);
 			if (!s_anims[i])
 				Zhbo_Log("viewmodel: missing clip %s", k_clips[i]);
@@ -205,7 +218,7 @@ void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)
 	{
 		const Real frames = (Real)anim->Get_Num_Frames();
 		Real frame = time * anim->Get_Frame_Rate();
-		if (clip == ZHBO_VM_IDLE || clip == ZHBO_VM_SPRINT)
+		if (clip == ZHBO_VM_IDLE || clip == ZHBO_VM_SPRINT || clip == ZHBO_VM_TABLET_IDLE)
 			frame = frames > 1.0f ? fmodf(frame, frames - 1.0f) : 0.0f;
 		else
 			frame = std::min(frame, std::max(frames - 1.0f, 0.0f));

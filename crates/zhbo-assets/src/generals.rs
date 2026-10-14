@@ -68,6 +68,22 @@ pub const VM_ANIMS: &[(&str, &str)] = &[
     ("ZHBO_VM_SPR", "viewmodel_an94_sprint_loop"),
     ("ZHBO_VM_RAI", "viewmodel_an94_pullout"),
 ];
+/// The scorestreak tablet: each faction's arms holding it, on its own hierarchy, with clips in
+/// `zhbo_core::viewmodel` order after the weapon's (TABLET_PULLOUT, TABLET_IDLE, TABLET_PUTAWAY).
+/// Its W3D models are the weapon viewmodel's names with `_TAB` for `_SKN`.
+pub const TABLET_HIERARCHY: &str = "ZHBO_VMT_SKL";
+pub const TABLET_ANIMS: &[(&str, &str)] = &[
+    ("ZHBO_VMT_PUL", "viewmodel_tablet_pullout"),
+    ("ZHBO_VMT_IDL", "viewmodel_tablet_idle"),
+    ("ZHBO_VMT_PUT", "viewmodel_tablet_putaway"),
+];
+const TABLET: &str = "t6_wpn_tablet_view";
+const TABLET_SCREEN: &str = "zhbo_bo2_tablet_screen.tga";
+
+/// The tablet viewmodel's W3D name for a weapon viewmodel's.
+pub fn tablet_model(viewmodel: &str) -> String {
+    viewmodel.replace("_SKN", "_TAB")
+}
 const VM_WEAPON: &str = "t6_wpn_ar_an94_view";
 const VM_MAGAZINE: &str = "t6_attach_mag_an94_view";
 
@@ -331,7 +347,87 @@ fn viewmodels(common: &Zone, zones: &[Zone], paks: &Paks, out: &mut BTreeMap<Str
         let fps = anim.frame_rate.round().max(1.0) as u32;
         out.insert(format!("Art\\W3D\\{w3d_name}.w3d"), w3d::animation(w3d_name, VM_HIERARCHY, frames, fps, &channels));
     }
-    Ok(format!("viewmodels {} (decals dropped: {})", made.join(", "), decals.into_iter().collect::<Vec<_>>().join(" ")))
+    tablets(common, zones, paks, out, &mut decals)?;
+    Ok(format!("viewmodels {} with tablets (decals dropped: {})", made.join(", "), decals.into_iter().collect::<Vec<_>>().join(" ")))
+}
+
+/// Each faction's arms holding the scorestreak tablet, with its lit screen.
+fn tablets(common: &Zone, zones: &[Zone], paks: &Paks, out: &mut BTreeMap<String, Vec<u8>>, decals: &mut BTreeSet<String>) -> Result<(), String> {
+    let tablet = xmodel::find(common, TABLET).map_err(|e| e.to_string())?;
+    let mut tablet_tex = textures(&tablet, paks, out, decals);
+    // The screen's material layers several images in a shader; draw one composite, self-lit.
+    let screen_surface = tablet.materials.iter().position(|m| m.as_ref().is_some_and(|m| m.name.contains("screen")));
+    if let Some(i) = screen_surface {
+        if let Some(mut img) = tablet.materials[i].as_ref().and_then(|m| tablet_screen(m, paks)) {
+            // No reflection over the lit screen (alpha is the shine).
+            bake_shine(&mut img, None);
+            out.insert(format!("Art\\Textures\\{TABLET_SCREEN}"), images::tga_bytes(&img));
+            tablet_tex[i] = Some(TABLET_SCREEN.to_string());
+        }
+    }
+    let mut rig: Option<Rig> = None;
+    for (f, zone) in FACTIONS.iter().zip(zones) {
+        let hands = xmodel::find(zone, f.hands).map_err(|e| e.to_string())?;
+        let rig = rig.get_or_insert_with(|| Rig::new(&hands, &[(&tablet, "tag_weapon")]));
+        let hands_tex = textures(&hands, paks, out, decals);
+        let mut meshes = character::skin(rig, &hands, "H", &hands_tex);
+        let mut screen = character::skin(rig, &tablet, "T", &tablet_tex);
+        for m in &mut screen {
+            m.emissive = m.texture.as_deref() == Some(TABLET_SCREEN);
+        }
+        meshes.extend(screen);
+        finish(&mut meshes, decals);
+        let name = tablet_model(f.viewmodel);
+        out.insert(format!("Art\\W3D\\{name}.w3d"), w3d::skin_model(&name, TABLET_HIERARCHY, &meshes));
+    }
+    let rig = rig.ok_or("no tablet arms")?;
+    out.insert(format!("Art\\W3D\\{TABLET_HIERARCHY}.w3d"), rig.hierarchy_file(TABLET_HIERARCHY));
+    for (w3d_name, bo2_name) in TABLET_ANIMS {
+        let anim = xanim::find(common, bo2_name).map_err(|e| e.to_string())?;
+        let (frames, channels) = character::animate(&rig, &anim);
+        let fps = anim.frame_rate.round().max(1.0) as u32;
+        out.insert(format!("Art\\W3D\\{w3d_name}.w3d"), w3d::animation(w3d_name, TABLET_HIERARCHY, frames, fps, &channels));
+    }
+    Ok(())
+}
+
+/// The scorestreak screen as BO2 shows it: the background UI, the satellite panels over it, and the
+/// targeting reticle over the panels.
+fn tablet_screen(m: &xmodel::Material, paks: &Paks) -> Option<Rgba> {
+    let layer = |part: &str| {
+        m.textures
+            .iter()
+            .filter_map(|t| t.image.as_ref())
+            .find(|i| i.name.contains(part))
+            .and_then(|i| paks.image(i.stream_hash))
+    };
+    let mut screen = layer("background")?;
+    if let Some(top) = layer("killstreaks_top") {
+        let size = (screen.width, screen.height);
+        over(&mut screen, &top, (0, 0), size);
+    }
+    if let Some(reticle) = layer("working_top") {
+        let size = screen.height / 2;
+        let at = (screen.width * 37 / 100 - size / 2, screen.height * 45 / 100 - size / 2);
+        over(&mut screen, &reticle, at, (size, size));
+    }
+    Some(screen)
+}
+
+/// Alpha-blend `src`, scaled to `size`, over `dst` at `at`.
+fn over(dst: &mut Rgba, src: &Rgba, at: (u32, u32), size: (u32, u32)) {
+    for y in 0..size.1.min(dst.height.saturating_sub(at.1)) {
+        for x in 0..size.0.min(dst.width.saturating_sub(at.0)) {
+            let (sx, sy) = (x * src.width / size.0, y * src.height / size.1);
+            let s = &src.pixels[((sy * src.width + sx) * 4) as usize..][..4];
+            let a = s[3] as u32;
+            let d = ((at.1 + y) * dst.width + at.0 + x) as usize * 4;
+            for c in 0..3 {
+                let v = (s[c] as u32 * a + dst.pixels[d + c] as u32 * (255 - a)) / 255;
+                dst.pixels[d + c] = v as u8;
+            }
+        }
+    }
 }
 
 /// Convert everything; returns the archive files and a one-line summary.
@@ -378,6 +474,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
     let world = load_zone(bo2_dir, crate::sfx::WORLD_ZONE)?;
     let clips = VM_ANIMS
         .iter()
+        .chain(TABLET_ANIMS)
         .map(|(_, bo2)| xanim::find(&common, bo2).map_err(|e| e.to_string()))
         .collect::<Result<Vec<_>, _>>()?;
     let (sound_files, sound_summary) = crate::sfx::files(&common, &world, bo2_dir, &clips)?;

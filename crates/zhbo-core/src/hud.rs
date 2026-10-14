@@ -10,7 +10,7 @@
 use crate::client::{Client, ViewMode, HITMARKER_TIME};
 use crate::host::{objflags, ClientHost, ObjInfo};
 use crate::math::Vec3;
-use crate::sim::{Mode, PlayerSim, FIELD_COMPUTER_RAISE};
+use crate::sim::{Mode, PlayerSim};
 
 /// MappedImage names produced by `zhbo_assets::hud`.
 pub mod sprites {
@@ -60,8 +60,8 @@ pub fn draw(host: &dyn ClientHost, client: &Client, player: Option<&PlayerSim>, 
 
     draw_damage(host, w, h, client.hud.damage_flash, p);
 
-    if let Mode::FieldComputer { t } = p.mode {
-        draw_field_computer(host, w, h, s, t / FIELD_COMPUTER_RAISE);
+    // Using the field computer: the tablet viewmodel is the whole show (zhbo_core::viewmodel).
+    if let Mode::FieldComputer { .. } = p.mode {
         return;
     }
 
@@ -309,30 +309,6 @@ fn draw_damage(host: &dyn ClientHost, w: f32, h: f32, flash: f32, p: &PlayerSim)
         host.fill_rect(o, 0.0, t, h, col);
         host.fill_rect(w - o - t, 0.0, t, h, col);
     }
-}
-
-fn draw_field_computer(host: &dyn ClientHost, w: f32, h: f32, s: f32, progress: f32) {
-    // A rugged tablet slides up from the bottom, like BO2's scorestreak remote.
-    let p = crate::math::smoothstep(progress);
-    let lw = w * 0.56;
-    let lh = h * 0.6;
-    let x = (w - lw) * 0.5;
-    let y = h - p * (lh + h * 0.14);
-    host.fill_rect(x - 18.0 * s, y - 18.0 * s, lw + 36.0 * s, lh + 36.0 * s, 0xF21B_1D1F);
-    host.fill_rect(x - 18.0 * s, y - 18.0 * s, lw + 36.0 * s, 4.0 * s, 0xF23A_3E42);
-    host.fill_rect(x, y, lw, lh, 0xF206_0B0E);
-    let green = 0xF05C_FFB0;
-    host.text(x + 18.0 * s, y + 14.0 * s, "FIELD COMPUTER", green, (14.0 * s) as i32, 0);
-    host.text(x + lw - 18.0 * s, y + 14.0 * s, "SECURE LINK", 0x905C_FFB0, (11.0 * s) as i32, 2);
-    let b = lh * 0.42;
-    if !host.image(sprites::BRACKET, x + (lw - b) * 0.5, y + (lh - b) * 0.5, b, b, 0xFFFF_FFFF) {
-        host.line(x + lw * 0.4, y + lh * 0.5, x + lw * 0.6, y + lh * 0.5, 2.0 * s, green);
-    }
-    let dots = ".".repeat(((progress * 12.0) as usize) % 4);
-    host.text(x + lw * 0.5, y + lh * 0.5 + b * 0.6, &format!("Establishing tactical view{dots}"), green, (12.0 * s) as i32, 1);
-    let bar = lw - 36.0 * s;
-    host.fill_rect(x + 18.0 * s, y + lh - 34.0 * s, bar, 6.0 * s, 0x605C_FFB0);
-    host.fill_rect(x + 18.0 * s, y + lh - 34.0 * s, bar * progress.clamp(0.0, 1.0), 6.0 * s, green);
 }
 
 fn draw_death_banner(host: &dyn ClientHost, w: f32, h: f32, s: f32, t: f32) {

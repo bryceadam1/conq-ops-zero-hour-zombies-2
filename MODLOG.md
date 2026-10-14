@@ -213,6 +213,14 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     the loader reuses, so they are not kept. BO2 decal surfaces (clan tag, emblem, visor and watch glass)
     are mostly clear and would draw opaque, so they are dropped.
 
+56. The field computer is a BO2 scorestreak. The tablet is its own viewmodel (`ZHBO_VMxxx_TAB`: arms plus
+    `t6_wpn_tablet_view` on `tag_weapon`, hierarchy `ZHBO_VMT_SKL`), because the gun and the tablet
+    both root at `j_gun`. The host swaps models by clip (`ZHBO_VM_TABLET_*`, ABI 6) and loads only
+    the clips of the current model's hierarchy. The screen material layers three images in a BO2
+    shader; the converter composites them into one self-lit texture and must zero its alpha, or the
+    reflection stage washes it out. BO2 has no wrist-datapad animations in `common_mp`; the
+    `viewmodel_pda_hacker_*` clips are Black Hat's.
+
 ## Verification log
 
 * Baseline source build (no mod) runs against Steam data with `-useCwd -win`: intro video plays (screenshot).
@@ -266,6 +274,9 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
   playing. The viewmodel sways, bobs, kicks and dips on landing, with a BO2 muzzle flash and ejected
   brass. Shiny weapon and gear: captures show the sheen on the AN-94's metal and the soldiers'
   armour. 7/7 still pass.
+* **Scorestreak tablet (2026-10-14)**: F brings up BO2's tablet (pullout, then a moment on its screen)
+  before the camera leaves for the overhead view; taking control again puts it away, then the AN-94
+  comes up. Captures show the raise, the lit screen and the putaway; 7/7 pass.
 
 ## Next steps
 

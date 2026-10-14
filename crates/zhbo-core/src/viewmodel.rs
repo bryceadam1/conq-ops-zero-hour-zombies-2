@@ -3,6 +3,10 @@
 //! The engine side (`host/zhbo/ZhboViewmodel.cpp`) owns the model and the clips; this decides from
 //! the player's state and this frame's events. Idle and sprint loop; the others play once and hold
 //! their last frame until the state moves on.
+//!
+//! Using the field computer is a BO2 scorestreak: the weapon is swapped for the tablet, which comes
+//! up before the view leaves for the overhead camera. Coming back to first person, the tablet goes
+//! down first, then the weapon comes up.
 
 use crate::math::Vec3;
 use crate::sim::PlayerSim;
@@ -14,6 +18,19 @@ pub const RELOAD: i32 = 2;
 pub const RELOAD_EMPTY: i32 = 3;
 pub const SPRINT: i32 = 4;
 pub const RAISE: i32 = 5;
+/// Tablet clips (a separate model, the arms holding BO2's scorestreak tablet).
+pub const TABLET_PULLOUT: i32 = 6;
+pub const TABLET_IDLE: i32 = 7;
+pub const TABLET_PUTAWAY: i32 = 8;
+
+/// Lengths of BO2's `viewmodel_tablet_pullout` (42 frames) and `_putaway` (19 frames) at 30 fps.
+pub const TABLET_PULLOUT_TIME: f32 = 41.0 / 30.0;
+pub const TABLET_PUTAWAY_TIME: f32 = 18.0 / 30.0;
+
+/// The tablet clip for `t` seconds into the field computer coming up.
+pub fn tablet_up(t: f32) -> (i32, f32) {
+    if t < TABLET_PULLOUT_TIME { (TABLET_PULLOUT, t) } else { (TABLET_IDLE, t - TABLET_PULLOUT_TIME) }
+}
 
 /// How long the fire clip owns the viewmodel after a shot before idle resumes.
 const FIRE_HOLD: f32 = 0.3;
@@ -34,7 +51,8 @@ pub struct Viewmodel {
 
 impl Default for Viewmodel {
     fn default() -> Self {
-        Viewmodel { anim: RAISE, t: 0.0 }
+        // First person starts from the field computer: the tablet goes down first.
+        Viewmodel { anim: TABLET_PUTAWAY, t: 0.0 }
     }
 }
 
@@ -65,6 +83,9 @@ impl Viewmodel {
         };
         if done {
             self.play(IDLE);
+        }
+        if self.anim == TABLET_PUTAWAY && self.t >= TABLET_PUTAWAY_TIME {
+            self.play(RAISE);
         }
         if self.anim == IDLE || self.anim == SPRINT {
             let want = if p.body.sprinting && p.arsenal.ads < 0.5 { SPRINT } else { IDLE };
@@ -192,7 +213,9 @@ mod tests {
         p.mode = Mode::Fps;
         p.arsenal.raise_left = 0.0;
         let mut vm = Viewmodel::default();
-        // Raise ends, then idle.
+        // The tablet goes down, the weapon comes up, then idle.
+        assert_eq!(vm.update(0.1, &p, Events::default()).0, TABLET_PUTAWAY);
+        assert_eq!(vm.update(TABLET_PUTAWAY_TIME, &p, Events::default()).0, RAISE);
         assert_eq!(vm.update(0.2, &p, Events::default()).0, IDLE);
         // A shot restarts the fire clip; idle comes back after it.
         assert_eq!(vm.update(0.05, &p, Events { shot: true, ..Default::default() }), (FIRE, 0.0));
@@ -212,6 +235,15 @@ mod tests {
         assert_eq!(vm.update(1.0, &p, Events::default()).0, RELOAD_EMPTY);
         p.arsenal.weapons[p.arsenal.active].reload_left = 0.0;
         assert_eq!(vm.update(0.05, &p, Events::default()).0, IDLE);
+    }
+
+    #[test]
+    fn tablet_comes_up_then_holds() {
+        assert_eq!(tablet_up(0.5), (TABLET_PULLOUT, 0.5));
+        let (clip, t) = tablet_up(TABLET_PULLOUT_TIME + 0.2);
+        assert_eq!(clip, TABLET_IDLE);
+        assert!((t - 0.2).abs() < 1e-5);
+        assert!(crate::sim::FIELD_COMPUTER_RAISE > TABLET_PULLOUT_TIME, "the tablet is fully up before the view leaves");
     }
 
     #[test]

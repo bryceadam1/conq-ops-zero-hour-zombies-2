@@ -961,7 +961,11 @@ Bool Zhbo_GetViewmodel(Int *clip, Real *time, Real *ads, AsciiString *model, Coo
 		return FALSE;
 	// One viewmodel per faction (zhbo_assets::generals::FACTIONS).
 	const AsciiString &name = general->getTemplate()->getName();
-	const char *vm = name == "ZHBO_General_China" ? "ZHBO_VMCHN_SKN" : name == "ZHBO_General_GLA" ? "ZHBO_VMGLA_SKN" : "ZHBO_VMUSA_SKN";
+	const char *faction = name == "ZHBO_General_China" ? "CHN" : name == "ZHBO_General_GLA" ? "GLA" : "USA";
+	// The tablet clips play on the arms-and-tablet model (zhbo_assets::generals::tablet_model).
+	const Bool tablet = s_out.viewmodel >= ZHBO_VM_TABLET_PULLOUT;
+	AsciiString vm;
+	vm.format("ZHBO_VM%s_%s", faction, tablet ? "TAB" : "SKN");
 	*clip = s_out.viewmodel;
 	*time = s_out.viewmodel_time;
 	*ads = s_out.viewmodel_ads;

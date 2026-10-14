@@ -12,9 +12,12 @@ use crate::weapons::{Arsenal, Rng, WeaponAction, MELEE_DAMAGE, MELEE_FX_WEAPON, 
 
 pub const MAX_PLAYERS: usize = 16;
 
-/// How long the field computer takes to come up before control returns to the RTS view (BO2's
-/// laptop raise for scorestreaks is about this long).
-pub const FIELD_COMPUTER_RAISE: f32 = 0.7;
+/// How long the field computer takes to come up before control returns to the RTS view: BO2's
+/// scorestreak tablet pullout, then a moment on its screen.
+pub const FIELD_COMPUTER_RAISE: f32 = crate::viewmodel::TABLET_PULLOUT_TIME + 0.35;
+/// Taking control, the weapon is ready after the camera flies in, the tablet goes down and the
+/// weapon comes up.
+pub const TAKE_CONTROL_READY: f32 = crate::client::ENTER_TIME + crate::viewmodel::TABLET_PUTAWAY_TIME;
 /// BO2 health regeneration: wait this long after the last hit, then regenerate.
 pub const REGEN_DELAY: f32 = 5.0;
 pub const REGEN_FULL_TIME: f32 = 3.0;
@@ -146,7 +149,7 @@ impl Sim {
         }
         let tuning = self.tuning;
         let frame = self.frame;
-        let state = match self.players[idx].take() {
+        let mut state = match self.players[idx].take() {
             Some(mut p) if p.general == general => {
                 p.body = Body::new(info.pos, &tuning);
                 p.mode = Mode::Fps;
@@ -170,6 +173,9 @@ impl Sim {
                 regen_wait: 0.0,
             },
         };
+        // The weapon can't fire or aim until the tablet is down and it is up again.
+        state.arsenal.raise_left = TAKE_CONTROL_READY + state.arsenal.current().def.raise_time;
+        state.arsenal.ads = 0.0;
         self.players[idx] = Some(state);
         host.set_controlled(general, true);
         self.emit(idx, EventKind::EnteredFps { general });
@@ -540,6 +546,17 @@ pub(crate) mod tests {
         }
     }
 
+    /// Logic frames covering `seconds`.
+    fn frames(seconds: f32) -> u32 {
+        (seconds / LOGIC_DT).ceil() as u32 + 1
+    }
+
+    /// Let the camera fly in, the tablet go down and the weapon come up.
+    fn wait_until_ready(sim: &mut Sim, host: &FakeHost) {
+        let ready = sim.player(0).unwrap().arsenal.raise_left;
+        run(sim, host, 0, 1, FpsInput::default(), frames(ready));
+    }
+
     fn events(sim: &Sim) -> Vec<EventKind> {
         sim.events.iter().map(|e| e.kind).collect()
     }
@@ -575,6 +592,7 @@ pub(crate) mod tests {
         host.add(soldier(2, 1, 60.0));
         let mut sim = Sim::new();
         sim.take_control(&host, 0, 1);
+        wait_until_ready(&mut sim, &host);
         // Let the weapon raise, then aim (ADS for accuracy) and fire. Eye is at 10 units; soldier
         // body centre is at 6, so aim slightly down.
         let pitch = -(4.0f32 / 60.0).atan();
@@ -596,6 +614,7 @@ pub(crate) mod tests {
         host.add(soldier(2, 1, 60.0));
         let mut sim = Sim::new();
         sim.take_control(&host, 0, 1);
+        wait_until_ready(&mut sim, &host);
         let pitch = -(4.0f32 / 60.0).atan();
         run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, pitch, ..Default::default() }, 20);
         run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::FIRE, pitch, ..Default::default() }, 10);
@@ -612,7 +631,7 @@ pub(crate) mod tests {
         run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::FIELD_COMPUTER, ..Default::default() }, 1);
         assert!(matches!(sim.player(0).unwrap().mode, Mode::FieldComputer { .. }));
         assert_eq!(*host.controlled.borrow(), vec![1], "still controlled while the laptop comes up");
-        run(&mut sim, &host, 0, 1, FpsInput::default(), 25);
+        run(&mut sim, &host, 0, 1, FpsInput::default(), frames(FIELD_COMPUTER_RAISE));
         assert_eq!(sim.player(0).unwrap().mode, Mode::Rts);
         assert!(host.controlled.borrow().is_empty(), "AI resumed");
         assert!(events(&sim).contains(&EventKind::ReturnedToRts { general: 1 }));
