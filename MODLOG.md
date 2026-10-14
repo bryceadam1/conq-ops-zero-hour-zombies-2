@@ -189,6 +189,10 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     (`host/zhbo/ZhboViewmodel.cpp`, in z_gameenginedevice; hook in patch 0004), posed with
     `Set_Animation(..., ANIM_MODE_MANUAL)` at the clip and time zhbo-core picks
     (`zhbo_core::viewmodel`, ClientOut ABI 3). Aiming slides it so `tag_sights` is on the view axis.
+51. BO2 and Zero Hour use opposite front-face winding. Copying BO2's triangle order made the engine
+    cull the outside of every converted model, so they looked inside-out; the converter now swaps
+    the last two indices of each triangle. My software preview draws both sides, so it can't
+    catch this; check winding in game.
 
 ## Verification log
 

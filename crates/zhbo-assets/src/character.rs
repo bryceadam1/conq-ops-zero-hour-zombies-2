@@ -132,7 +132,9 @@ pub fn skin(rig: &Rig, model: &Model, mesh_prefix: &str, textures: &[Option<Stri
             m.uvs.push(v.uv);
             m.bones.push(pivot as u16);
         }
-        m.triangles = s.triangles.iter().map(|t| t.map(u32::from)).collect();
+        // BO2 and Zero Hour use opposite front-face winding: keep BO2's order and the engine culls
+        // the outside of the model, so it looks inside-out.
+        m.triangles = s.triangles.iter().map(|t| [t[0] as u32, t[2] as u32, t[1] as u32]).collect();
         meshes.push(m);
     }
     meshes
