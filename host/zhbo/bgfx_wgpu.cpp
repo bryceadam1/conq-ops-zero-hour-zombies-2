@@ -13,7 +13,8 @@
 #include <cstdlib>
 #include <cstring>
 
-#if defined(__linux__) && defined(SAGE_USE_SDL3)
+#if defined(SAGE_USE_SDL3)
+#include <SDL3/SDL_filesystem.h>
 #include <SDL3/SDL_video.h>
 #endif
 
@@ -37,12 +38,12 @@ namespace
 	char g_rendererName[128] = "WebGPU (wgpu)";
 
 	// createUniform type and size, for setUniform's element counts.
-	struct UniformInfo
+	struct UniformSize
 	{
 		uint8_t floatsPerElement;
 		uint16_t num;
 	};
-	UniformInfo g_uniforms[UINT16_MAX];
+	UniformSize g_uniforms[UINT16_MAX];
 
 	void Release(const bgfx::Memory *mem)
 	{
@@ -85,9 +86,36 @@ namespace
 		va_end(args);
 	}
 
+	FILE *g_log = nullptr;
+
+	// zhbo-gfx.log next to the executable (the launcher stages it in a user-writable folder).
+	void OpenLog()
+	{
+		if (g_log != nullptr)
+		{
+			return;
+		}
+		char path[1024] = "zhbo-gfx.log";
+#if defined(SAGE_USE_SDL3)
+		if (const char *base = SDL_GetBasePath())
+		{
+			std::snprintf(path, sizeof(path), "%szhbo-gfx.log", base);
+		}
+#endif
+		g_log = std::fopen(path, "w");
+	}
+
 	void Trace(const char *msg)
 	{
-		TraceVa("%s\n", msg);
+		if (g_log != nullptr)
+		{
+			std::fprintf(g_log, "%s\n", msg);
+			std::fflush(g_log);
+		}
+		// The engine's bgfx callback only surfaces lines whose format names WARN or ERROR.
+		const bool problem = std::strstr(msg, "error") != nullptr || std::strstr(msg, "failed") != nullptr
+			|| std::strstr(msg, "skipped") != nullptr || std::strstr(msg, "short") != nullptr;
+		TraceVa(problem ? "WARN %s\n" : "%s\n", msg);
 	}
 
 	void Screenshot(const char *path, uint32_t width, uint32_t height, uint32_t pitch, const uint8_t *data, uint32_t size)
@@ -175,8 +203,6 @@ namespace
 namespace bgfx
 {
 	// --- structs with out-of-line members ------------------------------------------------------
-
-	CallbackI::~CallbackI() {}
 
 	PlatformData::PlatformData()
 		: ndt(nullptr), nwh(nullptr), context(nullptr), queue(nullptr), backBuffer(nullptr), backBufferDS(nullptr),
@@ -293,6 +319,7 @@ namespace bgfx
 	bool init(const Init &_init)
 	{
 		g_callback = _init.callback;
+		OpenLog();
 		zhgfx_set_callbacks(&Trace, &Screenshot);
 		const PlatformData &pd = _init.platformData.nwh != nullptr ? _init.platformData : g_platformData;
 		ZhgfxInit desc;
@@ -320,6 +347,11 @@ namespace bgfx
 	{
 		zhgfx_shutdown();
 		g_callback = nullptr;
+		if (g_log != nullptr)
+		{
+			std::fclose(g_log);
+			g_log = nullptr;
+		}
 	}
 
 	void reset(uint32_t _width, uint32_t _height, uint32_t _flags, TextureFormat::Enum)
@@ -432,7 +464,7 @@ namespace bgfx
 		{
 			return;
 		}
-		const UniformInfo &u = g_uniforms[_handle.idx];
+		const UniformSize &u = g_uniforms[_handle.idx];
 		const uint16_t num = _num == UINT16_MAX ? u.num : _num;
 		zhgfx_set_uniform(_handle.idx, (const float *)_value, uint32_t(num) * u.floatsPerElement);
 	}

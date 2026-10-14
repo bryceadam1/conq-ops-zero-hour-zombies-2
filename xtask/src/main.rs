@@ -225,6 +225,22 @@ fn copy_dir_if_changed(src: &Path, dst: &Path) -> Result<()> {
 // Toolchain
 // ------------------------------------------------------------------------------------------------
 
+/// The directory holding Git for Windows' `sh.exe` (`<git>\usr\bin`), if it can be found.
+fn git_sh_dir() -> Option<PathBuf> {
+    let mut candidates = vec![PathBuf::from(r"C:\Program Files\Git\usr\bin")];
+    if let Some(path) = env::var_os("PATH") {
+        for dir in env::split_paths(&path) {
+            if dir.join("git.exe").is_file() {
+                // <git>\cmd\git.exe or <git>\bin\git.exe
+                if let Some(root) = dir.parent() {
+                    candidates.push(root.join("usr").join("bin"));
+                }
+            }
+        }
+    }
+    candidates.into_iter().find(|d| d.join("sh.exe").is_file())
+}
+
 /// The Visual Studio environment script for 32-bit (`x64 == false`) or 64-bit x86 targets.
 fn vcvars(x64: bool) -> Result<PathBuf> {
     let vswhere = PathBuf::from(r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe");
@@ -423,8 +439,6 @@ fn build(opts: &Opts) -> Result<PathBuf> {
     if opts.wgpu {
         defs.push("-DGGC_BGFX_RENDERER=wgpu".into());
         defs.push(format!("-DZHBO_SHADERC={}", fwd(&shaderc)));
-        // Video playback (FFmpeg) is not wired up for the wgpu build yet.
-        defs.push("-DRTS_BUILD_OPTION_FFMPEG=OFF".into());
     }
 
     let exe_dir = match tc {
@@ -436,10 +450,19 @@ fn build(opts: &Opts) -> Result<PathBuf> {
                 (false, false) => ("win32", "win32-zhbo"),
             };
             let script = work_dir().join("build-engine.cmd");
+            // bgfx.cmake's FetchContent patch step runs `sh`; Git for Windows ships one.
+            let sh_path = git_sh_dir()
+                .map(|d| format!("set \"PATH=%PATH%;{}\"\r\n", d.display()))
+                .unwrap_or_default();
+            if opts.wgpu {
+                // The SDL3/OpenAL audio device decodes with FFmpeg; the win64 preset points
+                // FFMPEG_ROOT at <engine>/.deps-cache/ffmpeg-x64.
+                ensure_ffmpeg_win64(&engine)?;
+            }
             fs::write(
                 &script,
                 format!(
-                    "@echo off\r\ncall \"{vcvars}\" >nul\r\ncd /d \"{engine}\"\r\n\
+                    "@echo off\r\ncall \"{vcvars}\" >nul\r\n{sh_path}cd /d \"{engine}\"\r\n\
                      cmake --preset {preset} -B build/{build_dir} {defs}\r\n\
                      if errorlevel 1 exit /b 1\r\n\
                      cmake --build build/{build_dir} --config Release --target z_generals\r\n",
@@ -476,11 +499,22 @@ fn build(opts: &Opts) -> Result<PathBuf> {
     if exe_dir.join("generalszh.pdb").is_file() {
         fs::copy(exe_dir.join("generalszh.pdb"), dist.join("generalszh.pdb")).map_err(|e| e.to_string())?;
     }
-    // The SDL3/OpenAL build ships its runtime DLLs next to the executable.
-    for entry in fs::read_dir(&exe_dir).map_err(|e| e.to_string())?.flatten() {
-        let path = entry.path();
-        if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("dll")) {
-            fs::copy(&path, dist.join(entry.file_name())).map_err(|e| format!("copy {}: {e}", path.display()))?;
+    if opts.wgpu {
+        // Runtime DLLs: SDL3 and OpenAL from the engine's fetched dependencies (Release config),
+        // FFmpeg from the prebuilt package.
+        let deps = exe_dir.parent().and_then(Path::parent).map(|b| b.join("_deps")).unwrap_or_default();
+        let mut dlls = Vec::new();
+        find_files(&deps, &mut |p| {
+            let name = p.file_name().unwrap_or_default().to_string_lossy().to_ascii_lowercase();
+            let release = p.components().any(|c| c.as_os_str().eq_ignore_ascii_case("Release"));
+            release && name.ends_with(".dll") && (name.starts_with("sdl3") || name.starts_with("openal32"))
+        }, &mut dlls);
+        if dlls.is_empty() {
+            return Err(format!("no SDL3/OpenAL runtime DLLs under {}", deps.display()));
+        }
+        find_files(&ensure_ffmpeg_win64(&engine)?.join("bin"), &mut |p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("dll")), &mut dlls);
+        for dll in dlls {
+            fs::copy(&dll, dist.join(dll.file_name().unwrap())).map_err(|e| format!("copy {}: {e}", dll.display()))?;
         }
     }
     let (from, to) = tc.launcher_file();
@@ -488,6 +522,61 @@ fn build(opts: &Opts) -> Result<PathBuf> {
     pack(&dist)?;
     eprintln!("Conquer Ops staged in {}", dist.display());
     Ok(dist)
+}
+
+fn find_files(dir: &Path, keep: &mut dyn FnMut(&Path) -> bool, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = fs::read_dir(dir) else { return };
+    for entry in entries.flatten() {
+        let p = entry.path();
+        if p.is_dir() {
+            find_files(&p, keep, out);
+        } else if keep(&p) {
+            out.push(p);
+        }
+    }
+}
+
+/// BtbN's FFmpeg 8.1 win64 shared build (headers, import libs, DLLs), as the engine fork's CI uses.
+/// Downloaded once into the work dir. The asset name is a rolling alias for the 8.1 branch.
+const FFMPEG_WIN64_URL: &str =
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip";
+
+fn ensure_ffmpeg_win64(engine: &Path) -> Result<PathBuf> {
+    // Where the fork's win64 preset points FFMPEG_ROOT (untracked, so the engine reset keeps it).
+    let deps = engine.join(".deps-cache");
+    let root = deps.join("ffmpeg-x64");
+    if root.join("include").join("libavcodec").is_dir() {
+        return Ok(root);
+    }
+    fs::create_dir_all(&deps).map_err(|e| e.to_string())?;
+    let zip = deps.join("ffmpeg.zip");
+    // BtbN re-uploads the alias assets on every autobuild, so a download can briefly 404.
+    let mut ok = false;
+    for attempt in 1..=5 {
+        if run_cmd(Command::new("curl").args(["-fL", "--retry", "3", "-o"]).arg(&zip).arg(FFMPEG_WIN64_URL)).is_ok() {
+            ok = true;
+            break;
+        }
+        eprintln!("FFmpeg download attempt {attempt}/5 failed");
+        std::thread::sleep(std::time::Duration::from_secs(20));
+    }
+    if !ok {
+        return Err(format!("could not download {FFMPEG_WIN64_URL}"));
+    }
+    let tmp = deps.join("ffmpeg-tmp");
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
+    run_cmd(Command::new("tar").arg("-xf").arg(&zip).arg("-C").arg(&tmp))?;
+    let inner = fs::read_dir(&tmp)
+        .map_err(|e| e.to_string())?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| p.is_dir())
+        .ok_or("the FFmpeg archive has no top-level folder")?;
+    fs::rename(&inner, &root).map_err(|e| format!("move FFmpeg into place: {e}"))?;
+    let _ = fs::remove_dir_all(&tmp);
+    let _ = fs::remove_file(&zip);
+    Ok(root)
 }
 
 /// Pack `data/` into `ConquerOps.big`. Every file keeps its path relative to `data/`.

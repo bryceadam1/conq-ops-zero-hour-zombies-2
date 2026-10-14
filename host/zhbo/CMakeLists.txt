@@ -35,6 +35,8 @@ if(GGC_RENDER_BACKEND STREQUAL "bgfx" AND GGC_BGFX_RENDERER STREQUAL "wgpu")
     target_include_directories(zhbo_bgfx_wgpu PUBLIC $<TARGET_PROPERTY:bgfx,INTERFACE_INCLUDE_DIRECTORIES>)
     target_compile_definitions(zhbo_bgfx_wgpu PUBLIC $<TARGET_PROPERTY:bgfx,INTERFACE_COMPILE_DEFINITIONS>)
     target_link_libraries(zhbo_bgfx_wgpu PUBLIC ${ZHBO_CORE_LIB} bx)
+    # core_config carries the engine-wide defines (SAGE_USE_SDL3, ...).
+    target_link_libraries(zhbo_bgfx_wgpu PRIVATE core_config)
     if(WIN32)
         target_link_libraries(zhbo_bgfx_wgpu PUBLIC opengl32)
     endif()

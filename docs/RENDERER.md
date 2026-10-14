@@ -30,6 +30,15 @@ crates/zhbo-gfx             Rust: runtime (views, draws, resources) on wgpu
      `--bin2c` headers, named with the default `_dx11` suffix the backend includes;
    * links `zhbo_bgfx_wgpu` (the adapter, defined in `host/zhbo/CMakeLists.txt`) instead of the bgfx
      library. bgfx's headers and bx/bimg still come from the engine's pinned `bgfx.cmake`.
+4. The `win64` preset's OpenAL audio decodes with FFmpeg. xtask downloads the build the fork's CI
+   uses, BtbN's FFmpeg 8.1 win64 shared build, once into `<engine>/.deps-cache/ffmpeg-x64`. That is
+   where the preset points `FFMPEG_ROOT`. bgfx.cmake's patch step needs `sh`, which xtask adds to
+   PATH from Git for Windows.
+5. The SDL3, OpenAL and FFmpeg DLLs are copied next to `generalszh.exe`.
+
+The renderer logs to `zhbo-gfx.log` next to the executable: the adapter, fallbacks taken, and the
+first 32 wgpu errors in full. Lines naming a problem are also passed to the engine's bgfx callback
+as `WARN`.
 
 ## Shaders
 
@@ -94,6 +103,14 @@ One invalid draw in a wgpu render pass invalidates the whole frame. The runtime 
 * D3D's 16-bit formats (R5G6B5, A1R5G5B5, A4R4G4B4) and A8 have no wgpu equivalent. They are expanded
   to 8-bit on upload.
 * Without view-format reinterpretation (GL), sRGB textures are created as sRGB outright.
+* Whether a format can be a render target is probed on the device, inside an error scope, once per
+  format. On GL ES-class devices R32F cannot be rendered to. There, render targets fall back to the
+  first renderable format from R32F, RGBA32F, R16F, RGBA16F and RGBA8; the shaders read `.r`.
+  Parallels' GL driver renders none of the float formats, so its shadow and scene-depth targets
+  become RGBA8.
+* Dynamic buffers keep a CPU shadow copy. bgfx allows updates at any element offset, but
+  `write_buffer` needs 4-byte alignment, so the enclosing aligned range is uploaded. Growing a
+  buffer keeps its contents.
 * Environment variables:
   * `ZHBO_GFX_BACKEND=dx12|vulkan|metal|gl` forces an API;
   * `ZHBO_GFX_FALLBACK=1` prefers the software adapter (WARP or lavapipe);
@@ -107,6 +124,13 @@ One invalid draw in a wgpu render pass invalidates the whole frame. The runtime 
   BC1 and an R5G6B5 texture, a model transform, a partial clear and alpha blending. It reads the
   pixels back through the screenshot path and checks them. It passes on D3D12 WARP and on
   Parallels' GL driver (M1). It skips when no adapter exists; CI installs lavapipe for it.
+
+## Engine integration notes
+
+* `BgfxBackend` sends every 2D draw (identity view, orthographic projection) to its UI view, which
+  runs after the scene composite. The mod's first-person sky therefore cannot be a 2D gradient
+  painted before the 3D pass, as in the DX8 build. In wgpu builds the bridge instead sets the scene
+  view's clear colour to the sky colour while in first person.
 
 ## Not done yet
 

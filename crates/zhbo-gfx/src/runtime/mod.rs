@@ -271,6 +271,16 @@ struct Buffer {
     size: u32,
     layout: u16,
     index32: bool,
+    /// CPU copy of a dynamic buffer's contents (empty for static buffers).
+    shadow: Vec<u8>,
+}
+
+fn shadow_copy(size: u32, data: Option<&[u8]>) -> Vec<u8> {
+    let mut v = vec![0u8; (size.max(4) as usize).next_multiple_of(4)];
+    if let Some(d) = data {
+        v[..d.len()].copy_from_slice(d);
+    }
+    v
 }
 
 struct Uniform {
@@ -521,6 +531,8 @@ pub struct Renderer {
     /// Whether textures can be viewed in another format (sRGB views); not on GL.
     pub(crate) view_formats_supported: bool,
     pub(crate) cache: frame::Caches,
+    /// Formats probed for use as render targets (see `renderable`).
+    renderable: HashMap<wgpu::TextureFormat, bool>,
 }
 
 /// Run a wgpu future to completion. wgpu's native futures are ready immediately or after a
@@ -675,6 +687,7 @@ impl Renderer {
             frame_number: 0,
             stats: Stats::default(),
             cache,
+            renderable: HashMap::new(),
         };
         r.reset(desc.width, desc.height, desc.reset);
         Ok(r)
@@ -724,14 +737,14 @@ impl Renderer {
     // --- capabilities ----------------------------------------------------------------------
 
     /// `Caps::formats` bits for a bgfx texture format.
-    pub fn format_caps(&self, bgfx_format: u32) -> u32 {
+    pub fn format_caps(&mut self, bgfx_format: u32) -> u32 {
         let Some(plan) = state::map_format(bgfx_format).map(|p| if self.bc_supported { p } else { state::without_bc(p) }) else { return 0 };
         let features = self.adapter.get_texture_format_features(plan.format);
         let mut caps = 0;
         if features.allowed_usages.contains(wgpu::TextureUsages::TEXTURE_BINDING) || plan.format.is_depth_stencil_format() {
             caps |= CAPS_FORMAT_TEXTURE_2D;
         }
-        if features.allowed_usages.contains(wgpu::TextureUsages::RENDER_ATTACHMENT) {
+        if plan.format.is_depth_stencil_format() || self.renderable(plan.format) {
             caps |= CAPS_FORMAT_TEXTURE_FRAMEBUFFER;
             if features.flags.sample_count_supported(4) {
                 caps |= CAPS_FORMAT_TEXTURE_MSAA;
@@ -906,58 +919,69 @@ impl Renderer {
     pub fn create_vertex_buffer(&mut self, data: &[u8], layout: VertexLayout) -> u16 {
         let layout = self.register_layout(layout);
         let buffer = self.make_buffer(data.len() as u32, Some(data), wgpu::BufferUsages::VERTEX);
-        self.vertex_buffers.insert(Buffer { buffer, size: data.len() as u32, layout, index32: false })
+        self.vertex_buffers.insert(Buffer { buffer, size: data.len() as u32, layout, index32: false, shadow: Vec::new() })
     }
 
     pub fn create_index_buffer(&mut self, data: &[u8], flags: u16) -> u16 {
         let buffer = self.make_buffer(data.len() as u32, Some(data), wgpu::BufferUsages::INDEX);
-        self.index_buffers.insert(Buffer { buffer, size: data.len() as u32, layout: INVALID, index32: flags & BUFFER_INDEX32 != 0 })
+        self.index_buffers.insert(Buffer { buffer, size: data.len() as u32, layout: INVALID, index32: flags & BUFFER_INDEX32 != 0, shadow: Vec::new() })
     }
 
     pub fn create_dynamic_vertex_buffer(&mut self, num: u32, data: Option<&[u8]>, layout: VertexLayout) -> u16 {
         let size = data.map(|d| d.len() as u32).unwrap_or(num * layout.stride as u32);
         let layout = self.register_layout(layout);
         let buffer = self.make_buffer(size, data, wgpu::BufferUsages::VERTEX);
-        self.dynamic_vertex_buffers.insert(Buffer { buffer, size, layout, index32: false })
+        let shadow = shadow_copy(size, data);
+        self.dynamic_vertex_buffers.insert(Buffer { buffer, size, layout, index32: false, shadow })
     }
 
     pub fn create_dynamic_index_buffer(&mut self, num: u32, data: Option<&[u8]>, flags: u16) -> u16 {
         let index32 = flags & BUFFER_INDEX32 != 0;
         let size = data.map(|d| d.len() as u32).unwrap_or(num * if index32 { 4 } else { 2 });
         let buffer = self.make_buffer(size, data, wgpu::BufferUsages::INDEX);
-        self.dynamic_index_buffers.insert(Buffer { buffer, size, layout: INVALID, index32 })
+        let shadow = shadow_copy(size, data);
+        self.dynamic_index_buffers.insert(Buffer { buffer, size, layout: INVALID, index32, shadow })
     }
 
     pub fn update_dynamic_vertex_buffer(&mut self, h: u16, start_vertex: u32, data: &[u8]) {
         let Some(b) = self.dynamic_vertex_buffers.get(h) else { return };
-        let stride = self.layout(b.layout).map(|l| l.stride as u64).unwrap_or(1);
-        let offset = start_vertex as u64 * stride;
-        if offset + data.len() as u64 > b.buffer.size() {
-            // bgfx grows dynamic buffers (ALLOW_RESIZE); recreate with room and keep the layout.
-            let (layout, index32) = (b.layout, b.index32);
-            let size = (offset + data.len() as u64) as u32;
-            let buffer = self.make_buffer(size, None, wgpu::BufferUsages::VERTEX);
-            self.write_padded(&buffer, offset, data);
-            *self.dynamic_vertex_buffers.get_mut(h).unwrap() = Buffer { buffer, size, layout, index32 };
-            return;
-        }
-        let buffer = b.buffer.clone();
-        self.write_padded(&buffer, offset, data);
+        let stride = self.layout(b.layout).map(|l| l.stride as usize).unwrap_or(1);
+        self.update_dynamic(false, h, start_vertex as usize * stride, data);
     }
 
     pub fn update_dynamic_index_buffer(&mut self, h: u16, start_index: u32, data: &[u8]) {
         let Some(b) = self.dynamic_index_buffers.get(h) else { return };
-        let offset = start_index as u64 * if b.index32 { 4 } else { 2 };
-        if offset + data.len() as u64 > b.buffer.size() {
-            let index32 = b.index32;
-            let size = (offset + data.len() as u64) as u32;
-            let buffer = self.make_buffer(size, None, wgpu::BufferUsages::INDEX);
-            self.write_padded(&buffer, offset, data);
-            *self.dynamic_index_buffers.get_mut(h).unwrap() = Buffer { buffer, size, layout: INVALID, index32 };
-            return;
+        let isize = if b.index32 { 4 } else { 2 };
+        self.update_dynamic(true, h, start_index as usize * isize, data);
+    }
+
+    /// Write `data` at byte `offset` of a dynamic buffer. bgfx allows any element offset, but
+    /// `queue.write_buffer` needs 4-byte alignment, so the CPU shadow copy is updated and the
+    /// enclosing aligned range uploaded. A write past the end grows the buffer (bgfx's
+    /// ALLOW_RESIZE), keeping its contents.
+    fn update_dynamic(&mut self, index: bool, h: u16, offset: usize, data: &[u8]) {
+        let usage = if index { wgpu::BufferUsages::INDEX } else { wgpu::BufferUsages::VERTEX };
+        let end = offset + data.len();
+        let pool = if index { &mut self.dynamic_index_buffers } else { &mut self.dynamic_vertex_buffers };
+        let Some(b) = pool.get_mut(h) else { return };
+        let grow = end > b.shadow.len();
+        if grow {
+            b.shadow.resize(end.next_multiple_of(4), 0);
         }
-        let buffer = b.buffer.clone();
-        self.write_padded(&buffer, offset, data);
+        b.shadow[offset..end].copy_from_slice(data);
+        let (start, stop) = (offset & !3, end.next_multiple_of(4).min(b.shadow.len()));
+        if grow {
+            b.size = end as u32;
+            b.buffer = self.device.create_buffer(&wgpu::BufferDescriptor {
+                label: None,
+                size: b.shadow.len() as u64,
+                usage: usage | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            self.queue.write_buffer(&b.buffer, 0, &b.shadow);
+        } else {
+            self.queue.write_buffer(&b.buffer, start as u64, &b.shadow[start..stop]);
+        }
     }
 
     /// Kinds for `destroy`.
@@ -1009,6 +1033,28 @@ impl Renderer {
         let mips = if has_mips { 32 - width.max(height).leading_zeros() } else { 1 };
         let layers = layers.max(1);
         let rt = flags & (TEXTURE_RT | TEXTURE_RT_WRITE_ONLY | (7 << TEXTURE_RT_MSAA_SHIFT)) != 0;
+        let mut plan = plan;
+        if rt && !plan.format.is_depth_stencil_format() && !self.renderable(plan.format) {
+            // e.g. R32F (scene depth, shadow maps) is not renderable on GL downlevel devices. The
+            // shaders read `.r`, so any renderable float format with a red channel will do.
+            let substitutes = [
+                wgpu::TextureFormat::R32Float,
+                wgpu::TextureFormat::Rgba32Float,
+                wgpu::TextureFormat::R16Float,
+                wgpu::TextureFormat::Rgba16Float,
+                wgpu::TextureFormat::Rgba8Unorm,
+            ];
+            match substitutes.into_iter().find(|&f| self.renderable(f)) {
+                Some(f) => {
+                    self.log(&format!("zhbo-gfx: {:?} render targets are not supported here; using {f:?}", plan.format));
+                    plan.format = f;
+                }
+                None => {
+                    self.log(&format!("zhbo-gfx: no renderable substitute for {:?}", plan.format));
+                    return INVALID;
+                }
+            }
+        }
         let mut usage = wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::COPY_SRC;
         if rt {
             usage |= wgpu::TextureUsages::RENDER_ATTACHMENT;
@@ -1080,6 +1126,29 @@ impl Renderer {
             }
         }
         self.textures.insert(Arc::new(tex))
+    }
+
+    /// Whether `format` can be a render target on this device. Format tables and downlevel
+    /// rules differ per backend (R32F is not renderable on GL ES-class devices), so ask the device:
+    /// create a tiny target inside a validation error scope, once per format.
+    fn renderable(&mut self, format: wgpu::TextureFormat) -> bool {
+        if let Some(&ok) = self.renderable.get(&format) {
+            return ok;
+        }
+        let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let _probe = self.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("format probe"),
+            size: wgpu::Extent3d { width: 4, height: 4, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let ok = block_on(scope.pop()).is_none();
+        self.renderable.insert(format, ok);
+        ok
     }
 
     fn supported_samples(&self, format: wgpu::TextureFormat, wanted: u32) -> u32 {

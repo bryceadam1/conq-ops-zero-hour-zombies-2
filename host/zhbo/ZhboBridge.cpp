@@ -10,6 +10,9 @@
 // Precompiled engine headers are force-included by the z_gameengine target.
 #include "ZhboBridge.h"
 #include "zhbo_core.h"
+#if defined(GGC_BGFX_RENDERER_WGPU)
+#include "zhbo_gfx.h"
+#endif
 
 #include "Common/GameUtility.h"
 #include "Common/GlobalData.h"
@@ -903,6 +906,20 @@ void Zhbo_DrawHud()
 
 void Zhbo_DrawSky()
 {
+#if defined(GGC_BGFX_RENDERER_WGPU)
+	// The bgfx backend sends 2D draws to its UI view, which runs after the 3D scene, so a 2D
+	// gradient would cover the world. Paint the sky as the scene view's clear colour instead
+	// (view 1 is BgfxBackend's kBgfxEngineView; alpha stays 1 for its water blending), and put
+	// the backend's black back for the RTS camera.
+	static bool s_skyClear = false;
+	const bool wantSky = s_ready && s_out.camera_override;
+	if (wantSky != s_skyClear)
+	{
+		zhgfx_set_view_clear(1, 0x0001 | 0x0002 | 0x0004, wantSky ? 0x7896B4FFu : 0x000000FFu, 1.0f, 0);
+		s_skyClear = wantSky;
+	}
+	return;
+#endif
 	if (!s_ready || !s_out.camera_override)
 		return;
 	const Real w = (Real)TheDisplay->getWidth();

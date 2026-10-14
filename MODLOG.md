@@ -100,6 +100,16 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     encoding and pipelines are built in an error scope.
 25. Rust's x86_64-msvc staticlib with wgpu adds only `opengl32` to the native libs (D3D12/DXGI are
     loaded through `windows-link` raw-dylib).
+26. The fork's `win64` preset needs FFmpeg even with `RTS_BUILD_OPTION_FFMPEG=OFF`, because OpenAL
+    audio decodes with it. The preset sets `FFMPEG_ROOT=<engine>/.deps-cache/ffmpeg-x64`, overriding
+    the environment. bgfx.cmake's FetchContent patch step runs `sh`, which a plain cmd lacks.
+27. Engine defines such as `SAGE_USE_SDL3` live on the `core_config` interface target. A glue
+    target that doesn't link it silently compiles the non-SDL branch.
+28. In the bgfx backend, 2D draws go to the UI view (last), so a sky painted with `drawFillRect`
+    before the 3D pass hides the world. The wgpu build uses the scene view's clear colour.
+29. Unaligned dynamic index updates (`write_buffer` offset 438) and failed R32F render targets
+    made buildings vanish in RTS and the whole world vanish in first person. Both were silent in
+    the game; only `zhbo-gfx.log` showed them.
 
 ## Verification log
 
@@ -117,6 +127,11 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
 * Cross-platform: all crates type-check for x86_64-unknown-linux-gnu and aarch64-apple-darwin; core
   builds for i686-pc-windows-gnu; discovery unit-tested against a simulated CrossOver bottle.
 * Re-base onto bobtista's fork (2026-10-14): DX8 build, autotest 7/7 PASS.
+* **wgpu build in game (2026-10-14)**: `cargo xtask build --wgpu` gives a 64-bit SDL3 `generalszh.exe`
+  on the Rust renderer. It runs here on Parallels' GL adapter (M1). The intro video, shell map (3D
+  water, battleship, particles) and menus render. The autotest passes 7/7, and screenshots show the
+  RTS view (terrain, base, units, minimap, shroud) and the first-person world (terrain, trees,
+  depot, enemy infantry, HUD) matching the DX8 build. No wgpu errors in `zhbo-gfx.log`.
 * zhbo-gfx (2026-10-14): all 27 engine shader variants translate, validate and emit WGSL;
   `tests/headless.rs` draws a frame (transient + static buffers, BC1 + R5G6B5 textures, model
   transform, partial clear, alpha blend) and checks read-back pixels - PASS on D3D12 WARP and on the
