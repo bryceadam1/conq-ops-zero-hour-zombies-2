@@ -143,6 +143,13 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     MP characters are per map (`mp_raid.ff`: `c_usa_mp_fbi_assault_fb` bodies,
     `c_usa_mp_fbi_longsleeve_viewhands` arms); guns (`t6_wpn_*_view`/`_world`), `viewmodel_*` and
     third-person player animations are in `common_mp.ff` (481 models, 4233 anims).
+40. MP character models are in the faction zones (`faction_fbi_mp.ff`, `faction_seals_mp.ff`, ...);
+    a map zone only lists their names. `zhbo_formats::xmodel::find` reads a model by finding its
+    name right after its 248-byte struct, so no full zone walk is needed. Shared ("reusable") data
+    that an earlier asset already loaded is a back-reference and is not resolved yet. Verified with
+    rendered previews (`zhbo-assets model <ff> <name> --png`): FBI body (102 bones, 15000 tris),
+    FBI viewhands (72 bones), AN-94 viewmodel. Rigid and blended vertices are in model space; a
+    viewmodel's bind pose parks its magazine on `tag_clip1` behind the stock, and animation moves it.
 
 ## Verification log
 

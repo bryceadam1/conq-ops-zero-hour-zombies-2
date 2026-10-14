@@ -9,6 +9,7 @@ pub mod ipak;
 pub mod iwi;
 pub mod lzo;
 pub mod sab;
+pub mod xmodel;
 
 use std::fmt;
 

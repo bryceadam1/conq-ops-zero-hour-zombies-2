@@ -14,6 +14,8 @@
 //! zhbo-assets zones                                   list fastfiles
 //! zhbo-assets zone <ff>                               decrypt a fastfile; asset counts by type
 //! zhbo-assets find <text> [<ff> ...]                  names containing <text>, in every (or the given) zone
+//! zhbo-assets model <ff> <name> [--png out] [--bones] read a model; stats, preview image, skeleton
+//! zhbo-assets dump <ff> <text> [before] [after]        hex dump around a string in a zone
 //! ```
 //! `<bank>`/`<pak>`/`<ff>` are file names inside the BO2 install (`sound\`, `zone\all\`) or full paths.
 //! Everything exported is the player's own game data: keep it local, never redistribute it.
@@ -22,6 +24,8 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use zhbo_assets::{images, sounds};
+
+mod preview;
 use zhbo_formats::fastfile;
 use zhbo_formats::ipak::Ipak;
 use zhbo_formats::iwi::Format;
@@ -119,6 +123,76 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             for (t, n) in counts {
                 println!("{:>6}  {}", n, fastfile::asset_type_name(t));
+            }
+            if args.iter().any(|a| a == "--order") {
+                // Runs of asset types in stream order: what a parser must walk to reach an asset.
+                println!("order:");
+                let mut runs: Vec<(u32, usize, usize)> = Vec::new(); // (type, first index, count)
+                for (i, &(t, _)) in index.assets.iter().enumerate() {
+                    match runs.last_mut() {
+                        Some(r) if r.0 == t => r.2 += 1,
+                        _ => runs.push((t, i, 1)),
+                    }
+                }
+                for (t, first, n) in runs {
+                    println!("{:>6} {:>6}  {}", first, n, fastfile::asset_type_name(t));
+                }
+            }
+            Ok(())
+        }
+        "model" => {
+            let usage = "model <ff> <name> [--png out.png]";
+            let zone = open_zone(args.get(1).ok_or(usage)?)?;
+            let index = zone.index().map_err(|e| e.to_string())?;
+            let name = args.get(2).ok_or(usage)?;
+            let model = zhbo_formats::xmodel::find(&zone.data, &index.script_strings, name).map_err(|e| e.to_string())?;
+            println!("{}: {} bones, {} surfaces, {} lods, bounds {:?}..{:?}", model.name, model.bones.len(), model.surfaces.len(), model.lods.len(), model.mins, model.maxs);
+            for (i, l) in model.lods.iter().enumerate() {
+                let surfs = &model.surfaces[l.first_surface..l.first_surface + l.surface_count];
+                let tris: usize = surfs.iter().map(|s| s.triangles.len()).sum();
+                let verts: usize = surfs.iter().map(|s| s.vertices.len()).sum();
+                println!("  lod{i}: dist {:.0}, {} surfaces, {verts} vertices, {tris} triangles", l.distance, l.surface_count);
+            }
+            let names: Vec<&str> = model.bones.iter().take(12).map(|b| b.name.as_str()).collect();
+            println!("  bones: {} ...", names.join(" "));
+            if args.iter().any(|a| a == "--bones") {
+                for (i, b) in model.bones.iter().enumerate() {
+                    println!("  bone {i:>3} {:<24} parent {:>4} pos {:>7.2?} rot {:>6.3?}", b.name, b.parent.map_or(-1, |p| p as i64), b.position, b.rotation);
+                }
+                for (i, s) in model.surfaces.iter().enumerate().take(model.lods[0].surface_count) {
+                    let mut bones: Vec<u16> = s.vertices.iter().flat_map(|v| v.weights.iter().map(|w| w.0)).collect();
+                    bones.sort_unstable();
+                    bones.dedup();
+                    let c = s.vertices.iter().fold([0.0f32; 3], |a, v| [a[0] + v.position[0], a[1] + v.position[1], a[2] + v.position[2]]);
+                    let n = s.vertices.len().max(1) as f32;
+                    println!("  surface {i}: {} verts, bones {bones:?}, centroid {:>7.2?}", s.vertices.len(), [c[0] / n, c[1] / n, c[2] / n]);
+                }
+            }
+            if let Some(out) = flag(args, "--png") {
+                preview::render(&model, Path::new(out)).map_err(|e| e.to_string())?;
+                println!("wrote {out}");
+            }
+            Ok(())
+        }
+        "dump" => {
+            // Hex dump around each occurrence of a string in a zone, for format work.
+            let zone = open_zone(args.get(1).ok_or("dump <ff> <text> [before] [after]")?)?;
+            let needle = args.get(2).ok_or("dump <ff> <text> [before] [after]")?.as_bytes();
+            let before: usize = args.get(3).and_then(|v| v.parse().ok()).unwrap_or(256);
+            let after: usize = args.get(4).and_then(|v| v.parse().ok()).unwrap_or(64);
+            let d = &zone.data;
+            let mut start = 0;
+            while let Some(rel) = d[start..].windows(needle.len()).position(|w| w == needle) {
+                let at = start + rel;
+                start = at + 1;
+                println!("== at {at:#x}");
+                let from = at.saturating_sub(before) & !15;
+                for row in (from..(at + after).min(d.len())).step_by(16) {
+                    let bytes = &d[row..(row + 16).min(d.len())];
+                    let hex: Vec<String> = bytes.iter().map(|b| format!("{b:02x}")).collect();
+                    let text: String = bytes.iter().map(|&b| if (0x20..0x7f).contains(&b) { b as char } else { '.' }).collect();
+                    println!("{row:08x}  {:<47}  {text}", hex.join(" "));
+                }
             }
             Ok(())
         }
