@@ -1,23 +1,109 @@
 //! A tiny software rasterizer for checking converted models by eye: LOD 0, front and side views,
 //! flat-shaded, side by side in one PNG. BO2 models are Z-up with X forward.
+//!
+//! `pose` skins models with an animation frame, so animation decoding can be checked the same way.
 
 use std::path::Path;
+use zhbo_formats::xanim::Anim;
 use zhbo_formats::xmodel::Model;
 
 const H: usize = 512;
 const W: usize = H * 2;
 
+/// Positions and triangles of one surface, ready to draw.
+pub type Mesh = (Vec<[f32; 3]>, Vec<[u16; 3]>);
+
+fn lod0(model: &Model) -> &[zhbo_formats::xmodel::Surface] {
+    let lod = &model.lods[0];
+    &model.surfaces[lod.first_surface..lod.first_surface + lod.surface_count]
+}
+
 pub fn render(model: &Model, out: &Path) -> std::io::Result<()> {
+    let meshes: Vec<Mesh> =
+        lod0(model).iter().map(|s| (s.vertices.iter().map(|v| v.position).collect(), s.triangles.clone())).collect();
+    render_meshes(&meshes, out)
+}
+
+// --- rigid transforms: (rotation quaternion xyzw, translation) ---
+
+type Xf = ([f32; 4], [f32; 3]);
+
+fn qmul(a: [f32; 4], b: [f32; 4]) -> [f32; 4] {
+    [
+        a[3] * b[0] + a[0] * b[3] + a[1] * b[2] - a[2] * b[1],
+        a[3] * b[1] - a[0] * b[2] + a[1] * b[3] + a[2] * b[0],
+        a[3] * b[2] + a[0] * b[1] - a[1] * b[0] + a[2] * b[3],
+        a[3] * b[3] - a[0] * b[0] - a[1] * b[1] - a[2] * b[2],
+    ]
+}
+fn qrot(q: [f32; 4], v: [f32; 3]) -> [f32; 3] {
+    let p = qmul(qmul(q, [v[0], v[1], v[2], 0.0]), [-q[0], -q[1], -q[2], q[3]]);
+    [p[0], p[1], p[2]]
+}
+fn compose(parent: Xf, local: Xf) -> Xf {
+    let t = qrot(parent.0, local.1);
+    (qmul(parent.0, local.0), [parent.1[0] + t[0], parent.1[1] + t[1], parent.1[2] + t[2]])
+}
+fn inverse(x: Xf) -> Xf {
+    let q = [-x.0[0], -x.0[1], -x.0[2], x.0[3]];
+    let t = qrot(q, x.1);
+    (q, [-t[0], -t[1], -t[2]])
+}
+fn apply(x: Xf, v: [f32; 3]) -> [f32; 3] {
+    let r = qrot(x.0, v);
+    [r[0] + x.1[0], r[1] + x.1[1], r[2] + x.1[2]]
+}
+
+/// Skin `models` with `anim` at `frame`. Each model may hang its root bone from a named bone of
+/// an earlier model (a gun's `j_gun` on the arms' `tag_weapon`).
+pub fn pose(models: &[(&Model, Option<&str>)], anim: &Anim, frame: f32) -> Vec<Mesh> {
+    let mut meshes = Vec::new();
+    let mut placed: Vec<(String, Xf)> = Vec::new(); // posed world transforms of bones so far
+    for &(model, attach) in models {
+        let attach_xf = attach.and_then(|name| placed.iter().find(|(n, _)| n == name).map(|p| p.1));
+        let mut world: Vec<Xf> = Vec::with_capacity(model.bones.len());
+        for b in &model.bones {
+            let track = anim.bones.iter().find(|t| t.name == b.name);
+            let rot = track.and_then(|t| t.rotation_at(frame));
+            let pos = track.and_then(|t| t.translation_at(frame));
+            let xf = match b.parent {
+                Some(p) => compose(world[p], (rot.unwrap_or(b.local_rotation), pos.unwrap_or(b.local_position))),
+                None => match attach_xf {
+                    // An attached root follows its tag, plus whatever the animation does to it.
+                    Some(tag) => compose(tag, (rot.unwrap_or([0.0, 0.0, 0.0, 1.0]), pos.unwrap_or([0.0; 3]))),
+                    None => (rot.unwrap_or(b.rotation), pos.unwrap_or(b.position)),
+                },
+            };
+            world.push(xf);
+        }
+        let skin: Vec<Xf> = model.bones.iter().zip(&world).map(|(b, &w)| compose(w, inverse((b.rotation, b.position)))).collect();
+        for s in lod0(model) {
+            let positions = s
+                .vertices
+                .iter()
+                .map(|v| {
+                    v.weights.iter().fold([0.0f32; 3], |acc, &(bone, w)| {
+                        let p = apply(skin[bone as usize], v.position);
+                        [acc[0] + p[0] * w, acc[1] + p[1] * w, acc[2] + p[2] * w]
+                    })
+                })
+                .collect();
+            meshes.push((positions, s.triangles.clone()));
+        }
+        placed.extend(model.bones.iter().zip(&world).map(|(b, &w)| (b.name.clone(), w)));
+    }
+    meshes
+}
+
+pub fn render_meshes(meshes: &[Mesh], out: &Path) -> std::io::Result<()> {
     let mut rgb = vec![40u8; W * H * 3];
     let mut depth = vec![f32::NEG_INFINITY; W * H];
-    let lod = &model.lods[0];
-    let surfs = &model.surfaces[lod.first_surface..lod.first_surface + lod.surface_count];
 
     let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
-    for v in surfs.iter().flat_map(|s| &s.vertices) {
+    for p in meshes.iter().flat_map(|m| &m.0) {
         for k in 0..3 {
-            lo[k] = lo[k].min(v.position[k]);
-            hi[k] = hi[k].max(v.position[k]);
+            lo[k] = lo[k].min(p[k]);
+            hi[k] = hi[k].max(p[k]);
         }
     }
     let extent = (0..3).map(|k| hi[k] - lo[k]).fold(1e-3f32, f32::max) * 1.1;
@@ -32,9 +118,9 @@ pub fn render(model: &Model, out: &Path) -> std::io::Result<()> {
             let sy = -(p[2] - center[2]);
             [(view * H) as f32 + H as f32 / 2.0 + sx * scale, H as f32 / 2.0 + sy * scale, d]
         };
-        for s in surfs {
-            for t in &s.triangles {
-                let [a, b, c] = t.map(|i| s.vertices[i as usize].position);
+        for (positions, triangles) in meshes {
+            for t in triangles {
+                let [a, b, c] = t.map(|i| positions[i as usize]);
                 let n = cross(sub(b, a), sub(c, a));
                 let len = (n[0] * n[0] + n[1] * n[1] + n[2] * n[2]).sqrt().max(1e-9);
                 let light = [0.6f32, -0.5, 0.62];

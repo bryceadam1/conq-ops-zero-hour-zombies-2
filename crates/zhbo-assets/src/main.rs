@@ -16,6 +16,8 @@
 //! zhbo-assets find <text> [<ff> ...]                  names containing <text>, in every (or the given) zone
 //! zhbo-assets model <ff> <name> [--png out] [--bones] read a model; stats, preview image, skeleton
 //! zhbo-assets dump <ff> <text> [before] [after]        hex dump around a string in a zone
+//! zhbo-assets pose <out.png> <frame> <ff>:<anim> <ff>:<model>[@<tag>] ...
+//!                                                     render models posed by an animation frame
 //! ```
 //! `<bank>`/`<pak>`/`<ff>` are file names inside the BO2 install (`sound\`, `zone\all\`) or full paths.
 //! Everything exported is the player's own game data: keep it local, never redistribute it.
@@ -174,6 +176,37 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             Ok(())
         }
+        "pose" => {
+            // pose <out.png> <frame|fraction> <anim-ff>:<anim> <ff>:<model>[@<parent-bone>] ...
+            let usage = "pose <out.png> <frame> <ff>:<anim> <ff>:<model>[@<tag>] ...";
+            let out = args.get(1).ok_or(usage)?;
+            let frame: f32 = args.get(2).and_then(|v| v.parse().ok()).ok_or(usage)?;
+            let split = |s: &str| -> Result<(String, String), String> {
+                s.split_once(':').map(|(a, b)| (a.to_string(), b.to_string())).ok_or_else(|| usage.to_string())
+            };
+            let mut zones: ZoneCache = Default::default();
+            let (anim_ff, anim_name) = split(args.get(3).ok_or(usage)?)?;
+            load_zone(&mut zones, &anim_ff)?;
+            let (z, s) = &zones[&anim_ff];
+            let anim = zhbo_formats::xanim::find(&z.data, s, &anim_name).map_err(|e| e.to_string())?;
+            println!("{}: {} frames at {} fps, {} bones", anim.name, anim.num_frames, anim.frame_rate, anim.bones.len());
+            let mut models = Vec::new();
+            for spec in &args[4..] {
+                let (ff, rest) = split(spec)?;
+                let (name, tag) = match rest.split_once('@') {
+                    Some((n, t)) => (n.to_string(), Some(t.to_string())),
+                    None => (rest, None),
+                };
+                load_zone(&mut zones, &ff)?;
+                let (z, s) = &zones[&ff];
+                models.push((zhbo_formats::xmodel::find(&z.data, s, &name).map_err(|e| e.to_string())?, tag));
+            }
+            let refs: Vec<(&zhbo_formats::xmodel::Model, Option<&str>)> = models.iter().map(|(m, t)| (m, t.as_deref())).collect();
+            let meshes = preview::pose(&refs, &anim, frame);
+            preview::render_meshes(&meshes, Path::new(out)).map_err(|e| e.to_string())?;
+            println!("wrote {out}");
+            Ok(())
+        }
         "dump" => {
             // Hex dump around each occurrence of a string in a zone, for format work.
             let zone = open_zone(args.get(1).ok_or("dump <ff> <text> [before] [after]")?)?;
@@ -328,6 +361,18 @@ fn run(args: &[String]) -> Result<(), String> {
 fn open_bank(name: &str) -> Result<SoundBank, String> {
     let path = resolve(name, &["sound"])?;
     SoundBank::open(&path).map_err(|e| format!("{}: {e}", path.display()))
+}
+
+/// Decrypted zones with their script strings, by file name.
+type ZoneCache = std::collections::HashMap<String, (fastfile::Zone, Vec<String>)>;
+
+fn load_zone(zones: &mut ZoneCache, name: &str) -> Result<(), String> {
+    if !zones.contains_key(name) {
+        let z = open_zone(name)?;
+        let strings = z.index().map_err(|e| e.to_string())?.script_strings;
+        zones.insert(name.to_string(), (z, strings));
+    }
+    Ok(())
 }
 
 fn open_zone(name: &str) -> Result<fastfile::Zone, String> {

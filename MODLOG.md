@@ -150,6 +150,12 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     rendered previews (`zhbo-assets model <ff> <name> --png`): FBI body (102 bones, 15000 tris),
     FBI viewhands (72 bones), AN-94 viewmodel. Rigid and blended vertices are in model space; a
     viewmodel's bind pose parks its magazine on `tag_clip1` behind the stock, and animation moves it.
+41. `zhbo_formats::xanim` reads XAnimParts the same way (104-byte struct, then names, notifies,
+    then the byte/short/int/random pools and indices) and decodes bone tracks; every pool must be
+    consumed exactly, which catches layout mistakes. Animations with a delta (root motion) part
+    are refused for now. `zhbo-assets pose` skins models with a frame: arms + AN-94 (gun root
+    `j_gun` hung on the arms' `tag_weapon`) posed by `viewmodel_an94_reload` look right. Anim
+    values are full local transforms (replacing the bind local); unanimated parts keep the bind.
 
 ## Verification log
 
