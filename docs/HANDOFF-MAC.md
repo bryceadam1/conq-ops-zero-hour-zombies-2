@@ -58,6 +58,8 @@ steamcmd +@sSteamCmdForcePlatformType windows +force_install_dir ~/Games/ZeroHou
          +login <steam-user> +app_update 2732960 validate +quit
 steamcmd +@sSteamCmdForcePlatformType windows +force_install_dir ~/Games/BlackOps2 \
          +login <steam-user> +app_update 202970 validate +quit
+steamcmd +@sSteamCmdForcePlatformType windows +force_install_dir ~/Games/BlackOps2 \
+         +login <steam-user> +app_update 202990 validate +quit   # BO2 Multiplayer: mp.ipak (HUD art)
 export ZHBO_ZH_DIR=~/Games/ZeroHour ZHBO_BO2_DIR=~/Games/BlackOps2
 ```
 
@@ -139,21 +141,22 @@ Do the same checks as `scripts/autotest.ps1`, by hand or with new tooling:
    `scripts/inputtest.ps1` checks.
 3. Compare screenshots of the RTS view, first person and the shell map against the DX8 build.
 
-**Open task:** a macOS version of the test scripts. `um win` is Windows-only. Options: drive the menus
-with AppleScript/`cliclick`; add an engine flag that starts a skirmish directly; and take captures
-through the renderer's `requestScreenShot` path, which writes PNGs through the backend callback.
+**macOS:** `scripts/autotest-mac.sh` runs check 1 and `scripts/autotest-mac.sh --input` runs check 2.
+They load a saved skirmish (`-loadsave`), made once by hand as the script's header describes, and
+take captures through the engine's `GGC_BGFX_SCREENSHOT_*` flags. `--input` posts real key and
+mouse events with `scripts/macos/drive.swift` and needs Accessibility permission.
 
 ## 6. What still needs the Windows VM
 
 * The DX8 reference build, for side-by-side visual comparison.
-* `scripts/autotest.ps1` and `scripts/inputtest.ps1` regression runs, until a macOS equivalent exists.
+* `scripts/autotest.ps1` and `scripts/inputtest.ps1`, for regressions in the Windows builds.
 * Regressions in the 64-bit Windows wgpu build.
 
 ## 7. Next tasks after the Mac build runs
 
-1. Get the macOS build running and passing the autopilot checks (sections 3–5). Record new gotchas
-   in MODLOG.md.
-2. A macOS test driver (section 5).
+1. **Done 2026-10-14:** the macOS build runs on Metal and passes the autopilot and real-input
+   checks. Gotchas 32-38 are in MODLOG.md.
+2. **Done:** a macOS test driver (`scripts/autotest-mac.sh`). Still open: Retina at full resolution (MODLOG gotcha 37).
 3. M5 parity: shadows, water, bloom, SSAO and smudge against DX8. Measure with the renderer's
    screenshot path, and check `zhbo-gfx.log` for skipped draws.
 4. Installers: a script wrapping the SteamCMD steps above, plus macOS packaging. Unsigned local

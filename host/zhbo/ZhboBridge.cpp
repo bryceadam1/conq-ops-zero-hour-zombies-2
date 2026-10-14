@@ -790,6 +790,36 @@ void Zhbo_ClientFrame()
 	{
 		zhbo_platform::readKeys(in.keys);
 	}
+
+	// Test runs: log focus changes and the held keys, so an input test can tell lost focus from
+	// lost keys.
+	if (s_autopilot.enabled)
+	{
+		static Bool s_wasFocused = FALSE;
+		static uint32_t s_lastKeyHash = 0;
+		if (focused != s_wasFocused)
+		{
+			logf("window focus %s", focused ? "gained" : "lost");
+			s_wasFocused = focused;
+		}
+		char held[64];
+		Int n = 0;
+		uint32_t hash = 0;
+		for (Int k = 0; k < 256 && n < (Int)sizeof(held) - 1; ++k)
+		{
+			if (in.keys[k])
+			{
+				held[n++] = (k >= '0' && k <= 'Z') ? (char)k : '?';
+				hash = hash * 31 + (uint32_t)k + 1;
+			}
+		}
+		held[n] = 0;
+		if (hash != s_lastKeyHash)
+		{
+			logf("keys held: [%s]", held);
+			s_lastKeyHash = hash;
+		}
+	}
 	if (s_mouseCaptured && focused)
 	{
 		zhbo_platform::mouseDelta(in.mouse_dx, in.mouse_dy);

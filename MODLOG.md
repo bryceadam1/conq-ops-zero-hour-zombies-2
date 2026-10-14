@@ -123,6 +123,19 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     when copying the stage into dist. It now copies permissions as well.
 34. On macOS/Linux, the launcher's error path pops an `osascript`/`zenity` dialog and waits for it,
     so `conquerops --check` looked hung when the games were missing. `--check` now only prints.
+35. BO2's HUD art is in `zone/all/mp.ipak`, which ships with BO2 **Multiplayer** (Steam app 202990),
+    not the campaign app (202970). Without it the launcher logs "could not read Black Ops II art"
+    and the HUD uses its drawn fallbacks. SteamCMD must fetch both apps into the same folder.
+36. The fork's SDL3 entry point (`SDL3Main.cpp`) never called `initMemoryManager()`, so with the null
+    memory manager `TheDynamicMemoryAllocator` stayed null and a `--log` build asserted on every
+    string allocation (1.17 million times, 151 MB of log, in 25 s). Patch 0003 calls it.
+37. Retina: the fork creates the SDL window without `SDL_WINDOW_HIGH_PIXEL_DENSITY` and sizes the
+    swap chain from `SDL_GetWindowSize` (points), so `-xres 1280` renders 1280x720 and macOS
+    scales it 2x. Same as the fork's own renderer and as Windows at 200%; full-resolution Retina
+    is a separate feature (window flag, pixel swap size, mouse and UI mapping).
+38. macOS tests skip the menus with the fork's `-loadsave` (made once with `-saveatframe 90 -saveto`).
+    `ConquerOps.log` survives between runs, so delete it before launching, or a wait for "entered
+    first-person" matches the previous run and input is sent during the loading screen.
 
 ## Verification log
 
@@ -157,8 +170,13 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
   Parallels GL adapter (M1, CPU BC decode).
 * **Native macOS build (2026-10-14)**: `cargo xtask build --log` configures, compiles, links and
   stages on macOS 15.7 (M1 Pro, arm64), with the dylibs bundled into dist. `cargo test --workspace`
-  passes 73 tests, the headless renderer test included, now on Metal. Not run in game yet: the game
-  files are not on the Mac yet.
+  passes 73 tests, the headless renderer test included, now on Metal.
+* **macOS in game (2026-10-14)**: the renderer runs on `Apple M1 Pro (Metal)` with no CPU BC decode,
+  no R32F substitutes and no wgpu errors, at a steady 30 FPS. The intro video, RTS view and first
+  person (world, BO2 HUD with `DIN Alternate`, all 14 BO2 HUD images) render. `scripts/autotest-mac.sh`
+  passes 7/7, and `--input` passes (real W reaches the game, the General moves, the mouse turns the view).
+  In this save the General dies at frame ~496 before re-entry, so the "re-entered" check only
+  proves the line is logged.
 
 ## Next steps
 

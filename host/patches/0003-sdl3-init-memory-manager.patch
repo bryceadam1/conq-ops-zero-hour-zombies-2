@@ -1,0 +1,16 @@
+diff --git a/GeneralsMD/Code/Main/SDL3Main.cpp b/GeneralsMD/Code/Main/SDL3Main.cpp
+index 9512ec156..24b87a8e7 100644
+--- a/GeneralsMD/Code/Main/SDL3Main.cpp
++++ b/GeneralsMD/Code/Main/SDL3Main.cpp
+@@ -203,7 +203,10 @@ int main(int argc, char **argv)
+ 	// initMemoryManager(); the SDL3 entry point with the null memory manager never does, so a
+ 	// logging build produced no output. Initialize it here so DEBUG_LOG reaches the log file and
+ 	// console. Expands to nothing when debug logging is compiled out.
+-	DEBUG_INIT(DEBUG_FLAGS_DEFAULT);
++	// ZHBO: initMemoryManager() does that DEBUG_INIT too, and also creates the null memory
++	// manager's TheDynamicMemoryAllocator. Without it a logging build asserts on every string
++	// allocation (over a million times in 25 seconds), as WinMain's path never does.
++	initMemoryManager();
+ 
+ 	// TheSuperHackers @bugfix bobtista 02/09/2026 A headless run never initializes the renderer, so
+ 	// it must not take over the display: it runs as a background app with a hidden window and
