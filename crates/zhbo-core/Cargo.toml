@@ -9,5 +9,10 @@ license.workspace = true
 # staticlib: linked into generalszh.exe by host/zhbo/CMakeLists.txt. rlib: unit tests and tools.
 crate-type = ["staticlib", "rlib"]
 
+[features]
+# The wgpu renderer (zhbo-gfx) and its C ABI, for builds with GGC_BGFX_RENDERER=wgpu.
+renderer = ["dep:zhbo-gfx"]
+
 [dependencies]
 zhbo-requirements = { path = "../zhbo-requirements" }
+zhbo-gfx = { path = "../zhbo-gfx", optional = true }

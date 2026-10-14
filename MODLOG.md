@@ -18,6 +18,12 @@ Working journal. Facts, paths, versions, dead ends, next steps.
   `sound\*.sabs|*.sabl` (137 banks). BO2 is **never launched or hooked** (MP has VAC); only its files are read.
 * Engine source: TheSuperHackers GeneralsGameCode @ `02b5b56e22fa6a1ca06a3fc2f7648e646e9f56cb` (2026-10-13), GPL-3.0.
   Their AI policy forbids autonomous-agent PRs upstream - this mod never submits upstream.
+* Since 2026-10-14 the engine is **bobtista's fork** @ `4297a8e1fe2a53ce03984424e71d04694d7c5c7a` (submodule
+  `host/GeneralsGameCode`): `IRenderBackend` (D3D8 or bgfx), SDL3, OpenAL, 64-bit presets. The DX8
+  build (`cargo xtask build`) still passes the autotest 7/7 on it.
+* Renderer (2026-10-14): `crates/zhbo-gfx` implements the bgfx API subset the fork's `BgfxBackend`
+  uses on wgpu 30.0.1 (see `docs/RENDERER.md`); `cargo xtask build --wgpu` builds the 64-bit SDL3 game
+  on it. bgfx headers pinned at b2a7d94d574c6b82b54b6e8631cb6faafe807112 (via bgfx.cmake c480227).
 * Toolchain installed: rustup (aarch64 host, + `i686-pc-windows-msvc`), VS 2022 Build Tools 14.44 with
   x86/x64, **ARM64** (for Rust build scripts), ATL, MFC (`afxres.h` for RTS.RC), CMake 3.31, Ninja.
   `vcvarsarm64_x86.bat` = native ARM64 compilers emitting x86 → fast builds.
@@ -79,6 +85,21 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     load automatically.
 20. MinGW: the Rust core for `i686-pc-windows-gnu` needs only the same system libs as MSVC
     (panic=abort). MSYS2's MinGW has prefixed compilers but unprefixed binutils.
+21. The fork rejected three hunks of the original hook patch (W3DDisplay draw hooks moved inside a
+    `GGC_RPROFILE` block, W3DView include, GameLogic step); re-anchored by hand. xtask now pins the
+    engine to the submodule's checked-out HEAD so a bumped submodule builds before it is committed.
+22. bgfx shaders through naga's GLSL frontend need: `mtxFromCols/Rows` macros, `#define` constants as
+    uniform array sizes, and helper functions taking `sampler2D` split into `texture2D` + `sampler`
+    (Vulkan GLSL has no combined-sampler parameters). Vertex and fragment uniform blocks must use
+    different bindings (their layouts differ).
+23. In this VM wgpu sees two adapters: Parallels' GL driver on the M1 (no BC/DXT sampling, no compute,
+    no texture view formats) and D3D12 WARP (software). Default limits fail on the GL one ("max compute
+    workgroups ... better than allowed 0"), so the renderer requests the adapter's own limits, decodes
+    BC1-3 on the CPU and creates sRGB textures as sRGB outright when views can't reinterpret.
+24. wgpu loses the whole frame if one draw fails validation, so draws are range-checked before
+    encoding and pipelines are built in an error scope.
+25. Rust's x86_64-msvc staticlib with wgpu adds only `opengl32` to the native libs (D3D12/DXGI are
+    loaded through `windows-link` raw-dylib).
 
 ## Verification log
 
@@ -95,6 +116,11 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
   blood overlay, minimap, funds panel, Bahnschrift text.
 * Cross-platform: all crates type-check for x86_64-unknown-linux-gnu and aarch64-apple-darwin; core
   builds for i686-pc-windows-gnu; discovery unit-tested against a simulated CrossOver bottle.
+* Re-base onto bobtista's fork (2026-10-14): DX8 build, autotest 7/7 PASS.
+* zhbo-gfx (2026-10-14): all 27 engine shader variants translate, validate and emit WGSL;
+  `tests/headless.rs` draws a frame (transient + static buffers, BC1 + R5G6B5 textures, model
+  transform, partial clear, alpha blend) and checks read-back pixels - PASS on D3D12 WARP and on the
+  Parallels GL adapter (M1, CPU BC decode).
 
 ## Next steps
 

@@ -1,0 +1,112 @@
+diff --git a/Core/Libraries/Source/WWVegas/WW3D2/CMakeLists.txt b/Core/Libraries/Source/WWVegas/WW3D2/CMakeLists.txt
+index ee43e49..e329fa0 100644
+--- a/Core/Libraries/Source/WWVegas/WW3D2/CMakeLists.txt
++++ b/Core/Libraries/Source/WWVegas/WW3D2/CMakeLists.txt
+@@ -402,7 +402,13 @@ if(APPLE)
+ endif()
+ 
+ # Link the backend's native libraries into whoever consumes corei_ww3d2.
+-if(GGC_RENDER_BACKEND STREQUAL "bgfx")
++if(GGC_RENDER_BACKEND STREQUAL "bgfx" AND GGC_BGFX_RENDERER STREQUAL "wgpu")
++    # ZHBO: zhbo_bgfx_wgpu (host/zhbo) defines the bgfx API on the Rust renderer.
++    target_link_libraries(corei_ww3d2 INTERFACE zhbo_bgfx_wgpu bx bimg)
++    if(SAGE_USE_SDL3)
++        target_link_libraries(corei_ww3d2 INTERFACE sdl3lib)
++    endif()
++elseif(GGC_RENDER_BACKEND STREQUAL "bgfx")
+     target_link_libraries(corei_ww3d2 INTERFACE bgfx bx bimg)
+     # TheSuperHackers @build bobtista 29/04/2026 BgfxBackend.cpp pulls SDL3 headers
+     # to query the native window pointer for bgfx::PlatformData on macOS/Linux.
+diff --git a/cmake/bgfx.cmake b/cmake/bgfx.cmake
+index 7a89964..33fecfc 100644
+--- a/cmake/bgfx.cmake
++++ b/cmake/bgfx.cmake
+@@ -13,9 +13,15 @@
+ # FetchContent_MakeAvailable so bgfx.cmake picks them up at configure time.
+ set(BGFX_BUILD_EXAMPLES       OFF CACHE BOOL "" FORCE)
+ set(BGFX_BUILD_TESTS          OFF CACHE BOOL "" FORCE)
+-set(BGFX_BUILD_TOOLS          ON  CACHE BOOL "" FORCE)  # shaderc is mandatory
+-set(BGFX_BUILD_TOOLS_BIN2C    ON  CACHE BOOL "" FORCE)
+-set(BGFX_BUILD_TOOLS_SHADER   ON  CACHE BOOL "" FORCE)
++# ZHBO: with GGC_BGFX_RENDERER=wgpu, zhbo-shaderc (ZHBO_SHADERC) replaces shaderc.
++if(GGC_BGFX_RENDERER STREQUAL "wgpu")
++    set(_ggc_bgfx_tools OFF)
++else()
++    set(_ggc_bgfx_tools ON)
++endif()
++set(BGFX_BUILD_TOOLS          ${_ggc_bgfx_tools} CACHE BOOL "" FORCE)  # shaderc is mandatory
++set(BGFX_BUILD_TOOLS_BIN2C    ${_ggc_bgfx_tools} CACHE BOOL "" FORCE)
++set(BGFX_BUILD_TOOLS_SHADER   ${_ggc_bgfx_tools} CACHE BOOL "" FORCE)
+ set(BGFX_BUILD_TOOLS_GEOMETRY OFF CACHE BOOL "" FORCE)
+ set(BGFX_BUILD_TOOLS_TEXTURE  OFF CACHE BOOL "" FORCE)
+ set(BGFX_INSTALL              OFF CACHE BOOL "" FORCE)
+@@ -109,9 +115,18 @@ function(ggc_bgfx_shaders_init)
+ endfunction()
+ 
+ function(ggc_compile_bgfx_shader source_sc)
+-    if(NOT TARGET shaderc)
++    if(GGC_BGFX_RENDERER STREQUAL "wgpu")
++        if(NOT ZHBO_SHADERC)
++            message(FATAL_ERROR "GGC_BGFX_RENDERER=wgpu needs ZHBO_SHADERC (cargo xtask build sets it)")
++        endif()
++        set(_ggc_shaderc "${ZHBO_SHADERC}")
++        set(_ggc_shaderc_dep "${ZHBO_SHADERC}")
++    elseif(NOT TARGET shaderc)
+         message(FATAL_ERROR "ggc_compile_bgfx_shader: shaderc target not available. "
+                             "Ensure BGFX_BUILD_TOOLS_SHADER=ON and bgfx.cmake is included.")
++    else()
++        set(_ggc_shaderc "$<TARGET_FILE:shaderc>")
++        set(_ggc_shaderc_dep shaderc)
+     endif()
+ 
+     cmake_parse_arguments(_ggc_sc "" "NAME;DEFINES" "" ${ARGN})
+@@ -167,7 +182,7 @@ function(ggc_compile_bgfx_shader source_sc)
+ 
+     add_custom_command(
+         OUTPUT "${_out_header}"
+-        COMMAND "$<TARGET_FILE:shaderc>"
++        COMMAND "${_ggc_shaderc}"
+             -f "${_sc_abs}"
+             -o "${_out_header}"
+             --bin2c "${_varname}"
+@@ -178,7 +193,7 @@ function(ggc_compile_bgfx_shader source_sc)
+             --varyingdef "${_varying_def}"
+             ${_define_args}
+             -O 3
+-        DEPENDS "${_sc_abs}" "${_varying_def}" shaderc
++        DEPENDS "${_sc_abs}" "${_varying_def}" ${_ggc_shaderc_dep}
+         COMMENT "Compiling bgfx shader ${_sc_name}"
+         VERBATIM
+     )
+diff --git a/cmake/render-backend.cmake b/cmake/render-backend.cmake
+index e7a8f2c..7a40144 100644
+--- a/cmake/render-backend.cmake
++++ b/cmake/render-backend.cmake
+@@ -66,17 +66,23 @@ if(GGC_RENDER_BACKEND STREQUAL "bgfx")
+             set(GGC_BGFX_RENDERER "dx11" CACHE STRING "bgfx renderer for GGC_RENDER_BACKEND=bgfx")
+         endif()
+     endif()
+-    set_property(CACHE GGC_BGFX_RENDERER PROPERTY STRINGS dx11 metal vulkan)
++    # ZHBO: wgpu = the bgfx API implemented by Conquer Ops' Rust renderer (zhbo-gfx) on
++    # wgpu (Vulkan/Metal/D3D12); the bgfx library itself is not linked.
++    set_property(CACHE GGC_BGFX_RENDERER PROPERTY STRINGS dx11 metal vulkan wgpu)
+ 
+     if(NOT GGC_BGFX_RENDERER STREQUAL "dx11" AND
+        NOT GGC_BGFX_RENDERER STREQUAL "metal" AND
+-       NOT GGC_BGFX_RENDERER STREQUAL "vulkan")
++       NOT GGC_BGFX_RENDERER STREQUAL "vulkan" AND
++       NOT GGC_BGFX_RENDERER STREQUAL "wgpu")
+         message(FATAL_ERROR
+             "Invalid GGC_BGFX_RENDERER: '${GGC_BGFX_RENDERER}'. "
+-            "Must be one of: dx11, metal, vulkan.")
++            "Must be one of: dx11, metal, vulkan, wgpu.")
+     endif()
+ 
+-    if(GGC_BGFX_RENDERER STREQUAL "metal")
++    if(GGC_BGFX_RENDERER STREQUAL "wgpu")
++        # The backend's default (DX11-named) shader symbols carry zhbo shader blobs.
++        add_compile_definitions(GGC_BGFX_RENDERER_WGPU=1)
++    elseif(GGC_BGFX_RENDERER STREQUAL "metal")
+         add_compile_definitions(GGC_BGFX_RENDERER_METAL=1)
+     elseif(GGC_BGFX_RENDERER STREQUAL "vulkan")
+         add_compile_definitions(GGC_BGFX_RENDERER_VULKAN=1)

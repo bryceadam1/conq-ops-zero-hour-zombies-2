@@ -1,0 +1,116 @@
+# Renderer: the engine's bgfx API on wgpu
+
+Conquer Ops builds Zero Hour from bobtista's fork of the SuperHackers source. In that fork, the
+original D3D8 renderer sits behind `IRenderBackend`, and `BgfxBackend` implements it on a subset of
+the [bgfx](https://github.com/bkaradzic/bgfx) API. We keep `BgfxBackend` unchanged and replace bgfx
+itself with **zhbo-gfx**, a Rust implementation of that subset on [wgpu](https://wgpu.rs). wgpu
+drives D3D12, Vulkan, Metal or GL, so one renderer serves Windows, Linux and macOS, with no Wine.
+
+```
+BgfxBackend.cpp (engine, unchanged)
+   │  bgfx:: calls, declared by bgfx's own bgfx.h
+   ▼
+host/zhbo/bgfx_wgpu.cpp     C++ adapter: bgfx structs, Memory blocks, transient buffers
+   │  zhgfx_* C ABI (host/zhbo/zhbo_gfx.h)
+   ▼
+crates/zhbo-gfx             Rust: runtime (views, draws, resources) on wgpu
+```
+
+## Build
+
+`cargo xtask build --wgpu` (Windows for now; macOS and Linux follow in M6):
+
+1. `zhbo-core` is built for `x86_64-pc-windows-msvc` with `--features renderer`, which links
+   zhbo-gfx and its `zhgfx_*` functions into the static library the game already links.
+2. `zhbo-shaderc` is built for the build machine.
+3. The engine is configured with the fork's `win64` preset (SDL3, OpenAL, 64-bit) plus
+   `GGC_BGFX_RENDERER=wgpu` and `ZHBO_SHADERC=<path>`. `host/patches/0002-wgpu-renderer.patch` adds
+   that renderer value. With it set, the build:
+   * runs `zhbo-shaderc` instead of bgfx's shaderc. It takes shaderc's arguments and writes the same
+     `--bin2c` headers, named with the default `_dx11` suffix the backend includes;
+   * links `zhbo_bgfx_wgpu` (the adapter, defined in `host/zhbo/CMakeLists.txt`) instead of the bgfx
+     library. bgfx's headers and bx/bimg still come from the engine's pinned `bgfx.cmake`.
+
+## Shaders
+
+The engine's shaders are bgfx `.sc` files. `crates/zhbo-gfx/src/shader.rs` rewrites them into
+Vulkan-style GLSL 450. naga then validates them and emits WGSL. All 27 engine variants are
+translated in a unit test.
+
+* Loose uniforms go into one std140 block per stage, `@group(0)`: binding 0 for the vertex stage,
+  binding 1 for the fragment stage. The two stages have different layouts, as with bgfx's per-stage
+  constant buffers.
+* Only the predefined uniforms a shader references are emitted, such as `u_modelViewProj` and
+  `u_alphaRef4`. The runtime fills them at `frame()`, once view transforms are final.
+* `SAMPLER2D(name, slot)` becomes a texture at `@group(1) @binding(2*slot)` and a sampler at
+  `2*slot + 1`.
+* Attribute locations come from semantics: POSITION 0, NORMAL 1, COLOR0 4, TEXCOORDn 10+n. Instance
+  data `i_dataN` uses bgfx's TEXCOORD7, then 6, 5 and 4. Varyings are numbered in `varying.def.sc`
+  order.
+* `BGFX_SHADER_LANGUAGE_GLSL` is 0. wgpu follows D3D and Metal conventions (depth 0..1, top-left
+  texture origin), and the adapter reports `homogeneousDepth = false` and `originBottomLeft = false`.
+
+The header array holds a **shader blob**: `ZHS1`, the stage, the uniform, sampler and attribute
+reflection, then the WGSL (`src/blob.rs`). `createShader` decodes it.
+
+## Runtime model (`src/runtime/`)
+
+It follows bgfx's semantics:
+
+* **Views 0–255** have a rect, a clear, a mode, a frame buffer and view/proj matrices. `submit`
+  records a draw into a view. `frame()` executes views in `setViewOrder` order. Each view that has
+  draws, or was touched, becomes one render pass.
+* **Sticky draw state** (`setState`, `setStencil`, transforms, buffers, textures) is captured at
+  `submit` and then discarded according to the `BGFX_DISCARD_*` flags.
+* **Uniform values are sticky.** Each draw's user uniforms are written into a per-frame ring with
+  dynamic offsets.
+* **Resource creation and updates go to the queue immediately.** The queue runs them before the
+  frame's command buffer, which matches bgfx's "updates land before the frame" order. Draws hold
+  clones of the wgpu objects, so destroying a handle mid-frame is safe.
+* **Transient buffers** are fixed CPU arenas the engine writes into, uploaded at `frame()`.
+* **Partial clears**, where a view rect is smaller than its target, are drawn as a quad, as bgfx does.
+* **The game renders into an offscreen BGRA8 backbuffer**, which is then copied to the window
+  surface. This gives MSAA, `requestScreenShot`, headless runs and a fixed format on every platform.
+
+State words are decoded in `src/state.rs`: blend, depth, stencil, cull, primitive type, sampler
+flags and texture formats, using bit layouts from bgfx's `defines.h`.
+
+### Robustness
+
+One invalid draw in a wgpu render pass invalidates the whole frame. The runtime therefore:
+
+* checks index, vertex and instance ranges and offset alignment before encoding a draw, and skips
+  any draw that fails, reporting it once;
+* creates pipelines inside a validation error scope and caches failures, so the draws that need a
+  failed pipeline are skipped;
+* routes uncaptured wgpu errors to the engine's bgfx callback log, at most 32 per run.
+
+### Adapters and fallbacks
+
+* Adapters are ranked by hardware vs. software, then BC (DXT) support, then native API vs. GL, then
+  discrete GPU. wgpu's default choice ignores BC.
+* Without BC sampling (for example a VM's GL driver), BC1–3 textures are **decoded on the CPU** to
+  RGBA8.
+* D3D's 16-bit formats (R5G6B5, A1R5G5B5, A4R4G4B4) and A8 have no wgpu equivalent. They are expanded
+  to 8-bit on upload.
+* Without view-format reinterpretation (GL), sRGB textures are created as sRGB outright.
+* Environment variables:
+  * `ZHBO_GFX_BACKEND=dx12|vulkan|metal|gl` forces an API;
+  * `ZHBO_GFX_FALLBACK=1` prefers the software adapter (WARP or lavapipe);
+  * `WGPU_VALIDATION`, `WGPU_DEBUG`: see wgpu's `InstanceFlags::with_env`.
+
+## Testing
+
+* `cargo test -p zhbo-gfx` covers state decoding, BC decoding, matrices, blob round-trips, the
+  27-variant engine shader translation, and `tests/headless.rs`.
+* `tests/headless.rs` draws a frame through the public runtime API: transient and static buffers, a
+  BC1 and an R5G6B5 texture, a model transform, a partial clear and alpha blending. It reads the
+  pixels back through the screenshot path and checks them. It passes on D3D12 WARP and on
+  Parallels' GL driver (M1). It skips when no adapter exists; CI installs lavapipe for it.
+
+## Not done yet
+
+* Render-target-sized textures (`BackbufferRatio`) are not resized on `reset`.
+* Occlusion queries, indirect draws, compute, `setViewScissor` and `setScissor` are not
+  implemented. The backend does not call them.
+* `getStats` reports draw and blit counts and CPU frame time, but no GPU timings.

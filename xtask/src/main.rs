@@ -1,7 +1,9 @@
 //! `cargo xtask <command>` - builds Conquer Ops.
 //!
 //! ```text
-//! cargo xtask build [--log] [--dist DIR]   Rust core + patched Zero Hour + ConquerOps.big + launcher
+//! cargo xtask build [--log] [--wgpu] [--dist DIR]
+//!                                          Rust core + patched Zero Hour + ConquerOps.big + launcher;
+//!                                          --wgpu: 64-bit SDL3 build on the Rust wgpu renderer
 //! cargo xtask pack  [--dist DIR]           only repack data/ into ConquerOps.big
 //! cargo xtask run   [--log] [-- ARGS]      build, then start the game through the launcher
 //! cargo xtask patch                        prepare the patched engine checkout only
@@ -30,6 +32,8 @@ const ENGINE_URL: &str = "https://github.com/bobtista/GeneralsGameCode.git";
 
 struct Opts {
     log_build: bool,
+    /// Build the 64-bit SDL3 engine with the Rust wgpu renderer (GGC_BGFX_RENDERER=wgpu).
+    wgpu: bool,
     dist: Option<PathBuf>,
     game_args: Vec<String>,
 }
@@ -37,14 +41,15 @@ struct Opts {
 fn main() -> ExitCode {
     let args: Vec<String> = env::args().skip(1).collect();
     let Some(cmd) = args.first().cloned() else {
-        eprintln!("usage: cargo xtask <build|pack|run|patch|doctor> [--log] [--dist DIR] [-- GAME_ARGS]");
+        eprintln!("usage: cargo xtask <build|pack|run|patch|doctor> [--log] [--wgpu] [--dist DIR] [-- GAME_ARGS]");
         return ExitCode::FAILURE;
     };
-    let mut opts = Opts { log_build: false, dist: None, game_args: Vec::new() };
+    let mut opts = Opts { log_build: false, wgpu: false, dist: None, game_args: Vec::new() };
     let mut it = args.into_iter().skip(1);
     while let Some(a) = it.next() {
         match a.as_str() {
             "--log" => opts.log_build = true,
+            "--wgpu" => opts.wgpu = true,
             "--dist" => opts.dist = it.next().map(PathBuf::from),
             "--" => opts.game_args = it.by_ref().collect(),
             other => {
@@ -58,7 +63,7 @@ fn main() -> ExitCode {
         "pack" => pack(&dist_dir(&opts)).map(|_| ()),
         "run" => build(&opts).and_then(|dist| run(&dist, &opts.game_args)),
         "patch" => prepare_engine().map(|_| ()),
-        "doctor" => doctor(),
+        "doctor" => doctor(&opts),
         other => Err(format!("unknown command {other}")),
     };
     match result {
@@ -220,7 +225,8 @@ fn copy_dir_if_changed(src: &Path, dst: &Path) -> Result<()> {
 // Toolchain
 // ------------------------------------------------------------------------------------------------
 
-fn vcvars() -> Result<PathBuf> {
+/// The Visual Studio environment script for 32-bit (`x64 == false`) or 64-bit x86 targets.
+fn vcvars(x64: bool) -> Result<PathBuf> {
     let vswhere = PathBuf::from(r"C:\Program Files (x86)\Microsoft Visual Studio\Installer\vswhere.exe");
     let install = capture(Command::new(&vswhere).args([
         "-latest",
@@ -235,16 +241,17 @@ fn vcvars() -> Result<PathBuf> {
     let build = PathBuf::from(install.lines().next().unwrap_or_default()).join(r"VC\Auxiliary\Build");
     // Native ARM64 compilers targeting x86 are much faster than emulated x86 ones on ARM machines.
     let arch = env::var("PROCESSOR_ARCHITEW6432").or_else(|_| env::var("PROCESSOR_ARCHITECTURE")).unwrap_or_default();
-    let candidates: &[&str] = if arch.eq_ignore_ascii_case("ARM64") {
-        &["vcvarsarm64_x86.bat", "vcvars32.bat"]
-    } else {
-        &["vcvarsamd64_x86.bat", "vcvars32.bat"]
+    let candidates: &[&str] = match (arch.eq_ignore_ascii_case("ARM64"), x64) {
+        (true, false) => &["vcvarsarm64_x86.bat", "vcvars32.bat"],
+        (false, false) => &["vcvarsamd64_x86.bat", "vcvars32.bat"],
+        (true, true) => &["vcvarsarm64_amd64.bat", "vcvars64.bat"],
+        (false, true) => &["vcvars64.bat"],
     };
     candidates
         .iter()
         .map(|c| build.join(c))
         .find(|p| p.is_file())
-        .ok_or_else(|| format!("no x86 vcvars script in {}", build.display()))
+        .ok_or_else(|| format!("no {} vcvars script in {}", if x64 { "x64" } else { "x86" }, build.display()))
 }
 
 fn cargo() -> Command {
@@ -280,10 +287,11 @@ impl Toolchain {
     }
 
     /// Rust target for the core that links into generalszh.exe.
-    fn core_target(self) -> &'static str {
-        match self {
-            Toolchain::Msvc => "i686-pc-windows-msvc",
-            Toolchain::MinGw => "i686-pc-windows-gnu",
+    fn core_target(self, wgpu: bool) -> &'static str {
+        match (self, wgpu) {
+            (Toolchain::Msvc, true) => "x86_64-pc-windows-msvc",
+            (Toolchain::Msvc, false) => "i686-pc-windows-msvc",
+            (Toolchain::MinGw, _) => "i686-pc-windows-gnu",
         }
     }
 
@@ -310,18 +318,21 @@ impl Toolchain {
     }
 
     /// Missing prerequisites, as human-readable fixes.
-    fn problems(self) -> Vec<String> {
+    fn problems(self, wgpu: bool) -> Vec<String> {
         let mut out = Vec::new();
         if !on_path("git") {
             out.push("git is not on PATH".into());
         }
         let installed = capture(Command::new("rustup").args(["target", "list", "--installed"])).unwrap_or_default();
-        if !installed.lines().any(|l| l.trim() == self.core_target()) {
-            out.push(format!("Rust target missing: rustup target add {}", self.core_target()));
+        if !installed.lines().any(|l| l.trim() == self.core_target(wgpu)) {
+            out.push(format!("Rust target missing: rustup target add {}", self.core_target(wgpu)));
+        }
+        if wgpu && self != Toolchain::Msvc {
+            out.push("--wgpu builds are Windows-only until the native macOS/Linux builds land".into());
         }
         match self {
             Toolchain::Msvc => {
-                if let Err(e) = vcvars() {
+                if let Err(e) = vcvars(wgpu) {
                     out.push(format!("{e} (needs the C++ x86/x64 tools, CMake, ATL and MFC components)"));
                 }
             }
@@ -356,11 +367,11 @@ impl Toolchain {
 // Commands
 // ------------------------------------------------------------------------------------------------
 
-fn doctor() -> Result<()> {
+fn doctor(opts: &Opts) -> Result<()> {
     let tc = Toolchain::host();
-    eprintln!("toolchain: {tc:?} (core target {})", tc.core_target());
+    eprintln!("toolchain: {tc:?} (core target {})", tc.core_target(opts.wgpu));
     eprintln!("work dir:  {}", work_dir().display());
-    let problems = tc.problems();
+    let problems = tc.problems(opts.wgpu);
     if problems.is_empty() {
         eprintln!("all build prerequisites found");
         Ok(())
@@ -372,18 +383,29 @@ fn doctor() -> Result<()> {
 fn build(opts: &Opts) -> Result<PathBuf> {
     let root = repo_root();
     let tc = Toolchain::host();
-    let problems = tc.problems();
+    let problems = tc.problems(opts.wgpu);
     if !problems.is_empty() {
         return Err(format!("missing build prerequisites:\n  {}", problems.join("\n  ")));
     }
-    run_cmd(cargo().current_dir(&root).args(["build", "--release", "-p", "zhbo-core", "--target", tc.core_target()]))?;
+    let core_target = tc.core_target(opts.wgpu);
+    let mut core = cargo();
+    core.current_dir(&root).args(["build", "--release", "-p", "zhbo-core", "--target", core_target]);
+    if opts.wgpu {
+        core.args(["--features", "renderer"]);
+    }
+    run_cmd(&mut core)?;
+    // zhbo-shaderc runs on the build machine, translating the engine's shaders to WGSL.
+    let shaderc = rust_target_dir().join("release").join(if cfg!(windows) { "zhbo-shaderc.exe" } else { "zhbo-shaderc" });
+    if opts.wgpu {
+        run_cmd(cargo().current_dir(&root).args(["build", "--release", "-p", "zhbo-gfx", "--bin", "zhbo-shaderc"]))?;
+    }
     let mut launcher = cargo();
     launcher.current_dir(&root).args(["build", "--release", "-p", "zhbo-launcher"]);
     if let Some(t) = tc.launcher_target() {
         launcher.args(["--target", t]);
     }
     run_cmd(&mut launcher)?;
-    let core_lib = rust_target_dir().join(tc.core_target()).join("release").join(tc.core_lib_name());
+    let core_lib = rust_target_dir().join(core_target).join("release").join(tc.core_lib_name());
     let launcher_dir = match tc.launcher_target() {
         Some(t) => rust_target_dir().join(t).join("release"),
         None => rust_target_dir().join("release"),
@@ -398,19 +420,30 @@ fn build(opts: &Opts) -> Result<PathBuf> {
         defs.push("-DRTS_DEBUG_LOGGING=ON".into());
         defs.push("-DRTS_DEBUG_CRASHING=ON".into());
     }
+    if opts.wgpu {
+        defs.push("-DGGC_BGFX_RENDERER=wgpu".into());
+        defs.push(format!("-DZHBO_SHADERC={}", fwd(&shaderc)));
+        // Video playback (FFmpeg) is not wired up for the wgpu build yet.
+        defs.push("-DRTS_BUILD_OPTION_FFMPEG=OFF".into());
+    }
 
     let exe_dir = match tc {
         Toolchain::Msvc => {
-            let build_dir = if opts.log_build { "win32-zhbo-log" } else { "win32-zhbo" };
+            let (preset, build_dir) = match (opts.wgpu, opts.log_build) {
+                (true, true) => ("win64", "win64-zhbo-log"),
+                (true, false) => ("win64", "win64-zhbo"),
+                (false, true) => ("win32", "win32-zhbo-log"),
+                (false, false) => ("win32", "win32-zhbo"),
+            };
             let script = work_dir().join("build-engine.cmd");
             fs::write(
                 &script,
                 format!(
                     "@echo off\r\ncall \"{vcvars}\" >nul\r\ncd /d \"{engine}\"\r\n\
-                     cmake --preset win32 -B build/{build_dir} {defs}\r\n\
+                     cmake --preset {preset} -B build/{build_dir} {defs}\r\n\
                      if errorlevel 1 exit /b 1\r\n\
                      cmake --build build/{build_dir} --config Release --target z_generals\r\n",
-                    vcvars = vcvars()?.display(),
+                    vcvars = vcvars(opts.wgpu)?.display(),
                     engine = engine.display(),
                     defs = defs.join(" "),
                 ),
@@ -442,6 +475,13 @@ fn build(opts: &Opts) -> Result<PathBuf> {
     fs::copy(exe_dir.join("generalszh.exe"), dist.join("generalszh.exe")).map_err(|e| format!("copy generalszh.exe: {e}"))?;
     if exe_dir.join("generalszh.pdb").is_file() {
         fs::copy(exe_dir.join("generalszh.pdb"), dist.join("generalszh.pdb")).map_err(|e| e.to_string())?;
+    }
+    // The SDL3/OpenAL build ships its runtime DLLs next to the executable.
+    for entry in fs::read_dir(&exe_dir).map_err(|e| e.to_string())?.flatten() {
+        let path = entry.path();
+        if path.extension().is_some_and(|e| e.eq_ignore_ascii_case("dll")) {
+            fs::copy(&path, dist.join(entry.file_name())).map_err(|e| format!("copy {}: {e}", path.display()))?;
+        }
     }
     let (from, to) = tc.launcher_file();
     fs::copy(launcher_dir.join(from), dist.join(to)).map_err(|e| format!("copy launcher: {e}"))?;

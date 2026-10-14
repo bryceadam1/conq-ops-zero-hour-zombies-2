@@ -23,3 +23,24 @@ target_include_directories(z_gameenginedevice PUBLIC ${CMAKE_CURRENT_LIST_DIR})
 # The Rust core and the system libraries Rust's std needs (`cargo rustc -- --print native-static-libs`;
 # identical for the msvc and gnu targets with panic=abort).
 target_link_libraries(z_gameengine PUBLIC ${ZHBO_CORE_LIB} advapi32 ntdll userenv ws2_32 dbghelp)
+
+# GGC_BGFX_RENDERER=wgpu: the bgfx API on the Rust renderer (zhbo-gfx, inside ZHBO_CORE_LIB, built
+# with `--features renderer`). corei_ww3d2 links zhbo_bgfx_wgpu instead of the bgfx library (see
+# host/patches/0002); bgfx's headers and bx/bimg still come from the engine's bgfx.cmake.
+if(GGC_RENDER_BACKEND STREQUAL "bgfx" AND GGC_BGFX_RENDERER STREQUAL "wgpu")
+    add_library(zhbo_bgfx_wgpu STATIC
+        ${CMAKE_CURRENT_LIST_DIR}/bgfx_wgpu.cpp
+        ${CMAKE_CURRENT_LIST_DIR}/zhbo_gfx.h
+    )
+    target_include_directories(zhbo_bgfx_wgpu PUBLIC $<TARGET_PROPERTY:bgfx,INTERFACE_INCLUDE_DIRECTORIES>)
+    target_compile_definitions(zhbo_bgfx_wgpu PUBLIC $<TARGET_PROPERTY:bgfx,INTERFACE_COMPILE_DEFINITIONS>)
+    target_link_libraries(zhbo_bgfx_wgpu PUBLIC ${ZHBO_CORE_LIB} bx)
+    if(WIN32)
+        target_link_libraries(zhbo_bgfx_wgpu PUBLIC opengl32)
+    endif()
+    if(SAGE_USE_SDL3)
+        target_link_libraries(zhbo_bgfx_wgpu PRIVATE sdl3lib)
+    endif()
+    # Never build the real bgfx library in this configuration.
+    set_target_properties(bgfx PROPERTIES EXCLUDE_FROM_ALL ON)
+endif()

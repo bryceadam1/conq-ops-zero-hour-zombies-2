@@ -17,3 +17,7 @@ pub mod sim;
 pub mod strings;
 pub mod units;
 pub mod weapons;
+
+/// The renderer's C ABI (`zhgfx_*`) is part of this static library in wgpu builds.
+#[cfg(feature = "renderer")]
+pub use zhbo_gfx;
