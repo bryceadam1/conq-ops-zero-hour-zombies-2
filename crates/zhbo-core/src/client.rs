@@ -6,6 +6,7 @@
 use crate::input::{buttons, pack_move, FpsInput, MAX_PITCH};
 use crate::math::{basis_xy, dir_from_angles, smoothstep, wrap_angle, Vec3};
 use crate::sim::{EventKind, Mode, Sim};
+use crate::sounds::{self, Cues};
 use crate::units::LOGIC_DT;
 use crate::viewmodel::{self, Viewmodel};
 
@@ -170,6 +171,9 @@ pub struct ClientOut {
     pub viewmodel_time: f32,
     /// 0..1: how far the weapon is raised to aim down the sights.
     pub viewmodel_ads: f32,
+    /// Sway, bob and recoil: offset from the eye (forward, left, up) and yaw/pitch/roll (radians).
+    pub viewmodel_offset: Vec3,
+    pub viewmodel_angles: Vec3,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -253,7 +257,10 @@ pub struct Client {
     pub last_hfov: f32,
     /// First-person viewmodel animation, and this frame's weapon events for it.
     vm: Viewmodel,
+    vm_motion: viewmodel::Motion,
     vm_events: viewmodel::Events,
+    /// BO2 sound cues queued this frame (drained by the FFI layer into the host).
+    pub cues: Cues,
 }
 
 impl Default for Client {
@@ -281,7 +288,9 @@ impl Client {
             since_logic: 0.0,
             last_hfov: 1.0,
             vm: Viewmodel::default(),
+            vm_motion: viewmodel::Motion::default(),
             vm_events: viewmodel::Events::default(),
+            cues: Cues::default(),
         }
     }
 
@@ -415,6 +424,10 @@ impl Client {
                     out.hide_object = self.general;
                     out.capture_mouse = allowed as i32;
                     let events = std::mem::take(&mut self.vm_events);
+                    let pose = self.vm_motion.update(dt, self.yaw, self.pitch, p, events.shot);
+                    out.viewmodel_offset = pose.offset;
+                    out.viewmodel_angles = pose.angles;
+                    self.cues.update(dt, p, p.input.held & buttons::FIRE != 0);
                     if !in_fc {
                         let (clip, time) = self.vm.update(dt, p, events);
                         out.viewmodel = clip;
@@ -450,6 +463,8 @@ impl Client {
     fn start_entering(&mut self, inp: &ClientIn, general: u32, yaw: f32, eye: Vec3) {
         self.general = general;
         self.vm = Viewmodel::default(); // the weapon comes up as first person starts
+        self.vm_motion = viewmodel::Motion::default();
+        self.cues.reset();
         self.yaw = yaw;
         self.pitch = 0.0;
         self.eye_prev = eye;
@@ -495,6 +510,15 @@ impl Client {
         let me = inp.local_player;
         let mine: Vec<EventKind> = sim.events.iter().filter(|e| e.player == me).map(|e| e.kind).collect();
         sim.events.clear();
+        // A shot's impact is flesh if the same frame scored a hit.
+        let hit = mine.iter().any(|k| matches!(k, EventKind::HitMarker { .. }));
+        let fire = sim.player(me).map_or(sounds::FIRE, |p| sounds::fire_for(p.arsenal.current().def.zh_fx_weapon));
+        for kind in &mine {
+            if let EventKind::Shot { end, .. } = kind {
+                self.cues.play(fire);
+                self.cues.play_at(if hit { sounds::IMPACT_FLESH } else { sounds::IMPACT }, *end);
+            }
+        }
         for kind in mine {
             match kind {
                 EventKind::EnteredFps { general } => {
@@ -513,6 +537,7 @@ impl Client {
                     }
                 }
                 EventKind::HitMarker { headshot, kill } => {
+                    self.cues.play(sounds::HIT_MARKER);
                     self.hud.hitmarker = HITMARKER_TIME;
                     self.hud.hitmarker_kill = kill;
                     self.hud.hitmarker_head = headshot;
@@ -534,6 +559,7 @@ impl Client {
                     self.hud.muzzle = 0.05;
                 }
                 EventKind::Damaged { amount } => {
+                    self.cues.play(sounds::HURT);
                     self.hud.damage_flash = (self.hud.damage_flash + amount / 60.0).min(1.0);
                 }
                 EventKind::Shot { .. } => self.vm_events.shot = true,

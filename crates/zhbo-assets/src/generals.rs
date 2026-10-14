@@ -7,7 +7,7 @@
 
 use crate::character::{self, Rig, HIERARCHY};
 use crate::images;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use zhbo_formats::ipak::{Ipak, IpakEntry};
 use zhbo_formats::iwi::Rgba;
@@ -139,22 +139,115 @@ fn shrink(mut img: Rgba, max: u32) -> Rgba {
     img
 }
 
-/// Textures for a model's surfaces: the colour map of each, written once per name into `files`.
-fn textures(model: &xmodel::Model, paks: &Paks, files: &mut BTreeMap<String, Vec<u8>>) -> Vec<Option<String>> {
+/// Textures for a model's surfaces: the colour map of each, written once per name into `files`, with
+/// the surface's shine in its alpha (see [`bake_shine`]). Decals (clan tag, emblem: colour maps that are
+/// mostly clear, which BO2 blends over the weapon) are listed in `decals` instead.
+fn textures(
+    model: &xmodel::Model,
+    paks: &Paks,
+    files: &mut BTreeMap<String, Vec<u8>>,
+    decals: &mut BTreeSet<String>,
+) -> Vec<Option<String>> {
     model
         .materials
         .iter()
         .map(|m| {
-            let img = m.as_ref()?.color_map()?;
+            let m = m.as_ref()?;
+            let img = m.color_map()?;
             let name = character::texture_file(&img.name);
             let path = format!("Art\\Textures\\{name}");
-            if !files.contains_key(&path) {
-                let rgba = paks.image(img.stream_hash)?;
-                files.insert(path, images::tga_bytes(&shrink(rgba, MAX_TEXTURE)));
+            if !files.contains_key(&path) && !decals.contains(&name) {
+                let mut rgba = shrink(paks.image(img.stream_hash)?, MAX_TEXTURE);
+                if is_decal(&rgba) {
+                    decals.insert(name.clone());
+                    return Some(name);
+                }
+                let spec = m.image(xmodel::TS_SPECULAR_MAP).and_then(|s| paks.image(s.stream_hash));
+                bake_shine(&mut rgba, spec.as_ref());
+                files.insert(path, images::tga_bytes(&rgba));
             }
             Some(name)
         })
         .collect()
+}
+
+/// Mostly transparent: at least half the texels below half alpha.
+fn is_decal(img: &Rgba) -> bool {
+    let clear = img.pixels.chunks_exact(4).filter(|p| p[3] < 128).count();
+    clear * 2 >= img.pixels.len() / 4
+}
+
+/// How strongly the brightest, glossiest specular texel reflects the environment.
+const SHINE: f32 = 0.85;
+
+/// Put a surface's shine in its colour map's alpha: BO2's specular map gives the specular colour in
+/// RGB (bare metal bright, cloth and polymer dark) and gloss in alpha. Surfaces without one stay matte.
+/// The colour maps' own alpha is unused: these meshes are drawn opaque, without alpha test.
+fn bake_shine(color: &mut Rgba, spec: Option<&Rgba>) {
+    let (w, h) = (color.width, color.height);
+    for y in 0..h {
+        for x in 0..w {
+            let shine = spec.map_or(0.0, |s| {
+                let (sx, sy) = (x * s.width / w, y * s.height / h);
+                let p = &s.pixels[((sy * s.width + sx) * 4) as usize..][..4];
+                let level = (0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32) / 255.0;
+                let gloss = p[3] as f32 / 255.0;
+                level * (0.3 + 0.7 * gloss) * SHINE
+            });
+            color.pixels[((y * w + x) * 4 + 3) as usize] = (shine.clamp(0.0, 1.0) * 255.0).round() as u8;
+        }
+    }
+}
+
+/// The environment the shiny surfaces reflect.
+const ENV_MAP: &str = "zhbo_bo2_env.tga";
+
+/// Drop decal surfaces and reflect the environment on every textured mesh (weighted by the shine
+/// baked into its texture).
+fn finish(meshes: &mut Vec<w3d::SkinMesh>, decals: &BTreeSet<String>) {
+    meshes.retain(|m| m.texture.as_ref().is_none_or(|t| !decals.contains(t)));
+    for m in meshes.iter_mut().filter(|m| m.texture.is_some()) {
+        m.env_map = Some(ENV_MAP.to_string());
+    }
+}
+
+/// An outdoor environment in BO2's muted grade, for W3D's world-space environment mapper (`u, v` =
+/// `0.5 + 0.5 * reflection.xy`, so the centre is straight up or down and the rim is the horizon): a
+/// pale overcast sky with a brighter sun side, a bright horizon band, and dark ground and skyline.
+/// BO2's own reflection probes are cube maps stored in the map zone's temp block, which the zone
+/// loader does not keep.
+fn env_map() -> Rgba {
+    const N: u32 = 128;
+    let mut pixels = Vec::with_capacity((N * N * 4) as usize);
+    let sun = (0.6f32, 0.45f32);
+    for y in 0..N {
+        for x in 0..N {
+            let (rx, ry) = ((x as f32 + 0.5) / N as f32 * 2.0 - 1.0, (y as f32 + 0.5) / N as f32 * 2.0 - 1.0);
+            let rho = (rx * rx + ry * ry).sqrt().min(1.0);
+            let az = ry.atan2(rx);
+            // Up and down share a texel: average the sky above and the ground below.
+            let sky = [0.42, 0.46, 0.52];
+            let ground = [0.10, 0.09, 0.08];
+            let mut c: [f32; 3] = std::array::from_fn(|i| 0.5 * (sky[i] + ground[i]));
+            // Horizon band, broken by a skyline of buildings and trees.
+            let horizon = ((rho - 0.72) / 0.28).clamp(0.0, 1.0).powf(1.5);
+            let skyline = 0.5 + 0.5 * ((az * 7.0).sin() * (az * 13.0 + 1.3).sin()).max(-0.2);
+            let band = [0.62, 0.62, 0.60];
+            for i in 0..3 {
+                c[i] += (band[i] * skyline - c[i]) * horizon;
+            }
+            // The sun side.
+            let d = ((rx - sun.0).powi(2) + (ry - sun.1).powi(2)).sqrt();
+            let glow = (-d * d * 9.0).exp() * 0.45;
+            let warm = [1.0, 0.92, 0.78];
+            for i in 0..3 {
+                c[i] += glow * warm[i];
+            }
+            pixels.extend(c.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8));
+            pixels.push(255);
+        }
+    }
+    Rgba { width: N, height: N, pixels }
 }
 
 /// The Draw module for a General with a BO2 model.
@@ -216,15 +309,17 @@ fn viewmodels(common: &Zone, zones: &[Zone], paks: &Paks, out: &mut BTreeMap<Str
     let mag = xmodel::find(common, VM_MAGAZINE).map_err(|e| e.to_string())?;
     let mut rig: Option<Rig> = None;
     let mut made = Vec::new();
+    let mut decals = BTreeSet::new();
     for (f, zone) in FACTIONS.iter().zip(zones) {
         let hands = xmodel::find(zone, f.hands).map_err(|e| e.to_string())?;
         let rig = rig.get_or_insert_with(|| Rig::new(&hands, &[(&gun, "tag_weapon"), (&mag, "j_gun")]));
-        let hands_tex = textures(&hands, paks, out);
-        let gun_tex = textures(&gun, paks, out);
-        let mag_tex = textures(&mag, paks, out);
+        let hands_tex = textures(&hands, paks, out, &mut decals);
+        let gun_tex = textures(&gun, paks, out, &mut decals);
+        let mag_tex = textures(&mag, paks, out, &mut decals);
         let mut meshes = character::skin(rig, &hands, "H", &hands_tex);
         meshes.extend(character::skin(rig, &gun, "G", &gun_tex));
         meshes.extend(character::skin(rig, &mag, "M", &mag_tex));
+        finish(&mut meshes, &decals);
         out.insert(format!("Art\\W3D\\{}.w3d", f.viewmodel), w3d::skin_model(f.viewmodel, VM_HIERARCHY, &meshes));
         made.push(f.viewmodel);
     }
@@ -236,7 +331,7 @@ fn viewmodels(common: &Zone, zones: &[Zone], paks: &Paks, out: &mut BTreeMap<Str
         let fps = anim.frame_rate.round().max(1.0) as u32;
         out.insert(format!("Art\\W3D\\{w3d_name}.w3d"), w3d::animation(w3d_name, VM_HIERARCHY, frames, fps, &channels));
     }
-    Ok(format!("viewmodels {}", made.join(", ")))
+    Ok(format!("viewmodels {} (decals dropped: {})", made.join(", "), decals.into_iter().collect::<Vec<_>>().join(" ")))
 }
 
 /// Convert everything; returns the archive files and a one-line summary.
@@ -249,19 +344,25 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
     let mut rig: Option<Rig> = None;
     let mut summary = Vec::new();
 
+    out.insert(format!("Art\\Textures\\{ENV_MAP}"), images::tga_bytes(&env_map()));
     let mut zones = Vec::new();
+    let mut decals = BTreeSet::new();
     for f in FACTIONS {
         let zone = load_zone(bo2_dir, f.zone)?;
         let body = xmodel::find(&zone, f.body).map_err(|e| e.to_string())?;
         let rig = rig.get_or_insert_with(|| Rig::new(&body, &[(&weapon, character::WEAPON_TAG)]));
-        let body_tex = textures(&body, &paks, &mut out);
-        let weapon_tex = textures(&weapon, &paks, &mut out);
+        let body_tex = textures(&body, &paks, &mut out, &mut decals);
+        let weapon_tex = textures(&weapon, &paks, &mut out, &mut decals);
         let mut meshes = character::skin(rig, &body, "B", &body_tex);
         meshes.extend(character::skin(rig, &weapon, "W", &weapon_tex));
+        finish(&mut meshes, &decals);
         out.insert(format!("Art\\W3D\\{}.w3d", f.model), w3d::skin_model(f.model, HIERARCHY, &meshes));
         ini = replace_draw(&ini, f.object, &draw_module(f.model))?;
         summary.push(format!("{} = {} ({} meshes)", f.object, f.body, meshes.len()));
         zones.push(zone);
+    }
+    if !decals.is_empty() {
+        summary.push(format!("decals dropped: {}", decals.into_iter().collect::<Vec<_>>().join(" ")));
     }
     let rig = rig.ok_or("no bodies")?;
     out.insert(format!("Art\\W3D\\{HIERARCHY}.w3d"), rig.hierarchy_file(HIERARCHY));
@@ -272,6 +373,20 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
         out.insert(format!("Art\\W3D\\{w3d_name}.w3d"), w3d::animation(w3d_name, HIERARCHY, frames, fps, &channels));
     }
     summary.push(viewmodels(&common, &zones, &paks, &mut out)?);
+
+    // BO2 sound effects, including the viewmodel clips' sound notetracks.
+    let world = load_zone(bo2_dir, crate::sfx::WORLD_ZONE)?;
+    let clips = VM_ANIMS
+        .iter()
+        .map(|(_, bo2)| xanim::find(&common, bo2).map_err(|e| e.to_string()))
+        .collect::<Result<Vec<_>, _>>()?;
+    let (sound_files, sound_summary) = crate::sfx::files(&common, &world, bo2_dir, &clips)?;
+    out.extend(sound_files);
+    summary.push(sound_summary);
+
+    // First-person muzzle flash with BO2's flash sprite.
+    let fx_zone = load_zone(bo2_dir, crate::fx::ZONE)?;
+    out.extend(crate::fx::files(&fx_zone, &|hash| paks.image(hash))?);
     out.insert(INI_PATH.to_string(), ini.into_bytes());
     let textures = out.keys().filter(|k| k.ends_with(".tga")).count();
     Ok((out.into_iter().collect(), format!("{}; {textures} textures, {} animations", summary.join(", "), ANIMS.len())))
@@ -280,6 +395,39 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn solid(w: u32, h: u32, p: [u8; 4]) -> Rgba {
+        Rgba { width: w, height: h, pixels: p.repeat((w * h) as usize) }
+    }
+
+    #[test]
+    fn shine_follows_the_specular_map() {
+        let mut metal = solid(4, 4, [90, 90, 90, 255]);
+        bake_shine(&mut metal, Some(&solid(2, 2, [255, 255, 255, 255])));
+        assert!(metal.pixels.chunks_exact(4).all(|p| p[3] > 200 && p[..3] == [90, 90, 90]));
+        let mut cloth = solid(4, 4, [90, 90, 90, 255]);
+        bake_shine(&mut cloth, Some(&solid(8, 8, [30, 30, 30, 40])));
+        assert!(cloth.pixels.chunks_exact(4).all(|p| p[3] < 20));
+        let mut plain = solid(2, 2, [90, 90, 90, 255]);
+        bake_shine(&mut plain, None);
+        assert!(plain.pixels.chunks_exact(4).all(|p| p[3] == 0), "no specular map: matte");
+    }
+
+    #[test]
+    fn decals_are_mostly_clear() {
+        assert!(is_decal(&solid(4, 4, [255, 255, 255, 0])));
+        assert!(!is_decal(&solid(4, 4, [255, 255, 255, 255])));
+    }
+
+    #[test]
+    fn environment_is_brighter_at_the_horizon_and_sun() {
+        let env = env_map();
+        let at = |x: u32, y: u32| env.pixels[((y * env.width + x) * 4) as usize];
+        let n = env.width;
+        let centre = at(n / 2, n / 2);
+        assert!(at(n / 2, n - 2) > centre || at(1, n / 2) > centre, "horizon brighter than straight up/down");
+        assert!(at((n as f32 * 0.8) as u32, (n as f32 * 0.72) as u32) > centre, "sun side");
+    }
 
     #[test]
     fn replaces_only_the_named_draw_module() {

@@ -279,7 +279,8 @@ fn read_material(z: &Zone, m: u32) -> Material {
     Material { name, textures }
 }
 
-fn read_image(z: &Zone, g: u32) -> Image {
+/// Read the `GfxImage` at `g`.
+pub fn read_image(z: &Zone, g: u32) -> Image {
     Image {
         name: z.str_ptr(g + 72).trim_start_matches(',').to_string(),
         hash: z.u32(g + 76),

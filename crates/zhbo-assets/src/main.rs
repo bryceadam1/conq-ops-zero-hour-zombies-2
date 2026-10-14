@@ -272,6 +272,61 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             Ok(())
         }
+        "probes" => {
+            // probes <ff>: a map's reflection probes (GfxWorld::draw, at +396) and their images.
+            let zone = load_full_zone(args.get(1).ok_or("probes <ff>")?)?;
+            let world = zone.assets.iter().find(|a| fastfile::asset_type_name(a.kind) == "gfxworld").ok_or("no gfxworld")?;
+            let draw = world.addr + 396;
+            let (count, probes) = (zone.u32(draw), zone.u32(draw + 4));
+            let paks = image_paks()?;
+            println!("{count} probes");
+            for i in 0..count.min(64) {
+                let p = probes + 76 * i;
+                let origin = [zone.f32(p), zone.f32(p + 4), zone.f32(p + 8)];
+                let img = zone.u32(p + 60);
+                if img == 0 {
+                    continue;
+                }
+                let im = zhbo_formats::xmodel::read_image(&zone, img);
+                let head = paks.iter().find_map(|(n, pak, g)| g.get(&im.stream_hash).and_then(|parts| images::header(pak, parts)).map(|h| (n.clone(), h)));
+                println!("{i:3} {origin:?} {} {}x{} stream {:#x} parts {} -> {head:?}", im.name, im.width, im.height, im.stream_hash, im.streamed_parts);
+                let def = zone.u32(img);
+                if def != 0 {
+                    println!("    loadDef levels {} flags {:#x} format {} size {} mapType {} depth {}", zone.u8(def), zone.u8(def + 1), zone.u32(def + 4), zone.u32(def + 8), zone.u8(img + 16), zone.u16(img + 24));
+                }
+            }
+            Ok(())
+        }
+        "aliases" => {
+            // aliases <ff> [text]: BO2 sound aliases in a zone's sound banks.
+            let zone = load_full_zone(args.get(1).ok_or("aliases <ff> [text]")?)?;
+            let filter = args.get(2).map(|f| f.to_ascii_lowercase());
+            for bank in zhbo_formats::sndalias::banks(&zone) {
+                println!("bank {}: {} aliases, {} loaded sounds, {} bytes of loaded data", bank.name, bank.aliases.len(), bank.loaded.len(), bank.loaded_data.len());
+                if args.iter().any(|a| a == "--loaded") {
+                    for e in bank.loaded.iter().take(5) {
+                        println!("  loaded {:#010x} size {} offset {} frames {} rate {} ch {} fmt {}", e.id, e.size, e.offset, e.frame_count, e.rate_index, e.channels, e.format);
+                    }
+                }
+                for a in &bank.aliases {
+                    if filter.as_ref().is_some_and(|f| !a.name.to_ascii_lowercase().contains(f.as_str())) {
+                        continue;
+                    }
+                    let v = &a.variants;
+                    let first = v.first();
+                    println!(
+                        "  {:<48} {} variant(s), asset {:#010x} vol {:.2}..{:.2} {}",
+                        a.name,
+                        v.len(),
+                        first.map_or(0, |v| v.asset_id),
+                        first.map_or(0.0, |v| v.volume.0),
+                        first.map_or(0.0, |v| v.volume.1),
+                        first.map_or("", |v| v.file.as_str())
+                    );
+                }
+            }
+            Ok(())
+        }
         "anim" => {
             // anim <ff> <name>: tracks per bone.
             let zone = load_full_zone(args.get(1).ok_or("anim <ff> <name>")?)?;

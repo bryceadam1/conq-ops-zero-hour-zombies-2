@@ -36,7 +36,7 @@ void Zhbo_ClientFrame();
 Bool Zhbo_GetCameraOverride(Coord3D *eye, Coord3D *dir, Real *horizontalFov);
 /// The first-person viewmodel this frame: clip (ZHBO_VM_*), seconds into it, aim-down-sights 0..1,
 /// and the W3D model for the local General's faction. False when none should show.
-Bool Zhbo_GetViewmodel(Int *clip, Real *time, Real *ads, AsciiString *model);
+Bool Zhbo_GetViewmodel(Int *clip, Real *time, Real *ads, AsciiString *model, Coord3D *offset, Coord3D *angles);
 /// Device side (ZhboViewmodel.cpp): place, pose or hide the viewmodel. W3DView::update calls it
 /// every frame with the first-person camera, or with `active` false.
 void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir);

@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 3u
+#define ZHBO_ABI_VERSION 5u
 
 #ifdef __cplusplus
 extern "C" {
@@ -81,6 +81,7 @@ typedef struct ZhboClientApi
 	int32_t (*image)(const char *name, float x, float y, float w, float h, uint32_t argb);
 	int32_t (*query)(const ZhboVec3 *center, float radius, uint32_t viewer, ZhboObjInfo *out, int32_t cap);
 	int32_t (*cash)(int32_t player);
+	void (*sound)(const char *event, const ZhboVec3 *at); /* at: null for the player's own sounds */
 } ZhboClientApi;
 
 typedef struct ZhboClientIn
@@ -116,6 +117,8 @@ typedef struct ZhboClientOut
 	int32_t viewmodel;      /* ZHBO_VM_* clip, or ZHBO_VM_NONE */
 	float viewmodel_time;   /* seconds into the clip */
 	float viewmodel_ads;    /* 0..1 aim-down-sights */
+	ZhboVec3 viewmodel_offset; /* sway/bob/recoil: forward, left, up (world units) */
+	ZhboVec3 viewmodel_angles; /* yaw (left +), pitch (muzzle up +), roll; radians */
 } ZhboClientOut;
 
 /* Viewmodel clips (zhbo_core::viewmodel). */
@@ -146,7 +149,7 @@ int32_t zhbo_check_requirements(char *msg, uint32_t cap);
 static_assert(sizeof(ZhboObjInfo) == 52, "ZhboObjInfo layout must match host.rs");
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
 static_assert(sizeof(ZhboClientIn) == 316, "ZhboClientIn layout must match client.rs");
-static_assert(sizeof(ZhboClientOut) == 100, "ZhboClientOut layout must match client.rs");
+static_assert(sizeof(ZhboClientOut) == 124, "ZhboClientOut layout must match client.rs");
 static_assert(sizeof(ZhboLogicApi) == 11 * sizeof(void *), "ZhboLogicApi layout must match host.rs");
-static_assert(sizeof(ZhboClientApi) == 7 * sizeof(void *), "ZhboClientApi layout must match host.rs");
+static_assert(sizeof(ZhboClientApi) == 8 * sizeof(void *), "ZhboClientApi layout must match host.rs");
 #endif

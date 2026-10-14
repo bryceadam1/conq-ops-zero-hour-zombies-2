@@ -29,6 +29,10 @@ const CHUNK_TEXTURE_NAME: u32 = 0x0032;
 const CHUNK_MATERIAL_PASS: u32 = 0x0038;
 const CHUNK_VERTEX_MATERIAL_IDS: u32 = 0x0039;
 const CHUNK_SHADER_IDS: u32 = 0x003A;
+/// `W3dVertexMaterialStruct::Attributes`: stage 1 texture coordinates from the world-space reflection.
+const VERTMAT_STAGE1_MAPPING_WS_ENVIRONMENT: u32 = 0x0000_0D00;
+/// `W3DSHADER_DETAILCOLORFUNC_MODALPHAADDCOLOR`: local + localAlpha * other.
+const DETAILCOLOR_MODALPHAADDCOLOR: u8 = 12;
 const CHUNK_TEXTURE_STAGE: u32 = 0x0048;
 const CHUNK_TEXTURE_IDS: u32 = 0x0049;
 const CHUNK_STAGE_TEXCOORDS: u32 = 0x004A;
@@ -166,6 +170,9 @@ pub struct SkinMesh {
     pub texture: Option<String>,
     /// Alpha-tested texture (cut-outs such as straps and hair).
     pub alpha_test: bool,
+    /// A world-space environment map added over the texture, weighted by the texture's alpha (its
+    /// shine): `colour + alpha * environment`. Needs a texture without alpha test.
+    pub env_map: Option<String>,
 }
 
 fn mesh_chunk(container: &str, m: &SkinMesh) -> Chunk {
@@ -243,8 +250,9 @@ fn mesh_chunk(container: &str, m: &SkinMesh) -> Chunk {
     }
     c.child(inf);
 
+    let env = m.env_map.as_ref().filter(|_| textured && !m.alpha_test);
     let mut info = Chunk::new(CHUNK_MATERIAL_INFO);
-    info.u32(1).u32(1).u32(1).u32(textured as u32);
+    info.u32(1).u32(1).u32(1).u32(textured as u32 + env.is_some() as u32);
     c.child(info);
 
     let mut vms = Chunk::wrapper(CHUNK_VERTEX_MATERIALS);
@@ -254,7 +262,7 @@ fn mesh_chunk(container: &str, m: &SkinMesh) -> Chunk {
     vm.child(vm_name);
     let mut vm_info = Chunk::new(CHUNK_VERTEX_MATERIAL_INFO);
     vm_info
-        .u32(0) // attributes
+        .u32(if env.is_some() { VERTMAT_STAGE1_MAPPING_WS_ENVIRONMENT } else { 0 }) // attributes
         // Untextured surfaces (BO2 materials drawn by special shaders, such as screens) get a dark
         // grey instead of plain white.
         .u32(if textured { 0xFFFF_FFFF } else { 0x0040_4040 }) // ambient (RGB + pad)
@@ -279,7 +287,7 @@ fn mesh_chunk(container: &str, m: &SkinMesh) -> Chunk {
         .u8(0) // SecGradient: disable
         .u8(1) // SrcBlend: one
         .u8(textured as u8) // Texturing
-        .u8(0) // DetailColorFunc
+        .u8(if env.is_some() { DETAILCOLOR_MODALPHAADDCOLOR } else { 0 }) // DetailColorFunc
         .u8(0) // DetailAlphaFunc
         .u8(0) // ShaderPreset
         .u8(m.alpha_test as u8) // AlphaTest
@@ -295,6 +303,13 @@ fn mesh_chunk(container: &str, m: &SkinMesh) -> Chunk {
         tn.cstr(tex);
         tx.child(tn);
         texs.child(tx);
+        if let Some(env) = env {
+            let mut tx = Chunk::wrapper(CHUNK_TEXTURE);
+            let mut tn = Chunk::new(CHUNK_TEXTURE_NAME);
+            tn.cstr(env);
+            tx.child(tn);
+            texs.child(tx);
+        }
         c.child(texs);
     }
 
@@ -309,6 +324,20 @@ fn mesh_chunk(container: &str, m: &SkinMesh) -> Chunk {
         let mut stage = Chunk::wrapper(CHUNK_TEXTURE_STAGE);
         let mut tids = Chunk::new(CHUNK_TEXTURE_IDS);
         tids.u32(0);
+        stage.child(tids);
+        let mut uv = Chunk::new(CHUNK_STAGE_TEXCOORDS);
+        for t in &m.uvs {
+            uv.f32(t[0]).f32(1.0 - t[1]);
+        }
+        stage.child(uv);
+        pass.child(stage);
+    }
+    if env.is_some() {
+        // The mapper generates this stage's coordinates; the mesh's own are written for a uniform
+        // vertex layout.
+        let mut stage = Chunk::wrapper(CHUNK_TEXTURE_STAGE);
+        let mut tids = Chunk::new(CHUNK_TEXTURE_IDS);
+        tids.u32(1);
         stage.child(tids);
         let mut uv = Chunk::new(CHUNK_STAGE_TEXCOORDS);
         for t in &m.uvs {
@@ -429,6 +458,7 @@ mod tests {
             triangles: vec![[0, 1, 2]],
             texture: Some("t.tga".into()),
             alpha_test: false,
+            env_map: None,
         };
         let d = skin_model("TEST_SKN", "TEST_SKL", &[m]);
         let top = chunks(&d);

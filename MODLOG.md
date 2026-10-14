@@ -193,6 +193,25 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     cull the outside of every converted model, so they looked inside-out; the converter now swaps
     the last two indices of each triangle. My software preview draws both sides, so it can't
     catch this; check winding in game.
+52. BO2 sound aliases live in each zone's `SndBank` asset (`zhbo_formats::sndalias`; SndAliasList
+    is 20 bytes, SndAlias 96, since its flags field is 8 bytes). An alias variant's `assetId` can point
+    into *any* `sound/*.sabl|.sabs`, not just the bank's namesake: most player sounds are in
+    `cmn_root.all.sabl`, so the converter indexes every bank by id.
+53. Zero Hour's `loadFileDirectory` reads `X.ini` *and* every `X\*.ini`. So the generated archive adds
+    sound events, audio settings, particle systems and FX lists as new files
+    (`Data\INI\SoundEffects\ZHBO_BO2.ini`, ...) without replacing the stock ones.
+54. The first-person General's hidden third-person body still played its FX weapon's FireFX (a
+    length-10 tracer and a size-10 lens flare) right at the camera: a white sheet over the screen
+    when firing. `cbFireFx` now skips the local first-person General. This is lockstep-safe because the
+    `*_FX` weapons deal no damage and have no scatter, so `fireWeaponTemplate` only plays client-side
+    FX and sound for them. The viewmodel plays its own BO2 muzzle flash at `tag_flash`.
+55. Shine: the renderer's fixed-function emulation supports `DETAILCOLOR_MODALPHAADDCOLOR`
+    (`colour + colourAlpha * stage1`) and the world-space environment mapper
+    (`W3DVERTMAT_STAGE1_MAPPING_WS_ENVIRONMENT`). The converter bakes BO2's specular map (RGB
+    level x alpha gloss) into each colour map's alpha and adds a generated environment map on
+    stage 1. BO2's reflection probes are cube maps whose pixels sit in the zone's temp block, which
+    the loader reuses, so they are not kept. BO2 decal surfaces (clan tag, emblem, visor and watch glass)
+    are mostly clear and would draw opaque, so they are dropped.
 
 ## Verification log
 
@@ -241,6 +260,12 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
 * **First-person viewmodel (2026-10-14)**: each faction's BO2 arms hold the AN-94 with its
   magazine, playing BO2's idle, fire, reload, empty reload, sprint and raise clips. In game the
   autopilot shows hip fire, a reload and aiming through the iron sights; 7/7 still pass.
+* **BO2 feel (2026-10-14)**: BO2 sounds converted at launch: 46 sounds and 14 events (AN-94 and
+  B23R shots with their tails, dry fire, hit marker, heartbeat, hurt, footsteps, sprint, landing,
+  impacts, other players' shots), plus 4 reload notetrack events. The autopilot log shows each one
+  playing. The viewmodel sways, bobs, kicks and dips on landing, with a BO2 muzzle flash and ejected
+  brass. Shiny weapon and gear: captures show the sheen on the AN-94's metal and the soldiers'
+  armour. 7/7 still pass.
 
 ## Next steps
 
@@ -248,8 +273,7 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
 first-build problems, verification and the task list. The list below is the older gameplay backlog.
 
 1. Manual playtest by a human with real mouse/keyboard (the autotest injects input inside the mod).
-2. Weapon viewmodel (a gun in hand), muzzle flash near the camera, hit/kill sounds.
-3. BO2 audio: audition exported bank entries, map ids to weapon slots, and have a converter build a
-   private `ConquerOps_BO2.big` with AudioEvents that override the ZH fallbacks.
+2. More BO2 weapons (only the AN-94 viewmodel and the B23R sound are converted).
+3. BO2's own reflection probes: keep `GfxImageLoadDef` data when the zone loader reads it.
 4. Save/load of first-person state; two-client multiplayer test.
 5. Strike Force (`so_rts_*`) content as a natural next theme.

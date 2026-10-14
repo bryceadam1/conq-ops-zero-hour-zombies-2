@@ -12,7 +12,7 @@ use zhbo_formats::ipak::Ipak;
 use zhbo_formats::iwi::Rgba;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive.
-pub const VERSION: u32 = 7;
+pub const VERSION: u32 = 12;
 pub const ARCHIVE_NAME: &str = "ConquerOps_BO2.big";
 pub const VERSION_FILE: &str = "Data\\ConquerOps\\bo2_hud_version.txt";
 const TEXTURE: &str = "zhbo_bo2_hud.tga";

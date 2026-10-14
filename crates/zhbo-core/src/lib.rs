@@ -14,6 +14,7 @@ pub mod input;
 pub mod math;
 pub mod movement;
 pub mod sim;
+pub mod sounds;
 pub mod strings;
 pub mod units;
 pub mod viewmodel;

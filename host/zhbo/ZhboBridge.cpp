@@ -15,6 +15,9 @@
 #include "zhbo_gfx.h"
 #endif
 
+#include "Common/AudioEventRTS.h"
+#include "Common/AudioHandleSpecialValues.h"
+#include "Common/GameAudio.h"
 #include "Common/GameUtility.h"
 #include "Common/GlobalData.h"
 #include "Common/MessageStream.h"
@@ -46,6 +49,7 @@
 #include "GameLogic/Weapon.h"
 
 #include <map>
+#include <set>
 #include <string>
 #include <vector>
 
@@ -235,6 +239,12 @@ Weapon *fxWeapon(const char *name)
 
 void cbFireFx(uint32_t shooter, const char *fxWeapon_, uint32_t target, const ZhboVec3 *pos)
 {
+	// The local player's own first-person General: its hidden body sits at the camera, so its
+	// tracer and flare would fill the screen; the viewmodel plays its own BO2 muzzle flash instead.
+	// Skipping is lockstep-safe: the *_FX weapons deal no damage and have no scatter or fire OCL, so
+	// fireWeaponTemplate only plays client-side FX and sound for them.
+	if (s_out.camera_override && s_out.hide_object == shooter)
+		return;
 	Object *src = TheGameLogic->findObjectByID((ObjectID)shooter);
 	Weapon *weapon = fxWeapon(fxWeapon_);
 	if (!src || !weapon || !src->getDrawable())
@@ -284,6 +294,25 @@ struct CachedText
 };
 std::vector<CachedText> s_texts;
 UnsignedInt s_drawFrame = 0;
+
+// A BO2 sound (zhbo_core::sounds): positional when `at` is given, else the player's own 2D sound.
+void cbSound(const char *event, const ZhboVec3 *at)
+{
+	if (!TheAudio || !event)
+		return;
+	AudioEventRTS sound((AsciiString(event)));
+	if (at)
+	{
+		Coord3D pos;
+		pos.set(at->x, at->y, at->z);
+		sound.setPosition(&pos);
+	}
+	const AudioHandle handle = TheAudio->addAudioEvent(&sound);
+	// Report each event once: a handle below AHSV_FirstHandle is an error (unknown event, no sound).
+	static std::set<std::string> s_reported;
+	if (s_reported.insert(event).second)
+		logf("sound %s: %s", event, handle >= AHSV_FirstHandle ? "playing" : handle == AHSV_Muted ? "muted" : handle == AHSV_NoSound ? "no sound" : "error");
+}
 
 void cbScreenSize(float *w, float *h)
 {
@@ -737,7 +766,7 @@ void Zhbo_Init()
 		cbLog, cbGroundHeight, cbIsWalkable, cbExtent, cbObject, cbQuery,
 		cbSetPose, cbSetControlled, cbFireFx, cbDamage, cbHeal,
 	};
-	static const ZhboClientApi clientApi = { cbScreenSize, cbFillRect, cbLine, cbText, cbImage, cbQuery, cbCash };
+	static const ZhboClientApi clientApi = { cbScreenSize, cbFillRect, cbLine, cbText, cbImage, cbQuery, cbCash, cbSound };
 	zhbo_init(&logicApi, &clientApi);
 
 	if (TheControlBar)
@@ -923,7 +952,7 @@ Bool Zhbo_GetCameraOverride(Coord3D *eye, Coord3D *dir, Real *horizontalFov)
 	return TRUE;
 }
 
-Bool Zhbo_GetViewmodel(Int *clip, Real *time, Real *ads, AsciiString *model)
+Bool Zhbo_GetViewmodel(Int *clip, Real *time, Real *ads, AsciiString *model, Coord3D *offset, Coord3D *angles)
 {
 	if (!s_ready || !s_out.camera_override || s_out.viewmodel < 0 || !s_out.hide_object)
 		return FALSE;
@@ -936,6 +965,8 @@ Bool Zhbo_GetViewmodel(Int *clip, Real *time, Real *ads, AsciiString *model)
 	*clip = s_out.viewmodel;
 	*time = s_out.viewmodel_time;
 	*ads = s_out.viewmodel_ads;
+	offset->set(s_out.viewmodel_offset.x, s_out.viewmodel_offset.y, s_out.viewmodel_offset.z);
+	angles->set(s_out.viewmodel_angles.x, s_out.viewmodel_angles.y, s_out.viewmodel_angles.z);
 	model->set(vm);
 	return TRUE;
 }

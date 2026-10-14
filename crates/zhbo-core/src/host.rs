@@ -84,6 +84,8 @@ pub trait ClientHost {
     fn query(&self, center: Vec3, radius: f32, viewer: u32, out: &mut Vec<ObjInfo>);
     /// A player's current funds.
     fn cash(&self, player: i32) -> i32;
+    /// Play a sound event (`sounds::*`), at `at` for positional sounds.
+    fn sound(&self, _event: &str, _at: Option<Vec3>) {}
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -116,6 +118,7 @@ pub struct ClientApi {
     pub image: Option<extern "C" fn(name: *const c_char, x: f32, y: f32, w: f32, h: f32, argb: u32) -> i32>,
     pub query: Option<extern "C" fn(center: *const Vec3, radius: f32, viewer: u32, out: *mut ObjInfo, cap: i32) -> i32>,
     pub cash: Option<extern "C" fn(player: i32) -> i32>,
+    pub sound: Option<extern "C" fn(event: *const c_char, at: *const Vec3)>,
 }
 
 fn cstring(s: &str) -> CString {
@@ -226,6 +229,16 @@ impl ClientHost for CClientHost {
 
     fn cash(&self, player: i32) -> i32 {
         self.0.cash.map_or(0, |f| f(player))
+    }
+
+    fn sound(&self, event: &str, at: Option<Vec3>) {
+        if let Some(f) = self.0.sound {
+            let name = cstring(event);
+            match at {
+                Some(p) => f(name.as_ptr(), &p),
+                None => f(name.as_ptr(), std::ptr::null()),
+            }
+        }
     }
 }
 

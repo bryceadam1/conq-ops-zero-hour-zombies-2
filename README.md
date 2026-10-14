@@ -107,8 +107,9 @@ The two scripts take `-Dist` to test a given build.
   Only the AN-94 is converted so far.
 * BO2's HUD font also lives in the fastfiles, so text uses Bahnschrift (Windows' DIN-style font),
   falling back to Arial. macOS asks for DIN Alternate, which has not been checked yet.
-* Weapon sounds are Zero Hour's. `zhbo-assets` can export your BO2 sounds, but BO2 banks identify sounds
-  by hash only, so picking which sound is the MTAR is a manual step.
+* First person sounds like BO2: gunshots, reload foley, hit markers, footsteps and the low-health
+  heartbeat are converted from your install. Weapon metal and gear reflect a generated environment
+  (weighted by BO2's specular maps), not BO2's own per-map reflection probes.
 * First-person state is not saved in save games. Multiplayer is designed to be lockstep-safe but untested.
 * The engine build is not network-compatible with retail Zero Hour.
 

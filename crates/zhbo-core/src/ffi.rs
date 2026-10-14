@@ -6,7 +6,7 @@
 //! `zhbo_string` are lock-free for exactly that reason.
 
 use crate::client::{Client, ClientIn, ClientOut};
-use crate::host::{CClientHost, CLogicHost, ClientApi, LogicApi};
+use crate::host::{CClientHost, CLogicHost, ClientApi, ClientHost, LogicApi};
 use crate::input::FpsInput;
 use crate::sim::{Sim, MAX_PLAYERS};
 use std::ffi::{c_char, CStr};
@@ -37,7 +37,7 @@ fn publish_controlled(sim: &Sim) {
     }
 }
 
-pub const ABI_VERSION: u32 = 3;
+pub const ABI_VERSION: u32 = 5;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
 const _: () = {
@@ -45,9 +45,9 @@ const _: () = {
     assert!(size_of::<crate::host::ObjInfo>() == 52);
     assert!(size_of::<FpsInput>() == 20);
     assert!(size_of::<ClientIn>() == 316);
-    assert!(size_of::<ClientOut>() == 100);
+    assert!(size_of::<ClientOut>() == 124);
     assert!(size_of::<LogicApi>() == 11 * size_of::<usize>());
-    assert!(size_of::<ClientApi>() == 7 * size_of::<usize>());
+    assert!(size_of::<ClientApi>() == 8 * size_of::<usize>());
 };
 
 /// Returns the ABI version; the glue refuses to run if it does not match its header.
@@ -170,7 +170,14 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
         return;
     }
     let inp = *input;
-    let result = with_state(|s| s.client.frame(&mut s.sim, &inp)).unwrap_or_default();
+    let result = with_state(|s| {
+        let out = s.client.frame(&mut s.sim, &inp);
+        for r in std::mem::take(&mut s.client.cues.queue) {
+            s.client_host.sound(r.event, r.at);
+        }
+        out
+    })
+    .unwrap_or_default();
     *out = result;
 }
 

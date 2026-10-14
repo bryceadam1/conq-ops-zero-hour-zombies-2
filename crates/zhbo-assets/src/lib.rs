@@ -10,3 +10,5 @@ pub mod sounds;
 pub mod xf;
 pub mod character;
 pub mod generals;
+pub mod fx;
+pub mod sfx;
