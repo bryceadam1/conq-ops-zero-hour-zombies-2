@@ -8,7 +8,7 @@ use crate::input::{buttons, FpsInput};
 use crate::math::{basis_xy, dir_from_angles, Vec3};
 use crate::movement::{self, Blocker, Body, MoveModifiers, MoveTuning, World};
 use crate::units::{BO2_TO_ZH_DAMAGE, LOGIC_DT};
-use crate::weapons::{Arsenal, Rng, WeaponAction, MELEE_DAMAGE, MELEE_RANGE};
+use crate::weapons::{Arsenal, Rng, WeaponAction, MELEE_DAMAGE, MELEE_FX_WEAPON, MELEE_RANGE};
 
 pub const MAX_PLAYERS: usize = 16;
 
@@ -314,6 +314,7 @@ impl Sim {
                         da.total_cmp(&db).then(a.id.cmp(&b.id))
                     });
                 if let Some(v) = victim {
+                    host.fire_fx(p.general, MELEE_FX_WEAPON, v.id, v.pos);
                     let kill = host.damage(p.general, v.id, MELEE_DAMAGE * BO2_TO_ZH_DAMAGE, true);
                     self.emit(idx, EventKind::HitMarker { headshot: false, kill });
                 }

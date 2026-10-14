@@ -1,0 +1,8 @@
+[package]
+name = "zhbo-requirements"
+description = "Locate and validate the player's own Zero Hour and Black Ops 2 installs."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

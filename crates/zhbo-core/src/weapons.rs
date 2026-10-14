@@ -134,6 +134,7 @@ pub const LOADOUT: [&WeaponDef; 2] = [&MTAR, &B23R];
 pub const MELEE_DAMAGE: f32 = 135.0;
 pub const MELEE_RANGE: f32 = inches(64.0);
 pub const MELEE_COOLDOWN: f32 = 0.9;
+pub const MELEE_FX_WEAPON: &str = "ZHBO_Knife_FX";
 
 /// xorshift32: tiny, deterministic, identical on every client.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

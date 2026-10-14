@@ -1,0 +1,5 @@
+* text=auto eol=lf
+# Patches must apply byte-for-byte to the engine sources (which use CRLF).
+*.patch -text
+*.cmd text eol=crlf
+*.bat text eol=crlf

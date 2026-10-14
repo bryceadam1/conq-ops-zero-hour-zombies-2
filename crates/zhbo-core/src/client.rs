@@ -180,8 +180,50 @@ pub struct HudTimers {
     pub muzzle: f32,
 }
 
+/// Scripted input for in-game verification (`ZHBO_AUTOPILOT=1`): walks, turns, aims and fires,
+/// changes stance, jumps, then opens the field computer. Times are seconds in first person.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Autopilot {
+    pub t: f32,
+}
+
+impl Autopilot {
+    /// Keys held and mouse delta (counts per frame) at time `t`.
+    pub fn input_at(&self, b: &Bindings) -> (Vec<u8>, f32) {
+        let t = self.t;
+        let mut keys = Vec::new();
+        let mut dx = 0.0;
+        if (1.0..3.0).contains(&t) {
+            keys.push(b.forward);
+        }
+        if (3.0..3.5).contains(&t) {
+            dx = 12.0;
+        }
+        if (3.5..4.0).contains(&t) {
+            dx = -12.0;
+        }
+        if (4.5..8.0).contains(&t) {
+            keys.push(b.ads);
+        }
+        if (5.0..7.5).contains(&t) {
+            keys.push(b.fire);
+        }
+        if (8.5..8.6).contains(&t) || (9.5..9.6).contains(&t) {
+            keys.push(b.crouch);
+        }
+        if (10.0..10.1).contains(&t) {
+            keys.push(b.jump);
+        }
+        if (11.0..11.1).contains(&t) {
+            keys.push(b.field_computer);
+        }
+        (keys, dx)
+    }
+}
+
 pub struct Client {
     pub cfg: ClientConfig,
+    pub autopilot: Option<Autopilot>,
     pub view: ViewMode,
     pub yaw: f32,
     pub pitch: f32,
@@ -207,6 +249,7 @@ impl Client {
     pub fn new(cfg: ClientConfig) -> Self {
         Self {
             cfg,
+            autopilot: None,
             view: ViewMode::Rts,
             yaw: 0.0,
             pitch: 0.0,
@@ -224,7 +267,9 @@ impl Client {
     }
 
     pub fn reset(&mut self) {
+        let autopilot = self.autopilot.as_ref().map(|_| Autopilot::default());
         *self = Client::new(self.cfg);
+        self.autopilot = autopilot;
     }
 
     fn read_buttons(&self, inp: &ClientIn) -> (u32, f32, f32) {
@@ -255,6 +300,27 @@ impl Client {
     /// Run one rendered frame.
     pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         let dt = inp.dt.clamp(0.0, 0.25);
+        let mut scripted;
+        let inp = match self.autopilot.as_mut() {
+            Some(ap) if matches!(self.view, ViewMode::Fps) => {
+                ap.t += dt;
+                let (keys, dx) = ap.input_at(&self.cfg.bindings);
+                scripted = *inp;
+                scripted.keys = [0; 256];
+                for k in keys {
+                    scripted.keys[k as usize] = 1;
+                }
+                scripted.mouse_dx = dx;
+                scripted.mouse_dy = 0.0;
+                scripted.input_allowed = 1;
+                &scripted
+            }
+            Some(ap) => {
+                ap.t = 0.0;
+                inp
+            }
+            None => inp,
+        };
         let mut out = ClientOut { hfov: self.last_hfov, ..Default::default() };
         let player = sim.player(inp.local_player).cloned();
 

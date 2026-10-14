@@ -1,6 +1,9 @@
 [package]
 name = "zhbo-launcher"
+description = "ConquerOps.exe: checks that Zero Hour and Black Ops II are installed, then starts the mod."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[dependencies]
+zhbo-requirements = { path = "../zhbo-requirements" }

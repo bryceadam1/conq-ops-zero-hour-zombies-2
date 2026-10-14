@@ -1,0 +1,404 @@
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+index eef5514..1a0947d 100644
+--- a/CMakeLists.txt
++++ b/CMakeLists.txt
+@@ -93,6 +93,10 @@ add_subdirectory(Core)
+ # Add main build targets
+ if(RTS_BUILD_ZEROHOUR)
+     add_subdirectory(GeneralsMD)
++    # ZHBO: Conquer Ops engine glue and Rust core, provided by the mod's build (cargo xtask build).
++    if(ZHBO_GLUE_DIR)
++        add_subdirectory(${ZHBO_GLUE_DIR} zhbo)
++    endif()
+ endif()
+ 
+ if(RTS_BUILD_GENERALS)
+diff --git a/Core/GameEngine/Include/Common/MessageStream.h b/Core/GameEngine/Include/Common/MessageStream.h
+index e5dc1fc..be15aa4 100644
+--- a/Core/GameEngine/Include/Common/MessageStream.h
++++ b/Core/GameEngine/Include/Common/MessageStream.h
+@@ -604,6 +604,8 @@ public:
+ 		MSG_LOGIC_CRC,															///< CRC from the logic passed around in a network game :)
+ 		MSG_SET_MINE_CLEARING_DETAIL,								///< CRC from the logic passed around in a network game :)
+ 		MSG_ENABLE_RETALIATION_MODE,								///< Turn retaliation mode on or off.
++		MSG_ZHBO_TAKE_CONTROL,											///< ZHBO: (objectID) take first-person control of a General
++		MSG_ZHBO_FPS_INPUT,													///< ZHBO: (objectID, held, pressed, move, yaw, pitch) first-person input for one logic frame
+ 
+ 		MSG_BEGIN_DEBUG_NETWORK_MESSAGES = 1900,		///< network messages that exist only in debug/internal builds. all grouped separately.
+ 
+diff --git a/Core/GameEngine/Include/GameClient/ControlBar.h b/Core/GameEngine/Include/GameClient/ControlBar.h
+index 446277a..11faba2 100644
+--- a/Core/GameEngine/Include/GameClient/ControlBar.h
++++ b/Core/GameEngine/Include/GameClient/ControlBar.h
+@@ -214,6 +214,8 @@ enum GUICommandType CPP_11(: Int)
+ 
+ 	GUI_COMMAND_SELECT_ALL_UNITS_OF_TYPE,
+ 
++	GUI_COMMAND_ZHBO_TAKE_CONTROL,				///< ZHBO: take first-person control of the selected General
++
+ 	// add more commands here, don't forget to update the string command list below too ...
+ 
+ 	GUI_COMMAND_NUM_COMMANDS
+@@ -267,6 +269,7 @@ static const char *const TheGuiCommandNames[] =
+ 	"SPECIAL_POWER_CONSTRUCT",
+ 	"SPECIAL_POWER_CONSTRUCT_FROM_SHORTCUT",
+ 	"SELECT_ALL_UNITS_OF_TYPE",
++	"ZHBO_TAKE_CONTROL",
+ 
+ 	nullptr
+ };
+@@ -419,6 +422,7 @@ enum { MAX_BUILD_QUEUE_BUTTONS = 9 };// physical button count for the build queu
+ enum { MAX_SPECIAL_POWER_SHORTCUTS = 11};
+ class CommandSet : public Overridable
+ {
++	friend class ZhboControlBarAccess; // ZHBO: adds Deploy General to Command Centers
+ 
+ 	MEMORY_POOL_GLUE_WITH_USERLOOKUP_CREATE( CommandSet, "CommandSet" )
+ 
+@@ -1007,6 +1011,8 @@ private:
+ 	/// find existing command set
+ 	CommandSet *findNonConstCommandSet( const AsciiString& name );
+ 
++	friend class ZhboControlBarAccess; // ZHBO
++
+ 	const Image *m_genStarOn;
+ 	const Image *m_genStarOff;
+ 
+diff --git a/Core/GameEngine/Source/Common/MessageStream.cpp b/Core/GameEngine/Source/Common/MessageStream.cpp
+index 9980021..48ed6f8 100644
+--- a/Core/GameEngine/Source/Common/MessageStream.cpp
++++ b/Core/GameEngine/Source/Common/MessageStream.cpp
+@@ -647,6 +647,8 @@ const char *GameMessage::getCommandTypeAsString(GameMessage::Type t)
+ 	CASE_LABEL(MSG_LOGIC_CRC)
+ 	CASE_LABEL(MSG_SET_MINE_CLEARING_DETAIL)
+ 	CASE_LABEL(MSG_ENABLE_RETALIATION_MODE)
++	CASE_LABEL(MSG_ZHBO_TAKE_CONTROL)
++	CASE_LABEL(MSG_ZHBO_FPS_INPUT)
+ 	CASE_LABEL(MSG_BEGIN_DEBUG_NETWORK_MESSAGES)
+ 
+ #if defined(RTS_DEBUG) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
+diff --git a/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBarCommandProcessing.cpp b/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBarCommandProcessing.cpp
+index 5e2c41a..ae1cdd0 100644
+--- a/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBarCommandProcessing.cpp
++++ b/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBarCommandProcessing.cpp
+@@ -30,6 +30,7 @@
+ 
+ // USER INCLUDES //////////////////////////////////////////////////////////////////////////////////
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ 
+ #include "Common/BuildAssistant.h"
+ #include "Common/Money.h"
+@@ -631,6 +632,13 @@ CBCommandStatus ControlBar::processCommandUI( GameWindow *control,
+ 			break;
+ 		}
+ 
++		// ZHBO
++		case GUI_COMMAND_ZHBO_TAKE_CONTROL:
++		{
++			Zhbo_RequestTakeControl(obj);
++			break;
++		}
++
+ 		case GUI_COMMAND_SELECT_ALL_UNITS_OF_TYPE:
+ 		{
+ 			Player* localPlayer = ThePlayerList->getLocalPlayer();
+diff --git a/Core/GameEngine/Source/GameClient/GameText.cpp b/Core/GameEngine/Source/GameClient/GameText.cpp
+index 9ada81d..fec1f9c 100644
+--- a/Core/GameEngine/Source/GameClient/GameText.cpp
++++ b/Core/GameEngine/Source/GameClient/GameText.cpp
+@@ -44,6 +44,7 @@
+ //----------------------------------------------------------------------------
+ 
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ 
+ #include "GameClient/GameText.h"
+ #include "Common/Language.h"
+@@ -1267,6 +1268,17 @@ UnicodeString GameTextManager::fetch( const Char *label, Bool *exists )
+ 		lookUp = (StringLookUp *) bsearch( &key, (void*) m_mapStringLUT, m_mapTextCount, sizeof(StringLookUp), compareLUT );
+ 	}
+ 
++	// ZHBO: labels used by the mod's INI files
++	if( lookUp == nullptr )
++	{
++		if( const WideChar *zhboText = Zhbo_FetchString( label ) )
++		{
++			if( exists )
++				*exists = TRUE;
++			return UnicodeString( zhboText );
++		}
++	}
++
+ 	if( lookUp == nullptr )
+ 	{
+ 
+diff --git a/Core/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp b/Core/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp
+index aeb559b..52aec9d 100644
+--- a/Core/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp
++++ b/Core/GameEngine/Source/GameLogic/System/GameLogicDispatch.cpp
+@@ -29,6 +29,7 @@
+ 
+ // INCLUDES ///////////////////////////////////////////////////////////////////////////////////////
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ 
+ #include "Common/CRCDebug.h"
+ #include "Common/FramePacer.h"
+@@ -490,6 +491,17 @@ void GameLogic::logicMessageDispatcher( GameMessage *msg, void *userData )
+ 			onEnableRetaliationMode(msg);
+ 			break;
+ 		}
++		// ZHBO: first-person General
++		case GameMessage::MSG_ZHBO_TAKE_CONTROL:
++		{
++			Zhbo_OnTakeControlMessage(msgPlayer->getPlayerIndex(), msg);
++			break;
++		}
++		case GameMessage::MSG_ZHBO_FPS_INPUT:
++		{
++			Zhbo_OnInputMessage(msgPlayer->getPlayerIndex(), msg);
++			break;
++		}
+ 		case GameMessage::MSG_DO_WEAPON_AT_LOCATION:
+ 		{
+ 			onDoWeaponAtLocation(msg, currentlySelectedGroup);
+diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp
+index 4772d17..52dcfb3 100644
+--- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DDisplay.cpp
+@@ -35,6 +35,7 @@ static void drawFramerateBar();
+ 
+ // SYSTEM INCLUDES ////////////////////////////////////////////////////////////
+ #include <numeric>
++#include "ZhboBridge.h" // ZHBO
+ #include <stdlib.h>
+ #include <windows.h>
+ #include <io.h>
+@@ -2043,12 +2044,18 @@ AGAIN:
+ 				if (numRenderTargetPolygons || numRenderTargetVertices)
+ 					Debug_Statistics::Record_DX8_Polys_And_Vertices(numRenderTargetPolygons,numRenderTargetVertices,ShaderClass::_PresetOpaqueShader);
+ 
++				// ZHBO: sky behind the first-person view (the 3D pass only clears depth)
++				Zhbo_DrawSky();
++
+ 				// draw all views of the world
+ 				drawViews();
+ 
+ 				// draw the user interface
+ 				TheInGameUI->DRAW();
+ 
++				// ZHBO: first-person HUD
++				Zhbo_DrawHud();
++
+ 				TheGameClient->DRAW();
+ 
+ 				// draw the mouse
+diff --git a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
+index 37be366..3f6dd0d 100644
+--- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
++++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
+@@ -34,6 +34,7 @@
+ 
+ // SYSTEM INCLUDES ////////////////////////////////////////////////////////////////////////////////
+ #include <stdlib.h>
++#include "ZhboBridge.h" // ZHBO
+ #include <windows.h>
+ 
+ // USER INCLUDES //////////////////////////////////////////////////////////////////////////////////
+@@ -1676,8 +1677,40 @@ void W3DView::update()
+ 		updateCameraAreaConstraints();
+ 	}
+ 
++	// ZHBO: the first-person General owns the camera while active
++	static Bool s_zhboCameraWasOverridden = false;
++	Coord3D zhboEye, zhboDir;
++	Real zhboFov;
++	if (Zhbo_GetCameraOverride(&zhboEye, &zhboDir, &zhboFov))
++	{
++		// Keep the terrain draw window centred ahead of the eye.
++		m_pos.x = zhboEye.x + zhboDir.x * 100.0f;
++		m_pos.y = zhboEye.y + zhboDir.y * 100.0f;
++		m_pos.z = zhboEye.z;
++		Matrix3D transform;
++		transform.Look_At_Dir(Vector3(zhboEye.x, zhboEye.y, zhboEye.z), Vector3(zhboDir.x, zhboDir.y, zhboDir.z), 0.0f);
++		m_3DCamera->Set_View_Plane(zhboFov, -1);
++		setCameraTransform(transform);
++		// The RTS near plane (one map cell) is as far away as the General's eye height.
++		float zhboNear, zhboFar;
++		m_3DCamera->Get_Clip_Planes(zhboNear, zhboFar);
++		m_3DCamera->Set_Clip_Planes(0.5f, max(zhboFar, 2000.0f));
++		m_recalcCamera = false;
++		s_zhboCameraWasOverridden = true;
++	}
++	else if (s_zhboCameraWasOverridden)
++	{
++		s_zhboCameraWasOverridden = false;
++		setWidth(getWidth()); // restores the RTS field of view
++		// The override moved the pivot up to eye height; put the RTS camera back on the ground at its defaults.
++		setPitchToDefault();
++		setZoomToDefault();
++		resetPivotToGround();
++		m_recalcCamera = true;
++	}
++
+ 	// (gth) C&C3 if m_isCameraSlaved then force the camera to update each frame
+-	if (m_recalcCamera || m_isCameraSlaved)
++	if (!s_zhboCameraWasOverridden && (m_recalcCamera || m_isCameraSlaved))
+ 	{
+ 		updateCameraTransform();
+ 		m_recalcCamera = false;
+diff --git a/Core/GameEngineDevice/Source/Win32Device/Common/Win32BIGFileSystem.cpp b/Core/GameEngineDevice/Source/Win32Device/Common/Win32BIGFileSystem.cpp
+index 95448f7..b20656a 100644
+--- a/Core/GameEngineDevice/Source/Win32Device/Common/Win32BIGFileSystem.cpp
++++ b/Core/GameEngineDevice/Source/Win32Device/Common/Win32BIGFileSystem.cpp
+@@ -63,6 +63,13 @@ void Win32BIGFileSystem::init() {
+     // load original Generals assets
+     AsciiString installPath;
+     GetStringFromGeneralsRegistry("", "InstallPath", installPath );
++    // ZHBO: The Steam release ships the original Generals data in a ZH_Generals subfolder and
++    // can leave a stale InstallPath in the registry. Use the subfolder when the registry path is unusable.
++    if (installPath.isEmpty() || !TheLocalFileSystem->doesFileExist(installPath.str()))
++    {
++      if (TheLocalFileSystem->doesFileExist("ZH_Generals\\INI.big"))
++        installPath = "ZH_Generals\\";
++    }
+     //@todo this will need to be ramped up to a crash for release
+     DEBUG_ASSERTCRASH(!installPath.isEmpty(), ("Be 1337! Go install Generals!"));
+     if (!installPath.isEmpty())
+diff --git a/GeneralsMD/Code/GameEngine/Source/Common/GameEngine.cpp b/GeneralsMD/Code/GameEngine/Source/Common/GameEngine.cpp
+index 5d7b450..d89f6c6 100644
+--- a/GeneralsMD/Code/GameEngine/Source/Common/GameEngine.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/Common/GameEngine.cpp
+@@ -27,6 +27,7 @@
+ // Author: Michael S. Booth, April 2001
+ 
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ 
+ #include "Common/ActionManager.h"
+ #include "Common/AudioAffect.h"
+@@ -745,6 +746,9 @@ void GameEngine::init()
+ 			}
+ 		}
+ 
++		// ZHBO: Conquer Ops starts once every subsystem and INI file is loaded
++		Zhbo_Init();
++
+ 	}
+ 	catch (ErrorCode ec)
+ 	{
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/GameClient.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/GameClient.cpp
+index 983845c..c0c2cd7 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/GameClient.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/GameClient.cpp
+@@ -29,6 +29,7 @@
+ 
+ // SYSTEM INCLUDES ////////////////////////////////////////////////////////////
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ #include "GameClient/GameClient.h"
+ 
+ // USER INCLUDES //////////////////////////////////////////////////////////////
+@@ -295,6 +296,7 @@ void GameClient::init()
+ 		//
+ 
+ 		// since we only allocate one of each, don't bother pooling 'em
++		m_translators[ m_numTranslators++ ] =	TheMessageStream->attachTranslator( Zhbo_CreateTranslator(), 5 ); // ZHBO: first-person input
+ 		m_translators[ m_numTranslators++ ] =	TheMessageStream->attachTranslator( MSGNEW("GameClientSubsystem") WindowTranslator,     10 );
+ 		m_translators[ m_numTranslators++ ] =	TheMessageStream->attachTranslator( MSGNEW("GameClientSubsystem") MetaEventTranslator,	20 );
+ 		m_translators[ m_numTranslators++ ] =	TheMessageStream->attachTranslator( MSGNEW("GameClientSubsystem") HotKeyTranslator,	25 );
+@@ -704,6 +706,9 @@ void GameClient::update()
+ 	}
+ #endif
+ 
++	// ZHBO: first-person client frame (mouse look, camera, input messages) before the views update
++	Zhbo_ClientFrame();
++
+ 	// update the terrain visuals
+ 	{
+ 		TheTerrainVisual->UPDATE();
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/AIUpdate.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/AIUpdate.cpp
+index c6abb30..e80c4fa 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/AIUpdate.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/AIUpdate.cpp
+@@ -28,6 +28,7 @@
+ // Subsequently : John Ahlquist 2002 and a cast of thousands.
+ 
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ 
+ #define DEFINE_LOCOMOTORSET_NAMES					// for TheLocomotorSetNames[]
+ #define DEFINE_AUTOACQUIRE_NAMES
+@@ -1001,6 +1002,10 @@ void AIUpdateInterface::friend_notifyStateMachineChanged()
+ DECLARE_PERF_TIMER(AIUpdateInterface_update)
+ UpdateSleepTime AIUpdateInterface::update()
+ {
++	// ZHBO: a first-person General is driven by player input, not by its AI
++	if (Zhbo_IsControlled(getObject()->getID()))
++		return UPDATE_SLEEP_NONE;
++
+ 	//DEBUG_LOG(("AIUpdateInterface frame %d: %08lx",TheGameLogic->getFrame(),getObject()));
+ 
+ 	USE_PERF_TIMER(AIUpdateInterface_update)
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/PhysicsUpdate.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/PhysicsUpdate.cpp
+index ae2f459..c82c886 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/PhysicsUpdate.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/PhysicsUpdate.cpp
+@@ -27,6 +27,7 @@
+ // Author: Michael S. Booth, November 2001
+ 
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ 
+ // please talk to MDC (x36804) before taking this out
+ #define NO_DEBUG_CRC
+@@ -617,6 +618,10 @@ void PhysicsBehavior::setBounceSound(const AudioEventRTS* bounceSound)
+ DECLARE_PERF_TIMER(PhysicsBehavior)
+ UpdateSleepTime PhysicsBehavior::update()
+ {
++	// ZHBO: first-person movement owns the General's position, including jumps
++	if (Zhbo_IsControlled(getObject()->getID()))
++		return UPDATE_SLEEP_NONE;
++
+ 	USE_PERF_TIMER(PhysicsBehavior)
+ 
+ 	Object*														obj = getObject();
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp
+index afe0b87..b5198e0 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp
+@@ -28,6 +28,7 @@
+ ///////////////////////////////////////////////////////////////////////////////////////////////////
+ 
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ 
+ #include "Common/AudioAffect.h"
+ #include "Common/AudioHandleSpecialValues.h"
+@@ -404,6 +405,7 @@ void GameLogic::init()
+ //-------------------------------------------------------------------------------------------------
+ void GameLogic::reset()
+ {
++	Zhbo_Reset(); // ZHBO
+ 	m_thingTemplateBuildableOverrides.clear();
+ 	m_controlBarOverrides.clear();
+ 
+@@ -1126,6 +1128,7 @@ void GameLogic::setGameMode( GameMode mode )
+ // ------------------------------------------------------------------------------------------------
+ void GameLogic::startNewGame( Bool loadingSaveGame )
+ {
++	Zhbo_Reset(); // ZHBO
+ 	try
+ 	{
+ 		tryStartNewGame(loadingSaveGame);
+@@ -3794,6 +3797,9 @@ void GameLogic::update()
+ 		processCommandList( TheCommandList );
+ 	}
+ 
++	// ZHBO: first-person Generals move and shoot after this frame's input messages are applied
++	Zhbo_LogicStep( m_frame );
++
+ #ifdef ALLOW_NONSLEEPY_UPDATES
+ 	{
+ 		for (std::list<UpdateModulePtr>::const_iterator it = m_normalUpdates.begin(); it != m_normalUpdates.end(); ++it)

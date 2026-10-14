@@ -15,9 +15,10 @@ pub const fn inches(v: f32) -> f32 {
     v * ZH_PER_INCH
 }
 
-/// BO2 damage is authored against 100 HP players. Zero Hour rifle infantry have 100-120 HP, so BO2
-/// damage maps 1:1 and ZH armor (SMALL_ARMS vs. tank armor, etc.) does the rest.
-pub const BO2_TO_ZH_DAMAGE: f32 = 1.0;
+/// BO2 damage is authored against 100 HP players; a Zero Hour Ranger has 180 HP (`HumanArmor`).
+/// Scaling by 1.5 keeps BO2's shots-to-kill (an MTAR body-shot kill takes 3 rounds up close) while
+/// ZH armor (SMALL_ARMS against tank armor, etc.) still decides what rifles can hurt.
+pub const BO2_TO_ZH_DAMAGE: f32 = 1.5;
 
 #[cfg(test)]
 mod tests {

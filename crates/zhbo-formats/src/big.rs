@@ -96,32 +96,38 @@ pub fn normalize(path: &str) -> String {
     path.replace('/', "\\").to_ascii_lowercase()
 }
 
+/// Build a BIGF archive from (archive path, contents) pairs. Paths are stored with backslashes.
+pub fn write_archive(files: &[(String, Vec<u8>)]) -> Vec<u8> {
+    let names: Vec<String> = files.iter().map(|(n, _)| n.replace('/', "\\")).collect();
+    let table_len: usize = names.iter().map(|n| 8 + n.len() + 1).sum();
+    let data_start = 16 + table_len;
+    let total = data_start + files.iter().map(|(_, d)| d.len()).sum::<usize>();
+    let mut out = Vec::with_capacity(total);
+    out.extend_from_slice(b"BIGF");
+    out.extend_from_slice(&(total as u32).to_le_bytes());
+    out.extend_from_slice(&(files.len() as u32).to_be_bytes());
+    out.extend_from_slice(&(data_start as u32).to_be_bytes());
+    let mut offset = data_start;
+    for (name, (_, data)) in names.iter().zip(files) {
+        out.extend_from_slice(&(offset as u32).to_be_bytes());
+        out.extend_from_slice(&(data.len() as u32).to_be_bytes());
+        out.extend_from_slice(name.as_bytes());
+        out.push(0);
+        offset += data.len();
+    }
+    for (_, data) in files {
+        out.extend_from_slice(data);
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn build(files: &[(&str, &[u8])]) -> Vec<u8> {
-        let table_len: usize = files.iter().map(|(n, _)| 8 + n.len() + 1).sum();
-        let data_start = 16 + table_len;
-        let mut out = Vec::new();
-        out.extend_from_slice(b"BIGF");
-        out.extend_from_slice(&0u32.to_le_bytes());
-        out.extend_from_slice(&(files.len() as u32).to_be_bytes());
-        out.extend_from_slice(&(data_start as u32).to_be_bytes());
-        let mut offset = data_start;
-        for (name, data) in files {
-            out.extend_from_slice(&(offset as u32).to_be_bytes());
-            out.extend_from_slice(&(data.len() as u32).to_be_bytes());
-            out.extend_from_slice(name.as_bytes());
-            out.push(0);
-            offset += data.len();
-        }
-        for (_, data) in files {
-            out.extend_from_slice(data);
-        }
-        let size = out.len() as u32;
-        out[4..8].copy_from_slice(&size.to_le_bytes());
-        out
+        let owned: Vec<(String, Vec<u8>)> = files.iter().map(|(n, d)| (n.to_string(), d.to_vec())).collect();
+        write_archive(&owned)
     }
 
     #[test]

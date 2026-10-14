@@ -39,6 +39,17 @@ fn publish_controlled(sim: &Sim) {
 
 pub const ABI_VERSION: u32 = 1;
 
+// Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
+const _: () = {
+    use std::mem::size_of;
+    assert!(size_of::<crate::host::ObjInfo>() == 52);
+    assert!(size_of::<FpsInput>() == 20);
+    assert!(size_of::<ClientIn>() == 316);
+    assert!(size_of::<ClientOut>() == 88);
+    assert!(size_of::<LogicApi>() == 11 * size_of::<usize>());
+    assert!(size_of::<ClientApi>() == 4 * size_of::<usize>());
+};
+
 /// Returns the ABI version; the glue refuses to run if it does not match its header.
 #[no_mangle]
 pub extern "C" fn zhbo_abi_version() -> u32 {
@@ -52,7 +63,7 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
     if logic.is_null() || client.is_null() {
         return;
     }
-    let state = State {
+    let mut state = State {
         logic: CLogicHost(*logic),
         client_host: CClientHost(*client),
         sim: Sim::new(),
@@ -60,6 +71,10 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
     };
     use crate::host::LogicHost;
     state.logic.log(&format!("zhbo-core {} initialised (ABI {ABI_VERSION})", env!("CARGO_PKG_VERSION")));
+    if std::env::var_os("ZHBO_AUTOPILOT").is_some() {
+        state.client.autopilot = Some(crate::client::Autopilot::default());
+        state.logic.log("autopilot enabled (ZHBO_AUTOPILOT)");
+    }
     *STATE.lock().unwrap_or_else(|e| e.into_inner()) = Some(state);
 }
 
@@ -95,9 +110,41 @@ pub unsafe extern "C" fn zhbo_logic_input(player: i32, general: u32, input: *con
 #[no_mangle]
 pub extern "C" fn zhbo_logic_step(frame: u32) {
     with_state(|s| {
+        let before = s.sim.events.len();
         s.sim.step(&s.logic, frame);
         publish_controlled(&s.sim);
+        log_step(s, before, frame);
     });
+}
+
+/// `ConquerOps.log` is the in-game oracle: lifecycle events, kills, and a once-per-second pose.
+fn log_step(s: &State, first_new_event: usize, frame: u32) {
+    use crate::host::LogicHost;
+    use crate::sim::EventKind;
+    for e in s.sim.events.iter().skip(first_new_event) {
+        let line = match e.kind {
+            EventKind::EnteredFps { general } => format!("player {} took control of General {general}", e.player),
+            EventKind::FieldComputerOpened => format!("player {} opened the field computer", e.player),
+            EventKind::ReturnedToRts { general } => format!("player {} returned General {general} to RTS control", e.player),
+            EventKind::GeneralDied { general } => format!("player {}'s General {general} died", e.player),
+            EventKind::HitMarker { headshot, kill: true } => format!("player {} killed a target (headshot: {headshot})", e.player),
+            EventKind::Damaged { amount } => format!("player {}'s General took {amount:.0} damage", e.player),
+            _ => continue,
+        };
+        s.logic.log(&line);
+    }
+    if frame % 30 == 0 {
+        for (i, p) in s.sim.players.iter().enumerate() {
+            if let Some(p) = p.as_ref().filter(|p| p.is_first_person()) {
+                let w = p.arsenal.current();
+                s.logic.log(&format!(
+                    "player {i} pos ({:.1}, {:.1}, {:.1}) yaw {:.2} pitch {:.2} stance {:?} hp {:.0}/{:.0} {} {}|{}",
+                    p.body.pos.x, p.body.pos.y, p.body.pos.z, p.yaw, p.pitch, p.body.stance,
+                    p.health, p.max_health, w.def.display_name, w.ammo, w.reserve
+                ));
+            }
+        }
+    }
 }
 
 /// Non-zero if the object's own AI/physics must be suspended this frame.
@@ -127,6 +174,26 @@ pub extern "C" fn zhbo_client_draw_hud(local_player: i32) {
         let player = s.sim.player(local_player);
         crate::hud::draw(&s.client_host, &s.client, player);
     });
+}
+
+/// Both games must be installed. Returns 1 if so; otherwise 0 and writes a NUL-terminated
+/// explanation (UTF-8) into `msg` (up to `cap` bytes).
+///
+/// # Safety
+/// `msg` must be writable for `cap` bytes (or null with `cap` 0).
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_check_requirements(msg: *mut c_char, cap: u32) -> i32 {
+    let req = zhbo_requirements::check_requirements();
+    if req.ok() {
+        return 1;
+    }
+    if !msg.is_null() && cap > 0 {
+        let text = req.problems();
+        let n = text.len().min(cap as usize - 1);
+        std::ptr::copy_nonoverlapping(text.as_ptr(), msg.cast::<u8>(), n);
+        *msg.add(n) = 0;
+    }
+    0
 }
 
 /// UTF-16, NUL-terminated text for a mod string label, or null if the label is not ours.
