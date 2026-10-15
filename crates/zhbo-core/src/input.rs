@@ -18,7 +18,12 @@ pub mod buttons {
     pub const TACTICAL: u32 = 1 << 11;
     /// Toggle the weapon's alt mode (select fire, under-barrel launcher, second optic).
     pub const ALT_MODE: u32 = 1 << 12;
-    pub const ALL: u32 = (1 << 13) - 1;
+    /// Bring the hammer up or put it away (building).
+    pub const HAMMER: u32 = 1 << 13;
+    /// With the hammer up: the next or previous structure (the mouse wheel).
+    pub const BUILD_NEXT: u32 = 1 << 14;
+    pub const BUILD_PREV: u32 = 1 << 15;
+    pub const ALL: u32 = (1 << 16) - 1;
 }
 
 #[repr(C)]

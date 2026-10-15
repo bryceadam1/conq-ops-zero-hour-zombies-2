@@ -61,6 +61,11 @@ void Zhbo_DrawSky();
 GameMessageTranslator *Zhbo_CreateTranslator();
 /// "Take Control" command button pressed with `obj` selected.
 void Zhbo_RequestTakeControl(Object *obj);
+/// One of the General's own command buttons (Command = ZHBO_TAKE_CONTROL: Take Control, the Build
+/// menu and Back from it) pressed with `obj` selected.
+void Zhbo_OnZhboCommand(Object *obj, const CommandButton *button);
+/// How fast `builder` builds, as a share of a dozer's speed (DozerAIUpdate, host patch 0012).
+Real Zhbo_BuildRate(const Object *builder);
 
 /// A printf-style line in ConquerOps.log.
 void Zhbo_Log(const char *fmt, ...);

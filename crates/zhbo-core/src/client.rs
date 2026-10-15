@@ -24,6 +24,7 @@ pub mod vk {
     pub const KEY_4: u8 = 0x34;
     pub const KEY_5: u8 = 0x35;
     pub const A: u8 = 0x41;
+    pub const B: u8 = 0x42;
     pub const C: u8 = 0x43;
     pub const D: u8 = 0x44;
     pub const E: u8 = 0x45;
@@ -59,6 +60,8 @@ pub struct Bindings {
     pub map: u8,
     /// BO2's action slot 3: the weapon's alt mode (select fire, grenade launcher, second optic).
     pub alt_mode: u8,
+    /// The builder's hammer (the use key builds at a site).
+    pub hammer: u8,
 }
 
 impl Default for Bindings {
@@ -83,6 +86,7 @@ impl Default for Bindings {
             tactical: vk::Q,
             map: vk::TAB,
             alt_mode: vk::KEY_3,
+            hammer: vk::B,
         }
     }
 }
@@ -107,6 +111,9 @@ impl Default for ClientConfig {
 /// is the same move played backwards ([`transition_pose`]). The swing takes the first
 /// `TRANSITION_SPLIT` of it.
 pub const ENTER_TIME: f32 = 1.5;
+/// How long a word from the hammer stays up, and the time between hammer blows while building.
+pub const BUILD_NOTE_TIME: f32 = 2.5;
+pub const HAMMER_BLOW_TIME: f32 = crate::viewmodel::HAMMER_SWING_TIME;
 pub const LEAVE_TIME: f32 = ENTER_TIME;
 const TRANSITION_SPLIT: f32 = 0.45;
 pub const HITMARKER_TIME: f32 = 0.25;
@@ -234,6 +241,14 @@ pub struct HudTimers {
     /// Black Hat progress (0..1) while hacking, and how long it stays up without news.
     pub hack_progress: f32,
     pub hack_shown: f32,
+    /// Building at a site: its percent, how long the bar stays up without news, and the next
+    /// hammer blow's sound.
+    pub build_percent: f32,
+    pub build_shown: f32,
+    pub build_blow: f32,
+    /// A word from the hammer ("Not enough money") and how long it stays.
+    pub build_note: &'static str,
+    pub build_note_time: f32,
 }
 
 /// Scripted input for in-game verification (`ZHBO_AUTOPILOT=1`): walks, turns, aims and fires,
@@ -242,18 +257,22 @@ pub struct HudTimers {
 /// field computer. Times are seconds in first person.
 ///
 /// `ZHBO_AUTOPILOT=equipment` runs [`Autopilot::equipment_input`] instead, for a loadout with C4 and
-/// a Trophy System or Black Hat.
+/// a Trophy System or Black Hat; `ZHBO_AUTOPILOT=build` runs [`Autopilot::build_input`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Autopilot {
     pub t: f32,
     pub equipment: bool,
+    pub build: bool,
 }
 
 impl Autopilot {
-    /// Keys held and mouse delta (counts per frame) at time `t`.
-    pub fn input_at(&self, b: &Bindings) -> (Vec<u8>, f32) {
+    /// Keys held and mouse delta (counts per frame: x, y) at time `t`.
+    pub fn input_at(&self, b: &Bindings) -> (Vec<u8>, f32, f32) {
         if self.equipment {
-            return (self.equipment_input(b), 0.0);
+            return (self.equipment_input(b), 0.0, 0.0);
+        }
+        if self.build {
+            return self.build_input(b);
         }
         let t = self.t;
         let mut keys = Vec::new();
@@ -310,13 +329,35 @@ impl Autopilot {
         if (16.1..16.2).contains(&t) {
             keys.push(b.field_computer);
         }
-        (keys, dx)
+        (keys, dx, 0.0)
     }
 
     /// The equipment run: throw the lethal (C4), hold the tactical up for four seconds (the Black
     /// Hat on the drone the test puts in front; a Trophy System goes down when it is let go),
     /// double-tap reload to set the C4 off, fire a burst and reload, wait while enemy rockets come
     /// in, then open the field computer.
+    /// Building in first person (facing open ground): the hammer up, look down
+    /// (the structure goes as near as it can), place it, step up to it, and hold the use key until
+    /// it is built; then the hammer away.
+    pub fn build_input(&self, b: &Bindings) -> (Vec<u8>, f32, f32) {
+        let t = self.t;
+        let mut keys = Vec::new();
+        let dy = if (3.0..3.4).contains(&t) { 120.0 } else { 0.0 };
+        if (2.6..2.7).contains(&t) || (60.0..60.1).contains(&t) {
+            keys.push(b.hammer);
+        }
+        if (4.0..4.1).contains(&t) {
+            keys.push(b.fire);
+        }
+        if (4.6..5.2).contains(&t) {
+            keys.push(b.forward);
+        }
+        if (5.6..58.0).contains(&t) {
+            keys.push(b.field_computer);
+        }
+        (keys, 0.0, dy)
+    }
+
     pub fn equipment_input(&self, b: &Bindings) -> Vec<u8> {
         let t = self.t;
         let mut keys = Vec::new();
@@ -454,7 +495,7 @@ impl Client {
     }
 
     pub fn reset(&mut self) {
-        let autopilot = self.autopilot.as_ref().map(|a| Autopilot { equipment: a.equipment, ..Default::default() });
+        let autopilot = self.autopilot.as_ref().map(|a| Autopilot { equipment: a.equipment, build: a.build, ..Default::default() });
         *self = Client::new(self.cfg);
         self.autopilot = autopilot;
     }
@@ -477,6 +518,7 @@ impl Client {
             (b.lethal, buttons::LETHAL),
             (b.tactical, buttons::TACTICAL),
             (b.alt_mode, buttons::ALT_MODE),
+            (b.hammer, buttons::HAMMER),
         ] {
             if down(key) {
                 held |= bit;
@@ -494,14 +536,14 @@ impl Client {
         let inp = match self.autopilot.as_mut() {
             Some(ap) if matches!(self.view, ViewMode::Fps) => {
                 ap.t += dt;
-                let (keys, dx) = ap.input_at(&self.cfg.bindings);
+                let (keys, dx, dy) = ap.input_at(&self.cfg.bindings);
                 scripted = *inp;
                 scripted.keys = [0; 256];
                 for k in keys {
                     scripted.keys[k as usize] = 1;
                 }
                 scripted.mouse_dx = dx;
-                scripted.mouse_dy = 0.0;
+                scripted.mouse_dy = dy;
                 scripted.input_allowed = 1;
                 &scripted
             }
@@ -609,7 +651,7 @@ impl Client {
                         out.viewmodel_time = f.t;
                         out.viewmodel_ads = p.arsenal.ads;
                     }
-                    self.build_input(inp, &mut out, allowed && !in_fc);
+                    self.build_input(inp, &mut out, allowed && !in_fc, p.hammer.is_some());
                 }
             }
             ViewMode::Leaving { t, from_pos, from_dir, from_hfov, target, to_pos, to_dir, to_hfov } => {
@@ -657,14 +699,19 @@ impl Client {
         self.view = ViewMode::Entering { t: 0.0, from_pos: inp.rts_cam_pos, from_dir: from_dir.normalized_or_zero(), from_hfov };
     }
 
-    fn build_input(&mut self, inp: &ClientIn, out: &mut ClientOut, allowed: bool) {
+    fn build_input(&mut self, inp: &ClientIn, out: &mut ClientOut, allowed: bool, hammer: bool) {
         let (mut held, mut fwd, mut right) = if allowed { self.read_buttons(inp) } else { (0, 0.0, 0.0) };
         if !allowed {
             fwd = 0.0;
             right = 0.0;
         }
         if allowed && inp.wheel.abs() >= 1.0 {
-            self.latch |= buttons::SWAP_WEAPON;
+            // With the hammer up the wheel chooses the structure (wheel up: the previous one).
+            self.latch |= match (hammer, inp.wheel > 0.0) {
+                (false, _) => buttons::SWAP_WEAPON,
+                (true, true) => buttons::BUILD_PREV,
+                (true, false) => buttons::BUILD_NEXT,
+            };
         }
         if self.prev_held == u32::MAX {
             // Swallow keys that were already down on entry until they are released.
@@ -768,6 +815,31 @@ impl Client {
                 }
                 EventKind::Detonated => self.cues.play(sounds::DETONATE),
                 EventKind::DestroyedEquipment => {}
+                EventKind::Hammer { .. } => self.vm_events.swapped = true,
+                EventKind::BuildPlaced { .. } => {
+                    self.cues.play(sounds::PLANT);
+                    self.note("Structure placed: hold [F] at it to build");
+                }
+                EventKind::BuildRefused { status } => {
+                    self.cues.play(sounds::DRY_FIRE);
+                    self.note(match status {
+                        crate::building::status::NO_MONEY => "Not enough money",
+                        crate::building::status::LOCKED => "Not available yet",
+                        _ => "Can't build there",
+                    });
+                }
+                EventKind::Building { percent, .. } => {
+                    self.hud.build_percent = percent;
+                    if self.hud.build_shown <= 0.0 {
+                        self.hud.build_blow = 0.0;
+                    }
+                    self.hud.build_shown = 0.15;
+                }
+                EventKind::BuildComplete { .. } => {
+                    self.hud.build_shown = 0.0;
+                    self.cues.play(sounds::PLANT);
+                    self.note("Construction complete");
+                }
             }
         }
     }
@@ -789,8 +861,23 @@ impl Client {
         self.last_sent_frame = None;
     }
 
+    fn note(&mut self, text: &'static str) {
+        self.hud.build_note = text;
+        self.hud.build_note_time = BUILD_NOTE_TIME;
+    }
+
     fn tick_hud(&mut self, dt: f32) {
+        if self.hud.build_shown > 0.0 {
+            // A hammer blow every so often while building.
+            self.hud.build_blow -= dt;
+            if self.hud.build_blow <= 0.0 {
+                self.hud.build_blow = HAMMER_BLOW_TIME;
+                self.cues.play(sounds::MELEE_SWING);
+            }
+        }
         let h = &mut self.hud;
+        h.build_shown = (h.build_shown - dt).max(0.0);
+        h.build_note_time = (h.build_note_time - dt).max(0.0);
         h.hitmarker = (h.hitmarker - dt).max(0.0);
         h.damage_flash = (h.damage_flash - dt * 0.6).max(0.0);
         h.death_banner = (h.death_banner - dt).max(0.0);

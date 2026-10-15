@@ -6,6 +6,7 @@
 //! * [`ffi`] is the C ABI the engine glue in `host/zhbo/` calls; [`host`] is the reverse direction.
 
 pub mod attachments;
+pub mod building;
 pub mod client;
 pub mod conformance;
 pub mod equipment;

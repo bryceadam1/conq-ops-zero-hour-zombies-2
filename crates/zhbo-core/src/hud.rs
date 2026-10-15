@@ -13,6 +13,7 @@
 //! team emblem is the player's faction logo, and minimap dots carry each owner's team colour, as on
 //! Zero Hour's radar. Without the BO2 art the HUD falls back to drawn shapes and the engine font.
 
+use crate::building;
 use crate::client::{Client, ViewMode, HITMARKER_TIME};
 use crate::host::{objflags, ClientHost, ObjInfo};
 use crate::math::Vec3;
@@ -91,7 +92,10 @@ pub fn draw(host: &dyn ClientHost, client: &Client, sim: &Sim, local_player: i32
     }
 
     let in_fps = matches!(client.view, ViewMode::Fps);
-    let Some(p) = player.filter(|_| in_fps) else { return };
+    let Some(p) = player.filter(|_| in_fps) else {
+        host.ghost(0, Vec3::ZERO, 0.0, false);
+        return;
+    };
 
     draw_damage(host, w, h, client.hud.damage_flash, p);
 
@@ -106,12 +110,13 @@ pub fn draw(host: &dyn ClientHost, client: &Client, sim: &Sim, local_player: i32
         draw_score_popup(host, w, h, s, client);
         draw_hack(host, w, h, s, client);
     }
+    draw_build(host, w, h, s, client, p, !tablet_up && !map_open);
     let reveal = |pos: Vec3| sim.reveals(local_player, pos);
     let map_bottom = draw_minimap(host, s, client.yaw, p, &reveal);
     draw_compass(host, s, client.yaw, map_bottom);
     draw_team_panel(host, h, s, local_player, tablet_up);
     draw_streaks(host, w, h, s, tablet_up);
-    draw_ammo(host, w, h, s, p, !tablet_up && !map_open);
+    draw_ammo(host, w, h, s, p, !tablet_up && !map_open && p.hammer.is_none() && !p.building);
     draw_offhands(host, w, h, s, p);
     if map_open {
         draw_map(host, w, h, s, p);
@@ -451,6 +456,67 @@ fn draw_hack(host: &dyn ClientHost, w: f32, h: f32, s: f32, client: &Client) {
     host.fill_rect(x, y, bw * client.hud.hack_progress.clamp(0.0, 1.0), bh, 0xF020_D040);
     outline_rect(host, x, y, bw, bh, 1.0 * s, OUTLINE);
     host.text(w * 0.5, y - 18.0 * s, "HACKING", WHITE, (12.0 * s) as i32, 1);
+}
+
+/// Building: with the hammer up, the build menu (right of centre) and the placement ghost; at a
+/// site, BO2 Zombies' "Hold F" prompt and, while building, its progress.
+fn draw_build(host: &dyn ClientHost, w: f32, h: f32, s: f32, client: &Client, p: &PlayerSim, show: bool) {
+    let options = if p.hammer.is_some() || p.site.is_some() { host.build_options(p.general) } else { Vec::new() };
+    let name_of = |template: u32| options.iter().find(|o| o.template == template).map_or("structure".to_string(), |o| o.name());
+    match p.hammer {
+        Some(hm) if !options.is_empty() => {
+            let choice = hm.choice.min(options.len() - 1);
+            let o = options[choice];
+            let legal = o.status == building::status::OK && host.can_place(p.general, o.template, hm.at, hm.angle);
+            host.ghost(o.template, hm.at, hm.angle, legal);
+            if show {
+                let size = (13.0 * s) as i32;
+                let row = 20.0 * s;
+                let (pw, x) = (230.0 * s, w - 250.0 * s);
+                let top = h * 0.5 - row * (options.len() as f32 * 0.5 + 1.0);
+                host.fill_rect(x, top, pw, row * (options.len() as f32 + 2.6), PANEL);
+                host.text(x + 10.0 * s, top + 3.0 * s, "BUILD", GOLD, size, 0);
+                host.text(x + pw - 10.0 * s, top + 3.0 * s, "[B] put away", DIM, (11.0 * s) as i32, 2);
+                for (i, o) in options.iter().enumerate() {
+                    let y = top + row * (i as f32 + 1.2);
+                    if i == choice {
+                        outline_rect(host, x + 4.0 * s, y - 1.0 * s, pw - 8.0 * s, row, 1.0 * s, GOLD);
+                    }
+                    let col = match o.status {
+                        building::status::OK => WHITE,
+                        building::status::NO_MONEY => RED,
+                        _ => DIM,
+                    };
+                    host.text(x + 10.0 * s, y + 2.0 * s, &o.name(), col, size, 0);
+                    host.text(x + pw - 10.0 * s, y + 2.0 * s, &format!("${}", o.cost), col, size, 2);
+                }
+                let y = top + row * (options.len() as f32 + 1.4);
+                host.text(x + pw * 0.5, y, "[Wheel] choose   [Fire] place", DIM, (11.0 * s) as i32, 1);
+            }
+        }
+        _ => host.ghost(0, Vec3::ZERO, 0.0, false),
+    }
+    if !show {
+        return;
+    }
+    let size = (13.0 * s) as i32;
+    if let Some(site) = p.site {
+        if client.hud.build_shown > 0.0 {
+            let (bw, bh) = (180.0 * s, 8.0 * s);
+            let (x, y) = (w * 0.5 - bw * 0.5, h * 0.5 + 60.0 * s);
+            host.fill_rect(x, y, bw, bh, PANEL);
+            host.fill_rect(x, y, bw * (client.hud.build_percent / 100.0).clamp(0.0, 1.0), bh, 0xF0F2_C230);
+            outline_rect(host, x, y, bw, bh, 1.0 * s, OUTLINE);
+            let label = format!("BUILDING {}  {:.0}%", name_of(site.template).to_uppercase(), client.hud.build_percent);
+            host.text(w * 0.5, y - 18.0 * s, &label, WHITE, (12.0 * s) as i32, 1);
+        } else {
+            let text = format!("Hold [F] to build {} ({:.0}%)", name_of(site.template), site.percent);
+            host.text(w * 0.5, h * 0.5 + 60.0 * s, &text, WHITE, size, 1);
+        }
+    }
+    if client.hud.build_note_time > 0.0 {
+        host.text(w * 0.5, h * 0.5 + 84.0 * s, client.hud.build_note, WHITE, size, 1);
+    }
 }
 
 /// Where a world point is on screen, if it is in front of the camera.

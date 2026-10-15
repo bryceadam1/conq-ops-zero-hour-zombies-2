@@ -486,6 +486,19 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
 * **Load stalls (2026-10-15)**: the equipment autotest used to stall 0.85-1.25 s the first time
   the tablet, AN-94, Tac-45 and C4 viewmodels were shown; they now load in 3-4 ms (0 ms after the
   preload), and the loading screen preloads 26 objects and 6 viewmodels in about 0.4 s. 8/8 pass.
+* **Guns keep firing; the General builds (2026-10-15)**: under RTS control an idle General whose
+  gun ran dry picks the closest enemy he can see and attacks with the other gun (`--rts-dry` 5/5).
+  Building overhead: his Build button opens his faction's dozer/worker menu (`ZHBO_Build_<set>`,
+  copied at load with Back added); he builds as a dozer at `GENERAL_BUILD_RATE` (0.5) of its speed
+  (host/patches/0012; a GLA supply stash took 41.4 s against 20.0 s). In first person: B brings up
+  a hammer (BO2's `p_glo_tools_hammer` from `haiti_gump_front_door`, on the knife's bones with the
+  knife's `viewmodel_strider_*` clips), the wheel picks from the same menu, fire places a site where
+  he looks (Zero Hour's placement checks and payment, `buildObjectNow`), and holding F at a site
+  builds it at a dozer's speed with the hammer swinging (the dozer's per-frame build and completion
+  code); F opens the field computer only away from sites. ABI 14. `--build` 9/9 (the first-person
+  stash took 21.6 s with the walk), default 13/13, RTS 8/8, equipment 8/8.
+  Open: the hammer prop renders untextured grey (its campaign material's image is not found in the
+  paks); the placement ghost has not been checked in a capture yet.
 
 ## Next steps
 

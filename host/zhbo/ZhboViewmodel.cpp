@@ -34,11 +34,18 @@ namespace
 		"ZHBO_VMT_SKL.ZHBO_VMT_IDL", // ZHBO_VM_TABLET_IDLE
 		"ZHBO_VMT_SKL.ZHBO_VMT_PUT", // ZHBO_VM_TABLET_PUTAWAY
 	};
+	// The hammer's (zhbo_assets::generals::HAMMER_ANIMS).
+	const char *const k_hammer_clips[4] = {
+		"ZHBO_VMH_SKL.ZHBO_VMH_PUL", // ZHBO_VM_HAMMER_PULLOUT
+		"ZHBO_VMH_SKL.ZHBO_VMH_IDL", // ZHBO_VM_HAMMER_IDLE
+		"ZHBO_VMH_SKL.ZHBO_VMH_SWG", // ZHBO_VM_HAMMER_SWING
+		"ZHBO_VMH_SKL.ZHBO_VMH_PUT", // ZHBO_VM_HAMMER_PUTAWAY
+	};
 
 	// Clips that loop (zhbo_core::viewmodel::slot::loops), an alt mode's too.
 	Bool loops(int clip)
 	{
-		if (clip == ZHBO_VM_TABLET_IDLE)
+		if (clip == ZHBO_VM_TABLET_IDLE || clip == ZHBO_VM_HAMMER_IDLE)
 			return TRUE;
 		const int slot = clip >= ZHBO_VM_ALT_CLIPS ? clip - ZHBO_VM_ALT_CLIPS : clip;
 		return slot == ZHBO_VM_SLOT_IDLE || slot == ZHBO_VM_SLOT_EMPTY_IDLE || slot == ZHBO_VM_SLOT_SPRINT_LOOP
@@ -138,6 +145,12 @@ namespace
 				if (HAnimClass *anim = assets->Get_HAnim(k_tablet_clips[i]))
 					out[ZHBO_VM_TABLET_PULLOUT + i] = anim;
 		}
+		else if (name.endsWith("_HAM"))
+		{
+			for (int i = 0; i < 4; ++i)
+				if (HAnimClass *anim = assets->Get_HAnim(k_hammer_clips[i]))
+					out[ZHBO_VM_HAMMER_PULLOUT + i] = anim;
+		}
 		else if (weapon >= 0)
 		{
 			// zhbo_assets::generals::vm_anim: one clip per BO2 animation slot the weapon has, then its
@@ -216,11 +229,11 @@ void ZhboViewmodel_Preload(char faction, const int *weapons, int count)
 		return;
 	const double started = zhbo_platform::now();
 	int loaded = 0;
-	for (int i = -1; i < count; ++i)
+	for (int i = -2; i < count; ++i)
 	{
 		AsciiString name;
 		if (i < 0)
-			name.format("ZHBO_VM%s_TAB", faction == 'C' ? "CHN" : faction == 'G' ? "GLA" : "USA");
+			name.format("ZHBO_VM%s_%s", faction == 'C' ? "CHN" : faction == 'G' ? "GLA" : "USA", i == -1 ? "TAB" : "HAM");
 		else
 			name.format("ZV%02d%c_SKN", weapons[i], faction);
 		// The asset manager keeps the prototype and the clips once loaded; these copies can go.

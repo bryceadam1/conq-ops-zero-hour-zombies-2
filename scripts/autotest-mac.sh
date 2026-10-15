@@ -10,6 +10,9 @@
 #                                      picked from the command bar, ammo counted, then first person
 #   scripts/autotest-mac.sh --rts-dry  the same with no spare rifle rounds, then no spare pistol rounds:
 #                                      the empty gun hands over to the other and he keeps firing
+#   scripts/autotest-mac.sh --build    the General builds: his Build menu, a structure ordered from it,
+#                                      Back; it must take about 1 / GENERAL_BUILD_RATE of a dozer's time.
+#                                      Then in first person: the hammer places one, holding F builds it
 #   scripts/autotest-mac.sh --showcase [object]
 #                                      close-up captures of a General (idle, walk, death), no checks
 #
@@ -30,6 +33,7 @@ mode=autopilot
 [[ "${1:-}" == "--equipment" ]] && mode=equipment
 [[ "${1:-}" == "--rts" ]] && mode=rts
 [[ "${1:-}" == "--rts-dry" ]] && mode=rts-dry
+[[ "${1:-}" == "--build" ]] && mode=build
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="$HOME/Library/Application Support/ConquerOps/dist"
@@ -107,6 +111,36 @@ if [[ $mode == equipment ]]; then
     finish
     trap - EXIT
     echo "screenshots and logs: $out"
+    exit $ok
+fi
+if [[ $mode == build ]]; then
+    export ZHBO_AUTOPILOT=build GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS:-140}
+    "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
+    wait_for_log "spawned General" 90 || { echo "the General never appeared; see $log" >&2; exit 1; }
+    for _ in $(seq 160); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
+    finish
+    trap - EXIT
+    ok=0
+    check() { # name, pattern
+        if grep -qE "$2" "$out/ConquerOps.log"; then printf '%-28s PASS\n' "$1"; else printf '%-28s FAIL\n' "$1"; ok=1; fi
+    }
+    check "build menu opened" "build menu ZHBO_Build_"
+    check "  ...with Back" "build menu ZHBO_Build_.*Command_ZHBO_BuildBack"
+    check "structure ordered" "autopilot: ordered "
+    check "General started building" "started building"
+    check "General finished it" "finished building"
+    check "back to his commands" "closed the build menu"
+    check "first person: hammer placed" "placed .* in first person"
+    check "  ...held F to build it" "finished building .* in first person"
+    # Built at about GENERAL_BUILD_RATE of a dozer's speed (0.5: twice the time, within 15%): the
+    # first build, the overhead one.
+    if awk '/a dozer:/ && !seen { seen = 1; gsub(/[()s:]/, " "); for (i = 1; i <= NF; ++i) if ($i == "in") t = $(i + 1); else if ($i == "dozer") d = $(i + 1) } END { exit !(d > 0 && t / d > 1.7 && t / d < 2.3) }' "$out/ConquerOps.log"; then
+        printf '%-28s PASS\n' "  ...at half a dozer's speed"
+    else
+        printf '%-28s FAIL\n' "  ...at half a dozer's speed"; ok=1
+    fi
+    grep -E "build menu|ordered|building|first person" "$out/ConquerOps.log" | head -12
+    echo "screenshots and log: $out"
     exit $ok
 fi
 if [[ $mode == rts-dry ]]; then

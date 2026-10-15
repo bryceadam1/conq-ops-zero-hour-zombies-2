@@ -1,0 +1,30 @@
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/AIUpdate/DozerAIUpdate.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/AIUpdate/DozerAIUpdate.cpp
+@@ -29,6 +29,7 @@
+ 
+ // USER INCLUDES //////////////////////////////////////////////////////////////////////////////////
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ 
+ #include "Common/ActionManager.h"
+ #include "Common/Team.h"
+@@ -535,7 +536,9 @@
+ 				// divergent UB (arm64 vs x86) - a lockstep desync. Clamp to at least one frame.
+ 				if( framesToBuild < 1 )
+ 					framesToBuild = 1;
+-				Real percentProgressThisFrame = 100.0f / framesToBuild;
++				// ZHBO: a General builds more slowly than a dozer.
++				const Real zhboRate = Zhbo_BuildRate( dozer );
++				Real percentProgressThisFrame = 100.0f / framesToBuild * zhboRate;
+ 				goalObject->setConstructionPercent( goalObject->getConstructionPercent() +
+ 																						percentProgressThisFrame );
+ 
+@@ -545,7 +548,7 @@
+ 				// here and going straight for the change of the health
+ 				//
+ 				BodyModuleInterface *body = goalObject->getBodyModule();
+-				body->internalChangeHealth( body->getMaxHealth() / INT_TO_REAL( framesToBuild ) );
++				body->internalChangeHealth( body->getMaxHealth() / INT_TO_REAL( framesToBuild ) * zhboRate );
+ 
+ 				//
+ 				// since we've just actually contributed a "piece" to this building, we'll say that

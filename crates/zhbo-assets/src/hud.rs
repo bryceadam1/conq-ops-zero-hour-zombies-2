@@ -15,7 +15,7 @@ use zhbo_formats::iwi::Rgba;
 use zhbo_formats::t6zone::Zone;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive.
-pub const VERSION: u32 = 36;
+pub const VERSION: u32 = 38;
 pub const ARCHIVE_NAME: &str = "ConquerOps_BO2.big";
 pub const VERSION_FILE: &str = "Data\\ConquerOps\\bo2_hud_version.txt";
 const TEXTURE: &str = "zhbo_bo2_hud.tga";
@@ -215,6 +215,7 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     }
     let dot = found.iter().find(|(n, _)| n == "ZHBO_BO2_RedDot").map(|(_, i)| i.clone());
     tiles.push(("ZHBO_Button_TakeControl".to_string(), button_tile(dot.as_ref(), true)));
+    tiles.push(("ZHBO_Button_Back".to_string(), button_tile(Some(&back_arrow()), false)));
     for (name, img) in tiles {
         report.found.push(name.clone());
         found.push((name, img));
@@ -261,6 +262,25 @@ const TILE: (u32, u32) = (122, 98);
 
 /// A command bar button: a dark tile with `art` fitted in the middle (aspect kept). A reticle tile
 /// (Take Control) draws BO2-style crosshair lines around a small `art` (the red dot).
+/// A white arrow pointing left (the Build menu's Back), on clear.
+fn back_arrow() -> Rgba {
+    let (w, h) = (48u32, 32u32);
+    let mut pixels = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        for x in 0..w {
+            let dy = (y as f32 + 0.5 - h as f32 / 2.0).abs();
+            // The head: a triangle from the tip at the left; the shaft: a bar to the right.
+            let head = (x as f32) < 18.0 && dy <= x as f32 * 0.9;
+            let shaft = (16..44).contains(&x) && dy <= 4.0;
+            if head || shaft {
+                let p = ((y * w + x) * 4) as usize;
+                pixels[p..p + 4].copy_from_slice(&[235, 235, 235, 255]);
+            }
+        }
+    }
+    Rgba { width: w, height: h, pixels }
+}
+
 fn button_tile(art: Option<&Rgba>, reticle: bool) -> Rgba {
     let (w, h) = TILE;
     let mut t = Rgba { width: w, height: h, pixels: vec![0; (w * h * 4) as usize] };

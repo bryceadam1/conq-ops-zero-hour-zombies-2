@@ -37,7 +37,7 @@ fn publish_controlled(sim: &Sim) {
     }
 }
 
-pub const ABI_VERSION: u32 = 13;
+pub const ABI_VERSION: u32 = 14;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
 const _: () = {
@@ -47,8 +47,9 @@ const _: () = {
     assert!(size_of::<ClientIn>() == 332);
     assert!(size_of::<ClientOut>() == 132);
     assert!(size_of::<crate::sim::RtsWeapons>() == 36);
-    assert!(size_of::<LogicApi>() == 17 * size_of::<usize>());
-    assert!(size_of::<ClientApi>() == 10 * size_of::<usize>());
+    assert!(size_of::<crate::building::BuildOption>() == 64);
+    assert!(size_of::<LogicApi>() == 22 * size_of::<usize>());
+    assert!(size_of::<ClientApi>() == 13 * size_of::<usize>());
 };
 
 /// Returns the ABI version; the glue refuses to run if it does not match its header.
@@ -95,7 +96,7 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
         None => {}
         Some("manual") => state.logic.log("autopilot scene enabled, manual input (ZHBO_AUTOPILOT=manual)"),
         Some(mode) => {
-            state.client.autopilot = Some(crate::client::Autopilot { equipment: mode == "equipment", ..Default::default() });
+            state.client.autopilot = Some(crate::client::Autopilot { equipment: mode == "equipment", build: mode == "build", ..Default::default() });
             state.logic.log("autopilot enabled (ZHBO_AUTOPILOT)");
         }
     }
@@ -278,6 +279,12 @@ pub unsafe extern "C" fn zhbo_loadout_viewmodels(out: *mut i32, cap: i32) -> i32
         }
     }
     vms.len() as i32
+}
+
+/// How fast a General builds, as a share of a dozer's speed.
+#[no_mangle]
+pub extern "C" fn zhbo_general_build_rate() -> f32 {
+    crate::building::GENERAL_BUILD_RATE
 }
 
 /// Non-zero if the object's own AI/physics must be suspended this frame.

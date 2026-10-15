@@ -16,6 +16,13 @@ const ENGLISH: &[(&str, &str)] = &[
         "CONTROLBAR:ToolTipZHBO_TakeControl",
         "Fight as your General in first person, with the selected weapon and the ammo left. Press F to open your field computer and return to command.",
     ),
+    ("CONTROLBAR:ZHBO_BuildMenu", "&Build"),
+    (
+        "CONTROLBAR:ToolTipZHBO_BuildMenu",
+        "Build structures, like a dozer or worker (more slowly). In first person, press B for your hammer, place with fire, then hold F at the site to build.",
+    ),
+    ("CONTROLBAR:ZHBO_BuildBack", "&Back"),
+    ("CONTROLBAR:ToolTipZHBO_BuildBack", "Back to the General's commands."),
 ];
 
 fn table() -> &'static HashMap<String, Vec<u16>> {

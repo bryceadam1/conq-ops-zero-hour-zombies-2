@@ -13,6 +13,7 @@ use crate::attachments::FMJ_VEHICLE_DAMAGE;
 use crate::equipment::{EquipEvent, Equipment, Kind as EquipKind, Placed, HACK_COS, HACK_DRONE_TIME, HACK_RANGE, HACK_TIME};
 use crate::projectiles::{Outcome, Projectile};
 use crate::units::inches;
+use crate::building::{self, Hammer, Site};
 use crate::weapons::{Arsenal, Class, Perk, Rng, WeaponAction, MELEE_FX_WEAPON, MELEE_RANGE};
 
 pub const MAX_PLAYERS: usize = 16;
@@ -72,6 +73,15 @@ pub enum EventKind {
     /// Black Hat progress on the current target (0..1), each frame while hacking.
     Hacking { progress: f32 },
     AltToggled,
+    /// The hammer came up or went away.
+    Hammer { up: bool },
+    /// A structure's site laid out with the hammer (its template).
+    BuildPlaced { template: u32 },
+    /// The hammer could not place it: not enough money, locked, or no room there.
+    BuildRefused { status: i32 },
+    /// Building at a site, each frame while the use key is held (percent 0..100).
+    Building { template: u32, percent: f32 },
+    BuildComplete { template: u32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -103,6 +113,12 @@ pub struct PlayerSim {
     /// and the gun slot to go back to after a throw.
     pub rts_tactical: bool,
     pub rts_gun: i32,
+    /// The hammer, when it is out.
+    pub hammer: Option<Hammer>,
+    /// The structure under construction in reach (the use key builds it instead of opening the
+    /// field computer), and whether he is building it now.
+    pub site: Option<Site>,
+    pub building: bool,
 }
 
 impl PlayerSim {
@@ -129,6 +145,9 @@ impl PlayerSim {
             rts_lock: -1,
             rts_tactical: false,
             rts_gun: 0,
+            hammer: None,
+            site: None,
+            building: false,
         }
     }
 }
@@ -238,6 +257,9 @@ impl Sim {
                     rts_lock: -1,
                     rts_tactical: false,
                     rts_gun: 0,
+            hammer: None,
+            site: None,
+            building: false,
                 }
             }
         };
@@ -393,6 +415,12 @@ impl Sim {
         let world = HostWorld { host, viewer: p.general };
         match p.mode {
             Mode::Fps => {
+                // The use key builds at a site in reach (held), instead of opening the field computer.
+                p.site = host.build_site(p.general, p.body.pos, building::REACH);
+                p.building = p.site.is_some() && (input.held | input.pressed) & buttons::FIELD_COMPUTER != 0;
+                if p.site.is_some() {
+                    input.pressed &= !buttons::FIELD_COMPUTER;
+                }
                 if input.pressed & buttons::FIELD_COMPUTER != 0 {
                     p.mode = Mode::FieldComputer { t: 0.0 };
                     p.arsenal.ads = 0.0;
@@ -400,7 +428,7 @@ impl Sim {
                 } else {
                     let mods = MoveModifiers {
                         speed_scale: p.arsenal.move_scale(),
-                        block_sprint: p.arsenal.ads > 0.0 || p.arsenal.offhand.is_some() || p.arsenal.melee_left > 0.0,
+                        block_sprint: p.arsenal.ads > 0.0 || p.arsenal.offhand.is_some() || p.arsenal.melee_left > 0.0 || p.building,
                         sprint_time_scale: p.arsenal.sprint_scale(),
                     };
                     movement::step(&mut p.body, &input, mods, &self.tuning, &world, LOGIC_DT);
@@ -411,7 +439,10 @@ impl Sim {
                         Stance::Prone => 2,
                     };
                     let speed = p.body.horizontal_speed();
-                    p.arsenal.step(input.held, input.pressed, p.body.sprinting, stance, speed, &mut p.rng, &mut actions);
+                    // The hammer, or building, takes the hands: the gun gets no input meanwhile.
+                    let busy = self.step_building(host, idx, p, &input);
+                    let (held, pressed) = if busy { (0, 0) } else { (input.held, input.pressed) };
+                    p.arsenal.step(held, pressed, p.body.sprinting, stance, speed, &mut p.rng, &mut actions);
                     for a in actions {
                         self.apply_weapon_action(host, idx, p, a);
                     }
@@ -440,6 +471,73 @@ impl Sim {
         let moving = p.body.horizontal_speed() > 1.0;
         host.set_pose(p.general, p.body.pos, p.yaw, moving);
         true
+    }
+
+    /// The hammer (toggle, choose, place with fire) and building at a site (hold the use key);
+    /// whether either has his hands.
+    fn step_building(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, input: &FpsInput) -> bool {
+        if input.pressed & buttons::HAMMER != 0 {
+            p.hammer = match p.hammer {
+                Some(_) => None,
+                None => Some(Hammer::default()),
+            };
+            self.emit(idx, EventKind::Hammer { up: p.hammer.is_some() });
+        } else if p.hammer.is_some() && input.pressed & (buttons::SWAP_WEAPON | buttons::LETHAL | buttons::TACTICAL) != 0 {
+            // Reaching for a weapon puts the hammer away.
+            p.hammer = None;
+            self.emit(idx, EventKind::Hammer { up: false });
+        }
+        if let Some(mut h) = p.hammer {
+            h.raise = (h.raise + LOGIC_DT).min(building::HAMMER_RAISE);
+            let options = host.build_options(p.general);
+            let n = options.len();
+            if n > 0 {
+                if input.pressed & buttons::BUILD_NEXT != 0 {
+                    h.choice = (h.choice + 1) % n;
+                }
+                if input.pressed & buttons::BUILD_PREV != 0 {
+                    h.choice = (h.choice + n - 1) % n;
+                }
+                if !h.picked {
+                    h.picked = true;
+                    h.choice = options.iter().position(|o| o.status == building::status::OK).unwrap_or(0);
+                }
+                h.choice = h.choice.min(n - 1);
+                (h.at, h.angle) = placement(host, p, options[h.choice].radius);
+                if input.pressed & buttons::FIRE != 0 && h.raise >= building::HAMMER_RAISE && !p.building {
+                    let o = options[h.choice];
+                    let (pos, angle) = (h.at, h.angle);
+                    let status = if o.status != building::status::OK {
+                        o.status
+                    } else if host.can_place(p.general, o.template, pos, angle) && host.place(p.general, o.template, pos, angle) != 0 {
+                        -1
+                    } else {
+                        building::status::BLOCKED
+                    };
+                    if status == -1 {
+                        self.emit(idx, EventKind::BuildPlaced { template: o.template });
+                    } else {
+                        host.log(&format!("player {idx} can't build {} (status {status}, ${})", o.name(), o.cost));
+                        self.emit(idx, EventKind::BuildRefused { status });
+                    }
+                }
+            }
+            p.hammer = Some(h);
+        }
+        if p.building {
+            if let Some(site) = p.site {
+                let percent = host.construct(p.general, site.id, building::FPS_BUILD_RATE);
+                if percent >= 100.0 {
+                    p.building = false;
+                    p.site = None;
+                    self.emit(idx, EventKind::BuildComplete { template: site.template });
+                } else {
+                    p.site = Some(Site { percent, ..site });
+                    self.emit(idx, EventKind::Building { template: site.template, percent });
+                }
+            }
+        }
+        p.hammer.is_some() || p.building
     }
 
     /// Black Hat: hold it on enemy equipment or a Zero Hour drone until the hack completes.
@@ -520,6 +618,9 @@ impl Sim {
                 rts_lock: -1,
                 rts_tactical: false,
                 rts_gun: 0,
+            hammer: None,
+            site: None,
+            building: false,
             });
         }
         let Some(p) = self.players[idx].as_mut().filter(|p| p.general == general) else { return RtsWeapons::default() };
@@ -927,6 +1028,13 @@ impl World for HostWorld<'_> {
     }
 }
 
+/// Where the hammer puts a structure with a footprint of `radius`, and which way it faces (its
+/// front towards him).
+pub fn placement(host: &dyn LogicHost, p: &PlayerSim, radius: f32) -> (Vec3, f32) {
+    let pos = building::place_point(p.body.eye(), dir_from_angles(p.yaw, p.pitch), radius, |x, y| host.ground_height(x, y));
+    (pos, crate::math::wrap_angle(p.yaw + std::f32::consts::PI))
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -945,6 +1053,9 @@ pub(crate) mod tests {
         pub destroyed: RefCell<Vec<u32>>,
         pub played_fx: RefCell<Vec<String>>,
         pub smoked: RefCell<Vec<(Vec3, f32)>>,
+        /// Building: the build menu, and the sites laid out (id, template, where, percent).
+        pub options: RefCell<Vec<crate::building::BuildOption>>,
+        pub sites: RefCell<Vec<(u32, u32, Vec3, f32)>>,
     }
 
     impl FakeHost {
@@ -1036,6 +1147,29 @@ pub(crate) mod tests {
         }
         fn smoke(&self, center: Vec3, radius: f32) {
             self.smoked.borrow_mut().push((center, radius));
+        }
+        fn build_options(&self, _general: u32) -> Vec<crate::building::BuildOption> {
+            self.options.borrow().clone()
+        }
+        fn can_place(&self, _general: u32, _template: u32, pos: Vec3, _angle: f32) -> bool {
+            self.sites.borrow().iter().all(|s| (s.2 - pos).length_xy() > 80.0)
+        }
+        fn place(&self, _general: u32, template: u32, pos: Vec3, _angle: f32) -> u32 {
+            let mut sites = self.sites.borrow_mut();
+            let id = 20_000 + sites.len() as u32;
+            sites.push((id, template, pos, 0.0));
+            id
+        }
+        fn build_site(&self, _general: u32, pos: Vec3, reach: f32) -> Option<crate::building::Site> {
+            // Footprints 40 across.
+            self.sites.borrow().iter().filter(|s| s.3 < 100.0 && (s.2 - pos).length_xy() <= 20.0 + reach)
+                .map(|s| crate::building::Site { id: s.0, template: s.1, percent: s.3 }).next()
+        }
+        fn construct(&self, _general: u32, site: u32, rate: f32) -> f32 {
+            let mut sites = self.sites.borrow_mut();
+            let s = sites.iter_mut().find(|s| s.0 == site).unwrap();
+            s.3 = (s.3 + 10.0 * rate).min(100.0);
+            s.3
         }
         fn capture(&self, id: u32, new_owner: u32) {
             let owner = self.objects.borrow().iter().find(|o| o.id == new_owner).map(|o| o.owner_player);
@@ -1148,6 +1282,73 @@ pub(crate) mod tests {
         run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::FIRE, pitch, ..Default::default() }, 10);
         assert_eq!(host.get(3).health, 120.0, "friendly untouched");
         assert!(host.get(2).health < 120.0, "enemy behind was hit");
+    }
+
+    fn option(template: u32, status: i32) -> crate::building::BuildOption {
+        let mut o = crate::building::BuildOption { template, cost: 500, status, ..Default::default() };
+        o.name[..4].copy_from_slice(b"Shed");
+        o
+    }
+
+    #[test]
+    fn the_hammer_places_a_structure_and_holding_use_builds_it() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.options.borrow_mut().extend([option(7, crate::building::status::OK), option(8, crate::building::status::OK)]);
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        wait_until_ready(&mut sim, &host);
+        let ammo = sim.player(0).unwrap().arsenal.current().ammo;
+        let look = |held: u32, pressed: u32| FpsInput { held, pressed, pitch: -0.5, ..Default::default() };
+        run(&mut sim, &host, 0, 1, look(buttons::HAMMER, buttons::HAMMER), 1);
+        assert!(sim.player(0).unwrap().hammer.is_some());
+        run(&mut sim, &host, 0, 1, look(0, buttons::BUILD_NEXT), 1);
+        run(&mut sim, &host, 0, 1, look(0, 0), frames(crate::building::HAMMER_RAISE));
+        sim.events.clear();
+        run(&mut sim, &host, 0, 1, look(buttons::FIRE, buttons::FIRE), 1);
+        assert!(events(&sim).contains(&EventKind::BuildPlaced { template: 8 }), "{:?}", events(&sim));
+        assert_eq!(sim.player(0).unwrap().arsenal.current().ammo, ammo, "the gun did not fire");
+        let at = host.sites.borrow()[0].2;
+        assert!(at.x >= crate::building::PLACE_MIN - 0.01 && at.x < crate::building::PLACE_RANGE && at.z == 0.0, "placed ahead on the ground: {at:?}");
+        // Again on the same spot: no room.
+        sim.events.clear();
+        run(&mut sim, &host, 0, 1, look(buttons::FIRE, buttons::FIRE), 1);
+        assert!(events(&sim).contains(&EventKind::BuildRefused { status: crate::building::status::BLOCKED }));
+
+        // Up to the site: the use key builds it (not the field computer), only while held.
+        host.sites.borrow_mut()[0].2 = Vec3::new(25.0, 0.0, 0.0);
+        run(&mut sim, &host, 0, 1, look(buttons::FIELD_COMPUTER, buttons::FIELD_COMPUTER), 3);
+        assert_eq!(sim.player(0).unwrap().mode, Mode::Fps);
+        assert!(sim.player(0).unwrap().building);
+        run(&mut sim, &host, 0, 1, look(0, 0), 2);
+        let paused = host.sites.borrow()[0].3;
+        assert!((paused - 30.0).abs() < 0.01, "three frames of building: {paused}");
+        sim.events.clear();
+        run(&mut sim, &host, 0, 1, look(buttons::FIELD_COMPUTER, buttons::FIELD_COMPUTER), 7);
+        assert!(events(&sim).contains(&EventKind::BuildComplete { template: 8 }), "{:?}", events(&sim));
+        assert!(!sim.player(0).unwrap().building);
+        // Built: the use key is the field computer's again.
+        run(&mut sim, &host, 0, 1, look(0, 0), 1);
+        run(&mut sim, &host, 0, 1, look(buttons::FIELD_COMPUTER, buttons::FIELD_COMPUTER), 1);
+        assert!(matches!(sim.player(0).unwrap().mode, Mode::FieldComputer { .. }));
+    }
+
+    #[test]
+    fn the_hammer_refuses_what_he_cannot_afford_and_puts_away_for_a_weapon() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.options.borrow_mut().push(option(7, crate::building::status::NO_MONEY));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        wait_until_ready(&mut sim, &host);
+        run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::HAMMER, ..Default::default() }, 1);
+        run(&mut sim, &host, 0, 1, FpsInput::default(), frames(crate::building::HAMMER_RAISE));
+        sim.events.clear();
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, pressed: buttons::FIRE, ..Default::default() }, 1);
+        assert!(events(&sim).contains(&EventKind::BuildRefused { status: crate::building::status::NO_MONEY }));
+        assert!(host.sites.borrow().is_empty());
+        run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::SWAP_WEAPON, ..Default::default() }, 1);
+        assert!(sim.player(0).unwrap().hammer.is_none());
     }
 
     #[test]

@@ -104,6 +104,28 @@ pub trait LogicHost {
     fn capture(&self, id: u32, new_owner: u32);
     /// A smoke screen this frame: nothing shoots into or out of the circle.
     fn smoke(&self, center: Vec3, radius: f32);
+    /// The structures `general` can build (his build menu), with whether each can be placed now.
+    fn build_options(&self, _general: u32) -> Vec<crate::building::BuildOption> {
+        Vec::new()
+    }
+    /// Whether `template` can go down at `pos` (facing `angle`) for `general`.
+    fn can_place(&self, _general: u32, _template: u32, _pos: Vec3, _angle: f32) -> bool {
+        false
+    }
+    /// Pay for `template` and lay out its construction site at `pos`; the site's id, or 0.
+    fn place(&self, _general: u32, _template: u32, _pos: Vec3, _angle: f32) -> u32 {
+        0
+    }
+    /// The closest of `general`'s side's structures under construction within `reach` of the
+    /// edge of its footprint, from `pos`.
+    fn build_site(&self, _general: u32, _pos: Vec3, _reach: f32) -> Option<crate::building::Site> {
+        None
+    }
+    /// One logic frame of `general` building `site`, at `rate` of a dozer's speed; the percent
+    /// after (100 when it completed).
+    fn construct(&self, _general: u32, _site: u32, _rate: f32) -> f32 {
+        0.0
+    }
 }
 
 /// Rendering services for the HUD (screen pixels, ARGB colours).
@@ -129,6 +151,16 @@ pub trait ClientHost {
     fn radar(&self, _x: f32, _y: f32, _w: f32, _h: f32, _you: Vec3) -> Option<(f32, f32)> {
         None
     }
+    /// The structures `general` can build (as [`LogicHost::build_options`]), for the HUD.
+    fn build_options(&self, _general: u32) -> Vec<crate::building::BuildOption> {
+        Vec::new()
+    }
+    /// Whether `template` can go down at `pos` (for the placement ghost's colour).
+    fn can_place(&self, _general: u32, _template: u32, _pos: Vec3, _angle: f32) -> bool {
+        false
+    }
+    /// Show the placement ghost of `template` at `pos` (legal or not); `template` 0 hides it.
+    fn ghost(&self, _template: u32, _pos: Vec3, _angle: f32, _legal: bool) {}
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -155,6 +187,11 @@ pub struct LogicApi {
     pub fx: Option<extern "C" fn(name: *const c_char, pos: *const Vec3)>,
     pub capture: Option<extern "C" fn(id: u32, new_owner: u32)>,
     pub smoke: Option<extern "C" fn(center: *const Vec3, radius: f32)>,
+    pub build_options: Option<extern "C" fn(general: u32, out: *mut crate::building::BuildOption, cap: i32) -> i32>,
+    pub can_place: Option<extern "C" fn(general: u32, template: u32, pos: *const Vec3, angle: f32) -> i32>,
+    pub place: Option<extern "C" fn(general: u32, template: u32, pos: *const Vec3, angle: f32) -> u32>,
+    pub build_site: Option<extern "C" fn(general: u32, pos: *const Vec3, reach: f32, template: *mut u32, percent: *mut f32) -> u32>,
+    pub construct: Option<extern "C" fn(general: u32, site: u32, rate: f32) -> f32>,
 }
 
 #[repr(C)]
@@ -170,6 +207,17 @@ pub struct ClientApi {
     pub sound: Option<extern "C" fn(event: *const c_char, at: *const Vec3)>,
     pub clip: Option<extern "C" fn(x: f32, y: f32, w: f32, h: f32)>,
     pub radar: Option<extern "C" fn(x: f32, y: f32, w: f32, h: f32, you: *const Vec3, you_px: *mut Vec3) -> i32>,
+    pub build_options: Option<extern "C" fn(general: u32, out: *mut crate::building::BuildOption, cap: i32) -> i32>,
+    pub can_place: Option<extern "C" fn(general: u32, template: u32, pos: *const Vec3, angle: f32) -> i32>,
+    pub ghost: Option<extern "C" fn(template: u32, pos: *const Vec3, angle: f32, legal: i32)>,
+}
+
+fn build_options_via(f: Option<extern "C" fn(u32, *mut crate::building::BuildOption, i32) -> i32>, general: u32) -> Vec<crate::building::BuildOption> {
+    let Some(f) = f else { return Vec::new() };
+    let mut out = vec![crate::building::BuildOption::default(); 24];
+    let n = f(general, out.as_mut_ptr(), out.len() as i32).clamp(0, out.len() as i32) as usize;
+    out.truncate(n);
+    out
 }
 
 fn cstring(s: &str) -> CString {
@@ -273,6 +321,29 @@ impl LogicHost for CLogicHost {
             f(&center, radius);
         }
     }
+
+    fn build_options(&self, general: u32) -> Vec<crate::building::BuildOption> {
+        build_options_via(self.0.build_options, general)
+    }
+
+    fn can_place(&self, general: u32, template: u32, pos: Vec3, angle: f32) -> bool {
+        self.0.can_place.is_some_and(|f| f(general, template, &pos, angle) != 0)
+    }
+
+    fn place(&self, general: u32, template: u32, pos: Vec3, angle: f32) -> u32 {
+        self.0.place.map_or(0, |f| f(general, template, &pos, angle))
+    }
+
+    fn build_site(&self, general: u32, pos: Vec3, reach: f32) -> Option<crate::building::Site> {
+        let f = self.0.build_site?;
+        let (mut template, mut percent) = (0u32, 0.0f32);
+        let id = f(general, &pos, reach, &mut template, &mut percent);
+        (id != 0).then_some(crate::building::Site { id, template, percent })
+    }
+
+    fn construct(&self, general: u32, site: u32, rate: f32) -> f32 {
+        self.0.construct.map_or(0.0, |f| f(general, site, rate))
+    }
 }
 
 pub struct CClientHost(pub ClientApi);
@@ -336,6 +407,20 @@ impl ClientHost for CClientHost {
         if let Some(f) = self.0.clip {
             let (x, y, w, h) = rect.unwrap_or((0.0, 0.0, 0.0, 0.0));
             f(x, y, w, h);
+        }
+    }
+
+    fn build_options(&self, general: u32) -> Vec<crate::building::BuildOption> {
+        build_options_via(self.0.build_options, general)
+    }
+
+    fn can_place(&self, general: u32, template: u32, pos: Vec3, angle: f32) -> bool {
+        self.0.can_place.is_some_and(|f| f(general, template, &pos, angle) != 0)
+    }
+
+    fn ghost(&self, template: u32, pos: Vec3, angle: f32, legal: bool) {
+        if let Some(f) = self.0.ghost {
+            f(template, &pos, angle, legal as i32);
         }
     }
 }

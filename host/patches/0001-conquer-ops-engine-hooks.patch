@@ -96,7 +96,7 @@ index 5e2c41a..ae1cdd0 100644
 +		// ZHBO
 +		case GUI_COMMAND_ZHBO_TAKE_CONTROL:
 +		{
-+			Zhbo_RequestTakeControl(obj);
++			Zhbo_OnZhboCommand(obj, commandButton);
 +			break;
 +		}
 +

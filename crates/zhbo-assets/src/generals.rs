@@ -99,6 +99,30 @@ pub fn tablet_model(viewmodel: &str) -> String {
     viewmodel.replace("_SKN", "_TAB")
 }
 
+/// The builder's hammer (first person): each faction's arms holding BO2's hammer prop in the knife's
+/// grip, with the knife's clips, in `zhbo_core::viewmodel` order (HAMMER_PULLOUT, HAMMER_IDLE,
+/// HAMMER_SWING, HAMMER_PUTAWAY). Its W3D models are the weapon viewmodel's names with `_HAM` for
+/// `_SKN`.
+pub const HAMMER_HIERARCHY: &str = "ZHBO_VMH_SKL";
+pub const HAMMER_ANIMS: &[(&str, &str)] = &[
+    ("ZHBO_VMH_PUL", "viewmodel_strider_pullout"),
+    ("ZHBO_VMH_IDL", "viewmodel_strider_idle"),
+    ("ZHBO_VMH_SWG", "viewmodel_strider_melee_swipe"),
+    ("ZHBO_VMH_PUT", "viewmodel_strider_putaway"),
+];
+const KNIFE_VIEW: &str = "t6_wpn_knife_base_view";
+/// BO2's hammer, a campaign prop, and a small zone that has it.
+const HAMMER: &str = "p_glo_tools_hammer";
+const HAMMER_ZONE: &str = "haiti_gump_front_door";
+/// The hammer in the knife's grip, on `j_gun` (which points along the blade): the prop lies along
+/// its Y with the head at +Y, so its Y goes forward (X), gripped 2 inches from the end.
+const HAMMER_GRIP: crate::xf::Xf = ([-0.5, -0.5, -0.5, 0.5], [5.0, -0.5, 0.0]);
+
+/// The hammer viewmodel's W3D name for a weapon viewmodel's.
+pub fn hammer_model(viewmodel: &str) -> String {
+    viewmodel.replace("_SKN", "_HAM")
+}
+
 /// How a third-person clip is made from BO2's (all in common_mp). BO2 layers a player's torso
 /// animations (`pt_*`) over body animations (`pb_*`); Zero Hour plays one at a time.
 pub enum BodyClip {
@@ -879,6 +903,34 @@ fn tablets(common: &Zone, zones: &[Zone], paks: &Paks, out: &mut BTreeMap<String
     Ok(())
 }
 
+fn hammers(bo2_dir: &Path, common: &Zone, zones: &[Zone], paks: &Paks, out: &mut BTreeMap<String, Vec<u8>>, looks: &mut Looks) -> Result<(), String> {
+    let prop_zone = load_zone(bo2_dir, HAMMER_ZONE)?;
+    let hammer = xmodel::find(&prop_zone, HAMMER).map_err(|e| format!("{HAMMER}: {e}"))?;
+    let knife = xmodel::find(common, KNIFE_VIEW).map_err(|e| format!("{KNIFE_VIEW}: {e}"))?;
+    let hammer_tex = textures(&hammer, paks, out, looks);
+    let mut rig: Option<Rig> = None;
+    for (f, zone) in FACTIONS.iter().zip(zones) {
+        let hands = xmodel::find(zone, f.hands).map_err(|e| e.to_string())?;
+        let rig = rig.get_or_insert_with(|| Rig::new(&hands, &[(&knife, "tag_weapon")]));
+        let grip = rig.pivot("j_gun").ok_or("no j_gun on the knife")?;
+        let hands_tex = textures(&hands, paks, out, looks);
+        let mut meshes = character::skin(rig, &hands, "H", &hands_tex);
+        meshes.extend(character::skin_rigid(&hammer, grip, character::scaled_xf(HAMMER_GRIP), "M", 0, &hammer_tex, &[]));
+        finish(&mut meshes, looks);
+        let name = hammer_model(f.viewmodel);
+        out.insert(format!("Art\\W3D\\{name}.w3d"), w3d::skin_model(&name, HAMMER_HIERARCHY, &meshes));
+    }
+    let rig = rig.ok_or("no hammer arms")?;
+    out.insert(format!("Art\\W3D\\{HAMMER_HIERARCHY}.w3d"), rig.hierarchy_file(HAMMER_HIERARCHY));
+    for (w3d_name, bo2_name) in HAMMER_ANIMS {
+        let anim = xanim::find(common, bo2_name).map_err(|e| e.to_string())?;
+        let (frames, channels) = character::animate(&rig, &anim);
+        let fps = anim.frame_rate.round().max(1.0) as u32;
+        out.insert(format!("Art\\W3D\\{w3d_name}.w3d"), w3d::animation(w3d_name, HAMMER_HIERARCHY, frames, fps, &channels));
+    }
+    Ok(())
+}
+
 /// The scorestreak screen as BO2 shows it: the background UI, the satellite panels over it, and the
 /// targeting reticle over the panels.
 fn tablet_screen(m: &xmodel::Material, paks: &Paks) -> Option<Rgba> {
@@ -999,6 +1051,16 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
     for (i, (_, bo2_name)) in TABLET_ANIMS.iter().enumerate() {
         let anim = xanim::find(&common, bo2_name).map_err(|e| e.to_string())?;
         clips.push((zhbo_core::viewmodel::NONE, zhbo_core::viewmodel::TABLET_PULLOUT + i as i32, anim));
+    }
+    // The hammer is optional: without it the builder's hands show nothing.
+    match hammers(bo2_dir, &common, &zones, &paks, &mut out, &mut tablet_looks) {
+        Ok(()) => {
+            for (i, (_, bo2_name)) in HAMMER_ANIMS.iter().enumerate() {
+                let anim = xanim::find(&common, bo2_name).map_err(|e| e.to_string())?;
+                clips.push((zhbo_core::viewmodel::NONE, zhbo_core::viewmodel::HAMMER_PULLOUT + i as i32, anim));
+            }
+        }
+        Err(e) => summary.push(format!("no hammer viewmodel: {e}")),
     }
     let mut projectile_models = BTreeMap::new();
     summary.push(projectiles(&patch, &common, &paks, &mut out, &bo2, &mut table.weapons, &converted, &mut projectile_models));

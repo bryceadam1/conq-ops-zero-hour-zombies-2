@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 13u
+#define ZHBO_ABI_VERSION 14u
 
 #ifdef __cplusplus
 extern "C" {
@@ -62,6 +62,20 @@ typedef struct ZhboFpsInput
 	float pitch;
 } ZhboFpsInput;
 
+/* zhbo_core::building::BuildOption. status: ZHBO_BUILD_*. */
+typedef struct ZhboBuildOption
+{
+	uint32_t tmpl;
+	int32_t cost;
+	int32_t status;
+	float radius; /* its footprint's bounding radius */
+	char name[48];
+} ZhboBuildOption;
+#define ZHBO_BUILD_OK 0
+#define ZHBO_BUILD_NO_MONEY 1
+#define ZHBO_BUILD_LOCKED 2
+#define ZHBO_BUILD_BLOCKED 3
+
 typedef struct ZhboLogicApi
 {
 	void (*log)(const char *msg);
@@ -82,6 +96,15 @@ typedef struct ZhboLogicApi
 	void (*fx)(const char *fxlist, const ZhboVec3 *pos);
 	void (*capture)(uint32_t id, uint32_t new_owner); /* to new_owner's side (the Black Hat) */
 	void (*smoke)(const ZhboVec3 *center, float radius); /* a smoke screen this frame */
+	/* Building (zhbo_core::building). The General's build menu: up to cap options; the count. */
+	int32_t (*build_options)(uint32_t general, ZhboBuildOption *out, int32_t cap);
+	int32_t (*can_place)(uint32_t general, uint32_t tmpl, const ZhboVec3 *pos, float angle);
+	/* Pay for it and lay out its construction site; the site's id, or 0. */
+	uint32_t (*place)(uint32_t general, uint32_t tmpl, const ZhboVec3 *pos, float angle);
+	/* The closest of his side's structures under construction in reach; its id (0 none). */
+	uint32_t (*build_site)(uint32_t general, const ZhboVec3 *pos, float reach, uint32_t *tmpl, float *percent);
+	/* One logic frame of building `site` at `rate` of a dozer's speed; the percent after. */
+	float (*construct)(uint32_t general, uint32_t site, float rate);
 } ZhboLogicApi;
 
 /* zhbo_core::host::damage_kind and disable_kind. */
@@ -105,6 +128,10 @@ typedef struct ZhboClientApi
 	/* Zero Hour's radar in a screen rectangle; 0 if the local player has no radar. you_px gets
 	   where the world point `you` is on it (x, y). */
 	int32_t (*radar)(float x, float y, float w, float h, const ZhboVec3 *you, ZhboVec3 *you_px);
+	int32_t (*build_options)(uint32_t general, ZhboBuildOption *out, int32_t cap);
+	int32_t (*can_place)(uint32_t general, uint32_t tmpl, const ZhboVec3 *pos, float angle);
+	/* The hammer's placement ghost; tmpl 0 hides it. */
+	void (*ghost)(uint32_t tmpl, const ZhboVec3 *pos, float angle, int32_t legal);
 } ZhboClientApi;
 
 typedef struct ZhboClientIn
@@ -163,6 +190,11 @@ typedef struct ZhboClientOut
 #define ZHBO_VM_TABLET_PULLOUT 0x60
 #define ZHBO_VM_TABLET_IDLE 0x61
 #define ZHBO_VM_TABLET_PUTAWAY 0x62
+/* The builder's hammer (its own model: the faction's weapon viewmodel name with _HAM). */
+#define ZHBO_VM_HAMMER_PULLOUT 0x64
+#define ZHBO_VM_HAMMER_IDLE 0x65
+#define ZHBO_VM_HAMMER_SWING 0x66
+#define ZHBO_VM_HAMMER_PUTAWAY 0x67
 /* An alt mode's clips are its BO2 slots plus this, on its weapon's viewmodel (zhbo_core::weapons::ALT_CLIPS). */
 #define ZHBO_VM_ALT_CLIPS 0x80
 
@@ -204,6 +236,7 @@ void zhbo_logic_rts_offhand(int32_t player, uint32_t general, int32_t tactical);
 void zhbo_client_rts_ammo(uint32_t general, ZhboRtsWeapons *out);
 int32_t zhbo_world_mesh_count(int32_t vm); /* -2: the tablet */
 int32_t zhbo_loadout_viewmodels(int32_t *out, int32_t cap); /* the General's kit's viewmodels */
+float zhbo_general_build_rate(void); /* a General's building speed, share of a dozer's */
 int32_t zhbo_check_requirements(char *msg, uint32_t cap);
 
 #ifdef __cplusplus
@@ -213,8 +246,9 @@ static_assert(sizeof(ZhboObjInfo) == 56, "ZhboObjInfo layout must match host.rs"
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
 static_assert(sizeof(ZhboClientIn) == 332, "ZhboClientIn layout must match client.rs");
 static_assert(sizeof(ZhboClientOut) == 132, "ZhboClientOut layout must match client.rs");
-static_assert(sizeof(ZhboLogicApi) == 17 * sizeof(void *), "ZhboLogicApi layout must match host.rs");
+static_assert(sizeof(ZhboLogicApi) == 22 * sizeof(void *), "ZhboLogicApi layout must match host.rs");
 static_assert(sizeof(ZhboWorldPose) == 16, "ZhboWorldPose layout must match ffi.rs");
 static_assert(sizeof(ZhboRtsWeapons) == 36, "ZhboRtsWeapons layout must match sim.rs");
-static_assert(sizeof(ZhboClientApi) == 10 * sizeof(void *), "ZhboClientApi layout must match host.rs");
+static_assert(sizeof(ZhboClientApi) == 13 * sizeof(void *), "ZhboClientApi layout must match host.rs");
+static_assert(sizeof(ZhboBuildOption) == 64, "ZhboBuildOption layout must match building.rs");
 #endif

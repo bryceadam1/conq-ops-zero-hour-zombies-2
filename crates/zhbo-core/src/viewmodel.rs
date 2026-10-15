@@ -54,7 +54,7 @@ pub mod slot {
     /// Clips that loop (an alt mode's clips too, which sit [`crate::weapons::ALT_CLIPS`] later).
     pub fn loops(clip: i32) -> bool {
         let slot = if clip >= crate::weapons::ALT_CLIPS { clip - crate::weapons::ALT_CLIPS } else { clip };
-        matches!(slot, IDLE | EMPTY_IDLE | SPRINT_LOOP | SPRINT_EMPTY_LOOP) || clip == super::TABLET_IDLE
+        matches!(slot, IDLE | EMPTY_IDLE | SPRINT_LOOP | SPRINT_EMPTY_LOOP) || clip == super::TABLET_IDLE || clip == super::HAMMER_IDLE
     }
 }
 
@@ -71,6 +71,15 @@ pub const TABLET_PUTAWAY_TIME: f32 = 18.0 / 30.0;
 pub fn tablet_up(t: f32) -> (i32, f32) {
     if t < TABLET_PULLOUT_TIME { (TABLET_PULLOUT, t) } else { (TABLET_IDLE, t - TABLET_PULLOUT_TIME) }
 }
+
+/// Hammer clips (a separate model, the arms holding a hammer with BO2's knife animations).
+pub const HAMMER_PULLOUT: i32 = 0x64;
+pub const HAMMER_IDLE: i32 = 0x65;
+pub const HAMMER_SWING: i32 = 0x66;
+pub const HAMMER_PUTAWAY: i32 = 0x67;
+/// Lengths of BO2's `viewmodel_strider_pullout` and `_melee_swipe` (21 frames each at 30 fps).
+pub const HAMMER_PULLOUT_TIME: f32 = 21.0 / 30.0;
+pub const HAMMER_SWING_TIME: f32 = 21.0 / 30.0;
 
 /// How long the fire clip owns the viewmodel after a shot before idle resumes.
 const FIRE_HOLD: f32 = 0.3;
@@ -102,12 +111,15 @@ pub struct Viewmodel {
     shot_was_last: bool,
     shot_aimed: bool,
     since_sprint_start: f32,
+    /// Seconds the hammer has been out, and into building (one swing after another).
+    hammer_t: f32,
+    swing_t: f32,
 }
 
 impl Default for Viewmodel {
     fn default() -> Self {
         // First person starts from the field computer: the tablet goes down first.
-        Viewmodel { tablet_putaway: Some(0.0), since_shot: 10.0, shot_was_last: false, shot_aimed: false, since_sprint_start: 0.0 }
+        Viewmodel { tablet_putaway: Some(0.0), since_shot: 10.0, shot_was_last: false, shot_aimed: false, since_sprint_start: 0.0, hammer_t: 0.0, swing_t: 0.0 }
     }
 }
 
@@ -134,6 +146,23 @@ impl Viewmodel {
             }
             self.tablet_putaway = None;
         }
+
+        // The hammer: up, then idle; building swings it again and again.
+        if p.hammer.is_some() || p.building {
+            self.hammer_t += dt;
+            if p.building {
+                self.swing_t += dt;
+                return frame(NONE, HAMMER_SWING, self.swing_t % HAMMER_SWING_TIME);
+            }
+            self.swing_t = 0.0;
+            return if self.hammer_t < HAMMER_PULLOUT_TIME {
+                frame(NONE, HAMMER_PULLOUT, self.hammer_t)
+            } else {
+                frame(NONE, HAMMER_IDLE, self.hammer_t - HAMMER_PULLOUT_TIME)
+            };
+        }
+        self.hammer_t = 0.0;
+        self.swing_t = 0.0;
 
         if ev.shot {
             self.since_shot = 0.0;
