@@ -46,6 +46,21 @@ namespace zhbo_platform
 
 	static bool s_captured = false;
 
+	// The system cursor in the window's coordinates; false when it is outside the window.
+	static bool cursorInWindow(float &x, float &y)
+	{
+		if (TheSDL3Window == nullptr)
+			return false;
+		float gx, gy;
+		SDL_GetGlobalMouseState(&gx, &gy);
+		int wx, wy, ww, wh;
+		SDL_GetWindowPosition(TheSDL3Window, &wx, &wy);
+		SDL_GetWindowSize(TheSDL3Window, &ww, &wh);
+		x = gx - (float)wx;
+		y = gy - (float)wy;
+		return x >= 0.0f && y >= 0.0f && x < (float)ww && y < (float)wh;
+	}
+
 	void setMouseCapture(bool capture)
 	{
 		s_captured = capture;
@@ -53,9 +68,20 @@ namespace zhbo_platform
 		{
 			// Relative mode hides and confines the cursor and reports unaccelerated deltas.
 			SDL_SetWindowRelativeMouseMode(TheSDL3Window, capture);
+			// Leaving relative mode on macOS leaves SDL thinking the cursor is over no window
+			// until a click; warping it to where it already is puts it back over this one.
+			float x, y;
+			if (!capture && cursorInWindow(x, y))
+				SDL_WarpMouseInWindow(TheSDL3Window, x, y);
 		}
 		float dx, dy;
 		SDL_GetRelativeMouseState(&dx, &dy); // drop motion from before the capture
+	}
+
+	bool cursorOverWindow()
+	{
+		float x, y;
+		return cursorInWindow(x, y);
 	}
 
 	void mouseDelta(float &dx, float &dy)
@@ -129,6 +155,16 @@ namespace zhbo_platform
 		{
 			ClipCursor(nullptr);
 		}
+	}
+
+	bool cursorOverWindow()
+	{
+		RECT rc;
+		POINT p;
+		GetClientRect(ApplicationHWnd, &rc);
+		GetCursorPos(&p);
+		ScreenToClient(ApplicationHWnd, &p);
+		return p.x >= rc.left && p.y >= rc.top && p.x < rc.right && p.y < rc.bottom;
 	}
 
 	void mouseDelta(float &dx, float &dy)

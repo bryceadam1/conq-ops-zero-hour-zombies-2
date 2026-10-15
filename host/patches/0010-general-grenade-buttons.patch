@@ -1,0 +1,12 @@
+--- a/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBarCommandProcessing.cpp
++++ b/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBarCommandProcessing.cpp
+@@ -805,6 +805,9 @@
+ 		//---------------------------------------------------------------------------------------------
+ 		case GUI_COMMAND_SWITCH_WEAPON:
+ 		{
++				// ZHBO: a General's lethal and tactical buttons share the third slot; say which
++				Zhbo_OnSwitchWeaponButton( commandButton );
++
+ 				// command needs no additional data, send the message
+ 				GameMessage *msg = TheMessageStream->appendMessage( GameMessage::MSG_SWITCH_WEAPONS );
+ 

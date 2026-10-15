@@ -35,7 +35,7 @@ fn weapon_labels() -> &'static HashMap<String, Vec<u16>> {
     TABLE.get_or_init(|| {
         let l = crate::weapons::Loadout::default();
         let w = |id: &str| crate::weapons::weapon(id);
-        let (p, s, g) = (w(&l.primary), w(&l.secondary), w(&l.lethal));
+        let (p, s, g, t) = (w(&l.primary), w(&l.secondary), w(&l.lethal), w(&l.tactical));
         let rounds = |d: &crate::weapons::WeaponDef| format!("{} rounds a magazine, {} spare", d.clip, d.start_reserve);
         let entries = [
             ("CONTROLBAR:ZHBO_Primary".to_string(), format!("&{}", p.display_name)),
@@ -44,6 +44,8 @@ fn weapon_labels() -> &'static HashMap<String, Vec<u16>> {
             ("CONTROLBAR:ToolTipZHBO_Secondary".to_string(), format!("Use the {} ({}). The General switches to it when the {} is empty.", s.display_name, rounds(s), p.display_name)),
             ("CONTROLBAR:ZHBO_Lethal".to_string(), format!("&{}", g.display_name)),
             ("CONTROLBAR:ToolTipZHBO_Lethal".to_string(), format!("Throw {} at the target ({} carried). Only used when selected.", g.display_name, g.start_reserve.max(1))),
+            ("CONTROLBAR:ZHBO_Tactical".to_string(), format!("&{}", t.display_name)),
+            ("CONTROLBAR:ToolTipZHBO_Tactical".to_string(), format!("Throw {} at the target ({} carried). Only used when selected.", t.display_name, t.start_reserve.max(1))),
         ];
         entries.into_iter().map(|(k, v)| (k.to_ascii_lowercase(), v.encode_utf16().chain(std::iter::once(0)).collect())).collect()
     })

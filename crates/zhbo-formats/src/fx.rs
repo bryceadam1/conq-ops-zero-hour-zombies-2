@@ -232,8 +232,35 @@ fn find_depth(z: &Zone, name: &str, depth: u32) -> Option<Effect> {
 /// BO2's surface types (`surfaceType`): which explosion an impact plays depends on the ground.
 pub mod surface {
     pub const DEFAULT: usize = 0;
+    pub const BRICK: usize = 2;
+    pub const CONCRETE: usize = 5;
     pub const DIRT: usize = 6;
     pub const GRASS: usize = 10;
+    pub const METAL: usize = 13;
+}
+
+/// The impact table's entry for a bullet's `impactType`: small (pistols, SMGs), large (rifles),
+/// armour-piercing (snipers, shotguns), extreme.
+pub fn bullet_entry(impact_type: u32) -> Option<u32> {
+    match impact_type {
+        1 => Some(1),
+        2 => Some(3),
+        3 => Some(7),
+        4 => Some(9),
+        _ => None,
+    }
+}
+
+/// The blood a bullet of table entry `entry` raises on a soldier (the first of its flesh effects).
+pub fn impact_flesh(z: &Zone, entry: u32) -> Option<Effect> {
+    use crate::t6zone::layouts::{FxImpactEntry as IE, FxImpactTable as IT};
+    let kind = crate::fastfile::asset_type_id("impactfx")?;
+    let table = z.assets.iter().find(|a| a.kind == kind)?;
+    let entries = z.u32(table.addr + IT::table);
+    if entries == 0 || entry == 0 || entry > 32 {
+        return None;
+    }
+    (0..4).map(|i| z.u32(entries + entry * IE::SIZE + IE::flesh + 4 * i)).find(|p| *p != 0).map(|p| read(z, p)).filter(|e| !e.elems.is_empty())
 }
 
 /// The impact table's entry for an explosive weapon's `impactType` (the table orders its entries

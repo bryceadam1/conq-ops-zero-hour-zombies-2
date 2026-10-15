@@ -11,5 +11,5 @@
  		s_zhboCameraWasOverridden = false;
 +		ZhboViewmodel_Update(FALSE, zhboEye, zhboDir); // ZHBO: hide the viewmodel
  		setWidth(getWidth()); // restores the RTS field of view
- 		// The override moved the pivot up to eye height; put the RTS camera back on the ground at its defaults.
- 		setPitchToDefault();
+ 		// The override moved the pivot up to eye height; put it back on the ground. The pitch and
+ 		// zoom are the player's, as first person found them (the transition back ends there).

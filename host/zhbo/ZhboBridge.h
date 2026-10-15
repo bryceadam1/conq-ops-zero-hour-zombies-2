@@ -12,12 +12,17 @@
 #include "Common/GameType.h"
 
 class AsciiString;
+class CommandButton;
 class GameMessage;
 class GameMessageTranslator;
 class Object;
 
-/// A General's Zero Hour weapon slot that has no ammo left (its command button is restricted).
-Bool Zhbo_IsWeaponEmpty(const Object *obj, Int slot);
+/// A General's weapon switch button: 0 restricted (no ammo left), 1 available but not lit (the
+/// grenade not chosen), -1 Zero Hour decides.
+Int Zhbo_WeaponButtonState(const Object *obj, const CommandButton *command);
+/// A weapon switch button pressed (before Zero Hour's own switch message): a General's lethal and
+/// tactical buttons tell every client which grenade his third slot throws.
+void Zhbo_OnSwitchWeaponButton(const CommandButton *command);
 
 /// Startup, after every subsystem and INI file is loaded (end of GameEngine::init).
 void Zhbo_Init();

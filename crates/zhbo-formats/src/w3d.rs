@@ -43,6 +43,7 @@ const CHUNK_ANIMATION: u32 = 0x0200;
 const CHUNK_ANIMATION_HEADER: u32 = 0x0201;
 const CHUNK_ANIMATION_CHANNEL: u32 = 0x0202;
 const CHUNK_HLOD: u32 = 0x0700;
+const CHUNK_BOX: u32 = 0x0740;
 const CHUNK_HLOD_HEADER: u32 = 0x0701;
 const CHUNK_HLOD_LOD_ARRAY: u32 = 0x0702;
 const CHUNK_HLOD_SUB_OBJECT_ARRAY_HEADER: u32 = 0x0703;
@@ -384,9 +385,27 @@ fn mesh_chunk(container: &str, m: &SkinMesh) -> Chunk {
 /// A skinned model (`<name>.w3d`, conventionally `XXX_SKN`): its meshes and an HLOD binding them to
 /// the hierarchy `htree`.
 pub fn skin_model(name: &str, htree: &str, meshes: &[SkinMesh]) -> Vec<u8> {
+    skin_model_with_box(name, htree, meshes, None)
+}
+
+/// An oriented box on the model's root, `(centre, half extents)`. Zero Hour picks units by casting
+/// rays at their models, and a skin's own vertices sit bone-relative (unposed, by the feet), so
+/// infantry carry a box (`BOUNDINGBOX`) to be clicked on.
+pub type PickBox = ([f32; 3], [f32; 3]);
+
+/// [`skin_model`] with a box to select the unit by.
+pub fn skin_model_with_box(name: &str, htree: &str, meshes: &[SkinMesh], pick: Option<PickBox>) -> Vec<u8> {
     let mut out = Vec::new();
     for m in meshes {
         mesh_chunk(name, m).write_to(&mut out);
+    }
+    let box_name = format!("{name}.BOUNDINGBOX");
+    if let Some((centre, extent)) = pick {
+        let mut b = Chunk::new(CHUNK_BOX);
+        // Oriented; physical and projectile collisions (rays hit it). Not drawn.
+        b.u32(version(1, 0)).u32(0x0000_0001 | 0x0000_0010 | 0x0000_0020).name(&box_name, NAME_LEN * 2).u32(0);
+        b.f32(centre[0]).f32(centre[1]).f32(centre[2]).f32(extent[0]).f32(extent[1]).f32(extent[2]);
+        b.write_to(&mut out);
     }
     let mut hlod = Chunk::wrapper(CHUNK_HLOD);
     let mut header = Chunk::new(CHUNK_HLOD_HEADER);
@@ -394,11 +413,16 @@ pub fn skin_model(name: &str, htree: &str, meshes: &[SkinMesh]) -> Vec<u8> {
     hlod.child(header);
     let mut lod = Chunk::wrapper(CHUNK_HLOD_LOD_ARRAY);
     let mut lod_header = Chunk::new(CHUNK_HLOD_SUB_OBJECT_ARRAY_HEADER);
-    lod_header.u32(meshes.len() as u32).f32(-1.0); // NO_MAX_SCREEN_SIZE
+    lod_header.u32(meshes.len() as u32 + pick.is_some() as u32).f32(-1.0); // NO_MAX_SCREEN_SIZE
     lod.child(lod_header);
     for m in meshes {
         let mut sub = Chunk::new(CHUNK_HLOD_SUB_OBJECT);
         sub.u32(0).name(&format!("{name}.{}", m.name), NAME_LEN * 2);
+        lod.child(sub);
+    }
+    if pick.is_some() {
+        let mut sub = Chunk::new(CHUNK_HLOD_SUB_OBJECT);
+        sub.u32(0).name(&box_name, NAME_LEN * 2);
         lod.child(sub);
     }
     hlod.child(lod);
@@ -504,6 +528,13 @@ mod tests {
         assert_eq!(tri.2, 32, "W3dTriangleStruct is 32 bytes");
         let inf = mesh.iter().find(|c| c.0 == CHUNK_VERTEX_INFLUENCES).unwrap();
         assert_eq!(inf.2, 3 * 8, "W3dVertInfStruct is 8 bytes");
+
+        // A box to click: a 68-byte W3dBoxStruct, and one more sub-object.
+        let d = skin_model_with_box("TEST_SKN", "TEST_SKL", &[m.clone()], Some(([0.0, 0.0, 6.0], [4.0, 4.0, 6.0])));
+        let top = chunks(&d);
+        assert_eq!(top.iter().map(|c| c.0).collect::<Vec<_>>(), vec![CHUNK_MESH, CHUNK_BOX, CHUNK_HLOD]);
+        assert_eq!(top[1].2, 68);
+        assert!(d.windows(20).any(|w| w == b"TEST_SKN.BOUNDINGBO"[..].iter().chain(b"X").copied().collect::<Vec<u8>>().as_slice()));
 
         // BO2 maps: a second texture on a second stage, with the detail stage off.
         let bo2 = SkinMesh { bo2_maps: Some("t_nsg.tga".into()), env_map: Some("env.tga".into()), ..m };

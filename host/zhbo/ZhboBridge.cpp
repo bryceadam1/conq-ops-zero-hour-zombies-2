@@ -66,6 +66,14 @@
 
 extern "C" void GGC_RequestBgfxFramebufferRebuild(); // BgfxBackend.cpp
 
+// MSG_ZHBO_TAKE_CONTROL's optional second argument.
+enum
+{
+	ZHBO_ACTION_TAKE_CONTROL = 0,
+	ZHBO_ACTION_LETHAL = 1,
+	ZHBO_ACTION_TACTICAL = 2,
+};
+
 namespace
 {
 
@@ -360,11 +368,70 @@ Bool isGeneral(const Object *obj)
 	return obj && strncmp(obj->getTemplate()->getName().str(), "ZHBO_General_", 13) == 0;
 }
 
+// The overhead General's BO2 bullet impacts, by gun slot: on a soldier, a vehicle, anything else
+// (zhbo_assets::generals::RTS_FX_PATH).
+struct RtsHitFx
+{
+	AsciiString flesh, metal, hard;
+};
+RtsHitFx s_rtsHitFx[2];
+Bool s_rtsHitFxLoaded = FALSE;
+
+void loadRtsHitFx()
+{
+	s_rtsHitFxLoaded = TRUE;
+	File *f = TheFileSystem ? TheFileSystem->openFile("Data\\ConquerOps\\rts_fx.txt", File::READ | File::BINARY) : nullptr;
+	if (!f)
+		return;
+	const Int size = f->size();
+	char *buf = f->readEntireAndClose();
+	if (!buf)
+		return;
+	std::string text(buf, size);
+	delete[] buf;
+	size_t at = 0;
+	while (at < text.size())
+	{
+		size_t end = text.find('\n', at);
+		if (end == std::string::npos)
+			end = text.size();
+		const std::string line = text.substr(at, end - at);
+		at = end + 1;
+		int slot;
+		char flesh[128], metal[128], hard[128];
+		if (line.empty() || line[0] == ';' || sscanf(line.c_str(), "%d %127s %127s %127s", &slot, flesh, metal, hard) != 4 || slot < 0 || slot > 1)
+			continue;
+		s_rtsHitFx[slot].flesh = flesh;
+		s_rtsHitFx[slot].metal = metal;
+		s_rtsHitFx[slot].hard = hard;
+	}
+}
+
+// BO2's impact for a shot from gun slot `slot` landing on `victim`.
+void playRtsHit(Int slot, const Object *victim)
+{
+	if (!s_rtsHitFxLoaded)
+		loadRtsHitFx();
+	if (slot < 0 || slot > 1 || !victim || !TheFXListStore)
+		return;
+	const RtsHitFx &h = s_rtsHitFx[slot];
+	const AsciiString &name = victim->isKindOf(KINDOF_INFANTRY) ? h.flesh : victim->isKindOf(KINDOF_VEHICLE) ? h.metal : h.hard;
+	const FXList *fx = name.isEmpty() || name == "NONE" ? nullptr : TheFXListStore->findFXList(name.str());
+	if (!fx)
+		return;
+	Coord3D at;
+	victim->getGeometryInfo().getCenterPosition(*victim->getPosition(), at);
+	FXList::doFXPos(fx, &at);
+}
+
 struct RtsShots
 {
 	Bool seen;
 	UnsignedInt last[3];
 	Int slot;
+	// Whom the General was last attacking, and when (to keep attacking after a forced switch).
+	ObjectID victim;
+	UnsignedInt victimFrame;
 };
 std::map<ObjectID, RtsShots> s_rtsShots;
 
@@ -375,8 +442,17 @@ void rtsWeapons(UnsignedInt frame)
 		if (!isGeneral(obj) || obj->isEffectivelyDead() || !obj->getControllingPlayer())
 			continue;
 		if (s_rtsShots.find(obj->getID()) == s_rtsShots.end())
+		{
+			s_rtsShots[obj->getID()] = RtsShots();
 			s_rtsShots[obj->getID()].slot = -1;
+		}
 		RtsShots &seen = s_rtsShots[obj->getID()];
+		AIUpdateInterface *ai = obj->getAI();
+		if (const Object *victim = ai ? ai->getCurrentVictim() : nullptr)
+		{
+			seen.victim = victim->getID();
+			seen.victimFrame = frame;
+		}
 		uint32_t shots[3] = { 0, 0, 0 };
 		for (Int s = 0; s < 3; ++s)
 		{
@@ -390,7 +466,26 @@ void rtsWeapons(UnsignedInt frame)
 		WeaponSlotType current = PRIMARY_WEAPON;
 		obj->getCurrentWeapon(&current);
 		ZhboRtsWeapons ammo;
-		zhbo_logic_rts_update(obj->getControllingPlayer()->getPlayerIndex(), (uint32_t)obj->getID(), (int32_t)current, shots, &ammo);
+		// Where a grenade from the third slot goes: what the AI is attacking (a unit or a spot).
+		ZhboVec3 target;
+		const ZhboVec3 *aim = nullptr;
+		if (const Object *victim = ai ? ai->getCurrentVictim() : nullptr)
+		{
+			target.x = victim->getPosition()->x; target.y = victim->getPosition()->y; target.z = victim->getPosition()->z;
+			aim = &target;
+		}
+		else if (const Coord3D *spot = ai ? ai->getCurrentVictimPos() : nullptr)
+		{
+			target.x = spot->x; target.y = spot->y; target.z = spot->z;
+			aim = &target;
+		}
+		zhbo_logic_rts_update(obj->getControllingPlayer()->getPlayerIndex(), (uint32_t)obj->getID(), (int32_t)current, shots, aim, &ammo);
+		if (const Object *victim = ai ? ai->getCurrentVictim() : nullptr)
+		{
+			for (Int s = 0; s < 2; ++s)
+				if (shots[s])
+					playRtsHit(s, victim);
+		}
 		for (Int s = 0; s < 3; ++s)
 		{
 			// The log is the test's oracle: every lethal and pistol shot, every tenth rifle round.
@@ -406,6 +501,14 @@ void rtsWeapons(UnsignedInt frame)
 		{
 			obj->setWeaponLock((WeaponSlotType)ammo.lock, LOCKED_PERMANENTLY);
 			logf("General %u locked to weapon slot %d", (unsigned)obj->getID(), ammo.lock);
+			// A weapon that ran dry hands over mid-fight: Zero Hour drops an attack whose target is
+			// out of the new weapon's range, so order it again (he closes in with the pistol).
+			Object *victim = TheGameLogic->findObjectByID(seen.victim);
+			if (ai && victim && ammo.lock != (Int)current && !victim->isEffectivelyDead() && frame - seen.victimFrame < 90)
+			{
+				ai->aiAttackObject(victim, NO_MAX_SHOTS_LIMIT, ai->getLastCommandSource());
+				logf("General %u keeps attacking %u", (unsigned)obj->getID(), (unsigned)victim->getID());
+			}
 		}
 		for (Int s = 0; s < 3; ++s)
 		{
@@ -420,6 +523,12 @@ void cbFillRect(float x, float y, float w, float h, uint32_t argb);
 void cbText(float x, float y, const char *utf8, uint32_t argb, int32_t size, int32_t align);
 
 // The ammo left on each of the selected General's weapon buttons (drawn over the command bar).
+// The General's tactical grenade button (it shares the third slot with the lethal's).
+Bool isTacticalButton(const CommandButton *button)
+{
+	return button && button->getName() == "Command_ZHBO_SwitchToTactical";
+}
+
 void drawRtsAmmo()
 {
 	if (!TheInGameUI || TheInGameUI->getSelectCount() != 1 || !TheWindowManager)
@@ -447,11 +556,18 @@ void drawRtsAmmo()
 		win->winGetScreenPosition(&x, &y);
 		win->winGetSize(&w, &h);
 		char text[32];
+		Bool empty;
 		if (slot == 2)
-			snprintf(text, sizeof(text), "%d", ammo.ammo[slot]);
+		{
+			const Int count = isTacticalButton(button) ? ammo.tactical : ammo.ammo[2];
+			snprintf(text, sizeof(text), "%d", count);
+			empty = count <= 0;
+		}
 		else
+		{
 			snprintf(text, sizeof(text), "%d/%d", ammo.ammo[slot], ammo.reserve[slot]);
-		const Bool empty = ammo.ammo[slot] + ammo.reserve[slot] <= 0;
+			empty = ammo.ammo[slot] + ammo.reserve[slot] <= 0;
+		}
 		const Real band = (Real)h * 0.3f;
 		cbFillRect((float)x + 2.0f, (float)(y + h) - band - 1.0f, (float)w - 4.0f, band, 0xB0000000u);
 		cbText((float)(x + w) - 4.0f, (float)(y + h) - band - 1.0f, text, empty ? 0xFFE83A2Eu : 0xFFFFFFFFu, (int32_t)(band * 0.85f), 2);
@@ -463,6 +579,7 @@ struct WorldLook
 {
 	int32_t weapon;
 	int32_t tablet;
+	int32_t sidearm;
 };
 std::map<uint32_t, WorldLook> s_worldLooks;
 
@@ -747,6 +864,28 @@ public:
 	}
 };
 
+// Seconds left to keep Zero Hour's mouse in step with the system cursor after first person.
+double s_reclaimMouseUntil = 0.0;
+
+// Relative mouse mode reports the cursor as having left the window, and ending it sends no
+// "entered" event until the next click (SDL's own "left" may also still be queued), so Zero Hour
+// would keep the cursor uncaptured (no edge scrolling) and outside (no selection) until then. While
+// the cursor really is over the window, tell the mouse so and capture it again, as entering would.
+void reclaimMouse()
+{
+	if (!TheMouse || s_mouseCaptured || zhbo_platform::now() > s_reclaimMouseUntil)
+		return;
+	if (!zhbo_platform::windowFocused() || !zhbo_platform::cursorOverWindow())
+		return;
+	if (!TheMouse->isCursorInside())
+	{
+		TheMouse->onCursorMovedInside();
+		TheMouse->syncPositionToSystemCursor();
+	}
+	if (!TheMouse->isCursorCaptured())
+		TheMouse->refreshCursorCapture();
+}
+
 void setMouseCapture(Bool capture)
 {
 	if (capture == s_mouseCaptured)
@@ -754,14 +893,11 @@ void setMouseCapture(Bool capture)
 	s_mouseCaptured = capture;
 	zhbo_platform::setMouseCapture(capture != FALSE);
 	if (TheMouse) TheMouse->setVisibility(capture ? FALSE : TRUE);
-	// Relative mouse mode reports the cursor as having left the window, and ending it sends no
-	// "entered" event until the next click, so selection and edge scrolling would stay dead until
-	// then: tell the mouse it is back, where the system cursor really is.
 	if (!capture && TheMouse)
 	{
-		if (!TheMouse->isCursorInside())
-			TheMouse->onCursorMovedInside();
 		TheMouse->syncPositionToSystemCursor();
+		s_reclaimMouseUntil = zhbo_platform::now() + 3.0;
+		reclaimMouse();
 	}
 }
 
@@ -1323,6 +1459,13 @@ void Zhbo_OnTakeControlMessage(Int playerIndex, const GameMessage *msg)
 	Object *obj = TheGameLogic->findObjectByID(id);
 	if (!obj || strncmp(obj->getTemplate()->getName().str(), "ZHBO_General", 12) != 0)
 		return;
+	// The same message, with an action, chooses the grenade the General's third slot throws.
+	const Int action = msg->getArgumentCount() > 1 ? msg->getArgument(1)->integer : ZHBO_ACTION_TAKE_CONTROL;
+	if (action == ZHBO_ACTION_LETHAL || action == ZHBO_ACTION_TACTICAL)
+	{
+		zhbo_logic_rts_offhand(playerIndex, (uint32_t)id, action == ZHBO_ACTION_TACTICAL ? 1 : 0);
+		return;
+	}
 	zhbo_logic_take_control(playerIndex, (uint32_t)id);
 }
 
@@ -1362,9 +1505,9 @@ Bool Zhbo_IsControlled(ObjectID id)
 	return s_ready && zhbo_logic_is_controlled((uint32_t)id) != 0;
 }
 
-// Third person: show the weapon each controlled General has in hand (its W<vm><k> sub-objects on
-// the soldier model) or the scorestreak tablet (TB<k>), and play the tablet's raise or put-away
-// (USER_1, USER_2). Only changes are applied.
+// Third person: show the weapon each General has in hand (its W<vm><k> sub-objects on the soldier
+// model) or the scorestreak tablet (TB<k>), play the tablet's raise or put-away (USER_1, USER_2),
+// and hold the sidearm in BO2's pistol stance (JAMMED). Only changes are applied.
 
 void applyWorldPoses()
 {
@@ -1387,7 +1530,7 @@ void applyWorldPoses()
 		if (!draw)
 			continue;
 		std::map<uint32_t, WorldLook>::iterator it = s_worldLooks.find(p.general);
-		if (it != s_worldLooks.end() && it->second.weapon == p.weapon && it->second.tablet == p.tablet)
+		if (it != s_worldLooks.end() && it->second.weapon == p.weapon && it->second.tablet == p.tablet && it->second.sidearm == p.sidearm)
 			continue;
 		char name[16];
 		for (int32_t vm = 0; vm < MAX_VIEWMODELS; ++vm)
@@ -1413,7 +1556,12 @@ void applyWorldPoses()
 			draw->clearModelConditionState(MODELCONDITION_USER_1);
 			draw->clearModelConditionState(MODELCONDITION_USER_2);
 		}
-		WorldLook look = { p.weapon, p.tablet };
+		// BO2's pistol stance while the sidearm is in hand (JAMMED: only missiles use it otherwise).
+		if (p.sidearm && p.tablet == 0 && !obj->isEffectivelyDead())
+			draw->setModelConditionState(MODELCONDITION_JAMMED);
+		else
+			draw->clearModelConditionState(MODELCONDITION_JAMMED);
+		WorldLook look = { p.weapon, p.tablet, p.sidearm };
 		s_worldLooks[p.general] = look;
 	}
 }
@@ -1494,6 +1642,8 @@ void Zhbo_ClientFrame()
 	in.rts_cam_pos.x = camPos.x; in.rts_cam_pos.y = camPos.y; in.rts_cam_pos.z = camPos.z;
 	in.rts_cam_dir.x = camDir.x; in.rts_cam_dir.y = camDir.y; in.rts_cam_dir.z = camDir.z;
 	in.rts_hfov = TheTacticalView->getFieldOfView();
+	const Coord3D &pivot = TheTacticalView->getPosition();
+	in.rts_pivot.x = pivot.x; in.rts_pivot.y = pivot.y; in.rts_pivot.z = pivot.z;
 
 	zhbo_client_frame(&in, &s_out);
 	applyWorldPoses();
@@ -1511,6 +1661,7 @@ void Zhbo_ClientFrame()
 
 	// Never trap the cursor when the game is not the foreground window (Alt-Tab, background tests).
 	setMouseCapture(s_out.capture_mouse != 0 && focused && !menuUp);
+	reclaimMouse();
 	setRtsUiHidden(s_out.hide_rts_ui != 0);
 	setSkyForced(s_out.camera_override != 0);
 	setBo2Look(s_out.camera_override != 0);
@@ -1645,13 +1796,37 @@ void Zhbo_RequestTakeControl(Object *obj)
 	msg->appendObjectIDArgument(obj->getID());
 }
 
-Bool Zhbo_IsWeaponEmpty(const Object *obj, Int slot)
+Int Zhbo_WeaponButtonState(const Object *obj, const CommandButton *command)
 {
+	const Int slot = command ? (Int)command->getWeaponSlot() : -1;
 	if (!s_ready || !isGeneral(obj) || slot < 0 || slot > 2)
-		return FALSE;
+		return -1;
 	ZhboRtsWeapons ammo;
 	zhbo_client_rts_ammo((uint32_t)obj->getID(), &ammo);
-	return ammo.ammo[slot] + ammo.reserve[slot] <= 0;
+	if (slot < 2)
+		return ammo.ammo[slot] + ammo.reserve[slot] <= 0 ? 0 : -1;
+	const Bool tactical = isTacticalButton(command);
+	if ((tactical ? ammo.tactical : ammo.ammo[2]) <= 0)
+		return 0;
+	// Both grenade buttons are the third slot: only the chosen one shows as in use.
+	return (tactical ? 1 : 0) != ammo.tactical_selected ? 1 : -1;
+}
+
+void Zhbo_OnSwitchWeaponButton(const CommandButton *command)
+{
+	if (!s_ready || !command || command->getWeaponSlot() != TERTIARY_WEAPON || !TheInGameUI)
+		return;
+	const Int choice = isTacticalButton(command) ? ZHBO_ACTION_TACTICAL : ZHBO_ACTION_LETHAL;
+	const DrawableList *selected = TheInGameUI->getAllSelectedDrawables();
+	for (DrawableListCIt it = selected->begin(); it != selected->end(); ++it)
+	{
+		const Object *obj = *it ? (*it)->getObject() : nullptr;
+		if (!isGeneral(obj) || !obj->isLocallyControlled())
+			continue;
+		GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_ZHBO_TAKE_CONTROL);
+		msg->appendObjectIDArgument(obj->getID());
+		msg->appendIntegerArgument(choice);
+	}
 }
 
 const WideChar *Zhbo_FetchString(const char *label)

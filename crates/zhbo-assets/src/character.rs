@@ -33,7 +33,7 @@ pub struct Rig {
     pub anim_base: Vec<[f32; 3]>,
 }
 
-fn scaled(p: [f32; 3]) -> [f32; 3] {
+pub fn scaled(p: [f32; 3]) -> [f32; 3] {
     p.map(|c| c * SCALE)
 }
 
@@ -60,6 +60,15 @@ impl Rig {
     /// frame: BO2 attachments sit at an offset from the weapon.
     pub fn attach(&mut self, model: &Model, tag: usize, offset: Xf) {
         self.add_bones_at(model, Some(tag), offset);
+    }
+
+    /// Add a pivot with no mesh of its own: `name` under pivot `parent`, at `local` (scaled) in the
+    /// parent's frame. Zero Hour finds effect positions by bone (a gun's muzzle).
+    pub fn add_marker(&mut self, name: &str, parent: usize, local: Xf) {
+        self.pivots.push(Pivot { name: name.to_string(), parent: Some(parent), translation: local.1, rotation: local.0 });
+        self.bind.push(xf::compose(self.bind[parent], local));
+        self.names.push(name.to_string());
+        self.anim_base.push(local.1);
     }
 
     /// Put pivot `name` at `pos` (model space, scaled), keeping its rotation: an optic moves the

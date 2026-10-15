@@ -435,8 +435,6 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
 /// Zero Hour units always hit; per-shot RTS damage keeps BO2's ratios between weapons, scaled so a
 /// 40-damage rifle round (the AN-94's) hits for the 15 the General's rifle always had.
 const RTS_DAMAGE: f32 = 15.0 / 40.0;
-/// Explosives keep more of their BO2 punch (one grenade, thrown on purpose).
-const RTS_EXPLOSIVE: f32 = 0.75;
 
 /// The General's Zero Hour weapons under RTS control (`ZHBO_GeneralRifle`, `_Pistol`, `_Grenade`)
 /// with the loadout's BO2 numbers: (weapon, key, value) to set in `ZHBO_Weapons.ini`.
@@ -461,17 +459,8 @@ pub fn rts_weapon_edits(defs: &[WeaponDef]) -> Vec<(String, String, String)> {
         let key = id.replace(['+', '~'], "_");
         set(weapon, "FireSound", format!("ZHBO_BO2_FireNpc_{key}"));
     }
-    if let Some(g) = find(&l.lethal) {
-        let w = "ZHBO_GeneralGrenade";
-        set(w, "PrimaryDamage", format!("{:.1}", g.explosion_inner_damage * RTS_EXPLOSIVE));
-        set(w, "PrimaryDamageRadius", format!("{:.1}", g.explosion_radius_min.max(5.0)));
-        set(w, "SecondaryDamage", format!("{:.1}", g.explosion_outer_damage * RTS_EXPLOSIVE));
-        set(w, "SecondaryDamageRadius", format!("{:.1}", g.explosion_radius.max(10.0)));
-        if !g.explosion_fx.is_empty() {
-            set(w, "ProjectileDetonationFX", g.explosion_fx.clone());
-        }
-        set(w, "FireSound", zhbo_core::sounds::THROW.to_string());
-    }
+    // The third slot only stands in for the throw (zhbo-core throws the BO2 grenade).
+    set("ZHBO_GeneralGrenade", "FireSound", zhbo_core::sounds::THROW.to_string());
     out
 }
 

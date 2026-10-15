@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 12u
+#define ZHBO_ABI_VERSION 13u
 
 #ifdef __cplusplus
 extern "C" {
@@ -122,6 +122,7 @@ typedef struct ZhboClientIn
 	ZhboVec3 rts_cam_pos;
 	ZhboVec3 rts_cam_dir;
 	float rts_hfov; /* the RTS camera's horizontal field of view, radians */
+	ZhboVec3 rts_pivot; /* the point the RTS camera pivots on, on the ground */
 } ZhboClientIn;
 
 typedef struct ZhboClientOut
@@ -172,6 +173,7 @@ typedef struct ZhboWorldPose
 	uint32_t general;
 	int32_t weapon; /* viewmodel index of the weapon in hand */
 	int32_t tablet; /* 0 none, 1 coming up (MODELCONDITION_USER_1), 2 going down (USER_2) */
+	int32_t sidearm; /* the sidearm is in hand: pistol stance (MODELCONDITION_JAMMED) */
 } ZhboWorldPose;
 
 uint32_t zhbo_abi_version(void);
@@ -193,8 +195,12 @@ typedef struct ZhboRtsWeapons
 	int32_t ammo[3];    /* rounds in the magazine; grenades for the lethal */
 	int32_t reserve[3]; /* spare rounds */
 	int32_t lock;       /* slot to lock to, -1 none */
+	int32_t tactical;   /* tactical grenades left */
+	int32_t tactical_selected; /* the third slot throws the tactical (else the lethal) */
 } ZhboRtsWeapons;
-void zhbo_logic_rts_update(int32_t player, uint32_t general, int32_t current_slot, const uint32_t *shots, ZhboRtsWeapons *out);
+/* target: where the third slot's throw lands (the AI's victim or attack point), or null. */
+void zhbo_logic_rts_update(int32_t player, uint32_t general, int32_t current_slot, const uint32_t *shots, const ZhboVec3 *target, ZhboRtsWeapons *out);
+void zhbo_logic_rts_offhand(int32_t player, uint32_t general, int32_t tactical);
 void zhbo_client_rts_ammo(uint32_t general, ZhboRtsWeapons *out);
 int32_t zhbo_world_mesh_count(int32_t vm); /* -2: the tablet */
 int32_t zhbo_loadout_viewmodels(int32_t *out, int32_t cap); /* the General's kit's viewmodels */
@@ -205,10 +211,10 @@ int32_t zhbo_check_requirements(char *msg, uint32_t cap);
 
 static_assert(sizeof(ZhboObjInfo) == 56, "ZhboObjInfo layout must match host.rs");
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
-static_assert(sizeof(ZhboClientIn) == 320, "ZhboClientIn layout must match client.rs");
+static_assert(sizeof(ZhboClientIn) == 332, "ZhboClientIn layout must match client.rs");
 static_assert(sizeof(ZhboClientOut) == 132, "ZhboClientOut layout must match client.rs");
 static_assert(sizeof(ZhboLogicApi) == 17 * sizeof(void *), "ZhboLogicApi layout must match host.rs");
-static_assert(sizeof(ZhboWorldPose) == 12, "ZhboWorldPose layout must match ffi.rs");
-static_assert(sizeof(ZhboRtsWeapons) == 28, "ZhboRtsWeapons layout must match sim.rs");
+static_assert(sizeof(ZhboWorldPose) == 16, "ZhboWorldPose layout must match ffi.rs");
+static_assert(sizeof(ZhboRtsWeapons) == 36, "ZhboRtsWeapons layout must match sim.rs");
 static_assert(sizeof(ZhboClientApi) == 10 * sizeof(void *), "ZhboClientApi layout must match host.rs");
 #endif

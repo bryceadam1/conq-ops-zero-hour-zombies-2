@@ -283,10 +283,21 @@ void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)
 			frame = frames > 1.0f ? fmodf(frame, frames - 1.0f) : 0.0f;
 		else
 			frame = std::min(frame, std::max(frames - 1.0f, 0.0f));
-		s_model->Set_Animation(anim, frame, RenderObjClass::ANIM_MODE_MANUAL);
+		// Aiming: BO2 authors each weapon's ADS fire clip at the aimed pose (the sights on the line of
+		// sight), so its first frame is where the gun goes as the aim comes up. Every weapon has one,
+		// with or without a tag_sights bone (pistols, many rifles and launchers have none).
+		const int base = it->first >= ZHBO_VM_ALT_CLIPS ? ZHBO_VM_ALT_CLIPS : 0;
+		const int slot = it->first - base;
+		const Bool adsClip = slot == ZHBO_VM_SLOT_ADS_FIRE || slot == ZHBO_VM_SLOT_ADS_LASTSHOT;
+		std::map<int, HAnimClass *>::iterator aim = s_anims.find(base + ZHBO_VM_SLOT_ADS_FIRE);
+		if (ads > 0.0f && !adsClip && aim != s_anims.end() && (it->first < ZHBO_VM_TABLET_PULLOUT || it->first > ZHBO_VM_TABLET_PUTAWAY))
+			s_model->Set_Animation(anim, frame, aim->second, 0.0f, ads);
+		else
+			s_model->Set_Animation(anim, frame, RenderObjClass::ANIM_MODE_MANUAL);
 	}
 
-	// Aim down the sights: move the model so the sight bone is on the view axis.
+	// Aim down the sights: move the model so the sight bone is on the view axis. With the aimed
+	// pose above this is small for iron sights; an optic moves tag_sights up to its own window.
 	if (ads > 0.0f)
 	{
 		const int sights = s_model->Get_Bone_Index("tag_sights");

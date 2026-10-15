@@ -99,17 +99,58 @@ pub fn tablet_model(viewmodel: &str) -> String {
     viewmodel.replace("_SKN", "_TAB")
 }
 
-/// (W3D animation name, BO2 animation in common_mp).
-pub const ANIMS: &[(&str, &str)] = &[
-    ("ZHBO_PLR_IDL", "pb_stand_alert"),
-    ("ZHBO_PLR_RUN", "pb_combatrun_forward_loop"),
-    ("ZHBO_PLR_ADS", "pb_stand_ads"),
-    ("ZHBO_PLR_DTA", "pb_death_faceplant"),
-    ("ZHBO_PLR_DTB", "pb_death_flyback"),
+/// How a third-person clip is made from BO2's (all in common_mp). BO2 layers a player's torso
+/// animations (`pt_*`) over body animations (`pb_*`); Zero Hour plays one at a time.
+pub enum BodyClip {
+    /// One body animation as it is.
+    Body(&'static str),
+    /// A torso animation over a stance (its first frame) for the legs.
+    Torso(&'static str, &'static str),
+    /// A body animation's legs under a stance's upper body (its first frame).
+    Legs(&'static str, &'static str),
+}
+
+/// (W3D animation name, how it is made). The Draw module (`draw_module`) plays them by state.
+pub const ANIMS: &[(&str, BodyClip)] = &[
+    ("ZHBO_PLR_IDL", BodyClip::Body("pb_stand_alert")),
+    ("ZHBO_PLR_RUN", BodyClip::Body("pb_combatrun_forward_loop")),
+    ("ZHBO_PLR_ADS", BodyClip::Body("pb_stand_ads")),
+    ("ZHBO_PLR_FIR", BodyClip::Torso("pt_rifle_fire_ads", "pb_stand_ads")),
+    ("ZHBO_PLR_RLD", BodyClip::Torso("pt_reload_stand_rifle", "pb_stand_alert")),
+    // The sidearm: BO2's pistol stance, aim and reload, and the run's legs under the pistol stance.
+    ("ZHBO_PLR_PID", BodyClip::Body("pb_stand_alert_pistol")),
+    ("ZHBO_PLR_PRN", BodyClip::Legs("pb_combatrun_forward_loop", "pb_stand_alert_pistol")),
+    ("ZHBO_PLR_PAD", BodyClip::Body("pb_stand_ads_pistol")),
+    ("ZHBO_PLR_PRL", BodyClip::Torso("pt_reload_stand_pistol", "pb_stand_alert_pistol")),
+    // A grenade thrown (the lethal or the tactical).
+    ("ZHBO_PLR_THR", BodyClip::Torso("pt_grenade_stand_throw", "pb_stand_alert")),
+    ("ZHBO_PLR_DTA", BodyClip::Body("pb_death_faceplant")),
+    ("ZHBO_PLR_DTB", BodyClip::Body("pb_death_flyback")),
     // The scorestreak tablet coming up and going down (the field computer).
-    ("ZHBO_PLR_TBU", "pt_tablet_stand_raise"),
-    ("ZHBO_PLR_TBD", "pt_tablet_stand_putaway"),
+    ("ZHBO_PLR_TBU", BodyClip::Torso("pt_tablet_stand_raise", "pb_stand_alert")),
+    ("ZHBO_PLR_TBD", BodyClip::Torso("pt_tablet_stand_putaway", "pb_stand_alert")),
 ];
+
+/// BO2's leg and hip bones (`BodyClip::Legs` takes these from the moving animation).
+fn is_leg_bone(name: &str) -> bool {
+    ["mainroot", "hip", "knee", "ankle", "ball", "toe", "spinelower"].iter().any(|k| name.contains(k))
+}
+
+/// Build a clip from BO2's animations.
+fn body_clip(common: &Zone, c: &BodyClip) -> Result<xanim::Anim, String> {
+    let find = |n: &str| xanim::find(common, n).map_err(|e| e.to_string());
+    Ok(match c {
+        BodyClip::Body(n) => find(n)?,
+        BodyClip::Torso(torso, stance) => find(torso)?.layered_over(&find(stance)?),
+        BodyClip::Legs(legs, stance) => find(legs)?.legs_under(&find(stance)?, is_leg_bone),
+    })
+}
+
+/// The marker bone at converted weapon `vm`'s muzzle (`tag_flash`) on the soldier rig: where its
+/// shots and BO2 muzzle flash come from.
+pub fn flash_bone(vm: usize) -> String {
+    format!("ZF{vm:02}")
+}
 
 /// Third-person sub-objects on the soldier model: weapon `vm`'s meshes, and the tablet's (shared
 /// with `host/zhbo/ZhboBridge.cpp`).
@@ -124,6 +165,11 @@ const TABLET_WORLD: &str = "t6_wpn_tablet_world";
 const OPTIC_WINDOW: f32 = 0.72;
 /// BO2's smoke grenade cloud (its script plays it; the weapon names no effect).
 const SMOKE_EFFECT: &str = "weapon/grenade/fx_smoke_willy_pete";
+/// The overhead General's bullet impacts (see `ZhboBridge.cpp`, `loadRtsFx`).
+pub const RTS_FX_PATH: &str = "Data\\ConquerOps\\rts_fx.txt";
+/// The box a BO2 soldier is clicked by (inches: a man standing, with some room).
+const SOLDIER_BOX_CENTRE: [f32; 3] = [0.0, 0.0, 36.0];
+const SOLDIER_BOX_EXTENT: [f32; 3] = [18.0, 18.0, 38.0];
 /// The bone BO2's third-person tablet animations carry the tablet on.
 const TABLET_TAG: &str = "tag_inhand";
 
@@ -307,11 +353,31 @@ fn finish(meshes: &mut Vec<w3d::SkinMesh>, looks: &Looks) {
 /// bridge shows them (the weapons not in hand, the tablet); every condition state hides them, and
 /// the bridge's own show/hide wins over that (`ZhboBridge.cpp`). USER_1 raises the scorestreak
 /// tablet (the field computer), USER_2 puts it away.
-fn draw_module(model: &str, hidden: &[String]) -> String {
+fn draw_module(model: &str, hidden: &[String], guns: (usize, usize)) -> String {
     let a = |n: &str| format!("{HIERARCHY}.{n}");
     // Zero Hour reads INI lines of up to about a kilobyte; several HideSubObject lines add up.
     let hide: String = hidden.chunks(80).map(|c| format!("\x20     HideSubObject       = {}\n", c.join(" "))).collect();
-    format!(
+    // A state: the animation, how it plays, and the sub-objects hidden in it (every state must say,
+    // or the hidden weapons show).
+    let state = |conditions: &str, aliases: &[&str], anim: &str, mode: &str| {
+        let mut st = format!("\x20   {conditions}\n\x20     Animation           = {}\n\x20     AnimationMode       = {mode}\n", a(anim));
+        if mode == "LOOP" {
+            st.push_str("\x20     Flags               = RANDOMSTART\n");
+        }
+        if conditions.contains("MOVING") {
+            st.push_str("\x20     ParticleSysBone     = None InfantryDustTrails\n");
+        }
+        st.push_str(&hide);
+        st.push_str("\x20   End\n");
+        for alias in aliases {
+            st.push_str(&format!("\x20   AliasConditionState   = {alias}\n"));
+        }
+        st
+    };
+    // Zero Hour plays the state whose conditions match the most of the unit's, then the one with the
+    // fewest others, then the first: the grenade and the sidearm (JAMMED, set by ZhboBridge while it
+    // is in hand) come before the rifle so they win ties.
+    let mut d = format!(
         "  Draw = W3DModelDraw ModuleTag_01\n\
          \x20   OkToChangeModelColor = Yes\n\
          \x20   DefaultConditionState\n\
@@ -319,51 +385,50 @@ fn draw_module(model: &str, hidden: &[String]) -> String {
          \x20     Animation           = {idle}\n\
          \x20     AnimationMode       = LOOP\n\
          \x20     Flags               = RANDOMSTART\n\
-         \x20     WeaponFireFXBone    = PRIMARY tag_flash\n\
+         \x20     WeaponFireFXBone    = PRIMARY {primary}\n\
+         \x20     WeaponFireFXBone    = SECONDARY {secondary}\n\
          {hide}\
-         \x20   End\n\
-         \x20   ConditionState        = MOVING\n\
-         \x20     Animation           = {run}\n\
-         \x20     AnimationMode       = LOOP\n\
-         \x20     Flags               = RANDOMSTART\n\
-         \x20     ParticleSysBone     = None InfantryDustTrails\n\
-         {hide}\
-         \x20   End\n\
-         \x20   AliasConditionState   = MOVING FIRING_A\n\
-         \x20   AliasConditionState   = MOVING BETWEEN_FIRING_SHOTS_A\n\
-         \x20   AliasConditionState   = MOVING RELOADING_A\n\
-         \x20   ConditionState        = FIRING_A\n\
-         \x20     Animation           = {ads}\n\
-         \x20     AnimationMode       = LOOP\n\
-         {hide}\
-         \x20   End\n\
-         \x20   AliasConditionState   = BETWEEN_FIRING_SHOTS_A\n\
-         \x20   AliasConditionState   = RELOADING_A\n\
-         \x20   ConditionState        = USER_1\n\
-         \x20     Animation           = {tablet_up}\n\
-         \x20     AnimationMode       = ONCE\n\
-         {hide}\
-         \x20   End\n\
-         \x20   ConditionState        = USER_2\n\
-         \x20     Animation           = {tablet_down}\n\
-         \x20     AnimationMode       = ONCE\n\
-         {hide}\
-         \x20   End\n\
-         \x20   ConditionState        = DYING\n\
-         \x20     Animation           = {dta}\n\
-         \x20     Animation           = {dtb}\n\
-         \x20     AnimationMode       = ONCE\n\
-         {hide}\
-         \x20   End\n\
-         \x20 End\n",
+         \x20   End\n",
         idle = a("ZHBO_PLR_IDL"),
-        run = a("ZHBO_PLR_RUN"),
-        ads = a("ZHBO_PLR_ADS"),
-        dta = a("ZHBO_PLR_DTA"),
-        dtb = a("ZHBO_PLR_DTB"),
-        tablet_up = a("ZHBO_PLR_TBU"),
-        tablet_down = a("ZHBO_PLR_TBD"),
-    )
+        primary = flash_bone(guns.0),
+        secondary = flash_bone(guns.1),
+    );
+    d.push_str(&state("ConditionState        = DYING", &["DYING JAMMED", "DYING MOVING"], "ZHBO_PLR_DTA", "ONCE").replace(
+        &format!("Animation           = {}\n", a("ZHBO_PLR_DTA")),
+        &format!("Animation           = {}\n\x20     Animation           = {}\n", a("ZHBO_PLR_DTA"), a("ZHBO_PLR_DTB")),
+    ));
+    // A grenade: winding up and throwing are one animation.
+    d.push_str(&state(
+        "ConditionState        = PREATTACK_C",
+        &["FIRING_C", "BETWEEN_FIRING_SHOTS_C", "PREATTACK_C JAMMED", "FIRING_C JAMMED", "MOVING PREATTACK_C", "MOVING FIRING_C"],
+        "ZHBO_PLR_THR",
+        "ONCE",
+    ));
+    // The sidearm.
+    d.push_str(&state("ConditionState        = RELOADING_B", &["RELOADING_B JAMMED", "MOVING RELOADING_B JAMMED"], "ZHBO_PLR_PRL", "ONCE"));
+    d.push_str(&state(
+        "ConditionState        = FIRING_B",
+        &["BETWEEN_FIRING_SHOTS_B", "PREATTACK_B", "FIRING_B JAMMED", "BETWEEN_FIRING_SHOTS_B JAMMED", "PREATTACK_B JAMMED"],
+        "ZHBO_PLR_PAD",
+        "LOOP",
+    ));
+    d.push_str(&state("ConditionState        = MOVING JAMMED", &["MOVING JAMMED FIRING_B", "MOVING JAMMED BETWEEN_FIRING_SHOTS_B"], "ZHBO_PLR_PRN", "LOOP"));
+    d.push_str(&state("ConditionState        = JAMMED", &[], "ZHBO_PLR_PID", "LOOP"));
+    // The rifle.
+    d.push_str(&state("ConditionState        = RELOADING_A", &[], "ZHBO_PLR_RLD", "ONCE"));
+    d.push_str(&state("ConditionState        = FIRING_A", &[], "ZHBO_PLR_FIR", "ONCE"));
+    d.push_str(&state("ConditionState        = BETWEEN_FIRING_SHOTS_A", &["PREATTACK_A"], "ZHBO_PLR_ADS", "LOOP"));
+    d.push_str(&state(
+        "ConditionState        = MOVING",
+        &["MOVING FIRING_A", "MOVING BETWEEN_FIRING_SHOTS_A", "MOVING RELOADING_A"],
+        "ZHBO_PLR_RUN",
+        "LOOP",
+    ));
+    // The field computer's tablet.
+    d.push_str(&state("ConditionState        = USER_1", &[], "ZHBO_PLR_TBU", "ONCE"));
+    d.push_str(&state("ConditionState        = USER_2", &[], "ZHBO_PLR_TBD", "ONCE"));
+    d.push_str("\x20 End\n");
+    d
 }
 
 /// Set `key = value` in the `kind name` block of an INI text: the first line with that key in the
@@ -647,15 +712,19 @@ fn world_weapons(
     defs: &mut [zhbo_core::weapons::WeaponDef],
     converted: &[String],
     looks: &mut Looks,
-) -> Vec<w3d::SkinMesh> {
+) -> (Vec<w3d::SkinMesh>, Vec<(usize, crate::xf::Xf)>) {
     let hand = rig.pivot(character::WEAPON_TAG).unwrap_or(0);
     let mut meshes = Vec::new();
+    let mut flashes = Vec::new();
     for (vm, id) in converted.iter().enumerate() {
         let (base, shorts) = zhbo_core::attachments::split_id(id);
         let Some(w) = bo2.iter().find(|w| w.name == base) else { continue };
         let Some(world) = w.world_model.as_deref().and_then(|m| find_model(patch, common, m).ok()) else { continue };
         let c = combo(w, atts, &shorts);
         let prefix = format!("W{vm:02}");
+        if let Some(b) = world.bones.iter().find(|b| b.name == "tag_flash") {
+            flashes.push((vm, character::scaled_xf((b.rotation, b.position))));
+        }
         let tex = textures(&world, paks, out, looks);
         let mut mine = character::skin_rigid(&world, hand, crate::xf::IDENTITY, &prefix, 0, &tex, &c.hide);
         for (u, _) in &c.parts {
@@ -675,7 +744,7 @@ fn world_weapons(
         }
         meshes.extend(mine);
     }
-    meshes
+    (meshes, flashes)
 }
 
 /// Thrown and launched things for `converted` weapons: their BO2 projectile (or world) model as a
@@ -852,10 +921,17 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
 
     // The soldiers: body, every converted weapon in the right hand (one shown at a time), and the
     // tablet.
-    let rig = Rig::new(&xmodel::find(&zones[0], FACTIONS[0].body).map_err(|e| e.to_string())?, &[(&weapon, character::WEAPON_TAG)]);
+    let mut rig = Rig::new(&xmodel::find(&zones[0], FACTIONS[0].body).map_err(|e| e.to_string())?, &[(&weapon, character::WEAPON_TAG)]);
     let mut looks = Looks::default();
-    let held = world_weapons(&patch, &common, &paks, &mut out, &rig, &bo2, &atts, &mut table.weapons, &converted, &mut looks);
+    let (held, flashes) = world_weapons(&patch, &common, &paks, &mut out, &rig, &bo2, &atts, &mut table.weapons, &converted, &mut looks);
     let tablet = tablet_world(&patch, &common, &paks, &mut out, &rig, &mut looks);
+    // Each weapon's muzzle on the hand, so shots and flashes leave the gun in hand.
+    let hand = rig.pivot(character::WEAPON_TAG).unwrap_or(0);
+    for (vm, at) in &flashes {
+        rig.add_marker(&flash_bone(*vm), hand, *at);
+    }
+    let loadout_vm = |id: &str| converted.iter().position(|c| c == id).unwrap_or(0);
+    let guns = (loadout_vm(&zhbo_core::weapons::Loadout::default().primary), loadout_vm(&zhbo_core::weapons::Loadout::default().secondary));
     table.tablet_meshes = tablet.len() as u8;
     // Shown at first: the primary (viewmodel 0).
     let mut hidden: Vec<String> = held.iter().map(|m| m.name.clone()).filter(|n| !n.starts_with("W00")).collect();
@@ -868,8 +944,10 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
         finish(&mut meshes, &looks);
         meshes.extend(held.iter().cloned());
         meshes.extend(tablet.iter().cloned());
-        out.insert(format!("Art\\W3D\\{}.w3d", f.model), w3d::skin_model(f.model, HIERARCHY, &meshes));
-        ini = replace_draw(&ini, f.object, &draw_module(f.model, &hidden))?;
+        // A box around the standing soldier to click him by (his skin is unposed by the feet).
+        let pick = (character::scaled(SOLDIER_BOX_CENTRE), character::scaled(SOLDIER_BOX_EXTENT));
+        out.insert(format!("Art\\W3D\\{}.w3d", f.model), w3d::skin_model_with_box(f.model, HIERARCHY, &meshes, Some(pick)));
+        ini = replace_draw(&ini, f.object, &draw_module(f.model, &hidden, guns))?;
         summary.push(format!("{} = {} ({} meshes)", f.object, f.body, meshes.len()));
     }
     summary.push(format!("third person: {} weapon meshes, {} tablet meshes", held.len(), tablet.len()));
@@ -877,8 +955,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
         summary.push(format!("surfaces left out: {}", looks.dropped.iter().cloned().collect::<Vec<_>>().join(" ")));
     }
     out.insert(format!("Art\\W3D\\{HIERARCHY}.w3d"), rig.hierarchy_file(HIERARCHY));
-    for (w3d_name, bo2_name) in ANIMS {
-        let anim = xanim::find(&common, bo2_name).map_err(|e| e.to_string())?;
+    for (w3d_name, how) in ANIMS {
+        let anim = body_clip(&common, how)?;
         let (frames, channels) = character::animate(&rig, &anim);
         let fps = anim.frame_rate.round().max(1.0) as u32;
         out.insert(format!("Art\\W3D\\{w3d_name}.w3d"), w3d::animation(w3d_name, HIERARCHY, frames, fps, &channels));
@@ -896,8 +974,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
     // BO2 sound effects: the general ones, each converted weapon's own shots, and the viewmodel
     // clips' sound notetracks.
     let world = load_zone(bo2_dir, crate::sfx::WORLD_ZONE)?;
-    let (extra, fx_ini) = crate::weapons::sounds_and_fx(&bo2, &atts, &mut table.weapons, &converted);
-    out.insert("Data\\INI\\Weapon\\ZHBO_BO2_Weapons.ini".into(), fx_ini.into_bytes());
+    let (extra, mut fx_ini) = crate::weapons::sounds_and_fx(&bo2, &atts, &mut table.weapons, &converted);
     let (sound_files, sound_summary) = crate::sfx::files(&common, &world, bo2_dir, &clips, &extra)?;
     out.extend(sound_files);
     summary.push(sound_summary);
@@ -907,9 +984,14 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
     let mut effects = crate::fx::Converted::default();
     let mut ids: Vec<String> = converted.clone();
     ids.extend(table.weapons.iter().filter(|d| d.id.contains('~')).map(|d| d.id.clone()));
+    // Each gun's muzzle flash as others see it (BO2's `worldFlashEffect`), by weapon id.
+    let mut flashes: BTreeMap<String, String> = BTreeMap::new();
     for id in &ids {
         let Some(w) = bo2.iter().find(|w| w.name == base_id(id)) else { continue };
         let Some(d) = table.weapons.iter_mut().find(|d| &d.id == id) else { continue };
+        if let Some(f) = &w.world_flash_effect {
+            flashes.insert(id.clone(), effects.add(f, &|h| paks.image(h)));
+        }
         // BO2's smoke grenade plays its cloud from script: use it by name, for the screen's time.
         if d.effect == zhbo_core::weapons::Effect::Smoke {
             if let Some(e) = w.explosion_effect.clone().or_else(|| zhbo_formats::fx::find(&common, SMOKE_EFFECT)) {
@@ -927,6 +1009,27 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
             effects.add(&e, &|h| paks.image(h));
         }
     }
+    // The shots others see in first person flash as BO2's do (not Zero Hour's tracer).
+    for (id, flash) in &flashes {
+        if let Some(d) = table.weapons.iter().find(|d| &d.id == id && !d.fx_weapon.is_empty()) {
+            fx_ini = ini_set(&fx_ini, "Weapon", &d.fx_weapon, "FireFX", flash)?;
+        }
+    }
+    out.insert("Data\\INI\\Weapon\\ZHBO_BO2_Weapons.ini".into(), fx_ini.into_bytes());
+    // Under RTS control: the rifle's and pistol's BO2 hits on what they shoot, by what it is
+    // (ZhboBridge plays them as the shots land).
+    let loadout = zhbo_core::weapons::Loadout::default();
+    let mut rts_fx = String::from("; slot, then BO2's bullet impact on a soldier, a vehicle and anything else (FXLists)\n");
+    for (slot, id) in [(0, &loadout.primary), (1, &loadout.secondary)] {
+        let Some(w) = bo2.iter().find(|w| w.name == base_id(id)) else { continue };
+        let Some(entry) = zhbo_formats::fx::bullet_entry(w.impact_type) else { continue };
+        let mut add = |e: Option<zhbo_formats::fx::Effect>| e.map_or("NONE".to_string(), |e| effects.add(&e, &|h| paks.image(h)));
+        let flesh = add(zhbo_formats::fx::impact_flesh(&common, entry));
+        let metal = add(zhbo_formats::fx::impact(&common, entry, zhbo_formats::fx::surface::METAL));
+        let hard = add(zhbo_formats::fx::impact(&common, entry, zhbo_formats::fx::surface::CONCRETE));
+        rts_fx.push_str(&format!("{slot} {flesh} {metal} {hard}\n"));
+    }
+    out.insert(RTS_FX_PATH.into(), rts_fx.into_bytes());
     summary.push(format!("{} BO2 effects ({} textures)", effects.fxlists.matches("FXList ").count(), effects.textures.len()));
     out.insert("Data\\INI\\ParticleSystem\\ZHBO_BO2_Effects.ini".into(), effects.particles.clone().into_bytes());
     out.insert("Data\\INI\\FXList\\ZHBO_BO2_Effects.ini".into(), effects.fxlists.clone().into_bytes());
@@ -935,13 +1038,15 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
     // The General under RTS control fights with the loadout's rifle, pistol and lethal: their BO2
     // numbers on the Zero Hour weapons, and BO2's grenade model on the thrown one.
     if let Some(text) = out.get(crate::sfx::WEAPON_INI_PATH).map(|b| String::from_utf8_lossy(b).into_owned()) {
-        let rts = crate::weapons::rts_weapon_edits(&table.weapons);
+        let mut rts = crate::weapons::rts_weapon_edits(&table.weapons);
+        // BO2's muzzle flash, from the gun in hand (the Draw module's fire bones).
+        for (weapon, id) in [("ZHBO_GeneralRifle", &loadout.primary), ("ZHBO_GeneralPistol", &loadout.secondary)] {
+            if let Some(flash) = flashes.get(id) {
+                rts.push((weapon.to_string(), "FireFX".to_string(), flash.clone()));
+            }
+        }
         let text = rts.iter().try_fold(text, |t, (weapon, key, value)| ini_set(&t, "Weapon", weapon, key, value))?;
         out.insert(crate::sfx::WEAPON_INI_PATH.into(), text.into_bytes());
-    }
-    let lethal = zhbo_core::weapons::Loadout::default().lethal;
-    if let Some(model) = projectile_models.get(&lethal) {
-        ini = ini_set(&ini, "Object", "ZHBO_GeneralGrenadeShell", "Model", model)?;
     }
 
     out.insert(crate::weapons::TABLE_PATH.into(), zhbo_core::weapons::format_full_table(&table).into_bytes());
@@ -1129,7 +1234,8 @@ mod tests {
     #[test]
     fn replaces_only_the_named_draw_module() {
         for f in FACTIONS {
-            let out = replace_draw(BASE_INI, f.object, &draw_module(f.model, &["W0100".to_string()])).unwrap();
+            let out = replace_draw(BASE_INI, f.object, &draw_module(f.model, &["W0100".to_string()], (0, 1))).unwrap();
+            assert!(out.contains("WeaponFireFXBone    = PRIMARY ZF00") && out.contains("WeaponFireFXBone    = SECONDARY ZF01"));
             assert!(out.contains(&format!("Model               = {}", f.model)));
             // The rest of the object (weapons, body, locomotor) is untouched.
             assert_eq!(out.matches("Object ZHBO_General_").count(), 3);
@@ -1150,5 +1256,18 @@ mod tests {
         println!("{summary}");
         assert!(files.iter().any(|(p, _)| p == INI_PATH));
         assert!(files.iter().filter(|(p, _)| p.ends_with(".w3d")).count() >= 1 + FACTIONS.len() + ANIMS.len());
+        let text = |path: &str| files.iter().find(|(p, _)| p == path).map(|(_, b)| String::from_utf8_lossy(b).into_owned()).unwrap_or_default();
+        // The overhead General's BO2 hits (a soldier, a vehicle, anything else) for both guns.
+        let hits = text(RTS_FX_PATH);
+        for slot in ["0 ", "1 "] {
+            let line = hits.lines().find(|l| l.starts_with(slot)).unwrap_or_else(|| panic!("no impacts for slot {slot}: {hits}"));
+            assert!(line.split(' ').skip(1).all(|fx| fx.starts_with("ZHBO_BO2FX_")), "{line}");
+        }
+        // Its guns flash as BO2's do, from their own muzzles.
+        let weapons = text(crate::sfx::WEAPON_INI_PATH);
+        let rifle = &weapons[weapons.find("Weapon ZHBO_GeneralRifle").unwrap()..];
+        assert!(rifle[..rifle.find("\nEnd").unwrap()].contains("FireFX                  = ZHBO_BO2FX_") || rifle[..rifle.find("\nEnd").unwrap()].contains("FireFX = ZHBO_BO2FX_"), "{rifle}");
+        let draw = text(INI_PATH);
+        assert!(draw.contains("WeaponFireFXBone    = SECONDARY ZF01") && draw.contains("ZHBO_PLR_PRL"));
     }
 }

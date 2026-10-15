@@ -15,7 +15,7 @@ use zhbo_formats::iwi::Rgba;
 use zhbo_formats::t6zone::Zone;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive.
-pub const VERSION: u32 = 34;
+pub const VERSION: u32 = 35;
 pub const ARCHIVE_NAME: &str = "ConquerOps_BO2.big";
 pub const VERSION_FILE: &str = "Data\\ConquerOps\\bo2_hud_version.txt";
 const TEXTURE: &str = "zhbo_bo2_hud.tga";
@@ -208,7 +208,7 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     let l = zhbo_core::weapons::Loadout::default();
     let icon = |id: &str| found.iter().find(|(n, _)| *n == format!("ZHBO_BO2_Icon_{id}")).map(|(_, i)| i.clone());
     let mut tiles = Vec::new();
-    for (name, id) in [("ZHBO_Button_Primary", &l.primary), ("ZHBO_Button_Secondary", &l.secondary), ("ZHBO_Button_Lethal", &l.lethal)] {
+    for (name, id) in [("ZHBO_Button_Primary", &l.primary), ("ZHBO_Button_Secondary", &l.secondary), ("ZHBO_Button_Lethal", &l.lethal), ("ZHBO_Button_Tactical", &l.tactical)] {
         if let Some(img) = icon(id) {
             tiles.push((name.to_string(), button_tile(Some(&img), false)));
         }

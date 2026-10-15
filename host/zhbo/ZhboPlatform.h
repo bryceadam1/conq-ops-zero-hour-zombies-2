@@ -20,6 +20,9 @@ namespace zhbo_platform
 	void setMouseCapture(bool capture);
 	void mouseDelta(float &dx, float &dy);
 
+	// Whether the system cursor is over the game window's client area.
+	bool cursorOverWindow();
+
 	// Seconds, monotonic.
 	double now();
 

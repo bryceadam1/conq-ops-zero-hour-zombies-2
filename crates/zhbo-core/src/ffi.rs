@@ -37,16 +37,16 @@ fn publish_controlled(sim: &Sim) {
     }
 }
 
-pub const ABI_VERSION: u32 = 12;
+pub const ABI_VERSION: u32 = 13;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
 const _: () = {
     use std::mem::size_of;
     assert!(size_of::<crate::host::ObjInfo>() == 56);
     assert!(size_of::<FpsInput>() == 20);
-    assert!(size_of::<ClientIn>() == 320);
+    assert!(size_of::<ClientIn>() == 332);
     assert!(size_of::<ClientOut>() == 132);
-    assert!(size_of::<crate::sim::RtsWeapons>() == 28);
+    assert!(size_of::<crate::sim::RtsWeapons>() == 36);
     assert!(size_of::<LogicApi>() == 17 * size_of::<usize>());
     assert!(size_of::<ClientApi>() == 10 * size_of::<usize>());
 };
@@ -188,13 +188,28 @@ fn log_step(s: &State, first_new_event: usize, frame: u32) {
 /// # Safety
 /// `shots` must point to 3 values; `out` must be writable.
 #[no_mangle]
-pub unsafe extern "C" fn zhbo_logic_rts_update(player: i32, general: u32, current_slot: i32, shots: *const u32, out: *mut crate::sim::RtsWeapons) {
+pub unsafe extern "C" fn zhbo_logic_rts_update(
+    player: i32,
+    general: u32,
+    current_slot: i32,
+    shots: *const u32,
+    target: *const crate::math::Vec3,
+    out: *mut crate::sim::RtsWeapons,
+) {
     if shots.is_null() || out.is_null() {
         return;
     }
     let shots = [*shots, *shots.add(1), *shots.add(2)];
-    let r = with_state(|s| s.sim.rts_update(&s.logic, player, general, current_slot, shots)).unwrap_or_default();
+    let target = (!target.is_null()).then(|| *target);
+    let r = with_state(|s| s.sim.rts_update(&s.logic, player, general, current_slot, shots, target)).unwrap_or_default();
     *out = r;
+}
+
+/// Under RTS control: whether the General's third weapon slot throws the tactical (non-zero) or
+/// the lethal. Lockstep: from a game message.
+#[no_mangle]
+pub extern "C" fn zhbo_logic_rts_offhand(player: i32, general: u32, tactical: i32) {
+    with_state(|s| s.sim.rts_offhand(player, general, tactical != 0));
 }
 
 /// The ammo of a General's weapon slots, for the control bar.
@@ -218,6 +233,8 @@ pub struct WorldPose {
     pub weapon: i32,
     /// 0 no tablet, 1 tablet coming up (`USER_1`), 2 going down (`USER_2`).
     pub tablet: i32,
+    /// The sidearm (second gun) is in hand: the soldier holds it with BO2's pistol stance.
+    pub sidearm: i32,
 }
 
 /// Fill `out` with up to `cap` poses; returns how many.
@@ -231,8 +248,8 @@ pub unsafe extern "C" fn zhbo_client_world_poses(out: *mut WorldPose, cap: i32) 
     }
     let poses = with_state(|s| s.sim.world_poses()).unwrap_or_default();
     let n = poses.len().min(cap as usize);
-    for (i, (general, weapon, tablet)) in poses.into_iter().take(n).enumerate() {
-        *out.add(i) = WorldPose { general, weapon, tablet };
+    for (i, (general, weapon, tablet, sidearm)) in poses.into_iter().take(n).enumerate() {
+        *out.add(i) = WorldPose { general, weapon, tablet, sidearm: sidearm as i32 };
     }
     n as i32
 }

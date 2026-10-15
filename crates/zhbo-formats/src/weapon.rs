@@ -352,6 +352,8 @@ pub struct Weapon {
     /// effect for its `impactType` on dirt.
     pub explosion_effect: Option<crate::fx::Effect>,
     pub impact_type: u32,
+    /// The muzzle flash others see (`worldFlashEffect`).
+    pub world_flash_effect: Option<crate::fx::Effect>,
 }
 
 fn ms(z: &Zone, at: u32) -> f32 {
@@ -555,6 +557,8 @@ pub fn read(z: &Zone, v: u32) -> Weapon {
     w.pullback_sound_player = opt_str(z, d + WD::pullbackSoundPlayer);
     w.melee_swipe_sound_player = opt_str(z, d + WD::meleeSwipeSoundPlayer);
     w.impact_type = z.u32(d + WD::impactType);
+    let flash = z.u32(d + WD::worldFlashEffect);
+    w.world_flash_effect = (flash != 0).then(|| crate::fx::read(z, flash)).filter(|e| !e.elems.is_empty());
     let fx = z.u32(d + WD::projExplosionEffect);
     w.explosion_effect = (fx != 0).then(|| crate::fx::read(z, fx)).filter(|e| !e.elems.is_empty()).or_else(|| crate::fx::explosion_entry(w.impact_type).and_then(|e| crate::fx::impact(z, e, crate::fx::surface::DIRT)));
     w.hud_icon = named(z, d + WD::hudIcon);

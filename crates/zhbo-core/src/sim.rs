@@ -99,6 +99,10 @@ pub struct PlayerSim {
     /// Under RTS control: the Zero Hour weapon slot to lock to (the weapon that was in hand when
     /// first person ended, or one with ammo when the current one ran dry), or -1.
     pub rts_lock: i32,
+    /// Under RTS control: whether the third Zero Hour slot throws the tactical (else the lethal),
+    /// and the gun slot to go back to after a throw.
+    pub rts_tactical: bool,
+    pub rts_gun: i32,
 }
 
 impl PlayerSim {
@@ -123,6 +127,8 @@ impl PlayerSim {
             regen_wait: 0.0,
             hack: None,
             rts_lock: -1,
+            rts_tactical: false,
+            rts_gun: 0,
         }
     }
 }
@@ -230,6 +236,8 @@ impl Sim {
                     regen_wait: 0.0,
                     hack: None,
                     rts_lock: -1,
+                    rts_tactical: false,
+                    rts_gun: 0,
                 }
             }
         };
@@ -487,7 +495,7 @@ impl Sim {
     /// weapon the player selected (`current_slot`), and say which slot to lock to, if any. The
     /// arsenal is the same one first person uses, so ammo and the weapon in hand carry over both
     /// ways. Generals never taken control of get one here (in RTS mode).
-    pub fn rts_update(&mut self, host: &dyn LogicHost, player: i32, general: u32, current_slot: i32, shots: [u32; 3]) -> RtsWeapons {
+    pub fn rts_update(&mut self, host: &dyn LogicHost, player: i32, general: u32, current_slot: i32, shots: [u32; 3], target: Option<Vec3>) -> RtsWeapons {
         let Ok(idx) = usize::try_from(player) else { return RtsWeapons::default() };
         if idx >= MAX_PLAYERS {
             return RtsWeapons::default();
@@ -510,44 +518,84 @@ impl Sim {
                 regen_wait: 0.0,
                 hack: None,
                 rts_lock: -1,
+                rts_tactical: false,
+                rts_gun: 0,
             });
         }
         let Some(p) = self.players[idx].as_mut().filter(|p| p.general == general) else { return RtsWeapons::default() };
         if p.mode != Mode::Rts {
-            return rts_weapons(&p.arsenal, -1);
+            return rts_weapons(&p.arsenal, -1, p.rts_tactical);
         }
         let a = &mut p.arsenal;
-        for (slot, &n) in shots.iter().enumerate() {
+        for (slot, &n) in shots.iter().enumerate().take(2) {
             for _ in 0..n {
                 a.rts_shot(slot);
             }
+        }
+        // The third slot only stands in for the throw: the grenade itself is BO2's, thrown here as
+        // first person throws it (its fuse, bounces and blast), at what Zero Hour aimed at.
+        let mut throws = Vec::new();
+        for _ in 0..shots[2] {
+            let off = if p.rts_tactical { &mut a.tactical } else { &mut a.lethal };
+            if off.count > 0 {
+                off.count -= 1;
+                throws.push(off.def);
+            }
+        }
+        if (0..2).contains(&current_slot) {
+            p.rts_gun = current_slot;
         }
         if (0..a.weapons.len() as i32).contains(&current_slot) {
             a.active = current_slot as usize;
         }
         let mut lock = std::mem::replace(&mut p.rts_lock, -1);
+        if !throws.is_empty() {
+            lock = p.rts_gun; // back to the gun after the throw
+        }
         let a = &p.arsenal;
         let current = if lock >= 0 { lock } else { current_slot };
-        if (0..3).contains(&current) && a.rts_ammo(current as usize).0 + a.rts_ammo(current as usize).1 == 0 {
-            // Out of ammo: the first weapon that has some (the lethal only by choice).
+        let offhand_left = if p.rts_tactical { a.tactical.count } else { a.lethal.count };
+        let empty = |s: i32| if s == 2 { offhand_left == 0 } else { a.rts_ammo(s as usize).0 + a.rts_ammo(s as usize).1 == 0 };
+        if (0..3).contains(&current) && empty(current) {
+            // Out of ammo: the first gun that has some (the grenades only by choice).
             lock = (0..a.weapons.len()).find(|&s| a.rts_ammo(s).0 + a.rts_ammo(s).1 > 0).map_or(-1, |s| s as i32);
         }
-        rts_weapons(a, lock)
+        let out = rts_weapons(a, lock, p.rts_tactical);
+        if let Some(from) = host.object(general, general).map(|o| o.pos + Vec3::new(0.0, 0.0, p.body.eye_height * 0.9)) {
+            let yaw = p.yaw;
+            for def in throws {
+                let to = target.unwrap_or(from);
+                let speed = if def.projectile_speed > 0.0 { def.projectile_speed } else { crate::units::inches(800.0) };
+                let vel = throw_velocity(from, to, speed);
+                let mut proj = Projectile::launch(def, general, from, vel.normalized_or_zero(), def.fuse_time, host, yaw);
+                proj.vel = vel;
+                self.projectiles.push((idx, proj));
+            }
+        }
+        out
+    }
+
+    /// Under RTS control: make the third slot throw the tactical (`true`) or the lethal.
+    pub fn rts_offhand(&mut self, player: i32, general: u32, tactical: bool) {
+        let Some(p) = usize::try_from(player).ok().and_then(|i| self.players.get_mut(i)).and_then(|p| p.as_mut()) else { return };
+        if p.general == general {
+            p.rts_tactical = tactical;
+        }
     }
 
     /// The ammo a General's weapons have, for the control bar (the loadout's when the General has
     /// no arsenal yet).
     pub fn rts_ammo(&self, general: u32) -> RtsWeapons {
         match self.players.iter().flatten().find(|p| p.general == general) {
-            Some(p) => rts_weapons(&p.arsenal, -1),
-            None => rts_weapons(&Arsenal::new(), -1),
+            Some(p) => rts_weapons(&p.arsenal, -1, p.rts_tactical),
+            None => rts_weapons(&Arsenal::new(), -1, false),
         }
     }
 
     /// How each controlled General looks in third person: its General, the viewmodel index of the
-    /// weapon in hand (its world model is shown), and the tablet (0 none, 1 coming up for the field
-    /// computer, 2 going down as first person starts).
-    pub fn world_poses(&self) -> Vec<(u32, i32, i32)> {
+    /// weapon in hand (its world model is shown), the tablet (0 none, 1 coming up for the field
+    /// computer, 2 going down as first person starts), and whether the sidearm is in hand.
+    pub fn world_poses(&self) -> Vec<(u32, i32, i32, bool)> {
         self.players
             .iter()
             .flatten()
@@ -558,7 +606,7 @@ impl Sim {
                     Mode::Fps if a.raise_left > a.raise_total + 1e-4 => 2,
                     _ => 0,
                 };
-                (p.general, a.current().def.viewmodel.max(0), tablet)
+                (p.general, a.current().def.viewmodel.max(0), tablet, a.active == 1)
             })
             .collect()
     }
@@ -764,16 +812,34 @@ pub struct RtsWeapons {
     pub ammo: [i32; 3],
     pub reserve: [i32; 3],
     pub lock: i32,
+    /// Tactical grenades left, and whether the third slot throws them (else the lethal).
+    pub tactical: i32,
+    pub tactical_selected: i32,
 }
 
-fn rts_weapons(a: &Arsenal, lock: i32) -> RtsWeapons {
-    let mut out = RtsWeapons { lock, ..Default::default() };
+fn rts_weapons(a: &Arsenal, lock: i32, tactical_selected: bool) -> RtsWeapons {
+    let mut out = RtsWeapons { lock, tactical: a.tactical.count as i32, tactical_selected: tactical_selected as i32, ..Default::default() };
     for s in 0..3 {
         let (ammo, reserve) = a.rts_ammo(s);
         out.ammo[s] = ammo as i32;
         out.reserve[s] = reserve as i32;
     }
     out
+}
+
+/// Launch velocity for a grenade of throw speed `speed` from `from` to land at `to` (the low arc;
+/// out of reach, the farthest throw, at 45 degrees).
+pub fn throw_velocity(from: Vec3, to: Vec3, speed: f32) -> Vec3 {
+    let g = crate::projectiles::GRAVITY;
+    let flat = Vec3::new(to.x - from.x, to.y - from.y, 0.0);
+    let range = flat.length_xy().max(1.0);
+    let rise = to.z - from.z;
+    let v2 = speed * speed;
+    let disc = v2 * v2 - g * (g * range * range + 2.0 * rise * v2);
+    let tan = if disc >= 0.0 { (v2 - disc.sqrt()) / (g * range) } else { 1.0 };
+    let angle = tan.atan();
+    let along = flat.normalized_or_zero();
+    along * (speed * angle.cos()) + Vec3::new(0.0, 0.0, speed * angle.sin())
 }
 
 /// Planted equipment goes down this far in front of the General.
@@ -1126,17 +1192,19 @@ pub(crate) mod tests {
         let mut sim = Sim::new();
         let full = sim.rts_ammo(1);
         // Zero Hour fires the rifle: one round a shot, the clip refilled from the spare rounds.
-        let r = sim.rts_update(&host, 0, 1, 0, [1, 0, 0]);
+        let r = sim.rts_update(&host, 0, 1, 0, [1, 0, 0], None);
         assert_eq!((r.ammo[0], r.reserve[0]), (full.ammo[0] - 1, full.reserve[0]));
         assert_eq!(r.lock, -1);
         // Empty the rifle completely: the General is moved to the pistol.
         let rounds = (full.ammo[0] + full.reserve[0]) as u32;
-        let r = sim.rts_update(&host, 0, 1, 0, [rounds, 0, 0]);
+        let r = sim.rts_update(&host, 0, 1, 0, [rounds, 0, 0], None);
         assert_eq!(r.ammo[0] + r.reserve[0], 0);
         assert_eq!(r.lock, 1, "to the pistol");
-        // The player picks the pistol; a thrown grenade is one fewer.
-        let r = sim.rts_update(&host, 0, 1, 1, [0, 1, 1]);
+        // The player picks the pistol; a thrown grenade is one fewer, and he goes back to the pistol.
+        let r = sim.rts_update(&host, 0, 1, 1, [0, 1, 1], Some(Vec3::new(200.0, 0.0, 0.0)));
         assert_eq!(r.ammo[2], full.ammo[2] - 1);
+        assert_eq!(r.lock, 1, "back to the gun after the throw");
+        assert_eq!(sim.projectiles.len(), 1, "a BO2 grenade, thrown as in first person");
         // Taking control keeps the ammo and the weapon in hand.
         sim.take_control(&host, 0, 1);
         let p = sim.player(0).unwrap();
@@ -1145,8 +1213,30 @@ pub(crate) mod tests {
         assert_eq!(p.arsenal.weapons[0].ammo + p.arsenal.weapons[0].reserve, 0);
         // While in first person nothing is counted.
         let before = sim.rts_ammo(1);
-        sim.rts_update(&host, 0, 1, 0, [5, 5, 1]);
+        sim.rts_update(&host, 0, 1, 0, [5, 5, 1], None);
         assert_eq!(sim.rts_ammo(1), before);
+    }
+
+    #[test]
+    fn rts_throws_land_near_the_target_and_can_be_tacticals() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let full = sim.rts_ammo(1);
+        sim.rts_update(&host, 0, 1, 0, [0, 0, 0], None);
+        sim.rts_offhand(0, 1, true);
+        let r = sim.rts_update(&host, 0, 1, 2, [0, 0, 1], Some(Vec3::new(150.0, 40.0, 0.0)));
+        assert_eq!((r.tactical, r.ammo[2], r.tactical_selected), (full.tactical - 1, full.ammo[2], 1), "the tactical, not the lethal");
+        let (_, proj) = &sim.projectiles[0];
+        assert_eq!(proj.def.class, crate::weapons::Class::Tactical);
+        // The arc comes down by the target.
+        let mut p = proj.pos;
+        let mut v = proj.vel;
+        while v.z > 0.0 || p.z > 0.0 {
+            v.z -= crate::projectiles::GRAVITY * LOGIC_DT;
+            p = p + v * LOGIC_DT;
+        }
+        assert!((Vec3::new(p.x, p.y, 0.0) - Vec3::new(150.0, 40.0, 0.0)).length() < 8.0, "lands at {p:?}");
     }
 
     #[test]
@@ -1159,8 +1249,8 @@ pub(crate) mod tests {
         run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::FIELD_COMPUTER, ..Default::default() }, 1);
         run(&mut sim, &host, 0, 1, FpsInput::default(), frames(FIELD_COMPUTER_RAISE));
         assert_eq!(sim.player(0).unwrap().mode, Mode::Rts);
-        assert_eq!(sim.rts_update(&host, 0, 1, 0, [0, 0, 0]).lock, 1, "the pistol, which was in hand");
-        assert_eq!(sim.rts_update(&host, 0, 1, 1, [0, 0, 0]).lock, -1, "once");
+        assert_eq!(sim.rts_update(&host, 0, 1, 0, [0, 0, 0], None).lock, 1, "the pistol, which was in hand");
+        assert_eq!(sim.rts_update(&host, 0, 1, 1, [0, 0, 0], None).lock, -1, "once");
     }
 
     #[test]

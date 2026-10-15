@@ -281,6 +281,43 @@ pub fn nlerp(a: [f32; 4], b: [f32; 4], t: f32) -> [f32; 4] {
     q.map(|c| c / len)
 }
 
+impl Anim {
+    /// BO2 plays a player's torso animations (`pt_*`: reload, throw, fire) over a body animation
+    /// (`pb_*`: the stance and the legs). This is `self` (the torso layer) over `base` held at its
+    /// first frame, as one animation: `self`'s bones as they are, every other bone `base`'s pose.
+    pub fn layered_over(&self, base: &Anim) -> Anim {
+        let mut out = self.clone();
+        for b in &base.bones {
+            if out.bones.iter().any(|o| o.name == b.name) {
+                continue;
+            }
+            out.bones.push(BoneTrack {
+                name: b.name.clone(),
+                rotation: b.rotation_at(0.0).map(|r| vec![(0, r)]),
+                translation: b.translation_at(0.0).map(|t| vec![(0, t)]),
+            });
+        }
+        out
+    }
+}
+
+impl Anim {
+    /// `self`'s legs and hips (bones `is_lower` picks), animated, under `stance`'s upper body held
+    /// at its first frame: BO2 runs with a pistol on the rifle run's legs.
+    pub fn legs_under(&self, stance: &Anim, is_lower: impl Fn(&str) -> bool) -> Anim {
+        let mut out = self.clone();
+        out.bones.retain(|b| is_lower(&b.name));
+        for b in stance.bones.iter().filter(|b| !is_lower(&b.name)) {
+            out.bones.push(BoneTrack {
+                name: b.name.clone(),
+                rotation: b.rotation_at(0.0).map(|r| vec![(0, r)]),
+                translation: b.translation_at(0.0).map(|t| vec![(0, t)]),
+            });
+        }
+        out
+    }
+}
+
 impl BoneTrack {
     /// Local rotation at `frame` (fractional), if this bone's rotation is animated.
     pub fn rotation_at(&self, frame: f32) -> Option<[f32; 4]> {
@@ -295,6 +332,18 @@ impl BoneTrack {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn torso_layer_keeps_its_bones_and_takes_the_rest_from_the_stance() {
+        let track = |name: &str, x: f32| BoneTrack { name: name.into(), rotation: None, translation: Some(vec![(0, [x, 0.0, 0.0]), (10, [x + 1.0, 0.0, 0.0])]) };
+        let anim = |bones| Anim { name: String::new(), num_frames: 10, frame_rate: 30.0, looping: false, bones, notifies: Vec::new() };
+        let torso = anim(vec![track("j_spine4", 5.0)]);
+        let stance = anim(vec![track("j_spine4", 1.0), track("j_knee_le", 2.0)]);
+        let both = torso.layered_over(&stance);
+        assert_eq!(both.bones.len(), 2);
+        assert_eq!(both.bones[0].translation_at(10.0), Some([6.0, 0.0, 0.0]), "the torso layer's own bone");
+        assert_eq!(both.bones[1].translation_at(10.0), Some([2.0, 0.0, 0.0]), "the stance's first frame for the rest");
+    }
 
     #[test]
     fn samples_keyframes() {

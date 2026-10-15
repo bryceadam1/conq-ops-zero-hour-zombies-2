@@ -356,6 +356,28 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     `BO2_NORMAL_Y` flips the normal map's green if bumps ever look lit from below. `ZHBO_BO2_DEBUG`
     shows one term: -1 BO2 shading off (A/B), 1 flat normals, 2 normals, 3 diffuse light, 4
     specular, 5 reflection.
+75. Leaving first person flies back to the overhead camera as first person found it (its offset from
+    its pivot, `ClientIn::rts_pivot`, ABI 13), not to what the view reports then (the first-person
+    camera). The engine patch no longer resets the zoom and pitch to their defaults afterwards.
+76. After relative mouse mode macOS keeps the cursor "outside" (no edge scroll, no selection) until
+    a click: the cursor is warped to where it is, and for 3 s Zero Hour's mouse is told it is inside
+    and recaptured whenever the system cursor is over the window (`reclaimMouse`).
+77. The overhead General: a forced switch to the pistol re-issues the attack (Zero Hour drops one
+    out of the new weapon's range); the third slot is only the throw (`ZHBO_GeneralGrenade`), and
+    zhbo-core throws the BO2 lethal or tactical at the AI's target (`Sim::rts_update`), as first
+    person does. The Lethal and Tactical buttons share it; patch 0010 tells the bridge which was
+    pressed (MSG_ZHBO_TAKE_CONTROL with an action), patch 0006 lights only the chosen one.
+78. The soldier model: BO2's torso animations (`pt_*`) layered over stances (`pb_*`) for reloads,
+    throws and aimed fire, the pistol stance (JAMMED, set by the bridge while the sidearm is in hand;
+    only missiles use it otherwise), a marker bone per gun at its `tag_flash` (`ZF<vm>`) for its
+    shots and BO2 world muzzle flash, and a `BOUNDINGBOX` to click (skins ray-test unposed, by the
+    feet). BO2 bullet impacts play on what he hits (`rts_fx.txt`: flesh, metal, other).
+79. Sorted (translucent) draws replay from the render state captured at insert; bgfx's
+    `Set_Index_Buffer_Index_Offset` did not update it (patch 0011), so every translucent mesh in a
+    shared vertex buffer read another mesh's vertices: streaks from the Reflex glass to the watch.
+80. Aiming: the viewmodel blends toward the first frame of the weapon's ADS fire clip (BO2's aimed
+    pose; most BO2 viewmodels, all pistols among them, have no `tag_sights`), then `tag_sights`
+    corrects for optics.
 
 ## Verification log
 

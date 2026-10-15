@@ -207,7 +207,7 @@ index 1ee5828..1783c7e 100644
  #include <stdlib.h>
  #include <windows.h>
  
-@@ -1678,8 +1679,40 @@ void W3DView::update()
+@@ -1678,8 +1679,39 @@ void W3DView::update()
  		updateCameraAreaConstraints();
  	}
  
@@ -236,9 +236,8 @@ index 1ee5828..1783c7e 100644
 +	{
 +		s_zhboCameraWasOverridden = false;
 +		setWidth(getWidth()); // restores the RTS field of view
-+		// The override moved the pivot up to eye height; put the RTS camera back on the ground at its defaults.
-+		setPitchToDefault();
-+		setZoomToDefault();
++		// The override moved the pivot up to eye height; put it back on the ground. The pitch and
++		// zoom are the player's, as first person found them (the transition back ends there).
 +		resetPivotToGround();
 +		m_recalcCamera = true;
 +	}

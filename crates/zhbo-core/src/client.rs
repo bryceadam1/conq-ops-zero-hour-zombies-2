@@ -146,6 +146,8 @@ pub struct ClientIn {
     pub rts_cam_dir: Vec3,
     /// The RTS camera's horizontal field of view (radians).
     pub rts_hfov: f32,
+    /// The point the RTS camera pivots on (on the ground; the camera sits at an offset from it).
+    pub rts_pivot: Vec3,
 }
 
 impl Default for ClientIn {
@@ -164,6 +166,7 @@ impl Default for ClientIn {
             rts_cam_pos: Vec3::new(0.0, -200.0, 300.0),
             rts_cam_dir: Vec3::new(0.0, 0.6, -0.8),
             rts_hfov: 0.87,
+            rts_pivot: Vec3::new(0.0, 0.0, 0.0),
         }
     }
 }
@@ -399,6 +402,10 @@ pub struct Client {
     seen_frame: u32,
     since_logic: f32,
     pub last_hfov: f32,
+    /// The overhead camera as first person found it: its offset from its pivot, its direction and
+    /// field of view. Leaving flies back to it, centred on the General (while first person owns the
+    /// camera, the view reports the first-person camera, not the overhead one).
+    overhead: Option<(Vec3, Vec3, f32)>,
     /// The first-person camera this frame (for HUD marks over the world).
     pub view_eye: Vec3,
     pub view_dir: Vec3,
@@ -434,6 +441,7 @@ impl Client {
             seen_frame: 0,
             since_logic: 0.0,
             last_hfov: 1.0,
+            overhead: None,
             view_eye: Vec3::ZERO,
             view_dir: Vec3::new(1.0, 0.0, 0.0),
             vm: Viewmodel::default(),
@@ -643,6 +651,7 @@ impl Client {
         self.prev_held = u32::MAX; // ignore keys already held when entering (e.g. the click itself)
         let from_dir = if inp.rts_cam_dir.length() > 0.5 { inp.rts_cam_dir } else { Vec3::new(0.0, 0.6, -0.8) };
         let from_hfov = if inp.rts_hfov > 0.05 { inp.rts_hfov } else { self.last_hfov };
+        self.overhead = Some((inp.rts_cam_pos - inp.rts_pivot, from_dir.normalized_or_zero(), from_hfov));
         self.view = ViewMode::Entering { t: 0.0, from_pos: inp.rts_cam_pos, from_dir: from_dir.normalized_or_zero(), from_hfov };
     }
 
@@ -764,13 +773,16 @@ impl Client {
     fn begin_leaving(&mut self, inp: &ClientIn, target: Vec3) {
         let from_pos = self.eye_curr;
         let from_dir = dir_from_angles(self.yaw, self.pitch);
-        // Where the overhead camera will be once centred on the General: its angle, height and
-        // zoom are its own, only its look-at point moves to the General.
-        let dir = if inp.rts_cam_dir.length() > 0.5 { inp.rts_cam_dir.normalized_or_zero() } else { Vec3::new(0.0, 0.6, -0.8) };
-        let down = (-dir.z).max(0.2);
-        let along = ((inp.rts_cam_pos.z - target.z) / down).clamp(50.0, 2000.0);
-        let to_pos = target - dir * along;
-        let to_hfov = if inp.rts_hfov > 0.05 { inp.rts_hfov } else { self.last_hfov };
+        // Where the overhead camera will be once centred on the General: as it was when first
+        // person started (its angle, height and zoom), only its pivot moved to the General.
+        let (to_pos, dir, to_hfov) = match self.overhead {
+            Some((offset, dir, hfov)) => (target + offset, dir, hfov),
+            None => {
+                let dir = if inp.rts_cam_dir.length() > 0.5 { inp.rts_cam_dir.normalized_or_zero() } else { Vec3::new(0.0, 0.6, -0.8) };
+                let to_hfov = if inp.rts_hfov > 0.05 { inp.rts_hfov } else { self.last_hfov };
+                (target - dir * 400.0, dir, to_hfov)
+            }
+        };
         self.view = ViewMode::Leaving { t: 0.0, from_pos, from_dir, from_hfov: self.last_hfov, target, to_pos, to_dir: dir, to_hfov };
         self.last_sent_frame = None;
     }
@@ -921,6 +933,13 @@ mod tests {
                 break;
             }
         }
+        // While first person owns the camera the view reports the first-person camera, not the
+        // overhead one: leaving must not aim for that.
+        let overhead_pos = inp.rts_cam_pos;
+        inp.rts_cam_pos = client.view_eye;
+        inp.rts_cam_dir = client.view_dir;
+        inp.rts_hfov = 1.3;
+        inp.rts_pivot = client.view_eye + client.view_dir * 100.0;
         // Leave through the field computer.
         inp.keys[vk::F as usize] = 0x80;
         frame_with(&mut client, &mut sim, &host, &mut inp, 2);
@@ -946,11 +965,17 @@ mod tests {
         check(&outs, "entering");
         check(&leaving, "leaving");
         let first = outs[0];
-        assert!((first.eye - inp.rts_cam_pos).length() < 15.0 && first.dir.dot(rts_dir) > 0.97, "starts at the overhead camera");
+        assert!((first.eye - overhead_pos).length() < 15.0 && first.dir.dot(rts_dir) > 0.97, "starts at the overhead camera");
         assert!((first.hfov - 0.8).abs() < 0.05);
         let last = leaving.last().unwrap();
         assert!(last.dir.dot(rts_dir) > 0.995, "ends looking the overhead camera's way: {:?}", last.dir);
         assert!((last.hfov - 0.8).abs() < 0.02, "ends at the overhead field of view: {}", last.hfov);
+        // The overhead camera pivoted on the origin when first person started; it comes back at the
+        // same offset from the General (who has not moved), so nothing snaps when it takes over.
+        let ViewMode::Rts = client.view else { panic!("not back overhead") };
+        let general_at = host.objects.borrow().iter().find(|o| o.id == 1).unwrap().pos;
+        let expected = general_at + overhead_pos;
+        assert!((last.eye - expected).length() < 8.0, "ends where the overhead camera will be: {:?} vs {:?}", last.eye, expected);
     }
 
     #[test]
