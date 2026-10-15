@@ -93,9 +93,8 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
     match std::env::var("ZHBO_AUTOPILOT").ok().as_deref() {
         None => {}
         Some("manual") => state.logic.log("autopilot scene enabled, manual input (ZHBO_AUTOPILOT=manual)"),
-        Some(_) => {
-            state.client.autopilot = Some(crate::client::Autopilot::default());
-            state.sim.grant_streaks = true;
+        Some(mode) => {
+            state.client.autopilot = Some(crate::client::Autopilot { equipment: mode == "equipment", ..Default::default() });
             state.logic.log("autopilot enabled (ZHBO_AUTOPILOT)");
         }
     }
@@ -163,8 +162,6 @@ fn log_step(s: &State, first_new_event: usize, frame: u32) {
             EventKind::DestroyedEquipment => format!("player {} destroyed enemy equipment", e.player),
             EventKind::Hacked => format!("player {} hacked with the Black Hat", e.player),
             EventKind::AltToggled => format!("player {} toggled the weapon's alt mode", e.player),
-            EventKind::StreakEarned { streak } => format!("player {} earned a scorestreak: {}", e.player, streak.name()),
-            EventKind::StreakUsed { streak } => format!("player {} used a scorestreak: {}", e.player, streak.name()),
             _ => continue,
         };
         s.logic.log(&line);

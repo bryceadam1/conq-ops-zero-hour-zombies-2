@@ -79,13 +79,7 @@ pub const SFX: &[Sfx] = &[
     Sfx { event: "ZHBO_BO2_FireNpc", from: From::Common, layers: &["wpn_an94_fire_npc", "wpn_an94_fire_npc_decay"], kind: Kind::Others, limit: 3 },
     Sfx { event: "ZHBO_BO2_FirePistolNpc", from: From::Common, layers: &["wpn_beretta93r_fire_npc", "wpn_beretta93r_fire_npc_decay"], kind: Kind::Others, limit: 3 },
     Sfx { event: "ZHBO_BO2_FireRts", from: From::Common, layers: &["wpn_an94_fire_npc", "wpn_an94_fire_npc_decay"], kind: Kind::World, limit: 3 },
-    // Scorestreaks earned (each streak's own sting), the UAV coming online, equipment planted, and
-    // the C4 detonator.
-    Sfx { event: "ZHBO_BO2_Streak_RADAR", from: From::Common, layers: &["mpl_killstreak_radar"], kind: Kind::Player, limit: 1 },
-    Sfx { event: "ZHBO_BO2_Streak_AUTO_TURRET", from: From::Common, layers: &["mpl_killstreak_auto_turret"], kind: Kind::Player, limit: 1 },
-    Sfx { event: "ZHBO_BO2_Streak_MINIGUN", from: From::Common, layers: &["mpl_killstreak_minigun"], kind: Kind::Player, limit: 1 },
-    Sfx { event: "ZHBO_BO2_Streak_M32", from: From::Common, layers: &["mpl_killstreak_generic"], kind: Kind::Player, limit: 1 },
-    Sfx { event: "ZHBO_BO2_UavOnline", from: From::Common, layers: &["mpl_killstreak_uav"], kind: Kind::Player, limit: 1 },
+    // Equipment planted, and the C4 detonator.
     Sfx { event: "ZHBO_BO2_Plant", from: From::Common, layers: &["fly_claymore_plant_plr"], kind: Kind::Player, limit: 1 },
     Sfx { event: "ZHBO_BO2_Detonate", from: From::Common, layers: &["wpn_c4detpack_trigger_plr"], kind: Kind::Player, limit: 1 },
 ];

@@ -957,7 +957,7 @@ End
 // ------------------------------------------------------------------------------------------------
 
 /// BO2's multiplayer perks (Pick 10). Effects that need systems Conquer Ops does not have yet
-/// (scorestreaks, UAV, targeting) are carried but do nothing.
+/// (UAV, targeting, AI support) are carried but do nothing.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Perk {
     // Tier 1
@@ -1050,14 +1050,11 @@ pub struct Loadout {
     pub tactical: String,
     pub melee: String,
     pub perks: Vec<Perk>,
-    /// Scorestreaks, earned at their cost in points.
-    pub streaks: Vec<crate::streaks::Streak>,
 }
 
 impl Default for Loadout {
     /// The General's kit: the AN-94 with a Reflex sight and a Grenade Launcher, the Tac-45, a frag,
-    /// a concussion, the knife; Lightweight, Fast Hands and Dexterity; UAV, Sentry Gun and Death
-    /// Machine. `ZHBO_LOADOUT` changes it (see [`Loadout::with_spec`]).
+    /// a concussion, the knife; Lightweight, Fast Hands and Dexterity. `ZHBO_LOADOUT` changes it (see [`Loadout::with_spec`]).
     fn default() -> Self {
         let l = Loadout {
             primary: "an94_mp+gl+reflex".into(),
@@ -1066,7 +1063,6 @@ impl Default for Loadout {
             tactical: "concussion_grenade_mp".into(),
             melee: "knife_held_mp".into(),
             perks: vec![Perk::Lightweight, Perk::FastHands, Perk::Dexterity],
-            streaks: vec![crate::streaks::Streak::Uav, crate::streaks::Streak::SentryGun, crate::streaks::Streak::DeathMachine],
         };
         match std::env::var("ZHBO_LOADOUT") {
             Ok(spec) => l.with_spec(&spec),
@@ -1077,7 +1073,7 @@ impl Default for Loadout {
 
 impl Loadout {
     /// Change slots from a spec like `lethal=claymore_mp;tactical=trophy_system_mp;primary=
-    /// dsr50_mp+acog;perks=Hardline,Engineer;streaks=Uav,WarMachine`. For trying other kits (and
+    /// dsr50_mp+acog;perks=Hardline,Engineer`. For trying other kits (and
     /// test runs): the converter reads the same variable so their art is converted, and every
     /// player in a game must use the same one.
     pub fn with_spec(mut self, spec: &str) -> Loadout {
@@ -1091,9 +1087,6 @@ impl Loadout {
                 "tactical" => self.tactical = value,
                 "melee" => self.melee = value,
                 "perks" => self.perks = value.split(',').filter_map(|p| Perk::ALL.into_iter().find(|k| format!("{k:?}") == p.trim())).collect(),
-                "streaks" => {
-                    self.streaks = value.split(',').filter_map(|p| crate::streaks::Streak::ALL.into_iter().find(|k| format!("{k:?}") == p.trim())).collect()
-                }
                 _ => {}
             }
         }
@@ -1177,8 +1170,6 @@ pub struct WeaponState {
     pub alt_reserve: u16,
     /// Shots in the current string of fire (the grip's recoil reduction builds over it).
     pub string: u16,
-    /// A scorestreak weapon: gone when its ammo is.
-    pub streak: bool,
 }
 
 impl WeaponState {
@@ -1197,7 +1188,6 @@ impl WeaponState {
             alt_ammo: 0,
             alt_reserve: 0,
             string: 0,
-            streak: false,
         }
         .with_alt_ammo()
     }
@@ -1531,43 +1521,9 @@ impl Arsenal {
         self.raise_kind = RaiseKind::Alt;
     }
 
-    /// A handheld scorestreak (Death Machine, War Machine): carried as an extra weapon and raised
-    /// at once; using the same streak again refills it.
-    pub fn give_streak_weapon(&mut self, def: &'static WeaponDef) {
-        if let Some(i) = self.weapons.iter().position(|w| w.streak && w.def.id == def.id) {
-            self.weapons[i].ammo = def.clip;
-            self.weapons[i].reserve = def.start_reserve;
-            if i != self.active {
-                self.switch_to(i);
-            }
-            return;
-        }
-        let mut w = WeaponState::new(def);
-        w.streak = true;
-        self.weapons.push(w);
-        let i = self.weapons.len() - 1;
-        self.switch_to(i);
-    }
-
-    /// An empty scorestreak weapon is dropped, and the primary comes up.
-    fn drop_spent_streak_weapon(&mut self, out: &mut Vec<WeaponAction>) {
-        let w = self.current();
-        if w.streak && w.ammo == 0 && w.reserve == 0 && !w.is_reloading() && w.cooldown <= 0.0 {
-            let i = self.active;
-            self.weapons.remove(i);
-            self.active = 0;
-            self.previous = 0;
-            self.drop_left = 0.0;
-            let d = self.current().def;
-            (self.raise_left, self.raise_kind) = if self.has(Perk::FastHands) { (d.quick_raise_time, RaiseKind::Quick) } else { (d.raise_time, RaiseKind::Normal) };
-            self.raise_total = self.raise_left;
-            out.push(WeaponAction::Swapped);
-        }
-    }
-
     /// Give a magazine (Scavenger) to every gun.
     pub fn scavenge(&mut self) {
-        for w in self.weapons.iter_mut().filter(|w| !w.streak) {
+        for w in &mut self.weapons {
             w.reserve = (w.reserve + w.def.clip).min(w.def.max_reserve);
         }
         self.lethal.count = self.lethal.count.max(1);
@@ -1612,8 +1568,6 @@ impl Arsenal {
             self.toggle_alt();
             out.push(WeaponAction::AltToggled);
         }
-
-        self.drop_spent_streak_weapon(out);
 
         // Swap.
         if pressed & buttons::SWAP_WEAPON != 0 && self.weapons.len() > 1 && self.melee_left <= 0.0 {
@@ -2077,11 +2031,10 @@ mod loadout_tests {
     use super::*;
 
     #[test]
-    fn a_spec_changes_slots_perks_and_streaks() {
-        let l = Loadout::default().with_spec("lethal=claymore_mp; perks=Hardline,Engineer; streaks=WarMachine");
+    fn a_spec_changes_slots_and_perks() {
+        let l = Loadout::default().with_spec("lethal=claymore_mp; perks=Hardline,Engineer");
         assert_eq!(l.lethal, "claymore_mp");
         assert_eq!(l.perks, vec![Perk::Hardline, Perk::Engineer]);
-        assert_eq!(l.streaks, vec![crate::streaks::Streak::WarMachine]);
         assert_eq!(l.primary, Loadout::default().primary);
     }
 }

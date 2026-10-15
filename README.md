@@ -38,9 +38,8 @@ Set `ZHBO_ZH_DIR` / `ZHBO_BO2_DIR` to point at installs the detector does not fi
 | Jump | Space |
 | Reload | R |
 | Set off C4 | R twice quickly (or G with no C4 left in hand) |
-| Switch weapon (AN-94 ⇄ Tac-45, and a scorestreak weapon) | 1 or mouse wheel |
+| Switch weapon (AN-94 ⇄ Tac-45) | 1 or mouse wheel |
 | Attachment mode (grenade launcher, select fire, second optic) | 3 |
-| Use scorestreak / pick the next earned one | 4 / 5 |
 | Knife | V |
 | Lethal (frag: hold to cook; Claymore, Betty: plant; C4: throw) | G |
 | Tactical (concussion; Trophy, Insertion: plant; Black Hat: hold on the target) | Q |
@@ -112,22 +111,20 @@ The two scripts take `-Dist` to test a given build.
   smoothly than in BO2, and the viewmodel can poke into walls or enemies standing very close.
 * Weapons are BO2's own: every multiplayer weapon's definition (fire mode and rate, damage curve,
   spread, kick, reload/raise/ADS timings, grenade fuses and blasts), every attachment's numbers, the
-  alt modes they add and the scorestreak weapons are converted into `Data\ConquerOps\weapons.ini`.
+  and alt modes they add are converted into `Data\ConquerOps\weapons.ini`.
   The General carries an AN-94 with a Reflex sight and Grenade Launcher, the Tac-45, a frag, a
-  concussion and the knife; Lightweight, Fast Hands, Dexterity; UAV, Sentry Gun and Death Machine.
+  concussion and the knife; Lightweight, Fast Hands, Dexterity.
   Every weapon's art is converted (about 420 MB; `ZHBO_CONVERT_ALL_WEAPONS=0` converts only the
   loadout's). `ZHBO_LOADOUT` tries another kit, e.g.
-  `lethal=claymore_mp;tactical=trophy_system_mp;primary=dsr50_mp+acog;streaks=Uav,WarMachine` (every
+  `lethal=claymore_mp;tactical=trophy_system_mp;primary=dsr50_mp+acog` (every
   player in a game must use the same one).
 * Equipment works as in BO2: Claymores fire at enemies in front, Bouncing Betties hop, C4 waits for
   the detonator, the Shock Charge stuns, the Trophy System shoots down grenades, rockets and Zero
   Hour's missiles, the Sensor Grenade shows enemies on the minimap and finds stealthed units, the
   Tactical Insertion is where the next General comes in, and the Black Hat hacks enemy equipment
   and Zero Hour drones. Enemies can shoot equipment.
-* Scorestreaks: kills earn points toward the loadout's streaks at BO2's costs (Hardline earns them
-  faster); earned streaks are kept across deaths. The UAV shows enemies on the minimap through Zero
-  Hour's shroud; the Sentry Gun is BO2's turret on your side for 90 seconds; the Death Machine and
-  War Machine are carried until empty. Other BO2 streaks are not in yet.
+* BO2's scorestreaks are left out on purpose: the Generals' own upgrades and superweapons take
+  their place. (The field computer still uses BO2's scorestreak tablet and HUD box.)
 * Explosions use BO2's own effects (its impact table's grenade and rocket explosions, flashbang,
   equipment blasts), converted into Zero Hour particle systems; BO2's flipbook animation, models and
   decals in them are not converted.

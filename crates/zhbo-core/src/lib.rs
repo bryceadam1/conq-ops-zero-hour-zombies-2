@@ -19,7 +19,6 @@ pub mod movement;
 pub mod projectiles;
 pub mod sim;
 pub mod sounds;
-pub mod streaks;
 pub mod strings;
 pub mod units;
 pub mod viewmodel;

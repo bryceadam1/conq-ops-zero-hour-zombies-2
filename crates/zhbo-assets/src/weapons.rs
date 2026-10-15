@@ -2,10 +2,9 @@
 //! each one's definition turned into the core's [`WeaponDef`] (Zero Hour units, BO2's display name).
 //!
 //! The converted table (`Data\ConquerOps\weapons.ini`) holds every player weapon, every attachment
-//! and the alt modes they add, and the scorestreak weapons, so later features (picking up, buying,
+//! and the alt modes they add, so later features (picking up, buying,
 //! swapping) can hand out any of them. Viewmodels, sounds and projectile models are converted for
-//! the weapons in [`converted`] (the General's loadout with its attachments, and its scorestreak
-//! weapons, then every other weapon; `ZHBO_CONVERT_ALL_WEAPONS=0` limits it to the loadout).
+//! the weapons in [`converted`] (the General's loadout with its attachments, then every other weapon; `ZHBO_CONVERT_ALL_WEAPONS=0` limits it to the loadout).
 
 use std::collections::HashMap;
 use zhbo_core::attachments::{self, AttachmentDef};
@@ -13,8 +12,6 @@ use zhbo_core::units::inches;
 use zhbo_core::weapons::{Class, Effect, FireMode, Kick, Loadout, Place, Table, WeaponDef, ALT_CLIPS, MELEE_DAMAGE};
 use zhbo_formats::weapon::{self as bo2, Weapon};
 
-/// The scorestreak weapons BO2 hands the player (Death Machine, War Machine).
-pub const STREAK_WEAPONS: &[&str] = &["minigun_mp", "m32_mp"];
 
 /// BO2's create-a-class name of an attachment asset: `silencer_smg` is the `silencer`, `rf_fast` the
 /// `rf`.
@@ -63,11 +60,11 @@ fn place_of(name: &str) -> Place {
     }
 }
 
-/// The whole table: every player weapon, the alt modes their attachments add, the scorestreak
-/// weapons, and every attachment.
+/// The whole table: every player weapon, the alt modes their attachments add, and every
+/// attachment.
 pub fn table(bo2: &[Weapon], atts: &[bo2::Attachment], names: &HashMap<String, String>) -> Table {
     let mut weapons: Vec<WeaponDef> = bo2.iter().filter(|w| is_player_weapon(w)).map(|w| to_def(w, names)).collect();
-    let mut extra: Vec<String> = STREAK_WEAPONS.iter().map(|s| s.to_string()).collect();
+    let mut extra: Vec<String> = Vec::new();
     for d in &weapons {
         extra.extend(d.alt_modes.iter().map(|(_, alt)| alt.clone()));
     }
@@ -435,12 +432,10 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
     }
 }
 
-/// The ids whose art is converted: the loadout's (with its attachments and scorestreak weapons)
-/// first, then every other player weapon unless `ZHBO_CONVERT_ALL_WEAPONS=0`.
+/// The ids whose art is converted: the loadout's (with its attachments) first, then every other player weapon unless `ZHBO_CONVERT_ALL_WEAPONS=0`.
 pub fn converted(all: &[Weapon]) -> Vec<String> {
     let l = Loadout::default();
     let mut ids = vec![l.primary, l.secondary, l.lethal, l.tactical, l.melee];
-    ids.extend(l.streaks.iter().filter_map(|s| s.weapon()).map(str::to_string));
     // Every weapon's art, so any of them can be picked up, bought or swapped to; `=0` converts only
     // the loadout's (quicker while developing).
     if !std::env::var("ZHBO_CONVERT_ALL_WEAPONS").is_ok_and(|v| v == "0") {

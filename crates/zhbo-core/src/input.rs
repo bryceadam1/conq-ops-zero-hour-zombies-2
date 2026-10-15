@@ -18,12 +18,7 @@ pub mod buttons {
     pub const TACTICAL: u32 = 1 << 11;
     /// Toggle the weapon's alt mode (select fire, under-barrel launcher, second optic).
     pub const ALT_MODE: u32 = 1 << 12;
-    /// Use the selected scorestreak (BO2's action slot 4), and pick the next earned one.
-    pub const STREAK_USE: u32 = 1 << 13;
-    pub const STREAK_NEXT: u32 = 1 << 14;
-    /// Spare.
-    pub const RESERVED: u32 = 1 << 15;
-    pub const ALL: u32 = (1 << 16) - 1;
+    pub const ALL: u32 = (1 << 13) - 1;
 }
 
 #[repr(C)]

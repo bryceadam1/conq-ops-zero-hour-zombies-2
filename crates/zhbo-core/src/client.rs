@@ -59,9 +59,6 @@ pub struct Bindings {
     pub map: u8,
     /// BO2's action slot 3: the weapon's alt mode (select fire, grenade launcher, second optic).
     pub alt_mode: u8,
-    /// BO2's action slot 4: use the selected scorestreak; and pick the next earned one.
-    pub streak: u8,
-    pub streak_next: u8,
 }
 
 impl Default for Bindings {
@@ -86,8 +83,6 @@ impl Default for Bindings {
             tactical: vk::Q,
             map: vk::TAB,
             alt_mode: vk::KEY_3,
-            streak: vk::KEY_4,
-            streak_next: vk::KEY_5,
         }
     }
 }
@@ -114,9 +109,7 @@ pub const HITMARKER_TIME: f32 = 0.25;
 pub const DEATH_BANNER_TIME: f32 = 3.0;
 /// BO2's "+100" kill popup stays up this long; kills inside the window add up.
 pub const SCORE_POPUP_TIME: f32 = 1.4;
-pub const KILL_POINTS: u32 = crate::streaks::KILL_POINTS;
-/// BO2's "scorestreak earned" splash stays up this long.
-pub const STREAK_SPLASH_TIME: f32 = 3.0;
+pub const KILL_POINTS: u32 = 100;
 /// Fraction of weapon recoil that permanently moves the aim (the rest recovers).
 pub const RECOIL_PERMANENT: f32 = 0.35;
 
@@ -230,23 +223,27 @@ pub struct HudTimers {
     /// Black Hat progress (0..1) while hacking, and how long it stays up without news.
     pub hack_progress: f32,
     pub hack_shown: f32,
-    /// A scorestreak was just earned: BO2's "Press 4 for UAV" splash, and how long it stays.
-    pub earned: Option<crate::streaks::Streak>,
-    pub earned_shown: f32,
 }
 
 /// Scripted input for in-game verification (`ZHBO_AUTOPILOT=1`): walks, turns, aims and fires,
 /// changes stance, jumps, glances at the map, swaps to the pistol and fires it, swaps back, knifes,
-/// cooks and throws a frag, throws a concussion, fires the rifle's grenade launcher, calls in a UAV
-/// and a Sentry Gun, then opens the field computer. Times are seconds in first person.
+/// cooks and throws a frag, throws a concussion, fires the rifle's grenade launcher, then opens the
+/// field computer. Times are seconds in first person.
+///
+/// `ZHBO_AUTOPILOT=equipment` runs [`Autopilot::equipment_input`] instead, for a loadout with C4 and
+/// a Trophy System or Black Hat.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Autopilot {
     pub t: f32,
+    pub equipment: bool,
 }
 
 impl Autopilot {
     /// Keys held and mouse delta (counts per frame) at time `t`.
     pub fn input_at(&self, b: &Bindings) -> (Vec<u8>, f32) {
+        if self.equipment {
+            return (self.equipment_input(b), 0.0);
+        }
         let t = self.t;
         let mut keys = Vec::new();
         let mut dx = 0.0;
@@ -297,15 +294,32 @@ impl Autopilot {
         if (13.3..13.4).contains(&t) {
             keys.push(b.fire);
         }
-        // Scorestreaks (the autopilot starts with a UAV and a Sentry Gun earned): use the selected
-        // one, then the other.
-        if (14.6..14.7).contains(&t) || (15.1..15.2).contains(&t) {
-            keys.push(b.streak);
-        }
-        if (15.8..15.9).contains(&t) {
+        if (14.6..14.7).contains(&t) {
             keys.push(b.field_computer);
         }
         (keys, dx)
+    }
+
+    /// The equipment run: throw the lethal (C4), hold the tactical up for four seconds (the Black
+    /// Hat on the drone the test puts in front; a Trophy System goes down when it is let go),
+    /// double-tap reload to set the C4 off, wait while enemy rockets come in, then open the field
+    /// computer.
+    pub fn equipment_input(&self, b: &Bindings) -> Vec<u8> {
+        let t = self.t;
+        let mut keys = Vec::new();
+        if (0.5..1.0).contains(&t) {
+            keys.push(b.lethal);
+        }
+        if (2.0..6.0).contains(&t) {
+            keys.push(b.tactical);
+        }
+        if (7.0..7.08).contains(&t) || (7.2..7.28).contains(&t) {
+            keys.push(b.reload);
+        }
+        if (20.0..20.1).contains(&t) {
+            keys.push(b.field_computer);
+        }
+        keys
     }
 }
 
@@ -370,7 +384,7 @@ impl Client {
     }
 
     pub fn reset(&mut self) {
-        let autopilot = self.autopilot.as_ref().map(|_| Autopilot::default());
+        let autopilot = self.autopilot.as_ref().map(|a| Autopilot { equipment: a.equipment, ..Default::default() });
         *self = Client::new(self.cfg);
         self.autopilot = autopilot;
     }
@@ -393,8 +407,6 @@ impl Client {
             (b.lethal, buttons::LETHAL),
             (b.tactical, buttons::TACTICAL),
             (b.alt_mode, buttons::ALT_MODE),
-            (b.streak, buttons::STREAK_USE),
-            (b.streak_next, buttons::STREAK_NEXT),
         ] {
             if down(key) {
                 held |= bit;
@@ -668,14 +680,6 @@ impl Client {
                     self.hud.hack_shown = 0.15;
                 }
                 EventKind::Hacked => self.hud.hack_shown = 0.0,
-                EventKind::StreakEarned { streak } => {
-                    self.hud.earned = Some(streak);
-                    self.hud.earned_shown = STREAK_SPLASH_TIME;
-                    self.cues.play(streak.earned_sound());
-                }
-                EventKind::StreakUsed { streak: crate::streaks::Streak::Uav } => self.cues.play(sounds::UAV_ONLINE),
-                EventKind::StreakUsed { streak: crate::streaks::Streak::SentryGun } => self.cues.play(sounds::PLANT),
-                EventKind::StreakUsed { .. } => {}
                 EventKind::AltToggled => self.vm_events.swapped = true,
                 EventKind::Planted { kind } => {
                     use crate::equipment::Kind;
@@ -704,7 +708,6 @@ impl Client {
         h.muzzle = (h.muzzle - dt).max(0.0);
         h.score_popup = (h.score_popup - dt).max(0.0);
         h.hack_shown = (h.hack_shown - dt).max(0.0);
-        h.earned_shown = (h.earned_shown - dt).max(0.0);
         let decay = (1.0 - dt * 12.0).max(0.0);
         h.view_kick_pitch *= decay;
         h.view_kick_yaw *= decay;

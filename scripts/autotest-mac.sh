@@ -3,6 +3,9 @@
 #
 #   scripts/autotest-mac.sh            autopilot test (ZHBO_AUTOPILOT=1, scripted inside the mod)
 #   scripts/autotest-mac.sh --input    real-input test (ZHBO_AUTOPILOT=manual; holds W, moves the mouse)
+#   scripts/autotest-mac.sh --equipment
+#                                      C4, Trophy System and Black Hat against an enemy drone and
+#                                      rocket troopers (two runs: C4 + Trophy, C4 + Black Hat)
 #   scripts/autotest-mac.sh --showcase [object]
 #                                      close-up captures of a General (idle, walk, death), no checks
 #
@@ -20,6 +23,7 @@ set -euo pipefail
 mode=autopilot
 [[ "${1:-}" == "--input" ]] && mode=input
 [[ "${1:-}" == "--showcase" ]] && mode=showcase
+[[ "${1:-}" == "--equipment" ]] && mode=equipment
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="$HOME/Library/Application Support/ConquerOps/dist"
@@ -69,6 +73,36 @@ if [[ $mode == showcase ]]; then
     echo "captures: $out"
     exit 0
 fi
+if [[ $mode == equipment ]]; then
+    export ZHBO_AUTOPILOT=equipment GGC_AUTO_EXIT_SECONDS=40
+    ok=0
+    check() { # log, name, pattern
+        if grep -qE "$3" "$1"; then printf '%-28s PASS\n' "$2"; else printf '%-28s FAIL\n' "$2"; ok=1; fi
+    }
+    for tactical in trophy_system_mp pda_hack_mp; do
+        rm -f "$log"
+        ZHBO_LOADOUT="lethal=satchel_charge_mp;tactical=$tactical" "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
+        wait_for_log "entered first-person" 120 || { echo "the General never entered first person; see $log" >&2; exit 1; }
+        for _ in $(seq 60); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
+        pkill -f "$dist/generalszh" 2>/dev/null || true
+        cp "$log" "$out/ConquerOps-$tactical.log"
+        l="$out/ConquerOps-$tactical.log"
+        echo "== C4 + $tactical"
+        check "$l" "C4 thrown and stuck" "put down equipment \(C4\)"
+        check "$l" "C4 detonated" "set off their C4"
+        if [[ $tactical == trophy_system_mp ]]; then
+            check "$l" "Trophy System planted" "put down equipment \(Trophy\)"
+            check "$l" "Trophy shot down a rocket" "Trophy System shot down a projectile"
+        else
+            check "$l" "Black Hat hack" "hacked with the Black Hat"
+            check "$l" "drone changed sides" "captured by General"
+        fi
+    done
+    finish
+    trap - EXIT
+    echo "screenshots and logs: $out"
+    exit $ok
+fi
 if [[ $mode == autopilot ]]; then
     # Autopilot timeline: enters first person about 3 s in, field computer about 12 s after that.
     export ZHBO_AUTOPILOT=1 GGC_AUTO_EXIT_SECONDS=45
@@ -90,8 +124,6 @@ if [[ $mode == autopilot ]]; then
     check "threw a tactical" "threw a tactical"
     check "grenade went off" "grenade went off"
     check "grenade launcher" "toggled the weapon's alt mode"
-    check "UAV" "used a scorestreak: UAV"
-    check "Sentry Gun" "used a scorestreak: Sentry Gun"
     check "field computer" "opened the field computer"
     check "returned to RTS" "returned General [0-9]+ to RTS control"
     check "re-entered" "taking control again"

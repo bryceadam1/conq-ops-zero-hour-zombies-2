@@ -731,6 +731,24 @@ void autopilotSpawn()
 				rebel->getAIUpdateInterface()->aiAttackObject(general, NO_MAX_SHOTS_LIMIT, CMD_FROM_AI);
 		}
 	}
+	// ZHBO_AUTOPILOT=equipment: an enemy Sentry Drone in front for the Black Hat, and two rocket
+	// troopers firing at the General for the Trophy System.
+	const char *mode = getenv("ZHBO_AUTOPILOT");
+	if (enemy && mode && strcmp(mode, "equipment") == 0)
+	{
+		Coord3D d;
+		d.set(pos.x + c * 45.0f, pos.y + s * 45.0f, 0.0f);
+		Object *drone = spawnAt("AmericaVehicleSentryDrone", enemy->getDefaultTeam(), d, yaw + PI);
+		for (Int i = -1; i <= 1; i += 2)
+		{
+			Coord3D e;
+			e.set(pos.x + c * 110.0f - s * 30.0f * i, pos.y + s * 110.0f + c * 30.0f * i, 0.0f);
+			Object *rpg = spawnAt("GLAInfantryTunnelDefender", enemy->getDefaultTeam(), e, yaw + PI);
+			if (rpg && rpg->getAIUpdateInterface())
+				rpg->getAIUpdateInterface()->aiAttackObject(general, NO_MAX_SHOTS_LIMIT, CMD_FROM_AI);
+		}
+		logf("autopilot: equipment scene: Sentry Drone %u and two rocket troopers", drone ? (unsigned)drone->getID() : 0u);
+	}
 	logf("autopilot: spawned General %u at (%.0f, %.0f), enemies: %s", (unsigned)s_autopilot.general, pos.x, pos.y,
 		enemy ? "3 GLA rebels" : "none (no enemy player)");
 	Zhbo_RequestTakeControl(general);

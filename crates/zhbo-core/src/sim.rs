@@ -12,9 +12,8 @@ use crate::movement::Stance;
 use crate::attachments::FMJ_VEHICLE_DAMAGE;
 use crate::equipment::{EquipEvent, Equipment, Kind as EquipKind, Placed, HACK_COS, HACK_DRONE_TIME, HACK_RANGE, HACK_TIME};
 use crate::projectiles::{Outcome, Projectile};
-use crate::streaks::{Streak, Streaks, KILL_POINTS, SENTRY_DISTANCE, SENTRY_OBJECT, UAV_TIME};
 use crate::units::inches;
-use crate::weapons::{weapon, Arsenal, Class, Perk, Rng, WeaponAction, MELEE_FX_WEAPON, MELEE_RANGE};
+use crate::weapons::{Arsenal, Class, Perk, Rng, WeaponAction, MELEE_FX_WEAPON, MELEE_RANGE};
 
 pub const MAX_PLAYERS: usize = 16;
 
@@ -73,8 +72,6 @@ pub enum EventKind {
     /// Black Hat progress on the current target (0..1), each frame while hacking.
     Hacking { progress: f32 },
     AltToggled,
-    StreakEarned { streak: Streak },
-    StreakUsed { streak: Streak },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -132,14 +129,9 @@ pub struct Sim {
     pub projectiles: Vec<(usize, Projectile)>,
     /// Equipment that is down.
     pub equipment: Equipment,
-    /// Each player's scorestreaks (kept across Generals, as BO2 keeps them across lives).
-    pub streaks: Vec<Streaks>,
     pub tuning: MoveTuning,
     pub frame: u32,
     pub events: Vec<Event>,
-    /// Test runs (`ZHBO_AUTOPILOT`): a player taking control starts with a UAV and a Sentry Gun
-    /// earned, so the scripted run can use them.
-    pub grant_streaks: bool,
 }
 
 impl Default for Sim {
@@ -154,18 +146,14 @@ impl Sim {
             players: vec![None; MAX_PLAYERS],
             projectiles: Vec::new(),
             equipment: Equipment::default(),
-            streaks: vec![Streaks::default(); MAX_PLAYERS],
             tuning: MoveTuning::default(),
             frame: 0,
             events: Vec::new(),
-            grant_streaks: false,
         }
     }
 
     pub fn reset(&mut self) {
-        let grant = self.grant_streaks;
         *self = Sim::new();
-        self.grant_streaks = grant;
     }
 
     fn emit(&mut self, player: usize, kind: EventKind) {
@@ -246,10 +234,6 @@ impl Sim {
         state.arsenal.drop_left = 0.0;
         state.arsenal.offhand = None;
         state.arsenal.ads = 0.0;
-        if self.grant_streaks && self.streaks[idx].earned.is_empty() {
-            self.streaks[idx].earned = vec![Streak::Uav, Streak::SentryGun];
-            self.streaks[idx].selected = 0;
-        }
         self.players[idx] = Some(state);
         host.set_controlled(general, true);
         self.emit(idx, EventKind::EnteredFps { general });
@@ -279,9 +263,6 @@ impl Sim {
         }
         self.step_projectiles(host);
         self.step_equipment(host);
-        for s in &mut self.streaks {
-            s.uav_left = (s.uav_left - LOGIC_DT).max(0.0);
-        }
     }
 
     fn step_projectiles(&mut self, host: &dyn LogicHost) {
@@ -302,15 +283,11 @@ impl Sim {
                     if hit_enemy {
                         self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
                     }
-                    if kill {
-                        self.award_kill(*owner);
-                    }
                 }
                 Outcome::Hit { kill, .. } => {
                     if kill {
                         self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
                         self.scavenge(*owner);
-                        self.award_kill(*owner);
                     }
                 }
                 Outcome::Landed { at, stuck_to } => {
@@ -339,9 +316,6 @@ impl Sim {
                     if hit_enemy {
                         self.emit(owner, EventKind::HitMarker { headshot: false, kill });
                     }
-                    if kill {
-                        self.award_kill(owner);
-                    }
                 }
                 EquipEvent::Destroyed { by: Some(by), .. } => {
                     self.emit(by, EventKind::DestroyedEquipment);
@@ -350,18 +324,6 @@ impl Sim {
                 EquipEvent::Destroyed { by: None, .. } => {}
                 EquipEvent::Intercepted { owner, at } => self.emit(owner, EventKind::Intercepted { at }),
             }
-        }
-    }
-
-    /// Scorestreak points for a kill by `idx`.
-    fn award_kill(&mut self, idx: usize) {
-        let Some(s) = self.streaks.get_mut(idx) else { return };
-        let (hardline, loadout) = match self.players.get(idx).and_then(|p| p.as_ref()) {
-            Some(p) => (p.arsenal.has(Perk::Hardline), p.arsenal.loadout.streaks.clone()),
-            None => (false, crate::weapons::Loadout::default().streaks),
-        };
-        for streak in s.add_points(KILL_POINTS, hardline, &loadout) {
-            self.emit(idx, EventKind::StreakEarned { streak });
         }
     }
 
@@ -376,13 +338,11 @@ impl Sim {
 
     fn step_player(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim) -> bool {
         let Some(info) = host.object(p.general, p.general) else {
-            self.streaks[idx].died();
             self.emit(idx, EventKind::GeneralDied { general: p.general });
             return false;
         };
         if info.has(objflags::DEAD) {
             host.set_controlled(p.general, false);
-            self.streaks[idx].died();
             self.equipment.clear_owner(host, idx);
             self.emit(idx, EventKind::GeneralDied { general: p.general });
             return false;
@@ -431,7 +391,6 @@ impl Sim {
                         self.apply_weapon_action(host, idx, p, a);
                     }
                     self.step_hack(host, idx, p);
-                    self.step_streaks(host, idx, p, input.pressed);
                 }
             }
             Mode::FieldComputer { t } => {
@@ -504,32 +463,6 @@ impl Sim {
         }
     }
 
-    /// Scorestreaks: the use key fires the selected one, the next key picks another.
-    fn step_streaks(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, pressed: u32) {
-        if pressed & buttons::STREAK_NEXT != 0 {
-            self.streaks[idx].next();
-        }
-        if pressed & buttons::STREAK_USE == 0 || p.arsenal.offhand.is_some() || p.arsenal.melee_left > 0.0 {
-            return;
-        }
-        let Some(streak) = self.streaks[idx].take() else { return };
-        match streak {
-            Streak::Uav => self.streaks[idx].uav_left = UAV_TIME,
-            Streak::SentryGun => {
-                let (fwd, _) = basis_xy(p.yaw);
-                let at = p.body.pos + fwd * SENTRY_DISTANCE;
-                let at = Vec3::new(at.x, at.y, host.ground_height(at.x, at.y));
-                host.spawn(SENTRY_OBJECT, p.general, at, p.yaw);
-            }
-            Streak::DeathMachine | Streak::WarMachine => {
-                if let Some(id) = streak.weapon() {
-                    p.arsenal.give_streak_weapon(weapon(id));
-                }
-            }
-        }
-        self.emit(idx, EventKind::StreakUsed { streak });
-    }
-
     /// How each controlled General looks in third person: its General, the viewmodel index of the
     /// weapon in hand (its world model is shown), and the tablet (0 none, 1 coming up for the field
     /// computer, 2 going down as first person starts).
@@ -549,11 +482,11 @@ impl Sim {
             .collect()
     }
 
-    /// Whether `player` sees enemies at `pos` on the minimap through the shroud: their UAV, or one
-    /// of their Sensor Grenades.
+    /// Whether `player` sees enemies at `pos` on the minimap through the shroud: one of their
+    /// Sensor Grenades.
     pub fn reveals(&self, player: i32, pos: Vec3) -> bool {
         let Ok(idx) = usize::try_from(player) else { return false };
-        self.streaks.get(idx).is_some_and(|s| s.uav_left > 0.0) || self.equipment.sensed(idx, pos)
+        self.equipment.sensed(idx, pos)
     }
 
     fn track_health(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, info: &ObjInfo) {
@@ -629,7 +562,6 @@ impl Sim {
                             if p.arsenal.has(Perk::Scavenger) {
                                 p.arsenal.scavenge();
                             }
-                            self.award_kill_for(idx, p);
                         }
                     }
                     other => {
@@ -704,7 +636,6 @@ impl Sim {
                         if p.arsenal.has(Perk::Scavenger) {
                             p.arsenal.scavenge();
                         }
-                        self.award_kill_for(idx, p);
                     }
                 }
             }
@@ -731,7 +662,6 @@ impl Sim {
                             self.emit(idx, EventKind::HitMarker { headshot: false, kill });
                         }
                         if kill {
-                            self.award_kill_for(idx, p);
                         }
                     }
                 }
@@ -743,13 +673,6 @@ impl Sim {
         }
     }
 
-    /// Scorestreak points for a kill by the player being stepped (`p`, out of the table).
-    fn award_kill_for(&mut self, idx: usize, p: &PlayerSim) {
-        let hardline = p.arsenal.has(Perk::Hardline);
-        for streak in self.streaks[idx].add_points(KILL_POINTS, hardline, &p.arsenal.loadout.streaks) {
-            self.emit(idx, EventKind::StreakEarned { streak });
-        }
-    }
 }
 
 /// Planted equipment goes down this far in front of the General.

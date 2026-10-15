@@ -15,7 +15,7 @@ use zhbo_formats::iwi::Rgba;
 use zhbo_formats::t6zone::Zone;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive.
-pub const VERSION: u32 = 23;
+pub const VERSION: u32 = 24;
 pub const ARCHIVE_NAME: &str = "ConquerOps_BO2.big";
 pub const VERSION_FILE: &str = "Data\\ConquerOps\\bo2_hud_version.txt";
 const TEXTURE: &str = "zhbo_bo2_hud.tga";
@@ -90,11 +90,6 @@ pub const SPRITES: &[Sprite] = &[
     mat("ZHBO_BO2_StreakBoxLit", "hud_mp_vis_ks_dpad_box_back_lit", 64),
     mat("ZHBO_BO2_StreakGlow", "hud_ks_lit_glow", 128),
     Sprite { name: "ZHBO_BO2_StreakVsat", source: Source::Material("code_post_gfx_mp", "hud_ks_spy_sat_big"), max: 128 },
-    // The scorestreaks: UAV (BO2's spy plane icon), Sentry Gun, Death Machine, War Machine.
-    Sprite { name: "ZHBO_BO2_Streak_RADAR", source: Source::Material("code_post_gfx_mp", "hud_ks_u2_spyplane_big"), max: 128 },
-    Sprite { name: "ZHBO_BO2_Streak_AUTO_TURRET", source: Source::Material("code_post_gfx_mp", "hud_ks_auto_turret_big"), max: 128 },
-    Sprite { name: "ZHBO_BO2_Streak_MINIGUN", source: Source::Material("code_post_gfx_mp", "hud_ks_minigun_big"), max: 128 },
-    Sprite { name: "ZHBO_BO2_Streak_M32", source: Source::Material("code_post_gfx_mp", "hud_ks_m32_big"), max: 128 },
 ];
 
 #[derive(Debug, Default)]

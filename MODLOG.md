@@ -287,7 +287,7 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     they work after the owner dies. Black Hat captures use `Object::defect` for units and `setTeam`
     for inert objects (LogicApi `capture`). Fills: `objflags::DRONE`, `PROJECTILE` (the Trophy
     System), `FIRING` (minimap), and `SHROUDED` (client queries: the minimap follows Zero Hour's radar
-    rule, except for the UAV, Sensor Grenades and enemies firing).
+    rule, except for Sensor Grenades and enemies firing).
 66. BO2 effects (`zhbo_formats::fx`): MP grenades and rockets have no `projExplosionEffect`; their
     blast is the impact table (`impactfx`) entry for their `impactType`, but the table's order
     differs from the enum (grenade 7 → entry 12 `explosions/fx_grenadeexp_dirt`, rocket 9 → 13).
@@ -365,11 +365,16 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
   every-weapon test (4 s).
 
 * **Attachments, equipment, scorestreaks, BO2 effects (2026-10-14)**: the autotest (15/15) also
-  switches to the AN-94's grenade launcher, fires it and switches back, and calls in a UAV and a
-  Sentry Gun; captures show the Reflex over hidden iron sights, the launcher's raise and HUD, the
-  UAV sweep, BO2's grenade and flashbang effects, and the upright sentry. With
+  switches to the AN-94's grenade launcher, fires it and switches back; captures show the Reflex
+  over hidden iron sights, the launcher's raise and HUD, and BO2's grenade and flashbang effects. With
   `ZHBO_LOADOUT="lethal=claymore_mp;tactical=sensor_grenade_mp"` a Claymore is planted, arms and
   kills a rebel. All 59 player weapons and all 416 weapon+attachment combinations pass their tests.
+* **Equipment in game (2026-10-14)**: scorestreaks removed (the Generals' upgrades and
+  superweapons replace them). `scripts/autotest-mac.sh --equipment` runs the General with C4 and a
+  Trophy System, then C4 and a Black Hat, against an enemy Sentry Drone and two GLA rocket
+  troopers: the C4 sticks and goes off on a double-tapped reload (and kills), the Trophy System
+  shoots down both incoming rockets, the Black Hat hacks the drone in 3 s and it defects. 8/8 pass;
+  the normal autotest passes 13/13.
 
 ## Next steps
 

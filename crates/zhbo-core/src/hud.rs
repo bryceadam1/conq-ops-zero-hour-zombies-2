@@ -13,11 +13,10 @@
 //! team emblem is the player's faction logo, and minimap dots carry each owner's team colour, as on
 //! Zero Hour's radar. Without the BO2 art the HUD falls back to drawn shapes and the engine font.
 
-use crate::client::{Client, ViewMode, HITMARKER_TIME, STREAK_SPLASH_TIME};
+use crate::client::{Client, ViewMode, HITMARKER_TIME};
 use crate::host::{objflags, ClientHost, ObjInfo};
 use crate::math::Vec3;
 use crate::sim::{Mode, PlayerSim, Sim};
-use crate::streaks::Streak;
 
 /// MappedImage names produced by `zhbo_assets::hud`.
 pub mod sprites {
@@ -53,17 +52,11 @@ pub mod sprites {
     pub const STREAK_BOX_LIT: &str = "ZHBO_BO2_StreakBoxLit";
     pub const STREAK_GLOW: &str = "ZHBO_BO2_StreakGlow";
     pub const STREAK_VSAT: &str = "ZHBO_BO2_StreakVsat";
-    /// Scorestreak icons (`crate::streaks::Streak::icon`).
-    pub const STREAK_RADAR: &str = "ZHBO_BO2_Streak_RADAR";
-    pub const STREAK_AUTO_TURRET: &str = "ZHBO_BO2_Streak_AUTO_TURRET";
-    pub const STREAK_MINIGUN: &str = "ZHBO_BO2_Streak_MINIGUN";
-    pub const STREAK_M32: &str = "ZHBO_BO2_Streak_M32";
-    pub const ALL: [&str; 36] = [
+    pub const ALL: [&str; 32] = [
         DIGITS[0], DIGITS[1], DIGITS[2], DIGITS[3], DIGITS[4], DIGITS[5], DIGITS[6], DIGITS[7], DIGITS[8],
         DIGITS[9], SLASH, BLOOD, RED_DOT, HIT_MARKER, PLAYER_ARROW, DOT, COMPASS, LEFT_LOWER, LEFT_LOWER_BACK,
         FACTION_BACKING, FACTION_LIGHT, RIGHT_LOWER, GUN_TITLE[0], GUN_TITLE[1], GUN_TITLE[2], STREAK_BAR,
-        STREAK_BAR_BACK, STREAK_BOX, STREAK_BOX_LIT, STREAK_GLOW, STREAK_VSAT, PLAYER_BRACKET, STREAK_RADAR,
-        STREAK_AUTO_TURRET, STREAK_MINIGUN, STREAK_M32,
+        STREAK_BAR_BACK, STREAK_BOX, STREAK_BOX_LIT, STREAK_GLOW, STREAK_VSAT, PLAYER_BRACKET,
     ];
     /// Not BO2 art: Zero Hour's faction logo for the local player (the bridge resolves it).
     pub const TEAM_LOGO: &str = "ZHBO_TeamLogo";
@@ -109,15 +102,12 @@ pub fn draw(host: &dyn ClientHost, client: &Client, sim: &Sim, local_player: i32
         draw_hitmarker(host, w, h, s, client);
         draw_score_popup(host, w, h, s, client);
         draw_hack(host, w, h, s, client);
-        draw_streak_splash(host, w, h, s, client);
     }
     let reveal = |pos: Vec3| sim.reveals(local_player, pos);
-    let uav = sim.streaks.get(local_player.max(0) as usize).map_or(0.0, |st| st.uav_left);
-    let map_bottom = draw_minimap(host, s, client.yaw, p, &reveal, uav);
+    let map_bottom = draw_minimap(host, s, client.yaw, p, &reveal);
     draw_compass(host, s, client.yaw, map_bottom);
     draw_team_panel(host, h, s, local_player, tablet_up);
-    let streaks = sim.streaks.get(local_player.max(0) as usize).cloned().unwrap_or_default();
-    draw_streaks(host, w, h, s, tablet_up, p, &streaks);
+    draw_streaks(host, w, h, s, tablet_up);
     draw_ammo(host, w, h, s, p, !tablet_up && !map_open);
     draw_offhands(host, w, h, s, p);
     if map_open {
@@ -256,7 +246,7 @@ fn draw_score_popup(host: &dyn ClientHost, w: f32, h: f32, s: f32, client: &Clie
 
 /// Rotating minimap: you at the centre facing up, friendlies blue, enemies red (your army acts as
 /// a permanent UAV), structures as squares. Returns its bottom edge.
-fn draw_minimap(host: &dyn ClientHost, s: f32, yaw: f32, p: &PlayerSim, reveal: &dyn Fn(Vec3) -> bool, uav: f32) -> f32 {
+fn draw_minimap(host: &dyn ClientHost, s: f32, yaw: f32, p: &PlayerSim, reveal: &dyn Fn(Vec3) -> bool) -> f32 {
     let size = 150.0 * s;
     // BO2 keeps it tight in the corner; just below Zero Hour's message line (EVA notices).
     let (x0, y0) = (14.0 * s, 30.0 * s);
@@ -278,8 +268,8 @@ fn draw_minimap(host: &dyn ClientHost, s: f32, yaw: f32, p: &PlayerSim, reveal: 
     };
     let inside = |x: f32, y: f32, r: f32| x - r >= x0 && x + r <= x0 + size && y - r >= y0 && y + r <= y0 + size;
     for o in objs.iter().filter(|o| o.id != p.general && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE)) {
-        // Zero Hour's radar rule: enemies under your shroud don't show, unless your UAV or a Sensor
-        // Grenade sees them, or (BO2's rule) they are firing.
+        // Zero Hour's radar rule: enemies under your shroud don't show, unless one of your Sensor
+        // Grenades sees them, or (BO2's rule) they are firing.
         if o.has(objflags::ENEMY) && o.has(objflags::SHROUDED) && !o.has(objflags::FIRING) && !reveal(o.pos) {
             continue;
         }
@@ -297,16 +287,6 @@ fn draw_minimap(host: &dyn ClientHost, s: f32, yaw: f32, p: &PlayerSim, reveal: 
             if inside(x, y, r) && !host.image(sprites::DOT, x - r, y - r, r * 2.0, r * 2.0, team | 0xFF00_0000) {
                 host.fill_rect(x - r * 0.6, y - r * 0.6, r * 1.2, r * 1.2, team | 0xFF00_0000);
             }
-        }
-    }
-    // A UAV sweeps the minimap, as in BO2.
-    if uav > 0.0 {
-        let angle = uav * std::f32::consts::TAU / 3.0;
-        let r = size * 0.5;
-        for k in 0..6 {
-            let a = angle - k as f32 * 0.06;
-            let alpha = (0x90 - k * 0x14) as u32;
-            host.line(cx, cy, cx + a.cos() * r, cy - a.sin() * r, 2.0 * s, (alpha << 24) | 0x0080_E0FF);
         }
     }
     // You: BO2's player arrow, pointing up.
@@ -424,79 +404,31 @@ fn draw_team_panel(host: &dyn ClientHost, h: f32, s: f32, local_player: i32, tab
 // Scorestreaks (bottom right, above the weapon)
 // ------------------------------------------------------------------------------------------------
 
-/// BO2's scorestreak column: the loadout's three streaks stacked above the field computer (BO2's
-/// orbital VSAT icon, always ready), each lit once earned; the bar beside them fills with points
-/// toward the next. The selected earned streak shows its name and key, like BO2's.
-fn draw_streaks(host: &dyn ClientHost, w: f32, h: f32, s: f32, tablet_up: bool, p: &PlayerSim, st: &crate::streaks::Streaks) {
+/// BO2's scorestreak column. Conquer Ops' one streak is the field computer (BO2's orbital VSAT icon),
+/// always ready, so its box is lit; its name sits beside it like BO2's selected streak, with the key.
+fn draw_streaks(host: &dyn ClientHost, w: f32, h: f32, s: f32, tablet_up: bool) {
+    // The box art is a wide slanted box across the middle half of a square image.
     let b = 64.0 * s;
     let x = w - 14.0 * s - b;
-    let bottom = h - 206.0 * s;
-    let loadout = &p.arsenal.loadout.streaks;
-    let rows = loadout.len() + 1;
-    let step = b * 0.72;
-    // The bar to the left of the column, filled with points toward the next streak.
-    let (bw, bh) = (24.0 * s, step * rows as f32);
+    let y = h - 206.0 * s;
+    // The bar to the left of the column.
+    let (bw, bh) = (24.0 * s, 48.0 * s);
     let bx = x - bw + 6.0 * s;
-    let by = bottom + b * 0.5 + step * 0.5 - bh;
+    let by = y + (b - bh) * 0.5;
     host.image(sprites::STREAK_BAR_BACK, bx, by, bw, bh, 0xFFFF_FFFF);
-    let prev = loadout.iter().map(|k| k.cost()).filter(|c| *c <= st.score).max().unwrap_or(0);
-    let next = st.next_goal(loadout).map_or(prev.max(1), |k| k.cost());
-    let fill = ((st.score - prev.min(st.score)) as f32 / (next - prev).max(1) as f32).clamp(0.0, 1.0);
-    let filled = bh * fill;
-    let bar = host.image(sprites::STREAK_BAR, bx, by + bh - filled, bw, filled.max(0.0), 0xFFF2_C230);
-    if !bar {
-        host.fill_rect(bx + bw * 0.5 - 1.0 * s, by, 2.0 * s, bh, 0x60FF_FFFF);
-        host.fill_rect(bx + bw * 0.5 - 1.0 * s, by + bh - filled, 2.0 * s, filled, GOLD);
+    if !host.image(sprites::STREAK_BAR, bx, by, bw, bh, 0xFFFF_FFFF) {
+        host.fill_rect(bx + bw * 0.5, y, 2.0 * s, b, 0x90FF_FFFF);
     }
-    let selected = st.current();
-    let box_at = |row: usize| bottom - step * row as f32;
-    // The field computer, always ready.
-    draw_streak_box(host, x, box_at(0), b, sprites::STREAK_VSAT, true, tablet_up);
-    if !tablet_up && selected.is_none() {
-        host.text(bx - 4.0 * s, box_at(0) + b * 0.5 - 7.0 * s, "FIELD COMPUTER  [F]", WHITE, (12.0 * s) as i32, 2);
-    }
-    // The loadout's streaks, cheapest at the bottom.
-    let mut order: Vec<Streak> = loadout.clone();
-    order.sort_by_key(|k| k.cost());
-    for (i, k) in order.iter().enumerate() {
-        let y = box_at(i + 1);
-        let earned = st.earned.contains(k);
-        draw_streak_box(host, x, y, b, &k.icon(), earned, selected == Some(*k));
-        if selected == Some(*k) {
-            host.text(bx - 4.0 * s, y + b * 0.5 - 7.0 * s, &format!("{}  [4]", k.name().to_uppercase()), WHITE, (12.0 * s) as i32, 2);
-        }
-    }
-}
-
-/// One streak's box: glow when selected, lit fill when earned, the icon, the outline.
-fn draw_streak_box(host: &dyn ClientHost, x: f32, y: f32, b: f32, icon: &str, lit: bool, selected: bool) {
-    if selected {
-        let glow = b * 1.1;
-        host.image(sprites::STREAK_GLOW, x + (b - glow) * 0.5, y + (b - glow) * 0.5, glow, glow, 0xC0FF_FFFF);
-    }
-    let fill = if lit { host.image(sprites::STREAK_BOX_LIT, x, y, b, b, 0xFFFF_FFFF) } else { true };
-    let size = b * 0.46;
-    let tint = if lit { 0xFFFF_FFFF } else { 0x70FF_FFFF };
-    let icon_drawn = host.image(icon, x + (b - size) * 0.5, y + (b - size) * 0.5, size, size, tint);
+    let glow = b * 1.1;
+    host.image(sprites::STREAK_GLOW, x + (b - glow) * 0.5, y + (b - glow) * 0.5, glow, glow, if tablet_up { 0xC0FF_FFFF } else { 0x70FF_FFFF });
+    let lit = host.image(sprites::STREAK_BOX_LIT, x, y, b, b, 0xFFFF_FFFF);
+    let icon = b * 0.46;
+    host.image(sprites::STREAK_VSAT, x + (b - icon) * 0.5, y + (b - icon) * 0.5, icon, icon, 0xFFFF_FFFF);
     host.image(sprites::STREAK_BOX, x, y, b, b, 0xFFFF_FFFF);
-    if !fill || !icon_drawn {
-        slant_box(host, x, y + b * 0.2, b, b * 0.6, if lit { 0xB0A8_8228 } else { 0x60303438 }, Some(if lit { GOLD } else { OUTLINE }));
+    if !lit {
+        slant_box(host, x, y + b * 0.2, b, b * 0.6, 0xB0A8_8228, Some(GOLD));
     }
-}
-
-/// BO2's "scorestreak earned" splash: the streak's icon and name, and how to use it.
-fn draw_streak_splash(host: &dyn ClientHost, w: f32, h: f32, s: f32, client: &Client) {
-    let (Some(k), t) = (client.hud.earned, client.hud.earned_shown) else { return };
-    if t <= 0.0 {
-        return;
-    }
-    let a = ((t / STREAK_SPLASH_TIME).min(0.25) / 0.25 * 255.0) as u32;
-    let size = 72.0 * s;
-    let (cx, top) = (w * 0.5, h * 0.18);
-    host.image(&k.icon(), cx - size * 0.5, top, size, size, (a << 24) | 0x00FF_FFFF);
-    host.text(cx, top + size + 4.0 * s, &k.name().to_uppercase(), (a << 24) | (GOLD & 0x00FF_FFFF), (22.0 * s) as i32, 1);
-    // BO2's KILLSTREAK_EARNED_* prompt, with the key it is bound to here.
-    host.text(cx, top + size + 34.0 * s, &format!("Press 4 for {}", k.name()), (a << 24) | 0x00FF_FFFF, (14.0 * s) as i32, 1);
+    host.text(bx - 4.0 * s, y + b * 0.5 - 7.0 * s, "FIELD COMPUTER  [F]", WHITE, (12.0 * s) as i32, 2);
 }
 
 /// The Black Hat's progress over the crosshair.
@@ -740,7 +672,6 @@ mod tests {
         assert!(images.contains(&sprites::SLASH.to_string()));
         let texts = rec.texts.borrow();
         assert!(texts.iter().any(|t| t == "AN-94"));
-        assert!(images.contains(&sprites::STREAK_RADAR.to_string()), "the loadout's scorestreaks");
         assert!(texts.iter().any(|t| t == "FULL-AUTO"), "BO2 fire mode beside the weapon name");
         assert!(texts.iter().any(|t| t == "FUNDS") && images.contains(&"ZHBO_BO2_Digit1".to_string()), "funds in BO2 numerals");
         assert!(texts.iter().any(|t| t.starts_with("FIELD COMPUTER")), "the ready scorestreak");
