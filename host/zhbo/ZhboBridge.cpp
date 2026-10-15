@@ -892,6 +892,12 @@ void setMouseCapture(Bool capture)
 		return;
 	s_mouseCaptured = capture;
 	zhbo_platform::setMouseCapture(capture != FALSE);
+	// The Take Control button grabs the mouse on the press that starts first person, and first
+	// person swallows the release: the window manager kept routing the next click overhead to that
+	// button (nothing selected, no edge scrolling until a click). Nothing holds the mouse across
+	// first person.
+	if (TheWindowManager && TheWindowManager->winGetGrabWindow())
+		TheWindowManager->winSetGrabWindow(nullptr);
 	if (TheMouse) TheMouse->setVisibility(capture ? FALSE : TRUE);
 	if (!capture && TheMouse)
 	{
@@ -1055,7 +1061,9 @@ void autopilotSpawn()
 	logf("autopilot: spawned General %u at (%.0f, %.0f), enemies: %s", (unsigned)s_autopilot.general, pos.x, pos.y,
 		enemy ? "3 GLA rebels" : "none (no enemy player)");
 	s_autopilot.spawnFrame = TheGameLogic->getFrame();
-	if (!s_autopilot.rts)
+	// ZHBO_AUTOPILOT=manual: the scene only; the player starts overhead and does the rest.
+	const Bool manual = mode && strcmp(mode, "manual") == 0;
+	if (!s_autopilot.rts && !manual)
 		Zhbo_RequestTakeControl(general);
 }
 
@@ -1183,6 +1191,9 @@ void autopilotFrame()
 		rtsAutopilotFrame(frame);
 		return;
 	}
+	const char *mode = getenv("ZHBO_AUTOPILOT");
+	if (mode && strcmp(mode, "manual") == 0)
+		return;
 	// After the field computer hands the General back, take control again once (tests re-entry).
 	Object *general = TheGameLogic->findObjectByID(s_autopilot.general);
 	if (!general || s_autopilot.retakes >= 1)

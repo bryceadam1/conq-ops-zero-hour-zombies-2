@@ -361,7 +361,10 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     camera). The engine patch no longer resets the zoom and pitch to their defaults afterwards.
 76. After relative mouse mode macOS keeps the cursor "outside" (no edge scroll, no selection) until
     a click: the cursor is warped to where it is, and for 3 s Zero Hour's mouse is told it is inside
-    and recaptured whenever the system cursor is over the window (`reclaimMouse`).
+    and recaptured whenever the system cursor is over the window (`reclaimMouse`). The real cause of
+    the dead first click was the window manager: the Take Control button grabs the mouse on the
+    press that starts first person, first person swallows the release, and the next click overhead
+    went to the button. The grab is cleared whenever first person takes or releases the mouse.
 77. The overhead General: a forced switch to the pistol re-issues the attack (Zero Hour drops one
     out of the new weapon's range); the third slot is only the throw (`ZHBO_GeneralGrenade`), and
     zhbo-core throws the BO2 lethal or tactical at the AI's target (`Sim::rts_update`), as first
@@ -472,7 +475,9 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
   the pistol's front sight sits on screen centre, the Reflex window is clean, leaving first person
   ends on the overhead camera's real pose (logged: within 2.5 units, same direction and field of
   view), and close up (`ZHBO_CLOSEUP=<zoom>` with `--rts`) the General aims the rifle and holds the
-  pistol in BO2's stances. Selecting him and the mouse after first person need a real mouse.
+  pistol in BO2's stances. With a real mouse (`ZHBO_AUTOPILOT=manual`: the scene, the player
+  starts overhead): selecting him by his body works, and after first person the first click
+  selects (it went to the Take Control button before).
 * **Load stalls (2026-10-15)**: the equipment autotest used to stall 0.85-1.25 s the first time
   the tablet, AN-94, Tac-45 and C4 viewmodels were shown; they now load in 3-4 ms (0 ms after the
   preload), and the loading screen preloads 26 objects and 6 viewmodels in about 0.4 s. 8/8 pass.
