@@ -1050,6 +1050,8 @@ pub struct Loadout {
     pub tactical: String,
     pub melee: String,
     pub perks: Vec<Perk>,
+    /// Spare rounds the primary and secondary start with, instead of BO2's (tests run a gun dry).
+    pub reserve: [Option<u16>; 2],
 }
 
 impl Loadout {
@@ -1081,6 +1083,7 @@ impl Default for Loadout {
             tactical: "concussion_grenade_mp".into(),
             melee: "knife_held_mp".into(),
             perks: vec![Perk::Lightweight, Perk::FastHands, Perk::Dexterity],
+            reserve: [None, None],
         };
         match std::env::var("ZHBO_LOADOUT") {
             Ok(spec) => l.with_spec(&spec),
@@ -1105,6 +1108,8 @@ impl Loadout {
                 "tactical" => self.tactical = value,
                 "melee" => self.melee = value,
                 "perks" => self.perks = value.split(',').filter_map(|p| Perk::ALL.into_iter().find(|k| format!("{k:?}") == p.trim())).collect(),
+                "primary_reserve" => self.reserve[0] = value.parse().ok(),
+                "secondary_reserve" => self.reserve[1] = value.parse().ok(),
                 _ => {}
             }
         }
@@ -1406,6 +1411,11 @@ impl Arsenal {
 
     pub fn with_loadout(loadout: Loadout) -> Self {
         let mut weapons: Vec<WeaponState> = [&loadout.primary, &loadout.secondary].iter().map(|id| WeaponState::new(weapon(id))).collect();
+        for (w, r) in weapons.iter_mut().zip(loadout.reserve) {
+            if let Some(r) = r {
+                w.reserve = r;
+            }
+        }
         if loadout.perks.contains(&Perk::Scavenger) {
             for w in &mut weapons {
                 w.reserve = (w.reserve + w.def.clip).min(w.def.max_reserve.max(w.reserve));

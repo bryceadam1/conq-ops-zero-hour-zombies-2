@@ -504,7 +504,16 @@ void rtsWeapons(UnsignedInt frame)
 			// A weapon that ran dry hands over mid-fight: Zero Hour drops an attack whose target is
 			// out of the new weapon's range, so order it again (he closes in with the pistol).
 			Object *victim = TheGameLogic->findObjectByID(seen.victim);
-			if (ai && victim && ammo.lock != (Int)current && !victim->isEffectivelyDead() && frame - seen.victimFrame < 90)
+			if (victim && (victim->isEffectivelyDead() || frame - seen.victimFrame >= 90))
+				victim = nullptr;
+			// Between targets (idle), the new gun's shorter reach would leave enemies the empty one
+			// could hit unanswered: take on the closest one it could have.
+			if (!victim && ai && ai->isIdle() && ammo.lock != (Int)current)
+			{
+				const Weapon *was = obj->getWeaponInWeaponSlot(current);
+				victim = TheAI->findClosestEnemy(obj, was ? was->getAttackRange(obj) : 175.0f, AI::CAN_SEE | AI::CAN_ATTACK);
+			}
+			if (ai && victim && ammo.lock != (Int)current)
 			{
 				ai->aiAttackObject(victim, NO_MAX_SHOTS_LIMIT, ai->getLastCommandSource());
 				logf("General %u keeps attacking %u", (unsigned)obj->getID(), (unsigned)victim->getID());

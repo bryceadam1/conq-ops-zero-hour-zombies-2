@@ -321,7 +321,9 @@ fn blit(dst: &mut Rgba, src: &Rgba, at: (u32, u32)) {
 /// weapons' art is converted (`ZHBO_LOADOUT`, `ZHBO_CONVERT_ALL_WEAPONS`).
 fn version_stamp() -> String {
     let var = |k: &str| std::env::var(k).unwrap_or_default();
-    format!("{VERSION}\nloadout={}\nall={}\n", var("ZHBO_LOADOUT"), var("ZHBO_CONVERT_ALL_WEAPONS"))
+    // Only the parts that pick art: spare rounds (`primary_reserve`, ...) don't change it.
+    let loadout: Vec<String> = var("ZHBO_LOADOUT").split(';').filter(|p| !p.trim_start().contains("_reserve")).map(str::to_string).collect();
+    format!("{VERSION}\nloadout={}\nall={}\n", loadout.join(";"), var("ZHBO_CONVERT_ALL_WEAPONS"))
 }
 
 /// Version stored in an existing archive, if it is one of ours and was built for this loadout.

@@ -370,6 +370,11 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     zhbo-core throws the BO2 lethal or tactical at the AI's target (`Sim::rts_update`), as first
     person does. The Lethal and Tactical buttons share it; patch 0010 tells the bridge which was
     pressed (MSG_ZHBO_TAKE_CONTROL with an action), patch 0006 lights only the chosen one.
+77b. When a gun runs dry with no recent target (between fights), the General takes on the closest
+    enemy the empty gun could have reached: the new gun's shorter reach left enemies firing from
+    further away unanswered ("he stops firing on the pistol"). `--rts-dry` runs the overhead test
+    with no spare rifle rounds, then none for the pistol (`ZHBO_LOADOUT=primary_reserve=0`, a
+    loadout key that changes no art, so it doesn't force a reconversion).
 78. The soldier model: BO2's torso animations (`pt_*`) layered over stances (`pb_*`) for reloads,
     throws and aimed fire, the pistol stance (JAMMED, set by the bridge while the sidearm is in hand;
     only missiles use it otherwise), a marker bone per gun at its `tag_flash` (`ZF<vm>`) for its

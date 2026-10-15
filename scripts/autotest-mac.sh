@@ -8,6 +8,8 @@
 #                                      rocket troopers (two runs: C4 + Trophy, C4 + Black Hat)
 #   scripts/autotest-mac.sh --rts      the General under RTS control: rifle, the lethal and the pistol
 #                                      picked from the command bar, ammo counted, then first person
+#   scripts/autotest-mac.sh --rts-dry  the same with no spare rifle rounds, then no spare pistol rounds:
+#                                      the empty gun hands over to the other and he keeps firing
 #   scripts/autotest-mac.sh --showcase [object]
 #                                      close-up captures of a General (idle, walk, death), no checks
 #
@@ -27,6 +29,7 @@ mode=autopilot
 [[ "${1:-}" == "--showcase" ]] && mode=showcase
 [[ "${1:-}" == "--equipment" ]] && mode=equipment
 [[ "${1:-}" == "--rts" ]] && mode=rts
+[[ "${1:-}" == "--rts-dry" ]] && mode=rts-dry
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="$HOME/Library/Application Support/ConquerOps/dist"
@@ -99,6 +102,39 @@ if [[ $mode == equipment ]]; then
         else
             check "$l" "Black Hat hack" "hacked with the Black Hat"
             check "$l" "drone changed sides" "captured by General"
+        fi
+    done
+    finish
+    trap - EXIT
+    echo "screenshots and logs: $out"
+    exit $ok
+fi
+if [[ $mode == rts-dry ]]; then
+    export ZHBO_AUTOPILOT=rts GGC_AUTO_EXIT_SECONDS=35
+    ok=0
+    # The first line matching $3 comes after the first matching $2 in log $1.
+    after() { awk -v a="$2" -v b="$3" '$0 ~ a && !s { s = 1; next } s && $0 ~ b { f = 1 } END { exit !f }' "$1"; }
+    check() { # name, command...
+        local name=$1; shift
+        if "$@"; then printf '%-28s PASS\n' "$name"; else printf '%-28s FAIL\n' "$name"; ok=1; fi
+    }
+    for dry in primary secondary; do
+        rm -f "$log"
+        ZHBO_LOADOUT="${dry}_reserve=0" "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
+        wait_for_log "autopilot: taking control" 90 || { echo "the script never reached first person; see $log" >&2; exit 1; }
+        for _ in $(seq 40); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
+        pkill -f "$dist/generalszh" 2>/dev/null || true
+        l="$out/ConquerOps-$dry.log"
+        cp "$log" "$l"
+        if [[ $dry == primary ]]; then
+            echo "== no spare rifle rounds"
+            check "rifle ran dry: pistol" after "$l" "fired slot 0 [(]0/0 left[)]" "locked to weapon slot 1"
+            check "  ...attack goes on" after "$l" "locked to weapon slot 1" "keeps attacking"
+            check "  ...pistol keeps firing" after "$l" "locked to weapon slot 1" "fired slot 1"
+        else
+            echo "== no spare pistol rounds"
+            check "pistol ran dry: rifle" after "$l" "fired slot 1 [(]0/0 left[)]" "locked to weapon slot 0"
+            check "  ...rifle keeps firing" after "$l" "fired slot 1 [(]0/0 left[)]" "fired slot 0"
         fi
     done
     finish
