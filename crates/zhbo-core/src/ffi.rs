@@ -247,6 +247,22 @@ pub extern "C" fn zhbo_world_mesh_count(vm: i32) -> i32 {
     c.all().iter().filter(|d| d.viewmodel == vm).map(|d| d.world_meshes as i32).max().unwrap_or(0)
 }
 
+/// The viewmodels of the General's kit, so the host can load them before they are first shown.
+/// Writes up to `cap` indices to `out`; returns how many there are.
+///
+/// # Safety
+/// `out` must point to `cap` writable `i32`s (or be null with `cap` 0).
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_loadout_viewmodels(out: *mut i32, cap: i32) -> i32 {
+    let vms = crate::weapons::Loadout::default().viewmodels();
+    if !out.is_null() {
+        for (i, vm) in vms.iter().take(cap.max(0) as usize).enumerate() {
+            *out.add(i) = *vm;
+        }
+    }
+    vms.len() as i32
+}
+
 /// Non-zero if the object's own AI/physics must be suspended this frame.
 #[no_mangle]
 pub extern "C" fn zhbo_logic_is_controlled(object_id: u32) -> i32 {

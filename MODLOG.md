@@ -324,6 +324,15 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     end on the overhead camera's own pose (its direction, distance and height, recentred on the
     General); entering swings round behind the General, then moves in. Relative mouse mode leaves
     Zero Hour's mouse "outside the window" until a click: releasing it now says the cursor is back.
+72. Loading a BO2 viewmodel took about a second, on the render thread, the first time each was shown
+    (entering first person, each first switch, first equipment use). Nearly all of it was the bgfx
+    port's coplanar-triangle scan in `MeshModelClass::post_process`: it tested every pair of
+    triangles and renormalized one plane per pair, O(n^2) on meshes of tens of thousands of
+    triangles. Patch 0008 gives the same answer in O(n log n) (planes flipped to a canonical side
+    and sorted by distance; only neighbours within the 0.001 tolerance are tested): 3-4 ms a model.
+    Patch 0007 also loads the mod's objects and the local General's viewmodels and clips on the
+    loading screen (`Zhbo_Preload`, about 0.4 s). Retail never preloads: `KINDOF_PRELOAD` only works
+    with `-preload`. `ConquerOps.log` lists frames over 60 ms as `hitch:`.
 
 ## Verification log
 
@@ -408,6 +417,9 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
   and the pistol from the command bar, then takes control: 8/8 pass, and first person starts with
   the pistol and its remaining ammo. The capture shows the reticle Take Control button, the AN-94,
   Tac-45 and frag buttons with their BO2 icons and ammo, and the empty frag greyed out with a red 0.
+* **Load stalls (2026-10-15)**: the equipment autotest used to stall 0.85-1.25 s the first time
+  the tablet, AN-94, Tac-45 and C4 viewmodels were shown; they now load in 3-4 ms (0 ms after the
+  preload), and the loading screen preloads 26 objects and 6 viewmodels in about 0.4 s. 8/8 pass.
 
 ## Next steps
 

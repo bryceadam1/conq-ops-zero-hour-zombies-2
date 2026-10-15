@@ -1,0 +1,102 @@
+--- a/GeneralsMD/Code/Libraries/Source/WWVegas/WW3D2/meshmdlio.cpp
++++ b/GeneralsMD/Code/Libraries/Source/WWVegas/WW3D2/meshmdlio.cpp
+@@ -91,6 +91,8 @@
+ #include "ww3dcolor.h"
+ 
+ #include <math.h>
++#include <algorithm> // ZHBO
++#include <vector> // ZHBO
+ 
+ #ifdef _UNIX
+ #include "osdep/osdep.h"
+@@ -218,6 +220,34 @@
+ 		&& amax_w + 0.001f >= bmin_w;
+ }
+ 
++// ZHBO: the pair test of Has_Coplanar_Opposite_Triangle_Pairs for triangles i < j and their planes.
++static bool Is_Coplanar_Opposite_Pair(const Vector3 * verts, const Vector3 * norms, const TriIndex * polys,
++	int i, const Vector3 & ni, float di, int j, const Vector3 & nj, float dj)
++{
++	const bool opposite_face_planes =
++		Vector3::Dot_Product(ni, nj) < -0.999f && fabsf(di + dj) < 0.001f;
++	if (!opposite_face_planes) {
++		return false;
++	}
++	if (Triangles_Share_Positions(verts, polys[i], polys[j])) {
++		return true;
++	}
++	Vector3 vni;
++	Vector3 vnj;
++	return Triangle_Is_On_Plane(verts, polys[j], ni, di)
++		&& Projected_Triangle_Bounds_Overlap(verts, polys[i], polys[j], ni)
++		&& Compute_Averaged_Vertex_Normal(norms, polys[i], &vni)
++		&& Compute_Averaged_Vertex_Normal(norms, polys[j], &vnj)
++		&& Vector3::Dot_Product(vni, vnj) < -0.9f;
++}
++
++// ZHBO: the same answer as testing every pair, in O(n log n). A pair can only match when its planes
++// face opposite ways (normals within ~2.6 degrees of opposite) at distances summing to under 0.001.
++// Flipping each plane so its largest normal component is positive turns that into "the same
++// canonical plane": the flipped distances then differ by exactly |di + dj|. So sort by flipped
++// distance and test only triangles within 0.001 of each other. BO2's converted models have tens of
++// thousands of triangles; testing every pair (and renormalizing in the inner loop) took a second
++// per model.
+ static bool Has_Coplanar_Opposite_Triangle_Pairs(MeshGeometryClass * mesh)
+ {
+ 	const int poly_count = mesh->Get_Polygon_Count();
+@@ -228,32 +258,32 @@
+ 	const TriIndex * polys = mesh->Get_Polygon_Array();
+ 	const Vector3 * verts = mesh->Get_Vertex_Array();
+ 	const Vector3 * norms = mesh->Get_Vertex_Normal_Array();
++	struct Plane
++	{
++		Vector3 n;
++		float d;
++		float key; // d with the plane flipped to its canonical side
++		int index;
++	};
++	std::vector<Plane> planes;
++	planes.reserve(poly_count);
+ 	for (int i = 0; i < poly_count; ++i) {
+-		Vector3 ni;
+-		float di = 0.0f;
+-		if (!Compute_Triangle_Plane(verts, polys[i], &ni, &di)) {
++		Plane p;
++		if (!Compute_Triangle_Plane(verts, polys[i], &p.n, &p.d)) {
+ 			continue;
+ 		}
+-		for (int j = i + 1; j < poly_count; ++j) {
+-			Vector3 nj;
+-			float dj = 0.0f;
+-			if (!Compute_Triangle_Plane(verts, polys[j], &nj, &dj)) {
+-				continue;
+-			}
+-			const bool same_positions = Triangles_Share_Positions(verts, polys[i], polys[j]);
+-			const bool opposite_face_planes =
+-				Vector3::Dot_Product(ni, nj) < -0.999f && fabsf(di + dj) < 0.001f;
+-			if (same_positions && opposite_face_planes) {
+-				return true;
+-			}
+-			Vector3 vni;
+-			Vector3 vnj;
+-			if (opposite_face_planes
+-				&& Triangle_Is_On_Plane(verts, polys[j], ni, di)
+-				&& Projected_Triangle_Bounds_Overlap(verts, polys[i], polys[j], ni)
+-				&& Compute_Averaged_Vertex_Normal(norms, polys[i], &vni)
+-				&& Compute_Averaged_Vertex_Normal(norms, polys[j], &vnj)
+-				&& Vector3::Dot_Product(vni, vnj) < -0.9f) {
++		const int axis = Dominant_Axis(p.n);
++		const float c = axis == 0 ? p.n.X : axis == 1 ? p.n.Y : p.n.Z;
++		p.key = c < 0.0f ? -p.d : p.d;
++		p.index = i;
++		planes.push_back(p);
++	}
++	std::sort(planes.begin(), planes.end(), [](const Plane & a, const Plane & b) { return a.key < b.key; });
++	for (size_t a = 0; a < planes.size(); ++a) {
++		for (size_t b = a + 1; b < planes.size() && planes[b].key - planes[a].key < 0.001f; ++b) {
++			const Plane & p = planes[a].index < planes[b].index ? planes[a] : planes[b];
++			const Plane & q = planes[a].index < planes[b].index ? planes[b] : planes[a];
++			if (Is_Coplanar_Opposite_Pair(verts, norms, polys, p.index, p.n, p.d, q.index, q.n, q.d)) {
+ 				return true;
+ 			}
+ 		}

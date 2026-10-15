@@ -197,6 +197,7 @@ typedef struct ZhboRtsWeapons
 void zhbo_logic_rts_update(int32_t player, uint32_t general, int32_t current_slot, const uint32_t *shots, ZhboRtsWeapons *out);
 void zhbo_client_rts_ammo(uint32_t general, ZhboRtsWeapons *out);
 int32_t zhbo_world_mesh_count(int32_t vm); /* -2: the tablet */
+int32_t zhbo_loadout_viewmodels(int32_t *out, int32_t cap); /* the General's kit's viewmodels */
 int32_t zhbo_check_requirements(char *msg, uint32_t cap);
 
 #ifdef __cplusplus

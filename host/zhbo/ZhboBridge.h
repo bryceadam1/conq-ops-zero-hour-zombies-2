@@ -23,6 +23,9 @@ Bool Zhbo_IsWeaponEmpty(const Object *obj, Int slot);
 void Zhbo_Init();
 /// New game, loaded game, or back to the shell.
 void Zhbo_Reset();
+/// Loading screen, after the map's objects exist: load the mod's models now rather than the first
+/// time each is shown (GameLogic::startNewGame).
+void Zhbo_Preload();
 
 // --- Logic (deterministic lockstep) ------------------------------------------------------------
 void Zhbo_OnTakeControlMessage(Int playerIndex, const GameMessage *msg);
@@ -43,6 +46,8 @@ Bool Zhbo_GetViewmodel(Int *clip, Int *weapon, Bool *fired, Real *time, Real *ad
 /// Device side (ZhboViewmodel.cpp): place, pose or hide the viewmodel. W3DView::update calls it
 /// every frame with the first-person camera, or with `active` false.
 void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir);
+/// Load the tablet and these weapon viewmodels of a faction ('U', 'C', 'G'), and their clips.
+void ZhboViewmodel_Preload(char faction, const int *weapons, int count);
 /// After the in-game UI is drawn.
 void Zhbo_DrawHud();
 /// Before the 3D views are drawn: paints a sky gradient while first person owns the camera.

@@ -7,6 +7,7 @@
 // z_gameenginedevice; W3DView::update calls ZhboViewmodel_Update (host/patches/0001).
 #include "ZhboBridge.h"
 #include "zhbo_core.h"
+#include "ZhboPlatform.h"
 
 #include "Common/AudioEventRTS.h"
 #include "Common/File.h"
@@ -127,6 +128,33 @@ namespace
 		FXList::doFXPos(fx, &pos, &m);
 	}
 
+	// The clips of viewmodel `name`: the tablet's, or weapon `weapon`'s. Each weapon and the tablet
+	// have their own hierarchy, so only this model's.
+	void loadClips(WW3DAssetManager *assets, const AsciiString &name, int weapon, std::map<int, HAnimClass *> &out)
+	{
+		if (name.endsWith("_TAB"))
+		{
+			for (int i = 0; i < 3; ++i)
+				if (HAnimClass *anim = assets->Get_HAnim(k_tablet_clips[i]))
+					out[ZHBO_VM_TABLET_PULLOUT + i] = anim;
+		}
+		else if (weapon >= 0)
+		{
+			// zhbo_assets::generals::vm_anim: one clip per BO2 animation slot the weapon has, then its
+			// alt mode's (select fire, grenade launcher) after ZHBO_VM_ALT_CLIPS.
+			for (int base = 0; base <= ZHBO_VM_ALT_CLIPS; base += ZHBO_VM_ALT_CLIPS)
+			{
+				for (int slot = 0; slot < ZHBO_VM_SLOT_COUNT; ++slot)
+				{
+					char clip[64];
+					snprintf(clip, sizeof(clip), "ZV%02d_SKL.ZV%02d_A%02X", weapon, weapon, base + slot);
+					if (HAnimClass *anim = assets->Get_HAnim(clip))
+						out[base + slot] = anim;
+				}
+			}
+		}
+	}
+
 	void release()
 	{
 		for (auto &a : s_anims)
@@ -145,6 +173,7 @@ namespace
 	Bool load(const AsciiString &name, int weapon)
 	{
 		release();
+		const double started = zhbo_platform::now();
 		WW3DAssetManager *assets = WW3DAssetManager::Get_Instance();
 		s_model = assets ? assets->Create_Render_Obj(name.str()) : nullptr;
 		if (!s_model || !W3DDisplay::m_3DScene)
@@ -155,31 +184,10 @@ namespace
 			return FALSE;
 		}
 		W3DDisplay::m_3DScene->Add_Render_Object(s_model);
-		// Only this model's clips: each weapon and the tablet have their own hierarchy.
-		if (name.endsWith("_TAB"))
-		{
-			for (int i = 0; i < 3; ++i)
-				if (HAnimClass *anim = assets->Get_HAnim(k_tablet_clips[i]))
-					s_anims[ZHBO_VM_TABLET_PULLOUT + i] = anim;
-		}
-		else if (weapon >= 0)
-		{
-			// zhbo_assets::generals::vm_anim: one clip per BO2 animation slot the weapon has, then its
-			// alt mode's (select fire, grenade launcher) after ZHBO_VM_ALT_CLIPS.
-			for (int base = 0; base <= ZHBO_VM_ALT_CLIPS; base += ZHBO_VM_ALT_CLIPS)
-			{
-				for (int slot = 0; slot < ZHBO_VM_SLOT_COUNT; ++slot)
-				{
-					char clip[64];
-					snprintf(clip, sizeof(clip), "ZV%02d_SKL.ZV%02d_A%02X", weapon, weapon, base + slot);
-					if (HAnimClass *anim = assets->Get_HAnim(clip))
-						s_anims[base + slot] = anim;
-				}
-			}
-		}
+		loadClips(assets, name, weapon, s_anims);
 		Zhbo_Log("viewmodel: %d clips for %s", (int)s_anims.size(), name.str());
 		s_modelName = name;
-		Zhbo_Log("viewmodel: loaded %s", name.str());
+		Zhbo_Log("viewmodel: loaded %s in %.0f ms", name.str(), (zhbo_platform::now() - started) * 1000.0);
 		return TRUE;
 	}
 
@@ -199,6 +207,34 @@ namespace
 		m[2].Set(x.Z, y.Z, z.Z, eye.z);
 		return m;
 	}
+}
+
+void ZhboViewmodel_Preload(char faction, const int *weapons, int count)
+{
+	WW3DAssetManager *assets = WW3DAssetManager::Get_Instance();
+	if (!assets)
+		return;
+	const double started = zhbo_platform::now();
+	int loaded = 0;
+	for (int i = -1; i < count; ++i)
+	{
+		AsciiString name;
+		if (i < 0)
+			name.format("ZHBO_VM%s_TAB", faction == 'C' ? "CHN" : faction == 'G' ? "GLA" : "USA");
+		else
+			name.format("ZV%02d%c_SKN", weapons[i], faction);
+		// The asset manager keeps the prototype and the clips once loaded; these copies can go.
+		RenderObjClass *model = assets->Create_Render_Obj(name.str());
+		if (!model)
+			continue;
+		REF_PTR_RELEASE(model);
+		std::map<int, HAnimClass *> clips;
+		loadClips(assets, name, i < 0 ? ZHBO_VM_NONE : weapons[i], clips);
+		for (auto &c : clips)
+			REF_PTR_RELEASE(c.second);
+		++loaded;
+	}
+	Zhbo_Log("viewmodel: preloaded %d viewmodels in %.0f ms", loaded, (zhbo_platform::now() - started) * 1000.0);
 }
 
 void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)

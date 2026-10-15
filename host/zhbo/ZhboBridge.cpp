@@ -40,6 +40,7 @@
 #include "GameClient/GameWindow.h"
 #include "GameClient/GameWindowManager.h"
 #include "Common/NameKeyGenerator.h"
+#include "GameClient/GameClient.h"
 #include "GameClient/GameFont.h"
 #include "GameClient/GUICallbacks.h"
 #include "GameClient/Image.h"
@@ -57,6 +58,7 @@
 #include "GameLogic/TerrainLogic.h"
 #include "GameLogic/Weapon.h"
 
+#include <algorithm>
 #include <map>
 #include <set>
 #include <string>
@@ -1222,6 +1224,41 @@ void Zhbo_Reset()
 	logLine("reset");
 }
 
+void Zhbo_Preload()
+{
+	if (!s_ready)
+		return;
+	const double started = zhbo_platform::now();
+	// The mod's objects (the Generals, their grenades, C4 and other equipment): what the engine's
+	// own preload does for KINDOF_PRELOAD things, which retail only runs with -preload.
+	int objects = 0;
+	for (const ThingTemplate *t = TheThingFactory->firstTemplate(); t; t = t->friend_getNextTemplate())
+	{
+		if (strncmp(t->getName().str(), "ZHBO_", 5) != 0)
+			continue;
+		if (Drawable *draw = TheThingFactory->newDrawable(t))
+		{
+			draw->preloadAssets(TheGlobalData->m_timeOfDay);
+			TheGameClient->destroyDrawable(draw);
+			++objects;
+		}
+	}
+	logf("preloaded %d objects in %.0f ms", objects, (zhbo_platform::now() - started) * 1000.0);
+
+	// The local General's first-person models: its side's tablet and the kit's weapons.
+	const Player *local = ThePlayerList ? ThePlayerList->getLocalPlayer() : nullptr;
+	const PlayerTemplate *pt = local ? local->getPlayerTemplate() : nullptr;
+	if (!pt)
+		return;
+	const AsciiString side = pt->getBaseSide();
+	const char faction = side == "China" ? 'C' : side == "GLA" ? 'G' : side == "America" ? 'U' : 0;
+	if (!faction)
+		return;
+	int weapons[32];
+	const int count = std::min<int>(zhbo_loadout_viewmodels(weapons, 32), 32);
+	ZhboViewmodel_Preload(faction, weapons, count);
+}
+
 void Zhbo_OnTakeControlMessage(Int playerIndex, const GameMessage *msg)
 {
 	if (!s_ready || msg->getArgumentCount() < 1)
@@ -1342,6 +1379,8 @@ void Zhbo_ClientFrame()
 	const double now = zhbo_platform::now();
 	const float dt = (float)(now - s_lastTick);
 	s_lastTick = now;
+	if (dt > 0.06f && dt < 5.0f)
+		logf("hitch: %.0f ms frame", dt * 1000.0f);
 
 	const Bool focused = zhbo_platform::windowFocused();
 	const Bool menuUp = TheInGameUI->isQuitMenuVisible() || TheGameLogic->isGamePaused();

@@ -1052,6 +1052,24 @@ pub struct Loadout {
     pub perks: Vec<Perk>,
 }
 
+impl Loadout {
+    /// The converted viewmodels this kit can show: its guns and their alt modes, its offhands and
+    /// its melee weapon, each once.
+    pub fn viewmodels(&self) -> Vec<i32> {
+        let mut out = Vec::new();
+        for id in [&self.primary, &self.secondary, &self.lethal, &self.tactical, &self.melee] {
+            let d = weapon(id);
+            let alt = (!d.alt.is_empty()).then(|| weapon(&d.alt));
+            for vm in std::iter::once(d.viewmodel).chain(alt.map(|a| a.viewmodel)) {
+                if vm >= 0 && !out.contains(&vm) {
+                    out.push(vm);
+                }
+            }
+        }
+        out
+    }
+}
+
 impl Default for Loadout {
     /// The General's kit: the AN-94 with a Reflex sight and a Grenade Launcher, the Tac-45, a frag,
     /// a concussion, the knife; Lightweight, Fast Hands and Dexterity. `ZHBO_LOADOUT` changes it (see [`Loadout::with_spec`]).

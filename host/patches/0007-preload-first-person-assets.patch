@@ -1,0 +1,12 @@
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/System/GameLogic.cpp
+@@ -2444,6 +2444,9 @@
+ 		}
+ 	}
+ 
++	// ZHBO: load the first-person General's models now, not the first time each is shown
++	Zhbo_Preload();
++
+ 	//put this here somewhat randomly.
+ 	TheControlBar->hideCommunicator( FALSE );
+ 
