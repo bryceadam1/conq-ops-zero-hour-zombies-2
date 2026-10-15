@@ -52,7 +52,7 @@ pub const TS_COLOR_MAP: u8 = 2;
 pub const TS_NORMAL_MAP: u8 = 5;
 pub const TS_SPECULAR_MAP: u8 = 8;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Image {
     pub name: String,
     /// `GfxImage::hash`.
@@ -64,13 +64,13 @@ pub struct Image {
     pub height: u16,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Texture {
     pub semantic: u8,
     pub image: Option<Image>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Material {
     pub name: String,
     pub textures: Vec<Texture>,

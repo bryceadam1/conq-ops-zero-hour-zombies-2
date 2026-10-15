@@ -5,8 +5,10 @@
 //! * [`client`] runs per rendered frame (mouse look, camera, input messages, HUD).
 //! * [`ffi`] is the C ABI the engine glue in `host/zhbo/` calls; [`host`] is the reverse direction.
 
+pub mod attachments;
 pub mod client;
 pub mod conformance;
+pub mod equipment;
 pub mod ffi;
 pub mod hitscan;
 pub mod host;
@@ -17,6 +19,7 @@ pub mod movement;
 pub mod projectiles;
 pub mod sim;
 pub mod sounds;
+pub mod streaks;
 pub mod strings;
 pub mod units;
 pub mod viewmodel;

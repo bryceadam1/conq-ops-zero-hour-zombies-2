@@ -355,7 +355,7 @@ fn run(args: &[String]) -> Result<(), String> {
                     for u in w.attachment_uniques.iter().take(6) {
                         println!("      unique {} kind {} vm {:?} tag {:?}", u.name, u.kind, u.view_model, u.view_model_tag);
                     }
-                    println!("    sounds fire {:?} plr {:?} icon {:?} dpad {:?} world {:?}", w.fire_sound, w.fire_sound_player, w.hud_icon, w.dpad_icon, w.world_model);
+                    println!("    sounds fire {:?} plr {:?} icon {:?} dpad {:?} world {:?} projectile {:?} impact {} icon hash {:?}", w.fire_sound, w.fire_sound_player, w.hud_icon, w.dpad_icon, w.world_model, w.projectile_model, w.projectile_impact_explode, w.hud_icon_hash);
                     println!("    kick ads {:?} hip {:?} mult {:?}", w.ads_view_kick, w.hip_view_kick, w.location_multipliers.iter().take(7).collect::<Vec<_>>());
                     for (i, a) in w.anims.iter().enumerate() {
                         if let Some(a) = a {
@@ -364,6 +364,101 @@ fn run(args: &[String]) -> Result<(), String> {
                     }
                     println!();
                 }
+            }
+            Ok(())
+        }
+        "attachments" => {
+            // attachments [weapon filter]: BO2's attachments, and which ones each weapon allows.
+            use zhbo_formats::weapon;
+            let zone = load_full_zone("common_mp.ff")?;
+            let all = weapon::attachments(&zone);
+            if args.iter().any(|a| a == "--raw") {
+                use zhbo_formats::t6zone::layouts::WeaponAttachment as WA;
+                let kind = zhbo_formats::fastfile::asset_type_id("attachment").unwrap();
+                for a in zone.assets.iter().filter(|a| a.kind == kind) {
+                    let at = a.addr;
+                    println!(
+                        "{:<20} perks {:#x} {:#x} recoil {} {} kickc {} custom {} {} {} {} {} {} pen {} hipidle {}",
+                        zone.str_ptr(at),
+                        zone.u32(at + WA::perks),
+                        zone.u32(at + WA::perks + 4),
+                        zone.f32(at + WA::fAdsRecoilReductionRate),
+                        zone.f32(at + WA::fAdsRecoilReductionLimit),
+                        zone.f32(at + WA::fAdsViewKickCenterSpeedScale),
+                        zone.f32(at + WA::customFloat0),
+                        zone.f32(at + WA::customFloat1),
+                        zone.f32(at + WA::customFloat2),
+                        zone.u32(at + WA::customBool0),
+                        zone.u32(at + WA::customBool1),
+                        zone.u32(at + WA::customBool2),
+                        zone.u32(at + WA::penetrateType),
+                        zone.f32(at + WA::fHipIdleAmount),
+                    );
+                }
+                return Ok(());
+            }
+            for a in &all {
+                println!("{a:?}");
+            }
+            if let Some(f) = args.get(1) {
+                for w in weapon::all(&zone).into_iter().filter(|w| w.name.contains(f.as_str())) {
+                    let names: Vec<&str> = all.iter().filter(|a| w.allowed_attachments & (1 << a.kind) != 0).map(|a| a.name.as_str()).collect();
+                    println!("{} allows {:#x}: {names:?}\n  variants {:?} hide {:?} alt {:?}", w.name, w.allowed_attachments, w.attachment_variants, w.hide_tags, w.alt_weapon);
+                    for u in &w.attachment_uniques {
+                        println!("  unique {} kind {} combined {:#x} vm {:?} world {:?} tag {:?}/{:?} noclip {} anims {} off {:?} rot {:?} woff {:?} hide {:?} snd {:?} alt {:?} dw {:?}", u.name, u.kind, u.combined, u.view_model, u.world_model, u.view_model_tag, u.world_model_tag, u.disable_base_clip, u.anims.iter().filter(|a| a.is_some()).count(), u.view_offset, u.view_rotation, u.world_offset, u.hide_tags, u.fire_sound_player, u.alt_weapon, u.dual_wield_weapon);
+                    }
+                }
+            }
+            Ok(())
+        }
+        "fx" => {
+            // fx <weapon>: the BO2 effect a weapon's projectile makes when it goes off.
+            use zhbo_formats::{fx, weapon};
+            let zone = load_full_zone("common_mp.ff")?;
+            let name = args.get(1).ok_or("fx <weapon>")?;
+            if name == "--list" {
+                let kind = zhbo_formats::fastfile::asset_type_id("fx").unwrap();
+                for a in zone.assets.iter().filter(|a| a.kind == kind) {
+                    let e = fx::read(&zone, a.addr);
+                    println!("{} ({} elems, life {})", e.name, e.elems.len(), e.life_msec);
+                }
+                return Ok(());
+            }
+            if name == "--impacts" {
+                for t in 0..20u32 {
+                    let n = fx::impact(&zone, t, fx::surface::DIRT).map(|e| e.name).unwrap_or_default();
+                    println!("impact type {t}: {n}");
+                }
+                for w in weapon::all(&zone).iter().filter(|w| ["frag_grenade_mp", "claymore_mp", "gl_an94_mp", "m32_mp", "satchel_charge_mp", "usrpg_mp", "an94_mp", "fnp45_mp", "bouncingbetty_mp", "sticky_grenade_mp"].contains(&w.name.as_str())) {
+                    println!("{} impact type {}", w.name, w.impact_type);
+                }
+                return Ok(());
+            }
+            if let Some(e) = name.strip_prefix("effect:").and_then(|n| fx::find(&zone, n)) {
+                println!("{e:#?}");
+                return Ok(());
+            }
+            let w = weapon::all(&zone).into_iter().find(|w| &w.name == name).ok_or("no such weapon")?;
+            fn dump(e: &fx::Effect, indent: &str) {
+                println!("{indent}effect {} life {} looping {} elems {}", e.name, e.life_msec, e.looping_life_msec, e.elems.len());
+                for el in &e.elems {
+                    let r = |r: fx::Range| format!("{}+{}", r.base, r.amplitude);
+                    println!(
+                        "{indent}  kind {:>2} loop {} count {} delay {} life {} radius {} grav {} vel {:?}/{:?} wvel {:?}/{:?} atlas {:?} mats {:?} models {:?}",
+                        el.kind, el.looping, r(el.count), r(el.delay_msec), r(el.life_msec), r(el.offset_radius), r(el.gravity), el.velocity.0, el.velocity.1, el.world_velocity.0, el.world_velocity.1, el.atlas,
+                        el.materials.iter().map(|m| m.color_map().map(|i| i.name.clone()).unwrap_or_else(|| m.name.clone())).collect::<Vec<_>>(), el.models
+                    );
+                    if let (Some(a), Some(b)) = (el.vis.first(), el.vis.last()) {
+                        println!("{indent}      vis {} samples: {:?} size {:?} -> {:?} size {:?}", el.vis.len(), a.color, a.size, b.color, b.size);
+                    }
+                    for c in &el.children {
+                        dump(c, &format!("{indent}    "));
+                    }
+                }
+            }
+            match &w.explosion_effect {
+                Some(e) => dump(e, ""),
+                None => println!("{name} (impact type {}) has no explosion effect", w.impact_type),
             }
             Ok(())
         }

@@ -37,7 +37,7 @@ fn publish_controlled(sim: &Sim) {
     }
 }
 
-pub const ABI_VERSION: u32 = 9;
+pub const ABI_VERSION: u32 = 10;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
 const _: () = {
@@ -46,7 +46,7 @@ const _: () = {
     assert!(size_of::<FpsInput>() == 20);
     assert!(size_of::<ClientIn>() == 316);
     assert!(size_of::<ClientOut>() == 132);
-    assert!(size_of::<LogicApi>() == 15 * size_of::<usize>());
+    assert!(size_of::<LogicApi>() == 16 * size_of::<usize>());
     assert!(size_of::<ClientApi>() == 10 * size_of::<usize>());
 };
 
@@ -95,6 +95,7 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
         Some("manual") => state.logic.log("autopilot scene enabled, manual input (ZHBO_AUTOPILOT=manual)"),
         Some(_) => {
             state.client.autopilot = Some(crate::client::Autopilot::default());
+            state.sim.grant_streaks = true;
             state.logic.log("autopilot enabled (ZHBO_AUTOPILOT)");
         }
     }
@@ -156,6 +157,14 @@ fn log_step(s: &State, first_new_event: usize, frame: u32) {
             EventKind::Melee => format!("player {} meleed", e.player),
             EventKind::Thrown { lethal } => format!("player {} threw a {}", e.player, if lethal { "lethal" } else { "tactical" }),
             EventKind::Exploded { at } => format!("player {}'s grenade went off at ({:.0}, {:.0})", e.player, at.x, at.y),
+            EventKind::Planted { kind } => format!("player {} put down equipment ({kind:?})", e.player),
+            EventKind::Detonated => format!("player {} set off their C4", e.player),
+            EventKind::Intercepted { .. } => format!("player {}'s Trophy System shot down a projectile", e.player),
+            EventKind::DestroyedEquipment => format!("player {} destroyed enemy equipment", e.player),
+            EventKind::Hacked => format!("player {} hacked with the Black Hat", e.player),
+            EventKind::AltToggled => format!("player {} toggled the weapon's alt mode", e.player),
+            EventKind::StreakEarned { streak } => format!("player {} earned a scorestreak: {}", e.player, streak.name()),
+            EventKind::StreakUsed { streak } => format!("player {} used a scorestreak: {}", e.player, streak.name()),
             _ => continue,
         };
         s.logic.log(&line);
@@ -172,6 +181,44 @@ fn log_step(s: &State, first_new_event: usize, frame: u32) {
             }
         }
     }
+}
+
+/// How a controlled General looks in third person (see `Sim::world_poses`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WorldPose {
+    pub general: u32,
+    /// Viewmodel index of the weapon in hand: its `W<vm><k>` meshes are shown.
+    pub weapon: i32,
+    /// 0 no tablet, 1 tablet coming up (`USER_1`), 2 going down (`USER_2`).
+    pub tablet: i32,
+}
+
+/// Fill `out` with up to `cap` poses; returns how many.
+///
+/// # Safety
+/// `out` must be writable for `cap` entries.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_client_world_poses(out: *mut WorldPose, cap: i32) -> i32 {
+    if out.is_null() || cap <= 0 {
+        return 0;
+    }
+    let poses = with_state(|s| s.sim.world_poses()).unwrap_or_default();
+    let n = poses.len().min(cap as usize);
+    for (i, (general, weapon, tablet)) in poses.into_iter().take(n).enumerate() {
+        *out.add(i) = WorldPose { general, weapon, tablet };
+    }
+    n as i32
+}
+
+/// Third-person meshes of viewmodel `vm`'s weapon on the soldier model, or of the tablet for -2.
+#[no_mangle]
+pub extern "C" fn zhbo_world_mesh_count(vm: i32) -> i32 {
+    let c = crate::weapons::catalog();
+    if vm == -2 {
+        return c.tablet_meshes as i32;
+    }
+    c.all().iter().filter(|d| d.viewmodel == vm).map(|d| d.world_meshes as i32).max().unwrap_or(0)
 }
 
 /// Non-zero if the object's own AI/physics must be suspended this frame.
@@ -205,8 +252,7 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
 #[no_mangle]
 pub extern "C" fn zhbo_client_draw_hud(local_player: i32) {
     with_state(|s| {
-        let player = s.sim.player(local_player);
-        crate::hud::draw(&s.client_host, &s.client, player, local_player);
+        crate::hud::draw(&s.client_host, &s.client, &s.sim, local_player);
     });
 }
 

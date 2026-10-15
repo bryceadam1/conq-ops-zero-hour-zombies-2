@@ -9,8 +9,12 @@ use crate::math::{basis_xy, dir_from_angles, Vec3};
 use crate::movement::{self, Blocker, Body, MoveModifiers, MoveTuning, World};
 use crate::units::{BO2_TO_ZH_DAMAGE, LOGIC_DT};
 use crate::movement::Stance;
+use crate::attachments::FMJ_VEHICLE_DAMAGE;
+use crate::equipment::{EquipEvent, Equipment, Kind as EquipKind, Placed, HACK_COS, HACK_DRONE_TIME, HACK_RANGE, HACK_TIME};
 use crate::projectiles::{Outcome, Projectile};
-use crate::weapons::{Arsenal, Class, Perk, Rng, WeaponAction, MELEE_FX_WEAPON, MELEE_RANGE};
+use crate::streaks::{Streak, Streaks, KILL_POINTS, SENTRY_DISTANCE, SENTRY_OBJECT, UAV_TIME};
+use crate::units::inches;
+use crate::weapons::{weapon, Arsenal, Class, Perk, Rng, WeaponAction, MELEE_FX_WEAPON, MELEE_RANGE};
 
 pub const MAX_PLAYERS: usize = 16;
 
@@ -56,6 +60,21 @@ pub enum EventKind {
     Launched,
     /// A grenade, rocket or other projectile went off.
     Exploded { at: Vec3 },
+    /// Equipment set down (planted, or a thrown piece came to rest).
+    Planted { kind: EquipKind },
+    /// The player's C4 went off.
+    Detonated,
+    /// A Trophy System of this player's shot something down.
+    Intercepted { at: Vec3 },
+    /// This player broke an enemy's equipment.
+    DestroyedEquipment,
+    /// The Black Hat finished a hack.
+    Hacked,
+    /// Black Hat progress on the current target (0..1), each frame while hacking.
+    Hacking { progress: f32 },
+    AltToggled,
+    StreakEarned { streak: Streak },
+    StreakUsed { streak: Streak },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -78,6 +97,8 @@ pub struct PlayerSim {
     pub health: f32,
     pub max_health: f32,
     pub regen_wait: f32,
+    /// Black Hat: what it is aimed at (an object id) and how far along the hack is (seconds).
+    pub hack: Option<(u32, f32)>,
 }
 
 impl PlayerSim {
@@ -100,6 +121,7 @@ impl PlayerSim {
             health: 500.0,
             max_health: 500.0,
             regen_wait: 0.0,
+            hack: None,
         }
     }
 }
@@ -108,9 +130,16 @@ pub struct Sim {
     pub players: Vec<Option<PlayerSim>>,
     /// Grenades and rockets in flight, with the player who threw them.
     pub projectiles: Vec<(usize, Projectile)>,
+    /// Equipment that is down.
+    pub equipment: Equipment,
+    /// Each player's scorestreaks (kept across Generals, as BO2 keeps them across lives).
+    pub streaks: Vec<Streaks>,
     pub tuning: MoveTuning,
     pub frame: u32,
     pub events: Vec<Event>,
+    /// Test runs (`ZHBO_AUTOPILOT`): a player taking control starts with a UAV and a Sentry Gun
+    /// earned, so the scripted run can use them.
+    pub grant_streaks: bool,
 }
 
 impl Default for Sim {
@@ -121,11 +150,22 @@ impl Default for Sim {
 
 impl Sim {
     pub fn new() -> Self {
-        Self { players: vec![None; MAX_PLAYERS], projectiles: Vec::new(), tuning: MoveTuning::default(), frame: 0, events: Vec::new() }
+        Self {
+            players: vec![None; MAX_PLAYERS],
+            projectiles: Vec::new(),
+            equipment: Equipment::default(),
+            streaks: vec![Streaks::default(); MAX_PLAYERS],
+            tuning: MoveTuning::default(),
+            frame: 0,
+            events: Vec::new(),
+            grant_streaks: false,
+        }
     }
 
     pub fn reset(&mut self) {
+        let grant = self.grant_streaks;
         *self = Sim::new();
+        self.grant_streaks = grant;
     }
 
     fn emit(&mut self, player: usize, kind: EventKind) {
@@ -171,20 +211,31 @@ impl Sim {
                 p.input = FpsInput { yaw: info.yaw, ..Default::default() };
                 p
             }
-            _ => PlayerSim {
-                general,
-                mode: Mode::Fps,
-                body: Body::new(info.pos, &tuning),
-                yaw: info.yaw,
-                pitch: 0.0,
-                arsenal: Arsenal::new(),
-                rng: Rng::new(general.wrapping_mul(2_654_435_761) ^ frame),
-                input: FpsInput { yaw: info.yaw, ..Default::default() },
-                pressed_accum: 0,
-                health: info.health,
-                max_health: info.max_health,
-                regen_wait: 0.0,
-            },
+            _ => {
+                // A new General comes in at the player's Tactical Insertion, if one is down.
+                let (pos, yaw) = match self.equipment.take_insertion(host, idx) {
+                    Some((pos, yaw)) => {
+                        host.set_pose(general, pos, yaw, false);
+                        (pos, yaw)
+                    }
+                    None => (info.pos, info.yaw),
+                };
+                PlayerSim {
+                    general,
+                    mode: Mode::Fps,
+                    body: Body::new(pos, &tuning),
+                    yaw,
+                    pitch: 0.0,
+                    arsenal: Arsenal::new(),
+                    rng: Rng::new(general.wrapping_mul(2_654_435_761) ^ frame),
+                    input: FpsInput { yaw, ..Default::default() },
+                    pressed_accum: 0,
+                    health: info.health,
+                    max_health: info.max_health,
+                    regen_wait: 0.0,
+                    hack: None,
+                }
+            }
         };
         // The weapon can't fire or aim until the tablet is down and it is up again.
         // BO2's first raise, once the tablet is down.
@@ -195,6 +246,10 @@ impl Sim {
         state.arsenal.drop_left = 0.0;
         state.arsenal.offhand = None;
         state.arsenal.ads = 0.0;
+        if self.grant_streaks && self.streaks[idx].earned.is_empty() {
+            self.streaks[idx].earned = vec![Streak::Uav, Streak::SentryGun];
+            self.streaks[idx].selected = 0;
+        }
         self.players[idx] = Some(state);
         host.set_controlled(general, true);
         self.emit(idx, EventKind::EnteredFps { general });
@@ -223,6 +278,10 @@ impl Sim {
             }
         }
         self.step_projectiles(host);
+        self.step_equipment(host);
+        for s in &mut self.streaks {
+            s.uav_left = (s.uav_left - LOGIC_DT).max(0.0);
+        }
     }
 
     fn step_projectiles(&mut self, host: &dyn LogicHost) {
@@ -233,21 +292,76 @@ impl Sim {
             }
         }
         for (i, owner, outcome) in done.iter().rev() {
-            self.projectiles.remove(*i);
+            let (_, proj) = self.projectiles.remove(*i);
             match *outcome {
                 Outcome::Exploded { at, hit_enemy, kill } => {
                     self.emit(*owner, EventKind::Exploded { at });
+                    let mut ev = Vec::new();
+                    self.equipment.caught_in_blast(host, *owner, proj.owner, at, proj.def.explosion_radius, &mut ev);
+                    self.equipment_events(ev);
                     if hit_enemy {
                         self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
+                    }
+                    if kill {
+                        self.award_kill(*owner);
                     }
                 }
                 Outcome::Hit { kill, .. } => {
                     if kill {
                         self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
                         self.scavenge(*owner);
+                        self.award_kill(*owner);
                     }
                 }
+                Outcome::Landed { at, stuck_to } => {
+                    let yaw = proj.vel.y.atan2(proj.vel.x);
+                    let p = Placed::new(proj.def, *owner, proj.owner, proj.object, at, yaw, stuck_to);
+                    self.emit(*owner, EventKind::Planted { kind: p.kind });
+                    self.equipment.add(p);
+                }
             }
+        }
+    }
+
+    fn step_equipment(&mut self, host: &dyn LogicHost) {
+        let players = &self.players;
+        let engineer = |id: u32| players.iter().flatten().any(|p| p.general == id && p.arsenal.has(Perk::Engineer));
+        let mut ev = Vec::new();
+        self.equipment.step(host, &mut self.projectiles, &engineer, &mut ev);
+        self.equipment_events(ev);
+    }
+
+    fn equipment_events(&mut self, events: Vec<EquipEvent>) {
+        for e in events {
+            match e {
+                EquipEvent::Exploded { owner, at, hit_enemy, kill } => {
+                    self.emit(owner, EventKind::Exploded { at });
+                    if hit_enemy {
+                        self.emit(owner, EventKind::HitMarker { headshot: false, kill });
+                    }
+                    if kill {
+                        self.award_kill(owner);
+                    }
+                }
+                EquipEvent::Destroyed { by: Some(by), .. } => {
+                    self.emit(by, EventKind::DestroyedEquipment);
+                    self.emit(by, EventKind::HitMarker { headshot: false, kill: false });
+                }
+                EquipEvent::Destroyed { by: None, .. } => {}
+                EquipEvent::Intercepted { owner, at } => self.emit(owner, EventKind::Intercepted { at }),
+            }
+        }
+    }
+
+    /// Scorestreak points for a kill by `idx`.
+    fn award_kill(&mut self, idx: usize) {
+        let Some(s) = self.streaks.get_mut(idx) else { return };
+        let (hardline, loadout) = match self.players.get(idx).and_then(|p| p.as_ref()) {
+            Some(p) => (p.arsenal.has(Perk::Hardline), p.arsenal.loadout.streaks.clone()),
+            None => (false, crate::weapons::Loadout::default().streaks),
+        };
+        for streak in s.add_points(KILL_POINTS, hardline, &loadout) {
+            self.emit(idx, EventKind::StreakEarned { streak });
         }
     }
 
@@ -262,11 +376,14 @@ impl Sim {
 
     fn step_player(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim) -> bool {
         let Some(info) = host.object(p.general, p.general) else {
+            self.streaks[idx].died();
             self.emit(idx, EventKind::GeneralDied { general: p.general });
             return false;
         };
         if info.has(objflags::DEAD) {
             host.set_controlled(p.general, false);
+            self.streaks[idx].died();
+            self.equipment.clear_owner(host, idx);
             self.emit(idx, EventKind::GeneralDied { general: p.general });
             return false;
         }
@@ -313,6 +430,8 @@ impl Sim {
                     for a in actions {
                         self.apply_weapon_action(host, idx, p, a);
                     }
+                    self.step_hack(host, idx, p);
+                    self.step_streaks(host, idx, p, input.pressed);
                 }
             }
             Mode::FieldComputer { t } => {
@@ -335,6 +454,106 @@ impl Sim {
         let moving = p.body.horizontal_speed() > 1.0;
         host.set_pose(p.general, p.body.pos, p.yaw, moving);
         true
+    }
+
+    /// Black Hat: hold it on enemy equipment or a Zero Hour drone until the hack completes.
+    fn step_hack(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim) {
+        if p.arsenal.hacking().is_none() {
+            p.hack = None;
+            return;
+        }
+        let eye = p.body.eye();
+        let dir = dir_from_angles(p.yaw, p.pitch);
+        // Equipment first, then the nearest drone in the aim cone.
+        let target = match self.equipment.aimed_at(host, p.general, eye, dir) {
+            Some(i) => Some((self.equipment.placed[i].object, HACK_TIME)),
+            None => {
+                let mut objs = Vec::new();
+                host.query(eye, HACK_RANGE, p.general, &mut objs);
+                objs.into_iter()
+                    .filter(|o| o.has(objflags::DRONE) && o.has(objflags::ENEMY) && !o.has(objflags::DEAD))
+                    .filter_map(|o| {
+                        let to = o.pos + Vec3::new(0.0, 0.0, o.height * 0.5) - eye;
+                        let d = to.length();
+                        (d > 1e-3 && to.dot(dir) / d >= HACK_COS).then_some((o.id, d))
+                    })
+                    .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
+                    .map(|(id, _)| (id, HACK_DRONE_TIME))
+            }
+        };
+        let Some((target, needed)) = target else {
+            p.hack = None;
+            return;
+        };
+        let progress = match p.hack {
+            Some((t, done)) if t == target => done + LOGIC_DT,
+            _ => LOGIC_DT,
+        };
+        if progress >= needed {
+            if let Some(i) = self.equipment.placed.iter().position(|e| e.object == target) {
+                self.equipment.hacked(host, i, idx, p.general);
+            } else {
+                host.capture(target, p.general);
+            }
+            p.arsenal.hack_done();
+            p.hack = None;
+            self.emit(idx, EventKind::Hacked);
+        } else {
+            p.hack = Some((target, progress));
+            self.emit(idx, EventKind::Hacking { progress: progress / needed });
+        }
+    }
+
+    /// Scorestreaks: the use key fires the selected one, the next key picks another.
+    fn step_streaks(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, pressed: u32) {
+        if pressed & buttons::STREAK_NEXT != 0 {
+            self.streaks[idx].next();
+        }
+        if pressed & buttons::STREAK_USE == 0 || p.arsenal.offhand.is_some() || p.arsenal.melee_left > 0.0 {
+            return;
+        }
+        let Some(streak) = self.streaks[idx].take() else { return };
+        match streak {
+            Streak::Uav => self.streaks[idx].uav_left = UAV_TIME,
+            Streak::SentryGun => {
+                let (fwd, _) = basis_xy(p.yaw);
+                let at = p.body.pos + fwd * SENTRY_DISTANCE;
+                let at = Vec3::new(at.x, at.y, host.ground_height(at.x, at.y));
+                host.spawn(SENTRY_OBJECT, p.general, at, p.yaw);
+            }
+            Streak::DeathMachine | Streak::WarMachine => {
+                if let Some(id) = streak.weapon() {
+                    p.arsenal.give_streak_weapon(weapon(id));
+                }
+            }
+        }
+        self.emit(idx, EventKind::StreakUsed { streak });
+    }
+
+    /// How each controlled General looks in third person: its General, the viewmodel index of the
+    /// weapon in hand (its world model is shown), and the tablet (0 none, 1 coming up for the field
+    /// computer, 2 going down as first person starts).
+    pub fn world_poses(&self) -> Vec<(u32, i32, i32)> {
+        self.players
+            .iter()
+            .flatten()
+            .map(|p| {
+                let a = &p.arsenal;
+                let tablet = match p.mode {
+                    Mode::FieldComputer { .. } => 1,
+                    Mode::Fps if a.raise_left > a.raise_total + 1e-4 => 2,
+                    _ => 0,
+                };
+                (p.general, a.current().def.viewmodel.max(0), tablet)
+            })
+            .collect()
+    }
+
+    /// Whether `player` sees enemies at `pos` on the minimap through the shroud: their UAV, or one
+    /// of their Sensor Grenades.
+    pub fn reveals(&self, player: i32, pos: Vec3) -> bool {
+        let Ok(idx) = usize::try_from(player) else { return false };
+        self.streaks.get(idx).is_some_and(|s| s.uav_left > 0.0) || self.equipment.sensed(idx, pos)
     }
 
     fn track_health(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, info: &ObjInfo) {
@@ -364,22 +583,53 @@ impl Sim {
                 let radius = spread_deg.to_radians() * jitter.1.abs().sqrt();
                 let dir = dir_from_angles(p.yaw + radius * angle.cos(), p.pitch + radius * angle.sin());
 
-                let targets = gather_targets(host, eye, def.max_range, p.general);
+                let mut targets = gather_targets(host, eye, def.max_range, p.general);
                 let ground = |x: f32, y: f32| host.ground_height(x, y);
                 let hit = hitscan::trace(eye, dir, def.max_range, &targets, p.general, &ground);
                 // One tracer and sound per shot, not per pellet.
                 let fx = if pellet == 0 { Some(def.fx_weapon.as_str()).filter(|f| !f.is_empty()) } else { None };
+                // Enemy equipment in the way takes the shot.
+                let reach = match hit {
+                    HitResult::Object { distance, .. } => distance,
+                    other => (other.point() - eye).length(),
+                };
+                if let Some((i, t)) = self.equipment.shot(host, p.general, eye, dir, reach) {
+                    if let Some(fx) = fx {
+                        host.fire_fx(p.general, fx, 0, eye + dir * t);
+                    }
+                    let e = self.equipment.destroy(host, i, Some(idx));
+                    self.equipment_events(vec![e]);
+                    if pellet == 0 {
+                        self.emit(idx, EventKind::Shot { origin: eye, end: eye + dir * t });
+                        self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1 });
+                    }
+                    return;
+                }
                 match hit {
                     HitResult::Object { id, point, distance, headshot } => {
                         if let Some(fx) = fx {
                             host.fire_fx(p.general, fx, id, point);
                         }
                         let mult = if headshot { def.head_multiplier } else { 1.0 };
-                        let amount = def.damage_at(distance) * mult * BO2_TO_ZH_DAMAGE;
-                        let kill = host.damage(p.general, id, amount, damage_kind::SMALL_ARMS);
+                        let victim = host.object(id, p.general);
+                        let infantry = victim.is_some_and(|v| v.has(objflags::INFANTRY));
+                        let fmj = if def.fmj && !infantry { FMJ_VEHICLE_DAMAGE } else { 1.0 };
+                        let amount = def.damage_at(distance) * mult * fmj * BO2_TO_ZH_DAMAGE;
+                        let mut kill = host.damage(p.general, id, amount, damage_kind::SMALL_ARMS);
+                        // FMJ: on through the first soldier into whoever is behind.
+                        if def.fmj && infantry {
+                            targets.retain(|t| t.id != id);
+                            if let HitResult::Object { id: next, distance, headshot, .. } = hitscan::trace(point + dir * 0.1, dir, def.max_range - distance, &targets, p.general, &ground) {
+                                let mult = if headshot { def.head_multiplier } else { 1.0 };
+                                kill |= host.damage(p.general, next, def.damage_at(distance) * mult * PENETRATION_DAMAGE * BO2_TO_ZH_DAMAGE, damage_kind::SMALL_ARMS);
+                            }
+                        }
                         self.emit(idx, EventKind::HitMarker { headshot, kill });
-                        if kill && p.arsenal.has(Perk::Scavenger) {
-                            p.arsenal.scavenge();
+                        if kill {
+                            if p.arsenal.has(Perk::Scavenger) {
+                                p.arsenal.scavenge();
+                            }
+                            self.award_kill_for(idx, p);
                         }
                     }
                     other => {
@@ -393,15 +643,19 @@ impl Sim {
                     self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1 });
                 }
             }
-            WeaponAction::Launch { def } => {
+            WeaponAction::Launch { def, pellet } => {
                 let eye = p.body.eye();
-                let dir = dir_from_angles(p.yaw, p.pitch);
+                // The tri-bolt's bolts fan out a little.
+                let spread = (pellet as f32 - (def.pellets.max(1) - 1) as f32 * 0.5) * 0.04;
+                let dir = dir_from_angles(p.yaw + spread, p.pitch);
                 if !def.fx_weapon.is_empty() {
                     host.fire_fx(p.general, &def.fx_weapon, 0, eye + dir * 10.0);
                 }
                 let proj = Projectile::launch(def, p.general, eye + dir * 2.0, dir, def.fuse_time, host, p.yaw);
                 self.projectiles.push((idx, proj));
-                self.emit(idx, EventKind::Launched);
+                if pellet == 0 {
+                    self.emit(idx, EventKind::Launched);
+                }
             }
             WeaponAction::Throw { def, fuse_left } => {
                 let eye = p.body.eye();
@@ -446,17 +700,62 @@ impl Sim {
                     host.fire_fx(p.general, MELEE_FX_WEAPON, v.id, v.pos);
                     let kill = host.damage(p.general, v.id, damage * BO2_TO_ZH_DAMAGE, damage_kind::MELEE);
                     self.emit(idx, EventKind::HitMarker { headshot: false, kill });
-                    if kill && p.arsenal.has(Perk::Scavenger) {
-                        p.arsenal.scavenge();
+                    if kill {
+                        if p.arsenal.has(Perk::Scavenger) {
+                            p.arsenal.scavenge();
+                        }
+                        self.award_kill_for(idx, p);
                     }
                 }
             }
+            WeaponAction::Plant { def } => {
+                let (fwd, _) = basis_xy(p.yaw);
+                let at = p.body.pos + fwd * PLANT_DISTANCE;
+                let at = Vec3::new(at.x, at.y, host.ground_height(at.x, at.y));
+                let object = if def.projectile_object.is_empty() { 0 } else { host.spawn(&def.projectile_object, p.general, at, p.yaw) };
+                let placed = Placed::new(def, idx, p.general, object, at, p.yaw, None);
+                self.emit(idx, EventKind::Planted { kind: placed.kind });
+                self.equipment.add(placed);
+            }
+            WeaponAction::Detonate => {
+                let mut ev = Vec::new();
+                self.equipment.detonate(host, idx, &mut ev);
+                if !ev.is_empty() {
+                    self.emit(idx, EventKind::Detonated);
+                }
+                // Points for what the C4 kills (the owner's own state is out of the table now).
+                for e in &ev {
+                    if let EquipEvent::Exploded { at, hit_enemy, kill, .. } = *e {
+                        self.emit(idx, EventKind::Exploded { at });
+                        if hit_enemy {
+                            self.emit(idx, EventKind::HitMarker { headshot: false, kill });
+                        }
+                        if kill {
+                            self.award_kill_for(idx, p);
+                        }
+                    }
+                }
+            }
+            WeaponAction::AltToggled => self.emit(idx, EventKind::AltToggled),
             WeaponAction::ReloadStarted => self.emit(idx, EventKind::ReloadStarted),
             WeaponAction::Swapped => self.emit(idx, EventKind::Swapped),
             WeaponAction::DryFire | WeaponAction::ReloadFinished => {}
         }
     }
+
+    /// Scorestreak points for a kill by the player being stepped (`p`, out of the table).
+    fn award_kill_for(&mut self, idx: usize, p: &PlayerSim) {
+        let hardline = p.arsenal.has(Perk::Hardline);
+        for streak in self.streaks[idx].add_points(KILL_POINTS, hardline, &p.arsenal.loadout.streaks) {
+            self.emit(idx, EventKind::StreakEarned { streak });
+        }
+    }
 }
+
+/// Planted equipment goes down this far in front of the General.
+pub const PLANT_DISTANCE: f32 = inches(30.0);
+/// FMJ: damage to the second soldier a round passes through.
+pub const PENETRATION_DAMAGE: f32 = 0.75;
 
 fn reach_radius(o: &ObjInfo) -> f32 {
     if o.has(objflags::INFANTRY) {
@@ -643,6 +942,14 @@ pub(crate) mod tests {
         }
         fn fx(&self, name: &str, _pos: Vec3) {
             self.played_fx.borrow_mut().push(name.to_string());
+        }
+        fn capture(&self, id: u32, new_owner: u32) {
+            let owner = self.objects.borrow().iter().find(|o| o.id == new_owner).map(|o| o.owner_player);
+            if let Some(owner) = owner {
+                for o in self.objects.borrow_mut().iter_mut().filter(|o| o.id == id) {
+                    o.owner_player = owner;
+                }
+            }
         }
     }
 

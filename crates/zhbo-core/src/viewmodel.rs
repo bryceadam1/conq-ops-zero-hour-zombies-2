@@ -34,6 +34,8 @@ pub mod slot {
     pub const RAISE: i32 = 0x17;
     pub const FIRST_RAISE: i32 = 0x18;
     pub const DROP: i32 = 0x19;
+    pub const ALT_RAISE: i32 = 0x1A;
+    pub const ALT_DROP: i32 = 0x1B;
     pub const QUICK_RAISE: i32 = 0x1C;
     pub const QUICK_DROP: i32 = 0x1D;
     pub const EMPTY_RAISE: i32 = 0x1E;
@@ -49,9 +51,10 @@ pub mod slot {
     pub const ADS_RECHAMBER: i32 = 0x40;
     pub const COUNT: i32 = 0x58;
 
-    /// Clips that loop.
+    /// Clips that loop (an alt mode's clips too, which sit [`crate::weapons::ALT_CLIPS`] later).
     pub fn loops(clip: i32) -> bool {
-        matches!(clip, IDLE | EMPTY_IDLE | SPRINT_LOOP | SPRINT_EMPTY_LOOP | super::TABLET_IDLE)
+        let slot = if clip >= crate::weapons::ALT_CLIPS { clip - crate::weapons::ALT_CLIPS } else { clip };
+        matches!(slot, IDLE | EMPTY_IDLE | SPRINT_LOOP | SPRINT_EMPTY_LOOP) || clip == super::TABLET_IDLE
     }
 }
 
@@ -121,6 +124,8 @@ impl Viewmodel {
         let def = w.def;
         let model = def.viewmodel;
         let frame = |model: i32, clip: i32, t: f32| Frame { model, clip, t: t.max(0.0) };
+        // The held weapon's own clips (an alt mode's sit after its weapon's on the same viewmodel).
+        let wf = |clip: i32, t: f32| Frame { model, clip: clip + def.clip_base, t: t.max(0.0) };
 
         if let Some(t) = self.tablet_putaway.as_mut() {
             *t += dt;
@@ -154,17 +159,17 @@ impl Viewmodel {
             let t = a.melee.melee_time.max(0.3) - a.melee_left;
             let own = if empty { slot::MELEE_EMPTY } else { slot::MELEE };
             if def.has_anim(own as usize) {
-                return frame(model, own, t);
+                return wf(own, t);
             }
             if def.has_anim(slot::MELEE as usize) {
-                return frame(model, slot::MELEE, t);
+                return wf(slot::MELEE, t);
             }
             return frame(a.melee.viewmodel, slot::MELEE, t);
         }
         if a.drop_left > 0.0 {
             let prev = &a.weapons[a.previous];
             let clip = if a.drop_total <= prev.def.quick_drop_time + 1e-4 { slot::QUICK_DROP } else if prev.ammo == 0 { slot::EMPTY_DROP } else { slot::DROP };
-            return frame(prev.def.viewmodel, or(prev.def, clip, slot::DROP), a.drop_total - a.drop_left);
+            return frame(prev.def.viewmodel, or(prev.def, clip, slot::DROP) + prev.def.clip_base, a.drop_total - a.drop_left);
         }
         if a.raise_left > 0.0 {
             let clip = match a.raise_kind {
@@ -172,31 +177,32 @@ impl Viewmodel {
                 RaiseKind::Quick => slot::QUICK_RAISE,
                 RaiseKind::Normal if empty => slot::EMPTY_RAISE,
                 RaiseKind::Normal => slot::RAISE,
+                RaiseKind::Alt => slot::ALT_RAISE,
             };
-            return frame(model, or(def, clip, slot::RAISE), a.raise_total - a.raise_left);
+            return wf(or(def, clip, slot::RAISE), a.raise_total - a.raise_left);
         }
         match w.reload {
-            Some(Reload::Magazine { t, empty, .. }) => return frame(model, if empty { or(def, slot::RELOAD_EMPTY, slot::RELOAD) } else { slot::RELOAD }, t),
+            Some(Reload::Magazine { t, empty, .. }) => return wf(if empty { or(def, slot::RELOAD_EMPTY, slot::RELOAD) } else { slot::RELOAD }, t),
             Some(Reload::Shells { phase, t, .. }) => {
                 let clip = match phase {
                     ShellPhase::Start => slot::RELOAD_START,
                     ShellPhase::Insert => slot::RELOAD,
                     ShellPhase::End => slot::RELOAD_END,
                 };
-                return frame(model, clip, t);
+                return wf(clip, t);
             }
             None => {}
         }
         if p.body.sprinting && a.ads < 0.5 {
             let (sin, sloop) = if empty { (slot::SPRINT_EMPTY_IN, slot::SPRINT_EMPTY_LOOP) } else { (slot::SPRINT_IN, slot::SPRINT_LOOP) };
             return if self.since_sprint_start < SPRINT_IN_TIME && def.has_anim(sin as usize) {
-                frame(model, sin, self.since_sprint_start)
+                wf(sin, self.since_sprint_start)
             } else {
-                frame(model, or(def, sloop, slot::SPRINT_LOOP), (self.since_sprint_start - SPRINT_IN_TIME).max(0.0))
+                wf(or(def, sloop, slot::SPRINT_LOOP), (self.since_sprint_start - SPRINT_IN_TIME).max(0.0))
             };
         }
         if a.since_sprint < def.sprint_out_time && def.has_anim(slot::SPRINT_OUT as usize) {
-            return frame(model, if empty { or(def, slot::SPRINT_EMPTY_OUT, slot::SPRINT_OUT) } else { slot::SPRINT_OUT }, a.since_sprint);
+            return wf(if empty { or(def, slot::SPRINT_EMPTY_OUT, slot::SPRINT_OUT) } else { slot::SPRINT_OUT }, a.since_sprint);
         }
         // Fire (or the last shot), then the pump/bolt rechamber if the weapon has one.
         let fire_len = FIRE_HOLD.max(def.fire_time);
@@ -207,13 +213,13 @@ impl Viewmodel {
                 (false, true) => or(def, slot::LASTSHOT, slot::FIRE),
                 (false, false) => slot::FIRE,
             };
-            return frame(model, clip, self.since_shot);
+            return wf(clip, self.since_shot);
         }
         let rechamber = if self.shot_aimed { or(def, slot::ADS_RECHAMBER, slot::RECHAMBER) } else { slot::RECHAMBER };
         if def.has_anim(rechamber as usize) && !self.shot_was_last && self.since_shot < fire_len + def.fire_time {
-            return frame(model, rechamber, self.since_shot - FIRE_HOLD.min(def.fire_time * 0.3));
+            return wf(rechamber, self.since_shot - FIRE_HOLD.min(def.fire_time * 0.3));
         }
-        frame(model, if empty { or(def, slot::EMPTY_IDLE, slot::IDLE) } else { slot::IDLE }, self.since_shot)
+        wf(if empty { or(def, slot::EMPTY_IDLE, slot::IDLE) } else { slot::IDLE }, self.since_shot)
     }
 }
 

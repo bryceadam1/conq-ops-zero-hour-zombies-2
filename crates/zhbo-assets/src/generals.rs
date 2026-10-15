@@ -106,7 +106,22 @@ pub const ANIMS: &[(&str, &str)] = &[
     ("ZHBO_PLR_ADS", "pb_stand_ads"),
     ("ZHBO_PLR_DTA", "pb_death_faceplant"),
     ("ZHBO_PLR_DTB", "pb_death_flyback"),
+    // The scorestreak tablet coming up and going down (the field computer).
+    ("ZHBO_PLR_TBU", "pt_tablet_stand_raise"),
+    ("ZHBO_PLR_TBD", "pt_tablet_stand_putaway"),
 ];
+
+/// Third-person sub-objects on the soldier model: weapon `vm`'s meshes, and the tablet's (shared
+/// with `host/zhbo/ZhboBridge.cpp`).
+pub fn world_mesh(vm: i32, k: usize) -> String {
+    format!("W{vm:02}{k:02}")
+}
+pub fn tablet_mesh(k: usize) -> String {
+    format!("TB{k:02}")
+}
+const TABLET_WORLD: &str = "t6_wpn_tablet_world";
+/// The bone BO2's third-person tablet animations carry the tablet on.
+const TABLET_TAG: &str = "tag_inhand";
 
 pub(crate) fn load_zone(bo2_dir: &Path, name: &str) -> Result<Zone, String> {
     let path = bo2_dir.join("zone").join("all").join(format!("{name}.ff"));
@@ -280,9 +295,14 @@ fn env_map() -> Rgba {
     Rgba { width: N, height: N, pixels }
 }
 
-/// The Draw module for a General with a BO2 model.
-fn draw_module(model: &str) -> String {
+/// The Draw module for a General with a BO2 model. `hidden` are the sub-objects hidden until the
+/// bridge shows them (the weapons not in hand, the tablet); every condition state hides them, and
+/// the bridge's own show/hide wins over that (`ZhboBridge.cpp`). USER_1 raises the scorestreak
+/// tablet (the field computer), USER_2 puts it away.
+fn draw_module(model: &str, hidden: &[String]) -> String {
     let a = |n: &str| format!("{HIERARCHY}.{n}");
+    // Zero Hour reads INI lines of up to about a kilobyte; several HideSubObject lines add up.
+    let hide: String = hidden.chunks(80).map(|c| format!("\x20     HideSubObject       = {}\n", c.join(" "))).collect();
     format!(
         "  Draw = W3DModelDraw ModuleTag_01\n\
          \x20   OkToChangeModelColor = Yes\n\
@@ -292,12 +312,14 @@ fn draw_module(model: &str) -> String {
          \x20     AnimationMode       = LOOP\n\
          \x20     Flags               = RANDOMSTART\n\
          \x20     WeaponFireFXBone    = PRIMARY tag_flash\n\
+         {hide}\
          \x20   End\n\
          \x20   ConditionState        = MOVING\n\
          \x20     Animation           = {run}\n\
          \x20     AnimationMode       = LOOP\n\
          \x20     Flags               = RANDOMSTART\n\
          \x20     ParticleSysBone     = None InfantryDustTrails\n\
+         {hide}\
          \x20   End\n\
          \x20   AliasConditionState   = MOVING FIRING_A\n\
          \x20   AliasConditionState   = MOVING BETWEEN_FIRING_SHOTS_A\n\
@@ -305,13 +327,25 @@ fn draw_module(model: &str) -> String {
          \x20   ConditionState        = FIRING_A\n\
          \x20     Animation           = {ads}\n\
          \x20     AnimationMode       = LOOP\n\
+         {hide}\
          \x20   End\n\
          \x20   AliasConditionState   = BETWEEN_FIRING_SHOTS_A\n\
          \x20   AliasConditionState   = RELOADING_A\n\
+         \x20   ConditionState        = USER_1\n\
+         \x20     Animation           = {tablet_up}\n\
+         \x20     AnimationMode       = ONCE\n\
+         {hide}\
+         \x20   End\n\
+         \x20   ConditionState        = USER_2\n\
+         \x20     Animation           = {tablet_down}\n\
+         \x20     AnimationMode       = ONCE\n\
+         {hide}\
+         \x20   End\n\
          \x20   ConditionState        = DYING\n\
          \x20     Animation           = {dta}\n\
          \x20     Animation           = {dtb}\n\
          \x20     AnimationMode       = ONCE\n\
+         {hide}\
          \x20   End\n\
          \x20 End\n",
         idle = a("ZHBO_PLR_IDL"),
@@ -319,6 +353,8 @@ fn draw_module(model: &str) -> String {
         ads = a("ZHBO_PLR_ADS"),
         dta = a("ZHBO_PLR_DTA"),
         dtb = a("ZHBO_PLR_DTB"),
+        tablet_up = a("ZHBO_PLR_TBU"),
+        tablet_down = a("ZHBO_PLR_TBD"),
     )
 }
 
@@ -354,9 +390,77 @@ fn find_model(patch: &Zone, common: &Zone, name: &str) -> Result<xmodel::Model, 
 /// A notetrack source: viewmodel, clip (BO2 slot or tablet clip) and the BO2 animation.
 pub type Clip = (i32, i32, xanim::Anim);
 
-/// The first-person viewmodels of `converted` weapons: each faction's arms holding the weapon (and
-/// its magazine), on one hierarchy per weapon, with a W3D clip for every BO2 animation slot the
-/// weapon has. Sets each definition's `viewmodel`. Returns a summary and the clips (for sounds).
+/// What a weapon's attachments change about its art: BO2's `WeaponAttachmentUnique` for each, the
+/// animation set to use, the weapon's bones to hide, and the gunshot.
+pub struct Combo<'a> {
+    /// One per attachment (the single-attachment entry), with the attachment's point.
+    pub parts: Vec<(&'a zhbo_formats::weapon::AttachmentUnique, u32)>,
+    pub anims: Vec<Option<String>>,
+    pub hide: Vec<String>,
+    /// An attachment replaces the weapon's own magazine.
+    pub no_clip: bool,
+    pub fire_sound_player: Option<String>,
+    pub fire_sound: Option<String>,
+}
+
+/// The art of `w` with the attachments `shorts` (BO2 create-a-class names).
+pub fn combo<'a>(w: &'a zhbo_formats::weapon::Weapon, atts: &[zhbo_formats::weapon::Attachment], shorts: &[&str]) -> Combo<'a> {
+    use crate::weapons::short_name;
+    let mut parts = Vec::new();
+    let mut mask = 0u32;
+    for short in shorts {
+        let Some((kind, id)) = w.attachment_variants.iter().find(|(_, id)| short_name(id) == *short) else { continue };
+        mask |= 1 << kind;
+        let point = atts.iter().find(|a| &a.name == id).map_or(0, |a| a.point);
+        if let Some(u) = w.attachment_uniques.iter().find(|u| u.kind == *kind && u.combined == 0) {
+            parts.push((u, point));
+        }
+    }
+    let count = |a: &[Option<String>]| a.iter().filter(|x| x.is_some()).count();
+    // The animations: the entry for exactly this combination, else the attachment with the most
+    // of its own (a grip or launcher changes the hands), over the weapon's.
+    let exact = (shorts.len() > 1).then(|| w.attachment_uniques.iter().find(|u| u.combined == mask)).flatten();
+    let source = exact.or_else(|| parts.iter().map(|(u, _)| *u).max_by_key(|u| count(&u.anims)));
+    let mut anims = w.anims.clone();
+    if let Some(u) = source {
+        for (i, a) in u.anims.iter().enumerate() {
+            if a.is_some() && i < anims.len() {
+                anims[i] = a.clone();
+            }
+        }
+    }
+    let mut hide = w.hide_tags.clone();
+    for (u, _) in &parts {
+        hide.extend(u.hide_tags.iter().cloned());
+    }
+    if let Some(u) = exact {
+        hide.extend(u.hide_tags.iter().cloned());
+    }
+    hide.sort();
+    hide.dedup();
+    let sounds = parts.iter().map(|(u, _)| *u).find(|u| u.fire_sound_player.is_some() && u.fire_sound_player != w.fire_sound_player);
+    Combo {
+        no_clip: parts.iter().any(|(u, _)| u.disable_base_clip),
+        fire_sound_player: sounds.and_then(|u| u.fire_sound_player.clone()).or_else(|| w.fire_sound_player.clone()),
+        fire_sound: sounds.and_then(|u| u.fire_sound.clone()).or_else(|| w.fire_sound.clone()),
+        parts,
+        anims,
+        hide,
+    }
+}
+
+/// The BO2 weapon a converted id stands for: `an94_mp+gl+reflex` and `gl_an94_mp~...` are
+/// `an94_mp` and `gl_an94_mp`.
+pub fn base_id(id: &str) -> &str {
+    id.split('~').next().unwrap_or(id).split('+').next().unwrap_or(id)
+}
+
+/// The first-person viewmodels of `converted` weapons: each faction's arms holding the weapon, its
+/// magazine and its attachments (placed where BO2 puts them, iron sights hidden under an optic), on
+/// one hierarchy per weapon, with a W3D clip for every BO2 animation slot it has, and its alt mode's
+/// clips after them. Sets each definition's `viewmodel` (and its alt mode's). Returns a summary and
+/// the clips (for sounds).
+#[allow(clippy::too_many_arguments)]
 fn weapon_viewmodels(
     patch: &Zone,
     common: &Zone,
@@ -364,34 +468,66 @@ fn weapon_viewmodels(
     paks: &Paks,
     out: &mut BTreeMap<String, Vec<u8>>,
     bo2: &[zhbo_formats::weapon::Weapon],
+    atts: &[zhbo_formats::weapon::Attachment],
     defs: &mut [zhbo_core::weapons::WeaponDef],
     converted: &[String],
 ) -> Result<(String, Vec<Clip>), String> {
+    use zhbo_core::attachments::point;
     let mut decals = BTreeSet::new();
     let mut made = Vec::new();
     let mut clips = Vec::new();
     let mut anim_cache: BTreeMap<String, Option<xanim::Anim>> = BTreeMap::new();
     for (vm, id) in converted.iter().enumerate() {
         let vm = vm as i32;
-        let Some(w) = bo2.iter().find(|w| &w.name == id) else { continue };
+        let (base, shorts) = zhbo_core::attachments::split_id(id);
+        let Some(w) = bo2.iter().find(|w| w.name == base) else { continue };
         let Some(view) = w.view_model.as_deref() else { continue };
+        let c = combo(w, atts, &shorts);
         let gun = find_model(patch, common, view).map_err(|e| format!("{id}: {e}"))?;
-        let mag = if w.is_gun() { magazine(common, view) } else { None };
+        let mag = if w.is_gun() && !c.no_clip { magazine(common, view) } else { None };
         let mut parts: Vec<(&xmodel::Model, &str)> = vec![(&gun, "tag_weapon")];
         if let Some(m) = &mag {
             parts.push((m, "j_gun"));
         }
+        // The attachments' models, each with where it goes.
+        let mut extra: Vec<(xmodel::Model, Option<String>, crate::xf::Xf, u32)> = Vec::new();
+        for (u, pt) in &c.parts {
+            let Some(name) = &u.view_model else { continue };
+            let Ok(model) = find_model(patch, common, name) else { continue };
+            let offset = character::scaled_xf((crate::xf::from_angles(u.view_rotation), u.view_offset));
+            extra.push((model, u.view_model_tag.clone(), offset, *pt));
+        }
         let gun_tex = textures(&gun, paks, out, &mut decals);
         let mag_tex = mag.as_ref().map(|m| textures(m, paks, out, &mut decals));
+        let extra_tex: Vec<Vec<Option<String>>> = extra.iter().map(|(m, ..)| textures(m, paks, out, &mut decals)).collect();
         let mut rig: Option<Rig> = None;
         for (f, zone) in FACTIONS.iter().zip(zones) {
             let hands = xmodel::find(zone, f.hands).map_err(|e| e.to_string())?;
-            let rig = rig.get_or_insert_with(|| Rig::new(&hands, &parts));
+            let rig = rig.get_or_insert_with(|| {
+                let mut rig = Rig::new(&hands, &parts);
+                let root = gun.bones.first().and_then(|b| rig.pivot(&b.name)).unwrap_or(0);
+                for (model, tag, offset, pt) in &extra {
+                    let at = tag.as_deref().and_then(|t| rig.pivot(t)).unwrap_or(root);
+                    rig.attach(model, at, *offset);
+                    // Aim through the optic: the line of sight goes up to the middle of its glass.
+                    if *pt == point::OPTIC as u32 {
+                        if let Some(optic) = model.bones.first().and_then(|b| rig.pivot(&b.name)) {
+                            let mid = (model.mins[2] + model.maxs[2]) * 0.5 * character::SCALE;
+                            let pos = crate::xf::apply(rig.bind[optic], [0.0, 0.0, mid]);
+                            rig.move_pivot("tag_sights", pos);
+                        }
+                    }
+                }
+                rig
+            });
             let hands_tex = textures(&hands, paks, out, &mut decals);
             let mut meshes = character::skin(rig, &hands, "H", &hands_tex);
-            meshes.extend(character::skin(rig, &gun, "G", &gun_tex));
+            meshes.extend(character::skin_hiding(rig, &gun, "G", &gun_tex, &c.hide));
             if let (Some(m), Some(t)) = (&mag, &mag_tex) {
                 meshes.extend(character::skin(rig, m, "M", t));
+            }
+            for (k, ((model, ..), tex)) in extra.iter().zip(&extra_tex).enumerate() {
+                meshes.extend(character::skin(rig, model, &format!("A{k}"), tex));
             }
             finish(&mut meshes, &decals);
             let name = vm_model(vm, f.letter);
@@ -400,35 +536,108 @@ fn weapon_viewmodels(
         let rig = rig.ok_or("no viewmodel arms")?;
         let hierarchy = vm_hierarchy(vm);
         out.insert(format!("Art\\W3D\\{hierarchy}.w3d"), rig.hierarchy_file(&hierarchy));
-        let mut n = 0;
-        for (slot, anim_name) in w.anims.iter().enumerate() {
-            let Some(anim_name) = anim_name else { continue };
-            let anim = anim_cache.entry(anim_name.clone()).or_insert_with(|| xanim::find(common, anim_name).ok());
-            let Some(anim) = anim else { continue };
-            let (frames, channels) = character::animate(&rig, anim);
-            let fps = anim.frame_rate.round().max(1.0) as u32;
-            let clip = vm_anim(vm, slot);
-            out.insert(format!("Art\\W3D\\{clip}.w3d"), w3d::animation(&clip, &hierarchy, frames, fps, &channels));
-            clips.push((vm, slot as i32, anim.clone()));
-            n += 1;
+        // The weapon's clips, then its alt mode's after them on the same viewmodel.
+        let alt_id = defs.iter().find(|d| &d.id == id).map(|d| d.alt.clone()).unwrap_or_default();
+        let alt_anims = (!alt_id.is_empty()).then(|| bo2.iter().find(|a| a.name == base_id(&alt_id))).flatten().map(|a| a.anims.clone());
+        let mut sets = vec![(0usize, c.anims.clone())];
+        if let Some(a) = alt_anims.clone() {
+            sets.push((zhbo_core::weapons::ALT_CLIPS as usize, a));
         }
+        let mut n = 0;
+        for (base_slot, anims) in &sets {
+            for (slot, anim_name) in anims.iter().enumerate() {
+                let Some(anim_name) = anim_name else { continue };
+                let anim = anim_cache.entry(anim_name.clone()).or_insert_with(|| xanim::find(common, anim_name).ok());
+                let Some(anim) = anim else { continue };
+                let (frames, channels) = character::animate(&rig, anim);
+                let fps = anim.frame_rate.round().max(1.0) as u32;
+                let clip = vm_anim(vm, base_slot + slot);
+                out.insert(format!("Art\\W3D\\{clip}.w3d"), w3d::animation(&clip, &hierarchy, frames, fps, &channels));
+                clips.push((vm, (base_slot + slot) as i32, anim.clone()));
+                n += 1;
+            }
+        }
+        let mask = |a: &[Option<String>]| a.iter().enumerate().take(128).filter(|(_, x)| x.is_some()).fold(0u128, |m, (i, _)| m | (1u128 << i));
         if let Some(d) = defs.iter_mut().find(|d| &d.id == id) {
             d.viewmodel = vm;
+            d.anims = mask(&c.anims);
         }
-        made.push(format!("{id} ({n} clips{})", if mag.is_some() { ", magazine" } else { "" }));
+        if let (Some(a), Some(d)) = (alt_anims, defs.iter_mut().find(|d| d.id == alt_id)) {
+            d.viewmodel = vm;
+            d.clip_base = zhbo_core::weapons::ALT_CLIPS;
+            d.anims = mask(&a);
+        }
+        made.push(format!(
+            "{id} ({n} clips{}{})",
+            if mag.is_some() { ", magazine" } else { "" },
+            if extra.is_empty() { String::new() } else { format!(", {} attachment models", extra.len()) }
+        ));
     }
     Ok((format!("viewmodels {} (decals dropped: {})", made.join(", "), decals.into_iter().collect::<Vec<_>>().join(" ")), clips))
+}
+
+/// The third-person weapons on the soldier model: each converted weapon's BO2 world model and its
+/// attachments' (at BO2's world offsets), rigid on the right hand as `W<vm><k>` meshes, so the bridge
+/// shows the one in hand. Sets each definition's `world_meshes` (its alt mode shares them).
+#[allow(clippy::too_many_arguments)]
+fn world_weapons(
+    patch: &Zone,
+    common: &Zone,
+    paks: &Paks,
+    out: &mut BTreeMap<String, Vec<u8>>,
+    rig: &Rig,
+    bo2: &[zhbo_formats::weapon::Weapon],
+    atts: &[zhbo_formats::weapon::Attachment],
+    defs: &mut [zhbo_core::weapons::WeaponDef],
+    converted: &[String],
+    decals: &mut BTreeSet<String>,
+) -> Vec<w3d::SkinMesh> {
+    let hand = rig.pivot(character::WEAPON_TAG).unwrap_or(0);
+    let mut meshes = Vec::new();
+    for (vm, id) in converted.iter().enumerate() {
+        let (base, shorts) = zhbo_core::attachments::split_id(id);
+        let Some(w) = bo2.iter().find(|w| w.name == base) else { continue };
+        let Some(world) = w.world_model.as_deref().and_then(|m| find_model(patch, common, m).ok()) else { continue };
+        let c = combo(w, atts, &shorts);
+        let prefix = format!("W{vm:02}");
+        let tex = textures(&world, paks, out, decals);
+        let mut mine = character::skin_rigid(&world, hand, crate::xf::IDENTITY, &prefix, 0, &tex, &c.hide);
+        for (u, _) in &c.parts {
+            let Some(model) = u.world_model.as_deref().and_then(|m| find_model(patch, common, m).ok()) else { continue };
+            // From the world model's own tag, or its origin.
+            let tag = u.world_model_tag.as_deref().and_then(|t| world.bones.iter().find(|b| b.name == t));
+            let base_xf = tag.map_or(crate::xf::IDENTITY, |b| character::scaled_xf((b.rotation, b.position)));
+            let offset = crate::xf::compose(base_xf, character::scaled_xf((crate::xf::from_angles(u.world_rotation), u.world_offset)));
+            let t = textures(&model, paks, out, decals);
+            let first = mine.len();
+            mine.extend(character::skin_rigid(&model, hand, offset, &prefix, first, &t, &[]));
+        }
+        finish(&mut mine, decals);
+        let count = mine.len().min(99) as u8;
+        for d in defs.iter_mut().filter(|d| &d.id == id || d.alt == *id && d.id.contains('~')) {
+            d.world_meshes = count;
+        }
+        meshes.extend(mine);
+    }
+    meshes
 }
 
 /// Thrown and launched things for `converted` weapons: their BO2 projectile (or world) model as a
 /// W3D model, and a Zero Hour object that shows it (`ZHBO_Proj_<id>`). Sets `projectile_object`.
 fn projectiles(patch: &Zone, common: &Zone, paks: &Paks, out: &mut BTreeMap<String, Vec<u8>>, bo2: &[zhbo_formats::weapon::Weapon], defs: &mut [zhbo_core::weapons::WeaponDef], converted: &[String]) -> String {
     use zhbo_core::weapons::Class;
-    let mut ini = String::from("; Generated by zhbo-assets: thrown and launched BO2 weapons, moved by zhbo-core.\n\n");
+    let mut ini = String::from("; Generated by zhbo-assets: thrown, launched and placed BO2 weapons, moved by zhbo-core.\n\n");
     let mut decals = BTreeSet::new();
     let mut made = Vec::new();
-    for (vm, id) in converted.iter().enumerate() {
-        let Some(w) = bo2.iter().find(|w| &w.name == id) else { continue };
+    // The converted weapons and their alt modes (an under-barrel launcher's grenade).
+    let mut ids: Vec<String> = converted.to_vec();
+    for id in converted {
+        if let Some(alt) = defs.iter().find(|d| &d.id == id).map(|d| d.alt.clone()).filter(|a| !a.is_empty()) {
+            ids.push(alt);
+        }
+    }
+    for (n, id) in ids.iter().enumerate() {
+        let Some(w) = bo2.iter().find(|w| w.name == base_id(id)) else { continue };
         let Some(d) = defs.iter_mut().find(|d| &d.id == id) else { continue };
         let throws = d.class.is_offhand() || d.class == Class::Launcher || d.projectile_speed > 0.0;
         if !throws || d.class == Class::Melee {
@@ -440,14 +649,21 @@ fn projectiles(patch: &Zone, common: &Zone, paks: &Paks, out: &mut BTreeMap<Stri
         let tex = textures(&model, paks, out, &mut decals);
         let mut meshes = character::skin(&rig, &model, "P", &tex);
         finish(&mut meshes, &decals);
-        let name = projectile_model(vm as i32);
+        let name = projectile_model(n as i32);
         let hierarchy = name.replace("_SKN", "_SKL");
         out.insert(format!("Art\\W3D\\{name}.w3d"), w3d::skin_model(&name, &hierarchy, &meshes));
         out.insert(format!("Art\\W3D\\{hierarchy}.w3d"), rig.hierarchy_file(&hierarchy));
-        let object = projectile_object(id);
+        let object = projectile_object(&id.replace(['+', '~'], "_"));
+        // A Sensor Grenade sees for its owner (and finds stealthed units).
+        let sight = if base_id(id) == "sensor_grenade_mp" {
+            let r = zhbo_core::equipment::SENSOR_RANGE;
+            format!("  VisionRange = {r}\n  ShroudClearingRange = {r}\n  Behavior = StealthDetectorUpdate ModuleTag_03\n    DetectionRate = 500\n    DetectionRange = {r}\n  End\n")
+        } else {
+            String::new()
+        };
         ini.push_str(&format!(
-            "Object {object}\n  Draw = W3DModelDraw ModuleTag_01\n    DefaultConditionState\n      Model = {name}\n    End\n  End\n  \
-             KindOf = NO_COLLIDE INERT IMMOBILE UNATTACKABLE CLICK_THROUGH\n  Body = InactiveBody ModuleTag_02\n  End\n  \
+            "Object {object}\n  Draw = W3DModelDraw ModuleTag_01\n    OkToChangeModelColor = Yes\n    DefaultConditionState\n      Model = {name}\n    End\n  End\n  \
+             KindOf = NO_COLLIDE INERT IMMOBILE UNATTACKABLE CLICK_THROUGH\n  Body = InactiveBody ModuleTag_02\n  End\n{sight}  \
              Geometry = Sphere\n  GeometryMajorRadius = 1.0\n  GeometryIsSmall = Yes\nEnd\n\n"
         ));
         d.projectile_object = object;
@@ -536,37 +752,102 @@ fn over(dst: &mut Rgba, src: &Rgba, at: (u32, u32), size: (u32, u32)) {
     }
 }
 
+/// BO2's sentry turret as a Zero Hour object (`zhbo_core::streaks::SENTRY_OBJECT`): its model on its
+/// own hierarchy, turning on `tag_aim` and pitching on `tag_aim_pitch`, an automatic gun, and 90
+/// seconds of life.
+fn sentry(patch: &Zone, common: &Zone, paks: &Paks, out: &mut BTreeMap<String, Vec<u8>>, fire_sound: &str) -> Result<String, String> {
+    const MODEL: &str = "t6_wpn_turret_sentry_gun";
+    let model = find_model(patch, common, MODEL)?;
+    let rig = Rig::new(&model, &[]);
+    let mut decals = BTreeSet::new();
+    let tex = textures(&model, paks, out, &mut decals);
+    let mut meshes = character::skin(&rig, &model, "S", &tex);
+    finish(&mut meshes, &decals);
+    out.insert("Art\\W3D\\ZHBO_SENTRY_SKN.w3d".into(), w3d::skin_model("ZHBO_SENTRY_SKN", "ZHBO_SENTRY_SKL", &meshes));
+    out.insert("Art\\W3D\\ZHBO_SENTRY_SKL.w3d".into(), rig.hierarchy_file("ZHBO_SENTRY_SKL"));
+    let life = (zhbo_core::streaks::SENTRY_TIME * 1000.0) as u32;
+    let object = zhbo_core::streaks::SENTRY_OBJECT;
+    Ok(format!(
+        "; Generated by zhbo-assets: BO2's Sentry Gun scorestreak (zhbo-core places it).\n\n\
+         Weapon ZHBO_SentryGunWeapon\n  PrimaryDamage = 10.0\n  PrimaryDamageRadius = 0.0\n  AttackRange = 200.0\n  \
+         DamageType = SMALL_ARMS\n  DeathType = NORMAL\n  WeaponSpeed = 999999.0\n  ProjectileObject = NONE\n  \
+         FireFX = WeaponFX_GenericMachineGunFire\n  FireSound = {fire_sound}\n  RadiusDamageAffects = ENEMIES\n  \
+         DelayBetweenShots = 70\n  ClipSize = 0\n  AntiGround = Yes\n  AntiAirborneInfantry = Yes\nEnd\n\n\
+         Object {object}\n  Draw = W3DModelDraw ModuleTag_01\n    OkToChangeModelColor = Yes\n    DefaultConditionState\n      \
+         Model = ZHBO_SENTRY_SKN\n      Turret = tag_aim\n      TurretPitch = tag_aim_pitch\n      WeaponFireFXBone = PRIMARY tag_flash\n    End\n  End\n  \
+         DisplayName = OBJECT:{object}\n  EditorSorting = SYSTEM\n  VisionRange = 220\n  ShroudClearingRange = 220\n  \
+         WeaponSet\n    Conditions = None\n    Weapon = PRIMARY ZHBO_SentryGunWeapon\n  End\n  \
+         ArmorSet\n    Conditions = None\n    Armor = HumveeArmor\n  End\n  RadarPriority = UNIT\n  \
+         KindOf = PRELOAD SELECTABLE CAN_ATTACK ATTACK_NEEDS_LINE_OF_SIGHT IMMOBILE SCORE\n  \
+         Body = ActiveBody ModuleTag_02\n    MaxHealth = 300.0\n    InitialHealth = 300.0\n  End\n  \
+         Behavior = AIUpdateInterface ModuleTag_03\n    Turret\n      TurretTurnRate = 240\n      TurretPitchRate = 120\n      \
+         AllowsPitch = Yes\n      ControlledWeaponSlots = PRIMARY\n    End\n    AutoAcquireEnemiesWhenIdle = Yes\n  End\n  \
+         Behavior = LifetimeUpdate ModuleTag_04\n    MinLifetime = {life}\n    MaxLifetime = {life}\n  End\n  \
+         Behavior = DestroyDie ModuleTag_05\n  End\n  Behavior = FXListDie ModuleTag_06\n    DeathFX = FX_BoobyTrapExplosion\n  End\n  \
+         Geometry = CYLINDER\n  GeometryMajorRadius = 5.0\n  GeometryMinorRadius = 5.0\n  GeometryHeight = 9.0\n  GeometryIsSmall = Yes\nEnd\n"
+    ))
+}
+
+/// The tablet in the soldier's hand, as `TB<k>` meshes on BO2's `tag_inhand` (the bone its tablet
+/// animations carry).
+fn tablet_world(patch: &Zone, common: &Zone, paks: &Paks, out: &mut BTreeMap<String, Vec<u8>>, rig: &Rig, decals: &mut BTreeSet<String>) -> Vec<w3d::SkinMesh> {
+    let Ok(model) = find_model(patch, common, TABLET_WORLD) else { return Vec::new() };
+    let Some(tag) = rig.pivot(TABLET_TAG).or_else(|| rig.pivot("tag_weapon_left")) else { return Vec::new() };
+    let tex = textures(&model, paks, out, decals);
+    let mut meshes = character::skin_rigid(&model, tag, crate::xf::IDENTITY, "TB", 0, &tex, &[]);
+    finish(&mut meshes, decals);
+    meshes
+}
+
 /// Convert everything; returns the archive files and a one-line summary.
 pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String> {
     let common = load_zone(bo2_dir, "common_mp")?;
     let weapon = xmodel::find(&common, WEAPON).map_err(|e| e.to_string())?;
     let paks = Paks::open(bo2_dir)?;
+    let patch = load_zone(bo2_dir, crate::fx::ZONE)?;
     let mut out: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-    let mut ini = BASE_INI.to_string();
-    let mut rig: Option<Rig> = None;
     let mut summary = Vec::new();
-
     out.insert(format!("Art\\Textures\\{ENV_MAP}"), images::tga_bytes(&env_map()));
-    let mut zones = Vec::new();
+
+    // Every BO2 multiplayer weapon a player can carry, its attachments and alt modes, and the
+    // scorestreak weapons, as the core's weapon table; art for the converted ones (the loadout).
+    let bo2 = zhbo_formats::weapon::all(&common);
+    let atts = zhbo_formats::weapon::attachments(&common);
+    let names = crate::weapons::names(bo2_dir);
+    let mut table = crate::weapons::table(&bo2, &atts, &names);
+    let converted = crate::weapons::converted(&bo2);
+    crate::weapons::add_variants(&mut table, &converted);
+
+    let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(bo2_dir, f.zone)).collect::<Result<_, _>>()?;
+    let (vm_summary, mut clips) = weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &atts, &mut table.weapons, &converted)?;
+    summary.push(vm_summary);
+
+    // The soldiers: body, every converted weapon in the right hand (one shown at a time), and the
+    // tablet.
+    let rig = Rig::new(&xmodel::find(&zones[0], FACTIONS[0].body).map_err(|e| e.to_string())?, &[(&weapon, character::WEAPON_TAG)]);
     let mut decals = BTreeSet::new();
-    for f in FACTIONS {
-        let zone = load_zone(bo2_dir, f.zone)?;
-        let body = xmodel::find(&zone, f.body).map_err(|e| e.to_string())?;
-        let rig = rig.get_or_insert_with(|| Rig::new(&body, &[(&weapon, character::WEAPON_TAG)]));
+    let held = world_weapons(&patch, &common, &paks, &mut out, &rig, &bo2, &atts, &mut table.weapons, &converted, &mut decals);
+    let tablet = tablet_world(&patch, &common, &paks, &mut out, &rig, &mut decals);
+    table.tablet_meshes = tablet.len() as u8;
+    // Shown at first: the primary (viewmodel 0).
+    let mut hidden: Vec<String> = held.iter().map(|m| m.name.clone()).filter(|n| !n.starts_with("W00")).collect();
+    hidden.extend(tablet.iter().map(|m| m.name.clone()));
+    let mut ini = BASE_INI.to_string();
+    for (f, zone) in FACTIONS.iter().zip(&zones) {
+        let body = xmodel::find(zone, f.body).map_err(|e| e.to_string())?;
         let body_tex = textures(&body, &paks, &mut out, &mut decals);
-        let weapon_tex = textures(&weapon, &paks, &mut out, &mut decals);
-        let mut meshes = character::skin(rig, &body, "B", &body_tex);
-        meshes.extend(character::skin(rig, &weapon, "W", &weapon_tex));
+        let mut meshes = character::skin(&rig, &body, "B", &body_tex);
         finish(&mut meshes, &decals);
+        meshes.extend(held.iter().cloned());
+        meshes.extend(tablet.iter().cloned());
         out.insert(format!("Art\\W3D\\{}.w3d", f.model), w3d::skin_model(f.model, HIERARCHY, &meshes));
-        ini = replace_draw(&ini, f.object, &draw_module(f.model))?;
+        ini = replace_draw(&ini, f.object, &draw_module(f.model, &hidden))?;
         summary.push(format!("{} = {} ({} meshes)", f.object, f.body, meshes.len()));
-        zones.push(zone);
     }
+    summary.push(format!("third person: {} weapon meshes, {} tablet meshes", held.len(), tablet.len()));
     if !decals.is_empty() {
-        summary.push(format!("decals dropped: {}", decals.into_iter().collect::<Vec<_>>().join(" ")));
+        summary.push(format!("decals dropped: {}", decals.iter().cloned().collect::<Vec<_>>().join(" ")));
     }
-    let rig = rig.ok_or("no bodies")?;
     out.insert(format!("Art\\W3D\\{HIERARCHY}.w3d"), rig.hierarchy_file(HIERARCHY));
     for (w3d_name, bo2_name) in ANIMS {
         let anim = xanim::find(&common, bo2_name).map_err(|e| e.to_string())?;
@@ -574,34 +855,58 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
         let fps = anim.frame_rate.round().max(1.0) as u32;
         out.insert(format!("Art\\W3D\\{w3d_name}.w3d"), w3d::animation(w3d_name, HIERARCHY, frames, fps, &channels));
     }
-    // Every BO2 multiplayer weapon a player can carry, as the core's weapon table; art for the
-    // converted ones (the loadout by default).
-    let bo2 = zhbo_formats::weapon::all(&common);
-    let names = crate::weapons::names(bo2_dir);
-    let mut defs: Vec<zhbo_core::weapons::WeaponDef> =
-        bo2.iter().filter(|w| crate::weapons::is_player_weapon(w)).map(|w| crate::weapons::to_def(w, &names)).collect();
-    let converted = crate::weapons::converted(&bo2);
-    let patch = load_zone(bo2_dir, crate::fx::ZONE)?;
-    let (vm_summary, mut clips) = weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &mut defs, &converted)?;
-    summary.push(vm_summary);
+
     let mut tablet_decals = BTreeSet::new();
     tablets(&common, &zones, &paks, &mut out, &mut tablet_decals)?;
     for (i, (_, bo2_name)) in TABLET_ANIMS.iter().enumerate() {
         let anim = xanim::find(&common, bo2_name).map_err(|e| e.to_string())?;
         clips.push((zhbo_core::viewmodel::NONE, zhbo_core::viewmodel::TABLET_PULLOUT + i as i32, anim));
     }
-    summary.push(projectiles(&patch, &common, &paks, &mut out, &bo2, &mut defs, &converted));
+    summary.push(projectiles(&patch, &common, &paks, &mut out, &bo2, &mut table.weapons, &converted));
 
     // BO2 sound effects: the general ones, each converted weapon's own shots, and the viewmodel
     // clips' sound notetracks.
     let world = load_zone(bo2_dir, crate::sfx::WORLD_ZONE)?;
-    let (extra, fx_ini) = crate::weapons::sounds_and_fx(&bo2, &mut defs, &converted);
+    let (extra, fx_ini) = crate::weapons::sounds_and_fx(&bo2, &atts, &mut table.weapons, &converted);
     out.insert("Data\\INI\\Weapon\\ZHBO_BO2_Weapons.ini".into(), fx_ini.into_bytes());
     let (sound_files, sound_summary) = crate::sfx::files(&common, &world, bo2_dir, &clips, &extra)?;
     out.extend(sound_files);
     summary.push(sound_summary);
-    out.insert(crate::weapons::TABLE_PATH.into(), zhbo_core::weapons::format_table(&defs).into_bytes());
-    summary.push(format!("{} weapons in the table", defs.len()));
+
+    // The Sentry Gun scorestreak.
+    match sentry(&patch, &common, &paks, &mut out, "ZHBO_BO2_FireNpc_minigun_mp") {
+        Ok(ini) => {
+            out.insert("Data\\INI\\Object\\ZHBO_BO2_Sentry.ini".into(), ini.into_bytes());
+            summary.push("sentry gun".into());
+        }
+        Err(e) => summary.push(format!("no sentry gun ({e})")),
+    }
+
+    // BO2's own explosions for the converted weapons (and equipment breaking), as Zero Hour
+    // particle systems.
+    let mut effects = crate::fx::Converted::default();
+    let mut ids: Vec<String> = converted.clone();
+    ids.extend(table.weapons.iter().filter(|d| d.id.contains('~')).map(|d| d.id.clone()));
+    for id in &ids {
+        let Some(w) = bo2.iter().find(|w| w.name == base_id(id)) else { continue };
+        let Some(e) = &w.explosion_effect else { continue };
+        let Some(d) = table.weapons.iter_mut().find(|d| &d.id == id) else { continue };
+        if matches!(d.effect, zhbo_core::weapons::Effect::Explode | zhbo_core::weapons::Effect::Stun | zhbo_core::weapons::Effect::Emp | zhbo_core::weapons::Effect::Smoke) {
+            d.explosion_fx = effects.add(e, &|h| paks.image(h));
+        }
+    }
+    for name in zhbo_core::equipment::BO2_EFFECTS {
+        if let Some(e) = zhbo_formats::fx::find(&common, name) {
+            effects.add(&e, &|h| paks.image(h));
+        }
+    }
+    summary.push(format!("{} BO2 effects ({} textures)", effects.fxlists.matches("FXList ").count(), effects.textures.len()));
+    out.insert("Data\\INI\\ParticleSystem\\ZHBO_BO2_Effects.ini".into(), effects.particles.clone().into_bytes());
+    out.insert("Data\\INI\\FXList\\ZHBO_BO2_Effects.ini".into(), effects.fxlists.clone().into_bytes());
+    out.extend(std::mem::take(&mut effects.textures));
+
+    out.insert(crate::weapons::TABLE_PATH.into(), zhbo_core::weapons::format_full_table(&table).into_bytes());
+    summary.push(format!("{} weapons and {} attachments in the table", table.weapons.len(), table.attachments.len()));
 
     // First-person muzzle flash with BO2's flash sprite.
     out.extend(crate::fx::files(&patch, &|hash| paks.image(hash))?);
@@ -627,6 +932,7 @@ mod tests {
         let paks = Paks::open(&bo2_dir).unwrap();
         let names = crate::weapons::names(&bo2_dir);
         let bo2 = zhbo_formats::weapon::all(&common);
+        let atts = zhbo_formats::weapon::attachments(&common);
         let mut defs: Vec<zhbo_core::weapons::WeaponDef> =
             bo2.iter().filter(|w| crate::weapons::is_player_weapon(w)).map(|w| crate::weapons::to_def(w, &names)).collect();
         assert!(defs.len() > 50, "{} player weapons", defs.len());
@@ -641,7 +947,7 @@ mod tests {
         let ids: Vec<String> = defs.iter().map(|d| d.id.clone()).collect();
         for (i, id) in ids.iter().enumerate() {
             let mut out = BTreeMap::new();
-            match weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &mut defs, std::slice::from_ref(id)) {
+            match weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &atts, &mut defs, std::slice::from_ref(id)) {
                 Ok((summary, clips)) => {
                     let d = defs.iter().find(|d| &d.id == id).unwrap();
                     let models = out.keys().filter(|k| k.contains("_SKN")).count();
@@ -670,6 +976,70 @@ mod tests {
             }
         }
         assert!(fails.is_empty(), "{} problems:\n{}", fails.len(), fails.join("\n"));
+    }
+
+    /// Every attachment BO2 offers on every weapon: the weapon with it (and its alt mode) plays by
+    /// the attachment's numbers, and its viewmodel with the attachment's model converts.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn every_attachment_converts_and_plays() {
+        let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
+        let common = load_zone(&bo2_dir, "common_mp").unwrap();
+        let patch = load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
+        let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(&bo2_dir, f.zone).unwrap()).collect();
+        let paks = Paks::open(&bo2_dir).unwrap();
+        let names = crate::weapons::names(&bo2_dir);
+        let bo2 = zhbo_formats::weapon::all(&common);
+        let atts = zhbo_formats::weapon::attachments(&common);
+        let table = crate::weapons::table(&bo2, &atts, &names);
+        let mut fails = Vec::new();
+        let mut combos = 0;
+        for base in table.weapons.iter().filter(|d| !d.allowed.is_empty()) {
+            for (short, _) in &base.allowed {
+                let id = zhbo_core::attachments::variant_id(&base.id, &[short.as_str()]);
+                let mut t = table.clone();
+                crate::weapons::add_variants(&mut t, std::slice::from_ref(&id));
+                let Some(d) = t.weapons.iter().find(|d| d.id == id).cloned() else {
+                    fails.push(format!("{id}: not built"));
+                    continue;
+                };
+                if d.attachments != vec![short.clone()] {
+                    fails.push(format!("{id}: attachments {:?}", d.attachments));
+                }
+                let mut checked = vec![d.clone()];
+                if let Some(alt) = t.weapons.iter().find(|a| !d.alt.is_empty() && a.id == d.alt) {
+                    checked.push(alt.clone());
+                }
+                for c in checked {
+                    fails.extend(zhbo_core::conformance::check(Box::leak(Box::new(c))));
+                }
+                let mut out = BTreeMap::new();
+                match weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &atts, &mut t.weapons, std::slice::from_ref(&id)) {
+                    Ok((summary, clips)) => {
+                        let has_model = base_weapon(&bo2, &base.id).attachment_uniques.iter().any(|u| u.combined == 0 && u.view_model.is_some() && crate::weapons::short_name(&base.allowed.iter().find(|(s, _)| s == short).unwrap().1) == *short && w_kind(&bo2, &base.id, short) == Some(u.kind));
+                        if has_model && !summary.contains("attachment model") {
+                            fails.push(format!("{id}: attachment model missing ({summary})"));
+                        }
+                        if clips.is_empty() {
+                            fails.push(format!("{id}: no clips"));
+                        }
+                    }
+                    Err(e) => fails.push(format!("{id}: {e}")),
+                }
+                combos += 1;
+            }
+        }
+        println!("{combos} weapon and attachment combinations");
+        assert!(combos > 300, "{combos} combinations");
+        assert!(fails.is_empty(), "{} problems:\n{}", fails.len(), fails.join("\n"));
+    }
+
+    fn base_weapon<'a>(bo2: &'a [zhbo_formats::weapon::Weapon], id: &str) -> &'a zhbo_formats::weapon::Weapon {
+        bo2.iter().find(|w| w.name == id).unwrap()
+    }
+
+    fn w_kind(bo2: &[zhbo_formats::weapon::Weapon], id: &str, short: &str) -> Option<u32> {
+        base_weapon(bo2, id).attachment_variants.iter().find(|(_, a)| crate::weapons::short_name(a) == short).map(|(k, _)| *k)
     }
 
     fn solid(w: u32, h: u32, p: [u8; 4]) -> Rgba {
@@ -709,7 +1079,7 @@ mod tests {
     #[test]
     fn replaces_only_the_named_draw_module() {
         for f in FACTIONS {
-            let out = replace_draw(BASE_INI, f.object, &draw_module(f.model)).unwrap();
+            let out = replace_draw(BASE_INI, f.object, &draw_module(f.model, &["W0100".to_string()])).unwrap();
             assert!(out.contains(&format!("Model               = {}", f.model)));
             // The rest of the object (weapons, body, locomotor) is untouched.
             assert_eq!(out.matches("Object ZHBO_General_").count(), 3);

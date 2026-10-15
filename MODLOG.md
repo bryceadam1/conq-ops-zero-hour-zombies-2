@@ -263,6 +263,39 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     are BO2's `weapAnimFiles_t` slots (`ZVnn_SKL.ZVnn_Ann`). `conformance::check` measures a
     weapon against its definition; `generals::tests::every_mp_weapon_converts_and_plays_like_bo2`
     runs it on all 59 player weapons in the install, with every viewmodel and animation converted.
+63. Attachments (`zhbo_formats::weapon::attachments`, `zhbo_core::attachments`): each weapon
+    lists the `WeaponAttachment` variant it uses per kind (`WeaponVariantDef::attachments`, an
+    array of 30 pointers by `eAttachment`); `iAttachments` is the allowed set. Every attachment's
+    effect is a scale on the weapon (a scale of 1 is no change; `fAdsZoomFov1` of 1 means no zoom).
+    Select fire, the grenade launcher and the second optic are alt weapons of their own
+    (`sf_an94_mp`, `gl_an94_mp`: inventory `ALTMODE`); the launcher keeps its own grenades, the others
+    share the magazine. Art comes from `WeaponAttachmentUnique` (`au_<weapon>_<attachment>`): model,
+    offset/rotation from the weapon's origin or its `viewModelTag`, the weapon's bones to hide
+    (`hideTags`: iron sights under an optic), the suppressed gunshot, and a full animation set (the
+    combination's entry if there is one, else the attachment with the most). Optics have one bone at
+    their base: `tag_sights` is moved up to the middle of the optic for aiming. Alt-mode clips are
+    the BO2 slot + 0x80 on the weapon's viewmodel. BO2 counts spare ammo in magazines, so extended
+    mags carry more spare rounds; the tri-bolt fires all three bolts with one pull.
+64. Third person (ABI 10): every converted weapon's world model is on each soldier model as
+    `W<vm><k>` sub-objects rigid on `tag_weapon_right` (attachments at their world offsets), the
+    tablet as `TB<k>` on `tag_inhand` (BO2's tablet animations carry it there). Every condition
+    state hides all but the primary (lines of 80 names: Zero Hour reads INI lines up to ~1 KB, and
+    `HideSubObject` lines add up); the bridge's `showSubObject` for the weapon in hand wins over
+    them. USER_1 / USER_2 play `pt_tablet_stand_raise` / `_putaway`.
+65. Equipment (`zhbo_core::equipment`): planted (`Place::Plant`) or thrown pieces that land
+    (`Outcome::Landed`) stay as a Zero Hour object; relationships are asked through that object, so
+    they work after the owner dies. Black Hat captures use `Object::defect` for units and `setTeam`
+    for inert objects (LogicApi `capture`). Fills: `objflags::DRONE`, `PROJECTILE` (the Trophy
+    System), `FIRING` (minimap), and `SHROUDED` (client queries: the minimap follows Zero Hour's radar
+    rule, except for the UAV, Sensor Grenades and enemies firing).
+66. BO2 effects (`zhbo_formats::fx`): MP grenades and rockets have no `projExplosionEffect`; their
+    blast is the impact table (`impactfx`) entry for their `impactType`, but the table's order
+    differs from the enum (grenade 7 → entry 12 `explosions/fx_grenadeexp_dirt`, rocket 9 → 13).
+    Runner elements name their child effect. Element kinds: 0-2 sprites, 3-6 tails/lines/clouds, 7
+    model, 8-9 lights, 10 sound, 11 decal, 12 runner. Velocities are inches per millisecond, gravity a
+    fraction of 800 in/s², sizes centre-to-edge. Some HUD icons are empty stubs in `common_mp`; the
+    real material is in `code_post_gfx_mp`. Viewmodel foley is mostly in `mpl_common`, gear rustle
+    only in the map's bank; the `*_futz` notetracks have no sound in any MP bank.
 
 ## Verification log
 
@@ -330,6 +363,13 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
   a frag, throws a concussion, and both go off; captures show each animation and the HUD's
   "Tac-45 SEMI-AUTO 10/30", "9 / 90" and the grenade counters. All 59 player weapons pass the
   every-weapon test (4 s).
+
+* **Attachments, equipment, scorestreaks, BO2 effects (2026-10-14)**: the autotest (15/15) also
+  switches to the AN-94's grenade launcher, fires it and switches back, and calls in a UAV and a
+  Sentry Gun; captures show the Reflex over hidden iron sights, the launcher's raise and HUD, the
+  UAV sweep, BO2's grenade and flashbang effects, and the upright sentry. With
+  `ZHBO_LOADOUT="lethal=claymore_mp;tactical=sensor_grenade_mp"` a Claymore is planted, arms and
+  kills a rebel. All 59 player weapons and all 416 weapon+attachment combinations pass their tests.
 
 ## Next steps
 

@@ -20,6 +20,14 @@ pub mod objflags {
     pub const NO_COLLIDE: u32 = 1 << 7;
     /// Airborne right now (helicopters in flight, jets).
     pub const AIRBORNE: u32 = 1 << 8;
+    /// A drone (scout, battle, hellfire, spy): the Black Hat can hack it.
+    pub const DRONE: u32 = 1 << 9;
+    /// A missile or shell in flight (also `NO_COLLIDE`): the Trophy System shoots it down.
+    pub const PROJECTILE: u32 = 1 << 10;
+    /// Client queries only: hidden from the local player by Zero Hour's shroud or fog.
+    pub const SHROUDED: u32 = 1 << 11;
+    /// Firing a weapon right now.
+    pub const FIRING: u32 = 1 << 12;
 }
 
 /// How damage is dealt (Zero Hour damage types decide what armour applies).
@@ -92,6 +100,8 @@ pub trait LogicHost {
     fn disable(&self, id: u32, kind: i32, seconds: f32);
     /// Play a Zero Hour FXList at a point.
     fn fx(&self, name: &str, pos: Vec3);
+    /// Move an object to `new_owner`'s side (the Black Hat's hack).
+    fn capture(&self, id: u32, new_owner: u32);
 }
 
 /// Rendering services for the HUD (screen pixels, ARGB colours).
@@ -141,6 +151,7 @@ pub struct LogicApi {
     pub destroy: Option<extern "C" fn(id: u32)>,
     pub disable: Option<extern "C" fn(id: u32, kind: i32, seconds: f32)>,
     pub fx: Option<extern "C" fn(name: *const c_char, pos: *const Vec3)>,
+    pub capture: Option<extern "C" fn(id: u32, new_owner: u32)>,
 }
 
 #[repr(C)]
@@ -245,6 +256,12 @@ impl LogicHost for CLogicHost {
     fn fx(&self, name: &str, pos: Vec3) {
         if let Some(f) = self.0.fx {
             f(cstring(name).as_ptr(), &pos);
+        }
+    }
+
+    fn capture(&self, id: u32, new_owner: u32) {
+        if let Some(f) = self.0.capture {
+            f(id, new_owner);
         }
     }
 }

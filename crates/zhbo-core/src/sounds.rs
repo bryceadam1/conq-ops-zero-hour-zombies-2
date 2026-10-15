@@ -16,6 +16,11 @@ pub const EXPLOSION: &str = "ZHBO_BO2_Explosion";
 pub const PULL_PIN: &str = "ZHBO_BO2_PullPin";
 pub const THROW: &str = "ZHBO_BO2_Throw";
 pub const MELEE_SWING: &str = "ZHBO_BO2_MeleeSwing";
+/// The UAV coming online, equipment planted, and the C4 detonator. (Each scorestreak's own sting
+/// when earned is `Streak::earned_sound`.)
+pub const UAV_ONLINE: &str = "ZHBO_BO2_UavOnline";
+pub const PLANT: &str = "ZHBO_BO2_Plant";
+pub const DETONATE: &str = "ZHBO_BO2_Detonate";
 
 /// The player's own gunshot for a weapon: its own converted BO2 sound, else by class.
 pub fn fire_for(def: &'static crate::weapons::WeaponDef) -> &'static str {

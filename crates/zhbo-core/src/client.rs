@@ -20,6 +20,9 @@ pub mod vk {
     pub const SPACE: u8 = 0x20;
     pub const KEY_1: u8 = 0x31;
     pub const KEY_2: u8 = 0x32;
+    pub const KEY_3: u8 = 0x33;
+    pub const KEY_4: u8 = 0x34;
+    pub const KEY_5: u8 = 0x35;
     pub const A: u8 = 0x41;
     pub const C: u8 = 0x43;
     pub const D: u8 = 0x44;
@@ -54,6 +57,11 @@ pub struct Bindings {
     pub tactical: u8,
     /// Held: the whole map (BO2's scoreboard key).
     pub map: u8,
+    /// BO2's action slot 3: the weapon's alt mode (select fire, grenade launcher, second optic).
+    pub alt_mode: u8,
+    /// BO2's action slot 4: use the selected scorestreak; and pick the next earned one.
+    pub streak: u8,
+    pub streak_next: u8,
 }
 
 impl Default for Bindings {
@@ -77,6 +85,9 @@ impl Default for Bindings {
             lethal: vk::G,
             tactical: vk::Q,
             map: vk::TAB,
+            alt_mode: vk::KEY_3,
+            streak: vk::KEY_4,
+            streak_next: vk::KEY_5,
         }
     }
 }
@@ -103,7 +114,9 @@ pub const HITMARKER_TIME: f32 = 0.25;
 pub const DEATH_BANNER_TIME: f32 = 3.0;
 /// BO2's "+100" kill popup stays up this long; kills inside the window add up.
 pub const SCORE_POPUP_TIME: f32 = 1.4;
-pub const KILL_POINTS: u32 = 100;
+pub const KILL_POINTS: u32 = crate::streaks::KILL_POINTS;
+/// BO2's "scorestreak earned" splash stays up this long.
+pub const STREAK_SPLASH_TIME: f32 = 3.0;
 /// Fraction of weapon recoil that permanently moves the aim (the rest recovers).
 pub const RECOIL_PERMANENT: f32 = 0.35;
 
@@ -214,12 +227,18 @@ pub struct HudTimers {
     pub score_points: u32,
     /// The map key is held: Zero Hour's radar over the view.
     pub map_open: bool,
+    /// Black Hat progress (0..1) while hacking, and how long it stays up without news.
+    pub hack_progress: f32,
+    pub hack_shown: f32,
+    /// A scorestreak was just earned: BO2's "Press 4 for UAV" splash, and how long it stays.
+    pub earned: Option<crate::streaks::Streak>,
+    pub earned_shown: f32,
 }
 
 /// Scripted input for in-game verification (`ZHBO_AUTOPILOT=1`): walks, turns, aims and fires,
 /// changes stance, jumps, glances at the map, swaps to the pistol and fires it, swaps back, knifes,
-/// cooks and throws a frag, throws a concussion, then opens the field computer. Times are seconds
-/// in first person.
+/// cooks and throws a frag, throws a concussion, fires the rifle's grenade launcher, calls in a UAV
+/// and a Sentry Gun, then opens the field computer. Times are seconds in first person.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Autopilot {
     pub t: f32,
@@ -267,10 +286,23 @@ impl Autopilot {
         if (9.9..10.3).contains(&t) {
             keys.push(b.lethal);
         }
-        if (10.8..10.9).contains(&t) {
+        // After the frag has left the hand and the rifle is coming back up.
+        if (11.2..11.3).contains(&t) {
             keys.push(b.tactical);
         }
-        if (11.9..12.0).contains(&t) {
+        // The rifle's grenade launcher: switch to it, fire, switch back.
+        if (12.4..12.5).contains(&t) || (13.9..14.0).contains(&t) {
+            keys.push(b.alt_mode);
+        }
+        if (13.3..13.4).contains(&t) {
+            keys.push(b.fire);
+        }
+        // Scorestreaks (the autopilot starts with a UAV and a Sentry Gun earned): use the selected
+        // one, then the other.
+        if (14.6..14.7).contains(&t) || (15.1..15.2).contains(&t) {
+            keys.push(b.streak);
+        }
+        if (15.8..15.9).contains(&t) {
             keys.push(b.field_computer);
         }
         (keys, dx)
@@ -293,6 +325,9 @@ pub struct Client {
     seen_frame: u32,
     since_logic: f32,
     pub last_hfov: f32,
+    /// The first-person camera this frame (for HUD marks over the world).
+    pub view_eye: Vec3,
+    pub view_dir: Vec3,
     /// First-person viewmodel animation, and this frame's weapon events for it.
     vm: Viewmodel,
     vm_motion: viewmodel::Motion,
@@ -325,6 +360,8 @@ impl Client {
             seen_frame: 0,
             since_logic: 0.0,
             last_hfov: 1.0,
+            view_eye: Vec3::ZERO,
+            view_dir: Vec3::new(1.0, 0.0, 0.0),
             vm: Viewmodel::default(),
             vm_motion: viewmodel::Motion::default(),
             vm_events: viewmodel::Events::default(),
@@ -355,6 +392,9 @@ impl Client {
             (b.field_computer, buttons::FIELD_COMPUTER),
             (b.lethal, buttons::LETHAL),
             (b.tactical, buttons::TACTICAL),
+            (b.alt_mode, buttons::ALT_MODE),
+            (b.streak, buttons::STREAK_USE),
+            (b.streak_next, buttons::STREAK_NEXT),
         ] {
             if down(key) {
                 held |= bit;
@@ -464,6 +504,8 @@ impl Client {
                     out.hide_rts_ui = 1;
                     out.hide_object = self.general;
                     out.capture_mouse = allowed as i32;
+                    self.view_eye = out.eye;
+                    self.view_dir = out.dir;
                     self.hud.map_open = allowed && !in_fc && inp.keys[self.cfg.bindings.map as usize] != 0;
                     let events = std::mem::take(&mut self.vm_events);
                     let pose = self.vm_motion.update(dt, self.yaw, self.pitch, p, events.shot);
@@ -620,6 +662,29 @@ impl Client {
                 EventKind::Thrown { .. } => self.cues.play(sounds::THROW),
                 EventKind::Launched => self.cues.play(sounds::FIRE_LAUNCHER),
                 EventKind::Exploded { at } => self.cues.play_at(sounds::EXPLOSION, at),
+                EventKind::Intercepted { at } => self.cues.play_at(sounds::EXPLOSION, at),
+                EventKind::Hacking { progress } => {
+                    self.hud.hack_progress = progress;
+                    self.hud.hack_shown = 0.15;
+                }
+                EventKind::Hacked => self.hud.hack_shown = 0.0,
+                EventKind::StreakEarned { streak } => {
+                    self.hud.earned = Some(streak);
+                    self.hud.earned_shown = STREAK_SPLASH_TIME;
+                    self.cues.play(streak.earned_sound());
+                }
+                EventKind::StreakUsed { streak: crate::streaks::Streak::Uav } => self.cues.play(sounds::UAV_ONLINE),
+                EventKind::StreakUsed { streak: crate::streaks::Streak::SentryGun } => self.cues.play(sounds::PLANT),
+                EventKind::StreakUsed { .. } => {}
+                EventKind::AltToggled => self.vm_events.swapped = true,
+                EventKind::Planted { kind } => {
+                    use crate::equipment::Kind;
+                    if matches!(kind, Kind::Claymore | Kind::Betty | Kind::Trophy | Kind::Insertion) {
+                        self.cues.play(sounds::PLANT);
+                    }
+                }
+                EventKind::Detonated => self.cues.play(sounds::DETONATE),
+                EventKind::DestroyedEquipment => {}
             }
         }
     }
@@ -638,6 +703,8 @@ impl Client {
         h.death_banner = (h.death_banner - dt).max(0.0);
         h.muzzle = (h.muzzle - dt).max(0.0);
         h.score_popup = (h.score_popup - dt).max(0.0);
+        h.hack_shown = (h.hack_shown - dt).max(0.0);
+        h.earned_shown = (h.earned_shown - dt).max(0.0);
         let decay = (1.0 - dt * 12.0).max(0.0);
         h.view_kick_pitch *= decay;
         h.view_kick_yaw *= decay;

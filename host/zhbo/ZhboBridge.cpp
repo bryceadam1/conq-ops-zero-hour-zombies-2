@@ -145,6 +145,9 @@ void fillInfo(const Object *obj, const Object *viewer, ZhboObjInfo *out)
 		|| obj->isKindOf(KINDOF_MINE) || obj->isKindOf(KINDOF_INERT) || obj->isKindOf(KINDOF_BRIDGE))
 		flags |= ZHBO_OBJ_NO_COLLIDE;
 	if (obj->isAirborneTarget() || obj->isSignificantlyAboveTerrain()) flags |= ZHBO_OBJ_AIRBORNE;
+	if (obj->isKindOf(KINDOF_DRONE)) flags |= ZHBO_OBJ_DRONE;
+	if (obj->isKindOf(KINDOF_PROJECTILE)) flags |= ZHBO_OBJ_PROJECTILE;
+	if (obj->testStatus(OBJECT_STATUS_IS_FIRING_WEAPON)) flags |= ZHBO_OBJ_FIRING;
 	if (viewer && viewer != obj)
 	{
 		const Relationship rel = viewer->getRelationship(obj);
@@ -196,6 +199,21 @@ int32_t cbQuery(const ZhboVec3 *center, float radius, uint32_t viewerId, ZhboObj
 	for (Object *obj = iter->first(); obj && n < cap; obj = iter->next())
 	{
 		fillInfo(obj, viewer, &out[n++]);
+	}
+	return n;
+}
+
+// The HUD's query: as the logic's, plus whether the local player's shroud or fog hides each object.
+int32_t cbClientQuery(const ZhboVec3 *center, float radius, uint32_t viewerId, ZhboObjInfo *out, int32_t cap)
+{
+	const Int n = cbQuery(center, radius, viewerId, out, cap);
+	const Int local = rts::getObservedOrLocalPlayer()->getPlayerIndex();
+	for (Int i = 0; i < n; ++i)
+	{
+		const Object *obj = TheGameLogic->findObjectByID((ObjectID)out[i].id);
+		const ObjectShroudStatus status = obj ? obj->getShroudedStatus(local) : OBJECTSHROUD_CLEAR;
+		if (status == OBJECTSHROUD_FOGGED || status == OBJECTSHROUD_SHROUDED)
+			out[i].flags |= ZHBO_OBJ_SHROUDED;
 	}
 	return n;
 }
@@ -323,6 +341,28 @@ void cbFx(const char *name, const ZhboVec3 *pos)
 	Coord3D p;
 	p.set(pos->x, pos->y, pos->z);
 	FXList::doFXPos(fx, &p);
+}
+
+// What each controlled General was last shown holding (applyWorldPoses).
+struct WorldLook
+{
+	int32_t weapon;
+	int32_t tablet;
+};
+std::map<uint32_t, WorldLook> s_worldLooks;
+
+// The Black Hat: equipment changes team; a unit (a drone) defects.
+void cbCapture(uint32_t id, uint32_t newOwner)
+{
+	Object *obj = TheGameLogic->findObjectByID((ObjectID)id);
+	Object *owner = TheGameLogic->findObjectByID((ObjectID)newOwner);
+	if (!obj || !owner || !owner->getTeam() || obj->isEffectivelyDead())
+		return;
+	if (obj->isKindOf(KINDOF_INERT))
+		obj->setTeam(owner->getTeam());
+	else
+		obj->defect(owner->getTeam(), 0);
+	logf("object %u captured by General %u", id, newOwner);
 }
 
 void cbHeal(uint32_t id, float amount)
@@ -875,9 +915,9 @@ void Zhbo_Init()
 	static const ZhboLogicApi logicApi = {
 		cbLog, cbGroundHeight, cbIsWalkable, cbExtent, cbObject, cbQuery,
 		cbSetPose, cbSetControlled, cbFireFx, cbDamage, cbHeal,
-		cbSpawn, cbDestroy, cbDisable, cbFx,
+		cbSpawn, cbDestroy, cbDisable, cbFx, cbCapture,
 	};
-	static const ZhboClientApi clientApi = { cbScreenSize, cbFillRect, cbLine, cbText, cbImage, cbQuery, cbCash, cbSound, cbClip, cbRadar };
+	static const ZhboClientApi clientApi = { cbScreenSize, cbFillRect, cbLine, cbText, cbImage, cbClientQuery, cbCash, cbSound, cbClip, cbRadar };
 	zhbo_init(&logicApi, &clientApi);
 
 	// The BO2 weapon table, converted from the player's install into ConquerOps_BO2.big; without it
@@ -920,6 +960,7 @@ void Zhbo_Reset()
 	for (std::map<std::string, Weapon *>::iterator it = s_fxWeapons.begin(); it != s_fxWeapons.end(); ++it)
 		deleteInstance(it->second);
 	s_fxWeapons.clear();
+	s_worldLooks.clear();
 	zhbo_reset();
 	logLine("reset");
 }
@@ -966,6 +1007,62 @@ void Zhbo_LogicStep(UnsignedInt frame)
 Bool Zhbo_IsControlled(ObjectID id)
 {
 	return s_ready && zhbo_logic_is_controlled((uint32_t)id) != 0;
+}
+
+// Third person: show the weapon each controlled General has in hand (its W<vm><k> sub-objects on
+// the soldier model) or the scorestreak tablet (TB<k>), and play the tablet's raise or put-away
+// (USER_1, USER_2). Only changes are applied.
+
+void applyWorldPoses()
+{
+	ZhboWorldPose poses[16];
+	const int32_t n = zhbo_client_world_poses(poses, 16);
+	enum { MAX_VIEWMODELS = 160 };
+	static int32_t s_meshes[MAX_VIEWMODELS];
+	static int32_t s_tabletMeshes = -1;
+	if (s_tabletMeshes < 0)
+	{
+		s_tabletMeshes = zhbo_world_mesh_count(-2);
+		for (int32_t vm = 0; vm < MAX_VIEWMODELS; ++vm)
+			s_meshes[vm] = zhbo_world_mesh_count(vm);
+	}
+	for (int32_t i = 0; i < n; ++i)
+	{
+		const ZhboWorldPose &p = poses[i];
+		Object *obj = TheGameLogic->findObjectByID((ObjectID)p.general);
+		Drawable *draw = obj ? obj->getDrawable() : nullptr;
+		if (!draw)
+			continue;
+		std::map<uint32_t, WorldLook>::iterator it = s_worldLooks.find(p.general);
+		if (it != s_worldLooks.end() && it->second.weapon == p.weapon && it->second.tablet == p.tablet)
+			continue;
+		char name[16];
+		for (int32_t vm = 0; vm < MAX_VIEWMODELS; ++vm)
+		{
+			for (int32_t k = 0; k < s_meshes[vm]; ++k)
+			{
+				snprintf(name, sizeof(name), "W%02d%02d", vm, k);
+				draw->showSubObject(AsciiString(name), vm == p.weapon && p.tablet == 0);
+			}
+		}
+		for (int32_t k = 0; k < s_tabletMeshes; ++k)
+		{
+			snprintf(name, sizeof(name), "TB%02d", k);
+			draw->showSubObject(AsciiString(name), p.tablet != 0);
+		}
+		draw->updateSubObjects();
+		if (p.tablet == 1)
+			draw->clearAndSetModelConditionState(MODELCONDITION_USER_2, MODELCONDITION_USER_1);
+		else if (p.tablet == 2)
+			draw->clearAndSetModelConditionState(MODELCONDITION_USER_1, MODELCONDITION_USER_2);
+		else
+		{
+			draw->clearModelConditionState(MODELCONDITION_USER_1);
+			draw->clearModelConditionState(MODELCONDITION_USER_2);
+		}
+		WorldLook look = { p.weapon, p.tablet };
+		s_worldLooks[p.general] = look;
+	}
 }
 
 void Zhbo_ClientFrame()
@@ -1043,6 +1140,7 @@ void Zhbo_ClientFrame()
 	in.rts_cam_dir.x = camDir.x; in.rts_cam_dir.y = camDir.y; in.rts_cam_dir.z = camDir.z;
 
 	zhbo_client_frame(&in, &s_out);
+	applyWorldPoses();
 
 	if (s_out.send_input)
 	{
@@ -1092,7 +1190,8 @@ Bool Zhbo_GetViewmodel(Int *clip, Int *weapon, Bool *fired, Real *time, Real *ad
 	const Bool china = name == "ZHBO_General_China", gla = name == "ZHBO_General_GLA";
 	// The tablet clips play on the arms-and-tablet model (generals::tablet_model); everything else on
 	// the converted weapon's viewmodel (generals::vm_model).
-	const Bool tablet = s_out.viewmodel >= ZHBO_VM_TABLET_PULLOUT;
+	// (An alt mode's clips come after the tablet's numbers, on the weapon's own viewmodel.)
+	const Bool tablet = s_out.viewmodel >= ZHBO_VM_TABLET_PULLOUT && s_out.viewmodel <= ZHBO_VM_TABLET_PUTAWAY;
 	AsciiString vm;
 	if (tablet)
 		vm.format("ZHBO_VM%s_TAB", china ? "CHN" : gla ? "GLA" : "USA");

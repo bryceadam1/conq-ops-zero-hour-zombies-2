@@ -43,3 +43,16 @@ pub fn apply(x: Xf, v: [f32; 3]) -> [f32; 3] {
     let r = qrot(x.0, v);
     [r[0] + x.1[0], r[1] + x.1[1], r[2] + x.1[2]]
 }
+
+/// BO2 angles in degrees (pitch about Y, yaw about Z, roll about X, applied roll first) as a
+/// quaternion.
+pub fn from_angles(angles: [f32; 3]) -> [f32; 4] {
+    let half = |deg: f32| (deg.to_radians() * 0.5).sin_cos();
+    let (sp, cp) = half(angles[0]);
+    let (sy, cy) = half(angles[1]);
+    let (sr, cr) = half(angles[2]);
+    let qz = [0.0, 0.0, sy, cy];
+    let qy = [0.0, sp, 0.0, cp];
+    let qx = [sr, 0.0, 0.0, cr];
+    qnorm(qmul(qmul(qz, qy), qx))
+}

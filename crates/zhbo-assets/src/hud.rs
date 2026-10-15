@@ -15,7 +15,7 @@ use zhbo_formats::iwi::Rgba;
 use zhbo_formats::t6zone::Zone;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive.
-pub const VERSION: u32 = 20;
+pub const VERSION: u32 = 23;
 pub const ARCHIVE_NAME: &str = "ConquerOps_BO2.big";
 pub const VERSION_FILE: &str = "Data\\ConquerOps\\bo2_hud_version.txt";
 const TEXTURE: &str = "zhbo_bo2_hud.tga";
@@ -90,6 +90,11 @@ pub const SPRITES: &[Sprite] = &[
     mat("ZHBO_BO2_StreakBoxLit", "hud_mp_vis_ks_dpad_box_back_lit", 64),
     mat("ZHBO_BO2_StreakGlow", "hud_ks_lit_glow", 128),
     Sprite { name: "ZHBO_BO2_StreakVsat", source: Source::Material("code_post_gfx_mp", "hud_ks_spy_sat_big"), max: 128 },
+    // The scorestreaks: UAV (BO2's spy plane icon), Sentry Gun, Death Machine, War Machine.
+    Sprite { name: "ZHBO_BO2_Streak_RADAR", source: Source::Material("code_post_gfx_mp", "hud_ks_u2_spyplane_big"), max: 128 },
+    Sprite { name: "ZHBO_BO2_Streak_AUTO_TURRET", source: Source::Material("code_post_gfx_mp", "hud_ks_auto_turret_big"), max: 128 },
+    Sprite { name: "ZHBO_BO2_Streak_MINIGUN", source: Source::Material("code_post_gfx_mp", "hud_ks_minigun_big"), max: 128 },
+    Sprite { name: "ZHBO_BO2_Streak_M32", source: Source::Material("code_post_gfx_mp", "hud_ks_m32_big"), max: 128 },
 ];
 
 #[derive(Debug, Default)]
@@ -159,8 +164,13 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     zones.insert("common_mp", crate::generals::load_zone(bo2_dir, "common_mp")?);
     let weapons = zhbo_formats::weapon::all(&zones["common_mp"]);
     for id in crate::weapons::converted(&weapons) {
-        if let Some(hash) = weapons.iter().find(|w| w.name == id).and_then(|w| w.hud_icon_hash) {
-            wanted.push((format!("ZHBO_BO2_Icon_{id}"), Source::Hash(hash), 64));
+        let Some(w) = weapons.iter().find(|w| w.name == crate::generals::base_id(&id)) else { continue };
+        let name = format!("ZHBO_BO2_Icon_{id}");
+        match (w.hud_icon_hash, &w.hud_icon) {
+            (Some(hash), _) => wanted.push((name, Source::Hash(hash), 64)),
+            // Equipment icons are stubs in common_mp; the menus' zones hold the real material.
+            (None, Some(icon)) => wanted.push((name, Source::Dynamic(icon.clone()), 64)),
+            _ => {}
         }
     }
     for (name, source, max) in &wanted {
@@ -173,8 +183,20 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                 zhbo_formats::xmodel::find_material(&zones[zone], material)
                     .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash)))
             }
-            Source::Dynamic(material) => zhbo_formats::xmodel::find_material(&zones["common_mp"], material)
-                .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash))),
+            Source::Dynamic(material) => {
+                for zone in ["code_post_gfx_mp", "patch_mp"] {
+                    if !zones.contains_key(zone) {
+                        if let Ok(z) = crate::generals::load_zone(bo2_dir, zone) {
+                            zones.insert(zone, z);
+                        }
+                    }
+                }
+                ["common_mp", "code_post_gfx_mp", "patch_mp"]
+                    .iter()
+                    .filter_map(|z| zones.get(z))
+                    .filter_map(|z| zhbo_formats::xmodel::find_material(z, material))
+                    .find_map(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash)).filter(|h| *h != 0))
+            }
         };
         match hash.and_then(|h| paks.image(h)) {
             Some(img) => {
@@ -210,7 +232,7 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     let mut files = vec![
         (format!("Art\\Textures\\{TEXTURE}"), images::tga_bytes(&atlas)),
         ("Data\\INI\\MappedImages\\HandCreated\\ZHBO_BO2.ini".to_string(), ini.into_bytes()),
-        (VERSION_FILE.to_string(), VERSION.to_string().into_bytes()),
+        (VERSION_FILE.to_string(), version_stamp().into_bytes()),
     ];
     // The Generals as BO2 soldiers. On failure they keep their Zero Hour art.
     report.generals = Some(match crate::generals::files(bo2_dir) {
@@ -232,11 +254,22 @@ fn blit(dst: &mut Rgba, src: &Rgba, at: (u32, u32)) {
     }
 }
 
-/// Version stored in an existing archive, if it is one of ours.
+/// What the archive was built from: the converter version, and the loadout overrides that pick which
+/// weapons' art is converted (`ZHBO_LOADOUT`, `ZHBO_CONVERT_ALL_WEAPONS`).
+fn version_stamp() -> String {
+    let var = |k: &str| std::env::var(k).unwrap_or_default();
+    format!("{VERSION}\nloadout={}\nall={}\n", var("ZHBO_LOADOUT"), var("ZHBO_CONVERT_ALL_WEAPONS"))
+}
+
+/// Version stored in an existing archive, if it is one of ours and was built for this loadout.
 pub fn archive_version(path: &Path) -> Option<u32> {
     let big = zhbo_formats::big::BigArchive::open(path).ok()?;
     let e = big.find(VERSION_FILE)?;
-    String::from_utf8(big.read(e).ok()?).ok()?.trim().parse().ok()
+    let text = String::from_utf8(big.read(e).ok()?).ok()?;
+    if text.trim_end() != version_stamp().trim_end() {
+        return Some(0);
+    }
+    text.lines().next()?.trim().parse().ok()
 }
 
 #[cfg(test)]
@@ -278,7 +311,8 @@ mod tests {
         let bo2 = zhbo_requirements::check_requirements().black_ops2.unwrap();
         let (bytes, report) = build_archive(&bo2.path).unwrap();
         println!("{report:?}");
-        assert!(report.missing.is_empty());
+        // A few weapons have no HUD icon image in BO2 (the HUD then shows their short name).
+        assert!(report.missing.iter().all(|(name, _)| name.starts_with("ZHBO_BO2_Icon_")), "{:?}", report.missing);
         let dir = std::env::temp_dir().join("zhbo-hud-test");
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join(ARCHIVE_NAME);

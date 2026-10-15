@@ -6,7 +6,7 @@
 //! view/world models and the viewmodel animation for each `weapAnimFiles_t` slot. Field offsets
 //! come from the generated `t6zone::layouts`. Times are converted from milliseconds to seconds.
 
-use crate::t6zone::layouts::{WeaponAttachmentUnique as WU, WeaponDef as WD, WeaponVariantDef as WV};
+use crate::t6zone::layouts::{WeaponAttachment as WA, WeaponAttachmentUnique as WU, WeaponDef as WD, WeaponVariantDef as WV};
 use crate::t6zone::Zone;
 
 /// `weapAnimFiles_t`: the viewmodel animation slots (`szXAnims` index).
@@ -109,6 +109,9 @@ pub mod offhand {
     pub const GEAR: u32 = 4;
 }
 
+/// `eAttachment` count (`ATTACHMENT_TYPE_COUNT`).
+pub const ATTACHMENT_KINDS: u32 = 30;
+
 /// `hitLocation_t` count (`locationDamageMultipliers`).
 pub const HIT_LOCATIONS: usize = 21;
 /// `HITLOC_HEAD`.
@@ -124,6 +127,104 @@ pub struct AttachmentUnique {
     pub view_model: Option<String>,
     pub view_model_tag: Option<String>,
     pub world_model: Option<String>,
+    pub world_model_tag: Option<String>,
+    /// Bits (`1 << eAttachment`) of the attachments this combination stands for.
+    pub combined: u32,
+    /// The attachment replaces the weapon's own magazine (extended or dual magazines).
+    pub disable_base_clip: bool,
+    /// Viewmodel animations the combination overrides (`anim` slots), e.g. a grip's or extended
+    /// magazine's reloads.
+    pub anims: Vec<Option<String>>,
+    /// Where the attachment's view model sits on the weapon (inches) and its rotation (degrees:
+    /// pitch, yaw, roll), from `view_model_tag` or the weapon's origin.
+    pub view_offset: [f32; 3],
+    pub view_rotation: [f32; 3],
+    pub world_offset: [f32; 3],
+    pub world_rotation: [f32; 3],
+    /// Bones of the weapon hidden with this combination (iron sights under an optic).
+    pub hide_tags: Vec<String>,
+    /// The player's gunshot with this combination (suppressors), if it changes.
+    pub fire_sound_player: Option<String>,
+    pub fire_sound: Option<String>,
+    /// The weapon the attachment toggles to (select fire, grenade launcher, dual optic).
+    pub alt_weapon: Option<String>,
+    pub dual_wield_weapon: Option<String>,
+}
+
+/// A BO2 attachment (`WeaponAttachment`): how it changes any weapon it goes on. Scales multiply the
+/// weapon's own value (1 = unchanged, 0 = BO2 leaves the value alone).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Attachment {
+    /// `reflex`, `extclip`, `silencer`, ...
+    pub name: String,
+    /// Localize key, e.g. `MPUI_REFLEX`.
+    pub display_name: String,
+    /// `eAttachment`: the bit in a weapon's allowed set ([`Weapon::allowed_attachments`]).
+    pub kind: u32,
+    /// `eAttachmentPoint`: optic, under-barrel, muzzle, ... (one attachment per point).
+    pub point: u32,
+    /// A fire type the attachment switches the weapon to (select fire), or `None`.
+    pub fire_type: Option<u32>,
+    pub silenced: bool,
+    pub dual_mag: bool,
+    pub laser_sight: bool,
+    pub dual_wield: bool,
+    pub damage_range_scale: f32,
+    /// Zoomed field of view (0: the weapon's own).
+    pub ads_zoom_fov: f32,
+    pub ads_in_scale: f32,
+    pub ads_out_scale: f32,
+    pub ads_move_scale: f32,
+    pub hip_spread_min_scale: f32,
+    pub hip_spread_max_scale: f32,
+    pub fire_time_scale: f32,
+    pub reload_scale: f32,
+    pub reload_empty_scale: f32,
+    pub reload_add_scale: f32,
+    pub clip_size_scale: f32,
+    /// A fixed magazine size (0: none).
+    pub clip_size: i32,
+    /// ADS recoil reduction per shot and its limit (the grip).
+    pub recoil_reduction: (f32, f32),
+}
+
+/// Every attachment in a loaded zone.
+pub fn attachments(z: &Zone) -> Vec<Attachment> {
+    let Some(kind) = crate::fastfile::asset_type_id("attachment") else { return Vec::new() };
+    z.assets
+        .iter()
+        .filter(|a| a.kind == kind)
+        .map(|a| {
+            let at = a.addr;
+            let fire = z.u32(at + WA::fireType);
+            Attachment {
+                name: z.str_ptr(at + WA::szInternalName),
+                display_name: opt_str(z, at + WA::szDisplayName).unwrap_or_default(),
+                kind: z.u32(at + WA::attachmentType),
+                point: z.u32(at + WA::attachmentPoint),
+                // `weapFireType_t` has no "unchanged" value: BO2 marks it with the type count.
+                fire_type: (fire < 9 && fire != 0).then_some(fire),
+                silenced: z.u8(at + WA::bSilenced) != 0,
+                dual_mag: z.u8(at + WA::bDualMag) != 0,
+                laser_sight: z.u8(at + WA::laserSight) != 0,
+                dual_wield: z.u8(at + WA::bDualWield) != 0,
+                damage_range_scale: z.f32(at + WA::fDamageRangeScale),
+                ads_zoom_fov: z.f32(at + WA::fAdsZoomFov1),
+                ads_in_scale: z.f32(at + WA::fAdsTransInTimeScale),
+                ads_out_scale: z.f32(at + WA::fAdsTransOutTimeScale),
+                ads_move_scale: z.f32(at + WA::adsMoveSpeedScale),
+                hip_spread_min_scale: z.f32(at + WA::fHipSpreadMinScale),
+                hip_spread_max_scale: z.f32(at + WA::fHipSpreadMaxScale),
+                fire_time_scale: z.f32(at + WA::fFireTimeScale),
+                reload_scale: z.f32(at + WA::fReloadTimeScale),
+                reload_empty_scale: z.f32(at + WA::fReloadEmptyTimeScale),
+                reload_add_scale: z.f32(at + WA::fReloadAddTimeScale),
+                clip_size_scale: z.f32(at + WA::clipSizeScale),
+                clip_size: int(z, at + WA::iClipSize),
+                recoil_reduction: (z.f32(at + WA::fAdsRecoilReductionRate), z.f32(at + WA::fAdsRecoilReductionLimit)),
+            }
+        })
+        .collect()
 }
 
 /// Min/max pitch and yaw of a kick, degrees.
@@ -152,6 +253,14 @@ pub struct Weapon {
     pub attach_view_models: Vec<(String, String)>,
     /// Attachment combinations; `kind == 0` entries are the base weapon's parts (its magazine).
     pub attachment_uniques: Vec<AttachmentUnique>,
+    /// Bit `1 << eAttachment` for each attachment create-a-class offers on this weapon.
+    pub allowed_attachments: u64,
+    /// The `WeaponAttachment` this weapon uses for each kind it allows, e.g. (23, `silencer_smg`).
+    pub attachment_variants: Vec<(u32, String)>,
+    /// Bones hidden on the plain weapon.
+    pub hide_tags: Vec<String>,
+    /// Alt-mode weapon (the select-fire, launcher or second optic variant `sf_an94_mp`).
+    pub alt_weapon: Option<String>,
     /// Viewmodel animation per `anim` slot.
     pub anims: Vec<Option<String>>,
     pub clip_size: i32,
@@ -239,6 +348,10 @@ pub struct Weapon {
     /// The HUD icon's image in the `.ipak` packs (its material is inline in the weapon).
     pub hud_icon_hash: Option<u32>,
     pub dpad_icon: Option<String>,
+    /// What a projectile does when it goes off (`projExplosionEffect`), or the impact table's
+    /// effect for its `impactType` on dirt.
+    pub explosion_effect: Option<crate::fx::Effect>,
+    pub impact_type: u32,
 }
 
 fn ms(z: &Zone, at: u32) -> f32 {
@@ -257,6 +370,18 @@ fn opt_str(z: &Zone, field: u32) -> Option<String> {
 fn named(z: &Zone, field: u32) -> Option<String> {
     let p = z.u32(field);
     (p != 0).then(|| z.str_ptr(p).trim_start_matches(',').to_string()).filter(|s| !s.is_empty())
+}
+
+fn vec3(z: &Zone, at: u32) -> [f32; 3] {
+    [z.f32(at), z.f32(at + 4), z.f32(at + 8)]
+}
+
+/// A `hideTags` list: up to 32 script strings, zero-terminated.
+fn hide_tags(z: &Zone, at: u32) -> Vec<String> {
+    if at == 0 {
+        return Vec::new();
+    }
+    (0..32).map(|i| z.u16(at + 2 * i)).take_while(|&t| t != 0).map(|t| z.script_string(t).to_string()).filter(|t| !t.is_empty()).collect()
 }
 
 fn kick(z: &Zone, pitch_min: u32, pitch_max: u32, yaw_min: u32, yaw_max: u32) -> Kick {
@@ -293,6 +418,22 @@ pub fn read(z: &Zone, v: u32) -> Weapon {
                 view_model: named(z, u + WU::viewModel),
                 view_model_tag: opt_str(z, u + WU::viewModelTag),
                 world_model: named(z, u + WU::worldModel),
+                world_model_tag: opt_str(z, u + WU::worldModelTag),
+                combined: z.u32(u + WU::combinedAttachmentTypeMask),
+                disable_base_clip: z.u8(u + WU::disableBaseWeaponClip) != 0,
+                anims: {
+                    let at = z.u32(u + WU::szXAnims);
+                    (0..anim::COUNT as u32).map(|i| if at == 0 { None } else { opt_str(z, at + 4 * i) }).collect()
+                },
+                view_offset: vec3(z, u + WU::viewModelOffsets),
+                view_rotation: vec3(z, u + WU::viewModelRotations),
+                world_offset: vec3(z, u + WU::worldModelOffsets),
+                world_rotation: vec3(z, u + WU::worldModelRotations),
+                hide_tags: hide_tags(z, z.u32(u + WU::hideTags)),
+                fire_sound_player: opt_str(z, u + WU::fireSoundPlayer),
+                fire_sound: opt_str(z, u + WU::fireSound),
+                alt_weapon: opt_str(z, u + WU::szAltWeaponName),
+                dual_wield_weapon: opt_str(z, u + WU::szDualWieldWeaponName),
             });
         }
     }
@@ -309,6 +450,22 @@ pub fn read(z: &Zone, v: u32) -> Weapon {
         ads_out_time: ms(z, v + WV::iAdsTransOutTime),
         ads_zoom_fov: z.f32(v + WV::fAdsZoomFov1),
         silenced: z.u8(v + WV::bSilenced) != 0,
+        allowed_attachments: z.u32(v + WV::iAttachments) as u64,
+        attachment_variants: {
+            let at = z.u32(v + WV::attachments);
+            let mut out = Vec::new();
+            if at != 0 {
+                for i in 1..ATTACHMENT_KINDS {
+                    let a = z.u32(at + 4 * i);
+                    if a != 0 {
+                        out.push((i, z.str_ptr(a + WA::szInternalName)));
+                    }
+                }
+            }
+            out
+        },
+        hide_tags: hide_tags(z, z.u32(v + WV::hideTags)),
+        alt_weapon: opt_str(z, v + WV::szAltWeaponName),
         dpad_icon: named(z, v + WV::dpadIcon),
         ..Default::default()
     };
@@ -397,6 +554,9 @@ pub fn read(z: &Zone, v: u32) -> Weapon {
     w.projectile_explosion_sound = opt_str(z, d + WD::projExplosionSound);
     w.pullback_sound_player = opt_str(z, d + WD::pullbackSoundPlayer);
     w.melee_swipe_sound_player = opt_str(z, d + WD::meleeSwipeSoundPlayer);
+    w.impact_type = z.u32(d + WD::impactType);
+    let fx = z.u32(d + WD::projExplosionEffect);
+    w.explosion_effect = (fx != 0).then(|| crate::fx::read(z, fx)).filter(|e| !e.elems.is_empty()).or_else(|| crate::fx::explosion_entry(w.impact_type).and_then(|e| crate::fx::impact(z, e, crate::fx::surface::DIRT)));
     w.hud_icon = named(z, d + WD::hudIcon);
     let icon = z.u32(d + WD::hudIcon);
     w.hud_icon_hash = (icon != 0)

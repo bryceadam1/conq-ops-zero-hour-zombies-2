@@ -7,7 +7,7 @@
 
 use crate::input::buttons;
 use crate::units::LOGIC_DT;
-use crate::weapons::{Arsenal, Class, FireMode, Offhand, Rng, WeaponAction, WeaponDef, WeaponState, OFFHAND_PULLBACK};
+use crate::weapons::{Arsenal, Class, FireMode, Offhand, Place, Rng, WeaponAction, WeaponDef, WeaponState, OFFHAND_PULLBACK};
 
 /// Frames for `seconds`, rounded up.
 fn frames(seconds: f32) -> usize {
@@ -28,7 +28,7 @@ fn step(a: &mut Arsenal, held: u32, pressed: u32, out: &mut Vec<WeaponAction>, r
 }
 
 fn shots(out: &[WeaponAction]) -> usize {
-    out.iter().filter(|x| matches!(x, WeaponAction::Fire { pellet: 0, .. } | WeaponAction::Launch { .. })).count()
+    out.iter().filter(|x| matches!(x, WeaponAction::Fire { pellet: 0, .. } | WeaponAction::Launch { pellet: 0, .. })).count()
 }
 
 /// Whether `got` is within one logic frame (plus `slack` frames) of `want` seconds.
@@ -136,14 +136,15 @@ pub fn check(def: &'static WeaponDef) -> Vec<String> {
                 }
             }
         }
-        // Pellets per shot.
+        // Pellets (or bolts) per shot. A weapon faster than a logic frame fires several shots in
+        // one; count per shot.
         let mut a = arsenal(def);
         let mut out = Vec::new();
         step(&mut a, buttons::FIRE, buttons::FIRE, &mut out, &mut rng);
-        let pellets = out.iter().filter(|x| matches!(x, WeaponAction::Fire { .. })).count();
-        let launches = out.iter().filter(|x| matches!(x, WeaponAction::Launch { .. })).count();
-        if launches == 0 && pellets != def.pellets.max(1) as usize {
-            fail(format!("{pellets} pellets per shot, BO2 has {}", def.pellets));
+        let projectiles = out.iter().filter(|x| matches!(x, WeaponAction::Fire { .. } | WeaponAction::Launch { .. })).count();
+        let per_shot = projectiles / shots(&out).max(1);
+        if per_shot != def.pellets.max(1) as usize {
+            fail(format!("{per_shot} pellets per shot, BO2 has {}", def.pellets));
         }
 
         // Reloads (when there is more than the loaded round).
@@ -210,25 +211,57 @@ pub fn check(def: &'static WeaponDef) -> Vec<String> {
     }
 
     if def.class.is_offhand() {
-        // Thrown after the pull-back; a cooking grenade's fuse runs from the pin.
         let mut a = Arsenal::new();
         a.loadout.perks.clear();
         a.raise_left = 0.0;
         a.lethal = Offhand { def, count: 1 };
         let mut out = Vec::new();
-        let hold = OFFHAND_PULLBACK.max(if def.cook { (def.fuse_time * 0.5).min(1.0) } else { 0.0 });
-        for f in 0..frames(hold) {
-            a.step(buttons::LETHAL, if f == 0 { buttons::LETHAL } else { 0 }, false, 0, 0.0, &mut rng, &mut out);
-        }
-        for _ in 0..frames(0.2) {
-            a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
-        }
-        match out.iter().find_map(|x| if let WeaponAction::Throw { fuse_left, .. } = x { Some(*fuse_left) } else { None }) {
-            None => fail("never thrown".into()),
-            Some(left) => {
-                let want = if def.cook { def.fuse_time - frames(hold) as f32 * LOGIC_DT } else { def.fuse_time };
-                if (left - want).abs() > LOGIC_DT * 1.5 {
-                    fail(format!("fuse {left:.2} s left, BO2 says {want:.2}"));
+        match def.place {
+            // Equipment set down: planted after the pull-back, and one used.
+            Place::Plant => {
+                for f in 0..frames(OFFHAND_PULLBACK) {
+                    a.step(buttons::LETHAL, if f == 0 { buttons::LETHAL } else { 0 }, false, 0, 0.0, &mut rng, &mut out);
+                }
+                a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+                if !out.iter().any(|x| matches!(x, WeaponAction::Plant { .. })) {
+                    fail("never planted".into());
+                }
+                if a.lethal.count != 0 {
+                    fail("planting used none".into());
+                }
+            }
+            // The Black Hat: up while held, put away on release without using a charge.
+            Place::Hack => {
+                for f in 0..frames(1.0) {
+                    a.step(buttons::LETHAL, if f == 0 { buttons::LETHAL } else { 0 }, false, 0, 0.0, &mut rng, &mut out);
+                }
+                if a.hacking().is_none() {
+                    fail("not held up".into());
+                }
+                for _ in 0..frames(1.0) {
+                    a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+                }
+                if a.offhand.is_some() || a.lethal.count != 1 {
+                    fail("letting go of the Black Hat used it or left it up".into());
+                }
+            }
+            // Thrown after the pull-back; a cooking grenade's fuse runs from the pin.
+            Place::Throw => {
+                let hold = OFFHAND_PULLBACK.max(if def.cook { (def.fuse_time * 0.5).min(1.0) } else { 0.0 });
+                for f in 0..frames(hold) {
+                    a.step(buttons::LETHAL, if f == 0 { buttons::LETHAL } else { 0 }, false, 0, 0.0, &mut rng, &mut out);
+                }
+                for _ in 0..frames(0.2) {
+                    a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+                }
+                match out.iter().find_map(|x| if let WeaponAction::Throw { fuse_left, .. } = x { Some(*fuse_left) } else { None }) {
+                    None => fail("never thrown".into()),
+                    Some(left) => {
+                        let want = if def.cook { def.fuse_time - frames(hold) as f32 * LOGIC_DT } else { def.fuse_time };
+                        if (left - want).abs() > LOGIC_DT * 1.5 {
+                            fail(format!("fuse {left:.2} s left, BO2 says {want:.2}"));
+                        }
+                    }
                 }
             }
         }

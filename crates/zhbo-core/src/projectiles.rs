@@ -41,6 +41,9 @@ pub struct Projectile {
     pub resting: bool,
     pub flak_jacket: bool,
     pub tactical_mask: bool,
+    /// Becomes placed equipment where it comes to rest or sticks (C4, Shock Charge, Sensor
+    /// Grenade) instead of going off.
+    pub lands: bool,
 }
 
 /// What happened this step, for the client (sounds, hit markers).
@@ -48,6 +51,8 @@ pub struct Projectile {
 pub enum Outcome {
     Exploded { at: Vec3, hit_enemy: bool, kill: bool },
     Hit { at: Vec3, kill: bool },
+    /// Came to rest (or stuck to `stuck_to`) as equipment; its object stays.
+    Landed { at: Vec3, stuck_to: Option<u32> },
 }
 
 impl Projectile {
@@ -56,8 +61,9 @@ impl Projectile {
         let speed = if def.projectile_speed > 0.0 { def.projectile_speed } else { inches(800.0) };
         let vel = dir * speed + Vec3::new(0.0, 0.0, def.projectile_speed_up);
         let object = if def.projectile_object.is_empty() { 0 } else { host.spawn(&def.projectile_object, owner, from, yaw) };
-        let fuse = if def.impact_explode || def.effect == Effect::Impact || def.fuse_time <= 0.0 { f32::INFINITY } else { fuse_left };
-        Projectile { def, owner, pos: from, vel, fuse, age: 0.0, object, stuck_to: None, resting: false, flak_jacket: false, tactical_mask: false }
+        let lands = crate::equipment::Kind::of(def) != crate::equipment::Kind::Other;
+        let fuse = if lands || def.impact_explode || def.effect == Effect::Impact || def.fuse_time <= 0.0 { f32::INFINITY } else { fuse_left };
+        Projectile { def, owner, pos: from, vel, fuse, age: 0.0, object, stuck_to: None, resting: false, flak_jacket: false, tactical_mask: false, lands }
     }
 
     /// Advance one logic frame. Returns `Some` when it is finished (went off or hit).
@@ -67,6 +73,9 @@ impl Projectile {
         self.fuse -= dt;
         if self.fuse <= 0.0 {
             return Some(self.go_off(host, None));
+        }
+        if self.lands && (self.resting || self.stuck_to.is_some()) {
+            return Some(Outcome::Landed { at: self.pos, stuck_to: self.stuck_to });
         }
         if let Some(id) = self.stuck_to {
             // Riding on a stuck object (Semtex on a tank).
@@ -157,65 +166,13 @@ impl Projectile {
     /// The blast (or stun, EMP, smoke).
     fn go_off(&mut self, host: &dyn LogicHost, direct: Option<ObjInfo>) -> Outcome {
         self.remove_object(host);
-        let d = self.def;
-        let at = self.pos;
-        let fx = if d.explosion_fx.is_empty() { DEFAULT_EXPLOSION_FX } else { d.explosion_fx.as_str() };
-        if d.effect != Effect::None {
-            host.fx(fx, at);
-        }
-        let mut objs = Vec::new();
-        host.query(at, d.explosion_radius.max(1.0) + 12.0, self.owner, &mut objs);
-        let (mut hit_enemy, mut kill) = (false, false);
-        for o in objs.iter().filter(|o| !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE)) {
-            let ally = o.has(objflags::ALLY) && o.id != self.owner;
-            if ally {
-                continue; // no friendly fire, as in BO2's core modes
-            }
-            let centre = Vec3::new(o.pos.x, o.pos.y, o.pos.z + o.height * 0.5);
-            let dist = ((centre - at).length() - if o.has(objflags::INFANTRY) { 0.0 } else { o.major_radius }).max(0.0);
-            let direct_hit = direct.is_some_and(|x| x.id == o.id);
-            if dist > d.explosion_radius && !direct_hit {
-                continue;
-            }
-            let own = o.id == self.owner;
-            match d.effect {
-                Effect::Explode => {
-                    let mut amount = d.explosion_damage_at(dist) * BO2_TO_ZH_DAMAGE;
-                    if direct_hit {
-                        amount = amount.max(d.damage[0] * BO2_TO_ZH_DAMAGE);
-                    }
-                    if own && self.flak_jacket {
-                        amount *= perk_values::FLAK_JACKET_EXPLOSIVE;
-                    }
-                    if amount > 0.0 {
-                        let k = host.damage(self.owner, o.id, amount, damage_kind::EXPLOSION);
-                        if !own {
-                            hit_enemy = true;
-                            kill |= k;
-                        }
-                    }
-                }
-                Effect::Stun => {
-                    let f = (dist / d.explosion_radius.max(1.0)).clamp(0.0, 1.0);
-                    let mut secs = STUN_SECONDS.0 + (STUN_SECONDS.1 - STUN_SECONDS.0) * f;
-                    if own && self.tactical_mask {
-                        secs *= perk_values::TACTICAL_MASK_STUN;
-                    }
-                    if !own {
-                        host.disable(o.id, disable_kind::PARALYZED, secs);
-                        hit_enemy = true;
-                    }
-                }
-                Effect::Emp => {
-                    if !own && !o.has(objflags::INFANTRY) {
-                        host.disable(o.id, disable_kind::EMP, EMP_SECONDS);
-                        hit_enemy = true;
-                    }
-                }
-                Effect::Smoke | Effect::None | Effect::Impact => {}
-            }
-        }
-        Outcome::Exploded { at, hit_enemy, kill }
+        let (hit_enemy, kill) = blast(host, self.def, self.owner, self.pos, direct, self.flak_jacket, self.tactical_mask);
+        Outcome::Exploded { at: self.pos, hit_enemy, kill }
+    }
+
+    /// Stop it where it is (a Trophy System shot it down).
+    pub fn intercept(&mut self, host: &dyn LogicHost) {
+        self.remove_object(host);
     }
 
     fn remove_object(&mut self, host: &dyn LogicHost) {
@@ -224,6 +181,75 @@ impl Projectile {
             self.object = 0;
         }
     }
+}
+
+/// `def` going off at `at` for `owner` (a General's id): explosion damage, stun, EMP or smoke over
+/// its radius, and its effect. `direct` took a direct hit. Returns (hit an enemy, killed one).
+pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct: Option<ObjInfo>, flak_jacket: bool, tactical_mask: bool) -> (bool, bool) {
+    let d = def;
+    let fx = if d.explosion_fx.is_empty() { DEFAULT_EXPLOSION_FX } else { d.explosion_fx.as_str() };
+    if d.effect != Effect::None {
+        host.fx(fx, at);
+    }
+    let mut objs = Vec::new();
+    host.query(at, d.explosion_radius.max(1.0) + 12.0, owner, &mut objs);
+    objs.sort_by_key(|o| o.id);
+    let (mut hit_enemy, mut kill) = (false, false);
+    for o in objs.iter().filter(|o| !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE)) {
+        let ally = o.has(objflags::ALLY) && o.id != owner;
+        if ally {
+            continue; // no friendly fire, as in BO2's core modes
+        }
+        let centre = Vec3::new(o.pos.x, o.pos.y, o.pos.z + o.height * 0.5);
+        let dist = ((centre - at).length() - if o.has(objflags::INFANTRY) { 0.0 } else { o.major_radius }).max(0.0);
+        let direct_hit = direct.is_some_and(|x| x.id == o.id);
+        if dist > d.explosion_radius && !direct_hit {
+            continue;
+        }
+        let own = o.id == owner;
+        match d.effect {
+            Effect::Explode => {
+                let mut amount = d.explosion_damage_at(dist) * BO2_TO_ZH_DAMAGE;
+                if direct_hit {
+                    amount = amount.max(d.damage[0] * BO2_TO_ZH_DAMAGE);
+                }
+                if own && flak_jacket {
+                    amount *= perk_values::FLAK_JACKET_EXPLOSIVE;
+                }
+                if amount > 0.0 {
+                    let k = host.damage(owner, o.id, amount, damage_kind::EXPLOSION);
+                    if !own {
+                        hit_enemy = true;
+                        kill |= k;
+                    }
+                }
+            }
+            Effect::Stun => {
+                let f = (dist / d.explosion_radius.max(1.0)).clamp(0.0, 1.0);
+                let mut secs = STUN_SECONDS.0 + (STUN_SECONDS.1 - STUN_SECONDS.0) * f;
+                if own && tactical_mask {
+                    secs *= perk_values::TACTICAL_MASK_STUN;
+                }
+                if !own {
+                    host.disable(o.id, disable_kind::PARALYZED, secs);
+                    // The Shock Charge also hurts.
+                    let amount = d.explosion_damage_at(dist) * BO2_TO_ZH_DAMAGE;
+                    if amount > 0.0 && d.explosion_inner_damage > 10.0 {
+                        kill |= host.damage(owner, o.id, amount, damage_kind::EXPLOSION);
+                    }
+                    hit_enemy = true;
+                }
+            }
+            Effect::Emp => {
+                if !own && !o.has(objflags::INFANTRY) {
+                    host.disable(o.id, disable_kind::EMP, EMP_SECONDS);
+                    hit_enemy = true;
+                }
+            }
+            Effect::Smoke | Effect::None | Effect::Impact => {}
+        }
+    }
+    (hit_enemy, kill)
 }
 
 #[cfg(test)]

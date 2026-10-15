@@ -56,13 +56,35 @@ impl Rig {
         rig
     }
 
+    /// Hang another model from pivot `tag` with its origin at `offset` (scaled units) in the tag's
+    /// frame: BO2 attachments sit at an offset from the weapon.
+    pub fn attach(&mut self, model: &Model, tag: usize, offset: Xf) {
+        self.add_bones_at(model, Some(tag), offset);
+    }
+
+    /// Put pivot `name` at `pos` (model space, scaled), keeping its rotation: an optic moves the
+    /// line of sight (`tag_sights`) up to its own.
+    pub fn move_pivot(&mut self, name: &str, pos: [f32; 3]) {
+        let Some(i) = self.pivot(name) else { return };
+        let parent = self.pivots[i].parent.unwrap_or(0);
+        self.bind[i].1 = pos;
+        let local = xf::compose(xf::inverse(self.bind[parent]), self.bind[i]);
+        self.pivots[i].translation = local.1;
+        self.pivots[i].rotation = local.0;
+        self.anim_base[i] = local.1;
+    }
+
     /// Append a model's bones. Root bones hang from pivot `attach` (with an identity offset) or
     /// from the root transform.
     fn add_bones(&mut self, model: &Model, attach: Option<usize>) {
+        self.add_bones_at(model, attach, xf::IDENTITY);
+    }
+
+    fn add_bones_at(&mut self, model: &Model, attach: Option<usize>, offset: Xf) {
         let first = self.pivots.len();
-        // An attached model's origin sits exactly on its tag in the bind pose, so all of its bones
-        // are placed relative to the tag.
-        let origin = attach.map_or(xf::IDENTITY, |tag| self.bind[tag]);
+        // An attached model's origin sits on its tag (plus `offset`) in the bind pose, so all of
+        // its bones are placed relative to the tag.
+        let origin = xf::compose(attach.map_or(xf::IDENTITY, |tag| self.bind[tag]), offset);
         for b in &model.bones {
             let world = xf::compose(origin, (b.rotation, scaled(b.position)));
             let parent = match b.parent {
@@ -101,6 +123,13 @@ pub fn texture_file(image_name: &str) -> String {
 /// that is part of the rig, pass `None`: its bones are found by name). `textures` gives each surface's
 /// texture file, if any.
 pub fn skin(rig: &Rig, model: &Model, mesh_prefix: &str, textures: &[Option<String>]) -> Vec<SkinMesh> {
+    skin_hiding(rig, model, mesh_prefix, textures, &[])
+}
+
+/// [`skin`], leaving out triangles on the bones in `hide` (BO2's hide tags: the iron sights under
+/// an optic, the magazine a fast mag replaces).
+pub fn skin_hiding(rig: &Rig, model: &Model, mesh_prefix: &str, textures: &[Option<String>], hide: &[String]) -> Vec<SkinMesh> {
+    let hidden: Vec<bool> = model.bones.iter().map(|b| hide.iter().any(|h| h == &b.name)).collect();
     // Map the model's bones to pivots by name; unknown bones fall back to their nearest known ancestor.
     let mut to_pivot = Vec::with_capacity(model.bones.len());
     for (i, b) in model.bones.iter().enumerate() {
@@ -135,10 +164,58 @@ pub fn skin(rig: &Rig, model: &Model, mesh_prefix: &str, textures: &[Option<Stri
         }
         // BO2 and Zero Hour use opposite front-face winding: keep BO2's order and the engine culls
         // the outside of the model, so it looks inside-out.
-        m.triangles = s.triangles.iter().map(|t| [t[0] as u32, t[2] as u32, t[1] as u32]).collect();
-        meshes.push(m);
+        let heaviest = |v: usize| s.vertices[v].weights.iter().copied().fold((0u16, -1.0f32), |a, w| if w.1 > a.1 { w } else { a }).0 as usize;
+        m.triangles = s
+            .triangles
+            .iter()
+            .filter(|t| !t.iter().any(|&v| hidden.get(heaviest(v as usize)).copied().unwrap_or(false)))
+            .map(|t| [t[0] as u32, t[2] as u32, t[1] as u32])
+            .collect();
+        if !m.triangles.is_empty() {
+            meshes.push(m);
+        }
     }
     meshes
+}
+
+/// Skin a rigid model (a third-person weapon or attachment) entirely to `pivot`, its origin at
+/// `offset` (scaled) in the pivot's frame, leaving out triangles on the bones in `hide`.
+pub fn skin_rigid(model: &Model, pivot: usize, offset: Xf, mesh_prefix: &str, first_index: usize, textures: &[Option<String>], hide: &[String]) -> Vec<SkinMesh> {
+    let hidden: Vec<bool> = model.bones.iter().map(|b| hide.iter().any(|h| h == &b.name)).collect();
+    let Some(lod) = model.lods.first() else { return Vec::new() };
+    let mut meshes = Vec::new();
+    for (k, s) in model.surfaces[lod.first_surface..lod.first_surface + lod.surface_count].iter().enumerate() {
+        if s.vertices.is_empty() || s.triangles.is_empty() {
+            continue;
+        }
+        let mut m = SkinMesh {
+            name: format!("{mesh_prefix}{:02}", first_index + meshes.len()),
+            texture: textures.get(lod.first_surface + k).cloned().flatten(),
+            ..Default::default()
+        };
+        for v in &s.vertices {
+            m.positions.push(xf::apply(offset, scaled(v.position)));
+            m.normals.push(xf::qrot(offset.0, v.normal));
+            m.uvs.push(v.uv);
+            m.bones.push(pivot as u16);
+        }
+        let heaviest = |v: usize| s.vertices[v].weights.iter().copied().fold((0u16, -1.0f32), |a, w| if w.1 > a.1 { w } else { a }).0 as usize;
+        m.triangles = s
+            .triangles
+            .iter()
+            .filter(|t| !t.iter().any(|&v| hidden.get(heaviest(v as usize)).copied().unwrap_or(false)))
+            .map(|t| [t[0] as u32, t[2] as u32, t[1] as u32])
+            .collect();
+        if !m.triangles.is_empty() {
+            meshes.push(m);
+        }
+    }
+    meshes
+}
+
+/// Scale an offset (inches) into Zero Hour units.
+pub fn scaled_xf(x: Xf) -> Xf {
+    (x.0, scaled(x.1))
 }
 
 /// Convert an animation into W3D channels for the rig. Returns (frame count, channels).

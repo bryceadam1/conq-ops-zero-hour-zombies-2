@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 9u
+#define ZHBO_ABI_VERSION 10u
 
 #ifdef __cplusplus
 extern "C" {
@@ -29,6 +29,10 @@ enum ZhboObjFlags
 	ZHBO_OBJ_ALLY       = 1u << 6,
 	ZHBO_OBJ_NO_COLLIDE = 1u << 7,
 	ZHBO_OBJ_AIRBORNE   = 1u << 8,
+	ZHBO_OBJ_DRONE      = 1u << 9,  /* the Black Hat can hack it */
+	ZHBO_OBJ_PROJECTILE = 1u << 10, /* a missile or shell in flight: the Trophy System shoots it down */
+	ZHBO_OBJ_SHROUDED   = 1u << 11, /* client queries: hidden from the local player by shroud or fog */
+	ZHBO_OBJ_FIRING     = 1u << 12, /* firing a weapon right now */
 };
 
 enum ZhboGeom { ZHBO_GEOM_SPHERE = 0, ZHBO_GEOM_CYLINDER = 1, ZHBO_GEOM_BOX = 2 };
@@ -76,6 +80,7 @@ typedef struct ZhboLogicApi
 	void (*destroy)(uint32_t id);
 	void (*disable)(uint32_t id, int32_t kind, float seconds); /* ZHBO_DISABLE_* */
 	void (*fx)(const char *fxlist, const ZhboVec3 *pos);
+	void (*capture)(uint32_t id, uint32_t new_owner); /* to new_owner's side (the Black Hat) */
 } ZhboLogicApi;
 
 /* zhbo_core::host::damage_kind and disable_kind. */
@@ -155,6 +160,17 @@ typedef struct ZhboClientOut
 #define ZHBO_VM_TABLET_PULLOUT 0x60
 #define ZHBO_VM_TABLET_IDLE 0x61
 #define ZHBO_VM_TABLET_PUTAWAY 0x62
+/* An alt mode's clips are its BO2 slots plus this, on its weapon's viewmodel (zhbo_core::weapons::ALT_CLIPS). */
+#define ZHBO_VM_ALT_CLIPS 0x80
+
+/* How a controlled General looks in third person (zhbo_core::ffi::WorldPose). Its soldier model
+   carries each converted weapon as sub-objects W<vm:02><k:02> and the tablet as TB<k:02>. */
+typedef struct ZhboWorldPose
+{
+	uint32_t general;
+	int32_t weapon; /* viewmodel index of the weapon in hand */
+	int32_t tablet; /* 0 none, 1 coming up (MODELCONDITION_USER_1), 2 going down (USER_2) */
+} ZhboWorldPose;
 
 uint32_t zhbo_abi_version(void);
 void zhbo_init(const ZhboLogicApi *logic, const ZhboClientApi *client);
@@ -167,6 +183,8 @@ int32_t zhbo_logic_is_controlled(uint32_t object_id);
 void zhbo_client_frame(const ZhboClientIn *in, ZhboClientOut *out);
 void zhbo_client_draw_hud(int32_t local_player);
 const uint16_t *zhbo_string(const char *label);
+int32_t zhbo_client_world_poses(ZhboWorldPose *out, int32_t cap);
+int32_t zhbo_world_mesh_count(int32_t vm); /* -2: the tablet */
 int32_t zhbo_check_requirements(char *msg, uint32_t cap);
 
 #ifdef __cplusplus
@@ -176,6 +194,7 @@ static_assert(sizeof(ZhboObjInfo) == 56, "ZhboObjInfo layout must match host.rs"
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
 static_assert(sizeof(ZhboClientIn) == 316, "ZhboClientIn layout must match client.rs");
 static_assert(sizeof(ZhboClientOut) == 132, "ZhboClientOut layout must match client.rs");
-static_assert(sizeof(ZhboLogicApi) == 15 * sizeof(void *), "ZhboLogicApi layout must match host.rs");
+static_assert(sizeof(ZhboLogicApi) == 16 * sizeof(void *), "ZhboLogicApi layout must match host.rs");
+static_assert(sizeof(ZhboWorldPose) == 12, "ZhboWorldPose layout must match ffi.rs");
 static_assert(sizeof(ZhboClientApi) == 10 * sizeof(void *), "ZhboClientApi layout must match host.rs");
 #endif

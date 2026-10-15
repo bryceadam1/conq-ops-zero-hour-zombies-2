@@ -12,10 +12,12 @@
 //! Everything here runs inside Zero Hour's lockstep logic, so randomness comes from [`Rng`], which is
 //! seeded identically on every client, and the table must be identical on every client.
 
+pub use crate::attachments::AttachmentDef;
+use crate::attachments;
 use crate::input::buttons;
 use crate::units::{inches, LOGIC_DT};
 use std::collections::HashMap;
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 // ------------------------------------------------------------------------------------------------
 // Definitions
@@ -208,6 +210,60 @@ pub struct WeaponDef {
     pub viewmodel: i32,
     /// Which BO2 viewmodel animation slots (`weapAnimFiles_t`) the weapon has, as bits.
     pub anims: u128,
+    /// Viewmodel clips are the BO2 slot plus this: an alt mode's clips sit after its weapon's on the
+    /// same viewmodel ([`ALT_CLIPS`]).
+    pub clip_base: i32,
+    /// Third-person meshes of this weapon on the soldier model (`W{viewmodel:02}{k:02}`).
+    pub world_meshes: u8,
+    /// Attachments on this weapon (BO2's names: `grip`, `reflex`), sorted.
+    pub attachments: Vec<String>,
+    /// Base weapons: each attachment BO2's create-a-class offers, and which `Attachment` it uses
+    /// on this weapon (`silencer` is `silencer_smg` on an SMG).
+    pub allowed: Vec<(String, String)>,
+    /// Base weapons: the alt-mode weapon an attachment adds (`gl` → `gl_an94_mp`).
+    pub alt_modes: Vec<(String, String)>,
+    /// The weapon this toggles to (its alt mode, or back from it); empty when there is none.
+    pub alt: String,
+    /// This alt mode keeps its own ammo (a grenade launcher), not the weapon's magazine.
+    pub alt_own_ammo: bool,
+    pub silenced: bool,
+    pub laser: bool,
+    /// FMJ: penetrates infantry, hits vehicles and structures harder.
+    pub fmj: bool,
+    /// Target finder: enemies are marked while aiming.
+    pub target_finder: bool,
+    /// ADS recoil reduction per shot fired, and its limit (the grip).
+    pub recoil_reduction: (f32, f32),
+    /// How a piece of equipment is used.
+    pub place: Place,
+}
+
+/// An alt mode's viewmodel clips are its BO2 slots plus this.
+pub const ALT_CLIPS: i32 = 0x80;
+
+/// How an offhand item is used.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Place {
+    /// Thrown (grenades, C4, Shock Charge, Sensor Grenade).
+    #[default]
+    Throw,
+    /// Set down in front of the player (Claymore, Bouncing Betty, Trophy System, Tactical Insertion).
+    Plant,
+    /// Held up and aimed at enemy equipment or drones (Black Hat).
+    Hack,
+}
+
+impl Place {
+    fn name(self) -> &'static str {
+        match self {
+            Place::Throw => "throw",
+            Place::Plant => "plant",
+            Place::Hack => "hack",
+        }
+    }
+    fn parse(s: &str) -> Option<Place> {
+        [Place::Throw, Place::Plant, Place::Hack].into_iter().find(|p| p.name() == s)
+    }
 }
 
 impl Default for WeaponDef {
@@ -275,6 +331,19 @@ impl Default for WeaponDef {
             explode_sound: String::new(),
             viewmodel: -1,
             anims: 0,
+            clip_base: 0,
+            world_meshes: 0,
+            attachments: Vec::new(),
+            allowed: Vec::new(),
+            alt_modes: Vec::new(),
+            alt: String::new(),
+            alt_own_ammo: false,
+            silenced: false,
+            laser: false,
+            fmj: false,
+            target_finder: false,
+            recoil_reduction: (0.0, 0.0),
+            place: Place::Throw,
         }
     }
 }
@@ -338,19 +407,78 @@ impl WeaponDef {
 // The table: text format shared with the converter
 // ------------------------------------------------------------------------------------------------
 
-/// Write weapon definitions in the table format [`parse_table`] reads (Zero Hour INI style: one
-/// `Weapon <id>` block per weapon, `key = value` lines, `End`).
+/// Everything in the weapon table.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Table {
+    pub weapons: Vec<WeaponDef>,
+    pub attachments: Vec<AttachmentDef>,
+    /// Third-person meshes of the scorestreak tablet on the soldier model (`TB{k:02}`).
+    pub tablet_meshes: u8,
+}
+
+fn pairs(v: &[(String, String)]) -> String {
+    v.iter().map(|(a, b)| format!("{a}={b}")).collect::<Vec<_>>().join(" ")
+}
+
+fn parse_pairs(s: &str) -> Vec<(String, String)> {
+    s.split_whitespace().filter_map(|p| p.split_once('=')).map(|(a, b)| (a.to_string(), b.to_string())).collect()
+}
+
+fn fire_name(f: FireMode) -> String {
+    match f {
+        FireMode::Auto => "auto".to_string(),
+        FireMode::Semi => "semi".to_string(),
+        FireMode::Burst(n) => format!("burst {n}"),
+        FireMode::Minigun => "minigun".to_string(),
+    }
+}
+
+fn parse_fire(value: &str) -> Option<FireMode> {
+    let mut words = value.split_whitespace();
+    Some(match words.next()? {
+        "auto" => FireMode::Auto,
+        "semi" => FireMode::Semi,
+        "minigun" => FireMode::Minigun,
+        "burst" => FireMode::Burst(words.next().and_then(|n| n.parse().ok()).unwrap_or(3)),
+        _ => return None,
+    })
+}
+
+/// Write the table in the format [`parse_table`] reads (Zero Hour INI style: `Weapon <id>` and
+/// `Attachment <id>` blocks of `key = value` lines, each closed by `End`).
 pub fn format_table(defs: &[WeaponDef]) -> String {
+    format_full_table(&Table { weapons: defs.to_vec(), ..Default::default() })
+}
+
+pub fn format_full_table(t: &Table) -> String {
     let mut s = String::from("; Black Ops II multiplayer weapons, converted from the player's own install by zhbo-assets.\n; Private data: do not redistribute.\n\n");
-    for d in defs {
+    s.push_str(&format!("TabletMeshes = {}\n\n", t.tablet_meshes));
+    for a in &t.attachments {
+        let lines: Vec<(&str, String)> = vec![
+            ("Short", a.short.clone()),
+            ("DisplayName", a.display_name.clone()),
+            ("Point", a.point.to_string()),
+            ("Flags", format!("{} {}", a.silenced as u8, a.laser as u8)),
+            ("Fire", a.fire.map_or("none".into(), fire_name)),
+            ("Clip", a.clip.to_string()),
+            ("DamageRangeScale", a.damage_range_scale.to_string()),
+            ("Ads", format!("{} {} {} {}", a.ads_fov, a.ads_in_scale, a.ads_out_scale, a.ads_move_scale)),
+            ("HipSpreadScale", format!("{} {}", a.hip_spread_min_scale, a.hip_spread_max_scale)),
+            ("FireTimeScale", a.fire_time_scale.to_string()),
+            ("ReloadScale", format!("{} {} {}", a.reload_scale, a.reload_empty_scale, a.reload_add_scale)),
+            ("ClipScale", a.clip_scale.to_string()),
+            ("RecoilReduction", format!("{} {}", a.recoil_reduction.0, a.recoil_reduction.1)),
+        ];
+        s.push_str(&format!("Attachment {}\n", a.id));
+        for (k, v) in lines {
+            s.push_str(&format!("  {k} = {v}\n"));
+        }
+        s.push_str("End\n\n");
+    }
+    for d in &t.weapons {
         let pair = |a: (f32, f32)| format!("{} {}", a.0, a.1);
         let list = |v: &[f32]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" ");
-        let fire = match d.fire {
-            FireMode::Auto => "auto".to_string(),
-            FireMode::Semi => "semi".to_string(),
-            FireMode::Burst(n) => format!("burst {n}"),
-            FireMode::Minigun => "minigun".to_string(),
-        };
+        let fire = fire_name(d.fire);
         let lines: Vec<(&str, String)> = vec![
             ("DisplayName", d.display_name.clone()),
             ("Class", d.class.name().into()),
@@ -391,6 +519,18 @@ pub fn format_table(defs: &[WeaponDef]) -> String {
             ("ExplodeSound", d.explode_sound.clone()),
             ("Viewmodel", d.viewmodel.to_string()),
             ("Anims", format!("{:x}", d.anims)),
+            ("ClipBase", d.clip_base.to_string()),
+            ("WorldMeshes", d.world_meshes.to_string()),
+            ("Attachments", d.attachments.join(" ")),
+            ("Allowed", pairs(&d.allowed)),
+            ("AltModes", pairs(&d.alt_modes)),
+            ("Alt", d.alt.clone()),
+            (
+                "Flags",
+                format!("{} {} {} {} {}", d.alt_own_ammo as u8, d.silenced as u8, d.laser as u8, d.fmj as u8, d.target_finder as u8),
+            ),
+            ("RecoilReduction", format!("{} {}", d.recoil_reduction.0, d.recoil_reduction.1)),
+            ("Place", d.place.name().into()),
         ];
         s.push_str(&format!("Weapon {}\n", d.id));
         for (k, v) in lines {
@@ -401,10 +541,19 @@ pub fn format_table(defs: &[WeaponDef]) -> String {
     s
 }
 
-/// Read the weapon table. Unknown keys are ignored; a malformed value is an error.
+/// Read the weapon table's weapons (see [`parse_full_table`]).
 pub fn parse_table(text: &str) -> Result<Vec<WeaponDef>, String> {
-    let mut out = Vec::new();
-    let mut cur: Option<WeaponDef> = None;
+    parse_full_table(text).map(|t| t.weapons)
+}
+
+/// Read the weapon table. Unknown keys are ignored; a malformed value is an error.
+pub fn parse_full_table(text: &str) -> Result<Table, String> {
+    enum Block {
+        Weapon(WeaponDef),
+        Attachment(AttachmentDef),
+    }
+    let mut table = Table::default();
+    let mut cur: Option<Block> = None;
     for (n, raw) in text.lines().enumerate() {
         let line = raw.split(';').next().unwrap_or("").trim();
         if line.is_empty() {
@@ -412,141 +561,238 @@ pub fn parse_table(text: &str) -> Result<Vec<WeaponDef>, String> {
         }
         let err = |what: &str| format!("weapons table line {}: {what}: {raw}", n + 1);
         if let Some(id) = line.strip_prefix("Weapon ") {
-            cur = Some(WeaponDef { id: id.trim().to_string(), ..Default::default() });
+            cur = Some(Block::Weapon(WeaponDef { id: id.trim().to_string(), ..Default::default() }));
+            continue;
+        }
+        if let Some(id) = line.strip_prefix("Attachment ") {
+            cur = Some(Block::Attachment(AttachmentDef { id: id.trim().to_string(), ..Default::default() }));
             continue;
         }
         if line == "End" {
-            out.push(cur.take().ok_or_else(|| err("End without Weapon"))?);
+            match cur.take().ok_or_else(|| err("End without a block"))? {
+                Block::Weapon(w) => table.weapons.push(w),
+                Block::Attachment(a) => table.attachments.push(a),
+            }
             continue;
         }
-        let d = cur.as_mut().ok_or_else(|| err("value outside a Weapon block"))?;
         let (key, value) = line.split_once('=').ok_or_else(|| err("expected key = value"))?;
         let (key, value) = (key.trim(), value.trim());
         let nums: Vec<f32> = value.split_whitespace().filter_map(|x| x.parse().ok()).collect();
         let need = |k: usize| if nums.len() >= k { Ok(()) } else { Err(err("too few numbers")) };
-        match key {
-            "DisplayName" => d.display_name = value.to_string(),
-            "Class" => d.class = Class::parse(value).ok_or_else(|| err("unknown class"))?,
-            "Fire" => {
-                d.fire = match value.split_whitespace().next() {
-                    Some("auto") => FireMode::Auto,
-                    Some("semi") => FireMode::Semi,
-                    Some("minigun") => FireMode::Minigun,
-                    Some("burst") => FireMode::Burst(nums.first().copied().unwrap_or(3.0) as u8),
-                    _ => return Err(err("unknown fire mode")),
+        let num = |v: &str| v.parse::<f32>().map_err(|_| err("number"));
+        match cur.as_mut() {
+            None => match key {
+                "TabletMeshes" => table.tablet_meshes = num(value)? as u8,
+                _ => return Err(err("value outside a block")),
+            },
+            Some(Block::Attachment(a)) => match key {
+                "Short" => a.short = value.to_string(),
+                "DisplayName" => a.display_name = value.to_string(),
+                "Point" => a.point = num(value)? as u8,
+                "Flags" => {
+                    need(2)?;
+                    (a.silenced, a.laser) = (nums[0] != 0.0, nums[1] != 0.0);
                 }
-            }
-            "FireTime" => d.fire_time = value.parse().map_err(|_| err("number"))?,
-            "BurstDelay" => d.burst_delay = value.parse().map_err(|_| err("number"))?,
-            "SpinUpTime" => d.spin_up_time = value.parse().map_err(|_| err("number"))?,
-            "Pellets" => d.pellets = value.parse().map_err(|_| err("number"))?,
-            "Clip" => d.clip = value.parse().map_err(|_| err("number"))?,
-            "StartReserve" => d.start_reserve = value.parse().map_err(|_| err("number"))?,
-            "MaxReserve" => d.max_reserve = value.parse().map_err(|_| err("number"))?,
-            "Reload" => {
-                need(4)?;
-                (d.reload_time, d.reload_empty_time, d.reload_add_time, d.reload_empty_add_time) = (nums[0], nums[1], nums[2], nums[3]);
-            }
-            "ReloadShells" => {
-                need(3)?;
-                (d.reload_start_time, d.reload_end_time, d.reload_ammo_add) = (nums[0], nums[1], nums[2] as u16);
-            }
-            "Raise" => {
-                need(5)?;
-                (d.raise_time, d.first_raise_time, d.drop_time, d.quick_raise_time, d.quick_drop_time) = (nums[0], nums[1], nums[2], nums[3], nums[4]);
-            }
-            "SprintOutTime" => d.sprint_out_time = value.parse().map_err(|_| err("number"))?,
-            "Ads" => {
-                need(3)?;
-                (d.ads_in_time, d.ads_out_time, d.ads_fov) = (nums[0], nums[1], nums[2]);
-            }
-            "Damage" => {
-                need(6)?;
-                d.damage.copy_from_slice(&nums[..6]);
-            }
-            "DamageRange" => {
-                need(6)?;
-                d.damage_range.copy_from_slice(&nums[..6]);
-            }
-            "HeadMultiplier" => d.head_multiplier = value.parse().map_err(|_| err("number"))?,
-            "MaxRange" => d.max_range = value.parse().map_err(|_| err("number"))?,
-            "HipSpread" => {
-                need(6)?;
-                d.hip_spread = [(nums[0], nums[1]), (nums[2], nums[3]), (nums[4], nums[5])];
-            }
-            "Spread" => {
-                need(4)?;
-                (d.spread_decay, d.spread_fire_add, d.spread_move_add, d.ads_spread) = (nums[0], nums[1], nums[2], nums[3]);
-            }
-            "AdsKick" | "HipKick" => {
-                need(4)?;
-                let k = Kick { pitch: (nums[0], nums[1]), yaw: (nums[2], nums[3]) };
-                if key == "AdsKick" {
-                    d.ads_kick = k;
-                } else {
-                    d.hip_kick = k;
+                "Fire" => a.fire = parse_fire(value),
+                "Clip" => a.clip = num(value)? as u16,
+                "DamageRangeScale" => a.damage_range_scale = num(value)?,
+                "Ads" => {
+                    need(4)?;
+                    (a.ads_fov, a.ads_in_scale, a.ads_out_scale, a.ads_move_scale) = (nums[0], nums[1], nums[2], nums[3]);
                 }
-            }
-            "Move" => {
-                need(3)?;
-                (d.move_scale, d.ads_move_scale, d.sprint_duration_scale) = (nums[0], nums[1], nums[2]);
-            }
-            "Melee" => {
-                need(2)?;
-                (d.melee_damage, d.melee_time) = (nums[0], nums[1]);
-            }
-            "Effect" => d.effect = Effect::parse(value).ok_or_else(|| err("unknown effect"))?,
-            "Fuse" => {
-                need(2)?;
-                (d.fuse_time, d.cook) = (nums[0], nums[1] != 0.0);
-            }
-            "Explosion" => {
-                need(4)?;
-                (d.explosion_radius, d.explosion_radius_min, d.explosion_inner_damage, d.explosion_outer_damage) = (nums[0], nums[1], nums[2], nums[3]);
-            }
-            "Projectile" => {
-                need(5)?;
-                d.projectile_speed = nums[0];
-                d.projectile_speed_up = nums[1];
-                d.projectile_gravity = nums[2] != 0.0;
-                d.impact_explode = nums[3] != 0.0;
-                d.sticky = nums[4] != 0.0;
-            }
-            "FxWeapon" => d.fx_weapon = value.to_string(),
-            "ExplosionFx" => d.explosion_fx = value.to_string(),
-            "ProjectileObject" => d.projectile_object = value.to_string(),
-            "FireSound" => d.fire_sound = value.to_string(),
-            "ExplodeSound" => d.explode_sound = value.to_string(),
-            "Viewmodel" => d.viewmodel = value.parse().map_err(|_| err("number"))?,
-            "Anims" => d.anims = u128::from_str_radix(value, 16).map_err(|_| err("hex"))?,
-            _ => {}
+                "HipSpreadScale" => {
+                    need(2)?;
+                    (a.hip_spread_min_scale, a.hip_spread_max_scale) = (nums[0], nums[1]);
+                }
+                "FireTimeScale" => a.fire_time_scale = num(value)?,
+                "ReloadScale" => {
+                    need(3)?;
+                    (a.reload_scale, a.reload_empty_scale, a.reload_add_scale) = (nums[0], nums[1], nums[2]);
+                }
+                "ClipScale" => a.clip_scale = num(value)?,
+                "RecoilReduction" => {
+                    need(2)?;
+                    a.recoil_reduction = (nums[0], nums[1]);
+                }
+                _ => {}
+            },
+            Some(Block::Weapon(d)) => match key {
+                "DisplayName" => d.display_name = value.to_string(),
+                "Class" => d.class = Class::parse(value).ok_or_else(|| err("unknown class"))?,
+                "Fire" => d.fire = parse_fire(value).ok_or_else(|| err("unknown fire mode"))?,
+                "FireTime" => d.fire_time = num(value)?,
+                "BurstDelay" => d.burst_delay = num(value)?,
+                "SpinUpTime" => d.spin_up_time = num(value)?,
+                "Pellets" => d.pellets = value.parse().map_err(|_| err("number"))?,
+                "Clip" => d.clip = value.parse().map_err(|_| err("number"))?,
+                "StartReserve" => d.start_reserve = value.parse().map_err(|_| err("number"))?,
+                "MaxReserve" => d.max_reserve = value.parse().map_err(|_| err("number"))?,
+                "Reload" => {
+                    need(4)?;
+                    (d.reload_time, d.reload_empty_time, d.reload_add_time, d.reload_empty_add_time) = (nums[0], nums[1], nums[2], nums[3]);
+                }
+                "ReloadShells" => {
+                    need(3)?;
+                    (d.reload_start_time, d.reload_end_time, d.reload_ammo_add) = (nums[0], nums[1], nums[2] as u16);
+                }
+                "Raise" => {
+                    need(5)?;
+                    (d.raise_time, d.first_raise_time, d.drop_time, d.quick_raise_time, d.quick_drop_time) = (nums[0], nums[1], nums[2], nums[3], nums[4]);
+                }
+                "SprintOutTime" => d.sprint_out_time = num(value)?,
+                "Ads" => {
+                    need(3)?;
+                    (d.ads_in_time, d.ads_out_time, d.ads_fov) = (nums[0], nums[1], nums[2]);
+                }
+                "Damage" => {
+                    need(6)?;
+                    d.damage.copy_from_slice(&nums[..6]);
+                }
+                "DamageRange" => {
+                    need(6)?;
+                    d.damage_range.copy_from_slice(&nums[..6]);
+                }
+                "HeadMultiplier" => d.head_multiplier = num(value)?,
+                "MaxRange" => d.max_range = num(value)?,
+                "HipSpread" => {
+                    need(6)?;
+                    d.hip_spread = [(nums[0], nums[1]), (nums[2], nums[3]), (nums[4], nums[5])];
+                }
+                "Spread" => {
+                    need(4)?;
+                    (d.spread_decay, d.spread_fire_add, d.spread_move_add, d.ads_spread) = (nums[0], nums[1], nums[2], nums[3]);
+                }
+                "AdsKick" | "HipKick" => {
+                    need(4)?;
+                    let k = Kick { pitch: (nums[0], nums[1]), yaw: (nums[2], nums[3]) };
+                    if key == "AdsKick" {
+                        d.ads_kick = k;
+                    } else {
+                        d.hip_kick = k;
+                    }
+                }
+                "Move" => {
+                    need(3)?;
+                    (d.move_scale, d.ads_move_scale, d.sprint_duration_scale) = (nums[0], nums[1], nums[2]);
+                }
+                "Melee" => {
+                    need(2)?;
+                    (d.melee_damage, d.melee_time) = (nums[0], nums[1]);
+                }
+                "Effect" => d.effect = Effect::parse(value).ok_or_else(|| err("unknown effect"))?,
+                "Fuse" => {
+                    need(2)?;
+                    (d.fuse_time, d.cook) = (nums[0], nums[1] != 0.0);
+                }
+                "Explosion" => {
+                    need(4)?;
+                    (d.explosion_radius, d.explosion_radius_min, d.explosion_inner_damage, d.explosion_outer_damage) = (nums[0], nums[1], nums[2], nums[3]);
+                }
+                "Projectile" => {
+                    need(5)?;
+                    d.projectile_speed = nums[0];
+                    d.projectile_speed_up = nums[1];
+                    d.projectile_gravity = nums[2] != 0.0;
+                    d.impact_explode = nums[3] != 0.0;
+                    d.sticky = nums[4] != 0.0;
+                }
+                "FxWeapon" => d.fx_weapon = value.to_string(),
+                "ExplosionFx" => d.explosion_fx = value.to_string(),
+                "ProjectileObject" => d.projectile_object = value.to_string(),
+                "FireSound" => d.fire_sound = value.to_string(),
+                "ExplodeSound" => d.explode_sound = value.to_string(),
+                "Viewmodel" => d.viewmodel = value.parse().map_err(|_| err("number"))?,
+                "Anims" => d.anims = u128::from_str_radix(value, 16).map_err(|_| err("hex"))?,
+                "ClipBase" => d.clip_base = value.parse().map_err(|_| err("number"))?,
+                "WorldMeshes" => d.world_meshes = value.parse().map_err(|_| err("number"))?,
+                "Attachments" => d.attachments = value.split_whitespace().map(str::to_string).collect(),
+                "Allowed" => d.allowed = parse_pairs(value),
+                "AltModes" => d.alt_modes = parse_pairs(value),
+                "Alt" => d.alt = value.to_string(),
+                "Flags" => {
+                    need(5)?;
+                    d.alt_own_ammo = nums[0] != 0.0;
+                    d.silenced = nums[1] != 0.0;
+                    d.laser = nums[2] != 0.0;
+                    d.fmj = nums[3] != 0.0;
+                    d.target_finder = nums[4] != 0.0;
+                }
+                "RecoilReduction" => {
+                    need(2)?;
+                    d.recoil_reduction = (nums[0], nums[1]);
+                }
+                "Place" => d.place = Place::parse(value).ok_or_else(|| err("unknown placement"))?,
+                _ => {}
+            },
         }
     }
     if cur.is_some() {
-        return Err("weapons table: last Weapon block has no End".into());
+        return Err("weapons table: last block has no End".into());
     }
-    Ok(out)
+    Ok(table)
 }
 
 // ------------------------------------------------------------------------------------------------
 // The catalog
 // ------------------------------------------------------------------------------------------------
 
-/// All weapons by id.
+/// All weapons and attachments by id. Weapons with attachments the table doesn't hold are built
+/// from their base on first use (identically on every client) and kept.
 pub struct Catalog {
     by_id: HashMap<String, &'static WeaponDef>,
     order: Vec<&'static WeaponDef>,
+    attachments: HashMap<String, &'static AttachmentDef>,
+    built: Mutex<HashMap<String, &'static WeaponDef>>,
+    pub tablet_meshes: u8,
 }
 
 impl Catalog {
     pub fn new(defs: Vec<WeaponDef>) -> Catalog {
-        let order: Vec<&'static WeaponDef> = defs.into_iter().map(|d| &*Box::leak(Box::new(d))).collect();
-        let by_id = order.iter().map(|d| (d.id.clone(), *d)).collect();
-        Catalog { by_id, order }
+        Catalog::from_table(Table { weapons: defs, ..Default::default() })
     }
 
+    pub fn from_table(t: Table) -> Catalog {
+        let order: Vec<&'static WeaponDef> = t.weapons.into_iter().map(|d| &*Box::leak(Box::new(d))).collect();
+        let by_id = order.iter().map(|d| (d.id.clone(), *d)).collect();
+        let attachments = t.attachments.into_iter().map(|a| (a.id.clone(), &*Box::leak(Box::new(a)))).collect();
+        Catalog { by_id, order, attachments, built: Mutex::new(HashMap::new()), tablet_meshes: t.tablet_meshes }
+    }
+
+    /// A weapon by id; `base+att+att` builds the attachments onto the base if the table doesn't
+    /// hold that combination. `None` if the base is unknown.
     pub fn get(&self, id: &str) -> Option<&'static WeaponDef> {
-        self.by_id.get(id).copied()
+        if let Some(d) = self.by_id.get(id) {
+            return Some(*d);
+        }
+        let (base_id, shorts) = attachments::split_id(id);
+        if shorts.is_empty() {
+            return None;
+        }
+        // The table may hold the same combination in its sorted spelling.
+        let canonical = attachments::variant_id(base_id, &shorts);
+        if let Some(d) = self.by_id.get(&canonical) {
+            return Some(*d);
+        }
+        let mut built = self.built.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(d) = built.get(&canonical) {
+            return Some(*d);
+        }
+        let base = *self.by_id.get(base_id)?;
+        let atts = attachments::resolve(base, &shorts, |a| self.attachments.get(a).copied());
+        let mut d = attachments::apply(base, &atts);
+        if let Some((_, alt_id)) = base.alt_modes.iter().find(|(short, _)| d.attachments.contains(short)) {
+            d.alt = alt_id.clone();
+        }
+        let d: &'static WeaponDef = Box::leak(Box::new(d));
+        built.insert(canonical, d);
+        if id != d.id {
+            built.insert(id.to_string(), d);
+        }
+        Some(d)
+    }
+
+    pub fn attachment(&self, id: &str) -> Option<&'static AttachmentDef> {
+        self.attachments.get(id).copied()
     }
 
     pub fn all(&self) -> &[&'static WeaponDef] {
@@ -558,9 +804,9 @@ static CATALOG: OnceLock<Catalog> = OnceLock::new();
 
 /// Install the converted BO2 table (once, before play). Returns the number of weapons, or why not.
 pub fn install_catalog(text: &str) -> Result<usize, String> {
-    let defs = parse_table(text)?;
-    let n = defs.len();
-    CATALOG.set(Catalog::new(defs)).map_err(|_| "weapon catalog already installed".to_string())?;
+    let table = parse_full_table(text)?;
+    let n = table.weapons.len();
+    CATALOG.set(Catalog::from_table(table)).map_err(|_| "weapon catalog already installed".to_string())?;
     Ok(n)
 }
 
@@ -568,7 +814,7 @@ pub fn install_catalog(text: &str) -> Result<usize, String> {
 pub fn catalog() -> &'static Catalog {
     CATALOG.get().unwrap_or_else(|| {
         static BUILT_IN: OnceLock<Catalog> = OnceLock::new();
-        BUILT_IN.get_or_init(|| Catalog::new(parse_table(BUILTIN).expect("built-in weapon table")))
+        BUILT_IN.get_or_init(|| Catalog::from_table(parse_full_table(BUILTIN).expect("built-in weapon table")))
     })
 }
 
@@ -580,6 +826,37 @@ pub fn weapon(id: &str) -> &'static WeaponDef {
 /// Stand-in table when BO2 is not converted: the default loadout's weapons with BO2's published
 /// multiplayer values (rounded), in the same format as the converted table.
 pub const BUILTIN: &str = "
+Attachment reflex
+  Short = reflex
+  DisplayName = Reflex
+  Point = 1
+  Ads = 50 1 1 1
+End
+
+Attachment gl
+  Short = gl
+  DisplayName = Grenade Launcher
+  Point = 2
+End
+
+Weapon gl_an94_mp
+  DisplayName = Grenade Launcher
+  Class = launcher
+  Fire = semi
+  FireTime = 0.22
+  Clip = 1
+  StartReserve = 1
+  MaxReserve = 1
+  Reload = 2.75 2.75 1.4 1.4
+  Raise = 0.55 0.55 0.6 0.55 0.6
+  Ads = 0.5 0.5 50
+  Effect = explode
+  Explosion = 42.7 0 135 50
+  Projectile = 300 0 1 1 0
+  Alt = an94_mp
+  Flags = 1 0 0 0 0
+End
+
 Weapon an94_mp
   DisplayName = AN-94
   Class = rifle
@@ -603,6 +880,8 @@ Weapon an94_mp
   FxWeapon = ZHBO_MTAR_FX
   Viewmodel = 0
   Anims = 60000ee003f007ff85005e
+  Allowed = reflex=reflex gl=gl
+  AltModes = gl=gl_an94_mp
 End
 
 Weapon fnp45_mp
@@ -771,20 +1050,54 @@ pub struct Loadout {
     pub tactical: String,
     pub melee: String,
     pub perks: Vec<Perk>,
+    /// Scorestreaks, earned at their cost in points.
+    pub streaks: Vec<crate::streaks::Streak>,
 }
 
 impl Default for Loadout {
-    /// The General's kit: the AN-94 (the rifle the converted models hold), the Tac-45, a frag, a
-    /// concussion, the knife; Lightweight, Fast Hands and Dexterity.
+    /// The General's kit: the AN-94 with a Reflex sight and a Grenade Launcher, the Tac-45, a frag,
+    /// a concussion, the knife; Lightweight, Fast Hands and Dexterity; UAV, Sentry Gun and Death
+    /// Machine. `ZHBO_LOADOUT` changes it (see [`Loadout::with_spec`]).
     fn default() -> Self {
-        Loadout {
-            primary: "an94_mp".into(),
+        let l = Loadout {
+            primary: "an94_mp+gl+reflex".into(),
             secondary: "fnp45_mp".into(),
             lethal: "frag_grenade_mp".into(),
             tactical: "concussion_grenade_mp".into(),
             melee: "knife_held_mp".into(),
             perks: vec![Perk::Lightweight, Perk::FastHands, Perk::Dexterity],
+            streaks: vec![crate::streaks::Streak::Uav, crate::streaks::Streak::SentryGun, crate::streaks::Streak::DeathMachine],
+        };
+        match std::env::var("ZHBO_LOADOUT") {
+            Ok(spec) => l.with_spec(&spec),
+            Err(_) => l,
         }
+    }
+}
+
+impl Loadout {
+    /// Change slots from a spec like `lethal=claymore_mp;tactical=trophy_system_mp;primary=
+    /// dsr50_mp+acog;perks=Hardline,Engineer;streaks=Uav,WarMachine`. For trying other kits (and
+    /// test runs): the converter reads the same variable so their art is converted, and every
+    /// player in a game must use the same one.
+    pub fn with_spec(mut self, spec: &str) -> Loadout {
+        for part in spec.split(';') {
+            let Some((key, value)) = part.split_once('=') else { continue };
+            let value = value.trim().to_string();
+            match key.trim() {
+                "primary" => self.primary = value,
+                "secondary" => self.secondary = value,
+                "lethal" => self.lethal = value,
+                "tactical" => self.tactical = value,
+                "melee" => self.melee = value,
+                "perks" => self.perks = value.split(',').filter_map(|p| Perk::ALL.into_iter().find(|k| format!("{k:?}") == p.trim())).collect(),
+                "streaks" => {
+                    self.streaks = value.split(',').filter_map(|p| crate::streaks::Streak::ALL.into_iter().find(|k| format!("{k:?}") == p.trim())).collect()
+                }
+                _ => {}
+            }
+        }
+        self
     }
 }
 
@@ -843,7 +1156,10 @@ pub enum ShellPhase {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct WeaponState {
+    /// What is up now: the weapon, or its alt mode.
     pub def: &'static WeaponDef,
+    /// The weapon itself (with its attachments), whichever mode is up.
+    pub main: &'static WeaponDef,
     pub ammo: u16,
     pub reserve: u16,
     /// Seconds until the next round may fire (can go negative within a frame for high RPM).
@@ -856,12 +1172,20 @@ pub struct WeaponState {
     pub spin: f32,
     /// Has been raised before (the first raise is BO2's longer "first raise").
     pub raised_once: bool,
+    /// The alt mode's own ammo while the main mode is up (and the main mode's while the alt is).
+    pub alt_ammo: u16,
+    pub alt_reserve: u16,
+    /// Shots in the current string of fire (the grip's recoil reduction builds over it).
+    pub string: u16,
+    /// A scorestreak weapon: gone when its ammo is.
+    pub streak: bool,
 }
 
 impl WeaponState {
     pub fn new(def: &'static WeaponDef) -> Self {
         Self {
             def,
+            main: def,
             ammo: def.clip,
             reserve: def.start_reserve,
             cooldown: 0.0,
@@ -870,7 +1194,21 @@ impl WeaponState {
             bloom: 0.0,
             spin: 0.0,
             raised_once: false,
+            alt_ammo: 0,
+            alt_reserve: 0,
+            string: 0,
+            streak: false,
         }
+        .with_alt_ammo()
+    }
+
+    /// Load the alt mode's own magazine (an under-barrel launcher's grenades).
+    fn with_alt_ammo(mut self) -> Self {
+        if let Some(alt) = catalog().get(&self.def.alt).filter(|a| a.alt_own_ammo) {
+            self.alt_ammo = alt.clip;
+            self.alt_reserve = alt.start_reserve;
+        }
+        self
     }
 
     pub fn is_reloading(&self) -> bool {
@@ -972,14 +1310,22 @@ pub enum WeaponAction {
     /// Fire one round (one pellet for shotguns) with the given cone (degrees), random offsets in
     /// [-1, 1) and view kick (degrees pitch up, yaw).
     Fire { spread_deg: f32, jitter: (f32, f32), recoil: (f32, f32), pellet: u16 },
-    /// Launch a projectile (launchers, crossbow, ballistic knife).
-    Launch { def: &'static WeaponDef },
+    /// Launch a projectile (launchers, crossbow, ballistic knife); `pellet` numbers the bolts of
+    /// one shot (the tri-bolt's three).
+    Launch { def: &'static WeaponDef, pellet: u16 },
     /// Throw an offhand item; `fuse_left` is what remains after cooking.
     Throw { def: &'static WeaponDef, fuse_left: f32 },
     /// Cooked too long: it goes off in hand.
     CookedOff { def: &'static WeaponDef },
     /// Pin pulled (the throw animation's wind-up starts).
     OffhandReady { lethal: bool },
+    /// Set equipment down in front of the player (Claymore, Bouncing Betty, Trophy System,
+    /// Tactical Insertion).
+    Plant { def: &'static WeaponDef },
+    /// Set off the player's C4 (double-tap reload, or the lethal button with none left in hand).
+    Detonate,
+    /// Switched to or from the weapon's alt mode.
+    AltToggled,
     Melee { damage: f32 },
     DryFire,
     ReloadStarted,
@@ -993,6 +1339,8 @@ pub enum RaiseKind {
     First,
     Normal,
     Quick,
+    /// Into or out of an alt mode (BO2's alt raise).
+    Alt,
 }
 
 /// Offhand use in progress.
@@ -1003,6 +1351,9 @@ pub enum OffhandUse {
     /// Released: the throw plays out before the weapon comes back.
     Throwing { lethal: bool, t: f32 },
 }
+
+/// A second reload press within this many seconds sets off C4.
+pub const DETONATE_DOUBLE_TAP: f32 = 0.35;
 
 /// Seconds of BO2's offhand pull-back before a throw can leave the hand, and the throw itself.
 pub const OFFHAND_PULLBACK: f32 = 0.35;
@@ -1036,6 +1387,8 @@ pub struct Arsenal {
     pub melee_left: f32,
     pub offhand: Option<OffhandUse>,
     held_last: u32,
+    /// Seconds since reload was last pressed (a second press soon after detonates C4).
+    since_reload_press: f32,
 }
 
 impl Arsenal {
@@ -1075,6 +1428,7 @@ impl Arsenal {
             melee_left: 0.0,
             offhand: None,
             held_last: 0,
+            since_reload_press: 10.0,
         }
     }
 
@@ -1145,9 +1499,75 @@ impl Arsenal {
         self.ads = 0.0;
     }
 
+    /// Switch the held weapon to its alt mode or back. An alt mode with its own ammo (a launcher)
+    /// trades magazines with the weapon; the others share it.
+    pub fn toggle_alt(&mut self) {
+        let fast = self.has(Perk::FastHands);
+        let w = self.current_mut();
+        let to = if w.def.id == w.main.id {
+            match catalog().get(&w.main.alt) {
+                Some(alt) => alt,
+                None => return,
+            }
+        } else {
+            w.main
+        };
+        if to.id == w.def.id {
+            return;
+        }
+        if to.alt_own_ammo || w.def.alt_own_ammo {
+            std::mem::swap(&mut w.ammo, &mut w.alt_ammo);
+            std::mem::swap(&mut w.reserve, &mut w.alt_reserve);
+        }
+        w.def = to;
+        w.reload = None;
+        w.burst_left = 0;
+        w.cooldown = w.cooldown.max(0.0);
+        w.string = 0;
+        self.ads = 0.0;
+        let t = if fast { to.quick_raise_time } else { to.quick_raise_time.max(to.raise_time * 0.5) };
+        self.raise_left = t;
+        self.raise_total = t;
+        self.raise_kind = RaiseKind::Alt;
+    }
+
+    /// A handheld scorestreak (Death Machine, War Machine): carried as an extra weapon and raised
+    /// at once; using the same streak again refills it.
+    pub fn give_streak_weapon(&mut self, def: &'static WeaponDef) {
+        if let Some(i) = self.weapons.iter().position(|w| w.streak && w.def.id == def.id) {
+            self.weapons[i].ammo = def.clip;
+            self.weapons[i].reserve = def.start_reserve;
+            if i != self.active {
+                self.switch_to(i);
+            }
+            return;
+        }
+        let mut w = WeaponState::new(def);
+        w.streak = true;
+        self.weapons.push(w);
+        let i = self.weapons.len() - 1;
+        self.switch_to(i);
+    }
+
+    /// An empty scorestreak weapon is dropped, and the primary comes up.
+    fn drop_spent_streak_weapon(&mut self, out: &mut Vec<WeaponAction>) {
+        let w = self.current();
+        if w.streak && w.ammo == 0 && w.reserve == 0 && !w.is_reloading() && w.cooldown <= 0.0 {
+            let i = self.active;
+            self.weapons.remove(i);
+            self.active = 0;
+            self.previous = 0;
+            self.drop_left = 0.0;
+            let d = self.current().def;
+            (self.raise_left, self.raise_kind) = if self.has(Perk::FastHands) { (d.quick_raise_time, RaiseKind::Quick) } else { (d.raise_time, RaiseKind::Normal) };
+            self.raise_total = self.raise_left;
+            out.push(WeaponAction::Swapped);
+        }
+    }
+
     /// Give a magazine (Scavenger) to every gun.
     pub fn scavenge(&mut self) {
-        for w in &mut self.weapons {
+        for w in self.weapons.iter_mut().filter(|w| !w.streak) {
             w.reserve = (w.reserve + w.def.clip).min(w.def.max_reserve);
         }
         self.lethal.count = self.lethal.count.max(1);
@@ -1177,6 +1597,23 @@ impl Arsenal {
         if self.step_offhand(held, pressed, released, out) {
             return;
         }
+
+        // C4: a quick second press of reload sets it off (BO2's double tap).
+        self.since_reload_press += dt;
+        if pressed & buttons::RELOAD != 0 {
+            if self.since_reload_press < DETONATE_DOUBLE_TAP {
+                out.push(WeaponAction::Detonate);
+            }
+            self.since_reload_press = 0.0;
+        }
+
+        // Alt mode (select fire, grenade launcher, second optic).
+        if pressed & buttons::ALT_MODE != 0 && !self.current().main.alt.is_empty() && self.melee_left <= 0.0 && self.drop_left <= 0.0 {
+            self.toggle_alt();
+            out.push(WeaponAction::AltToggled);
+        }
+
+        self.drop_spent_streak_weapon(out);
 
         // Swap.
         if pressed & buttons::SWAP_WEAPON != 0 && self.weapons.len() > 1 && self.melee_left <= 0.0 {
@@ -1273,19 +1710,27 @@ impl Arsenal {
             return;
         }
         let kick = if ads > 0.5 { def.ads_kick } else { def.hip_kick };
+        if !(held & buttons::FIRE != 0) {
+            w.string = 0;
+        }
         let mut fired_semi = false;
         while w.cooldown <= 0.0 && w.ammo > 0 {
             if def.fire == FireMode::Semi && fired_semi {
                 break;
             }
             if def.class == Class::Launcher || (def.projectile_speed > 0.0 && def.class != Class::Shotgun && def.effect != Effect::None) {
-                out.push(WeaponAction::Launch { def });
+                for pellet in 0..def.pellets.max(1) {
+                    out.push(WeaponAction::Launch { def, pellet });
+                }
             } else {
                 let spread = w.spread_deg(stance, ads) + if ads < 0.5 { def.spread_move_add * (speed / 30.0).min(1.0) } else { 0.0 };
+                // The grip: aimed kick shrinks with each shot of a string, down to its limit.
+                let (rate, limit) = def.recoil_reduction;
+                let reduce = if ads > 0.5 { 1.0 - (rate * w.string as f32).min(limit) } else { 1.0 };
                 for pellet in 0..def.pellets.max(1) {
                     let jitter = (rng.signed(), rng.signed());
                     let recoil = if pellet == 0 {
-                        (rng.range(kick.pitch) * KICK_TO_DEGREES, rng.range(kick.yaw) * KICK_TO_DEGREES)
+                        (rng.range(kick.pitch) * KICK_TO_DEGREES * reduce, rng.range(kick.yaw) * KICK_TO_DEGREES * reduce)
                     } else {
                         (0.0, 0.0)
                     };
@@ -1293,6 +1738,7 @@ impl Arsenal {
                 }
             }
             w.ammo -= 1;
+            w.string = w.string.saturating_add(1);
             w.bloom += def.spread_fire_add;
             w.cooldown += def.fire_time;
             fired_semi = true;
@@ -1324,6 +1770,10 @@ impl Arsenal {
                 }
                 let slot = if lethal { &self.lethal } else { &self.tactical };
                 if slot.count == 0 {
+                    // Out of C4 in hand: the button is the detonator.
+                    if slot.def.sticky && slot.def.place == Place::Throw && slot.def.class == Class::Equipment {
+                        out.push(WeaponAction::Detonate);
+                    }
                     return false;
                 }
                 let w = self.current_mut();
@@ -1347,10 +1797,20 @@ impl Arsenal {
                     return true;
                 }
                 let let_go = released & button != 0 || held & button == 0;
-                if let_go && held_for >= OFFHAND_PULLBACK {
+                if def.place == Place::Hack {
+                    // The Black Hat stays up while held; the logic works out what it is aimed at.
+                    if let_go {
+                        self.offhand = Some(OffhandUse::Throwing { lethal, t: 0.0 });
+                    } else {
+                        self.offhand = Some(OffhandUse::Holding { lethal, held_for });
+                    }
+                } else if let_go && held_for >= OFFHAND_PULLBACK {
                     self.use_offhand(lethal);
                     self.offhand = Some(OffhandUse::Throwing { lethal, t: 0.0 });
-                    out.push(WeaponAction::Throw { def, fuse_left });
+                    out.push(match def.place {
+                        Place::Plant => WeaponAction::Plant { def },
+                        _ => WeaponAction::Throw { def, fuse_left },
+                    });
                 } else {
                     self.offhand = Some(OffhandUse::Holding { lethal, held_for });
                 }
@@ -1372,7 +1832,26 @@ impl Arsenal {
         }
     }
 
-    fn use_offhand(&mut self, lethal: bool) {
+    /// The Black Hat is up and aimed (seconds held), if it is.
+    pub fn hacking(&self) -> Option<f32> {
+        match self.offhand {
+            Some(OffhandUse::Holding { lethal, held_for }) => {
+                let def = if lethal { self.lethal.def } else { self.tactical.def };
+                (def.place == Place::Hack).then_some(held_for)
+            }
+            _ => None,
+        }
+    }
+
+    /// The Black Hat finished a hack: it uses one charge and goes down.
+    pub fn hack_done(&mut self) {
+        if let Some(OffhandUse::Holding { lethal, .. }) = self.offhand {
+            self.use_offhand(lethal);
+            self.offhand = Some(OffhandUse::Throwing { lethal, t: 0.0 });
+        }
+    }
+
+    pub fn use_offhand(&mut self, lethal: bool) {
         let slot = if lethal { &mut self.lethal } else { &mut self.tactical };
         slot.count = slot.count.saturating_sub(1);
     }
@@ -1590,5 +2069,50 @@ mod tests {
         assert!(with > a.move_scale());
         a.loadout.perks.push(Perk::ExtremeConditioning);
         assert!(a.sprint_scale() >= 2.0 * weapon("an94_mp").sprint_duration_scale - 1e-4);
+    }
+}
+
+#[cfg(test)]
+mod loadout_tests {
+    use super::*;
+
+    #[test]
+    fn a_spec_changes_slots_perks_and_streaks() {
+        let l = Loadout::default().with_spec("lethal=claymore_mp; perks=Hardline,Engineer; streaks=WarMachine");
+        assert_eq!(l.lethal, "claymore_mp");
+        assert_eq!(l.perks, vec![Perk::Hardline, Perk::Engineer]);
+        assert_eq!(l.streaks, vec![crate::streaks::Streak::WarMachine]);
+        assert_eq!(l.primary, Loadout::default().primary);
+    }
+}
+
+#[cfg(test)]
+mod swap_tests {
+    use super::*;
+
+    #[test]
+    fn swapping_mid_reload_before_the_add_time_keeps_the_magazine_empty() {
+        let mut a = Arsenal::new();
+        a.raise_left = 0.0;
+        a.loadout.perks.clear();
+        let mut rng = Rng::new(9);
+        let mut out = Vec::new();
+        a.weapons[0].ammo = 1;
+        // Fire the last round: the empty reload starts by itself.
+        a.step(buttons::FIRE, buttons::FIRE, false, 0, 0.0, &mut rng, &mut out);
+        assert!(a.current().is_reloading());
+        for _ in 0..10 {
+            a.step(buttons::FIRE, 0, false, 0, 0.0, &mut rng, &mut out);
+        }
+        a.step(0, buttons::SWAP_WEAPON, false, 0, 0.0, &mut rng, &mut out);
+        for _ in 0..60 {
+            a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+        }
+        a.step(0, buttons::SWAP_WEAPON, false, 0, 0.0, &mut rng, &mut out);
+        for _ in 0..60 {
+            a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+        }
+        assert_eq!(a.active, 0);
+        assert_eq!(a.current().ammo, 0, "{:?}", a.current().reload);
     }
 }

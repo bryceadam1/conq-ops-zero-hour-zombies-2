@@ -81,3 +81,203 @@ pub fn files(zone: &Zone, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>)
     out.insert("Data\\INI\\FXList\\ZHBO_BO2.ini".to_string(), FXLIST.as_bytes().to_vec());
     Ok(out.into_iter().collect())
 }
+
+// ------------------------------------------------------------------------------------------------
+// BO2 effects as Zero Hour particle systems
+// ------------------------------------------------------------------------------------------------
+
+use zhbo_formats::fx::{kind, Effect, Elem};
+
+/// Milliseconds per Zero Hour logic frame.
+const MS_PER_FRAME: f32 = 1000.0 / 30.0;
+/// BO2's gravity (800 in/s^2) in Zero Hour units per frame^2.
+const G_PER_FRAME2: f32 = 800.0 / 900.0 / 6.0;
+/// Largest side of an effect texture.
+const FX_TEXTURE_MAX: u32 = 256;
+
+/// Inches to Zero Hour units (`zhbo_core::units::inches`).
+fn units(inches: f32) -> f32 {
+    zhbo_core::units::inches(inches)
+}
+
+/// The Zero Hour name of a converted BO2 effect.
+pub fn fxlist_name(effect: &str) -> String {
+    let clean: String = effect.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    format!("ZHBO_BO2FX_{clean}")
+}
+
+/// Converted effects: the particle system and FXList INI text, and their textures.
+#[derive(Default)]
+pub struct Converted {
+    pub particles: String,
+    pub fxlists: String,
+    pub textures: BTreeMap<String, Vec<u8>>,
+    /// Effects already converted, by FXList name.
+    done: std::collections::BTreeSet<String>,
+}
+
+impl Converted {
+    /// Convert `effect` (with the effects its runners start) into an FXList; returns its name.
+    pub fn add(&mut self, effect: &Effect, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>) -> String {
+        let name = fxlist_name(&effect.name);
+        if !self.done.insert(name.clone()) {
+            return name;
+        }
+        let mut systems = Vec::new();
+        let mut bright = false;
+        self.add_elems(effect, 0.0, &name, paks, &mut systems, &mut bright);
+        let mut fx = format!("FXList {name}\n");
+        if bright {
+            fx.push_str("  LightPulse\n    Color = R:255 G:190 B:110\n    Radius = 40\n    IncreaseTime = 0\n    DecreaseTime = 400\n  End\n");
+        }
+        for s in &systems {
+            fx.push_str(&format!("  ParticleSystem\n    Name = {s}\n  End\n"));
+        }
+        fx.push_str("End\n\n");
+        self.fxlists.push_str(&fx);
+        name
+    }
+
+    fn add_elems(&mut self, effect: &Effect, delay_ms: f32, prefix: &str, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>, systems: &mut Vec<String>, bright: &mut bool) {
+        for el in &effect.elems {
+            if el.kind == kind::RUNNER {
+                for child in &el.children {
+                    self.add_elems(child, delay_ms + el.delay_msec.base, prefix, paks, systems, bright);
+                }
+                continue;
+            }
+            if !kind::is_sprite(el.kind) || el.vis.is_empty() {
+                continue;
+            }
+            let Some(m) = el.materials.first() else { continue };
+            if m.name.contains("distortion") {
+                continue; // a screen-space ripple Zero Hour can't draw
+            }
+            let Some(img) = m.color_map() else { continue };
+            let Some(tex) = self.texture(&img.name, img.stream_hash, el.atlas, paks) else { continue };
+            let additive = tex.1;
+            *bright |= additive;
+            let sys = format!("{prefix}_{}", systems.len());
+            self.particles.push_str(&particle_system(&sys, el, &tex.0, additive, delay_ms));
+            systems.push(sys);
+        }
+    }
+
+    /// The texture for a BO2 image (the first frame of a flipbook atlas), and whether BO2 draws it
+    /// additively (no real alpha).
+    fn texture(&mut self, image: &str, hash: u32, atlas: (u32, u32), paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>) -> Option<(String, bool)> {
+        let file = format!("zhbo_fx_{}", crate::character::texture_file(image).trim_start_matches("zhbo_"));
+        let mut rgba = paks(hash)?;
+        // One cell of the atlas.
+        let (cw, ch) = ((rgba.width / atlas.0.max(1)).max(1), (rgba.height / atlas.1.max(1)).max(1));
+        if (cw, ch) != (rgba.width, rgba.height) {
+            let mut cell = vec![0u8; (cw * ch * 4) as usize];
+            for y in 0..ch {
+                let src = ((y * rgba.width) * 4) as usize;
+                cell[(y * cw * 4) as usize..((y + 1) * cw * 4) as usize].copy_from_slice(&rgba.pixels[src..src + (cw * 4) as usize]);
+            }
+            rgba = zhbo_formats::iwi::Rgba { width: cw, height: ch, pixels: cell };
+        }
+        let rgba = crate::generals::shrink(rgba, FX_TEXTURE_MAX);
+        let additive = rgba.pixels.chunks_exact(4).all(|p| p[3] >= 250);
+        self.textures.entry(format!("Art\\Textures\\{file}")).or_insert_with(|| images::tga_bytes(&rgba));
+        Some((file, additive))
+    }
+}
+
+/// One BO2 effect element as a Zero Hour particle system.
+fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_ms: f32) -> String {
+    let frames = |ms: f32| (ms / MS_PER_FRAME).max(1.0);
+    let life = (frames(el.life_msec.min()), frames(el.life_msec.max()));
+    let first = el.vis.first().copied().unwrap_or_default();
+    let last = el.vis.last().copied().unwrap_or_default();
+    // BO2 sizes are from the centre to the edge.
+    let size = |s: f32| units(s * 2.0);
+    let start = (size(first.size[0]), size(first.size[0] + first.size_amplitude[0]));
+    let growth = (size(last.size[0]) - start.0) / life.0.max(1.0);
+    // Colour and alpha over life: up to 8 of BO2's samples, evenly spaced.
+    let n = el.vis.len();
+    let picks: Vec<usize> = if n <= 8 { (0..n).collect() } else { (0..8).map(|i| i * (n - 1) / 7).collect() };
+    let mut keys = String::new();
+    for (k, &i) in picks.iter().enumerate() {
+        let v = el.vis[i];
+        let t = if n > 1 { (life.0 * i as f32 / (n - 1) as f32).round() as u32 } else { 0 };
+        // Additive art fades by darkening; alpha-blended art by its alpha.
+        let a = v.color[3] as f32 / 255.0;
+        let (r, g, b) = if additive { (v.color[0] as f32 * a, v.color[1] as f32 * a, v.color[2] as f32 * a) } else { (v.color[0] as f32, v.color[1] as f32, v.color[2] as f32) };
+        keys.push_str(&format!("  Alpha{} = {a:.2} {a:.2} {t}\n", k + 1));
+        keys.push_str(&format!("  Color{} = R:{} G:{} B:{} {t}\n", k + 1, r.round() as u32, g.round() as u32, b.round() as u32));
+    }
+    // Velocity: BO2's effect frame has X along the surface normal (up here).
+    let per_frame = |v: f32| units(v * MS_PER_FRAME);
+    let (vb, va) = el.velocity;
+    let axis = |i: usize| {
+        let (lo, hi) = (per_frame(vb[i]), per_frame(vb[i] + va[i]));
+        (lo.min(hi), lo.max(hi))
+    };
+    let (up, x, y) = (axis(0), axis(1), axis(2));
+    let gravity = -G_PER_FRAME2 * (el.gravity.base + el.gravity.amplitude * 0.5);
+    let radius = units(el.offset_radius.max());
+    let delay = (frames(delay_ms + el.delay_msec.min()) - 1.0, frames(delay_ms + el.delay_msec.max()) - 1.0);
+    let count = (el.count.min().max(1.0), el.count.max().max(1.0));
+    let (burst_delay, system_life) = if el.looping && el.interval_msec > 0 { (frames(el.interval_msec as f32), 0.0) } else { (0.0, 1.0) };
+    format!(
+        "ParticleSystem {name}\n  Priority = WEAPON_EXPLOSION\n  IsOneShot = No\n  Shader = {shader}\n  Type = PARTICLE\n  ParticleName = {texture}\n  \
+         AngleZ = -3.14 3.14\n  AngularRateZ = -0.02 0.02\n  AngularDamping = 1.00 1.00\n  VelocityDamping = 0.97 0.99\n  \
+         Gravity = {gravity:.4}\n  Lifetime = {:.0} {:.0}\n  SystemLifetime = {system_life:.0}\n  Size = {:.2} {:.2}\n  StartSizeRate = 0.00 0.00\n  \
+         SizeRate = {growth:.3} {growth:.3}\n  SizeRateDamping = 1.00 1.00\n{keys}  ColorScale = 0.00 0.00\n  BurstDelay = {burst_delay:.0} {burst_delay:.0}\n  \
+         BurstCount = {:.0} {:.0}\n  InitialDelay = {:.0} {:.0}\n  DriftVelocity = X:0.00 Y:0.00 Z:0.00\n  VelocityType = ORTHO\n  \
+         VelOrthoX = {:.3} {:.3}\n  VelOrthoY = {:.3} {:.3}\n  VelOrthoZ = {:.3} {:.3}\n  VolumeType = {}\n{}  IsHollow = No\n  IsGroundAligned = No\n  \
+         IsEmitAboveGroundOnly = No\n  IsParticleUpTowardsEmitter = No\n  WindMotion = Unused\nEnd\n\n",
+        life.0,
+        life.1,
+        start.0,
+        start.1,
+        count.0,
+        count.1,
+        delay.0.max(0.0),
+        delay.1.max(0.0),
+        x.0,
+        x.1,
+        y.0,
+        y.1,
+        up.0,
+        up.1,
+        if radius > 0.05 { "SPHERE" } else { "POINT" },
+        if radius > 0.05 { format!("  VolSphereRadius = {radius:.2}\n") } else { String::new() },
+        shader = if additive { "ADDITIVE" } else { "ALPHA" },
+    )
+}
+
+#[cfg(test)]
+mod effect_tests {
+    use super::*;
+    use zhbo_formats::fx::{Range, VisSample};
+
+    #[test]
+    fn an_element_keeps_its_timing_size_and_fade() {
+        let el = Elem {
+            kind: kind::SPRITE_BILLBOARD,
+            count: Range { base: 5.0, amplitude: 2.0 },
+            life_msec: Range { base: 1000.0, amplitude: 500.0 },
+            delay_msec: Range { base: 100.0, amplitude: 0.0 },
+            offset_radius: Range { base: 0.0, amplitude: 12.0 },
+            gravity: Range { base: 1.0, amplitude: 0.0 },
+            velocity: ([0.3, 0.0, 0.0], [0.1, 0.0, 0.0]),
+            vis: vec![
+                VisSample { color: [200, 180, 160, 255], size: [6.0, 6.0], ..Default::default() },
+                VisSample { color: [100, 90, 80, 0], size: [30.0, 30.0], ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let ini = particle_system("ZHBO_test_0", &el, "zhbo_fx_smoke.tga", false, 0.0);
+        assert!(ini.contains("Lifetime = 30 45"), "{ini}");
+        assert!(ini.contains("BurstCount = 5 7"));
+        assert!(ini.contains("InitialDelay = 2 2"));
+        assert!(ini.contains("Alpha1 = 1.00 1.00 0") && ini.contains("Alpha2 = 0.00 0.00 30"));
+        assert!(ini.contains("Shader = ALPHA") && ini.contains("VolumeType = SPHERE"));
+        // Out along the normal (up), falling.
+        assert!(ini.contains("VelOrthoZ = 1.667 2.222"), "{ini}");
+        assert!(ini.contains("Gravity = -0.1481"), "{ini}");
+    }
+}

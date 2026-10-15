@@ -1,15 +1,138 @@
 //! Black Ops II multiplayer weapons for Conquer Ops: which of BO2's weapons a player can carry, and
 //! each one's definition turned into the core's [`WeaponDef`] (Zero Hour units, BO2's display name).
 //!
-//! The converted table (`Data\ConquerOps\weapons.ini`) holds every player weapon, so later features
-//! (picking up, buying, swapping) can hand out any of them. Viewmodels, sounds and projectile models
-//! are converted for the weapons in [`converted`] (the General's loadout by default; set
-//! `ZHBO_CONVERT_ALL_WEAPONS=1` for all of them).
+//! The converted table (`Data\ConquerOps\weapons.ini`) holds every player weapon, every attachment
+//! and the alt modes they add, and the scorestreak weapons, so later features (picking up, buying,
+//! swapping) can hand out any of them. Viewmodels, sounds and projectile models are converted for
+//! the weapons in [`converted`] (the General's loadout with its attachments, and its scorestreak
+//! weapons, then every other weapon; `ZHBO_CONVERT_ALL_WEAPONS=0` limits it to the loadout).
 
 use std::collections::HashMap;
+use zhbo_core::attachments::{self, AttachmentDef};
 use zhbo_core::units::inches;
-use zhbo_core::weapons::{Class, Effect, FireMode, Kick, Loadout, WeaponDef, MELEE_DAMAGE};
+use zhbo_core::weapons::{Class, Effect, FireMode, Kick, Loadout, Place, Table, WeaponDef, ALT_CLIPS, MELEE_DAMAGE};
 use zhbo_formats::weapon::{self as bo2, Weapon};
+
+/// The scorestreak weapons BO2 hands the player (Death Machine, War Machine).
+pub const STREAK_WEAPONS: &[&str] = &["minigun_mp", "m32_mp"];
+
+/// BO2's create-a-class name of an attachment asset: `silencer_smg` is the `silencer`, `rf_fast` the
+/// `rf`.
+pub fn short_name(attachment: &str) -> String {
+    attachment.split('_').next().unwrap_or(attachment).to_string()
+}
+
+/// The core's definition of a BO2 attachment. `names` maps localize keys to text.
+pub fn attachment_def(a: &bo2::Attachment, names: &HashMap<String, String>) -> AttachmentDef {
+    let fire = a.fire_type.map(|f| match f {
+        bo2::fire::FULLAUTO => FireMode::Auto,
+        bo2::fire::BURST2 | bo2::fire::BURST3 | bo2::fire::BURST4 | bo2::fire::BURST5 => FireMode::Burst((f - bo2::fire::BURST2 + 2) as u8),
+        _ => FireMode::Semi,
+    });
+    AttachmentDef {
+        id: a.name.clone(),
+        short: short_name(&a.name),
+        display_name: names.get(&a.display_name).map(|s| s.trim().to_string()).unwrap_or_else(|| short_name(&a.name)),
+        point: a.point as u8,
+        silenced: a.silenced,
+        laser: a.laser_sight,
+        fire,
+        clip: if fire.is_some() { a.clip_size.max(0) as u16 } else { 0 },
+        damage_range_scale: a.damage_range_scale,
+        ads_fov: if a.ads_zoom_fov > 1.0 { a.ads_zoom_fov } else { 0.0 },
+        ads_in_scale: a.ads_in_scale,
+        ads_out_scale: a.ads_out_scale,
+        ads_move_scale: a.ads_move_scale,
+        hip_spread_min_scale: a.hip_spread_min_scale,
+        hip_spread_max_scale: a.hip_spread_max_scale,
+        fire_time_scale: a.fire_time_scale,
+        reload_scale: a.reload_scale,
+        reload_empty_scale: a.reload_empty_scale,
+        reload_add_scale: a.reload_add_scale,
+        clip_scale: a.clip_size_scale,
+        recoil_reduction: a.recoil_reduction,
+    }
+}
+
+/// How an offhand item is used.
+fn place_of(name: &str) -> Place {
+    match name {
+        "claymore_mp" | "bouncingbetty_mp" | "trophy_system_mp" | "tactical_insertion_mp" => Place::Plant,
+        "pda_hack_mp" => Place::Hack,
+        _ => Place::Throw,
+    }
+}
+
+/// The whole table: every player weapon, the alt modes their attachments add, the scorestreak
+/// weapons, and every attachment.
+pub fn table(bo2: &[Weapon], atts: &[bo2::Attachment], names: &HashMap<String, String>) -> Table {
+    let mut weapons: Vec<WeaponDef> = bo2.iter().filter(|w| is_player_weapon(w)).map(|w| to_def(w, names)).collect();
+    let mut extra: Vec<String> = STREAK_WEAPONS.iter().map(|s| s.to_string()).collect();
+    for d in &weapons {
+        extra.extend(d.alt_modes.iter().map(|(_, alt)| alt.clone()));
+    }
+    for id in extra {
+        if weapons.iter().any(|d| d.id == id) {
+            continue;
+        }
+        if let Some(w) = bo2.iter().find(|w| w.name == id) {
+            let mut d = to_def(w, names);
+            if w.inventory == bo2::inventory::ALTMODE {
+                // A launcher alt mode has its own grenades; select fire and a second optic share
+                // the weapon's magazine.
+                d.alt_own_ammo = d.class == Class::Launcher;
+                // BO2 counts the alt launcher's grenades as rounds, not magazines.
+                if d.alt_own_ammo {
+                    d.start_reserve = (w.start_ammo - w.clip_size).max(0) as u16;
+                    d.max_reserve = ((w.max_ammo - w.clip_size).max(0) as u16).max(d.start_reserve);
+                }
+            }
+            weapons.push(d);
+        }
+    }
+    let attachments = atts.iter().filter(|a| a.kind != 0 && !a.name.starts_with(',')).map(|a| attachment_def(a, names)).collect();
+    Table { weapons, attachments, tablet_meshes: 0 }
+}
+
+/// Weapons with attachments, and their alt modes, that [`converted`] asks for: built from their base
+/// definitions (the core's own rules) and added to the table, so their art can be set on them. An
+/// alt mode for a converted weapon is `<alt>~<weapon>` (it shares the weapon's viewmodel).
+pub fn add_variants(table: &mut Table, converted: &[String]) {
+    for id in converted.iter().filter(|id| id.contains('+')) {
+        if table.weapons.iter().any(|d| &d.id == id) {
+            continue;
+        }
+        let (base_id, shorts) = attachments::split_id(id);
+        let Some(base) = table.weapons.iter().find(|d| d.id == base_id).cloned() else { continue };
+        let atts = attachments::resolve(&base, &shorts, |a| table.attachments.iter().find(|x| x.id == a));
+        let mut d = attachments::apply(&base, &atts);
+        if let Some((short, alt_id)) = base.alt_modes.iter().find(|(short, _)| d.attachments.contains(short)) {
+            if let Some(alt_base) = table.weapons.iter().find(|w| &w.id == alt_id).cloned() {
+                // Select fire and the second optic keep the weapon's other attachments.
+                let others: Vec<&AttachmentDef> = atts.iter().copied().filter(|a| &a.short != short).collect();
+                let mut alt = if alt_base.alt_own_ammo { alt_base.clone() } else { attachments::apply(&alt_base, &others) };
+                alt.id = format!("{alt_id}~{}", d.id);
+                alt.alt = d.id.clone();
+                alt.alt_own_ammo = alt_base.alt_own_ammo;
+                alt.display_name = alt_base.display_name.clone();
+                d.alt = alt.id.clone();
+                table.weapons.push(alt);
+            }
+        }
+        table.weapons.push(d);
+    }
+}
+
+/// The alt mode entry of a converted weapon, if it has one.
+pub fn alt_of<'a>(table: &'a Table, id: &str) -> Option<&'a WeaponDef> {
+    let d = table.weapons.iter().find(|d| d.id == id)?;
+    table.weapons.iter().find(|a| !d.alt.is_empty() && a.id == d.alt)
+}
+
+/// Mark alt-mode clips on a viewmodel: an alt mode's clips sit after its weapon's.
+pub fn alt_clip(slot: usize) -> usize {
+    slot + ALT_CLIPS as usize
+}
 
 /// BO2's base aim-down-sights walking speed, as a share of the normal walk.
 const ADS_MOVE_BASE: f32 = 0.35;
@@ -38,7 +161,7 @@ pub fn names(bo2_dir: &std::path::Path) -> HashMap<String, String> {
 /// own FX weapon (`ZHBO_FX_<id>`); the loadout's offhands and knife supply the throw, pin, blast and
 /// swing sounds. Sets each definition's `fire_sound` and `fx_weapon`; returns the events and the
 /// FX weapon INI.
-pub fn sounds_and_fx(bo2: &[Weapon], defs: &mut [WeaponDef], converted: &[String]) -> (Vec<crate::sfx::DynSfx>, String) {
+pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [WeaponDef], converted: &[String]) -> (Vec<crate::sfx::DynSfx>, String) {
     use crate::sfx::{DynSfx, Kind};
     let mut events = Vec::new();
     let mut ini = String::from("; Generated by zhbo-assets: each BO2 gun's third-person shot (zhbo-core plays these).\n\n");
@@ -47,27 +170,40 @@ pub fn sounds_and_fx(bo2: &[Weapon], defs: &mut [WeaponDef], converted: &[String
         vec![base.to_string(), format!("{base}_decay"), format!("{stem}_lfe"), format!("{stem}_LFE")]
     };
     let l = Loadout::default();
+    // The converted weapons and their alt modes.
+    let mut ids: Vec<String> = converted.to_vec();
     for id in converted {
-        let Some(w) = bo2.iter().find(|w| &w.name == id) else { continue };
+        if let Some(alt) = defs.iter().find(|d| &d.id == id).map(|d| d.alt.clone()).filter(|a| !a.is_empty()) {
+            ids.push(alt);
+        }
+    }
+    for id in &ids {
+        let base = crate::generals::base_id(id);
+        let Some(w) = bo2.iter().find(|w| w.name == base) else { continue };
         let Some(d) = defs.iter_mut().find(|d| &d.id == id) else { continue };
+        // Attachments can change the shot (a suppressor).
+        let (_, shorts) = attachments::split_id(id.split('~').next().unwrap_or(id));
+        let c = crate::generals::combo(w, atts, &shorts);
+        // Zero Hour names: no `+` or `~`.
+        let key = id.replace(['+', '~'], "_");
         if d.class.is_gun() {
-            if let Some(plr) = &w.fire_sound_player {
-                let event = format!("ZHBO_BO2_Fire_{id}");
+            if let Some(plr) = &c.fire_sound_player {
+                let event = format!("ZHBO_BO2_Fire_{key}");
                 events.push(DynSfx { event: event.clone(), layers: layers(plr), kind: Kind::Player, limit: 3 });
                 d.fire_sound = event;
             }
-            let npc_event = format!("ZHBO_BO2_FireNpc_{id}");
-            if let Some(npc) = &w.fire_sound {
+            let npc_event = format!("ZHBO_BO2_FireNpc_{key}");
+            if let Some(npc) = &c.fire_sound {
                 events.push(DynSfx { event: npc_event.clone(), layers: vec![npc.clone(), format!("{npc}_decay")], kind: Kind::Others, limit: 3 });
             }
-            let fx = format!("ZHBO_FX_{id}");
+            let fx = format!("ZHBO_FX_{key}");
             let launcher = d.class == Class::Launcher;
             ini.push_str(&format!(
                 "Weapon {fx}\n  PrimaryDamage           = 0.0\n  PrimaryDamageRadius     = 0.0\n  AttackRange             = 1000.0\n  \
                  DamageType              = SMALL_ARMS\n  DeathType               = NORMAL\n  WeaponSpeed             = 999999.0\n  \
                  ProjectileObject        = NONE\n  FireFX                  = {}\n  FireSound               = {npc_event}\n  \
                  RadiusDamageAffects     = ENEMIES\n  DelayBetweenShots       = 0\n  ClipSize                = 0\nEnd\n\n",
-                if launcher { "WeaponFX_RocketBuggyMissileFire" } else if d.class == Class::Pistol { "WeaponFX_GenericMachineGunFire" } else { "WeaponFX_GenericMachineGunFire" }
+                if launcher { "WeaponFX_RocketBuggyMissileFire" } else if d.silenced { "NONE" } else { "WeaponFX_GenericMachineGunFire" }
             ));
             d.fx_weapon = fx;
         }
@@ -274,17 +410,47 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         explode_sound: String::new(),
         viewmodel: -1,
         anims: w.anims.iter().enumerate().take(128).filter(|(_, a)| a.is_some()).fold(0u128, |m, (i, _)| m | (1u128 << i)),
+        clip_base: 0,
+        world_meshes: 0,
+        attachments: Vec::new(),
+        allowed: w.attachment_variants.iter().map(|(_, id)| (short_name(id), id.clone())).collect(),
+        alt_modes: w
+            .attachment_uniques
+            .iter()
+            .filter(|u| u.combined == 0)
+            .filter_map(|u| {
+                let alt = u.alt_weapon.clone()?;
+                let (_, att) = w.attachment_variants.iter().find(|(k, _)| *k == u.kind)?;
+                Some((short_name(att), alt))
+            })
+            .collect(),
+        alt: if w.inventory == bo2::inventory::ALTMODE { w.alt_weapon.clone().unwrap_or_default() } else { String::new() },
+        alt_own_ammo: false,
+        silenced: w.silenced,
+        laser: false,
+        fmj: false,
+        target_finder: false,
+        recoil_reduction: (0.0, 0.0),
+        place: place_of(&w.name),
     }
 }
 
-/// The ids whose art is converted: the loadout's, or every player weapon with
-/// `ZHBO_CONVERT_ALL_WEAPONS=1`.
+/// The ids whose art is converted: the loadout's (with its attachments and scorestreak weapons)
+/// first, then every other player weapon unless `ZHBO_CONVERT_ALL_WEAPONS=0`.
 pub fn converted(all: &[Weapon]) -> Vec<String> {
-    if std::env::var("ZHBO_CONVERT_ALL_WEAPONS").is_ok_and(|v| v == "1") {
-        return all.iter().filter(|w| is_player_weapon(w)).map(|w| w.name.clone()).collect();
-    }
     let l = Loadout::default();
-    vec![l.primary, l.secondary, l.lethal, l.tactical, l.melee]
+    let mut ids = vec![l.primary, l.secondary, l.lethal, l.tactical, l.melee];
+    ids.extend(l.streaks.iter().filter_map(|s| s.weapon()).map(str::to_string));
+    // Every weapon's art, so any of them can be picked up, bought or swapped to; `=0` converts only
+    // the loadout's (quicker while developing).
+    if !std::env::var("ZHBO_CONVERT_ALL_WEAPONS").is_ok_and(|v| v == "0") {
+        for w in all.iter().filter(|w| is_player_weapon(w)) {
+            if !ids.contains(&w.name) {
+                ids.push(w.name.clone());
+            }
+        }
+    }
+    ids
 }
 
 #[cfg(test)]

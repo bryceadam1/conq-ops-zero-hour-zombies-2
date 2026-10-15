@@ -34,11 +34,14 @@ namespace
 		"ZHBO_VMT_SKL.ZHBO_VMT_PUT", // ZHBO_VM_TABLET_PUTAWAY
 	};
 
-	// Clips that loop (zhbo_core::viewmodel::slot::loops).
+	// Clips that loop (zhbo_core::viewmodel::slot::loops), an alt mode's too.
 	Bool loops(int clip)
 	{
-		return clip == ZHBO_VM_SLOT_IDLE || clip == ZHBO_VM_SLOT_EMPTY_IDLE || clip == ZHBO_VM_SLOT_SPRINT_LOOP
-			|| clip == ZHBO_VM_SLOT_SPRINT_EMPTY_LOOP || clip == ZHBO_VM_TABLET_IDLE;
+		if (clip == ZHBO_VM_TABLET_IDLE)
+			return TRUE;
+		const int slot = clip >= ZHBO_VM_ALT_CLIPS ? clip - ZHBO_VM_ALT_CLIPS : clip;
+		return slot == ZHBO_VM_SLOT_IDLE || slot == ZHBO_VM_SLOT_EMPTY_IDLE || slot == ZHBO_VM_SLOT_SPRINT_LOOP
+			|| slot == ZHBO_VM_SLOT_SPRINT_EMPTY_LOOP;
 	}
 
 	RenderObjClass *s_model = nullptr;
@@ -161,13 +164,17 @@ namespace
 		}
 		else if (weapon >= 0)
 		{
-			// zhbo_assets::generals::vm_anim: one clip per BO2 animation slot the weapon has.
-			for (int slot = 0; slot < ZHBO_VM_SLOT_COUNT; ++slot)
+			// zhbo_assets::generals::vm_anim: one clip per BO2 animation slot the weapon has, then its
+			// alt mode's (select fire, grenade launcher) after ZHBO_VM_ALT_CLIPS.
+			for (int base = 0; base <= ZHBO_VM_ALT_CLIPS; base += ZHBO_VM_ALT_CLIPS)
 			{
-				char clip[64];
-				snprintf(clip, sizeof(clip), "ZV%02d_SKL.ZV%02d_A%02X", weapon, weapon, slot);
-				if (HAnimClass *anim = assets->Get_HAnim(clip))
-					s_anims[slot] = anim;
+				for (int slot = 0; slot < ZHBO_VM_SLOT_COUNT; ++slot)
+				{
+					char clip[64];
+					snprintf(clip, sizeof(clip), "ZV%02d_SKL.ZV%02d_A%02X", weapon, weapon, base + slot);
+					if (HAnimClass *anim = assets->Get_HAnim(clip))
+						s_anims[base + slot] = anim;
+				}
 			}
 		}
 		Zhbo_Log("viewmodel: %d clips for %s", (int)s_anims.size(), name.str());
@@ -227,8 +234,10 @@ void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)
 	s_model->Set_Transform(m);
 
 	std::map<int, HAnimClass *>::iterator it = s_anims.find(clip);
+	if (it == s_anims.end()) // a slot this weapon (or alt mode) doesn't have: hold its idle
+		it = s_anims.find((clip >= ZHBO_VM_ALT_CLIPS ? ZHBO_VM_ALT_CLIPS : 0) + ZHBO_VM_SLOT_IDLE);
 	if (it == s_anims.end())
-		it = s_anims.find(ZHBO_VM_SLOT_IDLE); // a slot this weapon doesn't have: hold its idle
+		it = s_anims.find(ZHBO_VM_SLOT_IDLE);
 	if (it != s_anims.end())
 	{
 		HAnimClass *anim = it->second;
