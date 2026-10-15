@@ -375,9 +375,11 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
 79. Sorted (translucent) draws replay from the render state captured at insert; bgfx's
     `Set_Index_Buffer_Index_Offset` did not update it (patch 0011), so every translucent mesh in a
     shared vertex buffer read another mesh's vertices: streaks from the Reflex glass to the watch.
-80. Aiming: the viewmodel blends toward the first frame of the weapon's ADS fire clip (BO2's aimed
-    pose; most BO2 viewmodels, all pistols among them, have no `tag_sights`), then `tag_sights`
-    corrects for optics.
+80. Aiming lines `tag_sights` up with the eye, and most BO2 viewmodels (every pistol, several rifles
+    and snipers) have none: the converter adds one at `tag_sights_on`, or else at the top of the
+    front sight (the highest point of the front third of the gun); an optic still moves it to its
+    window. Blending toward the ADS fire clip's first frame does not work: BO2's fire clips are not
+    whole poses (the arms fold up).
 
 ## Verification log
 
@@ -465,6 +467,12 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
 * **BO2 shading (2026-10-15)**: normal maps, gloss highlights and reflections on the viewmodels
   and tablet (screws, bezel edges and the receiver's wear catch the light), bloom, grade and vignette
   in first person; the overhead view unchanged. Autotest 13/13, overhead 8/8.
+* **Overhead General, sorted streaks, pistol aim (2026-10-15)**: autotest 13/13 (the pistol now
+  aims and fires twice; the timeline after it moved 1.5 s), overhead 8/8, equipment 8/8. Captures:
+  the pistol's front sight sits on screen centre, the Reflex window is clean, leaving first person
+  ends on the overhead camera's real pose (logged: within 2.5 units, same direction and field of
+  view), and close up (`ZHBO_CLOSEUP=<zoom>` with `--rts`) the General aims the rifle and holds the
+  pistol in BO2's stances. Selecting him and the mouse after first person need a real mouse.
 * **Load stalls (2026-10-15)**: the equipment autotest used to stall 0.85-1.25 s the first time
   the tablet, AN-94, Tac-45 and C4 viewmodels were shown; they now load in 3-4 ms (0 ms after the
   preload), and the loading screen preloads 26 objects and 6 viewmodels in about 0.4 s. 8/8 pass.

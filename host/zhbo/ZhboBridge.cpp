@@ -1128,6 +1128,13 @@ void rtsAutopilotFrame(UnsignedInt frame)
 	if (!general || !general->getDrawable())
 		return;
 	const UnsignedInt t = frame - s_autopilot.spawnFrame;
+	// ZHBO_CLOSEUP: follow the General closely, to see his animations and effects in captures.
+	if (getenv("ZHBO_CLOSEUP"))
+	{
+		TheTacticalView->setZoomLimited(FALSE);
+		TheTacticalView->lookAt(general->getPosition());
+		TheTacticalView->setZoom((Real)atof(getenv("ZHBO_CLOSEUP")));
+	}
 	static UnsignedInt s_done = 0;
 	if (t >= 15 && s_done < 1)
 	{

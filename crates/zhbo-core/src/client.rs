@@ -237,7 +237,7 @@ pub struct HudTimers {
 }
 
 /// Scripted input for in-game verification (`ZHBO_AUTOPILOT=1`): walks, turns, aims and fires,
-/// changes stance, jumps, glances at the map, swaps to the pistol and fires it, swaps back, knifes,
+/// changes stance, jumps, glances at the map, swaps to the pistol and fires it aimed, swaps back, knifes,
 /// cooks and throws a frag, throws a concussion, fires the rifle's grenade launcher, then opens the
 /// field computer. Times are seconds in first person.
 ///
@@ -276,36 +276,38 @@ impl Autopilot {
         if (4.0..4.4).contains(&t) {
             keys.push(b.map);
         }
-        if (4.5..7.5).contains(&t) {
+        // Aim the rifle, then (after the swap) the pistol.
+        if (4.5..7.5).contains(&t) || (7.6..9.9).contains(&t) {
             keys.push(b.ads);
         }
         if (5.0..7.0).contains(&t) {
             keys.push(b.fire);
         }
-        if (7.2..7.3).contains(&t) || (8.4..8.5).contains(&t) {
+        if (7.2..7.3).contains(&t) || (10.0..10.1).contains(&t) {
             keys.push(b.swap);
         }
-        if (7.8..7.9).contains(&t) || (8.1..8.2).contains(&t) {
+        // After the pistol's first raise (BO2's longer first draw).
+        if (9.3..9.4).contains(&t) || (9.6..9.7).contains(&t) {
             keys.push(b.fire);
         }
-        if (9.2..9.3).contains(&t) {
+        if (10.7..10.8).contains(&t) {
             keys.push(b.melee);
         }
-        if (9.9..10.3).contains(&t) {
+        if (11.4..11.8).contains(&t) {
             keys.push(b.lethal);
         }
         // After the frag has left the hand and the rifle is coming back up.
-        if (11.2..11.3).contains(&t) {
+        if (12.7..12.8).contains(&t) {
             keys.push(b.tactical);
         }
         // The rifle's grenade launcher: switch to it, fire, switch back.
-        if (12.4..12.5).contains(&t) || (13.9..14.0).contains(&t) {
+        if (13.9..14.0).contains(&t) || (15.4..15.5).contains(&t) {
             keys.push(b.alt_mode);
         }
-        if (13.3..13.4).contains(&t) {
+        if (14.8..14.9).contains(&t) {
             keys.push(b.fire);
         }
-        if (14.6..14.7).contains(&t) {
+        if (16.1..16.2).contains(&t) {
             keys.push(b.field_computer);
         }
         (keys, dx)

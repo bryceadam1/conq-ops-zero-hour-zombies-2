@@ -146,6 +146,26 @@ fn body_clip(common: &Zone, c: &BodyClip) -> Result<xanim::Anim, String> {
     })
 }
 
+/// Where a viewmodel gun's sights are, from its shape (model space, inches): the top of the front
+/// sight, the highest point of the front third of the gun, which sits on the line of sight. For
+/// guns without BO2's own `tag_sights`.
+fn sight_point(gun: &xmodel::Model) -> Option<[f32; 3]> {
+    let lod = gun.lods.first()?;
+    let verts: Vec<[f32; 3]> = gun.surfaces[lod.first_surface..lod.first_surface + lod.surface_count]
+        .iter()
+        .flat_map(|s| s.vertices.iter().map(|v| v.position))
+        .collect();
+    let (lo, hi) = verts.iter().fold((f32::MAX, f32::MIN), |(lo, hi), p| (lo.min(p[0]), hi.max(p[0])));
+    if verts.is_empty() || hi - lo < 1.0 {
+        return None;
+    }
+    let front = hi - (hi - lo) / 3.0;
+    verts.iter().filter(|p| p[0] >= front).copied().fold(None, |best: Option<[f32; 3]>, p| match best {
+        Some(b) if b[2] >= p[2] => Some(b),
+        _ => Some(p),
+    })
+}
+
 /// The marker bone at converted weapon `vm`'s muzzle (`tag_flash`) on the soldier rig: where its
 /// shots and BO2 muzzle flash come from.
 pub fn flash_bone(vm: usize) -> String {
@@ -621,6 +641,18 @@ fn weapon_viewmodels(
             let rig = rig.get_or_insert_with(|| {
                 let mut rig = Rig::new(&hands, &parts);
                 let root = gun.bones.first().and_then(|b| rig.pivot(&b.name)).unwrap_or(0);
+                // Aiming lines `tag_sights` up with the eye; many BO2 viewmodels (every pistol) have
+                // none, so give them one where their sights are.
+                if rig.pivot("tag_sights").is_none() {
+                    let at = rig.pivot("tag_sights_on").map(|p| rig.bind[p].1).or_else(|| {
+                        let weapon = rig.pivot("tag_weapon").map_or(crate::xf::IDENTITY, |p| rig.bind[p]);
+                        sight_point(&gun).map(|p| crate::xf::apply(weapon, character::scaled(p)))
+                    });
+                    if let Some(at) = at {
+                        let local = crate::xf::compose(crate::xf::inverse(rig.bind[root]), (crate::xf::IDENTITY.0, at));
+                        rig.add_marker("tag_sights", root, local);
+                    }
+                }
                 for (model, tag, offset, pt) in &extra {
                     let at = tag.as_deref().and_then(|t| rig.pivot(t)).unwrap_or(root);
                     rig.attach(model, at, *offset);
