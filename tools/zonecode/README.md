@@ -25,3 +25,9 @@ semantics (plain loads into block memory) instead of OAT's 64-bit host conversio
 C++23 compiler (Apple clang 17 works).
 
 Check a regeneration with `zhbo-assets walk`: every zone in `zone/all` must load with 0 bytes left over.
+
+## Struct layouts
+
+`RustLayoutTemplate.cpp` (register it as `m_template_mapping["layoutrust"]`, then run `zcg` with
+`-g layoutrust`) writes `layouts.rs`: each T6 struct's size and field offsets. Copy it to
+`crates/zhbo-formats/src/t6zone/layouts.rs`.

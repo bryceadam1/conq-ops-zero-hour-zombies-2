@@ -16,6 +16,8 @@
 #endif
 
 #include "Common/AudioEventRTS.h"
+#include "Common/File.h"
+#include "Common/FileSystem.h"
 #include "Common/AudioHandleSpecialValues.h"
 #include "Common/GameAudio.h"
 #include "Common/GameUtility.h"
@@ -33,6 +35,7 @@
 #include "GameClient/DisplayString.h"
 #include "GameClient/DisplayStringManager.h"
 #include "GameClient/Drawable.h"
+#include "GameClient/FXList.h"
 #include "GameClient/GameFont.h"
 #include "GameClient/GUICallbacks.h"
 #include "GameClient/Image.h"
@@ -260,13 +263,14 @@ void cbFireFx(uint32_t shooter, const char *fxWeapon_, uint32_t target, const Zh
 	(void)target;
 }
 
-int32_t cbDamage(uint32_t shooter, uint32_t victimId, float amount, int32_t melee)
+int32_t cbDamage(uint32_t shooter, uint32_t victimId, float amount, int32_t kind)
 {
 	Object *victim = TheGameLogic->findObjectByID((ObjectID)victimId);
 	if (!victim || victim->isEffectivelyDead())
 		return 0;
 	DamageInfo info;
-	info.in.m_damageType = melee ? DAMAGE_MELEE : DAMAGE_SMALL_ARMS;
+	// Zero Hour's armour decides what each kind can hurt (explosions hurt vehicles, bullets barely).
+	info.in.m_damageType = kind == ZHBO_DAMAGE_MELEE ? DAMAGE_MELEE : kind == ZHBO_DAMAGE_EXPLOSION ? DAMAGE_EXPLOSION : DAMAGE_SMALL_ARMS;
 	info.in.m_deathType = DEATH_NORMAL;
 	info.in.m_sourceID = (ObjectID)shooter;
 	if (const Object *src = TheGameLogic->findObjectByID((ObjectID)shooter))
@@ -275,6 +279,50 @@ int32_t cbDamage(uint32_t shooter, uint32_t victimId, float amount, int32_t mele
 	info.in.m_amount = amount;
 	victim->attemptDamage(&info);
 	return victim->isEffectivelyDead() ? 1 : 0;
+}
+
+// A thrown or launched BO2 weapon's object (zhbo_assets: ZHBO_Proj_<weapon>), on the owner's team.
+uint32_t cbSpawn(const char *thing, uint32_t owner, const ZhboVec3 *pos, float yaw)
+{
+	const ThingTemplate *tmpl = TheThingFactory ? TheThingFactory->findTemplate(thing) : nullptr;
+	Object *src = TheGameLogic->findObjectByID((ObjectID)owner);
+	Team *team = src ? src->getTeam() : nullptr;
+	if (!tmpl || !team)
+		return 0;
+	Object *obj = TheThingFactory->newObject(tmpl, team);
+	if (!obj)
+		return 0;
+	Coord3D p;
+	p.set(pos->x, pos->y, pos->z);
+	obj->setPosition(&p);
+	obj->setOrientation(yaw);
+	return (uint32_t)obj->getID();
+}
+
+void cbDestroy(uint32_t id)
+{
+	if (Object *obj = TheGameLogic->findObjectByID((ObjectID)id))
+		TheGameLogic->destroyObject(obj);
+}
+
+// Concussion, flash and shock charges paralyse; the EMP grenade shuts vehicles and buildings down.
+void cbDisable(uint32_t id, int32_t kind, float seconds)
+{
+	Object *obj = TheGameLogic->findObjectByID((ObjectID)id);
+	if (!obj || obj->isEffectivelyDead() || seconds <= 0.0f)
+		return;
+	const UnsignedInt until = TheGameLogic->getFrame() + (UnsignedInt)(seconds * LOGICFRAMES_PER_SECOND);
+	obj->setDisabledUntil(kind == ZHBO_DISABLE_EMP ? DISABLED_EMP : DISABLED_PARALYZED, until);
+}
+
+void cbFx(const char *name, const ZhboVec3 *pos)
+{
+	const FXList *fx = TheFXListStore ? TheFXListStore->findFXList(name) : nullptr;
+	if (!fx)
+		return;
+	Coord3D p;
+	p.set(pos->x, pos->y, pos->z);
+	FXList::doFXPos(fx, &p);
 }
 
 void cbHeal(uint32_t id, float amount)
@@ -619,6 +667,11 @@ void autopilotSpawn()
 	if (!general)
 		return;
 	s_autopilot.general = general->getID();
+	// Test only: enough health that the scripted run (weapons, grenades, field computer) finishes
+	// before the rebels win.
+	if (!s_autopilot.showcase)
+		if (BodyModuleInterface *body = general->getBodyModule())
+			body->setMaxHealth(body->getMaxHealth() * 3.0f, FULLY_HEAL);
 	if (s_autopilot.showcase)
 	{
 		logf("autopilot: showcase General %u at (%.0f, %.0f)", (unsigned)s_autopilot.general, pos.x, pos.y);
@@ -822,9 +875,27 @@ void Zhbo_Init()
 	static const ZhboLogicApi logicApi = {
 		cbLog, cbGroundHeight, cbIsWalkable, cbExtent, cbObject, cbQuery,
 		cbSetPose, cbSetControlled, cbFireFx, cbDamage, cbHeal,
+		cbSpawn, cbDestroy, cbDisable, cbFx,
 	};
 	static const ZhboClientApi clientApi = { cbScreenSize, cbFillRect, cbLine, cbText, cbImage, cbQuery, cbCash, cbSound, cbClip, cbRadar };
 	zhbo_init(&logicApi, &clientApi);
+
+	// The BO2 weapon table, converted from the player's install into ConquerOps_BO2.big; without it
+	// the core keeps its built-in stand-ins.
+	if (File *f = TheFileSystem ? TheFileSystem->openFile("Data\\ConquerOps\\weapons.ini", File::READ | File::BINARY) : nullptr)
+	{
+		const Int size = f->size();
+		if (char *buf = f->readEntireAndClose())
+		{
+			std::string text(buf, size);
+			delete[] buf;
+			logf("weapons: %d BO2 weapons installed", zhbo_install_weapons(text.c_str()));
+		}
+	}
+	else
+	{
+		logLine("weapons: no converted BO2 weapon table; using the built-in one");
+	}
 
 	if (TheControlBar)
 		ZhboControlBarAccess::injectConstructButtons();
@@ -1009,21 +1080,29 @@ Bool Zhbo_GetCameraOverride(Coord3D *eye, Coord3D *dir, Real *horizontalFov)
 	return TRUE;
 }
 
-Bool Zhbo_GetViewmodel(Int *clip, Real *time, Real *ads, AsciiString *model, Coord3D *offset, Coord3D *angles)
+Bool Zhbo_GetViewmodel(Int *clip, Int *weapon, Bool *fired, Real *time, Real *ads, AsciiString *model, Coord3D *offset, Coord3D *angles)
 {
 	if (!s_ready || !s_out.camera_override || s_out.viewmodel < 0 || !s_out.hide_object)
 		return FALSE;
 	const Object *general = TheGameLogic->findObjectByID((ObjectID)s_out.hide_object);
 	if (!general)
 		return FALSE;
-	// One viewmodel per faction (zhbo_assets::generals::FACTIONS).
+	// One set of viewmodels per faction (zhbo_assets::generals::FACTIONS).
 	const AsciiString &name = general->getTemplate()->getName();
-	const char *faction = name == "ZHBO_General_China" ? "CHN" : name == "ZHBO_General_GLA" ? "GLA" : "USA";
-	// The tablet clips play on the arms-and-tablet model (zhbo_assets::generals::tablet_model).
+	const Bool china = name == "ZHBO_General_China", gla = name == "ZHBO_General_GLA";
+	// The tablet clips play on the arms-and-tablet model (generals::tablet_model); everything else on
+	// the converted weapon's viewmodel (generals::vm_model).
 	const Bool tablet = s_out.viewmodel >= ZHBO_VM_TABLET_PULLOUT;
 	AsciiString vm;
-	vm.format("ZHBO_VM%s_%s", faction, tablet ? "TAB" : "SKN");
+	if (tablet)
+		vm.format("ZHBO_VM%s_TAB", china ? "CHN" : gla ? "GLA" : "USA");
+	else if (s_out.viewmodel_weapon >= 0)
+		vm.format("ZV%02d%c_SKN", s_out.viewmodel_weapon, china ? 'C' : gla ? 'G' : 'U');
+	else
+		return FALSE;
 	*clip = s_out.viewmodel;
+	*weapon = tablet ? ZHBO_VM_NONE : s_out.viewmodel_weapon;
+	*fired = s_out.viewmodel_fired != 0;
 	*time = s_out.viewmodel_time;
 	*ads = s_out.viewmodel_ads;
 	offset->set(s_out.viewmodel_offset.x, s_out.viewmodel_offset.y, s_out.viewmodel_offset.z);

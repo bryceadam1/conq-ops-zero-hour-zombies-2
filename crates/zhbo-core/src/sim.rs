@@ -2,13 +2,15 @@
 //! first-person control. Driven by `zhbo_logic_*` calls from `GameLogic`; must produce identical
 //! results on every client given identical inputs.
 
-use crate::host::{geom, objflags, LogicHost, ObjInfo};
+use crate::host::{damage_kind, geom, objflags, LogicHost, ObjInfo};
 use crate::hitscan::{self, HitResult, Shape, Target, INFANTRY_HEAD_FRACTION, INFANTRY_HIT_RADIUS};
 use crate::input::{buttons, FpsInput};
 use crate::math::{basis_xy, dir_from_angles, Vec3};
 use crate::movement::{self, Blocker, Body, MoveModifiers, MoveTuning, World};
 use crate::units::{BO2_TO_ZH_DAMAGE, LOGIC_DT};
-use crate::weapons::{Arsenal, Rng, WeaponAction, MELEE_DAMAGE, MELEE_FX_WEAPON, MELEE_RANGE};
+use crate::movement::Stance;
+use crate::projectiles::{Outcome, Projectile};
+use crate::weapons::{Arsenal, Class, Perk, Rng, WeaponAction, MELEE_FX_WEAPON, MELEE_RANGE};
 
 pub const MAX_PLAYERS: usize = 16;
 
@@ -45,6 +47,15 @@ pub enum EventKind {
     ReloadStarted,
     Swapped,
     GeneralDied { general: u32 },
+    /// Melee swing (hit or miss).
+    Melee,
+    /// Offhand pulled back (pin out); then thrown.
+    OffhandReady { lethal: bool },
+    Thrown { lethal: bool },
+    /// A launcher fired.
+    Launched,
+    /// A grenade, rocket or other projectile went off.
+    Exploded { at: Vec3 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -95,6 +106,8 @@ impl PlayerSim {
 
 pub struct Sim {
     pub players: Vec<Option<PlayerSim>>,
+    /// Grenades and rockets in flight, with the player who threw them.
+    pub projectiles: Vec<(usize, Projectile)>,
     pub tuning: MoveTuning,
     pub frame: u32,
     pub events: Vec<Event>,
@@ -108,7 +121,7 @@ impl Default for Sim {
 
 impl Sim {
     pub fn new() -> Self {
-        Self { players: vec![None; MAX_PLAYERS], tuning: MoveTuning::default(), frame: 0, events: Vec::new() }
+        Self { players: vec![None; MAX_PLAYERS], projectiles: Vec::new(), tuning: MoveTuning::default(), frame: 0, events: Vec::new() }
     }
 
     pub fn reset(&mut self) {
@@ -174,7 +187,13 @@ impl Sim {
             },
         };
         // The weapon can't fire or aim until the tablet is down and it is up again.
-        state.arsenal.raise_left = TAKE_CONTROL_READY + state.arsenal.current().def.raise_time;
+        // BO2's first raise, once the tablet is down.
+        let first = state.arsenal.current().def.first_raise_time;
+        state.arsenal.raise_left = TAKE_CONTROL_READY + first;
+        state.arsenal.raise_total = first;
+        state.arsenal.raise_kind = crate::weapons::RaiseKind::First;
+        state.arsenal.drop_left = 0.0;
+        state.arsenal.offhand = None;
         state.arsenal.ads = 0.0;
         self.players[idx] = Some(state);
         host.set_controlled(general, true);
@@ -201,6 +220,42 @@ impl Sim {
             let keep = self.step_player(host, idx, &mut p);
             if keep {
                 self.players[idx] = Some(p);
+            }
+        }
+        self.step_projectiles(host);
+    }
+
+    fn step_projectiles(&mut self, host: &dyn LogicHost) {
+        let mut done = Vec::new();
+        for (i, (owner, proj)) in self.projectiles.iter_mut().enumerate() {
+            if let Some(outcome) = proj.step(host) {
+                done.push((i, *owner, outcome));
+            }
+        }
+        for (i, owner, outcome) in done.iter().rev() {
+            self.projectiles.remove(*i);
+            match *outcome {
+                Outcome::Exploded { at, hit_enemy, kill } => {
+                    self.emit(*owner, EventKind::Exploded { at });
+                    if hit_enemy {
+                        self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
+                    }
+                }
+                Outcome::Hit { kill, .. } => {
+                    if kill {
+                        self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
+                        self.scavenge(*owner);
+                    }
+                }
+            }
+        }
+    }
+
+    /// Scavenger: a kill with a non-explosive weapon refills ammo.
+    fn scavenge(&mut self, idx: usize) {
+        if let Some(Some(p)) = self.players.get_mut(idx) {
+            if p.arsenal.has(Perk::Scavenger) {
+                p.arsenal.scavenge();
             }
         }
     }
@@ -243,11 +298,18 @@ impl Sim {
                 } else {
                     let mods = MoveModifiers {
                         speed_scale: p.arsenal.move_scale(),
-                        block_sprint: p.arsenal.ads > 0.0,
+                        block_sprint: p.arsenal.ads > 0.0 || p.arsenal.offhand.is_some() || p.arsenal.melee_left > 0.0,
+                        sprint_time_scale: p.arsenal.sprint_scale(),
                     };
                     movement::step(&mut p.body, &input, mods, &self.tuning, &world, LOGIC_DT);
                     let mut actions = Vec::new();
-                    p.arsenal.step(input.held, input.pressed, p.body.sprinting, &mut p.rng, &mut actions);
+                    let stance = match p.body.stance {
+                        Stance::Stand => 0,
+                        Stance::Crouch => 1,
+                        Stance::Prone => 2,
+                    };
+                    let speed = p.body.horizontal_speed();
+                    p.arsenal.step(input.held, input.pressed, p.body.sprinting, stance, speed, &mut p.rng, &mut actions);
                     for a in actions {
                         self.apply_weapon_action(host, idx, p, a);
                     }
@@ -294,7 +356,7 @@ impl Sim {
 
     fn apply_weapon_action(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, action: WeaponAction) {
         match action {
-            WeaponAction::Fire { spread_deg, jitter, recoil } => {
+            WeaponAction::Fire { spread_deg, jitter, recoil, pellet } => {
                 let def = p.arsenal.current().def;
                 let eye = p.body.eye();
                 // Random point in the spread cone (polar mapping of two uniform samples).
@@ -305,20 +367,63 @@ impl Sim {
                 let targets = gather_targets(host, eye, def.max_range, p.general);
                 let ground = |x: f32, y: f32| host.ground_height(x, y);
                 let hit = hitscan::trace(eye, dir, def.max_range, &targets, p.general, &ground);
+                // One tracer and sound per shot, not per pellet.
+                let fx = if pellet == 0 { Some(def.fx_weapon.as_str()).filter(|f| !f.is_empty()) } else { None };
                 match hit {
                     HitResult::Object { id, point, distance, headshot } => {
-                        host.fire_fx(p.general, def.zh_fx_weapon, id, point);
+                        if let Some(fx) = fx {
+                            host.fire_fx(p.general, fx, id, point);
+                        }
                         let mult = if headshot { def.head_multiplier } else { 1.0 };
                         let amount = def.damage_at(distance) * mult * BO2_TO_ZH_DAMAGE;
-                        let kill = host.damage(p.general, id, amount, false);
+                        let kill = host.damage(p.general, id, amount, damage_kind::SMALL_ARMS);
                         self.emit(idx, EventKind::HitMarker { headshot, kill });
+                        if kill && p.arsenal.has(Perk::Scavenger) {
+                            p.arsenal.scavenge();
+                        }
                     }
-                    other => host.fire_fx(p.general, def.zh_fx_weapon, 0, other.point()),
+                    other => {
+                        if let Some(fx) = fx {
+                            host.fire_fx(p.general, fx, 0, other.point());
+                        }
+                    }
                 }
-                self.emit(idx, EventKind::Shot { origin: eye, end: hit.point() });
-                self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1 });
+                if pellet == 0 {
+                    self.emit(idx, EventKind::Shot { origin: eye, end: hit.point() });
+                    self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1 });
+                }
             }
-            WeaponAction::Melee => {
+            WeaponAction::Launch { def } => {
+                let eye = p.body.eye();
+                let dir = dir_from_angles(p.yaw, p.pitch);
+                if !def.fx_weapon.is_empty() {
+                    host.fire_fx(p.general, &def.fx_weapon, 0, eye + dir * 10.0);
+                }
+                let proj = Projectile::launch(def, p.general, eye + dir * 2.0, dir, def.fuse_time, host, p.yaw);
+                self.projectiles.push((idx, proj));
+                self.emit(idx, EventKind::Launched);
+            }
+            WeaponAction::Throw { def, fuse_left } => {
+                let eye = p.body.eye();
+                // BO2 throws a little above the crosshair.
+                let dir = dir_from_angles(p.yaw, (p.pitch + 0.12).min(1.4));
+                let mut proj = Projectile::launch(def, p.general, eye + dir * 1.5, dir, fuse_left, host, p.yaw);
+                proj.vel = proj.vel + p.body.vel * 0.5;
+                proj.flak_jacket = p.arsenal.has(Perk::FlakJacket);
+                proj.tactical_mask = p.arsenal.has(Perk::TacticalMask);
+                self.projectiles.push((idx, proj));
+                self.emit(idx, EventKind::Thrown { lethal: def.class == Class::Lethal });
+            }
+            WeaponAction::CookedOff { def } => {
+                let mut proj = Projectile::launch(def, p.general, p.body.eye(), Vec3::ZERO, 0.0, host, p.yaw);
+                proj.vel = Vec3::ZERO;
+                proj.fuse = 0.0;
+                proj.flak_jacket = p.arsenal.has(Perk::FlakJacket);
+                self.projectiles.push((idx, proj));
+            }
+            WeaponAction::OffhandReady { lethal } => self.emit(idx, EventKind::OffhandReady { lethal }),
+            WeaponAction::Melee { damage } => {
+                self.emit(idx, EventKind::Melee);
                 let eye = p.body.eye();
                 let (fwd, _) = basis_xy(p.yaw);
                 let mut near = Vec::new();
@@ -339,8 +444,11 @@ impl Sim {
                     });
                 if let Some(v) = victim {
                     host.fire_fx(p.general, MELEE_FX_WEAPON, v.id, v.pos);
-                    let kill = host.damage(p.general, v.id, MELEE_DAMAGE * BO2_TO_ZH_DAMAGE, true);
+                    let kill = host.damage(p.general, v.id, damage * BO2_TO_ZH_DAMAGE, damage_kind::MELEE);
                     self.emit(idx, EventKind::HitMarker { headshot: false, kill });
+                    if kill && p.arsenal.has(Perk::Scavenger) {
+                        p.arsenal.scavenge();
+                    }
                 }
             }
             WeaponAction::ReloadStarted => self.emit(idx, EventKind::ReloadStarted),
@@ -443,6 +551,10 @@ pub(crate) mod tests {
         pub controlled: RefCell<Vec<u32>>,
         pub fx: RefCell<Vec<(u32, String, u32)>>,
         pub damage_log: RefCell<Vec<(u32, u32, f32)>>,
+        pub disabled: RefCell<Vec<(u32, i32, f32)>>,
+        pub spawned: RefCell<Vec<(u32, String)>>,
+        pub destroyed: RefCell<Vec<u32>>,
+        pub played_fx: RefCell<Vec<String>>,
     }
 
     impl FakeHost {
@@ -501,7 +613,7 @@ pub(crate) mod tests {
         fn fire_fx(&self, shooter: u32, fx_weapon: &str, target: u32, _pos: Vec3) {
             self.fx.borrow_mut().push((shooter, fx_weapon.to_string(), target));
         }
-        fn damage(&self, shooter: u32, victim: u32, amount: f32, _melee: bool) -> bool {
+        fn damage(&self, shooter: u32, victim: u32, amount: f32, _kind: i32) -> bool {
             self.damage_log.borrow_mut().push((shooter, victim, amount));
             let mut objs = self.objects.borrow_mut();
             let v = objs.iter_mut().find(|o| o.id == victim).unwrap();
@@ -516,6 +628,21 @@ pub(crate) mod tests {
             for o in self.objects.borrow_mut().iter_mut().filter(|o| o.id == id) {
                 o.health = (o.health + amount).min(o.max_health);
             }
+        }
+        fn spawn(&self, template: &str, _owner: u32, _pos: Vec3, _yaw: f32) -> u32 {
+            let mut s = self.spawned.borrow_mut();
+            let id = 10_000 + s.len() as u32;
+            s.push((id, template.to_string()));
+            id
+        }
+        fn destroy(&self, id: u32) {
+            self.destroyed.borrow_mut().push(id);
+        }
+        fn disable(&self, id: u32, kind: i32, seconds: f32) {
+            self.disabled.borrow_mut().push((id, kind, seconds));
+        }
+        fn fx(&self, name: &str, _pos: Vec3) {
+            self.played_fx.borrow_mut().push(name.to_string());
         }
     }
 

@@ -6,6 +6,7 @@
 //! * [`ffi`] is the C ABI the engine glue in `host/zhbo/` calls; [`host`] is the reverse direction.
 
 pub mod client;
+pub mod conformance;
 pub mod ffi;
 pub mod hitscan;
 pub mod host;
@@ -13,6 +14,7 @@ pub mod hud;
 pub mod input;
 pub mod math;
 pub mod movement;
+pub mod projectiles;
 pub mod sim;
 pub mod sounds;
 pub mod strings;

@@ -37,7 +37,7 @@ fn publish_controlled(sim: &Sim) {
     }
 }
 
-pub const ABI_VERSION: u32 = 8;
+pub const ABI_VERSION: u32 = 9;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
 const _: () = {
@@ -45,8 +45,8 @@ const _: () = {
     assert!(size_of::<crate::host::ObjInfo>() == 56);
     assert!(size_of::<FpsInput>() == 20);
     assert!(size_of::<ClientIn>() == 316);
-    assert!(size_of::<ClientOut>() == 124);
-    assert!(size_of::<LogicApi>() == 11 * size_of::<usize>());
+    assert!(size_of::<ClientOut>() == 132);
+    assert!(size_of::<LogicApi>() == 15 * size_of::<usize>());
     assert!(size_of::<ClientApi>() == 10 * size_of::<usize>());
 };
 
@@ -54,6 +54,23 @@ const _: () = {
 #[no_mangle]
 pub extern "C" fn zhbo_abi_version() -> u32 {
     ABI_VERSION
+}
+
+/// Install the weapon table (`Data\ConquerOps\weapons.ini`, converted from the player's BO2 install)
+/// before play. Returns the number of weapons, or -1 if it was rejected (the built-in table stays).
+///
+/// # Safety
+/// `text` must be a NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_install_weapons(text: *const std::ffi::c_char) -> i32 {
+    if text.is_null() {
+        return -1;
+    }
+    let text = std::ffi::CStr::from_ptr(text).to_string_lossy();
+    match crate::weapons::install_catalog(&text) {
+        Ok(n) => n as i32,
+        Err(_) => -1,
+    }
 }
 
 /// # Safety
@@ -135,6 +152,10 @@ fn log_step(s: &State, first_new_event: usize, frame: u32) {
             EventKind::GeneralDied { general } => format!("player {}'s General {general} died", e.player),
             EventKind::HitMarker { headshot, kill: true } => format!("player {} killed a target (headshot: {headshot})", e.player),
             EventKind::Damaged { amount } => format!("player {}'s General took {amount:.0} damage", e.player),
+            EventKind::Swapped => format!("player {} swapped weapons", e.player),
+            EventKind::Melee => format!("player {} meleed", e.player),
+            EventKind::Thrown { lethal } => format!("player {} threw a {}", e.player, if lethal { "lethal" } else { "tactical" }),
+            EventKind::Exploded { at } => format!("player {}'s grenade went off at ({:.0}, {:.0})", e.player, at.x, at.y),
             _ => continue,
         };
         s.logic.log(&line);

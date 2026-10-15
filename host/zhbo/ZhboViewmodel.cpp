@@ -20,38 +20,37 @@
 #include "WW3D2/rendobj.h"
 
 #include <cmath>
+#include <map>
 #include <sstream>
 #include <string>
 #include <vector>
 
 namespace
 {
-	const char *const k_clips[ZHBO_VM_COUNT] = {
-		"ZHBO_VM_SKL.ZHBO_VM_IDL", // ZHBO_VM_IDLE
-		"ZHBO_VM_SKL.ZHBO_VM_FIR", // ZHBO_VM_FIRE
-		"ZHBO_VM_SKL.ZHBO_VM_RLD", // ZHBO_VM_RELOAD
-		"ZHBO_VM_SKL.ZHBO_VM_RLE", // ZHBO_VM_RELOAD_EMPTY
-		"ZHBO_VM_SKL.ZHBO_VM_SPR", // ZHBO_VM_SPRINT
-		"ZHBO_VM_SKL.ZHBO_VM_RAI", // ZHBO_VM_RAISE
+	// The tablet's clips (zhbo_assets::generals::TABLET_ANIMS).
+	const char *const k_tablet_clips[3] = {
 		"ZHBO_VMT_SKL.ZHBO_VMT_PUL", // ZHBO_VM_TABLET_PULLOUT
 		"ZHBO_VMT_SKL.ZHBO_VMT_IDL", // ZHBO_VM_TABLET_IDLE
 		"ZHBO_VMT_SKL.ZHBO_VMT_PUT", // ZHBO_VM_TABLET_PUTAWAY
 	};
 
-	// Whether a clip belongs to the tablet model's hierarchy rather than the weapon's.
-	Bool isTabletClip(int clip)
+	// Clips that loop (zhbo_core::viewmodel::slot::loops).
+	Bool loops(int clip)
 	{
-		return clip >= ZHBO_VM_TABLET_PULLOUT;
+		return clip == ZHBO_VM_SLOT_IDLE || clip == ZHBO_VM_SLOT_EMPTY_IDLE || clip == ZHBO_VM_SLOT_SPRINT_LOOP
+			|| clip == ZHBO_VM_SLOT_SPRINT_EMPTY_LOOP || clip == ZHBO_VM_TABLET_IDLE;
 	}
 
 	RenderObjClass *s_model = nullptr;
 	AsciiString s_modelName;
-	HAnimClass *s_anims[ZHBO_VM_COUNT] = {};
+	// The loaded model's clips by clip id (BO2 slot or tablet clip).
+	std::map<int, HAnimClass *> s_anims;
 	AsciiString s_missing; // a model that failed to load; not retried
 
 	// Sound notetracks of the clips (zhbo_assets::sfx): played as the clip passes their time.
 	struct Note
 	{
+		int weapon;
 		int clip;
 		float time;
 		AsciiString event;
@@ -81,7 +80,7 @@ namespace
 			std::istringstream fields(line);
 			Note n;
 			std::string event;
-			if (fields >> n.clip >> n.time >> event)
+			if (fields >> n.weapon >> n.clip >> n.time >> event)
 			{
 				n.event = event.c_str();
 				s_notes.push_back(n);
@@ -90,23 +89,25 @@ namespace
 		Zhbo_Log("viewmodel: %d sound notetracks", (int)s_notes.size());
 	}
 
-	// Play the notes of `clip` in (from, to]; a clip that (re)started plays from its beginning.
-	// Returns whether the clip (re)started this frame.
-	Bool playNotes(int clip, float time)
+	int s_lastWeapon = -2;
+
+	// Play the notes of the weapon's `clip` in (from, to]; a clip that (re)started plays from its
+	// beginning.
+	void playNotes(int weapon, int clip, float time)
 	{
-		const Bool restarted = clip != s_lastClip || time < s_lastTime;
+		const Bool restarted = clip != s_lastClip || weapon != s_lastWeapon || time < s_lastTime;
 		const float from = restarted ? -1.0f : s_lastTime;
 		for (const Note &n : s_notes)
 		{
-			if (n.clip == clip && n.time > from && n.time <= time && TheAudio)
+			if (n.weapon == weapon && n.clip == clip && n.time > from && n.time <= time && TheAudio)
 			{
 				AudioEventRTS sound(n.event);
 				TheAudio->addAudioEvent(&sound);
 			}
 		}
 		s_lastClip = clip;
+		s_lastWeapon = weapon;
 		s_lastTime = time;
-		return restarted;
 	}
 
 	// An FXList at a viewmodel bone, oriented with it.
@@ -125,10 +126,11 @@ namespace
 
 	void release()
 	{
-		for (HAnimClass *&a : s_anims)
+		for (auto &a : s_anims)
 		{
-			REF_PTR_RELEASE(a);
+			REF_PTR_RELEASE(a.second);
 		}
+		s_anims.clear();
 		if (s_model)
 		{
 			s_model->Remove();
@@ -137,7 +139,7 @@ namespace
 		s_modelName.clear();
 	}
 
-	Bool load(const AsciiString &name)
+	Bool load(const AsciiString &name, int weapon)
 	{
 		release();
 		WW3DAssetManager *assets = WW3DAssetManager::Get_Instance();
@@ -150,16 +152,25 @@ namespace
 			return FALSE;
 		}
 		W3DDisplay::m_3DScene->Add_Render_Object(s_model);
-		// Only this model's clips: the weapon and the tablet models have different hierarchies.
-		const Bool tablet = name.endsWith("_TAB");
-		for (int i = 0; i < ZHBO_VM_COUNT; ++i)
+		// Only this model's clips: each weapon and the tablet have their own hierarchy.
+		if (name.endsWith("_TAB"))
 		{
-			if (isTabletClip(i) != tablet)
-				continue;
-			s_anims[i] = assets->Get_HAnim(k_clips[i]);
-			if (!s_anims[i])
-				Zhbo_Log("viewmodel: missing clip %s", k_clips[i]);
+			for (int i = 0; i < 3; ++i)
+				if (HAnimClass *anim = assets->Get_HAnim(k_tablet_clips[i]))
+					s_anims[ZHBO_VM_TABLET_PULLOUT + i] = anim;
 		}
+		else if (weapon >= 0)
+		{
+			// zhbo_assets::generals::vm_anim: one clip per BO2 animation slot the weapon has.
+			for (int slot = 0; slot < ZHBO_VM_SLOT_COUNT; ++slot)
+			{
+				char clip[64];
+				snprintf(clip, sizeof(clip), "ZV%02d_SKL.ZV%02d_A%02X", weapon, weapon, slot);
+				if (HAnimClass *anim = assets->Get_HAnim(clip))
+					s_anims[slot] = anim;
+			}
+		}
+		Zhbo_Log("viewmodel: %d clips for %s", (int)s_anims.size(), name.str());
 		s_modelName = name;
 		Zhbo_Log("viewmodel: loaded %s", name.str());
 		return TRUE;
@@ -185,11 +196,12 @@ namespace
 
 void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)
 {
-	Int clip = ZHBO_VM_NONE;
+	Int clip = ZHBO_VM_NONE, weapon = ZHBO_VM_NONE;
+	Bool fired = FALSE;
 	Real time = 0.0f, ads = 0.0f;
 	AsciiString name;
 	Coord3D offset, angles;
-	if (!active || !Zhbo_GetViewmodel(&clip, &time, &ads, &name, &offset, &angles) || clip < 0 || clip >= ZHBO_VM_COUNT)
+	if (!active || !Zhbo_GetViewmodel(&clip, &weapon, &fired, &time, &ads, &name, &offset, &angles) || clip < 0)
 	{
 		if (s_model)
 			s_model->Set_Hidden(true);
@@ -198,8 +210,8 @@ void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)
 	}
 	if (!s_notesLoaded)
 		loadNotes();
-	const Bool fired = playNotes(clip, time) && clip == ZHBO_VM_FIRE;
-	if (name != s_modelName && name != s_missing && !load(name))
+	playNotes(weapon, clip, time);
+	if (name != s_modelName && name != s_missing && !load(name, weapon))
 		return;
 	if (!s_model)
 		return;
@@ -214,11 +226,15 @@ void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)
 	m.Rotate_X(angles.z);
 	s_model->Set_Transform(m);
 
-	if (HAnimClass *anim = s_anims[clip])
+	std::map<int, HAnimClass *>::iterator it = s_anims.find(clip);
+	if (it == s_anims.end())
+		it = s_anims.find(ZHBO_VM_SLOT_IDLE); // a slot this weapon doesn't have: hold its idle
+	if (it != s_anims.end())
 	{
+		HAnimClass *anim = it->second;
 		const Real frames = (Real)anim->Get_Num_Frames();
 		Real frame = time * anim->Get_Frame_Rate();
-		if (clip == ZHBO_VM_IDLE || clip == ZHBO_VM_SPRINT || clip == ZHBO_VM_TABLET_IDLE)
+		if (loops(it->first))
 			frame = frames > 1.0f ? fmodf(frame, frames - 1.0f) : 0.0f;
 		else
 			frame = std::min(frame, std::max(frames - 1.0f, 0.0f));

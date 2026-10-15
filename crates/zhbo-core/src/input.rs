@@ -14,7 +14,9 @@ pub mod buttons {
     pub const SWAP_WEAPON: u32 = 1 << 7;
     pub const MELEE: u32 = 1 << 8;
     pub const FIELD_COMPUTER: u32 = 1 << 9;
-    pub const ALL: u32 = (1 << 10) - 1;
+    pub const LETHAL: u32 = 1 << 10;
+    pub const TACTICAL: u32 = 1 << 11;
+    pub const ALL: u32 = (1 << 12) - 1;
 }
 
 #[repr(C)]

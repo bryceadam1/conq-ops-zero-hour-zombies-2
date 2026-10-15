@@ -32,6 +32,16 @@ pub struct Sfx {
     pub limit: u8,
 }
 
+/// An event made at conversion time (a converted weapon's own sounds), from the common bank.
+#[derive(Clone, Debug)]
+pub struct DynSfx {
+    pub event: String,
+    /// Aliases mixed into each variant; ones the bank lacks are skipped.
+    pub layers: Vec<String>,
+    pub kind: Kind,
+    pub limit: u8,
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Kind {
     /// The player's own 2D sound.
@@ -251,13 +261,15 @@ fn sound_file(event: &str, variant: usize) -> String {
     format!("{}_{variant}", event.to_ascii_lowercase())
 }
 
-/// Convert the events; `viewmodel_clips` are the viewmodel animations in clip order, whose sound
-/// notetracks become `ZHBO_NT_*` events. Returns the archive files and a summary.
+/// Convert the events and `extra` (per-weapon) events; `viewmodel_clips` are the viewmodel
+/// animations by (viewmodel, clip), whose sound notetracks become `ZHBO_NT_*` events. Returns the
+/// archive files and a summary.
 pub fn files(
     common: &Zone,
     world: &Zone,
     bo2_dir: &Path,
-    viewmodel_clips: &[xanim::Anim],
+    viewmodel_clips: &[(i32, i32, xanim::Anim)],
+    extra: &[DynSfx],
 ) -> Result<(Vec<(String, Vec<u8>)>, String), String> {
     let lib = Library::open(bo2_dir)?;
     let pick = |zone: &Zone, prefix: &str| -> Option<Source> {
@@ -271,7 +283,8 @@ pub fn files(
     let mut missing = Vec::new();
 
     let mut add = |event: &str, src: &Source, layers: &[&str], kind: Kind, limit: u8, out: &mut BTreeMap<String, Vec<u8>>| -> bool {
-        let aliases: Vec<_> = layers.iter().filter_map(|n| src.bank.alias(n)).collect();
+        let mut aliases: Vec<_> = layers.iter().filter_map(|n| src.bank.alias(n)).collect();
+        aliases.dedup_by(|a, b| a.name == b.name);
         if aliases.is_empty() {
             return false;
         }
@@ -308,17 +321,27 @@ pub fn files(
         }
     }
 
+    let mut extra_made = 0;
+    for e in extra {
+        let layers: Vec<&str> = e.layers.iter().map(String::as_str).collect();
+        if add(&e.event, &common_src, &layers, e.kind, e.limit, &mut out) {
+            extra_made += 1;
+        } else {
+            missing.push("weapon sound");
+        }
+    }
+
     // Viewmodel notetracks: "sndnt#<alias>" notifies, at their time into each clip.
-    let mut notes = String::from("; clip seconds event (zhbo_core::viewmodel clip order)\n");
+    let mut notes = String::from("; viewmodel clip seconds event (zhbo_core::viewmodel: weapon viewmodel, BO2 slot or tablet clip)\n");
     let mut nt_events: BTreeMap<String, bool> = BTreeMap::new();
-    for (clip, anim) in viewmodel_clips.iter().enumerate() {
+    for (vm, clip, anim) in viewmodel_clips {
         let length = anim.num_frames as f32 / anim.frame_rate.max(1.0);
         for n in &anim.notifies {
             let Some(alias) = n.name.strip_prefix(NOTETRACK_PREFIX) else { continue };
             let event = format!("ZHBO_NT_{alias}");
             let ok = *nt_events.entry(event.clone()).or_insert_with(|| add(&event, &common_src, &[alias], Kind::Player, 2, &mut out));
             if ok {
-                notes.push_str(&format!("{clip} {:.3} {event}\n", n.time * length));
+                notes.push_str(&format!("{vm} {clip} {:.3} {event}\n", n.time * length));
             } else {
                 missing.push("notetrack");
             }
@@ -336,7 +359,7 @@ pub fn files(
     let wavs = out.keys().filter(|k| k.ends_with(".wav")).count();
     let summary = format!(
         "{wavs} sounds, {} events, {} notetrack events{}",
-        SFX.len() - missing.iter().filter(|m| **m != "notetrack").count(),
+        SFX.len() + extra_made - missing.iter().filter(|m| SFX.iter().any(|s| s.event == **m)).count(),
         nt_events.values().filter(|v| **v).count(),
         if missing.is_empty() { String::new() } else { format!(", missing {missing:?}") }
     );

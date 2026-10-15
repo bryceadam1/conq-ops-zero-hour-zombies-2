@@ -140,11 +140,13 @@ pub struct MoveModifiers {
     pub speed_scale: f32,
     /// Sprinting is not allowed (ADS, reloading with no sprint-reload, firing).
     pub block_sprint: bool,
+    /// Sprint duration multiplier (the weapon's `sprintDurationScale`, Extreme Conditioning).
+    pub sprint_time_scale: f32,
 }
 
 impl Default for MoveModifiers {
     fn default() -> Self {
-        Self { speed_scale: 1.0, block_sprint: false }
+        Self { speed_scale: 1.0, block_sprint: false, sprint_time_scale: 1.0 }
     }
 }
 
@@ -240,7 +242,8 @@ fn update_sprint(body: &mut Body, held: u32, fwd_axis: f32, mods: MoveModifiers,
         }
     } else {
         body.sprint_cooldown = (body.sprint_cooldown - dt).max(0.0);
-        body.sprint_stamina = (body.sprint_stamina + dt * t.sprint_time / t.sprint_recover_time).min(t.sprint_time);
+        let full = t.sprint_time * mods.sprint_time_scale;
+        body.sprint_stamina = (body.sprint_stamina + dt * full / t.sprint_recover_time).min(full);
     }
 }
 

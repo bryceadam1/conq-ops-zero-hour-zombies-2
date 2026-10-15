@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 8u
+#define ZHBO_ABI_VERSION 9u
 
 #ifdef __cplusplus
 extern "C" {
@@ -69,9 +69,21 @@ typedef struct ZhboLogicApi
 	void (*set_pose)(uint32_t id, const ZhboVec3 *pos, float yaw, int32_t moving);
 	void (*set_controlled)(uint32_t id, int32_t controlled);
 	void (*fire_fx)(uint32_t shooter, const char *fx_weapon, uint32_t target, const ZhboVec3 *pos);
-	int32_t (*damage)(uint32_t shooter, uint32_t victim, float amount, int32_t melee);
+	int32_t (*damage)(uint32_t shooter, uint32_t victim, float amount, int32_t kind); /* ZHBO_DAMAGE_* */
 	void (*heal)(uint32_t id, float amount);
+	/* A projectile's Zero Hour object, owned by `owner`'s player; 0 if it can't be made. */
+	uint32_t (*spawn)(const char *thing, uint32_t owner, const ZhboVec3 *pos, float yaw);
+	void (*destroy)(uint32_t id);
+	void (*disable)(uint32_t id, int32_t kind, float seconds); /* ZHBO_DISABLE_* */
+	void (*fx)(const char *fxlist, const ZhboVec3 *pos);
 } ZhboLogicApi;
+
+/* zhbo_core::host::damage_kind and disable_kind. */
+#define ZHBO_DAMAGE_SMALL_ARMS 0
+#define ZHBO_DAMAGE_MELEE 1
+#define ZHBO_DAMAGE_EXPLOSION 2
+#define ZHBO_DISABLE_PARALYZED 0
+#define ZHBO_DISABLE_EMP 1
 
 typedef struct ZhboClientApi
 {
@@ -119,29 +131,34 @@ typedef struct ZhboClientOut
 	ZhboFpsInput input;
 	int32_t rts_look_at_valid;
 	ZhboVec3 rts_look_at;
-	int32_t viewmodel;      /* ZHBO_VM_* clip, or ZHBO_VM_NONE */
+	int32_t viewmodel;      /* BO2 animation slot (weapAnimFiles_t), a ZHBO_VM_TABLET_* clip, or ZHBO_VM_NONE */
+	int32_t viewmodel_weapon; /* converted weapon viewmodel (ZVnn models), ZHBO_VM_NONE for the tablet */
+	int32_t viewmodel_fired;  /* the gun fired this frame: muzzle flash and brass */
 	float viewmodel_time;   /* seconds into the clip */
 	float viewmodel_ads;    /* 0..1 aim-down-sights */
 	ZhboVec3 viewmodel_offset; /* sway/bob/recoil: forward, left, up (world units) */
 	ZhboVec3 viewmodel_angles; /* yaw (left +), pitch (muzzle up +), roll; radians */
 } ZhboClientOut;
 
-/* Viewmodel clips (zhbo_core::viewmodel). */
+/* Viewmodel clips (zhbo_core::viewmodel): BO2's animation slots, then the scorestreak tablet's (its
+   own model: the faction's weapon viewmodel name with _TAB). */
 #define ZHBO_VM_NONE (-1)
-#define ZHBO_VM_IDLE 0
-#define ZHBO_VM_FIRE 1
-#define ZHBO_VM_RELOAD 2
-#define ZHBO_VM_RELOAD_EMPTY 3
-#define ZHBO_VM_SPRINT 4
-#define ZHBO_VM_RAISE 5
-/* The scorestreak tablet (its own model: the weapon viewmodel's name with _TAB for _SKN). */
-#define ZHBO_VM_TABLET_PULLOUT 6
-#define ZHBO_VM_TABLET_IDLE 7
-#define ZHBO_VM_TABLET_PUTAWAY 8
-#define ZHBO_VM_COUNT 9
+#define ZHBO_VM_SLOT_IDLE 0x01
+#define ZHBO_VM_SLOT_EMPTY_IDLE 0x02
+#define ZHBO_VM_SLOT_FIRE 0x04
+#define ZHBO_VM_SLOT_LASTSHOT 0x06
+#define ZHBO_VM_SLOT_SPRINT_LOOP 0x21
+#define ZHBO_VM_SLOT_SPRINT_EMPTY_LOOP 0x24
+#define ZHBO_VM_SLOT_ADS_FIRE 0x3D
+#define ZHBO_VM_SLOT_ADS_LASTSHOT 0x3E
+#define ZHBO_VM_SLOT_COUNT 0x58
+#define ZHBO_VM_TABLET_PULLOUT 0x60
+#define ZHBO_VM_TABLET_IDLE 0x61
+#define ZHBO_VM_TABLET_PUTAWAY 0x62
 
 uint32_t zhbo_abi_version(void);
 void zhbo_init(const ZhboLogicApi *logic, const ZhboClientApi *client);
+int32_t zhbo_install_weapons(const char *table); /* Data\\ConquerOps\\weapons.ini; count or -1 */
 void zhbo_reset(void);
 void zhbo_logic_take_control(int32_t player, uint32_t general);
 void zhbo_logic_input(int32_t player, uint32_t general, const ZhboFpsInput *input);
@@ -158,7 +175,7 @@ int32_t zhbo_check_requirements(char *msg, uint32_t cap);
 static_assert(sizeof(ZhboObjInfo) == 56, "ZhboObjInfo layout must match host.rs");
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
 static_assert(sizeof(ZhboClientIn) == 316, "ZhboClientIn layout must match client.rs");
-static_assert(sizeof(ZhboClientOut) == 124, "ZhboClientOut layout must match client.rs");
-static_assert(sizeof(ZhboLogicApi) == 11 * sizeof(void *), "ZhboLogicApi layout must match host.rs");
+static_assert(sizeof(ZhboClientOut) == 132, "ZhboClientOut layout must match client.rs");
+static_assert(sizeof(ZhboLogicApi) == 15 * sizeof(void *), "ZhboLogicApi layout must match host.rs");
 static_assert(sizeof(ZhboClientApi) == 10 * sizeof(void *), "ZhboClientApi layout must match host.rs");
 #endif

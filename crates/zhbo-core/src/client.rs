@@ -25,6 +25,8 @@ pub mod vk {
     pub const D: u8 = 0x44;
     pub const E: u8 = 0x45;
     pub const F: u8 = 0x46;
+    pub const G: u8 = 0x47;
+    pub const Q: u8 = 0x51;
     pub const R: u8 = 0x52;
     pub const S: u8 = 0x53;
     pub const V: u8 = 0x56;
@@ -47,6 +49,9 @@ pub struct Bindings {
     pub swap: u8,
     pub melee: u8,
     pub field_computer: u8,
+    /// Throw lethal / tactical (hold to cook).
+    pub lethal: u8,
+    pub tactical: u8,
     /// Held: the whole map (BO2's scoreboard key).
     pub map: u8,
 }
@@ -69,6 +74,8 @@ impl Default for Bindings {
             swap: vk::KEY_1,
             melee: vk::V,
             field_computer: vk::F,
+            lethal: vk::G,
+            tactical: vk::Q,
             map: vk::TAB,
         }
     }
@@ -169,8 +176,13 @@ pub struct ClientOut {
     /// One-shot: centre the RTS camera on `rts_look_at` (end of the field computer transition).
     pub rts_look_at_valid: i32,
     pub rts_look_at: Vec3,
-    /// First-person viewmodel clip (`viewmodel::IDLE`..), or `viewmodel::NONE` to hide it.
+    /// First-person viewmodel clip (a BO2 slot, `viewmodel::slot`, or a tablet clip), or
+    /// `viewmodel::NONE` to hide it.
     pub viewmodel: i32,
+    /// Which converted viewmodel plays it (the weapon's `WeaponDef::viewmodel`).
+    pub viewmodel_weapon: i32,
+    /// The gun fired this frame (muzzle flash and brass at the viewmodel's tags).
+    pub viewmodel_fired: i32,
     /// Seconds into the viewmodel clip.
     pub viewmodel_time: f32,
     /// 0..1: how far the weapon is raised to aim down the sights.
@@ -205,8 +217,9 @@ pub struct HudTimers {
 }
 
 /// Scripted input for in-game verification (`ZHBO_AUTOPILOT=1`): walks, turns, aims and fires,
-/// changes stance, jumps, glances at the map, then opens the field computer. Times are seconds in
-/// first person.
+/// changes stance, jumps, glances at the map, swaps to the pistol and fires it, swaps back, knifes,
+/// cooks and throws a frag, throws a concussion, then opens the field computer. Times are seconds
+/// in first person.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Autopilot {
     pub t: f32,
@@ -221,28 +234,43 @@ impl Autopilot {
         if (1.0..3.0).contains(&t) {
             keys.push(b.forward);
         }
+        if (2.0..2.1).contains(&t) || (2.8..2.9).contains(&t) {
+            keys.push(b.crouch);
+        }
         if (3.0..3.5).contains(&t) {
             dx = 12.0;
         }
         if (3.5..4.0).contains(&t) {
             dx = -12.0;
         }
-        if (4.5..8.0).contains(&t) {
-            keys.push(b.ads);
-        }
-        if (5.0..7.5).contains(&t) {
-            keys.push(b.fire);
-        }
-        if (8.5..8.6).contains(&t) || (9.5..9.6).contains(&t) {
-            keys.push(b.crouch);
-        }
-        if (10.0..10.1).contains(&t) {
+        if (3.6..3.7).contains(&t) {
             keys.push(b.jump);
         }
-        if (10.3..10.8).contains(&t) {
+        if (4.0..4.4).contains(&t) {
             keys.push(b.map);
         }
-        if (11.0..11.1).contains(&t) {
+        if (4.5..7.5).contains(&t) {
+            keys.push(b.ads);
+        }
+        if (5.0..7.0).contains(&t) {
+            keys.push(b.fire);
+        }
+        if (7.2..7.3).contains(&t) || (8.4..8.5).contains(&t) {
+            keys.push(b.swap);
+        }
+        if (7.8..7.9).contains(&t) || (8.1..8.2).contains(&t) {
+            keys.push(b.fire);
+        }
+        if (9.2..9.3).contains(&t) {
+            keys.push(b.melee);
+        }
+        if (9.9..10.3).contains(&t) {
+            keys.push(b.lethal);
+        }
+        if (10.8..10.9).contains(&t) {
+            keys.push(b.tactical);
+        }
+        if (11.9..12.0).contains(&t) {
             keys.push(b.field_computer);
         }
         (keys, dx)
@@ -325,6 +353,8 @@ impl Client {
             (b.swap, buttons::SWAP_WEAPON),
             (b.melee, buttons::MELEE),
             (b.field_computer, buttons::FIELD_COMPUTER),
+            (b.lethal, buttons::LETHAL),
+            (b.tactical, buttons::TACTICAL),
         ] {
             if down(key) {
                 held |= bit;
@@ -383,7 +413,7 @@ impl Client {
         let aspect = if inp.screen_h > 0.0 { inp.screen_w / inp.screen_h } else { 16.0 / 9.0 };
         let base_fov = horizontal_fov(self.cfg.cg_fov, aspect);
         let ads = player.as_ref().map_or(0.0, |p| p.arsenal.ads);
-        let ads_scale = player.as_ref().map_or(1.0, |p| p.arsenal.current().def.ads_fov_scale);
+        let ads_scale = player.as_ref().map_or(1.0, |p| p.arsenal.ads_fov_scale());
         let hfov = base_fov * (1.0 + (ads_scale - 1.0) * ads);
         self.last_hfov = hfov;
 
@@ -446,9 +476,11 @@ impl Client {
                         out.viewmodel = clip;
                         out.viewmodel_time = time;
                     } else {
-                        let (clip, time) = self.vm.update(dt, p, events);
-                        out.viewmodel = clip;
-                        out.viewmodel_time = time;
+                        out.viewmodel_fired = events.shot as i32;
+                        let f = self.vm.update(dt, p, events);
+                        out.viewmodel = f.clip;
+                        out.viewmodel_weapon = f.model;
+                        out.viewmodel_time = f.t;
                         out.viewmodel_ads = p.arsenal.ads;
                     }
                     self.build_input(inp, &mut out, allowed && !in_fc);
@@ -529,7 +561,7 @@ impl Client {
         sim.events.clear();
         // A shot's impact is flesh if the same frame scored a hit.
         let hit = mine.iter().any(|k| matches!(k, EventKind::HitMarker { .. }));
-        let fire = sim.player(me).map_or(sounds::FIRE, |p| sounds::fire_for(p.arsenal.current().def.zh_fx_weapon));
+        let fire = sim.player(me).map_or(sounds::FIRE, |p| sounds::fire_for(p.arsenal.current().def));
         for kind in &mine {
             if let EventKind::Shot { end, .. } = kind {
                 self.cues.play(fire);
@@ -583,6 +615,11 @@ impl Client {
                 EventKind::ReloadStarted => self.vm_events.reload_started = true,
                 EventKind::Swapped => self.vm_events.swapped = true,
                 EventKind::FieldComputerOpened => {}
+                EventKind::Melee => self.cues.play(sounds::MELEE_SWING),
+                EventKind::OffhandReady { .. } => self.cues.play(sounds::PULL_PIN),
+                EventKind::Thrown { .. } => self.cues.play(sounds::THROW),
+                EventKind::Launched => self.cues.play(sounds::FIRE_LAUNCHER),
+                EventKind::Exploded { at } => self.cues.play_at(sounds::EXPLOSION, at),
             }
         }
     }

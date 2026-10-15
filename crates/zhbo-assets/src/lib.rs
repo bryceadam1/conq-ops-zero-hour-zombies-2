@@ -12,3 +12,4 @@ pub mod character;
 pub mod generals;
 pub mod fx;
 pub mod sfx;
+pub mod weapons;

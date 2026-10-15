@@ -22,6 +22,21 @@ pub mod objflags {
     pub const AIRBORNE: u32 = 1 << 8;
 }
 
+/// How damage is dealt (Zero Hour damage types decide what armour applies).
+pub mod damage_kind {
+    pub const SMALL_ARMS: i32 = 0;
+    pub const MELEE: i32 = 1;
+    pub const EXPLOSION: i32 = 2;
+}
+
+/// Zero Hour disabled states the logic can apply.
+pub mod disable_kind {
+    /// Stunned infantry and vehicles (concussion, flashbang, shock charge).
+    pub const PARALYZED: i32 = 0;
+    /// Vehicles and structures shut down (EMP grenade).
+    pub const EMP: i32 = 1;
+}
+
 pub mod geom {
     pub const SPHERE: i32 = 0;
     pub const CYLINDER: i32 = 1;
@@ -67,9 +82,16 @@ pub trait LogicHost {
     fn set_controlled(&self, id: u32, controlled: bool);
     /// Play a Zero Hour weapon's fire FX/sound from `shooter` toward `target`/`pos` without damage.
     fn fire_fx(&self, shooter: u32, fx_weapon: &str, target: u32, pos: Vec3);
-    /// Deal damage as `shooter`. Returns true if the victim died from it.
-    fn damage(&self, shooter: u32, victim: u32, amount: f32, melee: bool) -> bool;
+    /// Deal damage (a [`damage_kind`]) as `shooter`. Returns true if the victim died from it.
+    fn damage(&self, shooter: u32, victim: u32, amount: f32, kind: i32) -> bool;
     fn heal(&self, id: u32, amount: f32);
+    /// Create a Zero Hour object (a projectile's model) owned by `owner`'s player; 0 if it can't.
+    fn spawn(&self, template: &str, owner: u32, pos: Vec3, yaw: f32) -> u32;
+    fn destroy(&self, id: u32);
+    /// Disable an object for `seconds` (a [`disable_kind`]).
+    fn disable(&self, id: u32, kind: i32, seconds: f32);
+    /// Play a Zero Hour FXList at a point.
+    fn fx(&self, name: &str, pos: Vec3);
 }
 
 /// Rendering services for the HUD (screen pixels, ARGB colours).
@@ -113,8 +135,12 @@ pub struct LogicApi {
     pub set_pose: Option<extern "C" fn(id: u32, pos: *const Vec3, yaw: f32, moving: i32)>,
     pub set_controlled: Option<extern "C" fn(id: u32, controlled: i32)>,
     pub fire_fx: Option<extern "C" fn(shooter: u32, fx_weapon: *const c_char, target: u32, pos: *const Vec3)>,
-    pub damage: Option<extern "C" fn(shooter: u32, victim: u32, amount: f32, melee: i32) -> i32>,
+    pub damage: Option<extern "C" fn(shooter: u32, victim: u32, amount: f32, kind: i32) -> i32>,
     pub heal: Option<extern "C" fn(id: u32, amount: f32)>,
+    pub spawn: Option<extern "C" fn(template: *const c_char, owner: u32, pos: *const Vec3, yaw: f32) -> u32>,
+    pub destroy: Option<extern "C" fn(id: u32)>,
+    pub disable: Option<extern "C" fn(id: u32, kind: i32, seconds: f32)>,
+    pub fx: Option<extern "C" fn(name: *const c_char, pos: *const Vec3)>,
 }
 
 #[repr(C)]
@@ -190,13 +216,35 @@ impl LogicHost for CLogicHost {
         }
     }
 
-    fn damage(&self, shooter: u32, victim: u32, amount: f32, melee: bool) -> bool {
-        self.0.damage.map_or(false, |f| f(shooter, victim, amount, melee as i32) != 0)
+    fn damage(&self, shooter: u32, victim: u32, amount: f32, kind: i32) -> bool {
+        self.0.damage.map_or(false, |f| f(shooter, victim, amount, kind) != 0)
     }
 
     fn heal(&self, id: u32, amount: f32) {
         if let Some(f) = self.0.heal {
             f(id, amount);
+        }
+    }
+
+    fn spawn(&self, template: &str, owner: u32, pos: Vec3, yaw: f32) -> u32 {
+        self.0.spawn.map_or(0, |f| f(cstring(template).as_ptr(), owner, &pos, yaw))
+    }
+
+    fn destroy(&self, id: u32) {
+        if let Some(f) = self.0.destroy {
+            f(id);
+        }
+    }
+
+    fn disable(&self, id: u32, kind: i32, seconds: f32) {
+        if let Some(f) = self.0.disable {
+            f(id, kind, seconds);
+        }
+    }
+
+    fn fx(&self, name: &str, pos: Vec3) {
+        if let Some(f) = self.0.fx {
+            f(cstring(name).as_ptr(), &pos);
         }
     }
 }

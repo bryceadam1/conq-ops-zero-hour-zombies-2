@@ -108,7 +108,8 @@ pub fn skin(rig: &Rig, model: &Model, mesh_prefix: &str, textures: &[Option<Stri
         debug_assert!(i == to_pivot.len());
         to_pivot.push(p);
     }
-    let lod = &model.lods[0];
+    // Some view models are bones only (the knife's base model hangs nothing of its own).
+    let Some(lod) = model.lods.first() else { return Vec::new() };
     let mut meshes = Vec::new();
     for (k, s) in model.surfaces[lod.first_surface..lod.first_surface + lod.surface_count].iter().enumerate() {
         if s.vertices.is_empty() || s.triangles.is_empty() {

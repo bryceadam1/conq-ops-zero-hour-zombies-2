@@ -11,9 +11,21 @@ use crate::sim::PlayerSim;
 pub const FIRE: &str = "ZHBO_BO2_Fire";
 pub const FIRE_PISTOL: &str = "ZHBO_BO2_FirePistol";
 
-/// The player's own gunshot for a weapon (by its Zero Hour FX weapon).
-pub fn fire_for(zh_fx_weapon: &str) -> &'static str {
-    if zh_fx_weapon.contains("B23R") { FIRE_PISTOL } else { FIRE }
+pub const FIRE_LAUNCHER: &str = "ZHBO_BO2_FireLauncher";
+pub const EXPLOSION: &str = "ZHBO_BO2_Explosion";
+pub const PULL_PIN: &str = "ZHBO_BO2_PullPin";
+pub const THROW: &str = "ZHBO_BO2_Throw";
+pub const MELEE_SWING: &str = "ZHBO_BO2_MeleeSwing";
+
+/// The player's own gunshot for a weapon: its own converted BO2 sound, else by class.
+pub fn fire_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
+    if !def.fire_sound.is_empty() {
+        def.fire_sound.as_str()
+    } else if def.class == crate::weapons::Class::Pistol {
+        FIRE_PISTOL
+    } else {
+        FIRE
+    }
 }
 pub const DRY_FIRE: &str = "ZHBO_BO2_DryFire";
 pub const HIT_MARKER: &str = "ZHBO_BO2_HitMarker";
@@ -110,7 +122,7 @@ impl Cues {
         }
 
         let w = p.arsenal.current();
-        if fire_held && !self.fire_was_held && w.ammo == 0 && w.reload_left <= 0.0 {
+        if fire_held && !self.fire_was_held && w.ammo == 0 && !w.is_reloading() {
             self.play(DRY_FIRE);
         }
         self.fire_was_held = fire_held;

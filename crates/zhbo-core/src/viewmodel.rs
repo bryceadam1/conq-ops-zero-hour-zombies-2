@@ -1,8 +1,11 @@
-//! The first-person viewmodel (BO2 arms and weapon): which animation plays, and how far into it.
+//! The first-person viewmodel: which BO2 model (arms with a weapon, a grenade, the knife or the
+//! scorestreak tablet), which of its BO2 animations, and how far into it.
 //!
-//! The engine side (`host/zhbo/ZhboViewmodel.cpp`) owns the model and the clips; this decides from
-//! the player's state and this frame's events. Idle and sprint loop; the others play once and hold
-//! their last frame until the state moves on.
+//! Clips are BO2's own viewmodel animation slots (`weapAnimFiles_t`, [`slot`]); the converter turns
+//! each weapon's animations into W3D clips named by slot, and the engine side
+//! (`host/zhbo/ZhboViewmodel.cpp`) poses the model. The state comes from the arsenal: offhand
+//! throws, melee, drop and raise, reloads (magazine or shell by shell), sprint in/loop/out, fire and
+//! last shot (hip or aimed), rechamber, then idle (empty idle when the magazine is dry).
 //!
 //! Using the field computer is a BO2 scorestreak: the weapon is swapped for the tablet, which comes
 //! up before the view leaves for the overhead camera. Coming back to first person, the tablet goes
@@ -10,18 +13,52 @@
 
 use crate::math::Vec3;
 use crate::sim::PlayerSim;
+use crate::weapons::{OffhandUse, RaiseKind, Reload, ShellPhase, WeaponDef};
 
 pub const NONE: i32 = -1;
-pub const IDLE: i32 = 0;
-pub const FIRE: i32 = 1;
-pub const RELOAD: i32 = 2;
-pub const RELOAD_EMPTY: i32 = 3;
-pub const SPRINT: i32 = 4;
-pub const RAISE: i32 = 5;
-/// Tablet clips (a separate model, the arms holding BO2's scorestreak tablet).
-pub const TABLET_PULLOUT: i32 = 6;
-pub const TABLET_IDLE: i32 = 7;
-pub const TABLET_PUTAWAY: i32 = 8;
+
+/// BO2's viewmodel animation slots (`weapAnimFiles_t`).
+pub mod slot {
+    pub const IDLE: i32 = 0x01;
+    pub const EMPTY_IDLE: i32 = 0x02;
+    pub const FIRE: i32 = 0x04;
+    pub const HOLD_FIRE: i32 = 0x05;
+    pub const LASTSHOT: i32 = 0x06;
+    pub const RECHAMBER: i32 = 0x08;
+    pub const MELEE: i32 = 0x09;
+    pub const MELEE_EMPTY: i32 = 0x0D;
+    pub const RELOAD: i32 = 0x10;
+    pub const RELOAD_EMPTY: i32 = 0x12;
+    pub const RELOAD_START: i32 = 0x13;
+    pub const RELOAD_END: i32 = 0x14;
+    pub const RAISE: i32 = 0x17;
+    pub const FIRST_RAISE: i32 = 0x18;
+    pub const DROP: i32 = 0x19;
+    pub const QUICK_RAISE: i32 = 0x1C;
+    pub const QUICK_DROP: i32 = 0x1D;
+    pub const EMPTY_RAISE: i32 = 0x1E;
+    pub const EMPTY_DROP: i32 = 0x1F;
+    pub const SPRINT_IN: i32 = 0x20;
+    pub const SPRINT_LOOP: i32 = 0x21;
+    pub const SPRINT_OUT: i32 = 0x22;
+    pub const SPRINT_EMPTY_IN: i32 = 0x23;
+    pub const SPRINT_EMPTY_LOOP: i32 = 0x24;
+    pub const SPRINT_EMPTY_OUT: i32 = 0x25;
+    pub const ADS_FIRE: i32 = 0x3D;
+    pub const ADS_LASTSHOT: i32 = 0x3E;
+    pub const ADS_RECHAMBER: i32 = 0x40;
+    pub const COUNT: i32 = 0x58;
+
+    /// Clips that loop.
+    pub fn loops(clip: i32) -> bool {
+        matches!(clip, IDLE | EMPTY_IDLE | SPRINT_LOOP | SPRINT_EMPTY_LOOP | super::TABLET_IDLE)
+    }
+}
+
+/// Tablet clips (a separate model, the arms holding BO2's scorestreak tablet), after BO2's slots.
+pub const TABLET_PULLOUT: i32 = 0x60;
+pub const TABLET_IDLE: i32 = 0x61;
+pub const TABLET_PUTAWAY: i32 = 0x62;
 
 /// Lengths of BO2's `viewmodel_tablet_pullout` (42 frames) and `_putaway` (19 frames) at 30 fps.
 pub const TABLET_PULLOUT_TIME: f32 = 41.0 / 30.0;
@@ -34,6 +71,8 @@ pub fn tablet_up(t: f32) -> (i32, f32) {
 
 /// How long the fire clip owns the viewmodel after a shot before idle resumes.
 const FIRE_HOLD: f32 = 0.3;
+/// BO2's sprint-in transition before the sprint loop.
+const SPRINT_IN_TIME: f32 = 0.25;
 
 /// What happened to the local player's weapon this frame.
 #[derive(Clone, Copy, Debug, Default)]
@@ -43,57 +82,138 @@ pub struct Events {
     pub swapped: bool,
 }
 
+/// One frame's viewmodel: which converted viewmodel (weapon), which clip, seconds into it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Frame {
+    pub model: i32,
+    pub clip: i32,
+    pub t: f32,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Viewmodel {
-    pub anim: i32,
-    pub t: f32,
+    /// The tablet going down as first person starts (seconds in), then the weapon's own clips.
+    tablet_putaway: Option<f32>,
+    /// Seconds since the last shot (fire, then rechamber), and whether it emptied the magazine.
+    since_shot: f32,
+    shot_was_last: bool,
+    shot_aimed: bool,
+    since_sprint_start: f32,
 }
 
 impl Default for Viewmodel {
     fn default() -> Self {
         // First person starts from the field computer: the tablet goes down first.
-        Viewmodel { anim: TABLET_PUTAWAY, t: 0.0 }
+        Viewmodel { tablet_putaway: Some(0.0), since_shot: 10.0, shot_was_last: false, shot_aimed: false, since_sprint_start: 0.0 }
     }
 }
 
-impl Viewmodel {
-    fn play(&mut self, anim: i32) {
-        self.anim = anim;
-        self.t = 0.0;
-    }
+/// `clip` if the weapon has it, else `fallback`.
+fn or(def: &WeaponDef, clip: i32, fallback: i32) -> i32 {
+    if def.anims == 0 || def.has_anim(clip as usize) { clip } else { fallback }
+}
 
-    /// Advance by `dt` and return (clip, seconds into it).
-    pub fn update(&mut self, dt: f32, p: &PlayerSim, ev: Events) -> (i32, f32) {
-        self.t += dt;
-        let w = p.arsenal.current();
-        if ev.swapped {
-            self.play(RAISE);
-        }
-        if ev.reload_started {
-            self.play(if w.ammo == 0 { RELOAD_EMPTY } else { RELOAD });
-        }
-        if ev.shot {
-            self.play(FIRE);
-        }
-        let done = match self.anim {
-            RELOAD | RELOAD_EMPTY => w.reload_left <= 0.0 && self.t > 0.1,
-            FIRE => self.t > FIRE_HOLD,
-            RAISE => p.arsenal.raise_left <= 0.0 && self.t > 0.1,
-            _ => false,
-        };
-        if done {
-            self.play(IDLE);
-        }
-        if self.anim == TABLET_PUTAWAY && self.t >= TABLET_PUTAWAY_TIME {
-            self.play(RAISE);
-        }
-        if self.anim == IDLE || self.anim == SPRINT {
-            let want = if p.body.sprinting && p.arsenal.ads < 0.5 { SPRINT } else { IDLE };
-            if want != self.anim {
-                self.play(want);
+impl Viewmodel {
+    /// Advance by `dt` and pick this frame's model, clip and time.
+    pub fn update(&mut self, dt: f32, p: &PlayerSim, ev: Events) -> Frame {
+        let a = &p.arsenal;
+        let w = a.current();
+        let def = w.def;
+        let model = def.viewmodel;
+        let frame = |model: i32, clip: i32, t: f32| Frame { model, clip, t: t.max(0.0) };
+
+        if let Some(t) = self.tablet_putaway.as_mut() {
+            *t += dt;
+            if *t < TABLET_PUTAWAY_TIME {
+                return frame(NONE, TABLET_PUTAWAY, *t);
             }
+            self.tablet_putaway = None;
         }
-        (self.anim, self.t)
+
+        if ev.shot {
+            self.since_shot = 0.0;
+            self.shot_was_last = w.ammo == 0;
+            self.shot_aimed = a.ads > 0.5;
+        } else {
+            self.since_shot += dt;
+        }
+        self.since_sprint_start = if p.body.sprinting { self.since_sprint_start + dt } else { 0.0 };
+        let empty = w.ammo == 0;
+
+        // Offhands: the grenade's own viewmodel pulls the pin (hold) and throws (fire).
+        if let Some(use_) = a.offhand {
+            let (lethal, clip, t) = match use_ {
+                OffhandUse::Holding { lethal, held_for } => (lethal, slot::HOLD_FIRE, held_for),
+                OffhandUse::Throwing { lethal, t } => (lethal, slot::FIRE, t),
+            };
+            let off = if lethal { a.lethal.def } else { a.tactical.def };
+            return frame(off.viewmodel, clip, t);
+        }
+        // Melee: the weapon's own (pistol whip) or BO2's knife.
+        if a.melee_left > 0.0 {
+            let t = a.melee.melee_time.max(0.3) - a.melee_left;
+            let own = if empty { slot::MELEE_EMPTY } else { slot::MELEE };
+            if def.has_anim(own as usize) {
+                return frame(model, own, t);
+            }
+            if def.has_anim(slot::MELEE as usize) {
+                return frame(model, slot::MELEE, t);
+            }
+            return frame(a.melee.viewmodel, slot::MELEE, t);
+        }
+        if a.drop_left > 0.0 {
+            let prev = &a.weapons[a.previous];
+            let clip = if a.drop_total <= prev.def.quick_drop_time + 1e-4 { slot::QUICK_DROP } else if prev.ammo == 0 { slot::EMPTY_DROP } else { slot::DROP };
+            return frame(prev.def.viewmodel, or(prev.def, clip, slot::DROP), a.drop_total - a.drop_left);
+        }
+        if a.raise_left > 0.0 {
+            let clip = match a.raise_kind {
+                RaiseKind::First => slot::FIRST_RAISE,
+                RaiseKind::Quick => slot::QUICK_RAISE,
+                RaiseKind::Normal if empty => slot::EMPTY_RAISE,
+                RaiseKind::Normal => slot::RAISE,
+            };
+            return frame(model, or(def, clip, slot::RAISE), a.raise_total - a.raise_left);
+        }
+        match w.reload {
+            Some(Reload::Magazine { t, empty, .. }) => return frame(model, if empty { or(def, slot::RELOAD_EMPTY, slot::RELOAD) } else { slot::RELOAD }, t),
+            Some(Reload::Shells { phase, t, .. }) => {
+                let clip = match phase {
+                    ShellPhase::Start => slot::RELOAD_START,
+                    ShellPhase::Insert => slot::RELOAD,
+                    ShellPhase::End => slot::RELOAD_END,
+                };
+                return frame(model, clip, t);
+            }
+            None => {}
+        }
+        if p.body.sprinting && a.ads < 0.5 {
+            let (sin, sloop) = if empty { (slot::SPRINT_EMPTY_IN, slot::SPRINT_EMPTY_LOOP) } else { (slot::SPRINT_IN, slot::SPRINT_LOOP) };
+            return if self.since_sprint_start < SPRINT_IN_TIME && def.has_anim(sin as usize) {
+                frame(model, sin, self.since_sprint_start)
+            } else {
+                frame(model, or(def, sloop, slot::SPRINT_LOOP), (self.since_sprint_start - SPRINT_IN_TIME).max(0.0))
+            };
+        }
+        if a.since_sprint < def.sprint_out_time && def.has_anim(slot::SPRINT_OUT as usize) {
+            return frame(model, if empty { or(def, slot::SPRINT_EMPTY_OUT, slot::SPRINT_OUT) } else { slot::SPRINT_OUT }, a.since_sprint);
+        }
+        // Fire (or the last shot), then the pump/bolt rechamber if the weapon has one.
+        let fire_len = FIRE_HOLD.max(def.fire_time);
+        if self.since_shot < fire_len {
+            let clip = match (self.shot_aimed, self.shot_was_last) {
+                (true, true) => or(def, slot::ADS_LASTSHOT, or(def, slot::LASTSHOT, slot::FIRE)),
+                (true, false) => or(def, slot::ADS_FIRE, slot::FIRE),
+                (false, true) => or(def, slot::LASTSHOT, slot::FIRE),
+                (false, false) => slot::FIRE,
+            };
+            return frame(model, clip, self.since_shot);
+        }
+        let rechamber = if self.shot_aimed { or(def, slot::ADS_RECHAMBER, slot::RECHAMBER) } else { slot::RECHAMBER };
+        if def.has_anim(rechamber as usize) && !self.shot_was_last && self.since_shot < fire_len + def.fire_time {
+            return frame(model, rechamber, self.since_shot - FIRE_HOLD.min(def.fire_time * 0.3));
+        }
+        frame(model, if empty { or(def, slot::EMPTY_IDLE, slot::IDLE) } else { slot::IDLE }, self.since_shot)
     }
 }
 
@@ -202,39 +322,69 @@ impl Motion {
 mod tests {
     use super::*;
     use crate::sim::{Mode, PlayerSim};
+    use crate::weapons::{OffhandUse, RaiseKind, Reload};
 
     fn player() -> PlayerSim {
         PlayerSim::spawn_for_tests()
     }
 
     #[test]
-    fn plays_the_right_clips() {
+    fn plays_bo2_clips_for_each_action() {
         let mut p = player();
         p.mode = Mode::Fps;
         p.arsenal.raise_left = 0.0;
         let mut vm = Viewmodel::default();
-        // The tablet goes down, the weapon comes up, then idle.
-        assert_eq!(vm.update(0.1, &p, Events::default()).0, TABLET_PUTAWAY);
-        assert_eq!(vm.update(TABLET_PUTAWAY_TIME, &p, Events::default()).0, RAISE);
-        assert_eq!(vm.update(0.2, &p, Events::default()).0, IDLE);
-        // A shot restarts the fire clip; idle comes back after it.
-        assert_eq!(vm.update(0.05, &p, Events { shot: true, ..Default::default() }), (FIRE, 0.0));
-        assert_eq!(vm.update(0.1, &p, Events::default()).0, FIRE);
-        assert_eq!(vm.update(0.3, &p, Events::default()).0, IDLE);
-        // Sprinting switches to the sprint loop, unless aiming.
-        p.body.sprinting = true;
-        assert_eq!(vm.update(0.05, &p, Events::default()).0, SPRINT);
+        let clip = |vm: &mut Viewmodel, p: &PlayerSim, dt: f32, ev: Events| vm.update(dt, p, ev).clip;
+        // The tablet goes down, then idle.
+        assert_eq!(clip(&mut vm, &p, 0.1, Events::default()), TABLET_PUTAWAY);
+        assert_eq!(clip(&mut vm, &p, TABLET_PUTAWAY_TIME, Events::default()), slot::IDLE);
+        // A shot plays fire; aimed, the aimed fire.
+        assert_eq!(clip(&mut vm, &p, 0.03, Events { shot: true, ..Default::default() }), slot::FIRE);
+        assert_eq!(clip(&mut vm, &p, 0.5, Events::default()), slot::IDLE);
         p.arsenal.ads = 1.0;
-        assert_eq!(vm.update(0.05, &p, Events::default()).0, IDLE);
+        assert_eq!(clip(&mut vm, &p, 0.03, Events { shot: true, ..Default::default() }), slot::ADS_FIRE);
         p.arsenal.ads = 0.0;
+        vm.update(0.5, &p, Events::default());
+        // Sprinting: sprint in, then the loop; afterwards sprint out.
+        p.body.sprinting = true;
+        assert_eq!(clip(&mut vm, &p, 0.05, Events::default()), slot::SPRINT_IN);
+        assert_eq!(clip(&mut vm, &p, 0.5, Events::default()), slot::SPRINT_LOOP);
         p.body.sprinting = false;
-        // An empty reload plays the empty clip and holds while the reload runs.
-        p.arsenal.weapons[p.arsenal.active].ammo = 0;
-        p.arsenal.weapons[p.arsenal.active].reload_left = 2.0;
-        assert_eq!(vm.update(0.05, &p, Events { reload_started: true, ..Default::default() }).0, RELOAD_EMPTY);
-        assert_eq!(vm.update(1.0, &p, Events::default()).0, RELOAD_EMPTY);
-        p.arsenal.weapons[p.arsenal.active].reload_left = 0.0;
-        assert_eq!(vm.update(0.05, &p, Events::default()).0, IDLE);
+        p.arsenal.since_sprint = 0.05;
+        assert_eq!(clip(&mut vm, &p, 0.05, Events::default()), slot::SPRINT_OUT);
+        p.arsenal.since_sprint = 10.0;
+        // Reloads: magazine, then empty.
+        let w = p.arsenal.active;
+        p.arsenal.weapons[w].reload = Some(Reload::Magazine { t: 0.5, length: 2.0, add_at: 1.0, added: false, empty: false });
+        assert_eq!(clip(&mut vm, &p, 0.05, Events::default()), slot::RELOAD);
+        p.arsenal.weapons[w].reload = Some(Reload::Magazine { t: 0.5, length: 2.0, add_at: 1.0, added: false, empty: true });
+        assert_eq!(clip(&mut vm, &p, 0.05, Events::default()), slot::RELOAD_EMPTY);
+        p.arsenal.weapons[w].reload = None;
+        // A grenade: the grenade's viewmodel pulls the pin, then throws.
+        p.arsenal.offhand = Some(OffhandUse::Holding { lethal: true, held_for: 0.2 });
+        let f = vm.update(0.05, &p, Events::default());
+        assert_eq!((f.model, f.clip), (p.arsenal.lethal.def.viewmodel, slot::HOLD_FIRE));
+        p.arsenal.offhand = Some(OffhandUse::Throwing { lethal: true, t: 0.1 });
+        assert_eq!(clip(&mut vm, &p, 0.05, Events::default()), slot::FIRE);
+        p.arsenal.offhand = None;
+        // Melee with a rifle: BO2's knife.
+        p.arsenal.melee_left = 0.3;
+        let f = vm.update(0.05, &p, Events::default());
+        assert_eq!((f.model, f.clip), (p.arsenal.melee.viewmodel, slot::MELEE));
+        p.arsenal.melee_left = 0.0;
+        // Swap: the rifle goes down, the pistol comes up.
+        p.arsenal.drop_left = 0.2;
+        p.arsenal.drop_total = 0.4;
+        p.arsenal.previous = 0;
+        p.arsenal.active = 1;
+        p.arsenal.raise_left = 0.3;
+        p.arsenal.raise_total = 0.3;
+        p.arsenal.raise_kind = RaiseKind::Normal;
+        let f = vm.update(0.05, &p, Events::default());
+        assert_eq!((f.model, f.clip), (p.arsenal.weapons[0].def.viewmodel, slot::DROP));
+        p.arsenal.drop_left = 0.0;
+        let f = vm.update(0.05, &p, Events::default());
+        assert_eq!((f.model, f.clip), (p.arsenal.weapons[1].def.viewmodel, slot::RAISE));
     }
 
     #[test]

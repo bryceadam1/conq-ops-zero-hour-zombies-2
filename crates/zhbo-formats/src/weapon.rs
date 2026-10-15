@@ -1,0 +1,502 @@
+//! Black Ops II (T6) weapon definitions, read from a fully loaded zone (`t6zone::Zone`).
+//!
+//! Every multiplayer weapon is a `WeaponVariantDef` asset in `common_mp` (`an94_mp`, `fnp45_mp`,
+//! `frag_grenade_mp`, ...) pointing at its `WeaponDef`: fire type and timings, clip and ammo, the
+//! damage curve, spread, kick, movement, reload/raise/drop timings, grenade fuse and explosion, the
+//! view/world models and the viewmodel animation for each `weapAnimFiles_t` slot. Field offsets
+//! come from the generated `t6zone::layouts`. Times are converted from milliseconds to seconds.
+
+use crate::t6zone::layouts::{WeaponAttachmentUnique as WU, WeaponDef as WD, WeaponVariantDef as WV};
+use crate::t6zone::Zone;
+
+/// `weapAnimFiles_t`: the viewmodel animation slots (`szXAnims` index).
+pub mod anim {
+    pub const IDLE: usize = 0x01;
+    pub const EMPTY_IDLE: usize = 0x02;
+    pub const FIRE_INTRO: usize = 0x03;
+    pub const FIRE: usize = 0x04;
+    pub const HOLD_FIRE: usize = 0x05;
+    pub const LASTSHOT: usize = 0x06;
+    pub const FINALSHOT: usize = 0x07;
+    pub const RECHAMBER: usize = 0x08;
+    pub const MELEE: usize = 0x09;
+    pub const MELEE_EMPTY: usize = 0x0D;
+    pub const RELOAD: usize = 0x10;
+    pub const RELOAD_EMPTY: usize = 0x12;
+    pub const RELOAD_START: usize = 0x13;
+    pub const RELOAD_END: usize = 0x14;
+    pub const RAISE: usize = 0x17;
+    pub const FIRST_RAISE: usize = 0x18;
+    pub const DROP: usize = 0x19;
+    pub const QUICK_RAISE: usize = 0x1C;
+    pub const QUICK_DROP: usize = 0x1D;
+    pub const EMPTY_RAISE: usize = 0x1E;
+    pub const EMPTY_DROP: usize = 0x1F;
+    pub const SPRINT_IN: usize = 0x20;
+    pub const SPRINT_LOOP: usize = 0x21;
+    pub const SPRINT_OUT: usize = 0x22;
+    pub const SPRINT_EMPTY_IN: usize = 0x23;
+    pub const SPRINT_EMPTY_LOOP: usize = 0x24;
+    pub const SPRINT_EMPTY_OUT: usize = 0x25;
+    pub const DETONATE: usize = 0x3A;
+    pub const ADS_FIRE: usize = 0x3D;
+    pub const ADS_LASTSHOT: usize = 0x3E;
+    pub const ADS_RECHAMBER: usize = 0x40;
+    pub const ADS_UP: usize = 0x55;
+    pub const ADS_DOWN: usize = 0x56;
+    pub const COUNT: usize = 0x58;
+}
+
+/// `weapType_t`.
+pub mod kind {
+    pub const BULLET: u32 = 0;
+    pub const GRENADE: u32 = 1;
+    pub const PROJECTILE: u32 = 2;
+    pub const GAS: u32 = 4;
+    pub const BOMB: u32 = 5;
+    pub const MINE: u32 = 6;
+    pub const MELEE: u32 = 7;
+    pub const RIOTSHIELD: u32 = 8;
+}
+
+/// `weapClass_t`.
+pub mod class {
+    pub const RIFLE: u32 = 0;
+    pub const MG: u32 = 1;
+    pub const SMG: u32 = 2;
+    pub const SPREAD: u32 = 3;
+    pub const PISTOL: u32 = 4;
+    pub const GRENADE: u32 = 5;
+    pub const ROCKETLAUNCHER: u32 = 6;
+    pub const TURRET: u32 = 7;
+    pub const NON_PLAYER: u32 = 8;
+    pub const GAS: u32 = 9;
+    pub const ITEM: u32 = 10;
+    pub const MELEE: u32 = 11;
+    pub const KILLSTREAK_ALT_STORED_WEAPON: u32 = 12;
+    pub const PISTOL_SPREAD: u32 = 13;
+}
+
+/// `weapInventoryType_t`.
+pub mod inventory {
+    pub const PRIMARY: u32 = 0;
+    pub const OFFHAND: u32 = 1;
+    pub const ITEM: u32 = 2;
+    pub const ALTMODE: u32 = 3;
+    pub const MELEE: u32 = 4;
+    pub const DWLEFTHAND: u32 = 5;
+}
+
+/// `weapFireType_t`.
+pub mod fire {
+    pub const FULLAUTO: u32 = 0;
+    pub const SINGLESHOT: u32 = 1;
+    pub const BURST2: u32 = 2;
+    pub const BURST3: u32 = 3;
+    pub const BURST4: u32 = 4;
+    pub const BURST5: u32 = 5;
+    pub const STACKED: u32 = 6;
+    pub const MINIGUN: u32 = 7;
+    pub const CHARGESHOT: u32 = 8;
+}
+
+/// `OffhandClass`.
+pub mod offhand {
+    pub const NONE: u32 = 0;
+    pub const FRAG: u32 = 1;
+    pub const SMOKE: u32 = 2;
+    pub const FLASH: u32 = 3;
+    pub const GEAR: u32 = 4;
+}
+
+/// `hitLocation_t` count (`locationDamageMultipliers`).
+pub const HIT_LOCATIONS: usize = 21;
+/// `HITLOC_HEAD`.
+pub const HIT_LOCATION_HEAD: usize = 2;
+
+/// One of a weapon's attachment combinations (`WeaponAttachmentUnique`): BO2 hangs the default
+/// magazine and every attachment's view model this way.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AttachmentUnique {
+    pub name: String,
+    /// `eAttachment` (0: none, the weapon's base parts).
+    pub kind: u32,
+    pub view_model: Option<String>,
+    pub view_model_tag: Option<String>,
+    pub world_model: Option<String>,
+}
+
+/// Min/max pitch and yaw of a kick, degrees.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Kick {
+    pub pitch: (f32, f32),
+    pub yaw: (f32, f32),
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Weapon {
+    /// `an94_mp`.
+    pub name: String,
+    /// Localize key, e.g. `WEAPON_AN94`.
+    pub display_name: String,
+    pub weap_type: u32,
+    pub class: u32,
+    pub inventory: u32,
+    pub fire_type: u32,
+    pub offhand_class: u32,
+    /// `gunXModel[0]`: the viewmodel weapon.
+    pub view_model: Option<String>,
+    pub world_model: Option<String>,
+    pub projectile_model: Option<String>,
+    /// Extra viewmodel parts (such as the magazine) and the tag each hangs from.
+    pub attach_view_models: Vec<(String, String)>,
+    /// Attachment combinations; `kind == 0` entries are the base weapon's parts (its magazine).
+    pub attachment_uniques: Vec<AttachmentUnique>,
+    /// Viewmodel animation per `anim` slot.
+    pub anims: Vec<Option<String>>,
+    pub clip_size: i32,
+    pub start_ammo: i32,
+    pub max_ammo: i32,
+    /// `start_ammo`/`max_ammo` count magazines (loaded one included), not rounds.
+    pub ammo_clip_relative: bool,
+    /// Pellets per shot (shotguns).
+    pub shot_count: i32,
+    pub shots_before_rechamber: i32,
+    // Seconds.
+    pub fire_time: f32,
+    pub last_fire_time: f32,
+    pub fire_delay: f32,
+    pub burst_delay: f32,
+    pub rechamber_time: f32,
+    pub rechamber_bolt_time: f32,
+    pub hold_fire_time: f32,
+    pub reload_time: f32,
+    pub reload_empty_time: f32,
+    pub reload_add_time: f32,
+    pub reload_empty_add_time: f32,
+    pub reload_start_time: f32,
+    pub reload_end_time: f32,
+    pub reload_start_add_time: f32,
+    pub reload_ammo_add: i32,
+    pub raise_time: f32,
+    pub first_raise_time: f32,
+    pub drop_time: f32,
+    pub quick_raise_time: f32,
+    pub quick_drop_time: f32,
+    pub sprint_in_time: f32,
+    pub sprint_out_time: f32,
+    pub ads_in_time: f32,
+    pub ads_out_time: f32,
+    pub melee_time: f32,
+    pub melee_delay: f32,
+    pub spin_up_time: f32,
+    pub spin_down_time: f32,
+    pub fuse_time: f32,
+    pub detonate_time: f32,
+    /// Damage at each of `damage_range` (inches), BO2's falloff curve.
+    pub damage: [i32; 6],
+    pub damage_range: [f32; 6],
+    pub min_player_damage: i32,
+    pub melee_damage: i32,
+    pub location_multipliers: Vec<f32>,
+    pub explosion_radius: i32,
+    pub explosion_radius_min: i32,
+    pub explosion_inner_damage: i32,
+    pub explosion_outer_damage: i32,
+    pub projectile_speed: i32,
+    pub projectile_speed_up: i32,
+    pub projectile_impact_explode: bool,
+    /// Degrees.
+    pub hip_spread_stand: (f32, f32),
+    pub hip_spread_ducked: (f32, f32),
+    pub hip_spread_prone: (f32, f32),
+    pub hip_spread_decay: f32,
+    pub hip_spread_fire_add: f32,
+    pub hip_spread_move_add: f32,
+    pub ads_spread: f32,
+    pub ads_zoom_fov: f32,
+    pub ads_view_kick: Kick,
+    pub hip_view_kick: Kick,
+    pub move_speed_scale: f32,
+    pub ads_move_speed_scale: f32,
+    pub sprint_duration_scale: f32,
+    pub max_range: f32,
+    pub bolt_action: bool,
+    pub cook_off_hold: bool,
+    pub dual_wield: bool,
+    pub clip_only: bool,
+    pub rifle_bullet: bool,
+    pub silenced: bool,
+    pub fire_sound: Option<String>,
+    pub fire_sound_player: Option<String>,
+    pub fire_last_sound_player: Option<String>,
+    pub empty_fire_sound_player: Option<String>,
+    pub projectile_explosion_sound: Option<String>,
+    pub pullback_sound_player: Option<String>,
+    pub melee_swipe_sound_player: Option<String>,
+    /// HUD art (material names).
+    pub hud_icon: Option<String>,
+    /// The HUD icon's image in the `.ipak` packs (its material is inline in the weapon).
+    pub hud_icon_hash: Option<u32>,
+    pub dpad_icon: Option<String>,
+}
+
+fn ms(z: &Zone, at: u32) -> f32 {
+    z.u32(at) as i32 as f32 / 1000.0
+}
+
+fn int(z: &Zone, at: u32) -> i32 {
+    z.u32(at) as i32
+}
+
+fn opt_str(z: &Zone, field: u32) -> Option<String> {
+    (z.u32(field) != 0).then(|| z.str_ptr(field)).filter(|s| !s.is_empty())
+}
+
+/// The name of the XModel or Material at the pointer in `field` (both start with their name).
+fn named(z: &Zone, field: u32) -> Option<String> {
+    let p = z.u32(field);
+    (p != 0).then(|| z.str_ptr(p).trim_start_matches(',').to_string()).filter(|s| !s.is_empty())
+}
+
+fn kick(z: &Zone, pitch_min: u32, pitch_max: u32, yaw_min: u32, yaw_max: u32) -> Kick {
+    Kick { pitch: (z.f32(pitch_min), z.f32(pitch_max)), yaw: (z.f32(yaw_min), z.f32(yaw_max)) }
+}
+
+/// Read the `WeaponVariantDef` at `v`.
+pub fn read(z: &Zone, v: u32) -> Weapon {
+    let d = z.u32(v + WV::weapDef);
+    let anims_at = z.u32(v + WV::szXAnims);
+    let anims = (0..anim::COUNT as u32)
+        .map(|i| if anims_at == 0 { None } else { opt_str(z, anims_at + 4 * i) })
+        .collect();
+    let mut attach_view_models = Vec::new();
+    let (models, tags) = (z.u32(v + WV::attachViewModel), z.u32(v + WV::attachViewModelTag));
+    if models != 0 && tags != 0 {
+        for i in 0..8 {
+            if let (Some(m), Some(t)) = (named(z, models + 4 * i), opt_str(z, tags + 4 * i)) {
+                attach_view_models.push((m, t));
+            }
+        }
+    }
+    let mut attachment_uniques = Vec::new();
+    let uniques = z.u32(v + WV::attachmentUniques);
+    if uniques != 0 {
+        for i in 0..95 {
+            let u = z.u32(uniques + 4 * i);
+            if u == 0 {
+                continue;
+            }
+            attachment_uniques.push(AttachmentUnique {
+                name: z.str_ptr(u + WU::szInternalName),
+                kind: z.u32(u + WU::attachmentType),
+                view_model: named(z, u + WU::viewModel),
+                view_model_tag: opt_str(z, u + WU::viewModelTag),
+                world_model: named(z, u + WU::worldModel),
+            });
+        }
+    }
+    let mut w = Weapon {
+        attachment_uniques,
+        name: z.str_ptr(v + WV::szInternalName),
+        display_name: opt_str(z, v + WV::szDisplayName).unwrap_or_default(),
+        anims,
+        attach_view_models,
+        clip_size: int(z, v + WV::iClipSize),
+        reload_time: ms(z, v + WV::iReloadTime),
+        reload_empty_time: ms(z, v + WV::iReloadEmptyTime),
+        ads_in_time: ms(z, v + WV::iAdsTransInTime),
+        ads_out_time: ms(z, v + WV::iAdsTransOutTime),
+        ads_zoom_fov: z.f32(v + WV::fAdsZoomFov1),
+        silenced: z.u8(v + WV::bSilenced) != 0,
+        dpad_icon: named(z, v + WV::dpadIcon),
+        ..Default::default()
+    };
+    if d == 0 {
+        return w;
+    }
+    let guns = z.u32(d + WD::gunXModel);
+    w.view_model = if guns != 0 { named(z, guns) } else { None };
+    // Like `gunXModel`, `worldModel` is an array of model pointers (one per attachment variant).
+    let worlds = z.u32(d + WD::worldModel);
+    w.world_model = if worlds != 0 { named(z, worlds) } else { None };
+    w.projectile_model = named(z, d + WD::projectileModel);
+    w.weap_type = z.u32(d + WD::weapType);
+    w.class = z.u32(d + WD::weapClass);
+    w.inventory = z.u32(d + WD::inventoryType);
+    w.fire_type = z.u32(d + WD::fireType);
+    w.offhand_class = z.u32(d + WD::offhandClass);
+    w.start_ammo = int(z, d + WD::iStartAmmo);
+    w.max_ammo = int(z, d + WD::iMaxAmmo);
+    w.ammo_clip_relative = z.u8(d + WD::ammoCountClipRelative) != 0;
+    w.shot_count = int(z, d + WD::shotCount);
+    w.shots_before_rechamber = int(z, d + WD::iShotsBeforeRechamber);
+    w.fire_time = ms(z, d + WD::iFireTime);
+    w.last_fire_time = ms(z, d + WD::iLastFireTime);
+    w.fire_delay = ms(z, d + WD::iFireDelay);
+    w.burst_delay = ms(z, d + WD::iBurstDelayTime);
+    w.rechamber_time = ms(z, d + WD::iRechamberTime);
+    w.rechamber_bolt_time = ms(z, d + WD::iRechamberBoltTime);
+    w.hold_fire_time = ms(z, d + WD::iHoldFireTime);
+    w.reload_add_time = ms(z, d + WD::iReloadAddTime);
+    w.reload_empty_add_time = ms(z, d + WD::iReloadEmptyAddTime);
+    w.reload_start_time = ms(z, d + WD::iReloadStartTime);
+    w.reload_end_time = ms(z, d + WD::iReloadEndTime);
+    w.reload_start_add_time = ms(z, d + WD::iReloadStartAddTime);
+    w.reload_ammo_add = int(z, d + WD::iReloadAmmoAdd);
+    w.raise_time = ms(z, d + WD::iRaiseTime);
+    w.first_raise_time = ms(z, d + WD::iFirstRaiseTime);
+    w.drop_time = ms(z, d + WD::iDropTime);
+    w.quick_raise_time = ms(z, d + WD::quickRaiseTime);
+    w.quick_drop_time = ms(z, d + WD::quickDropTime);
+    w.sprint_in_time = ms(z, d + WD::sprintInTime);
+    w.sprint_out_time = ms(z, d + WD::sprintOutTime);
+    w.melee_time = ms(z, d + WD::iMeleeTime);
+    w.melee_delay = ms(z, d + WD::iMeleeDelay);
+    w.spin_up_time = ms(z, d + WD::iSpinUpTime);
+    w.spin_down_time = ms(z, d + WD::iSpinDownTime);
+    w.fuse_time = ms(z, d + WD::fuseTime);
+    w.detonate_time = ms(z, d + WD::iDetonateTime);
+    for i in 0..6u32 {
+        w.damage[i as usize] = int(z, d + WD::damage + 4 * i);
+        w.damage_range[i as usize] = z.f32(d + WD::damageRange + 4 * i);
+    }
+    w.min_player_damage = int(z, d + WD::minPlayerDamage);
+    w.melee_damage = int(z, d + WD::iMeleeDamage);
+    let mults = z.u32(d + WD::locationDamageMultipliers);
+    w.location_multipliers = if mults != 0 { (0..HIT_LOCATIONS as u32).map(|i| z.f32(mults + 4 * i)).collect() } else { Vec::new() };
+    w.explosion_radius = int(z, d + WD::iExplosionRadius);
+    w.explosion_radius_min = int(z, d + WD::iExplosionRadiusMin);
+    w.explosion_inner_damage = int(z, d + WD::iExplosionInnerDamage);
+    w.explosion_outer_damage = int(z, d + WD::iExplosionOuterDamage);
+    w.projectile_speed = int(z, d + WD::iProjectileSpeed);
+    w.projectile_speed_up = int(z, d + WD::iProjectileSpeedUp);
+    w.projectile_impact_explode = z.u8(d + WD::bProjImpactExplode) != 0;
+    w.hip_spread_stand = (z.f32(d + WD::fHipSpreadStandMin), z.f32(d + WD::hipSpreadStandMax));
+    w.hip_spread_ducked = (z.f32(d + WD::fHipSpreadDuckedMin), z.f32(d + WD::hipSpreadDuckedMax));
+    w.hip_spread_prone = (z.f32(d + WD::fHipSpreadProneMin), z.f32(d + WD::hipSpreadProneMax));
+    w.hip_spread_decay = z.f32(d + WD::fHipSpreadDecayRate);
+    w.hip_spread_fire_add = z.f32(d + WD::fHipSpreadFireAdd);
+    w.hip_spread_move_add = z.f32(d + WD::fHipSpreadMoveAdd);
+    w.ads_spread = z.f32(d + WD::fAdsSpread);
+    w.ads_view_kick = kick(z, d + WD::fAdsViewKickPitchMin, d + WD::fAdsViewKickPitchMax, d + WD::fAdsViewKickYawMin, d + WD::fAdsViewKickYawMax);
+    w.hip_view_kick = kick(z, d + WD::fHipViewKickPitchMin, d + WD::fHipViewKickPitchMax, d + WD::fHipViewKickYawMin, d + WD::fHipViewKickYawMax);
+    w.move_speed_scale = z.f32(d + WD::moveSpeedScale);
+    w.ads_move_speed_scale = z.f32(d + WD::adsMoveSpeedScale);
+    w.sprint_duration_scale = z.f32(d + WD::sprintDurationScale);
+    w.max_range = z.f32(d + WD::maxRange);
+    w.bolt_action = z.u8(d + WD::bBoltAction) != 0;
+    w.cook_off_hold = z.u8(d + WD::bCookOffHold) != 0;
+    w.dual_wield = z.u8(d + WD::bDualWield) != 0;
+    w.clip_only = z.u8(d + WD::bClipOnly) != 0;
+    w.rifle_bullet = z.u8(d + WD::bRifleBullet) != 0;
+    w.fire_sound = opt_str(z, d + WD::fireSound);
+    w.fire_sound_player = opt_str(z, d + WD::fireSoundPlayer);
+    w.fire_last_sound_player = opt_str(z, d + WD::fireLastSoundPlayer);
+    w.empty_fire_sound_player = opt_str(z, d + WD::emptyFireSoundPlayer);
+    w.projectile_explosion_sound = opt_str(z, d + WD::projExplosionSound);
+    w.pullback_sound_player = opt_str(z, d + WD::pullbackSoundPlayer);
+    w.melee_swipe_sound_player = opt_str(z, d + WD::meleeSwipeSoundPlayer);
+    w.hud_icon = named(z, d + WD::hudIcon);
+    let icon = z.u32(d + WD::hudIcon);
+    w.hud_icon_hash = (icon != 0)
+        .then(|| crate::xmodel::read_material(z, icon))
+        .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash)))
+        .filter(|h| *h != 0);
+    w
+}
+
+/// Every weapon in a loaded zone.
+pub fn all(z: &Zone) -> Vec<Weapon> {
+    let Some(kind) = crate::fastfile::asset_type_id("weapon") else { return Vec::new() };
+    z.assets.iter().filter(|a| a.kind == kind).map(|a| read(z, a.addr)).collect()
+}
+
+impl Weapon {
+    /// The base weapon's extra view parts (the default magazine) and their tags.
+    pub fn base_view_parts(&self) -> Vec<(String, String)> {
+        let mut parts: Vec<(String, String)> = self.attach_view_models.clone();
+        for u in self.attachment_uniques.iter().filter(|u| u.kind == 0) {
+            if let Some(m) = &u.view_model {
+                parts.push((m.clone(), u.view_model_tag.clone().unwrap_or_else(|| "tag_clip".into())));
+            }
+        }
+        parts.dedup();
+        parts
+    }
+
+    pub fn anim(&self, slot: usize) -> Option<&str> {
+        self.anims.get(slot).and_then(|a| a.as_deref())
+    }
+
+    /// Damage at `distance` inches: BO2 interpolates linearly between the curve's points.
+    pub fn damage_at(&self, distance: f32) -> f32 {
+        let n = self.damage_range.iter().take_while(|r| **r > 0.0).count().max(1);
+        if distance <= self.damage_range[0] || n == 1 {
+            return self.damage[0] as f32;
+        }
+        for i in 1..n {
+            if distance <= self.damage_range[i] {
+                let (r0, r1) = (self.damage_range[i - 1], self.damage_range[i]);
+                let t = (distance - r0) / (r1 - r0).max(1e-3);
+                return self.damage[i - 1] as f32 + (self.damage[i] - self.damage[i - 1]) as f32 * t;
+            }
+        }
+        self.damage[n - 1] as f32
+    }
+
+    /// Rounds per burst (1 for everything that is not burst fire).
+    pub fn burst_count(&self) -> u32 {
+        match self.fire_type {
+            fire::BURST2 => 2,
+            fire::BURST3 => 3,
+            fire::BURST4 => 4,
+            fire::BURST5 => 5,
+            _ => 1,
+        }
+    }
+
+    /// A gun the player carries as a primary or secondary.
+    pub fn is_gun(&self) -> bool {
+        matches!(self.weap_type, kind::BULLET | kind::PROJECTILE)
+            && self.inventory == inventory::PRIMARY
+            && !matches!(self.class, class::TURRET | class::NON_PLAYER | class::KILLSTREAK_ALT_STORED_WEAPON)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn damage_curve_interpolates_like_bo2() {
+        let w = Weapon { damage: [40, 30, 0, 0, 0, 0], damage_range: [1000.0, 2000.0, 0.0, 0.0, 0.0, 0.0], ..Default::default() };
+        assert_eq!(w.damage_at(500.0), 40.0);
+        assert_eq!(w.damage_at(1500.0), 35.0);
+        assert_eq!(w.damage_at(5000.0), 30.0);
+    }
+
+    fn zone(name: &str) -> Zone {
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR");
+        let file = std::fs::read(std::path::Path::new(&dir).join(format!("zone/all/{name}.ff"))).unwrap();
+        crate::t6zone::load(&crate::fastfile::read(&file).unwrap()).unwrap()
+    }
+
+    /// Needs the player's BO2 install (with Multiplayer).
+    #[test]
+    #[ignore]
+    fn reads_the_an94() {
+        let z = zone("common_mp");
+        let w = all(&z).into_iter().find(|w| w.name == "an94_mp").expect("an94_mp");
+        assert_eq!(w.clip_size, 30);
+        assert_eq!(w.class, class::RIFLE);
+        assert!(w.fire_time > 0.03 && w.fire_time < 0.2, "{}", w.fire_time);
+        assert_eq!(w.view_model.as_deref(), Some("t6_wpn_ar_an94_view"));
+        assert!(w.anim(anim::RELOAD).is_some() && w.anim(anim::FIRE).is_some());
+        assert!(w.damage[0] > w.damage[1] && w.damage[1] > 0, "{:?}", w.damage);
+        for name in ["qcw05_mp", "fnp45_mp", "870mcs_mp", "frag_grenade_mp", "knife_mp"] {
+            let o = all(&z).into_iter().find(|w| w.name == name).unwrap();
+            assert!(o.view_model.is_some(), "{name} has a view model");
+        }
+    }
+}

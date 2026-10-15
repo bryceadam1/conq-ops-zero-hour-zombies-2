@@ -310,6 +310,75 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             Ok(())
         }
+        "weapons" => {
+            // weapons [name filter]: BO2 multiplayer weapon definitions (common_mp).
+            use zhbo_formats::weapon;
+            let zone = load_full_zone("common_mp.ff")?;
+            let filter = args.get(1).map(String::as_str);
+            for w in weapon::all(&zone) {
+                if filter.is_some_and(|f| !w.name.contains(f)) {
+                    continue;
+                }
+                println!(
+                    "{:<24} {:<18} type {} class {:>2} inv {} fire {} clip {:>3} start {:<3} max {:<3} rpm {:>5.0} dmg {:?}@{:?} reload {:.2}/{:.2} add {:.2} ads {:.2} raise {:.2} drop {:.2} spread hip {:?} ads {:.2} move {:.2} pellets {} fuse {:.2} expl {}/{}-{} vm {:?} anims {}",
+                    w.name,
+                    w.display_name,
+                    w.weap_type,
+                    w.class,
+                    w.inventory,
+                    w.fire_type,
+                    w.clip_size,
+                    w.start_ammo,
+                    w.max_ammo,
+                    if w.fire_time > 0.0 { 60.0 / w.fire_time } else { 0.0 },
+                    &w.damage[..3],
+                    &w.damage_range[..3],
+                    w.reload_time,
+                    w.reload_empty_time,
+                    w.reload_add_time,
+                    w.ads_in_time,
+                    w.raise_time,
+                    w.drop_time,
+                    w.hip_spread_stand,
+                    w.ads_spread,
+                    w.move_speed_scale,
+                    w.shot_count,
+                    w.fuse_time,
+                    w.explosion_radius,
+                    w.explosion_inner_damage,
+                    w.explosion_outer_damage,
+                    w.view_model,
+                    w.anims.iter().filter(|a| a.is_some()).count(),
+                );
+                if args.iter().any(|a| a == "--more") {
+                    println!("    attach {:?} base parts {:?} uniques {}", w.attach_view_models, w.base_view_parts(), w.attachment_uniques.len());
+                    for u in w.attachment_uniques.iter().take(6) {
+                        println!("      unique {} kind {} vm {:?} tag {:?}", u.name, u.kind, u.view_model, u.view_model_tag);
+                    }
+                    println!("    sounds fire {:?} plr {:?} icon {:?} dpad {:?} world {:?}", w.fire_sound, w.fire_sound_player, w.hud_icon, w.dpad_icon, w.world_model);
+                    println!("    kick ads {:?} hip {:?} mult {:?}", w.ads_view_kick, w.hip_view_kick, w.location_multipliers.iter().take(7).collect::<Vec<_>>());
+                    for (i, a) in w.anims.iter().enumerate() {
+                        if let Some(a) = a {
+                            print!(" {i:#x}={a}");
+                        }
+                    }
+                    println!();
+                }
+            }
+            Ok(())
+        }
+        "strings" => {
+            // strings <language zone, e.g. en_common_mp.ff> [filter]: localized strings.
+            let path = resolve(args.get(1).ok_or("strings <zone> [filter]")?, &["zone", "english"])?;
+            let file = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+            let zone = zhbo_formats::t6zone::load(&fastfile::read(&file).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
+            let mut all: Vec<_> = zhbo_formats::localize::entries(&zone).into_iter().collect();
+            all.sort();
+            for (k, v) in all.iter().filter(|(k, _)| args.get(2).is_none_or(|f| k.contains(f.as_str()))) {
+                println!("{k} = {v}");
+            }
+            Ok(())
+        }
         "probes" => {
             // probes <ff>: a map's reflection probes (GfxWorld::draw, at +396) and their images.
             let zone = load_full_zone(args.get(1).ok_or("probes <ff>")?)?;

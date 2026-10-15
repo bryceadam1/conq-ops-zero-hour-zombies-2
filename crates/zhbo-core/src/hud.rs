@@ -105,6 +105,7 @@ pub fn draw(host: &dyn ClientHost, client: &Client, player: Option<&PlayerSim>, 
     draw_team_panel(host, h, s, local_player, tablet_up);
     draw_streaks(host, w, h, s, tablet_up);
     draw_ammo(host, w, h, s, p, !tablet_up && !map_open);
+    draw_offhands(host, w, h, s, p);
     if map_open {
         draw_map(host, w, h, s, p);
     }
@@ -176,7 +177,12 @@ fn draw_crosshair(host: &dyn ClientHost, w: f32, h: f32, s: f32, client: &Client
     if p.body.sprinting || p.arsenal.is_busy() {
         return;
     }
-    let spread = p.arsenal.current().spread_deg(ads).to_radians();
+    let stance = match p.body.stance {
+        crate::movement::Stance::Stand => 0,
+        crate::movement::Stance::Crouch => 1,
+        crate::movement::Stance::Prone => 2,
+    };
+    let spread = p.arsenal.current().spread_deg(stance, ads).to_radians();
     let half_fov = client.last_hfov * 0.5;
     let gap = (spread.tan() / half_fov.tan() * (w * 0.5)).max(5.0 * s);
     let len = 10.0 * s;
@@ -430,7 +436,7 @@ fn draw_ammo(host: &dyn ClientHost, w: f32, h: f32, s: f32, p: &PlayerSim, promp
     // BO2 draws the magazine and the reserve nearly the same size.
     let big = 38.0 * s;
     let small = 32.0 * s;
-    let low = (wpn.ammo as f32) < wpn.def.mag_size as f32 * 0.3;
+    let low = (wpn.ammo as f32) < wpn.def.clip as f32 * 0.3;
     let mag_col = if wpn.ammo == 0 { RED } else if low { AMBER } else { WHITE };
     let reserve_left = draw_number(host, wpn.reserve as u32, right, base - small, small, WHITE);
     let slash_w = small * 0.5;
@@ -441,11 +447,7 @@ fn draw_ammo(host: &dyn ClientHost, w: f32, h: f32, s: f32, p: &PlayerSim, promp
 
     // The weapon's name in BO2's title box (its box is rows 22-40 of the 64-pixel art), with the
     // fire mode beside it.
-    let mode = match wpn.def.mode {
-        crate::weapons::FireMode::Auto => "FULL-AUTO",
-        crate::weapons::FireMode::Semi => "SEMI-AUTO",
-        crate::weapons::FireMode::Burst(_) => "BURST",
-    };
+    let mode = wpn.def.fire_mode_name();
     let row = ftop + 4.0 * s; // the box's top
     host.text(right, row + 1.0 * s, mode, WHITE, (12.0 * s) as i32, 2);
     let art = 20.0 * s / (18.0 / 64.0); // art height for a 20-pixel box
@@ -459,7 +461,7 @@ fn draw_ammo(host: &dyn ClientHost, w: f32, h: f32, s: f32, p: &PlayerSim, promp
     if !titled {
         slant_box(host, mid_left - 10.0 * s, row, text_w + 20.0 * s, 20.0 * s, 0x8030_3438, Some(OUTLINE));
     }
-    host.text(mid_left + text_w * 0.5, row + 3.0 * s, wpn.def.display_name, WHITE, (13.0 * s) as i32, 1);
+    host.text(mid_left + text_w * 0.5, row + 3.0 * s, &wpn.def.display_name, WHITE, (13.0 * s) as i32, 1);
 
     if !prompts {
         return;
@@ -475,6 +477,24 @@ fn draw_ammo(host: &dyn ClientHost, w: f32, h: f32, s: f32, p: &PlayerSim, promp
     };
     if let Some((text, col)) = prompt {
         host.text(w * 0.5, h * 0.5 + 46.0 * s, text, col, (13.0 * s) as i32, 1);
+    }
+}
+
+/// BO2's lethal and tactical counters: each offhand's own HUD icon with how many are left, in the
+/// weapon panel to the left of the ammo.
+fn draw_offhands(host: &dyn ClientHost, w: f32, h: f32, s: f32, p: &PlayerSim) {
+    let size = 20.0 * s;
+    let y = h - 34.0 * s;
+    let mut x = w - 182.0 * s;
+    for slot in [&p.arsenal.lethal, &p.arsenal.tactical] {
+        let col = if slot.count == 0 { 0x60FF_FFFF } else { 0xFFFF_FFFF };
+        if !host.image(&format!("ZHBO_BO2_Icon_{}", slot.def.id), x, y, size, size, col) {
+            // No art: BO2's short name.
+            let short: String = slot.def.display_name.chars().take(3).collect();
+            host.text(x + size * 0.5, y + 3.0 * s, &short, col, (10.0 * s) as i32, 1);
+        }
+        host.text(x + size + 2.0 * s, y + 6.0 * s, &slot.count.to_string(), col, (11.0 * s) as i32, 0);
+        x += size + 18.0 * s;
     }
 }
 
@@ -585,7 +605,7 @@ mod tests {
         assert!(images.contains(&"ZHBO_BO2_Digit0".to_string()));
         assert!(images.contains(&sprites::SLASH.to_string()));
         let texts = rec.texts.borrow();
-        assert!(texts.iter().any(|t| t == "MTAR"));
+        assert!(texts.iter().any(|t| t == "AN-94"));
         assert!(texts.iter().any(|t| t == "FULL-AUTO"), "BO2 fire mode beside the weapon name");
         assert!(texts.iter().any(|t| t == "FUNDS") && images.contains(&"ZHBO_BO2_Digit1".to_string()), "funds in BO2 numerals");
         assert!(texts.iter().any(|t| t.starts_with("FIELD COMPUTER")), "the ready scorestreak");

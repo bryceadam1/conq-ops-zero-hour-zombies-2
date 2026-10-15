@@ -29,6 +29,8 @@ pub struct Faction {
     /// First-person arms, and the viewmodel W3D name (`ZhboViewmodel.cpp` picks it by object).
     pub hands: &'static str,
     pub viewmodel: &'static str,
+    /// Letter in the weapon viewmodels' W3D names ([`vm_model`]).
+    pub letter: char,
 }
 
 pub const FACTIONS: &[Faction] = &[
@@ -39,6 +41,7 @@ pub const FACTIONS: &[Faction] = &[
         model: "ZHBO_USA_SKN",
         hands: "c_usa_mp_seal6_longsleeve_viewhands",
         viewmodel: "ZHBO_VMUSA_SKN",
+        letter: 'U',
     },
     Faction {
         object: "ZHBO_General_China",
@@ -47,6 +50,7 @@ pub const FACTIONS: &[Faction] = &[
         model: "ZHBO_CHN_SKN",
         hands: "c_chn_mp_pla_longsleeve_viewhands",
         viewmodel: "ZHBO_VMCHN_SKN",
+        letter: 'C',
     },
     Faction {
         object: "ZHBO_General_GLA",
@@ -55,19 +59,29 @@ pub const FACTIONS: &[Faction] = &[
         model: "ZHBO_GLA_SKN",
         hands: "c_mul_mp_pmc_longsleeve_viewhands",
         viewmodel: "ZHBO_VMGLA_SKN",
+        letter: 'G',
     },
 ];
 
-pub const VM_HIERARCHY: &str = "ZHBO_VM_SKL";
-/// Viewmodel clips, in `zhbo_core::viewmodel` order (IDLE, FIRE, RELOAD, RELOAD_EMPTY, SPRINT, RAISE).
-pub const VM_ANIMS: &[(&str, &str)] = &[
-    ("ZHBO_VM_IDL", "viewmodel_an94_idle"),
-    ("ZHBO_VM_FIR", "viewmodel_an94_fire"),
-    ("ZHBO_VM_RLD", "viewmodel_an94_reload"),
-    ("ZHBO_VM_RLE", "viewmodel_an94_reload_empty"),
-    ("ZHBO_VM_SPR", "viewmodel_an94_sprint_loop"),
-    ("ZHBO_VM_RAI", "viewmodel_an94_pullout"),
-];
+/// W3D names of weapon viewmodel `vm` (shared with `host/zhbo/ZhboViewmodel.cpp`): the hierarchy,
+/// each faction's arms holding the weapon, and the clip for each BO2 animation slot.
+pub fn vm_hierarchy(vm: i32) -> String {
+    format!("ZV{vm:02}_SKL")
+}
+pub fn vm_model(vm: i32, letter: char) -> String {
+    format!("ZV{vm:02}{letter}_SKN")
+}
+pub fn vm_anim(vm: i32, slot: usize) -> String {
+    format!("ZV{vm:02}_A{slot:02X}")
+}
+/// Projectile models (thrown grenades, rockets) and the Zero Hour object that shows one.
+pub fn projectile_model(vm: i32) -> String {
+    format!("ZPR{vm:02}_SKN")
+}
+pub fn projectile_object(id: &str) -> String {
+    format!("ZHBO_Proj_{id}")
+}
+
 /// The scorestreak tablet: each faction's arms holding it, on its own hierarchy, with clips in
 /// `zhbo_core::viewmodel` order after the weapon's (TABLET_PULLOUT, TABLET_IDLE, TABLET_PUTAWAY).
 /// Its W3D models are the weapon viewmodel's names with `_TAB` for `_SKN`.
@@ -84,8 +98,6 @@ const TABLET_SCREEN: &str = "zhbo_bo2_tablet_screen.tga";
 pub fn tablet_model(viewmodel: &str) -> String {
     viewmodel.replace("_SKN", "_TAB")
 }
-const VM_WEAPON: &str = "t6_wpn_ar_an94_view";
-const VM_MAGAZINE: &str = "t6_attach_mag_an94_view";
 
 /// (W3D animation name, BO2 animation in common_mp).
 pub const ANIMS: &[(&str, &str)] = &[
@@ -174,7 +186,7 @@ fn textures(
             let path = format!("Art\\Textures\\{name}");
             if !files.contains_key(&path) && !decals.contains(&name) {
                 let mut rgba = shrink(paks.image(img.stream_hash)?, MAX_TEXTURE);
-                if is_decal(&rgba) {
+                if is_decal(&name, &rgba) {
                     decals.insert(name.clone());
                     return Some(name);
                 }
@@ -187,10 +199,12 @@ fn textures(
         .collect()
 }
 
-/// Mostly transparent: at least half the texels below half alpha.
-fn is_decal(img: &Rgba) -> bool {
+/// A BO2 decal (clan tag, emblem, visor and watch glass, frost swatch): mostly transparent, and
+/// named as one. Weapon colour maps can be mostly clear too (BO2 keeps other data in that alpha).
+fn is_decal(name: &str, img: &Rgba) -> bool {
+    const DECALS: &[&str] = &["clan", "emblem", "visor", "glass", "swatch", "decal"];
     let clear = img.pixels.chunks_exact(4).filter(|p| p[3] < 128).count();
-    clear * 2 >= img.pixels.len() / 4
+    DECALS.iter().any(|d| name.contains(d)) && clear * 2 >= img.pixels.len() / 4
 }
 
 /// How strongly the brightest, glossiest specular texel reflects the environment.
@@ -318,37 +332,129 @@ pub fn replace_draw(ini: &str, object: &str, draw: &str) -> Result<String, Strin
     Ok(format!("{}{}{}", &ini[..draw_at], draw, &ini[end..]))
 }
 
-/// The first-person viewmodels: each faction's arms holding the AN-94 and its magazine, on one
-/// shared hierarchy, with the clips the core's viewmodel state machine plays.
-fn viewmodels(common: &Zone, zones: &[Zone], paks: &Paks, out: &mut BTreeMap<String, Vec<u8>>) -> Result<String, String> {
-    let gun = xmodel::find(common, VM_WEAPON).map_err(|e| e.to_string())?;
-    let mag = xmodel::find(common, VM_MAGAZINE).map_err(|e| e.to_string())?;
-    let mut rig: Option<Rig> = None;
-    let mut made = Vec::new();
+/// The magazine model of a gun's viewmodel: BO2 names them `t6_attach_mag_<weapon>_view` after a
+/// part of the gun's own view model name (the zones don't link them for base weapons).
+fn magazine(common: &Zone, view_model: &str) -> Option<xmodel::Model> {
+    const SKIP: &[&str] = &["t6", "wpn", "ar", "smg", "lmg", "mg", "pistol", "sniper", "shotty", "launch", "view", "base"];
+    view_model
+        .trim_end_matches("_view")
+        .split('_')
+        .rev()
+        .filter(|t| t.len() >= 3 && !SKIP.contains(t))
+        .find_map(|t| xmodel::find(common, &format!("t6_attach_mag_{t}_view")).ok())
+}
+
+/// A model as BO2 loads it: `patch_mp` over `common_mp` (some `common_mp` models are empty stubs
+/// that the patch replaces, such as the frag grenade's view model).
+fn find_model(patch: &Zone, common: &Zone, name: &str) -> Result<xmodel::Model, String> {
+    let patched = xmodel::find(patch, name).ok().filter(|m| !m.lods.is_empty());
+    patched.map_or_else(|| xmodel::find(common, name).map_err(|e| format!("{name}: {e}")), Ok)
+}
+
+/// A notetrack source: viewmodel, clip (BO2 slot or tablet clip) and the BO2 animation.
+pub type Clip = (i32, i32, xanim::Anim);
+
+/// The first-person viewmodels of `converted` weapons: each faction's arms holding the weapon (and
+/// its magazine), on one hierarchy per weapon, with a W3D clip for every BO2 animation slot the
+/// weapon has. Sets each definition's `viewmodel`. Returns a summary and the clips (for sounds).
+fn weapon_viewmodels(
+    patch: &Zone,
+    common: &Zone,
+    zones: &[Zone],
+    paks: &Paks,
+    out: &mut BTreeMap<String, Vec<u8>>,
+    bo2: &[zhbo_formats::weapon::Weapon],
+    defs: &mut [zhbo_core::weapons::WeaponDef],
+    converted: &[String],
+) -> Result<(String, Vec<Clip>), String> {
     let mut decals = BTreeSet::new();
-    for (f, zone) in FACTIONS.iter().zip(zones) {
-        let hands = xmodel::find(zone, f.hands).map_err(|e| e.to_string())?;
-        let rig = rig.get_or_insert_with(|| Rig::new(&hands, &[(&gun, "tag_weapon"), (&mag, "j_gun")]));
-        let hands_tex = textures(&hands, paks, out, &mut decals);
+    let mut made = Vec::new();
+    let mut clips = Vec::new();
+    let mut anim_cache: BTreeMap<String, Option<xanim::Anim>> = BTreeMap::new();
+    for (vm, id) in converted.iter().enumerate() {
+        let vm = vm as i32;
+        let Some(w) = bo2.iter().find(|w| &w.name == id) else { continue };
+        let Some(view) = w.view_model.as_deref() else { continue };
+        let gun = find_model(patch, common, view).map_err(|e| format!("{id}: {e}"))?;
+        let mag = if w.is_gun() { magazine(common, view) } else { None };
+        let mut parts: Vec<(&xmodel::Model, &str)> = vec![(&gun, "tag_weapon")];
+        if let Some(m) = &mag {
+            parts.push((m, "j_gun"));
+        }
         let gun_tex = textures(&gun, paks, out, &mut decals);
-        let mag_tex = textures(&mag, paks, out, &mut decals);
-        let mut meshes = character::skin(rig, &hands, "H", &hands_tex);
-        meshes.extend(character::skin(rig, &gun, "G", &gun_tex));
-        meshes.extend(character::skin(rig, &mag, "M", &mag_tex));
+        let mag_tex = mag.as_ref().map(|m| textures(m, paks, out, &mut decals));
+        let mut rig: Option<Rig> = None;
+        for (f, zone) in FACTIONS.iter().zip(zones) {
+            let hands = xmodel::find(zone, f.hands).map_err(|e| e.to_string())?;
+            let rig = rig.get_or_insert_with(|| Rig::new(&hands, &parts));
+            let hands_tex = textures(&hands, paks, out, &mut decals);
+            let mut meshes = character::skin(rig, &hands, "H", &hands_tex);
+            meshes.extend(character::skin(rig, &gun, "G", &gun_tex));
+            if let (Some(m), Some(t)) = (&mag, &mag_tex) {
+                meshes.extend(character::skin(rig, m, "M", t));
+            }
+            finish(&mut meshes, &decals);
+            let name = vm_model(vm, f.letter);
+            out.insert(format!("Art\\W3D\\{name}.w3d"), w3d::skin_model(&name, &vm_hierarchy(vm), &meshes));
+        }
+        let rig = rig.ok_or("no viewmodel arms")?;
+        let hierarchy = vm_hierarchy(vm);
+        out.insert(format!("Art\\W3D\\{hierarchy}.w3d"), rig.hierarchy_file(&hierarchy));
+        let mut n = 0;
+        for (slot, anim_name) in w.anims.iter().enumerate() {
+            let Some(anim_name) = anim_name else { continue };
+            let anim = anim_cache.entry(anim_name.clone()).or_insert_with(|| xanim::find(common, anim_name).ok());
+            let Some(anim) = anim else { continue };
+            let (frames, channels) = character::animate(&rig, anim);
+            let fps = anim.frame_rate.round().max(1.0) as u32;
+            let clip = vm_anim(vm, slot);
+            out.insert(format!("Art\\W3D\\{clip}.w3d"), w3d::animation(&clip, &hierarchy, frames, fps, &channels));
+            clips.push((vm, slot as i32, anim.clone()));
+            n += 1;
+        }
+        if let Some(d) = defs.iter_mut().find(|d| &d.id == id) {
+            d.viewmodel = vm;
+        }
+        made.push(format!("{id} ({n} clips{})", if mag.is_some() { ", magazine" } else { "" }));
+    }
+    Ok((format!("viewmodels {} (decals dropped: {})", made.join(", "), decals.into_iter().collect::<Vec<_>>().join(" ")), clips))
+}
+
+/// Thrown and launched things for `converted` weapons: their BO2 projectile (or world) model as a
+/// W3D model, and a Zero Hour object that shows it (`ZHBO_Proj_<id>`). Sets `projectile_object`.
+fn projectiles(patch: &Zone, common: &Zone, paks: &Paks, out: &mut BTreeMap<String, Vec<u8>>, bo2: &[zhbo_formats::weapon::Weapon], defs: &mut [zhbo_core::weapons::WeaponDef], converted: &[String]) -> String {
+    use zhbo_core::weapons::Class;
+    let mut ini = String::from("; Generated by zhbo-assets: thrown and launched BO2 weapons, moved by zhbo-core.\n\n");
+    let mut decals = BTreeSet::new();
+    let mut made = Vec::new();
+    for (vm, id) in converted.iter().enumerate() {
+        let Some(w) = bo2.iter().find(|w| &w.name == id) else { continue };
+        let Some(d) = defs.iter_mut().find(|d| &d.id == id) else { continue };
+        let throws = d.class.is_offhand() || d.class == Class::Launcher || d.projectile_speed > 0.0;
+        if !throws || d.class == Class::Melee {
+            continue;
+        }
+        let Some(model_name) = w.projectile_model.clone().or_else(|| w.world_model.clone()) else { continue };
+        let Ok(model) = find_model(patch, common, &model_name) else { continue };
+        let rig = Rig::new(&model, &[]);
+        let tex = textures(&model, paks, out, &mut decals);
+        let mut meshes = character::skin(&rig, &model, "P", &tex);
         finish(&mut meshes, &decals);
-        out.insert(format!("Art\\W3D\\{}.w3d", f.viewmodel), w3d::skin_model(f.viewmodel, VM_HIERARCHY, &meshes));
-        made.push(f.viewmodel);
+        let name = projectile_model(vm as i32);
+        let hierarchy = name.replace("_SKN", "_SKL");
+        out.insert(format!("Art\\W3D\\{name}.w3d"), w3d::skin_model(&name, &hierarchy, &meshes));
+        out.insert(format!("Art\\W3D\\{hierarchy}.w3d"), rig.hierarchy_file(&hierarchy));
+        let object = projectile_object(id);
+        ini.push_str(&format!(
+            "Object {object}\n  Draw = W3DModelDraw ModuleTag_01\n    DefaultConditionState\n      Model = {name}\n    End\n  End\n  \
+             KindOf = NO_COLLIDE INERT IMMOBILE UNATTACKABLE CLICK_THROUGH\n  Body = InactiveBody ModuleTag_02\n  End\n  \
+             Geometry = Sphere\n  GeometryMajorRadius = 1.0\n  GeometryIsSmall = Yes\nEnd\n\n"
+        ));
+        d.projectile_object = object;
+        made.push(id.as_str());
     }
-    let rig = rig.ok_or("no viewmodel arms")?;
-    out.insert(format!("Art\\W3D\\{VM_HIERARCHY}.w3d"), rig.hierarchy_file(VM_HIERARCHY));
-    for (w3d_name, bo2_name) in VM_ANIMS {
-        let anim = xanim::find(common, bo2_name).map_err(|e| e.to_string())?;
-        let (frames, channels) = character::animate(&rig, &anim);
-        let fps = anim.frame_rate.round().max(1.0) as u32;
-        out.insert(format!("Art\\W3D\\{w3d_name}.w3d"), w3d::animation(w3d_name, VM_HIERARCHY, frames, fps, &channels));
-    }
-    tablets(common, zones, paks, out, &mut decals)?;
-    Ok(format!("viewmodels {} with tablets (decals dropped: {})", made.join(", "), decals.into_iter().collect::<Vec<_>>().join(" ")))
+    out.insert("Data\\INI\\Object\\ZHBO_BO2_Projectiles.ini".into(), ini.into_bytes());
+    format!("projectiles {}", made.join(", "))
 }
 
 /// Each faction's arms holding the scorestreak tablet, with its lit screen.
@@ -468,22 +574,37 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
         let fps = anim.frame_rate.round().max(1.0) as u32;
         out.insert(format!("Art\\W3D\\{w3d_name}.w3d"), w3d::animation(w3d_name, HIERARCHY, frames, fps, &channels));
     }
-    summary.push(viewmodels(&common, &zones, &paks, &mut out)?);
+    // Every BO2 multiplayer weapon a player can carry, as the core's weapon table; art for the
+    // converted ones (the loadout by default).
+    let bo2 = zhbo_formats::weapon::all(&common);
+    let names = crate::weapons::names(bo2_dir);
+    let mut defs: Vec<zhbo_core::weapons::WeaponDef> =
+        bo2.iter().filter(|w| crate::weapons::is_player_weapon(w)).map(|w| crate::weapons::to_def(w, &names)).collect();
+    let converted = crate::weapons::converted(&bo2);
+    let patch = load_zone(bo2_dir, crate::fx::ZONE)?;
+    let (vm_summary, mut clips) = weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &mut defs, &converted)?;
+    summary.push(vm_summary);
+    let mut tablet_decals = BTreeSet::new();
+    tablets(&common, &zones, &paks, &mut out, &mut tablet_decals)?;
+    for (i, (_, bo2_name)) in TABLET_ANIMS.iter().enumerate() {
+        let anim = xanim::find(&common, bo2_name).map_err(|e| e.to_string())?;
+        clips.push((zhbo_core::viewmodel::NONE, zhbo_core::viewmodel::TABLET_PULLOUT + i as i32, anim));
+    }
+    summary.push(projectiles(&patch, &common, &paks, &mut out, &bo2, &mut defs, &converted));
 
-    // BO2 sound effects, including the viewmodel clips' sound notetracks.
+    // BO2 sound effects: the general ones, each converted weapon's own shots, and the viewmodel
+    // clips' sound notetracks.
     let world = load_zone(bo2_dir, crate::sfx::WORLD_ZONE)?;
-    let clips = VM_ANIMS
-        .iter()
-        .chain(TABLET_ANIMS)
-        .map(|(_, bo2)| xanim::find(&common, bo2).map_err(|e| e.to_string()))
-        .collect::<Result<Vec<_>, _>>()?;
-    let (sound_files, sound_summary) = crate::sfx::files(&common, &world, bo2_dir, &clips)?;
+    let (extra, fx_ini) = crate::weapons::sounds_and_fx(&bo2, &mut defs, &converted);
+    out.insert("Data\\INI\\Weapon\\ZHBO_BO2_Weapons.ini".into(), fx_ini.into_bytes());
+    let (sound_files, sound_summary) = crate::sfx::files(&common, &world, bo2_dir, &clips, &extra)?;
     out.extend(sound_files);
     summary.push(sound_summary);
+    out.insert(crate::weapons::TABLE_PATH.into(), zhbo_core::weapons::format_table(&defs).into_bytes());
+    summary.push(format!("{} weapons in the table", defs.len()));
 
     // First-person muzzle flash with BO2's flash sprite.
-    let fx_zone = load_zone(bo2_dir, crate::fx::ZONE)?;
-    out.extend(crate::fx::files(&fx_zone, &|hash| paks.image(hash))?);
+    out.extend(crate::fx::files(&patch, &|hash| paks.image(hash))?);
     out.insert(INI_PATH.to_string(), ini.into_bytes());
     let textures = out.keys().filter(|k| k.ends_with(".tga")).count();
     Ok((out.into_iter().collect(), format!("{}; {textures} textures, {} animations", summary.join(", "), ANIMS.len())))
@@ -492,6 +613,64 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every BO2 multiplayer weapon a player can carry, from this machine's install: its definition
+    /// converts and plays by BO2's rules in the simulation (`zhbo_core::conformance`), and its
+    /// viewmodel (arms, weapon, magazine) and every BO2 animation convert.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn every_mp_weapon_converts_and_plays_like_bo2() {
+        let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
+        let common = load_zone(&bo2_dir, "common_mp").unwrap();
+        let patch = load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
+        let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(&bo2_dir, f.zone).unwrap()).collect();
+        let paks = Paks::open(&bo2_dir).unwrap();
+        let names = crate::weapons::names(&bo2_dir);
+        let bo2 = zhbo_formats::weapon::all(&common);
+        let mut defs: Vec<zhbo_core::weapons::WeaponDef> =
+            bo2.iter().filter(|w| crate::weapons::is_player_weapon(w)).map(|w| crate::weapons::to_def(w, &names)).collect();
+        assert!(defs.len() > 50, "{} player weapons", defs.len());
+        // The table carries every one of them unchanged.
+        let again = zhbo_core::weapons::parse_table(&zhbo_core::weapons::format_table(&defs)).unwrap();
+        for (a, b) in again.iter().zip(&defs) {
+            assert_eq!(a, b, "{} round trip", b.id);
+        }
+        assert_eq!(again.len(), defs.len());
+
+        let mut fails = Vec::new();
+        let ids: Vec<String> = defs.iter().map(|d| d.id.clone()).collect();
+        for (i, id) in ids.iter().enumerate() {
+            let mut out = BTreeMap::new();
+            match weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &mut defs, std::slice::from_ref(id)) {
+                Ok((summary, clips)) => {
+                    let d = defs.iter().find(|d| &d.id == id).unwrap();
+                    let models = out.keys().filter(|k| k.contains("_SKN")).count();
+                    if models != FACTIONS.len() {
+                        fails.push(format!("{id}: {models} viewmodels"));
+                    }
+                    if clips.is_empty() && d.class != zhbo_core::weapons::Class::Equipment {
+                        fails.push(format!("{id}: no animations ({summary})"));
+                    }
+                    let def: &'static zhbo_core::weapons::WeaponDef = Box::leak(Box::new(d.clone()));
+                    fails.extend(zhbo_core::conformance::check(def));
+                    println!(
+                        "{i:2} {id:<24} {:<22} {:?} {:>9?} clip {:>3}/{:<3} rpm {:>5.0} dmg {:>3.0}-{:<3.0} {} clips",
+                        d.display_name,
+                        d.class,
+                        d.fire,
+                        d.clip,
+                        d.start_reserve,
+                        d.rounds_per_minute(),
+                        d.damage[0],
+                        d.damage[1],
+                        clips.len()
+                    );
+                }
+                Err(e) => fails.push(format!("{id}: {e}")),
+            }
+        }
+        assert!(fails.is_empty(), "{} problems:\n{}", fails.len(), fails.join("\n"));
+    }
 
     fn solid(w: u32, h: u32, p: [u8; 4]) -> Rgba {
         Rgba { width: w, height: h, pixels: p.repeat((w * h) as usize) }
@@ -512,8 +691,9 @@ mod tests {
 
     #[test]
     fn decals_are_mostly_clear() {
-        assert!(is_decal(&solid(4, 4, [255, 255, 255, 0])));
-        assert!(!is_decal(&solid(4, 4, [255, 255, 255, 255])));
+        assert!(is_decal("zhbo_clan_font_c.tga", &solid(4, 4, [255, 255, 255, 0])));
+        assert!(!is_decal("zhbo_clan_font_c.tga", &solid(4, 4, [255, 255, 255, 255])));
+        assert!(!is_decal("zhbo_mtl_t6_wpn_pistol_fnp45_col.tga", &solid(4, 4, [255, 255, 255, 0])), "weapon colour maps stay");
     }
 
     #[test]

@@ -37,8 +37,10 @@ Set `ZHBO_ZH_DIR` / `ZHBO_BO2_DIR` to point at installs the detector does not fi
 | Crouch / Prone | C / Ctrl |
 | Jump | Space |
 | Reload | R |
-| Switch weapon (MTAR ⇄ B23R) | 1 or mouse wheel |
+| Switch weapon (AN-94 ⇄ Tac-45) | 1 or mouse wheel |
 | Knife | V |
+| Throw lethal (frag; hold to cook) | G |
+| Throw tactical (concussion) | Q |
 | Field computer (back to RTS) | F |
 | Whole map (Zero Hour's radar, needs radar) | Tab (hold) |
 | Game menu | Esc |
@@ -102,10 +104,15 @@ The two scripts take `-Dist` to test a given build.
 
 ## Status and known limits
 
-* The General and the first-person arms and AN-94 are BO2 models converted at launch from your
+* The General and the first-person arms and weapons are BO2 models converted at launch from your
   install (`ConquerOps_BO2.big`). W3D skins take one bone per vertex, so joints bend a little less
   smoothly than in BO2, and the viewmodel can poke into walls or enemies standing very close.
-  Only the AN-94 is converted so far.
+* Weapons are BO2's own: every multiplayer weapon's definition (fire mode and rate, damage curve,
+  spread, kick, reload/raise/ADS timings, grenade fuses and blasts) is converted into
+  `Data\ConquerOps\weapons.ini`, and the General's loadout (AN-94, Tac-45, frag, concussion, knife;
+  Lightweight, Fast Hands, Dexterity) plays with BO2's viewmodel animations for every action. Art is
+  converted for the loadout; `ZHBO_CONVERT_ALL_WEAPONS=1` converts every weapon (for future pickups).
+  Attachments, killstreak weapons and equipment placement (Claymore, C4, Trophy) are not in yet.
 * BO2's HUD font also lives in the fastfiles, so text uses Bahnschrift (Windows' DIN-style font),
   falling back to Arial. macOS asks for DIN Alternate, which has not been checked yet.
 * First person sounds like BO2: gunshots, reload foley, hit markers, footsteps and the low-health

@@ -15,7 +15,7 @@ use zhbo_formats::iwi::Rgba;
 use zhbo_formats::t6zone::Zone;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive.
-pub const VERSION: u32 = 16;
+pub const VERSION: u32 = 20;
 pub const ARCHIVE_NAME: &str = "ConquerOps_BO2.big";
 pub const VERSION_FILE: &str = "Data\\ConquerOps\\bo2_hud_version.txt";
 const TEXTURE: &str = "zhbo_bo2_hud.tga";
@@ -27,6 +27,8 @@ pub enum Source {
     Hash(u32),
     /// The first image of a BO2 material in a zone.
     Material(&'static str, &'static str),
+    /// A material in `common_mp` named at conversion time (weapon HUD icons).
+    Dynamic(String),
 }
 
 pub struct Sprite {
@@ -47,18 +49,18 @@ const fn hash(name: &'static str, hash: u32, max: u32) -> Sprite {
 
 /// The BO2 HUD art Conquer Ops uses.
 pub const SPRITES: &[Sprite] = &[
-    // The slanted HUD numerals (`hud_mp_num_big_*`).
-    hash("ZHBO_BO2_Digit0", 0x0ad6_b469, 64),
-    hash("ZHBO_BO2_Digit1", 0x1023_a304, 64),
-    hash("ZHBO_BO2_Digit2", 0x0341_43b7, 64),
-    hash("ZHBO_BO2_Digit3", 0x147c_846c, 64),
-    hash("ZHBO_BO2_Digit4", 0x056b_fdc0, 64),
-    hash("ZHBO_BO2_Digit5", 0x0566_ac71, 64),
-    hash("ZHBO_BO2_Digit6", 0x0979_d350, 64),
-    hash("ZHBO_BO2_Digit7", 0x0b81_1161, 64),
-    hash("ZHBO_BO2_Digit8", 0x08c6_95e9, 64),
-    hash("ZHBO_BO2_Digit9", 0x1aa6_7f7b, 64),
-    hash("ZHBO_BO2_Slash", 0x010f_77fb, 64),
+    // The slanted HUD numerals.
+    mat("ZHBO_BO2_Digit0", "hud_mp_num_big_0", 64),
+    mat("ZHBO_BO2_Digit1", "hud_mp_num_big_1", 64),
+    mat("ZHBO_BO2_Digit2", "hud_mp_num_big_2", 64),
+    mat("ZHBO_BO2_Digit3", "hud_mp_num_big_3", 64),
+    mat("ZHBO_BO2_Digit4", "hud_mp_num_big_4", 64),
+    mat("ZHBO_BO2_Digit5", "hud_mp_num_big_5", 64),
+    mat("ZHBO_BO2_Digit6", "hud_mp_num_big_6", 64),
+    mat("ZHBO_BO2_Digit7", "hud_mp_num_big_7", 64),
+    mat("ZHBO_BO2_Digit8", "hud_mp_num_big_8", 64),
+    mat("ZHBO_BO2_Digit9", "hud_mp_num_big_9", 64),
+    mat("ZHBO_BO2_Slash", "hud_mp_num_big_slash", 64),
     // Blood splatter, used for the damage overlay.
     hash("ZHBO_BO2_Blood", 0x0594_8908, 256),
     // Red-dot sight glow.
@@ -92,8 +94,8 @@ pub const SPRITES: &[Sprite] = &[
 
 #[derive(Debug, Default)]
 pub struct Report {
-    pub found: Vec<&'static str>,
-    pub missing: Vec<(&'static str, String)>,
+    pub found: Vec<String>,
+    pub missing: Vec<(String, String)>,
     /// The BO2 Generals: what was converted, or why not.
     pub generals: Option<Result<String, String>>,
 }
@@ -143,10 +145,27 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     let mut report = Report::default();
     let paks = crate::generals::Paks::open(bo2_dir)?;
     let mut zones: HashMap<&str, Zone> = HashMap::new();
-    let mut found: Vec<(&Sprite, Rgba)> = Vec::new();
-    for s in SPRITES {
-        let hash = match s.source {
-            Source::Hash(h) => Some(h),
+    let mut found: Vec<(String, Rgba)> = Vec::new();
+    // The fixed sprites, then each converted weapon's own HUD icon (`ZHBO_BO2_Icon_<weapon>`, the
+    // lethal and tactical counters use them).
+    let mut wanted: Vec<(String, Source, u32)> = SPRITES
+        .iter()
+        .map(|s| (s.name.to_string(), match &s.source {
+            Source::Hash(h) => Source::Hash(*h),
+            Source::Material(z, m) => Source::Material(z, m),
+            Source::Dynamic(m) => Source::Dynamic(m.clone()),
+        }, s.max))
+        .collect();
+    zones.insert("common_mp", crate::generals::load_zone(bo2_dir, "common_mp")?);
+    let weapons = zhbo_formats::weapon::all(&zones["common_mp"]);
+    for id in crate::weapons::converted(&weapons) {
+        if let Some(hash) = weapons.iter().find(|w| w.name == id).and_then(|w| w.hud_icon_hash) {
+            wanted.push((format!("ZHBO_BO2_Icon_{id}"), Source::Hash(hash), 64));
+        }
+    }
+    for (name, source, max) in &wanted {
+        let hash = match source {
+            Source::Hash(h) => Some(*h),
             Source::Material(zone, material) => {
                 if !zones.contains_key(zone) {
                     zones.insert(zone, crate::generals::load_zone(bo2_dir, zone)?);
@@ -154,15 +173,17 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                 zhbo_formats::xmodel::find_material(&zones[zone], material)
                     .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash)))
             }
+            Source::Dynamic(material) => zhbo_formats::xmodel::find_material(&zones["common_mp"], material)
+                .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash))),
         };
         match hash.and_then(|h| paks.image(h)) {
             Some(img) => {
-                let mut img = crate::generals::shrink(img, s.max);
+                let mut img = crate::generals::shrink(img, *max);
                 additive_to_alpha(&mut img);
-                found.push((s, img));
-                report.found.push(s.name);
+                found.push((name.clone(), img));
+                report.found.push(name.clone());
             }
-            None => report.missing.push((s.name, "not in this install".into())),
+            None => report.missing.push((name.clone(), "not in this install".into())),
         }
     }
     // A pixel of padding around each sprite keeps filtering from bleeding between them.
@@ -179,7 +200,7 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
         ini.push_str(&format!(
             "MappedImage {}\n  Texture = {TEXTURE}\n  TextureWidth = {ATLAS}\n  TextureHeight = {ATLAS}\n  \
              Coords = Left:{} Top:{} Right:{} Bottom:{}\n  Status = NONE\nEnd\n\n",
-            s.name,
+            s,
             at.0,
             at.1,
             at.0 + img.width - 1, // Zero Hour's Coords are inclusive

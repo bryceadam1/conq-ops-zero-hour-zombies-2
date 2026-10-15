@@ -15,6 +15,7 @@
 
 #[allow(clippy::all)]
 pub mod generated;
+pub mod layouts;
 
 use crate::fastfile;
 use std::fmt;

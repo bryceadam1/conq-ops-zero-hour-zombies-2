@@ -239,6 +239,31 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     shrinking onto its spot, not a bug. `ZHBO_FORCE_RADAR=1` gives the autopilot player radar.
     The SDL key reader maps Tab (0x09).
 
+59. Struct layouts: `tools/zonecode/RustLayoutTemplate.cpp` (preset `layoutrust`) prints every T6
+    struct's size and field offsets into `crates/zhbo-formats/src/t6zone/layouts.rs`, so assets' plain
+    fields are read by name (it agrees with the hand-measured SndAlias 96 / SndAliasList 20 / GfxImage 80).
+60. BO2 weapons (`zhbo_formats::weapon`): every MP weapon is a `WeaponVariantDef` in `common_mp`.
+    `gunXModel` and `worldModel` are arrays of pointers. Gun start/max ammo count magazines even when
+    `ammoCountClipRelative` is false (AN-94 4/8 = 30/90, 210 max). The damage curve has six slots;
+    unused middle slots have range 0 and the last is the minimum damage beyond the curve.
+    `adsMoveSpeedScale` multiplies a base ADS walk (rifles 1, LMGs 0.8, SMGs/pistols/shotguns 2).
+    Base weapons don't link their magazine model (match `t6_attach_mag_<part>_view` to the view
+    model name). Some `common_mp` models are empty stubs that `patch_mp` replaces (the frag's view
+    model): look in `patch_mp` first. `knife_mp` points at animations no longer shipped; quick
+    melee uses `knife_held_mp`. HUD icons are materials inline in the weapon (follow `hudIcon`).
+    English names are in `zone/english/en_code_post_gfx_mp.ff` (11,300 strings) with `en_patch_mp`
+    over it; three grenades' keys differ (`WEAPON_FLASHBANG`, `WEAPON_EMPGRENADE`,
+    `WEAPON_STUN_GRENADE`). BO2's perk descriptions come from the same strings; their tuning
+    numbers are set in BO2 script, so `perk_values` uses documented defaults.
+61. The hand-picked hash for the HUD numeral 9 was wrong (every "90" showed as "0"); numerals now
+    come by material name (`hud_mp_num_big_*`).
+62. Weapons in the core (ABI 9): `weapons.rs` holds the catalog (the converted table, or a built-in
+    stand-in), loadout, perks and arsenal; `projectiles.rs` flies grenades and rockets (bounce,
+    stick, cook, fuse, blast, stun = `DISABLED_PARALYZED`, EMP = `DISABLED_EMP`). Viewmodel clips
+    are BO2's `weapAnimFiles_t` slots (`ZVnn_SKL.ZVnn_Ann`). `conformance::check` measures a
+    weapon against its definition; `generals::tests::every_mp_weapon_converts_and_plays_like_bo2`
+    runs it on all 59 player weapons in the install, with every viewmodel and animation converted.
+
 ## Verification log
 
 * Baseline source build (no mod) runs against Steam data with `-useCwd -win`: intro video plays (screenshot).
@@ -300,6 +325,11 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
   numerals) with the scorestreak name above it while the tablet is up; bottom-right scorestreak
   column (field computer, gold), the weapon name in a slanted box with its fire mode, and mag/reserve
   at similar sizes. The HUD stays up while the tablet is up, without the crosshair. 7/7 pass.
+* **BO2 weapons (2026-10-14)**: AN-94, Tac-45, frag, concussion and the knife play with their BO2
+  definitions and viewmodels. The autotest (12/12) swaps, fires the pistol, knifes, cooks and throws
+  a frag, throws a concussion, and both go off; captures show each animation and the HUD's
+  "Tac-45 SEMI-AUTO 10/30", "9 / 90" and the grenade counters. All 59 player weapons pass the
+  every-weapon test (4 s).
 
 ## Next steps
 
