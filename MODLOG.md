@@ -205,13 +205,10 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     when firing. `cbFireFx` now skips the local first-person General. This is lockstep-safe because the
     `*_FX` weapons deal no damage and have no scatter, so `fireWeaponTemplate` only plays client-side
     FX and sound for them. The viewmodel plays its own BO2 muzzle flash at `tag_flash`.
-55. Shine: the renderer's fixed-function emulation supports `DETAILCOLOR_MODALPHAADDCOLOR`
-    (`colour + colourAlpha * stage1`) and the world-space environment mapper
-    (`W3DVERTMAT_STAGE1_MAPPING_WS_ENVIRONMENT`). The converter bakes BO2's specular map (RGB
-    level x alpha gloss) into each colour map's alpha and adds a generated environment map on
-    stage 1. BO2's reflection probes are cube maps whose pixels sit in the zone's temp block, which
-    the loader reuses, so they are not kept. Only opaque surfaces get the shine; see 73 for the others
-    (decals such as the clan tag and the watch glass used to be dropped because they drew opaque).
+55. Shine (superseded by 74): opaque BO2 surfaces used to get their specular map baked into the colour
+    map's alpha and a generated environment map on stage 1 (`DETAILCOLOR_MODALPHAADDCOLOR`, the
+    world-space environment mapper). BO2's reflection probes are cube maps whose pixels sit in the
+    zone's temp block, which the loader reuses, so they are not kept.
 
 56. The field computer is a BO2 scorestreak. The tablet is its own viewmodel (`ZHBO_VMxxx_TAB`: arms plus
     `t6_wpn_tablet_view` on `tag_weapon`, hierarchy `ZHBO_VMT_SKL`), because the gun and the tablet
@@ -344,6 +341,21 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     from the player's tag and emblem, and drawn as is they show the whole font atlas. BO2
     effects take additive or alpha from their material too (the "no alpha means additive" guess is
     only the fallback).
+74. BO2 shading (host patch 0009): every opaque BO2 surface gets its own maps packed into one more
+    texture on stage 1 (`*_nsg.tga`: BC5 normal X and Y, the specular map's alpha as gloss, its
+    luminance as specular level; `generals::surface_maps`) and its occlusion map in the colour map's
+    alpha. The backend flags a draw whose stage 1 is such a texture (name ends `_nsg.`) with its colour
+    op off (`u_material[25]`), and `fs_uber`'s `bo2Shade` lights it: per-pixel normals with the tangent
+    frame from screen-space derivatives (W3D meshes carry no tangents), a normalized Blinn-Phong
+    highlight whose power comes from gloss, Schlick Fresnel, and a reflection of a sky and ground
+    built from the scene's lights. It takes Zero Hour's material terms and its per-channel clamp of
+    diffuse light, but keeps only 35% of the lights' colour: Zero Hour's accent lights are violet
+    and blue, which tinted the lifted BO2 surfaces violet (BO2 lights near neutral). In first person the
+    screen gets bloom, a slightly cool grade and a vignette (`setBo2Look`; the player's settings come
+    back overhead), and the scene renders in HDR throughout so highlights roll off and bloom.
+    `BO2_NORMAL_Y` flips the normal map's green if bumps ever look lit from below. `ZHBO_BO2_DEBUG`
+    shows one term: -1 BO2 shading off (A/B), 1 flat normals, 2 normals, 3 diffuse light, 4
+    specular, 5 reflection.
 
 ## Verification log
 
@@ -428,6 +440,9 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
   and the pistol from the command bar, then takes control: 8/8 pass, and first person starts with
   the pistol and its remaining ammo. The capture shows the reticle Take Control button, the AN-94,
   Tac-45 and frag buttons with their BO2 icons and ammo, and the empty frag greyed out with a red 0.
+* **BO2 shading (2026-10-15)**: normal maps, gloss highlights and reflections on the viewmodels
+  and tablet (screws, bezel edges and the receiver's wear catch the light), bloom, grade and vignette
+  in first person; the overhead view unchanged. Autotest 13/13, overhead 8/8.
 * **Load stalls (2026-10-15)**: the equipment autotest used to stall 0.85-1.25 s the first time
   the tablet, AN-94, Tac-45 and C4 viewmodels were shown; they now load in 3-4 ms (0 ms after the
   preload), and the loading screen preloads 26 objects and 6 viewmodels in about 0.4 s. 8/8 pass.

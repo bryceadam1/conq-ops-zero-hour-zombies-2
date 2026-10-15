@@ -64,6 +64,8 @@
 #include <string>
 #include <vector>
 
+extern "C" void GGC_RequestBgfxFramebufferRebuild(); // BgfxBackend.cpp
+
 namespace
 {
 
@@ -1078,9 +1080,56 @@ void setSkyForced(Bool forced)
 	}
 }
 
+// BO2's look on screen while first person owns the camera (the surfaces themselves are lit as
+// BO2 lights them by host patch 0009): bloom on bright highlights, BO2 multiplayer's slightly cool
+// grade and a soft vignette. The player's own settings come back in the overhead view. The scene is
+// rendered in HDR throughout (Zhbo_Init) so the BO2 highlights have headroom to roll off and bloom.
+struct ScreenLook
+{
+	Bool bloom, grade, vignette;
+	Real bloomThreshold, bloomIntensity, gradeStrength, gradeTemperature, gradeTint, vignetteStrength;
+};
+Bool s_bo2Look = FALSE;
+ScreenLook s_lookWas;
+
+void setBo2Look(Bool on)
+{
+	if (on == s_bo2Look || !TheWritableGlobalData)
+		return;
+	s_bo2Look = on;
+	GlobalData *gd = TheWritableGlobalData;
+	if (on)
+	{
+		s_lookWas = { gd->m_bgfxBloom, gd->m_bgfxColorGrade, gd->m_bgfxVignette, gd->m_bgfxBloomThreshold, gd->m_bgfxBloomIntensity,
+			gd->m_bgfxColorGradeStrength, gd->m_bgfxColorGradeTemperature, gd->m_bgfxColorGradeTint, gd->m_bgfxVignetteStrength };
+		gd->m_bgfxBloom = TRUE;
+		gd->m_bgfxBloomThreshold = 0.8f;
+		gd->m_bgfxBloomIntensity = 0.35f;
+		gd->m_bgfxColorGrade = TRUE;
+		gd->m_bgfxColorGradeStrength = 0.45f;
+		gd->m_bgfxColorGradeTemperature = -0.15f;
+		gd->m_bgfxColorGradeTint = 0.0f;
+		gd->m_bgfxVignette = TRUE;
+		gd->m_bgfxVignetteStrength = 0.22f;
+	}
+	else
+	{
+		gd->m_bgfxBloom = s_lookWas.bloom;
+		gd->m_bgfxColorGrade = s_lookWas.grade;
+		gd->m_bgfxVignette = s_lookWas.vignette;
+		gd->m_bgfxBloomThreshold = s_lookWas.bloomThreshold;
+		gd->m_bgfxBloomIntensity = s_lookWas.bloomIntensity;
+		gd->m_bgfxColorGradeStrength = s_lookWas.gradeStrength;
+		gd->m_bgfxColorGradeTemperature = s_lookWas.gradeTemperature;
+		gd->m_bgfxColorGradeTint = s_lookWas.gradeTint;
+		gd->m_bgfxVignetteStrength = s_lookWas.vignetteStrength;
+	}
+}
+
 void releaseClientState()
 {
 	setSkyForced(FALSE);
+	setBo2Look(FALSE);
 	setMouseCapture(FALSE);
 	setHiddenObject(INVALID_ID);
 	setRtsUiHidden(FALSE);
@@ -1198,6 +1247,13 @@ void Zhbo_Init()
 	s_autopilot.enabled = getenv("ZHBO_AUTOPILOT") != nullptr;
 	s_autopilot.showcase = s_autopilot.enabled && strcmp(getenv("ZHBO_AUTOPILOT"), "showcase") == 0;
 	s_autopilot.rts = s_autopilot.enabled && strcmp(getenv("ZHBO_AUTOPILOT"), "rts") == 0;
+
+	// Render the scene in HDR (see setBo2Look); the format change needs a framebuffer rebuild.
+	if (TheWritableGlobalData && !TheWritableGlobalData->m_bgfxHdr)
+	{
+		TheWritableGlobalData->m_bgfxHdr = TRUE;
+		GGC_RequestBgfxFramebufferRebuild();
+	}
 
 	s_lastTick = zhbo_platform::now();
 	s_ready = TRUE;
@@ -1457,6 +1513,7 @@ void Zhbo_ClientFrame()
 	setMouseCapture(s_out.capture_mouse != 0 && focused && !menuUp);
 	setRtsUiHidden(s_out.hide_rts_ui != 0);
 	setSkyForced(s_out.camera_override != 0);
+	setBo2Look(s_out.camera_override != 0);
 	setHiddenObject(s_out.hide_object ? (ObjectID)s_out.hide_object : INVALID_ID);
 
 	if (s_out.rts_look_at_valid)

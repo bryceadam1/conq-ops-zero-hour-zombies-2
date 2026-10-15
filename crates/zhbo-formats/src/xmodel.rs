@@ -51,6 +51,7 @@ pub struct Lod {
 pub const TS_COLOR_MAP: u8 = 2;
 pub const TS_NORMAL_MAP: u8 = 5;
 pub const TS_SPECULAR_MAP: u8 = 8;
+pub const TS_OCCLUSION_MAP: u8 = 10;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Image {

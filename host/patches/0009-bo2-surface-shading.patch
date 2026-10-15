@@ -1,0 +1,261 @@
+--- a/Core/Libraries/Source/WWVegas/WW3D2/Backend/BgfxBackend.cpp
++++ b/Core/Libraries/Source/WWVegas/WW3D2/Backend/BgfxBackend.cpp
+@@ -326,6 +326,7 @@
+     MU_LegacyPixelShaderMode,
+     MU_ZBias,
+     MU_LightMapParams,
++    MU_Bo2Params, // ZHBO: x = a Conquer Ops BO2 surface (fs_uber bo2Shade)
+     MU_COUNT
+ };
+ BgfxDraw       g_draw;
+@@ -10047,6 +10048,16 @@
+         std::memcpy(m[MU_LegacyPixelShaderMode], g_draw.legacyPixelShaderMode, sizeof(float) * 4);
+         std::memcpy(m[MU_ZBias],              g_draw.zBias,              sizeof(float) * 4);
+         std::memcpy(m[MU_LightMapParams],     g_draw.lightMapParams,     sizeof(float) * 4);
++        // ZHBO: a BO2 surface's maps are on stage 1 with the stage's colour op off.
++        const bool bo2Surface = g_draw.bo2MapsTexture != nullptr
++            && g_draw.bo2MapsTexture == g_draw.sourceTextures[1]
++            && g_draw.tssOps0[2] < 0.5f;
++        // ZHBO_BO2_DEBUG: a negative value turns BO2 shading off (A/B); see fs_uber bo2Shade for the rest.
++        static const float s_bo2Debug = getenv("ZHBO_BO2_DEBUG") ? static_cast<float>(atoi(getenv("ZHBO_BO2_DEBUG"))) : 0.0f;
++        m[MU_Bo2Params][0] = (bo2Surface && s_bo2Debug >= 0.0f) ? 1.0f : 0.0f;
++        m[MU_Bo2Params][1] = s_bo2Debug;
++        m[MU_Bo2Params][2] = 0.0f;
++        m[MU_Bo2Params][3] = 0.0f;
+         // TheSuperHackers @performance bobtista 11/07/2026 Consecutive draws in
+         // one view frequently share the whole packed block (rigid category
+         // meshes, grouped sorted runs) — elide the re-upload when unchanged.
+@@ -11030,6 +11041,26 @@
+     g_draw.vertexColorFlags[3] = (emissive_source == RB_MATERIAL_COLOR_SOURCE_COLOR1) ? 1.0f : 0.0f;
+ }
+ 
++// ZHBO: a Conquer Ops BO2 surface's packed maps (`*_nsg.tga`, zhbo_assets::generals::surface_maps).
++static bool IsBo2MapsTexture(TextureBaseClass * texture)
++{
++    TextureClass * t = texture ? texture->As_TextureClass() : nullptr;
++    if (t == nullptr)
++    {
++        return false;
++    }
++    const char * name = t->Get_Texture_Name().str();
++    for (const char * c = name; c && *c; ++c)
++    {
++        if ((c[0] == '_') && (c[1] == 'n' || c[1] == 'N') && (c[2] == 's' || c[2] == 'S')
++            && (c[3] == 'g' || c[3] == 'G') && c[4] == '.')
++        {
++            return true;
++        }
++    }
++    return false;
++}
++
+ void BgfxBackend::Set_Texture(unsigned int stage, TextureBaseClass * texture)
+ {
+     PERF_TIME(PERF_SECT_SET_TEXTURE);
+@@ -11091,6 +11122,10 @@
+                     g_draw.textureIsMissing[0] = missingOrUnavailable; break;
+             case 1: g_draw.tex[1] = h;
+                     g_draw.sourceTextures[1] = texture;
++                    if (IsBo2MapsTexture(texture))
++                    {
++                        g_draw.bo2MapsTexture = texture;
++                    }
+                     g_draw.samplerFlags[1] = samplerFlags;
+                     g_draw.mipFilterDisabled[1] = mipFilterDisabled;
+                     g_draw.textureIsMissing[1] = missingOrUnavailable; break;
+--- a/Core/Libraries/Source/WWVegas/WW3D2/Backend/BgfxBackendState.h
++++ b/Core/Libraries/Source/WWVegas/WW3D2/Backend/BgfxBackendState.h
+@@ -430,6 +430,9 @@
+     float texProjected[4]     = { 0.0f, 0.0f, 0.0f, 0.0f };
+     float cloudParams[4]      = { 0.0f, 0.0f, 0.0f, 0.0f };
+     float lightMapParams[4]   = { 0.0f, 0.0f, 0.0f, 0.0f };
++    // ZHBO: the stage-1 texture last bound when it was a Conquer Ops BO2 surface's packed maps
++    // (`*_nsg.tga`); the draw is a BO2 surface while it is still bound there.
++    TextureBaseClass * bo2MapsTexture = nullptr;
+     bgfx::TextureHandle cloudTex = BGFX_INVALID_HANDLE;
+     bgfx::TextureHandle lightMapTex = BGFX_INVALID_HANDLE;
+     float lightDirs[4][4] = {
+--- a/Core/Libraries/Source/WWVegas/WW3D2/shaders/fs_uber.sc
++++ b/Core/Libraries/Source/WWVegas/WW3D2/shaders/fs_uber.sc
+@@ -104,7 +104,7 @@
+ 
+ // TheSuperHackers @performance bobtista 15/06/2026 Packed per-draw material uniforms.
+ // Index order MUST match MaterialUniformSlot in BgfxBackend.cpp.
+-uniform vec4 u_material[25];
++uniform vec4 u_material[26];
+ #define u_matDiffuse            u_material[0]
+ #define u_matAmbient            u_material[1]
+ #define u_matEmissive           u_material[2]
+@@ -130,6 +130,8 @@
+ #define u_legacyPixelShaderMode u_material[22]
+ #define u_zBias                 u_material[23]
+ #define u_lightMapParams        u_material[24]
++// ZHBO: x > 0.5 = a Conquer Ops BO2 surface (stage 1 holds its packed maps, see bo2Shade).
++#define u_bo2Params             u_material[25]
+ 
+ // TSS operation IDs (must match BgfxBackend.cpp encoding)
+ #define TSS_DISABLE         0.0
+@@ -698,6 +700,126 @@
+ // axis, each fetched with the minor-axis gradient so it lands on the sharper mip, yielding a
+ // capped ~4x anisotropic result that clears the fringe without the 16x striping. The tap count
+ // scales with the footprint's anisotropy ratio, so a roughly square footprint costs a single tap.
++// ZHBO: Black Ops II surfaces (Conquer Ops). The converter packs each opaque BO2 material's own maps
++// into stage 1 (r, g: tangent-space normal X and Y from BO2's normal map; b: gloss; a: specular
++// level) and its ambient occlusion into the colour map's alpha. This lights them as BO2's material
++// model does: per-pixel normals, a gloss-driven normalized Blinn-Phong highlight with Fresnel, and
++// a reflection of the surroundings (BO2 uses baked probes; Zero Hour maps have none, so the sky and
++// ground are built from the scene's own lights). Meshes carry no tangents: the frame comes from
++// screen-space derivatives of position and UV.
++#define BO2_NORMAL_Y 1.0
++#define BO2_MAX_POWER 2048.0
++#define BO2_LIGHT_SATURATION 0.35
++
++vec3 bo2PerturbNormal(vec3 n, vec3 p, vec2 uv, vec2 xy)
++{
++	vec3 dp1 = dFdx(p);
++	vec3 dp2 = dFdy(p);
++	vec2 duv1 = dFdx(uv);
++	vec2 duv2 = dFdy(uv);
++	vec3 dp2perp = cross(dp2, n);
++	vec3 dp1perp = cross(n, dp1);
++	vec3 t = dp2perp * duv1.x + dp1perp * duv2.x;
++	vec3 b = dp2perp * duv1.y + dp1perp * duv2.y;
++	float frame = max(dot(t, t), dot(b, b));
++	if (frame < 1e-20)
++	{
++		return n;
++	}
++	float invmax = inversesqrt(frame);
++	float z = sqrt(max(0.0, 1.0 - dot(xy, xy)));
++	return normalize(t * (xy.x * invmax) + b * (xy.y * BO2_NORMAL_Y * invmax) + n * z);
++}
++
++vec4 bo2Shade(vec4 albedo, vec4 maps, vec2 uv, vec4 vertexColor)
++{
++	// The material's own terms, as Zero Hour's lit path takes them (vertex colour or material).
++	vec3 matDiffuse = (u_vertexColorFlags.y > 0.5) ? vertexColor.rgb : u_matDiffuse.rgb;
++	vec3 matAmbient = (u_vertexColorFlags.z > 0.5) ? vertexColor.rgb : u_matAmbient.rgb;
++	vec3 matEmissive = (u_vertexColorFlags.w > 0.5) ? vertexColor.rgb : (u_matEmissive.rgb * u_matFx.w);
++	float nrmLen = length(v_normal);
++	vec3 geo = (nrmLen > 1e-5) ? (v_normal / nrmLen) : vec3(0.0, 0.0, 1.0);
++	// u_bo2Params.y (ZHBO_BO2_DEBUG): 1 flat normals, 2 show the normal, 3 diffuse light only,
++	// 4 specular only, 5 reflection only.
++	float debugMode = u_bo2Params.y;
++	vec3 n = (debugMode > 0.5 && debugMode < 1.5) ? geo : bo2PerturbNormal(geo, v_worldPos, uv, maps.rg * 2.0 - 1.0);
++	vec3 v = normalize(u_eyePos.xyz - v_worldPos);
++	float gloss = maps.b;
++	float f0 = maps.a * maps.a;
++	float power = min(exp2(1.0 + gloss * 11.0), BO2_MAX_POWER);
++	float norm = (power + 8.0) / 8.0;
++	float ao = albedo.a;
++
++	vec3 ambient = GGC_SCENE_AMBIENT.rgb * matAmbient;
++	vec3 direct = matEmissive;
++	vec3 spec = vec3(0.0, 0.0, 0.0);
++	vec3 sun = vec3(0.0, 0.0, 0.0);
++	for (int li = 0; li < 4; ++li)
++	{
++		if (u_lightParams[li].w > 0.5 || u_lightDirs[li].w > 0.5)
++		{
++			float ldirLen = length(u_lightDirs[li].xyz);
++			vec3 l = (ldirLen > 1e-5) ? (u_lightDirs[li].xyz / ldirLen) : vec3(0.0, 0.0, 1.0);
++			float atten = 1.0;
++			if (u_lightParams[li].z > 0.5)
++			{
++				vec3 toLight = u_lightPositions[li].xyz - v_worldPos;
++				float dist = length(toLight);
++				l = (dist > 0.0001) ? (toLight / dist) : vec3(0.0, 0.0, 1.0);
++				float inner = max(u_lightParams[li].x, 0.0001);
++				float outer = max(u_lightParams[li].y, inner);
++				float a1 = (outer - inner < 0.001) ? 0.0 : (0.1 / inner);
++				float a2 = 8.0 / (outer * outer);
++				atten = (dist <= outer) ? (1.0 / (1.0 + a1 * dist + a2 * dist * dist)) : 0.0;
++			}
++			else if (li == 0)
++			{
++				sun = u_lightColors[li].rgb;
++			}
++			// BO2 lights its weapons near neutral; Zero Hour's accent lights are strongly coloured
++			// (violet and blue), so keep most of their brightness and little of their colour.
++			vec3 lightColor = mix(vec3_splat(dot(u_lightColors[li].rgb, LUMA_WEIGHTS)), u_lightColors[li].rgb, BO2_LIGHT_SATURATION);
++			ambient += u_lightAmbients[li].rgb * matAmbient * atten;
++			float nDotL = max(0.0, dot(n, l));
++			// Wrap the geometric normal's shadow terminator so the normal map can't light the back.
++			float facing = clamp(dot(geo, l) * 4.0 + 1.0, 0.0, 1.0);
++			direct += lightColor * matDiffuse * nDotL * atten * facing;
++			vec3 h = normalize(l + v);
++			float vDotH = max(0.0, dot(v, h));
++			// Grazing highlights brighten on glossy surfaces only (rough ones scatter that light).
++			float fresnel = f0 + (1.0 - f0) * pow(1.0 - vDotH, 5.0) * gloss * gloss;
++			spec += lightColor * (pow(max(0.0, dot(n, h)), power) * norm * nDotL * atten * facing * fresnel);
++		}
++	}
++
++	// The surroundings: sky above, ground below, a bright horizon; rough surfaces see them blurred.
++	vec3 r = reflect(-v, n);
++	float blur = 1.0 - gloss;
++	float up = smoothstep(-0.25 - blur * 0.5, 0.25 + blur * 0.5, r.z);
++	// Zero Hour maps tint their ambient (often violet); the surroundings keep its brightness only.
++	float ambientLevel = dot(ambient, LUMA_WEIGHTS);
++	float sunLevel = dot(sun, LUMA_WEIGHTS);
++	vec3 skyColor = vec3(0.92, 0.97, 1.05) * (ambientLevel * 1.4 + sunLevel * 0.35);
++	vec3 groundColor = vec3(1.0, 0.96, 0.9) * (ambientLevel * 0.45 + sunLevel * 0.08);
++	float horizon = exp(-r.z * r.z * (40.0 - blur * 36.0)) * (0.25 + 0.5 * gloss);
++	vec3 env = mix(groundColor, skyColor, up) + (skyColor * horizon);
++	float nDotV = max(0.0, dot(n, v));
++	float envFresnel = f0 + (1.0 - f0) * pow(1.0 - nDotV, 5.0) * gloss * gloss;
++
++	// Diffuse light saturates per channel as Zero Hour's lighting does (the maps' lights add up past
++	// 1 in some channels); only the highlights go beyond white, into the HDR headroom.
++	vec3 diffuseLight = min(ambient * ao + direct, vec3_splat(1.0));
++	vec3 color = albedo.rgb * diffuseLight * (1.0 - f0) + spec + env * envFresnel * ao;
++	if (debugMode > 1.5)
++	{
++		color = (debugMode < 2.5) ? (n * 0.5 + 0.5)
++			: (debugMode < 3.5) ? diffuseLight
++			: (debugMode < 4.5) ? spec
++			: env * envFresnel * ao;
++	}
++	return vec4(color, 1.0);
++}
++
+ vec4 sampleAniso(sampler2D smp, vec2 uv)
+ {
+ 	vec2 dx = dFdx(uv);
+@@ -1129,6 +1251,14 @@
+ 	// priColorOp=1 (SELECTARG1) is excluded: it outputs tex0 directly as a baked-lit texture.
+ 	bool needsLit = (priColorOp > 2.5 && priColorOp < 5.5)
+ 	             || (priColorOp > 1.5 && priColorOp < 2.5);
++#if !GGC_UBER_STAGE0_ARRAY
++	if (u_bo2Params.x > 0.5 && u_lightingEnabled.x > 0.5)
++	{
++		// ZHBO: a BO2 surface, lit as BO2 lights it (stage 1 is its maps, not a TSS stage).
++		current = bo2Shade(tex0, texture2D(s_tex1, stage0UV), stage0UV, diffuse);
++	}
++	else
++#endif
+ 	if (needsLit && u_lightingEnabled.x > 0.5)
+ 	{
+ 		// Material has lighting enabled. D3D's T&L pipeline REPLACES the
+--- a/Core/Libraries/Source/WWVegas/WW3D2/shaders/vs_uber.sc
++++ b/Core/Libraries/Source/WWVegas/WW3D2/shaders/vs_uber.sc
+@@ -8,7 +8,7 @@
+ 
+ // TheSuperHackers @performance bobtista 15/06/2026 Packed per-draw material uniforms.
+ // Index order MUST match MaterialUniformSlot in BgfxBackend.cpp.
+-uniform vec4 u_material[25];
++uniform vec4 u_material[26]; // ZHBO: [25] = BO2 material (fs_uber)
+ #define u_matDiffuse            u_material[0]
+ #define u_matAmbient            u_material[1]
+ #define u_matEmissive           u_material[2]
+--- a/Core/Libraries/Source/WWVegas/WW3D2/shaders/vs_uber_instanced.sc
++++ b/Core/Libraries/Source/WWVegas/WW3D2/shaders/vs_uber_instanced.sc
+@@ -8,7 +8,7 @@
+ 
+ // TheSuperHackers @performance bobtista 15/06/2026 Packed per-draw material uniforms.
+ // Index order MUST match MaterialUniformSlot in BgfxBackend.cpp.
+-uniform vec4 u_material[25];
++uniform vec4 u_material[26]; // ZHBO: [25] = BO2 material (fs_uber)
+ #define u_matDiffuse            u_material[0]
+ #define u_matAmbient            u_material[1]
+ #define u_matEmissive           u_material[2]

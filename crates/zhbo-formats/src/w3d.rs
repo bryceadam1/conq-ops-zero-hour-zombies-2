@@ -188,6 +188,10 @@ pub struct SkinMesh {
     /// A world-space environment map added over the texture, weighted by the texture's alpha (its
     /// shine): `colour + alpha * environment`. Opaque meshes only (the others' alpha is coverage).
     pub env_map: Option<String>,
+    /// BO2's own surface maps packed into one texture (`*_nsg.tga`: normal X and Y, gloss,
+    /// specular level), on stage 1 with the mesh's UVs. The renderer lights such a mesh as BO2 does
+    /// (host patch 0009); the fixed-function stage is off. Takes the place of `env_map`.
+    pub bo2_maps: Option<String>,
     /// Self-lit at full brightness, whatever the scene's lights (screens, glowing buttons).
     pub emissive: bool,
 }
@@ -267,9 +271,11 @@ fn mesh_chunk(container: &str, m: &SkinMesh) -> Chunk {
     }
     c.child(inf);
 
-    let env = m.env_map.as_ref().filter(|_| textured && m.blend == Blend::Opaque);
+    let bo2_maps = m.bo2_maps.as_ref().filter(|_| textured);
+    let env = m.env_map.as_ref().filter(|_| textured && m.blend == Blend::Opaque && bo2_maps.is_none());
+    let stage1 = bo2_maps.or(env);
     let mut info = Chunk::new(CHUNK_MATERIAL_INFO);
-    info.u32(1).u32(1).u32(1).u32(textured as u32 + env.is_some() as u32);
+    info.u32(1).u32(1).u32(1).u32(textured as u32 + stage1.is_some() as u32);
     c.child(info);
 
     let mut vms = Chunk::wrapper(CHUNK_VERTEX_MATERIALS);
@@ -328,10 +334,10 @@ fn mesh_chunk(container: &str, m: &SkinMesh) -> Chunk {
         tn.cstr(tex);
         tx.child(tn);
         texs.child(tx);
-        if let Some(env) = env {
+        if let Some(second) = stage1 {
             let mut tx = Chunk::wrapper(CHUNK_TEXTURE);
             let mut tn = Chunk::new(CHUNK_TEXTURE_NAME);
-            tn.cstr(env);
+            tn.cstr(second);
             tx.child(tn);
             texs.child(tx);
         }
@@ -357,9 +363,9 @@ fn mesh_chunk(container: &str, m: &SkinMesh) -> Chunk {
         stage.child(uv);
         pass.child(stage);
     }
-    if env.is_some() {
-        // The mapper generates this stage's coordinates; the mesh's own are written for a uniform
-        // vertex layout.
+    if stage1.is_some() {
+        // The BO2 maps use the mesh's UVs; for the environment the mapper generates this stage's
+        // coordinates, and the mesh's own are written for a uniform vertex layout.
         let mut stage = Chunk::wrapper(CHUNK_TEXTURE_STAGE);
         let mut tids = Chunk::new(CHUNK_TEXTURE_IDS);
         tids.u32(1);
@@ -484,9 +490,10 @@ mod tests {
             texture: Some("t.tga".into()),
             blend: Blend::Opaque,
             env_map: None,
+            bo2_maps: None,
             emissive: false,
         };
-        let d = skin_model("TEST_SKN", "TEST_SKL", &[m]);
+        let d = skin_model("TEST_SKN", "TEST_SKL", &[m.clone()]);
         let top = chunks(&d);
         assert_eq!(top.iter().map(|c| c.0).collect::<Vec<_>>(), vec![CHUNK_MESH, CHUNK_HLOD]);
         let mesh = chunks(&d[8..8 + top[0].2]);
@@ -497,5 +504,16 @@ mod tests {
         assert_eq!(tri.2, 32, "W3dTriangleStruct is 32 bytes");
         let inf = mesh.iter().find(|c| c.0 == CHUNK_VERTEX_INFLUENCES).unwrap();
         assert_eq!(inf.2, 3 * 8, "W3dVertInfStruct is 8 bytes");
+
+        // BO2 maps: a second texture on a second stage, with the detail stage off.
+        let bo2 = SkinMesh { bo2_maps: Some("t_nsg.tga".into()), env_map: Some("env.tga".into()), ..m };
+        let d = skin_model("TEST_SKN", "TEST_SKL", &[bo2]);
+        let mesh = chunks(&d[8..8 + chunks(&d)[0].2]);
+        let pass = mesh.iter().find(|c| c.0 == CHUNK_MATERIAL_PASS).unwrap();
+        let start = 8 + 8 + mesh.iter().take_while(|c| c.0 != CHUNK_MATERIAL_PASS).map(|c| 8 + c.2).sum::<usize>();
+        let stages = chunks(&d[start..start + pass.2]).iter().filter(|c| c.0 == CHUNK_TEXTURE_STAGE).count();
+        assert_eq!(stages, 2);
+        assert!(d.windows(9).any(|w| w == b"t_nsg.tga"));
+        assert!(!d.windows(7).any(|w| w == b"env.tga"), "the BO2 maps take the environment's place");
     }
 }

@@ -192,11 +192,14 @@ pub(crate) fn shrink(mut img: Rgba, max: u32) -> Rgba {
 struct Looks {
     blend: BTreeMap<String, w3d::Blend>,
     dropped: BTreeSet<String>,
+    /// Opaque surfaces' packed BO2 maps (see [`surface_maps`]), by colour map.
+    maps: BTreeMap<String, String>,
 }
 
 /// Textures for a model's surfaces: the colour map of each, written once per name into `files`.
-/// Opaque surfaces get their shine in the alpha (see [`bake_shine`]); the others keep BO2's alpha
-/// (coverage) in a file of their own, and their blend mode goes in `looks`.
+/// Opaque surfaces get their ambient occlusion in the colour map's alpha and their packed BO2 maps
+/// in a second file (see [`surface_maps`]); the others keep BO2's alpha (coverage) in a file of
+/// their own. Blend modes and maps go in `looks`.
 fn textures(model: &xmodel::Model, paks: &Paks, files: &mut BTreeMap<String, Vec<u8>>, looks: &mut Looks) -> Vec<Option<String>> {
     model
         .materials
@@ -232,44 +235,63 @@ fn textures(model: &xmodel::Model, paks: &Paks, files: &mut BTreeMap<String, Vec
             if !files.contains_key(&path) {
                 let mut rgba = shrink(paks.image(img.stream_hash)?, MAX_TEXTURE);
                 if blend == w3d::Blend::Opaque {
-                    let spec = m.image(xmodel::TS_SPECULAR_MAP).and_then(|s| paks.image(s.stream_hash));
-                    bake_shine(&mut rgba, spec.as_ref());
+                    let map = |semantic| m.image(semantic).and_then(|i| paks.image(i.stream_hash));
+                    put_occlusion(&mut rgba, map(xmodel::TS_OCCLUSION_MAP).as_ref());
+                    let maps = surface_maps(rgba.width, rgba.height, map(xmodel::TS_NORMAL_MAP).as_ref(), map(xmodel::TS_SPECULAR_MAP).as_ref());
+                    files.insert(format!("Art\\Textures\\{}", maps_file(&name)), images::tga_bytes(&maps));
                 }
                 files.insert(path, images::tga_bytes(&rgba));
+            }
+            if blend == w3d::Blend::Opaque {
+                looks.maps.insert(name.clone(), maps_file(&name));
             }
             Some(name)
         })
         .collect()
 }
 
-/// How strongly the brightest, glossiest specular texel reflects the environment.
-const SHINE: f32 = 0.85;
+/// The packed BO2 maps of the opaque surface whose colour map is `color`.
+fn maps_file(color: &str) -> String {
+    color.replace(".tga", "_nsg.tga")
+}
 
-/// Put a surface's shine in its colour map's alpha: BO2's specular map gives the specular colour in
-/// RGB (bare metal bright, cloth and polymer dark) and gloss in alpha. Surfaces without one stay matte.
-/// (Opaque surfaces only: their colour map's own alpha is unused.)
-fn bake_shine(color: &mut Rgba, spec: Option<&Rgba>) {
+/// The texel of `img` at `(x, y)` of a `w` x `h` image (nearest).
+fn texel(img: &Rgba, x: u32, y: u32, w: u32, h: u32) -> [u8; 4] {
+    let (sx, sy) = (x * img.width / w, y * img.height / h);
+    let i = ((sy * img.width + sx) * 4) as usize;
+    [img.pixels[i], img.pixels[i + 1], img.pixels[i + 2], img.pixels[i + 3]]
+}
+
+/// A BO2 surface's own maps in one texture the renderer's BO2 shading reads (host patch 0009): the
+/// tangent-space normal's X and Y (BO2's BC5 normal map), gloss (the specular map's alpha) and
+/// specular level (its colour's luminance: bare metal bright, cloth and polymer dark). Missing maps
+/// give a flat, matte surface.
+fn surface_maps(w: u32, h: u32, normal: Option<&Rgba>, spec: Option<&Rgba>) -> Rgba {
+    let mut pixels = Vec::with_capacity((w * h * 4) as usize);
+    for y in 0..h {
+        for x in 0..w {
+            let n = normal.map_or([128, 128, 255, 255], |n| texel(n, x, y, w, h));
+            let s = spec.map_or([0; 4], |s| texel(s, x, y, w, h));
+            let level = 0.2126 * s[0] as f32 + 0.7152 * s[1] as f32 + 0.0722 * s[2] as f32;
+            pixels.extend([n[0], n[1], s[3], level.round() as u8]);
+        }
+    }
+    Rgba { width: w, height: h, pixels }
+}
+
+/// Put BO2's ambient occlusion (its occlusion map's red) in an opaque colour map's alpha, which BO2
+/// uses for other data; fully open without one.
+fn put_occlusion(color: &mut Rgba, ao: Option<&Rgba>) {
     let (w, h) = (color.width, color.height);
     for y in 0..h {
         for x in 0..w {
-            let shine = spec.map_or(0.0, |s| {
-                let (sx, sy) = (x * s.width / w, y * s.height / h);
-                let p = &s.pixels[((sy * s.width + sx) * 4) as usize..][..4];
-                let level = (0.2126 * p[0] as f32 + 0.7152 * p[1] as f32 + 0.0722 * p[2] as f32) / 255.0;
-                let gloss = p[3] as f32 / 255.0;
-                level * (0.3 + 0.7 * gloss) * SHINE
-            });
-            color.pixels[((y * w + x) * 4 + 3) as usize] = (shine.clamp(0.0, 1.0) * 255.0).round() as u8;
+            color.pixels[((y * w + x) * 4 + 3) as usize] = ao.map_or(255, |a| texel(a, x, y, w, h)[0]);
         }
     }
 }
 
-/// The environment the shiny surfaces reflect.
-const ENV_MAP: &str = "zhbo_bo2_env.tga";
-
-/// Leave out the dropped surfaces, give each the blend mode of its material, and reflect the
-/// environment on the opaque textured ones (weighted by the shine baked into the texture). Glows
-/// are self-lit.
+/// Leave out the dropped surfaces, give each the blend mode of its material and the opaque ones
+/// their BO2 maps. Glows are self-lit.
 fn finish(meshes: &mut Vec<w3d::SkinMesh>, looks: &Looks) {
     meshes.retain(|m| m.texture.as_ref().is_none_or(|t| !looks.dropped.contains(t)));
     for m in meshes.iter_mut() {
@@ -277,50 +299,8 @@ fn finish(meshes: &mut Vec<w3d::SkinMesh>, looks: &Looks) {
         if matches!(m.blend, w3d::Blend::Additive { .. }) {
             m.emissive = true;
         }
-        if m.texture.is_some() && m.blend == w3d::Blend::Opaque {
-            m.env_map = Some(ENV_MAP.to_string());
-        }
+        m.bo2_maps = m.texture.as_ref().and_then(|t| looks.maps.get(t)).cloned();
     }
-}
-
-
-/// An outdoor environment in BO2's muted grade, for W3D's world-space environment mapper (`u, v` =
-/// `0.5 + 0.5 * reflection.xy`, so the centre is straight up or down and the rim is the horizon): a
-/// pale overcast sky with a brighter sun side, a bright horizon band, and dark ground and skyline.
-/// BO2's own reflection probes are cube maps stored in the map zone's temp block, which the zone
-/// loader does not keep.
-fn env_map() -> Rgba {
-    const N: u32 = 128;
-    let mut pixels = Vec::with_capacity((N * N * 4) as usize);
-    let sun = (0.6f32, 0.45f32);
-    for y in 0..N {
-        for x in 0..N {
-            let (rx, ry) = ((x as f32 + 0.5) / N as f32 * 2.0 - 1.0, (y as f32 + 0.5) / N as f32 * 2.0 - 1.0);
-            let rho = (rx * rx + ry * ry).sqrt().min(1.0);
-            let az = ry.atan2(rx);
-            // Up and down share a texel: average the sky above and the ground below.
-            let sky = [0.42, 0.46, 0.52];
-            let ground = [0.10, 0.09, 0.08];
-            let mut c: [f32; 3] = std::array::from_fn(|i| 0.5 * (sky[i] + ground[i]));
-            // Horizon band, broken by a skyline of buildings and trees.
-            let horizon = ((rho - 0.72) / 0.28).clamp(0.0, 1.0).powf(1.5);
-            let skyline = 0.5 + 0.5 * ((az * 7.0).sin() * (az * 13.0 + 1.3).sin()).max(-0.2);
-            let band = [0.62, 0.62, 0.60];
-            for i in 0..3 {
-                c[i] += (band[i] * skyline - c[i]) * horizon;
-            }
-            // The sun side.
-            let d = ((rx - sun.0).powi(2) + (ry - sun.1).powi(2)).sqrt();
-            let glow = (-d * d * 9.0).exp() * 0.45;
-            let warm = [1.0, 0.92, 0.78];
-            for i in 0..3 {
-                c[i] += glow * warm[i];
-            }
-            pixels.extend(c.map(|v| (v.clamp(0.0, 1.0) * 255.0).round() as u8));
-            pixels.push(255);
-        }
-    }
-    Rgba { width: N, height: N, pixels }
 }
 
 /// The Draw module for a General with a BO2 model. `hidden` are the sub-objects hidden until the
@@ -767,9 +747,7 @@ fn tablets(common: &Zone, zones: &[Zone], paks: &Paks, out: &mut BTreeMap<String
     // The screen's material layers several images in a shader; draw one composite, self-lit.
     let screen_surface = tablet.materials.iter().position(|m| m.as_ref().is_some_and(|m| m.name.contains("screen")));
     if let Some(i) = screen_surface {
-        if let Some(mut img) = tablet.materials[i].as_ref().and_then(|m| tablet_screen(m, paks)) {
-            // No reflection over the lit screen (alpha is the shine).
-            bake_shine(&mut img, None);
+        if let Some(img) = tablet.materials[i].as_ref().and_then(|m| tablet_screen(m, paks)) {
             out.insert(format!("Art\\Textures\\{TABLET_SCREEN}"), images::tga_bytes(&img));
             tablet_tex[i] = Some(TABLET_SCREEN.to_string());
         }
@@ -858,7 +836,6 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
     let patch = load_zone(bo2_dir, crate::fx::ZONE)?;
     let mut out: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut summary = Vec::new();
-    out.insert(format!("Art\\Textures\\{ENV_MAP}"), images::tga_bytes(&env_map()));
 
     // Every BO2 multiplayer weapon a player can carry, with its attachments and alt modes, as the
     // core's weapon table; art for the converted ones (the loadout first, then the rest).
@@ -1109,16 +1086,16 @@ mod tests {
     }
 
     #[test]
-    fn shine_follows_the_specular_map() {
-        let mut metal = solid(4, 4, [90, 90, 90, 255]);
-        bake_shine(&mut metal, Some(&solid(2, 2, [255, 255, 255, 255])));
-        assert!(metal.pixels.chunks_exact(4).all(|p| p[3] > 200 && p[..3] == [90, 90, 90]));
-        let mut cloth = solid(4, 4, [90, 90, 90, 255]);
-        bake_shine(&mut cloth, Some(&solid(8, 8, [30, 30, 30, 40])));
-        assert!(cloth.pixels.chunks_exact(4).all(|p| p[3] < 20));
-        let mut plain = solid(2, 2, [90, 90, 90, 255]);
-        bake_shine(&mut plain, None);
-        assert!(plain.pixels.chunks_exact(4).all(|p| p[3] == 0), "no specular map: matte");
+    fn surface_maps_pack_normal_gloss_and_specular() {
+        let normal = solid(2, 2, [100, 150, 255, 255]);
+        let spec = solid(8, 8, [200, 200, 200, 40]);
+        let maps = surface_maps(4, 4, Some(&normal), Some(&spec));
+        assert!(maps.pixels.chunks_exact(4).all(|p| p == [100, 150, 40, 200]));
+        let flat = surface_maps(2, 2, None, None);
+        assert!(flat.pixels.chunks_exact(4).all(|p| p == [128, 128, 0, 0]), "no maps: flat and matte");
+        let mut color = solid(4, 4, [90, 90, 90, 7]);
+        put_occlusion(&mut color, Some(&solid(2, 2, [60, 0, 0, 255])));
+        assert!(color.pixels.chunks_exact(4).all(|p| p == [90, 90, 90, 60]));
     }
 
     #[test]
@@ -1127,23 +1104,14 @@ mod tests {
         looks.blend.insert("glass_a.tga".into(), w3d::Blend::Alpha);
         looks.blend.insert("glow_a.tga".into(), w3d::Blend::Additive { alpha: false });
         looks.dropped.insert("reticle.tga".into());
+        looks.maps.insert("gun.tga".into(), "gun_nsg.tga".into());
         let mesh = |t: &str| w3d::SkinMesh { texture: Some(t.into()), ..Default::default() };
         let mut meshes = vec![mesh("gun.tga"), mesh("glass_a.tga"), mesh("glow_a.tga"), mesh("reticle.tga")];
         finish(&mut meshes, &looks);
         assert_eq!(meshes.len(), 3, "the reticle is left out");
-        assert_eq!((meshes[0].blend, meshes[0].env_map.is_some()), (w3d::Blend::Opaque, true));
-        assert_eq!((meshes[1].blend, meshes[1].env_map.is_some()), (w3d::Blend::Alpha, false), "glass keeps its alpha");
+        assert_eq!((meshes[0].blend, meshes[0].bo2_maps.as_deref()), (w3d::Blend::Opaque, Some("gun_nsg.tga")));
+        assert_eq!((meshes[1].blend, meshes[1].bo2_maps.as_deref()), (w3d::Blend::Alpha, None), "glass keeps its alpha");
         assert!(meshes[2].emissive, "glows are self-lit");
-    }
-
-    #[test]
-    fn environment_is_brighter_at_the_horizon_and_sun() {
-        let env = env_map();
-        let at = |x: u32, y: u32| env.pixels[((y * env.width + x) * 4) as usize];
-        let n = env.width;
-        let centre = at(n / 2, n / 2);
-        assert!(at(n / 2, n - 2) > centre || at(1, n / 2) > centre, "horizon brighter than straight up/down");
-        assert!(at((n as f32 * 0.8) as u32, (n as f32 * 0.72) as u32) > centre, "sun side");
     }
 
     #[test]
