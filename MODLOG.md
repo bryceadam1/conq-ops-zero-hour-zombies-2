@@ -210,8 +210,8 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     (`W3DVERTMAT_STAGE1_MAPPING_WS_ENVIRONMENT`). The converter bakes BO2's specular map (RGB
     level x alpha gloss) into each colour map's alpha and adds a generated environment map on
     stage 1. BO2's reflection probes are cube maps whose pixels sit in the zone's temp block, which
-    the loader reuses, so they are not kept. BO2 decal surfaces (clan tag, emblem, visor and watch glass)
-    are mostly clear and would draw opaque, so they are dropped.
+    the loader reuses, so they are not kept. Only opaque surfaces get the shine; see 73 for the others
+    (decals such as the clan tag and the watch glass used to be dropped because they drew opaque).
 
 56. The field computer is a BO2 scorestreak. The tablet is its own viewmodel (`ZHBO_VMxxx_TAB`: arms plus
     `t6_wpn_tablet_view` on `tag_weapon`, hierarchy `ZHBO_VMT_SKL`), because the gun and the tablet
@@ -313,16 +313,17 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     16 every bone after the first was shifted by a float, so animated translations started from the
     wrong place (the reload's new magazine floated). BO2 reloads use two magazines: `tag_clip` (in
     the gun, dropped) and `tag_clip1` (in the hand, off screen at idle); both get one.
-69. Optics: the glass (`*_lens`) is left out, and so is the reticle surface, because BO2 projects
-    the reticle to infinity, which a surface on the glass can't do; the HUD draws BO2's red-dot glow
-    on the line of sight instead (W3D meshes can now be additive: `SkinMesh::additive`). The sight
+69. Optics: the reticle surface is left out, because BO2 projects the reticle to infinity, which a
+    surface on the glass can't do; the HUD draws BO2's red-dot glow on the line of sight instead.
+    The glass (`*_lens`) blends as BO2 draws it (73). The sight
     line sits at 72% of the optic's height (its window, above the mount).
 70. Smoke (ABI 12, LogicApi `smoke`): BO2's Willy Pete names no effect (its script plays
     `weapon/grenade/fx_smoke_willy_pete`); looping effect parts get a finite `SystemLifetime` (0 is
     forever). For 15 s anything attacking into or out of the cloud goes back to idle.
 71. Camera transitions blend the field of view (ClientIn `rts_hfov`, `View::getFieldOfView`) and
     end on the overhead camera's own pose (its direction, distance and height, recentred on the
-    General); entering swings round behind the General, then moves in. Relative mouse mode leaves
+    General); entering swings round behind the General, then moves in, and leaving plays the same
+    move backwards (`transition_pose`), with the General hidden while the camera is in the head. Relative mouse mode leaves
     Zero Hour's mouse "outside the window" until a click: releasing it now says the cursor is back.
 72. Loading a BO2 viewmodel took about a second, on the render thread, the first time each was shown
     (entering first person, each first switch, first equipment use). Nearly all of it was the bgfx
@@ -333,6 +334,16 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     Patch 0007 also loads the mod's objects and the local General's viewmodels and clips on the
     loading screen (`Zhbo_Preload`, about 0.4 s). Retail never preloads: `KINDOF_PRELOAD` only works
     with `-preload`. `ConquerOps.log` lists frames over 60 ms as `hitch:`.
+73. Blending: each BO2 material's render state (`GfxStateBits::loadBits[0]` of its lit technique,
+    or the unlit/emissive one for glows: bits 0-3 source and 4-7 destination blend, bit 11 alpha
+    test off) says how it draws (`xmodel::Material::blend`). The converter writes the same W3D
+    shader (`w3d::Blend`: opaque, alpha test, alpha, premultiplied, additive; blended ones don't write
+    depth, and Zero Hour sorts any mesh whose shader blends) and keeps the colour map's own alpha for
+    non-opaque surfaces (`*_a.tga`). The tablet's buttons are an additive glow (they drew as black
+    panels), optic glass and watch glass mix by alpha. The clan tag and emblem surfaces stay out: BO2 fills them
+    from the player's tag and emblem, and drawn as is they show the whole font atlas. BO2
+    effects take additive or alpha from their material too (the "no alpha means additive" guess is
+    only the fallback).
 
 ## Verification log
 

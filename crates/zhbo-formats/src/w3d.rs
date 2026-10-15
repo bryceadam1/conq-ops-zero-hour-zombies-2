@@ -155,6 +155,21 @@ pub fn hierarchy(name: &str, pivots: &[Pivot]) -> Vec<u8> {
     out
 }
 
+/// How a mesh is drawn over what is behind it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Blend {
+    #[default]
+    Opaque,
+    /// Opaque where the texture's alpha is over half, clear elsewhere (straps, hair).
+    AlphaTest,
+    /// Mixed by the texture's alpha (glass, decals).
+    Alpha,
+    /// Colour already weighted by its alpha: added, with the background dimmed by the alpha.
+    Premultiplied,
+    /// Added over the background (glows): black is clear. `alpha` weights it by the texture's alpha.
+    Additive { alpha: bool },
+}
+
 /// One skinned mesh: vertices relative to their bone, one texture.
 #[derive(Clone, Debug, Default)]
 pub struct SkinMesh {
@@ -168,16 +183,13 @@ pub struct SkinMesh {
     pub triangles: Vec<[u32; 3]>,
     /// Texture file name (e.g. `zhbo_x.tga`), or none for an untextured mesh.
     pub texture: Option<String>,
-    /// Alpha-tested texture (cut-outs such as straps and hair).
-    pub alpha_test: bool,
+    /// Blended meshes don't write depth; Zero Hour sorts them back to front after the opaque ones.
+    pub blend: Blend,
     /// A world-space environment map added over the texture, weighted by the texture's alpha (its
-    /// shine): `colour + alpha * environment`. Needs a texture without alpha test.
+    /// shine): `colour + alpha * environment`. Opaque meshes only (the others' alpha is coverage).
     pub env_map: Option<String>,
     /// Self-lit at full brightness, whatever the scene's lights (screens, glowing buttons).
     pub emissive: bool,
-    /// Added over what is behind it, without writing depth (glows such as an optic's reticle:
-    /// black is clear, bright is light).
-    pub additive: bool,
 }
 
 fn mesh_chunk(container: &str, m: &SkinMesh) -> Chunk {
@@ -255,7 +267,7 @@ fn mesh_chunk(container: &str, m: &SkinMesh) -> Chunk {
     }
     c.child(inf);
 
-    let env = m.env_map.as_ref().filter(|_| textured && !m.alpha_test);
+    let env = m.env_map.as_ref().filter(|_| textured && m.blend == Blend::Opaque);
     let mut info = Chunk::new(CHUNK_MATERIAL_INFO);
     info.u32(1).u32(1).u32(1).u32(textured as u32 + env.is_some() as u32);
     c.child(info);
@@ -281,21 +293,29 @@ fn mesh_chunk(container: &str, m: &SkinMesh) -> Chunk {
     vms.child(vm);
     c.child(vms);
 
+    // ShaderClass's SrcBlend (zero, one, src alpha, 1 - src alpha) and DestBlend (zero, one, src
+    // colour, 1 - src colour, src alpha, 1 - src alpha).
+    let (src_blend, dst_blend, depth_write) = match m.blend {
+        Blend::Opaque | Blend::AlphaTest => (1, 0, true),
+        Blend::Alpha => (2, 5, false),
+        Blend::Premultiplied => (1, 5, false),
+        Blend::Additive { alpha } => (if alpha { 2 } else { 1 }, 1, false),
+    };
     let mut shaders = Chunk::new(CHUNK_SHADERS);
     shaders
         .u8(3) // DepthCompare: PASS_LEQUAL
-        .u8(!m.additive as u8) // DepthMask: write, except for glows
+        .u8(depth_write as u8) // DepthMask
         .u8(0) // ColorMask (obsolete)
-        .u8(m.additive as u8) // DestBlend: zero, or one (additive)
+        .u8(dst_blend) // DestBlend
         .u8(0) // FogFunc (obsolete)
         .u8(1) // PriGradient: modulate
         .u8(0) // SecGradient: disable
-        .u8(1) // SrcBlend: one
+        .u8(src_blend) // SrcBlend
         .u8(textured as u8) // Texturing
         .u8(if env.is_some() { DETAILCOLOR_MODALPHAADDCOLOR } else { 0 }) // DetailColorFunc
         .u8(0) // DetailAlphaFunc
         .u8(0) // ShaderPreset
-        .u8(m.alpha_test as u8) // AlphaTest
+        .u8((m.blend == Blend::AlphaTest) as u8) // AlphaTest
         .u8(0)
         .u8(0)
         .u8(0);
@@ -462,8 +482,7 @@ mod tests {
             bones: vec![1, 1, 2],
             triangles: vec![[0, 1, 2]],
             texture: Some("t.tga".into()),
-            alpha_test: false,
-            additive: false,
+            blend: Blend::Opaque,
             env_map: None,
             emissive: false,
         };

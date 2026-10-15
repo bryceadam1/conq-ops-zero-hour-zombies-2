@@ -104,10 +104,10 @@ impl Default for ClientConfig {
 }
 
 /// Camera transitions: entering swings round behind the General, then moves in to the eyes; leaving
-/// pulls back behind the General, then swings round to the overhead camera's own angle. Each is two
-/// phases, split at `TRANSITION_SPLIT`.
-pub const ENTER_TIME: f32 = 1.4;
-pub const LEAVE_TIME: f32 = 1.6;
+/// is the same move played backwards ([`transition_pose`]). The swing takes the first
+/// `TRANSITION_SPLIT` of it.
+pub const ENTER_TIME: f32 = 1.5;
+pub const LEAVE_TIME: f32 = ENTER_TIME;
 const TRANSITION_SPLIT: f32 = 0.45;
 pub const HITMARKER_TIME: f32 = 0.25;
 pub const DEATH_BANNER_TIME: f32 = 3.0;
@@ -360,6 +360,29 @@ impl Orbit {
     }
 }
 
+/// A camera pose: position, view direction, horizontal field of view.
+type Pose = (Vec3, Vec3, f32);
+
+/// The camera `k` of the way from the overhead view (0) to the General's eyes (1): swing round the
+/// eyes, at the overhead camera's distance and height, to behind the General's view (`behind` is that
+/// azimuth), turning to look at them; then move in, turning to the view. Entering plays this forwards
+/// and leaving backwards, so the two are the same move.
+fn transition_pose(k: f32, overhead: Pose, eyes: Pose, behind: f32) -> Pose {
+    let (over_pos, over_dir, over_hfov) = overhead;
+    let (eye, view_dir, eye_hfov) = eyes;
+    let orbit = Orbit::around(eye, over_pos);
+    let (pos, dir) = if k < TRANSITION_SPLIT {
+        let s = smoothstep(k / TRANSITION_SPLIT);
+        let pos = orbit.at(lerp_angle(orbit.azimuth, behind, s));
+        (pos, over_dir.lerp((eye - pos).normalized_or_zero(), s))
+    } else {
+        let s = smoothstep((k - TRANSITION_SPLIT) / (1.0 - TRANSITION_SPLIT));
+        let start = orbit.at(behind);
+        (start.lerp(eye, s), (eye - start).normalized_or_zero().lerp(view_dir, s))
+    };
+    (pos, dir.normalized_or_zero(), over_hfov + (eye_hfov - over_hfov) * smoothstep(k))
+}
+
 pub struct Client {
     pub cfg: ClientConfig,
     pub autopilot: Option<Autopilot>,
@@ -519,24 +542,13 @@ impl Client {
             ViewMode::Entering { t, from_pos, from_dir, from_hfov } => {
                 let t = t + dt;
                 let u = (t / ENTER_TIME).min(1.0);
-                // Swing round the General to behind their view, at the overhead camera's
-                // distance and height, then move in to the eyes.
-                let orbit = Orbit::around(eye, from_pos);
                 let behind = self.yaw + std::f32::consts::PI;
-                let to_dir = dir_from_angles(self.yaw, self.pitch);
-                if u < TRANSITION_SPLIT {
-                    let s = smoothstep(u / TRANSITION_SPLIT);
-                    let pos = orbit.at(lerp_angle(orbit.azimuth, behind, s));
-                    out.eye = pos;
-                    out.dir = from_dir.lerp((eye - pos).normalized_or_zero(), s).normalized_or_zero();
-                } else {
-                    let s = smoothstep((u - TRANSITION_SPLIT) / (1.0 - TRANSITION_SPLIT));
-                    let start = orbit.at(behind);
-                    out.eye = start.lerp(eye, s);
-                    out.dir = (eye - start).normalized_or_zero().lerp(to_dir, s).normalized_or_zero();
-                }
+                let eyes = (eye, dir_from_angles(self.yaw, self.pitch), hfov);
+                let (pos, dir, fov) = transition_pose(u, (from_pos, from_dir, from_hfov), eyes, behind);
+                out.eye = pos;
+                out.dir = dir;
                 out.camera_override = 1;
-                out.hfov = from_hfov + (hfov - from_hfov) * smoothstep(u);
+                out.hfov = fov;
                 out.hide_rts_ui = 1;
                 if u > 0.9 {
                     out.hide_object = self.general;
@@ -593,24 +605,18 @@ impl Client {
             ViewMode::Leaving { t, from_pos, from_dir, from_hfov, target, to_pos, to_dir, to_hfov } => {
                 let t = t + dt;
                 let u = (t / LEAVE_TIME).min(1.0);
-                // Pull back behind the General (along the view) to the overhead camera's distance
-                // and height, then swing round to its angle: it ends on the overhead camera's pose.
-                let orbit = Orbit::around(target, to_pos);
+                // Entering backwards: from the eyes (where first person left off) to the overhead
+                // camera's own pose, centred on the General.
                 let behind = self.yaw + std::f32::consts::PI;
-                if u < TRANSITION_SPLIT {
-                    let s = smoothstep(u / TRANSITION_SPLIT);
-                    let pos = from_pos.lerp(orbit.at(behind), s);
-                    out.eye = pos;
-                    out.dir = from_dir.lerp((target - pos).normalized_or_zero(), s).normalized_or_zero();
-                } else {
-                    let s = smoothstep((u - TRANSITION_SPLIT) / (1.0 - TRANSITION_SPLIT));
-                    let pos = orbit.at(lerp_angle(behind, orbit.azimuth, s));
-                    out.eye = pos;
-                    // Looking at the General, settling on the overhead camera's own direction.
-                    out.dir = (target - pos).normalized_or_zero().lerp(to_dir, s * s).normalized_or_zero();
-                }
+                let (pos, dir, fov) = transition_pose(1.0 - u, (to_pos, to_dir, to_hfov), (from_pos, from_dir, from_hfov), behind);
+                out.eye = pos;
+                out.dir = dir;
                 out.camera_override = 1;
-                out.hfov = from_hfov + (to_hfov - from_hfov) * smoothstep(u);
+                out.hfov = fov;
+                // The General stays hidden while the camera is still inside the head (as entering).
+                if u < 0.1 {
+                    out.hide_object = self.general;
+                }
                 if t >= LEAVE_TIME {
                     self.view = ViewMode::Rts;
                     out.camera_override = 0;

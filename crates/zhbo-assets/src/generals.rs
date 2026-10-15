@@ -186,45 +186,55 @@ pub(crate) fn shrink(mut img: Rgba, max: u32) -> Rgba {
     img
 }
 
-/// Textures for a model's surfaces: the colour map of each, written once per name into `files`, with
-/// the surface's shine in its alpha (see [`bake_shine`]). Decals (clan tag, emblem: colour maps that are
-/// mostly clear, which BO2 blends over the weapon) are listed in `decals` instead.
-fn textures(
-    model: &xmodel::Model,
-    paks: &Paks,
-    files: &mut BTreeMap<String, Vec<u8>>,
-    decals: &mut BTreeSet<String>,
-) -> Vec<Option<String>> {
+/// How the converted surfaces are drawn, by texture file: how each blends over what is behind it
+/// (BO2's own render state), and the ones left out.
+#[derive(Default)]
+struct Looks {
+    blend: BTreeMap<String, w3d::Blend>,
+    dropped: BTreeSet<String>,
+}
+
+/// Textures for a model's surfaces: the colour map of each, written once per name into `files`.
+/// Opaque surfaces get their shine in the alpha (see [`bake_shine`]); the others keep BO2's alpha
+/// (coverage) in a file of their own, and their blend mode goes in `looks`.
+fn textures(model: &xmodel::Model, paks: &Paks, files: &mut BTreeMap<String, Vec<u8>>, looks: &mut Looks) -> Vec<Option<String>> {
     model
         .materials
         .iter()
         .map(|m| {
             let m = m.as_ref()?;
-            // An optic's glass is see-through: leave it out (as a decal).
-            if m.name.contains("_lens") || m.name.ends_with("_glass") {
-                let name = character::texture_file(&m.name);
-                decals.insert(name.clone());
-                return Some(name);
-            }
             // An optic's reticle: BO2 projects it to infinity (it stays on the line of sight,
             // wherever the eye is), which a surface on the glass can't do; the HUD draws BO2's
             // red-dot glow at the centre instead (`zhbo_core::hud`). Leave it out.
-            if m.name.contains("reticle") {
+            // The clan tag and emblem: BO2 fills these in from the player's own tag and emblem
+            // (picking glyphs out of a font atlas), so drawn as they are they show the whole atlas.
+            if m.name.contains("reticle") || m.name.contains("clan_tag") || m.name.contains("player_icon") {
                 let name = character::texture_file(&m.name);
-                decals.insert(name.clone());
+                looks.dropped.insert(name.clone());
                 return Some(name);
             }
-            let img = m.color_map()?;
-            let name = character::texture_file(&img.name);
-            let path = format!("Art\\Textures\\{name}");
-            if !files.contains_key(&path) && !decals.contains(&name) {
-                let mut rgba = shrink(paks.image(img.stream_hash)?, MAX_TEXTURE);
-                if is_decal(&name, &rgba) {
-                    decals.insert(name.clone());
+            let blend = m.blend();
+            let Some(img) = m.color_map() else {
+                // A see-through surface drawn only by a special shader: nothing to draw it with.
+                if blend != w3d::Blend::Opaque {
+                    let name = character::texture_file(&m.name);
+                    looks.dropped.insert(name.clone());
                     return Some(name);
                 }
-                let spec = m.image(xmodel::TS_SPECULAR_MAP).and_then(|s| paks.image(s.stream_hash));
-                bake_shine(&mut rgba, spec.as_ref());
+                return None;
+            };
+            let mut name = character::texture_file(&img.name);
+            if blend != w3d::Blend::Opaque {
+                name = name.replace(".tga", "_a.tga");
+                looks.blend.insert(name.clone(), blend);
+            }
+            let path = format!("Art\\Textures\\{name}");
+            if !files.contains_key(&path) {
+                let mut rgba = shrink(paks.image(img.stream_hash)?, MAX_TEXTURE);
+                if blend == w3d::Blend::Opaque {
+                    let spec = m.image(xmodel::TS_SPECULAR_MAP).and_then(|s| paks.image(s.stream_hash));
+                    bake_shine(&mut rgba, spec.as_ref());
+                }
                 files.insert(path, images::tga_bytes(&rgba));
             }
             Some(name)
@@ -232,20 +242,12 @@ fn textures(
         .collect()
 }
 
-/// A BO2 decal (clan tag, emblem, visor and watch glass, frost swatch): mostly transparent, and
-/// named as one. Weapon colour maps can be mostly clear too (BO2 keeps other data in that alpha).
-fn is_decal(name: &str, img: &Rgba) -> bool {
-    const DECALS: &[&str] = &["clan", "emblem", "visor", "glass", "swatch", "decal"];
-    let clear = img.pixels.chunks_exact(4).filter(|p| p[3] < 128).count();
-    DECALS.iter().any(|d| name.contains(d)) && clear * 2 >= img.pixels.len() / 4
-}
-
 /// How strongly the brightest, glossiest specular texel reflects the environment.
 const SHINE: f32 = 0.85;
 
 /// Put a surface's shine in its colour map's alpha: BO2's specular map gives the specular colour in
 /// RGB (bare metal bright, cloth and polymer dark) and gloss in alpha. Surfaces without one stay matte.
-/// The colour maps' own alpha is unused: these meshes are drawn opaque, without alpha test.
+/// (Opaque surfaces only: their colour map's own alpha is unused.)
 fn bake_shine(color: &mut Rgba, spec: Option<&Rgba>) {
     let (w, h) = (color.width, color.height);
     for y in 0..h {
@@ -265,12 +267,19 @@ fn bake_shine(color: &mut Rgba, spec: Option<&Rgba>) {
 /// The environment the shiny surfaces reflect.
 const ENV_MAP: &str = "zhbo_bo2_env.tga";
 
-/// Drop decal surfaces and reflect the environment on every textured mesh (weighted by the shine
-/// baked into its texture).
-fn finish(meshes: &mut Vec<w3d::SkinMesh>, decals: &BTreeSet<String>) {
-    meshes.retain(|m| m.texture.as_ref().is_none_or(|t| !decals.contains(t)));
-    for m in meshes.iter_mut().filter(|m| m.texture.is_some()) {
-        m.env_map = Some(ENV_MAP.to_string());
+/// Leave out the dropped surfaces, give each the blend mode of its material, and reflect the
+/// environment on the opaque textured ones (weighted by the shine baked into the texture). Glows
+/// are self-lit.
+fn finish(meshes: &mut Vec<w3d::SkinMesh>, looks: &Looks) {
+    meshes.retain(|m| m.texture.as_ref().is_none_or(|t| !looks.dropped.contains(t)));
+    for m in meshes.iter_mut() {
+        m.blend = m.texture.as_ref().and_then(|t| looks.blend.get(t)).copied().unwrap_or_default();
+        if matches!(m.blend, w3d::Blend::Additive { .. }) {
+            m.emissive = true;
+        }
+        if m.texture.is_some() && m.blend == w3d::Blend::Opaque {
+            m.env_map = Some(ENV_MAP.to_string());
+        }
     }
 }
 
@@ -534,7 +543,7 @@ fn weapon_viewmodels(
     converted: &[String],
 ) -> Result<(String, Vec<Clip>), String> {
     use zhbo_core::attachments::point;
-    let mut decals = BTreeSet::new();
+    let mut looks = Looks::default();
     let mut made = Vec::new();
     let mut clips = Vec::new();
     let mut anim_cache: BTreeMap<String, Option<xanim::Anim>> = BTreeMap::new();
@@ -558,9 +567,9 @@ fn weapon_viewmodels(
             let offset = character::scaled_xf((crate::xf::from_angles(u.view_rotation), u.view_offset));
             extra.push((model, u.view_model_tag.clone(), offset, *pt));
         }
-        let gun_tex = textures(&gun, paks, out, &mut decals);
-        let mag_tex = mag.as_ref().map(|m| textures(m, paks, out, &mut decals));
-        let extra_tex: Vec<Vec<Option<String>>> = extra.iter().map(|(m, ..)| textures(m, paks, out, &mut decals)).collect();
+        let gun_tex = textures(&gun, paks, out, &mut looks);
+        let mag_tex = mag.as_ref().map(|m| textures(m, paks, out, &mut looks));
+        let extra_tex: Vec<Vec<Option<String>>> = extra.iter().map(|(m, ..)| textures(m, paks, out, &mut looks)).collect();
         let mut rig: Option<Rig> = None;
         for (f, zone) in FACTIONS.iter().zip(zones) {
             let hands = xmodel::find(zone, f.hands).map_err(|e| e.to_string())?;
@@ -582,7 +591,7 @@ fn weapon_viewmodels(
                 }
                 rig
             });
-            let hands_tex = textures(&hands, paks, out, &mut decals);
+            let hands_tex = textures(&hands, paks, out, &mut looks);
             let mut meshes = character::skin(rig, &hands, "H", &hands_tex);
             meshes.extend(character::skin_hiding(rig, &gun, "G", &gun_tex, &c.hide));
             if let (Some(m), Some(t)) = (&mag, &mag_tex) {
@@ -596,7 +605,7 @@ fn weapon_viewmodels(
             for (k, ((model, ..), tex)) in extra.iter().zip(&extra_tex).enumerate() {
                 meshes.extend(character::skin(rig, model, &format!("A{k}"), tex));
             }
-            finish(&mut meshes, &decals);
+            finish(&mut meshes, &looks);
             let name = vm_model(vm, f.letter);
             out.insert(format!("Art\\W3D\\{name}.w3d"), w3d::skin_model(&name, &vm_hierarchy(vm), &meshes));
         }
@@ -640,7 +649,7 @@ fn weapon_viewmodels(
             if extra.is_empty() { String::new() } else { format!(", {} attachment models", extra.len()) }
         ));
     }
-    Ok((format!("viewmodels {} (decals dropped: {})", made.join(", "), decals.into_iter().collect::<Vec<_>>().join(" ")), clips))
+    Ok((format!("viewmodels {} (surfaces left out: {})", made.join(", "), looks.dropped.into_iter().collect::<Vec<_>>().join(" ")), clips))
 }
 
 /// The third-person weapons on the soldier model: each converted weapon's BO2 world model and its
@@ -657,7 +666,7 @@ fn world_weapons(
     atts: &[zhbo_formats::weapon::Attachment],
     defs: &mut [zhbo_core::weapons::WeaponDef],
     converted: &[String],
-    decals: &mut BTreeSet<String>,
+    looks: &mut Looks,
 ) -> Vec<w3d::SkinMesh> {
     let hand = rig.pivot(character::WEAPON_TAG).unwrap_or(0);
     let mut meshes = Vec::new();
@@ -667,7 +676,7 @@ fn world_weapons(
         let Some(world) = w.world_model.as_deref().and_then(|m| find_model(patch, common, m).ok()) else { continue };
         let c = combo(w, atts, &shorts);
         let prefix = format!("W{vm:02}");
-        let tex = textures(&world, paks, out, decals);
+        let tex = textures(&world, paks, out, looks);
         let mut mine = character::skin_rigid(&world, hand, crate::xf::IDENTITY, &prefix, 0, &tex, &c.hide);
         for (u, _) in &c.parts {
             let Some(model) = u.world_model.as_deref().and_then(|m| find_model(patch, common, m).ok()) else { continue };
@@ -675,11 +684,11 @@ fn world_weapons(
             let tag = u.world_model_tag.as_deref().and_then(|t| world.bones.iter().find(|b| b.name == t));
             let base_xf = tag.map_or(crate::xf::IDENTITY, |b| character::scaled_xf((b.rotation, b.position)));
             let offset = crate::xf::compose(base_xf, character::scaled_xf((crate::xf::from_angles(u.world_rotation), u.world_offset)));
-            let t = textures(&model, paks, out, decals);
+            let t = textures(&model, paks, out, looks);
             let first = mine.len();
             mine.extend(character::skin_rigid(&model, hand, offset, &prefix, first, &t, &[]));
         }
-        finish(&mut mine, decals);
+        finish(&mut mine, looks);
         let count = mine.len().min(99) as u8;
         for d in defs.iter_mut().filter(|d| &d.id == id || d.alt == *id && d.id.contains('~')) {
             d.world_meshes = count;
@@ -704,7 +713,7 @@ fn projectiles(
 ) -> String {
     use zhbo_core::weapons::Class;
     let mut ini = String::from("; Generated by zhbo-assets: thrown, launched and placed BO2 weapons, moved by zhbo-core.\n\n");
-    let mut decals = BTreeSet::new();
+    let mut looks = Looks::default();
     let mut made = Vec::new();
     // The converted weapons and their alt modes (an under-barrel launcher's grenade).
     let mut ids: Vec<String> = converted.to_vec();
@@ -723,9 +732,9 @@ fn projectiles(
         let Some(model_name) = w.projectile_model.clone().or_else(|| w.world_model.clone()) else { continue };
         let Ok(model) = find_model(patch, common, &model_name) else { continue };
         let rig = Rig::new(&model, &[]);
-        let tex = textures(&model, paks, out, &mut decals);
+        let tex = textures(&model, paks, out, &mut looks);
         let mut meshes = character::skin(&rig, &model, "P", &tex);
-        finish(&mut meshes, &decals);
+        finish(&mut meshes, &looks);
         let name = projectile_model(n as i32);
         let hierarchy = name.replace("_SKN", "_SKL");
         out.insert(format!("Art\\W3D\\{name}.w3d"), w3d::skin_model(&name, &hierarchy, &meshes));
@@ -752,9 +761,9 @@ fn projectiles(
 }
 
 /// Each faction's arms holding the scorestreak tablet, with its lit screen.
-fn tablets(common: &Zone, zones: &[Zone], paks: &Paks, out: &mut BTreeMap<String, Vec<u8>>, decals: &mut BTreeSet<String>) -> Result<(), String> {
+fn tablets(common: &Zone, zones: &[Zone], paks: &Paks, out: &mut BTreeMap<String, Vec<u8>>, looks: &mut Looks) -> Result<(), String> {
     let tablet = xmodel::find(common, TABLET).map_err(|e| e.to_string())?;
-    let mut tablet_tex = textures(&tablet, paks, out, decals);
+    let mut tablet_tex = textures(&tablet, paks, out, looks);
     // The screen's material layers several images in a shader; draw one composite, self-lit.
     let screen_surface = tablet.materials.iter().position(|m| m.as_ref().is_some_and(|m| m.name.contains("screen")));
     if let Some(i) = screen_surface {
@@ -769,14 +778,14 @@ fn tablets(common: &Zone, zones: &[Zone], paks: &Paks, out: &mut BTreeMap<String
     for (f, zone) in FACTIONS.iter().zip(zones) {
         let hands = xmodel::find(zone, f.hands).map_err(|e| e.to_string())?;
         let rig = rig.get_or_insert_with(|| Rig::new(&hands, &[(&tablet, "tag_weapon")]));
-        let hands_tex = textures(&hands, paks, out, decals);
+        let hands_tex = textures(&hands, paks, out, looks);
         let mut meshes = character::skin(rig, &hands, "H", &hands_tex);
         let mut screen = character::skin(rig, &tablet, "T", &tablet_tex);
         for m in &mut screen {
             m.emissive = m.texture.as_deref() == Some(TABLET_SCREEN);
         }
         meshes.extend(screen);
-        finish(&mut meshes, decals);
+        finish(&mut meshes, looks);
         let name = tablet_model(f.viewmodel);
         out.insert(format!("Art\\W3D\\{name}.w3d"), w3d::skin_model(&name, TABLET_HIERARCHY, &meshes));
     }
@@ -832,12 +841,12 @@ fn over(dst: &mut Rgba, src: &Rgba, at: (u32, u32), size: (u32, u32)) {
 
 /// The tablet in the soldier's hand, as `TB<k>` meshes on BO2's `tag_inhand` (the bone its tablet
 /// animations carry).
-fn tablet_world(patch: &Zone, common: &Zone, paks: &Paks, out: &mut BTreeMap<String, Vec<u8>>, rig: &Rig, decals: &mut BTreeSet<String>) -> Vec<w3d::SkinMesh> {
+fn tablet_world(patch: &Zone, common: &Zone, paks: &Paks, out: &mut BTreeMap<String, Vec<u8>>, rig: &Rig, looks: &mut Looks) -> Vec<w3d::SkinMesh> {
     let Ok(model) = find_model(patch, common, TABLET_WORLD) else { return Vec::new() };
     let Some(tag) = rig.pivot(TABLET_TAG).or_else(|| rig.pivot("tag_weapon_left")) else { return Vec::new() };
-    let tex = textures(&model, paks, out, decals);
+    let tex = textures(&model, paks, out, looks);
     let mut meshes = character::skin_rigid(&model, tag, crate::xf::IDENTITY, "TB", 0, &tex, &[]);
-    finish(&mut meshes, decals);
+    finish(&mut meshes, looks);
     meshes
 }
 
@@ -867,9 +876,9 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
     // The soldiers: body, every converted weapon in the right hand (one shown at a time), and the
     // tablet.
     let rig = Rig::new(&xmodel::find(&zones[0], FACTIONS[0].body).map_err(|e| e.to_string())?, &[(&weapon, character::WEAPON_TAG)]);
-    let mut decals = BTreeSet::new();
-    let held = world_weapons(&patch, &common, &paks, &mut out, &rig, &bo2, &atts, &mut table.weapons, &converted, &mut decals);
-    let tablet = tablet_world(&patch, &common, &paks, &mut out, &rig, &mut decals);
+    let mut looks = Looks::default();
+    let held = world_weapons(&patch, &common, &paks, &mut out, &rig, &bo2, &atts, &mut table.weapons, &converted, &mut looks);
+    let tablet = tablet_world(&patch, &common, &paks, &mut out, &rig, &mut looks);
     table.tablet_meshes = tablet.len() as u8;
     // Shown at first: the primary (viewmodel 0).
     let mut hidden: Vec<String> = held.iter().map(|m| m.name.clone()).filter(|n| !n.starts_with("W00")).collect();
@@ -877,9 +886,9 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
     let mut ini = BASE_INI.to_string();
     for (f, zone) in FACTIONS.iter().zip(&zones) {
         let body = xmodel::find(zone, f.body).map_err(|e| e.to_string())?;
-        let body_tex = textures(&body, &paks, &mut out, &mut decals);
+        let body_tex = textures(&body, &paks, &mut out, &mut looks);
         let mut meshes = character::skin(&rig, &body, "B", &body_tex);
-        finish(&mut meshes, &decals);
+        finish(&mut meshes, &looks);
         meshes.extend(held.iter().cloned());
         meshes.extend(tablet.iter().cloned());
         out.insert(format!("Art\\W3D\\{}.w3d", f.model), w3d::skin_model(f.model, HIERARCHY, &meshes));
@@ -887,8 +896,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
         summary.push(format!("{} = {} ({} meshes)", f.object, f.body, meshes.len()));
     }
     summary.push(format!("third person: {} weapon meshes, {} tablet meshes", held.len(), tablet.len()));
-    if !decals.is_empty() {
-        summary.push(format!("decals dropped: {}", decals.iter().cloned().collect::<Vec<_>>().join(" ")));
+    if !looks.dropped.is_empty() {
+        summary.push(format!("surfaces left out: {}", looks.dropped.iter().cloned().collect::<Vec<_>>().join(" ")));
     }
     out.insert(format!("Art\\W3D\\{HIERARCHY}.w3d"), rig.hierarchy_file(HIERARCHY));
     for (w3d_name, bo2_name) in ANIMS {
@@ -898,8 +907,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
         out.insert(format!("Art\\W3D\\{w3d_name}.w3d"), w3d::animation(w3d_name, HIERARCHY, frames, fps, &channels));
     }
 
-    let mut tablet_decals = BTreeSet::new();
-    tablets(&common, &zones, &paks, &mut out, &mut tablet_decals)?;
+    let mut tablet_looks = Looks::default();
+    tablets(&common, &zones, &paks, &mut out, &mut tablet_looks)?;
     for (i, (_, bo2_name)) in TABLET_ANIMS.iter().enumerate() {
         let anim = xanim::find(&common, bo2_name).map_err(|e| e.to_string())?;
         clips.push((zhbo_core::viewmodel::NONE, zhbo_core::viewmodel::TABLET_PULLOUT + i as i32, anim));
@@ -1113,10 +1122,18 @@ mod tests {
     }
 
     #[test]
-    fn decals_are_mostly_clear() {
-        assert!(is_decal("zhbo_clan_font_c.tga", &solid(4, 4, [255, 255, 255, 0])));
-        assert!(!is_decal("zhbo_clan_font_c.tga", &solid(4, 4, [255, 255, 255, 255])));
-        assert!(!is_decal("zhbo_mtl_t6_wpn_pistol_fnp45_col.tga", &solid(4, 4, [255, 255, 255, 0])), "weapon colour maps stay");
+    fn surfaces_blend_as_their_materials_do() {
+        let mut looks = Looks::default();
+        looks.blend.insert("glass_a.tga".into(), w3d::Blend::Alpha);
+        looks.blend.insert("glow_a.tga".into(), w3d::Blend::Additive { alpha: false });
+        looks.dropped.insert("reticle.tga".into());
+        let mesh = |t: &str| w3d::SkinMesh { texture: Some(t.into()), ..Default::default() };
+        let mut meshes = vec![mesh("gun.tga"), mesh("glass_a.tga"), mesh("glow_a.tga"), mesh("reticle.tga")];
+        finish(&mut meshes, &looks);
+        assert_eq!(meshes.len(), 3, "the reticle is left out");
+        assert_eq!((meshes[0].blend, meshes[0].env_map.is_some()), (w3d::Blend::Opaque, true));
+        assert_eq!((meshes[1].blend, meshes[1].env_map.is_some()), (w3d::Blend::Alpha, false), "glass keeps its alpha");
+        assert!(meshes[2].emissive, "glows are self-lit");
     }
 
     #[test]

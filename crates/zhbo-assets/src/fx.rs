@@ -87,6 +87,7 @@ pub fn files(zone: &Zone, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>)
 // ------------------------------------------------------------------------------------------------
 
 use zhbo_formats::fx::{kind, Effect, Elem};
+use zhbo_formats::w3d::Blend;
 
 /// Milliseconds per Zero Hour logic frame.
 const MS_PER_FRAME: f32 = 1000.0 / 30.0;
@@ -163,7 +164,13 @@ impl Converted {
             }
             let Some(img) = m.color_map() else { continue };
             let Some(tex) = self.texture(&img.name, img.stream_hash, el.atlas, paks) else { continue };
-            let additive = tex.1;
+            // As BO2 blends the material: glows add, smoke and debris mix by alpha (premultiplied
+            // art too, the nearest Zero Hour has). Without a render state, art with no real alpha adds.
+            let additive = match m.blend() {
+                Blend::Additive { .. } => true,
+                Blend::Alpha | Blend::Premultiplied => false,
+                Blend::Opaque | Blend::AlphaTest => tex.1,
+            };
             *bright |= additive;
             let sys = format!("{prefix}_{}", systems.len());
             self.particles.push_str(&particle_system(&sys, el, &tex.0, additive, delay_ms, looping_secs));
@@ -171,8 +178,8 @@ impl Converted {
         }
     }
 
-    /// The texture for a BO2 image (the first frame of a flipbook atlas), and whether BO2 draws it
-    /// additively (no real alpha).
+    /// The texture for a BO2 image (the first frame of a flipbook atlas), and whether it has no real
+    /// alpha.
     fn texture(&mut self, image: &str, hash: u32, atlas: (u32, u32), paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>) -> Option<(String, bool)> {
         let file = format!("zhbo_fx_{}", crate::character::texture_file(image).trim_start_matches("zhbo_"));
         let mut rgba = paks(hash)?;

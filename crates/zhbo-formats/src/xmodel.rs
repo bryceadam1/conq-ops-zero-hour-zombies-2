@@ -74,6 +74,10 @@ pub struct Texture {
 pub struct Material {
     pub name: String,
     pub textures: Vec<Texture>,
+    /// The render state (`GfxStateBits::loadBits`) each technique type draws with, by technique
+    /// type (`stateBitsEntry`); `None` where the material has no such technique.
+    pub state_bits: Vec<Option<[u32; 2]>>,
+    pub sort_key: u8,
 }
 
 impl Material {
@@ -84,6 +88,35 @@ impl Material {
     }
     pub fn image(&self, semantic: u8) -> Option<&Image> {
         self.textures.iter().filter(|t| t.semantic == semantic).find_map(|t| t.image.as_ref())
+    }
+
+    /// How the material is drawn over what is behind it, from the render state of its main
+    /// technique (the lit one, or the unlit/emissive one of a glow).
+    pub fn blend(&self) -> crate::w3d::Blend {
+        let main = [2, 3].iter().find_map(|&t| self.state_bits.get(t).copied().flatten());
+        let main = main.or_else(|| self.state_bits.iter().skip(2).find_map(|b| *b));
+        main.map_or(crate::w3d::Blend::Opaque, |b| blend_of(b[0]))
+    }
+}
+
+/// `GfxStateBits::loadBits[0]`: source and destination colour blend (bits 0-3, 4-7: BO2's
+/// `GFXS_BLEND_*`, 1 zero, 2 one, 5 src alpha, 6 1 - src alpha, 10 1 - dest colour) and alpha test
+/// (bit 11 set: disabled).
+pub fn blend_of(bits: u32) -> crate::w3d::Blend {
+    use crate::w3d::Blend;
+    const ZERO: u32 = 1;
+    const ONE: u32 = 2;
+    const SRC_ALPHA: u32 = 5;
+    const INV_SRC_ALPHA: u32 = 6;
+    let (src, dst) = (bits & 0xF, (bits >> 4) & 0xF);
+    let alpha_test = bits & 0x800 == 0;
+    match (src, dst) {
+        (_, 0) | (_, ZERO) if alpha_test => Blend::AlphaTest,
+        (_, 0) | (_, ZERO) => Blend::Opaque,
+        // A glow: added (an inverse-destination-colour source, a soft "screen" add, is close enough).
+        (src, ONE) => Blend::Additive { alpha: src == SRC_ALPHA },
+        (ONE, INV_SRC_ALPHA) => Blend::Premultiplied,
+        _ => Blend::Alpha,
     }
 }
 
@@ -283,7 +316,15 @@ pub fn read_material(z: &Zone, m: u32) -> Material {
             })
             .collect()
     };
-    Material { name, textures }
+    let states = z.u32(m + 104);
+    let state_count = z.u8(m + 86) as u32;
+    let state_bits = (0..36)
+        .map(|t| {
+            let i = z.u8(m + 48 + t) as u32;
+            (states != 0 && i < state_count).then(|| [z.u32(states + 20 * i), z.u32(states + 20 * i + 4)])
+        })
+        .collect();
+    Material { name, textures, state_bits, sort_key: z.u8(m + 9) }
 }
 
 /// Read the `GfxImage` at `g`.
@@ -301,6 +342,17 @@ pub fn read_image(z: &Zone, g: u32) -> Image {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn blend_modes_from_render_state() {
+        use crate::w3d::Blend;
+        // As BO2's materials have them: a gun, the Reflex lens and reticle, the tablet's buttons.
+        assert_eq!(blend_of(0x1812_8812), Blend::Opaque);
+        assert_eq!(blend_of(0x0000_0065), Blend::Alpha);
+        assert_eq!(blend_of(0x0000_0862), Blend::Premultiplied);
+        assert_eq!(blend_of(0x0000_082A), Blend::Additive { alpha: false });
+        assert_eq!(blend_of(0x0000_0012), Blend::AlphaTest);
+    }
 
     #[test]
     fn unpacks_vertex_fields() {
