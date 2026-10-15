@@ -16,7 +16,7 @@
 #endif
 
 #include "Common/AudioEventRTS.h"
-#include "Common/AcademyStats.h"
+#include "Common/ActionManager.h"
 #include "Common/BuildAssistant.h"
 #include "Common/File.h"
 #include "Common/FileSystem.h"
@@ -51,13 +51,12 @@
 #include "GameClient/KeyDefs.h"
 #include "GameClient/Mouse.h"
 #include "GameClient/View.h"
-#include "GameClient/GameText.h"
-#include "GameLogic/Module/CreateModule.h"
 #include "GameLogic/AI.h"
 #include "GameLogic/Damage.h"
 #include "GameLogic/GameLogic.h"
 #include "GameLogic/Module/AIUpdate.h"
 #include "GameLogic/Module/BodyModule.h"
+#include "GameLogic/Module/DozerAIUpdate.h"
 #include "GameLogic/Object.h"
 #include "GameLogic/PartitionManager.h"
 #include "GameLogic/TerrainLogic.h"
@@ -262,7 +261,10 @@ void cbSetControlled(uint32_t id, int32_t controlled)
 	if (AIUpdateInterface *ai = obj->getAIUpdateInterface())
 	{
 		// Drop whatever the unit was doing; on release it starts idle and auto-acquires as usual.
-		ai->aiIdle(CMD_FROM_AI);
+		// Taking control is the player's order: as for any other, a dozer drops the task in hand
+		// (DozerAIUpdate::aiDoCommand). On release, one still pending (a site laid out in first
+		// person and left unfinished) is resumed.
+		ai->aiIdle(controlled ? CMD_FROM_PLAYER : CMD_FROM_AI);
 	}
 	obj->clearModelConditionState(MODELCONDITION_MOVING);
 	logf("General %u %s first-person control", id, controlled ? "entered" : "left");
@@ -970,8 +972,14 @@ struct Autopilot
 	// the lethal, then the pistol, from the command bar, then takes control.
 	Bool rts;
 	// ZHBO_AUTOPILOT=build: the General alone; the script opens his Build menu, orders a structure
-	// and goes back to his commands (his building is logged as it completes).
+	// and goes back to his commands (his building is logged as it completes). Then in first person
+	// he builds another, and repairs it once the script damages it; back overhead, he is ordered
+	// to repair it again.
 	Bool build;
+	Int buildPhase; // BuildPhase
+	ObjectID built; // the structure built in first person
+	UnsignedInt phaseFrame;
+	Real damagedHealth;
 	UnsignedInt spawnFrame;
 	Bool spawned;
 	ObjectID general;
@@ -1218,6 +1226,133 @@ void buildAutopilotFrame(UnsignedInt frame)
 	}
 }
 
+enum BuildPhase
+{
+	BUILD_OVERHEAD,		// ordered from his Build menu
+	BUILD_FPS,				// laid out with the hammer, built by holding the use key
+	REPAIR_FPS,				// damaged by the script; repaired by holding the use key
+	REPAIR_OVERHEAD,	// damaged again and ordered repaired, as a right-click would
+	BUILD_TEST_DONE
+};
+
+// The script knocks this share of its health off the structure the General built.
+void damageForTest(Object *obj, Real share)
+{
+	BodyModuleInterface *body = obj->getBodyModule();
+	body->internalChangeHealth(-body->getMaxHealth() * share);
+	s_autopilot.damagedHealth = body->getHealth();
+	logf("autopilot: damaged %s to %.0f%%", obj->getTemplate()->getName().str(), body->getHealth() / body->getMaxHealth() * 100.0f);
+}
+
+// ZHBO_AUTOPILOT=build: a structure the General built is done; on to the next step.
+void buildTestStructureDone(Object *obj)
+{
+	Object *general = TheGameLogic->findObjectByID(s_autopilot.general);
+	if (!general)
+		return;
+	if (s_autopilot.buildPhase == BUILD_OVERHEAD)
+	{
+		// Built from overhead; now the same in first person, facing open ground where the same
+		// structure could go (as near as the hammer puts it). His own workers wander about: if
+		// there is none where he stands, he is moved to where there is.
+		s_autopilot.buildPhase = BUILD_FPS;
+		const ThingTemplate *what = obj->getTemplate();
+		const Real ahead = std::max(50.0f, what->getTemplateGeometryInfo().getBoundingCircleRadius() + 15.0f);
+		const UnsignedInt checks = BuildAssistant::TERRAIN_RESTRICTIONS | BuildAssistant::CLEAR_PATH
+			| BuildAssistant::NO_OBJECT_OVERLAP | BuildAssistant::SHROUD_REVEALED;
+		const Coord3D start = *general->getPosition();
+		Bool found = FALSE;
+		for (Int ring = 0; ring < 4 && !found; ++ring)
+		{
+			for (Int spot = 0; spot < (ring ? 8 : 1) && !found; ++spot)
+			{
+				Coord3D g = start;
+				g.x += Cos(spot * (PI / 4.0f)) * 100.0f * ring;
+				g.y += Sin(spot * (PI / 4.0f)) * 100.0f * ring;
+				g.z = TheTerrainLogic->getGroundHeight(g.x, g.y);
+				for (Int k = 0; k < 24 && !found; ++k)
+				{
+					const Real a = k * (PI / 12.0f);
+					Coord3D at;
+					at.set(g.x + Cos(a) * ahead, g.y + Sin(a) * ahead, g.z);
+					// The hammer turns the front towards him, and the script turns it a notch or two.
+					found = TRUE;
+					for (Int turn = 1; turn <= 2 && found; ++turn)
+						found = TheBuildAssistant->isLocationLegalToBuild(&at, what, a + PI + turn * (PI / 12.0f), checks, general, nullptr) == LBC_OK;
+					if (found)
+					{
+						general->setPosition(&g);
+						general->setOrientation(a);
+						logf("autopilot: facing open ground at %d degrees, %d from where he built", k * 15, ring * 100);
+					}
+				}
+			}
+		}
+		TheTerrainVisual->removeAllBibs();
+		if (!found)
+			logLine("autopilot: no open ground around the General");
+		logLine("autopilot: taking control to build in first person");
+		Zhbo_RequestTakeControl(general);
+	}
+	else if (s_autopilot.buildPhase == BUILD_FPS)
+	{
+		s_autopilot.buildPhase = REPAIR_FPS;
+		s_autopilot.built = obj->getID();
+		damageForTest(obj, 0.3f);
+	}
+}
+
+// ZHBO_AUTOPILOT=build, after the first-person repair: back overhead, damage it again and order
+// the General to repair it; log how long that took against a dozer's time.
+void repairTestFrame(UnsignedInt frame)
+{
+	Object *general = TheGameLogic->findObjectByID(s_autopilot.general);
+	Object *built = TheGameLogic->findObjectByID(s_autopilot.built);
+	if (!general || !built || !general->getDrawable())
+		return;
+	BodyModuleInterface *body = built->getBodyModule();
+	if (s_autopilot.buildPhase == REPAIR_FPS)
+	{
+		if (zhbo_logic_is_controlled((uint32_t)general->getID()))
+		{
+			s_autopilot.phaseFrame = 0;
+			return;
+		}
+		if (s_autopilot.phaseFrame == 0)
+			s_autopilot.phaseFrame = frame;
+		if (frame - s_autopilot.phaseFrame < 3 * LOGICFRAMES_PER_SECOND)
+			return;
+		s_autopilot.buildPhase = REPAIR_OVERHEAD;
+		s_autopilot.phaseFrame = 0;
+		damageForTest(built, 0.15f);
+		TheInGameUI->deselectAllDrawables();
+		TheInGameUI->selectDrawable(general->getDrawable());
+		GameMessage *group = TheMessageStream->appendMessage(GameMessage::MSG_CREATE_SELECTED_GROUP);
+		group->appendBooleanArgument(TRUE);
+		group->appendObjectIDArgument(general->getID());
+		GameMessage *repair = TheMessageStream->appendMessage(GameMessage::MSG_DO_REPAIR);
+		repair->appendObjectIDArgument(built->getID());
+		logf("autopilot: ordered the General to repair %s", built->getTemplate()->getName().str());
+		return;
+	}
+	if (s_autopilot.buildPhase != REPAIR_OVERHEAD)
+		return;
+	// Timed from the first health he gives it (after the walk).
+	if (s_autopilot.phaseFrame == 0)
+	{
+		if (body->getHealth() > s_autopilot.damagedHealth)
+			s_autopilot.phaseFrame = frame;
+		return;
+	}
+	if (body->getHealth() < body->getMaxHealth())
+		return;
+	s_autopilot.buildPhase = BUILD_TEST_DONE;
+	const DozerAIInterface *dozer = general->getAI() ? general->getAI()->getDozerAIInterface() : nullptr;
+	const Real secs = (frame - s_autopilot.phaseFrame) / (Real)LOGICFRAMES_PER_SECOND;
+	const Real dozerSecs = dozer ? 0.15f / dozer->getRepairHealthPerSecond() : 0.0f;
+	logf("General repaired %s overhead in %.1f s (a dozer: %.1f s)", built->getTemplate()->getName().str(), secs, dozerSecs);
+}
+
 // Structures Generals are building: when each started, to log how long it took.
 std::map<ObjectID, UnsignedInt> s_generalBuilds;
 
@@ -1243,36 +1378,8 @@ void trackGeneralBuilds(UnsignedInt frame)
 			const Real dozer = obj->getTemplate()->calcTimeToBuild(obj->getControllingPlayer()) / (Real)LOGICFRAMES_PER_SECOND;
 			logf("General finished building %s in %.1f s (a dozer: %.1f s)", obj->getTemplate()->getName().str(), secs, dozer);
 			s_generalBuilds.erase(it);
-			// ZHBO_AUTOPILOT=build: built from overhead; now the same in first person.
-			static Bool s_fpsPhase = FALSE;
-			if (s_autopilot.build && !s_fpsPhase)
-			{
-				s_fpsPhase = TRUE;
-				if (Object *general = TheGameLogic->findObjectByID(s_autopilot.general))
-				{
-					// Facing open ground where the same structure could go (as near as the hammer puts it).
-					const ThingTemplate *what = obj->getTemplate();
-					const Real ahead = std::max(50.0f, what->getTemplateGeometryInfo().getBoundingCircleRadius() + 15.0f);
-					const Coord3D *g = general->getPosition();
-					const UnsignedInt checks = BuildAssistant::TERRAIN_RESTRICTIONS | BuildAssistant::CLEAR_PATH
-						| BuildAssistant::NO_OBJECT_OVERLAP | BuildAssistant::SHROUD_REVEALED;
-					for (Int k = 0; k < 24; ++k)
-					{
-						const Real a = k * (PI / 12.0f);
-						Coord3D at;
-						at.set(g->x + Cos(a) * ahead, g->y + Sin(a) * ahead, g->z);
-						const Real facing = a + PI; // the hammer turns the front towards him
-						if (TheBuildAssistant->isLocationLegalToBuild(&at, what, facing, checks, general, nullptr) == LBC_OK)
-						{
-							general->setOrientation(a);
-							break;
-						}
-					}
-					TheTerrainVisual->removeAllBibs();
-					logLine("autopilot: taking control to build in first person");
-					Zhbo_RequestTakeControl(general);
-				}
-			}
+			if (s_autopilot.build)
+				buildTestStructureDone(obj);
 		}
 	}
 }
@@ -1341,6 +1448,7 @@ void autopilotFrame()
 	if (s_autopilot.build)
 	{
 		buildAutopilotFrame(frame);
+		repairTestFrame(frame);
 		return;
 	}
 	const char *mode = getenv("ZHBO_AUTOPILOT");
@@ -1467,7 +1575,7 @@ public:
 		Int made = 0;
 		for (const ThingTemplate *t = TheThingFactory->firstTemplate(); t; t = t->friend_getNextTemplate())
 		{
-			if (!t->isKindOf(KINDOF_DOZER) || strncmp(t->getName().str(), "ZHBO_", 5) == 0)
+			if (!isWorker(t))
 				continue;
 			const AsciiString &dozerSet = t->friend_getCommandSetString();
 			const CommandSet *from = dozerSet.isEmpty() ? nullptr : TheControlBar->findCommandSet(dozerSet);
@@ -1485,32 +1593,64 @@ public:
 			++made;
 		}
 		logf("made %d General build menus", made);
+		logBuildMenus();
 	}
 
-	/// The Build menu for `general`: his player's dozer's (the side's own, e.g. the Air Force
-	/// General's), or any of his base side's.
+	/// A stock dozer or worker (the General is one too, but not anyone's worker).
+	static Bool isWorker(const ThingTemplate *t)
+	{
+		return t && t->isKindOf(KINDOF_DOZER) && strncmp(t->getName().str(), "ZHBO_", 5) != 0;
+	}
+
+	/// The worker a faction trains: the one its Command Center builds (each General's own, as the
+	/// Toxin General's Chem_GLAWorker), else one it starts with.
+	static const ThingTemplate *workerOf(const PlayerTemplate *pt)
+	{
+		if (!pt)
+			return nullptr;
+		const ThingTemplate *cc = TheThingFactory->findTemplate(pt->getStartingBuilding());
+		const CommandSet *set = cc ? TheControlBar->findCommandSet(cc->friend_getCommandSetString()) : nullptr;
+		for (Int i = 0; set && i < MAX_COMMANDS_PER_SET; ++i)
+		{
+			const CommandButton *b = set->getCommandButton(i);
+			if (b && b->getCommandType() == GUI_COMMAND_UNIT_BUILD && isWorker(b->getThingTemplate()))
+				return b->getThingTemplate();
+		}
+		for (Int i = 0; i < MAX_MP_STARTING_UNITS; ++i)
+		{
+			const ThingTemplate *t = TheThingFactory->findTemplate(pt->getStartingUnit(i));
+			if (isWorker(t))
+				return t;
+		}
+		return nullptr;
+	}
+
+	/// The Build menu for `general`: his faction's worker's, with Back.
 	static AsciiString buildSetFor(const Object *general)
 	{
 		const Player *player = general ? general->getControllingPlayer() : nullptr;
-		if (!player)
-			return AsciiString::TheEmptyString;
-		const AsciiString side = player->getSide();
-		const PlayerTemplate *pt = player->getPlayerTemplate();
-		const AsciiString base = pt ? pt->getBaseSide() : AsciiString::TheEmptyString;
-		AsciiString fallback;
-		for (const ThingTemplate *t = TheThingFactory->firstTemplate(); t; t = t->friend_getNextTemplate())
+		const ThingTemplate *worker = player ? workerOf(player->getPlayerTemplate()) : nullptr;
+		const AsciiString name = worker ? buildSetName(worker->friend_getCommandSetString()) : AsciiString::TheEmptyString;
+		return !name.isEmpty() && TheControlBar->findCommandSet(name) ? name : AsciiString::TheEmptyString;
+	}
+
+	/// Which worker's menu each faction's General builds from (the build test reads it).
+	static void logBuildMenus()
+	{
+		for (Int i = 0; ThePlayerTemplateStore && i < ThePlayerTemplateStore->getPlayerTemplateCount(); ++i)
 		{
-			if (!t->isKindOf(KINDOF_DOZER) || strncmp(t->getName().str(), "ZHBO_", 5) == 0)
+			const PlayerTemplate *pt = ThePlayerTemplateStore->getNthPlayerTemplate(i);
+			if (!pt || pt->isObserver() || !pt->isPlayableSide())
 				continue;
-			const AsciiString name = buildSetName(t->friend_getCommandSetString());
-			if (!TheControlBar->findCommandSet(name))
-				continue;
-			if (t->getDefaultOwningSide() == side)
-				return name;
-			if (fallback.isEmpty() && t->getDefaultOwningSide() == base)
-				fallback = name;
+			const ThingTemplate *worker = workerOf(pt);
+			logf("build menu: %s builds as %s", pt->getName().str(), worker ? worker->getName().str() : "(no worker)");
 		}
-		return fallback;
+	}
+
+	/// Whether `obj` is on the Next Idle Worker button's list.
+	static Bool isIdleWorker(Object *obj)
+	{
+		return TheInGameUI && TheInGameUI->findIdleWorker(obj) != nullptr;
 	}
 
 	static void injectConstructButtons()
@@ -1554,6 +1694,32 @@ public:
 		makeBuildSets();
 	}
 };
+
+namespace
+{
+// Generals on the Next Idle Worker button's list (a dozer's idle state puts them there): logged as
+// they join or leave it.
+std::set<ObjectID> s_idleGenerals;
+
+void trackIdleGenerals()
+{
+	if (!TheInGameUI)
+		return;
+	for (Object *obj = TheGameLogic->getFirstObject(); obj; obj = obj->getNextObject())
+	{
+		if (!isGeneral(obj))
+			continue;
+		const Bool idle = ZhboControlBarAccess::isIdleWorker(obj);
+		if (idle == (s_idleGenerals.count(obj->getID()) > 0))
+			continue;
+		if (idle)
+			s_idleGenerals.insert(obj->getID());
+		else
+			s_idleGenerals.erase(obj->getID());
+		logf("General %u %s the idle workers", (unsigned)obj->getID(), idle ? "joined" : "left");
+	}
+}
+}
 
 // ------------------------------------------------------------------------------------------------
 // Building in first person (zhbo_core::building): the hammer places from the General's build menu,
@@ -1730,89 +1896,107 @@ namespace
 		return sqrtf(ox * ox + oy * oy);
 	}
 
-	uint32_t cbBuildSite(uint32_t generalId, const ZhboVec3 *pos, float reach, uint32_t *tmpl, float *percent)
+	DozerAIInterface *dozerOf(Object *obj)
+	{
+		AIUpdateInterface *ai = obj ? obj->getAI() : nullptr;
+		return ai ? ai->getDozerAIInterface() : nullptr;
+	}
+
+	// What `general` can do at `obj` by Zero Hour's rules for a dozer (ActionManager): ZHBO_WORK_*,
+	// or -1. A site he laid out himself is his to build even with his dozer task on it.
+	Int workOn(const Object *general, const Object *obj)
+	{
+		if (!obj->isKindOf(KINDOF_STRUCTURE))
+			return -1;
+		if (obj->testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION))
+		{
+			const Bool his = obj->getBuilderID() == general->getID() && obj->getControllingPlayer() == general->getControllingPlayer();
+			return his || TheActionManager->canResumeConstructionOf(general, obj, CMD_FROM_PLAYER) ? ZHBO_WORK_BUILD : -1;
+		}
+		return TheActionManager->canRepairObject(general, obj, CMD_FROM_PLAYER) ? ZHBO_WORK_REPAIR : -1;
+	}
+
+	// How far along work on `obj` is: built, or its health.
+	float workPercent(const Object *obj, Int kind)
+	{
+		if (kind == ZHBO_WORK_BUILD)
+			return obj->getConstructionPercent();
+		const BodyModuleInterface *body = obj->getBodyModule();
+		return body && body->getMaxHealth() > 0.0f ? body->getHealth() / body->getMaxHealth() * 100.0f : 100.0f;
+	}
+
+	uint32_t cbWorkSite(uint32_t generalId, const ZhboVec3 *pos, float reach, ZhboWorkSite *out)
 	{
 		const Object *general = TheGameLogic->findObjectByID((ObjectID)generalId);
-		const Player *player = general ? general->getControllingPlayer() : nullptr;
-		if (!player)
+		if (!general || !general->getControllingPlayer())
 			return 0;
 		Coord3D at;
 		at.set(pos->x, pos->y, pos->z);
 		SimpleObjectIterator *iter = ThePartitionManager->iterateObjectsInRange(&at, reach + 300.0f, FROM_CENTER_2D);
 		MemoryPoolObjectHolder hold(iter);
 		const Object *best = nullptr;
+		Int bestKind = -1;
 		Real bestDistance = reach;
 		for (Object *obj = iter->first(); obj; obj = iter->next())
 		{
-			if (!obj->isKindOf(KINDOF_STRUCTURE) || !obj->testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION)
-				|| obj->isEffectivelyDead() || obj->getControllingPlayer() != player)
+			const Int kind = workOn(general, obj);
+			if (kind < 0)
 				continue;
 			const Real d = footprintDistance(obj, &at);
 			if (d <= bestDistance && (!best || d < bestDistance || obj->getID() < best->getID()))
 			{
 				best = obj;
+				bestKind = kind;
 				bestDistance = d;
 			}
 		}
 		if (!best)
 			return 0;
-		*tmpl = best->getTemplate()->getTemplateID();
-		*percent = best->getConstructionPercent();
-		return (uint32_t)best->getID();
+		out->id = (uint32_t)best->getID();
+		out->tmpl = best->getTemplate()->getTemplateID();
+		out->kind = bestKind;
+		out->percent = workPercent(best, bestKind);
+		UnicodeString name = best->getTemplate()->getDisplayName();
+		if (name.isEmpty())
+			name.translate(best->getTemplate()->getName());
+		utf8(name, out->name, sizeof(out->name));
+		return out->id;
 	}
 
-	// One frame of building, as DozerAIUpdate's DOZER_TASK_BUILD at the dock (host/patches/0012
-	// scales the RTS General's; here `rate` is the first-person speed).
-	float cbConstruct(uint32_t generalId, uint32_t siteId, float rate)
+	// One frame of his work on `siteId`, the dozer's own (DozerAIUpdate::buildStep and repairStep,
+	// host/patches/0012) at `rate`, the first-person speed.
+	float cbWork(uint32_t generalId, uint32_t siteId, float rate)
 	{
 		Object *general = TheGameLogic->findObjectByID((ObjectID)generalId);
 		Object *site = TheGameLogic->findObjectByID((ObjectID)siteId);
-		if (!general || !site || !site->testStatus(OBJECT_STATUS_UNDER_CONSTRUCTION)
-			|| site->getControllingPlayer() != general->getControllingPlayer())
-			return 100.0f;
-		BodyModuleInterface *body = site->getBodyModule();
-		Int framesToBuild = site->getTemplate()->calcTimeToBuild(general->getControllingPlayer());
-		if (framesToBuild < 1)
-			framesToBuild = 1;
-		const Drawable *look = site->getDrawable();
-		if (look && !look->getModelConditionFlags().test(MODELCONDITION_ACTIVELY_BEING_CONSTRUCTED))
+		const Int kind = general && site ? workOn(general, site) : -1;
+		if (kind == ZHBO_WORK_BUILD)
+		{
+			// As a dozer arriving at the site (DozerActionMoveToActionPosState): it is being built now.
 			site->clearAndSetModelConditionFlags(MAKE_MODELCONDITION_MASK(MODELCONDITION_AWAITING_CONSTRUCTION),
 				MAKE_MODELCONDITION_MASK2(MODELCONDITION_PARTIALLY_CONSTRUCTED, MODELCONDITION_ACTIVELY_BEING_CONSTRUCTED));
-		site->setConstructionPercent(site->getConstructionPercent() + 100.0f / framesToBuild * rate);
-		body->internalChangeHealth(body->getMaxHealth() / INT_TO_REAL(framesToBuild) * rate);
-		site->setProducer(general);
-		site->setBuilder(general);
-		if (site->getConstructionPercent() < 100.0f)
-			return site->getConstructionPercent();
-
-		site->clearStatus(MAKE_OBJECT_STATUS_MASK(OBJECT_STATUS_UNDER_CONSTRUCTION));
-		site->clearStatus(MAKE_OBJECT_STATUS_MASK(OBJECT_STATUS_RECONSTRUCTING));
-		site->clearModelConditionFlags(MAKE_MODELCONDITION_MASK3(MODELCONDITION_AWAITING_CONSTRUCTION,
-			MODELCONDITION_PARTIALLY_CONSTRUCTED, MODELCONDITION_ACTIVELY_BEING_CONSTRUCTED));
-		site->setConstructionPercent(CONSTRUCTION_COMPLETE);
-		body->evaluateVisualCondition();
-		if (Player *player = site->getControllingPlayer())
-		{
-			player->onStructureConstructionComplete(general, site, FALSE);
-			player->getAcademyStats()->recordProduction(site, general);
-			for (BehaviorModule **m = site->getBehaviorModules(); *m; ++m)
-				if (CreateModuleInterface *create = (*m)->getCreate())
-					create->onBuildComplete();
+			if (!DozerAIUpdate::buildStep(general, site, rate, FALSE))
+				return site->getConstructionPercent();
+			// Built by hand: his dozer task on it (from laying it out) is done too.
+			DozerAIInterface *dozer = dozerOf(general);
+			if (dozer && dozer->getTaskTarget(DOZER_TASK_BUILD) == site->getID())
+				dozer->cancelTask(DOZER_TASK_BUILD);
+			logf("General %u finished building %s in first person", generalId, site->getTemplate()->getName().str());
+			return 100.0f;
 		}
-		site->handlePartitionCellMaintenance();
-		site->updateUpgradeModules();
-		if (general->isLocallyViewed())
+		if (kind == ZHBO_WORK_REPAIR)
 		{
-			UnicodeString name = site->getTemplate()->getDisplayName();
-			if (name.isEmpty())
-				name.translate(site->getTemplate()->getName());
-			UnicodeString msg;
-			msg.format(TheGameText->fetch("DOZER:ConstructionComplete").str(), name.str());
-			TheInGameUI->message(msg);
-			TheRadar->createEvent(site->getPosition(), RADAR_EVENT_CONSTRUCTION);
+			if (!DozerAIUpdate::repairStep(general, site, rate))
+				return -1.0f; // another builder has it
+			const float percent = workPercent(site, kind);
+			if (percent < 100.0f)
+				return percent;
+			if (general->isLocallyViewed())
+				TheInGameUI->message("DOZER:RepairComplete");
+			logf("General %u repaired %s in first person", generalId, site->getTemplate()->getName().str());
+			return 100.0f;
 		}
-		logf("General %u finished building %s in first person", generalId, site->getTemplate()->getName().str());
-		return 100.0f;
+		return -1.0f;
 	}
 
 	// The hammer's placement ghost: Zero Hour's placement icon (see-through, red where it can't go).
@@ -1907,7 +2091,7 @@ void Zhbo_Init()
 		cbLog, cbGroundHeight, cbIsWalkable, cbExtent, cbObject, cbQuery,
 		cbSetPose, cbSetControlled, cbFireFx, cbDamage, cbHeal,
 		cbSpawn, cbDestroy, cbDisable, cbFx, cbCapture, cbSmoke,
-		cbBuildOptions, cbCanPlace, cbPlace, cbBuildSite, cbConstruct,
+		cbBuildOptions, cbCanPlace, cbPlace, cbWorkSite, cbWork,
 	};
 	static const ZhboClientApi clientApi = {
 		cbScreenSize, cbFillRect, cbLine, cbText, cbImage, cbClientQuery, cbCash, cbSound, cbClip, cbRadar,
@@ -1971,6 +2155,7 @@ void Zhbo_Reset()
 	s_worldLooks.clear();
 	s_rtsShots.clear();
 	s_generalBuilds.clear();
+	s_idleGenerals.clear();
 	forgetGhost();
 	zhbo_reset();
 	logLine("reset");
@@ -2058,6 +2243,7 @@ void Zhbo_LogicStep(UnsignedInt frame)
 		rtsAutopilotWave(frame);
 	rtsWeapons(frame);
 	trackGeneralBuilds(frame);
+	trackIdleGenerals();
 	zhbo_logic_step(frame);
 }
 
@@ -2374,7 +2560,7 @@ void Zhbo_OnZhboCommand(Object *obj, const CommandButton *button)
 	Zhbo_RequestTakeControl(obj);
 }
 
-Real Zhbo_BuildRate(const Object *builder)
+Real Zhbo_WorkRate(const Object *builder)
 {
 	return isGeneral(builder) ? zhbo_general_build_rate() : 1.0f;
 }

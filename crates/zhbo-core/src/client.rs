@@ -265,11 +265,20 @@ pub struct Autopilot {
     pub build: bool,
 }
 
+/// What the autopilot does in one frame: keys held, mouse movement (counts: x, y) and wheel notches.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Scripted {
+    pub keys: Vec<u8>,
+    pub dx: f32,
+    pub dy: f32,
+    pub wheel: f32,
+}
+
 impl Autopilot {
-    /// Keys held and mouse delta (counts per frame: x, y) at time `t`.
-    pub fn input_at(&self, b: &Bindings) -> (Vec<u8>, f32, f32) {
+    /// What it does at time `t`.
+    pub fn input_at(&self, b: &Bindings) -> Scripted {
         if self.equipment {
-            return (self.equipment_input(b), 0.0, 0.0);
+            return Scripted { keys: self.equipment_input(b), ..Default::default() };
         }
         if self.build {
             return self.build_input(b);
@@ -329,21 +338,19 @@ impl Autopilot {
         if (16.1..16.2).contains(&t) {
             keys.push(b.field_computer);
         }
-        (keys, dx, 0.0)
+        Scripted { keys, dx, ..Default::default() }
     }
 
-    /// The equipment run: throw the lethal (C4), hold the tactical up for four seconds (the Black
-    /// Hat on the drone the test puts in front; a Trophy System goes down when it is let go),
-    /// double-tap reload to set the C4 off, fire a burst and reload, wait while enemy rockets come
-    /// in, then open the field computer.
-    /// Building in first person (facing open ground): the hammer up, look down
-    /// (the structure goes as near as it can), place it, step up to it, and hold the use key until
-    /// it is built; then the hammer away.
-    pub fn build_input(&self, b: &Bindings) -> (Vec<u8>, f32, f32) {
+    /// Building in first person (facing open ground): the hammer up, look down (the structure goes
+    /// as near as it can), turn it a notch, place it (the hammer goes away), step up to it, and
+    /// hold the use key until it is built. The test then damages it: hold the use key again to
+    /// repair it, and open the field computer to go back to the overhead view.
+    pub fn build_input(&self, b: &Bindings) -> Scripted {
         let t = self.t;
         let mut keys = Vec::new();
         let dy = if (3.0..3.4).contains(&t) { 120.0 } else { 0.0 };
-        if (2.6..2.7).contains(&t) || (60.0..60.1).contains(&t) {
+        let wheel = if (3.6..3.65).contains(&t) { 1.0 } else { 0.0 };
+        if (2.6..2.7).contains(&t) {
             keys.push(b.hammer);
         }
         if (4.0..4.1).contains(&t) {
@@ -352,12 +359,16 @@ impl Autopilot {
         if (4.6..5.2).contains(&t) {
             keys.push(b.forward);
         }
-        if (5.6..58.0).contains(&t) {
+        if (5.6..32.0).contains(&t) || (34.0..56.0).contains(&t) || (58.0..58.1).contains(&t) {
             keys.push(b.field_computer);
         }
-        (keys, 0.0, dy)
+        Scripted { keys, dy, wheel, ..Default::default() }
     }
 
+    /// The equipment run: throw the lethal (C4), hold the tactical up for four seconds (the Black
+    /// Hat on the drone the test puts in front; a Trophy System goes down when it is let go),
+    /// double-tap reload to set the C4 off, fire a burst and reload, wait while enemy rockets come
+    /// in, then open the field computer.
     pub fn equipment_input(&self, b: &Bindings) -> Vec<u8> {
         let t = self.t;
         let mut keys = Vec::new();
@@ -536,14 +547,15 @@ impl Client {
         let inp = match self.autopilot.as_mut() {
             Some(ap) if matches!(self.view, ViewMode::Fps) => {
                 ap.t += dt;
-                let (keys, dx, dy) = ap.input_at(&self.cfg.bindings);
+                let script = ap.input_at(&self.cfg.bindings);
                 scripted = *inp;
                 scripted.keys = [0; 256];
-                for k in keys {
+                for k in script.keys {
                     scripted.keys[k as usize] = 1;
                 }
-                scripted.mouse_dx = dx;
-                scripted.mouse_dy = dy;
+                scripted.mouse_dx = script.dx;
+                scripted.mouse_dy = script.dy;
+                scripted.wheel = script.wheel;
                 scripted.input_allowed = 1;
                 &scripted
             }
@@ -706,11 +718,11 @@ impl Client {
             right = 0.0;
         }
         if allowed && inp.wheel.abs() >= 1.0 {
-            // With the hammer up the wheel chooses the structure (wheel up: the previous one).
+            // With the hammer up the wheel turns the structure being placed (wheel up: to the left).
             self.latch |= match (hammer, inp.wheel > 0.0) {
                 (false, _) => buttons::SWAP_WEAPON,
-                (true, true) => buttons::BUILD_PREV,
-                (true, false) => buttons::BUILD_NEXT,
+                (true, true) => buttons::ROTATE_LEFT,
+                (true, false) => buttons::ROTATE_RIGHT,
             };
         }
         if self.prev_held == u32::MAX {
@@ -825,20 +837,21 @@ impl Client {
                     self.note(match status {
                         crate::building::status::NO_MONEY => "Not enough money",
                         crate::building::status::LOCKED => "Not available yet",
+                        crate::building::status::BUSY => "Someone else is repairing it",
                         _ => "Can't build there",
                     });
                 }
-                EventKind::Building { percent, .. } => {
+                EventKind::Working { percent, .. } => {
                     self.hud.build_percent = percent;
                     if self.hud.build_shown <= 0.0 {
                         self.hud.build_blow = 0.0;
                     }
                     self.hud.build_shown = 0.15;
                 }
-                EventKind::BuildComplete { .. } => {
+                EventKind::WorkDone { kind } => {
                     self.hud.build_shown = 0.0;
                     self.cues.play(sounds::PLANT);
-                    self.note("Construction complete");
+                    self.note(crate::building::work_text(kind).done);
                 }
             }
         }

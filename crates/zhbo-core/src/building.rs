@@ -1,12 +1,14 @@
-//! The General as a builder. Under RTS control he builds like a dozer or worker (his faction's build
-//! menu, a dozer's AI), only more slowly. In first person he places a structure with his hammer and
-//! builds it by holding the use key at the site, as a BO2 Zombies player rebuilds a barrier.
+//! The General as a builder. Under RTS control he builds and repairs like a dozer or worker (his
+//! faction's build menu, a dozer's AI), only more slowly. In first person he places a structure with
+//! his hammer and builds it, or repairs a damaged one, by holding the use key at it, as a BO2
+//! Zombies player rebuilds a barrier.
 
 use crate::math::Vec3;
 
-/// His building speed under RTS control, as a share of a dozer's (Zero Hour's `DozerAIUpdate`).
+/// His building and repairing speed under RTS control, as a share of a dozer's (Zero Hour's
+/// `DozerAIUpdate`; repairs at his own `RepairHealthPercentPerSecond`).
 pub const GENERAL_BUILD_RATE: f32 = 0.5;
-/// In first person, holding the use key at the site: a dozer's speed (he is right there, exposed).
+/// In first person, holding the use key at it: a dozer's speed (he is right there, exposed).
 pub const FPS_BUILD_RATE: f32 = 1.0;
 /// How far from a structure's footprint he can build it (Zero Hour units, from his centre: his
 /// body is 10 across the radius, so 15 to spare).
@@ -18,6 +20,8 @@ pub const PLACE_MIN: f32 = 50.0;
 pub const PLACE_CLEAR: f32 = 15.0;
 /// Seconds to bring the hammer up (BO2's knife pullout) before it can place.
 pub const HAMMER_RAISE: f32 = crate::viewmodel::HAMMER_PULLOUT_TIME;
+/// How far one notch of the mouse wheel turns the structure being placed (radians: 15 degrees).
+pub const ROTATE_STEP: f32 = std::f32::consts::PI / 12.0;
 
 /// One structure the General can build (his build menu's), as the host describes it.
 #[repr(C)]
@@ -42,8 +46,7 @@ impl Default for BuildOption {
 
 impl BuildOption {
     pub fn name(&self) -> String {
-        let end = self.name.iter().position(|&c| c == 0).unwrap_or(self.name.len());
-        String::from_utf8_lossy(&self.name[..end]).into_owned()
+        name_of(&self.name)
     }
 }
 
@@ -56,15 +59,66 @@ pub mod status {
     pub const LOCKED: i32 = 2;
     /// (A refused placement only) no room there.
     pub const BLOCKED: i32 = 3;
+    /// (Work only) another builder is already repairing it.
+    pub const BUSY: i32 = 4;
 }
 
-/// A structure under construction in his reach.
+/// What he can do at a [`Site`].
+pub mod work {
+    /// Build a structure under construction.
+    pub const BUILD: i32 = 0;
+    /// Repair a damaged structure.
+    pub const REPAIR: i32 = 1;
+}
+
+/// How the HUD words each kind of [`work`].
+pub struct WorkText {
+    /// "Hold [F] to {prompt} ...".
+    pub prompt: &'static str,
+    /// Over the progress bar.
+    pub progress: &'static str,
+    pub done: &'static str,
+}
+
+/// By [`work`] kind.
+pub const WORK_TEXT: [WorkText; 2] = [
+    WorkText { prompt: "build", progress: "BUILDING", done: "Construction complete" },
+    WorkText { prompt: "repair", progress: "REPAIRING", done: "Repair complete" },
+];
+
+pub fn work_text(kind: i32) -> &'static WorkText {
+    usize::try_from(kind).ok().and_then(|k| WORK_TEXT.get(k)).unwrap_or(&WORK_TEXT[0])
+}
+
+/// A structure in his reach he can work on, as the host describes it.
+#[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Site {
     pub id: u32,
     pub template: u32,
-    /// 0..100.
+    /// [`work`].
+    pub kind: i32,
+    /// How far along: built, or (repairing) its health, 0..100.
     pub percent: f32,
+    /// Display name, UTF-8, NUL-terminated.
+    pub name: [u8; 48],
+}
+
+impl Default for Site {
+    fn default() -> Self {
+        Site { id: 0, template: 0, kind: work::BUILD, percent: 0.0, name: [0; 48] }
+    }
+}
+
+impl Site {
+    pub fn name(&self) -> String {
+        name_of(&self.name)
+    }
+}
+
+fn name_of(bytes: &[u8]) -> String {
+    let end = bytes.iter().position(|&c| c == 0).unwrap_or(bytes.len());
+    String::from_utf8_lossy(&bytes[..end]).into_owned()
 }
 
 /// The hammer, out in first person: which of his build options is chosen, and how far it is up.
@@ -74,6 +128,8 @@ pub struct Hammer {
     /// The choice was made (it starts on the first structure he can build now).
     pub picked: bool,
     pub raise: f32,
+    /// How far the mouse wheel turned it from facing him (radians).
+    pub turn: f32,
     /// Where the chosen structure would go now, and which way it would face.
     pub at: Vec3,
     pub angle: f32,

@@ -18,6 +18,8 @@
 //! zhbo-assets dump <ff> <text> [before] [after]        hex dump around a string in a zone
 //! zhbo-assets pose <out.png> <frame> <ff>:<anim> <ff>:<model>[@<tag>] ...
 //!                                                     render models posed by an animation frame
+//! zhbo-assets hammer <out.png> <clip> <frame>         render the converted hammer viewmodel
+//!                                                     (clip: ZHBO_VMH_PUL/IDL/SWG/PUT)
 //! ```
 //! `<bank>`/`<pak>`/`<ff>` are file names inside the BO2 install (`sound\`, `zone\all\`) or full paths.
 //! Everything exported is the player's own game data: keep it local, never redistribute it.
@@ -546,6 +548,17 @@ fn run(args: &[String]) -> Result<(), String> {
             for n in &anim.notifies {
                 println!("  notify {:.3} {}", n.time, n.name);
             }
+            Ok(())
+        }
+        "hammer" => {
+            let usage = "hammer <out.png> <clip> <frame>";
+            let out = args.get(1).ok_or(usage)?;
+            let clip = args.get(2).ok_or(usage)?;
+            let frame: usize = args.get(3).and_then(|v| v.parse().ok()).ok_or(usage)?;
+            let (rig, meshes, channels) = zhbo_assets::generals::hammer_preview(&bo2_dir()?, clip)?;
+            let posed = preview::pose_w3d(&rig.pivots, &meshes, &channels, frame);
+            preview::render_meshes(&posed, Path::new(out)).map_err(|e| e.to_string())?;
+            println!("wrote {out}");
             Ok(())
         }
         "posew3d" => {

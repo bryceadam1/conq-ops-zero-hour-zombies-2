@@ -116,15 +116,16 @@ pub trait LogicHost {
     fn place(&self, _general: u32, _template: u32, _pos: Vec3, _angle: f32) -> u32 {
         0
     }
-    /// The closest of `general`'s side's structures under construction within `reach` of the
-    /// edge of its footprint, from `pos`.
-    fn build_site(&self, _general: u32, _pos: Vec3, _reach: f32) -> Option<crate::building::Site> {
+    /// The closest structure `general` can work on (one under construction he can build, or a
+    /// damaged one he can repair, by Zero Hour's rules for a dozer) within `reach` of the edge of
+    /// its footprint, from `pos`.
+    fn work_site(&self, _general: u32, _pos: Vec3, _reach: f32) -> Option<crate::building::Site> {
         None
     }
-    /// One logic frame of `general` building `site`, at `rate` of a dozer's speed; the percent
-    /// after (100 when it completed).
-    fn construct(&self, _general: u32, _site: u32, _rate: f32) -> f32 {
-        0.0
+    /// One logic frame of `general` working on `site`, at `rate` of a dozer's speed; how far along
+    /// it is after (100 when done), or negative if someone else has it.
+    fn work(&self, _general: u32, _site: u32, _rate: f32) -> f32 {
+        -1.0
     }
 }
 
@@ -190,8 +191,8 @@ pub struct LogicApi {
     pub build_options: Option<extern "C" fn(general: u32, out: *mut crate::building::BuildOption, cap: i32) -> i32>,
     pub can_place: Option<extern "C" fn(general: u32, template: u32, pos: *const Vec3, angle: f32) -> i32>,
     pub place: Option<extern "C" fn(general: u32, template: u32, pos: *const Vec3, angle: f32) -> u32>,
-    pub build_site: Option<extern "C" fn(general: u32, pos: *const Vec3, reach: f32, template: *mut u32, percent: *mut f32) -> u32>,
-    pub construct: Option<extern "C" fn(general: u32, site: u32, rate: f32) -> f32>,
+    pub work_site: Option<extern "C" fn(general: u32, pos: *const Vec3, reach: f32, out: *mut crate::building::Site) -> u32>,
+    pub work: Option<extern "C" fn(general: u32, site: u32, rate: f32) -> f32>,
 }
 
 #[repr(C)]
@@ -334,15 +335,15 @@ impl LogicHost for CLogicHost {
         self.0.place.map_or(0, |f| f(general, template, &pos, angle))
     }
 
-    fn build_site(&self, general: u32, pos: Vec3, reach: f32) -> Option<crate::building::Site> {
-        let f = self.0.build_site?;
-        let (mut template, mut percent) = (0u32, 0.0f32);
-        let id = f(general, &pos, reach, &mut template, &mut percent);
-        (id != 0).then_some(crate::building::Site { id, template, percent })
+    fn work_site(&self, general: u32, pos: Vec3, reach: f32) -> Option<crate::building::Site> {
+        let f = self.0.work_site?;
+        let mut site = crate::building::Site::default();
+        let id = f(general, &pos, reach, &mut site);
+        (id != 0).then(|| crate::building::Site { id, ..site })
     }
 
-    fn construct(&self, general: u32, site: u32, rate: f32) -> f32 {
-        self.0.construct.map_or(0.0, |f| f(general, site, rate))
+    fn work(&self, general: u32, site: u32, rate: f32) -> f32 {
+        self.0.work.map_or(-1.0, |f| f(general, site, rate))
     }
 }
 

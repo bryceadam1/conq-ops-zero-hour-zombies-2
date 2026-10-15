@@ -77,11 +77,12 @@ pub enum EventKind {
     Hammer { up: bool },
     /// A structure's site laid out with the hammer (its template).
     BuildPlaced { template: u32 },
-    /// The hammer could not place it: not enough money, locked, or no room there.
+    /// The hammer could not place it (not enough money, locked, or no room there), or someone
+    /// else is repairing it (`building::status`).
     BuildRefused { status: i32 },
-    /// Building at a site, each frame while the use key is held (percent 0..100).
-    Building { template: u32, percent: f32 },
-    BuildComplete { template: u32 },
+    /// Working at a site (`building::work`), each frame while the use key is held (percent 0..100).
+    Working { kind: i32, percent: f32 },
+    WorkDone { kind: i32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -415,13 +416,11 @@ impl Sim {
         let world = HostWorld { host, viewer: p.general };
         match p.mode {
             Mode::Fps => {
-                // The use key builds at a site in reach (held), instead of opening the field computer.
-                p.site = host.build_site(p.general, p.body.pos, building::REACH);
+                // The use key works (builds or repairs) at a structure in reach, held, instead of
+                // opening the field computer.
+                p.site = host.work_site(p.general, p.body.pos, building::REACH);
                 p.building = p.site.is_some() && (input.held | input.pressed) & buttons::FIELD_COMPUTER != 0;
-                if p.site.is_some() {
-                    input.pressed &= !buttons::FIELD_COMPUTER;
-                }
-                if input.pressed & buttons::FIELD_COMPUTER != 0 {
+                if p.site.is_none() && input.pressed & buttons::FIELD_COMPUTER != 0 {
                     p.mode = Mode::FieldComputer { t: 0.0 };
                     p.arsenal.ads = 0.0;
                     self.emit(idx, EventKind::FieldComputerOpened);
@@ -473,9 +472,11 @@ impl Sim {
         true
     }
 
-    /// The hammer (toggle, choose, place with fire) and building at a site (hold the use key);
-    /// whether either has his hands.
+    /// The hammer (toggle; choose with ADS, turn with the wheel, place with fire) and working at a
+    /// site (hold the use key); whether either has his hands.
     fn step_building(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, input: &FpsInput) -> bool {
+        // In hand at the start of the frame: its input (the click that placed, say) is not the gun's.
+        let had_hammer = p.hammer.is_some();
         if input.pressed & buttons::HAMMER != 0 {
             p.hammer = match p.hammer {
                 Some(_) => None,
@@ -491,19 +492,23 @@ impl Sim {
             h.raise = (h.raise + LOGIC_DT).min(building::HAMMER_RAISE);
             let options = host.build_options(p.general);
             let n = options.len();
+            let mut placed = false;
             if n > 0 {
-                if input.pressed & buttons::BUILD_NEXT != 0 {
-                    h.choice = (h.choice + 1) % n;
-                }
-                if input.pressed & buttons::BUILD_PREV != 0 {
-                    h.choice = (h.choice + n - 1) % n;
-                }
                 if !h.picked {
                     h.picked = true;
                     h.choice = options.iter().position(|o| o.status == building::status::OK).unwrap_or(0);
                 }
+                if input.pressed & buttons::ADS != 0 {
+                    h.choice = (h.choice + 1) % n;
+                }
+                if input.pressed & buttons::ROTATE_LEFT != 0 {
+                    h.turn = crate::math::wrap_angle(h.turn + building::ROTATE_STEP);
+                }
+                if input.pressed & buttons::ROTATE_RIGHT != 0 {
+                    h.turn = crate::math::wrap_angle(h.turn - building::ROTATE_STEP);
+                }
                 h.choice = h.choice.min(n - 1);
-                (h.at, h.angle) = placement(host, p, options[h.choice].radius);
+                (h.at, h.angle) = placement(host, p, options[h.choice].radius, h.turn);
                 if input.pressed & buttons::FIRE != 0 && h.raise >= building::HAMMER_RAISE && !p.building {
                     let o = options[h.choice];
                     let (pos, angle) = (h.at, h.angle);
@@ -515,6 +520,8 @@ impl Sim {
                         building::status::BLOCKED
                     };
                     if status == -1 {
+                        placed = true;
+                        host.log(&format!("player {idx} placed {} turned {:.0} degrees", o.name(), h.turn.to_degrees()));
                         self.emit(idx, EventKind::BuildPlaced { template: o.template });
                     } else {
                         host.log(&format!("player {idx} can't build {} (status {status}, ${})", o.name(), o.cost));
@@ -522,22 +529,33 @@ impl Sim {
                     }
                 }
             }
-            p.hammer = Some(h);
+            if placed {
+                // One structure per hammer: it goes away once placed (bring it up again for another).
+                p.hammer = None;
+                self.emit(idx, EventKind::Hammer { up: false });
+            } else {
+                p.hammer = Some(h);
+            }
         }
         if p.building {
             if let Some(site) = p.site {
-                let percent = host.construct(p.general, site.id, building::FPS_BUILD_RATE);
-                if percent >= 100.0 {
+                let percent = host.work(p.general, site.id, building::FPS_BUILD_RATE);
+                if percent < 0.0 {
+                    p.building = false;
+                    if input.pressed & buttons::FIELD_COMPUTER != 0 {
+                        self.emit(idx, EventKind::BuildRefused { status: building::status::BUSY });
+                    }
+                } else if percent >= 100.0 {
                     p.building = false;
                     p.site = None;
-                    self.emit(idx, EventKind::BuildComplete { template: site.template });
+                    self.emit(idx, EventKind::WorkDone { kind: site.kind });
                 } else {
                     p.site = Some(Site { percent, ..site });
-                    self.emit(idx, EventKind::Building { template: site.template, percent });
+                    self.emit(idx, EventKind::Working { kind: site.kind, percent });
                 }
             }
         }
-        p.hammer.is_some() || p.building
+        had_hammer || p.hammer.is_some() || p.building
     }
 
     /// Black Hat: hold it on enemy equipment or a Zero Hour drone until the hack completes.
@@ -1028,11 +1046,11 @@ impl World for HostWorld<'_> {
     }
 }
 
-/// Where the hammer puts a structure with a footprint of `radius`, and which way it faces (its
-/// front towards him).
-pub fn placement(host: &dyn LogicHost, p: &PlayerSim, radius: f32) -> (Vec3, f32) {
+/// Where the hammer puts a structure with a footprint of `radius`, and which way it faces: its
+/// front towards him, turned by `turn`.
+pub fn placement(host: &dyn LogicHost, p: &PlayerSim, radius: f32, turn: f32) -> (Vec3, f32) {
     let pos = building::place_point(p.body.eye(), dir_from_angles(p.yaw, p.pitch), radius, |x, y| host.ground_height(x, y));
-    (pos, crate::math::wrap_angle(p.yaw + std::f32::consts::PI))
+    (pos, crate::math::wrap_angle(p.yaw + std::f32::consts::PI + turn))
 }
 
 #[cfg(test)]
@@ -1040,6 +1058,19 @@ pub(crate) mod tests {
     use super::*;
     use crate::input::pack_move;
     use std::cell::RefCell;
+
+    /// A structure the fake host offers to work on.
+    #[derive(Clone, Copy, Debug, Default)]
+    pub struct FakeSite {
+        pub id: u32,
+        pub template: u32,
+        pub at: Vec3,
+        pub angle: f32,
+        pub percent: f32,
+        pub kind: i32,
+        /// Someone else is repairing it.
+        pub busy: bool,
+    }
 
     /// A flat world with a set of objects; records engine calls.
     #[derive(Default)]
@@ -1053,9 +1084,9 @@ pub(crate) mod tests {
         pub destroyed: RefCell<Vec<u32>>,
         pub played_fx: RefCell<Vec<String>>,
         pub smoked: RefCell<Vec<(Vec3, f32)>>,
-        /// Building: the build menu, and the sites laid out (id, template, where, percent).
+        /// Building: the build menu, and the structures to work on (laid out, or damaged).
         pub options: RefCell<Vec<crate::building::BuildOption>>,
-        pub sites: RefCell<Vec<(u32, u32, Vec3, f32)>>,
+        pub sites: RefCell<Vec<FakeSite>>,
     }
 
     impl FakeHost {
@@ -1152,24 +1183,28 @@ pub(crate) mod tests {
             self.options.borrow().clone()
         }
         fn can_place(&self, _general: u32, _template: u32, pos: Vec3, _angle: f32) -> bool {
-            self.sites.borrow().iter().all(|s| (s.2 - pos).length_xy() > 80.0)
+            self.sites.borrow().iter().all(|s| (s.at - pos).length_xy() > 80.0)
         }
-        fn place(&self, _general: u32, template: u32, pos: Vec3, _angle: f32) -> u32 {
+        fn place(&self, _general: u32, template: u32, pos: Vec3, angle: f32) -> u32 {
             let mut sites = self.sites.borrow_mut();
             let id = 20_000 + sites.len() as u32;
-            sites.push((id, template, pos, 0.0));
+            sites.push(FakeSite { id, template, at: pos, angle, ..Default::default() });
             id
         }
-        fn build_site(&self, _general: u32, pos: Vec3, reach: f32) -> Option<crate::building::Site> {
+        fn work_site(&self, _general: u32, pos: Vec3, reach: f32) -> Option<crate::building::Site> {
             // Footprints 40 across.
-            self.sites.borrow().iter().filter(|s| s.3 < 100.0 && (s.2 - pos).length_xy() <= 20.0 + reach)
-                .map(|s| crate::building::Site { id: s.0, template: s.1, percent: s.3 }).next()
+            self.sites.borrow().iter().filter(|s| s.percent < 100.0 && (s.at - pos).length_xy() <= 20.0 + reach)
+                .map(|s| crate::building::Site { id: s.id, template: s.template, kind: s.kind, percent: s.percent, ..Default::default() })
+                .next()
         }
-        fn construct(&self, _general: u32, site: u32, rate: f32) -> f32 {
+        fn work(&self, _general: u32, site: u32, rate: f32) -> f32 {
             let mut sites = self.sites.borrow_mut();
-            let s = sites.iter_mut().find(|s| s.0 == site).unwrap();
-            s.3 = (s.3 + 10.0 * rate).min(100.0);
-            s.3
+            let s = sites.iter_mut().find(|s| s.id == site).unwrap();
+            if s.busy {
+                return -1.0;
+            }
+            s.percent = (s.percent + 10.0 * rate).min(100.0);
+            s.percent
         }
         fn capture(&self, id: u32, new_owner: u32) {
             let owner = self.objects.borrow().iter().find(|o| o.id == new_owner).map(|o| o.owner_player);
@@ -1302,30 +1337,39 @@ pub(crate) mod tests {
         let look = |held: u32, pressed: u32| FpsInput { held, pressed, pitch: -0.5, ..Default::default() };
         run(&mut sim, &host, 0, 1, look(buttons::HAMMER, buttons::HAMMER), 1);
         assert!(sim.player(0).unwrap().hammer.is_some());
-        run(&mut sim, &host, 0, 1, look(0, buttons::BUILD_NEXT), 1);
+        // ADS picks the next structure, and does not aim the gun.
+        run(&mut sim, &host, 0, 1, look(buttons::ADS, buttons::ADS), 1);
         run(&mut sim, &host, 0, 1, look(0, 0), frames(crate::building::HAMMER_RAISE));
+        assert_eq!(sim.player(0).unwrap().arsenal.ads, 0.0);
         sim.events.clear();
         run(&mut sim, &host, 0, 1, look(buttons::FIRE, buttons::FIRE), 1);
         assert!(events(&sim).contains(&EventKind::BuildPlaced { template: 8 }), "{:?}", events(&sim));
         assert_eq!(sim.player(0).unwrap().arsenal.current().ammo, ammo, "the gun did not fire");
-        let at = host.sites.borrow()[0].2;
+        let at = host.sites.borrow()[0].at;
         assert!(at.x >= crate::building::PLACE_MIN - 0.01 && at.x < crate::building::PLACE_RANGE && at.z == 0.0, "placed ahead on the ground: {at:?}");
-        // Again on the same spot: no room.
+        // One structure per hammer: it went away.
+        assert!(sim.player(0).unwrap().hammer.is_none());
+        assert!(events(&sim).contains(&EventKind::Hammer { up: false }));
+        // Up again, on the same spot: no room.
+        run(&mut sim, &host, 0, 1, look(buttons::HAMMER, buttons::HAMMER), 1);
+        run(&mut sim, &host, 0, 1, look(0, 0), frames(crate::building::HAMMER_RAISE));
         sim.events.clear();
         run(&mut sim, &host, 0, 1, look(buttons::FIRE, buttons::FIRE), 1);
         assert!(events(&sim).contains(&EventKind::BuildRefused { status: crate::building::status::BLOCKED }));
+        assert!(sim.player(0).unwrap().hammer.is_some(), "refused: still in hand");
+        run(&mut sim, &host, 0, 1, look(buttons::HAMMER, buttons::HAMMER), 1);
 
         // Up to the site: the use key builds it (not the field computer), only while held.
-        host.sites.borrow_mut()[0].2 = Vec3::new(25.0, 0.0, 0.0);
+        host.sites.borrow_mut()[0].at = Vec3::new(25.0, 0.0, 0.0);
         run(&mut sim, &host, 0, 1, look(buttons::FIELD_COMPUTER, buttons::FIELD_COMPUTER), 3);
         assert_eq!(sim.player(0).unwrap().mode, Mode::Fps);
         assert!(sim.player(0).unwrap().building);
         run(&mut sim, &host, 0, 1, look(0, 0), 2);
-        let paused = host.sites.borrow()[0].3;
+        let paused = host.sites.borrow()[0].percent;
         assert!((paused - 30.0).abs() < 0.01, "three frames of building: {paused}");
         sim.events.clear();
         run(&mut sim, &host, 0, 1, look(buttons::FIELD_COMPUTER, buttons::FIELD_COMPUTER), 7);
-        assert!(events(&sim).contains(&EventKind::BuildComplete { template: 8 }), "{:?}", events(&sim));
+        assert!(events(&sim).contains(&EventKind::WorkDone { kind: crate::building::work::BUILD }), "{:?}", events(&sim));
         assert!(!sim.player(0).unwrap().building);
         // Built: the use key is the field computer's again.
         run(&mut sim, &host, 0, 1, look(0, 0), 1);
@@ -1349,6 +1393,52 @@ pub(crate) mod tests {
         assert!(host.sites.borrow().is_empty());
         run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::SWAP_WEAPON, ..Default::default() }, 1);
         assert!(sim.player(0).unwrap().hammer.is_none());
+    }
+
+    #[test]
+    fn the_wheel_turns_the_structure_being_placed() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.options.borrow_mut().push(option(7, crate::building::status::OK));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        wait_until_ready(&mut sim, &host);
+        run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::HAMMER, ..Default::default() }, 1);
+        run(&mut sim, &host, 0, 1, FpsInput::default(), frames(crate::building::HAMMER_RAISE));
+        let facing = sim.player(0).unwrap().hammer.unwrap().angle;
+        run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::ROTATE_LEFT, ..Default::default() }, 1);
+        run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::ROTATE_LEFT, ..Default::default() }, 1);
+        run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::ROTATE_RIGHT, ..Default::default() }, 1);
+        let turned = sim.player(0).unwrap().hammer.unwrap().angle;
+        assert!((crate::math::wrap_angle(turned - facing) - crate::building::ROTATE_STEP).abs() < 1e-4, "{facing} -> {turned}");
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, pressed: buttons::FIRE, ..Default::default() }, 1);
+        assert!((host.sites.borrow()[0].angle - turned).abs() < 1e-4, "placed as turned");
+    }
+
+    #[test]
+    fn holding_use_at_a_damaged_structure_repairs_it() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let repair = crate::building::work::REPAIR;
+        host.sites.borrow_mut().push(FakeSite { id: 5, template: 3, at: Vec3::new(30.0, 0.0, 0.0), percent: 60.0, kind: repair, ..Default::default() });
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        wait_until_ready(&mut sim, &host);
+        let hold = FpsInput { held: buttons::FIELD_COMPUTER, pressed: buttons::FIELD_COMPUTER, ..Default::default() };
+        run(&mut sim, &host, 0, 1, hold, 1);
+        assert!(events(&sim).contains(&EventKind::Working { kind: repair, percent: 70.0 }), "{:?}", events(&sim));
+        assert_eq!(sim.player(0).unwrap().mode, Mode::Fps, "the use key repaired, not the field computer");
+        run(&mut sim, &host, 0, 1, hold, 3);
+        assert!(events(&sim).contains(&EventKind::WorkDone { kind: repair }), "{:?}", events(&sim));
+
+        // Someone else repairing it: refused once, when the key goes down.
+        host.sites.borrow_mut().push(FakeSite { id: 6, template: 3, at: Vec3::new(30.0, 0.0, 0.0), percent: 50.0, kind: repair, busy: true, ..Default::default() });
+        sim.events.clear();
+        run(&mut sim, &host, 0, 1, hold, 1);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIELD_COMPUTER, ..Default::default() }, 3);
+        let refused = events(&sim).iter().filter(|e| **e == EventKind::BuildRefused { status: crate::building::status::BUSY }).count();
+        assert_eq!(refused, 1, "{:?}", events(&sim));
+        assert_eq!(host.sites.borrow()[1].percent, 50.0);
     }
 
     #[test]

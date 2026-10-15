@@ -13,7 +13,7 @@
 //! team emblem is the player's faction logo, and minimap dots carry each owner's team colour, as on
 //! Zero Hour's radar. Without the BO2 art the HUD falls back to drawn shapes and the engine font.
 
-use crate::building;
+use crate::building::{self, work_text};
 use crate::client::{Client, ViewMode, HITMARKER_TIME};
 use crate::host::{objflags, ClientHost, ObjInfo};
 use crate::math::Vec3;
@@ -459,10 +459,9 @@ fn draw_hack(host: &dyn ClientHost, w: f32, h: f32, s: f32, client: &Client) {
 }
 
 /// Building: with the hammer up, the build menu (right of centre) and the placement ghost; at a
-/// site, BO2 Zombies' "Hold F" prompt and, while building, its progress.
+/// structure to build or repair, BO2 Zombies' "Hold F" prompt and, while working, its progress.
 fn draw_build(host: &dyn ClientHost, w: f32, h: f32, s: f32, client: &Client, p: &PlayerSim, show: bool) {
-    let options = if p.hammer.is_some() || p.site.is_some() { host.build_options(p.general) } else { Vec::new() };
-    let name_of = |template: u32| options.iter().find(|o| o.template == template).map_or("structure".to_string(), |o| o.name());
+    let options = if p.hammer.is_some() { host.build_options(p.general) } else { Vec::new() };
     match p.hammer {
         Some(hm) if !options.is_empty() => {
             let choice = hm.choice.min(options.len() - 1);
@@ -491,7 +490,7 @@ fn draw_build(host: &dyn ClientHost, w: f32, h: f32, s: f32, client: &Client, p:
                     host.text(x + pw - 10.0 * s, y + 2.0 * s, &format!("${}", o.cost), col, size, 2);
                 }
                 let y = top + row * (options.len() as f32 + 1.4);
-                host.text(x + pw * 0.5, y, "[Wheel] choose   [Fire] place", DIM, (11.0 * s) as i32, 1);
+                host.text(x + pw * 0.5, y, "[RMB] next   [Wheel] turn   [Fire] place", DIM, (11.0 * s) as i32, 1);
             }
         }
         _ => host.ghost(0, Vec3::ZERO, 0.0, false),
@@ -507,10 +506,10 @@ fn draw_build(host: &dyn ClientHost, w: f32, h: f32, s: f32, client: &Client, p:
             host.fill_rect(x, y, bw, bh, PANEL);
             host.fill_rect(x, y, bw * (client.hud.build_percent / 100.0).clamp(0.0, 1.0), bh, 0xF0F2_C230);
             outline_rect(host, x, y, bw, bh, 1.0 * s, OUTLINE);
-            let label = format!("BUILDING {}  {:.0}%", name_of(site.template).to_uppercase(), client.hud.build_percent);
+            let label = format!("{} {}  {:.0}%", work_text(site.kind).progress, site.name().to_uppercase(), client.hud.build_percent);
             host.text(w * 0.5, y - 18.0 * s, &label, WHITE, (12.0 * s) as i32, 1);
         } else {
-            let text = format!("Hold [F] to build {} ({:.0}%)", name_of(site.template), site.percent);
+            let text = format!("Hold [F] to {} {} ({:.0}%)", work_text(site.kind).prompt, site.name(), site.percent);
             host.text(w * 0.5, h * 0.5 + 60.0 * s, &text, WHITE, size, 1);
         }
     }

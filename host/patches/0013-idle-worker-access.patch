@@ -1,0 +1,12 @@
+diff --git a/GeneralsMD/Code/GameEngine/Include/GameClient/InGameUI.h b/GeneralsMD/Code/GameEngine/Include/GameClient/InGameUI.h
+index 312a2ced7..836fae864 100644
+--- a/GeneralsMD/Code/GameEngine/Include/GameClient/InGameUI.h
++++ b/GeneralsMD/Code/GameEngine/Include/GameClient/InGameUI.h
+@@ -321,6 +321,7 @@ class InGameUI : public SubsystemInterface, public Snapshot
+ {
+ 
+ friend class Drawable;	// for selection/deselection transactions
++friend class ZhboControlBarAccess; // ZHBO: whether a General is on the Next Idle Worker list
+ 
+ protected:
+ 

@@ -20,9 +20,9 @@ pub mod buttons {
     pub const ALT_MODE: u32 = 1 << 12;
     /// Bring the hammer up or put it away (building).
     pub const HAMMER: u32 = 1 << 13;
-    /// With the hammer up: the next or previous structure (the mouse wheel).
-    pub const BUILD_NEXT: u32 = 1 << 14;
-    pub const BUILD_PREV: u32 = 1 << 15;
+    /// With the hammer up: turn the structure being placed (the mouse wheel; ADS picks the next one).
+    pub const ROTATE_LEFT: u32 = 1 << 14;
+    pub const ROTATE_RIGHT: u32 = 1 << 15;
     pub const ALL: u32 = (1 << 16) - 1;
 }
 

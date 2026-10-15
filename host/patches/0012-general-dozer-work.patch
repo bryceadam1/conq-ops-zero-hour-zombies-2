@@ -1,0 +1,334 @@
+diff --git a/GeneralsMD/Code/GameEngine/Include/GameLogic/Module/DozerAIUpdate.h b/GeneralsMD/Code/GameEngine/Include/GameLogic/Module/DozerAIUpdate.h
+index d7113be4a..e0f5f2e36 100644
+--- a/GeneralsMD/Code/GameEngine/Include/GameLogic/Module/DozerAIUpdate.h
++++ b/GeneralsMD/Code/GameEngine/Include/GameLogic/Module/DozerAIUpdate.h
+@@ -201,6 +201,11 @@ public:
+ 	static Bool findGoodBuildOrRepairPosition(const Object* me, const Object* target, Coord3D& positionOut);
+ 	static Object* findGoodBuildOrRepairPositionAndTarget(Object* me, Object* target, Coord3D& positionOut);
+ 
++	// ZHBO: one frame of a dozer's work on `goal`, at `rate` times a dozer's speed. The dozer's own
++	// tasks use them, and so does a first-person General working by hand.
++	static Bool buildStep( Object *dozer, Object *goal, Real rate, Bool isRebuild );	///< TRUE when the structure is finished
++	static Bool repairStep( Object *dozer, Object *goal, Real rate );									///< FALSE if another builder is repairing it
++
+ public:
+ 
+ 	DozerAIUpdate( Thing *thing, const ModuleData* moduleData );
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/AIUpdate/DozerAIUpdate.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/AIUpdate/DozerAIUpdate.cpp
+index dc00d4cea..0b6d20f42 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/AIUpdate/DozerAIUpdate.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Update/AIUpdate/DozerAIUpdate.cpp
+@@ -29,6 +29,7 @@
+ 
+ // USER INCLUDES //////////////////////////////////////////////////////////////////////////////////
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
++#include "ZhboBridge.h" // ZHBO
+ 
+ #include "Common/ActionManager.h"
+ #include "Common/Team.h"
+@@ -528,121 +529,13 @@ StateReturnType DozerActionDoActionState::update()
+ 				dozer->setModelConditionState( MODELCONDITION_ACTIVELY_CONSTRUCTING );
+ 
+ 
+-				// increase the construction percent of the goal object
+-				Int framesToBuild = goalObject->getTemplate()->calcTimeToBuild( dozer->getControllingPlayer() );
+-				// TheSuperHackers @bugfix bobtista 10/06/2026 Guard a zero build time: dividing by it gives
+-				// Inf, which corrupts construction percent and the int-cast health change with platform-
+-				// divergent UB (arm64 vs x86) - a lockstep desync. Clamp to at least one frame.
+-				if( framesToBuild < 1 )
+-					framesToBuild = 1;
+-				Real percentProgressThisFrame = 100.0f / framesToBuild;
+-				goalObject->setConstructionPercent( goalObject->getConstructionPercent() +
+-																						percentProgressThisFrame );
+-
+-				//
+-				// every time we construct a piece of the goal object, the goal object gets a little
+-				// bit o health, note that we're bypassing the regular healing/damage methods
+-				// here and going straight for the change of the health
+-				//
+-				BodyModuleInterface *body = goalObject->getBodyModule();
+-				body->internalChangeHealth( body->getMaxHealth() / INT_TO_REAL( framesToBuild ) );
+-
+-				//
+-				// since we've just actually contributed a "piece" to this building, we'll say that
+-				// we are now the producer and the builder
+-				//
+-				goalObject->setProducer( dozer );
+-				goalObject->setBuilder( dozer );
+-
+-				// check for construction complete
+-				if( goalObject->getConstructionPercent() >= 100.0f )
++				// ZHBO: the work itself is shared with a first-person General (DozerAIUpdate::buildStep).
++				if( DozerAIUpdate::buildStep( dozer, goalObject, Zhbo_WorkRate( dozer ), dozerAI->getIsRebuild() ) )
+ 				{
+ 
+-					// clear the under construction status
+-					goalObject->clearStatus( MAKE_OBJECT_STATUS_MASK( OBJECT_STATUS_UNDER_CONSTRUCTION ) );
+-					goalObject->clearStatus( MAKE_OBJECT_STATUS_MASK( OBJECT_STATUS_RECONSTRUCTING ) );
+-
+ 					// stop playing the construction sound!
+ 					dozerAI->finishBuildingSound();
+ 
+-					// object will now be idle instead of in one of the construction actions
+-					goalObject->clearModelConditionFlags(
+-						MAKE_MODELCONDITION_MASK3(MODELCONDITION_AWAITING_CONSTRUCTION, MODELCONDITION_PARTIALLY_CONSTRUCTED, MODELCONDITION_ACTIVELY_BEING_CONSTRUCTED));
+-
+-					// set the construction at the 100% enum value
+-					goalObject->setConstructionPercent( CONSTRUCTION_COMPLETE );
+-
+-					//
+-					// now that we're done with construction we evaluate the visual condition of
+-					// the object since while under construction visual changes due to damage state
+-					// do not occur.  Note that is was important to call this after we cleared the
+-					// model conditions involving construction because part of this evaluation
+-					// is to auto populate the model with particle systems when special named
+-					// bones for the current given state are provided
+-					//
+-					body->evaluateVisualCondition();
+-
+-					// this object now has energy influence in the player
+-					Player *player = goalObject->getControllingPlayer();
+-					if( player )
+-					{
+-
+-						// notification for build completion
+-						player->onStructureConstructionComplete( dozer, goalObject, dozerAI->getIsRebuild() );
+-
+-						player->getAcademyStats()->recordProduction( goalObject, dozer );
+-
+-						//
+-						// Now onCreates were called at construction start.  Now at finish is when we
+-						// want the Game side of OnCreate
+-						//
+-						for (BehaviorModule** m = goalObject->getBehaviorModules(); *m; ++m)
+-						{
+-							CreateModuleInterface* create = (*m)->getCreate();
+-							if (!create)
+-								continue;
+-							create->onBuildComplete();
+-						}
+-
+-					}
+-
+-					// Creation is another valid and essential time to call this.  This building now Looks.
+-					goalObject->handlePartitionCellMaintenance();
+-
+-					// UnderConstruction just cleared, so update our upgrades
+-					goalObject->updateUpgradeModules();
+-
+-					// this object now has influence in the controlling players' tech tree
+-					/// @todo need to write this
+-
+-					// do some UI stuff for the controlling player
+-					if( dozer->isLocallyViewed() )
+-					{
+-
+-						// message the the building player
+-						UnicodeString format = TheGameText->fetch( "DOZER:ConstructionComplete" );
+-						UnicodeString objectName = goalObject->getTemplate()->getDisplayName();
+-						if( objectName.isEmpty() )
+-						{
+-							UnicodeString format = TheGameText->fetch( "INI:MissingDisplayName" );
+-
+-							objectName.format( format, goalObject->getTemplate()->getName().str() );
+-
+-						}
+-
+-						UnicodeString msg;
+-						msg.format( format.str(), objectName.str() );
+-						TheInGameUI->message( msg );
+-
+-						AudioEventRTS audio = *dozer->getTemplate()->getVoiceTaskComplete();
+-						audio.setObjectID(dozer->getID());
+-						TheAudio->addAudioEvent(&audio);
+-
+-						/// make radar neat-o attention grabber event at build location
+-						TheRadar->createEvent( goalObject->getPosition(), RADAR_EVENT_CONSTRUCTION );
+-
+-					}
+-
+ 					// this will allow us to exit the state machine with success
+ 					complete = TRUE;
+ 
+@@ -713,12 +606,8 @@ StateReturnType DozerActionDoActionState::update()
+ 				if( canHeal )
+ 				{
+ 
+-					// figure out how much health we will restore this frame
+-					Real health = body->getMaxHealth() * dozerAI->getRepairHealthPerSecond() /
+-												LOGICFRAMES_PER_SECOND;
+-
+-					// try to give it a little bit-o-health
+-					if ( ! goalObject->attemptHealingFromSoleBenefactor(health, dozer, 2) )//this frame and the next
++					// try to give it a little bit-o-health (ZHBO: shared with a first-person General)
++					if ( ! DozerAIUpdate::repairStep( dozer, goalObject, Zhbo_WorkRate( dozer ) ) )//this frame and the next
+ 					{
+ 						// goalObject->setStatus( OBJECT_STATUS_UNDERGOING_REPAIR );
+ 						// This bit used to be set way back in DozerAIUpdate::privateRepair(), but it has been outmoded
+@@ -1605,6 +1494,10 @@ UpdateSleepTime DozerAIUpdate::update()
+ 	UpdateSleepTime result;
+ 	result = AIUpdateInterface::update();
+ 
++	// ZHBO: a first-person General works by hand; his dozer tasks wait until he is released.
++	if( Zhbo_IsControlled( getObject()->getID() ) )
++		return result;
++
+ 	// do nothing if we're dead
+ 	///@todo shouldn't this be at a higher level?
+ 	if( getObject()->isEffectivelyDead() )
+@@ -1893,6 +1786,155 @@ void DozerAIUpdate::privateResumeConstruction( Object *obj, CommandSourceType cm
+ 
+ }
+ 
++//-------------------------------------------------------------------------------------------------
++/** ZHBO: one frame of `dozer` building `goal`, at `rate` times a dozer's speed; TRUE when that
++	* finishes it. The dozer's build task (DozerActionDoActionState) and a first-person General
++	* building by hand share it. */
++//-------------------------------------------------------------------------------------------------
++Bool DozerAIUpdate::buildStep( Object *dozer, Object *goalObject, Real rate, Bool isRebuild )
++{
++
++	// increase the construction percent of the goal object
++	Int framesToBuild = goalObject->getTemplate()->calcTimeToBuild( dozer->getControllingPlayer() );
++	// TheSuperHackers @bugfix bobtista 10/06/2026 Guard a zero build time: dividing by it gives
++	// Inf, which corrupts construction percent and the int-cast health change with platform-
++	// divergent UB (arm64 vs x86) - a lockstep desync. Clamp to at least one frame.
++	if( framesToBuild < 1 )
++		framesToBuild = 1;
++	Real percentProgressThisFrame = 100.0f / framesToBuild * rate;
++	goalObject->setConstructionPercent( goalObject->getConstructionPercent() +
++																			percentProgressThisFrame );
++
++	//
++	// every time we construct a piece of the goal object, the goal object gets a little
++	// bit o health, note that we're bypassing the regular healing/damage methods
++	// here and going straight for the change of the health
++	//
++	BodyModuleInterface *body = goalObject->getBodyModule();
++	body->internalChangeHealth( body->getMaxHealth() / INT_TO_REAL( framesToBuild ) * rate );
++
++	//
++	// since we've just actually contributed a "piece" to this building, we'll say that
++	// we are now the producer and the builder
++	//
++	goalObject->setProducer( dozer );
++	goalObject->setBuilder( dozer );
++
++	// check for construction complete
++	if( goalObject->getConstructionPercent() >= 100.0f )
++	{
++
++		// clear the under construction status
++		goalObject->clearStatus( MAKE_OBJECT_STATUS_MASK( OBJECT_STATUS_UNDER_CONSTRUCTION ) );
++		goalObject->clearStatus( MAKE_OBJECT_STATUS_MASK( OBJECT_STATUS_RECONSTRUCTING ) );
++
++		// object will now be idle instead of in one of the construction actions
++		goalObject->clearModelConditionFlags(
++			MAKE_MODELCONDITION_MASK3(MODELCONDITION_AWAITING_CONSTRUCTION, MODELCONDITION_PARTIALLY_CONSTRUCTED, MODELCONDITION_ACTIVELY_BEING_CONSTRUCTED));
++
++		// set the construction at the 100% enum value
++		goalObject->setConstructionPercent( CONSTRUCTION_COMPLETE );
++
++		//
++		// now that we're done with construction we evaluate the visual condition of
++		// the object since while under construction visual changes due to damage state
++		// do not occur.  Note that is was important to call this after we cleared the
++		// model conditions involving construction because part of this evaluation
++		// is to auto populate the model with particle systems when special named
++		// bones for the current given state are provided
++		//
++		body->evaluateVisualCondition();
++
++		// this object now has energy influence in the player
++		Player *player = goalObject->getControllingPlayer();
++		if( player )
++		{
++
++			// notification for build completion
++			player->onStructureConstructionComplete( dozer, goalObject, isRebuild );
++
++			player->getAcademyStats()->recordProduction( goalObject, dozer );
++
++			//
++			// Now onCreates were called at construction start.  Now at finish is when we
++			// want the Game side of OnCreate
++			//
++			for (BehaviorModule** m = goalObject->getBehaviorModules(); *m; ++m)
++			{
++				CreateModuleInterface* create = (*m)->getCreate();
++				if (!create)
++					continue;
++				create->onBuildComplete();
++			}
++
++		}
++
++		// Creation is another valid and essential time to call this.  This building now Looks.
++		goalObject->handlePartitionCellMaintenance();
++
++		// UnderConstruction just cleared, so update our upgrades
++		goalObject->updateUpgradeModules();
++
++		// this object now has influence in the controlling players' tech tree
++		/// @todo need to write this
++
++		// do some UI stuff for the controlling player
++		if( dozer->isLocallyViewed() )
++		{
++
++			// message the the building player
++			UnicodeString format = TheGameText->fetch( "DOZER:ConstructionComplete" );
++			UnicodeString objectName = goalObject->getTemplate()->getDisplayName();
++			if( objectName.isEmpty() )
++			{
++				UnicodeString format = TheGameText->fetch( "INI:MissingDisplayName" );
++
++				objectName.format( format, goalObject->getTemplate()->getName().str() );
++
++			}
++
++			UnicodeString msg;
++			msg.format( format.str(), objectName.str() );
++			TheInGameUI->message( msg );
++
++			AudioEventRTS audio = *dozer->getTemplate()->getVoiceTaskComplete();
++			audio.setObjectID(dozer->getID());
++			TheAudio->addAudioEvent(&audio);
++
++			/// make radar neat-o attention grabber event at build location
++			TheRadar->createEvent( goalObject->getPosition(), RADAR_EVENT_CONSTRUCTION );
++
++		}
++
++		return TRUE;
++
++	}
++
++	return FALSE;
++
++}
++
++//-------------------------------------------------------------------------------------------------
++/** ZHBO: one frame of `dozer` repairing `goal`, at `rate` times its repair speed; FALSE if
++	* another builder has it (attemptHealingFromSoleBenefactor). Shared as buildStep is. */
++//-------------------------------------------------------------------------------------------------
++Bool DozerAIUpdate::repairStep( Object *dozer, Object *goalObject, Real rate )
++{
++	AIUpdateInterface *ai = dozer->getAI();
++	DozerAIInterface *dozerAI = ai ? ai->getDozerAIInterface() : nullptr;
++	if( dozerAI == nullptr )
++		return FALSE;
++
++	// figure out how much health we will restore this frame
++	BodyModuleInterface *body = goalObject->getBodyModule();
++	Real health = body->getMaxHealth() * dozerAI->getRepairHealthPerSecond() * rate /
++								LOGICFRAMES_PER_SECOND;
++
++	// try to give it a little bit-o-health
++	return goalObject->attemptHealingFromSoleBenefactor( health, dozer, 2 );//this frame and the next
++
++}
++
+ //-------------------------------------------------------------------------------------------------
+ //-------------------------------------------------------------------------------------------------
+ /*static*/ Bool DozerAIUpdate::findGoodBuildOrRepairPosition(const Object* me, const Object* target, Coord3D& positionOut)

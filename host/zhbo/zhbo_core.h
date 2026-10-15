@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 14u
+#define ZHBO_ABI_VERSION 15u
 
 #ifdef __cplusplus
 extern "C" {
@@ -75,6 +75,19 @@ typedef struct ZhboBuildOption
 #define ZHBO_BUILD_NO_MONEY 1
 #define ZHBO_BUILD_LOCKED 2
 #define ZHBO_BUILD_BLOCKED 3
+#define ZHBO_BUILD_BUSY 4
+
+/* zhbo_core::building::Site: a structure the General can work on. kind: ZHBO_WORK_*. */
+typedef struct ZhboWorkSite
+{
+	uint32_t id;
+	uint32_t tmpl;
+	int32_t kind;
+	float percent; /* built, or (repairing) its health, 0..100 */
+	char name[48]; /* display name, UTF-8 */
+} ZhboWorkSite;
+#define ZHBO_WORK_BUILD 0
+#define ZHBO_WORK_REPAIR 1
 
 typedef struct ZhboLogicApi
 {
@@ -101,10 +114,11 @@ typedef struct ZhboLogicApi
 	int32_t (*can_place)(uint32_t general, uint32_t tmpl, const ZhboVec3 *pos, float angle);
 	/* Pay for it and lay out its construction site; the site's id, or 0. */
 	uint32_t (*place)(uint32_t general, uint32_t tmpl, const ZhboVec3 *pos, float angle);
-	/* The closest of his side's structures under construction in reach; its id (0 none). */
-	uint32_t (*build_site)(uint32_t general, const ZhboVec3 *pos, float reach, uint32_t *tmpl, float *percent);
-	/* One logic frame of building `site` at `rate` of a dozer's speed; the percent after. */
-	float (*construct)(uint32_t general, uint32_t site, float rate);
+	/* The closest structure in reach he can build or repair (as a dozer could); its id (0 none). */
+	uint32_t (*work_site)(uint32_t general, const ZhboVec3 *pos, float reach, ZhboWorkSite *out);
+	/* One logic frame of working on `site` at `rate` of a dozer's speed; how far along after
+	   (100 done), or negative if another builder has it. */
+	float (*work)(uint32_t general, uint32_t site, float rate);
 } ZhboLogicApi;
 
 /* zhbo_core::host::damage_kind and disable_kind. */
@@ -251,4 +265,5 @@ static_assert(sizeof(ZhboWorldPose) == 16, "ZhboWorldPose layout must match ffi.
 static_assert(sizeof(ZhboRtsWeapons) == 36, "ZhboRtsWeapons layout must match sim.rs");
 static_assert(sizeof(ZhboClientApi) == 13 * sizeof(void *), "ZhboClientApi layout must match host.rs");
 static_assert(sizeof(ZhboBuildOption) == 64, "ZhboBuildOption layout must match building.rs");
+static_assert(sizeof(ZhboWorkSite) == 64, "ZhboWorkSite layout must match building.rs");
 #endif

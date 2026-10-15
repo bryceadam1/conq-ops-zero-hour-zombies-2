@@ -499,6 +499,23 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
   stash took 21.6 s with the walk), default 13/13, RTS 8/8, equipment 8/8.
   Open: the hammer prop renders untextured grey (its campaign material's image is not found in the
   paks); the placement ghost has not been checked in a capture yet.
+* **The General as a worker (2026-10-15, playtest fixes)**: his build menu is the worker his
+  faction's Command Center trains (PlayerTemplate StartingBuilding → its command set's dozer, else a
+  starting unit). Matching the side picked `GC_Chem_*` (Generals' Challenge) for the Toxin General,
+  so his barracks didn't count for his workers. Every faction's choice is logged at load. The
+  dozer's per-frame build and repair moved into `DozerAIUpdate::buildStep`/`repairStep`
+  (host/patches/0012, now `general-dozer-work`). The dozer task and first person share them, so first
+  person runs Zero Hour's own completion code. `Zhbo_WorkRate` scales his repairs too. In first
+  person his dozer state machine is paused. Taking control is a player order, which drops his current
+  task. A site laid out in first person is his pending task: he finishes it when released, and it is
+  cleared if he builds it by hand. The leftover task is what had kept him off the Next Idle Worker
+  list. Hammer: one placement per raise; the wheel turns the structure 15° a notch; ADS picks the
+  next structure. F at a damaged structure repairs it (`ActionManager::canRepairObject`;
+  `canResumeConstructionOf` for sites). Host API: `work_site`/`work` with a 64-byte `Site` (kind,
+  name); ABI 15. The hammer was turned 180° about its handle so the face leads the chop; check it
+  with `zhbo-assets hammer <png> ZHBO_VMH_SWG <frame>`. Patch 0013 makes `ZhboControlBarAccess` a
+  friend of InGameUI (idle-worker list). `--build` 17/17: FPS repair, idle worker back overhead, an
+  ordered repair at 15.0 s against a dozer's 7.5 s. Default 13/13, RTS 8/8, equipment 8/8, rts-dry 5/5.
 
 ## Next steps
 

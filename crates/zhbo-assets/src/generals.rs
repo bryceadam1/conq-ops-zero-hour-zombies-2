@@ -115,8 +115,9 @@ const KNIFE_VIEW: &str = "t6_wpn_knife_base_view";
 const HAMMER: &str = "p_glo_tools_hammer";
 const HAMMER_ZONE: &str = "haiti_gump_front_door";
 /// The hammer in the knife's grip, on `j_gun` (which points along the blade): the prop lies along
-/// its Y with the head at +Y, so its Y goes forward (X), gripped 2 inches from the end.
-const HAMMER_GRIP: crate::xf::Xf = ([-0.5, -0.5, -0.5, 0.5], [5.0, -0.5, 0.0]);
+/// its Y with the head at +Y, so its Y goes forward (X), gripped 2 inches from the end. Its face is
+/// at -X and its claw at +X; turned about the handle so the face, not the claw, leads the swing.
+const HAMMER_GRIP: crate::xf::Xf = ([0.5, 0.5, -0.5, 0.5], [5.0, 0.5, 0.0]);
 
 /// The hammer viewmodel's W3D name for a weapon viewmodel's.
 pub fn hammer_model(viewmodel: &str) -> String {
@@ -903,6 +904,32 @@ fn tablets(common: &Zone, zones: &[Zone], paks: &Paks, out: &mut BTreeMap<String
     Ok(())
 }
 
+/// One faction's hammer viewmodel: its arms (`hands`, the rig's base, with the knife) and the
+/// hammer in the knife's grip.
+fn hammer_meshes(rig: &Rig, hands: &xmodel::Model, hammer: &xmodel::Model, hands_tex: &[Option<String>], hammer_tex: &[Option<String>]) -> Result<Vec<w3d::SkinMesh>, String> {
+    let grip = rig.pivot("j_gun").ok_or("no j_gun on the knife")?;
+    let mut meshes = character::skin(rig, hands, "H", hands_tex);
+    meshes.extend(character::skin_rigid(hammer, grip, character::scaled_xf(HAMMER_GRIP), "M", 0, hammer_tex, &[]));
+    Ok(meshes)
+}
+
+/// The first faction's hammer viewmodel as converted, untextured, with the clip `clip` (a W3D name
+/// from [`HAMMER_ANIMS`]): to check it by eye (`zhbo-assets hammer`).
+pub fn hammer_preview(bo2_dir: &Path, clip: &str) -> Result<(Rig, Vec<w3d::SkinMesh>, Vec<w3d::Channel>), String> {
+    let common = load_zone(bo2_dir, "common_mp")?;
+    let faction = load_zone(bo2_dir, FACTIONS[0].zone)?;
+    let prop_zone = load_zone(bo2_dir, HAMMER_ZONE)?;
+    let hammer = xmodel::find(&prop_zone, HAMMER).map_err(|e| format!("{HAMMER}: {e}"))?;
+    let knife = xmodel::find(&common, KNIFE_VIEW).map_err(|e| format!("{KNIFE_VIEW}: {e}"))?;
+    let hands = xmodel::find(&faction, FACTIONS[0].hands).map_err(|e| e.to_string())?;
+    let rig = Rig::new(&hands, &[(&knife, "tag_weapon")]);
+    let meshes = hammer_meshes(&rig, &hands, &hammer, &[], &[])?;
+    let bo2_name = HAMMER_ANIMS.iter().find(|(w, _)| *w == clip).map(|(_, b)| *b).ok_or_else(|| format!("no hammer clip {clip}"))?;
+    let anim = xanim::find(&common, bo2_name).map_err(|e| e.to_string())?;
+    let (_, channels) = character::animate(&rig, &anim);
+    Ok((rig, meshes, channels))
+}
+
 fn hammers(bo2_dir: &Path, common: &Zone, zones: &[Zone], paks: &Paks, out: &mut BTreeMap<String, Vec<u8>>, looks: &mut Looks) -> Result<(), String> {
     let prop_zone = load_zone(bo2_dir, HAMMER_ZONE)?;
     let hammer = xmodel::find(&prop_zone, HAMMER).map_err(|e| format!("{HAMMER}: {e}"))?;
@@ -912,10 +939,8 @@ fn hammers(bo2_dir: &Path, common: &Zone, zones: &[Zone], paks: &Paks, out: &mut
     for (f, zone) in FACTIONS.iter().zip(zones) {
         let hands = xmodel::find(zone, f.hands).map_err(|e| e.to_string())?;
         let rig = rig.get_or_insert_with(|| Rig::new(&hands, &[(&knife, "tag_weapon")]));
-        let grip = rig.pivot("j_gun").ok_or("no j_gun on the knife")?;
         let hands_tex = textures(&hands, paks, out, looks);
-        let mut meshes = character::skin(rig, &hands, "H", &hands_tex);
-        meshes.extend(character::skin_rigid(&hammer, grip, character::scaled_xf(HAMMER_GRIP), "M", 0, &hammer_tex, &[]));
+        let mut meshes = hammer_meshes(rig, &hands, &hammer, &hands_tex, &hammer_tex)?;
         finish(&mut meshes, looks);
         let name = hammer_model(f.viewmodel);
         out.insert(format!("Art\\W3D\\{name}.w3d"), w3d::skin_model(&name, HAMMER_HIERARCHY, &meshes));
