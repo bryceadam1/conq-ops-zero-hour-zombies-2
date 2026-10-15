@@ -6,6 +6,8 @@
 #   scripts/autotest-mac.sh --equipment
 #                                      C4, Trophy System and Black Hat against an enemy drone and
 #                                      rocket troopers (two runs: C4 + Trophy, C4 + Black Hat)
+#   scripts/autotest-mac.sh --rts      the General under RTS control: rifle, the lethal and the pistol
+#                                      picked from the command bar, ammo counted, then first person
 #   scripts/autotest-mac.sh --showcase [object]
 #                                      close-up captures of a General (idle, walk, death), no checks
 #
@@ -24,6 +26,7 @@ mode=autopilot
 [[ "${1:-}" == "--input" ]] && mode=input
 [[ "${1:-}" == "--showcase" ]] && mode=showcase
 [[ "${1:-}" == "--equipment" ]] && mode=equipment
+[[ "${1:-}" == "--rts" ]] && mode=rts
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="$HOME/Library/Application Support/ConquerOps/dist"
@@ -101,6 +104,28 @@ if [[ $mode == equipment ]]; then
     finish
     trap - EXIT
     echo "screenshots and logs: $out"
+    exit $ok
+fi
+if [[ $mode == rts ]]; then
+    export ZHBO_AUTOPILOT=rts GGC_AUTO_EXIT_SECONDS=35
+    "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
+    wait_for_log "autopilot: taking control" 90 || { echo "the script never reached first person; see $log" >&2; exit 1; }
+    for _ in $(seq 40); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
+    finish
+    trap - EXIT
+    ok=0
+    check() { # name, pattern
+        if grep -qE "$2" "$out/ConquerOps.log"; then printf '%-28s PASS\n' "$1"; else printf '%-28s FAIL\n' "$1"; ok=1; fi
+    }
+    check "rifle rounds counted" "fired slot 0 \([0-9]+/[0-9]+ left\)"
+    check "lethal picked" "uses weapon slot 2"
+    check "lethal thrown" "fired slot 2 \(0/0 left\)"
+    check "back to the rifle" "locked to weapon slot 0"
+    check "pistol picked" "uses weapon slot 1"
+    check "pistol rounds counted" "fired slot 1"
+    check "first person keeps pistol" "entered first-person control"
+    check "  ...holding the pistol" "Tac-45 [0-9]+\|"
+    echo "screenshots and log: $out"
     exit $ok
 fi
 if [[ $mode == autopilot ]]; then

@@ -37,7 +37,7 @@ fn publish_controlled(sim: &Sim) {
     }
 }
 
-pub const ABI_VERSION: u32 = 10;
+pub const ABI_VERSION: u32 = 11;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
 const _: () = {
@@ -46,6 +46,7 @@ const _: () = {
     assert!(size_of::<FpsInput>() == 20);
     assert!(size_of::<ClientIn>() == 316);
     assert!(size_of::<ClientOut>() == 132);
+    assert!(size_of::<crate::sim::RtsWeapons>() == 28);
     assert!(size_of::<LogicApi>() == 16 * size_of::<usize>());
     assert!(size_of::<ClientApi>() == 10 * size_of::<usize>());
 };
@@ -178,6 +179,34 @@ fn log_step(s: &State, first_new_event: usize, frame: u32) {
             }
         }
     }
+}
+
+/// A General under RTS control, once per logic frame (see `Sim::rts_update`): the Zero Hour weapon
+/// slot in use, the shots each slot fired since the last call, and back the ammo per slot and the
+/// slot to lock to.
+///
+/// # Safety
+/// `shots` must point to 3 values; `out` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_logic_rts_update(player: i32, general: u32, current_slot: i32, shots: *const u32, out: *mut crate::sim::RtsWeapons) {
+    if shots.is_null() || out.is_null() {
+        return;
+    }
+    let shots = [*shots, *shots.add(1), *shots.add(2)];
+    let r = with_state(|s| s.sim.rts_update(&s.logic, player, general, current_slot, shots)).unwrap_or_default();
+    *out = r;
+}
+
+/// The ammo of a General's weapon slots, for the control bar.
+///
+/// # Safety
+/// `out` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_client_rts_ammo(general: u32, out: *mut crate::sim::RtsWeapons) {
+    if out.is_null() {
+        return;
+    }
+    *out = with_state(|s| s.sim.rts_ammo(general)).unwrap_or_else(|| crate::sim::Sim::new().rts_ammo(general));
 }
 
 /// How a controlled General looks in third person (see `Sim::world_poses`).

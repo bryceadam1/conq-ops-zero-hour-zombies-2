@@ -296,6 +296,19 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     fraction of 800 in/s², sizes centre-to-edge. Some HUD icons are empty stubs in `common_mp`; the
     real material is in `code_post_gfx_mp`. Viewmodel foley is mostly in `mpl_common`, gear rustle
     only in the map's bank; the `*_futz` notetracks have no sound in any MP bank.
+67. The General under RTS control (ABI 11): weapon slots PRIMARY rifle, SECONDARY pistol,
+    TERTIARY lethal, switched like the Ranger (`SWITCH_WEAPON`, `CHECK_LIKE`; auto-choose leaves out
+    `FROM_PLAYER` so the lock decides; pistol and lethal auto-choose `NONE`). The bridge counts shots
+    each logic frame by `Weapon::getLastShotFrame` changes and reports them with the current slot
+    (`zhbo_logic_rts_update`); the core charges the same arsenal first person uses and returns a
+    slot to lock to (the weapon in hand after the field computer, or one with ammo when the current
+    one runs dry). An empty weapon can't fire (`setPossibleNextShotFrame` pushed ahead each frame)
+    and patch 0006 restricts its button. The ammo is drawn over the buttons (found by the window
+    names `ControlBar.wnd:ButtonCommandNN`, `GadgetButtonGetData` is the `CommandButton`). Command
+    set slots are column-major: odd numbers are the top row. A later `MappedImage` of the same name
+    re-parses into the earlier one, so `data/` ships Zero Hour stand-ins (`ZHBO_A_Buttons.ini`, which
+    sorts before `ZHBO_BO2.ini`) that the BO2 archive's composed button tiles replace. Objects
+    spawned by a test script must be made in the logic step (`rtsAutopilotWave`).
 
 ## Verification log
 
@@ -375,6 +388,11 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
   troopers: the C4 sticks and goes off on a double-tapped reload (and kills), the Trophy System
   shoots down both incoming rockets, the Black Hat hacks the drone in 3 s and it defects. 8/8 pass;
   the normal autotest passes 13/13.
+* **The General in the overhead view (2026-10-15)**: `scripts/autotest-mac.sh --rts` selects the
+  General, lets Zero Hour's AI fight with the rifle, picks the frag (thrown, then back to the rifle)
+  and the pistol from the command bar, then takes control: 8/8 pass, and first person starts with
+  the pistol and its remaining ammo. The capture shows the reticle Take Control button, the AN-94,
+  Tac-45 and frag buttons with their BO2 icons and ammo, and the empty frag greyed out with a red 0.
 
 ## Next steps
 

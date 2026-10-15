@@ -432,6 +432,49 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
     }
 }
 
+/// Zero Hour units always hit; per-shot RTS damage keeps BO2's ratios between weapons, scaled so a
+/// 40-damage rifle round (the AN-94's) hits for the 15 the General's rifle always had.
+const RTS_DAMAGE: f32 = 15.0 / 40.0;
+/// Explosives keep more of their BO2 punch (one grenade, thrown on purpose).
+const RTS_EXPLOSIVE: f32 = 0.75;
+
+/// The General's Zero Hour weapons under RTS control (`ZHBO_GeneralRifle`, `_Pistol`, `_Grenade`)
+/// with the loadout's BO2 numbers: (weapon, key, value) to set in `ZHBO_Weapons.ini`.
+pub fn rts_weapon_edits(defs: &[WeaponDef]) -> Vec<(String, String, String)> {
+    let l = Loadout::default();
+    let find = |id: &str| defs.iter().find(|d| d.id == id);
+    let mut out = Vec::new();
+    let mut set = |w: &str, k: &str, v: String| out.push((w.to_string(), k.to_string(), v));
+    for (weapon, id) in [("ZHBO_GeneralRifle", &l.primary), ("ZHBO_GeneralPistol", &l.secondary)] {
+        let Some(d) = find(id) else { continue };
+        let range = match d.class {
+            Class::Sniper => 300.0,
+            Class::Shotgun => 100.0,
+            Class::Pistol => 125.0,
+            _ => 175.0,
+        };
+        set(weapon, "PrimaryDamage", format!("{:.1}", d.damage[0] * RTS_DAMAGE * d.pellets.max(1) as f32));
+        set(weapon, "AttackRange", format!("{range:.1}"));
+        set(weapon, "DelayBetweenShots", format!("{:.0}", d.fire_time * 1000.0));
+        set(weapon, "ClipSize", d.clip.max(1).to_string());
+        set(weapon, "ClipReloadTime", format!("{:.0}", d.reload_time * 1000.0));
+        let key = id.replace(['+', '~'], "_");
+        set(weapon, "FireSound", format!("ZHBO_BO2_FireNpc_{key}"));
+    }
+    if let Some(g) = find(&l.lethal) {
+        let w = "ZHBO_GeneralGrenade";
+        set(w, "PrimaryDamage", format!("{:.1}", g.explosion_inner_damage * RTS_EXPLOSIVE));
+        set(w, "PrimaryDamageRadius", format!("{:.1}", g.explosion_radius_min.max(5.0)));
+        set(w, "SecondaryDamage", format!("{:.1}", g.explosion_outer_damage * RTS_EXPLOSIVE));
+        set(w, "SecondaryDamageRadius", format!("{:.1}", g.explosion_radius.max(10.0)));
+        if !g.explosion_fx.is_empty() {
+            set(w, "ProjectileDetonationFX", g.explosion_fx.clone());
+        }
+        set(w, "FireSound", zhbo_core::sounds::THROW.to_string());
+    }
+    out
+}
+
 /// The ids whose art is converted: the loadout's (with its attachments) first, then every other player weapon unless `ZHBO_CONVERT_ALL_WEAPONS=0`.
 pub fn converted(all: &[Weapon]) -> Vec<String> {
     let l = Loadout::default();

@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 10u
+#define ZHBO_ABI_VERSION 11u
 
 #ifdef __cplusplus
 extern "C" {
@@ -184,6 +184,16 @@ void zhbo_client_frame(const ZhboClientIn *in, ZhboClientOut *out);
 void zhbo_client_draw_hud(int32_t local_player);
 const uint16_t *zhbo_string(const char *label);
 int32_t zhbo_client_world_poses(ZhboWorldPose *out, int32_t cap);
+/* The General's Zero Hour weapon slots (primary, secondary, lethal) under RTS control
+   (zhbo_core::sim::RtsWeapons). */
+typedef struct ZhboRtsWeapons
+{
+	int32_t ammo[3];    /* rounds in the magazine; grenades for the lethal */
+	int32_t reserve[3]; /* spare rounds */
+	int32_t lock;       /* slot to lock to, -1 none */
+} ZhboRtsWeapons;
+void zhbo_logic_rts_update(int32_t player, uint32_t general, int32_t current_slot, const uint32_t *shots, ZhboRtsWeapons *out);
+void zhbo_client_rts_ammo(uint32_t general, ZhboRtsWeapons *out);
 int32_t zhbo_world_mesh_count(int32_t vm); /* -2: the tablet */
 int32_t zhbo_check_requirements(char *msg, uint32_t cap);
 
@@ -196,5 +206,6 @@ static_assert(sizeof(ZhboClientIn) == 316, "ZhboClientIn layout must match clien
 static_assert(sizeof(ZhboClientOut) == 132, "ZhboClientOut layout must match client.rs");
 static_assert(sizeof(ZhboLogicApi) == 16 * sizeof(void *), "ZhboLogicApi layout must match host.rs");
 static_assert(sizeof(ZhboWorldPose) == 12, "ZhboWorldPose layout must match ffi.rs");
+static_assert(sizeof(ZhboRtsWeapons) == 28, "ZhboRtsWeapons layout must match sim.rs");
 static_assert(sizeof(ZhboClientApi) == 10 * sizeof(void *), "ZhboClientApi layout must match host.rs");
 #endif

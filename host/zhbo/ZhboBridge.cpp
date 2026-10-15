@@ -36,6 +36,10 @@
 #include "GameClient/DisplayStringManager.h"
 #include "GameClient/Drawable.h"
 #include "GameClient/FXList.h"
+#include "GameClient/GadgetPushButton.h"
+#include "GameClient/GameWindow.h"
+#include "GameClient/GameWindowManager.h"
+#include "Common/NameKeyGenerator.h"
 #include "GameClient/GameFont.h"
 #include "GameClient/GUICallbacks.h"
 #include "GameClient/Image.h"
@@ -343,6 +347,113 @@ void cbFx(const char *name, const ZhboVec3 *pos)
 	FXList::doFXPos(fx, &p);
 }
 
+// The General under RTS control: Zero Hour's AI fights with the loadout's weapons (PRIMARY rifle,
+// SECONDARY pistol, TERTIARY lethal), but the ammo is the General's own in zhbo-core. Each logic
+// frame every shot is counted against it, the slot the player picked is reported, an empty weapon
+// can't fire, and the General is moved off it to one with ammo.
+Bool isGeneral(const Object *obj)
+{
+	return obj && strncmp(obj->getTemplate()->getName().str(), "ZHBO_General_", 13) == 0;
+}
+
+struct RtsShots
+{
+	Bool seen;
+	UnsignedInt last[3];
+	Int slot;
+};
+std::map<ObjectID, RtsShots> s_rtsShots;
+
+void rtsWeapons(UnsignedInt frame)
+{
+	for (Object *obj = TheGameLogic->getFirstObject(); obj; obj = obj->getNextObject())
+	{
+		if (!isGeneral(obj) || obj->isEffectivelyDead() || !obj->getControllingPlayer())
+			continue;
+		if (s_rtsShots.find(obj->getID()) == s_rtsShots.end())
+			s_rtsShots[obj->getID()].slot = -1;
+		RtsShots &seen = s_rtsShots[obj->getID()];
+		uint32_t shots[3] = { 0, 0, 0 };
+		for (Int s = 0; s < 3; ++s)
+		{
+			const Weapon *w = obj->getWeaponInWeaponSlot((WeaponSlotType)s);
+			const UnsignedInt last = w ? w->getLastShotFrame() : 0;
+			if (seen.seen && last != seen.last[s] && last != 0)
+				shots[s] = 1;
+			seen.last[s] = last;
+		}
+		seen.seen = TRUE;
+		WeaponSlotType current = PRIMARY_WEAPON;
+		obj->getCurrentWeapon(&current);
+		ZhboRtsWeapons ammo;
+		zhbo_logic_rts_update(obj->getControllingPlayer()->getPlayerIndex(), (uint32_t)obj->getID(), (int32_t)current, shots, &ammo);
+		for (Int s = 0; s < 3; ++s)
+		{
+			// The log is the test's oracle: every lethal and pistol shot, every tenth rifle round.
+			if (shots[s] && (s > 0 || ammo.ammo[s] % 10 == 0))
+				logf("General %u fired slot %d (%d/%d left)", (unsigned)obj->getID(), s, ammo.ammo[s], ammo.reserve[s]);
+		}
+		if (seen.slot != (Int)current)
+		{
+			logf("General %u uses weapon slot %d", (unsigned)obj->getID(), (Int)current);
+			seen.slot = (Int)current;
+		}
+		if (ammo.lock >= 0 && ammo.lock < 3)
+		{
+			obj->setWeaponLock((WeaponSlotType)ammo.lock, LOCKED_PERMANENTLY);
+			logf("General %u locked to weapon slot %d", (unsigned)obj->getID(), ammo.lock);
+		}
+		for (Int s = 0; s < 3; ++s)
+		{
+			Weapon *w = obj->getWeaponInWeaponSlot((WeaponSlotType)s);
+			if (w && ammo.ammo[s] + ammo.reserve[s] <= 0)
+				w->setPossibleNextShotFrame(frame + 2);
+		}
+	}
+}
+
+void cbFillRect(float x, float y, float w, float h, uint32_t argb);
+void cbText(float x, float y, const char *utf8, uint32_t argb, int32_t size, int32_t align);
+
+// The ammo left on each of the selected General's weapon buttons (drawn over the command bar).
+void drawRtsAmmo()
+{
+	if (!TheInGameUI || TheInGameUI->getSelectCount() != 1 || !TheWindowManager)
+		return;
+	const Drawable *draw = TheInGameUI->getFirstSelectedDrawable();
+	const Object *obj = draw ? draw->getObject() : nullptr;
+	if (!isGeneral(obj))
+		return;
+	ZhboRtsWeapons ammo;
+	zhbo_client_rts_ammo((uint32_t)obj->getID(), &ammo);
+	for (Int i = 1; i <= 14; ++i)
+	{
+		char name[64];
+		snprintf(name, sizeof(name), "ControlBar.wnd:ButtonCommand%02d", i);
+		GameWindow *win = TheWindowManager->winGetWindowFromId(nullptr, TheNameKeyGenerator->nameToKey(name));
+		if (!win || win->winIsHidden())
+			continue;
+		const CommandButton *button = (const CommandButton *)GadgetButtonGetData(win);
+		if (!button || button->getCommandType() != GUI_COMMAND_SWITCH_WEAPON)
+			continue;
+		const Int slot = (Int)button->getWeaponSlot();
+		if (slot < 0 || slot > 2)
+			continue;
+		Int x, y, w, h;
+		win->winGetScreenPosition(&x, &y);
+		win->winGetSize(&w, &h);
+		char text[32];
+		if (slot == 2)
+			snprintf(text, sizeof(text), "%d", ammo.ammo[slot]);
+		else
+			snprintf(text, sizeof(text), "%d/%d", ammo.ammo[slot], ammo.reserve[slot]);
+		const Bool empty = ammo.ammo[slot] + ammo.reserve[slot] <= 0;
+		const Real band = (Real)h * 0.3f;
+		cbFillRect((float)x + 2.0f, (float)(y + h) - band - 1.0f, (float)w - 4.0f, band, 0xB0000000u);
+		cbText((float)(x + w) - 4.0f, (float)(y + h) - band - 1.0f, text, empty ? 0xFFE83A2Eu : 0xFFFFFFFFu, (int32_t)(band * 0.85f), 2);
+	}
+}
+
 // What each controlled General was last shown holding (applyWorldPoses).
 struct WorldLook
 {
@@ -647,6 +758,10 @@ struct Autopilot
 	Bool enabled;
 	// ZHBO_AUTOPILOT=showcase: the General alone, filmed close up in RTS (idle, a walk, death).
 	Bool showcase;
+	// ZHBO_AUTOPILOT=rts: the General stays under RTS control and is selected; the script picks
+	// the lethal, then the pistol, from the command bar, then takes control.
+	Bool rts;
+	UnsignedInt spawnFrame;
 	Bool spawned;
 	ObjectID general;
 	UnsignedInt releasedFrame;
@@ -751,7 +866,9 @@ void autopilotSpawn()
 	}
 	logf("autopilot: spawned General %u at (%.0f, %.0f), enemies: %s", (unsigned)s_autopilot.general, pos.x, pos.y,
 		enemy ? "3 GLA rebels" : "none (no enemy player)");
-	Zhbo_RequestTakeControl(general);
+	s_autopilot.spawnFrame = TheGameLogic->getFrame();
+	if (!s_autopilot.rts)
+		Zhbo_RequestTakeControl(general);
 }
 
 // Showcase: keep the camera close on the General; walk out and back, then die.
@@ -789,6 +906,71 @@ void showcaseFrame(UnsignedInt frame)
 	}
 }
 
+// The RTS script: what a player does with the General's command bar.
+// Fresh rebels in front of the General for the RTS script's lethal and pistol (the first ones are
+// dead by then). Called from the logic step: objects made outside it crash when they fire.
+void rtsAutopilotWave(UnsignedInt frame)
+{
+	const UnsignedInt t = frame - s_autopilot.spawnFrame;
+	Object *general = TheGameLogic->findObjectByID(s_autopilot.general);
+	if (!general || (t != 230 && t != 410))
+		return;
+	Player *local = ThePlayerList->getLocalPlayer();
+	for (Int p = 0; p < ThePlayerList->getPlayerCount(); ++p)
+	{
+		Player *enemy = ThePlayerList->getNthPlayer(p);
+		if (enemy == local || !enemy->getPlayerTemplate() || local->getRelationship(enemy->getDefaultTeam()) != ENEMIES)
+			continue;
+		const Real yaw = general->getOrientation();
+		const Coord3D *g = general->getPosition();
+		for (Int k = -1; k <= 1; ++k)
+		{
+			Coord3D e;
+			e.set(g->x + Cos(yaw) * 90.0f - Sin(yaw) * 10.0f * k, g->y + Sin(yaw) * 90.0f + Cos(yaw) * 10.0f * k, 0.0f);
+			spawnAt("GLAInfantryRebel", enemy->getDefaultTeam(), e, yaw + PI);
+		}
+		logLine("autopilot: three more rebels");
+		break;
+	}
+}
+
+void rtsAutopilotFrame(UnsignedInt frame)
+{
+	Object *general = TheGameLogic->findObjectByID(s_autopilot.general);
+	if (!general || !general->getDrawable())
+		return;
+	const UnsignedInt t = frame - s_autopilot.spawnFrame;
+	static UnsignedInt s_done = 0;
+	if (t >= 15 && s_done < 1)
+	{
+		s_done = 1;
+		TheInGameUI->deselectAllDrawables();
+		TheInGameUI->selectDrawable(general->getDrawable());
+		GameMessage *group = TheMessageStream->appendMessage(GameMessage::MSG_CREATE_SELECTED_GROUP);
+		group->appendBooleanArgument(TRUE);
+		group->appendObjectIDArgument(general->getID());
+		logLine("autopilot: selected the General");
+	}
+	const struct { UnsignedInt at; Int slot; const char *what; } picks[] = { { 240, TERTIARY_WEAPON, "lethal" }, { 420, SECONDARY_WEAPON, "pistol" } };
+	for (Int i = 0; i < 2; ++i)
+	{
+		if (t >= picks[i].at && s_done < (UnsignedInt)(2 + i))
+		{
+			s_done = 2 + i;
+
+			GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_SWITCH_WEAPONS);
+			msg->appendIntegerArgument(picks[i].slot);
+			logf("autopilot: picked the %s from the command bar", picks[i].what);
+		}
+	}
+	if (t >= 600 && s_done < 4)
+	{
+		s_done = 4;
+		logLine("autopilot: taking control");
+		Zhbo_RequestTakeControl(general);
+	}
+}
+
 void autopilotFrame()
 {
 	if (!s_autopilot.enabled)
@@ -799,6 +981,11 @@ void autopilotFrame()
 	if (s_autopilot.showcase)
 	{
 		showcaseFrame(frame);
+		return;
+	}
+	if (s_autopilot.rts)
+	{
+		rtsAutopilotFrame(frame);
 		return;
 	}
 	// After the field computer hands the General back, take control again once (tests re-entry).
@@ -960,6 +1147,7 @@ void Zhbo_Init()
 
 	s_autopilot.enabled = getenv("ZHBO_AUTOPILOT") != nullptr;
 	s_autopilot.showcase = s_autopilot.enabled && strcmp(getenv("ZHBO_AUTOPILOT"), "showcase") == 0;
+	s_autopilot.rts = s_autopilot.enabled && strcmp(getenv("ZHBO_AUTOPILOT"), "rts") == 0;
 
 	s_lastTick = zhbo_platform::now();
 	s_ready = TRUE;
@@ -972,13 +1160,16 @@ void Zhbo_Reset()
 	releaseClientState();
 	const Bool autopilot = s_autopilot.enabled;
 	const Bool showcase = s_autopilot.showcase;
+	const Bool rts = s_autopilot.rts;
 	memset(&s_autopilot, 0, sizeof(s_autopilot));
 	s_autopilot.enabled = autopilot;
 	s_autopilot.showcase = showcase;
+	s_autopilot.rts = rts;
 	for (std::map<std::string, Weapon *>::iterator it = s_fxWeapons.begin(); it != s_fxWeapons.end(); ++it)
 		deleteInstance(it->second);
 	s_fxWeapons.clear();
 	s_worldLooks.clear();
+	s_rtsShots.clear();
 	zhbo_reset();
 	logLine("reset");
 }
@@ -1019,6 +1210,9 @@ void Zhbo_LogicStep(UnsignedInt frame)
 		s_autopilot.spawned = TRUE;
 		autopilotSpawn();
 	}
+	if (s_autopilot.rts && s_autopilot.spawned)
+		rtsAutopilotWave(frame);
+	rtsWeapons(frame);
 	zhbo_logic_step(frame);
 }
 
@@ -1244,6 +1438,8 @@ void Zhbo_DrawHud()
 		return;
 	++s_drawFrame;
 	zhbo_client_draw_hud(rts::getObservedOrLocalPlayer()->getPlayerIndex());
+	if (!s_out.camera_override)
+		drawRtsAmmo();
 	evictTexts();
 }
 
@@ -1302,6 +1498,15 @@ void Zhbo_RequestTakeControl(Object *obj)
 		return;
 	GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_ZHBO_TAKE_CONTROL);
 	msg->appendObjectIDArgument(obj->getID());
+}
+
+Bool Zhbo_IsWeaponEmpty(const Object *obj, Int slot)
+{
+	if (!s_ready || !isGeneral(obj) || slot < 0 || slot > 2)
+		return FALSE;
+	ZhboRtsWeapons ammo;
+	zhbo_client_rts_ammo((uint32_t)obj->getID(), &ammo);
+	return ammo.ammo[slot] + ammo.reserve[slot] <= 0;
 }
 
 const WideChar *Zhbo_FetchString(const char *label)

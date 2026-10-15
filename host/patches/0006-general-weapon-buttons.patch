@@ -1,0 +1,23 @@
+
+
+--- a/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBarCommand.cpp
++++ b/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBarCommand.cpp
+@@ -58,6 +58,7 @@
+ #include "GameClient/GameWindow.h"
+ #include "GameClient/GameWindowManager.h"
+ #include "GameClient/GadgetPushButton.h"
++#include "ZhboBridge.h" // ZHBO
+ 
+ 
+ // PRIVATE DATA ///////////////////////////////////////////////////////////////////////////////////
+@@ -1469,6 +1470,10 @@ CommandAvailability ControlBar::getCommandAvailability( const CommandButton *com
+ 			if( w == nullptr)
+ 				return COMMAND_RESTRICTED;
+ 
++			// ZHBO: a General's weapon with no ammo left can't be picked
++			if( Zhbo_IsWeaponEmpty( obj, (Int)command->getWeaponSlot() ) )
++				return COMMAND_RESTRICTED;
++
+ 			const DrawableList *selected = TheInGameUI->getAllSelectedDrawables();
+ 			for( DrawableListCIt it = selected->begin(); it != selected->end(); ++it )
+ 			{

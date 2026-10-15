@@ -26,6 +26,15 @@ only works with the game installed, and the converted files stay in your local C
 
 Set `ZHBO_ZH_DIR` / `ZHBO_BO2_DIR` to point at installs the detector does not find.
 
+## The General in the overhead view
+
+Until you take control, the General is an ordinary unit that fights with the loadout's rifle. Their
+command bar has **Take Control** and a button for each weapon, like the Ranger's: the rifle, the
+pistol and the lethal (only used when picked). Each shows the ammo left. Ammo is the General's own
+and limited, in both views: what is fired from the overhead view is gone in first person, and the
+weapon picked carries over both ways. An empty weapon's button is greyed out, and the General
+switches to a weapon that still has ammo.
+
 ## Controls (first person)
 
 | Action | Key |

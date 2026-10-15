@@ -96,6 +96,9 @@ pub struct PlayerSim {
     pub regen_wait: f32,
     /// Black Hat: what it is aimed at (an object id) and how far along the hack is (seconds).
     pub hack: Option<(u32, f32)>,
+    /// Under RTS control: the Zero Hour weapon slot to lock to (the weapon that was in hand when
+    /// first person ended, or one with ammo when the current one ran dry), or -1.
+    pub rts_lock: i32,
 }
 
 impl PlayerSim {
@@ -119,6 +122,7 @@ impl PlayerSim {
             max_health: 500.0,
             regen_wait: 0.0,
             hack: None,
+            rts_lock: -1,
         }
     }
 }
@@ -222,6 +226,7 @@ impl Sim {
                     max_health: info.max_health,
                     regen_wait: 0.0,
                     hack: None,
+                    rts_lock: -1,
                 }
             }
         };
@@ -400,6 +405,8 @@ impl Sim {
                 let t = t + LOGIC_DT;
                 if t >= FIELD_COMPUTER_RAISE {
                     p.mode = Mode::Rts;
+                    // The RTS weapon is the one that was in hand.
+                    p.rts_lock = p.arsenal.active as i32;
                     host.set_pose(p.general, p.body.pos, p.yaw, false);
                     host.set_controlled(p.general, false);
                     self.emit(idx, EventKind::ReturnedToRts { general: p.general });
@@ -460,6 +467,68 @@ impl Sim {
         } else {
             p.hack = Some((target, progress));
             self.emit(idx, EventKind::Hacking { progress: progress / needed });
+        }
+    }
+
+    /// The General under RTS control (Zero Hour's AI fights with it): count the shots its Zero Hour
+    /// weapons fired (`shots`, by slot: primary, secondary, lethal) against the arsenal, follow the
+    /// weapon the player selected (`current_slot`), and say which slot to lock to, if any. The
+    /// arsenal is the same one first person uses, so ammo and the weapon in hand carry over both
+    /// ways. Generals never taken control of get one here (in RTS mode).
+    pub fn rts_update(&mut self, host: &dyn LogicHost, player: i32, general: u32, current_slot: i32, shots: [u32; 3]) -> RtsWeapons {
+        let Ok(idx) = usize::try_from(player) else { return RtsWeapons::default() };
+        if idx >= MAX_PLAYERS {
+            return RtsWeapons::default();
+        }
+        if self.players[idx].as_ref().is_none_or(|p| p.general != general && !p.is_first_person()) {
+            let Some(info) = host.object(general, general) else { return RtsWeapons::default() };
+            let frame = self.frame;
+            self.players[idx] = Some(PlayerSim {
+                general,
+                mode: Mode::Rts,
+                body: Body::new(info.pos, &self.tuning),
+                yaw: info.yaw,
+                pitch: 0.0,
+                arsenal: Arsenal::new(),
+                rng: Rng::new(general.wrapping_mul(2_654_435_761) ^ frame),
+                input: FpsInput { yaw: info.yaw, ..Default::default() },
+                pressed_accum: 0,
+                health: info.health,
+                max_health: info.max_health,
+                regen_wait: 0.0,
+                hack: None,
+                rts_lock: -1,
+            });
+        }
+        let Some(p) = self.players[idx].as_mut().filter(|p| p.general == general) else { return RtsWeapons::default() };
+        if p.mode != Mode::Rts {
+            return rts_weapons(&p.arsenal, -1);
+        }
+        let a = &mut p.arsenal;
+        for (slot, &n) in shots.iter().enumerate() {
+            for _ in 0..n {
+                a.rts_shot(slot);
+            }
+        }
+        if (0..a.weapons.len() as i32).contains(&current_slot) {
+            a.active = current_slot as usize;
+        }
+        let mut lock = std::mem::replace(&mut p.rts_lock, -1);
+        let a = &p.arsenal;
+        let current = if lock >= 0 { lock } else { current_slot };
+        if (0..3).contains(&current) && a.rts_ammo(current as usize).0 + a.rts_ammo(current as usize).1 == 0 {
+            // Out of ammo: the first weapon that has some (the lethal only by choice).
+            lock = (0..a.weapons.len()).find(|&s| a.rts_ammo(s).0 + a.rts_ammo(s).1 > 0).map_or(-1, |s| s as i32);
+        }
+        rts_weapons(a, lock)
+    }
+
+    /// The ammo a General's weapons have, for the control bar (the loadout's when the General has
+    /// no arsenal yet).
+    pub fn rts_ammo(&self, general: u32) -> RtsWeapons {
+        match self.players.iter().flatten().find(|p| p.general == general) {
+            Some(p) => rts_weapons(&p.arsenal, -1),
+            None => rts_weapons(&Arsenal::new(), -1),
         }
     }
 
@@ -673,6 +742,26 @@ impl Sim {
         }
     }
 
+}
+
+/// A General's Zero Hour weapon slots under RTS control (primary, secondary, lethal): rounds in
+/// the magazine (grenades in hand for the lethal), spare rounds, and the slot to lock to (-1 none).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct RtsWeapons {
+    pub ammo: [i32; 3],
+    pub reserve: [i32; 3],
+    pub lock: i32,
+}
+
+fn rts_weapons(a: &Arsenal, lock: i32) -> RtsWeapons {
+    let mut out = RtsWeapons { lock, ..Default::default() };
+    for s in 0..3 {
+        let (ammo, reserve) = a.rts_ammo(s);
+        out.ammo[s] = ammo as i32;
+        out.reserve[s] = reserve as i32;
+    }
+    out
 }
 
 /// Planted equipment goes down this far in front of the General.
@@ -1012,6 +1101,50 @@ pub(crate) mod tests {
         run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
         assert!(sim.player(0).is_none());
         assert!(events(&sim).contains(&EventKind::GeneralDied { general: 1 }));
+    }
+
+    #[test]
+    fn rts_shots_use_the_generals_ammo_and_carry_into_first_person() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let full = sim.rts_ammo(1);
+        // Zero Hour fires the rifle: one round a shot, the clip refilled from the spare rounds.
+        let r = sim.rts_update(&host, 0, 1, 0, [1, 0, 0]);
+        assert_eq!((r.ammo[0], r.reserve[0]), (full.ammo[0] - 1, full.reserve[0]));
+        assert_eq!(r.lock, -1);
+        // Empty the rifle completely: the General is moved to the pistol.
+        let rounds = (full.ammo[0] + full.reserve[0]) as u32;
+        let r = sim.rts_update(&host, 0, 1, 0, [rounds, 0, 0]);
+        assert_eq!(r.ammo[0] + r.reserve[0], 0);
+        assert_eq!(r.lock, 1, "to the pistol");
+        // The player picks the pistol; a thrown grenade is one fewer.
+        let r = sim.rts_update(&host, 0, 1, 1, [0, 1, 1]);
+        assert_eq!(r.ammo[2], full.ammo[2] - 1);
+        // Taking control keeps the ammo and the weapon in hand.
+        sim.take_control(&host, 0, 1);
+        let p = sim.player(0).unwrap();
+        assert_eq!(p.arsenal.active, 1);
+        assert_eq!(p.arsenal.weapons[1].ammo as i32, r.ammo[1]);
+        assert_eq!(p.arsenal.weapons[0].ammo + p.arsenal.weapons[0].reserve, 0);
+        // While in first person nothing is counted.
+        let before = sim.rts_ammo(1);
+        sim.rts_update(&host, 0, 1, 0, [5, 5, 1]);
+        assert_eq!(sim.rts_ammo(1), before);
+    }
+
+    #[test]
+    fn returning_to_rts_locks_the_weapon_in_hand() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.players[0].as_mut().unwrap().arsenal.active = 1;
+        run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::FIELD_COMPUTER, ..Default::default() }, 1);
+        run(&mut sim, &host, 0, 1, FpsInput::default(), frames(FIELD_COMPUTER_RAISE));
+        assert_eq!(sim.player(0).unwrap().mode, Mode::Rts);
+        assert_eq!(sim.rts_update(&host, 0, 1, 0, [0, 0, 0]).lock, 1, "the pistol, which was in hand");
+        assert_eq!(sim.rts_update(&host, 0, 1, 1, [0, 0, 0]).lock, -1, "once");
     }
 
     #[test]

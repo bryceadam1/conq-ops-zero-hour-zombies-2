@@ -15,7 +15,7 @@ use zhbo_formats::iwi::Rgba;
 use zhbo_formats::t6zone::Zone;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive.
-pub const VERSION: u32 = 24;
+pub const VERSION: u32 = 25;
 pub const ARCHIVE_NAME: &str = "ConquerOps_BO2.big";
 pub const VERSION_FILE: &str = "Data\\ConquerOps\\bo2_hud_version.txt";
 const TEXTURE: &str = "zhbo_bo2_hud.tga";
@@ -203,6 +203,22 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             None => report.missing.push((name.clone(), "not in this install".into())),
         }
     }
+    // The General's command bar buttons: the loadout's BO2 icons on Zero Hour-sized tiles, and a
+    // BO2 reticle for Take Control (`data/.../ZHBO_A_Buttons.ini` has Zero Hour stand-ins).
+    let l = zhbo_core::weapons::Loadout::default();
+    let icon = |id: &str| found.iter().find(|(n, _)| *n == format!("ZHBO_BO2_Icon_{id}")).map(|(_, i)| i.clone());
+    let mut tiles = Vec::new();
+    for (name, id) in [("ZHBO_Button_Primary", &l.primary), ("ZHBO_Button_Secondary", &l.secondary), ("ZHBO_Button_Lethal", &l.lethal)] {
+        if let Some(img) = icon(id) {
+            tiles.push((name.to_string(), button_tile(Some(&img), false)));
+        }
+    }
+    let dot = found.iter().find(|(n, _)| n == "ZHBO_BO2_RedDot").map(|(_, i)| i.clone());
+    tiles.push(("ZHBO_Button_TakeControl".to_string(), button_tile(dot.as_ref(), true)));
+    for (name, img) in tiles {
+        report.found.push(name.clone());
+        found.push((name, img));
+    }
     // A pixel of padding around each sprite keeps filtering from bleeding between them.
     let sizes: Vec<(u32, u32)> = found.iter().map(|(_, i)| (i.width + 2, i.height + 2)).collect();
     let places = pack(&sizes).ok_or("HUD sprites do not fit the atlas")?;
@@ -238,6 +254,58 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
         Err(e) => Err(e),
     });
     Ok((write_archive(&files), report))
+}
+
+/// Command bar button size (Zero Hour's are 61 x 49; twice that keeps the art sharp).
+const TILE: (u32, u32) = (122, 98);
+
+/// A command bar button: a dark tile with `art` fitted in the middle (aspect kept). A reticle tile
+/// (Take Control) draws BO2-style crosshair lines around a small `art` (the red dot).
+fn button_tile(art: Option<&Rgba>, reticle: bool) -> Rgba {
+    let (w, h) = TILE;
+    let mut t = Rgba { width: w, height: h, pixels: vec![0; (w * h * 4) as usize] };
+    for y in 0..h {
+        let shade = 46 - (y * 24 / h) as u8;
+        for x in 0..w {
+            let p = ((y * w + x) * 4) as usize;
+            t.pixels[p..p + 4].copy_from_slice(&[shade, shade + 3, shade + 6, 255]);
+        }
+    }
+    let mut over = |x: u32, y: u32, c: [u8; 4]| {
+        if x < w && y < h {
+            let p = ((y * w + x) * 4) as usize;
+            let a = c[3] as u32;
+            for k in 0..3 {
+                t.pixels[p + k] = ((c[k] as u32 * a + t.pixels[p + k] as u32 * (255 - a)) / 255) as u8;
+            }
+        }
+    };
+    if reticle {
+        let (cx, cy) = (w / 2, h / 2);
+        for d in 10..30 {
+            for k in 0..3u32 {
+                over(cx + d, cy - 1 + k, [235, 235, 235, 255]);
+                over(cx - d, cy - 1 + k, [235, 235, 235, 255]);
+                over(cx - 1 + k, cy + d, [235, 235, 235, 255]);
+                over(cx - 1 + k, cy - d, [235, 235, 235, 255]);
+            }
+        }
+    }
+    if let Some(src) = art {
+        let (bw, bh) = if reticle { (28.0, 28.0) } else { (w as f32 * 0.9, h as f32 * 0.82) };
+        let scale = (bw / src.width as f32).min(bh / src.height as f32);
+        let (dw, dh) = ((src.width as f32 * scale) as u32, (src.height as f32 * scale) as u32);
+        let (ox, oy) = ((w - dw) / 2, (h - dh) / 2);
+        for y in 0..dh {
+            for x in 0..dw {
+                let (sx, sy) = ((x as f32 / scale) as u32, (y as f32 / scale) as u32);
+                let p = ((sy.min(src.height - 1) * src.width + sx.min(src.width - 1)) * 4) as usize;
+                let c = &src.pixels[p..p + 4];
+                over(ox + x, oy + y, [c[0], c[1], c[2], c[3]]);
+            }
+        }
+    }
+    t
 }
 
 fn blit(dst: &mut Rgba, src: &Rgba, at: (u32, u32)) {
@@ -282,6 +350,18 @@ mod tests {
                 assert!(!overlap, "{a:?} overlaps {b:?}");
             }
         }
+    }
+
+    #[test]
+    fn button_tiles_fit_the_art() {
+        let wide = Rgba { width: 64, height: 16, pixels: [255u8, 255, 255, 255].repeat(64 * 16) };
+        let t = button_tile(Some(&wide), false);
+        assert_eq!((t.width, t.height), TILE);
+        let px = |x: u32, y: u32| t.pixels[((y * t.width + x) * 4) as usize];
+        assert_eq!(px(TILE.0 / 2, TILE.1 / 2), 255, "art in the middle");
+        assert!(px(TILE.0 / 2, 5) < 60, "dark above the wide art");
+        let r = button_tile(None, true);
+        assert!(r.pixels[(((TILE.1 / 2) * TILE.0 + TILE.0 / 2 + 20) * 4) as usize] > 200, "crosshair line");
     }
 
     #[test]

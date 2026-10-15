@@ -16,6 +16,9 @@ class GameMessage;
 class GameMessageTranslator;
 class Object;
 
+/// A General's Zero Hour weapon slot that has no ammo left (its command button is restricted).
+Bool Zhbo_IsWeaponEmpty(const Object *obj, Int slot);
+
 /// Startup, after every subsystem and INI file is loaded (end of GameEngine::init).
 void Zhbo_Init();
 /// New game, loaded game, or back to the shell.

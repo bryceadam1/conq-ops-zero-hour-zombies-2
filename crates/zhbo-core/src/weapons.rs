@@ -1521,6 +1521,32 @@ impl Arsenal {
         self.raise_kind = RaiseKind::Alt;
     }
 
+    /// A shot from the Zero Hour weapon in `slot` (0 primary, 1 secondary, 2 lethal) while the
+    /// General is under RTS control: it comes out of the magazine, which Zero Hour's own clip
+    /// reload refills from the spare rounds.
+    pub fn rts_shot(&mut self, slot: usize) {
+        if slot == 2 {
+            self.lethal.count = self.lethal.count.saturating_sub(1);
+            return;
+        }
+        let Some(w) = self.weapons.get_mut(slot) else { return };
+        w.reload = None;
+        if w.ammo == 0 {
+            let take = w.def.clip.min(w.reserve);
+            w.ammo += take;
+            w.reserve -= take;
+        }
+        w.ammo = w.ammo.saturating_sub(1);
+    }
+
+    /// Rounds in the magazine and spare for RTS slot `slot` (grenades for the lethal).
+    pub fn rts_ammo(&self, slot: usize) -> (u16, u16) {
+        match slot {
+            2 => (self.lethal.count, 0),
+            s => self.weapons.get(s).map_or((0, 0), |w| (w.ammo, w.reserve)),
+        }
+    }
+
     /// Give a magazine (Scavenger) to every gun.
     pub fn scavenge(&mut self) {
         for w in &mut self.weapons {

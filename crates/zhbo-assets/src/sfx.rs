@@ -86,7 +86,7 @@ pub const SFX: &[Sfx] = &[
 
 /// The mod's weapon INI with BO2 gunshots: (weapon, fire sound event).
 const WEAPON_INI: &str = include_str!("../../../data/Data/INI/Weapon/ZHBO_Weapons.ini");
-const WEAPON_INI_PATH: &str = "Data\\INI\\Weapon\\ZHBO_Weapons.ini";
+pub const WEAPON_INI_PATH: &str = "Data\\INI\\Weapon\\ZHBO_Weapons.ini";
 const WEAPON_SOUNDS: &[(&str, &str)] =
     &[("ZHBO_MTAR_FX", "ZHBO_BO2_FireNpc"), ("ZHBO_B23R_FX", "ZHBO_BO2_FirePistolNpc"), ("ZHBO_GeneralRifle", "ZHBO_BO2_FireRts")];
 
