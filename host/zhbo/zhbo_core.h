@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 11u
+#define ZHBO_ABI_VERSION 12u
 
 #ifdef __cplusplus
 extern "C" {
@@ -81,6 +81,7 @@ typedef struct ZhboLogicApi
 	void (*disable)(uint32_t id, int32_t kind, float seconds); /* ZHBO_DISABLE_* */
 	void (*fx)(const char *fxlist, const ZhboVec3 *pos);
 	void (*capture)(uint32_t id, uint32_t new_owner); /* to new_owner's side (the Black Hat) */
+	void (*smoke)(const ZhboVec3 *center, float radius); /* a smoke screen this frame */
 } ZhboLogicApi;
 
 /* zhbo_core::host::damage_kind and disable_kind. */
@@ -120,6 +121,7 @@ typedef struct ZhboClientIn
 	float screen_h;
 	ZhboVec3 rts_cam_pos;
 	ZhboVec3 rts_cam_dir;
+	float rts_hfov; /* the RTS camera's horizontal field of view, radians */
 } ZhboClientIn;
 
 typedef struct ZhboClientOut
@@ -202,9 +204,9 @@ int32_t zhbo_check_requirements(char *msg, uint32_t cap);
 
 static_assert(sizeof(ZhboObjInfo) == 56, "ZhboObjInfo layout must match host.rs");
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
-static_assert(sizeof(ZhboClientIn) == 316, "ZhboClientIn layout must match client.rs");
+static_assert(sizeof(ZhboClientIn) == 320, "ZhboClientIn layout must match client.rs");
 static_assert(sizeof(ZhboClientOut) == 132, "ZhboClientOut layout must match client.rs");
-static_assert(sizeof(ZhboLogicApi) == 16 * sizeof(void *), "ZhboLogicApi layout must match host.rs");
+static_assert(sizeof(ZhboLogicApi) == 17 * sizeof(void *), "ZhboLogicApi layout must match host.rs");
 static_assert(sizeof(ZhboWorldPose) == 12, "ZhboWorldPose layout must match ffi.rs");
 static_assert(sizeof(ZhboRtsWeapons) == 28, "ZhboRtsWeapons layout must match sim.rs");
 static_assert(sizeof(ZhboClientApi) == 10 * sizeof(void *), "ZhboClientApi layout must match host.rs");

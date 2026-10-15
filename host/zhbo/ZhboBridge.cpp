@@ -462,6 +462,45 @@ struct WorldLook
 };
 std::map<uint32_t, WorldLook> s_worldLooks;
 
+// A smoke screen (BO2's smoke grenade) this frame: no one shoots into or out of it. Anything
+// attacking with its attacker or its victim in the cloud goes back to idle (and picks another
+// target it can see).
+void cbSmoke(const ZhboVec3 *at, float radius)
+{
+	Coord3D center;
+	center.set(at->x, at->y, at->z);
+	SimpleObjectIterator *iter = ThePartitionManager->iterateObjectsInRange(&center, radius + 400.0f, FROM_CENTER_2D);
+	MemoryPoolObjectHolder hold(iter);
+	const Real r2 = radius * radius;
+	Int blinded = 0;
+	auto inside = [&](const Object *o)
+	{
+		const Coord3D *p = o->getPosition();
+		const Real dx = p->x - center.x, dy = p->y - center.y;
+		return dx * dx + dy * dy <= r2;
+	};
+	for (Object *obj = iter->first(); obj; obj = iter->next())
+	{
+		AIUpdateInterface *ai = obj->getAI();
+		if (!ai || obj->isEffectivelyDead() || zhbo_logic_is_controlled((uint32_t)obj->getID()))
+			continue;
+		const Object *victim = ai->getCurrentVictim();
+		if (victim && (inside(obj) || inside(victim)))
+		{
+			ai->aiIdle(CMD_FROM_AI);
+			++blinded;
+		}
+	}
+	// The log is the test's oracle (at most once a second).
+	static UnsignedInt s_lastLog = 0;
+	const UnsignedInt frame = TheGameLogic->getFrame();
+	if (blinded > 0 && frame >= s_lastLog + 30)
+	{
+		s_lastLog = frame;
+		logf("smoke: %d attackers can't see through it", blinded);
+	}
+}
+
 // The Black Hat: equipment changes team; a unit (a drone) defects.
 void cbCapture(uint32_t id, uint32_t newOwner)
 {
@@ -711,6 +750,15 @@ void setMouseCapture(Bool capture)
 	s_mouseCaptured = capture;
 	zhbo_platform::setMouseCapture(capture != FALSE);
 	if (TheMouse) TheMouse->setVisibility(capture ? FALSE : TRUE);
+	// Relative mouse mode reports the cursor as having left the window, and ending it sends no
+	// "entered" event until the next click, so selection and edge scrolling would stay dead until
+	// then: tell the mouse it is back, where the system cursor really is.
+	if (!capture && TheMouse)
+	{
+		if (!TheMouse->isCursorInside())
+			TheMouse->onCursorMovedInside();
+		TheMouse->syncPositionToSystemCursor();
+	}
 }
 
 void setHiddenObject(ObjectID id)
@@ -1120,7 +1168,7 @@ void Zhbo_Init()
 	static const ZhboLogicApi logicApi = {
 		cbLog, cbGroundHeight, cbIsWalkable, cbExtent, cbObject, cbQuery,
 		cbSetPose, cbSetControlled, cbFireFx, cbDamage, cbHeal,
-		cbSpawn, cbDestroy, cbDisable, cbFx, cbCapture,
+		cbSpawn, cbDestroy, cbDisable, cbFx, cbCapture, cbSmoke,
 	};
 	static const ZhboClientApi clientApi = { cbScreenSize, cbFillRect, cbLine, cbText, cbImage, cbClientQuery, cbCash, cbSound, cbClip, cbRadar };
 	zhbo_init(&logicApi, &clientApi);
@@ -1350,6 +1398,7 @@ void Zhbo_ClientFrame()
 	const Coord3D camDir = TheTacticalView->get3DCameraDirection();
 	in.rts_cam_pos.x = camPos.x; in.rts_cam_pos.y = camPos.y; in.rts_cam_pos.z = camPos.z;
 	in.rts_cam_dir.x = camDir.x; in.rts_cam_dir.y = camDir.y; in.rts_cam_dir.z = camDir.z;
+	in.rts_hfov = TheTacticalView->getFieldOfView();
 
 	zhbo_client_frame(&in, &s_out);
 	applyWorldPoses();

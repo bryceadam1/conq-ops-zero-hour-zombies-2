@@ -75,6 +75,9 @@ const OUTLINE: u32 = 0xB0C8_CCD0;
 /// Horizontal lean of BO2's slanted boxes, as a share of their height.
 const SLANT: f32 = 0.35;
 
+/// BO2's sight attachments (a reticle on the line of sight).
+const OPTICS: &[&str] = &["reflex", "acog", "holo", "rangefinder", "dualoptic", "mms", "ir", "vzoom"];
+
 /// Minimap radius in world units.
 const MINIMAP_RANGE: f32 = 320.0;
 
@@ -171,8 +174,14 @@ fn draw_number(host: &dyn ClientHost, value: u32, right: f32, top: f32, height: 
 fn draw_crosshair(host: &dyn ClientHost, w: f32, h: f32, s: f32, client: &Client, p: &PlayerSim) {
     let (cx, cy) = (w * 0.5, h * 0.5);
     let ads = p.arsenal.ads;
+    // Aiming through an optic: BO2's red-dot glow, translucent, on the line of sight (BO2 projects
+    // the reticle to infinity, so it stays centred). Iron sights have none.
+    let optic = p.arsenal.current().def.attachments.iter().any(|a| OPTICS.contains(&a.as_str()));
+    if ads > 0.6 && !optic {
+        return;
+    }
     if ads > 0.6 {
-        let size = 22.0 * s;
+        let size = 30.0 * s;
         if !host.image(sprites::RED_DOT, cx - size * 0.5, cy - size * 0.5, size, size, 0xFFFF_FFFF) {
             host.fill_rect(cx - 2.0 * s, cy - 2.0 * s, 4.0 * s, 4.0 * s, RED);
         }
@@ -653,7 +662,7 @@ mod tests {
         let mut client = Client::default();
         sim.take_control(&host, 0, 1);
         let mut inp = ClientIn::default();
-        for f in 1..80 {
+        for f in 1..160 {
             client.frame(&mut sim, &inp);
             sim.step(&host, f);
             inp.logic_frame = f;

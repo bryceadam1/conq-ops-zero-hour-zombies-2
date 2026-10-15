@@ -309,6 +309,21 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     re-parses into the earlier one, so `data/` ships Zero Hour stand-ins (`ZHBO_A_Buttons.ini`, which
     sorts before `ZHBO_BO2.ini`) that the BO2 archive's composed button tiles replace. Objects
     spawned by a test script must be made in the logic step (`rtsAutopilotWave`).
+68. `XModel::trans` (bone offsets from the parent) is packed at 12 bytes per bone, not 16: read at
+    16 every bone after the first was shifted by a float, so animated translations started from the
+    wrong place (the reload's new magazine floated). BO2 reloads use two magazines: `tag_clip` (in
+    the gun, dropped) and `tag_clip1` (in the hand, off screen at idle); both get one.
+69. Optics: the glass (`*_lens`) is left out, and so is the reticle surface, because BO2 projects
+    the reticle to infinity, which a surface on the glass can't do; the HUD draws BO2's red-dot glow
+    on the line of sight instead (W3D meshes can now be additive: `SkinMesh::additive`). The sight
+    line sits at 72% of the optic's height (its window, above the mount).
+70. Smoke (ABI 12, LogicApi `smoke`): BO2's Willy Pete names no effect (its script plays
+    `weapon/grenade/fx_smoke_willy_pete`); looping effect parts get a finite `SystemLifetime` (0 is
+    forever). For 15 s anything attacking into or out of the cloud goes back to idle.
+71. Camera transitions blend the field of view (ClientIn `rts_hfov`, `View::getFieldOfView`) and
+    end on the overhead camera's own pose (its direction, distance and height, recentred on the
+    General); entering swings round behind the General, then moves in. Relative mouse mode leaves
+    Zero Hour's mouse "outside the window" until a click: releasing it now says the cursor is back.
 
 ## Verification log
 

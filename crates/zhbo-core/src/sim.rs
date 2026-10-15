@@ -133,6 +133,8 @@ pub struct Sim {
     pub projectiles: Vec<(usize, Projectile)>,
     /// Equipment that is down.
     pub equipment: Equipment,
+    /// Smoke screens: where, how wide, seconds left.
+    pub smokes: Vec<(Vec3, f32, f32)>,
     pub tuning: MoveTuning,
     pub frame: u32,
     pub events: Vec<Event>,
@@ -150,6 +152,7 @@ impl Sim {
             players: vec![None; MAX_PLAYERS],
             projectiles: Vec::new(),
             equipment: Equipment::default(),
+            smokes: Vec::new(),
             tuning: MoveTuning::default(),
             frame: 0,
             events: Vec::new(),
@@ -268,6 +271,11 @@ impl Sim {
         }
         self.step_projectiles(host);
         self.step_equipment(host);
+        for s in &mut self.smokes {
+            host.smoke(s.0, s.1);
+            s.2 -= LOGIC_DT;
+        }
+        self.smokes.retain(|s| s.2 > 0.0);
     }
 
     fn step_projectiles(&mut self, host: &dyn LogicHost) {
@@ -282,6 +290,10 @@ impl Sim {
             match *outcome {
                 Outcome::Exploded { at, hit_enemy, kill } => {
                     self.emit(*owner, EventKind::Exploded { at });
+                    if proj.def.effect == crate::weapons::Effect::Smoke {
+                        let radius = proj.def.explosion_radius.max(crate::projectiles::SMOKE_RADIUS);
+                        self.smokes.push((at, radius, crate::projectiles::SMOKE_TIME));
+                    }
                     let mut ev = Vec::new();
                     self.equipment.caught_in_blast(host, *owner, proj.owner, at, proj.def.explosion_radius, &mut ev);
                     self.equipment_events(ev);
@@ -866,6 +878,7 @@ pub(crate) mod tests {
         pub spawned: RefCell<Vec<(u32, String)>>,
         pub destroyed: RefCell<Vec<u32>>,
         pub played_fx: RefCell<Vec<String>>,
+        pub smoked: RefCell<Vec<(Vec3, f32)>>,
     }
 
     impl FakeHost {
@@ -954,6 +967,9 @@ pub(crate) mod tests {
         }
         fn fx(&self, name: &str, _pos: Vec3) {
             self.played_fx.borrow_mut().push(name.to_string());
+        }
+        fn smoke(&self, center: Vec3, radius: f32) {
+            self.smoked.borrow_mut().push((center, radius));
         }
         fn capture(&self, id: u32, new_owner: u32) {
             let owner = self.objects.borrow().iter().find(|o| o.id == new_owner).map(|o| o.owner_player);
@@ -1145,6 +1161,22 @@ pub(crate) mod tests {
         assert_eq!(sim.player(0).unwrap().mode, Mode::Rts);
         assert_eq!(sim.rts_update(&host, 0, 1, 0, [0, 0, 0]).lock, 1, "the pistol, which was in hand");
         assert_eq!(sim.rts_update(&host, 0, 1, 1, [0, 0, 0]).lock, -1, "once");
+    }
+
+    #[test]
+    fn a_smoke_grenade_screens_for_its_time_then_clears() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let smoke: &'static crate::weapons::WeaponDef =
+            Box::leak(Box::new(crate::weapons::WeaponDef { id: "willy_pete_mp".into(), effect: crate::weapons::Effect::Smoke, fuse_time: 0.5, ..Default::default() }));
+        let p = Projectile::launch(smoke, 1, Vec3::new(0.0, 0.0, 1.0), Vec3::new(1.0, 0.0, 0.0), 0.5, &host, 0.0);
+        sim.projectiles.push((0, p));
+        run(&mut sim, &host, 0, 1, FpsInput::default(), frames(1.0));
+        assert_eq!(sim.smokes.len(), 1);
+        assert!(!host.smoked.borrow().is_empty());
+        run(&mut sim, &host, 0, 1, FpsInput::default(), frames(crate::projectiles::SMOKE_TIME));
+        assert!(sim.smokes.is_empty(), "cleared after {} s", crate::projectiles::SMOKE_TIME);
     }
 
     #[test]

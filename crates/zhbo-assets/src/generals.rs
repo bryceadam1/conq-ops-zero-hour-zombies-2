@@ -120,6 +120,10 @@ pub fn tablet_mesh(k: usize) -> String {
     format!("TB{k:02}")
 }
 const TABLET_WORLD: &str = "t6_wpn_tablet_world";
+/// How high up an optic its window's centre is (share of the optic's height).
+const OPTIC_WINDOW: f32 = 0.72;
+/// BO2's smoke grenade cloud (its script plays it; the weapon names no effect).
+const SMOKE_EFFECT: &str = "weapon/grenade/fx_smoke_willy_pete";
 /// The bone BO2's third-person tablet animations carry the tablet on.
 const TABLET_TAG: &str = "tag_inhand";
 
@@ -196,6 +200,20 @@ fn textures(
         .iter()
         .map(|m| {
             let m = m.as_ref()?;
+            // An optic's glass is see-through: leave it out (as a decal).
+            if m.name.contains("_lens") || m.name.ends_with("_glass") {
+                let name = character::texture_file(&m.name);
+                decals.insert(name.clone());
+                return Some(name);
+            }
+            // An optic's reticle: BO2 projects it to infinity (it stays on the line of sight,
+            // wherever the eye is), which a surface on the glass can't do; the HUD draws BO2's
+            // red-dot glow at the centre instead (`zhbo_core::hud`). Leave it out.
+            if m.name.contains("reticle") {
+                let name = character::texture_file(&m.name);
+                decals.insert(name.clone());
+                return Some(name);
+            }
             let img = m.color_map()?;
             let name = character::texture_file(&img.name);
             let path = format!("Art\\Textures\\{name}");
@@ -255,6 +273,7 @@ fn finish(meshes: &mut Vec<w3d::SkinMesh>, decals: &BTreeSet<String>) {
         m.env_map = Some(ENV_MAP.to_string());
     }
 }
+
 
 /// An outdoor environment in BO2's muted grade, for W3D's world-space environment mapper (`u, v` =
 /// `0.5 + 0.5 * reflection.xy`, so the centre is straight up or down and the rim is the horizon): a
@@ -551,10 +570,11 @@ fn weapon_viewmodels(
                 for (model, tag, offset, pt) in &extra {
                     let at = tag.as_deref().and_then(|t| rig.pivot(t)).unwrap_or(root);
                     rig.attach(model, at, *offset);
-                    // Aim through the optic: the line of sight goes up to the middle of its glass.
+                    // Aim through the optic: the line of sight goes up to the middle of its glass
+                    // (the window sits in the upper part of the sight, above its mount).
                     if *pt == point::OPTIC as u32 {
                         if let Some(optic) = model.bones.first().and_then(|b| rig.pivot(&b.name)) {
-                            let mid = (model.mins[2] + model.maxs[2]) * 0.5 * character::SCALE;
+                            let mid = (model.mins[2] + (model.maxs[2] - model.mins[2]) * OPTIC_WINDOW) * character::SCALE;
                             let pos = crate::xf::apply(rig.bind[optic], [0.0, 0.0, mid]);
                             rig.move_pivot("tag_sights", pos);
                         }
@@ -567,6 +587,11 @@ fn weapon_viewmodels(
             meshes.extend(character::skin_hiding(rig, &gun, "G", &gun_tex, &c.hide));
             if let (Some(m), Some(t)) = (&mag, &mag_tex) {
                 meshes.extend(character::skin(rig, m, "M", t));
+                // BO2's reloads bring the new magazine in on `tag_clip1` while the old one
+                // (`tag_clip`) drops away: a second copy rides there (off screen until then).
+                if let Some(new_mag) = rig.pivot("tag_clip1") {
+                    meshes.extend(character::skin_rigid(m, new_mag, crate::xf::IDENTITY, "N", 0, t, &[]));
+                }
             }
             for (k, ((model, ..), tex)) in extra.iter().zip(&extra_tex).enumerate() {
                 meshes.extend(character::skin(rig, model, &format!("A{k}"), tex));
@@ -898,9 +923,16 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
     ids.extend(table.weapons.iter().filter(|d| d.id.contains('~')).map(|d| d.id.clone()));
     for id in &ids {
         let Some(w) = bo2.iter().find(|w| w.name == base_id(id)) else { continue };
-        let Some(e) = &w.explosion_effect else { continue };
         let Some(d) = table.weapons.iter_mut().find(|d| &d.id == id) else { continue };
-        if matches!(d.effect, zhbo_core::weapons::Effect::Explode | zhbo_core::weapons::Effect::Stun | zhbo_core::weapons::Effect::Emp | zhbo_core::weapons::Effect::Smoke) {
+        // BO2's smoke grenade plays its cloud from script: use it by name, for the screen's time.
+        if d.effect == zhbo_core::weapons::Effect::Smoke {
+            if let Some(e) = w.explosion_effect.clone().or_else(|| zhbo_formats::fx::find(&common, SMOKE_EFFECT)) {
+                d.explosion_fx = effects.add_timed(&e, zhbo_core::projectiles::SMOKE_TIME, &|h| paks.image(h));
+            }
+            continue;
+        }
+        let Some(e) = &w.explosion_effect else { continue };
+        if matches!(d.effect, zhbo_core::weapons::Effect::Explode | zhbo_core::weapons::Effect::Stun | zhbo_core::weapons::Effect::Emp) {
             d.explosion_fx = effects.add(e, &|h| paks.image(h));
         }
     }

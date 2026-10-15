@@ -175,6 +175,9 @@ pub struct SkinMesh {
     pub env_map: Option<String>,
     /// Self-lit at full brightness, whatever the scene's lights (screens, glowing buttons).
     pub emissive: bool,
+    /// Added over what is behind it, without writing depth (glows such as an optic's reticle:
+    /// black is clear, bright is light).
+    pub additive: bool,
 }
 
 fn mesh_chunk(container: &str, m: &SkinMesh) -> Chunk {
@@ -281,9 +284,9 @@ fn mesh_chunk(container: &str, m: &SkinMesh) -> Chunk {
     let mut shaders = Chunk::new(CHUNK_SHADERS);
     shaders
         .u8(3) // DepthCompare: PASS_LEQUAL
-        .u8(1) // DepthMask: write
+        .u8(!m.additive as u8) // DepthMask: write, except for glows
         .u8(0) // ColorMask (obsolete)
-        .u8(0) // DestBlend: zero
+        .u8(m.additive as u8) // DestBlend: zero, or one (additive)
         .u8(0) // FogFunc (obsolete)
         .u8(1) // PriGradient: modulate
         .u8(0) // SecGradient: disable
@@ -460,6 +463,7 @@ mod tests {
             triangles: vec![[0, 1, 2]],
             texture: Some("t.tga".into()),
             alpha_test: false,
+            additive: false,
             env_map: None,
             emissive: false,
         };

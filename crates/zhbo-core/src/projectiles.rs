@@ -22,6 +22,9 @@ const ARM_TIME: f32 = 0.08;
 /// Stun and EMP lengths (seconds) at the blast centre and at the edge.
 const STUN_SECONDS: (f32, f32) = (5.0, 2.0);
 const EMP_SECONDS: f32 = 10.0;
+/// A smoke grenade's screen: how long it stays up and how wide it is (BO2's Willy Pete).
+pub const SMOKE_TIME: f32 = 15.0;
+pub const SMOKE_RADIUS: f32 = inches(220.0);
 /// Zero Hour FX for a blast when the weapon names none.
 const DEFAULT_EXPLOSION_FX: &str = "FX_BoobyTrapExplosion";
 

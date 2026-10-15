@@ -157,7 +157,7 @@ pub fn read(z: &Zone, h: u32) -> Result<Model, FormatError> {
                 [0.0, 0.0, 0.0, 1.0]
             };
             // Stored with a stride of 4 floats per bone although only 3 are used.
-            let t = if trans != 0 { vec3(z, trans + 16 * k) } else { [0.0; 3] };
+            let t = if trans != 0 { vec3(z, trans + 12 * k) } else { [0.0; 3] };
             ((p >= 0 && (p as usize) < num_bones).then_some(p as usize), q, t)
         };
         let (rotation, position) = if base != 0 {

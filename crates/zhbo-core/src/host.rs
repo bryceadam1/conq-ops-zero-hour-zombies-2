@@ -102,6 +102,8 @@ pub trait LogicHost {
     fn fx(&self, name: &str, pos: Vec3);
     /// Move an object to `new_owner`'s side (the Black Hat's hack).
     fn capture(&self, id: u32, new_owner: u32);
+    /// A smoke screen this frame: nothing shoots into or out of the circle.
+    fn smoke(&self, center: Vec3, radius: f32);
 }
 
 /// Rendering services for the HUD (screen pixels, ARGB colours).
@@ -152,6 +154,7 @@ pub struct LogicApi {
     pub disable: Option<extern "C" fn(id: u32, kind: i32, seconds: f32)>,
     pub fx: Option<extern "C" fn(name: *const c_char, pos: *const Vec3)>,
     pub capture: Option<extern "C" fn(id: u32, new_owner: u32)>,
+    pub smoke: Option<extern "C" fn(center: *const Vec3, radius: f32)>,
 }
 
 #[repr(C)]
@@ -262,6 +265,12 @@ impl LogicHost for CLogicHost {
     fn capture(&self, id: u32, new_owner: u32) {
         if let Some(f) = self.0.capture {
             f(id, new_owner);
+        }
+    }
+
+    fn smoke(&self, center: Vec3, radius: f32) {
+        if let Some(f) = self.0.smoke {
+            f(&center, radius);
         }
     }
 }

@@ -58,9 +58,9 @@ impl Default for MoveTuning {
             radius: inches(15.0),
             sprint_time: 4.0,
             sprint_recover_time: 2.0,
-            stand_eye: inches(60.0),
-            crouch_eye: inches(40.0),
-            prone_eye: inches(11.0),
+            stand_eye: inches(60.0) * crate::units::GENERAL_SCALE,
+            crouch_eye: inches(40.0) * crate::units::GENERAL_SCALE,
+            prone_eye: inches(11.0) * crate::units::GENERAL_SCALE,
             stance_blend_time: 0.2,
         }
     }

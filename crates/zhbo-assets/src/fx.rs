@@ -118,14 +118,21 @@ pub struct Converted {
 
 impl Converted {
     /// Convert `effect` (with the effects its runners start) into an FXList; returns its name.
+    /// Looping parts run for the effect's own looping life (at most 20 s).
     pub fn add(&mut self, effect: &Effect, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>) -> String {
+        let secs = (effect.looping_life_msec as f32 / 1000.0).clamp(1.0, 20.0);
+        self.add_timed(effect, secs, paks)
+    }
+
+    /// [`Converted::add`], with the looping parts running `looping_secs` (a smoke screen's time).
+    pub fn add_timed(&mut self, effect: &Effect, looping_secs: f32, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>) -> String {
         let name = fxlist_name(&effect.name);
         if !self.done.insert(name.clone()) {
             return name;
         }
         let mut systems = Vec::new();
         let mut bright = false;
-        self.add_elems(effect, 0.0, &name, paks, &mut systems, &mut bright);
+        self.add_elems(effect, 0.0, looping_secs, &name, paks, &mut systems, &mut bright);
         let mut fx = format!("FXList {name}\n");
         if bright {
             fx.push_str("  LightPulse\n    Color = R:255 G:190 B:110\n    Radius = 40\n    IncreaseTime = 0\n    DecreaseTime = 400\n  End\n");
@@ -138,11 +145,12 @@ impl Converted {
         name
     }
 
-    fn add_elems(&mut self, effect: &Effect, delay_ms: f32, prefix: &str, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>, systems: &mut Vec<String>, bright: &mut bool) {
+    #[allow(clippy::too_many_arguments)]
+    fn add_elems(&mut self, effect: &Effect, delay_ms: f32, looping_secs: f32, prefix: &str, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>, systems: &mut Vec<String>, bright: &mut bool) {
         for el in &effect.elems {
             if el.kind == kind::RUNNER {
                 for child in &el.children {
-                    self.add_elems(child, delay_ms + el.delay_msec.base, prefix, paks, systems, bright);
+                    self.add_elems(child, delay_ms + el.delay_msec.base, looping_secs, prefix, paks, systems, bright);
                 }
                 continue;
             }
@@ -158,7 +166,7 @@ impl Converted {
             let additive = tex.1;
             *bright |= additive;
             let sys = format!("{prefix}_{}", systems.len());
-            self.particles.push_str(&particle_system(&sys, el, &tex.0, additive, delay_ms));
+            self.particles.push_str(&particle_system(&sys, el, &tex.0, additive, delay_ms, looping_secs));
             systems.push(sys);
         }
     }
@@ -186,7 +194,7 @@ impl Converted {
 }
 
 /// One BO2 effect element as a Zero Hour particle system.
-fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_ms: f32) -> String {
+fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_ms: f32, looping_secs: f32) -> String {
     let frames = |ms: f32| (ms / MS_PER_FRAME).max(1.0);
     let life = (frames(el.life_msec.min()), frames(el.life_msec.max()));
     let first = el.vis.first().copied().unwrap_or_default();
@@ -220,7 +228,8 @@ fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_m
     let radius = units(el.offset_radius.max());
     let delay = (frames(delay_ms + el.delay_msec.min()) - 1.0, frames(delay_ms + el.delay_msec.max()) - 1.0);
     let count = (el.count.min().max(1.0), el.count.max().max(1.0));
-    let (burst_delay, system_life) = if el.looping && el.interval_msec > 0 { (frames(el.interval_msec as f32), 0.0) } else { (0.0, 1.0) };
+    // Looping parts emit every interval for `looping_secs` (never forever: SystemLifetime 0 is).
+    let (burst_delay, system_life) = if el.looping && el.interval_msec > 0 { (frames(el.interval_msec as f32), frames(looping_secs * 1000.0)) } else { (0.0, 1.0) };
     format!(
         "ParticleSystem {name}\n  Priority = WEAPON_EXPLOSION\n  IsOneShot = No\n  Shader = {shader}\n  Type = PARTICLE\n  ParticleName = {texture}\n  \
          AngleZ = -3.14 3.14\n  AngularRateZ = -0.02 0.02\n  AngularDamping = 1.00 1.00\n  VelocityDamping = 0.97 0.99\n  \
@@ -270,7 +279,7 @@ mod effect_tests {
             ],
             ..Default::default()
         };
-        let ini = particle_system("ZHBO_test_0", &el, "zhbo_fx_smoke.tga", false, 0.0);
+        let ini = particle_system("ZHBO_test_0", &el, "zhbo_fx_smoke.tga", false, 0.0, 15.0);
         assert!(ini.contains("Lifetime = 30 45"), "{ini}");
         assert!(ini.contains("BurstCount = 5 7"));
         assert!(ini.contains("InitialDelay = 2 2"));
@@ -279,5 +288,9 @@ mod effect_tests {
         // Out along the normal (up), falling.
         assert!(ini.contains("VelOrthoZ = 1.667 2.222"), "{ini}");
         assert!(ini.contains("Gravity = -0.1481"), "{ini}");
+        // Looping parts end.
+        let looping = Elem { looping: true, interval_msec: 3000, ..el };
+        let ini = particle_system("ZHBO_test_1", &looping, "zhbo_fx_smoke.tga", false, 0.0, 15.0);
+        assert!(ini.contains("SystemLifetime = 450") && ini.contains("BurstDelay = 90 90"), "{ini}");
     }
 }

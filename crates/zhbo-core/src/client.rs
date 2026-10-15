@@ -4,7 +4,7 @@
 //! Nothing here affects the lockstep simulation except through the input messages it emits.
 
 use crate::input::{buttons, pack_move, FpsInput, MAX_PITCH};
-use crate::math::{basis_xy, dir_from_angles, smoothstep, wrap_angle, Vec3};
+use crate::math::{dir_from_angles, lerp_angle, smoothstep, wrap_angle, Vec3};
 use crate::sim::{EventKind, Mode, Sim};
 use crate::sounds::{self, Cues};
 use crate::units::LOGIC_DT;
@@ -103,8 +103,12 @@ impl Default for ClientConfig {
     }
 }
 
-pub const ENTER_TIME: f32 = 0.9;
-pub const LEAVE_TIME: f32 = 1.1;
+/// Camera transitions: entering swings round behind the General, then moves in to the eyes; leaving
+/// pulls back behind the General, then swings round to the overhead camera's own angle. Each is two
+/// phases, split at `TRANSITION_SPLIT`.
+pub const ENTER_TIME: f32 = 1.4;
+pub const LEAVE_TIME: f32 = 1.6;
+const TRANSITION_SPLIT: f32 = 0.45;
 pub const HITMARKER_TIME: f32 = 0.25;
 pub const DEATH_BANNER_TIME: f32 = 3.0;
 /// BO2's "+100" kill popup stays up this long; kills inside the window add up.
@@ -140,6 +144,8 @@ pub struct ClientIn {
     /// The RTS camera, for transitions.
     pub rts_cam_pos: Vec3,
     pub rts_cam_dir: Vec3,
+    /// The RTS camera's horizontal field of view (radians).
+    pub rts_hfov: f32,
 }
 
 impl Default for ClientIn {
@@ -157,6 +163,7 @@ impl Default for ClientIn {
             screen_h: 720.0,
             rts_cam_pos: Vec3::new(0.0, -200.0, 300.0),
             rts_cam_dir: Vec3::new(0.0, 0.6, -0.8),
+            rts_hfov: 0.87,
         }
     }
 }
@@ -201,9 +208,10 @@ pub struct ClientOut {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ViewMode {
     Rts,
-    Entering { t: f32, from_pos: Vec3, from_dir: Vec3 },
+    Entering { t: f32, from_pos: Vec3, from_dir: Vec3, from_hfov: f32 },
     Fps,
-    Leaving { t: f32, from_pos: Vec3, from_dir: Vec3, target: Vec3 },
+    /// `to_*`: the overhead camera's pose once it is centred on `target`.
+    Leaving { t: f32, from_pos: Vec3, from_dir: Vec3, from_hfov: f32, target: Vec3, to_pos: Vec3, to_dir: Vec3, to_hfov: f32 },
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -302,8 +310,8 @@ impl Autopilot {
 
     /// The equipment run: throw the lethal (C4), hold the tactical up for four seconds (the Black
     /// Hat on the drone the test puts in front; a Trophy System goes down when it is let go),
-    /// double-tap reload to set the C4 off, wait while enemy rockets come in, then open the field
-    /// computer.
+    /// double-tap reload to set the C4 off, fire a burst and reload, wait while enemy rockets come
+    /// in, then open the field computer.
     pub fn equipment_input(&self, b: &Bindings) -> Vec<u8> {
         let t = self.t;
         let mut keys = Vec::new();
@@ -316,10 +324,39 @@ impl Autopilot {
         if (7.0..7.08).contains(&t) || (7.2..7.28).contains(&t) {
             keys.push(b.reload);
         }
+        // A burst and a reload (the reload animation's magazines).
+        if (9.0..10.0).contains(&t) {
+            keys.push(b.fire);
+        }
+        if (10.3..10.4).contains(&t) {
+            keys.push(b.reload);
+        }
         if (20.0..20.1).contains(&t) {
             keys.push(b.field_computer);
         }
         keys
+    }
+}
+
+/// A camera circling a point at a fixed distance and height (the overhead camera's, around the
+/// General).
+#[derive(Clone, Copy, Debug)]
+struct Orbit {
+    focus: Vec3,
+    distance: f32,
+    height: f32,
+    azimuth: f32,
+}
+
+impl Orbit {
+    /// The orbit through `pos` around `focus`.
+    fn around(focus: Vec3, pos: Vec3) -> Orbit {
+        let d = pos - focus;
+        Orbit { focus, distance: d.length_xy().max(20.0), height: d.z.max(20.0), azimuth: d.y.atan2(d.x) }
+    }
+
+    fn at(&self, azimuth: f32) -> Vec3 {
+        self.focus + Vec3::new(azimuth.cos() * self.distance, azimuth.sin() * self.distance, self.height)
     }
 }
 
@@ -479,19 +516,32 @@ impl Client {
                     self.start_entering(inp, p.general, p.yaw, p.body.eye());
                 }
             }
-            ViewMode::Entering { t, from_pos, from_dir } => {
+            ViewMode::Entering { t, from_pos, from_dir, from_hfov } => {
                 let t = t + dt;
-                let s = smoothstep(t / ENTER_TIME);
+                let u = (t / ENTER_TIME).min(1.0);
+                // Swing round the General to behind their view, at the overhead camera's
+                // distance and height, then move in to the eyes.
+                let orbit = Orbit::around(eye, from_pos);
+                let behind = self.yaw + std::f32::consts::PI;
                 let to_dir = dir_from_angles(self.yaw, self.pitch);
+                if u < TRANSITION_SPLIT {
+                    let s = smoothstep(u / TRANSITION_SPLIT);
+                    let pos = orbit.at(lerp_angle(orbit.azimuth, behind, s));
+                    out.eye = pos;
+                    out.dir = from_dir.lerp((eye - pos).normalized_or_zero(), s).normalized_or_zero();
+                } else {
+                    let s = smoothstep((u - TRANSITION_SPLIT) / (1.0 - TRANSITION_SPLIT));
+                    let start = orbit.at(behind);
+                    out.eye = start.lerp(eye, s);
+                    out.dir = (eye - start).normalized_or_zero().lerp(to_dir, s).normalized_or_zero();
+                }
                 out.camera_override = 1;
-                out.eye = from_pos.lerp(eye, s);
-                out.dir = from_dir.lerp(to_dir, s).normalized_or_zero();
-                out.hfov = hfov;
+                out.hfov = from_hfov + (hfov - from_hfov) * smoothstep(u);
                 out.hide_rts_ui = 1;
-                if s > 0.8 {
+                if u > 0.9 {
                     out.hide_object = self.general;
                 }
-                self.view = if t >= ENTER_TIME { ViewMode::Fps } else { ViewMode::Entering { t, from_pos, from_dir } };
+                self.view = if t >= ENTER_TIME { ViewMode::Fps } else { ViewMode::Entering { t, from_pos, from_dir, from_hfov } };
             }
             ViewMode::Fps => {
                 if !first_person {
@@ -540,23 +590,34 @@ impl Client {
                     self.build_input(inp, &mut out, allowed && !in_fc);
                 }
             }
-            ViewMode::Leaving { t, from_pos, from_dir, target } => {
+            ViewMode::Leaving { t, from_pos, from_dir, from_hfov, target, to_pos, to_dir, to_hfov } => {
                 let t = t + dt;
-                let s = smoothstep(t / LEAVE_TIME);
-                let (fwd, _) = basis_xy(self.yaw);
-                let to_pos = target - fwd * 140.0 + Vec3::new(0.0, 0.0, 190.0);
-                let to_dir = (target - to_pos).normalized_or_zero();
+                let u = (t / LEAVE_TIME).min(1.0);
+                // Pull back behind the General (along the view) to the overhead camera's distance
+                // and height, then swing round to its angle: it ends on the overhead camera's pose.
+                let orbit = Orbit::around(target, to_pos);
+                let behind = self.yaw + std::f32::consts::PI;
+                if u < TRANSITION_SPLIT {
+                    let s = smoothstep(u / TRANSITION_SPLIT);
+                    let pos = from_pos.lerp(orbit.at(behind), s);
+                    out.eye = pos;
+                    out.dir = from_dir.lerp((target - pos).normalized_or_zero(), s).normalized_or_zero();
+                } else {
+                    let s = smoothstep((u - TRANSITION_SPLIT) / (1.0 - TRANSITION_SPLIT));
+                    let pos = orbit.at(lerp_angle(behind, orbit.azimuth, s));
+                    out.eye = pos;
+                    // Looking at the General, settling on the overhead camera's own direction.
+                    out.dir = (target - pos).normalized_or_zero().lerp(to_dir, s * s).normalized_or_zero();
+                }
                 out.camera_override = 1;
-                out.eye = from_pos.lerp(to_pos, s);
-                out.dir = from_dir.lerp(to_dir, s).normalized_or_zero();
-                out.hfov = hfov;
+                out.hfov = from_hfov + (to_hfov - from_hfov) * smoothstep(u);
                 if t >= LEAVE_TIME {
                     self.view = ViewMode::Rts;
                     out.camera_override = 0;
                     out.rts_look_at_valid = 1;
                     out.rts_look_at = target;
                 } else {
-                    self.view = ViewMode::Leaving { t, from_pos, from_dir, target };
+                    self.view = ViewMode::Leaving { t, from_pos, from_dir, from_hfov, target, to_pos, to_dir, to_hfov };
                 }
             }
         }
@@ -575,7 +636,8 @@ impl Client {
         self.latch = 0;
         self.prev_held = u32::MAX; // ignore keys already held when entering (e.g. the click itself)
         let from_dir = if inp.rts_cam_dir.length() > 0.5 { inp.rts_cam_dir } else { Vec3::new(0.0, 0.6, -0.8) };
-        self.view = ViewMode::Entering { t: 0.0, from_pos: inp.rts_cam_pos, from_dir: from_dir.normalized_or_zero() };
+        let from_hfov = if inp.rts_hfov > 0.05 { inp.rts_hfov } else { self.last_hfov };
+        self.view = ViewMode::Entering { t: 0.0, from_pos: inp.rts_cam_pos, from_dir: from_dir.normalized_or_zero(), from_hfov };
     }
 
     fn build_input(&mut self, inp: &ClientIn, out: &mut ClientOut, allowed: bool) {
@@ -631,12 +693,12 @@ impl Client {
                 }
                 EventKind::ReturnedToRts { general } => {
                     self.general = general;
-                    self.begin_leaving(body_pos.unwrap_or(self.eye_curr));
+                    self.begin_leaving(inp, body_pos.unwrap_or(self.eye_curr));
                 }
                 EventKind::GeneralDied { .. } => {
                     self.hud.death_banner = DEATH_BANNER_TIME;
                     if !matches!(self.view, ViewMode::Rts) {
-                        self.begin_leaving(self.eye_curr - Vec3::new(0.0, 0.0, 10.0));
+                        self.begin_leaving(inp, self.eye_curr - Vec3::new(0.0, 0.0, 10.0));
                     }
                 }
                 EventKind::HitMarker { headshot, kill } => {
@@ -693,10 +755,17 @@ impl Client {
         }
     }
 
-    fn begin_leaving(&mut self, target: Vec3) {
+    fn begin_leaving(&mut self, inp: &ClientIn, target: Vec3) {
         let from_pos = self.eye_curr;
         let from_dir = dir_from_angles(self.yaw, self.pitch);
-        self.view = ViewMode::Leaving { t: 0.0, from_pos, from_dir, target };
+        // Where the overhead camera will be once centred on the General: its angle, height and
+        // zoom are its own, only its look-at point moves to the General.
+        let dir = if inp.rts_cam_dir.length() > 0.5 { inp.rts_cam_dir.normalized_or_zero() } else { Vec3::new(0.0, 0.6, -0.8) };
+        let down = (-dir.z).max(0.2);
+        let along = ((inp.rts_cam_pos.z - target.z) / down).clamp(50.0, 2000.0);
+        let to_pos = target - dir * along;
+        let to_hfov = if inp.rts_hfov > 0.05 { inp.rts_hfov } else { self.last_hfov };
+        self.view = ViewMode::Leaving { t: 0.0, from_pos, from_dir, from_hfov: self.last_hfov, target, to_pos, to_dir: dir, to_hfov };
         self.last_sent_frame = None;
     }
 
@@ -822,6 +891,60 @@ mod tests {
         }
         assert_eq!(client.view, ViewMode::Rts);
         assert!(look.is_some(), "RTS camera recentred on the General");
+    }
+
+    /// Entering and leaving first person never jump: every frame the camera moves a little, starting
+    /// from (and ending on) the overhead camera's pose and field of view.
+    #[test]
+    fn transitions_are_smooth_both_ways() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { rts_cam_pos: Vec3::new(-150.0, 60.0, 220.0), rts_hfov: 0.8, ..Default::default() };
+        let rts_dir = (Vec3::new(0.0, 0.0, 0.0) - inp.rts_cam_pos).normalized_or_zero();
+        inp.rts_cam_dir = rts_dir;
+        sim.take_control(&host, 0, 1);
+        let mut outs = Vec::new();
+        for _ in 0..200 {
+            let out = frame_with(&mut client, &mut sim, &host, &mut inp, 1);
+            if matches!(client.view, ViewMode::Entering { .. } | ViewMode::Fps) {
+                outs.push(out);
+            }
+            if client.view == ViewMode::Fps && outs.len() > 2 {
+                break;
+            }
+        }
+        // Leave through the field computer.
+        inp.keys[vk::F as usize] = 0x80;
+        frame_with(&mut client, &mut sim, &host, &mut inp, 2);
+        inp.keys[vk::F as usize] = 0;
+        let mut leaving = Vec::new();
+        for _ in 0..400 {
+            let out = frame_with(&mut client, &mut sim, &host, &mut inp, 1);
+            if out.camera_override != 0 && matches!(client.view, ViewMode::Leaving { .. }) {
+                leaving.push(out);
+            }
+            if client.view == ViewMode::Rts && !leaving.is_empty() {
+                break;
+            }
+        }
+        let check = |outs: &[ClientOut], what: &str| {
+            for w in outs.windows(2) {
+                let (a, b) = (&w[0], &w[1]);
+                assert!((a.eye - b.eye).length() < 25.0, "{what}: eye jumped {:?} -> {:?}", a.eye, b.eye);
+                assert!(a.dir.dot(b.dir) > 0.97, "{what}: view turned too fast {:?} -> {:?}", a.dir, b.dir);
+                assert!((a.hfov - b.hfov).abs() < 0.05, "{what}: fov jumped {} -> {}", a.hfov, b.hfov);
+            }
+        };
+        check(&outs, "entering");
+        check(&leaving, "leaving");
+        let first = outs[0];
+        assert!((first.eye - inp.rts_cam_pos).length() < 15.0 && first.dir.dot(rts_dir) > 0.97, "starts at the overhead camera");
+        assert!((first.hfov - 0.8).abs() < 0.05);
+        let last = leaving.last().unwrap();
+        assert!(last.dir.dot(rts_dir) > 0.995, "ends looking the overhead camera's way: {:?}", last.dir);
+        assert!((last.hfov - 0.8).abs() < 0.02, "ends at the overhead field of view: {}", last.hfov);
     }
 
     #[test]

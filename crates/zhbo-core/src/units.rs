@@ -29,3 +29,7 @@ mod tests {
         assert!((inches(72.0) - 12.0).abs() < 1e-4);
     }
 }
+
+/// The General is drawn this much bigger than BO2's scale (`Scale` in `ZZZ_ZHBO_General.ini`) so
+/// they stand as tall as Zero Hour's infantry; the first-person eye is raised to match.
+pub const GENERAL_SCALE: f32 = 1.15;
