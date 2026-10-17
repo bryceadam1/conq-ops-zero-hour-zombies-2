@@ -119,8 +119,12 @@ impl Pools<'_> {
         if stored >= 64 {
             let b = self.indices.pop(count)?;
             // The game keeps checkpoints of long index lists in dataShort: the first entry, every
-            // 256th entry, and always the final entry — even when it repeats the last 256-boundary
-            // one (OpenAssetTools FlatXAnimReader/FlatXAnimDataWriter; `checkpoint_count` matches).
+            // 256th entry after it, and the final one unless it already is a 256-boundary —
+            // `(count - 2)/256 + 2` total. Verified by draining every pool exactly across the
+            // whole real install (`converts_from_real_install`); the formula a FlatXAnimReader
+            // cross-check suggested, `(count - 1)/256 + 1`, under-reads dataShort for every
+            // count below 258 and leaves the pool short (the game's own count includes its
+            // trailing checkpoints, OAT's reader does not).
             self.short.pop(checkpoint_count(count))?;
             return Ok((0..count).map(|i| u16_at(b, 2 * i)).collect());
         }
@@ -129,11 +133,9 @@ impl Pools<'_> {
     }
 }
 
-/// Checkpoints a long track's index list keeps in dataShort: the first entry, every 256th entry,
-/// and always the final one (OpenAssetTools FlatXAnimReader's `ReadPackedIndices` skips
-/// `((count-1)/256) + 1`).
+/// Checkpoints a long track's index list keeps in dataShort (see `indices` above).
 fn checkpoint_count(count: usize) -> usize {
-    (count - 1) / 256 + 1
+    (count - 2) / 256 + 2
 }
 
 fn quat(v: [i16; 4]) -> [f32; 4] {
@@ -344,17 +346,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn checkpoint_counts_match_oat() {
-        // (count - 1)/256 + 1: the first entry, every 256th, and the final one (which repeats the
-        // last boundary checkpoint when the count lands on it). Verified against OpenAssetTools'
-        // FlatXAnimReader; counts in [65, 256] keep exactly one (the final).
-        assert_eq!(checkpoint_count(65), 1);
-        assert_eq!(checkpoint_count(256), 1);
+    fn checkpoint_counts_match_the_real_install() {
+        // (count - 2)/256 + 2: the first entry, every 256th after it, and the final one unless it
+        // already is a 256-boundary. Locked by the synthetic long-anim test below and by
+        // `converts_from_real_install`, which drains every pool exactly across the whole install
+        // (a shorter count exhausts dataShort, a longer one leaves bytes over — `read` rejects
+        // both).
+        assert_eq!(checkpoint_count(65), 2);
+        assert_eq!(checkpoint_count(256), 2);
         assert_eq!(checkpoint_count(257), 2);
-        assert_eq!(checkpoint_count(512), 2);
+        assert_eq!(checkpoint_count(258), 3);
+        assert_eq!(checkpoint_count(512), 3);
         assert_eq!(checkpoint_count(513), 3);
-        assert_eq!(checkpoint_count(1024), 4);
+        assert_eq!(checkpoint_count(514), 4);
+        assert_eq!(checkpoint_count(1024), 5);
         assert_eq!(checkpoint_count(1025), 5);
+        assert_eq!(checkpoint_count(1026), 6);
     }
 
     fn put16(m: &mut [u8], o: usize, v: u16) {
@@ -379,7 +386,7 @@ mod tests {
         let h = 0x40;
         put32(&mut mem, h, name_addr as u32);
         put16(&mut mem, h + 4, 0); // dataByte
-        put16(&mut mem, h + 6, 2); // dataShort: stored size + 1 checkpoint
+        put16(&mut mem, h + 6, 3); // dataShort: stored size + 2 checkpoints
         put16(&mut mem, h + 8, 0); // dataInt
         put16(&mut mem, h + 10, 0); // randomDataByte
         put16(&mut mem, h + 14, 300); // num_frames
