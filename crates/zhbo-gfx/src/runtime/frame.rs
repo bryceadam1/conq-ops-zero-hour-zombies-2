@@ -4,7 +4,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use super::math::{self, Mtx};
-use super::{BufferSrc, Draw, Predefined, Program, Renderer, Texture, INVALID, MAX_VIEWS};
+use super::{BufferSrc, Predefined, Program, Renderer, Texture, INVALID, MAX_VIEWS};
 use crate::state::{self, PipelineState, SamplerKey, StencilFace};
 
 pub(crate) struct Backbuffer {
@@ -807,7 +807,7 @@ impl Renderer {
     /// Group 0 (this program's uniform blocks in the frame ring) and group 1 (textures and
     /// samplers), cached per frame in [`BindGroupCaches`].
     fn bind_groups_for(&mut self, program: &Arc<Program>, plan: &DrawPlan) {
-        let (unfilterable, textures, ubo) = (plan.unfilterable, &plan.textures, plan.ubo);
+        let (unfilterable, textures, _ubo) = (plan.unfilterable, &plan.textures, plan.ubo);
         if let Some(bgl0) = &program.bgl0 {
             if !self.cache.bind_groups.group0.contains_key(&program.serial) {
                 let mut entries = Vec::new();
