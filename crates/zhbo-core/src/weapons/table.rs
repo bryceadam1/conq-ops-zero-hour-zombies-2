@@ -131,7 +131,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
 
 /// The shape of a field's value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind {
+pub enum FieldKind {
     /// One number.
     Num,
     /// `n` space-separated numbers, all required (bools are `0`/`1`).
@@ -181,7 +181,7 @@ pub struct Field<T> {
     /// The line's key, as the converter writes it.
     pub key: &'static str,
     pub doc: &'static str,
-    pub kind: Kind,
+    pub kind: FieldKind,
     /// The formatted value; must reproduce the table format byte for byte.
     pub get: fn(&T) -> String,
     /// Parse the value; the error is a short reason (the caller adds the line context).
@@ -196,59 +196,59 @@ macro_rules! field {
 
 /// Every `Attachment` block line, in table order.
 pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
-    field!("Short", "The attachment's two-letter short (`gl`, `reflex`).", Kind::Str,
+    field!("Short", "The attachment's two-letter short (`gl`, `reflex`).", FieldKind::Str,
         |a: &AttachmentDef| a.short.clone(),
         |a: &mut AttachmentDef, v: Values| { a.short = v.text.into(); Ok(()) }),
-    field!("DisplayName", "As BO2's create-a-class shows it.", Kind::Str,
+    field!("DisplayName", "As BO2's create-a-class shows it.", FieldKind::Str,
         |a: &AttachmentDef| a.display_name.clone(),
         |a: &mut AttachmentDef, v: Values| { a.display_name = v.text.into(); Ok(()) }),
-    field!("Point", "The viewmodel attachment point (BO2's attachment point id).", Kind::Num,
+    field!("Point", "The viewmodel attachment point (BO2's attachment point id).", FieldKind::Num,
         |a: &AttachmentDef| a.point.to_string(),
         |a: &mut AttachmentDef, v: Values| { a.point = v.text_num()? as u8; Ok(()) }),
-    field!("Flags", "silenced, laser.", Kind::Nums(2),
+    field!("Flags", "silenced, laser.", FieldKind::Nums(2),
         |a: &AttachmentDef| format!("{} {}", a.silenced as u8, a.laser as u8),
         |a: &mut AttachmentDef, v: Values| {
             v.need(2)?;
             (a.silenced, a.laser) = (v.flag(0), v.flag(1));
             Ok(())
         }),
-    field!("Fire", "The fire mode it forces (`none` keeps the weapon's).", Kind::Enum,
+    field!("Fire", "The fire mode it forces (`none` keeps the weapon's).", FieldKind::Enum,
         |a: &AttachmentDef| a.fire.map_or("none".into(), |f| fire_name(f)),
         |a: &mut AttachmentDef, v: Values| { a.fire = parse_fire(v.text); Ok(()) }),
-    field!("Clip", "Rounds in the magazine when this optic or mag is on (0 keeps the weapon's).", Kind::Num,
+    field!("Clip", "Rounds in the magazine when this optic or mag is on (0 keeps the weapon's).", FieldKind::Num,
         |a: &AttachmentDef| a.clip.to_string(),
         |a: &mut AttachmentDef, v: Values| { a.clip = v.text_num()? as u16; Ok(()) }),
-    field!("DamageRangeScale", "Scales the damage curve's ranges.", Kind::Num,
+    field!("DamageRangeScale", "Scales the damage curve's ranges.", FieldKind::Num,
         |a: &AttachmentDef| a.damage_range_scale.to_string(),
         |a: &mut AttachmentDef, v: Values| { a.damage_range_scale = v.text_num()?; Ok(()) }),
-    field!("Ads", "ADS field of view, in/out scale and move scale.", Kind::Nums(4),
+    field!("Ads", "ADS field of view, in/out scale and move scale.", FieldKind::Nums(4),
         |a: &AttachmentDef| format!("{} {} {} {}", a.ads_fov, a.ads_in_scale, a.ads_out_scale, a.ads_move_scale),
         |a: &mut AttachmentDef, v: Values| {
             v.need(4)?;
             (a.ads_fov, a.ads_in_scale, a.ads_out_scale, a.ads_move_scale) = (v.num(0), v.num(1), v.num(2), v.num(3));
             Ok(())
         }),
-    field!("HipSpreadScale", "Scales the hip spread's min and max.", Kind::Nums(2),
+    field!("HipSpreadScale", "Scales the hip spread's min and max.", FieldKind::Nums(2),
         |a: &AttachmentDef| format!("{} {}", a.hip_spread_min_scale, a.hip_spread_max_scale),
         |a: &mut AttachmentDef, v: Values| {
             v.need(2)?;
             (a.hip_spread_min_scale, a.hip_spread_max_scale) = (v.num(0), v.num(1));
             Ok(())
         }),
-    field!("FireTimeScale", "Scales the time between shots.", Kind::Num,
+    field!("FireTimeScale", "Scales the time between shots.", FieldKind::Num,
         |a: &AttachmentDef| a.fire_time_scale.to_string(),
         |a: &mut AttachmentDef, v: Values| { a.fire_time_scale = v.text_num()?; Ok(()) }),
-    field!("ReloadScale", "Scales the reload, empty-reload and add times.", Kind::Nums(3),
+    field!("ReloadScale", "Scales the reload, empty-reload and add times.", FieldKind::Nums(3),
         |a: &AttachmentDef| format!("{} {} {}", a.reload_scale, a.reload_empty_scale, a.reload_add_scale),
         |a: &mut AttachmentDef, v: Values| {
             v.need(3)?;
             (a.reload_scale, a.reload_empty_scale, a.reload_add_scale) = (v.num(0), v.num(1), v.num(2));
             Ok(())
         }),
-    field!("ClipScale", "Scales the clip size (rounded).", Kind::Num,
+    field!("ClipScale", "Scales the clip size (rounded).", FieldKind::Num,
         |a: &AttachmentDef| a.clip_scale.to_string(),
         |a: &mut AttachmentDef, v: Values| { a.clip_scale = v.text_num()?; Ok(()) }),
-    field!("RecoilReduction", "Per-shot recoil reduction and its limit.", Kind::Nums(2),
+    field!("RecoilReduction", "Per-shot recoil reduction and its limit.", FieldKind::Nums(2),
         |a: &AttachmentDef| format!("{} {}", a.recoil_reduction.0, a.recoil_reduction.1),
         |a: &mut AttachmentDef, v: Values| {
             v.need(2)?;
@@ -259,51 +259,51 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
 
 /// Every `Weapon` block line, in table order.
 pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
-    field!("DisplayName", "As BO2's HUD shows it.", Kind::Str,
+    field!("DisplayName", "As BO2's HUD shows it.", FieldKind::Str,
         |d: &WeaponDef| d.display_name.clone(),
         |d: &mut WeaponDef, v: Values| { d.display_name = v.text.into(); Ok(()) }),
-    field!("Class", "The weapon class (smg, ar, sniper, launcher, pistol, melee, offhand).", Kind::Enum,
+    field!("Class", "The weapon class (smg, ar, sniper, launcher, pistol, melee, offhand).", FieldKind::Enum,
         |d: &WeaponDef| d.class.name().into(),
         |d: &mut WeaponDef, v: Values| { d.class = Class::parse(v.text).ok_or("unknown class")?; Ok(()) }),
-    field!("Fire", "auto, semi, minigun, or `burst n`.", Kind::Enum,
+    field!("Fire", "auto, semi, minigun, or `burst n`.", FieldKind::Enum,
         |d: &WeaponDef| fire_name(d.fire),
         |d: &mut WeaponDef, v: Values| { d.fire = parse_fire(v.text).ok_or("unknown fire mode")?; Ok(()) }),
-    field!("FireTime", "Seconds between shots.", Kind::Num,
+    field!("FireTime", "Seconds between shots.", FieldKind::Num,
         |d: &WeaponDef| d.fire_time.to_string(),
         |d: &mut WeaponDef, v: Values| { d.fire_time = v.text_num()?; Ok(()) }),
-    field!("BurstDelay", "Extra wait after a burst before the next one.", Kind::Num,
+    field!("BurstDelay", "Extra wait after a burst before the next one.", FieldKind::Num,
         |d: &WeaponDef| d.burst_delay.to_string(),
         |d: &mut WeaponDef, v: Values| { d.burst_delay = v.text_num()?; Ok(()) }),
-    field!("SpinUpTime", "Minigun spin-up.", Kind::Num,
+    field!("SpinUpTime", "Minigun spin-up.", FieldKind::Num,
         |d: &WeaponDef| d.spin_up_time.to_string(),
         |d: &mut WeaponDef, v: Values| { d.spin_up_time = v.text_num()?; Ok(()) }),
-    field!("Pellets", "Projectiles per shot (shotguns).", Kind::Num,
+    field!("Pellets", "Projectiles per shot (shotguns).", FieldKind::Num,
         |d: &WeaponDef| d.pellets.to_string(),
         |d: &mut WeaponDef, v: Values| { d.pellets = v.text.parse().map_err(|_| "number")?; Ok(()) }),
-    field!("Clip", "Rounds in the magazine.", Kind::Num,
+    field!("Clip", "Rounds in the magazine.", FieldKind::Num,
         |d: &WeaponDef| d.clip.to_string(),
         |d: &mut WeaponDef, v: Values| { d.clip = v.text.parse().map_err(|_| "number")?; Ok(()) }),
-    field!("StartReserve", "Spare rounds at spawn.", Kind::Num,
+    field!("StartReserve", "Spare rounds at spawn.", FieldKind::Num,
         |d: &WeaponDef| d.start_reserve.to_string(),
         |d: &mut WeaponDef, v: Values| { d.start_reserve = v.text.parse().map_err(|_| "number")?; Ok(()) }),
-    field!("MaxReserve", "Spare rounds at most.", Kind::Num,
+    field!("MaxReserve", "Spare rounds at most.", FieldKind::Num,
         |d: &WeaponDef| d.max_reserve.to_string(),
         |d: &mut WeaponDef, v: Values| { d.max_reserve = v.text.parse().map_err(|_| "number")?; Ok(()) }),
-    field!("Reload", "Reload, empty reload, rounds-in time, empty rounds-in time.", Kind::Nums(4),
+    field!("Reload", "Reload, empty reload, rounds-in time, empty rounds-in time.", FieldKind::Nums(4),
         |d: &WeaponDef| format!("{} {} {} {}", d.reload_time, d.reload_empty_time, d.reload_add_time, d.reload_empty_add_time),
         |d: &mut WeaponDef, v: Values| {
             v.need(4)?;
             (d.reload_time, d.reload_empty_time, d.reload_add_time, d.reload_empty_add_time) = (v.num(0), v.num(1), v.num(2), v.num(3));
             Ok(())
         }),
-    field!("ReloadShells", "Shell-by-shell reload (tube shotguns): start, end, rounds per cycle.", Kind::Nums(3),
+    field!("ReloadShells", "Shell-by-shell reload (tube shotguns): start, end, rounds per cycle.", FieldKind::Nums(3),
         |d: &WeaponDef| format!("{} {} {}", d.reload_start_time, d.reload_end_time, d.reload_ammo_add),
         |d: &mut WeaponDef, v: Values| {
             v.need(3)?;
             (d.reload_start_time, d.reload_end_time, d.reload_ammo_add) = (v.num(0), v.num(1), v.num(2) as u16);
             Ok(())
         }),
-    field!("Raise", "Raise, first raise, drop, quick raise, quick drop.", Kind::Nums(5),
+    field!("Raise", "Raise, first raise, drop, quick raise, quick drop.", FieldKind::Nums(5),
         |d: &WeaponDef| format!("{} {} {} {} {}", d.raise_time, d.first_raise_time, d.drop_time, d.quick_raise_time, d.quick_drop_time),
         |d: &mut WeaponDef, v: Values| {
             v.need(5)?;
@@ -311,89 +311,89 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
                 (v.num(0), v.num(1), v.num(2), v.num(3), v.num(4));
             Ok(())
         }),
-    field!("SprintOutTime", "Raising from a sprint.", Kind::Num,
+    field!("SprintOutTime", "Raising from a sprint.", FieldKind::Num,
         |d: &WeaponDef| d.sprint_out_time.to_string(),
         |d: &mut WeaponDef, v: Values| { d.sprint_out_time = v.text_num()?; Ok(()) }),
-    field!("Ads", "ADS in and out time, and the aimed field of view (0: no zoom).", Kind::Nums(3),
+    field!("Ads", "ADS in and out time, and the aimed field of view (0: no zoom).", FieldKind::Nums(3),
         |d: &WeaponDef| format!("{} {} {}", d.ads_in_time, d.ads_out_time, d.ads_fov),
         |d: &mut WeaponDef, v: Values| {
             v.need(3)?;
             (d.ads_in_time, d.ads_out_time, d.ads_fov) = (v.num(0), v.num(1), v.num(2));
             Ok(())
         }),
-    field!("Damage", "BO2's damage curve: damage at each range step.", Kind::Nums(6),
+    field!("Damage", "BO2's damage curve: damage at each range step.", FieldKind::Nums(6),
         |d: &WeaponDef| d.damage.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" "),
         |d: &mut WeaponDef, v: Values| {
             v.need(6)?;
             d.damage.copy_from_slice(&v.nums[..6]);
             Ok(())
         }),
-    field!("DamageRange", "The ranges (Zero Hour units) of the damage curve.", Kind::Nums(6),
+    field!("DamageRange", "The ranges (Zero Hour units) of the damage curve.", FieldKind::Nums(6),
         |d: &WeaponDef| d.damage_range.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" "),
         |d: &mut WeaponDef, v: Values| {
             v.need(6)?;
             d.damage_range.copy_from_slice(&v.nums[..6]);
             Ok(())
         }),
-    field!("HeadMultiplier", "Headshot damage multiplier.", Kind::Num,
+    field!("HeadMultiplier", "Headshot damage multiplier.", FieldKind::Num,
         |d: &WeaponDef| d.head_multiplier.to_string(),
         |d: &mut WeaponDef, v: Values| { d.head_multiplier = v.text_num()?; Ok(()) }),
-    field!("MaxRange", "Bullets fly this far (Zero Hour units).", Kind::Num,
+    field!("MaxRange", "Bullets fly this far (Zero Hour units).", FieldKind::Num,
         |d: &WeaponDef| d.max_range.to_string(),
         |d: &mut WeaponDef, v: Values| { d.max_range = v.text_num()?; Ok(()) }),
-    field!("HipSpread", "Hip spread cone (degrees) min/max: standing, crouched, prone.", Kind::Nums(6),
+    field!("HipSpread", "Hip spread cone (degrees) min/max: standing, crouched, prone.", FieldKind::Nums(6),
         |d: &WeaponDef| d.hip_spread.iter().flat_map(|p| [p.0, p.1]).map(|x| x.to_string()).collect::<Vec<_>>().join(" "),
         |d: &mut WeaponDef, v: Values| {
             v.need(6)?;
             d.hip_spread = [(v.num(0), v.num(1)), (v.num(2), v.num(3)), (v.num(4), v.num(5))];
             Ok(())
         }),
-    field!("Spread", "Spread decay, per-shot add, move add, and the ADS spread.", Kind::Nums(4),
+    field!("Spread", "Spread decay, per-shot add, move add, and the ADS spread.", FieldKind::Nums(4),
         |d: &WeaponDef| format!("{} {} {} {}", d.spread_decay, d.spread_fire_add, d.spread_move_add, d.ads_spread),
         |d: &mut WeaponDef, v: Values| {
             v.need(4)?;
             (d.spread_decay, d.spread_fire_add, d.spread_move_add, d.ads_spread) = (v.num(0), v.num(1), v.num(2), v.num(3));
             Ok(())
         }),
-    field!("AdsKick", "Per-shot view kick aimed: pitch min/max, yaw min/max.", Kind::Nums(4),
+    field!("AdsKick", "Per-shot view kick aimed: pitch min/max, yaw min/max.", FieldKind::Nums(4),
         |d: &WeaponDef| format!("{} {} {} {}", d.ads_kick.pitch.0, d.ads_kick.pitch.1, d.ads_kick.yaw.0, d.ads_kick.yaw.1),
         |d: &mut WeaponDef, v: Values| {
             v.need(4)?;
             d.ads_kick = Kick { pitch: (v.num(0), v.num(1)), yaw: (v.num(2), v.num(3)) };
             Ok(())
         }),
-    field!("HipKick", "Per-shot view kick from the hip: pitch min/max, yaw min/max.", Kind::Nums(4),
+    field!("HipKick", "Per-shot view kick from the hip: pitch min/max, yaw min/max.", FieldKind::Nums(4),
         |d: &WeaponDef| format!("{} {} {} {}", d.hip_kick.pitch.0, d.hip_kick.pitch.1, d.hip_kick.yaw.0, d.hip_kick.yaw.1),
         |d: &mut WeaponDef, v: Values| {
             v.need(4)?;
             d.hip_kick = Kick { pitch: (v.num(0), v.num(1)), yaw: (v.num(2), v.num(3)) };
             Ok(())
         }),
-    field!("Move", "Move scale, ADS move scale, sprint duration scale.", Kind::Nums(3),
+    field!("Move", "Move scale, ADS move scale, sprint duration scale.", FieldKind::Nums(3),
         |d: &WeaponDef| format!("{} {} {}", d.move_scale, d.ads_move_scale, d.sprint_duration_scale),
         |d: &mut WeaponDef, v: Values| {
             v.need(3)?;
             (d.move_scale, d.ads_move_scale, d.sprint_duration_scale) = (v.num(0), v.num(1), v.num(2));
             Ok(())
         }),
-    field!("Melee", "Bayonet/stock melee damage and time.", Kind::Nums(2),
+    field!("Melee", "Bayonet/stock melee damage and time.", FieldKind::Nums(2),
         |d: &WeaponDef| format!("{} {}", d.melee_damage, d.melee_time),
         |d: &mut WeaponDef, v: Values| {
             v.need(2)?;
             (d.melee_damage, d.melee_time) = (v.num(0), v.num(1));
             Ok(())
         }),
-    field!("Effect", "How the shot lands: explode, stun, emp, smoke, impact, none.", Kind::Enum,
+    field!("Effect", "How the shot lands: explode, stun, emp, smoke, impact, none.", FieldKind::Enum,
         |d: &WeaponDef| d.effect.name().into(),
         |d: &mut WeaponDef, v: Values| { d.effect = Effect::parse(v.text).ok_or("unknown effect")?; Ok(()) }),
-    field!("Fuse", "Fuse time, and whether holding cooks it.", Kind::Nums(2),
+    field!("Fuse", "Fuse time, and whether holding cooks it.", FieldKind::Nums(2),
         |d: &WeaponDef| format!("{} {}", d.fuse_time, d.cook as u8),
         |d: &mut WeaponDef, v: Values| {
             v.need(2)?;
             (d.fuse_time, d.cook) = (v.num(0), v.flag(1));
             Ok(())
         }),
-    field!("Explosion", "Blast radius, inner radius, inner damage, outer damage.", Kind::Nums(4),
+    field!("Explosion", "Blast radius, inner radius, inner damage, outer damage.", FieldKind::Nums(4),
         |d: &WeaponDef| format!("{} {} {} {}", d.explosion_radius, d.explosion_radius_min, d.explosion_inner_damage, d.explosion_outer_damage),
         |d: &mut WeaponDef, v: Values| {
             v.need(4)?;
@@ -401,7 +401,7 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
                 (v.num(0), v.num(1), v.num(2), v.num(3));
             Ok(())
         }),
-    field!("Projectile", "Speed, speed when aimed up, gravity, explode on impact, sticky.", Kind::Nums(5),
+    field!("Projectile", "Speed, speed when aimed up, gravity, explode on impact, sticky.", FieldKind::Nums(5),
         |d: &WeaponDef| format!("{} {} {} {} {}", d.projectile_speed, d.projectile_speed_up, d.projectile_gravity as u8, d.impact_explode as u8, d.sticky as u8),
         |d: &mut WeaponDef, v: Values| {
             v.need(5)?;
@@ -412,46 +412,46 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             d.sticky = v.flag(4);
             Ok(())
         }),
-    field!("FxWeapon", "Zero Hour assets made for this weapon by the converter (empty when absent).", Kind::Str,
+    field!("FxWeapon", "Zero Hour assets made for this weapon by the converter (empty when absent).", FieldKind::Str,
         |d: &WeaponDef| d.fx_weapon.clone(),
         |d: &mut WeaponDef, v: Values| { d.fx_weapon = v.text.into(); Ok(()) }),
-    field!("ExplosionFx", "Zero Hour FXList for the blast (grenades, rockets).", Kind::Str,
+    field!("ExplosionFx", "Zero Hour FXList for the blast (grenades, rockets).", FieldKind::Str,
         |d: &WeaponDef| d.explosion_fx.clone(),
         |d: &mut WeaponDef, v: Values| { d.explosion_fx = v.text.into(); Ok(()) }),
-    field!("ProjectileObject", "The thrown/projectiled Zero Hour object.", Kind::Str,
+    field!("ProjectileObject", "The thrown/projectiled Zero Hour object.", FieldKind::Str,
         |d: &WeaponDef| d.projectile_object.clone(),
         |d: &mut WeaponDef, v: Values| { d.projectile_object = v.text.into(); Ok(()) }),
-    field!("FireSound", "The shot's BO2 sound event.", Kind::Str,
+    field!("FireSound", "The shot's BO2 sound event.", FieldKind::Str,
         |d: &WeaponDef| d.fire_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.fire_sound = v.text.into(); Ok(()) }),
-    field!("ExplodeSound", "The blast's BO2 sound event.", Kind::Str,
+    field!("ExplodeSound", "The blast's BO2 sound event.", FieldKind::Str,
         |d: &WeaponDef| d.explode_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.explode_sound = v.text.into(); Ok(()) }),
-    field!("Viewmodel", "Viewmodel index in the converted art, or -1.", Kind::Num,
+    field!("Viewmodel", "Viewmodel index in the converted art, or -1.", FieldKind::Num,
         |d: &WeaponDef| d.viewmodel.to_string(),
         |d: &mut WeaponDef, v: Values| { d.viewmodel = v.text.parse().map_err(|_| "number")?; Ok(()) }),
-    field!("Anims", "Which BO2 viewmodel animation slots the weapon has, as hex bits.", Kind::Hex,
+    field!("Anims", "Which BO2 viewmodel animation slots the weapon has, as hex bits.", FieldKind::Hex,
         |d: &WeaponDef| format!("{:x}", d.anims),
         |d: &mut WeaponDef, v: Values| { d.anims = u128::from_str_radix(v.text, 16).map_err(|_| "hex")?; Ok(()) }),
-    field!("ClipBase", "Viewmodel clip base (an alt mode's clips sit after its weapon's).", Kind::Num,
+    field!("ClipBase", "Viewmodel clip base (an alt mode's clips sit after its weapon's).", FieldKind::Num,
         |d: &WeaponDef| d.clip_base.to_string(),
         |d: &mut WeaponDef, v: Values| { d.clip_base = v.text.parse().map_err(|_| "number")?; Ok(()) }),
-    field!("WorldMeshes", "Third-person meshes on the soldier model (`W{vm}{k}`).", Kind::Num,
+    field!("WorldMeshes", "Third-person meshes on the soldier model (`W{vm}{k}`).", FieldKind::Num,
         |d: &WeaponDef| d.world_meshes.to_string(),
         |d: &mut WeaponDef, v: Values| { d.world_meshes = v.text.parse().map_err(|_| "number")?; Ok(()) }),
-    field!("Attachments", "The attachment shorts on this variant, sorted.", Kind::Words,
+    field!("Attachments", "The attachment shorts on this variant, sorted.", FieldKind::Words,
         |d: &WeaponDef| d.attachments.join(" "),
         |d: &mut WeaponDef, v: Values| { d.attachments = v.text.split_whitespace().map(str::to_string).collect(); Ok(()) }),
-    field!("Allowed", "Base weapons: each attachment BO2 offers (`short=attachment`).", Kind::Pairs,
+    field!("Allowed", "Base weapons: each attachment BO2 offers (`short=attachment`).", FieldKind::Pairs,
         |d: &WeaponDef| pairs(&d.allowed),
         |d: &mut WeaponDef, v: Values| { d.allowed = parse_pairs(v.text); Ok(()) }),
-    field!("AltModes", "Base weapons: the alt-mode weapon an attachment adds (`short=alt`).", Kind::Pairs,
+    field!("AltModes", "Base weapons: the alt-mode weapon an attachment adds (`short=alt`).", FieldKind::Pairs,
         |d: &WeaponDef| pairs(&d.alt_modes),
         |d: &mut WeaponDef, v: Values| { d.alt_modes = parse_pairs(v.text); Ok(()) }),
-    field!("Alt", "The weapon this toggles to (its alt mode, or back from it).", Kind::Str,
+    field!("Alt", "The weapon this toggles to (its alt mode, or back from it).", FieldKind::Str,
         |d: &WeaponDef| d.alt.clone(),
         |d: &mut WeaponDef, v: Values| { d.alt = v.text.into(); Ok(()) }),
-    field!("Flags", "alt keeps its own ammo, silenced, laser, FMJ, target finder.", Kind::Nums(5),
+    field!("Flags", "alt keeps its own ammo, silenced, laser, FMJ, target finder.", FieldKind::Nums(5),
         |d: &WeaponDef| format!("{} {} {} {} {}", d.alt_own_ammo as u8, d.silenced as u8, d.laser as u8, d.fmj as u8, d.target_finder as u8),
         |d: &mut WeaponDef, v: Values| {
             v.need(5)?;
@@ -462,14 +462,14 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             d.target_finder = v.flag(4);
             Ok(())
         }),
-    field!("RecoilReduction", "Per-shot recoil reduction and its limit (the grip).", Kind::Nums(2),
+    field!("RecoilReduction", "Per-shot recoil reduction and its limit (the grip).", FieldKind::Nums(2),
         |d: &WeaponDef| format!("{} {}", d.recoil_reduction.0, d.recoil_reduction.1),
         |d: &mut WeaponDef, v: Values| {
             v.need(2)?;
             d.recoil_reduction = (v.num(0), v.num(1));
             Ok(())
         }),
-    field!("Place", "How the equipment is used: throw, plant, hack.", Kind::Enum,
+    field!("Place", "How the equipment is used: throw, plant, hack.", FieldKind::Enum,
         |d: &WeaponDef| d.place.name().into(),
         |d: &mut WeaponDef, v: Values| { d.place = Place::parse(v.text).ok_or("unknown placement")?; Ok(()) }),
 ];

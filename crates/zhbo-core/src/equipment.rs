@@ -17,6 +17,7 @@ use crate::projectiles::blast;
 use crate::units::{inches, LOGIC_DT};
 use crate::weapons::WeaponDef;
 
+
 /// Seconds after it is down before a piece of equipment does anything.
 pub const ARM_TIME: f32 = 1.0;
 /// Claymore: an enemy inside this range and within 70 degrees of its front sets it off.
@@ -48,31 +49,17 @@ pub const BREAK_FX: &str = "ZHBO_BO2FX_explosions_fx_exp_equipment";
 pub const TROPHY_FX: &str = "ZHBO_BO2FX_explosions_fx_exp_equipment_lg";
 pub const BO2_EFFECTS: &[&str] = &["explosions/fx_exp_equipment", "explosions/fx_exp_equipment_lg"];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Kind {
-    Claymore,
-    Betty,
-    C4,
-    Shock,
-    Trophy,
-    Insertion,
-    Sensor,
-    /// Not equipment that stays down.
-    Other,
-}
+/// What a piece of equipment is and does (`crate::weapons::Kind`, re-exported here for the
+/// sim's equipment code). Lives on the weapon definition (the weapon table's `Equipment` block,
+/// refactor plan 3.2): the converter writes it, the sim reads it. The hand-written id match
+/// this replaces was a second copy of the table.
+pub use crate::weapons::Kind;
 
 impl Kind {
+    /// The weapon's kind, straight from the weapon table (refactor plan 3.2). The old
+    /// hand-written id match this replaced was a second copy of the table.
     pub fn of(def: &WeaponDef) -> Kind {
-        match def.id.split('+').next().unwrap_or("") {
-            "claymore_mp" => Kind::Claymore,
-            "bouncingbetty_mp" => Kind::Betty,
-            "satchel_charge_mp" => Kind::C4,
-            "proximity_grenade_mp" => Kind::Shock,
-            "trophy_system_mp" => Kind::Trophy,
-            "tactical_insertion_mp" => Kind::Insertion,
-            "sensor_grenade_mp" => Kind::Sensor,
-            _ => Kind::Other,
-        }
+        def.equipment_kind
     }
 }
 
@@ -396,6 +383,16 @@ mod tests {
             class: Class::Equipment,
             effect,
             place: Place::Plant,
+            equipment_kind: match id {
+                "claymore_mp" => Kind::Claymore,
+                "bouncingbetty_mp" => Kind::Betty,
+                "satchel_charge_mp" => Kind::C4,
+                "proximity_grenade_mp" => Kind::Shock,
+                "trophy_system_mp" => Kind::Trophy,
+                "tactical_insertion_mp" => Kind::Insertion,
+                "sensor_grenade_mp" => Kind::Sensor,
+                _ => Kind::Other,
+            },
             explosion_radius: 30.0,
             explosion_inner_damage: 200.0,
             explosion_outer_damage: 100.0,
@@ -463,6 +460,16 @@ mod sim_tests {
             class: Class::Equipment,
             effect: Effect::Explode,
             place,
+            equipment_kind: match id {
+                "claymore_mp" => Kind::Claymore,
+                "bouncingbetty_mp" => Kind::Betty,
+                "satchel_charge_mp" => Kind::C4,
+                "proximity_grenade_mp" => Kind::Shock,
+                "trophy_system_mp" => Kind::Trophy,
+                "tactical_insertion_mp" => Kind::Insertion,
+                "sensor_grenade_mp" => Kind::Sensor,
+                _ => Kind::Other,
+            },
             start_reserve: 2,
             explosion_radius: 30.0,
             explosion_inner_damage: 200.0,

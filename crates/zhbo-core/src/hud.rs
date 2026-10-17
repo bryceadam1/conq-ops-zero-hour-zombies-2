@@ -599,7 +599,7 @@ fn project(client: &Client, w: f32, h: f32, at: Vec3) -> Option<(f32, f32)> {
 fn draw_marks(host: &dyn ClientHost, prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, client: &Client, sim: &Sim, p: &PlayerSim) {
     let def = p.arsenal.current().def;
     let finder = def.target_finder && p.arsenal.ads > 0.6;
-    let engineer = p.arsenal.has(crate::weapons::Perk::Engineer);
+    let engineer = p.arsenal.has(crate::weapons::Perk::ENGINEER);
     if !finder && !engineer {
         return;
     }

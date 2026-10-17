@@ -55,7 +55,7 @@ impl Default for Loadout {
             lethal: "frag_grenade_mp".into(),
             tactical: "concussion_grenade_mp".into(),
             melee: "knife_held_mp".into(),
-            perks: vec![Perk::Lightweight, Perk::FastHands, Perk::Dexterity],
+            perks: vec![Perk::LIGHTWEIGHT, Perk::FAST_HANDS, Perk::DEXTERITY],
             reserve: [None, None],
         };
         // The loadout spec from the config registry (ZHBO_LOADOUT, read once at init).
@@ -81,7 +81,7 @@ impl Loadout {
                 "lethal" => self.lethal = value,
                 "tactical" => self.tactical = value,
                 "melee" => self.melee = value,
-                "perks" => self.perks = value.split(',').filter_map(|p| Perk::ALL.into_iter().find(|k| format!("{k:?}") == p.trim())).collect(),
+                "perks" => self.perks = value.split(',').filter_map(|p| Perk::by_id(p.trim())).collect(),
                 "primary_reserve" => self.reserve[0] = value.parse().ok(),
                 "secondary_reserve" => self.reserve[1] = value.parse().ok(),
                 _ => {}

@@ -34,4 +34,6 @@ inline void tabletMesh(char *out, size_t cap, int k)
 inline constexpr const char *WEAPON_TABLE_PATH = "Data\\ConquerOps\\weapons.ini";
 inline constexpr const char *RTS_FX_PATH = "Data\\ConquerOps\\rts_fx.txt";
 inline constexpr const char *VIEWMODEL_SOUNDS_PATH = "Data\\ConquerOps\\viewmodel_sounds.txt";
+inline constexpr const char *STRINGS_PATH = "Data\\ConquerOps\\strings_en.ini";
+inline constexpr const char *TUNING_PATH = "Data\\ConquerOps\\tuning.ini";
 } // namespace zhbo_names

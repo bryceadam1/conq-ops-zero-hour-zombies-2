@@ -10,7 +10,7 @@ use super::catalog::{catalog, weapon};
 use super::def::{Class, Effect, FireMode, Place, WeaponDef, ALT_CLIPS, KICK_TO_DEGREES, MELEE_DAMAGE, MELEE_FX_WEAPON, MELEE_RANGE};
 use super::table::{fire_name, parse_fire};
 use super::loadout::Loadout;
-use super::perks::{perk_values, Perk};
+use super::perks::Perk;
 use super::rng::Rng;
 use crate::attachments;
 use crate::input::buttons;
@@ -277,7 +277,7 @@ impl Arsenal {
                 w.reserve = r;
             }
         }
-        if loadout.perks.contains(&Perk::Scavenger) {
+        if loadout.perks.contains(&Perk::SCAVENGER) {
             for w in &mut weapons {
                 w.reserve = (w.reserve + w.def.clip).min(w.def.max_reserve.max(w.reserve));
             }
@@ -332,13 +332,13 @@ impl Arsenal {
     pub fn move_scale(&self) -> f32 {
         let d = self.current().def;
         let base = d.move_scale + (d.ads_move_scale - d.move_scale) * self.ads;
-        base * if self.has(Perk::Lightweight) { perk_values::LIGHTWEIGHT_SPEED } else { 1.0 }
+        base * if self.has(Perk::LIGHTWEIGHT) { Perk::LIGHTWEIGHT.magnitude() } else { 1.0 }
     }
 
     /// Sprint duration multiplier from the held weapon and perks.
     pub fn sprint_scale(&self) -> f32 {
         let d = self.current().def.sprint_duration_scale.max(0.1);
-        d * if self.has(Perk::ExtremeConditioning) { perk_values::EXTREME_CONDITIONING_SPRINT } else { 1.0 }
+        d * if self.has(Perk::EXTREME_CONDITIONING) { Perk::EXTREME_CONDITIONING.magnitude() } else { 1.0 }
     }
 
     /// Field of view multiplier when fully aimed (relative to BO2's 65 degrees).
@@ -352,11 +352,11 @@ impl Arsenal {
     }
 
     fn sprint_out_time(&self) -> f32 {
-        self.current().def.sprint_out_time * if self.has(Perk::Dexterity) { perk_values::DEXTERITY_SPRINT_OUT } else { 1.0 }
+        self.current().def.sprint_out_time * if self.has(Perk::DEXTERITY) { Perk::DEXTERITY.magnitude() } else { 1.0 }
     }
 
     fn switch_to(&mut self, index: usize) {
-        let fast = self.has(Perk::FastHands);
+        let fast = self.has(Perk::FAST_HANDS);
         let from = self.current().def;
         self.current_mut().reload = None; // swapping cancels a reload, like BO2
         self.current_mut().burst_left = 0;
@@ -381,7 +381,7 @@ impl Arsenal {
     /// Switch the held weapon to its alt mode or back. An alt mode with its own ammo (a launcher)
     /// trades magazines with the weapon; the others share it.
     pub fn toggle_alt(&mut self) {
-        let fast = self.has(Perk::FastHands);
+        let fast = self.has(Perk::FAST_HANDS);
         let w = self.current_mut();
         let to = if w.def.id == w.main.id {
             match catalog().get(&w.main.alt) {
@@ -694,7 +694,7 @@ impl Arsenal {
                     self.offhand = None;
                     let d = self.current().def;
                     (self.raise_left, self.raise_kind) =
-                        if self.has(Perk::FastHands) { (d.quick_raise_time, RaiseKind::Quick) } else { (d.raise_time, RaiseKind::Normal) };
+                        if self.has(Perk::FAST_HANDS) { (d.quick_raise_time, RaiseKind::Quick) } else { (d.raise_time, RaiseKind::Normal) };
                     self.raise_total = self.raise_left;
                 } else {
                     self.offhand = Some(OffhandUse::Throwing { lethal, t });

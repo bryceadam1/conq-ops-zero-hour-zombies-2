@@ -42,9 +42,14 @@ pub const FIELD_COMPUTER_RAISE: f32 = crate::viewmodel::TABLET_PULLOUT_TIME + 0.
 /// Taking control, the weapon is ready after the camera flies in, the tablet goes down and the
 /// weapon comes up.
 pub const TAKE_CONTROL_READY: f32 = crate::client::ENTER_TIME + crate::viewmodel::TABLET_PUTAWAY_TIME;
-/// BO2 health regeneration: wait this long after the last hit, then regenerate.
-pub const REGEN_DELAY: f32 = 5.0;
-pub const REGEN_FULL_TIME: f32 = 3.0;
+/// BO2 health regeneration: wait this long after the last hit, then regenerate. The values come
+/// from the tuning pack (`data/ConquerOps/tuning.ini`); these aliases are for the sim tests.
+pub fn regen_delay() -> f32 {
+    crate::tuning::get().regen_delay
+}
+pub fn regen_full_time() -> f32 {
+    crate::tuning::get().regen_full_time
+}
 /// Hard cap on queued client events so a headless or paused client cannot grow it forever.
 const MAX_EVENTS: usize = 512;
 
@@ -203,8 +208,17 @@ impl Sim {
         }
     }
 
+    /// A sim configured from the gameplay tuning pack (`data/ConquerOps/tuning.ini`, loaded by the
+    /// bridge). The tests use `Sim::new`, whose defaults are the pack's own values.
+    pub fn with_tuning(t: &crate::tuning::Tuning) -> Self {
+        let mut sim = Self::new();
+        sim.tuning.walk_speed = t.walk_speed;
+        sim.tuning.sprint_time = t.sprint_time;
+        sim
+    }
+
     pub fn reset(&mut self) {
-        *self = Sim::new();
+        *self = Sim::with_tuning(&crate::tuning::get());
     }
 
     fn emit(&mut self, player: usize, kind: EventKind) {
@@ -368,7 +382,7 @@ impl Sim {
 
     fn step_equipment(&mut self, host: &dyn LogicHost) {
         let players = &self.players;
-        let engineer = |id: u32| players.iter().flatten().any(|p| p.general == id && p.arsenal.has(Perk::Engineer));
+        let engineer = |id: u32| players.iter().flatten().any(|p| p.general == id && p.arsenal.has(Perk::ENGINEER));
         let mut ev = Vec::new();
         self.equipment.step(host, &mut self.projectiles, &engineer, &mut ev);
         self.equipment_events(ev);
@@ -396,7 +410,7 @@ impl Sim {
     /// Scavenger: a kill with a non-explosive weapon refills ammo.
     fn scavenge(&mut self, idx: usize) {
         if let Some(Some(p)) = self.players.get_mut(idx) {
-            if p.arsenal.has(Perk::Scavenger) {
+            if p.arsenal.has(Perk::SCAVENGER) {
                 p.arsenal.scavenge();
             }
         }
@@ -520,12 +534,12 @@ impl Sim {
     fn track_health(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, info: &ObjInfo) {
         p.max_health = info.max_health;
         if info.health < p.health - 1e-3 {
-            p.regen_wait = REGEN_DELAY;
+            p.regen_wait = regen_delay();
             self.emit(idx, EventKind::Damaged { amount: p.health - info.health });
         } else {
             p.regen_wait = (p.regen_wait - LOGIC_DT).max(0.0);
             if p.regen_wait <= 0.0 && info.health < info.max_health {
-                let amount = (info.max_health / REGEN_FULL_TIME * LOGIC_DT).min(info.max_health - info.health);
+                let amount = (info.max_health / regen_full_time() * LOGIC_DT).min(info.max_health - info.health);
                 host.heal(p.general, amount);
                 p.health = info.health + amount;
                 return;

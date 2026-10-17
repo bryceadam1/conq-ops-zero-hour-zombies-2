@@ -62,7 +62,7 @@ impl Sim {
                         }
                         self.emit(idx, EventKind::HitMarker { headshot, kill });
                         if kill {
-                            if p.arsenal.has(Perk::Scavenger) {
+                            if p.arsenal.has(Perk::SCAVENGER) {
                                 p.arsenal.scavenge();
                             }
                         }
@@ -98,8 +98,8 @@ impl Sim {
                 let dir = dir_from_angles(p.yaw, (p.pitch + 0.12).min(1.4));
                 let mut proj = Projectile::launch(def, p.general, eye + dir * 1.5, dir, fuse_left, host, p.yaw);
                 proj.vel = proj.vel + p.body.vel * 0.5;
-                proj.flak_jacket = p.arsenal.has(Perk::FlakJacket);
-                proj.tactical_mask = p.arsenal.has(Perk::TacticalMask);
+                proj.flak_jacket = p.arsenal.has(Perk::FLAK_JACKET);
+                proj.tactical_mask = p.arsenal.has(Perk::TACTICAL_MASK);
                 self.projectiles.push((idx, proj));
                 self.emit(idx, EventKind::Thrown { lethal: def.class == Class::Lethal });
             }
@@ -107,7 +107,7 @@ impl Sim {
                 let mut proj = Projectile::launch(def, p.general, p.body.eye(), Vec3::ZERO, 0.0, host, p.yaw);
                 proj.vel = Vec3::ZERO;
                 proj.fuse = 0.0;
-                proj.flak_jacket = p.arsenal.has(Perk::FlakJacket);
+                proj.flak_jacket = p.arsenal.has(Perk::FLAK_JACKET);
                 self.projectiles.push((idx, proj));
             }
             WeaponAction::OffhandReady { lethal } => self.emit(idx, EventKind::OffhandReady { lethal }),
@@ -136,7 +136,7 @@ impl Sim {
                     let kill = host.damage(p.general, v.id, damage * BO2_TO_ZH_DAMAGE, damage_kind::MELEE);
                     self.emit(idx, EventKind::HitMarker { headshot: false, kill });
                     if kill {
-                        if p.arsenal.has(Perk::Scavenger) {
+                        if p.arsenal.has(Perk::SCAVENGER) {
                             p.arsenal.scavenge();
                         }
                     }

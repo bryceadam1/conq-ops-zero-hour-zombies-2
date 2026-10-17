@@ -229,9 +229,9 @@ mod tests {
     fn perks_change_movement() {
         let mut a = Arsenal::new();
         let with = a.move_scale();
-        a.loadout.perks.retain(|p| *p != Perk::Lightweight);
+        a.loadout.perks.retain(|p| *p != Perk::LIGHTWEIGHT);
         assert!(with > a.move_scale());
-        a.loadout.perks.push(Perk::ExtremeConditioning);
+        a.loadout.perks.push(Perk::EXTREME_CONDITIONING);
         assert!(a.sprint_scale() >= 2.0 * weapon("an94_mp").sprint_duration_scale - 1e-4);
     }
 }
@@ -246,7 +246,7 @@ mod loadout_tests {
     fn a_spec_changes_slots_and_perks() {
         let l = Loadout::default().with_spec("lethal=claymore_mp; perks=Hardline,Engineer");
         assert_eq!(l.lethal, "claymore_mp");
-        assert_eq!(l.perks, vec![Perk::Hardline, Perk::Engineer]);
+        assert_eq!(l.perks, vec![Perk::HARDLINE, Perk::ENGINEER]);
         assert_eq!(l.primary, Loadout::default().primary);
     }
 }

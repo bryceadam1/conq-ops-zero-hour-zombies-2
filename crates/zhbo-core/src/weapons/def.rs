@@ -221,6 +221,24 @@ pub struct WeaponDef {
     pub recoil_reduction: (f32, f32),
     /// How a piece of equipment is used.
     pub place: Place,
+    /// What the weapon is as equipment (claymore, C4, …); `Other` when it stays in the hand.
+    pub equipment_kind: Kind,
+}
+
+/// What a weapon is as equipment, once down (claymore, C4, …). The converter writes it from the
+/// weapon table's `Equipment` block; `Kind::of` is just the field read (refactor plan 3.2).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Kind {
+    Claymore,
+    Betty,
+    C4,
+    Shock,
+    Trophy,
+    Insertion,
+    Sensor,
+    /// Not equipment that stays down.
+    #[default]
+    Other,
 }
 
 /// An alt mode's viewmodel clips are its BO2 slots plus this.
@@ -298,6 +316,7 @@ impl Default for WeaponDef {
             melee_damage: MELEE_DAMAGE,
             melee_time: 0.6,
             effect: Effect::None,
+            equipment_kind: Kind::Other,
             fuse_time: 0.0,
             cook: false,
             explosion_radius: 0.0,

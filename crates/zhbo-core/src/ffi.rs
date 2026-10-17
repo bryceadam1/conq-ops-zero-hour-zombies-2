@@ -60,6 +60,17 @@ const _: () = {
 
 /// Load the shipped strings file (`Data/ConquerOps/strings_en.ini`, read by the bridge's
 /// `readTextFile`); `lookup` consults it before the built-in English fallback.
+/// Load the gameplay tuning pack (`data/ConquerOps/tuning.ini`); the sim's default values hold
+/// until this runs.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_load_tuning(text: *const c_char) {
+    if text.is_null() {
+        return;
+    }
+    let text = unsafe { CStr::from_ptr(text).to_string_lossy() };
+    crate::tuning::load(&text);
+}
+
 #[no_mangle]
 pub unsafe extern "C" fn zhbo_load_strings(text: *const c_char) {
     if text.is_null() {
@@ -110,7 +121,7 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
     let mut state = State {
         logic: CLogicHost(*logic),
         client_host: CClientHost(*client),
-        sim: Sim::new(),
+        sim: Sim::with_tuning(&crate::tuning::get()),
         client: Client::default(),
     };
     use crate::host::LogicHost;

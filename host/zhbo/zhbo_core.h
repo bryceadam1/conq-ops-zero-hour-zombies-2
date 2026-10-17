@@ -240,6 +240,8 @@ uint32_t zhbo_abi_version(void);
 uint64_t zhbo_abi_fields(void);
 /* Load the mod's shipped strings file (see strings.rs); lookup consults it first. */
 void zhbo_load_strings(const char *text);
+/* Load the gameplay tuning pack (see tuning.rs); the sim's defaults hold until this runs. */
+void zhbo_load_tuning(const char *text);
 void zhbo_init(const ZhboLogicApi *logic, const ZhboClientApi *client);
 int32_t zhbo_install_weapons(const char *table); /* Data\\ConquerOps\\weapons.ini; count or -1 */
 void zhbo_reset(void);

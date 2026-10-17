@@ -7,7 +7,7 @@
 use crate::host::{damage_kind, disable_kind, objflags, LogicHost, ObjInfo};
 use crate::math::Vec3;
 use crate::units::{inches, BO2_TO_ZH_DAMAGE, LOGIC_DT};
-use crate::weapons::{perk_values, Effect, WeaponDef};
+use crate::weapons::{Effect, Perk, WeaponDef};
 
 /// BO2's `g_gravity` (800 in/s^2).
 pub const GRAVITY: f32 = inches(800.0);
@@ -217,7 +217,7 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
                     amount = amount.max(d.damage[0] * BO2_TO_ZH_DAMAGE);
                 }
                 if own && flak_jacket {
-                    amount *= perk_values::FLAK_JACKET_EXPLOSIVE;
+                    amount *= Perk::FLAK_JACKET.magnitude();
                 }
                 if amount > 0.0 {
                     let k = host.damage(owner, o.id, amount, damage_kind::EXPLOSION);
@@ -231,7 +231,7 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
                 let f = (dist / d.explosion_radius.max(1.0)).clamp(0.0, 1.0);
                 let mut secs = STUN_SECONDS.0 + (STUN_SECONDS.1 - STUN_SECONDS.0) * f;
                 if own && tactical_mask {
-                    secs *= perk_values::TACTICAL_MASK_STUN;
+                    secs *= Perk::TACTICAL_MASK.magnitude();
                 }
                 if !own {
                     host.disable(o.id, disable_kind::PARALYZED, secs);

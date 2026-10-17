@@ -23,6 +23,7 @@ pub mod projectiles;
 pub mod sim;
 pub mod sounds;
 pub mod strings;
+pub mod tuning;
 pub mod units;
 pub mod viewmodel;
 pub mod weapons;
