@@ -520,6 +520,45 @@ pub const CAPS_FORMAT_TEXTURE_MSAA: u32 = 0x4000;
 
 // --- the renderer -----------------------------------------------------------------------------
 
+/// The renderer's resource pools and the layout registry. `pool_insert` reports exhaustion;
+/// every handle carries a generation (see `Pool`).
+pub(crate) struct Resources {
+    shaders: Pool<Arc<Shader>>,
+    programs: Pool<Arc<Program>>,
+    textures: Pool<Arc<Texture>>,
+    frame_buffers: Pool<FrameBuffer>,
+    vertex_buffers: Pool<Buffer>,
+    index_buffers: Pool<Buffer>,
+    dynamic_vertex_buffers: Pool<Buffer>,
+    dynamic_index_buffers: Pool<Buffer>,
+    uniforms: Pool<Uniform>,
+    uniform_names: HashMap<String, u16>,
+    layouts: Vec<VertexLayout>,
+    layout_ids: HashMap<VertexLayout, u16>,
+    /// Formats probed for use as render targets (see `renderable`).
+    renderable: HashMap<wgpu::TextureFormat, bool>,
+}
+
+impl Resources {
+    fn new() -> Resources {
+        Resources {
+            shaders: Pool::default(),
+            programs: Pool::default(),
+            textures: Pool::default(),
+            frame_buffers: Pool::default(),
+            vertex_buffers: Pool::default(),
+            index_buffers: Pool::default(),
+            dynamic_vertex_buffers: Pool::default(),
+            dynamic_index_buffers: Pool::default(),
+            uniforms: Pool::default(),
+            uniform_names: HashMap::new(),
+            layouts: Vec::new(),
+            layout_ids: HashMap::new(),
+            renderable: HashMap::new(),
+        }
+    }
+}
+
 pub struct Renderer {
     pub(crate) device: wgpu::Device,
     pub(crate) queue: wgpu::Queue,
@@ -537,18 +576,8 @@ pub struct Renderer {
     pub(crate) backbuffer: frame::Backbuffer,
 
     serial: u32,
-    shaders: Pool<Arc<Shader>>,
-    programs: Pool<Arc<Program>>,
-    textures: Pool<Arc<Texture>>,
-    frame_buffers: Pool<FrameBuffer>,
-    vertex_buffers: Pool<Buffer>,
-    index_buffers: Pool<Buffer>,
-    dynamic_vertex_buffers: Pool<Buffer>,
-    dynamic_index_buffers: Pool<Buffer>,
-    uniforms: Pool<Uniform>,
-    uniform_names: HashMap<String, u16>,
-    layouts: Vec<VertexLayout>,
-    layout_ids: HashMap<VertexLayout, u16>,
+    /// The resource pools and the layout registry (refactor plan 2.2: narrow responsibilities).
+    res: Resources,
 
     transient_vb: Arena,
     transient_ib: Arena,
@@ -572,8 +601,6 @@ pub struct Renderer {
     /// Whether textures can be viewed in another format (sRGB views); not on GL.
     pub(crate) view_formats_supported: bool,
     pub(crate) cache: frame::Caches,
-    /// Formats probed for use as render targets (see `renderable`).
-    renderable: HashMap<wgpu::TextureFormat, bool>,
 }
 
 /// Run a wgpu future to completion. wgpu's native futures are ready immediately or after a
@@ -704,18 +731,7 @@ impl Renderer {
             reset_flags: desc.reset,
             backbuffer,
             serial: 0,
-            shaders: Pool::default(),
-            programs: Pool::default(),
-            textures: Pool::default(),
-            frame_buffers: Pool::default(),
-            vertex_buffers: Pool::default(),
-            index_buffers: Pool::default(),
-            dynamic_vertex_buffers: Pool::default(),
-            dynamic_index_buffers: Pool::default(),
-            uniforms: Pool::default(),
-            uniform_names: HashMap::new(),
-            layouts: Vec::new(),
-            layout_ids: HashMap::new(),
+            res: Resources::new(),
             transient_vb,
             transient_ib,
             views: vec![View::default(); MAX_VIEWS],
@@ -730,7 +746,6 @@ impl Renderer {
             frame_number: 0,
             stats: Stats::default(),
             cache,
-            renderable: HashMap::new(),
         };
         r.reset(desc.width, desc.height, desc.reset);
         Ok(r)
@@ -808,8 +823,8 @@ impl Renderer {
 
     pub fn stats(&self) -> Stats {
         let mut s = self.stats;
-        s.num_textures = self.textures.live() as u32;
-        s.num_frame_buffers = self.frame_buffers.live() as u32;
+        s.num_textures = self.res.textures.live() as u32;
+        s.num_frame_buffers = self.res.frame_buffers.live() as u32;
         s.errors = self.errors.load(std::sync::atomic::Ordering::Relaxed);
         s
     }
@@ -835,7 +850,7 @@ impl Renderer {
             self.report(format!("zhbo-gfx: createShader: WGSL failed to compile: {e}"));
             return INVALID;
         }
-        let h = self.shaders.insert(Arc::new(Shader { blob, module }));
+        let h = self.res.shaders.insert(Arc::new(Shader { blob, module }));
         if h == INVALID {
             self.report(format!("zhbo-gfx: createShader: resource pool exhausted"));
         }
@@ -843,12 +858,12 @@ impl Renderer {
     }
 
     pub fn destroy_shader(&mut self, h: u16) {
-        self.shaders.remove(h);
+        self.res.shaders.remove(h);
     }
 
     pub fn create_program(&mut self, vs: u16, fs: u16, destroy_shaders: bool) -> u16 {
-        let Some(vsh) = self.shaders.get(vs).cloned() else { return INVALID };
-        let fsh = self.shaders.get(fs).cloned();
+        let Some(vsh) = self.res.shaders.get(vs).cloned() else { return INVALID };
+        let fsh = self.res.shaders.get(fs).cloned();
         if vsh.blob.stage != Stage::Vertex {
             self.log("zhbo-gfx: createProgram: first shader is not a vertex shader");
             return INVALID;
@@ -886,10 +901,10 @@ impl Renderer {
         let serial = self.next_serial();
         let program = Program { serial, vs: vsh, fs: fsh, vs_uniforms, fs_uniforms, slots, bgl0 };
         if destroy_shaders {
-            self.shaders.remove(vs);
-            self.shaders.remove(fs);
+            self.res.shaders.remove(vs);
+            self.res.shaders.remove(fs);
         }
-        let h = self.programs.insert(Arc::new(program));
+        let h = self.res.programs.insert(Arc::new(program));
         if h == INVALID {
             self.report(format!("zhbo-gfx: createProgram: resource pool exhausted"));
         }
@@ -897,15 +912,15 @@ impl Renderer {
     }
 
     pub fn destroy_program(&mut self, h: u16) {
-        self.programs.remove(h);
+        self.res.programs.remove(h);
     }
 
     // --- uniforms --------------------------------------------------------------------------
 
     /// `bgfx::UniformType`: 0 Sampler, 2 Vec4, 3 Mat3, 4 Mat4.
     pub fn create_uniform(&mut self, name: &str, ty: u8, num: u16) -> u16 {
-        if let Some(&h) = self.uniform_names.get(name) {
-            if let Some(u) = self.uniforms.get_mut(h) {
+        if let Some(&h) = self.res.uniform_names.get(name) {
+            if let Some(u) = self.res.uniforms.get_mut(h) {
                 u.refs += 1;
                 return h;
             }
@@ -915,28 +930,28 @@ impl Renderer {
             4 => 16,
             _ => 4,
         } * num.max(1) as usize;
-        let h = self.uniforms.insert(Uniform { name: name.to_string(), refs: 1, value: vec![0.0; floats] });
+        let h = self.res.uniforms.insert(Uniform { name: name.to_string(), refs: 1, value: vec![0.0; floats] });
         if h == INVALID {
             self.report("zhbo-gfx: createUniform: resource pool exhausted".into());
         }
         if h != INVALID {
-            self.uniform_names.insert(name.to_string(), h);
+            self.res.uniform_names.insert(name.to_string(), h);
         }
         h
     }
 
     pub fn destroy_uniform(&mut self, h: u16) {
-        let Some(u) = self.uniforms.get_mut(h) else { return };
+        let Some(u) = self.res.uniforms.get_mut(h) else { return };
         u.refs -= 1;
         if u.refs == 0 {
-            let u = self.uniforms.remove(h).unwrap();
-            self.uniform_names.remove(&u.name);
+            let u = self.res.uniforms.remove(h).unwrap();
+            self.res.uniform_names.remove(&u.name);
         }
     }
 
     /// Set `num` elements (vec4 or mat4, as created) of a uniform. Values are sticky.
     pub fn set_uniform(&mut self, h: u16, value: &[f32]) {
-        if let Some(u) = self.uniforms.get_mut(h) {
+        if let Some(u) = self.res.uniforms.get_mut(h) {
             let n = value.len().min(u.value.len());
             u.value[..n].copy_from_slice(&value[..n]);
         }
@@ -945,17 +960,17 @@ impl Renderer {
     // --- vertex layouts and buffers --------------------------------------------------------
 
     pub fn register_layout(&mut self, layout: VertexLayout) -> u16 {
-        if let Some(&id) = self.layout_ids.get(&layout) {
+        if let Some(&id) = self.res.layout_ids.get(&layout) {
             return id;
         }
-        let id = self.layouts.len() as u16;
-        self.layouts.push(layout.clone());
-        self.layout_ids.insert(layout, id);
+        let id = self.res.layouts.len() as u16;
+        self.res.layouts.push(layout.clone());
+        self.res.layout_ids.insert(layout, id);
         id
     }
 
     pub(crate) fn layout(&self, id: u16) -> Option<&VertexLayout> {
-        self.layouts.get(id as usize)
+        self.res.layouts.get(id as usize)
     }
 
     fn make_buffer(&self, size: u32, data: Option<&[u8]>, usage: wgpu::BufferUsages) -> wgpu::Buffer {
@@ -988,7 +1003,7 @@ impl Renderer {
     pub fn create_vertex_buffer(&mut self, data: &[u8], layout: VertexLayout) -> u16 {
         let layout = self.register_layout(layout);
         let buffer = self.make_buffer(data.len() as u32, Some(data), wgpu::BufferUsages::VERTEX);
-        let h = self.vertex_buffers.insert(Buffer {
+        let h = self.res.vertex_buffers.insert(Buffer {
             buffer,
             size: data.len() as u32,
             layout,
@@ -1003,7 +1018,7 @@ impl Renderer {
 
     pub fn create_index_buffer(&mut self, data: &[u8], flags: u16) -> u16 {
         let buffer = self.make_buffer(data.len() as u32, Some(data), wgpu::BufferUsages::INDEX);
-        let h = self.index_buffers.insert(Buffer {
+        let h = self.res.index_buffers.insert(Buffer {
             buffer,
             size: data.len() as u32,
             layout: INVALID,
@@ -1021,7 +1036,7 @@ impl Renderer {
         let layout = self.register_layout(layout);
         let buffer = self.make_buffer(size, data, wgpu::BufferUsages::VERTEX);
         let shadow = shadow_copy(size, data);
-        let h = self.dynamic_vertex_buffers.insert(Buffer { buffer, size, layout, index32: false, shadow });
+        let h = self.res.dynamic_vertex_buffers.insert(Buffer { buffer, size, layout, index32: false, shadow });
         if h == INVALID {
             self.report(format!("zhbo-gfx: createDynamicVertexBuffer: resource pool exhausted"));
         }
@@ -1033,7 +1048,7 @@ impl Renderer {
         let size = data.map(|d| d.len() as u32).unwrap_or(num * if index32 { 4 } else { 2 });
         let buffer = self.make_buffer(size, data, wgpu::BufferUsages::INDEX);
         let shadow = shadow_copy(size, data);
-        let h = self.dynamic_index_buffers.insert(Buffer { buffer, size, layout: INVALID, index32, shadow });
+        let h = self.res.dynamic_index_buffers.insert(Buffer { buffer, size, layout: INVALID, index32, shadow });
         if h == INVALID {
             self.report(format!("zhbo-gfx: createDynamicIndexBuffer: resource pool exhausted"));
         }
@@ -1041,13 +1056,13 @@ impl Renderer {
     }
 
     pub fn update_dynamic_vertex_buffer(&mut self, h: u16, start_vertex: u32, data: &[u8]) {
-        let Some(b) = self.dynamic_vertex_buffers.get(h) else { return };
+        let Some(b) = self.res.dynamic_vertex_buffers.get(h) else { return };
         let stride = self.layout(b.layout).map(|l| l.stride as usize).unwrap_or(1);
         self.update_dynamic(false, h, start_vertex as usize * stride, data);
     }
 
     pub fn update_dynamic_index_buffer(&mut self, h: u16, start_index: u32, data: &[u8]) {
-        let Some(b) = self.dynamic_index_buffers.get(h) else { return };
+        let Some(b) = self.res.dynamic_index_buffers.get(h) else { return };
         let isize = if b.index32 { 4 } else { 2 };
         self.update_dynamic(true, h, start_index as usize * isize, data);
     }
@@ -1059,7 +1074,7 @@ impl Renderer {
     fn update_dynamic(&mut self, index: bool, h: u16, offset: usize, data: &[u8]) {
         let usage = if index { wgpu::BufferUsages::INDEX } else { wgpu::BufferUsages::VERTEX };
         let end = offset + data.len();
-        let pool = if index { &mut self.dynamic_index_buffers } else { &mut self.dynamic_vertex_buffers };
+        let pool = if index { &mut self.res.dynamic_index_buffers } else { &mut self.res.dynamic_vertex_buffers };
         let Some(b) = pool.get_mut(h) else { return };
         let grow = end > b.shadow.len();
         if grow {
@@ -1084,17 +1099,17 @@ impl Renderer {
     /// Kinds for `destroy`.
     pub fn destroy(&mut self, kind: ResourceKind, h: u16) {
         match kind {
-            ResourceKind::VertexBuffer => drop(self.vertex_buffers.remove(h)),
-            ResourceKind::IndexBuffer => drop(self.index_buffers.remove(h)),
-            ResourceKind::DynamicVertexBuffer => drop(self.dynamic_vertex_buffers.remove(h)),
-            ResourceKind::DynamicIndexBuffer => drop(self.dynamic_index_buffers.remove(h)),
+            ResourceKind::VertexBuffer => drop(self.res.vertex_buffers.remove(h)),
+            ResourceKind::IndexBuffer => drop(self.res.index_buffers.remove(h)),
+            ResourceKind::DynamicVertexBuffer => drop(self.res.dynamic_vertex_buffers.remove(h)),
+            ResourceKind::DynamicIndexBuffer => drop(self.res.dynamic_index_buffers.remove(h)),
             ResourceKind::Shader => self.destroy_shader(h),
             ResourceKind::Program => self.destroy_program(h),
-            ResourceKind::Texture => drop(self.textures.remove(h)),
+            ResourceKind::Texture => drop(self.res.textures.remove(h)),
             ResourceKind::FrameBuffer => {
-                if let Some(fb) = self.frame_buffers.remove(h) {
+                if let Some(fb) = self.res.frame_buffers.remove(h) {
                     for t in fb.owned {
-                        self.textures.remove(t);
+                        self.res.textures.remove(t);
                     }
                 }
             }
@@ -1222,7 +1237,7 @@ impl Renderer {
                 self.upload_all(&tex, data);
             }
         }
-        let h = self.textures.insert(Arc::new(tex));
+        let h = self.res.textures.insert(Arc::new(tex));
         if h == INVALID {
             self.report(format!("zhbo-gfx: createTexture2D: resource pool exhausted"));
         }
@@ -1233,7 +1248,7 @@ impl Renderer {
     /// rules differ per backend (R32F is not renderable on GL ES-class devices), so ask the device:
     /// create a tiny target inside a validation error scope, once per format.
     fn renderable(&mut self, format: wgpu::TextureFormat) -> bool {
-        if let Some(&ok) = self.renderable.get(&format) {
+        if let Some(&ok) = self.res.renderable.get(&format) {
             return ok;
         }
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
@@ -1248,7 +1263,7 @@ impl Renderer {
             view_formats: &[],
         });
         let ok = block_on(scope.pop()).is_none();
-        self.renderable.insert(format, ok);
+        self.res.renderable.insert(format, ok);
         ok
     }
 
@@ -1354,7 +1369,7 @@ impl Renderer {
 
     #[allow(clippy::too_many_arguments)]
     pub fn update_texture_2d(&mut self, h: u16, layer: u32, mip: u32, x: u32, y: u32, w: u32, height: u32, data: &[u8], pitch: Option<u32>) {
-        let Some(tex) = self.textures.get(h).cloned() else { return };
+        let Some(tex) = self.res.textures.get(h).cloned() else { return };
         if mip >= tex.mips || layer >= tex.layers {
             return;
         }
@@ -1367,7 +1382,7 @@ impl Renderer {
         let mut colors = Vec::new();
         let mut depth = None;
         for &t in textures {
-            let Some(tex) = self.textures.get(t).cloned() else { return INVALID };
+            let Some(tex) = self.res.textures.get(t).cloned() else { return INVALID };
             if tex.is_depth() {
                 depth = Some(tex);
             } else {
@@ -1377,7 +1392,7 @@ impl Renderer {
         let Some(first) = colors.first().or(depth.as_ref()) else { return INVALID };
         let (width, height) = (first.width, first.height);
         let owned = if destroy_textures { textures.to_vec() } else { Vec::new() };
-        let h = self.frame_buffers.insert(FrameBuffer { colors, depth, width, height, owned });
+        let h = self.res.frame_buffers.insert(FrameBuffer { colors, depth, width, height, owned });
         if h == INVALID {
             self.report(format!("zhbo-gfx: createFrameBuffer: resource pool exhausted"));
         }
@@ -1471,7 +1486,7 @@ impl Renderer {
     pub fn set_index_buffer(&mut self, kind: BufferKind, h: u16, first: u32, num: u32) {
         let (src, index32, size) = match kind {
             BufferKind::Static | BufferKind::Dynamic => {
-                let pool = if kind == BufferKind::Static { &self.index_buffers } else { &self.dynamic_index_buffers };
+                let pool = if kind == BufferKind::Static { &self.res.index_buffers } else { &self.res.dynamic_index_buffers };
                 let Some(b) = pool.get(h) else {
                     self.current.index = None;
                     return;
@@ -1503,7 +1518,7 @@ impl Renderer {
         let Some(slot) = self.current.streams.get_mut(stream as usize) else { return };
         let (src, layout, size) = match kind {
             BufferKind::Static | BufferKind::Dynamic => {
-                let pool = if kind == BufferKind::Static { &self.vertex_buffers } else { &self.dynamic_vertex_buffers };
+                let pool = if kind == BufferKind::Static { &self.res.vertex_buffers } else { &self.res.dynamic_vertex_buffers };
                 let Some(b) = pool.get(h) else {
                     *slot = None;
                     return;
@@ -1515,21 +1530,21 @@ impl Renderer {
             BufferKind::Transient { .. } => (BufferSrc::TransientVertex, h, self.transient_vb.used as u32),
         };
         let layout = if layout_override != INVALID { layout_override } else { layout };
-        let stride = self.layouts.get(layout as usize).map(|l| l.stride as u32).unwrap_or(0).max(1);
+        let stride = self.res.layouts.get(layout as usize).map(|l| l.stride as u32).unwrap_or(0).max(1);
         let num = if num == u32::MAX { (size / stride).saturating_sub(start) } else { num };
         *slot = Some(StreamBinding { src, offset: start as u64 * stride as u64, layout, num_vertices: num });
     }
 
     pub fn set_instance_data(&mut self, kind: BufferKind, h: u16, start: u32, num: u32, stride: u32) {
         let src = match kind {
-            BufferKind::Static => self.vertex_buffers.get(h).map(|b| BufferSrc::Gpu(b.buffer.clone())),
-            BufferKind::Dynamic => self.dynamic_vertex_buffers.get(h).map(|b| BufferSrc::Gpu(b.buffer.clone())),
+            BufferKind::Static => self.res.vertex_buffers.get(h).map(|b| BufferSrc::Gpu(b.buffer.clone())),
+            BufferKind::Dynamic => self.res.dynamic_vertex_buffers.get(h).map(|b| BufferSrc::Gpu(b.buffer.clone())),
             BufferKind::Transient { .. } => Some(BufferSrc::TransientVertex),
         };
         let stride = if stride == 0 {
             match kind {
-                BufferKind::Static => self.vertex_buffers.get(h),
-                BufferKind::Dynamic => self.dynamic_vertex_buffers.get(h),
+                BufferKind::Static => self.res.vertex_buffers.get(h),
+                BufferKind::Dynamic => self.res.dynamic_vertex_buffers.get(h),
                 _ => None,
             }
             .and_then(|b| self.layout(b.layout))
@@ -1544,7 +1559,7 @@ impl Renderer {
     /// `flags == u32::MAX` uses the texture's creation sampler flags.
     pub fn set_texture(&mut self, stage: u8, h: u16, flags: u32) {
         let Some(slot) = self.current.textures.get_mut(stage as usize) else { return };
-        *slot = self.textures.get(h).map(|t| TextureBinding {
+        *slot = self.res.textures.get(h).map(|t| TextureBinding {
             texture: t.clone(),
             sampler: if flags == u32::MAX { t.flags as u32 } else { flags },
         });
@@ -1576,7 +1591,7 @@ impl Renderer {
 
     /// Record a draw with the current state into view `v`.
     pub fn submit(&mut self, v: u16, program: u16, depth: u32, discard: u8) {
-        if let (Some(p), true) = (self.programs.get(program).cloned(), (v as usize) < MAX_VIEWS) {
+        if let (Some(p), true) = (self.res.programs.get(program).cloned(), (v as usize) < MAX_VIEWS) {
             let ubo = [
                 p.vs_uniforms.as_ref().map(|u| self.write_user_uniforms(u)),
                 p.fs_uniforms.as_ref().map(|u| self.write_user_uniforms(u)),
@@ -1594,7 +1609,7 @@ impl Renderer {
         let offset = self.uniform_ring.len().next_multiple_of(self.uniform_align as usize);
         self.uniform_ring.resize(offset + u.size as usize, 0);
         for (name, at, floats) in &u.user {
-            let Some(uni) = self.uniform_names.get(name).and_then(|&h| self.uniforms.get(h)) else { continue };
+            let Some(uni) = self.res.uniform_names.get(name).and_then(|&h| self.res.uniforms.get(h)) else { continue };
             let n = (*floats as usize).min(uni.value.len());
             let dst = &mut self.uniform_ring[offset + *at as usize..offset + *at as usize + n * 4];
             for (chunk, v) in dst.chunks_exact_mut(4).zip(&uni.value[..n]) {
@@ -1606,7 +1621,7 @@ impl Renderer {
 
     #[allow(clippy::too_many_arguments)]
     pub fn blit(&mut self, v: u16, dst: u16, dst_mip: u8, dx: u16, dy: u16, dz: u16, src: u16, src_mip: u8, sx: u16, sy: u16, sz: u16, w: u16, h: u16, d: u16) {
-        let (Some(dst_t), Some(src_t)) = (self.textures.get(dst).cloned(), self.textures.get(src).cloned()) else { return };
+        let (Some(dst_t), Some(src_t)) = (self.res.textures.get(dst).cloned(), self.res.textures.get(src).cloned()) else { return };
         let sw = mip_extent(src_t.width, src_mip);
         let sh = mip_extent(src_t.height, src_mip);
         let dw = mip_extent(dst_t.width, dst_mip);
@@ -1635,7 +1650,7 @@ impl Renderer {
     }
 
     pub(crate) fn frame_buffer_targets(&self, fb: u16) -> Option<(Vec<Arc<Texture>>, Option<Arc<Texture>>, u32, u32)> {
-        let f = self.frame_buffers.get(fb)?;
+        let f = self.res.frame_buffers.get(fb)?;
         Some((f.colors.clone(), f.depth.clone(), f.width, f.height))
     }
 }
