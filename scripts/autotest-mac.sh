@@ -224,7 +224,9 @@ if [[ $mode == rts ]]; then
 fi
 if [[ $mode == autopilot ]]; then
     # Autopilot timeline: enters first person about 3 s in, field computer about 12 s after that.
-    export ZHBO_AUTOPILOT=1 GGC_AUTO_EXIT_SECONDS=45
+    # The exit is in wall seconds; under render hitches logic time (the scripts' clock) runs well
+    # behind it, so leave enough wall time for the whole timeline to finish.
+    export ZHBO_AUTOPILOT=1 GGC_AUTO_EXIT_SECONDS=120
     "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
     wait_for_log "entered first-person" 90 || { echo "the General never entered first person; see $log" >&2; exit 1; }
     for _ in $(seq 60); do [[ -n "$(game_pid)" ]] || break; sleep 1; done

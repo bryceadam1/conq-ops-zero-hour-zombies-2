@@ -16,7 +16,10 @@ use super::Bindings;
 /// a Trophy System or Black Hat; `ZHBO_AUTOPILOT=build` runs [`Autopilot::build_input`].
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Autopilot {
+    /// Seconds in first person (logic ticks, set by the client from the sim's frame counter).
     pub t: f32,
+    /// The logic frame first person was entered at; `t` counts from there, immune to render hitches.
+    pub base_frame: u32,
     pub equipment: bool,
     pub build: bool,
 }

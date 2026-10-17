@@ -395,7 +395,10 @@ impl Client {
         let inp = match self.autopilot.as_mut() {
             #[cfg(feature = "autopilot")]
             Some(ap) if matches!(self.view, ViewMode::Fps) => {
-                ap.t += dt;
+                // The scripts' time windows are tuned in logic ticks (the sim's), so read the
+                // clock from the logic frame, not the render dt: hitches and frame-rate
+                // differences would drift every window relative to the state it aims at.
+                ap.t = (inp.logic_frame - ap.base_frame) as f32 * LOGIC_DT;
                 let script = ap.input_at(&self.cfg.bindings);
                 scripted = *inp;
                 scripted.keys = script.keys;
@@ -408,6 +411,7 @@ impl Client {
             #[cfg(feature = "autopilot")]
             Some(ap) => {
                 ap.t = 0.0;
+                ap.base_frame = inp.logic_frame;
                 inp
             }
             #[cfg(not(feature = "autopilot"))]
