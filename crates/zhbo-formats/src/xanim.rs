@@ -13,6 +13,7 @@
 //! Layout and decoding from OpenAssetTools (`T6_Assets.h`, `XAnimParts.txt`, `FlatXAnimReader.cpp`,
 //! GPL-3.0). The delta part (root motion) is not decoded; the bone tracks are.
 
+use crate::t6zone::layouts::XAnimParts;
 use crate::t6zone::Zone;
 use crate::FormatError;
 
@@ -157,25 +158,25 @@ pub fn find(zone: &Zone, name: &str) -> Result<Anim, FormatError> {
 /// Read the animation whose struct is at `h`.
 pub fn read(z: &Zone, h: u32) -> Result<Anim, FormatError> {
     let name = z.str_ptr(h).trim_start_matches(',').to_string();
-    let counts: Vec<usize> = (0..10).map(|i| Ok::<usize, FormatError>(z.try_u8(h + 24 + i)? as usize)).collect::<Result<Vec<_>, _>>()?;
-    let data_byte_count = z.try_u16(h + 4)? as usize;
-    let data_short_count = z.try_u16(h + 6)? as usize;
-    let data_int_count = z.try_u16(h + 8)? as usize;
-    let random_byte_count = z.try_u16(h + 10)? as usize;
-    let num_frames = z.try_u16(h + 14)?;
-    let looping = z.try_u8(h + 16)? != 0;
-    let notify_count = z.try_u8(h + 34)? as u32;
-    let random_short_count = z.try_u32(h + 40)? as usize;
-    let index_count = z.try_u32(h + 44)? as usize;
-    let frame_rate = z.try_f32(h + 48)?;
+    let counts: Vec<usize> = (0..10).map(|i| Ok::<usize, FormatError>(z.try_u8(h + XAnimParts::boneCount + i)? as usize)).collect::<Result<Vec<_>, _>>()?;
+    let data_byte_count = z.try_u16(h + XAnimParts::dataByteCount)? as usize;
+    let data_short_count = z.try_u16(h + XAnimParts::dataShortCount)? as usize;
+    let data_int_count = z.try_u16(h + XAnimParts::dataIntCount)? as usize;
+    let random_byte_count = z.try_u16(h + XAnimParts::randomDataByteCount)? as usize;
+    let num_frames = z.try_u16(h + XAnimParts::numframes)?;
+    let looping = z.try_u8(h + XAnimParts::bLoop)? != 0;
+    let notify_count = z.try_u8(h + XAnimParts::notifyCount)? as u32;
+    let random_short_count = z.try_u32(h + XAnimParts::randomDataShortCount)? as usize;
+    let index_count = z.try_u32(h + XAnimParts::indexCount)? as usize;
+    let frame_rate = z.try_f32(h + XAnimParts::framerate)?;
     let byte_indices = num_frames < 256;
     let bone_count = counts[ALL];
 
-    let names_ptr = z.try_u32(h + 64)?;
+    let names_ptr = z.try_u32(h + XAnimParts::names)?;
     let names: Vec<String> = (0..bone_count as u32)
         .map(|i| if names_ptr != 0 { z.script_string(z.u16(names_ptr + 2 * i)).to_string() } else { String::new() })
         .collect();
-    let notify_ptr = z.try_u32(h + 96)?;
+    let notify_ptr = z.try_u32(h + XAnimParts::notify)?;
     let notifies = if notify_ptr == 0 {
         Vec::new()
     } else {
@@ -189,12 +190,12 @@ pub fn read(z: &Zone, h: u32) -> Result<Anim, FormatError> {
         Ok(Pool { d, elem, name: what })
     };
     let mut p = Pools {
-        byte: pool(68, data_byte_count, 1, "dataByte")?,
-        short: pool(72, data_short_count, 2, "dataShort")?,
-        int: pool(76, data_int_count, 4, "dataInt")?,
-        random_short: pool(80, random_short_count, 2, "randomDataShort")?,
-        random_byte: pool(84, random_byte_count, 1, "randomDataByte")?,
-        indices: pool(92, index_count, if byte_indices { 1 } else { 2 }, "indices")?,
+        byte: pool(XAnimParts::dataByte, data_byte_count, 1, "dataByte")?,
+        short: pool(XAnimParts::dataShort, data_short_count, 2, "dataShort")?,
+        int: pool(XAnimParts::dataInt, data_int_count, 4, "dataInt")?,
+        random_short: pool(XAnimParts::randomDataShort, random_short_count, 2, "randomDataShort")?,
+        random_byte: pool(XAnimParts::randomDataByte, random_byte_count, 1, "randomDataByte")?,
+        indices: pool(XAnimParts::indices, index_count, if byte_indices { 1 } else { 2 }, "indices")?,
         byte_indices,
     };
     let mut bones: Vec<BoneTrack> = names.into_iter().map(|name| BoneTrack { name, ..Default::default() }).collect();
@@ -386,20 +387,20 @@ mod tests {
         mem[h + 16] = 0; // not looping
         let counts = [0u8, 1, 0, 0, 0, 0, 0, 0, 0, 1]; // one HALF_QUAT bone
         for (i, c) in counts.iter().enumerate() {
-            mem[h + 24 + i] = *c;
+            mem[h + XAnimParts::boneCount as usize + i] = *c;
         }
         mem[h + 34] = 0; // notifies
         put32(&mut mem, h + 40, (2 * count) as u32); // randomDataShort: Z and W per key
         put32(&mut mem, h + 44, count as u32); // indices
-        put32(&mut mem, h + 48, 30.0f32.to_bits());
+        put32(&mut mem, h + XAnimParts::framerate as usize, 30.0f32.to_bits());
         put32(&mut mem, h + 64, 0); // bone names
 
         let shorts_addr = 0x100;
         let indices_addr = 0x120;
         let random_addr = 0x240;
-        put32(&mut mem, h + 72, shorts_addr as u32);
-        put32(&mut mem, h + 80, random_addr as u32);
-        put32(&mut mem, h + 92, indices_addr as u32);
+        put32(&mut mem, h + XAnimParts::dataShort as usize, shorts_addr as u32);
+        put32(&mut mem, h + XAnimParts::randomDataShort as usize, random_addr as u32);
+        put32(&mut mem, h + XAnimParts::indices as usize, indices_addr as u32);
 
         // dataShort: stored size, then the checkpoints (first and final index entries).
         put16(&mut mem, shorts_addr, STORED);

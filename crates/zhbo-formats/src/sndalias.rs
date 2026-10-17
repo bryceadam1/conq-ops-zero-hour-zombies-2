@@ -6,12 +6,13 @@
 //! with its volume, pitch and distance ranges. Layout from OpenAssetTools' `T6_Assets.h`, sizes as
 //! its ZoneCodeGenerator computes them (32-bit PC).
 
+use crate::t6zone::layouts::{SndAlias as SA, SndAliasList as SL, SndBank as SB};
 use crate::t6zone::Zone;
 use crate::FormatError;
 
-const ALIAS_LIST_SIZE: u32 = 20;
-const ALIAS_SIZE: u32 = 96;
-const LOADED_ASSETS: u32 = 4708; // SndBank::loadedAssets
+const ALIAS_LIST_SIZE: u32 = SL::SIZE;
+const ALIAS_SIZE: u32 = SA::SIZE;
+const LOADED_ASSETS: u32 = SB::loadedAssets;
 const ASSET_ENTRY_SIZE: u32 = 20;
 pub const ASSET_SOUND: u32 = 9;
 
@@ -74,20 +75,20 @@ pub fn banks(zone: &Zone) -> Result<Vec<Bank>, FormatError> {
 
 fn read_bank(z: &Zone, b: u32) -> Result<Bank, FormatError> {
     let name = z.try_str_ptr(b)?;
-    let count = z.try_u32(b + 4)?;
-    let lists = z.try_u32(b + 8)?;
+    let count = z.try_u32(b + SB::aliasCount)?;
+    let lists = z.try_u32(b + SB::alias)?;
     let mut aliases = Vec::new();
     if lists != 0 {
         for i in 0..count {
             let l = lists + ALIAS_LIST_SIZE * i;
-            let head = z.u32(l + 8);
-            let n = z.u32(l + 12).min(256);
+            let head = z.u32(l + SL::head);
+            let n = z.u32(l + SL::count).min(256);
             let variants = (0..n)
                 .filter(|_| head != 0)
                 .map(|j| {
                     let a = head + ALIAS_SIZE * j;
                     Variant {
-                        asset_id: z.u32(a + 16),
+                        asset_id: z.u32(a + SA::assetId),
                         file: z.str_ptr(a + 20),
                         start_delay_ms: z.u16(a + 54),
                         volume: (unit(z.u16(a + 60)), unit(z.u16(a + 62))),

@@ -5,13 +5,15 @@
 //! 32-bit PC layout from OpenAssetTools' `T6_Assets.h` (GPL-3.0).
 
 use crate::fastfile::ASSET_XMODEL;
+use crate::t6zone::layouts::{DObjAnimMat, GfxPackedVertex, XModel as XM, XModelLodInfo as XLI, XSurface as XS, XSurfaceVertexInfo as XV};
 use crate::t6zone::Zone;
 use crate::FormatError;
 
-const SKEL_MAT_SIZE: u16 = 64; // DObjSkelMat: vertex bone references are byte offsets of these
+/// DObjSkelMat: vertex bone references are byte offsets of these.
+const SKEL_MAT_SIZE: u16 = (DObjAnimMat::SIZE * 2) as u16;
 const SURF_QUANTIZED: u16 = 0x1;
-const XSURFACE_SIZE: u32 = 80;
-const VERTEX_SIZE: u32 = 32;
+const XSURFACE_SIZE: u32 = XS::SIZE;
+const VERTEX_SIZE: u32 = GfxPackedVertex::SIZE;
 
 #[derive(Clone, Debug)]
 pub struct Bone {
@@ -169,13 +171,13 @@ pub fn find(zone: &Zone, name: &str) -> Result<Model, FormatError> {
 /// Read the model whose struct is at `addr`.
 pub fn read(z: &Zone, h: u32) -> Result<Model, FormatError> {
     let name = z.str_ptr(h).trim_start_matches(',').to_string();
-    let num_bones = z.try_u8(h + 4)? as usize;
-    let num_root = z.try_u8(h + 5)? as usize;
-    let num_surfs = z.try_u8(h + 6)? as usize;
+    let num_bones = z.try_u8(h + XM::numBones)? as usize;
+    let num_root = z.try_u8(h + XM::numRootBones)? as usize;
+    let num_surfs = z.try_u8(h + XM::numsurfs)? as usize;
     if num_root > num_bones {
         return Err(FormatError::Corrupt(format!("model {name}: {num_root} root bones of {num_bones}")));
     }
-    let (names, parents, quats, trans, base) = (z.try_u32(h + 8)?, z.try_u32(h + 12)?, z.try_u32(h + 16)?, z.try_u32(h + 20)?, z.try_u32(h + 28)?);
+    let (names, parents, quats, trans, base) = (z.try_u32(h + XM::boneNames)?, z.try_u32(h + XM::parentList)?, z.try_u32(h + XM::quats)?, z.try_u32(h + XM::trans)?, z.try_u32(h + XM::baseMat)?);
 
     let mut bones = Vec::with_capacity(num_bones);
     for i in 0..num_bones {
@@ -203,12 +205,12 @@ pub fn read(z: &Zone, h: u32) -> Result<Model, FormatError> {
         bones.push(Bone { name: bone_name, parent, local_rotation, local_position, rotation, position });
     }
 
-    let surfs = z.try_u32(h + 32)?;
+    let surfs = z.try_u32(h + XM::surfs)?;
     let surfaces = (0..num_surfs)
         .map(|s| if surfs != 0 { read_surface(z, surfs + XSURFACE_SIZE * s as u32) } else { Ok(Surface::default()) })
         .collect::<Result<Vec<_>, _>>()?;
 
-    let handles = z.try_u32(h + 36)?;
+    let handles = z.try_u32(h + XM::materialHandles)?;
     let materials = (0..num_surfs)
         .map(|s| {
             let m = if handles != 0 { z.u32(handles + 4 * s as u32) } else { 0 };
@@ -216,30 +218,38 @@ pub fn read(z: &Zone, h: u32) -> Result<Model, FormatError> {
         })
         .collect();
 
-    let num_lods = z.try_u16(h + 196)? as usize;
+    let num_lods = z.try_u16(h + XM::numLods)? as usize;
     let lods = (0..num_lods.min(4))
         .map(|l| -> Result<Lod, FormatError> {
-            let li = h + 40 + 28 * l as u32;
+            let li = h + XM::lodInfo + XLI::SIZE * l as u32;
             Ok(Lod {
-                distance: z.try_f32(li)?,
-                surface_count: z.try_u16(li + 4)? as usize,
-                first_surface: z.try_u16(li + 6)? as usize,
+                distance: z.try_f32(li + XLI::dist)?,
+                surface_count: z.try_u16(li + XLI::numsurfs)? as usize,
+                first_surface: z.try_u16(li + XLI::surfIndex)? as usize,
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Model { name, bones, surfaces, lods, radius: z.try_f32(h + 168)?, mins: vec3(z, h + 172), maxs: vec3(z, h + 184), materials })
+    Ok(Model { name, bones, surfaces, lods, radius: z.try_f32(h + XM::radius)?, mins: vec3(z, h + XM::mins), maxs: vec3(z, h + XM::maxs), materials })
 }
 
 fn read_surface(z: &Zone, sh: u32) -> Result<Surface, FormatError> {
-    let vert_list_count = z.try_u8(sh + 1)? as u32;
-    let flags = z.try_u16(sh + 2)?;
-    let vert_count = z.try_u16(sh + 4)? as u32;
-    let tri_count = z.try_u16(sh + 6)? as u32;
-    let tris = z.try_u32(sh + 12)?;
-    let blend_counts = [16, 18, 20, 22].map(|o| z.try_u16(sh + o).map_or(0, |v| (v as i16).max(0)) as usize);
-    let blend = z.try_u32(sh + 24)?;
-    let verts = z.try_u32(sh + 32)?;
-    let vert_list = z.try_u32(sh + 40)?;
+    let vert_list_count = z.try_u8(sh + XS::vertListCount)? as u32;
+    let flags = z.try_u16(sh + XS::flags)?;
+    let vert_count = z.try_u16(sh + XS::vertCount)? as u32;
+    let tri_count = z.try_u16(sh + XS::triCount)? as u32;
+    let tris = z.try_u32(sh + XS::triIndices)?;
+    // XSurface::vertInfo holds XSurfaceVertexInfo: the blend counts are its vertCount short[4].
+    let blend_counts = (0..4usize)
+        .map(|i| {
+            z.try_u16(sh + XS::vertInfo + XV::vertCount + i as u32 * 2)
+                .map_or(0, |v| (v as i16).max(0)) as usize
+        })
+        .collect::<Vec<_>>()
+        .try_into()
+        .unwrap_or([0usize; 4]);
+    let blend = z.try_u32(sh + XS::vertInfo + XV::vertsBlend)?;
+    let verts = z.try_u32(sh + XS::verts0)?;
+    let vert_list = z.try_u32(sh + XS::vertList)?;
     if flags & SURF_QUANTIZED != 0 || verts == 0 {
         return Ok(Surface::default());
     }
@@ -247,10 +257,10 @@ fn read_surface(z: &Zone, sh: u32) -> Result<Surface, FormatError> {
     let mut vertices: Vec<Vertex> = (0..vert_count)
         .map(|i| {
             let v = verts + VERTEX_SIZE * i;
-            let tc = z.u32(v + 20);
+            let tc = z.u32(v + GfxPackedVertex::texCoord);
             Vertex {
                 position: vec3(z, v),
-                normal: unpack_unit_vec(z.u32(v + 24)),
+                normal: unpack_unit_vec(z.u32(v + GfxPackedVertex::normal)),
                 uv: [half_to_f32(tc as u16), half_to_f32((tc >> 16) as u16)],
                 weights: Vec::new(),
             }
