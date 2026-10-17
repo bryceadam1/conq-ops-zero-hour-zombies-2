@@ -60,6 +60,41 @@ xorshift RNG seeded from the General id and frame, objects sorted by id before u
 
 Not yet covered: save/load keeps no first-person state (a loaded game starts in RTS view).
 
+### Engine gotchas (promoted from MODLOG)
+
+- **Objects must be created inside `GameLogic::update`** (or a logic-step callback): W3DModelDraw
+  resolves weapon barrel bones only while the logic updates. An object spawned from the client
+  update gets a zero-sized recoil vector and crashes in `W3DModelDraw::handleWeaponFireFX` the
+  first time it fires. Objects a test script spawns are made in the logic step too (`rtsAutopilotWave`).
+- Zero Hour's `loadFileDirectory` reads `X.ini` *and* every `X\*.ini`: the generated archive adds
+  files under new INI subdirectories (e.g. `Data\INI\SoundEffects\ZHBO_BO2.ini`) without
+  replacing the stock ones. Objects load in sorted order, so the mod's file is
+  `ZZZ_ZHBO_General.ini` (last).
+- The General's art is generated into `ConquerOps_BO2.big` with a same-path
+  `ZZZ_ZHBO_General.ini`; mod archives load in name order with overwrite, so it replaces
+  `ConquerOps.big`'s Burton fallback. **Bump `hud::VERSION` whenever converter output changes**,
+  or launchers keep the old archive.
+- The first-person General's hidden third-person body still plays its FX weapon's FireFX right
+  at the camera. `cbFireFx` skips the local first-person General; this is lockstep-safe because
+  the `*_FX` weapons deal no damage and have no scatter, so `fireWeaponTemplate` only plays
+  client-side FX and sound for them.
+- After the camera override, reset pitch/zoom/pivot (`resetPivotToGround`) or the RTS camera stays
+  low; leaving first person flies back to the overhead camera as first person found it, not what
+  the view reports then.
+- The RTS camera never shows sky, and `new_skybox` is drawn only by the water renderer, so first
+  person paints its own gradient before the 3D pass (which clears depth but not colour).
+- Zero Hour's `loadFileDirectory` reads `X.ini` *and* every `X\*.ini`: the generated archive adds
+  sound events, audio settings, particle systems and FX lists as new files
+  (`Data\INI\SoundEffects\ZHBO_BO2.ini`, ...) without replacing the stock ones. Objects load in
+  sorted order, so the mod's file is `ZZZ_ZHBO_General.ini` (last).
+- The General's art is generated into `ConquerOps_BO2.big` with a same-path `ZZZ_ZHBO_General.ini`;
+  mod archives load in name order with overwrite, so it replaces `ConquerOps.big`'s Burton
+  fallback. **Bump `hud::VERSION` whenever converter output changes**, or launchers keep the old
+  archive.
+- The autopilot replaces all input inside the Rust core, so `autotest.ps1` never exercises the OS
+  input path. `ZHBO_AUTOPILOT=manual` sets up the scene without scripted input, and
+  `scripts/inputtest.ps1` drives real keys and mouse through it.
+
 ## Names
 
 Asset names the mod invents are the ABI between the converter, the glue and the core. Their single

@@ -61,9 +61,7 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     `.sabs` (streamed, long) = format 8, plain FLAC. `.sabl` (loaded, short effects incl. gunshots) =
     format 0, raw 16-bit PCM. Names are hashes only; the name tables are in the encrypted fastfiles,
     which we deliberately do not decrypt.
-12. Objects must be created inside `GameLogic::update`. W3DModelDraw resolves weapon barrel bones only
-    while the logic updates; an object spawned from the client update gets a zero-sized recoil vector
-    and crashes in `W3DModelDraw::handleWeaponFireFX` the first time it fires.
+(promoted into docs/CONTRACT.md "Engine gotchas")
 13. The VM runs at 200% DPI: a 1280x720 game window reports a 640x360 client rect, so `um win drive`
     click coordinates equal the half-scale screenshot coordinates.
 14. The RTS camera never shows sky, and `new_skybox` is drawn only by the water renderer, so first
@@ -197,9 +195,7 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     is 20 bytes, SndAlias 96, since its flags field is 8 bytes). An alias variant's `assetId` can point
     into *any* `sound/*.sabl|.sabs`, not just the bank's namesake: most player sounds are in
     `cmn_root.all.sabl`, so the converter indexes every bank by id.
-53. Zero Hour's `loadFileDirectory` reads `X.ini` *and* every `X\*.ini`. So the generated archive adds
-    sound events, audio settings, particle systems and FX lists as new files
-    (`Data\INI\SoundEffects\ZHBO_BO2.ini`, ...) without replacing the stock ones.
+(promoted into docs/CONTRACT.md "Engine gotchas")
 54. The first-person General's hidden third-person body still played its FX weapon's FireFX (a
     length-10 tracer and a size-10 lens flare) right at the camera: a white sheet over the screen
     when firing. `cbFireFx` now skips the local first-person General. This is lockstep-safe because the
