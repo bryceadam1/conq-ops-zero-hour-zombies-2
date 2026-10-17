@@ -8,6 +8,7 @@
 pub mod attachments;
 pub mod building;
 pub mod client;
+pub mod config;
 pub mod conformance;
 pub mod equipment;
 pub mod ffi;
@@ -16,8 +17,10 @@ pub mod host;
 pub mod hud;
 pub mod input;
 pub mod math;
+pub mod names;
 pub mod movement;
 pub mod projectiles;
+pub mod schema;
 pub mod sim;
 pub mod sounds;
 pub mod strings;

@@ -40,7 +40,7 @@ pub const FACTIONS: &[Faction] = &[
         body: "c_usa_mp_seal6_assault_fb",
         model: "ZHBO_USA_SKN",
         hands: "c_usa_mp_seal6_longsleeve_viewhands",
-        viewmodel: "ZHBO_VMUSA_SKN",
+        viewmodel: zhbo_core::names::FACTION_VIEWMODEL_USA,
         letter: 'U',
     },
     Faction {
@@ -49,7 +49,7 @@ pub const FACTIONS: &[Faction] = &[
         body: "c_chn_mp_pla_assault_fb",
         model: "ZHBO_CHN_SKN",
         hands: "c_chn_mp_pla_longsleeve_viewhands",
-        viewmodel: "ZHBO_VMCHN_SKN",
+        viewmodel: zhbo_core::names::FACTION_VIEWMODEL_CHN,
         letter: 'C',
     },
     Faction {
@@ -58,38 +58,39 @@ pub const FACTIONS: &[Faction] = &[
         body: "c_mul_mp_pmc_assault_fb",
         model: "ZHBO_GLA_SKN",
         hands: "c_mul_mp_pmc_longsleeve_viewhands",
-        viewmodel: "ZHBO_VMGLA_SKN",
+        viewmodel: zhbo_core::names::FACTION_VIEWMODEL_GLA,
         letter: 'G',
     },
 ];
 
 /// W3D names of weapon viewmodel `vm` (shared with `host/zhbo/ZhboViewmodel.cpp`): the hierarchy,
-/// each faction's arms holding the weapon, and the clip for each BO2 animation slot.
+/// each faction's arms holding the weapon, and the clip for each BO2 animation slot. The names
+/// themselves live in the naming registry (`zhbo_core::names`).
 pub fn vm_hierarchy(vm: i32) -> String {
-    format!("ZV{vm:02}_SKL")
+    zhbo_core::names::viewmodel_skl(vm as u8)
 }
 pub fn vm_model(vm: i32, letter: char) -> String {
-    format!("ZV{vm:02}{letter}_SKN")
+    zhbo_core::names::viewmodel_skn(vm as u8, letter)
 }
 pub fn vm_anim(vm: i32, slot: usize) -> String {
-    format!("ZV{vm:02}_A{slot:02X}")
+    zhbo_core::names::viewmodel_anim(vm as u8, slot as u8)
 }
 /// Projectile models (thrown grenades, rockets) and the Zero Hour object that shows one.
 pub fn projectile_model(vm: i32) -> String {
-    format!("ZPR{vm:02}_SKN")
+    zhbo_core::names::projectile_model(vm as u8)
 }
 pub fn projectile_object(id: &str) -> String {
-    format!("ZHBO_Proj_{id}")
+    zhbo_core::names::projectile_object(id)
 }
 
 /// The scorestreak tablet: each faction's arms holding it, on its own hierarchy, with clips in
 /// `zhbo_core::viewmodel` order after the weapon's (TABLET_PULLOUT, TABLET_IDLE, TABLET_PUTAWAY).
 /// Its W3D models are the weapon viewmodel's names with `_TAB` for `_SKN`.
-pub const TABLET_HIERARCHY: &str = "ZHBO_VMT_SKL";
+pub use zhbo_core::names::{TABLET_HIERARCHY, TABLET_IDLE, TABLET_PULLOUT, TABLET_PUTAWAY};
 pub const TABLET_ANIMS: &[(&str, &str)] = &[
-    ("ZHBO_VMT_PUL", "viewmodel_tablet_pullout"),
-    ("ZHBO_VMT_IDL", "viewmodel_tablet_idle"),
-    ("ZHBO_VMT_PUT", "viewmodel_tablet_putaway"),
+    (TABLET_PULLOUT, "viewmodel_tablet_pullout"),
+    (TABLET_IDLE, "viewmodel_tablet_idle"),
+    (TABLET_PUTAWAY, "viewmodel_tablet_putaway"),
 ];
 const TABLET: &str = "t6_wpn_tablet_view";
 const TABLET_SCREEN: &str = "zhbo_bo2_tablet_screen.tga";
@@ -103,12 +104,12 @@ pub fn tablet_model(viewmodel: &str) -> String {
 /// grip, with the knife's clips, in `zhbo_core::viewmodel` order (HAMMER_PULLOUT, HAMMER_IDLE,
 /// HAMMER_SWING, HAMMER_PUTAWAY). Its W3D models are the weapon viewmodel's names with `_HAM` for
 /// `_SKN`.
-pub const HAMMER_HIERARCHY: &str = "ZHBO_VMH_SKL";
+pub use zhbo_core::names::{HAMMER_HIERARCHY, HAMMER_IDLE, HAMMER_PULLOUT, HAMMER_PUTAWAY, HAMMER_SWING};
 pub const HAMMER_ANIMS: &[(&str, &str)] = &[
-    ("ZHBO_VMH_PUL", "viewmodel_strider_pullout"),
-    ("ZHBO_VMH_IDL", "viewmodel_strider_idle"),
-    ("ZHBO_VMH_SWG", "viewmodel_strider_melee_swipe"),
-    ("ZHBO_VMH_PUT", "viewmodel_strider_putaway"),
+    (HAMMER_PULLOUT, "viewmodel_strider_pullout"),
+    (HAMMER_IDLE, "viewmodel_strider_idle"),
+    (HAMMER_SWING, "viewmodel_strider_melee_swipe"),
+    (HAMMER_PUTAWAY, "viewmodel_strider_putaway"),
 ];
 const KNIFE_VIEW: &str = "t6_wpn_knife_base_view";
 /// BO2's hammer, a campaign prop, and a small zone that has it.
@@ -211,7 +212,7 @@ const OPTIC_WINDOW: f32 = 0.72;
 /// BO2's smoke grenade cloud (its script plays it; the weapon names no effect).
 const SMOKE_EFFECT: &str = "weapon/grenade/fx_smoke_willy_pete";
 /// The overhead General's bullet impacts (see `ZhboBridge.cpp`, `loadRtsFx`).
-pub const RTS_FX_PATH: &str = "Data\\ConquerOps\\rts_fx.txt";
+pub use zhbo_core::names::RTS_FX_PATH;
 /// The box a BO2 soldier is clicked by (inches: a man standing, with some room).
 const SOLDIER_BOX_CENTRE: [f32; 3] = [0.0, 0.0, 36.0];
 const SOLDIER_BOX_EXTENT: [f32; 3] = [18.0, 18.0, 38.0];
@@ -1017,12 +1018,20 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
 
     // Every BO2 multiplayer weapon a player can carry, with its attachments and alt modes, as the
     // core's weapon table; art for the converted ones (the loadout first, then the rest).
-    let bo2 = zhbo_formats::weapon::all(&common);
-    let atts = zhbo_formats::weapon::attachments(&common);
+    let bo2 = zhbo_formats::weapon::all(&common).map_err(|e| e.to_string())?;
+    let atts = zhbo_formats::weapon::attachments(&common).map_err(|e| e.to_string())?;
     let names = crate::weapons::names(bo2_dir);
     let mut table = crate::weapons::table(&bo2, &atts, &names);
     let converted = crate::weapons::converted(&bo2);
     crate::weapons::add_variants(&mut table, &converted);
+    #[cfg(debug_assertions)]
+    {
+        // The schema-driven table (refactor plan 1.4) must survive format+parse unchanged: a
+        // schema field the converter forgot to map shows up here, at the machine that has BO2.
+        let text = zhbo_core::weapons::format_full_table(&table);
+        let back = zhbo_core::weapons::parse_full_table(&text).expect("the converter's table re-parses");
+        assert_eq!(zhbo_core::weapons::format_full_table(&back), text, "the converter's table is a fixed point");
+    }
 
     let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(bo2_dir, f.zone)).collect::<Result<_, _>>()?;
     let (vm_summary, mut clips) = weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &atts, &mut table.weapons, &converted)?;
@@ -1194,8 +1203,8 @@ mod tests {
         let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(&bo2_dir, f.zone).unwrap()).collect();
         let paks = Paks::open(&bo2_dir).unwrap();
         let names = crate::weapons::names(&bo2_dir);
-        let bo2 = zhbo_formats::weapon::all(&common);
-        let atts = zhbo_formats::weapon::attachments(&common);
+        let bo2 = zhbo_formats::weapon::all(&common).unwrap();
+        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
         let mut defs: Vec<zhbo_core::weapons::WeaponDef> =
             bo2.iter().filter(|w| crate::weapons::is_player_weapon(w)).map(|w| crate::weapons::to_def(w, &names)).collect();
         assert!(defs.len() > 50, "{} player weapons", defs.len());
@@ -1252,8 +1261,8 @@ mod tests {
         let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(&bo2_dir, f.zone).unwrap()).collect();
         let paks = Paks::open(&bo2_dir).unwrap();
         let names = crate::weapons::names(&bo2_dir);
-        let bo2 = zhbo_formats::weapon::all(&common);
-        let atts = zhbo_formats::weapon::attachments(&common);
+        let bo2 = zhbo_formats::weapon::all(&common).unwrap();
+        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
         let table = crate::weapons::table(&bo2, &atts, &names);
         let mut fails = Vec::new();
         let mut combos = 0;
@@ -1365,6 +1374,25 @@ mod tests {
         }
         assert!(FACTIONS.iter().all(|f| f.model.len() <= 15));
         assert!(ANIMS.iter().all(|a| a.0.len() <= 15) && HIERARCHY.len() <= 15);
+    }
+
+    /// The converter's whole table (weapons, attachments, alt-mode variants) formatted and parsed
+    /// back through the schema must come out identical (refactor plan 1.4's fixed-point check; the
+    /// debug assertion in `files` guards it on every conversion too).
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn weapon_table_is_a_fixed_point() {
+        let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
+        let common = load_zone(&bo2_dir, "common_mp").unwrap();
+        let names = crate::weapons::names(&bo2_dir);
+        let bo2 = zhbo_formats::weapon::all(&common).unwrap();
+        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        let mut table = crate::weapons::table(&bo2, &atts, &names);
+        let converted = crate::weapons::converted(&bo2);
+        crate::weapons::add_variants(&mut table, &converted);
+        let text = zhbo_core::weapons::format_full_table(&table);
+        let back = zhbo_core::weapons::parse_full_table(&text).expect("the table re-parses");
+        assert_eq!(zhbo_core::weapons::format_full_table(&back), text, "format ∘ parse is the identity on the converter's table");
     }
 
     #[test]

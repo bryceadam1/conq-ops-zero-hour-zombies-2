@@ -8,3 +8,4 @@ publish = false
 
 [dependencies]
 zhbo-formats = { path = "../crates/zhbo-formats" }
+zhbo-core = { path = "../crates/zhbo-core" }

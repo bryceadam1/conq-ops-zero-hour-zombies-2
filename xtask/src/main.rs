@@ -67,6 +67,7 @@ fn main() -> ExitCode {
         "run" => build(&opts).and_then(|dist| run(&dist, &opts.game_args)),
         "patch" => prepare_engine().map(|_| ()),
         "doctor" => doctor(&opts),
+        "names" => write_names().map(|_| ()),
         other => Err(format!("unknown command {other}")),
     };
     match result {
@@ -76,6 +77,20 @@ fn main() -> ExitCode {
             ExitCode::FAILURE
         }
     }
+}
+
+/// Regenerate `host/zhbo/ZhboNames.h` from the Rust naming registry (`zhbo-core/src/names.rs`).
+/// Checked in, so a test in zhbo-core fails when the header drifts from the builders.
+fn write_names() -> Result<()> {
+    let path = repo_root().join("host/zhbo/ZhboNames.h");
+    let previous = std::fs::read_to_string(&path).unwrap_or_default();
+    if previous == zhbo_core::names::ZHBO_NAMES_H {
+        eprintln!("zhbo-names: host/zhbo/ZhboNames.h is up to date");
+        return Ok(());
+    }
+    std::fs::write(&path, zhbo_core::names::ZHBO_NAMES_H).map_err(|e| format!("{}: {e}", path.display()))?;
+    eprintln!("zhbo-names: wrote {}", path.display());
+    Ok(())
 }
 
 fn repo_root() -> PathBuf {
@@ -209,7 +224,9 @@ fn prepare_engine() -> Result<PathBuf> {
 
 fn copy_dir_if_changed(src: &Path, dst: &Path) -> Result<()> {
     fs::create_dir_all(dst).map_err(|e| e.to_string())?;
+    let mut keep: Vec<String> = Vec::new();
     for entry in fs::read_dir(src).map_err(|e| format!("{}: {e}", src.display()))?.flatten() {
+        keep.push(entry.file_name().to_string_lossy().into_owned());
         let from = entry.path();
         let to = dst.join(entry.file_name());
         if from.is_dir() {
@@ -222,6 +239,18 @@ fn copy_dir_if_changed(src: &Path, dst: &Path) -> Result<()> {
             // Keep the execute bit (generalszh, run.sh on macOS/Linux).
             let perms = entry.metadata().map_err(|e| e.to_string())?.permissions();
             fs::set_permissions(&to, perms).map_err(|e| format!("{}: {e}", to.display()))?;
+        }
+    }
+    // The source is the truth: files it no longer has are stale glue and would keep being used
+    // (or shipped) from previous runs.
+    for entry in fs::read_dir(dst).map_err(|e| format!("{}: {e}", dst.display()))?.flatten() {
+        if !keep.contains(&entry.file_name().to_string_lossy().into_owned()) {
+            let p = entry.path();
+            if p.is_dir() {
+                fs::remove_dir_all(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+            } else {
+                fs::remove_file(&p).map_err(|e| format!("{}: {e}", p.display()))?;
+            }
         }
     }
     Ok(())
@@ -595,9 +624,11 @@ fn find_files(dir: &Path, keep: &mut dyn FnMut(&Path) -> bool, out: &mut Vec<Pat
 }
 
 /// BtbN's FFmpeg 8.1 win64 shared build (headers, import libs, DLLs), as the engine fork's CI uses.
-/// Downloaded once into the work dir. The asset name is a rolling alias for the 8.1 branch.
+/// Downloaded once into the work dir. Pinned to a dated autobuild so the download is reproducible
+/// (the `latest` release is a rolling alias that changes under us); this asset stays on the 8.1
+/// branch the engine links against.
 const FFMPEG_WIN64_URL: &str =
-    "https://github.com/BtbN/FFmpeg-Builds/releases/download/latest/ffmpeg-n8.1-latest-win64-gpl-shared-8.1.zip";
+    "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-16-13-04/ffmpeg-n8.1.3-18-g46d899d7a0-win64-gpl-shared-8.1.zip";
 
 fn ensure_ffmpeg_win64(engine: &Path) -> Result<PathBuf> {
     // Where the fork's win64 preset points FFMPEG_ROOT (untracked, so the engine reset keeps it).
@@ -624,7 +655,19 @@ fn ensure_ffmpeg_win64(engine: &Path) -> Result<PathBuf> {
     let tmp = deps.join("ffmpeg-tmp");
     let _ = fs::remove_dir_all(&tmp);
     fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
-    run_cmd(Command::new("tar").arg("-xf").arg(&zip).arg("-C").arg(&tmp))?;
+    // GNU tar (Git for Windows' usr/bin/tar) cannot read zips; on Windows PowerShell's
+    // Expand-Archive always exists, elsewhere unzip with bsdtar as the fallback.
+    let extracted = if cfg!(windows) {
+        run_cmd(Command::new("powershell").args(["-NoProfile", "-Command"]).arg(format!(
+            "Expand-Archive -Force -LiteralPath '{}' -DestinationPath '{}'",
+            zip.display(),
+            tmp.display()
+        )))
+    } else {
+        run_cmd(Command::new("unzip").args(["-q"]).arg(&zip).arg("-d").arg(&tmp))
+            .or_else(|_| run_cmd(Command::new("tar").arg("-xf").arg(&zip).arg("-C").arg(&tmp)))
+    };
+    extracted.map_err(|e| format!("extract {}: {e}", zip.display()))?;
     let inner = fs::read_dir(&tmp)
         .map_err(|e| e.to_string())?
         .flatten()

@@ -1060,7 +1060,7 @@ pub(crate) mod tests {
     use std::cell::RefCell;
 
     /// A structure the fake host offers to work on.
-    #[derive(Clone, Copy, Debug, Default)]
+    #[derive(Clone, Copy, Debug, Default, PartialEq)]
     pub struct FakeSite {
         pub id: u32,
         pub template: u32,
@@ -1256,6 +1256,179 @@ pub(crate) mod tests {
 
     fn events(sim: &Sim) -> Vec<EventKind> {
         sim.events.iter().map(|e| e.kind).collect()
+    }
+
+    /// The contract's core promise: identical inputs produce identical sim outcomes. Two Sims over
+    /// two identical fake hosts run the same 1200 frames of seeded pseudo-random scripted input —
+    /// shots, melee, reloads, alt modes, grenade throws, equipment planting, building, the Black
+    /// Hat — and must agree on every event, on every engine call and on the final state (refactor
+    /// plan 4.2: the regression net for the sim, weapons and equipment refactors; it also watches
+    /// for HashMap iteration or float associativity drift).
+    #[test]
+    fn identical_inputs_are_deterministic() {
+        const FRAMES: u32 = 1200;
+        /// A cycle of scripted intents: settle, fire, reload, move, throw, hack, build, alt mode.
+        /// Phases keep the weapon usable (a uniformly random button mask would perpetually
+        /// interrupt the raise), and the xorshift only jitters within each phase.
+        const CYCLE: u32 = 600;
+        // A fixed-seed xorshift so a flaky RNG can never hide a real drift.
+        let script = {
+            let mut seed: u64 = 0x5EED_CAFE_F00D_D065;
+            let mut next = || {
+                seed ^= seed << 13;
+                seed ^= seed >> 7;
+                seed ^= seed << 17;
+                seed
+            };
+            let mut yaw = 0.0f32;
+            let mut pitch = 0.0f32;
+            let mut script = Vec::with_capacity(FRAMES as usize);
+            for f in 0..FRAMES {
+                let t = f % CYCLE;
+                let (mut held, mut pressed) = (0u32, 0u32);
+                let jitter = |r: u64, scale: f32| (r % 41) as f32 / 100.0 * scale - scale / 2.0;
+                yaw += jitter(next(), 0.4);
+                pitch = (pitch + jitter(next(), 0.1)).clamp(-crate::input::MAX_PITCH, crate::input::MAX_PITCH);
+                let fwd = (next() % 5) as f32 / 2.0 - 1.0;
+                let side = (next() % 5) as f32 / 2.0 - 1.0;
+                // `pressed` must be a single-frame edge (the sim acts on every frame it is set);
+                // held buttons derive their own press edge in the arsenal.
+                match t {
+                    // Settle: the weapon comes up, no buttons.
+                    0..=39 => {}
+                    // Fire bursts at the enemy soldier standing ahead.
+                    40..=139 => {
+                        held |= buttons::ADS | buttons::FIRE;
+                        pitch = pitch.clamp(-0.15, 0.0);
+                    }
+                    // Reload.
+                    140..=159 => held |= buttons::RELOAD,
+                    // Sprint forward, then walk.
+                    160..=189 => held |= buttons::SPRINT,
+                    // Pull the lethal's pin (held), then let go: thrown. Aimed up so the blast
+                    // lands clear of the General.
+                    190..=229 => {
+                        held |= buttons::LETHAL;
+                        pitch = 0.6;
+                    }
+                    // Same for the tactical: its held edge must land after the lethal's 0.45 s
+                    // throwing wind-down has finished consuming presses.
+                    250..=289 => {
+                        held |= buttons::TACTICAL;
+                        pitch = 0.6;
+                    }
+                    // Melee swings.
+                    300..=329 => {
+                        if t % 6 == 0 {
+                            pressed |= buttons::MELEE;
+                        }
+                    }
+                    // Stance bits.
+                    330..=349 => {
+                        if next() % 3 == 0 {
+                            held |= buttons::CROUCH;
+                        }
+                        if next() % 5 == 0 {
+                            pressed |= buttons::JUMP;
+                        }
+                        if next() % 7 == 0 {
+                            held |= buttons::PRONE;
+                        }
+                    }
+                    // The alt mode (the launcher): toggle in for one frame, then fire a press
+                    // edge after its raise finishes (a semi weapon needs a fresh press), aimed up
+                    // so the blast lands clear.
+                    350 => pressed |= buttons::ALT_MODE,
+                    351..=374 => held |= buttons::FIRE,
+                    376..=384 => {
+                        held |= buttons::FIRE;
+                        pitch = 0.5;
+                    }
+                    385 => pressed |= buttons::ALT_MODE,
+                    // The Black Hat: open the field computer (one frame); its raise hands control
+                    // back to the RTS view (the retake at 470 brings first person up again).
+                    395 => pressed |= buttons::FIELD_COMPUTER,
+                    // Bring the hammer up, place a structure, put it away (single-frame presses).
+                    520 => pressed |= buttons::HAMMER,
+                    545 => pressed |= buttons::FIRE,
+                    565 => pressed |= buttons::HAMMER,
+                    _ => {}
+                }
+                script.push(FpsInput {
+                    held,
+                    pressed,
+                    move_packed: pack_move(fwd, side),
+                    yaw,
+                    pitch,
+                });
+            }
+            script
+        };
+
+        let make_world = || {
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            host.add(soldier(2, 1, 60.0));
+            host.add(soldier(3, 1, 90.0));
+            host.options.borrow_mut().push(crate::building::BuildOption {
+                template: 7,
+                cost: 100,
+                status: crate::building::status::OK,
+                radius: 20.0,
+                ..Default::default()
+            });
+            let mut sim = Sim::new();
+            sim.take_control(&host, 0, 1);
+            // The lethal slot plants (a claymore) so the equipment path is exercised alongside the
+            // thrown tactical.
+            if let Some(p) = sim.players[0].as_mut() {
+                p.arsenal = crate::weapons::Arsenal::with_loadout(
+                    crate::weapons::Loadout::default().with_spec("lethal=claymore_mp"),
+                );
+            }
+            (host, sim)
+        };
+        let (host_a, mut sim_a) = make_world();
+        let (host_b, mut sim_b) = make_world();
+
+        for input in &script {
+            let f = sim_a.frame + 1;
+            // Take control again after the field computer's RTS handoff (tests re-entry).
+            if f % 600 == 470 {
+                sim_a.take_control(&host_a, 0, 1);
+                sim_b.take_control(&host_b, 0, 1);
+            }
+            sim_a.input(0, 1, *input);
+            sim_a.step(&host_a, f);
+            sim_b.input(0, 1, *input);
+            sim_b.step(&host_b, f);
+            assert_eq!(events(&sim_a), events(&sim_b), "event drift at frame {}", f);
+            assert_eq!(host_a.objects, host_b.objects, "object drift at frame {}", f);
+        }
+
+        // The final state agrees: where the General is, what he holds, what the engine saw (a run
+        // may legitimately end with the General dead on his own explosives — then he is dead in
+        // both).
+        assert_eq!(sim_a.player(0).is_none(), sim_b.player(0).is_none(), "the General's fate agrees");
+        assert_eq!(host_a.get(1).pos, host_b.get(1).pos, "the General ended up in the same place");
+        if let (Some(a), Some(b)) = (sim_a.player(0), sim_b.player(0)) {
+            assert_eq!(a.arsenal, b.arsenal, "the whole arsenal agrees (rounds, clips, cooldowns)");
+        }
+        assert_eq!(sim_a.projectiles.len(), sim_b.projectiles.len());
+        assert_eq!(sim_a.equipment, sim_b.equipment);
+        assert_eq!(*host_a.spawned.borrow(), *host_b.spawned.borrow());
+        assert_eq!(*host_a.sites.borrow(), *host_b.sites.borrow());
+        // And the run actually exercised the systems (a silent no-op run would prove nothing).
+        let kinds = events(&sim_a);
+        assert!(kinds.iter().any(|k| matches!(k, EventKind::Shot { .. })), "fired");
+        assert!(kinds.iter().any(|k| matches!(k, EventKind::Planted { .. })), "planted the claymore");
+        assert!(kinds.contains(&EventKind::Thrown { lethal: false }), "threw a tactical");
+        assert!(kinds.contains(&EventKind::Launched), "fired the launcher alt mode");
+        assert!(kinds.contains(&EventKind::ReloadStarted), "reloaded");
+        assert!(kinds.contains(&EventKind::FieldComputerOpened), "hacked");
+        assert!(kinds.iter().any(|k| matches!(k, EventKind::Exploded { .. })), "something went off");
+        assert!(kinds.iter().any(|k| matches!(k, EventKind::Melee)), "swung the knife");
+        assert!(!host_a.sites.borrow().is_empty(), "built");
     }
 
     #[test]

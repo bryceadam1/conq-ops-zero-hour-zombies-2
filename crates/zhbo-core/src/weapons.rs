@@ -46,7 +46,7 @@ impl Class {
     pub fn is_offhand(self) -> bool {
         matches!(self, Class::Lethal | Class::Tactical | Class::Equipment)
     }
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Class::Rifle => "rifle",
             Class::Smg => "smg",
@@ -62,7 +62,7 @@ impl Class {
             Class::Equipment => "equipment",
         }
     }
-    fn parse(s: &str) -> Option<Self> {
+    pub(crate) fn parse(s: &str) -> Option<Self> {
         [
             Class::Rifle,
             Class::Smg,
@@ -109,7 +109,7 @@ pub enum Effect {
 }
 
 impl Effect {
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Effect::Explode => "explode",
             Effect::Stun => "stun",
@@ -119,7 +119,7 @@ impl Effect {
             Effect::None => "none",
         }
     }
-    fn parse(s: &str) -> Option<Self> {
+    pub(crate) fn parse(s: &str) -> Option<Self> {
         [Effect::Explode, Effect::Stun, Effect::Emp, Effect::Smoke, Effect::Impact, Effect::None].into_iter().find(|e| e.name() == s)
     }
 }
@@ -254,14 +254,14 @@ pub enum Place {
 }
 
 impl Place {
-    fn name(self) -> &'static str {
+    pub(crate) fn name(self) -> &'static str {
         match self {
             Place::Throw => "throw",
             Place::Plant => "plant",
             Place::Hack => "hack",
         }
     }
-    fn parse(s: &str) -> Option<Place> {
+    pub(crate) fn parse(s: &str) -> Option<Place> {
         [Place::Throw, Place::Plant, Place::Hack].into_iter().find(|p| p.name() == s)
     }
 }
@@ -416,15 +416,15 @@ pub struct Table {
     pub tablet_meshes: u8,
 }
 
-fn pairs(v: &[(String, String)]) -> String {
+pub(crate) fn pairs(v: &[(String, String)]) -> String {
     v.iter().map(|(a, b)| format!("{a}={b}")).collect::<Vec<_>>().join(" ")
 }
 
-fn parse_pairs(s: &str) -> Vec<(String, String)> {
+pub(crate) fn parse_pairs(s: &str) -> Vec<(String, String)> {
     s.split_whitespace().filter_map(|p| p.split_once('=')).map(|(a, b)| (a.to_string(), b.to_string())).collect()
 }
 
-fn fire_name(f: FireMode) -> String {
+pub(crate) fn fire_name(f: FireMode) -> String {
     match f {
         FireMode::Auto => "auto".to_string(),
         FireMode::Semi => "semi".to_string(),
@@ -433,7 +433,7 @@ fn fire_name(f: FireMode) -> String {
     }
 }
 
-fn parse_fire(value: &str) -> Option<FireMode> {
+pub(crate) fn parse_fire(value: &str) -> Option<FireMode> {
     let mut words = value.split_whitespace();
     Some(match words.next()? {
         "auto" => FireMode::Auto,
@@ -454,89 +454,10 @@ pub fn format_full_table(t: &Table) -> String {
     let mut s = String::from("; Black Ops II multiplayer weapons, converted from the player's own install by zhbo-assets.\n; Private data: do not redistribute.\n\n");
     s.push_str(&format!("TabletMeshes = {}\n\n", t.tablet_meshes));
     for a in &t.attachments {
-        let lines: Vec<(&str, String)> = vec![
-            ("Short", a.short.clone()),
-            ("DisplayName", a.display_name.clone()),
-            ("Point", a.point.to_string()),
-            ("Flags", format!("{} {}", a.silenced as u8, a.laser as u8)),
-            ("Fire", a.fire.map_or("none".into(), fire_name)),
-            ("Clip", a.clip.to_string()),
-            ("DamageRangeScale", a.damage_range_scale.to_string()),
-            ("Ads", format!("{} {} {} {}", a.ads_fov, a.ads_in_scale, a.ads_out_scale, a.ads_move_scale)),
-            ("HipSpreadScale", format!("{} {}", a.hip_spread_min_scale, a.hip_spread_max_scale)),
-            ("FireTimeScale", a.fire_time_scale.to_string()),
-            ("ReloadScale", format!("{} {} {}", a.reload_scale, a.reload_empty_scale, a.reload_add_scale)),
-            ("ClipScale", a.clip_scale.to_string()),
-            ("RecoilReduction", format!("{} {}", a.recoil_reduction.0, a.recoil_reduction.1)),
-        ];
-        s.push_str(&format!("Attachment {}\n", a.id));
-        for (k, v) in lines {
-            s.push_str(&format!("  {k} = {v}\n"));
-        }
-        s.push_str("End\n\n");
+        crate::schema::write_block(&mut s, "Attachment ", &a.id, crate::schema::ATTACHMENT_FIELDS, a);
     }
     for d in &t.weapons {
-        let pair = |a: (f32, f32)| format!("{} {}", a.0, a.1);
-        let list = |v: &[f32]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" ");
-        let fire = fire_name(d.fire);
-        let lines: Vec<(&str, String)> = vec![
-            ("DisplayName", d.display_name.clone()),
-            ("Class", d.class.name().into()),
-            ("Fire", fire),
-            ("FireTime", d.fire_time.to_string()),
-            ("BurstDelay", d.burst_delay.to_string()),
-            ("SpinUpTime", d.spin_up_time.to_string()),
-            ("Pellets", d.pellets.to_string()),
-            ("Clip", d.clip.to_string()),
-            ("StartReserve", d.start_reserve.to_string()),
-            ("MaxReserve", d.max_reserve.to_string()),
-            ("Reload", format!("{} {} {} {}", d.reload_time, d.reload_empty_time, d.reload_add_time, d.reload_empty_add_time)),
-            ("ReloadShells", format!("{} {} {}", d.reload_start_time, d.reload_end_time, d.reload_ammo_add)),
-            ("Raise", format!("{} {} {} {} {}", d.raise_time, d.first_raise_time, d.drop_time, d.quick_raise_time, d.quick_drop_time)),
-            ("SprintOutTime", d.sprint_out_time.to_string()),
-            ("Ads", format!("{} {} {}", d.ads_in_time, d.ads_out_time, d.ads_fov)),
-            ("Damage", list(&d.damage)),
-            ("DamageRange", list(&d.damage_range)),
-            ("HeadMultiplier", d.head_multiplier.to_string()),
-            ("MaxRange", d.max_range.to_string()),
-            ("HipSpread", format!("{} {} {}", pair(d.hip_spread[0]), pair(d.hip_spread[1]), pair(d.hip_spread[2]))),
-            ("Spread", format!("{} {} {} {}", d.spread_decay, d.spread_fire_add, d.spread_move_add, d.ads_spread)),
-            ("AdsKick", format!("{} {}", pair(d.ads_kick.pitch), pair(d.ads_kick.yaw))),
-            ("HipKick", format!("{} {}", pair(d.hip_kick.pitch), pair(d.hip_kick.yaw))),
-            ("Move", format!("{} {} {}", d.move_scale, d.ads_move_scale, d.sprint_duration_scale)),
-            ("Melee", format!("{} {}", d.melee_damage, d.melee_time)),
-            ("Effect", d.effect.name().into()),
-            ("Fuse", format!("{} {}", d.fuse_time, d.cook as u8)),
-            ("Explosion", format!("{} {} {} {}", d.explosion_radius, d.explosion_radius_min, d.explosion_inner_damage, d.explosion_outer_damage)),
-            (
-                "Projectile",
-                format!("{} {} {} {} {}", d.projectile_speed, d.projectile_speed_up, d.projectile_gravity as u8, d.impact_explode as u8, d.sticky as u8),
-            ),
-            ("FxWeapon", d.fx_weapon.clone()),
-            ("ExplosionFx", d.explosion_fx.clone()),
-            ("ProjectileObject", d.projectile_object.clone()),
-            ("FireSound", d.fire_sound.clone()),
-            ("ExplodeSound", d.explode_sound.clone()),
-            ("Viewmodel", d.viewmodel.to_string()),
-            ("Anims", format!("{:x}", d.anims)),
-            ("ClipBase", d.clip_base.to_string()),
-            ("WorldMeshes", d.world_meshes.to_string()),
-            ("Attachments", d.attachments.join(" ")),
-            ("Allowed", pairs(&d.allowed)),
-            ("AltModes", pairs(&d.alt_modes)),
-            ("Alt", d.alt.clone()),
-            (
-                "Flags",
-                format!("{} {} {} {} {}", d.alt_own_ammo as u8, d.silenced as u8, d.laser as u8, d.fmj as u8, d.target_finder as u8),
-            ),
-            ("RecoilReduction", format!("{} {}", d.recoil_reduction.0, d.recoil_reduction.1)),
-            ("Place", d.place.name().into()),
-        ];
-        s.push_str(&format!("Weapon {}\n", d.id));
-        for (k, v) in lines {
-            s.push_str(&format!("  {k} = {v}\n"));
-        }
-        s.push_str("End\n\n");
+        crate::schema::write_block(&mut s, "Weapon ", &d.id, crate::schema::WEAPON_FIELDS, d);
     }
     s
 }
@@ -546,7 +467,8 @@ pub fn parse_table(text: &str) -> Result<Vec<WeaponDef>, String> {
     parse_full_table(text).map(|t| t.weapons)
 }
 
-/// Read the weapon table. Unknown keys are ignored; a malformed value is an error.
+/// Read the weapon table. Unknown keys are ignored; a malformed value is an error. The keys and
+/// their formats live in [`crate::schema`], shared with the formatter.
 pub fn parse_full_table(text: &str) -> Result<Table, String> {
     enum Block {
         Weapon(WeaponDef),
@@ -578,152 +500,14 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
         let (key, value) = line.split_once('=').ok_or_else(|| err("expected key = value"))?;
         let (key, value) = (key.trim(), value.trim());
         let nums: Vec<f32> = value.split_whitespace().filter_map(|x| x.parse().ok()).collect();
-        let need = |k: usize| if nums.len() >= k { Ok(()) } else { Err(err("too few numbers")) };
-        let num = |v: &str| v.parse::<f32>().map_err(|_| err("number"));
+        let values = crate::schema::Values { text: value, nums: &nums };
         match cur.as_mut() {
             None => match key {
-                "TabletMeshes" => table.tablet_meshes = num(value)? as u8,
+                "TabletMeshes" => table.tablet_meshes = values.text_num().map_err(|e| err(&e))? as u8,
                 _ => return Err(err("value outside a block")),
             },
-            Some(Block::Attachment(a)) => match key {
-                "Short" => a.short = value.to_string(),
-                "DisplayName" => a.display_name = value.to_string(),
-                "Point" => a.point = num(value)? as u8,
-                "Flags" => {
-                    need(2)?;
-                    (a.silenced, a.laser) = (nums[0] != 0.0, nums[1] != 0.0);
-                }
-                "Fire" => a.fire = parse_fire(value),
-                "Clip" => a.clip = num(value)? as u16,
-                "DamageRangeScale" => a.damage_range_scale = num(value)?,
-                "Ads" => {
-                    need(4)?;
-                    (a.ads_fov, a.ads_in_scale, a.ads_out_scale, a.ads_move_scale) = (nums[0], nums[1], nums[2], nums[3]);
-                }
-                "HipSpreadScale" => {
-                    need(2)?;
-                    (a.hip_spread_min_scale, a.hip_spread_max_scale) = (nums[0], nums[1]);
-                }
-                "FireTimeScale" => a.fire_time_scale = num(value)?,
-                "ReloadScale" => {
-                    need(3)?;
-                    (a.reload_scale, a.reload_empty_scale, a.reload_add_scale) = (nums[0], nums[1], nums[2]);
-                }
-                "ClipScale" => a.clip_scale = num(value)?,
-                "RecoilReduction" => {
-                    need(2)?;
-                    a.recoil_reduction = (nums[0], nums[1]);
-                }
-                _ => {}
-            },
-            Some(Block::Weapon(d)) => match key {
-                "DisplayName" => d.display_name = value.to_string(),
-                "Class" => d.class = Class::parse(value).ok_or_else(|| err("unknown class"))?,
-                "Fire" => d.fire = parse_fire(value).ok_or_else(|| err("unknown fire mode"))?,
-                "FireTime" => d.fire_time = num(value)?,
-                "BurstDelay" => d.burst_delay = num(value)?,
-                "SpinUpTime" => d.spin_up_time = num(value)?,
-                "Pellets" => d.pellets = value.parse().map_err(|_| err("number"))?,
-                "Clip" => d.clip = value.parse().map_err(|_| err("number"))?,
-                "StartReserve" => d.start_reserve = value.parse().map_err(|_| err("number"))?,
-                "MaxReserve" => d.max_reserve = value.parse().map_err(|_| err("number"))?,
-                "Reload" => {
-                    need(4)?;
-                    (d.reload_time, d.reload_empty_time, d.reload_add_time, d.reload_empty_add_time) = (nums[0], nums[1], nums[2], nums[3]);
-                }
-                "ReloadShells" => {
-                    need(3)?;
-                    (d.reload_start_time, d.reload_end_time, d.reload_ammo_add) = (nums[0], nums[1], nums[2] as u16);
-                }
-                "Raise" => {
-                    need(5)?;
-                    (d.raise_time, d.first_raise_time, d.drop_time, d.quick_raise_time, d.quick_drop_time) = (nums[0], nums[1], nums[2], nums[3], nums[4]);
-                }
-                "SprintOutTime" => d.sprint_out_time = num(value)?,
-                "Ads" => {
-                    need(3)?;
-                    (d.ads_in_time, d.ads_out_time, d.ads_fov) = (nums[0], nums[1], nums[2]);
-                }
-                "Damage" => {
-                    need(6)?;
-                    d.damage.copy_from_slice(&nums[..6]);
-                }
-                "DamageRange" => {
-                    need(6)?;
-                    d.damage_range.copy_from_slice(&nums[..6]);
-                }
-                "HeadMultiplier" => d.head_multiplier = num(value)?,
-                "MaxRange" => d.max_range = num(value)?,
-                "HipSpread" => {
-                    need(6)?;
-                    d.hip_spread = [(nums[0], nums[1]), (nums[2], nums[3]), (nums[4], nums[5])];
-                }
-                "Spread" => {
-                    need(4)?;
-                    (d.spread_decay, d.spread_fire_add, d.spread_move_add, d.ads_spread) = (nums[0], nums[1], nums[2], nums[3]);
-                }
-                "AdsKick" | "HipKick" => {
-                    need(4)?;
-                    let k = Kick { pitch: (nums[0], nums[1]), yaw: (nums[2], nums[3]) };
-                    if key == "AdsKick" {
-                        d.ads_kick = k;
-                    } else {
-                        d.hip_kick = k;
-                    }
-                }
-                "Move" => {
-                    need(3)?;
-                    (d.move_scale, d.ads_move_scale, d.sprint_duration_scale) = (nums[0], nums[1], nums[2]);
-                }
-                "Melee" => {
-                    need(2)?;
-                    (d.melee_damage, d.melee_time) = (nums[0], nums[1]);
-                }
-                "Effect" => d.effect = Effect::parse(value).ok_or_else(|| err("unknown effect"))?,
-                "Fuse" => {
-                    need(2)?;
-                    (d.fuse_time, d.cook) = (nums[0], nums[1] != 0.0);
-                }
-                "Explosion" => {
-                    need(4)?;
-                    (d.explosion_radius, d.explosion_radius_min, d.explosion_inner_damage, d.explosion_outer_damage) = (nums[0], nums[1], nums[2], nums[3]);
-                }
-                "Projectile" => {
-                    need(5)?;
-                    d.projectile_speed = nums[0];
-                    d.projectile_speed_up = nums[1];
-                    d.projectile_gravity = nums[2] != 0.0;
-                    d.impact_explode = nums[3] != 0.0;
-                    d.sticky = nums[4] != 0.0;
-                }
-                "FxWeapon" => d.fx_weapon = value.to_string(),
-                "ExplosionFx" => d.explosion_fx = value.to_string(),
-                "ProjectileObject" => d.projectile_object = value.to_string(),
-                "FireSound" => d.fire_sound = value.to_string(),
-                "ExplodeSound" => d.explode_sound = value.to_string(),
-                "Viewmodel" => d.viewmodel = value.parse().map_err(|_| err("number"))?,
-                "Anims" => d.anims = u128::from_str_radix(value, 16).map_err(|_| err("hex"))?,
-                "ClipBase" => d.clip_base = value.parse().map_err(|_| err("number"))?,
-                "WorldMeshes" => d.world_meshes = value.parse().map_err(|_| err("number"))?,
-                "Attachments" => d.attachments = value.split_whitespace().map(str::to_string).collect(),
-                "Allowed" => d.allowed = parse_pairs(value),
-                "AltModes" => d.alt_modes = parse_pairs(value),
-                "Alt" => d.alt = value.to_string(),
-                "Flags" => {
-                    need(5)?;
-                    d.alt_own_ammo = nums[0] != 0.0;
-                    d.silenced = nums[1] != 0.0;
-                    d.laser = nums[2] != 0.0;
-                    d.fmj = nums[3] != 0.0;
-                    d.target_finder = nums[4] != 0.0;
-                }
-                "RecoilReduction" => {
-                    need(2)?;
-                    d.recoil_reduction = (nums[0], nums[1]);
-                }
-                "Place" => d.place = Place::parse(value).ok_or_else(|| err("unknown placement"))?,
-                _ => {}
-            },
+            Some(Block::Attachment(a)) => crate::schema::set_field(crate::schema::ATTACHMENT_FIELDS, a, key, values).map_err(|e| err(&e))?,
+            Some(Block::Weapon(d)) => crate::schema::set_field(crate::schema::WEAPON_FIELDS, d, key, values).map_err(|e| err(&e))?,
         }
     }
     if cur.is_some() {
@@ -851,6 +635,8 @@ Weapon gl_an94_mp
   Raise = 0.55 0.55 0.6 0.55 0.6
   Ads = 0.5 0.5 50
   Effect = explode
+  ; explodes on impact; the fuse is the safety timeout (0 would go off in the barrel)
+  Fuse = 2.5 0
   Explosion = 42.7 0 135 50
   Projectile = 300 0 1 1 0
   Alt = an94_mp
@@ -924,6 +710,22 @@ Weapon frag_grenade_mp
   Projectile = 225 50 1 0 0
   Viewmodel = 2
   Anims = e800076
+End
+
+Weapon claymore_mp
+  DisplayName = Claymore
+  Class = lethal
+  Fire = semi
+  FireTime = 0.6
+  Clip = 1
+  StartReserve = 1
+  MaxReserve = 2
+  Effect = explode
+  Fuse = 3.5 0
+  Explosion = 42 0 150 50
+  Projectile = 0 0 0 1 0
+  Viewmodel = 2
+  Place = plant
 End
 
 Weapon concussion_grenade_mp
@@ -1085,9 +887,10 @@ impl Default for Loadout {
             perks: vec![Perk::Lightweight, Perk::FastHands, Perk::Dexterity],
             reserve: [None, None],
         };
-        match std::env::var("ZHBO_LOADOUT") {
-            Ok(spec) => l.with_spec(&spec),
-            Err(_) => l,
+        // The loadout spec from the config registry (ZHBO_LOADOUT, read once at init).
+        match crate::config::get().loadout.as_deref() {
+            Some(spec) => l.with_spec(spec),
+            None => l,
         }
     }
 }
@@ -1543,6 +1346,9 @@ impl Arsenal {
         w.cooldown = w.cooldown.max(0.0);
         w.string = 0;
         self.ads = 0.0;
+        // BO2 raises an alt toggle in max(quickRaiseTime, raiseTime / 2) — the quick raise when it
+        // is longer, never a full raise (refactor audit 0.4, docs/REFACTOR-PLAN.md); Fast Hands
+        // switches use quickRaiseTime outright, like every other switch in switch_to().
         let t = if fast { to.quick_raise_time } else { to.quick_raise_time.max(to.raise_time * 0.5) };
         self.raise_left = t;
         self.raise_total = t;

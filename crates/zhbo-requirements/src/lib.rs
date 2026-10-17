@@ -217,8 +217,11 @@ mod reg {
         if rc != 0 {
             return None;
         }
-        let len = (size as usize / 2).saturating_sub(1);
-        let s = String::from_utf16_lossy(&buf[..len]);
+        // RegGetValueW normally NUL-terminates, but values written without a terminator (or with
+        // extra NULs) would lose their last character at size/2 - 1: trim at the first NUL instead.
+        let units = &buf[..(size as usize / 2).min(buf.len())];
+        let end = units.iter().position(|&c| c == 0).unwrap_or(units.len());
+        let s = String::from_utf16_lossy(&units[..end]);
         (!s.is_empty()).then_some(s)
     }
 }

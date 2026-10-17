@@ -317,7 +317,7 @@ fn run(args: &[String]) -> Result<(), String> {
             use zhbo_formats::weapon;
             let zone = load_full_zone("common_mp.ff")?;
             let filter = args.get(1).map(String::as_str);
-            for w in weapon::all(&zone) {
+            for w in weapon::all(&zone).map_err(|e| e.to_string())? {
                 if filter.is_some_and(|f| !w.name.contains(f)) {
                     continue;
                 }
@@ -373,7 +373,7 @@ fn run(args: &[String]) -> Result<(), String> {
             // attachments [weapon filter]: BO2's attachments, and which ones each weapon allows.
             use zhbo_formats::weapon;
             let zone = load_full_zone("common_mp.ff")?;
-            let all = weapon::attachments(&zone);
+            let all = weapon::attachments(&zone).map_err(|e| e.to_string())?;
             if args.iter().any(|a| a == "--raw") {
                 use zhbo_formats::t6zone::layouts::WeaponAttachment as WA;
                 let kind = zhbo_formats::fastfile::asset_type_id("attachment").unwrap();
@@ -403,7 +403,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 println!("{a:?}");
             }
             if let Some(f) = args.get(1) {
-                for w in weapon::all(&zone).into_iter().filter(|w| w.name.contains(f.as_str())) {
+                for w in weapon::all(&zone).map_err(|e| e.to_string())?.into_iter().filter(|w| w.name.contains(f.as_str())) {
                     let names: Vec<&str> = all.iter().filter(|a| w.allowed_attachments & (1 << a.kind) != 0).map(|a| a.name.as_str()).collect();
                     println!("{} allows {:#x}: {names:?}\n  variants {:?} hide {:?} alt {:?}", w.name, w.allowed_attachments, w.attachment_variants, w.hide_tags, w.alt_weapon);
                     for u in &w.attachment_uniques {
@@ -431,7 +431,7 @@ fn run(args: &[String]) -> Result<(), String> {
                     let n = fx::impact(&zone, t, fx::surface::DIRT).map(|e| e.name).unwrap_or_default();
                     println!("impact type {t}: {n}");
                 }
-                for w in weapon::all(&zone).iter().filter(|w| ["frag_grenade_mp", "claymore_mp", "gl_an94_mp", "m32_mp", "satchel_charge_mp", "usrpg_mp", "an94_mp", "fnp45_mp", "bouncingbetty_mp", "sticky_grenade_mp"].contains(&w.name.as_str())) {
+                for w in weapon::all(&zone).map_err(|e| e.to_string())?.iter().filter(|w| ["frag_grenade_mp", "claymore_mp", "gl_an94_mp", "m32_mp", "satchel_charge_mp", "usrpg_mp", "an94_mp", "fnp45_mp", "bouncingbetty_mp", "sticky_grenade_mp"].contains(&w.name.as_str())) {
                     println!("{} impact type {}", w.name, w.impact_type);
                 }
                 return Ok(());
@@ -440,7 +440,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 println!("{e:#?}");
                 return Ok(());
             }
-            let w = weapon::all(&zone).into_iter().find(|w| &w.name == name).ok_or("no such weapon")?;
+            let w = weapon::all(&zone).map_err(|e| e.to_string())?.into_iter().find(|w| &w.name == name).ok_or("no such weapon")?;
             fn dump(e: &fx::Effect, indent: &str) {
                 println!("{indent}effect {} life {} looping {} elems {}", e.name, e.life_msec, e.looping_life_msec, e.elems.len());
                 for el in &e.elems {
@@ -469,7 +469,7 @@ fn run(args: &[String]) -> Result<(), String> {
             let path = resolve(args.get(1).ok_or("strings <zone> [filter]")?, &["zone", "english"])?;
             let file = fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
             let zone = zhbo_formats::t6zone::load(&fastfile::read(&file).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
-            let mut all: Vec<_> = zhbo_formats::localize::entries(&zone).into_iter().collect();
+            let mut all: Vec<_> = zhbo_formats::localize::entries(&zone).map_err(|e| e.to_string())?.into_iter().collect();
             all.sort();
             for (k, v) in all.iter().filter(|(k, _)| args.get(2).is_none_or(|f| k.contains(f.as_str()))) {
                 println!("{k} = {v}");
@@ -505,7 +505,7 @@ fn run(args: &[String]) -> Result<(), String> {
             // aliases <ff> [text]: BO2 sound aliases in a zone's sound banks.
             let zone = load_full_zone(args.get(1).ok_or("aliases <ff> [text]")?)?;
             let filter = args.get(2).map(|f| f.to_ascii_lowercase());
-            for bank in zhbo_formats::sndalias::banks(&zone) {
+            for bank in zhbo_formats::sndalias::banks(&zone).map_err(|e| e.to_string())? {
                 println!("bank {}: {} aliases, {} loaded sounds, {} bytes of loaded data", bank.name, bank.aliases.len(), bank.loaded.len(), bank.loaded_data.len());
                 if args.iter().any(|a| a == "--loaded") {
                     for e in bank.loaded.iter().take(5) {

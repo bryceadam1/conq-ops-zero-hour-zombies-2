@@ -164,7 +164,7 @@ impl Placed {
 }
 
 /// Everything that is down, stepped once per logic frame.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Equipment {
     pub placed: Vec<Placed>,
 }

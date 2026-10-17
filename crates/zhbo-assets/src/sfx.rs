@@ -276,7 +276,7 @@ pub fn files(
 ) -> Result<(Vec<(String, Vec<u8>)>, String), String> {
     let lib = Library::open(bo2_dir)?;
     let pick = |zone: &Zone, prefix: &str| -> Option<Source> {
-        let bank = sndalias::banks(zone).into_iter().find(|b| b.name.starts_with(prefix))?;
+        let bank = sndalias::banks(zone).ok()?.into_iter().find(|b| b.name.starts_with(prefix))?;
         Some(Source { bank, lib: &lib })
     };
     let common_src = pick(common, "mpl_common").ok_or("no mpl_common sound bank in common_mp")?;
@@ -341,7 +341,7 @@ pub fn files(
         let length = anim.num_frames as f32 / anim.frame_rate.max(1.0);
         for n in &anim.notifies {
             let Some(alias) = n.name.strip_prefix(NOTETRACK_PREFIX) else { continue };
-            let event = format!("ZHBO_NT_{alias}");
+            let event = zhbo_core::names::notetrack_event(alias);
             // Most foley is in the common bank; some (gear rustle) only in the map's.
             let ok = *nt_events
                 .entry(event.clone())
@@ -356,7 +356,7 @@ pub fn files(
     }
     out.insert("Data\\INI\\SoundEffects\\ZHBO_BO2.ini".into(), ini.into_bytes());
     out.insert(WEAPON_INI_PATH.into(), weapon_ini(WEAPON_INI, WEAPON_SOUNDS)?.into_bytes());
-    out.insert("Data\\ConquerOps\\viewmodel_sounds.txt".into(), notes.into_bytes());
+    out.insert(zhbo_core::names::VIEWMODEL_SOUNDS_PATH.into(), notes.into_bytes());
     // Zero Hour allows only 4 simultaneous 2D sounds; automatic fire plus footsteps and reload
     // foley need more. The engine loads this folder after AudioSettings.ini.
     out.insert(

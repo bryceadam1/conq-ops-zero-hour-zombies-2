@@ -135,7 +135,7 @@ pub fn alt_clip(slot: usize) -> usize {
 const ADS_MOVE_BASE: f32 = 0.35;
 
 /// Where the weapon table goes in the archive (the bridge hands it to the core).
-pub const TABLE_PATH: &str = "Data\\ConquerOps\\weapons.ini";
+pub use zhbo_core::names::WEAPON_TABLE_PATH as TABLE_PATH;
 
 /// BO2's localized strings for the display names: `zone/<language>/<lang>_code_post_gfx_mp.ff`
 /// with `<lang>_patch_mp.ff` over it. Empty if the language zones can't be read.
@@ -147,7 +147,7 @@ pub fn names(bo2_dir: &std::path::Path) -> HashMap<String, String> {
             let Ok(file) = std::fs::read(&path) else { continue };
             let Ok(ff) = zhbo_formats::fastfile::read(&file) else { continue };
             let Ok(z) = zhbo_formats::t6zone::load(&ff) else { continue };
-            out.extend(zhbo_formats::localize::entries(&z));
+            out.extend(zhbo_formats::localize::entries(&z).unwrap_or_default());
         }
     }
     out

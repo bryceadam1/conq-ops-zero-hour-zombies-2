@@ -16,8 +16,8 @@ use zhbo_formats::t6zone::Zone;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive.
 pub const VERSION: u32 = 39;
-pub const ARCHIVE_NAME: &str = "ConquerOps_BO2.big";
-pub const VERSION_FILE: &str = "Data\\ConquerOps\\bo2_hud_version.txt";
+pub use zhbo_core::names::BO2_ARCHIVE_NAME as ARCHIVE_NAME;
+pub use zhbo_core::names::BO2_ARCHIVE_VERSION_PATH as VERSION_FILE;
 const TEXTURE: &str = "zhbo_bo2_hud.tga";
 const ATLAS: u32 = 1024;
 
@@ -157,7 +157,7 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
         }, s.max))
         .collect();
     zones.insert("common_mp", crate::generals::load_zone(bo2_dir, "common_mp")?);
-    let weapons = zhbo_formats::weapon::all(&zones["common_mp"]);
+    let weapons = zhbo_formats::weapon::all(&zones["common_mp"]).map_err(|e| e.to_string())?;
     for id in crate::weapons::converted(&weapons) {
         let Some(w) = weapons.iter().find(|w| w.name == crate::generals::base_id(&id)) else { continue };
         let name = format!("ZHBO_BO2_Icon_{id}");

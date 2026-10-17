@@ -691,6 +691,7 @@ mod tests {
         texts: RefCell<Vec<String>>,
         images: RefCell<Vec<String>>,
         prims: RefCell<usize>,
+        lines: RefCell<Vec<(f32, f32, f32, f32)>>,
         has_art: bool,
         objects: Vec<ObjInfo>,
     }
@@ -702,8 +703,9 @@ mod tests {
         fn fill_rect(&self, _x: f32, _y: f32, _w: f32, _h: f32, _argb: u32) {
             *self.prims.borrow_mut() += 1;
         }
-        fn line(&self, _x0: f32, _y0: f32, _x1: f32, _y1: f32, _width: f32, _argb: u32) {
+        fn line(&self, x0: f32, y0: f32, x1: f32, y1: f32, _width: f32, _argb: u32) {
             *self.prims.borrow_mut() += 1;
+            self.lines.borrow_mut().push((x0, y0, x1, y1));
         }
         fn text(&self, _x: f32, _y: f32, text: &str, _argb: u32, _size: i32, _align: i32) {
             self.texts.borrow_mut().push(text.to_string());
@@ -758,6 +760,18 @@ mod tests {
 
     #[test]
     fn map_key_shows_the_radar_or_says_there_is_none() {
+        // A crosshair line touches (640±gap, 360) with a gap of about 40; the map's own radar box
+        // keeps its edges more than 260 px from the centre, so this window only sees the crosshair.
+        let near_centre = |lines: &[(f32, f32, f32, f32)]| {
+            lines
+                .iter()
+                .filter(|&&(x0, y0, x1, y1)| {
+                    [(x0, y0), (x1, y1)]
+                        .iter()
+                        .any(|&(x, y)| (x - 640.0).abs() < 70.0 && (y - 360.0).abs() < 70.0)
+                })
+                .count()
+        };
         let (sim, mut client) = fps_state();
         client.hud.map_open = true;
         let rec = Recorder { has_art: true, ..Default::default() };
@@ -765,6 +779,14 @@ mod tests {
         let texts = rec.texts.borrow();
         assert!(texts.iter().any(|t| t == "TACTICAL MAP"));
         assert!(texts.iter().any(|t| t == "NO RADAR"), "the fake host has no radar");
+        // The same frame's map_open: no crosshair while the map is up (the ammo panel and the
+        // minimap stay, like BO2's scoreboard).
+        assert_eq!(near_centre(&rec.lines.borrow()), 0, "no crosshair under the map");
+        drop(texts);
+        client.hud.map_open = false;
+        let rec = Recorder { has_art: true, ..Default::default() };
+        draw(&rec, &client, &sim, 0);
+        assert!(near_centre(&rec.lines.borrow()) >= 8, "the crosshair is back with the map closed");
     }
 
     #[test]

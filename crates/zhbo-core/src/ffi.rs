@@ -37,7 +37,12 @@ fn publish_controlled(sim: &Sim) {
     }
 }
 
-pub const ABI_VERSION: u32 = 15;
+pub const ABI_VERSION: u32 = 16;
+
+/// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
+/// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
+pub const LOGIC_API_FIELDS: u64 = 22;
+pub const CLIENT_API_FIELDS: u64 = 13;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
 const _: () = {
@@ -49,14 +54,22 @@ const _: () = {
     assert!(size_of::<crate::sim::RtsWeapons>() == 36);
     assert!(size_of::<crate::building::BuildOption>() == 64);
     assert!(size_of::<crate::building::Site>() == 64);
-    assert!(size_of::<LogicApi>() == 22 * size_of::<usize>());
-    assert!(size_of::<ClientApi>() == 13 * size_of::<usize>());
+    assert!(size_of::<LogicApi>() == (LOGIC_API_FIELDS as usize) * size_of::<usize>());
+    assert!(size_of::<ClientApi>() == (CLIENT_API_FIELDS as usize) * size_of::<usize>());
 };
 
 /// Returns the ABI version; the glue refuses to run if it does not match its header.
 #[no_mangle]
 pub extern "C" fn zhbo_abi_version() -> u32 {
     ABI_VERSION
+}
+
+/// The API tables' field counts, packed (low word: logic, high word: client). `Zhbo_Init` refuses
+/// a mismatch with a distinct message, so a silently shifted table is caught even when the sizes
+/// happen to agree.
+#[no_mangle]
+pub extern "C" fn zhbo_abi_fields() -> u64 {
+    LOGIC_API_FIELDS | (CLIENT_API_FIELDS << 32)
 }
 
 /// Install the weapon table (`Data\ConquerOps\weapons.ini`, converted from the player's BO2 install)
@@ -91,16 +104,19 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
     };
     use crate::host::LogicHost;
     state.logic.log(&format!("zhbo-core {} initialised (ABI {ABI_VERSION})", env!("CARGO_PKG_VERSION")));
-    // ZHBO_AUTOPILOT=1 scripts the first-person input; =manual only sets up the test scene (the
-    // bridge spawns the General and takes control) and leaves input to the player or a test driver.
-    match std::env::var("ZHBO_AUTOPILOT").ok().as_deref() {
-        None => {}
-        Some("manual") => state.logic.log("autopilot scene enabled, manual input (ZHBO_AUTOPILOT=manual)"),
-        Some(mode) => {
-            state.client.autopilot = Some(crate::client::Autopilot { equipment: mode == "equipment", build: mode == "build", ..Default::default() });
+    // Every ZHBO_* variable the core reads, parsed once (see config.rs); the sim reads the struct.
+    let config = crate::config::Config::from_env();
+    match config.autopilot {
+        crate::config::Autopilot::Off => {}
+        crate::config::Autopilot::Manual => {
+            state.logic.log("autopilot scene enabled, manual input (ZHBO_AUTOPILOT=manual)")
+        }
+        crate::config::Autopilot::Scripted { equipment, build } => {
+            state.client.autopilot = Some(crate::client::Autopilot { equipment, build, ..Default::default() });
             state.logic.log("autopilot enabled (ZHBO_AUTOPILOT)");
         }
     }
+    crate::config::init(config);
     *STATE.lock().unwrap_or_else(|e| e.into_inner()) = Some(state);
 }
 
@@ -370,5 +386,14 @@ mod tests {
         assert_eq!(out.camera_override, 0);
         let s = unsafe { zhbo_string(c"OBJECT:ZHBO_General".as_ptr()) };
         assert!(!s.is_null());
+    }
+
+    #[test]
+    fn abi_fields_report_both_tables() {
+        // host/zhbo/zhbo_core.h asserts the same counts; Zhbo_Init unpacks both words.
+        assert_eq!(zhbo_abi_fields() & 0xFFFF_FFFF, LOGIC_API_FIELDS);
+        assert_eq!(zhbo_abi_fields() >> 32, CLIENT_API_FIELDS);
+        assert_eq!(std::mem::size_of::<crate::host::LogicApi>(), (LOGIC_API_FIELDS as usize) * std::mem::size_of::<usize>());
+        assert_eq!(std::mem::size_of::<crate::host::ClientApi>(), (CLIENT_API_FIELDS as usize) * std::mem::size_of::<usize>());
     }
 }

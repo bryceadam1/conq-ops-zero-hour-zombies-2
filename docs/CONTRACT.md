@@ -60,7 +60,37 @@ xorshift RNG seeded from the General id and frame, objects sorted by id before u
 
 Not yet covered: save/load keeps no first-person state (a loaded game starts in RTS view).
 
+## Names
+
+Asset names the mod invents are the ABI between the converter, the glue and the core. Their single
+source is the naming registry, `crates/zhbo-core/src/names.rs`: typed builders (`world_mesh`,
+`viewmodel_skn`, `general`, …), the file paths inside the mod's BIG files, and the `_nsg` texture
+suffix. The names the glue uses are generated from it into `host/zhbo/ZhboNames.h` (`cargo xtask
+names`; the header is checked in and a zhbo-core test fails when it drifts). Both sides' tests
+round-trip the builders (`W0302` → viewmodel 3, mesh 2). When the mod starts inventing a new name,
+add a builder there and route every literal — Rust or C++ — through it.
+
 ## Versioning
 
 `ZHBO_ABI_VERSION` (`host/zhbo/zhbo_core.h`) must equal `zhbo_abi_version()`; struct sizes are asserted
-on both sides (`static_assert` in the header, `const _: ()` in `ffi.rs`).
+on both sides (`static_assert` in the header, `const _: ()` in `ffi.rs`). The API tables' field counts
+are shared constants (`ZHBO_LOGIC_API_FIELDS`/`ZHBO_CLIENT_API_FIELDS` in the header; `LOGIC_API_FIELDS`/
+`CLIENT_API_FIELDS` in `ffi.rs`), and `zhbo_abi_fields()` reports them at init: `Zhbo_Init` refuses to run
+when either the version or the counts disagree, with a message naming the mismatch.
+
+### Adding an engine service (a new field in `ZhboLogicApi` or `ZhboClientApi`)
+
+The checklist, in order:
+
+1. **Append-only**: add the new field at the END of the struct in `host/zhbo/zhbo_core.h`
+   (inserting mid-table would shift every later pointer; designated initializers catch renames,
+   not insertions).
+2. Bump `ZHBO_LOGIC_API_FIELDS` or `ZHBO_CLIENT_API_FIELDS` in the same header, and the matching
+   constant in `crates/zhbo-core/src/ffi.rs`.
+3. Bump `ZHBO_ABI_VERSION` in both places.
+4. Implement the callback in the glue (`host/zhbo/*.cpp`) and add it to the designated-initializer
+   table in `Zhbo_Init`.
+5. Declare the extern in `zhbo_core.h`, wire it into the Rust side (`host.rs`'s `LogicApi`/
+   `ClientApi` and the `C*Host` impls in `ffi.rs`), keeping the table order identical.
+6. Provide a fake in the tests (zhbo-core's `FakeHost` implements both traits; extend it so sim
+   tests cover the new service).
