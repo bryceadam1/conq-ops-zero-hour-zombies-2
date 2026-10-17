@@ -3,90 +3,63 @@
 //!
 //! Nothing here affects the lockstep simulation except through the input messages it emits.
 
-use crate::input::{buttons, pack_move, FpsInput, MAX_PITCH};
+use crate::input::{buttons, key_name, pack_move, FpsInput, Key, KeySet, MAX_PITCH};
 use crate::math::{dir_from_angles, lerp_angle, smoothstep, wrap_angle, Vec3};
 use crate::sim::{EventKind, Mode, Sim};
 use crate::sounds::{self, Cues};
 use crate::units::LOGIC_DT;
 use crate::viewmodel::{self, Viewmodel};
 
-/// Windows virtual-key codes.
-pub mod vk {
-    pub const LBUTTON: u8 = 0x01;
-    pub const RBUTTON: u8 = 0x02;
-    pub const SHIFT: u8 = 0x10;
-    pub const CONTROL: u8 = 0x11;
-    pub const TAB: u8 = 0x09;
-    pub const SPACE: u8 = 0x20;
-    pub const KEY_1: u8 = 0x31;
-    pub const KEY_2: u8 = 0x32;
-    pub const KEY_3: u8 = 0x33;
-    pub const KEY_4: u8 = 0x34;
-    pub const KEY_5: u8 = 0x35;
-    pub const A: u8 = 0x41;
-    pub const B: u8 = 0x42;
-    pub const C: u8 = 0x43;
-    pub const D: u8 = 0x44;
-    pub const E: u8 = 0x45;
-    pub const F: u8 = 0x46;
-    pub const G: u8 = 0x47;
-    pub const Q: u8 = 0x51;
-    pub const R: u8 = 0x52;
-    pub const S: u8 = 0x53;
-    pub const V: u8 = 0x56;
-    pub const W: u8 = 0x57;
-}
-
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Bindings {
-    pub forward: u8,
-    pub back: u8,
-    pub left: u8,
-    pub right: u8,
-    pub fire: u8,
-    pub ads: u8,
-    pub sprint: u8,
-    pub crouch: u8,
-    pub prone: u8,
-    pub jump: u8,
-    pub reload: u8,
-    pub swap: u8,
-    pub melee: u8,
-    pub field_computer: u8,
+    pub forward: Key,
+    pub back: Key,
+    pub left: Key,
+    pub right: Key,
+    pub fire: Key,
+    pub ads: Key,
+    pub sprint: Key,
+    pub crouch: Key,
+    pub prone: Key,
+    pub jump: Key,
+    pub reload: Key,
+    pub swap: Key,
+    pub melee: Key,
+    pub field_computer: Key,
     /// Throw lethal / tactical (hold to cook).
-    pub lethal: u8,
-    pub tactical: u8,
+    pub lethal: Key,
+    pub tactical: Key,
     /// Held: the whole map (BO2's scoreboard key).
-    pub map: u8,
+    pub map: Key,
     /// BO2's action slot 3: the weapon's alt mode (select fire, grenade launcher, second optic).
-    pub alt_mode: u8,
+    pub alt_mode: Key,
     /// The builder's hammer (the use key builds at a site).
-    pub hammer: u8,
+    pub hammer: Key,
 }
 
 impl Default for Bindings {
     /// BO2 PC defaults, with the scorestreak/"use" key repurposed for the field computer.
     fn default() -> Self {
         Self {
-            forward: vk::W,
-            back: vk::S,
-            left: vk::A,
-            right: vk::D,
-            fire: vk::LBUTTON,
-            ads: vk::RBUTTON,
-            sprint: vk::SHIFT,
-            crouch: vk::C,
-            prone: vk::CONTROL,
-            jump: vk::SPACE,
-            reload: vk::R,
-            swap: vk::KEY_1,
-            melee: vk::V,
-            field_computer: vk::F,
-            lethal: vk::G,
-            tactical: vk::Q,
-            map: vk::TAB,
-            alt_mode: vk::KEY_3,
-            hammer: vk::B,
+            forward: Key::W,
+            back: Key::S,
+            left: Key::A,
+            right: Key::D,
+            fire: Key::MouseLeft,
+            ads: Key::MouseRight,
+            sprint: Key::Shift,
+            crouch: Key::C,
+            prone: Key::Control,
+            jump: Key::Space,
+            reload: Key::R,
+            swap: Key::Key1,
+            melee: Key::V,
+            field_computer: Key::F,
+            lethal: Key::G,
+            tactical: Key::Q,
+            map: Key::Tab,
+            alt_mode: Key::Key3,
+            hammer: Key::B,
         }
     }
 }
@@ -138,8 +111,8 @@ pub struct ClientIn {
     pub dt: f32,
     pub local_player: i32,
     pub logic_frame: u32,
-    /// `GetAsyncKeyState` high bits for every virtual key (non-zero = down).
-    pub keys: [u8; 256],
+    /// Platform-neutral key-down set (see [`KeySet`]).
+    pub keys: KeySet,
     pub mouse_dx: f32,
     pub mouse_dy: f32,
     /// Wheel notches since last frame.
@@ -163,7 +136,7 @@ impl Default for ClientIn {
             dt: 1.0 / 60.0,
             local_player: 0,
             logic_frame: 0,
-            keys: [0; 256],
+            keys: KeySet::default(),
             mouse_dx: 0.0,
             mouse_dy: 0.0,
             wheel: 0.0,
@@ -268,7 +241,7 @@ pub struct Autopilot {
 /// What the autopilot does in one frame: keys held, mouse movement (counts: x, y) and wheel notches.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Scripted {
-    pub keys: Vec<u8>,
+    pub keys: KeySet,
     pub dx: f32,
     pub dy: f32,
     pub wheel: f32,
@@ -284,13 +257,13 @@ impl Autopilot {
             return self.build_input(b);
         }
         let t = self.t;
-        let mut keys = Vec::new();
+        let mut keys = KeySet::default();
         let mut dx = 0.0;
         if (1.0..3.0).contains(&t) {
-            keys.push(b.forward);
+            keys.set_down(b.forward, true);
         }
         if (2.0..2.1).contains(&t) || (2.8..2.9).contains(&t) {
-            keys.push(b.crouch);
+            keys.set_down(b.crouch, true);
         }
         if (3.0..3.5).contains(&t) {
             dx = 12.0;
@@ -299,44 +272,44 @@ impl Autopilot {
             dx = -12.0;
         }
         if (3.6..3.7).contains(&t) {
-            keys.push(b.jump);
+            keys.set_down(b.jump, true);
         }
         if (4.0..4.4).contains(&t) {
-            keys.push(b.map);
+            keys.set_down(b.map, true);
         }
         // Aim the rifle, then (after the swap) the pistol.
         if (4.5..7.5).contains(&t) || (7.6..9.9).contains(&t) {
-            keys.push(b.ads);
+            keys.set_down(b.ads, true);
         }
         if (5.0..7.0).contains(&t) {
-            keys.push(b.fire);
+            keys.set_down(b.fire, true);
         }
         if (7.2..7.3).contains(&t) || (10.0..10.1).contains(&t) {
-            keys.push(b.swap);
+            keys.set_down(b.swap, true);
         }
         // After the pistol's first raise (BO2's longer first draw).
         if (9.3..9.4).contains(&t) || (9.6..9.7).contains(&t) {
-            keys.push(b.fire);
+            keys.set_down(b.fire, true);
         }
         if (10.7..10.8).contains(&t) {
-            keys.push(b.melee);
+            keys.set_down(b.melee, true);
         }
         if (11.4..11.8).contains(&t) {
-            keys.push(b.lethal);
+            keys.set_down(b.lethal, true);
         }
         // After the frag has left the hand and the rifle is coming back up.
         if (12.7..12.8).contains(&t) {
-            keys.push(b.tactical);
+            keys.set_down(b.tactical, true);
         }
         // The rifle's grenade launcher: switch to it, fire, switch back.
         if (13.9..14.0).contains(&t) || (15.4..15.5).contains(&t) {
-            keys.push(b.alt_mode);
+            keys.set_down(b.alt_mode, true);
         }
         if (14.8..14.9).contains(&t) {
-            keys.push(b.fire);
+            keys.set_down(b.fire, true);
         }
         if (16.1..16.2).contains(&t) {
-            keys.push(b.field_computer);
+            keys.set_down(b.field_computer, true);
         }
         Scripted { keys, dx, ..Default::default() }
     }
@@ -347,20 +320,20 @@ impl Autopilot {
     /// repair it, and open the field computer to go back to the overhead view.
     pub fn build_input(&self, b: &Bindings) -> Scripted {
         let t = self.t;
-        let mut keys = Vec::new();
+        let mut keys = KeySet::default();
         let dy = if (3.0..3.4).contains(&t) { 120.0 } else { 0.0 };
         let wheel = if (3.6..3.65).contains(&t) { 1.0 } else { 0.0 };
         if (2.6..2.7).contains(&t) {
-            keys.push(b.hammer);
+            keys.set_down(b.hammer, true);
         }
         if (4.0..4.1).contains(&t) {
-            keys.push(b.fire);
+            keys.set_down(b.fire, true);
         }
         if (4.6..5.2).contains(&t) {
-            keys.push(b.forward);
+            keys.set_down(b.forward, true);
         }
         if (5.6..32.0).contains(&t) || (34.0..56.0).contains(&t) || (58.0..58.1).contains(&t) {
-            keys.push(b.field_computer);
+            keys.set_down(b.field_computer, true);
         }
         Scripted { keys, dy, wheel, ..Default::default() }
     }
@@ -369,27 +342,27 @@ impl Autopilot {
     /// Hat on the drone the test puts in front; a Trophy System goes down when it is let go),
     /// double-tap reload to set the C4 off, fire a burst and reload, wait while enemy rockets come
     /// in, then open the field computer.
-    pub fn equipment_input(&self, b: &Bindings) -> Vec<u8> {
+    pub fn equipment_input(&self, b: &Bindings) -> KeySet {
         let t = self.t;
-        let mut keys = Vec::new();
+        let mut keys = KeySet::default();
         if (0.5..1.0).contains(&t) {
-            keys.push(b.lethal);
+            keys.set_down(b.lethal, true);
         }
         if (2.0..6.0).contains(&t) {
-            keys.push(b.tactical);
+            keys.set_down(b.tactical, true);
         }
         if (7.0..7.08).contains(&t) || (7.2..7.28).contains(&t) {
-            keys.push(b.reload);
+            keys.set_down(b.reload, true);
         }
         // A burst and a reload (the reload animation's magazines).
         if (9.0..10.0).contains(&t) {
-            keys.push(b.fire);
+            keys.set_down(b.fire, true);
         }
         if (10.3..10.4).contains(&t) {
-            keys.push(b.reload);
+            keys.set_down(b.reload, true);
         }
         if (20.0..20.1).contains(&t) {
-            keys.push(b.field_computer);
+            keys.set_down(b.field_computer, true);
         }
         keys
     }
@@ -513,7 +486,7 @@ impl Client {
 
     fn read_buttons(&self, inp: &ClientIn) -> (u32, f32, f32) {
         let b = &self.cfg.bindings;
-        let down = |k: u8| inp.keys[k as usize] != 0;
+        let down = |k: Key| inp.keys.is_down(k);
         let mut held = 0;
         for (key, bit) in [
             (b.fire, buttons::FIRE),
@@ -549,10 +522,7 @@ impl Client {
                 ap.t += dt;
                 let script = ap.input_at(&self.cfg.bindings);
                 scripted = *inp;
-                scripted.keys = [0; 256];
-                for k in script.keys {
-                    scripted.keys[k as usize] = 1;
-                }
+                scripted.keys = script.keys;
                 scripted.mouse_dx = script.dx;
                 scripted.mouse_dy = script.dy;
                 scripted.wheel = script.wheel;
@@ -644,7 +614,7 @@ impl Client {
                     out.capture_mouse = allowed as i32;
                     self.view_eye = out.eye;
                     self.view_dir = out.dir;
-                    self.hud.map_open = allowed && !in_fc && inp.keys[self.cfg.bindings.map as usize] != 0;
+                    self.hud.map_open = allowed && !in_fc && inp.keys.is_down(self.cfg.bindings.map);
                     let events = std::mem::take(&mut self.vm_events);
                     let pose = self.vm_motion.update(dt, self.yaw, self.pitch, p, events.shot);
                     out.viewmodel_offset = pose.offset;
@@ -962,7 +932,7 @@ mod tests {
         assert!(client.yaw < 0.0, "turned clockwise (right): {}", client.yaw);
         inp.mouse_dx = 0.0;
         let yaw = client.yaw;
-        inp.keys[vk::W as usize] = 0x80;
+        inp.keys.set_down(Key::W, true);
         frame_with(&mut client, &mut sim, &host, &mut inp, 30);
         let pos = host.get(1).pos;
         let heading = pos.y.atan2(pos.x);
@@ -980,10 +950,10 @@ mod tests {
         sim.take_control(&host, 0, 1);
         frame_with(&mut client, &mut sim, &host, &mut inp, 60);
         assert!(!client.hud.map_open);
-        inp.keys[vk::TAB as usize] = 0x80;
+        inp.keys.set_down(Key::Tab, true);
         frame_with(&mut client, &mut sim, &host, &mut inp, 1);
         assert!(client.hud.map_open);
-        inp.keys[vk::TAB as usize] = 0;
+        inp.keys.set_down(Key::Tab, false);
         frame_with(&mut client, &mut sim, &host, &mut inp, 1);
         assert!(!client.hud.map_open);
     }
@@ -997,9 +967,9 @@ mod tests {
         let mut inp = ClientIn::default();
         sim.take_control(&host, 0, 1);
         frame_with(&mut client, &mut sim, &host, &mut inp, 60);
-        inp.keys[vk::F as usize] = 0x80;
+        inp.keys.set_down(Key::F, true);
         frame_with(&mut client, &mut sim, &host, &mut inp, 2);
-        inp.keys[vk::F as usize] = 0;
+        inp.keys.set_down(Key::F, false);
         frame_with(&mut client, &mut sim, &host, &mut inp, (crate::sim::FIELD_COMPUTER_RAISE / LOGIC_DT) as usize + 5);
         assert!(matches!(client.view, ViewMode::Leaving { .. }), "{:?}", client.view);
         let mut look = None;
@@ -1043,9 +1013,9 @@ mod tests {
         inp.rts_hfov = 1.3;
         inp.rts_pivot = client.view_eye + client.view_dir * 100.0;
         // Leave through the field computer.
-        inp.keys[vk::F as usize] = 0x80;
+        inp.keys.set_down(Key::F, true);
         frame_with(&mut client, &mut sim, &host, &mut inp, 2);
-        inp.keys[vk::F as usize] = 0;
+        inp.keys.set_down(Key::F, false);
         let mut leaving = Vec::new();
         for _ in 0..400 {
             let out = frame_with(&mut client, &mut sim, &host, &mut inp, 1);

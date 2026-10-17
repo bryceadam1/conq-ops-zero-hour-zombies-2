@@ -103,3 +103,156 @@ mod tests {
         assert!((i.pitch - MAX_PITCH).abs() < 1e-6);
     }
 }
+
+/// Platform-neutral physical keys (named physical keys, mouse buttons and the wheel). The client
+/// input carries a bitset of these instead of Windows virtual-key codes, so the ABI has no
+/// platform in it and a platform layer maps its native scancodes straight to `Key` values.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[repr(u8)]
+pub enum Key {
+    A,
+    B,
+    C,
+    D,
+    E,
+    F,
+    G,
+    H,
+    I,
+    J,
+    K,
+    L,
+    M,
+    N,
+    O,
+    P,
+    Q,
+    R,
+    S,
+    T,
+    U,
+    V,
+    W,
+    X,
+    Y,
+    Z,
+    Key1,
+    Key2,
+    Key3,
+    Key4,
+    Key5,
+    Space,
+    Tab,
+    Shift,
+    Control,
+    MouseLeft,
+    MouseRight,
+}
+
+impl Key {
+    /// Every `Key`, in enum order (the tests walk this to check the default bindings).
+    pub const ALL: &'static [Key] = &[
+        Key::A, Key::B, Key::C, Key::D, Key::E, Key::F, Key::G, Key::H, Key::I, Key::J, Key::K, Key::L,
+        Key::M, Key::N, Key::O, Key::P, Key::Q, Key::R, Key::S, Key::T, Key::U, Key::V, Key::W, Key::X,
+        Key::Y, Key::Z, Key::Key1, Key::Key2, Key::Key3, Key::Key4, Key::Key5, Key::Space, Key::Tab,
+        Key::Shift, Key::Control, Key::MouseLeft, Key::MouseRight,
+    ];
+
+    /// The bit in a `ClientIn::keys` word for this key.
+    pub fn bit(self) -> u64 {
+        1u64 << self as u8 as usize
+    }
+}
+
+/// The 256-bit (4x64) key-down set that crosses the ABI.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[repr(C)]
+pub struct KeySet {
+    pub bits: [u64; 4],
+}
+
+impl KeySet {
+    pub fn is_down(&self, k: Key) -> bool {
+        self.bits[(k as u8 as usize) / 64] & k.bit() != 0
+    }
+    pub fn set_down(&mut self, k: Key, down: bool) {
+        let bit = k.bit();
+        let w = (k as u8 as usize) / 64;
+        if down {
+            self.bits[w] |= bit;
+        } else {
+            self.bits[w] &= !bit;
+        }
+    }
+    pub fn clear(&mut self) {
+        self.bits = [0; 4];
+    }
+}
+
+/// The player-facing name of a key (HUD prompts: "[F]", "[TAB]").
+pub fn key_name(k: Key) -> &'static str {
+    match k {
+        Key::A => "A",
+        Key::B => "B",
+        Key::C => "C",
+        Key::D => "D",
+        Key::E => "E",
+        Key::F => "F",
+        Key::G => "G",
+        Key::H => "H",
+        Key::I => "I",
+        Key::J => "J",
+        Key::K => "K",
+        Key::L => "L",
+        Key::M => "M",
+        Key::N => "N",
+        Key::O => "O",
+        Key::P => "P",
+        Key::Q => "Q",
+        Key::R => "R",
+        Key::S => "S",
+        Key::T => "T",
+        Key::U => "U",
+        Key::V => "V",
+        Key::W => "W",
+        Key::X => "X",
+        Key::Y => "Y",
+        Key::Z => "Z",
+        Key::Key1 => "1",
+        Key::Key2 => "2",
+        Key::Key3 => "3",
+        Key::Key4 => "4",
+        Key::Key5 => "5",
+        Key::Space => "SPACE",
+        Key::Tab => "TAB",
+        Key::Shift => "SHIFT",
+        Key::Control => "CTRL",
+        Key::MouseLeft => "LMB",
+        Key::MouseRight => "RMB",
+    }
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+
+    #[test]
+    fn key_set_round_trips() {
+        let mut ks = KeySet::default();
+        assert!(!ks.is_down(Key::A));
+        ks.set_down(Key::A, true);
+        assert!(ks.is_down(Key::A));
+        ks.set_down(Key::A, false);
+        assert!(!ks.is_down(Key::A));
+        ks.set_down(Key::MouseRight, true);
+        assert!(ks.is_down(Key::MouseRight));
+        ks.clear();
+        assert!(!ks.is_down(Key::MouseRight));
+    }
+
+    #[test]
+    fn key_names_are_distinct() {
+        let names: std::collections::HashSet<_> = Key::ALL.iter().map(|k| key_name(*k)).collect();
+        assert_eq!(names.len(), Key::ALL.len(), "every key has a unique name");
+    }
+}

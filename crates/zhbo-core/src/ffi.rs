@@ -37,7 +37,7 @@ fn publish_controlled(sim: &Sim) {
     }
 }
 
-pub const ABI_VERSION: u32 = 16;
+pub const ABI_VERSION: u32 = 17;
 
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
@@ -49,7 +49,7 @@ const _: () = {
     use std::mem::size_of;
     assert!(size_of::<crate::host::ObjInfo>() == 56);
     assert!(size_of::<FpsInput>() == 20);
-    assert!(size_of::<ClientIn>() == 332);
+    assert!(size_of::<ClientIn>() == 112);
     assert!(size_of::<ClientOut>() == 132);
     assert!(size_of::<crate::sim::RtsWeapons>() == 36);
     assert!(size_of::<crate::building::BuildOption>() == 64);
@@ -317,7 +317,9 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
 #[no_mangle]
 pub extern "C" fn zhbo_client_draw_hud(local_player: i32) {
     with_state(|s| {
-        crate::hud::draw(&s.client_host, &s.client, &s.sim, local_player);
+        let mut prims = Vec::new();
+        crate::hud::draw(&s.client_host, &mut prims, &s.client, &s.sim, local_player);
+        crate::hud::render(&prims, &s.client_host);
     });
 }
 
