@@ -75,15 +75,8 @@ namespace
 	void loadNotes()
 	{
 		s_notesLoaded = TRUE;
-		File *f = TheFileSystem ? TheFileSystem->openFile(zhbo_names::VIEWMODEL_SOUNDS_PATH, File::READ | File::BINARY) : nullptr;
-		if (!f)
-			return;
-		const Int size = f->size();
-		char *buf = f->readEntireAndClose();
-		if (!buf)
-			return;
-		std::istringstream in(std::string(buf, size));
-		delete[] buf;
+		const std::string text = readTextFile(zhbo_names::VIEWMODEL_SOUNDS_PATH);
+		std::istringstream in(text);
 		std::string line;
 		while (std::getline(in, line))
 		{

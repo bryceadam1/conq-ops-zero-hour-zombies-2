@@ -17,6 +17,11 @@ class GameMessage;
 class GameMessageTranslator;
 class Object;
 
+#include <string>
+/// A whole file from the game's file system as text (empty when missing). Shared by the glue's
+/// section files (definition in ZhboBridge.cpp).
+std::string readTextFile(const char *path);
+
 /// A General's weapon switch button: 0 restricted (no ammo left), 1 available but not lit (the
 /// grenade not chosen), -1 Zero Hour decides.
 Int Zhbo_WeaponButtonState(const Object *obj, const CommandButton *command);

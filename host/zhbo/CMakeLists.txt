@@ -14,6 +14,15 @@ endif()
 target_sources(z_gameengine PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/ZhboBridge.cpp
     ${CMAKE_CURRENT_LIST_DIR}/ZhboBridge.h
+    ${CMAKE_CURRENT_LIST_DIR}/ZhboBridgeInternal.h
+    ${CMAKE_CURRENT_LIST_DIR}/ZhboLogicApi.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/ZhboRtsWeapons.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/ZhboHud.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/ZhboInput.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/ZhboAutopilot.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/ZhboScreenLook.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/ZhboControlBar.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/ZhboBuilding.cpp
     ${CMAKE_CURRENT_LIST_DIR}/ZhboPlatform.cpp
     ${CMAKE_CURRENT_LIST_DIR}/ZhboPlatform.h
     ${CMAKE_CURRENT_LIST_DIR}/zhbo_core.h
