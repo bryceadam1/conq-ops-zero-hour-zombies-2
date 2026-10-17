@@ -241,6 +241,26 @@ pub enum Kind {
     Other,
 }
 
+impl Kind {
+    pub(crate) fn name(self) -> &'static str {
+        match self {
+            Kind::Claymore => "claymore",
+            Kind::Betty => "betty",
+            Kind::C4 => "c4",
+            Kind::Shock => "shock",
+            Kind::Trophy => "trophy",
+            Kind::Insertion => "insertion",
+            Kind::Sensor => "sensor",
+            Kind::Other => "none",
+        }
+    }
+    pub(crate) fn parse(s: &str) -> Option<Kind> {
+        [Kind::Claymore, Kind::Betty, Kind::C4, Kind::Shock, Kind::Trophy, Kind::Insertion, Kind::Sensor, Kind::Other]
+            .into_iter()
+            .find(|k| k.name() == s)
+    }
+}
+
 /// An alt mode's viewmodel clips are its BO2 slots plus this.
 pub const ALT_CLIPS: i32 = 0x80;
 

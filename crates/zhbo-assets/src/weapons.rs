@@ -9,8 +9,10 @@
 use std::collections::HashMap;
 use zhbo_core::attachments::{self, AttachmentDef};
 use zhbo_core::units::inches;
-use zhbo_core::weapons::{Class, Effect, FireMode, Kind, Kick, Loadout, Place, Table, WeaponDef, ALT_CLIPS, MELEE_DAMAGE};
+use zhbo_core::weapons::{format_table, parse_table, Class, Effect, FireMode, Kick, Loadout, Table, WeaponDef, ALT_CLIPS, MELEE_DAMAGE};
 use zhbo_formats::weapon::{self as bo2, Weapon};
+
+use crate::manifest;
 
 
 /// BO2's create-a-class name of an attachment asset: `silencer_smg` is the `silencer`, `rf_fast` the
@@ -48,15 +50,6 @@ pub fn attachment_def(a: &bo2::Attachment, names: &HashMap<String, String>) -> A
         reload_add_scale: a.reload_add_scale,
         clip_scale: a.clip_size_scale,
         recoil_reduction: a.recoil_reduction,
-    }
-}
-
-/// How an offhand item is used.
-fn place_of(name: &str) -> Place {
-    match name {
-        "claymore_mp" | "bouncingbetty_mp" | "trophy_system_mp" | "tactical_insertion_mp" => Place::Plant,
-        "pda_hack_mp" => Place::Hack,
-        _ => Place::Throw,
     }
 }
 
@@ -217,38 +210,9 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
     (events, ini)
 }
 
-/// Lethal equipment and tactical equipment in BO2's create-a-class (the rest of the offhands and
-/// items are sorted by `OffhandClass`).
-const LETHALS: &[&str] = &["frag_grenade_mp", "sticky_grenade_mp", "hatchet_mp", "bouncingbetty_mp", "claymore_mp", "satchel_charge_mp"];
-const TACTICALS: &[&str] = &[
-    "concussion_grenade_mp",
-    "flash_grenade_mp",
-    "willy_pete_mp",
-    "emp_grenade_mp",
-    "sensor_grenade_mp",
-    "proximity_grenade_mp",
-    "trophy_system_mp",
-    "tactical_insertion_mp",
-    "pda_hack_mp",
-];
-
-/// What each BO2 weapon is as equipment once down (refactor plan 3.2): the weapon table's
-/// `Equipment` block, written here.
-pub fn equipment_kind_of(name: &str) -> Kind {
-    match name {
-        "claymore_mp" => Kind::Claymore,
-        "bouncingbetty_mp" => Kind::Betty,
-        "satchel_charge_mp" => Kind::C4,
-        "proximity_grenade_mp" => Kind::Shock,
-        "trophy_system_mp" => Kind::Trophy,
-        "tactical_insertion_mp" => Kind::Insertion,
-        "sensor_grenade_mp" => Kind::Sensor,
-        _ => Kind::Other,
-    }
-}
-
 /// A weapon a player can carry in BO2 multiplayer (not killstreak, turret or alt-mode entries).
 pub fn is_player_weapon(w: &Weapon) -> bool {
+    use manifest::{EXCLUDED_WEAPONS, LETHALS, TACTICALS};
     if w.name == "knife_held_mp" {
         return true;
     }
@@ -258,10 +222,11 @@ pub fn is_player_weapon(w: &Weapon) -> bool {
     if LETHALS.contains(&w.name.as_str()) || TACTICALS.contains(&w.name.as_str()) {
         return true;
     }
-    w.is_gun() && !w.name.contains("wager") && !w.name.starts_with("inventory_") && w.view_model.is_some() && !matches!(w.name.as_str(), "minigun_mp" | "riotshield_mp")
+    w.is_gun() && !w.name.contains("wager") && !w.name.starts_with("inventory_") && w.view_model.is_some() && !EXCLUDED_WEAPONS.contains(&w.name.as_str())
 }
 
 fn class_of(w: &Weapon) -> Class {
+    use manifest::{LETHALS, TACTICALS};
     let name = w.name.as_str();
     if LETHALS.contains(&name) {
         return if matches!(name, "bouncingbetty_mp" | "claymore_mp" | "satchel_charge_mp") { Class::Equipment } else { Class::Lethal };
@@ -288,13 +253,11 @@ fn class_of(w: &Weapon) -> Class {
 }
 
 fn effect_of(w: &Weapon) -> Effect {
-    match w.name.as_str() {
-        "concussion_grenade_mp" | "flash_grenade_mp" | "proximity_grenade_mp" => Effect::Stun,
-        "emp_grenade_mp" => Effect::Emp,
-        "willy_pete_mp" => Effect::Smoke,
-        "hatchet_mp" | "knife_ballistic_mp" => Effect::Impact,
-        "sensor_grenade_mp" | "trophy_system_mp" | "tactical_insertion_mp" | "pda_hack_mp" => Effect::None,
-        _ if w.weap_type == bo2::kind::PROJECTILE || w.weap_type == bo2::kind::GRENADE || w.weap_type == bo2::kind::MINE => Effect::Explode,
+    if let Some(e) = manifest::named_effect(&w.name) {
+        return e;
+    }
+    match w.weap_type {
+        bo2::kind::PROJECTILE | bo2::kind::GRENADE | bo2::kind::MINE => Effect::Explode,
         _ => Effect::None,
     }
 }
@@ -313,6 +276,10 @@ fn kick(k: bo2::Kick) -> Kick {
 }
 
 /// The core definition for a BO2 weapon. `names` maps localize keys to text.
+///
+/// In debug builds the result is round-tripped through the table schema (format then parse), so
+/// a schema line that `to_def` does not write — or one whose value does not survive the text
+/// form — fails here instead of silently drifting (refactor plan 1.4 / 3.2).
 pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
     let class = class_of(w);
     let clip = w.clip_size.max(0) as u16;
@@ -327,13 +294,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         ((w.start_ammo - w.clip_size).max(0) as u16, (w.max_ammo - w.clip_size).max(0) as u16)
     };
     let range = |r: f32| if r >= 999_999.0 { inches(100_000.0) } else { inches(r) };
-    // A few weapons' own display keys have no text; BO2's menus use these.
-    let key = match w.display_name.trim_start_matches("WEAPON_") {
-        "FLASH_GRENADE" => "WEAPON_FLASHBANG",
-        "EMP_GRENADE" => "WEAPON_EMPGRENADE",
-        "CONCUSSION_GRENADE" => "WEAPON_STUN_GRENADE",
-        _ => w.display_name.as_str(),
-    };
+    let key = manifest::display_name_key(w.display_name.trim_start_matches("WEAPON_"));
     let display_name = names
         .get(key)
         .or_else(|| names.get(&format!("WEAPON_{key}")))
@@ -341,7 +302,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| w.name.trim_end_matches("_mp").to_uppercase());
     let effect = effect_of(w);
-    let sticky = matches!(w.name.as_str(), "sticky_grenade_mp" | "crossbow_mp" | "satchel_charge_mp" | "proximity_grenade_mp");
+    let sticky = manifest::STICKY.contains(&w.name.as_str());
     let mut damage = [0.0; 6];
     let mut damage_range = [0.0; 6];
     for i in 0..6 {
@@ -350,9 +311,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
     }
     let mult = |i: usize| w.location_multipliers.get(i).copied().filter(|m| *m > 0.0).unwrap_or(1.0);
     let shells = w.reload_start_time > 0.0 && w.reload_ammo_add > 0;
-    WeaponDef {
+    let d = WeaponDef {
         id: w.name.clone(),
-        equipment_kind: equipment_kind_of(&w.name),
+        equipment_kind: manifest::equipment_kind_of(&w.name),
         display_name,
         class,
         fire: fire_mode(w),
@@ -444,8 +405,17 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         fmj: false,
         target_finder: false,
         recoil_reduction: (0.0, 0.0),
-        place: place_of(&w.name),
+        place: manifest::place_of(&w.name),
+    };
+    #[cfg(debug_assertions)]
+    {
+        let text = format_table(std::slice::from_ref(&d));
+        match parse_table(&text) {
+            Ok(back) => debug_assert_eq!(back.as_slice(), std::slice::from_ref(&d), "to_def's output must round-trip through the weapon table schema"),
+            Err(e) => panic!("to_def's output does not parse back ({}): {}", w.name, e),
+        }
     }
+    d
 }
 
 /// Zero Hour units always hit; per-shot RTS damage keeps BO2's ratios between weapons, scaled so a

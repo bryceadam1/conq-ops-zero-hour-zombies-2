@@ -16,4 +16,5 @@ pub mod textures;
 pub mod viewmodels;
 pub mod fx;
 pub mod sfx;
+pub mod manifest;
 pub mod weapons;

@@ -6,7 +6,7 @@
 ** License, or (at your option) any later version.
 */
 
-use super::def::{Class, Effect, FireMode, Kick, Place, WeaponDef};
+use super::def::{Class, Effect, FireMode, Kind, Kick, Place, WeaponDef};
 use crate::attachments::AttachmentDef;
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -472,6 +472,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("Place", "How the equipment is used: throw, plant, hack.", FieldKind::Enum,
         |d: &WeaponDef| d.place.name().into(),
         |d: &mut WeaponDef, v: Values| { d.place = Place::parse(v.text).ok_or("unknown placement")?; Ok(()) }),
+    field!("Equipment", "What the weapon is as equipment once down: claymore, betty, c4, shock, trophy, insertion, sensor, or none.", FieldKind::Enum,
+        |d: &WeaponDef| d.equipment_kind.name().into(),
+        |d: &mut WeaponDef, v: Values| { d.equipment_kind = Kind::parse(v.text).ok_or("unknown equipment kind")?; Ok(()) }),
 ];
 
 /// Apply one schema line to `t`. Unknown keys are tolerated (the parser skips them).
@@ -517,7 +520,22 @@ mod tests {
         }
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 45);
+        assert_eq!(WEAPON_FIELDS.len(), 46);
         assert_eq!(ATTACHMENT_FIELDS.len(), 13);
+    }
+
+    #[test]
+    fn equipment_block_round_trips() {
+        let mut d = WeaponDef::default();
+        d.id = "claymore_mp".into();
+        d.equipment_kind = Kind::Claymore;
+        let text = format_table(&[d.clone()]);
+        assert!(text.contains("Equipment = claymore"));
+        let back = parse_table(&text).unwrap();
+        assert_eq!(back[0].equipment_kind, Kind::Claymore);
+        d.equipment_kind = Kind::Other;
+        let text = format_table(&[d]);
+        assert!(text.contains("Equipment = none"));
+        assert_eq!(parse_table(&text).unwrap()[0].equipment_kind, Kind::Other);
     }
 }
