@@ -24,6 +24,9 @@ pub(crate) struct Backbuffer {
 const BACKBUFFER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth24PlusStencil8;
 
+/// Color attachments a frame buffer may carry (bgfx's own cap).
+pub(crate) const MAX_COLOR_ATTACHMENTS: usize = 4;
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct PipelineKey {
     program: u32,
@@ -32,7 +35,9 @@ struct PipelineKey {
     stencil: Option<(StencilFace, StencilFace)>,
     streams: [Option<u16>; super::MAX_STREAMS],
     instance_stride: Option<u32>,
-    colors: Vec<wgpu::TextureFormat>,
+    /// The color attachment formats, in order; the tail is `None` (the old `Vec` allocated on
+    /// every pipeline lookup).
+    colors: [Option<wgpu::TextureFormat>; MAX_COLOR_ATTACHMENTS],
     depth: Option<wgpu::TextureFormat>,
     samples: u32,
 }
@@ -52,13 +57,24 @@ struct CachedPipeline {
 
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct ClearKey {
-    colors: Vec<wgpu::TextureFormat>,
+    colors: [Option<wgpu::TextureFormat>; MAX_COLOR_ATTACHMENTS],
     depth: Option<wgpu::TextureFormat>,
     samples: u32,
     flags: u16,
 }
 
+/// The per-frame bind-group caches. Clearing a HashMap keeps its buckets: a 1000-draw frame
+/// reallocates nothing (the old code built both maps fresh every frame).
+#[derive(Default)]
+pub(crate) struct BindGroupCaches {
+    /// Program serial -> group 0 (predefined uniforms).
+    pub group0: HashMap<u32, wgpu::BindGroup>,
+    /// (program, uniform block, texture bindings) -> group 1.
+    pub group1: HashMap<(u32, u32, Vec<(u32, u32)>), wgpu::BindGroup>,
+}
+
 pub(crate) struct Caches {
+    bind_groups: BindGroupCaches,
     pipelines: HashMap<PipelineKey, Option<CachedPipeline>>,
     layouts: HashMap<(u32, u32), (wgpu::PipelineLayout, Option<wgpu::BindGroupLayout>)>,
     samplers: HashMap<(SamplerKey, bool), wgpu::Sampler>,
@@ -150,6 +166,7 @@ impl Caches {
             }],
         });
         Caches {
+            bind_groups: BindGroupCaches::default(),
             pipelines: HashMap::new(),
             layouts: HashMap::new(),
             samplers: HashMap::new(),
@@ -272,6 +289,24 @@ fn bgfx_color(rgba: u32) -> [f32; 4] {
     [c.r as f32, c.g as f32, c.b as f32, c.a as f32]
 }
 
+/// Everything the bind and emit phases need from the pick and validate phases.
+struct DrawPlan {
+key: PipelineKey,
+unfilterable: u32,
+textures: Vec<(u32, Option<Arc<Texture>>, u32)>,
+buffers: BufferPlan,
+rgba: u32,
+ubo: [Option<u32>; 2],
+}
+
+/// What a validated draw needs from its buffers (the emit step reads only this).
+struct BufferPlan {
+vertex_count: u32,
+binds: Vec<(wgpu::Buffer, u64)>,
+index: Option<(wgpu::Buffer, u64, wgpu::IndexFormat, u32, u32)>,
+instances: u32,
+}
+
 impl Renderer {
     fn target_for(&self, fb: u16) -> Option<Target> {
         if fb == INVALID {
@@ -349,8 +384,8 @@ impl Renderer {
         }
 
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
-        let mut group0: HashMap<u32, wgpu::BindGroup> = HashMap::new();
-        let mut group1: HashMap<(u32, u32, Vec<(u32, u32)>), wgpu::BindGroup> = HashMap::new();
+        self.cache.bind_groups.group0.clear();
+        self.cache.bind_groups.group1.clear();
         let mut visited = [false; MAX_VIEWS];
         let mut num_draw = 0;
         for pos in 0..MAX_VIEWS {
@@ -444,7 +479,7 @@ impl Renderer {
             }
 
             for &i in &draws {
-                if self.encode_draw(&mut pass, i, &target, &mut group0, &mut group1) {
+                if self.encode_draw(&mut pass, i, &target) {
                     num_draw += 1;
                 }
             }
@@ -631,21 +666,41 @@ impl Renderer {
     }
 
     /// Encode one draw. Returns false (and reports why, once) if it had to be skipped; a draw
-    /// that would fail validation must never reach the pass, or the whole frame is lost.
-    fn encode_draw(
-        &mut self,
-        pass: &mut wgpu::RenderPass<'_>,
-        i: usize,
-        target: &Target,
-        group0: &mut HashMap<u32, wgpu::BindGroup>,
-        group1: &mut HashMap<(u32, u32, Vec<(u32, u32)>), wgpu::BindGroup>,
-    ) -> bool {
-        let d: &Draw = &self.draws[i];
-        let program = d.program.clone();
-        let st = d.state.clone();
-        let ubo = d.ubo;
+    /// that would fail validation must never reach the pass, or the whole frame is lost. The
+    /// three phases are named steps: pick the pipeline, validate the buffers, bind and emit.
+    fn encode_draw(&mut self, pass: &mut wgpu::RenderPass<'_>, i: usize, target: &Target) -> bool {
+        let (program, st, rgba, ubo) = {
+            let d = &self.draws[i];
+            (d.program.clone(), d.state.clone(), d.state.rgba, d.ubo)
+        };
 
-        // Which bound textures cannot be filtered (depth, or 32-bit float without the feature).
+        // The pipeline (and with it, which textures cannot be filtered).
+        let (unfilterable, textures) = self.draw_textures(&program, &st);
+        let key = self.pipeline_key(&program, unfilterable, target, &st);
+        if !self.cache.pipelines.contains_key(&key) {
+            let built = self.build_pipeline(&program, &key);
+            self.cache.pipelines.insert(key.clone(), built);
+        }
+        let pipeline = self.cache.pipelines.get(&key).and_then(|c| c.as_ref().map(|c| c.pipeline.clone()));
+        let Some(pipeline) = pipeline else { return false };
+
+        // Buffer ranges: a draw that would fail validation is dropped here, before the pass.
+        let slots = self.cache.pipelines.get(&key).and_then(|c| c.as_ref().map(|c| c.slots.clone()));
+        let Some(slots) = slots else { return false };
+        let Some(buffers) = self.validate_buffers(&slots, &st) else { return false };
+        if buffers.instances == 0 {
+            return false;
+        }
+        let plan = DrawPlan { key: key.clone(), unfilterable, textures, buffers, rgba, ubo };
+
+        self.bind_groups_for(&program, &plan);
+        self.emit_draw(pass, &pipeline, &program, &plan);
+        true
+    }
+
+    /// Which bound textures this draw samples and which of them cannot be filtered (depth, or
+    /// 32-bit float without the feature).
+    fn draw_textures(&self, program: &Arc<Program>, st: &super::DrawState) -> (u32, Vec<(u32, Option<Arc<Texture>>, u32)>) {
         let features = self.device.features();
         let mut unfilterable = 0u32;
         let mut textures: Vec<(u32, Option<Arc<Texture>>, u32)> = Vec::new();
@@ -664,29 +719,29 @@ impl Renderer {
             }
             textures.push((slot, binding.as_ref().map(|b| b.texture.clone()), binding.map(|b| b.sampler).unwrap_or(0)));
         }
+        (unfilterable, textures)
+    }
 
+    /// The pipeline cache key for this draw on this target.
+    fn pipeline_key(&self, program: &Arc<Program>, unfilterable: u32, target: &Target, st: &super::DrawState) -> PipelineKey {
         let decoded = state::decode_state(st.state);
         let stencil = state::decode_stencil(st.stencil.0).map(|f| (f, state::decode_stencil(st.stencil.1).unwrap_or(f)));
-        let key = PipelineKey {
+        PipelineKey {
             program: program.serial,
             unfilterable,
             state: decoded,
             stencil: if target.depth.as_ref().is_some_and(|(_, f)| f.has_stencil_aspect()) { stencil } else { None },
             streams: std::array::from_fn(|s| st.streams[s].as_ref().map(|b| b.layout)),
             instance_stride: st.instance.as_ref().map(|i| i.stride),
-            colors: target.color_formats.clone(),
+            colors: std::array::from_fn(|i| target.color_formats.get(i).copied()),
             depth: target.depth.as_ref().map(|(_, f)| *f),
             samples: target.samples,
-        };
-        if !self.cache.pipelines.contains_key(&key) {
-            let built = self.build_pipeline(&program, &key);
-            self.cache.pipelines.insert(key.clone(), built);
         }
-        let Some(Some(cached)) = self.cache.pipelines.get(&key) else { return false };
-        let slots = cached.slots.clone();
+    }
 
-        // Validate buffer ranges before touching the pass. Transient arenas are sized by what the
-        // engine allocated so far (`used`), not by the GPU buffer's full capacity.
+    /// Validate buffer ranges before touching the pass. Transient arenas are sized by what the
+    /// engine allocated so far (`used`), not by the GPU buffer's full capacity.
+    fn validate_buffers(&mut self, slots: &[SlotSrc], st: &super::DrawState) -> Option<BufferPlan> {
         let (tvb, tib) = (self.transient_vb.gpu.clone(), self.transient_ib.gpu.clone());
         let (tvb_used, tib_used) = (self.transient_vb.used as u64, self.transient_ib.used as u64);
         let gpu = |src: &BufferSrc| match src {
@@ -701,25 +756,25 @@ impl Renderer {
         };
         let mut vertex_count = u32::MAX;
         let mut binds: Vec<(wgpu::Buffer, u64)> = Vec::new();
-        for s in &slots {
+        for s in slots {
             match *s {
                 SlotSrc::Stream(n) => {
-                    let Some(b) = &st.streams[n] else { return false };
+                    let b = st.streams.get(n)?.as_ref()?;
                     let size = buffer_size(&b.src);
                     let stride = self.layout(b.layout).map(|l| l.stride as u64).unwrap_or(0);
                     if b.offset % 4 != 0 || b.offset > size {
                         self.report(format!("zhbo-gfx: skipped a draw: vertex stream offset {} is unaligned or past the buffer", b.offset));
-                        return false;
+                        return None;
                     }
                     let fits = if stride == 0 { u32::MAX } else { ((size - b.offset) / stride) as u32 };
                     vertex_count = vertex_count.min(b.num_vertices.min(fits));
                     binds.push((gpu(&b.src), b.offset));
                 }
                 SlotSrc::Instance => {
-                    let Some(inst) = &st.instance else { return false };
+                    let inst = st.instance.as_ref()?;
                     if inst.offset % 4 != 0 || inst.offset + inst.num as u64 * inst.stride as u64 > buffer_size(&inst.src) {
                         self.report("zhbo-gfx: skipped a draw: instance data out of range".into());
-                        return false;
+                        return None;
                     }
                     binds.push((gpu(&inst.src), inst.offset));
                 }
@@ -727,9 +782,6 @@ impl Renderer {
             }
         }
         let instances = st.instance.as_ref().map(|i| i.num).unwrap_or(1);
-        if instances == 0 {
-            return false;
-        }
         let index = match &st.index {
             Some(ib) => {
                 let isize = if ib.format == wgpu::IndexFormat::Uint32 { 4 } else { 2 };
@@ -738,21 +790,26 @@ impl Renderer {
                     if ib.num != 0 {
                         self.report("zhbo-gfx: skipped a draw: index range past the buffer".into());
                     }
-                    return false;
+                    return None;
                 }
                 Some((gpu(&ib.src), ib.offset, ib.format, ib.first, ib.num))
             }
             None => {
                 if vertex_count == 0 || vertex_count == u32::MAX {
-                    return false;
+                    return None;
                 }
                 None
             }
         };
+        Some(BufferPlan { vertex_count, binds, index, instances })
+    }
 
-        // Bind group 0: this program's uniform blocks in the frame ring.
+    /// Group 0 (this program's uniform blocks in the frame ring) and group 1 (textures and
+    /// samplers), cached per frame in [`BindGroupCaches`].
+    fn bind_groups_for(&mut self, program: &Arc<Program>, plan: &DrawPlan) {
+        let (unfilterable, textures, ubo) = (plan.unfilterable, &plan.textures, plan.ubo);
         if let Some(bgl0) = &program.bgl0 {
-            if !group0.contains_key(&program.serial) {
+            if !self.cache.bind_groups.group0.contains_key(&program.serial) {
                 let mut entries = Vec::new();
                 for (binding, u) in [(0, &program.vs_uniforms), (1, &program.fs_uniforms)] {
                     if let Some(u) = u {
@@ -767,11 +824,10 @@ impl Renderer {
                     }
                 }
                 let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: bgl0, entries: &entries });
-                group0.insert(program.serial, bg);
+                self.cache.bind_groups.group0.insert(program.serial, bg);
             }
         }
 
-        // Bind group 1: textures and samplers.
         let bg1_key = (
             program.serial,
             unfilterable,
@@ -779,9 +835,9 @@ impl Renderer {
         );
         let layout_bgl1 = self.cache.layouts.get(&(program.serial, unfilterable)).and_then(|(_, b)| b.clone());
         if let Some(bgl1) = &layout_bgl1 {
-            if !group1.contains_key(&bg1_key) {
+            if !self.cache.bind_groups.group1.contains_key(&bg1_key) {
                 let mut samplers = Vec::new();
-                for (slot, _, flags) in &textures {
+                for (slot, _, flags) in textures.iter() {
                     let nonfiltering = unfilterable & (1 << slot) != 0;
                     let mut key = state::decode_sampler(*flags, self.border_supported);
                     key.compare = None;
@@ -792,8 +848,8 @@ impl Renderer {
                         key.anisotropy = 1;
                     }
                     let device = &self.device;
-                    let s = self.cache.samplers.entry((key, nonfiltering)).or_insert_with(|| device.create_sampler(&key.descriptor())).clone();
-                    samplers.push(s);
+                    let sampler = self.cache.samplers.entry((key, nonfiltering)).or_insert_with(|| device.create_sampler(&key.descriptor())).clone();
+                    samplers.push(sampler);
                 }
                 let mut entries = Vec::new();
                 for ((slot, tex, _), sampler) in textures.iter().zip(&samplers) {
@@ -807,41 +863,50 @@ impl Renderer {
                     entries.push(wgpu::BindGroupEntry { binding: slot * 2 + 1, resource: wgpu::BindingResource::Sampler(sampler) });
                 }
                 let bg = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: bgl1, entries: &entries });
-                group1.insert(bg1_key.clone(), bg);
+                self.cache.bind_groups.group1.insert(bg1_key.clone(), bg);
             }
         }
+    }
 
-        let Some(Some(cached)) = self.cache.pipelines.get(&key) else { return false };
-        pass.set_pipeline(&cached.pipeline);
-        if let Some(bg) = group0.get(&program.serial) {
+    /// Emit the validated draw into the pass.
+    fn emit_draw(&mut self, pass: &mut wgpu::RenderPass<'_>, pipeline: &wgpu::RenderPipeline, program: &Arc<Program>, plan: &DrawPlan) {
+        pass.set_pipeline(pipeline);
+        if let Some(bg) = self.cache.bind_groups.group0.get(&program.serial) {
             let mut offsets = Vec::new();
             if program.vs_uniforms.is_some() {
-                offsets.push(ubo[0].unwrap_or(0));
+                offsets.push(plan.ubo[0].unwrap_or(0));
             }
             if program.fs_uniforms.is_some() {
-                offsets.push(ubo[1].unwrap_or(0));
+                offsets.push(plan.ubo[1].unwrap_or(0));
             }
             pass.set_bind_group(0, bg, &offsets);
         }
-        if let Some(bg) = group1.get(&bg1_key) {
+        let bg1_key = (
+            program.serial,
+            plan.unfilterable,
+            plan.textures
+                .iter()
+                .map(|(_, t, s)| (t.as_ref().map(|t| t.serial).unwrap_or(0), *s))
+                .collect::<Vec<_>>(),
+        );
+        if let Some(bg) = self.cache.bind_groups.group1.get(&bg1_key) {
             pass.set_bind_group(1, bg, &[]);
         }
-        let c = bgfx_color(st.rgba);
+        let c = bgfx_color(plan.rgba);
         pass.set_blend_constant(wgpu::Color { r: c[0] as f64, g: c[1] as f64, b: c[2] as f64, a: c[3] as f64 });
-        if let Some((front, _)) = key.stencil {
+        if let Some((front, _)) = plan.key.stencil {
             pass.set_stencil_reference(front.reference as u32);
         }
-        for (slot, (buffer, offset)) in binds.iter().enumerate() {
+        for (slot, (buffer, offset)) in plan.buffers.binds.iter().enumerate() {
             pass.set_vertex_buffer(slot as u32, buffer.slice(*offset..));
         }
-        match index {
+        match &plan.buffers.index {
             Some((buffer, offset, format, first, num)) => {
-                pass.set_index_buffer(buffer.slice(offset..), format);
-                pass.draw_indexed(first..first + num, 0, 0..instances);
+                pass.set_index_buffer(buffer.slice(offset..), *format);
+                pass.draw_indexed(*first..*first + *num, 0, 0..plan.buffers.instances);
             }
-            None => pass.draw(0..vertex_count, 0..instances),
+            None => pass.draw(0..plan.buffers.vertex_count, 0..plan.buffers.instances),
         }
-        true
     }
 
     fn pipeline_layout(&mut self, program: &Program, unfilterable: u32) -> wgpu::PipelineLayout {
@@ -947,6 +1012,7 @@ impl Renderer {
         let targets: Vec<Option<wgpu::ColorTargetState>> = key
             .colors
             .iter()
+            .flatten()
             .map(|&format| {
                 // Blending on a non-blendable format (e.g. R32F) is a validation error.
                 let blendable = format.guaranteed_format_features(self.device.features()).flags.contains(wgpu::TextureFormatFeatureFlags::BLENDABLE);
@@ -1041,7 +1107,7 @@ impl Renderer {
     /// Pipeline and uniforms for clearing part of a target (a view rect smaller than it).
     fn clear_quad(&mut self, target: &Target, clear: super::Clear) -> Option<(wgpu::RenderPipeline, wgpu::BindGroup)> {
         let key = ClearKey {
-            colors: target.color_formats.clone(),
+            colors: std::array::from_fn(|i| target.color_formats.get(i).copied()),
             depth: target.depth.as_ref().map(|(_, f)| *f),
             samples: target.samples,
             flags: clear.flags & 7,
@@ -1057,7 +1123,11 @@ impl Renderer {
                 .colors
                 .iter()
                 .enumerate()
-                .map(|(i, &format)| Some(wgpu::ColorTargetState { format, blend: None, write_mask: if i == 0 { write } else { wgpu::ColorWrites::empty() } }))
+                .flat_map(|(i, format)| {
+                    format.map(|format| {
+                        Some(wgpu::ColorTargetState { format, blend: None, write_mask: if i == 0 { write } else { wgpu::ColorWrites::empty() } })
+                    })
+                })
                 .collect();
             let stencil_face = wgpu::StencilFaceState {
                 compare: wgpu::CompareFunction::Always,

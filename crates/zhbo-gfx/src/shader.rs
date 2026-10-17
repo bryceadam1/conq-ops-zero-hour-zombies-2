@@ -48,23 +48,7 @@ pub fn parse_varying_def(text: &str) -> Vec<VaryingDef> {
     out
 }
 
-/// Vertex attribute location for a bgfx semantic. Shared with the vertex-layout builder.
-pub fn attribute_location(semantic: &str) -> Option<u32> {
-    Some(match semantic {
-        "POSITION" => 0,
-        "NORMAL" => 1,
-        "TANGENT" => 2,
-        "BITANGENT" => 3,
-        "COLOR0" => 4,
-        "COLOR1" => 5,
-        "COLOR2" => 6,
-        "COLOR3" => 7,
-        "INDICES" | "BLENDINDICES" => 8,
-        "WEIGHT" | "BLENDWEIGHT" => 9,
-        s if s.starts_with("TEXCOORD") => 10 + s["TEXCOORD".len()..].parse::<u32>().ok()?,
-        _ => return None,
-    })
-}
+pub use crate::state::attribute_location;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum UniformKind {

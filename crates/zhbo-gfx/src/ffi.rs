@@ -30,8 +30,8 @@ pub struct ZhgfxInit {
 #[repr(C)]
 pub struct ZhgfxLayout {
     pub stride: u16,
-    pub offset: [u16; 18],
-    pub attributes: [u16; 18],
+    pub offset: [u16; crate::state::ATTRIB_COUNT],
+    pub attributes: [u16; crate::state::ATTRIB_COUNT],
 }
 
 #[repr(C)]

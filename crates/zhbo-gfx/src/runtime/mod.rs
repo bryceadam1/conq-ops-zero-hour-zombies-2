@@ -151,15 +151,19 @@ impl<T> Pool<T> {
 pub struct VertexLayout {
     pub stride: u16,
     /// Per `bgfx::Attrib`: offset and wgpu format.
-    pub attribs: [Option<(u16, wgpu::VertexFormat)>; 18],
+    pub attribs: [Option<(u16, wgpu::VertexFormat)>; crate::state::ATTRIB_COUNT],
 }
 
 impl VertexLayout {
     /// From the raw `VertexLayout` members: `m_stride`, `m_offset[]`, `m_attributes[]` (bgfx's
     /// encoding: `num - 1` in bits 0-1, type in bits 3-5, normalized in bit 7, asInt in bit 8).
-    pub fn from_bgfx(stride: u16, offsets: &[u16; 18], encoded: &[u16; 18]) -> VertexLayout {
-        let mut attribs = [None; 18];
-        for i in 0..18 {
+    pub fn from_bgfx(
+        stride: u16,
+        offsets: &[u16; crate::state::ATTRIB_COUNT],
+        encoded: &[u16; crate::state::ATTRIB_COUNT],
+    ) -> VertexLayout {
+        let mut attribs = [None; crate::state::ATTRIB_COUNT];
+        for i in 0..crate::state::ATTRIB_COUNT {
             let e = encoded[i];
             if e == u16::MAX {
                 continue;

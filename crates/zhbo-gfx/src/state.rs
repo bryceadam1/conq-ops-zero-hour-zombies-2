@@ -504,11 +504,34 @@ pub fn convert_texels(conversion: Conversion, src: &[u8]) -> std::borrow::Cow<'_
 
 // --- vertex layouts ---------------------------------------------------------------------------
 
+/// Vertex attribute slots (`bgfx::Attrib::Enum` count). The FFI vertex layout and the shader
+/// attribute locations both derive from this.
+pub const ATTRIB_COUNT: usize = 18;
+
 /// `bgfx::Attrib::Enum` order.
-pub const ATTRIB_SEMANTICS: [&str; 18] = [
+pub const ATTRIB_SEMANTICS: [&str; ATTRIB_COUNT] = [
     "POSITION", "NORMAL", "TANGENT", "BITANGENT", "COLOR0", "COLOR1", "COLOR2", "COLOR3", "INDICES", "WEIGHT",
     "TEXCOORD0", "TEXCOORD1", "TEXCOORD2", "TEXCOORD3", "TEXCOORD4", "TEXCOORD5", "TEXCOORD6", "TEXCOORD7",
 ];
+
+/// Vertex attribute location for a bgfx semantic: the [`ATTRIB_SEMANTICS`] row, plus the engine's
+/// alias names for indices/weights and the `TEXCOORD<n>` rows. Shared with the shader compiler
+/// (one table; the old shader.rs copy had drifted by alias).
+pub fn attribute_location(semantic: &str) -> Option<u32> {
+    ATTRIB_SEMANTICS
+        .iter()
+        .position(|s| *s == semantic)
+        .map(|i| i as u32)
+        .or_else(|| match semantic {
+            "BLENDINDICES" => Some(8),
+            "BLENDWEIGHT" => Some(9),
+            s if s.starts_with("TEXCOORD") => {
+                let n: u32 = s["TEXCOORD".len()..].parse().ok()?;
+                (n < 8).then_some(10 + n)
+            }
+            _ => None,
+        })
+}
 
 /// The wgpu vertex format for a bgfx attribute (`bgfx::AttribType::Enum`: Int8, Uint8, Uint10,
 /// Int16, Uint16, Half, Float) with `num` components.
