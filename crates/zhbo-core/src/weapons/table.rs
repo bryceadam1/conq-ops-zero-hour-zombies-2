@@ -1,13 +1,133 @@
-//! The weapon table's schema, defined once (refactor plan 1.4). Every `key = value` line of a
-//! `Weapon` or `Attachment` block: its key, value shape, doc string, and accessors.
-//! `weapons::format_full_table` and `weapons::parse_full_table` walk these tables, so adding a
-//! field means one entry here — plus the converter's BO2→mod mapping in zhbo-assets, which the
-//! fixed-point check there guards (a mapping that forgot the new field fails in debug builds).
-//!
-//! The text format must not change: the getters reproduce the pre-schema table byte for byte, and
-//! `table_round_trips` plus the converter's fixed-point assertions keep it that way.
+/*
+** Conquer Ops - Zero Hour gameplay core: the weapon table: BO2's WeaponDef rows as `key = value` text, and the schema it is generated from.
+**
+** This program is free software: you can redistribute it and/or modify it under the terms of the
+** GNU General Public License as published by the Free Software Foundation, either version 3 of the
+** License, or (at your option) any later version.
+*/
 
-use crate::weapons::{parse_fire, parse_pairs, pairs, AttachmentDef, Class, Effect, FireMode, Kick, Place, WeaponDef};
+use super::def::{Class, Effect, FireMode, Kick, Place, WeaponDef};
+use crate::attachments::AttachmentDef;
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Table {
+    pub weapons: Vec<WeaponDef>,
+    pub attachments: Vec<AttachmentDef>,
+    /// Third-person meshes of the scorestreak tablet on the soldier model (`TB{k:02}`).
+    pub tablet_meshes: u8,
+}
+
+pub(crate) fn pairs(v: &[(String, String)]) -> String {
+    v.iter().map(|(a, b)| format!("{a}={b}")).collect::<Vec<_>>().join(" ")
+}
+
+pub(crate) fn parse_pairs(s: &str) -> Vec<(String, String)> {
+    s.split_whitespace().filter_map(|p| p.split_once('=')).map(|(a, b)| (a.to_string(), b.to_string())).collect()
+}
+
+pub(crate) fn fire_name(f: FireMode) -> String {
+    match f {
+        FireMode::Auto => "auto".to_string(),
+        FireMode::Semi => "semi".to_string(),
+        FireMode::Burst(n) => format!("burst {n}"),
+        FireMode::Minigun => "minigun".to_string(),
+    }
+}
+
+pub(crate) fn parse_fire(value: &str) -> Option<FireMode> {
+    let mut words = value.split_whitespace();
+    Some(match words.next()? {
+        "auto" => FireMode::Auto,
+        "semi" => FireMode::Semi,
+        "minigun" => FireMode::Minigun,
+        "burst" => FireMode::Burst(words.next().and_then(|n| n.parse().ok()).unwrap_or(3)),
+        _ => return None,
+    })
+}
+
+/// Write the table in the format [`parse_table`] reads (Zero Hour INI style: `Weapon <id>` and
+/// `Attachment <id>` blocks of `key = value` lines, each closed by `End`).
+pub fn format_table(defs: &[WeaponDef]) -> String {
+    format_full_table(&Table { weapons: defs.to_vec(), ..Default::default() })
+}
+
+pub fn format_full_table(t: &Table) -> String {
+    let mut s = String::from("; Black Ops II multiplayer weapons, converted from the player's own install by zhbo-assets.\n; Private data: do not redistribute.\n\n");
+    s.push_str(&format!("TabletMeshes = {}\n\n", t.tablet_meshes));
+    for a in &t.attachments {
+        write_block(&mut s, "Attachment ", &a.id, ATTACHMENT_FIELDS, a);
+    }
+    for d in &t.weapons {
+        write_block(&mut s, "Weapon ", &d.id, WEAPON_FIELDS, d);
+    }
+    s
+}
+
+/// Read the weapon table's weapons (see [`parse_full_table`]).
+pub fn parse_table(text: &str) -> Result<Vec<WeaponDef>, String> {
+    parse_full_table(text).map(|t| t.weapons)
+}
+
+/// Read the weapon table. Unknown keys are ignored; a malformed value is an error. The keys and
+/// their formats live in [`crate::schema`], shared with the formatter.
+pub fn parse_full_table(text: &str) -> Result<Table, String> {
+    enum Block {
+        Weapon(WeaponDef),
+        Attachment(AttachmentDef),
+    }
+    let mut table = Table::default();
+    let mut cur: Option<Block> = None;
+    for (n, raw) in text.lines().enumerate() {
+        let line = raw.split(';').next().unwrap_or("").trim();
+        if line.is_empty() {
+            continue;
+        }
+        let err = |what: &str| format!("weapons table line {}: {what}: {raw}", n + 1);
+        if let Some(id) = line.strip_prefix("Weapon ") {
+            cur = Some(Block::Weapon(WeaponDef { id: id.trim().to_string(), ..Default::default() }));
+            continue;
+        }
+        if let Some(id) = line.strip_prefix("Attachment ") {
+            cur = Some(Block::Attachment(AttachmentDef { id: id.trim().to_string(), ..Default::default() }));
+            continue;
+        }
+        if line == "End" {
+            match cur.take().ok_or_else(|| err("End without a block"))? {
+                Block::Weapon(w) => table.weapons.push(w),
+                Block::Attachment(a) => table.attachments.push(a),
+            }
+            continue;
+        }
+        let (key, value) = line.split_once('=').ok_or_else(|| err("expected key = value"))?;
+        let (key, value) = (key.trim(), value.trim());
+        let nums: Vec<f32> = value.split_whitespace().filter_map(|x| x.parse().ok()).collect();
+        let values = Values { text: value, nums: &nums };
+        match cur.as_mut() {
+            None => match key {
+                "TabletMeshes" => table.tablet_meshes = values.text_num().map_err(|e| err(&e))? as u8,
+                _ => return Err(err("value outside a block")),
+            },
+            Some(Block::Attachment(a)) => set_field(ATTACHMENT_FIELDS, a, key, values).map_err(|e| err(&e))?,
+            Some(Block::Weapon(d)) => set_field(WEAPON_FIELDS, d, key, values).map_err(|e| err(&e))?,
+        }
+    }
+    if cur.is_some() {
+        return Err("weapons table: last block has no End".into());
+    }
+    Ok(table)
+}
+
+// ------------------------------------------------------------------------------------------------
+// The catalog
+// ------------------------------------------------------------------------------------------------
+
+/// All weapons and attachments by id. Weapons with attachments the table doesn't hold are built
+
+// ------------------------------------------------------------------------------------------------
+// The table: text format shared with the converter
+// ------------------------------------------------------------------------------------------------
+
+/// Everything in the weapon table.
 
 /// The shape of a field's value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,7 +213,7 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
             Ok(())
         }),
     field!("Fire", "The fire mode it forces (`none` keeps the weapon's).", Kind::Enum,
-        |a: &AttachmentDef| a.fire.map_or("none".into(), |f| crate::weapons::fire_name(f)),
+        |a: &AttachmentDef| a.fire.map_or("none".into(), |f| fire_name(f)),
         |a: &mut AttachmentDef, v: Values| { a.fire = parse_fire(v.text); Ok(()) }),
     field!("Clip", "Rounds in the magazine when this optic or mag is on (0 keeps the weapon's).", Kind::Num,
         |a: &AttachmentDef| a.clip.to_string(),
@@ -146,7 +266,7 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
         |d: &WeaponDef| d.class.name().into(),
         |d: &mut WeaponDef, v: Values| { d.class = Class::parse(v.text).ok_or("unknown class")?; Ok(()) }),
     field!("Fire", "auto, semi, minigun, or `burst n`.", Kind::Enum,
-        |d: &WeaponDef| crate::weapons::fire_name(d.fire),
+        |d: &WeaponDef| fire_name(d.fire),
         |d: &mut WeaponDef, v: Values| { d.fire = parse_fire(v.text).ok_or("unknown fire mode")?; Ok(()) }),
     field!("FireTime", "Seconds between shots.", Kind::Num,
         |d: &WeaponDef| d.fire_time.to_string(),

@@ -1,6 +1,24 @@
-//! The deterministic, lockstep part of the mod: one [`PlayerSim`] per player whose General is under
-//! first-person control. Driven by `zhbo_logic_*` calls from `GameLogic`; must produce identical
-//! results on every client given identical inputs.
+//! The deterministic, lockstep part of the mod: one [`PlayerSim`] per player whose General is
+//! under first-person control. Driven by `zhbo_logic_*` calls from `GameLogic`; must produce
+//! identical results on every client given identical inputs. The per-system stepping lives in the
+//! child modules (fire, build, hack, rts); this file owns the state, the orchestration and the
+//! events.
+/*
+** Conquer Ops - Zero Hour gameplay core: the lockstep simulation's state and orchestration.
+**
+** This program is free software: you can redistribute it and/or modify it under the terms of the
+** GNU General Public License as published by the Free Software Foundation, either version 3 of the
+** License, or (at your option) any later version.
+*/
+
+mod build;
+mod fire;
+mod hack;
+mod rts;
+
+pub use build::{placement, HostWorld, PLANT_DISTANCE};
+pub use fire::{gather_targets, throw_velocity, PENETRATION_DAMAGE};
+pub use rts::RtsWeapons;
 
 use crate::host::{damage_kind, geom, objflags, LogicHost, ObjInfo};
 use crate::hitscan::{self, HitResult, Shape, Target, INFANTRY_HEAD_FRACTION, INFANTRY_HIT_RADIUS};
@@ -472,244 +490,6 @@ impl Sim {
         true
     }
 
-    /// The hammer (toggle; choose with ADS, turn with the wheel, place with fire) and working at a
-    /// site (hold the use key); whether either has his hands.
-    fn step_building(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, input: &FpsInput) -> bool {
-        // In hand at the start of the frame: its input (the click that placed, say) is not the gun's.
-        let had_hammer = p.hammer.is_some();
-        if input.pressed & buttons::HAMMER != 0 {
-            p.hammer = match p.hammer {
-                Some(_) => None,
-                None => Some(Hammer::default()),
-            };
-            self.emit(idx, EventKind::Hammer { up: p.hammer.is_some() });
-        } else if p.hammer.is_some() && input.pressed & (buttons::SWAP_WEAPON | buttons::LETHAL | buttons::TACTICAL) != 0 {
-            // Reaching for a weapon puts the hammer away.
-            p.hammer = None;
-            self.emit(idx, EventKind::Hammer { up: false });
-        }
-        if let Some(mut h) = p.hammer {
-            h.raise = (h.raise + LOGIC_DT).min(building::HAMMER_RAISE);
-            let options = host.build_options(p.general);
-            let n = options.len();
-            let mut placed = false;
-            if n > 0 {
-                if !h.picked {
-                    h.picked = true;
-                    h.choice = options.iter().position(|o| o.status == building::status::OK).unwrap_or(0);
-                }
-                if input.pressed & buttons::ADS != 0 {
-                    h.choice = (h.choice + 1) % n;
-                }
-                if input.pressed & buttons::ROTATE_LEFT != 0 {
-                    h.turn = crate::math::wrap_angle(h.turn + building::ROTATE_STEP);
-                }
-                if input.pressed & buttons::ROTATE_RIGHT != 0 {
-                    h.turn = crate::math::wrap_angle(h.turn - building::ROTATE_STEP);
-                }
-                h.choice = h.choice.min(n - 1);
-                (h.at, h.angle) = placement(host, p, options[h.choice].radius, h.turn);
-                if input.pressed & buttons::FIRE != 0 && h.raise >= building::HAMMER_RAISE && !p.building {
-                    let o = options[h.choice];
-                    let (pos, angle) = (h.at, h.angle);
-                    let status = if o.status != building::status::OK {
-                        o.status
-                    } else if host.can_place(p.general, o.template, pos, angle) && host.place(p.general, o.template, pos, angle) != 0 {
-                        -1
-                    } else {
-                        building::status::BLOCKED
-                    };
-                    if status == -1 {
-                        placed = true;
-                        host.log(&format!("player {idx} placed {} turned {:.0} degrees", o.name(), h.turn.to_degrees()));
-                        self.emit(idx, EventKind::BuildPlaced { template: o.template });
-                    } else {
-                        host.log(&format!("player {idx} can't build {} (status {status}, ${})", o.name(), o.cost));
-                        self.emit(idx, EventKind::BuildRefused { status });
-                    }
-                }
-            }
-            if placed {
-                // One structure per hammer: it goes away once placed (bring it up again for another).
-                p.hammer = None;
-                self.emit(idx, EventKind::Hammer { up: false });
-            } else {
-                p.hammer = Some(h);
-            }
-        }
-        if p.building {
-            if let Some(site) = p.site {
-                let percent = host.work(p.general, site.id, building::FPS_BUILD_RATE);
-                if percent < 0.0 {
-                    p.building = false;
-                    if input.pressed & buttons::FIELD_COMPUTER != 0 {
-                        self.emit(idx, EventKind::BuildRefused { status: building::status::BUSY });
-                    }
-                } else if percent >= 100.0 {
-                    p.building = false;
-                    p.site = None;
-                    self.emit(idx, EventKind::WorkDone { kind: site.kind });
-                } else {
-                    p.site = Some(Site { percent, ..site });
-                    self.emit(idx, EventKind::Working { kind: site.kind, percent });
-                }
-            }
-        }
-        had_hammer || p.hammer.is_some() || p.building
-    }
-
-    /// Black Hat: hold it on enemy equipment or a Zero Hour drone until the hack completes.
-    fn step_hack(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim) {
-        if p.arsenal.hacking().is_none() {
-            p.hack = None;
-            return;
-        }
-        let eye = p.body.eye();
-        let dir = dir_from_angles(p.yaw, p.pitch);
-        // Equipment first, then the nearest drone in the aim cone.
-        let target = match self.equipment.aimed_at(host, p.general, eye, dir) {
-            Some(i) => Some((self.equipment.placed[i].object, HACK_TIME)),
-            None => {
-                let mut objs = Vec::new();
-                host.query(eye, HACK_RANGE, p.general, &mut objs);
-                objs.into_iter()
-                    .filter(|o| o.has(objflags::DRONE) && o.has(objflags::ENEMY) && !o.has(objflags::DEAD))
-                    .filter_map(|o| {
-                        let to = o.pos + Vec3::new(0.0, 0.0, o.height * 0.5) - eye;
-                        let d = to.length();
-                        (d > 1e-3 && to.dot(dir) / d >= HACK_COS).then_some((o.id, d))
-                    })
-                    .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
-                    .map(|(id, _)| (id, HACK_DRONE_TIME))
-            }
-        };
-        let Some((target, needed)) = target else {
-            p.hack = None;
-            return;
-        };
-        let progress = match p.hack {
-            Some((t, done)) if t == target => done + LOGIC_DT,
-            _ => LOGIC_DT,
-        };
-        if progress >= needed {
-            if let Some(i) = self.equipment.placed.iter().position(|e| e.object == target) {
-                self.equipment.hacked(host, i, idx, p.general);
-            } else {
-                host.capture(target, p.general);
-            }
-            p.arsenal.hack_done();
-            p.hack = None;
-            self.emit(idx, EventKind::Hacked);
-        } else {
-            p.hack = Some((target, progress));
-            self.emit(idx, EventKind::Hacking { progress: progress / needed });
-        }
-    }
-
-    /// The General under RTS control (Zero Hour's AI fights with it): count the shots its Zero Hour
-    /// weapons fired (`shots`, by slot: primary, secondary, lethal) against the arsenal, follow the
-    /// weapon the player selected (`current_slot`), and say which slot to lock to, if any. The
-    /// arsenal is the same one first person uses, so ammo and the weapon in hand carry over both
-    /// ways. Generals never taken control of get one here (in RTS mode).
-    pub fn rts_update(&mut self, host: &dyn LogicHost, player: i32, general: u32, current_slot: i32, shots: [u32; 3], target: Option<Vec3>) -> RtsWeapons {
-        let Ok(idx) = usize::try_from(player) else { return RtsWeapons::default() };
-        if idx >= MAX_PLAYERS {
-            return RtsWeapons::default();
-        }
-        if self.players[idx].as_ref().is_none_or(|p| p.general != general && !p.is_first_person()) {
-            let Some(info) = host.object(general, general) else { return RtsWeapons::default() };
-            let frame = self.frame;
-            self.players[idx] = Some(PlayerSim {
-                general,
-                mode: Mode::Rts,
-                body: Body::new(info.pos, &self.tuning),
-                yaw: info.yaw,
-                pitch: 0.0,
-                arsenal: Arsenal::new(),
-                rng: Rng::new(general.wrapping_mul(2_654_435_761) ^ frame),
-                input: FpsInput { yaw: info.yaw, ..Default::default() },
-                pressed_accum: 0,
-                health: info.health,
-                max_health: info.max_health,
-                regen_wait: 0.0,
-                hack: None,
-                rts_lock: -1,
-                rts_tactical: false,
-                rts_gun: 0,
-            hammer: None,
-            site: None,
-            building: false,
-            });
-        }
-        let Some(p) = self.players[idx].as_mut().filter(|p| p.general == general) else { return RtsWeapons::default() };
-        if p.mode != Mode::Rts {
-            return rts_weapons(&p.arsenal, -1, p.rts_tactical);
-        }
-        let a = &mut p.arsenal;
-        for (slot, &n) in shots.iter().enumerate().take(2) {
-            for _ in 0..n {
-                a.rts_shot(slot);
-            }
-        }
-        // The third slot only stands in for the throw: the grenade itself is BO2's, thrown here as
-        // first person throws it (its fuse, bounces and blast), at what Zero Hour aimed at.
-        let mut throws = Vec::new();
-        for _ in 0..shots[2] {
-            let off = if p.rts_tactical { &mut a.tactical } else { &mut a.lethal };
-            if off.count > 0 {
-                off.count -= 1;
-                throws.push(off.def);
-            }
-        }
-        if (0..2).contains(&current_slot) {
-            p.rts_gun = current_slot;
-        }
-        if (0..a.weapons.len() as i32).contains(&current_slot) {
-            a.active = current_slot as usize;
-        }
-        let mut lock = std::mem::replace(&mut p.rts_lock, -1);
-        if !throws.is_empty() {
-            lock = p.rts_gun; // back to the gun after the throw
-        }
-        let a = &p.arsenal;
-        let current = if lock >= 0 { lock } else { current_slot };
-        let offhand_left = if p.rts_tactical { a.tactical.count } else { a.lethal.count };
-        let empty = |s: i32| if s == 2 { offhand_left == 0 } else { a.rts_ammo(s as usize).0 + a.rts_ammo(s as usize).1 == 0 };
-        if (0..3).contains(&current) && empty(current) {
-            // Out of ammo: the first gun that has some (the grenades only by choice).
-            lock = (0..a.weapons.len()).find(|&s| a.rts_ammo(s).0 + a.rts_ammo(s).1 > 0).map_or(-1, |s| s as i32);
-        }
-        let out = rts_weapons(a, lock, p.rts_tactical);
-        if let Some(from) = host.object(general, general).map(|o| o.pos + Vec3::new(0.0, 0.0, p.body.eye_height * 0.9)) {
-            let yaw = p.yaw;
-            for def in throws {
-                let to = target.unwrap_or(from);
-                let speed = if def.projectile_speed > 0.0 { def.projectile_speed } else { crate::units::inches(800.0) };
-                let vel = throw_velocity(from, to, speed);
-                let mut proj = Projectile::launch(def, general, from, vel.normalized_or_zero(), def.fuse_time, host, yaw);
-                proj.vel = vel;
-                self.projectiles.push((idx, proj));
-            }
-        }
-        out
-    }
-
-    /// Under RTS control: make the third slot throw the tactical (`true`) or the lethal.
-    pub fn rts_offhand(&mut self, player: i32, general: u32, tactical: bool) {
-        let Some(p) = usize::try_from(player).ok().and_then(|i| self.players.get_mut(i)).and_then(|p| p.as_mut()) else { return };
-        if p.general == general {
-            p.rts_tactical = tactical;
-        }
-    }
-
-    /// The ammo a General's weapons have, for the control bar (the loadout's when the General has
-    /// no arsenal yet).
-    pub fn rts_ammo(&self, general: u32) -> RtsWeapons {
-        match self.players.iter().flatten().find(|p| p.general == general) {
-            Some(p) => rts_weapons(&p.arsenal, -1, p.rts_tactical),
-            None => rts_weapons(&Arsenal::new(), -1, false),
-        }
-    }
 
     /// How each controlled General looks in third person: its General, the viewmodel index of the
     /// weapon in hand (its world model is shown), the tablet (0 none, 1 coming up for the field
@@ -754,303 +534,32 @@ impl Sim {
         p.health = info.health;
     }
 
-    fn apply_weapon_action(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, action: WeaponAction) {
-        match action {
-            WeaponAction::Fire { spread_deg, jitter, recoil, pellet } => {
-                let def = p.arsenal.current().def;
-                let eye = p.body.eye();
-                // Random point in the spread cone (polar mapping of two uniform samples).
-                let angle = jitter.0 * std::f32::consts::PI;
-                let radius = spread_deg.to_radians() * jitter.1.abs().sqrt();
-                let dir = dir_from_angles(p.yaw + radius * angle.cos(), p.pitch + radius * angle.sin());
-
-                let mut targets = gather_targets(host, eye, def.max_range, p.general);
-                let ground = |x: f32, y: f32| host.ground_height(x, y);
-                let hit = hitscan::trace(eye, dir, def.max_range, &targets, p.general, &ground);
-                // One tracer and sound per shot, not per pellet.
-                let fx = if pellet == 0 { Some(def.fx_weapon.as_str()).filter(|f| !f.is_empty()) } else { None };
-                // Enemy equipment in the way takes the shot.
-                let reach = match hit {
-                    HitResult::Object { distance, .. } => distance,
-                    other => (other.point() - eye).length(),
-                };
-                if let Some((i, t)) = self.equipment.shot(host, p.general, eye, dir, reach) {
-                    if let Some(fx) = fx {
-                        host.fire_fx(p.general, fx, 0, eye + dir * t);
-                    }
-                    let e = self.equipment.destroy(host, i, Some(idx));
-                    self.equipment_events(vec![e]);
-                    if pellet == 0 {
-                        self.emit(idx, EventKind::Shot { origin: eye, end: eye + dir * t });
-                        self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1 });
-                    }
-                    return;
-                }
-                match hit {
-                    HitResult::Object { id, point, distance, headshot } => {
-                        if let Some(fx) = fx {
-                            host.fire_fx(p.general, fx, id, point);
-                        }
-                        let mult = if headshot { def.head_multiplier } else { 1.0 };
-                        let victim = host.object(id, p.general);
-                        let infantry = victim.is_some_and(|v| v.has(objflags::INFANTRY));
-                        let fmj = if def.fmj && !infantry { FMJ_VEHICLE_DAMAGE } else { 1.0 };
-                        let amount = def.damage_at(distance) * mult * fmj * BO2_TO_ZH_DAMAGE;
-                        let mut kill = host.damage(p.general, id, amount, damage_kind::SMALL_ARMS);
-                        // FMJ: on through the first soldier into whoever is behind.
-                        if def.fmj && infantry {
-                            targets.retain(|t| t.id != id);
-                            if let HitResult::Object { id: next, distance, headshot, .. } = hitscan::trace(point + dir * 0.1, dir, def.max_range - distance, &targets, p.general, &ground) {
-                                let mult = if headshot { def.head_multiplier } else { 1.0 };
-                                kill |= host.damage(p.general, next, def.damage_at(distance) * mult * PENETRATION_DAMAGE * BO2_TO_ZH_DAMAGE, damage_kind::SMALL_ARMS);
-                            }
-                        }
-                        self.emit(idx, EventKind::HitMarker { headshot, kill });
-                        if kill {
-                            if p.arsenal.has(Perk::Scavenger) {
-                                p.arsenal.scavenge();
-                            }
-                        }
-                    }
-                    other => {
-                        if let Some(fx) = fx {
-                            host.fire_fx(p.general, fx, 0, other.point());
-                        }
-                    }
-                }
-                if pellet == 0 {
-                    self.emit(idx, EventKind::Shot { origin: eye, end: hit.point() });
-                    self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1 });
-                }
-            }
-            WeaponAction::Launch { def, pellet } => {
-                let eye = p.body.eye();
-                // The tri-bolt's bolts fan out a little.
-                let spread = (pellet as f32 - (def.pellets.max(1) - 1) as f32 * 0.5) * 0.04;
-                let dir = dir_from_angles(p.yaw + spread, p.pitch);
-                if !def.fx_weapon.is_empty() {
-                    host.fire_fx(p.general, &def.fx_weapon, 0, eye + dir * 10.0);
-                }
-                let proj = Projectile::launch(def, p.general, eye + dir * 2.0, dir, def.fuse_time, host, p.yaw);
-                self.projectiles.push((idx, proj));
-                if pellet == 0 {
-                    self.emit(idx, EventKind::Launched);
-                }
-            }
-            WeaponAction::Throw { def, fuse_left } => {
-                let eye = p.body.eye();
-                // BO2 throws a little above the crosshair.
-                let dir = dir_from_angles(p.yaw, (p.pitch + 0.12).min(1.4));
-                let mut proj = Projectile::launch(def, p.general, eye + dir * 1.5, dir, fuse_left, host, p.yaw);
-                proj.vel = proj.vel + p.body.vel * 0.5;
-                proj.flak_jacket = p.arsenal.has(Perk::FlakJacket);
-                proj.tactical_mask = p.arsenal.has(Perk::TacticalMask);
-                self.projectiles.push((idx, proj));
-                self.emit(idx, EventKind::Thrown { lethal: def.class == Class::Lethal });
-            }
-            WeaponAction::CookedOff { def } => {
-                let mut proj = Projectile::launch(def, p.general, p.body.eye(), Vec3::ZERO, 0.0, host, p.yaw);
-                proj.vel = Vec3::ZERO;
-                proj.fuse = 0.0;
-                proj.flak_jacket = p.arsenal.has(Perk::FlakJacket);
-                self.projectiles.push((idx, proj));
-            }
-            WeaponAction::OffhandReady { lethal } => self.emit(idx, EventKind::OffhandReady { lethal }),
-            WeaponAction::Melee { damage } => {
-                self.emit(idx, EventKind::Melee);
-                let eye = p.body.eye();
-                let (fwd, _) = basis_xy(p.yaw);
-                let mut near = Vec::new();
-                host.query(eye, MELEE_RANGE + 12.0, p.general, &mut near);
-                let victim = near
-                    .iter()
-                    .filter(|o| o.id != p.general && !o.has(objflags::DEAD) && !o.has(objflags::ALLY))
-                    .filter(|o| !o.has(objflags::NO_COLLIDE) && !o.has(objflags::STRUCTURE))
-                    .filter(|o| {
-                        let to = o.pos - p.body.pos;
-                        let d = to.length_xy();
-                        d <= MELEE_RANGE + reach_radius(o) && (d < 1e-3 || (to.x * fwd.x + to.y * fwd.y) / d > 0.6)
-                    })
-                    .min_by(|a, b| {
-                        let da = (a.pos - p.body.pos).length_xy();
-                        let db = (b.pos - p.body.pos).length_xy();
-                        da.total_cmp(&db).then(a.id.cmp(&b.id))
-                    });
-                if let Some(v) = victim {
-                    host.fire_fx(p.general, MELEE_FX_WEAPON, v.id, v.pos);
-                    let kill = host.damage(p.general, v.id, damage * BO2_TO_ZH_DAMAGE, damage_kind::MELEE);
-                    self.emit(idx, EventKind::HitMarker { headshot: false, kill });
-                    if kill {
-                        if p.arsenal.has(Perk::Scavenger) {
-                            p.arsenal.scavenge();
-                        }
-                    }
-                }
-            }
-            WeaponAction::Plant { def } => {
-                let (fwd, _) = basis_xy(p.yaw);
-                let at = p.body.pos + fwd * PLANT_DISTANCE;
-                let at = Vec3::new(at.x, at.y, host.ground_height(at.x, at.y));
-                let object = if def.projectile_object.is_empty() { 0 } else { host.spawn(&def.projectile_object, p.general, at, p.yaw) };
-                let placed = Placed::new(def, idx, p.general, object, at, p.yaw, None);
-                self.emit(idx, EventKind::Planted { kind: placed.kind });
-                self.equipment.add(placed);
-            }
-            WeaponAction::Detonate => {
-                let mut ev = Vec::new();
-                self.equipment.detonate(host, idx, &mut ev);
-                if !ev.is_empty() {
-                    self.emit(idx, EventKind::Detonated);
-                }
-                // Points for what the C4 kills (the owner's own state is out of the table now).
-                for e in &ev {
-                    if let EquipEvent::Exploded { at, hit_enemy, kill, .. } = *e {
-                        self.emit(idx, EventKind::Exploded { at });
-                        if hit_enemy {
-                            self.emit(idx, EventKind::HitMarker { headshot: false, kill });
-                        }
-                        if kill {
-                        }
-                    }
-                }
-            }
-            WeaponAction::AltToggled => self.emit(idx, EventKind::AltToggled),
-            WeaponAction::ReloadStarted => self.emit(idx, EventKind::ReloadStarted),
-            WeaponAction::Swapped => self.emit(idx, EventKind::Swapped),
-            WeaponAction::DryFire | WeaponAction::ReloadFinished => {}
-        }
-    }
-
 }
 
-/// A General's Zero Hour weapon slots under RTS control (primary, secondary, lethal): rounds in
-/// the magazine (grenades in hand for the lethal), spare rounds, and the slot to lock to (-1 none).
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct RtsWeapons {
-    pub ammo: [i32; 3],
-    pub reserve: [i32; 3],
-    pub lock: i32,
-    /// Tactical grenades left, and whether the third slot throws them (else the lethal).
-    pub tactical: i32,
-    pub tactical_selected: i32,
-}
-
-fn rts_weapons(a: &Arsenal, lock: i32, tactical_selected: bool) -> RtsWeapons {
-    let mut out = RtsWeapons { lock, tactical: a.tactical.count as i32, tactical_selected: tactical_selected as i32, ..Default::default() };
-    for s in 0..3 {
-        let (ammo, reserve) = a.rts_ammo(s);
-        out.ammo[s] = ammo as i32;
-        out.reserve[s] = reserve as i32;
-    }
-    out
-}
-
-/// Launch velocity for a grenade of throw speed `speed` from `from` to land at `to` (the low arc;
-/// out of reach, the farthest throw, at 45 degrees).
-pub fn throw_velocity(from: Vec3, to: Vec3, speed: f32) -> Vec3 {
-    let g = crate::projectiles::GRAVITY;
-    let flat = Vec3::new(to.x - from.x, to.y - from.y, 0.0);
-    let range = flat.length_xy().max(1.0);
-    let rise = to.z - from.z;
-    let v2 = speed * speed;
-    let disc = v2 * v2 - g * (g * range * range + 2.0 * rise * v2);
-    let tan = if disc >= 0.0 { (v2 - disc.sqrt()) / (g * range) } else { 1.0 };
-    let angle = tan.atan();
-    let along = flat.normalized_or_zero();
-    along * (speed * angle.cos()) + Vec3::new(0.0, 0.0, speed * angle.sin())
-}
-
-/// Planted equipment goes down this far in front of the General.
-pub const PLANT_DISTANCE: f32 = inches(30.0);
-/// FMJ: damage to the second soldier a round passes through.
-pub const PENETRATION_DAMAGE: f32 = 0.75;
-
-fn reach_radius(o: &ObjInfo) -> f32 {
-    if o.has(objflags::INFANTRY) {
-        INFANTRY_HIT_RADIUS
-    } else {
-        o.major_radius
-    }
-}
-
-/// Convert nearby objects into hitscan targets. Friendlies are skipped so bullets pass through them
-/// (BO2 has no friendly fire in core modes); dead and non-colliding objects are skipped.
-pub fn gather_targets(host: &dyn LogicHost, eye: Vec3, range: f32, shooter: u32) -> Vec<Target> {
-    let mut objs = Vec::new();
-    host.query(eye, range, shooter, &mut objs);
-    let mut targets: Vec<Target> = objs
-        .iter()
-        .filter(|o| o.id != shooter && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::ALLY))
-        .map(target_from)
-        .collect();
-    // Deterministic order regardless of partition iteration order.
-    targets.sort_by_key(|t| t.id);
-    targets
-}
-
-pub fn target_from(o: &ObjInfo) -> Target {
-    if o.has(objflags::INFANTRY) {
-        return Target {
-            id: o.id,
-            pos: o.pos,
-            shape: Shape::Cylinder { radius: INFANTRY_HIT_RADIUS.min(o.major_radius.max(1.0)), height: o.height.max(6.0) },
-            head_fraction: INFANTRY_HEAD_FRACTION,
-        };
-    }
-    let shape = match o.geom_type {
-        geom::BOX => Shape::Box { half_x: o.major_radius, half_y: o.minor_radius, height: o.height.max(1.0), yaw: o.yaw },
-        geom::SPHERE => Shape::Sphere { radius: o.major_radius },
-        _ => Shape::Cylinder { radius: o.major_radius, height: o.height.max(1.0) },
+/// The log line for an event, or `None` for the quiet ones (the ffi log and the tests share this
+/// vocabulary, so the event enum has one wording).
+pub fn describe_event(e: &Event) -> Option<String> {
+    use EventKind::*;
+    let msg = match e.kind {
+        EnteredFps { general } => format!("player {} took control of General {general}", e.player),
+        FieldComputerOpened => format!("player {} opened the field computer", e.player),
+        ReturnedToRts { general } => format!("player {} returned General {general} to RTS control", e.player),
+        GeneralDied { general } => format!("player {}'s General {general} died", e.player),
+        HitMarker { headshot, kill: true } => format!("player {} killed a target (headshot: {headshot})", e.player),
+        Damaged { amount } => format!("player {}'s General took {amount:.0} damage", e.player),
+        Swapped => format!("player {} swapped weapons", e.player),
+        Melee => format!("player {} meleed", e.player),
+        Thrown { lethal } => format!("player {} threw a {}", e.player, if lethal { "lethal" } else { "tactical" }),
+        Exploded { at } => format!("player {}'s grenade went off at ({:.0}, {:.0})", e.player, at.x, at.y),
+        Planted { kind } => format!("player {} put down equipment ({kind:?})", e.player),
+        Detonated => format!("player {} set off their C4", e.player),
+        Intercepted { .. } => format!("player {}'s Trophy System shot down a projectile", e.player),
+        DestroyedEquipment => format!("player {} destroyed enemy equipment", e.player),
+        Hacked => format!("player {} hacked with the Black Hat", e.player),
+        AltToggled => format!("player {} toggled the weapon's alt mode", e.player),
+        _ => return None,
     };
-    Target { id: o.id, pos: o.pos, shape, head_fraction: 0.0 }
-}
-
-/// [`World`] backed by the engine: terrain from `TheTerrainLogic`, solid footprints from structures
-/// and ground vehicles.
-pub struct HostWorld<'a> {
-    pub host: &'a dyn LogicHost,
-    pub viewer: u32,
-}
-
-impl World for HostWorld<'_> {
-    fn ground_height(&self, x: f32, y: f32) -> f32 {
-        self.host.ground_height(x, y)
-    }
-
-    fn is_walkable(&self, x: f32, y: f32) -> bool {
-        self.host.is_walkable(x, y)
-    }
-
-    fn extent(&self) -> (Vec3, Vec3) {
-        self.host.extent()
-    }
-
-    fn blockers(&self, pos: Vec3, radius: f32, out: &mut Vec<Blocker>) {
-        let mut objs = Vec::new();
-        self.host.query(pos, radius, self.viewer, &mut objs);
-        objs.sort_by_key(|o| o.id);
-        for o in objs.iter().filter(|o| o.id != self.viewer) {
-            if o.has(objflags::DEAD) || o.has(objflags::NO_COLLIDE) || o.has(objflags::AIRBORNE) {
-                continue;
-            }
-            if !(o.has(objflags::STRUCTURE) || o.has(objflags::VEHICLE)) {
-                continue;
-            }
-            let top = o.pos.z + o.height.max(1.0);
-            out.push(match o.geom_type {
-                geom::BOX => Blocker::Box { center: o.pos, half_x: o.major_radius, half_y: o.minor_radius, yaw: o.yaw, top },
-                _ => Blocker::Circle { center: o.pos, radius: o.major_radius, top },
-            });
-        }
-    }
-}
-
-/// Where the hammer puts a structure with a footprint of `radius`, and which way it faces: its
-/// front towards him, turned by `turn`.
-pub fn placement(host: &dyn LogicHost, p: &PlayerSim, radius: f32, turn: f32) -> (Vec3, f32) {
-    let pos = building::place_point(p.body.eye(), dir_from_angles(p.yaw, p.pitch), radius, |x, y| host.ground_height(x, y));
-    (pos, crate::math::wrap_angle(p.yaw + std::f32::consts::PI + turn))
+    Some(msg)
 }
 
 #[cfg(test)]

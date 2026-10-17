@@ -20,7 +20,6 @@ pub mod math;
 pub mod names;
 pub mod movement;
 pub mod projectiles;
-pub mod schema;
 pub mod sim;
 pub mod sounds;
 pub mod strings;

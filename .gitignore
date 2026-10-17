@@ -9,4 +9,4 @@
 *.ipak
 *.dmp
 .claude/
-.vscode/
+.vscode/.kilo/

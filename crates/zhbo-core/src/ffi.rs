@@ -162,28 +162,10 @@ pub extern "C" fn zhbo_logic_step(frame: u32) {
 /// `ConquerOps.log` is the in-game oracle: lifecycle events, kills, and a once-per-second pose.
 fn log_step(s: &State, first_new_event: usize, frame: u32) {
     use crate::host::LogicHost;
-    use crate::sim::EventKind;
     for e in s.sim.events.iter().skip(first_new_event) {
-        let line = match e.kind {
-            EventKind::EnteredFps { general } => format!("player {} took control of General {general}", e.player),
-            EventKind::FieldComputerOpened => format!("player {} opened the field computer", e.player),
-            EventKind::ReturnedToRts { general } => format!("player {} returned General {general} to RTS control", e.player),
-            EventKind::GeneralDied { general } => format!("player {}'s General {general} died", e.player),
-            EventKind::HitMarker { headshot, kill: true } => format!("player {} killed a target (headshot: {headshot})", e.player),
-            EventKind::Damaged { amount } => format!("player {}'s General took {amount:.0} damage", e.player),
-            EventKind::Swapped => format!("player {} swapped weapons", e.player),
-            EventKind::Melee => format!("player {} meleed", e.player),
-            EventKind::Thrown { lethal } => format!("player {} threw a {}", e.player, if lethal { "lethal" } else { "tactical" }),
-            EventKind::Exploded { at } => format!("player {}'s grenade went off at ({:.0}, {:.0})", e.player, at.x, at.y),
-            EventKind::Planted { kind } => format!("player {} put down equipment ({kind:?})", e.player),
-            EventKind::Detonated => format!("player {} set off their C4", e.player),
-            EventKind::Intercepted { .. } => format!("player {}'s Trophy System shot down a projectile", e.player),
-            EventKind::DestroyedEquipment => format!("player {} destroyed enemy equipment", e.player),
-            EventKind::Hacked => format!("player {} hacked with the Black Hat", e.player),
-            EventKind::AltToggled => format!("player {} toggled the weapon's alt mode", e.player),
-            _ => continue,
-        };
-        s.logic.log(&line);
+        if let Some(line) = crate::sim::describe_event(e) {
+            s.logic.log(&line);
+        }
     }
     if frame % 30 == 0 {
         for (i, p) in s.sim.players.iter().enumerate() {
