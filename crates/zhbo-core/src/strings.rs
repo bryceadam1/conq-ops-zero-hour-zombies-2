@@ -121,6 +121,9 @@ mod tests {
 
     #[test]
     fn lookup_is_case_insensitive_and_nul_terminated() {
+        // The other test loaded a shipped table that overrides the built-in English: reset it
+        // so this one exercises the fallback.
+        load("");
         let s = lookup("object:zhbo_general").unwrap();
         assert_eq!(*s.last().unwrap(), 0);
         assert_eq!(String::from_utf16(&s[..s.len() - 1]).unwrap(), "General");
