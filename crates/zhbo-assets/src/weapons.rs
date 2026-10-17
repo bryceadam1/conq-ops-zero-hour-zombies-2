@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 use zhbo_core::attachments::{self, AttachmentDef};
 use zhbo_core::units::inches;
-use zhbo_core::weapons::{Class, Effect, FireMode, Kick, Loadout, Place, Table, WeaponDef, ALT_CLIPS, MELEE_DAMAGE};
+use zhbo_core::weapons::{Class, Effect, FireMode, Kind, Kick, Loadout, Place, Table, WeaponDef, ALT_CLIPS, MELEE_DAMAGE};
 use zhbo_formats::weapon::{self as bo2, Weapon};
 
 
@@ -232,6 +232,21 @@ const TACTICALS: &[&str] = &[
     "pda_hack_mp",
 ];
 
+/// What each BO2 weapon is as equipment once down (refactor plan 3.2): the weapon table's
+/// `Equipment` block, written here.
+pub fn equipment_kind_of(name: &str) -> Kind {
+    match name {
+        "claymore_mp" => Kind::Claymore,
+        "bouncingbetty_mp" => Kind::Betty,
+        "satchel_charge_mp" => Kind::C4,
+        "proximity_grenade_mp" => Kind::Shock,
+        "trophy_system_mp" => Kind::Trophy,
+        "tactical_insertion_mp" => Kind::Insertion,
+        "sensor_grenade_mp" => Kind::Sensor,
+        _ => Kind::Other,
+    }
+}
+
 /// A weapon a player can carry in BO2 multiplayer (not killstreak, turret or alt-mode entries).
 pub fn is_player_weapon(w: &Weapon) -> bool {
     if w.name == "knife_held_mp" {
@@ -337,6 +352,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
     let shells = w.reload_start_time > 0.0 && w.reload_ammo_add > 0;
     WeaponDef {
         id: w.name.clone(),
+        equipment_kind: equipment_kind_of(&w.name),
         display_name,
         class,
         fire: fire_mode(w),
