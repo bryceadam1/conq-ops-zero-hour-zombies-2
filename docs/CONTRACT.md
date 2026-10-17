@@ -105,6 +105,20 @@ names`; the header is checked in and a zhbo-core test fails when it drifts). Bot
 round-trip the builders (`W0302` → viewmodel 3, mesh 2). When the mod starts inventing a new name,
 add a builder there and route every literal — Rust or C++ — through it.
 
+## Tuning
+
+The gameplay tuning pack (`crates/zhbo-core/src/tuning.rs`, filled from
+`Data/ConquerOps/tuning.ini`) is the single source for the numbers gameplay code used to scatter
+across ~10 files (movement, regeneration, building rates, projectile physics, the field
+computer's raise time). The pack is part of the mod like `weapons.ini`: the bridge loads it once
+at init (`zhbo_load_tuning`, path from the names registry), every player must have the identical
+file, and the sim must never read a tuning value from anywhere else — modules take `&Tuning`
+instead of their own constants. When the file is absent the built-in defaults in `tuning.rs` keep
+tests and the fallback working; a test asserts those defaults equal the shipped file's values.
+Adding a tuning knob: add the field to `Tuning`, give it the current hardcoded value as default,
+parse it in `Tuning::from_ini`, add it to `data/ConquerOps/tuning.ini`, and route the old
+constant's readers through the struct. The pack moves numbers; it must not change them.
+
 ## Versioning
 
 `ZHBO_ABI_VERSION` (`host/zhbo/zhbo_core.h`) must equal `zhbo_abi_version()`; struct sizes are asserted
