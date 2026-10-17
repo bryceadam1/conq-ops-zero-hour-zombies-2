@@ -447,7 +447,7 @@ static void gatherClientInput(ZhboClientIn &in, Bool focused, Bool menuUp)
 	in.logic_frame = TheGameLogic->getFrame();
 	if (focused && !menuUp)
 	{
-		zhbo_platform::readKeys(in.keys);
+		zhbo_platform::readKeys(in.keys.bits);
 	}
 
 	// Test runs: log focus changes and the held keys, so an input test can tell lost focus from
@@ -461,14 +461,24 @@ static void gatherClientInput(ZhboClientIn &in, Bool focused, Bool menuUp)
 			logf("window focus %s", focused ? "gained" : "lost");
 			s_wasFocused = focused;
 		}
-		char held[64];
+		static const char *const keyNames[] = {
+			"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q",
+			"R", "S", "T", "U", "V", "W", "X", "Y", "Z", "1", "2", "3", "4", "5", "SPACE", "TAB",
+			"SHIFT", "CTRL", "LMB", "RMB",
+		};
+		static_assert(sizeof(keyNames) / sizeof(keyNames[0]) == (int)zhbo_platform::keys::Key::COUNT, "key vocabulary must match");
+		char held[96];
 		Int n = 0;
 		uint32_t hash = 0;
-		for (Int k = 0; k < 256 && n < (Int)sizeof(held) - 1; ++k)
+		for (Int k = 0; k < (Int)sizeof(zhbo_platform::keys::Key); ++k)
 		{
-			if (in.keys[k])
+			const uint64_t bit = 1ull << (k % 64);
+			if (in.keys.bits[k / 64] & bit)
 			{
-				held[n++] = (k >= '0' && k <= 'Z') ? (char)k : '?';
+				for (const char *c = keyNames[k]; *c && n < (Int)sizeof(held) - 1; ++c)
+					held[n++] = *c;
+				if (n < (Int)sizeof(held) - 1)
+					held[n++] = ' ';
 				hash = hash * 31 + (uint32_t)k + 1;
 			}
 		}

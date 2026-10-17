@@ -21,27 +21,36 @@ namespace zhbo_platform
 		return TheSDL3Window != nullptr && (SDL_GetWindowFlags(TheSDL3Window) & SDL_WINDOW_INPUT_FOCUS) != 0;
 	}
 
-	void readKeys(uint8_t keys[256])
+	void readKeys(uint64_t bits[4])
 	{
-		std::memset(keys, 0, 256);
+		bits[0] = 0;
+		bits[1] = 0;
+		bits[2] = 0;
+		bits[3] = 0;
+		using namespace keys;
 		const bool *state = SDL_GetKeyboardState(nullptr);
+		const SDL_Scancode letters[26] = { SDL_SCANCODE_A, SDL_SCANCODE_B, SDL_SCANCODE_C, SDL_SCANCODE_D,
+			SDL_SCANCODE_E, SDL_SCANCODE_F, SDL_SCANCODE_G, SDL_SCANCODE_H, SDL_SCANCODE_I, SDL_SCANCODE_J,
+			SDL_SCANCODE_K, SDL_SCANCODE_L, SDL_SCANCODE_M, SDL_SCANCODE_N, SDL_SCANCODE_O, SDL_SCANCODE_P,
+			SDL_SCANCODE_Q, SDL_SCANCODE_R, SDL_SCANCODE_S, SDL_SCANCODE_T, SDL_SCANCODE_U, SDL_SCANCODE_V,
+			SDL_SCANCODE_W, SDL_SCANCODE_X, SDL_SCANCODE_Y, SDL_SCANCODE_Z };
 		for (int i = 0; i < 26; ++i)
 		{
-			keys['A' + i] = state[SDL_SCANCODE_A + i] ? 1 : 0;
+			setDown(bits, (Key)(Key::A + i), state[letters[i]]);
 		}
 		// SDL orders the digit row 1..9, 0.
-		for (int i = 1; i <= 9; ++i)
+		const SDL_Scancode digits[5] = { SDL_SCANCODE_1, SDL_SCANCODE_2, SDL_SCANCODE_3, SDL_SCANCODE_4, SDL_SCANCODE_5 };
+		for (int i = 0; i < 5; ++i)
 		{
-			keys['0' + i] = state[SDL_SCANCODE_1 + (i - 1)] ? 1 : 0;
+			setDown(bits, (Key)(Key::Key1 + i), state[digits[i]]);
 		}
-		keys['0'] = state[SDL_SCANCODE_0] ? 1 : 0;
-		keys[0x10] = (state[SDL_SCANCODE_LSHIFT] || state[SDL_SCANCODE_RSHIFT]) ? 1 : 0;
-		keys[0x11] = (state[SDL_SCANCODE_LCTRL] || state[SDL_SCANCODE_RCTRL]) ? 1 : 0;
-		keys[0x20] = state[SDL_SCANCODE_SPACE] ? 1 : 0;
-		keys[0x09] = state[SDL_SCANCODE_TAB] ? 1 : 0;
+		setDown(bits, Key::Space, state[SDL_SCANCODE_SPACE]);
+		setDown(bits, Key::Tab, state[SDL_SCANCODE_TAB]);
+		setDown(bits, Key::Shift, state[SDL_SCANCODE_LSHIFT] || state[SDL_SCANCODE_RSHIFT]);
+		setDown(bits, Key::Control, state[SDL_SCANCODE_LCTRL] || state[SDL_SCANCODE_RCTRL]);
 		const SDL_MouseButtonFlags buttons = SDL_GetMouseState(nullptr, nullptr);
-		keys[0x01] = (buttons & SDL_BUTTON_LMASK) ? 1 : 0;
-		keys[0x02] = (buttons & SDL_BUTTON_RMASK) ? 1 : 0;
+		setDown(bits, Key::MouseLeft, (buttons & SDL_BUTTON_LMASK) != 0);
+		setDown(bits, Key::MouseRight, (buttons & SDL_BUTTON_RMASK) != 0);
 	}
 
 	static bool s_captured = false;
@@ -117,12 +126,27 @@ namespace zhbo_platform
 		return GetForegroundWindow() == ApplicationHWnd;
 	}
 
-	void readKeys(uint8_t keys[256])
+	void readKeys(uint64_t bits[4])
 	{
-		for (int vk = 0; vk < 256; ++vk)
+		using namespace keys;
+		const Key letters[26] = { Key::A, Key::B, Key::C, Key::D, Key::E, Key::F, Key::G, Key::H,
+			Key::I, Key::J, Key::K, Key::L, Key::M, Key::N, Key::O, Key::P, Key::Q, Key::R, Key::S,
+			Key::T, Key::U, Key::V, Key::W, Key::X, Key::Y, Key::Z };
+		for (int i = 0; i < 26; ++i)
 		{
-			keys[vk] = (GetAsyncKeyState(vk) & 0x8000) ? 1 : 0;
+			setDown(bits, letters[i], (GetAsyncKeyState('A' + i) & 0x8000) != 0);
 		}
+		const Key digits[5] = { Key::Key1, Key::Key2, Key::Key3, Key::Key4, Key::Key5 };
+		for (int i = 0; i < 5; ++i)
+		{
+			setDown(bits, digits[i], (GetAsyncKeyState('1' + i) & 0x8000) != 0);
+		}
+		setDown(bits, Key::Space, (GetAsyncKeyState(VK_SPACE) & 0x8000) != 0);
+		setDown(bits, Key::Tab, (GetAsyncKeyState(VK_TAB) & 0x8000) != 0);
+		setDown(bits, Key::Shift, (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
+		setDown(bits, Key::Control, (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0);
+		setDown(bits, Key::MouseLeft, (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0);
+		setDown(bits, Key::MouseRight, (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0);
 	}
 
 	static bool s_captured = false;

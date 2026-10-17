@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 16u
+#define ZHBO_ABI_VERSION 17u
 
 /* Field counts of the API tables below. The Rust side derives its layout asserts and
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
@@ -154,12 +154,19 @@ typedef struct ZhboClientApi
 	void (*ghost)(uint32_t tmpl, const ZhboVec3 *pos, float angle, int32_t legal);
 } ZhboClientApi;
 
+/* The 256-bit platform-neutral key-down set (see input.rs's Key enum: low bits first, one bit
+   per named physical key, mouse button or wheel). */
+typedef struct ZhboKeySet
+{
+	uint64_t bits[4];
+} ZhboKeySet;
+
 typedef struct ZhboClientIn
 {
 	float dt;
 	int32_t local_player;
 	uint32_t logic_frame;
-	uint8_t keys[256];
+	ZhboKeySet keys;
 	float mouse_dx;
 	float mouse_dy;
 	float wheel;
@@ -266,7 +273,7 @@ int32_t zhbo_check_requirements(char *msg, uint32_t cap);
 
 static_assert(sizeof(ZhboObjInfo) == 56, "ZhboObjInfo layout must match host.rs");
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
-static_assert(sizeof(ZhboClientIn) == 332, "ZhboClientIn layout must match client.rs");
+static_assert(sizeof(ZhboClientIn) == 112, "ZhboClientIn layout must match client.rs");
 static_assert(sizeof(ZhboClientOut) == 132, "ZhboClientOut layout must match client.rs");
 static_assert(sizeof(ZhboLogicApi) == ZHBO_LOGIC_API_FIELDS * sizeof(void *), "ZhboLogicApi layout must match host.rs");
 static_assert(sizeof(ZhboWorldPose) == 16, "ZhboWorldPose layout must match ffi.rs");

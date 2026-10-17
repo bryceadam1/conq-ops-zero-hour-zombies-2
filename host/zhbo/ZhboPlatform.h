@@ -10,10 +10,32 @@ namespace zhbo_platform
 	// Whether the game window has keyboard focus.
 	bool windowFocused();
 
-	// Fill keys[256], indexed by Windows virtual-key code (the Rust core's key vocabulary,
-	// `zhbo_core::client::vk`): 0x01/0x02 mouse buttons, 0x10 Shift, 0x11 Ctrl, 0x20 Space,
-	// '0'-'9', 'A'-'Z'. Non-zero means held.
-	void readKeys(uint8_t keys[256]);
+	// Fill the 256-bit platform-neutral key-down set (bit i = key i of the Rust core's `Key`
+	// enum, A..Z, Key1..Key5, Space, Tab, Shift, Control, MouseLeft, MouseRight). The bridge maps
+	// native scancodes or virtual keys straight to these bits.
+	void readKeys(uint64_t keys[4]);
+
+	// The key enum, shared with the bridge (bit indices must match input.rs's `Key`).
+	namespace keys
+	{
+		enum Key : uint8_t
+		{
+			A, B, C, D, E, F, G, H, I, J, K, L, M, N, O, P, Q, R, S, T, U, V, W, X, Y, Z,
+			Key1, Key2, Key3, Key4, Key5,
+			Space, Tab, Shift, Control,
+			MouseLeft, MouseRight,
+			COUNT = MouseRight + 1,
+		};
+		inline void setDown(uint64_t bits[4], Key key, bool down)
+		{
+			const int k = (int)key;
+			const uint64_t mask = 1ull << (k % 64);
+			if (down)
+				bits[k / 64] |= mask;
+			else
+				bits[k / 64] &= ~mask;
+		}
+	}
 
 	// First-person mouse look: capture hides and confines the cursor; deltas are in pixels since
 	// the previous call (zero when not captured).
