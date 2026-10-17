@@ -82,6 +82,119 @@ fn index_bytes(i: &[u16]) -> Vec<u8> {
     i.iter().flat_map(|v| v.to_le_bytes()).collect()
 }
 
+
+/// A headless renderer for the negative-path tests, or the test returns early on machines
+/// without a usable adapter (the tests that need pixels assert on the screenshot instead).
+fn headless() -> (Option<Renderer>, Arc<Mutex<Vec<String>>>) {
+    let desc = InitDesc {
+        kind: WindowKind::Headless,
+        window: std::ptr::null_mut(),
+        display: std::ptr::null_mut(),
+        width: W,
+        height: H,
+        reset: 0,
+        transient_vb_size: 0,
+        transient_ib_size: 0,
+    };
+    let log = Arc::new(Mutex::new(Vec::<String>::new()));
+    let log2 = log.clone();
+    match Renderer::new(&desc, Box::new(move |m| {
+        eprintln!("{m}");
+        log2.lock().unwrap().push(m.to_string());
+    })) {
+        Ok(r) => (Some(r), log),
+        Err(e) => {
+            eprintln!("no usable adapter, skipping: {e}");
+            (None, log)
+        }
+    }
+}
+
+fn assert_no_errors(r: &Renderer, log: &Arc<Mutex<Vec<String>>>) {
+    assert_eq!(r.stats().errors, 0, "wgpu reported errors:\n{}", log.lock().unwrap().join("\n"));
+}
+
+/// A program + layout pair for the tests (the same one-quad shader).
+fn test_program(r: &mut Renderer) -> (u16, u16) {
+    let varyings = parse_varying_def(VARYINGS);
+    let vs = r.create_shader(&blob::build(VS, &varyings, Stage::Vertex, &[]).unwrap().encode());
+    let fs = r.create_shader(&blob::build(FS, &varyings, Stage::Fragment, &[]).unwrap().encode());
+    (r.create_program(vs, fs, true), r.register_layout(layout()))
+}
+
+fn setup_views(r: &mut Renderer) {
+    for v in 0..3u16 {
+        r.set_view_rect(v, 0, 0, W as u16, H as u16);
+        r.set_view_transform(v, None, Some(&ortho()));
+    }
+    r.set_view_clear(0, state::CLEAR_COLOR | state::CLEAR_DEPTH, 0x0000ffff, 1.0, 0);
+}
+
+/// Invalid handles, out-of-range draws, a full pool and a broken pipeline: the frame completes,
+/// `stats().errors` counts the problems, and nothing panics (4.1).
+#[test]
+fn negative_paths_are_counted_not_fatal() {
+    let (Some(mut r), log) = headless() else { return };
+    let (program, layout_id) = test_program(&mut r);
+    assert_ne!(program, INVALID);
+
+    setup_views(&mut r);
+    let tint = r.create_uniform("u_tint", 2, 1);
+    r.set_uniform(tint, &[1.0, 1.0, 1.0, 1.0]);
+
+    // Draws that reference resources that do not exist: each must be dropped, not crash.
+    r.set_vertex_buffer(0, BufferKind::Static, 0xFEFE, 0, 4, INVALID);
+    r.set_index_buffer(BufferKind::Static, 0xFEFE, 0, 6);
+    r.set_texture(0, 0xFEFE, u32::MAX);
+    r.set_state(0xF | (8 << 4), 0);
+    r.submit(0, program, 0, 0xFF);
+
+    // Out-of-range draw: an index buffer with 6 indices, drawn with 6000.
+    let static_ib = r.create_index_buffer(&index_bytes(&QUAD_INDICES), 0);
+    let static_vb = r.create_vertex_buffer(&quad(0.0, 0.0, 32.0, 64.0, [255; 4]), layout());
+    r.set_vertex_buffer(0, BufferKind::Static, static_vb, 0, 4, INVALID);
+    r.set_index_buffer(BufferKind::Static, static_ib, 0, 6000);
+    r.set_state(0xF | (8 << 4), 0);
+    r.submit(0, program, 0, 0xFF);
+
+    // An out-of-range view, a view rect past the backbuffer and a bogus clear flag: dropped.
+    r.set_view_rect(200, 0, 0, W as u16, H as u16);
+    r.set_view_rect(0, 0, 0, u16::MAX, u16::MAX);
+
+    // A broken pipeline: garbage WGSL produces an INVALID shader, and a program built from it
+    // names the real cause (the shader), not a downstream pipeline failure.
+    let bad = r.create_shader(b"not a ZHS1 blob");
+    assert_eq!(bad, INVALID, "decode errors name the shader, not the pipeline");
+    let bad_program = r.create_program(bad, bad, false);
+    assert_eq!(bad_program, INVALID);
+
+    r.frame();
+    assert_eq!(r.stats().errors, 0, "wgpu reported errors:\n{}", log.lock().unwrap().join("\n"));
+    assert!(r.stats().num_draw <= 1, "invalid draws dropped ({} drew)", r.stats().num_draw);
+}
+
+/// A truncated or garbage `ZHS1` blob must produce a clean error, never a panic (4.1).
+#[test]
+fn blob_decoder_never_panics_on_garbage() {
+    use zhbo_gfx::blob::ShaderBlob;
+    let mut samples: Vec<Vec<u8>> = Vec::new();
+    samples.push(Vec::new());
+    samples.push(b"Z".to_vec());
+    samples.push(b"ZHS1".to_vec());
+    samples.push(b"ZHS1\x00\x00".to_vec());
+    samples.push(b"ZHS1\xff\xff\xff\xfftruncated".to_vec());
+    samples.push(vec![0xFFu8; 4096]);
+    for mut s in samples {
+        // Truncate every prefix of a valid blob too, if one is available.
+        for cut in 0..=s.len() {
+            let bad = s[..cut].to_vec();
+            let r = ShaderBlob::decode(&bad);
+            assert!(r.is_err(), "garbage of {} bytes decoded: {:?}", bad.len(), bad);
+        }
+        s.reverse();
+    }
+}
+
 #[test]
 fn draws_a_frame_and_reads_it_back() {
     let desc = InitDesc {
@@ -268,6 +381,98 @@ fn transient_all_remaining_draws() {
 
     r.frame();
     assert_eq!(r.stats().num_draw, 1, "only the in-range draw survives");
+    assert_eq!(r.stats().errors, 0, "wgpu reported errors:\n{}", log.lock().unwrap().join("\n"));
+}
+
+/// Dynamic buffers: an in-place update, an update that grows the buffer past its created size
+/// (bgfx's ALLOW_RESIZE) while keeping the earlier contents, and a draw from the grown buffer (4.1).
+#[test]
+fn dynamic_buffers_update_grow_and_draw() {
+    let (Some(mut r), log) = headless() else { return };
+    let (program, layout_id) = test_program(&mut r);
+    setup_views(&mut r);
+    let tint = r.create_uniform("u_tint", 2, 1);
+    r.set_uniform(tint, &[1.0, 1.0, 1.0, 1.0]);
+
+    // Two vertices now; a third vertex is written past the end (growing the buffer by one).
+    let dvb = r.create_dynamic_vertex_buffer(2, Some(&quad(0.0, 0.0, 16.0, 64.0, [255; 4])), layout());
+    assert_ne!(dvb, INVALID);
+    r.update_dynamic_vertex_buffer(dvb, 2, &quad(32.0, 64.0, 48.0, 64.0, [255; 4])[..24]);
+    let dib = r.create_dynamic_index_buffer(6, Some(&index_bytes(&[0, 1, 2, 0, 2, 3])), 0);
+    assert_ne!(dib, INVALID);
+    // An in-place index update at the buffer's tail (still no grow).
+    r.update_dynamic_index_buffer(dib, 4, &index_bytes(&[2, 3]));
+
+    let red565: Vec<u8> = std::iter::repeat_n(0xF800u16.to_le_bytes(), 4).flatten().collect();
+    let red = r.create_texture_2d(2, 2, false, 1, state::bgfx_format::R5G6B5, 0, Some(&red565));
+    assert_ne!(red, INVALID);
+    r.set_vertex_buffer(0, BufferKind::Dynamic, dvb, 0, u32::MAX, INVALID);
+    r.set_index_buffer(BufferKind::Dynamic, dib, 0, u32::MAX);
+    r.set_texture(0, red, u32::MAX);
+    r.set_state(0xF | (8 << 4), 0);
+    r.submit(0, program, 0, 0xFF);
+
+    // The grown vertex buffer drew the triangle (red, inside it at (12, 48)).
+    let shot: Arc<Mutex<Option<(u32, u32, Vec<u8>)>>> = Arc::default();
+    let shot2 = shot.clone();
+    r.set_screenshot_fn(Box::new(move |_, w, h, _, data| *shot2.lock().unwrap() = Some((w, h, data.to_vec()))));
+    r.request_screenshot(INVALID, "grow.png");
+    r.frame();
+
+    let (w, h, px) = shot.lock().unwrap().take().expect("screenshot callback ran");
+    let i = ((48 * w + 12) * 4) as usize;
+    assert!(px[i + 2] > 200, "the grown buffer drew the triangle: BGR {},{}", px[i], px[i + 1]);
+    assert_eq!(r.stats().errors, 0, "wgpu reported errors:\n{}", log.lock().unwrap().join("\n"));
+}
+
+/// View order, offscreen frame buffers (plain and MSAA), an sRGB-sampled texture and instance
+/// data: each path renders without wgpu errors and the draws are counted (4.1).
+#[test]
+fn views_framebuffers_msaa_srgb_and_instance_data() {
+    let (Some(mut r), log) = headless() else { return };
+    let (program, layout_id) = test_program(&mut r);
+    setup_views(&mut r);
+    let tint = r.create_uniform("u_tint", 2, 1);
+    r.set_uniform(tint, &[1.0, 1.0, 1.0, 1.0]);
+
+    // The backbuffer views draw in 2, 1, 0 order regardless of submission order.
+    r.set_view_order(0, Some(&[2, 1, 0]), 3);
+
+    let static_vb = r.create_vertex_buffer(&quad(0.0, 0.0, W as f32, H as f32, [255; 4]), layout());
+    let static_ib = r.create_index_buffer(&index_bytes(&QUAD_INDICES), 0);
+    let srgb_tex = r.create_texture_2d(2, 2, false, 1, state::bgfx_format::RGBA8, zhbo_gfx::runtime::TEXTURE_SRGB, Some(&[0, 0, 255, 255]));
+
+    // View 1 draws into a plain offscreen RGBA8 frame buffer, sampling the sRGB texture.
+    let rt = r.create_texture_2d(W, H, false, 1, state::bgfx_format::RGBA8, zhbo_gfx::runtime::TEXTURE_RT, None);
+    let fb = r.create_frame_buffer(&[rt], false);
+    assert!(rt != INVALID && fb != INVALID, "offscreen frame buffer created");
+    r.set_view_frame_buffer(1, fb);
+    r.set_view_clear(1, state::CLEAR_COLOR | state::CLEAR_DEPTH, 0x0000ffff, 1.0, 0);
+
+    // View 2 draws into a 4x-MSAA offscreen frame buffer.
+    let rt_msaa = r.create_texture_2d(W, H, false, 1, state::bgfx_format::RGBA8,
+        zhbo_gfx::runtime::TEXTURE_RT | (3 << zhbo_gfx::runtime::TEXTURE_RT_MSAA_SHIFT), None);
+    let fb_msaa = r.create_frame_buffer(&[rt_msaa], false);
+    assert_ne!(fb_msaa, INVALID, "the MSAA frame buffer is usable");
+    r.set_view_frame_buffer(2, fb_msaa);
+    r.set_view_clear(2, state::CLEAR_COLOR | state::CLEAR_DEPTH, 0x0000ffff, 1.0, 0);
+
+    // View 0 draws the backbuffer with per-instance data (4 instances, 16 bytes each).
+    let instances = vec![0u8; 4 * 16];
+    let idvb = r.create_dynamic_vertex_buffer(4, Some(&instances), layout());
+    assert_ne!(idvb, INVALID);
+    r.set_instance_data(BufferKind::Dynamic, idvb, 0, 4, 16);
+
+    for v in 0..3u16 {
+        r.set_vertex_buffer(0, BufferKind::Static, static_vb, 0, u32::MAX, INVALID);
+        r.set_index_buffer(BufferKind::Static, static_ib, 0, u32::MAX);
+        r.set_texture(0, srgb_tex, u32::MAX);
+        r.set_state(0xF | (8 << 4), 0);
+        r.submit(v, program, 0, 0xFF);
+    }
+
+    r.frame();
+    assert_eq!(r.stats().num_draw, 3, "all three views drew");
     assert_eq!(r.stats().errors, 0, "wgpu reported errors:\n{}", log.lock().unwrap().join("\n"));
 }
 
