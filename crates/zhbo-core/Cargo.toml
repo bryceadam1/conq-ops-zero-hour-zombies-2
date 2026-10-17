@@ -12,6 +12,10 @@ crate-type = ["staticlib", "rlib"]
 [features]
 # The wgpu renderer (zhbo-gfx) and its C ABI, for builds with GGC_BGFX_RENDERER=wgpu.
 renderer = ["dep:zhbo-gfx"]
+# The in-game autopilot test harness (client/autopilot.rs, ZHBO_AUTOPILOT): the scripted input
+# driver. On by default so unit tests and the Windows autotest run; release builds can strip it.
+default = ["autopilot"]
+autopilot = []
 
 [dependencies]
 zhbo-requirements = { path = "../zhbo-requirements" }

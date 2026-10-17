@@ -134,7 +134,11 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
             state.logic.log("autopilot scene enabled, manual input (ZHBO_AUTOPILOT=manual)")
         }
         crate::config::Autopilot::Scripted { equipment, build } => {
-            state.client.autopilot = Some(crate::client::Autopilot { equipment, build, ..Default::default() });
+            #[cfg(feature = "autopilot")]
+            {
+                state.client.autopilot = Some(crate::client::Autopilot { equipment, build, ..Default::default() });
+            }
+            let _ = (equipment, build);
             state.logic.log("autopilot enabled (ZHBO_AUTOPILOT)");
         }
     }
