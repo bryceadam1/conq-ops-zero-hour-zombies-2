@@ -94,3 +94,33 @@ The checklist, in order:
    `ClientApi` and the `C*Host` impls in `ffi.rs`), keeping the table order identical.
 6. Provide a fake in the tests (zhbo-core's `FakeHost` implements both traits; extend it so sim
    tests cover the new service).
+
+### Save / load: the first-person state (documented follow-up, deliberately not implemented)
+
+Zero Hour saves and restores the RTS game (units, money, buildings) through the engine's own
+`SaveGame`/`LoadGame` pipelines; the engine does not know the mod's first-person state exists,
+so today that state is lost across a save/load or level transition: the player snaps back to
+third-person RTS control with whatever the engine persisted.
+
+What would need serializing before the feature is possible:
+
+- **`PlayerSim`** (crates/zhbo-core/src/sim.rs): position, view angles, health, stance,
+  flags (`sprint`, `ads`, `on_ground`), hack/hammer timers, the active `Arsenal` (`WeaponState`:
+  current weapon index, per-weapon ammo/mags, reload/offhand timers), and the RNG stream
+  position (save the xorshift state so post-load rolls differ from pre-load, not repeat).
+- **Projectiles** (projectiles.rs): every live projectile's position, velocity, fuse timers,
+  owner, and damage profile — they are pure state, no engine handles.
+- **Equipment in the world**: placed claymores/betties/C4/sensors (position, armed state,
+  trigger timers) and the insertion marker state.
+- **`Client` view state** (client.rs): `ViewMode`, viewmodel selection, `HudTimers`,
+  `Autopilot` must NOT be saved (it is a test harness).
+- **Serdes transport**: the ZH save hooks for mods are the `GameLogic::CRC`/`Save`/`Load`
+  overrides on the player's logic object (see MODLOG: the same hook family that owns
+  `GameLogic::update`). Data would go through `Xfer` blocks, size-capped, versioned with a
+  `ZhboSaveVersion` constant — same append-only discipline as the ABI. Because the sim is
+  deterministic given inputs, the saved state is small: the sim re-derives everything else
+  from replayed inputs, so only the snapshot above plus the input-seed needs storing.
+
+Open questions for a feature agent: how ZH migrates `Xfer` blocks across game versions
+(engine save compat), whether a save/load must also replay `Client` timers to keep HUD state
+coherent, and whether dead players (spectator between respawn) need a serializable form.
