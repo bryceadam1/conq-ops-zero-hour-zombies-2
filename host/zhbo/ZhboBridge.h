@@ -51,6 +51,9 @@ Bool Zhbo_GetViewmodel(Int *clip, Int *weapon, Bool *fired, Real *time, Real *ad
 /// Device side (ZhboViewmodel.cpp): place, pose or hide the viewmodel. W3DView::update calls it
 /// every frame with the first-person camera, or with `active` false.
 void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir);
+/// Drop the viewmodel's model, clips and per-game caches (Zhbo_Reset: the scene and assets are
+/// torn down per game).
+void ZhboViewmodel_Reset();
 /// Load the tablet and these weapon viewmodels of a faction ('U', 'C', 'G'), and their clips.
 void ZhboViewmodel_Preload(char faction, const int *weapons, int count);
 /// After the in-game UI is drawn.

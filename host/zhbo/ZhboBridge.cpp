@@ -9,6 +9,7 @@
 
 // Precompiled engine headers are force-included by the z_gameengine target.
 #include "ZhboBridge.h"
+#include "ZhboNames.h"
 #include "zhbo_core.h"
 #include "ZhboPlatform.h"
 #if defined(GGC_BGFX_RENDERER_WGPU)
@@ -91,6 +92,61 @@ Bool s_rtsUiHidden = FALSE;
 ObjectID s_hiddenObject = INVALID_ID;
 Real s_wheelAccum = 0.0f;
 double s_lastTick = 0.0;
+// Smoke log throttle (cbSmoke): at most one line a second.
+UnsignedInt s_smokeLastLog = 0;
+
+// The glue's configuration (docs/CONFIG.md), read exactly once in Zhbo_Init: ZHBO_AUTOPILOT is
+// parsed here once instead of three times with subtly different modes, and the per-frame getenv
+// calls are gone. Mode meanings agree with the Rust core's zhbo-core/src/config.rs.
+struct ZhboConfig
+{
+	Bool autopilot_enabled = FALSE;
+	Bool autopilot_manual = FALSE;	  // ZHBO_AUTOPILOT=manual: scene only, input stays with the player
+	Bool autopilot_equipment = FALSE; // =equipment: the Black Hat / Trophy System scene
+	Bool autopilot_showcase = FALSE;
+	Bool autopilot_rts = FALSE;
+	Bool autopilot_build = FALSE;
+	Bool force_radar = FALSE; // ZHBO_FORCE_RADAR: give the test player radar, to film the Tab map
+	const char *showcase_object = nullptr; // ZHBO_SHOWCASE_OBJECT: what to stand in front of the camera
+	Real showcase_zoom = 0.12f;			   // ZHBO_SHOWCASE_ZOOM, plus:
+	Bool has_showcase_pitch = FALSE;	   // ZHBO_SHOWCASE_PITCH (radians)
+	Real showcase_pitch = 0.0f;
+	Bool has_showcase_angle = FALSE; // ZHBO_SHOWCASE_ANGLE (radians, around the General)
+	Real showcase_angle = 0.0f;
+	Bool closeup = FALSE;		 // ZHBO_CLOSEUP: follow the General closely in captures
+	Real closeup_zoom = 0.0f;
+} s_config;
+
+void readConfig()
+{
+	s_config = {};
+	const char *autopilot = getenv("ZHBO_AUTOPILOT");
+	s_config.autopilot_enabled = autopilot != nullptr && autopilot[0] != 0;
+	s_config.autopilot_manual = s_config.autopilot_enabled && strcmp(autopilot, "manual") == 0;
+	s_config.autopilot_equipment = s_config.autopilot_enabled && strcmp(autopilot, "equipment") == 0;
+	s_config.autopilot_showcase = s_config.autopilot_enabled && strcmp(autopilot, "showcase") == 0;
+	s_config.autopilot_rts = s_config.autopilot_enabled && strcmp(autopilot, "rts") == 0;
+	s_config.autopilot_build = s_config.autopilot_enabled && strcmp(autopilot, "build") == 0;
+	s_config.force_radar = getenv("ZHBO_FORCE_RADAR") != nullptr;
+	s_config.showcase_object = getenv("ZHBO_SHOWCASE_OBJECT");
+	if (const char *v = getenv("ZHBO_SHOWCASE_ZOOM"))
+		s_config.showcase_zoom = (Real)atof(v);
+	if (const char *v = getenv("ZHBO_SHOWCASE_PITCH"))
+	{
+		s_config.has_showcase_pitch = TRUE;
+		s_config.showcase_pitch = (Real)atof(v);
+	}
+	if (const char *v = getenv("ZHBO_SHOWCASE_ANGLE"))
+	{
+		s_config.has_showcase_angle = TRUE;
+		s_config.showcase_angle = (Real)atof(v);
+	}
+	if (const char *v = getenv("ZHBO_CLOSEUP"))
+	{
+		s_config.closeup = TRUE;
+		s_config.closeup_zoom = (Real)atof(v);
+	}
+}
 
 // One engine Weapon per FX template: fireWeaponTemplate needs a firing Weapon instance.
 std::map<std::string, Weapon *> s_fxWeapons;
@@ -141,8 +197,13 @@ int32_t cbIsWalkable(float x, float y)
 
 void cbExtent(ZhboVec3 *lo, ZhboVec3 *hi)
 {
+	// The map-less fallback: the caller's generous default bounds (zhbo-core pre-fills them), so a
+	// null terrain (shell, tests) clamps nothing instead of crashing.
 	Region3D r;
-	TheTerrainLogic->getExtent(&r);
+	r.lo.set(-1e6f, -1e6f, -1e6f);
+	r.hi.set(1e6f, 1e6f, 1e6f);
+	if (TheTerrainLogic)
+		TheTerrainLogic->getExtent(&r);
 	lo->x = r.lo.x; lo->y = r.lo.y; lo->z = r.lo.z;
 	hi->x = r.hi.x; hi->y = r.hi.y; hi->z = r.hi.z;
 }
@@ -352,6 +413,8 @@ void cbDisable(uint32_t id, int32_t kind, float seconds)
 	Object *obj = TheGameLogic->findObjectByID((ObjectID)id);
 	if (!obj || obj->isEffectivelyDead() || seconds <= 0.0f)
 		return;
+	// Clamp before the float->int cast: an absurd `seconds` (a data error) would overflow it (UB).
+	seconds = std::min(seconds, 3600.0f);
 	const UnsignedInt until = TheGameLogic->getFrame() + (UnsignedInt)(seconds * LOGICFRAMES_PER_SECOND);
 	obj->setDisabledUntil(kind == ZHBO_DISABLE_EMP ? DISABLED_EMP : DISABLED_PARALYZED, until);
 }
@@ -372,7 +435,7 @@ void cbFx(const char *name, const ZhboVec3 *pos)
 // can't fire, and the General is moved off it to one with ammo.
 Bool isGeneral(const Object *obj)
 {
-	return obj && strncmp(obj->getTemplate()->getName().str(), "ZHBO_General_", 13) == 0;
+	return obj && zhbo_names::isGeneral(obj->getTemplate()->getName().str());
 }
 
 // The overhead General's BO2 bullet impacts, by gun slot: on a soldier, a vehicle, anything else
@@ -387,7 +450,7 @@ Bool s_rtsHitFxLoaded = FALSE;
 void loadRtsHitFx()
 {
 	s_rtsHitFxLoaded = TRUE;
-	File *f = TheFileSystem ? TheFileSystem->openFile("Data\\ConquerOps\\rts_fx.txt", File::READ | File::BINARY) : nullptr;
+	File *f = TheFileSystem ? TheFileSystem->openFile(zhbo_names::RTS_FX_PATH, File::READ | File::BINARY) : nullptr;
 	if (!f)
 		return;
 	const Int size = f->size();
@@ -472,7 +535,7 @@ void rtsWeapons(UnsignedInt frame)
 		seen.seen = TRUE;
 		WeaponSlotType current = PRIMARY_WEAPON;
 		obj->getCurrentWeapon(&current);
-		ZhboRtsWeapons ammo;
+		ZhboRtsWeapons ammo = {}; // zeroed: the Rust call may early-return without filling it
 		// Where a grenade from the third slot goes: what the AI is attacking (a unit or a spot).
 		ZhboVec3 target;
 		const ZhboVec3 *aim = nullptr;
@@ -553,7 +616,7 @@ void drawRtsAmmo()
 	const Object *obj = draw ? draw->getObject() : nullptr;
 	if (!isGeneral(obj))
 		return;
-	ZhboRtsWeapons ammo;
+	ZhboRtsWeapons ammo = {};
 	zhbo_client_rts_ammo((uint32_t)obj->getID(), &ammo);
 	for (Int i = 1; i <= 14; ++i)
 	{
@@ -629,11 +692,10 @@ void cbSmoke(const ZhboVec3 *at, float radius)
 		}
 	}
 	// The log is the test's oracle (at most once a second).
-	static UnsignedInt s_lastLog = 0;
 	const UnsignedInt frame = TheGameLogic->getFrame();
-	if (blinded > 0 && frame >= s_lastLog + 30)
+	if (blinded > 0 && frame >= s_smokeLastLog + 30)
 	{
-		s_lastLog = frame;
+		s_smokeLastLog = frame;
 		logf("smoke: %d attackers can't see through it", blinded);
 	}
 }
@@ -673,6 +735,13 @@ struct CachedText
 std::vector<CachedText> s_texts;
 UnsignedInt s_drawFrame = 0;
 
+// Image-name lookups for the HUD (cbImage), including misses; TheMappedImageCollection resets per
+// game, so the pointers go stale and the cache is cleared in Zhbo_Reset.
+std::map<std::string, const Image *> s_images;
+
+// Sound events already reported once (cbSound); cleared in Zhbo_Reset.
+std::set<std::string> s_soundReported;
+
 // A BO2 sound (zhbo_core::sounds): positional when `at` is given, else the player's own 2D sound.
 void cbSound(const char *event, const ZhboVec3 *at)
 {
@@ -687,8 +756,7 @@ void cbSound(const char *event, const ZhboVec3 *at)
 	}
 	const AudioHandle handle = TheAudio->addAudioEvent(&sound);
 	// Report each event once: a handle below AHSV_FirstHandle is an error (unknown event, no sound).
-	static std::set<std::string> s_reported;
-	if (s_reported.insert(event).second)
+	if (s_soundReported.insert(event).second)
 		logf("sound %s: %s", event, handle >= AHSV_FirstHandle ? "playing" : handle == AHSV_Muted ? "muted" : handle == AHSV_NoSound ? "no sound" : "error");
 }
 
@@ -767,7 +835,9 @@ void cbText(float x, float y, const char *utf8, uint32_t argb, int32_t size, int
 	Int px = (Int)x;
 	if (align == 1) px -= w / 2;
 	else if (align == 2) px -= w;
-	const UnsignedInt shadow = (argb & 0xFF000000u) >> 1 & 0xFF000000u;
+	// Half the alpha as the shadow's alpha, computed on the byte so an odd alpha's low bit cannot
+	// bleed into the red channel.
+	const UnsignedInt shadow = (((argb >> 24) >> 1) & 0xFFu) << 24;
 	ds->draw(px, (Int)y, argb, shadow);
 }
 
@@ -784,8 +854,8 @@ int32_t cbImage(const char *name_, float x, float y, float w, float h, uint32_t 
 			return 0;
 		name = std::string(pt->getBaseSide().str()) + "_Logo";
 	}
-	// Mapped images live for the whole session; cache lookups (including misses).
-	static std::map<std::string, const Image *> s_images;
+	// Mapped images are reset per game (TheMappedImageCollection), so the cache must not outlive
+	// one: it is cleared in Zhbo_Reset (s_images), including misses.
 	std::map<std::string, const Image *>::iterator it = s_images.find(name);
 	const Image *image;
 	if (it == s_images.end())
@@ -985,6 +1055,10 @@ struct Autopilot
 	ObjectID general;
 	UnsignedInt releasedFrame;
 	Int retakes;
+	// Step machines of the scripted tests, so Zhbo_Reset (memset) can restart them in the same
+	// process (function-local statics could not).
+	UnsignedInt buildStep; // buildAutopilotFrame
+	UnsignedInt rtsDone;	 // rtsAutopilotFrame
 };
 Autopilot s_autopilot = {};
 
@@ -1014,8 +1088,7 @@ Object *spawnAt(const char *templateName, Team *team, const Coord3D &pos, Real y
 void autopilotSpawn()
 {
 	Player *local = ThePlayerList->getLocalPlayer();
-	// ZHBO_FORCE_RADAR: give the test player radar, to film the Tab map.
-	if (getenv("ZHBO_FORCE_RADAR") && TheRadar)
+	if (s_config.force_radar && TheRadar)
 		TheRadar->forceOn(local->getPlayerIndex(), TRUE);
 	Object *cc = nullptr;
 	local->iterateObjects(findCommandCenter, &cc);
@@ -1036,8 +1109,7 @@ void autopilotSpawn()
 	const Coord3D *ccPos = cc->getPosition();
 	Coord3D pos;
 	pos.set(ccPos->x + c * 90.0f, ccPos->y + s * 90.0f, 0.0f);
-	const char *showcaseObject = getenv("ZHBO_SHOWCASE_OBJECT");
-	Object *general = spawnAt(s_autopilot.showcase && showcaseObject ? showcaseObject : "ZHBO_General_USA", local->getDefaultTeam(), pos, yaw);
+	Object *general = spawnAt(s_autopilot.showcase && s_config.showcase_object ? s_config.showcase_object : "ZHBO_General_USA", local->getDefaultTeam(), pos, yaw);
 	if (!general)
 		return;
 	s_autopilot.general = general->getID();
@@ -1067,8 +1139,7 @@ void autopilotSpawn()
 	}
 	// ZHBO_AUTOPILOT=equipment: an enemy Sentry Drone in front for the Black Hat, and two rocket
 	// troopers firing at the General for the Trophy System.
-	const char *mode = getenv("ZHBO_AUTOPILOT");
-	if (enemy && mode && strcmp(mode, "equipment") == 0)
+	if (enemy && s_config.autopilot_equipment)
 	{
 		Coord3D d;
 		d.set(pos.x + c * 45.0f, pos.y + s * 45.0f, 0.0f);
@@ -1099,17 +1170,13 @@ void showcaseFrame(UnsignedInt frame)
 	if (!general)
 		return;
 	const Coord3D *pos = general->getPosition();
-	// ZHBO_SHOWCASE_ZOOM / ZHBO_SHOWCASE_PITCH (radians) / ZHBO_SHOWCASE_ANGLE (radians, around the General).
-	const char *zoomEnv = getenv("ZHBO_SHOWCASE_ZOOM");
-	const char *pitchEnv = getenv("ZHBO_SHOWCASE_PITCH");
-	const char *angleEnv = getenv("ZHBO_SHOWCASE_ANGLE");
 	TheTacticalView->setZoomLimited(FALSE);
 	TheTacticalView->lookAt(pos);
-	TheTacticalView->setZoom(zoomEnv ? (Real)atof(zoomEnv) : 0.12f);
-	if (pitchEnv)
-		TheTacticalView->setPitch((Real)atof(pitchEnv));
-	if (angleEnv)
-		TheTacticalView->setAngle(general->getOrientation() + (Real)atof(angleEnv));
+	TheTacticalView->setZoom(s_config.showcase_zoom);
+	if (s_config.has_showcase_pitch)
+		TheTacticalView->setPitch(s_config.showcase_pitch);
+	if (s_config.has_showcase_angle)
+		TheTacticalView->setAngle(general->getOrientation() + s_config.showcase_angle);
 	AIUpdateInterface *ai = general->getAIUpdateInterface();
 	const Real yaw = general->getOrientation();
 	if (ai && (frame == 180 || frame == 300))
@@ -1163,7 +1230,7 @@ void buildAutopilotFrame(UnsignedInt frame)
 	if (!general || !general->getDrawable())
 		return;
 	const UnsignedInt t = frame - s_autopilot.spawnFrame;
-	static UnsignedInt s_step = 0;
+	UnsignedInt &s_step = s_autopilot.buildStep;
 	if (t >= 15 && s_step < 1)
 	{
 		s_step = 1;
@@ -1391,13 +1458,13 @@ void rtsAutopilotFrame(UnsignedInt frame)
 		return;
 	const UnsignedInt t = frame - s_autopilot.spawnFrame;
 	// ZHBO_CLOSEUP: follow the General closely, to see his animations and effects in captures.
-	if (getenv("ZHBO_CLOSEUP"))
+	if (s_config.closeup)
 	{
 		TheTacticalView->setZoomLimited(FALSE);
 		TheTacticalView->lookAt(general->getPosition());
-		TheTacticalView->setZoom((Real)atof(getenv("ZHBO_CLOSEUP")));
+		TheTacticalView->setZoom(s_config.closeup_zoom);
 	}
-	static UnsignedInt s_done = 0;
+	UnsignedInt &s_done = s_autopilot.rtsDone;
 	if (t >= 15 && s_done < 1)
 	{
 		s_done = 1;
@@ -1451,8 +1518,7 @@ void autopilotFrame()
 		repairTestFrame(frame);
 		return;
 	}
-	const char *mode = getenv("ZHBO_AUTOPILOT");
-	if (mode && strcmp(mode, "manual") == 0)
+	if (s_config.autopilot_manual)
 		return;
 	// After the field computer hands the General back, take control again once (tests re-entry).
 	Object *general = TheGameLogic->findObjectByID(s_autopilot.general);
@@ -1769,9 +1835,41 @@ namespace
 	void utf8(const UnicodeString &text, char *out, size_t cap)
 	{
 		size_t n = 0;
+		unsigned high = 0; // pending high surrogate (0xD800..0xDBFF), 0 when none
 		for (const WideChar *c = text.str(); c && *c && n + 4 < cap; ++c)
 		{
 			const unsigned v = (unsigned)*c;
+			if (v >= 0xD800 && v <= 0xDBFF)
+			{
+				// A pair follows: its low half combines into one code point. A lone high surrogate
+				// (no low half before the next one or the end) becomes '?' below.
+				if (high)
+					out[n++] = '?';
+				high = v;
+				continue;
+			}
+			if (v >= 0xDC00 && v <= 0xDFFF)
+			{
+				if (high)
+				{
+					const unsigned cp = 0x10000u + ((high - 0xD800u) << 10) + (v - 0xDC00u);
+					out[n++] = (char)(0xF0 | (cp >> 18));
+					out[n++] = (char)(0x80 | ((cp >> 12) & 0x3F));
+					out[n++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+					out[n++] = (char)(0x80 | (cp & 0x3F));
+				}
+				else
+				{
+					out[n++] = '?'; // lone low surrogate
+				}
+				high = 0;
+				continue;
+			}
+			if (high)
+			{
+				out[n++] = '?'; // high surrogate with no low half after it
+				high = 0;
+			}
 			if (v < 0x80)
 				out[n++] = (char)v;
 			else if (v < 0x800)
@@ -1786,6 +1884,8 @@ namespace
 				out[n++] = (char)(0x80 | (v & 0x3F));
 			}
 		}
+		if (high && n + 1 < cap)
+			out[n++] = '?'; // trailing lone high surrogate
 		out[n] = 0;
 	}
 
@@ -2035,17 +2135,30 @@ namespace
 		s_ghost->colorTint(legal ? nullptr : &illegal);
 	}
 
+	// The last placement check (cbClientCanPlace): keyed on what it checked, so a changed input is
+	// not answered with a stale result. Cleared in Zhbo_Reset (it reads engine state per game).
+	struct CanPlaceCache
+	{
+		uint32_t general, tmpl;
+		float x, y, z, angle;
+		int32_t result;
+	};
+	CanPlaceCache s_canPlace = {};
+
 	int32_t cbClientCanPlace(uint32_t generalId, uint32_t tmpl, const ZhboVec3 *pos, float angle)
 	{
 		// Every other frame, as Zero Hour's placement UI: what is in the way stays marked meanwhile.
-		static int32_t s_last = 0;
 		if (TheGameClient->getFrame() & 1)
-			return s_last;
+			return s_canPlace.result;
+		if (s_canPlace.general == generalId && s_canPlace.tmpl == tmpl && s_canPlace.x == pos->x && s_canPlace.y == pos->y
+			&& s_canPlace.z == pos->z && s_canPlace.angle == angle)
+			return s_canPlace.result;
 		TheTerrainVisual->removeAllBibs();
 		Object *general = TheGameLogic->findObjectByID((ObjectID)generalId);
 		const ThingTemplate *what = buildable(general, tmpl);
-		s_last = what && legalAt(general, what, pos, angle, BuildAssistant::USE_QUICK_PATHFIND | BuildAssistant::IGNORE_STEALTHED) == LBC_OK;
-		return s_last;
+		s_canPlace = { generalId, tmpl, pos->x, pos->y, pos->z, angle,
+			what && legalAt(general, what, pos, angle, BuildAssistant::USE_QUICK_PATHFIND | BuildAssistant::IGNORE_STEALTHED) == LBC_OK ? 1 : 0 };
+		return s_canPlace.result;
 	}
 
 	// A reset destroys every drawable, the ghost too.
@@ -2074,6 +2187,14 @@ void Zhbo_Init()
 		logf("zhbo-core ABI %u does not match glue ABI %u; mod disabled", zhbo_abi_version(), ZHBO_ABI_VERSION);
 		return;
 	}
+	// A same-size but shifted API table would pass the version check: the counts catch it.
+	if (const uint64_t fields = zhbo_abi_fields();
+		(fields & 0xFFFFFFFFu) != ZHBO_LOGIC_API_FIELDS || (fields >> 32) != ZHBO_CLIENT_API_FIELDS)
+	{
+		logf("zhbo-core API tables have %u logic / %u client fields, glue expects %u / %u; mod disabled",
+			(unsigned)(fields & 0xFFFFFFFFu), (unsigned)(fields >> 32), ZHBO_LOGIC_API_FIELDS, ZHBO_CLIENT_API_FIELDS);
+		return;
+	}
 
 	// Conquer Ops needs both games installed; refuse to run otherwise.
 	char problems[1024];
@@ -2087,21 +2208,52 @@ void Zhbo_Init()
 		zhbo_platform::exitProcess(1);
 	}
 
+	// Designated initializers: a field inserted mid-table cannot silently shift the rest, and the
+	// compiler names any field that is missing or renamed.
 	static const ZhboLogicApi logicApi = {
-		cbLog, cbGroundHeight, cbIsWalkable, cbExtent, cbObject, cbQuery,
-		cbSetPose, cbSetControlled, cbFireFx, cbDamage, cbHeal,
-		cbSpawn, cbDestroy, cbDisable, cbFx, cbCapture, cbSmoke,
-		cbBuildOptions, cbCanPlace, cbPlace, cbWorkSite, cbWork,
+		.log = cbLog,
+		.ground_height = cbGroundHeight,
+		.is_walkable = cbIsWalkable,
+		.extent = cbExtent,
+		.object = cbObject,
+		.query = cbQuery,
+		.set_pose = cbSetPose,
+		.set_controlled = cbSetControlled,
+		.fire_fx = cbFireFx,
+		.damage = cbDamage,
+		.heal = cbHeal,
+		.spawn = cbSpawn,
+		.destroy = cbDestroy,
+		.disable = cbDisable,
+		.fx = cbFx,
+		.capture = cbCapture,
+		.smoke = cbSmoke,
+		.build_options = cbBuildOptions,
+		.can_place = cbCanPlace,
+		.place = cbPlace,
+		.work_site = cbWorkSite,
+		.work = cbWork,
 	};
 	static const ZhboClientApi clientApi = {
-		cbScreenSize, cbFillRect, cbLine, cbText, cbImage, cbClientQuery, cbCash, cbSound, cbClip, cbRadar,
-		cbBuildOptions, cbClientCanPlace, cbGhost,
+		.screen_size = cbScreenSize,
+		.fill_rect = cbFillRect,
+		.line = cbLine,
+		.text = cbText,
+		.image = cbImage,
+		.query = cbClientQuery,
+		.cash = cbCash,
+		.sound = cbSound,
+		.clip = cbClip,
+		.radar = cbRadar,
+		.build_options = cbBuildOptions,
+		.can_place = cbClientCanPlace,
+		.ghost = cbGhost,
 	};
 	zhbo_init(&logicApi, &clientApi);
 
 	// The BO2 weapon table, converted from the player's install into ConquerOps_BO2.big; without it
 	// the core keeps its built-in stand-ins.
-	if (File *f = TheFileSystem ? TheFileSystem->openFile("Data\\ConquerOps\\weapons.ini", File::READ | File::BINARY) : nullptr)
+	if (File *f = TheFileSystem ? TheFileSystem->openFile(zhbo_names::WEAPON_TABLE_PATH, File::READ | File::BINARY) : nullptr)
 	{
 		const Int size = f->size();
 		if (char *buf = f->readEntireAndClose())
@@ -2119,10 +2271,11 @@ void Zhbo_Init()
 	if (TheControlBar)
 		ZhboControlBarAccess::injectConstructButtons();
 
-	s_autopilot.enabled = getenv("ZHBO_AUTOPILOT") != nullptr;
-	s_autopilot.showcase = s_autopilot.enabled && strcmp(getenv("ZHBO_AUTOPILOT"), "showcase") == 0;
-	s_autopilot.rts = s_autopilot.enabled && strcmp(getenv("ZHBO_AUTOPILOT"), "rts") == 0;
-	s_autopilot.build = s_autopilot.enabled && strcmp(getenv("ZHBO_AUTOPILOT"), "build") == 0;
+	readConfig();
+	s_autopilot.enabled = s_config.autopilot_enabled;
+	s_autopilot.showcase = s_config.autopilot_showcase;
+	s_autopilot.rts = s_config.autopilot_rts;
+	s_autopilot.build = s_config.autopilot_build;
 
 	// Render the scene in HDR (see setBo2Look); the format change needs a framebuffer rebuild.
 	if (TheWritableGlobalData && !TheWritableGlobalData->m_bgfxHdr)
@@ -2157,6 +2310,17 @@ void Zhbo_Reset()
 	s_generalBuilds.clear();
 	s_idleGenerals.clear();
 	forgetGhost();
+	// Every per-game static: engine state that a new game rebuilds (zhbo-core keeps its own
+	// surviving state behind zhbo_reset, called below).
+	memset(s_rtsHitFx, 0, sizeof(s_rtsHitFx));
+	s_rtsHitFxLoaded = FALSE;
+	s_images.clear();
+	s_soundReported.clear();
+	s_smokeLastLog = 0;
+	memset(&s_canPlace, 0, sizeof(s_canPlace));
+	s_wheelAccum = 0.0f;
+	s_lastTick = zhbo_platform::now(); // else the first frame after the reset logs a bogus hitch
+	ZhboViewmodel_Reset();
 	zhbo_reset();
 	logLine("reset");
 }
@@ -2202,7 +2366,8 @@ void Zhbo_OnTakeControlMessage(Int playerIndex, const GameMessage *msg)
 		return;
 	const ObjectID id = msg->getArgument(0)->objectID;
 	Object *obj = TheGameLogic->findObjectByID(id);
-	if (!obj || strncmp(obj->getTemplate()->getName().str(), "ZHBO_General", 12) != 0)
+	// The same prefix test as everywhere else (isGeneral): "ZHBO_General_", not a shorter one.
+	if (!obj || !isGeneral(obj))
 		return;
 	// The same message, with an action, chooses the grenade the General's third slot throws.
 	const Int action = msg->getArgumentCount() > 1 ? msg->getArgument(1)->integer : ZHBO_ACTION_TAKE_CONTROL;
@@ -2284,13 +2449,13 @@ void applyWorldPoses()
 		{
 			for (int32_t k = 0; k < s_meshes[vm]; ++k)
 			{
-				snprintf(name, sizeof(name), "W%02d%02d", vm, k);
+				zhbo_names::worldMesh(name, sizeof(name), vm, k);
 				draw->showSubObject(AsciiString(name), vm == p.weapon && p.tablet == 0);
 			}
 		}
 		for (int32_t k = 0; k < s_tabletMeshes; ++k)
 		{
-			snprintf(name, sizeof(name), "TB%02d", k);
+			zhbo_names::tabletMesh(name, sizeof(name), k);
 			draw->showSubObject(AsciiString(name), p.tablet != 0);
 		}
 		draw->updateSubObjects();
@@ -2578,7 +2743,7 @@ Int Zhbo_WeaponButtonState(const Object *obj, const CommandButton *command)
 	const Int slot = command ? (Int)command->getWeaponSlot() : -1;
 	if (!s_ready || !isGeneral(obj) || slot < 0 || slot > 2)
 		return -1;
-	ZhboRtsWeapons ammo;
+	ZhboRtsWeapons ammo = {};
 	zhbo_client_rts_ammo((uint32_t)obj->getID(), &ammo);
 	if (slot < 2)
 		return ammo.ammo[slot] + ammo.reserve[slot] <= 0 ? 0 : -1;

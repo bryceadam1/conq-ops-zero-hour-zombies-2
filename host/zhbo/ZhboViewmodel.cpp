@@ -6,6 +6,7 @@
 // and down until the weapon's tag_sights bone sits on the line of sight. Built into
 // z_gameenginedevice; W3DView::update calls ZhboViewmodel_Update (host/patches/0001).
 #include "ZhboBridge.h"
+#include "ZhboNames.h"
 #include "zhbo_core.h"
 #include "ZhboPlatform.h"
 
@@ -74,7 +75,7 @@ namespace
 	void loadNotes()
 	{
 		s_notesLoaded = TRUE;
-		File *f = TheFileSystem ? TheFileSystem->openFile("Data\\ConquerOps\\viewmodel_sounds.txt", File::READ | File::BINARY) : nullptr;
+		File *f = TheFileSystem ? TheFileSystem->openFile(zhbo_names::VIEWMODEL_SOUNDS_PATH, File::READ | File::BINARY) : nullptr;
 		if (!f)
 			return;
 		const Int size = f->size();
@@ -220,6 +221,20 @@ namespace
 		m[2].Set(x.Z, y.Z, z.Z, eye.z);
 		return m;
 	}
+}
+
+// A game reset tears down the 3D scene (W3DScene) and reloads assets, so the held model and clip
+// references go stale: drop them and the per-game caches (without this, the model would keep
+// rendering over the shell and the notes list would survive into the next game).
+void ZhboViewmodel_Reset()
+{
+	release();
+	s_missing.clear();
+	s_notes.clear();
+	s_notesLoaded = FALSE;
+	s_lastClip = -1;
+	s_lastWeapon = -2;
+	s_lastTime = 0.0f;
 }
 
 void ZhboViewmodel_Preload(char faction, const int *weapons, int count)

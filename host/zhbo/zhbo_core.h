@@ -10,7 +10,13 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 15u
+#define ZHBO_ABI_VERSION 16u
+
+/* Field counts of the API tables below. The Rust side derives its layout asserts and
+   zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
+   append the field here, bump both counts, bump ZHBO_ABI_VERSION, and see CONTRACT.md. */
+#define ZHBO_LOGIC_API_FIELDS 22u
+#define ZHBO_CLIENT_API_FIELDS 13u
 
 #ifdef __cplusplus
 extern "C" {
@@ -223,6 +229,8 @@ typedef struct ZhboWorldPose
 } ZhboWorldPose;
 
 uint32_t zhbo_abi_version(void);
+/* Per-table field counts (low word: logic, high word: client); Zhbo_Init refuses a mismatch. */
+uint64_t zhbo_abi_fields(void);
 void zhbo_init(const ZhboLogicApi *logic, const ZhboClientApi *client);
 int32_t zhbo_install_weapons(const char *table); /* Data\\ConquerOps\\weapons.ini; count or -1 */
 void zhbo_reset(void);
@@ -260,10 +268,10 @@ static_assert(sizeof(ZhboObjInfo) == 56, "ZhboObjInfo layout must match host.rs"
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
 static_assert(sizeof(ZhboClientIn) == 332, "ZhboClientIn layout must match client.rs");
 static_assert(sizeof(ZhboClientOut) == 132, "ZhboClientOut layout must match client.rs");
-static_assert(sizeof(ZhboLogicApi) == 22 * sizeof(void *), "ZhboLogicApi layout must match host.rs");
+static_assert(sizeof(ZhboLogicApi) == ZHBO_LOGIC_API_FIELDS * sizeof(void *), "ZhboLogicApi layout must match host.rs");
 static_assert(sizeof(ZhboWorldPose) == 16, "ZhboWorldPose layout must match ffi.rs");
 static_assert(sizeof(ZhboRtsWeapons) == 36, "ZhboRtsWeapons layout must match sim.rs");
-static_assert(sizeof(ZhboClientApi) == 13 * sizeof(void *), "ZhboClientApi layout must match host.rs");
+static_assert(sizeof(ZhboClientApi) == ZHBO_CLIENT_API_FIELDS * sizeof(void *), "ZhboClientApi layout must match host.rs");
 static_assert(sizeof(ZhboBuildOption) == 64, "ZhboBuildOption layout must match building.rs");
 static_assert(sizeof(ZhboWorkSite) == 64, "ZhboWorkSite layout must match building.rs");
 #endif
