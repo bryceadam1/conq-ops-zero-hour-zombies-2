@@ -76,39 +76,66 @@ pub type ScreenshotFn = Box<dyn Fn(&str, u32, u32, u32, &[u8]) + Send + Sync>;
 
 // --- handle pools -----------------------------------------------------------------------------
 
+/// Handles pack a generation into the high 4 bits: `(generation << 12) | slot`. Destroying and
+/// recreating a resource hands out a new generation for the slot, so a stale handle is rejected by
+/// `get`/`get_mut` instead of silently operating on the slot's new occupant (bgfx's plain indices
+/// would alias). `INVALID` (all 16 bits set) is reserved and never produced: slots stop at
+/// `HANDLE_INDEX_MASK` and generations at 15. The C++ side treats handles as opaque `uint16_t`
+/// (see `zhbo_gfx.h`), so the packing is invisible there.
+const HANDLE_INDEX_MASK: u16 = 0x0FFF;
+const HANDLE_GEN_SHIFT: u32 = 12;
+
 struct Pool<T> {
     items: Vec<Option<T>>,
+    /// Per-slot generation; a fresh slot starts at 1 so handle 0 is never handed out.
+    gens: Vec<u8>,
     free: Vec<u16>,
 }
 
 impl<T> Default for Pool<T> {
     fn default() -> Self {
-        Pool { items: Vec::new(), free: Vec::new() }
+        Pool { items: Vec::new(), gens: Vec::new(), free: Vec::new() }
     }
 }
 
 impl<T> Pool<T> {
     fn insert(&mut self, t: T) -> u16 {
-        if let Some(h) = self.free.pop() {
-            self.items[h as usize] = Some(t);
-            return h;
+        if let Some(slot) = self.free.pop() {
+            let g = &mut self.gens[slot as usize];
+            *g = g.wrapping_add(1) & 0xF; // generations wrap; 16 reuses shadow an old handle
+            self.items[slot as usize] = Some(t);
+            return ((*g as u16) << HANDLE_GEN_SHIFT) | slot;
         }
-        if self.items.len() >= INVALID as usize {
+        if self.items.len() >= HANDLE_INDEX_MASK as usize {
             return INVALID;
         }
+        self.gens.push(1);
         self.items.push(Some(t));
-        (self.items.len() - 1) as u16
+        (1 << HANDLE_GEN_SHIFT) | (self.items.len() - 1) as u16
+    }
+    /// The slot for a handle, if the handle's generation matches the slot's.
+    fn slot(&self, h: u16) -> Option<usize> {
+        let slot = (h & HANDLE_INDEX_MASK) as usize;
+        if self.gens.get(slot).copied() == Some((h >> HANDLE_GEN_SHIFT) as u8) && slot < self.items.len() {
+            Some(slot)
+        } else {
+            None
+        }
     }
     fn get(&self, h: u16) -> Option<&T> {
-        self.items.get(h as usize).and_then(Option::as_ref)
+        self.slot(h).and_then(|s| self.items[s].as_ref())
     }
     fn get_mut(&mut self, h: u16) -> Option<&mut T> {
-        self.items.get_mut(h as usize).and_then(Option::as_mut)
+        match self.slot(h) {
+            Some(s) => self.items[s].as_mut(),
+            None => None,
+        }
     }
     fn remove(&mut self, h: u16) -> Option<T> {
-        let t = self.items.get_mut(h as usize)?.take();
+        let slot = self.slot(h)?;
+        let t = self.items[slot].take();
         if t.is_some() {
-            self.free.push(h);
+            self.free.push(h & HANDLE_INDEX_MASK);
         }
         t
     }
@@ -311,17 +338,12 @@ impl Arena {
         }
     }
     /// Allocate `num * stride` bytes at an offset that is a multiple of `stride` and of 4.
-    /// Returns the offset in units of `stride`, or `None` if there is not enough room.
+    /// Returns the offset in units of `stride`, or `None` if there is not enough room (or the
+    /// request overflows).
     fn alloc(&mut self, num: u32, stride: u32) -> Option<(u32, usize)> {
-        let stride = stride.max(1) as usize;
-        let align = lcm(stride, 4);
-        let start = self.used.next_multiple_of(align);
-        let end = start + num as usize * stride;
-        if end > self.data.len() {
-            return None;
-        }
+        let (units, start, end) = alloc_in(self.used, self.data.len(), num, stride)?;
         self.used = end;
-        Some(((start / stride) as u32, start))
+        Some((units, start))
     }
     fn avail(&self, num: u32, stride: u32) -> u32 {
         let stride = stride.max(1) as usize;
@@ -329,6 +351,20 @@ impl Arena {
         let room = self.data.len().saturating_sub(start) / stride;
         room.min(num as usize) as u32
     }
+}
+
+/// The CPU side of [`Arena::alloc`], factored out so hostile sizes are unit-testable: returns
+/// `(offset in units of stride, start byte, end byte)` or `None` when `num * stride` overflows or
+/// does not fit.
+fn alloc_in(used: usize, cap: usize, num: u32, stride: u32) -> Option<(u32, usize, usize)> {
+    let stride = stride.max(1) as usize;
+    let align = lcm(stride, 4);
+    let start = used.next_multiple_of(align);
+    let end = start.checked_add((num as usize).checked_mul(stride)?)?;
+    if end > cap {
+        return None;
+    }
+    Some(((start / stride) as u32, start, end))
 }
 
 fn gcd(a: usize, b: usize) -> usize {
@@ -493,7 +529,8 @@ pub struct Renderer {
     pub(crate) width: u32,
     pub(crate) height: u32,
     pub(crate) reset_flags: u32,
-    pub(crate) backbuffer: Option<frame::Backbuffer>,
+    /// The offscreen target draws render into; rebuilt by `reset` (created there, never `None`).
+    pub(crate) backbuffer: frame::Backbuffer,
 
     serial: u32,
     shaders: Pool<Arc<Shader>>,
@@ -645,10 +682,12 @@ impl Renderer {
             "transient ib",
         );
         let cache = frame::Caches::new(&device);
+        let view_formats_supported = adapter.get_downlevel_capabilities().flags.contains(wgpu::DownlevelFlags::VIEW_FORMATS);
+        let backbuffer = frame::build_backbuffer(&device, &adapter, view_formats_supported, desc.width.max(1), desc.height.max(1), desc.reset);
         let mut r = Renderer {
             border_supported: features.contains(wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER),
             bc_supported: features.contains(wgpu::Features::TEXTURE_COMPRESSION_BC),
-            view_formats_supported: adapter.get_downlevel_capabilities().flags.contains(wgpu::DownlevelFlags::VIEW_FORMATS),
+            view_formats_supported,
             device,
             queue,
             adapter,
@@ -659,7 +698,7 @@ impl Renderer {
             width: desc.width.max(1),
             height: desc.height.max(1),
             reset_flags: desc.reset,
-            backbuffer: None,
+            backbuffer,
             serial: 0,
             shaders: Pool::default(),
             programs: Pool::default(),
@@ -707,11 +746,17 @@ impl Renderer {
         self.serial
     }
 
+    /// (Re)build the offscreen backbuffer for the current size and reset flags.
+    fn rebuild_backbuffer(&mut self) {
+        self.backbuffer = frame::build_backbuffer(&self.device, &self.adapter, self.view_formats_supported, self.width, self.height, self.reset_flags);
+    }
+
     pub(crate) fn log(&self, msg: &str) {
         (self.trace)(msg);
     }
 
-    /// Resize the backbuffer and apply reset flags (MSAA, vsync, sRGB).
+    /// Resize the backbuffer and apply reset flags (MSAA, vsync, sRGB). Also (re)builds the
+    /// backbuffer itself, so a backbuffer always exists once the renderer does.
     pub fn reset(&mut self, width: u32, height: u32, flags: u32) {
         self.width = width.max(1);
         self.height = height.max(1);
@@ -731,7 +776,7 @@ impl Renderer {
             };
             surface.configure(&self.device, config);
         }
-        self.backbuffer = None; // rebuilt at the next frame at the new size
+        self.rebuild_backbuffer();
     }
 
     // --- capabilities ----------------------------------------------------------------------
@@ -775,11 +820,22 @@ impl Renderer {
                 return INVALID;
             }
         };
+        // Bad WGSL is a creation-time validation error; catch it here so the failure is named at
+        // the shader that caused it instead of at every pipeline built from it.
+        let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor {
             label: None,
             source: wgpu::ShaderSource::Wgsl(blob.wgsl.as_str().into()),
         });
-        self.shaders.insert(Arc::new(Shader { blob, module }))
+        if let Some(e) = block_on(scope.pop()) {
+            self.report(format!("zhbo-gfx: createShader: WGSL failed to compile: {e}"));
+            return INVALID;
+        }
+        let h = self.shaders.insert(Arc::new(Shader { blob, module }));
+        if h == INVALID {
+            self.report(format!("zhbo-gfx: createShader: resource pool exhausted"));
+        }
+        h
     }
 
     pub fn destroy_shader(&mut self, h: u16) {
@@ -829,7 +885,11 @@ impl Renderer {
             self.shaders.remove(vs);
             self.shaders.remove(fs);
         }
-        self.programs.insert(Arc::new(program))
+        let h = self.programs.insert(Arc::new(program));
+        if h == INVALID {
+            self.report(format!("zhbo-gfx: createProgram: resource pool exhausted"));
+        }
+        h
     }
 
     pub fn destroy_program(&mut self, h: u16) {
@@ -852,7 +912,12 @@ impl Renderer {
             _ => 4,
         } * num.max(1) as usize;
         let h = self.uniforms.insert(Uniform { name: name.to_string(), refs: 1, value: vec![0.0; floats] });
-        self.uniform_names.insert(name.to_string(), h);
+        if h == INVALID {
+            self.report("zhbo-gfx: createUniform: resource pool exhausted".into());
+        }
+        if h != INVALID {
+            self.uniform_names.insert(name.to_string(), h);
+        }
         h
     }
 
@@ -919,12 +984,32 @@ impl Renderer {
     pub fn create_vertex_buffer(&mut self, data: &[u8], layout: VertexLayout) -> u16 {
         let layout = self.register_layout(layout);
         let buffer = self.make_buffer(data.len() as u32, Some(data), wgpu::BufferUsages::VERTEX);
-        self.vertex_buffers.insert(Buffer { buffer, size: data.len() as u32, layout, index32: false, shadow: Vec::new() })
+        let h = self.vertex_buffers.insert(Buffer {
+            buffer,
+            size: data.len() as u32,
+            layout,
+            index32: false,
+            shadow: Vec::new(),
+        });
+        if h == INVALID {
+            self.report(format!("zhbo-gfx: createVertexBuffer: resource pool exhausted"));
+        }
+        h
     }
 
     pub fn create_index_buffer(&mut self, data: &[u8], flags: u16) -> u16 {
         let buffer = self.make_buffer(data.len() as u32, Some(data), wgpu::BufferUsages::INDEX);
-        self.index_buffers.insert(Buffer { buffer, size: data.len() as u32, layout: INVALID, index32: flags & BUFFER_INDEX32 != 0, shadow: Vec::new() })
+        let h = self.index_buffers.insert(Buffer {
+            buffer,
+            size: data.len() as u32,
+            layout: INVALID,
+            index32: flags & BUFFER_INDEX32 != 0,
+            shadow: Vec::new(),
+        });
+        if h == INVALID {
+            self.report(format!("zhbo-gfx: createIndexBuffer: resource pool exhausted"));
+        }
+        h
     }
 
     pub fn create_dynamic_vertex_buffer(&mut self, num: u32, data: Option<&[u8]>, layout: VertexLayout) -> u16 {
@@ -932,7 +1017,11 @@ impl Renderer {
         let layout = self.register_layout(layout);
         let buffer = self.make_buffer(size, data, wgpu::BufferUsages::VERTEX);
         let shadow = shadow_copy(size, data);
-        self.dynamic_vertex_buffers.insert(Buffer { buffer, size, layout, index32: false, shadow })
+        let h = self.dynamic_vertex_buffers.insert(Buffer { buffer, size, layout, index32: false, shadow });
+        if h == INVALID {
+            self.report(format!("zhbo-gfx: createDynamicVertexBuffer: resource pool exhausted"));
+        }
+        h
     }
 
     pub fn create_dynamic_index_buffer(&mut self, num: u32, data: Option<&[u8]>, flags: u16) -> u16 {
@@ -940,7 +1029,11 @@ impl Renderer {
         let size = data.map(|d| d.len() as u32).unwrap_or(num * if index32 { 4 } else { 2 });
         let buffer = self.make_buffer(size, data, wgpu::BufferUsages::INDEX);
         let shadow = shadow_copy(size, data);
-        self.dynamic_index_buffers.insert(Buffer { buffer, size, layout: INVALID, index32, shadow })
+        let h = self.dynamic_index_buffers.insert(Buffer { buffer, size, layout: INVALID, index32, shadow });
+        if h == INVALID {
+            self.report(format!("zhbo-gfx: createDynamicIndexBuffer: resource pool exhausted"));
+        }
+        h
     }
 
     pub fn update_dynamic_vertex_buffer(&mut self, h: u16, start_vertex: u32, data: &[u8]) {
@@ -1125,7 +1218,11 @@ impl Renderer {
                 self.upload_all(&tex, data);
             }
         }
-        self.textures.insert(Arc::new(tex))
+        let h = self.textures.insert(Arc::new(tex));
+        if h == INVALID {
+            self.report(format!("zhbo-gfx: createTexture2D: resource pool exhausted"));
+        }
+        h
     }
 
     /// Whether `format` can be a render target on this device. Format tables and downlevel
@@ -1152,12 +1249,7 @@ impl Renderer {
     }
 
     fn supported_samples(&self, format: wgpu::TextureFormat, wanted: u32) -> u32 {
-        let flags = self.adapter.get_texture_format_features(format).flags;
-        let mut n = wanted;
-        while n > 1 && !flags.sample_count_supported(n) {
-            n /= 2;
-        }
-        n.max(1)
+        frame::supported_samples_for(&self.adapter, format, wanted)
     }
 
     /// Upload every layer and mip from bgfx's layout (layer-major, then mips).
@@ -1195,8 +1287,13 @@ impl Renderer {
                 let (bw, bh) = (w.div_ceil(dim), h.div_ceil(dim));
                 let tight = bw * block_bytes;
                 let pitch = pitch.unwrap_or(tight);
-                if (data.len() as u64) < pitch as u64 * (bh as u64 - 1) + tight as u64 {
-                    self.log(&format!("zhbo-gfx: texture upload short: {} bytes for {w}x{h}", data.len()));
+                let needed = pitch as u64 * (bh as u64 - 1) + tight as u64;
+                if (data.len() as u64) < needed {
+                    self.log(&format!(
+                        "zhbo-gfx: texture upload short: texture {} layer {layer} mip {mip} {w}x{h}: needs {needed} bytes, got {}",
+                        tex.serial,
+                        data.len()
+                    ));
                     return;
                 }
                 if conversion == state::Conversion::None {
@@ -1215,8 +1312,13 @@ impl Renderer {
                 let bpp = tex.plan.source_bytes_per_texel();
                 let tight = w * bpp;
                 let pitch = pitch.unwrap_or(tight);
-                if (data.len() as u64) < pitch as u64 * (h as u64 - 1) + tight as u64 {
-                    self.log(&format!("zhbo-gfx: texture upload short: {} bytes for {w}x{h}", data.len()));
+                let needed = pitch as u64 * (h as u64 - 1) + tight as u64;
+                if (data.len() as u64) < needed {
+                    self.log(&format!(
+                        "zhbo-gfx: texture upload short: texture {} layer {layer} mip {mip} {w}x{h}: needs {needed} bytes, got {}",
+                        tex.serial,
+                        data.len()
+                    ));
                     return;
                 }
                 if conversion == state::Conversion::None {
@@ -1271,7 +1373,11 @@ impl Renderer {
         let Some(first) = colors.first().or(depth.as_ref()) else { return INVALID };
         let (width, height) = (first.width, first.height);
         let owned = if destroy_textures { textures.to_vec() } else { Vec::new() };
-        self.frame_buffers.insert(FrameBuffer { colors, depth, width, height, owned })
+        let h = self.frame_buffers.insert(FrameBuffer { colors, depth, width, height, owned });
+        if h == INVALID {
+            self.report(format!("zhbo-gfx: createFrameBuffer: resource pool exhausted"));
+        }
+        h
     }
 
     pub fn create_frame_buffer_sized(&mut self, width: u32, height: u32, bgfx_format: u32, flags: u64) -> u16 {
@@ -1368,7 +1474,9 @@ impl Renderer {
                 };
                 (BufferSrc::Gpu(b.buffer.clone()), b.index32, b.size)
             }
-            BufferKind::Transient { index32 } => (BufferSrc::TransientIndex, index32, u32::MAX),
+            // "All remaining" (num == u32::MAX) counts from `first` to the end of what the engine
+            // has allocated in the arena so far, not to the end of the (much larger) GPU buffer.
+            BufferKind::Transient { index32 } => (BufferSrc::TransientIndex, index32, self.transient_ib.used as u32),
         };
         let isize = if index32 { 4 } else { 2 };
         let num = if num == u32::MAX { (size / isize).saturating_sub(first) } else { num };
@@ -1398,7 +1506,9 @@ impl Renderer {
                 };
                 (BufferSrc::Gpu(b.buffer.clone()), b.layout, b.size)
             }
-            BufferKind::Transient { .. } => (BufferSrc::TransientVertex, h, u32::MAX),
+            // Transient: `h` is the layout id; "all remaining" counts vertices up to the arena's
+            // used bytes (see `set_index_buffer`).
+            BufferKind::Transient { .. } => (BufferSrc::TransientVertex, h, self.transient_vb.used as u32),
         };
         let layout = if layout_override != INVALID { layout_override } else { layout };
         let stride = self.layouts.get(layout as usize).map(|l| l.stride as u32).unwrap_or(0).max(1);
@@ -1493,11 +1603,21 @@ impl Renderer {
     #[allow(clippy::too_many_arguments)]
     pub fn blit(&mut self, v: u16, dst: u16, dst_mip: u8, dx: u16, dy: u16, dz: u16, src: u16, src_mip: u8, sx: u16, sy: u16, sz: u16, w: u16, h: u16, d: u16) {
         let (Some(dst_t), Some(src_t)) = (self.textures.get(dst).cloned(), self.textures.get(src).cloned()) else { return };
-        let sw = (src_t.width >> src_mip).max(1);
-        let sh = (src_t.height >> src_mip).max(1);
-        let width = (w as u32).min(sw.saturating_sub(sx as u32));
-        let height = (h as u32).min(sh.saturating_sub(sy as u32));
-        let depth = (d as u32).min(src_t.layers.saturating_sub(sz as u32)).max(1);
+        let sw = mip_extent(src_t.width, src_mip);
+        let sh = mip_extent(src_t.height, src_mip);
+        let dw = mip_extent(dst_t.width, dst_mip);
+        let dh = mip_extent(dst_t.height, dst_mip);
+        // Clamp to both mips: a copy reaching past either is a wgpu validation error that would
+        // take the whole frame's commands with it.
+        let width = (w as u32).min(sw.saturating_sub(sx as u32)).min(dw.saturating_sub(dx as u32));
+        let height = (h as u32).min(sh.saturating_sub(sy as u32)).min(dh.saturating_sub(dy as u32));
+        let depth = (d as u32)
+            .min(src_t.layers.saturating_sub(sz as u32))
+            .min(dst_t.layers.saturating_sub(dz as u32));
+        if width == 0 || height == 0 || depth == 0 {
+            self.report("zhbo-gfx: skipped a blit: the clamped region or layer range is empty".into());
+            return;
+        }
         self.blits.push(Blit {
             view: v,
             dst: dst_t,
@@ -1522,6 +1642,12 @@ fn level_bytes(plan: &FormatPlan, w: u32, h: u32) -> usize {
         Some((dim, bytes)) => (w.div_ceil(dim) * h.div_ceil(dim) * bytes) as usize,
         None => (w * h * plan.source_bytes_per_texel()) as usize,
     }
+}
+
+/// Size of a mip level, treating an out-of-range mip as 1 (no shift-overflow panics on hostile
+/// mip indices).
+fn mip_extent(size: u32, mip: u8) -> u32 {
+    size.checked_shr(mip as u32).unwrap_or(1).max(1)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1614,4 +1740,64 @@ pub(crate) fn error_chain(e: &dyn std::error::Error) -> String {
         src = s.source();
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn arena_alloc_rejects_overflowing_and_oversized_requests() {
+        // Hostile u32 inputs must not panic in debug or wrap in release (0.1b).
+        assert_eq!(alloc_in(0, 1024, u32::MAX, u32::MAX), None);
+        assert_eq!(alloc_in(0, 1024, u32::MAX, 1), None);
+        assert_eq!(alloc_in(0, 1024, 1, u32::MAX), None);
+        // And a fitting request still lands on an offset aligned to stride and 4.
+        assert_eq!(alloc_in(3, 1024, 2, 8), Some((1, 8, 24)));
+        // A zero-size request allocates nothing, even in an empty arena.
+        assert_eq!(alloc_in(0, 0, 0, 0), Some((0, 0, 0)));
+    }
+
+    #[test]
+    fn pool_handles_carry_a_generation() {
+        let mut pool: Pool<u32> = Pool::default();
+        let a = pool.insert(1);
+        assert_ne!(a, INVALID);
+        assert_eq!(pool.get(a), Some(&1));
+        // A stale handle (destroy + recreate) must not see the slot's new occupant (0.1c).
+        let removed = pool.remove(a);
+        assert_eq!(removed, Some(1));
+        assert_eq!(pool.get(a), None);
+        let b = pool.insert(2);
+        assert_ne!(b, a, "reused slot gets a new generation");
+        assert_eq!(b & HANDLE_INDEX_MASK, a & HANDLE_INDEX_MASK, "same slot");
+        assert_eq!(pool.get(b), Some(&2));
+        assert_eq!(pool.get(a), None, "stale handle rejected");
+        assert_eq!(pool.get_mut(a), None);
+        // Removing through a stale handle must not free the live slot.
+        assert_eq!(pool.remove(a), None);
+        assert_eq!(pool.get(b), Some(&2));
+        assert_eq!(pool.remove(b), Some(2));
+        // Generation wraps after 16 reuses; INVALID is never handed out.
+        let mut first = None;
+        for _ in 0..64 {
+            let h = pool.insert(0);
+            assert_ne!(h, INVALID);
+            first.get_or_insert(h);
+            assert_eq!(pool.remove(h), Some(0));
+        }
+        assert_ne!(first.unwrap(), INVALID);
+    }
+
+    #[test]
+    fn pool_reports_full_instead_of_aliasing_invalid() {
+        let mut pool: Pool<u8> = Pool::default();
+        // Fill to the capacity cap (HANDLE_INDEX_MASK slots, keeping 0xFFFF reserved).
+        for _ in 0..HANDLE_INDEX_MASK {
+            let h = pool.insert(0);
+            assert_ne!(h, INVALID);
+        }
+        assert_eq!(pool.insert(0), INVALID);
+        assert_eq!(pool.get(INVALID), None, "INVALID never decodes to a slot");
+    }
 }

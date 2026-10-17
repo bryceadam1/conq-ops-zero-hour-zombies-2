@@ -1,4 +1,10 @@
 // C ABI of the Rust renderer (crates/zhbo-gfx/src/ffi.rs). Used only by bgfx_wgpu.cpp.
+//
+// Resource handles are opaque uint16_t values created by zhgfx_create_* and passed back to
+// zhgfx_set_*/zhgfx_destroy. Internally the Rust renderer packs a 4-bit generation into the high
+// bits ((generation << 12) | slot) so a handle that outlives its resource is rejected instead of
+// aliasing a recreated one; treat handles as opaque and never persist them across a renderer
+// restart. 0xFFFF is invalid (bgfx's kInvalidHandle) and is never handed out.
 #pragma once
 
 #include <stdbool.h>

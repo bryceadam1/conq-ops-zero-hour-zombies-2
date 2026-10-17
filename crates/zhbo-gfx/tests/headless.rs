@@ -205,3 +205,109 @@ fn draws_a_frame_and_reads_it_back() {
     assert_eq!(r.stats().errors, 0, "wgpu reported errors:\n{}", log.lock().unwrap().join("\n"));
     assert_eq!(r.stats().num_draw, 3);
 }
+
+/// A transient buffer set with "all remaining" (num == u32::MAX, legal in bgfx) must draw exactly
+/// what the engine allocated, not a garbage count (0.1a).
+#[test]
+fn transient_all_remaining_draws() {
+    let desc = InitDesc {
+        kind: WindowKind::Headless,
+        window: std::ptr::null_mut(),
+        display: std::ptr::null_mut(),
+        width: W,
+        height: H,
+        reset: 0,
+        transient_vb_size: 0,
+        transient_ib_size: 0,
+    };
+    let log = Arc::new(Mutex::new(Vec::<String>::new()));
+    let log2 = log.clone();
+    let mut r = match Renderer::new(&desc, Box::new(move |m| {
+        eprintln!("{m}");
+        log2.lock().unwrap().push(m.to_string());
+    })) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("no usable adapter, skipping: {e}");
+            return;
+        }
+    };
+
+    let varyings = parse_varying_def(VARYINGS);
+    let vs = r.create_shader(&blob::build(VS, &varyings, Stage::Vertex, &[]).unwrap().encode());
+    let fs = r.create_shader(&blob::build(FS, &varyings, Stage::Fragment, &[]).unwrap().encode());
+    let program = r.create_program(vs, fs, true);
+    assert_ne!(program, INVALID);
+    let red565: Vec<u8> = std::iter::repeat_n(0xF800u16.to_le_bytes(), 4).flatten().collect();
+    let red = r.create_texture_2d(2, 2, false, 1, state::bgfx_format::R5G6B5, 0, Some(&red565));
+    assert_ne!(red, INVALID);
+    let layout_id = r.register_layout(layout());
+
+    r.set_view_rect(0, 0, 0, W as u16, H as u16);
+    r.set_view_transform(0, None, Some(&ortho()));
+    r.set_view_clear(0, state::CLEAR_COLOR | state::CLEAR_DEPTH, 0x0000ffff, 1.0, 0);
+    r.set_state(0xF | (8 << 4), 0);
+
+    // A 4-vertex quad and 6 indices, both set with num == u32::MAX ("all remaining").
+    let vb = quad(0.0, 0.0, W as f32, H as f32, [255; 4]);
+    let (ptr, start) = r.transient_alloc(false, 4, 24).unwrap();
+    unsafe { std::ptr::copy_nonoverlapping(vb.as_ptr(), ptr, vb.len()) };
+    let ib = index_bytes(&QUAD_INDICES);
+    let (iptr, istart) = r.transient_alloc(true, 6, 2).unwrap();
+    unsafe { std::ptr::copy_nonoverlapping(ib.as_ptr(), iptr, ib.len()) };
+    r.set_vertex_buffer(0, BufferKind::Transient { index32: false }, layout_id, start, u32::MAX, INVALID);
+    r.set_index_buffer(BufferKind::Transient { index32: false }, 0, istart, u32::MAX);
+    r.set_texture(0, red, u32::MAX);
+    r.submit(0, program, 0, 0xFF);
+
+    // A stale transient range past the arena's used bytes is clamped, not drawn with garbage.
+    r.set_vertex_buffer(0, BufferKind::Transient { index32: false }, layout_id, start + 4, u32::MAX, INVALID);
+    r.set_index_buffer(BufferKind::Transient { index32: false }, 0, istart + 6, u32::MAX);
+    r.set_texture(0, red, u32::MAX);
+    r.submit(0, program, 0, 0xFF);
+
+    r.frame();
+    assert_eq!(r.stats().num_draw, 1, "only the in-range draw survives");
+    assert_eq!(r.stats().errors, 0, "wgpu reported errors:\n{}", log.lock().unwrap().join("\n"));
+}
+
+/// A blit whose clamped region or layer range is empty is skipped with a report, never sent to
+/// wgpu as a zero-size or out-of-range copy (0.1e).
+#[test]
+fn empty_blits_are_skipped() {
+    let desc = InitDesc {
+        kind: WindowKind::Headless,
+        window: std::ptr::null_mut(),
+        display: std::ptr::null_mut(),
+        width: W,
+        height: H,
+        reset: 0,
+        transient_vb_size: 0,
+        transient_ib_size: 0,
+    };
+    let log = Arc::new(Mutex::new(Vec::<String>::new()));
+    let log2 = log.clone();
+    let mut r = match Renderer::new(&desc, Box::new(move |m| {
+        eprintln!("{m}");
+        log2.lock().unwrap().push(m.to_string());
+    })) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("no usable adapter, skipping: {e}");
+            return;
+        }
+    };
+    let a = r.create_texture_2d(8, 8, false, 2, state::bgfx_format::RGBA8, 0, None);
+    let b = r.create_texture_2d(8, 8, false, 2, state::bgfx_format::RGBA8, 0, None);
+    assert!(a != INVALID && b != INVALID);
+
+    // Source layer range empty (sz at the last layer), zero size, and a zero-width copy.
+    r.blit(0, b, 0, 0, 0, 0, a, 0, 0, 0, 1, 4, 4, 1); // valid, to keep the blit path exercised
+    r.blit(0, b, 0, 0, 0, 0, a, 0, 0, 0, 1, 4, 4, 0); // zero depth
+    r.blit(0, b, 0, 0, 0, 0, a, 0, 0, 0, 1, 0, 4, 1); // zero width
+    r.blit(0, b, 0, 0, 0, 0, a, 0, 0, 0, 2, 4, 4, 1); // source layer out of range
+    r.blit(0, b, 0, 0, 0, 0, a, 0, 8, 0, 0, 4, 4, 1); // source x past the mip
+    r.frame();
+    assert_eq!(r.stats().num_blit, 1, "only the valid blit is recorded");
+    assert_eq!(r.stats().errors, 0, "wgpu reported errors:\n{}", log.lock().unwrap().join("\n"));
+}

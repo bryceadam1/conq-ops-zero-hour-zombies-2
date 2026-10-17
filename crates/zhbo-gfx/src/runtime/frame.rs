@@ -19,7 +19,6 @@ pub(crate) struct Backbuffer {
     samples: u32,
     width: u32,
     height: u32,
-    flags: u32,
 }
 
 const BACKBUFFER_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Bgra8Unorm;
@@ -206,82 +205,77 @@ fn texture_view_format(t: &Texture) -> wgpu::TextureFormat {
     if t.flags & super::TEXTURE_SRGB != 0 { t.plan.format.add_srgb_suffix() } else { t.plan.format }
 }
 
+/// Build the offscreen backbuffer draws render into (and the window presents from). Called by
+/// `Renderer::new` and rebuilt by `reset` on resize/flag changes, so a backbuffer always exists —
+/// code using it never needs an unwrap or a call-order invariant.
+pub(crate) fn build_backbuffer(device: &wgpu::Device, adapter: &wgpu::Adapter, view_formats_supported: bool, width: u32, height: u32, flags: u32) -> Backbuffer {
+    let msaa_bits = (flags >> super::RESET_MSAA_SHIFT) & 7;
+    let wanted = if msaa_bits == 0 { 1 } else { 1 << msaa_bits };
+    let samples = supported_samples_for(adapter, BACKBUFFER_FORMAT, wanted).min(supported_samples_for(adapter, DEPTH_FORMAT, wanted));
+    let size = wgpu::Extent3d { width, height, depth_or_array_layers: 1 };
+    let srgb = BACKBUFFER_FORMAT.add_srgb_suffix();
+    let format = if flags & super::RESET_SRGB_BACKBUFFER != 0 { srgb } else { BACKBUFFER_FORMAT };
+    let (base, view_formats): (_, &[wgpu::TextureFormat]) =
+        if view_formats_supported { (BACKBUFFER_FORMAT, &[srgb]) } else { (format, &[]) };
+    let color = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("backbuffer"),
+        size,
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: base,
+        usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
+        view_formats,
+    });
+    let target = color.create_view(&wgpu::TextureViewDescriptor { format: Some(format), ..Default::default() });
+    let plain = color.create_view(&Default::default());
+    let msaa = (samples > 1).then(|| {
+        device
+            .create_texture(&wgpu::TextureDescriptor {
+                label: Some("backbuffer msaa"),
+                size,
+                mip_level_count: 1,
+                sample_count: samples,
+                dimension: wgpu::TextureDimension::D2,
+                format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+                view_formats: &[],
+            })
+            .create_view(&Default::default())
+    });
+    let depth = device
+        .create_texture(&wgpu::TextureDescriptor {
+            label: Some("backbuffer depth"),
+            size,
+            mip_level_count: 1,
+            sample_count: samples,
+            dimension: wgpu::TextureDimension::D2,
+            format: DEPTH_FORMAT,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        })
+        .create_view(&Default::default());
+    Backbuffer { color, target, plain, format, msaa, depth, samples, width, height }
+}
+
+pub(crate) fn supported_samples_for(adapter: &wgpu::Adapter, format: wgpu::TextureFormat, wanted: u32) -> u32 {
+    let flags = adapter.get_texture_format_features(format).flags;
+    let mut n = wanted;
+    while n > 1 && !flags.sample_count_supported(n) {
+        n /= 2;
+    }
+    n.max(1)
+}
+
 fn bgfx_color(rgba: u32) -> [f32; 4] {
     let c = state::clear_color(rgba);
     [c.r as f32, c.g as f32, c.b as f32, c.a as f32]
 }
 
 impl Renderer {
-    fn ensure_backbuffer(&mut self) {
-        let msaa_bits = (self.reset_flags >> super::RESET_MSAA_SHIFT) & 7;
-        if let Some(bb) = &self.backbuffer {
-            if bb.width == self.width && bb.height == self.height && bb.flags == self.reset_flags {
-                return;
-            }
-        }
-        let wanted = if msaa_bits == 0 { 1 } else { 1 << msaa_bits };
-        let samples = self.supported_samples(BACKBUFFER_FORMAT, wanted).min(self.supported_samples(DEPTH_FORMAT, wanted));
-        let size = wgpu::Extent3d { width: self.width, height: self.height, depth_or_array_layers: 1 };
-        let srgb = BACKBUFFER_FORMAT.add_srgb_suffix();
-        let format = if self.reset_flags & super::RESET_SRGB_BACKBUFFER != 0 { srgb } else { BACKBUFFER_FORMAT };
-        let (base, view_formats): (_, &[wgpu::TextureFormat]) =
-            if self.view_formats_supported { (BACKBUFFER_FORMAT, &[srgb]) } else { (format, &[]) };
-        let color = self.device.create_texture(&wgpu::TextureDescriptor {
-            label: Some("backbuffer"),
-            size,
-            mip_level_count: 1,
-            sample_count: 1,
-            dimension: wgpu::TextureDimension::D2,
-            format: base,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_SRC,
-            view_formats,
-        });
-        let target = color.create_view(&wgpu::TextureViewDescriptor { format: Some(format), ..Default::default() });
-        let plain = color.create_view(&Default::default());
-        let msaa = (samples > 1).then(|| {
-            self.device
-                .create_texture(&wgpu::TextureDescriptor {
-                    label: Some("backbuffer msaa"),
-                    size,
-                    mip_level_count: 1,
-                    sample_count: samples,
-                    dimension: wgpu::TextureDimension::D2,
-                    format,
-                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                    view_formats: &[],
-                })
-                .create_view(&Default::default())
-        });
-        let depth = self
-            .device
-            .create_texture(&wgpu::TextureDescriptor {
-                label: Some("backbuffer depth"),
-                size,
-                mip_level_count: 1,
-                sample_count: samples,
-                dimension: wgpu::TextureDimension::D2,
-                format: DEPTH_FORMAT,
-                usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-                view_formats: &[],
-            })
-            .create_view(&Default::default());
-        self.backbuffer = Some(Backbuffer {
-            color,
-            target,
-            plain,
-            format,
-            msaa,
-            depth,
-            samples,
-            width: self.width,
-            height: self.height,
-            flags: self.reset_flags,
-        });
-    }
-
     fn target_for(&self, fb: u16) -> Option<Target> {
         if fb == INVALID {
-            let bb = self.backbuffer.as_ref()?;
+            let bb = &self.backbuffer;
             let color = match &bb.msaa {
                 Some(m) => (m.clone(), Some(bb.target.clone())),
                 None => (bb.target.clone(), None),
@@ -327,7 +321,6 @@ impl Renderer {
     /// Execute the frame. Returns the frame number, like `bgfx::frame`.
     pub fn frame(&mut self) -> u32 {
         let started = std::time::Instant::now();
-        self.ensure_backbuffer();
 
         // Transient data the engine wrote this frame.
         for arena in [&self.transient_vb, &self.transient_ib] {
@@ -461,8 +454,7 @@ impl Renderer {
         let mut readbacks = Vec::new();
         for (fb, path) in std::mem::take(&mut self.screenshots) {
             let (texture, format) = if fb == INVALID {
-                let bb = self.backbuffer.as_ref().unwrap();
-                (bb.color.clone(), BACKBUFFER_FORMAT)
+                (self.backbuffer.color.clone(), BACKBUFFER_FORMAT)
             } else {
                 match self.frame_buffer_targets(fb).and_then(|t| t.0.first().cloned()) {
                     Some(t) => (t.texture.clone(), t.plan.format),
@@ -500,7 +492,7 @@ impl Renderer {
         if let Some(st) = &surface_texture {
             let format = st.texture.format();
             let pipeline = self.present_pipeline(format);
-            let bb = self.backbuffer.as_ref().unwrap();
+            let bb = &self.backbuffer;
             let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("present"),
                 layout: &self.cache.present_bgl,
@@ -631,7 +623,8 @@ impl Renderer {
         }
     }
 
-    fn report(&mut self, msg: String) {
+    /// Report a problem once (so the log is not flooded); draws and other work continue.
+    pub(crate) fn report(&mut self, msg: String) {
         if self.cache.reported.len() < 256 && self.cache.reported.insert(msg.clone()) {
             self.log(&msg);
         }
@@ -692,14 +685,20 @@ impl Renderer {
         let Some(Some(cached)) = self.cache.pipelines.get(&key) else { return false };
         let slots = cached.slots.clone();
 
-        // Validate buffer ranges before touching the pass.
+        // Validate buffer ranges before touching the pass. Transient arenas are sized by what the
+        // engine allocated so far (`used`), not by the GPU buffer's full capacity.
         let (tvb, tib) = (self.transient_vb.gpu.clone(), self.transient_ib.gpu.clone());
+        let (tvb_used, tib_used) = (self.transient_vb.used as u64, self.transient_ib.used as u64);
         let gpu = |src: &BufferSrc| match src {
             BufferSrc::Gpu(b) => b.clone(),
             BufferSrc::TransientVertex => tvb.clone(),
             BufferSrc::TransientIndex => tib.clone(),
         };
-        let buffer_size = |src: &BufferSrc| gpu(src).size();
+        let buffer_size = |src: &BufferSrc| match src {
+            BufferSrc::Gpu(b) => b.size(),
+            BufferSrc::TransientVertex => tvb_used,
+            BufferSrc::TransientIndex => tib_used,
+        };
         let mut vertex_count = u32::MAX;
         let mut binds: Vec<(wgpu::Buffer, u64)> = Vec::new();
         for s in &slots {
