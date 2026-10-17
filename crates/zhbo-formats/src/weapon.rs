@@ -8,6 +8,7 @@
 
 use crate::t6zone::layouts::{WeaponAttachment as WA, WeaponAttachmentUnique as WU, WeaponDef as WD, WeaponVariantDef as WV};
 use crate::t6zone::Zone;
+use crate::FormatError;
 
 /// `weapAnimFiles_t`: the viewmodel animation slots (`szXAnims` index).
 pub mod anim {
@@ -189,16 +190,16 @@ pub struct Attachment {
 }
 
 /// Every attachment in a loaded zone.
-pub fn attachments(z: &Zone) -> Vec<Attachment> {
-    let Some(kind) = crate::fastfile::asset_type_id("attachment") else { return Vec::new() };
+pub fn attachments(z: &Zone) -> Result<Vec<Attachment>, FormatError> {
+    let Some(kind) = crate::fastfile::asset_type_id("attachment") else { return Ok(Vec::new()) };
     z.assets
         .iter()
         .filter(|a| a.kind == kind)
-        .map(|a| {
+        .map(|a| -> Result<Attachment, FormatError> {
             let at = a.addr;
-            let fire = z.u32(at + WA::fireType);
-            Attachment {
-                name: z.str_ptr(at + WA::szInternalName),
+            let fire = z.try_u32(at + WA::fireType)?;
+            Ok(Attachment {
+                name: z.try_str_ptr(at + WA::szInternalName)?,
                 display_name: opt_str(z, at + WA::szDisplayName).unwrap_or_default(),
                 kind: z.u32(at + WA::attachmentType),
                 point: z.u32(at + WA::attachmentPoint),
@@ -222,7 +223,7 @@ pub fn attachments(z: &Zone) -> Vec<Attachment> {
                 clip_size_scale: z.f32(at + WA::clipSizeScale),
                 clip_size: int(z, at + WA::iClipSize),
                 recoil_reduction: (z.f32(at + WA::fAdsRecoilReductionRate), z.f32(at + WA::fAdsRecoilReductionLimit)),
-            }
+            })
         })
         .collect()
 }
@@ -391,14 +392,14 @@ fn kick(z: &Zone, pitch_min: u32, pitch_max: u32, yaw_min: u32, yaw_max: u32) ->
 }
 
 /// Read the `WeaponVariantDef` at `v`.
-pub fn read(z: &Zone, v: u32) -> Weapon {
-    let d = z.u32(v + WV::weapDef);
-    let anims_at = z.u32(v + WV::szXAnims);
+pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
+    let d = z.try_u32(v + WV::weapDef)?;
+    let anims_at = z.try_u32(v + WV::szXAnims)?;
     let anims = (0..anim::COUNT as u32)
         .map(|i| if anims_at == 0 { None } else { opt_str(z, anims_at + 4 * i) })
         .collect();
     let mut attach_view_models = Vec::new();
-    let (models, tags) = (z.u32(v + WV::attachViewModel), z.u32(v + WV::attachViewModelTag));
+    let (models, tags) = (z.try_u32(v + WV::attachViewModel)?, z.try_u32(v + WV::attachViewModelTag)?);
     if models != 0 && tags != 0 {
         for i in 0..8 {
             if let (Some(m), Some(t)) = (named(z, models + 4 * i), opt_str(z, tags + 4 * i)) {
@@ -407,7 +408,7 @@ pub fn read(z: &Zone, v: u32) -> Weapon {
         }
     }
     let mut attachment_uniques = Vec::new();
-    let uniques = z.u32(v + WV::attachmentUniques);
+    let uniques = z.try_u32(v + WV::attachmentUniques)?;
     if uniques != 0 {
         for i in 0..95 {
             let u = z.u32(uniques + 4 * i);
@@ -454,7 +455,7 @@ pub fn read(z: &Zone, v: u32) -> Weapon {
         silenced: z.u8(v + WV::bSilenced) != 0,
         allowed_attachments: z.u32(v + WV::iAttachments) as u64,
         attachment_variants: {
-            let at = z.u32(v + WV::attachments);
+            let at = z.try_u32(v + WV::attachments)?;
             let mut out = Vec::new();
             if at != 0 {
                 for i in 1..ATTACHMENT_KINDS {
@@ -466,18 +467,18 @@ pub fn read(z: &Zone, v: u32) -> Weapon {
             }
             out
         },
-        hide_tags: hide_tags(z, z.u32(v + WV::hideTags)),
+        hide_tags: hide_tags(z, z.try_u32(v + WV::hideTags)?),
         alt_weapon: opt_str(z, v + WV::szAltWeaponName),
         dpad_icon: named(z, v + WV::dpadIcon),
         ..Default::default()
     };
     if d == 0 {
-        return w;
+        return Ok(w);
     }
-    let guns = z.u32(d + WD::gunXModel);
+    let guns = z.try_u32(d + WD::gunXModel)?;
     w.view_model = if guns != 0 { named(z, guns) } else { None };
     // Like `gunXModel`, `worldModel` is an array of model pointers (one per attachment variant).
-    let worlds = z.u32(d + WD::worldModel);
+    let worlds = z.try_u32(d + WD::worldModel)?;
     w.world_model = if worlds != 0 { named(z, worlds) } else { None };
     w.projectile_model = named(z, d + WD::projectileModel);
     w.weap_type = z.u32(d + WD::weapType);
@@ -522,7 +523,7 @@ pub fn read(z: &Zone, v: u32) -> Weapon {
     }
     w.min_player_damage = int(z, d + WD::minPlayerDamage);
     w.melee_damage = int(z, d + WD::iMeleeDamage);
-    let mults = z.u32(d + WD::locationDamageMultipliers);
+    let mults = z.try_u32(d + WD::locationDamageMultipliers)?;
     w.location_multipliers = if mults != 0 { (0..HIT_LOCATIONS as u32).map(|i| z.f32(mults + 4 * i)).collect() } else { Vec::new() };
     w.explosion_radius = int(z, d + WD::iExplosionRadius);
     w.explosion_radius_min = int(z, d + WD::iExplosionRadiusMin);
@@ -557,22 +558,22 @@ pub fn read(z: &Zone, v: u32) -> Weapon {
     w.pullback_sound_player = opt_str(z, d + WD::pullbackSoundPlayer);
     w.melee_swipe_sound_player = opt_str(z, d + WD::meleeSwipeSoundPlayer);
     w.impact_type = z.u32(d + WD::impactType);
-    let flash = z.u32(d + WD::worldFlashEffect);
+    let flash = z.try_u32(d + WD::worldFlashEffect)?;
     w.world_flash_effect = (flash != 0).then(|| crate::fx::read(z, flash)).filter(|e| !e.elems.is_empty());
-    let fx = z.u32(d + WD::projExplosionEffect);
+    let fx = z.try_u32(d + WD::projExplosionEffect)?;
     w.explosion_effect = (fx != 0).then(|| crate::fx::read(z, fx)).filter(|e| !e.elems.is_empty()).or_else(|| crate::fx::explosion_entry(w.impact_type).and_then(|e| crate::fx::impact(z, e, crate::fx::surface::DIRT)));
     w.hud_icon = named(z, d + WD::hudIcon);
-    let icon = z.u32(d + WD::hudIcon);
+    let icon = z.try_u32(d + WD::hudIcon)?;
     w.hud_icon_hash = (icon != 0)
         .then(|| crate::xmodel::read_material(z, icon))
         .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash)))
         .filter(|h| *h != 0);
-    w
+    Ok(w)
 }
 
 /// Every weapon in a loaded zone.
-pub fn all(z: &Zone) -> Vec<Weapon> {
-    let Some(kind) = crate::fastfile::asset_type_id("weapon") else { return Vec::new() };
+pub fn all(z: &Zone) -> Result<Vec<Weapon>, FormatError> {
+    let Some(kind) = crate::fastfile::asset_type_id("weapon") else { return Ok(Vec::new()) };
     z.assets.iter().filter(|a| a.kind == kind).map(|a| read(z, a.addr)).collect()
 }
 
@@ -651,7 +652,7 @@ mod tests {
     #[ignore]
     fn reads_the_an94() {
         let z = zone("common_mp");
-        let w = all(&z).into_iter().find(|w| w.name == "an94_mp").expect("an94_mp");
+        let w = all(&z).unwrap().into_iter().find(|w| w.name == "an94_mp").expect("an94_mp");
         assert_eq!(w.clip_size, 30);
         assert_eq!(w.class, class::RIFLE);
         assert!(w.fire_time > 0.03 && w.fire_time < 0.2, "{}", w.fire_time);
@@ -659,7 +660,7 @@ mod tests {
         assert!(w.anim(anim::RELOAD).is_some() && w.anim(anim::FIRE).is_some());
         assert!(w.damage[0] > w.damage[1] && w.damage[1] > 0, "{:?}", w.damage);
         for name in ["qcw05_mp", "fnp45_mp", "870mcs_mp", "frag_grenade_mp", "knife_mp"] {
-            let o = all(&z).into_iter().find(|w| w.name == name).unwrap();
+            let o = all(&z).unwrap().into_iter().find(|w| w.name == name).unwrap();
             assert!(o.view_model.is_some(), "{name} has a view model");
         }
     }

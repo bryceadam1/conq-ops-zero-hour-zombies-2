@@ -38,12 +38,17 @@ impl Ipak {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let source = path.as_ref().to_path_buf();
         let mut f = File::open(&source)?;
+        let file_len = f.metadata()?.len();
         let mut head = [0u8; 16];
         f.read_exact(&mut head).map_err(|_| FormatError::Truncated("ipak header"))?;
         if &head[0..4] != MAGIC {
             return Err(FormatError::BadMagic { expected: "KAPI", found: head[0..4].try_into().unwrap() });
         }
         let count = u32::from_le_bytes(head[12..16].try_into().unwrap()) as usize;
+        // The section count is file-controlled; keep its table within the file.
+        if count.checked_mul(16).map_or(true, |need| need as u64 > file_len.saturating_sub(16)) {
+            return Err(FormatError::Corrupt(format!("ipak section count {count} does not fit in the file")));
+        }
         let mut secs = vec![0u8; 16 * count];
         f.read_exact(&mut secs).map_err(|_| FormatError::Truncated("ipak sections"))?;
         let section = |kind: u32| {
@@ -57,8 +62,15 @@ impl Ipak {
             // Some small packs (e.g. empty DLC stubs) have no index.
             return Ok(Self { source, data_offset: 0, entries: Vec::new() });
         };
+        let index_len = (index.3 as u64).checked_mul(16).ok_or_else(|| FormatError::Corrupt("ipak index too long".into()))?;
+        if index.1 as u64 > file_len || index_len > file_len - index.1 as u64 {
+            return Err(FormatError::Corrupt(format!(
+                "ipak index ({}, {} bytes) is past the end of the {}-byte file",
+                index.1, index_len, file_len
+            )));
+        }
         f.seek(SeekFrom::Start(index.1 as u64))?;
-        let mut raw = vec![0u8; index.3 as usize * 16];
+        let mut raw = vec![0u8; index_len as usize];
         f.read_exact(&mut raw).map_err(|_| FormatError::Truncated("ipak index"))?;
         let entries = raw
             .chunks_exact(16)
@@ -82,6 +94,13 @@ impl Ipak {
         let end = pos + entry.size as u64;
         let mut out = Vec::new();
         while pos < end {
+            if end - pos < BLOCK_HEADER {
+                return Err(FormatError::Corrupt(format!(
+                    "ipak entry {:#x}: {} bytes left, less than a block header",
+                    entry.name_hash,
+                    end - pos
+                )));
+            }
             f.seek(SeekFrom::Start(pos))?;
             let mut head = [0u8; BLOCK_HEADER as usize];
             f.read_exact(&mut head).map_err(|_| FormatError::Truncated("ipak block header"))?;
@@ -94,6 +113,17 @@ impl Ipak {
                 let cmd = u32::from_le_bytes(head[4 + i * 4..8 + i * 4].try_into().unwrap());
                 let size = (cmd & 0x00ff_ffff) as usize;
                 let flag = cmd >> 24;
+                // A command must stay inside this entry: a corrupt size would otherwise read into
+                // the next entry's data (and its 24-bit size is also the allocation cap here).
+                let remaining = end - pos - BLOCK_HEADER - payload_len;
+                if size as u64 > remaining {
+                    return Err(FormatError::Corrupt(format!(
+                        "ipak entry {:#x}: command {i} reads {} bytes, {} past the entry",
+                        entry.name_hash,
+                        size,
+                        size as u64 - remaining
+                    )));
+                }
                 let mut chunk = vec![0u8; size];
                 f.read_exact(&mut chunk).map_err(|_| FormatError::Truncated("ipak block data"))?;
                 payload_len += size as u64;

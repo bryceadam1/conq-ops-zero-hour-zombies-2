@@ -169,13 +169,13 @@ pub fn find(zone: &Zone, name: &str) -> Result<Model, FormatError> {
 /// Read the model whose struct is at `addr`.
 pub fn read(z: &Zone, h: u32) -> Result<Model, FormatError> {
     let name = z.str_ptr(h).trim_start_matches(',').to_string();
-    let num_bones = z.u8(h + 4) as usize;
-    let num_root = z.u8(h + 5) as usize;
-    let num_surfs = z.u8(h + 6) as usize;
+    let num_bones = z.try_u8(h + 4)? as usize;
+    let num_root = z.try_u8(h + 5)? as usize;
+    let num_surfs = z.try_u8(h + 6)? as usize;
     if num_root > num_bones {
         return Err(FormatError::Corrupt(format!("model {name}: {num_root} root bones of {num_bones}")));
     }
-    let (names, parents, quats, trans, base) = (z.u32(h + 8), z.u32(h + 12), z.u32(h + 16), z.u32(h + 20), z.u32(h + 28));
+    let (names, parents, quats, trans, base) = (z.try_u32(h + 8)?, z.try_u32(h + 12)?, z.try_u32(h + 16)?, z.try_u32(h + 20)?, z.try_u32(h + 28)?);
 
     let mut bones = Vec::with_capacity(num_bones);
     for i in 0..num_bones {
@@ -203,10 +203,12 @@ pub fn read(z: &Zone, h: u32) -> Result<Model, FormatError> {
         bones.push(Bone { name: bone_name, parent, local_rotation, local_position, rotation, position });
     }
 
-    let surfs = z.u32(h + 32);
-    let surfaces = (0..num_surfs).map(|s| if surfs != 0 { read_surface(z, surfs + XSURFACE_SIZE * s as u32) } else { Surface::default() }).collect();
+    let surfs = z.try_u32(h + 32)?;
+    let surfaces = (0..num_surfs)
+        .map(|s| if surfs != 0 { read_surface(z, surfs + XSURFACE_SIZE * s as u32) } else { Ok(Surface::default()) })
+        .collect::<Result<Vec<_>, _>>()?;
 
-    let handles = z.u32(h + 36);
+    let handles = z.try_u32(h + 36)?;
     let materials = (0..num_surfs)
         .map(|s| {
             let m = if handles != 0 { z.u32(handles + 4 * s as u32) } else { 0 };
@@ -214,28 +216,32 @@ pub fn read(z: &Zone, h: u32) -> Result<Model, FormatError> {
         })
         .collect();
 
-    let num_lods = z.u16(h + 196) as usize;
+    let num_lods = z.try_u16(h + 196)? as usize;
     let lods = (0..num_lods.min(4))
-        .map(|l| {
+        .map(|l| -> Result<Lod, FormatError> {
             let li = h + 40 + 28 * l as u32;
-            Lod { distance: z.f32(li), surface_count: z.u16(li + 4) as usize, first_surface: z.u16(li + 6) as usize }
+            Ok(Lod {
+                distance: z.try_f32(li)?,
+                surface_count: z.try_u16(li + 4)? as usize,
+                first_surface: z.try_u16(li + 6)? as usize,
+            })
         })
-        .collect();
-    Ok(Model { name, bones, surfaces, lods, radius: z.f32(h + 168), mins: vec3(z, h + 172), maxs: vec3(z, h + 184), materials })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(Model { name, bones, surfaces, lods, radius: z.try_f32(h + 168)?, mins: vec3(z, h + 172), maxs: vec3(z, h + 184), materials })
 }
 
-fn read_surface(z: &Zone, sh: u32) -> Surface {
-    let vert_list_count = z.u8(sh + 1) as u32;
-    let flags = z.u16(sh + 2);
-    let vert_count = z.u16(sh + 4) as u32;
-    let tri_count = z.u16(sh + 6) as u32;
-    let tris = z.u32(sh + 12);
-    let blend_counts = [16, 18, 20, 22].map(|o| z.i16(sh + o).max(0) as usize);
-    let blend = z.u32(sh + 24);
-    let verts = z.u32(sh + 32);
-    let vert_list = z.u32(sh + 40);
+fn read_surface(z: &Zone, sh: u32) -> Result<Surface, FormatError> {
+    let vert_list_count = z.try_u8(sh + 1)? as u32;
+    let flags = z.try_u16(sh + 2)?;
+    let vert_count = z.try_u16(sh + 4)? as u32;
+    let tri_count = z.try_u16(sh + 6)? as u32;
+    let tris = z.try_u32(sh + 12)?;
+    let blend_counts = [16, 18, 20, 22].map(|o| z.try_u16(sh + o).map_or(0, |v| (v as i16).max(0)) as usize);
+    let blend = z.try_u32(sh + 24)?;
+    let verts = z.try_u32(sh + 32)?;
+    let vert_list = z.try_u32(sh + 40)?;
     if flags & SURF_QUANTIZED != 0 || verts == 0 {
-        return Surface::default();
+        return Ok(Surface::default());
     }
 
     let mut vertices: Vec<Vertex> = (0..vert_count)
@@ -270,10 +276,13 @@ fn read_surface(z: &Zone, sh: u32) -> Surface {
         let rd = |i: u32| z.u16(blend + 2 * i);
         for (extra, &count) in blend_counts.iter().enumerate() {
             for _ in 0..count {
+                // Bone references are byte offsets into the surface's DObjSkelMat array (64 bytes
+                // each), like the rigid vertList's; the weights are half floats (OpenAssetTools'
+                // XModel dumpers read both the same way for IW4 through T6).
                 let mut w = vec![(rd(o) / SKEL_MAT_SIZE, 1.0f32)];
                 let mut rest = 1.0f32;
                 for k in 0..extra as u32 {
-                    let weight = rd(o + 2 + 2 * k) as f32 / 65535.0;
+                    let weight = half_to_f32(rd(o + 2 + 2 * k));
                     rest -= weight;
                     w.push((rd(o + 1 + 2 * k) / SKEL_MAT_SIZE, weight));
                 }
@@ -292,7 +301,7 @@ fn read_surface(z: &Zone, sh: u32) -> Surface {
     } else {
         Vec::new()
     };
-    Surface { vertices, triangles }
+    Ok(Surface { vertices, triangles })
 }
 
 /// A material asset by name (2D HUD art is a material too), or `None` if the zone has none.
@@ -364,6 +373,77 @@ mod tests {
         assert!(v[0] > 0.9 && v[1].abs() < 0.01 && v[2].abs() < 0.01, "{v:?}");
     }
 
+    /// Blend weights of a synthetic surface: bone references are DObjSkelMat byte offsets (divided
+    /// by 64) and secondary weights are half floats, matching OpenAssetTools' XModel readers.
+    #[test]
+    fn reads_synthetic_blend_weights() {
+        let mut mem = vec![0u8; 0x400];
+        let put16 = |m: &mut [u8], o: usize, v: u16| m[o..o + 2].copy_from_slice(&v.to_le_bytes());
+        let put32 = |m: &mut [u8], o: usize, v: u32| m[o..o + 4].copy_from_slice(&v.to_le_bytes());
+
+        let sh = 0x40; // XSurface
+        mem[sh] = 0; // vertListCount
+        put16(&mut mem, sh + 2, 0); // flags: not quantized
+        put16(&mut mem, sh + 4, 3); // vertCount
+        put16(&mut mem, sh + 6, 1); // triCount
+        put16(&mut mem, sh + 16, 0); // blendCounts[0]
+        put16(&mut mem, sh + 18, 2); // blendCounts[1]: two 2-influence vertices
+        put16(&mut mem, sh + 20, 1); // blendCounts[2]: one 3-influence vertex
+        put16(&mut mem, sh + 22, 0);
+        let blend_addr = 0x100;
+        let verts_addr = 0x180;
+        let tris_addr = 0x200;
+        put32(&mut mem, sh + 24, blend_addr as u32);
+        put32(&mut mem, sh + 32, verts_addr as u32);
+        put32(&mut mem, sh + 40, 0); // no rigid vertList
+        put32(&mut mem, sh + 12, tris_addr as u32);
+
+        // Blend stream: [bone0][bone1][w1] for 2-influence, [bone0][bone1][w1][bone2][w2] for 3.
+        // Bones: byte offsets (index * 64); weights: half floats. The stream is u16 slots.
+        let put_entry = |m: &mut [u8], o: usize, bone0: u16, rest: &[(u16, f32)]| {
+            put16(m, o, bone0 * SKEL_MAT_SIZE);
+            for (k, (bone, weight)) in rest.iter().enumerate() {
+                put16(m, o + 2 * (1 + 2 * k), bone * SKEL_MAT_SIZE);
+                // 0.25, 0.5 and 0.125 as half floats.
+                let bits = match weight {
+                    w if *w == 0.25 => 0x3400u16,
+                    w if *w == 0.5 => 0x3800,
+                    w if *w == 0.125 => 0x3000,
+                    _ => unreachable!(),
+                };
+                put16(m, o + 2 * (2 + 2 * k), bits);
+            }
+        };
+        put_entry(&mut mem, blend_addr as usize, 3, &[(7, 0.5)]);
+        put_entry(&mut mem, blend_addr as usize + 6, 5, &[(2, 0.25)]);
+        put_entry(&mut mem, blend_addr as usize + 12, 1, &[(9, 0.5), (4, 0.125)]);
+
+        // Three vertices at 32-byte stride: position (12), texCoord (at 20), normal (at 24).
+        for i in 0..3usize {
+            let v = verts_addr + 32 * i;
+            let xyz: [f32; 3] = [1.0 + i as f32, 2.0, 3.0];
+            for (c, x) in xyz.iter().enumerate() {
+                put32(&mut mem, v + 4 * c, x.to_bits());
+            }
+            put32(&mut mem, v + 20, 0); // tex coords
+            put32(&mut mem, v + 24, 0x1FF); // +X normal (unpacked 1.0, 0, 0)
+        }
+        // One triangle 0,1,2.
+        put16(&mut mem, tris_addr, 0);
+        put16(&mut mem, tris_addr + 2, 1);
+        put16(&mut mem, tris_addr + 4, 2);
+
+        let zone = crate::t6zone::synthetic_zone("t", mem, Vec::new(), Vec::new());
+        let s = read_surface(&zone, sh as u32).expect("the synthetic surface reads");
+        assert_eq!(s.vertices.len(), 3);
+        assert_eq!(s.vertices[0].weights, vec![(3, 0.5), (7, 0.5)]);
+        assert_eq!(s.vertices[1].weights, vec![(5, 0.75), (2, 0.25)]);
+        assert_eq!(s.vertices[2].weights, vec![(1, 0.375), (9, 0.5), (4, 0.125)]);
+        assert_eq!(s.triangles, vec![[0, 1, 2]]);
+        assert!((s.vertices[0].position[0] - 1.0).abs() < 1e-5, "{:?}", s.vertices[0].position);
+        assert!(s.vertices[0].normal[0] > 0.9, "{:?}", s.vertices[0].normal);
+    }
+
     fn zone(name: &str) -> Zone {
         let dir = std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR");
         let file = std::fs::read(std::path::Path::new(&dir).join(format!("zone/all/{name}.ff"))).unwrap();
@@ -386,6 +466,16 @@ mod tests {
                 assert!((total - 1.0).abs() < 0.01, "weights sum to 1");
                 assert!(v.weights.iter().all(|w| (w.0 as usize) < model.bones.len()));
             }
+            // The secondary weights are half floats: they span the range, they are not one narrow
+            // band (reading the half-float bits as /65535 lands every secondary near 0.22).
+            let secondary: Vec<f32> = s
+                .vertices
+                .iter()
+                .flat_map(|v| v.weights.iter().skip(1).map(|w| w.1))
+                .collect();
+            assert!(!secondary.is_empty(), "the character has blended vertices");
+            let max = secondary.iter().cloned().fold(0.0f32, f32::max);
+            assert!(max > 0.4, "secondary weights reach at least 0.4 (max {max})");
             assert!(s.triangles.iter().flatten().all(|&i| (i as usize) < s.vertices.len()));
         }
         assert!(model.maxs[2] > 60.0 && model.maxs[2] < 85.0, "height {:?}", model.maxs);

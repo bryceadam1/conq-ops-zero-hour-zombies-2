@@ -68,6 +68,7 @@ impl SoundBank {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
         let source = path.as_ref().to_path_buf();
         let mut file = File::open(&source)?;
+        let file_len = file.metadata()?.len();
         let mut header = [0u8; 0x88];
         file.read_exact(&mut header)
             .map_err(|_| FormatError::Truncated("sab header"))?;
@@ -86,12 +87,24 @@ impl SoundBank {
         if entry_size < 20 {
             return Err(FormatError::Corrupt(format!("entry size {entry_size} < 20")));
         }
+        // The count and entry size are file-controlled: cap the count and require the table to fit
+        // in the file before pre-allocating for it.
+        const MAX_ENTRIES: usize = 1 << 20;
+        let table_len = (entry_size as u64)
+            .checked_mul(count as u64)
+            .ok_or_else(|| FormatError::Corrupt(format!("sab entry table {count} x {entry_size} overflows")))?;
+        if count > MAX_ENTRIES || entry_offset > file_len || table_len > file_len - entry_offset {
+            return Err(FormatError::Corrupt(format!(
+                "sab entry table ({count} x {entry_size} bytes at {entry_offset}) does not fit in the {}-byte file",
+                file_len
+            )));
+        }
         let name_raw = &header[0x48..0x88];
         let name_len = name_raw.iter().position(|&b| b == 0).unwrap_or(name_raw.len());
         let name = String::from_utf8_lossy(&name_raw[..name_len]).into_owned();
 
         file.seek(SeekFrom::Start(entry_offset))?;
-        let mut table = vec![0u8; entry_size * count];
+        let mut table = vec![0u8; table_len as usize];
         file.read_exact(&mut table)
             .map_err(|_| FormatError::Truncated("sab entry table"))?;
         let entries = table
@@ -121,6 +134,13 @@ impl SoundBank {
     /// Raw payload bytes (a FLAC stream when `entry.format == FORMAT_FLAC`).
     pub fn read(&self, entry: &SabEntry) -> Result<Vec<u8>> {
         let mut file = File::open(&self.source)?;
+        let len = file.metadata()?.len();
+        if entry.offset as u64 > len || entry.size as u64 > len - entry.offset as u64 {
+            return Err(FormatError::Corrupt(format!(
+                "sab entry {:#x} extends past the end of the bank ({}+{} of {})",
+                entry.id, entry.offset, entry.size, len
+            )));
+        }
         file.seek(SeekFrom::Start(entry.offset as u64))?;
         let mut buf = vec![0u8; entry.size as usize];
         file.read_exact(&mut buf)

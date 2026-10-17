@@ -7,6 +7,7 @@
 //! its ZoneCodeGenerator computes them (32-bit PC).
 
 use crate::t6zone::Zone;
+use crate::FormatError;
 
 const ALIAS_LIST_SIZE: u32 = 20;
 const ALIAS_SIZE: u32 = 96;
@@ -67,14 +68,14 @@ fn unit(v: u16) -> f32 {
 }
 
 /// Every sound bank in a loaded zone.
-pub fn banks(zone: &Zone) -> Vec<Bank> {
+pub fn banks(zone: &Zone) -> Result<Vec<Bank>, FormatError> {
     zone.assets.iter().filter(|a| a.kind == ASSET_SOUND).map(|a| read_bank(zone, a.addr)).collect()
 }
 
-fn read_bank(z: &Zone, b: u32) -> Bank {
-    let name = z.str_ptr(b);
-    let count = z.u32(b + 4);
-    let lists = z.u32(b + 8);
+fn read_bank(z: &Zone, b: u32) -> Result<Bank, FormatError> {
+    let name = z.try_str_ptr(b)?;
+    let count = z.try_u32(b + 4)?;
+    let lists = z.try_u32(b + 8)?;
     let mut aliases = Vec::new();
     if lists != 0 {
         for i in 0..count {
@@ -123,7 +124,7 @@ fn read_bank(z: &Zone, b: u32) -> Bank {
             .collect()
     };
     let loaded_data = if data != 0 { z.bytes(data, data_size as usize).to_vec() } else { Vec::new() };
-    Bank { name, aliases, loaded, loaded_data }
+    Ok(Bank { name, aliases, loaded, loaded_data })
 }
 
 #[cfg(test)]
@@ -137,7 +138,7 @@ mod tests {
         let dir = std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR");
         let file = std::fs::read(std::path::Path::new(&dir).join("zone/all/common_mp.ff")).unwrap();
         let zone = crate::t6zone::load(&crate::fastfile::read(&file).unwrap()).unwrap();
-        let banks = banks(&zone);
+        let banks = banks(&zone).unwrap();
         let common = banks.iter().find(|b| b.name == "mpl_common.all").expect("mpl_common.all");
         assert!(common.aliases.len() > 500, "{} aliases", common.aliases.len());
         let fire = common.aliases.iter().find(|a| a.name.contains("an94") && a.name.contains("fire")).expect("an94 fire");

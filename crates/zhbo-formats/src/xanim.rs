@@ -117,13 +117,23 @@ impl Pools<'_> {
         }
         if stored >= 64 {
             let b = self.indices.pop(count)?;
-            // The game keeps checkpoints of long index lists in dataShort: skip them.
-            self.short.pop((count - 2) / 256 + 2)?;
+            // The game keeps checkpoints of long index lists in dataShort: the first entry, every
+            // 256th entry, and always the final entry — even when it repeats the last 256-boundary
+            // one (OpenAssetTools FlatXAnimReader/FlatXAnimDataWriter; `checkpoint_count` matches).
+            self.short.pop(checkpoint_count(count))?;
             return Ok((0..count).map(|i| u16_at(b, 2 * i)).collect());
         }
         let b = self.short.pop(count)?;
         Ok((0..count).map(|i| u16_at(b, 2 * i)).collect())
     }
+}
+
+/// Checkpoints a long track's index list keeps in dataShort: the first entry, every 256th entry,
+/// and always the final entry — which repeats the last 256-boundary one when the count lands on
+/// one (OpenAssetTools FlatXAnimDataWriter writes `((count-2)/256) + 1` boundary checkpoints and
+/// then the final entry).
+fn checkpoint_count(count: usize) -> usize {
+    (count - 2) / 256 + 2
 }
 
 fn quat(v: [i16; 4]) -> [f32; 4] {
@@ -147,25 +157,25 @@ pub fn find(zone: &Zone, name: &str) -> Result<Anim, FormatError> {
 /// Read the animation whose struct is at `h`.
 pub fn read(z: &Zone, h: u32) -> Result<Anim, FormatError> {
     let name = z.str_ptr(h).trim_start_matches(',').to_string();
-    let counts: Vec<usize> = (0..10).map(|i| z.u8(h + 24 + i) as usize).collect();
-    let data_byte_count = z.u16(h + 4) as usize;
-    let data_short_count = z.u16(h + 6) as usize;
-    let data_int_count = z.u16(h + 8) as usize;
-    let random_byte_count = z.u16(h + 10) as usize;
-    let num_frames = z.u16(h + 14);
-    let looping = z.u8(h + 16) != 0;
-    let notify_count = z.u8(h + 34) as u32;
-    let random_short_count = z.u32(h + 40) as usize;
-    let index_count = z.u32(h + 44) as usize;
-    let frame_rate = z.f32(h + 48);
+    let counts: Vec<usize> = (0..10).map(|i| Ok::<usize, FormatError>(z.try_u8(h + 24 + i)? as usize)).collect::<Result<Vec<_>, _>>()?;
+    let data_byte_count = z.try_u16(h + 4)? as usize;
+    let data_short_count = z.try_u16(h + 6)? as usize;
+    let data_int_count = z.try_u16(h + 8)? as usize;
+    let random_byte_count = z.try_u16(h + 10)? as usize;
+    let num_frames = z.try_u16(h + 14)?;
+    let looping = z.try_u8(h + 16)? != 0;
+    let notify_count = z.try_u8(h + 34)? as u32;
+    let random_short_count = z.try_u32(h + 40)? as usize;
+    let index_count = z.try_u32(h + 44)? as usize;
+    let frame_rate = z.try_f32(h + 48)?;
     let byte_indices = num_frames < 256;
     let bone_count = counts[ALL];
 
-    let names_ptr = z.u32(h + 64);
+    let names_ptr = z.try_u32(h + 64)?;
     let names: Vec<String> = (0..bone_count as u32)
         .map(|i| if names_ptr != 0 { z.script_string(z.u16(names_ptr + 2 * i)).to_string() } else { String::new() })
         .collect();
-    let notify_ptr = z.u32(h + 96);
+    let notify_ptr = z.try_u32(h + 96)?;
     let notifies = if notify_ptr == 0 {
         Vec::new()
     } else {
@@ -173,18 +183,18 @@ pub fn read(z: &Zone, h: u32) -> Result<Anim, FormatError> {
             .map(|i| Notify { name: z.script_string(z.u16(notify_ptr + 8 * i)).to_string(), time: z.f32(notify_ptr + 8 * i + 4) })
             .collect()
     };
-    let pool = |ptr_at: u32, count: usize, elem: usize, what: &'static str| -> Pool {
-        let ptr = z.u32(h + ptr_at);
-        let d = if ptr != 0 { z.bytes(ptr, count * elem) } else { &[][..] };
-        Pool { d, elem, name: what }
+    let pool = |ptr_at: u32, count: usize, elem: usize, what: &'static str| -> Result<Pool, FormatError> {
+        let ptr = z.try_u32(h + ptr_at)?;
+        let d = if ptr != 0 { z.try_bytes(ptr, count * elem)? } else { &[][..] };
+        Ok(Pool { d, elem, name: what })
     };
     let mut p = Pools {
-        byte: pool(68, data_byte_count, 1, "dataByte"),
-        short: pool(72, data_short_count, 2, "dataShort"),
-        int: pool(76, data_int_count, 4, "dataInt"),
-        random_short: pool(80, random_short_count, 2, "randomDataShort"),
-        random_byte: pool(84, random_byte_count, 1, "randomDataByte"),
-        indices: pool(92, index_count, if byte_indices { 1 } else { 2 }, "indices"),
+        byte: pool(68, data_byte_count, 1, "dataByte")?,
+        short: pool(72, data_short_count, 2, "dataShort")?,
+        int: pool(76, data_int_count, 4, "dataInt")?,
+        random_short: pool(80, random_short_count, 2, "randomDataShort")?,
+        random_byte: pool(84, random_byte_count, 1, "randomDataByte")?,
+        indices: pool(92, index_count, if byte_indices { 1 } else { 2 }, "indices")?,
         byte_indices,
     };
     let mut bones: Vec<BoneTrack> = names.into_iter().map(|name| BoneTrack { name, ..Default::default() }).collect();
@@ -332,6 +342,95 @@ impl BoneTrack {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn checkpoint_counts_match_oat() {
+        // (count - 2)/256 + 2: the first entry, every 256th, and the final one (which repeats the
+        // last boundary checkpoint when the count lands on it). Verified against OpenAssetTools'
+        // FlatXAnimReader for long anims; counts in [65, 256] keep exactly two (first + final).
+        assert_eq!(checkpoint_count(65), 2);
+        assert_eq!(checkpoint_count(256), 2);
+        assert_eq!(checkpoint_count(257), 2);
+        assert_eq!(checkpoint_count(512), 3);
+        assert_eq!(checkpoint_count(513), 3);
+        assert_eq!(checkpoint_count(1024), 5);
+        assert_eq!(checkpoint_count(1025), 5);
+    }
+
+    fn put16(m: &mut [u8], o: usize, v: u16) {
+        m[o..o + 2].copy_from_slice(&v.to_le_bytes());
+    }
+    fn put32(m: &mut [u8], o: usize, v: u32) {
+        m[o..o + 4].copy_from_slice(&v.to_le_bytes());
+    }
+
+    /// A synthetic 65-key track on a 300-frame anim exercises the long-index path: the 65 frame
+    /// indices live in the indices pool, dataShort carries the stored size plus 2 checkpoints. A
+    /// wrong skip count would leave dataShort bytes over or exhaust it, which `read` rejects.
+    #[test]
+    fn reads_a_synthetic_long_anim() {
+        const STORED: u16 = 64;
+        let count = STORED as usize + 1;
+        let mut mem = vec![0u8; 0x400];
+
+        // Name, the XAnimParts struct, and the pools.
+        let name_addr = 0x10;
+        mem[name_addr..name_addr + b"test_long_anim".len() + 1].copy_from_slice(b"test_long_anim\0");
+        let h = 0x40;
+        put32(&mut mem, h, name_addr as u32);
+        put16(&mut mem, h + 4, 0); // dataByte
+        put16(&mut mem, h + 6, 3); // dataShort: stored size + 2 checkpoints
+        put16(&mut mem, h + 8, 0); // dataInt
+        put16(&mut mem, h + 10, 0); // randomDataByte
+        put16(&mut mem, h + 14, 300); // num_frames
+        mem[h + 16] = 0; // not looping
+        let counts = [0u8, 1, 0, 0, 0, 0, 0, 0, 0, 1]; // one HALF_QUAT bone
+        for (i, c) in counts.iter().enumerate() {
+            mem[h + 24 + i] = *c;
+        }
+        mem[h + 34] = 0; // notifies
+        put32(&mut mem, h + 40, (2 * count) as u32); // randomDataShort: Z and W per key
+        put32(&mut mem, h + 44, count as u32); // indices
+        put32(&mut mem, h + 48, 30.0f32.to_bits());
+        put32(&mut mem, h + 64, 0); // bone names
+
+        let shorts_addr = 0x100;
+        let indices_addr = 0x120;
+        let random_addr = 0x240;
+        put32(&mut mem, h + 72, shorts_addr as u32);
+        put32(&mut mem, h + 80, random_addr as u32);
+        put32(&mut mem, h + 92, indices_addr as u32);
+
+        // dataShort: stored size, then the checkpoints (first and final index entries).
+        put16(&mut mem, shorts_addr, STORED);
+        put16(&mut mem, shorts_addr + 2, 0);
+        put16(&mut mem, shorts_addr + 4, (count - 1) as u16);
+        // indices pool: frames 0..=64.
+        for i in 0..count {
+            put16(&mut mem, indices_addr + 2 * i, i as u16);
+        }
+        // randomDataShort: half quats (Z, W).
+        for i in 0..2 * count {
+            put16(&mut mem, random_addr + 2 * i, 1000 + 3 * i as u16);
+        }
+
+        let zone = crate::t6zone::synthetic_zone(
+            "t",
+            mem,
+            Vec::new(),
+            vec![crate::t6zone::Asset { kind: crate::fastfile::ASSET_XANIM, structure: "XAnimParts", addr: h as u32 }],
+        );
+        let anim = find(&zone, "test_long_anim").expect("the synthetic anim loads");
+        assert_eq!(anim.num_frames, 300);
+        let rotation = anim.bones[0].rotation.as_ref().expect("the bone rotates");
+        assert_eq!(rotation.len(), count);
+        for (k, (frame, q)) in rotation.iter().enumerate() {
+            assert_eq!(*frame, k as u16);
+            let len: f32 = q.iter().map(|c| c * c).sum::<f32>().sqrt();
+            assert!((len - 1.0).abs() < 1e-4, "key {k} is a normalized quaternion");
+        }
+        assert!(anim.bones[0].translation.is_none());
+    }
 
     #[test]
     fn torso_layer_keeps_its_bones_and_takes_the_rest_from_the_stance() {

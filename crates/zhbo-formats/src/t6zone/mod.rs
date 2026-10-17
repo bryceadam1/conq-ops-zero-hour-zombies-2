@@ -18,6 +18,7 @@ pub mod generated;
 pub mod layouts;
 
 use crate::fastfile;
+use crate::FormatError;
 use std::fmt;
 
 pub const FOLLOWING: u32 = 0xFFFF_FFFF;
@@ -341,6 +342,12 @@ pub struct Zone {
     pub trailing_bytes: usize,
 }
 
+/// A zone assembled from raw memory (reader tests build one without a fastfile stream).
+#[cfg(test)]
+pub(crate) fn synthetic_zone(name: &str, mem: Vec<u8>, script_strings: Vec<String>, assets: Vec<Asset>) -> Zone {
+    Zone { name: name.to_string(), mem, script_strings, assets, trailing_bytes: 0 }
+}
+
 /// Load every asset of a decrypted zone. On failure the error says which asset broke.
 pub fn load(zone: &fastfile::Zone) -> Result<Zone, LoadError> {
     let d = &zone.data;
@@ -456,6 +463,36 @@ impl Zone {
     pub fn bytes(&self, addr: u32, len: usize) -> &[u8] {
         self.mem.get(addr as usize..addr as usize + len).unwrap_or(&[])
     }
+
+    /// Fallible reads for asset boundaries (top-level struct fields): unlike the lenient ones
+    /// above, an address outside the zone memory is an error, so a corrupt pointer cannot silently
+    /// read as "field is 0". Inner fields keep the lenient accessors.
+    pub fn try_u8(&self, addr: u32) -> Result<u8, FormatError> {
+        self.mem.get(addr as usize).copied().ok_or_else(|| bad_addr(addr, 1))
+    }
+    pub fn try_u16(&self, addr: u32) -> Result<u16, FormatError> {
+        let b = self.mem.get(addr as usize..addr as usize + 2).ok_or_else(|| bad_addr(addr, 2))?;
+        Ok(u16::from_le_bytes([b[0], b[1]]))
+    }
+    pub fn try_u32(&self, addr: u32) -> Result<u32, FormatError> {
+        let b = self.mem.get(addr as usize..addr as usize + 4).ok_or_else(|| bad_addr(addr, 4))?;
+        Ok(u32::from_le_bytes(b.try_into().unwrap()))
+    }
+    pub fn try_f32(&self, addr: u32) -> Result<f32, FormatError> {
+        Ok(f32::from_bits(self.try_u32(addr)?))
+    }
+    pub fn try_bytes(&self, addr: u32, len: usize) -> Result<&[u8], FormatError> {
+        self.mem.get(addr as usize..addr as usize + len).ok_or_else(|| bad_addr(addr, len as u32))
+    }
+
+    /// The string a `const char*` field points to, falling back to "".
+    pub fn try_str_ptr(&self, field: u32) -> Result<String, FormatError> {
+        match self.try_u32(field)? {
+            0 => Ok(String::new()),
+            p => Ok(cstr_at(&self.mem, p)),
+        }
+    }
+
     /// The string a `const char*` field points to.
     pub fn str_ptr(&self, field: u32) -> String {
         match self.u32(field) {
@@ -479,6 +516,10 @@ impl Zone {
             .filter(|a| a.kind == kind)
             .find(|a| self.asset_name(a).is_some_and(|n| n.trim_start_matches(',') == name))
     }
+}
+
+fn bad_addr(addr: u32, len: u32) -> FormatError {
+    FormatError::Corrupt(format!("address {addr:#x} (+{len}) is outside the zone memory"))
 }
 
 #[cfg(test)]

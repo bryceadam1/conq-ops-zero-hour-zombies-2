@@ -62,6 +62,15 @@ impl BigArchive {
 
     pub fn read(&self, entry: &BigEntry) -> Result<Vec<u8>> {
         let mut file = File::open(&self.source)?;
+        // The entry's declared extent is file-controlled: refuse one past the archive (its size
+        // would otherwise be pre-allocated before the short read is noticed).
+        let len = file.metadata()?.len();
+        if entry.offset as u64 > len || entry.size as u64 > len - entry.offset as u64 {
+            return Err(FormatError::Corrupt(format!(
+                "BIG member {:?} extends past the end of the archive ({}+{} of {})",
+                entry.path, entry.offset, entry.size, len
+            )));
+        }
         file.seek(SeekFrom::Start(entry.offset as u64))?;
         let mut buf = vec![0u8; entry.size as usize];
         file.read_exact(&mut buf)
@@ -71,6 +80,14 @@ impl BigArchive {
 }
 
 fn parse_table(table: &[u8], count: usize) -> Result<Vec<BigEntry>> {
+    // The count is file-controlled: refuse one that cannot fit in the table (8 header bytes per
+    // entry minimum) before pre-allocating for it, so a hostile header cannot ask for gigabytes.
+    if count.checked_mul(8).map_or(true, |need| need > table.len()) {
+        return Err(FormatError::Corrupt(format!(
+            "entry count {count} does not fit in the {}-byte file table",
+            table.len()
+        )));
+    }
     let mut entries = Vec::with_capacity(count);
     let mut pos = 0usize;
     for _ in 0..count {
