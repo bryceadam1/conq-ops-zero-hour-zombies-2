@@ -291,6 +291,7 @@ void Zhbo_Init()
 	{
 		logLine("weapons: no converted BO2 weapon table; using the built-in one");
 	}
+	zhbo_load_strings(readTextFile(zhbo_names::STRINGS_PATH).c_str());
 
 	zhboInjectConstructButtons();
 

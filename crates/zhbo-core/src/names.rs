@@ -14,6 +14,8 @@ pub const NO_SHADOW_SUFFIX: &str = "_nsg";
 pub const WEAPON_TABLE_PATH: &str = "Data\\ConquerOps\\weapons.ini";
 pub const RTS_FX_PATH: &str = "Data\\ConquerOps\\rts_fx.txt";
 pub const VIEWMODEL_SOUNDS_PATH: &str = "Data\\ConquerOps\\viewmodel_sounds.txt";
+/// The shipped localised strings (see strings.rs).
+pub const STRINGS_PATH: &str = "Data\\ConquerOps\\strings_en.ini";
 /// The converted BO2 HUD/texture archive and its version marker.
 pub const BO2_ARCHIVE_NAME: &str = "ConquerOps_BO2.big";
 pub const BO2_ARCHIVE_VERSION_PATH: &str = "Data\\ConquerOps\\bo2_hud_version.txt";

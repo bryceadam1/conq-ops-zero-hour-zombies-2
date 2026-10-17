@@ -58,6 +58,17 @@ const _: () = {
     assert!(size_of::<ClientApi>() == (CLIENT_API_FIELDS as usize) * size_of::<usize>());
 };
 
+/// Load the shipped strings file (`Data/ConquerOps/strings_en.ini`, read by the bridge's
+/// `readTextFile`); `lookup` consults it before the built-in English fallback.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_load_strings(text: *const c_char) {
+    if text.is_null() {
+        return;
+    }
+    let text = unsafe { CStr::from_ptr(text).to_string_lossy() };
+    crate::strings::load(&text);
+}
+
 /// Returns the ABI version; the glue refuses to run if it does not match its header.
 #[no_mangle]
 pub extern "C" fn zhbo_abi_version() -> u32 {

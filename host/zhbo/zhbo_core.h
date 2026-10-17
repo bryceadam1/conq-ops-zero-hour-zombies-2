@@ -238,6 +238,8 @@ typedef struct ZhboWorldPose
 uint32_t zhbo_abi_version(void);
 /* Per-table field counts (low word: logic, high word: client); Zhbo_Init refuses a mismatch. */
 uint64_t zhbo_abi_fields(void);
+/* Load the mod's shipped strings file (see strings.rs); lookup consults it first. */
+void zhbo_load_strings(const char *text);
 void zhbo_init(const ZhboLogicApi *logic, const ZhboClientApi *client);
 int32_t zhbo_install_weapons(const char *table); /* Data\\ConquerOps\\weapons.ini; count or -1 */
 void zhbo_reset(void);
