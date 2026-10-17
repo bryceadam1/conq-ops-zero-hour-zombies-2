@@ -130,11 +130,10 @@ impl Pools<'_> {
 }
 
 /// Checkpoints a long track's index list keeps in dataShort: the first entry, every 256th entry,
-/// and always the final entry — which repeats the last 256-boundary one when the count lands on
-/// one (OpenAssetTools FlatXAnimDataWriter writes `((count-2)/256) + 1` boundary checkpoints and
-/// then the final entry).
+/// and always the final one (OpenAssetTools FlatXAnimReader's `ReadPackedIndices` skips
+/// `((count-1)/256) + 1`).
 fn checkpoint_count(count: usize) -> usize {
-    (count - 2) / 256 + 2
+    (count - 1) / 256 + 1
 }
 
 fn quat(v: [i16; 4]) -> [f32; 4] {
@@ -346,15 +345,15 @@ mod tests {
 
     #[test]
     fn checkpoint_counts_match_oat() {
-        // (count - 2)/256 + 2: the first entry, every 256th, and the final one (which repeats the
+        // (count - 1)/256 + 1: the first entry, every 256th, and the final one (which repeats the
         // last boundary checkpoint when the count lands on it). Verified against OpenAssetTools'
-        // FlatXAnimReader for long anims; counts in [65, 256] keep exactly two (first + final).
-        assert_eq!(checkpoint_count(65), 2);
-        assert_eq!(checkpoint_count(256), 2);
+        // FlatXAnimReader; counts in [65, 256] keep exactly one (the final).
+        assert_eq!(checkpoint_count(65), 1);
+        assert_eq!(checkpoint_count(256), 1);
         assert_eq!(checkpoint_count(257), 2);
-        assert_eq!(checkpoint_count(512), 3);
+        assert_eq!(checkpoint_count(512), 2);
         assert_eq!(checkpoint_count(513), 3);
-        assert_eq!(checkpoint_count(1024), 5);
+        assert_eq!(checkpoint_count(1024), 4);
         assert_eq!(checkpoint_count(1025), 5);
     }
 
@@ -380,7 +379,7 @@ mod tests {
         let h = 0x40;
         put32(&mut mem, h, name_addr as u32);
         put16(&mut mem, h + 4, 0); // dataByte
-        put16(&mut mem, h + 6, 3); // dataShort: stored size + 2 checkpoints
+        put16(&mut mem, h + 6, 2); // dataShort: stored size + 1 checkpoint
         put16(&mut mem, h + 8, 0); // dataInt
         put16(&mut mem, h + 10, 0); // randomDataByte
         put16(&mut mem, h + 14, 300); // num_frames
