@@ -513,6 +513,17 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
   friend of InGameUI (idle-worker list). `--build` 17/17: FPS repair, idle worker back overhead, an
   ordered repair at 15.0 s against a dozer's 7.5 s. Default 13/13, RTS 8/8, equipment 8/8, rts-dry 5/5.
 
+## Docs housekeeping (2026-10-18)
+
+The refactor plan's last phase is done: **AGENTS.md** is now the front door for agents
+(ground rules, doc read order, verification ladder, commit/journal discipline). The rule
+that matters most for future sessions: *plan/handoff documents in `docs/` are scaffolding —
+fold anything durable into the permanent docs and delete the file in the same commit*.
+`HANDOFF-MAC.md` and `REFACTOR-PLAN.md` were deleted this way (macOS gotchas →
+PLATFORMS.md; the open backlog lives below). When adding features, update the doc the
+behavior contradicts in the same commit, and keep gameplay numbers out of code — they come
+from the tuning pack and the weapon-table schema.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
