@@ -23,6 +23,7 @@ index e5dc1fc..be15aa4 100644
  		MSG_ENABLE_RETALIATION_MODE,								///< Turn retaliation mode on or off.
 +		MSG_ZHBO_TAKE_CONTROL,											///< ZHBO: (objectID) take first-person control of a General
 +		MSG_ZHBO_FPS_INPUT,													///< ZHBO: (objectID, held, pressed, move, yaw, pitch) first-person input for one logic frame
++		MSG_ZHBO_CHOOSE_CLASS,												///< ZHBO: (objectID, classIndex) the General assumes a class preset (classes.rs)
  
  		MSG_BEGIN_DEBUG_NETWORK_MESSAGES = 1900,		///< network messages that exist only in debug/internal builds. all grouped separately.
  
@@ -74,6 +75,7 @@ index 9980021..48ed6f8 100644
  	CASE_LABEL(MSG_ENABLE_RETALIATION_MODE)
 +	CASE_LABEL(MSG_ZHBO_TAKE_CONTROL)
 +	CASE_LABEL(MSG_ZHBO_FPS_INPUT)
++	CASE_LABEL(MSG_ZHBO_CHOOSE_CLASS)
  	CASE_LABEL(MSG_BEGIN_DEBUG_NETWORK_MESSAGES)
  
  #if defined(RTS_DEBUG) || defined(_ALLOW_DEBUG_CHEATS_IN_RELEASE)
@@ -158,6 +160,12 @@ index 472aee9..8a38139 100644
 +		case GameMessage::MSG_ZHBO_FPS_INPUT:
 +		{
 +			Zhbo_OnInputMessage(msgPlayer->getPlayerIndex(), msg);
++			break;
++		}
++		// ZHBO: the pick menu's class choice (classes.rs)
++		case GameMessage::MSG_ZHBO_CHOOSE_CLASS:
++		{
++			Zhbo_OnChooseClassMessage(msgPlayer->getPlayerIndex(), msg);
 +			break;
 +		}
  		case GameMessage::MSG_DO_WEAPON_AT_LOCATION:

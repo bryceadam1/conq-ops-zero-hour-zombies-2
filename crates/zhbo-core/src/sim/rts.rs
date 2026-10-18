@@ -19,6 +19,7 @@ impl Sim {
             let frame = self.frame;
             self.players[idx] = Some(PlayerSim {
                 general,
+                class: None,
                 mode: Mode::Rts,
                 body: Body::new(info.pos, &self.tuning),
                 yaw: info.yaw,

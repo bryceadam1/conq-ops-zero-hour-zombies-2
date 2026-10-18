@@ -7,6 +7,7 @@
 
 pub mod attachments;
 pub mod building;
+pub mod classes;
 pub mod client;
 pub mod config;
 pub mod conformance;

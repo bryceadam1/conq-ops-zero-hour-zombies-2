@@ -40,6 +40,8 @@ void Zhbo_Preload();
 // --- Logic (deterministic lockstep) ------------------------------------------------------------
 void Zhbo_OnTakeControlMessage(Int playerIndex, const GameMessage *msg);
 void Zhbo_OnInputMessage(Int playerIndex, const GameMessage *msg);
+/// The pick menu's choice: the General assumes the class at the shared list's index (classes.rs).
+void Zhbo_OnChooseClassMessage(Int playerIndex, const GameMessage *msg);
 /// Once per logic frame, right after the frame's command list was processed.
 void Zhbo_LogicStep(UnsignedInt frame);
 /// True while the object is driven by first-person input (its AI and physics must not run).

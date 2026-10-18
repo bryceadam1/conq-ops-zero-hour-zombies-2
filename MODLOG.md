@@ -524,6 +524,34 @@ PLATFORMS.md; the open backlog lives below). When adding features, update the do
 behavior contradicts in the same commit, and keep gameplay numbers out of code — they come
 from the tuning pack and the weapon-table schema.
 
+## Class pick (2026-10-18)
+
+BO2's create-a-class, phase 1: at first control of a General the player picks one of the
+five basic BO2 classes (Assault/Marksman/Pointman/Breacher/Engineer) and the General assumes
+it — the kit replaces the base kit, the weapon raises like after take_control, and the pick
+overlay goes away. All data-driven: `crates/zhbo-core/src/classes.rs` (registry + the five
+basics built in) and `data/ConquerOps/classes.ini` (shipped in the mod's BIG file, loaded by
+`zhbo_load_classes` at init — the list must be identical on every client, so the pick crosses
+the lockstep stream as a plain index). The pick menu is a HUD overlay (`draw_class_pick`)
+driven by fresh presses of 1-5 (`class_pick_input` reads `Key::Key1`..`Key5` even while the
+game's input is locked); the choice rides a new one-shot in `ClientOut` (`choose_class`,
+`choose_class_general`) that the bridge turns into `MSG_ZHBO_CHOOSE_CLASS` (patch 0001: enum,
+label, dispatch; `Zhbo_OnChooseClassMessage` → `zhbo_logic_choose_class`). `PlayerSim` keeps
+the assumed class id (`class: Option<String>`), `EventKind::ClassChosen` plays the plant
+sound, and `describe_event` names it. ClientIn grew `mouse_x`/`mouse_y`/`mouse_buttons` for
+future menu work (ABI: ClientIn 128, ClientOut 140 — KeySet's 8-byte alignment inserts 4 bytes
+of hidden padding after `logic_frame`; the old 112 assumed none).
+
+**Open (next session):** custom classes. The engine's `GameMessage` has no string argument
+type (`MessageStream.h`: integer/real/bool/objectid/drawableid/teamid/location/pixel/...), so a
+custom class's spec cannot ride the pick message as text — it needs a packed-integer encoding
+(weapon-table ids + attachment/perk masks, ~7 integer args) or a shared preset id. The
+create-a-class screen (weapon/attachment/perk lists) and the lobby button
+(`SkirmishGameOptionsMenu.wnd`/WOL lobby) are unstarted; the skirmish lobby's buttons are
+`.wnd`-based (`TheNameKeyGenerator->nameToKey("SkirmishGameOptionsMenu.wnd:ButtonBack")`), so
+the button likely needs a runtime-injected window on the pattern of
+`ZhboControlBarAccess::injectConstructButtons`.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

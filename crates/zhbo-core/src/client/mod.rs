@@ -115,6 +115,11 @@ pub struct ClientIn {
     pub keys: KeySet,
     pub mouse_dx: f32,
     pub mouse_dy: f32,
+    /// Absolute mouse cursor position (screen pixels), for menus (the lobby class pick).
+    pub mouse_x: f32,
+    pub mouse_y: f32,
+    /// The mouse buttons' held state (see [`KeySet`]).
+    pub mouse_buttons: u32,
     /// Wheel notches since last frame.
     pub wheel: f32,
     /// Game window focused and no menu/dialog is up.
@@ -139,6 +144,9 @@ impl Default for ClientIn {
             keys: KeySet::default(),
             mouse_dx: 0.0,
             mouse_dy: 0.0,
+            mouse_x: 640.0,
+            mouse_y: 360.0,
+            mouse_buttons: 0,
             wheel: 0.0,
             input_allowed: 1,
             screen_w: 1280.0,
@@ -152,7 +160,7 @@ impl Default for ClientIn {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ClientOut {
     /// Replace the tactical view's camera with `eye`/`dir`/`hfov` this frame.
     pub camera_override: i32,
@@ -186,6 +194,47 @@ pub struct ClientOut {
     /// Sway, bob and recoil: offset from the eye (forward, left, up) and yaw/pitch/roll (radians).
     pub viewmodel_offset: Vec3,
     pub viewmodel_angles: Vec3,
+    /// One-shot: the player picked class `choose_class` (an index into `classes.rs`' list, or 0
+    /// = none) for `choose_class_general`. When a custom class is picked, `choose_class` is
+    /// `i32::MIN` (the custom marker) and `choose_class_payload` carries the wire words
+    /// (`classes.rs`' `CustomClass::to_wire_words`); the bridge sends them alongside the index.
+    pub choose_class: i32,
+    pub choose_class_general: u32,
+    /// The custom class's wire words when `choose_class` is the custom marker; unused otherwise.
+    pub choose_class_payload: [u32; 64],
+    /// How many `choose_class_payload` words are valid (0 for a shipped class pick).
+    pub choose_class_payload_len: i32,
+}
+
+// Manual Default: `[u32; 64]` has none (arrays above 32 don't), and the rest are plain.
+impl Default for ClientOut {
+    fn default() -> ClientOut {
+        ClientOut {
+            camera_override: 0,
+            eye: Vec3::default(),
+            dir: Vec3::default(),
+            hfov: 0.0,
+            capture_mouse: 0,
+            hide_rts_ui: 0,
+            hide_object: 0,
+            send_input: 0,
+            input_general: 0,
+            input: FpsInput::default(),
+            rts_look_at_valid: 0,
+            rts_look_at: Vec3::default(),
+            viewmodel: 0,
+            viewmodel_weapon: 0,
+            viewmodel_fired: 0,
+            viewmodel_time: 0.0,
+            viewmodel_ads: 0.0,
+            viewmodel_offset: Vec3::default(),
+            viewmodel_angles: Vec3::default(),
+            choose_class: 0,
+            choose_class_general: 0,
+            choose_class_payload: [0; 64],
+            choose_class_payload_len: 0,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -290,6 +339,9 @@ pub struct Client {
     last_sent_frame: Option<u32>,
     latch: u32,
     prev_held: u32,
+    /// The previous frame's raw key set: edge detection for keys outside the button bindings
+    /// (the class pick's number keys).
+    prev_keys: KeySet,
     eye_prev: Vec3,
     eye_curr: Vec3,
     seen_frame: u32,
@@ -332,6 +384,7 @@ impl Client {
             last_sent_frame: None,
             latch: 0,
             prev_held: 0,
+            prev_keys: KeySet::default(),
             eye_prev: Vec3::ZERO,
             eye_curr: Vec3::ZERO,
             seen_frame: 0,
@@ -387,8 +440,23 @@ impl Client {
         (held, fwd, right)
     }
 
-    /// Run one rendered frame.
-    pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
+/// The class pick's number keys: a fresh press of 1-5 picks that entry of the class list (the
+/// list is shared, so the index is deterministic on every client; the five basics fill the keys,
+/// more entries go through the create-a-class paging later). One-shot: the value stays 0
+/// otherwise, and the bridge turns it into `MSG_ZHBO_CHOOSE_CLASS`.
+fn class_pick_input(inp: &ClientIn, prev: &KeySet, out: &mut ClientOut, general: u32) {
+    const PICK_KEYS: [Key; 5] = [Key::Key1, Key::Key2, Key::Key3, Key::Key4, Key::Key5];
+    for (i, key) in PICK_KEYS.iter().enumerate() {
+        if inp.keys.is_down(*key) && !prev.is_down(*key) {
+            out.choose_class = i as i32 + 1;
+            out.choose_class_general = general;
+            return;
+        }
+    }
+}
+
+/// Run one rendered frame.
+pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         let dt = inp.dt.clamp(0.0, 0.25);
         #[allow(unused_mut)]
         let mut scripted = ClientIn::default();
@@ -516,7 +584,7 @@ impl Client {
                         out.viewmodel_time = f.t;
                         out.viewmodel_ads = p.arsenal.ads;
                     }
-                    self.build_input(inp, &mut out, allowed && !in_fc, p.hammer.is_some());
+                    self.build_input(inp, &mut out, allowed && !in_fc, p.hammer.is_some(), p.class.is_none());
                 }
             }
             ViewMode::Leaving { t, from_pos, from_dir, from_hfov, target, to_pos, to_dir, to_hfov } => {
@@ -544,6 +612,8 @@ impl Client {
                 }
             }
         }
+        // The fresh-press detectors (the class pick) compare against this frame's keys.
+        self.prev_keys = inp.keys;
         out
     }
 
@@ -564,11 +634,16 @@ impl Client {
         self.view = ViewMode::Entering { t: 0.0, from_pos: inp.rts_cam_pos, from_dir: from_dir.normalized_or_zero(), from_hfov };
     }
 
-    fn build_input(&mut self, inp: &ClientIn, out: &mut ClientOut, allowed: bool, hammer: bool) {
+    fn build_input(&mut self, inp: &ClientIn, out: &mut ClientOut, allowed: bool, hammer: bool, class_pick: bool) {
         let (mut held, mut fwd, mut right) = if allowed { self.read_buttons(inp) } else { (0, 0.0, 0.0) };
         if !allowed {
             fwd = 0.0;
             right = 0.0;
+        }
+        // The pick menu takes the number keys while it is up, even when the game has locked
+        // input (it must not eat them).
+        if class_pick {
+            Self::class_pick_input(inp, &self.prev_keys, out, self.general);
         }
         if allowed && inp.wheel.abs() >= 1.0 {
             // With the hammer up the wheel turns the structure being placed (wheel up: to the left).
@@ -660,6 +735,7 @@ impl Client {
                 EventKind::ReloadStarted => self.vm_events.reload_started = true,
                 EventKind::Swapped => self.vm_events.swapped = true,
                 EventKind::FieldComputerOpened => {}
+                EventKind::ClassChosen { .. } => self.cues.play(sounds::PLANT),
                 EventKind::Melee => self.cues.play(sounds::MELEE_SWING),
                 EventKind::OffhandReady { .. } => self.cues.play(sounds::PULL_PIN),
                 EventKind::Thrown { .. } => self.cues.play(sounds::THROW),

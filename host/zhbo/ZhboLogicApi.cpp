@@ -312,6 +312,11 @@ void cbHeal(uint32_t id, float amount)
 	if (obj)
 		obj->attemptHealing(amount, obj);
 }
+// The pick menu's choice: the General assumes the class at the shared list's index (classes.rs).
+void cbChooseClass(int32_t player, uint32_t generalId, int32_t index)
+{
+	zhbo_logic_choose_class(player, generalId, index);
+}
 void ResetFxWeapons()
 {
 	for (std::map<std::string, Weapon *>::iterator it = s_fxWeapons.begin(); it != s_fxWeapons.end(); ++it)

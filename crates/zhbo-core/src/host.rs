@@ -193,6 +193,7 @@ pub struct LogicApi {
     pub place: Option<extern "C" fn(general: u32, template: u32, pos: *const Vec3, angle: f32) -> u32>,
     pub work_site: Option<extern "C" fn(general: u32, pos: *const Vec3, reach: f32, out: *mut crate::building::Site) -> u32>,
     pub work: Option<extern "C" fn(general: u32, site: u32, rate: f32) -> f32>,
+    pub choose_class: Option<extern "C" fn(player: i32, general: u32, index: i32)>,
 }
 
 #[repr(C)]

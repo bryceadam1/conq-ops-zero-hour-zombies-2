@@ -141,6 +141,7 @@ pub enum Key {
     Key3,
     Key4,
     Key5,
+    Escape,
     Space,
     Tab,
     Shift,
@@ -154,7 +155,7 @@ impl Key {
     pub const ALL: &'static [Key] = &[
         Key::A, Key::B, Key::C, Key::D, Key::E, Key::F, Key::G, Key::H, Key::I, Key::J, Key::K, Key::L,
         Key::M, Key::N, Key::O, Key::P, Key::Q, Key::R, Key::S, Key::T, Key::U, Key::V, Key::W, Key::X,
-        Key::Y, Key::Z, Key::Key1, Key::Key2, Key::Key3, Key::Key4, Key::Key5, Key::Space, Key::Tab,
+        Key::Y, Key::Z, Key::Key1, Key::Key2, Key::Key3, Key::Key4, Key::Key5, Key::Escape, Key::Space, Key::Tab,
         Key::Shift, Key::Control, Key::MouseLeft, Key::MouseRight,
     ];
 
@@ -223,6 +224,7 @@ pub fn key_name(k: Key) -> &'static str {
         Key::Key3 => "3",
         Key::Key4 => "4",
         Key::Key5 => "5",
+        Key::Escape => "ESC",
         Key::Space => "SPACE",
         Key::Tab => "TAB",
         Key::Shift => "SHIFT",

@@ -139,6 +139,7 @@ int32_t cbCanPlace(uint32_t generalId, uint32_t tmpl, const ZhboVec3 *pos, float
 uint32_t cbPlace(uint32_t generalId, uint32_t tmpl, const ZhboVec3 *pos, float angle);
 uint32_t cbWorkSite(uint32_t generalId, const ZhboVec3 *pos, float reach, ZhboWorkSite *out);
 float cbWork(uint32_t generalId, uint32_t siteId, float rate);
+void cbChooseClass(int32_t player, uint32_t generalId, int32_t index);
 
 // --- Client API callbacks (ZhboHud.cpp, ZhboBuilding.cpp) -------------------------------------
 void cbScreenSize(float *w, float *h);

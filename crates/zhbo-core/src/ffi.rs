@@ -41,7 +41,7 @@ pub const ABI_VERSION: u32 = 17;
 
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
-pub const LOGIC_API_FIELDS: u64 = 22;
+pub const LOGIC_API_FIELDS: u64 = 23;
 pub const CLIENT_API_FIELDS: u64 = 13;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
@@ -49,8 +49,8 @@ const _: () = {
     use std::mem::size_of;
     assert!(size_of::<crate::host::ObjInfo>() == 56);
     assert!(size_of::<FpsInput>() == 20);
-    assert!(size_of::<ClientIn>() == 112);
-    assert!(size_of::<ClientOut>() == 132);
+    assert!(size_of::<ClientIn>() == 128);
+    assert!(size_of::<ClientOut>() == 400);
     assert!(size_of::<crate::sim::RtsWeapons>() == 36);
     assert!(size_of::<crate::building::BuildOption>() == 64);
     assert!(size_of::<crate::building::Site>() == 64);
@@ -78,6 +78,17 @@ pub unsafe extern "C" fn zhbo_load_strings(text: *const c_char) {
     }
     let text = unsafe { CStr::from_ptr(text).to_string_lossy() };
     crate::strings::load(&text);
+}
+
+/// Load the class preset list (`Data/ConquerOps/classes.ini`, read by the bridge's
+/// `readTextFile`); the five basic BO2 classes hold until this runs (see classes.rs).
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_load_classes(text: *const c_char) {
+    if text.is_null() {
+        return;
+    }
+    let text = unsafe { CStr::from_ptr(text).to_string_lossy() };
+    crate::classes::load(&text);
 }
 
 /// Returns the ABI version; the glue refuses to run if it does not match its header.
@@ -173,6 +184,25 @@ pub unsafe extern "C" fn zhbo_logic_input(player: i32, general: u32, input: *con
     }
     let input = *input;
     with_state(|s| s.sim.input(player, general, input));
+}
+
+/// The pick menu's choice (see `classes.rs`): the General assumes the class at the shared list's
+/// index, or a custom class when `payload` carries its wire words. A negative index with an empty
+/// payload is ignored.
+///
+/// # Safety
+/// `payload` must point to `len` u32 words when `len` > 0 (the bridge's stack array).
+#[no_mangle]
+pub extern "C" fn zhbo_logic_choose_class(player: i32, general: u32, index: i32, payload: *const u32, len: i32) {
+    // # Safety: the bridge passes a valid pointer and length, per the contract above.
+    let payload: &[u32] = unsafe {
+        if len > 0 && !payload.is_null() {
+            std::slice::from_raw_parts(payload, len as usize)
+        } else {
+            &[]
+        }
+    };
+    with_state(|s| s.sim.choose_class(player, general, index.max(0) as usize, payload));
 }
 
 #[no_mangle]

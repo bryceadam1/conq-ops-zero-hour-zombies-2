@@ -18,6 +18,8 @@ pub const VIEWMODEL_SOUNDS_PATH: &str = "Data\\ConquerOps\\viewmodel_sounds.txt"
 pub const STRINGS_PATH: &str = "Data\\ConquerOps\\strings_en.ini";
 /// The gameplay tuning pack (see tuning.rs).
 pub const TUNING_PATH: &str = "Data\\ConquerOps\\tuning.ini";
+/// The class presets (see classes.rs).
+pub const CLASSES_PATH: &str = "Data\\ConquerOps\\classes.ini";
 /// The converted BO2 HUD/texture archive and its version marker.
 pub const BO2_ARCHIVE_NAME: &str = "ConquerOps_BO2.big";
 pub const BO2_ARCHIVE_VERSION_PATH: &str = "Data\\ConquerOps\\bo2_hud_version.txt";
@@ -161,6 +163,7 @@ inline constexpr const char *RTS_FX_PATH = "Data\\ConquerOps\\rts_fx.txt";
 inline constexpr const char *VIEWMODEL_SOUNDS_PATH = "Data\\ConquerOps\\viewmodel_sounds.txt";
 inline constexpr const char *STRINGS_PATH = "Data\\ConquerOps\\strings_en.ini";
 inline constexpr const char *TUNING_PATH = "Data\\ConquerOps\\tuning.ini";
+inline constexpr const char *CLASSES_PATH = "Data\\ConquerOps\\classes.ini";
 } // namespace zhbo_names
 "#;
 

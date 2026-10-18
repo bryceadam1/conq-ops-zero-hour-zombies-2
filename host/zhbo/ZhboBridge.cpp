@@ -262,6 +262,7 @@ void Zhbo_Init()
 		.place = cbPlace,
 		.work_site = cbWorkSite,
 		.work = cbWork,
+		.choose_class = cbChooseClass,
 	};
 	static const ZhboClientApi clientApi = {
 		.screen_size = cbScreenSize,
@@ -293,6 +294,7 @@ void Zhbo_Init()
 	}
 	zhbo_load_strings(readTextFile(zhbo_names::STRINGS_PATH).c_str());
 	zhbo_load_tuning(readTextFile(zhbo_names::TUNING_PATH).c_str());
+	zhbo_load_classes(readTextFile(zhbo_names::CLASSES_PATH).c_str());
 
 	zhboInjectConstructButtons();
 
@@ -409,6 +411,27 @@ void Zhbo_OnInputMessage(Int playerIndex, const GameMessage *msg)
 	zhbo_logic_input(playerIndex, (uint32_t)msg->getArgument(0)->objectID, &input);
 }
 
+void Zhbo_OnChooseClassMessage(Int playerIndex, const GameMessage *msg)
+{
+	if (!s_ready || msg->getArgumentCount() < 2)
+		return;
+	const Int index = msg->getArgument(1)->integer;
+	// A custom class appends its wire words after the index (zhbo_core::classes'
+	// CustomClass::to_wire_words): [len, word...]. Anything shorter is a plain list pick.
+	if (msg->getArgumentCount() < 3)
+	{
+		zhbo_logic_choose_class(playerIndex, (uint32_t)msg->getArgument(0)->objectID, index, nullptr, 0);
+		return;
+	}
+	const Int len = msg->getArgument(2)->integer;
+	if (len < 0 || len > 64 || msg->getArgumentCount() < 3 + len)
+		return;
+	uint32_t payload[64];
+	for (Int i = 0; i < len; ++i)
+		payload[i] = (uint32_t)msg->getArgument(3 + i)->integer;
+	zhbo_logic_choose_class(playerIndex, (uint32_t)msg->getArgument(0)->objectID, index, payload, len);
+}
+
 void Zhbo_LogicStep(UnsignedInt frame)
 {
 	if (!s_ready)
@@ -522,6 +545,24 @@ static void applyClientOutput(Bool focused, Bool menuUp)
 		msg->appendIntegerArgument(s_out.input.move_packed);
 		msg->appendRealArgument(s_out.input.yaw);
 		msg->appendRealArgument(s_out.input.pitch);
+	}
+
+	// One-shot: the pick menu's class choice goes to the General (and to every client, since the
+	// message is part of the lockstep stream). A custom class rides along as its wire words
+	// (zhbo_core::classes' CustomClass::to_wire_words), appended after the index.
+	if (s_out.choose_class != 0)
+	{
+		GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_ZHBO_CHOOSE_CLASS);
+		msg->appendObjectIDArgument((ObjectID)s_out.choose_class_general);
+		msg->appendIntegerArgument((Int)s_out.choose_class);
+		if (s_out.choose_class_payload_len > 0)
+		{
+			msg->appendIntegerArgument((Int)s_out.choose_class_payload_len);
+			for (Int i = 0; i < s_out.choose_class_payload_len; ++i)
+				msg->appendIntegerArgument((Int)s_out.choose_class_payload[i]);
+		}
+		s_out.choose_class = 0;
+		s_out.choose_class_payload_len = 0;
 	}
 
 	// Never trap the cursor when the game is not the foreground window (Alt-Tab, background tests).

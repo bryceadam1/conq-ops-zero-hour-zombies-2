@@ -65,6 +65,8 @@ pub enum Mode {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum EventKind {
     EnteredFps { general: u32 },
+    /// The pick menu's choice applied: the General carries the class kit now.
+    ClassChosen { general: u32, class: u8 },
     FieldComputerOpened,
     ReturnedToRts { general: u32 },
     Shot { origin: Vec3, end: Vec3 },
@@ -117,6 +119,9 @@ pub struct Event {
 #[derive(Clone, Debug)]
 pub struct PlayerSim {
     pub general: u32,
+    /// The class the General assumed (`classes.rs` id), or `None` while the pick menu is up:
+    /// the first control after a spawn (a fresh `PlayerSim`) picks once.
+    pub class: Option<String>,
     pub mode: Mode,
     pub body: Body,
     pub yaw: f32,
@@ -154,6 +159,7 @@ impl PlayerSim {
     pub fn spawn_for_tests() -> PlayerSim {
         PlayerSim {
             general: 1,
+            class: Some("assault".into()),
             mode: Mode::Fps,
             body: Body::new(Vec3::ZERO, &MoveTuning::default()),
             yaw: 0.0,
@@ -275,6 +281,7 @@ impl Sim {
                 };
                 PlayerSim {
                     general,
+                    class: None,
                     mode: Mode::Fps,
                     body: Body::new(pos, &tuning),
                     yaw,
@@ -308,6 +315,46 @@ impl Sim {
         self.players[idx] = Some(state);
         host.set_controlled(general, true);
         self.emit(idx, EventKind::EnteredFps { general });
+    }
+
+    /// `MSG_ZHBO_CHOOSE_CLASS`: the player picked a class for their General from the pick menu.
+    /// An empty `payload` means a shipped class (`classes.rs`' list, by index — identical on every
+    /// client, so the index is deterministic); a non-empty payload carries a custom class's wire
+    /// words (see `classes.rs`' `CustomClass::to_wire_words`), which the sim decodes and applies
+    /// as-is (the spec travels with the pick, so no shared list is needed).
+    /// The first pick after a spawn applies: the kit replaces the base kit, and the weapon raises
+    /// like after take_control (BO2: the pick happens between spawns, not mid-fight).
+    pub fn choose_class(&mut self, player: i32, general: u32, index: usize, payload: &[u32]) {
+        let Ok(idx) = usize::try_from(player) else { return };
+        if idx >= MAX_PLAYERS {
+            return;
+        }
+        let Some(mut p) = self.players[idx].take() else { return };
+        if p.general != general || !matches!(p.mode, Mode::Fps) || p.class.is_some() {
+            self.players[idx] = Some(p);
+            return;
+        }
+        let (class_id, loadout) = if payload.is_empty() {
+            let Some(c) = crate::classes::at(index) else { self.players[idx] = Some(p); return };
+            (c.id.clone(), crate::classes::loadout_of(&c))
+        } else {
+            let Some(c) = crate::classes::CustomClass::from_wire_words(payload) else {
+                self.players[idx] = Some(p);
+                return;
+            };
+            (format!("custom:{}", c.name), c.loadout())
+        };
+        p.class = Some(class_id);
+        p.arsenal = Arsenal::with_loadout(loadout);
+        let first = p.arsenal.current().def.first_raise_time;
+        p.arsenal.raise_left = TAKE_CONTROL_READY + first;
+        p.arsenal.raise_total = first;
+        p.arsenal.raise_kind = crate::weapons::RaiseKind::First;
+        p.arsenal.drop_left = 0.0;
+        p.arsenal.offhand = None;
+        p.arsenal.ads = 0.0;
+        self.players[idx] = Some(p);
+        self.emit(idx, EventKind::ClassChosen { general, class: index as u8 });
     }
 
     /// `MSG_ZHBO_FPS_INPUT`: latest input for a player's General.
@@ -556,6 +603,9 @@ pub fn describe_event(e: &Event) -> Option<String> {
     use EventKind::*;
     let msg = match e.kind {
         EnteredFps { general } => format!("player {} took control of General {general}", e.player),
+        ClassChosen { general, class } => {
+            format!("player {}'s General {general} assumed the {} class", e.player, crate::classes::at(class as usize).map(|c| c.name).unwrap_or_else(|| "???".into()))
+        }
         FieldComputerOpened => format!("player {} opened the field computer", e.player),
         ReturnedToRts { general } => format!("player {} returned General {general} to RTS control", e.player),
         GeneralDied { general } => format!("player {}'s General {general} died", e.player),

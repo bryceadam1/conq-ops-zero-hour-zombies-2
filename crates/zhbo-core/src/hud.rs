@@ -158,6 +158,71 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
     if map_open {
         draw_map(host, prims, w, h, s, p);
     }
+    if p.class.is_none() {
+        draw_class_pick(prims, w, h, s);
+    }
+}
+
+/// The class pick, BO2's create-a-class choice at spawn: a dark full-screen overlay with the
+/// classes from `classes.rs` (the five basics first, then any customs), each row its number key,
+/// name and headline kit. The choice lands through `MSG_ZHBO_CHOOSE_CLASS` (the HUD keys 1-N in
+/// `client.rs`'s `class_pick_input`), and the General assumes the class — its kit replaces the
+/// base kit and the pick screen goes away. Shown only while the class is unset.
+fn draw_class_pick(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32) {
+    prims.push(Prim::Rect { x: 0.0, y: 0.0, w, h, argb: 0xC010_1214 });
+    let list = crate::classes::get();
+    let row_h = 46.0 * s;
+    let panel_w = 480.0 * s;
+    let panel_h = 52.0 * s + list.len() as f32 * row_h + 34.0 * s;
+    let (px, py) = ((w - panel_w) * 0.5, (h - panel_h) * 0.5);
+    prims.push(Prim::Rect { x: px, y: py, w: panel_w, h: panel_h, argb: PANEL });
+    outline_rect(prims, px, py, panel_w, panel_h, 1.5 * s, OUTLINE);
+    prims.push(Prim::Text {
+        x: w * 0.5,
+        y: py + 12.0 * s,
+        text: "CHOOSE A CLASS".into(),
+        argb: WHITE,
+        size: (18.0 * s) as i32,
+        align: 1,
+    });
+    for (i, c) in list.iter().enumerate() {
+        let row = py + 52.0 * s + i as f32 * row_h;
+        prims.push(Prim::Rect { x: px + 16.0 * s, y: row + 5.0 * s, w: 34.0 * s, h: 34.0 * s, argb: 0xFF2A_2E33 });
+        prims.push(Prim::Text {
+            x: px + 33.0 * s,
+            y: row + 11.0 * s,
+            text: (i + 1).to_string(),
+            argb: GOLD,
+            size: (20.0 * s) as i32,
+            align: 1,
+        });
+        let loadout = crate::classes::loadout_of(c);
+        let primary = &crate::weapons::weapon(&loadout.primary).display_name;
+        prims.push(Prim::Text {
+            x: px + 68.0 * s,
+            y: row + 3.0 * s,
+            text: c.name.clone(),
+            argb: WHITE,
+            size: (15.0 * s) as i32,
+            align: 0,
+        });
+        prims.push(Prim::Text {
+            x: px + 68.0 * s,
+            y: row + 21.0 * s,
+            text: primary.clone(),
+            argb: DIM,
+            size: (11.0 * s) as i32,
+            align: 0,
+        });
+    }
+    prims.push(Prim::Text {
+        x: w * 0.5,
+        y: py + panel_h - 24.0 * s,
+        text: "PRESS A NUMBER TO CHOOSE".into(),
+        argb: DIM,
+        size: (12.0 * s) as i32,
+        align: 1,
+    });
 }
 
 /// Held map key (Tab, BO2's scoreboard key): Zero Hour's own radar over the middle of the view,
@@ -790,6 +855,8 @@ mod tests {
         let mut sim = Sim::new();
         let mut client = Client::default();
         sim.take_control(&host, 0, 1);
+        // A class is chosen (the pick screen only shows while the class is unset).
+        sim.choose_class(0, 1, 0, &[]);
         let mut inp = ClientIn::default();
         for f in 1..160 {
             client.frame(&mut sim, &inp);

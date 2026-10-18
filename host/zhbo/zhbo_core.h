@@ -15,7 +15,7 @@
 /* Field counts of the API tables below. The Rust side derives its layout asserts and
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
    append the field here, bump both counts, bump ZHBO_ABI_VERSION, and see CONTRACT.md. */
-#define ZHBO_LOGIC_API_FIELDS 22u
+#define ZHBO_LOGIC_API_FIELDS 23u
 #define ZHBO_CLIENT_API_FIELDS 13u
 
 #ifdef __cplusplus
@@ -125,6 +125,9 @@ typedef struct ZhboLogicApi
 	/* One logic frame of working on `site` at `rate` of a dozer's speed; how far along after
 	   (100 done), or negative if another builder has it. */
 	float (*work)(uint32_t general, uint32_t site, float rate);
+	/* The pick menu's choice: the General assumes the class at the shared list's index
+	   (crates/zhbo-core/src/classes.rs; the list ships in the mod's BIG file). */
+	void (*choose_class)(int32_t player, uint32_t general, int32_t index);
 } ZhboLogicApi;
 
 /* zhbo_core::host::damage_kind and disable_kind. */
@@ -169,6 +172,9 @@ typedef struct ZhboClientIn
 	ZhboKeySet keys;
 	float mouse_dx;
 	float mouse_dy;
+	float mouse_x; /* absolute cursor position (screen pixels), for menus (the class pick) */
+	float mouse_y;
+	uint32_t mouse_buttons; /* the mouse buttons' held state */
 	float wheel;
 	int32_t input_allowed;
 	float screen_w;
@@ -200,6 +206,12 @@ typedef struct ZhboClientOut
 	float viewmodel_ads;    /* 0..1 aim-down-sights */
 	ZhboVec3 viewmodel_offset; /* sway/bob/recoil: forward, left, up (world units) */
 	ZhboVec3 viewmodel_angles; /* yaw (left +), pitch (muzzle up +), roll; radians */
+	int32_t choose_class; /* one-shot: the player picked class N (the class list's index) for the General */
+	uint32_t choose_class_general;
+	/* A custom class's wire words (classes.rs' CustomClass::to_wire_words), valid when
+	   choose_class_payload_len > 0: the bridge appends them to the pick message. */
+	uint32_t choose_class_payload[64];
+	int32_t choose_class_payload_len;
 } ZhboClientOut;
 
 /* Viewmodel clips (zhbo_core::viewmodel): BO2's animation slots, then the scorestreak tablet's (its
@@ -242,11 +254,15 @@ uint64_t zhbo_abi_fields(void);
 void zhbo_load_strings(const char *text);
 /* Load the gameplay tuning pack (see tuning.rs); the sim's defaults hold until this runs. */
 void zhbo_load_tuning(const char *text);
+/* Load the class presets (see classes.rs); the five basic BO2 classes hold until this runs. */
+void zhbo_load_classes(const char *text);
 void zhbo_init(const ZhboLogicApi *logic, const ZhboClientApi *client);
 int32_t zhbo_install_weapons(const char *table); /* Data\\ConquerOps\\weapons.ini; count or -1 */
 void zhbo_reset(void);
 void zhbo_logic_take_control(int32_t player, uint32_t general);
 void zhbo_logic_input(int32_t player, uint32_t general, const ZhboFpsInput *input);
+/* The pick menu's choice (see classes.rs): the General assumes the class at the shared list's index. */
+void zhbo_logic_choose_class(int32_t player, uint32_t general, int32_t index);
 void zhbo_logic_step(uint32_t frame);
 int32_t zhbo_logic_is_controlled(uint32_t object_id);
 void zhbo_client_frame(const ZhboClientIn *in, ZhboClientOut *out);
@@ -277,8 +293,8 @@ int32_t zhbo_check_requirements(char *msg, uint32_t cap);
 
 static_assert(sizeof(ZhboObjInfo) == 56, "ZhboObjInfo layout must match host.rs");
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
-static_assert(sizeof(ZhboClientIn) == 112, "ZhboClientIn layout must match client.rs");
-static_assert(sizeof(ZhboClientOut) == 132, "ZhboClientOut layout must match client.rs");
+	static_assert(sizeof(ZhboClientIn) == 128, "ZhboClientIn layout must match client.rs");
+static_assert(sizeof(ZhboClientOut) == 400, "ZhboClientOut layout must match client.rs");
 static_assert(sizeof(ZhboLogicApi) == ZHBO_LOGIC_API_FIELDS * sizeof(void *), "ZhboLogicApi layout must match host.rs");
 static_assert(sizeof(ZhboWorldPose) == 16, "ZhboWorldPose layout must match ffi.rs");
 static_assert(sizeof(ZhboRtsWeapons) == 36, "ZhboRtsWeapons layout must match sim.rs");
