@@ -44,10 +44,16 @@ namespace zhbo_platform
 		{
 			setDown(bits, (Key)(Key::Key1 + i), state[digits[i]]);
 		}
+		setDown(bits, Key::Key6, state[SDL_SCANCODE_6]);
 		setDown(bits, Key::Space, state[SDL_SCANCODE_SPACE]);
 		setDown(bits, Key::Tab, state[SDL_SCANCODE_TAB]);
 		setDown(bits, Key::Shift, state[SDL_SCANCODE_LSHIFT] || state[SDL_SCANCODE_RSHIFT]);
 		setDown(bits, Key::Control, state[SDL_SCANCODE_LCTRL] || state[SDL_SCANCODE_RCTRL]);
+		// The menus' navigation keys (BO2's create-a-class arrows / enter / backspace).
+		setDown(bits, Key::Up, state[SDL_SCANCODE_UP]);
+		setDown(bits, Key::Down, state[SDL_SCANCODE_DOWN]);
+		setDown(bits, Key::Enter, state[SDL_SCANCODE_RETURN]);
+		setDown(bits, Key::Backspace, state[SDL_SCANCODE_BACKSPACE]);
 		const SDL_MouseButtonFlags buttons = SDL_GetMouseState(nullptr, nullptr);
 		setDown(bits, Key::MouseLeft, (buttons & SDL_BUTTON_LMASK) != 0);
 		setDown(bits, Key::MouseRight, (buttons & SDL_BUTTON_RMASK) != 0);

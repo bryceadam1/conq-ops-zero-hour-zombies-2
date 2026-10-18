@@ -141,6 +141,7 @@ pub enum Key {
     Key3,
     Key4,
     Key5,
+    Key6,
     Escape,
     Space,
     Tab,
@@ -148,6 +149,12 @@ pub enum Key {
     Control,
     MouseLeft,
     MouseRight,
+    /// The editor/pick menus' navigation keys (BO2's create-a-class moves with the arrows and
+    /// confirms with Enter; the name field edits with Backspace).
+    Up,
+    Down,
+    Enter,
+    Backspace,
 }
 
 impl Key {
@@ -155,8 +162,9 @@ impl Key {
     pub const ALL: &'static [Key] = &[
         Key::A, Key::B, Key::C, Key::D, Key::E, Key::F, Key::G, Key::H, Key::I, Key::J, Key::K, Key::L,
         Key::M, Key::N, Key::O, Key::P, Key::Q, Key::R, Key::S, Key::T, Key::U, Key::V, Key::W, Key::X,
-        Key::Y, Key::Z, Key::Key1, Key::Key2, Key::Key3, Key::Key4, Key::Key5, Key::Escape, Key::Space, Key::Tab,
-        Key::Shift, Key::Control, Key::MouseLeft, Key::MouseRight,
+        Key::Y, Key::Z, Key::Key1, Key::Key2, Key::Key3, Key::Key4, Key::Key5, Key::Key6, Key::Escape,
+        Key::Space, Key::Tab, Key::Shift, Key::Control, Key::MouseLeft, Key::MouseRight,
+        Key::Up, Key::Down, Key::Enter, Key::Backspace,
     ];
 
     /// The bit in a `ClientIn::keys` word for this key.
@@ -224,6 +232,7 @@ pub fn key_name(k: Key) -> &'static str {
         Key::Key3 => "3",
         Key::Key4 => "4",
         Key::Key5 => "5",
+        Key::Key6 => "6",
         Key::Escape => "ESC",
         Key::Space => "SPACE",
         Key::Tab => "TAB",
@@ -231,6 +240,10 @@ pub fn key_name(k: Key) -> &'static str {
         Key::Control => "CTRL",
         Key::MouseLeft => "LMB",
         Key::MouseRight => "RMB",
+        Key::Up => "UP",
+        Key::Down => "DOWN",
+        Key::Enter => "ENTER",
+        Key::Backspace => "BACKSPACE",
     }
 }
 

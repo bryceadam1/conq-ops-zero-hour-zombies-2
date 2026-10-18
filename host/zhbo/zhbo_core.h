@@ -183,6 +183,7 @@ typedef struct ZhboClientIn
 	ZhboVec3 rts_cam_dir;
 	float rts_hfov; /* the RTS camera's horizontal field of view, radians */
 	ZhboVec3 rts_pivot; /* the point the RTS camera pivots on, on the ground */
+	int32_t class_pick_force; /* one-shot: the lobby's Create-a-Class button was pressed */
 } ZhboClientIn;
 
 typedef struct ZhboClientOut

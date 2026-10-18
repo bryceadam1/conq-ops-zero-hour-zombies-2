@@ -95,6 +95,13 @@ FILE *s_log = nullptr;
 // hitch log reads.
 ZhboClientOut s_out = {};
 Real s_wheelAccum = 0.0f;
+static Int s_classPickLatch = 0;
+
+void Zhbo_ShowClassPick()
+{
+	s_classPickLatch = 1;
+	logf("lobby: create-a-class requested");
+}
 double s_lastTick = 0.0;
 
 void logLine(const char *msg)
@@ -520,6 +527,8 @@ static void gatherClientInput(ZhboClientIn &in, Bool focused, Bool menuUp)
 	}
 	in.wheel = s_wheelAccum;
 	s_wheelAccum = 0.0f;
+	in.class_pick_force = s_classPickLatch;
+	s_classPickLatch = 0;
 	in.input_allowed = (focused && !menuUp) ? 1 : 0;
 	in.screen_w = (float)TheDisplay->getWidth();
 	in.screen_h = (float)TheDisplay->getHeight();

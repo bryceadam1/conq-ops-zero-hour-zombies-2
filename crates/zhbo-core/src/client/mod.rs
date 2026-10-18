@@ -133,6 +133,10 @@ pub struct ClientIn {
     pub rts_hfov: f32,
     /// The point the RTS camera pivots on (on the ground; the camera sits at an offset from it).
     pub rts_pivot: Vec3,
+    /// One-shot from the host: the lobby's Create-a-Class button was pressed, so the pick screen
+    /// opens (or re-opens) even when a class is already chosen. The bridge latches the shell
+    /// button until the first client frame consumes it.
+    pub class_pick_force: i32,
 }
 
 impl Default for ClientIn {
@@ -155,6 +159,7 @@ impl Default for ClientIn {
             rts_cam_dir: Vec3::new(0.0, 0.6, -0.8),
             rts_hfov: 0.87,
             rts_pivot: Vec3::new(0.0, 0.0, 0.0),
+            class_pick_force: 0,
         }
     }
 }
@@ -584,7 +589,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                         out.viewmodel_time = f.t;
                         out.viewmodel_ads = p.arsenal.ads;
                     }
-                    self.build_input(inp, &mut out, allowed && !in_fc, p.hammer.is_some(), p.class.is_none());
+                    self.build_input(inp, &mut out, allowed && !in_fc, p.hammer.is_some(), p.class.is_none() || inp.class_pick_force != 0);
                 }
             }
             ViewMode::Leaving { t, from_pos, from_dir, from_hfov, target, to_pos, to_dir, to_hfov } => {

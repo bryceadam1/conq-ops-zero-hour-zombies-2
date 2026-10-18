@@ -47,6 +47,10 @@ void Zhbo_LogicStep(UnsignedInt frame);
 /// True while the object is driven by first-person input (its AI and physics must not run).
 Bool Zhbo_IsControlled(ObjectID id);
 
+/// Open the Create-a-Class pick screen from the lobby (SkirmishGameOptionsMenu). One-shot latch
+/// consumed by the next client frame.
+void Zhbo_ShowClassPick();
+
 // --- Client (per rendered frame) ---------------------------------------------------------------
 /// Before the display/views update (GameClient::update).
 void Zhbo_ClientFrame();
