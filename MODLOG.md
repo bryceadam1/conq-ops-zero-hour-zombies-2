@@ -515,8 +515,9 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
 
 ## Next steps
 
-**Continuing on macOS: start at `docs/HANDOFF-MAC.md`.** It covers state, setup, the expected
-first-build problems, verification and the task list. The list below is the older gameplay backlog.
+The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
+macOS-specific gotchas live in [docs/PLATFORMS.md](docs/PLATFORMS.md). Start from `AGENTS.md` and
+the docs read order there. The list below is the older gameplay backlog.
 
 1. Manual playtest by a human with real mouse/keyboard (the autotest injects input inside the mod).
 2. More BO2 weapons (only the AN-94 viewmodel and the B23R sound are converted).

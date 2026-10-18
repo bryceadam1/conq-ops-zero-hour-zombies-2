@@ -7,7 +7,7 @@ How each layer of the mod is verified, and what to run before declaring a change
 | Layer | What it covers | How |
 |---|---|---|
 | Unit tests | sim, weapons, movement, hitscan, HUD, formats, requirements | `cargo test --workspace` |
-| Headless renderer | frame encoding, transient buffers, read-back pixels | `cargo test -p zhbo-gfx` (`tests/headless.rs`) |
+| Headless renderer | frame encoding, transient and dynamic buffers, read-back pixels, draw validation, ABI asserts | `cargo test -p zhbo-gfx` (`tests/headless.rs`, `tests/ffi.rs`) |
 | Asset conformance | BO2/ConquerOps zones load with 0 bytes left over; weapon table round-trips | `cargo test -p zhbo-assets` (BO2 install needed for the `#[ignore]`d tests) |
 | In-game scripted test | full loop: take control, move, fight, field computer, RTS hand-back | `scripts/autotest.ps1` (Windows) / `scripts/autotest-mac.sh` (macOS) |
 | Real input test | OS keyboard/mouse path the autopilot does not cover | `scripts/inputtest.ps1` / `autotest-mac.sh --input` |

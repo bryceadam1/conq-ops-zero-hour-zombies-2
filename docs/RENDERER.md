@@ -119,11 +119,17 @@ One invalid draw in a wgpu render pass invalidates the whole frame. The runtime 
 ## Testing
 
 * `cargo test -p zhbo-gfx` covers state decoding, BC decoding, matrices, blob round-trips, the
-  27-variant engine shader translation, and `tests/headless.rs`.
-* `tests/headless.rs` draws a frame through the public runtime API: transient and static buffers, a
-  BC1 and an R5G6B5 texture, a model transform, a partial clear and alpha blending. It reads the
-  pixels back through the screenshot path and checks them. It passes on D3D12 WARP and on
-  Parallels' GL driver (M1). It skips when no adapter exists; CI installs lavapipe for it.
+  27-variant engine shader translation, and two test files:
+* `tests/headless.rs` draws frames through the public runtime API: transient and static buffers,
+  a BC1 and an R5G6B5 texture, a model transform, a partial clear and alpha blending, dynamic
+  buffer updates and grow (ALLOW_RESIZE), view reordering, plain and MSAA offscreen frame
+  buffers, an sRGB-sampled texture and instance data — plus negative-path tests for draw
+  validation (skip-and-report on bad handles, counts, layers and blit regions). It reads pixels
+  back through the screenshot path and checks them. It passes on D3D12 WARP and on Parallels'
+  GL driver (M1). It skips when no adapter exists; CI installs lavapipe for it.
+* `tests/ffi.rs` locks the Rust side of the ABI: it mirrors the header's struct layouts and the
+  API-table field counts with compile-time asserts and round-trips the encode functions through
+  a `Vec<u8>` cursor, so header and Rust drift fail a plain `cargo test`.
 
 ## Engine integration notes
 

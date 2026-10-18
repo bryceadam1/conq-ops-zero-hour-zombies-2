@@ -12,7 +12,7 @@ depots fetched with SteamCMD.
 | Game executable | `generalszh.exe`: 32-bit DX8 (`cargo xtask build`) or 64-bit SDL3 + wgpu (`--wgpu`) | `generalszh`, SDL3 + wgpu on Metal | `generalszh`, SDL3 + wgpu on Vulkan/GL |
 | Launcher | `ConquerOps.exe` | `conquerops` | `conquerops` |
 | Build | Visual Studio 2022 | Xcode CLT + Homebrew (`cargo xtask build`) | gcc/clang + distro packages (`cargo xtask build`) |
-| Status | both builds pass the in-game autotest and real-input test | build path written, **not yet built** (see [HANDOFF-MAC.md](HANDOFF-MAC.md)) | build path written, not yet built |
+| Status | both builds pass the in-game autotest and real-input test | built and passing the in-game autotest (`scripts/autotest-mac.sh`; `--input` for real input) | build path written, not yet built |
 
 ## Where the games are found
 
@@ -92,5 +92,25 @@ dist is the `dist` folder next to it.
   renderer frame with pixel checks. The renderer test uses whatever GPU or software adapter wgpu
   finds and skips when there is none.
 * `scripts/autotest.ps1` (scripted first-person loop) and `scripts/inputtest.ps1` (real keyboard and
-  mouse) are Windows-only, because they drive the game with `um win`. A macOS equivalent is one of
-  the open tasks in [HANDOFF-MAC.md](HANDOFF-MAC.md).
+  mouse) are Windows-only, because they drive the game with `um win`. On macOS,
+  `scripts/autotest-mac.sh` runs the same scripted loop (plus `--input` for real keyboard/mouse);
+  see [TESTING.md](TESTING.md) for the full ladder.
+
+### macOS troubleshooting
+
+Gotchas that cost time when the macOS build was first brought up (from the old handoff notes):
+
+* If surface creation fails, make sure `GGC_MACOS_USE_NSWINDOW` is unset — the backend must
+  arrive as SDL's `CAMetalLayer`, which the adapter turns into a wgpu `CoreAnimationLayer`
+  surface (`host/zhbo/bgfx_wgpu.cpp`, surface kind 2).
+* On retina displays the backend's width and height must be pixels rather than points — a blurry
+  image at half resolution or HUD offsets point there (`reset()` in
+  `crates/zhbo-gfx/src/runtime/mod.rs`, the backend's `LbSwapWidth()`).
+* Mouse look uses SDL relative mouse mode: the cursor must hide and stay confined in first
+  person and be released by the field computer (F).
+* `ZhboPlatform.cpp` asks for the `DIN Alternate` font on macOS; if text falls back badly, check
+  how the fork resolves fonts there.
+* Zero Hour's data search: the engine tries `CNC_GENERALS_INSTALLPATH`, then paths relative to
+  the working directory (the Zero Hour folder). If base-game assets are missing, set
+  `CNC_GENERALS_INSTALLPATH=$ZHBO_ZH_DIR/ZH_Generals/`. The packaging step (`cargo xtask build`)
+  needs `dylibbundler` and sets `GGC_MACOS_RUNTIME_DIR` on the staged binary.

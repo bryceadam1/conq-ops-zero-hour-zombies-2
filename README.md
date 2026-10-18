@@ -61,8 +61,7 @@ switches to a weapon that still has ammo.
 The game is built natively from source on every platform; there is no Wine. On Windows there are two
 builds: the 32-bit DX8 reference and the 64-bit SDL3 build on the mod's Rust wgpu renderer
 ([docs/RENDERER.md](docs/RENDERER.md)). Both are built and tested in game. macOS and Linux use the
-same SDL3 + wgpu build. Their build path is written but has not been run yet; continuing on a Mac
-starts at [docs/HANDOFF-MAC.md](docs/HANDOFF-MAC.md). See [docs/PLATFORMS.md](docs/PLATFORMS.md).
+same SDL3 + wgpu build. See [docs/PLATFORMS.md](docs/PLATFORMS.md).
 
 ## Building
 
@@ -110,7 +109,8 @@ The two scripts take `-Dist` to test a given build.
 | `data/` | Mod INI files, packed into `ConquerOps.big` |
 | `docs/CONTRACT.md` | Engine ↔ Rust ownership, units, timing, lifecycle |
 | `docs/RENDERER.md`, `docs/PLATFORMS.md` | The wgpu renderer; platforms and native builds |
-| `docs/HANDOFF-MAC.md` | Where the work stands and how to continue it on macOS |
+| `docs/TESTING.md` | Every test layer and how to run it |
+| `AGENTS.md` | How to work in this repo: ground rules, read order, conventions |
 | `MODLOG.md` | Development journal and gotchas |
 
 ## Status and known limits
