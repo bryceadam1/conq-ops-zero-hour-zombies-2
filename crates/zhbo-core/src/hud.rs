@@ -163,66 +163,60 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
     }
 }
 
-/// The class pick, BO2's create-a-class choice at spawn: a dark full-screen overlay with the
-/// classes from `classes.rs` (the five basics first, then any customs), each row its number key,
+/// The class pick, BO2's create-a-class choice at spawn: a dark full-screen overlay with BO2's
+/// three-piece title banner up top and the classes from `classes.rs` (the five basics first, then
+/// any customs) as slanted rows — each its number key in BO2's numerals on a streak-box plate, its
 /// name and headline kit. The choice lands through `MSG_ZHBO_CHOOSE_CLASS` (the HUD keys 1-N in
 /// `client.rs`'s `class_pick_input`), and the General assumes the class — its kit replaces the
 /// base kit and the pick screen goes away. Shown only while the class is unset.
 fn draw_class_pick(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32) {
     prims.push(Prim::Rect { x: 0.0, y: 0.0, w, h, argb: 0xC010_1214 });
     let list = crate::classes::get();
-    let row_h = 46.0 * s;
-    let panel_w = 480.0 * s;
-    let panel_h = 52.0 * s + list.len() as f32 * row_h + 34.0 * s;
+    let row_h = 54.0 * s;
+    let panel_w = 560.0 * s;
+    let header_h = 58.0 * s;
+    let footer_h = 40.0 * s;
+    let panel_h = header_h + list.len() as f32 * row_h + footer_h;
     let (px, py) = ((w - panel_w) * 0.5, (h - panel_h) * 0.5);
-    prims.push(Prim::Rect { x: px, y: py, w: panel_w, h: panel_h, argb: PANEL });
-    outline_rect(prims, px, py, panel_w, panel_h, 1.5 * s, OUTLINE);
-    prims.push(Prim::Text {
-        x: w * 0.5,
-        y: py + 12.0 * s,
-        text: "CHOOSE A CLASS".into(),
-        argb: WHITE,
-        size: (18.0 * s) as i32,
-        align: 1,
-    });
+
+    // The title, BO2's create-a-class heading: the GunTitle banner (left cap, mid stretch, right
+    // cap) behind "CREATE A CLASS", with its slanted fallback when the art is missing.
+    let title = "CREATE A CLASS";
+    let title_w = 300.0 * s;
+    let cap = header_h * 0.62;
+    let mid_left = w * 0.5 - title_w * 0.5;
+    let mut title_fallback = slant_box(px, py, panel_w, header_h, PANEL, Some(OUTLINE));
+    title_fallback.push(Prim::Rect { x: px + 5.0 * s, y: py + 6.0 * s, w: 3.0 * s, h: header_h - 12.0 * s, argb: GOLD });
+    prims.push(Prim::Image { name: sprites::GUN_TITLE[0].to_string(), x: mid_left - cap, y: py, w: cap, h: header_h, argb: 0xFFFF_FFFF, fallback: Vec::new() });
+    prims.push(Prim::Image { name: sprites::GUN_TITLE[1].to_string(), x: mid_left, y: py, w: title_w, h: header_h, argb: 0xFFFF_FFFF, fallback: title_fallback });
+    prims.push(Prim::Image { name: sprites::GUN_TITLE[2].to_string(), x: mid_left + title_w, y: py, w: cap, h: header_h, argb: 0xFFFF_FFFF, fallback: Vec::new() });
+    prims.push(Prim::Text { x: w * 0.5, y: py + 16.0 * s, text: title.into(), argb: WHITE, size: (22.0 * s) as i32, align: 1 });
+
+    // The class rows: slanted BO2 bars, the number key in BO2's numerals on a streak-box plate,
+    // the class name in white, its primary in the dim headline.
     for (i, c) in list.iter().enumerate() {
-        let row = py + 52.0 * s + i as f32 * row_h;
-        prims.push(Prim::Rect { x: px + 16.0 * s, y: row + 5.0 * s, w: 34.0 * s, h: 34.0 * s, argb: 0xFF2A_2E33 });
-        prims.push(Prim::Text {
-            x: px + 33.0 * s,
-            y: row + 11.0 * s,
-            text: (i + 1).to_string(),
-            argb: GOLD,
-            size: (20.0 * s) as i32,
-            align: 1,
+        let row = py + header_h + i as f32 * row_h;
+        let (rx, rw) = (px + 32.0 * s, panel_w - 64.0 * s);
+        prims.extend(slant_box(rx, row, rw, row_h - 8.0 * s, PANEL, Some(OUTLINE)));
+        let (kw, kh) = (30.0 * s, 38.0 * s);
+        let (kx, ky) = (rx + 14.0 * s, row + 4.0 * s);
+        prims.push(Prim::Image {
+            name: sprites::STREAK_BOX.to_string(),
+            x: kx, y: ky, w: kw, h: kh, argb: 0xFF22_262B,
+            fallback: vec![Prim::Rect { x: kx, y: ky, w: kw, h: kh, argb: 0xFF22_262B }],
         });
+        draw_number(prims, i as u32 + 1, kx + kw - 6.0 * s, ky + 5.0 * s, kh - 10.0 * s, GOLD);
         let loadout = crate::classes::loadout_of(c);
         let primary = &crate::weapons::weapon(&loadout.primary).display_name;
-        prims.push(Prim::Text {
-            x: px + 68.0 * s,
-            y: row + 3.0 * s,
-            text: c.name.clone(),
-            argb: WHITE,
-            size: (15.0 * s) as i32,
-            align: 0,
-        });
-        prims.push(Prim::Text {
-            x: px + 68.0 * s,
-            y: row + 21.0 * s,
-            text: primary.clone(),
-            argb: DIM,
-            size: (11.0 * s) as i32,
-            align: 0,
-        });
+        let tx = rx + kw + 26.0 * s;
+        prims.push(Prim::Text { x: tx, y: row + 8.0 * s, text: c.name.clone(), argb: WHITE, size: (17.0 * s) as i32, align: 0 });
+        prims.push(Prim::Text { x: tx, y: row + 29.0 * s, text: primary.clone(), argb: DIM, size: (12.0 * s) as i32, align: 0 });
     }
-    prims.push(Prim::Text {
-        x: w * 0.5,
-        y: py + panel_h - 24.0 * s,
-        text: "PRESS A NUMBER TO CHOOSE".into(),
-        argb: DIM,
-        size: (12.0 * s) as i32,
-        align: 1,
-    });
+
+    // The footer prompt: a slanted gold-edged sliver with BO2's command line.
+    let foot = py + panel_h - footer_h;
+    prims.extend(slant_box(px + 32.0 * s, foot + 5.0 * s, panel_w - 64.0 * s, 24.0 * s, 0x6610_1214, Some(GOLD)));
+    prims.push(Prim::Text { x: w * 0.5, y: foot + 10.0 * s, text: "PRESS A NUMBER TO CHOOSE".into(), argb: DIM, size: (13.0 * s) as i32, align: 1 });
 }
 
 /// Held map key (Tab, BO2's scoreboard key): Zero Hour's own radar over the middle of the view,

@@ -282,6 +282,8 @@ pub struct HudTimers {
     /// A word from the hammer ("Not enough money") and how long it stays.
     pub build_note: &'static str,
     pub build_note_time: f32,
+    /// The class pick screen has made its entrance this life: its open sound plays once.
+    pub class_pick_seen: bool,
 }
 
 /// A camera circling a point at a fixed distance and height (the overhead camera's, around the
@@ -511,6 +513,19 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
 
         self.consume_events(sim, inp, player.as_ref().map(|p| p.body.pos));
         self.tick_hud(dt);
+
+        // The class pick's entrance: its UI sound once per life while the class is unset (the
+        // screen draws over the view every frame, so the latch lives here with the other timers).
+        if let Some(p) = &player {
+            if p.class.is_none() {
+                if !self.hud.class_pick_seen {
+                    self.hud.class_pick_seen = true;
+                    self.cues.play(sounds::UI_SELECT);
+                }
+            } else {
+                self.hud.class_pick_seen = false;
+            }
+        }
 
         let aspect = if inp.screen_h > 0.0 { inp.screen_w / inp.screen_h } else { 16.0 / 9.0 };
         let base_fov = horizontal_fov(self.cfg.cg_fov, aspect);

@@ -40,6 +40,10 @@ pub const LAND: &str = "ZHBO_BO2_Land";
 pub const IMPACT: &str = "ZHBO_BO2_Impact";
 pub const IMPACT_FLESH: &str = "ZHBO_BO2_ImpactFlesh";
 
+/// The menu/UI confirm blip: played when the class pick screen comes up (a BO2 UI sound if the
+/// player's install has one; the host logs an error once if not, and the screen still opens).
+pub const UI_SELECT: &str = "ZHBO_BO2_UISelect";
+
 /// Distance between footsteps (Zero Hour units; a 60" stride at the converter's 11/72 scale).
 const STRIDE: f32 = 9.0;
 const SPRINT_STRIDE: f32 = 11.5;
