@@ -31,6 +31,9 @@ use crate::weapons::{self, Class as WeaponClass, Perk};
 /// The Pick-10 budget: ten points per class, exactly BO2's.
 pub const PICK_10: i32 = 10;
 
+/// The longest class name the editor's name field accepts (BO2's field is a short one line).
+pub const NAME_MAX: usize = 24;
+
 /// The eight BO2 wildcards. Each costs a point and unlocks one extra element (another point).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Wildcard {
@@ -126,6 +129,8 @@ pub const SECONDARY_CLASSES: [WeaponClass; 2] = [WeaponClass::Pistol, WeaponClas
 /// One editable slot of the class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slot {
+    /// BO2's "Class Name" row at the top: Enter starts text entry on it.
+    Name,
     Primary,
     PrimaryAtts,
     Secondary,
@@ -135,6 +140,12 @@ pub enum Slot {
     Perk1,
     Perk2,
     Perk3,
+    /// The second row of a perk tier, shown only when the tier's Greed wildcard is on. BO2's create-
+    /// a-class adds a duplicate "PERK n" row for the extra pick; the row is dead without the
+    /// wildcard, so it is not in [`Slot::ALL`] and only the editor's dynamic list shows it.
+    Perk1b,
+    Perk2b,
+    Perk3b,
     Wildcards,
     /// BO2's final row: confirming it saves the class and leaves the editor. It has no option list.
     Save,
@@ -142,8 +153,11 @@ pub enum Slot {
 
 impl Slot {
     /// Every slot, in BO2's create-a-class order. `Save` is the row below the elements, so it is
-    /// last in the walk and the arrows wrap from it back to the primary.
-    pub const ALL: [Slot; 11] = [
+    /// last in the walk and the arrows wrap from it back to the name. The second perk rows
+    /// ([`Slot::Perk1b`] and its siblings) are *not* here: they only exist while their Greed wildcard
+    /// is on, so the editor's [`Editor::slots`] inserts them into a copy of this list.
+    pub const ALL: [Slot; 12] = [
+        Slot::Name,
         Slot::Primary,
         Slot::PrimaryAtts,
         Slot::Secondary,
@@ -157,31 +171,37 @@ impl Slot {
         Slot::Save,
     ];
 
-    /// BO2's header for the slot.
+    /// BO2's header for the slot. The second perk rows read as their tier's header.
     pub fn label(self) -> &'static str {
         match self {
+            Slot::Name => "CLASS NAME",
             Slot::Primary => "PRIMARY WEAPON",
             Slot::PrimaryAtts => "ATTACHMENTS",
             Slot::Secondary => "SECONDARY WEAPON",
             Slot::SecondaryAtts => "ATTACHMENTS",
             Slot::Lethal => "LETHAL",
             Slot::Tactical => "TACTICAL",
-            Slot::Perk1 => "PERK 1",
-            Slot::Perk2 => "PERK 2",
-            Slot::Perk3 => "PERK 3",
+            Slot::Perk1 | Slot::Perk1b => "PERK 1",
+            Slot::Perk2 | Slot::Perk2b => "PERK 2",
+            Slot::Perk3 | Slot::Perk3b => "PERK 3",
             Slot::Wildcards => "WILDCARDS",
             Slot::Save => "SAVE CLASS",
         }
     }
 
-    /// The perk tier this slot picks, if it is a perk slot.
+    /// The perk tier this slot picks, if it is a perk slot (either row of a tier).
     pub fn perk_tier(self) -> Option<u8> {
         match self {
-            Slot::Perk1 => Some(1),
-            Slot::Perk2 => Some(2),
-            Slot::Perk3 => Some(3),
+            Slot::Perk1 | Slot::Perk1b => Some(1),
+            Slot::Perk2 | Slot::Perk2b => Some(2),
+            Slot::Perk3 | Slot::Perk3b => Some(3),
             _ => None,
         }
+    }
+
+    /// Whether this is the *second* row of a perk tier (the Greed one).
+    pub fn is_extra_perk(self) -> bool {
+        matches!(self, Slot::Perk1b | Slot::Perk2b | Slot::Perk3b)
     }
 }
 
@@ -197,8 +217,11 @@ pub struct Draft {
     pub secondary_atts: Vec<String>,
     pub lethal: String,
     pub tactical: String,
-    /// The three perk tiers' picks.
+    /// The three perk tiers' first picks.
     pub perks: [Option<Perk>; 3],
+    /// A tier's *second* pick, the one its Greed wildcard opens (BO2's "Perk n Greed"). Dead unless
+    /// the matching wildcard is in play; dropped when the wildcard is turned off.
+    pub extra_perks: [Option<Perk>; 3],
     /// The wildcards in play.
     pub wildcards: Vec<Wildcard>,
     /// Spare rounds for the primary and secondary; 0 = BO2's default.
@@ -218,6 +241,7 @@ impl Default for Draft {
             lethal: "frag_grenade_mp".into(),
             tactical: "concussion_grenade_mp".into(),
             perks: [Some(Perk::LIGHTWEIGHT), Some(Perk::FAST_HANDS), Some(Perk::DEXTERITY)],
+            extra_perks: [None, None, None],
             wildcards: Vec::new(),
             reserve: [0, 0],
         }
@@ -266,6 +290,7 @@ impl Draft {
             n += 1;
         }
         n += self.perks.iter().filter(|p| p.is_some()).count() as i32;
+        n += self.extra_perks.iter().filter(|p| p.is_some()).count() as i32;
         n += self.wildcards.len() as i32;
         n
     }
@@ -298,6 +323,23 @@ impl Draft {
         }
     }
 
+    /// The perks in pick order for the spec/wire: each tier's first pick, then its Greed pick, in
+    /// tier order. Empty tiers are skipped. Duplicates are impossible (the editor refuses them).
+    pub fn perks_in_order(&self) -> Vec<Perk> {
+        let mut out: Vec<Perk> = Vec::new();
+        for t in 0..3 {
+            if let Some(p) = self.perks[t] {
+                out.push(p);
+            }
+            if let Some(p) = self.extra_perks[t] {
+                if !out.contains(&p) {
+                    out.push(p);
+                }
+            }
+        }
+        out
+    }
+
     /// The kit spec (`Loadout::with_spec` grammar), exactly like a shipped class's. `primary` and
     /// `secondary` carry their attachments; the perks join in tier order.
     pub fn to_spec(&self) -> String {
@@ -312,7 +354,7 @@ impl Draft {
         push("lethal", &self.lethal);
         push("tactical", &self.tactical);
         push("melee", "knife_held_mp");
-        let perks: Vec<&str> = self.perks.iter().flatten().map(|p| p.def().id).collect();
+        let perks: Vec<&str> = self.perks_in_order().iter().map(|p| p.def().id).collect();
         push("perks", &perks.join(","));
         if self.reserve[0] > 0 {
             push("primary_reserve", &self.reserve[0].to_string());
@@ -332,7 +374,7 @@ impl Draft {
             lethal: self.lethal.clone(),
             tactical: self.tactical.clone(),
             melee: "knife_held_mp".into(),
-            perks: self.perks.iter().flatten().map(|p| p.def().id.to_string()).collect(),
+            perks: self.perks_in_order().iter().map(|p| p.def().id.to_string()).collect(),
             reserve: self.reserve,
         }
     }
@@ -341,6 +383,7 @@ impl Draft {
     pub fn from_custom(c: &CustomClass) -> Draft {
         let (primary, primary_atts) = split_atts(&c.primary);
         let (secondary, secondary_atts) = split_atts(&c.secondary);
+        let (perks, extra_perks) = perks_of(&c.perks);
         Draft {
             name: c.name.clone(),
             primary,
@@ -349,7 +392,8 @@ impl Draft {
             secondary_atts,
             lethal: c.lethal.clone(),
             tactical: c.tactical.clone(),
-            perks: perks_of(&c.perks),
+            perks,
+            extra_perks,
             wildcards: wildcards_of(c),
             reserve: c.reserve,
         }
@@ -363,18 +407,22 @@ fn split_atts(id: &str) -> (String, Vec<String>) {
     (base, parts.map(|s| s.to_string()).collect())
 }
 
-/// The perks of a saved class into the three tiers (the first in each tier wins; a second in a tier
-/// needs the matching greed wildcard, which [`wildcards_of`] restores).
-fn perks_of(ids: &[String]) -> [Option<Perk>; 3] {
-    let mut out: [Option<Perk>; 3] = [None, None, None];
+/// The perks of a saved class into the three tiers' first and second picks: the first perk in a
+/// tier is its primary row, the second its Greed row. A second in a tier needs the matching Greed
+/// wildcard, which [`wildcards_of`] restores.
+fn perks_of(ids: &[String]) -> ([Option<Perk>; 3], [Option<Perk>; 3]) {
+    let mut first: [Option<Perk>; 3] = [None, None, None];
+    let mut second: [Option<Perk>; 3] = [None, None, None];
     for id in ids {
         let Some(p) = Perk::by_id(id) else { continue };
         let tier = (p.def().tier as usize).clamp(1, 3) - 1;
-        if out[tier].is_none() {
-            out[tier] = Some(p);
+        if first[tier].is_none() {
+            first[tier] = Some(p);
+        } else if second[tier].is_none() {
+            second[tier] = Some(p);
         }
     }
-    out
+    (first, second)
 }
 
 /// The wildcards a saved class implies: it can only have the ones its choices need. A saved class
@@ -429,29 +477,62 @@ pub struct Editor {
     pub option: usize,
     /// Whether the slot's option list is open (picking) or the slot row is just highlighted.
     pub picking: bool,
+    /// Whether the class-name row has text entry (BO2's name field): printable keys edit the name
+    /// instead of moving the highlight, and Enter/Escape leave it.
+    pub naming: bool,
 }
 
 impl Editor {
     pub fn new(draft: Draft) -> Editor {
-        Editor { draft, slot: Slot::Primary, option: 0, picking: false }
+        Editor { draft, slot: Slot::Primary, option: 0, picking: false, naming: false }
+    }
+
+    /// The rows to draw and walk, in order: [`Slot::ALL`] with a second perk row spliced in after a
+    /// tier whose Greed wildcard is on (BO2's duplicate "PERK n" row).
+    pub fn slots(&self) -> Vec<Slot> {
+        let mut out: Vec<Slot> = Vec::with_capacity(Slot::ALL.len() + 3);
+        for s in Slot::ALL {
+            out.push(s);
+            if let Some(tier) = s.perk_tier() {
+                if !s.is_extra_perk() && self.draft.wildcards.contains(&greed_wildcard(tier)) {
+                    out.push(extra_perk_slot(tier));
+                }
+            }
+        }
+        out
     }
 
     /// The option list for the highlighted slot: display strings, in the order the arrows walk.
     /// The lists are rebuilt on demand so a weapon change re-derives the attachment list.
     pub fn options(&self) -> Vec<String> {
         match self.slot {
+            Slot::Name => Vec::new(),
             Slot::Primary => weapon_options(&PRIMARY_CLASSES),
             Slot::PrimaryAtts => attachment_options(&self.draft.primary, &self.draft.primary_atts),
-            Slot::Secondary => weapon_options(&SECONDARY_CLASSES),
+            Slot::Secondary => weapon_options(&self.secondary_classes()),
             Slot::SecondaryAtts => attachment_options(&self.draft.secondary, &self.draft.secondary_atts),
             Slot::Lethal => equipment_options(WeaponClass::Lethal),
             Slot::Tactical => equipment_options(WeaponClass::Tactical),
-            Slot::Perk1 => perk_options(1),
-            Slot::Perk2 => perk_options(2),
-            Slot::Perk3 => perk_options(3),
+            Slot::Perk1 | Slot::Perk1b => perk_options(1),
+            Slot::Perk2 | Slot::Perk2b => perk_options(2),
+            Slot::Perk3 | Slot::Perk3b => perk_options(3),
             Slot::Wildcards => Wildcard::ALL.iter().map(|w| w.name().to_string()).collect(),
             Slot::Save => Vec::new(),
         }
+    }
+
+    /// The secondary slot's categories: BO2's pistols and launchers, plus the primary-class guns
+    /// when Overkill puts a second primary there.
+    fn secondary_classes(&self) -> Vec<WeaponClass> {
+        let mut out: Vec<WeaponClass> = SECONDARY_CLASSES.to_vec();
+        if self.draft.wildcards.contains(&Wildcard::Overkill) {
+            for c in PRIMARY_CLASSES {
+                if !out.contains(&c) {
+                    out.push(c);
+                }
+            }
+        }
+        out
     }
 
     /// Whether option `i` of the highlighted slot is already in the draft (so the list can mark it).
@@ -459,8 +540,9 @@ impl Editor {
     /// attachment option is chosen when the weapon carries its short.
     pub fn option_chosen(&self, i: usize) -> bool {
         match self.slot {
+            Slot::Name => false,
             Slot::Primary => gun_ids(&PRIMARY_CLASSES).get(i).is_some_and(|id| *id == self.draft.primary),
-            Slot::Secondary => gun_ids(&SECONDARY_CLASSES).get(i).is_some_and(|id| *id == self.draft.secondary),
+            Slot::Secondary => gun_ids(&self.secondary_classes()).get(i).is_some_and(|id| *id == self.draft.secondary),
             Slot::PrimaryAtts => {
                 attachment_shorts(&self.draft.primary, &self.draft.primary_atts).get(i).is_some_and(|s| self.draft.primary_atts.iter().any(|a| a == s))
             }
@@ -469,11 +551,12 @@ impl Editor {
             }
             Slot::Lethal => equipment_ids(WeaponClass::Lethal).get(i).is_some_and(|id| *id == self.draft.lethal),
             Slot::Tactical => equipment_ids(WeaponClass::Tactical).get(i).is_some_and(|id| *id == self.draft.tactical),
-            Slot::Perk1 | Slot::Perk2 | Slot::Perk3 => {
+            Slot::Perk1 | Slot::Perk2 | Slot::Perk3 | Slot::Perk1b | Slot::Perk2b | Slot::Perk3b => {
+                // The tier's list marks a perk when *either* row of the tier holds it.
                 let tier = self.slot.perk_tier().unwrap_or(1);
                 let list = perk_list(tier);
-                let cur = self.draft.perks[(tier as usize).clamp(1, 3) - 1];
-                cur.is_some_and(|p| list.get(i).is_some_and(|x| *x == p))
+                let idx = (tier as usize).clamp(1, 3) - 1;
+                list.get(i).is_some_and(|p| self.draft.perks[idx] == Some(*p) || self.draft.extra_perks[idx] == Some(*p))
             }
             Slot::Wildcards => Wildcard::ALL.get(i).is_some_and(|w| self.draft.wildcards.contains(w)),
             Slot::Save => false,
@@ -481,10 +564,29 @@ impl Editor {
     }
 }
 
+/// The Greed wildcard that opens a tier's second perk row.
+fn greed_wildcard(tier: u8) -> Wildcard {
+    match tier {
+        2 => Wildcard::Perk2Greed,
+        3 => Wildcard::Perk3Greed,
+        _ => Wildcard::Perk1Greed,
+    }
+}
+
+/// The second perk row of a tier (the Greed one).
+fn extra_perk_slot(tier: u8) -> Slot {
+    match tier {
+        2 => Slot::Perk2b,
+        3 => Slot::Perk3b,
+        _ => Slot::Perk1b,
+    }
+}
+
 /// The current value of a slot as the editor's row shows it: the draft's own resolution, so the
 /// screen reads exactly like the resulting class. Display names, not ids; `—` when a slot is empty.
 pub fn slot_value(d: &Draft, slot: Slot) -> String {
     match slot {
+        Slot::Name => if d.name.is_empty() { "—".into() } else { d.name.clone() },
         Slot::Primary => weapons::weapon(&d.primary).display_name.clone(),
         Slot::Secondary => weapons::weapon(&d.secondary).display_name.clone(),
         Slot::PrimaryAtts => att_names(&d.primary_atts),
@@ -494,6 +596,10 @@ pub fn slot_value(d: &Draft, slot: Slot) -> String {
         Slot::Perk1 | Slot::Perk2 | Slot::Perk3 => {
             let tier = slot.perk_tier().unwrap_or(1) as usize;
             d.perks[tier - 1].map(|p| p.def().id.to_string()).unwrap_or_else(|| "—".into())
+        }
+        Slot::Perk1b | Slot::Perk2b | Slot::Perk3b => {
+            let tier = slot.perk_tier().unwrap_or(1) as usize;
+            d.extra_perks[tier - 1].map(|p| p.def().id.to_string()).unwrap_or_else(|| "—".into())
         }
         Slot::Wildcards => {
             if d.wildcards.is_empty() {
@@ -563,7 +669,9 @@ fn perk_options(tier: u8) -> Vec<String> {
 }
 
 /// A key edge this frame (fresh press): the editor's input is edge-driven like the pick screen.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// `typed` is the fresh presses of the printable keys (A-Z and Space), in `Key::ALL` order, so the
+/// name row can append them; it is empty outside text entry.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Edges {
     pub up: bool,
     pub down: bool,
@@ -571,12 +679,15 @@ pub struct Edges {
     pub right: bool,
     pub confirm: bool,
     pub cancel: bool,
+    pub backspace: bool,
+    pub typed: Vec<Key>,
 }
 
 impl Edges {
     /// The edges in `now` that were not in `prev`.
     pub fn between(prev: &crate::input::KeySet, now: &crate::input::KeySet) -> Edges {
         let edge = |k: Key| now.is_down(k) && !prev.is_down(k);
+        let typed = Key::ALL.iter().copied().filter(|k| is_typable(*k) && edge(*k)).collect();
         Edges {
             up: edge(Key::Up),
             down: edge(Key::Down),
@@ -584,7 +695,48 @@ impl Edges {
             right: edge(Key::Right),
             confirm: edge(Key::Enter),
             cancel: edge(Key::Escape),
+            backspace: edge(Key::Backspace),
+            typed,
         }
+    }
+}
+
+/// Whether a key types a character into the class-name field: A-Z and Space. `char_of` gives it.
+fn is_typable(k: Key) -> bool {
+    char_of(k).is_some()
+}
+
+/// The character a key types into the name field: A-Z as uppercase letters, Space as a space.
+fn char_of(k: Key) -> Option<char> {
+    match k {
+        Key::A => Some('A'),
+        Key::B => Some('B'),
+        Key::C => Some('C'),
+        Key::D => Some('D'),
+        Key::E => Some('E'),
+        Key::F => Some('F'),
+        Key::G => Some('G'),
+        Key::H => Some('H'),
+        Key::I => Some('I'),
+        Key::J => Some('J'),
+        Key::K => Some('K'),
+        Key::L => Some('L'),
+        Key::M => Some('M'),
+        Key::N => Some('N'),
+        Key::O => Some('O'),
+        Key::P => Some('P'),
+        Key::Q => Some('Q'),
+        Key::R => Some('R'),
+        Key::S => Some('S'),
+        Key::T => Some('T'),
+        Key::U => Some('U'),
+        Key::V => Some('V'),
+        Key::W => Some('W'),
+        Key::X => Some('X'),
+        Key::Y => Some('Y'),
+        Key::Z => Some('Z'),
+        Key::Space => Some(' '),
+        _ => None,
     }
 }
 
@@ -603,16 +755,19 @@ impl Editor {
     /// Fold one frame's key edges into the session. `valid` gates the save (the caller's own check
     /// of the budget, so the UI can also show it).
     pub fn step(&mut self, edges: Edges) -> Outcome {
+        if self.naming {
+            return self.step_naming(edges);
+        }
         if self.picking {
             return self.step_picking(edges);
         }
         // The slot row is highlighted: up/down move the highlight, Enter opens the list.
         if edges.up {
-            self.slot = prev_slot(self.slot);
+            self.slot = self.prev_slot(self.slot);
             self.option = 0;
         }
         if edges.down {
-            self.slot = next_slot(self.slot);
+            self.slot = self.next_slot(self.slot);
             self.option = 0;
         }
         if edges.confirm {
@@ -621,6 +776,11 @@ impl Editor {
             if self.slot == Slot::Save {
                 return Outcome::Save;
             }
+            // The name row opens text entry instead of an option list.
+            if self.slot == Slot::Name {
+                self.naming = true;
+                return Outcome::Continue;
+            }
             self.picking = true;
             self.option = self.current_option_index();
         }
@@ -628,6 +788,38 @@ impl Editor {
             return Outcome::Cancel;
         }
         Outcome::Continue
+    }
+
+    /// The name row has text entry: printable keys append, Backspace deletes, Enter/Escape leave
+    /// the field (the text stays either way; Escape does not cancel the whole editor while naming).
+    fn step_naming(&mut self, edges: Edges) -> Outcome {
+        for key in &edges.typed {
+            if let Some(c) = char_of(*key) {
+                if self.draft.name.chars().count() < NAME_MAX {
+                    self.draft.name.push(c);
+                }
+            }
+        }
+        if edges.backspace {
+            self.draft.name.pop();
+        }
+        if edges.confirm || edges.cancel {
+            self.naming = false;
+        }
+        Outcome::Continue
+    }
+
+    /// The rows to walk, in order: [`Editor::slots`].
+    fn next_slot(&self, s: Slot) -> Slot {
+        let list = self.slots();
+        let i = list.iter().position(|x| *x == s).unwrap_or(0);
+        list[(i + 1) % list.len()]
+    }
+
+    fn prev_slot(&self, s: Slot) -> Slot {
+        let list = self.slots();
+        let i = list.iter().position(|x| *x == s).unwrap_or(0);
+        list[(i + list.len() - 1) % list.len()]
     }
 
     /// The option list is open: up/down move, Enter picks, Escape closes the list (one step back).
@@ -658,24 +850,37 @@ impl Editor {
     /// The index in the option list of the slot's current value (so the list opens on it).
     fn current_option_index(&self) -> usize {
         match self.slot {
+            Slot::Name => 0,
             Slot::Primary => weapon_index(&PRIMARY_CLASSES, &self.draft.primary),
-            Slot::Secondary => weapon_index(&SECONDARY_CLASSES, &self.draft.secondary),
+            Slot::Secondary => weapon_index(&self.secondary_classes(), &self.draft.secondary),
             Slot::PrimaryAtts | Slot::SecondaryAtts => 0,
             Slot::Lethal => equipment_index(WeaponClass::Lethal, &self.draft.lethal),
             Slot::Tactical => equipment_index(WeaponClass::Tactical, &self.draft.tactical),
-            Slot::Perk1 => perk_index(1, self.draft.perks[0]),
-            Slot::Perk2 => perk_index(2, self.draft.perks[1]),
-            Slot::Perk3 => perk_index(3, self.draft.perks[2]),
+            Slot::Perk1 | Slot::Perk1b => perk_index(1, self.perk_held(1)),
+            Slot::Perk2 | Slot::Perk2b => perk_index(2, self.perk_held(2)),
+            Slot::Perk3 | Slot::Perk3b => perk_index(3, self.perk_held(3)),
             Slot::Wildcards => 0,
             Slot::Save => 0,
         }
     }
 
+    /// The perk the highlighted row holds: the tier's first pick on the base row, its Greed pick on
+    /// the second row.
+    fn perk_held(&self, tier: u8) -> Option<Perk> {
+        let idx = (tier as usize).clamp(1, 3) - 1;
+        if self.slot.is_extra_perk() {
+            self.draft.extra_perks[idx]
+        } else {
+            self.draft.perks[idx]
+        }
+    }
+
     /// Apply option `i` of the highlighted slot to the draft. Weapon picks drop attachments the new
-    /// weapon does not offer; attachment picks toggle; perk picks set the tier (and a wildcard's
-    /// second slot picks the tier's other perk); wildcard picks toggle.
+    /// weapon does not offer; attachment picks toggle; perk picks set the tier row; wildcard picks
+    /// toggle.
     fn apply(&mut self, i: usize) {
         match self.slot {
+            Slot::Name => {}
             Slot::Primary => {
                 let ids = gun_ids(&PRIMARY_CLASSES);
                 if let Some(id) = ids.get(i).copied() {
@@ -684,7 +889,7 @@ impl Editor {
                 }
             }
             Slot::Secondary => {
-                let ids = gun_ids(&SECONDARY_CLASSES);
+                let ids = gun_ids(&self.secondary_classes());
                 if let Some(id) = ids.get(i).copied() {
                     self.draft.secondary = id.to_string();
                     self.keep_offered_atts(false);
@@ -714,7 +919,7 @@ impl Editor {
                     self.draft.tactical = id.to_string();
                 }
             }
-            Slot::Perk1 | Slot::Perk2 | Slot::Perk3 => {
+            Slot::Perk1 | Slot::Perk2 | Slot::Perk3 | Slot::Perk1b | Slot::Perk2b | Slot::Perk3b => {
                 let tier = self.slot.perk_tier().unwrap_or(1);
                 let perks: Vec<Perk> = perk_list(tier);
                 if let Some(p) = perks.get(i).copied() {
@@ -730,15 +935,19 @@ impl Editor {
         }
     }
 
-    /// Set a perk in a tier, avoiding a duplicate of the tier's other pick when a greed wildcard
-    /// gives the tier two slots.
+    /// Set the highlighted row's perk in a tier. The base row and the Greed row hold separate picks;
+    /// the tier's option list refuses a perk already in the tier, so a tier's two picks differ.
     fn set_perk(&mut self, tier: u8, p: Perk) {
         let idx = (tier as usize).clamp(1, 3) - 1;
-        self.draft.perks[idx] = Some(p);
+        if self.slot.is_extra_perk() {
+            self.draft.extra_perks[idx] = Some(p);
+        } else {
+            self.draft.perks[idx] = Some(p);
+        }
     }
 
     /// Toggle a wildcard on or off; turning one off drops the element it enabled (the third primary
-    /// attachment, the second secondary attachment).
+    /// attachment, the second secondary attachment, a tier's Greed perk).
     fn toggle_wildcard(&mut self, w: Wildcard) {
         if let Some(pos) = self.draft.wildcards.iter().position(|x| *x == w) {
             self.draft.wildcards.remove(pos);
@@ -749,7 +958,16 @@ impl Editor {
                 Wildcard::SecondaryGunfighter => {
                     self.draft.secondary_atts.truncate(1);
                 }
-                _ => {}
+                _ => {
+                    if let Some(tier) = w.greed_tier() {
+                        let idx = (tier as usize).clamp(1, 3) - 1;
+                        self.draft.extra_perks[idx] = None;
+                        // The Greed row is gone; if it was highlighted, fall back to the base row.
+                        if self.slot.is_extra_perk() && self.slot.perk_tier() == Some(tier) {
+                            self.slot = base_perk_slot(tier);
+                        }
+                    }
+                }
             }
         } else {
             self.draft.wildcards.push(w);
@@ -825,14 +1043,13 @@ fn perk_index(tier: u8, p: Option<Perk>) -> usize {
     p.and_then(|p| list.iter().position(|x| *x == p)).unwrap_or(0)
 }
 
-fn next_slot(s: Slot) -> Slot {
-    let i = Slot::ALL.iter().position(|x| *x == s).unwrap_or(0);
-    Slot::ALL[(i + 1) % Slot::ALL.len()]
-}
-
-fn prev_slot(s: Slot) -> Slot {
-    let i = Slot::ALL.iter().position(|x| *x == s).unwrap_or(0);
-    Slot::ALL[(i + Slot::ALL.len() - 1) % Slot::ALL.len()]
+/// The base (non-Greed) row of a perk tier.
+fn base_perk_slot(tier: u8) -> Slot {
+    match tier {
+        2 => Slot::Perk2,
+        3 => Slot::Perk3,
+        _ => Slot::Perk1,
+    }
 }
 
 #[cfg(test)]
@@ -947,16 +1164,20 @@ mod tests {
 
     #[test]
     fn slot_navigation_wraps_around_bo2s_order() {
-        assert_eq!(next_slot(Slot::Primary), Slot::PrimaryAtts);
-        assert_eq!(prev_slot(Slot::Primary), Slot::Save);
-        assert_eq!(next_slot(Slot::Wildcards), Slot::Save);
-        assert_eq!(prev_slot(Slot::Save), Slot::Wildcards);
+        let e = Editor::new(Draft::default());
+        assert_eq!(e.next_slot(Slot::Name), Slot::Primary);
+        assert_eq!(e.next_slot(Slot::Primary), Slot::PrimaryAtts);
+        // The first row wraps up to the Save row, and Save wraps down to the first row.
+        assert_eq!(e.prev_slot(Slot::Name), Slot::Save);
+        assert_eq!(e.next_slot(Slot::Wildcards), Slot::Save);
+        assert_eq!(e.next_slot(Slot::Save), Slot::Name);
+        assert_eq!(e.prev_slot(Slot::Save), Slot::Wildcards);
         // Walk the whole list and come back.
-        let mut s = Slot::Primary;
+        let mut s = Slot::Name;
         for _ in 0..Slot::ALL.len() {
-            s = next_slot(s);
+            s = e.next_slot(s);
         }
-        assert_eq!(s, Slot::Primary);
+        assert_eq!(s, Slot::Name);
     }
 
     #[test]
@@ -965,11 +1186,11 @@ mod tests {
         e.slot = Slot::Save;
         // The Save row carries no options, so it can never open a list.
         assert!(e.options().is_empty());
-        // Confirming it leaves the editor with a save; a down edge walks off it to the primary.
+        // Confirming it leaves the editor with a save; a down edge walks off it to the first row.
         assert_eq!(e.step(Edges { confirm: true, ..Default::default() }), Outcome::Save);
         assert!(!e.picking, "the save row does not enter the list state");
         assert_eq!(e.step(Edges { down: true, ..Default::default() }), Outcome::Continue);
-        assert_eq!(e.slot, Slot::Primary);
+        assert_eq!(e.slot, Slot::Name);
         // Escape still cancels (without saving).
         e.slot = Slot::Save;
         assert_eq!(e.step(Edges { cancel: true, ..Default::default() }), Outcome::Cancel);
@@ -1050,5 +1271,173 @@ mod tests {
         // The perk rows read the tier's held perk.
         assert_eq!(slot_value(&d, Slot::Perk1), "Lightweight");
         assert_eq!(slot_value(&d, Slot::Wildcards), "—");
+    }
+
+    // --- Option 2: the class-name row types text ---
+
+    #[test]
+    fn the_name_row_starts_text_entry_and_letters_append() {
+        let mut e = Editor::new(Draft { name: String::new(), ..Draft::default() });
+        e.slot = Slot::Name;
+        // The name row has no option list: Enter starts text entry instead of opening one.
+        assert!(e.options().is_empty());
+        assert_eq!(e.step(Edges { confirm: true, ..Default::default() }), Outcome::Continue);
+        assert!(e.naming, "Enter on the name row starts text entry");
+        assert!(!e.picking, "the name row never opens an option list");
+        // Letters append in the order they were pressed.
+        e.step(Edges { typed: vec![Key::M, Key::P], ..Default::default() });
+        assert_eq!(e.draft.name, "MP");
+        // Space types a space; Backspace deletes the last character.
+        e.step(Edges { typed: vec![Key::Space, Key::A], ..Default::default() });
+        assert_eq!(e.draft.name, "MP A");
+        e.step(Edges { backspace: true, ..Default::default() });
+        assert_eq!(e.draft.name, "MP ");
+        // Enter leaves the field (the text stays); the row stays highlighted and not in the list.
+        assert_eq!(e.step(Edges { confirm: true, ..Default::default() }), Outcome::Continue);
+        assert!(!e.naming);
+        assert_eq!(e.draft.name, "MP ");
+        assert_eq!(e.slot, Slot::Name);
+    }
+
+    #[test]
+    fn the_name_field_caps_at_bo2s_length() {
+        let mut e = Editor::new(Draft { name: String::new(), ..Draft::default() });
+        e.slot = Slot::Name;
+        e.naming = true;
+        // Type far past the cap; the field refuses characters once it is full.
+        let keys: Vec<Key> = std::iter::repeat(Key::A).take(NAME_MAX + 5).collect();
+        e.step(Edges { typed: keys, ..Default::default() });
+        assert_eq!(e.draft.name.chars().count(), NAME_MAX);
+        assert_eq!(e.draft.name, "A".repeat(NAME_MAX));
+    }
+
+    #[test]
+    fn escape_leaves_the_name_field_without_cancelling_the_editor() {
+        let mut e = Editor::new(Draft { name: "Rifle".into(), ..Draft::default() });
+        e.slot = Slot::Name;
+        e.naming = true;
+        // Escape leaves the field, it does not cancel the whole editor while naming.
+        assert_eq!(e.step(Edges { cancel: true, ..Default::default() }), Outcome::Continue);
+        assert!(!e.naming);
+        assert_eq!(e.draft.name, "Rifle");
+        // A second Escape (now out of the field) cancels the editor as usual.
+        assert_eq!(e.step(Edges { cancel: true, ..Default::default() }), Outcome::Cancel);
+    }
+
+    #[test]
+    fn the_name_round_trips_through_a_saved_class() {
+        let mut d = Draft { name: "My Rifle".into(), ..Draft::default() };
+        d.primary = "an94_mp".into();
+        let c = d.to_custom();
+        assert_eq!(c.name, "My Rifle");
+        let back = Draft::from_custom(&c);
+        assert_eq!(back.name, "My Rifle");
+    }
+
+    // --- Option 3: Greed second perks and Overkill's second primary ---
+
+    #[test]
+    fn a_greed_wildcard_splices_in_a_second_perk_row() {
+        let mut e = Editor::new(Draft::default());
+        // Without the wildcard the second row is absent from the walk.
+        assert!(!e.slots().contains(&Slot::Perk1b));
+        assert_eq!(e.slots().len(), Slot::ALL.len());
+        // Turning on Perk 1 Greed inserts the row right after the base Perk 1 row.
+        e.draft.wildcards.push(Wildcard::Perk1Greed);
+        let slots = e.slots();
+        let base = slots.iter().position(|s| *s == Slot::Perk1).expect("Perk 1 row");
+        assert_eq!(slots[base + 1], Slot::Perk1b, "the Greed row follows its base row");
+        // It reads as its tier's header and knows its tier.
+        assert_eq!(Slot::Perk1b.label(), "PERK 1");
+        assert_eq!(Slot::Perk1b.perk_tier(), Some(1));
+        assert!(Slot::Perk1b.is_extra_perk());
+        assert!(!Slot::Perk1.is_extra_perk());
+    }
+
+    #[test]
+    fn the_second_perk_row_sets_the_extra_pick_without_touching_the_base() {
+        let mut e = Editor::new(Draft::default());
+        e.draft.wildcards.push(Wildcard::Perk1Greed);
+        e.slot = Slot::Perk1b;
+        let perks = perk_list(1);
+        // Pick a tier-1 perk other than the base pick (Lightweight).
+        let choice = perks
+            .iter()
+            .position(|p| *p != Perk::LIGHTWEIGHT)
+            .expect("a second tier-1 perk");
+        e.picking = true;
+        e.option = choice;
+        e.step(Edges { confirm: true, ..Default::default() });
+        assert_eq!(e.draft.extra_perks[0], Some(perks[choice]));
+        // The base pick is untouched, and both picks resolve into the spec.
+        assert_eq!(e.draft.perks[0], Some(Perk::LIGHTWEIGHT));
+        let perks_in_order = e.draft.perks_in_order();
+        assert_eq!(perks_in_order.len(), 4, "three base perks plus the Greed pick");
+        assert!(perks_in_order.contains(&perks[choice]));
+    }
+
+    #[test]
+    fn turning_off_a_greed_wildcard_drops_its_second_perk() {
+        let mut e = Editor::new(Draft::default());
+        e.draft.wildcards.push(Wildcard::Perk2Greed);
+        e.slot = Slot::Perk2b;
+        e.draft.extra_perks[1] = Some(Perk::SCAVENGER);
+        // Highlighted on the Greed row, turning the wildcard off falls back to the base row and
+        // clears the extra pick.
+        e.toggle_wildcard(Wildcard::Perk2Greed);
+        assert!(!e.draft.wildcards.contains(&Wildcard::Perk2Greed));
+        assert_eq!(e.draft.extra_perks[1], None);
+        assert_eq!(e.slot, Slot::Perk2, "the highlight returns to the base row");
+        // The Greed row is gone from the walk again.
+        assert!(!e.slots().contains(&Slot::Perk2b));
+    }
+
+    #[test]
+    fn a_greed_perk_costs_its_point_in_the_budget() {
+        let mut d = Draft::default();
+        let base = d.spent();
+        d.extra_perks[0] = Some(Perk::SCAVENGER);
+        assert_eq!(d.spent(), base + 1, "the Greed perk costs a point");
+        d.wildcards.push(Wildcard::Perk1Greed);
+        assert_eq!(d.spent(), base + 2, "the wildcard costs a point too");
+    }
+
+    #[test]
+    fn overkill_offers_primary_guns_in_the_secondary_list() {
+        let mut e = Editor::new(Draft::default());
+        let base = e.secondary_classes();
+        assert_eq!(base, SECONDARY_CLASSES.to_vec(), "pistols and launchers only");
+        e.draft.wildcards.push(Wildcard::Overkill);
+        let with_overkill = e.secondary_classes();
+        // The primary-class guns are offered in the secondary slot.
+        for c in PRIMARY_CLASSES {
+            assert!(with_overkill.contains(&c), "Overkill offers {c:?}");
+        }
+        // The option list walks the same categories.
+        e.slot = Slot::Secondary;
+        let options = e.options();
+        assert!(options.contains(&weapons::weapon("an94_mp").display_name.to_string()));
+    }
+
+    #[test]
+    fn overkill_puts_a_second_primary_into_the_secondary_slot() {
+        let mut e = Editor::new(Draft::default());
+        e.draft.wildcards.push(Wildcard::Overkill);
+        e.slot = Slot::Secondary;
+        let classes = e.secondary_classes();
+        let ids = gun_ids(&classes);
+        // Pick the first primary-class gun offered in the secondary list.
+        let target = "an94_mp";
+        let i = ids.iter().position(|id| *id == target).expect("AN-94 is offered");
+        e.picking = true;
+        e.option = i;
+        e.step(Edges { confirm: true, ..Default::default() });
+        assert_eq!(e.draft.secondary, target);
+        // A round trip resolves it as the secondary and re-derives Overkill.
+        let c = e.draft.to_custom();
+        assert_eq!(c.secondary, target);
+        let back = Draft::from_custom(&c);
+        assert_eq!(back.secondary, target);
+        assert!(back.wildcards.contains(&Wildcard::Overkill));
     }
 }

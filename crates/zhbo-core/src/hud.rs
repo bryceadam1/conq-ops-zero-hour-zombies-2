@@ -228,7 +228,7 @@ fn draw_class_pick(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32) {
 /// fallback shapes show when the art is missing. The keys are the arrows (move), Enter (open/pick or
 /// save), Escape (back out).
 fn draw_class_editor(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, editor: &crate::classmenu::Editor) {
-    use crate::classmenu::{Draft, Slot};
+    use crate::classmenu::Draft;
     let d: &Draft = &editor.draft;
     prims.push(Prim::Rect { x: 0.0, y: 0.0, w, h, argb: 0xE010_1214 });
 
@@ -248,11 +248,13 @@ fn draw_class_editor(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, editor: &cra
 
     // The slots column, down the left: label in white, value in the dim headline, the highlighted
     // row in the gold bar. The values come from the draft's own resolution so they read as BO2's.
+    // The rows are the editor's dynamic list, so a tier's Greed row appears when its wildcard is on.
     let col_x = w * 0.10;
     let col_w = w * 0.42;
     let row_h = 40.0 * s;
     let top = title_y + header_h + 18.0 * s;
-    for (i, slot) in Slot::ALL.iter().enumerate() {
+    let rows = editor.slots();
+    for (i, slot) in rows.iter().enumerate() {
         let row = top + i as f32 * row_h;
         let active = *slot == editor.slot;
         let (fill, edge) = if active { (0xCC22_262B, Some(GOLD)) } else { (0x8810_1214, Some(0x40C8_CCD0)) };
@@ -302,7 +304,7 @@ fn draw_class_editor(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, editor: &cra
     let remaining = d.remaining().max(0);
     let counter_argb = if d.valid() { GOLD } else { RED };
     let cx = col_x + 8.0 * s;
-    let cy = top + Slot::ALL.len() as f32 * row_h + 16.0 * s;
+    let cy = top + rows.len() as f32 * row_h + 16.0 * s;
     prims.push(Prim::Text { x: cx, y: cy, text: "POINTS LEFT".into(), argb: DIM, size: (12.0 * s) as i32, align: 0 });
     draw_number(prims, remaining as u32, cx + 96.0 * s, cy - 6.0 * s, 34.0 * s, counter_argb);
     prims.push(Prim::Text { x: cx + 104.0 * s, y: cy, text: format!("/ {}", crate::classmenu::PICK_10), argb: DIM, size: (12.0 * s) as i32, align: 0 });

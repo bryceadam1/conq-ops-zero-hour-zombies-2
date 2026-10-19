@@ -587,11 +587,34 @@ re-edited. The **General's submodule was not touched**: the skirmish lobby's Cre
 ships as `host/patches/0014-create-a-class-lobby-button.patch` (applied and reverted in the
 submodule), and the mod's own art/skin come from the mod's BIG file. ABI 15.
 
-Tests: `cargo test --workspace` — zhbo-core 120 (the editor's state machine, the Pick-10 budget,
-the draft↔`CustomClass` round trip, the save-row flow, and the client's key-6 → edit → save →
-custom-pick integration all covered); clippy clean but for the pre-existing dead-code warnings.
-Open: the editor has not been captured in a real frame yet, and the profile file's write has not
-been exercised in-game.
+## Create-a-class parity with BO2 (2026-10-18)
+
+Three gaps against BO2's create-a-class closed in the editor:
+
+1. **Class naming.** The editor grew BO2's top **CLASS NAME** row (`Slot::Name`): Enter opens text
+   entry (`Editor.naming`), A-Z/Space append (capped at `NAME_MAX`, 24), Backspace deletes,
+   Enter/Escape leave the field. The name is part of the draft, resolves into `CustomClass.name`
+   on save, and the profile assigns BO2's default slot name to a blank one. The Rust `Key` enum's
+   letters and Space, and the C++ host's polls and `keyNames`, carry the typed edges
+   (`Edges.typed`, in `Key::ALL` order).
+2. **Greed's second perk.** A tier whose Greed wildcard (`Perk1Greed`/`Perk2Greed`/`Perk3Greed`) is
+   in play now shows a duplicate **PERK n** row (`Slot::Perk1b`/`Perk2b`/`Perk3b`, `Editor.slots`),
+   so a tier can hold two perks as BO2's Greed wildcard allows. The draft carries the second picks
+   in `extra_perks`; `Draft::spent`/`to_custom`/`from_custom` and `wildcards_of` account for them,
+   and turning the wildcard off drops the extra perk and its row. The row is *not* in `Slot::ALL`
+   (it exists only while its wildcard does); the HUD and the walk both use `Editor.slots`.
+3. **The in-game autotest run.** `ZHBO_AUTOPILOT=classpick` runs a new scripted run
+   (`Autopilot::classpick_input`) that opens the editor from the pick screen, names the class,
+   changes the secondary, and saves — so an in-game run exercises the editor's drawing and the
+   profile write end to end. The C++ side needs no new scene (the default scripted scene and
+   control suffice); the flag rides `ZhboConfig.autopilot_classpick` and the Rust
+   `Autopilot.classpick`.
+
+Tests: `cargo test --workspace` — zhbo-core 121 (the classpick autopilot run's full editor path is
+now covered, alongside the naming row, the Greed second-perk rows, the Pick-10 budget, the
+draft↔`CustomClass` round trip and the key-6 → edit → save → custom-pick integration); clippy clean
+but for the pre-existing dead-code warnings. Open: the editor's in-game *drawing* still has not been
+captured in a real frame on macOS; the classpick run is ready for that capture.
 
 ## Next steps
 

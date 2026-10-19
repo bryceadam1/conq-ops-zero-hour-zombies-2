@@ -15,6 +15,9 @@
 #                                      Then in first person: the hammer places one (turned with the
 #                                      wheel), holding F builds it, and repairs it once damaged. Back
 #                                      overhead he is an idle worker, and repairs it again when ordered.
+#   scripts/autotest-mac.sh --classpick
+#                                      the create-a-class editor: opened from the pick screen, the class
+#                                      named, the secondary changed and the class saved to the profile
 #   scripts/autotest-mac.sh --showcase [object]
 #                                      close-up captures of a General (idle, walk, death), no checks
 #
@@ -36,6 +39,7 @@ mode=autopilot
 [[ "${1:-}" == "--rts" ]] && mode=rts
 [[ "${1:-}" == "--rts-dry" ]] && mode=rts-dry
 [[ "${1:-}" == "--build" ]] && mode=build
+[[ "${1:-}" == "--classpick" ]] && mode=classpick
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="$HOME/Library/Application Support/ConquerOps/dist"
@@ -164,6 +168,32 @@ if [[ $mode == build ]]; then
         printf '%-28s FAIL\n' "  ...at half a dozer's speed"; ok=1
     fi
     grep -E "build menu: Faction|ordered|building|first person|repair|damaged|idle workers|placed" "$out/ConquerOps.log" | head -40
+    echo "screenshots and log: $out"
+    exit $ok
+fi
+if [[ $mode == classpick ]]; then
+    # The create-a-class editor: the autopilot opens the pick screen from first person, opens the
+    # editor, types a name, changes the secondary, and saves; the bridge writes the profile and the
+    # sim logs the pick under the class's own name. No .wnd edit and no shared class list: the
+    # saved class rides the pick message's payload.
+    export ZHBO_AUTOPILOT=classpick GGC_AUTO_EXIT_SECONDS=60
+    "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
+    wait_for_log "entered first-person" 90 || { echo "the General never entered first person; see $log" >&2; exit 1; }
+    for _ in $(seq 70); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
+    finish
+    trap - EXIT
+    ok=0
+    check() { # name, pattern
+        if grep -qE "$2" "$out/ConquerOps.log"; then printf '%-28s PASS\n' "$1"; else printf '%-28s FAIL\n' "$1"; ok=1; fi
+    }
+    check "saved to the profile" "create-a-class: saved a custom class to the profile"
+    check "picked under its own name" "assumed the AB class"
+    if grep -q "assumed the ??? class" "$out/ConquerOps.log"; then
+        printf '%-28s FAIL\n' "  ...not as ???"; ok=1
+    else
+        printf '%-28s PASS\n' "  ...not as ???"
+    fi
+    grep -E "create-a-class|assumed the" "$out/ConquerOps.log" | head -20
     echo "screenshots and log: $out"
     exit $ok
 fi

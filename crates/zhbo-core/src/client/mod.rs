@@ -415,7 +415,7 @@ impl Client {
     pub fn reset(&mut self) {
         #[cfg(feature = "autopilot")]
         let autopilot =
-            self.autopilot.as_ref().map(|a| Autopilot { equipment: a.equipment, build: a.build, ..Default::default() });
+            self.autopilot.as_ref().map(|a| Autopilot { equipment: a.equipment, build: a.build, classpick: a.classpick, ..Default::default() });
         *self = Client::new(self.cfg);
         #[cfg(feature = "autopilot")]
         {
@@ -1143,12 +1143,13 @@ mod tests {
         assert_ne!(edited, crate::classmenu::Draft::default().primary, "the weapon changed");
 
         // Walk down the slot row to the Save row (the primary is first, Save is last of eleven).
-        for _ in 0..crate::classmenu::Slot::ALL.len() - 1 {
+        for _ in 0..(crate::classmenu::Slot::ALL.len() - 2) {
             inp.keys.set_down(Key::Down, true);
             client.frame(&mut sim, &inp);
             inp.keys.set_down(Key::Down, false);
             client.frame(&mut sim, &inp);
         }
+        assert_eq!(client.class_editor.as_ref().expect("still open").slot, crate::classmenu::Slot::Save);
         // Confirm the Save row: the editor closes and the outgoing one-shot carries the class.
         inp.keys.set_down(Key::Enter, true);
         let out = client.frame(&mut sim, &inp);
@@ -1171,5 +1172,51 @@ mod tests {
         let f169 = horizontal_fov(65.0, 16.0 / 9.0).to_degrees();
         assert!((f43 - 65.0).abs() < 0.01);
         assert!(f169 > 80.0 && f169 < 82.0, "{f169}");
+    }
+
+    /// The `ZHBO_AUTOPILOT=classpick` script drives the whole editor: it opens it from the pick
+    /// screen, names the class, changes the secondary, and saves — the same path an in-game run
+    /// takes. This test runs the script through the client and asserts each step lands.
+    #[cfg(feature = "autopilot")]
+    #[test]
+    fn the_classpick_autopilot_opens_names_and_saves_a_class() {
+        crate::profile::reset();
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        client.autopilot = Some(Autopilot { classpick: true, ..Default::default() });
+        let mut inp = ClientIn::default();
+        sim.take_control(&host, 0, 1);
+
+        // Reach first person: the script runs there (the pick screen only listens in Fps).
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        assert_eq!(client.view, ViewMode::Fps);
+
+        // Run the script's full timeline (the last save pulse is at 8.4s, so ~9s of frames). The
+        // save's choose one-shot is emitted on its own frame, so capture it as it goes by.
+        let mut saved: Option<ClientOut> = None;
+        for _ in 0..(30 * 10) {
+            let out = client.frame(&mut sim, &inp);
+            if out.choose_class != 0 {
+                saved = Some(out);
+            }
+            inp.dt = LOGIC_DT;
+            let f = sim.frame + 1;
+            sim.step(&host, f);
+            inp.logic_frame = f;
+        }
+        let out = saved.expect("the script saves a class");
+
+        // The editor saved and closed, and the outgoing one-shot carries the custom class.
+        assert!(client.class_editor.is_none(), "the script saves and closes the editor");
+        assert_eq!(out.choose_class, Client::CHOOSE_CLASS_CUSTOM);
+        let words: Vec<u32> = out.choose_class_payload[..out.choose_class_payload_len as usize].to_vec();
+        let class = crate::classes::CustomClass::from_wire_words(&words).expect("the payload reassembles");
+        assert_eq!(class.name, "AB", "the script names the class");
+        assert_ne!(class.secondary, crate::classmenu::Draft::default().secondary, "the script changes the secondary");
+        assert_eq!(crate::profile::classes().len(), 1, "the profile kept the class");
+        assert_eq!(crate::profile::classes()[0].name, "AB");
+        crate::profile::reset();
     }
 }

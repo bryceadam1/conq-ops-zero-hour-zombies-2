@@ -186,6 +186,7 @@ void readConfig()
 	s_config.autopilot_showcase = s_config.autopilot_enabled && strcmp(autopilot, "showcase") == 0;
 	s_config.autopilot_rts = s_config.autopilot_enabled && strcmp(autopilot, "rts") == 0;
 	s_config.autopilot_build = s_config.autopilot_enabled && strcmp(autopilot, "build") == 0;
+	s_config.autopilot_classpick = s_config.autopilot_enabled && strcmp(autopilot, "classpick") == 0;
 	s_config.force_radar = getenv("ZHBO_FORCE_RADAR") != nullptr;
 	s_config.showcase_object = getenv("ZHBO_SHOWCASE_OBJECT");
 	if (const char *v = getenv("ZHBO_SHOWCASE_ZOOM"))
@@ -612,7 +613,10 @@ static void applyClientOutput(Bool focused, Bool menuUp)
 			// A custom class pick from the create-a-class editor also saves it to the player's
 			// profile (the core returns the whole file's text; write it next to the log).
 			if (const char *profile = zhbo_profile_save(s_out.choose_class_payload, s_out.choose_class_payload_len))
+			{
 				writeProfileFile(profile);
+				logf("create-a-class: saved a custom class to the profile (%d words)", (int)s_out.choose_class_payload_len);
+			}
 		}
 		s_out.choose_class = 0;
 		s_out.choose_class_payload_len = 0;

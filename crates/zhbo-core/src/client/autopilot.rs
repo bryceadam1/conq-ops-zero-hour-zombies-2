@@ -7,6 +7,10 @@
 use crate::input::{Key, KeySet};
 use super::Bindings;
 
+/// How long a create-a-class pulse holds a key: long enough for one logic tick (30 Hz) to see the
+/// press and the next to see the release, short enough that the next pulse is a fresh edge.
+const PULSE: f32 = 0.1;
+
 /// Scripted input for in-game verification (`ZHBO_AUTOPILOT=1`): walks, turns, aims and fires,
 /// changes stance, jumps, glances at the map, swaps to the pistol and fires it aimed, swaps back, knifes,
 /// cooks and throws a frag, throws a concussion, fires the rifle's grenade launcher, then opens the
@@ -14,6 +18,9 @@ use super::Bindings;
 ///
 /// `ZHBO_AUTOPILOT=equipment` runs [`Autopilot::equipment_input`] instead, for a loadout with C4 and
 /// a Trophy System or Black Hat; `ZHBO_AUTOPILOT=build` runs [`Autopilot::build_input`].
+/// `ZHBO_AUTOPILOT=classpick` runs [`Autopilot::classpick_input`]: it opens the create-a-class editor
+/// from the pick screen (key 6), names the class, changes the secondary, and saves — so an in-game
+/// run exercises the editor and the profile write end to end.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Autopilot {
     /// Seconds in first person (logic ticks, set by the client from the sim's frame counter).
@@ -22,6 +29,8 @@ pub struct Autopilot {
     pub base_frame: u32,
     pub equipment: bool,
     pub build: bool,
+    /// The create-a-class run: drive the editor from the pick screen and save a named class.
+    pub classpick: bool,
 }
 
 /// What the autopilot does in one frame: keys held, mouse movement (counts: x, y) and wheel notches.
@@ -41,6 +50,9 @@ impl Autopilot {
         }
         if self.build {
             return self.build_input(b);
+        }
+        if self.classpick {
+            return self.classpick_input();
         }
         let t = self.t;
         let mut keys = KeySet::default();
@@ -122,6 +134,47 @@ impl Autopilot {
             keys.set_down(b.field_computer, true);
         }
         Scripted { keys, dy, wheel, ..Default::default() }
+    }
+
+    /// The create-a-class run (`ZHBO_AUTOPILOT=classpick`): on the pick screen, `6` opens the editor;
+    /// then the script names the class, changes the secondary weapon, and walks the row to Save and
+    /// confirms — so an in-game run captures the editor's drawing and the profile write end to end.
+    ///
+    /// The editor is edge-driven (a key acts on its *fresh press*), so the pulses below hold each key
+    /// for a short window and release it, giving exactly one edge per step. The row walk is long
+    /// (twelve rows), so `pulse` fires `Down` on a fixed period from `t0`.
+    pub fn classpick_input(&self) -> Scripted {
+        let t = self.t;
+        let mut keys = KeySet::default();
+        // A key held in `[start, start + width)`, giving one fresh-press edge when the window opens.
+        let pulse = |keys: &mut KeySet, key: Key, start: f32| {
+            if (start..start + PULSE).contains(&t) {
+                keys.set_down(key, true);
+            }
+        };
+        // 1. Open the editor from the pick screen (`6`).
+        pulse(&mut keys, Key::Key6, 0.2);
+        // 2. Walk up to the Name row and name the class "AB" (two separate key edges, so the second
+        //    A is a fresh press), then leave the field with Enter.
+        pulse(&mut keys, Key::Up, 0.6);
+        pulse(&mut keys, Key::Enter, 1.0);
+        pulse(&mut keys, Key::A, 1.4);
+        pulse(&mut keys, Key::B, 1.8);
+        pulse(&mut keys, Key::Enter, 2.2);
+        // 3. Walk down to the Secondary row (Name -> Primary -> PrimaryAtts -> Secondary: three downs).
+        for i in 0..3 {
+            pulse(&mut keys, Key::Down, 2.6 + i as f32 * 0.4);
+        }
+        // 4. Open the secondary's list, move one option down, and choose it.
+        pulse(&mut keys, Key::Enter, 4.0);
+        pulse(&mut keys, Key::Down, 4.4);
+        pulse(&mut keys, Key::Enter, 4.8);
+        // 5. Walk the rest of the way to the Save row (SecondaryAtts .. Save: eight downs) and save.
+        for i in 0..8 {
+            pulse(&mut keys, Key::Down, 5.2 + i as f32 * 0.4);
+        }
+        pulse(&mut keys, Key::Enter, 8.4);
+        Scripted { keys, ..Default::default() }
     }
 
     /// The equipment run: throw the lethal (C4), hold the tactical up for four seconds (the Black

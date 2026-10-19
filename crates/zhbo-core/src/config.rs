@@ -15,8 +15,8 @@ pub enum Autopilot {
     /// player or a test driver (`ZHBO_AUTOPILOT=manual`).
     Manual,
     /// Scripted first-person input drives the General (any other value); the flags pick the test's
-    /// focus (`ZHBO_AUTOPILOT=1`, `equipment`, `build`, `showcase`).
-    Scripted { equipment: bool, build: bool },
+    /// focus (`ZHBO_AUTOPILOT=1`, `equipment`, `build`, `classpick`, `showcase`).
+    Scripted { equipment: bool, build: bool, classpick: bool },
 }
 
 /// The core's configuration, read once at init.
@@ -42,12 +42,17 @@ impl Config {
 }
 
 /// ZHBO_AUTOPILOT's mode: `manual` for the scene-only setup, off/unset (or empty), or a scripted
-/// mode (`equipment`/`build` pick the test's focus; anything else scripts the standard input).
+/// mode (`equipment`/`build`/`classpick` pick the test's focus; anything else scripts the standard
+/// input).
 pub fn autopilot_mode(value: Option<&str>) -> Autopilot {
     match value {
         None | Some("") => Autopilot::Off,
         Some("manual") => Autopilot::Manual,
-        Some(m) => Autopilot::Scripted { equipment: m == "equipment", build: m == "build" },
+        Some(m) => Autopilot::Scripted {
+            equipment: m == "equipment",
+            build: m == "build",
+            classpick: m == "classpick",
+        },
     }
 }
 
@@ -77,15 +82,28 @@ mod tests {
         assert_eq!(autopilot_mode(None), Autopilot::Off);
         assert_eq!(autopilot_mode(Some("")), Autopilot::Off);
         assert_eq!(autopilot_mode(Some("manual")), Autopilot::Manual);
-        assert_eq!(autopilot_mode(Some("1")), Autopilot::Scripted { equipment: false, build: false });
+        assert_eq!(
+            autopilot_mode(Some("1")),
+            Autopilot::Scripted { equipment: false, build: false, classpick: false }
+        );
         assert_eq!(
             autopilot_mode(Some("equipment")),
-            Autopilot::Scripted { equipment: true, build: false }
+            Autopilot::Scripted { equipment: true, build: false, classpick: false }
         );
-        assert_eq!(autopilot_mode(Some("build")), Autopilot::Scripted { equipment: false, build: true });
+        assert_eq!(
+            autopilot_mode(Some("build")),
+            Autopilot::Scripted { equipment: false, build: true, classpick: false }
+        );
+        assert_eq!(
+            autopilot_mode(Some("classpick")),
+            Autopilot::Scripted { equipment: false, build: false, classpick: true }
+        );
         // Any other value scripts the standard input, like before (the bridge matched modes the
         // same way; unknown values fall through to scripted input).
-        assert_eq!(autopilot_mode(Some("showcase")), Autopilot::Scripted { equipment: false, build: false });
+        assert_eq!(
+            autopilot_mode(Some("showcase")),
+            Autopilot::Scripted { equipment: false, build: false, classpick: false }
+        );
     }
 
     #[test]

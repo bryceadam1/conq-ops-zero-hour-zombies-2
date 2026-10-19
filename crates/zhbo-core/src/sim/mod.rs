@@ -62,11 +62,51 @@ pub enum Mode {
     Rts,
 }
 
+/// A class name as the log carries it: a fixed inline buffer so [`EventKind`] stays `Copy` (the
+/// events are copied out of the sim's ring, and a shipped class's name and a custom one's both fit
+/// in [`NAME_MAX`](crate::classmenu::NAME_MAX) bytes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClassName {
+    bytes: [u8; crate::classmenu::NAME_MAX],
+    len: u8,
+}
+
+impl ClassName {
+    /// The name of a shipped class by its registry index, or `???` when the index is out of range.
+    pub fn shipped(index: usize) -> Self {
+        match crate::classes::at(index) {
+            Some(c) => Self::new(&c.name),
+            None => Self::new("???"),
+        }
+    }
+
+    /// A name from any string, truncated to the inline buffer (byte-wise, so a multi-byte name can
+    /// split; class names are the player's own printable keys, so that is not reachable in practice).
+    pub fn new(name: &str) -> Self {
+        let mut bytes = [0u8; crate::classmenu::NAME_MAX];
+        let n = name.len().min(crate::classmenu::NAME_MAX);
+        bytes[..n].copy_from_slice(&name.as_bytes()[..n]);
+        Self { bytes, len: n as u8 }
+    }
+
+    pub fn as_str(&self) -> &str {
+        core::str::from_utf8(&self.bytes[..self.len as usize]).unwrap_or("???")
+    }
+}
+
+impl core::fmt::Display for ClassName {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum EventKind {
     EnteredFps { general: u32 },
-    /// The pick menu's choice applied: the General carries the class kit now.
-    ClassChosen { general: u32, class: u8 },
+    /// The pick menu's choice applied: the General carries the class kit now. The name is carried
+    /// here (not the pick index) so the log names a class the player built in the editor as well as
+    /// a shipped one — a custom class has no registry index to look up.
+    ClassChosen { general: u32, class: ClassName },
     FieldComputerOpened,
     ReturnedToRts { general: u32 },
     Shot { origin: Vec3, end: Vec3 },
@@ -334,15 +374,16 @@ impl Sim {
             self.players[idx] = Some(p);
             return;
         }
-        let (class_id, loadout) = if payload.is_empty() {
+        let (class_id, class_name, loadout) = if payload.is_empty() {
             let Some(c) = crate::classes::at(index) else { self.players[idx] = Some(p); return };
-            (c.id.clone(), crate::classes::loadout_of(&c))
+            (c.id.clone(), ClassName::new(&c.name), crate::classes::loadout_of(&c))
         } else {
             let Some(c) = crate::classes::CustomClass::from_wire_words(payload) else {
                 self.players[idx] = Some(p);
                 return;
             };
-            (format!("custom:{}", c.name), c.loadout())
+            let name = if c.name.is_empty() { "Custom Class".to_string() } else { c.name.clone() };
+            (format!("custom:{}", c.name), ClassName::new(&name), c.loadout())
         };
         p.class = Some(class_id);
         p.arsenal = Arsenal::with_loadout(loadout);
@@ -354,7 +395,7 @@ impl Sim {
         p.arsenal.offhand = None;
         p.arsenal.ads = 0.0;
         self.players[idx] = Some(p);
-        self.emit(idx, EventKind::ClassChosen { general, class: index as u8 });
+        self.emit(idx, EventKind::ClassChosen { general, class: class_name });
     }
 
     /// `MSG_ZHBO_FPS_INPUT`: latest input for a player's General.
@@ -604,7 +645,7 @@ pub fn describe_event(e: &Event) -> Option<String> {
     let msg = match e.kind {
         EnteredFps { general } => format!("player {} took control of General {general}", e.player),
         ClassChosen { general, class } => {
-            format!("player {}'s General {general} assumed the {} class", e.player, crate::classes::at(class as usize).map(|c| c.name).unwrap_or_else(|| "???".into()))
+            format!("player {}'s General {general} assumed the {class} class", e.player)
         }
         FieldComputerOpened => format!("player {} opened the field computer", e.player),
         ReturnedToRts { general } => format!("player {} returned General {general} to RTS control", e.player),
@@ -1024,6 +1065,29 @@ pub(crate) mod tests {
         sim.take_control(&host, 1, 1);
         assert!(sim.player(1).is_none());
         assert!(host.controlled.borrow().is_empty());
+    }
+
+    #[test]
+    fn custom_class_pick_logs_its_own_name() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        let custom = crate::classes::CustomClass {
+            name: "Ghost Recon".into(),
+            ..Default::default()
+        };
+        let words = custom.to_wire_words();
+        sim.choose_class(0, 1, usize::MAX, &words);
+        let ev = events(&sim);
+        let logged = ev.iter().find_map(|e| match e {
+            EventKind::ClassChosen { class, .. } => Some(class.clone()),
+            _ => None,
+        });
+        match logged {
+            Some(name) => assert_eq!(name.as_str(), "Ghost Recon"),
+            other => panic!("expected custom class name, got {other:?}"),
+        }
     }
 
     #[test]

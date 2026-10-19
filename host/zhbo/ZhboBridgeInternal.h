@@ -80,6 +80,7 @@ struct ZhboConfig
 	Bool autopilot_showcase = FALSE;
 	Bool autopilot_rts = FALSE;
 	Bool autopilot_build = FALSE;
+	Bool autopilot_classpick = FALSE; // =classpick: the create-a-class editor run (scene like the default scripted run)
 	Bool force_radar = FALSE; // ZHBO_FORCE_RADAR: give the test player radar, to film the Tab map
 	const char *showcase_object = nullptr; // ZHBO_SHOWCASE_OBJECT: what to stand in front of the camera
 	Real showcase_zoom = 0.12f;			   // ZHBO_SHOWCASE_ZOOM, plus:
