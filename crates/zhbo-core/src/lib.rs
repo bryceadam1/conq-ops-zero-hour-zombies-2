@@ -8,6 +8,7 @@
 pub mod attachments;
 pub mod building;
 pub mod classes;
+pub mod classmenu;
 pub mod client;
 pub mod config;
 pub mod conformance;
@@ -20,6 +21,7 @@ pub mod input;
 pub mod math;
 pub mod names;
 pub mod movement;
+pub mod profile;
 pub mod projectiles;
 pub mod sim;
 pub mod sounds;

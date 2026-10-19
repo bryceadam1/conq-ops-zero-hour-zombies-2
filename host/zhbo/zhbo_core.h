@@ -257,6 +257,11 @@ void zhbo_load_strings(const char *text);
 void zhbo_load_tuning(const char *text);
 /* Load the class presets (see classes.rs); the five basic BO2 classes hold until this runs. */
 void zhbo_load_classes(const char *text);
+/* Load the player's create-a-class profile (see profile.rs); the empty profile holds until this runs. */
+void zhbo_load_profile(const char *text);
+/* Save a custom class from the choose-class wire words into the profile; returns the profile's full
+   text (NUL-terminated) for the caller to write to the profile file, or null when the words don't decode. */
+const char *zhbo_profile_save(const uint32_t *words, int32_t len);
 void zhbo_init(const ZhboLogicApi *logic, const ZhboClientApi *client);
 int32_t zhbo_install_weapons(const char *table); /* Data\\ConquerOps\\weapons.ini; count or -1 */
 void zhbo_reset(void);

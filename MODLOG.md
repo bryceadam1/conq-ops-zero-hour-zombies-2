@@ -545,14 +545,53 @@ of hidden padding after `logic_frame`; the old 112 assumed none).
 **Open (next session):** custom classes. The engine's `GameMessage` has no string argument
 type (`MessageStream.h`: integer/real/bool/objectid/drawableid/teamid/location/pixel/...), so a
 custom class's spec cannot ride the pick message as text — it needs a packed-integer encoding
-(weapon-table ids + attachment/perk masks, ~7 integer args) or a shared preset id. The
-create-a-class screen (weapon/attachment/perk lists) is unstarted. The skirmish lobby's
+(weapon-table ids + attachment/perk masks, ~7 integer args) or a shared preset id. *Resolved in the
+section below: the packed-integer encoding and the create-a-class screen both landed.* The
+skirmish lobby's
 Create-a-Class button now ships as `host/patches/0014-create-a-class-lobby-button.patch`
 (`SkirmishGameOptionsMenu.cpp` looks up `SkirmishGameOptionsMenu.wnd:ButtonCreateClass` and
 calls `Zhbo_ShowClassPick`; the `.wnd` file must carry the button — a runtime-injected window on
 the pattern of `ZhboControlBarAccess::injectConstructButtons` is the fallback if the art does
 not). It reaches the pick overlay through the same `Zhbo_ShowClassPick` latch as the in-game
 pick, which the client consumes via `ClientIn.class_pick_force`.
+
+## Create-a-class editor and custom classes (2026-10-18)
+
+BO2's create-a-class, phase 2/3: the editor and the player's own classes. The pick screen now
+carries a sixth row — key **6** opens the create-a-class editor instead of picking a preset
+(`class_pick_input` returns "open the editor"; the client keeps it in `Client::class_editor`,
+drawn by `draw_class_editor` in BO2's skin: the ten element rows — Primary/Attachments/Secondary/
+Attachments/Lethal/Tactical/Perk 1-3/Wildcards — plus the final **SAVE CLASS** row, the option
+list on the right when a row is open, and the Pick-10 counter). The whole editor lives in
+`crates/zhbo-core/src/classmenu.rs`: `Draft` is the Pick-10 choice set, `Editor` is the state
+machine (`Outcome::{Continue,Save,Cancel}`, arrows to move, Enter to open/choose/confirm, Escape
+to back out), and the arrows/Enter/Backspace/Left/Right keys were added to the Rust `Key` enum and
+mirrored in the C++ host (`ZhboPlatform.h`'s enum, `ZhboPlatform.cpp`'s polls, the bridge's
+`keyNames`).
+
+Confirming SAVE on a valid draft (never over ten points) resolves it into a `CustomClass`
+(`Draft::to_custom`), saves it into the profile, and sends the pick. Because `GameMessage` has no
+string argument, the spec rides the payload as packed integers: `ClientOut.choose_class_payload`
+carries `CustomClass::to_wire_words` (UTF-8 as `u32`s) with `choose_class = i32::MIN` (the custom
+marker), and the sim reassembles it with `CustomClass::from_wire_words` — the bridge appends them
+after the two `choose_class`/general integers (patch 0001's message shape is unchanged; only the
+custom marker + payload are new).
+
+The profile is the player's own classes, kept between sessions in `ConquerOps.profile` next to the
+mod's log in the game's user-data directory (`crates/zhbo-core/src/profile.rs`: pure
+`to_text`/`from_text`, up to BO2's ten slots, re-saving a name replaces it). The bridge reads it at
+init (`zhbo_load_profile`) and, on a custom pick, writes the whole file back
+(`zhbo_profile_save` returns the text; `ZhboBridge.cpp`'s `readProfileFile`/`writeProfileFile` do
+the I/O). Re-opening key 6 loads the most recently saved class into the editor so a kit can be
+re-edited. The **General's submodule was not touched**: the skirmish lobby's Create-a-Class button
+ships as `host/patches/0014-create-a-class-lobby-button.patch` (applied and reverted in the
+submodule), and the mod's own art/skin come from the mod's BIG file. ABI 15.
+
+Tests: `cargo test --workspace` — zhbo-core 120 (the editor's state machine, the Pick-10 budget,
+the draft↔`CustomClass` round trip, the save-row flow, and the client's key-6 → edit → save →
+custom-pick integration all covered); clippy clean but for the pre-existing dead-code warnings.
+Open: the editor has not been captured in a real frame yet, and the profile file's write has not
+been exercised in-game.
 
 ## Next steps
 

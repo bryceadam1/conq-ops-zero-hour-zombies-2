@@ -138,6 +138,42 @@ std::string readTextFile(const char *path)
 	return text;
 }
 
+// The player's create-a-class profile: a text file in the game's user-data directory, next to the
+// mod's log. Not in a BIG file (it is the player's own, written at runtime). The path is built the
+// same way the log's is, so both land in the same place.
+static std::string profilePath()
+{
+	std::string path = TheGlobalData ? TheGlobalData->getPath_UserData().str() : "";
+	path += "ConquerOps.profile";
+	return path;
+}
+
+// The profile file's text (empty when there is none yet).
+static std::string readProfileFile()
+{
+	FILE *f = fopen(profilePath().c_str(), "rb");
+	if (!f)
+		return {};
+	std::string text;
+	char buf[512];
+	size_t n;
+	while ((n = fread(buf, 1, sizeof(buf), f)) > 0)
+		text.append(buf, n);
+	fclose(f);
+	return text;
+}
+
+// Write the profile file's text, replacing whatever was there (the core returns the whole file on a
+// save, so a single write is enough and a torn append cannot corrupt the list).
+static void writeProfileFile(const char *text)
+{
+	FILE *f = fopen(profilePath().c_str(), "wb");
+	if (!f)
+		return;
+	fwrite(text, 1, strlen(text), f);
+	fclose(f);
+}
+
 ZhboConfig s_config = {};
 
 void readConfig()
@@ -302,6 +338,9 @@ void Zhbo_Init()
 	zhbo_load_strings(readTextFile(zhbo_names::STRINGS_PATH).c_str());
 	zhbo_load_tuning(readTextFile(zhbo_names::TUNING_PATH).c_str());
 	zhbo_load_classes(readTextFile(zhbo_names::CLASSES_PATH).c_str());
+	// The player's create-a-class profile: a small text file next to the mod's log, in the game's
+	// user-data directory (see zhbo_core::profile). Its custom classes join the pick screen's list.
+	zhbo_load_profile(readProfileFile().c_str());
 
 	zhboInjectConstructButtons();
 
@@ -495,8 +534,9 @@ static void gatherClientInput(ZhboClientIn &in, Bool focused, Bool menuUp)
 		}
 		static const char *const keyNames[] = {
 			"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q",
-			"R", "S", "T", "U", "V", "W", "X", "Y", "Z", "1", "2", "3", "4", "5", "SPACE", "TAB",
-			"SHIFT", "CTRL", "LMB", "RMB",
+			"R", "S", "T", "U", "V", "W", "X", "Y", "Z", "1", "2", "3", "4", "5", "6", "ESC",
+			"SPACE", "TAB", "SHIFT", "CTRL", "LMB", "RMB", "UP", "DOWN", "LEFT", "RIGHT", "ENTER",
+			"BACKSPACE",
 		};
 		static_assert(sizeof(keyNames) / sizeof(keyNames[0]) == (int)zhbo_platform::keys::Key::COUNT, "key vocabulary must match");
 		char held[96];
@@ -569,6 +609,10 @@ static void applyClientOutput(Bool focused, Bool menuUp)
 			msg->appendIntegerArgument((Int)s_out.choose_class_payload_len);
 			for (Int i = 0; i < s_out.choose_class_payload_len; ++i)
 				msg->appendIntegerArgument((Int)s_out.choose_class_payload[i]);
+			// A custom class pick from the create-a-class editor also saves it to the player's
+			// profile (the core returns the whole file's text; write it next to the log).
+			if (const char *profile = zhbo_profile_save(s_out.choose_class_payload, s_out.choose_class_payload_len))
+				writeProfileFile(profile);
 		}
 		s_out.choose_class = 0;
 		s_out.choose_class_payload_len = 0;

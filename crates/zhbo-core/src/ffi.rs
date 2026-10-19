@@ -91,6 +91,48 @@ pub unsafe extern "C" fn zhbo_load_classes(text: *const c_char) {
     crate::classes::load(&text);
 }
 
+/// Load the player's create-a-class profile (`ConquerOps.profile`, read by the bridge from the
+/// user-data directory at init); the empty profile holds until this runs (see profile.rs).
+///
+/// # Safety
+/// `text` must be a NUL-terminated UTF-8 string.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_load_profile(text: *const c_char) {
+    if text.is_null() {
+        return;
+    }
+    let text = unsafe { CStr::from_ptr(text).to_string_lossy() };
+    crate::profile::load(&text);
+}
+
+/// The profile text buffer for [`zhbo_profile_save`]'s return: a stable UTF-8 NUL-terminated copy
+/// the bridge reads and writes to the profile file. Replaced on every save (the bridge writes it
+/// before the next call).
+static PROFILE_TEXT: Mutex<Vec<u8>> = Mutex::new(Vec::new());
+
+/// Save a custom class into the profile from the choose-class payload's wire words
+/// ([`crate::classes::CustomClass::from_wire_words`]). Returns a pointer to the profile's full text
+/// (NUL-terminated) for the bridge to write, or null when the words don't decode (nothing saved).
+///
+/// # Safety
+/// `words` must point to `len` `u32`s (or be null when `len` is 0).
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_profile_save(words: *const u32, len: i32) -> *const c_char {
+    if words.is_null() || len <= 0 {
+        return std::ptr::null();
+    }
+    let words = unsafe { std::slice::from_raw_parts(words, len as usize) };
+    let Some(class) = crate::classes::CustomClass::from_wire_words(words) else {
+        return std::ptr::null();
+    };
+    let text = crate::profile::save(class);
+    let mut buf = PROFILE_TEXT.lock().unwrap_or_else(|e| e.into_inner());
+    buf.clear();
+    buf.extend_from_slice(text.as_bytes());
+    buf.push(0);
+    buf.as_ptr().cast::<c_char>()
+}
+
 /// Returns the ABI version; the glue refuses to run if it does not match its header.
 #[no_mangle]
 pub extern "C" fn zhbo_abi_version() -> u32 {

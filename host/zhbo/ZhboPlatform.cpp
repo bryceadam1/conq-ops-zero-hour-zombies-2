@@ -52,6 +52,8 @@ namespace zhbo_platform
 		// The menus' navigation keys (BO2's create-a-class arrows / enter / backspace).
 		setDown(bits, Key::Up, state[SDL_SCANCODE_UP]);
 		setDown(bits, Key::Down, state[SDL_SCANCODE_DOWN]);
+		setDown(bits, Key::Left, state[SDL_SCANCODE_LEFT]);
+		setDown(bits, Key::Right, state[SDL_SCANCODE_RIGHT]);
 		setDown(bits, Key::Enter, state[SDL_SCANCODE_RETURN]);
 		setDown(bits, Key::Backspace, state[SDL_SCANCODE_BACKSPACE]);
 		const SDL_MouseButtonFlags buttons = SDL_GetMouseState(nullptr, nullptr);
@@ -151,6 +153,14 @@ namespace zhbo_platform
 		setDown(bits, Key::Tab, (GetAsyncKeyState(VK_TAB) & 0x8000) != 0);
 		setDown(bits, Key::Shift, (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
 		setDown(bits, Key::Control, (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0);
+		setDown(bits, Key::Key6, (GetAsyncKeyState('6') & 0x8000) != 0);
+		setDown(bits, Key::Escape, (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0);
+		setDown(bits, Key::Up, (GetAsyncKeyState(VK_UP) & 0x8000) != 0);
+		setDown(bits, Key::Down, (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0);
+		setDown(bits, Key::Left, (GetAsyncKeyState(VK_LEFT) & 0x8000) != 0);
+		setDown(bits, Key::Right, (GetAsyncKeyState(VK_RIGHT) & 0x8000) != 0);
+		setDown(bits, Key::Enter, (GetAsyncKeyState(VK_RETURN) & 0x8000) != 0);
+		setDown(bits, Key::Backspace, (GetAsyncKeyState(VK_BACK) & 0x8000) != 0);
 		setDown(bits, Key::MouseLeft, (GetAsyncKeyState(VK_LBUTTON) & 0x8000) != 0);
 		setDown(bits, Key::MouseRight, (GetAsyncKeyState(VK_RBUTTON) & 0x8000) != 0);
 	}

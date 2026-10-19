@@ -87,7 +87,7 @@ mod tests {
 
     #[test]
     fn move_round_trips_exactly_after_quantisation() {
-        for &(f, r) in &[(1.0, -1.0), (0.0, 0.0), (-0.5, 0.25), (0.7071, 0.7071)] {
+        for &(f, r) in &[(1.0, -1.0), (0.0, 0.0), (-0.5, 0.25), (std::f32::consts::FRAC_1_SQRT_2, std::f32::consts::FRAC_1_SQRT_2)] {
             let (f2, r2) = unpack_move(pack_move(f, r));
             let (f3, r3) = unpack_move(pack_move(f2, r2));
             assert_eq!((f2, r2), (f3, r3), "stable after one round trip");
@@ -153,6 +153,8 @@ pub enum Key {
     /// confirms with Enter; the name field edits with Backspace).
     Up,
     Down,
+    Left,
+    Right,
     Enter,
     Backspace,
 }
@@ -164,7 +166,7 @@ impl Key {
         Key::M, Key::N, Key::O, Key::P, Key::Q, Key::R, Key::S, Key::T, Key::U, Key::V, Key::W, Key::X,
         Key::Y, Key::Z, Key::Key1, Key::Key2, Key::Key3, Key::Key4, Key::Key5, Key::Key6, Key::Escape,
         Key::Space, Key::Tab, Key::Shift, Key::Control, Key::MouseLeft, Key::MouseRight,
-        Key::Up, Key::Down, Key::Enter, Key::Backspace,
+        Key::Up, Key::Down, Key::Left, Key::Right, Key::Enter, Key::Backspace,
     ];
 
     /// The bit in a `ClientIn::keys` word for this key.
@@ -242,6 +244,8 @@ pub fn key_name(k: Key) -> &'static str {
         Key::MouseRight => "RMB",
         Key::Up => "UP",
         Key::Down => "DOWN",
+        Key::Left => "LEFT",
+        Key::Right => "RIGHT",
         Key::Enter => "ENTER",
         Key::Backspace => "BACKSPACE",
     }

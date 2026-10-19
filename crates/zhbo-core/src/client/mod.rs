@@ -367,6 +367,10 @@ pub struct Client {
     vm_events: viewmodel::Events,
     /// BO2 sound cues queued this frame (drained by the FFI layer into the host).
     pub cues: Cues,
+    /// The open create-a-class editor (BO2's Pick-10 screen), or `None` when it is closed. Opened
+    /// from the class pick screen's CREATE A CLASS row; on save its class becomes the pick, on
+    /// cancel the pick screen returns.
+    pub class_editor: Option<crate::classmenu::Editor>,
 }
 
 impl Default for Client {
@@ -404,6 +408,7 @@ impl Client {
             vm_motion: viewmodel::Motion::default(),
             vm_events: viewmodel::Events::default(),
             cues: Cues::default(),
+            class_editor: None,
         }
     }
 
@@ -447,19 +452,37 @@ impl Client {
         (held, fwd, right)
     }
 
-/// The class pick's number keys: a fresh press of 1-5 picks that entry of the class list (the
-/// list is shared, so the index is deterministic on every client; the five basics fill the keys,
-/// more entries go through the create-a-class paging later). One-shot: the value stays 0
-/// otherwise, and the bridge turns it into `MSG_ZHBO_CHOOSE_CLASS`.
-fn class_pick_input(inp: &ClientIn, prev: &KeySet, out: &mut ClientOut, general: u32) {
+/// The class pick's keys: a fresh press of 1-5 picks that entry of the class list (the list is
+/// shared, so the index is deterministic on every client; the five basics fill the keys); a fresh
+/// press of 6 opens the create-a-class editor (BO2's row below the presets). One-shot: the value
+/// stays 0 otherwise, and the bridge turns it into `MSG_ZHBO_CHOOSE_CLASS`.
+fn class_pick_input(inp: &ClientIn, prev: &KeySet, out: &mut ClientOut, general: u32) -> bool {
     const PICK_KEYS: [Key; 5] = [Key::Key1, Key::Key2, Key::Key3, Key::Key4, Key::Key5];
     for (i, key) in PICK_KEYS.iter().enumerate() {
         if inp.keys.is_down(*key) && !prev.is_down(*key) {
             out.choose_class = i as i32 + 1;
             out.choose_class_general = general;
-            return;
+            return false;
         }
     }
+    // Entry 6 is the editor: it opens instead of picking.
+    inp.keys.is_down(Key::Key6) && !prev.is_down(Key::Key6)
+}
+
+/// `choose_class`'s marker for a class built in the create-a-class editor: the payload words carry
+/// its spec instead of a registry index.
+const CHOOSE_CLASS_CUSTOM: i32 = i32::MIN;
+
+/// Fill a custom-class pick into the outgoing one-shot: the marker in `choose_class`, the class's
+/// wire words in the payload. The bridge turns it into `MSG_ZHBO_CHOOSE_CLASS` and the sim
+/// reassembles the spec ([`crate::classes::CustomClass::from_wire_words`]).
+fn pick_custom_class(out: &mut ClientOut, general: u32, class: &crate::classes::CustomClass) {
+    out.choose_class = Self::CHOOSE_CLASS_CUSTOM;
+    out.choose_class_general = general;
+    let words = class.to_wire_words();
+    let n = words.len().min(out.choose_class_payload.len());
+    out.choose_class_payload[..n].copy_from_slice(&words[..n]);
+    out.choose_class_payload_len = n as i32;
 }
 
 /// Run one rendered frame.
@@ -660,10 +683,59 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
             fwd = 0.0;
             right = 0.0;
         }
+        // The create-a-class editor, when open, owns the input entirely: the arrows move its
+        // highlight, Enter confirms and Escape backs out. While it is up nothing else reads the
+        // keys this frame.
+        if self.class_editor.is_some() {
+            let edges = crate::classmenu::Edges::between(&self.prev_keys, &inp.keys);
+            let mut editor = self.class_editor.take().expect("editor is open");
+            let outcome = editor.step(edges);
+            match outcome {
+                crate::classmenu::Outcome::Continue => {
+                    self.class_editor = Some(editor);
+                }
+                crate::classmenu::Outcome::Save if editor.draft.valid() => {
+                    let class = editor.draft.to_custom();
+                    // Persist it into the profile first (the pick screen lists the profile's classes,
+                    // so the just-built one shows next time), then pick it: the bridge sends the
+                    // choose message and writes the profile file. The profile assigns a default
+                    // name to a blank one, so read the saved entry back and send that: the pick and
+                    // the profile then carry the same named class.
+                    crate::profile::save(class);
+                    let class = crate::profile::classes().last().cloned().expect("just saved");
+                    Self::pick_custom_class(out, self.general, &class);
+                    self.cues.play(sounds::PLANT);
+                    self.prev_held = u32::MAX;
+                }
+                crate::classmenu::Outcome::Save => {
+                    // An over-spent class cannot be saved; the editor stays open.
+                    self.class_editor = Some(editor);
+                }
+                crate::classmenu::Outcome::Cancel => {
+                    self.cues.play(sounds::UI_SELECT);
+                    self.prev_held = u32::MAX;
+                }
+            }
+            return;
+        }
         // The pick menu takes the number keys while it is up, even when the game has locked
         // input (it must not eat them).
         if class_pick {
-            Self::class_pick_input(inp, &self.prev_keys, out, self.general);
+            let open_editor = Self::class_pick_input(inp, &self.prev_keys, out, self.general);
+            if open_editor {
+                // Open on the most recently saved custom class when there is one (so the player can
+                // re-edit it), otherwise on BO2's default class. BO2 opens a fresh slot; ours keeps
+                // the last class so a player without naming gets their kit back.
+                let draft = crate::profile::classes()
+                    .last()
+                    .map(crate::classmenu::Draft::from_custom)
+                    .unwrap_or_default();
+                self.class_editor = Some(crate::classmenu::Editor::new(draft));
+                self.cues.play(sounds::UI_SELECT);
+                // The opening key's edge must not reach the editor on the same frame.
+                self.prev_keys = inp.keys;
+                return;
+            }
         }
         if allowed && inp.wheel.abs() >= 1.0 {
             // With the hammer up the wheel turns the structure being placed (wheel up: to the left).
@@ -1027,6 +1099,70 @@ mod tests {
         let general_at = host.objects.borrow().iter().find(|o| o.id == 1).unwrap().pos;
         let expected = general_at + overhead_pos;
         assert!((last.eye - expected).length() < 8.0, "ends where the overhead camera will be: {:?} vs {:?}", last.eye, expected);
+    }
+
+    /// The create-a-class editor's full flow from the pick screen: `6` opens it, Enter on the
+    /// Primary slot opens its list, a Down+Enter picks the next weapon, and Enter on the slot row
+    /// saves — the outgoing one-shot then carries the custom marker and the class's wire words, and
+    /// the profile keeps the class.
+    #[test]
+    fn key6_opens_the_editor_and_saving_picks_a_custom_class() {
+        crate::profile::reset();
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        sim.take_control(&host, 0, 1);
+
+        // Reach first person first: the pick screen only listens there.
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        assert_eq!(client.view, ViewMode::Fps);
+
+        // Open the editor: `6` on the pick screen (the class is unset, so the pick screen is up).
+        inp.keys.set_down(Key::Key6, true);
+        client.frame(&mut sim, &inp);
+        inp.keys.set_down(Key::Key6, false);
+        client.frame(&mut sim, &inp);
+        assert!(client.class_editor.is_some(), "6 opens the editor");
+
+        // Open the Primary slot's list, then pick the next weapon down the list.
+        inp.keys.set_down(Key::Enter, true);
+        client.frame(&mut sim, &inp);
+        inp.keys.set_down(Key::Enter, false);
+        client.frame(&mut sim, &inp);
+        inp.keys.set_down(Key::Down, true);
+        client.frame(&mut sim, &inp);
+        inp.keys.set_down(Key::Down, false);
+        client.frame(&mut sim, &inp);
+        inp.keys.set_down(Key::Enter, true);
+        client.frame(&mut sim, &inp);
+        inp.keys.set_down(Key::Enter, false);
+        client.frame(&mut sim, &inp);
+        let edited = client.class_editor.as_ref().expect("still open").draft.primary.clone();
+        assert_ne!(edited, crate::classmenu::Draft::default().primary, "the weapon changed");
+
+        // Walk down the slot row to the Save row (the primary is first, Save is last of eleven).
+        for _ in 0..crate::classmenu::Slot::ALL.len() - 1 {
+            inp.keys.set_down(Key::Down, true);
+            client.frame(&mut sim, &inp);
+            inp.keys.set_down(Key::Down, false);
+            client.frame(&mut sim, &inp);
+        }
+        // Confirm the Save row: the editor closes and the outgoing one-shot carries the class.
+        inp.keys.set_down(Key::Enter, true);
+        let out = client.frame(&mut sim, &inp);
+        inp.keys.set_down(Key::Enter, false);
+        assert!(client.class_editor.is_none(), "saving closes the editor");
+        assert_eq!(out.choose_class, Client::CHOOSE_CLASS_CUSTOM);
+        assert_eq!(out.choose_class_general, 1);
+        assert!(out.choose_class_payload_len > 0);
+        let words: Vec<u32> = out.choose_class_payload[..out.choose_class_payload_len as usize].to_vec();
+        let class = crate::classes::CustomClass::from_wire_words(&words).expect("the payload reassembles");
+        assert_eq!(class.primary, edited, "the payload carries the edited weapon");
+        assert_eq!(crate::profile::classes().len(), 1, "the profile kept the class");
+        assert_eq!(crate::profile::classes()[0], class);
+        crate::profile::reset();
     }
 
     #[test]

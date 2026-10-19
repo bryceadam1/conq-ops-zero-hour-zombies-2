@@ -158,7 +158,9 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
     if map_open {
         draw_map(host, prims, w, h, s, p);
     }
-    if p.class.is_none() {
+    if let Some(editor) = &client.class_editor {
+        draw_class_editor(prims, w, h, s, editor);
+    } else if p.class.is_none() {
         draw_class_pick(prims, w, h, s);
     }
 }
@@ -217,6 +219,106 @@ fn draw_class_pick(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32) {
     let foot = py + panel_h - footer_h;
     prims.extend(slant_box(px + 32.0 * s, foot + 5.0 * s, panel_w - 64.0 * s, 24.0 * s, 0x6610_1214, Some(GOLD)));
     prims.push(Prim::Text { x: w * 0.5, y: foot + 10.0 * s, text: "PRESS A NUMBER TO CHOOSE".into(), argb: DIM, size: (13.0 * s) as i32, align: 1 });
+}
+
+/// The create-a-class editor, BO2's Pick-10 screen (`classmenu::Editor`): a dark full-screen overlay
+/// with the GunTitle banner up top, the slot rows down the left (each its label and current value),
+/// the highlighted slot's option list down the right when it is open, and the points-left counter in
+/// the corner. Drawn in BO2's skin with the same slanted bars and numerals as the pick screen; the
+/// fallback shapes show when the art is missing. The keys are the arrows (move), Enter (open/pick or
+/// save), Escape (back out).
+fn draw_class_editor(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, editor: &crate::classmenu::Editor) {
+    use crate::classmenu::{Draft, Slot};
+    let d: &Draft = &editor.draft;
+    prims.push(Prim::Rect { x: 0.0, y: 0.0, w, h, argb: 0xE010_1214 });
+
+    // Title: the GunTitle banner behind "CREATE A CLASS", matching the pick screen's heading.
+    let title = "CREATE A CLASS";
+    let title_w = 300.0 * s;
+    let header_h = 58.0 * s;
+    let cap = header_h * 0.62;
+    let mid_left = w * 0.5 - title_w * 0.5;
+    let title_y = 22.0 * s;
+    let mut title_fallback = slant_box(mid_left - 40.0 * s, title_y, title_w + 80.0 * s, header_h, PANEL, Some(OUTLINE));
+    title_fallback.push(Prim::Rect { x: mid_left - 35.0 * s, y: title_y + 6.0 * s, w: 3.0 * s, h: header_h - 12.0 * s, argb: GOLD });
+    prims.push(Prim::Image { name: sprites::GUN_TITLE[0].to_string(), x: mid_left - cap, y: title_y, w: cap, h: header_h, argb: 0xFFFF_FFFF, fallback: Vec::new() });
+    prims.push(Prim::Image { name: sprites::GUN_TITLE[1].to_string(), x: mid_left, y: title_y, w: title_w, h: header_h, argb: 0xFFFF_FFFF, fallback: title_fallback });
+    prims.push(Prim::Image { name: sprites::GUN_TITLE[2].to_string(), x: mid_left + title_w, y: title_y, w: cap, h: header_h, argb: 0xFFFF_FFFF, fallback: Vec::new() });
+    prims.push(Prim::Text { x: w * 0.5, y: title_y + 16.0 * s, text: title.into(), argb: WHITE, size: (22.0 * s) as i32, align: 1 });
+
+    // The slots column, down the left: label in white, value in the dim headline, the highlighted
+    // row in the gold bar. The values come from the draft's own resolution so they read as BO2's.
+    let col_x = w * 0.10;
+    let col_w = w * 0.42;
+    let row_h = 40.0 * s;
+    let top = title_y + header_h + 18.0 * s;
+    for (i, slot) in Slot::ALL.iter().enumerate() {
+        let row = top + i as f32 * row_h;
+        let active = *slot == editor.slot;
+        let (fill, edge) = if active { (0xCC22_262B, Some(GOLD)) } else { (0x8810_1214, Some(0x40C8_CCD0)) };
+        prims.extend(slant_box(col_x, row, col_w, row_h - 6.0 * s, fill, edge));
+        if active {
+            prims.push(Prim::Rect { x: col_x + 4.0 * s, y: row + 5.0 * s, w: 3.0 * s, h: row_h - 16.0 * s, argb: GOLD });
+        }
+        prims.push(Prim::Text { x: col_x + 16.0 * s, y: row + 4.0 * s, text: slot.label().into(), argb: if active { WHITE } else { DIM }, size: (13.0 * s) as i32, align: 0 });
+        prims.push(Prim::Text { x: col_x + col_w - 12.0 * s, y: row + 6.0 * s, text: crate::classmenu::slot_value(d, *slot), argb: if active { WHITE } else { DIM }, size: (12.0 * s) as i32, align: 2 });
+    }
+
+    // The option list, down the right when the highlighted slot is open. The highlighted option is
+    // the gold bar; the chosen elements are white, the rest dim. Scrolled so the highlight shows.
+    if editor.picking {
+        let opts = editor.options();
+        let list_x = w * 0.56;
+        let list_w = w * 0.34;
+        let list_top = top;
+        let visible = ((h - list_top - 70.0 * s) / row_h) as usize;
+        let start = editor.option.saturating_sub(visible.saturating_sub(1).max(0));
+        let shown = visible.max(1);
+        for (j, name) in opts.iter().enumerate().skip(start).take(shown) {
+            let row = list_top + (j - start) as f32 * row_h;
+            let active = j == editor.option;
+            let chosen = editor.option_chosen(j);
+            let (fill, edge) = if active { (0xCC22_262B, Some(GOLD)) } else { (0x8810_1214, Some(0x40C8_CCD0)) };
+            prims.extend(slant_box(list_x, row, list_w, row_h - 6.0 * s, fill, edge));
+            let (name_argb, mark) = if active {
+                (WHITE, Some(">"))
+            } else if chosen {
+                (WHITE, Some("*"))
+            } else {
+                (DIM, None)
+            };
+            if let Some(m) = mark {
+                prims.push(Prim::Text { x: list_x + 12.0 * s, y: row + 6.0 * s, text: m.into(), argb: GOLD, size: (13.0 * s) as i32, align: 0 });
+            }
+            prims.push(Prim::Text { x: list_x + 30.0 * s, y: row + 6.0 * s, text: name.clone(), argb: name_argb, size: (13.0 * s) as i32, align: 0 });
+        }
+        if opts.len() > shown {
+            prims.push(Prim::Text { x: list_x + list_w - 12.0 * s, y: list_top + shown as f32 * row_h + 4.0 * s, text: format!("{} / {}", editor.option + 1, opts.len()), argb: DIM, size: (11.0 * s) as i32, align: 2 });
+        }
+    }
+
+    // The Pick-10 counter, bottom-left in BO2's numerals: points left of the ten, gold when spent
+    // fits the budget, red when the draft is over.
+    let remaining = d.remaining().max(0);
+    let counter_argb = if d.valid() { GOLD } else { RED };
+    let cx = col_x + 8.0 * s;
+    let cy = top + Slot::ALL.len() as f32 * row_h + 16.0 * s;
+    prims.push(Prim::Text { x: cx, y: cy, text: "POINTS LEFT".into(), argb: DIM, size: (12.0 * s) as i32, align: 0 });
+    draw_number(prims, remaining as u32, cx + 96.0 * s, cy - 6.0 * s, 34.0 * s, counter_argb);
+    prims.push(Prim::Text { x: cx + 104.0 * s, y: cy, text: format!("/ {}", crate::classmenu::PICK_10), argb: DIM, size: (12.0 * s) as i32, align: 0 });
+    if !d.valid() {
+        prims.push(Prim::Text { x: cx + 156.0 * s, y: cy, text: "OVER BUDGET".into(), argb: RED, size: (12.0 * s) as i32, align: 0 });
+    }
+
+    // The footer prompt: the command line in BO2's slanted gold-edged sliver.
+    let foot = h - 40.0 * s;
+    prims.extend(slant_box(col_x, foot, w - 2.0 * col_x, 26.0 * s, 0x6610_1214, Some(GOLD)));
+    let prompt = if editor.picking {
+        "ARROWS  SELECT     ENTER  CHOOSE     ESC  BACK"
+    } else {
+        "ARROWS  MOVE     ENTER  OPEN     ESC  CANCEL     ENTER ON VALID  SAVE"
+    };
+    prims.push(Prim::Text { x: w * 0.5, y: foot + 7.0 * s, text: prompt.into(), argb: DIM, size: (12.0 * s) as i32, align: 1 });
 }
 
 /// Held map key (Tab, BO2's scoreboard key): Zero Hour's own radar over the middle of the view,
@@ -926,5 +1028,42 @@ mod tests {
         let rec = Recorder::default();
         let prims = draw_hud(&rec, /* client placeholder */ &Client::default(), &Sim::new());
         assert!(rec.texts.borrow().is_empty() && *rec.prims.borrow() == 0);
+    }
+
+    #[test]
+    fn the_editor_draws_its_slots_and_counter() {
+        let (sim, mut client) = fps_state();
+        client.class_editor = Some(crate::classmenu::Editor::new(crate::classmenu::Draft::default()));
+        let rec = Recorder { has_art: true, ..Default::default() };
+        let _ = draw_hud(&rec, &client, &sim);
+        let texts = rec.texts.borrow();
+        // The title, the slot labels, and the counter are all on screen.
+        assert!(texts.iter().any(|t| t == "CREATE A CLASS"));
+        for label in ["PRIMARY WEAPON", "SECONDARY WEAPON", "PERK 1", "WILDCARDS"] {
+            assert!(texts.iter().any(|t| t == label), "slot label {label}");
+        }
+        assert!(texts.iter().any(|t| t == "POINTS LEFT"), "the Pick-10 counter");
+        assert!(texts.iter().any(|t| t.contains("AN-94")), "the held primary in its row");
+        // The pick screen is gone while the editor owns the screen.
+        assert!(!texts.iter().any(|t| t == "PRESS A NUMBER TO CHOOSE"));
+        // With the art installed the banner is BO2's, not the fallback.
+        assert!(rec.images.borrow().contains(&sprites::GUN_TITLE[1].to_string()));
+    }
+
+    #[test]
+    fn the_editor_shows_the_option_list_when_picking() {
+        let (sim, mut client) = fps_state();
+        let mut e = crate::classmenu::Editor::new(crate::classmenu::Draft::default());
+        e.slot = crate::classmenu::Slot::Perk2;
+        e.picking = true;
+        client.class_editor = Some(e);
+        let rec = Recorder { has_art: true, ..Default::default() };
+        let _ = draw_hud(&rec, &client, &sim);
+        let texts = rec.texts.borrow();
+        // The tier's perks are listed; the held one carries the chosen mark.
+        assert!(texts.iter().any(|t| t == "Scavenger"), "tier 2 perks are listed");
+        assert!(texts.iter().any(|t| t == "FastHands"), "tier 2 perks are listed");
+        // The footer prompt changes to the picking commands.
+        assert!(texts.iter().any(|t| t.contains("ENTER  CHOOSE")), "picking prompt");
     }
 }
