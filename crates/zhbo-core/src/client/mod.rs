@@ -371,6 +371,10 @@ pub struct Client {
     /// from the class pick screen's CREATE A CLASS row; on save its class becomes the pick, on
     /// cancel the pick screen returns.
     pub class_editor: Option<crate::classmenu::Editor>,
+    /// Set while the pick screen was forced open from outside a spawn (the lobby's Create a Class
+    /// button or the command bar's entry). It keeps the screen up even when a class is already
+    /// chosen, so a pick can be replaced, and clears once one lands.
+    pub class_pick_forced: bool,
 }
 
 impl Default for Client {
@@ -409,6 +413,7 @@ impl Client {
             vm_events: viewmodel::Events::default(),
             cues: Cues::default(),
             class_editor: None,
+            class_pick_forced: false,
         }
     }
 
@@ -467,6 +472,26 @@ fn class_pick_input(inp: &ClientIn, prev: &KeySet, out: &mut ClientOut, general:
     }
     // Entry 6 is the editor: it opens instead of picking.
     inp.keys.is_down(Key::Key6) && !prev.is_down(Key::Key6)
+}
+
+/// The class pick from the overhead view: the same screen and the same keys as the first-person
+/// pick ([`class_pick_input`]), driven while the General is under RTS control so a class can be
+/// chosen without taking first-person control. The editor opens the same way.
+fn pick_input_rts(&mut self, inp: &ClientIn, out: &mut ClientOut) {
+    if self.class_editor.is_some() {
+        // The editor's own input runs in `build_input`; from overhead, only the pick's own keys do.
+        return;
+    }
+    let open_editor = Self::class_pick_input(inp, &self.prev_keys, out, self.general);
+    if open_editor {
+        let draft = crate::profile::classes()
+            .last()
+            .map(crate::classmenu::Draft::from_custom)
+            .unwrap_or_default();
+        self.class_editor = Some(crate::classmenu::Editor::new(draft));
+        self.cues.play(sounds::UI_SELECT);
+        self.prev_keys = inp.keys;
+    }
 }
 
 /// `choose_class`'s marker for a class built in the create-a-class editor: the payload words carry
@@ -537,10 +562,16 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         self.consume_events(sim, inp, player.as_ref().map(|p| p.body.pos));
         self.tick_hud(dt);
 
+        // A forced open (the lobby's Create a Class button or the command bar's entry) keeps the
+        // screen up even when a class is already chosen, so a kit can be replaced.
+        if inp.class_pick_force != 0 {
+            self.class_pick_forced = true;
+        }
+
         // The class pick's entrance: its UI sound once per life while the class is unset (the
         // screen draws over the view every frame, so the latch lives here with the other timers).
         if let Some(p) = &player {
-            if p.class.is_none() {
+            if p.class.is_none() || self.class_pick_forced {
                 if !self.hud.class_pick_seen {
                     self.hud.class_pick_seen = true;
                     self.cues.play(sounds::UI_SELECT);
@@ -565,6 +596,17 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 if first_person {
                     let p = player.as_ref().unwrap();
                     self.start_entering(inp, p.general, p.yaw, p.body.eye());
+                } else {
+                    // The class pick works from the overhead view too: the command bar's "Create a
+                    // Class" button (Zhbo_ShowClassPick) and the number keys drive the same screen
+                    // the first-person pick uses. `build_input` is first-person only, so run the
+                    // pick's own input here. The General need not have a `PlayerSim` yet (he can be
+                    // picked before he is ever controlled), so gate on the pick being wanted rather
+                    // than on the record.
+                    let unclassed = player.as_ref().is_none_or(|p| p.class.is_none());
+                    if unclassed || inp.class_pick_force != 0 {
+                        self.pick_input_rts(inp, &mut out);
+                    }
                 }
             }
             ViewMode::Entering { t, from_pos, from_dir, from_hfov } => {
@@ -706,6 +748,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     Self::pick_custom_class(out, self.general, &class);
                     self.cues.play(sounds::PLANT);
                     self.prev_held = u32::MAX;
+                    self.class_pick_forced = false;
                 }
                 crate::classmenu::Outcome::Save => {
                     // An over-spent class cannot be saved; the editor stays open.
@@ -714,6 +757,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 crate::classmenu::Outcome::Cancel => {
                     self.cues.play(sounds::UI_SELECT);
                     self.prev_held = u32::MAX;
+                    self.class_pick_forced = false;
                 }
             }
             return;
@@ -827,7 +871,11 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 EventKind::ReloadStarted => self.vm_events.reload_started = true,
                 EventKind::Swapped => self.vm_events.swapped = true,
                 EventKind::FieldComputerOpened => {}
-                EventKind::ClassChosen { .. } => self.cues.play(sounds::PLANT),
+                EventKind::ClassChosen { .. } => {
+                    self.cues.play(sounds::PLANT);
+                    // A pick landed: the forced screen closes, and the next spawn's pick returns.
+                    self.class_pick_forced = false;
+                }
                 EventKind::Melee => self.cues.play(sounds::MELEE_SWING),
                 EventKind::OffhandReady { .. } => self.cues.play(sounds::PULL_PIN),
                 EventKind::Thrown { .. } => self.cues.play(sounds::THROW),

@@ -54,6 +54,11 @@ const ENGLISH: &[(&str, &str)] = &[
     ),
     ("CONTROLBAR:ZHBO_BuildBack", "&Back"),
     ("CONTROLBAR:ToolTipZHBO_BuildBack", "Back to the General's commands."),
+    ("CONTROLBAR:ZHBO_ChooseClass", "Create a &Class"),
+    (
+        "CONTROLBAR:ToolTipZHBO_ChooseClass",
+        "Pick a class for your General. The kit replaces his base one and takes effect the next time he takes the field.",
+    ),
 ];
 
 fn table() -> &'static HashMap<String, Vec<u16>> {

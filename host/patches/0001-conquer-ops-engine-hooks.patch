@@ -31,24 +31,26 @@ diff --git a/Core/GameEngine/Include/GameClient/ControlBar.h b/Core/GameEngine/I
 index eb5b7a2..55a9e39 100644
 --- a/Core/GameEngine/Include/GameClient/ControlBar.h
 +++ b/Core/GameEngine/Include/GameClient/ControlBar.h
-@@ -214,6 +214,8 @@ enum GUICommandType CPP_11(: Int)
+@@ -214,6 +214,9 @@ enum GUICommandType CPP_11(: Int)
  
  	GUI_COMMAND_SELECT_ALL_UNITS_OF_TYPE,
  
 +	GUI_COMMAND_ZHBO_TAKE_CONTROL,				///< ZHBO: take first-person control of the selected General
++	GUI_COMMAND_ZHBO_CHOOSE_CLASS,				///< ZHBO: open the create-a-class pick screen for the selected General
 +
  	// add more commands here, don't forget to update the string command list below too ...
  
  	GUI_COMMAND_NUM_COMMANDS
-@@ -267,6 +269,7 @@ static const char *const TheGuiCommandNames[] =
+@@ -267,6 +270,8 @@ static const char *const TheGuiCommandNames[] =
  	"SPECIAL_POWER_CONSTRUCT",
  	"SPECIAL_POWER_CONSTRUCT_FROM_SHORTCUT",
  	"SELECT_ALL_UNITS_OF_TYPE",
 +	"ZHBO_TAKE_CONTROL",
++	"ZHBO_CHOOSE_CLASS",
  
  	nullptr
  };
-@@ -419,6 +422,7 @@ enum { MAX_BUILD_QUEUE_BUTTONS = 9 };// physical button count for the build queu
+@@ -419,6 +423,7 @@ enum { MAX_BUILD_QUEUE_BUTTONS = 9 };// physical button count for the build queu
  enum { MAX_SPECIAL_POWER_SHORTCUTS = 11};
  class CommandSet : public Overridable
  {
@@ -56,7 +58,7 @@ index eb5b7a2..55a9e39 100644
  
  	MEMORY_POOL_GLUE_WITH_USERLOOKUP_CREATE( CommandSet, "CommandSet" )
  
-@@ -1008,6 +1012,8 @@ private:
+@@ -1008,6 +1013,8 @@ private:
  	/// find existing command set
  	CommandSet *findNonConstCommandSet( const AsciiString& name );
  
@@ -91,7 +93,7 @@ index 5e2c41a..ae1cdd0 100644
  
  #include "Common/BuildAssistant.h"
  #include "Common/Money.h"
-@@ -631,6 +632,13 @@ CBCommandStatus ControlBar::processCommandUI( GameWindow *control,
+@@ -631,6 +632,20 @@ CBCommandStatus ControlBar::processCommandUI( GameWindow *control,
  			break;
  		}
  
@@ -99,6 +101,13 @@ index 5e2c41a..ae1cdd0 100644
 +		case GUI_COMMAND_ZHBO_TAKE_CONTROL:
 +		{
 +			Zhbo_OnZhboCommand(obj, commandButton);
++			break;
++		}
++
++		// ZHBO: the command bar's Create a Class entry opens the pick screen.
++		case GUI_COMMAND_ZHBO_CHOOSE_CLASS:
++		{
++			Zhbo_ShowClassPick();
 +			break;
 +		}
 +

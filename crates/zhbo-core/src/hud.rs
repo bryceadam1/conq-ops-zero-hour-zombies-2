@@ -127,7 +127,18 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
         draw_death_banner(prims, w, h, s, client.hud.death_banner);
     }
 
+    // The create-a-class screen works from the overhead view too (the command bar's "Create a
+    // Class" button opens it there), so draw it before the first-person-only overlays below. The
+    // General need not have a `PlayerSim` yet (the pick can happen before he is ever controlled).
     let in_fps = matches!(client.view, ViewMode::Fps);
+    if !in_fps {
+        if let Some(editor) = &client.class_editor {
+            draw_class_editor(prims, w, h, s, editor);
+        } else if client.class_pick_forced || player.is_none_or(|p| p.class.is_none()) {
+            draw_class_pick(prims, w, h, s);
+        }
+    }
+
     let Some(p) = player.filter(|_| in_fps) else {
         host.ghost(0, Vec3::ZERO, 0.0, false);
         return;
@@ -160,7 +171,7 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
     }
     if let Some(editor) = &client.class_editor {
         draw_class_editor(prims, w, h, s, editor);
-    } else if p.class.is_none() {
+    } else if p.class.is_none() || client.class_pick_forced {
         draw_class_pick(prims, w, h, s);
     }
 }
@@ -1027,9 +1038,15 @@ mod tests {
 
     #[test]
     fn nothing_in_rts_view() {
+        // No General in the sim: the overhead view draws only the create-a-class screen when the
+        // local General is unclassed (it opens from the command bar, so it must show there too).
         let rec = Recorder::default();
-        let prims = draw_hud(&rec, /* client placeholder */ &Client::default(), &Sim::new());
-        assert!(rec.texts.borrow().is_empty() && *rec.prims.borrow() == 0);
+        let mut client = Client::default();
+        client.class_pick_forced = false;
+        let _ = draw_hud(&rec, &client, &Sim::new());
+        // With no class chosen and no forced pick, the pick screen is what draws — and nothing else.
+        let texts = rec.texts.borrow();
+        assert!(texts.iter().any(|t| t == "CREATE A CLASS"), "the pick screen drew: {texts:?}");
     }
 
     #[test]

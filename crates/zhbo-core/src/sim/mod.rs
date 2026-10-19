@@ -369,8 +369,40 @@ impl Sim {
         if idx >= MAX_PLAYERS {
             return;
         }
-        let Some(mut p) = self.players[idx].take() else { return };
-        if p.general != general || !matches!(p.mode, Mode::Fps) || p.class.is_some() {
+        // The class can be picked before the General is ever taken into first person: the command
+        // bar's Create a Class button opens the pick while he is still under RTS control. Make a
+        // fresh record for him so the kit is in place when he takes the field; its position is
+        // filled in from the object when he does.
+        let mut p = match self.players[idx].take() {
+            Some(p) => p,
+            None => {
+                let tuning = self.tuning;
+                let frame = self.frame;
+                PlayerSim {
+                    general,
+                    class: None,
+                    mode: Mode::Fps,
+                    body: Body::new(Vec3::ZERO, &tuning),
+                    yaw: 0.0,
+                    pitch: 0.0,
+                    arsenal: Arsenal::new(),
+                    rng: Rng::new(general.wrapping_mul(2_654_435_761) ^ frame),
+                    input: FpsInput::default(),
+                    pressed_accum: 0,
+                    health: 0.0,
+                    max_health: 0.0,
+                    regen_wait: 0.0,
+                    hack: None,
+                    rts_lock: -1,
+                    rts_tactical: false,
+                    rts_gun: 0,
+                    hammer: None,
+                    site: None,
+                    building: false,
+                }
+            }
+        };
+        if p.general != general {
             self.players[idx] = Some(p);
             return;
         }
@@ -387,13 +419,23 @@ impl Sim {
         };
         p.class = Some(class_id);
         p.arsenal = Arsenal::with_loadout(loadout);
-        let first = p.arsenal.current().def.first_raise_time;
-        p.arsenal.raise_left = TAKE_CONTROL_READY + first;
-        p.arsenal.raise_total = first;
-        p.arsenal.raise_kind = crate::weapons::RaiseKind::First;
-        p.arsenal.drop_left = 0.0;
-        p.arsenal.offhand = None;
-        p.arsenal.ads = 0.0;
+        // The kit is ready as soon as the class lands, whichever view the player is in. In first
+        // person the weapon still has to come up (BO2: the pick happens between spawns, not
+        // mid-fight); in overhead it is ready for the next time the General takes the field.
+        if matches!(p.mode, Mode::Fps) {
+            let first = p.arsenal.current().def.first_raise_time;
+            p.arsenal.raise_left = TAKE_CONTROL_READY + first;
+            p.arsenal.raise_total = first;
+            p.arsenal.raise_kind = crate::weapons::RaiseKind::First;
+            p.arsenal.drop_left = 0.0;
+            p.arsenal.offhand = None;
+            p.arsenal.ads = 0.0;
+        } else {
+            // A class picked while commanding: mark it so the next Take Control readies the kit
+            // without re-raising a weapon the General already has out.
+            p.arsenal.raise_left = 0.0;
+            p.arsenal.raise_total = 0.0;
+        }
         self.players[idx] = Some(p);
         self.emit(idx, EventKind::ClassChosen { general, class: class_name });
     }
@@ -1088,6 +1130,40 @@ pub(crate) mod tests {
             Some(name) => assert_eq!(name.as_str(), "Ghost Recon"),
             other => panic!("expected custom class name, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn class_chosen_from_overhead_applies_its_kit() {
+        // A General built from the Command Center and still under RTS control: the class picked
+        // from the command bar must replace the base kit without first-person control. He has no
+        // `PlayerSim` yet (he was never taken into first person), so the pick creates the record.
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        assert!(sim.player(0).is_none(), "no record before the pick");
+        sim.choose_class(0, 1, 0, &[]);
+        let p = sim.player(0).expect("the pick made the record");
+        assert_eq!(p.class.as_deref(), Some(crate::classes::at(0).unwrap().id.as_str()));
+        let ev = events(&sim);
+        assert!(
+            ev.iter().any(|e| matches!(e, EventKind::ClassChosen { .. })),
+            "the overhead pick emitted ClassChosen"
+        );
+    }
+
+    #[test]
+    fn class_pick_replaces_an_existing_class() {
+        // Re-opening the pick screen (the lobby/command-bar button) and choosing again swaps the
+        // kit instead of being ignored.
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        let first = sim.player(0).and_then(|p| p.class.clone());
+        sim.choose_class(0, 1, 1, &[]);
+        let second = sim.player(0).and_then(|p| p.class.clone());
+        assert_ne!(first, second, "the second pick replaced the first");
     }
 
     #[test]

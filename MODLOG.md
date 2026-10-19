@@ -616,6 +616,28 @@ draft↔`CustomClass` round trip and the key-6 → edit → save → custom-pick
 but for the pre-existing dead-code warnings. Open: the editor's in-game *drawing* still has not been
 captured in a real frame on macOS; the classpick run is ready for that capture.
 
+## Class selection from the overhead view and the lobby button, take two
+
+Three gaps the first create-a-class pass left open are now closed:
+
+1. **The Create-a-Class button in the skirmish lobby.** Patch 0014's button is built in code when
+   the base `.wnd` art lacks the element. It now injects from the menu's `Init`, once the layout is
+   settled, so the button lands relative to the menu's own rect and is visible; the first attempt
+   injected during gadget setup, before the layout was real, so it sat at an unset position.
+2. **The General's kit at spawn.** A class picked while commanding (overhead) applies its kit
+   immediately and without first-person control; the sim makes the General's record on the pick
+   when he was never controlled. The kit replaces the base one; the weapon still comes up on the
+   next first-person control, so the "old default weapons" only showed because no class had landed.
+3. **Class selection from the command bar.** The General's command set carries a new
+   `Command_ZHBO_ChooseClass` button (`Command = ZHBO_CHOOSE_CLASS`), and the engine's
+   `processCommandUI` routes `GUI_COMMAND_ZHBO_CHOOSE_CLASS` to `Zhbo_ShowClassPick`. The pick
+   screen and the editor now draw and take input from the overhead view too, so a class can be
+   chosen from either view, exactly like every other Zero Hour command.
+
+Tests: `cargo test --workspace` — zhbo-core 134 (the overhead pick creates the General's record and
+applies the kit; a re-pick replaces the chosen class); clippy clean. The engine's
+`ControlBarCommandProcessing.cpp` and `SkirmishGameOptionsMenu.cpp` compile with the new call sites.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

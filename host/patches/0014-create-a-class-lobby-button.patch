@@ -1,16 +1,17 @@
 diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp
-index 54a33df7b..c5efeb5da 100644
+index 54a33df7b..6c8b24e1d 100644
 --- a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp
 +++ b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp
-@@ -28,6 +28,7 @@
+@@ -30,6 +30,8 @@
  
  #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
  
 +#include "ZhboBridge.h" // ZHBO
++
  
  #include "Common/BattleHonors.h"
  #include "Common/FileSystem.h"
-@@ -115,6 +116,7 @@ static NameKeyType sliderGameSpeedID = NAMEKEY_INVALID;
+@@ -115,6 +117,7 @@ static NameKeyType sliderGameSpeedID = NAMEKEY_INVALID;
  static NameKeyType staticTextGameSpeedID = NAMEKEY_INVALID;
  static NameKeyType checkBoxLimitSuperweaponsID = NAMEKEY_INVALID;
  static NameKeyType comboBoxStartingCashID = NAMEKEY_INVALID;
@@ -18,7 +19,7 @@ index 54a33df7b..c5efeb5da 100644
  
  // Window Pointers ------------------------------------------------------------------------
  static GameWindow *staticTextGameSpeed = nullptr;
-@@ -128,6 +130,7 @@ static GameWindow *windowMap = nullptr;
+@@ -128,6 +131,7 @@ static GameWindow *windowMap = nullptr;
  static GameWindow *textEntryPlayerName = nullptr;
  static GameWindow *checkBoxLimitSuperweapons = nullptr;
  static GameWindow *comboBoxStartingCash = nullptr;
@@ -26,9 +27,9 @@ index 54a33df7b..c5efeb5da 100644
  static GameWindow *comboBoxPlayer[MAX_SLOTS] = {0};
  
  static GameWindow *comboBoxColor[MAX_SLOTS] = {0};
-@@ -1016,6 +1019,52 @@ static void handleLimitSuperweaponsClick()
-   }
+@@ -1017,6 +1021,62 @@ static void handleLimitSuperweaponsClick()
  }
+ 
  
 +// BO2's create-a-class from the lobby: opens the class pick screen before the game starts, so the
 +// player's General (the FPS avatar) spawns with the chosen kit instead of the base one. The pick
@@ -42,23 +43,21 @@ index 54a33df7b..c5efeb5da 100644
 +// The mod never ships the base game's .wnd files, so SkirmishGameOptionsMenu.wnd may not carry a
 +// ButtonCreateClass element. When the lookup comes up empty we build the button in code and parent
 +// it to the skirmish menu, on the pattern of ZhboControlBarAccess::injectConstructButtons. A shipped
-+// .wnd element, if the art later provides one, takes precedence and this does nothing.
++// .wnd element, if the art later provides one, takes precedence and this does nothing. Called from
++// the menu's Init, once the layout is settled, so the parent's own rect is real.
 +static GameWindow *injectCreateClassButton( GameWindow *parent )
 +{
 +  if( parent == nullptr )
 +    return nullptr;
 +
-+  // Borrow the map-select button's screen rect so the new button lands in the same column, below
-+  // the map preview, without guessing at pixel coordinates for every resolution.
-+  GameWindow *anchor = TheWindowManager->winGetWindowFromId( nullptr,
-+    TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:ButtonSelectMap" ) );
-+  Int x = 10, y = 10, w = 120, h = 28;
-+  if( anchor )
-+  {
-+    anchor->winGetScreenPosition( &x, &y );
-+    anchor->winGetSize( &w, &h );
-+    y += h + 4;
-+  }
++  // Sit in the lower-right of the menu, under the map preview: relative to the parent's own rect,
++  // so the button lands on screen at every resolution without borrowing another element's position.
++  Int px = 0, py = 0, pw = 0, ph = 0;
++  parent->winGetScreenPosition( &px, &py );
++  parent->winGetSize( &pw, &ph );
++  const Int w = 130, h = 28;
++  Int x = px + pw - w - 20;
++  Int y = py + ph - h - 20;
 +
 +  WinInstanceData instData;
 +  instData.init();
@@ -76,10 +75,22 @@ index 54a33df7b..c5efeb5da 100644
 +  return button;
 +}
 +
- 
++/// Build the Create a Class button once, the first time the menu comes up (the layout is settled by
++/// then, so the parent's rect is real). Idempotent: a second Init does not add a second button.
++static void ensureCreateClassButton()
++{
++  if( buttonCreateClass != nullptr )
++    return;
++  buttonCreateClass = TheWindowManager->winGetWindowFromId( parentSkirmishGameOptions, buttonCreateClassID );
++  if( buttonCreateClass == nullptr )
++    buttonCreateClass = injectCreateClassButton( parentSkirmishGameOptions );
++  DEBUG_ASSERTCRASH(buttonCreateClass, ("Could not create the buttonCreateClass"));
++}
++
  //-------------------------------------------------------------------------------------------------
  /** Initialize the Gadgets Options Menu */
-@@ -1033,6 +1082,7 @@ void InitSkirmishGameGadgets()
+ //-------------------------------------------------------------------------------------------------
+@@ -1033,6 +1093,7 @@ void InitSkirmishGameGadgets()
  	staticTextGameSpeedID = TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:StaticTextGameSpeed" );
    checkBoxLimitSuperweaponsID = TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:CheckboxLimitSuperweapons" );
    comboBoxStartingCashID = TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:ComboBoxStartingCash" );
@@ -87,19 +98,18 @@ index 54a33df7b..c5efeb5da 100644
  
  	// Initialize the pointers to our gadgets
  	parentSkirmishGameOptions = TheWindowManager->winGetWindowFromId( nullptr, parentSkirmishGameOptionsID );
-@@ -1055,6 +1105,11 @@ void InitSkirmishGameGadgets()
-   DEBUG_ASSERTCRASH(comboBoxStartingCash, ("Could not find the comboBoxStartingCash"));
-   PopulateStartingCashComboBox(comboBoxStartingCash, TheSkirmishGameInfo );
- 
-+	// The Create Class button: prefer the .wnd element; build one in code if the art lacks it.
-+	buttonCreateClass = TheWindowManager->winGetWindowFromId( parentSkirmishGameOptions, buttonCreateClassID );
-+	if( buttonCreateClass == nullptr )
-+		buttonCreateClass = injectCreateClassButton( parentSkirmishGameOptions );
-+
- 	textEntryPlayerNameID = TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:TextEntryPlayerName" );
-   textEntryPlayerName = TheWindowManager->winGetWindowFromId( nullptr, textEntryPlayerNameID );
- 	DEBUG_ASSERTCRASH(textEntryPlayerName, ("Could not find the textEntryPlayerName" ));
-@@ -1648,6 +1665,10 @@ WindowMsgHandledType SkirmishGameOptionsMenuSystem( GameWindow *window, Unsigned
+@@ -1351,6 +1412,10 @@ void SkirmishGameOptionsMenuInit( WindowLayout *layout, void *userData )
+ 	GadgetSliderSetPosition( sliderGameSpeed, sliderPos );
+ 	setFPSTextBox(sliderPos);
+ 	buttonStart->winSetText(TheGameText->fetch("GUI:Start"));
++	// The Create Class button: look for the .wnd element and, when the art lacks it (the mod never
++	// ships the base .wnd files), build it in code. Done here, after the layout is settled, so the
++	// parent's rect is real and the button lands on screen.
++	ensureCreateClassButton();
+ 	/* hey, for now we're also going to disable the map select button until it doesn't crash */
+ 	//buttonSelectMap->winEnable( FALSE );
+ 	//buttonSelectMap->winEnable( TRUE );
+@@ -1648,6 +1713,10 @@ WindowMsgHandledType SkirmishGameOptionsMenuSystem( GameWindow *window, Unsigned
          {
            handleLimitSuperweaponsClick();
          }
