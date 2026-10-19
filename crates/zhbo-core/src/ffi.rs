@@ -244,7 +244,11 @@ pub unsafe extern "C" fn zhbo_logic_choose_class(player: i32, general: u32, inde
             &[]
         }
     };
-    with_state(|s| s.sim.choose_class(player, general, index.max(0) as usize, payload));
+    // A custom class travels as a payload; the index is then unused (`CHOOSE_CLASS_CUSTOM` is
+    // `i32::MIN`), so it must not be clamped to a real list index. A negative index with an empty
+    // payload is the ignored case the contract above describes.
+    let index = if payload.is_empty() { usize::try_from(index).unwrap_or(usize::MAX) } else { 0 };
+    with_state(|s| s.sim.choose_class(player, general, index, payload));
 }
 
 #[no_mangle]

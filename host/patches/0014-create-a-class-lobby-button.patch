@@ -2,7 +2,15 @@ diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus
 index 54a33df7b..c5efeb5da 100644
 --- a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp
 +++ b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp
-@@ -115,6 +115,7 @@ static NameKeyType sliderGameSpeedID = NAMEKEY_INVALID;
+@@ -28,6 +28,7 @@
+ 
+ #include "PreRTS.h"	// This must go first in EVERY cpp file in the GameEngine
+ 
++#include "ZhboBridge.h" // ZHBO
+ 
+ #include "Common/BattleHonors.h"
+ #include "Common/FileSystem.h"
+@@ -115,6 +116,7 @@ static NameKeyType sliderGameSpeedID = NAMEKEY_INVALID;
  static NameKeyType staticTextGameSpeedID = NAMEKEY_INVALID;
  static NameKeyType checkBoxLimitSuperweaponsID = NAMEKEY_INVALID;
  static NameKeyType comboBoxStartingCashID = NAMEKEY_INVALID;
@@ -10,7 +18,7 @@ index 54a33df7b..c5efeb5da 100644
  
  // Window Pointers ------------------------------------------------------------------------
  static GameWindow *staticTextGameSpeed = nullptr;
-@@ -128,6 +129,7 @@ static GameWindow *windowMap = nullptr;
+@@ -128,6 +130,7 @@ static GameWindow *windowMap = nullptr;
  static GameWindow *textEntryPlayerName = nullptr;
  static GameWindow *checkBoxLimitSuperweapons = nullptr;
  static GameWindow *comboBoxStartingCash = nullptr;
@@ -18,7 +26,7 @@ index 54a33df7b..c5efeb5da 100644
  static GameWindow *comboBoxPlayer[MAX_SLOTS] = {0};
  
  static GameWindow *comboBoxColor[MAX_SLOTS] = {0};
-@@ -1016,6 +1018,17 @@ static void handleLimitSuperweaponsClick()
+@@ -1016,6 +1019,52 @@ static void handleLimitSuperweaponsClick()
    }
  }
  
@@ -27,16 +35,51 @@ index 54a33df7b..c5efeb5da 100644
 +// itself lands in the sim through MSG_ZHBO_CHOOSE_CLASS (see the Zhbo mod layer).
 +static void handleCreateClassClick()
 +{
-+  if (Zhbo_ShowClassPick())
++  // The class pick screen takes the mouse until the player picks or backs out.
++  Zhbo_ShowClassPick();
++}
++
++// The mod never ships the base game's .wnd files, so SkirmishGameOptionsMenu.wnd may not carry a
++// ButtonCreateClass element. When the lookup comes up empty we build the button in code and parent
++// it to the skirmish menu, on the pattern of ZhboControlBarAccess::injectConstructButtons. A shipped
++// .wnd element, if the art later provides one, takes precedence and this does nothing.
++static GameWindow *injectCreateClassButton( GameWindow *parent )
++{
++  if( parent == nullptr )
++    return nullptr;
++
++  // Borrow the map-select button's screen rect so the new button lands in the same column, below
++  // the map preview, without guessing at pixel coordinates for every resolution.
++  GameWindow *anchor = TheWindowManager->winGetWindowFromId( nullptr,
++    TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:ButtonSelectMap" ) );
++  Int x = 10, y = 10, w = 120, h = 28;
++  if( anchor )
 +  {
-+    // The class pick screen is up: it takes the mouse until the player picks or backs out.
++    anchor->winGetScreenPosition( &x, &y );
++    anchor->winGetSize( &w, &h );
++    y += h + 4;
 +  }
++
++  WinInstanceData instData;
++  instData.init();
++  BitSet( instData.m_style, GWS_PUSH_BUTTON | GWS_MOUSE_TRACK );
++  instData.m_textLabelString = "Create a Class";
++
++  GameWindow *button = TheWindowManager->gogoGadgetPushButton( parent,
++    WIN_STATUS_ENABLED | WIN_STATUS_IMAGE, x, y, w, h, &instData, nullptr, FALSE );
++  if( button == nullptr )
++    return nullptr;
++
++  // Give the button the same id the .wnd element would have, so the menu's system handler routes
++  // its clicks through the same comparison.
++  button->winSetWindowId( buttonCreateClassID );
++  return button;
 +}
 +
  
  //-------------------------------------------------------------------------------------------------
  /** Initialize the Gadgets Options Menu */
-@@ -1033,6 +1046,7 @@ void InitSkirmishGameGadgets()
+@@ -1033,6 +1082,7 @@ void InitSkirmishGameGadgets()
  	staticTextGameSpeedID = TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:StaticTextGameSpeed" );
    checkBoxLimitSuperweaponsID = TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:CheckboxLimitSuperweapons" );
    comboBoxStartingCashID = TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:ComboBoxStartingCash" );
@@ -44,18 +87,19 @@ index 54a33df7b..c5efeb5da 100644
  
  	// Initialize the pointers to our gadgets
  	parentSkirmishGameOptions = TheWindowManager->winGetWindowFromId( nullptr, parentSkirmishGameOptionsID );
-@@ -1055,6 +1069,10 @@ void InitSkirmishGameGadgets()
+@@ -1055,6 +1105,11 @@ void InitSkirmishGameGadgets()
    DEBUG_ASSERTCRASH(comboBoxStartingCash, ("Could not find the comboBoxStartingCash"));
    PopulateStartingCashComboBox(comboBoxStartingCash, TheSkirmishGameInfo );
  
-+	// Retrieve the Create Class button gadget
++	// The Create Class button: prefer the .wnd element; build one in code if the art lacks it.
 +	buttonCreateClass = TheWindowManager->winGetWindowFromId( parentSkirmishGameOptions, buttonCreateClassID );
-+	DEBUG_ASSERTCRASH(buttonCreateClass, ("Could not find the buttonCreateClass"));
++	if( buttonCreateClass == nullptr )
++		buttonCreateClass = injectCreateClassButton( parentSkirmishGameOptions );
 +
  	textEntryPlayerNameID = TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:TextEntryPlayerName" );
    textEntryPlayerName = TheWindowManager->winGetWindowFromId( nullptr, textEntryPlayerNameID );
  	DEBUG_ASSERTCRASH(textEntryPlayerName, ("Could not find the textEntryPlayerName" ));
-@@ -1648,6 +1666,10 @@ WindowMsgHandledType SkirmishGameOptionsMenuSystem( GameWindow *window, Unsigned
+@@ -1648,6 +1665,10 @@ WindowMsgHandledType SkirmishGameOptionsMenuSystem( GameWindow *window, Unsigned
          {
            handleLimitSuperweaponsClick();
          }
