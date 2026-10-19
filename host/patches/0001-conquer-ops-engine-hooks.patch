@@ -17,7 +17,7 @@ diff --git a/Core/GameEngine/Include/Common/MessageStream.h b/Core/GameEngine/In
 index e5dc1fc..be15aa4 100644
 --- a/Core/GameEngine/Include/Common/MessageStream.h
 +++ b/Core/GameEngine/Include/Common/MessageStream.h
-@@ -604,6 +604,8 @@ public:
+@@ -604,6 +604,9 @@ public:
  		MSG_LOGIC_CRC,															///< CRC from the logic passed around in a network game :)
  		MSG_SET_MINE_CLEARING_DETAIL,								///< CRC from the logic passed around in a network game :)
  		MSG_ENABLE_RETALIATION_MODE,								///< Turn retaliation mode on or off.
@@ -69,7 +69,7 @@ diff --git a/Core/GameEngine/Source/Common/MessageStream.cpp b/Core/GameEngine/S
 index 9980021..48ed6f8 100644
 --- a/Core/GameEngine/Source/Common/MessageStream.cpp
 +++ b/Core/GameEngine/Source/Common/MessageStream.cpp
-@@ -647,6 +647,8 @@ const char *GameMessage::getCommandTypeAsString(GameMessage::Type t)
+@@ -647,6 +647,9 @@ const char *GameMessage::getCommandTypeAsString(GameMessage::Type t)
  	CASE_LABEL(MSG_LOGIC_CRC)
  	CASE_LABEL(MSG_SET_MINE_CLEARING_DETAIL)
  	CASE_LABEL(MSG_ENABLE_RETALIATION_MODE)
@@ -147,7 +147,7 @@ index 472aee9..8a38139 100644
  
  #include "Common/CRCDebug.h"
  #include "Common/FramePacer.h"
-@@ -490,6 +491,17 @@ void GameLogic::logicMessageDispatcher( GameMessage *msg, void *userData )
+@@ -490,6 +491,23 @@ void GameLogic::logicMessageDispatcher( GameMessage *msg, void *userData )
  			onEnableRetaliationMode(msg);
  			break;
  		}

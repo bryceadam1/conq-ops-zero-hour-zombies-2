@@ -193,7 +193,7 @@ pub unsafe extern "C" fn zhbo_logic_input(player: i32, general: u32, input: *con
 /// # Safety
 /// `payload` must point to `len` u32 words when `len` > 0 (the bridge's stack array).
 #[no_mangle]
-pub extern "C" fn zhbo_logic_choose_class(player: i32, general: u32, index: i32, payload: *const u32, len: i32) {
+pub unsafe extern "C" fn zhbo_logic_choose_class(player: i32, general: u32, index: i32, payload: *const u32, len: i32) {
     // # Safety: the bridge passes a valid pointer and length, per the contract above.
     let payload: &[u32] = unsafe {
         if len > 0 && !payload.is_null() {

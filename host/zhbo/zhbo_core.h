@@ -262,8 +262,10 @@ int32_t zhbo_install_weapons(const char *table); /* Data\\ConquerOps\\weapons.in
 void zhbo_reset(void);
 void zhbo_logic_take_control(int32_t player, uint32_t general);
 void zhbo_logic_input(int32_t player, uint32_t general, const ZhboFpsInput *input);
-/* The pick menu's choice (see classes.rs): the General assumes the class at the shared list's index. */
-void zhbo_logic_choose_class(int32_t player, uint32_t general, int32_t index);
+/* The pick menu's choice (see classes.rs): the General assumes the class at the shared list's index.
+   A custom class appends its wire words after the index as [len, word...]; payload/len are null/0 for a
+   plain list pick. */
+void zhbo_logic_choose_class(int32_t player, uint32_t general, int32_t index, const uint32_t *payload, int32_t len);
 void zhbo_logic_step(uint32_t frame);
 int32_t zhbo_logic_is_controlled(uint32_t object_id);
 void zhbo_client_frame(const ZhboClientIn *in, ZhboClientOut *out);
