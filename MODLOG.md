@@ -546,11 +546,13 @@ of hidden padding after `logic_frame`; the old 112 assumed none).
 type (`MessageStream.h`: integer/real/bool/objectid/drawableid/teamid/location/pixel/...), so a
 custom class's spec cannot ride the pick message as text — it needs a packed-integer encoding
 (weapon-table ids + attachment/perk masks, ~7 integer args) or a shared preset id. The
-create-a-class screen (weapon/attachment/perk lists) and the lobby button
-(`SkirmishGameOptionsMenu.wnd`/WOL lobby) are unstarted; the skirmish lobby's buttons are
-`.wnd`-based (`TheNameKeyGenerator->nameToKey("SkirmishGameOptionsMenu.wnd:ButtonBack")`), so
-the button likely needs a runtime-injected window on the pattern of
-`ZhboControlBarAccess::injectConstructButtons`.
+create-a-class screen (weapon/attachment/perk lists) is unstarted. The skirmish lobby's
+Create-a-Class button now ships as `host/patches/0014-create-a-class-lobby-button.patch`
+(`SkirmishGameOptionsMenu.cpp` looks up `SkirmishGameOptionsMenu.wnd:ButtonCreateClass` and
+calls `Zhbo_ShowClassPick`; the `.wnd` file must carry the button — a runtime-injected window on
+the pattern of `ZhboControlBarAccess::injectConstructButtons` is the fallback if the art does
+not). It reaches the pick overlay through the same `Zhbo_ShowClassPick` latch as the in-game
+pick, which the client consumes via `ClientIn.class_pick_force`.
 
 ## Next steps
 
