@@ -20,12 +20,41 @@ pub struct ScreenView<'a> {
     /// Seconds since the class set changed (`cacchooseclass.lua`'s `SetActiveClassSet`), while the
     /// list is sliding in and the preview fading in; `None` when the screen is settled.
     pub set_change: Option<f32>,
+    /// Seconds since the shown menu (or submenu) opened, while `CoD.Menu.animateIn`'s fade runs;
+    /// `None` once it has landed (a settled screen draws byte-identically to the old static one).
+    pub open: Option<f32>,
 }
 
-/// Draw the class screen for a host: the editor while one is open, else the pick list.
+/// `CoD.Menu.animateIn`'s duration (`codmenu.lua:2300-2326`): `beginAnimation("animate_popup_in",
+/// 250, false, true)` — 250 ms, no ease-in, an ease-out, alpha 0 → 1. `openPopup` runs it for
+/// every popup it creates (`codmenu.lua:1985-1990`; the lobby opens the choose-class screen through
+/// it, `partylobby.lua:429`), and the port's class screen and its in-place submenus use the same
+/// menu-open animation.
+pub const MENU_OPEN_MS: f32 = 250.0;
+
+/// Draw the class screen for a host: the editor while one is open, else the pick list. A menu that
+/// has just opened is one alpha group faded by `animateIn`'s curve, exactly as LUI fades the whole
+/// menu element (`bo2::fade` is the `alphaMultiplier`).
 pub fn draw_screen(prims: &mut Vec<Prim>, w: f32, h: f32, view: &ScreenView) {
+    if settle(view.open) >= 1.0 {
+        draw_body(prims, w, h, view);
+    } else {
+        let mut group = Vec::new();
+        draw_body(&mut group, w, h, view);
+        bo2::fade(&mut group, crate::lui::anim::ease(settle(view.open), false, true));
+        prims.extend(group);
+    }
+}
+
+/// The static screen, with no menu-open fade around it.
+fn draw_body(prims: &mut Vec<Prim>, w: f32, h: f32, view: &ScreenView) {
     match view.editor {
         Some(editor) => draw_editor(prims, w, h, editor, view.deny, view.now),
         None => draw_pick(prims, w, h, view),
     }
+}
+
+/// `open`'s progress through `MENU_OPEN_MS`, 1 when there is no open transition.
+pub fn settle(open: Option<f32>) -> f32 {
+    open.map_or(1.0, |since| (since * 1000.0 / MENU_OPEN_MS).clamp(0.0, 1.0))
 }

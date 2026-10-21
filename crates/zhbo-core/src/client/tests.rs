@@ -266,6 +266,45 @@
         crate::profile::reset();
     }
 
+    /// The in-match panel opens as a popup, so `CoD.Menu.animateIn`'s 250 ms fade runs once per
+    /// open (`codmenu.lua:2300-2326`) and starts over after Escape closes it.
+    #[test]
+    fn the_in_match_panel_fades_in_and_a_reopen_starts_over() {
+        let _g = crate::profile::lock();
+        crate::profile::reset();
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { dt: 1.0 / 60.0, ..Default::default() };
+
+        let out = client.frame(&mut sim, &inp);
+        assert_eq!(out.menu_open, 0);
+        assert!(client.class_screen_view().open.is_none(), "no screen, no entrance");
+        // The command bar's force opens it over the RTS view.
+        inp.class_pick_force = 1;
+        client.frame(&mut sim, &inp);
+        let open = client.class_screen_view().open.expect("the panel's open starts the fade");
+        assert!((0.0..crate::classui::MENU_OPEN_MS / 1000.0).contains(&open), "just opened: {open}");
+        inp.class_pick_force = 0;
+        for _ in 0..16 {
+            client.frame(&mut sim, &inp);
+        }
+        assert!(client.class_screen_view().open.is_none(), "settled after 250 ms");
+        // Escape closes it; the next forced open is a fresh menu and fades again.
+        inp.keys.set_down(Key::Escape, true);
+        client.frame(&mut sim, &inp);
+        inp.keys.set_down(Key::Escape, false);
+        client.frame(&mut sim, &inp);
+        assert!(!client.class_pick_open, "Escape closed the panel");
+        assert!(client.class_screen_view().open.is_none());
+        inp.class_pick_force = 1;
+        client.frame(&mut sim, &inp);
+        assert!(client.class_pick_open, "the force reopens it");
+        assert!(client.class_screen_view().open.is_some(), "the reopen fades again");
+        crate::profile::reset();
+    }
+
     /// First person: an unclassed take-control offers the pick; Escape leaves the General unarmed
     /// (knife only) and plays on, and the auto-offer stays dismissed until the *next* take-control.
     #[test]

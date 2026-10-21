@@ -1670,6 +1670,53 @@ a one-row grid and a short last row; and the shared input fold walking a perk gr
 arrows, asserting `cac_grid_nav` on the move and that Left/Right wrap the row while Down/Up move a
 row.
 
+## v1.0 Track C leftovers: the menus fade in on the Lua's 250 ms (2026-10-21)
+
+The class screens had the focused row's 650 ms pulse and the class-set switch's 250 ms
+slide/fade, but a menu that opened simply appeared. BO2's menu-open animation is
+`CoD.Menu.animateIn` (`patch_mp/ui/t6/codmenu.lua:2300-2326`): `setAlpha(0)`, `setZoom(600)`,
+`beginAnimation("animate_popup_in", 250, false, true)`, then `setAlpha(1)`, `setZoom(0)` — 250 ms,
+no ease-in, an ease-out, from alpha 0 to 1. `openPopup` runs it for every popup it creates
+(`codmenu.lua:1985-1990`), `openPopupOnDrc` at `:2040-2042`, and the lobby opens
+`CACChooseClass` through `openPopup` (`partylobby.lua:429`), so that is the choose-class screen's
+entrance. G8 (`ghidra/answers/G8.md`) gives the curve — the engine's cosine ease on the flagged
+half — and the existing `lui::anim::ease` is that curve; `bo2::fade` is the `alphaMultiplier` over
+one prim group.
+
+Read exactly, **`openMenu` does not call `animateIn`**: BO2's `CoD.Menu.openMenu`
+(`codmenu.lua:1937-1963`) creates the menu and adds it with `addElementAfter`, a cut; the CAC
+editors and pickers are opened that way (`caceditclass.lua:276`, `:309`, `:342`, `:370`), so their
+entrance is a cut in the Lua. The port collapses BO2's menu stack into one screen, so it runs the
+same menu-open animation on its in-place screen swaps (the editor and its picker) as well; that is
+the port's choice, not an invented duration. The **close** direction is the Lua's
+`animateOutAndGoBack` (`codmenu.lua:2254-2295`, 150 ms, out only, reached through `goBack` at
+`:279-299` when the menu occludes another) and is **not** ported, so backing out of a picker is
+still a cut. The menu-level zoom 600 → 0 that travels with the fade is not drawn either (the prim
+path has no element zoom); the alpha is the motion the captures show.
+
+Implementation: `ScreenView` carries `open: Option<f32>` (seconds since the shown menu opened).
+`classui::draw_screen` draws the static body into one group and fades it with `animateIn`'s
+ease-out alpha; with `open` `None` (or once the duration has run) it draws the body directly, so a
+settled screen is byte-identical to the old static draw. The hosts own the clock: `MenuState`
+starts `menu_open` at `new()` (the screen's entrance), on `open_editor`, on a picker opening, and
+when the editor closes back to the list, and clears it after 250 ms of its 60 Hz steps. The
+in-match `Client` starts `class_pick_since` on a false → true `class_pick_open` edge (the spawn
+offer or the command bar's force) and drops it from the view after 250 ms. The `S`/`O` dialogs are
+popups too: `MenuState::open_dialog` starts `dialog_open`, and `draw_dialog` takes the same age
+(`None` from the screenshot harness, so the captures stay settled).
+
+Tests: `cargo test -p zhbo-core -p zhbo-assets` green (322 + 40), clippy clean in every touched
+file. New: the draw starts at alpha 0, is 127 at the ease-out midpoint, lands at the static screen
+(and a full duration draws exactly that static list), for the pick list, the editor and a picker;
+`MenuState` starts the fade on open, the editor, the picker and the editor's close, but not on a
+picker close; the `S` dialog starts and lands its own fade; and the in-match panel starts one per
+open and starts over after Escape closes it.
+
+Remaining Track C motion: the menu's 150 ms close fade and the eased highlight moves between rows
+(only the focused row's pulse is in). Remaining Track C scope otherwise: the pixel pass against
+`cac/sweep/` and the in-match class panel per `hud/class.lua` (the panel's entrance is now in; the
+class change applying on the next spawn is still the integrator's design call).
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

@@ -127,7 +127,7 @@ fn browse_prims() -> Vec<Prim> {
     // Highlight the first custom row: the shot then shows the player's own classes and their kit,
     // not just the shipped presets.
     let highlight = rows.iter().position(|r| matches!(r, PickRow::Custom(0))).unwrap_or(0);
-    draw(&ScreenView { highlight, editor: None, deny: 0.0, manage: true, now: 0.0, set_change: None })
+    draw(&ScreenView { highlight, editor: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
 /// The shell screen on an untouched class set: the pager's marker sits mid-row, as BO2's does on
@@ -135,7 +135,7 @@ fn browse_prims() -> Vec<Prim> {
 fn pager_prims() -> Vec<Prim> {
     let set = profile::active_set();
     profile::set_active(3);
-    let prims = draw(&ScreenView { highlight: 0, editor: None, deny: 0.0, manage: true, now: 0.0, set_change: None });
+    let prims = draw(&ScreenView { highlight: 0, editor: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
     profile::set_active(set);
     prims
 }
@@ -145,14 +145,14 @@ fn pager_prims() -> Vec<Prim> {
 fn pick_prims() -> Vec<Prim> {
     let rows = classui::pick_rows(false);
     let highlight = rows.iter().position(|r| matches!(r, PickRow::Custom(1))).unwrap_or(0);
-    draw(&ScreenView { highlight, editor: None, deny: 0.0, manage: false, now: 0.0, set_change: None })
+    draw(&ScreenView { highlight, editor: None, deny: 0.0, manage: false, now: 0.0, set_change: None, open: None })
 }
 
 /// The allocation editor on a populated draft, its boxed grid closed (`b-editor/028`).
 fn editor_prims() -> Vec<Prim> {
     let mut editor = editor_state();
     editor.picking = false;
-    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true, now: 0.0, set_change: None })
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
 /// BO2's pristine empty class (`b-editor/002`): nothing chosen, so the attachment rows read
@@ -172,14 +172,14 @@ fn empty_editor_prims() -> Vec<Prim> {
         reserve: [0, 0],
     };
     let editor = Editor::new(draft);
-    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true, now: 0.0, set_change: None })
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
 /// The primary weapon screen: the category column, the category's tiles and the segmented bars
 /// (`c-primary/001`).
 fn weapon_picker_prims() -> Vec<Prim> {
     let editor = editor_state();
-    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true, now: 0.0, set_change: None })
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
 /// The attachment picker of the primary (`d-attach/001`).
@@ -195,14 +195,14 @@ fn attachment_picker_prims() -> Vec<Prim> {
     prev.update(&pointer);
     pointer.keys.set_down(Key::Enter, false);
     classui::editor_frame(&mut editor, &pointer, &prev);
-    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true, now: 0.0, set_change: None })
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
 /// The shell's `S Class Set Options` dialog over the choose-class screen (`a-chooseclass/021`).
 fn set_dialog_prims() -> Vec<Prim> {
     let mut prims = browse_prims();
     let dialog = Dialog::set_options(&profile::get().set_name(profile::active_set()));
-    classui::draw_dialog(&mut prims, size().0, size().1, &dialog);
+    classui::draw_dialog(&mut prims, size().0, size().1, &dialog, None);
     prims
 }
 
@@ -211,7 +211,7 @@ fn class_dialog_prims() -> Vec<Prim> {
     let mut prims = browse_prims();
     let name = first_custom_name();
     let dialog = Dialog::class_options(&name);
-    classui::draw_dialog(&mut prims, size().0, size().1, &dialog);
+    classui::draw_dialog(&mut prims, size().0, size().1, &dialog, None);
     prims
 }
 

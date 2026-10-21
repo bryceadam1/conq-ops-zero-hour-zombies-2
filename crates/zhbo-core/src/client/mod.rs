@@ -412,6 +412,10 @@ pub struct Client {
     pub class_pick_open: bool,
     /// The pick screen's highlighted row (client-local; the mouse and 1-9,0 move it).
     pub class_pick_highlight: usize,
+    /// The `ui_clock` reading of the last time the screen opened, while `CoD.Menu.animateIn`'s
+    /// 250 ms entrance fade runs (`codmenu.lua:2300-2326`); `None` until it first opens and ignored
+    /// once the fade is over.
+    class_pick_since: Option<f32>,
     /// The previous frame's keys/pointer: hover and click edges for the class screens (the shared
     /// fold's prev state; the shell menu keeps its own).
     menu_prev: crate::classui::MenuPrev,
@@ -455,6 +459,7 @@ impl Client {
             class_pick_dismissed: false,
             class_pick_open: false,
             class_pick_highlight: 0,
+            class_pick_since: None,
             ui_clock: 0.0,
             menu_prev: crate::classui::MenuPrev::default(),
         }
@@ -527,6 +532,13 @@ impl Client {
             now: self.ui_clock,
             // A match is pick-only: the set is chosen in the lobby, so it never switches here.
             set_change: None,
+            // BO2's class screen opens as a popup and `animateIn` fades it in over 250 ms; the
+            // view only carries the age while that fade is running, so a settled screen draws the
+            // static prims exactly.
+            open: self
+                .class_pick_since
+                .filter(|since| self.ui_clock - since < crate::classui::MENU_OPEN_MS / 1000.0)
+                .map(|since| (self.ui_clock - since).max(0.0)),
         }
     }
 
@@ -904,8 +916,14 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         // The class pick's state after this frame's input: it draws over the view, `menu_open`
         // makes the bridge leave the cursor free and eat the game-bound mouse/key messages behind
         // it. Both follow the same latch so the HUD and the bridge can never disagree.
+        let was_open = self.class_pick_open;
         self.class_pick_open = self.class_pick_wanted(unclassed);
         out.menu_open = self.class_pick_open as i32;
+        // A fresh open starts `animateIn`'s entrance fade (`codmenu.lua:2300-2326`); a screen that
+        // stays up keeps its clock, and a closed one starts over on the next open.
+        if self.class_pick_open && !was_open {
+            self.class_pick_since = Some(self.ui_clock);
+        }
         // The fresh-press/hover detectors compare against this frame's keys and cursor.
         self.menu_prev.update(&menu_pointer(inp));
         out
