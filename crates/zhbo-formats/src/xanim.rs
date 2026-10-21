@@ -55,6 +55,10 @@ pub struct Anim {
     pub num_frames: u16,
     pub frame_rate: f32,
     pub looping: bool,
+    /// `bDelta`: the clip carries root motion (its delta part, not decoded here).
+    pub delta: bool,
+    /// `assetType`, as BO2 stores it.
+    pub asset_type: u8,
     pub bones: Vec<BoneTrack>,
     pub notifies: Vec<Notify>,
 }
@@ -166,6 +170,8 @@ pub fn read(z: &Zone, h: u32) -> Result<Anim, FormatError> {
     let random_byte_count = z.try_u16(h + XAnimParts::randomDataByteCount)? as usize;
     let num_frames = z.try_u16(h + XAnimParts::numframes)?;
     let looping = z.try_u8(h + XAnimParts::bLoop)? != 0;
+    let delta = z.try_u8(h + XAnimParts::bDelta)? != 0;
+    let asset_type = z.try_u8(h + XAnimParts::assetType)?;
     let notify_count = z.try_u8(h + XAnimParts::notifyCount)? as u32;
     let random_short_count = z.try_u32(h + XAnimParts::randomDataShortCount)? as usize;
     let index_count = z.try_u32(h + XAnimParts::indexCount)? as usize;
@@ -269,7 +275,7 @@ pub fn read(z: &Zone, h: u32) -> Result<Anim, FormatError> {
             return Err(FormatError::Corrupt(format!("animation {name}: {} bytes left in {}", pool.d.len(), pool.name)));
         }
     }
-    Ok(Anim { name, num_frames, frame_rate, looping, bones, notifies })
+    Ok(Anim { name, num_frames, frame_rate, looping, delta, asset_type, bones, notifies })
 }
 
 fn sample<T: Copy>(track: &Track<T>, frame: f32, lerp: impl Fn(T, T, f32) -> T) -> T {
@@ -442,7 +448,7 @@ mod tests {
     #[test]
     fn torso_layer_keeps_its_bones_and_takes_the_rest_from_the_stance() {
         let track = |name: &str, x: f32| BoneTrack { name: name.into(), rotation: None, translation: Some(vec![(0, [x, 0.0, 0.0]), (10, [x + 1.0, 0.0, 0.0])]) };
-        let anim = |bones| Anim { name: String::new(), num_frames: 10, frame_rate: 30.0, looping: false, bones, notifies: Vec::new() };
+        let anim = |bones| Anim { name: String::new(), num_frames: 10, frame_rate: 30.0, looping: false, delta: false, asset_type: 0, bones, notifies: Vec::new() };
         let torso = anim(vec![track("j_spine4", 5.0)]);
         let stance = anim(vec![track("j_spine4", 1.0), track("j_knee_le", 2.0)]);
         let both = torso.layered_over(&stance);

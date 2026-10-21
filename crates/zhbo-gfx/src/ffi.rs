@@ -54,6 +54,12 @@ fn with<R>(default: R, f: impl FnOnce(&mut Renderer) -> R) -> R {
     }
 }
 
+/// Run `f` on the live renderer (the core's native viewmodel pass draws through it in-process);
+/// `default` when the renderer is not initialised.
+pub fn with_renderer<R>(default: R, f: impl FnOnce(&mut Renderer) -> R) -> R {
+    with(default, f)
+}
+
 unsafe fn bytes<'a>(data: *const u8, size: u32) -> Option<&'a [u8]> {
     (!data.is_null() && size > 0).then(|| unsafe { std::slice::from_raw_parts(data, size as usize) })
 }

@@ -11,6 +11,9 @@
 
 mod frame;
 pub mod math;
+mod native;
+
+pub use native::{NativeBlend, NativeDraw, NativeFrame, NativeLight, NativeSurface, NativeVertex, NATIVE_MAX_BONES, NATIVE_MAX_LIGHTS};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -447,6 +450,9 @@ impl Default for DrawState {
     }
 }
 
+/// A frame buffer's colour textures, depth texture, width and height.
+pub(crate) type FrameBufferTargets = (Vec<Arc<Texture>>, Option<Arc<Texture>>, u32, u32);
+
 pub(crate) struct Draw {
     seq: u32,
     view: u16,
@@ -511,6 +517,8 @@ pub struct Stats {
     pub transient_ib_used: u32,
     pub cpu_frame_ns: u64,
     pub errors: u32,
+    /// Native BO2 draws refused last frame (`native_submit`'s validation).
+    pub native_skipped: u32,
 }
 
 /// Bits for `Caps::formats`, as bgfx reports them.
@@ -601,6 +609,8 @@ pub struct Renderer {
     /// Whether textures can be viewed in another format (sRGB views); not on GL.
     pub(crate) view_formats_supported: bool,
     pub(crate) cache: frame::Caches,
+    /// The native BO2 model pass (`native.rs`).
+    pub(crate) native: native::NativeState,
 }
 
 /// Run a wgpu future to completion. wgpu's native futures are ready immediately or after a
@@ -713,6 +723,7 @@ impl Renderer {
             "transient ib",
         );
         let cache = frame::Caches::new(&device);
+        let native = native::NativeState::new(&device, &queue, uniform_align);
         let view_formats_supported = adapter.get_downlevel_capabilities().flags.contains(wgpu::DownlevelFlags::VIEW_FORMATS);
         let backbuffer = frame::build_backbuffer(&device, &adapter, view_formats_supported, desc.width.max(1), desc.height.max(1), desc.reset);
         let mut r = Renderer {
@@ -746,6 +757,7 @@ impl Renderer {
             frame_number: 0,
             stats: Stats::default(),
             cache,
+            native,
         };
         r.reset(desc.width, desc.height, desc.reset);
         Ok(r)
@@ -852,7 +864,7 @@ impl Renderer {
         }
         let h = self.res.shaders.insert(Arc::new(Shader { blob, module }));
         if h == INVALID {
-            self.report(format!("zhbo-gfx: createShader: resource pool exhausted"));
+            self.report("zhbo-gfx: createShader: resource pool exhausted".to_string());
         }
         h
     }
@@ -906,7 +918,7 @@ impl Renderer {
         }
         let h = self.res.programs.insert(Arc::new(program));
         if h == INVALID {
-            self.report(format!("zhbo-gfx: createProgram: resource pool exhausted"));
+            self.report("zhbo-gfx: createProgram: resource pool exhausted".to_string());
         }
         h
     }
@@ -1011,7 +1023,7 @@ impl Renderer {
             shadow: Vec::new(),
         });
         if h == INVALID {
-            self.report(format!("zhbo-gfx: createVertexBuffer: resource pool exhausted"));
+            self.report("zhbo-gfx: createVertexBuffer: resource pool exhausted".to_string());
         }
         h
     }
@@ -1026,7 +1038,7 @@ impl Renderer {
             shadow: Vec::new(),
         });
         if h == INVALID {
-            self.report(format!("zhbo-gfx: createIndexBuffer: resource pool exhausted"));
+            self.report("zhbo-gfx: createIndexBuffer: resource pool exhausted".to_string());
         }
         h
     }
@@ -1038,7 +1050,7 @@ impl Renderer {
         let shadow = shadow_copy(size, data);
         let h = self.res.dynamic_vertex_buffers.insert(Buffer { buffer, size, layout, index32: false, shadow });
         if h == INVALID {
-            self.report(format!("zhbo-gfx: createDynamicVertexBuffer: resource pool exhausted"));
+            self.report("zhbo-gfx: createDynamicVertexBuffer: resource pool exhausted".to_string());
         }
         h
     }
@@ -1050,7 +1062,7 @@ impl Renderer {
         let shadow = shadow_copy(size, data);
         let h = self.res.dynamic_index_buffers.insert(Buffer { buffer, size, layout: INVALID, index32, shadow });
         if h == INVALID {
-            self.report(format!("zhbo-gfx: createDynamicIndexBuffer: resource pool exhausted"));
+            self.report("zhbo-gfx: createDynamicIndexBuffer: resource pool exhausted".to_string());
         }
         h
     }
@@ -1239,7 +1251,7 @@ impl Renderer {
         }
         let h = self.res.textures.insert(Arc::new(tex));
         if h == INVALID {
-            self.report(format!("zhbo-gfx: createTexture2D: resource pool exhausted"));
+            self.report("zhbo-gfx: createTexture2D: resource pool exhausted".to_string());
         }
         h
     }
@@ -1394,7 +1406,7 @@ impl Renderer {
         let owned = if destroy_textures { textures.to_vec() } else { Vec::new() };
         let h = self.res.frame_buffers.insert(FrameBuffer { colors, depth, width, height, owned });
         if h == INVALID {
-            self.report(format!("zhbo-gfx: createFrameBuffer: resource pool exhausted"));
+            self.report("zhbo-gfx: createFrameBuffer: resource pool exhausted".to_string());
         }
         h
     }
@@ -1612,7 +1624,7 @@ impl Renderer {
             let Some(uni) = self.res.uniform_names.get(name).and_then(|&h| self.res.uniforms.get(h)) else { continue };
             let n = (*floats as usize).min(uni.value.len());
             let dst = &mut self.uniform_ring[offset + *at as usize..offset + *at as usize + n * 4];
-            for (chunk, v) in dst.chunks_exact_mut(4).zip(&uni.value[..n]) {
+            for (chunk, v) in dst.as_chunks_mut::<4>().0.iter_mut().zip(&uni.value[..n]) {
                 chunk.copy_from_slice(&v.to_le_bytes());
             }
         }
@@ -1649,7 +1661,7 @@ impl Renderer {
         });
     }
 
-    pub(crate) fn frame_buffer_targets(&self, fb: u16) -> Option<(Vec<Arc<Texture>>, Option<Arc<Texture>>, u32, u32)> {
+    pub(crate) fn frame_buffer_targets(&self, fb: u16) -> Option<FrameBufferTargets> {
         let f = self.res.frame_buffers.get(fb)?;
         Some((f.colors.clone(), f.depth.clone(), f.width, f.height))
     }

@@ -16,6 +16,7 @@ pub mod paks;
 pub mod textures;
 pub mod viewmodels;
 pub mod fonts;
+pub mod native;
 pub mod fx;
 pub mod sfx;
 pub mod manifest;

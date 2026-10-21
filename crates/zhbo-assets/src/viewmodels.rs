@@ -8,6 +8,7 @@
 use crate::character::{self, Rig};
 use crate::generals::*;
 use crate::images;
+use crate::native;
 use std::path::Path;
 use crate::paks::{load_zone, Paks};
 use crate::textures::{finish, textures, Looks};
@@ -18,7 +19,6 @@ use std::collections::BTreeMap;
 
 /// The magazine model of a gun's viewmodel: BO2 names them `t6_attach_mag_<weapon>_view` after a
 /// part of the gun's own view model name (the zones don't link them for base weapons).
-
 pub(crate) fn magazine(common: &Zone, view_model: &str) -> Option<xmodel::Model> {
     const SKIP: &[&str] = &["t6", "wpn", "ar", "smg", "lmg", "mg", "pistol", "sniper", "shotty", "launch", "view", "base"];
     view_model
@@ -149,6 +149,11 @@ pub(crate) fn weapon_viewmodels(
         let gun_tex = textures(&gun, paks, out, &mut looks);
         let mag_tex = mag.as_ref().map(|m| textures(m, paks, out, &mut looks));
         let extra_tex: Vec<Vec<Option<String>>> = extra.iter().map(|(m, ..)| textures(m, paks, out, &mut looks)).collect();
+        // The native blobs (Track R): the same parts, unconverted, for the renderer's own BO2 pass.
+        let native_gun = native::model(&gun, &gun_tex, &looks);
+        let native_mag = mag.as_ref().zip(mag_tex.as_ref()).map(|(m, t)| native::model(m, t, &looks));
+        let native_extra: Vec<zhbo_native::model::Model> = extra.iter().zip(&extra_tex).map(|((m, ..), t)| native::model(m, t, &looks)).collect();
+        let mut native_factions: Vec<(char, zhbo_native::model::Model)> = Vec::new();
         let mut rig: Option<Rig> = None;
         for (f, zone) in FACTIONS.iter().zip(zones) {
             let hands = xmodel::find(zone, f.hands).map_err(|e| e.to_string())?;
@@ -183,6 +188,7 @@ pub(crate) fn weapon_viewmodels(
                 rig
             });
             let hands_tex = textures(&hands, paks, out, &mut looks);
+            native_factions.push((f.letter, native::model(&hands, &hands_tex, &looks)));
             let mut meshes = character::skin(rig, &hands, "H", &hands_tex);
             meshes.extend(character::skin_hiding(rig, &gun, "G", &gun_tex, &c.hide));
             if let (Some(m), Some(t)) = (&mag, &mag_tex) {
@@ -211,6 +217,7 @@ pub(crate) fn weapon_viewmodels(
             sets.push((zhbo_core::weapons::ALT_CLIPS as usize, a));
         }
         let mut n = 0;
+        let mut native_clips = Vec::new();
         for (base_slot, anims) in &sets {
             for (slot, anim_name) in anims.iter().enumerate() {
                 let Some(anim_name) = anim_name else { continue };
@@ -220,10 +227,15 @@ pub(crate) fn weapon_viewmodels(
                 let fps = anim.frame_rate.round().max(1.0) as u32;
                 let clip = vm_anim(vm, base_slot + slot);
                 out.insert(format!("Art\\W3D\\{clip}.w3d"), w3d::animation(&clip, &hierarchy, frames, fps, &channels));
+                native_clips.push(((base_slot + slot) as u16, native::put_anim(out, anim)));
                 clips.push((vm, (base_slot + slot) as i32, anim.clone()));
                 n += 1;
             }
         }
+        let attachments: Vec<(Option<String>, crate::xf::Xf, bool)> =
+            extra.iter().map(|(_, tag, offset, pt)| (tag.clone(), (offset.0, offset.1.map(|c| c / character::SCALE)), *pt == point::OPTIC as u32)).collect();
+        let vm_native = native::Viewmodel { vm, id, gun: &gun, extra_models: extra.iter().map(|e| &e.0).collect(), attachments, hide: &c.hide, clips: &native_clips };
+        native::viewmodels(out, &vm_native, &native_gun, native_mag.as_ref(), &native_extra, &native_factions);
         let mask = |a: &[Option<String>]| a.iter().enumerate().take(128).filter(|(_, x)| x.is_some()).fold(0u128, |m, (i, _)| m | (1u128 << i));
         if let Some(d) = defs.iter_mut().find(|d| &d.id == id) {
             d.viewmodel = vm;
@@ -476,8 +488,8 @@ pub(crate) fn over(dst: &mut Rgba, src: &Rgba, at: (u32, u32), size: (u32, u32))
             let s = &src.pixels[((sy * src.width + sx) * 4) as usize..][..4];
             let a = s[3] as u32;
             let d = ((at.1 + y) * dst.width + at.0 + x) as usize * 4;
-            for c in 0..3 {
-                let v = (s[c] as u32 * a + dst.pixels[d + c] as u32 * (255 - a)) / 255;
+            for (c, &sc) in s.iter().take(3).enumerate() {
+                let v = (sc as u32 * a + dst.pixels[d + c] as u32 * (255 - a)) / 255;
                 dst.pixels[d + c] = v as u8;
             }
         }

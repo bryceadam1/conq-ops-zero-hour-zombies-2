@@ -27,18 +27,26 @@ pub struct Config {
     /// deterministic sim inputs).
     pub loadout: Option<String>,
     pub autopilot: Autopilot,
+    /// `ZHBO_NATIVE_VIEWMODEL=1`: draw the first-person weapon through the renderer's native BO2
+    /// pass (`nativevm`) instead of the W3D conversion. Presentation only, never a sim input.
+    pub native_viewmodel: bool,
 }
 
 impl Config {
     /// Parse the two variables (the C++ side parses them once into `ZhboConfig` the same way).
     pub fn parse(loadout: Option<&str>, autopilot: Option<&str>) -> Config {
-        Config { loadout: loadout.filter(|s| !s.is_empty()).map(str::to_string), autopilot: autopilot_mode(autopilot) }
+        Config { loadout: loadout.filter(|s| !s.is_empty()).map(str::to_string), autopilot: autopilot_mode(autopilot), native_viewmodel: false }
     }
 
     /// Read the environment once at init.
     pub fn from_env() -> Config {
-        Config::parse(env("ZHBO_LOADOUT"), env("ZHBO_AUTOPILOT"))
+        Config { native_viewmodel: flag(env("ZHBO_NATIVE_VIEWMODEL")), ..Config::parse(env("ZHBO_LOADOUT"), env("ZHBO_AUTOPILOT")) }
     }
+}
+
+/// An on/off variable: on for `1`, `true`, `yes` or `on` (any case), off otherwise or unset.
+pub fn flag(value: Option<&str>) -> bool {
+    value.is_some_and(|v| matches!(v.to_ascii_lowercase().as_str(), "1" | "true" | "yes" | "on"))
 }
 
 /// ZHBO_AUTOPILOT's mode: `manual` for the scene-only setup, off/unset (or empty), or a scripted
@@ -68,14 +76,26 @@ pub fn init(config: Config) {
     let _ = CONFIG.set(config);
 }
 
-/// The configuration, falling back to the defaults before init (tests, converters).
+/// The configuration, falling back to the defaults before init (tests, converters). The fallback
+/// must not fill the cell: the bridge's loaders run before `zhbo_init`, and a `get_or_init` here
+/// once locked the defaults in, so `init` silently dropped every variable it parsed.
 pub fn get() -> &'static Config {
-    CONFIG.get_or_init(Config::default)
+    static DEFAULT: Config = Config { loadout: None, autopilot: Autopilot::Off, native_viewmodel: false };
+    CONFIG.get().unwrap_or(&DEFAULT)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_read_before_init_does_not_lock_in_the_defaults() {
+        // The cell is process-wide; this test is its only writer.
+        assert!(!get().native_viewmodel || CONFIG.get().is_some());
+        let _ = get();
+        init(Config { native_viewmodel: true, ..Config::default() });
+        assert!(get().native_viewmodel, "init after an early read still takes effect");
+    }
 
     #[test]
     fn parses_the_autopilot_modes() {
@@ -104,6 +124,13 @@ mod tests {
             autopilot_mode(Some("showcase")),
             Autopilot::Scripted { equipment: false, build: false, classpick: false }
         );
+    }
+
+    #[test]
+    fn flags_read_the_usual_spellings() {
+        assert!(flag(Some("1")) && flag(Some("TRUE")) && flag(Some("on")));
+        assert!(!flag(None) && !flag(Some("0")) && !flag(Some("no")) && !flag(Some("")));
+        assert!(!Config::parse(None, None).native_viewmodel, "off unless asked for");
     }
 
     #[test]

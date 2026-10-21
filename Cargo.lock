@@ -1429,6 +1429,7 @@ dependencies = [
  "png",
  "zhbo-core",
  "zhbo-formats",
+ "zhbo-native",
  "zhbo-requirements",
 ]
 
@@ -1437,6 +1438,7 @@ name = "zhbo-core"
 version = "0.1.0"
 dependencies = [
  "zhbo-gfx",
+ "zhbo-native",
  "zhbo-requirements",
 ]
 
@@ -1465,6 +1467,10 @@ dependencies = [
  "zhbo-assets",
  "zhbo-requirements",
 ]
+
+[[package]]
+name = "zhbo-native"
+version = "0.1.0"
 
 [[package]]
 name = "zhbo-requirements"
