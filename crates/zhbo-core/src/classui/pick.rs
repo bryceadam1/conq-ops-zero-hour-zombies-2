@@ -207,7 +207,7 @@ pub fn draw_pick(prims: &mut Vec<Prim>, w: f32, h: f32, view: &ScreenView<'_>) {
             ListItem::Row(i) => {
                 let (name, _) = row_class(&rows[i], &presets, customs);
                 let cell = rects[i];
-                class_button(prims, f, Rect { x: cell.x - slide, ..cell }, &name, i == active, now);
+                class_button(prims, f, Rect { x: cell.x - slide, ..cell }, &name, i == active, rows[i], now);
             }
         }
         y += item_h(item) + ROW_SPACING;
@@ -240,11 +240,37 @@ pub fn draw_pick(prims: &mut Vec<Prim>, w: f32, h: f32, view: &ScreenView<'_>) {
     deny_flash(prims, w, h, f.s(), deny);
 }
 
-/// A `CoD9Button` label: Condensed, left-aligned; off-white, or `BOIIOrange` pulsing between alpha
-/// 1 and 0.5 every `PulseDuration` (650 ms, eased out going up and in going down) while focused
-/// (`cod9button.lua`'s `button_over`, `pulse_high`/`pulse_low`).
-pub(super) fn class_button(prims: &mut Vec<Prim>, f: &Frame, r: Rect, label: &str, focused: bool, now: f32) {
-    let colour = if focused { argb(BOII_ORANGE, pulse_alpha(now)) } else { argb(OFF_WHITE, 1.0) };
+/// A `CoD9Button` row: Condensed, left-aligned. The list colours by kind (`cacchooseclass.lua`'s
+/// `UpdateButtonList`): a preset/default class is `BOIIOrange`; a filled custom class is off-white
+/// (`a-chooseclass/001`'s `Custom 1`-`Custom 3`, `b-editor/002`'s `Custom 1`); an empty/locked
+/// custom slot is grey (`Custom 4`/`Custom 5`; `a-chooseclass/002`'s `Custom 2`-`Custom 5`). The
+/// focused row is white with the `button_over` border, pulsing between alpha 1 and 0.5 every
+/// `PulseDuration` (650 ms, eased; `cod9button.lua`'s `pulse_high`/`pulse_low`); `a-chooseclass/001`
+/// shows the focused `Custom 1` white with the white row rule.
+pub(super) fn class_button(
+    prims: &mut Vec<Prim>,
+    f: &Frame,
+    r: Rect,
+    label: &str,
+    focused: bool,
+    row: PickRow,
+    now: f32,
+) {
+    let preset = matches!(row, PickRow::Preset(_));
+    let empty = matches!(row, PickRow::Empty(_));
+    let colour = if focused || (!preset && !empty) {
+        argb(OFF_WHITE, 1.0)
+    } else if preset {
+        argb(BOII_ORANGE, 1.0)
+    } else {
+        argb(OFF_WHITE, 0.5)
+    };
+    if focused {
+        bo2::border(prims, f, r, 1.0, argb(OFF_WHITE, pulse_alpha(now)));
+    }
+    // The row's own rule, in the same colour (`a-chooseclass/001`: the filled custom rows' white
+    // lines, the empty rows' grey ones, the focused row's white one).
+    bo2::fill(prims, f, Rect { x: r.x, y: r.bottom() - 1.0, w: r.w, h: 1.0 }, colour);
     bo2::text(prims, f, Family::Condensed, label, r, Align::Left, colour);
 }
 
