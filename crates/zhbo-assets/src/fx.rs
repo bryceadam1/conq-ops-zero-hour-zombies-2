@@ -91,8 +91,8 @@ use zhbo_formats::w3d::Blend;
 
 /// Milliseconds per Zero Hour logic frame.
 const MS_PER_FRAME: f32 = 1000.0 / 30.0;
-/// BO2's gravity (800 in/s^2) in Zero Hour units per frame^2.
-const G_PER_FRAME2: f32 = 800.0 / 900.0 / 6.0;
+/// BO2's gravity (800 in/s^2) in Zero Hour units per frame^2 (the one BO2-inches factor).
+const G_PER_FRAME2: f32 = 800.0 / 900.0 * zhbo_core::units::ZH_PER_INCH;
 /// Largest side of an effect texture.
 const FX_TEXTURE_MAX: u32 = 256;
 

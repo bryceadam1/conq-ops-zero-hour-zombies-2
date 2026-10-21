@@ -8,6 +8,16 @@ use zhbo_native::math::{QUAT_IDENTITY, IDENTITY};
 use zhbo_native::model::{Bone, Lod, Material, Surface};
 use zhbo_native::viewmodel::{Marker, Part};
 
+#[test]
+fn viewmodel_geometry_uses_the_sims_inch() {
+    // The viewmodel-space boundary: BO2 geometry is scaled by the same factor the sim uses, so a
+    // gun's 20" offset and a 72" body are 20/6 and 12 Zero Hour units — first person and third
+    // person agree (Track R7).
+    assert_eq!(ART_SCALE, crate::units::ZH_PER_INCH);
+    assert!((72.0 * ART_SCALE - crate::units::inches(72.0)).abs() < 1e-6);
+    assert!((20.0 * ART_SCALE - crate::units::inches(20.0)).abs() < 1e-6);
+}
+
 fn bone(name: &str, parent: Option<u32>, pos: [f32; 3]) -> Bone {
     Bone { name: name.into(), parent, local_rotation: QUAT_IDENTITY, local_position: pos, rotation: QUAT_IDENTITY, position: pos }
 }

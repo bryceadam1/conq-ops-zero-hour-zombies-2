@@ -252,8 +252,9 @@ impl Viewmodel {
     }
 }
 
-/// BO2 inches to Zero Hour units (the converter's scale).
-const INCH: f32 = 11.0 / 72.0;
+/// BO2 inches to Zero Hour units: the sim's factor, which is also the converter's art scale
+/// (`units::ZH_PER_INCH`; one source with `zhbo_native`).
+const INCH: f32 = crate::units::ZH_PER_INCH;
 /// Sway: degrees of lag per degree/second of turning, its limit, and how fast it settles.
 const SWAY_PER_RATE: f32 = 0.012;
 const SWAY_MAX: f32 = 4.0;
@@ -428,7 +429,7 @@ mod tests {
         let (clip, t) = tablet_up(TABLET_PULLOUT_TIME + 0.2);
         assert_eq!(clip, TABLET_IDLE);
         assert!((t - 0.2).abs() < 1e-5);
-        assert!(crate::sim::FIELD_COMPUTER_RAISE > TABLET_PULLOUT_TIME, "the tablet is fully up before the view leaves");
+        const { assert!(crate::sim::FIELD_COMPUTER_RAISE > TABLET_PULLOUT_TIME, "the tablet is fully up before the view leaves") };
     }
 
     #[test]

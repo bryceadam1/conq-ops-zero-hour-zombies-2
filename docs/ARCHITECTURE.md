@@ -46,7 +46,9 @@ The mod's own blobs for BO2 art drawn natively (Track R), and the pose math that
 texture paths), `anim` (`.zba`: keyframe tracks and notetracks), `viewmodel` (`.zbv`: the DObj
 recipe — parts on tags, hidden tags, marker tags, slot → clip), `pose` (composition, sampling,
 crossfade, additive layers, notetracks, the skinning palette), `tga` (reading the converter's
-textures back) and `math`. Depends on nothing; the converter writes it, the core reads it.
+textures back) and `math`. It also holds `ZH_PER_INCH`, the one BO2-inches → Zero Hour-units
+factor the converter's art (`ART_SCALE`) and the sim's `units` both read. Depends on nothing; the
+converter writes it, the core reads it.
 
 ### `crates/zhbo-core`
 The Rust gameplay core: BO2-style movement, weapons, hitscan, field computer, camera, HUD,

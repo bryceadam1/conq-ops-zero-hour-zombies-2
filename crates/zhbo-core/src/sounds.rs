@@ -134,9 +134,10 @@ ui_cues! {
     UinToggleDrc = "uin_toggle_drc",
 }
 
-/// Distance between footsteps (Zero Hour units; a 60" stride at the converter's 11/72 scale).
-const STRIDE: f32 = 9.0;
-const SPRINT_STRIDE: f32 = 11.5;
+/// Distance between footsteps (Zero Hour units): a 54" step, 69" sprinting, at the one BO2-inches
+/// factor (`units::inches`). Kept at the values the footstep cadence was tuned to.
+const STRIDE: f32 = crate::units::inches(54.0);
+const SPRINT_STRIDE: f32 = crate::units::inches(69.0);
 /// Below this share of health the heartbeat plays, once per beat.
 const HEARTBEAT_HEALTH: f32 = 0.35;
 const HEARTBEAT_PERIOD: f32 = 0.9;
