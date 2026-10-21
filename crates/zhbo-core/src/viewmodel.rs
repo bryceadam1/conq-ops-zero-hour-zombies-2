@@ -433,7 +433,7 @@ mod tests {
         let (clip, t) = tablet_up(TABLET_PULLOUT_TIME + 0.2);
         assert_eq!(clip, TABLET_IDLE);
         assert!((t - 0.2).abs() < 1e-5);
-        assert!(crate::sim::FIELD_COMPUTER_RAISE > TABLET_PULLOUT_TIME, "the tablet is fully up before the view leaves");
+        const { assert!(crate::sim::FIELD_COMPUTER_RAISE > TABLET_PULLOUT_TIME, "the tablet is fully up before the view leaves") };
     }
 
     /// A def whose G4 numbers a test can assert on (the catalogs' defs are real BO2 data).

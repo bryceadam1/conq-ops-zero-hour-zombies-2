@@ -25,9 +25,18 @@ pub mod viewmodel;
 
 pub use io::FormatError;
 
-/// BO2 inches to the art's world units: the scale the converter builds BO2 models at (the
-/// W3D conversion's `zhbo_assets::character::SCALE`) and the native viewmodel draws them at.
-pub const ART_SCALE: f32 = 11.0 / 72.0;
+/// Zero Hour world units per Black Ops II inch: **1/6**, six inches to a unit, so BO2's 72" player
+/// is 12 units tall (Zero Hour's infantry `GeometryHeight = 12`; CONTRACT.md, "Units"). This is the
+/// one definition of the two games' scale: the art paths draw with [`ART_SCALE`] and the sim moves
+/// and aims with `zhbo_core::units::ZH_PER_INCH`, both reading this number. It lives here because
+/// this crate is the leaf the converter and the core both depend on (docs/ARCHITECTURE.md).
+pub const ZH_PER_INCH: f32 = 1.0 / 6.0;
+
+/// BO2 inches to the art's world units: [`ZH_PER_INCH`] itself. Art and sim must agree — a BO2
+/// body's eye at its inch height and the sim's first-person eye are the same world point, which is
+/// what puts a native model on the General in third person (Track R7). An alias, not a second
+/// scale.
+pub const ART_SCALE: f32 = ZH_PER_INCH;
 
 /// The marker the converter places on every native viewmodel for aiming down the sights: BO2's
 /// `tag_sights`, an optic's window, or the gun's front sight (`zhbo_assets::native::aim_marker`).
@@ -60,6 +69,18 @@ fn file_stem(name: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn one_factor_for_bo2_inches_and_zh_units() {
+        // The sim's contract: six inches to a Zero Hour unit, a 72" player at ZH infantry height.
+        assert_eq!(ZH_PER_INCH, 1.0 / 6.0);
+        assert_eq!(ART_SCALE, ZH_PER_INCH, "the art scale is the sim's scale, not a second one");
+        assert!((72.0 * ART_SCALE - 12.0).abs() < 1e-6, "a 72-inch soldier is 12 units");
+        assert!((60.0 * ART_SCALE - 10.0).abs() < 1e-6, "BO2's 60-inch eye is 10 units");
+        // Measured on the player's install (`zhbo-assets model ... c_usa_mp_seal6_assault_fb`:
+        // bounds z -0.12"..72.15"), the body the converter draws is a 72-inch body.
+        assert!((72.14641 * ART_SCALE - 12.0244).abs() < 1e-3);
+    }
 
     #[test]
     fn archive_paths_are_stable_file_names() {

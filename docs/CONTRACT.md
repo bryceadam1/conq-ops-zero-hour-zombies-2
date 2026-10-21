@@ -24,6 +24,11 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
 
 * World: Zero Hour units. 1 ZH unit = 6 BO2 inches (ZH infantry `GeometryHeight = 12` ≙ a 72-inch BO2 player).
   All BO2 distances/speeds go through `units::inches`.
+* The factor is defined once in `zhbo_native::ZH_PER_INCH`; `units::ZH_PER_INCH` and the art's
+  `ART_SCALE` (`zhbo_assets::character::SCALE`, the native viewmodel) read it. One scale serves both,
+  so a converted body's eye and the sim's first-person eye are the same world point (third person, R7).
+  Stock ZH infantry mesh heads are taller than their collision cylinder (14.3–16 units vs
+  `GeometryHeight` 12–13); the sim's 12-unit, 72-inch body is the reference.
 * Damage: BO2 damage (100 HP scale) × `BO2_TO_ZH_DAMAGE` (1.5; a Ranger has 180 HP).
 * Angles: radians. Yaw 0 = +X, counter-clockwise (same as `Object::getOrientation`). Pitch + is up,
   clamped to ±85°.

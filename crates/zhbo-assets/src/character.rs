@@ -16,8 +16,10 @@ use zhbo_formats::w3d::{self, Channel, Pivot, SkinMesh};
 use zhbo_formats::xanim::Anim;
 use zhbo_formats::xmodel::Model;
 
-/// BO2 inches to Zero Hour world units: a 72" soldier becomes 11 units tall, like stock infantry
-/// (one source with the native viewmodel's scale).
+/// BO2 inches to Zero Hour world units: [`zhbo_native::ZH_PER_INCH`] (a 72" soldier becomes 12
+/// units), the same factor the sim and the native viewmodel use. Stock ZH infantry mesh heads sit
+/// at 14.3–16 units, taller than their 12–13 `GeometryHeight` collision cylinder; the sim's
+/// documented 12-unit body is the reference, not the stylised head height.
 pub const SCALE: f32 = zhbo_native::ART_SCALE;
 pub const HIERARCHY: &str = "ZHBO_PLR_SKL";
 /// The bone a third-person weapon hangs from.
@@ -291,6 +293,17 @@ mod tests {
             maxs: [0.0; 3],
             materials: vec![None],
         }
+    }
+
+    #[test]
+    fn converted_art_stands_at_the_sims_height() {
+        // The world-space boundary: the W3D converter and the native viewmodel must use the sim's
+        // factor, or a body drawn in third person (Track R7) is 9% shorter than its eye height.
+        assert_eq!(SCALE, zhbo_core::units::ZH_PER_INCH);
+        assert_eq!(SCALE, zhbo_native::ART_SCALE);
+        assert!((72.0 * SCALE - 12.0).abs() < 1e-5, "a 72-inch soldier is 12 units");
+        // A measured SEAL 6 body (`zhbo-assets model ... c_usa_mp_seal6_assault_fb`: 72.146").
+        assert!((72.14641 * SCALE - zhbo_core::units::inches(72.14641)).abs() < 1e-5);
     }
 
     #[test]

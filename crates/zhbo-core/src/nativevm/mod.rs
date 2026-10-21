@@ -34,8 +34,8 @@ mod gpu;
 pub mod ffi;
 pub mod place;
 
-/// BO2 inches to the art's world units: the scale the converter draws BO2 models at
-/// (`zhbo_assets::character::SCALE` reads this).
+/// BO2 inches to the art's world units: [`zhbo_native::ART_SCALE`], the same factor as the sim's
+/// [`crate::units::ZH_PER_INCH`] (one source; the converter's `character::SCALE` reads it too).
 pub const ART_SCALE: f32 = zhbo_native::ART_SCALE;
 
 /// The marker the converter places for aiming (`zhbo_assets::native::AIM_TAG`).

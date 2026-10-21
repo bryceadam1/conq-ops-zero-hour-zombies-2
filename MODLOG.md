@@ -1699,6 +1699,70 @@ intended difference: **the compare tolerance only binds at neutral Motion and at
 on.** Eyeball: the throw and hip poses read naturally in the native frames. The arms swinging
 through the ADS transition stands in for the `ads_up`/`ads_down` clips (converted into the
 manifests, never yet requested — a Track R3/R5 follow-up).
+## Reconciling the art scale with the sim's units (2026-10-21, v1/art-scale)
+
+The two scales left open after Track R2 are one scale after all. `units::ZH_PER_INCH` (1/6) is the
+sim's BO2-inches → ZH-world-units factor, fixed by CONTRACT's "1 unit = 6 inches; `GeometryHeight`
+12 ≙ a 72-inch player". `zhbo_native::ART_SCALE` (11/72) was a hand-copied *art* factor introduced
+with the W3D character conversion and then reused verbatim by the native viewmodel and
+`viewmodel::INCH`. It is not a second unit; it was 9% short. Evidence from the two installs:
+
+- BO2: `zhbo-assets model zone/all/faction_seals_mp.ff c_usa_mp_seal6_assault_fb` reports bounds
+  z -0.12"..72.15" — the player body is exactly 72 inches.
+- ZH: stock infantry `GeometryHeight` is 12–13 (Ranger 13, Burton 12, GLA Rebel 12), per INIZH.big;
+  their *mesh* heads sit at 14.3–16.0 units (measured from each model's hierarchy bind transforms
+  and vertices in W3D.big/W3DZH.big — the skinned mesh is bone-relative, and the repro matches each
+  mesh header's Min/Max exactly). The collision cylinder, not the stylised head height, is the
+  documented body size.
+- The mod's own eye: `inches(60) × GENERAL_SCALE` = 11.5 units. At 11/72 the converted body's
+  60-inch eye is 10.54 units, so the camera floated 0.96 units (5.7") above the body's eye line —
+  invisible in first person, wrong the moment R7 puts the body in the world. At 1/6 both are 11.5.
+- `GENERAL_SCALE` 1.15 × 12.02 units = 13.8, next to the General's `GeometryHeight = 14`; at 11/72
+  it was 12.7, a unit below its own collision cylinder.
+
+Fix (one source, no ABI change): `zhbo_native::ZH_PER_INCH = 1/6` is now the definition; `ART_SCALE`
+is an alias of it. `units::ZH_PER_INCH`, `nativevm::ART_SCALE`, `character::SCALE`,
+`viewmodel::INCH`, and the effect gravity constant read it instead of copying a number; footstep
+spacing keeps its tuned 9 and 11.5 units, now expressed through `units::inches` (54", 69"). Tests pin the
+factor and both boundaries (`zhbo-native`, `units`, `character`, `nativevm`). CONTRACT ("Units") and
+ARCHITECTURE (zhbo-native) say where the number lives.
+
+**Consequences for the integrator:** the W3D conversion bakes the scale, so existing
+`ConquerOps_BO2.big` files must be rebuilt — `zhbo_assets::hud::VERSION` (49) needs a bump, left
+unset here because this task forbids VERSION bumps; without it the launcher keeps the old 11/72
+W3D art. The native blobs store inches, so they are unaffected by reconversion. First person
+changes slightly by design: gun geometry, bob/recoil offsets and the viewmodel pose all use the
+corrected factor (9% bigger). Not run in game here (integrator runs the build/autotest).
+
+Verified: `env -u ZHBO_BO2_DIR -u ZHBO_ZH_DIR cargo test -p zhbo-native -p zhbo-core -p zhbo-assets`
+green (native 18, core 317, assets 41 + 8 ignored); the real-install conversion
+(`generals::tests::converts_from_real_install`, `ZHBO_BO2_DIR`) green, 1,578 native files;
+`cargo check -p zhbo-core --features renderer` green; clippy has no warnings in the changed lines
+(one pre-existing `chunks_exact` warning in `fx.rs` remains, unrelated).
+
+## Integrating v1/art-scale: one ZH-units-per-BO2-inch factor, 1/6 (2026-10-21)
+
+Merged `v1/art-scale` (1 commit). `zhbo_native::ZH_PER_INCH = 1/6` is now the single definition;
+`ART_SCALE`, `units::ZH_PER_INCH`, `character::SCALE`, `viewmodel::INCH`, effect gravity and
+footstep distances all read it. The old 11/72 was an eyeballed "72″ soldier ≈ 11 units" that
+under-measured the stock body — at 11/72 the converted body's 60″ eye sat 0.96 units below the
+camera, the exact defect R7 would have exposed. Ground truth: BO2's player is 72″ (converter
+bounds read), ZH's body convention is 6″/unit (CONTRACT; INIZH.big's cylinders), the engine
+maps W3D units 1:1 to world units (`Drawable::getScale`). Conflicts: `viewmodel.rs` (kept R6's
+`INCH = zhbo_native::ART_SCALE`, now the alias of the single source; the branch's stale
+SWAY/BOB constants dropped) and MODLOG.md (both kept). Archive VERSION 49 → 50 (the W3D
+conversion bakes the scale; native blobs store inches and need no reconversion).
+
+Verified: cargo test --workspace green; real-install suite green; clippy clean; `cargo xtask
+build` clean; autotest 13/13 default, 13/13 native+compare, 14/14 `--rts`. Compare log: the
+same lone mid-throw Motion transient, 0.904 (was 0.829 — 9% larger with the corrected scale,
+as expected); all other samples ≤ 0.013. First-person art is 8.3% larger by design.
+
+Watch item (was "magenta blob at the screen edge"): it recurs deterministically in the
+pistol-draw frames (a magenta patch with a white dot plus yellow/black hazard-striped patches
+at the frame corners), on both the R2-era and current native runs. Looks like specific
+viewhands sub-surface art (a wrist device?) rather than a transient; audit the viewhands'
+materials in a future polish round. Not a correctness failure.
 
 ## Next steps
 
