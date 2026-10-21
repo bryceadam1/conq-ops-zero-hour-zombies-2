@@ -12,8 +12,10 @@ pub struct ScreenView<'a> {
     pub editor: Option<&'a Editor>,
     /// Seconds left of the deny rim (a refused choice).
     pub deny: f32,
-    /// The shell screen: CREATE A CLASS row, set/class options. False in a match.
+    /// The lobby's screen (class sets, set/class options). False in a match.
     pub manage: bool,
+    /// The host's UI clock in seconds (the focused button's pulse, LUI transitions).
+    pub now: f32,
 }
 
 /// Draw the class screen for a host: the editor while one is open, else the pick list.
@@ -21,199 +23,13 @@ pub fn draw_screen(prims: &mut Vec<Prim>, w: f32, h: f32, view: &ScreenView) {
     let s = (h / 720.0).max(0.5);
     match view.editor {
         Some(editor) => draw_editor(prims, w, h, s, editor, view.deny),
-        None => draw_pick(prims, w, h, s, view.highlight, view.deny, view.manage),
+        None => draw_pick(prims, w, h, view.highlight, view.deny, view.manage, view.now),
     }
 }
 
 // ------------------------------------------------------------------------------------------------
 // The pick screen
 // ------------------------------------------------------------------------------------------------
-
-/// BO2's choose-class screen: the heading and the class-set pager across the top, the list of
-/// presets, the player's customs and (in the shell) CREATE A CLASS down the left with BO2's hint
-/// under it, the highlighted class's kit on the right, the prompts at the bottom.
-/// `highlighted` is the host's local row (the in-game client's or the shell menu's); the keys and
-/// mouse drive it through [`pick_frame`]. `manage` selects the shell's list and footer actions.
-pub fn draw_pick(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, highlighted: usize, deny: f32, manage: bool) {
-    background(prims, w, h);
-    let l = pick_layout(w, h, s);
-
-    // Snapshot both registries once: the rows, the pager and the details panel must describe the
-    // same lists.
-    let presets = classes::get();
-    let prof = profile::get();
-    let customs: &[crate::classes::CustomClass] = prof.customs();
-    let list = PickList {
-        rows: pick_rows_for(presets.len(), customs.len(), manage),
-        set: prof.active_set(),
-        sets: profile::MAX_SETS,
-        set_name: prof.set_name(prof.active_set()),
-    };
-    let rows = &list.rows;
-    let title_x = banner(prims, l.content_x, l.content_w, s, l.title_y, l.header_h);
-    heading(prims, title_x, l.title_y, s, "CHOOSE CLASS", WHITE);
-    if rows.is_empty() {
-        // A match with no registry and no customs: draw the chrome, never index an empty list.
-        footer_prompts(prims, w, s, l.footer_y, &[Prompt { key: "ESC", label: "Close" }], &[]);
-        deny_flash(prims, w, h, s, deny);
-        return;
-    }
-    let active = highlighted.min(rows.len() - 1);
-
-    // The class-set pager over the list (`classsetpager` in BO2): `‹ CLASS SET n ›` with the ten-dot
-    // marker under it. The shell steps it with Left/Right; a match shows the active set read-only.
-    set_pager(prims, s, l.list_x + l.list_w * 0.5, l.pager_y, &list, manage);
-    // The highlighted class's allocation, top right in the heading, with BO2's segmented bar under
-    // it (the same readout the editor carries).
-    let spent = class_allocation(&rows[active], &presets, customs);
-    let (bx, by, bw) = allocation_bar_rect(&l, s);
-    draw_allocation_counter(prims, bx + bw, l.title_y + 12.0 * s, s, spent, crate::classmenu::PICK_10);
-    draw_allocation(prims, bx, by, bw, s, spent, crate::classmenu::PICK_10);
-
-    panel(prims, l.list_x - 8.0 * s, l.list_y - 8.0 * s, l.list_w + 16.0 * s, l.list_h + 16.0 * s, s);
-    let visible = pick_visible(&l);
-    let first = pick_first(active, visible);
-    for (i, r) in rows.iter().enumerate().skip(first).take(visible) {
-        let y = l.list_y + (i - first) as f32 * l.row_h;
-        let on = i == active;
-        row(prims, l.list_x, y, l.list_w, l.row_h - 6.0 * s, s, on);
-        // BO2's slot numeral (1-10 by key), or a plus for the new-class row.
-        let (name, primary, primary_id) = match *r {
-            PickRow::Preset(j) => {
-                let c = &presets[j];
-                let kit = classes::loadout_of(c);
-                (c.name.clone(), weapons::weapon(&kit.primary).display_name.clone(), kit.primary.clone())
-            }
-            PickRow::Custom(j) => {
-                let c = &customs[j];
-                (c.name.clone(), weapons::weapon(&c.primary).display_name.clone(), c.primary.clone())
-            }
-            PickRow::Create => ("CREATE A CLASS".to_string(), "Ten points of allocation".to_string(), String::new()),
-        };
-        if matches!(r, PickRow::Create) {
-            prims.push(Prim::Text { x: l.list_x + 22.0 * s, y: y + 4.0 * s, text: "+".to_string(), argb: GOLD, size: (22.0 * s) as i32, align: 0 });
-        } else {
-            hud::draw_number(prims, i as u32 + 1, l.list_x + 44.0 * s, y + 2.0 * s, 24.0 * s, if on { GOLD } else { WHITE });
-        }
-        let tx = l.list_x + 62.0 * s;
-        prims.push(Prim::Text { x: tx, y: y + 3.0 * s, text: name, argb: if on { ORANGE } else { WHITE }, size: (14.0 * s) as i32, align: 0 });
-        let icon_x = l.list_x + l.list_w - 48.0 * s;
-        let icon_y = y + 3.0 * s;
-        if primary_id.is_empty() {
-            prims.push(Prim::Text { x: icon_x - 4.0 * s, y: y + 17.0 * s, text: primary, argb: DIM, size: (10.0 * s) as i32, align: 2 });
-        } else {
-            weapon_icon(prims, &primary_id, icon_x, icon_y, 24.0 * s, if on { WHITE } else { DIM }, &primary);
-            prims.push(Prim::Text { x: icon_x - 8.0 * s, y: y + 17.0 * s, text: primary, argb: DIM, size: (10.0 * s) as i32, align: 2 });
-        }
-    }
-
-    if rows.len() > visible {
-        prims.push(Prim::Text {
-            x: l.list_x + l.list_w - 6.0 * s,
-            y: l.list_y + l.list_h + 2.0 * s,
-            text: format!("{} / {}", active + 1, rows.len()),
-            argb: DIM,
-            size: (10.0 * s) as i32,
-            align: 2,
-        });
-    }
-    if manage {
-        // BO2's hint under the class list (a-chooseclass/001). It is the shell's alone: a match is
-        // already running, so the set is not what the fight loads into.
-        chevron(prims, l.list_x + 6.0 * s, l.hint_y + 3.0 * s, 6.0 * s, ORANGE, 1);
-        prims.push(Prim::Text {
-            x: l.list_x + 20.0 * s,
-            y: l.hint_y,
-            text: "You will load into the game with this class set.".to_string(),
-            argb: DIM,
-            size: (12.0 * s) as i32,
-            align: 0,
-        });
-    }
-    draw_pick_details(prims, &l, s, &rows[active], &presets, customs);
-
-    if manage {
-        // BO2's choose-class prompt strip: `ESC Back` left, `S Class Set Options` and
-        // `O Class Options` right (each clickable).
-        let actions = [
-            PickFooterAction::Back.prompt(),
-            PickFooterAction::SetOptions.prompt(),
-            PickFooterAction::ClassOptions.prompt(),
-        ];
-        footer_prompts(prims, w, s, l.footer_y, &actions[..1], &actions[1..]);
-    } else {
-        // In a match the screen is pick-only: Escape closes it and there is no management.
-        footer_prompts(
-            prims,
-            w,
-            s,
-            l.footer_y,
-            &[Prompt { key: "1-9", label: "Choose" }, Prompt { key: "ENTER", label: "Select" }],
-            &[Prompt { key: "ESC", label: "Close" }],
-        );
-    }
-    deny_flash(prims, w, h, s, deny);
-}
-
-/// How many of the ten points the highlighted row's class spends (BO2's counter beside the pager).
-pub(super) fn class_allocation(row: &PickRow, presets: &[classes::ClassDef], customs: &[crate::classes::CustomClass]) -> i32 {
-    match *row {
-        PickRow::Preset(j) => {
-            let stored = crate::classes::CustomClass::from_spec(&presets[j].spec);
-            Draft::from_stored(&stored).spent()
-        }
-        PickRow::Custom(j) => Draft::from_stored(&customs[j]).spent(),
-        PickRow::Create => 0,
-    }
-}
-
-/// BO2's class-set pager: `‹ CLASS SET n ›` with a ten-dot bar under it marking the position within
-/// the ten sets (`a-chooseclass/001`..`/010`). In the shell the chevrons are lit (Left/Right step
-/// the sets); in a match they are dim, because the set is picked in the lobby.
-pub(super) fn set_pager(prims: &mut Vec<Prim>, s: f32, cx: f32, y: f32, list: &PickList, manage: bool) {
-    let col = if manage { ORANGE } else { DIM };
-    let chev = 11.0 * s;
-    chevron(prims, cx - 74.0 * s, y + 6.0 * s, chev, col, -1);
-    chevron(prims, cx + 74.0 * s - chev * 0.6, y + 6.0 * s, chev, col, 1);
-    prims.push(Prim::Text {
-        x: cx,
-        y: y + 2.0 * s,
-        text: list.set_name.clone(),
-        argb: WHITE,
-        size: (13.0 * s) as i32,
-        align: 1,
-    });
-    // The ten-dot set marker, BO2's diamond on the active set.
-    let n = list.sets.max(1);
-    let step = 15.0 * s;
-    let left = cx - step * (n as f32 - 1.0) * 0.5;
-    let my = y + 23.0 * s;
-    for i in 0..n {
-        let mx = left + i as f32 * step;
-        if i == list.marker() {
-            diamond(prims, mx, my, 5.0 * s, ORANGE);
-        } else {
-            prims.push(Prim::Rect { x: mx - 1.5 * s, y: my - 1.5 * s, w: 3.0 * s, h: 3.0 * s, argb: DIM });
-        }
-    }
-}
-
-/// A chevron (`‹`/`›`) drawn as two strokes: `dir` −1 points left, +1 right. `x, y` is its top-left.
-pub(super) fn chevron(prims: &mut Vec<Prim>, x: f32, y: f32, size: f32, argb: u32, dir: i32) {
-    let mid = y + size * 0.5;
-    let (x0, x1) = if dir < 0 { (x + size * 0.5, x) } else { (x, x + size * 0.5) };
-    prims.push(Prim::Line { x0, y0: y, x1, y1: mid, width: 2.0, argb });
-    prims.push(Prim::Line { x0: x1, y0: mid, x1: x0, y1: y + size, width: 2.0, argb });
-}
-
-/// A filled diamond (the pager's active-set marker, BO2's little orange lozenge).
-pub(super) fn diamond(prims: &mut Vec<Prim>, cx: f32, cy: f32, r: f32, argb: u32) {
-    for i in 0..(r * 2.0).max(1.0) as i32 {
-        let f = i as f32 / (r * 2.0).max(1.0);
-        let half = r * (1.0 - (f * 2.0 - 1.0).abs());
-        prims.push(Prim::Rect { x: cx - half, y: cy - r + i as f32, w: half * 2.0, h: 1.0, argb });
-    }
-}
 
 /// BO2's circled `X` remove affordance, on the selected box's top-right corner (`b-editor/028`).
 pub(super) fn remove_glyph(prims: &mut Vec<Prim>, cell: &EditorCell, s: f32) {
@@ -236,85 +52,6 @@ pub(super) fn remove_glyph(prims: &mut Vec<Prim>, cell: &EditorCell, s: f32) {
     let k = r * 0.42;
     prims.push(Prim::Line { x0: cx - k, y0: cy - k, x1: cx + k, y1: cy + k, width: 1.8, argb: WHITE });
     prims.push(Prim::Line { x0: cx - k, y0: cy + k, x1: cx + k, y1: cy - k, width: 1.8, argb: WHITE });
-}
-
-/// The highlighted class's kit on the right, in BO2's order (`a-chooseclass/001`): PRIMARY,
-/// SECONDARY, PERK 1, PERK 2, PERK 3, LETHAL, TACTICAL, BONUS CARDS.
-pub(super) fn draw_pick_details(prims: &mut Vec<Prim>, l: &PickLayout, s: f32, row: &PickRow, presets: &[classes::ClassDef], customs: &[crate::classes::CustomClass]) {
-    let x = l.panel_x + 14.0 * s;
-    let w = l.panel_w - 28.0 * s;
-    panel(prims, l.panel_x, l.panel_y, l.panel_w, l.panel_h, s);
-    let mut y = l.panel_y + 12.0 * s;
-    if matches!(*row, PickRow::Create) {
-        prims.push(Prim::Text { x, y, text: "CREATE A CLASS".to_string(), argb: ORANGE, size: (18.0 * s) as i32, align: 0 });
-        y += 30.0 * s;
-        for line in ["Name it, pick ten points of kit,", "then save it to your profile.", "", "It joins this list and can be", "picked again in any match."] {
-            prims.push(Prim::Text { x, y, text: (*line).to_string(), argb: DIM, size: (12.0 * s) as i32, align: 0 });
-            y += 18.0 * s;
-        }
-        return;
-    }
-    let (primary, secondary, lethal, tactical, perks, wildcards) = match *row {
-        PickRow::Preset(j) => {
-            let kit = classes::loadout_of(&presets[j]);
-            (kit.primary.clone(), kit.secondary.clone(), kit.lethal.clone(), kit.tactical.clone(), kit.perks.clone(), Vec::new())
-        }
-        PickRow::Custom(j) => {
-            let c = &customs[j];
-            // The repaired draft: the details panel shows the class the game would actually apply.
-            let draft = Draft::from_stored(c);
-            (draft.primary_id(), draft.secondary_id(), draft.lethal.clone(), draft.tactical.clone(), draft.perks_in_order(), draft.wildcards.clone())
-        }
-        PickRow::Create => unreachable!("handled above"),
-    };
-    // The rows' spacing follows the panel's height, so the kit spreads down it as BO2's does.
-    let unit = l.panel_h / 15.0;
-    // The two weapons as BO2's icon-and-name blocks.
-    for (label, id) in [("PRIMARY", primary.as_str()), ("SECONDARY", secondary.as_str())] {
-        let def = weapons::weapon(id);
-        let size = 64.0 * s;
-        weapon_icon(prims, &def.id, x, y, size, WHITE, &def.display_name);
-        prims.push(Prim::Text { x: x + size + 12.0 * s, y: y + 2.0 * s, text: label.to_string(), argb: DIM, size: (10.0 * s) as i32, align: 0 });
-        prims.push(Prim::Text { x: x + size + 12.0 * s, y: y + 15.0 * s, text: def.display_name.clone(), argb: WHITE, size: (15.0 * s) as i32, align: 0 });
-        // The weapon's attachments as their own little icons on the right.
-        let mut ax = x + w - 22.0 * s;
-        for short in def.attachments.iter().rev() {
-            icon(prims, sprites::attachment_icon(short), ax, y + 8.0 * s, 20.0 * s, DIM, short);
-            ax -= 24.0 * s;
-        }
-        y += (size + unit).max(unit * 2.0);
-    }
-    // PERK 1-3: each tier's pick, with the Greed rows' second pick beside it.
-    for tier in 1..=3u8 {
-        let picks: Vec<&crate::weapons::Perk> = perks.iter().filter(|p| p.def().tier == tier).collect();
-        let size = 28.0 * s;
-        let mut px = x;
-        for perk in &picks {
-            icon(prims, Some(sprites::perk_icon(**perk)), px, y, size, WHITE, perk.def().id);
-            px += size + 4.0 * s;
-        }
-        prims.push(Prim::Text { x: px + 6.0 * s, y: y + 2.0 * s, text: format!("PERK {tier}"), argb: DIM, size: (10.0 * s) as i32, align: 0 });
-        let names: Vec<&str> = picks.iter().map(|p| p.def().id).collect();
-        prims.push(Prim::Text { x: px + 6.0 * s, y: y + 15.0 * s, text: if names.is_empty() { "—".into() } else { names.join(", ") }, argb: WHITE, size: (12.0 * s) as i32, align: 0 });
-        y += size + unit * 0.5;
-    }
-    for (label, id) in [("LETHAL", lethal.as_str()), ("TACTICAL", tactical.as_str())] {
-        let def = weapons::weapon(id);
-        let size = 28.0 * s;
-        weapon_icon(prims, &def.id, x, y, size, WHITE, &def.display_name);
-        prims.push(Prim::Text { x: x + size + 8.0 * s, y: y + 2.0 * s, text: label.to_string(), argb: DIM, size: (10.0 * s) as i32, align: 0 });
-        prims.push(Prim::Text { x: x + size + 8.0 * s, y: y + 15.0 * s, text: def.display_name.clone(), argb: WHITE, size: (12.0 * s) as i32, align: 0 });
-        y += size + unit * 0.5;
-    }
-    if !wildcards.is_empty() {
-        prims.push(Prim::Text { x, y, text: "BONUS CARDS".to_string(), argb: DIM, size: (10.0 * s) as i32, align: 0 });
-        y += 15.0 * s;
-        for wildcard in &wildcards {
-            icon(prims, Some(sprites::wildcard_icon(*wildcard)), x, y, 18.0 * s, WHITE, wildcard.name());
-            prims.push(Prim::Text { x: x + 24.0 * s, y: y + 2.0 * s, text: wildcard.name().to_string(), argb: DIM, size: (11.0 * s) as i32, align: 0 });
-            y += 21.0 * s;
-        }
-    }
 }
 
 // ------------------------------------------------------------------------------------------------

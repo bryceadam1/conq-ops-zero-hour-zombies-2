@@ -50,6 +50,12 @@ pub(super) fn banner(prims: &mut Vec<Prim>, x: f32, w: f32, s: f32, y: f32, head
     x + cap + 16.0 * s
 }
 
+/// The prompt width at `s` (the engine font's advance is close enough for the layout and the
+/// prompt's clickable box).
+pub(super) fn prompt_width(p: &Prompt, s: f32) -> f32 {
+    (p.key.chars().count() + p.label.chars().count() + 1) as f32 * PROMPT_SIZE * 6.0 / 7.0 * s
+}
+
 /// A screen's heading in the band.
 pub(super) fn heading(prims: &mut Vec<Prim>, x: f32, y: f32, s: f32, text: &str, argb: u32) {
     prims.push(Prim::Text { x, y: y + 10.0 * s, text: text.to_string(), argb, size: (24.0 * s) as i32, align: 0 });

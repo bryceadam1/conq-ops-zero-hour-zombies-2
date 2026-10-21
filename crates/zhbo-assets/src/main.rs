@@ -101,7 +101,7 @@ impl Filter {
     }
 
     fn wants_hash(&self, hash: u32) -> bool {
-        self.hashes.as_ref().map_or(true, |h| h.contains(&hash))
+        self.hashes.as_ref().is_none_or(|h| h.contains(&hash))
     }
 
     fn accepts(&self, h: &zhbo_formats::iwi::Header) -> bool {
@@ -115,7 +115,7 @@ impl Filter {
             Format::Bc5 => 14,
             Format::Other(c) => c,
         };
-        self.formats.as_ref().map_or(true, |f| f.contains(&code)) && h.width.max(h.height) <= self.max_size
+        self.formats.as_ref().is_none_or(|f| f.contains(&code)) && h.width.max(h.height) <= self.max_size
     }
 }
 
@@ -302,7 +302,7 @@ fn run(args: &[String]) -> Result<(), String> {
                             images::write_png(&file, &rgba)?;
                             // Also over dark grey, since most HUD art is white on clear.
                             let mut dark = rgba.clone();
-                            for px in dark.pixels.chunks_exact_mut(4) {
+                            for px in dark.pixels.as_chunks_mut::<4>().0 {
                                 let a = px[3] as u32;
                                 for c in &mut px[..3] {
                                     *c = ((*c as u32 * a + 40 * (255 - a)) / 255) as u8;
@@ -565,7 +565,17 @@ fn run(args: &[String]) -> Result<(), String> {
                 .map(PathBuf::from)
                 .unwrap_or_else(|| PathBuf::from("target/cac-shots"));
             let archive = flag(args, "--archive").map(PathBuf::from);
-            zhbo_assets::screenshot::run(&out, archive.as_deref())
+            let size = flag(args, "--size").and_then(|v| v.split_once('x')).and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)));
+            zhbo_assets::screenshot::run(&out, archive.as_deref(), size)
+        }
+        "build-archive" => {
+            // build-archive <out.big>: the launcher's BO2 conversion into a file of your choice
+            // (development: refresh the archive the screenshot harness reads without launching).
+            let out = PathBuf::from(args.get(1).ok_or("build-archive <out.big>")?);
+            let (bytes, report) = zhbo_assets::hud::build_archive(&bo2_dir()?)?;
+            fs::write(&out, bytes).map_err(|e| format!("{}: {e}", out.display()))?;
+            println!("built {} ({} images, missing: {:?})", out.display(), report.found.len(), report.missing);
+            Ok(())
         }
         "hud-sheet" => {
             // hud-sheet [out-dir] [--archive path] [--cols N]: every MappedImage, labelled.

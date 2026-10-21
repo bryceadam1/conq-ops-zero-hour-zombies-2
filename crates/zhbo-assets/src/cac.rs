@@ -48,6 +48,20 @@ const ATTACHMENTS: &[(&str, &str, &str)] = &[
     ("stackfire", "code_post_gfx_mp", "cac_mods_tribolt"),
 ];
 
+/// Every item's image material by its reference name (`mp7` -> `menu_mp_weapons_mp7`), from the
+/// player's `mp/statstable.csv` in `patch_mp.ff` (column 4 the reference, 6 the image). Empty when
+/// the zone or table can't be read: the screens then keep their drawn fallbacks.
+pub fn item_images(bo2_dir: &std::path::Path) -> std::collections::HashMap<String, String> {
+    let Ok(zone) = crate::generals::load_zone(bo2_dir, "patch_mp") else { return Default::default() };
+    let Ok(Some(table)) = zhbo_formats::stringtable::find(&zone, "mp/statstable.csv") else { return Default::default() };
+    table
+        .rows
+        .iter()
+        .filter_map(|r| Some((r.get(4)?.clone(), r.get(6)?.clone())))
+        .filter(|(reference, image)| !reference.is_empty() && !image.is_empty())
+        .collect()
+}
+
 /// The material (zone, name) for an attachment short, if this pack has its icon.
 pub fn attachment_material(short: &str) -> Option<(&'static str, &'static str)> {
     ATTACHMENTS.iter().find(|(s, _, _)| *s == short).map(|(_, zone, material)| (*zone, *material))

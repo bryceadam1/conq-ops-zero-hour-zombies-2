@@ -100,7 +100,8 @@ pub struct PickFrame {
 }
 
 /// Fold one frame of pick-screen input. `highlight` is the host's stored row; `manage` selects the
-/// shell's list (with CREATE A CLASS and the footer actions) or the in-match pick-only list. Pure
+/// lobby's list (the set's five slots, the footer actions) or the in-match pick-only list (the
+/// slots, then the default classes). Pure
 /// apart from reading the two registries (the list is rebuilt on demand, like the draw).
 pub fn pick_frame(inp: &MenuPointer, prev: &MenuPrev, highlight: usize, manage: bool) -> PickFrame {
     let rows = pick_rows(manage);
@@ -109,10 +110,8 @@ pub fn pick_frame(inp: &MenuPointer, prev: &MenuPrev, highlight: usize, manage: 
         return out;
     }
     let mut hl = highlight.min(rows.len() - 1);
-    let s = inp.scale();
-    let layout = pick_layout(inp.screen_w, inp.screen_h, s);
-    let first = pick_first(hl, pick_visible(&layout));
-    let hover = pick_row_at(&layout, inp.mouse_x, inp.mouse_y, rows.len(), first);
+    let layout = pick_layout(inp.screen_w, inp.screen_h, manage);
+    let hover = pick_row_at(&layout, inp.mouse_x, inp.mouse_y, &rows);
     if prev.moved(inp) {
         if let Some(i) = hover {
             if i != hl {
@@ -152,7 +151,7 @@ pub fn pick_frame(inp: &MenuPointer, prev: &MenuPrev, highlight: usize, manage: 
             out.activate = Some(i);
         } else {
             // The shell's footer prompts (set/class options, back) are clickable.
-            out.footer = pick_footer_at(&layout, inp.screen_w, s, inp.mouse_x, inp.mouse_y, manage);
+            out.footer = pick_footer_at(&layout, inp.mouse_x, inp.mouse_y);
         }
     }
     if out.activate.is_none() && out.footer.is_none() {

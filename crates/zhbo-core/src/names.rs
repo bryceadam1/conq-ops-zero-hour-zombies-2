@@ -30,6 +30,10 @@ pub fn font_glyph(font: &str, code: u32) -> String {
     format!("ZHBO_Glyph_{font}_{code}")
 }
 
+/// A weapon's create-a-class picture (BO2's `<statstable image>_big`, `ZHBO_CaC_Weapon_mp7_mp`).
+pub fn cac_weapon_image(base_id: &str) -> String {
+    format!("ZHBO_CaC_Weapon_{base_id}")
+}
 /// A weapon viewmodel's hierarchy (`ZV03_SKL` for viewmodel 3).
 pub fn viewmodel_skl(vm: u8) -> String {
     format!("ZV{vm:02}_SKL")

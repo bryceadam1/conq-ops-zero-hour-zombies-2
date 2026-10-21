@@ -105,6 +105,13 @@ pub struct Report {
     pub fonts: Option<Result<String, String>>,
 }
 
+/// Mirror an image top to bottom (rows reversed).
+fn flip_vertical(img: &mut Rgba) {
+    let row = img.width as usize * 4;
+    let rows: Vec<Vec<u8>> = img.pixels.chunks(row).rev().map(<[u8]>::to_vec).collect();
+    img.pixels = rows.concat();
+}
+
 /// BO2 draws some HUD art additively: bright on opaque black. Give such an image its brightness as
 /// alpha (and full-strength colour) so alpha blending looks the same.
 fn additive_to_alpha(img: &mut Rgba) {
@@ -173,13 +180,25 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
         }, s.max))
         .collect();
     // The materials the LUI ports draw, under their BO2 names (`zhbo_core::lui::materials`).
+    // A name ending in `_flipv` is its base material mirrored vertically (LUI draws an image whose
+    // top is below its bottom upside down; `addLargePopupBackground`'s bottom rule is one).
     for (material, max) in zhbo_core::lui::materials::MATERIALS {
-        wanted.push((zhbo_core::lui::materials::image(material), Source::Dynamic(material.to_string()), *max));
+        let base = material.strip_suffix(zhbo_core::lui::materials::FLIP_V).unwrap_or(material);
+        wanted.push((zhbo_core::lui::materials::image(material), Source::Dynamic(base.to_string()), *max));
     }
     zones.insert("common_mp", crate::generals::load_zone(bo2_dir, "common_mp")?);
     let weapons = zhbo_formats::weapon::all(&zones["common_mp"]).map_err(|e| e.to_string())?;
+    // The create-a-class weapon pictures: each item's image in BO2's `mp/statstable.csv` plus
+    // `_big` (`classpreview.lua`'s `GetItemImage(...) .. "_big"`).
+    let item_images = crate::cac::item_images(bo2_dir);
     for id in crate::weapons::converted(&weapons) {
         let Some(w) = weapons.iter().find(|w| w.name == crate::generals::base_id(&id)) else { continue };
+        let base = crate::generals::base_id(&id);
+        if let Some(image) = item_images.get(base.trim_end_matches("_mp")) {
+            if image.starts_with("menu_mp_weapons_") {
+                wanted.push((zhbo_core::names::cac_weapon_image(base), Source::Dynamic(format!("{image}_big")), 512));
+            }
+        }
         let name = format!("ZHBO_BO2_Icon_{id}");
         match (w.hud_icon_hash, &w.hud_icon) {
             (Some(hash), _) => wanted.push((name, Source::Hash(hash), 64)),
@@ -224,14 +243,14 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             }
             Source::Dynamic(material) => {
                 // Weapon menu art lives in the MP patches; a few DLC guns only in `frontend`.
-                for zone in ["code_post_gfx_mp", "patch_mp", "patch_ui_mp", "frontend"] {
+                for zone in ["code_post_gfx_mp", "ui_mp", "patch_mp", "patch_ui_mp", "frontend"] {
                     if !zones.contains_key(zone) {
                         if let Ok(z) = crate::generals::load_zone(bo2_dir, zone) {
                             zones.insert(zone, z);
                         }
                     }
                 }
-                ["common_mp", "code_post_gfx_mp", "patch_mp", "patch_ui_mp", "frontend"]
+                ["common_mp", "code_post_gfx_mp", "ui_mp", "patch_mp", "patch_ui_mp", "frontend"]
                     .iter()
                     .filter_map(|z| zones.get(z))
                     .filter_map(|z| zhbo_formats::xmodel::find_material(z, material))
@@ -242,6 +261,9 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             Some(img) => {
                 let mut img = crate::generals::shrink(img, *max);
                 additive_to_alpha(&mut img);
+                if name.ends_with(zhbo_core::lui::materials::FLIP_V) {
+                    flip_vertical(&mut img);
+                }
                 found.push((name.clone(), img));
                 report.found.push(name.clone());
             }

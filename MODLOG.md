@@ -1021,6 +1021,70 @@ headers overlaid. **Not yet run in game.** Integration needs:
 - archive VERSION 42 (reconvert);
 - `scripts/autotest-mac.sh --rts` (new checks) and `--rts-dry`.
 
+## v1.0 Track C, first wave: the choose-class screens on BO2's own geometry (2026-10-21)
+
+The pick screens were invented: a self-drawn banner/pager/details panel, presets first, a CREATE A
+CLASS row the real game never had. This wave ports them to the Lua (`classui/bo2.rs`, `pick.rs`,
+`preview.rs`), in LUI units resolved through Track 0's `lui` layer:
+
+1. **The lobby is `CACChooseClass`** (`decompiled/patch_mp/ui_mp/t6/menus/cacchooseclass.lua`):
+   the CHOOSE CLASS title (`addTitle`, Big), the `‹ CLASS SET n ›` header (35 tall at
+   `TitleHeight + 10`, ExtraSmall name over `menu_vis_carousel_pip[_fill]` pips), the active set's
+   **five custom slots and nothing else** (`UpdateButtonList`: 30-tall CoD9Buttons,
+   `ButtonSpacing` 2, list width `width / 3 - 50 - 20 = 218`), BO2's `MENU_CLASS_SETS_HINT` under
+   the list (`hinttext.lua`'s `ui_arrow_right` + wrapped Default), and the `ClassPreview` from
+   `width / 3 - 50` to the right edge. Untouched slots are BO2's `Custom 1`..`Custom 5`
+   (`a-chooseclass/002`: set 2's five empty slots; `reset_classes.cfg` names them `CLASS_SLOTn`),
+   so a profile blank name now saves as `Custom n`, not `Custom Class n` — the profile, the pick
+   rows and the command-bar labels share the one namer (`classui::empty_slot_name`).
+2. **The match is `changeclass`** (`decompiled/patch_mp/ui_mp/t6/hud/changeclass.lua`): the same
+   title, a 250-wide list at `TitleHeight` holding the set's name (Condensed), a half-button
+   spacer, the five slots, another spacer and the default classes in BO2's order — `class_smg` 10
+   through `class_sniper` 14 (`AddDefaultClassButtons`) — and a `Menu.Width - DefaultWidth * 1.5`
+   preview. An untouched slot is inert in a match (BO2's empty slots would spawn an empty class;
+   the mod's profile only stores saved customs, so a no-op beats a silent knife-only spawn).
+3. **The preview is `ClassPreview`** (`patch_mp/ui/t6/classpreview.lua`): the `n/10` counter
+   (Condensed, `CoD.orange`, right-aligned 100 wide) over the ten-bar `AllocationBar`, then the
+   columns — left `(W - 4) * 0.53` (primary block half its width tall, its attachment row, the
+   secondary, its row, 71 tall), right `(W - 4) * 0.47` (three perk rows, LETHAL, TACTICAL), then
+   WILDCARDS across. Black 0.1 plates, slot names ExtraSmall at 0.5. The focused list button
+   pulses `BOIIOrange` 1 → 0.5 and back every 650 ms (`cod9button.lua` `PulseDuration`, eased
+   through Track 0's `lui::anim`); the hosts feed it their UI clocks (`Client::ui_clock` from
+   render dt, the shell menu a 60 Hz step — UI only, never the sim).
+4. **Chrome is BO2's materials now** (`lui::materials::MATERIALS`): `menu_mp_cac_backing` (8
+   tiles, alpha 0.7) and the two `menu_mp_backing_frame` rules of `addLargePopupBackground`
+   (alpha 0.65, 16 tall around a 605 band lifted 19). The bottom rule is the top one drawn with
+   its LUI top below its bottom — a vertical mirror — so the converter writes a `_flipv` copy
+   (`hud.rs`'s `flip_vertical`); a `FLIP_V` name suffix is the convention.
+5. **CaC weapon pictures** come from the player's `mp/statstable.csv` (patch_mp.ff): column 4 is
+   the reference (`mp7`), column 6 the image (`menu_mp_weapons_mp7`); `classpreview.lua` draws
+   `<image>_big`. New `zhbo-formats::stringtable` parses the zone's `StringTable` asset; the
+   converter emits `ZHBO_CaC_Weapon_<base>` (`names::cac_weapon_image`) from the `_big` material.
+6. **The screenshot harness** installs the archive's BO2 font metrics (`names::FONTS_PATH`) like
+   the bridge does at init, reads every MappedImage INI in the archive (the fonts' glyphs live in
+   their own), takes `--size WxH` for the captures' 3024×1890, and the new `build-archive` dev
+   subcommand writes the launcher's BO2 archive to a chosen path so the harness can be iterated
+   without launching the game.
+
+Gotchas:
+- **The digit keys follow the rows.** The match list puts the set's slots first, so key 1 is the
+  first custom now (was the Assault preset). Every scripted pick derives its key from the live
+  list (`autopilot::custom_class_key`: the first custom, else the first default class — never a
+  hard-coded index). The classpick autotest's "5 premade + the custom" doc note is updated.
+- **`map_or(true, …)` → `is_none_or`, `chunks_exact_mut(4)` → `as_chunks_mut::<4>().0`** (clippy
+  1.99 in the touched files).
+
+Tests: `cargo test -p zhbo-core -p zhbo-assets` green (258 + 37), clippy clean in every touched
+file. **Not yet run in game** (the integrator runs the game): the classpick autotest's
+expectations changed with the row order. Integration needs: archive VERSION bump (new CaC
+materials/images in `ConquerOps_BO2.big`).
+
+Remaining Track C scope: the editor/picker screens on the same LUI geometry (they still draw the
+old self-drawn chrome), the cue map wired to the exact Lua call sites (`cac_main_nav`,
+`cac_main_edit_loadout`, `cac_safearea`, `cac_main_exit_cac`, … — the aliases exist in
+`sounds::UiCue`), the LUI transitions (the 250 ms slide/fade of `SetActiveClassSet`), the pixel
+pass against `cac/sweep/`, and the in-match class panel per `hud/class.lua`.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

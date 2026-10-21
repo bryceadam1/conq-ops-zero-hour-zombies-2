@@ -15,13 +15,15 @@ enum ClasspickAction {
 }
 
 /// The number key for the profile's first custom class, from the live pick list (never a
-/// hard-coded 6: the presets are whatever the match loaded, and the custom follows them). The
-/// standard and equipment runs seed a custom in the profile; with none, fall back to the first
-/// preset so a run still reaches first person.
+/// hard-coded index: the match list is the set's custom slots, then the default classes,
+/// `changeclass.lua`). The standard and equipment runs seed a custom in the profile; with none,
+/// fall back to the first default class (an untouched slot is not pickable in a match), so a run
+/// still reaches first person.
 fn custom_class_key() -> Key {
-    crate::classui::pick_rows(false)
-        .iter()
+    let rows = crate::classui::pick_rows(false);
+    rows.iter()
         .position(|r| matches!(r, crate::classui::PickRow::Custom(0)))
+        .or_else(|| rows.iter().position(|r| matches!(r, crate::classui::PickRow::Preset(_))))
         .and_then(crate::classui::pick_key)
         .unwrap_or(Key::Key1)
 }
@@ -35,7 +37,8 @@ fn custom_class_key() -> Key {
 /// class key first: the standard run picks the first custom class the profile holds — the autotest
 /// seeds one, the AN-94 with its under-barrel grenade launcher, because BO2's premades carry no
 /// attachments and the script's alt-mode step has to toggle something — and falls back to the first
-/// preset (Assault) when the profile has none. The build run picks the first preset, and the
+/// default class in the match list's order (SMG) when the profile has none. The build run picks the
+/// first preset, and the
 /// equipment run picks the C4/tactical class the autotest seeds in the profile.
 ///
 /// `ZHBO_AUTOPILOT=equipment` runs [`Autopilot::equipment_input`] instead, for a loadout with C4 and
@@ -166,9 +169,9 @@ impl Autopilot {
     pub fn build_input(&self, b: &Bindings) -> Scripted {
         let t = self.t;
         let mut keys = KeySet::default();
-        // The spawn select is up on the unarmed spawn: pick Assault so the hammer's own input is
-        // not eaten by the screen (the hammer itself works unarmed).
-        let pick = (0.3..0.4).contains(&t).then_some(Key::Key1);
+        // The spawn select is up on the unarmed spawn: pick the first default class so the
+        // hammer's own input is not eaten by the screen (the hammer itself works unarmed).
+        let pick = (0.3..0.4).contains(&t).then(custom_class_key);
         let dy = if (3.0..3.4).contains(&t) { 120.0 } else { 0.0 };
         let wheel = if (3.6..3.65).contains(&t) { 1.0 } else { 0.0 };
         if (2.6..2.7).contains(&t) {
@@ -187,8 +190,9 @@ impl Autopilot {
     }
 
     /// The create-a-class run (`ZHBO_AUTOPILOT=classpick`). In a match the screen is pick-only:
-    /// the seeded "AB" custom (written to the profile before launch) is the sixth row, so the
-    /// script presses its number key and the sim assumes it; no editor and no profile write.
+    /// the seeded "AB" custom (written to the profile before launch) leads the list
+    /// (`changeclass.lua`: the set's custom slots, then the defaults), so the script presses its
+    /// number key and the sim assumes it; no editor and no profile write.
     /// It then opens the field computer to return overhead, and on the *next* take-control forces
     /// the screen open (the command-bar path) and Escapes it, proving first-person play continues.
     ///

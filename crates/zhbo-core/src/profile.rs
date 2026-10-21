@@ -339,7 +339,7 @@ impl Profile {
         }
         class.name = class.name.trim().to_string();
         if class.name.is_empty() {
-            class.name = format!("Custom Class {}", slot + 1);
+            class.name = crate::classui::empty_slot_name(slot);
         }
         if slot < customs.len() {
             customs[slot] = class;
@@ -603,7 +603,7 @@ mod tests {
         let _g = lock();
         let mut p = Profile::new();
         p.save(class("", "an94_mp"));
-        assert_eq!(p.customs()[0].name, "Custom Class 1");
+        assert_eq!(p.customs()[0].name, "Custom 1", "BO2's untouched slot name (`a-chooseclass/002`)");
         p.set_active(2);
         p.save(class("Third Set", "an94_mp"));
         assert_eq!(p.customs_in(0).unwrap().len(), 1, "set 1 kept its class");

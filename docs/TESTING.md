@@ -9,10 +9,10 @@ How each layer of the mod is verified, and what to run before declaring a change
 | Unit tests | sim, weapons, movement, hitscan, HUD, formats, requirements | `cargo test --workspace` |
 | Headless renderer | frame encoding, transient and dynamic buffers, read-back pixels, draw validation, ABI asserts | `cargo test -p zhbo-gfx` (`tests/headless.rs`, `tests/ffi.rs`) |
 | Asset conformance | BO2/ConquerOps zones load with 0 bytes left over; weapon table round-trips | `cargo test -p zhbo-assets` (BO2 install needed for the `#[ignore]`d tests) |
-| In-game scripted test | full loop: take control, move, fight, throw both offhands, toggle the grenade launcher, field computer, RTS hand-back. The script seeds a v2 profile with one custom class in the active set — the AN-94 with its under-barrel launcher, plus the frag, concussion, pistol and knife — because BO2's premades carry no attachments and the alt-mode step needs one; the autopilot picks that custom from the spawn screen by its computed row key (5 premades + the custom) | `scripts/autotest.ps1` (Windows) / `scripts/autotest-mac.sh` (macOS; seeds `ConquerOps.profile` with the GL custom before launch — the standard autopilot picks the first profile custom when there is one, else the first preset) |
+| In-game scripted test | full loop: take control, move, fight, throw both offhands, toggle the grenade launcher, field computer, RTS hand-back. The script seeds a v2 profile with one custom class in the active set — the AN-94 with its under-barrel launcher, plus the frag, concussion, pistol and knife — because BO2's premades carry no attachments and the alt-mode step needs one; the autopilot picks that custom from the spawn screen by its computed row key (the match list is the set's custom slots, then the defaults, `changeclass.lua`) | `scripts/autotest.ps1` (Windows) / `scripts/autotest-mac.sh` (macOS; seeds `ConquerOps.profile` with the GL custom before launch — the standard autopilot picks the first profile custom when there is one, else the first default class) |
 | Real input test | OS keyboard/mouse path the autopilot does not cover | `scripts/inputtest.ps1` / `autotest-mac.sh --input` |
 | Overhead General | his class guns swapped in (`armed slot 0 with ZHBO_GeneralWeapon_`), rounds counted, the command bar's orders given the way the buttons give them — the lethal at a rebel (thrown as first person throws), a reload, the pistol, the knife at a rebel spawned close (`meleed`) — then first person keeps the pistol. `--rts-dry` runs it with no spare rifle, then no spare pistol, rounds: the dry gun hands over | `autotest-mac.sh --rts` / `--rts-dry` (`ZHBO_AUTOPILOT=rts`; macOS only, `autotest.ps1` has no RTS mode) |
-| Create-a-class run | the in-match screen is pick-only and shows the profile's ACTIVE class set: the script seeds a v2 profile with one custom (MP7 primary, claymore — deliberately unlike any premade kit) in set 1, picks it from the spawn screen by its row key (5 premade + the custom) and the sim logs `assumed the AB class`, with no profile write; the once-a-second pose line then names the MP7, proving the *kit* landed; it then leaves first person, takes control again, forces the screen open and Escapes it, and first-person play continues | `ZHBO_AUTOPILOT=classpick` with either autotest script (the macOS script seeds `ConquerOps.profile` first, then checks `assumed the AB class`, `MP7 <n>\|` in a pose line, no `create-a-class: saved` line, a second `entered first-person control`, and `taking control again`) |
+| Create-a-class run | the in-match screen is pick-only and shows the profile's ACTIVE class set: the script seeds a v2 profile with one custom (MP7 primary, claymore — deliberately unlike any premade kit) in set 1, picks it from the spawn screen by its row key (the custom leads the match list, `changeclass.lua`) and the sim logs `assumed the AB class`, with no profile write; the once-a-second pose line then names the MP7, proving the *kit* landed; it then leaves first person, takes control again, forces the screen open and Escapes it, and first-person play continues | `ZHBO_AUTOPILOT=classpick` with either autotest script (the macOS script seeds `ConquerOps.profile` first, then checks `assumed the AB class`, `MP7 <n>\|` in a pose line, no `create-a-class: saved` line, a second `entered first-person control`, and `taking control again`) |
 | Shell create-a-class | the lobby's class screen (the menu ABI): browse, edit, save, delete, copy, close — in the shell, no match | manual only: the in-game autotest does not cover the shell (see below) |
 | Class-screen screenshots | the shell list, the in-match pick list and the Pick-10 editor rendered through `classui::draw_screen` | `cargo run -p zhbo-assets -- screenshot` (uses the locally built `ConquerOps_BO2.big`; PNGs in `target/cac-shots/`) |
 
@@ -26,16 +26,18 @@ verify it by hand after touching the menu ABI, the shell window, or the shared c
    button sits at the top-right of the lobby panel.
 2. Click it: the BO2 class screen opens *in the shell* (menu background art, the class list, the
    kit panel). The lobby beneath is inert (its buttons and its Escape shortcut do not react).
-3. Browse with the mouse (hover highlights, the wheel scrolls) and the arrows; **Enter/click on a
-   preset row** opens the editor on that kit as a template; on **CREATE A CLASS** opens a fresh
-   draft. **Escape** in the editor returns to the list.
+3. Browse with the mouse (hover highlights, the wheel scrolls) and the arrows: the list is the
+   active set's five custom slots (`cacchooseclass.lua`) — **Enter/click on a filled row** opens
+   the editor on that class; on an untouched **`Custom n`** row opens a fresh draft. **Escape** in
+   the editor returns to the list.
 4. Edit something, walk to **SAVE CLASS**, confirm: `ConquerOps.profile` (in the game's user-data
    directory) is rewritten with the new class, and the list shows it highlighted.
 5. On a custom row: **C** copies it (`NAME COPY` appears), **Backspace** deletes it — both rewrite
    the profile file.
 6. **Escape** on the list closes back to the skirmish lobby (and the lobby's Escape works again).
-7. Start a match: the saved class appears on the in-game pick screen, which is **pick-only** (no
-   CREATE A CLASS row, no editor, no delete/copy — BO2 creates classes only in the lobby); the
+7. Start a match: the saved class appears on the in-game pick screen (the set's five custom
+   slots, then the default classes), which is **pick-only** (no editor, no delete/copy, untouched
+   slots are inert — BO2 creates classes only in the lobby); the
    spawn offer opens in first person while unclassed, the command-bar button forces it, and Escape
    closes it and leaves the General unarmed (knife only) — the offer re-arms on the next
    take-control. `scripts/autotest-mac.sh --classpick` covers that flow.
@@ -58,11 +60,15 @@ says which. It reads the already-converted archive (no BO2 install needed, never
 
 ## Headless class-screen screenshots
 
-`cargo run -p zhbo-assets -- screenshot [out-dir] [--archive <ConquerOps_BO2.big>]` renders the three
-class screens through the same drawing code the game runs (`classui::draw_screen`) and writes
-`cac-browse.png` (the shell list: presets, saved customs, CREATE A CLASS, management footer),
-`cac-pick.png` (the in-match pick list, no CREATE row) and `cac-editor.png` (a populated Pick-10
-draft with the primary option list open) at 1280x720. The default output is `target/cac-shots/`,
+`cargo run -p zhbo-assets -- screenshot [out-dir] [--archive <ConquerOps_BO2.big>] [--size WxH]`
+renders the class screens through the same drawing code the game runs (`classui::draw_screen`) and
+writes nine shots: `cac-browse.png` (the lobby list: the active set's five custom slots, the set
+header and the S/O footer), `cac-set-pager.png` (a browsed mid-row set), `cac-pick.png` (the
+in-match list: the slots, then the default classes), `cac-editor.png` (a populated Pick-10 draft
+with the primary option list open), `cac-editor-empty.png` (BO2's pristine empty class),
+`cac-editor-weapons.png` (the category column and stat bars), `cac-editor-attachments.png` (the
+attachment strip) and `cac-dialog-set.png`/`cac-dialog-class.png` (the S/O dialogs). Default size
+is 1280x720 (BO2's 720p; the captures are 3024x1890). The default output is `target/cac-shots/`,
 which is inside the ignored build directory.
 
 It reads the player's already-converted `ConquerOps_BO2.big` (the launcher's normal output; found in

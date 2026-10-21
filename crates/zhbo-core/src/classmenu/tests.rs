@@ -276,7 +276,7 @@ use super::*;
         e.slot = Slot::Name;
         e.naming = true;
         // Type far past the cap; the field refuses characters once it is full.
-        let keys: Vec<Key> = std::iter::repeat(Key::A).take(NAME_MAX + 5).collect();
+        let keys: Vec<Key> = std::iter::repeat_n(Key::A, NAME_MAX + 5).collect();
         e.step(Edges { typed: keys, ..Default::default() });
         assert_eq!(e.draft.name.chars().count(), NAME_MAX);
         assert_eq!(e.draft.name, "A".repeat(NAME_MAX));

@@ -367,6 +367,8 @@ pub struct Client {
     pub pitch: f32,
     pub general: u32,
     pub hud: HudTimers,
+    /// Seconds of client frames (render time, UI only: the class screen's pulses and fades).
+    pub ui_clock: f32,
     last_sent_frame: Option<u32>,
     latch: u32,
     prev_held: u32,
@@ -443,6 +445,7 @@ impl Client {
             class_pick_dismissed: false,
             class_pick_open: false,
             class_pick_highlight: 0,
+            ui_clock: 0.0,
             menu_prev: crate::classui::MenuPrev::default(),
         }
     }
@@ -511,6 +514,7 @@ impl Client {
             editor: None,
             deny: 0.0,
             manage: false,
+            now: self.ui_clock,
         }
     }
 
@@ -547,7 +551,7 @@ impl Client {
                     }
                 }
                 // The in-match list has no CREATE A CLASS row.
-                Some(crate::classui::PickRow::Create) | None => {}
+                Some(crate::classui::PickRow::Empty(_)) | None => {}
             }
         } else if frame.back {
             self.close_pick(unclassed);
@@ -649,6 +653,7 @@ impl Client {
 /// Run one rendered frame.
 pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         let dt = inp.dt.clamp(0.0, 0.25);
+        self.ui_clock += dt;
         // The sim's record names the General the local player is commanding, in first person or
         // overhead. Adopt it before the class screen runs: a fresh General's first class pick can
         // come from the command bar before he was ever taken into first person, and the client
@@ -661,7 +666,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         let unclassed = player.as_ref().is_none_or(|p| p.class.is_none());
         #[cfg(feature = "autopilot")]
         let pick_wanted = self.class_pick_wanted(unclassed);
-        #[allow(unused_mut)]
+        #[allow(unused_mut, unused_assignments)]
         let mut scripted = ClientIn::default();
         let inp = match self.autopilot.as_mut() {
             #[cfg(feature = "autopilot")]
