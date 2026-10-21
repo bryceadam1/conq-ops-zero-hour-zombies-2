@@ -17,7 +17,7 @@ environment mid-game.
 | Variable | Meaning |
 |---|---|
 | `ZHBO_AUTOPILOT` | Same modes as above; parsed once here and once in the core. |
-| `ZHBO_FORCE_RADAR` | Give the autopilot's test player radar, to film the Tab map. |
+| `ZHBO_FORCE_RADAR` | Give the autopilot's test player radar, to film the full map (M). |
 | `ZHBO_SHOWCASE_OBJECT` | Template name to spawn in front of the camera in showcase mode (default `ZHBO_General_USA`). |
 | `ZHBO_SHOWCASE_ZOOM` | Camera zoom distance for showcase captures (default `0.12`). |
 | `ZHBO_SHOWCASE_PITCH` | Camera pitch in radians (default: the view's own). |

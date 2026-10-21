@@ -73,15 +73,23 @@ fn uses_bo2_numerals_when_the_art_is_installed() {
     let rec = Recorder { has_art: true, objects: vec![soldier(5, 1, 40.0)], ..Default::default() };
     let prims = draw_hud(&rec, &client, &sim);
     let images = rec.images.borrow();
-    assert!(images.contains(&"ZHBO_BO2_Digit3".to_string()), "30 rounds -> '3' numeral");
-    assert!(images.contains(&"ZHBO_BO2_Digit0".to_string()));
-    assert!(images.contains(&sprites::SLASH.to_string()));
+    let mat = |m: &str| crate::lui::materials::image(m);
+    assert!(images.contains(&mat("hud_mp_num_big_3")), "30 rounds -> '3' digit");
+    assert!(images.contains(&mat("hud_mp_num_big_0")));
+    assert!(images.contains(&mat("hud_mp_num_big_slash")));
+    assert!(images.contains(&mat("hud_mp_num_big_1")), "funds (10000) in HUD digits");
     let texts = rec.texts.borrow();
     assert!(texts.iter().any(|t| t == "MTAR"), "BO2's Assault class carries the MTAR: {texts:?}");
-    assert!(texts.iter().any(|t| t == "FULL-AUTO"), "BO2 fire mode beside the weapon name");
-    assert!(texts.iter().any(|t| t == "FUNDS") && images.contains(&"ZHBO_BO2_Digit1".to_string()), "funds in BO2 numerals");
-    assert!(texts.iter().any(|t| t.starts_with("FIELD COMPUTER")), "the ready scorestreak");
-    for art in [sprites::COMPASS, sprites::PLAYER_ARROW, sprites::DOT, sprites::LEFT_LOWER, sprites::RIGHT_LOWER, sprites::STREAK_VSAT, sprites::GUN_TITLE[1]] {
+    for art in [
+        sprites::COMPASS,
+        sprites::PLAYER_ARROW,
+        sprites::DOT,
+        sprites::STREAK_VSAT,
+        &mat("hud_mp_vis_left_lower"),
+        &mat("hud_mp_vis_right_lower"),
+        &mat("hud_mp_vis_gun_title_mid"),
+        &mat("hud_mp_vis_ks_dpad_box_back_lit"),
+    ] {
         assert!(images.contains(&art.to_string()), "BO2 art {art}");
     }
     assert!(images.contains(&sprites::TEAM_LOGO.to_string()), "Zero Hour's faction logo");
@@ -116,7 +124,7 @@ fn map_key_shows_the_radar_or_says_there_is_none() {
     client.hud.map_open = false;
     let rec = Recorder { has_art: true, ..Default::default() };
     let prims = draw_hud(&rec, &client, &sim);
-    assert!(near_centre(&rec.lines.borrow()) >= 8, "the crosshair is back with the map closed");
+    assert!(near_centre(&rec.lines.borrow()) >= 4, "the crosshair is back with the map closed");
 }
 
 #[test]
@@ -208,4 +216,28 @@ fn cac_sprite_names_follow_the_core_tables() {
     all.sort_unstable();
     all.dedup();
     assert_eq!(all.len(), n, "every MappedImage name is unique");
+}
+
+#[test]
+fn every_hud_material_is_converted() {
+    for m in materials() {
+        assert!(crate::lui::materials::MATERIALS.iter().any(|(n, _)| *n == m), "{m} is missing from lui::materials::MATERIALS");
+    }
+}
+
+#[test]
+fn tab_shows_the_scoreboard_and_hides_the_hud() {
+    let _f = crate::lui::font::lock();
+    crate::lui::font::load("");
+    let (sim, mut client) = fps_state();
+    client.hud.scoreboard_open = true;
+    client.hud.lui.kills = 2;
+    let rec = Recorder { has_art: true, ..Default::default() };
+    let _prims = draw_hud(&rec, &client, &sim);
+    let texts = rec.texts.borrow();
+    for want in ["SCOREBOARD", "KILLS", "DEATHS", "200"] {
+        assert!(texts.iter().any(|t| t == want), "{want} in {texts:?}");
+    }
+    let images = rec.images.borrow();
+    assert!(!images.contains(&crate::lui::materials::image("hud_mp_vis_right_lower")), "the ammo area hides under the scoreboard");
 }

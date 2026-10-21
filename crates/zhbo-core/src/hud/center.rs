@@ -1,6 +1,35 @@
-//! The centre of the screen: crosshair, hit marker and the kill popup.
+//! The centre of the screen: the crosshair, the hit marker and the score popup.
+//!
+//! * Crosshair (Ghidra G6, `t6mp` 0x004b5d70/0x004b5ea0/0x004b5e40): four side pieces pushed out
+//!   from the centre by the weapon's spread, `tan(spread°) · 240 / tan(fovY/2)` in the 480-line
+//!   virtual space; alpha `1 − aimSpreadScale`, floored at `cg_crosshairAlphaMin` 0.5; gone once
+//!   aiming down the sights. The weapon's own `reticleSide` art, `iReticleSideSize` and
+//!   `iReticleMinOfs` are not in the weapon table yet, so the pieces are drawn strokes.
+//! * Hit marker (G6, `maps/mp/gametypes/_damagefeedback.gsc`): `damage_feedback` 24 x 48 at
+//!   (−12, −12) from the centre in the 480-line hudelem space, alpha 1 fading to 0 over 1 s; BO2 has
+//!   no separate kill marker.
+//! * Score popup (`hud/scorepopup.lua:10-12, 454-523`): "+N" in `Condensed`, its box 40 right of
+//!   centre and 75..45 above it, for `DisplayTime` 1000 ms. The additive glow layers
+//!   (`CoD.AdditiveTextOverlay`) are not drawn.
 
+use super::frame::{argb, Lui};
 use super::*;
+use crate::lui::font::Family;
+use crate::lui::Place;
+
+/// G6: `cg_crosshairAlphaMin`.
+pub const CROSSHAIR_ALPHA_MIN: f32 = 0.5;
+/// The hit marker's fade (`fadeovertime(1)`).
+pub const HITMARKER_FADE: f32 = 1.0;
+/// The score popup's `DisplayTime`.
+pub const SCORE_DISPLAY: f32 = 1.0;
+
+/// The crosshair's push from the centre in pixels: G6's 480-line value scaled to the screen.
+pub fn crosshair_offset(spread_deg: f32, hfov: f32, w: f32, h: f32) -> f32 {
+    let tan_half_v = (hfov * 0.5).tan() * h / w.max(1.0);
+    let px480 = spread_deg.to_radians().tan() * 240.0 / tan_half_v.max(1e-4);
+    px480 * h / 480.0
+}
 
 pub(super) fn draw_crosshair(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, client: &Client, p: &PlayerSim) {
     // Unarmed (knife only): there is no gun to aim, so no crosshair.
@@ -36,63 +65,73 @@ pub(super) fn draw_crosshair(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, clie
         crate::movement::Stance::Crouch => 1,
         crate::movement::Stance::Prone => 2,
     };
-    let spread = p.arsenal.current().spread_deg(stance, ads).to_radians();
-    let half_fov = client.last_hfov * 0.5;
-    let gap = (spread.tan() / half_fov.tan() * (w * 0.5)).max(5.0 * s);
+    let wpn = p.arsenal.current();
+    let spread = wpn.spread_deg(stance, ads);
+    let gap = crosshair_offset(spread, client.last_hfov, w, h);
+    // aimSpreadScale: how far the bloom has opened the cone between its stance min and max.
+    let (min, max) = wpn.def.hip_spread[stance];
+    let aim_spread = if max > min { (wpn.bloom / (max - min)).clamp(0.0, 1.0) } else { 0.0 };
+    let alpha = (1.0 - aim_spread).max(CROSSHAIR_ALPHA_MIN);
+    let col = argb((1.0, 1.0, 1.0), alpha);
     let len = 10.0 * s;
-    let alpha = ((1.0 - ads / 0.6) * 235.0) as u32;
-    let col = (alpha << 24) | 0x00FF_FFFF;
-    let shadow = ((alpha / 3) << 24) & 0xFF00_0000;
     for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
         let (x0, y0) = (cx + dx * gap, cy + dy * gap);
         let (x1, y1) = (cx + dx * (gap + len), cy + dy * (gap + len));
-        prims.push(Prim::Line { x0: x0 + 1.0, y0: y0 + 1.0, x1: x1 + 1.0, y1: y1 + 1.0, width: 2.0 * s, argb: shadow });
         prims.push(Prim::Line { x0, y0, x1, y1, width: 2.0 * s, argb: col });
     }
 }
 
-pub(super) fn draw_hitmarker(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, client: &Client) {
+/// The hit marker: `t` counts down from [`HITMARKER_FADE`].
+pub(super) fn draw_hitmarker(prims: &mut Vec<Prim>, w: f32, h: f32, client: &Client) {
     let t = client.hud.hitmarker;
     if t <= 0.0 {
         return;
     }
+    let u = h / 480.0;
     let (cx, cy) = (w * 0.5, h * 0.5);
-    let a = ((t / HITMARKER_TIME).min(1.0) * 255.0) as u32;
-    let rgb = if client.hud.hitmarker_kill { 0x00E8_3A2E } else { 0x00FF_FFFF };
-    let col = (a << 24) | rgb;
-    // BO2's `damage_feedback`: the X fills the top half of the image.
-    let size = 30.0 * s;
-    let (inner, outer) = (6.0 * s, 14.0 * s);
+    let col = argb((1.0, 1.0, 1.0), (t / HITMARKER_FADE).min(1.0));
     let mut fallback = Vec::new();
+    let (inner, outer) = (4.0 * u, 9.0 * u);
     for (dx, dy) in [(1.0, 1.0), (-1.0, 1.0), (1.0, -1.0), (-1.0, -1.0)] {
-        fallback.push(Prim::Line { x0: cx + dx * inner, y0: cy + dy * inner, x1: cx + dx * outer, y1: cy + dy * outer, width: 2.0 * s, argb: col });
+        fallback.push(Prim::Line { x0: cx + dx * inner, y0: cy + dy * inner, x1: cx + dx * outer, y1: cy + dy * outer, width: 1.5 * u, argb: col });
     }
-    prims.push(Prim::Image {
-        name: sprites::HIT_MARKER.to_string(),
-        x: cx - size * 0.5,
-        y: cy - size * 0.5,
-        w: size,
-        h: size * 2.0,
-        argb: col,
-        fallback,
-    });
+    prims.push(Prim::Image { name: crate::lui::materials::image("damage_feedback"), x: cx - 12.0 * u, y: cy - 12.0 * u, w: 24.0 * u, h: 48.0 * u, argb: col, fallback });
 }
 
-/// BO2's yellow "+100" score popup above-right of the crosshair after a kill.
-pub(super) fn draw_score_popup(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, client: &Client) {
+/// The score popup over the centre.
+pub(super) fn draw_score_popup(l: &Lui, prims: &mut Vec<Prim>, client: &Client) {
     let t = client.hud.score_popup;
     if t <= 0.0 || client.hud.score_points == 0 {
         return;
     }
-    let a = (t.min(0.4) / 0.4 * 255.0) as u32;
-    let col = (a << 24) | (SCORE_YELLOW & 0x00FF_FFFF);
-    let height = 26.0 * s;
-    let rise = (1.0 - t / crate::client::SCORE_POPUP_TIME).max(0.0) * 12.0 * s;
-    let top = h * 0.5 - 70.0 * s - rise;
-    let right = w * 0.5 + 40.0 * s + digit_advance(height) * client.hud.score_points.to_string().len() as f32;
-    let left = draw_number(prims, client.hud.score_points, right, top, height, col);
-    // The plus sign.
-    let (px, py, arm) = (left - 9.0 * s, top + height * 0.5, 5.0 * s);
-    prims.push(Prim::Rect { x: px - arm, y: py - 1.5 * s, w: arm * 2.0, h: 3.0 * s, argb: col });
-    prims.push(Prim::Rect { x: px - 1.5 * s, y: py - arm, w: 3.0 * s, h: arm * 2.0, argb: col });
+    let r = Place::new((true, true, 40.0, 40.0), (false, false, -75.0, -75.0 + 30.0)).resolve(l.screen());
+    l.text(prims, r, Family::Condensed, &format!("+{}", client.hud.score_points), None, (true, true), (1.0, 1.0, 1.0), 1.0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn crosshair_offset_is_g6s_480_line_value() {
+        // A 65° horizontal FOV at 4:3: tan(vfov/2) = tan(32.5°) * 0.75. A 3° spread pushes
+        // tan(3°) * 240 / that = 37.7 lines, scaled to 720 px.
+        let px = crosshair_offset(3.0, 65f32.to_radians(), 960.0, 720.0);
+        let expect = 3f32.to_radians().tan() * 240.0 / (32.5f32.to_radians().tan() * 0.75) * 1.5;
+        assert!((px - expect).abs() < 1e-3, "{px} vs {expect}");
+    }
+
+    #[test]
+    fn score_popup_sits_right_of_and_above_the_centre() {
+        let _f = crate::lui::font::lock();
+        crate::lui::font::load("");
+        let l = Lui::new(1280.0, 720.0);
+        let mut client = Client::default();
+        client.hud.score_popup = 0.5;
+        client.hud.score_points = 100;
+        let mut prims = Vec::new();
+        draw_score_popup(&l, &mut prims, &client);
+        // No fonts loaded in the test: the engine-font fallback, centred at 640 + 40.
+        assert!(matches!(&prims[0], Prim::Text { x, y, text, .. } if *x == 680.0 && *y == 285.0 && text == "+100"));
+    }
 }

@@ -35,6 +35,8 @@ pub const STREAK_BOX: &str = "ZHBO_BO2_StreakBox";
 pub const STREAK_BOX_LIT: &str = "ZHBO_BO2_StreakBoxLit";
 pub const STREAK_GLOW: &str = "ZHBO_BO2_StreakGlow";
 pub const STREAK_VSAT: &str = "ZHBO_BO2_StreakVsat";
+/// The build menu's slot in the streak column (no BO2 art: it falls back to its name).
+pub const BUILD_ICON: &str = "ZHBO_BuildIcon";
 
 // Create-a-class icons. The perk order is `weapons::PERKS` (the converter uses the same order);
 // the wildcard icons are indexed by the enum's own discriminant (`Wildcard::ALL` is the picker's

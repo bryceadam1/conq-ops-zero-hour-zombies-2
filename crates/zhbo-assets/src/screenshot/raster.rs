@@ -194,6 +194,8 @@ fn walk(prims: &[Prim], canvas: &mut Canvas, atlas: &Atlas, mut clip: Option<Cli
                     walk(fallback, canvas, atlas, clip, missing);
                 }
             },
+            // The rasteriser has no rotated blit: a quad draws its fallback (its outline).
+            Prim::Quad { fallback, .. } => walk(fallback, canvas, atlas, clip, missing),
             Prim::ClipBegin { x, y, w, h } => {
                 let rect = ClipRect { x: *x, y: *y, w: *w, h: *h };
                 clip = Some(match clip {

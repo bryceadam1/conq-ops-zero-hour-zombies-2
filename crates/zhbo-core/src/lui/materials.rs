@@ -6,7 +6,24 @@
 
 /// The materials to convert, each with the largest side it is kept at (under 1022: the atlas
 /// pages are 1024 px with a pixel of padding round each sprite).
-pub const MATERIALS: &[(&str, u32)] = &[];
+pub const MATERIALS: &[(&str, u32)] = &[
+    // The HUD (`hud::materials`; each port lists its own in its module).
+    ("hud_mp_num_big_0", 64), ("hud_mp_num_big_1", 64), ("hud_mp_num_big_2", 64), ("hud_mp_num_big_3", 64),
+    ("hud_mp_num_big_4", 64), ("hud_mp_num_big_5", 64), ("hud_mp_num_big_6", 64), ("hud_mp_num_big_7", 64),
+    ("hud_mp_num_big_8", 64), ("hud_mp_num_big_9", 64), ("hud_mp_num_big_slash", 64), ("hud_mp_num_big_line", 64),
+    ("hud_mp_num_big_0_white", 64), ("hud_mp_num_big_1_white", 64), ("hud_mp_num_big_2_white", 64),
+    ("hud_mp_num_big_3_white", 64), ("hud_mp_num_big_4_white", 64), ("hud_mp_num_big_5_white", 64),
+    ("hud_mp_num_big_6_white", 64), ("hud_mp_num_big_7_white", 64), ("hud_mp_num_big_8_white", 64),
+    ("hud_mp_num_big_9_white", 64), ("hud_mp_num_big_slash_white", 64), ("hud_mp_num_big_line_white", 64),
+    ("hud_mp_vis_right_lower_white", 512), ("hud_mp_vis_right_lower", 512),
+    ("hud_mp_vis_left_lower_back", 512), ("hud_mp_vis_left_lower", 512), ("hud_mp_vis_score_highlight", 256),
+    ("hud_mp_vis_gun_title_left", 64), ("hud_mp_vis_gun_title_mid", 64), ("hud_mp_vis_gun_title_right", 64),
+    ("hud_mp_firerate_single", 64), ("hud_mp_firerate_burst", 64), ("hud_mp_firerate_auto", 64),
+    ("hud_mp_firerate_free", 64), ("hud_mp_firerate_lock", 64), ("hud_mp_firerate_pump", 64), ("hud_mp_firerate_bolt", 64),
+    ("hud_mp_vis_ks_dpad_box_back", 128), ("hud_mp_vis_ks_dpad_box_back_lit", 128), ("hud_mp_vis_ks_dpad_box", 128),
+    ("hud_mp_vis_ks_dpad_bracket", 128),
+    ("overlay_low_health", 512), ("hit_direction", 256), ("damage_feedback", 64), ("hud_horizontal_compass_minimap", 512),
+];
 
 /// The MappedImage a BO2 material converts to.
 pub fn image(material: &str) -> String {

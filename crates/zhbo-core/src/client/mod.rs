@@ -29,8 +29,10 @@ pub struct Bindings {
     /// Throw lethal / tactical (hold to cook).
     pub lethal: Key,
     pub tactical: Key,
-    /// Held: the whole map (BO2's scoreboard key).
+    /// Held: the whole map (Zero Hour's radar).
     pub map: Key,
+    /// Held: BO2's scoreboard.
+    pub scoreboard: Key,
     /// BO2's action slot 3: the weapon's alt mode (select fire, grenade launcher, second optic).
     pub alt_mode: Key,
     /// The builder's hammer (the use key builds at a site).
@@ -57,7 +59,8 @@ impl Default for Bindings {
             field_computer: Key::F,
             lethal: Key::G,
             tactical: Key::Q,
-            map: Key::Tab,
+            map: Key::M,
+            scoreboard: Key::Tab,
             alt_mode: Key::Key3,
             hammer: Key::B,
         }
@@ -89,10 +92,12 @@ pub const BUILD_NOTE_TIME: f32 = 2.5;
 pub const HAMMER_BLOW_TIME: f32 = crate::viewmodel::HAMMER_SWING_TIME;
 pub const LEAVE_TIME: f32 = ENTER_TIME;
 const TRANSITION_SPLIT: f32 = 0.45;
-pub const HITMARKER_TIME: f32 = 0.25;
+/// BO2's hit marker fades over a second (`_damagefeedback.gsc`: `fadeovertime(1)`; Ghidra G6).
+pub const HITMARKER_TIME: f32 = crate::hud::center::HITMARKER_FADE;
 pub const DEATH_BANNER_TIME: f32 = 3.0;
 /// BO2's "+100" kill popup stays up this long; kills inside the window add up.
-pub const SCORE_POPUP_TIME: f32 = 1.4;
+/// The score popup's `DisplayTime` (`hud/scorepopup.lua:12`).
+pub const SCORE_POPUP_TIME: f32 = crate::hud::center::SCORE_DISPLAY;
 pub const KILL_POINTS: u32 = 100;
 /// Fraction of weapon recoil that permanently moves the aim (the rest recovers).
 pub const RECOIL_PERMANENT: f32 = 0.35;
@@ -295,6 +300,10 @@ pub struct HudTimers {
     pub score_points: u32,
     /// The map key is held: Zero Hour's radar over the view.
     pub map_open: bool,
+    /// The scoreboard key is held.
+    pub scoreboard_open: bool,
+    /// The BO2 HUD's clock and between-frame state (`hud::state`).
+    pub lui: crate::hud::state::HudLui,
     /// Black Hat progress (0..1) while hacking, and how long it stays up without news.
     pub hack_progress: f32,
     pub hack_shown: f32,
@@ -699,6 +708,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         };
         let mut out = ClientOut { hfov: self.last_hfov, viewmodel: viewmodel::NONE, ..Default::default() };
         self.hud.map_open = false;
+        self.hud.scoreboard_open = false;
 
         // Track logic frames for eye interpolation.
         if let Some(p) = &player {
@@ -716,6 +726,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
 
         self.consume_events(sim, inp, player.as_ref().map(|p| p.body.pos));
         self.tick_hud(dt);
+        self.hud.lui.tick(dt, player.as_ref().filter(|p| p.is_first_person()));
 
         // A forced open (the lobby's Create a Class button or the command bar's entry) keeps the
         // screen up even when a class is already chosen, so a kit can be replaced.
@@ -812,6 +823,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     self.view_eye = out.eye;
                     self.view_dir = out.dir;
                     self.hud.map_open = allowed && !in_fc && !menu && inp.keys.is_down(self.cfg.bindings.map);
+                    self.hud.scoreboard_open = allowed && !menu && inp.keys.is_down(self.cfg.bindings.scoreboard);
                     let events = std::mem::take(&mut self.vm_events);
                     let pose = self.vm_motion.update(dt, self.yaw, self.pitch, p, events.shot);
                     out.viewmodel_offset = pose.offset;
@@ -955,6 +967,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 }
                 EventKind::GeneralDied { .. } => {
                     self.hud.death_banner = DEATH_BANNER_TIME;
+                    self.hud.lui.deaths += 1;
                     if !matches!(self.view, ViewMode::Rts) {
                         self.begin_leaving(inp, self.eye_curr - Vec3::new(0.0, 0.0, 10.0));
                     }
@@ -965,6 +978,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     self.hud.hitmarker_kill = kill;
                     self.hud.hitmarker_head = headshot;
                     if kill {
+                        self.hud.lui.kills += 1;
                         if self.hud.score_popup <= 0.0 {
                             self.hud.score_points = 0;
                         }
