@@ -85,8 +85,11 @@ pub fn draw_editor(prims: &mut Vec<Prim>, w: f32, h: f32, editor: &Editor, deny:
         _ if editor.picking => draw_option_grid(prims, &l, editor),
         _ => draw_editor_grid(prims, &l, editor, now),
     }
-    // The prompt bars: ESC Back left; the walk's affordances right (BO2's `R Remove` only while the
-    // highlighted slot holds something, `b-editor/002` vs `/028`).
+    // The prompt bars: `ESC Back` and `TAB Personalize Knife` on the left (`caceditclass.lua:46-63`
+    // adds the knife prompt to the left bar; `b-editor/002` and `/028` show the pair), `R Remove`
+    // on the right only while the highlighted slot holds something (`b-editor/002` vs `/028`).
+    // The standalone pickers are separate menus and carry only `ESC Back` (`c-primary/001`,
+    // `d-attach/002`); the mod's category pager and gun row are mouse/wheel targets, not prompts.
     let cells = editor_cells(&l, editor);
     let removable = cells.iter().any(|c| c.slot == editor.slot && cell_filled(editor, c));
     let mut left: Vec<(&str, &str)> = vec![("ESC", "Back")];
@@ -94,19 +97,14 @@ pub fn draw_editor(prims: &mut Vec<Prim>, w: f32, h: f32, editor: &Editor, deny:
         left = vec![("ENTER", "Done"), ("BKSP", "Delete")];
         Vec::new()
     } else if editor.picking {
-        if matches!(editor.slot, Slot::Primary | Slot::Secondary) {
-            vec![("LEFT/RIGHT", "Category"), ("UP/DOWN", "Gun"), ("ENTER", "Choose")]
-        } else {
-            vec![("ENTER", "Choose")]
-        }
+        Vec::new()
     } else {
-        // BO2's order: `R Remove` rightmost, `ENTER Open` beside it.
-        let mut v = Vec::new();
+        left = vec![("ESC", "Back"), ("TAB", "Personalize Knife")];
         if removable {
-            v.push(("R", "Remove"));
+            vec![("R", "Remove")]
+        } else {
+            Vec::new()
         }
-        v.push(("ENTER", "Open"));
-        v
     };
     let boxes = bo2::prompt_boxes(f, &left, &right);
     bo2::draw_prompts(prims, f, &boxes);
