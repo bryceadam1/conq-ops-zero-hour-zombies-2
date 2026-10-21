@@ -254,8 +254,8 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
   `zhbo_native_body`. `DRAWN` (1): the bridge hides the W3D `W<vm><k>` sub-objects. Anything else
   (0 not native, 2 still loading) leaves the W3D weapon showing — and the `s_worldLooks` cache
   remembers the native flag, so a failed native draw brings the W3D weapon back instead of leaving
-  nothing. `ZHBO_NATIVE_BODY=1` draws the weapon while the W3D body stays; `=2` is meant to draw the
-  body too, but the bridge's hide is blocked (see *The two modes* below). `zhbo_native_body_enabled`
+  nothing. `ZHBO_NATIVE_BODY=1` draws the weapon while the W3D body stays; `=2` draws the body and
+  the weapon and hides the W3D body (see *The two modes* below). `zhbo_native_body_enabled`
   is the mode the bridge tests before doing the third-person work at all.
 * **The two modes.** In *weapon* mode (M2) the gun is placed by the engine's world-space
   `tag_weapon_right` transform (`ZhboNativeBodyIn.tag`, read from the drawable), scaled once at the
@@ -263,13 +263,16 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
   rig is placed at the General object's world transform (`pos`/`yaw` from the sim's `NativePose`);
   the bridge's tag is ignored. The body's clip is picked from the movement state with the
   run-time fallback chain (`state::fallbacks`); the full BO2 transition graph and blend times are
-  deliberately skipped. The bridge must hide the whole W3D body in body mode when the native pass
-  returns `DRAWN`. That hide is not wired yet: the first-person hidden body's path
-  (`setHiddenObject` → `Drawable::setDrawableHidden`) also makes the General unselectable
-  (`Drawable::updateHiddenStatus` deselects him; `CanSelectDrawable`/`SelectionInfo` skip
-  effectively hidden drawables), which would leave the overhead General uncommandable. Body mode 2
-  needs a hide that leaves the drawable selectable (or must exclude the controlled General) before
-  the bridge can use it; see the MODLOG entry.
+  deliberately skipped. The bridge hides the whole W3D body in body mode when the native pass
+  returns `DRAWN`, through the draw modules (`Drawable::getDrawModules()` →
+  `ObjectDrawInterface::setHidden`), not `Drawable::setDrawableHidden`. The first-person path's
+  `setDrawableHidden` sets `Drawable::m_hidden`; `Drawable::updateHiddenStatus` then deselects the
+  General (`CanSelectDrawable`/`SelectionInfo` also refuse effectively hidden drawables). The
+  draw-module call hides only the W3D render object and its effects (`W3DModelDraw::setHidden`) and
+  leaves `m_hidden` false, so the General stays selected and commandable. The bridge re-asserts the
+  hide every frame and restores the body to the drawable's own effective-hidden state as soon as
+  the native pass stops returning `DRAWN`, so a refused draw never leaves an invisible,
+  uncommandable General.
 * **The core cannot open the archive; it asks.** After each `zhbo_native_body` call the bridge
   answers every `zhbo_native_body_wanted(i)` path with `zhbo_native_body_provide(path, bytes, len)`
   (`len < 0`: not in the archive, after which that rig is given up and logged once) and prints every
