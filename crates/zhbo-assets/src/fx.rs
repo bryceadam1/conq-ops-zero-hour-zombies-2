@@ -104,10 +104,9 @@ fn units(inches: f32) -> f32 {
     zhbo_core::units::inches(inches)
 }
 
-/// The Zero Hour name of a converted BO2 effect.
+/// The Zero Hour name of a converted BO2 effect (the registry's builder, `names::bo2_fx`).
 pub fn fxlist_name(effect: &str) -> String {
-    let clean: String = effect.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
-    format!("ZHBO_BO2FX_{clean}")
+    zhbo_core::names::bo2_fx(effect)
 }
 
 /// Converted effects: the particle system and FXList INI text, and their textures.
