@@ -248,12 +248,11 @@ pub fn carousel_shown() -> usize {
 
 /// A grid picker's columns for a slot: `CoD.CACAttachments.GridColumns` is 6,
 /// `CoD.CACPerksP.GridColumns` 3 (the perks, wildcards and grenade pickers share it,
-/// `e-perks/001`, `f-wildcards/001`).
+/// `e-perks/001`, `f-wildcards/001`). The count lives on the pure slot model
+/// (`Slot::option_columns`, which the editor's own walk reads), so the picture and the arrows can
+/// never disagree; the carousel has no grid and falls back to the common three.
 pub fn grid_columns(slot: Slot) -> usize {
-    match slot {
-        Slot::PrimaryAtts | Slot::SecondaryAtts => 6,
-        _ => 3,
-    }
+    slot.option_columns().unwrap_or(3)
 }
 
 /// One grid picker's cell box (menu-relative): `GridItemWidth` = (864 − spacing × (cols−1)) / cols,

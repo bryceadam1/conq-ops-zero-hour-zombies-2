@@ -595,3 +595,78 @@ fn a_stored_over_budget_class_opens_repaired() {
     assert!(repaired.valid());
     assert_eq!(repaired.name, "Fat", "the class's identity survives the repair");
 }
+
+#[test]
+fn the_content_grid_links_match_bo2s_contentgrid() {
+    // `contentgrid.lua:91-122` with 7 cells, 3 wide (the perk/wildcard shape):
+    //   row 0: 0 1 2   row 1: 3 4 5   row 2 (short): 6
+    // Left/Right wrap inside the row (never page); a one-cell row keeps no link (a no-op move).
+    assert_eq!(grid_right(0, 7, 3), 1);
+    assert_eq!(grid_right(1, 7, 3), 2);
+    assert_eq!(grid_right(2, 7, 3), 0, "the row's last cell links to its first");
+    assert_eq!(grid_left(0, 7, 3), 2, "and the first back to the last");
+    assert_eq!(grid_left(1, 7, 3), 0);
+    assert_eq!(grid_left(6, 7, 3), 6, "a one-cell row has no left link");
+    assert_eq!(grid_right(6, 7, 3), 6, "nor a right one");
+    // Up/Down walk the cells that hold the column and wrap between the first and last of them:
+    // cells 1, 4, 7 are column 1 but the short last row has none, so 1 <-> 4 wrap.
+    assert_eq!(grid_down(1, 7, 3), 4);
+    assert_eq!(grid_down(4, 7, 3), 1, "the last row holding the column links back");
+    assert_eq!(grid_up(4, 7, 3), 1);
+    assert_eq!(grid_up(1, 7, 3), 4);
+    // Column 0 has all three rows: 0 -> 3 -> 6 -> 0, and back.
+    assert_eq!(grid_down(0, 7, 3), 3);
+    assert_eq!(grid_down(3, 7, 3), 6);
+    assert_eq!(grid_down(6, 7, 3), 0);
+    assert_eq!(grid_up(0, 7, 3), 6);
+    assert_eq!(grid_up(6, 7, 3), 3);
+    // A full grid is the plain rectangle; a one-row grid never leaves it (BO2's self-links no-op).
+    for i in 0..6 {
+        assert_eq!(grid_down(i, 6, 3), (i + 3) % 6);
+        assert_eq!(grid_up(i, 6, 3), (i + 3) % 6);
+    }
+    assert_eq!(grid_right(5, 6, 3), 3);
+    assert_eq!(grid_left(3, 6, 3), 5);
+    for i in 0..3 {
+        assert_eq!(grid_down(i, 3, 3), i);
+        assert_eq!(grid_up(i, 3, 3), i);
+    }
+    // The attachment grid is six wide (`cacattachmentsmenu.lua:9`).
+    assert_eq!(grid_right(5, 13, 6), 0);
+    assert_eq!(grid_left(0, 13, 6), 5);
+    assert_eq!(grid_down(5, 13, 6), 11, "the last row holding column 5 is row 1");
+    assert_eq!(grid_down(11, 13, 6), 5);
+    assert_eq!(grid_down(6, 13, 6), 12);
+    assert_eq!(grid_down(12, 13, 6), 0);
+    assert_eq!(grid_up(0, 13, 6), 12, "the short last row's own cell links back");
+}
+
+#[test]
+fn a_grid_picker_walks_two_dimensions_and_a_wide_slot_says_so() {
+    // The perk picker's list is three wide (`cacperksp.lua:7`); `Editor::step` folds the arrows.
+    assert_eq!(Slot::Perk2.option_columns(), Some(3));
+    assert_eq!(Slot::PrimaryAtts.option_columns(), Some(6), "`cacattachmentsmenu.lua:9`");
+    assert_eq!(Slot::Wildcards.option_columns(), Some(3), "`cacbonuscards.lua:7`");
+    assert_eq!(Slot::Primary.option_columns(), None, "the carousel walks categories, not a grid");
+    assert_eq!(Slot::Name.option_columns(), None);
+
+    let mut e = Editor::new(Draft::default());
+    e.slot = Slot::Perk2;
+    e.picking = true;
+    e.option = 0;
+    e.step(Edges { right: true, ..Default::default() });
+    assert_eq!(e.option, 1, "Right stays in the row");
+    e.step(Edges { left: true, ..Default::default() });
+    assert_eq!(e.option, 0);
+    e.step(Edges { left: true, ..Default::default() });
+    let row_end = e.options().len().min(3) - 1;
+    assert_eq!(e.option, row_end, "Left off the row's edge wraps to its last cell");
+    e.step(Edges { right: true, ..Default::default() });
+    assert_eq!(e.option, 0, "Right off the row's edge wraps to its first");
+    // Down moves a row (three cells), not to the next flat item.
+    let n = e.options().len();
+    e.step(Edges { down: true, ..Default::default() });
+    assert_eq!(e.option, if n > 3 { 3 } else { 0 });
+    e.step(Edges { up: true, ..Default::default() });
+    assert_eq!(e.option, 0);
+}

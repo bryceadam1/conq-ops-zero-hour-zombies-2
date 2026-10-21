@@ -1630,6 +1630,46 @@ Verified: cargo test --workspace green; the FULL real-install suite green (zhbo-
 zhbo-assets 7); clippy clean in the touched crates; `cargo xtask build` clean; in-game autotest
 13/13 default, 13/13 with `ZHBO_NATIVE_VIEWMODEL=1 ZHBO_NATIVE_COMPARE=1`, 14/14 `--rts`.
 
+## v1.0 Track C leftovers: the content grids walk in two dimensions (2026-10-21)
+
+The pure editor's `step_picking` walked the option list as a single line: Up/Down visited the next
+and previous flat option and Left/Right were not read at all, so BO2's 3-wide perk/wildcard grid
+(and the 6-wide attachment grid) could only be walked with Up/Down. The carousel was the only
+two-dimensional picker.
+
+It now uses BO2's own `ContentGrid` links (`patch_mp/ui/t6/contentgrid.lua:91-122`, through
+`SetNavigation` at `:137-144`), which the CAC screens really do use:
+`cacattachmentsmenu.lua:178-189` builds `CoD.ContentGrid.new(CoD.CACAttachments.GridColumns, …)`
+with `GridColumns = 6` (`:9`), `cacperksp.lua:194-199` the 3-wide perk grid (`:7`), and
+`cacbonuscards.lua:185-190` the 3-wide wildcard grid (`:7`). The links are:
+
+- **Left/Right wrap inside the row.** A new cell links to the cell before it (same row) and its
+  `right` to the row's *first* cell; the first cell's `left` is back-linked to the row's last. So
+  Left off a row's left edge lands on its rightmost cell, and Right off the right edge on its
+  leftmost. A one-cell row has neither link (BO2's `SetNavigation` skips a target that is the
+  button itself), which is a no-op move here.
+- **Up/Down wrap inside the column**, not the flat list: each row links to the row above/below in
+  the same column and back, and the first row's `up` is re-linked by the last row that holds the
+  column. A short last row therefore has no cell in the columns it does not reach, and those
+  columns wrap between the first and last rows that do have them.
+- **There is no page step on Left/Right.** The "row-edge step the page" in the task's premise is
+  not in this Lua: `ContentGrid` is one un-paged grid, and the only paging in the dump is
+  `ScrollableContentGrid` (`scrollablecontentgrid.lua:559-745`, Up/Down page by a gridful), which
+  none of the CAC screens build. The port wraps, as the Lua does.
+
+The column count is now a property of the pure slot model (`Slot::option_columns`: 6 for the
+attachment rows, 3 for every other content grid, `None` for the carousel and the non-list rows),
+and `classui::grid_columns` (the drawing window) delegates to it, so the picture and the arrows
+cannot disagree. The weapon carousel keeps its category walk: `classui::editor_frame` consumes its
+four arrows before the pure editor sees them, and `step_picking`'s linear branch remains only for
+that path.
+
+Tests: `cargo test -p zhbo-core` green (39 classui + 37 classmenu among them), clippy clean in the
+touched files. New: the link table itself on a 7-cell/3-wide grid, a full 6-wide attachment grid,
+a one-row grid and a short last row; and the shared input fold walking a perk grid with all four
+arrows, asserting `cac_grid_nav` on the move and that Left/Right wrap the row while Down/Up move a
+row.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

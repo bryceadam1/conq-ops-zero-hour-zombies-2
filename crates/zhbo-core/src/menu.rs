@@ -605,7 +605,9 @@ mod tests {
         }
         assert_eq!(menu.editor.as_ref().expect("editor open").slot, crate::classmenu::Slot::Lethal);
         press(&mut menu, &mut inp, Key::Enter); // open the Lethal slot's list
-        press(&mut menu, &mut inp, Key::Down); // the next lethal down
+        // The list is a content grid (`contentgrid.lua`): its items sit in a row, so Right moves
+        // along it (Down only leaves a row that has another one below).
+        press(&mut menu, &mut inp, Key::Right);
         press(&mut menu, &mut inp, Key::Enter); // choose it
         let out = save_open_editor(&mut menu, &mut inp);
         assert!(menu.editor.is_none(), "saving closes the editor");
@@ -778,7 +780,9 @@ mod tests {
             press(&mut menu, &mut inp, Key::Down);
         }
         press(&mut menu, &mut inp, Key::Enter);
-        press(&mut menu, &mut inp, Key::Down);
+        // The lethal list is a content grid: Right walks its row (Down leaves a row only when
+        // another is below).
+        press(&mut menu, &mut inp, Key::Right);
         press(&mut menu, &mut inp, Key::Enter);
         let out = save_open_editor(&mut menu, &mut inp);
         assert_eq!(out.save_profile, classui::SAVE_PROFILE_CLASS);

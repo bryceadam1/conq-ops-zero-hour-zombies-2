@@ -350,6 +350,34 @@ fn an_option_grid_hit_tests_every_card_it_draws() {
 }
 
 #[test]
+fn the_shared_fold_walks_a_content_grid_with_all_four_arrows() {
+    // The perk picker's grid is three wide (`cacperksp.lua:7`). The shared fold passes the arrows
+    // to the pure editor now, so the hosts get BO2's ContentGrid links without their own code.
+    let mut e = Editor::new(Draft::default());
+    e.slot = Slot::Perk2;
+    e.picking = true;
+    e.option = 0;
+    let n = e.options().len();
+    assert!(n >= 4, "tier 2 has a second row to walk: {n}");
+    let mut prev = MenuPrev::default();
+
+    let f = press(&mut e, &mut prev, &[Key::Right]);
+    assert_eq!(e.option, 1, "Right stays in the row");
+    assert_eq!(f.cue, Some(cues::GRID_NAV), "a grid move plays cac_grid_nav");
+    press(&mut e, &mut prev, &[Key::Left]);
+    assert_eq!(e.option, 0);
+    press(&mut e, &mut prev, &[Key::Left]);
+    assert_eq!(e.option, 2, "Left off the row's edge wraps to its last cell");
+    press(&mut e, &mut prev, &[Key::Right]);
+    assert_eq!(e.option, 0, "Right off the row's edge wraps to its first");
+    press(&mut e, &mut prev, &[Key::Down]);
+    assert_eq!(e.option, 3, "Down is one row, not the next flat option");
+    press(&mut e, &mut prev, &[Key::Up]);
+    assert_eq!(e.option, 0);
+    assert!(e.picking, "the arrows never close the list");
+}
+
+#[test]
 fn the_option_grid_labels_the_option_under_each_cell_and_highlights_the_chosen_one() {
     let mut e = Editor::new(Draft::default());
     e.slot = Slot::Perk3;
