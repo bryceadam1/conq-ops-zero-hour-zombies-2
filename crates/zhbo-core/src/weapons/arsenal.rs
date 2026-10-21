@@ -55,8 +55,11 @@ pub struct WeaponState {
     /// The alt mode's own ammo while the main mode is up (and the main mode's while the alt is).
     pub alt_ammo: u16,
     pub alt_reserve: u16,
-    /// Shots in the current string of fire (the grip's recoil reduction builds over it).
+    /// Shots in the current string of fire (the reduced-kick window counts it).
     pub string: u16,
+    /// The grip's recoil-reduction accumulator, and seconds since the last shot (G5).
+    pub recoil_acc: f32,
+    pub since_shot: f32,
 }
 
 impl WeaponState {
@@ -79,6 +82,8 @@ impl WeaponState {
             alt_ammo: 0,
             alt_reserve: 0,
             string: 0,
+            recoil_acc: 0.0,
+            since_shot: 10.0,
         }
         .with_alt_ammo()
     }
@@ -189,8 +194,8 @@ pub struct Offhand {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum WeaponAction {
     /// Fire one round (one pellet for shotguns) with the given cone (degrees), random offsets in
-    /// [-1, 1) and view kick (degrees pitch up, yaw).
-    Fire { spread_deg: f32, jitter: (f32, f32), recoil: (f32, f32), pellet: u16 },
+    /// [-1, 1), view kick (degrees pitch up, yaw, roll) and the gun kick spring's impulse.
+    Fire { spread_deg: f32, jitter: (f32, f32), recoil: (f32, f32, f32), gun_kick: (f32, f32), pellet: u16 },
     /// Launch a projectile (launchers, crossbow, ballistic knife); `pellet` numbers the bolts of
     /// one shot (the tri-bolt's three).
     Launch { def: &'static WeaponDef, pellet: u16 },
@@ -526,6 +531,23 @@ impl Arsenal {
         (blast, stun)
     }
 
+    /// The hip spread cone's min and max at an eye height (inches; Ghidra G6): the weapon's
+    /// stance values blended by eye height, x0.65 with `bulletaccuracy`.
+    pub fn spread_cone(&self, view_height: f32) -> (f32, f32) {
+        super::recoil::spread_range(self.current().def, view_height, self.has_specialty(Specialty::BulletAccuracy), &self.tuning)
+    }
+
+    /// The spread now (degrees) at a stance (0 stand, 1 crouch, 2 prone) and aim: the cone's
+    /// minimum plus the bloom, at most its maximum, blending to the ADS spread as the gun aims.
+    pub fn spread_now(&self, stance: usize, ads: f32) -> f32 {
+        let t = &self.tuning;
+        let height = [t.player_standing_view_height, t.view_height_crouch, t.view_height_prone][stance.min(2)];
+        let (min, max) = self.spread_cone(height);
+        let w = self.current();
+        let hip = (min + w.bloom).min(max);
+        hip + (w.def.ads_spread - hip) * ads
+    }
+
     /// `movefaster` (Lightweight): the run speed is `g_speed x perk_speedMultiplier` (G2).
     pub fn move_faster(&self) -> bool {
         self.has_specialty(Specialty::MoveFaster)
@@ -659,6 +681,7 @@ impl Arsenal {
         for w in &mut self.weapons {
             let decay = w.def.spread_decay.max(0.1);
             w.bloom = (w.bloom - decay * dt).max(0.0);
+            w.since_shot += dt;
         }
 
         // Offhands: hold to pull back (and cook), release to throw.
@@ -780,7 +803,8 @@ impl Arsenal {
             }
             return;
         }
-        let kick = if ads > 0.5 { def.ads_kick } else { def.hip_kick };
+        let spread_now = self.spread_now(stance, ads);
+        let w = self.current_mut();
         if !(held & buttons::FIRE != 0) {
             w.string = 0;
         }
@@ -794,18 +818,19 @@ impl Arsenal {
                     out.push(WeaponAction::Launch { def, pellet });
                 }
             } else {
-                let spread = w.spread_deg(stance, ads) + if ads < 0.5 { def.spread_move_add * (speed / 30.0).min(1.0) } else { 0.0 };
-                // The grip: aimed kick shrinks with each shot of a string, down to its limit.
-                let (rate, limit) = def.recoil_reduction;
-                let reduce = if ads > 0.5 { 1.0 - (rate * w.string as f32).min(limit) } else { 1.0 };
+                let spread = spread_now + if ads < 0.5 { def.spread_move_add * (speed / 30.0).min(1.0) } else { 0.0 };
+                // BO2's per-shot kick (G5); the view kick's degrees scale is still the mod's
+                // (G5 leaves its consumer unresolved).
+                let k = super::recoil::shot_kick(def, ads, w.string, &mut w.recoil_acc, w.since_shot, rng);
+                w.since_shot = 0.0;
                 for pellet in 0..def.pellets.max(1) {
                     let jitter = (rng.signed(), rng.signed());
-                    let recoil = if pellet == 0 {
-                        (rng.range(kick.pitch) * KICK_TO_DEGREES * reduce, rng.range(kick.yaw) * KICK_TO_DEGREES * reduce)
+                    let (recoil, gun_kick) = if pellet == 0 {
+                        ((k.view.0 * KICK_TO_DEGREES, k.view.1 * KICK_TO_DEGREES, k.view.2 * KICK_TO_DEGREES), k.gun)
                     } else {
-                        (0.0, 0.0)
+                        ((0.0, 0.0, 0.0), (0.0, 0.0))
                     };
-                    out.push(WeaponAction::Fire { spread_deg: spread, jitter, recoil, pellet });
+                    out.push(WeaponAction::Fire { spread_deg: spread, jitter, recoil, gun_kick, pellet });
                 }
             }
             w.ammo -= 1;

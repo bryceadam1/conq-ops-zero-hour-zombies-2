@@ -11,7 +11,7 @@ use super::*;
 impl Sim {
     pub(super) fn apply_weapon_action(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, action: WeaponAction) {
         match action {
-            WeaponAction::Fire { spread_deg, jitter, recoil, pellet } => {
+            WeaponAction::Fire { spread_deg, jitter, recoil, gun_kick, pellet } => {
                 let def = p.arsenal.current().def;
                 let eye = p.body.eye();
                 // Random point in the spread cone (polar mapping of two uniform samples).
@@ -37,7 +37,7 @@ impl Sim {
                     self.equipment_events(vec![e]);
                     if pellet == 0 {
                         self.emit(idx, EventKind::Shot { origin: eye, end: eye + dir * t });
-                        self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1 });
+                        self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1, roll_deg: recoil.2, gun_kick });
                     }
                     return;
                 }
@@ -73,7 +73,7 @@ impl Sim {
                 }
                 if pellet == 0 {
                     self.emit(idx, EventKind::Shot { origin: eye, end: hit.point() });
-                    self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1 });
+                    self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1, roll_deg: recoil.2, gun_kick });
                 }
             }
             WeaponAction::Launch { def, pellet } => {

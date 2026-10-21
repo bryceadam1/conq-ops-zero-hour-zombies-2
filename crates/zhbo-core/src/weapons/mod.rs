@@ -12,6 +12,7 @@ pub mod def;
 pub mod feel;
 pub mod loadout;
 pub mod perks;
+pub mod recoil;
 pub mod rng;
 pub mod specialty;
 pub mod table;

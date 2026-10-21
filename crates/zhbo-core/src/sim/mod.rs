@@ -111,7 +111,12 @@ pub enum EventKind {
     ReturnedToRts { general: u32 },
     Shot { origin: Vec3, end: Vec3 },
     HitMarker { headshot: bool, kill: bool },
-    Recoil { pitch_deg: f32, yaw_deg: f32 },
+    /// A shot's view kick (G5: pitch up, yaw, roll -0.5 x yaw) and the gun kick spring's impulse
+    /// (`weapons::recoil::GunKickSpring`).
+    Recoil { pitch_deg: f32, yaw_deg: f32, roll_deg: f32, gun_kick: (f32, f32) },
+    /// Damage flinch (G7): the view kicks this far, the engine's no-direction branch (the sim
+    /// carries no damage direction), and settles over `FlinchTime`.
+    Flinch { pitch_deg: f32 },
     Damaged { amount: f32 },
     ReloadStarted,
     Swapped,
@@ -658,7 +663,11 @@ impl Sim {
         p.max_health = info.max_health;
         if info.health < p.health - 1e-3 {
             p.regen_wait = regen_delay();
-            self.emit(idx, EventKind::Damaged { amount: p.health - info.health });
+            let amount = p.health - info.health;
+            self.emit(idx, EventKind::Damaged { amount });
+            let toughness = p.arsenal.class_specialties().has(Specialty::BulletFlinch);
+            let flinch = crate::weapons::recoil::flinch_degrees(amount / crate::units::BO2_TO_ZH_DAMAGE, toughness, &p.arsenal.tuning);
+            self.emit(idx, EventKind::Flinch { pitch_deg: flinch });
         } else {
             p.regen_wait = (p.regen_wait - LOGIC_DT).max(0.0);
             if p.regen_wait <= 0.0 && info.health < info.max_health {
@@ -1504,6 +1513,29 @@ pub(crate) mod tests {
         run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
         assert!(sim.player(0).is_none());
         assert!(events(&sim).contains(&EventKind::GeneralDied { general: 1 }));
+    }
+
+    #[test]
+    fn damage_flinches_the_view_and_toughness_cuts_it() {
+        // G7: flinch = BO2 damage x bg_viewKickScale (0.175), x0.25 with Toughness.
+        let flinch_for = |toughness: bool| {
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            sim.take_control(&host, 0, 1);
+            run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+            let p = sim.players[0].as_mut().unwrap();
+            p.arsenal.loadout.perks.retain(|k| *k != crate::weapons::Perk::TOUGHNESS);
+            if toughness {
+                p.arsenal.loadout.perks.push(crate::weapons::Perk::TOUGHNESS);
+            }
+            // 60 Zero Hour points are 40 on BO2's scale.
+            host.objects.borrow_mut()[0].health -= 40.0 * crate::units::BO2_TO_ZH_DAMAGE;
+            run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+            events(&sim).into_iter().find_map(|k| if let EventKind::Flinch { pitch_deg } = k { Some(pitch_deg) } else { None }).expect("a flinch")
+        };
+        assert!((flinch_for(false) - 7.0).abs() < 1e-3);
+        assert!((flinch_for(true) - 1.75).abs() < 1e-3);
     }
 
     #[test]
