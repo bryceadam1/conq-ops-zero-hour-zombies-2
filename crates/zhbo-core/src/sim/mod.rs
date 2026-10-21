@@ -221,6 +221,24 @@ impl PlayerSim {
     }
 }
 
+/// One General's native third-person frame: what the bridge needs to draw his body and the weapon
+/// in his hand without asking the sim again (Track R7). Presentation only; nothing reads it back.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NativePose {
+    pub general: u32,
+    /// The converted weapon index in hand, or -1 for none (the knife/unarmed).
+    pub weapon: i32,
+    /// 0 stand, 1 crouch, 2 prone.
+    pub stance: i32,
+    /// The body clip (`zhbo_native::thirdperson::state`).
+    pub state: u16,
+    /// Seconds into the clip and its playback rate.
+    pub time: f32,
+    pub rate: f32,
+    /// The second gun is in hand (BO2's pistol stance).
+    pub sidearm: bool,
+}
+
 pub struct Sim {
     pub players: Vec<Option<PlayerSim>>,
     /// Grenades and rockets in flight, with the player who threw them.
@@ -648,6 +666,41 @@ impl Sim {
                     _ => 0,
                 };
                 (p.general, a.current().def.viewmodel.max(0), tablet, a.active == 1)
+            })
+            .collect()
+    }
+
+    /// What each General's native third person needs this frame (Track R7): the weapon in hand
+    /// (`WeaponDef::viewmodel`, -1 for none), the stance and the body clip the sim's movement
+    /// state picks, the clip's clock and the pistol stance. `moving` is the engine's answer for
+    /// the General the bridge asks about while he is under RTS control (the sim does not step his
+    /// body then), ignored while first person.
+    pub fn native_poses(&self, moving: Option<(u32, bool)>) -> Vec<NativePose> {
+        let run_speed = self.tuning.run_speed(false);
+        let time = self.frame as f32 * LOGIC_DT;
+        self.players
+            .iter()
+            .flatten()
+            // First person draws the viewmodel's arms; only the overhead view needs the body.
+            .filter(|p| !p.is_first_person())
+            .map(|p| {
+                let a = &p.arsenal;
+                let stance = match p.body.stance {
+                    movement::Stance::Stand => 0,
+                    movement::Stance::Crouch => 1,
+                    movement::Stance::Prone => 2,
+                };
+                let engine_moving = moving.is_some_and(|(g, m)| g == p.general && m) && !p.is_first_person();
+                let speed = p.body.horizontal_speed();
+                NativePose {
+                    general: p.general,
+                    weapon: a.current().def.viewmodel,
+                    stance,
+                    state: crate::nativebody::state_of(stance, speed, p.body.sprinting, a.ads, a.active == 1, engine_moving, run_speed),
+                    time,
+                    rate: 1.0,
+                    sidearm: a.active == 1,
+                }
             })
             .collect()
     }

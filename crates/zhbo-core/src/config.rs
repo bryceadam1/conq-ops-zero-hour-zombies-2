@@ -30,17 +30,31 @@ pub struct Config {
     /// `ZHBO_NATIVE_VIEWMODEL=1`: draw the first-person weapon through the renderer's native BO2
     /// pass (`nativevm`) instead of the W3D conversion. Presentation only, never a sim input.
     pub native_viewmodel: bool,
+    /// `ZHBO_NATIVE_BODY`: the third-person General through the same native pass (`nativebody`).
+    /// 0 off (W3D), 1 the weapon in his hand while the W3D body draws, 2 the body too (Track R7's
+    /// staging: verify the weapon before the body). Presentation only.
+    pub native_body: u8,
 }
 
 impl Config {
     /// Parse the two variables (the C++ side parses them once into `ZhboConfig` the same way).
     pub fn parse(loadout: Option<&str>, autopilot: Option<&str>) -> Config {
-        Config { loadout: loadout.filter(|s| !s.is_empty()).map(str::to_string), autopilot: autopilot_mode(autopilot), native_viewmodel: false }
+        Config { loadout: loadout.filter(|s| !s.is_empty()).map(str::to_string), autopilot: autopilot_mode(autopilot), native_viewmodel: false, native_body: 0 }
     }
 
     /// Read the environment once at init.
     pub fn from_env() -> Config {
-        Config { native_viewmodel: flag(env("ZHBO_NATIVE_VIEWMODEL")), ..Config::parse(env("ZHBO_LOADOUT"), env("ZHBO_AUTOPILOT")) }
+        Config { native_viewmodel: flag(env("ZHBO_NATIVE_VIEWMODEL")), native_body: body_mode(env("ZHBO_NATIVE_BODY")), ..Config::parse(env("ZHBO_LOADOUT"), env("ZHBO_AUTOPILOT")) }
+    }
+}
+
+/// `ZHBO_NATIVE_BODY`: 0 off, 1 the weapon only (the W3D body draws), 2 the body and the weapon.
+/// `full` and `weapon` are the same spellings the plan uses in prose.
+pub fn body_mode(value: Option<&str>) -> u8 {
+    match value.map(|v| v.trim().to_ascii_lowercase()) {
+        Some(v) if v == "2" || v == "full" => 2,
+        Some(v) if matches!(v.as_str(), "1" | "true" | "yes" | "on" | "weapon") => 1,
+        _ => 0,
     }
 }
 
@@ -80,7 +94,7 @@ pub fn init(config: Config) {
 /// must not fill the cell: the bridge's loaders run before `zhbo_init`, and a `get_or_init` here
 /// once locked the defaults in, so `init` silently dropped every variable it parsed.
 pub fn get() -> &'static Config {
-    static DEFAULT: Config = Config { loadout: None, autopilot: Autopilot::Off, native_viewmodel: false };
+    static DEFAULT: Config = Config { loadout: None, autopilot: Autopilot::Off, native_viewmodel: false, native_body: 0 };
     CONFIG.get().unwrap_or(&DEFAULT)
 }
 
@@ -131,6 +145,17 @@ mod tests {
         assert!(flag(Some("1")) && flag(Some("TRUE")) && flag(Some("on")));
         assert!(!flag(None) && !flag(Some("0")) && !flag(Some("no")) && !flag(Some("")));
         assert!(!Config::parse(None, None).native_viewmodel, "off unless asked for");
+    }
+
+    #[test]
+    fn the_native_body_stages_the_weapon_before_the_body() {
+        assert_eq!(body_mode(None), 0);
+        assert_eq!(body_mode(Some("0")), 0);
+        assert_eq!(body_mode(Some("weapon")), 1);
+        assert_eq!(body_mode(Some("TRUE")), 1);
+        assert_eq!(body_mode(Some("2")), 2);
+        assert_eq!(body_mode(Some("full")), 2);
+        assert_eq!(body_mode(Some("garbage")), 0);
     }
 
     #[test]

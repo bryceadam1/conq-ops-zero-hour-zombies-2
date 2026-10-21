@@ -41,6 +41,32 @@ pub const ART_SCALE: f32 = zhbo_native::ART_SCALE;
 /// The marker the converter places for aiming (`zhbo_assets::native::AIM_TAG`).
 pub const AIM_TAG: &str = zhbo_native::AIM_TAG;
 
+/// A surface's blend as the renderer's pipeline enum. Shared with the third person so the two
+/// native paths cannot drift.
+#[cfg(feature = "renderer")]
+pub(crate) fn native_blend(b: Blend) -> zhbo_gfx::runtime::NativeBlend {
+    use zhbo_gfx::runtime::NativeBlend;
+    match b {
+        Blend::Opaque => NativeBlend::Opaque,
+        Blend::AlphaTest => NativeBlend::AlphaTest,
+        Blend::Alpha => NativeBlend::Alpha,
+        Blend::Premultiplied => NativeBlend::Premultiplied,
+        Blend::Additive { alpha: false } => NativeBlend::Additive,
+        Blend::Additive { alpha: true } => NativeBlend::AdditiveAlpha,
+    }
+}
+
+/// A surface's cull mode as the renderer's pipeline enum.
+#[cfg(feature = "renderer")]
+pub(crate) fn native_cull(c: Cull) -> zhbo_gfx::runtime::NativeCull {
+    use zhbo_gfx::runtime::NativeCull;
+    match c {
+        Cull::None => NativeCull::None,
+        Cull::Back => NativeCull::Back,
+        Cull::Front => NativeCull::Front,
+    }
+}
+
 /// Files the core asked the bridge for, and what came back.
 #[derive(Default)]
 pub struct Files {

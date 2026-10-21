@@ -2,10 +2,10 @@
 //! once per viewmodel, submit the posed palette each frame.
 
 use zhbo_gfx::ffi::with_renderer;
-use zhbo_gfx::runtime::{NativeBlend, NativeCull, NativeDraw, NativeFrame, NativeLight, NativeSurface, NativeVertex, INVALID};
-use zhbo_native::model::{Blend, Cull};
+use zhbo_gfx::runtime::{NativeDraw, NativeFrame, NativeLight, NativeSurface, NativeVertex, INVALID};
 
 use super::ffi::{State, ZhboNativeIn, DRAWN, LOADING, NOT_NATIVE};
+use super::{native_blend, native_cull};
 
 /// The handles of the viewmodel on the GPU.
 #[derive(Default)]
@@ -27,25 +27,6 @@ impl Gpu {
                 r.native_destroy_texture(t);
             }
         });
-    }
-}
-
-fn blend(b: Blend) -> NativeBlend {
-    match b {
-        Blend::Opaque => NativeBlend::Opaque,
-        Blend::AlphaTest => NativeBlend::AlphaTest,
-        Blend::Alpha => NativeBlend::Alpha,
-        Blend::Premultiplied => NativeBlend::Premultiplied,
-        Blend::Additive { alpha: false } => NativeBlend::Additive,
-        Blend::Additive { alpha: true } => NativeBlend::AdditiveAlpha,
-    }
-}
-
-fn cull(c: Cull) -> NativeCull {
-    match c {
-        Cull::None => NativeCull::None,
-        Cull::Back => NativeCull::Back,
-        Cull::Front => NativeCull::Front,
     }
 }
 
@@ -99,7 +80,7 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeIn) -> i32 {
             let surfaces: Vec<NativeSurface> = mesh
                 .surfaces
                 .iter()
-                .map(|s| NativeSurface { first_index: s.first_index, index_count: s.index_count, blend: blend(s.blend), emissive: s.emissive, color: handle(&s.color), maps: handle(&s.maps), sort_key: s.sort_key, cull: cull(s.cull) })
+                .map(|s| NativeSurface { first_index: s.first_index, index_count: s.index_count, blend: native_blend(s.blend), emissive: s.emissive, color: handle(&s.color), maps: handle(&s.maps), sort_key: s.sort_key, cull: native_cull(s.cull) })
                 .collect();
             let m = r.native_create_mesh(&vertices, &mesh.indices, &surfaces);
             Some((m, handles.into_iter().map(|(_, h)| h).filter(|&h| h != INVALID).collect::<Vec<_>>()))
