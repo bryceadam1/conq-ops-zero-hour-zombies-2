@@ -1021,6 +1021,66 @@ headers overlaid. **Not yet run in game.** Integration needs:
 - archive VERSION 42 (reconvert);
 - `scripts/autotest-mac.sh --rts` (new checks) and `--rts-dry`.
 
+## v1.0 Track PW: perks as specialties, BO2 movement, weapon timing, recoil, gun position (2026-10-21)
+
+Everything here comes from the Ghidra answers in `~/Documents/BO2-reference/ghidra/answers/`
+(G1–G7) and BO2's own data. Before this, the perk effects and movement numbers were guesses.
+
+1. **Perks are specialty sets** (G1). The engine never sees perk names. Each consumer tests one
+   of 62 specialty bits (the index table at `t6mp` `0x00f6b918`), and a player has a bit when
+   the class, the current weapon variant (`WeaponVariantDef+0x248`) or one of its attachments
+   (`WeaponAttachment+0xfc`) grants it. The converter reads the perk rows from the player's
+   `patch_mp` `mp/statstable.csv` (a new StringTable reader); an install test proves all 16
+   equal the built-in copies (`statstable.csv:151-166`). **The old Dexterity was wrong**: it
+   was a guessed "aim faster after sprinting" ×0.5, but BO2's Dexterity is
+   fastmantle/fastladderclimb/sprintrecovery/fastmeleerecovery. Dead Silence's stats row is
+   `PERKS_NINJA`.
+   **Gotcha:** on this install only **FMJ** grants bits through the data (`armorpiercing`,
+   `bulletpenetration`). No weapon variant does, and fast mag and quickdraw work through their
+   reload/ADS time scales, not `fastreload`/`fastads` bits. G1's README examples describe the
+   mechanism, not this data.
+2. **The tuning pack is in BO2 units under dvar names**, one field table in `tuning.rs`, with a
+   test holding `tuning.ini` equal to the defaults. Fixed in passing: the old ini said
+   `WalkSpeed = 380` while the default was `inches(190)` = 31.7 units/s.
+3. **Movement** (G2). Lightweight is `(int)(190 × 1.07)` = 203 in/s, the engine's truncation.
+   Strafe ×0.8, back ×0.7, strafing while sprinting ×0.667. BO2's sprint meter: the length is
+   base × the weapon's `sprintDurationScale` (×2 Extreme Conditioning, cap 16.383 s); it
+   recharges 1 s per second after a sprint; a start needs more than 1 s; holding the button
+   through the end needs a release. Going prone blends the speed scale 0.65→0.15 over 600 ms,
+   and getting up blends back over 400 ms.
+4. **Weapon timing** (G3, `FUN_008e0780`). Perks don't shorten data; the state's countdown runs
+   at 1/multiplier. The arsenal's timers run in weapon-data time, so the viewmodel's clip
+   times, read from them, already play at `rate / mult` as the client does (`FUN_0052b1d0`).
+   `Arsenal::anim_rate` exposes the factor for anything wall-clocked. Fast Hands now runs the
+   normal raise/drop at ×2 instead of swapping in the quick animations. The grenade cook fuse
+   stays real time. Quickdraw divides the ADS rate by 0.5.
+5. **Recoil** (G5): the hip/aimed view-kick selection (aimed only at ADS == 1), pitch always
+   up, roll −0.5·yaw, the minimum magnitude, the grip's accumulator with
+   `fAdsRecoilReturnRate`, and reduced kick. The gun-kick impulse plus `GunKickSpring`
+   (5 ms steps) are ready for the viewmodel. **Flinch** (G7): damage × 0.175, ×0.25
+   Toughness, clamped 0.5–90°, as a new `Flinch` event. The sim has no damage direction, so
+   it takes the engine's pitch-only branch. **Spread** (G6): stance min/max blended by eye
+   height, ×0.65 with bulletaccuracy (`Arsenal::spread_cone`).
+6. **Gun position** (G4): `weapons/gunpos.rs` is a pure client-side module covering the
+   stance/move/strafe/sprint offsets at the weapon's blend rates, the fade by half-ADS, the
+   wide-FOV pull-back, the landing dip, BO2's bob waveform with ADS damping, sway and the kick
+   spring. Track R consumes it. The weapon table carries every field it needs: 17 new keys,
+   now 64.
+7. **Other perks.** Flak Jacket: `perk_flakJacket` 35% of the thrower's own blast
+   (`_class.gsc:1023-1032`). Tactical Mask: the thrower's own concussion ×0.1
+   (`_weapons.gsc:1375-1376`, a script constant, `StunProtectionScale`). Scavenger and Hacker
+   are tested by specialty. **No system in the sim:** Ghost, Blind Eye, Hardline, Hard Wired,
+   Cold Blooded and Awareness (no UAV, airstreaks, momentum, EMP or enemy footsteps for them
+   to act on), Dead Silence (the General's footsteps are his own 2D cues), fast mantle and
+   ladder climb (no mantling or ladders on Zero Hour maps). Their bits are carried and tested
+   nowhere yet.
+
+**Pending** (left as before, cited): the fall-damage curve and `fallheight` (G2 unresolved);
+proof that the sprint base is `player_sprintTime` (G2 medium); how the engine converts and
+recentres view kick (G5 unresolved, so `KICK_TO_DEGREES` and the client's settle remain);
+`aimSpreadScale` dynamics (the bloom model remains); the ADS move base (the converter's
+`ADS_MOVE_BASE` remains); the two `playerAnimType` values exempt from quickdraw.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

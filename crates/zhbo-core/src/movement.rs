@@ -708,9 +708,7 @@ pub(crate) mod tests {
     fn jump_reaches_bo2_height_and_lands() {
         let t = MoveTuning::default();
         let mut b = Body::new(Vec3::ZERO, &t);
-        let mut input = FpsInput::default();
-        input.held = buttons::JUMP;
-        input.pressed = buttons::JUMP;
+        let input = FpsInput { held: buttons::JUMP, pressed: buttons::JUMP, ..Default::default() };
         let world = FlatWorld::default();
         step(&mut b, &input, MoveModifiers::default(), &t, &world, LOGIC_DT);
         assert!(!b.on_ground);

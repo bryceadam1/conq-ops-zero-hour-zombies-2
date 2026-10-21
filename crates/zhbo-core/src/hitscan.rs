@@ -91,7 +91,7 @@ fn ray_sphere(o: Vec3, d: Vec3, r: f32) -> Option<f32> {
 fn ray_cylinder(o: Vec3, d: Vec3, r: f32, h: f32) -> Option<f32> {
     let mut best: Option<f32> = None;
     let mut consider = |t: f32| {
-        if t >= 0.0 && best.map_or(true, |b| t < b) {
+        if t >= 0.0 && best.is_none_or(|b| t < b) {
             best = Some(t);
         }
     };
@@ -199,7 +199,7 @@ pub fn trace(
     let mut best: Option<(f32, &Target)> = None;
     for t in targets.iter().filter(|t| t.id != ignore) {
         if let Some(d) = ray_vs_target(origin, dir, limit, t) {
-            if best.map_or(true, |(bd, _)| d < bd) {
+            if best.is_none_or(|(bd, _)| d < bd) {
                 best = Some((d, t));
             }
         }

@@ -10,6 +10,7 @@ pub mod arsenal;
 pub mod catalog;
 pub mod def;
 pub mod feel;
+pub mod gunpos;
 pub mod loadout;
 pub mod perks;
 pub mod recoil;
@@ -33,7 +34,7 @@ pub use crate::attachments::AttachmentDef;
 mod tests {
     use super::*;
     use crate::input::buttons;
-    use crate::units::{inches, LOGIC_DT};
+    use crate::units::LOGIC_DT;
 
     fn def(f: impl FnOnce(&mut WeaponDef)) -> &'static WeaponDef {
         let mut d = WeaponDef { id: "test_mp".into(), ..Default::default() };
@@ -292,8 +293,6 @@ mod tests {
 #[cfg(test)]
 mod loadout_tests {
     use super::*;
-    use crate::input::buttons;
-    use crate::units::{inches, LOGIC_DT};
 
     #[test]
     fn a_spec_changes_slots_and_perks() {
@@ -308,7 +307,6 @@ mod loadout_tests {
 mod swap_tests {
     use super::*;
     use crate::input::buttons;
-    use crate::units::{inches, LOGIC_DT};
 
     #[test]
     fn swapping_mid_reload_before_the_add_time_keeps_the_magazine_empty() {

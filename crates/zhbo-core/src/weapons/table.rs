@@ -80,8 +80,8 @@ pub fn parse_table(text: &str) -> Result<Vec<WeaponDef>, String> {
 /// their formats live in [`crate::schema`], shared with the formatter.
 pub fn parse_full_table(text: &str) -> Result<Table, String> {
     enum Block {
-        Weapon(WeaponDef),
-        Attachment(AttachmentDef),
+        Weapon(Box<WeaponDef>),
+        Attachment(Box<AttachmentDef>),
         Perk(String, Specialties),
     }
     let mut table = Table::default();
@@ -93,11 +93,11 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
         }
         let err = |what: &str| format!("weapons table line {}: {what}: {raw}", n + 1);
         if let Some(id) = line.strip_prefix("Weapon ") {
-            cur = Some(Block::Weapon(WeaponDef { id: id.trim().to_string(), ..Default::default() }));
+            cur = Some(Block::Weapon(Box::new(WeaponDef { id: id.trim().to_string(), ..Default::default() })));
             continue;
         }
         if let Some(id) = line.strip_prefix("Attachment ") {
-            cur = Some(Block::Attachment(AttachmentDef { id: id.trim().to_string(), ..Default::default() }));
+            cur = Some(Block::Attachment(Box::new(AttachmentDef { id: id.trim().to_string(), ..Default::default() })));
             continue;
         }
         if let Some(id) = line.strip_prefix("Perk ") {
@@ -106,8 +106,8 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
         }
         if line == "End" {
             match cur.take().ok_or_else(|| err("End without a block"))? {
-                Block::Weapon(w) => table.weapons.push(w),
-                Block::Attachment(a) => table.attachments.push(a),
+                Block::Weapon(w) => table.weapons.push(*w),
+                Block::Attachment(a) => table.attachments.push(*a),
                 Block::Perk(stats, specialties) => table.perks.push((stats, specialties)),
             }
             continue;
@@ -137,16 +137,8 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
 }
 
 // ------------------------------------------------------------------------------------------------
-// The catalog
-// ------------------------------------------------------------------------------------------------
-
-/// All weapons and attachments by id. Weapons with attachments the table doesn't hold are built
-
-// ------------------------------------------------------------------------------------------------
 // The table: text format shared with the converter
 // ------------------------------------------------------------------------------------------------
-
-/// Everything in the weapon table.
 
 /// The shape of a field's value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -232,7 +224,7 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
             Ok(())
         }),
     field!("Fire", "The fire mode it forces (`none` keeps the weapon's).", FieldKind::Enum,
-        |a: &AttachmentDef| a.fire.map_or("none".into(), |f| fire_name(f)),
+        |a: &AttachmentDef| a.fire.map_or("none".into(), fire_name),
         |a: &mut AttachmentDef, v: Values| { a.fire = parse_fire(v.text); Ok(()) }),
     field!("Clip", "Rounds in the magazine when this optic or mag is on (0 keeps the weapon's).", FieldKind::Num,
         |a: &AttachmentDef| a.clip.to_string(),
@@ -613,9 +605,7 @@ mod tests {
 
     #[test]
     fn equipment_block_round_trips() {
-        let mut d = WeaponDef::default();
-        d.id = "claymore_mp".into();
-        d.equipment_kind = Kind::Claymore;
+        let mut d = WeaponDef { id: "claymore_mp".into(), equipment_kind: Kind::Claymore, ..Default::default() };
         let text = format_table(&[d.clone()]);
         assert!(text.contains("Equipment = claymore"));
         let back = parse_table(&text).unwrap();
@@ -629,12 +619,8 @@ mod tests {
     #[test]
     fn specialties_and_perk_rows_round_trip() {
         use super::super::specialty::Specialty;
-        let mut d = WeaponDef::default();
-        d.id = "mp7_mp+fastmag".into();
-        d.specialties = Specialties::of(&[Specialty::FastReload]);
-        let mut a = AttachmentDef::default();
-        a.id = "rf".into();
-        a.specialties = Specialties::of(&[Specialty::Rof]);
+        let d = WeaponDef { id: "mp7_mp+fastmag".into(), specialties: Specialties::of(&[Specialty::FastReload]), ..Default::default() };
+        let a = AttachmentDef { id: "rf".into(), specialties: Specialties::of(&[Specialty::Rof]), ..Default::default() };
         let t = Table {
             weapons: vec![d],
             attachments: vec![a],

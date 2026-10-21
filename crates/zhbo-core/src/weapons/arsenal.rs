@@ -663,6 +663,7 @@ impl Arsenal {
     }
 
     /// Advance one logic frame. `stance` is 0 stand, 1 crouch, 2 prone; `speed` the ground speed.
+    #[allow(clippy::too_many_arguments)]
     pub fn step(&mut self, held: u32, pressed: u32, sprinting: bool, stance: usize, speed: f32, rng: &mut Rng, out: &mut Vec<WeaponAction>) {
         let dt = LOGIC_DT;
         let pressed = pressed | (held & !self.held_last);

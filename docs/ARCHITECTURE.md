@@ -47,8 +47,12 @@ from `zhbo_logic_*` must stay deterministic. Depends on `zhbo-requirements` and 
 `zhbo-gfx`. After Phase 2.3:
 - `weapons/`: `def.rs` (WeaponDef, enums), `table.rs` (the weapon table's schema,
   parse and format), `catalog.rs` (the converted table or built-in stand-ins),
-  `perks.rs` (the perk table), `loadout.rs`, `rng.rs` (xorshift), `arsenal.rs`
-  (WeaponState, Reload, Offhand, Arsenal, WeaponAction).
+  `perks.rs` (the perk table: each perk's specialty set), `specialty.rs` (BO2's 62
+  specialty bits), `feel.rs` (gun kick, sway, viewmodel offsets, reticle data),
+  `recoil.rs` (per-shot kick, the gun kick spring, flinch, the spread cone), `gunpos.rs`
+  (the client-side gun position: offsets, bob, sway), `loadout.rs`, `rng.rs` (xorshift),
+  `arsenal.rs` (WeaponState, Reload, Offhand, Arsenal with HasSpecialty and the perk-timed
+  weapon states, WeaponAction).
 - `sim/`: `mod.rs` (Sim, PlayerSim, Event, the top-level `step` orchestration),
   `hack.rs` (Black Hat), `build.rs` (hammer/site), `rts.rs` (the overhead General:
   `rts_update`, the third slot's orders `rts_offhand`/`Third`, `rts_reload`, `RtsWeapons`
@@ -60,7 +64,7 @@ from `zhbo_logic_*` must stay deterministic. Depends on `zhbo-requirements` and 
 - `hud/` and `classui/`: the first-person HUD and the create-a-class screens, one file per element
   or concern.
 - `config.rs` (env vars parsed once at init), `names.rs` (the naming registry),
-  `tuning.rs` (the gameplay tuning pack), `strings.rs` (the localised strings),
+  `tuning.rs` (the gameplay tuning pack, BO2 units), `strings.rs` (the localised strings),
   `equipment.rs` (BO2 equipment behavior, driven by the weapon table's `Equipment` block).
 
 ### `crates/zhbo-assets`
