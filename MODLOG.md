@@ -1876,7 +1876,9 @@ generic flash. The converter reads `viewFlashEffect`, `viewShellEjectEffect` and
 `viewLastShotEjectEffect` from the BO2 `WeaponDef` (the three fields were there in the layouts but
 unused), turns each into a Zero Hour FXList with `fx.rs`'s existing `FxEffectDef`-to-particle-
 system conversion, and the weapon table carries the names (`ViewFlashFx`, `ViewShellFx`,
-`ViewLastShotShellFx`). `zhbo_viewmodel_fx(vm, ...)` (a new free function on the append-only ABI
+`ViewLastShotShellFx`). `names::bo2_fx` builds the FXList names (the registry), so no literal is
+copied between the converter, the table and the bridge. `zhbo_viewmodel_fx(vm, ...)` (a new free
+function on the append-only ABI
 surface) hands the bridge the names for the weapon on the current viewmodel; `ZhboViewmodel.cpp`
 plays them at `tag_flash` and `tag_brass` when `ClientOut.viewmodel_fired` says the sim's `Shot`
 event fired. The generic `ZHBO_ViewmodelMuzzle` stays as the fallback.
