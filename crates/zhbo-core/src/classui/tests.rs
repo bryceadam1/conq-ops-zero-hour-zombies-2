@@ -453,6 +453,20 @@ fn the_category_column_rotates_so_the_active_one_is_on_top() {
 }
 
 #[test]
+fn a_pickers_title_is_the_luas_heading() {
+    let mut e = Editor::new(Draft::default());
+    // BO2 titles the weapon screens `PRIMARY`/`SECONDARY` (`MPUI_<slot>_CAPS`), the wildcard screen
+    // `MENU_WILDCARDS_CAPS` (menus/cacbonuscards.lua), the others by their slot.
+    for (slot, want) in [(Slot::Primary, "PRIMARY"), (Slot::Secondary, "SECONDARY"), (Slot::Wildcards, "WILDCARDS"), (Slot::Perk2, "PERK 2")] {
+        e.slot = slot;
+        assert_eq!(picker_title(&e), want, "{slot:?}'s picker title");
+    }
+    // The attachment screen names the gun it edits (`<WEAPON> ATTACHMENTS`).
+    e.slot = Slot::PrimaryAtts;
+    assert!(picker_title(&e).ends_with(" ATTACHMENTS"), "{}", picker_title(&e));
+}
+
+#[test]
 fn the_secondary_slot_lists_pistols_first() {
     let d = Draft { secondary: "fnp45_mp".into(), ..Draft::default() };
     let mut e = Editor::new(d);

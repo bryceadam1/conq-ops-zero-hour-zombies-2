@@ -187,7 +187,9 @@ impl Slot {
             Slot::Perk1 | Slot::Perk1b => "PERK 1",
             Slot::Perk2 | Slot::Perk2b => "PERK 2",
             Slot::Perk3 | Slot::Perk3b => "PERK 3",
-            Slot::Wildcards => "BONUS CARDS",
+            // BO2 calls the items `bonuscard_*` internally but the screen is `MENU_WILDCARDS_CAPS`
+            // (`menus/cacbonuscards.lua`), so the picker titles itself WILDCARDS.
+            Slot::Wildcards => "WILDCARDS",
             Slot::Save => "SAVE CLASS",
         }
     }

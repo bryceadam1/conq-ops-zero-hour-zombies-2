@@ -125,7 +125,7 @@ fn editor_title(editor: &Editor) -> String {
 
 /// A picker's title (`cacweaponsp.lua`: `MPUI_<slot>_CAPS`; `cacattachmentsmenu.lua`:
 /// `<WEAPON> ATTACHMENTS`; `e-perks/001`'s `PERK 1`, `f-wildcards/001`'s `WILDCARDS`).
-fn picker_title(editor: &Editor) -> String {
+pub(super) fn picker_title(editor: &Editor) -> String {
     match editor.slot {
         Slot::Primary => "PRIMARY".to_string(),
         Slot::Secondary => "SECONDARY".to_string(),
