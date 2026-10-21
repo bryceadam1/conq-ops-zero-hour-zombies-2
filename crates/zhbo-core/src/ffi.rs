@@ -54,7 +54,7 @@ const _: () = {
     assert!(size_of::<FpsInput>() == 20);
     assert!(size_of::<ClientIn>() == 136);
     assert!(size_of::<ClientOut>() == 4508);
-    assert!(size_of::<crate::sim::RtsWeapons>() == 36);
+    assert!(size_of::<crate::sim::RtsWeapons>() == 184);
     assert!(size_of::<crate::building::BuildOption>() == 64);
     assert!(size_of::<crate::building::Site>() == 64);
     assert!(size_of::<crate::menu::MenuIn>() == 56);
@@ -66,10 +66,11 @@ const _: () = {
     assert!(size_of::<ClientApi>() == (CLIENT_API_FIELDS as usize) * size_of::<usize>());
 };
 
-/// Load the shipped strings file (`Data/ConquerOps/strings_en.ini`, read by the bridge's
-/// `readTextFile`); `lookup` consults it before the built-in English fallback.
 /// Load the gameplay tuning pack (`data/ConquerOps/tuning.ini`); the sim's default values hold
 /// until this runs.
+///
+/// # Safety
+/// `text` must be null or a NUL-terminated string.
 #[no_mangle]
 pub unsafe extern "C" fn zhbo_load_tuning(text: *const c_char) {
     if text.is_null() {
@@ -79,6 +80,11 @@ pub unsafe extern "C" fn zhbo_load_tuning(text: *const c_char) {
     crate::tuning::load(&text);
 }
 
+/// Load the shipped strings file (`Data/ConquerOps/strings_en.ini`, read by the bridge's
+/// `readTextFile`); `lookup` consults it before the built-in English fallback.
+///
+/// # Safety
+/// `text` must be null or a NUL-terminated string.
 #[no_mangle]
 pub unsafe extern "C" fn zhbo_load_strings(text: *const c_char) {
     if text.is_null() {
@@ -90,6 +96,9 @@ pub unsafe extern "C" fn zhbo_load_strings(text: *const c_char) {
 
 /// Load the class preset list (`Data/ConquerOps/classes.ini`, read by the bridge's
 /// `readTextFile`); the five basic BO2 classes hold until this runs (see classes.rs).
+///
+/// # Safety
+/// `text` must be null or a NUL-terminated string.
 #[no_mangle]
 pub unsafe extern "C" fn zhbo_load_classes(text: *const c_char) {
     if text.is_null() {
@@ -325,7 +334,7 @@ fn log_step(s: &State, first_new_event: usize, frame: u32) {
             s.logic.log(&line);
         }
     }
-    if frame % 30 == 0 {
+    if frame.is_multiple_of(30) {
         for (i, p) in s.sim.players.iter().enumerate() {
             if let Some(p) = p.as_ref().filter(|p| p.is_first_person()) {
                 let w = p.arsenal.current();
@@ -363,11 +372,20 @@ pub unsafe extern "C" fn zhbo_logic_rts_update(
     *out = r;
 }
 
-/// Under RTS control: whether the General's third weapon slot throws the tactical (non-zero) or
-/// the lethal. Lockstep: from a game message.
+/// Under RTS control: what the General's third weapon slot does when it next fires — `choice` 0
+/// throws (or plants) the lethal, 1 the tactical, 2 strikes once with the knife (`sim::Third`).
+/// Lockstep: from a game message.
 #[no_mangle]
-pub extern "C" fn zhbo_logic_rts_offhand(player: i32, general: u32, tactical: i32) {
-    with_state(|s| s.sim.rts_offhand(player, general, tactical != 0));
+pub extern "C" fn zhbo_logic_rts_offhand(player: i32, general: u32, choice: i32) {
+    with_state(|s| s.sim.rts_offhand(player, general, choice));
+}
+
+/// Under RTS control: the reload order for the gun in Zero Hour slot `current_slot`. Returns the
+/// slot whose magazine was topped up (the bridge starts Zero Hour's reload on it), or -1 when
+/// there was nothing to reload. Lockstep: from a game message.
+#[no_mangle]
+pub extern "C" fn zhbo_logic_rts_reload(player: i32, general: u32, current_slot: i32) -> i32 {
+    with_state(|s| s.sim.rts_reload(player, general, current_slot)).unwrap_or(-1)
 }
 
 /// The ammo of a General's weapon slots, for the control bar.

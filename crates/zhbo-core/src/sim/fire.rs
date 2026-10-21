@@ -61,10 +61,8 @@ impl Sim {
                             }
                         }
                         self.emit(idx, EventKind::HitMarker { headshot, kill });
-                        if kill {
-                            if p.arsenal.has(Perk::SCAVENGER) {
-                                p.arsenal.scavenge();
-                            }
+                        if kill && p.arsenal.has(Perk::SCAVENGER) {
+                            p.arsenal.scavenge();
                         }
                     }
                     other => {
@@ -97,7 +95,7 @@ impl Sim {
                 // BO2 throws a little above the crosshair.
                 let dir = dir_from_angles(p.yaw, (p.pitch + 0.12).min(1.4));
                 let mut proj = Projectile::launch(def, p.general, eye + dir * 1.5, dir, fuse_left, host, p.yaw);
-                proj.vel = proj.vel + p.body.vel * 0.5;
+                proj.vel += p.body.vel * 0.5;
                 proj.flak_jacket = p.arsenal.has(Perk::FLAK_JACKET);
                 proj.tactical_mask = p.arsenal.has(Perk::TACTICAL_MASK);
                 self.projectiles.push((idx, proj));
@@ -111,37 +109,7 @@ impl Sim {
                 self.projectiles.push((idx, proj));
             }
             WeaponAction::OffhandReady { lethal } => self.emit(idx, EventKind::OffhandReady { lethal }),
-            WeaponAction::Melee { damage } => {
-                self.emit(idx, EventKind::Melee);
-                let eye = p.body.eye();
-                let (fwd, _) = basis_xy(p.yaw);
-                let mut near = Vec::new();
-                host.query(eye, MELEE_RANGE + 12.0, p.general, &mut near);
-                let victim = near
-                    .iter()
-                    .filter(|o| o.id != p.general && !o.has(objflags::DEAD) && !o.has(objflags::ALLY))
-                    .filter(|o| !o.has(objflags::NO_COLLIDE) && !o.has(objflags::STRUCTURE))
-                    .filter(|o| {
-                        let to = o.pos - p.body.pos;
-                        let d = to.length_xy();
-                        d <= MELEE_RANGE + reach_radius(o) && (d < 1e-3 || (to.x * fwd.x + to.y * fwd.y) / d > 0.6)
-                    })
-                    .min_by(|a, b| {
-                        let da = (a.pos - p.body.pos).length_xy();
-                        let db = (b.pos - p.body.pos).length_xy();
-                        da.total_cmp(&db).then(a.id.cmp(&b.id))
-                    });
-                if let Some(v) = victim {
-                    host.fire_fx(p.general, MELEE_FX_WEAPON, v.id, v.pos);
-                    let kill = host.damage(p.general, v.id, damage * BO2_TO_ZH_DAMAGE, damage_kind::MELEE);
-                    self.emit(idx, EventKind::HitMarker { headshot: false, kill });
-                    if kill {
-                        if p.arsenal.has(Perk::SCAVENGER) {
-                            p.arsenal.scavenge();
-                        }
-                    }
-                }
-            }
+            WeaponAction::Melee { damage } => self.melee_strike(host, idx, p, damage, MeleeReach::Body),
             WeaponAction::Plant { def } => {
                 let (fwd, _) = basis_xy(p.yaw);
                 let at = p.body.pos + fwd * PLANT_DISTANCE;
@@ -177,7 +145,65 @@ impl Sim {
     }
 }
 
+/// FMJ: damage to the second soldier a round passes through.
 pub const PENETRATION_DAMAGE: f32 = 0.75;
+
+/// How far a knife reaches. In first person the General is BO2's player body, so the knife reaches
+/// [`MELEE_RANGE`] past its hit radius. Under RTS control Zero Hour walked him up to the victim with
+/// its own footprints (attack range is measured edge to edge, `Weapon::getAttackDistance`), so the
+/// reach counts both footprints the same way.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum MeleeReach {
+    Body,
+    Footprint(f32),
+}
+
+impl MeleeReach {
+    fn reaches(self, from: Vec3, o: &ObjInfo) -> bool {
+        let d = (o.pos - from).length_xy();
+        match self {
+            MeleeReach::Body => d <= MELEE_RANGE + reach_radius(o),
+            MeleeReach::Footprint(own) => d <= MELEE_RANGE + own + o.major_radius,
+        }
+    }
+}
+
+impl Sim {
+    /// BO2's knife: the nearest enemy in front of the General and in reach takes the hit.
+    pub(super) fn melee_strike(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, damage: f32, reach: MeleeReach) {
+        self.emit(idx, EventKind::Melee);
+        let eye = p.body.eye();
+        let (fwd, _) = basis_xy(p.yaw);
+        let extra = match reach {
+            MeleeReach::Body => 12.0,
+            MeleeReach::Footprint(own) => own + 12.0,
+        };
+        let mut near = Vec::new();
+        host.query(eye, MELEE_RANGE + extra, p.general, &mut near);
+        let victim = near
+            .iter()
+            .filter(|o| o.id != p.general && !o.has(objflags::DEAD) && !o.has(objflags::ALLY))
+            .filter(|o| !o.has(objflags::NO_COLLIDE) && !o.has(objflags::STRUCTURE))
+            .filter(|o| {
+                let to = o.pos - p.body.pos;
+                let d = to.length_xy();
+                reach.reaches(p.body.pos, o) && (d < 1e-3 || (to.x * fwd.x + to.y * fwd.y) / d > 0.6)
+            })
+            .min_by(|a, b| {
+                let da = (a.pos - p.body.pos).length_xy();
+                let db = (b.pos - p.body.pos).length_xy();
+                da.total_cmp(&db).then(a.id.cmp(&b.id))
+            });
+        if let Some(v) = victim {
+            host.fire_fx(p.general, MELEE_FX_WEAPON, v.id, v.pos);
+            let kill = host.damage(p.general, v.id, damage * BO2_TO_ZH_DAMAGE, damage_kind::MELEE);
+            self.emit(idx, EventKind::HitMarker { headshot: false, kill });
+            if kill && p.arsenal.has(Perk::SCAVENGER) {
+                p.arsenal.scavenge();
+            }
+        }
+    }
+}
 
 fn reach_radius(o: &ObjInfo) -> f32 {
     if o.has(objflags::INFANTRY) {
@@ -217,53 +243,6 @@ pub fn target_from(o: &ObjInfo) -> Target {
         _ => Shape::Cylinder { radius: o.major_radius, height: o.height.max(1.0) },
     };
     Target { id: o.id, pos: o.pos, shape, head_fraction: 0.0 }
-}
-
-/// [`World`] backed by the engine: terrain from `TheTerrainLogic`, solid footprints from structures
-/// and ground vehicles.
-pub struct HostWorld<'a> {
-    pub host: &'a dyn LogicHost,
-    pub viewer: u32,
-}
-
-impl World for HostWorld<'_> {
-    fn ground_height(&self, x: f32, y: f32) -> f32 {
-        self.host.ground_height(x, y)
-    }
-
-    fn is_walkable(&self, x: f32, y: f32) -> bool {
-        self.host.is_walkable(x, y)
-    }
-
-    fn extent(&self) -> (Vec3, Vec3) {
-        self.host.extent()
-    }
-
-    fn blockers(&self, pos: Vec3, radius: f32, out: &mut Vec<Blocker>) {
-        let mut objs = Vec::new();
-        self.host.query(pos, radius, self.viewer, &mut objs);
-        objs.sort_by_key(|o| o.id);
-        for o in objs.iter().filter(|o| o.id != self.viewer) {
-            if o.has(objflags::DEAD) || o.has(objflags::NO_COLLIDE) || o.has(objflags::AIRBORNE) {
-                continue;
-            }
-            if !(o.has(objflags::STRUCTURE) || o.has(objflags::VEHICLE)) {
-                continue;
-            }
-            let top = o.pos.z + o.height.max(1.0);
-            out.push(match o.geom_type {
-                geom::BOX => Blocker::Box { center: o.pos, half_x: o.major_radius, half_y: o.minor_radius, yaw: o.yaw, top },
-                _ => Blocker::Circle { center: o.pos, radius: o.major_radius, top },
-            });
-        }
-    }
-}
-
-/// Where the hammer puts a structure with a footprint of `radius`, and which way it faces: its
-/// front towards him, turned by `turn`.
-pub fn placement(host: &dyn LogicHost, p: &PlayerSim, radius: f32, turn: f32) -> (Vec3, f32) {
-    let pos = building::place_point(p.body.eye(), dir_from_angles(p.yaw, p.pitch), radius, |x, y| host.ground_height(x, y));
-    (pos, crate::math::wrap_angle(p.yaw + std::f32::consts::PI + turn))
 }
 
 /// Launch velocity for a grenade of throw speed `speed` from `from` to land at `to`: the low arc

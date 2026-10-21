@@ -18,7 +18,7 @@ mod rts;
 
 pub use build::{placement, HostWorld, PLANT_DISTANCE};
 pub use fire::{gather_targets, throw_velocity, PENETRATION_DAMAGE};
-pub use rts::RtsWeapons;
+pub use rts::{RtsState, RtsWeapons, Third};
 
 use crate::host::{damage_kind, geom, objflags, LogicHost, ObjInfo};
 use crate::hitscan::{self, HitResult, Shape, Target, INFANTRY_HEAD_FRACTION, INFANTRY_HIT_RADIUS};
@@ -175,13 +175,9 @@ pub struct PlayerSim {
     pub regen_wait: f32,
     /// Black Hat: what it is aimed at (an object id) and how far along the hack is (seconds).
     pub hack: Option<(u32, f32)>,
-    /// Under RTS control: the Zero Hour weapon slot to lock to (the weapon that was in hand when
-    /// first person ended, or one with ammo when the current one ran dry), or -1.
-    pub rts_lock: i32,
-    /// Under RTS control: whether the third Zero Hour slot throws the tactical (else the lethal),
-    /// and the gun slot to go back to after a throw.
-    pub rts_tactical: bool,
-    pub rts_gun: i32,
+    /// Under RTS control: the weapon lock, what the third slot does and the gun to go back to
+    /// (`rts.rs`).
+    pub rts: RtsState,
     /// The hammer, when it is out.
     pub hammer: Option<Hammer>,
     /// The structure under construction in reach (the use key builds it instead of opening the
@@ -212,9 +208,7 @@ impl PlayerSim {
             max_health: 500.0,
             regen_wait: 0.0,
             hack: None,
-            rts_lock: -1,
-            rts_tactical: false,
-            rts_gun: 0,
+            rts: RtsState::default(),
             hammer: None,
             site: None,
             building: false,
@@ -336,9 +330,7 @@ impl Sim {
                     max_health: info.max_health,
                     regen_wait: 0.0,
                     hack: None,
-                    rts_lock: -1,
-                    rts_tactical: false,
-                    rts_gun: 0,
+                    rts: RtsState::default(),
             hammer: None,
             site: None,
             building: false,
@@ -396,9 +388,7 @@ impl Sim {
                     max_health: 0.0,
                     regen_wait: 0.0,
                     hack: None,
-                    rts_lock: -1,
-                    rts_tactical: false,
-                    rts_gun: 0,
+                    rts: RtsState::default(),
                     hammer: None,
                     site: None,
                     building: false,
@@ -621,7 +611,7 @@ impl Sim {
                 if t >= FIELD_COMPUTER_RAISE {
                     p.mode = Mode::Rts;
                     // The RTS weapon is the one that was in hand.
-                    p.rts_lock = p.arsenal.active as i32;
+                    p.rts.lock = p.arsenal.active as i32;
                     host.set_pose(p.general, p.body.pos, p.yaw, false);
                     host.set_controlled(p.general, false);
                     self.emit(idx, EventKind::ReturnedToRts { general: p.general });
@@ -1560,7 +1550,7 @@ pub(crate) mod tests {
         sim.rts_update(&host, 0, 1, 0, [0, 0, 0], None);
         sim.choose_class(0, 1, 0, &[]);
         let full = sim.rts_ammo(1);
-        sim.rts_offhand(0, 1, true);
+        sim.rts_offhand(0, 1, Third::Tactical.wire());
         let r = sim.rts_update(&host, 0, 1, 2, [0, 0, 1], Some(Vec3::new(150.0, 40.0, 0.0)));
         assert_eq!((r.tactical, r.ammo[2], r.tactical_selected), (full.tactical - 1, full.ammo[2], 1), "the tactical, not the lethal");
         let (_, proj) = &sim.projectiles[0];
