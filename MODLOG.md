@@ -908,8 +908,8 @@ class-screen ports share:
    flags, resolved per axis: both anchors stretch, one anchor offsets from that edge, neither
    offsets from the centre. The root is `LUI.UIHeight` = 720 units tall
    (`patch_mp/ui/lui/lui.lua:4`) and as wide as the aspect allows. `lui.lua`'s `UIWidth = 960`
-   is the 4:3 base, not the root width. The root's size and PC's safe area are engine-side:
-   full screen is assumed until Ghidra query G9 answers it.
+   is the 4:3 base, not the root width. G9 confirms the engine centres a root 720 high and
+   720·aspect wide, and that PC's safe area is the whole root.
 3. **Fonts.** BO2's UI fonts are `fonts/720/{small,normal,big,extraBig,extraSmall,italic,
    smallItalic}Font` in **`zone/english/en_code_post_gfx_mp.ff`**. `zone/all` has only the
    debug fonts. All of them share one 512×1024 alpha atlas, `gamefonts_pc_720`, streamed from
@@ -920,8 +920,8 @@ class-screen ports share:
    Condensed 30, Big 48, Morris 60), so LUI draws text at the font's native size; the ammo label's
    48-unit box in `hud/ammocounter.lua` is `bigFont`. Each glyph becomes a MappedImage, and the
    metrics travel as `Data\ConquerOps\bo2_fonts.txt` → `zhbo_load_fonts`. Without the archive,
-   text falls back to the engine font. The glyph's pen line is the text box's bottom edge, with
-   glyph `y0` measured up from it; that is unverified until G9.
+   text falls back to the engine font. G9 confirms the engine's placement: scale = box
+   height ÷ pixel height, the pen line at the box bottom, glyphs at `bottom + y0·scale`.
 4. **Menu sounds.** `sounds::UiCue` lists every alias the MP UI Lua plays (63 after removing
    `cac_restricted`, a padlock material, and `cac_closed`, an event name). The `cac_*` aliases
    live in `code_post_gfx_mp`'s `mpl_code_post_gfx` bank. A few `uin_*` aliases are in
@@ -931,8 +931,9 @@ class-screen ports share:
    yields 37 menu events. The seven old CaC cue constants now point at their aliases' events
    until Track C wires each Lua call site to its exact cue.
 5. **Animation states** (`lui/anim.rs`): `Tween` is one `animateToState` move. An interrupted
-   move starts from the current value, and a zero duration snaps. The easing curve per
-   `easeIn`/`easeOut` flag is engine-side and stays linear until G8.
+   move starts from the current value, and a zero duration snaps. The easing is the engine's (G8,
+   tick `0x00932f80`): linear, with `(1 − cos πt)/2` on the flagged half (easeIn: t < 0.5,
+   easeOut: t > 0.5).
 6. **Materials by BO2 name.** `lui::materials::MATERIALS` lists the materials the ports draw. Each
    converts to `ZHBO_Mat_<material>`, searched across the MP zones, now including `patch_ui_mp`.
 7. **A dead end, recorded so nobody repeats it:** image `GfxImageLoadDef`s are loaded into

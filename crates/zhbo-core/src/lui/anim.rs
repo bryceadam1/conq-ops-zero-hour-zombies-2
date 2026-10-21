@@ -4,8 +4,10 @@
 //! lands (`patch_mp/ui/lui/luielement.lua`). A [`Tween`] is one such move of one value, sampled by
 //! the screen's own clock (menu and HUD time, never the sim's).
 //!
-//! The curve for each `easeIn`/`easeOut` combination is engine-side (Ghidra query G8); until it
-//! is answered [`ease`] is linear for every combination, and that one function is all G8 changes.
+//! The curve is the engine's (Ghidra G8, `~/Documents/BO2-reference/ghidra/answers/G8.md`; the
+//! per-frame tick at `t6mp` `0x00932f80`): linear, with a cosine ease `(1 - cos πt) / 2` on the
+//! half a flag names. An interrupted move starts from the value on screen; whether the engine
+//! snaps an interrupted element to its old target first is not settled by G8 (medium confidence).
 
 /// One value moving between two states.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -51,10 +53,15 @@ impl Tween {
     }
 }
 
-/// LUI's easing for a progress `t` in 0..1. Linear for every flag combination until G8 gives
-/// the engine's curve (see the module doc).
-pub fn ease(t: f32, _ease_in: bool, _ease_out: bool) -> f32 {
-    t.clamp(0.0, 1.0)
+/// LUI's easing for a progress `t` in 0..1: `easeIn` eases the first half, `easeOut` the second,
+/// both together give a full ease-in-out; the curve is continuous at the half (both are 0.5 there).
+pub fn ease(t: f32, ease_in: bool, ease_out: bool) -> f32 {
+    let t = t.clamp(0.0, 1.0);
+    if (ease_in && t < 0.5) || (ease_out && t > 0.5) {
+        (1.0 - (std::f32::consts::PI * t).cos()) * 0.5
+    } else {
+        t
+    }
 }
 
 #[cfg(test)]
@@ -83,5 +90,16 @@ mod tests {
         let mut snap = Tween::at(0.2);
         snap.animate_to(3.0, 0.9, 0.0, true, true);
         assert_eq!(snap.value(3.0), 0.9, "zero duration snaps");
+    }
+
+    #[test]
+    fn eases_the_flagged_half_with_the_engines_cosine() {
+        // G8: t = (1 - cos πt) / 2 on the flagged half, linear elsewhere.
+        assert_eq!(ease(0.25, false, false), 0.25);
+        assert!((ease(0.25, true, false) - 0.146_446_6).abs() < 1e-6);
+        assert_eq!(ease(0.25, false, true), 0.25, "easeOut leaves the first half linear");
+        assert!((ease(0.75, false, true) - 0.853_553_4).abs() < 1e-6);
+        assert!((ease(0.5, true, true) - 0.5).abs() < 1e-6, "continuous at the half");
+        assert_eq!(ease(1.0, true, true), 1.0);
     }
 }

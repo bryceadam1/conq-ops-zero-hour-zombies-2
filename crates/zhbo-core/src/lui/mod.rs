@@ -9,6 +9,8 @@
 //! both offsets are from that edge; neither set, both are from the parent's centre. The root is
 //! [`LUI_HEIGHT`] virtual units tall (`lui.lua`: `LUI.UIHeight = 720`) and as wide as the screen's
 //! aspect makes it, so a 16:9 screen is 1280 x 720 units; [`Root::to_screen`] scales to pixels.
+//! The engine centres the root on the screen and PC's safe area is the whole root (Ghidra G9),
+//! which this top-left-origin root matches.
 
 pub mod anim;
 pub mod font;

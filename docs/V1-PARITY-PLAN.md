@@ -165,6 +165,10 @@ specialty_fastmeleerecovery` (`lua-dump/patch_mp/mp/statstable.csv:161`).
 
 ## Reference queries
 
+**Answered 2026-10-21** (G1–G9, `~/Documents/BO2-reference/ghidra/answers/`, index in its
+`README.md`; `dvars-t6mp.tsv` lists 330 dvar defaults). Key rule from G1: a player has a
+specialty if the class, the weapon variant or one of its attachments grants it.
+
 Read-only Ghidra on `t6mp` (static only); answers in `~/Documents/BO2-reference/ghidra/answers/`:
 
 - **G1** Perk dvar defaults: every `perk_*` dvar registered (name, default, min/max), and which
@@ -180,6 +184,7 @@ Read-only Ghidra on `t6mp` (static only); answers in `~/Documents/BO2-reference/
 - **G6** Crosshair: spread → crosshair size math, colours, hit-marker drawing (size, duration,
   fade).
 - **G7** Damage feedback: directional indicators and the low-health overlay (timings, curves).
+- **G8** LUI animation easing and interpolation. **G9** LUI root, safe area, text placement.
 
 ## Integration order
 

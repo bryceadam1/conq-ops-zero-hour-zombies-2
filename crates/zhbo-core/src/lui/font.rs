@@ -7,7 +7,9 @@
 //! `CoD.textSize` equals its font's pixel height (Default 25 = `smallFont`, Condensed 30 =
 //! `normalFont`, Big 48, Morris 60), so LUI draws its text at the font's own size. A glyph's box is
 //! `x0, y0, width, height` from the pen, with `y0` negative (above the pen line); the pen advances
-//! by `dx`. All in font pixels, scaled by `height / pixel_height` to the requested size.
+//! by `dx`. All in font pixels, scaled by `height / pixel_height` to the requested size. The
+//! engine places glyphs the same way (Ghidra G9): scale = box height / pixel height, the pen line
+//! at the box's bottom, Center/Right shifting the line within the box.
 
 use crate::hud::Prim;
 use std::collections::HashMap;
