@@ -1,0 +1,8 @@
+[package]
+name = "zhbo-native"
+description = "Conquer Ops' own model and animation blobs for BO2 art drawn natively (no W3D): the format, and the pose math that plays it."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]

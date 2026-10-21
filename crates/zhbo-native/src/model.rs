@@ -1,0 +1,335 @@
+//! A skinned model blob (`.zbm`): one BO2 `XModel` as the mod draws it.
+//!
+//! Positions are BO2's own units (inches) in model space; the core scales at draw time. Bones keep
+//! both their local (parent-relative) and model-space bind transforms, as `XModel` stores them.
+//! Every vertex carries up to four bone influences (BO2 skins with at most four).
+
+use crate::io::{FormatError, Reader, Writer};
+use crate::math::{Quat, Vec3};
+
+pub const MAGIC: [u8; 4] = *b"ZBM\0";
+pub const VERSION: u32 = 1;
+
+/// No material on a surface (BO2 leaves the clan tag/emblem surfaces to code).
+pub const NO_MATERIAL: u32 = u32::MAX;
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Bone {
+    pub name: String,
+    pub parent: Option<u32>,
+    /// Relative to the parent, as BO2's animations offset it (identity for roots).
+    pub local_rotation: Quat,
+    pub local_position: Vec3,
+    /// Model space, bind pose.
+    pub rotation: Quat,
+    pub position: Vec3,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Vertex {
+    pub position: Vec3,
+    pub normal: Vec3,
+    pub uv: [f32; 2],
+    /// Indices into the model's bones; unused slots have weight 0.
+    pub bones: [u16; 4],
+    /// Sum to 1.
+    pub weights: [f32; 4],
+}
+
+/// How a surface draws over what is behind it: BO2's own render state for its lit technique
+/// (`GfxStateBits::loadBits[0]`, read by `zhbo_formats::xmodel::blend_of`; MODLOG #73).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Blend {
+    #[default]
+    Opaque,
+    /// Opaque with alpha test (cutouts: foliage on a stock, mesh grilles).
+    AlphaTest,
+    /// Source alpha over the destination (glass).
+    Alpha,
+    Premultiplied,
+    /// Added to the destination (glows), scaled by alpha when `alpha`.
+    Additive { alpha: bool },
+}
+
+impl Blend {
+    fn code(self) -> u8 {
+        match self {
+            Blend::Opaque => 0,
+            Blend::AlphaTest => 1,
+            Blend::Alpha => 2,
+            Blend::Premultiplied => 3,
+            Blend::Additive { alpha: false } => 4,
+            Blend::Additive { alpha: true } => 5,
+        }
+    }
+    fn from_code(c: u8) -> Result<Blend, FormatError> {
+        Ok(match c {
+            0 => Blend::Opaque,
+            1 => Blend::AlphaTest,
+            2 => Blend::Alpha,
+            3 => Blend::Premultiplied,
+            4 => Blend::Additive { alpha: false },
+            5 => Blend::Additive { alpha: true },
+            _ => return Err(FormatError::Corrupt(format!("blend {c}"))),
+        })
+    }
+    /// Whether it writes depth (blended surfaces don't, so what is behind them still shows).
+    pub fn writes_depth(self) -> bool {
+        matches!(self, Blend::Opaque | Blend::AlphaTest)
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Material {
+    /// BO2's material name (for logs).
+    pub name: String,
+    pub blend: Blend,
+    /// Self-lit (glows, screens): drawn at full colour, no lighting.
+    pub emissive: bool,
+    /// The colour map's file in the archive (`Art\Textures\...`), sRGB. Opaque surfaces carry their
+    /// ambient occlusion in its alpha (`zhbo_assets::textures::put_occlusion`).
+    pub color: Option<String>,
+    /// The packed surface maps (`*_nsg.tga`: normal X, normal Y, gloss, specular level;
+    /// `zhbo_assets::textures::surface_maps`), linear.
+    pub maps: Option<String>,
+    /// BO2's sort key (draw order of blended surfaces).
+    pub sort_key: u8,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Surface {
+    pub material: u32,
+    pub vertices: Vec<Vertex>,
+    pub indices: Vec<u16>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct Lod {
+    pub distance: f32,
+    pub first_surface: u32,
+    pub surface_count: u32,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Model {
+    pub name: String,
+    pub bones: Vec<Bone>,
+    pub materials: Vec<Material>,
+    pub lods: Vec<Lod>,
+    /// All LODs' surfaces; `lods` says which belong to which.
+    pub surfaces: Vec<Surface>,
+    pub mins: Vec3,
+    pub maxs: Vec3,
+    pub radius: f32,
+}
+
+impl Model {
+    /// The surfaces of LOD 0 (the one a viewmodel draws).
+    pub fn lod0(&self) -> &[Surface] {
+        match self.lods.first() {
+            Some(l) => {
+                let a = (l.first_surface as usize).min(self.surfaces.len());
+                let b = (a + l.surface_count as usize).min(self.surfaces.len());
+                &self.surfaces[a..b]
+            }
+            None => &self.surfaces,
+        }
+    }
+
+    pub fn bone(&self, name: &str) -> Option<usize> {
+        self.bones.iter().position(|b| b.name == name)
+    }
+
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut w = Writer::header(MAGIC, VERSION);
+        w.str(&self.name);
+        w.count(self.bones.len());
+        for b in &self.bones {
+            w.str(&b.name);
+            w.u32(b.parent.unwrap_or(u32::MAX));
+            w.f32s(&b.local_rotation);
+            w.f32s(&b.local_position);
+            w.f32s(&b.rotation);
+            w.f32s(&b.position);
+        }
+        w.count(self.materials.len());
+        for m in &self.materials {
+            w.str(&m.name);
+            w.u8(m.blend.code());
+            w.u8(m.emissive as u8);
+            w.opt_str(m.color.as_deref());
+            w.opt_str(m.maps.as_deref());
+            w.u8(m.sort_key);
+        }
+        w.count(self.lods.len());
+        for l in &self.lods {
+            w.f32(l.distance);
+            w.u32(l.first_surface);
+            w.u32(l.surface_count);
+        }
+        w.count(self.surfaces.len());
+        for s in &self.surfaces {
+            w.u32(s.material);
+            w.count(s.vertices.len());
+            for v in &s.vertices {
+                w.f32s(&v.position);
+                w.f32s(&v.normal);
+                w.f32s(&v.uv);
+                for b in v.bones {
+                    w.u16(b);
+                }
+                w.f32s(&v.weights);
+            }
+            w.count(s.indices.len());
+            for i in &s.indices {
+                w.u16(*i);
+            }
+        }
+        w.f32s(&self.mins);
+        w.f32s(&self.maxs);
+        w.f32(self.radius);
+        w.bytes
+    }
+
+    /// Read and validate a model blob: bone parents come before their children, every index is in
+    /// range, every surface's material exists.
+    pub fn from_bytes(data: &[u8]) -> Result<Model, FormatError> {
+        let mut r = Reader::open(data, MAGIC, "model", VERSION)?;
+        let name = r.str()?;
+        let nb = r.count(4 + 4 + 56)?;
+        let mut bones = Vec::with_capacity(nb);
+        for i in 0..nb {
+            let name = r.str()?;
+            let parent = match r.u32()? {
+                u32::MAX => None,
+                p if (p as usize) < i => Some(p),
+                p => return Err(FormatError::Corrupt(format!("bone {i} has parent {p}"))),
+            };
+            bones.push(Bone { name, parent, local_rotation: r.f32n()?, local_position: r.f32n()?, rotation: r.f32n()?, position: r.f32n()? });
+        }
+        let nm = r.count(8)?;
+        let mut materials = Vec::with_capacity(nm);
+        for _ in 0..nm {
+            materials.push(Material {
+                name: r.str()?,
+                blend: Blend::from_code(r.u8()?)?,
+                emissive: r.u8()? != 0,
+                color: r.opt_str()?,
+                maps: r.opt_str()?,
+                sort_key: r.u8()?,
+            });
+        }
+        let nl = r.count(12)?;
+        let mut lods = Vec::with_capacity(nl);
+        for _ in 0..nl {
+            lods.push(Lod { distance: r.f32()?, first_surface: r.u32()?, surface_count: r.u32()? });
+        }
+        let ns = r.count(12)?;
+        let mut surfaces = Vec::with_capacity(ns);
+        for si in 0..ns {
+            let material = r.u32()?;
+            if material != NO_MATERIAL && material as usize >= materials.len() {
+                return Err(FormatError::Corrupt(format!("surface {si} uses material {material} of {}", materials.len())));
+            }
+            let nv = r.count(68)?;
+            let mut vertices = Vec::with_capacity(nv);
+            for _ in 0..nv {
+                let position = r.f32n()?;
+                let normal = r.f32n()?;
+                let uv = r.f32n()?;
+                let mut vb = [0u16; 4];
+                for b in &mut vb {
+                    *b = r.u16()?;
+                    if *b as usize >= nb.max(1) {
+                        return Err(FormatError::Corrupt(format!("surface {si} skins to bone {b} of {nb}")));
+                    }
+                }
+                vertices.push(Vertex { position, normal, uv, bones: vb, weights: r.f32n()? });
+            }
+            let ni = r.count(2)?;
+            if ni % 3 != 0 {
+                return Err(FormatError::Corrupt(format!("surface {si} has {ni} indices")));
+            }
+            let mut indices = Vec::with_capacity(ni);
+            for _ in 0..ni {
+                let i = r.u16()?;
+                if i as usize >= nv {
+                    return Err(FormatError::Corrupt(format!("surface {si} index {i} of {nv} vertices")));
+                }
+                indices.push(i);
+            }
+            surfaces.push(Surface { material, vertices, indices });
+        }
+        for (i, l) in lods.iter().enumerate() {
+            if l.first_surface as u64 + l.surface_count as u64 > surfaces.len() as u64 {
+                return Err(FormatError::Corrupt(format!("lod {i} past the surfaces")));
+            }
+        }
+        let model = Model { name, bones, materials, lods, surfaces, mins: r.f32n()?, maxs: r.f32n()?, radius: r.f32()? };
+        r.finish()?;
+        Ok(model)
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use crate::math::QUAT_IDENTITY;
+
+    /// A two-bone strip (root, arm 10" along X), one surface skinned across both.
+    pub(crate) fn strip() -> Model {
+        let bone = |name: &str, parent, x: f32| Bone {
+            name: name.into(),
+            parent,
+            local_rotation: QUAT_IDENTITY,
+            local_position: [if parent.is_some() { 10.0 } else { 0.0 }, 0.0, 0.0],
+            rotation: QUAT_IDENTITY,
+            position: [x, 0.0, 0.0],
+        };
+        let v = |x: f32, b: [u16; 4], w: [f32; 4]| Vertex { position: [x, 0.0, 0.0], normal: [0.0, 0.0, 1.0], uv: [x / 20.0, 0.0], bones: b, weights: w };
+        Model {
+            name: "strip".into(),
+            bones: vec![bone("j_root", None, 0.0), bone("j_arm", Some(0), 10.0)],
+            materials: vec![Material { name: "mtl_strip".into(), color: Some("Art\\Textures\\strip.tga".into()), maps: Some("Art\\Textures\\strip_nsg.tga".into()), ..Default::default() }],
+            lods: vec![Lod { distance: 0.0, first_surface: 0, surface_count: 1 }],
+            surfaces: vec![Surface {
+                material: 0,
+                vertices: vec![v(0.0, [0, 0, 0, 0], [1.0, 0.0, 0.0, 0.0]), v(10.0, [0, 1, 0, 0], [0.5, 0.5, 0.0, 0.0]), v(20.0, [1, 0, 0, 0], [1.0, 0.0, 0.0, 0.0])],
+                indices: vec![0, 1, 2],
+            }],
+            mins: [0.0; 3],
+            maxs: [20.0, 0.0, 0.0],
+            radius: 20.0,
+        }
+    }
+
+    #[test]
+    fn round_trips() {
+        let m = strip();
+        let bytes = m.to_bytes();
+        assert_eq!(Model::from_bytes(&bytes).unwrap(), m);
+        // Every prefix is refused, never a panic.
+        for n in 0..bytes.len() {
+            assert!(Model::from_bytes(&bytes[..n]).is_err(), "prefix {n}");
+        }
+        let mut longer = bytes.clone();
+        longer.push(0);
+        assert!(Model::from_bytes(&longer).is_err(), "trailing bytes");
+    }
+
+    #[test]
+    fn refuses_out_of_range_indices() {
+        let mut m = strip();
+        m.surfaces[0].indices[2] = 3;
+        assert!(Model::from_bytes(&m.to_bytes()).is_err());
+        let mut m = strip();
+        m.surfaces[0].vertices[0].bones[0] = 2;
+        assert!(Model::from_bytes(&m.to_bytes()).is_err());
+        let mut m = strip();
+        m.bones[0].parent = Some(1);
+        assert!(Model::from_bytes(&m.to_bytes()).is_err(), "a parent after its child");
+        let mut m = strip();
+        m.surfaces[0].material = 4;
+        assert!(Model::from_bytes(&m.to_bytes()).is_err());
+    }
+}
