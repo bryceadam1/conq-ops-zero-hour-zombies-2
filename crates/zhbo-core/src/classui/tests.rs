@@ -172,7 +172,7 @@ fn the_lobby_shows_the_set_header_and_hint_and_the_match_the_sets_name() {
     crate::lui::font::load("");
     crate::profile::reset();
     let mut lobby = Vec::new();
-    draw_pick(&mut lobby, 1280.0, 720.0, &ScreenView { highlight: 0, editor: None, deny: 0.0, manage: true, now: 0.0, set_change: None });
+    draw_pick(&mut lobby, 1280.0, 720.0, &ScreenView { highlight: 0, editor: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
     let lobby_text = texts(&lobby);
     for want in ["CHOOSE CLASS", "CLASS SET 1", "Custom 1", "Custom 5", "Class Set Options", "Class Options", "PRIMARY", "WILDCARDS"] {
         assert!(lobby_text.iter().any(|t| t == want), "the lobby shows {want:?}: {lobby_text:?}");
@@ -180,7 +180,7 @@ fn the_lobby_shows_the_set_header_and_hint_and_the_match_the_sets_name() {
     // The hint wraps onto lines of the list's width.
     assert!(lobby_text.iter().any(|t| SET_HINT.starts_with(t.as_str()) && !t.is_empty()), "the hint: {lobby_text:?}");
     let mut game = Vec::new();
-    draw_pick(&mut game, 1280.0, 720.0, &ScreenView { highlight: 0, editor: None, deny: 0.0, manage: false, now: 0.0, set_change: None });
+    draw_pick(&mut game, 1280.0, 720.0, &ScreenView { highlight: 0, editor: None, deny: 0.0, manage: false, now: 0.0, set_change: None, open: None });
     let game_text = texts(&game);
     assert!(!game_text.iter().any(|t| t.starts_with("You will load")), "no hint in a match: {game_text:?}");
     assert!(game_text.iter().any(|t| t == "CLASS SET 1"), "the match list names the set");
@@ -196,7 +196,7 @@ fn a_class_set_switch_slides_the_list_in_and_fades_the_preview() {
     crate::profile::reset();
     let view = |settle: f32| {
         let mut prims = Vec::new();
-        draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: None, deny: 0.0, manage: true, now: 0.0, set_change: Some(settle * pick::SET_SWITCH_MS / 1000.0) });
+        draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: None, deny: 0.0, manage: true, now: 0.0, set_change: Some(settle * pick::SET_SWITCH_MS / 1000.0), open: None });
         prims
     };
     let started = view(0.0);
@@ -230,6 +230,47 @@ fn a_class_set_switch_slides_the_list_in_and_fades_the_preview() {
     // A settled screen has no clip of its own (the clip belongs to the slide).
     assert!(!landed.iter().any(|p| matches!(p, Prim::ClipBegin { .. })), "settled draws no clip");
     assert!(started.iter().any(|p| matches!(p, Prim::ClipBegin { .. })), "the slide clips the list to the menu");
+    crate::profile::reset();
+}
+
+#[test]
+fn a_menu_fades_in_over_the_luas_250ms() {
+    let _g = lock();
+    let _f = crate::lui::font::lock();
+    crate::lui::font::load("");
+    crate::profile::reset();
+    // `CoD.Menu.animateIn` (`codmenu.lua:2300-2326`): `beginAnimation("animate_popup_in", 250,
+    // false, true)` — no ease-in, an ease-out, from alpha 0 to 1. `openPopup` runs it for the
+    // lobby's choose-class screen and for every popup (`codmenu.lua:1985-1990`).
+    assert_eq!(MENU_OPEN_MS, 250.0, "codmenu.lua's animateIn duration");
+    let draw = |open: Option<f32>, editor: Option<&Editor>| {
+        let mut prims = Vec::new();
+        draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor, deny: 0.0, manage: true, now: 0.0, set_change: None, open });
+        prims
+    };
+    let alpha = |prims: &[Prim], want: &str| -> Option<u32> {
+        prims.iter().find_map(|q| match q {
+            Prim::Text { text, argb, .. } if text == want => Some(*argb >> 24),
+            _ => None,
+        })
+    };
+    // The screen starts invisible and lands at its own alpha (the title is off-white, full).
+    assert_eq!(alpha(&draw(Some(0.0), None), "CHOOSE CLASS"), Some(0), "opens at alpha 0");
+    // Halfway through with easeOut: `(1 - cos(pi/2)) / 2` is exactly 0.5, so a 255 alpha is 127.
+    assert_eq!(alpha(&draw(Some(MENU_OPEN_MS / 2000.0), None), "CHOOSE CLASS"), Some(127), "the ease-out midpoint");
+    let landed = draw(None, None);
+    assert_eq!(alpha(&landed, "CHOOSE CLASS"), Some(255), "settled at full alpha");
+    // No time and the full duration both draw exactly the static screen (no fade group, no clip).
+    assert_eq!(draw(Some(MENU_OPEN_MS / 1000.0), None), landed, "the landed fade is the static draw");
+    // The editor is a menu too, and its picker is a submenu: both fade in the same way.
+    let e = Editor::new(Draft::default());
+    assert_eq!(alpha(&draw(Some(0.0), Some(&e)), "SAVE CLASS"), Some(0));
+    assert_eq!(alpha(&draw(None, Some(&e)), "SAVE CLASS"), Some(255));
+    let mut picker = Editor::new(Draft::default());
+    picker.slot = Slot::Perk2;
+    picker.picking = true;
+    assert_eq!(alpha(&draw(Some(0.0), Some(&picker)), "Scavenger"), Some(0), "the submenu opens from 0");
+    assert_eq!(alpha(&draw(None, Some(&picker)), "Scavenger"), Some(255));
     crate::profile::reset();
 }
 
@@ -350,6 +391,34 @@ fn an_option_grid_hit_tests_every_card_it_draws() {
 }
 
 #[test]
+fn the_shared_fold_walks_a_content_grid_with_all_four_arrows() {
+    // The perk picker's grid is three wide (`cacperksp.lua:7`). The shared fold passes the arrows
+    // to the pure editor now, so the hosts get BO2's ContentGrid links without their own code.
+    let mut e = Editor::new(Draft::default());
+    e.slot = Slot::Perk2;
+    e.picking = true;
+    e.option = 0;
+    let n = e.options().len();
+    assert!(n >= 4, "tier 2 has a second row to walk: {n}");
+    let mut prev = MenuPrev::default();
+
+    let f = press(&mut e, &mut prev, &[Key::Right]);
+    assert_eq!(e.option, 1, "Right stays in the row");
+    assert_eq!(f.cue, Some(cues::GRID_NAV), "a grid move plays cac_grid_nav");
+    press(&mut e, &mut prev, &[Key::Left]);
+    assert_eq!(e.option, 0);
+    press(&mut e, &mut prev, &[Key::Left]);
+    assert_eq!(e.option, 2, "Left off the row's edge wraps to its last cell");
+    press(&mut e, &mut prev, &[Key::Right]);
+    assert_eq!(e.option, 0, "Right off the row's edge wraps to its first");
+    press(&mut e, &mut prev, &[Key::Down]);
+    assert_eq!(e.option, 3, "Down is one row, not the next flat option");
+    press(&mut e, &mut prev, &[Key::Up]);
+    assert_eq!(e.option, 0);
+    assert!(e.picking, "the arrows never close the list");
+}
+
+#[test]
 fn the_option_grid_labels_the_option_under_each_cell_and_highlights_the_chosen_one() {
     let mut e = Editor::new(Draft::default());
     e.slot = Slot::Perk3;
@@ -358,7 +427,7 @@ fn the_option_grid_labels_the_option_under_each_cell_and_highlights_the_chosen_o
     let opts = e.options();
     let (first, shown) = picker_window(e.slot, e.option);
     let mut prims = Vec::new();
-    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true, now: 0.0, set_change: None });
+    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
     let t = texts(&prims);
     for name in &opts[first..(first + shown).min(opts.len())] {
         assert!(t.iter().any(|x| x == name), "option {name} is labelled: {t:?}");
@@ -379,7 +448,7 @@ fn the_editor_screens_draw_their_boxes_and_prompts() {
     let mut e = Editor::new(Draft::default());
     e.slot = Slot::Perk2;
     let mut prims = Vec::new();
-    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true, now: 0.0, set_change: None });
+    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
     let t = texts(&prims);
     for label in ["PERK 1", "PERK 2", "PERK 3", "LETHAL", "TACTICAL", "ATTACHMENTS", "WILDCARDS"] {
         assert!(t.iter().any(|x| x == label), "editor label {label}: {t:?}");
@@ -391,7 +460,7 @@ fn the_editor_screens_draw_their_boxes_and_prompts() {
     // A perk list shows the tier's grid.
     e.picking = true;
     let mut prims = Vec::new();
-    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true, now: 0.0, set_change: None });
+    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
     let t = texts(&prims);
     assert!(t.iter().any(|x| x == "Scavenger"), "tier 2 perks are listed: {t:?}");
     assert!(t.iter().any(|x| x == "FastHands"), "tier 2 perks are listed");
@@ -402,7 +471,7 @@ fn a_launcher_shows_attachments_not_available() {
     let d = Draft { secondary: "smaw_mp".into(), ..Draft::default() };
     let e = Editor::new(d);
     let mut prims = Vec::new();
-    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true, now: 0.0, set_change: None });
+    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
     let t = texts(&prims);
     assert!(t.iter().any(|x| x == "Attachments not available"), "BO2's launcher line: {t:?}");
 }

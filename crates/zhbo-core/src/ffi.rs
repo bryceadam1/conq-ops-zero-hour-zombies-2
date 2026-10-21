@@ -693,7 +693,7 @@ pub unsafe extern "C" fn zhbo_menu_frame(input: *const crate::menu::MenuIn, out:
         crate::classui::draw_screen(&mut prims, inp.screen_w, inp.screen_h, &menu.view());
         // The shell's `S`/`O` dialogs draw over the screen (BO2's popup panels).
         if let Some(dialog) = menu.dialog() {
-            crate::classui::draw_dialog(&mut prims, inp.screen_w, inp.screen_h, dialog);
+            crate::classui::draw_dialog(&mut prims, inp.screen_w, inp.screen_h, dialog, menu.dialog_open());
         }
         crate::hud::render(&prims, &s.client_host);
         out

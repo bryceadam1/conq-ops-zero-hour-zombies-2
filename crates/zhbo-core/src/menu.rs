@@ -108,6 +108,12 @@ pub struct MenuState {
     /// The clock reading of the last class-set change, while `SetActiveClassSet`'s 250 ms
     /// slide/fade runs (`cacchooseclass.lua`); `None` once it has landed.
     set_change: Option<f32>,
+    /// The clock reading of the last menu open (the screen itself, the editor, its picker), while
+    /// `CoD.Menu.animateIn`'s 250 ms fade runs (`codmenu.lua:2300-2326`); `None` once it has run.
+    menu_open: Option<f32>,
+    /// The same for the open `S`/`O` dialog (`openPopup` runs `animateIn` too); `None` when none is
+    /// up or the fade has run.
+    dialog_open: Option<f32>,
 }
 
 impl Default for MenuState {
@@ -133,6 +139,10 @@ impl MenuState {
             closed: false,
             clock: 0.0,
             set_change: None,
+            // BO2 opens the shell screen as a popup (`partylobby.lua:429`), so `animateIn` fades it
+            // in from the first frame.
+            menu_open: Some(0.0),
+            dialog_open: None,
         }
     }
 
@@ -157,6 +167,15 @@ impl MenuState {
         if self.set_change.is_some_and(|start| self.clock - start >= classui::SET_SWITCH_MS / 1000.0) {
             self.set_change = None;
         }
+        // `CoD.Menu.animateIn`'s menu-open fade (`codmenu.lua:2300-2326`, 250 ms) and the same on
+        // the `S`/`O` dialog popup.
+        let open_done = |start: f32| self.clock - start >= classui::MENU_OPEN_MS / 1000.0;
+        if self.menu_open.is_some_and(open_done) {
+            self.menu_open = None;
+        }
+        if self.dialog_open.is_some_and(open_done) {
+            self.dialog_open = None;
+        }
         if self.dialog.is_some() {
             self.dialog_frame(&pointer, &mut out);
         } else if let Some(editor) = self.editor.take() {
@@ -173,12 +192,19 @@ impl MenuState {
     /// editor and management affordances).
     pub fn view(&self) -> classui::ScreenView<'_> {
         let set_change = self.set_change.map(|start| (self.clock - start).max(0.0));
-        classui::ScreenView { highlight: self.highlight, editor: self.editor.as_ref(), deny: self.deny, manage: true, now: self.clock, set_change }
+        let open = self.menu_open.map(|start| (self.clock - start).max(0.0));
+        classui::ScreenView { highlight: self.highlight, editor: self.editor.as_ref(), deny: self.deny, manage: true, now: self.clock, set_change, open }
     }
 
     /// The open `S`/`O` dialog, for the host to draw over the screen (`classui::draw_dialog`).
     pub fn dialog(&self) -> Option<&Dialog> {
         self.dialog.as_ref()
+    }
+
+    /// Seconds since the open dialog's popup animation started (`CoD.Menu.animateIn`; the host
+    /// passes it to `classui::draw_dialog`), or `None` when it has landed.
+    pub fn dialog_open(&self) -> Option<f32> {
+        self.dialog_open.map(|start| (self.clock - start).max(0.0))
     }
 
     /// Play BO2's deny cue and light the screen's rim (an over-budget choice, a full profile).
@@ -194,6 +220,8 @@ impl MenuState {
         self.editor_slot = slot;
         // BO2's ChooseClass handler: the lobby plays cac_main_edit_loadout as the editor opens.
         self.cues.push(cues::EDIT_LOADOUT);
+        // A new menu: `animateIn` fades the editor screen in (`codmenu.lua:2300-2326`).
+        self.menu_open = Some(self.clock);
         // The opening key's edge must not reach the editor on the same frame.
         self.prev.buttons = 0;
     }
@@ -205,6 +233,8 @@ impl MenuState {
         self.dialog_set = crate::profile::active_set();
         // popup.lua's OpenPopup: a dialog opens with the loadout-editor select cue.
         self.cues.push(cues::DIALOG_OPEN);
+        // The dialog is a popup: `openPopup` runs `animateIn`'s 250 ms fade (`codmenu.lua:1985-1990`).
+        self.dialog_open = Some(self.clock);
         self.prev.buttons = 0;
     }
 
@@ -458,12 +488,20 @@ impl MenuState {
     /// returns to the list (no pick — no match is running); a full set refuses the save and keeps
     /// the editor open; Cancel returns without saving.
     fn editor_frame(&mut self, mut editor: Editor, pointer: &MenuPointer, out: &mut MenuOut) {
+        let was_picking = editor.picking;
         let frame = classui::editor_frame(&mut editor, pointer, &self.prev);
         if frame.denied {
             self.deny();
         }
         if let Some(cue) = frame.cue {
             self.cues.push(cue);
+        }
+        // Opening a picker swaps in a new menu in BO2 (`CACEditClass.WeaponChosen` and its siblings
+        // call `openMenu`), so the port starts the menu-open fade on it too. BO2's back-out of such
+        // a menu is `animateOutAndGoBack` (`codmenu.lua:2254-2295`, 150 ms, out only); the port has
+        // no close fade yet, so closing a picker is still a cut.
+        if !was_picking && editor.picking {
+            self.menu_open = Some(self.clock);
         }
         match frame.outcome {
             Outcome::Save => {
@@ -476,11 +514,14 @@ impl MenuState {
                     Some(text) => {
                         write_profile(out, classui::SAVE_PROFILE_CLASS, &text);
                         self.cues.push(cues::SAVE);
-                        // Back to the list with the saved slot highlighted.
+                        // Back to the list with the saved slot highlighted. The choose-class menu
+                        // opens afresh here (BO2 closed it when the editor opened), so its
+                        // entrance fade runs again.
                         let row = PickRow::Custom(slot);
                         if let Some(i) = classui::pick_rows(true).iter().position(|r| *r == row) {
                             self.highlight = i;
                         }
+                        self.menu_open = Some(self.clock);
                     }
                     None => {
                         // No free slot: BO2 cannot create a sixth class in a set. Surface it and
@@ -492,6 +533,8 @@ impl MenuState {
             }
             Outcome::Cancel => {
                 self.cues.push(cues::BACKOUT);
+                // The choose-class list is back: its menu opens afresh (see the save branch).
+                self.menu_open = Some(self.clock);
             }
             Outcome::Continue => {
                 self.editor = Some(editor);
@@ -555,6 +598,77 @@ mod tests {
     }
 
     #[test]
+    fn the_screen_fades_in_on_open_and_each_new_menu_restarts_it() {
+        let _g = lock();
+        crate::profile::reset();
+        let mut menu = MenuState::new();
+        let mut inp = MenuIn::default();
+        // The shell screen is opened as a popup by the lobby (`partylobby.lua:429`), so
+        // `animateIn` (`codmenu.lua:2300-2326`) starts on its first frame.
+        assert_eq!(menu.view().open, Some(0.0), "the screen opens from alpha 0");
+        for _ in 0..16 {
+            menu.frame(&inp);
+        }
+        assert!(menu.view().open.is_none(), "the 250 ms have run: settled");
+        // Enter opens the editor: a new menu, so a new 250 ms fade.
+        press(&mut menu, &mut inp, Key::Enter);
+        let since = menu.view().open.expect("the editor's open starts the fade");
+        assert!(since > 0.0 && since < classui::MENU_OPEN_MS / 1000.0, "just opened: {since}");
+        for _ in 0..16 {
+            menu.frame(&inp);
+        }
+        assert!(menu.view().open.is_none(), "the editor has settled");
+        // Enter on PRIMARY opens its picker: the editor's submenu fades in too.
+        press(&mut menu, &mut inp, Key::Enter);
+        assert!(menu.editor.as_ref().is_some_and(|e| e.picking), "the carousel is open");
+        assert!(menu.view().open.is_some(), "the picker's open starts the fade");
+        for _ in 0..16 {
+            menu.frame(&inp);
+        }
+        assert!(menu.view().open.is_none(), "the picker has settled");
+        // Escape pops the picker back to the editor underneath: not a new menu, so no fade.
+        press(&mut menu, &mut inp, Key::Escape);
+        assert!(menu.view().open.is_none(), "backing out of a picker does not re-open the editor");
+        // Escape leaves the editor for the choose-class list; that menu opens afresh.
+        press(&mut menu, &mut inp, Key::Escape);
+        assert!(menu.editor.is_none(), "the editor closed");
+        assert!(menu.view().open.is_some(), "the list's entrance fade runs again");
+        crate::profile::reset();
+    }
+
+    #[test]
+    fn the_shell_dialogs_fade_in_like_popups() {
+        let _g = lock();
+        crate::profile::reset();
+        let mut menu = MenuState::new();
+        let mut inp = MenuIn::default();
+        menu.frame(&inp);
+        assert!(menu.dialog_open().is_none(), "no dialog before S");
+        // `cacchooseclass.lua`'s OpenClassSetOptions calls `openPopup`, which runs `animateIn`
+        // (`codmenu.lua:1985-1990`).
+        press(&mut menu, &mut inp, Key::S);
+        let since = menu.dialog_open().expect("the popup's open starts the fade");
+        assert!(since > 0.0 && since < classui::MENU_OPEN_MS / 1000.0, "just opened: {since}");
+        let title = |prims: &[crate::hud::Prim]| -> Option<u32> {
+            prims.iter().find_map(|p| match p {
+                crate::hud::Prim::Text { text, argb, .. } if text == "CLASS SET OPTIONS" => Some(*argb >> 24),
+                _ => None,
+            })
+        };
+        let mut started = Vec::new();
+        classui::draw_dialog(&mut started, 1280.0, 720.0, menu.dialog().expect("open"), Some(0.0));
+        assert_eq!(title(&started), Some(0), "the popup opens from alpha 0");
+        for _ in 0..16 {
+            menu.frame(&inp);
+        }
+        assert!(menu.dialog_open().is_none(), "the popup has settled after 250 ms");
+        let mut landed = Vec::new();
+        classui::draw_dialog(&mut landed, 1280.0, 720.0, menu.dialog().expect("still open"), menu.dialog_open());
+        assert_eq!(title(&landed), Some(crate::hud::WHITE >> 24), "and lands at its full alpha");
+        crate::profile::reset();
+    }
+
+    #[test]
     fn enter_on_a_row_opens_the_editor_on_that_slot() {
         let _g = lock();
         crate::profile::reset();
@@ -605,7 +719,9 @@ mod tests {
         }
         assert_eq!(menu.editor.as_ref().expect("editor open").slot, crate::classmenu::Slot::Lethal);
         press(&mut menu, &mut inp, Key::Enter); // open the Lethal slot's list
-        press(&mut menu, &mut inp, Key::Down); // the next lethal down
+        // The list is a content grid (`contentgrid.lua`): its items sit in a row, so Right moves
+        // along it (Down only leaves a row that has another one below).
+        press(&mut menu, &mut inp, Key::Right);
         press(&mut menu, &mut inp, Key::Enter); // choose it
         let out = save_open_editor(&mut menu, &mut inp);
         assert!(menu.editor.is_none(), "saving closes the editor");
@@ -778,7 +894,9 @@ mod tests {
             press(&mut menu, &mut inp, Key::Down);
         }
         press(&mut menu, &mut inp, Key::Enter);
-        press(&mut menu, &mut inp, Key::Down);
+        // The lethal list is a content grid: Right walks its row (Down leaves a row only when
+        // another is below).
+        press(&mut menu, &mut inp, Key::Right);
         press(&mut menu, &mut inp, Key::Enter);
         let out = save_open_editor(&mut menu, &mut inp);
         assert_eq!(out.save_profile, classui::SAVE_PROFILE_CLASS);

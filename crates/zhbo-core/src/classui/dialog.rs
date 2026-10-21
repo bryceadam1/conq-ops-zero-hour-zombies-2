@@ -206,8 +206,23 @@ pub(super) fn dialog_item_at(d: &Dialog, w: f32, h: f32, s: f32, x: f32, y: f32)
 
 
 /// Draw one of the shell's dialogs over the screen BO2 way (`a-chooseclass/021`): the dimmed screen,
-/// the centred panel with its title, subtitle and entries, and the `ESC Back` prompt.
-pub fn draw_dialog(prims: &mut Vec<Prim>, w: f32, h: f32, d: &Dialog) {
+/// the centred panel with its title, subtitle and entries, and the `ESC Back` prompt. The `S`/`O`
+/// dialogs are popups (`cacchooseclass.lua`'s `OpenClassOptions`/`OpenClassSetOptions` call
+/// `openPopup`), so `open` runs `CoD.Menu.animateIn`'s 250 ms ease-out alpha fade
+/// (`codmenu.lua:1985-1990`, `:2300-2326`); `None` draws the settled popup.
+pub fn draw_dialog(prims: &mut Vec<Prim>, w: f32, h: f32, d: &Dialog, open: Option<f32>) {
+    if settle(open) >= 1.0 {
+        draw_dialog_body(prims, w, h, d);
+    } else {
+        let mut group = Vec::new();
+        draw_dialog_body(&mut group, w, h, d);
+        bo2::fade(&mut group, crate::lui::anim::ease(settle(open), false, true));
+        prims.extend(group);
+    }
+}
+
+/// The settled dialog prims (no open fade).
+fn draw_dialog_body(prims: &mut Vec<Prim>, w: f32, h: f32, d: &Dialog) {
     let s = (h / 720.0).max(0.5);
     prims.push(Prim::Rect { x: 0.0, y: 0.0, w, h, argb: 0xB400_0000 });
     let (bx, by, bw, bh) = dialog_box(w, h, s, d.items.len());
