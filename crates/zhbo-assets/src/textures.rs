@@ -26,6 +26,23 @@ pub(crate) struct Looks {
     pub(crate) maps: BTreeMap<String, String>,
 }
 
+/// BO2's wrist datapad: the campaign map/readout screen on the first-person hands. Multiplayer's
+/// watch face is not that screen, and drawn statically the campaign UI reads as placeholder art
+/// (its yellow readouts look like caution stripes, its radar like a magenta dot). Draw the screen
+/// off instead: the geometry and the watchglass stay, the campaign UI never reaches the hands.
+const DATAPAD: &str = "viewarm_gen_datapad";
+pub(crate) const DATAPAD_OFF: &str = "zhbo_viewarm_gen_datapad_off.tga";
+
+/// The wrist datapad's screen off: a flat, dark panel (the watchglass over it stays).
+fn datapad_off() -> Rgba {
+    const SIZE: u32 = 256;
+    let mut pixels = Vec::with_capacity((SIZE * SIZE * 4) as usize);
+    for _ in 0..SIZE * SIZE {
+        pixels.extend([16, 18, 20, 255]);
+    }
+    Rgba { width: SIZE, height: SIZE, pixels }
+}
+
 /// Textures for a model's surfaces: the colour map of each, written once per name into `files`.
 /// Opaque surfaces get their ambient occlusion in the colour map's alpha and their packed BO2 maps
 /// in a second file (see [`surface_maps`]); the others keep BO2's alpha (coverage) in a file of
@@ -56,14 +73,17 @@ pub(crate) fn textures(model: &xmodel::Model, paks: &Paks, files: &mut BTreeMap<
                 }
                 return None;
             };
-            let mut name = character::texture_file(&img.name);
+            let neutral = m.name.contains(DATAPAD);
+            let mut name = if neutral { DATAPAD_OFF.to_string() } else { character::texture_file(&img.name) };
             if blend != w3d::Blend::Opaque {
-                name = name.replace(".tga", "_a.tga");
+                if !neutral {
+                    name = name.replace(".tga", "_a.tga");
+                }
                 looks.blend.insert(name.clone(), blend);
             }
             let path = format!("Art\\Textures\\{name}");
             if !files.contains_key(&path) {
-                let mut rgba = shrink(paks.image(img.stream_hash)?, MAX_TEXTURE);
+                let mut rgba = if neutral { datapad_off() } else { shrink(paks.image(img.stream_hash)?, MAX_TEXTURE) };
                 if blend == w3d::Blend::Opaque {
                     let map = |semantic| m.image(semantic).and_then(|i| paks.image(i.stream_hash));
                     put_occlusion(&mut rgba, map(xmodel::TS_OCCLUSION_MAP).as_ref());
@@ -130,5 +150,19 @@ pub(crate) fn finish(meshes: &mut Vec<w3d::SkinMesh>, looks: &Looks) {
             m.emissive = true;
         }
         m.bo2_maps = m.texture.as_ref().and_then(|t| looks.maps.get(t)).cloned();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_wrist_datapad_screen_is_a_dark_neutral_panel() {
+        let off = datapad_off();
+        assert_eq!((off.width, off.height), (256, 256));
+        assert_eq!(off.pixels.len(), (256 * 256 * 4) as usize);
+        assert!(off.pixels.as_chunks::<4>().0.iter().all(|p| p[3] == 255 && p[0] < 40 && p[1] < 40 && p[2] < 40));
+        assert!(DATAPAD_OFF.starts_with("zhbo_") && DATAPAD_OFF.ends_with(".tga"));
     }
 }
