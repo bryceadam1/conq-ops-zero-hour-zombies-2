@@ -398,6 +398,9 @@ pub struct Client {
     vm: Viewmodel,
     vm_motion: viewmodel::Motion,
     vm_events: viewmodel::Events,
+    /// The last shot's gun kick impulse (`EventKind::Recoil`'s `gun_kick`), taken by the viewmodel
+    /// motion next frame: G5's spring, in degrees/s of gun angle.
+    vm_kick: Option<(f32, f32)>,
     /// BO2 sound cues queued this frame (drained by the FFI layer into the host).
     pub cues: Cues,
     /// Set while the pick screen was forced open from outside a spawn (the command bar's
@@ -450,6 +453,7 @@ impl Client {
             vm: Viewmodel::default(),
             vm_motion: viewmodel::Motion::default(),
             vm_events: viewmodel::Events::default(),
+            vm_kick: None,
             cues: Cues::default(),
             class_pick_forced: false,
             class_pick_dismissed: false,
@@ -856,7 +860,9 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     self.hud.map_open = allowed && !in_fc && !menu && inp.keys.is_down(self.cfg.bindings.map);
                     self.hud.scoreboard_open = allowed && !menu && inp.keys.is_down(self.cfg.bindings.scoreboard);
                     let events = std::mem::take(&mut self.vm_events);
-                    let pose = self.vm_motion.update(dt, self.yaw, self.pitch, p, events.shot);
+                    // The viewmodel's motion reads the def's gun-position numbers (G4) and the
+                    // sim's own stance/speed/aim; the view's `cg_fov` is G4's wide-FOV reference.
+                    let pose = self.vm_motion.update(dt, self.yaw, self.pitch, self.cfg.cg_fov, p, self.vm_kick.take());
                     out.viewmodel_offset = pose.offset;
                     out.viewmodel_angles = pose.angles;
                     self.cues.update(dt, p, p.input.held & buttons::FIRE != 0);
@@ -915,6 +921,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         self.general = general;
         self.vm = Viewmodel::default(); // the weapon comes up as first person starts
         self.vm_motion = viewmodel::Motion::default();
+        self.vm_kick = None;
         // A fresh take-control re-offers the spawn pick even if the last life Escaped it.
         self.class_pick_dismissed = false;
         self.cues.reset();
@@ -1017,13 +1024,15 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                         self.hud.score_popup = SCORE_POPUP_TIME;
                     }
                 }
-                EventKind::Recoil { pitch_deg, yaw_deg, .. } => {
+                EventKind::Recoil { pitch_deg, yaw_deg, gun_kick, .. } => {
                     // BO2 assault rifles mostly recover: part of each kick moves the real aim, the
                     // rest is a visual kick that settles back.
                     self.pitch = (self.pitch + (pitch_deg * RECOIL_PERMANENT).to_radians()).clamp(-MAX_PITCH, MAX_PITCH);
                     self.yaw = wrap_angle(self.yaw + (yaw_deg * RECOIL_PERMANENT).to_radians());
                     self.hud.view_kick_pitch += pitch_deg * (1.0 - RECOIL_PERMANENT);
                     self.hud.view_kick_yaw += yaw_deg * (1.0 - RECOIL_PERMANENT);
+                    // The gun itself kicks on G5's spring, not with the camera.
+                    self.vm_kick = Some(gun_kick);
                     self.hud.muzzle = 0.05;
                 }
                 EventKind::Flinch { pitch_deg } => self.hud.view_kick_pitch += pitch_deg,

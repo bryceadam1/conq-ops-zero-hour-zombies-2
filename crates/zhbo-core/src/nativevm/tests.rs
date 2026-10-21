@@ -116,6 +116,50 @@ fn loads_through_requests_then_poses_and_aims() {
     });
 }
 
+/// Perpendicular distance from `p` to the ray `(eye, dir)` — the shot's own line.
+fn distance_to_ray(p: [f32; 3], eye: [f32; 3], dir: [f32; 3]) -> f32 {
+    let d = [p[0] - eye[0], p[1] - eye[1], p[2] - eye[2]];
+    let along = d[0] * dir[0] + d[1] * dir[1] + d[2] * dir[2];
+    let perp = [d[0] - dir[0] * along, d[1] - dir[1] * along, d[2] - dir[2] * along];
+    (perp[0] * perp[0] + perp[1] * perp[1] + perp[2] * perp[2]).sqrt()
+}
+
+#[test]
+fn aiming_puts_the_sight_on_the_ray_the_shot_takes() {
+    use crate::math::dir_from_angles;
+    use crate::movement::{Body, MoveTuning};
+    let f = fixture();
+    // The eye and axis of the shot, built as `sim::fire` and `Body::eye()` build them: the eye off
+    // the world origin, the view angles the sim fires along.
+    let eye = Body::new(crate::math::Vec3::new(120.0, -30.0, 4.0), &MoveTuning::default()).eye();
+    let (yaw, pitch) = (0.9f32, -0.2f32);
+    let dir = dir_from_angles(yaw, pitch);
+    let (eye, dir) = ([eye.x, eye.y, eye.z], [dir.x, dir.y, dir.z]);
+    let shot = |s: &mut ffi::State, ads: f32| {
+        let mut inp = input(1, ads);
+        (inp.eye, inp.dir) = (eye, dir);
+        for _ in 0..8 {
+            s.frame(&inp, true);
+            answer(s, &f);
+        }
+        distance_to_ray(aim_in_eye(s), eye, dir)
+    };
+    with_state(|s| {
+        *s = ffi::State::default();
+        // At the hip the sight is where the animation and the def's offsets put it: 2" left of the
+        // axis in this fixture (its forward distance does not matter to the distance).
+        let hip = shot(s, 0.0);
+        let half = shot(s, 0.5);
+        let aimed = shot(s, 1.0);
+        assert!((hip - 2.0 * ART_SCALE).abs() < 1e-3, "hip {hip}");
+        assert!(aimed < 1e-4, "fully aimed, the sight is on the ray: {aimed}");
+        assert!(hip > half && half > aimed, "the slide is monotone: {hip} {half} {aimed}");
+        // The sight keeps its authored distance ahead of the eye all the way.
+        let along = |p: [f32; 3]| (p[0] - eye[0]) * dir[0] + (p[1] - eye[1]) * dir[1] + (p[2] - eye[2]) * dir[2];
+        assert!((along(aim_in_eye(s)) - 20.0 * ART_SCALE).abs() < 1e-3, "{}", along(aim_in_eye(s)));
+    });
+}
+
 #[test]
 fn falls_back_to_the_idle_and_plays_at_the_rate() {
     let f = fixture();

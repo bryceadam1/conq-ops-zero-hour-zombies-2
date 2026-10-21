@@ -1630,6 +1630,76 @@ Verified: cargo test --workspace green; the FULL real-install suite green (zhbo-
 zhbo-assets 7); clippy clean in the touched crates; `cargo xtask build` clean; in-game autotest
 13/13 default, 13/13 with `ZHBO_NATIVE_VIEWMODEL=1 ZHBO_NATIVE_COMPARE=1`, 14/14 `--rts`.
 
+## Track R6: the sights sit on the shot's own axis (2026-10-21, branch `v1/track-r6`)
+
+`nativevm::placement` slid the aim marker onto the view axis, but the gun's offset and angles came
+from `viewmodel::Motion`'s own guesses (`BOB_SIDE`, `KICK_BACK`, `SWAY_*`, `KICK_UP`…), so the
+"hip pose" and the ADS damping were not BO2's. R6 makes the weapon def the source: `Motion` now
+runs `weapons::gunpos::GunPos::step` each frame with the local player's stance, speed, strafe, aim,
+view angles, bob cycle and sprint weight, so the hip pose is the def's `vStandMove`/`vDuckedOfs`/
+`vStrafeMove`/`vSprintOfs` (and their rotations), sway and the gun kick spring are the def's own
+(`sway*`/`adsSway*`, `f{Ads,Hip}GunKick*`), and `fAdsAimPitch`/`fAdsBobFactor` apply. The shot's gun
+kick impulse — `EventKind::Recoil.gun_kick`, which the client used to discard — now feeds G5's
+spring. Presentation only: no sim, ABI or asset change.
+
+The placement itself moved to `nativevm::place` (`aligned`/`root`/`sight`), unchanged in intent: the
+eye frame is the sim's own (`Body::eye()` + the view angles `dir_from_angles`, the axis `sim::fire`
+traces along), and the aim fraction (BO2's `fWeaponPosFrac`, which the arsenal moves at the def's
+ADS in/out times) slides `tag_sights`/the optic's window/the front sight onto that axis, its forward
+distance kept. The unit test builds the eye and direction the way `sim::fire` and `Body::eye()` do
+and asserts the sight's distance to the *ray* at ads 0 / 0.5 / 1 (2" of hip offset → 1" → 0) and
+that its along-ray distance never changes.
+
+Gotchas found on the way:
+
+* `gunpos`'s output is (pitch, yaw, roll) **degrees** and (forward, **right**, up) inches; the
+  renderer's `GunPose` is (yaw, pitch, roll) **radians** and (forward, **left**, up) art units.
+  Both conversions live in `viewmodel::Motion::update` — swapping either mirrors the whole pose.
+* `GunPos::sway`'s rotation had the opposite sign from its offset: the gun *led* the view while its
+  position hung behind it. An arm cannot turn faster than the camera, so the sway angle now takes
+  the same negated delta as the offset (test: `turning_sways_the_gun_behind_the_view`).
+* Viewmodel offsets are in the converter's art scale (`zhbo_native::ART_SCALE`, 11/72 per inch),
+  not the sim's 1/6 ZH units per inch. `viewmodel::INCH` reads that constant now.
+* BO2's own ADS transition is an animation: `weapAnimFiles_t` 0x55/0x56 (`ads_up`/`ads_down`) are
+  already converted into the native manifests and the W3D clips, but the clip state machine never
+  asks for them. The placement slide stands in for them; when the state machine plays them (Track
+  R3/R5 follow-up) the slide's visible work shrinks rather than fighting them.
+* `fAdsAimPitch` pitches the gun at full ADS *while* the sight is held on the axis, so the muzzle
+  sits a few degrees off the sight line — G4's own rule (`FUN_008ef760`), not a placement error.
+* The camera carries the cosmetic view kick (`hud.view_kick_*`) and the sim's shot axis does not.
+  The crosshair is drawn on the camera axis, so the sights follow the camera and the crosshair; the
+  placement test builds the ray from the fire path's own values to keep that honest.
+* Landing still uses the client's own dip: G4's `landChange` (the signed fall delta `FUN_00530990`
+  takes) is not in the sim's state, so `GunInput.land_change` goes in as 0.
+* G4's ADS view-origin delta (`FUN_00530af0`: `(viewOrigin - eyePos) * adsFrac` added to the gun)
+  has nothing to do here: the mod's first-person camera *is* the sim's `Body::eye()`, so the delta
+  is zero by construction. It would come back only if a separate ADS view origin were introduced
+  (e.g. a peek/lean camera).
+
+Verified: `cargo test -p zhbo-core -p zhbo-native` green (320 + native), clippy clean in the touched
+files. In-game `ZHBO_NATIVE_VIEWMODEL=1` / `ZHBO_NATIVE_COMPARE=1` eyeball pass left to the
+integrator (see the track's handoff note).
+
+## Integrating Track R6: the ADS sight picture on the shot's own axis (2026-10-21)
+
+Merged `v1/track-r6` (1 commit): `nativevm/place.rs` slides the gun in the eye frame so the aim
+marker's lateral/vertical offsets shrink to zero by ads = 1 (BO2's `fWeaponPosFrac` blend; the
+fraction moves at the def's `fAdsTransInTime`/`fAdsTransOutTime`), the marker being the
+converter's `AIM_TAG` (`tag_sights`, or the optic's window when one is mounted — same path).
+The axis is the sim's own (`Body::eye()` + `dir_from_angles` — the ray `sim::fire` traces).
+`viewmodel::Motion` now runs `weapons::gunpos` every frame (stance/strafe/sprint offsets, sway,
+ADS bob damping, the gun-kick spring fed by the recoil event's previously-discarded `gun_kick`),
+and a sway rotation-sign bug is fixed. Clean merge (fast-descendant), no ABI/VERSION change.
+
+Verified: cargo test --workspace green; real-install suite green; clippy clean; `cargo xtask
+build` clean; in-game autotest 13/13 default, 13/13 native+compare, 14/14 `--rts`. Compare log:
+≤ 0.013 at full ADS and 0.000 at neutral hip; ONE sample pair diverges 0.83 at ads 0 mid-throw
+— the native rig plays BO2's real Motion offsets where the W3D rig has none. That is R6's
+intended difference: **the compare tolerance only binds at neutral Motion and at ADS from now
+on.** Eyeball: the throw and hip poses read naturally in the native frames. The arms swinging
+through the ADS transition stands in for the `ads_up`/`ads_down` clips (converted into the
+manifests, never yet requested — a Track R3/R5 follow-up).
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
