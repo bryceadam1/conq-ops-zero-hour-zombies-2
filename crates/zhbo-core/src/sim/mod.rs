@@ -18,7 +18,7 @@ mod rts;
 
 pub use build::{placement, HostWorld, PLANT_DISTANCE};
 pub use fire::{gather_targets, throw_velocity, PENETRATION_DAMAGE};
-pub use rts::{RtsState, RtsWeapons, Third};
+pub use rts::{RtsIcons, RtsState, RtsWeapons, Third};
 
 use crate::host::{damage_kind, geom, objflags, LogicHost, ObjInfo};
 use crate::hitscan::{self, HitResult, Shape, Target, INFANTRY_HEAD_FRACTION, INFANTRY_HIT_RADIUS};

@@ -225,4 +225,11 @@ mod tests {
         let checked_in = std::fs::read_to_string(path).expect("host/zhbo/ZhboNames.h is checked in");
         assert_eq!(checked_in, ZHBO_NAMES_H, "run `cargo xtask names` to regenerate host/zhbo/ZhboNames.h");
     }
+
+    #[test]
+    fn the_abis_rts_name_slots_match_the_c_header() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../host/zhbo/zhbo_core.h");
+        let header = std::fs::read_to_string(path).expect("host/zhbo/zhbo_core.h is checked in");
+        assert!(header.contains(&format!("#define ZHBO_RTS_WEAPON_NAME_CAP {RTS_WEAPON_NAME_CAP}\n")), "zhbo_core.h's ZHBO_RTS_WEAPON_NAME_CAP must be {RTS_WEAPON_NAME_CAP}");
+    }
 }

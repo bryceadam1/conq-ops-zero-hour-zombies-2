@@ -80,14 +80,107 @@ struct WorldLook
 std::map<uint32_t, WorldLook> s_worldLooks;
 } // namespace
 
-// The General under RTS control: Zero Hour's AI fights with the loadout's weapons: PRIMARY gun,
-// SECONDARY sidearm (a pistol, or the SMAW-style launcher the Assault preset carries), TERTIARY
-// lethal. The ammo is the General's own in zhbo-core: each logic frame every shot is counted
-// against it, the slot the player picked is reported, an empty weapon can't fire, and the General
-// is moved off it to one with ammo.
+// The General under RTS control: Zero Hour's AI fights with his class's weapons: PRIMARY and
+// SECONDARY are his two guns, TERTIARY carries out the command bar's Lethal, Tactical and Melee
+// orders. zhbo-core names the Zero Hour weapon each slot must hold (ZhboRtsWeapons::templates,
+// converted per BO2 weapon) and they are swapped in when it changes. The ammo is the General's own
+// in zhbo-core: each logic frame every shot is counted against it, the slot the player picked is
+// reported, an empty weapon can't fire, and the General is moved off it to one with ammo.
 Bool isGeneral(const Object *obj)
 {
 	return obj && zhbo_names::isGeneral(obj->getTemplate()->getName().str());
+}
+
+Int rtsOrderAction(const CommandButton *button)
+{
+	if (!button)
+		return -1;
+	const AsciiString &name = button->getName();
+	if (name == "Command_ZHBO_Lethal")
+		return ZHBO_ACTION_LETHAL;
+	if (name == "Command_ZHBO_Tactical")
+		return ZHBO_ACTION_TACTICAL;
+	if (name == "Command_ZHBO_Melee")
+		return ZHBO_ACTION_MELEE;
+	if (name == "Command_ZHBO_Reload")
+		return ZHBO_ACTION_RELOAD;
+	return -1;
+}
+
+void sendRtsOrder(Int action)
+{
+	if (!TheInGameUI)
+		return;
+	const DrawableList *selected = TheInGameUI->getAllSelectedDrawables();
+	for (DrawableListCIt it = selected->begin(); it != selected->end(); ++it)
+	{
+		const Object *obj = *it ? (*it)->getObject() : nullptr;
+		if (!isGeneral(obj) || !obj->isLocallyControlled())
+			continue;
+		GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_ZHBO_TAKE_CONTROL);
+		msg->appendObjectIDArgument(obj->getID());
+		msg->appendIntegerArgument(action);
+	}
+}
+
+namespace
+{
+// Put the Zero Hour weapon zhbo-core names into each of the General's slots (unchanged slots and
+// names the archive lacks are left alone).
+void armRtsWeapons(Object *obj, const ZhboRtsWeapons &w)
+{
+	for (Int s = 0; s < 3; ++s)
+	{
+		char name[ZHBO_RTS_WEAPON_NAME_CAP + 1] = {};
+		memcpy(name, w.templates[s], ZHBO_RTS_WEAPON_NAME_CAP);
+		if (!name[0])
+			continue;
+		const Weapon *have = obj->getWeaponInWeaponSlot((WeaponSlotType)s);
+		if (have && have->getTemplate()->getName() == name)
+			continue;
+		const WeaponTemplate *tmpl = TheWeaponStore ? TheWeaponStore->findWeaponTemplate(name) : nullptr;
+		if (!tmpl)
+		{
+			static std::set<std::string> s_missing;
+			if (s_missing.insert(name).second)
+				logf("General %u: no Zero Hour weapon %s (reconvert the BO2 archive)", (unsigned)obj->getID(), name);
+			continue;
+		}
+		obj->zhboSetSlotWeapon((WeaponSlotType)s, tmpl);
+		logf("General %u armed slot %d with %s", (unsigned)obj->getID(), s, name);
+	}
+}
+} // namespace
+
+void applyRtsOrder(Int playerIndex, Object *general, Int action)
+{
+	const uint32_t id = (uint32_t)general->getID();
+	if (action == ZHBO_ACTION_RELOAD)
+	{
+		WeaponSlotType current = PRIMARY_WEAPON;
+		general->getCurrentWeapon(&current);
+		const Int slot = zhbo_logic_rts_reload(playerIndex, id, (int32_t)current);
+		Weapon *w = slot >= 0 && slot < 2 ? general->getWeaponInWeaponSlot((WeaponSlotType)slot) : nullptr;
+		if (w)
+		{
+			w->reloadAmmo(general);
+			logf("General %u reloads slot %d", (unsigned)id, slot);
+		}
+		return;
+	}
+	if (action < ZHBO_ACTION_LETHAL || action > ZHBO_ACTION_MELEE)
+		return;
+	zhbo_logic_rts_offhand(playerIndex, id, action - ZHBO_ACTION_LETHAL);
+	// The order's weapon goes into the third slot now, before Zero Hour's own weapon message (next
+	// in the stream) aims it: its reach is the order's. Zero Hour's temporary lock for the order
+	// can't override a permanent one (the gun he was told to hold, or the one he went back to), so
+	// that lock is released; zhbo-core locks him back to the gun once the order is carried out.
+	ZhboRtsWeapons w = {};
+	zhbo_client_rts_ammo(id, &w);
+	armRtsWeapons(general, w);
+	general->releaseWeaponLock(LOCKED_PERMANENTLY);
+	static const char *const what[] = { "lethal", "tactical", "melee" };
+	logf("General %u ordered to use the %s", (unsigned)id, what[action - ZHBO_ACTION_LETHAL]);
 }
 void rtsWeapons(UnsignedInt frame)
 {
@@ -141,6 +234,7 @@ void rtsWeapons(UnsignedInt frame)
 			aim = &target;
 		}
 		zhbo_logic_rts_update(obj->getControllingPlayer()->getPlayerIndex(), (uint32_t)obj->getID(), (int32_t)current, shots, aim, &ammo);
+		armRtsWeapons(obj, ammo);
 		if (const Object *victim = ai ? ai->getCurrentVictim() : nullptr)
 		{
 			for (Int s = 0; s < 2; ++s)
@@ -188,13 +282,8 @@ void rtsWeapons(UnsignedInt frame)
 		}
 	}
 }
-// The ammo left on each of the selected General's weapon buttons (drawn over the command bar).
-// The General's tactical grenade button (it shares the third slot with the lethal's).
-Bool isTacticalButton(const CommandButton *button)
-{
-	return button && button->getName() == "Command_ZHBO_SwitchToTactical";
-}
-
+// The ammo left on each of the selected General's gun buttons and offhand orders (drawn over the
+// command bar).
 void drawRtsAmmo()
 {
 	if (!TheInGameUI || TheInGameUI->getSelectCount() != 1 || !TheWindowManager)
@@ -205,6 +294,8 @@ void drawRtsAmmo()
 		return;
 	ZhboRtsWeapons ammo = {};
 	zhbo_client_rts_ammo((uint32_t)obj->getID(), &ammo);
+	ZhboRtsIcons icons = {};
+	zhbo_client_rts_icons((uint32_t)obj->getID(), &icons);
 	for (Int i = 1; i <= 14; ++i)
 	{
 		char name[64];
@@ -213,19 +304,40 @@ void drawRtsAmmo()
 		if (!win || win->winIsHidden())
 			continue;
 		const CommandButton *button = (const CommandButton *)GadgetButtonGetData(win);
-		if (!button || button->getCommandType() != GUI_COMMAND_SWITCH_WEAPON)
+		if (!button)
 			continue;
-		const Int slot = (Int)button->getWeaponSlot();
-		if (slot < 0 || slot > 2)
+		const Int order = rtsOrderAction(button);
+		const Int slot = button->getCommandType() == GUI_COMMAND_SWITCH_WEAPON ? (Int)button->getWeaponSlot() : -1;
+		Int icon = -1;
+		if (slot == 0 || slot == 1)
+			icon = slot == 0 ? ZHBO_RTS_ICON_PRIMARY : ZHBO_RTS_ICON_SECONDARY;
+		else if (order == ZHBO_ACTION_LETHAL)
+			icon = ZHBO_RTS_ICON_LETHAL;
+		else if (order == ZHBO_ACTION_TACTICAL)
+			icon = ZHBO_RTS_ICON_TACTICAL;
+		else if (order == ZHBO_ACTION_MELEE)
+			icon = ZHBO_RTS_ICON_KNIFE;
+		if (icon < 0)
 			continue;
 		Int x, y, w, h;
 		win->winGetScreenPosition(&x, &y);
 		win->winGetSize(&w, &h);
+		// His kit's BO2 icon over the plain tile (his class is the player's; no button art can show it).
+		char iconName[ZHBO_RTS_WEAPON_NAME_CAP + 1] = {};
+		memcpy(iconName, icons.icons[icon], ZHBO_RTS_WEAPON_NAME_CAP);
+		if (iconName[0])
+		{
+			const float pad = (float)h * 0.08f;
+			cbImage(iconName, (float)x + pad, (float)y + pad, (float)w - 2.0f * pad, (float)h * 0.62f - pad, 0xFFF2FFFFu);
+		}
+		if (order == ZHBO_ACTION_MELEE)
+			continue; // the knife never runs dry
+
 		char text[32];
 		Bool empty;
-		if (slot == 2)
+		if (order == ZHBO_ACTION_LETHAL || order == ZHBO_ACTION_TACTICAL)
 		{
-			const Int count = isTacticalButton(button) ? ammo.tactical : ammo.ammo[2];
+			const Int count = order == ZHBO_ACTION_TACTICAL ? ammo.tactical : ammo.lethal;
 			snprintf(text, sizeof(text), "%d", count);
 			empty = count <= 0;
 		}

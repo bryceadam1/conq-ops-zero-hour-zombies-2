@@ -262,6 +262,56 @@ impl Sim {
     }
 }
 
+/// The BO2 icons of a General's kit for his command bar, by [`RtsIcons::PRIMARY`] .. [`RtsIcons::KNIFE`]
+/// (`classicons::weapon_icon` names; empty while he is classless). The bridge draws them over the
+/// plain tiles of his gun and order buttons each frame: his class is the player's, so no
+/// conversion-time button art can show it (the same reason the class buttons draw their kits).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RtsIcons {
+    pub icons: [[u8; crate::names::RTS_WEAPON_NAME_CAP]; 5],
+}
+
+impl RtsIcons {
+    pub const PRIMARY: usize = 0;
+    pub const SECONDARY: usize = 1;
+    pub const LETHAL: usize = 2;
+    pub const TACTICAL: usize = 3;
+    pub const KNIFE: usize = 4;
+
+    pub fn icon(&self, which: usize) -> Option<&str> {
+        let t = self.icons.get(which)?;
+        let len = t.iter().position(|&b| b == 0).unwrap_or(t.len());
+        std::str::from_utf8(&t[..len]).ok().filter(|s| !s.is_empty())
+    }
+}
+
+impl Default for RtsIcons {
+    fn default() -> Self {
+        RtsIcons { icons: [[0; crate::names::RTS_WEAPON_NAME_CAP]; 5] }
+    }
+}
+
+impl Sim {
+    /// The kit icons for a General's command bar ([`RtsIcons`]).
+    pub fn rts_icons(&self, general: u32) -> RtsIcons {
+        let mut out = RtsIcons::default();
+        let Some(a) = self.players.iter().flatten().find(|p| p.general == general).map(|p| &p.arsenal).filter(|a| !a.is_unarmed()) else {
+            return out;
+        };
+        let gun = |s: usize| a.weapons.get(s).map(|w| w.def).filter(|d| d.class.is_gun());
+        let defs = [gun(0), gun(1), Some(a.lethal.def), Some(a.tactical.def), Some(a.melee)];
+        for (slot, def) in defs.into_iter().enumerate() {
+            let Some(def) = def else { continue };
+            let name = crate::classicons::weapon_icon(&def.id);
+            if name.len() < crate::names::RTS_WEAPON_NAME_CAP {
+                out.icons[slot][..name.len()].copy_from_slice(name.as_bytes());
+            }
+        }
+        out
+    }
+}
+
 /// What the third slot has left for its current order: the chosen offhand's count, or one knife.
 fn third_left(a: &Arsenal, rts: &RtsState) -> u16 {
     match rts.third() {
@@ -282,6 +332,12 @@ pub struct RtsWeapons {
     pub tactical_selected: i32,
     /// What the third slot does now ([`Third`]'s wire value). Appended in ABI 22.
     pub third: i32,
+    /// Lethals left (`ammo[2]` counts whichever offhand the third slot holds). Appended in ABI 22.
+    pub lethal: i32,
+    /// Which third-slot orders can be given now, by [`Third`] wire value: bit 0 the lethal, 1 the
+    /// tactical, 2 the knife (an offhand with some left that an overhead order can use; the knife
+    /// once classed). The command bar greys the others out. Appended in ABI 22.
+    pub orders: i32,
     /// The Zero Hour weapon each slot must hold (`names::rts_weapon`, NUL-terminated), or empty to
     /// keep the one it has (a classless General keeps the stand-ins). Appended in ABI 22.
     pub templates: [[u8; crate::names::RTS_WEAPON_NAME_CAP]; 3],
@@ -296,6 +352,8 @@ impl Default for RtsWeapons {
             tactical: 0,
             tactical_selected: 0,
             third: 0,
+            lethal: 0,
+            orders: 0,
             templates: [[0; crate::names::RTS_WEAPON_NAME_CAP]; 3],
         }
     }
@@ -316,6 +374,7 @@ fn rts_weapons(a: &Arsenal, lock: i32, rts: &RtsState) -> RtsWeapons {
         tactical: a.tactical.count as i32,
         tactical_selected: rts.tactical as i32,
         third: rts.third().wire(),
+        lethal: a.lethal.count as i32,
         ..Default::default()
     };
     for s in 0..2 {
@@ -324,10 +383,13 @@ fn rts_weapons(a: &Arsenal, lock: i32, rts: &RtsState) -> RtsWeapons {
         out.reserve[s] = reserve as i32;
     }
     out.ammo[2] = third_left(a, rts) as i32;
-    // A classless General (knife only) keeps Zero Hour's stand-ins, which the empty-ammo veto holds.
+    // A classless General (knife only) keeps Zero Hour's stand-ins, which the empty-ammo veto holds,
+    // and has no orders to give.
     if a.is_unarmed() {
         return out;
     }
+    let usable = |o: &crate::weapons::Offhand| o.count > 0 && o.def.place != Place::Hack;
+    out.orders = (usable(&a.lethal) as i32) << Third::Lethal.wire() | (usable(&a.tactical) as i32) << Third::Tactical.wire() | 1 << Third::Melee.wire();
     let third = match rts.third() {
         Third::Melee => a.melee,
         Third::Tactical => a.tactical.def,
@@ -466,6 +528,40 @@ mod tests {
         // The third slot is not a gun: the order reloads the gun he goes back to.
         sim.rts_update(&host, 0, 1, 1, [0, 3, 0], None);
         assert_eq!(sim.rts_reload(0, 1, 2), 1);
+    }
+
+    #[test]
+    fn the_command_bar_offers_only_the_orders_he_can_carry_out() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.rts_update(&host, 0, 1, 0, [0, 0, 0], None);
+        assert_eq!(sim.rts_ammo(1).orders, 0, "no orders before a class");
+        sim.choose_class(0, 1, 0, &[]);
+        let r = sim.rts_ammo(1);
+        assert_eq!((r.orders, r.lethal), (0b111, arsenal(&mut sim).lethal.count as i32));
+        arsenal(&mut sim).lethal.count = 0;
+        let black_hat: &'static WeaponDef = Box::leak(Box::new(WeaponDef { id: "pda_hack_mp".into(), class: Class::Tactical, place: Place::Hack, ..Default::default() }));
+        arsenal(&mut sim).tactical = Offhand { def: black_hat, count: 1 };
+        assert_eq!(sim.rts_ammo(1).orders, 1 << Third::Melee.wire(), "no lethals left, and the Black Hat needs first person");
+    }
+
+    #[test]
+    fn the_command_bar_draws_his_own_kit() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.rts_update(&host, 0, 1, 0, [0, 0, 0], None);
+        assert!((0..5).all(|i| sim.rts_icons(1).icon(i).is_none()), "nothing before a class");
+        sim.choose_class(0, 1, 0, &[]);
+        let a = arsenal(&mut sim).clone();
+        let icons = sim.rts_icons(1);
+        let want = |id: &str| crate::classicons::weapon_icon(id);
+        assert_eq!(icons.icon(RtsIcons::PRIMARY), Some(want(&a.weapons[0].def.id).as_str()));
+        assert_eq!(icons.icon(RtsIcons::SECONDARY), Some(want(&a.weapons[1].def.id).as_str()));
+        assert_eq!(icons.icon(RtsIcons::LETHAL), Some(want(&a.lethal.def.id).as_str()));
+        assert_eq!(icons.icon(RtsIcons::TACTICAL), Some(want(&a.tactical.def.id).as_str()));
+        assert_eq!(icons.icon(RtsIcons::KNIFE), Some(want(&a.melee.id).as_str()));
     }
 
     #[test]

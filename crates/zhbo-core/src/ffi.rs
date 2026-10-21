@@ -54,7 +54,8 @@ const _: () = {
     assert!(size_of::<FpsInput>() == 20);
     assert!(size_of::<ClientIn>() == 136);
     assert!(size_of::<ClientOut>() == 4508);
-    assert!(size_of::<crate::sim::RtsWeapons>() == 184);
+    assert!(size_of::<crate::sim::RtsWeapons>() == 192);
+    assert!(size_of::<crate::sim::RtsIcons>() == 240);
     assert!(size_of::<crate::building::BuildOption>() == 64);
     assert!(size_of::<crate::building::Site>() == 64);
     assert!(size_of::<crate::menu::MenuIn>() == 56);
@@ -329,11 +330,7 @@ pub extern "C" fn zhbo_logic_step(frame: u32) {
 /// `ConquerOps.log` is the in-game oracle: lifecycle events, kills, and a once-per-second pose.
 fn log_step(s: &State, first_new_event: usize, frame: u32) {
     use crate::host::LogicHost;
-    for e in s.sim.events.iter().skip(first_new_event) {
-        if let Some(line) = crate::sim::describe_event(e) {
-            s.logic.log(&line);
-        }
-    }
+    log_events(s, first_new_event);
     if frame.is_multiple_of(30) {
         for (i, p) in s.sim.players.iter().enumerate() {
             if let Some(p) = p.as_ref().filter(|p| p.is_first_person()) {
@@ -344,6 +341,16 @@ fn log_step(s: &State, first_new_event: usize, frame: u32) {
                     p.health, p.max_health, w.def.display_name, w.ammo, w.reserve
                 ));
             }
+        }
+    }
+}
+
+/// The sim's events from `first_new_event` on, as `ConquerOps.log` lines.
+fn log_events(s: &State, first_new_event: usize) {
+    use crate::host::LogicHost;
+    for e in s.sim.events.iter().skip(first_new_event) {
+        if let Some(line) = crate::sim::describe_event(e) {
+            s.logic.log(&line);
         }
     }
 }
@@ -368,7 +375,14 @@ pub unsafe extern "C" fn zhbo_logic_rts_update(
     }
     let shots = [*shots, *shots.add(1), *shots.add(2)];
     let target = (!target.is_null()).then(|| *target);
-    let r = with_state(|s| s.sim.rts_update(&s.logic, player, general, current_slot, shots, target)).unwrap_or_default();
+    // His orders' throws, plants and knife strikes happen here, before the logic step: log them too.
+    let r = with_state(|s| {
+        let before = s.sim.events.len();
+        let r = s.sim.rts_update(&s.logic, player, general, current_slot, shots, target);
+        log_events(s, before);
+        r
+    })
+    .unwrap_or_default();
     *out = r;
 }
 
@@ -398,6 +412,18 @@ pub unsafe extern "C" fn zhbo_client_rts_ammo(general: u32, out: *mut crate::sim
         return;
     }
     *out = with_state(|s| s.sim.rts_ammo(general)).unwrap_or_else(|| crate::sim::Sim::new().rts_ammo(general));
+}
+
+/// The selected General's kit icons for his command bar (`sim::RtsIcons`).
+///
+/// # Safety
+/// `out` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_client_rts_icons(general: u32, out: *mut crate::sim::RtsIcons) {
+    if out.is_null() {
+        return;
+    }
+    *out = with_state(|s| s.sim.rts_icons(general)).unwrap_or_default();
 }
 
 /// One command-bar class button (zhbo_core::classicons): which class it carries, where it sits in

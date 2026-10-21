@@ -87,6 +87,30 @@ const ENGLISH: &[(&str, &str)] = &[
         "CONTROLBAR:ToolTipZHBO_ChooseClass",
         "Pick a class for your General. The kit replaces his base one and takes effect the next time he takes the field.",
     ),
+    // The General's guns and orders under RTS control (sim/rts.rs). Named for BO2's loadout slots,
+    // not the weapons: his class is the player's, so the bridge draws each kit's BO2 icon over the
+    // button instead (zhbo_client_rts_icons) and the number on it is what is left.
+    ("CONTROLBAR:ZHBO_Primary", "&Primary"),
+    ("CONTROLBAR:ToolTipZHBO_Primary", "Fight with your primary weapon. Ammo is limited: the number on the button is what is left."),
+    ("CONTROLBAR:ZHBO_Secondary", "S&econdary"),
+    (
+        "CONTROLBAR:ToolTipZHBO_Secondary",
+        "Fight with your secondary weapon. The General switches to it on his own when the primary is empty.",
+    ),
+    ("CONTROLBAR:ZHBO_Lethal", "&Lethal"),
+    (
+        "CONTROLBAR:ToolTipZHBO_Lethal",
+        "Use your lethal where you click: a grenade is thrown there, equipment is put down facing it. The number is how many are left.",
+    ),
+    ("CONTROLBAR:ZHBO_Tactical", "Tact&ical"),
+    (
+        "CONTROLBAR:ToolTipZHBO_Tactical",
+        "Use your tactical where you click: a grenade is thrown there, equipment is put down facing it. The Black Hat needs first person.",
+    ),
+    ("CONTROLBAR:ZHBO_Melee", "&Knife"),
+    ("CONTROLBAR:ToolTipZHBO_Melee", "Close in on the enemy you click and knife him."),
+    ("CONTROLBAR:ZHBO_Reload", "&Reload"),
+    ("CONTROLBAR:ToolTipZHBO_Reload", "Reload the weapon in hand from its spare rounds."),
     // The one-page class command set (ZhboControlBar): its navigation and the class buttons'
     // shared tooltip. The class buttons' own labels are derived from the live class list
     // (`CONTROLBAR:ZHBO_ClassButton01`..`15`, see class_label).
@@ -107,29 +131,6 @@ fn table() -> &'static HashMap<String, Vec<u16>> {
             .iter()
             .map(|(k, v)| (k.to_ascii_lowercase(), v.encode_utf16().chain(std::iter::once(0)).collect()))
             .collect()
-    })
-}
-
-/// The General's weapon buttons, named after the loadout's weapons. Built the first time one is
-/// asked for: the control bar asks after the converted weapon table is installed.
-fn weapon_labels() -> &'static HashMap<String, Vec<u16>> {
-    static TABLE: OnceLock<HashMap<String, Vec<u16>>> = OnceLock::new();
-    TABLE.get_or_init(|| {
-        let l = crate::weapons::Loadout::default();
-        let w = |id: &str| crate::weapons::weapon(id);
-        let (p, s, g, t) = (w(&l.primary), w(&l.secondary), w(&l.lethal), w(&l.tactical));
-        let rounds = |d: &crate::weapons::WeaponDef| format!("{} rounds a magazine, {} spare", d.clip, d.start_reserve);
-        let entries = [
-            ("CONTROLBAR:ZHBO_Primary".to_string(), format!("&{}", p.display_name)),
-            ("CONTROLBAR:ToolTipZHBO_Primary".to_string(), format!("Use the {} ({}). Ammo is limited: the number on the button is what is left.", p.display_name, rounds(p))),
-            ("CONTROLBAR:ZHBO_Secondary".to_string(), format!("&{}", s.display_name)),
-            ("CONTROLBAR:ToolTipZHBO_Secondary".to_string(), format!("Use the {} ({}). The General switches to it when the {} is empty.", s.display_name, rounds(s), p.display_name)),
-            ("CONTROLBAR:ZHBO_Lethal".to_string(), format!("&{}", g.display_name)),
-            ("CONTROLBAR:ToolTipZHBO_Lethal".to_string(), format!("Throw {} at the target ({} carried). Only used when selected.", g.display_name, g.start_reserve.max(1))),
-            ("CONTROLBAR:ZHBO_Tactical".to_string(), format!("&{}", t.display_name)),
-            ("CONTROLBAR:ToolTipZHBO_Tactical".to_string(), format!("Throw {} at the target ({} carried). Only used when selected.", t.display_name, t.start_reserve.max(1))),
-        ];
-        entries.into_iter().map(|(k, v)| (k.to_ascii_lowercase(), v.encode_utf16().chain(std::iter::once(0)).collect())).collect()
     })
 }
 
@@ -177,12 +178,6 @@ pub fn lookup(label: &str) -> Option<&'static [u16]> {
     if key.starts_with("controlbar:zhbo_classbutton") {
         return class_label(&key);
     }
-    // The General's weapon buttons: every slot's TextLabel and DescriptLabel
-    // (`CONTROLBAR:ZHBO_<Slot>` / `CONTROLBAR:ToolTipZHBO_<Slot>`). A slot missing from this list
-    // falls through to the built-in table, has no entry, and renders as "???".
-    if ["zhbo_primary", "zhbo_secondary", "zhbo_lethal", "zhbo_tactical"].iter().any(|slot| key.contains(slot)) {
-        return weapon_labels().get(&key).map(|v| v.as_slice());
-    }
     table().get(&key).map(|v| v.as_slice())
 }
 
@@ -212,8 +207,8 @@ mod tests {
         assert_eq!(*s.last().unwrap(), 0);
         assert_eq!(String::from_utf16(&s[..s.len() - 1]).unwrap(), "General");
         assert!(lookup("OBJECT:NotOurs").is_none());
-        let rifle = lookup("CONTROLBAR:ZHBO_Primary").unwrap();
-        assert_eq!(String::from_utf16(&rifle[..rifle.len() - 1]).unwrap(), "&AN-94");
+        let primary = lookup("CONTROLBAR:ZHBO_Primary").unwrap();
+        assert_eq!(String::from_utf16(&primary[..primary.len() - 1]).unwrap(), "&Primary", "BO2's slot name: the button's icon is the kit's");
     }
 
     fn read(served: &[u16]) -> String {
@@ -228,14 +223,13 @@ mod tests {
         crate::classes::CustomClass { name: name.into(), primary: "an94_mp".into(), ..crate::classes::CustomClass::default() }
     }
 
-    /// Every weapon slot's button and tooltip label resolves. `zhbo_tactical` was missing from
-    /// `lookup`'s weapon branch, so the tactical button fell through to the built-in table, had no
-    /// entry, and the engine drew it as "???" while the other three slots were fine.
+    /// Every gun and order button's label and tooltip resolves (a missing one renders as "???";
+    /// `zhbo_tactical` once did, while the other slots were fine).
     #[test]
     fn every_weapon_slot_label_and_tooltip_resolves() {
         let _g = lock();
         load("");
-        for slot in ["Primary", "Secondary", "Lethal", "Tactical"] {
+        for slot in ["Primary", "Secondary", "Lethal", "Tactical", "Melee", "Reload"] {
             let label = format!("CONTROLBAR:ZHBO_{slot}");
             assert!(text(&label).is_some_and(|t| !t.is_empty()), "{label} is served");
             let tooltip = format!("CONTROLBAR:ToolTipZHBO_{slot}");

@@ -523,10 +523,14 @@ pub fn rts_weapons_ini(defs: &[WeaponDef], flashes: &BTreeMap<String, String>, h
             } else {
                 (zhbo_core::sim::PLANT_DISTANCE, 0.0)
             };
+            // The order's cursor ring (RadiusCursorType ATTACK_SCATTER_AREA) is the blast. Zero
+            // Hour's scattered token shot lands anywhere in it; zhbo-core aims at the point itself.
+            let ring = if throw { d.explosion_radius } else { 0.0 };
             let sound = if throw && has_event(zhbo_core::sounds::THROW) { zhbo_core::sounds::THROW } else { "NONE" };
             format!(
                 "  PrimaryDamage           = 0.01\n  PrimaryDamageRadius     = 0.0\n  AttackRange             = {range:.1}\n  \
-                 MinimumAttackRange      = {min:.1}\n  DamageType              = SMALL_ARMS\n  DeathType               = NORMAL\n  \
+                 MinimumAttackRange      = {min:.1}\n  ScatterRadius           = {ring:.1}\n  \
+                 DamageType              = SMALL_ARMS\n  DeathType               = NORMAL\n  \
                  WeaponSpeed             = 999999.0\n  ProjectileObject        = NONE\n  RadiusDamageAffects     = ENEMIES NEUTRALS\n  \
                  FireSound               = {sound}\n  PreAttackDelay          = 450\n  PreAttackType           = PER_SHOT\n  \
                  DelayBetweenShots       = 0\n  ClipSize                = 1\n  ClipReloadTime          = 1500\n  AutoReloadsClip         = Yes\n"
@@ -626,6 +630,7 @@ mod tests {
         let throw = block(&ini, "ZHBO_GeneralWeapon_frag_grenade_mp");
         assert_eq!(value(throw, "AttackRange"), format!("{:.1}", throw_range(&frag)));
         assert_eq!(value(throw, "MinimumAttackRange"), "40.0", "never into its own blast");
+        assert_eq!(value(throw, "ScatterRadius"), "40.0", "the order's cursor ring is the blast");
         assert_eq!(value(throw, "FireSound"), zhbo_core::sounds::THROW);
         let plant = block(&ini, "ZHBO_GeneralWeapon_claymore_mp");
         assert_eq!(value(plant, "AttackRange"), format!("{:.1}", zhbo_core::sim::PLANT_DISTANCE));
