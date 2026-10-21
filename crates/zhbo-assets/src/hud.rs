@@ -16,7 +16,7 @@ use zhbo_formats::iwi::Rgba;
 use zhbo_formats::t6zone::Zone;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive.
-pub const VERSION: u32 = 41;
+pub const VERSION: u32 = 42;
 pub use zhbo_core::names::BO2_ARCHIVE_NAME as ARCHIVE_NAME;
 pub use zhbo_core::names::BO2_ARCHIVE_VERSION_PATH as VERSION_FILE;
 /// Stem of each page's TGA; every MappedImage names the page it was packed into.
@@ -105,10 +105,10 @@ pub struct Report {
 /// BO2 draws some HUD art additively: bright on opaque black. Give such an image its brightness as
 /// alpha (and full-strength colour) so alpha blending looks the same.
 fn additive_to_alpha(img: &mut Rgba) {
-    if img.pixels.chunks_exact(4).any(|p| p[3] < 250) {
+    if img.pixels.as_chunks::<4>().0.iter().any(|p| p[3] < 250) {
         return; // has real alpha
     }
-    for p in img.pixels.chunks_exact_mut(4) {
+    for p in img.pixels.as_chunks_mut::<4>().0.iter_mut() {
         let a = p[0].max(p[1]).max(p[2]);
         if a > 0 {
             for c in &mut p[..3] {
@@ -328,8 +328,8 @@ fn button_tile(art: Option<&Rgba>, reticle: bool) -> Rgba {
         if x < w && y < h {
             let p = ((y * w + x) * 4) as usize;
             let a = c[3] as u32;
-            for k in 0..3 {
-                t.pixels[p + k] = ((c[k] as u32 * a + t.pixels[p + k] as u32 * (255 - a)) / 255) as u8;
+            for (k, &ck) in c.iter().take(3).enumerate() {
+                t.pixels[p + k] = ((ck as u32 * a + t.pixels[p + k] as u32 * (255 - a)) / 255) as u8;
             }
         }
     };

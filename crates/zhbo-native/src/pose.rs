@@ -33,6 +33,18 @@ pub struct Bone {
     /// this bone, is `pose * inv_bind * vertex`.
     pub inv_bind: Xf,
     pub hidden: bool,
+    /// Driven by the clips (false for a rigid part's bones).
+    pub animated: bool,
+}
+
+/// One part to compose: a model, the bone it hangs from, its offset in that bone's frame, and
+/// whether the clips leave it alone (`viewmodel::Part::rigid`).
+#[derive(Clone, Copy)]
+pub struct PartRef<'a> {
+    pub model: &'a Model,
+    pub tag: Option<&'a str>,
+    pub offset: Xf,
+    pub rigid: bool,
 }
 
 /// One composed part: where its bones start in the skeleton.
@@ -52,10 +64,10 @@ impl Skeleton {
     /// Compose `parts` (a model, the tag it hangs from, its offset in the tag's frame) in order,
     /// then the marker tags, then hide `hide` and everything under it. A part whose tag is
     /// missing hangs from the base's origin (logged by the caller: BO2 would fail the attach).
-    pub fn compose(parts: &[(&Model, Option<&str>, Xf)], markers: &[Marker], hide: &[String]) -> (Skeleton, Vec<String>) {
+    pub fn compose(parts: &[PartRef<'_>], markers: &[Marker], hide: &[String]) -> (Skeleton, Vec<String>) {
         let mut s = Skeleton::default();
         let mut problems = Vec::new();
-        for (model, tag, offset) in parts {
+        for &PartRef { model, tag, offset, rigid } in parts {
             let attach = tag.and_then(|t| {
                 let at = s.bone(t);
                 if at.is_none() {
@@ -63,7 +75,7 @@ impl Skeleton {
                 }
                 at
             });
-            let origin = compose(attach.map_or(IDENTITY, |i| s.bones[i].bind), *offset);
+            let origin = compose(attach.map_or(IDENTITY, |i| s.bones[i].bind), offset);
             let first = s.bones.len();
             for b in &model.bones {
                 let own = (b.rotation, b.position);
@@ -74,7 +86,7 @@ impl Skeleton {
                 };
                 let bind_local = compose(inverse(parent.map_or(IDENTITY, |p| s.bones[p].bind)), world);
                 let anim_base = if b.parent.is_some() { b.local_position } else { [0.0; 3] };
-                s.bones.push(Bone { name: b.name.clone(), parent, bind_local, anim_base, bind: world, inv_bind: inverse(own), hidden: false });
+                s.bones.push(Bone { name: b.name.clone(), parent, bind_local, anim_base, bind: world, inv_bind: inverse(own), hidden: false, animated: !rigid });
             }
             s.parts.push(PartBones { first, count: model.bones.len() });
         }
@@ -84,7 +96,7 @@ impl Skeleton {
                 continue;
             };
             let bind = compose(s.bones[parent].bind, m.local);
-            s.bones.push(Bone { name: m.name.clone(), parent: Some(parent), bind_local: m.local, anim_base: m.local.1, bind, inv_bind: inverse(bind), hidden: false });
+            s.bones.push(Bone { name: m.name.clone(), parent: Some(parent), bind_local: m.local, anim_base: m.local.1, bind, inv_bind: inverse(bind), hidden: false, animated: true });
         }
         for i in 0..s.bones.len() {
             let hidden_here = hide.iter().any(|h| h == &s.bones[i].name);
@@ -109,7 +121,7 @@ impl Skeleton {
         out.clear();
         for b in &self.bones {
             let mut local = b.bind_local;
-            if let Some(t) = anim.bones.iter().find(|t| t.name == b.name) {
+            if let Some(t) = anim.bones.iter().find(|t| b.animated && t.name == b.name) {
                 if let Some(q) = t.rotation_at(frame) {
                     local.0 = q;
                 }
@@ -166,7 +178,7 @@ pub fn blend(from: &[Xf], to: &mut [Xf], t: f32) {
 /// Add `anim`'s change since its first frame on top of `base` (an additive layer, weighted).
 pub fn add(skel: &Skeleton, base: &mut [Xf], anim: &Anim, frame: f32, weight: f32) {
     for (i, b) in skel.bones.iter().enumerate() {
-        let Some(t) = anim.bones.iter().find(|t| t.name == b.name) else { continue };
+        let Some(t) = anim.bones.iter().find(|t| b.animated && t.name == b.name) else { continue };
         if let (Some(q0), Some(q)) = (t.rotation_at(0.0), t.rotation_at(frame)) {
             let delta = nlerp([0.0, 0.0, 0.0, 1.0], qmul(q, qconj(q0)), weight);
             base[i].0 = qnorm(qmul(delta, base[i].0));
@@ -198,6 +210,19 @@ mod tests {
     use crate::math::{mat4_point, MAT4_IDENTITY};
     use crate::model::tests::strip;
 
+    fn part<'a>(model: &'a Model, tag: Option<&'a str>, offset: Xf) -> PartRef<'a> {
+        PartRef { model, tag, offset, rigid: false }
+    }
+
+    #[test]
+    fn rigid_parts_ignore_the_clips() {
+        let m = strip();
+        let (skel, _) = Skeleton::compose(&[PartRef { model: &m, tag: None, offset: IDENTITY, rigid: true }], &[], &[]);
+        let mut local = Vec::new();
+        skel.sample(&bend(), 10.0, &mut local);
+        assert_eq!(local, skel.bind_pose());
+    }
+
     fn close(a: [f32; 3], b: [f32; 3]) -> bool {
         (0..3).all(|k| (a[k] - b[k]).abs() < 1e-3)
     }
@@ -218,7 +243,7 @@ mod tests {
     #[test]
     fn bind_pose_skins_vertices_where_bo2_put_them() {
         let m = strip();
-        let (skel, problems) = Skeleton::compose(&[(&m, None, IDENTITY)], &[], &[]);
+        let (skel, problems) = Skeleton::compose(&[part(&m, None, IDENTITY)], &[], &[]);
         assert!(problems.is_empty());
         let (mut ms, mut pal) = (Vec::new(), Vec::new());
         skel.model_space(&skel.bind_pose(), &mut ms);
@@ -231,7 +256,7 @@ mod tests {
     #[test]
     fn a_clip_bends_the_child_and_its_translation_adds_to_the_local_offset() {
         let m = strip();
-        let (skel, _) = Skeleton::compose(&[(&m, None, IDENTITY)], &[], &[]);
+        let (skel, _) = Skeleton::compose(&[part(&m, None, IDENTITY)], &[], &[]);
         let a = bend();
         let (mut local, mut ms, mut pal) = (Vec::new(), Vec::new(), Vec::new());
         skel.sample(&a, 10.0, &mut local);
@@ -251,7 +276,7 @@ mod tests {
         gun.bones[1].name = "tag_sight_on".into();
         let offset = (crate::math::QUAT_IDENTITY, [0.0, 0.0, 1.0]);
         let markers = [Marker { name: "tag_sights".into(), parent: "tag_weapon_root".into(), local: (crate::math::QUAT_IDENTITY, [5.0, 0.0, 3.0]) }];
-        let (skel, problems) = Skeleton::compose(&[(&arms, None, IDENTITY), (&gun, Some("j_arm"), offset)], &markers, &["tag_sight_on".to_string()]);
+        let (skel, problems) = Skeleton::compose(&[part(&arms, None, IDENTITY), part(&gun, Some("j_arm"), offset)], &markers, &["tag_sight_on".to_string()]);
         assert!(problems.is_empty(), "{problems:?}");
         assert_eq!(skel.bones.len(), 5);
         let (mut local, mut ms, mut pal) = (Vec::new(), Vec::new(), Vec::new());
@@ -264,7 +289,7 @@ mod tests {
         skel.palette(&ms, &MAT4_IDENTITY, &mut pal);
         assert!(skel.bones[3].hidden && pal[3] == [0.0; 16], "the hidden tag collapses");
         assert!(!skel.bones[2].hidden);
-        let (_, missing) = Skeleton::compose(&[(&arms, None, IDENTITY), (&gun, Some("nope"), IDENTITY)], &[], &[]);
+        let (_, missing) = Skeleton::compose(&[part(&arms, None, IDENTITY), part(&gun, Some("nope"), IDENTITY)], &[], &[]);
         assert_eq!(missing.len(), 1);
     }
 
@@ -281,7 +306,7 @@ mod tests {
     #[test]
     fn blend_and_add_layers() {
         let m = strip();
-        let (skel, _) = Skeleton::compose(&[(&m, None, IDENTITY)], &[], &[]);
+        let (skel, _) = Skeleton::compose(&[part(&m, None, IDENTITY)], &[], &[]);
         let bind = skel.bind_pose();
         let mut bent = Vec::new();
         skel.sample(&bend(), 10.0, &mut bent);

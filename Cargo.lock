@@ -1429,6 +1429,7 @@ dependencies = [
  "png",
  "zhbo-core",
  "zhbo-formats",
+ "zhbo-native",
  "zhbo-requirements",
 ]
 

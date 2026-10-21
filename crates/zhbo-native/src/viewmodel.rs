@@ -22,6 +22,9 @@ pub struct Part {
     pub tag: Option<String>,
     /// The part's origin in the tag's frame (BO2 inches): an attachment's view offset.
     pub offset: Xf,
+    /// Not driven by the clips: it rides its tag as modelled (the reload's incoming magazine on
+    /// `tag_clip1`, whose bones share the magazine's names).
+    pub rigid: bool,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -61,6 +64,7 @@ impl Viewmodel {
             w.opt_str(p.tag.as_deref());
             w.f32s(&p.offset.0);
             w.f32s(&p.offset.1);
+            w.u8(p.rigid as u8);
         }
         w.count(self.markers.len());
         for m in &self.markers {
@@ -85,7 +89,7 @@ impl Viewmodel {
         let mut r = Reader::open(data, MAGIC, "viewmodel", VERSION)?;
         let id = r.str()?;
         let faction = r.u8()?;
-        let np = r.count(33)?;
+        let np = r.count(34)?;
         let mut parts = Vec::with_capacity(np);
         for i in 0..np {
             let model = r.str()?;
@@ -93,7 +97,7 @@ impl Viewmodel {
             if (i == 0) != tag.is_none() {
                 return Err(FormatError::Corrupt(format!("part {i}: only the base part has no tag")));
             }
-            parts.push(Part { model, tag, offset: (r.f32n()?, r.f32n()?) });
+            parts.push(Part { model, tag, offset: (r.f32n()?, r.f32n()?), rigid: r.u8()? != 0 });
         }
         let nm = r.count(36)?;
         let mut markers = Vec::with_capacity(nm);
@@ -126,9 +130,9 @@ mod tests {
             id: "an94_mp+reflex".into(),
             faction: b'U',
             parts: vec![
-                Part { model: "Art\\Native\\arms.zbm".into(), tag: None, offset: IDENTITY },
-                Part { model: "Art\\Native\\gun.zbm".into(), tag: Some("tag_weapon".into()), offset: IDENTITY },
-                Part { model: "Art\\Native\\reflex.zbm".into(), tag: Some("tag_weapon".into()), offset: ([0.0, 0.0, 0.0, 1.0], [3.0, 0.0, 4.5]) },
+                Part { model: "Art\\Native\\arms.zbm".into(), tag: None, offset: IDENTITY, rigid: false },
+                Part { model: "Art\\Native\\gun.zbm".into(), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false },
+                Part { model: "Art\\Native\\reflex.zbm".into(), tag: Some("tag_weapon".into()), offset: ([0.0, 0.0, 0.0, 1.0], [3.0, 0.0, 4.5]), rigid: true },
             ],
             markers: vec![Marker { name: "tag_sights".into(), parent: "tag_weapon".into(), local: ([0.0, 0.0, 0.0, 1.0], [2.0, 0.0, 5.0]) }],
             hide: vec!["tag_sight_on".into()],

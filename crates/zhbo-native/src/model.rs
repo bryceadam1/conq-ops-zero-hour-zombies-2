@@ -13,6 +13,9 @@ pub const VERSION: u32 = 1;
 /// No material on a surface (BO2 leaves the clan tag/emblem surfaces to code).
 pub const NO_MATERIAL: u32 = u32::MAX;
 
+/// A vertex's size in the blob: position, normal, UV, four bone indices, four weights.
+const VERTEX_BYTES: usize = 12 + 12 + 8 + 4 * 2 + 4 * 4;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Bone {
     pub name: String,
@@ -231,7 +234,7 @@ impl Model {
             if material != NO_MATERIAL && material as usize >= materials.len() {
                 return Err(FormatError::Corrupt(format!("surface {si} uses material {material} of {}", materials.len())));
             }
-            let nv = r.count(68)?;
+            let nv = r.count(VERTEX_BYTES)?;
             let mut vertices = Vec::with_capacity(nv);
             for _ in 0..nv {
                 let position = r.f32n()?;
@@ -315,6 +318,15 @@ pub(crate) mod tests {
         let mut longer = bytes.clone();
         longer.push(0);
         assert!(Model::from_bytes(&longer).is_err(), "trailing bytes");
+    }
+
+    #[test]
+    fn a_vertex_is_the_size_the_reader_bounds_it_by() {
+        let mut one = strip();
+        one.surfaces[0].indices.clear();
+        let three = one.to_bytes().len();
+        one.surfaces[0].vertices.pop();
+        assert_eq!(three - one.to_bytes().len(), VERTEX_BYTES);
     }
 
     #[test]

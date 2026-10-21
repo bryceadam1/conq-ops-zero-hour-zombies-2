@@ -346,6 +346,8 @@ mod tests {
             num_frames: 1,
             frame_rate: 30.0,
             looping: true,
+            delta: false,
+            asset_type: 0,
             bones: vec![BoneTrack {
                 name: "arm".into(),
                 rotation: Some(vec![(0, base.rotation)]),
