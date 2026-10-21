@@ -339,7 +339,15 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
             flashes.insert(id.clone(), effects.add(f, &|h| paks.image(h)));
         }
         if let Some(f) = &w.view_flash_effect {
-            d.view_flash_fx = effects.add(f, &|h| paks.image(h));
+            // Only claim it when the converter can draw it (sprites or runner children). An effect
+            // with only a light or a model would leave an empty FXList, and the bridge's generic
+            // gas flash is better than nothing.
+            let drawable = f.elems.iter().any(|e| {
+                zhbo_formats::fx::kind::is_sprite(e.kind) || e.kind == zhbo_formats::fx::kind::RUNNER
+            });
+            if drawable {
+                d.view_flash_fx = effects.add(f, &|h| paks.image(h));
+            }
         }
         if let Some(f) = &w.view_shell_eject_effect {
             d.view_shell_fx = effects.add_shell(f, &patch, &|h| paks.image(h));
