@@ -338,6 +338,15 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         if let Some(f) = &w.world_flash_effect {
             flashes.insert(id.clone(), effects.add(f, &|h| paks.image(h)));
         }
+        if let Some(f) = &w.view_flash_effect {
+            d.view_flash_fx = effects.add(f, &|h| paks.image(h));
+        }
+        if let Some(f) = &w.view_shell_eject_effect {
+            d.view_shell_fx = effects.add(f, &|h| paks.image(h));
+        }
+        if let Some(f) = &w.view_last_shot_eject_effect {
+            d.view_last_shot_shell_fx = effects.add(f, &|h| paks.image(h));
+        }
         // BO2's smoke grenade plays its cloud from script: use it by name, for the screen's time.
         if d.effect == zhbo_core::weapons::Effect::Smoke {
             if let Some(e) = w.explosion_effect.clone().or_else(|| zhbo_formats::fx::find(&common, SMOKE_EFFECT)) {
