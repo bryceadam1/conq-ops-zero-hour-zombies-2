@@ -362,6 +362,7 @@ void Zhbo_Init()
 	zhbo_load_strings(readTextFile(zhbo_names::STRINGS_PATH).c_str());
 	zhbo_load_tuning(readTextFile(zhbo_names::TUNING_PATH).c_str());
 	zhbo_load_classes(readTextFile(zhbo_names::CLASSES_PATH).c_str());
+	zhbo_load_fonts(readTextFile(zhbo_names::FONTS_PATH).c_str());
 	// The player's create-a-class profile: a small text file next to the mod's log, in the game's
 	// user-data directory (see zhbo_core::profile). Its custom classes join the pick screen's list.
 	zhbo_load_profile(readProfileFile().c_str());

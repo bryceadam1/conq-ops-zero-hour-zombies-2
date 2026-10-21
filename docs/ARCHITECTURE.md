@@ -53,6 +53,11 @@ from `zhbo_logic_*` must stay deterministic. Depends on `zhbo-requirements` and 
   `hack.rs` (Black Hat), `build.rs` (hammer/site), `rts.rs` (`rts_update`,
   `rts_offhand`, `RtsWeapons`), `fire.rs` (`apply_weapon_action`, `gather_targets`,
   `throw_velocity`).
+- `lui/`: BO2's LUI layout model shared by the HUD and the class screens: the anchor/edge
+  resolution against a 720-unit root (`mod.rs`), BO2's converted UI fonts (`font.rs`), the
+  BO2 materials the ports draw by name (`materials.rs`) and LUI's animation states (`anim.rs`).
+- `hud/` and `classui/`: the first-person HUD and the create-a-class screens, one file per element
+  or concern.
 - `config.rs` (env vars parsed once at init), `names.rs` (the naming registry),
   `tuning.rs` (the gameplay tuning pack), `strings.rs` (the localised strings),
   `equipment.rs` (BO2 equipment behavior, driven by the weapon table's `Equipment` block).
@@ -60,7 +65,7 @@ from `zhbo_logic_*` must stay deterministic. Depends on `zhbo-requirements` and 
 ### `crates/zhbo-assets`
 The BO2 → mod converter: reads your BO2 install (through `zhbo-formats`), converts HUD art,
 sound, weapon viewmodels and the weapon table, and writes `ConquerOps_BO2.big`. Also a CLI
-to list/export BO2 sounds and images. Depends on `zhbo-formats`, `zhbo-requirements`, and
+to list/export BO2 sounds, images and fonts. `fonts.rs` converts BO2's UI fonts. Depends on `zhbo-formats`, `zhbo-requirements`, and
 `zhbo-core`. After Phase 2.5 the module is split into `textures.rs` (the texture pipeline),
 `ini.rs` (the INI rewriters), `viewmodels.rs` (the viewmodel conversion), `generals.rs`
 (the Zero Hour names, factions and the `files()` orchestrator), and `paks.rs`

@@ -20,6 +20,8 @@ pub enum Format {
     Dxt5,
     /// Two-channel BC5 (normal maps).
     Bc5,
+    /// Alpha only, one byte a pixel (the font atlases).
+    A8,
     Other(u8),
 }
 
@@ -28,6 +30,7 @@ impl Format {
         match c {
             1 => Format::Argb32,
             2 => Format::Rgb24,
+            5 => Format::A8,
             11 => Format::Dxt1,
             12 => Format::Dxt3,
             13 => Format::Dxt5,
@@ -42,6 +45,7 @@ impl Format {
         match self {
             Format::Argb32 => Some(w * h * 4),
             Format::Rgb24 => Some(w * h * 3),
+            Format::A8 => Some(w * h),
             Format::Dxt1 => Some(blocks * 8),
             Format::Dxt3 | Format::Dxt5 | Format::Bc5 => Some(blocks * 16),
             Format::Other(_) => None,
@@ -97,6 +101,8 @@ pub fn decode(data: &[u8]) -> Result<Rgba> {
     let pixels = match h.format {
         Format::Argb32 => src.chunks_exact(4).flat_map(|p| [p[2], p[1], p[0], p[3]]).collect(),
         Format::Rgb24 => src.chunks_exact(3).flat_map(|p| [p[2], p[1], p[0], 255]).collect(),
+        // White coverage: a tint colours it, as BO2's font shader does.
+        Format::A8 => src.iter().flat_map(|&a| [255, 255, 255, a]).collect(),
         f => decode_blocks(src, w, hh, f),
     };
     Ok(Rgba { width: w as u32, height: hh as u32, pixels })

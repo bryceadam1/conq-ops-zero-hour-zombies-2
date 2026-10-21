@@ -88,6 +88,17 @@ pub unsafe extern "C" fn zhbo_load_strings(text: *const c_char) {
     crate::strings::load(&text);
 }
 
+/// Load the BO2 font metrics (`names::FONTS_PATH` in the converted archive, read by the bridge's
+/// `readTextFile`; empty without the archive, and text then uses the engine font).
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_load_fonts(text: *const c_char) {
+    if text.is_null() {
+        return;
+    }
+    let text = unsafe { CStr::from_ptr(text).to_string_lossy() };
+    crate::lui::font::load(&text);
+}
+
 /// Load the class preset list (`Data/ConquerOps/classes.ini`, read by the bridge's
 /// `readTextFile`); the five basic BO2 classes hold until this runs (see classes.rs).
 #[no_mangle]

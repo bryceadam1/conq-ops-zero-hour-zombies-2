@@ -23,6 +23,12 @@ pub const CLASSES_PATH: &str = "ConquerOps\\classes.ini";
 /// The converted BO2 HUD/texture archive and its version marker.
 pub const BO2_ARCHIVE_NAME: &str = "ConquerOps_BO2.big";
 pub const BO2_ARCHIVE_VERSION_PATH: &str = "Data\\ConquerOps\\bo2_hud_version.txt";
+/// The BO2 font metrics in the converted archive (see lui/font.rs).
+pub const FONTS_PATH: &str = "Data\\ConquerOps\\bo2_fonts.txt";
+/// A BO2 font glyph's MappedImage (`ZHBO_Glyph_bigFont_65`, the converted atlas).
+pub fn font_glyph(font: &str, code: u32) -> String {
+    format!("ZHBO_Glyph_{font}_{code}")
+}
 
 /// A weapon viewmodel's hierarchy (`ZV03_SKL` for viewmodel 3).
 pub fn viewmodel_skl(vm: u8) -> String {
@@ -164,6 +170,7 @@ inline constexpr const char *VIEWMODEL_SOUNDS_PATH = "Data\\ConquerOps\\viewmode
 inline constexpr const char *STRINGS_PATH = "ConquerOps\\strings_en.ini";
 inline constexpr const char *TUNING_PATH = "ConquerOps\\tuning.ini";
 inline constexpr const char *CLASSES_PATH = "ConquerOps\\classes.ini";
+inline constexpr const char *FONTS_PATH = "Data\\ConquerOps\\bo2_fonts.txt";
 } // namespace zhbo_names
 "#;
 

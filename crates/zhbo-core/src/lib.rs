@@ -21,6 +21,7 @@ pub mod hitscan;
 pub mod host;
 pub mod hud;
 pub mod input;
+pub mod lui;
 pub mod math;
 pub mod menu;
 pub mod names;

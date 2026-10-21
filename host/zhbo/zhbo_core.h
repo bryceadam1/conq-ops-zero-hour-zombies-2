@@ -332,6 +332,8 @@ void zhbo_load_strings(const char *text);
 void zhbo_load_tuning(const char *text);
 /* Load the class presets (see classes.rs); the five basic BO2 classes hold until this runs. */
 void zhbo_load_classes(const char *text);
+/* Load the BO2 font metrics (see lui/font.rs); empty text leaves the engine font in use. */
+void zhbo_load_fonts(const char *text);
 /* Load the player's create-a-class profile (see profile.rs); the empty profile holds until this runs. */
 void zhbo_load_profile(const char *text);
 /* Save a custom class from the choose-class wire words into the profile; returns the profile's full

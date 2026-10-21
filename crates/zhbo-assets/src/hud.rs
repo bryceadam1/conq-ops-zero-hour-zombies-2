@@ -16,7 +16,7 @@ use zhbo_formats::iwi::Rgba;
 use zhbo_formats::t6zone::Zone;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive.
-pub const VERSION: u32 = 41;
+pub const VERSION: u32 = 42;
 pub use zhbo_core::names::BO2_ARCHIVE_NAME as ARCHIVE_NAME;
 pub use zhbo_core::names::BO2_ARCHIVE_VERSION_PATH as VERSION_FILE;
 /// Stem of each page's TGA; every MappedImage names the page it was packed into.
@@ -29,7 +29,8 @@ pub enum Source {
     Hash(u32),
     /// The first image of a BO2 material in a zone.
     Material(&'static str, &'static str),
-    /// A material in `common_mp` named at conversion time (weapon HUD icons).
+    /// A material named at conversion time (weapon HUD icons, the LUI ports' materials), searched
+    /// in the MP zones in order.
     Dynamic(String),
 }
 
@@ -100,6 +101,8 @@ pub struct Report {
     pub missing: Vec<(String, String)>,
     /// The BO2 Generals: what was converted, or why not.
     pub generals: Option<Result<String, String>>,
+    /// BO2's UI fonts (`fonts.rs`): what was converted, or why the engine font stays.
+    pub fonts: Option<Result<String, String>>,
 }
 
 /// BO2 draws some HUD art additively: bright on opaque black. Give such an image its brightness as
@@ -169,6 +172,10 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             Source::Dynamic(m) => Source::Dynamic(m.clone()),
         }, s.max))
         .collect();
+    // The materials the LUI ports draw, under their BO2 names (`zhbo_core::lui::materials`).
+    for (material, max) in zhbo_core::lui::materials::MATERIALS {
+        wanted.push((zhbo_core::lui::materials::image(material), Source::Dynamic(material.to_string()), *max));
+    }
     zones.insert("common_mp", crate::generals::load_zone(bo2_dir, "common_mp")?);
     let weapons = zhbo_formats::weapon::all(&zones["common_mp"]).map_err(|e| e.to_string())?;
     for id in crate::weapons::converted(&weapons) {
@@ -217,14 +224,14 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             }
             Source::Dynamic(material) => {
                 // Weapon menu art lives in the MP patches; a few DLC guns only in `frontend`.
-                for zone in ["code_post_gfx_mp", "patch_mp", "frontend"] {
+                for zone in ["code_post_gfx_mp", "patch_mp", "patch_ui_mp", "frontend"] {
                     if !zones.contains_key(zone) {
                         if let Ok(z) = crate::generals::load_zone(bo2_dir, zone) {
                             zones.insert(zone, z);
                         }
                     }
                 }
-                ["common_mp", "code_post_gfx_mp", "patch_mp", "frontend"]
+                ["common_mp", "code_post_gfx_mp", "patch_mp", "patch_ui_mp", "frontend"]
                     .iter()
                     .filter_map(|z| zones.get(z))
                     .filter_map(|z| zhbo_formats::xmodel::find_material(z, material))
@@ -279,6 +286,11 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
         .collect();
     files.push(("Data\\INI\\MappedImages\\HandCreated\\ZHBO_BO2.ini".to_string(), ini.into_bytes()));
     files.push((VERSION_FILE.to_string(), version_stamp().into_bytes()));
+    // BO2's UI fonts. Without them the screens keep the engine font.
+    report.fonts = Some(crate::fonts::files(bo2_dir).map(|(font_files, summary)| {
+        files.extend(font_files);
+        summary
+    }));
     // The Generals as BO2 soldiers. On failure they keep their Zero Hour art.
     report.generals = Some(match crate::generals::files(bo2_dir) {
         Ok((general_files, summary)) => {

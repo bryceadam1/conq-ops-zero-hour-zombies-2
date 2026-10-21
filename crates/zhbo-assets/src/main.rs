@@ -108,6 +108,7 @@ impl Filter {
         let code = match h.format {
             Format::Argb32 => 1,
             Format::Rgb24 => 2,
+            Format::A8 => 5,
             Format::Dxt1 => 11,
             Format::Dxt3 => 12,
             Format::Dxt5 => 13,
@@ -690,6 +691,26 @@ fn run(args: &[String]) -> Result<(), String> {
                     _ => "other",
                 };
                 println!("{:#010x}  {:>7.2}  {:>2}  {:>6}  {fmt}", e.id, e.duration_secs().unwrap_or(0.0), e.channels, e.sample_rate().unwrap_or(0));
+            }
+            Ok(())
+        }
+        "fonts" => {
+            // fonts <ff>: every font in a zone (the UI's are in zone/english/en_code_post_gfx_mp.ff).
+            let zone = load_full_zone(args.get(1).ok_or("fonts <ff>")?)?;
+            for f in zhbo_formats::font::all(&zone).map_err(|e| e.to_string())? {
+                let image = f.material.as_ref().and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref()));
+                println!(
+                    "{:<28} height {:>3}, {:>4} glyphs, {:>4} kerning pairs, material {} ({})",
+                    f.name,
+                    f.pixel_height,
+                    f.glyphs.len(),
+                    f.kerning.len(),
+                    f.material.as_ref().map_or("-", |m| m.name.as_str()),
+                    image.map_or("no image".to_string(), |i| format!("{} {}x{} hash {:#010x}", i.name, i.width, i.height, i.stream_hash))
+                );
+                if let Some(g) = f.glyphs.iter().find(|g| g.letter == u16::from(b'A')) {
+                    println!("  'A': {g:?}");
+                }
             }
             Ok(())
         }

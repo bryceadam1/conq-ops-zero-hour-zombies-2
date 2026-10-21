@@ -172,6 +172,24 @@ names`; the header is checked in and a zhbo-core test fails when it drifts). Bot
 round-trip the builders (`W0302` → viewmodel 3, mesh 2). When the mod starts inventing a new name,
 add a builder there and route every literal — Rust or C++ — through it.
 
+## BO2 UI: fonts, materials and menu sounds
+
+The screens ported from BO2's LUI Lua (`crates/zhbo-core/src/lui/`) draw with three converted
+resources, all from the player's own install and all named by the registry:
+
+- **Fonts.** `zhbo_assets::fonts` writes BO2's UI font atlas (`zhbo_bo2_fonts.tga`), one
+  MappedImage per glyph (`names::font_glyph`, `ZHBO_Glyph_bigFont_65`) and the metrics file
+  `names::FONTS_PATH`. The bridge passes that file to `zhbo_load_fonts` at init, next to the
+  strings, tuning and classes. Without the converted archive the text is empty, nothing loads, and
+  `lui::font::text` draws with the engine font (`Prim::Text`), so every screen keeps working.
+- **Materials.** `lui::materials::MATERIALS` lists the BO2 materials the ports draw, by their BO2
+  names. The converter turns each into the MappedImage `lui::materials::image(name)`
+  (`ZHBO_Mat_<material>`), so a port keeps BO2's names end to end.
+- **Menu sounds.** `sounds::UiCue` lists every alias BO2's multiplayer UI Lua plays. The converter
+  makes each an AudioEvent `ZHBO_UI_<alias>` from the MP banks. Aliases that only the
+  single-player banks have stay missing, matching BO2's silent MP menus; the host logs each missing
+  event once.
+
 ## Tuning
 
 The gameplay tuning pack (`crates/zhbo-core/src/tuning.rs`, filled from

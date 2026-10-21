@@ -106,13 +106,18 @@ fn prepare_bo2_art(here: &Path, bo2: &Path) {
     let line = match hud::build_archive(bo2) {
         Ok((bytes, report)) => match std::fs::write(&out, bytes) {
             Ok(()) => format!(
-                "built {} ({} images, missing: {:?})\nGenerals: {}",
+                "built {} ({} images, missing: {:?})\nGenerals: {}\nFonts: {}",
                 out.display(),
                 report.found.len(),
                 report.missing,
                 match &report.generals {
                     Some(Ok(summary)) => summary.clone(),
                     Some(Err(e)) => format!("kept Zero Hour art ({e})"),
+                    None => "not converted".into(),
+                },
+                match &report.fonts {
+                    Some(Ok(summary)) => summary.clone(),
+                    Some(Err(e)) => format!("kept the engine font ({e})"),
                     None => "not converted".into(),
                 }
             ),

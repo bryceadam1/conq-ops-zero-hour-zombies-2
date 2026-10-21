@@ -896,6 +896,52 @@ layout/draw vs. input folds vs. dialogs next time it is touched.
 Tests: workspace green (zhbo-core 234); engine build clean; full autotest 13/13 (with the GL
 custom pick), classpick 6/6.
 
+## v1.0 parity, Track 0: the shared BO2 UI layer (2026-10-21)
+
+The v1.0 plan (`docs/V1-PARITY-PLAN.md`) replaces guessed BO2 look and behaviour with ground truth
+from the reference environment (`~/Documents/BO2-reference/`). Track 0 builds what the HUD and
+class-screen ports share:
+
+1. **Splits.** `classui.rs` (2,920 lines) became `classui/` and `hud.rs` became `hud/`, each
+   split along its existing section seams. The move changes no behaviour.
+2. **LUI layout** (`zhbo-core/src/lui/mod.rs`). Elements are four edge offsets plus four anchor
+   flags, resolved per axis: both anchors stretch, one anchor offsets from that edge, neither
+   offsets from the centre. The root is `LUI.UIHeight` = 720 units tall
+   (`patch_mp/ui/lui/lui.lua:4`) and as wide as the aspect allows. `lui.lua`'s `UIWidth = 960`
+   is the 4:3 base, not the root width. The root's size and PC's safe area are engine-side:
+   full screen is assumed until Ghidra query G9 answers it.
+3. **Fonts.** BO2's UI fonts are `fonts/720/{small,normal,big,extraBig,extraSmall,italic,
+   smallItalic}Font` in **`zone/english/en_code_post_gfx_mp.ff`**. `zone/all` has only the
+   debug fonts. All of them share one 512×1024 alpha atlas, `gamefonts_pc_720`, streamed from
+   **`zone/english/en_base.ipak`**. The converter used to open only `zone/all` packs. The atlas
+   is IWi **format 5, alpha-only**, which `iwi::Format::A8` now decodes as white coverage. The
+   `CoD.fonts` → file mapping and the English `CoD.textSize` values come from
+   `patch_mp/ui/t6/codbase.lua:147-350`. Every size equals its font's pixel height (Default 25,
+   Condensed 30, Big 48, Morris 60), so LUI draws text at the font's native size; the ammo label's
+   48-unit box in `hud/ammocounter.lua` is `bigFont`. Each glyph becomes a MappedImage, and the
+   metrics travel as `Data\ConquerOps\bo2_fonts.txt` → `zhbo_load_fonts`. Without the archive,
+   text falls back to the engine font. The glyph's pen line is the text box's bottom edge, with
+   glyph `y0` measured up from it; that is unverified until G9.
+4. **Menu sounds.** `sounds::UiCue` lists every alias the MP UI Lua plays (63 after removing
+   `cac_restricted`, a padlock material, and `cac_closed`, an event name). The `cac_*` aliases
+   live in `code_post_gfx_mp`'s `mpl_code_post_gfx` bank. A few `uin_*` aliases are in
+   `common_mp`, `patch_mp` or `patch_ui_mp`. Most of the shared widgets' `uin_navigation_*` and
+   `uin_slider_*` aliases exist **only in the single-player bank** (`spl_code_post_gfx`), so BO2's
+   MP menus are silent for them, and the converter leaves them out the same way. The real install
+   yields 37 menu events. The seven old CaC cue constants now point at their aliases' events
+   until Track C wires each Lua call site to its exact cue.
+5. **Animation states** (`lui/anim.rs`): `Tween` is one `animateToState` move. An interrupted
+   move starts from the current value, and a zero duration snaps. The easing curve per
+   `easeIn`/`easeOut` flag is engine-side and stays linear until G8.
+6. **Materials by BO2 name.** `lui::materials::MATERIALS` lists the materials the ports draw. Each
+   converts to `ZHBO_Mat_<material>`, searched across the MP zones, now including `patch_ui_mp`.
+7. **A dead end, recorded so nobody repeats it:** image `GfxImageLoadDef`s are loaded into
+   `XFILE_BLOCK_TEMP`, which our loader recycles on every pop. A generic keep-what-points-into-temp
+   capture was tried for the font atlas, but the atlas is streamed (one part) after all, so it was
+   reverted. MODLOG backlog #3 (reflection probes) will need that capture.
+
+Archive `hud::VERSION` 41 → 42.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

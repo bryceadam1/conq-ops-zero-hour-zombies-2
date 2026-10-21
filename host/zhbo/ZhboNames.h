@@ -37,4 +37,5 @@ inline constexpr const char *VIEWMODEL_SOUNDS_PATH = "Data\\ConquerOps\\viewmode
 inline constexpr const char *STRINGS_PATH = "ConquerOps\\strings_en.ini";
 inline constexpr const char *TUNING_PATH = "ConquerOps\\tuning.ini";
 inline constexpr const char *CLASSES_PATH = "ConquerOps\\classes.ini";
+inline constexpr const char *FONTS_PATH = "Data\\ConquerOps\\bo2_fonts.txt";
 } // namespace zhbo_names

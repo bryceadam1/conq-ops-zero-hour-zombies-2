@@ -40,16 +40,109 @@ pub const LAND: &str = "ZHBO_BO2_Land";
 pub const IMPACT: &str = "ZHBO_BO2_Impact";
 pub const IMPACT_FLESH: &str = "ZHBO_BO2_ImpactFlesh";
 
-/// Create-a-class menu cues, converted from BO2's own CaC aliases (see `zhbo_assets::sfx`).
-/// The screen opens, a highlight moves, a choice is confirmed or refused, the class is saved and
-/// a finished class is picked. The host logs an error once for a missing event; the screen works.
-pub const UI_OPEN: &str = "ZHBO_BO2_UIOpen";
-pub const UI_NAVIGATE: &str = "ZHBO_BO2_UINavigate";
-pub const UI_SELECT: &str = "ZHBO_BO2_UISelect";
-pub const UI_BACK: &str = "ZHBO_BO2_UIBack";
-pub const UI_DENY: &str = "ZHBO_BO2_UIDeny";
-pub const UI_SAVE: &str = "ZHBO_BO2_UISave";
-pub const UI_PICKED: &str = "ZHBO_BO2_UIPicked";
+macro_rules! ui_cues {
+    ($($cue:ident = $alias:literal,)*) => {
+        /// A BO2 menu sound: every alias BO2's multiplayer UI Lua plays (`Engine.PlaySound` and the
+        /// widgets' sound fields across `patch_mp`/`patch_ui_mp`). The converter turns each into an
+        /// AudioEvent named [`UiCue::event`] from the player's own banks (`zhbo_assets::sfx`), so a
+        /// screen plays the exact alias BO2 plays at the same point. Some aliases the shared widgets
+        /// name (most `uin_navigation_*`, `uin_slider_*`) exist only in the single-player banks, so
+        /// BO2's multiplayer menus play nothing for them; the converter leaves them out the same
+        /// way, and the host logs a missing event once.
+        #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+        pub enum UiCue { $($cue,)* }
+
+        impl UiCue {
+            pub const ALL: &'static [UiCue] = &[$(UiCue::$cue,)*];
+
+            /// BO2's alias name.
+            pub const fn alias(self) -> &'static str {
+                match self { $(UiCue::$cue => $alias,)* }
+            }
+
+            /// The converted AudioEvent's name.
+            pub const fn event(self) -> &'static str {
+                match self { $(UiCue::$cue => concat!("ZHBO_UI_", $alias),)* }
+            }
+        }
+    };
+}
+
+ui_cues! {
+    CacCmnBackout = "cac_cmn_backout",
+    CacCmnDeny = "cac_cmn_deny",
+    CacCmnItemRemove = "cac_cmn_item_remove",
+    CacEnterCac = "cac_enter_cac",
+    CacEquipmentAdd = "cac_equipment_add",
+    CacEquipmentRemove = "cac_equipment_remove",
+    CacGlobeDraw = "cac_globe_draw",
+    CacGridEquipItem = "cac_grid_equip_item",
+    CacGridNav = "cac_grid_nav",
+    CacKillstreakBlocked = "cac_killstreak_blocked",
+    CacKillstreakNav = "cac_killstreak_nav",
+    CacLoadoutEditSel = "cac_loadout_edit_sel",
+    CacLoadoutEditSubmenu = "cac_loadout_edit_submenu",
+    CacLoadoutNav = "cac_loadout_nav",
+    CacLoadoutWildcardNav = "cac_loadout_wildcard_nav",
+    CacMainEditLoadout = "cac_main_edit_loadout",
+    CacMainExitCac = "cac_main_exit_cac",
+    CacMainNav = "cac_main_nav",
+    CacSafearea = "cac_safearea",
+    CacScreenFade = "cac_screen_fade",
+    CacScreenHpan = "cac_screen_hpan",
+    CacSlideEquipItem = "cac_slide_equip_item",
+    CacSlideNavDown = "cac_slide_nav_down",
+    CacSlideNavLr = "cac_slide_nav_lr",
+    CacSlideNavUp = "cac_slide_nav_up",
+    CacWildcardEquip1 = "cac_wildcard_equip_1",
+    CacWildcardEquip2 = "cac_wildcard_equip_2",
+    CacWildcardEquip3 = "cac_wildcard_equip_3",
+    CacWildcardEquip4 = "cac_wildcard_equip_4",
+    CacWildcardEquip5 = "cac_wildcard_equip_5",
+    CacWildcardEquip6 = "cac_wildcard_equip_6",
+    CacWildcardEquip7 = "cac_wildcard_equip_7",
+    CacWildcardRemove = "cac_wildcard_remove",
+    UinAlertSlideout = "uin_alert_slideout",
+    UinButtonPressDrc = "uin_button_press_drc",
+    UinCmnBackout = "uin_cmn_backout",
+    UinLauDoublexp = "uin_lau_doublexp",
+    UinLoadoutNav = "uin_loadout_nav",
+    UinMainEnter = "uin_main_enter",
+    UinMainNav = "uin_main_nav",
+    UinMainPause = "uin_main_pause",
+    UinMapChosen = "uin_map_chosen",
+    UinMenuLeftRight = "uin_menu_left_right",
+    UinMenuTrans02 = "uin_menu_trans_02",
+    UinNavigationBackout = "uin_navigation_backout",
+    UinNavigationClick = "uin_navigation_click",
+    UinNavigationSelectMain = "uin_navigation_select_main",
+    UinNavigationSelectSubmenu = "uin_navigation_select_submenu",
+    UinNavigationVote = "uin_navigation_vote",
+    UinNavigationWipe = "uin_navigation_wipe",
+    UinNavigationWpnAlt = "uin_navigation_wpn_alt",
+    UinPanelSlideDrc = "uin_panel_slide_drc",
+    UinRankDemotion = "uin_rank_demotion",
+    UinRankPromotion = "uin_rank_promotion",
+    UinScrollTickDrc = "uin_scroll_tick_drc",
+    UinSlideNavDown = "uin_slide_nav_down",
+    UinSlideNavLr = "uin_slide_nav_lr",
+    UinSlideNavUp = "uin_slide_nav_up",
+    UinSliderDecDrc = "uin_slider_dec_drc",
+    UinSliderGrabDrc = "uin_slider_grab_drc",
+    UinSliderIncDrc = "uin_slider_inc_drc",
+    UinSliderReleaseDrc = "uin_slider_release_drc",
+    UinToggleDrc = "uin_toggle_drc",
+}
+
+/// The create-a-class screens' current cues, each a BO2 alias. Track C of the v1.0 plan replaces
+/// these with the exact cue at each Lua call site; until then they keep the old mapping.
+pub const UI_OPEN: &str = UiCue::CacEnterCac.event();
+pub const UI_NAVIGATE: &str = UiCue::CacGridNav.event();
+pub const UI_SELECT: &str = UiCue::CacGridEquipItem.event();
+pub const UI_BACK: &str = UiCue::CacCmnBackout.event();
+pub const UI_DENY: &str = UiCue::CacCmnDeny.event();
+pub const UI_SAVE: &str = UiCue::CacLoadoutEditSubmenu.event();
+pub const UI_PICKED: &str = UiCue::CacLoadoutEditSel.event();
 
 /// Distance between footsteps (Zero Hour units; a 60" stride at the converter's 11/72 scale).
 const STRIDE: f32 = 9.0;

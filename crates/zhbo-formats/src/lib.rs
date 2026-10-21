@@ -5,6 +5,7 @@
 
 pub mod big;
 pub mod fastfile;
+pub mod font;
 pub mod fx;
 pub mod ipak;
 pub mod iwi;

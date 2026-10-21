@@ -15,6 +15,7 @@ pub mod ini;
 pub mod paks;
 pub mod textures;
 pub mod viewmodels;
+pub mod fonts;
 pub mod fx;
 pub mod sfx;
 pub mod manifest;
