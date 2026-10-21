@@ -2038,6 +2038,21 @@ real-install suite green; clippy clean; `cargo xtask build` clean (first compile
 bridge hook); autotest 13/13 default, 13/13 native+compare, 14/14 `--rts`, 14/14 `--rts` with
 `ZHBO_NATIVE_BODY=1`, `--showcase` with `ZHBO_NATIVE_BODY=1`.
 
+## Body mode 2: the first-person hide is not reusable overhead (2026-10-21)
+
+Tried to finish R7's body mode by reusing the first-person hidden body. The mechanism is
+`setHiddenObject` (`host/zhbo/ZhboInput.cpp:90`), driven from `applyClientOutput`
+(`host/zhbo/ZhboBridge.cpp:691`), which calls `Drawable::setDrawableHidden`
+(`host/GeneralsGameCode/GeneralsMD/Code/GameEngine/Source/GameClient/Drawable.cpp:4621`). It is
+per-drawable, but hiding the overhead General is not the same as hiding the first-person body:
+`Drawable::updateHiddenStatus` (`Drawable.cpp:4603`) deselects the drawable, and the engine refuses
+to select an effectively hidden drawable (`SelectionXlat.cpp:141`, `SelectionInfo.cpp:356`). The
+mod's command bar and ammo overlay need exactly one selected General (`ZhboControlBar.cpp:149`,
+`ZhboRtsWeapons.cpp:292`), so body mode 2 would leave the General uncommandable. No C++ was wired;
+WEAPON mode and its W3D restore path are unchanged, and the Rust/ABI side needed no change. M3
+needs a hide that leaves the drawable selectable, or must exclude the controlled General; do not
+add a new engine hook for it.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
