@@ -205,19 +205,19 @@ fn the_allocation_bar_lights_one_segment_per_point_and_the_counter_says_n_of_ten
     assert_eq!(allocation_lit(-2, 10), 0, "never negative");
     assert_eq!(allocation_lit(14, 10), 10, "clamped to the budget");
     let mut prims = Vec::new();
-    draw_allocation(&mut prims, 0.0, 0.0, 200.0, 1.0, 7, 10);
+    let f = bo2::Frame::new(1280.0, 720.0);
+    preview::allocation_bar(&mut prims, &f, crate::lui::Rect { x: 0.0, y: 0.0, w: 200.0, h: 10.0 }, 7, 10);
     let lit = prims
         .iter()
-        .filter(|p| matches!(p, Prim::Rect { argb, .. } if *argb == ORANGE))
+        .filter(|p| matches!(p, Prim::Rect { argb, .. } if *argb == bo2::argb(bo2::BOII_ORANGE, 1.0)))
         .count();
     assert_eq!(lit, 7, "seven of the ten blocks are spent");
-    assert_eq!(prims.iter().filter(|p| matches!(p, Prim::Rect { .. })).count(), 10, "ten blocks");
 }
 
 #[test]
 fn the_editor_grid_hit_tests_every_box() {
     let e = Editor::new(Draft::default());
-    let l = editor_layout(1280.0, 720.0, 1.0);
+    let l = editor_layout(1280.0, 720.0);
     let cells = editor_cells(&l, &e);
     // Every box of the walk is on screen, and its middle maps back to it. A weapon that offers
     // no attachments has no attachment boxes (BO2's "Attachments not available").
@@ -230,14 +230,103 @@ fn the_editor_grid_hit_tests_every_box() {
         assert_eq!(cells.iter().any(|c| c.slot == slot), offered, "{slot:?} box presence");
     }
     for (i, c) in cells.iter().enumerate() {
-        let (cx, cy) = c.center();
-        assert_eq!(editor_cell_at(&cells, cx, cy), Some(i), "{:?} box {i}", c.slot);
+        let p = l.frame.px(c.rect);
+        let (cx, cy) = (p.x + p.w * 0.5, p.y + p.h * 0.5);
+        assert_eq!(editor_cell_at(&l, &cells, cx, cy), Some(i), "{:?} box {i}", c.slot);
     }
     // The attachment boxes are one per attachment the gun may carry.
     let atts = cells.iter().filter(|c| c.slot == Slot::PrimaryAtts).count();
     assert_eq!(atts, e.draft.primary_att_max());
     // A point off the grid hits nothing.
-    assert_eq!(editor_cell_at(&cells, 5.0, 5.0), None);
+    assert_eq!(editor_cell_at(&l, &cells, 5.0, 5.0), None);
+}
+
+/// A box's middle in screen pixels, as a pointer reports it.
+fn centre(l: &EditorLayout, r: crate::lui::Rect) -> (f32, f32) {
+    let p = l.frame.px(r);
+    (p.x + p.w * 0.5, p.y + p.h * 0.5)
+}
+
+#[test]
+fn the_weapon_picker_hit_tests_the_card_and_the_tiles_it_draws() {
+    let mut e = Editor::new(Draft::default());
+    e.slot = Slot::Primary;
+    e.picking = true;
+    let l = editor_layout(1280.0, 720.0);
+    let cats = weapon_categories(&e);
+    let opts = cats[category_of(&cats, e.option)].options.clone();
+    let highlighted = opts.iter().position(|i| *i == e.option).expect("the held gun is in its category");
+    // BO2's carousel keeps the highlighted gun as its grown card and streams its successors right,
+    // so the window starts at the highlight (`cacweaponsp.lua`'s `HighlightedItemWidth`).
+    let (first, shown) = picker_window(e.slot, highlighted);
+    assert_eq!(first, highlighted, "the carousel's window starts at the highlighted card");
+    assert!(shown >= 1, "at least one tile fits");
+    let (cx, cy) = centre(&l, carousel_card(&l));
+    assert_eq!(picker_option_at(&l, e.slot, cx, cy, first, opts.len()), Some(highlighted), "the card is the highlight");
+    for j in 0..shown {
+        let i = highlighted + 1 + j;
+        if i >= opts.len() {
+            break;
+        }
+        let (tx, ty) = centre(&l, carousel_tile(&l, j));
+        assert_eq!(picker_option_at(&l, e.slot, tx, ty, first, opts.len()), Some(i), "tile {j} is the next gun");
+    }
+    // A point off the carousel hits nothing (the category column below is not an option).
+    assert_eq!(picker_option_at(&l, e.slot, 2.0, 2.0, first, opts.len()), None);
+}
+
+#[test]
+fn an_option_grid_hit_tests_every_card_it_draws() {
+    let mut e = Editor::new(Draft::default());
+    e.slot = Slot::Perk2;
+    e.picking = true;
+    let l = editor_layout(1280.0, 720.0);
+    let opts = e.options();
+    assert!(opts.len() > 1, "tier 2 lists its perks");
+    // The highlighted cell's row is the window's bottom row (BO2's grids scroll a row at a time).
+    for highlighted in [0, 1, opts.len() - 1] {
+        let (first, shown) = picker_window(e.slot, highlighted);
+        assert_eq!(first % grid_columns(e.slot), 0, "the window starts on a column");
+        assert!(highlighted >= first && highlighted < first + shown, "the highlight {highlighted} is in view");
+        for j in 0..shown {
+            let i = first + j;
+            if i >= opts.len() {
+                break;
+            }
+            let (x, y) = centre(&l, grid_cell(&l, e.slot, j));
+            assert_eq!(picker_option_at(&l, e.slot, x, y, first, opts.len()), Some(i), "cell {j} maps to its option");
+        }
+    }
+    // A point off the grid hits nothing.
+    assert_eq!(picker_option_at(&l, e.slot, 2.0, 2.0, 0, opts.len()), None);
+    // Rows walk three at a time, so a highlight on the last row of a full page keeps the page.
+    let cols = grid_columns(e.slot);
+    assert_eq!(cols, 3, "the perk grid is three wide (`CoD.CACPerksP.GridColumns`)");
+}
+
+#[test]
+fn the_option_grid_labels_the_option_under_each_cell_and_highlights_the_chosen_one() {
+    let mut e = Editor::new(Draft::default());
+    e.slot = Slot::Perk3;
+    e.picking = true;
+    e.option = e.options().len() - 1;
+    let opts = e.options();
+    let (first, shown) = picker_window(e.slot, e.option);
+    let mut prims = Vec::new();
+    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true, now: 0.0 });
+    let t = texts(&prims);
+    for name in &opts[first..(first + shown).min(opts.len())] {
+        assert!(t.iter().any(|x| x == name), "option {name} is labelled: {t:?}");
+    }
+    // The highlight is on the selected option's cell, and only there (BOIIOrange, `cod9button.lua`).
+    let orange: Vec<String> = prims
+        .iter()
+        .filter_map(|p| match p {
+            Prim::Text { text, argb, .. } if *argb == bo2::argb(bo2::BOII_ORANGE, 1.0) => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(orange, vec![opts[e.option].clone()], "one highlighted cell, on the chosen perk");
 }
 
 #[test]
@@ -247,7 +336,7 @@ fn the_editor_screens_draw_their_boxes_and_prompts() {
     let mut prims = Vec::new();
     draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true, now: 0.0 });
     let t = texts(&prims);
-    for label in ["PERK 1", "PERK 2", "PERK 3", "LETHAL", "TACTICAL", "ATTACHMENTS", "BONUS CARDS"] {
+    for label in ["PERK 1", "PERK 2", "PERK 3", "LETHAL", "TACTICAL", "ATTACHMENTS", "WILDCARDS"] {
         assert!(t.iter().any(|x| x == label), "editor label {label}: {t:?}");
     }
     assert!(t.iter().any(|x| x == "Remove"), "the R Remove prompt: {t:?}");
@@ -409,26 +498,26 @@ fn r_clears_the_highlighted_slot_and_an_empty_one_is_a_no_op() {
 fn the_circled_x_clears_only_the_selected_filled_box() {
     let d = Draft { primary_atts: vec!["gl".into(), "reflex".into()], ..Draft::default() };
     let mut e = Editor::new(d);
-    let l = editor_layout(1280.0, 720.0, 1.0);
+    let l = editor_layout(1280.0, 720.0);
     // Select the attachment strip, then click the second attachment's X.
     e.slot = Slot::PrimaryAtts;
     let cells = editor_cells(&l, &e);
     let second = cells.iter().find(|c| c.slot == Slot::PrimaryAtts && c.index == 1).expect("the second box");
-    let (rx, ry, rw, rh) = remove_rect(second, 1.0);
-    assert_eq!(editor_remove_at(&cells, &e, 1.0, rx + rw * 0.5, ry + rh * 0.5), Some((Slot::PrimaryAtts, 1)));
+    let r = l.frame.px(remove_rect(second));
+    assert_eq!(editor_remove_at(&l, &cells, &e, r.x + r.w * 0.5, r.y + r.h * 0.5), Some((Slot::PrimaryAtts, 1)));
     // The X is not live on an unselected slot (BO2 draws it on the highlighted one).
     e.slot = Slot::Primary;
-    assert_eq!(editor_remove_at(&cells, &e, 1.0, rx + rw * 0.5, ry + rh * 0.5), None);
+    assert_eq!(editor_remove_at(&l, &cells, &e, r.x + r.w * 0.5, r.y + r.h * 0.5), None);
     // Clicking it removes exactly that attachment.
     let mut e = Editor::new(Draft { primary: "an94_mp".into(), primary_atts: vec!["gl".into(), "reflex".into()], ..Draft::default() });
     e.slot = Slot::PrimaryAtts;
     let cells = editor_cells(&l, &e);
     let second = cells.iter().find(|c| c.slot == Slot::PrimaryAtts && c.index == 1).cloned().expect("the second box");
-    let (rx, ry, rw, rh) = remove_rect(&second, 1.0);
+    let r = l.frame.px(remove_rect(&second));
     let mut prev = MenuPrev::default();
     let mut pointer = MenuPointer { screen_w: 1280.0, screen_h: 720.0, ..Default::default() };
-    pointer.mouse_x = rx + rw * 0.5;
-    pointer.mouse_y = ry + rh * 0.5;
+    pointer.mouse_x = r.x + r.w * 0.5;
+    pointer.mouse_y = r.y + r.h * 0.5;
     let _ = editor_frame(&mut e, &pointer, &prev);
     prev.update(&pointer);
     pointer.mouse_buttons = crate::input::mouse_buttons::LEFT;

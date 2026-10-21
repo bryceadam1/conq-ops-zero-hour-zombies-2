@@ -200,8 +200,7 @@ pub struct EditorFrame {
 /// (the hosts drop it on Save/Cancel).
 pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> EditorFrame {
     use crate::classmenu::Edges;
-    let s = inp.scale();
-    let layout = editor_layout(inp.screen_w, inp.screen_h, s);
+    let layout = editor_layout(inp.screen_w, inp.screen_h);
     let mut edges = Edges::between(&prev.keys, &inp.keys);
     let clicked = prev.clicked(inp);
     let moved = prev.moved(inp);
@@ -231,7 +230,7 @@ pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> 
     // The box's circled X (mouse) and `R` (keyboard) clear the highlighted slot, BO2's `R Remove`.
     let mut removed = false;
     if !editor.picking && !editor.naming {
-        if let Some((slot, index)) = editor_remove_at(&cells, editor, s, inp.mouse_x, inp.mouse_y).filter(|_| clicked) {
+        if let Some((slot, index)) = editor_remove_at(&layout, &cells, editor, inp.mouse_x, inp.mouse_y).filter(|_| clicked) {
             removed = clear_cell(&mut editor.draft, slot, index);
         } else if prev.edge(inp, Key::R) {
             removed = clear_slot(&mut editor.draft, editor.slot);
@@ -243,11 +242,10 @@ pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> 
     // The cells repeat a slot (three bonus-card boxes, two attachment boxes), so a hit box maps to
     // the walk's slot index, not to its own.
     let slots = editor.slots();
-    let slot = editor_cell_at(&cells, inp.mouse_x, inp.mouse_y)
+    let slot = editor_cell_at(&layout, &cells, inp.mouse_x, inp.mouse_y)
         .and_then(|i| cells.get(i))
         .and_then(|c| slots.iter().position(|s| *s == c.slot));
-    let options = if editor.picking { editor.options() } else { Vec::new() };
-    let (start, _) = picker_window(&layout, editor.slot, editor.option);
+    let (start, _) = picker_window(editor.slot, editor.option);
     let drawn = if editor.picking {
         picker_option_at(&layout, editor.slot, inp.mouse_x, inp.mouse_y, start, drawn_option_count(editor, &cats))
     } else {
@@ -263,7 +261,6 @@ pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> 
             cat.options.get(start + row).copied().unwrap_or(editor.option)
         }
     });
-    let _ = options;
     let pointer = crate::classmenu::PointerEvent { slot, option, click: clicked && !removed, wheel: inp.wheel.trunc() as i32, moved };
     let before_slot = editor.slot;
     let before_option = editor.option;

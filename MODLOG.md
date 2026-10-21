@@ -1085,6 +1085,51 @@ old self-drawn chrome), the cue map wired to the exact Lua call sites (`cac_main
 `sounds::UiCue`), the LUI transitions (the 250 ms slide/fade of `SetActiveClassSet`), the pixel
 pass against `cac/sweep/`, and the in-match class panel per `hud/class.lua`.
 
+## v1.0 Track C, second wave: the editor and the pickers on LUI geometry (2026-10-21)
+
+`screens.rs` had grown past the ~1,500-line hygiene limit and the editor was still drawing the
+old self-drawn chrome at engine font sizes while the pick screens had moved to `bo2.rs`'s LUI
+frame. This splits it and puts the editor and both pickers on the same geometry:
+
+1. **`classui/editor.rs` is the editor** (`CoD.CustomClass`, `patch_mp/ui/t6/customclass.lua`):
+   the class name as `addTitle`'s heading, the allocation bar under it (element top 3, 10 tall,
+   the menu's width), the left column PRIMARY (151) / ATTACHMENTS / SECONDARY / ATTACHMENTS and
+   the right one PERK 1-3 / LETHAL / TACTICAL (`ButtonHeight` 71, `MajorGridSpacing` 9,
+   `LeftSideButtonWidth` 500 at 0, `RightSideButtonWidth` 355 at 509), WILDCARDS across, the
+   mod's SAVE CLASS under them. Slot plates are `CoD.SlotList`'s (`SlotWidth` 64 × 1.4, `Spacing`
+   15): **three on a primary/secondary row, two on everything else** (`slotlistgridbutton.lua`;
+   the count is the button's kind, not the number of filled slots). `screens.rs` is down to the
+   host view (`ScreenView`/`draw_screen`); `layout.rs` is geometry only; `chrome.rs` keeps the
+   shared bits (prompts, deny rim, `allocation_lit`, element names, weapon stats).
+2. **The pickers are BO2's carousel and grids** (`cacweaponsp.lua`, `menus/cacattachmentsmenu.lua`,
+   `cacperksp.lua`): the highlighted gun is the grown card (`HighlightedItemWidth` 345.6 ×
+   `HighlightedItemHeight` 217.8) and its successors stream right as `ItemWidth` 192 × 146 tiles,
+   clipped at the menu's edge; the option grids are 6 columns of `GridItemWidth` × `64 + Title +
+   10` for attachments and 3 columns of `96 + Title + 10` for the rest, `GridItemSpacing` 8.
+   `picker_window`/`picker_option_at` are the one window both the draw and the hit-test read, so
+   a click can never land on a different cell than the one drawn.
+3. Two fixes came with it: the option grid's draw loop added the window's first index
+   twice (labels and the orange highlight walked off the visible page — invisible today only
+   because no list is longer than its page at 864×648, but wrong the moment one is), and
+   `editor_frame` built the option list every frame and threw it away.
+
+Gotchas:
+- **`editor_layout` takes no scale now.** It resolves the LUI frame (`bo2::Frame::new`) and every
+  box is in root units; `Frame::px` is the only place units turn into pixels. Anything holding a
+  screen-space rect across a resize is a bug (the old layout took `s` and pre-multiplied).
+- The grid's `GridTop` is 80 in the captures (`d-attach/002`) against the Lua's 60: the captures
+  are what the pixel pass matches.
+
+Tests: `cargo test -p zhbo-core -p zhbo-assets` green (261 + 37), clippy clean in every touched
+file. New: the carousel and the option grid hit-test every cell they draw, and a drawn option
+grid is asserted to label the window's options with exactly one `BOIIOrange` highlight.
+
+Remaining Track C scope: the sound cues wired to the exact Lua call sites (`cac_main_nav`,
+`cac_main_edit_loadout`, `cac_safearea`, `cac_main_exit_cac`, `cac_slide_*`, `cac_wildcard_*` —
+the aliases exist in `sounds::UiCue`, the screens still play the five coarse ones), the LUI
+transitions (the 250 ms slide/fade of `SetActiveClassSet`, the screen fade), the pixel pass
+against `cac/sweep/`, and the in-match class panel per `hud/class.lua`.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

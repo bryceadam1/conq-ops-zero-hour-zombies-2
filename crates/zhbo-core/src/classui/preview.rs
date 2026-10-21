@@ -104,10 +104,11 @@ pub fn draw(prims: &mut Vec<Prim>, f: &Frame, p: Rect, draft: Option<&Draft>) {
         bo2::text(&mut out, f, family, s, Rect { x: r.x + 3.0, y, w: r.w, h }, Align::Left, argb(OFF_WHITE, 1.0));
         out
     };
-    // Weapons: the `_big` picture right of centre and the name in Condensed at the block's bottom.
+    // Weapons: the `_big` picture right of centre, below the slot label, and the name in
+    // Condensed at the block's bottom.
     for (r, id, pic_h, right_pad, pic_top) in [
-        (pr, d.primary.as_str(), c.primary_h * 0.9, 50.0, pr.y),
-        (sr, d.secondary.as_str(), SMALL_H * 0.8, 80.0, sr.y + 5.0),
+        (pr, d.primary.as_str(), c.primary_h * 0.9, 50.0, pr.y + bo2::TEXT_EXTRA_SMALL),
+        (sr, d.secondary.as_str(), SMALL_H * 0.8, 80.0, sr.y + bo2::TEXT_EXTRA_SMALL),
     ] {
         if id.is_empty() {
             continue;
@@ -132,20 +133,22 @@ pub fn draw(prims: &mut Vec<Prim>, f: &Frame, p: Rect, draft: Option<&Draft>) {
             prims.extend(name(r, &att_display(short), Family::ExtraSmall, bo2::TEXT_EXTRA_SMALL, r.y + bo2::TEXT_EXTRA_SMALL * i as f32));
         }
     }
-    // Perks: each tier's picks as squares from the row's right (the first pick left of the second),
-    // the names under the slot label.
+    // Perks: the tier's picks as squares right-anchored in the row (the last pick flush right,
+    // `classpreview.lua`'s `perkImage1/2`), the names under the slot label, clipped short of them.
     for (k, r) in perk_rows.iter().enumerate() {
         let tier = k as u8 + 1;
         let picks: Vec<crate::weapons::Perk> = d.perks_in_order().into_iter().filter(|p| p.def().tier == tier).collect();
+        let n = picks.len();
         for (i, perk) in picks.iter().enumerate() {
             let size = c.perk_h;
-            let x = r.right() - size * (2 - i) as f32;
+            let x = r.right() - (n - i) as f32 * (size + GAP);
             bo2::sprite(prims, f, sprites::perk_icon(*perk), Rect { x, y: r.y, w: size, h: size }, argb(OFF_WHITE, 1.0), Vec::new());
-            prims.extend(name(*r, &perk_name(*perk), Family::ExtraSmall, bo2::TEXT_EXTRA_SMALL, r.y + bo2::TEXT_EXTRA_SMALL * (i as f32 + 1.0)));
+            let name_r = Rect { x: r.x + 3.0, y: r.y + bo2::TEXT_EXTRA_SMALL * (i as f32 + 1.0), w: c.right_w - n as f32 * (size + GAP) - 8.0, h: bo2::TEXT_EXTRA_SMALL };
+            bo2::text(prims, f, Family::ExtraSmall, &perk_name(*perk), name_r, Align::Left, argb(OFF_WHITE, 1.0));
         }
     }
     // Grenades: the icon at three quarters of the row's height, from the row's right in 71-wide
-    // cells (`classpreview.lua`'s `primarygrenadeImage1/2`).
+    // cells (`classpreview.lua`'s `primarygrenadeImage1/2`); the name clipped short of it.
     for (r, id) in [(lethal, d.lethal.as_str()), (tactical, d.tactical.as_str())] {
         if id.is_empty() {
             continue;
@@ -154,7 +157,8 @@ pub fn draw(prims: &mut Vec<Prim>, f: &Frame, p: Rect, draft: Option<&Draft>) {
         let s = SMALL_H * 0.75;
         let x = r.right() - SMALL_H * 2.0 + SMALL_H / 2.0 - s / 2.0;
         bo2::sprite(prims, f, &format!("ZHBO_BO2_Icon_{}", def.id), Rect { x, y: r.y + SMALL_H / 2.0 - s / 2.0, w: s, h: s }, argb(OFF_WHITE, 1.0), Vec::new());
-        prims.extend(name(r, &def.display_name, Family::ExtraSmall, bo2::TEXT_EXTRA_SMALL, r.y + bo2::TEXT_EXTRA_SMALL));
+        let name_r = Rect { x: r.x + 3.0, y: r.y + bo2::TEXT_EXTRA_SMALL, w: c.right_w - 2.0 * SMALL_H - 8.0, h: bo2::TEXT_EXTRA_SMALL };
+        bo2::text(prims, f, Family::ExtraSmall, &def.display_name, name_r, Align::Left, argb(OFF_WHITE, 1.0));
     }
     // Wildcards: each card's art and name in its plate.
     for (r, wildcard) in cards.iter().zip(d.wildcards.iter()) {
@@ -169,6 +173,7 @@ pub fn draw(prims: &mut Vec<Prim>, f: &Frame, p: Rect, draft: Option<&Draft>) {
 /// white 0.5 highlight one unit in along their top (`allocation_change`).
 pub fn allocation_bar(prims: &mut Vec<Prim>, f: &Frame, r: Rect, spent: i32, max: i32) {
     let n = max.max(1) as usize;
+    let lit = allocation_lit(spent, max);
     let spacing = 5.0;
     let bar_w = (r.w - spacing * (n as f32 - 1.0)) / n as f32;
     let bar_h = 8.0;
@@ -176,7 +181,7 @@ pub fn allocation_bar(prims: &mut Vec<Prim>, f: &Frame, r: Rect, spent: i32, max
     for i in 0..n {
         let b = Rect { x: r.x + i as f32 * (bar_w + spacing), y, w: bar_w, h: bar_h };
         bo2::fill(prims, f, b, argb(bo2::BOII_ORANGE, 0.35));
-        if (i as i32) < spent {
+        if i < lit {
             bo2::fill(prims, f, b, argb(bo2::BOII_ORANGE, 1.0));
             bo2::fill(prims, f, Rect { x: b.x + 1.0, y: b.y + 1.0, w: b.w - 2.0, h: (b.h - 6.0).max(0.0) }, argb(OFF_WHITE, 0.5));
         }

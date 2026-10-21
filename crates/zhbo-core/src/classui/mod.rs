@@ -38,7 +38,7 @@
 
 use crate::classes;
 use crate::classmenu::{Draft, Editor, Slot, Wildcard};
-use crate::hud::{self, sprites, Prim, DIM, GOLD, OUTLINE, PANEL, RED, WHITE};
+use crate::hud::{self, sprites, Prim, DIM, GOLD, RED, WHITE};
 use crate::input::Key;
 use crate::input::KeySet;
 use crate::profile;
@@ -50,6 +50,7 @@ mod categories;
 mod chrome;
 mod dialog;
 mod edit;
+mod editor;
 mod input;
 mod layout;
 mod pick;
@@ -62,6 +63,7 @@ pub use categories::*;
 pub use chrome::*;
 pub use dialog::*;
 pub use edit::*;
+pub use editor::*;
 pub use input::*;
 pub use layout::*;
 pub use pick::*;
@@ -70,23 +72,9 @@ pub use screens::*;
 /// How long the deny flash stays up after a refused choice (seconds).
 pub const DENY_FLASH: f32 = 0.3;
 
-/// A dark row behind the list's content.
-pub(super) const ROW_FILL: u32 = 0x8C15_181C;
-/// The highlighted row's fill, a touch brighter than BO2's gold edge.
-pub(super) const ROW_ACTIVE: u32 = 0xD02A_2E33;
-/// A row's separator / outline.
-pub(super) const ROW_EDGE: u32 = 0x55C8_CCD0;
-/// The pick list's right-hand details panel.
-pub(super) const PANEL_FILL: u32 = 0x9010_1214;
-
 /// BO2's selection orange: the create-a-class highlight and the spend bars
 /// (`b-editor/001`, `c-primary/001`).
 pub(super) const ORANGE: u32 = 0xFFFF_8A1E;
-/// A boxed editor cell's fill and its idle edge (BO2's near-black tiles).
-pub(super) const CELL_FILL: u32 = 0x8C14_161A;
-pub(super) const CELL_EDGE: u32 = 0x70C8_CCD0;
-/// The allocation bar's free segments and BO2's tile-strip fill.
-pub(super) const BAR_FREE: u32 = 0x46FF_FFFF;
 /// The dialog panel behind the shell's S/O menus (`a-chooseclass/021`).
 pub(super) const DIALOG_FILL: u32 = 0xF01C_1E20;
 pub(super) const DIALOG_EDGE: u32 = 0xB0D8_DCDE;
