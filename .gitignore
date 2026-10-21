@@ -9,6 +9,7 @@
 *.ipak
 *.dmp
 .claude/
+.opencode/
 .vscode/.kilo/
 
 .vscode/
