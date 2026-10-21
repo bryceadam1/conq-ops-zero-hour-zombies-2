@@ -8,6 +8,9 @@
 
 // Precompiled engine headers are force-included by the z_gameengine target.
 #include "ZhboBridgeInternal.h"
+// ObjectDrawInterface: the selection-safe body hide goes through the draw modules
+// (Drawable::getDrawModules()) instead of Drawable::setDrawableHidden.
+#include "Common/DrawModule.h"
 namespace
 {
 // The overhead General's BO2 bullet impacts, by gun slot: on a soldier, a vehicle, anything else
@@ -81,6 +84,10 @@ struct WorldLook
 	int32_t native;
 };
 std::map<uint32_t, WorldLook> s_worldLooks;
+// The Generals whose W3D body is hidden for body mode (ZHBO_NATIVE_BODY=2). Hidden through
+// the draw modules, not Drawable::m_hidden: that flag also deselects the General
+// (Drawable::updateHiddenStatus) and makes CanSelectDrawable refuse him.
+std::set<uint32_t> s_nativeBodyHidden;
 } // namespace
 
 // The General under RTS control: Zero Hour's AI fights with his class's weapons: PRIMARY and
@@ -355,8 +362,38 @@ void drawRtsAmmo()
 	}
 }
 
+namespace
+{
+// Hide or restore a drawable's model through its draw modules: the same path
+// Drawable::updateHiddenStatus uses for m_hidden/m_hiddenByStealth, but without touching either.
+// W3DModelDraw::setHidden hides only the render object and its effects (shadow, terrain decal,
+// particles); selection state lives on the Drawable, so this leaves the General selected and
+// selectable.
+void setDrawModuleHidden(Drawable *draw, Bool hidden)
+{
+	if (!draw)
+		return;
+	for (DrawModule **dm = draw->getDrawModules(); *dm; ++dm)
+	{
+		ObjectDrawInterface *di = (*dm)->getObjectDrawInterface();
+		if (di)
+			di->setHidden(hidden != 0);
+	}
+}
+} // namespace
+
 void ResetRtsWeapons()
 {
+	// A reset destroys the drawables; restore any body still tracked so a surviving drawable
+	// (or a load that reuses one) is not left invisible.
+	for (std::set<uint32_t>::iterator it = s_nativeBodyHidden.begin(); it != s_nativeBodyHidden.end(); ++it)
+	{
+		Object *obj = TheGameLogic ? TheGameLogic->findObjectByID((ObjectID)*it) : nullptr;
+		Drawable *draw = obj ? obj->getDrawable() : nullptr;
+		if (draw)
+			setDrawModuleHidden(draw, draw->isDrawableEffectivelyHidden());
+	}
+	s_nativeBodyHidden.clear();
 	memset(s_rtsHitFx, 0, sizeof(s_rtsHitFx));
 	s_rtsHitFxLoaded = FALSE;
 	s_rtsShots.clear();
@@ -425,7 +462,10 @@ void applyWorldPoses()
 	}
 	// Which Generals the native pass drew this frame: their W3D weapon stays hidden.
 	std::set<uint32_t> nativeDrawn;
-	if (zhbo_native_body_enabled() != 0)
+	// Which of them the full-body pass drew (ZHBO_NATIVE_BODY=2): their W3D body is hidden.
+	std::set<uint32_t> nativeBodyDrawn;
+	const int32_t nativeBodyMode = zhbo_native_body_enabled();
+	if (nativeBodyMode != 0)
 	{
 		ZhboNativePose nativePoses[16];
 		const int32_t nativeCount = zhbo_client_native_poses(nativePoses, 16, 0, 0);
@@ -439,7 +479,7 @@ void applyWorldPoses()
 			// The General's world frame: feet and facing come from the drawable's transform.
 			ZhboNativeBodyIn in = {};
 			in.general = np.general;
-			in.mode = ZHBO_BODY_WEAPON;
+			in.mode = (nativeBodyMode == ZHBO_BODY_FULL) ? ZHBO_BODY_FULL : ZHBO_BODY_WEAPON;
 			in.vm = np.weapon;
 			const ZhboFaction *faction = zhboFactionOfGeneralName(obj->getTemplate()->getName());
 			in.faction = faction ? faction->letter : 'U';
@@ -500,7 +540,11 @@ void applyWorldPoses()
 						in.tag[r * 4 + c] = tagMatrix[r][c];
 			}
 			if (zhbo_native_body(&in) == ZHBO_NATIVE_DRAWN)
+			{
 				nativeDrawn.insert(np.general);
+				if (nativeBodyMode == ZHBO_BODY_FULL)
+					nativeBodyDrawn.insert(np.general);
+			}
 		}
 		// Answer this frame's requests after the draw calls, as the viewmodel does, so the next
 		// frame's load can use them.
@@ -558,4 +602,29 @@ void applyWorldPoses()
 		WorldLook look = { p.weapon, p.tablet, p.sidearm, nativeWeapon ? 1 : 0 };
 		s_worldLooks[p.general] = look;
 	}
+
+	// Body mode: the native pass owns the whole figure, so hide the W3D body for the Generals
+	// it drew this frame and restore any body it drew last frame but not this one (a refusal,
+	// a model still loading, or a switch back to weapon mode). Restoring within the same frame
+	// is what keeps a failed native draw from leaving an invisible, uncommandable General.
+	for (std::set<uint32_t>::iterator it = s_nativeBodyHidden.begin(); it != s_nativeBodyHidden.end();)
+	{
+		if (nativeBodyDrawn.count(*it) == 0)
+		{
+			Object *obj = TheGameLogic->findObjectByID((ObjectID)*it);
+			Drawable *draw = obj ? obj->getDrawable() : nullptr;
+			if (draw)
+				setDrawModuleHidden(draw, draw->isDrawableEffectivelyHidden());
+			it = s_nativeBodyHidden.erase(it);
+		}
+		else
+			++it;
+	}
+	for (std::set<uint32_t>::iterator it = nativeBodyDrawn.begin(); it != nativeBodyDrawn.end(); ++it)
+	{
+		Object *obj = TheGameLogic->findObjectByID((ObjectID)*it);
+		if (Drawable *draw = obj ? obj->getDrawable() : nullptr)
+			setDrawModuleHidden(draw, TRUE);
+	}
+	s_nativeBodyHidden.swap(nativeBodyDrawn);
 }

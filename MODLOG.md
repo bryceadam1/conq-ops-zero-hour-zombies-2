@@ -2053,6 +2053,63 @@ WEAPON mode and its W3D restore path are unchanged, and the Rust/ABI side needed
 needs a hide that leaves the drawable selectable, or must exclude the controlled General; do not
 add a new engine hook for it.
 
+## Body mode 2: hiding the W3D body without losing selection (2026-10-21)
+
+The first-person hide could not be reused (above), so body mode 2 hides the W3D body one level
+down: through the draw modules, not the Drawable. `Drawable::updateHiddenStatus`
+(`Drawable.cpp:4603`) does two things when `m_hidden || m_hiddenByStealth`: it deselects the
+General, then calls `ObjectDrawInterface::setHidden(hidden)` on every module (`Drawable.cpp:4609`).
+The bridge now does only the second half: `draw->getDrawModules()` (`Drawable.h:370`) →
+`ObjectDrawInterface::setHidden` (`Common/DrawModule.h:183`). `W3DModelDraw::setHidden`
+(`W3DModelDraw.cpp:1826`) hides the render object, its shadow, its terrain decal and its particles;
+it never touches `TheInGameUI` or the Drawable's selection flags. Selection checks
+`Drawable::isDrawableEffectivelyHidden()` (`m_hidden || m_hiddenByStealth`, `Drawable.h:336`;
+`SelectionXlat.cpp:141`, `SelectionInfo.cpp:356`), which stays false, so the General remains
+selectable and the command bar/ammo overlay (`ZhboControlBar.cpp:149`, `ZhboRtsWeapons.cpp:292`)
+keep working. The bridge already hides `W<vm><k>` sub-objects by name without side effects, but
+that needs the body mesh's names and would not cover every module; the draw-module hide is the
+engine's whole-model primitive and covers all of them, so it was preferred.
+
+`applyWorldPoses` (`host/zhbo/ZhboRtsWeapons.cpp`) sends `ZHBO_BODY_FULL` when
+`zhbo_native_body_enabled()` is `ZHBO_BODY_FULL`, tracks the Generals whose native draw returned
+`ZHBO_NATIVE_DRAWN` in `s_nativeBodyHidden`, re-asserts the draw-module hide every frame (other
+systems may toggle module visibility), and restores any tracked body the same frame the native pass
+stops returning `DRAWN` — a refusal, a still-loading model, a switch back to weapon mode, or a
+reset. The restore goes to `draw->isDrawableEffectivelyHidden()`, not unconditional `FALSE`, so a
+first-person or stealth hide is preserved. WEAPON mode (`ZHBO_NATIVE_BODY=1`) takes the unchanged
+`ZHBO_BODY_WEAPON` path: `nativeBodyDrawn` stays empty, no draw module is touched, and the W3D
+weapon restore is byte-identical.
+
+No engine patch and no ABI/Rust change: the core already accepts mode 2, and
+`zhbo_native_body_enabled` reads `ZHBO_NATIVE_BODY`. The C++ was not compiled on this branch (the
+integrator builds). The W3D shadow is disabled while the native body draws (`setHidden` hides the
+shadow too); that is an in-game visual item, not a selection issue.
+
+## Integrating Track R7 body mode 2: the selection-safe W3D body hide (2026-10-21)
+
+Merged `v1/r7-body-hide` (1 commit). The hide is the engine's own whole-model primitive minus
+its deselect: `Drawable::updateHiddenStatus` (Drawable.cpp:4603-4616) is two halves —
+deselect, then per-draw-module `ObjectDrawInterface::setHidden` — and the bridge calls only the
+second half, so `Drawable::isDrawableEffectivelyHidden()` stays false and
+`CanSelectDrawable`/`SelectionInfo` never refuse the General. No engine patch. Body mode:
+`ZHBO_NATIVE_BODY=2` sends `ZHBO_BODY_FULL`; when `zhbo_native_body` answers
+`ZHBO_NATIVE_DRAWN` the General's draw modules are hidden (re-asserted every frame), and any
+frame the native draw does not claim him restores the modules to
+`isDrawableEffectivelyHidden()` — refusal, loading, mode switch, or off all bring the W3D body
+back; `ResetRtsWeapons` restores too. Weapon mode (1) is byte-identical.
+
+Verified: cargo test --workspace green; `cargo xtask build` clean (first compile of the seam);
+autotest 13/13 default, 14/14 `--rts` (mode 0 regression), 14/14 with `ZHBO_NATIVE_BODY=1`
+(mode 1 regression), **14/14 with `ZHBO_NATIVE_BODY=2`** — the script's command-bar order
+checks passing with the body hidden IS the selectability proof — and `--showcase` with mode 2:
+`ZW04U composed: 105 bones` (the full body rig), the captures showing the native BO2 body
+running in its own clip with the weapon on its tag, no duplicate bodies.
+
+Eyeball items for the playtest: `W3DModelDraw::setHidden` also hides the W3D shadow, so mode 2
+has no body shadow yet (the native pass draws none); and a possible one-frame W3D/native
+overlap when returning from first person (applyWorldPoses runs before applyClientOutput; the
+next frame re-hides — watch for the flicker).
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
