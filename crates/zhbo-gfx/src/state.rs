@@ -480,7 +480,7 @@ pub fn convert_texels(conversion: Conversion, src: &[u8]) -> std::borrow::Cow<'_
     let expand5 = |v: u16| ((v << 3) | (v >> 2)) as u8;
     let expand6 = |v: u16| ((v << 2) | (v >> 4)) as u8;
     let expand4 = |v: u16| (v * 17) as u8;
-    let words = || src.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]]));
+    let words = || src.as_chunks::<2>().0.iter().map(|c| u16::from_le_bytes([c[0], c[1]]));
     match conversion {
         Conversion::None | Conversion::Bc1ToRgba8 | Conversion::Bc2ToRgba8 | Conversion::Bc3ToRgba8 => Cow::Borrowed(src),
         Conversion::A8ToRgba8 => Cow::Owned(src.iter().flat_map(|&a| [0, 0, 0, a]).collect()),

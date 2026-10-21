@@ -1021,6 +1021,82 @@ headers overlaid. **Not yet run in game.** Integration needs:
 - archive VERSION 42 (reconvert);
 - `scripts/autotest-mac.sh --rts` (new checks) and `--rts-dry`.
 
+## Track R, milestone 1: the native BO2 viewmodel path (2026-10-21, branch `v1/track-r`)
+
+The v1.0 plan's Track R replaces the W3D conversion of BO2 art (the root of the transparent
+patches, attachment misalignment and wrong animation variants) with BO2 models drawn by the
+renderer itself. This milestone builds the whole path end to end behind `ZHBO_NATIVE_VIEWMODEL=1`;
+W3D stays the default until the integrator verifies it in game.
+
+1. **`zhbo-native`** (new crate, no deps): the mod's own `.zbm`/`.zba`/`.zbv` blobs and BO2's pose
+   math. Composition and sampling mirror `character::Rig`/`animate`, which were verified in game:
+   a later part hangs from an earlier bone by name; rotations replace; **translations add to the
+   bone's local offset** (zero for roots). BO2's `hideTags` collapse the tag and its children to a
+   zero matrix, as BO2 hides parts. Readers are bounds-checked to the byte (every prefix of a blob
+   is refused).
+2. **Converter**: `native.rs` writes the blobs beside the W3D output for every converted weapon:
+   the arms per faction, gun, magazine plus its rigid `tag_clip1` copy, attachments on their
+   `viewModelTag` at the attachment's view offset (`WeaponAttachmentUnique`), and the combination's
+   animations (the variant table the W3D path already picks). The aim marker `tag_zhbo_aim` uses
+   the W3D path's rule. Real-install test: 60 viewmodels × 3 factions compose with no missing tag;
+   1,578 files, 31.3 MB, all f32. Archive VERSION 42.
+   - **Gotcha:** a few BO2 viewhands (e.g. `c_chn_mp_pla_longsleeve_viewhands`) decode with
+     non-finite half-float weights and unit vectors. The W3D path never noticed. The blob reader
+     refuses non-finite data, so the converter neutralizes those vertices.
+3. **Renderer** (`zhbo-gfx` `runtime/native.rs` + `native.wgsl`): GPU skinning (256-bone palette),
+   `bo2Shade` (patch 0009) ported to WGSL in linear light with sRGB colour maps, BO2's GE128 alpha
+   test, and blend from `GfxStateBits` (#73). Its own depth buffer, so the world never cuts the gun.
+   It draws into the scene view just before the composite (`kBgfxEngineView` 1 /
+   `kBgfxSceneCompositeView` 9, BgfxBackend.cpp), so bloom and tonemap apply.
+   - **Parity decision:** the native draw uses the scene's own projection. G4
+     (`~/Documents/BO2-reference/ghidra/answers/G4.md`: `CG_GetViewFov` `FUN_004a0920`, `cg_fov`
+     65 × `cg_fovScale`) shows t6mp has no viewmodel FOV; the `cg_gun_*` dvars all default to 0.
+4. **Core** (`nativevm/`): asks the bridge for archive files (it can't open the BIG itself), loads
+   and composes, plays the clip with a playback-rate hook (G3's state-duration multipliers), and
+   places the gun. Placement is the eye frame × `GunPose` × ADS slide (aim marker onto the view axis)
+   × art scale. `GunPose` is the hook for the gun-position track's `weapons::gunpos`; bob and sway
+   are not implemented here. Uploads mesh and textures and submits the palette. Logs and file
+   requests go through the bridge.
+5. **Bridge** (`ZhboViewmodel.cpp`): calls `zhbo_native_viewmodel` before loading the W3D model,
+   serves file requests and log lines, and plays the muzzle/brass FXLists at
+   `zhbo_native_bone`. Sound notetracks are unchanged. The scene lights come from GlobalData; ZH's
+   `lightPos` is the direction light *travels*, so the light is `-lightPos` (`W3DShadow.cpp`
+   `lightRay`).
+6. **Single sources**: `ART_SCALE` (11/72) and `AIM_TAG` live in `zhbo-native`, and
+   `character::SCALE` reads it. Open finding for whoever owns units: the art scale (11/72 units per
+   inch) and the sim's `units::ZH_PER_INCH` (1/6) differ. The viewmodel is unaffected (scaling about
+   the eye leaves the image unchanged), but the two should be reconciled.
+
+Tests: zhbo-native 17; zhbo-gfx `tests/native.rs` 5 (headless Metal: skinning, the sRGB round
+trip, light, view transform, view order, refusals); core `nativevm` 4, plus 1 end to end into a
+headless renderer with `--features renderer`; workspace green; real-install conversion green. The
+bridge file compiles against the macOS engine build's flags. **Not run in game** (integrator).
+
+Still to do in Track R:
+- R4: surface back-face culling (currently none) and BO2's reflection probes.
+- R5: the attachment combination's own variant clip set is already in the manifest; verify in game.
+- R6: ADS optic eye relief from the weapon def (today: the W3D marker rule).
+- R7: third person, the General's body and weapon on the native path with BO2 MP body animations.
+- R8: FxEffectDef effects on tags.
+- Tablet and hammer viewmodels: still W3D.
+- Retire the W3D viewmodel once verified.
+- Quantize the blobs.
+- Share textures across viewmodels (each weapon switch re-uploads the arms' textures).
+
+## Integrating Track R: a config bug that hid every ZHBO_* variable from the core (2026-10-21)
+
+The first `ZHBO_NATIVE_VIEWMODEL=1` run drew W3D as if the flag were unset. `config::get()` was
+`CONFIG.get_or_init(Config::default)`, and the bridge's loaders (weapon table, strings, classes)
+run before `zhbo_init`. The first early read therefore locked the defaults in, and `init`'s
+`set` was silently dropped. The autopilot and loadout only kept working because the C++ side
+parses those variables itself. `get()` now falls back to a static default without filling the
+cell; the new test `a_read_before_init_does_not_lock_in_the_defaults` covers it. With the fix the
+native path runs: autotest 13/13, every weapon composed (e.g. `ZV12U composed: 86 bones, 14410
+vertices, 16 surfaces`), and zhbo-gfx refused nothing. **Open (next Track R round):** next to the
+W3D render of the same frame, the native colours wash out to grey (the AN-94's olive finish and the
+dark gloves render light grey), and the gun sits a little higher. The colour map's sampling or the
+`bo2Shade` light balance is the first suspect.
+
 ## v1.0 Track PW: perks as specialties, BO2 movement, weapon timing, recoil, gun position (2026-10-21)
 
 Everything here comes from the Ghidra answers in `~/Documents/BO2-reference/ghidra/answers/`

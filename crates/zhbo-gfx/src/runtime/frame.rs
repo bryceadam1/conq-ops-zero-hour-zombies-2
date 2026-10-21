@@ -70,8 +70,14 @@ pub(crate) struct BindGroupCaches {
     /// Program serial -> group 0 (predefined uniforms).
     pub group0: HashMap<u32, wgpu::BindGroup>,
     /// (program, uniform block, texture bindings) -> group 1.
-    pub group1: HashMap<(u32, u32, Vec<(u32, u32)>), wgpu::BindGroup>,
+    pub group1: HashMap<Group1Key, wgpu::BindGroup>,
 }
+
+/// A group-1 bind group's identity: program, uniform block offset, (binding, texture serial) pairs.
+pub(crate) type Group1Key = (u32, u32, Vec<(u32, u32)>);
+
+/// A draw's sampled textures: (binding, texture, sampler flags).
+type DrawTextures = Vec<(u32, Option<Arc<Texture>>, u32)>;
 
 pub(crate) struct Caches {
     bind_groups: BindGroupCaches,
@@ -208,14 +214,14 @@ fn uniform_buffer(device: &wgpu::Device, size: u64) -> wgpu::Buffer {
 }
 
 /// A resolved render target for one view.
-struct Target {
+pub(super) struct Target {
     /// (attachment view, resolve view) per colour target.
-    colors: Vec<(wgpu::TextureView, Option<wgpu::TextureView>)>,
-    color_formats: Vec<wgpu::TextureFormat>,
+    pub(super) colors: Vec<(wgpu::TextureView, Option<wgpu::TextureView>)>,
+    pub(super) color_formats: Vec<wgpu::TextureFormat>,
     depth: Option<(wgpu::TextureView, wgpu::TextureFormat)>,
-    samples: u32,
-    width: u32,
-    height: u32,
+    pub(super) samples: u32,
+    pub(super) width: u32,
+    pub(super) height: u32,
 }
 
 fn texture_view_format(t: &Texture) -> wgpu::TextureFormat {
@@ -293,7 +299,7 @@ fn bgfx_color(rgba: u32) -> [f32; 4] {
 struct DrawPlan {
 key: PipelineKey,
 unfilterable: u32,
-textures: Vec<(u32, Option<Arc<Texture>>, u32)>,
+textures: DrawTextures,
 buffers: BufferPlan,
 rgba: u32,
 ubo: [Option<u32>; 2],
@@ -308,7 +314,7 @@ instances: u32,
 }
 
 impl Renderer {
-    fn target_for(&self, fb: u16) -> Option<Target> {
+    pub(super) fn target_for(&self, fb: u16) -> Option<Target> {
         if fb == INVALID {
             let bb = &self.backbuffer;
             let color = match &bb.msaa {
@@ -377,6 +383,8 @@ impl Renderer {
             self.queue.write_buffer(&self.cache.uniforms, 0, &self.uniform_ring);
         }
 
+        self.native_upload();
+
         // Bucket draws by view.
         let mut by_view: Vec<Vec<usize>> = vec![Vec::new(); MAX_VIEWS];
         for (i, d) in self.draws.iter().enumerate() {
@@ -394,6 +402,8 @@ impl Renderer {
                 continue;
             }
             visited[v] = true;
+            // Native BO2 models queued to draw before this view (the scene composite).
+            self.native_encode(&mut encoder, Some(v as u16));
 
             for b in self.blits.iter().filter(|b| b.view as usize == v) {
                 encoder.copy_texture_to_texture(
@@ -452,7 +462,7 @@ impl Renderer {
                     load: if full && clear.flags & state::CLEAR_DEPTH != 0 { wgpu::LoadOp::Clear(clear.depth) } else { wgpu::LoadOp::Load },
                     store: wgpu::StoreOp::Store,
                 }),
-                stencil_ops: fmt.has_stencil_aspect().then(|| wgpu::Operations {
+                stencil_ops: fmt.has_stencil_aspect().then_some(wgpu::Operations {
                     load: if full && clear.flags & state::CLEAR_STENCIL != 0 { wgpu::LoadOp::Clear(clear.stencil as u32) } else { wgpu::LoadOp::Load },
                     store: wgpu::StoreOp::Store,
                 }),
@@ -484,6 +494,9 @@ impl Renderer {
                 }
             }
         }
+
+        // Native draws whose view never came this frame still draw, at the end.
+        self.native_encode(&mut encoder, None);
 
         // Screenshots: copy into readback buffers now, map after submit.
         let mut readbacks = Vec::new();
@@ -568,7 +581,7 @@ impl Renderer {
             for row in 0..h as usize {
                 let line = &data[row * pitch as usize..row * pitch as usize + w as usize * 4];
                 if matches!(format, wgpu::TextureFormat::Rgba8Unorm | wgpu::TextureFormat::Rgba8UnormSrgb) {
-                    for px in line.chunks_exact(4) {
+                    for px in line.as_chunks::<4>().0 {
                         bgra.extend_from_slice(&[px[2], px[1], px[0], px[3]]);
                     }
                 } else {
@@ -585,6 +598,8 @@ impl Renderer {
         self.stats.num_draw = num_draw;
         self.stats.num_blit = self.blits.len() as u32;
         self.stats.cpu_frame_ns = started.elapsed().as_nanos() as u64;
+        self.stats.native_skipped = std::mem::take(&mut self.native.skipped);
+        self.native_end_frame();
         self.draws.clear();
         self.blits.clear();
         self.transforms.clear();
@@ -650,7 +665,7 @@ impl Renderer {
                         }
                     };
                     let start = (base + at) as usize;
-                    for (chunk, v) in self.uniform_ring[start..start + values.len() * 4].chunks_exact_mut(4).zip(values) {
+                    for (chunk, v) in self.uniform_ring[start..start + values.len() * 4].as_chunks_mut::<4>().0.iter_mut().zip(values) {
                         chunk.copy_from_slice(&v.to_le_bytes());
                     }
                 }
@@ -700,10 +715,10 @@ impl Renderer {
 
     /// Which bound textures this draw samples and which of them cannot be filtered (depth, or
     /// 32-bit float without the feature).
-    fn draw_textures(&self, program: &Arc<Program>, st: &super::DrawState) -> (u32, Vec<(u32, Option<Arc<Texture>>, u32)>) {
+    fn draw_textures(&self, program: &Arc<Program>, st: &super::DrawState) -> (u32, DrawTextures) {
         let features = self.device.features();
         let mut unfilterable = 0u32;
-        let mut textures: Vec<(u32, Option<Arc<Texture>>, u32)> = Vec::new();
+        let mut textures: DrawTextures = Vec::new();
         for &(slot, array) in &program.slots {
             let binding = st.textures.get(slot as usize).and_then(|t| t.clone());
             let binding = binding.filter(|b| b.texture.array == array && b.texture.sample_count() == 1);
@@ -766,7 +781,7 @@ impl Renderer {
                         self.report(format!("zhbo-gfx: skipped a draw: vertex stream offset {} is unaligned or past the buffer", b.offset));
                         return None;
                     }
-                    let fits = if stride == 0 { u32::MAX } else { ((size - b.offset) / stride) as u32 };
+                    let fits = (size - b.offset).checked_div(stride).map_or(u32::MAX, |n| n as u32);
                     vertex_count = vertex_count.min(b.num_vertices.min(fits));
                     binds.push((gpu(&b.src), b.offset));
                 }
@@ -1167,7 +1182,7 @@ impl Renderer {
         let pipeline = self.cache.clear.get(&key)?.clone();
         let c = bgfx_color(clear.rgba);
         let mut data = [0u8; 32];
-        for (chunk, v) in data.chunks_exact_mut(4).zip(c.iter().chain(&[clear.depth, 0.0, 0.0, 0.0])) {
+        for (chunk, v) in data.as_chunks_mut::<4>().0.iter_mut().zip(c.iter().chain(&[clear.depth, 0.0, 0.0, 0.0])) {
             chunk.copy_from_slice(&v.to_le_bytes());
         }
         let buffer = self.device.create_buffer(&wgpu::BufferDescriptor {

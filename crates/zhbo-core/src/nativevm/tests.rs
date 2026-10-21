@@ -1,0 +1,219 @@
+//! The native viewmodel without a GPU: a two-part viewmodel built in memory, its files provided
+//! through the request/answer loop, posed by its clip, slid onto the sights when aiming.
+
+use super::ffi::{with_state, ZhboNativeIn, LOADING, NOT_NATIVE};
+use super::*;
+use zhbo_native::anim::BoneTrack;
+use zhbo_native::math::{QUAT_IDENTITY, IDENTITY};
+use zhbo_native::model::{Bone, Lod, Material, Surface};
+use zhbo_native::viewmodel::{Marker, Part};
+
+fn bone(name: &str, parent: Option<u32>, pos: [f32; 3]) -> Bone {
+    Bone { name: name.into(), parent, local_rotation: QUAT_IDENTITY, local_position: pos, rotation: QUAT_IDENTITY, position: pos }
+}
+
+/// A one-triangle model whose vertices all ride its last bone.
+fn model(name: &str, bones: Vec<Bone>) -> Model {
+    let last = bones.len() as u16 - 1;
+    let v = |p: [f32; 3]| Vertex { position: p, normal: [0.0, 0.0, 1.0], uv: [0.0; 2], bones: [last, 0, 0, 0], weights: [1.0, 0.0, 0.0, 0.0] };
+    let at = bones.last().unwrap().position;
+    Model {
+        name: name.into(),
+        bones,
+        materials: vec![Material { name: "m".into(), color: Some("Art\\Textures\\c.tga".into()), ..Default::default() }],
+        lods: vec![Lod { distance: 0.0, first_surface: 0, surface_count: 1 }],
+        // Facing the eye (in the Y-Z plane), 5" on a side.
+        surfaces: vec![Surface { material: 0, vertices: vec![v(at), v([at[0], at[1] + 5.0, at[2]]), v([at[0], at[1], at[2] + 5.0])], indices: vec![0, 1, 2] }],
+        ..Default::default()
+    }
+}
+
+struct Fixture {
+    files: Vec<(String, Vec<u8>)>,
+}
+
+/// Arms with `tag_weapon` 20" ahead; a gun on it whose sights sit 4" up and 2" left; an idle clip
+/// that lifts the arms' `tag_weapon` 1" and a reload that lowers it 3".
+fn fixture() -> Fixture {
+    let arms = model("arms", vec![bone("j_root", None, [0.0; 3]), bone("tag_weapon", Some(0), [20.0, 0.0, -5.0])]);
+    let gun = model("gun", vec![bone("tag_weapon", None, [0.0; 3]), bone("j_gun", Some(0), [3.0, 0.0, 0.0])]);
+    let clip = |name: &str, z: f32| Anim {
+        name: name.into(),
+        num_frames: 10,
+        frame_rate: 10.0,
+        looping: false,
+        delta: false,
+        asset_type: 0,
+        bones: vec![BoneTrack { name: "tag_weapon".into(), rotation: None, translation: Some(vec![(0, [0.0, 0.0, z]), (10, [0.0, 0.0, z])]) }],
+        notes: vec![],
+    };
+    let manifest = Viewmodel {
+        id: "test_mp".into(),
+        faction: b'U',
+        parts: vec![
+            Part { model: zhbo_native::model_path("arms"), tag: None, offset: IDENTITY, rigid: false },
+            Part { model: zhbo_native::model_path("gun"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false },
+        ],
+        markers: vec![Marker { name: AIM_TAG.into(), parent: "tag_weapon".into(), local: (QUAT_IDENTITY, [0.0, 2.0, 4.0]) }],
+        hide: vec![],
+        clips: vec![(1, zhbo_native::anim_path("idle")), (0x10, zhbo_native::anim_path("reload"))],
+    };
+    Fixture {
+        files: vec![
+            (zhbo_native::viewmodel_path(7, 'U'), manifest.to_bytes()),
+            (zhbo_native::model_path("arms"), arms.to_bytes()),
+            (zhbo_native::model_path("gun"), gun.to_bytes()),
+            (zhbo_native::anim_path("idle"), clip("idle", 1.0).to_bytes()),
+            (zhbo_native::anim_path("reload"), clip("reload", -3.0).to_bytes()),
+        ],
+    }
+}
+
+fn input(clip: i32, ads: f32) -> ZhboNativeIn {
+    ZhboNativeIn { vm: 7, faction: b'U' as i32, clip, ads, rate: 1.0, dir: [1.0, 0.0, 0.0], ..Default::default() }
+}
+
+/// Answer every outstanding request from the fixture (absent files: "missing").
+fn answer(s: &mut ffi::State, f: &Fixture) -> usize {
+    let wanted: Vec<String> = s.files.wanted().map(str::to_string).collect();
+    for w in &wanted {
+        let bytes = f.files.iter().find(|(p, _)| p == w).map(|(_, b)| b.as_slice());
+        s.files.provide(w, bytes);
+    }
+    wanted.len()
+}
+
+fn aim_in_eye(s: &ffi::State) -> [f32; 3] {
+    let m = s.loaded.as_ref().unwrap().bone_world(&s.posed, AIM_TAG).expect("the aim marker");
+    [m[0][3], m[1][3], m[2][3]]
+}
+
+#[test]
+fn loads_through_requests_then_poses_and_aims() {
+    let f = fixture();
+    with_state(|s| {
+        *s = ffi::State::default();
+        assert_eq!(s.frame(&input(1, 0.0), false), NOT_NATIVE, "off unless enabled");
+        assert_eq!(s.frame(&input(1, 0.0), true), LOADING, "asks for the manifest");
+        assert_eq!(answer(s, &f), 1);
+        assert_eq!(s.frame(&input(1, 0.0), true), LOADING, "asks for the models");
+        assert_eq!(answer(s, &f), 2);
+        s.frame(&input(1, 0.0), true);
+        // The idle clip and the colour map were requested; the texture is absent (draws white).
+        assert_eq!(answer(s, &f), 1 + cfg!(feature = "renderer") as usize);
+        s.frame(&input(1, 0.0), true);
+        let loaded = s.loaded.as_ref().expect("composed");
+        assert_eq!(loaded.skeleton.bones.len(), 5);
+        assert_eq!(s.posed.palette.len(), 5);
+        // Hip: the marker at the gun's sights, 20" ahead, 5" down + 1" (idle) + 4", 2" left; scaled.
+        let hip = aim_in_eye(s);
+        let want = [20.0 * ART_SCALE, 2.0 * ART_SCALE, 0.0];
+        assert!((0..3).all(|k| (hip[k] - want[k]).abs() < 1e-4), "{hip:?} vs {want:?}");
+        // Fully aimed: the marker slides onto the view axis, its distance kept.
+        s.frame(&input(1, 1.0), true);
+        let aimed = aim_in_eye(s);
+        assert!(aimed[1].abs() < 1e-4 && aimed[2].abs() < 1e-4 && (aimed[0] - want[0]).abs() < 1e-4, "{aimed:?}");
+    });
+}
+
+#[test]
+fn falls_back_to_the_idle_and_plays_at_the_rate() {
+    let f = fixture();
+    with_state(|s| {
+        *s = ffi::State::default();
+        for _ in 0..6 {
+            s.frame(&input(0x10, 0.0), true);
+            answer(s, &f);
+        }
+        let l = s.loaded.as_ref().unwrap();
+        assert_eq!(l.clip_path(0x17), l.clip_path(1), "a slot the gun lacks holds the idle");
+        assert_eq!(l.clip_path(0x10).unwrap(), zhbo_native::anim_path("reload"));
+        let z = aim_in_eye(s)[2];
+        assert!((z - (-3.0 - 5.0 + 4.0) * ART_SCALE).abs() < 1e-4, "the reload lowers the gun: {z}");
+        let mut req = ffi::request(&input(0x10, 0.0));
+        req.rate = 0.0;
+        assert!(req.rate == 0.0 && ffi::request(&ZhboNativeIn { rate: f32::NAN, ..input(1, 0.0) }).rate == 1.0);
+    });
+}
+
+#[test]
+fn a_missing_manifest_gives_up_once() {
+    with_state(|s| {
+        *s = ffi::State::default();
+        let mut inp = input(1, 0.0);
+        inp.vm = 99;
+        assert_eq!(s.frame(&inp, true), LOADING);
+        let wanted: Vec<String> = s.files.wanted().map(str::to_string).collect();
+        for w in wanted {
+            s.files.provide(&w, None);
+        }
+        assert_eq!(s.frame(&inp, true), NOT_NATIVE);
+        assert_eq!(s.frame(&inp, true), NOT_NATIVE, "not retried");
+        assert_eq!(s.log.len(), 1, "logged once: {:?}", s.log);
+    });
+}
+
+#[test]
+fn gun_pose_matches_the_w3d_rotation_order() {
+    // A yaw of 90° turns the gun's forward (X) to the left (Y); a pitch raises the muzzle.
+    let yaw = GunPose::from_offset_angles([0.0; 3], [std::f32::consts::FRAC_PI_2, 0.0, 0.0]);
+    let p = zhbo_native::math::apply(yaw.0, [1.0, 0.0, 0.0]);
+    assert!((p[1] - 1.0).abs() < 1e-5, "{p:?}");
+    let pitch = GunPose::from_offset_angles([0.0; 3], [0.0, 0.3, 0.0]);
+    assert!(zhbo_native::math::apply(pitch.0, [1.0, 0.0, 0.0])[2] > 0.2, "muzzle up");
+}
+
+/// End to end on a headless renderer (wgpu builds): the core composes, uploads and submits the
+/// fixture, and the frame's pixels show it in front of the cleared scene.
+#[cfg(feature = "renderer")]
+#[test]
+fn draws_into_a_headless_renderer() {
+    use std::sync::{Arc, Mutex};
+    use zhbo_gfx::ffi::{with_renderer, zhgfx_init, zhgfx_shutdown, ZhgfxInit};
+    use zhbo_gfx::runtime::INVALID;
+    let init = ZhgfxInit { kind: 0, window: std::ptr::null_mut(), display: std::ptr::null_mut(), width: 64, height: 64, reset: 0, transient_vb_size: 0, transient_ib_size: 0 };
+    if !unsafe { zhgfx_init(&init) } {
+        eprintln!("no usable adapter, skipping");
+        return;
+    }
+    let shot: Arc<Mutex<Option<Vec<u8>>>> = Arc::default();
+    let shot2 = shot.clone();
+    with_renderer((), |r| {
+        r.set_screenshot_fn(Box::new(move |_, _, _, _, d| *shot2.lock().unwrap() = Some(d.to_vec())));
+        r.set_view_rect(1, 0, 0, 64, 64);
+        r.set_view_clear(1, zhbo_gfx::state::CLEAR_COLOR, 0x0000ffff, 1.0, 0);
+        // The eye at the origin looking down +X, Z up (bx row-vector order): X forward -> z,
+        // Y left -> -x, Z up -> y; a 90° perspective with depth 0..1.
+        let view = [0.0, 0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+        let (n, f) = (0.1f32, 100.0f32);
+        let proj = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, f / (f - n), 1.0, 0.0, 0.0, -n * f / (f - n), 0.0];
+        r.set_view_transform(1, Some(&view), Some(&proj));
+        r.touch(1);
+    });
+    let f = fixture();
+    let drawn = with_state(|s| {
+        *s = ffi::State::default();
+        let mut inp = input(1, 1.0);
+        inp.target_view = 1;
+        inp.before_view = 2;
+        let mut code = LOADING;
+        for _ in 0..8 {
+            code = s.frame(&inp, true);
+            answer(s, &f);
+        }
+        code
+    });
+    assert_eq!(drawn, ffi::DRAWN);
+    with_renderer((), |r| {
+        r.request_screenshot(INVALID, "vm.png");
+        r.frame();
+        assert_eq!(r.stats().errors, 0);
+        assert_eq!(r.stats().native_skipped, 0);
+    });
+    let px = shot.lock().unwrap().take().expect("a screenshot");
+    // Cleared blue (BGRA 255,0,0); the unlit (no lights, no ambient) viewmodel is dark on it.
+    let covered = px.as_chunks::<4>().0.iter().filter(|p| p[0] < 128).count();
+    assert!(covered > 0, "the viewmodel's triangles reached the screen");
+    with_state(|s| s.gpu.release());
+    zhgfx_shutdown();
+}

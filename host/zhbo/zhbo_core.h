@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 22u
+#define ZHBO_ABI_VERSION 23u
 
 /* Field counts of the API tables below. The Rust side derives its layout asserts and
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
@@ -406,6 +406,44 @@ int32_t zhbo_loadout_viewmodels(int32_t *out, int32_t cap); /* the General's kit
 float zhbo_general_build_rate(void); /* a General's building speed, share of a dozer's */
 int32_t zhbo_check_requirements(char *msg, uint32_t cap);
 
+/* The native first-person viewmodel (Track R; nativevm/ffi.rs, CONTRACT.md "Native viewmodel").
+   Opt-in (ZHBO_NATIVE_VIEWMODEL=1). Each frame: zhbo_native_viewmodel, then answer every
+   zhbo_native_wanted path with zhbo_native_provide (len < 0: not in the archive), and log each
+   zhbo_native_take_log line. */
+typedef struct ZhboNativeLight
+{
+	float dir[3];   /* towards the light, world space */
+	float color[3]; /* display-encoded */
+} ZhboNativeLight;
+typedef struct ZhboNativeIn
+{
+	float eye[3];
+	float dir[3];
+	float offset[3]; /* the gun's view-space offset and yaw/pitch/roll, as the W3D path takes them */
+	float angles[3];
+	int32_t clip;
+	int32_t vm;      /* converted weapon index (ZV<vm><faction>) */
+	int32_t faction; /* the arms' letter: 'U', 'C', 'G' */
+	float time;
+	float ads;
+	float rate;      /* clip playback rate, 1 = BO2's own */
+	float ambient[3];
+	ZhboNativeLight lights[3];
+	int32_t light_count;
+	uint16_t target_view; /* the engine's scene view (drawn into) */
+	uint16_t before_view; /* the view the pass runs before (the scene composite) */
+	float debug;          /* ZHBO_BO2_DEBUG's term view, 0 off */
+} ZhboNativeIn;
+#define ZHBO_NATIVE_NOT_NATIVE 0 /* draw the W3D model */
+#define ZHBO_NATIVE_DRAWN 1      /* drawn natively: hide the W3D model */
+#define ZHBO_NATIVE_LOADING 2    /* files still coming: the W3D model this frame */
+int32_t zhbo_native_viewmodel(const ZhboNativeIn *in);
+int32_t zhbo_native_wanted(int32_t i, char *buf, int32_t cap);
+void zhbo_native_provide(const char *path, const uint8_t *data, int32_t len);
+int32_t zhbo_native_take_log(char *buf, int32_t cap);
+int32_t zhbo_native_bone(const char *name, float *out12); /* world 3x4 rows of the last pose */
+void zhbo_native_reset(void);
+
 #ifdef __cplusplus
 }
 
@@ -423,4 +461,6 @@ static_assert(sizeof(ZhboClassButton) == 756, "ZhboClassButton layout must match
 static_assert(sizeof(ZhboClientApi) == ZHBO_CLIENT_API_FIELDS * sizeof(void *), "ZhboClientApi layout must match host.rs");
 static_assert(sizeof(ZhboBuildOption) == 64, "ZhboBuildOption layout must match building.rs");
 static_assert(sizeof(ZhboWorkSite) == 64, "ZhboWorkSite layout must match building.rs");
+static_assert(sizeof(ZhboNativeLight) == 24, "ZhboNativeLight layout must match nativevm/ffi.rs");
+static_assert(sizeof(ZhboNativeIn) == 168, "ZhboNativeIn layout must match nativevm/ffi.rs");
 #endif

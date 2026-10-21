@@ -220,8 +220,8 @@ pub use zhbo_core::names::RTS_FX_PATH;
 const SOLDIER_BOX_CENTRE: [f32; 3] = [0.0, 0.0, 36.0];
 const SOLDIER_BOX_EXTENT: [f32; 3] = [18.0, 18.0, 38.0];
 
-/// Archive files: path inside the BIG and contents.
-type Files = Vec<(String, Vec<u8>)>;
+/// The archive's files: `(path, bytes)`.
+pub type Files = Vec<(String, Vec<u8>)>;
 
 /// Convert everything; returns the archive files and a one-line summary.
 pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
@@ -648,6 +648,36 @@ mod tests {
             let name = zhbo_core::names::rts_weapon(&d.id);
             assert!(name.len() < zhbo_core::names::RTS_WEAPON_NAME_CAP, "{name} is too long for the ABI");
             assert!(rts.contains(&format!("Weapon {name}\n")), "no {name}");
+        }
+        native_blobs_are_whole(&files);
+    }
+
+    /// Every native viewmodel (Track R) reads back, names models, clips and textures that are in
+    /// the archive, composes without a missing tag, and carries its aim marker.
+    fn native_blobs_are_whole(files: &[(String, Vec<u8>)]) {
+        use zhbo_native::{anim::Anim, model::Model, pose::{PartRef, Skeleton}, viewmodel::Viewmodel};
+        let file = |path: &str| files.iter().find(|(p, _)| p == path).map(|(_, b)| b.as_slice());
+        let manifests: Vec<&(String, Vec<u8>)> = files.iter().filter(|(p, _)| p.ends_with(".zbv")).collect();
+        let native: Vec<&(String, Vec<u8>)> = files.iter().filter(|(p, _)| p.starts_with(zhbo_native::DIR)).collect();
+        println!("native blobs: {} files, {:.1} MB", native.len(), native.iter().map(|(_, b)| b.len()).sum::<usize>() as f64 / 1e6);
+        assert!(manifests.len() >= FACTIONS.len(), "{} native viewmodels", manifests.len());
+        for (path, bytes) in manifests {
+            let vm = Viewmodel::from_bytes(bytes).unwrap_or_else(|e| panic!("{path}: {e}"));
+            let models: Vec<Model> = vm.parts.iter().map(|p| Model::from_bytes(file(&p.model).unwrap_or_else(|| panic!("{path}: no {}", p.model))).unwrap_or_else(|e| panic!("{}: {e}", p.model))).collect();
+            for m in &models {
+                for mat in &m.materials {
+                    for t in mat.color.iter().chain(&mat.maps) {
+                        assert!(file(t).is_some(), "{}: texture {t} not written", m.name);
+                    }
+                }
+            }
+            let parts: Vec<PartRef> = vm.parts.iter().zip(&models).map(|(p, m)| PartRef { model: m, tag: p.tag.as_deref(), offset: p.offset, rigid: p.rigid }).collect();
+            let (skel, problems) = Skeleton::compose(&parts, &vm.markers, &vm.hide);
+            assert!(problems.is_empty(), "{path}: {problems:?}");
+            assert!(skel.bone(crate::native::AIM_TAG).is_some(), "{path}: no aim marker");
+            for (_, clip) in &vm.clips {
+                Anim::from_bytes(file(clip).unwrap_or_else(|| panic!("{path}: no {clip}"))).unwrap_or_else(|e| panic!("{clip}: {e}"));
+            }
         }
     }
 }

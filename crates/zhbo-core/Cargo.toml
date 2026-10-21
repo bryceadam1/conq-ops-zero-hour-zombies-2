@@ -19,4 +19,5 @@ autopilot = []
 
 [dependencies]
 zhbo-requirements = { path = "../zhbo-requirements" }
+zhbo-native = { path = "../zhbo-native" }
 zhbo-gfx = { path = "../zhbo-gfx", optional = true }

@@ -155,6 +155,39 @@ icons, which the bridge draws over them with what each has left (the class-butto
 class is the player's, so no conversion-time art can show it). Name slots are
 `ZHBO_RTS_WEAPON_NAME_CAP` (48) bytes; a test keeps it equal to `names::RTS_WEAPON_NAME_CAP`.
 
+## The native viewmodel (Track R)
+
+With `ZHBO_NATIVE_VIEWMODEL=1` in a wgpu build, the first-person weapon is drawn by the renderer's
+native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba/.zbv` in
+`ConquerOps_BO2.big`) instead of the W3D model. Free functions on the append-only ABI surface
+(`zhbo_core.h`, `nativevm/ffi.rs`); presentation only, nothing reaches the sim.
+
+* **The bridge asks each frame, the core decides.** `ZhboViewmodel_Update` builds a
+  `ZhboNativeIn` from what it already has for the W3D model (clip, time, ADS fraction, eye and
+  direction, the gun's view-space offset and angles, the faction letter from the `ZV<vm><F>`
+  name) plus Zero Hour's global lights for the time of day (towards-the-light = `-lightPos`) and
+  calls `zhbo_native_viewmodel`. `DRAWN` (1): the W3D model stays hidden and the muzzle/brass
+  FXLists play at `zhbo_native_bone("tag_flash"/"tag_brass")`. `LOADING` (2) and `NOT_NATIVE`
+  (0): the W3D path draws this frame. Viewmodel sound notetracks are unchanged (the bridge's
+  `playNotes` runs before either path).
+* **The core cannot open the archive; it asks.** After each call the bridge answers every
+  `zhbo_native_wanted(i)` path with `zhbo_native_provide(path, bytes, len)` (`len < 0`: not in the
+  archive, after which that viewmodel is given up and logged once) and prints every
+  `zhbo_native_take_log` line. A viewmodel draws once its manifest, models and textures are in;
+  clips fill in as they arrive (bind pose until then).
+* **Where it draws.** Into `target_view` (BgfxBackend's `kBgfxEngineView`, 1) just before
+  `before_view` (`kBgfxSceneCompositeView`, 9), with the scene view's own view and projection: BO2
+  has no viewmodel FOV (`~/Documents/BO2-reference/ghidra/answers/G4.md`). The pass has its own
+  depth buffer, so the world never cuts the gun.
+* **The gun-position hook.** The gun's view-space transform enters as `GunPose`
+  (`nativevm::GunPose::from_offset_angles` today); the gun-position track's `weapons::gunpos`
+  output replaces it there. The clip playback rate (`ZhboNativeIn.rate`) is the hook for G3's
+  state-duration multipliers.
+* `zhbo_native_reset` runs from `ZhboViewmodel_Reset` (a game reset tears down the scene); it frees
+  the renderer's meshes and textures.
+* ABI: the functions and `ZhboNativeIn` (168 bytes) / `ZhboNativeLight` (24) are new; the header and
+  Rust carry size asserts. They need the `ZHBO_ABI_VERSION` bump with their merge.
+
 ## Lifecycle
 
 1. `GameEngine::init` end → `Zhbo_Init`: ABI check, **requirements check (both games must be installed,

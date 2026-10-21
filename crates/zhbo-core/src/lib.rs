@@ -25,6 +25,7 @@ pub mod lui;
 pub mod math;
 pub mod menu;
 pub mod names;
+pub mod nativevm;
 pub mod movement;
 pub mod profile;
 pub mod projectiles;

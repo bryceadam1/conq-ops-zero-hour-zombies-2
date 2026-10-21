@@ -7,6 +7,7 @@ license.workspace = true
 
 [dependencies]
 zhbo-formats = { path = "../zhbo-formats" }
+zhbo-native = { path = "../zhbo-native" }
 zhbo-requirements = { path = "../zhbo-requirements" }
 zhbo-core = { path = "../zhbo-core" }
 claxon = "0.4"
