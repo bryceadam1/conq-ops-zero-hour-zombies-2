@@ -17,6 +17,7 @@ pub mod textures;
 pub mod viewmodels;
 pub mod fonts;
 pub mod native;
+pub mod thirdperson;
 pub mod fx;
 pub mod sfx;
 pub mod manifest;

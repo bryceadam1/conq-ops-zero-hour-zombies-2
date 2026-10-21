@@ -76,6 +76,9 @@ struct WorldLook
 	int32_t weapon;
 	int32_t tablet;
 	int32_t sidearm;
+	// The native third person drew the weapon last frame: when it stops succeeding, the W3D
+	// sub-objects must come back, so this is part of the change test.
+	int32_t native;
 };
 std::map<uint32_t, WorldLook> s_worldLooks;
 } // namespace
@@ -364,11 +367,53 @@ void ResetRtsWeapons()
 // Third person: show the weapon each General has in hand (its W<vm><k> sub-objects on the soldier
 // model) or the scorestreak tablet (TB<k>), play the tablet's raise or put-away (USER_1, USER_2),
 // and hold the secondary in BO2's sidearm stance (JAMMED). Only changes are applied.
+//
+// M2 (Track R7): with ZHBO_NATIVE_BODY=1 the weapon itself comes from the native BO2 path instead:
+// zhbo_client_native_poses says which General holds which converted weapon, the drawable's
+// tag_weapon_right transform places it in the world (zhbo_native_body, mode ZHBO_BODY_WEAPON), and
+// the W3D W<vm><k> sub-objects are hidden while the native draw succeeds. Any refusal (no blob,
+// no GPU pass, no tag) leaves the W3D weapon showing.
+
+namespace
+{
+// A native blob's bytes from the archive, for the third person's request/answer loop.
+Bool readNativeBodyFile(const char *path, std::string &out)
+{
+	File *f = TheFileSystem ? TheFileSystem->openFile(path) : nullptr;
+	if (!f)
+		return FALSE;
+	const Int size = f->size();
+	char *buf = f->readEntireAndClose();
+	if (!buf)
+		return FALSE;
+	out.assign(buf, size);
+	delete[] buf;
+	return TRUE;
+}
+
+// Answer the core's third-person file requests and print its log lines.
+void serveNativeBody()
+{
+	std::vector<std::string> wanted;
+	char path[512];
+	for (int i = 0; zhbo_native_body_wanted(i, path, sizeof(path)) >= 0; ++i)
+		wanted.push_back(path);
+	for (const std::string &p : wanted)
+	{
+		std::string bytes;
+		if (readNativeBodyFile(p.c_str(), bytes))
+			zhbo_native_body_provide(p.c_str(), reinterpret_cast<const uint8_t *>(bytes.data()), (int32_t)bytes.size());
+		else
+			zhbo_native_body_provide(p.c_str(), nullptr, -1);
+	}
+	char line[512];
+	while (zhbo_native_body_take_log(line, sizeof(line)) >= 0)
+		Zhbo_Log("%s", line);
+}
+} // namespace
 
 void applyWorldPoses()
 {
-	ZhboWorldPose poses[16];
-	const int32_t n = zhbo_client_world_poses(poses, 16);
 	enum { MAX_VIEWMODELS = 160 };
 	static int32_t s_meshes[MAX_VIEWMODELS];
 	static int32_t s_tabletMeshes = -1;
@@ -378,6 +423,92 @@ void applyWorldPoses()
 		for (int32_t vm = 0; vm < MAX_VIEWMODELS; ++vm)
 			s_meshes[vm] = zhbo_world_mesh_count(vm);
 	}
+	// Which Generals the native pass drew this frame: their W3D weapon stays hidden.
+	std::set<uint32_t> nativeDrawn;
+	if (zhbo_native_body_enabled() != 0)
+	{
+		ZhboNativePose nativePoses[16];
+		const int32_t nativeCount = zhbo_client_native_poses(nativePoses, 16, 0, 0);
+		for (int32_t i = 0; i < nativeCount; ++i)
+		{
+			const ZhboNativePose &np = nativePoses[i];
+			Object *obj = TheGameLogic->findObjectByID((ObjectID)np.general);
+			Drawable *draw = obj ? obj->getDrawable() : nullptr;
+			if (!draw)
+				continue;
+			// The General's world frame: feet and facing come from the drawable's transform.
+			ZhboNativeBodyIn in = {};
+			in.general = np.general;
+			in.mode = ZHBO_BODY_WEAPON;
+			in.vm = np.weapon;
+			const ZhboFaction *faction = zhboFactionOfGeneralName(obj->getTemplate()->getName());
+			in.faction = faction ? faction->letter : 'U';
+			in.state = np.state;
+			in.time = np.time;
+			in.rate = np.rate;
+			// The scene's lights as the native pass takes them (the viewmodel's sceneLights, same
+			// source): Zero Hour's global lights for the time of day. lightPos is the direction the
+			// light travels, so the light is the other way.
+			if (TheGlobalData)
+			{
+				const int lightCount = std::min(std::max(TheGlobalData->m_numGlobalLights, 0), 3);
+				for (int l = 0; l < lightCount; ++l)
+				{
+					const GlobalData::TerrainLighting &tl = TheGlobalData->m_terrainObjectsLighting[TheGlobalData->m_timeOfDay][l];
+					in.lights[l].dir[0] = -tl.lightPos.x;
+					in.lights[l].dir[1] = -tl.lightPos.y;
+					in.lights[l].dir[2] = -tl.lightPos.z;
+					in.lights[l].color[0] = tl.diffuse.red;
+					in.lights[l].color[1] = tl.diffuse.green;
+					in.lights[l].color[2] = tl.diffuse.blue;
+					in.ambient[0] += tl.ambient.red;
+					in.ambient[1] += tl.ambient.green;
+					in.ambient[2] += tl.ambient.blue;
+				}
+				in.light_count = lightCount;
+			}
+			// The RTS camera's position: the shader's specular term.
+			if (TheTacticalView)
+			{
+				const Coord3D camPos = TheTacticalView->get3DCameraPosition();
+				in.eye[0] = camPos.x;
+				in.eye[1] = camPos.y;
+				in.eye[2] = camPos.z;
+			}
+			in.target_view = 1; // k_scene_view (the scene the drawable renders into)
+			in.before_view = 9; // k_composite_view (the pass this runs before)
+			if (const char *dbg = getenv("ZHBO_BO2_DEBUG"))
+				in.debug = static_cast<float>(atoi(dbg));
+			if (const Matrix3D *world = draw->getTransformMatrix())
+			{
+				const Vector3 pos = world->Get_Translation();
+				in.pos[0] = pos.X;
+				in.pos[1] = pos.Y;
+				in.pos[2] = pos.Z;
+				in.yaw = world->Get_Z_Rotation();
+			}
+			// The engine's own tag_weapon_right transform places the weapon: the same matrix the
+			// W3D weapon hung from, so the native model sits exactly where it did. The W3D name
+			// is 15 chars (W3D_NAME_LEN 16 with the NUL): the converter truncates the tag to
+			// "tag_weapon_righ", so the lookup must ask for the truncated name.
+			Matrix3D tagMatrix(true);
+			if (draw->getCurrentWorldspaceClientBonePositions("tag_weapon_righ", tagMatrix))
+			{
+				in.tag_valid = 1;
+				for (int r = 0; r < 3; ++r)
+					for (int c = 0; c < 4; ++c)
+						in.tag[r * 4 + c] = tagMatrix[r][c];
+			}
+			if (zhbo_native_body(&in) == ZHBO_NATIVE_DRAWN)
+				nativeDrawn.insert(np.general);
+		}
+		// Answer this frame's requests after the draw calls, as the viewmodel does, so the next
+		// frame's load can use them.
+		serveNativeBody();
+	}
+
+	ZhboWorldPose poses[16];
+	const int32_t n = zhbo_client_world_poses(poses, 16);
 	for (int32_t i = 0; i < n; ++i)
 	{
 		const ZhboWorldPose &p = poses[i];
@@ -385,8 +516,12 @@ void applyWorldPoses()
 		Drawable *draw = obj ? obj->getDrawable() : nullptr;
 		if (!draw)
 			continue;
+		const Bool nativeWeapon = nativeDrawn.count(p.general) != 0 && p.tablet == 0;
 		std::map<uint32_t, WorldLook>::iterator it = s_worldLooks.find(p.general);
-		if (it != s_worldLooks.end() && it->second.weapon == p.weapon && it->second.tablet == p.tablet && it->second.sidearm == p.sidearm)
+		// A native-state change must refresh too: when the native pass stops succeeding the W3D
+		// weapon has to come back.
+		if (it != s_worldLooks.end() && it->second.weapon == p.weapon && it->second.tablet == p.tablet && it->second.sidearm == p.sidearm
+			&& it->second.native == (nativeWeapon ? 1 : 0))
 			continue;
 		char name[16];
 		for (int32_t vm = 0; vm < MAX_VIEWMODELS; ++vm)
@@ -394,7 +529,10 @@ void applyWorldPoses()
 			for (int32_t k = 0; k < s_meshes[vm]; ++k)
 			{
 				zhbo_names::worldMesh(name, sizeof(name), vm, k);
-				draw->showSubObject(AsciiString(name), vm == p.weapon && p.tablet == 0);
+				// The native pass draws the held weapon; the W3D sub-objects stay hidden for that
+				// General (another weapon's stale sub-objects too).
+				const Bool show = !nativeWeapon && vm == p.weapon && p.tablet == 0;
+				draw->showSubObject(AsciiString(name), show);
 			}
 		}
 		for (int32_t k = 0; k < s_tabletMeshes; ++k)
@@ -417,7 +555,7 @@ void applyWorldPoses()
 			draw->setModelConditionState(MODELCONDITION_JAMMED);
 		else
 			draw->clearModelConditionState(MODELCONDITION_JAMMED);
-		WorldLook look = { p.weapon, p.tablet, p.sidearm };
+		WorldLook look = { p.weapon, p.tablet, p.sidearm, nativeWeapon ? 1 : 0 };
 		s_worldLooks[p.general] = look;
 	}
 }

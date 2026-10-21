@@ -285,6 +285,15 @@ pub(crate) fn world_weapons(
         }
         let tex = textures(&world, paks, out, looks);
         let mut mine = character::skin_rigid(&world, hand, crate::xf::IDENTITY, &prefix, 0, &tex, &c.hide);
+        // Track R7: the same world model and attachments as native blobs, composed at run time on
+        // the General's `tag_weapon_right` (`zhbo_core::nativebody`). The native side takes BO2
+        // inches, so its offsets stay unscaled (the W3D path's are scaled above).
+        let mut native_parts = vec![zhbo_native::viewmodel::Part {
+            model: crate::native::put_model(out, &crate::native::model(&world, &tex, looks)),
+            tag: None,
+            offset: crate::xf::IDENTITY,
+            rigid: true,
+        }];
         for (u, _) in &c.parts {
             let Some(model) = u.world_model.as_deref().and_then(|m| find_model(patch, common, m).ok()) else { continue };
             // From the world model's own tag, or its origin.
@@ -294,7 +303,20 @@ pub(crate) fn world_weapons(
             let t = textures(&model, paks, out, looks);
             let first = mine.len();
             mine.extend(character::skin_rigid(&model, hand, offset, &prefix, first, &t, &[]));
+            let native_base = tag.map_or(crate::xf::IDENTITY, |b| (b.rotation, b.position));
+            native_parts.push(zhbo_native::viewmodel::Part {
+                model: crate::native::put_model(out, &crate::native::model(&model, &t, looks)),
+                // A tag the world model does not have hangs the attachment at its origin, as the
+                // W3D path does; the native composition treats a missing tag the same way.
+                tag: u.world_model_tag.clone().filter(|n| world.bones.iter().any(|b| &b.name == n)),
+                offset: crate::xf::compose(native_base, (crate::xf::from_angles(u.world_rotation), u.world_offset)),
+                rigid: true,
+            });
         }
+        out.insert(
+            zhbo_native::world_weapon_path(vm as i32),
+            zhbo_native::thirdperson::Weapon { id: (*id).to_string(), parts: native_parts, hide: c.hide.clone() }.to_bytes(),
+        );
         finish(&mut mine, looks);
         let count = mine.len().min(99) as u8;
         for d in defs.iter_mut().filter(|d| &d.id == id || d.alt == *id && d.id.contains('~')) {

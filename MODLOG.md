@@ -1941,6 +1941,102 @@ changes); autotest 13/13 default, 13/13 native+compare, 14/14 `--rts`; zero miss
 warnings in the game log. The per-weapon flash's exact look (and the shell sprite's scale) is
 a human-playtest eyeball item. R8d (first-person tracers/impacts) is deliberately out: the
 hit-point/surface carrier across the ABI is an integrator decision, parked.
+## Track R7, milestone 1: the body and world weapons as native blobs (2026-10-21, branch `v1/track-r7`)
+
+The third-person half of the native path starts with the data. `zhbo-native::thirdperson` adds two
+manifests, both under `Art\Native\` in the mod's BIG (nothing shipped):
+
+- **`ZB<faction>.zbc`** (body): each faction's BO2 MP body (`c_usa_mp_seal6_assault_fb`,
+  `c_chn_mp_pla_assault_fb`, `c_mul_mp_pmc_assault_fb`) as one `.zbm` (skeleton, four-bone skin,
+  surfaces, materials — the same `native::model` the viewmodels use), the body bone a weapon hangs
+  from (`tag_weapon_right`), and one `.zba` clip per movement state
+  (`thirdperson::state::{STAND_IDLE, STAND_WALK, STAND_RUN, STAND_SPRINT, STAND_ADS, CROUCH_*,
+  PRONE_*, *_PISTOL}`). The states and the run-time fallback chains (`state::fallbacks`) live in
+  the manifest, so a body missing one stance still draws the nearest one.
+- **`ZW<vm>.zbw`** (world weapon): the weapon's `world_model` first, each converted combination's
+  world attachment on its `worldModelTag` (or the model's origin when BO2 names no tag) at BO2's
+  `world_offset`/`world_rotation`, plus the combination's `hideTags`. **The offsets stay in BO2
+  inches** (the native blobs' unit); the W3D path scales them, and scaling the native ones would
+  apply `SCALE` twice at draw. The manifest is per converted weapon index, so a weapon switch
+  reloads only the weapon — the body never names one.
+
+**Gotcha — the body clip names are not all proven.** The W3D conversion only ever used
+`pb_stand_alert`, `pb_stand_alert_pistol`, `pb_stand_ads`, `pb_stand_ads_pistol` and
+`pb_combatrun_forward_loop`; the walk, crouch, prone and sprint clips were never converted and
+their exact spelling is not in the repo or the reference dump. `zhbo-assets::thirdperson` resolves
+each state by a candidate list (the known names first) and then by scanning `common_mp`'s XAnim
+assets for a name with the state's words and none of another stance's (backward/left/right, pistol,
+ads, transitions). The scan is unit-tested with representative spellings; which names a real
+install actually has is what the real-install test's strict "every state has a clip" assertion
+will report (it names the state and the model in its panic). A state that genuinely does not exist
+in MP falls back at run time.
+
+Tests: `zhbo-native` 20 (the two manifests round-trip, every prefix refused, the fallback chains);
+`zhbo-assets` 43 + 8 ignored, including the resolver's word scan; the real-install
+`converts_from_real_install` now also runs `native_bodies_are_whole`: every faction body reads
+back as a 66–78-inch body with a `tag_weapon_right` bone, every state's clip reads back, all body
+and weapon textures are in the archive, and the body composes with **every** world weapon (and
+each world weapon composes alone) with no missing tag. **Not run here — this machine has no BO2
+install; the integrator's run is the first real check of the clip names.** Archive `VERSION`
+(`zhbo_assets::hud`) needs a bump for the new blobs, deliberately left to the integrator.
+
+## Track R7 milestone 3: the General's body native (Rust side)
+
+The Rust side of the body mode is in `nativebody`: `load` reads the faction's `ZB<f>.zbc`
+manifest, its body `.zbm`, and its `.zba` clips, composes the skeleton with the body first (no tag)
+and the weapon's base part on the body's `weapon_tag`, then builds one mesh from all of it. The
+mode is part of the cache key (`(faction, vm, mode)`), so switching from weapon-only to body mode
+reloads the rig. `Loaded::clip_for` picks the movement state's clip, falling back through
+`state::fallbacks` when the body has no clip for that stance/gait. `ffi::frame` now allows
+`Mode::Body` through, reads the clip and hands it to `pose`, which samples the clip at the frame's
+time and rate. The weapon-only mode still draws the rigid gun on the engine's `tag_weapon_right`.
+
+**Deliberately skipped (M3 scope):** the full BO2 transition graph (start/stop/turn clips,
+left/right strafes), the per-state blend times, and the reload/throw/melee clips. The body snaps
+between clips rather than blending; a weapon reload/throw plays no body clip. The five W3D-proven
+clip spellings plus the word-scan fallback cover idle/walk/run/sprint/ADS/crouch/prone/pistol.
+
+**Bridge hook not compile-checked (integrator):** in body mode (`ZHBO_NATIVE_BODY=2`) the C++
+bridge must hide the whole W3D General body when `zhbo_native_body` returns `ZHBO_NATIVE_DRAWN`,
+not only the W3D weapon sub-objects. The bridge already reads `zhbo_native_body_enabled` and calls
+`zhbo_native_body` per General in `applyWorldPoses`; the change is to set the drawable hidden
+(`draw->setHidden(true)` or the equivalent model-condition state) while the native body drew, and
+unhide when it stops succeeding. The Rust side places the native body at the General object's
+`pos`/`yaw` (the sim's `NativePose`), so the W3D object's own transform is not needed.
+
+Tests: `zhbo-core` 336 headless (6 nativebody, including the clip-by-state test and the tag-scaled-
+once test) and 337 with the renderer feature; `zhbo-native` 20; `zhbo-assets` 43 + 8 ignored;
+`zhbo-formats` 21. The in-game body check (does the native body sit on the General, do the clips
+look right) is the integrator's.
+
+## Integrating Track R7: the native third person — and the 15-char W3D name trap (2026-10-21)
+
+Merged `v1/track-r7` (3 milestone commits). M1: the faction MP bodies (`c_usa_mp_*_fb`) and the
+weapons' `world_model`s convert as native blobs (`ZB<f>.zbc` manifests, `.zbm`, `.zba` clips).
+M2: `zhbo_client_native_poses` + `zhbo_native_body` draw the General's weapon natively in the
+world on the engine's `tag_weapon_right` while the W3D body stays (`ZHBO_NATIVE_BODY=1`); any
+refusal brings the W3D weapon back. M3: the Rust-side body mode composes the faction body and
+the weapon into one rig with a minimal movement-state clip pick (idle/walk/run/sprint/ADS/
+crouch/prone — deliberately no transition graph, blends, or reload/throw/melee clips); **the
+C++ still drives weapon mode only** (`ZHBO_BODY_WEAPON`); the body mode's bridge hook (mode 2 +
+hiding the whole W3D body) is the follow-up. The auto-merge took both ABI surfaces cleanly
+(R8's + R7's, same 23 → 24 edit); the merged ABI is 24 + 1 = **25** (`ZhboNativePose` 28,
+`ZhboNativeBodyIn` 204, size asserts both sides). Archive VERSION 51 → 52 (the new blobs).
+
+**The 15-char W3D name trap (the integration's real bug).** The feature engaged nothing in game
+— silently. Probe bisect (env ✓, poses ✓ 1 when overhead) pinned it to
+`getCurrentWorldspaceClientBonePositions("tag_weapon_right")` returning false: **W3D names are
+15 chars (`W3D_NAME_LEN` 16 with the NUL), so the converter writes the pivot as
+`tag_weapon_righ` and the 16-char query never matches.** The engine's own sub-object attach is
+index-based (or truncates identically), so nothing else ever noticed. The lookup now asks for
+the truncated name (commented in ZhboRtsWeapons.cpp). After it: `ZW19U composed` (the TAR-21's
+world model) in the `--rts` leg, the showcase General's native gun pixel-identical to the W3D
+one's placement, and the W3D sub-objects hiding cleanly while the native draw succeeds.
+
+Verified: cargo test --workspace green (incl. the 6 headless nativebody tests); full
+real-install suite green; clippy clean; `cargo xtask build` clean (first compile of the +146
+bridge hook); autotest 13/13 default, 13/13 native+compare, 14/14 `--rts`, 14/14 `--rts` with
+`ZHBO_NATIVE_BODY=1`, `--showcase` with `ZHBO_NATIVE_BODY=1`.
 
 ## Next steps
 

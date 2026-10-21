@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 24u
+#define ZHBO_ABI_VERSION 25u
 
 /* Field counts of the API tables below. The Rust side derives its layout asserts and
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
@@ -448,6 +448,54 @@ int32_t zhbo_native_take_log(char *buf, int32_t cap);
 int32_t zhbo_native_bone(const char *name, float *out12); /* world 3x4 rows of the last pose */
 void zhbo_native_reset(void);
 
+/* The native third person (Track R7; nativebody/ffi.rs, CONTRACT.md "The native third person").
+   ZHBO_NATIVE_BODY=1 draws the weapon in the General's hand while the W3D body stays; 2 draws the
+   body too. Each frame: zhbo_client_native_poses, then zhbo_native_body for each General, then
+   answer every zhbo_native_body_wanted path with zhbo_native_body_provide (len < 0: not in the
+   archive) and log each zhbo_native_body_take_log line. */
+typedef struct ZhboNativePose
+{
+	uint32_t general;
+	int32_t weapon;  /* converted weapon index (WeaponDef::viewmodel), -1 none */
+	int32_t stance;  /* 0 stand, 1 crouch, 2 prone */
+	int32_t state;   /* zhbo_native::thirdperson::state clip id */
+	float time;      /* seconds into the clip */
+	float rate;      /* clip playback rate, 1 = BO2's own */
+	int32_t sidearm; /* the second gun is in hand */
+} ZhboNativePose;
+typedef struct ZhboNativeBodyIn
+{
+	uint32_t general;
+	int32_t mode;    /* ZHBO_BODY_WEAPON or ZHBO_BODY_FULL */
+	int32_t vm;      /* converted weapon index, -1 none */
+	int32_t faction; /* the body's letter: 'U', 'C', 'G' */
+	int32_t state;
+	float time;
+	float rate;
+	float pos[3];    /* the General's feet, world units */
+	float yaw;       /* radians, 0 = +X, counter-clockwise */
+	float eye[3];    /* the camera's world position (the shader's specular term) */
+	float tag[12];   /* the engine drawable's tag_weapon_right world transform, 3x4 rows */
+	int32_t tag_valid;
+	float ambient[3];
+	ZhboNativeLight lights[3];
+	int32_t light_count;
+	uint16_t target_view;
+	uint16_t before_view;
+	float debug;
+} ZhboNativeBodyIn;
+#define ZHBO_BODY_WEAPON 1 /* the weapon only: the W3D body draws */
+#define ZHBO_BODY_FULL 2   /* the body and the weapon: the bridge hides the W3D body */
+int32_t zhbo_client_native_poses(ZhboNativePose *out, int32_t cap, uint32_t local_general, int32_t local_moving);
+int32_t zhbo_native_body_enabled(void); /* ZHBO_NATIVE_BODY's mode; the bridge skips its work at 0 */
+int32_t zhbo_native_body(const ZhboNativeBodyIn *in);
+int32_t zhbo_native_body_ready(const ZhboNativeBodyIn *in); /* 1 when the frame can be drawn */
+int32_t zhbo_native_body_wanted(int32_t i, char *buf, int32_t cap);
+void zhbo_native_body_provide(const char *path, const uint8_t *data, int32_t len);
+int32_t zhbo_native_body_take_log(char *buf, int32_t cap);
+int32_t zhbo_native_body_bone(const char *name, float *out12); /* world 3x4 rows of the last pose */
+void zhbo_native_body_reset(void);
+
 #ifdef __cplusplus
 }
 
@@ -467,4 +515,6 @@ static_assert(sizeof(ZhboBuildOption) == 64, "ZhboBuildOption layout must match 
 static_assert(sizeof(ZhboWorkSite) == 64, "ZhboWorkSite layout must match building.rs");
 static_assert(sizeof(ZhboNativeLight) == 24, "ZhboNativeLight layout must match nativevm/ffi.rs");
 static_assert(sizeof(ZhboNativeIn) == 168, "ZhboNativeIn layout must match nativevm/ffi.rs");
+static_assert(sizeof(ZhboNativePose) == 28, "ZhboNativePose layout must match nativebody/ffi.rs");
+static_assert(sizeof(ZhboNativeBodyIn) == 204, "ZhboNativeBodyIn layout must match nativebody/ffi.rs");
 #endif

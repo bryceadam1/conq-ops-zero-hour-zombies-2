@@ -40,7 +40,7 @@ fn publish_controlled(sim: &Sim) {
     }
 }
 
-pub const ABI_VERSION: u32 = 24;
+pub const ABI_VERSION: u32 = 25;
 
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
@@ -574,6 +574,25 @@ pub unsafe extern "C" fn zhbo_client_world_poses(out: *mut WorldPose, cap: i32) 
     let n = poses.len().min(cap as usize);
     for (i, (general, weapon, tablet, sidearm)) in poses.into_iter().take(n).enumerate() {
         *out.add(i) = WorldPose { general, weapon, tablet, sidearm: sidearm as i32 };
+    }
+    n as i32
+}
+
+/// Fill `out` with up to `cap` native third-person poses (Track R7): the weapon in each General's
+/// hand and the body clip his movement state picks. `local_moving` is the engine's answer for
+/// `local_general` while he is under RTS control. Returns how many.
+///
+/// # Safety
+/// `out` must be writable for `cap` entries.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_client_native_poses(out: *mut crate::nativebody::ffi::ZhboNativePose, cap: i32, local_general: u32, local_moving: i32) -> i32 {
+    if out.is_null() || cap <= 0 {
+        return 0;
+    }
+    let poses = with_state(|s| s.sim.native_poses((local_general != 0).then_some((local_general, local_moving != 0)))).unwrap_or_default();
+    let n = poses.len().min(cap as usize);
+    for (i, p) in poses.into_iter().take(n).enumerate() {
+        *out.add(i) = crate::nativebody::ffi::ZhboNativePose { general: p.general, weapon: p.weapon, stance: p.stance, state: p.state as i32, time: p.time, rate: p.rate, sidearm: p.sidearm as i32 };
     }
     n as i32
 }

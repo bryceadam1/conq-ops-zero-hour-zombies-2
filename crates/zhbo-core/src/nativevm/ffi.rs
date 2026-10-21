@@ -260,6 +260,8 @@ pub extern "C" fn zhbo_native_reset() {
         let _ = s;
     }
     *g = None;
+    // The third person's state holds its own GPU handles and file cache; a game reset drops both.
+    crate::nativebody::ffi::zhbo_native_body_reset();
 }
 
 /// A mutable look at the state for the tests.

@@ -41,6 +41,32 @@ pub const ART_SCALE: f32 = zhbo_native::ART_SCALE;
 /// The marker the converter places for aiming (`zhbo_assets::native::AIM_TAG`).
 pub const AIM_TAG: &str = zhbo_native::AIM_TAG;
 
+/// A surface's blend as the renderer's pipeline enum. Shared with the third person so the two
+/// native paths cannot drift.
+#[cfg(feature = "renderer")]
+pub(crate) fn native_blend(b: Blend) -> zhbo_gfx::runtime::NativeBlend {
+    use zhbo_gfx::runtime::NativeBlend;
+    match b {
+        Blend::Opaque => NativeBlend::Opaque,
+        Blend::AlphaTest => NativeBlend::AlphaTest,
+        Blend::Alpha => NativeBlend::Alpha,
+        Blend::Premultiplied => NativeBlend::Premultiplied,
+        Blend::Additive { alpha: false } => NativeBlend::Additive,
+        Blend::Additive { alpha: true } => NativeBlend::AdditiveAlpha,
+    }
+}
+
+/// A surface's cull mode as the renderer's pipeline enum.
+#[cfg(feature = "renderer")]
+pub(crate) fn native_cull(c: Cull) -> zhbo_gfx::runtime::NativeCull {
+    use zhbo_gfx::runtime::NativeCull;
+    match c {
+        Cull::None => NativeCull::None,
+        Cull::Back => NativeCull::Back,
+        Cull::Front => NativeCull::Front,
+    }
+}
+
 /// Files the core asked the bridge for, and what came back.
 #[derive(Default)]
 pub struct Files {
@@ -142,8 +168,9 @@ pub struct Mesh {
 }
 
 /// Concatenate the parts' LOD 0. `u16` indices: a composed viewmodel stays far below 65,536
-/// vertices (an arms + rifle + optic composite is ~20k); a larger one is refused.
-pub fn build_mesh(skel: &Skeleton, models: &[Model]) -> Result<Mesh, String> {
+/// vertices (an arms + rifle + optic composite is ~20k); a larger one is refused. Takes references
+/// so a body rig can borrow its own models while the weapon's are owned beside them.
+pub fn build_mesh<'a>(skel: &Skeleton, models: impl IntoIterator<Item = &'a Model>) -> Result<Mesh, String> {
     let mut mesh = Mesh::default();
     for (part, model) in skel.parts.iter().zip(models) {
         for s in model.lod0() {
