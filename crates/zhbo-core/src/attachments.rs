@@ -11,7 +11,7 @@
 //! penetration and extra damage to vehicles, the grip's recoil reduction (its ADS recoil reduction
 //! fields), the tactical knife's quicker melee, and the target finder marking enemies while aiming.
 
-use crate::weapons::{FireMode, WeaponDef};
+use crate::weapons::{FireMode, Specialties, WeaponDef};
 
 /// BO2's attachment points (`eAttachmentPoint`): one attachment per point.
 pub mod point {
@@ -49,6 +49,9 @@ pub struct AttachmentDef {
     pub clip_scale: f32,
     /// ADS recoil reduction per shot and its limit (the grip).
     pub recoil_reduction: (f32, f32),
+    /// The specialties the attachment grants (`WeaponAttachment.perks`: fast mag's `fastreload`,
+    /// quickdraw's `fastads`, the laser's `bulletaccuracy`, rapid fire's `rof`).
+    pub specialties: Specialties,
 }
 
 impl Default for AttachmentDef {
@@ -75,6 +78,7 @@ impl Default for AttachmentDef {
             reload_add_scale: 1.0,
             clip_scale: 1.0,
             recoil_reduction: (0.0, 0.0),
+            specialties: Specialties::NONE,
         }
     }
 }
@@ -171,6 +175,7 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
         }
         d.silenced |= a.silenced;
         d.laser |= a.laser;
+        d.specialties = d.specialties.union(a.specialties);
         if a.recoil_reduction.1 > 0.0 {
             d.recoil_reduction = a.recoil_reduction;
         }

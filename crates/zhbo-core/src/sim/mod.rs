@@ -258,8 +258,7 @@ impl Sim {
     /// bridge). The tests use `Sim::new`, whose defaults are the pack's own values.
     pub fn with_tuning(t: &crate::tuning::Tuning) -> Self {
         let mut sim = Self::new();
-        sim.tuning.walk_speed = t.walk_speed;
-        sim.tuning.sprint_time = t.sprint_time;
+        sim.tuning = MoveTuning::from_tuning(t);
         sim
     }
 
@@ -594,6 +593,7 @@ impl Sim {
                         speed_scale: p.arsenal.move_scale(),
                         block_sprint: p.arsenal.ads > 0.0 || p.arsenal.offhand.is_some() || p.arsenal.melee_left > 0.0 || p.building,
                         sprint_time_scale: p.arsenal.sprint_scale(),
+                        move_faster: p.arsenal.move_faster(),
                     };
                     movement::step(&mut p.body, &input, mods, &self.tuning, &world, LOGIC_DT);
                     let mut actions = Vec::new();

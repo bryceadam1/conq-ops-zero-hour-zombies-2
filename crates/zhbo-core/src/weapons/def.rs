@@ -6,6 +6,8 @@
 ** License, or (at your option) any later version.
 */
 
+use super::feel::{GunKick, Reticle, Sway, ViewPos};
+use super::specialty::Specialties;
 use crate::units::inches;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -223,6 +225,24 @@ pub struct WeaponDef {
     pub place: Place,
     /// What the weapon is as equipment (claymore, C4, …); `Other` when it stays in the hand.
     pub equipment_kind: Kind,
+    /// The specialties this weapon grants while it is the current weapon: its variant's own
+    /// (`WeaponVariantDef.perks`) and its attachments' (`WeaponAttachment.perks`), unioned when
+    /// the attachments are applied (Ghidra G1's HasSpecialty rule).
+    pub specialties: Specialties,
+    /// `f{Ads,Hip}ViewKickMinMagnitude`: the shortest view kick a shot gives, aimed and hip (G5).
+    pub view_kick_min: (f32, f32),
+    /// `f{Ads,Hip}ViewKickCenterSpeed`: how fast the view kick recentres (G5).
+    pub view_kick_center: (f32, f32),
+    pub ads_gun_kick: GunKick,
+    pub hip_gun_kick: GunKick,
+    /// `fGunMaxPitch`, `fGunMaxYaw`: the gun kick spring's limits (G5).
+    pub gun_max: (f32, f32),
+    /// `fAdsRecoilReturnRate`: how fast the grip's recoil reduction wears off between shots (G5).
+    pub recoil_return_rate: f32,
+    pub hip_sway: Sway,
+    pub ads_sway: Sway,
+    pub view_pos: ViewPos,
+    pub reticle: Reticle,
 }
 
 /// What a weapon is as equipment, once down (claymore, C4, …). The converter writes it from the
@@ -368,6 +388,17 @@ impl Default for WeaponDef {
             target_finder: false,
             recoil_reduction: (0.0, 0.0),
             place: Place::Throw,
+            specialties: Specialties::NONE,
+            view_kick_min: (0.0, 0.0),
+            view_kick_center: (0.0, 0.0),
+            ads_gun_kick: GunKick::default(),
+            hip_gun_kick: GunKick::default(),
+            gun_max: (0.0, 0.0),
+            recoil_return_rate: 0.0,
+            hip_sway: Sway::default(),
+            ads_sway: Sway::default(),
+            view_pos: ViewPos::default(),
+            reticle: Reticle::default(),
         }
     }
 }
