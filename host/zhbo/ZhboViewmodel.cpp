@@ -258,6 +258,27 @@ namespace
 		FXList::doFXPos(fx, &pos, &mtx);
 	}
 
+	// The weapon's own BO2 first-person effects (Track R8) at its flash and brass tags; the
+	// generic converted fallbacks when the weapon's effect was not convertible.
+	void viewmodelFx(int weapon, Bool native)
+	{
+		char flash[128] = "";
+		char shell[128] = "";
+		zhbo_viewmodel_fx(weapon, flash, static_cast<int32_t>(sizeof(flash)), shell, static_cast<int32_t>(sizeof(shell)));
+		const char *flashFx = flash[0] ? flash : "ZHBO_ViewmodelMuzzle";
+		const char *shellFx = shell[0] ? shell : "ZHBO_ViewmodelBrass";
+		if (native)
+		{
+			nativeBoneFx(flashFx, "tag_flash");
+			nativeBoneFx(shellFx, "tag_brass");
+		}
+		else
+		{
+			boneFx(flashFx, "tag_flash");
+			boneFx(shellFx, "tag_brass");
+		}
+	}
+
 	// The scene's lights as the native pass takes them: Zero Hour's global lights for the time of
 	// day (`lightPos` is the direction the light travels, so the light is the other way).
 	void sceneLights(ZhboNativeIn &in)
@@ -310,10 +331,7 @@ namespace
 		if (s_model)
 			s_model->Set_Hidden(true);
 		if (fired)
-		{
-			nativeBoneFx("ZHBO_ViewmodelMuzzle", "tag_flash");
-			nativeBoneFx("ZHBO_ViewmodelBrass", "tag_brass");
-		}
+			viewmodelFx(weapon, TRUE);
 		return TRUE;
 	}
 
@@ -495,8 +513,5 @@ void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)
 	}
 	s_model->Set_Hidden(false);
 	if (fired)
-	{
-		boneFx("ZHBO_ViewmodelMuzzle", "tag_flash");
-		boneFx("ZHBO_ViewmodelBrass", "tag_brass");
-	}
+		viewmodelFx(weapon, FALSE);
 }
