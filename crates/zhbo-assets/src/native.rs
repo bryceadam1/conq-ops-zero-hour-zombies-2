@@ -83,10 +83,9 @@ pub(crate) fn model(m: &xmodel::Model, tex: &[Option<String>], looks: &Looks) ->
     out
 }
 
-/// A vertex with its four heaviest influences, renormalized (BO2 skins with at most four). Some
-/// of BO2's own vertices decode with non-finite values (a few viewhands' half-float weights and
-/// unit vectors); the blob refuses those, so they become a neutral value here: the origin, an up
-/// normal, a zero UV, no weight.
+/// A vertex with its four heaviest influences, renormalized (BO2 skins with at most four). The
+/// blob refuses non-finite values, so anything that ever decodes non-finite becomes a neutral
+/// value here: the origin, an up normal, a zero UV, no weight.
 fn vertex(v: &xmodel::Vertex) -> nm::Vertex {
     let finite = |a: &[f32]| a.iter().all(|c| c.is_finite());
     let mut w: Vec<(u16, f32)> = v.weights.iter().copied().filter(|x| x.1.is_finite() && x.1 > 0.0).collect();

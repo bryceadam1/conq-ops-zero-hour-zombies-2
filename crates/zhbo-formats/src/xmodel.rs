@@ -319,12 +319,12 @@ fn read_surface(z: &Zone, sh: u32) -> Result<Surface, FormatError> {
         for (extra, &count) in blend_counts.iter().enumerate() {
             for _ in 0..count {
                 // Bone references are byte offsets into the surface's DObjSkelMat array (64 bytes
-                // each), like the rigid vertList's; the weights are half floats (OpenAssetTools'
-                // XModel dumpers read both the same way for IW4 through T6).
+                // each), like the rigid vertList's; the weights are u16 fixed point (val/65535 —
+                // OpenAssetTools' `BoneWeight16`, for IW4 through T6), NOT half floats.
                 let mut w = vec![(rd(o) / SKEL_MAT_SIZE, 1.0f32)];
                 let mut rest = 1.0f32;
                 for k in 0..extra as u32 {
-                    let weight = half_to_f32(rd(o + 2 + 2 * k));
+                    let weight = rd(o + 2 + 2 * k) as f32 / 65535.0;
                     rest -= weight;
                     w.push((rd(o + 1 + 2 * k) / SKEL_MAT_SIZE, weight));
                 }
@@ -445,7 +445,8 @@ mod tests {
     }
 
     /// Blend weights of a synthetic surface: bone references are DObjSkelMat byte offsets (divided
-    /// by 64) and secondary weights are half floats, matching OpenAssetTools' XModel readers.
+    /// by 64) and secondary weights are u16 fixed point (val/65535), matching OpenAssetTools'
+    /// `BoneWeight16`.
     #[test]
     fn reads_synthetic_blend_weights() {
         let mut mem = vec![0u8; 0x400];
@@ -470,19 +471,14 @@ mod tests {
         put32(&mut mem, sh + 12, tris_addr as u32);
 
         // Blend stream: [bone0][bone1][w1] for 2-influence, [bone0][bone1][w1][bone2][w2] for 3.
-        // Bones: byte offsets (index * 64); weights: half floats. The stream is u16 slots.
+        // Bones: byte offsets (index * 64); weights: u16 fixed point. The stream is u16 slots.
+        let fixed = |w: f32| (w * 65536.0).min(65535.0) as u16; // exact for the powers of two below
+        let weight_of = |bits: u16| bits as f32 / 65535.0;
         let put_entry = |m: &mut [u8], o: usize, bone0: u16, rest: &[(u16, f32)]| {
             put16(m, o, bone0 * SKEL_MAT_SIZE);
             for (k, (bone, weight)) in rest.iter().enumerate() {
                 put16(m, o + 2 * (1 + 2 * k), bone * SKEL_MAT_SIZE);
-                // 0.25, 0.5 and 0.125 as half floats.
-                let bits = match weight {
-                    w if *w == 0.25 => 0x3400u16,
-                    w if *w == 0.5 => 0x3800,
-                    w if *w == 0.125 => 0x3000,
-                    _ => unreachable!(),
-                };
-                put16(m, o + 2 * (2 + 2 * k), bits);
+                put16(m, o + 2 * (2 + 2 * k), fixed(*weight));
             }
         };
         put_entry(&mut mem, blend_addr as usize, 3, &[(7, 0.5)]);
@@ -507,9 +503,10 @@ mod tests {
         let zone = crate::t6zone::synthetic_zone("t", mem, Vec::new(), Vec::new());
         let s = read_surface(&zone, sh as u32).expect("the synthetic surface reads");
         assert_eq!(s.vertices.len(), 3);
-        assert_eq!(s.vertices[0].weights, vec![(3, 0.5), (7, 0.5)]);
-        assert_eq!(s.vertices[1].weights, vec![(5, 0.75), (2, 0.25)]);
-        assert_eq!(s.vertices[2].weights, vec![(1, 0.375), (9, 0.5), (4, 0.125)]);
+        let (w_half, w_quarter, w_eighth) = (weight_of(0x8000), weight_of(0x4000), weight_of(0x2000));
+        assert_eq!(s.vertices[0].weights, vec![(3, 1.0 - w_half), (7, w_half)]);
+        assert_eq!(s.vertices[1].weights, vec![(5, 1.0 - w_quarter), (2, w_quarter)]);
+        assert_eq!(s.vertices[2].weights, vec![(1, 1.0 - w_half - w_eighth), (9, w_half), (4, w_eighth)]);
         assert_eq!(s.triangles, vec![[0, 1, 2]]);
         assert!((s.vertices[0].position[0] - 1.0).abs() < 1e-5, "{:?}", s.vertices[0].position);
         assert!(s.vertices[0].normal[0] > 0.9, "{:?}", s.vertices[0].normal);
@@ -537,18 +534,16 @@ mod tests {
                 assert!((total - 1.0).abs() < 0.01, "weights sum to 1");
                 assert!(v.weights.iter().all(|w| (w.0 as usize) < model.bones.len()));
             }
-            // The secondary weights are half floats: they span the range, they are not one narrow
-            // band (reading the half-float bits as /65535 lands every secondary near 0.22).
-            let secondary: Vec<f32> = s
-                .vertices
-                .iter()
-                .flat_map(|v| v.weights.iter().skip(1).map(|w| w.1))
-                .collect();
-            assert!(!secondary.is_empty(), "the character has blended vertices");
-            let max = secondary.iter().cloned().fold(0.0f32, f32::max);
-            assert!(max > 0.4, "secondary weights reach at least 0.4 (max {max})");
             assert!(s.triangles.iter().flatten().all(|&i| (i as usize) < s.vertices.len()));
         }
+        // The secondary weights are u16 fixed point (val/65535): they span the range, they are not
+        // one narrow band (reading them as half floats lands many of them past 1.0, some infinite —
+        // the sum assert above trips first). Some surfaces are rigid gear (one bone, no blend
+        // stream), so check across the whole LOD.
+        let secondary: Vec<f32> = surfs.iter().flat_map(|s| s.vertices.iter().flat_map(|v| v.weights.iter().skip(1).map(|w| w.1))).collect();
+        assert!(!secondary.is_empty(), "the character has blended vertices");
+        let max = secondary.iter().cloned().fold(0.0f32, f32::max);
+        assert!(max > 0.4, "secondary weights reach at least 0.4 (max {max})");
         assert!(model.maxs[2] > 60.0 && model.maxs[2] < 85.0, "height {:?}", model.maxs);
         for m in &model.materials[lod0.first_surface..lod0.first_surface + lod0.surface_count] {
             assert!(m.is_some(), "material resolved, shared ones included");

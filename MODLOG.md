@@ -1346,6 +1346,26 @@ Residual, for the next Track R round:
 - `native_pose_matches_the_w3d_rig` still needs the BO2 install to run ("the gun sits a little
   higher"); the compare mode's two-tag log is the in-game substitute so far.
 
+## Fix: XModel blend weights are u16 fixed point, not half floats (2026-10-21, branch `fix/xmodel-weights`)
+
+The ignored real-install test `xmodel::tests::reads_an_mp_character` failed at "weights sum to 1"
+on `c_usa_mp_fbi_assault_fb`. Bracketed with the player's install: green at 27f274b (the reader's
+introduction), red from **48ad512** on — that commit ("half-float blend weights per OAT") switched
+the secondary weights of `XSurfaceVertexInfo::vertsBlend` from `val/65535` to `half_to_f32`,
+misreading OAT: its `BoneWeight16` (`ObjWriting/XModel/XModelToCommonConverter.cpp.template`) is
+`value / std::numeric_limits<uint16_t>::max()`. The prime suspect e60b814 (raw offsets → generated
+layout constants) was innocent: every constant it adopted in xmodel.rs, xanim.rs and sndalias.rs
+matches the old hand-maintained offset exactly. Against the real bytes the u16 reading is exact
+(bone slots all multiples of 64 and in range, secondaries ≤ 0.5, per-vertex secondary sums ≤ 0.68);
+the half-float reading landed hundreds of vertices per surface past a 1.01 secondary sum (max: inf),
+the implicit first weight clamped to 0 and the total blew past 1.01. The half-float companion
+asserts 48ad512 added had never passed — it landed red. Fix: read `val as f32 / 65535.0` again; the
+secondary-range check now spans the whole LOD because some surfaces are rigid gear with no blend
+stream. **Half floats in `GfxPackedVertex` are only the packed texcoords.** This also retires the
+Track R milestone-1 gotcha above about viewhands' "non-finite half-float weights": weights never
+decode non-finite; `native.rs`'s neutralizing filter stays as a defense but no real vertex hits it
+for weights.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
