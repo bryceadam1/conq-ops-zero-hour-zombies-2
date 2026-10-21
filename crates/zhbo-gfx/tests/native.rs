@@ -74,7 +74,7 @@ fn quad(x0: f32, y0: f32, x1: f32, y1: f32, bone: u16) -> [NativeVertex; 4] {
 
 fn frame(lights: u32) -> NativeFrame {
     NativeFrame {
-        view_proj: ortho(),
+        view_proj: Some(ortho()),
         eye: [32.0, 32.0, -100.0],
         ambient: [0.1, 0.1, 0.1],
         lights: [NativeLight { direction: [0.0, 0.0, -1.0], color: [1.0, 1.0, 1.0] }; 3],
@@ -168,6 +168,24 @@ fn refuses_bad_input_without_errors() {
     assert!(!r.native_submit(&draw(mesh, &[IDENTITY; 4], 1)), "destroyed mesh");
     r.frame();
     assert_eq!(r.stats().native_skipped, 4);
+    assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
+}
+
+#[test]
+fn takes_the_target_views_transform_when_given_none() {
+    let Some((mut r, log, shot)) = renderer() else { return };
+    let red = texture(&mut r, [255, 0, 0, 255]);
+    let mesh = r.native_create_mesh(&quad(0.0, 0.0, 16.0, 16.0, 0), &[0, 1, 2, 0, 2, 3], &[surface(red, true, 6)]);
+    // The view's projection (bx order, the same bytes as the column-major ortho) and a view
+    // matrix that moves the world 32 pixels right.
+    r.set_view_transform(1, Some(&translate(32.0, 0.0)), Some(&ortho()));
+    let mut f = frame(0);
+    f.view_proj = None;
+    assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh, palette: &[IDENTITY], frame: f }));
+    r.request_screenshot(INVALID, "view.png");
+    r.frame();
+    assert!(close(pixel(&shot, 40, 8), [0, 0, 255]), "drawn through the view's transform: {:?}", pixel(&shot, 40, 8));
+    assert!(close(pixel(&shot, 8, 8), [0, 0, 0]), "not at the untransformed spot: {:?}", pixel(&shot, 8, 8));
     assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
 }
 

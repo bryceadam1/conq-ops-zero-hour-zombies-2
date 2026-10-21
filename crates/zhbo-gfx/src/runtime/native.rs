@@ -98,8 +98,10 @@ pub struct NativeLight {
 /// What a draw is lit and seen by.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NativeFrame {
-    /// World to clip, column-major (`clip = view_proj * world`), depth 0..1.
-    pub view_proj: [f32; 16],
+    /// World to clip, column-major (`clip = view_proj * world`), depth 0..1. `None`: the target
+    /// view's own view and projection as the engine leaves them at `frame()` (BO2 draws its
+    /// viewmodel with the world's FOV, `cg_fov`; there is no viewmodel FOV: G4).
+    pub view_proj: Option<[f32; 16]>,
     pub eye: [f32; 3],
     pub ambient: [f32; 3],
     pub lights: [NativeLight; NATIVE_MAX_LIGHTS],
@@ -143,6 +145,8 @@ struct Queued {
     mesh: Arc<Mesh>,
     frame_offset: u32,
     palette_offset: u32,
+    /// Fill the frame block's matrix from the target view at upload.
+    view_proj_from_view: bool,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -415,7 +419,7 @@ impl Renderer {
     pub fn native_submit(&mut self, d: &NativeDraw) -> bool {
         let why = if d.target_view as usize >= MAX_VIEWS || d.before_view as usize >= MAX_VIEWS {
             Some(format!("view {} / {} out of range", d.target_view, d.before_view))
-        } else if !finite(&d.frame.view_proj) || !finite(&d.frame.eye) || d.palette.iter().any(|m| !finite(m)) {
+        } else if !d.frame.view_proj.is_none_or(|m| finite(&m)) || !finite(&d.frame.eye) || d.palette.iter().any(|m| !finite(m)) {
             Some("non-finite matrices".into())
         } else if d.palette.len() > NATIVE_MAX_BONES {
             Some(format!("{} bones past {NATIVE_MAX_BONES}", d.palette.len()))
@@ -438,7 +442,7 @@ impl Renderer {
         let frame_offset = ring.len() as u32;
         let f = &d.frame;
         let mut block = Vec::with_capacity(FRAME_BYTES as usize);
-        block.extend(f.view_proj.iter().flat_map(|v| v.to_le_bytes()));
+        block.extend(f.view_proj.unwrap_or(super::math::IDENTITY).iter().flat_map(|v| v.to_le_bytes()));
         for v in [[f.eye[0], f.eye[1], f.eye[2], 1.0], [f.ambient[0], f.ambient[1], f.ambient[2], 1.0]] {
             block.extend(v.iter().flat_map(|c| c.to_le_bytes()));
         }
@@ -457,7 +461,7 @@ impl Renderer {
             ring.extend(m.iter().flat_map(|c| c.to_le_bytes()));
         }
         ring.resize(palette_offset as usize + PALETTE_BYTES as usize, 0);
-        self.native.queue.push(Queued { target_view: d.target_view, before_view: d.before_view, mesh, frame_offset, palette_offset });
+        self.native.queue.push(Queued { target_view: d.target_view, before_view: d.before_view, mesh, frame_offset, palette_offset, view_proj_from_view: d.frame.view_proj.is_none() });
         true
     }
 
@@ -465,6 +469,18 @@ impl Renderer {
     pub(crate) fn native_upload(&mut self) {
         if self.native.queue.is_empty() {
             return;
+        }
+        // The engine's transforms are final now: `view * proj` in bx's row-vector order is the
+        // column-major `proj * view` the shader multiplies by.
+        for q in &self.native.queue {
+            if q.view_proj_from_view {
+                let v = &self.views[q.target_view as usize];
+                let vp = super::math::mul(&v.view, &v.proj);
+                let at = q.frame_offset as usize;
+                for (k, c) in vp.iter().enumerate() {
+                    self.native.ring[at + 4 * k..at + 4 * k + 4].copy_from_slice(&c.to_le_bytes());
+                }
+            }
         }
         let needed = self.native.ring.len() as u64;
         if self.native.gpu_ring.as_ref().is_none_or(|(_, _, size)| *size < needed) {
