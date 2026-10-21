@@ -454,6 +454,8 @@ fn the_editor_screens_draw_their_boxes_and_prompts() {
         assert!(t.iter().any(|x| x == label), "editor label {label}: {t:?}");
     }
     assert!(t.iter().any(|x| x == "Remove"), "the R Remove prompt: {t:?}");
+    assert!(t.iter().any(|x| x == "Personalize Knife"), "the Tab prompt from b-editor/002: {t:?}");
+    assert!(!t.iter().any(|x| x == "Open"), "no invented Enter Open prompt: {t:?}");
     assert!(t.iter().any(|x| x.contains("AN-94")), "the held primary in its box");
     // The allocation readout replaced the old POINTS LEFT counter.
     assert!(!t.iter().any(|x| x == "POINTS LEFT"), "no Pick-10 wording: {t:?}");
@@ -464,6 +466,8 @@ fn the_editor_screens_draw_their_boxes_and_prompts() {
     let t = texts(&prims);
     assert!(t.iter().any(|x| x == "Scavenger"), "tier 2 perks are listed: {t:?}");
     assert!(t.iter().any(|x| x == "FastHands"), "tier 2 perks are listed");
+    assert!(t.iter().any(|x| x == "Back"), "the picker's only prompt from d-attach/002: {t:?}");
+    assert!(!t.iter().any(|x| x == "Choose"), "no invented Enter Choose prompt: {t:?}");
 }
 
 #[test]

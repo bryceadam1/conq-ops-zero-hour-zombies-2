@@ -2109,6 +2109,66 @@ Eyeball items for the playtest: `W3DModelDraw::setHidden` also hides the W3D sha
 has no body shadow yet (the native pass draws none); and a possible one-frame W3D/native
 overlap when returning from first person (applyWorldPoses runs before applyClientOutput; the
 next frame re-hides — watch for the flicker).
+## v1.0 Track C, pixel pass: the class screens against `cac/sweep/` (2026-10-21)
+
+The screenshot harness at 3024×1890 (`cargo run -p zhbo-assets -- screenshot --size 3024x1890`)
+was compared with the sweep chapters: `cac-browse`/`cac-set-pager` ↔ `a-chooseclass/001`/`002`,
+the editor ↔ `b-editor/002`/`028`/`031`, the weapon picker ↔ `c-primary/001`, the attachment grid
+↔ `d-attach/002`, the dialogs ↔ `a-chooseclass/021`/`023`. Three fixes landed:
+
+1. **The editor's prompt bar** (`classui/editor.rs`): the captures pair `ESC Back` with
+   `TAB Personalize Knife` (`caceditclass.lua:46-63`) and carry only `R Remove` on the right
+   (`b-editor/002`/`028`); the mod's invented `ENTER Open` and the picker's `LEFT/RIGHT Category`/
+   `UP/DOWN Gun`/`ENTER Choose` are gone (`c-primary/001`, `d-attach/002` show only `ESC Back`).
+   The `TAB` key still opens the category pager; the personalize screen itself is the remaining
+   Track C personalize scope, so the label matches BO2 while the action is still the pager.
+2. **The choose-class rows** (`classui/pick.rs`): the captures colour by kind — preset/default
+   `BOIIOrange`, filled custom off-white with a white row rule, empty/locked custom grey
+   (`a-chooseclass/001` Custom 1-3 white vs Custom 4/5 grey; `a-chooseclass/002` the empty set's
+   focused Custom 1 white, Custom 2-5 grey). The focus is a white `button_over` border pulsing on
+   the `CoD9Button.PulseDuration` (650 ms), not orange text.
+3. **The shot's empty editor title** (`zhbo-assets/screenshot`): `Custom 1`, as `b-editor/002`
+   and `profile::empty_slot_name` already say, not `CUSTOM 1`.
+
+**`GridTop` is 80, not the Lua's 60.** The `d-attach/002` grid's selected-cell frame is at
+y≈305 px and the cell border at y≈312 px at 3024×1890, i.e. the element top 80 at the captures'
+scale; the Lua's 60 would put it at 252 px, inside the allocation bar (260-286 px). The earlier
+wave's capture choice is right; do not "fix" it to 60.
+
+Remaining pixel deltas (not changed: they need a layout/data pass, not a one-line tune):
+- **The attachment grid is too large and the description/stat/`Equipped` panel is missing.**
+  `d-attach/002`'s six cells span 1809 px (≈689 LUI) and are ≈130 px (≈50 LUI) tall, with
+  `Reflex Sight`, `Precision red dot sight.`, the four stat bars and the `Equipped` MP7 below the
+  grid; the mod's `grid_cell` uses the full 864-unit width and 94-unit height and leaves the lower
+  half blank. `cacattachmentsmenu.lua` has the `GridTop`/cell/panel geometry to port.
+- **The profile-level readout** (`43 / 7955` above the allocation `n/10`) is absent: the mod's
+  profile has no level/XP, so the harness and the screens can only show the allocation.
+- **The seeded secondary `fnp45_mp` displays `Tac-45`** in the harness's kit/preview while
+  `b-editor/028`'s Five-seven is that weapon; the display name is the converted weapon table's,
+  not `classui`'s.
+- **The primary category column lists `LAUNCHERS`** (`cac-editor-weapons`); `c-primary/001`'s
+  primary categories stop at `SPECIALS` (launchers are secondary). The category list comes from
+  the weapon table/`weapon_categories`, so this is a data/filter pass.
+- **The mod's `SAVE CLASS` row** is a deliberate mod affordance (BO2 saves on back-out) and stays.
+- The stat bars' grey/white fill and the `cac-editor` seeded kit's `FlakJacket` second perk are
+  harness/state choices, not captures to match literally.
+
+## Integrating the Track C pixel pass (2026-10-21)
+
+Merged `v1/cac-pixel` (4 commits): the choose-class rows colour like the sweeps (focused white
+with a white border/rule, presets orange, filled customs off-white, empty/locked grey —
+`cod9button.lua:414-420` is the highlight, the captures show the white label); the editor and
+picker footers read as BO2's (`ESC Back`, `TAB Personalize Knife`, `R Remove`; the invented
+`ENTER Open`/`Category`/`Gun`/`Choose` prompts are gone); the pristine fixture title is
+`Custom 1`. **`GridTop` 80 stands**, proven against `d-attach/002` at 3024×1890 (the cell top
+lands at 304.5 px; the Lua's 60 would put it inside the allocation bar). MODLOG.md was the only
+conflict; both kept. The remaining deltas are recorded in the branch's MODLOG entry above — the
+largest: the attachment grid's cell size + missing lower description/Equipped panel, and the
+dialog popup chrome; a reference-guided pass follows.
+
+Verified: cargo test --workspace green; the full real-install suite green; clippy clean; `cargo
+xtask build` clean; autotest 13/13 default, `--classpick` all checks, 14/14 `--rts`; the nine
+harness shots regenerated with every sprite resolving.
 
 ## Next steps
 
