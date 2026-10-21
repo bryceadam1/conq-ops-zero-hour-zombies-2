@@ -48,7 +48,8 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeIn) -> i32 {
         // Every texture the surfaces name: decoded once in, absent ones draw white/flat.
         let mut paths: Vec<(String, bool)> = Vec::new();
         for surf in &loaded.mesh.surfaces {
-            for (p, srgb) in [(&surf.color, true), (&surf.maps, false)] {
+            // Display-space shading (native.wgsl): every map uploads raw.
+            for (p, srgb) in [(&surf.color, false), (&surf.maps, false)] {
                 if let Some(p) = p {
                     if !paths.iter().any(|(q, _)| q == p) {
                         paths.push((p.clone(), srgb));

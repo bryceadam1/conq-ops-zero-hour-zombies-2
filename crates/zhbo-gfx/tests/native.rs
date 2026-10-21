@@ -1,7 +1,8 @@
-//! The native BO2 model pass without a window: skinning moves vertices with their bones, the
-//! colour survives the sRGB decode/encode round trip, lighting lights, the pass runs before the
-//! view it is queued before (or at the end of the frame when that view never comes), and bad
-//! input is refused and counted, never fatal.
+//! The native BO2 model pass without a window: skinning moves vertices with their bones, an
+//! emissive colour comes through exactly, dark finishes keep their hue and stay dark under Zero
+//! Hour's lights, lighting lights, the pass runs before the view it is queued before (or at the
+//! end of the frame when that view never comes), and bad input is refused and counted, never
+//! fatal.
 //!
 //! Skips on machines without a usable adapter (set ZHBO_GFX_FALLBACK=1 for the software one).
 
@@ -85,7 +86,7 @@ fn frame(lights: u32) -> NativeFrame {
 
 fn texture(r: &mut Renderer, rgba: [u8; 4]) -> u16 {
     let data: Vec<u8> = std::iter::repeat_n(rgba, 16).flatten().collect();
-    r.native_create_texture(4, 4, &data, true)
+    r.native_create_texture(4, 4, &data, false)
 }
 
 fn surface(color: u16, emissive: bool, count: u32) -> NativeSurface {
@@ -118,7 +119,7 @@ fn skins_by_bone_and_keeps_the_colour() {
     r.request_screenshot(INVALID, "native.png");
     r.frame();
     assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
-    assert!(close(pixel(&shot, 8, 8), [32, 64, 128]), "bone 0's quad, colour round-tripped through sRGB: {:?}", pixel(&shot, 8, 8));
+    assert!(close(pixel(&shot, 8, 8), [32, 64, 128]), "bone 0's quad, its colour exact: {:?}", pixel(&shot, 8, 8));
     assert!(close(pixel(&shot, 40, 40), [32, 64, 128]), "bone 1's quad moved down: {:?}", pixel(&shot, 40, 40));
     assert!(close(pixel(&shot, 40, 8), [0, 0, 0]), "nothing left where bone 1's quad was: {:?}", pixel(&shot, 40, 8));
     assert_eq!(r.native_live(), (1, 1));
@@ -144,6 +145,53 @@ fn light_brightens_a_lit_surface() {
 
 fn draw(mesh: u16, palette: &[[f32; 16]], view: u16) -> NativeDraw<'_> {
     NativeDraw { target_view: view, before_view: 2, mesh, palette, frame: frame(0) }
+}
+
+/// A dark olive BO2 finish (the AN-94's colour map averages RGB 42/39/35) with its packed maps
+/// (flat normal, gloss 72, specular level 61), lit by Zero Hour's day lights, keeps its hue and
+/// stays dark: the integrator's finding #1 was the native gun washing out to light grey.
+#[test]
+fn a_dark_finish_keeps_its_hue_under_zero_hour_light() {
+    let Some((mut r, log, shot)) = renderer() else { return };
+    let olive = texture(&mut r, [70, 80, 40, 255]);
+    let data: Vec<u8> = std::iter::repeat_n([128u8, 128, 72, 61], 16).flatten().collect();
+    let maps = r.native_create_texture(4, 4, &data, false);
+    let mut s = surface(olive, false, 6);
+    s.maps = maps;
+    let mesh = r.native_create_mesh(&quad(0.0, 0.0, 64.0, 64.0, 0), &[0, 1, 2, 0, 2, 3], &[s]);
+    let mut f = frame(1);
+    f.ambient = [0.45, 0.45, 0.47];
+    f.lights[0] = NativeLight { direction: [-0.5, 0.3, -0.8], color: [1.0, 0.97, 0.9] };
+    assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh, palette: &[IDENTITY], frame: f }));
+    r.request_screenshot(INVALID, "olive.png");
+    r.frame();
+    assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
+    let [b, g, rr] = pixel(&shot, 32, 32);
+    eprintln!("olive lit: RGB {rr} {g} {b}");
+    assert!(g > b + 10 && rr > b + 5, "kept its olive hue: RGB {rr} {g} {b}");
+    assert!(g < 160, "stayed a dark finish, not washed out: RGB {rr} {g} {b}");
+}
+
+/// Under a bright map ambient (Zero Hour maps go well past the GameData defaults) a dark finish
+/// stays dark: the environment term must not wash it out (finding #1's real cause).
+#[test]
+fn a_dark_finish_stays_dark_under_a_bright_ambient() {
+    let Some((mut r, log, shot)) = renderer() else { return };
+    let dark = texture(&mut r, [42, 39, 35, 213]);
+    let data: Vec<u8> = std::iter::repeat_n([128u8, 126, 72, 61], 16).flatten().collect();
+    let maps = r.native_create_texture(4, 4, &data, false);
+    let mut s = surface(dark, false, 6);
+    s.maps = maps;
+    let mesh = r.native_create_mesh(&quad(0.0, 0.0, 64.0, 64.0, 0), &[0, 1, 2, 0, 2, 3], &[s]);
+    let mut f = frame(1);
+    f.ambient = [1.2, 1.2, 1.2];
+    assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh, palette: &[IDENTITY], frame: f }));
+    r.request_screenshot(INVALID, "bright.png");
+    r.frame();
+    assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
+    let [b, g, rr] = pixel(&shot, 32, 32);
+    eprintln!("dark finish, bright ambient: RGB {rr} {g} {b}");
+    assert!(rr.max(g).max(b) < 110, "not washed out to grey: RGB {rr} {g} {b}");
 }
 
 #[test]

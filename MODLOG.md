@@ -1097,6 +1097,41 @@ W3D render of the same frame, the native colours wash out to grey (the AN-94's o
 dark gloves render light grey), and the gun sits a little higher. The colour map's sampling or the
 `bo2Shade` light balance is the first suspect.
 
+## Track R, round 2: the grey wash-out was linear light (2026-10-21, branch `v1/track-r2`)
+
+Root cause of finding #1 above: `native.wgsl` had ported `bo2Shade` to *linear* light — colour
+maps sampled through sRGB views, lights and ambient sRGB-decoded, the result re-encoded for the
+scene target. But bo2Shade was tuned in game in display (gamma) space, and in linear light its
+environment term (a sky/ground reflection scaled from the ambient and sun levels) keeps roughly
+its gamma-space strength while a dark albedo's diffuse collapses (42/255 ≈ 0.165 display → 0.024
+linear): the grey sky reflection swamps the finish's hue. It only bites under a bright map
+ambient (Zero Hour maps go well past the GameData defaults — the wash-out map's ambient is past
+1), which is why checking the day lights (all ≤ 1) found nothing. Fix: shade in display space,
+exactly like bo2Shade and like the scene the pass draws into. Colour maps upload raw (the core's
+`gpu.rs` and the renderer's `white` fallback drop their sRGB views), lights and ambient are Zero
+Hour's display-encoded values used as-is, and the result is written straight; only when the target
+view is itself an sRGB format is it decoded first, since the hardware re-encodes on write
+(`encode_srgb` inverted to `decode_output`).
+
+Validated headless on Metal: the new `a_dark_finish_stays_dark_under_a_bright_ambient` test (the
+AN-94's average finish 42/39/35 with its packed maps, ambient 1.2) renders **RGB 134/133/132 —
+exactly the reported light grey — against the old shader**, and RGB 93/90/86 with its hue on the
+new one; `a_dark_finish_keeps_its_hue_under_zero_hour_light` (olive 70/80/40, the day lights)
+passes on the new shader (85/94/56). With the real converted AN-94 maps
+(`nativevm::tests::diag_real_maps`, `#[ignore]`d) and the full viewmodel from the archive
+(`diag_real_viewmodel`, ambient 1.2) the gun renders its dark olive/metal finish, not grey.
+
+Also this round, chasing the other half of the finding ("the gun sits a little higher"):
+- `native_pose_matches_the_w3d_rig` (zhbo-assets, `#[ignore]`d, needs the BO2 install): the
+  native pose and the verified W3D rig must agree bone by bone (< 0.01 units) across weapons and
+  frames. **Not run here — no BO2 install on this machine; integrator.**
+- `ZHBO_NATIVE_COMPARE=1` (`ZhboViewmodel.cpp`, with `ZHBO_NATIVE_VIEWMODEL=1`): poses the W3D
+  model hidden alongside the native one and logs both paths' `tag_weapon`/`tag_flash` once a
+  second. **Not compile-checked here (no game build on the branch); integrator.**
+- The diag tests take `ZHBO_DIAG_DIR` (extracted `an94_col.tga`/`an94_nsg.tga`),
+  `ZHBO_DIAG_BIG`/`ZHBO_DIAG_OUT` (`ConquerOps_BO2.big` → PPM; `ZHBO_DIAG_AMB` scales the
+  ambient).
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

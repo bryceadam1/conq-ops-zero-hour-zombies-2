@@ -88,17 +88,23 @@ flags and texture formats, using bit layouts from bgfx's `defines.h`.
 
 Besides the engine's bgfx draws, the runtime draws BO2 models itself (Track R): the core uploads a
 skinned mesh once (`native_create_mesh`: 56-byte vertices with four bone influences, `u16`
-indices, surfaces with BO2's blend, emissive flag, sRGB colour map and packed normal/gloss/specular
-map from `native_create_texture`, which builds the mip chain) and queues a draw per frame with its
-bone palette (`native_submit`, at most 256 bones). Queued draws run in one pass immediately before
-their `before_view` (the scene composite), into the `target_view`'s frame buffer and rect; a draw
-whose before-view never comes runs at the end of the frame. A `None` `view_proj` takes the target
-view's own view × projection at `frame()`. The pass has its own `Depth32Float` buffer, cleared and
-discarded, so the viewmodel draws over the world and its parts sort among themselves; opaque
-surfaces draw first, blended ones after in BO2's sort-key order. Shading is `bo2Shade` (host
-patch 0009) ported to WGSL, in linear light (sRGB colour views, decoded light colours) and encoded
-again for the gamma-space scene target unless that is sRGB. Bad meshes and draws are refused,
-logged once and counted in `stats().native_skipped`; they never reach wgpu validation.
+indices, surfaces with BO2's blend, emissive flag, colour map and packed normal/gloss/specular map
+from `native_create_texture`, which builds the mip chain; both upload raw — see shading) and
+queues a draw per frame with its bone palette (`native_submit`, at most 256 bones). Queued draws
+run in one pass immediately before their `before_view` (the scene composite), into the
+`target_view`'s frame buffer and rect; a draw whose before-view never comes runs at the end of the
+frame. A `None` `view_proj` takes the target view's own view × projection at `frame()`. The pass
+has its own `Depth32Float` buffer, cleared and discarded, so the viewmodel draws over the world
+and its parts sort among themselves; opaque surfaces draw first, blended ones after in BO2's
+sort-key order. Shading is `bo2Shade` (host patch 0009) ported to WGSL **in display (gamma)
+space**, as bo2Shade itself runs and as the rest of Zero Hour's scene is lit: colour maps upload
+raw, the lights are Zero Hour's display-encoded values used as-is, and the shaded result is
+written straight to the gamma-space scene target — unless that target is itself sRGB, in which
+case the result is decoded to linear first (the hardware re-encodes on write). A linear-light
+port washed dark finishes out to grey: bo2Shade's environment term, tuned in gamma space, ends up
+several times stronger than a dark albedo's diffuse when both are decoded to linear (MODLOG,
+Track R round 2). Bad meshes and draws are refused, logged once and counted in
+`stats().native_skipped`; they never reach wgpu validation.
 
 ### Robustness
 
@@ -144,9 +150,10 @@ One invalid draw in a wgpu render pass invalidates the whole frame. The runtime 
   back through the screenshot path and checks them. It passes on D3D12 WARP and on Parallels'
   GL driver (M1). It skips when no adapter exists; CI installs lavapipe for it.
 * `tests/native.rs` drives the native BO2 pass headless: bone-skinned quads move with their
-  palette, an sRGB colour survives the round trip, light brightens a lit surface, a `None`
-  matrix takes the view's transform, the pass runs before its view (or at the end), and every
-  refusal is counted without a wgpu error.
+  palette, an emissive colour comes through exactly, a dark BO2 finish keeps its hue under Zero
+  Hour's day lights and stays dark under a bright map ambient (the grey wash-out regression),
+  light brightens a lit surface, a `None` matrix takes the view's transform, the pass runs before
+  its view (or at the end), and every refusal is counted without a wgpu error.
 * `tests/ffi.rs` locks the Rust side of the ABI: it mirrors the header's struct layouts and the
   API-table field counts with compile-time asserts and round-trips the encode functions through
   a `Vec<u8>` cursor, so header and Rust drift fail a plain `cargo test`.

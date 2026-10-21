@@ -264,6 +264,71 @@ mod tests {
         assert!(model(&gun(), &[Some("gun.tga".into())], &looks).surfaces.is_empty());
     }
 
+    /// The native pose agrees with the W3D rig (verified in game) bone by bone: the same weapon,
+    /// arms and clip posed both ways, model space, at several frames.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install (ZHBO_BO2_DIR)"]
+    fn native_pose_matches_the_w3d_rig() {
+        use crate::character::{animate, Rig, SCALE};
+        use crate::xf;
+        let bo2 = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let common = crate::paks::load_zone(&bo2, "common_mp").unwrap();
+        let patch = crate::paks::load_zone(&bo2, "patch_mp").unwrap();
+        let faction = crate::paks::load_zone(&bo2, crate::generals::FACTIONS[0].zone).unwrap();
+        let hands = xmodel::find(&faction, crate::generals::FACTIONS[0].hands).unwrap();
+        let weapons = zhbo_formats::weapon::all(&common).unwrap();
+        for (id, slot) in [("kard_mp", 1usize), ("kard_mp", 0x17), ("an94_mp", 1), ("an94_mp", 0x10)] {
+            let w = weapons.iter().find(|w| w.name == id).unwrap();
+            let gun = crate::viewmodels::find_model(&patch, &common, w.view_model.as_deref().unwrap()).unwrap();
+            let mag = crate::viewmodels::magazine(&common, w.view_model.as_deref().unwrap());
+            let mut parts: Vec<(&xmodel::Model, &str)> = vec![(&gun, "tag_weapon")];
+            if let Some(m) = &mag {
+                parts.push((m, "j_gun"));
+            }
+            let rig = Rig::new(&hands, &parts);
+            let Some(anim_name) = w.anims.get(slot).cloned().flatten() else { continue };
+            let anim = xanim::find(&common, &anim_name).unwrap();
+            let (_, channels) = animate(&rig, &anim);
+            let looks = Looks::default();
+            let nh = model(&hands, &vec![None; hands.surfaces.len()], &looks);
+            let ng = model(&gun, &vec![None; gun.surfaces.len()], &looks);
+            let nmag = mag.as_ref().map(|m| model(m, &vec![None; m.surfaces.len()], &looks));
+            let mut np: Vec<(&nm::Model, Option<&str>, zhbo_native::math::Xf, bool)> = vec![(&nh, None, zhbo_native::math::IDENTITY, false), (&ng, Some("tag_weapon"), zhbo_native::math::IDENTITY, false)];
+            if let Some(m) = &nmag {
+                np.push((m, Some("j_gun"), zhbo_native::math::IDENTITY, false));
+            }
+            let skel = skeleton(&np);
+            let na = super::anim(&anim);
+            let mut worst = (0.0f32, String::new(), 0u16);
+            for f in [0u16, anim.num_frames / 2, anim.num_frames] {
+                // W3D: pivot local = base * channel delta, composed from ROOTTRANSFORM.
+                let mut world = vec![xf::IDENTITY; rig.pivots.len()];
+                for (i, p) in rig.pivots.iter().enumerate().skip(1) {
+                    let mut local = (p.rotation, p.translation);
+                    if let Some(ch) = channels.iter().find(|c| c.pivot as usize == i) {
+                        let (dq, dt) = (ch.rotations[f as usize], ch.translations[f as usize]);
+                        local = (xf::qnorm(xf::qmul(p.rotation, dq)), { let t = xf::qrot(p.rotation, dt); [p.translation[0] + t[0], p.translation[1] + t[1], p.translation[2] + t[2]] });
+                    }
+                    world[i] = xf::compose(world[p.parent.unwrap_or(0)], local);
+                }
+                let (mut local, mut ms) = (Vec::new(), Vec::new());
+                skel.sample(&na, f as f32, &mut local);
+                skel.model_space(&local, &mut ms);
+                // Pivot k (skipping ROOTTRANSFORM) is native bone k - 1: same order, same names.
+                for (k, b) in skel.bones.iter().enumerate() {
+                    assert_eq!(rig.names[k + 1], b.name);
+                    let n = ms[k].1.map(|c| c * SCALE);
+                    let d = (0..3).map(|c| (n[c] - world[k + 1].1[c]).powi(2)).sum::<f32>().sqrt();
+                    if d > worst.0 {
+                        worst = (d, b.name.clone(), f);
+                    }
+                }
+            }
+            println!("{id} slot {slot:#x} {anim_name}: worst bone {} off by {:.4} units at frame {}", worst.1, worst.0, worst.2);
+            assert!(worst.0 < 0.01, "{id} {anim_name}: {} off by {} at frame {}", worst.1, worst.0, worst.2);
+        }
+    }
+
     #[test]
     fn aim_marker_falls_back_to_the_front_sight() {
         let arms = nm::Model { name: "arms".into(), bones: vec![nm::Bone { name: "tag_weapon".into(), parent: None, local_rotation: QUAT_IDENTITY, local_position: [0.0; 3], rotation: QUAT_IDENTITY, position: [5.0, 0.0, 0.0] }], ..Default::default() };

@@ -9,7 +9,8 @@
 //! rect, so the viewmodel sits in the scene before bloom and the tonemap see it. The pass has a
 //! depth buffer of its own, cleared, so the viewmodel draws over the world (BO2 draws its
 //! viewmodel in a separate depth range) and its parts sort among themselves. Opaque surfaces draw
-//! first, then blended ones in BO2's sort-key order.
+//! first, then blended ones in BO2's sort-key order. Shading is in display space, like the scene
+//! it joins (see `native.wgsl`).
 //!
 //! Submits are validated (handles, view ids, palette size against the mesh's bones, finite
 //! matrices) and refused with a one-time log line; nothing in the frame path panics.
@@ -79,7 +80,7 @@ pub struct NativeSurface {
     pub index_count: u32,
     pub blend: NativeBlend,
     pub emissive: bool,
-    /// A [`Renderer::native_create_texture`] handle (sRGB colour), or `INVALID` for white.
+    /// A [`Renderer::native_create_texture`] handle (the colour map), or `INVALID` for white.
     pub color: u16,
     /// The packed normal/gloss/specular map (linear), or `INVALID` for a flat matte surface.
     pub maps: u16,
@@ -247,7 +248,7 @@ impl NativeState {
             bgl0,
             bgl1,
             sampler,
-            white: one_pixel(device, queue, [255; 4], wgpu::TextureFormat::Rgba8UnormSrgb),
+            white: one_pixel(device, queue, [255; 4], wgpu::TextureFormat::Rgba8Unorm),
             flat: one_pixel(device, queue, [128, 128, 0, 0], wgpu::TextureFormat::Rgba8Unorm),
             align: align.max(16) as u64,
             skipped: 0,
@@ -280,8 +281,9 @@ fn finite(m: &[f32]) -> bool {
 }
 
 impl Renderer {
-    /// An RGBA8 texture for native surfaces, with a box-filtered mip chain; `srgb` for colour
-    /// maps (sampled to linear), not for packed data maps. `INVALID` if the data is the wrong size.
+    /// An RGBA8 texture for native surfaces, with a box-filtered mip chain. `srgb` samples it
+    /// decoded to linear; the native shader works in display space, so its maps are uploaded
+    /// without it. `INVALID` if the data is the wrong size.
     pub fn native_create_texture(&mut self, width: u32, height: u32, rgba: &[u8], srgb: bool) -> u16 {
         let max = self.device.limits().max_texture_dimension_2d;
         if width == 0 || height == 0 || width > max || height > max || rgba.len() != (width as usize) * (height as usize) * 4 {
@@ -503,7 +505,7 @@ impl Renderer {
             return p.clone();
         }
         let attrs = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Uint16x4, 4 => Float32x4];
-        let constants = [("encode_srgb", if key.color.is_srgb() { 0.0 } else { 1.0 })];
+        let constants = [("decode_output", if key.color.is_srgb() { 1.0 } else { 0.0 })];
         let blended = key.blend.blended();
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let pipeline = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {

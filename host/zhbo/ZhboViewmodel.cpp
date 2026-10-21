@@ -378,6 +378,93 @@ void ZhboViewmodel_Preload(char faction, const int *weapons, int count)
 	Zhbo_Log("viewmodel: preloaded %d viewmodels in %.0f ms", loaded, (zhbo_platform::now() - started) * 1000.0);
 }
 
+namespace
+{
+	// ZHBO_NATIVE_COMPARE=1 (with ZHBO_NATIVE_VIEWMODEL=1): pose the W3D model too, hidden, and log
+	// where both paths put the gun's tags once a second, to measure any placement difference in game.
+	Bool compareMode()
+	{
+		static const Bool s_compare = getenv("ZHBO_NATIVE_COMPARE") && atoi(getenv("ZHBO_NATIVE_COMPARE")) != 0;
+		return s_compare;
+	}
+
+	void logCompare(Int clip, Real time, Real ads)
+	{
+		static int s_calls = 0;
+		if (s_calls++ % 30 != 0)
+			return;
+		for (const char *bone : { "tag_weapon", "tag_flash" })
+		{
+			float m[12];
+			const int index = s_model->Get_Bone_Index(bone);
+			if (index <= 0 || !zhbo_native_bone(bone, m))
+				continue;
+			const Vector3 w = s_model->Get_Bone_Transform(index).Get_Translation();
+			const float dx = m[3] - w.X, dy = m[7] - w.Y, dz = m[11] - w.Z;
+			Zhbo_Log("native compare: clip %d t %.2f ads %.2f %s w3d (%.3f %.3f %.3f) native (%.3f %.3f %.3f) off %.3f", clip, time, ads, bone,
+				w.X, w.Y, w.Z, m[3], m[7], m[11], sqrtf(dx * dx + dy * dy + dz * dz));
+		}
+	}
+
+	// Pose the W3D model for this frame (load, place, animate, slide onto the sights). FALSE when
+	// there is no W3D model to pose.
+	Bool poseW3d(const Coord3D &eye, const Coord3D &dir, Int clip, Int weapon, const AsciiString &name, Real time, Real ads,
+		const Coord3D &offset, const Coord3D &angles)
+	{
+		if (name != s_modelName && name != s_missing && !load(name, weapon))
+			return FALSE;
+		if (!s_model)
+			return FALSE;
+
+		Vector3 x, y, z;
+		Matrix3D m = viewTransform(eye, dir, x, y, z);
+		// Sway, bob and recoil from the core: offset in view space, then yaw, pitch (muzzle up), roll.
+		m.Translate(Vector3(offset.x, offset.y, offset.z));
+		m.Rotate_Z(angles.x);
+		m.Rotate_Y(-angles.y);
+		m.Rotate_X(angles.z);
+		s_model->Set_Transform(m);
+
+		std::map<int, HAnimClass *>::iterator it = s_anims.find(clip);
+		if (it == s_anims.end()) // a slot this weapon (or alt mode) doesn't have: hold its idle
+			it = s_anims.find((clip >= ZHBO_VM_ALT_CLIPS ? ZHBO_VM_ALT_CLIPS : 0) + ZHBO_VM_SLOT_IDLE);
+		if (it == s_anims.end())
+			it = s_anims.find(ZHBO_VM_SLOT_IDLE);
+		if (it != s_anims.end())
+		{
+			HAnimClass *anim = it->second;
+			const Real frames = (Real)anim->Get_Num_Frames();
+			Real frame = time * anim->Get_Frame_Rate();
+			if (loops(it->first))
+				frame = frames > 1.0f ? fmodf(frame, frames - 1.0f) : 0.0f;
+			else
+				frame = std::min(frame, std::max(frames - 1.0f, 0.0f));
+			s_model->Set_Animation(anim, frame, RenderObjClass::ANIM_MODE_MANUAL);
+		}
+
+		// Aim down the sights: move the model so the sight bone is on the view axis (the converter
+		// gives every gun one: BO2's, an optic's window, or its rear sight's top).
+		if (ads > 0.0f)
+		{
+			const int sights = s_model->Get_Bone_Index("tag_sights");
+			static Bool s_warned = FALSE;
+			if (sights <= 0 && !s_warned)
+			{
+				s_warned = TRUE;
+				Zhbo_Log("viewmodel: no tag_sights bone (index %d)", sights);
+			}
+			if (sights > 0)
+			{
+				Vector3 local;
+				Matrix3D::Inverse_Transform_Vector(m, s_model->Get_Bone_Transform(sights).Get_Translation(), &local);
+				m.Adjust_Translation((y * -local.Y + z * -local.Z) * ads);
+				s_model->Set_Transform(m);
+			}
+		}
+		return TRUE;
+	}
+}
+
 void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)
 {
 	Int clip = ZHBO_VM_NONE, weapon = ZHBO_VM_NONE;
@@ -395,60 +482,18 @@ void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)
 	if (!s_notesLoaded)
 		loadNotes();
 	playNotes(weapon, clip, time);
-	if (nativeViewmodel(eye, dir, clip, weapon, name, time, ads, offset, angles, fired))
+	const Bool native = nativeViewmodel(eye, dir, clip, weapon, name, time, ads, offset, angles, fired);
+	if (native && !compareMode())
 		return;
-	if (name != s_modelName && name != s_missing && !load(name, weapon))
+	if (!poseW3d(eye, dir, clip, weapon, name, time, ads, offset, angles))
 		return;
-	if (!s_model)
+	if (native)
+	{
+		s_model->Set_Hidden(true);
+		logCompare(clip, time, ads);
 		return;
+	}
 	s_model->Set_Hidden(false);
-
-	Vector3 x, y, z;
-	Matrix3D m = viewTransform(eye, dir, x, y, z);
-	// Sway, bob and recoil from the core: offset in view space, then yaw, pitch (muzzle up), roll.
-	m.Translate(Vector3(offset.x, offset.y, offset.z));
-	m.Rotate_Z(angles.x);
-	m.Rotate_Y(-angles.y);
-	m.Rotate_X(angles.z);
-	s_model->Set_Transform(m);
-
-	std::map<int, HAnimClass *>::iterator it = s_anims.find(clip);
-	if (it == s_anims.end()) // a slot this weapon (or alt mode) doesn't have: hold its idle
-		it = s_anims.find((clip >= ZHBO_VM_ALT_CLIPS ? ZHBO_VM_ALT_CLIPS : 0) + ZHBO_VM_SLOT_IDLE);
-	if (it == s_anims.end())
-		it = s_anims.find(ZHBO_VM_SLOT_IDLE);
-	if (it != s_anims.end())
-	{
-		HAnimClass *anim = it->second;
-		const Real frames = (Real)anim->Get_Num_Frames();
-		Real frame = time * anim->Get_Frame_Rate();
-		if (loops(it->first))
-			frame = frames > 1.0f ? fmodf(frame, frames - 1.0f) : 0.0f;
-		else
-			frame = std::min(frame, std::max(frames - 1.0f, 0.0f));
-		s_model->Set_Animation(anim, frame, RenderObjClass::ANIM_MODE_MANUAL);
-	}
-
-	// Aim down the sights: move the model so the sight bone is on the view axis (the converter
-	// gives every gun one: BO2's, an optic's window, or its rear sight's top).
-	if (ads > 0.0f)
-	{
-		const int sights = s_model->Get_Bone_Index("tag_sights");
-		static Bool s_warned = FALSE;
-		if (sights <= 0 && !s_warned)
-		{
-			s_warned = TRUE;
-			Zhbo_Log("viewmodel: no tag_sights bone (index %d)", sights);
-		}
-		if (sights > 0)
-		{
-			Vector3 local;
-			Matrix3D::Inverse_Transform_Vector(m, s_model->Get_Bone_Transform(sights).Get_Translation(), &local);
-			m.Adjust_Translation((y * -local.Y + z * -local.Z) * ads);
-			s_model->Set_Transform(m);
-		}
-	}
-
 	if (fired)
 	{
 		boneFx("ZHBO_ViewmodelMuzzle", "tag_flash");
