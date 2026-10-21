@@ -45,6 +45,11 @@ namespace zhbo_platform
 			setDown(bits, (Key)(Key::Key1 + i), state[digits[i]]);
 		}
 		setDown(bits, Key::Key6, state[SDL_SCANCODE_6]);
+		setDown(bits, Key::Key7, state[SDL_SCANCODE_7]);
+		setDown(bits, Key::Key8, state[SDL_SCANCODE_8]);
+		setDown(bits, Key::Key9, state[SDL_SCANCODE_9]);
+		setDown(bits, Key::Key0, state[SDL_SCANCODE_0]);
+		setDown(bits, Key::Escape, state[SDL_SCANCODE_ESCAPE]);
 		setDown(bits, Key::Space, state[SDL_SCANCODE_SPACE]);
 		setDown(bits, Key::Tab, state[SDL_SCANCODE_TAB]);
 		setDown(bits, Key::Shift, state[SDL_SCANCODE_LSHIFT] || state[SDL_SCANCODE_RSHIFT]);
@@ -154,6 +159,10 @@ namespace zhbo_platform
 		setDown(bits, Key::Shift, (GetAsyncKeyState(VK_SHIFT) & 0x8000) != 0);
 		setDown(bits, Key::Control, (GetAsyncKeyState(VK_CONTROL) & 0x8000) != 0);
 		setDown(bits, Key::Key6, (GetAsyncKeyState('6') & 0x8000) != 0);
+		setDown(bits, Key::Key7, (GetAsyncKeyState('7') & 0x8000) != 0);
+		setDown(bits, Key::Key8, (GetAsyncKeyState('8') & 0x8000) != 0);
+		setDown(bits, Key::Key9, (GetAsyncKeyState('9') & 0x8000) != 0);
+		setDown(bits, Key::Key0, (GetAsyncKeyState('0') & 0x8000) != 0);
 		setDown(bits, Key::Escape, (GetAsyncKeyState(VK_ESCAPE) & 0x8000) != 0);
 		setDown(bits, Key::Up, (GetAsyncKeyState(VK_UP) & 0x8000) != 0);
 		setDown(bits, Key::Down, (GetAsyncKeyState(VK_DOWN) & 0x8000) != 0);

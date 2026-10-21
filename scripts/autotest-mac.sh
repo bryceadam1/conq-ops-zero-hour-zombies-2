@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # In-game tests for Conquer Ops on macOS: the counterpart of autotest.ps1 and inputtest.ps1.
 #
-#   scripts/autotest-mac.sh            autopilot test (ZHBO_AUTOPILOT=1, scripted inside the mod)
+#   scripts/autotest-mac.sh            autopilot test (ZHBO_AUTOPILOT=1, scripted inside the mod; the
+#                                      profile is seeded with a GL custom for the alt-mode check)
 #   scripts/autotest-mac.sh --input    real-input test (ZHBO_AUTOPILOT=manual; holds W, moves the mouse)
 #   scripts/autotest-mac.sh --equipment
 #                                      C4, Trophy System and Black Hat against an enemy drone and
@@ -16,8 +17,9 @@
 #                                      wheel), holding F builds it, and repairs it once damaged. Back
 #                                      overhead he is an idle worker, and repairs it again when ordered.
 #   scripts/autotest-mac.sh --classpick
-#                                      the create-a-class editor: opened from the pick screen, the class
-#                                      named, the secondary changed and the class saved to the profile
+#                                      the pick-only in-match class screen: the script seeds a custom
+#                                      class ("AB") in the profile, picks it by its row key, then forces
+#                                      the screen open after re-taking control and Escape-closes it
 #   scripts/autotest-mac.sh --showcase [object]
 #                                      close-up captures of a General (idle, walk, death), no checks
 #
@@ -95,8 +97,24 @@ if [[ $mode == equipment ]]; then
     check() { # log, name, pattern
         if grep -qE "$3" "$1"; then printf '%-28s PASS\n' "$2"; else printf '%-28s FAIL\n' "$2"; ok=1; fi
     }
+    profile="$userdata/ConquerOps.profile"
     for tactical in trophy_system_mp pda_hack_mp; do
         rm -f "$log"
+        # A General spawns unarmed, so the run needs the C4/tactical class on the spawn list:
+        # seed it in the profile (the autopilot picks the first custom by its computed row key).
+        # ZHBO_LOADOUT still drives the converted art and the base kit. The profile file's v2
+        # format: `v2`, the active set, then each set's `class`/name/spec/`end` records
+        # (crates/zhbo-core/src/profile.rs).
+        rm -f "$profile"
+        cat >"$profile" <<EOF
+v2
+active 1
+set 1 CLASS SET 1
+class
+C4 Test
+primary=an94_mp+gl+reflex;secondary=fnp45_mp;lethal=satchel_charge_mp;tactical=$tactical;melee=knife_held_mp;perks=Lightweight,FastHands,Dexterity
+end
+EOF
         ZHBO_LOADOUT="lethal=satchel_charge_mp;tactical=$tactical" "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
         wait_for_log "entered first-person" 120 || { echo "the General never entered first person; see $log" >&2; exit 1; }
         for _ in $(seq 60); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
@@ -172,10 +190,25 @@ if [[ $mode == build ]]; then
     exit $ok
 fi
 if [[ $mode == classpick ]]; then
-    # The create-a-class editor: the autopilot opens the pick screen from first person, opens the
-    # editor, types a name, changes the secondary, and saves; the bridge writes the profile and the
-    # sim logs the pick under the class's own name. No .wnd edit and no shared class list: the
-    # saved class rides the pick message's payload.
+    # The in-match create-a-class run is pick-only (BO2 only creates classes in the lobby): seed
+    # the profile with one custom class ("AB") in the active class set, then let the autopilot
+    # pick it from the spawn screen by its row key (5 default classes + AB). A pick must not
+    # write the profile. The script then leaves first person, takes control again, forces the
+    # screen open and Escapes it, proving first-person play continues. The profile file's v2
+    # format: `v2`, the active set, then each set's `class`/name/spec/`end` records (profile.rs).
+    profile="$userdata/ConquerOps.profile"
+    rm -f "$profile"
+    # Deliberately NOT the stock Assault kit: the kit check below greps for the MP7 and the
+    # claymore, so a pick that logs the name but never applies the kit cannot pass.
+    cat >"$profile" <<'EOF'
+v2
+active 1
+set 1 CLASS SET 1
+class
+AB
+primary=mp7_mp;secondary=fnp45_mp;lethal=claymore_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Toughness,FastHands,Dexterity
+end
+EOF
     export ZHBO_AUTOPILOT=classpick GGC_AUTO_EXIT_SECONDS=60
     "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
     wait_for_log "entered first-person" 90 || { echo "the General never entered first person; see $log" >&2; exit 1; }
@@ -186,14 +219,34 @@ if [[ $mode == classpick ]]; then
     check() { # name, pattern
         if grep -qE "$2" "$out/ConquerOps.log"; then printf '%-28s PASS\n' "$1"; else printf '%-28s FAIL\n' "$1"; ok=1; fi
     }
-    check "saved to the profile" "create-a-class: saved a custom class to the profile"
-    check "picked under its own name" "assumed the AB class"
+    check "picked the seeded class" "assumed the AB class"
+    # The KIT, not just the name: the seeded class's primary is the MP7, and the sim's once-a-second
+    # pose line names the weapon in hand ("... MP7 40|80"). The old seed was the Assault kit, so a
+    # pick that never applied the kit still passed the name-only check.
+    check "  ...kit applied (MP7)" "MP7 [0-9]+\|"
+    # A pick never writes the profile (the Phase-2 save-vs-pick split).
+    if grep -q "create-a-class: saved a custom class" "$out/ConquerOps.log"; then
+        printf '%-28s FAIL\n' "  ...pick did not re-save"; ok=1
+    else
+        printf '%-28s PASS\n' "  ...pick did not re-save"
+    fi
+    # The script's second phase: after the field computer hands the General back, the host takes
+    # control again and the screen is forced open, then Escape closes it while first person plays.
+    check "  ...re-entered first person" "taking control again"
+    # The second session: force the screen open, Escape it, then hold W. The local General's pose
+    # must change after the second entry, which only happens if the screen really closed and the
+    # game got the input again.
+    if awk '/entered first-person control/ { n++; next } n >= 2 && / pos \(/ { if (first == "") first = $0; last = $0 } END { exit !(first != "" && last != "" && first != last) }' "$out/ConquerOps.log"; then
+        printf '%-28s PASS\n' "  ...Escape kept playing"
+    else
+        printf '%-28s FAIL\n' "  ...Escape kept playing"; ok=1
+    fi
     if grep -q "assumed the ??? class" "$out/ConquerOps.log"; then
         printf '%-28s FAIL\n' "  ...not as ???"; ok=1
     else
         printf '%-28s PASS\n' "  ...not as ???"
     fi
-    grep -E "create-a-class|assumed the" "$out/ConquerOps.log" | head -20
+    grep -E "create-a-class|assumed the|taking control again|first-person control" "$out/ConquerOps.log" | head -20
     echo "screenshots and log: $out"
     exit $ok
 fi
@@ -245,14 +298,33 @@ if [[ $mode == rts ]]; then
     check "lethal picked" "uses weapon slot 2"
     check "lethal thrown" "fired slot 2 \(0/0 left\)"
     check "back to the rifle" "locked to weapon slot 0"
-    check "pistol picked" "uses weapon slot 1"
-    check "pistol rounds counted" "fired slot 1"
-    check "first person keeps pistol" "entered first-person control"
-    check "  ...holding the pistol" "Tac-45 [0-9]+\|"
+    # Slot 1 is the class's secondary. The run picks BO2's default Assault class at spawn, which
+    # carries the SMAW there (statstable.csv), not the base kit's Tac-45.
+    check "secondary picked" "uses weapon slot 1"
+    check "secondary rounds counted" "fired slot 1"
+    check "first person keeps the secondary" "entered first-person control"
+    check "  ...holding the SMAW" "SMAW [0-9]+\|"
     echo "screenshots and log: $out"
     exit $ok
 fi
 if [[ $mode == autopilot ]]; then
+    # BO2's premades carry no attachments, so none can toggle an alt mode; the "grenade launcher"
+    # step needs a primary with its under-barrel launcher. Seed the profile with one custom class
+    # in the active set (the AN-94 and its launcher, plus the frag, concussion, pistol and knife
+    # the script's throws and swaps expect) and the autopilot picks it by its computed row key
+    # (5 premades + this custom). The profile file's v2 format: `v2`, the active set, then each
+    # set's `class`/name/spec/`end` records (crates/zhbo-core/src/profile.rs).
+    profile="$userdata/ConquerOps.profile"
+    rm -f "$profile"
+    cat >"$profile" <<'EOF'
+v2
+active 1
+set 1 CLASS SET 1
+class
+GL Test
+primary=an94_mp+gl;secondary=fnp45_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,FastHands,Dexterity
+end
+EOF
     # Autopilot timeline: enters first person about 3 s in, field computer about 12 s after that.
     # The exit is in wall seconds; under render hitches logic time (the scripts' clock) runs well
     # behind it, so leave enough wall time for the whole timeline to finish.

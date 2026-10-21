@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 17u
+#define ZHBO_ABI_VERSION 21u
 
 /* Field counts of the API tables below. The Rust side derives its layout asserts and
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
@@ -183,7 +183,15 @@ typedef struct ZhboClientIn
 	ZhboVec3 rts_cam_dir;
 	float rts_hfov; /* the RTS camera's horizontal field of view, radians */
 	ZhboVec3 rts_pivot; /* the point the RTS camera pivots on, on the ground */
-	int32_t class_pick_force; /* one-shot: the lobby's Create-a-Class button was pressed */
+	/* One-shot: force the in-game class pick screen open (the command bar's Create-a-Class entry).
+	   The lobby's button does NOT use this: it opens the shell screen (zhbo_menu_open) instead. */
+	int32_t class_pick_force;
+	/* One-shot: a command-bar class button was pressed: 1-based in the class-button rows
+	   (zhbo_class_buttons' order: the presets, then the profile's customs), 0 = none. The core
+	   emits the same choose_class pick the pick screen sends, naming the General it has under
+	   command, so the bar and the screen never diverge. The bridge cannot queue that pick itself:
+	   zhbo_client_frame writes a fresh ZhboClientOut over its copy every frame. */
+	int32_t class_button;
 } ZhboClientIn;
 
 typedef struct ZhboClientOut
@@ -207,13 +215,80 @@ typedef struct ZhboClientOut
 	float viewmodel_ads;    /* 0..1 aim-down-sights */
 	ZhboVec3 viewmodel_offset; /* sway/bob/recoil: forward, left, up (world units) */
 	ZhboVec3 viewmodel_angles; /* yaw (left +), pitch (muzzle up +), roll; radians */
-	int32_t choose_class; /* one-shot: the player picked class N (the class list's index) for the General */
+	int32_t choose_class; /* one-shot: 1-based class index (0 = none, i32::MIN = custom payload) */
 	uint32_t choose_class_general;
 	/* A custom class's wire words (classes.rs' CustomClass::to_wire_words), valid when
 	   choose_class_payload_len > 0: the bridge appends them to the pick message. */
 	uint32_t choose_class_payload[64];
 	int32_t choose_class_payload_len;
+	/* One-shot: write the profile file now. 1 = the editor saved a class, 2 = the pick screen
+	   deleted/copied a slot. A pick alone never sets it (re-picking must not rewrite the file).
+	   The payload is the profile file's full text, UTF-8 packed four bytes per word
+	   (zhbo_core::profile::pack_text); see zhbo_profile_write. */
+	int32_t save_profile;
+	uint32_t save_profile_payload[1024];
+	int32_t save_profile_payload_len;
+	/* The class screen (pick or editor) is up: the bridge leaves the cursor free and swallows the
+	   game-bound mouse/key messages behind it. */
+	int32_t menu_open;
 } ZhboClientOut;
+
+/* The shell create-a-class screen (the lobby's class menu; docs/CONTRACT.md's menu ABI): the
+   bridge's modal shell window fills ZhboMenuIn from its draw callback (keys from the platform
+   poll, the pointer/buttons from the engine's cursor, the wheel from the window's GWM_WHEEL
+   messages, the screen from the display) and calls zhbo_menu_frame; the core draws through the
+   stored ZhboClientApi callbacks (valid during the window's draw) and plays its UI sounds through
+   the stored sound callback. Pure local UI: no determinism/lockstep requirements; the profile file
+   is its only output. */
+typedef struct ZhboMenuIn
+{
+	ZhboKeySet keys;
+	float mouse_x; /* absolute cursor position (screen pixels) */
+	float mouse_y;
+	uint32_t mouse_buttons; /* the mouse buttons' held state (bit 0 left, 1 right, 2 middle) */
+	float wheel; /* wheel notches since last frame */
+	float screen_w;
+	float screen_h;
+} ZhboMenuIn;
+
+typedef struct ZhboMenuOut
+{
+	int32_t closed; /* one-shot: the screen asked to close (Escape/Back on the pick list) */
+	/* One-shot: write the profile file now (1 = the editor saved a class, 2 = the list
+	   deleted/copied a slot), same shape as ZhboClientOut's save_profile: the file's full UTF-8
+	   text packed four bytes per word (zhbo_core::profile::pack_text); see zhbo_profile_write. */
+	int32_t save_profile;
+	uint32_t save_profile_payload[1024];
+	int32_t save_profile_payload_len;
+} ZhboMenuOut;
+
+/* One command-bar class button (zhbo_core::classicons): the one-page class command set the bridge
+   builds while a General has no class: Take Control plus the ACTIVE set's ten classes (the five
+   premade, then up to five customs); rows past the tenth come back present=0 (ZHBO_CLASS_BUTTONS
+   is only the array capacity). The bridge caches these rows at game start and draws each class's
+   kit over its button. The labels are also served to the engine through
+   strings.rs (CONTROLBAR:ZHBO_ClassButton01..15), so the command button's TextLabel follows the
+   live class list. */
+#define ZHBO_CLASS_BUTTONS 15
+typedef struct ZhboClassButton
+{
+	int32_t present;   /* non-zero when a class occupies this button */
+	int32_t page;      /* 1 or 2 */
+	int32_t slot;      /* the command set's index: page one starts at 1 (0 is Take Control) */
+	char name[48];     /* the button's label, UTF-8 */
+	char primary[48];  /* converted MappedImage names (ZHBO_BO2_Icon_<id>) */
+	char secondary[48];
+	char lethal[48];
+	char tactical[48];
+	char perks[6][40]; /* the perk icons, in pick order */
+	int32_t perk_count;
+	int32_t payload_len; /* a custom class's wire words (0 for a shipped preset) */
+	uint32_t payload[64];
+} ZhboClassButton;
+
+/* `choose_class`'s marker for a class built in the editor (client/mod.rs' CHOOSE_CLASS_CUSTOM): the
+   payload carries its wire words instead of a registry index. */
+#define ZHBO_CHOOSE_CLASS_CUSTOM (-2147483647 - 1)
 
 /* Viewmodel clips (zhbo_core::viewmodel): BO2's animation slots, then the scorestreak tablet's (its
    own model: the faction's weapon viewmodel name with _TAB). */
@@ -262,6 +337,9 @@ void zhbo_load_profile(const char *text);
 /* Save a custom class from the choose-class wire words into the profile; returns the profile's full
    text (NUL-terminated) for the caller to write to the profile file, or null when the words don't decode. */
 const char *zhbo_profile_save(const uint32_t *words, int32_t len);
+/* Write the profile from a save_profile one-shot: words are the file's full UTF-8 text packed
+   four bytes per word; returns the NUL-terminated text to write, or null when it doesn't decode. */
+const char *zhbo_profile_write(const uint32_t *words, int32_t len);
 void zhbo_init(const ZhboLogicApi *logic, const ZhboClientApi *client);
 int32_t zhbo_install_weapons(const char *table); /* Data\\ConquerOps\\weapons.ini; count or -1 */
 void zhbo_reset(void);
@@ -275,6 +353,12 @@ void zhbo_logic_step(uint32_t frame);
 int32_t zhbo_logic_is_controlled(uint32_t object_id);
 void zhbo_client_frame(const ZhboClientIn *in, ZhboClientOut *out);
 void zhbo_client_draw_hud(int32_t local_player);
+/* The shell create-a-class screen (see ZhboMenuIn above): open it (a fresh screen state), run one
+   frame (input in, the close/profile one-shots out; the draw happens inside through the stored
+   ZhboClientApi), close it (drop the state). */
+void zhbo_menu_open(void);
+void zhbo_menu_frame(const ZhboMenuIn *in, ZhboMenuOut *out);
+void zhbo_menu_close(void);
 const uint16_t *zhbo_string(const char *label);
 int32_t zhbo_client_world_poses(ZhboWorldPose *out, int32_t cap);
 /* The General's Zero Hour weapon slots (primary, secondary, lethal) under RTS control
@@ -291,6 +375,11 @@ typedef struct ZhboRtsWeapons
 void zhbo_logic_rts_update(int32_t player, uint32_t general, int32_t current_slot, const uint32_t *shots, const ZhboVec3 *target, ZhboRtsWeapons *out);
 void zhbo_logic_rts_offhand(int32_t player, uint32_t general, int32_t tactical);
 void zhbo_client_rts_ammo(uint32_t general, ZhboRtsWeapons *out);
+/* The command bar's class buttons, in button order (the five presets then the profile's ten slots);
+   returns how many rows were written. */
+int32_t zhbo_class_buttons(ZhboClassButton *out, int32_t cap);
+/* Non-zero once the General has assumed a class (the bar shows the class set until then). */
+int32_t zhbo_general_has_class(uint32_t general);
 int32_t zhbo_world_mesh_count(int32_t vm); /* -2: the tablet */
 int32_t zhbo_loadout_viewmodels(int32_t *out, int32_t cap); /* the General's kit's viewmodels */
 float zhbo_general_build_rate(void); /* a General's building speed, share of a dozer's */
@@ -301,11 +390,14 @@ int32_t zhbo_check_requirements(char *msg, uint32_t cap);
 
 static_assert(sizeof(ZhboObjInfo) == 56, "ZhboObjInfo layout must match host.rs");
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
-	static_assert(sizeof(ZhboClientIn) == 128, "ZhboClientIn layout must match client.rs");
-static_assert(sizeof(ZhboClientOut) == 400, "ZhboClientOut layout must match client.rs");
+static_assert(sizeof(ZhboClientIn) == 136, "ZhboClientIn layout must match client.rs");
+static_assert(sizeof(ZhboClientOut) == 4508, "ZhboClientOut layout must match client.rs");
+static_assert(sizeof(ZhboMenuIn) == 56, "ZhboMenuIn layout must match menu.rs");
+static_assert(sizeof(ZhboMenuOut) == 4108, "ZhboMenuOut layout must match menu.rs");
 static_assert(sizeof(ZhboLogicApi) == ZHBO_LOGIC_API_FIELDS * sizeof(void *), "ZhboLogicApi layout must match host.rs");
 static_assert(sizeof(ZhboWorldPose) == 16, "ZhboWorldPose layout must match ffi.rs");
 static_assert(sizeof(ZhboRtsWeapons) == 36, "ZhboRtsWeapons layout must match sim.rs");
+static_assert(sizeof(ZhboClassButton) == 756, "ZhboClassButton layout must match ffi.rs");
 static_assert(sizeof(ZhboClientApi) == ZHBO_CLIENT_API_FIELDS * sizeof(void *), "ZhboClientApi layout must match host.rs");
 static_assert(sizeof(ZhboBuildOption) == 64, "ZhboBuildOption layout must match building.rs");
 static_assert(sizeof(ZhboWorkSite) == 64, "ZhboWorkSite layout must match building.rs");

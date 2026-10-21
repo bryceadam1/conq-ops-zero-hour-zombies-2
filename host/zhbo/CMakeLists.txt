@@ -19,6 +19,7 @@ target_sources(z_gameengine PRIVATE
     ${CMAKE_CURRENT_LIST_DIR}/ZhboRtsWeapons.cpp
     ${CMAKE_CURRENT_LIST_DIR}/ZhboHud.cpp
     ${CMAKE_CURRENT_LIST_DIR}/ZhboInput.cpp
+    ${CMAKE_CURRENT_LIST_DIR}/ZhboMenu.cpp
     ${CMAKE_CURRENT_LIST_DIR}/ZhboAutopilot.cpp
     ${CMAKE_CURRENT_LIST_DIR}/ZhboScreenLook.cpp
     ${CMAKE_CURRENT_LIST_DIR}/ZhboControlBar.cpp

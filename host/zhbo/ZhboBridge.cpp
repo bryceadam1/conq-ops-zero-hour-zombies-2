@@ -96,11 +96,33 @@ FILE *s_log = nullptr;
 ZhboClientOut s_out = {};
 Real s_wheelAccum = 0.0f;
 static Int s_classPickLatch = 0;
+// A command-bar class button pressed since the last client frame (see `chooseClass`).
+Int s_classButtonPick = 0;
 
+// The in-game Create-a-Class entry (patch 0001 routes GUI_COMMAND_ZHBO_CHOOSE_CLASS here). The
+// command bar's class buttons and its Create a Class button share that command and are told apart
+// by which command window the engine is dispatching: a class button hands its index to the next
+// client frame, which sends that class's pick, and the Create a Class button swaps the General into
+// the class set. (The class screen's own spawn-select path lives in the client core and
+// never comes through here.) The lobby's button is a different path: it opens the shell screen
+// (Zhbo_OpenClassMenu).
 void Zhbo_ShowClassPick()
 {
+	Object *general = zhboSelectedGeneral();
+	const Int button = zhboPressedClassButton();
+	if (general && button >= 0)
+	{
+		zhboChooseClassButton(general, button);
+		return;
+	}
+	if (general)
+	{
+		zhboOpenClassSet(general, TRUE);
+		return;
+	}
+	// No General in hand (a scripted or legacy caller): keep the old overlay latch.
 	s_classPickLatch = 1;
-	logf("lobby: create-a-class requested");
+	logf("create-a-class: pick screen forced open");
 }
 double s_lastTick = 0.0;
 
@@ -164,8 +186,9 @@ static std::string readProfileFile()
 }
 
 // Write the profile file's text, replacing whatever was there (the core returns the whole file on a
-// save, so a single write is enough and a torn append cannot corrupt the list).
-static void writeProfileFile(const char *text)
+// save, so a single write is enough and a torn append cannot corrupt the list). Shared with the
+// shell menu (ZhboMenu.cpp): plain file I/O, it works outside a match.
+void writeProfileFile(const char *text)
 {
 	FILE *f = fopen(profilePath().c_str(), "wb");
 	if (!f)
@@ -366,6 +389,9 @@ void Zhbo_Reset()
 {
 	if (!s_ready)
 		return;
+	// The shell create-a-class screen never survives a game transition (a new game, a loaded game
+	// or a return to the shell): its window goes away with the shell.
+	Zhbo_CloseClassMenu();
 	releaseClientState();
 	const Bool autopilot = s_autopilot.enabled;
 	const Bool showcase = s_autopilot.showcase;
@@ -385,6 +411,9 @@ void Zhbo_Reset()
 	ResetAutopilotTrackers();
 	ResetControlBarTrackers();
 	s_wheelAccum = 0.0f;
+	// A bar click from the leaving game must not arm a one-shot in the new one.
+	s_classPickLatch = 0;
+	s_classButtonPick = 0;
 	s_lastTick = zhbo_platform::now(); // else the first frame after the reset logs a bogus hitch
 	ZhboViewmodel_Reset();
 	zhbo_reset();
@@ -537,7 +566,7 @@ static void gatherClientInput(ZhboClientIn &in, Bool focused, Bool menuUp)
 			"A", "B", "C", "D", "E", "F", "G", "H", "I", "J", "K", "L", "M", "N", "O", "P", "Q",
 			"R", "S", "T", "U", "V", "W", "X", "Y", "Z", "1", "2", "3", "4", "5", "6", "ESC",
 			"SPACE", "TAB", "SHIFT", "CTRL", "LMB", "RMB", "UP", "DOWN", "LEFT", "RIGHT", "ENTER",
-			"BACKSPACE",
+			"BACKSPACE", "7", "8", "9", "0",
 		};
 		static_assert(sizeof(keyNames) / sizeof(keyNames[0]) == (int)zhbo_platform::keys::Key::COUNT, "key vocabulary must match");
 		char held[96];
@@ -568,8 +597,27 @@ static void gatherClientInput(ZhboClientIn &in, Bool focused, Bool menuUp)
 	}
 	in.wheel = s_wheelAccum;
 	s_wheelAccum = 0.0f;
+	// The class screens' pointer: the engine's own cursor (TheMouse keeps it in step with the
+	// system cursor, and it is free while a screen is up) and its held buttons. Bit 0 left, 1 right,
+	// 2 middle (matches zhbo_core::input::mouse_buttons).
+	if (TheMouse)
+	{
+		const MouseIO *m = TheMouse->getMouseStatus();
+		in.mouse_x = (float)m->pos.x;
+		in.mouse_y = (float)m->pos.y;
+		if (m->leftState == MBS_Down || m->leftState == MBS_DoubleClick)
+			in.mouse_buttons |= 1u;
+		if (m->rightState == MBS_Down || m->rightState == MBS_DoubleClick)
+			in.mouse_buttons |= 2u;
+		if (m->middleState == MBS_Down || m->middleState == MBS_DoubleClick)
+			in.mouse_buttons |= 4u;
+	}
 	in.class_pick_force = s_classPickLatch;
 	s_classPickLatch = 0;
+	// The class button the bar dispatched since the last frame (one-shot: the core turns it into
+	// the same choose_class pick the class screen sends).
+	in.class_button = s_classButtonPick;
+	s_classButtonPick = 0;
 	in.input_allowed = (focused && !menuUp) ? 1 : 0;
 	in.screen_w = (float)TheDisplay->getWidth();
 	in.screen_h = (float)TheDisplay->getHeight();
@@ -599,27 +647,46 @@ static void applyClientOutput(Bool focused, Bool menuUp)
 
 	// One-shot: the pick menu's class choice goes to the General (and to every client, since the
 	// message is part of the lockstep stream). A custom class rides along as its wire words
-	// (zhbo_core::classes' CustomClass::to_wire_words), appended after the index.
+	// (zhbo_core::classes' CustomClass::to_wire_words), appended after the index. The core's index
+	// is 1-based so 0 can mean "no pick"; the message carries the list's own 0-based index.
 	if (s_out.choose_class != 0)
 	{
 		GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_ZHBO_CHOOSE_CLASS);
 		msg->appendObjectIDArgument((ObjectID)s_out.choose_class_general);
-		msg->appendIntegerArgument((Int)s_out.choose_class);
+		const Int index = s_out.choose_class > 0 ? s_out.choose_class - 1 : s_out.choose_class;
+		msg->appendIntegerArgument(index);
 		if (s_out.choose_class_payload_len > 0)
 		{
 			msg->appendIntegerArgument((Int)s_out.choose_class_payload_len);
 			for (Int i = 0; i < s_out.choose_class_payload_len; ++i)
 				msg->appendIntegerArgument((Int)s_out.choose_class_payload[i]);
-			// A custom class pick from the create-a-class editor also saves it to the player's
-			// profile (the core returns the whole file's text; write it next to the log).
-			if (const char *profile = zhbo_profile_save(s_out.choose_class_payload, s_out.choose_class_payload_len))
-			{
-				writeProfileFile(profile);
-				logf("create-a-class: saved a custom class to the profile (%d words)", (int)s_out.choose_class_payload_len);
-			}
 		}
+		// The other half of the manual check: the bar's dispatch log names the button, this one
+		// proves the pick really went out (the sim's "assumed the ... class" line proves it landed).
+		if (s_out.choose_class == ZHBO_CHOOSE_CLASS_CUSTOM)
+			logf("choose class: General %u gets a custom class (%d words)", (unsigned)s_out.choose_class_general, (int)s_out.choose_class_payload_len);
+		else
+			logf("choose class: General %u gets preset %d", (unsigned)s_out.choose_class_general, index);
 		s_out.choose_class = 0;
 		s_out.choose_class_payload_len = 0;
+	}
+
+	// One-shot: the profile file changed (the editor's Save, or a class-screen delete/copy). The
+	// core already applied it; write the whole file, the same way the old save did. Picking a class
+	// alone never sets this, so re-picking a saved class no longer rewrites the profile.
+	if (s_out.save_profile != 0)
+	{
+		// A zero-word payload is a real write too: deleting the last class leaves an empty profile.
+		if (const char *profile = zhbo_profile_write(s_out.save_profile_payload, s_out.save_profile_payload_len))
+		{
+			writeProfileFile(profile);
+			if (s_out.save_profile == 1)
+				logf("create-a-class: saved a custom class to the profile (%d words)", (int)s_out.save_profile_payload_len);
+			else
+				logf("create-a-class: profile updated (%d words)", (int)s_out.save_profile_payload_len);
+		}
+		s_out.save_profile = 0;
+		s_out.save_profile_payload_len = 0;
 	}
 
 	// Never trap the cursor when the game is not the foreground window (Alt-Tab, background tests).
@@ -652,6 +719,9 @@ void Zhbo_ClientFrame()
 	}
 
 	autopilotFrame();
+	// A General with no class shows the class set instead of his own commands; once he has one (or
+	// Create a Class opened it for a re-pick) the bar tracks that.
+	zhboUpdateClassBar();
 
 	const Bool focused = zhbo_platform::windowFocused();
 	const Bool menuUp = TheInGameUI->isQuitMenuVisible() || TheGameLogic->isGamePaused();
@@ -728,7 +798,10 @@ void Zhbo_DrawHud()
 	advanceDrawFrame();
 	zhbo_client_draw_hud(rts::getObservedOrLocalPlayer()->getPlayerIndex());
 	if (!s_out.camera_override)
+	{
 		drawRtsAmmo();
+		drawClassButtons();
+	}
 	evictTexts();
 }
 
@@ -800,6 +873,21 @@ void Zhbo_OnZhboCommand(Object *obj, const CommandButton *button)
 		logf("General %u %s", (unsigned)obj->getID(), set.isEmpty() ? "closed the build menu" : "opened the build menu");
 		return;
 	}
+	if (name == "Command_ZHBO_ClassNext")
+	{
+		// The class set is one page (at most ten classes in page one's twelve class slots), so the
+		// bridge never places this button. Its INI entry stays (no INI churn for a button the bar
+		// no longer shows); if a stale set still showed it, never fall through to Take Control.
+		logLine("class menu: the class set is one page; ClassNext does nothing");
+		return;
+	}
+	if (name == "Command_ZHBO_ClassBack")
+	{
+		zhboCloseClassSet(obj);
+		return;
+	}
+	// Take Control: the class set (if it was up) hands the bar back to the General's own commands.
+	zhboCloseClassSet(obj);
 	Zhbo_RequestTakeControl(obj);
 }
 
@@ -852,5 +940,29 @@ void Zhbo_OnSwitchWeaponButton(const CommandButton *command)
 const WideChar *Zhbo_FetchString(const char *label)
 {
 	// Usable before Zhbo_Init: the string table is static data in the Rust core.
-	return (const WideChar *)zhbo_string(label);
+	const uint16_t *text = zhbo_string(label);
+	if (!text)
+		return nullptr;
+	// The ABI is UTF-16 (zhbo_core.h). WideChar is wchar_t: 16-bit on Windows, 32-bit on
+	// macOS/Linux. Reinterpreting the buffer on the 32-bit platforms reads two UTF-16 units as
+	// one WCHAR, runs past the 16-bit NUL terminator, and the font draws the garbage as "???".
+	if (sizeof(WideChar) == sizeof(uint16_t))
+		return reinterpret_cast<const WideChar *>(text);
+
+	// GameTextManager::fetch copies the text into a UnicodeString before returning, so one
+	// process-stable buffer is enough (and keeps the ABI unchanged).
+	static std::vector<WideChar> wide;
+	wide.clear();
+	for (const uint16_t *c = text; *c; ++c)
+	{
+		unsigned cp = *c;
+		if (cp >= 0xD800 && cp <= 0xDBFF && c[1] >= 0xDC00 && c[1] <= 0xDFFF)
+		{
+			cp = 0x10000u + ((cp - 0xD800u) << 10) + (c[1] - 0xDC00u);
+			++c;
+		}
+		wide.push_back(static_cast<WideChar>(cp));
+	}
+	wide.push_back(0);
+	return wide.data();
 }

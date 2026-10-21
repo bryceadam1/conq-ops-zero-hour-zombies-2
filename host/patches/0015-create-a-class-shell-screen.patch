@@ -1,0 +1,23 @@
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp
+--- a/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameClient/GUI/GUICallbacks/Menus/SkirmishGameOptionsMenu.cpp
+@@ -1021,13 +1021,14 @@
+ }
+ 
+ 
+-// BO2's create-a-class from the lobby: opens the class pick screen before the game starts, so the
+-// player's General (the FPS avatar) spawns with the chosen kit instead of the base one. The pick
+-// itself lands in the sim through MSG_ZHBO_CHOOSE_CLASS (see the Zhbo mod layer).
++// BO2's create-a-class from the lobby: opens the shell class screen (browse, edit, save, delete
++// and copy custom classes outside a match, like BO2's lobby create-a-class). The screen is the
++// bridge's modal window driven by the Rust core's menu frame (host/zhbo/ZhboMenu.cpp); the in-game
++// pick screen (the command bar's entry and the at-spawn pick) is a different path
++// (Zhbo_ShowClassPick).
+ static void handleCreateClassClick()
+ {
+-  // The class pick screen takes the mouse until the player picks or backs out.
+-  Zhbo_ShowClassPick();
++  Zhbo_OpenClassMenu();
+ }
+ 
+ // The mod never ships the base game's .wnd files, so SkirmishGameOptionsMenu.wnd may not carry a

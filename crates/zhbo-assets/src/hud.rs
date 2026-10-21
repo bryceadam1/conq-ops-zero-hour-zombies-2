@@ -1,5 +1,6 @@
-//! Builds `ConquerOps_BO2.big`: Black Ops II HUD art from the player's own install, laid out in one
-//! atlas texture with Zero Hour `MappedImage` definitions so the HUD can draw it by name.
+//! Builds `ConquerOps_BO2.big`: Black Ops II HUD art from the player's own install, laid out in
+//! 1024² atlas pages with Zero Hour `MappedImage` definitions so the HUD can draw it by name. The
+//! create-a-class icons and menu chrome live in [`crate::cac`] and join the same pages.
 //!
 //! Most sprites are found by their BO2 material name in the decrypted zones (`common_mp`,
 //! `code_post_gfx_mp`), whose image points into the `.ipak` packs; a few older ones by the image's
@@ -15,10 +16,11 @@ use zhbo_formats::iwi::Rgba;
 use zhbo_formats::t6zone::Zone;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive.
-pub const VERSION: u32 = 39;
+pub const VERSION: u32 = 41;
 pub use zhbo_core::names::BO2_ARCHIVE_NAME as ARCHIVE_NAME;
 pub use zhbo_core::names::BO2_ARCHIVE_VERSION_PATH as VERSION_FILE;
-const TEXTURE: &str = "zhbo_bo2_hud.tga";
+/// Stem of each page's TGA; every MappedImage names the page it was packed into.
+const TEXTURE: &str = "zhbo_bo2_hud";
 const ATLAS: u32 = 1024;
 
 /// Where a sprite's image comes from.
@@ -117,27 +119,37 @@ fn additive_to_alpha(img: &mut Rgba) {
     }
 }
 
-/// Shelf-pack sizes into the atlas; returns each top-left corner, or `None` if they don't fit.
-fn pack(sizes: &[(u32, u32)]) -> Option<Vec<(u32, u32)>> {
+/// Shelf-pack sizes into as many `ATLAS`-sized pages as they need; returns each sprite's page and
+/// top-left corner. Pages stay at 1024², well below the engine's texture ceiling, and the pack can
+/// grow with the catalog without shrinking every image.
+fn pack(sizes: &[(u32, u32)]) -> Option<Vec<(usize, (u32, u32))>> {
     let mut order: Vec<usize> = (0..sizes.len()).collect();
     order.sort_by_key(|&i| std::cmp::Reverse(sizes[i].1));
-    let mut at = vec![(0, 0); sizes.len()];
-    let (mut x, mut y, mut shelf) = (0, 0, 0);
+    let mut at = vec![(0, (0, 0)); sizes.len()];
+    let (mut page, mut x, mut y, mut shelf) = (0, 0, 0, 0);
     for i in order {
         let (w, h) = sizes[i];
+        if w > ATLAS || h > ATLAS {
+            return None;
+        }
         if x + w > ATLAS {
             x = 0;
             y += shelf;
             shelf = 0;
         }
-        if w > ATLAS || y + h > ATLAS {
-            return None;
+        if y + h > ATLAS {
+            page += 1;
+            (x, y, shelf) = (0, 0, 0);
         }
-        at[i] = (x, y);
+        at[i] = (page, (x, y));
         x += w;
         shelf = shelf.max(h);
     }
     Some(at)
+}
+
+fn texture_name(page: usize) -> String {
+    format!("{TEXTURE}_{page}.tga")
 }
 
 /// Read the sprites from the BO2 install at `bo2_dir` and return the archive bytes.
@@ -146,10 +158,11 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     let paks = crate::generals::Paks::open(bo2_dir)?;
     let mut zones: HashMap<&str, Zone> = HashMap::new();
     let mut found: Vec<(String, Rgba)> = Vec::new();
-    // The fixed sprites, then each converted weapon's own HUD icon (`ZHBO_BO2_Icon_<weapon>`, the
-    // lethal and tactical counters use them).
+    // The fixed HUD and create-a-class sprites, then each converted weapon's own HUD icon
+    // (`ZHBO_BO2_Icon_<weapon>`, the lethal and tactical counters use them).
     let mut wanted: Vec<(String, Source, u32)> = SPRITES
         .iter()
+        .chain(crate::cac::SPRITES.iter())
         .map(|s| (s.name.to_string(), match &s.source {
             Source::Hash(h) => Source::Hash(*h),
             Source::Material(z, m) => Source::Material(z, m),
@@ -168,25 +181,50 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             _ => {}
         }
     }
+    // One icon per attachment in the converted table, named by the core's short-name map. BO2's
+    // variants share an art set (`silencer_smg`/`silencer` are both the suppressor); an attachment
+    // the map has no art for is reported, never fatal.
+    let attachments = zhbo_formats::weapon::attachments(&zones["common_mp"]).map_err(|e| e.to_string())?;
+    let mut seen_atts: Vec<String> = Vec::new();
+    for att in attachments {
+        if att.kind == 0 || att.name.starts_with(',') {
+            continue;
+        }
+        let short = crate::weapons::short_name(&att.name);
+        if seen_atts.contains(&short) {
+            continue;
+        }
+        seen_atts.push(short.clone());
+        match (zhbo_core::hud::sprites::attachment_icon(&short), crate::cac::attachment_material(&short)) {
+            (Some(name), Some((zone, material))) => wanted.push((name.to_string(), Source::Material(zone, material), 64)),
+            _ => report.missing.push((format!("ZHBO_BO2_Attach_{short}"), "no BO2 icon material".into())),
+        }
+    }
     for (name, source, max) in &wanted {
         let hash = match source {
             Source::Hash(h) => Some(*h),
             Source::Material(zone, material) => {
+                // A missing menu zone leaves its sprites on the report's `missing` list instead of
+                // failing the whole conversion (the HUD has drawn fallbacks for every one).
                 if !zones.contains_key(zone) {
-                    zones.insert(zone, crate::generals::load_zone(bo2_dir, zone)?);
+                    if let Ok(z) = crate::generals::load_zone(bo2_dir, zone) {
+                        zones.insert(zone, z);
+                    }
                 }
-                zhbo_formats::xmodel::find_material(&zones[zone], material)
+                zones.get(zone)
+                    .and_then(|z| zhbo_formats::xmodel::find_material(z, material))
                     .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash)))
             }
             Source::Dynamic(material) => {
-                for zone in ["code_post_gfx_mp", "patch_mp"] {
+                // Weapon menu art lives in the MP patches; a few DLC guns only in `frontend`.
+                for zone in ["code_post_gfx_mp", "patch_mp", "frontend"] {
                     if !zones.contains_key(zone) {
                         if let Ok(z) = crate::generals::load_zone(bo2_dir, zone) {
                             zones.insert(zone, z);
                         }
                     }
                 }
-                ["common_mp", "code_post_gfx_mp", "patch_mp"]
+                ["common_mp", "code_post_gfx_mp", "patch_mp", "frontend"]
                     .iter()
                     .filter_map(|z| zones.get(z))
                     .filter_map(|z| zhbo_formats::xmodel::find_material(z, material))
@@ -203,49 +241,44 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             None => report.missing.push((name.clone(), "not in this install".into())),
         }
     }
-    // The General's command bar buttons: the loadout's BO2 icons on Zero Hour-sized tiles, and a
-    // BO2 reticle for Take Control (`data/.../ZHBO_A_Buttons.ini` has Zero Hour stand-ins).
-    let l = zhbo_core::weapons::Loadout::default();
-    let icon = |id: &str| found.iter().find(|(n, _)| *n == format!("ZHBO_BO2_Icon_{id}")).map(|(_, i)| i.clone());
-    let mut tiles = Vec::new();
-    for (name, id) in [("ZHBO_Button_Primary", &l.primary), ("ZHBO_Button_Secondary", &l.secondary), ("ZHBO_Button_Lethal", &l.lethal), ("ZHBO_Button_Tactical", &l.tactical)] {
-        if let Some(img) = icon(id) {
-            tiles.push((name.to_string(), button_tile(Some(&img), false)));
-        }
-    }
-    let dot = found.iter().find(|(n, _)| n == "ZHBO_BO2_RedDot").map(|(_, i)| i.clone());
-    tiles.push(("ZHBO_Button_TakeControl".to_string(), button_tile(dot.as_ref(), true)));
-    tiles.push(("ZHBO_Button_Back".to_string(), button_tile(Some(&back_arrow()), false)));
-    for (name, img) in tiles {
+    // The General's command bar buttons: the loadout's BO2 icons on Zero Hour-sized tiles, a BO2
+    // reticle for Take Control, and the class set's chrome (`data/.../ZHBO_A_Buttons.ini` keeps
+    // Zero Hour stand-ins for the no-archive path).
+    for (name, img) in button_tiles(&found) {
         report.found.push(name.clone());
         found.push((name, img));
     }
     // A pixel of padding around each sprite keeps filtering from bleeding between them.
     let sizes: Vec<(u32, u32)> = found.iter().map(|(_, i)| (i.width + 2, i.height + 2)).collect();
-    let places = pack(&sizes).ok_or("HUD sprites do not fit the atlas")?;
-    let mut atlas = Rgba { width: ATLAS, height: ATLAS, pixels: vec![0; (ATLAS * ATLAS * 4) as usize] };
+    let places = pack(&sizes).ok_or("a HUD sprite is larger than the 1024px atlas page")?;
+    let pages = places.iter().map(|(page, _)| *page).max().unwrap_or(0) + 1;
+    let mut atlases: Vec<Rgba> =
+        (0..pages).map(|_| Rgba { width: ATLAS, height: ATLAS, pixels: vec![0; (ATLAS * ATLAS * 4) as usize] }).collect();
     let mut ini = String::from(
         "; Generated by zhbo-assets from the player's own Call of Duty: Black Ops II install.\n\
          ; Private data: do not redistribute.\n\n",
     );
-    for ((s, img), (x, y)) in found.iter().zip(places) {
+    for ((s, img), (page, (x, y))) in found.iter().zip(places) {
         let at = (x + 1, y + 1);
-        blit(&mut atlas, img, at);
+        blit(&mut atlases[page], img, at);
         ini.push_str(&format!(
-            "MappedImage {}\n  Texture = {TEXTURE}\n  TextureWidth = {ATLAS}\n  TextureHeight = {ATLAS}\n  \
+            "MappedImage {}\n  Texture = {}\n  TextureWidth = {ATLAS}\n  TextureHeight = {ATLAS}\n  \
              Coords = Left:{} Top:{} Right:{} Bottom:{}\n  Status = NONE\nEnd\n\n",
             s,
+            texture_name(page),
             at.0,
             at.1,
             at.0 + img.width - 1, // Zero Hour's Coords are inclusive
             at.1 + img.height - 1
         ));
     }
-    let mut files = vec![
-        (format!("Art\\Textures\\{TEXTURE}"), images::tga_bytes(&atlas)),
-        ("Data\\INI\\MappedImages\\HandCreated\\ZHBO_BO2.ini".to_string(), ini.into_bytes()),
-        (VERSION_FILE.to_string(), version_stamp().into_bytes()),
-    ];
+    let mut files: Vec<(String, Vec<u8>)> = atlases
+        .iter()
+        .enumerate()
+        .map(|(page, atlas)| (format!("Art\\Textures\\{}", texture_name(page)), images::tga_bytes(atlas)))
+        .collect();
+    files.push(("Data\\INI\\MappedImages\\HandCreated\\ZHBO_BO2.ini".to_string(), ini.into_bytes()));
+    files.push((VERSION_FILE.to_string(), version_stamp().into_bytes()));
     // The Generals as BO2 soldiers. On failure they keep their Zero Hour art.
     report.generals = Some(match crate::generals::files(bo2_dir) {
         Ok((general_files, summary)) => {
@@ -328,6 +361,29 @@ fn button_tile(art: Option<&Rgba>, reticle: bool) -> Rgba {
     t
 }
 
+/// The command bar's generated tiles. The four loadout tiles carry the default kit's BO2 icons and
+/// only exist when those icons converted; the rest are chrome. `ZHBO_Button_ClassTile` is a plain
+/// face because the bridge draws each class's kit over it every frame — it must never fall back to
+/// a base-game cameo (`ZHBO_A_Buttons.ini`'s hand-set cell), which read as parts of unrelated unit
+/// art under the kit. `ZHBO_Button_ChooseClass` carries BO2's create-a-class grid pattern; its
+/// base-game rect straddled two cells of `SAUserInterface512_005.tga`, stitching two cameos.
+fn button_tiles(found: &[(String, Rgba)]) -> Vec<(String, Rgba)> {
+    let l = zhbo_core::weapons::Loadout::default();
+    let art = |name: &str| found.iter().find(|(n, _)| n == name).map(|(_, i)| i.clone());
+    let mut tiles = Vec::new();
+    for (name, id) in [("ZHBO_Button_Primary", &l.primary), ("ZHBO_Button_Secondary", &l.secondary), ("ZHBO_Button_Lethal", &l.lethal), ("ZHBO_Button_Tactical", &l.tactical)] {
+        if let Some(img) = art(&format!("ZHBO_BO2_Icon_{id}")) {
+            tiles.push((name.to_string(), button_tile(Some(&img), false)));
+        }
+    }
+    let dot = art("ZHBO_BO2_RedDot");
+    tiles.push(("ZHBO_Button_TakeControl".to_string(), button_tile(dot.as_ref(), true)));
+    tiles.push(("ZHBO_Button_Back".to_string(), button_tile(Some(&back_arrow()), false)));
+    tiles.push(("ZHBO_Button_ClassTile".to_string(), button_tile(None, false)));
+    tiles.push(("ZHBO_Button_ChooseClass".to_string(), button_tile(art("ZHBO_BO2_MenuGrid").as_ref(), false)));
+    tiles
+}
+
 fn blit(dst: &mut Rgba, src: &Rgba, at: (u32, u32)) {
     for y in 0..src.height.min(dst.height.saturating_sub(at.1)) {
         let s = (y * src.width * 4) as usize;
@@ -361,17 +417,53 @@ pub fn archive_version(path: &Path) -> Option<u32> {
 mod tests {
     use super::*;
 
+    fn assert_packed(sizes: &[(u32, u32)], at: &[(usize, (u32, u32))]) {
+        for (i, ((page, a), sa)) in at.iter().zip(sizes).enumerate() {
+            assert!(a.0 + sa.0 <= ATLAS && a.1 + sa.1 <= ATLAS, "{page}:{a:?} out of bounds");
+            for ((other_page, b), sb) in at[i + 1..].iter().zip(&sizes[i + 1..]) {
+                if page != other_page {
+                    continue;
+                }
+                let overlap = a.0 < b.0 + sb.0 && b.0 < a.0 + sa.0 && a.1 < b.1 + sb.1 && b.1 < a.1 + sa.1;
+                assert!(!overlap, "{page}:{a:?} overlaps {b:?}");
+            }
+        }
+    }
+
     #[test]
     fn packing_fits_without_overlap() {
         let sizes: Vec<(u32, u32)> = vec![(514, 66), (258, 130), (258, 130), (258, 130), (130, 258), (66, 66), (34, 66), (18, 18)];
         let at = pack(&sizes).unwrap();
-        for (i, (a, sa)) in at.iter().zip(&sizes).enumerate() {
-            assert!(a.0 + sa.0 <= ATLAS && a.1 + sa.1 <= ATLAS);
-            for (b, sb) in at[i + 1..].iter().zip(&sizes[i + 1..]) {
-                let overlap = a.0 < b.0 + sb.0 && b.0 < a.0 + sa.0 && a.1 < b.1 + sb.1 && b.1 < a.1 + sa.1;
-                assert!(!overlap, "{a:?} overlaps {b:?}");
-            }
+        assert_packed(&sizes, &at);
+    }
+
+    #[test]
+    fn packing_opens_a_new_page_when_the_atlas_is_full() {
+        let sizes: Vec<(u32, u32)> = vec![(ATLAS, ATLAS), (ATLAS, ATLAS)];
+        let at = pack(&sizes).unwrap();
+        assert_eq!(at[0].0, 0);
+        assert_eq!(at[1].0, 1);
+        assert_eq!(texture_name(at[0].0), "zhbo_bo2_hud_0.tga");
+        assert_eq!(texture_name(at[1].0), "zhbo_bo2_hud_1.tga");
+        assert_packed(&sizes, &at);
+    }
+
+    #[test]
+    fn the_cac_pack_fits_pages() {
+        // The fixed sprites at their maximum size, plus a full converted weapon list's icons and
+        // the command bar tiles; the pack must land every one of them, on one or more pages.
+        let mut sizes: Vec<(u32, u32)> = SPRITES
+            .iter()
+            .chain(crate::cac::SPRITES.iter())
+            .map(|s| (s.max + 2, s.max + 2))
+            .collect();
+        for _ in 0..128 {
+            sizes.push((66, 66));
         }
+        let at = pack(&sizes).unwrap();
+        assert_eq!(at.len(), sizes.len(), "every wanted sprite is placed");
+        assert_packed(&sizes, &at);
+        assert!(at.iter().any(|(page, _)| *page > 0), "the pack outgrew the old single atlas");
     }
 
     #[test]
@@ -387,6 +479,47 @@ mod tests {
     }
 
     #[test]
+    fn the_class_bar_buttons_are_generated_plain_tiles() {
+        // The class buttons draw their kit over the tile every frame; the Create a Class button's
+        // base-game rect straddled two cells of SAUserInterface512_005 (the tail of one cameo and
+        // the head of the next). Both must come from the converter, not from that hand-set sheet.
+        let tiles = button_tiles(&[]);
+        let names: Vec<&str> = tiles.iter().map(|(n, _)| n.as_str()).collect();
+        assert!(names.contains(&"ZHBO_Button_ClassTile"));
+        assert!(names.contains(&"ZHBO_Button_ChooseClass"));
+        let class = &tiles.iter().find(|(n, _)| n == "ZHBO_Button_ClassTile").unwrap().1;
+        assert_eq!((class.width, class.height), TILE);
+        // A plain face: only the dark gradient, so the kit reads over it.
+        assert!(class.pixels.chunks(4).all(|p| p[3] == 255 && p[0] < 60 && p[1] < 60 && p[2] < 60));
+    }
+
+    #[test]
+    fn every_command_button_image_is_a_generated_tile() {
+        // A command button whose ButtonImage only exists as a hand-set rect in ZHBO_A_Buttons.ini
+        // samples a cameo cell, not a button face: that is how the class buttons painted base-game
+        // soldier art under their kit and how Create a Class straddled two cells. Only the Build
+        // menu's dozer cameo is deliberately Zero Hour art.
+        const BUTTONS: &str = include_str!("../../../data/Data/INI/CommandButton/ZHBO_CommandButtons.ini");
+        let mut generated: Vec<String> = button_tiles(&[]).into_iter().map(|(n, _)| n).collect();
+        // The four loadout tiles need their BO2 icons, which the default kit always converts.
+        generated.extend(["ZHBO_Button_Primary", "ZHBO_Button_Secondary", "ZHBO_Button_Lethal", "ZHBO_Button_Tactical"].map(String::from));
+        let mut checked = 0;
+        for line in BUTTONS.lines() {
+            let Some((key, value)) = line.split_once('=') else { continue };
+            let name = value.trim();
+            if key.trim() != "ButtonImage" || !name.starts_with("ZHBO_Button_") {
+                continue;
+            }
+            checked += 1;
+            assert!(
+                generated.iter().any(|g| g == name) || name == "ZHBO_Button_Build",
+                "{name} has no generated tile: its base-game rect is a cameo cell, not a button face"
+            );
+        }
+        assert!(checked > 10, "the command button INI was found and parsed ({checked})");
+    }
+
+    #[test]
     fn additive_art_gets_alpha() {
         let mut img = Rgba { width: 2, height: 1, pixels: vec![0, 0, 0, 255, 100, 50, 0, 255] };
         additive_to_alpha(&mut img);
@@ -395,10 +528,13 @@ mod tests {
 
     #[test]
     fn spec_matches_the_names_the_hud_draws() {
-        let mut spec: Vec<&str> = SPRITES.iter().map(|s| s.name).collect();
-        let mut hud: Vec<&str> = zhbo_core::hud::sprites::ALL.to_vec();
-        spec.sort();
-        hud.sort();
+        let mut spec: Vec<&str> = SPRITES.iter().chain(crate::cac::SPRITES.iter()).map(|s| s.name).collect();
+        // Attachment icons are made from the catalog at build time, so their names are not in
+        // either fixed sprite list (the core lists them for the class screen).
+        let mut hud: Vec<&str> =
+            zhbo_core::hud::sprites::ALL.iter().copied().filter(|n| !n.contains("_Attach_")).collect();
+        spec.sort_unstable();
+        hud.sort_unstable();
         assert_eq!(spec, hud);
     }
 

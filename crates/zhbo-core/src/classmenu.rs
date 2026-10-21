@@ -1,8 +1,9 @@
 //! BO2's Create-a-Class editor: the Pick-10 slot editor behind the "CREATE A CLASS" screen.
 //!
-//! The pick screen (`hud::draw_class_pick`) is the *quick* choice between shipped presets; this
-//! module is the full editor BO2 opens from the lobby's Create-a-Class button. It is a
-//! keyboard-driven state machine over the Pick-10 model:
+//! The pick screen (`classui::draw_pick`) is the *quick* choice between shipped presets and the
+//! player's saved classes; this module is the full editor BO2 opens from the shell screen's
+//! CREATE A CLASS row (a match is pick-only). It is a keyboard- and pointer-driven state machine
+//! over the Pick-10 model:
 //!
 //! * **10 points** per class. Every chosen element — a primary or secondary weapon, each
 //!   attachment, the lethal, the tactical, each perk, each wildcard — costs 1. The counter shows
@@ -24,9 +25,9 @@
 //! registry's entries resolve to and the same wire format the pick message carries — so a class
 //! built here needs no new transport: the sim receives its spec and applies it as-is.
 
-use crate::classes::CustomClass;
+use crate::classes::{self, CustomClass};
 use crate::input::Key;
-use crate::weapons::{self, Class as WeaponClass, Perk};
+use crate::weapons::{self, Class as WeaponClass, Perk, WeaponDef};
 
 /// The Pick-10 budget: ten points per class, exactly BO2's.
 pub const PICK_10: i32 = 10;
@@ -56,14 +57,16 @@ pub enum Wildcard {
 }
 
 impl Wildcard {
-    /// All eight, BO2's order.
+    /// All eight, in BO2's display order (`f-wildcards/001`: the three Greed cards, Overkill,
+    /// Secondary Gunfighter, Primary Gunfighter, Tactician, Danger Close). This order is the
+    /// bonus-card picker's presentation order; the profile stores the ids, not the index.
     pub const ALL: [Wildcard; 8] = [
         Wildcard::Perk1Greed,
         Wildcard::Perk2Greed,
         Wildcard::Perk3Greed,
         Wildcard::Overkill,
-        Wildcard::PrimaryGunfighter,
         Wildcard::SecondaryGunfighter,
+        Wildcard::PrimaryGunfighter,
         Wildcard::Tactician,
         Wildcard::DangerClose,
     ];
@@ -175,16 +178,16 @@ impl Slot {
     pub fn label(self) -> &'static str {
         match self {
             Slot::Name => "CLASS NAME",
-            Slot::Primary => "PRIMARY WEAPON",
+            Slot::Primary => "PRIMARY",
             Slot::PrimaryAtts => "ATTACHMENTS",
-            Slot::Secondary => "SECONDARY WEAPON",
+            Slot::Secondary => "SECONDARY",
             Slot::SecondaryAtts => "ATTACHMENTS",
             Slot::Lethal => "LETHAL",
             Slot::Tactical => "TACTICAL",
             Slot::Perk1 | Slot::Perk1b => "PERK 1",
             Slot::Perk2 | Slot::Perk2b => "PERK 2",
             Slot::Perk3 | Slot::Perk3b => "PERK 3",
-            Slot::Wildcards => "WILDCARDS",
+            Slot::Wildcards => "BONUS CARDS",
             Slot::Save => "SAVE CLASS",
         }
     }
@@ -300,26 +303,33 @@ impl Draft {
         PICK_10 - self.spent()
     }
 
-    /// Whether the draft's choices fit the budget (never over ten).
+    /// Whether the draft's choices fit the budget (never over ten) and the three-card cap.
     pub fn valid(&self) -> bool {
-        self.remaining() >= 0
+        self.remaining() >= 0 && self.wildcards.len() <= classes::MAX_BONUS_CARDS
     }
 
-    /// The most attachments the primary may carry: 2, or 3 with Primary Gunfighter.
+    /// Whether every bonus-card slot is taken (`maxBonusCards`), so another card is denied.
+    pub fn wildcards_full(&self) -> bool {
+        self.wildcards.len() >= classes::MAX_BONUS_CARDS
+    }
+
+    /// The most attachments the primary may carry: BO2's two (`maxAttachments`), or three with
+    /// Primary Gunfighter.
     pub fn primary_att_max(&self) -> usize {
         if self.wildcards.contains(&Wildcard::PrimaryGunfighter) {
-            3
+            classes::MAX_ATTACHMENTS + 1
         } else {
-            2
+            classes::MAX_ATTACHMENTS
         }
     }
 
-    /// The most attachments the secondary may carry: 1, or 2 with Secondary Gunfighter.
+    /// The most attachments the secondary may carry: one (BO2's secondary slot takes one fewer),
+    /// or two with Secondary Gunfighter.
     pub fn secondary_att_max(&self) -> usize {
         if self.wildcards.contains(&Wildcard::SecondaryGunfighter) {
-            2
+            classes::MAX_ATTACHMENTS
         } else {
-            1
+            classes::MAX_ATTACHMENTS - 1
         }
     }
 
@@ -377,6 +387,16 @@ impl Draft {
             perks: self.perks_in_order().iter().map(|p| p.def().id.to_string()).collect(),
             reserve: self.reserve,
         }
+    }
+
+    /// Build a draft from a *stored* class, repaired first: profile entries are loaded repaired
+    /// ([`crate::profile`]) and a class can also arrive from an older build or a hand edit, so
+    /// re-opening one in the editor shows exactly the class the game would apply — never a draft
+    /// holding an unknown weapon or more than ten points (`classrepair`, BO2's `checkclasses.lua`).
+    pub fn from_stored(c: &CustomClass) -> Draft {
+        let mut c = c.clone();
+        let _ = crate::classrepair::repair(&mut c);
+        Draft::from_custom(&c)
     }
 
     /// Build a draft from a saved class (re-opening a profile entry in the editor).
@@ -480,11 +500,50 @@ pub struct Editor {
     /// Whether the class-name row has text entry (BO2's name field): printable keys edit the name
     /// instead of moving the highlight, and Enter/Escape leave it.
     pub naming: bool,
+    /// One-shot: the last confirm was refused (over budget, or an attachment at its cap). The
+    /// caller plays BO2's deny cue and clears this; the state itself stays pure.
+    pub denied: bool,
+}
+
+/// The editor's answer to one pointer frame, already hit-tested by the view (the editor knows
+/// nothing about pixels). Hovering moves the highlight; a click confirms the hovered row, exactly
+/// as Enter does on it; the wheel walks the list.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PointerEvent {
+    /// Hovered slot row (an index into [`Editor::slots`]).
+    pub slot: Option<usize>,
+    /// Hovered option row (an index into [`Editor::options`]) while a list is open.
+    pub option: Option<usize>,
+    /// The left button went down this frame.
+    pub click: bool,
+    /// Wheel notches this frame (positive scrolls down the list).
+    pub wheel: i32,
+    /// The cursor moved this frame. Only then does a hover move the highlight (a resting cursor
+    /// must not fight the keyboard); a click always acts on the row under it.
+    pub moved: bool,
+}
+
+impl PointerEvent {
+    /// Whether this frame carries a pointer action at all (click or wheel).
+    pub fn is_action(&self) -> bool {
+        self.click || self.wheel != 0
+    }
+}
+
+/// What [`Editor::apply`] did with an option.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ApplyResult {
+    /// The draft changed.
+    Changed,
+    /// The option was already the draft's value (picking it again).
+    NoChange,
+    /// The choice would break the budget or a cap: the draft is untouched.
+    Denied,
 }
 
 impl Editor {
     pub fn new(draft: Draft) -> Editor {
-        Editor { draft, slot: Slot::Primary, option: 0, picking: false, naming: false }
+        Editor { draft, slot: Slot::Primary, option: 0, picking: false, naming: false, denied: false }
     }
 
     /// The rows to draw and walk, in order: [`Slot::ALL`] with a second perk row spliced in after a
@@ -500,6 +559,11 @@ impl Editor {
             }
         }
         out
+    }
+
+    /// The highlighted slot's index in [`Editor::slots`], for the view's scrolling.
+    pub fn slot_index(&self) -> usize {
+        self.slots().iter().position(|s| *s == self.slot).unwrap_or(0)
     }
 
     /// The option list for the highlighted slot: display strings, in the order the arrows walk.
@@ -561,6 +625,38 @@ impl Editor {
             Slot::Wildcards => Wildcard::ALL.get(i).is_some_and(|w| self.draft.wildcards.contains(w)),
             Slot::Save => false,
         }
+    }
+
+    /// The weapon option `i` of the highlighted slot selects, for the view's icon and stat bars.
+    /// `None` when the slot does not list guns (perks, attachments, wildcards).
+    pub fn option_weapon(&self, i: usize) -> Option<&'static crate::weapons::WeaponDef> {
+        let id = match self.slot {
+            Slot::Primary => gun_ids(&PRIMARY_CLASSES).get(i).copied(),
+            Slot::Secondary => gun_ids(&self.secondary_classes()).get(i).copied(),
+            Slot::Lethal => equipment_ids(WeaponClass::Lethal).get(i).copied(),
+            Slot::Tactical => equipment_ids(WeaponClass::Tactical).get(i).copied(),
+            _ => None,
+        }?;
+        Some(weapons::weapon(id))
+    }
+
+    /// The attachment short option `i` of an attachment slot, for its icon.
+    pub fn option_attachment(&self, i: usize) -> Option<&'static str> {
+        match self.slot {
+            Slot::PrimaryAtts => attachment_shorts(&self.draft.primary, &self.draft.primary_atts).get(i).copied(),
+            Slot::SecondaryAtts => attachment_shorts(&self.draft.secondary, &self.draft.secondary_atts).get(i).copied(),
+            _ => None,
+        }
+    }
+
+    /// The perk option `i` of a perk row, for its icon.
+    pub fn option_perk(&self, i: usize) -> Option<Perk> {
+        self.slot.perk_tier().and_then(|tier| perk_list(tier).get(i).copied())
+    }
+
+    /// The wildcard option `i` of the wildcard slot, for its icon.
+    pub fn option_wildcard(&self, i: usize) -> Option<Wildcard> {
+        (self.slot == Slot::Wildcards).then(|| Wildcard::ALL.get(i).copied()).flatten()
     }
 }
 
@@ -669,8 +765,8 @@ fn perk_options(tier: u8) -> Vec<String> {
 }
 
 /// A key edge this frame (fresh press): the editor's input is edge-driven like the pick screen.
-/// `typed` is the fresh presses of the printable keys (A-Z and Space), in `Key::ALL` order, so the
-/// name row can append them; it is empty outside text entry.
+/// `typed` is the fresh presses of the printable keys (A-Z, 0-9 and Space), in `Key::ALL` order, so
+/// the name row can append them; it is empty outside text entry.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Edges {
     pub up: bool,
@@ -701,14 +797,25 @@ impl Edges {
     }
 }
 
-/// Whether a key types a character into the class-name field: A-Z and Space. `char_of` gives it.
+/// Whether a key types a character into the class-name field: A-Z, 0-9 and Space. `char_of` gives it.
 fn is_typable(k: Key) -> bool {
     char_of(k).is_some()
 }
 
-/// The character a key types into the name field: A-Z as uppercase letters, Space as a space.
+/// The character a key types into the name field. BO2's class names are uppercase letters, digits
+/// and the space: A-Z as uppercase letters, 0-9, and Space.
 fn char_of(k: Key) -> Option<char> {
     match k {
+        Key::Key0 => Some('0'),
+        Key::Key1 => Some('1'),
+        Key::Key2 => Some('2'),
+        Key::Key3 => Some('3'),
+        Key::Key4 => Some('4'),
+        Key::Key5 => Some('5'),
+        Key::Key6 => Some('6'),
+        Key::Key7 => Some('7'),
+        Key::Key8 => Some('8'),
+        Key::Key9 => Some('9'),
         Key::A => Some('A'),
         Key::B => Some('B'),
         Key::C => Some('C'),
@@ -755,6 +862,7 @@ impl Editor {
     /// Fold one frame's key edges into the session. `valid` gates the save (the caller's own check
     /// of the budget, so the UI can also show it).
     pub fn step(&mut self, edges: Edges) -> Outcome {
+        self.denied = false;
         if self.naming {
             return self.step_naming(edges);
         }
@@ -771,21 +879,96 @@ impl Editor {
             self.option = 0;
         }
         if edges.confirm {
-            // The Save row has no list to open: confirming it leaves the editor, the caller saving
-            // the class (it gates on the draft's validity).
-            if self.slot == Slot::Save {
-                return Outcome::Save;
-            }
-            // The name row opens text entry instead of an option list.
-            if self.slot == Slot::Name {
-                self.naming = true;
-                return Outcome::Continue;
-            }
-            self.picking = true;
-            self.option = self.current_option_index();
+            return self.confirm();
         }
         if edges.cancel {
             return Outcome::Cancel;
+        }
+        Outcome::Continue
+    }
+
+    /// Confirm the highlighted row, the shared body of Enter and a click on a row: Save leaves the
+    /// editor (only when the draft fits the budget), the name row starts text entry, everything else
+    /// opens its option list on the current choice.
+    fn confirm(&mut self) -> Outcome {
+        if self.slot == Slot::Save {
+            // BO2 refuses an over-budget save; surface it rather than closing silently.
+            if self.draft.valid() {
+                return Outcome::Save;
+            }
+            self.denied = true;
+            return Outcome::Continue;
+        }
+        if self.slot == Slot::Name {
+            self.naming = true;
+            return Outcome::Continue;
+        }
+        self.picking = true;
+        self.option = self.current_option_index();
+        Outcome::Continue
+    }
+
+    /// Fold one pointer frame (hover/click/wheel, already hit-tested by the view) into the session.
+    /// Pure like [`Editor::step`]; a click on a row is Enter on it. A *hover* only moves the
+    /// highlight on a real cursor move, so keyboard navigation is never overridden by the mouse
+    /// resting somewhere; a click always acts on the row under the cursor.
+    pub fn step_pointer(&mut self, pointer: PointerEvent) -> Outcome {
+        self.denied = false;
+        if self.naming {
+            // Clicking away leaves the name field; it never cancels the editor.
+            if pointer.click {
+                self.naming = false;
+            }
+            return Outcome::Continue;
+        }
+        if self.picking {
+            let n = self.options().len();
+            if pointer.wheel != 0 && n > 0 {
+                self.option = (self.option as i32 + pointer.wheel).rem_euclid(n as i32) as usize;
+            }
+            if pointer.moved {
+                if let Some(i) = pointer.option {
+                    if i < n {
+                        self.option = i;
+                    }
+                }
+            }
+            if pointer.click {
+                if let Some(i) = pointer.option {
+                    if i < n {
+                        if self.apply(i) == ApplyResult::Denied {
+                            self.denied = true;
+                        }
+                        self.picking = false;
+                    }
+                } else if let Some(i) = pointer.slot {
+                    // A click outside the open list returns to the row walk and confirms that row.
+                    if let Some(slot) = self.slots().get(i).copied() {
+                        self.slot = slot;
+                        self.option = 0;
+                        self.picking = false;
+                        return self.confirm();
+                    }
+                }
+            }
+            return Outcome::Continue;
+        }
+        if pointer.wheel != 0 {
+            let list = self.slots();
+            let i = list.iter().position(|s| *s == self.slot).unwrap_or(0) as i32;
+            self.slot = list[(i + pointer.wheel).rem_euclid(list.len() as i32) as usize];
+            self.option = 0;
+        }
+        if pointer.moved || pointer.click {
+            if let Some(i) = pointer.slot {
+                if let Some(slot) = self.slots().get(i).copied() {
+                    self.slot = slot;
+                    self.option = 0;
+                }
+            }
+        }
+        if pointer.click && pointer.slot.is_some() {
+            return self.confirm();
         }
         Outcome::Continue
     }
@@ -838,7 +1021,9 @@ impl Editor {
             self.option = (self.option + 1) % n;
         }
         if edges.confirm {
-            self.apply(self.option);
+            if self.apply(self.option) == ApplyResult::Denied {
+                self.denied = true;
+            }
             self.picking = false;
         }
         if edges.cancel {
@@ -875,10 +1060,29 @@ impl Editor {
         }
     }
 
-    /// Apply option `i` of the highlighted slot to the draft. Weapon picks drop attachments the new
-    /// weapon does not offer; attachment picks toggle; perk picks set the tier row; wildcard picks
-    /// toggle.
-    fn apply(&mut self, i: usize) {
+    /// Apply option `i` of the highlighted slot to the draft. A choice that would spend an
+    /// eleventh Pick-10 point, or add an attachment past the gun's cap, is refused and the draft
+    /// is left exactly as it was (BO2's deny feedback reads this).
+    fn apply(&mut self, i: usize) -> ApplyResult {
+        let before = self.draft.clone();
+        if !self.apply_option(i) {
+            return ApplyResult::Denied;
+        }
+        if !self.draft.valid() {
+            self.draft = before;
+            return ApplyResult::Denied;
+        }
+        if self.draft == before {
+            ApplyResult::NoChange
+        } else {
+            ApplyResult::Changed
+        }
+    }
+
+    /// Apply option `i` without the budget check; false means the option itself was refused (an
+    /// attachment at its cap). Weapon picks drop attachments the new weapon does not offer;
+    /// attachment picks toggle; perk picks set the tier row; wildcard picks toggle.
+    fn apply_option(&mut self, i: usize) -> bool {
         match self.slot {
             Slot::Name => {}
             Slot::Primary => {
@@ -899,14 +1103,18 @@ impl Editor {
                 let shorts = attachment_shorts(&self.draft.primary, &self.draft.primary_atts);
                 let max = self.draft.primary_att_max();
                 if let Some(short) = shorts.get(i).copied() {
-                    toggle_att(&mut self.draft.primary_atts, short, max);
+                    if !toggle_att(&mut self.draft.primary_atts, short, max) {
+                        return false;
+                    }
                 }
             }
             Slot::SecondaryAtts => {
                 let shorts = attachment_shorts(&self.draft.secondary, &self.draft.secondary_atts);
                 let max = self.draft.secondary_att_max();
                 if let Some(short) = shorts.get(i).copied() {
-                    toggle_att(&mut self.draft.secondary_atts, short, max);
+                    if !toggle_att(&mut self.draft.secondary_atts, short, max) {
+                        return false;
+                    }
                 }
             }
             Slot::Lethal => {
@@ -928,11 +1136,16 @@ impl Editor {
             }
             Slot::Wildcards => {
                 if let Some(w) = Wildcard::ALL.get(i).copied() {
-                    self.toggle_wildcard(w);
+                    // A fourth bonus card is refused (BO2's `maxBonusCards`), so the editor turns it
+                    // into the deny cue and leaves the draft alone.
+                    if !self.toggle_wildcard(w) {
+                        return false;
+                    }
                 }
             }
             Slot::Save => {}
         }
+        true
     }
 
     /// Set the highlighted row's perk in a tier. The base row and the Greed row hold separate picks;
@@ -947,8 +1160,9 @@ impl Editor {
     }
 
     /// Toggle a wildcard on or off; turning one off drops the element it enabled (the third primary
-    /// attachment, the second secondary attachment, a tier's Greed perk).
-    fn toggle_wildcard(&mut self, w: Wildcard) {
+    /// attachment, the second secondary attachment, a tier's Greed perk). False when a fourth card
+    /// is refused: BO2 allows `maxBonusCards` (3) per class, so the option is denied untouched.
+    fn toggle_wildcard(&mut self, w: Wildcard) -> bool {
         if let Some(pos) = self.draft.wildcards.iter().position(|x| *x == w) {
             self.draft.wildcards.remove(pos);
             match w {
@@ -969,8 +1183,12 @@ impl Editor {
                     }
                 }
             }
+            true
+        } else if self.draft.wildcards_full() {
+            false
         } else {
             self.draft.wildcards.push(w);
+            true
         }
     }
 
@@ -985,23 +1203,55 @@ impl Editor {
     }
 }
 
-/// Toggle an attachment short in the list, capped at `max`.
-fn toggle_att(atts: &mut Vec<String>, short: &str, max: usize) {
+/// Toggle an attachment short in the list, capped at `max`. False means it could not be added
+/// (the cap is reached): the caller turns that into the editor's deny cue.
+fn toggle_att(atts: &mut Vec<String>, short: &str, max: usize) -> bool {
     if let Some(pos) = atts.iter().position(|s| s == short) {
         atts.remove(pos);
+        true
     } else if atts.len() < max {
         atts.push(short.to_string());
+        true
+    } else {
+        false
     }
+}
+
+/// The catalog's player-facing create-a-class entries: base weapons and offhands only, once per
+/// display name. BO2 lists each weapon once; the converted table also carries the alt-mode
+/// variants an attachment adds (`gl_an94_mp`, `sf_an94_mp`, a second optic), which are not
+/// classes of their own. `WeaponDef::alt` is the table's alt-variant marker (the weapon the entry
+/// toggles back to); a base also lists the variants in `alt_modes`, so either side catches one.
+/// Every returned id is a base id, which is what the converter draws an icon for
+/// (`ZHBO_BO2_Icon_<base id>`).
+fn cac_entries() -> Vec<&'static WeaponDef> {
+    let all = weapons::catalog().all();
+    let mut seen: Vec<&str> = Vec::new();
+    all.iter()
+        .copied()
+        .filter(|d| d.alt.is_empty())
+        .filter(|d| !all.iter().any(|base| base.alt_modes.iter().any(|(_, alt)| alt == &d.id)))
+        .filter(|d| {
+            // Safety net: no weapon may appear twice under one display name.
+            let name = d.display_name.as_str();
+            if seen.contains(&name) {
+                false
+            } else {
+                seen.push(name);
+                true
+            }
+        })
+        .collect()
 }
 
 /// The gun ids of the categories, in the same order as [`weapon_options`].
 fn gun_ids(classes: &[WeaponClass]) -> Vec<&'static str> {
-    weapons::catalog().all().iter().filter(|d| classes.contains(&d.class)).map(|d| d.id.as_str()).collect()
+    cac_entries().into_iter().filter(|d| classes.contains(&d.class)).map(|d| d.id.as_str()).collect()
 }
 
 /// The equipment ids of a class.
 fn equipment_ids(class: WeaponClass) -> Vec<&'static str> {
-    weapons::catalog().all().iter().filter(|d| d.class == class).map(|d| d.id.as_str()).collect()
+    cac_entries().into_iter().filter(|d| d.class == class).map(|d| d.id.as_str()).collect()
 }
 
 /// The attachment shorts the weapon offers.
@@ -1052,392 +1302,7 @@ fn base_perk_slot(tier: u8) -> Slot {
     }
 }
 
+/// The editor's tests live in their own file: `classmenu.rs` is at the module-size limit.
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn the_default_draft_spends_the_base_kit_points() {
-        let d = Draft::default();
-        // 2 weapons + 2 primary attachments + lethal + tactical + 3 perks = 9; one point free.
-        assert_eq!(d.spent(), 9);
-        assert_eq!(d.remaining(), 1);
-        assert!(d.valid());
-        assert_eq!(d.primary_id(), "an94_mp+gl+reflex");
-        assert_eq!(d.secondary_id(), "fnp45_mp");
-    }
-
-    #[test]
-    fn every_wildcard_costs_a_point_and_round_trips_through_its_id() {
-        for w in Wildcard::ALL {
-            assert_eq!(Wildcard::by_id(w.id()), Some(w));
-            assert!(!w.name().is_empty());
-        }
-        assert_eq!(Wildcard::Perk1Greed.greed_tier(), Some(1));
-        assert_eq!(Wildcard::Overkill.greed_tier(), None);
-    }
-
-    #[test]
-    fn a_weapon_pick_drops_attachments_the_new_weapon_does_not_offer() {
-        let mut e = Editor::new(Draft::default());
-        e.slot = Slot::Primary;
-        // The built-in table's primary list: the AN-94 (rifle) and its Grenade Launcher variant.
-        // Pick the launcher variant; the AN-94's gl/reflex are not offered by it.
-        let ids = gun_ids(&PRIMARY_CLASSES);
-        let launcher = ids.iter().position(|id| *id == "gl_an94_mp").expect("the launcher variant is in the catalog");
-        e.picking = true;
-        e.option = launcher;
-        e.step(Edges { confirm: true, ..Default::default() });
-        assert_eq!(e.draft.primary, "gl_an94_mp");
-        assert!(e.draft.primary_atts.is_empty(), "{:?}", e.draft.primary_atts);
-    }
-
-    #[test]
-    fn attachments_cap_at_two_until_the_gunfighter_wildcard() {
-        let mut d = Draft { primary: "an94_mp".into(), primary_atts: vec![], ..Draft::default() };
-        let shorts = allowed_shorts(&d.primary);
-        assert!(shorts.len() >= 2);
-        let mut max = d.primary_att_max();
-        toggle_att(&mut d.primary_atts, shorts[0], max);
-        toggle_att(&mut d.primary_atts, shorts[1], max);
-        // A third is refused without the wildcard.
-        let third = shorts.get(2).copied();
-        if let Some(t) = third {
-            toggle_att(&mut d.primary_atts, t, max);
-            assert_eq!(d.primary_atts.len(), 2, "capped at 2");
-        }
-        d.wildcards.push(Wildcard::PrimaryGunfighter);
-        max = d.primary_att_max();
-        assert_eq!(max, 3);
-        if let Some(t) = third {
-            toggle_att(&mut d.primary_atts, t, max);
-            assert_eq!(d.primary_atts.len(), 3);
-        }
-    }
-
-    #[test]
-    fn toggling_off_a_gunfighter_wildcard_truncates_its_extra_attachment() {
-        let mut d = Draft { primary: "an94_mp".into(), primary_atts: vec!["gl".into(), "reflex".into(), "stock".into()], wildcards: vec![Wildcard::PrimaryGunfighter], ..Draft::default() };
-        assert_eq!(d.spent(), 11);
-        assert!(!d.valid());
-        d.wildcards.remove(0);
-        d.primary_atts.truncate(2);
-        assert_eq!(d.spent(), 9);
-        assert!(d.valid());
-    }
-
-    #[test]
-    fn the_budget_refuses_an_over_spend() {
-        let mut d = Draft::default();
-        // Default is 9; adding a wildcard makes 10 (valid), another makes 11 (invalid).
-        d.wildcards.push(Wildcard::Overkill);
-        assert_eq!(d.remaining(), 0);
-        assert!(d.valid());
-        d.wildcards.push(Wildcard::Tactician);
-        assert_eq!(d.remaining(), -1);
-        assert!(!d.valid());
-    }
-
-    #[test]
-    fn a_draft_round_trips_through_custom_class() {
-        let mut d = Draft { name: "My Rifle".into(), primary: "an94_mp".into(), primary_atts: vec!["reflex".into()], ..Draft::default() };
-        d.perks = [Some(Perk::LIGHTWEIGHT), Some(Perk::TOUGHNESS), Some(Perk::DEXTERITY)];
-        let c = d.to_custom();
-        assert_eq!(c.name, "My Rifle");
-        assert_eq!(c.primary, "an94_mp+reflex");
-        let back = Draft::from_custom(&c);
-        assert_eq!(back.name, "My Rifle");
-        assert_eq!(back.primary, "an94_mp");
-        assert_eq!(back.primary_atts, vec!["reflex".to_string()]);
-        assert_eq!(back.perks, d.perks);
-        assert_eq!(back.to_spec(), d.to_spec());
-    }
-
-    #[test]
-    fn the_spec_applies_over_the_base_kit() {
-        let d = Draft { primary: "an94_mp".into(), primary_atts: vec![], perks: [Some(Perk::FLAK_JACKET), None, None], ..Draft::default() };
-        let l = crate::weapons::Loadout::default().with_spec(&d.to_spec());
-        assert_eq!(l.primary, "an94_mp");
-        // The spec carries exactly the set perks; unset tiers fall back to the base kit's slots.
-        assert_eq!(l.perks, vec![Perk::FLAK_JACKET]);
-    }
-
-    #[test]
-    fn slot_navigation_wraps_around_bo2s_order() {
-        let e = Editor::new(Draft::default());
-        assert_eq!(e.next_slot(Slot::Name), Slot::Primary);
-        assert_eq!(e.next_slot(Slot::Primary), Slot::PrimaryAtts);
-        // The first row wraps up to the Save row, and Save wraps down to the first row.
-        assert_eq!(e.prev_slot(Slot::Name), Slot::Save);
-        assert_eq!(e.next_slot(Slot::Wildcards), Slot::Save);
-        assert_eq!(e.next_slot(Slot::Save), Slot::Name);
-        assert_eq!(e.prev_slot(Slot::Save), Slot::Wildcards);
-        // Walk the whole list and come back.
-        let mut s = Slot::Name;
-        for _ in 0..Slot::ALL.len() {
-            s = e.next_slot(s);
-        }
-        assert_eq!(s, Slot::Name);
-    }
-
-    #[test]
-    fn the_save_row_confirms_into_a_save_and_has_no_list() {
-        let mut e = Editor::new(Draft::default());
-        e.slot = Slot::Save;
-        // The Save row carries no options, so it can never open a list.
-        assert!(e.options().is_empty());
-        // Confirming it leaves the editor with a save; a down edge walks off it to the first row.
-        assert_eq!(e.step(Edges { confirm: true, ..Default::default() }), Outcome::Save);
-        assert!(!e.picking, "the save row does not enter the list state");
-        assert_eq!(e.step(Edges { down: true, ..Default::default() }), Outcome::Continue);
-        assert_eq!(e.slot, Slot::Name);
-        // Escape still cancels (without saving).
-        e.slot = Slot::Save;
-        assert_eq!(e.step(Edges { cancel: true, ..Default::default() }), Outcome::Cancel);
-    }
-
-    #[test]
-    fn the_editor_opens_the_list_on_the_held_option() {
-        // The secondary slot opens on the Tac-45, which the built-in table holds.
-        let mut e = Editor::new(Draft { secondary: "fnp45_mp".into(), ..Draft::default() });
-        e.slot = Slot::Secondary;
-        let idx = e.current_option_index();
-        assert_eq!(gun_ids(&SECONDARY_CLASSES)[idx], "fnp45_mp");
-        e.picking = true;
-        e.option = idx;
-        // Confirming the held weapon leaves the draft unchanged.
-        let before = e.draft.clone();
-        e.step(Edges { confirm: true, ..Default::default() });
-        assert_eq!(e.draft, before);
-    }
-
-    #[test]
-    fn cancel_closes_the_list_then_the_editor() {
-        let mut e = Editor::new(Draft::default());
-        e.picking = true;
-        assert_eq!(e.step(Edges { cancel: true, ..Default::default() }), Outcome::Continue);
-        assert!(!e.picking);
-        assert_eq!(e.step(Edges { cancel: true, ..Default::default() }), Outcome::Cancel);
-    }
-
-    #[test]
-    fn perk_picks_land_in_their_tier() {
-        let mut e = Editor::new(Draft::default());
-        e.slot = Slot::Perk2;
-        let perks = perk_list(2);
-        let scav = perks.iter().position(|p| p.def().id == "Scavenger").expect("Scavenger is tier 2");
-        e.picking = true;
-        e.option = scav;
-        e.step(Edges { confirm: true, ..Default::default() });
-        assert_eq!(e.draft.perks[1], Some(Perk::SCAVENGER));
-        // Tier 1 and 3 are untouched.
-        assert_eq!(e.draft.perks[0], Some(Perk::LIGHTWEIGHT));
-        assert_eq!(e.draft.perks[2], Some(Perk::DEXTERITY));
-    }
-
-    #[test]
-    fn option_chosen_marks_the_drafts_current_elements() {
-        // Primary: the held gun's index is the chosen one; no other weapon is.
-        let mut e = Editor::new(Draft::default());
-        e.slot = Slot::Primary;
-        let held = e.current_option_index();
-        assert!(e.option_chosen(held));
-        assert!(!e.option_chosen(held + 1));
-        // Attachments: the AN-94's gl and reflex are on the draft, so their list entries are chosen.
-        e.slot = Slot::PrimaryAtts;
-        let shorts = attachment_shorts(&e.draft.primary, &e.draft.primary_atts);
-        for (i, short) in shorts.iter().enumerate() {
-            let on = e.draft.primary_atts.iter().any(|a| a == short);
-            assert_eq!(e.option_chosen(i), on, "attachment {short}");
-        }
-        // Perks: the tier's held perk is chosen.
-        e.slot = Slot::Perk1;
-        let p1 = perk_list(1).iter().position(|p| *p == Perk::LIGHTWEIGHT).expect("Lightweight is tier 1");
-        assert!(e.option_chosen(p1));
-        // Wildcards: none are on the default draft.
-        e.slot = Slot::Wildcards;
-        assert!(!e.option_chosen(0));
-    }
-
-    #[test]
-    fn slot_values_read_as_the_resulting_class() {
-        let d = Draft::default();
-        assert_eq!(slot_value(&d, Slot::Primary), weapons::weapon("an94_mp").display_name);
-        assert_eq!(slot_value(&d, Slot::Secondary), weapons::weapon("fnp45_mp").display_name);
-        // The attachment row lists the display names, not the shorts.
-        let atts = slot_value(&d, Slot::PrimaryAtts);
-        assert!(atts.contains("Grenade Launcher") && atts.contains("Reflex"), "keeps names: {atts}");
-        assert_ne!(atts, "—");
-        // The perk rows read the tier's held perk.
-        assert_eq!(slot_value(&d, Slot::Perk1), "Lightweight");
-        assert_eq!(slot_value(&d, Slot::Wildcards), "—");
-    }
-
-    // --- Option 2: the class-name row types text ---
-
-    #[test]
-    fn the_name_row_starts_text_entry_and_letters_append() {
-        let mut e = Editor::new(Draft { name: String::new(), ..Draft::default() });
-        e.slot = Slot::Name;
-        // The name row has no option list: Enter starts text entry instead of opening one.
-        assert!(e.options().is_empty());
-        assert_eq!(e.step(Edges { confirm: true, ..Default::default() }), Outcome::Continue);
-        assert!(e.naming, "Enter on the name row starts text entry");
-        assert!(!e.picking, "the name row never opens an option list");
-        // Letters append in the order they were pressed.
-        e.step(Edges { typed: vec![Key::M, Key::P], ..Default::default() });
-        assert_eq!(e.draft.name, "MP");
-        // Space types a space; Backspace deletes the last character.
-        e.step(Edges { typed: vec![Key::Space, Key::A], ..Default::default() });
-        assert_eq!(e.draft.name, "MP A");
-        e.step(Edges { backspace: true, ..Default::default() });
-        assert_eq!(e.draft.name, "MP ");
-        // Enter leaves the field (the text stays); the row stays highlighted and not in the list.
-        assert_eq!(e.step(Edges { confirm: true, ..Default::default() }), Outcome::Continue);
-        assert!(!e.naming);
-        assert_eq!(e.draft.name, "MP ");
-        assert_eq!(e.slot, Slot::Name);
-    }
-
-    #[test]
-    fn the_name_field_caps_at_bo2s_length() {
-        let mut e = Editor::new(Draft { name: String::new(), ..Draft::default() });
-        e.slot = Slot::Name;
-        e.naming = true;
-        // Type far past the cap; the field refuses characters once it is full.
-        let keys: Vec<Key> = std::iter::repeat(Key::A).take(NAME_MAX + 5).collect();
-        e.step(Edges { typed: keys, ..Default::default() });
-        assert_eq!(e.draft.name.chars().count(), NAME_MAX);
-        assert_eq!(e.draft.name, "A".repeat(NAME_MAX));
-    }
-
-    #[test]
-    fn escape_leaves_the_name_field_without_cancelling_the_editor() {
-        let mut e = Editor::new(Draft { name: "Rifle".into(), ..Draft::default() });
-        e.slot = Slot::Name;
-        e.naming = true;
-        // Escape leaves the field, it does not cancel the whole editor while naming.
-        assert_eq!(e.step(Edges { cancel: true, ..Default::default() }), Outcome::Continue);
-        assert!(!e.naming);
-        assert_eq!(e.draft.name, "Rifle");
-        // A second Escape (now out of the field) cancels the editor as usual.
-        assert_eq!(e.step(Edges { cancel: true, ..Default::default() }), Outcome::Cancel);
-    }
-
-    #[test]
-    fn the_name_round_trips_through_a_saved_class() {
-        let mut d = Draft { name: "My Rifle".into(), ..Draft::default() };
-        d.primary = "an94_mp".into();
-        let c = d.to_custom();
-        assert_eq!(c.name, "My Rifle");
-        let back = Draft::from_custom(&c);
-        assert_eq!(back.name, "My Rifle");
-    }
-
-    // --- Option 3: Greed second perks and Overkill's second primary ---
-
-    #[test]
-    fn a_greed_wildcard_splices_in_a_second_perk_row() {
-        let mut e = Editor::new(Draft::default());
-        // Without the wildcard the second row is absent from the walk.
-        assert!(!e.slots().contains(&Slot::Perk1b));
-        assert_eq!(e.slots().len(), Slot::ALL.len());
-        // Turning on Perk 1 Greed inserts the row right after the base Perk 1 row.
-        e.draft.wildcards.push(Wildcard::Perk1Greed);
-        let slots = e.slots();
-        let base = slots.iter().position(|s| *s == Slot::Perk1).expect("Perk 1 row");
-        assert_eq!(slots[base + 1], Slot::Perk1b, "the Greed row follows its base row");
-        // It reads as its tier's header and knows its tier.
-        assert_eq!(Slot::Perk1b.label(), "PERK 1");
-        assert_eq!(Slot::Perk1b.perk_tier(), Some(1));
-        assert!(Slot::Perk1b.is_extra_perk());
-        assert!(!Slot::Perk1.is_extra_perk());
-    }
-
-    #[test]
-    fn the_second_perk_row_sets_the_extra_pick_without_touching_the_base() {
-        let mut e = Editor::new(Draft::default());
-        e.draft.wildcards.push(Wildcard::Perk1Greed);
-        e.slot = Slot::Perk1b;
-        let perks = perk_list(1);
-        // Pick a tier-1 perk other than the base pick (Lightweight).
-        let choice = perks
-            .iter()
-            .position(|p| *p != Perk::LIGHTWEIGHT)
-            .expect("a second tier-1 perk");
-        e.picking = true;
-        e.option = choice;
-        e.step(Edges { confirm: true, ..Default::default() });
-        assert_eq!(e.draft.extra_perks[0], Some(perks[choice]));
-        // The base pick is untouched, and both picks resolve into the spec.
-        assert_eq!(e.draft.perks[0], Some(Perk::LIGHTWEIGHT));
-        let perks_in_order = e.draft.perks_in_order();
-        assert_eq!(perks_in_order.len(), 4, "three base perks plus the Greed pick");
-        assert!(perks_in_order.contains(&perks[choice]));
-    }
-
-    #[test]
-    fn turning_off_a_greed_wildcard_drops_its_second_perk() {
-        let mut e = Editor::new(Draft::default());
-        e.draft.wildcards.push(Wildcard::Perk2Greed);
-        e.slot = Slot::Perk2b;
-        e.draft.extra_perks[1] = Some(Perk::SCAVENGER);
-        // Highlighted on the Greed row, turning the wildcard off falls back to the base row and
-        // clears the extra pick.
-        e.toggle_wildcard(Wildcard::Perk2Greed);
-        assert!(!e.draft.wildcards.contains(&Wildcard::Perk2Greed));
-        assert_eq!(e.draft.extra_perks[1], None);
-        assert_eq!(e.slot, Slot::Perk2, "the highlight returns to the base row");
-        // The Greed row is gone from the walk again.
-        assert!(!e.slots().contains(&Slot::Perk2b));
-    }
-
-    #[test]
-    fn a_greed_perk_costs_its_point_in_the_budget() {
-        let mut d = Draft::default();
-        let base = d.spent();
-        d.extra_perks[0] = Some(Perk::SCAVENGER);
-        assert_eq!(d.spent(), base + 1, "the Greed perk costs a point");
-        d.wildcards.push(Wildcard::Perk1Greed);
-        assert_eq!(d.spent(), base + 2, "the wildcard costs a point too");
-    }
-
-    #[test]
-    fn overkill_offers_primary_guns_in_the_secondary_list() {
-        let mut e = Editor::new(Draft::default());
-        let base = e.secondary_classes();
-        assert_eq!(base, SECONDARY_CLASSES.to_vec(), "pistols and launchers only");
-        e.draft.wildcards.push(Wildcard::Overkill);
-        let with_overkill = e.secondary_classes();
-        // The primary-class guns are offered in the secondary slot.
-        for c in PRIMARY_CLASSES {
-            assert!(with_overkill.contains(&c), "Overkill offers {c:?}");
-        }
-        // The option list walks the same categories.
-        e.slot = Slot::Secondary;
-        let options = e.options();
-        assert!(options.contains(&weapons::weapon("an94_mp").display_name.to_string()));
-    }
-
-    #[test]
-    fn overkill_puts_a_second_primary_into_the_secondary_slot() {
-        let mut e = Editor::new(Draft::default());
-        e.draft.wildcards.push(Wildcard::Overkill);
-        e.slot = Slot::Secondary;
-        let classes = e.secondary_classes();
-        let ids = gun_ids(&classes);
-        // Pick the first primary-class gun offered in the secondary list.
-        let target = "an94_mp";
-        let i = ids.iter().position(|id| *id == target).expect("AN-94 is offered");
-        e.picking = true;
-        e.option = i;
-        e.step(Edges { confirm: true, ..Default::default() });
-        assert_eq!(e.draft.secondary, target);
-        // A round trip resolves it as the secondary and re-derives Overkill.
-        let c = e.draft.to_custom();
-        assert_eq!(c.secondary, target);
-        let back = Draft::from_custom(&c);
-        assert_eq!(back.secondary, target);
-        assert!(back.wildcards.contains(&Wildcard::Overkill));
-    }
-}
+#[path = "classmenu/tests.rs"]
+mod tests;

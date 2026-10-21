@@ -20,6 +20,12 @@
 //!                                                     render models posed by an animation frame
 //! zhbo-assets hammer <out.png> <clip> <frame>         render the converted hammer viewmodel
 //!                                                     (clip: ZHBO_VMH_PUL/IDL/SWG/PUT)
+//! zhbo-assets screenshot [out-dir] [--archive <big>]  render the create-a-class screens to PNG
+//!                                                     (default output: target/cac-shots/)
+//! zhbo-assets hud-sheet [out-dir] [--archive <big>] [--cols N]
+//!                                                     every MappedImage of a built archive as a
+//!                                                     labelled contact sheet + the raw atlas pages
+//!                                                     (default output: target/hud-sheet/)
 //! ```
 //! `<bank>`/`<pak>`/`<ff>` are file names inside the BO2 install (`sound\`, `zone\all\`) or full paths.
 //! Everything exported is the player's own game data: keep it local, never redistribute it.
@@ -549,6 +555,27 @@ fn run(args: &[String]) -> Result<(), String> {
                 println!("  notify {:.3} {}", n.time, n.name);
             }
             Ok(())
+        }
+        "screenshot" => {
+            // screenshot [out-dir] [--archive path]: the class screens through the real drawing code.
+            let out = args
+                .get(1)
+                .filter(|a| !a.starts_with("--"))
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("target/cac-shots"));
+            let archive = flag(args, "--archive").map(PathBuf::from);
+            zhbo_assets::screenshot::run(&out, archive.as_deref())
+        }
+        "hud-sheet" => {
+            // hud-sheet [out-dir] [--archive path] [--cols N]: every MappedImage, labelled.
+            let out = args
+                .get(1)
+                .filter(|a| !a.starts_with("--"))
+                .map(PathBuf::from)
+                .unwrap_or_else(|| PathBuf::from("target/hud-sheet"));
+            let archive = flag(args, "--archive").map(PathBuf::from);
+            let cols = flag(args, "--cols").and_then(|c| c.parse().ok()).unwrap_or(5);
+            zhbo_assets::screenshot::run_contact(&out, archive.as_deref(), cols)
         }
         "hammer" => {
             let usage = "hammer <out.png> <clip> <frame>";

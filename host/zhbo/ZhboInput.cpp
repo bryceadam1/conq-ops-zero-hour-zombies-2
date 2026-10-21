@@ -15,7 +15,9 @@ class ZhboTranslator : public GameMessageTranslator
 public:
 	virtual GameMessageDisposition translateGameMessage(const GameMessage *msg) override
 	{
-		if (!s_out.camera_override)
+		// First person owns the mouse/keyboard; a class screen owns them too, from either view:
+		// clicks and keys must not reach the RTS UI or the game behind it (Escape stays).
+		if (!s_out.camera_override && !s_out.menu_open)
 			return KEEP_MESSAGE;
 		const GameMessage::Type t = msg->getType();
 		if (t == GameMessage::MSG_RAW_MOUSE_WHEEL)

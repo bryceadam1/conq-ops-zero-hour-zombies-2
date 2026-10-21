@@ -157,6 +157,19 @@ pub enum Key {
     Right,
     Enter,
     Backspace,
+    /// The rest of the digit row, for the pick screen's 1-9,0 class keys.
+    Key7,
+    Key8,
+    Key9,
+    Key0,
+}
+
+/// The mouse buttons' bits in `ClientIn::mouse_buttons` (the bridge fills them from the engine's
+/// cursor every client frame; the menus use them for clicks).
+pub mod mouse_buttons {
+    pub const LEFT: u32 = 1 << 0;
+    pub const RIGHT: u32 = 1 << 1;
+    pub const MIDDLE: u32 = 1 << 2;
 }
 
 impl Key {
@@ -167,6 +180,7 @@ impl Key {
         Key::Y, Key::Z, Key::Key1, Key::Key2, Key::Key3, Key::Key4, Key::Key5, Key::Key6, Key::Escape,
         Key::Space, Key::Tab, Key::Shift, Key::Control, Key::MouseLeft, Key::MouseRight,
         Key::Up, Key::Down, Key::Left, Key::Right, Key::Enter, Key::Backspace,
+        Key::Key7, Key::Key8, Key::Key9, Key::Key0,
     ];
 
     /// The bit in a `ClientIn::keys` word for this key.
@@ -248,6 +262,10 @@ pub fn key_name(k: Key) -> &'static str {
         Key::Right => "RIGHT",
         Key::Enter => "ENTER",
         Key::Backspace => "BACKSPACE",
+        Key::Key7 => "7",
+        Key::Key8 => "8",
+        Key::Key9 => "9",
+        Key::Key0 => "0",
     }
 }
 
@@ -273,5 +291,16 @@ mod key_tests {
     fn key_names_are_distinct() {
         let names: std::collections::HashSet<_> = Key::ALL.iter().map(|k| key_name(*k)).collect();
         assert_eq!(names.len(), Key::ALL.len(), "every key has a unique name");
+    }
+
+    #[test]
+    fn the_key_walk_covers_the_enum_in_order() {
+        // The C++ host's enum and `keyNames` mirror this list; a missing or reordered entry
+        // would shift every bit in the ABI.
+        assert_eq!(Key::ALL.len(), Key::Key0 as usize + 1);
+        for (i, k) in Key::ALL.iter().enumerate() {
+            assert_eq!(*k as usize, i, "Key::ALL[{i}] is {k:?}");
+        }
+        assert_eq!(Key::ALL.len(), 49);
     }
 }

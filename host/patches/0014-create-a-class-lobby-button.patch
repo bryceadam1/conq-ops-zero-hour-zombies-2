@@ -27,7 +27,7 @@ index 54a33df7b..6c8b24e1d 100644
  static GameWindow *comboBoxPlayer[MAX_SLOTS] = {0};
  
  static GameWindow *comboBoxColor[MAX_SLOTS] = {0};
-@@ -1017,6 +1021,62 @@ static void handleLimitSuperweaponsClick()
+@@ -1017,6 +1021,100 @@ static void handleLimitSuperweaponsClick()
  }
  
  
@@ -50,24 +50,63 @@ index 54a33df7b..6c8b24e1d 100644
 +  if( parent == nullptr )
 +    return nullptr;
 +
-+  // Sit in the lower-right of the menu, under the map preview: relative to the parent's own rect,
-+  // so the button lands on screen at every resolution without borrowing another element's position.
++  // Same size and font as the neighbouring Start button, so it reads as one of the shell's own.
++  Int w = 174, h = 36;
++  GameFont *font = nullptr;
++  if( buttonStart )
++  {
++    buttonStart->winGetSize( &w, &h );
++    font = buttonStart->winGetFont();
++  }
++  if( font == nullptr )
++    font = TheWindowManager->winFindFont( "Times New Roman", 14, FALSE );
++
++  // Sit in the empty top-right of the menu's panel, aligned with the title row. Anchored to the
++  // panel (a named sibling) so it scales with the layout; fall back to the parent's lower-right.
++  // gogoGadgetPushButton takes parent-relative coordinates, unlike winGetScreenPosition.
 +  Int px = 0, py = 0, pw = 0, ph = 0;
 +  parent->winGetScreenPosition( &px, &py );
 +  parent->winGetSize( &pw, &ph );
-+  const Int w = 130, h = 28;
-+  Int x = px + pw - w - 20;
-+  Int y = py + ph - h - 20;
++  Int x = pw - w - 20, y = ph - h - 20;
++  GameWindow *panel = TheWindowManager->winGetWindowFromId( parent,
++    TheNameKeyGenerator->nameToKey( "SkirmishGameOptionsMenu.wnd:SubParent" ) );
++  if( panel )
++  {
++    Int rx = 0, ry = 0, rw = 0, rh = 0;
++    panel->winGetScreenPosition( &rx, &ry );
++    panel->winGetSize( &rw, &rh );
++    x = rx - px + rw - w - 4;
++    y = ry - py + 4;
++  }
 +
 +  WinInstanceData instData;
 +  instData.init();
 +  BitSet( instData.m_style, GWS_PUSH_BUTTON | GWS_MOUSE_TRACK );
-+  instData.m_textLabelString = "Create a Class";
 +
++  // The plain draw path, not WIN_STATUS_IMAGE: the image path paints only the gadget's images, and
++  // assignDefaultGadgetLook assigns none here (the retail shell uses its own Buttons-* images).
 +  GameWindow *button = TheWindowManager->gogoGadgetPushButton( parent,
-+    WIN_STATUS_ENABLED | WIN_STATUS_IMAGE, x, y, w, h, &instData, nullptr, FALSE );
++    WIN_STATUS_ENABLED | WIN_STATUS_NO_FOCUS, x, y, w, h, &instData, font, FALSE );
 +  if( button == nullptr )
 +    return nullptr;
++
++  // Set the text and its colours directly: assignDefaultGadgetLook skips them when defaultVisual is
++  // FALSE, and an undefined colour has zero alpha, which is what made the old button invisible.
++  // The text colours are the Start button's; the fill is the menu panel's dark style.
++  GadgetButtonSetText( button, UnicodeString( L"Create a Class" ) );
++  button->winSetEnabledTextColors( TheWindowManager->winMakeColor( 255, 255, 255, 255 ),
++                                   TheWindowManager->winMakeColor( 0, 0, 0, 255 ) );
++  button->winSetDisabledTextColors( TheWindowManager->winMakeColor( 62, 64, 92, 255 ),
++                                    TheWindowManager->winMakeColor( 31, 32, 47, 255 ) );
++  button->winSetHiliteTextColors( TheWindowManager->winMakeColor( 186, 255, 12, 255 ),
++                                  TheWindowManager->winMakeColor( 0, 2, 0, 255 ) );
++  GadgetButtonSetEnabledColor( button, TheWindowManager->winMakeColor( 2, 2, 2, 220 ) );
++  GadgetButtonSetEnabledBorderColor( button, TheWindowManager->winMakeColor( 47, 55, 168, 255 ) );
++  GadgetButtonSetHiliteColor( button, TheWindowManager->winMakeColor( 24, 32, 60, 235 ) );
++  GadgetButtonSetHiliteBorderColor( button, TheWindowManager->winMakeColor( 186, 255, 12, 255 ) );
++  GadgetButtonSetDisabledColor( button, TheWindowManager->winMakeColor( 16, 16, 20, 220 ) );
++  GadgetButtonSetDisabledBorderColor( button, TheWindowManager->winMakeColor( 64, 64, 80, 255 ) );
++  button->winSetTooltip( UnicodeString( L"Browse, edit and manage your custom classes" ) );
 +
 +  // Give the button the same id the .wnd element would have, so the menu's system handler routes
 +  // its clicks through the same comparison.
@@ -75,12 +114,11 @@ index 54a33df7b..6c8b24e1d 100644
 +  return button;
 +}
 +
-+/// Build the Create a Class button once, the first time the menu comes up (the layout is settled by
-+/// then, so the parent's rect is real). Idempotent: a second Init does not add a second button.
++/// Make sure the Create a Class button exists. The layout's windows are destroyed when the shell
++/// pops the menu, so the cached pointer is stale on a later visit: look the button up on the fresh
++/// layout and rebuild it only when it is missing. Idempotent within one layout.
 +static void ensureCreateClassButton()
 +{
-+  if( buttonCreateClass != nullptr )
-+    return;
 +  buttonCreateClass = TheWindowManager->winGetWindowFromId( parentSkirmishGameOptions, buttonCreateClassID );
 +  if( buttonCreateClass == nullptr )
 +    buttonCreateClass = injectCreateClassButton( parentSkirmishGameOptions );

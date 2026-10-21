@@ -4,6 +4,7 @@
 //! be redistributed. Sound banks and `.ipak` image packs are only compressed; fastfiles are
 //! decrypted by `zhbo_formats::fastfile` from the player's own install.
 
+pub mod cac;
 pub mod hud;
 pub mod images;
 pub mod sounds;
@@ -17,4 +18,5 @@ pub mod viewmodels;
 pub mod fx;
 pub mod sfx;
 pub mod manifest;
+pub mod screenshot;
 pub mod weapons;

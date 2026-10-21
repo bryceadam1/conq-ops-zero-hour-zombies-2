@@ -30,6 +30,19 @@ the ground rules.
 - **Never bypass anti-cheat. Never launch, hook or connect to Black Ops II.** Only its files
   are read; decrypting BO2 fastfiles from the player's own install for conversion is allowed,
   and the output stays local and is never shipped.
+  - Development-workstation carve-out (approved 2026-10-20): running your own BO2 install for
+    reference — screenshots/recordings, input automation, static analysis of its files — is
+    allowed **offline only**: Steam in offline mode, Custom Games/local matches only, never a
+    public or online match, and no debugger or memory tool attached while the game is online or
+    in any VAC/TAC-protected context. The mod itself still never launches, hooks, or connects
+    to BO2.
+  - Addendum (approved 2026-10-20): stock BO2 MP requires Steam online even for Custom Games
+    (verified in-game and by community research; no legitimate offline path exists). Steam may
+    be taken ONLINE solely to reach the MP menu shell for Custom Games → Create a Class
+    reference capture. Hard bans unchanged: never a public/online match or matchmaking of any
+    kind, never League Play, no client modification, no debugger or memory tool attached at any
+    time while the game is running (TAC loads in-menu; enforcement is not limited to public
+    servers), and Steam is returned to persistent offline mode when a capture session ends.
 - **Rust wherever possible.** C++ is limited to the engine hooks (`host/patches`), the bridge
   and the platform/adapter layer in `host/zhbo`. Do not add C++ outside those files.
 - **Native builds, no Wine.** Windows, macOS and Linux all build from source.

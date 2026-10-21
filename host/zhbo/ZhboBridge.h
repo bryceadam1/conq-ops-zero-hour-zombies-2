@@ -47,9 +47,24 @@ void Zhbo_LogicStep(UnsignedInt frame);
 /// True while the object is driven by first-person input (its AI and physics must not run).
 Bool Zhbo_IsControlled(ObjectID id);
 
-/// Open the Create-a-Class pick screen from the lobby (SkirmishGameOptionsMenu). One-shot latch
-/// consumed by the next client frame.
+/// Force the in-game Create-a-Class pick screen open (the command bar's "Create a Class" entry;
+/// the at-spawn pick needs no forcing). One-shot latch consumed by the next client frame. The
+/// lobby's button does NOT use this--it opens the shell screen (Zhbo_OpenClassMenu) instead.
 void Zhbo_ShowClassPick();
+
+// --- The shell create-a-class screen (the lobby's class menu) -----------------------------------
+/// Open the shell class screen: a full-screen modal window whose draw callback runs the Rust
+/// core's menu frame (ZhboMenu.cpp). Called by the skirmish lobby's Create a Class button
+/// (patch 0015); a no-op while the screen is already up.
+void Zhbo_OpenClassMenu();
+/// Close the shell class screen (its window and the core's menu state); also called from
+/// Zhbo_Reset so the screen never leaks into a match. A no-op while it is not up.
+void Zhbo_CloseClassMenu();
+/// Whether the shell class screen is up.
+Bool Zhbo_ClassMenuOpen();
+/// One menu frame: fills ZhboMenuIn, calls zhbo_menu_frame, writes the profile one-shot, closes
+/// on request. Called by the shell window's draw callback (ZhboMenu.cpp).
+void Zhbo_MenuFrame();
 
 // --- Client (per rendered frame) ---------------------------------------------------------------
 /// Before the display/views update (GameClient::update).

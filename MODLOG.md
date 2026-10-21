@@ -638,6 +638,264 @@ Tests: `cargo test --workspace` — zhbo-core 134 (the overhead pick creates the
 applies the kit; a re-pick replaces the chosen class); clippy clean. The engine's
 `ControlBarCommandProcessing.cpp` and `SkirmishGameOptionsMenu.cpp` compile with the new call sites.
 
+## Create-a-class rework: lobby screen, real BO2 art, mouse, full slot management (2026-10-19)
+
+A four-phase rework of the whole feature (the plan lived outside the repo; the work was done by
+DeepSeek V4.1 Flash subagents, orchestrated and reviewed). What landed, and the gotchas worth
+keeping:
+
+1. **The lobby button now renders.** Root cause of the invisible button: patch 0014's code-built
+   gadget was created with `WIN_STATUS_IMAGE` but no images and a null font, and
+   `assignDefaultGadgetLook(..., defaultVisual=FALSE)` leaves the text colours undefined — and an
+   undefined `WIN_COLOR` is `0x00FFFFFF`, **white with zero alpha**. Both draw paths (image, text)
+   painted nothing. The rebuilt button borrows the Start button's font/size, uses the non-image
+   draw func, and sets text + fill/border/text colours explicitly. Also fixed there: gadget
+   coordinates are parent-relative (the old code added the screen origin — harmless only because
+   this root sits at 0,0), and the static button pointer went stale on a second lobby visit (the
+   shell destroys layout windows on pop; look the button up by id every `Init`).
+2. **The CaC asset pack.** `zhbo-assets` converts the create-a-class art from the player's BO2
+   install: 16 perk icons (`code_post_gfx_mp` `perk_*`), 8 wildcard icons (`common_mp`
+   `menu_mp_bonuscard_*`; Tactician is BO2's `_two_tacticals`), 25 attachment icons
+   (`cac_mods_*`; the short→material table is `cac.rs`, confirmed against BO2's `MPUI_*` string
+   table, not guesswork), 15 menu-chrome sprites (`menu_mp_cac_*`), and seven UI sounds from the
+   `mpl_code_post_gfx` bank (`cac_enter_cac`, `cac_grid_nav`, `cac_grid_equip_item`,
+   `cac_cmn_backout`, `cac_cmn_deny`, `cac_loadout_edit_submenu`, `cac_loadout_edit_sel`). The
+   atlas is now **multiple 1024² pages** (each MappedImage names its own texture page) instead of
+   one page that could not fit the pack; `hud::VERSION` 39→40. `willy_pete_mp`'s icon is the only
+   missing sprite (no usable art in the install; drawn fallback). `ZHBO_BO2_UISelect` had silently
+   never had an SFX entry; it does now.
+3. **The screens are real.** All class-screen drawing moved to `classui.rs` (BO2 background,
+   banner, rows, panels, per-element icons, `WeaponDef`-sourced stat bars, Pick-10 counter, deny
+   rim); the pick list is presets + up to 10 profile customs + CREATE A CLASS, **customs
+   re-pickable** (they never were — the old screen listed only the five presets). Mouse works end
+   to end (the bridge finally fills the `ClientIn` mouse fields; hover/click/wheel through pure
+   `classmenu::step_pointer` folds; `menu_open` in `ClientOut` makes the translator swallow
+   game-bound input behind the screen and frees the cursor in first person). Keys 7/8/9/0 joined
+   the `Key` enum (appended at the end, C++ side mirrored). Profile delete/copy/rename are in, on
+   the pick screen and in the editor.
+   - **Save is split from pick** (ABI 18): re-picking a class no longer rewrites the profile file.
+     The one-shot `save_profile` (+`zhbo_profile_write`) carries the file's *whole text* packed
+     four bytes per word — delete/copy have no class payload, so the wire-words save
+     (`zhbo_profile_save`, now unused by the bridge) could not serve them.
+   - **Pre-existing path bug fixed:** `cargo xtask pack` packs `data/` with paths relative to
+     `data/`, so strings/tuning/classes live at `ConquerOps\*.ini` in the BIG — but `names.rs`
+     said `Data\ConquerOps\*.ini`, so the shipped class presets, tuning pack and strings were
+     **silently never loaded in-game** (built-in defaults masked it; the tuning test passed
+     because it compares defaults to the file it reads itself). The weapon table's
+     `Data\ConquerOps\weapons.ini` was and is right — the converter writes that path into the
+     *other* archive.
+   - The client now encodes preset picks 1-based (0 is the one-shot's "no pick"); the bridge
+     decodes. The classpick autopilot emits one action per frame with release frames — macOS
+     hitches skipped the old 0.1 s windows. SDL key polling now reports Escape (menus need it).
+4. **The lobby screen** (ABI 19): patch 0015 retargets the button to a code-built full-screen
+   **modal root window** (`winSetModal` + focus — input only within it; the lobby is inert), on
+   the engine's `ExtendedMessageBox` pattern. `Shell::doPush` was rejected: it only loads `.wnd`
+   files and the mod ships none. The window's draw callback runs `zhbo_menu_frame`
+   (`ZhboMenuIn`/`ZhboMenuOut` — free functions, not API-table fields; prims render through the
+   stored `ClientApi` callbacks, sounds via `cbSound`, both shell-safe); `menu.rs`'s `MenuState`
+   hosts the same `classui` screens with no sim (browse → edit → save/delete/copy → close; no
+   pick outside a match). `Zhbo_Reset` destroys the window and `zhbo_reset` drops the state.
+   CONTRACT.md has the menu-ABI section; the manual shell check steps are in TESTING.md.
+
+Tests: `cargo test --workspace` 233 green (zhbo-core 156), clippy unchanged, full autotest 13/13
+and classpick 5/5 (save, pick by name, profile re-pick, no re-save on pick, no `???`). Still
+needs human eyes: the shell screen's look/feel in the lobby (steps in TESTING.md).
+
+Gotcha for future sessions: `zhbo-requirements`' `finds_games_inside_a_prefix_library` test reads
+the **real** `ZHBO_ZH_DIR`/`ZHBO_BO2_DIR` env vars and fails when they are set (they are, in the
+dev shells here). Run tests with `env -u ZHBO_BO2_DIR -u ZHBO_ZH_DIR`, or fix the test to scrub
+them. Pre-existing, deliberately not fixed in this work.
+
+## Create-a-class Phase 5: in-game is pick-only, mouse/digits/list fixes, screenshot harness (2026-10-19)
+
+Playtest-driven fixes (again DeepSeek V4.1 Flash subagents, orchestrated):
+
+1. **In-game is selection only, and never forced over the match.** The old `class_pick_wanted`
+   counted "no class chosen yet" as a reason in *every* view, so the screen drew over the RTS view
+   from match start while `menu_open` ate every click — unplayable. Now: `ViewMode::Rts` opens
+   only on the command-bar force; `ViewMode::Fps` on the force or while unclassed (BO2's
+   spawn-time select). Escape closes and keeps the current kit; a `class_pick_dismissed` latch
+   holds the offer closed until the next take-control (`start_entering` re-arms it). The in-game
+   screen lost the editor, the CREATE A CLASS row and the delete/copy keys (BO2: creating is a
+   lobby activity); `Client.class_editor` is gone, the editor lives only in the shell `MenuState`.
+   `classui::pick_rows*` took a `manage` parameter so both screens stay single-sourced.
+2. **Digits type into class names** (`char_of` covers `Key0..Key9`; BO2's charset is A–Z, 0–9,
+   space).
+3. **Every clickable surface is hit-tested** (pick rows, slot rows, option rows, name/save rows,
+   and the shell footer's delete/copy/back, which are real buttons now); `PointerEvent.moved`
+   separates hover from click.
+4. **Weapon lists are filtered to real CaC weapons.** The duplicates without icons at the bottom
+   were converted alt-mode variants: the filter drops `WeaponDef::alt` entries and anything named
+   in a base weapon's `alt_modes`, then de-dupes by display name (`classmenu::cac_entries`).
+   Every listed weapon resolves a `ZHBO_BO2_Icon_<base id>`.
+5. **The classpick autotest no longer drives an in-game editor** (there isn't one): the script
+   seeds `ConquerOps.profile` with a custom class before launch, the autopilot picks it in-game by
+   its computed key, then forces and Escapes a second offer and walks — asserting the pick, the
+   no-re-save rule, and that play resumes. Editor end-to-end coverage is the headless `menu.rs`
+   tests.
+6. **Headless screenshot harness**: `cargo run -p zhbo-assets -- screenshot [out-dir]` renders the
+   real screens (shell browse, in-game pick, editor) to PNGs with no game launch — prims are
+   rasterized in software (atlas sprites read back out of `ConquerOps_BO2.big`, an embedded 5×7
+   font for text). It installs the converted weapon table from the archive so the catalog is real.
+   It immediately earned its keep, surfacing for the next art pass: the converted menu backdrop is
+   a bright snow scene that washes the whole screen out (wrong material choice for a menu);
+   `ZHBO_BO2_PanelLine` (a grunge frame) is stretched across panels instead of 9-sliced/tiled; the
+   chosen-option `*` overlaps the option name; weapon stat bars only draw when the option list is
+   short enough to leave room.
+
+Tests: 247 green workspace-wide, clippy unchanged, full autotest and the reworked classpick run
+pass. The screenshots live in `target/cac-shots/` (gitignored).
+
+## Create-a-class Phase 6: unarmed spawn, command-bar class sets, the General-0 pick bug (2026-10-20)
+
+Playtest bugs, two parallel Flash agents + an integrator build (ABI 19 → 20):
+
+1. **The custom-pick kit bug was a wrong General id, not the data path.** A reproduce-first test of
+   the profile→client→sim wire path passed on current code; the real break was that
+   `Client.general` was only assigned at take-control, so a class picked from the *command bar*
+   before first control went out naming **General 0** and `Sim::choose_class` silently returned —
+   screen closed, no `ClassChosen`, stock kit kept. `Client` now adopts the sim record's General
+   every frame, and the sim's no-record branch creates the record in `Mode::Rts`. Hardened along
+   the way: `weapons::catalog::weapon_or_none` — an unknown weapon id is never silently swapped for
+   the first catalog entry (the old `weapon()` fallback was exactly the "got an AN-94 instead"
+   symptom); oversized custom payloads are denied instead of truncated-undecodable. The classpick
+   autotest now seeds an MP7+claymore class and greps the pose line for `MP7 <n>|`, so a
+   name-only pass can never ship this again.
+2. **Unarmed until classed.** `Loadout::unarmed()` / `Arsenal::unarmed()` (knife only; the knife
+   pre-raised, zero offhands, zero ammo, no ADS since it is not a gun) at every record creation;
+   `Loadout::default()` untouched (classes' spec base, converter source). Consumers swept: HUD
+   hides ammo/offhands/crosshair (`Arsenal::is_unarmed`), fire/swap/reload/alt/offhand are no-ops,
+   melee still swings, hammer and field computer work. Escape on the spawn offer now means *stay
+   unarmed*; the offer re-arms on the next take-control. RTS: a classless General reports
+   `[0,0,0]` ammo and the bridge's existing no-ammo veto (`setPossibleNextShotFrame(frame+2)`)
+   holds Zero Hour's weapons — no INI change; fighting resumes with the class kit once one lands.
+   The autotest's scripted runs pick a class at 0.3 s (gated on the pick actually being up, so the
+   digit can't leak into a weapon swap), and the `ZHBO_AUTOPILOT=rts` run gets a one-shot Assault
+   from the bridge since it has no class UI.
+3. **The command bar is the class menu for a fresh General.** Selecting a classless General swaps
+   the bar to a code-built two-page class set (page 1: Take Control + 5 presets + up to 7 customs
+   + Next; page 2: the rest + Back), built from `zhbo_core::classicons` rows served over the new
+   `zhbo_class_buttons`/`zhbo_general_has_class` exports (ABI 20; `ZhboClassButton` carries label,
+   icon names, perk icons and the custom's wire payload). Labels come from the live class list via
+   `strings.rs` (`CONTROLBAR:ZHBO_ClassButton01..15`, duplicates get a ` 2` suffix); the kit icons
+   are drawn over the buttons every frame (primary large, offhand minis, perk pips — the
+   ammo-overlay pattern) because player-authored customs can never have conversion-time art. The
+   bridge routes a press by pointer-matching the command window carrying `WIN_STATE_SELECTED`
+   during `processCommandUI`; the pick rides the same `MSG_ZHBO_CHOOSE_CLASS` as the overlay
+   (1-based index, or `i32::MIN` + wire words). Once classed, the normal set returns and its
+   Create a Class button swaps back into the class set — the command bar no longer opens the
+   overlay, which now exists only as the first-person spawn select. CONTRACT.md documents the
+   class-set contract.
+4. **Test-isolation fixes of the same family:** `classes.rs` and `strings.rs` got
+   `profile::lock`-style `#[cfg(test)]` mutexes after parallel runs showed `classicons` tests
+   reading the class registry mid-mutation and `strings` tests racing the shipped table. Lock
+   order where tests combine: profile → classes → strings.
+
+Tests: 268 green; engine build clean at ABI 20; full autotest 13/13 (now with a class pick before
+combat); classpick 6/6 with the MP7 kit proof. Manual checks outstanding: unarmed spawn (knife
+only, both views), the paged class bar with kit icons, and a lobby-authored custom applying its
+exact kit in-game.
+
+## Playtest fixes: the dropped command-bar pick, the ??? labels, the stitched icons (2026-10-20)
+
+Three user-reported bugs, three Flash agents in parallel, then an integrator build (ABI 20 → 21,
+archive VERSION 40 → 41):
+
+1. **Command-bar class picks were dropped 100% of the time.** The button dispatch queued
+   `s_out.choose_class` from the UI pump, but `zhbo_client_frame` writes the WHOLE `ZhboClientOut`
+   fresh every frame (`*out = result` in ffi.rs) and `applyClientOutput` reads it right after — no
+   click ordering survives. Gotcha worth remembering: **one-shots that cross the ABI must be
+   ClientIn, never bridge-side ClientOut state.** Now `ZhboClientIn.class_button` (1-based button
+   index, appended; `ZhboClientIn` 128 → 136) and the Rust client emits the pick through the same
+   `pick_custom_class`/preset path as the overlay, naming the General it adopted from the sim
+   record. The class set closes on `zhbo_general_has_class` (a failed pick leaves it open for a
+   retry); the stale bridge queue code is gone.
+2. **The ??? on every custom label was a wchar_t width mismatch.** The string ABI is UTF-16
+   (`const uint16_t *zhbo_string`), but `WideChar` is `wchar_t` — **4 bytes on macOS/Linux** (the
+   engine has no `-fshort-wchar`), and `Zhbo_FetchString` just reinterpreted the pointer:
+   `wcslen` read two UTF-16 units per WCHAR and ran past the 16-bit NUL into heap, and CoreText
+   maps the garbage to `?`. Windows' 16-bit wchar_t made the cast harmless there — which is why it
+   was long-standing and Mac-only, and why Rust-drawn overlay text was fine. Fix: widen properly in
+   `Zhbo_FetchString` (with surrogate-pair handling; `GameTextManager::fetch` copies immediately,
+   so one static buffer suffices, ABI unchanged). Also fixed in the same pass: `zhbo_tactical` was
+   never in `strings::lookup`'s weapon family (the Tactical button missed on EVERY platform since
+   the buttons landed); served strings are now interned (immortal pointers across label rebuilds,
+   and no per-fetch leak of hot labels); `zhbo_string` logs `served`/`MISSED` once per label so
+   future misses name themselves.
+3. **The "stitched" icons were hand-set base-game coords, not the atlas.** A contact sheet of the
+   real dist archive (`zhbo-assets hud-sheet`, new diagnostic) showed all 161 sprites whole and
+   the reconversion byte-identical — then proved `ZHBO_Button_ChooseClass`'s rect in
+   `ZHBO_A_Buttons.ini` started 10 px inside one `SAUserInterface512_005` cameo cell and ran
+   through the gutter into the next (literally the tail of one jet and the head of another), and
+   `ZHBO_Button_ClassTile` reused a soldier cameo under the kit overlay. The converter now always
+   generates both tiles (plain dark tile; BO2 grid-pattern tile for ChooseClass; VERSION 41), the
+   fallback coords point at one whole cell, and a new test (`every_command_button_image_is_a_
+   generated_tile`) would have caught it.
+
+Tests: 277 green; engine build clean at ABI 21; full autotest 13/13; classpick 6/6 (first attempt
+died to a machine hitch storm inside the 90 s wait — the in-game flow had actually completed;
+rerun passed. `Zhbo_Reset` legitimately fires ~4× at startup; `ResetControlBarTrackers` rebuilds
+the class pages each time, which is why the log shows repeated "made the class menu" lines).
+
+## Create-a-class parity wave: the 10×(5+5) model and the reference-driven pass (2026-10-20)
+
+The reference environment session delivered a decompiled CaC (`~/Documents/BO2-reference/lua-dump/`,
+479/479 scripts) and 295 captures (`~/Documents/BO2-reference/cac/sweep/`); this wave verified and
+refined our implementation against it (Flash agents; citations are to those files). The AGENTS.md
+addendum permitting Steam-online menu-shell capture is in the same tree.
+
+1. **The model is class sets, not a flat list** (`cacutility.lua`'s caps block; `cacchooseclass.lua`'s
+   `SetActiveClassSet`). Profile v2: ten `ClassSet`s of ≤5 customs each, plus an `active_set` the
+   game loads with ("You will load into the game with this class set"); v1 profiles migrate into
+   sets 1–2. Save/copy/delete/rename/reset are slot-based inside sets; a sixth class in a set is
+   refused (was: oldest evicted). **Gotcha found inside the work:** `classes::parse` stripped `;`
+   as an inline comment, so every shipped spec silently loaded as its first slot only — the real
+   kits never reached the game. Comments are whole-line only now.
+2. **Caps and naming.** New hard cap of three bonus cards (`cacutility.lua` `maxBonusCards = 3`;
+   a fourth is denied with the deny cue). BO2 never says "Pick 10" — the UI now says "allocation"
+   with BO2's segmented 10-block bar and `n/10` counter (`allocationbar.lua`'s `AddBars`,
+   `allocationsubtitle.lua`'s format).
+3. **Repair, BO2's way** (`classrepair.rs`, mirroring `checkclasses.lua` `CheckItems` /
+   `ClearWeapon` / `ClearSlot`): unknown weapons clear with their attachments, wrong-slot offhands
+   and repeat/unknown perks drop in slot-walk order, and an over-budget/over-card class is trimmed
+   back-to-front so the weapon is the last thing standing — applied on profile load and when a
+   stored class opens in the editor.
+4. **The premade five are BO2's now** (`editdefaultclasses.lua` + `mp/statstable.csv`'s
+   default-class column): Assault=TAR-21+SMAW, SMG=MP7+Five-seven, LMG=MK48+SMAW, CQB=870+SMAW,
+   Sniper=SVU+Five-seven, frag/concussion, Lightweight/Toughness/Dexterity, no attachments. The
+   built-in stand-in catalog gained those seven guns as name+class stand-ins (schema defaults; the
+   converted table replaces them — no numbers hand-copied).
+5. **The command bar is one page of the active set**: Take Control + the five premade + up to
+   five customs + Back; the two-page machinery and Next glyph are gone (`ZHBO_CLASS_BUTTONS 15` is
+   capacity only; rows 10..14 are `present=0` and skipped). Rows re-derive from the active set on
+   every reset, so a set switched in the lobby shows up next match.
+6. **The screens read like the captures** (bounded visual pass; citations per item in the commit):
+   `‹ CLASS SET n ›` pager with the ten-dot marker (`a-chooseclass/001…011`; display-only in-match,
+   where the client can't switch sets), the editor as BO2's boxed grid with the orange-outlined
+   selected box and its circled X (`R Remove` when the slot holds something), attachment boxes
+   under each weapon ("Attachments not available" where none are offered), the weapon picker's
+   rotated CATEGORY column (`c-primary/001`, `d-attach/037`) with the four segmented stat bars in
+   BO2's order (FIRE RATE, DAMAGE, RANGE, ACCURACY), perk order confirmed against `e-perks`, bonus
+   cards reordered to `f-wildcards/001` (Secondary Gunfighter before Primary Gunfighter), and the
+   choose-class footers with `S Class Set Options` / `O Class Options` dialogs (`a-chooseclass/021,
+   023`, `j-dialogs/001`). Deliberate divergences: no camo/personalize, killstreak slots, unlock
+   tokens/padlocks, level indicator, weapon descriptions (no data source); the set dialog ships
+   RENAME + RESET SET (set COPY deferred — profile has no set-copy op).
+7. **Autotest follows the premades:** the standard run seeds a `GL Test` custom (an94_mp+gl — no
+   premade carries an attachment, so the alt-mode check needs it) and picks it by its derived row
+   key; `--rts` checks follow the Assault SMAW. **Open:** `scripts/autotest.ps1` (Windows) doesn't
+   seed the GL custom — port when a Windows run is next available.
+
+Gotchas for the art pass: the converted CaC chrome sprites are whole framed tiles and smear when
+stretched (the screens draw their own chrome now; bring the art back via nine-slicing in
+`hud::render`); the converted menu background is a bright snow scene, so the screens scrim it dark
+to match BO2's near-black; `zhbo_menu_frame` must draw `menu.dialog()` after `draw_screen` or the
+dialogs never reach the shell. `classui.rs` is ~2,900 lines — past the AGENTS.md smell line; split
+layout/draw vs. input folds vs. dialogs next time it is touched.
+
+Tests: workspace green (zhbo-core 234); engine build clean; full autotest 13/13 (with the GL
+custom pick), classpick 6/6.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

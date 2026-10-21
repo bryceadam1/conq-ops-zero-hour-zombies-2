@@ -40,9 +40,16 @@ pub const LAND: &str = "ZHBO_BO2_Land";
 pub const IMPACT: &str = "ZHBO_BO2_Impact";
 pub const IMPACT_FLESH: &str = "ZHBO_BO2_ImpactFlesh";
 
-/// The menu/UI confirm blip: played when the class pick screen comes up (a BO2 UI sound if the
-/// player's install has one; the host logs an error once if not, and the screen still opens).
+/// Create-a-class menu cues, converted from BO2's own CaC aliases (see `zhbo_assets::sfx`).
+/// The screen opens, a highlight moves, a choice is confirmed or refused, the class is saved and
+/// a finished class is picked. The host logs an error once for a missing event; the screen works.
+pub const UI_OPEN: &str = "ZHBO_BO2_UIOpen";
+pub const UI_NAVIGATE: &str = "ZHBO_BO2_UINavigate";
 pub const UI_SELECT: &str = "ZHBO_BO2_UISelect";
+pub const UI_BACK: &str = "ZHBO_BO2_UIBack";
+pub const UI_DENY: &str = "ZHBO_BO2_UIDeny";
+pub const UI_SAVE: &str = "ZHBO_BO2_UISave";
+pub const UI_PICKED: &str = "ZHBO_BO2_UIPicked";
 
 /// Distance between footsteps (Zero Hour units; a 60" stride at the converter's 11/72 scale).
 const STRIDE: f32 = 9.0;

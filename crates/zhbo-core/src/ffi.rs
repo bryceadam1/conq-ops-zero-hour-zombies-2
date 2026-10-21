@@ -18,6 +18,9 @@ struct State {
     client_host: CClientHost,
     sim: Sim,
     client: Client,
+    /// The shell create-a-class screen (`zhbo_menu_*`): `Some` while its window is up. Local UI
+    /// only — it never touches the sim (docs/CONTRACT.md's menu ABI).
+    menu: Option<crate::menu::MenuState>,
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);
@@ -37,7 +40,7 @@ fn publish_controlled(sim: &Sim) {
     }
 }
 
-pub const ABI_VERSION: u32 = 17;
+pub const ABI_VERSION: u32 = 21;
 
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
@@ -49,11 +52,16 @@ const _: () = {
     use std::mem::size_of;
     assert!(size_of::<crate::host::ObjInfo>() == 56);
     assert!(size_of::<FpsInput>() == 20);
-    assert!(size_of::<ClientIn>() == 128);
-    assert!(size_of::<ClientOut>() == 400);
+    assert!(size_of::<ClientIn>() == 136);
+    assert!(size_of::<ClientOut>() == 4508);
     assert!(size_of::<crate::sim::RtsWeapons>() == 36);
     assert!(size_of::<crate::building::BuildOption>() == 64);
     assert!(size_of::<crate::building::Site>() == 64);
+    assert!(size_of::<crate::menu::MenuIn>() == 56);
+    assert!(size_of::<crate::menu::MenuOut>() == 4108);
+    assert!(size_of::<ClassButton>() == 756);
+    // host/zhbo/zhbo_core.h's ZHBO_CLASS_BUTTONS (the bridge's fixed array).
+    assert!(crate::classicons::BUTTONS == 15);
     assert!(size_of::<LogicApi>() == (LOGIC_API_FIELDS as usize) * size_of::<usize>());
     assert!(size_of::<ClientApi>() == (CLIENT_API_FIELDS as usize) * size_of::<usize>());
 };
@@ -110,9 +118,21 @@ pub unsafe extern "C" fn zhbo_load_profile(text: *const c_char) {
 /// before the next call).
 static PROFILE_TEXT: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 
+/// Keep `text` in the stable buffer `zhbo_profile_save`/`zhbo_profile_write` return.
+fn store_profile_text(text: &str) -> *const c_char {
+    let mut buf = PROFILE_TEXT.lock().unwrap_or_else(|e| e.into_inner());
+    buf.clear();
+    buf.extend_from_slice(text.as_bytes());
+    buf.push(0);
+    buf.as_ptr().cast::<c_char>()
+}
+
 /// Save a custom class into the profile from the choose-class payload's wire words
 /// ([`crate::classes::CustomClass::from_wire_words`]). Returns a pointer to the profile's full text
 /// (NUL-terminated) for the bridge to write, or null when the words don't decode (nothing saved).
+///
+/// Kept for callers that still have a class's wire words; the class screen now writes the whole
+/// profile through [`zhbo_profile_write`] (delete/copy have no class to encode).
 ///
 /// # Safety
 /// `words` must point to `len` `u32`s (or be null when `len` is 0).
@@ -125,12 +145,33 @@ pub unsafe extern "C" fn zhbo_profile_save(words: *const u32, len: i32) -> *cons
     let Some(class) = crate::classes::CustomClass::from_wire_words(words) else {
         return std::ptr::null();
     };
-    let text = crate::profile::save(class);
-    let mut buf = PROFILE_TEXT.lock().unwrap_or_else(|e| e.into_inner());
-    buf.clear();
-    buf.extend_from_slice(text.as_bytes());
-    buf.push(0);
-    buf.as_ptr().cast::<c_char>()
+    store_profile_text(&crate::profile::save(class))
+}
+
+/// Write the profile from the client's `save_profile` one-shot: the words are the profile file's
+/// full text (`profile::pack_text`), which the core already applied (the editor's Save, or a
+/// delete/copy). Loads it back (idempotent) and returns a NUL-terminated copy for the bridge to
+/// write, or null when the words don't decode.
+///
+/// # Safety
+/// `words` must point to `len` `u32`s (or be null when `len` is 0).
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_profile_write(words: *const u32, len: i32) -> *const c_char {
+    // An empty profile (the last class deleted) is a legitimate write of zero words.
+    let words: &[u32] = unsafe {
+        if len > 0 && !words.is_null() {
+            std::slice::from_raw_parts(words, len as usize)
+        } else if len == 0 {
+            &[]
+        } else {
+            return std::ptr::null();
+        }
+    };
+    let Some(text) = crate::profile::unpack_text(words) else {
+        return std::ptr::null();
+    };
+    crate::profile::load(&text);
+    store_profile_text(&text)
 }
 
 /// Returns the ABI version; the glue refuses to run if it does not match its header.
@@ -176,6 +217,7 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
         client_host: CClientHost(*client),
         sim: Sim::with_tuning(&crate::tuning::get()),
         client: Client::default(),
+        menu: None,
     };
     use crate::host::LogicHost;
     state.logic.log(&format!("zhbo-core {} initialised (ABI {ABI_VERSION})", env!("CARGO_PKG_VERSION")));
@@ -205,6 +247,9 @@ pub extern "C" fn zhbo_reset() {
     with_state(|s| {
         s.sim.reset();
         s.client.reset();
+        // The shell create-a-class screen never survives a game transition (its window is the
+        // bridge's; it goes away with the shell).
+        s.menu = None;
         publish_controlled(&s.sim);
     });
 }
@@ -248,7 +293,18 @@ pub unsafe extern "C" fn zhbo_logic_choose_class(player: i32, general: u32, inde
     // `i32::MIN`), so it must not be clamped to a real list index. A negative index with an empty
     // payload is the ignored case the contract above describes.
     let index = if payload.is_empty() { usize::try_from(index).unwrap_or(usize::MAX) } else { 0 };
-    with_state(|s| s.sim.choose_class(player, general, index, payload));
+    with_state(|s| {
+        use crate::host::LogicHost;
+        // The engine dispatches messages before `zhbo_logic_step`, so `log_step`'s snapshot
+        // already contains the event; log the pick here (the user-facing "assumed the ... class").
+        let before = s.sim.events.len();
+        s.sim.choose_class(player, general, index, payload);
+        for e in s.sim.events.iter().skip(before) {
+            if let Some(line) = crate::sim::describe_event(e) {
+                s.logic.log(&line);
+            }
+        }
+    });
 }
 
 #[no_mangle]
@@ -324,6 +380,117 @@ pub unsafe extern "C" fn zhbo_client_rts_ammo(general: u32, out: *mut crate::sim
         return;
     }
     *out = with_state(|s| s.sim.rts_ammo(general)).unwrap_or_else(|| crate::sim::Sim::new().rts_ammo(general));
+}
+
+/// One command-bar class button (zhbo_core::classicons): which class it carries, where it sits in
+/// the one-page class command set, its label, its kit's converted icon names, and (for a custom
+/// class) the pick message's wire words. The bridge caches these at game start and draws the icons
+/// over the button's rect.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct ClassButton {
+    /// Non-zero when a class occupies this button; otherwise the button is unused.
+    pub present: i32,
+    /// The command set's page, always 1 (the active set fits one page; kept for layout stability).
+    pub page: i32,
+    /// The command set's index: 0 is Take Control, 1..=10 the active set's classes.
+    pub slot: i32,
+    /// The button's label, UTF-8 NUL-terminated (also served to the engine by `strings.rs`).
+    pub name: [u8; 48],
+    /// The primary weapon's converted HUD icon (`ZHBO_BO2_Icon_<id>`).
+    pub primary: [u8; 48],
+    /// The secondary weapon's icon.
+    pub secondary: [u8; 48],
+    /// The lethal equipment's icon.
+    pub lethal: [u8; 48],
+    /// The tactical equipment's icon.
+    pub tactical: [u8; 48],
+    /// The perk icons, in pick order (at most six: three tiers plus Greed picks).
+    pub perks: [[u8; 40]; 6],
+    pub perk_count: i32,
+    /// A custom class's wire words (`classes.rs`); zero for a shipped preset (picked by index).
+    pub payload_len: i32,
+    pub payload: [u32; 64],
+}
+
+impl Default for ClassButton {
+    fn default() -> Self {
+        ClassButton {
+            present: 0,
+            page: 0,
+            slot: 0,
+            name: [0; 48],
+            primary: [0; 48],
+            secondary: [0; 48],
+            lethal: [0; 48],
+            tactical: [0; 48],
+            perks: [[0; 40]; 6],
+            perk_count: 0,
+            payload_len: 0,
+            payload: [0; 64],
+        }
+    }
+}
+
+/// Copy `text` into a fixed C buffer, NUL-terminated and truncated on a byte boundary.
+fn put_text(dst: &mut [u8], text: &str) {
+    let bytes = text.as_bytes();
+    let n = bytes.len().min(dst.len().saturating_sub(1));
+    dst[..n].copy_from_slice(&bytes[..n]);
+    if let Some(last) = dst.last_mut() {
+        *last = 0;
+    }
+}
+
+/// Fill `out` with the command bar's class buttons (`zhbo_core::classicons::icons`/`labels`);
+/// returns how many were written (the class list's 15 slots, present or not).
+///
+/// # Safety
+/// `out` must be writable for `cap` `ClassButton`s.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_class_buttons(out: *mut ClassButton, cap: i32) -> i32 {
+    if out.is_null() || cap <= 0 {
+        return 0;
+    }
+    let icons = crate::classicons::icons();
+    let labels = crate::classicons::labels();
+    let presets = icons.iter().take(crate::classicons::PRESETS).filter(|c| c.is_some()).count();
+    let customs = icons.iter().skip(crate::classicons::PRESETS).filter(|c| c.is_some()).count();
+    let n = icons.len().min(cap as usize);
+    for i in 0..n {
+        let mut b = ClassButton::default();
+        if let Some(c) = &icons[i] {
+            b.present = 1;
+            if let Some((page, slot)) = crate::classicons::button_page_for(i, presets, customs) {
+                b.page = page as i32;
+                b.slot = slot as i32;
+            }
+            put_text(&mut b.name, labels[i].as_deref().unwrap_or(c.name.as_str()));
+            put_text(&mut b.primary, &c.primary);
+            put_text(&mut b.secondary, &c.secondary);
+            put_text(&mut b.lethal, &c.lethal);
+            put_text(&mut b.tactical, &c.tactical);
+            let perks = c.perks.len().min(6);
+            for k in 0..perks {
+                put_text(&mut b.perks[k], c.perks[k]);
+            }
+            b.perk_count = perks as i32;
+            if i >= crate::classicons::PRESETS {
+                let words = crate::classicons::custom_payload(i);
+                let len = words.len().min(64);
+                b.payload[..len].copy_from_slice(&words[..len]);
+                b.payload_len = len as i32;
+            }
+        }
+        *out.add(i) = b;
+    }
+    n as i32
+}
+
+/// Whether a General has assumed a class yet (the command bar shows the class set until he has).
+#[no_mangle]
+pub extern "C" fn zhbo_general_has_class(general: u32) -> i32 {
+    with_state(|s| s.sim.players.iter().flatten().any(|p| p.general == general && p.class.is_some()) as i32).unwrap_or(0)
 }
 
 /// How a controlled General looks in third person (see `Sim::world_poses`).
@@ -425,6 +592,61 @@ pub extern "C" fn zhbo_client_draw_hud(local_player: i32) {
     });
 }
 
+// ------------------------------------------------------------------------------------------------
+// The shell create-a-class menu (the lobby's class screen; docs/CONTRACT.md's menu ABI). The
+// bridge's shell window calls these from its open/draw/close points; the screen draws through the
+// stored client (HUD) callbacks and its sounds through the stored sound callback, both valid
+// during the window's draw.
+// ------------------------------------------------------------------------------------------------
+
+/// Open the shell class screen (the lobby's Create a Class button): a fresh `MenuState` (any
+/// screen already up is replaced).
+#[no_mangle]
+pub extern "C" fn zhbo_menu_open() {
+    with_state(|s| s.menu = Some(crate::menu::MenuState::new()));
+}
+
+/// Close the shell class screen: drop its state. The bridge calls this when its window goes away.
+#[no_mangle]
+pub extern "C" fn zhbo_menu_close() {
+    with_state(|s| s.menu = None);
+}
+
+/// One frame of the shell class screen: fold the input, play the queued cues, draw the prims. When
+/// no screen is open the frame reports `closed` so a stray window closes instead of spinning.
+///
+/// # Safety
+/// `input` must be valid; `out` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_menu_frame(input: *const crate::menu::MenuIn, out: *mut crate::menu::MenuOut) {
+    if input.is_null() || out.is_null() {
+        return;
+    }
+    let inp = *input;
+    // With no state (or no screen open) the frame reports closed: a stray window pops instead of
+    // spinning on a black screen.
+    let closed = crate::menu::MenuOut { closed: 1, ..Default::default() };
+    let result = with_state(|s| {
+        let Some(menu) = s.menu.as_mut() else {
+            return closed;
+        };
+        let out = menu.frame(&inp);
+        for cue in menu.cues.drain(..) {
+            s.client_host.sound(cue, None);
+        }
+        let mut prims = Vec::new();
+        crate::classui::draw_screen(&mut prims, inp.screen_w, inp.screen_h, &menu.view());
+        // The shell's `S`/`O` dialogs draw over the screen (BO2's popup panels).
+        if let Some(dialog) = menu.dialog() {
+            crate::classui::draw_dialog(&mut prims, inp.screen_w, inp.screen_h, dialog);
+        }
+        crate::hud::render(&prims, &s.client_host);
+        out
+    })
+    .unwrap_or(closed);
+    *out = result;
+}
+
 /// Both games must be installed. Returns 1 if so; otherwise 0 and writes a NUL-terminated
 /// explanation (UTF-8) into `msg` (up to `cap` bytes).
 ///
@@ -455,15 +677,51 @@ pub unsafe extern "C" fn zhbo_string(label: *const c_char) -> *const u16 {
         return std::ptr::null();
     }
     let Ok(label) = CStr::from_ptr(label).to_str() else { return std::ptr::null() };
-    crate::strings::lookup(label).map_or(std::ptr::null(), |s| s.as_ptr())
+    let text = crate::strings::lookup(label);
+    {
+        // One line per mod label when the answer changes: whether the core served it. A label
+        // logged `served` that still draws as "???" is not a lookup miss — the text left the core
+        // as valid UTF-16, so the fault is on the engine side of the ABI (see MODLOG); a `MISSED`
+        // line names the label to add to the table. Engine labels that are not ours stay quiet.
+        use std::collections::HashMap;
+        use std::sync::Mutex;
+        static SEEN: Mutex<Option<HashMap<String, bool>>> = Mutex::new(None);
+        if label.to_ascii_lowercase().contains("zhbo") {
+            let mut seen = SEEN.lock().unwrap_or_else(|e| e.into_inner());
+            let served = text.is_some();
+            let table = seen.get_or_insert_with(HashMap::new);
+            let changed = match table.get_mut(label) {
+                Some(previous) => std::mem::replace(previous, served) != served,
+                None => {
+                    table.insert(label.to_string(), served);
+                    true
+                }
+            };
+            if changed {
+                if served {
+                    eprintln!("zhbo: string {label:?} served");
+                } else {
+                    eprintln!("zhbo: string {label:?} MISSED (no entry in the mod's string table: the engine draws ???)");
+                }
+            }
+        }
+    }
+    text.map_or(std::ptr::null(), |s| s.as_ptr())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    /// The global State is shared: the ffi tests that init it run one at a time.
+    fn state_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     #[test]
     fn calls_before_init_are_harmless() {
+        let _g = state_lock();
         zhbo_reset();
         zhbo_logic_step(1);
         assert_eq!(zhbo_logic_is_controlled(5), 0);
@@ -472,6 +730,40 @@ mod tests {
         assert_eq!(out.camera_override, 0);
         let s = unsafe { zhbo_string(c"OBJECT:ZHBO_General".as_ptr()) };
         assert!(!s.is_null());
+        // The shell menu's entry points, too.
+        zhbo_menu_open();
+        let mut mout = crate::menu::MenuOut::default();
+        unsafe { zhbo_menu_frame(&crate::menu::MenuIn::default(), &mut mout) };
+        zhbo_menu_close();
+    }
+
+    /// The shell menu over the ABI: open, a frame (draws through all-None callbacks, guarded), and
+    /// `zhbo_reset` drops the screen so no menu state leaks into a match.
+    #[test]
+    fn the_menu_opens_frames_and_reset_drops_it() {
+        let _g = state_lock();
+        // All-None callback tables: every C*Host method guards on None.
+        // # Safety: both tables are plain structs of Option<fn> fields; zeroed is all-None.
+        let logic: LogicApi = unsafe { std::mem::zeroed() };
+        let client: ClientApi = unsafe { std::mem::zeroed() };
+        unsafe { zhbo_init(&logic, &client) };
+
+        // A frame with no menu open reports closed (a stray window would pop).
+        let mut out = crate::menu::MenuOut::default();
+        unsafe { zhbo_menu_frame(&crate::menu::MenuIn::default(), &mut out) };
+        assert_eq!(out.closed, 1);
+
+        zhbo_menu_open();
+        let mut out = crate::menu::MenuOut::default();
+        unsafe { zhbo_menu_frame(&crate::menu::MenuIn::default(), &mut out) };
+        assert_eq!(out.closed, 0, "the screen is up");
+        assert_eq!(out.save_profile, 0);
+
+        zhbo_reset();
+        let mut out = crate::menu::MenuOut::default();
+        unsafe { zhbo_menu_frame(&crate::menu::MenuIn::default(), &mut out) };
+        assert_eq!(out.closed, 1, "reset dropped the screen");
+        zhbo_menu_close();
     }
 
     #[test]
@@ -481,5 +773,75 @@ mod tests {
         assert_eq!(zhbo_abi_fields() >> 32, CLIENT_API_FIELDS);
         assert_eq!(std::mem::size_of::<crate::host::LogicApi>(), (LOGIC_API_FIELDS as usize) * std::mem::size_of::<usize>());
         assert_eq!(std::mem::size_of::<crate::host::ClientApi>(), (CLIENT_API_FIELDS as usize) * std::mem::size_of::<usize>());
+    }
+
+    fn ctext(buf: &[u8]) -> &str {
+        let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
+        std::str::from_utf8(&buf[..end]).unwrap()
+    }
+
+    #[test]
+    fn class_buttons_describe_the_pages_and_carry_the_pick_payload() {
+        let _g = crate::profile::lock();
+        crate::profile::reset();
+        let c = crate::classes::CustomClass {
+            name: "My Sniper".into(),
+            primary: "dsr50_mp+acog".into(),
+            ..crate::classes::CustomClass::default()
+        };
+        crate::profile::save(c.clone());
+        let mut out = [ClassButton::default(); crate::classicons::BUTTONS];
+        let n = unsafe { zhbo_class_buttons(out.as_mut_ptr(), out.len() as i32) };
+        assert_eq!(n as usize, crate::classicons::BUTTONS);
+        // The preset buttons: page one, right after Take Control.
+        assert_eq!(out[0].present, 1);
+        assert_eq!((out[0].page, out[0].slot), (1, 1));
+        assert!(!ctext(&out[0].name).is_empty(), "a preset is labelled");
+        assert!(ctext(&out[0].primary).starts_with("ZHBO_BO2_Icon_"));
+        assert!(out[0].payload_len == 0, "a preset picks by index");
+        // The one custom class sits on page one's first custom slot, with its wire words.
+        assert_eq!(out[crate::classicons::PRESETS].present, 1);
+        assert_eq!((out[crate::classicons::PRESETS].page, out[crate::classicons::PRESETS].slot), (1, 6));
+        assert_eq!(ctext(&out[crate::classicons::PRESETS].name), "My Sniper");
+        assert_eq!(ctext(&out[crate::classicons::PRESETS].primary), "ZHBO_BO2_Icon_dsr50_mp");
+        let len = out[crate::classicons::PRESETS].payload_len as usize;
+        assert_eq!(crate::classes::CustomClass::from_wire_words(&out[crate::classicons::PRESETS].payload[..len]), Some(c));
+        // The empty custom slots carry no class.
+        assert!(out[crate::classicons::PRESETS + 1..].iter().all(|b| b.present == 0));
+        crate::profile::reset();
+    }
+
+    /// The command bar's class button crosses the ABI: `ZhboClientIn.class_button` (1-based) makes
+    /// `zhbo_client_frame` emit the pick, and a frame without it emits nothing. This is the half
+    /// the bug lost: the bridge queued `choose_class` into the shared out struct and the next
+    /// `zhbo_client_frame` wrote a fresh struct over it before the bridge could read the pick.
+    #[test]
+    fn a_command_bar_class_button_reaches_the_client_out_through_the_abi() {
+        let _g = state_lock();
+        let logic: LogicApi = unsafe { std::mem::zeroed() };
+        let client: ClientApi = unsafe { std::mem::zeroed() };
+        unsafe { zhbo_init(&logic, &client) };
+        let mut out = ClientOut::default();
+        let inp = ClientIn { class_button: 1, ..Default::default() };
+        unsafe { zhbo_client_frame(&inp, &mut out) };
+        assert_eq!(out.choose_class, 1, "button 1 is the first preset, 1-based");
+        assert_eq!(out.choose_class_payload_len, 0);
+        unsafe { zhbo_client_frame(&ClientIn::default(), &mut out) };
+        assert_eq!(out.choose_class, 0, "the one-shot is consumed, not repeated");
+        zhbo_reset();
+    }
+
+    #[test]
+    fn general_has_class_follows_the_sim() {
+        let _g = state_lock();
+        let logic: LogicApi = unsafe { std::mem::zeroed() };
+        let client: ClientApi = unsafe { std::mem::zeroed() };
+        unsafe { zhbo_init(&logic, &client) };
+        assert_eq!(zhbo_general_has_class(1), 0);
+        let words = crate::classes::CustomClass { primary: "an94_mp".into(), ..crate::classes::CustomClass::default() }.to_wire_words();
+        unsafe { zhbo_logic_choose_class(0, 1, i32::MIN, words.as_ptr(), words.len() as i32) };
+        assert_eq!(zhbo_general_has_class(1), 1);
+        assert_eq!(zhbo_general_has_class(2), 0, "another General has no class");
+        zhbo_reset();
     }
 }

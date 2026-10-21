@@ -99,12 +99,18 @@ void readConfig();
 extern ZhboClientOut s_out;
 extern Real s_wheelAccum;
 extern double s_lastTick;
+// The command bar's pressed class button, waiting for the next client frame: 0 none, else 1-based
+// in the class-button rows (ZhboControlBar's `chooseClass` fills it). Same one-shot discipline as
+// the client's own class_pick_force latch.
+extern Int s_classButtonPick;
 
 // Logging: the debug output and the per-game log file (the tests' oracle).
 void logLine(const char *msg);
 void logf(const char *fmt, ...);
 /// A whole file from the game's file system as text (empty when missing).
 std::string readTextFile(const char *path);
+/// Write the create-a-class profile file's text (ZhboBridge.cpp); works outside a match.
+void writeProfileFile(const char *text);
 
 // One faction row: what each mapping (side name, viewmodel letter, VM code, General object) shares.
 struct ZhboFaction
@@ -183,6 +189,15 @@ void setBo2Look(Bool on);
 // --- ZhboControlBar.cpp -----------------------------------------------------------------------
 AsciiString zhboBuildSetFor(const Object *general);
 void zhboInjectConstructButtons();
+// The command bar's class set (zhbo_core::classicons): one page of presets and the active set's
+// customs.
+Object *zhboSelectedGeneral();
+Int zhboPressedClassButton();
+void zhboOpenClassSet(Object *general, Bool forced);
+void zhboCloseClassSet(Object *general);
+void zhboChooseClassButton(Object *general, Int button);
+void zhboUpdateClassBar();
+void drawClassButtons();
 
 
 // --- ZhboAutopilot.cpp ------------------------------------------------------------------------
@@ -194,7 +209,8 @@ struct Autopilot
 	// ZHBO_AUTOPILOT=showcase: the General alone, filmed close up in RTS (idle, a walk, death).
 	Bool showcase;
 	// ZHBO_AUTOPILOT=rts: the General stays under RTS control and is selected; the script picks
-	// the lethal, then the pistol, from the command bar, then takes control.
+	// the lethal, then the secondary (the Assault preset's SMAW), from the command bar, then takes
+	// control.
 	Bool rts;
 	// ZHBO_AUTOPILOT=build: the General alone; the script opens his Build menu, orders a structure
 	// and goes back to his commands (his building is logged as it completes). Then in first person

@@ -3,7 +3,7 @@
 //!
 //! Nothing here affects the lockstep simulation except through the input messages it emits.
 
-use crate::input::{buttons, key_name, pack_move, FpsInput, Key, KeySet, MAX_PITCH};
+use crate::input::{buttons, pack_move, FpsInput, Key, KeySet, MAX_PITCH};
 use crate::math::{dir_from_angles, lerp_angle, smoothstep, wrap_angle, Vec3};
 use crate::sim::{EventKind, Mode, Sim};
 use crate::sounds::{self, Cues};
@@ -133,10 +133,18 @@ pub struct ClientIn {
     pub rts_hfov: f32,
     /// The point the RTS camera pivots on (on the ground; the camera sits at an offset from it).
     pub rts_pivot: Vec3,
-    /// One-shot from the host: the lobby's Create-a-Class button was pressed, so the pick screen
-    /// opens (or re-opens) even when a class is already chosen. The bridge latches the shell
-    /// button until the first client frame consumes it.
+    /// One-shot from the host: the command bar's Create-a-Class entry was pressed, so the pick
+    /// screen opens (or re-opens) even when a class is already chosen. The bridge latches it until
+    /// the first client frame consumes it. (The lobby's button opens the shell screen instead —
+    /// see `menu.rs`.)
     pub class_pick_force: i32,
+    /// One-shot from the host: a command-bar class button was pressed — 1-based, in
+    /// [`crate::classicons`]' button order (the five default classes first, then the active class
+    /// set's customs), 0 = none.
+    /// The engine dispatches a bar click at a different point in the frame from the client's, so
+    /// the bridge only hands the button over and the pick is emitted here, through the same
+    /// one-shot the pick screen writes. See [`Client::pick_class_button`].
+    pub class_button: i32,
 }
 
 impl Default for ClientIn {
@@ -160,6 +168,7 @@ impl Default for ClientIn {
             rts_hfov: 0.87,
             rts_pivot: Vec3::new(0.0, 0.0, 0.0),
             class_pick_force: 0,
+            class_button: 0,
         }
     }
 }
@@ -199,16 +208,27 @@ pub struct ClientOut {
     /// Sway, bob and recoil: offset from the eye (forward, left, up) and yaw/pitch/roll (radians).
     pub viewmodel_offset: Vec3,
     pub viewmodel_angles: Vec3,
-    /// One-shot: the player picked class `choose_class` (an index into `classes.rs`' list, or 0
-    /// = none) for `choose_class_general`. When a custom class is picked, `choose_class` is
-    /// `i32::MIN` (the custom marker) and `choose_class_payload` carries the wire words
-    /// (`classes.rs`' `CustomClass::to_wire_words`); the bridge sends them alongside the index.
+    /// One-shot: the player picked class `choose_class` for `choose_class_general`: a 1-based
+    /// index into `classes.rs`' list (0 is the "no pick" marker, and the bridge subtracts one for
+    /// the message), or `i32::MIN` for a custom class whose wire words are in
+    /// `choose_class_payload` (`classes.rs`' `CustomClass::to_wire_words`).
     pub choose_class: i32,
     pub choose_class_general: u32,
     /// The custom class's wire words when `choose_class` is the custom marker; unused otherwise.
     pub choose_class_payload: [u32; 64],
     /// How many `choose_class_payload` words are valid (0 for a shipped class pick).
     pub choose_class_payload_len: i32,
+    /// One-shot: write the profile file now. The in-match client is pick-only, so it never sets
+    /// this (the shell menu's editor/delete/copy use `MenuOut`'s own one-shot); a pick alone must
+    /// never rewrite the profile.
+    pub save_profile: i32,
+    /// The profile file's full text, UTF-8 packed four bytes per word (see `profile::pack_text`).
+    pub save_profile_payload: [u32; 1024],
+    /// How many `save_profile_payload` words are valid.
+    pub save_profile_payload_len: i32,
+    /// The in-match class pick is up: the bridge leaves the cursor free and swallows the
+    /// game-bound mouse/key messages behind it.
+    pub menu_open: i32,
 }
 
 // Manual Default: `[u32; 64]` has none (arrays above 32 don't), and the rest are plain.
@@ -238,6 +258,10 @@ impl Default for ClientOut {
             choose_class_general: 0,
             choose_class_payload: [0; 64],
             choose_class_payload_len: 0,
+            save_profile: 0,
+            save_profile_payload: [0; 1024],
+            save_profile_payload_len: 0,
+            menu_open: 0,
         }
     }
 }
@@ -346,9 +370,6 @@ pub struct Client {
     last_sent_frame: Option<u32>,
     latch: u32,
     prev_held: u32,
-    /// The previous frame's raw key set: edge detection for keys outside the button bindings
-    /// (the class pick's number keys).
-    prev_keys: KeySet,
     eye_prev: Vec3,
     eye_curr: Vec3,
     seen_frame: u32,
@@ -367,14 +388,21 @@ pub struct Client {
     vm_events: viewmodel::Events,
     /// BO2 sound cues queued this frame (drained by the FFI layer into the host).
     pub cues: Cues,
-    /// The open create-a-class editor (BO2's Pick-10 screen), or `None` when it is closed. Opened
-    /// from the class pick screen's CREATE A CLASS row; on save its class becomes the pick, on
-    /// cancel the pick screen returns.
-    pub class_editor: Option<crate::classmenu::Editor>,
-    /// Set while the pick screen was forced open from outside a spawn (the lobby's Create a Class
-    /// button or the command bar's entry). It keeps the screen up even when a class is already
-    /// chosen, so a pick can be replaced, and clears once one lands.
+    /// Set while the pick screen was forced open from outside a spawn (the command bar's
+    /// Create-a-Class entry). It keeps the screen up even when a class is already chosen, so a
+    /// pick can be replaced, and clears once one lands or Escape closes it.
     pub class_pick_forced: bool,
+    /// After Escape closes the in-match pick while the General is still unclassed, the auto-offer
+    /// stays shut until the next take-control. The command-bar force ignores this latch.
+    pub class_pick_dismissed: bool,
+    /// Whether the pick screen is actually up this frame (set at the end of [`Client::frame`]).
+    /// The HUD draws it (and the bridge frees the cursor) only while this is true.
+    pub class_pick_open: bool,
+    /// The pick screen's highlighted row (client-local; the mouse and 1-9,0 move it).
+    pub class_pick_highlight: usize,
+    /// The previous frame's keys/pointer: hover and click edges for the class screens (the shared
+    /// fold's prev state; the shell menu keeps its own).
+    menu_prev: crate::classui::MenuPrev,
 }
 
 impl Default for Client {
@@ -399,7 +427,6 @@ impl Client {
             last_sent_frame: None,
             latch: 0,
             prev_held: 0,
-            prev_keys: KeySet::default(),
             eye_prev: Vec3::ZERO,
             eye_curr: Vec3::ZERO,
             seen_frame: 0,
@@ -412,8 +439,11 @@ impl Client {
             vm_motion: viewmodel::Motion::default(),
             vm_events: viewmodel::Events::default(),
             cues: Cues::default(),
-            class_editor: None,
             class_pick_forced: false,
+            class_pick_dismissed: false,
+            class_pick_open: false,
+            class_pick_highlight: 0,
+            menu_prev: crate::classui::MenuPrev::default(),
         }
     }
 
@@ -456,41 +486,139 @@ impl Client {
         let right = (down(b.right) as i32 - down(b.left) as i32) as f32;
         (held, fwd, right)
     }
-
-/// The class pick's keys: a fresh press of 1-5 picks that entry of the class list (the list is
-/// shared, so the index is deterministic on every client; the five basics fill the keys); a fresh
-/// press of 6 opens the create-a-class editor (BO2's row below the presets). One-shot: the value
-/// stays 0 otherwise, and the bridge turns it into `MSG_ZHBO_CHOOSE_CLASS`.
-fn class_pick_input(inp: &ClientIn, prev: &KeySet, out: &mut ClientOut, general: u32) -> bool {
-    const PICK_KEYS: [Key; 5] = [Key::Key1, Key::Key2, Key::Key3, Key::Key4, Key::Key5];
-    for (i, key) in PICK_KEYS.iter().enumerate() {
-        if inp.keys.is_down(*key) && !prev.is_down(*key) {
-            out.choose_class = i as i32 + 1;
-            out.choose_class_general = general;
-            return false;
-        }
-    }
-    // Entry 6 is the editor: it opens instead of picking.
-    inp.keys.is_down(Key::Key6) && !prev.is_down(Key::Key6)
 }
 
-/// The class pick from the overhead view: the same screen and the same keys as the first-person
-/// pick ([`class_pick_input`]), driven while the General is under RTS control so a class can be
-/// chosen without taking first-person control. The editor opens the same way.
-fn pick_input_rts(&mut self, inp: &ClientIn, out: &mut ClientOut) {
-    if self.class_editor.is_some() {
-        // The editor's own input runs in `build_input`; from overhead, only the pick's own keys do.
-        return;
+/// The class screens' input frame, projected from this frame's client input (the shell menu's
+/// `MenuIn` projects into the same shape; the shared folds work on either).
+fn menu_pointer(inp: &ClientIn) -> crate::classui::MenuPointer {
+    crate::classui::MenuPointer {
+        keys: inp.keys,
+        mouse_x: inp.mouse_x,
+        mouse_y: inp.mouse_y,
+        mouse_buttons: inp.mouse_buttons,
+        wheel: inp.wheel,
+        screen_w: inp.screen_w,
+        screen_h: inp.screen_h,
     }
-    let open_editor = Self::class_pick_input(inp, &self.prev_keys, out, self.general);
-    if open_editor {
-        let draft = crate::profile::classes()
-            .last()
-            .map(crate::classmenu::Draft::from_custom)
-            .unwrap_or_default();
-        self.class_editor = Some(crate::classmenu::Editor::new(draft));
+}
+
+impl Client {
+    /// The class screen's view for `classui::draw_screen` (the shell menu produces the same shape,
+    /// with its editor and management affordances). A match is pick-only.
+    pub fn class_screen_view(&self) -> crate::classui::ScreenView<'_> {
+        crate::classui::ScreenView {
+            highlight: self.class_pick_highlight,
+            editor: None,
+            deny: 0.0,
+            manage: false,
+        }
+    }
+
+    /// The pick screen's input, on the shared fold (`classui::pick_frame`): an activated row picks
+    /// it (no editor, no delete/copy in a match — BO2 only creates classes in the lobby). Escape
+    /// closes the screen and keeps the current kit.
+    fn class_pick_input(&mut self, inp: &ClientIn, out: &mut ClientOut, unclassed: bool) {
+        let frame = crate::classui::pick_frame(&menu_pointer(inp), &self.menu_prev, self.class_pick_highlight, false);
+        self.class_pick_highlight = frame.highlight;
+        if frame.navigated && frame.activate.is_none() {
+            self.cues.play(sounds::UI_NAVIGATE);
+        }
+        if let Some(i) = frame.activate {
+            match crate::classui::pick_rows(false).get(i).copied() {
+                Some(crate::classui::PickRow::Preset(j)) => {
+                    // 1-based: 0 is the one-shot's "no pick" marker; the bridge subtracts the one.
+                    out.choose_class = j as i32 + 1;
+                    out.choose_class_general = self.general;
+                    out.choose_class_payload_len = 0;
+                    self.cues.play(sounds::UI_SELECT);
+                    self.class_pick_forced = false;
+                }
+                Some(crate::classui::PickRow::Custom(j)) => {
+                    if let Some(class) = crate::profile::classes().get(j) {
+                        if pick_custom_class(out, self.general, class) {
+                            self.cues.play(sounds::UI_SELECT);
+                            self.class_pick_forced = false;
+                        } else {
+                            // Never send a truncated payload: the sim could not decode it and the
+                            // pick would silently do nothing (the General keeping the stock kit).
+                            self.cues.play(sounds::DRY_FIRE);
+                            self.note("That class is too large to send");
+                        }
+                    }
+                }
+                // The in-match list has no CREATE A CLASS row.
+                Some(crate::classui::PickRow::Create) | None => {}
+            }
+        } else if frame.back {
+            self.close_pick(unclassed);
+        }
+    }
+
+    /// A command-bar class button was pressed (`button` is 1-based, see `ClientIn::class_button`):
+    /// emit the pick the class screen would emit for that class, so the bar and the screen share
+    /// one writer of `choose_class`. Buttons below `classicons::PRESETS` are the five default
+    /// classes by registry index (a 1-based `choose_class`); the rest are the ACTIVE class set's
+    /// customs ([`crate::profile::classes`]), sent as their wire words. A button whose class is
+    /// gone (an empty custom slot, or a registry with fewer presets than the bar drew) sends
+    /// nothing, like an empty pick row.
+    fn pick_class_button(&mut self, out: &mut ClientOut, button: i32) {
+        let Some(index) = usize::try_from(button - 1).ok() else { return };
+        if index < crate::classicons::PRESETS {
+            if crate::classes::at(index).is_none() {
+                return;
+            }
+            // 1-based: 0 is the one-shot's "no pick" marker; the bridge subtracts the one.
+            out.choose_class = index as i32 + 1;
+            out.choose_class_general = self.general;
+            out.choose_class_payload_len = 0;
+        } else {
+            // Snapshot the profile once, like the pick screen's draw does.
+            let classes = crate::profile::classes();
+            let Some(class) = classes.get(index - crate::classicons::PRESETS) else { return };
+            if !pick_custom_class(out, self.general, class) {
+                // Never send a truncated payload (see `pick_custom_class`).
+                self.cues.play(sounds::DRY_FIRE);
+                self.note("That class is too large to send");
+                return;
+            }
+        }
         self.cues.play(sounds::UI_SELECT);
-        self.prev_keys = inp.keys;
+        self.class_pick_forced = false;
+    }
+
+    /// Close the pick screen without picking: keep the current (or base) kit and let the player
+    /// play on. Escaping while still unclassed latches the auto-offer shut until the next
+    /// take-control; the command-bar force still opens the screen regardless.
+    fn close_pick(&mut self, unclassed: bool) {
+        self.class_pick_forced = false;
+        if unclassed {
+            self.class_pick_dismissed = true;
+        }
+        self.cues.play(sounds::UI_BACK);
+    }
+
+    /// The class screen's input, from either the overhead view or first person. Returns true while
+    /// the pick screen owns the frame (so the first-person input path stays out of it).
+    fn menu_input(&mut self, inp: &ClientIn, out: &mut ClientOut, unclassed: bool) -> bool {
+        if self.class_pick_wanted(unclassed) {
+            self.class_pick_input(inp, out, unclassed);
+            return true;
+        }
+        false
+    }
+
+    /// Whether the pick screen is up. In the overhead view only the command-bar force opens it; in
+    /// first person the force opens it too, and an unclassed General is offered it at take-control
+    /// unless Escape dismissed the offer for this life.
+    fn class_pick_wanted(&self, unclassed: bool) -> bool {
+        match self.view {
+            // Overhead: only the command bar's force opens it (an unclassed player keeps playing).
+            ViewMode::Rts => self.class_pick_forced,
+            // First person: the force, or the spawn offer while unclassed and not dismissed.
+            ViewMode::Fps => self.class_pick_forced || (unclassed && !self.class_pick_dismissed),
+            // Never during the camera transitions.
+            ViewMode::Entering { .. } | ViewMode::Leaving { .. } => false,
+        }
     }
 }
 
@@ -501,18 +629,38 @@ const CHOOSE_CLASS_CUSTOM: i32 = i32::MIN;
 /// Fill a custom-class pick into the outgoing one-shot: the marker in `choose_class`, the class's
 /// wire words in the payload. The bridge turns it into `MSG_ZHBO_CHOOSE_CLASS` and the sim
 /// reassembles the spec ([`crate::classes::CustomClass::from_wire_words`]).
-fn pick_custom_class(out: &mut ClientOut, general: u32, class: &crate::classes::CustomClass) {
-    out.choose_class = Self::CHOOSE_CLASS_CUSTOM;
-    out.choose_class_general = general;
+///
+/// Returns `false` when the wire words do not fit the ABI payload: a truncated payload would fail
+/// to decode in the sim, which would then ignore the pick and leave the General on his old kit.
+/// The caller denies the pick instead.
+fn pick_custom_class(out: &mut ClientOut, general: u32, class: &crate::classes::CustomClass) -> bool {
     let words = class.to_wire_words();
-    let n = words.len().min(out.choose_class_payload.len());
-    out.choose_class_payload[..n].copy_from_slice(&words[..n]);
-    out.choose_class_payload_len = n as i32;
+    if words.len() > out.choose_class_payload.len() {
+        return false;
+    }
+    out.choose_class = CHOOSE_CLASS_CUSTOM;
+    out.choose_class_general = general;
+    out.choose_class_payload[..words.len()].copy_from_slice(&words);
+    out.choose_class_payload_len = words.len() as i32;
+    true
 }
 
+impl Client {
 /// Run one rendered frame.
 pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         let dt = inp.dt.clamp(0.0, 0.25);
+        // The sim's record names the General the local player is commanding, in first person or
+        // overhead. Adopt it before the class screen runs: a fresh General's first class pick can
+        // come from the command bar before he was ever taken into first person, and the client
+        // only learned his id on entering before — so that pick named General 0, the sim dropped
+        // it, and the General kept the stock kit.
+        let player = sim.player(inp.local_player).cloned();
+        if let Some(p) = &player {
+            self.general = p.general;
+        }
+        let unclassed = player.as_ref().is_none_or(|p| p.class.is_none());
+        #[cfg(feature = "autopilot")]
+        let pick_wanted = self.class_pick_wanted(unclassed);
         #[allow(unused_mut)]
         let mut scripted = ClientIn::default();
         let inp = match self.autopilot.as_mut() {
@@ -525,9 +673,17 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 let script = ap.input_at(&self.cfg.bindings);
                 scripted = *inp;
                 scripted.keys = script.keys;
+                // A script's class-pick key is only pressed while the spawn pick is really up (a
+                // re-entry on an already classed General must not turn it into a weapon swap).
+                if let Some(key) = script.class_pick {
+                    if pick_wanted {
+                        scripted.keys.set_down(key, true);
+                    }
+                }
                 scripted.mouse_dx = script.dx;
                 scripted.mouse_dy = script.dy;
                 scripted.wheel = script.wheel;
+                scripted.class_pick_force = script.pick_force;
                 scripted.input_allowed = 1;
                 &scripted
             }
@@ -543,7 +699,6 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         };
         let mut out = ClientOut { hfov: self.last_hfov, viewmodel: viewmodel::NONE, ..Default::default() };
         self.hud.map_open = false;
-        let player = sim.player(inp.local_player).cloned();
 
         // Track logic frames for eye interpolation.
         if let Some(p) = &player {
@@ -568,17 +723,25 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
             self.class_pick_forced = true;
         }
 
-        // The class pick's entrance: its UI sound once per life while the class is unset (the
-        // screen draws over the view every frame, so the latch lives here with the other timers).
-        if let Some(p) = &player {
-            if p.class.is_none() || self.class_pick_forced {
-                if !self.hud.class_pick_seen {
-                    self.hud.class_pick_seen = true;
-                    self.cues.play(sounds::UI_SELECT);
-                }
-            } else {
-                self.hud.class_pick_seen = false;
+        // The command bar's class buttons. The engine dispatches a bar click from its own command
+        // processing, at a different point in the frame from this call, so the bridge hands the
+        // button over as a one-shot and the pick is emitted here. (Queueing the pick into
+        // `ClientOut` from the bridge instead would be dropped: every `zhbo_client_frame` writes a
+        // fresh whole struct over the bridge's copy before it can read the pick.)
+        if inp.class_button > 0 {
+            self.pick_class_button(&mut out, inp.class_button);
+        }
+
+        // The class pick's entrance: its UI_OPEN cue once per open. The screen only shows when
+        // `class_pick_wanted` says so (the command-bar force in either view; first person's
+        // spawn offer while unclassed and not dismissed).
+        if self.class_pick_wanted(unclassed) {
+            if !self.hud.class_pick_seen {
+                self.hud.class_pick_seen = true;
+                self.cues.play(sounds::UI_OPEN);
             }
+        } else {
+            self.hud.class_pick_seen = false;
         }
 
         let aspect = if inp.screen_h > 0.0 { inp.screen_w / inp.screen_h } else { 16.0 / 9.0 };
@@ -597,15 +760,11 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     let p = player.as_ref().unwrap();
                     self.start_entering(inp, p.general, p.yaw, p.body.eye());
                 } else {
-                    // The class pick works from the overhead view too: the command bar's "Create a
-                    // Class" button (Zhbo_ShowClassPick) and the number keys drive the same screen
-                    // the first-person pick uses. `build_input` is first-person only, so run the
-                    // pick's own input here. The General need not have a `PlayerSim` yet (he can be
-                    // picked before he is ever controlled), so gate on the pick being wanted rather
-                    // than on the record.
-                    let unclassed = player.as_ref().is_none_or(|p| p.class.is_none());
-                    if unclassed || inp.class_pick_force != 0 {
-                        self.pick_input_rts(inp, &mut out);
+                    // In the overhead view only the command-bar's Create a Class entry
+                    // (`class_pick_force`) opens the screen; an unclassed General is *not* offered
+                    // it here (he never has to stop playing the RTS to pick).
+                    if self.class_pick_wanted(unclassed) {
+                        self.menu_input(inp, &mut out, unclassed);
                     }
                 }
             }
@@ -632,7 +791,9 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 } else {
                     let p = player.as_ref().unwrap();
                     let in_fc = matches!(p.mode, Mode::FieldComputer { .. });
-                    if allowed && !in_fc {
+                    // The class screen takes the cursor and freezes the view behind it.
+                    let menu = self.class_pick_wanted(unclassed);
+                    if allowed && !in_fc && !menu {
                         let zoom = hfov / base_fov;
                         let sens = self.cfg.sensitivity * zoom;
                         let inv = if self.cfg.invert_y { -1.0 } else { 1.0 };
@@ -647,10 +808,10 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     out.hfov = hfov;
                     out.hide_rts_ui = 1;
                     out.hide_object = self.general;
-                    out.capture_mouse = allowed as i32;
+                    out.capture_mouse = (allowed && !menu) as i32;
                     self.view_eye = out.eye;
                     self.view_dir = out.dir;
-                    self.hud.map_open = allowed && !in_fc && inp.keys.is_down(self.cfg.bindings.map);
+                    self.hud.map_open = allowed && !in_fc && !menu && inp.keys.is_down(self.cfg.bindings.map);
                     let events = std::mem::take(&mut self.vm_events);
                     let pose = self.vm_motion.update(dt, self.yaw, self.pitch, p, events.shot);
                     out.viewmodel_offset = pose.offset;
@@ -669,7 +830,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                         out.viewmodel_time = f.t;
                         out.viewmodel_ads = p.arsenal.ads;
                     }
-                    self.build_input(inp, &mut out, allowed && !in_fc, p.hammer.is_some(), p.class.is_none() || inp.class_pick_force != 0);
+                    self.build_input(inp, &mut out, allowed && !in_fc, p.hammer.is_some(), unclassed);
                 }
             }
             ViewMode::Leaving { t, from_pos, from_dir, from_hfov, target, to_pos, to_dir, to_hfov } => {
@@ -697,8 +858,13 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 }
             }
         }
-        // The fresh-press detectors (the class pick) compare against this frame's keys.
-        self.prev_keys = inp.keys;
+        // The class pick's state after this frame's input: it draws over the view, `menu_open`
+        // makes the bridge leave the cursor free and eat the game-bound mouse/key messages behind
+        // it. Both follow the same latch so the HUD and the bridge can never disagree.
+        self.class_pick_open = self.class_pick_wanted(unclassed);
+        out.menu_open = self.class_pick_open as i32;
+        // The fresh-press/hover detectors compare against this frame's keys and cursor.
+        self.menu_prev.update(&menu_pointer(inp));
         out
     }
 
@@ -706,6 +872,8 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         self.general = general;
         self.vm = Viewmodel::default(); // the weapon comes up as first person starts
         self.vm_motion = viewmodel::Motion::default();
+        // A fresh take-control re-offers the spawn pick even if the last life Escaped it.
+        self.class_pick_dismissed = false;
         self.cues.reset();
         self.yaw = yaw;
         self.pitch = 0.0;
@@ -719,67 +887,17 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         self.view = ViewMode::Entering { t: 0.0, from_pos: inp.rts_cam_pos, from_dir: from_dir.normalized_or_zero(), from_hfov };
     }
 
-    fn build_input(&mut self, inp: &ClientIn, out: &mut ClientOut, allowed: bool, hammer: bool, class_pick: bool) {
+    fn build_input(&mut self, inp: &ClientIn, out: &mut ClientOut, allowed: bool, hammer: bool, unclassed: bool) {
         let (mut held, mut fwd, mut right) = if allowed { self.read_buttons(inp) } else { (0, 0.0, 0.0) };
         if !allowed {
             fwd = 0.0;
             right = 0.0;
         }
-        // The create-a-class editor, when open, owns the input entirely: the arrows move its
-        // highlight, Enter confirms and Escape backs out. While it is up nothing else reads the
-        // keys this frame.
-        if self.class_editor.is_some() {
-            let edges = crate::classmenu::Edges::between(&self.prev_keys, &inp.keys);
-            let mut editor = self.class_editor.take().expect("editor is open");
-            let outcome = editor.step(edges);
-            match outcome {
-                crate::classmenu::Outcome::Continue => {
-                    self.class_editor = Some(editor);
-                }
-                crate::classmenu::Outcome::Save if editor.draft.valid() => {
-                    let class = editor.draft.to_custom();
-                    // Persist it into the profile first (the pick screen lists the profile's classes,
-                    // so the just-built one shows next time), then pick it: the bridge sends the
-                    // choose message and writes the profile file. The profile assigns a default
-                    // name to a blank one, so read the saved entry back and send that: the pick and
-                    // the profile then carry the same named class.
-                    crate::profile::save(class);
-                    let class = crate::profile::classes().last().cloned().expect("just saved");
-                    Self::pick_custom_class(out, self.general, &class);
-                    self.cues.play(sounds::PLANT);
-                    self.prev_held = u32::MAX;
-                    self.class_pick_forced = false;
-                }
-                crate::classmenu::Outcome::Save => {
-                    // An over-spent class cannot be saved; the editor stays open.
-                    self.class_editor = Some(editor);
-                }
-                crate::classmenu::Outcome::Cancel => {
-                    self.cues.play(sounds::UI_SELECT);
-                    self.prev_held = u32::MAX;
-                    self.class_pick_forced = false;
-                }
-            }
+        // The class pick owns the frame while it is up: it reads the arrows/Enter/mouse and
+        // nothing else reaches the game (no look, no movement, no firing).
+        if self.menu_input(inp, out, unclassed) {
+            self.prev_held = u32::MAX;
             return;
-        }
-        // The pick menu takes the number keys while it is up, even when the game has locked
-        // input (it must not eat them).
-        if class_pick {
-            let open_editor = Self::class_pick_input(inp, &self.prev_keys, out, self.general);
-            if open_editor {
-                // Open on the most recently saved custom class when there is one (so the player can
-                // re-edit it), otherwise on BO2's default class. BO2 opens a fresh slot; ours keeps
-                // the last class so a player without naming gets their kit back.
-                let draft = crate::profile::classes()
-                    .last()
-                    .map(crate::classmenu::Draft::from_custom)
-                    .unwrap_or_default();
-                self.class_editor = Some(crate::classmenu::Editor::new(draft));
-                self.cues.play(sounds::UI_SELECT);
-                // The opening key's edge must not reach the editor on the same frame.
-                self.prev_keys = inp.keys;
-                return;
-            }
         }
         if allowed && inp.wheel.abs() >= 1.0 {
             // With the hammer up the wheel turns the structure being placed (wheel up: to the left).
@@ -872,7 +990,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 EventKind::Swapped => self.vm_events.swapped = true,
                 EventKind::FieldComputerOpened => {}
                 EventKind::ClassChosen { .. } => {
-                    self.cues.play(sounds::PLANT);
+                    self.cues.play(sounds::UI_PICKED);
                     // A pick landed: the forced screen closes, and the next spawn's pick returns.
                     self.class_pick_forced = false;
                 }
@@ -972,299 +1090,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
     }
 }
 
+/// The client's tests live in their own file: `mod.rs` is at the module-size limit.
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::sim::tests::{general, FakeHost};
-
-    fn frame_with(client: &mut Client, sim: &mut Sim, host: &FakeHost, inp: &mut ClientIn, steps: usize) -> ClientOut {
-        let mut out = ClientOut::default();
-        for _ in 0..steps {
-            out = client.frame(sim, inp);
-            if out.send_input != 0 {
-                sim.input(inp.local_player, out.input_general, out.input);
-            }
-            inp.dt = LOGIC_DT;
-            let f = sim.frame + 1;
-            sim.step(host, f);
-            inp.logic_frame = f;
-        }
-        out
-    }
-
-    #[test]
-    fn enter_transition_then_capture_and_send_one_input_per_logic_frame() {
-        let host = FakeHost::default();
-        host.add(general(1, 0));
-        let mut sim = Sim::new();
-        let mut client = Client::default();
-        let mut inp = ClientIn::default();
-        sim.take_control(&host, 0, 1);
-
-        let out = client.frame(&mut sim, &inp);
-        assert_eq!(out.camera_override, 1);
-        assert!(matches!(client.view, ViewMode::Entering { .. }));
-
-        let out = frame_with(&mut client, &mut sim, &host, &mut inp, 60);
-        assert_eq!(client.view, ViewMode::Fps);
-        assert_eq!(out.capture_mouse, 1);
-        assert_eq!(out.hide_object, 1);
-        assert_eq!(out.hide_rts_ui, 1);
-
-        // Same logic frame twice: only the first render frame sends.
-        let a = client.frame(&mut sim, &inp);
-        let b = client.frame(&mut sim, &inp);
-        assert_eq!((a.send_input, b.send_input), (1, 0));
-    }
-
-    #[test]
-    fn mouse_right_turns_right_and_w_walks_forward() {
-        let host = FakeHost::default();
-        host.add(general(1, 0));
-        let mut sim = Sim::new();
-        let mut client = Client::default();
-        let mut inp = ClientIn::default();
-        sim.take_control(&host, 0, 1);
-        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
-        inp.mouse_dx = 100.0;
-        frame_with(&mut client, &mut sim, &host, &mut inp, 1);
-        assert!(client.yaw < 0.0, "turned clockwise (right): {}", client.yaw);
-        inp.mouse_dx = 0.0;
-        let yaw = client.yaw;
-        inp.keys.set_down(Key::W, true);
-        frame_with(&mut client, &mut sim, &host, &mut inp, 30);
-        let pos = host.get(1).pos;
-        let heading = pos.y.atan2(pos.x);
-        assert!((heading - yaw).abs() < 0.05, "walked along view yaw {yaw}, heading {heading}");
-    }
-
-    #[test]
-    fn holding_tab_opens_the_map() {
-        let host = FakeHost::default();
-        host.add(general(1, 0));
-        let mut sim = Sim::new();
-        let mut client = Client::default();
-        let mut inp = ClientIn::default();
-        inp.input_allowed = 1;
-        sim.take_control(&host, 0, 1);
-        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
-        assert!(!client.hud.map_open);
-        inp.keys.set_down(Key::Tab, true);
-        frame_with(&mut client, &mut sim, &host, &mut inp, 1);
-        assert!(client.hud.map_open);
-        inp.keys.set_down(Key::Tab, false);
-        frame_with(&mut client, &mut sim, &host, &mut inp, 1);
-        assert!(!client.hud.map_open);
-    }
-
-    #[test]
-    fn field_computer_key_leaves_first_person() {
-        let host = FakeHost::default();
-        host.add(general(1, 0));
-        let mut sim = Sim::new();
-        let mut client = Client::default();
-        let mut inp = ClientIn::default();
-        sim.take_control(&host, 0, 1);
-        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
-        inp.keys.set_down(Key::F, true);
-        frame_with(&mut client, &mut sim, &host, &mut inp, 2);
-        inp.keys.set_down(Key::F, false);
-        frame_with(&mut client, &mut sim, &host, &mut inp, (crate::sim::FIELD_COMPUTER_RAISE / LOGIC_DT) as usize + 5);
-        assert!(matches!(client.view, ViewMode::Leaving { .. }), "{:?}", client.view);
-        let mut look = None;
-        for _ in 0..120 {
-            let out = frame_with(&mut client, &mut sim, &host, &mut inp, 1);
-            if out.rts_look_at_valid != 0 {
-                look = Some(out.rts_look_at);
-            }
-        }
-        assert_eq!(client.view, ViewMode::Rts);
-        assert!(look.is_some(), "RTS camera recentred on the General");
-    }
-
-    /// Entering and leaving first person never jump: every frame the camera moves a little, starting
-    /// from (and ending on) the overhead camera's pose and field of view.
-    #[test]
-    fn transitions_are_smooth_both_ways() {
-        let host = FakeHost::default();
-        host.add(general(1, 0));
-        let mut sim = Sim::new();
-        let mut client = Client::default();
-        let mut inp = ClientIn { rts_cam_pos: Vec3::new(-150.0, 60.0, 220.0), rts_hfov: 0.8, ..Default::default() };
-        let rts_dir = (Vec3::new(0.0, 0.0, 0.0) - inp.rts_cam_pos).normalized_or_zero();
-        inp.rts_cam_dir = rts_dir;
-        sim.take_control(&host, 0, 1);
-        let mut outs = Vec::new();
-        for _ in 0..200 {
-            let out = frame_with(&mut client, &mut sim, &host, &mut inp, 1);
-            if matches!(client.view, ViewMode::Entering { .. } | ViewMode::Fps) {
-                outs.push(out);
-            }
-            if client.view == ViewMode::Fps && outs.len() > 2 {
-                break;
-            }
-        }
-        // While first person owns the camera the view reports the first-person camera, not the
-        // overhead one: leaving must not aim for that.
-        let overhead_pos = inp.rts_cam_pos;
-        inp.rts_cam_pos = client.view_eye;
-        inp.rts_cam_dir = client.view_dir;
-        inp.rts_hfov = 1.3;
-        inp.rts_pivot = client.view_eye + client.view_dir * 100.0;
-        // Leave through the field computer.
-        inp.keys.set_down(Key::F, true);
-        frame_with(&mut client, &mut sim, &host, &mut inp, 2);
-        inp.keys.set_down(Key::F, false);
-        let mut leaving = Vec::new();
-        for _ in 0..400 {
-            let out = frame_with(&mut client, &mut sim, &host, &mut inp, 1);
-            if out.camera_override != 0 && matches!(client.view, ViewMode::Leaving { .. }) {
-                leaving.push(out);
-            }
-            if client.view == ViewMode::Rts && !leaving.is_empty() {
-                break;
-            }
-        }
-        let check = |outs: &[ClientOut], what: &str| {
-            for w in outs.windows(2) {
-                let (a, b) = (&w[0], &w[1]);
-                assert!((a.eye - b.eye).length() < 25.0, "{what}: eye jumped {:?} -> {:?}", a.eye, b.eye);
-                assert!(a.dir.dot(b.dir) > 0.97, "{what}: view turned too fast {:?} -> {:?}", a.dir, b.dir);
-                assert!((a.hfov - b.hfov).abs() < 0.05, "{what}: fov jumped {} -> {}", a.hfov, b.hfov);
-            }
-        };
-        check(&outs, "entering");
-        check(&leaving, "leaving");
-        let first = outs[0];
-        assert!((first.eye - overhead_pos).length() < 15.0 && first.dir.dot(rts_dir) > 0.97, "starts at the overhead camera");
-        assert!((first.hfov - 0.8).abs() < 0.05);
-        let last = leaving.last().unwrap();
-        assert!(last.dir.dot(rts_dir) > 0.995, "ends looking the overhead camera's way: {:?}", last.dir);
-        assert!((last.hfov - 0.8).abs() < 0.02, "ends at the overhead field of view: {}", last.hfov);
-        // The overhead camera pivoted on the origin when first person started; it comes back at the
-        // same offset from the General (who has not moved), so nothing snaps when it takes over.
-        let ViewMode::Rts = client.view else { panic!("not back overhead") };
-        let general_at = host.objects.borrow().iter().find(|o| o.id == 1).unwrap().pos;
-        let expected = general_at + overhead_pos;
-        assert!((last.eye - expected).length() < 8.0, "ends where the overhead camera will be: {:?} vs {:?}", last.eye, expected);
-    }
-
-    /// The create-a-class editor's full flow from the pick screen: `6` opens it, Enter on the
-    /// Primary slot opens its list, a Down+Enter picks the next weapon, and Enter on the slot row
-    /// saves — the outgoing one-shot then carries the custom marker and the class's wire words, and
-    /// the profile keeps the class.
-    #[test]
-    fn key6_opens_the_editor_and_saving_picks_a_custom_class() {
-        crate::profile::reset();
-        let host = FakeHost::default();
-        host.add(general(1, 0));
-        let mut sim = Sim::new();
-        let mut client = Client::default();
-        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
-        sim.take_control(&host, 0, 1);
-
-        // Reach first person first: the pick screen only listens there.
-        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
-        assert_eq!(client.view, ViewMode::Fps);
-
-        // Open the editor: `6` on the pick screen (the class is unset, so the pick screen is up).
-        inp.keys.set_down(Key::Key6, true);
-        client.frame(&mut sim, &inp);
-        inp.keys.set_down(Key::Key6, false);
-        client.frame(&mut sim, &inp);
-        assert!(client.class_editor.is_some(), "6 opens the editor");
-
-        // Open the Primary slot's list, then pick the next weapon down the list.
-        inp.keys.set_down(Key::Enter, true);
-        client.frame(&mut sim, &inp);
-        inp.keys.set_down(Key::Enter, false);
-        client.frame(&mut sim, &inp);
-        inp.keys.set_down(Key::Down, true);
-        client.frame(&mut sim, &inp);
-        inp.keys.set_down(Key::Down, false);
-        client.frame(&mut sim, &inp);
-        inp.keys.set_down(Key::Enter, true);
-        client.frame(&mut sim, &inp);
-        inp.keys.set_down(Key::Enter, false);
-        client.frame(&mut sim, &inp);
-        let edited = client.class_editor.as_ref().expect("still open").draft.primary.clone();
-        assert_ne!(edited, crate::classmenu::Draft::default().primary, "the weapon changed");
-
-        // Walk down the slot row to the Save row (the primary is first, Save is last of eleven).
-        for _ in 0..(crate::classmenu::Slot::ALL.len() - 2) {
-            inp.keys.set_down(Key::Down, true);
-            client.frame(&mut sim, &inp);
-            inp.keys.set_down(Key::Down, false);
-            client.frame(&mut sim, &inp);
-        }
-        assert_eq!(client.class_editor.as_ref().expect("still open").slot, crate::classmenu::Slot::Save);
-        // Confirm the Save row: the editor closes and the outgoing one-shot carries the class.
-        inp.keys.set_down(Key::Enter, true);
-        let out = client.frame(&mut sim, &inp);
-        inp.keys.set_down(Key::Enter, false);
-        assert!(client.class_editor.is_none(), "saving closes the editor");
-        assert_eq!(out.choose_class, Client::CHOOSE_CLASS_CUSTOM);
-        assert_eq!(out.choose_class_general, 1);
-        assert!(out.choose_class_payload_len > 0);
-        let words: Vec<u32> = out.choose_class_payload[..out.choose_class_payload_len as usize].to_vec();
-        let class = crate::classes::CustomClass::from_wire_words(&words).expect("the payload reassembles");
-        assert_eq!(class.primary, edited, "the payload carries the edited weapon");
-        assert_eq!(crate::profile::classes().len(), 1, "the profile kept the class");
-        assert_eq!(crate::profile::classes()[0], class);
-        crate::profile::reset();
-    }
-
-    #[test]
-    fn hor_plus_fov() {
-        let f43 = horizontal_fov(65.0, 4.0 / 3.0).to_degrees();
-        let f169 = horizontal_fov(65.0, 16.0 / 9.0).to_degrees();
-        assert!((f43 - 65.0).abs() < 0.01);
-        assert!(f169 > 80.0 && f169 < 82.0, "{f169}");
-    }
-
-    /// The `ZHBO_AUTOPILOT=classpick` script drives the whole editor: it opens it from the pick
-    /// screen, names the class, changes the secondary, and saves — the same path an in-game run
-    /// takes. This test runs the script through the client and asserts each step lands.
-    #[cfg(feature = "autopilot")]
-    #[test]
-    fn the_classpick_autopilot_opens_names_and_saves_a_class() {
-        crate::profile::reset();
-        let host = FakeHost::default();
-        host.add(general(1, 0));
-        let mut sim = Sim::new();
-        let mut client = Client::default();
-        client.autopilot = Some(Autopilot { classpick: true, ..Default::default() });
-        let mut inp = ClientIn::default();
-        sim.take_control(&host, 0, 1);
-
-        // Reach first person: the script runs there (the pick screen only listens in Fps).
-        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
-        assert_eq!(client.view, ViewMode::Fps);
-
-        // Run the script's full timeline (the last save pulse is at 8.4s, so ~9s of frames). The
-        // save's choose one-shot is emitted on its own frame, so capture it as it goes by.
-        let mut saved: Option<ClientOut> = None;
-        for _ in 0..(30 * 10) {
-            let out = client.frame(&mut sim, &inp);
-            if out.choose_class != 0 {
-                saved = Some(out);
-            }
-            inp.dt = LOGIC_DT;
-            let f = sim.frame + 1;
-            sim.step(&host, f);
-            inp.logic_frame = f;
-        }
-        let out = saved.expect("the script saves a class");
-
-        // The editor saved and closed, and the outgoing one-shot carries the custom class.
-        assert!(client.class_editor.is_none(), "the script saves and closes the editor");
-        assert_eq!(out.choose_class, Client::CHOOSE_CLASS_CUSTOM);
-        let words: Vec<u32> = out.choose_class_payload[..out.choose_class_payload_len as usize].to_vec();
-        let class = crate::classes::CustomClass::from_wire_words(&words).expect("the payload reassembles");
-        assert_eq!(class.name, "AB", "the script names the class");
-        assert_ne!(class.secondary, crate::classmenu::Draft::default().secondary, "the script changes the secondary");
-        assert_eq!(crate::profile::classes().len(), 1, "the profile kept the class");
-        assert_eq!(crate::profile::classes()[0].name, "AB");
-        crate::profile::reset();
-    }
-}
+#[path = "tests.rs"]
+mod tests;

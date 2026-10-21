@@ -326,7 +326,9 @@ impl Sim {
                     body: Body::new(pos, &tuning),
                     yaw,
                     pitch: 0.0,
-                    arsenal: Arsenal::new(),
+                    // A General spawns unarmed: knife only until a class is picked. (The class
+                    // pick replaces this arsenal; Escape on the spawn offer leaves it.)
+                    arsenal: Arsenal::unarmed(),
                     rng: Rng::new(general.wrapping_mul(2_654_435_761) ^ frame),
                     input: FpsInput { yaw, ..Default::default() },
                     pressed_accum: 0,
@@ -372,7 +374,8 @@ impl Sim {
         // The class can be picked before the General is ever taken into first person: the command
         // bar's Create a Class button opens the pick while he is still under RTS control. Make a
         // fresh record for him so the kit is in place when he takes the field; its position is
-        // filled in from the object when he does.
+        // filled in from the object when he does. He is under RTS control here (a first-person
+        // pick always has the record `take_control` made), so the class is ready immediately.
         let mut p = match self.players[idx].take() {
             Some(p) => p,
             None => {
@@ -381,11 +384,11 @@ impl Sim {
                 PlayerSim {
                     general,
                     class: None,
-                    mode: Mode::Fps,
+                    mode: Mode::Rts,
                     body: Body::new(Vec3::ZERO, &tuning),
                     yaw: 0.0,
                     pitch: 0.0,
-                    arsenal: Arsenal::new(),
+                    arsenal: Arsenal::unarmed(),
                     rng: Rng::new(general.wrapping_mul(2_654_435_761) ^ frame),
                     input: FpsInput::default(),
                     pressed_accum: 0,
@@ -1109,6 +1112,154 @@ pub(crate) mod tests {
         assert!(host.controlled.borrow().is_empty());
     }
 
+    /// Bug 1: a General spawns with no guns and no grenades, only the melee knife, until a class
+    /// is chosen. `Loadout::default()` (the classes' base kit) is untouched.
+    #[test]
+    fn a_fresh_general_spawns_unarmed() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        let p = sim.player(0).unwrap();
+        assert!(p.class.is_none());
+        let a = &p.arsenal;
+        assert!(a.is_unarmed(), "no gun at spawn");
+        assert_eq!(a.weapons.len(), 1, "the knife is the only weapon");
+        assert_eq!(a.current().def.class, crate::weapons::Class::Melee);
+        assert_eq!(a.melee.id, "knife_held_mp");
+        assert_eq!((a.lethal.count, a.tactical.count), (0, 0), "no grenades");
+        assert!(a.loadout.primary.is_empty() && a.loadout.secondary.is_empty());
+        assert!(a.loadout.perks.is_empty());
+        // The full base kit is still what the classes build on.
+        let base = crate::weapons::Loadout::default();
+        assert!(!base.primary.is_empty() && !base.secondary.is_empty() && !base.lethal.is_empty());
+    }
+
+    /// Unarmed is a no-op for every gun action (no panic, no shot, no index-0 fallback); the knife
+    /// still swings, and the hammer and field computer still work.
+    #[test]
+    fn unarmed_weapon_input_is_a_no_op_and_melee_still_works() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        wait_until_ready(&mut sim, &host);
+        let everything = buttons::FIRE
+            | buttons::ADS
+            | buttons::RELOAD
+            | buttons::SWAP_WEAPON
+            | buttons::ALT_MODE
+            | buttons::LETHAL
+            | buttons::TACTICAL;
+        run(&mut sim, &host, 0, 1, FpsInput { held: everything, ..Default::default() }, 40);
+        let kinds = events(&sim);
+        for kind in [EventKind::Swapped, EventKind::AltToggled, EventKind::ReloadStarted, EventKind::Launched, EventKind::Detonated] {
+            assert!(!kinds.contains(&kind), "unarmed did not {kind:?}: {kinds:?}");
+        }
+        assert!(!kinds.iter().any(|k| matches!(k, EventKind::Shot { .. } | EventKind::Thrown { .. } | EventKind::OffhandReady { .. })), "{kinds:?}");
+        assert_eq!(sim.player(0).unwrap().arsenal.ads, 0.0, "nothing to aim");
+        assert!(sim.projectiles.is_empty());
+        // The knife: BO2 always has melee.
+        sim.events.clear();
+        run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::MELEE, ..Default::default() }, 1);
+        assert!(events(&sim).contains(&EventKind::Melee));
+    }
+
+    #[test]
+    fn the_hammer_and_field_computer_work_unarmed() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.options.borrow_mut().push(option(7, crate::building::status::OK));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        wait_until_ready(&mut sim, &host);
+        assert!(sim.player(0).unwrap().arsenal.is_unarmed());
+        let look = |held: u32, pressed: u32| FpsInput { held, pressed, pitch: -0.5, ..Default::default() };
+        run(&mut sim, &host, 0, 1, look(buttons::HAMMER, buttons::HAMMER), 1);
+        run(&mut sim, &host, 0, 1, look(0, 0), frames(crate::building::HAMMER_RAISE));
+        run(&mut sim, &host, 0, 1, look(buttons::FIRE, buttons::FIRE), 1);
+        assert!(events(&sim).contains(&EventKind::BuildPlaced { template: 7 }), "{:?}", events(&sim));
+        sim.events.clear();
+        run(&mut sim, &host, 0, 1, look(buttons::FIELD_COMPUTER, buttons::FIELD_COMPUTER), 1);
+        assert!(events(&sim).contains(&EventKind::FieldComputerOpened), "{:?}", events(&sim));
+    }
+
+    /// Bug 1, overhead half: a classless General reports no usable slot/ammo, so the bridge's
+    /// "an empty weapon can't fire" veto holds Zero Hour's own weapon; after a class lands the kit
+    /// fires exactly as before, and the RTS update never re-creates the record over the kit.
+    #[test]
+    fn a_classless_general_under_rts_cannot_fire_then_fires_with_its_class_kit() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        // The bridge calls rts_update every logic frame; the first call makes the record unarmed.
+        let r = sim.rts_update(&host, 0, 1, 0, [3, 3, 3], None);
+        assert_eq!(r.ammo, [0, 0, 0]);
+        assert_eq!(r.reserve, [0, 0, 0]);
+        assert_eq!(r.lock, -1, "nothing to switch to");
+        assert_eq!(sim.rts_ammo(1).ammo, [0, 0, 0], "the control bar shows no usable weapon");
+        assert!(sim.projectiles.is_empty(), "the third slot threw nothing");
+        // A class lands from the command bar: the kit is there immediately.
+        sim.choose_class(0, 1, 0, &[]);
+        let full = sim.rts_ammo(1);
+        assert!(full.ammo[0] > 0 && full.ammo[1] > 0, "the class kit's guns: {full:?}");
+        let r = sim.rts_update(&host, 0, 1, 0, [1, 0, 0], None);
+        assert_eq!((r.ammo[0], r.reserve[0]), (full.ammo[0] - 1, full.reserve[0]));
+        assert_eq!(sim.player(0).unwrap().arsenal.weapons[0].main.id, "tar21_mp", "the kit was not reset");
+        assert_eq!(sim.player(0).unwrap().class.as_deref(), Some("assault"));
+    }
+
+    /// Bug 3, overhead half: a custom class picked while commanding keeps its exact kit through
+    /// `take_control` (which must not re-create the record or re-apply the base kit), and the
+    /// weapon is ready as soon as first person starts.
+    #[test]
+    fn an_overhead_custom_pick_keeps_its_kit_through_take_control() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        // The bridge's per-frame rts_update makes the (unarmed) record before the pick.
+        sim.rts_update(&host, 0, 1, 0, [0, 0, 0], None);
+        let custom = crate::classes::CustomClass {
+            name: "Overhead".into(),
+            primary: "fnp45_mp".into(),
+            secondary: "an94_mp".into(),
+            lethal: "claymore_mp".into(),
+            tactical: "concussion_grenade_mp".into(),
+            melee: "knife_held_mp".into(),
+            perks: vec!["Toughness".into()],
+            ..Default::default()
+        };
+        sim.choose_class(0, 1, usize::MAX, &custom.to_wire_words());
+        // In overhead the kit is ready now (no first-person raise).
+        assert_eq!(sim.player(0).unwrap().arsenal.raise_left, 0.0);
+        sim.take_control(&host, 0, 1);
+        let p = sim.player(0).unwrap();
+        assert_eq!(p.class.as_deref(), Some("custom:Overhead"));
+        let a = &p.arsenal;
+        assert_eq!(a.weapons[0].main.id, "fnp45_mp");
+        assert_eq!(a.weapons[1].main.id, "an94_mp");
+        assert_eq!(a.lethal.def.id, "claymore_mp");
+        assert!(a.has(crate::weapons::Perk::TOUGHNESS));
+        assert!(a.raise_left >= TAKE_CONTROL_READY, "the weapon still comes up in first person");
+        // A later rts_update does not re-create/reset the record.
+        sim.rts_update(&host, 0, 1, 0, [0, 0, 0], None);
+        assert_eq!(sim.player(0).unwrap().arsenal.weapons[0].main.id, "fnp45_mp");
+        // A re-pick in first person (the spawn offer on a later take-control) replaces the kit.
+        let second = crate::classes::CustomClass {
+            name: "Rifle".into(),
+            primary: "an94_mp".into(),
+            secondary: "fnp45_mp".into(),
+            lethal: "frag_grenade_mp".into(),
+            tactical: "concussion_grenade_mp".into(),
+            melee: "knife_held_mp".into(),
+            ..Default::default()
+        };
+        sim.choose_class(0, 1, usize::MAX, &second.to_wire_words());
+        let a = &sim.player(0).unwrap().arsenal;
+        assert_eq!(a.weapons[0].main.id, "an94_mp", "the re-pick replaced the first kit");
+        assert!(a.raise_left >= TAKE_CONTROL_READY, "the first-person pick re-raises");
+    }
+
     #[test]
     fn custom_class_pick_logs_its_own_name() {
         let host = FakeHost::default();
@@ -1175,6 +1326,8 @@ pub(crate) mod tests {
         host.add(soldier(2, 1, 60.0));
         let mut sim = Sim::new();
         sim.take_control(&host, 0, 1);
+        // A General spawns unarmed; this test is about a gun, so pick the first preset.
+        sim.choose_class(0, 1, 0, &[]);
         wait_until_ready(&mut sim, &host);
         // Let the weapon raise, then aim (ADS for accuracy) and fire. Eye is at 10 units; soldier
         // body centre is at 6, so aim slightly down.
@@ -1197,6 +1350,7 @@ pub(crate) mod tests {
         host.add(soldier(2, 1, 60.0));
         let mut sim = Sim::new();
         sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
         wait_until_ready(&mut sim, &host);
         let pitch = -(4.0f32 / 60.0).atan();
         run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, pitch, ..Default::default() }, 20);
@@ -1367,6 +1521,10 @@ pub(crate) mod tests {
         let host = FakeHost::default();
         host.add(general(1, 0));
         let mut sim = Sim::new();
+        // The General under RTS gets a record from the bridge's per-frame update; spawn unarmed,
+        // so give him a class first (the test is about the class kit's ammo).
+        sim.rts_update(&host, 0, 1, 0, [0, 0, 0], None);
+        sim.choose_class(0, 1, 0, &[]);
         let full = sim.rts_ammo(1);
         // Zero Hour fires the rifle: one round a shot, the clip refilled from the spare rounds.
         let r = sim.rts_update(&host, 0, 1, 0, [1, 0, 0], None);
@@ -1399,8 +1557,9 @@ pub(crate) mod tests {
         let host = FakeHost::default();
         host.add(general(1, 0));
         let mut sim = Sim::new();
-        let full = sim.rts_ammo(1);
         sim.rts_update(&host, 0, 1, 0, [0, 0, 0], None);
+        sim.choose_class(0, 1, 0, &[]);
+        let full = sim.rts_ammo(1);
         sim.rts_offhand(0, 1, true);
         let r = sim.rts_update(&host, 0, 1, 2, [0, 0, 1], Some(Vec3::new(150.0, 40.0, 0.0)));
         assert_eq!((r.tactical, r.ammo[2], r.tactical_selected), (full.tactical - 1, full.ammo[2], 1), "the tactical, not the lethal");
@@ -1422,6 +1581,8 @@ pub(crate) mod tests {
         host.add(general(1, 0));
         let mut sim = Sim::new();
         sim.take_control(&host, 0, 1);
+        // The pistol is slot 1 of a class kit; the unarmed kit has only the knife.
+        sim.choose_class(0, 1, 0, &[]);
         sim.players[0].as_mut().unwrap().arsenal.active = 1;
         run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::FIELD_COMPUTER, ..Default::default() }, 1);
         run(&mut sim, &host, 0, 1, FpsInput::default(), frames(FIELD_COMPUTER_RAISE));

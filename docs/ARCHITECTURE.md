@@ -85,6 +85,7 @@ starting the game. Depends on `zhbo-requirements` and `zhbo-assets`.
 | `ZhboScreenLook.cpp` | Sky/BO2-look toggles |
 | `ZhboControlBar.cpp` | `ZhboControlBarAccess`, idle-worker tracking |
 | `ZhboBuilding.cpp` | First-person build/repair/ghost |
+| `ZhboMenu.cpp` | The shell create-a-class window (modal, code-built) and `Zhbo_MenuFrame` |
 
 It talks to `zhbo-core` through the `ZhboLogicApi`/`ZhboClientApi` tables only — no direct
 calls into Rust internals. Name literals shared across the boundary are generated into

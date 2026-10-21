@@ -15,11 +15,11 @@ pub const WEAPON_TABLE_PATH: &str = "Data\\ConquerOps\\weapons.ini";
 pub const RTS_FX_PATH: &str = "Data\\ConquerOps\\rts_fx.txt";
 pub const VIEWMODEL_SOUNDS_PATH: &str = "Data\\ConquerOps\\viewmodel_sounds.txt";
 /// The shipped localised strings (see strings.rs).
-pub const STRINGS_PATH: &str = "Data\\ConquerOps\\strings_en.ini";
+pub const STRINGS_PATH: &str = "ConquerOps\\strings_en.ini";
 /// The gameplay tuning pack (see tuning.rs).
-pub const TUNING_PATH: &str = "Data\\ConquerOps\\tuning.ini";
+pub const TUNING_PATH: &str = "ConquerOps\\tuning.ini";
 /// The class presets (see classes.rs).
-pub const CLASSES_PATH: &str = "Data\\ConquerOps\\classes.ini";
+pub const CLASSES_PATH: &str = "ConquerOps\\classes.ini";
 /// The converted BO2 HUD/texture archive and its version marker.
 pub const BO2_ARCHIVE_NAME: &str = "ConquerOps_BO2.big";
 pub const BO2_ARCHIVE_VERSION_PATH: &str = "Data\\ConquerOps\\bo2_hud_version.txt";
@@ -161,9 +161,9 @@ inline void tabletMesh(char *out, size_t cap, int k)
 inline constexpr const char *WEAPON_TABLE_PATH = "Data\\ConquerOps\\weapons.ini";
 inline constexpr const char *RTS_FX_PATH = "Data\\ConquerOps\\rts_fx.txt";
 inline constexpr const char *VIEWMODEL_SOUNDS_PATH = "Data\\ConquerOps\\viewmodel_sounds.txt";
-inline constexpr const char *STRINGS_PATH = "Data\\ConquerOps\\strings_en.ini";
-inline constexpr const char *TUNING_PATH = "Data\\ConquerOps\\tuning.ini";
-inline constexpr const char *CLASSES_PATH = "Data\\ConquerOps\\classes.ini";
+inline constexpr const char *STRINGS_PATH = "ConquerOps\\strings_en.ini";
+inline constexpr const char *TUNING_PATH = "ConquerOps\\tuning.ini";
+inline constexpr const char *CLASSES_PATH = "ConquerOps\\classes.ini";
 } // namespace zhbo_names
 "#;
 

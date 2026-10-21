@@ -1,9 +1,14 @@
 //! The class registry (BO2 Create-a-Class): named loadout presets the General can assume. The
-//! five basic BO2 classes are built in; `Data/ConquerOps/classes.ini` (shipped in the mod's BIG
-//! file, like weapons.ini — every player must have the identical file, so an index sent over the
-//! lockstep message stream means the same kit everywhere) overrides and extends the list. Custom
-//! classes live in the player's own profile (local; see `client::menu`), picked by sending their
-//! spec through the choose-class message.
+//! five default classes BO2 gives every player (`class_custom_assault` … `class_custom_sniper`,
+//! statstable.csv's default-class column; the set is shared across all ten class sets) are built
+//! in; `Data/ConquerOps/classes.ini` (shipped in the mod's BIG file, like weapons.ini — every
+//! player must have the identical file, so an index sent over the lockstep message stream means
+//! the same kit everywhere) overrides and extends the list. Custom classes live in the player's
+//! own profile, five per class set (local; see `profile.rs` and `client::menu`), picked by sending
+//! their spec through the choose-class message.
+//!
+//! The caps below are BO2's own (`CoD.CACUtility` in `cacutility.lua`); the modules that enforce
+//! them read them from here so no number is written twice.
 /*
 ** Conquer Ops - Zero Hour gameplay core: the class registry (Create-a-Class presets).
 **
@@ -25,18 +30,43 @@ pub struct ClassDef {
     pub spec: String,
 }
 
-/// The five basic BO2 classes as `(id, name, spec)` triples: the defaults when no file is loaded
+/// How many class sets BO2 gives a player (`reset_public_class_sets.cfg`: `CLASS_SET1`..`10`).
+pub const MAX_CLASS_SETS: usize = 10;
+
+/// Custom class slots per class set: `CoD.CACUtility.maxCustomClass`.
+pub const MAX_CUSTOM_CLASSES: usize = 5;
+
+/// Bonus cards (wildcards) per class: `CoD.CACUtility.maxBonusCards`.
+pub const MAX_BONUS_CARDS: usize = 3;
+
+/// Attachment slots on a weapon before a Gunfighter card: `CoD.CACUtility.maxAttachments`.
+pub const MAX_ATTACHMENTS: usize = 2;
+
+/// Perk slots a class can hold: `CoD.CACUtility.maxSpecialtySlots` (three tiers, two each).
+pub const MAX_SPECIALTY_SLOTS: usize = 6;
+
+/// Grenades of one kind a class can carry: `CoD.CACUtility.maxGrenades`.
+pub const MAX_GRENADES: usize = 2;
+
+/// The five default BO2 classes as `(id, name, spec)` triples: the defaults when no file is loaded
 /// (tests, the fallback). Complete specs, so an INI file must set every slot it wants different
 /// from the base kit.
+///
+/// These are BO2's shared premades, not invented classes: the ids are BO2's own default-class keys
+/// (`class_custom_assault` … `class_custom_sniper`, the `CoD.CACUtility.defaultClassNames` list and
+/// `reset_classes.cfg`'s `equipdefaultclass` table) and the kits are the default-class column of
+/// `mp/statstable.csv` — each class's primary and secondary are the rows that name it, and every
+/// class carries the frag, two concussions, Lightweight, Toughness and Dexterity. BO2 gives the
+/// premades no attachments, so neither do these.
 pub const BASIC: &[(&str, &str, &str)] = &[
-    ("assault", "Assault", "primary=an94_mp+gl+reflex;secondary=fnp45_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,FastHands,Dexterity"),
-    ("marksman", "Marksman", "primary=dsr50_mp;secondary=fnp45_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=ExtremeConditioning,FastHands,Dexterity"),
-    ("pointman", "Pointman", "primary=an94_mp+reflex;secondary=fnp45_mp;lethal=claymore_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,Scavenger,Dexterity"),
-    ("breacher", "Breacher", "primary=an94_mp+reflex;secondary=fnp45_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=FlakJacket,Toughness,Dexterity"),
-    ("engineer", "Engineer", "primary=an94_mp+reflex;secondary=fnp45_mp;lethal=claymore_mp;tactical=trophy_system_mp;melee=knife_held_mp;perks=Engineer,Lightweight,Dexterity"),
+    ("assault", "Assault", "primary=tar21_mp;secondary=smaw_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,Toughness,Dexterity"),
+    ("smg", "SMG", "primary=mp7_mp;secondary=fiveseven_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,Toughness,Dexterity"),
+    ("lmg", "LMG", "primary=mk48_mp;secondary=smaw_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,Toughness,Dexterity"),
+    ("cqb", "CQB", "primary=870mcs_mp;secondary=smaw_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,Toughness,Dexterity"),
+    ("sniper", "Sniper", "primary=svu_mp;secondary=fiveseven_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,Toughness,Dexterity"),
 ];
 
-/// The basic triples as `ClassDef`s (each access builds fresh ones; tests mutate nothing).
+/// The default-class triples as `ClassDef`s (each access builds fresh ones; tests mutate nothing).
 pub fn basic() -> Vec<ClassDef> {
     BASIC.iter().map(|(id, name, spec)| ClassDef { id: (*id).into(), name: (*name).into(), spec: (*spec).into() }).collect()
 }
@@ -59,14 +89,30 @@ pub fn reset() {
     *CLASSES.lock().unwrap_or_else(|e| e.into_inner()) = None;
 }
 
+/// The class registry is shared: every test that reads or mutates it (here and in `classicons`)
+/// takes this lock so parallel test threads cannot see each other's loads/resets (the same pattern
+/// as `profile::lock`).
+#[cfg(test)]
+pub fn lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
+}
+
 /// Parse `Class <id>` blocks: `Name =` and `Spec =` fields between `Class` and `End`, `;`-comments
 /// like the rest of the mod's data files. A block with an empty `Spec` or a duplicate id is
 /// skipped (a broken block must not lose the whole list).
+///
+/// Comments are whole lines only (a line whose first character is `;`): a spec is `;`-separated
+/// (`primary=…;secondary=…`), so stripping an inline `;` would silently truncate every class in
+/// the shipped file to its first slot.
 pub fn parse(text: &str) -> Vec<ClassDef> {
     let mut out: Vec<ClassDef> = Vec::new();
     let mut current: Option<ClassDef> = None;
     for line in text.lines() {
-        let line = line.split(';').next().unwrap_or("").trim();
+        let line = line.trim();
+        if line.starts_with(';') {
+            continue;
+        }
         if let Some(rest) = line.strip_prefix("Class ") {
             let id = rest.trim().to_ascii_lowercase();
             if !id.is_empty() {
@@ -250,32 +296,115 @@ impl CustomClass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, OnceLock};
 
-    /// The global list is shared; tests that touch it run one at a time.
-    fn lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
-    }
+    // The shared registry lock (the module-level `lock`): tests that read or change the global
+    // list hold it, so they run one at a time.
 
     #[test]
-    fn the_five_basics_are_the_defaults() {
+    fn the_five_basics_are_bo2s_default_classes() {
         let _g = lock();
         reset();
         let list = get();
         assert_eq!(list.len(), 5);
-        assert_eq!(list[0].id, "assault");
-        assert_eq!(list[4].id, "engineer");
+        // BO2's default-class order: assault, smg, lmg, cqb, sniper (defaultClassNames in
+        // cacutility.lua, index 0..4).
+        assert_eq!(list.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["assault", "smg", "lmg", "cqb", "sniper"]);
+        assert_eq!(list.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(), ["Assault", "SMG", "LMG", "CQB", "Sniper"]);
         // Every basic class carries a complete kit: every slot set over the base kit.
         for c in &list {
             let l = loadout_of(c);
             assert!(!l.primary.is_empty() && !l.secondary.is_empty() && !l.melee.is_empty());
             assert!(!l.lethal.is_empty() && !l.tactical.is_empty());
-            assert!(!l.perks.is_empty());
+            assert_eq!(l.perks.len(), 3, "{}: three perks", c.id);
         }
-        // The assault class is the default loadout's kit.
-        let default = crate::weapons::Loadout::default();
-        assert_eq!(loadout_of(&list[0]), default, "assault: the base kit");
+        // statstable.csv's default-class column: each class's primary and secondary.
+        let kit = |id: &str| {
+            let l = loadout_of(&list.iter().find(|c| c.id == id).expect(id).clone());
+            (l.primary.clone(), l.secondary.clone())
+        };
+        assert_eq!(kit("assault"), ("tar21_mp".into(), "smaw_mp".into()));
+        assert_eq!(kit("smg"), ("mp7_mp".into(), "fiveseven_mp".into()));
+        assert_eq!(kit("lmg"), ("mk48_mp".into(), "smaw_mp".into()));
+        assert_eq!(kit("cqb"), ("870mcs_mp".into(), "smaw_mp".into()));
+        assert_eq!(kit("sniper"), ("svu_mp".into(), "fiveseven_mp".into()));
+        // No premade carries attachments in BO2, and all share the offhands and perks.
+        for c in &list {
+            let l = loadout_of(c);
+            assert!(!l.primary.contains('+') && !l.secondary.contains('+'), "{}: no attachments", c.id);
+            assert_eq!(l.lethal, "frag_grenade_mp");
+            assert_eq!(l.tactical, "concussion_grenade_mp");
+            assert_eq!(
+                l.perks,
+                vec![crate::weapons::Perk::LIGHTWEIGHT, crate::weapons::Perk::TOUGHNESS, crate::weapons::Perk::DEXTERITY]
+            );
+        }
+    }
+
+    /// The shipped file and the built-in list are the same list: the registry index a pick message
+    /// carries must name the same kit on every client, whether or not the file loaded.
+    #[test]
+    fn the_shipped_classes_file_matches_the_built_ins() {
+        let _g = lock();
+        let file = parse(include_str!("../../../data/ConquerOps/classes.ini"));
+        assert_eq!(file, basic(), "data/ConquerOps/classes.ini and classes.rs BASIC must stay equal");
+    }
+
+    /// The caps are BO2's (`cacutility.lua`) and the data still fits them: a full class set, two
+    /// attachments before a Gunfighter card, two grenades of a kind, six perk slots, three cards.
+    #[test]
+    fn the_caps_hold_in_the_shipped_data() {
+        let _g = lock();
+        assert_eq!(MAX_CLASS_SETS, 10, "cacchooseclass.lua: ten class sets");
+        assert_eq!(MAX_CUSTOM_CLASSES, 5, "maxCustomClass");
+        assert_eq!(MAX_BONUS_CARDS, 3, "maxBonusCards");
+        assert_eq!(MAX_ATTACHMENTS, 2, "maxAttachments (a Gunfighter card adds the third)");
+        assert_eq!(MAX_SPECIALTY_SLOTS, 6, "maxSpecialtySlots: three tiers, two picks each");
+        // maxGrenades is the carried count, which is the weapon table's magazine: the standard
+        // tactical carries exactly two.
+        assert_eq!(crate::weapons::weapon("concussion_grenade_mp").clip as usize, MAX_GRENADES);
+        // Every premade fits the allocation: ten points per class.
+        for c in basic() {
+            let spent = crate::classmenu::Draft::from_custom(&CustomClass::from_spec(&c.spec)).spent();
+            assert!(spent <= crate::classmenu::PICK_10, "{}: {spent} points", c.id);
+        }
+    }
+
+    /// Every id the shipped premades name resolves in the catalog and the perk table, so a fixture
+    /// typo cannot ship a class that silently arms the General with nothing (or the wrong gun).
+    #[test]
+    fn every_shipped_premade_id_resolves() {
+        let _g = lock();
+        let file = parse(include_str!("../../../data/ConquerOps/classes.ini"));
+        crate::weapons::catalog::clear_unresolved();
+        for c in &file {
+            let l = loadout_of(c);
+            for slot in ["primary", "secondary"] {
+                let id = if slot == "primary" { &l.primary } else { &l.secondary };
+                let base = id.split('+').next().unwrap_or(id);
+                let def = crate::weapons::catalog::weapon_or_none(base)
+                    .unwrap_or_else(|| panic!("{}: {} id {base:?} does not resolve", c.id, slot));
+                assert!(def.class.is_gun(), "{}: {slot} {base:?} is not a gun", c.id);
+                for short in id.split('+').skip(1) {
+                    assert!(
+                        def.allowed.iter().any(|(s, _)| s == short),
+                        "{}: {} does not offer attachment {short:?}",
+                        c.id,
+                        slot
+                    );
+                }
+            }
+            for (slot, id) in [("lethal", &l.lethal), ("tactical", &l.tactical), ("melee", &l.melee)] {
+                assert!(
+                    crate::weapons::catalog::weapon_or_none(id).is_some(),
+                    "{}: {slot} id {id:?} does not resolve",
+                    c.id
+                );
+            }
+            // The perks parse from the spec (an unknown name would silently vanish).
+            let want: Vec<&str> = c.spec.split("perks=").nth(1).unwrap_or("").split(',').map(|p| p.trim()).filter(|p| !p.is_empty()).collect();
+            assert_eq!(l.perks.len(), want.len(), "{}: every perk id resolves ({want:?})", c.id);
+        }
+        assert!(crate::weapons::catalog::unresolved().is_empty(), "{:?}", crate::weapons::catalog::unresolved());
     }
 
     #[test]
@@ -294,6 +423,22 @@ mod tests {
         assert!(by_id("marksman").is_none(), "the file replaces the list");
         // Restore for the other tests.
         reset();
+    }
+
+    /// A spec is `;`-separated, so `;` may only start a *whole-line* comment: the old parser took
+    /// the first `;` in a line as an inline comment and silently cut every shipped class down to
+    /// its primary slot (the registry's kit was the base kit's for everything after it).
+    #[test]
+    fn a_spec_keeps_its_semicolons() {
+        let list = parse("Class a\nName = A\nSpec = primary=an94_mp;secondary=fnp45_mp;perks=Lightweight,Dexterity\nEnd\n");
+        assert_eq!(list[0].spec, "primary=an94_mp;secondary=fnp45_mp;perks=Lightweight,Dexterity");
+        let c = loadout_of(&list[0]);
+        assert_eq!(c.secondary, "fnp45_mp", "the secondary survived the parse");
+        assert_eq!(c.perks.len(), 2);
+        // A line that *starts* with `;` is still a comment.
+        let list = parse("; a comment\nClass a\nName = A\nSpec = primary=an94_mp\nEnd\n");
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].spec, "primary=an94_mp");
     }
 
     #[test]

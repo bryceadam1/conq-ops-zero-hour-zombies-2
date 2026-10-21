@@ -56,6 +56,38 @@ mod tests {
         actions.iter().filter(|a| matches!(a, WeaponAction::Fire { pellet: 0, .. })).count()
     }
 
+    /// An unknown weapon id is never silently substituted in a kit: the slot is left out and the id
+    /// is recorded (and printed), so a class whose id does not resolve cannot pass for the stock
+    /// AN-94 kit. `weapon()` (display-only) still falls back, but loudly.
+    #[test]
+    fn an_unknown_weapon_id_is_loud_and_never_becomes_the_first_gun() {
+        catalog::clear_unresolved();
+        assert!(catalog::weapon_or_none("definitely_not_a_weapon_mp").is_none());
+        assert!(catalog::unresolved().iter().any(|s| s == "definitely_not_a_weapon_mp"), "{:?}", catalog::unresolved());
+        // The display fallback keeps its old behaviour but is recorded.
+        assert_eq!(weapon("definitely_not_a_weapon_mp").id, catalog().all()[0].id);
+        // A kit with that primary is unarmed (the knife), not the catalog's first entry.
+        let a = Arsenal::with_loadout(Loadout { primary: "definitely_not_a_weapon_mp".into(), ..Loadout::unarmed() });
+        assert!(a.is_unarmed(), "the bad id did not borrow the AN-94");
+        assert_eq!(a.weapons.len(), 1);
+        assert_eq!(a.weapons[0].def.class, Class::Melee);
+        catalog::clear_unresolved();
+    }
+
+    #[test]
+    fn the_unarmed_kit_is_knife_only_and_the_base_kit_is_untouched() {
+        let a = Arsenal::unarmed();
+        assert!(a.is_unarmed());
+        assert_eq!(a.weapons.len(), 1);
+        assert_eq!(a.current().def.id, "knife_held_mp");
+        assert_eq!((a.lethal.count, a.tactical.count), (0, 0));
+        assert!(a.loadout.perks.is_empty());
+        // `Loadout::default()` is still the classes' spec base and the converter's source.
+        let base = Loadout::default();
+        assert!(!base.primary.is_empty() && !base.secondary.is_empty());
+        assert!(!Arsenal::new().is_unarmed(), "Arsenal::new stays the full base kit for the tests/converter");
+    }
+
     #[test]
     fn table_round_trips() {
         let defs: Vec<WeaponDef> = catalog().all().iter().map(|d| (*d).clone()).collect();

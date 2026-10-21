@@ -43,6 +43,73 @@ Both network messages are ordinary lockstep `GameMessage`s, so they are replicat
 recorded in replays. Everything in `sim` is deterministic given identical inputs (no wall-clock time,
 xorshift RNG seeded from the General id and frame, objects sorted by id before use).
 
+## The shell menu ABI (the lobby's create-a-class)
+
+The lobby's Create a Class button opens the class screens *in the shell* (BO2's lobby create-a-class:
+edit/manage classes outside a match). The window is the engine's — a full-screen modal window built
+in code by the bridge (`host/zhbo/ZhboMenu.cpp`, on the engine's own modal-dialog pattern; host patch
+0015 retargets the button to it) — and the screen is the same `classui` screens the in-game `Client`
+hosts, driven by a small `MenuState` (`crates/zhbo-core/src/menu.rs`) with no `Sim` and no match.
+
+Ownership and rules:
+
+* **Pure local UI.** The menu never touches the sim: no determinism or lockstep requirements, no
+  `GameMessage`s. Selecting a row *opens the editor* (in-game it would pick — there is no match);
+  the profile file (`ConquerOps.profile`, written by the bridge on the `save_profile` one-shot,
+  exactly as in-game) is its only output.
+* **Free functions, not table fields.** `zhbo_menu_open` / `zhbo_menu_frame` / `zhbo_menu_close`
+  and the `ZhboMenuIn`/`ZhboMenuOut` structs are an append-only surface like the rest of the ABI
+  (bump `ZHBO_ABI_VERSION`, size asserts on both sides) but they do not extend `ZhboLogicApi`/
+  `ZhboClientApi` — the field counts stay untouched.
+* **The frame is the window's draw callback.** The bridge fills `ZhboMenuIn` (keys from the
+  platform poll, the pointer/buttons from the engine's cursor, the wheel from the window's
+  `GWM_WHEEL` messages, the screen from the display) and calls `zhbo_menu_frame`; inside it the
+  core renders its prims through the already-stored `ZhboClientApi` draw callbacks (valid during a
+  draw) and plays its UI sounds through the stored sound callback (`TheAudio` works in the shell).
+  `ZhboMenuOut` then only needs `closed` (Escape/Back pops the window) and the profile one-shot.
+  The core keeps its own prev-key state for edge detection, like `Client` does.
+* **Lifetime.** `zhbo_menu_open` creates a fresh `MenuState`, `zhbo_menu_close` drops it; the
+  bridge destroys the window on `out.closed` and from `Zhbo_Reset`, so no menu state survives a
+  game transition (`zhbo_reset` drops it too). The shell-drawn image lookups share `cbImage`'s
+  cache, invalidated by the same `Zhbo_Reset` hook as the in-game path (the MappedImage collection
+  resets per game), so they cannot hold stale pointers across a game start.
+
+## The command-bar class set
+
+Selecting a General who has no class swaps the control bar to a one-page, code-built class command
+set: Take Control plus the profile's ACTIVE class set — BO2's five premade classes followed by the
+active set's up to five customs (BO2's model is ten sets of 5 custom + 5 default; the bar shows
+one set, and `Back` is its way out). Once he has a class the normal set returns and its Create a
+Class button swaps back for re-picks. The overlay pick screen exists only as the first-person
+spawn select — the command bar never opens it.
+
+Ownership and rules:
+
+* **The core owns the data, the bridge owns the windows.** `zhbo-core`'s `classicons` module
+  composes the slots, labels and kit-icon names and exposes them through
+  `zhbo_class_buttons(ZhboClassButton *out, cap)`; the bridge (`ZhboControlBar.cpp`) builds the
+  `CommandSet` at game start, places the present rows' `ZHBO_CHOOSE_CLASS` CommandButtons at the
+  returned slots, swaps sets on selection, and draws each kit over its button every frame (the
+  ammo-overlay pattern; the buttons' own `ButtonImage` is a plain tile). `zhbo_general_has_class`
+  drives the auto-swap. Both are free functions on the append-only ABI surface (same rules as the
+  menu ABI: bump + size asserts, no API-table fields).
+* **The pick rides the same channel as the overlay, and only the core emits it.** The bridge
+  learns *which* button fired by pointer-comparing the command window carrying
+  `WIN_STATE_SELECTED` during `processCommandUI` against its registered 15, then hands the 1-based
+  button index to the next client frame as `ZhboClientIn.class_button` (one-shot, 0 = none). The
+  core maps it to the pick through the same code as the overlay — a 1-based registry index for a
+  preset, `ZHBO_CHOOSE_CLASS_CUSTOM` plus the live profile entry's wire words for a custom — and
+  emits `ClientOut.choose_class`, naming the General it adopted from the sim record. It cannot be
+  queued bridge-side: `zhbo_client_frame` writes the whole `ZhboClientOut` fresh every frame, so a
+  `choose_class` stashed there from the UI pump is overwritten before `applyClientOutput` reads it
+  (the Phase-6 click-100%-dropped bug).
+* **The General id is never ambient.** `Client` adopts the sim record's General every frame, so a
+  pick sent from the overhead view before the first take-control names the General under command
+  (a pick naming an unknown/zero General is dropped by the sim, which logs it).
+* **Unarmed until classed.** A General with no class carries the knife-only `Loadout::unarmed()`:
+  no guns, no grenades, no HUD ammo/crosshair; the RTS report marks every slot empty, and the
+  bridge's existing no-ammo veto keeps Zero Hour's own weapons from firing until a class lands.
+
 ## Lifecycle
 
 1. `GameEngine::init` end → `Zhbo_Init`: ABI check, **requirements check (both games must be installed,

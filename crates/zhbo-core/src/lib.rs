@@ -8,7 +8,10 @@
 pub mod attachments;
 pub mod building;
 pub mod classes;
+pub mod classicons;
 pub mod classmenu;
+pub mod classrepair;
+pub mod classui;
 pub mod client;
 pub mod config;
 pub mod conformance;
@@ -19,6 +22,7 @@ pub mod host;
 pub mod hud;
 pub mod input;
 pub mod math;
+pub mod menu;
 pub mod names;
 pub mod movement;
 pub mod profile;

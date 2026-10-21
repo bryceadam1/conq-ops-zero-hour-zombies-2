@@ -9,7 +9,8 @@
 //! up the HUD stays, as in BO2, without the crosshair.
 //!
 //! Every piece is BO2's own art where BO2 has it, from `ConquerOps_BO2.big`, which the launcher builds
-//! from the player's own install (`zhbo_assets::hud::SPRITES`). The exceptions are Zero Hour's: the
+//! from the player's own install (`zhbo_assets::hud::SPRITES` and `zhbo_assets::cac::SPRITES`). The
+//! exceptions are Zero Hour's: the
 //! team emblem is the player's faction logo, and minimap dots carry each owner's team colour, as on
 //! Zero Hour's radar. Without the BO2 art the HUD falls back to drawn shapes and the engine font.
 
@@ -55,8 +56,11 @@ pub fn render(prims: &[Prim], host: &dyn ClientHost) {
     }
 }
 
-/// MappedImage names produced by `zhbo_assets::hud`.
+/// MappedImage names produced by `zhbo_assets::hud` and `zhbo_assets::cac`.
 pub mod sprites {
+    use crate::classmenu::Wildcard;
+    use crate::weapons::Perk;
+
     pub const DIGITS: [&str; 10] = [
         "ZHBO_BO2_Digit0",
         "ZHBO_BO2_Digit1",
@@ -89,26 +93,153 @@ pub mod sprites {
     pub const STREAK_BOX_LIT: &str = "ZHBO_BO2_StreakBoxLit";
     pub const STREAK_GLOW: &str = "ZHBO_BO2_StreakGlow";
     pub const STREAK_VSAT: &str = "ZHBO_BO2_StreakVsat";
-    pub const ALL: [&str; 32] = [
+
+    // Create-a-class icons. The perk order is `weapons::PERKS` (the converter uses the same order);
+    // the wildcard icons are indexed by the enum's own discriminant (`Wildcard::ALL` is the picker's
+    // display order, which BO2's grid sets and the icon list need not follow).
+    pub const PERK_ICONS: [&str; 16] = [
+        "ZHBO_BO2_Perk_Lightweight",
+        "ZHBO_BO2_Perk_Hardline",
+        "ZHBO_BO2_Perk_BlindEye",
+        "ZHBO_BO2_Perk_FlakJacket",
+        "ZHBO_BO2_Perk_Ghost",
+        "ZHBO_BO2_Perk_Toughness",
+        "ZHBO_BO2_Perk_ColdBlooded",
+        "ZHBO_BO2_Perk_FastHands",
+        "ZHBO_BO2_Perk_HardWired",
+        "ZHBO_BO2_Perk_Scavenger",
+        "ZHBO_BO2_Perk_Dexterity",
+        "ZHBO_BO2_Perk_ExtremeConditioning",
+        "ZHBO_BO2_Perk_Engineer",
+        "ZHBO_BO2_Perk_TacticalMask",
+        "ZHBO_BO2_Perk_DeadSilence",
+        "ZHBO_BO2_Perk_Awareness",
+    ];
+    pub const WILDCARD_ICONS: [&str; 8] = [
+        "ZHBO_BO2_Wildcard_Perk1Greed",
+        "ZHBO_BO2_Wildcard_Perk2Greed",
+        "ZHBO_BO2_Wildcard_Perk3Greed",
+        "ZHBO_BO2_Wildcard_Overkill",
+        "ZHBO_BO2_Wildcard_PrimaryGunfighter",
+        "ZHBO_BO2_Wildcard_SecondaryGunfighter",
+        "ZHBO_BO2_Wildcard_Tactician",
+        "ZHBO_BO2_Wildcard_DangerClose",
+    ];
+    /// One icon per attachment short name in the weapon table (`reflex`, `extclip`, ...).
+    pub const ATTACHMENT_ICONS: &[(&str, &str)] = &[
+        ("reflex", "ZHBO_BO2_Attach_Reflex"),
+        ("steadyaim", "ZHBO_BO2_Attach_SteadyAim"),
+        ("silencer", "ZHBO_BO2_Attach_Silencer"),
+        ("dualclip", "ZHBO_BO2_Attach_DualClip"),
+        ("holo", "ZHBO_BO2_Attach_Holo"),
+        ("grip", "ZHBO_BO2_Attach_Grip"),
+        ("fastads", "ZHBO_BO2_Attach_FastAds"),
+        ("fmj", "ZHBO_BO2_Attach_Fmj"),
+        ("extbarrel", "ZHBO_BO2_Attach_ExtBarrel"),
+        ("rangefinder", "ZHBO_BO2_Attach_RangeFinder"),
+        ("stalker", "ZHBO_BO2_Attach_Stalker"),
+        ("extclip", "ZHBO_BO2_Attach_ExtClip"),
+        ("sf", "ZHBO_BO2_Attach_SelectFire"),
+        ("rf", "ZHBO_BO2_Attach_RapidFire"),
+        ("mms", "ZHBO_BO2_Attach_Mms"),
+        ("acog", "ZHBO_BO2_Attach_Acog"),
+        ("dualoptic", "ZHBO_BO2_Attach_DualOptic"),
+        ("gl", "ZHBO_BO2_Attach_GrenadeLauncher"),
+        ("vzoom", "ZHBO_BO2_Attach_VariableZoom"),
+        ("ir", "ZHBO_BO2_Attach_Ir"),
+        ("swayreduc", "ZHBO_BO2_Attach_SwayReduction"),
+        ("is", "ZHBO_BO2_Attach_IronSight"),
+        ("tacknife", "ZHBO_BO2_Attach_TacticalKnife"),
+        ("dw", "ZHBO_BO2_Attach_DualWield"),
+        ("stackfire", "ZHBO_BO2_Attach_TriBolt"),
+    ];
+
+    // The create-a-class screen's chrome.
+    pub const MENU_BACKGROUND: &str = "ZHBO_BO2_MenuBackground";
+    pub const MENU_BACKDROP: &str = "ZHBO_BO2_MenuBackdrop";
+    pub const MENU_GRID: &str = "ZHBO_BO2_MenuGrid";
+    pub const MENU_GLOW: &str = "ZHBO_BO2_MenuGlow";
+    pub const ROW_FILL: &str = "ZHBO_BO2_RowFill";
+    pub const ROW_HIGHLIGHT: &str = "ZHBO_BO2_RowHighlight";
+    pub const ROW_LINE: &str = "ZHBO_BO2_RowLine";
+    pub const PANEL_FILL: &str = "ZHBO_BO2_PanelFill";
+    pub const PANEL_HIGHLIGHT: &str = "ZHBO_BO2_PanelHighlight";
+    pub const PANEL_LINE: &str = "ZHBO_BO2_PanelLine";
+    pub const PANEL_EDGE: &str = "ZHBO_BO2_PanelEdge";
+    pub const TILE_FILL: &str = "ZHBO_BO2_TileFill";
+    pub const TILE_HIGHLIGHT: &str = "ZHBO_BO2_TileHighlight";
+    pub const WILDCARD_FILL: &str = "ZHBO_BO2_WildcardFill";
+    pub const WILDCARD_HIGHLIGHT: &str = "ZHBO_BO2_WildcardHighlight";
+    pub const CAC_CHROME: [&str; 15] = [
+        MENU_BACKGROUND,
+        MENU_BACKDROP,
+        MENU_GRID,
+        MENU_GLOW,
+        ROW_FILL,
+        ROW_HIGHLIGHT,
+        ROW_LINE,
+        PANEL_FILL,
+        PANEL_HIGHLIGHT,
+        PANEL_LINE,
+        PANEL_EDGE,
+        TILE_FILL,
+        TILE_HIGHLIGHT,
+        WILDCARD_FILL,
+        WILDCARD_HIGHLIGHT,
+    ];
+
+    /// Every fixed MappedImage name the converter emits (`ZHBO_BO2_Icon_<weapon>` is per weapon).
+    pub const ALL: &[&str] = &[
         DIGITS[0], DIGITS[1], DIGITS[2], DIGITS[3], DIGITS[4], DIGITS[5], DIGITS[6], DIGITS[7], DIGITS[8],
         DIGITS[9], SLASH, BLOOD, RED_DOT, HIT_MARKER, PLAYER_ARROW, DOT, COMPASS, LEFT_LOWER, LEFT_LOWER_BACK,
         FACTION_BACKING, FACTION_LIGHT, RIGHT_LOWER, GUN_TITLE[0], GUN_TITLE[1], GUN_TITLE[2], STREAK_BAR,
         STREAK_BAR_BACK, STREAK_BOX, STREAK_BOX_LIT, STREAK_GLOW, STREAK_VSAT, PLAYER_BRACKET,
+        PERK_ICONS[0], PERK_ICONS[1], PERK_ICONS[2], PERK_ICONS[3], PERK_ICONS[4], PERK_ICONS[5],
+        PERK_ICONS[6], PERK_ICONS[7], PERK_ICONS[8], PERK_ICONS[9], PERK_ICONS[10], PERK_ICONS[11],
+        PERK_ICONS[12], PERK_ICONS[13], PERK_ICONS[14], PERK_ICONS[15],
+        WILDCARD_ICONS[0], WILDCARD_ICONS[1], WILDCARD_ICONS[2], WILDCARD_ICONS[3], WILDCARD_ICONS[4],
+        WILDCARD_ICONS[5], WILDCARD_ICONS[6], WILDCARD_ICONS[7],
+        ATTACHMENT_ICONS[0].1, ATTACHMENT_ICONS[1].1, ATTACHMENT_ICONS[2].1, ATTACHMENT_ICONS[3].1,
+        ATTACHMENT_ICONS[4].1, ATTACHMENT_ICONS[5].1, ATTACHMENT_ICONS[6].1, ATTACHMENT_ICONS[7].1,
+        ATTACHMENT_ICONS[8].1, ATTACHMENT_ICONS[9].1, ATTACHMENT_ICONS[10].1, ATTACHMENT_ICONS[11].1,
+        ATTACHMENT_ICONS[12].1, ATTACHMENT_ICONS[13].1, ATTACHMENT_ICONS[14].1, ATTACHMENT_ICONS[15].1,
+        ATTACHMENT_ICONS[16].1, ATTACHMENT_ICONS[17].1, ATTACHMENT_ICONS[18].1, ATTACHMENT_ICONS[19].1,
+        ATTACHMENT_ICONS[20].1, ATTACHMENT_ICONS[21].1, ATTACHMENT_ICONS[22].1, ATTACHMENT_ICONS[23].1,
+        ATTACHMENT_ICONS[24].1,
+        MENU_BACKGROUND, MENU_BACKDROP, MENU_GRID, MENU_GLOW, ROW_FILL, ROW_HIGHLIGHT, ROW_LINE,
+        PANEL_FILL, PANEL_HIGHLIGHT, PANEL_LINE, PANEL_EDGE, TILE_FILL, TILE_HIGHLIGHT, WILDCARD_FILL,
+        WILDCARD_HIGHLIGHT,
     ];
+
+    /// The icon for a perk, in BO2's table order.
+    pub fn perk_icon(perk: Perk) -> &'static str {
+        PERK_ICONS[perk.0 as usize]
+    }
+
+    /// The icon for a wildcard.
+    pub fn wildcard_icon(wildcard: Wildcard) -> &'static str {
+        WILDCARD_ICONS[wildcard as usize]
+    }
+
+    /// The icon for an attachment short name, if the catalog's table has one.
+    pub fn attachment_icon(short: &str) -> Option<&'static str> {
+        ATTACHMENT_ICONS.iter().find(|(s, _)| *s == short).map(|(_, name)| *name)
+    }
+
     /// Not BO2 art: Zero Hour's faction logo for the local player (the bridge resolves it).
     pub const TEAM_LOGO: &str = "ZHBO_TeamLogo";
 }
 
-const WHITE: u32 = 0xF2FF_FFFF;
-const DIM: u32 = 0xA0FF_FFFF;
-const RED: u32 = 0xF0E8_3A2E;
-const AMBER: u32 = 0xF0F2_B233;
+pub(crate) const WHITE: u32 = 0xF2FF_FFFF;
+pub(crate) const DIM: u32 = 0xA0FF_FFFF;
+pub(crate) const RED: u32 = 0xF0E8_3A2E;
+pub(crate) const AMBER: u32 = 0xF0F2_B233;
 const SCORE_YELLOW: u32 = 0xFFF5_D53A;
 /// BO2's player arrow and ready-streak gold.
-const GOLD: u32 = 0xFFF2_C230;
+pub(crate) const GOLD: u32 = 0xFFF2_C230;
 /// Panel fills and outlines.
-const PANEL: u32 = 0x9010_1214;
-const OUTLINE: u32 = 0xB0C8_CCD0;
+pub(crate) const PANEL: u32 = 0x9010_1214;
+pub(crate) const OUTLINE: u32 = 0xB0C8_CCD0;
 /// Horizontal lean of BO2's slanted boxes, as a share of their height.
 const SLANT: f32 = 0.35;
 
@@ -127,16 +258,13 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
         draw_death_banner(prims, w, h, s, client.hud.death_banner);
     }
 
-    // The create-a-class screen works from the overhead view too (the command bar's "Create a
-    // Class" button opens it there), so draw it before the first-person-only overlays below. The
-    // General need not have a `PlayerSim` yet (the pick can happen before he is ever controlled).
+    // The create-a-class screen can be up in the overhead view too (only when the command bar's
+    // "Create a Class" button forces it), so draw it before the first-person-only overlays below.
+    // The client decides (`class_pick_open`): an unclassed General in the overhead view is *not*
+    // forced to pick, which used to swallow every click from match start.
     let in_fps = matches!(client.view, ViewMode::Fps);
-    if !in_fps {
-        if let Some(editor) = &client.class_editor {
-            draw_class_editor(prims, w, h, s, editor);
-        } else if client.class_pick_forced || player.is_none_or(|p| p.class.is_none()) {
-            draw_class_pick(prims, w, h, s);
-        }
+    if !in_fps && client.class_pick_open {
+        crate::classui::draw_screen(prims, w, h, &client.class_screen_view());
     }
 
     let Some(p) = player.filter(|_| in_fps) else {
@@ -169,169 +297,9 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
     if map_open {
         draw_map(host, prims, w, h, s, p);
     }
-    if let Some(editor) = &client.class_editor {
-        draw_class_editor(prims, w, h, s, editor);
-    } else if p.class.is_none() || client.class_pick_forced {
-        draw_class_pick(prims, w, h, s);
+    if client.class_pick_open {
+        crate::classui::draw_screen(prims, w, h, &client.class_screen_view());
     }
-}
-
-/// The class pick, BO2's create-a-class choice at spawn: a dark full-screen overlay with BO2's
-/// three-piece title banner up top and the classes from `classes.rs` (the five basics first, then
-/// any customs) as slanted rows — each its number key in BO2's numerals on a streak-box plate, its
-/// name and headline kit. The choice lands through `MSG_ZHBO_CHOOSE_CLASS` (the HUD keys 1-N in
-/// `client.rs`'s `class_pick_input`), and the General assumes the class — its kit replaces the
-/// base kit and the pick screen goes away. Shown only while the class is unset.
-fn draw_class_pick(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32) {
-    prims.push(Prim::Rect { x: 0.0, y: 0.0, w, h, argb: 0xC010_1214 });
-    let list = crate::classes::get();
-    let row_h = 54.0 * s;
-    let panel_w = 560.0 * s;
-    let header_h = 58.0 * s;
-    let footer_h = 40.0 * s;
-    let panel_h = header_h + list.len() as f32 * row_h + footer_h;
-    let (px, py) = ((w - panel_w) * 0.5, (h - panel_h) * 0.5);
-
-    // The title, BO2's create-a-class heading: the GunTitle banner (left cap, mid stretch, right
-    // cap) behind "CREATE A CLASS", with its slanted fallback when the art is missing.
-    let title = "CREATE A CLASS";
-    let title_w = 300.0 * s;
-    let cap = header_h * 0.62;
-    let mid_left = w * 0.5 - title_w * 0.5;
-    let mut title_fallback = slant_box(px, py, panel_w, header_h, PANEL, Some(OUTLINE));
-    title_fallback.push(Prim::Rect { x: px + 5.0 * s, y: py + 6.0 * s, w: 3.0 * s, h: header_h - 12.0 * s, argb: GOLD });
-    prims.push(Prim::Image { name: sprites::GUN_TITLE[0].to_string(), x: mid_left - cap, y: py, w: cap, h: header_h, argb: 0xFFFF_FFFF, fallback: Vec::new() });
-    prims.push(Prim::Image { name: sprites::GUN_TITLE[1].to_string(), x: mid_left, y: py, w: title_w, h: header_h, argb: 0xFFFF_FFFF, fallback: title_fallback });
-    prims.push(Prim::Image { name: sprites::GUN_TITLE[2].to_string(), x: mid_left + title_w, y: py, w: cap, h: header_h, argb: 0xFFFF_FFFF, fallback: Vec::new() });
-    prims.push(Prim::Text { x: w * 0.5, y: py + 16.0 * s, text: title.into(), argb: WHITE, size: (22.0 * s) as i32, align: 1 });
-
-    // The class rows: slanted BO2 bars, the number key in BO2's numerals on a streak-box plate,
-    // the class name in white, its primary in the dim headline.
-    for (i, c) in list.iter().enumerate() {
-        let row = py + header_h + i as f32 * row_h;
-        let (rx, rw) = (px + 32.0 * s, panel_w - 64.0 * s);
-        prims.extend(slant_box(rx, row, rw, row_h - 8.0 * s, PANEL, Some(OUTLINE)));
-        let (kw, kh) = (30.0 * s, 38.0 * s);
-        let (kx, ky) = (rx + 14.0 * s, row + 4.0 * s);
-        prims.push(Prim::Image {
-            name: sprites::STREAK_BOX.to_string(),
-            x: kx, y: ky, w: kw, h: kh, argb: 0xFF22_262B,
-            fallback: vec![Prim::Rect { x: kx, y: ky, w: kw, h: kh, argb: 0xFF22_262B }],
-        });
-        draw_number(prims, i as u32 + 1, kx + kw - 6.0 * s, ky + 5.0 * s, kh - 10.0 * s, GOLD);
-        let loadout = crate::classes::loadout_of(c);
-        let primary = &crate::weapons::weapon(&loadout.primary).display_name;
-        let tx = rx + kw + 26.0 * s;
-        prims.push(Prim::Text { x: tx, y: row + 8.0 * s, text: c.name.clone(), argb: WHITE, size: (17.0 * s) as i32, align: 0 });
-        prims.push(Prim::Text { x: tx, y: row + 29.0 * s, text: primary.clone(), argb: DIM, size: (12.0 * s) as i32, align: 0 });
-    }
-
-    // The footer prompt: a slanted gold-edged sliver with BO2's command line.
-    let foot = py + panel_h - footer_h;
-    prims.extend(slant_box(px + 32.0 * s, foot + 5.0 * s, panel_w - 64.0 * s, 24.0 * s, 0x6610_1214, Some(GOLD)));
-    prims.push(Prim::Text { x: w * 0.5, y: foot + 10.0 * s, text: "PRESS A NUMBER TO CHOOSE".into(), argb: DIM, size: (13.0 * s) as i32, align: 1 });
-}
-
-/// The create-a-class editor, BO2's Pick-10 screen (`classmenu::Editor`): a dark full-screen overlay
-/// with the GunTitle banner up top, the slot rows down the left (each its label and current value),
-/// the highlighted slot's option list down the right when it is open, and the points-left counter in
-/// the corner. Drawn in BO2's skin with the same slanted bars and numerals as the pick screen; the
-/// fallback shapes show when the art is missing. The keys are the arrows (move), Enter (open/pick or
-/// save), Escape (back out).
-fn draw_class_editor(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, editor: &crate::classmenu::Editor) {
-    use crate::classmenu::Draft;
-    let d: &Draft = &editor.draft;
-    prims.push(Prim::Rect { x: 0.0, y: 0.0, w, h, argb: 0xE010_1214 });
-
-    // Title: the GunTitle banner behind "CREATE A CLASS", matching the pick screen's heading.
-    let title = "CREATE A CLASS";
-    let title_w = 300.0 * s;
-    let header_h = 58.0 * s;
-    let cap = header_h * 0.62;
-    let mid_left = w * 0.5 - title_w * 0.5;
-    let title_y = 22.0 * s;
-    let mut title_fallback = slant_box(mid_left - 40.0 * s, title_y, title_w + 80.0 * s, header_h, PANEL, Some(OUTLINE));
-    title_fallback.push(Prim::Rect { x: mid_left - 35.0 * s, y: title_y + 6.0 * s, w: 3.0 * s, h: header_h - 12.0 * s, argb: GOLD });
-    prims.push(Prim::Image { name: sprites::GUN_TITLE[0].to_string(), x: mid_left - cap, y: title_y, w: cap, h: header_h, argb: 0xFFFF_FFFF, fallback: Vec::new() });
-    prims.push(Prim::Image { name: sprites::GUN_TITLE[1].to_string(), x: mid_left, y: title_y, w: title_w, h: header_h, argb: 0xFFFF_FFFF, fallback: title_fallback });
-    prims.push(Prim::Image { name: sprites::GUN_TITLE[2].to_string(), x: mid_left + title_w, y: title_y, w: cap, h: header_h, argb: 0xFFFF_FFFF, fallback: Vec::new() });
-    prims.push(Prim::Text { x: w * 0.5, y: title_y + 16.0 * s, text: title.into(), argb: WHITE, size: (22.0 * s) as i32, align: 1 });
-
-    // The slots column, down the left: label in white, value in the dim headline, the highlighted
-    // row in the gold bar. The values come from the draft's own resolution so they read as BO2's.
-    // The rows are the editor's dynamic list, so a tier's Greed row appears when its wildcard is on.
-    let col_x = w * 0.10;
-    let col_w = w * 0.42;
-    let row_h = 40.0 * s;
-    let top = title_y + header_h + 18.0 * s;
-    let rows = editor.slots();
-    for (i, slot) in rows.iter().enumerate() {
-        let row = top + i as f32 * row_h;
-        let active = *slot == editor.slot;
-        let (fill, edge) = if active { (0xCC22_262B, Some(GOLD)) } else { (0x8810_1214, Some(0x40C8_CCD0)) };
-        prims.extend(slant_box(col_x, row, col_w, row_h - 6.0 * s, fill, edge));
-        if active {
-            prims.push(Prim::Rect { x: col_x + 4.0 * s, y: row + 5.0 * s, w: 3.0 * s, h: row_h - 16.0 * s, argb: GOLD });
-        }
-        prims.push(Prim::Text { x: col_x + 16.0 * s, y: row + 4.0 * s, text: slot.label().into(), argb: if active { WHITE } else { DIM }, size: (13.0 * s) as i32, align: 0 });
-        prims.push(Prim::Text { x: col_x + col_w - 12.0 * s, y: row + 6.0 * s, text: crate::classmenu::slot_value(d, *slot), argb: if active { WHITE } else { DIM }, size: (12.0 * s) as i32, align: 2 });
-    }
-
-    // The option list, down the right when the highlighted slot is open. The highlighted option is
-    // the gold bar; the chosen elements are white, the rest dim. Scrolled so the highlight shows.
-    if editor.picking {
-        let opts = editor.options();
-        let list_x = w * 0.56;
-        let list_w = w * 0.34;
-        let list_top = top;
-        let visible = ((h - list_top - 70.0 * s) / row_h) as usize;
-        let start = editor.option.saturating_sub(visible.saturating_sub(1).max(0));
-        let shown = visible.max(1);
-        for (j, name) in opts.iter().enumerate().skip(start).take(shown) {
-            let row = list_top + (j - start) as f32 * row_h;
-            let active = j == editor.option;
-            let chosen = editor.option_chosen(j);
-            let (fill, edge) = if active { (0xCC22_262B, Some(GOLD)) } else { (0x8810_1214, Some(0x40C8_CCD0)) };
-            prims.extend(slant_box(list_x, row, list_w, row_h - 6.0 * s, fill, edge));
-            let (name_argb, mark) = if active {
-                (WHITE, Some(">"))
-            } else if chosen {
-                (WHITE, Some("*"))
-            } else {
-                (DIM, None)
-            };
-            if let Some(m) = mark {
-                prims.push(Prim::Text { x: list_x + 12.0 * s, y: row + 6.0 * s, text: m.into(), argb: GOLD, size: (13.0 * s) as i32, align: 0 });
-            }
-            prims.push(Prim::Text { x: list_x + 30.0 * s, y: row + 6.0 * s, text: name.clone(), argb: name_argb, size: (13.0 * s) as i32, align: 0 });
-        }
-        if opts.len() > shown {
-            prims.push(Prim::Text { x: list_x + list_w - 12.0 * s, y: list_top + shown as f32 * row_h + 4.0 * s, text: format!("{} / {}", editor.option + 1, opts.len()), argb: DIM, size: (11.0 * s) as i32, align: 2 });
-        }
-    }
-
-    // The Pick-10 counter, bottom-left in BO2's numerals: points left of the ten, gold when spent
-    // fits the budget, red when the draft is over.
-    let remaining = d.remaining().max(0);
-    let counter_argb = if d.valid() { GOLD } else { RED };
-    let cx = col_x + 8.0 * s;
-    let cy = top + rows.len() as f32 * row_h + 16.0 * s;
-    prims.push(Prim::Text { x: cx, y: cy, text: "POINTS LEFT".into(), argb: DIM, size: (12.0 * s) as i32, align: 0 });
-    draw_number(prims, remaining as u32, cx + 96.0 * s, cy - 6.0 * s, 34.0 * s, counter_argb);
-    prims.push(Prim::Text { x: cx + 104.0 * s, y: cy, text: format!("/ {}", crate::classmenu::PICK_10), argb: DIM, size: (12.0 * s) as i32, align: 0 });
-    if !d.valid() {
-        prims.push(Prim::Text { x: cx + 156.0 * s, y: cy, text: "OVER BUDGET".into(), argb: RED, size: (12.0 * s) as i32, align: 0 });
-    }
-
-    // The footer prompt: the command line in BO2's slanted gold-edged sliver.
-    let foot = h - 40.0 * s;
-    prims.extend(slant_box(col_x, foot, w - 2.0 * col_x, 26.0 * s, 0x6610_1214, Some(GOLD)));
-    let prompt = if editor.picking {
-        "ARROWS  SELECT     ENTER  CHOOSE     ESC  BACK"
-    } else {
-        "ARROWS  MOVE     ENTER  OPEN     ESC  CANCEL     ENTER ON VALID  SAVE"
-    };
-    prims.push(Prim::Text { x: w * 0.5, y: foot + 7.0 * s, text: prompt.into(), argb: DIM, size: (12.0 * s) as i32, align: 1 });
 }
 
 /// Held map key (Tab, BO2's scoreboard key): Zero Hour's own radar over the middle of the view,
@@ -361,12 +329,12 @@ fn draw_map(host: &dyn ClientHost, prims: &mut Vec<Prim>, w: f32, h: f32, s: f32
 // ------------------------------------------------------------------------------------------------
 
 /// Width of one BO2 numeral at height `height` (the art is 32x64, glyphs overlap slightly).
-fn digit_advance(height: f32) -> f32 {
+pub(crate) fn digit_advance(height: f32) -> f32 {
     height * 0.40
 }
 
 /// Draw a number in BO2 numerals, right-aligned at `right`. Returns the left edge.
-fn draw_number(prims: &mut Vec<Prim>, value: u32, right: f32, top: f32, height: f32, argb: u32) -> f32 {
+pub(crate) fn draw_number(prims: &mut Vec<Prim>, value: u32, right: f32, top: f32, height: f32, argb: u32) -> f32 {
     let text = value.to_string();
     let adv = digit_advance(height);
     let left = right - adv * text.len() as f32;
@@ -387,6 +355,10 @@ fn draw_number(prims: &mut Vec<Prim>, value: u32, right: f32, top: f32, height: 
 // ------------------------------------------------------------------------------------------------
 
 fn draw_crosshair(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, client: &Client, p: &PlayerSim) {
+    // Unarmed (knife only): there is no gun to aim, so no crosshair.
+    if p.arsenal.is_unarmed() {
+        return;
+    }
     let (cx, cy) = (w * 0.5, h * 0.5);
     let ads = p.arsenal.ads;
     // Aiming through an optic: BO2's red-dot glow, translucent, on the line of sight (BO2 projects
@@ -594,7 +566,7 @@ fn draw_compass(prims: &mut Vec<Prim>, s: f32, yaw: f32, top: f32) {
 // BO2 shapes
 // ------------------------------------------------------------------------------------------------
 
-fn outline_rect(prims: &mut Vec<Prim>, x: f32, y: f32, w: f32, h: f32, t: f32, argb: u32) {
+pub(crate) fn outline_rect(prims: &mut Vec<Prim>, x: f32, y: f32, w: f32, h: f32, t: f32, argb: u32) {
     prims.push(Prim::Rect { x: x, y: y, w: w, h: t, argb: argb });
     prims.push(Prim::Rect { x: x, y: y + h - t, w: w, h: t, argb: argb });
     prims.push(Prim::Rect { x: x, y: y, w: t, h: h, argb: argb });
@@ -602,7 +574,7 @@ fn outline_rect(prims: &mut Vec<Prim>, x: f32, y: f32, w: f32, h: f32, t: f32, a
 }
 
 /// BO2's slanted box: a parallelogram leaning right, `x` its bottom-left corner's left edge.
-fn slant_box(x: f32, y: f32, w: f32, h: f32, fill: u32, edge: Option<u32>) -> Vec<Prim> {
+pub(crate) fn slant_box(x: f32, y: f32, w: f32, h: f32, fill: u32, edge: Option<u32>) -> Vec<Prim> {
     let mut prims = Vec::new();
     let lean = h * SLANT;
     let rows = h.ceil().max(1.0) as i32;
@@ -798,6 +770,11 @@ fn draw_marks(host: &dyn ClientHost, prims: &mut Vec<Prim>, w: f32, h: f32, s: f
 }
 
 fn draw_ammo(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, p: &PlayerSim, prompts: bool) {
+    // Knife only: no magazine, no reserve and no "No ammo" prompt to draw (the knife is not a
+    // gun that ran dry). Unarmed firing is simply nothing.
+    if p.arsenal.is_unarmed() {
+        return;
+    }
     let wpn = p.arsenal.current();
     // BO2's weapon panel frame, bottom-right.
     let (fw, fh) = (176.0 * s, 88.0 * s);
@@ -853,6 +830,10 @@ fn draw_ammo(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, p: &PlayerSim, promp
 /// BO2's lethal and tactical counters: each offhand's own HUD icon with how many are left, in the
 /// weapon panel to the left of the ammo.
 fn draw_offhands(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, p: &PlayerSim) {
+    // Unarmed: no lethal/tactical counters either (the empty kit has none).
+    if p.arsenal.is_unarmed() {
+        return;
+    }
     let size = 20.0 * s;
     let y = h - 34.0 * s;
     let mut x = w - 182.0 * s;
@@ -985,7 +966,7 @@ mod tests {
         assert!(images.contains(&"ZHBO_BO2_Digit0".to_string()));
         assert!(images.contains(&sprites::SLASH.to_string()));
         let texts = rec.texts.borrow();
-        assert!(texts.iter().any(|t| t == "AN-94"));
+        assert!(texts.iter().any(|t| t == "MTAR"), "BO2's Assault class carries the MTAR: {texts:?}");
         assert!(texts.iter().any(|t| t == "FULL-AUTO"), "BO2 fire mode beside the weapon name");
         assert!(texts.iter().any(|t| t == "FUNDS") && images.contains(&"ZHBO_BO2_Digit1".to_string()), "funds in BO2 numerals");
         assert!(texts.iter().any(|t| t.starts_with("FIELD COMPUTER")), "the ready scorestreak");
@@ -1036,53 +1017,86 @@ mod tests {
         assert!(texts.iter().any(|t| t == "3") && texts.iter().any(|t| t == "0"));
     }
 
+    /// Bug 1's HUD sweep: an unarmed General (knife only) draws no ammo panel ("0/0", "No ammo"),
+    /// no offhand counters and no gun crosshair. It must not panic on the empty gun slots.
     #[test]
-    fn nothing_in_rts_view() {
-        // No General in the sim: the overhead view draws only the create-a-class screen when the
-        // local General is unclassed (it opens from the command bar, so it must show there too).
-        let rec = Recorder::default();
+    fn unarmed_draws_no_ammo_panel_or_crosshair() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
         let mut client = Client::default();
-        client.class_pick_forced = false;
-        let _ = draw_hud(&rec, &client, &Sim::new());
-        // With no class chosen and no forced pick, the pick screen is what draws — and nothing else.
-        let texts = rec.texts.borrow();
-        assert!(texts.iter().any(|t| t == "CREATE A CLASS"), "the pick screen drew: {texts:?}");
-    }
-
-    #[test]
-    fn the_editor_draws_its_slots_and_counter() {
-        let (sim, mut client) = fps_state();
-        client.class_editor = Some(crate::classmenu::Editor::new(crate::classmenu::Draft::default()));
-        let rec = Recorder { has_art: true, ..Default::default() };
-        let _ = draw_hud(&rec, &client, &sim);
-        let texts = rec.texts.borrow();
-        // The title, the slot labels, and the counter are all on screen.
-        assert!(texts.iter().any(|t| t == "CREATE A CLASS"));
-        for label in ["PRIMARY WEAPON", "SECONDARY WEAPON", "PERK 1", "WILDCARDS"] {
-            assert!(texts.iter().any(|t| t == label), "slot label {label}");
+        sim.take_control(&host, 0, 1);
+        let mut inp = ClientIn::default();
+        for f in 1..160 {
+            client.frame(&mut sim, &inp);
+            sim.step(&host, f);
+            inp.logic_frame = f;
         }
-        assert!(texts.iter().any(|t| t == "POINTS LEFT"), "the Pick-10 counter");
-        assert!(texts.iter().any(|t| t.contains("AN-94")), "the held primary in its row");
-        // The pick screen is gone while the editor owns the screen.
-        assert!(!texts.iter().any(|t| t == "PRESS A NUMBER TO CHOOSE"));
-        // With the art installed the banner is BO2's, not the fallback.
-        assert!(rec.images.borrow().contains(&sprites::GUN_TITLE[1].to_string()));
-    }
-
-    #[test]
-    fn the_editor_shows_the_option_list_when_picking() {
-        let (sim, mut client) = fps_state();
-        let mut e = crate::classmenu::Editor::new(crate::classmenu::Draft::default());
-        e.slot = crate::classmenu::Slot::Perk2;
-        e.picking = true;
-        client.class_editor = Some(e);
+        assert!(matches!(client.view, crate::client::ViewMode::Fps));
+        assert!(sim.player(0).unwrap().arsenal.is_unarmed());
+        // Draw the play view (the spawn offer normally covers it).
+        client.class_pick_open = false;
         let rec = Recorder { has_art: true, ..Default::default() };
         let _ = draw_hud(&rec, &client, &sim);
         let texts = rec.texts.borrow();
-        // The tier's perks are listed; the held one carries the chosen mark.
-        assert!(texts.iter().any(|t| t == "Scavenger"), "tier 2 perks are listed");
-        assert!(texts.iter().any(|t| t == "FastHands"), "tier 2 perks are listed");
-        // The footer prompt changes to the picking commands.
-        assert!(texts.iter().any(|t| t.contains("ENTER  CHOOSE")), "picking prompt");
+        assert!(!texts.iter().any(|t| t == "No ammo"), "{texts:?}");
+        assert!(!texts.iter().any(|t| t == "Knife"), "no weapon panel for the knife: {texts:?}");
+        drop(texts);
+        let near_centre = rec.lines.borrow().iter().filter(|&&(x0, y0, x1, y1)| {
+            [(x0, y0), (x1, y1)].iter().any(|&(x, y)| (x - 640.0).abs() < 70.0 && (y - 360.0).abs() < 70.0)
+        }).count();
+        assert_eq!(near_centre, 0, "no crosshair without a gun");
     }
+
+    #[test]
+    fn nothing_in_rts_view_unless_the_pick_is_open() {
+        // No General in the sim, and no forced pick: the overhead view draws nothing (an unclassed
+        // General must not get the pick screen over the RTS view).
+        let rec = Recorder::default();
+        let client = Client::default();
+        let _ = draw_hud(&rec, &client, &Sim::new());
+        assert!(rec.texts.borrow().is_empty(), "nothing draws: {:?}", rec.texts.borrow());
+
+        // The command bar forces it: the pick screen draws, and it is pick-only (no CREATE row,
+        // no delete/copy affordances).
+        let mut client = Client::default();
+        client.class_pick_open = true;
+        let rec = Recorder::default();
+        let _ = draw_hud(&rec, &client, &Sim::new());
+        let texts = rec.texts.borrow();
+        assert!(texts.iter().any(|t| t == "CHOOSE CLASS"), "the pick screen drew: {texts:?}");
+        assert!(!texts.iter().any(|t| t == "Ten points of allocation"), "no CREATE A CLASS row in a match");
+        assert!(texts.iter().any(|t| t == "Close"), "the in-match footer closes: {texts:?}");
+        // The pager is a read-only display of the active set in a match: no management prompts.
+        assert!(texts.iter().any(|t| t == "CLASS SET 1"), "the active set shows");
+        assert!(!texts.iter().any(|t| t == "Class Set Options"), "no set options in a match");
+    }
+
+    #[test]
+    fn cac_sprite_names_follow_the_core_tables() {
+        use crate::classmenu::Wildcard;
+        use crate::weapons::{Perk, PERKS};
+        for (i, def) in PERKS.iter().enumerate() {
+            assert_eq!(sprites::perk_icon(Perk::ALL[i]), sprites::PERK_ICONS[i]);
+            assert_eq!(sprites::PERK_ICONS[i], format!("ZHBO_BO2_Perk_{}", def.id));
+        }
+        for w in Wildcard::ALL {
+            assert_eq!(sprites::wildcard_icon(w), format!("ZHBO_BO2_Wildcard_{w:?}"), "the icon follows the wildcard's name");
+        }
+        let mut shorts: Vec<&str> = sprites::ATTACHMENT_ICONS.iter().map(|(short, _)| *short).collect();
+        shorts.sort_unstable();
+        shorts.dedup();
+        assert_eq!(shorts.len(), sprites::ATTACHMENT_ICONS.len(), "attachment shorts are unique");
+        for (short, name) in sprites::ATTACHMENT_ICONS {
+            assert_eq!(sprites::attachment_icon(short), Some(*name));
+        }
+        assert!(sprites::attachment_icon("not-an-attachment").is_none());
+        // The converter's fixed-name list must not repeat a name (the atlas keys images by it).
+        let mut all = sprites::ALL.to_vec();
+        let n = all.len();
+        all.sort_unstable();
+        all.dedup();
+        assert_eq!(all.len(), n, "every MappedImage name is unique");
+    }
+
 }

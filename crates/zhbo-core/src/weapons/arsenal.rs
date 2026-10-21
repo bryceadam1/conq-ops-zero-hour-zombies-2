@@ -6,7 +6,7 @@
 ** License, or (at your option) any later version.
 */
 
-use super::catalog::{catalog, weapon};
+use super::catalog::{catalog, weapon, weapon_or_none};
 use super::def::{Class, Effect, FireMode, Place, WeaponDef, ALT_CLIPS, KICK_TO_DEGREES, MELEE_DAMAGE, MELEE_FX_WEAPON, MELEE_RANGE};
 use super::table::{fire_name, parse_fire};
 use super::loadout::Loadout;
@@ -61,11 +61,15 @@ pub struct WeaponState {
 
 impl WeaponState {
     pub fn new(def: &'static WeaponDef) -> Self {
+        // A gun has its magazine; melee and the offhand classes have no rounds (the knife's table
+        // entry carries none, so its default clip would otherwise read as 30 rounds to the RTS
+        // ammo report and the unarmed no-fire veto).
+        let gun = def.class.is_gun();
         Self {
             def,
             main: def,
-            ammo: def.clip,
-            reserve: def.start_reserve,
+            ammo: if gun { def.clip } else { 0 },
+            reserve: if gun { def.start_reserve } else { 0 },
             cooldown: 0.0,
             reload: None,
             burst_left: 0,
@@ -270,29 +274,87 @@ impl Arsenal {
         Self::with_loadout(Loadout::default())
     }
 
+    /// The General before a class is picked: knife only, no guns, no grenades. BO2 always has
+    /// melee, so the knife is the one weapon; an empty slot in `weapons` is never required because
+    /// the knife is there (every consumer can use `current()`), and the offhand counts are zero.
+    pub fn unarmed() -> Self {
+        let loadout = Loadout::unarmed();
+        let melee = weapon(&loadout.melee);
+        let mut knife = WeaponState::new(melee);
+        knife.raised_once = true;
+        Self {
+            lethal: Offhand { def: melee, count: 0 },
+            tactical: Offhand { def: melee, count: 0 },
+            melee,
+            loadout,
+            weapons: vec![knife],
+            active: 0,
+            raise_left: 0.0,
+            raise_total: 0.0,
+            raise_kind: RaiseKind::First,
+            drop_left: 0.0,
+            drop_total: 0.0,
+            previous: 0,
+            ads: 0.0,
+            since_sprint: 10.0,
+            melee_left: 0.0,
+            offhand: None,
+            held_last: 0,
+            since_reload_press: 10.0,
+        }
+    }
+
+    /// Whether the General has no gun (the unarmed kit, or a knife-only kit): the HUD hides the
+    /// ammo panel, the crosshair and the offhand counters, and firing has nothing to fire.
+    pub fn is_unarmed(&self) -> bool {
+        !self.weapons.iter().any(|w| w.def.class.is_gun())
+    }
+
     pub fn with_loadout(loadout: Loadout) -> Self {
-        let mut weapons: Vec<WeaponState> = [&loadout.primary, &loadout.secondary].iter().map(|id| WeaponState::new(weapon(id))).collect();
-        for (w, r) in weapons.iter_mut().zip(loadout.reserve) {
-            if let Some(r) = r {
+        // A gun whose id is not in the weapon table is *left out*, loudly (catalog::weapon_or_none
+        // records it), rather than silently becoming the catalog's first entry — the AN-94 — which
+        // made a failed class application look like "the class picked, but the stock kit stayed".
+        let mut weapons: Vec<WeaponState> = Vec::new();
+        for (id, reserve) in [(&loadout.primary, loadout.reserve[0]), (&loadout.secondary, loadout.reserve[1])] {
+            if id.is_empty() {
+                continue;
+            }
+            let Some(def) = weapon_or_none(id) else { continue };
+            let mut w = WeaponState::new(def);
+            if let Some(r) = reserve {
                 w.reserve = r;
             }
+            weapons.push(w);
         }
         if loadout.perks.contains(&Perk::SCAVENGER) {
             for w in &mut weapons {
                 w.reserve = (w.reserve + w.def.clip).min(w.def.max_reserve.max(w.reserve));
             }
         }
-        // Offhands start with BO2's start count (`start_reserve` for them).
+        // Offhands start with BO2's start count (`start_reserve` for them); an empty or unknown
+        // slot has none.
+        let knife = || weapon("knife_held_mp");
         let offhand = |id: &str| {
-            let def = weapon(id);
+            if id.is_empty() {
+                return Offhand { def: knife(), count: 0 };
+            }
+            let Some(def) = weapon_or_none(id) else { return Offhand { def: knife(), count: 0 } };
             Offhand { def, count: def.start_reserve.max(1) }
         };
+        let melee = if loadout.melee.is_empty() { knife() } else { weapon_or_none(&loadout.melee).unwrap_or_else(knife) };
+        // A kit with no resolvable gun at all is unarmed (the knife is still there): never leave
+        // `weapons` empty, which every consumer reads through `current()`.
+        if weapons.is_empty() {
+            let mut knife = WeaponState::new(melee);
+            knife.raised_once = true;
+            weapons.push(knife);
+        }
         let raise = weapons[0].def.first_raise_time;
         weapons[0].raised_once = true;
         Self {
             lethal: offhand(&loadout.lethal),
             tactical: offhand(&loadout.tactical),
-            melee: weapon(&loadout.melee),
+            melee,
             loadout,
             weapons,
             active: 0,
@@ -518,7 +580,8 @@ impl Arsenal {
         // until the weapon is back up from a sprint.
         let def = self.current().def;
         let sprint_ready = self.since_sprint >= self.sprint_out_time();
-        let wants_ads = held & buttons::ADS != 0 && !sprinting && sprint_ready && self.raise_left <= 0.0 && self.drop_left <= 0.0 && !self.current().is_reloading();
+        // Only a gun aims; a knife or a held offhand has no sights (and no ADS zoom).
+        let wants_ads = def.class.is_gun() && held & buttons::ADS != 0 && !sprinting && sprint_ready && self.raise_left <= 0.0 && self.drop_left <= 0.0 && !self.current().is_reloading();
         self.ads = if wants_ads {
             (self.ads + dt / def.ads_in_time.max(1e-3)).min(1.0)
         } else {

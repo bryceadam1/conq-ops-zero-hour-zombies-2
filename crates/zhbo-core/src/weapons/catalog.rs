@@ -95,9 +95,49 @@ pub fn catalog() -> &'static Catalog {
     })
 }
 
+/// Unknown ids [`weapon`]/[`weapon_or_none`] were asked for, once each. A test asserts this is
+/// empty, and [`note_unresolved`] prints each id once (the autotest captures the process's
+/// stdout/stderr), so a kit that quietly became the catalog's first entry shows up.
+static UNRESOLVED: Mutex<Vec<String>> = Mutex::new(Vec::new());
+
+fn note_unresolved(id: &str) {
+    let mut seen = UNRESOLVED.lock().unwrap_or_else(|e| e.into_inner());
+    if seen.iter().any(|s| s == id) {
+        return;
+    }
+    seen.push(id.to_string());
+    // Loud on purpose: an unknown id used to be silently replaced by the AN-94, which was
+    // indistinguishable from "the class pick did nothing" in the log.
+    eprintln!("zhbo: unknown weapon id {id:?} (not in the weapon table)");
+}
+
+/// The weapon ids that did not resolve since the last [`clear_unresolved`]. The tests assert this
+/// is empty after building a kit; the FFI layer logs it once per logic step when non-empty.
+pub fn unresolved() -> Vec<String> {
+    UNRESOLVED.lock().unwrap_or_else(|e| e.into_inner()).clone()
+}
+
+/// Forget the unresolved ids (the tests, and a game reset).
+pub fn clear_unresolved() {
+    UNRESOLVED.lock().unwrap_or_else(|e| e.into_inner()).clear();
+}
+
+/// The weapon with this id, or `None` when the table does not hold it — never a substitution.
+/// Kit construction uses this so an unknown id leaves the slot out instead of handing the General
+/// the catalog's first entry (the stock AN-94) with no trace.
+pub fn weapon_or_none(id: &str) -> Option<&'static WeaponDef> {
+    let def = catalog().get(id);
+    if def.is_none() {
+        note_unresolved(id);
+    }
+    def
+}
+
 /// The weapon with this id, falling back to the built-in table and then to its first entry.
+/// Display-only callers use this; the substitution is recorded (and printed once per id) so it is
+/// never silent. Kit construction uses [`weapon_or_none`].
 pub fn weapon(id: &str) -> &'static WeaponDef {
-    catalog().get(id).or_else(|| catalog().all().first().copied()).expect("weapon catalog is empty")
+    weapon_or_none(id).or_else(|| catalog().all().first().copied()).expect("weapon catalog is empty")
 }
 
 /// Stand-in table when BO2 is not converted: the default loadout's weapons with BO2's published
@@ -244,5 +284,44 @@ Weapon knife_held_mp
   Melee = 135 0.6
   Viewmodel = 4
   Anims = 60200e6003f007f3804256
+End
+
+; The five default classes (data/ConquerOps/classes.ini) name BO2's own guns, so those ids must
+; resolve even with no converted table: they stand in at the schema's generic values (name and
+; class only — no BO2 numbers are copied here). The player's converted table replaces every one
+; of these entries with the real weapon, which the mod's requirements check guarantees exists.
+Weapon tar21_mp
+  DisplayName = MTAR
+  Class = rifle
+End
+
+Weapon mp7_mp
+  DisplayName = MP7
+  Class = smg
+End
+
+Weapon mk48_mp
+  DisplayName = MK48
+  Class = lmg
+End
+
+Weapon 870mcs_mp
+  DisplayName = 870 MCS
+  Class = shotgun
+End
+
+Weapon svu_mp
+  DisplayName = SVU
+  Class = sniper
+End
+
+Weapon smaw_mp
+  DisplayName = SMAW
+  Class = launcher
+End
+
+Weapon fiveseven_mp
+  DisplayName = Five-Seven
+  Class = pistol
 End
 ";

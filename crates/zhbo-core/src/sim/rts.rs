@@ -24,7 +24,9 @@ impl Sim {
                 body: Body::new(info.pos, &self.tuning),
                 yaw: info.yaw,
                 pitch: 0.0,
-                arsenal: Arsenal::new(),
+                // A classless General has no guns to fire: report nothing usable until a class
+                // lands (the bridge's empty-weapon veto stops Zero Hour's own firing).
+                arsenal: Arsenal::unarmed(),
                 rng: Rng::new(general.wrapping_mul(2_654_435_761) ^ frame),
                 input: FpsInput { yaw: info.yaw, ..Default::default() },
                 pressed_accum: 0,
@@ -106,7 +108,9 @@ impl Sim {
     pub fn rts_ammo(&self, general: u32) -> RtsWeapons {
         match self.players.iter().flatten().find(|p| p.general == general) {
             Some(p) => rts_weapons(&p.arsenal, -1, p.rts_tactical),
-            None => rts_weapons(&Arsenal::new(), -1, false),
+            // No record yet: the General is still classless, so he has no usable weapon (before
+            // the first `rts_update` created the record). Never report the stock kit.
+            None => rts_weapons(&Arsenal::unarmed(), -1, false),
         }
     }
 }

@@ -80,10 +80,11 @@ struct WorldLook
 std::map<uint32_t, WorldLook> s_worldLooks;
 } // namespace
 
-// The General under RTS control: Zero Hour's AI fights with the loadout's weapons (PRIMARY rifle,
-// SECONDARY pistol, TERTIARY lethal), but the ammo is the General's own in zhbo-core. Each logic
-// frame every shot is counted against it, the slot the player picked is reported, an empty weapon
-// can't fire, and the General is moved off it to one with ammo.
+// The General under RTS control: Zero Hour's AI fights with the loadout's weapons: PRIMARY gun,
+// SECONDARY sidearm (a pistol, or the SMAW-style launcher the Assault preset carries), TERTIARY
+// lethal. The ammo is the General's own in zhbo-core: each logic frame every shot is counted
+// against it, the slot the player picked is reported, an empty weapon can't fire, and the General
+// is moved off it to one with ammo.
 Bool isGeneral(const Object *obj)
 {
 	return obj && zhbo_names::isGeneral(obj->getTemplate()->getName().str());
@@ -100,6 +101,13 @@ void rtsWeapons(UnsignedInt frame)
 			s_rtsShots[obj->getID()].slot = -1;
 		}
 		RtsShots &seen = s_rtsShots[obj->getID()];
+		// A General spawns unarmed now, and the scripted RTS autotest (ZHBO_AUTOPILOT=rts) drives
+		// the command bar directly with no class-screen UI of its own: give its General the shipped
+		// Assault preset on the first frame it is seen, so the run still exercises the RTS weapon
+		// path (ZHBO_LOADOUT still contributes the kit's spare rounds, which the dry runs need).
+		// Test-only: the autopilot is single-player-only (see ZhboBridgeInternal.h).
+		if (s_autopilot.rts && !seen.seen)
+			zhbo_logic_choose_class(obj->getControllingPlayer()->getPlayerIndex(), (uint32_t)obj->getID(), 0, nullptr, 0);
 		AIUpdateInterface *ai = obj->getAI();
 		if (const Object *victim = ai ? ai->getCurrentVictim() : nullptr)
 		{
@@ -141,7 +149,7 @@ void rtsWeapons(UnsignedInt frame)
 		}
 		for (Int s = 0; s < 3; ++s)
 		{
-			// The log is the test's oracle: every lethal and pistol shot, every tenth rifle round.
+			// The log is the test's oracle: every lethal and secondary shot, every tenth primary round.
 			if (shots[s] && (s > 0 || ammo.ammo[s] % 10 == 0))
 				logf("General %u fired slot %d (%d/%d left)", (unsigned)obj->getID(), s, ammo.ammo[s], ammo.reserve[s]);
 		}
@@ -155,7 +163,7 @@ void rtsWeapons(UnsignedInt frame)
 			obj->setWeaponLock((WeaponSlotType)ammo.lock, LOCKED_PERMANENTLY);
 			logf("General %u locked to weapon slot %d", (unsigned)obj->getID(), ammo.lock);
 			// A weapon that ran dry hands over mid-fight: Zero Hour drops an attack whose target is
-			// out of the new weapon's range, so order it again (he closes in with the pistol).
+			// out of the new weapon's range, so order it again (he closes in with the secondary).
 			Object *victim = TheGameLogic->findObjectByID(seen.victim);
 			if (victim && (victim->isEffectivelyDead() || frame - seen.victimFrame >= 90))
 				victim = nullptr;
@@ -243,7 +251,7 @@ void ResetRtsWeapons()
 
 // Third person: show the weapon each General has in hand (its W<vm><k> sub-objects on the soldier
 // model) or the scorestreak tablet (TB<k>), play the tablet's raise or put-away (USER_1, USER_2),
-// and hold the sidearm in BO2's pistol stance (JAMMED). Only changes are applied.
+// and hold the secondary in BO2's sidearm stance (JAMMED). Only changes are applied.
 
 void applyWorldPoses()
 {
@@ -292,7 +300,7 @@ void applyWorldPoses()
 			draw->clearModelConditionState(MODELCONDITION_USER_1);
 			draw->clearModelConditionState(MODELCONDITION_USER_2);
 		}
-		// BO2's pistol stance while the sidearm is in hand (JAMMED: only missiles use it otherwise).
+		// BO2's sidearm stance while the secondary is in hand (JAMMED: only missiles use it otherwise).
 		if (p.sidearm && p.tablet == 0 && !obj->isEffectivelyDead())
 			draw->setModelConditionState(MODELCONDITION_JAMMED);
 		else

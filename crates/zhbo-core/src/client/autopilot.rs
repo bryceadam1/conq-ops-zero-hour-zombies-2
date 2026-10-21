@@ -7,20 +7,43 @@
 use crate::input::{Key, KeySet};
 use super::Bindings;
 
-/// How long a create-a-class pulse holds a key: long enough for one logic tick (30 Hz) to see the
-/// press and the next to see the release, short enough that the next pulse is a fresh edge.
-const PULSE: f32 = 0.1;
+/// One classpick script action: a key (held for a frame) or the re-open one-shot.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ClasspickAction {
+    Press(Key),
+    Reopen,
+}
+
+/// The number key for the profile's first custom class, from the live pick list (never a
+/// hard-coded 6: the presets are whatever the match loaded, and the custom follows them). The
+/// standard and equipment runs seed a custom in the profile; with none, fall back to the first
+/// preset so a run still reaches first person.
+fn custom_class_key() -> Key {
+    crate::classui::pick_rows(false)
+        .iter()
+        .position(|r| matches!(r, crate::classui::PickRow::Custom(0)))
+        .and_then(crate::classui::pick_key)
+        .unwrap_or(Key::Key1)
+}
 
 /// Scripted input for in-game verification (`ZHBO_AUTOPILOT=1`): walks, turns, aims and fires,
 /// changes stance, jumps, glances at the map, swaps to the pistol and fires it aimed, swaps back, knifes,
 /// cooks and throws a frag, throws a concussion, fires the rifle's grenade launcher, then opens the
 /// field computer. Times are seconds in first person.
 ///
+/// A General spawns unarmed with the class pick up, so every script that needs a gun presses a
+/// class key first: the standard run picks the first custom class the profile holds — the autotest
+/// seeds one, the AN-94 with its under-barrel grenade launcher, because BO2's premades carry no
+/// attachments and the script's alt-mode step has to toggle something — and falls back to the first
+/// preset (Assault) when the profile has none. The build run picks the first preset, and the
+/// equipment run picks the C4/tactical class the autotest seeds in the profile.
+///
 /// `ZHBO_AUTOPILOT=equipment` runs [`Autopilot::equipment_input`] instead, for a loadout with C4 and
 /// a Trophy System or Black Hat; `ZHBO_AUTOPILOT=build` runs [`Autopilot::build_input`].
-/// `ZHBO_AUTOPILOT=classpick` runs [`Autopilot::classpick_input`]: it opens the create-a-class editor
-/// from the pick screen (key 6), names the class, changes the secondary, and saves — so an in-game
-/// run exercises the editor and the profile write end to end.
+/// `ZHBO_AUTOPILOT=classpick` runs [`Autopilot::classpick_input`]: the profile is seeded with a
+/// custom class before launch; in first person it picks that class from the spawn screen by its row
+/// key, leaves via the field computer, and on the next take-control forces the screen open and
+/// Escapes it — exercising the pick-only in-match flow end to end.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Autopilot {
     /// Seconds in first person (logic ticks, set by the client from the sim's frame counter).
@@ -29,8 +52,17 @@ pub struct Autopilot {
     pub base_frame: u32,
     pub equipment: bool,
     pub build: bool,
-    /// The create-a-class run: drive the editor from the pick screen and save a named class.
+    /// The create-a-class run: pick the seeded custom, then Escape a second offer.
     pub classpick: bool,
+    /// The classpick script's next action and whether the previous key still needs a release frame
+    /// (a render hitch may jump `t` past several windows; one action per frame keeps every edge).
+    pub(crate) classpick_step: usize,
+    pub(crate) classpick_release: bool,
+    /// After the field-computer action the script waits for the next first-person session (the
+    /// clock resets on take-control), so the Escape phase cannot fire while still leaving.
+    pub(crate) classpick_wait_reset: bool,
+    /// The previous `t`, to notice the reset between first-person sessions.
+    pub(crate) classpick_last_t: f32,
 }
 
 /// What the autopilot does in one frame: keys held, mouse movement (counts: x, y) and wheel notches.
@@ -40,23 +72,38 @@ pub struct Scripted {
     pub dx: f32,
     pub dy: f32,
     pub wheel: f32,
+    /// One-shot for the host: force the class pick screen open (the classpick run's re-pick).
+    pub pick_force: i32,
+    /// The class row key to press this frame *if the spawn pick is actually up*. The client gates
+    /// it (`class_pick_wanted`) so a script that runs again after take-control on an already
+    /// classed General (the RTS run's first-person phase) does not turn the pick key into a weapon
+    /// swap.
+    pub class_pick: Option<Key>,
 }
 
 impl Autopilot {
     /// What it does at time `t`.
-    pub fn input_at(&self, b: &Bindings) -> Scripted {
+    pub fn input_at(&mut self, b: &Bindings) -> Scripted {
         if self.equipment {
-            return Scripted { keys: self.equipment_input(b), ..Default::default() };
+            let pick = (0.3..0.4).contains(&self.t).then(custom_class_key);
+            return Scripted { keys: self.equipment_input(b), class_pick: pick, ..Default::default() };
         }
         if self.build {
             return self.build_input(b);
         }
         if self.classpick {
-            return self.classpick_input();
+            return self.classpick_input(b);
         }
         let t = self.t;
         let mut keys = KeySet::default();
         let mut dx = 0.0;
+        // The General spawns unarmed and the spawn pick is up: pick the seeded custom before the
+        // combat script, all of which assumes a gun (the autotest's seed is the AN-94 with its
+        // grenade launcher; no premade has one, so the alt-mode step needs it). Without a custom
+        // the first preset is the pick, and a run that reaches first person unseeded still works.
+        // The client only sends it while the screen is actually open, so a re-entry on a classed
+        // General never turns it into a swap.
+        let pick = (0.3..0.4).contains(&t).then(custom_class_key);
         if (1.0..3.0).contains(&t) {
             keys.set_down(b.forward, true);
         }
@@ -109,7 +156,7 @@ impl Autopilot {
         if (16.1..16.2).contains(&t) {
             keys.set_down(b.field_computer, true);
         }
-        Scripted { keys, dx, ..Default::default() }
+        Scripted { keys, dx, class_pick: pick, ..Default::default() }
     }
 
     /// Building in first person (facing open ground): the hammer up, look down (the structure goes
@@ -119,6 +166,9 @@ impl Autopilot {
     pub fn build_input(&self, b: &Bindings) -> Scripted {
         let t = self.t;
         let mut keys = KeySet::default();
+        // The spawn select is up on the unarmed spawn: pick Assault so the hammer's own input is
+        // not eaten by the screen (the hammer itself works unarmed).
+        let pick = (0.3..0.4).contains(&t).then_some(Key::Key1);
         let dy = if (3.0..3.4).contains(&t) { 120.0 } else { 0.0 };
         let wheel = if (3.6..3.65).contains(&t) { 1.0 } else { 0.0 };
         if (2.6..2.7).contains(&t) {
@@ -133,48 +183,66 @@ impl Autopilot {
         if (5.6..32.0).contains(&t) || (34.0..56.0).contains(&t) || (58.0..58.1).contains(&t) {
             keys.set_down(b.field_computer, true);
         }
-        Scripted { keys, dy, wheel, ..Default::default() }
+        Scripted { keys, dy, wheel, class_pick: pick, ..Default::default() }
     }
 
-    /// The create-a-class run (`ZHBO_AUTOPILOT=classpick`): on the pick screen, `6` opens the editor;
-    /// then the script names the class, changes the secondary weapon, and walks the row to Save and
-    /// confirms — so an in-game run captures the editor's drawing and the profile write end to end.
+    /// The create-a-class run (`ZHBO_AUTOPILOT=classpick`). In a match the screen is pick-only:
+    /// the seeded "AB" custom (written to the profile before launch) is the sixth row, so the
+    /// script presses its number key and the sim assumes it; no editor and no profile write.
+    /// It then opens the field computer to return overhead, and on the *next* take-control forces
+    /// the screen open (the command-bar path) and Escapes it, proving first-person play continues.
     ///
-    /// The editor is edge-driven (a key acts on its *fresh press*), so the pulses below hold each key
-    /// for a short window and release it, giving exactly one edge per step. The row walk is long
-    /// (twelve rows), so `pulse` fires `Down` on a fixed period from `t0`.
-    pub fn classpick_input(&self) -> Scripted {
-        let t = self.t;
-        let mut keys = KeySet::default();
-        // A key held in `[start, start + width)`, giving one fresh-press edge when the window opens.
-        let pulse = |keys: &mut KeySet, key: Key, start: f32| {
-            if (start..start + PULSE).contains(&t) {
-                keys.set_down(key, true);
+    /// The schedule is a list of actions rather than time windows: a render hitch can jump the
+    /// logic clock past a window (the macOS runs do), so each due action is emitted on a frame of
+    /// its own and followed by a release frame, which preserves the fresh-press edge. Actions fire
+    /// no earlier than their times. The clock resets with each take-control, so after the
+    /// field-computer action the script waits for the reset before its second phase.
+    pub fn classpick_input(&mut self, b: &Bindings) -> Scripted {
+        use ClasspickAction::*;
+        let custom_key = custom_class_key();
+        // Phase one (this first-person session): pick the seeded class, then leave overhead.
+        // Phase two (the next take-control, t reset): force the screen open and Escape it.
+        let schedule: [(f32, ClasspickAction); 4] = [
+            (0.3, Press(custom_key)),
+            (1.6, Press(b.field_computer)),
+            (0.3, Reopen),
+            (0.9, Press(Key::Escape)),
+        ];
+        // A held key gets one frame on its own, then one released frame, so the next action's
+        // fresh-press edge is never merged with it.
+        if self.classpick_release {
+            self.classpick_release = false;
+            return Scripted::default();
+        }
+        // New first-person session? The client's `t` restarts from the take-control frame.
+        if self.t + 0.05 < self.classpick_last_t {
+            self.classpick_wait_reset = false;
+        }
+        self.classpick_last_t = self.t;
+        if self.classpick_wait_reset {
+            return Scripted::default();
+        }
+        let mut scripted = Scripted::default();
+        if let Some((when, action)) = schedule.get(self.classpick_step).copied() {
+            if self.t >= when {
+                match action {
+                    Press(k) => scripted.keys.set_down(k, true),
+                    Reopen => scripted.pick_force = 1,
+                }
+                // The field computer hands the General back: the next phase is a new session.
+                if action == Press(b.field_computer) {
+                    self.classpick_wait_reset = true;
+                }
+                self.classpick_step += 1;
+                self.classpick_release = true;
             }
-        };
-        // 1. Open the editor from the pick screen (`6`).
-        pulse(&mut keys, Key::Key6, 0.2);
-        // 2. Walk up to the Name row and name the class "AB" (two separate key edges, so the second
-        //    A is a fresh press), then leave the field with Enter.
-        pulse(&mut keys, Key::Up, 0.6);
-        pulse(&mut keys, Key::Enter, 1.0);
-        pulse(&mut keys, Key::A, 1.4);
-        pulse(&mut keys, Key::B, 1.8);
-        pulse(&mut keys, Key::Enter, 2.2);
-        // 3. Walk down to the Secondary row (Name -> Primary -> PrimaryAtts -> Secondary: three downs).
-        for i in 0..3 {
-            pulse(&mut keys, Key::Down, 2.6 + i as f32 * 0.4);
         }
-        // 4. Open the secondary's list, move one option down, and choose it.
-        pulse(&mut keys, Key::Enter, 4.0);
-        pulse(&mut keys, Key::Down, 4.4);
-        pulse(&mut keys, Key::Enter, 4.8);
-        // 5. Walk the rest of the way to the Save row (SecondaryAtts .. Save: eight downs) and save.
-        for i in 0..8 {
-            pulse(&mut keys, Key::Down, 5.2 + i as f32 * 0.4);
+        // After Escape, walk forward for a couple of seconds: the autotest checks the position
+        // changes, proving first-person play resumed (a still-open screen would eat the input).
+        if self.classpick_step >= schedule.len() && (1.2..3.0).contains(&self.t) {
+            scripted.keys.set_down(b.forward, true);
         }
-        pulse(&mut keys, Key::Enter, 8.4);
-        Scripted { keys, ..Default::default() }
+        scripted
     }
 
     /// The equipment run: throw the lethal (C4), hold the tactical up for four seconds (the Black

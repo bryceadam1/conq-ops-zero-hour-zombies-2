@@ -6,7 +6,7 @@
 ** License, or (at your option) any later version.
 */
 
-use super::catalog::weapon;
+use super::catalog::{weapon, weapon_or_none};
 use super::perks::Perk;
 use crate::config;
 use std::collections::HashMap;
@@ -33,7 +33,12 @@ impl Loadout {
     pub fn viewmodels(&self) -> Vec<i32> {
         let mut out = Vec::new();
         for id in [&self.primary, &self.secondary, &self.lethal, &self.tactical, &self.melee] {
-            let d = weapon(id);
+            // An empty slot is legitimate (the unarmed kit); an unknown one resolves to nothing
+            // rather than borrowing the catalog's first weapon's viewmodel.
+            if id.is_empty() {
+                continue;
+            }
+            let Some(d) = weapon_or_none(id) else { continue };
             let alt = (!d.alt.is_empty()).then(|| weapon(&d.alt));
             for vm in std::iter::once(d.viewmodel).chain(alt.map(|a| a.viewmodel)) {
                 if vm >= 0 && !out.contains(&vm) {
@@ -42,6 +47,21 @@ impl Loadout {
             }
         }
         out
+    }
+
+    /// The kit before a class is picked: no guns and no grenades, the melee knife, no perks (BO2
+    /// always has melee). Deliberately not [`Default`] — that is the classes' spec base and the
+    /// converter's source, and must stay the full base kit.
+    pub fn unarmed() -> Loadout {
+        Loadout {
+            primary: String::new(),
+            secondary: String::new(),
+            lethal: String::new(),
+            tactical: String::new(),
+            melee: "knife_held_mp".into(),
+            perks: Vec::new(),
+            reserve: [None, None],
+        }
     }
 }
 
