@@ -83,6 +83,9 @@ static CATALOG: OnceLock<Catalog> = OnceLock::new();
 pub fn install_catalog(text: &str) -> Result<usize, String> {
     let table = parse_full_table(text)?;
     let n = table.weapons.len();
+    if !table.perks.is_empty() {
+        super::perks::install_converted(&table.perks);
+    }
     CATALOG.set(Catalog::from_table(table)).map_err(|_| "weapon catalog already installed".to_string())?;
     Ok(n)
 }

@@ -7,6 +7,8 @@
 */
 
 use super::def::{Class, Effect, FireMode, Kind, Kick, Place, WeaponDef};
+use super::feel::{nums, v3, GunKick, Sway};
+use super::specialty::Specialties;
 use crate::attachments::AttachmentDef;
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -15,6 +17,9 @@ pub struct Table {
     pub attachments: Vec<AttachmentDef>,
     /// Third-person meshes of the scorestreak tablet on the soldier model (`TB{k:02}`).
     pub tablet_meshes: u8,
+    /// BO2's perk rows (`mp/statstable.csv`): the reference without `PERKS_` (`LIGHTWEIGHT`,
+    /// `NINJA`) and the specialties it grants (`Perk <ref>` blocks).
+    pub perks: Vec<(String, Specialties)>,
 }
 
 pub(crate) fn pairs(v: &[(String, String)]) -> String {
@@ -54,6 +59,9 @@ pub fn format_table(defs: &[WeaponDef]) -> String {
 pub fn format_full_table(t: &Table) -> String {
     let mut s = String::from("; Black Ops II multiplayer weapons, converted from the player's own install by zhbo-assets.\n; Private data: do not redistribute.\n\n");
     s.push_str(&format!("TabletMeshes = {}\n\n", t.tablet_meshes));
+    for (stats, specialties) in &t.perks {
+        s.push_str(&format!("Perk {stats}\n  Specialties = {}\nEnd\n\n", specialties.format()));
+    }
     for a in &t.attachments {
         write_block(&mut s, "Attachment ", &a.id, ATTACHMENT_FIELDS, a);
     }
@@ -72,8 +80,9 @@ pub fn parse_table(text: &str) -> Result<Vec<WeaponDef>, String> {
 /// their formats live in [`crate::schema`], shared with the formatter.
 pub fn parse_full_table(text: &str) -> Result<Table, String> {
     enum Block {
-        Weapon(WeaponDef),
-        Attachment(AttachmentDef),
+        Weapon(Box<WeaponDef>),
+        Attachment(Box<AttachmentDef>),
+        Perk(String, Specialties),
     }
     let mut table = Table::default();
     let mut cur: Option<Block> = None;
@@ -84,17 +93,22 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
         }
         let err = |what: &str| format!("weapons table line {}: {what}: {raw}", n + 1);
         if let Some(id) = line.strip_prefix("Weapon ") {
-            cur = Some(Block::Weapon(WeaponDef { id: id.trim().to_string(), ..Default::default() }));
+            cur = Some(Block::Weapon(Box::new(WeaponDef { id: id.trim().to_string(), ..Default::default() })));
             continue;
         }
         if let Some(id) = line.strip_prefix("Attachment ") {
-            cur = Some(Block::Attachment(AttachmentDef { id: id.trim().to_string(), ..Default::default() }));
+            cur = Some(Block::Attachment(Box::new(AttachmentDef { id: id.trim().to_string(), ..Default::default() })));
+            continue;
+        }
+        if let Some(id) = line.strip_prefix("Perk ") {
+            cur = Some(Block::Perk(id.trim().to_string(), Specialties::NONE));
             continue;
         }
         if line == "End" {
             match cur.take().ok_or_else(|| err("End without a block"))? {
-                Block::Weapon(w) => table.weapons.push(w),
-                Block::Attachment(a) => table.attachments.push(a),
+                Block::Weapon(w) => table.weapons.push(*w),
+                Block::Attachment(a) => table.attachments.push(*a),
+                Block::Perk(stats, specialties) => table.perks.push((stats, specialties)),
             }
             continue;
         }
@@ -108,6 +122,11 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
                 _ => return Err(err("value outside a block")),
             },
             Some(Block::Attachment(a)) => set_field(ATTACHMENT_FIELDS, a, key, values).map_err(|e| err(&e))?,
+            Some(Block::Perk(_, specialties)) => {
+                if key == "Specialties" {
+                    *specialties = Specialties::parse(value).map_err(|e| err(&e))?;
+                }
+            }
             Some(Block::Weapon(d)) => set_field(WEAPON_FIELDS, d, key, values).map_err(|e| err(&e))?,
         }
     }
@@ -118,16 +137,8 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
 }
 
 // ------------------------------------------------------------------------------------------------
-// The catalog
-// ------------------------------------------------------------------------------------------------
-
-/// All weapons and attachments by id. Weapons with attachments the table doesn't hold are built
-
-// ------------------------------------------------------------------------------------------------
 // The table: text format shared with the converter
 // ------------------------------------------------------------------------------------------------
-
-/// Everything in the weapon table.
 
 /// The shape of a field's value.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -213,7 +224,7 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
             Ok(())
         }),
     field!("Fire", "The fire mode it forces (`none` keeps the weapon's).", FieldKind::Enum,
-        |a: &AttachmentDef| a.fire.map_or("none".into(), |f| fire_name(f)),
+        |a: &AttachmentDef| a.fire.map_or("none".into(), fire_name),
         |a: &mut AttachmentDef, v: Values| { a.fire = parse_fire(v.text); Ok(()) }),
     field!("Clip", "Rounds in the magazine when this optic or mag is on (0 keeps the weapon's).", FieldKind::Num,
         |a: &AttachmentDef| a.clip.to_string(),
@@ -255,6 +266,9 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
             a.recoil_reduction = (v.num(0), v.num(1));
             Ok(())
         }),
+    field!("Specialties", "The specialties it grants (`WeaponAttachment.perks`), by name.", FieldKind::Words,
+        |a: &AttachmentDef| a.specialties.format(),
+        |a: &mut AttachmentDef, v: Values| { a.specialties = Specialties::parse(v.text)?; Ok(()) }),
 ];
 
 /// Every `Weapon` block line, in table order.
@@ -475,6 +489,71 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("Equipment", "What the weapon is as equipment once down: claymore, betty, c4, shock, trophy, insertion, sensor, or none.", FieldKind::Enum,
         |d: &WeaponDef| d.equipment_kind.name().into(),
         |d: &mut WeaponDef, v: Values| { d.equipment_kind = Kind::parse(v.text).ok_or("unknown equipment kind")?; Ok(()) }),
+    field!("Specialties", "The specialties the weapon grants while in hand (`WeaponVariantDef.perks`, with its attachments'), by name.", FieldKind::Words,
+        |d: &WeaponDef| d.specialties.format(),
+        |d: &mut WeaponDef, v: Values| { d.specialties = Specialties::parse(v.text)?; Ok(()) }),
+    field!("ViewKickMin", "The shortest view kick, aimed and hip (`f{Ads,Hip}ViewKickMinMagnitude`).", FieldKind::Nums(2),
+        |d: &WeaponDef| nums(&[d.view_kick_min.0, d.view_kick_min.1]),
+        |d: &mut WeaponDef, v: Values| { v.need(2)?; d.view_kick_min = (v.num(0), v.num(1)); Ok(()) }),
+    field!("ViewKickCenter", "View kick recentre speed, aimed and hip (`f{Ads,Hip}ViewKickCenterSpeed`).", FieldKind::Nums(2),
+        |d: &WeaponDef| nums(&[d.view_kick_center.0, d.view_kick_center.1]),
+        |d: &mut WeaponDef, v: Values| { v.need(2)?; d.view_kick_center = (v.num(0), v.num(1)); Ok(()) }),
+    field!("AdsGunKick", "Aimed gun kick: pitch min/max, yaw min/max, accel, speed max, speed decay, static decay, reduced-kick bullets and percent.", FieldKind::Nums(10),
+        |d: &WeaponDef| d.ads_gun_kick.format(),
+        |d: &mut WeaponDef, v: Values| { v.need(10)?; d.ads_gun_kick = GunKick::from_nums(v.nums); Ok(()) }),
+    field!("HipGunKick", "Hip gun kick, as AdsGunKick.", FieldKind::Nums(10),
+        |d: &WeaponDef| d.hip_gun_kick.format(),
+        |d: &mut WeaponDef, v: Values| { v.need(10)?; d.hip_gun_kick = GunKick::from_nums(v.nums); Ok(()) }),
+    field!("GunMax", "The gun kick's pitch and yaw limits (`fGunMaxPitch`, `fGunMaxYaw`).", FieldKind::Nums(2),
+        |d: &WeaponDef| nums(&[d.gun_max.0, d.gun_max.1]),
+        |d: &mut WeaponDef, v: Values| { v.need(2)?; d.gun_max = (v.num(0), v.num(1)); Ok(()) }),
+    field!("RecoilReturn", "How fast the grip's recoil reduction wears off (`fAdsRecoilReturnRate`).", FieldKind::Num,
+        |d: &WeaponDef| d.recoil_return_rate.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.recoil_return_rate = v.text_num()?; Ok(()) }),
+    field!("HipSway", "Hip sway: max angle, lerp speed, pitch, yaw, horizontal and vertical scales.", FieldKind::Nums(6),
+        |d: &WeaponDef| d.hip_sway.format(),
+        |d: &mut WeaponDef, v: Values| { v.need(6)?; d.hip_sway = Sway::from_nums(v.nums); Ok(()) }),
+    field!("AdsSway", "Aimed sway, as HipSway (BO2 has no aimed horizontal/vertical scales).", FieldKind::Nums(6),
+        |d: &WeaponDef| d.ads_sway.format(),
+        |d: &mut WeaponDef, v: Values| { v.need(6)?; d.ads_sway = Sway::from_nums(v.nums); Ok(()) }),
+    field!("ViewStand", "Viewmodel move offset and rotation standing (`vStandMove`, `vStandRot`).", FieldKind::Nums(6),
+        |d: &WeaponDef| { let p = &d.view_pos; nums(&[p.stand_move, p.stand_rot].concat()) },
+        |d: &mut WeaponDef, v: Values| { v.need(6)?; let p = &mut d.view_pos; (p.stand_move, p.stand_rot) = (v3(v.nums), v3(&v.nums[3..])); Ok(()) }),
+    field!("ViewDucked", "Crouched offset, move and rotation (`vDuckedOfs`, `vDuckedMove`, `vDuckedRot`).", FieldKind::Nums(9),
+        |d: &WeaponDef| { let p = &d.view_pos; nums(&[p.ducked_ofs, p.ducked_move, p.ducked_rot].concat()) },
+        |d: &mut WeaponDef, v: Values| { v.need(9)?; let p = &mut d.view_pos; (p.ducked_ofs, p.ducked_move, p.ducked_rot) = (v3(v.nums), v3(&v.nums[3..]), v3(&v.nums[6..])); Ok(()) }),
+    field!("ViewProne", "Prone offset, move and rotation (`vProneOfs`, `vProneMove`, `vProneRot`).", FieldKind::Nums(9),
+        |d: &WeaponDef| { let p = &d.view_pos; nums(&[p.prone_ofs, p.prone_move, p.prone_rot].concat()) },
+        |d: &mut WeaponDef, v: Values| { v.need(9)?; let p = &mut d.view_pos; (p.prone_ofs, p.prone_move, p.prone_rot) = (v3(v.nums), v3(&v.nums[3..]), v3(&v.nums[6..])); Ok(()) }),
+    field!("ViewStrafe", "Strafe move and rotation (`vStrafeMove`, `vStrafeRot`).", FieldKind::Nums(6),
+        |d: &WeaponDef| { let p = &d.view_pos; nums(&[p.strafe_move, p.strafe_rot].concat()) },
+        |d: &mut WeaponDef, v: Values| { v.need(6)?; let p = &mut d.view_pos; (p.strafe_move, p.strafe_rot) = (v3(v.nums), v3(&v.nums[3..])); Ok(()) }),
+    field!("ViewSprint", "Sprint offset, rotation and bob (`vSprintOfs`, `vSprintRot`, `vSprintBob`).", FieldKind::Nums(8),
+        |d: &WeaponDef| { let p = &d.view_pos; nums(&[&p.sprint_ofs[..], &p.sprint_rot[..], &p.sprint_bob[..]].concat()) },
+        |d: &mut WeaponDef, v: Values| {
+            v.need(8)?;
+            let p = &mut d.view_pos;
+            (p.sprint_ofs, p.sprint_rot, p.sprint_bob) = (v3(v.nums), v3(&v.nums[3..]), [v.num(6), v.num(7)]);
+            Ok(())
+        }),
+    field!("ViewRates", "Position and rotation blend rates (standing, prone) and the stand/crouch/prone move min speeds.", FieldKind::Nums(7),
+        |d: &WeaponDef| { let p = &d.view_pos; nums(&[p.move_rate, p.prone_move_rate, p.rot_rate, p.prone_rot_rate, p.stand_min_speed, p.ducked_min_speed, p.prone_min_speed]) },
+        |d: &mut WeaponDef, v: Values| {
+            v.need(7)?;
+            let p = &mut d.view_pos;
+            (p.move_rate, p.prone_move_rate, p.rot_rate, p.prone_rot_rate) = (v.num(0), v.num(1), v.num(2), v.num(3));
+            (p.stand_min_speed, p.ducked_min_speed, p.prone_min_speed) = (v.num(4), v.num(5), v.num(6));
+            Ok(())
+        }),
+    field!("ViewAds", "Aimed pitch offset and bob factor (`fAdsAimPitch`, `fAdsBobFactor`).", FieldKind::Nums(2),
+        |d: &WeaponDef| nums(&[d.view_pos.ads_aim_pitch, d.view_pos.ads_bob_factor]),
+        |d: &mut WeaponDef, v: Values| { v.need(2)?; (d.view_pos.ads_aim_pitch, d.view_pos.ads_bob_factor) = (v.num(0), v.num(1)); Ok(()) }),
+    field!("Reticle", "Crosshair: centre and side size, min offset, side position, ADS in/out fade fractions, keep when aimed, colour change.", FieldKind::Nums(8),
+        |d: &WeaponDef| d.reticle.format(),
+        |d: &mut WeaponDef, v: Values| { v.need(8)?; d.reticle.set_nums(v.nums); Ok(()) }),
+    field!("ReticleArt", "The crosshair's centre and side materials (`-` for none).", FieldKind::Words,
+        |d: &WeaponDef| d.reticle.format_art(),
+        |d: &mut WeaponDef, v: Values| { d.reticle.set_art(v.text); Ok(()) }),
 ];
 
 /// Apply one schema line to `t`. Unknown keys are tolerated (the parser skips them).
@@ -520,15 +599,13 @@ mod tests {
         }
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 46);
-        assert_eq!(ATTACHMENT_FIELDS.len(), 13);
+        assert_eq!(WEAPON_FIELDS.len(), 64);
+        assert_eq!(ATTACHMENT_FIELDS.len(), 14);
     }
 
     #[test]
     fn equipment_block_round_trips() {
-        let mut d = WeaponDef::default();
-        d.id = "claymore_mp".into();
-        d.equipment_kind = Kind::Claymore;
+        let mut d = WeaponDef { id: "claymore_mp".into(), equipment_kind: Kind::Claymore, ..Default::default() };
         let text = format_table(&[d.clone()]);
         assert!(text.contains("Equipment = claymore"));
         let back = parse_table(&text).unwrap();
@@ -537,5 +614,21 @@ mod tests {
         let text = format_table(&[d]);
         assert!(text.contains("Equipment = none"));
         assert_eq!(parse_table(&text).unwrap()[0].equipment_kind, Kind::Other);
+    }
+
+    #[test]
+    fn specialties_and_perk_rows_round_trip() {
+        use super::super::specialty::Specialty;
+        let d = WeaponDef { id: "mp7_mp+fastmag".into(), specialties: Specialties::of(&[Specialty::FastReload]), ..Default::default() };
+        let a = AttachmentDef { id: "rf".into(), specialties: Specialties::of(&[Specialty::Rof]), ..Default::default() };
+        let t = Table {
+            weapons: vec![d],
+            attachments: vec![a],
+            perks: vec![("LIGHTWEIGHT".into(), Specialties::of(&[Specialty::MoveFaster, Specialty::FallHeight]))],
+            ..Default::default()
+        };
+        let text = format_full_table(&t);
+        assert!(text.contains("Perk LIGHTWEIGHT\n  Specialties = fallheight movefaster\nEnd"), "{text}");
+        assert_eq!(parse_full_table(&text).unwrap(), t);
     }
 }

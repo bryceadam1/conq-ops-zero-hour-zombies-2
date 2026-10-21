@@ -238,6 +238,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let atts = zhbo_formats::weapon::attachments(&common).map_err(|e| e.to_string())?;
     let names = crate::weapons::names(bo2_dir);
     let mut table = crate::weapons::table(&bo2, &atts, &names);
+    // What each perk does: its specialty set, from the player's own statstable (Ghidra G1).
+    table.perks = crate::weapons::perk_rows(&patch);
     let converted = crate::weapons::converted(&bo2);
     crate::weapons::add_variants(&mut table, &converted);
     #[cfg(debug_assertions)]

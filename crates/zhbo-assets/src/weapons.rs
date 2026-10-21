@@ -9,7 +9,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use zhbo_core::attachments::{self, AttachmentDef};
 use zhbo_core::units::inches;
-use zhbo_core::weapons::{format_table, parse_table, Class, Effect, FireMode, Kick, Loadout, Place, Table, WeaponDef, ALT_CLIPS, MELEE_DAMAGE};
+use zhbo_core::weapons::{format_table, parse_table, Class, Effect, FireMode, GunKick, Kick, Loadout, Place, Reticle, Specialties, Sway, Table, ViewPos, WeaponDef, ALT_CLIPS, MELEE_DAMAGE};
 use zhbo_formats::weapon::{self as bo2, Weapon};
 
 use crate::manifest;
@@ -50,7 +50,24 @@ pub fn attachment_def(a: &bo2::Attachment, names: &HashMap<String, String>) -> A
         reload_add_scale: a.reload_add_scale,
         clip_scale: a.clip_size_scale,
         recoil_reduction: a.recoil_reduction,
+        specialties: Specialties::from_words(a.perks.0, a.perks.1),
     }
+}
+
+/// BO2's perk rows from the player's `mp/statstable.csv` (`patch_mp`): each `specialty` row's
+/// reference (column d, `PERKS_LIGHTWEIGHT` -> `LIGHTWEIGHT`) and the specialties it grants
+/// (column e, `|`-separated). Rows with a specialty the core does not know are skipped (Ghidra
+/// G1's index table names all 62).
+pub fn perk_rows(patch: &zhbo_formats::t6zone::Zone) -> Vec<(String, Specialties)> {
+    let Ok(Some(rows)) = zhbo_formats::stringtable::rows(patch, "mp/statstable.csv") else { return Vec::new() };
+    rows.iter()
+        .filter(|r| r.get(2).is_some_and(|c| c == "specialty"))
+        .filter_map(|r| {
+            let stats = r.get(3)?.strip_prefix("PERKS_")?.to_string();
+            let set = Specialties::parse(r.get(4)?).ok()?;
+            (!set.is_empty()).then_some((stats, set))
+        })
+        .collect()
 }
 
 /// The whole table: every player weapon, the alt modes their attachments add, and every
@@ -81,7 +98,7 @@ pub fn table(bo2: &[Weapon], atts: &[bo2::Attachment], names: &HashMap<String, S
         }
     }
     let attachments = atts.iter().filter(|a| a.kind != 0 && !a.name.starts_with(',')).map(|a| attachment_def(a, names)).collect();
-    Table { weapons, attachments, tablet_meshes: 0 }
+    Table { weapons, attachments, tablet_meshes: 0, perks: Vec::new() }
 }
 
 /// Weapons with attachments, and their alt modes, that [`converted`] asks for: built from their base
@@ -275,6 +292,65 @@ fn kick(k: bo2::Kick) -> Kick {
     Kick { pitch: k.pitch, yaw: k.yaw }
 }
 
+fn gun_kick(k: bo2::GunKick) -> GunKick {
+    GunKick {
+        pitch: k.pitch,
+        yaw: k.yaw,
+        accel: k.accel,
+        speed_max: k.speed_max,
+        speed_decay: k.speed_decay,
+        static_decay: k.static_decay,
+        reduced_bullets: k.reduced_bullets as f32,
+        reduced_percent: k.reduced_percent,
+    }
+}
+
+fn sway(s: bo2::Sway) -> Sway {
+    Sway { max_angle: s.max_angle, lerp_speed: s.lerp_speed, pitch_scale: s.pitch_scale, yaw_scale: s.yaw_scale, horiz_scale: s.horiz_scale, vert_scale: s.vert_scale }
+}
+
+fn view_pos(p: bo2::ViewPos) -> ViewPos {
+    ViewPos {
+        stand_move: p.stand_move,
+        stand_rot: p.stand_rot,
+        ducked_ofs: p.ducked_ofs,
+        ducked_move: p.ducked_move,
+        ducked_rot: p.ducked_rot,
+        prone_ofs: p.prone_ofs,
+        prone_move: p.prone_move,
+        prone_rot: p.prone_rot,
+        strafe_move: p.strafe_move,
+        strafe_rot: p.strafe_rot,
+        sprint_ofs: p.sprint_ofs,
+        sprint_rot: p.sprint_rot,
+        sprint_bob: p.sprint_bob,
+        move_rate: p.move_rate,
+        prone_move_rate: p.prone_move_rate,
+        rot_rate: p.rot_rate,
+        prone_rot_rate: p.prone_rot_rate,
+        stand_min_speed: p.stand_min_speed,
+        ducked_min_speed: p.ducked_min_speed,
+        prone_min_speed: p.prone_min_speed,
+        ads_aim_pitch: p.ads_aim_pitch,
+        ads_bob_factor: p.ads_bob_factor,
+    }
+}
+
+fn reticle(r: &bo2::Reticle) -> Reticle {
+    Reticle {
+        center: r.center.clone().unwrap_or_default(),
+        side: r.side.clone().unwrap_or_default(),
+        center_size: r.center_size as f32,
+        side_size: r.side_size as f32,
+        min_ofs: r.min_ofs as f32,
+        side_pos: r.side_pos,
+        ads_in_frac: r.ads_in_frac,
+        ads_out_frac: r.ads_out_frac,
+        keep_when_ads: r.keep_when_ads,
+        color_change: r.color_change,
+    }
+}
+
 /// The core definition for a BO2 weapon. `names` maps localize keys to text.
 ///
 /// In debug builds the result is round-tripped through the table schema (format then parse), so
@@ -406,6 +482,18 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         target_finder: false,
         recoil_reduction: (0.0, 0.0),
         place: manifest::place_of(&w.name),
+        specialties: Specialties::from_words(w.perks.0, w.perks.1),
+        view_kick_min: w.view_kick_min,
+        view_kick_center: w.view_kick_center,
+        ads_gun_kick: gun_kick(w.ads_gun_kick),
+        hip_gun_kick: gun_kick(w.hip_gun_kick),
+        gun_max: w.gun_max,
+        recoil_return_rate: w.recoil.2,
+        hip_sway: sway(w.hip_sway),
+        // BO2's aimed sway has no horizontal/vertical scales of its own (G4): the hip ones apply.
+        ads_sway: Sway { horiz_scale: w.hip_sway.horiz_scale, vert_scale: w.hip_sway.vert_scale, ..sway(w.ads_sway) },
+        view_pos: view_pos(w.view_pos),
+        reticle: reticle(&w.reticle),
     };
     #[cfg(debug_assertions)]
     {
@@ -589,6 +677,27 @@ mod tests {
         let d = to_def(&w, &HashMap::new());
         assert_eq!((d.clip, d.start_reserve, d.max_reserve), (30, 90, 210));
         assert_eq!(d.display_name, "AN94");
+    }
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_installs_perk_rows_are_the_built_in_sets_and_weapons_carry_their_bits() {
+        use zhbo_core::weapons::{Perk, Specialty};
+        let bo2 = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let patch = crate::generals::load_zone(&bo2, crate::fx::ZONE).unwrap();
+        let rows = perk_rows(&patch);
+        for perk in Perk::ALL {
+            let d = perk.def();
+            let (_, set) = rows.iter().find(|(k, _)| k == d.stats).unwrap_or_else(|| panic!("statstable has {}", d.stats));
+            assert_eq!(*set, Specialties::of(d.specialties), "{}: the built-in set is the install's row", d.id);
+        }
+        // In this install only FMJ grants specialties through the data (`armorpiercing`,
+        // `bulletpenetration`); fast mag and quickdraw work through their reload/ADS time scales.
+        let common = crate::generals::load_zone(&bo2, "common_mp").unwrap();
+        let atts = bo2::attachments(&common).unwrap();
+        let granting: Vec<(String, Specialties)> =
+            atts.iter().map(|a| (a.name.clone(), Specialties::from_words(a.perks.0, a.perks.1))).filter(|(_, s)| !s.is_empty()).collect();
+        assert!(granting.iter().any(|(n, s)| n == "fmj" && s.has(Specialty::BulletPenetration) && s.has(Specialty::ArmorPiercing)), "{granting:?}");
     }
 
     /// The `Weapon` block named `name` in `ini`, and one key's value in it.

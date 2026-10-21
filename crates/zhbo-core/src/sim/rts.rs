@@ -207,8 +207,7 @@ impl Sim {
         let vel = throw_velocity(from, to, speed);
         let mut proj = Projectile::launch(def, p.general, from, vel.normalized_or_zero(), def.fuse_time, host, p.yaw);
         proj.vel = vel;
-        proj.flak_jacket = p.arsenal.has(Perk::FLAK_JACKET);
-        proj.tactical_mask = p.arsenal.has(Perk::TACTICAL_MASK);
+        (proj.self_blast_scale, proj.self_stun_scale) = p.arsenal.self_harm_scales();
         self.projectiles.push((idx, proj));
         self.emit(idx, EventKind::Thrown { lethal: def.class == Class::Lethal });
     }

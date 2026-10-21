@@ -986,7 +986,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                         self.hud.score_popup = SCORE_POPUP_TIME;
                     }
                 }
-                EventKind::Recoil { pitch_deg, yaw_deg } => {
+                EventKind::Recoil { pitch_deg, yaw_deg, .. } => {
                     // BO2 assault rifles mostly recover: part of each kick moves the real aim, the
                     // rest is a visual kick that settles back.
                     self.pitch = (self.pitch + (pitch_deg * RECOIL_PERMANENT).to_radians()).clamp(-MAX_PITCH, MAX_PITCH);
@@ -995,6 +995,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     self.hud.view_kick_yaw += yaw_deg * (1.0 - RECOIL_PERMANENT);
                     self.hud.muzzle = 0.05;
                 }
+                EventKind::Flinch { pitch_deg } => self.hud.view_kick_pitch += pitch_deg,
                 EventKind::Damaged { amount } => {
                     self.cues.play(sounds::HURT);
                     self.hud.damage_flash = (self.hud.damage_flash + amount / 60.0).min(1.0);

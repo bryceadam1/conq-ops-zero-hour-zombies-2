@@ -32,7 +32,7 @@ use crate::equipment::{EquipEvent, Equipment, Kind as EquipKind, Placed, HACK_CO
 use crate::projectiles::{Outcome, Projectile};
 use crate::units::inches;
 use crate::building::{self, Hammer, Site};
-use crate::weapons::{Arsenal, Class, Perk, Rng, WeaponAction, MELEE_FX_WEAPON, MELEE_RANGE};
+use crate::weapons::{Arsenal, Class, Rng, Specialty, WeaponAction, MELEE_FX_WEAPON, MELEE_RANGE};
 
 pub const MAX_PLAYERS: usize = 16;
 
@@ -111,7 +111,12 @@ pub enum EventKind {
     ReturnedToRts { general: u32 },
     Shot { origin: Vec3, end: Vec3 },
     HitMarker { headshot: bool, kill: bool },
-    Recoil { pitch_deg: f32, yaw_deg: f32 },
+    /// A shot's view kick (G5: pitch up, yaw, roll -0.5 x yaw) and the gun kick spring's impulse
+    /// (`weapons::recoil::GunKickSpring`).
+    Recoil { pitch_deg: f32, yaw_deg: f32, roll_deg: f32, gun_kick: (f32, f32) },
+    /// Damage flinch (G7): the view kicks this far, the engine's no-direction branch (the sim
+    /// carries no damage direction), and settles over `FlinchTime`.
+    Flinch { pitch_deg: f32 },
     Damaged { amount: f32 },
     ReloadStarted,
     Swapped,
@@ -252,8 +257,7 @@ impl Sim {
     /// bridge). The tests use `Sim::new`, whose defaults are the pack's own values.
     pub fn with_tuning(t: &crate::tuning::Tuning) -> Self {
         let mut sim = Self::new();
-        sim.tuning.walk_speed = t.walk_speed;
-        sim.tuning.sprint_time = t.sprint_time;
+        sim.tuning = MoveTuning::from_tuning(t);
         sim
     }
 
@@ -505,7 +509,7 @@ impl Sim {
 
     fn step_equipment(&mut self, host: &dyn LogicHost) {
         let players = &self.players;
-        let engineer = |id: u32| players.iter().flatten().any(|p| p.general == id && p.arsenal.has(Perk::ENGINEER));
+        let engineer = |id: u32| players.iter().flatten().any(|p| p.general == id && p.arsenal.class_specialties().has(Specialty::ShowEnemyEquipment));
         let mut ev = Vec::new();
         self.equipment.step(host, &mut self.projectiles, &engineer, &mut ev);
         self.equipment_events(ev);
@@ -533,7 +537,7 @@ impl Sim {
     /// Scavenger: a kill with a non-explosive weapon refills ammo.
     fn scavenge(&mut self, idx: usize) {
         if let Some(Some(p)) = self.players.get_mut(idx) {
-            if p.arsenal.has(Perk::SCAVENGER) {
+            if p.arsenal.has_specialty(Specialty::Scavenger) {
                 p.arsenal.scavenge();
             }
         }
@@ -584,6 +588,7 @@ impl Sim {
                         speed_scale: p.arsenal.move_scale(),
                         block_sprint: p.arsenal.ads > 0.0 || p.arsenal.offhand.is_some() || p.arsenal.melee_left > 0.0 || p.building,
                         sprint_time_scale: p.arsenal.sprint_scale(),
+                        move_faster: p.arsenal.move_faster(),
                     };
                     movement::step(&mut p.body, &input, mods, &self.tuning, &world, LOGIC_DT);
                     let mut actions = Vec::new();
@@ -658,7 +663,11 @@ impl Sim {
         p.max_health = info.max_health;
         if info.health < p.health - 1e-3 {
             p.regen_wait = regen_delay();
-            self.emit(idx, EventKind::Damaged { amount: p.health - info.health });
+            let amount = p.health - info.health;
+            self.emit(idx, EventKind::Damaged { amount });
+            let toughness = p.arsenal.class_specialties().has(Specialty::BulletFlinch);
+            let flinch = crate::weapons::recoil::flinch_degrees(amount / crate::units::BO2_TO_ZH_DAMAGE, toughness, &p.arsenal.tuning);
+            self.emit(idx, EventKind::Flinch { pitch_deg: flinch });
         } else {
             p.regen_wait = (p.regen_wait - LOGIC_DT).max(0.0);
             if p.regen_wait <= 0.0 && info.health < info.max_health {
@@ -1504,6 +1513,29 @@ pub(crate) mod tests {
         run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
         assert!(sim.player(0).is_none());
         assert!(events(&sim).contains(&EventKind::GeneralDied { general: 1 }));
+    }
+
+    #[test]
+    fn damage_flinches_the_view_and_toughness_cuts_it() {
+        // G7: flinch = BO2 damage x bg_viewKickScale (0.175), x0.25 with Toughness.
+        let flinch_for = |toughness: bool| {
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            sim.take_control(&host, 0, 1);
+            run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+            let p = sim.players[0].as_mut().unwrap();
+            p.arsenal.loadout.perks.retain(|k| *k != crate::weapons::Perk::TOUGHNESS);
+            if toughness {
+                p.arsenal.loadout.perks.push(crate::weapons::Perk::TOUGHNESS);
+            }
+            // 60 Zero Hour points are 40 on BO2's scale.
+            host.objects.borrow_mut()[0].health -= 40.0 * crate::units::BO2_TO_ZH_DAMAGE;
+            run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+            events(&sim).into_iter().find_map(|k| if let EventKind::Flinch { pitch_deg } = k { Some(pitch_deg) } else { None }).expect("a flinch")
+        };
+        assert!((flinch_for(false) - 7.0).abs() < 1e-3);
+        assert!((flinch_for(true) - 1.75).abs() < 1e-3);
     }
 
     #[test]

@@ -7,7 +7,7 @@
 use crate::host::{damage_kind, disable_kind, objflags, LogicHost, ObjInfo};
 use crate::math::Vec3;
 use crate::units::{inches, BO2_TO_ZH_DAMAGE, LOGIC_DT};
-use crate::weapons::{Effect, Perk, WeaponDef};
+use crate::weapons::{Effect, WeaponDef};
 
 /// BO2's `g_gravity` (800 in/s^2).
 pub const GRAVITY: f32 = inches(800.0);
@@ -42,8 +42,11 @@ pub struct Projectile {
     /// Stuck to the ground or to an object (sticky grenades, bolts).
     pub stuck_to: Option<u32>,
     pub resting: bool,
-    pub flak_jacket: bool,
-    pub tactical_mask: bool,
+    /// The thrower's own share of this blast's damage (`flakjacket`: `perk_flakJacket` percent,
+    /// `_class.gsc:1023-1032`), 1 without it.
+    pub self_blast_scale: f32,
+    /// The thrower's own share of this stun (`stunprotection`: x0.1, `_weapons.gsc:1375-1376`).
+    pub self_stun_scale: f32,
     /// Becomes placed equipment where it comes to rest or sticks (C4, Shock Charge, Sensor
     /// Grenade) instead of going off.
     pub lands: bool,
@@ -66,7 +69,7 @@ impl Projectile {
         let object = if def.projectile_object.is_empty() { 0 } else { host.spawn(&def.projectile_object, owner, from, yaw) };
         let lands = crate::equipment::Kind::of(def) != crate::equipment::Kind::Other;
         let fuse = if lands || def.impact_explode || def.effect == Effect::Impact || def.fuse_time <= 0.0 { f32::INFINITY } else { fuse_left };
-        Projectile { def, owner, pos: from, vel, fuse, age: 0.0, object, stuck_to: None, resting: false, flak_jacket: false, tactical_mask: false, lands }
+        Projectile { def, owner, pos: from, vel, fuse, age: 0.0, object, stuck_to: None, resting: false, self_blast_scale: 1.0, self_stun_scale: 1.0, lands }
     }
 
     /// Advance one logic frame. Returns `Some` when it is finished (went off or hit).
@@ -169,7 +172,7 @@ impl Projectile {
     /// The blast (or stun, EMP, smoke).
     fn go_off(&mut self, host: &dyn LogicHost, direct: Option<ObjInfo>) -> Outcome {
         self.remove_object(host);
-        let (hit_enemy, kill) = blast(host, self.def, self.owner, self.pos, direct, self.flak_jacket, self.tactical_mask);
+        let (hit_enemy, kill) = blast(host, self.def, self.owner, self.pos, direct, self.self_blast_scale, self.self_stun_scale);
         Outcome::Exploded { at: self.pos, hit_enemy, kill }
     }
 
@@ -188,7 +191,7 @@ impl Projectile {
 
 /// `def` going off at `at` for `owner` (a General's id): explosion damage, stun, EMP or smoke over
 /// its radius, and its effect. `direct` took a direct hit. Returns (hit an enemy, killed one).
-pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct: Option<ObjInfo>, flak_jacket: bool, tactical_mask: bool) -> (bool, bool) {
+pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct: Option<ObjInfo>, self_blast_scale: f32, self_stun_scale: f32) -> (bool, bool) {
     let d = def;
     let fx = if d.explosion_fx.is_empty() { DEFAULT_EXPLOSION_FX } else { d.explosion_fx.as_str() };
     if d.effect != Effect::None {
@@ -216,8 +219,8 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
                 if direct_hit {
                     amount = amount.max(d.damage[0] * BO2_TO_ZH_DAMAGE);
                 }
-                if own && flak_jacket {
-                    amount *= Perk::FLAK_JACKET.magnitude();
+                if own {
+                    amount *= self_blast_scale;
                 }
                 if amount > 0.0 {
                     let k = host.damage(owner, o.id, amount, damage_kind::EXPLOSION);
@@ -230,8 +233,8 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
             Effect::Stun => {
                 let f = (dist / d.explosion_radius.max(1.0)).clamp(0.0, 1.0);
                 let mut secs = STUN_SECONDS.0 + (STUN_SECONDS.1 - STUN_SECONDS.0) * f;
-                if own && tactical_mask {
-                    secs *= Perk::TACTICAL_MASK.magnitude();
+                if own {
+                    secs *= self_stun_scale;
                 }
                 if !own {
                     host.disable(o.id, disable_kind::PARALYZED, secs);

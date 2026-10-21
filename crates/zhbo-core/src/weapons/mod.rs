@@ -9,17 +9,23 @@
 pub mod arsenal;
 pub mod catalog;
 pub mod def;
+pub mod feel;
+pub mod gunpos;
 pub mod loadout;
 pub mod perks;
+pub mod recoil;
 pub mod rng;
+pub mod specialty;
 pub mod table;
 
 pub use arsenal::*;
 pub use catalog::*;
 pub use def::*;
+pub use feel::{GunKick, Reticle, Sway, ViewPos};
 pub use loadout::*;
 pub use perks::*;
 pub use rng::*;
+pub use specialty::*;
 pub use table::*;
 
 pub use crate::attachments::AttachmentDef;
@@ -28,7 +34,7 @@ pub use crate::attachments::AttachmentDef;
 mod tests {
     use super::*;
     use crate::input::buttons;
-    use crate::units::{inches, LOGIC_DT};
+    use crate::units::LOGIC_DT;
 
     fn def(f: impl FnOnce(&mut WeaponDef)) -> &'static WeaponDef {
         let mut d = WeaponDef { id: "test_mp".into(), ..Default::default() };
@@ -232,18 +238,34 @@ mod tests {
 
     #[test]
     fn swap_drops_then_raises_faster_with_fast_hands() {
+        // G3: Fast Hands keeps the weapon's own drop/raise times and runs the countdown at
+        // 1 / perk_weapSwitchMultiplier (the swap takes half the frames), not the quick times.
+        let swap_frames = |a: &mut Arsenal| {
+            let mut out = Vec::new();
+            let mut rng = Rng::new(8);
+            a.step(0, buttons::SWAP_WEAPON, false, 0, 0.0, &mut rng, &mut out);
+            let mut n = 1;
+            while a.drop_left > 0.0 || a.raise_left > 0.0 {
+                a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+                n += 1;
+            }
+            n
+        };
         let mut a = Arsenal::new();
         a.raise_left = 0.0;
         a.loadout.perks.clear();
-        let mut out = Vec::new();
-        a.step(0, buttons::SWAP_WEAPON, false, 0, 0.0, &mut Rng::new(8), &mut out);
-        let slow = a.drop_left + a.raise_left;
+        // The secondary's first raise (it has not been up yet), after the primary's drop.
+        let expect = ((a.weapons[0].def.drop_time + a.weapons[1].def.first_raise_time) / LOGIC_DT).ceil();
+        let slow = swap_frames(&mut a);
+        assert_eq!(a.active, 1);
         let mut b = Arsenal::new();
         b.raise_left = 0.0;
-        b.step(0, buttons::SWAP_WEAPON, false, 0, 0.0, &mut Rng::new(8), &mut out);
-        let fast = b.drop_left + b.raise_left;
-        assert!(fast < slow, "fast hands {fast} vs {slow}");
-        assert_eq!(a.active, 1);
+        assert!(b.loadout.perks.contains(&Perk::FAST_HANDS));
+        let fast = swap_frames(&mut b);
+        assert_eq!(b.raise_kind, RaiseKind::First, "the same animation, run faster");
+        // Two frames of overhead either way: the press frame and the frame the drop ends on.
+        assert!((slow as f32 - 2.0 - expect).abs() <= 1.0, "{slow} frames vs {expect}");
+        assert!((fast as f32 - 2.0 - expect * 0.5).abs() <= 1.0, "fast hands {fast} frames vs {}", expect * 0.5);
     }
 
     #[test]
@@ -259,19 +281,18 @@ mod tests {
     #[test]
     fn perks_change_movement() {
         let mut a = Arsenal::new();
-        let with = a.move_scale();
+        assert!(a.move_faster(), "Lightweight grants movefaster");
         a.loadout.perks.retain(|p| *p != Perk::LIGHTWEIGHT);
-        assert!(with > a.move_scale());
+        assert!(!a.move_faster());
+        let base = a.sprint_scale();
         a.loadout.perks.push(Perk::EXTREME_CONDITIONING);
-        assert!(a.sprint_scale() >= 2.0 * weapon("an94_mp").sprint_duration_scale - 1e-4);
+        assert!((a.sprint_scale() - 2.0 * base).abs() < 1e-4, "longersprint doubles the sprint");
     }
 }
 
 #[cfg(test)]
 mod loadout_tests {
     use super::*;
-    use crate::input::buttons;
-    use crate::units::{inches, LOGIC_DT};
 
     #[test]
     fn a_spec_changes_slots_and_perks() {
@@ -286,7 +307,6 @@ mod loadout_tests {
 mod swap_tests {
     use super::*;
     use crate::input::buttons;
-    use crate::units::{inches, LOGIC_DT};
 
     #[test]
     fn swapping_mid_reload_before_the_add_time_keeps_the_magazine_empty() {

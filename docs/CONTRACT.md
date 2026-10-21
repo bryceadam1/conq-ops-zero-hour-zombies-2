@@ -280,14 +280,24 @@ damage came from (`HudLui::damage_from`); until then no indicator shows.
 The gameplay tuning pack (`crates/zhbo-core/src/tuning.rs`, filled from
 `Data/ConquerOps/tuning.ini`) is the single source for the numbers gameplay code used to scatter
 across ~10 files (movement, regeneration, building rates, projectile physics, the field
-computer's raise time). The pack is part of the mod like `weapons.ini`: the bridge loads it once
-at init (`zhbo_load_tuning`, path from the names registry), every player must have the identical
-file, and the sim must never read a tuning value from anywhere else — modules take `&Tuning`
-instead of their own constants. When the file is absent the built-in defaults in `tuning.rs` keep
-tests and the fallback working; a test asserts those defaults equal the shipped file's values.
-Adding a tuning knob: add the field to `Tuning`, give it the current hardcoded value as default,
-parse it in `Tuning::from_ini`, add it to `data/ConquerOps/tuning.ini`, and route the old
-constant's readers through the struct. The pack moves numbers; it must not change them.
+computer's raise time) and for BO2's engine numbers: movement, the `perk_*` multipliers, damage
+flinch, the view and bob dvars (v1.0 Track PW). BO2's numbers stay in BO2's units (inches,
+inches/s, seconds) under the engine's dvar names as ini keys (`g_speed`, `perk_weapSwitchMultiplier`),
+each field's doc citing the Ghidra answer it came from (`~/Documents/BO2-reference/ghidra/
+answers/G1-G7.md`); code converts at the point of use. The pack is part of the mod like
+`weapons.ini`: the bridge loads it once at init (`zhbo_load_tuning`, path from the names
+registry), every player must have the identical file, and the sim must never read a tuning value
+from anywhere else — modules take `&Tuning` (`MoveTuning::from_tuning`, `Arsenal::tuning`)
+instead of their own constants. When the file is absent the built-in defaults keep tests and the
+fallback working; a test asserts the shipped file sets every key to its default. Adding a knob:
+one line in `tuning.rs`'s field table (field, ini key, default, cited doc) and the same key in
+`data/ConquerOps/tuning.ini`.
+
+**Perks are specialty sets.** What a perk does is the `specialty_*` bits it grants (the
+converted weapon table's `Perk` blocks, read from the player's `mp/statstable.csv`; built-in
+copies in `weapons/perks.rs`). Gameplay tests specialties, never perk names:
+`Arsenal::has_specialty` is BO2's rule (the class's perks, or the weapon in hand's own bits and
+its attachments'; G1).
 
 ## Versioning
 

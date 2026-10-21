@@ -187,6 +187,8 @@ pub struct Attachment {
     pub clip_size: i32,
     /// ADS recoil reduction per shot and its limit (the grip).
     pub recoil_reduction: (f32, f32),
+    /// `WeaponAttachment.perks`: the specialty bits the attachment grants (G1).
+    pub perks: (u32, u32),
 }
 
 /// Every attachment in a loaded zone.
@@ -223,6 +225,7 @@ pub fn attachments(z: &Zone) -> Result<Vec<Attachment>, FormatError> {
                 clip_size_scale: z.f32(at + WA::clipSizeScale),
                 clip_size: int(z, at + WA::iClipSize),
                 recoil_reduction: (z.f32(at + WA::fAdsRecoilReductionRate), z.f32(at + WA::fAdsRecoilReductionLimit)),
+                perks: (z.u32(at + WA::perks), z.u32(at + WA::perks + 4)),
             })
         })
         .collect()
@@ -233,6 +236,72 @@ pub fn attachments(z: &Zone) -> Result<Vec<Attachment>, FormatError> {
 pub struct Kick {
     pub pitch: (f32, f32),
     pub yaw: (f32, f32),
+}
+
+/// The gun kick of one aim state (`f{Ads,Hip}GunKick*`, `{ads,hip}GunKickReducedKick*`; G5).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GunKick {
+    pub pitch: (f32, f32),
+    pub yaw: (f32, f32),
+    pub accel: f32,
+    pub speed_max: f32,
+    pub speed_decay: f32,
+    pub static_decay: f32,
+    pub reduced_bullets: i32,
+    pub reduced_percent: f32,
+}
+
+/// View sway (`sway*` / `adsSway*`; G4). BO2's ADS set has no horizontal/vertical scales.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Sway {
+    pub max_angle: f32,
+    pub lerp_speed: f32,
+    pub pitch_scale: f32,
+    pub yaw_scale: f32,
+    pub horiz_scale: f32,
+    pub vert_scale: f32,
+}
+
+/// The viewmodel's stance and movement offsets and their rates (inches, degrees; G4).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ViewPos {
+    pub stand_move: [f32; 3],
+    pub stand_rot: [f32; 3],
+    pub ducked_ofs: [f32; 3],
+    pub ducked_move: [f32; 3],
+    pub ducked_rot: [f32; 3],
+    pub prone_ofs: [f32; 3],
+    pub prone_move: [f32; 3],
+    pub prone_rot: [f32; 3],
+    pub strafe_move: [f32; 3],
+    pub strafe_rot: [f32; 3],
+    pub sprint_ofs: [f32; 3],
+    pub sprint_rot: [f32; 3],
+    pub sprint_bob: [f32; 2],
+    pub move_rate: f32,
+    pub prone_move_rate: f32,
+    pub rot_rate: f32,
+    pub prone_rot_rate: f32,
+    pub stand_min_speed: f32,
+    pub ducked_min_speed: f32,
+    pub prone_min_speed: f32,
+    pub ads_aim_pitch: f32,
+    pub ads_bob_factor: f32,
+}
+
+/// The weapon's own crosshair (G6).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Reticle {
+    pub center: Option<String>,
+    pub side: Option<String>,
+    pub center_size: i32,
+    pub side_size: i32,
+    pub min_ofs: i32,
+    pub side_pos: f32,
+    pub ads_in_frac: f32,
+    pub ads_out_frac: f32,
+    pub keep_when_ads: bool,
+    pub color_change: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -327,6 +396,22 @@ pub struct Weapon {
     pub ads_zoom_fov: f32,
     pub ads_view_kick: Kick,
     pub hip_view_kick: Kick,
+    /// `f{Ads,Hip}ViewKickMinMagnitude`.
+    pub view_kick_min: (f32, f32),
+    /// The variant's `f{Ads,Hip}ViewKickCenterSpeed`.
+    pub view_kick_center: (f32, f32),
+    pub ads_gun_kick: GunKick,
+    pub hip_gun_kick: GunKick,
+    /// `fGunMaxPitch`, `fGunMaxYaw`.
+    pub gun_max: (f32, f32),
+    /// `fAdsRecoilReductionRate`, `fAdsRecoilReductionLimit`, `fAdsRecoilReturnRate`.
+    pub recoil: (f32, f32, f32),
+    pub hip_sway: Sway,
+    pub ads_sway: Sway,
+    pub view_pos: ViewPos,
+    pub reticle: Reticle,
+    /// `WeaponVariantDef.perks`: the specialty bits the variant grants (G1).
+    pub perks: (u32, u32),
     pub move_speed_scale: f32,
     pub ads_move_speed_scale: f32,
     pub sprint_duration_scale: f32,
@@ -470,6 +555,8 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         hide_tags: hide_tags(z, z.try_u32(v + WV::hideTags)?),
         alt_weapon: opt_str(z, v + WV::szAltWeaponName),
         dpad_icon: named(z, v + WV::dpadIcon),
+        perks: (z.u32(v + WV::perks), z.u32(v + WV::perks + 4)),
+        view_kick_center: (z.f32(v + WV::fAdsViewKickCenterSpeed), z.f32(v + WV::fHipViewKickCenterSpeed)),
         ..Default::default()
     };
     if d == 0 {
@@ -541,6 +628,82 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.ads_spread = z.f32(d + WD::fAdsSpread);
     w.ads_view_kick = kick(z, d + WD::fAdsViewKickPitchMin, d + WD::fAdsViewKickPitchMax, d + WD::fAdsViewKickYawMin, d + WD::fAdsViewKickYawMax);
     w.hip_view_kick = kick(z, d + WD::fHipViewKickPitchMin, d + WD::fHipViewKickPitchMax, d + WD::fHipViewKickYawMin, d + WD::fHipViewKickYawMax);
+    w.view_kick_min = (z.f32(d + WD::fAdsViewKickMinMagnitude), z.f32(d + WD::fHipViewKickMinMagnitude));
+    w.ads_gun_kick = GunKick {
+        pitch: (z.f32(d + WD::fAdsGunKickPitchMin), z.f32(d + WD::fAdsGunKickPitchMax)),
+        yaw: (z.f32(d + WD::fAdsGunKickYawMin), z.f32(d + WD::fAdsGunKickYawMax)),
+        accel: z.f32(d + WD::fAdsGunKickAccel),
+        speed_max: z.f32(d + WD::fAdsGunKickSpeedMax),
+        speed_decay: z.f32(d + WD::fAdsGunKickSpeedDecay),
+        static_decay: z.f32(d + WD::fAdsGunKickStaticDecay),
+        reduced_bullets: int(z, d + WD::adsGunKickReducedKickBullets),
+        reduced_percent: z.f32(d + WD::adsGunKickReducedKickPercent),
+    };
+    w.hip_gun_kick = GunKick {
+        pitch: (z.f32(d + WD::fHipGunKickPitchMin), z.f32(d + WD::fHipGunKickPitchMax)),
+        yaw: (z.f32(d + WD::fHipGunKickYawMin), z.f32(d + WD::fHipGunKickYawMax)),
+        accel: z.f32(d + WD::fHipGunKickAccel),
+        speed_max: z.f32(d + WD::fHipGunKickSpeedMax),
+        speed_decay: z.f32(d + WD::fHipGunKickSpeedDecay),
+        static_decay: z.f32(d + WD::fHipGunKickStaticDecay),
+        reduced_bullets: int(z, d + WD::hipGunKickReducedKickBullets),
+        reduced_percent: z.f32(d + WD::hipGunKickReducedKickPercent),
+    };
+    w.gun_max = (z.f32(d + WD::fGunMaxPitch), z.f32(d + WD::fGunMaxYaw));
+    w.recoil = (z.f32(d + WD::fAdsRecoilReductionRate), z.f32(d + WD::fAdsRecoilReductionLimit), z.f32(d + WD::fAdsRecoilReturnRate));
+    w.hip_sway = Sway {
+        max_angle: z.f32(d + WD::swayMaxAngle),
+        lerp_speed: z.f32(d + WD::swayLerpSpeed),
+        pitch_scale: z.f32(d + WD::swayPitchScale),
+        yaw_scale: z.f32(d + WD::swayYawScale),
+        horiz_scale: z.f32(d + WD::swayHorizScale),
+        vert_scale: z.f32(d + WD::swayVertScale),
+    };
+    w.ads_sway = Sway {
+        max_angle: z.f32(d + WD::adsSwayMaxAngle),
+        lerp_speed: z.f32(d + WD::adsSwayLerpSpeed),
+        pitch_scale: z.f32(d + WD::adsSwayPitchScale),
+        yaw_scale: z.f32(d + WD::adsSwayYawScale),
+        horiz_scale: 0.0,
+        vert_scale: 0.0,
+    };
+    let v2 = |at: u32| [z.f32(at), z.f32(at + 4)];
+    w.view_pos = ViewPos {
+        stand_move: vec3(z, d + WD::vStandMove),
+        stand_rot: vec3(z, d + WD::vStandRot),
+        ducked_ofs: vec3(z, d + WD::vDuckedOfs),
+        ducked_move: vec3(z, d + WD::vDuckedMove),
+        ducked_rot: vec3(z, d + WD::vDuckedRot),
+        prone_ofs: vec3(z, d + WD::vProneOfs),
+        prone_move: vec3(z, d + WD::vProneMove),
+        prone_rot: vec3(z, d + WD::vProneRot),
+        strafe_move: vec3(z, d + WD::vStrafeMove),
+        strafe_rot: vec3(z, d + WD::vStrafeRot),
+        sprint_ofs: vec3(z, d + WD::vSprintOfs),
+        sprint_rot: vec3(z, d + WD::vSprintRot),
+        sprint_bob: v2(d + WD::vSprintBob),
+        move_rate: z.f32(d + WD::fPosMoveRate),
+        prone_move_rate: z.f32(d + WD::fPosProneMoveRate),
+        rot_rate: z.f32(d + WD::fPosRotRate),
+        prone_rot_rate: z.f32(d + WD::fPosProneRotRate),
+        stand_min_speed: z.f32(d + WD::fStandMoveMinSpeed),
+        ducked_min_speed: z.f32(d + WD::fDuckedMoveMinSpeed),
+        prone_min_speed: z.f32(d + WD::fProneMoveMinSpeed),
+        ads_aim_pitch: z.f32(d + WD::fAdsAimPitch),
+        ads_bob_factor: z.f32(d + WD::fAdsBobFactor),
+    };
+    w.reticle = Reticle {
+        center: named(z, d + WD::reticleCenter),
+        side: named(z, d + WD::reticleSide),
+        center_size: int(z, d + WD::iReticleCenterSize),
+        side_size: int(z, d + WD::iReticleSideSize),
+        min_ofs: int(z, d + WD::iReticleMinOfs),
+        side_pos: z.f32(d + WD::fHipReticleSidePos),
+        ads_in_frac: z.f32(d + WD::fAdsCrosshairInFrac),
+        ads_out_frac: z.f32(d + WD::fAdsCrosshairOutFrac),
+        keep_when_ads: z.u8(d + WD::bKeepCrosshairWhenADS) != 0,
+        color_change: z.u8(d + WD::crosshairColorChange) != 0,
+    };
     w.move_speed_scale = z.f32(d + WD::moveSpeedScale);
     w.ads_move_speed_scale = z.f32(d + WD::adsMoveSpeedScale);
     w.sprint_duration_scale = z.f32(d + WD::sprintDurationScale);

@@ -11,7 +11,9 @@ use super::def::{Class, Effect, FireMode, Place, WeaponDef, KICK_TO_DEGREES};
 use super::loadout::Loadout;
 use super::perks::Perk;
 use super::rng::Rng;
+use super::specialty::{Specialties, Specialty};
 use crate::input::buttons;
+use crate::tuning::Tuning;
 use crate::units::LOGIC_DT;
 
 
@@ -53,8 +55,11 @@ pub struct WeaponState {
     /// The alt mode's own ammo while the main mode is up (and the main mode's while the alt is).
     pub alt_ammo: u16,
     pub alt_reserve: u16,
-    /// Shots in the current string of fire (the grip's recoil reduction builds over it).
+    /// Shots in the current string of fire (the reduced-kick window counts it).
     pub string: u16,
+    /// The grip's recoil-reduction accumulator, and seconds since the last shot (G5).
+    pub recoil_acc: f32,
+    pub since_shot: f32,
 }
 
 impl WeaponState {
@@ -77,6 +82,8 @@ impl WeaponState {
             alt_ammo: 0,
             alt_reserve: 0,
             string: 0,
+            recoil_acc: 0.0,
+            since_shot: 10.0,
         }
         .with_alt_ammo()
     }
@@ -107,7 +114,7 @@ impl WeaponState {
         !self.is_reloading() && self.ammo < self.def.clip && self.reserve > 0
     }
 
-    fn start_reload(&mut self, speed: f32) {
+    fn start_reload(&mut self) {
         if !self.can_reload() {
             return;
         }
@@ -119,7 +126,7 @@ impl WeaponState {
             let empty = self.ammo == 0;
             let (length, add_at) = if empty { (d.reload_empty_time, d.reload_empty_add_time) } else { (d.reload_time, d.reload_add_time) };
             let add_at = if add_at > 0.0 { add_at } else { length };
-            Reload::Magazine { t: 0.0, length: length / speed, add_at: add_at.min(length) / speed, added: false, empty }
+            Reload::Magazine { t: 0.0, length, add_at: add_at.min(length), added: false, empty }
         });
     }
 
@@ -129,7 +136,7 @@ impl WeaponState {
         self.reserve -= take;
     }
 
-    /// Advance a reload; returns whether it finished this frame.
+    /// Advance a reload by `dt` of weapon time; returns whether it finished this frame.
     fn step_reload(&mut self, dt: f32) -> bool {
         let d = self.def;
         let Some(r) = self.reload else { return false };
@@ -187,8 +194,8 @@ pub struct Offhand {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum WeaponAction {
     /// Fire one round (one pellet for shotguns) with the given cone (degrees), random offsets in
-    /// [-1, 1) and view kick (degrees pitch up, yaw).
-    Fire { spread_deg: f32, jitter: (f32, f32), recoil: (f32, f32), pellet: u16 },
+    /// [-1, 1), view kick (degrees pitch up, yaw, roll) and the gun kick spring's impulse.
+    Fire { spread_deg: f32, jitter: (f32, f32), recoil: (f32, f32, f32), gun_kick: (f32, f32), pellet: u16 },
     /// Launch a projectile (launchers, crossbow, ballistic knife); `pellet` numbers the bolts of
     /// one shot (the tri-bolt's three).
     Launch { def: &'static WeaponDef, pellet: u16 },
@@ -265,6 +272,33 @@ pub struct Arsenal {
     held_last: u32,
     /// Seconds since reload was last pressed (a second press soon after detonates C4).
     since_reload_press: f32,
+    /// Real seconds the held grenade has cooked (the fuse burns in real time; the offhand
+    /// states' own clock runs at the perk's rate).
+    cooked: f32,
+    /// The tuning pack's perk multipliers, taken when the kit was made (the pack is loaded once at
+    /// init, identically on every client).
+    pub tuning: Tuning,
+}
+
+/// One of BO2's weapon-state families, each of which a specialty speeds up (Ghidra G3,
+/// `FUN_008e0780`: while a state runs, `weaponTime -= msec / mult`, so it lasts `duration x mult`;
+/// the client plays the viewmodel animation at `rate / mult` to match, `FUN_0052b1d0`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Timing {
+    /// Raise and drop (states 1-5): `fastweaponswitch`.
+    Switch,
+    /// The reload family (0x0b-0x12): `fastreload`.
+    Reload,
+    /// Firing and rechambering (6, 7, 8, 0x28): `rof`.
+    Fire,
+    /// Melee (0x15): `fastmeleerecovery`.
+    Melee,
+    /// A grenade's or other thrown offhand's states (0x16-0x1d): `fasttoss`.
+    Toss,
+    /// Equipment's offhand states: `fastequipmentuse`.
+    Equipment,
+    /// Sprint out (0x26): `sprintrecovery`.
+    SprintOut,
 }
 
 impl Arsenal {
@@ -299,6 +333,8 @@ impl Arsenal {
             offhand: None,
             held_last: 0,
             since_reload_press: 10.0,
+            cooked: 0.0,
+            tuning: crate::tuning::get(),
         }
     }
 
@@ -368,11 +404,95 @@ impl Arsenal {
             offhand: None,
             held_last: 0,
             since_reload_press: 10.0,
+            cooked: 0.0,
+            tuning: crate::tuning::get(),
         }
     }
 
     pub fn has(&self, perk: Perk) -> bool {
         self.loadout.perks.contains(&perk)
+    }
+
+    /// The specialties the class's perks grant.
+    pub fn class_specialties(&self) -> Specialties {
+        self.loadout.perks.iter().fold(Specialties::NONE, |s, p| s.union(p.specialties()))
+    }
+
+    /// BO2's current weapon for the specialty test (`FUN_008ddfe0`): the offhand while it is in
+    /// use, the melee weapon while meleeing, else the weapon up.
+    pub fn current_weapon(&self) -> &'static WeaponDef {
+        match self.offhand {
+            Some(OffhandUse::Holding { lethal, .. }) | Some(OffhandUse::Throwing { lethal, .. }) => {
+                if lethal {
+                    self.lethal.def
+                } else {
+                    self.tactical.def
+                }
+            }
+            None if self.melee_left > 0.0 => self.melee,
+            None => self.current().def,
+        }
+    }
+
+    /// BO2's HasSpecialty (Ghidra G1, `FUN_008bf6c0`): the class grants it, or the current weapon
+    /// does (its variant's bits with its attachments').
+    pub fn has_specialty(&self, s: Specialty) -> bool {
+        self.class_specialties().has(s) || self.current_weapon().specialties.has(s)
+    }
+
+    /// How long a state of `family` lasts, as a share of its weapon-data duration (1 without the
+    /// specialty). Weapon timers advance by `dt / multiplier`; the viewmodel plays at
+    /// `1 / multiplier` (see [`Arsenal::anim_rate`]).
+    pub fn multiplier(&self, family: Timing) -> f32 {
+        let t = &self.tuning;
+        let (specialty, m) = match family {
+            Timing::Switch => (Specialty::FastWeaponSwitch, t.perk_weap_switch_multiplier),
+            Timing::Reload => (Specialty::FastReload, t.perk_weap_reload_multiplier),
+            Timing::Fire => (Specialty::Rof, t.perk_weap_rate_multiplier),
+            Timing::Melee => (Specialty::FastMeleeRecovery, t.perk_weap_melee_multiplier),
+            Timing::Toss => (Specialty::FastToss, t.perk_weap_toss_multiplier),
+            Timing::Equipment => (Specialty::FastEquipmentUse, t.perk_weap_equipment_use_multiplier),
+            Timing::SprintOut => (Specialty::SprintRecovery, t.perk_sprint_recovery_multiplier),
+        };
+        if self.has_specialty(specialty) && m > 0.0 {
+            m
+        } else {
+            1.0
+        }
+    }
+
+    /// Weapon time passed in one logic frame for `family`.
+    fn tick(&self, family: Timing) -> f32 {
+        LOGIC_DT / self.multiplier(family)
+    }
+
+    /// The viewmodel animation's playback rate for what the weapon is doing now (`FUN_0052b1d0`:
+    /// `rate / mult`); 1 at rest. The clip times the viewmodel reads are already in weapon time,
+    /// so this is for anything timed against the wall clock.
+    pub fn anim_rate(&self) -> f32 {
+        let family = if let Some(OffhandUse::Holding { lethal, .. } | OffhandUse::Throwing { lethal, .. }) = self.offhand {
+            Some(self.offhand_timing(lethal))
+        } else if self.melee_left > 0.0 {
+            Some(Timing::Melee)
+        } else if self.drop_left > 0.0 || self.raise_left > 0.0 {
+            Some(Timing::Switch)
+        } else if self.current().is_reloading() {
+            Some(Timing::Reload)
+        } else if self.since_sprint < self.current().def.sprint_out_time {
+            Some(Timing::SprintOut)
+        } else {
+            None
+        };
+        family.map_or(1.0, |f| 1.0 / self.multiplier(f))
+    }
+
+    fn offhand_timing(&self, lethal: bool) -> Timing {
+        let def = if lethal { self.lethal.def } else { self.tactical.def };
+        if def.class == Class::Equipment {
+            Timing::Equipment
+        } else {
+            Timing::Toss
+        }
     }
 
     pub fn current(&self) -> &WeaponState {
@@ -388,17 +508,56 @@ impl Arsenal {
         self.raise_left > 0.0 || self.drop_left > 0.0 || self.current().is_reloading() || self.melee_left > 0.0 || self.offhand.is_some()
     }
 
-    /// Movement speed multiplier from the held weapon, ADS and perks.
+    /// Movement speed multiplier from the held weapon: its `adsMoveSpeedScale` while aiming, else
+    /// its `moveSpeedScale` (`FUN_008ed080`; G2). Lightweight is the movement's own
+    /// ([`Arsenal::move_faster`]).
     pub fn move_scale(&self) -> f32 {
         let d = self.current().def;
-        let base = d.move_scale + (d.ads_move_scale - d.move_scale) * self.ads;
-        base * if self.has(Perk::LIGHTWEIGHT) { Perk::LIGHTWEIGHT.magnitude() } else { 1.0 }
+        if self.ads > 0.0 {
+            d.ads_move_scale
+        } else {
+            d.move_scale
+        }
     }
 
-    /// Sprint duration multiplier from the held weapon and perks.
+    /// What the player's own blasts and stuns do to them: `flakjacket` takes `perk_flakJacket`
+    /// percent of explosive damage (`_class.gsc:1023-1032`), `stunprotection` cuts a stun to
+    /// x0.1 (`_weapons.gsc:1375-1376`). Checked against the class: by the time the grenade goes
+    /// off the hand holds the gun again.
+    pub fn self_harm_scales(&self) -> (f32, f32) {
+        let class = self.class_specialties();
+        let blast = if class.has(Specialty::FlakJacket) { self.tuning.perk_flak_jacket * 0.01 } else { 1.0 };
+        let stun = if class.has(Specialty::StunProtection) { self.tuning.stun_protection_scale } else { 1.0 };
+        (blast, stun)
+    }
+
+    /// The hip spread cone's min and max at an eye height (inches; Ghidra G6): the weapon's
+    /// stance values blended by eye height, x0.65 with `bulletaccuracy`.
+    pub fn spread_cone(&self, view_height: f32) -> (f32, f32) {
+        super::recoil::spread_range(self.current().def, view_height, self.has_specialty(Specialty::BulletAccuracy), &self.tuning)
+    }
+
+    /// The spread now (degrees) at a stance (0 stand, 1 crouch, 2 prone) and aim: the cone's
+    /// minimum plus the bloom, at most its maximum, blending to the ADS spread as the gun aims.
+    pub fn spread_now(&self, stance: usize, ads: f32) -> f32 {
+        let t = &self.tuning;
+        let height = [t.player_standing_view_height, t.view_height_crouch, t.view_height_prone][stance.min(2)];
+        let (min, max) = self.spread_cone(height);
+        let w = self.current();
+        let hip = (min + w.bloom).min(max);
+        hip + (w.def.ads_spread - hip) * ads
+    }
+
+    /// `movefaster` (Lightweight): the run speed is `g_speed x perk_speedMultiplier` (G2).
+    pub fn move_faster(&self) -> bool {
+        self.has_specialty(Specialty::MoveFaster)
+    }
+
+    /// Sprint length multiplier: the weapon's `sprintDurationScale`, x `perk_sprintMultiplier`
+    /// with `longersprint` (`FUN_008bcfe0`; G2).
     pub fn sprint_scale(&self) -> f32 {
         let d = self.current().def.sprint_duration_scale.max(0.1);
-        d * if self.has(Perk::EXTREME_CONDITIONING) { Perk::EXTREME_CONDITIONING.magnitude() } else { 1.0 }
+        d * if self.has_specialty(Specialty::LongerSprint) { self.tuning.perk_sprint_multiplier } else { 1.0 }
     }
 
     /// Field of view multiplier when fully aimed (relative to BO2's 65 degrees).
@@ -411,29 +570,26 @@ impl Arsenal {
         }
     }
 
-    fn sprint_out_time(&self) -> f32 {
-        self.current().def.sprint_out_time * if self.has(Perk::DEXTERITY) { Perk::DEXTERITY.magnitude() } else { 1.0 }
+    /// The weapon is back up from a sprint: `sprintOutTime` of weapon time has passed (which
+    /// `sprintrecovery` makes 0.3 of the wall time; G2 `FUN_008e4ad0`).
+    fn sprint_ready(&self) -> bool {
+        self.since_sprint >= self.current().def.sprint_out_time
     }
 
+    /// Raise and drop take the weapon's own times; `fastweaponswitch` runs them at its rate
+    /// ([`Timing::Switch`]) rather than switching to the quick animations (G3).
     fn switch_to(&mut self, index: usize) {
-        let fast = self.has(Perk::FAST_HANDS);
         let from = self.current().def;
         self.current_mut().reload = None; // swapping cancels a reload, like BO2
         self.current_mut().burst_left = 0;
-        self.drop_left = if fast { from.quick_drop_time } else { from.drop_time };
+        self.drop_left = from.drop_time;
         self.drop_total = self.drop_left;
         self.previous = self.active;
         self.active = index;
         let to = self.current().def;
         let first = !self.current().raised_once;
         self.current_mut().raised_once = true;
-        (self.raise_left, self.raise_kind) = if first {
-            (to.first_raise_time, RaiseKind::First)
-        } else if fast {
-            (to.quick_raise_time, RaiseKind::Quick)
-        } else {
-            (to.raise_time, RaiseKind::Normal)
-        };
+        (self.raise_left, self.raise_kind) = if first { (to.first_raise_time, RaiseKind::First) } else { (to.raise_time, RaiseKind::Normal) };
         self.raise_total = self.raise_left;
         self.ads = 0.0;
     }
@@ -441,7 +597,6 @@ impl Arsenal {
     /// Switch the held weapon to its alt mode or back. An alt mode with its own ammo (a launcher)
     /// trades magazines with the weapon; the others share it.
     pub fn toggle_alt(&mut self) {
-        let fast = self.has(Perk::FAST_HANDS);
         let w = self.current_mut();
         let to = if w.def.id == w.main.id {
             match catalog().get(&w.main.alt) {
@@ -465,9 +620,9 @@ impl Arsenal {
         w.string = 0;
         self.ads = 0.0;
         // BO2 raises an alt toggle in max(quickRaiseTime, raiseTime / 2) — the quick raise when it
-        // is longer, never a full raise (refactor audit 0.4, docs/REFACTOR-PLAN.md); Fast Hands
-        // switches use quickRaiseTime outright, like every other switch in switch_to().
-        let t = if fast { to.quick_raise_time } else { to.quick_raise_time.max(to.raise_time * 0.5) };
+        // is longer, never a full raise (refactor audit 0.4); Fast Hands runs it at the switch
+        // rate like every other raise (G3).
+        let t = to.quick_raise_time.max(to.raise_time * 0.5);
         self.raise_left = t;
         self.raise_total = t;
         self.raise_kind = RaiseKind::Alt;
@@ -508,24 +663,27 @@ impl Arsenal {
     }
 
     /// Advance one logic frame. `stance` is 0 stand, 1 crouch, 2 prone; `speed` the ground speed.
+    #[allow(clippy::too_many_arguments)]
     pub fn step(&mut self, held: u32, pressed: u32, sprinting: bool, stance: usize, speed: f32, rng: &mut Rng, out: &mut Vec<WeaponAction>) {
         let dt = LOGIC_DT;
         let pressed = pressed | (held & !self.held_last);
         let released = self.held_last & !held;
         self.held_last = held;
 
-        self.since_sprint = if sprinting { 0.0 } else { self.since_sprint + dt };
-        self.melee_left = (self.melee_left - dt).max(0.0);
+        // Weapon timers run in weapon-data time: each family at its specialty's rate (G3).
+        let (sprint_tick, melee_tick, switch_tick) = (self.tick(Timing::SprintOut), self.tick(Timing::Melee), self.tick(Timing::Switch));
+        self.since_sprint = if sprinting { 0.0 } else { self.since_sprint + sprint_tick };
+        self.melee_left = (self.melee_left - melee_tick).max(0.0);
         if self.drop_left > 0.0 {
-            self.drop_left = (self.drop_left - dt).max(0.0);
+            self.drop_left = (self.drop_left - switch_tick).max(0.0);
         } else {
-            self.raise_left = (self.raise_left - dt).max(0.0);
+            self.raise_left = (self.raise_left - switch_tick).max(0.0);
         }
         for w in &mut self.weapons {
             let decay = w.def.spread_decay.max(0.1);
             w.bloom = (w.bloom - decay * dt).max(0.0);
+            w.since_shot += dt;
         }
-        let reload_speed = 1.0;
 
         // Offhands: hold to pull back (and cook), release to throw.
         if self.step_offhand(held, pressed, released, out) {
@@ -566,24 +724,27 @@ impl Arsenal {
         }
 
         // Reload progress / requests.
-        if self.current_mut().step_reload(dt) {
+        let reload_tick = self.tick(Timing::Reload);
+        if self.current_mut().step_reload(reload_tick) {
             out.push(WeaponAction::ReloadFinished);
         }
         if pressed & buttons::RELOAD != 0 && self.current().can_reload() && self.raise_left <= 0.0 && self.drop_left <= 0.0 {
-            self.current_mut().start_reload(reload_speed);
+            self.current_mut().start_reload();
             out.push(WeaponAction::ReloadStarted);
         }
 
-        // ADS blend: BO2 aims in and out at the weapon's own rates, and not while sprinting or
-        // until the weapon is back up from a sprint.
+        // ADS blend (`FUN_008e4470`): the fraction moves at 1/adsTransInTime in and
+        // 1/adsTransOutTime out, `fastads` dividing the rate by `perk_weapAdsMultiplier`; never
+        // while sprinting or until the weapon is back up from a sprint.
         let def = self.current().def;
-        let sprint_ready = self.since_sprint >= self.sprint_out_time();
+        let sprint_ready = self.sprint_ready();
         // Only a gun aims; a knife or a held offhand has no sights (and no ADS zoom).
         let wants_ads = def.class.is_gun() && held & buttons::ADS != 0 && !sprinting && sprint_ready && self.raise_left <= 0.0 && self.drop_left <= 0.0 && !self.current().is_reloading();
+        let quickdraw = if self.has_specialty(Specialty::FastAds) && self.tuning.perk_weap_ads_multiplier > 0.0 { self.tuning.perk_weap_ads_multiplier } else { 1.0 };
         self.ads = if wants_ads {
-            (self.ads + dt / def.ads_in_time.max(1e-3)).min(1.0)
+            (self.ads + dt / (def.ads_in_time.max(1e-3) * quickdraw)).min(1.0)
         } else {
-            (self.ads - dt / def.ads_out_time.max(1e-3)).max(0.0)
+            (self.ads - dt / (def.ads_out_time.max(1e-3) * quickdraw)).max(0.0)
         };
 
         if def.class == Class::Melee || def.class.is_offhand() {
@@ -593,8 +754,9 @@ impl Arsenal {
         // Firing.
         let ads = self.ads;
         let blocked = sprinting || !sprint_ready || self.raise_left > 0.0 || self.drop_left > 0.0 || self.melee_left > 0.0;
+        let fire_tick = self.tick(Timing::Fire);
         let w = self.current_mut();
-        w.cooldown -= dt;
+        w.cooldown -= fire_tick;
         // Minigun barrels spin while the trigger is held.
         if def.fire == FireMode::Minigun {
             w.spin = if held & buttons::FIRE != 0 && !blocked { (w.spin + dt).min(def.spin_up_time) } else { (w.spin - dt).max(0.0) };
@@ -631,7 +793,7 @@ impl Arsenal {
             w.burst_left = 0;
             if pressed & buttons::FIRE != 0 {
                 if w.can_reload() {
-                    w.start_reload(reload_speed);
+                    w.start_reload();
                     out.push(WeaponAction::ReloadStarted);
                 } else {
                     out.push(WeaponAction::DryFire);
@@ -642,7 +804,8 @@ impl Arsenal {
             }
             return;
         }
-        let kick = if ads > 0.5 { def.ads_kick } else { def.hip_kick };
+        let spread_now = self.spread_now(stance, ads);
+        let w = self.current_mut();
         if !(held & buttons::FIRE != 0) {
             w.string = 0;
         }
@@ -656,18 +819,19 @@ impl Arsenal {
                     out.push(WeaponAction::Launch { def, pellet });
                 }
             } else {
-                let spread = w.spread_deg(stance, ads) + if ads < 0.5 { def.spread_move_add * (speed / 30.0).min(1.0) } else { 0.0 };
-                // The grip: aimed kick shrinks with each shot of a string, down to its limit.
-                let (rate, limit) = def.recoil_reduction;
-                let reduce = if ads > 0.5 { 1.0 - (rate * w.string as f32).min(limit) } else { 1.0 };
+                let spread = spread_now + if ads < 0.5 { def.spread_move_add * (speed / 30.0).min(1.0) } else { 0.0 };
+                // BO2's per-shot kick (G5); the view kick's degrees scale is still the mod's
+                // (G5 leaves its consumer unresolved).
+                let k = super::recoil::shot_kick(def, ads, w.string, &mut w.recoil_acc, w.since_shot, rng);
+                w.since_shot = 0.0;
                 for pellet in 0..def.pellets.max(1) {
                     let jitter = (rng.signed(), rng.signed());
-                    let recoil = if pellet == 0 {
-                        (rng.range(kick.pitch) * KICK_TO_DEGREES * reduce, rng.range(kick.yaw) * KICK_TO_DEGREES * reduce)
+                    let (recoil, gun_kick) = if pellet == 0 {
+                        ((k.view.0 * KICK_TO_DEGREES, k.view.1 * KICK_TO_DEGREES, k.view.2 * KICK_TO_DEGREES), k.gun)
                     } else {
-                        (0.0, 0.0)
+                        ((0.0, 0.0, 0.0), (0.0, 0.0))
                     };
-                    out.push(WeaponAction::Fire { spread_deg: spread, jitter, recoil, pellet });
+                    out.push(WeaponAction::Fire { spread_deg: spread, jitter, recoil, gun_kick, pellet });
                 }
             }
             w.ammo -= 1;
@@ -685,14 +849,13 @@ impl Arsenal {
         }
         if w.ammo == 0 && w.reserve > 0 {
             // BO2 reloads by itself when the magazine runs dry.
-            w.start_reload(reload_speed);
+            w.start_reload();
             out.push(WeaponAction::ReloadStarted);
         }
     }
 
     /// Lethal (G) and tactical (Q) use. Returns whether it owns this frame.
     fn step_offhand(&mut self, held: u32, pressed: u32, released: u32, out: &mut Vec<WeaponAction>) -> bool {
-        let dt = LOGIC_DT;
         match self.offhand {
             None => {
                 let lethal = pressed & buttons::LETHAL != 0;
@@ -714,14 +877,16 @@ impl Arsenal {
                 w.burst_left = 0;
                 self.ads = 0.0;
                 self.offhand = Some(OffhandUse::Holding { lethal, held_for: 0.0 });
+                self.cooked = 0.0;
                 out.push(WeaponAction::OffhandReady { lethal });
                 true
             }
             Some(OffhandUse::Holding { lethal, held_for }) => {
-                let held_for = held_for + dt;
+                let held_for = held_for + self.tick(self.offhand_timing(lethal));
+                self.cooked += LOGIC_DT;
                 let button = if lethal { buttons::LETHAL } else { buttons::TACTICAL };
                 let def = if lethal { self.lethal.def } else { self.tactical.def };
-                let fuse_left = if def.cook { def.fuse_time - held_for } else { def.fuse_time };
+                let fuse_left = if def.cook { def.fuse_time - self.cooked } else { def.fuse_time };
                 if def.cook && fuse_left <= 0.0 {
                     // Cooked too long.
                     self.use_offhand(lethal);
@@ -750,12 +915,11 @@ impl Arsenal {
                 true
             }
             Some(OffhandUse::Throwing { lethal, t }) => {
-                let t = t + dt;
+                let t = t + self.tick(self.offhand_timing(lethal));
                 if t >= OFFHAND_THROW {
                     self.offhand = None;
                     let d = self.current().def;
-                    (self.raise_left, self.raise_kind) =
-                        if self.has(Perk::FAST_HANDS) { (d.quick_raise_time, RaiseKind::Quick) } else { (d.raise_time, RaiseKind::Normal) };
+                    (self.raise_left, self.raise_kind) = (d.raise_time, RaiseKind::Normal);
                     self.raise_total = self.raise_left;
                 } else {
                     self.offhand = Some(OffhandUse::Throwing { lethal, t });

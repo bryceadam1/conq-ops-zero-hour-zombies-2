@@ -145,7 +145,7 @@ impl Placed {
     /// Blow it up where it is.
     fn explode(&mut self, host: &dyn LogicHost) -> EquipEvent {
         self.remove(host);
-        let (hit_enemy, kill) = blast(host, self.def, self.general, self.pos, None, false, false);
+        let (hit_enemy, kill) = blast(host, self.def, self.general, self.pos, None, 1.0, 1.0);
         EquipEvent::Exploded { owner: self.owner, at: self.pos, hit_enemy, kill }
     }
 }

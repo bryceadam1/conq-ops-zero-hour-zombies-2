@@ -11,7 +11,7 @@ use super::*;
 impl Sim {
     pub(super) fn apply_weapon_action(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, action: WeaponAction) {
         match action {
-            WeaponAction::Fire { spread_deg, jitter, recoil, pellet } => {
+            WeaponAction::Fire { spread_deg, jitter, recoil, gun_kick, pellet } => {
                 let def = p.arsenal.current().def;
                 let eye = p.body.eye();
                 // Random point in the spread cone (polar mapping of two uniform samples).
@@ -37,7 +37,7 @@ impl Sim {
                     self.equipment_events(vec![e]);
                     if pellet == 0 {
                         self.emit(idx, EventKind::Shot { origin: eye, end: eye + dir * t });
-                        self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1 });
+                        self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1, roll_deg: recoil.2, gun_kick });
                     }
                     return;
                 }
@@ -61,7 +61,7 @@ impl Sim {
                             }
                         }
                         self.emit(idx, EventKind::HitMarker { headshot, kill });
-                        if kill && p.arsenal.has(Perk::SCAVENGER) {
+                        if kill && p.arsenal.has_specialty(Specialty::Scavenger) {
                             p.arsenal.scavenge();
                         }
                     }
@@ -73,7 +73,7 @@ impl Sim {
                 }
                 if pellet == 0 {
                     self.emit(idx, EventKind::Shot { origin: eye, end: hit.point() });
-                    self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1 });
+                    self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1, roll_deg: recoil.2, gun_kick });
                 }
             }
             WeaponAction::Launch { def, pellet } => {
@@ -96,8 +96,7 @@ impl Sim {
                 let dir = dir_from_angles(p.yaw, (p.pitch + 0.12).min(1.4));
                 let mut proj = Projectile::launch(def, p.general, eye + dir * 1.5, dir, fuse_left, host, p.yaw);
                 proj.vel += p.body.vel * 0.5;
-                proj.flak_jacket = p.arsenal.has(Perk::FLAK_JACKET);
-                proj.tactical_mask = p.arsenal.has(Perk::TACTICAL_MASK);
+                (proj.self_blast_scale, proj.self_stun_scale) = p.arsenal.self_harm_scales();
                 self.projectiles.push((idx, proj));
                 self.emit(idx, EventKind::Thrown { lethal: def.class == Class::Lethal });
             }
@@ -105,7 +104,7 @@ impl Sim {
                 let mut proj = Projectile::launch(def, p.general, p.body.eye(), Vec3::ZERO, 0.0, host, p.yaw);
                 proj.vel = Vec3::ZERO;
                 proj.fuse = 0.0;
-                proj.flak_jacket = p.arsenal.has(Perk::FLAK_JACKET);
+                (proj.self_blast_scale, proj.self_stun_scale) = p.arsenal.self_harm_scales();
                 self.projectiles.push((idx, proj));
             }
             WeaponAction::OffhandReady { lethal } => self.emit(idx, EventKind::OffhandReady { lethal }),
@@ -198,7 +197,7 @@ impl Sim {
             host.fire_fx(p.general, MELEE_FX_WEAPON, v.id, v.pos);
             let kill = host.damage(p.general, v.id, damage * BO2_TO_ZH_DAMAGE, damage_kind::MELEE);
             self.emit(idx, EventKind::HitMarker { headshot: false, kill });
-            if kill && p.arsenal.has(Perk::SCAVENGER) {
+            if kill && p.arsenal.has_specialty(Specialty::Scavenger) {
                 p.arsenal.scavenge();
             }
         }
