@@ -50,6 +50,17 @@ pub fn projectile_model(vm: u8) -> String {
 pub fn projectile_object(id: &str) -> String {
     format!("ZHBO_Proj_{id}")
 }
+/// The Zero Hour weapon the overhead General fights with when he holds BO2 weapon `id`
+/// (`ZHBO_GeneralWeapon_mp7_mp`): one per player weapon, written by the converter, swapped into
+/// his weapon slots by the bridge as his class and his third-slot order change (`sim/rts.rs`).
+/// Attachments and alt modes share the base weapon's (`an94_mp+gl` → `an94_mp`).
+pub const RTS_WEAPON_PREFIX: &str = "ZHBO_GeneralWeapon_";
+/// Longest RTS weapon name the ABI carries (`ZhboRtsWeapons::templates`, NUL included).
+pub const RTS_WEAPON_NAME_CAP: usize = 48;
+pub fn rts_weapon(id: &str) -> String {
+    let base = id.split(['+', '~']).next().unwrap_or(id);
+    format!("{RTS_WEAPON_PREFIX}{base}")
+}
 /// A viewmodel notetrack sound event (`sndnt#reload` plays `ZHBO_NT_reload`).
 pub const NOTETRACK_PREFIX: &str = "ZHBO_NT_";
 pub fn notetrack_event(alias: &str) -> String {
@@ -220,5 +231,12 @@ mod tests {
         let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../host/zhbo/ZhboNames.h");
         let checked_in = std::fs::read_to_string(path).expect("host/zhbo/ZhboNames.h is checked in");
         assert_eq!(checked_in, ZHBO_NAMES_H, "run `cargo xtask names` to regenerate host/zhbo/ZhboNames.h");
+    }
+
+    #[test]
+    fn the_abis_rts_name_slots_match_the_c_header() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../host/zhbo/zhbo_core.h");
+        let header = std::fs::read_to_string(path).expect("host/zhbo/zhbo_core.h is checked in");
+        assert!(header.contains(&format!("#define ZHBO_RTS_WEAPON_NAME_CAP {RTS_WEAPON_NAME_CAP}\n")), "zhbo_core.h's ZHBO_RTS_WEAPON_NAME_CAP must be {RTS_WEAPON_NAME_CAP}");
     }
 }

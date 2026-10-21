@@ -95,49 +95,6 @@ impl Sim {
 }
 
 pub const PLANT_DISTANCE: f32 = inches(30.0);
-/// FMJ: damage to the second soldier a round passes through.
-pub const PENETRATION_DAMAGE: f32 = 0.75;
-
-fn reach_radius(o: &ObjInfo) -> f32 {
-    if o.has(objflags::INFANTRY) {
-        INFANTRY_HIT_RADIUS
-    } else {
-        o.major_radius
-    }
-}
-
-/// Convert nearby objects into hitscan targets. Friendlies are skipped so bullets pass through them
-/// (BO2 has no friendly fire in core modes); dead and non-colliding objects are skipped.
-pub fn gather_targets(host: &dyn LogicHost, eye: Vec3, range: f32, shooter: u32) -> Vec<Target> {
-    let mut objs = Vec::new();
-    host.query(eye, range, shooter, &mut objs);
-    let mut targets: Vec<Target> = objs
-        .iter()
-        .filter(|o| o.id != shooter && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::ALLY))
-        .map(target_from)
-        .collect();
-    // Deterministic order regardless of partition iteration order.
-    targets.sort_by_key(|t| t.id);
-    targets
-}
-
-pub fn target_from(o: &ObjInfo) -> Target {
-    if o.has(objflags::INFANTRY) {
-        return Target {
-            id: o.id,
-            pos: o.pos,
-            shape: Shape::Cylinder { radius: INFANTRY_HIT_RADIUS.min(o.major_radius.max(1.0)), height: o.height.max(6.0) },
-            head_fraction: INFANTRY_HEAD_FRACTION,
-        };
-    }
-    let shape = match o.geom_type {
-        geom::BOX => Shape::Box { half_x: o.major_radius, half_y: o.minor_radius, height: o.height.max(1.0), yaw: o.yaw },
-        geom::SPHERE => Shape::Sphere { radius: o.major_radius },
-        _ => Shape::Cylinder { radius: o.major_radius, height: o.height.max(1.0) },
-    };
-    Target { id: o.id, pos: o.pos, shape, head_fraction: 0.0 }
-}
-
 /// [`World`] backed by the engine: terrain from `TheTerrainLogic`, solid footprints from structures
 /// and ground vehicles.
 pub struct HostWorld<'a> {

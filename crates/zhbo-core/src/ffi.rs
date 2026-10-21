@@ -40,7 +40,7 @@ fn publish_controlled(sim: &Sim) {
     }
 }
 
-pub const ABI_VERSION: u32 = 21;
+pub const ABI_VERSION: u32 = 22;
 
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
@@ -54,7 +54,8 @@ const _: () = {
     assert!(size_of::<FpsInput>() == 20);
     assert!(size_of::<ClientIn>() == 136);
     assert!(size_of::<ClientOut>() == 4508);
-    assert!(size_of::<crate::sim::RtsWeapons>() == 36);
+    assert!(size_of::<crate::sim::RtsWeapons>() == 192);
+    assert!(size_of::<crate::sim::RtsIcons>() == 240);
     assert!(size_of::<crate::building::BuildOption>() == 64);
     assert!(size_of::<crate::building::Site>() == 64);
     assert!(size_of::<crate::menu::MenuIn>() == 56);
@@ -66,10 +67,11 @@ const _: () = {
     assert!(size_of::<ClientApi>() == (CLIENT_API_FIELDS as usize) * size_of::<usize>());
 };
 
-/// Load the shipped strings file (`Data/ConquerOps/strings_en.ini`, read by the bridge's
-/// `readTextFile`); `lookup` consults it before the built-in English fallback.
 /// Load the gameplay tuning pack (`data/ConquerOps/tuning.ini`); the sim's default values hold
 /// until this runs.
+///
+/// # Safety
+/// `text` must be null or a NUL-terminated string.
 #[no_mangle]
 pub unsafe extern "C" fn zhbo_load_tuning(text: *const c_char) {
     if text.is_null() {
@@ -79,6 +81,11 @@ pub unsafe extern "C" fn zhbo_load_tuning(text: *const c_char) {
     crate::tuning::load(&text);
 }
 
+/// Load the shipped strings file (`Data/ConquerOps/strings_en.ini`, read by the bridge's
+/// `readTextFile`); `lookup` consults it before the built-in English fallback.
+///
+/// # Safety
+/// `text` must be null or a NUL-terminated string.
 #[no_mangle]
 pub unsafe extern "C" fn zhbo_load_strings(text: *const c_char) {
     if text.is_null() {
@@ -101,6 +108,9 @@ pub unsafe extern "C" fn zhbo_load_fonts(text: *const c_char) {
 
 /// Load the class preset list (`Data/ConquerOps/classes.ini`, read by the bridge's
 /// `readTextFile`); the five basic BO2 classes hold until this runs (see classes.rs).
+///
+/// # Safety
+/// `text` must be null or a NUL-terminated string.
 #[no_mangle]
 pub unsafe extern "C" fn zhbo_load_classes(text: *const c_char) {
     if text.is_null() {
@@ -331,12 +341,8 @@ pub extern "C" fn zhbo_logic_step(frame: u32) {
 /// `ConquerOps.log` is the in-game oracle: lifecycle events, kills, and a once-per-second pose.
 fn log_step(s: &State, first_new_event: usize, frame: u32) {
     use crate::host::LogicHost;
-    for e in s.sim.events.iter().skip(first_new_event) {
-        if let Some(line) = crate::sim::describe_event(e) {
-            s.logic.log(&line);
-        }
-    }
-    if frame % 30 == 0 {
+    log_events(s, first_new_event);
+    if frame.is_multiple_of(30) {
         for (i, p) in s.sim.players.iter().enumerate() {
             if let Some(p) = p.as_ref().filter(|p| p.is_first_person()) {
                 let w = p.arsenal.current();
@@ -346,6 +352,16 @@ fn log_step(s: &State, first_new_event: usize, frame: u32) {
                     p.health, p.max_health, w.def.display_name, w.ammo, w.reserve
                 ));
             }
+        }
+    }
+}
+
+/// The sim's events from `first_new_event` on, as `ConquerOps.log` lines.
+fn log_events(s: &State, first_new_event: usize) {
+    use crate::host::LogicHost;
+    for e in s.sim.events.iter().skip(first_new_event) {
+        if let Some(line) = crate::sim::describe_event(e) {
+            s.logic.log(&line);
         }
     }
 }
@@ -370,15 +386,31 @@ pub unsafe extern "C" fn zhbo_logic_rts_update(
     }
     let shots = [*shots, *shots.add(1), *shots.add(2)];
     let target = (!target.is_null()).then(|| *target);
-    let r = with_state(|s| s.sim.rts_update(&s.logic, player, general, current_slot, shots, target)).unwrap_or_default();
+    // His orders' throws, plants and knife strikes happen here, before the logic step: log them too.
+    let r = with_state(|s| {
+        let before = s.sim.events.len();
+        let r = s.sim.rts_update(&s.logic, player, general, current_slot, shots, target);
+        log_events(s, before);
+        r
+    })
+    .unwrap_or_default();
     *out = r;
 }
 
-/// Under RTS control: whether the General's third weapon slot throws the tactical (non-zero) or
-/// the lethal. Lockstep: from a game message.
+/// Under RTS control: what the General's third weapon slot does when it next fires — `choice` 0
+/// throws (or plants) the lethal, 1 the tactical, 2 strikes once with the knife (`sim::Third`).
+/// Lockstep: from a game message.
 #[no_mangle]
-pub extern "C" fn zhbo_logic_rts_offhand(player: i32, general: u32, tactical: i32) {
-    with_state(|s| s.sim.rts_offhand(player, general, tactical != 0));
+pub extern "C" fn zhbo_logic_rts_offhand(player: i32, general: u32, choice: i32) {
+    with_state(|s| s.sim.rts_offhand(player, general, choice));
+}
+
+/// Under RTS control: the reload order for the gun in Zero Hour slot `current_slot`. Returns the
+/// slot whose magazine was topped up (the bridge starts Zero Hour's reload on it), or -1 when
+/// there was nothing to reload. Lockstep: from a game message.
+#[no_mangle]
+pub extern "C" fn zhbo_logic_rts_reload(player: i32, general: u32, current_slot: i32) -> i32 {
+    with_state(|s| s.sim.rts_reload(player, general, current_slot)).unwrap_or(-1)
 }
 
 /// The ammo of a General's weapon slots, for the control bar.
@@ -391,6 +423,18 @@ pub unsafe extern "C" fn zhbo_client_rts_ammo(general: u32, out: *mut crate::sim
         return;
     }
     *out = with_state(|s| s.sim.rts_ammo(general)).unwrap_or_else(|| crate::sim::Sim::new().rts_ammo(general));
+}
+
+/// The selected General's kit icons for his command bar (`sim::RtsIcons`).
+///
+/// # Safety
+/// `out` must be writable.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_client_rts_icons(general: u32, out: *mut crate::sim::RtsIcons) {
+    if out.is_null() {
+        return;
+    }
+    *out = with_state(|s| s.sim.rts_icons(general)).unwrap_or_default();
 }
 
 /// One command-bar class button (zhbo_core::classicons): which class it carries, where it sits in

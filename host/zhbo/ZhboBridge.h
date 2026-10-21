@@ -22,12 +22,15 @@ class Object;
 /// section files (definition in ZhboBridge.cpp).
 std::string readTextFile(const char *path);
 
-/// A General's weapon switch button: 0 restricted (no ammo left), 1 available but not lit (the
-/// grenade not chosen), -1 Zero Hour decides.
+/// A General's weapon switch or order button: 0 restricted (no ammo left, or an order he can't
+/// carry out), 1 available, -1 Zero Hour decides.
 Int Zhbo_WeaponButtonState(const Object *obj, const CommandButton *command);
-/// A weapon switch button pressed (before Zero Hour's own switch message): a General's lethal and
-/// tactical buttons tell every client which grenade his third slot throws.
+/// A weapon switch button pressed (before Zero Hour's own switch message). The General's switch
+/// buttons are his guns only (patch 0010's hook; his offhands are orders now), so nothing to add.
 void Zhbo_OnSwitchWeaponButton(const CommandButton *command);
+/// A FIRE_WEAPON order given (patch 0016, before Zero Hour's own weapon message): a General's
+/// Lethal, Tactical and Melee orders tell every client what his third slot does first.
+void Zhbo_OnFireWeaponCommand(const CommandButton *command);
 
 /// Startup, after every subsystem and INI file is loaded (end of GameEngine::init).
 void Zhbo_Init();

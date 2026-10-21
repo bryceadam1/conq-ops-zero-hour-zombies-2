@@ -943,6 +943,84 @@ class-screen ports share:
 
 Archive `hud::VERSION` 41 → 42.
 
+## v1.0 Track O: command-view orders and the General's class guns overhead (2026-10-21)
+
+Scope, from the user: first-person actions should be commandable from the overhead view as **RTS
+orders the General carries out himself**. The primary/secondary swap stays a direct toggle; the
+one-off actions (lethal, tactical, knife) get their own targeted flows. The contract is in
+CONTRACT.md "The General under RTS control: his weapons and orders".
+
+1. **Gap found first: the overhead guns were never the class's.** `ZHBO_GeneralRifle`/`_Pistol`
+   were written once by the converter from `Loadout::default()`. An MP7 or SVU class therefore
+   fought overhead with the default rifle's fire rate, magazine, reload, reach and sound; only the
+   ammo count was the class's.
+   - The converter now writes one Zero Hour weapon per BO2 player weapon
+     (`ZHBO_GeneralWeapon_<id>`, `weapons::rts_weapons_ini`).
+   - The core names, every frame, the one each slot must hold (`RtsWeapons::templates`).
+   - The bridge swaps it in with a new engine call, `Object::zhboSetSlotWeapon` (patch 0016).
+   - The swap survives save/load because `Weapon::xfer` stores the template by name.
+2. **Orders ride the third slot.** Zero Hour has three weapon slots and `FIRE_WEAPON` buttons
+   already do "walk into range, fire once at a point/unit", so Lethal, Tactical and Knife are
+   `FIRE_WEAPON TERTIARY MaxShotsToFire=1`. The slot holds the ordered item's Zero Hour weapon,
+   whose `AttackRange` is the order's reach:
+   - a throw: v²/g at the core's own throw speed, never inside its blast (`MinimumAttackRange`);
+   - a plant: `PLANT_DISTANCE`;
+   - the knife: `MELEE_RANGE`.
+   When it fires, the core does what first person does (`WeaponAction::Plant`, the throw arc,
+   `Sim::melee_strike`, extracted from the first-person melee). Gotchas found on the way:
+   - **A temporary weapon lock can't override a permanent one** (`WeaponSet::setWeaponLock`). The
+     General is usually permanently locked to a gun (the switch buttons and the core's own
+     after-order lock both lock permanently), so the order message's handler releases the
+     permanent lock first; the core locks him back to the gun once the order is carried out.
+   - **The item's weapon has to be in the slot before Zero Hour reads the order.** The button's
+     action message (`Zhbo_OnFireWeaponCommand`, patch 0016's hook in `issueFireWeaponCommand`)
+     comes just ahead of Zero Hour's own weapon message, and its logic handler swaps the weapon in
+     immediately (`applyRtsOrder`), not at the next `rtsWeapons`. Otherwise Zero Hour would aim
+     the order with the previous item's reach.
+   - **Zero Hour's attack range is edge to edge** (`Weapon::getAttackDistance` adds both bounding
+     radii, and the General's is 10 units, 60 BO2 inches). First person's knife check is centre
+     distance against the BO2 body, so a General stopped by Zero Hour at knife range was always
+     too far for it. The RTS strike counts both footprints (`MeleeReach::Footprint`).
+   - **Events emitted inside `rts_update` were never logged.** `zhbo_logic_step` takes its event
+     baseline after `rtsWeapons` has run, so the old overhead throws never appeared in the log
+     either. The ffi now logs `rts_update`'s own events (`log_events`).
+3. **Reload** is a bridge command (`Command_ZHBO_Reload`, action 4): the core tops the gun in hand
+   up from its spare rounds, and the bridge starts `Weapon::reloadAmmo` for the time.
+4. **The bar shows his kit, not the default loadout's.**
+   - The four loadout button tiles and the weapon labels ("&AN-94") were baked from
+     `Loadout::default()`.
+   - Now the gun and order buttons are plain tiles, and the bridge draws the live kit's BO2 icons
+     over them (`zhbo_client_rts_icons`) with what is left, the class-button pattern.
+   - The labels are BO2's slot names (Primary, Secondary, Lethal, Tactical) plus Knife and Reload.
+   - Reload gets a generated magazine tile.
+   - The set is 3 Primary over 4 Reload, 5 Secondary over 6 Knife, 7 Lethal over 8 Tactical.
+5. **Cleanups along the way:**
+   - the dead copies the module split left in `sim/build.rs` (hitscan helpers) and `sim/fire.rs`
+     (`HostWorld`, `placement`) are deleted;
+   - the pre-existing clippy warnings in every file touched are fixed (ffi docs, `as_chunks`, a
+     `const` assert, a `Files` alias).
+
+Decisions made without the user (asleep; revisit if wrong):
+- The Black Hat is never an overhead order: it needs its target held in view.
+- C4 with none left in hand has no overhead "detonate" button yet.
+- Attachment variants share the base weapon's RTS weapon. An extended magazine's bigger clip is
+  still counted by the core, but Zero Hour reloads at the base clip.
+- The throw cursor's ring is the item's blast (`ScatterRadius`). It is read from whatever item the
+  slot holds when the button is pressed, so it shows the previous order's item until the order is
+  given.
+- A cancelled order, or one never carried out, leaves him without his permanent gun lock; he
+  falls back to the primary.
+
+Tests: `cargo test --workspace` is green (zhbo-core 245, of which 11 are new in `sim/rts.rs`;
+zhbo-assets 36, of which 2 are new). The ignored real-install conversion passes with every player
+weapon's RTS weapon present and within the ABI's name cap. Patch 0016 applies on top of 0001–0015,
+and all touched C++ passes `-fsyntax-only` against the real compile commands with the patched
+headers overlaid. **Not yet run in game.** Integration needs:
+- ABI bump 21 → 22 (`ZhboRtsWeapons` 36 → 192 bytes, `ZhboRtsIcons` 240 bytes,
+  `zhbo_logic_rts_reload`);
+- archive VERSION 42 (reconvert);
+- `scripts/autotest-mac.sh --rts` (new checks) and `--rts-dry`.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

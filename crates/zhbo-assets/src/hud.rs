@@ -16,7 +16,7 @@ use zhbo_formats::iwi::Rgba;
 use zhbo_formats::t6zone::Zone;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive.
-pub const VERSION: u32 = 42;
+pub const VERSION: u32 = 43;
 pub use zhbo_core::names::BO2_ARCHIVE_NAME as ARCHIVE_NAME;
 pub use zhbo_core::names::BO2_ARCHIVE_VERSION_PATH as VERSION_FILE;
 /// Stem of each page's TGA; every MappedImage names the page it was packed into.
@@ -108,10 +108,10 @@ pub struct Report {
 /// BO2 draws some HUD art additively: bright on opaque black. Give such an image its brightness as
 /// alpha (and full-strength colour) so alpha blending looks the same.
 fn additive_to_alpha(img: &mut Rgba) {
-    if img.pixels.chunks_exact(4).any(|p| p[3] < 250) {
+    if img.pixels.as_chunks::<4>().0.iter().any(|p| p[3] < 250) {
         return; // has real alpha
     }
-    for p in img.pixels.chunks_exact_mut(4) {
+    for p in img.pixels.as_chunks_mut::<4>().0 {
         let a = p[0].max(p[1]).max(p[2]);
         if a > 0 {
             for c in &mut p[..3] {
@@ -340,8 +340,8 @@ fn button_tile(art: Option<&Rgba>, reticle: bool) -> Rgba {
         if x < w && y < h {
             let p = ((y * w + x) * 4) as usize;
             let a = c[3] as u32;
-            for k in 0..3 {
-                t.pixels[p + k] = ((c[k] as u32 * a + t.pixels[p + k] as u32 * (255 - a)) / 255) as u8;
+            for (k, &ck) in c.iter().enumerate().take(3) {
+                t.pixels[p + k] = ((ck as u32 * a + t.pixels[p + k] as u32 * (255 - a)) / 255) as u8;
             }
         }
     };
@@ -373,24 +373,40 @@ fn button_tile(art: Option<&Rgba>, reticle: bool) -> Rgba {
     t
 }
 
-/// The command bar's generated tiles. The four loadout tiles carry the default kit's BO2 icons and
-/// only exist when those icons converted; the rest are chrome. `ZHBO_Button_ClassTile` is a plain
-/// face because the bridge draws each class's kit over it every frame — it must never fall back to
-/// a base-game cameo (`ZHBO_A_Buttons.ini`'s hand-set cell), which read as parts of unrelated unit
-/// art under the kit. `ZHBO_Button_ChooseClass` carries BO2's create-a-class grid pattern; its
-/// base-game rect straddled two cells of `SAUserInterface512_005.tga`, stitching two cameos.
-fn button_tiles(found: &[(String, Rgba)]) -> Vec<(String, Rgba)> {
-    let l = zhbo_core::weapons::Loadout::default();
-    let art = |name: &str| found.iter().find(|(n, _)| n == name).map(|(_, i)| i.clone());
-    let mut tiles = Vec::new();
-    for (name, id) in [("ZHBO_Button_Primary", &l.primary), ("ZHBO_Button_Secondary", &l.secondary), ("ZHBO_Button_Lethal", &l.lethal), ("ZHBO_Button_Tactical", &l.tactical)] {
-        if let Some(img) = art(&format!("ZHBO_BO2_Icon_{id}")) {
-            tiles.push((name.to_string(), button_tile(Some(&img), false)));
+/// A magazine for the Reload button: a slanted box with rounds stacked at its lips.
+fn magazine_glyph() -> Rgba {
+    let (w, h) = (32u32, 44u32);
+    let mut pixels = vec![0u8; (w * h * 4) as usize];
+    for y in 0..h {
+        // The box leans like a rifle magazine; its top third holds the rounds.
+        let lean = (h - y) as f32 * 0.25;
+        for x in 0..w {
+            let fx = x as f32 - lean;
+            let wall = (3.0..21.0).contains(&fx) && (fx < 6.0 || fx >= 18.0 || y >= h - 3);
+            let round = (8.0..16.0).contains(&fx) && y < h / 3 && y % 5 < 3;
+            if wall || round {
+                let p = ((y * w + x) * 4) as usize;
+                pixels[p..p + 4].copy_from_slice(&[235, 235, 235, 255]);
+            }
         }
     }
+    Rgba { width: w, height: h, pixels }
+}
+
+/// The command bar's generated tiles. `ZHBO_Button_ClassTile` is a plain face because the bridge
+/// draws a kit over it every frame (each class button's, and the General's own on his gun and
+/// order buttons: his class is the player's, so no conversion-time art can show it) — it must
+/// never fall back to a base-game cameo (`ZHBO_A_Buttons.ini`'s hand-set cell), which read as
+/// parts of unrelated unit art under the kit. `ZHBO_Button_ChooseClass` carries BO2's
+/// create-a-class grid pattern; its base-game rect straddled two cells of
+/// `SAUserInterface512_005.tga`, stitching two cameos.
+fn button_tiles(found: &[(String, Rgba)]) -> Vec<(String, Rgba)> {
+    let art = |name: &str| found.iter().find(|(n, _)| n == name).map(|(_, i)| i.clone());
+    let mut tiles = Vec::new();
     let dot = art("ZHBO_BO2_RedDot");
     tiles.push(("ZHBO_Button_TakeControl".to_string(), button_tile(dot.as_ref(), true)));
     tiles.push(("ZHBO_Button_Back".to_string(), button_tile(Some(&back_arrow()), false)));
+    tiles.push(("ZHBO_Button_Reload".to_string(), button_tile(Some(&magazine_glyph()), false)));
     tiles.push(("ZHBO_Button_ClassTile".to_string(), button_tile(None, false)));
     tiles.push(("ZHBO_Button_ChooseClass".to_string(), button_tile(art("ZHBO_BO2_MenuGrid").as_ref(), false)));
     tiles
@@ -512,9 +528,7 @@ mod tests {
         // soldier art under their kit and how Create a Class straddled two cells. Only the Build
         // menu's dozer cameo is deliberately Zero Hour art.
         const BUTTONS: &str = include_str!("../../../data/Data/INI/CommandButton/ZHBO_CommandButtons.ini");
-        let mut generated: Vec<String> = button_tiles(&[]).into_iter().map(|(n, _)| n).collect();
-        // The four loadout tiles need their BO2 icons, which the default kit always converts.
-        generated.extend(["ZHBO_Button_Primary", "ZHBO_Button_Secondary", "ZHBO_Button_Lethal", "ZHBO_Button_Tactical"].map(String::from));
+        let generated: Vec<String> = button_tiles(&[]).into_iter().map(|(n, _)| n).collect();
         let mut checked = 0;
         for line in BUTTONS.lines() {
             let Some((key, value)) = line.split_once('=') else { continue };

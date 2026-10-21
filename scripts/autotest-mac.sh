@@ -7,8 +7,9 @@
 #   scripts/autotest-mac.sh --equipment
 #                                      C4, Trophy System and Black Hat against an enemy drone and
 #                                      rocket troopers (two runs: C4 + Trophy, C4 + Black Hat)
-#   scripts/autotest-mac.sh --rts      the General under RTS control: rifle, the lethal and the pistol
-#                                      picked from the command bar, ammo counted, then first person
+#   scripts/autotest-mac.sh --rts      the General under RTS control: his class guns armed, the rifle's
+#                                      rounds counted, the command bar's orders (the lethal at a rebel,
+#                                      a reload, the pistol, the knife at a close rebel), then first person
 #   scripts/autotest-mac.sh --rts-dry  the same with no spare rifle rounds, then no spare pistol rounds:
 #                                      the empty gun hands over to the other and he keeps firing
 #   scripts/autotest-mac.sh --build    the General builds: his Build menu, a structure ordered from it,
@@ -284,7 +285,8 @@ if [[ $mode == rts-dry ]]; then
     exit $ok
 fi
 if [[ $mode == rts ]]; then
-    export ZHBO_AUTOPILOT=rts GGC_AUTO_EXIT_SECONDS=35
+    # The timeline (ZhboAutopilot.cpp rtsAutopilotFrame) takes control at 690 logic frames.
+    export ZHBO_AUTOPILOT=rts GGC_AUTO_EXIT_SECONDS=45
     "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
     wait_for_log "autopilot: taking control" 90 || { echo "the script never reached first person; see $log" >&2; exit 1; }
     for _ in $(seq 40); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
@@ -294,10 +296,16 @@ if [[ $mode == rts ]]; then
     check() { # name, pattern
         if grep -qE "$2" "$out/ConquerOps.log"; then printf '%-28s PASS\n' "$1"; else printf '%-28s FAIL\n' "$1"; ok=1; fi
     }
+    check "class guns armed" "General [0-9]+ armed slot 0 with ZHBO_GeneralWeapon_"
     check "rifle rounds counted" "fired slot 0 \([0-9]+/[0-9]+ left\)"
-    check "lethal picked" "uses weapon slot 2"
+    check "lethal ordered" "General [0-9]+ ordered to use the lethal"
+    check "  ...third slot armed" "General [0-9]+ armed slot 2 with ZHBO_GeneralWeapon_"
     check "lethal thrown" "fired slot 2 \(0/0 left\)"
+    check "  ...as first person throws" "player [0-9]+ threw a lethal"
     check "back to the rifle" "locked to weapon slot 0"
+    check "reload ordered" "General [0-9]+ reloads slot 0"
+    check "knife ordered" "General [0-9]+ ordered to use the melee"
+    check "  ...he closed in and struck" "player [0-9]+ meleed"
     # Slot 1 is the class's secondary. The run picks BO2's default Assault class at spawn, which
     # carries the SMAW there (statstable.csv), not the base kit's Tac-45.
     check "secondary picked" "uses weapon slot 1"

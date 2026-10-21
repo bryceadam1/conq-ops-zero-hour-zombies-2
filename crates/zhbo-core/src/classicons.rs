@@ -51,7 +51,7 @@ pub struct ClassIcons {
 
 /// The per-weapon icon the converter emits (`ZHBO_BO2_Icon_<id>`); an attached variant uses its
 /// base gun's icon (`an94_mp+reflex` -> `ZHBO_BO2_Icon_an94_mp`), exactly like the class screen.
-fn weapon_icon(id: &str) -> String {
+pub(crate) fn weapon_icon(id: &str) -> String {
     let base = id.split('+').next().unwrap_or(id);
     format!("ZHBO_BO2_Icon_{base}")
 }
@@ -192,7 +192,7 @@ mod tests {
 
     #[test]
     fn three_customs_still_fit_one_page() {
-        assert!(ROWS <= PAGE1_CLASS_SLOTS, "a full active set must fit page one's class slots");
+        const { assert!(ROWS <= PAGE1_CLASS_SLOTS, "a full active set must fit page one's class slots") };
         let [p1, p2] = pages_for(PRESETS, 3);
         assert_eq!(p1, vec![0, 1, 2, 3, 4, 5, 6, 7], "the five presets, then the three customs");
         assert!(p2.is_empty(), "three customs never spill onto a second page");

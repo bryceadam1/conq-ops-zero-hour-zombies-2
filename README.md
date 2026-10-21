@@ -28,12 +28,19 @@ Set `ZHBO_ZH_DIR` / `ZHBO_BO2_DIR` to point at installs the detector does not fi
 
 ## The General in the overhead view
 
-Until you take control, the General is an ordinary unit that fights with the loadout's rifle. Their
-command bar has **Take Control** and a button for each weapon, like the Ranger's: the rifle, the
-pistol and the lethal (only used when picked). Each shows the ammo left. Ammo is the General's own
-and limited, in both views: what is fired from the overhead view is gone in first person, and the
-weapon picked carries over both ways. An empty weapon's button is greyed out, and the General
-switches to a weapon that still has ammo.
+Until you take control, the General is an ordinary unit that fights with his class's guns: their
+BO2 fire rate, magazine, reload and sound. His command bar has **Take Control**, his **Primary** and
+**Secondary** (switched like the Ranger's weapons), and orders:
+
+- **Lethal** and **Tactical**: click a spot. He walks into throwing range and throws the grenade
+  there, or he walks up and puts the equipment down facing it.
+- **Knife**: click an enemy. He closes in and knifes him.
+- **Reload**: reloads the gun in hand.
+
+Each button shows his kit's BO2 icon and what is left. Ammo is the General's own and limited, in
+both views: what is used from the overhead view is gone in first person, and the gun picked
+carries over both ways. An empty weapon's button is greyed out, and the General switches to a gun
+that still has ammo.
 
 ## Controls (first person)
 
