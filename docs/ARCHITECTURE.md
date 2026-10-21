@@ -50,9 +50,10 @@ from `zhbo_logic_*` must stay deterministic. Depends on `zhbo-requirements` and 
   `perks.rs` (the perk table), `loadout.rs`, `rng.rs` (xorshift), `arsenal.rs`
   (WeaponState, Reload, Offhand, Arsenal, WeaponAction).
 - `sim/`: `mod.rs` (Sim, PlayerSim, Event, the top-level `step` orchestration),
-  `hack.rs` (Black Hat), `build.rs` (hammer/site), `rts.rs` (`rts_update`,
-  `rts_offhand`, `RtsWeapons`), `fire.rs` (`apply_weapon_action`, `gather_targets`,
-  `throw_velocity`).
+  `hack.rs` (Black Hat), `build.rs` (hammer/site), `rts.rs` (the overhead General:
+  `rts_update`, the third slot's orders `rts_offhand`/`Third`, `rts_reload`, `RtsWeapons`
+  with each slot's Zero Hour weapon, `RtsIcons`), `fire.rs` (`apply_weapon_action`,
+  `melee_strike`, `gather_targets`, `throw_velocity`).
 - `config.rs` (env vars parsed once at init), `names.rs` (the naming registry),
   `tuning.rs` (the gameplay tuning pack), `strings.rs` (the localised strings),
   `equipment.rs` (BO2 equipment behavior, driven by the weapon table's `Equipment` block).
@@ -78,7 +79,7 @@ starting the game. Depends on `zhbo-requirements` and `zhbo-assets`.
 |---|---|
 | `ZhboBridge.cpp` | Globals, API-table init, `Zhbo_Init/Reset/…` entry points |
 | `ZhboLogicApi.cpp` | Logic callbacks (`cbLog`…`cbFx`) |
-| `ZhboRtsWeapons.cpp` | RTS shot tracking, ammo overlay |
+| `ZhboRtsWeapons.cpp` | RTS shot tracking, the class weapons swapped into his slots, his orders (`applyRtsOrder`), the kit icon and ammo overlay |
 | `ZhboHud.cpp` | Text cache, fill/line/text/image/clip/radar/cash |
 | `ZhboInput.cpp` | `ZhboTranslator`, mouse capture, hidden object, RTS UI hide |
 | `ZhboAutopilot.cpp` | The in-game test harness |
