@@ -14,6 +14,11 @@
 //! is what the client knows; the output is an offset (inches: forward, right, up) and angles
 //! (degrees: pitch, yaw, roll) for the renderer. Client-side only: none of it feeds the sim.
 //!
+//! The client's viewmodel motion (`viewmodel::Motion`) is the consumer: it builds [`GunInput`]
+//! from the local player and the weapon def each frame and turns this pose into the renderer's
+//! view-space offset (art units, forward/left/up) and angles (radians, yaw/pitch/roll). Track R6
+//! places the viewmodel from it.
+//!
 //! Medium-confidence parts (named in G4): the bob roll term, the sway smoothing (a lerp at the
 //! weapon's lerp speed stands in for the engine's DiffTrack), and the sprint-pose weight curve,
 //! which the caller supplies.
@@ -146,7 +151,11 @@ impl GunPos {
         let last = self.last_view.replace(i.view).unwrap_or(i.view);
         let rate = |d: f32| if dt > 0.0 { (d / (dt * 60.0)).clamp(-max.max(0.0), max.max(0.0)) } else { 0.0 };
         let (dp, dy) = (rate(i.view.0 - last.0), rate(wrap(i.view.1 - last.1)));
-        let target_angle = (dp * l(h.pitch_scale, a.pitch_scale), dy * l(h.yaw_scale, a.yaw_scale));
+        // The gun *lags* the view, so both the rotation and the offset are the view's turn
+        // measured back from the gun: turning left swings the muzzle right and drops a left turn's
+        // yaw onto the gun (`G4`'s delta with the sign of the offset it is paired with). Leading
+        // the view would mean the arms turn faster than the camera.
+        let target_angle = (-dp * l(h.pitch_scale, a.pitch_scale), -dy * l(h.yaw_scale, a.yaw_scale));
         let target_ofs = (dy * l(h.horiz_scale, a.horiz_scale), dp * l(h.vert_scale, a.vert_scale));
         let k = (lerp_speed * dt).clamp(0.0, 1.0);
         self.sway_angle.0 += (target_angle.0 - self.sway_angle.0) * k;
@@ -255,15 +264,20 @@ mod tests {
     }
 
     #[test]
-    fn turning_sways_the_gun() {
+    fn turning_sways_the_gun_behind_the_view() {
         let mut d = gun();
         d.hip_sway = super::super::Sway { max_angle: 5.0, lerp_speed: 8.0, pitch_scale: 0.5, yaw_scale: 0.5, horiz_scale: 0.1, vert_scale: 0.1 };
         let t = Tuning::default();
         let mut g = GunPos::default();
         let mut i = GunInput { fov: 65.0, ..Default::default() };
         g.step(&d, &i, &t, 1.0 / 60.0);
+        // A left turn leaves the gun behind: it hangs to the right (offset +right) and points right
+        // of the view (negative yaw). The mirror holds for a right turn.
         i.view.1 = 2.0;
-        let pose = g.step(&d, &i, &t, 1.0 / 60.0);
-        assert!(pose.angles[1] > 0.0 && pose.offset[1] > 0.0, "{pose:?}");
+        let left = g.step(&d, &i, &t, 1.0 / 60.0);
+        assert!(left.angles[1] < 0.0 && left.offset[1] > 0.0, "{left:?}");
+        i.view.1 = 0.0;
+        let right = g.step(&d, &i, &t, 1.0 / 60.0);
+        assert!(right.angles[1] > 0.0 && right.offset[1] < 0.0, "{right:?}");
     }
 }

@@ -14,17 +14,17 @@
 //! as they arrive (bind pose, white).
 //!
 //! **Placement.** As the W3D path: the model's frame is the eye's (X along the view, Y left, Z up),
-//! the gun's view-space transform ([`GunPose`]: today the core's offset and yaw/pitch/roll, the
-//! hook the gun-position track's `weapons::gunpos` plugs into), BO2's inches scaled to the
-//! art's scale, and aiming down the sights slides the aim marker onto the view axis by the ADS
-//! fraction. Projection is the scene's own (`NativeFrame::view_proj = None`): BO2 has no
+//! the gun's view-space transform ([`GunPose`], built by the client's `viewmodel::Motion` from the
+//! weapon def's gun-position numbers — `weapons::gunpos`, G4), BO2's inches scaled to the art's
+//! scale, and aiming down the sights slides the aim marker onto the view axis by the ADS fraction
+//! ([`place`]). Projection is the scene's own (`NativeFrame::view_proj = None`): BO2 has no
 //! viewmodel FOV (G4).
 
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
 
 use zhbo_native::anim::Anim;
-use zhbo_native::math::{axis_angle, compose, mat4, mat4_mul, qmul, Mat4, Xf, MAT4_IDENTITY};
+use zhbo_native::math::{axis_angle, mat4, mat4_mul, qmul, Mat4, Xf};
 use zhbo_native::model::{Blend, Cull, Model, Vertex};
 use zhbo_native::pose::{PartRef, Skeleton};
 use zhbo_native::viewmodel::Viewmodel;
@@ -32,6 +32,7 @@ use zhbo_native::viewmodel::Viewmodel;
 #[cfg(feature = "renderer")]
 mod gpu;
 pub mod ffi;
+pub mod place;
 
 /// BO2 inches to the art's world units: the scale the converter draws BO2 models at
 /// (`zhbo_assets::character::SCALE` reads this).
@@ -84,7 +85,8 @@ impl Files {
 }
 
 /// The gun's transform in the eye's frame (X forward, Y left, Z up), in world units: where the
-/// viewmodel's origin sits and how it is turned. The hook the gun-position track fills in.
+/// viewmodel's origin sits and how it is turned. The core's `viewmodel::Motion` fills it from the
+/// weapon def's gun-position numbers (`weapons::gunpos`, G4).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GunPose(pub Xf);
 
@@ -270,25 +272,15 @@ impl Loaded {
         self.skeleton.palette(&out.model, &out.root, &mut out.palette);
     }
 
-    /// The model-to-world matrix: eye frame × gun pose × ADS slide × scale. Aiming slides the gun
-    /// (in the eye's frame) so the aim marker's sideways and vertical offsets go to zero at full
-    /// ADS, as the W3D path does with `tag_sights`.
+    /// The model-to-world matrix: eye frame × gun pose × ADS slide × scale ([`place`]). Aiming
+    /// slides the gun (in the eye's frame) so the aim marker's sideways and vertical offsets go to
+    /// zero at full ADS, as the W3D path does with `tag_sights`.
     pub fn placement(&self, req: &Request, model_space: &[Xf]) -> Mat4 {
-        let scale = {
-            let mut s = MAT4_IDENTITY;
-            s[0] = ART_SCALE;
-            s[5] = ART_SCALE;
-            s[10] = ART_SCALE;
-            s
+        let gun = match self.aim.and_then(|i| model_space.get(i)) {
+            Some(aim) => place::aligned(req.gun.0, *aim, req.ads),
+            None => req.gun.0,
         };
-        let mut gun = req.gun.0;
-        if let Some(aim) = self.aim.filter(|_| req.ads > 0.0) {
-            let p = zhbo_native::math::apply(model_space[aim], [0.0; 3]).map(|c| c * ART_SCALE);
-            let in_eye = zhbo_native::math::apply(gun, p);
-            let k = req.ads.min(1.0);
-            gun = compose((zhbo_native::math::QUAT_IDENTITY, [0.0, -in_eye[1] * k, -in_eye[2] * k]), gun);
-        }
-        mat4_mul(&mat4_mul(&eye_frame(req.eye, req.dir), &mat4(gun)), &scale)
+        place::root(req.eye, req.dir, gun)
     }
 
     /// A bone's world transform for the last pose (3x4 rows: the bridge's `Matrix3D`), for

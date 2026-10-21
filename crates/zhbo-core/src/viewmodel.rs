@@ -10,9 +10,14 @@
 //! Using the field computer is a BO2 scorestreak: the weapon is swapped for the tablet, which comes
 //! up before the view leaves for the overhead camera. Coming back to first person, the tablet goes
 //! down first, then the weapon comes up.
+//!
+//! [`Motion`] is where the gun sits each frame: the weapon def's gun-position numbers through
+//! `weapons::gunpos` (Ghidra G4/G5), in the renderer's view space and angle order.
 
-use crate::math::Vec3;
+use crate::math::{basis_xy, Vec3};
+use crate::movement::Stance;
 use crate::sim::PlayerSim;
+use crate::weapons::gunpos::{GunInput, GunPos};
 use crate::weapons::{OffhandUse, RaiseKind, Reload, ShellPhase, WeaponDef};
 
 pub const NONE: i32 = -1;
@@ -252,103 +257,103 @@ impl Viewmodel {
     }
 }
 
-/// BO2 inches to Zero Hour units (the converter's scale).
-const INCH: f32 = 11.0 / 72.0;
-/// Sway: degrees of lag per degree/second of turning, its limit, and how fast it settles.
-const SWAY_PER_RATE: f32 = 0.012;
-const SWAY_MAX: f32 = 4.0;
-const SWAY_FOLLOW: f32 = 12.0;
-/// Walk bob: sideways and vertical swing (inches), and a full cycle per two strides.
-const BOB_SIDE: f32 = 0.35;
-const BOB_UP: f32 = 0.25;
+/// BO2 inches to the viewmodel's art units: the converter's scale, the same one the composed
+/// model is drawn at (`zhbo_native::ART_SCALE`).
+const INCH: f32 = zhbo_native::ART_SCALE;
+/// The bob cycle advances one swing per this many Zero Hour units walked (`ps->bobCycle`: it
+/// follows ground distance, not time).
 const BOB_STRIDE: f32 = 9.0;
-const SPRINT_BOB: f32 = 1.8;
-/// Recoil: kick back (inches) and up (degrees) per shot, and its recovery rate.
-const KICK_BACK: f32 = 0.6;
-const KICK_UP: f32 = 1.2;
-const KICK_RECOVER: f32 = 18.0;
-/// Landing dip (inches) and recovery.
+/// Landing dip (BO2 inches) and its recovery rate (per second).
 const LAND_DIP: f32 = 0.8;
 const LAND_RECOVER: f32 = 8.0;
 
 /// The viewmodel's offset from the eye this frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Pose {
-    /// View space, Zero Hour units: forward, left, up.
+    /// View space, art units (`INCH` per BO2 inch): forward, left, up.
     pub offset: Vec3,
     /// Radians: yaw (left positive), pitch (muzzle up positive), roll.
     pub angles: Vec3,
 }
 
-/// Sway, bob, recoil kick and landing dip.
+/// The viewmodel's motion: BO2's gun-position state (the stance and movement offsets, sway and
+/// the gun kick spring; Ghidra G4/G5, `weapons::gunpos`), fed this frame's stance, speed, aim and
+/// view, plus the bob cycle, the sprint pose's weight and the landing dip.
 #[derive(Clone, Debug, Default)]
 pub struct Motion {
-    last_view: Option<(f32, f32)>,
-    sway: (f32, f32),
-    phase: f32,
-    kick: f32,
+    gun: GunPos,
+    /// The bob cycle, turns (`ps->bobCycle`).
+    bob: f32,
+    /// The sprint pose's weight 0..1 (G4's sprint raise/drop curve, which the caller supplies).
+    sprint: f32,
+    /// The landing dip 0..1, and whether the feet were off the ground last frame.
     land: f32,
     airborne: bool,
 }
 
-fn angle_delta(a: f32, b: f32) -> f32 {
-    let mut d = a - b;
-    while d > std::f32::consts::PI {
-        d -= std::f32::consts::TAU;
-    }
-    while d < -std::f32::consts::PI {
-        d += std::f32::consts::TAU;
-    }
-    d
-}
-
 impl Motion {
-    pub fn update(&mut self, dt: f32, yaw: f32, pitch: f32, p: &PlayerSim, shot: bool) -> Pose {
+    /// One frame of `dt` seconds. `yaw`/`pitch` are the view angles this frame (radians), `fov`
+    /// the field of view `cg_fov` (degrees; G4's wide-FOV pullback), and `shot` the gun kick's
+    /// impulse when a shot went off.
+    pub fn update(&mut self, dt: f32, yaw: f32, pitch: f32, fov: f32, p: &PlayerSim, shot: Option<(f32, f32)>) -> Pose {
+        let def = p.arsenal.current().def;
         let dt = dt.max(1e-4);
-        let calm = 1.0 - 0.85 * p.arsenal.ads.clamp(0.0, 1.0);
+        let ads = p.arsenal.ads.clamp(0.0, 1.0);
+        let speed_zh = p.body.horizontal_speed();
+        // The gun-position math is BO2's, in its inches and inches/s.
+        let speed = speed_zh / crate::units::ZH_PER_INCH;
 
-        // Sway: the weapon lags behind the turn, then catches up.
-        let (yaw_rate, pitch_rate) = match self.last_view {
-            Some((y, pt)) => (angle_delta(yaw, y).to_degrees() / dt, (pitch - pt).to_degrees() / dt),
-            None => (0.0, 0.0),
-        };
-        self.last_view = Some((yaw, pitch));
-        let target = (
-            (-yaw_rate * SWAY_PER_RATE).clamp(-SWAY_MAX, SWAY_MAX),
-            (-pitch_rate * SWAY_PER_RATE).clamp(-SWAY_MAX, SWAY_MAX),
-        );
-        let k = (dt * SWAY_FOLLOW).min(1.0);
-        self.sway.0 += (target.0 - self.sway.0) * k;
-        self.sway.1 += (target.1 - self.sway.1) * k;
-
-        // Bob: phase follows ground distance; amplitude follows speed.
-        let speed = p.body.vel.length_xy();
-        let sprint = if p.body.sprinting { SPRINT_BOB } else { 1.0 };
-        let amp = if p.body.on_ground { (speed / 30.0).min(1.5) * sprint } else { 0.0 };
+        // The bob cycle follows the distance walked on the ground (`ps->bobCycle`).
         if p.body.on_ground {
-            self.phase = (self.phase + speed * dt / BOB_STRIDE * std::f32::consts::PI) % std::f32::consts::TAU;
+            self.bob = (self.bob + speed_zh * dt / BOB_STRIDE * std::f32::consts::PI) % std::f32::consts::TAU;
         }
 
-        if shot {
-            self.kick = 1.0;
-        }
-        self.kick *= (-dt * KICK_RECOVER).exp();
+        // The sprint pose comes up over the sprint-in clip and drops at the def's sprint-out time.
+        let target = if p.body.sprinting { 1.0 } else { 0.0 };
+        let rate = if target > self.sprint { 1.0 / SPRINT_IN_TIME } else { 1.0 / def.sprint_out_time.max(1e-3) };
+        let step = rate * dt;
+        self.sprint = if (target - self.sprint).abs() <= step { target } else { self.sprint + step * (target - self.sprint).signum() };
+
+        // The landing dip: down on the frame the feet touch, back up over the next eighth-second.
         if p.body.on_ground && self.airborne {
             self.land = 1.0;
         }
         self.airborne = !p.body.on_ground;
         self.land *= (-dt * LAND_RECOVER).exp();
 
-        let ads_kick = 1.0 - 0.6 * p.arsenal.ads.clamp(0.0, 1.0);
-        let side = BOB_SIDE * amp * self.phase.sin() * calm;
-        let up = -BOB_UP * amp * self.phase.cos().abs() * calm - LAND_DIP * self.land;
+        if let Some(impulse) = shot {
+            self.gun.spring.kick(impulse);
+        }
+
+        // The signed share of the velocity to the right (`velocity . right / speed`).
+        let (_, right) = basis_xy(yaw);
+        let strafe = if speed_zh > 1e-3 { (p.body.vel.x * right.x + p.body.vel.y * right.y) / speed_zh } else { 0.0 };
+        let input = GunInput {
+            stance: match p.body.stance {
+                Stance::Stand => 0,
+                Stance::Crouch => 1,
+                Stance::Prone => 2,
+            },
+            speed,
+            run_speed: p.arsenal.tuning.g_speed.max(1.0),
+            strafe,
+            ads,
+            sprinting: p.body.sprinting,
+            sprint_weight: self.sprint,
+            bob_cycle: (self.bob / std::f32::consts::TAU).rem_euclid(1.0),
+            fov,
+            view: (pitch.to_degrees(), yaw.to_degrees()),
+            // The landing dip stays the client's own: the fall delta `FUN_00530990` wants is not
+            // in the sim's state (no `landChange`), so gunpos's dip contributes nothing.
+            land_change: 0.0,
+            since_land: 0.0,
+        };
+        let pose = self.gun.step(def, &input, &p.arsenal.tuning, dt);
+        // BO2's offset is (forward, right, up) and its angles (pitch, yaw, roll); the renderer's
+        // view space is (forward, left, up) and its angles (yaw, pitch, roll).
         Pose {
-            offset: Vec3::new(-KICK_BACK * self.kick * ads_kick * INCH, side * INCH, up * INCH),
-            angles: Vec3::new(
-                (self.sway.0 * calm).to_radians(),
-                (self.sway.1 * calm + KICK_UP * self.kick * ads_kick).to_radians(),
-                (side * 1.5 * (sprint - 0.5)).to_radians(),
-            ),
+            offset: Vec3::new(pose.offset[0] * INCH, -pose.offset[1] * INCH, (pose.offset[2] - LAND_DIP * self.land) * INCH),
+            angles: Vec3::new(pose.angles[1].to_radians(), pose.angles[0].to_radians(), pose.angles[2].to_radians()),
         }
     }
 }
@@ -357,7 +362,7 @@ impl Motion {
 mod tests {
     use super::*;
     use crate::sim::{Mode, PlayerSim};
-    use crate::weapons::{OffhandUse, RaiseKind, Reload};
+    use crate::weapons::{GunKick, OffhandUse, RaiseKind, Reload, Sway};
 
     fn player() -> PlayerSim {
         PlayerSim::spawn_for_tests()
@@ -431,36 +436,102 @@ mod tests {
         assert!(crate::sim::FIELD_COMPUTER_RAISE > TABLET_PULLOUT_TIME, "the tablet is fully up before the view leaves");
     }
 
+    /// A def whose G4 numbers a test can assert on (the catalogs' defs are real BO2 data).
+    fn gun_def() -> &'static WeaponDef {
+        let mut d = WeaponDef::default();
+        d.view_pos.ducked_ofs = [0.0, 1.0, -2.0];
+        d.view_pos.stand_move = [-1.0, 0.5, 0.25];
+        d.view_pos.move_rate = 10.0;
+        d.view_pos.rot_rate = 10.0;
+        d.view_pos.stand_min_speed = 20.0;
+        d.view_pos.ads_aim_pitch = 2.0;
+        d.hip_gun_kick = GunKick { accel: 30.0, speed_decay: 20.0, static_decay: 20.0, ..Default::default() };
+        d.hip_sway = Sway { max_angle: 5.0, lerp_speed: 8.0, pitch_scale: 0.5, yaw_scale: 0.5, horiz_scale: 0.1, vert_scale: 0.1 };
+        Box::leak(Box::new(d))
+    }
+
+    fn settle(m: &mut Motion, p: &PlayerSim, yaw: f32, pitch: f32, shot: Option<(f32, f32)>) -> Pose {
+        let mut pose = Pose::default();
+        for _ in 0..120 {
+            pose = m.update(1.0 / 60.0, yaw, pitch, 65.0, p, shot);
+        }
+        pose
+    }
+
     #[test]
     fn motion_sways_bobs_and_kicks() {
         let mut p = player();
+        p.arsenal.weapons[0].def = gun_def();
+        p.arsenal.weapons[0].main = gun_def();
         let mut m = Motion::default();
-        assert_eq!(m.update(0.016, 0.0, 0.0, &p, false), Pose::default());
-        // Turning right (yaw decreasing) swings the weapon left, then it settles.
-        let turned = m.update(0.016, -0.05, 0.0, &p, false);
-        assert!(turned.angles.x > 0.0, "{turned:?}");
+        assert_eq!(m.update(0.016, 0.0, 0.0, 65.0, &p, None), Pose::default());
+        // Turning right (yaw decreasing) leaves the weapon behind: it hangs left of the view, then
+        // settles.
+        let turned = m.update(0.016, -0.05, 0.0, 65.0, &p, None);
+        assert!(turned.angles.x > 0.0 && turned.offset.y > 0.0, "{turned:?}");
         for _ in 0..60 {
-            m.update(0.016, -0.05, 0.0, &p, false);
+            m.update(0.016, -0.05, 0.0, 65.0, &p, None);
         }
-        assert!(m.update(0.016, -0.05, 0.0, &p, false).angles.x.abs() < 1e-3);
-        // A shot kicks the weapon back and up; it recovers.
-        let kicked = m.update(0.016, -0.05, 0.0, &p, true);
-        assert!(kicked.offset.x < 0.0 && kicked.angles.y > 0.0);
-        for _ in 0..30 {
-            m.update(0.016, -0.05, 0.0, &p, false);
+        assert!(m.update(0.016, -0.05, 0.0, 65.0, &p, None).angles.x.abs() < 1e-3);
+        // A shot kicks the muzzle up (the impulse the sim hands over with the recoil event), then
+        // the spring brings it back.
+        let kicked = m.update(0.016, -0.05, 0.0, 65.0, &p, Some((8.0, 0.0)));
+        assert!(kicked.angles.y > 0.0, "{kicked:?}");
+        for _ in 0..180 {
+            m.update(0.016, -0.05, 0.0, 65.0, &p, None);
         }
-        assert!(m.update(0.016, -0.05, 0.0, &p, false).offset.x.abs() < 1e-3);
-        // Walking bobs it; aiming calms the bob.
+        assert!(m.update(0.016, -0.05, 0.0, 65.0, &p, None).angles.y.abs() < 1e-3);
+        // Walking bobs the muzzle; aiming damps the bob (G4's `fAdsBobFactor`). The aim's own pitch
+        // offset is constant, so the bob is the pitch's swing.
+        let swing = |m: &mut Motion, p: &PlayerSim| {
+            // Let the aim's pitch and the sway settle first, then measure the bob's own swing.
+            for _ in 0..120 {
+                m.update(0.016, -0.05, 0.0, 65.0, p, None);
+            }
+            let (mut lo, mut hi) = (f32::MAX, f32::MIN);
+            for _ in 0..120 {
+                let y = m.update(0.016, -0.05, 0.0, 65.0, p, None).angles.y;
+                (lo, hi) = (lo.min(y), hi.max(y));
+            }
+            hi - lo
+        };
         p.body.vel = Vec3::new(30.0, 0.0, 0.0);
-        let mut most = 0.0f32;
-        for _ in 0..60 {
-            most = most.max(m.update(0.016, -0.05, 0.0, &p, false).offset.z.abs());
+        let most = swing(&mut m, &p);
+        p.arsenal.ads = 1.0;
+        let aimed = swing(&mut m, &p);
+        assert!(most > 0.0 && aimed < most * 0.5, "bob {most} vs aimed {aimed}");
+    }
+
+    #[test]
+    fn the_hip_pose_is_the_defs_offsets_and_aiming_fades_them_by_half_way() {
+        let mut p = player();
+        p.arsenal.weapons[0].def = gun_def();
+        p.arsenal.weapons[0].main = gun_def();
+        p.body.stance = Stance::Crouch;
+        let mut m = Motion::default();
+        // Crouched at the hip: BO2's `vDuckedOfs` (forward, right, up) in inches, its Y flipped to
+        // the renderer's left, at the art's scale.
+        let hip = settle(&mut m, &p, 0.0, 0.0, None);
+        assert!((hip.offset.x - 0.0).abs() < 1e-4, "{hip:?}");
+        assert!((hip.offset.y + 1.0 * INCH).abs() < 1e-4, "{hip:?}");
+        assert!((hip.offset.z + 2.0 * INCH).abs() < 1e-4, "{hip:?}");
+        // Half-way into the aim the positional offsets are gone (G4: `max(0, 1 - 2 * ads)`), and
+        // fully aimed the gun has the def's `fAdsAimPitch` on its pitch.
+        p.arsenal.ads = 0.5;
+        for _ in 0..120 {
+            m.update(1.0 / 60.0, 0.0, 0.0, 65.0, &p, None);
         }
         p.arsenal.ads = 1.0;
-        let mut aimed = 0.0f32;
-        for _ in 0..60 {
-            aimed = aimed.max(m.update(0.016, -0.05, 0.0, &p, false).offset.z.abs());
-        }
-        assert!(most > 0.0 && aimed < most * 0.5, "bob {most} vs aimed {aimed}");
+        let aimed = settle(&mut m, &p, 0.0, 0.0, None);
+        assert!(aimed.offset.length() < 1e-4, "{aimed:?}");
+        assert!((aimed.angles.y - 2.0f32.to_radians()).abs() < 1e-4, "{aimed:?}");
+        // Standing and walking: `vStandMove` scaled by how far into the run the speed is.
+        p.body.stance = Stance::Stand;
+        p.arsenal.ads = 0.0;
+        p.body.vel = Vec3::new(30.0, 0.0, 0.0);
+        let moving = settle(&mut m, &p, 0.0, 0.0, None);
+        let f = (180.0 - 20.0) / (190.0 - 20.0);
+        assert!((moving.offset.x + 1.0 * f * INCH).abs() < 1e-3, "{moving:?}");
+        assert!((moving.offset.z - 0.25 * f * INCH).abs() < 1e-3, "{moving:?}");
     }
 }

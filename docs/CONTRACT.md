@@ -180,9 +180,23 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   has no viewmodel FOV (`~/Documents/BO2-reference/ghidra/answers/G4.md`). The pass has its own
   depth buffer, so the world never cuts the gun.
 * **The gun-position hook.** The gun's view-space transform enters as `GunPose`
-  (`nativevm::GunPose::from_offset_angles` today); the gun-position track's `weapons::gunpos`
-  output replaces it there. The clip playback rate (`ZhboNativeIn.rate`) is the hook for G3's
-  state-duration multipliers.
+  (`nativevm::GunPose::from_offset_angles`, offset in art units forward/left/up and yaw/pitch/roll
+  radians). The core's `viewmodel::Motion` builds it from the weapon def's own gun-position numbers
+  (`weapons::gunpos`, G4: stance/movement offsets, sway, bob, the gun kick spring, `fAdsAimPitch`
+  and `fAdsBobFactor`), and hands the same offset and angles to the W3D path, so both rigs stay in
+  agreement under `ZHBO_NATIVE_COMPARE=1`. The clip playback rate (`ZhboNativeIn.rate`) is the hook
+  for G3's state-duration multipliers.
+* **Placement and the aim axis (R6).** `nativevm::place` composes the model's root from the eye's
+  frame (`ZhboNativeIn.eye`/`dir`: the client writes them from the sim's `Body::eye()` and the view
+  angles, the eye→aim axis `sim::fire` traces shots along), the gun's transform and the art's
+  scale. Aiming slides the aim marker (`zhbo_native::AIM_TAG`: BO2's `tag_sights`, an optic's
+  window when one is mounted, or the front sight the converter found) onto that axis by
+  `ZhboNativeIn.ads` — BO2's `fWeaponPosFrac`, moved at the weapon's own ADS in/out times — keeping
+  the marker's forward distance; at 0 the pose is the hip pose untouched. Placement never derives
+  an eye or axis of its own, so at full ADS the sight sits on the ray the shot takes. (The camera
+  axis carries the client's cosmetic view kick, `hud.view_kick_*`, which the sim's ray does not;
+  the crosshair is drawn on the same camera axis, so the sight picture matches the crosshair while
+  the sim stays authoritative for where the round goes.)
 * `zhbo_native_reset` runs from `ZhboViewmodel_Reset` (a game reset tears down the scene); it frees
   the renderer's meshes and textures.
 * ABI: the functions and `ZhboNativeIn` (168 bytes) / `ZhboNativeLight` (24) are new; the header and
