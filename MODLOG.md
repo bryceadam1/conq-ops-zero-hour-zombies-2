@@ -1869,6 +1869,45 @@ break. The `PlayerSim::pending_class` sketch in the Track C section is retired.
 Verified: cargo test --workspace green; real-install suite green; clippy clean; `cargo xtask
 build` clean; autotest 13/13 default, `--classpick` all checks, 14/14 `--rts`.
 
+## Track R7, milestone 1: the body and world weapons as native blobs (2026-10-21, branch `v1/track-r7`)
+
+The third-person half of the native path starts with the data. `zhbo-native::thirdperson` adds two
+manifests, both under `Art\Native\` in the mod's BIG (nothing shipped):
+
+- **`ZB<faction>.zbc`** (body): each faction's BO2 MP body (`c_usa_mp_seal6_assault_fb`,
+  `c_chn_mp_pla_assault_fb`, `c_mul_mp_pmc_assault_fb`) as one `.zbm` (skeleton, four-bone skin,
+  surfaces, materials — the same `native::model` the viewmodels use), the body bone a weapon hangs
+  from (`tag_weapon_right`), and one `.zba` clip per movement state
+  (`thirdperson::state::{STAND_IDLE, STAND_WALK, STAND_RUN, STAND_SPRINT, STAND_ADS, CROUCH_*,
+  PRONE_*, *_PISTOL}`). The states and the run-time fallback chains (`state::fallbacks`) live in
+  the manifest, so a body missing one stance still draws the nearest one.
+- **`ZW<vm>.zbw`** (world weapon): the weapon's `world_model` first, each converted combination's
+  world attachment on its `worldModelTag` (or the model's origin when BO2 names no tag) at BO2's
+  `world_offset`/`world_rotation`, plus the combination's `hideTags`. **The offsets stay in BO2
+  inches** (the native blobs' unit); the W3D path scales them, and scaling the native ones would
+  apply `SCALE` twice at draw. The manifest is per converted weapon index, so a weapon switch
+  reloads only the weapon — the body never names one.
+
+**Gotcha — the body clip names are not all proven.** The W3D conversion only ever used
+`pb_stand_alert`, `pb_stand_alert_pistol`, `pb_stand_ads`, `pb_stand_ads_pistol` and
+`pb_combatrun_forward_loop`; the walk, crouch, prone and sprint clips were never converted and
+their exact spelling is not in the repo or the reference dump. `zhbo-assets::thirdperson` resolves
+each state by a candidate list (the known names first) and then by scanning `common_mp`'s XAnim
+assets for a name with the state's words and none of another stance's (backward/left/right, pistol,
+ads, transitions). The scan is unit-tested with representative spellings; which names a real
+install actually has is what the real-install test's strict "every state has a clip" assertion
+will report (it names the state and the model in its panic). A state that genuinely does not exist
+in MP falls back at run time.
+
+Tests: `zhbo-native` 20 (the two manifests round-trip, every prefix refused, the fallback chains);
+`zhbo-assets` 43 + 8 ignored, including the resolver's word scan; the real-install
+`converts_from_real_install` now also runs `native_bodies_are_whole`: every faction body reads
+back as a 66–78-inch body with a `tag_weapon_right` bone, every state's clip reads back, all body
+and weapon textures are in the archive, and the body composes with **every** world weapon (and
+each world weapon composes alone) with no missing tag. **Not run here — this machine has no BO2
+install; the integrator's run is the first real check of the clip names.** Archive `VERSION`
+(`zhbo_assets::hud`) needs a bump for the new blobs, deliberately left to the integrator.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

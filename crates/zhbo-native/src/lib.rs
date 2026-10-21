@@ -10,6 +10,8 @@
 //! * [`anim`]: an animation (`.zba`): per-bone keyframe tracks and notetracks.
 //! * [`viewmodel`]: a first-person viewmodel (`.zbv`): which models hang from which tags, the extra
 //!   tags the converter adds (`tag_sights`), the bones to hide, and the clip of each BO2 slot.
+//! * [`thirdperson`]: a third-person body (`.zbc`: the faction's MP body and one clip per movement
+//!   state) and a weapon's world model with its world attachments (`.zbw`).
 //! * [`pose`]: BO2's `DObj` composition (attached models share the skeleton by tag), sampling a
 //!   clip, layering, notetrack crossing and the skinning palette.
 //!
@@ -21,6 +23,7 @@ pub mod math;
 pub mod model;
 pub mod pose;
 pub mod tga;
+pub mod thirdperson;
 pub mod viewmodel;
 
 pub use io::FormatError;
@@ -61,6 +64,16 @@ pub fn viewmodel_path(vm: i32, faction: char) -> String {
     format!("{DIR}ZV{vm:02}{faction}.zbv")
 }
 
+/// The archive path of faction `faction`'s third-person body manifest (`U`, `C`, `G`).
+pub fn body_path(faction: char) -> String {
+    format!("{DIR}ZB{faction}.zbc")
+}
+
+/// The archive path of converted weapon `vm`'s world-model manifest.
+pub fn world_weapon_path(vm: i32) -> String {
+    format!("{DIR}ZW{vm:02}.zbw")
+}
+
 /// A BO2 asset name as a file name: BO2 names may start with `,` or carry `/`.
 fn file_stem(name: &str) -> String {
     name.trim_start_matches(',').chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect()
@@ -87,6 +100,8 @@ mod tests {
         assert_eq!(model_path("viewmodel_usa_seals_arms"), "Art\\Native\\viewmodel_usa_seals_arms.zbm");
         assert_eq!(anim_path(",viewmodel_an94_reload"), "Art\\Native\\viewmodel_an94_reload.zba");
         assert_eq!(viewmodel_path(3, 'U'), "Art\\Native\\ZV03U.zbv");
+        assert_eq!(body_path('U'), "Art\\Native\\ZBU.zbc");
+        assert_eq!(world_weapon_path(7), "Art\\Native\\ZW07.zbw");
         assert_eq!(model_path("a/b c"), "Art\\Native\\a_b_c.zbm");
     }
 }

@@ -255,6 +255,17 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let (vm_summary, mut clips) = viewmodels::weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &atts, &mut table.weapons, &converted)?;
     summary.push(vm_summary);
 
+    // Track R7: the third-person body's clips. BO2's MP bodies share the player skeleton, so one
+    // set serves every faction; each faction's body manifest names them (`zhbo_native::body_path`).
+    let (body_clips, body_unresolved) = crate::thirdperson::clips(&common);
+    for c in &body_clips {
+        crate::native::put_anim(&mut out, &c.anim);
+    }
+    if !body_unresolved.is_empty() {
+        summary.push(format!("native body clips missing for states {body_unresolved:?}"));
+    }
+    summary.push(format!("native body clips: {}", body_clips.iter().map(|c| format!("{}=`{}`", c.state, c.anim.name)).collect::<Vec<_>>().join(", ")));
+
     // The soldiers: body, every converted weapon in the right hand (one shown at a time), and the
     // tablet.
     let mut rig = Rig::new(&xmodel::find(&zones[0], FACTIONS[0].body).map_err(|e| e.to_string())?, &[(&weapon, character::WEAPON_TAG)]);
@@ -276,6 +287,17 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     for (f, zone) in FACTIONS.iter().zip(&zones) {
         let body = xmodel::find(zone, f.body).map_err(|e| e.to_string())?;
         let body_tex = textures::textures(&body, &paks, &mut out, &mut looks);
+        // Track R7: the same body as a native blob (skeleton, skin weights and surfaces), with the
+        // clip of every movement state, for the renderer's native BO2 pass.
+        let native_body = crate::native::model(&body, &body_tex, &looks);
+        let native_body_path = crate::native::put_model(&mut out, &native_body);
+        let body_manifest = zhbo_native::thirdperson::Body {
+            faction: f.letter as u8,
+            model: native_body_path,
+            weapon_tag: character::WEAPON_TAG.to_string(),
+            clips: body_clips.iter().map(|c| (c.state, zhbo_native::anim_path(&c.anim.name))).collect(),
+        };
+        out.insert(zhbo_native::body_path(f.letter), body_manifest.to_bytes());
         let mut meshes = character::skin(&rig, &body, "B", &body_tex);
         textures::finish(&mut meshes, &looks);
         meshes.extend(held.iter().cloned());
@@ -678,6 +700,68 @@ mod tests {
             for (_, clip) in &vm.clips {
                 Anim::from_bytes(file(clip).unwrap_or_else(|| panic!("{path}: no {clip}"))).unwrap_or_else(|e| panic!("{clip}: {e}"));
             }
+        }
+        native_bodies_are_whole(files);
+    }
+
+    /// Track R7: every faction body reads back, is a 72-inch player with its weapon tag and every
+    /// movement state's clip, and composes with a world weapon and its world attachments without a
+    /// missing tag; its textures and the weapon's are in the archive.
+    fn native_bodies_are_whole(files: &[(String, Vec<u8>)]) {
+        use zhbo_native::thirdperson::{state, Body, Weapon};
+        use zhbo_native::{anim::Anim, model::Model, pose::{PartRef, Skeleton}};
+        let file = |path: &str| files.iter().find(|(p, _)| p == path).map(|(_, b)| b.as_slice());
+        let model = |path: &str| Model::from_bytes(file(path).unwrap_or_else(|| panic!("no model {path}"))).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let textures_are_in = |m: &Model, what: &str| {
+            for mat in &m.materials {
+                for t in mat.color.iter().chain(&mat.maps) {
+                    assert!(file(t).is_some(), "{what}: texture {t} not written");
+                }
+            }
+        };
+        let bodies: Vec<&(String, Vec<u8>)> = files.iter().filter(|(p, _)| p.ends_with(".zbc")).collect();
+        assert_eq!(bodies.len(), FACTIONS.len(), "one body manifest per faction");
+        let weapons: Vec<&(String, Vec<u8>)> = files.iter().filter(|(p, _)| p.ends_with(".zbw")).collect();
+        assert!(!weapons.is_empty(), "no world weapon manifests");
+        println!("native third person: {} bodies, {} world weapons", bodies.len(), weapons.len());
+        for (path, bytes) in &bodies {
+            let body = Body::from_bytes(bytes).unwrap_or_else(|e| panic!("{path}: {e}"));
+            let bm = model(&body.model);
+            textures_are_in(&bm, &body.model);
+            // A BO2 MP player body is a 72-inch soldier in its own (inch) space.
+            let height = bm.maxs[2] - bm.mins[2];
+            assert!((66.0..=78.0).contains(&height), "{}: {height} inches tall", body.model);
+            assert!(bm.bone(&body.weapon_tag).is_some(), "{path}: no {} bone", body.weapon_tag);
+            // Every movement state resolves to a clip in the archive, and reads back.
+            for st in 1..=state::COUNT {
+                let clip = body.clip(st).unwrap_or_else(|| panic!("{path}: no clip for state {st}"));
+                Anim::from_bytes(file(clip).unwrap_or_else(|| panic!("{path}: no {clip}"))).unwrap_or_else(|e| panic!("{clip}: {e}"));
+            }
+            // Composes with every converted world weapon on its weapon tag, no missing tags.
+            for (wpath, wbytes) in &weapons {
+                let w = Weapon::from_bytes(wbytes).unwrap_or_else(|e| panic!("{wpath}: {e}"));
+                let models: Vec<Model> = w.parts.iter().map(|p| model(&p.model)).collect();
+                for m in &models {
+                    textures_are_in(m, wpath);
+                }
+                let mut parts: Vec<PartRef> = Vec::with_capacity(models.len() + 1);
+                parts.push(PartRef { model: &bm, tag: None, offset: crate::xf::IDENTITY, rigid: false });
+                // The world model hangs on the body's weapon tag; its attachments on its bones.
+                parts.push(PartRef { model: &models[0], tag: Some(body.weapon_tag.as_str()), offset: w.parts[0].offset, rigid: true });
+                for (p, m) in w.parts.iter().zip(&models).skip(1) {
+                    parts.push(PartRef { model: m, tag: p.tag.as_deref(), offset: p.offset, rigid: true });
+                }
+                let (_, problems) = Skeleton::compose(&parts, &[], &w.hide);
+                assert!(problems.is_empty(), "{path} + {wpath}: {problems:?}");
+            }
+        }
+        // A world weapon composes on its own too (the weapon-only mode, while the W3D body draws).
+        for (wpath, wbytes) in &weapons {
+            let w = Weapon::from_bytes(wbytes).unwrap_or_else(|e| panic!("{wpath}: {e}"));
+            let models: Vec<Model> = w.parts.iter().map(|p| model(&p.model)).collect();
+            let parts: Vec<PartRef> = w.parts.iter().zip(&models).map(|(p, m)| PartRef { model: m, tag: p.tag.as_deref(), offset: p.offset, rigid: true }).collect();
+            let (_, problems) = Skeleton::compose(&parts, &[], &w.hide);
+            assert!(problems.is_empty(), "{wpath}: {problems:?}");
         }
     }
 }

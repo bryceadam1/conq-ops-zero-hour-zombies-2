@@ -207,6 +207,32 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
 * ABI: the functions and `ZhboNativeIn` (168 bytes) / `ZhboNativeLight` (24) are new; the header and
   Rust carry size asserts. They need the `ZHBO_ABI_VERSION` bump with their merge.
 
+## The native third person (Track R7)
+
+The converter also writes the General's third-person art as native blobs, so the renderer can draw
+him and the weapon in his hand instead of the W3D conversion. Presentation only, as the viewmodel:
+the sim's General object is unchanged, and Zero Hour still owns his health, targeting and death.
+
+* **The body.** `zhbo-assets` writes each faction's MP body (`c_usa_mp_seal6_assault_fb`,
+  `c_chn_mp_pla_assault_fb`, `c_mul_mp_pmc_assault_fb`) as one `.zbm` (skeleton, four-bone skin,
+  surfaces and materials, in BO2 inches) and a `ZB<faction>.zbc` manifest naming it, the body bone
+  a weapon hangs from (`tag_weapon_right`), and one `.zba` clip per movement state
+  (`zhbo_native::thirdperson::state`: stand idle/walk/run/sprint/ADS, crouch idle/walk/ADS, prone
+  idle/crawl, the pistol's idle and ADS). The clips are BO2's `pb_*` MP body animations. The
+  converter tries the names the W3D conversion already proves (`pb_stand_alert`,
+  `pb_combatrun_forward_loop`, ...) and then scans `common_mp` for a plausible one, because the
+  exact spelling of the stances the W3D path never needed (walk, crouch, prone) can differ between
+  installs; a state the body has no clip for falls back to the nearest stance and gait at run time
+  (`state::fallbacks`).
+* **The weapon.** Each converted weapon's `world_model` and its attachments' world models are
+  written as `.zbm` blobs and a `ZW<vm>.zbw` manifest: the world model first, each attachment on
+  its `worldModelTag` (or the model's origin when BO2 names no tag) at BO2's world offset, and the
+  combination's `hideTags`. Offsets stay in BO2 inches; the renderer's scale is applied once, at
+  draw. The body manifest never names a weapon: the core composes the two at run time, so a weapon
+  switch reloads only the weapon.
+* **Archive.** These are more files in `ConquerOps_BO2.big`; `zhbo_assets::hud::VERSION` must be
+  bumped whenever converter output changes (left to the integrator on this branch).
+
 ## Lifecycle
 
 1. `GameEngine::init` end → `Zhbo_Init`: ABI check, **requirements check (both games must be installed,
