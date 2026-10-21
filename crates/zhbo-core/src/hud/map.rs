@@ -1,13 +1,37 @@
-//! The rotating minimap and the compass strip under it.
+//! The rotating minimap and the compass strip under it, in `CoD.Compass.AddMinimap`'s boxes
+//! (`patch_mp/ui/t6/hud/compass.lua:70-242`): the container 13..163 x 7..187 from the safe area's
+//! top-left; the map fills it but its bottom 30 (a 150 x 150 square), and the strip runs 32..6 above
+//! the container's bottom over a black 0.25 plate with a 0.25 white border, drawing
+//! `hud_horizontal_compass_minimap` with `shaderVector0.x` 0.673 (the share of the art in view).
+//! The map's content is Zero Hour's (team-coloured dots, the deliberate divergence).
 
+use super::frame::Lui;
 use super::*;
+use crate::lui::{Place, Rect};
+
+/// `shaderVector0.x` of the strip (compass.lua:206).
+pub const STRIP_VIEW: f32 = 0.673;
+
+/// The minimap container, in LUI units.
+pub fn container(l: &Lui) -> Rect {
+    Place::new((true, false, 13.0, 163.0), (true, false, 7.0, 187.0)).resolve(l.screen())
+}
+
+/// The map square and the strip, in pixels.
+pub fn boxes(l: &Lui) -> (Rect, Rect) {
+    let c = container(l);
+    let map = Place::new((true, true, 0.0, 0.0), (true, true, 0.0, -30.0)).resolve(c);
+    let strip = Place::new((true, true, 0.0, 0.0), (false, true, -32.0, -6.0)).resolve(c);
+    (l.px(map), l.px(strip))
+}
 
 /// Rotating minimap: you at the centre facing up, friendlies blue, enemies red (your army acts as
 /// a permanent UAV), structures as squares. Returns its bottom edge.
-pub(super) fn draw_minimap(host: &dyn ClientHost, prims: &mut Vec<Prim>, s: f32, yaw: f32, p: &PlayerSim, reveal: &dyn Fn(Vec3) -> bool) -> f32 {
-    let size = 150.0 * s;
-    // BO2 keeps it tight in the corner; just below Zero Hour's message line (EVA notices).
-    let (x0, y0) = (14.0 * s, 30.0 * s);
+pub(super) fn draw_minimap(host: &dyn ClientHost, prims: &mut Vec<Prim>, l: &Lui, yaw: f32, p: &PlayerSim, reveal: &dyn Fn(Vec3) -> bool) {
+    let (m, _) = boxes(l);
+    let s = l.root.scale;
+    let size = m.w;
+    let (x0, y0) = (m.x, m.y);
     let (cx, cy) = (x0 + size * 0.5, y0 + size * 0.5);
     prims.push(Prim::Rect { x: x0, y: y0, w: size, h: size, argb: 0xB02A_2E33 });
     // BO2's thin light frame.
@@ -74,27 +98,29 @@ pub(super) fn draw_minimap(host: &dyn ClientHost, prims: &mut Vec<Prim>, s: f32,
         argb: 0xFFFF_FFFF,
         fallback,
     });
-    y0 + size
 }
 
 /// BO2's compass strip under the minimap (`hud_horizontal_compass_minimap`: a full turn, N at the
 /// left), scrolled so the view heading is in the middle of the window.
-pub(super) fn draw_compass(prims: &mut Vec<Prim>, s: f32, yaw: f32, top: f32) {
-    let (x0, width, height) = (14.0 * s, 150.0 * s, 22.0 * s);
-    let y0 = top + 2.0 * s;
-    prims.push(Prim::Rect { x: x0, y: y0, w: width, h: height, argb: 0x8018_1A1C });
+pub(super) fn draw_compass(prims: &mut Vec<Prim>, l: &Lui, yaw: f32) {
+    let (_, b) = boxes(l);
+    let s = l.root.scale;
+    let (x0, y0, width, height) = (b.x, b.y, b.w, b.h);
+    prims.push(Prim::Rect { x: x0, y: y0, w: width, h: height, argb: 0x4000_0000 });
+    outline_rect(prims, x0, y0, width, height, 1.0, 0x40FF_FFFF);
     let cx = x0 + width * 0.5;
     // Heading in compass degrees: yaw 0 is east (+x), north is +y.
     let heading = (90.0 - yaw.to_degrees()).rem_euclid(360.0);
-    // The window shows half a turn; the art's N sits 8/512 in from its left edge.
-    let strip = width * 2.0;
+    // The window shows `STRIP_VIEW` of the turn; the art's N sits 8/512 in from its left edge.
+    let strip = width / STRIP_VIEW;
     let north_x = cx - heading / 360.0 * strip;
     let left = north_x - strip * 8.0 / 512.0;
     prims.push(Prim::ClipBegin { x: x0, y: y0, w: width, h: height });
     // Fallback: ticks and letters (the art unclips first, like the direct path did).
     let mut fallback = vec![Prim::ClipEnd];
-    let px_per_deg = width / 180.0;
-    for i in ((heading - 90.0) / 15.0).ceil() as i32..=((heading + 90.0) / 15.0).floor() as i32 {
+    let half_view = 180.0 * STRIP_VIEW;
+    let px_per_deg = width / (2.0 * half_view);
+    for i in ((heading - half_view) / 15.0).ceil() as i32..=((heading + half_view) / 15.0).floor() as i32 {
         let deg = i as f32 * 15.0;
         let x = cx + (deg - heading) * px_per_deg;
         match (deg.rem_euclid(360.0) as i32 + 360) % 360 {

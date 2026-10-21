@@ -516,6 +516,28 @@ impl Zone {
             .filter(|a| a.kind == kind)
             .find(|a| self.asset_name(a).is_some_and(|n| n.trim_start_matches(',') == name))
     }
+
+    /// Every address holding `name` as a NUL-terminated string (an inline struct's name).
+    pub fn strings(&self, name: &str) -> Vec<u32> {
+        let needle: Vec<u8> = name.bytes().chain([0]).collect();
+        let mut out = Vec::new();
+        let mut at = 0;
+        while let Some(i) = self.mem[at..].windows(needle.len()).position(|w| w == needle.as_slice()) {
+            let addr = at + i;
+            // A whole string, not the tail of a longer one.
+            if addr == 0 || self.mem[addr - 1] == 0 || self.mem[addr - 1] == b',' {
+                out.push(addr as u32);
+            }
+            at = addr + 1;
+        }
+        out
+    }
+
+    /// Every 4-byte-aligned field whose value is `target` (the structs pointing at it).
+    pub fn pointers_to(&self, target: u32) -> Vec<u32> {
+        let want = target.to_le_bytes();
+        self.mem.chunks_exact(4).enumerate().filter(|(_, c)| *c == want).map(|(i, _)| 4 * i as u32).collect()
+    }
 }
 
 fn bad_addr(addr: u32, len: u32) -> FormatError {

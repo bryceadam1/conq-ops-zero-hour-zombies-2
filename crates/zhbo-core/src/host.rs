@@ -162,6 +162,12 @@ pub trait ClientHost {
     }
     /// Show the placement ghost of `template` at `pos` (legal or not); `template` 0 hides it.
     fn ghost(&self, _template: u32, _pos: Vec3, _angle: f32, _legal: bool) {}
+    /// Draw a MappedImage on an arbitrary quad: `corners` take the image's top-left, top-right,
+    /// bottom-right and bottom-left in that order (BO2 rotates its damage indicators and crosshair
+    /// pieces). Returns false when unsupported or the image is missing, so callers fall back.
+    fn image_quad(&self, _name: &str, _corners: [(f32, f32); 4], _argb: u32) -> bool {
+        false
+    }
 }
 
 // ---------------------------------------------------------------------------------------------

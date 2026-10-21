@@ -316,9 +316,31 @@ fn read_surface(z: &Zone, sh: u32) -> Result<Surface, FormatError> {
 
 /// A material asset by name (2D HUD art is a material too), or `None` if the zone has none.
 pub fn find_material(z: &Zone, name: &str) -> Option<Material> {
+    find_asset_material(z, name).or_else(|| find_inline_material(z, name))
+}
+
+/// A material that is one of the zone's own assets (fast; [`find_material`] also scans for
+/// inline ones).
+pub fn find_asset_material(z: &Zone, name: &str) -> Option<Material> {
     let kind = crate::fastfile::asset_type_id("material")?;
     let asset = z.find(kind, name).or_else(|| z.find(kind, &format!(",{name}")))?;
     Some(read_material(z, asset.addr))
+}
+
+/// A material that is not one of the zone's own assets but is loaded inline inside another (a
+/// weapon's or menu's), as many HUD icons are (`hud_mp_firerate_*` in `common_mp`): its name
+/// string, then a field pointing at it that starts a `Material` with that name and an image.
+pub fn find_inline_material(z: &Zone, name: &str) -> Option<Material> {
+    z.strings(name).into_iter().flat_map(|s| z.pointers_to(s)).find_map(|m| {
+        // A real Material: its texture count fits its table and its images have sizes. A name
+        // pointer alone also matches a reference stub or another struct's name field.
+        if z.u8(m + 84) == 0 || z.u8(m + 84) > 32 {
+            return None;
+        }
+        let mat = read_material(z, m);
+        let sized = |t: &Texture| t.image.as_ref().is_some_and(|i| i.width > 0 && i.height > 0 && i.width <= 8192 && i.height <= 8192);
+        (mat.name == name && mat.textures.iter().all(sized)).then_some(mat)
+    })
 }
 
 pub fn read_material(z: &Zone, m: u32) -> Material {

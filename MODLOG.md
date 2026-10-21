@@ -1097,6 +1097,95 @@ W3D render of the same frame, the native colours wash out to grey (the AN-94's o
 dark gloves render light grey), and the gun sits a little higher. The colour map's sampling or the
 `bo2Shade` light balance is the first suspect.
 
+## v1.0 parity, Track H: BO2's HUD from its own Lua (2026-10-21)
+
+The first-person HUD is now a port of BO2's MP HUD Lua
+(`lua-dump/decompiled/patch_mp/ui_mp/t6/hud/`), built on Track 0's LUI layer. Every box keeps the
+Lua's numbers and anchors, every image is the material the Lua registers (converted as
+`ZHBO_Mat_<name>`, listed in `lui::materials::MATERIALS`), and the code-drawn parts follow Ghidra
+G6/G7. Element by element:
+
+1. **Ammo area** (`hud/ammo.rs`; `ammoarea.lua`, `offhandicons.lua`, `huddigit.lua`):
+   - The panel art (300 × 150), the offhand counters (24 px icons stacked left, alpha 0.75^n),
+     the fire-rate icon, and the alt-fire icon with its key.
+   - **HUD digits**: the `_white` art behind at offWhite α 0.6 and the plain art in front. The
+     background/foreground binding came from `setDigit`'s upvalues 3 and 4 in the bytecode.
+     Reserve digits are drawn small (×0.75) and the clip big, with a pen starting at
+     Right − 20 = −48. A low clip pulses red every 500 ms.
+   - **Weapon label**: the three-piece gun title in `SmallItalic`, black at α 0.5. Its width is
+     the text width − 18 + 128 and its visible width the text width − 18 + 30. Attachment labels
+     show for 2000 ms; with two or more, `CUSTOMIZED` replaces them, and the fire-rate icon fades
+     in over 200 ms with easeIn.
+2. **Score panel** (`hud/score.rs`; `scorebottomleft.lua`).
+   - **Gotcha:** unluac names every upvalue `arg`, so the numbers were recovered from the
+     bytecode (`build/t6lua.py disasm`). The `new` closure captures 28, 110, −87, 107, −48.
+   - The panel's left inset is 28; the decompiled "110" was a mislabel. The score sits at
+     x 28 + 110 = 138, y −87, and the digits pack from the first slot (leading zeros take no
+     space).
+   - **Divergence:** the Zero Hour faction logo, the army's radar colour on the backing, and the
+     player's funds as the number. There is no enemy score, timer or win status.
+3. **Streak column** (`hud/rewards.rs`; `rewardselection.lua`):
+   - The vertical list's slot tops are −302, −254, −218 and −182, with slots 64 × 64 and 24 in
+     from the right edge.
+   - **Divergence:** the bottom slot is the field computer (always lit) and the next one the
+     build menu.
+   - A slot's name shows for 1000 ms and fades over 250 ms.
+4. **Centre** (`hud/center.rs`):
+   - **Crosshair (G6):** the offset is `tan(spread)·240/tan(fovY/2)` in the 480-line space;
+     alpha is `1 − aimSpreadScale`, floored at 0.5.
+   - **Hit marker (G6):** `damage_feedback` 24 × 48 at (−12, −12) in the 480-line space, fading
+     over 1 s (`HITMARKER_TIME` 0.25 → 1.0). The red kill tint is gone, since BO2 has no kill
+     marker.
+   - **Score popup:** "+N" in `Condensed`, 40 right of and 75 above the centre, for 1000 ms
+     (`SCORE_POPUP_TIME` 1.4 → 1.0).
+5. **Damage** (`hud/damage.rs`, `hud/state.rs`; G7):
+   - **Low-health overlay:** the `overlay_low_health` state machine. Pulsing starts below 0.66
+     health and fades out above 0.9, with phases of 150, 320 and 400 ms and a 700 ms fade-out.
+     The old corner blood is gone.
+   - **Direction indicators:** 8 slots of 2 s each, opaque for the first half; each is a
+     128 × 64 band 64–128 units from the centre, drawn through the new `Prim::Quad` /
+     `ClientHost::image_quad`.
+6. **Minimap and compass** (`hud/map.rs`; `compass.lua:70-242`):
+   - The container is 13–163 × 7–187, with a 150 × 150 map.
+   - The strip sits 32–6 above the container's bottom on a black α 0.25 plate with a white α 0.25
+     border, showing `shaderVector0.x` 0.673 of a turn.
+7. **Scoreboard on Tab** (`hud/scoreboard.rs`):
+   - The columns are TDM's: SCORE, KILLS, DEATHS, ASSISTS, resolved from `en_code_post_gfx_mp`
+     (`MENU_SCORE_CAPS`, `MENU_KILLS_CAPS`, `MENU_DEATHS_CAPS`, `MPUI_ASSISTS_CAPS`).
+   - BO2 hides its HUD under the board (`BIT_SCOREBOARD_OPEN`), and so does the port.
+   - The tallies are client-side (`HudLui::kills/deaths`), and only the local player's row shows.
+     The widths come from the file's constants but their binding to each box is not fully
+     decoded: **approximate**.
+   - **The full map moves to M** (`Bindings::map`, default `Key::M`; `Bindings::scoreboard`
+     `Key::Tab`). The new key is a default for the user to review.
+
+**Pending:**
+- **Weapon table (Track W):** `reticleSide`, `iReticleSideSize`, `iReticleMinOfs` and
+  `crosshairColorChange`; BO2's fire type (the pump and bolt icons); the low-ammo warning
+  threshold (a third of the magazine is used meanwhile).
+- **Engine:** an `image_quad` C callback and the damage direction (CONTRACT.md). Without them
+  the indicators draw outlines and no slot fills. The view-damage HUD shake (`hudshaker.lua`)
+  also needs that direction.
+- **Not ported**, with no sim source: `scorefeed` rows (BO2 adds none for kills), the
+  obituary window, `notificationpopups`, `grenadeeffect` (proximity-grenade droplets), the
+  game timer, and the score popup's additive glow.
+
+## Integrating Track H: HUD materials loaded inline inside other assets (2026-10-21)
+
+The ported HUD asked for `hud_mp_firerate_*` and `overlay_low_health`. The launcher reported them
+"not in this install", although the reference catalog lists them in `common_mp`. They are not
+`common_mp` assets: they are `Material`s loaded **inline inside other assets** (the weapons), and
+`find_material` only looked at top-level assets. Searching for the name pointer alone matches
+reference stubs and other structs' name fields too, so `xmodel::find_inline_material` takes the
+name string, finds the fields pointing at it, and accepts only a struct that reads as a real
+`Material`: 1–32 textures, all with sized images. The real install then gives 64×64
+`hud_mp_firerate_auto` (`mp.ipak`) and 512×512 `overlay_low_health` (`base.ipak`). The scan is
+slow, so the archive build checks every zone's top-level assets before scanning any zone
+(`find_asset_material` first). The whole real-install archive build takes about 40 s in
+release. In game: the FULL-AUTO label and the red low-clip digits draw from BO2's art, and the
+autotest passes 13/13. Seen in the screenshots and **open**: the streak column shows only BUILD,
+without the field computer's slot, and a stray yellow "3" sits by the offhand icons.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

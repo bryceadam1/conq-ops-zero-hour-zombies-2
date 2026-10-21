@@ -60,7 +60,8 @@ that still has ammo.
 | Lethal (frag: hold to cook; Claymore, Betty: plant; C4: throw) | G |
 | Tactical (concussion; Trophy, Insertion: plant; Black Hat: hold on the target) | Q |
 | Field computer (back to RTS) | F |
-| Whole map (Zero Hour's radar, needs radar) | Tab (hold) |
+| Scoreboard (BO2's, Team Deathmatch columns) | Tab (hold) |
+| Whole map (Zero Hour's radar, needs radar) | M (hold) |
 | Game menu | Esc |
 
 ## Platforms

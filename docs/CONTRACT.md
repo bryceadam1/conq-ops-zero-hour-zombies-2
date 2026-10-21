@@ -268,6 +268,13 @@ resources, all from the player's own install and all named by the registry:
   single-player banks have stay missing, matching BO2's silent MP menus; the host logs each missing
   event once.
 
+The HUD (`crates/zhbo-core/src/hud/`) draws only through these and the existing callbacks. One
+more is wanted: `ClientHost::image_quad` draws a MappedImage on four arbitrary corners (BO2 rotates
+its damage-direction indicators and crosshair pieces). It is not on the C ABI yet, so the FFI host
+answers false and those prims draw their outline fallbacks. Adding it is an append to
+`ZhboClientApi` with a version bump. The damage indicators also need the engine to report where
+damage came from (`HudLui::damage_from`); until then no indicator shows.
+
 ## Tuning
 
 The gameplay tuning pack (`crates/zhbo-core/src/tuning.rs`, filled from

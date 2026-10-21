@@ -65,7 +65,7 @@
     }
 
     #[test]
-    fn holding_tab_opens_the_map() {
+    fn holding_m_opens_the_map_and_tab_the_scoreboard() {
         let host = FakeHost::default();
         host.add(general(1, 0));
         let mut sim = Sim::new();
@@ -76,12 +76,15 @@
         sim.choose_class(0, 1, 0, &[]);
         frame_with(&mut client, &mut sim, &host, &mut inp, 60);
         assert!(!client.hud.map_open);
-        inp.keys.set_down(Key::Tab, true);
+        inp.keys.set_down(Key::M, true);
         frame_with(&mut client, &mut sim, &host, &mut inp, 1);
-        assert!(client.hud.map_open);
-        inp.keys.set_down(Key::Tab, false);
+        assert!(client.hud.map_open && !client.hud.scoreboard_open);
+        inp.keys.set_down(Key::M, false);
         frame_with(&mut client, &mut sim, &host, &mut inp, 1);
         assert!(!client.hud.map_open);
+        inp.keys.set_down(Key::Tab, true);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 1);
+        assert!(client.hud.scoreboard_open && !client.hud.map_open);
     }
 
     #[test]

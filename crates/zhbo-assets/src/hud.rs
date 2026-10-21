@@ -16,7 +16,7 @@ use zhbo_formats::iwi::Rgba;
 use zhbo_formats::t6zone::Zone;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive.
-pub const VERSION: u32 = 44;
+pub const VERSION: u32 = 45;
 pub use zhbo_core::names::BO2_ARCHIVE_NAME as ARCHIVE_NAME;
 pub use zhbo_core::names::BO2_ARCHIVE_VERSION_PATH as VERSION_FILE;
 /// Stem of each page's TGA; every MappedImage names the page it was packed into.
@@ -231,11 +231,15 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                         }
                     }
                 }
-                ["common_mp", "code_post_gfx_mp", "patch_mp", "patch_ui_mp", "frontend"]
+                // Each zone's own assets first; only then the slow scan for a material loaded inline
+                // inside another asset (`hud_mp_firerate_*` lives inside `common_mp`'s weapons).
+                let order = ["common_mp", "code_post_gfx_mp", "patch_mp", "patch_ui_mp", "frontend"];
+                let image = |m: zhbo_formats::xmodel::Material| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash)).filter(|h| *h != 0);
+                order
                     .iter()
                     .filter_map(|z| zones.get(z))
-                    .filter_map(|z| zhbo_formats::xmodel::find_material(z, material))
-                    .find_map(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash)).filter(|h| *h != 0))
+                    .find_map(|z| zhbo_formats::xmodel::find_asset_material(z, material).and_then(image))
+                    .or_else(|| order.iter().filter_map(|z| zones.get(z)).find_map(|z| zhbo_formats::xmodel::find_inline_material(z, material).and_then(image)))
             }
         };
         match hash.and_then(|h| paks.image(h)) {
