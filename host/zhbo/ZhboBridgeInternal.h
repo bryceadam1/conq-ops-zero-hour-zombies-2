@@ -163,9 +163,24 @@ int32_t cbClientCanPlace(uint32_t generalId, uint32_t tmpl, const ZhboVec3 *pos,
 void cbGhost(uint32_t tmpl, const ZhboVec3 *pos, float angle, int32_t legal);
 
 // --- ZhboRtsWeapons.cpp -----------------------------------------------------------------------
+// MSG_ZHBO_TAKE_CONTROL's optional second argument: what the General is told to do.
+enum
+{
+	ZHBO_ACTION_TAKE_CONTROL = 0,
+	// The third slot's orders (zhbo_logic_rts_offhand's choice is the action minus one).
+	ZHBO_ACTION_LETHAL = 1,
+	ZHBO_ACTION_TACTICAL = 2,
+	ZHBO_ACTION_MELEE = 3,
+	ZHBO_ACTION_RELOAD = 4,
+};
 void rtsWeapons(UnsignedInt frame);
 Bool isGeneral(const Object *obj);
-Bool isTacticalButton(const CommandButton *button);
+/// The order a General's command button gives (ZHBO_ACTION_LETHAL/_TACTICAL/_MELEE/_RELOAD), or -1.
+Int rtsOrderAction(const CommandButton *button);
+/// Tell every client what each selected General is ordered to do (MSG_ZHBO_TAKE_CONTROL).
+void sendRtsOrder(Int action);
+/// Lockstep: carry out a General's order message (the logic step's MSG_ZHBO_TAKE_CONTROL).
+void applyRtsOrder(Int playerIndex, Object *general, Int action);
 void drawRtsAmmo();
 void applyWorldPoses();
 

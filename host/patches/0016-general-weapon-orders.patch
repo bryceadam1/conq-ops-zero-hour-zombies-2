@@ -1,0 +1,125 @@
+--- a/GeneralsMD/Code/GameEngine/Include/GameLogic/Object.h
++++ b/GeneralsMD/Code/GameEngine/Include/GameLogic/Object.h
+@@ -549,6 +549,8 @@
+ 	inline Bool testWeaponSetFlag(WeaponSetType wst) const { return m_curWeaponSetFlags.test(wst); }
+ 	inline const WeaponSetFlags& getWeaponSetFlags() const { return m_curWeaponSetFlags; }
+ 	Bool setWeaponLock( WeaponSlotType weaponSlot, WeaponLockType lockType ){ return m_weaponSet.setWeaponLock( weaponSlot, lockType ); }
++	// ZHBO: the Conquer Ops General's weapons follow his class and his orders (WeaponSet::zhboSetSlotWeapon)
++	void zhboSetSlotWeapon( WeaponSlotType weaponSlot, const WeaponTemplate *tmpl ){ m_weaponSet.zhboSetSlotWeapon( this, weaponSlot, tmpl ); }
+ 	void releaseWeaponLock(WeaponLockType lockType){ m_weaponSet.releaseWeaponLock(lockType); }
+ 	Bool isCurWeaponLocked() const { return m_weaponSet.isCurWeaponLocked(); }
+ 
+--- a/GeneralsMD/Code/GameEngine/Include/GameLogic/WeaponSet.h
++++ b/GeneralsMD/Code/GameEngine/Include/GameLogic/WeaponSet.h
+@@ -218,6 +218,9 @@
+ 	~WeaponSet();
+ 
+ 	void updateWeaponSet(const Object* obj);
++	// ZHBO: put a weapon of another template in one slot (the Conquer Ops General's class weapons
++	// and his third-slot orders)
++	void zhboSetSlotWeapon(const Object* obj, WeaponSlotType wslot, const WeaponTemplate* tmpl);
+ 	void reloadAllAmmo(const Object *obj, Bool now);
+ 	Bool isOutOfAmmo() const;
+ 	Bool hasAnyWeapon() const { return m_filledWeaponSlotMask != 0; }
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/WeaponSet.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/WeaponSet.cpp
+@@ -313,7 +313,39 @@
+ // ------------------------------------------------------------------------------------------------
+ void WeaponSet::loadPostProcess()
+ {
++
++}
+ 
++//-------------------------------------------------------------------------------------------------
++// ZHBO: the slot gets a fresh weapon of `tmpl` (a full clip); the lock and the current choice
++// stay. The old weapon is deleted at the end of the frame, like updateWeaponSet's. A saved
++// weapon keeps its template by name (Weapon::xfer), so a swap survives save/load.
++void WeaponSet::zhboSetSlotWeapon(const Object* obj, WeaponSlotType wslot, const WeaponTemplate* tmpl)
++{
++	if (tmpl == nullptr || wslot < PRIMARY_WEAPON || wslot >= WEAPONSLOT_COUNT)
++		return;
++	if (m_weapons[wslot] != nullptr && m_weapons[wslot]->getTemplate() == tmpl)
++		return;
++	TheWeaponStore->deleteWeaponDeferred(m_weapons[wslot]);
++	m_weapons[wslot] = TheWeaponStore->allocateNewWeapon(tmpl, wslot);
++	m_weapons[wslot]->loadAmmoNow(obj);
++	m_filledWeaponSlotMask = 0;
++	m_totalAntiMask = 0;
++	m_totalDamageTypeMask.clear();
++	m_hasPitchLimit = false;
++	m_hasDamageWeapon = false;
++	for (Int i = PRIMARY_WEAPON; i < WEAPONSLOT_COUNT; ++i)
++	{
++		if (m_weapons[i] == nullptr)
++			continue;
++		m_filledWeaponSlotMask |= (1 << i);
++		m_totalAntiMask |= m_weapons[i]->getAntiMask();
++		m_totalDamageTypeMask.set(m_weapons[i]->getDamageType());
++		if (m_weapons[i]->isPitchLimited())
++			m_hasPitchLimit = true;
++		if (m_weapons[i]->isDamageWeapon())
++			m_hasDamageWeapon = true;
++	}
+ }
+ 
+ //-------------------------------------------------------------------------------------------------
+--- a/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBarCommand.cpp
++++ b/Core/GameEngine/Source/GameClient/GUI/ControlBar/ControlBarCommand.cpp
+@@ -1284,7 +1284,15 @@
+ 
+ 			// no ai, can't possibly fire weapon
+ 			if( ai == nullptr )
++				return COMMAND_RESTRICTED;
++
++			// ZHBO: a General's lethal, tactical and melee orders share the third slot; what is left
++			// of each decides, not the slot's weapon
++			const Int zhboOrder = Zhbo_WeaponButtonState( obj, command );
++			if( zhboOrder == 0 )
+ 				return COMMAND_RESTRICTED;
++			if( zhboOrder == 1 )
++				return COMMAND_AVAILABLE;
+ 
+ 			// ask the ai if the weapon is ready to fire
+ 			const Weapon* w = obj->getWeaponInWeaponSlot( command->getWeaponSlot() );
+--- a/Core/GameEngine/Source/GameClient/MessageStream/CommandXlat.cpp
++++ b/Core/GameEngine/Source/GameClient/MessageStream/CommandXlat.cpp
+@@ -90,6 +90,7 @@
+ #include "GameNetwork/GameSpy/BuddyThread.h"
+ 
+ #include "WW3D2/ww3d.h"
++#include "ZhboBridge.h" // ZHBO
+ 
+ #if defined(RTS_DEBUG)
+ /*non-static*/ Real TheSkateDistOverride = 0.0f;
+@@ -1342,6 +1343,7 @@
+ 			msgType = GameMessage::MSG_DO_WEAPON_AT_LOCATION;
+ 			if( commandType == DO_COMMAND )
+ 			{
++				Zhbo_OnFireWeaponCommand( command ); // ZHBO: a General's order picks his third slot first
+ 				GameMessage *msg;
+ 				msg = TheMessageStream->appendMessage( msgType );
+ 				msg->appendIntegerArgument( command->getWeaponSlot() );
+@@ -1357,6 +1359,7 @@
+ 			msgType = GameMessage::MSG_DO_WEAPON_AT_OBJECT;
+ 			if( commandType == DO_COMMAND )
+ 			{
++				Zhbo_OnFireWeaponCommand( command ); // ZHBO: a General's order picks his third slot first
+ 				GameMessage *msg;
+ 				msg = TheMessageStream->appendMessage( msgType );
+ 				msg->appendIntegerArgument( command->getWeaponSlot() );
+@@ -1378,6 +1381,7 @@
+ 		msgType = GameMessage::MSG_DO_WEAPON_AT_LOCATION;
+ 		if( commandType == DO_COMMAND )
+ 		{
++			Zhbo_OnFireWeaponCommand( command ); // ZHBO: a General's order picks his third slot first
+ 			GameMessage *msg;
+ 			msg = TheMessageStream->appendMessage( msgType );
+ 			msg->appendIntegerArgument( command->getWeaponSlot() );
+@@ -1394,6 +1398,7 @@
+ 		msgType = GameMessage::MSG_DO_WEAPON;
+ 		if( commandType == DO_COMMAND )
+ 		{
++			Zhbo_OnFireWeaponCommand( command ); // ZHBO: a General's order picks his third slot first
+ 			GameMessage *msg;
+ 			msg = TheMessageStream->appendMessage( msgType );
+ 			DEBUG_ASSERTCRASH( (command->getSpecialPowerTemplate()), ("No Special Power Weapon here to 'do' with! ML"));

@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 21u
+#define ZHBO_ABI_VERSION 22u
 
 /* Field counts of the API tables below. The Rust side derives its layout asserts and
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
@@ -363,20 +363,39 @@ void zhbo_menu_frame(const ZhboMenuIn *in, ZhboMenuOut *out);
 void zhbo_menu_close(void);
 const uint16_t *zhbo_string(const char *label);
 int32_t zhbo_client_world_poses(ZhboWorldPose *out, int32_t cap);
-/* The General's Zero Hour weapon slots (primary, secondary, lethal) under RTS control
-   (zhbo_core::sim::RtsWeapons). */
+/* The General's Zero Hour weapon slots (primary, secondary, the third slot's order) under RTS
+   control (zhbo_core::sim::RtsWeapons). */
+#define ZHBO_RTS_WEAPON_NAME_CAP 48
 typedef struct ZhboRtsWeapons
 {
-	int32_t ammo[3];    /* rounds in the magazine; grenades for the lethal */
+	int32_t ammo[3];    /* rounds in the magazine; for the third slot, what its order has left */
 	int32_t reserve[3]; /* spare rounds */
 	int32_t lock;       /* slot to lock to, -1 none */
 	int32_t tactical;   /* tactical grenades left */
-	int32_t tactical_selected; /* the third slot throws the tactical (else the lethal) */
+	int32_t tactical_selected; /* the offhand orders use the tactical (else the lethal) */
+	/* ABI 22: */
+	int32_t third;      /* the third slot's order: 0 lethal, 1 tactical, 2 one knife strike */
+	int32_t lethal;     /* lethals left */
+	int32_t orders;     /* orders that can be given, bit per `third` value */
+	char templates[3][ZHBO_RTS_WEAPON_NAME_CAP]; /* the Zero Hour weapon each slot must hold, or "" to keep it */
 } ZhboRtsWeapons;
 /* target: where the third slot's throw lands (the AI's victim or attack point), or null. */
 void zhbo_logic_rts_update(int32_t player, uint32_t general, int32_t current_slot, const uint32_t *shots, const ZhboVec3 *target, ZhboRtsWeapons *out);
-void zhbo_logic_rts_offhand(int32_t player, uint32_t general, int32_t tactical);
+/* The third slot's next order (`third` above). Lockstep: from MSG_ZHBO_TAKE_CONTROL. */
+void zhbo_logic_rts_offhand(int32_t player, uint32_t general, int32_t choice);
 void zhbo_client_rts_ammo(uint32_t general, ZhboRtsWeapons *out);
+/* ABI 22: the reload order for the gun in `current_slot` (or the one he goes back to); returns the
+   slot topped up, whose Zero Hour weapon must start reloading, or -1. Lockstep: from
+   MSG_ZHBO_TAKE_CONTROL. */
+int32_t zhbo_logic_rts_reload(int32_t player, uint32_t general, int32_t current_slot);
+/* ABI 22: a General's kit icons for his command bar (zhbo_core::sim::RtsIcons), drawn over the
+   plain tiles of his gun and order buttons; "" while he is classless. */
+enum { ZHBO_RTS_ICON_PRIMARY, ZHBO_RTS_ICON_SECONDARY, ZHBO_RTS_ICON_LETHAL, ZHBO_RTS_ICON_TACTICAL, ZHBO_RTS_ICON_KNIFE, ZHBO_RTS_ICONS };
+typedef struct ZhboRtsIcons
+{
+	char icons[ZHBO_RTS_ICONS][ZHBO_RTS_WEAPON_NAME_CAP];
+} ZhboRtsIcons;
+void zhbo_client_rts_icons(uint32_t general, ZhboRtsIcons *out);
 /* The command bar's class buttons, in button order (the five presets then the profile's ten slots);
    returns how many rows were written. */
 int32_t zhbo_class_buttons(ZhboClassButton *out, int32_t cap);
@@ -398,7 +417,8 @@ static_assert(sizeof(ZhboMenuIn) == 56, "ZhboMenuIn layout must match menu.rs");
 static_assert(sizeof(ZhboMenuOut) == 4108, "ZhboMenuOut layout must match menu.rs");
 static_assert(sizeof(ZhboLogicApi) == ZHBO_LOGIC_API_FIELDS * sizeof(void *), "ZhboLogicApi layout must match host.rs");
 static_assert(sizeof(ZhboWorldPose) == 16, "ZhboWorldPose layout must match ffi.rs");
-static_assert(sizeof(ZhboRtsWeapons) == 36, "ZhboRtsWeapons layout must match sim.rs");
+static_assert(sizeof(ZhboRtsWeapons) == 192, "ZhboRtsWeapons layout must match sim/rts.rs");
+static_assert(sizeof(ZhboRtsIcons) == 240, "ZhboRtsIcons layout must match sim/rts.rs");
 static_assert(sizeof(ZhboClassButton) == 756, "ZhboClassButton layout must match ffi.rs");
 static_assert(sizeof(ZhboClientApi) == ZHBO_CLIENT_API_FIELDS * sizeof(void *), "ZhboClientApi layout must match host.rs");
 static_assert(sizeof(ZhboBuildOption) == 64, "ZhboBuildOption layout must match building.rs");

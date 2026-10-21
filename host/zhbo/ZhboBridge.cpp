@@ -75,14 +75,6 @@
 
 extern "C" void GGC_RequestBgfxFramebufferRebuild(); // BgfxBackend.cpp
 
-// MSG_ZHBO_TAKE_CONTROL's optional second argument.
-enum
-{
-	ZHBO_ACTION_TAKE_CONTROL = 0,
-	ZHBO_ACTION_LETHAL = 1,
-	ZHBO_ACTION_TACTICAL = 2,
-};
-
 namespace
 {
 
@@ -465,11 +457,11 @@ void Zhbo_OnTakeControlMessage(Int playerIndex, const GameMessage *msg)
 	// The same prefix test as everywhere else (isGeneral): "ZHBO_General_", not a shorter one.
 	if (!obj || !isGeneral(obj))
 		return;
-	// The same message, with an action, chooses the grenade the General's third slot throws.
+	// The same message, with an action, is an order for him under RTS control (ZhboRtsWeapons.cpp).
 	const Int action = msg->getArgumentCount() > 1 ? msg->getArgument(1)->integer : ZHBO_ACTION_TAKE_CONTROL;
-	if (action == ZHBO_ACTION_LETHAL || action == ZHBO_ACTION_TACTICAL)
+	if (action != ZHBO_ACTION_TAKE_CONTROL)
 	{
-		zhbo_logic_rts_offhand(playerIndex, (uint32_t)id, action == ZHBO_ACTION_TACTICAL ? 1 : 0);
+		applyRtsOrder(playerIndex, obj, action);
 		return;
 	}
 	zhbo_logic_take_control(playerIndex, (uint32_t)id);
@@ -887,6 +879,11 @@ void Zhbo_OnZhboCommand(Object *obj, const CommandButton *button)
 		zhboCloseClassSet(obj);
 		return;
 	}
+	if (rtsOrderAction(button) == ZHBO_ACTION_RELOAD)
+	{
+		sendRtsOrder(ZHBO_ACTION_RELOAD);
+		return;
+	}
 	// Take Control: the class set (if it was up) hands the bar back to the General's own commands.
 	zhboCloseClassSet(obj);
 	Zhbo_RequestTakeControl(obj);
@@ -907,35 +904,34 @@ void Zhbo_RequestTakeControl(Object *obj)
 
 Int Zhbo_WeaponButtonState(const Object *obj, const CommandButton *command)
 {
-	const Int slot = command ? (Int)command->getWeaponSlot() : -1;
-	if (!s_ready || !isGeneral(obj) || slot < 0 || slot > 2)
+	if (!s_ready || !command || !isGeneral(obj))
 		return -1;
 	ZhboRtsWeapons ammo = {};
 	zhbo_client_rts_ammo((uint32_t)obj->getID(), &ammo);
-	if (slot < 2)
-		return ammo.ammo[slot] + ammo.reserve[slot] <= 0 ? 0 : -1;
-	const Bool tactical = isTacticalButton(command);
-	if ((tactical ? ammo.tactical : ammo.ammo[2]) <= 0)
-		return 0;
-	// Both grenade buttons are the third slot: only the chosen one shows as in use.
-	return (tactical ? 1 : 0) != ammo.tactical_selected ? 1 : -1;
+	// His Lethal, Tactical and Melee orders share the third slot: each is as good as what it has
+	// left (the core's `orders`), never the slot's weapon state.
+	const Int order = rtsOrderAction(command);
+	if (order == ZHBO_ACTION_LETHAL || order == ZHBO_ACTION_TACTICAL || order == ZHBO_ACTION_MELEE)
+		return (ammo.orders >> (order - ZHBO_ACTION_LETHAL)) & 1 ? 1 : 0;
+	const Int slot = command->getCommandType() == GUI_COMMAND_SWITCH_WEAPON ? (Int)command->getWeaponSlot() : -1;
+	if (slot < 0 || slot > 1)
+		return -1;
+	return ammo.ammo[slot] + ammo.reserve[slot] <= 0 ? 0 : -1;
 }
 
 void Zhbo_OnSwitchWeaponButton(const CommandButton *command)
 {
-	if (!s_ready || !command || command->getWeaponSlot() != TERTIARY_WEAPON || !TheInGameUI)
+	// His switch buttons are his two guns, which Zero Hour's own switch message handles.
+	(void)command;
+}
+
+void Zhbo_OnFireWeaponCommand(const CommandButton *command)
+{
+	if (!s_ready)
 		return;
-	const Int choice = isTacticalButton(command) ? ZHBO_ACTION_TACTICAL : ZHBO_ACTION_LETHAL;
-	const DrawableList *selected = TheInGameUI->getAllSelectedDrawables();
-	for (DrawableListCIt it = selected->begin(); it != selected->end(); ++it)
-	{
-		const Object *obj = *it ? (*it)->getObject() : nullptr;
-		if (!isGeneral(obj) || !obj->isLocallyControlled())
-			continue;
-		GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_ZHBO_TAKE_CONTROL);
-		msg->appendObjectIDArgument(obj->getID());
-		msg->appendIntegerArgument(choice);
-	}
+	const Int action = rtsOrderAction(command);
+	if (action == ZHBO_ACTION_LETHAL || action == ZHBO_ACTION_TACTICAL || action == ZHBO_ACTION_MELEE)
+		sendRtsOrder(action);
 }
 
 const WideChar *Zhbo_FetchString(const char *label)

@@ -110,6 +110,51 @@ Ownership and rules:
   no guns, no grenades, no HUD ammo/crosshair; the RTS report marks every slot empty, and the
   bridge's existing no-ammo veto keeps Zero Hour's own weapons from firing until a class lands.
 
+## The General under RTS control: his weapons and orders
+
+Zero Hour's AI moves, aims and fires the overhead General's three weapon slots; `zhbo-core`
+(`sim/rts.rs`) owns what each slot is and what its shots do. Every logic frame the bridge reports
+the shots and the slot in use (`zhbo_logic_rts_update`) and gets back `ZhboRtsWeapons`:
+
+* **Each slot's Zero Hour weapon, by name** (`templates`, `names::rts_weapon`: one
+  `ZHBO_GeneralWeapon_<id>` per BO2 player weapon, written by `zhbo-assets weapons::rts_weapons_ini`
+  into `ZHBO_BO2_Weapons.ini`; attachments share their base weapon's). Slots 0 and 1 are the class's
+  guns, with their BO2 fire rate, magazine, reload, reach and sound. Slot 2 is the current order's
+  item, and its range is that order's reach. The bridge swaps a slot when its name changes
+  (`Object::zhboSetSlotWeapon`, engine patch 0016). An empty name keeps the slot as it is: a
+  classless General keeps the `ZHBO_General*` stand-ins, which the empty veto holds. A name the
+  archive lacks is logged once and skipped.
+* **The ammo, and the lock.** The arsenal is first person's: every RTS shot is counted against it,
+  an empty slot is vetoed (`setPossibleNextShotFrame`), and `lock` moves him off a dry gun or back
+  to his gun after an order.
+* **The orders** (`third`, `lethal`, `orders`): the third slot does one thing per order: 0 throws or
+  plants the lethal, 1 the tactical, 2 one knife strike. The command bar's Lethal, Tactical and
+  Knife buttons are `FIRE_WEAPON TERTIARY` with one shot (`NEED_TARGET_POS`, or
+  `NEED_TARGET_ENEMY_OBJECT` for the knife). Before Zero Hour appends its weapon message,
+  `Zhbo_OnFireWeaponCommand` (patch 0016) sends `MSG_ZHBO_TAKE_CONTROL` with the action (1 lethal,
+  2 tactical, 3 knife; 4 is Reload, a bridge command). In the logic step, which every peer runs
+  on the same frame, `applyRtsOrder` does three things in order:
+  - sets the order (`zhbo_logic_rts_offhand`, choice = action − 1);
+  - arms that item's weapon at once, so its reach applies before Zero Hour aims it;
+  - releases his permanent gun lock, because Zero Hour's temporary order lock can't override one.
+  When the slot fires, the core does what first person does: the grenade flies on its arc to the
+  AI's target point, equipment is planted in front of him facing it (`WeaponAction::Plant`), or the
+  knife strikes (`Sim::melee_strike`). Zero Hour measures attack range edge to edge, so the RTS
+  strike's reach counts both footprints (`MeleeReach::Footprint`). The Black Hat is never ordered
+  overhead (it needs first person). `orders` greys out what can't be ordered; the order buttons'
+  availability comes from it, not from the shared slot's weapon state (patch 0016's hook in
+  `getCommandAvailability`).
+* **Reload** (`zhbo_logic_rts_reload`): the gun in hand (or the one he goes back to) tops up from
+  its spare rounds; the bridge starts Zero Hour's `Weapon::reloadAmmo` for the time.
+* **Events** from orders happen inside `rts_update`, before the logic step, so the ffi logs them
+  there (`log_events`), and `ConquerOps.log` shows "threw a lethal" or "meleed" for overhead
+  orders too.
+
+The buttons' faces are plain tiles: `zhbo_client_rts_icons` (`ZhboRtsIcons`) names his kit's BO2
+icons, which the bridge draws over them with what each has left (the class-button pattern; his
+class is the player's, so no conversion-time art can show it). Name slots are
+`ZHBO_RTS_WEAPON_NAME_CAP` (48) bytes; a test keeps it equal to `names::RTS_WEAPON_NAME_CAP`.
+
 ## Lifecycle
 
 1. `GameEngine::init` end → `Zhbo_Init`: ABI check, **requirements check (both games must be installed,

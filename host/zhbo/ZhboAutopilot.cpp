@@ -277,8 +277,10 @@ void rtsAutopilotWave(UnsignedInt frame)
 {
 	const UnsignedInt t = frame - s_autopilot.spawnFrame;
 	Object *general = TheGameLogic->findObjectByID(s_autopilot.general);
-	if (!general || (t != 230 && t != 410))
+	// Two waves for his guns and the thrown lethal; one close rebel for the knife order.
+	if (!general || (t != 230 && t != 410 && t != 500))
 		return;
+	const Bool close = t == 500;
 	Player *local = ThePlayerList->getLocalPlayer();
 	for (Int p = 0; p < ThePlayerList->getPlayerCount(); ++p)
 	{
@@ -287,13 +289,14 @@ void rtsAutopilotWave(UnsignedInt frame)
 			continue;
 		const Real yaw = general->getOrientation();
 		const Coord3D *g = general->getPosition();
-		for (Int k = -1; k <= 1; ++k)
+		const Real ahead = close ? 40.0f : 90.0f;
+		for (Int k = close ? 0 : -1; k <= (close ? 0 : 1); ++k)
 		{
 			Coord3D e;
-			e.set(g->x + Cos(yaw) * 90.0f - Sin(yaw) * 10.0f * k, g->y + Sin(yaw) * 90.0f + Cos(yaw) * 10.0f * k, 0.0f);
+			e.set(g->x + Cos(yaw) * ahead - Sin(yaw) * 10.0f * k, g->y + Sin(yaw) * ahead + Cos(yaw) * 10.0f * k, 0.0f);
 			spawnAt("GLAInfantryRebel", enemy->getDefaultTeam(), e, yaw + PI);
 		}
-		logLine("autopilot: three more rebels");
+		logLine(close ? "autopilot: a rebel up close" : "autopilot: three more rebels");
 		break;
 	}
 }
@@ -420,21 +423,52 @@ void rtsAutopilotFrame(UnsignedInt frame)
 		group->appendObjectIDArgument(general->getID());
 		logLine("autopilot: selected the General");
 	}
-	const struct { UnsignedInt at; Int slot; const char *what; } picks[] = { { 240, TERTIARY_WEAPON, "lethal" }, { 420, SECONDARY_WEAPON, "pistol" } };
-	for (Int i = 0; i < 2; ++i)
+	// The command bar's orders as its buttons give them: the order's action first (what
+	// Zhbo_OnFireWeaponCommand sends), then Zero Hour's own weapon message for the third slot.
+	const Object *rebel = TheAI ? TheAI->findClosestEnemy(general, 250.0f, AI::CAN_SEE) : nullptr;
+	if (t >= 240 && s_done < 2)
 	{
-		if (t >= picks[i].at && s_done < (UnsignedInt)(2 + i))
+		s_done = 2;
+		if (rebel)
 		{
-			s_done = 2 + i;
-
-			GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_SWITCH_WEAPONS);
-			msg->appendIntegerArgument(picks[i].slot);
-			logf("autopilot: picked the %s from the command bar", picks[i].what);
+			sendRtsOrder(ZHBO_ACTION_LETHAL);
+			GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_DO_WEAPON_AT_LOCATION);
+			msg->appendIntegerArgument(TERTIARY_WEAPON);
+			msg->appendLocationArgument(*rebel->getPosition());
+			msg->appendIntegerArgument(1);
+			msg->appendObjectIDArgument(INVALID_ID);
+			logLine("autopilot: ordered the lethal at a rebel");
 		}
 	}
-	if (t >= 600 && s_done < 4)
+	if (t >= 330 && s_done < 3)
+	{
+		s_done = 3;
+		sendRtsOrder(ZHBO_ACTION_RELOAD);
+		logLine("autopilot: ordered a reload");
+	}
+	if (t >= 420 && s_done < 4)
 	{
 		s_done = 4;
+		GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_SWITCH_WEAPONS);
+		msg->appendIntegerArgument(SECONDARY_WEAPON);
+		logLine("autopilot: picked the pistol from the command bar");
+	}
+	if (t >= 505 && s_done < 5)
+	{
+		s_done = 5;
+		if (rebel)
+		{
+			sendRtsOrder(ZHBO_ACTION_MELEE);
+			GameMessage *msg = TheMessageStream->appendMessage(GameMessage::MSG_DO_WEAPON_AT_OBJECT);
+			msg->appendIntegerArgument(TERTIARY_WEAPON);
+			msg->appendObjectIDArgument(rebel->getID());
+			msg->appendIntegerArgument(1);
+			logf("autopilot: ordered a knife at rebel %u", (unsigned)rebel->getID());
+		}
+	}
+	if (t >= 690 && s_done < 6)
+	{
+		s_done = 6;
 		logLine("autopilot: taking control");
 		Zhbo_RequestTakeControl(general);
 	}

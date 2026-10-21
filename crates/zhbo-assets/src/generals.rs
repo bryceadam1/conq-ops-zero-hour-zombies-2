@@ -220,10 +220,11 @@ pub use zhbo_core::names::RTS_FX_PATH;
 const SOLDIER_BOX_CENTRE: [f32; 3] = [0.0, 0.0, 36.0];
 const SOLDIER_BOX_EXTENT: [f32; 3] = [18.0, 18.0, 38.0];
 
+/// Archive files: path inside the BIG and contents.
+type Files = Vec<(String, Vec<u8>)>;
 
 /// Convert everything; returns the archive files and a one-line summary.
-
-pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String> {
+pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let common = load_zone(bo2_dir, "common_mp")?;
     let weapon = xmodel::find(&common, WEAPON).map_err(|e| e.to_string())?;
     let paks = Paks::open(bo2_dir)?;
@@ -360,6 +361,9 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
             fx_ini = ini_set(&fx_ini, "Weapon", &d.fx_weapon, "FireFX", flash)?;
         }
     }
+    // The overhead General's weapon for every player weapon (swapped in by class and order).
+    let has_event = |name: &str| extra.iter().any(|e| e.event == name);
+    fx_ini.push_str(&crate::weapons::rts_weapons_ini(&table.weapons, &flashes, &has_event));
     out.insert("Data\\INI\\Weapon\\ZHBO_BO2_Weapons.ini".into(), fx_ini.into_bytes());
     // Under RTS control: the rifle's and pistol's BO2 hits on what they shoot, by what it is
     // (ZhboBridge plays them as the shots land).
@@ -543,12 +547,12 @@ mod tests {
         let normal = solid(2, 2, [100, 150, 255, 255]);
         let spec = solid(8, 8, [200, 200, 200, 40]);
         let maps = surface_maps(4, 4, Some(&normal), Some(&spec));
-        assert!(maps.pixels.chunks_exact(4).all(|p| p == [100, 150, 40, 200]));
+        assert!(maps.pixels.as_chunks::<4>().0.iter().all(|p| *p == [100, 150, 40, 200]));
         let flat = surface_maps(2, 2, None, None);
-        assert!(flat.pixels.chunks_exact(4).all(|p| p == [128, 128, 0, 0]), "no maps: flat and matte");
+        assert!(flat.pixels.as_chunks::<4>().0.iter().all(|p| *p == [128, 128, 0, 0]), "no maps: flat and matte");
         let mut color = solid(4, 4, [90, 90, 90, 7]);
         put_occlusion(&mut color, Some(&solid(2, 2, [60, 0, 0, 255])));
-        assert!(color.pixels.chunks_exact(4).all(|p| p == [90, 90, 90, 60]));
+        assert!(color.pixels.as_chunks::<4>().0.iter().all(|p| *p == [90, 90, 90, 60]));
     }
 
     #[test]
@@ -636,5 +640,14 @@ mod tests {
         assert!(rifle[..rifle.find("\nEnd").unwrap()].contains("FireFX                  = ZHBO_BO2FX_") || rifle[..rifle.find("\nEnd").unwrap()].contains("FireFX = ZHBO_BO2FX_"), "{rifle}");
         let draw = text(INI_PATH);
         assert!(draw.contains("WeaponFireFXBone    = SECONDARY ZF01") && draw.contains("ZHBO_PLR_PRL"));
+        // Every player weapon has the overhead General's Zero Hour weapon, and its name fits the
+        // ABI's slot (`ZhboRtsWeapons::templates`).
+        let rts = text("Data\\INI\\Weapon\\ZHBO_BO2_Weapons.ini");
+        let table = zhbo_core::weapons::parse_full_table(&text(crate::weapons::TABLE_PATH)).unwrap();
+        for d in table.weapons.iter().filter(|d| !d.id.contains(['+', '~'])) {
+            let name = zhbo_core::names::rts_weapon(&d.id);
+            assert!(name.len() < zhbo_core::names::RTS_WEAPON_NAME_CAP, "{name} is too long for the ABI");
+            assert!(rts.contains(&format!("Weapon {name}\n")), "no {name}");
+        }
     }
 }

@@ -96,6 +96,11 @@ attachments are rigid sub-objects on `tag_weapon_right`.
   (already parsed) on their tags.
 - Retire the W3D viewmodel code once R1–R7 pass; the dist archive VERSION bumps.
 
+> **Tracks W and P run as one track, PW** (decision 2026-10-21): both hinge on G1's HasSpecialty
+> rule (class perks OR the weapon variant's OR its attachments' specialty bits), so splitting them
+> would have two agents editing `weapons/`. PW also writes G4's gun-position math as a pure module
+> (`weapons/gunpos.rs`) that Track R consumes.
+
 ### Track W — Weapon feel and sound (owns `weapons/`, `viewmodel.rs` state machine, `sfx.rs`)
 
 - Extend the weapon table schema with the WeaponVariantDef fields that drive feel and sound:
@@ -189,8 +194,8 @@ Read-only Ghidra on `t6mp` (static only); answers in `~/Documents/BO2-reference/
 ## Integration order
 
 1. Track 0 (blocking).
-2. In parallel: R, W, H, C, P, O. Merge order on conflicts: R → W (W depends on R3 notetracks
-   for sounds, but schema work starts immediately) → H/C (share Track 0 primitives) → P → O.
+2. In parallel: R, PW, H, C, O. Merge order on conflicts: PW → R (R consumes gunpos and the
+   playback rate) → H/C (share Track 0 primitives) → O.
 3. Each merge: `cargo test --workspace`, clippy, in-game autotest (`scripts/autotest-mac.sh`,
    plus `--input`); commit with citations; MODLOG entry.
 4. Finish: fold durable notes into RENDERER/CONTRACT/ARCHITECTURE/TESTING/MODLOG, delete this
