@@ -1869,6 +1869,79 @@ break. The `PlayerSim::pending_class` sketch in the Track C section is retired.
 Verified: cargo test --workspace green; real-install suite green; clippy clean; `cargo xtask
 build` clean; autotest 13/13 default, `--classpick` all checks, 14/14 `--rts`.
 
+## Track R8: the weapon's own effects on its tags (2026-10-21, branch `v1/track-r8`)
+
+Muzzle flash and shell ejection now come from the weapon's own `FxEffectDef`s, not a single
+generic flash. The converter reads `viewFlashEffect`, `viewShellEjectEffect` and
+`viewLastShotEjectEffect` from the BO2 `WeaponDef` (the three fields were there in the layouts but
+unused), turns each into a Zero Hour FXList with `fx.rs`'s existing `FxEffectDef`-to-particle-
+system conversion, and the weapon table carries the names (`ViewFlashFx`, `ViewShellFx`,
+`ViewLastShotShellFx`). `names::bo2_fx` builds the FXList names (the registry), so no literal is
+copied between the converter, the table and the bridge. `zhbo_viewmodel_fx(vm, ...)` (a new free
+function on the append-only ABI
+surface) hands the bridge the names for the weapon on the current viewmodel; `ZhboViewmodel.cpp`
+plays them at `tag_flash` and `tag_brass` when `ClientOut.viewmodel_fired` says the sim's `Shot`
+event fired. The generic `ZHBO_ViewmodelMuzzle` stays as the fallback.
+
+**Design choice: the engine-FX path, not the native pass.** The engine already owns particle
+systems, the material's blend mode, lifetimes and the world FX weapon pipeline; a native particle
+system in `zhbo-gfx` would duplicate all of it and need its own headless renderer suite. The
+native viewmodel path only supplies the tag transforms (`zhbo_native_bone`), so both viewmodel
+paths share the effect art and the table. Shell model elements (`weapon/shellejects/fx_rifle`, the
+`fx_rifle_shell` model — `build/list_patch_mp.txt`) become small sprites from the model's own
+colour map: Zero Hour's `FXList` has no model nugget. **That is the one approximation** — exact
+3D brass needs a native mesh draw.
+
+Tracers/impacts (R8d) are not in this commit. The first-person player's `fire_fx` is deliberately
+skipped in `cbFireFx` (the hidden body sits at the camera); per-weapon first-person impacts need a
+decision on how the sim's shot end (surface-aware) reaches the bridge — the `rts_fx.txt` table is
+the existing shape, but the first-person path has no ABI carrier for the hit point yet. Left for
+the integrator's merge decision.
+
+Tests: `zhbo-assets` `a_model_element_becomes_a_shell_sprite` (model → sprite conversion);
+`zhbo-core` `viewmodel_effect_names_round_trip` (table schema) and
+`viewmodel_fx_leaves_the_buffers_alone_when_the_viewmodel_is_unknown` (FFI). `cargo test -p
+zhbo-core -p zhbo-assets -p zhbo-formats -p zhbo-gfx -p zhbo-native` green (with `ZHBO_BO2_DIR`/
+`ZHBO_ZH_DIR` unset); clippy has no new warnings (the pre-existing `chunks_exact` one in `fx.rs`
+remains). The ignored real-install converter test has not run here (no BO2 install on this
+machine).
+
+**Integrator:** the new archive art (effects, particle systems, textures for every weapon) needs
+the `hud::VERSION` bump; `zhbo_viewmodel_fx` needs the `ZHBO_ABI_VERSION` bump. `ZhboViewmodel.cpp`
+is the only C++ touched (it cannot be compile-checked here). In-game eyeball: every weapon's flash
+and shell at `tag_flash`/`tag_brass` on the native path (`ZHBO_NATIVE_VIEWMODEL=1`) and the W3D
+path, and that the fallback flash still plays for a weapon whose effect was not converted.
+
+## Integrating Track R8: per-weapon muzzle flash and shell eject on the engine's FXList path (2026-10-21)
+
+Merged `v1/track-r8` (7 commits): the three previously-unread `WeaponDef` fields
+(`viewFlashEffect`, `viewShellEjectEffect`, `viewLastShotEjectEffect`) parsed and converted
+through the existing `FxEffectDef` → Zero Hour particle-system path; the weapon table carries
+them (`ViewFlashFx`/`ViewShellFx`/`ViewLastShotShellFx`); the bridge's new `viewmodelFx` plays
+the weapon's own flash at `tag_flash` (and brass at `tag_brass`) from the sim's `Shot` event on
+both the native and W3D viewmodel paths — the generic `ZHBO_ViewmodelMuzzle` is the fallback
+when an effect has no drawable child. Design: effects draw through the engine's `FXList` path,
+NOT a new native particle system (the engine already owns particles, blending, lifetimes); only
+the tag transforms come from the native path. Deliberate divergence: BO2's shell is a model and
+ZH's FXList has no model nugget, so the shell converts to a small sprite textured from the
+model's own colour map (documented in CONTRACT). `names::bo2_fx` is the single FXList-name
+builder.
+
+Integration caught one bad assertion: the agent asserted the AN-94 has a
+`viewShellEjectEffect`; the real data says NO (probe: flash=yes, shell=no, last-shot=no; only
+41 of 172 weapons define a shell effect). The AN-94's brass rides its xanim in BO2 — our
+generic shell fallback is correct for it. A notetrack-driven `shell_eject` event (Track R3's
+notetrack events) would match BO2 exactly; recorded as a follow-up. ABI 23 → 24 (the
+`zhbo_viewmodel_fx` free function); archive VERSION 50 → 51 (the per-weapon FXLists and shell
+textures).
+
+Verified: cargo test --workspace green; the FULL real-install suite green (the probe-corrected
+assertions included); clippy clean; `cargo xtask build` clean (first compile of the bridge
+changes); autotest 13/13 default, 13/13 native+compare, 14/14 `--rts`; zero missing-FXList
+warnings in the game log. The per-weapon flash's exact look (and the shell sprite's scale) is
+a human-playtest eyeball item. R8d (first-person tracers/impacts) is deliberately out: the
+hit-point/surface carrier across the ABI is an integrator decision, parked.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

@@ -171,10 +171,21 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   `ZhboNativeIn` from what it already has for the W3D model (clip, time, ADS fraction, eye and
   direction, the gun's view-space offset and angles, the faction letter from the `ZV<vm><F>`
   name) plus Zero Hour's global lights for the time of day (towards-the-light = `-lightPos`) and
-  calls `zhbo_native_viewmodel`. `DRAWN` (1): the W3D model stays hidden and the muzzle/brass
-  FXLists play at `zhbo_native_bone("tag_flash"/"tag_brass")`. `LOADING` (2) and `NOT_NATIVE`
-  (0): the W3D path draws this frame. Viewmodel sound notetracks are unchanged (the bridge's
-  `playNotes` runs before either path).
+  calls `zhbo_native_viewmodel`. `DRAWN` (1): the W3D model stays hidden and the weapon's own
+  muzzle-flash/shell-eject FXLists play at `zhbo_native_bone("tag_flash"/"tag_brass")` when the
+  sim's shot event reaches the client. The names come from `zhbo_viewmodel_fx(vm, ...)` — the
+  weapon table's `ViewFlashFx`/`ViewShellFx`/`ViewLastShotShellFx`, converted from BO2's
+  `viewFlashEffect`/`viewShellEjectEffect`/`viewLastShotEjectEffect` by `zhbo-assets`; the generic
+  `ZHBO_ViewmodelMuzzle` FXList is the fallback when a weapon's effect was not convertible.
+  `LOADING` (2) and `NOT_NATIVE` (0): the W3D path draws this frame. Viewmodel sound notetracks
+  are unchanged (the bridge's `playNotes` runs before either path).
+  - **Effects draw through the engine's `FXList` path, not the native pass.** The engine already
+    owns particle systems, the blend modes from the material state bits, lifetimes and the world
+    FX weapon pipeline; the native pass has no particle system and would duplicate all of it.
+    Shell model elements are drawn as small sprites from the model's own colour map, because
+    Zero Hour's FXList has no model nugget.
+  - `zhbo_viewmodel_fx` is a free function on the append-only ABI surface (like
+    `zhbo_loadout_viewmodels`); it needs the `ZHBO_ABI_VERSION` bump with its merge.
 * **The core cannot open the archive; it asks.** After each call the bridge answers every
   `zhbo_native_wanted(i)` path with `zhbo_native_provide(path, bytes, len)` (`len < 0`: not in the
   archive, after which that viewmodel is given up and logged once) and prints every

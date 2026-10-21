@@ -190,6 +190,12 @@ pub struct WeaponDef {
     pub fx_weapon: String,
     /// Zero Hour FXList for the blast (grenades, rockets).
     pub explosion_fx: String,
+    /// Zero Hour FXList for the first-person muzzle flash (`viewFlashEffect`).
+    pub view_flash_fx: String,
+    /// Zero Hour FXList for the first-person shell eject (`viewShellEjectEffect`).
+    pub view_shell_fx: String,
+    /// Zero Hour FXList for the first-person shell eject on the last round.
+    pub view_last_shot_shell_fx: String,
     pub projectile_object: String,
     pub fire_sound: String,
     pub explode_sound: String,
@@ -370,6 +376,9 @@ impl Default for WeaponDef {
             sticky: false,
             fx_weapon: String::new(),
             explosion_fx: String::new(),
+            view_flash_fx: String::new(),
+            view_shell_fx: String::new(),
+            view_last_shot_shell_fx: String::new(),
             projectile_object: String::new(),
             fire_sound: String::new(),
             explode_sound: String::new(),

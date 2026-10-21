@@ -71,6 +71,13 @@ pub fn notetrack_event(alias: &str) -> String {
     format!("ZHBO_NT_{alias}")
 }
 
+/// A converted BO2 effect's Zero Hour FXList (`ZHBO_BO2FX_weapon_shellejects_fx_rifle`): BO2's
+/// effect name with every non-alphanumeric rune replaced by `_`.
+pub fn bo2_fx(effect: &str) -> String {
+    let clean: String = effect.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
+    format!("ZHBO_BO2FX_{clean}")
+}
+
 /// A weapon's third-person meshes on the soldier model (`W0302`: viewmodel 3, mesh 2).
 pub fn world_mesh(vm: u8, k: u8) -> String {
     format!("W{vm:02}{k:02}")
@@ -209,6 +216,7 @@ mod tests {
         assert_eq!(projectile_model(2), "ZPR02_SKN");
         assert_eq!(projectile_object("frag_grenade_mp"), "ZHBO_Proj_frag_grenade_mp");
         assert_eq!(notetrack_event("reload"), "ZHBO_NT_reload");
+        assert_eq!(bo2_fx("weapon/shellejects/fx_rifle"), "ZHBO_BO2FX_weapon_shellejects_fx_rifle");
         assert_eq!(general("USA"), GENERAL_USA);
         assert_eq!(faction_viewmodel("GLA"), FACTION_VIEWMODEL_GLA);
         assert_eq!(faction_viewmodel("CHN"), FACTION_VIEWMODEL_CHN);

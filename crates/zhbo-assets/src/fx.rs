@@ -1,7 +1,10 @@
-//! First-person weapon effects with Black Ops II art: the muzzle flash. BO2's gas-flash sprite
-//! (`fxt_fire_gas_flash`, an image asset in `patch_mp`) becomes a small additive Zero Hour
-//! particle system, sized for a gun a few units from the camera rather than for the RTS view, and
-//! the `ZHBO_ViewmodelMuzzle` FXList that `ZhboViewmodel.cpp` plays at `tag_flash` on every shot.
+//! First-person weapon effects with Black Ops II art. Every weapon's own `viewFlashEffect` and
+//! `viewShellEjectEffect` become Zero Hour FXLists (the weapon table carries their names, and
+//! `ZhboViewmodel.cpp` plays them at `tag_flash`/`tag_brass` when the sim reports a shot). The
+//! generic `ZHBO_ViewmodelMuzzle` FXList (BO2's `fxt_fire_gas_flash` sprite) stays as the fallback
+//! for a weapon whose effect the converter could not build. Model elements (the ejected shell
+//! casing) are drawn as small sprites from the model's own colour map: Zero Hour's FXList has no
+//! model element.
 
 use crate::images;
 use std::collections::BTreeMap;
@@ -86,7 +89,7 @@ pub fn files(zone: &Zone, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>)
 // BO2 effects as Zero Hour particle systems
 // ------------------------------------------------------------------------------------------------
 
-use zhbo_formats::fx::{kind, Effect, Elem};
+use zhbo_formats::fx::{kind, Effect, Elem, Range, VisSample};
 use zhbo_formats::w3d::Blend;
 
 /// Milliseconds per Zero Hour logic frame.
@@ -101,10 +104,9 @@ fn units(inches: f32) -> f32 {
     zhbo_core::units::inches(inches)
 }
 
-/// The Zero Hour name of a converted BO2 effect.
+/// The Zero Hour name of a converted BO2 effect (the registry's builder, `names::bo2_fx`).
 pub fn fxlist_name(effect: &str) -> String {
-    let clean: String = effect.chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '_' }).collect();
-    format!("ZHBO_BO2FX_{clean}")
+    zhbo_core::names::bo2_fx(effect)
 }
 
 /// Converted effects: the particle system and FXList INI text, and their textures.
@@ -127,13 +129,24 @@ impl Converted {
 
     /// [`Converted::add`], with the looping parts running `looping_secs` (a smoke screen's time).
     pub fn add_timed(&mut self, effect: &Effect, looping_secs: f32, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>) -> String {
+        self.add_timed_with(effect, looping_secs, paks, None)
+    }
+
+    /// [`Converted::add`] for an effect whose model elements (a shell casing) should be drawn as
+    /// sprites from the model's own colour map (`zone` provides the model).
+    pub fn add_shell(&mut self, effect: &Effect, zone: &Zone, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>) -> String {
+        let secs = (effect.looping_life_msec as f32 / 1000.0).clamp(1.0, 20.0);
+        self.add_timed_with(effect, secs, paks, Some(zone))
+    }
+
+    fn add_timed_with(&mut self, effect: &Effect, looping_secs: f32, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>, zone: Option<&Zone>) -> String {
         let name = fxlist_name(&effect.name);
         if !self.done.insert(name.clone()) {
             return name;
         }
         let mut systems = Vec::new();
         let mut bright = false;
-        self.add_elems(effect, 0.0, looping_secs, &name, paks, &mut systems, &mut bright);
+        self.add_elems(effect, 0.0, looping_secs, &name, paks, zone, &mut systems, &mut bright);
         let mut fx = format!("FXList {name}\n");
         if bright {
             fx.push_str("  LightPulse\n    Color = R:255 G:190 B:110\n    Radius = 40\n    IncreaseTime = 0\n    DecreaseTime = 400\n  End\n");
@@ -147,11 +160,26 @@ impl Converted {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn add_elems(&mut self, effect: &Effect, delay_ms: f32, looping_secs: f32, prefix: &str, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>, systems: &mut Vec<String>, bright: &mut bool) {
+    fn add_elems(&mut self, effect: &Effect, delay_ms: f32, looping_secs: f32, prefix: &str, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>, zone: Option<&Zone>, systems: &mut Vec<String>, bright: &mut bool) {
         for el in &effect.elems {
             if el.kind == kind::RUNNER {
                 for child in &el.children {
-                    self.add_elems(child, delay_ms + el.delay_msec.base, looping_secs, prefix, paks, systems, bright);
+                    self.add_elems(child, delay_ms + el.delay_msec.base, looping_secs, prefix, paks, zone, systems, bright);
+                }
+                continue;
+            }
+            // A model element (BO2's ejected shell casing) becomes a sprite of the model's own
+            // colour map: Zero Hour's FXList has no model element.
+            if el.kind == kind::MODEL {
+                let Some(z) = zone else { continue };
+                for model_name in &el.models {
+                    let Ok(model) = xmodel::find(z, model_name) else { continue };
+                    let Some(m) = model.materials.iter().flatten().next() else { continue };
+                    let Some(img) = m.color_map() else { continue };
+                    let Some(tex) = self.texture(&img.name, img.stream_hash, (1, 1), paks) else { continue };
+                    let sys = format!("{prefix}_shell{}", systems.len());
+                    self.particles.push_str(&model_particle_system(&sys, el, &tex.0, delay_ms));
+                    systems.push(sys);
                 }
                 continue;
             }
@@ -265,6 +293,22 @@ fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_m
     )
 }
 
+/// A model element (an ejected shell) as a small sprite. The model's own colour map is the
+/// particle texture; BO2's model element gives no size, so a shell-sized default is used.
+fn model_particle_system(name: &str, el: &Elem, texture: &str, delay_ms: f32) -> String {
+    let mut e = el.clone();
+    if e.vis.is_empty() {
+        e.vis = vec![
+            VisSample { color: [255, 235, 180, 255], size: [0.5, 0.5], ..Default::default() },
+            VisSample { color: [255, 235, 180, 0], size: [0.5, 0.5], ..Default::default() },
+        ];
+    }
+    if e.life_msec.base <= 0.0 {
+        e.life_msec = Range { base: 700.0, amplitude: 200.0 };
+    }
+    particle_system(name, &e, texture, false, delay_ms, 1.0)
+}
+
 #[cfg(test)]
 mod effect_tests {
     use super::*;
@@ -299,5 +343,16 @@ mod effect_tests {
         let looping = Elem { looping: true, interval_msec: 3000, ..el };
         let ini = particle_system("ZHBO_test_1", &looping, "zhbo_fx_smoke.tga", false, 0.0, 15.0);
         assert!(ini.contains("SystemLifetime = 450") && ini.contains("BurstDelay = 90 90"), "{ini}");
+    }
+
+    #[test]
+    fn a_model_element_becomes_a_shell_sprite() {
+        let el = Elem { kind: kind::MODEL, models: vec!["fx_rifle_shell".into()], ..Default::default() };
+        let ini = model_particle_system("ZHBO_test_shell", &el, "zhbo_fx_shell.tga", 0.0);
+        assert!(ini.contains("ParticleSystem ZHBO_test_shell"), "{ini}");
+        assert!(ini.contains("ParticleName = zhbo_fx_shell.tga"));
+        // BO2's model element has no size: a shell-sized default life and sprite.
+        assert!(ini.contains("Lifetime = 21 27"), "{ini}");
+        assert!(ini.contains("Size = 0.17 0.17"), "{ini}");
     }
 }

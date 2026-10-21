@@ -40,7 +40,7 @@ fn publish_controlled(sim: &Sim) {
     }
 }
 
-pub const ABI_VERSION: u32 = 23;
+pub const ABI_VERSION: u32 = 24;
 
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
@@ -604,6 +604,34 @@ pub unsafe extern "C" fn zhbo_loadout_viewmodels(out: *mut i32, cap: i32) -> i32
     vms.len() as i32
 }
 
+/// Write `text` as a NUL-terminated string into `dst` (truncating to `cap - 1` bytes).
+///
+/// # Safety
+/// `dst` must point to `cap` writable bytes, or be null.
+unsafe fn write_c_str(dst: *mut c_char, cap: i32, text: &str) {
+    if dst.is_null() || cap <= 0 {
+        return;
+    }
+    let n = text.len().min(cap as usize - 1);
+    std::ptr::copy_nonoverlapping(text.as_ptr(), dst.cast::<u8>(), n);
+    *dst.add(n) = 0;
+}
+
+/// The first-person FXList names for the weapon on viewmodel `vm`: its muzzle flash (`viewFlashEffect`)
+/// and shell eject (`viewShellEjectEffect`). Returns 0 if no weapon uses that viewmodel.
+///
+/// # Safety
+/// `flash`/`shell` must point to `flash_cap`/`shell_cap` writable bytes (or be null).
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_viewmodel_fx(vm: i32, flash: *mut c_char, flash_cap: i32, shell: *mut c_char, shell_cap: i32) -> i32 {
+    let Some(d) = crate::weapons::catalog().all().iter().find(|d| d.viewmodel == vm) else { return 0 };
+    unsafe {
+        write_c_str(flash, flash_cap, &d.view_flash_fx);
+        write_c_str(shell, shell_cap, &d.view_shell_fx);
+    }
+    1
+}
+
 /// How fast a General builds, as a share of a dozer's speed.
 #[no_mangle]
 pub extern "C" fn zhbo_general_build_rate() -> f32 {
@@ -828,6 +856,16 @@ mod tests {
         assert_eq!(zhbo_abi_fields() >> 32, CLIENT_API_FIELDS);
         assert_eq!(std::mem::size_of::<crate::host::LogicApi>(), (LOGIC_API_FIELDS as usize) * std::mem::size_of::<usize>());
         assert_eq!(std::mem::size_of::<crate::host::ClientApi>(), (CLIENT_API_FIELDS as usize) * std::mem::size_of::<usize>());
+    }
+
+    #[test]
+    fn viewmodel_fx_leaves_the_buffers_alone_when_the_viewmodel_is_unknown() {
+        let mut flash = [1u8; 8];
+        let mut shell = [1u8; 8];
+        let found = unsafe { zhbo_viewmodel_fx(9999, flash.as_mut_ptr().cast(), 8, shell.as_mut_ptr().cast(), 8) };
+        assert_eq!(found, 0);
+        assert_eq!(flash[0], 1, "no weapon writes nothing");
+        assert_eq!(shell[0], 1);
     }
 
     fn ctext(buf: &[u8]) -> &str {

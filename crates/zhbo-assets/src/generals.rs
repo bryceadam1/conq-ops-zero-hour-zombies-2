@@ -338,6 +338,23 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         if let Some(f) = &w.world_flash_effect {
             flashes.insert(id.clone(), effects.add(f, &|h| paks.image(h)));
         }
+        if let Some(f) = &w.view_flash_effect {
+            // Only claim it when the converter can draw it (sprites or runner children). An effect
+            // with only a light or a model would leave an empty FXList, and the bridge's generic
+            // gas flash is better than nothing.
+            let drawable = f.elems.iter().any(|e| {
+                zhbo_formats::fx::kind::is_sprite(e.kind) || e.kind == zhbo_formats::fx::kind::RUNNER
+            });
+            if drawable {
+                d.view_flash_fx = effects.add(f, &|h| paks.image(h));
+            }
+        }
+        if let Some(f) = &w.view_shell_eject_effect {
+            d.view_shell_fx = effects.add_shell(f, &patch, &|h| paks.image(h));
+        }
+        if let Some(f) = &w.view_last_shot_eject_effect {
+            d.view_last_shot_shell_fx = effects.add_shell(f, &patch, &|h| paks.image(h));
+        }
         // BO2's smoke grenade plays its cloud from script: use it by name, for the screen's time.
         if d.effect == zhbo_core::weapons::Effect::Smoke {
             if let Some(e) = w.explosion_effect.clone().or_else(|| zhbo_formats::fx::find(&common, SMOKE_EFFECT)) {
@@ -429,6 +446,13 @@ mod tests {
         let names = crate::weapons::names(&bo2_dir);
         let bo2 = zhbo_formats::weapon::all(&common).unwrap();
         let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        // The weapon's own first-person effects are parsed (R8): the AN-94 carries both.
+        let an94 = bo2.iter().find(|w| w.name == "an94_mp").expect("an94_mp");
+        assert!(an94.view_flash_effect.is_some(), "the AN-94 has a viewFlashEffect");
+        // The AN-94's brass rides its xanim: like most BO2 weapons it has no
+        // `viewShellEjectEffect` (41 of 172 do), so its shell is the generic fallback.
+        assert!(an94.view_shell_eject_effect.is_none(), "the AN-94's brass rides its xanim");
+        assert!(bo2.iter().filter(|w| w.view_shell_eject_effect.is_some()).count() > 30, "many weapons define a shell effect");
         let mut defs: Vec<zhbo_core::weapons::WeaponDef> =
             bo2.iter().filter(|w| crate::weapons::is_player_weapon(w)).map(|w| crate::weapons::to_def(w, &names)).collect();
         assert!(defs.len() > 50, "{} player weapons", defs.len());

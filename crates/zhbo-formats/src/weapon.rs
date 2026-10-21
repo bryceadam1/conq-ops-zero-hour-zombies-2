@@ -440,6 +440,12 @@ pub struct Weapon {
     pub impact_type: u32,
     /// The muzzle flash others see (`worldFlashEffect`).
     pub world_flash_effect: Option<crate::fx::Effect>,
+    /// The first-person muzzle flash (`viewFlashEffect`).
+    pub view_flash_effect: Option<crate::fx::Effect>,
+    /// The first-person shell eject (`viewShellEjectEffect`).
+    pub view_shell_eject_effect: Option<crate::fx::Effect>,
+    /// The first-person shell eject on the last round (`viewLastShotEjectEffect`).
+    pub view_last_shot_eject_effect: Option<crate::fx::Effect>,
 }
 
 fn ms(z: &Zone, at: u32) -> f32 {
@@ -723,6 +729,12 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.impact_type = z.u32(d + WD::impactType);
     let flash = z.try_u32(d + WD::worldFlashEffect)?;
     w.world_flash_effect = (flash != 0).then(|| crate::fx::read(z, flash)).filter(|e| !e.elems.is_empty());
+    let view_flash = z.try_u32(d + WD::viewFlashEffect)?;
+    w.view_flash_effect = (view_flash != 0).then(|| crate::fx::read(z, view_flash)).filter(|e| !e.elems.is_empty());
+    let shell = z.try_u32(d + WD::viewShellEjectEffect)?;
+    w.view_shell_eject_effect = (shell != 0).then(|| crate::fx::read(z, shell)).filter(|e| !e.elems.is_empty());
+    let last_shell = z.try_u32(d + WD::viewLastShotEjectEffect)?;
+    w.view_last_shot_eject_effect = (last_shell != 0).then(|| crate::fx::read(z, last_shell)).filter(|e| !e.elems.is_empty());
     let fx = z.try_u32(d + WD::projExplosionEffect)?;
     w.explosion_effect = (fx != 0).then(|| crate::fx::read(z, fx)).filter(|e| !e.elems.is_empty()).or_else(|| crate::fx::explosion_entry(w.impact_type).and_then(|e| crate::fx::impact(z, e, crate::fx::surface::DIRT)));
     w.hud_icon = named(z, d + WD::hudIcon);

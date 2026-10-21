@@ -432,6 +432,15 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("ExplosionFx", "Zero Hour FXList for the blast (grenades, rockets).", FieldKind::Str,
         |d: &WeaponDef| d.explosion_fx.clone(),
         |d: &mut WeaponDef, v: Values| { d.explosion_fx = v.text.into(); Ok(()) }),
+    field!("ViewFlashFx", "Zero Hour FXList for the first-person muzzle flash (`viewFlashEffect`).", FieldKind::Str,
+        |d: &WeaponDef| d.view_flash_fx.clone(),
+        |d: &mut WeaponDef, v: Values| { d.view_flash_fx = v.text.into(); Ok(()) }),
+    field!("ViewShellFx", "Zero Hour FXList for the first-person shell eject (`viewShellEjectEffect`).", FieldKind::Str,
+        |d: &WeaponDef| d.view_shell_fx.clone(),
+        |d: &mut WeaponDef, v: Values| { d.view_shell_fx = v.text.into(); Ok(()) }),
+    field!("ViewLastShotShellFx", "Zero Hour FXList for the first-person shell eject on the last round.", FieldKind::Str,
+        |d: &WeaponDef| d.view_last_shot_shell_fx.clone(),
+        |d: &mut WeaponDef, v: Values| { d.view_last_shot_shell_fx = v.text.into(); Ok(()) }),
     field!("ProjectileObject", "The thrown/projectiled Zero Hour object.", FieldKind::Str,
         |d: &WeaponDef| d.projectile_object.clone(),
         |d: &mut WeaponDef, v: Values| { d.projectile_object = v.text.into(); Ok(()) }),
@@ -599,7 +608,7 @@ mod tests {
         }
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 64);
+        assert_eq!(WEAPON_FIELDS.len(), 67);
         assert_eq!(ATTACHMENT_FIELDS.len(), 14);
     }
 
@@ -614,6 +623,25 @@ mod tests {
         let text = format_table(&[d]);
         assert!(text.contains("Equipment = none"));
         assert_eq!(parse_table(&text).unwrap()[0].equipment_kind, Kind::Other);
+    }
+
+    #[test]
+    fn viewmodel_effect_names_round_trip() {
+        let d = WeaponDef {
+            id: "an94_mp".into(),
+            view_flash_fx: "ZHBO_BO2FX_fx_muzzle".into(),
+            view_shell_fx: "ZHBO_BO2FX_fx_rifle".into(),
+            view_last_shot_shell_fx: "ZHBO_BO2FX_fx_rifle_last".into(),
+            ..Default::default()
+        };
+        let text = format_table(&[d]);
+        assert!(text.contains("ViewFlashFx = ZHBO_BO2FX_fx_muzzle"), "{text}");
+        assert!(text.contains("ViewShellFx = ZHBO_BO2FX_fx_rifle"), "{text}");
+        assert!(text.contains("ViewLastShotShellFx = ZHBO_BO2FX_fx_rifle_last"), "{text}");
+        let back = parse_table(&text).unwrap();
+        assert_eq!(back[0].view_flash_fx, "ZHBO_BO2FX_fx_muzzle");
+        assert_eq!(back[0].view_shell_fx, "ZHBO_BO2FX_fx_rifle");
+        assert_eq!(back[0].view_last_shot_shell_fx, "ZHBO_BO2FX_fx_rifle_last");
     }
 
     #[test]

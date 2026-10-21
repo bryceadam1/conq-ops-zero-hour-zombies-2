@@ -447,6 +447,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         impact_explode: w.projectile_impact_explode,
         sticky,
         fx_weapon: String::new(),
+        view_flash_fx: String::new(),
+        view_shell_fx: String::new(),
+        view_last_shot_shell_fx: String::new(),
         explosion_fx: match effect {
             Effect::Explode => "FX_BoobyTrapExplosion",
             Effect::Stun => "WeaponFX_RangerFlashBangGrenadeDetonation",
