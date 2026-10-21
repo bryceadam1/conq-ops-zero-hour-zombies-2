@@ -43,6 +43,27 @@
     }
 
     #[test]
+    fn a_shot_event_for_the_local_player_sets_viewmodel_fired() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        assert_eq!(client.view, ViewMode::Fps);
+        // Another player's shot is not the local viewmodel's effect.
+        sim.events.push(crate::sim::Event { player: 1, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO } });
+        let out = client.frame(&mut sim, &inp);
+        assert_eq!(out.viewmodel_fired, 0);
+        // The sim's own `Shot` event is what the bridge's `fired` flag comes from.
+        sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO } });
+        let out = client.frame(&mut sim, &inp);
+        assert_eq!(out.viewmodel_fired, 1);
+    }
+
+    #[test]
     fn mouse_right_turns_right_and_w_walks_forward() {
         let host = FakeHost::default();
         host.add(general(1, 0));

@@ -438,6 +438,10 @@ mod tests {
         let names = crate::weapons::names(&bo2_dir);
         let bo2 = zhbo_formats::weapon::all(&common).unwrap();
         let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        // The weapon's own first-person effects are parsed (R8): the AN-94 carries both.
+        let an94 = bo2.iter().find(|w| w.name == "an94_mp").expect("an94_mp");
+        assert!(an94.view_flash_effect.is_some(), "the AN-94 has a viewFlashEffect");
+        assert!(an94.view_shell_eject_effect.is_some(), "the AN-94 has a viewShellEjectEffect");
         let mut defs: Vec<zhbo_core::weapons::WeaponDef> =
             bo2.iter().filter(|w| crate::weapons::is_player_weapon(w)).map(|w| crate::weapons::to_def(w, &names)).collect();
         assert!(defs.len() > 50, "{} player weapons", defs.len());
