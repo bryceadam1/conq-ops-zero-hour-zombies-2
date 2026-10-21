@@ -84,7 +84,7 @@ pub fn icons() -> Vec<Option<ClassIcons>> {
         let kit = c.loadout();
         out.push(Some(ClassIcons {
             // A hand-edited profile can carry a blank name; the button still needs a label.
-            name: if c.name.trim().is_empty() { format!("Custom Class {}", i + 1) } else { c.name.clone() },
+            name: if c.name.trim().is_empty() { crate::classui::empty_slot_name(i) } else { c.name.clone() },
             primary: weapon_icon(&kit.primary),
             secondary: weapon_icon(&kit.secondary),
             lethal: weapon_icon(&kit.lethal),
@@ -121,7 +121,7 @@ pub fn button_page_for(button: usize, presets: usize, customs: usize) -> Option<
 
 /// The button labels, in button order. A duplicate (a custom class named like a preset, or two
 /// customs whose names differ only by case) gets a numeric suffix so each button reads uniquely;
-/// a blank name falls back to `Custom Class N`.
+/// a blank name falls back to BO2's untouched slot name (`Custom N`, `a-chooseclass/002`).
 pub fn labels() -> Vec<Option<String>> {
     let icons = icons();
     let mut out: Vec<Option<String>> = Vec::with_capacity(BUTTONS);
@@ -336,11 +336,11 @@ mod tests {
         assert_eq!(custom_labels[PRESETS], Some(format!("{first_preset} 2")), "a name like a default class gets a suffix");
         assert_eq!(custom_labels[PRESETS + 1], Some("Sniper 2".to_string()));
 
-        // A blank name (a hand-edited profile) still gets a readable label.
+        // A blank name (a hand-edited profile) still gets a readable label: BO2's slot name.
         crate::profile::reset();
         crate::profile::load("   \nprimary=an94_mp\n");
         let blank_labels = labels();
-        assert_eq!(blank_labels[PRESETS], Some("Custom Class 1".to_string()));
+        assert_eq!(blank_labels[PRESETS], Some("Custom 1".to_string()));
         crate::profile::reset();
     }
 

@@ -1,257 +1,108 @@
-//! The screens' geometry: the pick and editor layouts, the editor's boxes and the pickers' windows, and their hit-testing.
+//! The editor's and the pickers' geometry, in LUI units, from the Lua (see `bo2.rs` for the frame).
 
+use super::bo2::{self, Frame};
 use super::*;
+use crate::lui::{Place, Rect};
 
-/// The pick screen's geometry: the heading and the set pager across the top, the list down the left
-/// with BO2's "You will load into the game with this class set." under it, the selected class's kit
-/// on the right, the prompt strip at the bottom (`a-chooseclass/001`).
-#[derive(Clone, Copy, Debug)]
-pub struct PickLayout {
-    pub title_y: f32,
-    pub header_h: f32,
-    pub content_x: f32,
-    pub content_w: f32,
-    /// The `‹ CLASS SET n ›` row and its ten-dot marker.
-    pub pager_y: f32,
-    pub pager_h: f32,
-    pub list_x: f32,
-    pub list_y: f32,
-    pub list_w: f32,
-    pub list_h: f32,
-    pub row_h: f32,
-    /// BO2's "You will load into the game with this class set." line under the list.
-    pub hint_y: f32,
-    pub panel_x: f32,
-    pub panel_y: f32,
-    pub panel_w: f32,
-    pub panel_h: f32,
-    pub footer_y: f32,
-}
+/// `CoD.CustomClass`'s grid (`patch_ui_mp/ui/t6/customclass.lua`'s `AddWidgets`): the element is
+/// `CoD.Menu.Width` wide, centred, top 60, so element-relative and menu-relative units agree.
+pub const ELEMENT_TOP: f32 = 60.0;
+/// `ButtonHeight` (secondary, attachment rows, grenades, bonus cards).
+pub const BUTTON_H: f32 = 71.0;
+/// `PrimaryWeaponButtonHeight` (`ButtonHeight * 2 + MinorGridSpacing`).
+pub const PRIMARY_H: f32 = 151.0;
+/// `LeftSideButtonWidth` / `RightSideButtonWidth` (with `MajorGridSpacing` 9 between).
+pub const LEFT_W: f32 = 500.0;
+pub const RIGHT_X: f32 = 509.0;
+pub const RIGHT_W: f32 = 355.0;
+/// `MajorGridSpacing` / `MinorGridSpacing` (both 9).
+pub const GRID_GAP: f32 = 9.0;
 
-pub fn pick_layout(w: f32, h: f32, s: f32) -> PickLayout {
-    let title_y = 12.0 * s;
-    let header_h = 46.0 * s;
-    let content_x = w * 0.05;
-    let content_w = w * 0.90;
-    let pager_y = title_y + header_h + 2.0 * s;
-    let pager_h = 32.0 * s;
-    let list_x = content_x;
-    let list_y = pager_y + pager_h + 10.0 * s;
-    let list_w = content_w * 0.46;
-    let footer_y = h - 34.0 * s;
-    let list_h = (footer_y - list_y - 56.0 * s).max(80.0 * s);
-    let panel_x = content_x + content_w * 0.52;
-    PickLayout {
-        title_y,
-        header_h,
-        content_x,
-        content_w,
-        pager_y,
-        pager_h,
-        list_x,
-        list_y,
-        list_w,
-        list_h,
-        row_h: 34.0 * s,
-        hint_y: list_y + list_h + 8.0 * s,
-        panel_x,
-        panel_y: list_y,
-        panel_w: content_x + content_w - panel_x,
-        panel_h: list_h,
-        footer_y,
-    }
-}
+/// `CoD.SlotList`: a slot plate is `SlotHeight * 1.4` wide (`SlotWidth`), `Spacing` 15 apart; the
+/// list is right-anchored inside the button's `InnerBorder` (5) and fills its height.
+pub const SLOT_W: f32 = 64.0 * 1.4;
+pub const SLOT_PITCH: f32 = SLOT_W + 15.0;
+pub const INNER_BORDER: f32 = 5.0;
 
-/// The allocation bar and counter's place in the heading: BO2 puts the bar under the pager on the
-/// right half of the choose-class screen and across the whole width in the editor.
-pub(super) fn allocation_bar_rect(l: &PickLayout, s: f32) -> (f32, f32, f32) {
-    (l.panel_x, l.pager_y + 10.0 * s, l.panel_w)
-}
+/// `CoD.CACAttachments.GridTop` for the grid pickers (the captures' ~80, `d-attach/002`).
+pub const GRID_TOP: f32 = 80.0;
+/// `CoD.CACAttachments.GridItemSpacing` (and `CACPerksP`'s).
+pub const GRID_ITEM_GAP: f32 = 8.0;
 
-/// How many pick rows fit in the list's panel.
-pub fn pick_visible(l: &PickLayout) -> usize {
-    ((l.list_h - 4.0) / l.row_h).max(1.0) as usize
-}
-
-/// The first row shown so the highlighted row is in the window (the list scrolls, like BO2's).
-pub fn pick_first(highlighted: usize, visible: usize) -> usize {
-    highlighted.saturating_sub(visible.saturating_sub(1))
-}
-
-/// The prompt width at `s` (the engine font's advance is close enough for the layout and the
-/// prompt's clickable box).
-pub(super) fn prompt_width(p: &Prompt, s: f32) -> f32 {
-    (p.key.chars().count() + p.label.chars().count() + 1) as f32 * PROMPT_SIZE * 6.0 / 7.0 * s
-}
-
-/// The shell's footer prompts, right-aligned in the prompt strip: BO2's `S Class Set Options`,
-/// `O Class Options`, with `ESC Back` at the left (each is clickable). Empty for the in-match
-/// pick-only footer (there is nothing to manage).
-pub fn pick_footer_actions(l: &PickLayout, w: f32, s: f32, manage: bool) -> Vec<(PickFooterAction, f32, f32, f32, f32)> {
-    if !manage {
-        return Vec::new();
-    }
-    let y = l.footer_y + 3.0 * s;
-    let fh = 22.0 * s;
-    let gap = 24.0 * s;
-    let right = (l.content_x + l.content_w - 10.0 * s).min(w * 0.95 - 10.0 * s);
-    let mut out = Vec::with_capacity(3);
-    let back = PickFooterAction::Back.prompt();
-    out.push((PickFooterAction::Back, l.content_x + 10.0 * s, y, prompt_width(&back, s), fh));
-    // The right group is laid out back to front from the strip's right edge.
-    let set = PickFooterAction::SetOptions.prompt();
-    let class = PickFooterAction::ClassOptions.prompt();
-    let (set_w, class_w) = (prompt_width(&set, s), prompt_width(&class, s));
-    let set_x = right - class_w - gap - set_w;
-    out.push((PickFooterAction::SetOptions, set_x, y, set_w, fh));
-    out.push((PickFooterAction::ClassOptions, set_x + set_w + gap, y, class_w, fh));
-    out
-}
-
-/// The footer action under a screen point, if any (shell only).
-pub fn pick_footer_at(l: &PickLayout, w: f32, s: f32, x: f32, y: f32, manage: bool) -> Option<PickFooterAction> {
-    pick_footer_actions(l, w, s, manage)
-        .into_iter()
-        .find(|(_, bx, by, bw, bh)| x >= *bx && x <= bx + bw && y >= *by && y <= by + bh)
-        .map(|(action, _, _, _, _)| action)
-}
-
-/// The row under a screen point, if any. `first` is [`pick_first`] for the current highlight.
-pub fn pick_row_at(l: &PickLayout, x: f32, y: f32, rows: usize, first: usize) -> Option<usize> {
-    if x < l.list_x || x > l.list_x + l.list_w || y < l.list_y || y > l.list_y + l.list_h {
-        return None;
-    }
-    let j = ((y - l.list_y) / l.row_h) as usize;
-    let within = y - l.list_y - j as f32 * l.row_h;
-    let i = first + j;
-    (j < pick_visible(l) && i < rows && within <= l.row_h - 6.0).then_some(i)
-}
-
-// ------------------------------------------------------------------------------------------------
-// The editor's geometry: BO2's boxed grid
-// ------------------------------------------------------------------------------------------------
-
-/// The editor's geometry (`b-editor/001`): the heading (the class name) with the allocation bar
-/// under it, the primary/attachments/secondary/attachments/bonus-card boxes down the left, PERK 1-3,
-/// LETHAL, TACTICAL and SAVE down the right, and the prompt strip at the bottom.
+/// The editor's geometry: the class name as the heading (Big), the allocation bar under it
+/// (element top 3, 10 tall across the menu's width), then the left column (PRIMARY, ATTACHMENTS,
+/// SECONDARY, ATTACHMENTS, WILDCARDS) and the right one (PERK 1-3, LETHAL, TACTICAL) of
+/// `customclass.lua`, the mod's SAVE CLASS under them, the prompts at the menu's bottom.
 #[derive(Clone, Copy, Debug)]
 pub struct EditorLayout {
-    pub title_y: f32,
-    pub header_h: f32,
-    pub content_x: f32,
-    pub content_w: f32,
-    pub bar_y: f32,
-    pub bar_h: f32,
-    /// The first box row's top.
-    pub top: f32,
-    pub gap: f32,
-    pub left_x: f32,
-    pub left_w: f32,
-    pub right_x: f32,
-    pub right_w: f32,
-    pub primary_y: f32,
-    pub primary_h: f32,
-    pub atts_y: f32,
-    pub atts_h: f32,
-    pub secondary_y: f32,
-    pub secondary_h: f32,
-    pub atts2_y: f32,
-    pub wild_y: f32,
-    pub wild_h: f32,
-    pub perk_h: f32,
-    pub offhand_h: f32,
-    pub save_h: f32,
-    /// The right column's rows below the three perk rows (BO2's LETHAL, TACTICAL, then our Save).
-    pub lethal_y: f32,
-    pub tactical_y: f32,
-    pub save_y: f32,
-    pub footer_y: f32,
-    /// The opening weapon/option list: rows this high, starting here.
-    pub row_h: f32,
+    pub frame: Frame,
+    /// The class-name row (the screen's title), menu-relative (0, 0, 864, Big).
+    pub title: Rect,
+    /// The allocation bar (element top 3, 10 tall, the menu's width).
+    pub bar: Rect,
+    pub primary: Rect,
+    pub primary_atts: Rect,
+    pub secondary: Rect,
+    pub secondary_atts: Rect,
+    pub perks: [Rect; 3],
+    pub lethal: Rect,
+    pub tactical: Rect,
+    /// The WILDCARDS label (ExtraSmall) and its three cards across the menu.
+    pub wildcards_label: Rect,
+    pub wildcards: [Rect; 3],
+    /// The mod's own SAVE CLASS row (BO2 saves on back-out): below the grid, right column.
+    pub save: Rect,
 }
 
-pub fn editor_layout(w: f32, h: f32, s: f32) -> EditorLayout {
-    let title_y = 12.0 * s;
-    let header_h = 46.0 * s;
-    let content_x = w * 0.06;
-    let content_w = w * 0.88;
-    let bar_y = title_y + header_h + 2.0 * s;
-    let bar_h = 7.0 * s;
-    let top = bar_y + 22.0 * s;
-    let gap = 8.0 * s;
-    let left_x = content_x;
-    let left_w = content_w * 0.575;
-    let right_x = content_x + content_w * 0.595;
-    let right_w = content_x + content_w - right_x;
-    let primary_y = top;
-    let primary_h = 170.0 * s;
-    let atts_y = primary_y + primary_h + gap;
-    let atts_h = 42.0 * s;
-    let secondary_y = atts_y + atts_h + gap;
-    let secondary_h = 96.0 * s;
-    let atts2_y = secondary_y + secondary_h + gap;
-    let wild_y = atts2_y + atts_h + gap;
-    let wild_h = 120.0 * s;
-    let perk_h = 88.0 * s;
-    let offhand_h = 82.0 * s;
-    let save_h = 36.0 * s;
-    let lethal_y = top + 3.0 * (perk_h + gap);
-    let tactical_y = lethal_y + offhand_h + gap;
-    let save_y = tactical_y + offhand_h + gap;
+pub fn editor_layout(w: f32, h: f32) -> EditorLayout {
+    let frame = Frame::new(w, h);
+    let content = frame.in_menu(Place::new((false, false, -bo2::MENU_W / 2.0, bo2::MENU_W / 2.0), (true, true, ELEMENT_TOP, 0.0)));
+    let at = |x: f32, y: f32, w: f32, h: f32| Rect { x: content.x + x, y: content.y + y, w, h };
+    let row2 = PRIMARY_H + GRID_GAP; // primary -> attachments
+    let row3 = row2 + BUTTON_H + GRID_GAP; // -> secondary / lethal
+    let row4 = row3 + BUTTON_H + GRID_GAP; // -> attachments / tactical
+    let wild_label_y = row4 + BUTTON_H + 5.0;
+    let wild_y = wild_label_y + bo2::TEXT_EXTRA_SMALL + 2.0;
+    let card_w = (bo2::MENU_W - 2.0 * GRID_GAP) / 3.0;
     EditorLayout {
-        title_y,
-        header_h,
-        content_x,
-        content_w,
-        bar_y,
-        bar_h,
-        top,
-        gap,
-        left_x,
-        left_w,
-        right_x,
-        right_w,
-        primary_y,
-        primary_h,
-        atts_y,
-        atts_h,
-        secondary_y,
-        secondary_h,
-        atts2_y,
-        wild_y,
-        wild_h,
-        perk_h,
-        offhand_h,
-        save_h,
-        lethal_y,
-        tactical_y,
-        save_y,
-        footer_y: h - 34.0 * s,
-        row_h: 34.0 * s,
+        frame,
+        title: frame.in_menu(Place::new((true, false, 0.0, bo2::MENU_W), (true, false, 0.0, bo2::TEXT_BIG))),
+        bar: at(0.0, 3.0, bo2::MENU_W, 10.0),
+        primary: at(0.0, 25.0, LEFT_W, PRIMARY_H),
+        primary_atts: at(0.0, 25.0 + row2, LEFT_W, BUTTON_H),
+        secondary: at(0.0, 25.0 + row3, LEFT_W, BUTTON_H),
+        secondary_atts: at(0.0, 25.0 + row4, LEFT_W, BUTTON_H),
+        perks: [25.0, 25.0 + BUTTON_H + GRID_GAP, 25.0 + 2.0 * (BUTTON_H + GRID_GAP)].map(|y| at(RIGHT_X, y, RIGHT_W, BUTTON_H)),
+        lethal: at(RIGHT_X, 25.0 + row3, RIGHT_W, BUTTON_H),
+        tactical: at(RIGHT_X, 25.0 + row4, RIGHT_W, BUTTON_H),
+        wildcards_label: at(2.0, 25.0 + wild_label_y, bo2::MENU_W, bo2::TEXT_EXTRA_SMALL),
+        wildcards: [0, 1, 2].map(|i| at(i as f32 * (card_w + GRID_GAP), 25.0 + wild_y, card_w, BUTTON_H)),
+        save: at(RIGHT_X, 25.0 + wild_y + BUTTON_H + GRID_GAP, RIGHT_W, 36.0),
     }
 }
 
 /// One addressable box of the editor's screen: the slot it edits, which of the slot's repeated
-/// boxes it is (attachment 2, bonus card 3, …), and where it sits.
+/// boxes it is (attachment 2, bonus card 3, …), and where it sits (root units).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct EditorCell {
     pub slot: Slot,
     pub index: usize,
-    pub x: f32,
-    pub y: f32,
-    pub w: f32,
-    pub h: f32,
+    pub rect: Rect,
 }
 
 impl EditorCell {
-    pub fn center(&self) -> (f32, f32) {
-        (self.x + self.w * 0.5, self.y + self.h * 0.5)
+    /// Whether a screen point is inside the box.
+    pub fn contains(&self, f: &Frame, x: f32, y: f32) -> bool {
+        bo2::hit(f, self.rect, x, y)
     }
+}
 
-    /// Whether a point is inside the box.
-    pub fn contains(&self, x: f32, y: f32) -> bool {
-        x >= self.x && x <= self.x + self.w && y >= self.y && y <= self.y + self.h
-    }
+/// The slot plates of a button: `n` plates right-anchored inside its `InnerBorder`, filled from
+/// the left (`slotlistgridbutton.lua`, `slotlist.lua`). Plate `i`'s box (root units).
+pub fn slot_plate(button: Rect, n: usize, i: usize) -> Rect {
+    let width = n as f32 * SLOT_W + (n as f32 - 1.0) * (SLOT_PITCH - SLOT_W);
+    let x = button.right() - INNER_BORDER - width + i as f32 * SLOT_PITCH;
+    Rect { x, y: button.y + INNER_BORDER, w: SLOT_W, h: button.h - 2.0 * INNER_BORDER }
 }
 
 /// The editor's boxes, in the walk order of [`Slot::ALL`] (the second perk rows beside their tier,
@@ -259,66 +110,59 @@ impl EditorCell {
 pub fn editor_cells(l: &EditorLayout, editor: &Editor) -> Vec<EditorCell> {
     let d = &editor.draft;
     let mut out: Vec<EditorCell> = Vec::with_capacity(22);
-    let mut cell = |slot, index, x, y, w, h| out.push(EditorCell { slot, index, x, y, w, h });
+    let mut cell = |slot, index, rect| out.push(EditorCell { slot, index, rect });
     // The heading is the class-name row (BO2's editor titles the screen with the class name).
-    cell(Slot::Name, 0, l.content_x, l.title_y, l.content_w * 0.55, l.header_h);
-    cell(Slot::Primary, 0, l.left_x, l.primary_y, l.left_w, l.primary_h);
-    // The attachment boxes sit right of their label, BO2's row. A weapon that offers no
-    // attachments has no boxes at all ("Attachments not available", b-editor/002).
-    let box_w = l.left_w * 0.18;
-    let box_gap = l.left_w * 0.035;
-    let first_x = l.left_x + l.left_w * 0.36;
+    cell(Slot::Name, 0, l.title);
+    cell(Slot::Primary, 0, l.primary);
+    // The attachment plates sit right of their label in the row's slot list, BO2's grid. A weapon
+    // that offers no attachments has no plates at all ("Attachments not available", b-editor/002).
     if offers_attachments(&d.primary) {
         for i in 0..d.primary_att_max() {
-            let x = first_x + i as f32 * (box_w + box_gap);
-            cell(Slot::PrimaryAtts, i, x, l.atts_y, box_w.min(l.left_x + l.left_w - x), l.atts_h);
+            cell(Slot::PrimaryAtts, i, slot_plate(l.primary_atts, 3, i));
         }
     }
-    cell(Slot::Secondary, 0, l.left_x, l.secondary_y, l.left_w, l.secondary_h);
+    cell(Slot::Secondary, 0, l.secondary);
     if offers_attachments(&d.secondary) {
         for i in 0..d.secondary_att_max() {
-            let x = first_x + i as f32 * (box_w + box_gap);
-            cell(Slot::SecondaryAtts, i, x, l.atts2_y, box_w.min(l.left_x + l.left_w - x), l.atts_h);
+            cell(Slot::SecondaryAtts, i, slot_plate(l.secondary_atts, 3, i));
         }
     }
-    cell(Slot::Lethal, 0, l.right_x + l.right_w * 0.46, l.lethal_y, l.right_w * 0.36, l.offhand_h);
-    cell(Slot::Tactical, 0, l.right_x + l.right_w * 0.46, l.tactical_y, l.right_w * 0.36, l.offhand_h);
+    cell(Slot::Lethal, 0, slot_plate(l.lethal, 2, 0));
+    cell(Slot::Tactical, 0, slot_plate(l.tactical, 2, 0));
     for tier in 1..=3u8 {
-        let y = l.top + (tier as f32 - 1.0) * (l.perk_h + l.gap);
-        cell(perk_slot(tier), 0, l.right_x + l.right_w * 0.46, y, l.right_w * 0.36, l.perk_h);
+        let button = l.perks[(tier - 1) as usize];
+        cell(perk_slot(tier), 0, slot_plate(button, 2, 0));
         if d.wildcards.contains(&greed_wildcard(tier)) {
-            cell(perk_extra_slot(tier), 1, l.right_x + l.right_w * 0.86, y + l.perk_h * 0.25, l.right_w * 0.12, l.perk_h * 0.5);
+            cell(perk_extra_slot(tier), 1, slot_plate(button, 2, 1));
         }
     }
-    let wild_w = (l.left_w - 2.0 * l.gap) / 3.0;
-    for i in 0..3 {
-        cell(Slot::Wildcards, i, l.left_x + i as f32 * (wild_w + l.gap), l.wild_y, wild_w, l.wild_h);
+    for (i, r) in l.wildcards.iter().enumerate() {
+        cell(Slot::Wildcards, i, *r);
     }
-    let save_y = l.save_y;
-    cell(Slot::Save, 0, l.right_x + l.right_w * 0.46, save_y, l.right_w * 0.36, l.save_h);
+    cell(Slot::Save, 0, l.save);
     out
 }
 
 /// The box under a screen point.
-pub fn editor_cell_at(cells: &[EditorCell], x: f32, y: f32) -> Option<usize> {
-    cells.iter().position(|c| c.contains(x, y))
+pub fn editor_cell_at(l: &EditorLayout, cells: &[EditorCell], x: f32, y: f32) -> Option<usize> {
+    cells.iter().position(|c| c.contains(&l.frame, x, y))
 }
 
-/// BO2's circled `X` on a filled, selected box: where it draws and what it covers.
-pub fn remove_rect(cell: &EditorCell, s: f32) -> (f32, f32, f32, f32) {
-    let d = 18.0 * s;
-    (cell.x + cell.w - d - 4.0 * s, cell.y + 4.0 * s, d, d)
+/// BO2's circled `X` on a filled, selected box: where it draws and what it covers (root units;
+/// centred on the box's top-right corner, `b-editor/028`).
+pub fn remove_rect(cell: &EditorCell) -> Rect {
+    let d = 20.0;
+    Rect { x: cell.rect.right() - d * 0.5, y: cell.rect.y - d * 0.5, w: d, h: d }
 }
 
 /// The `(slot, box)` a click clears at this point: only the selected slot's filled boxes carry the
 /// `X` (BO2 shows it on the highlighted slot alone).
-pub fn editor_remove_at(cells: &[EditorCell], editor: &Editor, s: f32, x: f32, y: f32) -> Option<(Slot, usize)> {
+pub fn editor_remove_at(l: &EditorLayout, cells: &[EditorCell], editor: &Editor, x: f32, y: f32) -> Option<(Slot, usize)> {
     cells.iter().find_map(|c| {
         if c.slot != editor.slot || !cell_filled(editor, c) {
             return None;
         }
-        let (rx, ry, rw, rh) = remove_rect(c, s);
-        (x >= rx && x <= rx + rw && y >= ry && y <= ry + rh).then_some((c.slot, c.index))
+        bo2::hit(&l.frame, remove_rect(c), x, y).then_some((c.slot, c.index))
     })
 }
 
@@ -371,39 +215,112 @@ pub(super) fn greed_wildcard(tier: u8) -> Wildcard {
     }
 }
 
-/// The opening option list's rect: the weapon picker's tiles fill the right column, every other
-/// picker's rows fill the left one.
-pub fn picker_rect(l: &EditorLayout, slot: Slot) -> (f32, f32, f32, f32) {
+// ------------------------------------------------------------------------------------------------
+// The pickers' geometry (BO2's carousel and grids)
+// ------------------------------------------------------------------------------------------------
+
+/// `CoD.CACPrimaryWeapons.ItemWidth`/`ItemHeight` (the gun tiles) and its highlighted card
+/// (`HighlightedItemWidth`/`HighlightedItemHeight`).
+pub const CAROUSEL_ITEM_W: f32 = 192.0;
+pub const CAROUSEL_ITEM_H: f32 = 146.0;
+pub const CAROUSEL_CARD_W: f32 = 345.6;
+pub const CAROUSEL_CARD_H: f32 = 217.8;
+/// The carousel's top (under the title and allocation bar, `cacweaponsp.lua`) and the tiles' inset.
+pub const CAROUSEL_TOP: f32 = 83.0;
+const CAROUSEL_TILE_TOP: f32 = 97.0;
+const CAROUSEL_TILE_PITCH: f32 = CAROUSEL_ITEM_W + 4.0;
+
+/// The weapon picker's highlighted card (left, menu-relative).
+pub fn carousel_card(l: &EditorLayout) -> Rect {
+    l.frame.in_menu(Place::new((true, false, 0.0, CAROUSEL_CARD_W), (true, false, CAROUSEL_TOP, CAROUSEL_TOP + CAROUSEL_CARD_H)))
+}
+
+/// Tile `i` of the weapon picker's carousel (menu-relative), flowing right of the card.
+pub fn carousel_tile(l: &EditorLayout, i: usize) -> Rect {
+    let x = CAROUSEL_CARD_W + 12.0 + i as f32 * CAROUSEL_TILE_PITCH;
+    l.frame.in_menu(Place::new((true, false, x, x + CAROUSEL_ITEM_W), (true, false, CAROUSEL_TILE_TOP, CAROUSEL_TILE_TOP + CAROUSEL_ITEM_H)))
+}
+
+/// How many tiles the carousel shows (the last may clip at the menu's edge, as BO2's does).
+pub fn carousel_shown() -> usize {
+    ((bo2::MENU_W - (CAROUSEL_CARD_W + 12.0)) / CAROUSEL_TILE_PITCH).ceil() as usize
+}
+
+/// A grid picker's columns for a slot: `CoD.CACAttachments.GridColumns` is 6,
+/// `CoD.CACPerksP.GridColumns` 3 (the perks, wildcards and grenade pickers share it,
+/// `e-perks/001`, `f-wildcards/001`).
+pub fn grid_columns(slot: Slot) -> usize {
     match slot {
-        Slot::Primary | Slot::Secondary => (l.right_x, l.top, l.right_w, l.footer_y - 20.0 - l.top),
-        _ => (l.left_x, l.top, l.left_w, l.footer_y - 20.0 - l.top),
+        Slot::PrimaryAtts | Slot::SecondaryAtts => 6,
+        _ => 3,
     }
 }
 
-/// How many option rows fit in the picker.
-pub fn picker_rows(l: &EditorLayout, slot: Slot) -> usize {
-    let (_, _, _, h) = picker_rect(l, slot);
-    (h / l.row_h).max(1.0) as usize
+/// One grid picker's cell box (menu-relative): `GridItemWidth` = (864 − spacing × (cols−1)) / cols,
+/// the height `64 + TitleHeight + 10` for attachments (94) and `96 + TitleHeight + 10` for the rest
+/// (126), rows `GridTop` down, `GridItemSpacing` apart.
+pub fn grid_cell(l: &EditorLayout, slot: Slot, i: usize) -> Rect {
+    let cols = grid_columns(slot);
+    let w = (bo2::MENU_W - GRID_ITEM_GAP * (cols as f32 - 1.0)) / cols as f32;
+    let h = if cols == 6 { 64.0 + bo2::TEXT_EXTRA_SMALL + 10.0 } else { 96.0 + bo2::TEXT_EXTRA_SMALL + 10.0 };
+    let x = (i % cols) as f32 * (w + GRID_ITEM_GAP);
+    let y = GRID_TOP + (i / cols) as f32 * (h + GRID_ITEM_GAP);
+    l.frame.in_menu(Place::new((true, false, x, x + w), (true, false, y, y + h)))
 }
 
-/// The first shown option (scrolled so the highlighted one shows) and how many fit.
-pub fn picker_window(l: &EditorLayout, slot: Slot, highlighted: usize) -> (usize, usize) {
-    let shown = picker_rows(l, slot);
-    (highlighted.saturating_sub(shown.saturating_sub(1)), shown)
+/// The first option the picker shows (scrolled so the highlighted one is in view) and how many
+/// cards/tiles fit. BO2's carousel IS its highlighted card: the window starts at it
+/// (`b-editor/016`).
+pub fn picker_window(slot: Slot, highlighted: usize) -> (usize, usize) {
+    match slot {
+        Slot::Primary | Slot::Secondary => (highlighted, carousel_shown()),
+        _ => {
+            let cols = grid_columns(slot);
+            let rows = grid_rows_visible(slot);
+            let row = highlighted / cols;
+            let first_row = row.saturating_sub(rows.saturating_sub(1));
+            (first_row * cols, rows * cols)
+        }
+    }
 }
 
-/// The drawn row under a screen point, already translated to its index in the shown window.
+/// How many grid rows show at once (`d-attach/002`: two plus a third peeking).
+fn grid_rows_visible(slot: Slot) -> usize {
+    let h = if grid_columns(slot) == 6 { 64.0 + bo2::TEXT_EXTRA_SMALL + 10.0 } else { 96.0 + bo2::TEXT_EXTRA_SMALL + 10.0 };
+    let avail = bo2::MENU_H - GRID_TOP - bo2::PROMPT_H - 130.0; // the name/description block below
+    ((avail + GRID_ITEM_GAP) / (h + GRID_ITEM_GAP)).max(1.0).floor() as usize
+}
+
+/// The drawn option under a screen point, already translated to its index in the shown window.
 pub fn picker_option_at(l: &EditorLayout, slot: Slot, x: f32, y: f32, first: usize, count: usize) -> Option<usize> {
-    let (px, py, pw, _) = picker_rect(l, slot);
-    if x < px || x > px + pw || y < py || y > l.footer_y {
-        return None;
+    match slot {
+        Slot::Primary | Slot::Secondary => {
+            if first < count && bo2::hit(&l.frame, carousel_card(l), x, y) {
+                return Some(first);
+            }
+            for j in 0..carousel_shown() {
+                let i = first + 1 + j;
+                if i >= count {
+                    break;
+                }
+                if bo2::hit(&l.frame, carousel_tile(l, j), x, y) {
+                    return Some(i);
+                }
+            }
+            None
+        }
+        _ => {
+            let shown = grid_columns(slot) * grid_rows_visible(slot);
+            for j in 0..shown {
+                let i = first + j;
+                if i >= count {
+                    break;
+                }
+                if bo2::hit(&l.frame, grid_cell(l, slot, j), x, y) {
+                    return Some(i);
+                }
+            }
+            None
+        }
     }
-    let j = ((y - py) / l.row_h) as usize;
-    let within = y - py - j as f32 * l.row_h;
-    let i = first + j;
-    (j < picker_rows(l, slot) && i < count && within <= l.row_h - 6.0).then_some(i)
 }
-
-// ------------------------------------------------------------------------------------------------
-// The weapon picker's category column
-// ------------------------------------------------------------------------------------------------

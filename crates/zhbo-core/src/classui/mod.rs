@@ -10,13 +10,18 @@
 //! draw them through [`draw_screen`]'s [`ScreenView`], so no host state leaks into the layout.
 //! `hud` just delegates here, and the shell's set/class dialogs are drawn by [`draw_dialog`].
 //!
-//! The layout is BO2's (`cacchooseclass.lua`, `c-primary/*`, `b-editor/*`):
+//! The layout is BO2's, in LUI units (`bo2.rs` owns the frame; `cacchooseclass.lua`,
+//! `changeclass.lua`, `classpreview.lua`, `c-primary/*`, `b-editor/*` are the sources):
 //!
-//! * **Choose class.** The heading band and the `‹ CLASS SET n ›` pager with its ten-dot set marker
-//!   over the list (`a-chooseclass/001`), the ten-point allocation bar and its `n/10` counter on the
-//!   right (`b-editor/001`), the class rows down the left with BO2's hint under them, and the
-//!   highlighted class's kit on the right in BO2's order (PRIMARY, SECONDARY, PERK 1-3, LETHAL,
-//!   TACTICAL, BONUS CARDS).
+//! * **Choose class.** The CHOOSE CLASS title, the `‹ CLASS SET n ›` header with its set pips
+//!   (lobby only), and the button list down the left: the lobby (`cacchooseclass.lua`'s
+//!   `UpdateButtonList`) lists the active set's five custom slots — filled ones by name, untouched
+//!   ones as BO2's `Custom n` (`a-chooseclass/002`) — with BO2's set hint under them; a match
+//!   (`changeclass.lua`) shows the set's name, then the same five slots, then the default classes
+//!   in BO2's order (SMG, CQB, Assault, LMG, Sniper). The highlighted class's `ClassPreview` sits
+//!   right (`preview.rs`): the `n/10` allocation counter and ten-bar strip, then PRIMARY, SECONDARY,
+//!   PERK 1-3, LETHAL, TACTICAL and WILDCARDS. The focused row pulses `BOIIOrange`
+//!   (`cod9button.lua`).
 //! * **Editor.** The class name as the heading, the allocation bar under it, and BO2's boxed grid:
 //!   the primary and its attachment boxes, the secondary and its, the bonus-card strip down the left
 //!   (`b-editor/001`); PERK 1-3, LETHAL and TACTICAL down the right (`b-editor/028`). The selected
@@ -26,28 +31,31 @@
 //!   category as tiles, and the highlighted gun's four segmented bars in BO2's order (FIRE RATE,
 //!   DAMAGE, RANGE, ACCURACY).
 //!
-//! The pick list is the ACTIVE class set's: the five defaults, then the set's five custom slots, with
-//! the set a match loads into shown by the pager. The *shell* adds the final CREATE A CLASS row, the
-//! set/class options (`S`/`O`, `menu::Dialog`) and walks the ten sets with Left/Right; in a match the
-//! screen is pick-only (BO2 only lets you create classes in the lobby) and the pager is a read-only
-//! display of the active set. Missing art falls back to drawn shapes (`Prim::Image`'s fallback), so
-//! the screens work without the converted archive.
+//! The *shell* walks the ten sets with Left/Right and carries the set/class options (`S`/`O`,
+//! `menu::Dialog`); in a match the screen is pick-only (BO2 only creates classes in the lobby) and
+//! an untouched slot is not pickable. Missing art falls back to drawn shapes (`Prim::Image`'s
+//! fallback), so the screens work without the converted archive.
 
 use crate::classes;
 use crate::classmenu::{Draft, Editor, Slot, Wildcard};
-use crate::hud::{self, sprites, Prim, DIM, GOLD, OUTLINE, PANEL, RED, WHITE};
+use crate::hud::{self, sprites, Prim, DIM, GOLD, RED, WHITE};
 use crate::input::Key;
 use crate::input::KeySet;
 use crate::profile;
 use crate::weapons::{self, Class as WeaponClass, WeaponDef};
 
 
+pub mod bo2;
 mod categories;
 mod chrome;
+pub mod cues;
 mod dialog;
 mod edit;
+mod editor;
 mod input;
 mod layout;
+mod pick;
+mod preview;
 mod screens;
 #[cfg(test)]
 mod tests;
@@ -56,30 +64,18 @@ pub use categories::*;
 pub use chrome::*;
 pub use dialog::*;
 pub use edit::*;
+pub use editor::*;
 pub use input::*;
 pub use layout::*;
+pub use pick::*;
 pub use screens::*;
 
 /// How long the deny flash stays up after a refused choice (seconds).
 pub const DENY_FLASH: f32 = 0.3;
 
-/// A dark row behind the list's content.
-pub(super) const ROW_FILL: u32 = 0x8C15_181C;
-/// The highlighted row's fill, a touch brighter than BO2's gold edge.
-pub(super) const ROW_ACTIVE: u32 = 0xD02A_2E33;
-/// A row's separator / outline.
-pub(super) const ROW_EDGE: u32 = 0x55C8_CCD0;
-/// The pick list's right-hand details panel.
-pub(super) const PANEL_FILL: u32 = 0x9010_1214;
-
 /// BO2's selection orange: the create-a-class highlight and the spend bars
 /// (`b-editor/001`, `c-primary/001`).
 pub(super) const ORANGE: u32 = 0xFFFF_8A1E;
-/// A boxed editor cell's fill and its idle edge (BO2's near-black tiles).
-pub(super) const CELL_FILL: u32 = 0x8C14_161A;
-pub(super) const CELL_EDGE: u32 = 0x70C8_CCD0;
-/// The allocation bar's free segments and BO2's tile-strip fill.
-pub(super) const BAR_FREE: u32 = 0x46FF_FFFF;
 /// The dialog panel behind the shell's S/O menus (`a-chooseclass/021`).
 pub(super) const DIALOG_FILL: u32 = 0xF01C_1E20;
 pub(super) const DIALOG_EDGE: u32 = 0xB0D8_DCDE;
@@ -93,8 +89,9 @@ pub enum PickRow {
     Preset(usize),
     /// An index into the player's profile (`profile::classes`).
     Custom(usize),
-    /// The final CREATE A CLASS row: opens the editor on a fresh draft.
-    Create,
+    /// An untouched custom slot of the active set (`Custom n`, BO2 always shows all five): picking
+    /// it in the lobby opens the editor on a fresh class for that slot.
+    Empty(usize),
 }
 
 /// One of the shell pick screen's footer prompts. In a match the footer is prompts only (the screen
@@ -147,8 +144,8 @@ pub struct Prompt {
 /// One class set's pick list: the rows plus the set they describe, for the screen's pager.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PickList {
-    /// The rows, in BO2's order: the five default classes, the active set's custom slots, then (in
-    /// the shell only) CREATE A CLASS.
+    /// The rows, in BO2's order: the active set's five custom slots (filled, then untouched), then
+    /// in a match the default classes (`changeclass.lua`).
     pub rows: Vec<PickRow>,
     /// The active class set, 0-based.
     pub set: usize,
@@ -178,7 +175,7 @@ pub fn pick_list(manage: bool) -> PickList {
     // One snapshot of the profile, so the rows and the pager describe the same set even if a
     // test thread saves meanwhile.
     let p = profile::get();
-    let rows = pick_rows_for(classes::get().len(), p.customs().len(), manage);
+    let rows = pick_rows_for(&classes::get(), p.customs().len(), manage);
     let set = p.active_set();
     PickList { rows, set, sets: profile::MAX_SETS, set_name: p.set_name(set) }
 }
@@ -190,13 +187,21 @@ pub fn pick_rows(manage: bool) -> Vec<PickRow> {
 
 /// The list for a caller that already snapshotted the two registries (the draw does, so both
 /// halves of one frame describe the same lists even if a test thread saves concurrently).
-pub fn pick_rows_for(presets: usize, customs: usize, manage: bool) -> Vec<PickRow> {
-    let extra = usize::from(manage);
-    let mut rows = Vec::with_capacity(presets + customs + extra);
-    rows.extend((0..presets).map(PickRow::Preset));
-    rows.extend((0..customs).map(PickRow::Custom));
-    if manage {
-        rows.push(PickRow::Create);
+///
+/// The lobby's `CACChooseClass` lists the active set's five custom slots and nothing else
+/// (`cacchooseclass.lua`'s `UpdateButtonList`). The match's `changeclass` lists the same five, then
+/// the default classes in its order: SMG, CQB, Assault, LMG, Sniper (`AddDefaultClassButtons`,
+/// `class_smg` 10 .. `class_sniper` 14); a preset outside those five keeps its registry order after
+/// them.
+pub fn pick_rows_for(presets: &[classes::ClassDef], customs: usize, manage: bool) -> Vec<PickRow> {
+    let customs = customs.min(profile::MAX_CLASSES);
+    let mut rows: Vec<PickRow> = (0..customs).map(PickRow::Custom).collect();
+    rows.extend((customs..profile::MAX_CLASSES).map(PickRow::Empty));
+    if !manage {
+        const ORDER: [&str; 5] = ["smg", "cqb", "assault", "lmg", "sniper"];
+        let mut order: Vec<usize> = (0..presets.len()).collect();
+        order.sort_by_key(|&j| ORDER.iter().position(|o| presets[j].id.eq_ignore_ascii_case(o)).unwrap_or(ORDER.len()));
+        rows.extend(order.into_iter().map(PickRow::Preset));
     }
     rows
 }

@@ -18,9 +18,9 @@
 //! ABI).
 
 use crate::classmenu::{Draft, Editor, Outcome};
+use crate::classui::cues;
 use crate::classui::{self, Dialog, DialogItem, DialogOutcome, MenuPointer, MenuPrev, PickFooterAction, PickRow};
 use crate::input::{Key, KeySet};
-use crate::sounds;
 
 /// The menu frame's input (ABI: `ZhboMenuIn`). The bridge fills it from the shell window's draw
 /// callback: keys from the platform poll, the pointer and buttons from the engine's cursor, the
@@ -103,6 +103,11 @@ pub struct MenuState {
     pub cues: Vec<&'static str>,
     /// The screen asked to close (Escape/Back on the pick list).
     closed: bool,
+    /// The screen's UI clock in seconds (60 Hz steps, like the deny rim): LUI pulses and fades.
+    clock: f32,
+    /// The clock reading of the last class-set change, while `SetActiveClassSet`'s 250 ms
+    /// slide/fade runs (`cacchooseclass.lua`); `None` once it has landed.
+    set_change: Option<f32>,
 }
 
 impl Default for MenuState {
@@ -124,8 +129,10 @@ impl MenuState {
             highlight: 0,
             deny: 0.0,
             prev: MenuPrev::default(),
-            cues: vec![sounds::UI_OPEN],
+            cues: vec![cues::ENTER_CAC],
             closed: false,
+            clock: 0.0,
+            set_change: None,
         }
     }
 
@@ -145,6 +152,11 @@ impl MenuState {
         // The menu ABI carries no dt (the shell window draws every rendered frame); the rim decays
         // a 60 Hz step per frame.
         self.deny = (self.deny - 1.0 / 60.0).max(0.0);
+        self.clock += 1.0 / 60.0;
+        // A set switch's slide/fade is over once its duration has run.
+        if self.set_change.is_some_and(|start| self.clock - start >= classui::SET_SWITCH_MS / 1000.0) {
+            self.set_change = None;
+        }
         if self.dialog.is_some() {
             self.dialog_frame(&pointer, &mut out);
         } else if let Some(editor) = self.editor.take() {
@@ -160,7 +172,8 @@ impl MenuState {
     /// What the screen draws (the same `ScreenView` the in-game Client produces, plus the shell's
     /// editor and management affordances).
     pub fn view(&self) -> classui::ScreenView<'_> {
-        classui::ScreenView { highlight: self.highlight, editor: self.editor.as_ref(), deny: self.deny, manage: true }
+        let set_change = self.set_change.map(|start| (self.clock - start).max(0.0));
+        classui::ScreenView { highlight: self.highlight, editor: self.editor.as_ref(), deny: self.deny, manage: true, now: self.clock, set_change }
     }
 
     /// The open `S`/`O` dialog, for the host to draw over the screen (`classui::draw_dialog`).
@@ -170,7 +183,7 @@ impl MenuState {
 
     /// Play BO2's deny cue and light the screen's rim (an over-budget choice, a full profile).
     fn deny(&mut self) {
-        self.cues.push(sounds::UI_DENY);
+        self.cues.push(cues::DENY);
         self.deny = classui::DENY_FLASH;
     }
 
@@ -179,7 +192,8 @@ impl MenuState {
         self.editor = Some(Editor::new(draft));
         self.editor_set = crate::profile::active_set();
         self.editor_slot = slot;
-        self.cues.push(sounds::UI_OPEN);
+        // BO2's ChooseClass handler: the lobby plays cac_main_edit_loadout as the editor opens.
+        self.cues.push(cues::EDIT_LOADOUT);
         // The opening key's edge must not reach the editor on the same frame.
         self.prev.buttons = 0;
     }
@@ -189,7 +203,8 @@ impl MenuState {
         self.dialog = Some(dialog);
         self.dialog_slot = slot;
         self.dialog_set = crate::profile::active_set();
-        self.cues.push(sounds::UI_OPEN);
+        // popup.lua's OpenPopup: a dialog opens with the loadout-editor select cue.
+        self.cues.push(cues::DIALOG_OPEN);
         self.prev.buttons = 0;
     }
 
@@ -204,14 +219,14 @@ impl MenuState {
                 self.dialog = Some(dialog);
             }
             DialogOutcome::Back => {
-                self.cues.push(sounds::UI_BACK);
+                self.cues.push(cues::BACKOUT);
             }
             DialogOutcome::Confirm(item) => {
                 if item == DialogItem::Rename && !was_naming {
                     // The entry opens the text field on the current name (BO2's rename popup).
                     let seed = self.dialog_seed();
                     dialog.begin_rename(&seed);
-                    self.cues.push(sounds::UI_SELECT);
+                    self.cues.push(cues::GRID_EQUIP);
                     self.dialog = Some(dialog);
                     return;
                 }
@@ -259,7 +274,7 @@ impl MenuState {
                 match text {
                     Some(text) => {
                         write_profile(out, classui::SAVE_PROFILE_EDIT, &text);
-                        self.cues.push(sounds::UI_SELECT);
+                        self.cues.push(cues::GRID_EQUIP);
                     }
                     None => self.deny(),
                 }
@@ -268,9 +283,12 @@ impl MenuState {
                 Some(slot) => match crate::profile::copy_in_slot(slot) {
                     Some((_name, text)) => {
                         write_profile(out, classui::SAVE_PROFILE_EDIT, &text);
-                        // The copy is appended: second to last, just before CREATE A CLASS.
-                        self.highlight = classui::pick_rows(true).len().saturating_sub(2);
-                        self.cues.push(sounds::UI_SELECT);
+                        // The copy is appended to the set's filled slots: highlight it.
+                        let row = PickRow::Custom(crate::profile::get().customs().len().saturating_sub(1));
+                        if let Some(i) = classui::pick_rows(true).iter().position(|r| *r == row) {
+                            self.highlight = i;
+                        }
+                        self.cues.push(cues::GRID_EQUIP);
                     }
                     None => self.deny(),
                 },
@@ -279,7 +297,7 @@ impl MenuState {
             DialogItem::ResetSet => match crate::profile::reset_set(set) {
                 Some(text) => {
                     write_profile(out, classui::SAVE_PROFILE_EDIT, &text);
-                    self.cues.push(sounds::UI_BACK);
+                    self.cues.push(cues::SAVE);
                 }
                 None => self.deny(),
             },
@@ -303,7 +321,7 @@ impl MenuState {
                 match crate::profile::save_in_set(set, slot, class) {
                     Some(text) => {
                         write_profile(out, classui::SAVE_PROFILE_CLASS, &text);
-                        self.cues.push(if item == DialogItem::ResetDefault { sounds::UI_SAVE } else { sounds::UI_BACK });
+                        self.cues.push(if item == DialogItem::ResetDefault { cues::SAVE } else { cues::ITEM_REMOVE });
                     }
                     None => self.deny(),
                 }
@@ -344,17 +362,20 @@ impl MenuState {
             Some(text) => {
                 write_profile(out, classui::SAVE_PROFILE_EDIT, &text);
                 self.highlight = 0;
+                // `SetActiveClassSet` slides the new set's list in and fades its preview in.
+                self.set_change = Some(self.clock);
                 true
             }
             None => false,
         };
         if !switched && frame.navigated && frame.activate.is_none() {
-            self.cues.push(sounds::UI_NAVIGATE);
+            self.cues.push(cues::row_nav(true));
         }
         if switched {
-            self.cues.push(sounds::UI_NAVIGATE);
+            // Prev/NextClassSet plays cac_safearea (`cacchooseclass.lua`).
+            self.cues.push(cues::SET_STEP);
             if frame.back {
-                self.cues.push(sounds::UI_BACK);
+                self.cues.push(cues::screen_back(true));
                 self.closed = true;
             }
             return;
@@ -381,7 +402,9 @@ impl MenuState {
                         self.open_editor(Draft::from_stored(c), Some(j));
                     }
                 }
-                Some(PickRow::Create) => self.open_editor(Draft::default(), None),
+                // An untouched slot: a fresh class for the set's first free slot (BO2 keeps a set's
+                // filled slots first, so that is the slot picked unless the player skips ahead).
+                Some(PickRow::Empty(_)) => self.open_editor(Draft::default(), None),
                 None => {}
             }
         } else if let Some(j) = delete {
@@ -389,7 +412,7 @@ impl MenuState {
                 Some(text) => {
                     write_profile(out, classui::SAVE_PROFILE_EDIT, &text);
                     self.highlight = self.highlight.min(classui::pick_rows(true).len().saturating_sub(1));
-                    self.cues.push(sounds::UI_BACK);
+                    self.cues.push(cues::ITEM_REMOVE);
                 }
                 None => self.deny(),
             }
@@ -397,9 +420,12 @@ impl MenuState {
             match crate::profile::copy_in_slot(j) {
                 Some((_new_name, text)) => {
                     write_profile(out, classui::SAVE_PROFILE_EDIT, &text);
-                    // The copy is appended: second to last, just before CREATE A CLASS.
-                    self.highlight = classui::pick_rows(true).len().saturating_sub(2);
-                    self.cues.push(sounds::UI_SELECT);
+                    // The copy is appended to the set's filled slots: highlight it.
+                    let row = PickRow::Custom(crate::profile::get().customs().len().saturating_sub(1));
+                    if let Some(i) = classui::pick_rows(true).iter().position(|r| *r == row) {
+                        self.highlight = i;
+                    }
+                    self.cues.push(cues::GRID_EQUIP);
                 }
                 None => self.deny(),
             }
@@ -417,13 +443,13 @@ impl MenuState {
                 None => self.deny(),
             },
             Some(PickFooterAction::Back) => {
-                self.cues.push(sounds::UI_BACK);
+                self.cues.push(cues::screen_back(true));
                 self.closed = true;
             }
             None => {}
         }
         if frame.back {
-            self.cues.push(sounds::UI_BACK);
+            self.cues.push(cues::screen_back(true));
             self.closed = true;
         }
     }
@@ -449,7 +475,7 @@ impl MenuState {
                 match crate::profile::save_in_set(set, slot, class) {
                     Some(text) => {
                         write_profile(out, classui::SAVE_PROFILE_CLASS, &text);
-                        self.cues.push(sounds::UI_SAVE);
+                        self.cues.push(cues::SAVE);
                         // Back to the list with the saved slot highlighted.
                         let row = PickRow::Custom(slot);
                         if let Some(i) = classui::pick_rows(true).iter().position(|r| *r == row) {
@@ -465,7 +491,7 @@ impl MenuState {
                 }
             }
             Outcome::Cancel => {
-                self.cues.push(sounds::UI_BACK);
+                self.cues.push(cues::BACKOUT);
             }
             Outcome::Continue => {
                 self.editor = Some(editor);
@@ -506,41 +532,53 @@ mod tests {
     }
 
     #[test]
+    fn a_set_switch_starts_the_luas_250ms_slide_and_a_row_move_does_not() {
+        let _g = lock();
+        crate::profile::reset();
+        let mut menu = MenuState::new();
+        let mut inp = MenuIn::default();
+        menu.frame(&inp);
+        assert!(menu.view().set_change.is_none(), "the screen opens settled");
+        // A row move is not a set switch.
+        press(&mut menu, &mut inp, Key::Down);
+        assert!(menu.view().set_change.is_none(), "a row move has no slide");
+        // Right/Left walk the sets: `SetActiveClassSet` slides the new list in over 250 ms.
+        press(&mut menu, &mut inp, Key::Right);
+        let since = menu.view().set_change.expect("the switch started the transition");
+        assert!((0.0..classui::SET_SWITCH_MS / 1000.0).contains(&since), "just started: {since}");
+        // The hosts draw it in the transition until the duration elapses.
+        for _ in 0..16 {
+            menu.frame(&inp);
+        }
+        assert!(menu.view().set_change.is_none(), "the 250 ms have run: the screen is settled again");
+        crate::profile::reset();
+    }
+
+    #[test]
     fn enter_on_a_row_opens_the_editor_on_that_slot() {
         let _g = lock();
         crate::profile::reset();
         crate::profile::save(custom("AB", "tar21_mp"));
         let mut menu = MenuState::new();
         let mut inp = MenuIn::default();
-        menu.frame(&mut inp); // settle the open frame
-        let presets = crate::classes::get().len();
+        menu.frame(&inp); // settle the open frame
 
-        // A preset row opens the editor with the preset's kit as a template (the draft is
-        // nameless: the profile names it on save, the preset is never written).
-        press(&mut menu, &mut inp, Key::Enter);
-        let editor = menu.editor.as_ref().expect("a preset row opens the editor");
-        assert_eq!(editor.draft.primary, "tar21_mp", "the Assault default class's rifle: {}", editor.draft.primary);
-        assert_eq!(editor.draft.secondary, "smaw_mp", "BO2's premade Assault carries the SMAW");
-        assert!(editor.draft.name.is_empty(), "a template has no name yet");
-        press(&mut menu, &mut inp, Key::Escape); // back to the list
-        assert!(menu.editor.is_none(), "Escape backs out of the editor");
-
-        // A custom row opens the editor on the saved class, name and all (re-saving replaces it).
-        for _ in 0..presets {
-            press(&mut menu, &mut inp, Key::Down);
-        }
+        // The lobby's list is the active set's five custom slots (`cacchooseclass.lua`,
+        // `a-chooseclass/001`): a saved custom opens the editor on the class, name and all
+        // (re-saving replaces it).
         assert_eq!(classui::pick_rows(true)[menu.highlight], PickRow::Custom(0));
         press(&mut menu, &mut inp, Key::Enter);
         let editor = menu.editor.as_ref().expect("a custom row opens the editor");
         assert_eq!(editor.draft.name, "AB");
         assert_eq!(editor.draft.primary, "tar21_mp");
-        press(&mut menu, &mut inp, Key::Escape);
+        press(&mut menu, &mut inp, Key::Escape); // back to the list
+        assert!(menu.editor.is_none(), "Escape backs out of the editor");
 
-        // The CREATE A CLASS row opens a fresh draft.
-        press(&mut menu, &mut inp, Key::Down); // to CREATE A CLASS
-        assert_eq!(menu.highlight, presets + 1);
+        // An untouched slot (BO2's `Custom n`) opens a fresh draft.
+        press(&mut menu, &mut inp, Key::Down);
+        assert_eq!(classui::pick_rows(true)[menu.highlight], PickRow::Empty(1));
         press(&mut menu, &mut inp, Key::Enter);
-        let editor = menu.editor.as_ref().expect("CREATE A CLASS opens the editor");
+        let editor = menu.editor.as_ref().expect("an untouched slot opens a fresh draft");
         assert_eq!(editor.draft, Draft::default());
         crate::profile::reset();
     }
@@ -551,12 +589,13 @@ mod tests {
         crate::profile::reset();
         let mut menu = MenuState::new();
         let mut inp = MenuIn::default();
-        menu.frame(&mut inp);
+        menu.frame(&inp);
 
-        // Open the editor on CREATE A CLASS (the last row), change the lethal, save.
+        // Open the editor on the last row (the set's last untouched slot), change the lethal, save.
         let rows = classui::pick_rows(true).len();
         press(&mut menu, &mut inp, Key::Up); // wraps to the last row
         assert_eq!(menu.highlight, rows - 1, "wrapped to the last row");
+        assert_eq!(classui::pick_rows(true)[menu.highlight], PickRow::Empty(crate::profile::MAX_CLASSES - 1));
         press(&mut menu, &mut inp, Key::Enter);
         assert!(menu.editor.is_some());
         // The editor opens on Primary; walk down to the Lethal row (Primary -> PrimaryAtts ->
@@ -580,7 +619,7 @@ mod tests {
         assert_eq!(crate::profile::classes().len(), 1);
         let saved = &crate::profile::classes()[0];
         assert_ne!(saved.lethal, Draft::default().lethal, "the edit landed: {}", saved.lethal);
-        assert_eq!(saved.name, "Custom Class 1", "the profile named the blank class");
+        assert_eq!(saved.name, "Custom 1", "the profile named the blank class (BO2's slot name)");
         // The list now shows the saved slot, highlighted.
         assert_eq!(classui::pick_rows(true)[menu.highlight], PickRow::Custom(0));
         crate::profile::reset();
@@ -593,13 +632,9 @@ mod tests {
         crate::profile::save(custom("AB", "an94_mp"));
         let mut menu = MenuState::new();
         let mut inp = MenuIn::default();
-        menu.frame(&mut inp);
-        let presets = crate::classes::get().len();
+        menu.frame(&inp);
 
-        // Copy the AB row: the profile grows and the copy is highlighted (just before CREATE).
-        for _ in 0..presets {
-            press(&mut menu, &mut inp, Key::Down);
-        }
+        // Copy the AB row (the list's first row): the profile grows and the copy is highlighted.
         assert_eq!(classui::pick_rows(true)[menu.highlight], PickRow::Custom(0));
         let out = press(&mut menu, &mut inp, Key::C);
         assert_eq!(out.save_profile, classui::SAVE_PROFILE_EDIT);
@@ -607,19 +642,16 @@ mod tests {
         assert_eq!(crate::profile::classes()[1].name, "AB COPY");
         let rows = classui::pick_rows(true);
         assert_eq!(rows[menu.highlight], PickRow::Custom(1), "the copy is highlighted");
-        assert_eq!(menu.highlight, rows.len() - 2, "just before CREATE A CLASS");
 
-        // Delete the copy: the profile shrinks back and the highlight clamps to the list.
+        // Delete the copy: the profile shrinks back; the highlight stays on the row, now the set's
+        // first untouched slot.
         let out = press(&mut menu, &mut inp, Key::Backspace);
         assert_eq!(out.save_profile, classui::SAVE_PROFILE_EDIT);
         assert_eq!(crate::profile::classes().len(), 1);
         assert_eq!(crate::profile::classes()[0].name, "AB");
-        assert_eq!(menu.highlight, classui::pick_rows(true).len() - 1, "the highlight clamped to the list");
+        assert_eq!(classui::pick_rows(true)[menu.highlight], PickRow::Empty(1));
 
-        // Backspace on a preset does nothing (no profile write, no deny).
-        press(&mut menu, &mut inp, Key::Up); // to AB
-        press(&mut menu, &mut inp, Key::Up); // to the last preset
-        assert!(matches!(classui::pick_rows(true)[menu.highlight], PickRow::Preset(_)));
+        // Backspace on an untouched slot does nothing (no profile write, no deny).
         let out = press(&mut menu, &mut inp, Key::Backspace);
         assert_eq!(out.save_profile, 0);
         assert_eq!(crate::profile::classes().len(), 1);
@@ -652,10 +684,10 @@ mod tests {
         let _g = lock();
         crate::profile::reset();
         let mut menu = MenuState::new();
-        assert_eq!(menu.cues, vec![sounds::UI_OPEN], "the open sting queues on open");
+        assert_eq!(menu.cues, vec![cues::ENTER_CAC], "the open sting queues on open");
         menu.cues.clear();
-        let mut inp = MenuIn::default();
-        menu.frame(&mut inp);
+        let inp = MenuIn::default();
+        menu.frame(&inp);
         assert!(menu.cues.is_empty(), "once per open");
         // The view draws the pick screen (background art, the banner, the rows).
         let mut prims = Vec::new();
@@ -667,8 +699,8 @@ mod tests {
                 _ => None,
             })
             .collect();
-        assert!(texts.contains(&"CREATE A CLASS"), "the banner and the row draw");
-        assert!(texts.iter().any(|t| *t == "Assault"), "the preset rows draw: {texts:?}");
+        assert!(texts.contains(&"CHOOSE CLASS"), "the banner draws: {texts:?}");
+        assert!(texts.contains(&"Custom 1"), "the set's untouched slots draw: {texts:?}");
         crate::profile::reset();
     }
 
@@ -676,20 +708,23 @@ mod tests {
     fn a_click_activates_the_row_under_the_cursor() {
         let _g = lock();
         crate::profile::reset();
+        crate::profile::save(custom("AB", "an94_mp"));
+        crate::profile::save(custom("SMG", "mp7_mp"));
         let mut menu = MenuState::new();
         let mut inp = MenuIn { screen_w: 1280.0, screen_h: 720.0, ..Default::default() };
-        menu.frame(&mut inp);
-        // Aim at the second row (SMG) and click.
-        let l = classui::pick_layout(1280.0, 720.0, 1.0);
-        inp.mouse_x = l.list_x + 10.0;
-        inp.mouse_y = l.list_y + l.row_h + 5.0;
-        menu.frame(&mut inp); // the hover lands
+        menu.frame(&inp);
+        // Aim at the second row (the SMG custom) and click.
+        let l = classui::pick_layout(1280.0, 720.0, true);
+        let rect = classui::row_rects(&l, &classui::pick_rows(true))[1];
+        inp.mouse_x = rect.x + 10.0;
+        inp.mouse_y = rect.y + 5.0;
+        menu.frame(&inp); // the hover lands
         inp.mouse_buttons = crate::input::mouse_buttons::LEFT;
-        menu.frame(&mut inp); // the click edge
+        menu.frame(&inp); // the click edge
         inp.mouse_buttons = 0;
-        menu.frame(&mut inp);
+        menu.frame(&inp);
         let editor = menu.editor.as_ref().expect("the click opened the editor");
-        assert_eq!(editor.draft.primary, "mp7_mp", "the SMG row's gun");
+        assert_eq!(editor.draft.primary, "mp7_mp", "the SMG custom's gun");
         crate::profile::reset();
     }
 
@@ -760,22 +795,24 @@ mod tests {
     fn a_sixth_class_is_refused_and_the_editor_stays_open() {
         let _g = lock();
         crate::profile::reset();
-        for i in 0..crate::profile::MAX_CLASSES {
+        for i in 0..crate::profile::MAX_CLASSES - 1 {
             crate::profile::save(custom(&format!("Filler {i}"), "an94_mp"));
         }
         let mut menu = MenuState::new();
         let mut inp = MenuIn::default();
         menu.frame(&inp);
-        // CREATE A CLASS is the last row; open it and try to save.
+        // The set's one untouched slot is the last row; open a fresh draft on it.
         press(&mut menu, &mut inp, Key::Up);
-        assert_eq!(menu.highlight, classui::pick_rows(true).len() - 1);
+        assert_eq!(classui::pick_rows(true)[menu.highlight], PickRow::Empty(crate::profile::MAX_CLASSES - 1));
         press(&mut menu, &mut inp, Key::Enter);
         assert!(menu.editor.is_some());
+        // The set fills while the draft is open (the bridge writes the profile from elsewhere).
+        crate::profile::save(custom("Filler last", "mp7_mp"));
         let out = save_open_editor(&mut menu, &mut inp);
         assert_eq!(out.save_profile, 0, "nothing was written");
         assert!(menu.editor.is_some(), "the draft survives: the editor stays up");
         assert_eq!(crate::profile::classes().len(), crate::profile::MAX_CLASSES);
-        assert!(menu.cues.contains(&sounds::UI_DENY), "the denied save is surfaced");
+        assert!(menu.cues.contains(&cues::DENY), "the denied save is surfaced");
         crate::profile::reset();
     }
 
@@ -900,18 +937,18 @@ mod tests {
     }
 
     #[test]
-    fn o_on_a_preset_is_refused_and_escape_backs_out_of_a_dialog_first() {
+    fn o_on_an_empty_slot_is_refused_and_escape_backs_out_of_a_dialog_first() {
         let _g = lock();
         crate::profile::reset();
         let mut menu = MenuState::new();
         let mut inp = MenuIn::default();
         menu.frame(&inp);
-        // A preset row has nothing to rename or copy: O is refused.
-        assert!(matches!(classui::pick_rows(true)[menu.highlight], PickRow::Preset(_)));
+        // An untouched slot has nothing to rename or copy: O is refused.
+        assert!(matches!(classui::pick_rows(true)[menu.highlight], PickRow::Empty(_)));
         menu.cues.clear();
         press(&mut menu, &mut inp, Key::O);
         assert!(menu.dialog().is_none());
-        assert!(menu.cues.contains(&sounds::UI_DENY), "the refused O is surfaced");
+        assert!(menu.cues.contains(&cues::DENY), "the refused O is surfaced");
         // Escape in a dialog backs out to the list; the screen stays open.
         press(&mut menu, &mut inp, Key::S);
         assert!(menu.dialog().is_some());
@@ -932,13 +969,14 @@ mod tests {
         let mut inp = MenuIn { screen_w: 1280.0, screen_h: 720.0, ..Default::default() };
         menu.frame(&inp);
         to_custom(&mut menu, &mut inp, 0);
-        let l = classui::pick_layout(1280.0, 720.0, 1.0);
-        let (_, x, y, w, h) = classui::pick_footer_actions(&l, 1280.0, 1.0, true)
+        let l = classui::pick_layout(1280.0, 720.0, true);
+        let (_, r) = classui::pick_footer_actions(&l)
             .into_iter()
-            .find(|(a, ..)| *a == PickFooterAction::ClassOptions)
+            .find(|(a, _)| *a == PickFooterAction::ClassOptions)
             .expect("the O prompt");
-        inp.mouse_x = x + w * 0.5;
-        inp.mouse_y = y + h * 0.5;
+        let r = l.frame.px(r);
+        inp.mouse_x = r.x + r.w * 0.5;
+        inp.mouse_y = r.y + r.h * 0.5;
         menu.frame(&inp); // the hover lands
         inp.mouse_buttons = crate::input::mouse_buttons::LEFT;
         menu.frame(&inp); // the click edge

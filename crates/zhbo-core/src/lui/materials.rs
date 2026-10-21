@@ -23,7 +23,28 @@ pub const MATERIALS: &[(&str, u32)] = &[
     ("hud_mp_vis_ks_dpad_box_back", 128), ("hud_mp_vis_ks_dpad_box_back_lit", 128), ("hud_mp_vis_ks_dpad_box", 128),
     ("hud_mp_vis_ks_dpad_bracket", 128),
     ("overlay_low_health", 512), ("hit_direction", 256), ("damage_feedback", 64), ("hud_horizontal_compass_minimap", 512),
+    // Create a class (classui): `codmenu.lua`'s large popup frame, `cacchooseclass.lua`'s set pips,
+    // `hinttext.lua`'s arrow, the grid buttons' gradients (`customclass.lua`, `growinggridbutton.lua`)
+    // and the lock/restricted badges.
+    ("menu_mp_cac_backing", 512),
+    ("menu_mp_backing_frame", 512),
+    ("menu_mp_backing_frame_flipv", 512),
+    ("menu_vis_carousel_pip", 32),
+    ("menu_vis_carousel_pip_fill", 32),
+    ("ui_arrow_right", 32),
+    ("menu_mp_cac_grad_stretch", 64),
+    ("menu_mp_cac_grad_stretch_add", 64),
+    ("menu_mp_cac_grad_stretch_add_v2", 64),
+    ("menu_mp_cac_grid_pattern", 16),
+    ("lui_bracket", 16),
+    ("cac_restricted", 32),
+    ("menu_mp_lobby_locked", 32),
+    ("menu_mp_lobby_locked_big", 128),
 ];
+
+/// A [`MATERIALS`] name ending in this is its base material mirrored top to bottom (LUI draws an
+/// image upside down when its top edge is below its bottom; the converter writes the mirror).
+pub const FLIP_V: &str = "_flipv";
 
 /// The MappedImage a BO2 material converts to.
 pub fn image(material: &str) -> String {

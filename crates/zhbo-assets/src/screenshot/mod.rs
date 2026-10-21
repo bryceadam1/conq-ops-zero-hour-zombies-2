@@ -59,10 +59,11 @@ pub const HEIGHT: u32 = 720;
 /// `archive` overrides the `ConquerOps_BO2.big` to read (the `--archive` flag); otherwise the
 /// `ZHBO_BO2_ARCHIVE` environment variable, then the standard launcher dist locations, then
 /// `build/dist` are tried.
-pub fn run(out: &Path, archive: Option<&Path>) -> Result<(), String> {
+pub fn run(out: &Path, archive: Option<&Path>, size: Option<(u32, u32)>) -> Result<(), String> {
     let archive = resolve_archive(archive)?;
     let atlas = Atlas::open(&archive)?;
     install_weapon_catalog(&archive);
+    install_fonts(&archive);
     println!(
         "screenshot: {} ({} sprites on {} atlas pages)",
         archive.display(),
@@ -70,7 +71,8 @@ pub fn run(out: &Path, archive: Option<&Path>) -> Result<(), String> {
         atlas.page_count()
     );
     seed_profile();
-    let result = write_shots(&atlas, out);
+    let (w, h) = size.unwrap_or((WIDTH, HEIGHT));
+    let result = write_shots(&atlas, out, w, h);
     clear_profile();
     result
 }
@@ -82,7 +84,8 @@ pub fn run_contact(out: &Path, archive: Option<&Path>, cols: u32) -> Result<(), 
 }
 
 /// Every shot, in the order it is printed.
-fn write_shots(atlas: &Atlas, out: &Path) -> Result<(), String> {
+fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> {
+    SIZE.with(|s| s.set((w as f32, h as f32)));
     fs::create_dir_all(out).map_err(|e| format!("{}: {e}", out.display()))?;
     let mut missing = BTreeSet::new();
     let shots = [
@@ -97,7 +100,7 @@ fn write_shots(atlas: &Atlas, out: &Path) -> Result<(), String> {
         ("cac-dialog-class", class_dialog_prims()),
     ];
     for (name, prims) in shots {
-        let canvas = raster::render(&prims, atlas, WIDTH, HEIGHT, &mut missing);
+        let canvas = raster::render(&prims, atlas, w, h, &mut missing);
         let file = out.join(format!("{name}.png"));
         let (width, height) = (canvas.width(), canvas.height());
         images::write_png(&file, &Rgba { width, height, pixels: canvas.pixels().to_vec() })?;
@@ -124,7 +127,7 @@ fn browse_prims() -> Vec<Prim> {
     // Highlight the first custom row: the shot then shows the player's own classes and their kit,
     // not just the shipped presets.
     let highlight = rows.iter().position(|r| matches!(r, PickRow::Custom(0))).unwrap_or(0);
-    draw(&ScreenView { highlight, editor: None, deny: 0.0, manage: true })
+    draw(&ScreenView { highlight, editor: None, deny: 0.0, manage: true, now: 0.0, set_change: None })
 }
 
 /// The shell screen on an untouched class set: the pager's marker sits mid-row, as BO2's does on
@@ -132,7 +135,7 @@ fn browse_prims() -> Vec<Prim> {
 fn pager_prims() -> Vec<Prim> {
     let set = profile::active_set();
     profile::set_active(3);
-    let prims = draw(&ScreenView { highlight: 0, editor: None, deny: 0.0, manage: true });
+    let prims = draw(&ScreenView { highlight: 0, editor: None, deny: 0.0, manage: true, now: 0.0, set_change: None });
     profile::set_active(set);
     prims
 }
@@ -142,14 +145,14 @@ fn pager_prims() -> Vec<Prim> {
 fn pick_prims() -> Vec<Prim> {
     let rows = classui::pick_rows(false);
     let highlight = rows.iter().position(|r| matches!(r, PickRow::Custom(1))).unwrap_or(0);
-    draw(&ScreenView { highlight, editor: None, deny: 0.0, manage: false })
+    draw(&ScreenView { highlight, editor: None, deny: 0.0, manage: false, now: 0.0, set_change: None })
 }
 
 /// The allocation editor on a populated draft, its boxed grid closed (`b-editor/028`).
 fn editor_prims() -> Vec<Prim> {
     let mut editor = editor_state();
     editor.picking = false;
-    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true })
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true, now: 0.0, set_change: None })
 }
 
 /// BO2's pristine empty class (`b-editor/002`): nothing chosen, so the attachment rows read
@@ -169,14 +172,14 @@ fn empty_editor_prims() -> Vec<Prim> {
         reserve: [0, 0],
     };
     let editor = Editor::new(draft);
-    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true })
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true, now: 0.0, set_change: None })
 }
 
 /// The primary weapon screen: the category column, the category's tiles and the segmented bars
 /// (`c-primary/001`).
 fn weapon_picker_prims() -> Vec<Prim> {
     let editor = editor_state();
-    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true })
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true, now: 0.0, set_change: None })
 }
 
 /// The attachment picker of the primary (`d-attach/001`).
@@ -186,20 +189,20 @@ fn attachment_picker_prims() -> Vec<Prim> {
     editor.slot = Slot::PrimaryAtts;
     let mut prev = MenuPrev::default();
     // Enter opens the attachment strip's list through the real edge fold.
-    let mut pointer = MenuPointer { screen_w: WIDTH as f32, screen_h: HEIGHT as f32, ..Default::default() };
+    let mut pointer = MenuPointer { screen_w: size().0, screen_h: size().1, ..Default::default() };
     pointer.keys.set_down(Key::Enter, true);
     classui::editor_frame(&mut editor, &pointer, &prev);
     prev.update(&pointer);
     pointer.keys.set_down(Key::Enter, false);
     classui::editor_frame(&mut editor, &pointer, &prev);
-    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true })
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true, now: 0.0, set_change: None })
 }
 
 /// The shell's `S Class Set Options` dialog over the choose-class screen (`a-chooseclass/021`).
 fn set_dialog_prims() -> Vec<Prim> {
     let mut prims = browse_prims();
     let dialog = Dialog::set_options(&profile::get().set_name(profile::active_set()));
-    classui::draw_dialog(&mut prims, WIDTH as f32, HEIGHT as f32, &dialog);
+    classui::draw_dialog(&mut prims, size().0, size().1, &dialog);
     prims
 }
 
@@ -208,7 +211,7 @@ fn class_dialog_prims() -> Vec<Prim> {
     let mut prims = browse_prims();
     let name = first_custom_name();
     let dialog = Dialog::class_options(&name);
-    classui::draw_dialog(&mut prims, WIDTH as f32, HEIGHT as f32, &dialog);
+    classui::draw_dialog(&mut prims, size().0, size().1, &dialog);
     prims
 }
 
@@ -219,7 +222,7 @@ fn first_custom_name() -> String {
 
 fn draw(view: &ScreenView<'_>) -> Vec<Prim> {
     let mut prims = Vec::new();
-    classui::draw_screen(&mut prims, WIDTH as f32, HEIGHT as f32, view);
+    classui::draw_screen(&mut prims, size().0, size().1, view);
     prims
 }
 
@@ -242,7 +245,7 @@ fn editor_state() -> Editor {
     };
     let mut editor = Editor::new(draft);
     let mut prev = MenuPrev::default();
-    let mut pointer = MenuPointer { screen_w: WIDTH as f32, screen_h: HEIGHT as f32, ..Default::default() };
+    let mut pointer = MenuPointer { screen_w: size().0, screen_h: size().1, ..Default::default() };
     // Enter opens the Primary list; the two Downs walk it to a different gun, whose stat bars the
     // view then shows.
     for key in [Key::Enter, Key::Down, Key::Down] {
@@ -287,6 +290,28 @@ fn seed_profile() {
 
 fn clear_profile() {
     profile::load("");
+}
+
+thread_local! {
+    /// The size the views draw at (`--size`; BO2's 720p by default).
+    static SIZE: std::cell::Cell<(f32, f32)> = const { std::cell::Cell::new((WIDTH as f32, HEIGHT as f32)) };
+}
+
+/// The views' screen size.
+fn size() -> (f32, f32) {
+    SIZE.with(|s| s.get())
+}
+
+/// Load BO2's UI font metrics (`names::FONTS_PATH`) from the archive, as the bridge does at init;
+/// without them the text draws in the harness's own font.
+fn install_fonts(archive: &Path) {
+    let text = BigArchive::open(archive)
+        .ok()
+        .and_then(|big| big.find(names::FONTS_PATH).and_then(|e| big.read(e).ok()))
+        .and_then(|b| String::from_utf8(b).ok())
+        .unwrap_or_default();
+    zhbo_core::lui::font::load(&text);
+    println!("fonts: {}", if zhbo_core::lui::font::loaded() { "BO2's UI fonts" } else { "none in the archive (engine-font stand-in)" });
 }
 
 /// Install the converted weapon table (names, icons, the editor's option lists) from the
@@ -373,9 +398,10 @@ mod tests {
         let browse = browse_prims();
         let browse_text = texts(&browse);
         assert!(browse_text.contains(&"CHOOSE CLASS"), "the heading draws: {browse_text:?}");
-        assert!(browse_text.contains(&"CREATE A CLASS"), "the new-class row draws");
         assert!(browse_text.contains(&"BLACKOUT"), "the profile's custom row draws: {browse_text:?}");
-        assert!(browse_text.iter().any(|t| *t == "You will load into the game with this class set."), "BO2's hint draws");
+        assert!(browse_text.contains(&"Custom 4") && browse_text.contains(&"Custom 5"), "the set's untouched slots draw: {browse_text:?}");
+        // BO2's hint wraps to the list's width (`hinttext.lua`).
+        assert!(browse_text.iter().any(|t| classui::SET_HINT.starts_with(*t) && !t.is_empty()), "BO2's hint draws: {browse_text:?}");
         assert!(browse_text.contains(&"Class Set Options") && browse_text.contains(&"Class Options"), "the S/O prompts draw");
 
         // The pager shot is on an untouched set: the marker sits mid-row and the list has no customs.

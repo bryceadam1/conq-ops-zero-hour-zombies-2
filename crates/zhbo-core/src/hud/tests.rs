@@ -71,7 +71,7 @@ fn fps_state() -> (Sim, Client) {
 fn uses_bo2_numerals_when_the_art_is_installed() {
     let (sim, client) = fps_state();
     let rec = Recorder { has_art: true, objects: vec![soldier(5, 1, 40.0)], ..Default::default() };
-    let prims = draw_hud(&rec, &client, &sim);
+    let _ = draw_hud(&rec, &client, &sim);
     let images = rec.images.borrow();
     let mat = |m: &str| crate::lui::materials::image(m);
     assert!(images.contains(&mat("hud_mp_num_big_3")), "30 rounds -> '3' digit");
@@ -113,7 +113,7 @@ fn map_key_shows_the_radar_or_says_there_is_none() {
     let (sim, mut client) = fps_state();
     client.hud.map_open = true;
     let rec = Recorder { has_art: true, ..Default::default() };
-    let prims = draw_hud(&rec, &client, &sim);
+    let _ = draw_hud(&rec, &client, &sim);
     let texts = rec.texts.borrow();
     assert!(texts.iter().any(|t| t == "TACTICAL MAP"));
     assert!(texts.iter().any(|t| t == "NO RADAR"), "the fake host has no radar");
@@ -123,7 +123,7 @@ fn map_key_shows_the_radar_or_says_there_is_none() {
     drop(texts);
     client.hud.map_open = false;
     let rec = Recorder { has_art: true, ..Default::default() };
-    let prims = draw_hud(&rec, &client, &sim);
+    let _ = draw_hud(&rec, &client, &sim);
     assert!(near_centre(&rec.lines.borrow()) >= 4, "the crosshair is back with the map closed");
 }
 
@@ -131,7 +131,7 @@ fn map_key_shows_the_radar_or_says_there_is_none() {
 fn falls_back_to_text_without_the_art() {
     let (sim, client) = fps_state();
     let rec = Recorder::default();
-    let prims = draw_hud(&rec, &client, &sim);
+    let _ = draw_hud(&rec, &client, &sim);
     let texts = rec.texts.borrow();
     assert!(texts.iter().any(|t| t == "3") && texts.iter().any(|t| t == "0"));
 }
@@ -185,7 +185,7 @@ fn nothing_in_rts_view_unless_the_pick_is_open() {
     let texts = rec.texts.borrow();
     assert!(texts.iter().any(|t| t == "CHOOSE CLASS"), "the pick screen drew: {texts:?}");
     assert!(!texts.iter().any(|t| t == "Ten points of allocation"), "no CREATE A CLASS row in a match");
-    assert!(texts.iter().any(|t| t == "Close"), "the in-match footer closes: {texts:?}");
+    assert!(texts.iter().any(|t| t == "Back"), "the in-match footer closes: {texts:?}");
     // The pager is a read-only display of the active set in a match: no management prompts.
     assert!(texts.iter().any(|t| t == "CLASS SET 1"), "the active set shows");
     assert!(!texts.iter().any(|t| t == "Class Set Options"), "no set options in a match");

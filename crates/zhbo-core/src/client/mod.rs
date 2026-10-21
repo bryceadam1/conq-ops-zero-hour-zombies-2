@@ -3,6 +3,7 @@
 //!
 //! Nothing here affects the lockstep simulation except through the input messages it emits.
 
+use crate::classui::cues;
 use crate::input::{buttons, pack_move, FpsInput, Key, KeySet, MAX_PITCH};
 use crate::math::{dir_from_angles, lerp_angle, smoothstep, wrap_angle, Vec3};
 use crate::sim::{EventKind, Mode, Sim};
@@ -376,6 +377,8 @@ pub struct Client {
     pub pitch: f32,
     pub general: u32,
     pub hud: HudTimers,
+    /// Seconds of client frames (render time, UI only: the class screen's pulses and fades).
+    pub ui_clock: f32,
     last_sent_frame: Option<u32>,
     latch: u32,
     prev_held: u32,
@@ -452,6 +455,7 @@ impl Client {
             class_pick_dismissed: false,
             class_pick_open: false,
             class_pick_highlight: 0,
+            ui_clock: 0.0,
             menu_prev: crate::classui::MenuPrev::default(),
         }
     }
@@ -520,6 +524,9 @@ impl Client {
             editor: None,
             deny: 0.0,
             manage: false,
+            now: self.ui_clock,
+            // A match is pick-only: the set is chosen in the lobby, so it never switches here.
+            set_change: None,
         }
     }
 
@@ -530,7 +537,7 @@ impl Client {
         let frame = crate::classui::pick_frame(&menu_pointer(inp), &self.menu_prev, self.class_pick_highlight, false);
         self.class_pick_highlight = frame.highlight;
         if frame.navigated && frame.activate.is_none() {
-            self.cues.play(sounds::UI_NAVIGATE);
+            self.cues.play(cues::GRID_NAV);
         }
         if let Some(i) = frame.activate {
             match crate::classui::pick_rows(false).get(i).copied() {
@@ -539,13 +546,13 @@ impl Client {
                     out.choose_class = j as i32 + 1;
                     out.choose_class_general = self.general;
                     out.choose_class_payload_len = 0;
-                    self.cues.play(sounds::UI_SELECT);
+                    self.cues.play(cues::GRID_EQUIP);
                     self.class_pick_forced = false;
                 }
                 Some(crate::classui::PickRow::Custom(j)) => {
                     if let Some(class) = crate::profile::classes().get(j) {
                         if pick_custom_class(out, self.general, class) {
-                            self.cues.play(sounds::UI_SELECT);
+                            self.cues.play(cues::GRID_EQUIP);
                             self.class_pick_forced = false;
                         } else {
                             // Never send a truncated payload: the sim could not decode it and the
@@ -556,7 +563,7 @@ impl Client {
                     }
                 }
                 // The in-match list has no CREATE A CLASS row.
-                Some(crate::classui::PickRow::Create) | None => {}
+                Some(crate::classui::PickRow::Empty(_)) | None => {}
             }
         } else if frame.back {
             self.close_pick(unclassed);
@@ -591,7 +598,7 @@ impl Client {
                 return;
             }
         }
-        self.cues.play(sounds::UI_SELECT);
+        self.cues.play(cues::GRID_EQUIP);
         self.class_pick_forced = false;
     }
 
@@ -603,7 +610,7 @@ impl Client {
         if unclassed {
             self.class_pick_dismissed = true;
         }
-        self.cues.play(sounds::UI_BACK);
+        self.cues.play(cues::BACKOUT);
     }
 
     /// The class screen's input, from either the overhead view or first person. Returns true while
@@ -635,6 +642,22 @@ impl Client {
 /// its spec instead of a registry index.
 const CHOOSE_CLASS_CUSTOM: i32 = i32::MIN;
 
+/// The match list's row for the class the General is wearing, so the pick screen can open on it
+/// (`hud/changeclass.lua`'s `Button_RowGainFocus` fires for the active class). The sim names a
+/// shipped class by its registry id and a custom one `custom:<name>`
+/// (`sim::choose_class`), and the profile stores customs by name, which is what the row lookup
+/// compares.
+fn current_class_row(class: Option<&str>) -> Option<usize> {
+    let class = class?;
+    let presets = crate::classes::get();
+    let customs = crate::profile::classes();
+    crate::classui::pick_rows(false).iter().position(|row| match *row {
+        crate::classui::PickRow::Preset(j) => presets.get(j).is_some_and(|c| c.id == class),
+        crate::classui::PickRow::Custom(j) => customs.get(j).is_some_and(|c| class == format!("custom:{}", c.name)),
+        crate::classui::PickRow::Empty(_) => false,
+    })
+}
+
 /// Fill a custom-class pick into the outgoing one-shot: the marker in `choose_class`, the class's
 /// wire words in the payload. The bridge turns it into `MSG_ZHBO_CHOOSE_CLASS` and the sim
 /// reassembles the spec ([`crate::classes::CustomClass::from_wire_words`]).
@@ -658,6 +681,7 @@ impl Client {
 /// Run one rendered frame.
 pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         let dt = inp.dt.clamp(0.0, 0.25);
+        self.ui_clock += dt;
         // The sim's record names the General the local player is commanding, in first person or
         // overhead. Adopt it before the class screen runs: a fresh General's first class pick can
         // come from the command bar before he was ever taken into first person, and the client
@@ -670,7 +694,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         let unclassed = player.as_ref().is_none_or(|p| p.class.is_none());
         #[cfg(feature = "autopilot")]
         let pick_wanted = self.class_pick_wanted(unclassed);
-        #[allow(unused_mut)]
+        #[allow(unused_mut, unused_assignments)]
         let mut scripted = ClientIn::default();
         let inp = match self.autopilot.as_mut() {
             #[cfg(feature = "autopilot")]
@@ -743,13 +767,20 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
             self.pick_class_button(&mut out, inp.class_button);
         }
 
-        // The class pick's entrance: its UI_OPEN cue once per open. The screen only shows when
-        // `class_pick_wanted` says so (the command-bar force in either view; first person's
-        // spawn offer while unclassed and not dismissed).
+        // The class pick's entrance: BO2's in-game class menu opens with `uin_main_pause`
+        // (`hud/class.lua`), once per open. The screen only shows when `class_pick_wanted` says so
+        // (the command-bar force in either view; first person's spawn offer while unclassed and not
+        // dismissed).
         if self.class_pick_wanted(unclassed) {
             if !self.hud.class_pick_seen {
                 self.hud.class_pick_seen = true;
-                self.cues.play(sounds::UI_OPEN);
+                self.cues.play(cues::IN_GAME_OPEN);
+                // BO2's changeclass screen focuses the class the player is wearing (its rows fire
+                // `Button_RowGainFocus` on the active one), so opening the panel mid-life lands on
+                // it rather than on the first row.
+                if let Some(row) = current_class_row(player.as_ref().and_then(|p| p.class.as_deref())) {
+                    self.class_pick_highlight = row;
+                }
             }
         } else {
             self.hud.class_pick_seen = false;
@@ -1005,7 +1036,8 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 EventKind::Swapped => self.vm_events.swapped = true,
                 EventKind::FieldComputerOpened => {}
                 EventKind::ClassChosen { .. } => {
-                    self.cues.play(sounds::UI_PICKED);
+                    // No cue here: BO2's class change applies silently on spawn. The menu already
+                    // played the equip when the pick was made (and the command bar does too).
                     // A pick landed: the forced screen closes, and the next spawn's pick returns.
                     self.class_pick_forced = false;
                 }

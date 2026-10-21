@@ -70,8 +70,7 @@
         host.add(general(1, 0));
         let mut sim = Sim::new();
         let mut client = Client::default();
-        let mut inp = ClientIn::default();
-        inp.input_allowed = 1;
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
         sim.take_control(&host, 0, 1);
         sim.choose_class(0, 1, 0, &[]);
         frame_with(&mut client, &mut sim, &host, &mut inp, 60);
@@ -202,10 +201,10 @@
         assert_eq!(client.view, ViewMode::Fps);
         assert!(client.class_pick_open);
 
-        // The in-match rows are the presets and the custom: no CREATE A CLASS entry.
+        // The in-match rows are the set's five slots then the defaults (`changeclass.lua`).
         let rows = crate::classui::pick_rows(false);
-        assert!(!rows.contains(&crate::classui::PickRow::Create));
-        // Key 6 picks the seeded custom (5 presets + AB) and sends its payload, no profile write.
+        assert_eq!(rows[0], crate::classui::PickRow::Custom(0));
+        // Its digit key picks the seeded custom and sends its payload, no profile write.
         let custom = rows.iter().position(|r| matches!(r, crate::classui::PickRow::Custom(0))).expect("the custom row");
         let key = crate::classui::pick_key(custom).expect("a digit key");
         inp.keys.set_down(key, true);
@@ -435,19 +434,24 @@
         assert_eq!(out.menu_open, 1, "the pick screen is up (no class yet)");
         assert_eq!(out.capture_mouse, 0, "the cursor is free for the screen");
 
-        // Row 1 (the Assault preset) maps to the 1-based index 1; the bridge subtracts one.
-        inp.keys.set_down(Key::Key1, true);
-        let out = client.frame(&mut sim, &inp);
-        inp.keys.set_down(Key::Key1, false);
-        client.frame(&mut sim, &inp);
-        assert_eq!(out.choose_class, 1);
-        assert_eq!(out.choose_class_payload_len, 0);
-        assert_eq!(out.save_profile, 0, "a pick never writes the profile");
-
-        // With "AB" saved the rows are the five presets, AB (key 6), then CREATE A CLASS.
+        // The match list is the set's five custom slots (AB, then four untouched), then the
+        // default classes in `changeclass.lua`'s order (SMG, CQB, Assault, LMG, Sniper): key 6 is
+        // the SMG preset, a 1-based index pick (the bridge subtracts one).
+        let rows = crate::classui::pick_rows(false);
+        assert_eq!(rows[0], crate::classui::PickRow::Custom(0));
+        assert_eq!(rows[5], crate::classui::PickRow::Preset(1), "SMG leads the defaults");
         inp.keys.set_down(Key::Key6, true);
         let out = client.frame(&mut sim, &inp);
         inp.keys.set_down(Key::Key6, false);
+        client.frame(&mut sim, &inp);
+        assert_eq!(out.choose_class, 2, "SMG is registry index 1, sent 1-based");
+        assert_eq!(out.choose_class_payload_len, 0);
+        assert_eq!(out.save_profile, 0, "a pick never writes the profile");
+
+        // Key 1 is the first row: the AB custom, sent as its wire words.
+        inp.keys.set_down(Key::Key1, true);
+        let out = client.frame(&mut sim, &inp);
+        inp.keys.set_down(Key::Key1, false);
         assert_eq!(out.choose_class, CHOOSE_CLASS_CUSTOM);
         let words: Vec<u32> = out.choose_class_payload[..out.choose_class_payload_len as usize].to_vec();
         assert_eq!(crate::classes::CustomClass::from_wire_words(&words).unwrap().name, "AB");
@@ -514,7 +518,6 @@
         sim.choose_class(0, out.choose_class_general, usize::MAX, &words);
         let f = sim.frame + 1;
         sim.step(&host, f);
-        inp.logic_frame = f;
 
         let p = sim.player(0).expect("the General is in first person");
         assert_eq!(p.class.as_deref(), Some("custom:Loud Kit"));
@@ -530,6 +533,62 @@
         assert!(a.has(crate::weapons::Perk::TOUGHNESS), "the class's perks");
         assert!(a.has(crate::weapons::Perk::FLAK_JACKET), "the class's perks");
         assert!(!a.has(crate::weapons::Perk::LIGHTWEIGHT), "no stock perks leaked through");
+        crate::profile::reset();
+    }
+
+    /// BO2's changeclass focuses the class the player is wearing, so the in-match panel opens on
+    /// the equipped class rather than on the first row (the command bar's entry can be pressed at
+    /// any time, and landing on row 1 would make the player think they wear the default).
+    #[test]
+    fn the_in_match_panel_opens_on_the_class_the_general_is_wearing() {
+        let _g = crate::profile::lock();
+        crate::profile::reset();
+        crate::profile::save(crate::classes::CustomClass { name: "First".into(), ..Default::default() });
+        crate::profile::save(crate::classes::CustomClass { name: "Second".into(), primary: "fnp45_mp".into(), ..Default::default() });
+        let host = FakeHost::default();
+        host.add(general(7, 0));
+        let mut sim = Sim::new();
+        sim.rts_update(&host, 0, 7, 0, [0, 0, 0], None);
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, class_pick_force: 1, ..Default::default() };
+        for _ in 0..2 {
+            client.frame(&mut sim, &inp);
+            let f = sim.frame + 1;
+            sim.step(&host, f);
+            inp.logic_frame = f;
+        }
+        assert!(client.class_pick_open, "the command bar opened the panel");
+        // Pick the SECOND custom by its row key; deliver the one-shot as the bridge does.
+        let row = crate::classui::pick_rows(false)
+            .iter()
+            .position(|r| *r == crate::classui::PickRow::Custom(1))
+            .expect("the second custom's row");
+        let key = crate::classui::pick_key(row).expect("a digit key");
+        inp.keys.set_down(key, true);
+        let out = client.frame(&mut sim, &inp);
+        inp.keys.set_down(key, false);
+        client.frame(&mut sim, &inp);
+        let words = &out.choose_class_payload[..out.choose_class_payload_len as usize];
+        sim.choose_class(0, out.choose_class_general, usize::MAX, words);
+        assert_eq!(sim.player(0).expect("the record").class.as_deref(), Some("custom:Second"));
+        // Close the panel, then force it open again: it focuses the class now worn.
+        inp.class_pick_force = 0;
+        for _ in 0..2 {
+            client.frame(&mut sim, &inp);
+            let f = sim.frame + 1;
+            sim.step(&host, f);
+            inp.logic_frame = f;
+        }
+        assert!(!client.class_pick_open, "a classed General's panel is closed");
+        inp.class_pick_force = 1;
+        for _ in 0..2 {
+            client.frame(&mut sim, &inp);
+            let f = sim.frame + 1;
+            sim.step(&host, f);
+            inp.logic_frame = f;
+        }
+        assert!(client.class_pick_open);
+        assert_eq!(client.class_pick_highlight, row, "the panel opens on the worn class, not row 0");
         crate::profile::reset();
     }
 
@@ -559,9 +618,8 @@
         sim.rts_update(&host, 0, 7, 0, [0, 0, 0], None);
         let mut client = Client::default();
         let mut inp = ClientIn { input_allowed: 1, class_pick_force: 1, ..Default::default() };
-        let mut out = ClientOut::default();
         for _ in 0..2 {
-            out = client.frame(&mut sim, &inp);
+            client.frame(&mut sim, &inp);
             let f = sim.frame + 1;
             sim.step(&host, f);
             inp.logic_frame = f;
@@ -571,7 +629,7 @@
         let row = rows.iter().position(|r| matches!(r, crate::classui::PickRow::Custom(0))).expect("the custom row");
         let key = crate::classui::pick_key(row).expect("a digit key");
         inp.keys.set_down(key, true);
-        out = client.frame(&mut sim, &inp);
+        let out = client.frame(&mut sim, &inp);
         inp.keys.set_down(key, false);
         client.frame(&mut sim, &inp);
         assert_eq!(out.choose_class, CHOOSE_CLASS_CUSTOM);
@@ -719,13 +777,15 @@
         let words: Vec<u32> = pick.choose_class_payload[..pick.choose_class_payload_len as usize].to_vec();
         let class = crate::classes::CustomClass::from_wire_words(&words).expect("the payload reassembles");
         assert_eq!(class.name, "GL Test", "the seeded custom is picked by row key");
-        // The row is derived from the live list: the presets, then the custom.
+        // The row is derived from the live list: the set's custom slots lead the match list
+        // (`changeclass.lua`), then the defaults, so the seeded custom is row 1.
         let rows = crate::classui::pick_rows(false);
         assert_eq!(
             rows.iter().position(|r| matches!(r, crate::classui::PickRow::Custom(0))),
-            Some(crate::classes::get().len()),
-            "the custom follows the presets"
+            Some(0),
+            "the custom leads the match list"
         );
+        assert!(rows[1..].iter().take(4).all(|r| matches!(r, crate::classui::PickRow::Empty(_))), "the set's untouched slots follow");
         let a = &sim.player(0).unwrap().arsenal;
         assert!(!a.is_unarmed(), "the class armed the General");
         assert_eq!(a.weapons[0].main.id, "an94_mp+gl", "the seeded primary (with its launcher) landed");
@@ -757,9 +817,9 @@
     }
 
     /// With no custom in the profile the standard run still reaches first person: it picks the
-    /// first preset (Assault). That fallback key is Key1, also the swap binding, so a re-entry on
-    /// an already classed General must not turn it into a swap (the RTS run's first-person phase
-    /// reuses this script and checks the pistol is still in hand).
+    /// first default class in the match list's order (SMG, `changeclass.lua`). A re-entry on an
+    /// already classed General must not turn the pick key into gameplay input (the RTS run's
+    /// first-person phase reuses this script and checks the pistol is still in hand).
     #[cfg(feature = "autopilot")]
     #[test]
     fn the_standard_autopilot_falls_back_to_the_first_preset_without_a_custom() {
@@ -787,9 +847,9 @@
             inp.logic_frame = f;
         }
         let pick = pick.expect("the standard run picks a class at spawn");
-        assert_eq!(pick.choose_class, 1, "the first preset (Assault)");
+        assert_eq!(pick.choose_class, 2, "the first default class in the match list's order (SMG, registry index 1 sent 1-based)");
         assert_eq!(pick.choose_class_payload_len, 0, "a preset is an index pick");
-        assert_eq!(sim.player(0).unwrap().arsenal.weapons[0].main.id, "tar21_mp");
+        assert_eq!(sim.player(0).unwrap().arsenal.weapons[0].main.id, "mp7_mp");
 
         // A second session on the classed General: the Key1 pick window must stay inert.
         sim.take_control(&host, 0, 1);
@@ -832,9 +892,15 @@
         sim.take_control(&host, 0, 1);
         frame_with(&mut client, &mut sim, &host, &mut inp, 60);
         assert!(client.class_pick_open);
-        inp.keys.set_down(Key::Key6, true);
+        // The seeded custom leads the match list (`changeclass.lua`): press its row key.
+        let row = crate::classui::pick_rows(false)
+            .iter()
+            .position(|r| matches!(r, crate::classui::PickRow::Custom(0)))
+            .expect("the seeded custom is listed");
+        let key = crate::classui::pick_key(row).expect("a digit key");
+        inp.keys.set_down(key, true);
         let out = client.frame(&mut sim, &inp);
-        inp.keys.set_down(Key::Key6, false);
+        inp.keys.set_down(key, false);
         assert_eq!(out.choose_class, 0, "nothing was sent");
         assert_eq!(out.choose_class_payload_len, 0);
         assert!(client.class_pick_open, "the screen stays up: the pick was denied");

@@ -12,6 +12,8 @@ use zhbo_formats::iwi::Rgba;
 
 /// The MappedImage definitions `zhbo_assets::hud` writes into the archive.
 pub(crate) const INI_PATH: &str = "Data\\INI\\MappedImages\\HandCreated\\ZHBO_BO2.ini";
+/// Where the converter's MappedImage INIs live.
+const MAPPED_IMAGES_DIR: &str = "Data\\INI\\MappedImages\\";
 
 /// One sprite: which texture page it lives on and its inclusive pixel rectangle.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -41,7 +43,16 @@ impl Atlas {
         let entry = big
             .find(INI_PATH)
             .ok_or_else(|| format!("{}: no {INI_PATH} (is this a ConquerOps_BO2.big from the launcher?)", path.display()))?;
-        let text = String::from_utf8(big.read(entry).map_err(|e| e.to_string())?).map_err(|e| format!("{INI_PATH}: {e}"))?;
+        let mut text = String::from_utf8(big.read(entry).map_err(|e| e.to_string())?).map_err(|e| format!("{INI_PATH}: {e}"))?;
+        // The other generated MappedImage INIs in the archive (the BO2 fonts' glyphs).
+        for e in big.entries() {
+            if e.path.starts_with(MAPPED_IMAGES_DIR) && e.path != INI_PATH && e.path.ends_with(".ini") {
+                if let Ok(more) = big.read(e).map_err(|e| e.to_string()).and_then(|b| String::from_utf8(b).map_err(|e| e.to_string())) {
+                    text.push('\n');
+                    text.push_str(&more);
+                }
+            }
+        }
         let mut atlas = Atlas::empty();
         for (name, image) in parse_mapped_images(&text) {
             if !atlas.pages.contains_key(&image.texture) {

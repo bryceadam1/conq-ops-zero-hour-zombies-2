@@ -1345,6 +1345,251 @@ Residual, for the next Track R round:
 - Reflection probes (the rest of R4) stay skipped: the `XFILE_BLOCK_TEMP` dead end stands.
 - `native_pose_matches_the_w3d_rig` still needs the BO2 install to run ("the gun sits a little
   higher"); the compare mode's two-tag log is the in-game substitute so far.
+## v1.0 Track C, first wave: the choose-class screens on BO2's own geometry (2026-10-21)
+
+The pick screens were invented: a self-drawn banner/pager/details panel, presets first, a CREATE A
+CLASS row the real game never had. This wave ports them to the Lua (`classui/bo2.rs`, `pick.rs`,
+`preview.rs`), in LUI units resolved through Track 0's `lui` layer:
+
+1. **The lobby is `CACChooseClass`** (`decompiled/patch_mp/ui_mp/t6/menus/cacchooseclass.lua`):
+   the CHOOSE CLASS title (`addTitle`, Big), the `‹ CLASS SET n ›` header (35 tall at
+   `TitleHeight + 10`, ExtraSmall name over `menu_vis_carousel_pip[_fill]` pips), the active set's
+   **five custom slots and nothing else** (`UpdateButtonList`: 30-tall CoD9Buttons,
+   `ButtonSpacing` 2, list width `width / 3 - 50 - 20 = 218`), BO2's `MENU_CLASS_SETS_HINT` under
+   the list (`hinttext.lua`'s `ui_arrow_right` + wrapped Default), and the `ClassPreview` from
+   `width / 3 - 50` to the right edge. Untouched slots are BO2's `Custom 1`..`Custom 5`
+   (`a-chooseclass/002`: set 2's five empty slots; `reset_classes.cfg` names them `CLASS_SLOTn`),
+   so a profile blank name now saves as `Custom n`, not `Custom Class n` — the profile, the pick
+   rows and the command-bar labels share the one namer (`classui::empty_slot_name`).
+2. **The match is `changeclass`** (`decompiled/patch_mp/ui_mp/t6/hud/changeclass.lua`): the same
+   title, a 250-wide list at `TitleHeight` holding the set's name (Condensed), a half-button
+   spacer, the five slots, another spacer and the default classes in BO2's order — `class_smg` 10
+   through `class_sniper` 14 (`AddDefaultClassButtons`) — and a `Menu.Width - DefaultWidth * 1.5`
+   preview. An untouched slot is inert in a match (BO2's empty slots would spawn an empty class;
+   the mod's profile only stores saved customs, so a no-op beats a silent knife-only spawn).
+3. **The preview is `ClassPreview`** (`patch_mp/ui/t6/classpreview.lua`): the `n/10` counter
+   (Condensed, `CoD.orange`, right-aligned 100 wide) over the ten-bar `AllocationBar`, then the
+   columns — left `(W - 4) * 0.53` (primary block half its width tall, its attachment row, the
+   secondary, its row, 71 tall), right `(W - 4) * 0.47` (three perk rows, LETHAL, TACTICAL), then
+   WILDCARDS across. Black 0.1 plates, slot names ExtraSmall at 0.5. The focused list button
+   pulses `BOIIOrange` 1 → 0.5 and back every 650 ms (`cod9button.lua` `PulseDuration`, eased
+   through Track 0's `lui::anim`); the hosts feed it their UI clocks (`Client::ui_clock` from
+   render dt, the shell menu a 60 Hz step — UI only, never the sim).
+4. **Chrome is BO2's materials now** (`lui::materials::MATERIALS`): `menu_mp_cac_backing` (8
+   tiles, alpha 0.7) and the two `menu_mp_backing_frame` rules of `addLargePopupBackground`
+   (alpha 0.65, 16 tall around a 605 band lifted 19). The bottom rule is the top one drawn with
+   its LUI top below its bottom — a vertical mirror — so the converter writes a `_flipv` copy
+   (`hud.rs`'s `flip_vertical`); a `FLIP_V` name suffix is the convention.
+5. **CaC weapon pictures** come from the player's `mp/statstable.csv` (patch_mp.ff): column 4 is
+   the reference (`mp7`), column 6 the image (`menu_mp_weapons_mp7`); `classpreview.lua` draws
+   `<image>_big`. New `zhbo-formats::stringtable` parses the zone's `StringTable` asset; the
+   converter emits `ZHBO_CaC_Weapon_<base>` (`names::cac_weapon_image`) from the `_big` material.
+6. **The screenshot harness** installs the archive's BO2 font metrics (`names::FONTS_PATH`) like
+   the bridge does at init, reads every MappedImage INI in the archive (the fonts' glyphs live in
+   their own), takes `--size WxH` for the captures' 3024×1890, and the new `build-archive` dev
+   subcommand writes the launcher's BO2 archive to a chosen path so the harness can be iterated
+   without launching the game.
+
+Gotchas:
+- **The digit keys follow the rows.** The match list puts the set's slots first, so key 1 is the
+  first custom now (was the Assault preset). Every scripted pick derives its key from the live
+  list (`autopilot::custom_class_key`: the first custom, else the first default class — never a
+  hard-coded index). The classpick autotest's "5 premade + the custom" doc note is updated.
+- **`map_or(true, …)` → `is_none_or`, `chunks_exact_mut(4)` → `as_chunks_mut::<4>().0`** (clippy
+  1.99 in the touched files).
+
+Tests: `cargo test -p zhbo-core -p zhbo-assets` green (258 + 37), clippy clean in every touched
+file. **Not yet run in game** (the integrator runs the game): the classpick autotest's
+expectations changed with the row order. Integration needs: archive VERSION bump (new CaC
+materials/images in `ConquerOps_BO2.big`).
+
+Remaining Track C scope: the editor/picker screens on the same LUI geometry (they still draw the
+old self-drawn chrome), the cue map wired to the exact Lua call sites (`cac_main_nav`,
+`cac_main_edit_loadout`, `cac_safearea`, `cac_main_exit_cac`, … — the aliases exist in
+`sounds::UiCue`), the LUI transitions (the 250 ms slide/fade of `SetActiveClassSet`), the pixel
+pass against `cac/sweep/`, and the in-match class panel per `hud/class.lua`.
+
+## v1.0 Track C, second wave: the editor and the pickers on LUI geometry (2026-10-21)
+
+`screens.rs` had grown past the ~1,500-line hygiene limit and the editor was still drawing the
+old self-drawn chrome at engine font sizes while the pick screens had moved to `bo2.rs`'s LUI
+frame. This splits it and puts the editor and both pickers on the same geometry:
+
+1. **`classui/editor.rs` is the editor** (`CoD.CustomClass`, `patch_mp/ui/t6/customclass.lua`):
+   the class name as `addTitle`'s heading, the allocation bar under it (element top 3, 10 tall,
+   the menu's width), the left column PRIMARY (151) / ATTACHMENTS / SECONDARY / ATTACHMENTS and
+   the right one PERK 1-3 / LETHAL / TACTICAL (`ButtonHeight` 71, `MajorGridSpacing` 9,
+   `LeftSideButtonWidth` 500 at 0, `RightSideButtonWidth` 355 at 509), WILDCARDS across, the
+   mod's SAVE CLASS under them. Slot plates are `CoD.SlotList`'s (`SlotWidth` 64 × 1.4, `Spacing`
+   15): **three on a primary/secondary row, two on everything else** (`slotlistgridbutton.lua`;
+   the count is the button's kind, not the number of filled slots). `screens.rs` is down to the
+   host view (`ScreenView`/`draw_screen`); `layout.rs` is geometry only; `chrome.rs` keeps the
+   shared bits (prompts, deny rim, `allocation_lit`, element names, weapon stats).
+2. **The pickers are BO2's carousel and grids** (`cacweaponsp.lua`, `menus/cacattachmentsmenu.lua`,
+   `cacperksp.lua`): the highlighted gun is the grown card (`HighlightedItemWidth` 345.6 ×
+   `HighlightedItemHeight` 217.8) and its successors stream right as `ItemWidth` 192 × 146 tiles,
+   clipped at the menu's edge; the option grids are 6 columns of `GridItemWidth` × `64 + Title +
+   10` for attachments and 3 columns of `96 + Title + 10` for the rest, `GridItemSpacing` 8.
+   `picker_window`/`picker_option_at` are the one window both the draw and the hit-test read, so
+   a click can never land on a different cell than the one drawn.
+3. Two fixes came with it: the option grid's draw loop added the window's first index
+   twice (labels and the orange highlight walked off the visible page — invisible today only
+   because no list is longer than its page at 864×648, but wrong the moment one is), and
+   `editor_frame` built the option list every frame and threw it away.
+
+Gotchas:
+- **`editor_layout` takes no scale now.** It resolves the LUI frame (`bo2::Frame::new`) and every
+  box is in root units; `Frame::px` is the only place units turn into pixels. Anything holding a
+  screen-space rect across a resize is a bug (the old layout took `s` and pre-multiplied).
+- The grid's `GridTop` is 80 in the captures (`d-attach/002`) against the Lua's 60: the captures
+  are what the pixel pass matches.
+
+Tests: `cargo test -p zhbo-core -p zhbo-assets` green (261 + 37), clippy clean in every touched
+file. New: the carousel and the option grid hit-test every cell they draw, and a drawn option
+grid is asserted to label the window's options with exactly one `BOIIOrange` highlight.
+
+Remaining Track C scope: the sound cues wired to the exact Lua call sites (`cac_main_nav`,
+`cac_main_edit_loadout`, `cac_safearea`, `cac_main_exit_cac`, `cac_slide_*`, `cac_wildcard_*` —
+the aliases exist in `sounds::UiCue`, the screens still play the five coarse ones), the LUI
+transitions (the 250 ms slide/fade of `SetActiveClassSet`, the screen fade), the pixel pass
+against `cac/sweep/`, and the in-match class panel per `hud/class.lua`.
+
+## v1.0 Track C, third wave: the screens play the Lua's own sound cues (2026-10-21)
+
+The screens had a handful of coarse cues (`UI_OPEN`/`UI_NAVIGATE`/`UI_SELECT`/`UI_BACK`/`UI_DENY`) played
+by rules the hosts invented. BO2's menus do not work that way: every widget and handler names the
+exact alias, and the same alias is reused across screens. `classui/cues.rs` now names them,
+`classui/input.rs`'s folds decide which one a frame calls for, and the hosts only play what they
+are handed:
+
+- **The lobby** (`cacchooseclass.lua`): a row gaining focus is `cac_main_nav`
+  (`classButtonList.gainFocusSFX`); choosing a class to edit is `cac_main_edit_loadout`
+  (`ChooseClass`); the screen's back-out is `cac_main_exit_cac` (`setBackOutSFX`); the set pager is
+  `cac_safearea` (`Prev`/`NextClassSet` — the alias is not a safe-area sound); entering create-a-
+  class from the lobby is `cac_enter_cac` (`gamelobby.lua`); a dialog opening is
+  `cac_loadout_edit_sel` (`popup.lua`'s `OpenPopup`).
+- **The editor** (`caceditclass.lua`, `slotlistgridbutton.lua`, `attachmentgridbutton.lua`,
+  `bonuscardbutton.lua`, `cardcarousellist.lua`): opening the weapon picker is
+  `cac_loadout_edit_sel` (`WeaponSelectSFX`), any other submenu `cac_loadout_edit_submenu`
+  (`SubmenuSelectSFX`); a gun slot's focus is `cac_loadout_nav` and the bonus-card strip's
+  `cac_loadout_wildcard_nav`; a carousel move is `cac_slide_nav_lr`/`_up`/`_down` and its equip
+  `cac_slide_equip_item`; a grid's move and equip are `cac_grid_nav`/`cac_grid_equip_item`; an
+  attachment is `cac_equipment_add`; a bonus card is its own `cac_wildcard_equip_1..7` (Tactician,
+  BO2's `bonuscard_two_tacticals`, has no alias and falls back to the grid action, as the Lua's
+  table lookup does); `R`/the `X` is `cac_cmn_item_remove`; backing out of a picker or the editor
+  is `cac_cmn_backout`; a refused choice is `cac_cmn_deny` **alone** (the Lua's handlers play
+  `denySFX` instead of the action sound, so the fold returns no second cue).
+- **In a match** (`hud/class.lua`, `hud/changeclass.lua`): the panel opens with `uin_main_pause`,
+  rows use the grid's nav/equip, and leaving it is `cac_cmn_backout`. The `ClassChosen` sim event no
+  longer plays a cue: BO2 applies a class change silently on spawn, and the pick already played the
+  equip.
+
+Gotchas:
+- **`sounds::UI_*` is gone.** The alias-of-alias constants hid which Lua site a sound came from.
+  Use `classui::cues::*`; the converted event name is still `ZHBO_UI_<alias>`, so no archive change.
+- **Cues are decisions, not observations.** A denied action returns `cue: None`; a host that plays
+  `frame.cue` and its own deny sound must not also play a back-out for the same frame.
+- **Content grids walk Up/Down only.** The pure editor has no per-cell left/right links yet, so
+  BO2's 3-wide grids (a Right that stays in the row, a page step at the edges) are still to come;
+  the carousel is the only 2-D picker today.
+
+Tests: `cargo test -p zhbo-core -p zhbo-assets` green (267 + 37), clippy clean in every touched
+file. New: the cue table is asserted to be BO2 aliases and distinct per action, and the editor's
+walk is asserted to play the Lua's cue at each site (weapon select, slides, grid nav/equip,
+equipment add, the card's own alias, remove, back-out, and the deny alone).
+
+Remaining Track C scope: the LUI transitions (`SetActiveClassSet`'s 250 ms slide, the screen's
+fade, the highlight tweens — only the focused row's 650 ms pulse is in), the content grids'
+per-cell left/right links, the pixel pass against `cac/sweep/`, and the in-match class panel per
+`hud/class.lua` (the change applying on the next spawn is the sim's already; the panel that shows
+the active class in a match is not ported).
+
+## v1.0 Track C, fourth wave: the class-set switch moves with the Lua's 250 ms (2026-10-21)
+
+`SetActiveClassSet` (`cacchooseclass.lua`:500) is the one transition the choose-class screen has,
+and the port drew the new set as a hard cut. It now runs the Lua's two animations:
+
+- **The list slides in** from `-320 - buttonListWidth - 20` to its resting place with
+  `beginAnimation("onscreen", 250, false, true)` — an ease-out over the list's width plus 20 — and
+  is clipped to the menu while it travels so it cannot paint over the backing frame.
+- **The preview fades in** over the same 250 ms (`fade_in`, `250, true, false` — an ease-in) by
+  one alpha multiplier over the whole block, the way LUI's `alphaMultiplier` works; `bo2::fade`
+  scales a prim group (image fallbacks included).
+
+The hosts own the clock: `ScreenView` carries `set_change: Option<f32>` (seconds since the
+switch), `MenuState` starts it on `cycle_active` and clears it once 250 ms have run at its 60 Hz
+step, and the in-match pick reports `None` (a match never switches sets). `draw_pick` takes the
+`ScreenView` now instead of seven loose arguments, so the motion cannot be half-wired.
+
+Gotchas:
+- **A fade is a group, not a colour.** Prims carry their own alpha; fading an element means
+  drawing it into its own list and scaling that list, not passing an alpha down the call chain.
+- **Settled means byte-identical.** Outside a switch the draw must be exactly the static layout
+  (no clip prim, no fade list), or the screenshot harness's captures stop matching; the test
+  asserts both.
+
+Tests: `cargo test -p zhbo-core -p zhbo-assets` green (269 + 37), clippy clean in every touched
+file. New: at settle 0 the list's first row sits a list-width plus 20 to the left of its resting
+pen and the preview starts at alpha 0, at settle 1 both are static and unclipped, and the menu
+starts/clears the transition on a set switch but not on a row move.
+
+Remaining Track C motion: the picker/submenu open and close (BO2 fades a menu in on `openMenu`),
+the screen's own entrance, and eased highlight moves between rows (only the focused row's 650 ms
+`BOIIOrange` pulse is in). Remaining Track C scope otherwise: the pixel pass against `cac/sweep/`
+and the in-match class panel per `hud/class.lua`.
+
+## v1.0 Track C, fifth wave: the in-match panel opens on the class you wear (2026-10-21)
+
+BO2's in-game class panel is the pause menu's Class tab (`hud/class.lua`) and its changeclass
+screen focuses the class the player is wearing — `Button_RowGainFocus` runs on the active class,
+and the preview starts on it. The mod's in-match pick always opened on row 0, so a classed player
+pressing the command bar's entry saw the first slot focused and could not tell what they wore.
+
+`Client` now derives the row from the sim's class id when the panel opens
+(`current_class_row`: a shipped class by registry id, a custom by `custom:<name>` against the
+active set's profile list) and focuses it. The sim's `choose_class` is unchanged.
+
+On "applies on next spawn": the sim already applies a pick as it lands, which is right for the
+screen's real use — BO2's `changeclass` IS the spawn screen, and the mod's unclassed spawn offer
+is that screen. The command bar's mid-life entry is a mod affordance BO2 has no equivalent for, so
+its pick applies at once (with the kit's first raise) rather than waiting for a respawn; a
+`PlayerSim::pending_class` applied by `take_control` would be the way to get the pause-menu
+version, and it would change the classpick autotest's mid-life expectations. Left to the
+integrator as a design call.
+
+Tests: `cargo test -p zhbo-core -p zhbo-assets` green (270 + 37), clippy clean in the touched
+files. New: a two-custom profile, the second picked by its row key, the panel closed and forced
+open again — the highlight is the worn class's row.
+
+## Integrating Track C: the class screens on BO2's geometry, art and cues (2026-10-21)
+
+Merged `v1/track-c` (6 commits): the choose-class screens and the Pick-10 editor on BO2's own
+LUI geometry, materials and art; the editor split out of the oversized screens.rs into
+`classui/editor.rs`; the Lua's exact sound cue per call site (cac_* / uin_*); the 250 ms
+class-set slide + fade; the in-match panel opening on the class the General wears.
+
+Conflicts: MODLOG.md (both kept); `lui/materials.rs` (H's HUD entries + C's CaC entries, one
+array, C's `FLIP_V` kept); `zhbo-assets/hud.rs` (H's inline-material scan with C's zone order,
+adding `ui_mp`); `hud/tests.rs` (H's looser crosshair assertion kept). `stringtable.rs` was an
+add/add — two independent StringTable readers, PW's null-guarded `rows()` and C's richer
+`Table`/`find`/`rows_where`; both kept verbatim, to be unified later with the real install as
+arbiter. The compiler then caught one semantic conflict: C's `bo2::fade` pre-dated H's
+`Prim::Quad`; it now scales Quad's alpha and recurses its fallback like Image. Archive VERSION
+47 → 48 for the new CaC materials and `ZHBO_CaC_Weapon_*` images.
+
+Verified: cargo test --workspace green; the real-install suite green EXCEPT the pre-existing
+`xmodel::tests::reads_an_mp_character` failure ("weights sum to 1", broken before this merge —
+only `stringtable.rs` differs from HEAD in that crate; fix pending on branch
+`fix/xmodel-weights`); clippy clean in the touched crates; `cargo xtask build` clean; in-game
+autotest 13/13 default, `--classpick` all checks (the seeded custom picked, its MP7 kit
+applied, the pick not re-saved), `--rts` 14/14.
+
+Watch: cues are now per call site, so menus sound different (the lobby's Escape is
+`cac_main_exit_cac`, a set step `cac_safearea`, the in-match panel's entrance `uin_main_pause`).
+`GridTop` is 80 in the port vs 60 in `cacattachmentsmenu.lua:8` — first suspect if the reference
+pixel pass disagrees. `sim::choose_class` still applies a mid-match pick immediately; BO2's
+pause-menu "next spawn" semantics would need a `PlayerSim::pending_class` (deferred, see the
+Track C section above).
 
 ## Next steps
 

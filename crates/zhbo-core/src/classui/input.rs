@@ -1,6 +1,7 @@
 //! The shared input folds both hosts run: pointer and key edges, the pick screen's and the editor's frame.
 
 use super::*;
+use crate::classui::cues;
 
 /// The pick screen's keys 1-9,0, in list order: key 1 is the first row, key 0 the tenth. The keys
 /// exist so a player can pick without the mouse; BO2 shows the same numerals on the rows.
@@ -100,7 +101,8 @@ pub struct PickFrame {
 }
 
 /// Fold one frame of pick-screen input. `highlight` is the host's stored row; `manage` selects the
-/// shell's list (with CREATE A CLASS and the footer actions) or the in-match pick-only list. Pure
+/// lobby's list (the set's five slots, the footer actions) or the in-match pick-only list (the
+/// slots, then the default classes). Pure
 /// apart from reading the two registries (the list is rebuilt on demand, like the draw).
 pub fn pick_frame(inp: &MenuPointer, prev: &MenuPrev, highlight: usize, manage: bool) -> PickFrame {
     let rows = pick_rows(manage);
@@ -109,10 +111,8 @@ pub fn pick_frame(inp: &MenuPointer, prev: &MenuPrev, highlight: usize, manage: 
         return out;
     }
     let mut hl = highlight.min(rows.len() - 1);
-    let s = inp.scale();
-    let layout = pick_layout(inp.screen_w, inp.screen_h, s);
-    let first = pick_first(hl, pick_visible(&layout));
-    let hover = pick_row_at(&layout, inp.mouse_x, inp.mouse_y, rows.len(), first);
+    let layout = pick_layout(inp.screen_w, inp.screen_h, manage);
+    let hover = pick_row_at(&layout, inp.mouse_x, inp.mouse_y, &rows);
     if prev.moved(inp) {
         if let Some(i) = hover {
             if i != hl {
@@ -152,7 +152,7 @@ pub fn pick_frame(inp: &MenuPointer, prev: &MenuPrev, highlight: usize, manage: 
             out.activate = Some(i);
         } else {
             // The shell's footer prompts (set/class options, back) are clickable.
-            out.footer = pick_footer_at(&layout, inp.screen_w, s, inp.mouse_x, inp.mouse_y, manage);
+            out.footer = pick_footer_at(&layout, inp.mouse_x, inp.mouse_y);
         }
     }
     if out.activate.is_none() && out.footer.is_none() {
@@ -201,8 +201,7 @@ pub struct EditorFrame {
 /// (the hosts drop it on Save/Cancel).
 pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> EditorFrame {
     use crate::classmenu::Edges;
-    let s = inp.scale();
-    let layout = editor_layout(inp.screen_w, inp.screen_h, s);
+    let layout = editor_layout(inp.screen_w, inp.screen_h);
     let mut edges = Edges::between(&prev.keys, &inp.keys);
     let clicked = prev.clicked(inp);
     let moved = prev.moved(inp);
@@ -210,18 +209,25 @@ pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> 
     // the guns inside the active category. The fold consumes those edges here, before the pure
     // editor sees them, so the highlighted option always stays inside the drawn category.
     let cats = if editor.picking && !editor.naming { weapon_categories(editor) } else { Vec::new() };
+    // The carousel's moves carry its own cue (`cardcarousellist.lua`): sideways is the LR slide,
+    // up and down their own (`cac_slide_nav_*`), while the grids all share `cac_grid_nav`.
+    let mut slide: Option<&'static str> = None;
     if !cats.is_empty() {
         if edges.left {
             step_category(editor, &cats, -1);
+            slide = Some(cues::SLIDE_LR);
         }
         if edges.right {
             step_category(editor, &cats, 1);
+            slide = Some(cues::SLIDE_LR);
         }
         if edges.up {
             step_within_category(editor, &cats, -1);
+            slide = Some(cues::SLIDE_UP);
         }
         if edges.down {
             step_within_category(editor, &cats, 1);
+            slide = Some(cues::SLIDE_DOWN);
         }
         edges.up = false;
         edges.down = false;
@@ -232,7 +238,7 @@ pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> 
     // The box's circled X (mouse) and `R` (keyboard) clear the highlighted slot, BO2's `R Remove`.
     let mut removed = false;
     if !editor.picking && !editor.naming {
-        if let Some((slot, index)) = editor_remove_at(&cells, editor, s, inp.mouse_x, inp.mouse_y).filter(|_| clicked) {
+        if let Some((slot, index)) = editor_remove_at(&layout, &cells, editor, inp.mouse_x, inp.mouse_y).filter(|_| clicked) {
             removed = clear_cell(&mut editor.draft, slot, index);
         } else if prev.edge(inp, Key::R) {
             removed = clear_slot(&mut editor.draft, editor.slot);
@@ -244,11 +250,10 @@ pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> 
     // The cells repeat a slot (three bonus-card boxes, two attachment boxes), so a hit box maps to
     // the walk's slot index, not to its own.
     let slots = editor.slots();
-    let slot = editor_cell_at(&cells, inp.mouse_x, inp.mouse_y)
+    let slot = editor_cell_at(&layout, &cells, inp.mouse_x, inp.mouse_y)
         .and_then(|i| cells.get(i))
         .and_then(|c| slots.iter().position(|s| *s == c.slot));
-    let options = if editor.picking { editor.options() } else { Vec::new() };
-    let (start, _) = picker_window(&layout, editor.slot, editor.option);
+    let (start, _) = picker_window(editor.slot, editor.option);
     let drawn = if editor.picking {
         picker_option_at(&layout, editor.slot, inp.mouse_x, inp.mouse_y, start, drawn_option_count(editor, &cats))
     } else {
@@ -264,7 +269,6 @@ pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> 
             cat.options.get(start + row).copied().unwrap_or(editor.option)
         }
     });
-    let _ = options;
     let pointer = crate::classmenu::PointerEvent { slot, option, click: clicked && !removed, wheel: inp.wheel.trunc() as i32, moved };
     let before_slot = editor.slot;
     let before_option = editor.option;
@@ -278,22 +282,43 @@ pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> 
     let outcome = if has_pointer { editor.step_pointer(pointer) } else { editor.step(edges) };
     let denied = editor.denied;
     editor.denied = false;
-    // Opening a list or the name field is a select; closing one after choosing is a select, while
-    // backing out of it is BO2's back cue. A slot/option move is the navigate cue, and removing a
-    // slot is BO2's remove (the back cue).
-    let cue = if removed {
-        Some(crate::sounds::UI_BACK)
+    // Each event plays the alias the Lua plays at the same point (see `cues.rs`): opening the
+    // weapon picker is `cac_loadout_edit_sel` and any other submenu `cac_loadout_edit_submenu`;
+    // equipping names the item's own alias; backing out is the menu's `cac_cmn_backout`; a slot
+    // move is the slot list's `cac_loadout_nav` (the bonus-card strip's own for its row) and an
+    // option move the grid's or carousel's; `R`/the `X` is `cac_cmn_item_remove`.
+    // A refused choice plays BO2's deny alone: the hosts surface `denied` (the cue and the rim), and
+    // the Lua's handlers pick `denySFX` *instead of* the button's action sound (`cacperksp.lua`).
+    let cue = if denied {
+        None
+    } else if removed {
+        Some(cues::ITEM_REMOVE)
     } else {
         match outcome {
             crate::classmenu::Outcome::Continue => {
-                if editor.picking != before_picking || editor.naming != before_naming {
-                    let opened = editor.picking || editor.naming;
-                    let chose = editor.draft != before_draft;
-                    Some(if opened || chose { crate::sounds::UI_SELECT } else { crate::sounds::UI_BACK })
-                } else if editor.slot != before_slot || editor.option != before_option {
-                    Some(crate::sounds::UI_NAVIGATE)
-                } else if editor.draft != before_draft {
-                    Some(crate::sounds::UI_SELECT)
+                let chose = editor.draft != before_draft;
+                if editor.picking != before_picking {
+                    if editor.picking {
+                        // A weapon picker is CACEditClass's WeaponChosen; everything else is one of
+                        // its submenus (`AttachmentSlotChosen`, `PerkSlotChosen`, …).
+                        Some(if is_carousel(editor.slot) { cues::WEAPON_SELECT } else { cues::SUBMENU_SELECT })
+                    } else if chose {
+                        Some(equip_cue(editor))
+                    } else {
+                        Some(cues::BACKOUT)
+                    }
+                } else if editor.naming != before_naming {
+                    // BO2's text field is a grid button too: opening or committing it is its action,
+                    // backing out of it the menu's back-out.
+                    Some(if editor.naming || chose { cues::GRID_EQUIP } else { cues::BACKOUT })
+                } else if slide.is_some() || editor.option != before_option {
+                    // The carousel's moves are folded before the snapshot, so `slide` (not the option
+                    // delta) is what tells this frame apart.
+                    Some(slide.unwrap_or(cues::GRID_NAV))
+                } else if editor.slot != before_slot {
+                    Some(if editor.slot == Slot::Wildcards { cues::WILDCARD_NAV } else { cues::LOADOUT_NAV })
+                } else if chose {
+                    Some(equip_cue(editor))
                 } else {
                     None
                 }
@@ -302,6 +327,24 @@ pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> 
         }
     };
     EditorFrame { outcome, denied, removed, cue }
+}
+
+/// Whether a slot's picker is BO2's weapon carousel (the two gun slots), as opposed to a content
+/// grid (`cacweaponsp.lua` versus `cacattachmentsmenu.lua`/`cacperksp.lua`).
+fn is_carousel(slot: Slot) -> bool {
+    matches!(slot, Slot::Primary | Slot::Secondary)
+}
+
+/// The alias an equip plays in the current slot: the carousel's slide for a gun, the equipment add
+/// for an attachment (`attachmentgridbutton.lua`), the card's own alias for a wildcard
+/// (`bonuscardbutton.lua`), and the grid's action for everything else (`luibutton.lua`).
+fn equip_cue(editor: &Editor) -> &'static str {
+    match editor.slot {
+        Slot::Primary | Slot::Secondary => cues::SLIDE_EQUIP,
+        Slot::PrimaryAtts | Slot::SecondaryAtts => cues::EQUIPMENT_ADD,
+        Slot::Wildcards => editor.option_wildcard(editor.option).map_or(cues::GRID_EQUIP, cues::wildcard_equip),
+        _ => cues::GRID_EQUIP,
+    }
 }
 
 /// How many rows the open picker draws: the active category's guns, or the option list itself.

@@ -36,29 +36,32 @@ fn press(editor: &mut Editor, prev: &mut MenuPrev, keys: &[Key]) -> EditorFrame 
 }
 
 #[test]
-fn the_shell_pick_list_is_presets_then_customs_then_create_and_the_match_list_has_no_create() {
+fn the_lobby_lists_the_sets_five_slots_and_the_match_adds_the_defaults() {
     let _g = lock();
     crate::profile::reset();
-    let presets = classes::get().len();
+    // BO2's CACChooseClass: the five custom slots of the active set, nothing else
+    // (`cacchooseclass.lua` `UpdateButtonList`, `a-chooseclass/002`: an untouched set is five
+    // `Custom n` slots).
     let rows = pick_rows(true);
-    assert_eq!(rows.len(), presets + 1, "an empty profile: presets + CREATE");
-    assert_eq!(rows[presets], PickRow::Create);
-    // In a match there is no CREATE A CLASS row (picks only).
-    let rows = pick_rows(false);
-    assert_eq!(rows.len(), presets, "the in-match list is the presets alone");
-    assert!(!rows.contains(&PickRow::Create));
+    assert_eq!(rows, (0..5).map(PickRow::Empty).collect::<Vec<_>>());
     crate::profile::save(custom("AB", "an94_mp"));
     crate::profile::save(custom("Sniper", "dsr50_mp"));
     let rows = pick_rows(true);
-    assert_eq!(rows.len(), presets + 3);
-    assert_eq!(rows[presets], PickRow::Custom(0));
-    assert_eq!(rows[presets + 1], PickRow::Custom(1));
-    assert_eq!(rows[presets + 2], PickRow::Create);
-    // The in-match list keeps the customs but drops CREATE.
+    assert_eq!(rows[..3], [PickRow::Custom(0), PickRow::Custom(1), PickRow::Empty(2)]);
+    assert_eq!(rows.len(), 5);
+    // The match's changeclass: the same five, then the default classes in its order (SMG, CQB,
+    // Assault, LMG, Sniper: `class_smg` 10 .. `class_sniper` 14).
     let rows = pick_rows(false);
-    assert_eq!(rows.len(), presets + 2);
-    assert_eq!(rows[presets], PickRow::Custom(0));
-    assert!(!rows.contains(&PickRow::Create));
+    assert_eq!(rows[..5], pick_rows(true)[..]);
+    let presets = classes::get();
+    let ids: Vec<&str> = rows[5..]
+        .iter()
+        .map(|r| match r {
+            PickRow::Preset(j) => presets[*j].id.as_str(),
+            other => panic!("only defaults after the slots: {other:?}"),
+        })
+        .collect();
+    assert_eq!(ids, ["smg", "cqb", "assault", "lmg", "sniper"]);
     crate::profile::reset();
 }
 
@@ -66,17 +69,12 @@ fn the_shell_pick_list_is_presets_then_customs_then_create_and_the_match_list_ha
 fn the_pick_list_describes_the_active_class_set() {
     let _g = lock();
     crate::profile::reset();
-    // Set 1 of ten, BO2's default name, the five defaults and (in the shell) CREATE.
-    let presets = classes::get().len();
     let list = pick_list(true);
     assert_eq!((list.set, list.sets), (0, 10));
     assert_eq!(list.set_number(), 1);
-    assert_eq!(list.marker(), 0, "the first dot is the marker on set 1");
+    assert_eq!(list.marker(), 0, "the first pip is the marker on set 1");
     assert_eq!(list.set_name, "CLASS SET 1");
-    assert_eq!(list.rows.iter().filter(|r| matches!(r, PickRow::Preset(_))).count(), presets);
-    assert!(list.rows.iter().all(|r| !matches!(r, PickRow::Custom(_))), "no customs yet");
-    assert_eq!(list.rows.last(), Some(&PickRow::Create));
-    // A class saved in set 2 shows only there, and the pager's data follows the set.
+    // A class saved in set 2 shows only there, and the header's data follows the set.
     crate::profile::save(custom("Set One", "an94_mp"));
     crate::profile::rename_set(1, "SNIPERS");
     crate::profile::set_active(1);
@@ -84,10 +82,9 @@ fn the_pick_list_describes_the_active_class_set() {
     let list = pick_list(true);
     assert_eq!((list.set, list.set_number()), (1, 2));
     assert_eq!(list.set_name, "SNIPERS");
-    assert_eq!(list.marker(), 1, "the second dot marks set 2");
-    assert_eq!(list.rows[presets], PickRow::Custom(0));
-    assert_eq!(list.rows[presets + 1], PickRow::Create, "one custom in this set");
-    // Left/Right step the set only in the shell; a match's fold ignores them.
+    assert_eq!(list.marker(), 1, "the second pip marks set 2");
+    assert_eq!(list.rows[..2], [PickRow::Custom(0), PickRow::Empty(1)], "one custom in this set");
+    // Left/Right step the set only in the lobby; a match's fold ignores them.
     let mut inp = MenuPointer { screen_w: 1280.0, screen_h: 720.0, ..Default::default() };
     let prev = MenuPrev::default();
     inp.keys.set_down(Key::Right, true);
@@ -125,60 +122,124 @@ fn the_set_pager_steps_through_all_ten_sets_and_wraps() {
 }
 
 #[test]
-fn pick_hit_testing_finds_every_row_in_the_window() {
-    let l = pick_layout(1280.0, 720.0, 1.0);
-    let visible = pick_visible(&l);
-    for i in 0..visible.min(7) {
-        let y = l.list_y + i as f32 * l.row_h + 4.0;
-        assert_eq!(pick_row_at(&l, l.list_x + 10.0, y, 7, 0), Some(i), "row {i}");
+fn pick_hit_testing_follows_the_luas_button_list() {
+    // The lobby list: 30-unit buttons 2 apart under the set header (`cacchooseclass.lua`), 218
+    // wide; at 720p one unit is one pixel and the 864-wide menu starts at (1280 - 864) / 2.
+    let l = pick_layout(1280.0, 720.0, true);
+    assert_eq!(l.frame.menu.x, 208.0);
+    assert_eq!(l.list.x, 208.0);
+    assert_eq!(l.list.y, 36.0 + 48.0 + 10.0 + 35.0 + 10.0);
+    assert_eq!(l.list.w, 218.0);
+    let rows: Vec<PickRow> = (0..5).map(PickRow::Empty).collect();
+    for i in 0..5 {
+        let y = l.list.y + i as f32 * (ROW_H + ROW_SPACING) + 4.0;
+        assert_eq!(pick_row_at(&l, l.list.x + 10.0, y, &rows), Some(i), "row {i}");
     }
-    // The scroll window: the first shown row is `first`, so the first slot is that row.
-    let first = 2;
-    assert_eq!(pick_row_at(&l, l.list_x + 10.0, l.list_y + 4.0, 7, first), Some(first));
-    assert_eq!(pick_row_at(&l, l.list_x - 5.0, l.list_y + 5.0, 7, 0), None, "left of the list");
-    assert_eq!(pick_row_at(&l, l.list_x + 10.0, l.list_y + 7.0 * l.row_h, 7, 0), None, "past the last row");
+    assert_eq!(pick_row_at(&l, l.list.x - 5.0, l.list.y + 5.0, &rows), None, "left of the list");
+    assert_eq!(pick_row_at(&l, l.list.x + 10.0, l.list.y + ROW_H + 1.0, &rows), None, "the 2-unit spacing");
+    assert_eq!(pick_row_at(&l, l.list.x + 10.0, l.list.y - 20.0, &rows), None, "the set header is not a row");
+    // The match list: the set's name and a spacer come first.
+    let m = pick_layout(1280.0, 720.0, false);
+    let rects = row_rects(&m, &rows);
+    assert_eq!(rects[0].y, m.list.y + bo2::TEXT_CONDENSED + ROW_SPACING + ROW_H / 2.0 + ROW_SPACING);
 }
 
 #[test]
-fn the_shell_footer_prompts_are_hit_tested_and_absent_in_a_match() {
-    let l = pick_layout(1280.0, 720.0, 1.0);
-    let actions = pick_footer_actions(&l, 1280.0, 1.0, true);
+fn the_footer_prompts_are_hit_tested_in_bo2s_order() {
+    let l = pick_layout(1280.0, 720.0, true);
+    let actions = pick_footer_actions(&l);
     assert_eq!(
-        actions.iter().map(|(a, ..)| *a).collect::<Vec<_>>(),
-        vec![PickFooterAction::Back, PickFooterAction::SetOptions, PickFooterAction::ClassOptions],
-        "BO2's choose-class footer: ESC Back, S Class Set Options, O Class Options"
+        actions.iter().map(|(a, _)| *a).collect::<Vec<_>>(),
+        vec![PickFooterAction::Back, PickFooterAction::ClassOptions, PickFooterAction::SetOptions],
+        "BO2's footer: ESC Back left, O Class Options rightmost, S Class Set Options beside it"
     );
-    for (action, x, y, w, h) in &actions {
-        assert_eq!(pick_footer_at(&l, 1280.0, 1.0, x + w * 0.5, y + h * 0.5, true), Some(*action));
+    assert!(actions[1].1.x > actions[2].1.x, "Class Options is right of Class Set Options");
+    for (action, r) in &actions {
+        let p = l.frame.px(*r);
+        assert_eq!(pick_footer_at(&l, p.x + p.w * 0.5, p.y + p.h * 0.5), Some(*action));
     }
-    assert_eq!(pick_footer_at(&l, 1280.0, 1.0, l.list_x, l.list_y, true), None, "not a row point");
-    assert!(pick_footer_actions(&l, 1280.0, 1.0, false).is_empty(), "no management in a match");
-    assert_eq!(pick_footer_at(&l, 1280.0, 1.0, 1200.0, l.footer_y + 5.0, false), None);
-    // The prompts carry BO2's keys.
+    assert_eq!(pick_footer_at(&l, l.list.x, l.list.y), None, "not a row point");
+    let m = pick_layout(1280.0, 720.0, false);
+    assert_eq!(pick_footer_actions(&m).iter().map(|(a, _)| *a).collect::<Vec<_>>(), vec![PickFooterAction::Back]);
     assert_eq!((PickFooterAction::SetOptions.key(), PickFooterAction::SetOptions.label()), ("S", "Class Set Options"));
     assert_eq!((PickFooterAction::ClassOptions.key(), PickFooterAction::ClassOptions.label()), ("O", "Class Options"));
 }
 
 #[test]
-fn the_choose_class_footer_carries_bo2s_hint_in_the_shell_only() {
+fn the_lobby_shows_the_set_header_and_hint_and_the_match_the_sets_name() {
     let _g = lock();
+    let _f = crate::lui::font::lock();
+    crate::lui::font::load("");
     crate::profile::reset();
-    let hint = "You will load into the game with this class set.";
-    let mut shell = Vec::new();
-    draw_pick(&mut shell, 1280.0, 720.0, 1.0, 0, 0.0, true);
-    let shell_text = texts(&shell);
-    assert!(shell_text.iter().any(|t| t == hint), "the shell shows BO2's hint: {shell_text:?}");
-    assert!(shell_text.iter().any(|t| t == "CLASS SET 1"), "the pager names the set");
-    assert!(shell_text.iter().any(|t| t == "Class Set Options"));
-    assert!(shell_text.iter().any(|t| t == "Class Options"));
-    // A match is already running: no hint, and the pager still shows the active set (read-only).
+    let mut lobby = Vec::new();
+    draw_pick(&mut lobby, 1280.0, 720.0, &ScreenView { highlight: 0, editor: None, deny: 0.0, manage: true, now: 0.0, set_change: None });
+    let lobby_text = texts(&lobby);
+    for want in ["CHOOSE CLASS", "CLASS SET 1", "Custom 1", "Custom 5", "Class Set Options", "Class Options", "PRIMARY", "WILDCARDS"] {
+        assert!(lobby_text.iter().any(|t| t == want), "the lobby shows {want:?}: {lobby_text:?}");
+    }
+    // The hint wraps onto lines of the list's width.
+    assert!(lobby_text.iter().any(|t| SET_HINT.starts_with(t.as_str()) && !t.is_empty()), "the hint: {lobby_text:?}");
     let mut game = Vec::new();
-    draw_pick(&mut game, 1280.0, 720.0, 1.0, 0, 0.0, false);
+    draw_pick(&mut game, 1280.0, 720.0, &ScreenView { highlight: 0, editor: None, deny: 0.0, manage: false, now: 0.0, set_change: None });
     let game_text = texts(&game);
-    assert!(!game_text.iter().any(|t| t == hint), "no hint in a match: {game_text:?}");
-    assert!(game_text.iter().any(|t| t == "CLASS SET 1"), "the read-only pager draws");
+    assert!(!game_text.iter().any(|t| t.starts_with("You will load")), "no hint in a match: {game_text:?}");
+    assert!(game_text.iter().any(|t| t == "CLASS SET 1"), "the match list names the set");
     assert!(!game_text.iter().any(|t| t == "Class Set Options"), "nothing to manage in a match");
     crate::profile::reset();
+}
+
+#[test]
+fn a_class_set_switch_slides_the_list_in_and_fades_the_preview() {
+    let _g = lock();
+    let _f = crate::lui::font::lock();
+    crate::lui::font::load("");
+    crate::profile::reset();
+    let view = |settle: f32| {
+        let mut prims = Vec::new();
+        draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: None, deny: 0.0, manage: true, now: 0.0, set_change: Some(settle * pick::SET_SWITCH_MS / 1000.0) });
+        prims
+    };
+    let started = view(0.0);
+    let landed = view(1.0);
+    assert_eq!(pick::SET_SWITCH_MS, 250.0, "cacchooseclass.lua's beginAnimation duration");
+    // The list starts a list-width plus 20 to the left of its resting place (`setLeftRight` aims its
+    // right edge at -320), so the same row's text is further left at settle 0.
+    let lobby = pick_layout(1280.0, 720.0, true);
+    let row_pen = |prims: &[Prim]| {
+        prims
+            .iter()
+            .find_map(|p| match p {
+                Prim::Text { text, x, .. } if text == "Custom 1" => Some(*x),
+                _ => None,
+            })
+            .expect("the first row's label")
+    };
+    let travel = (lobby.list.w + 20.0) * lobby.frame.s();
+    assert!((row_pen(&landed) - row_pen(&started) - travel).abs() < 1.0, "the list slides in by its width + 20");
+    // The preview fades in over the same 250 ms (`fade_in` with an ease-in): at 0 nothing of it is
+    // visible, and by the end it is at full alpha. TACTICAL is the preview's own slot label.
+    let alpha_of = |prims: &[Prim], want: &str| -> Option<u32> {
+        prims.iter().find_map(|q| match q {
+            Prim::Text { text, argb, .. } if text == want => Some(*argb >> 24),
+            _ => None,
+        })
+    };
+    // The preview draws its slot labels at 0.5 alpha, so full here is 0x80, not 0xFF.
+    assert_eq!(alpha_of(&started, "TACTICAL"), Some(0), "the preview starts invisible");
+    assert_eq!(alpha_of(&landed, "TACTICAL"), Some(bo2::argb(bo2::OFF_WHITE, 0.5) >> 24), "and lands at its full alpha");
+    // A settled screen has no clip of its own (the clip belongs to the slide).
+    assert!(!landed.iter().any(|p| matches!(p, Prim::ClipBegin { .. })), "settled draws no clip");
+    assert!(started.iter().any(|p| matches!(p, Prim::ClipBegin { .. })), "the slide clips the list to the menu");
+    crate::profile::reset();
+}
+
+#[test]
+fn the_focused_button_pulses_like_cod9button() {
+    // 650 ms down to 0.5, 650 ms back up, eased (`cod9button.lua` `pulse_low`/`pulse_high`).
+    assert_eq!(pulse_alpha(0.0), 1.0);
+    assert!((pulse_alpha(0.65) - 0.5).abs() < 1e-4);
+    assert!((pulse_alpha(1.3) - 1.0).abs() < 1e-4);
+    assert!(pulse_alpha(0.3) > 0.5 && pulse_alpha(0.3) < 1.0);
 }
 
 #[test]
@@ -189,27 +250,19 @@ fn the_allocation_bar_lights_one_segment_per_point_and_the_counter_says_n_of_ten
     assert_eq!(allocation_lit(-2, 10), 0, "never negative");
     assert_eq!(allocation_lit(14, 10), 10, "clamped to the budget");
     let mut prims = Vec::new();
-    draw_allocation(&mut prims, 0.0, 0.0, 200.0, 1.0, 7, 10);
+    let f = bo2::Frame::new(1280.0, 720.0);
+    preview::allocation_bar(&mut prims, &f, crate::lui::Rect { x: 0.0, y: 0.0, w: 200.0, h: 10.0 }, 7, 10);
     let lit = prims
         .iter()
-        .filter(|p| matches!(p, Prim::Rect { argb, .. } if *argb == ORANGE))
+        .filter(|p| matches!(p, Prim::Rect { argb, .. } if *argb == bo2::argb(bo2::BOII_ORANGE, 1.0)))
         .count();
     assert_eq!(lit, 7, "seven of the ten blocks are spent");
-    assert_eq!(prims.iter().filter(|p| matches!(p, Prim::Rect { .. })).count(), 10, "ten blocks");
-}
-
-#[test]
-fn pick_hit_testing_still_maps_the_set_pager_row() {
-    // The pager sits above the list, so a click on it is not a row and the list starts below it.
-    let l = pick_layout(1280.0, 720.0, 1.0);
-    assert!(l.list_y > l.pager_y + l.pager_h, "the list starts under the pager");
-    assert_eq!(pick_row_at(&l, l.list_x + 10.0, l.pager_y + 4.0, 7, 0), None, "the pager is not a row");
 }
 
 #[test]
 fn the_editor_grid_hit_tests_every_box() {
     let e = Editor::new(Draft::default());
-    let l = editor_layout(1280.0, 720.0, 1.0);
+    let l = editor_layout(1280.0, 720.0);
     let cells = editor_cells(&l, &e);
     // Every box of the walk is on screen, and its middle maps back to it. A weapon that offers
     // no attachments has no attachment boxes (BO2's "Attachments not available").
@@ -222,14 +275,103 @@ fn the_editor_grid_hit_tests_every_box() {
         assert_eq!(cells.iter().any(|c| c.slot == slot), offered, "{slot:?} box presence");
     }
     for (i, c) in cells.iter().enumerate() {
-        let (cx, cy) = c.center();
-        assert_eq!(editor_cell_at(&cells, cx, cy), Some(i), "{:?} box {i}", c.slot);
+        let p = l.frame.px(c.rect);
+        let (cx, cy) = (p.x + p.w * 0.5, p.y + p.h * 0.5);
+        assert_eq!(editor_cell_at(&l, &cells, cx, cy), Some(i), "{:?} box {i}", c.slot);
     }
     // The attachment boxes are one per attachment the gun may carry.
     let atts = cells.iter().filter(|c| c.slot == Slot::PrimaryAtts).count();
     assert_eq!(atts, e.draft.primary_att_max());
     // A point off the grid hits nothing.
-    assert_eq!(editor_cell_at(&cells, 5.0, 5.0), None);
+    assert_eq!(editor_cell_at(&l, &cells, 5.0, 5.0), None);
+}
+
+/// A box's middle in screen pixels, as a pointer reports it.
+fn centre(l: &EditorLayout, r: crate::lui::Rect) -> (f32, f32) {
+    let p = l.frame.px(r);
+    (p.x + p.w * 0.5, p.y + p.h * 0.5)
+}
+
+#[test]
+fn the_weapon_picker_hit_tests_the_card_and_the_tiles_it_draws() {
+    let mut e = Editor::new(Draft::default());
+    e.slot = Slot::Primary;
+    e.picking = true;
+    let l = editor_layout(1280.0, 720.0);
+    let cats = weapon_categories(&e);
+    let opts = cats[category_of(&cats, e.option)].options.clone();
+    let highlighted = opts.iter().position(|i| *i == e.option).expect("the held gun is in its category");
+    // BO2's carousel keeps the highlighted gun as its grown card and streams its successors right,
+    // so the window starts at the highlight (`cacweaponsp.lua`'s `HighlightedItemWidth`).
+    let (first, shown) = picker_window(e.slot, highlighted);
+    assert_eq!(first, highlighted, "the carousel's window starts at the highlighted card");
+    assert!(shown >= 1, "at least one tile fits");
+    let (cx, cy) = centre(&l, carousel_card(&l));
+    assert_eq!(picker_option_at(&l, e.slot, cx, cy, first, opts.len()), Some(highlighted), "the card is the highlight");
+    for j in 0..shown {
+        let i = highlighted + 1 + j;
+        if i >= opts.len() {
+            break;
+        }
+        let (tx, ty) = centre(&l, carousel_tile(&l, j));
+        assert_eq!(picker_option_at(&l, e.slot, tx, ty, first, opts.len()), Some(i), "tile {j} is the next gun");
+    }
+    // A point off the carousel hits nothing (the category column below is not an option).
+    assert_eq!(picker_option_at(&l, e.slot, 2.0, 2.0, first, opts.len()), None);
+}
+
+#[test]
+fn an_option_grid_hit_tests_every_card_it_draws() {
+    let mut e = Editor::new(Draft::default());
+    e.slot = Slot::Perk2;
+    e.picking = true;
+    let l = editor_layout(1280.0, 720.0);
+    let opts = e.options();
+    assert!(opts.len() > 1, "tier 2 lists its perks");
+    // The highlighted cell's row is the window's bottom row (BO2's grids scroll a row at a time).
+    for highlighted in [0, 1, opts.len() - 1] {
+        let (first, shown) = picker_window(e.slot, highlighted);
+        assert_eq!(first % grid_columns(e.slot), 0, "the window starts on a column");
+        assert!(highlighted >= first && highlighted < first + shown, "the highlight {highlighted} is in view");
+        for j in 0..shown {
+            let i = first + j;
+            if i >= opts.len() {
+                break;
+            }
+            let (x, y) = centre(&l, grid_cell(&l, e.slot, j));
+            assert_eq!(picker_option_at(&l, e.slot, x, y, first, opts.len()), Some(i), "cell {j} maps to its option");
+        }
+    }
+    // A point off the grid hits nothing.
+    assert_eq!(picker_option_at(&l, e.slot, 2.0, 2.0, 0, opts.len()), None);
+    // Rows walk three at a time, so a highlight on the last row of a full page keeps the page.
+    let cols = grid_columns(e.slot);
+    assert_eq!(cols, 3, "the perk grid is three wide (`CoD.CACPerksP.GridColumns`)");
+}
+
+#[test]
+fn the_option_grid_labels_the_option_under_each_cell_and_highlights_the_chosen_one() {
+    let mut e = Editor::new(Draft::default());
+    e.slot = Slot::Perk3;
+    e.picking = true;
+    e.option = e.options().len() - 1;
+    let opts = e.options();
+    let (first, shown) = picker_window(e.slot, e.option);
+    let mut prims = Vec::new();
+    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true, now: 0.0, set_change: None });
+    let t = texts(&prims);
+    for name in &opts[first..(first + shown).min(opts.len())] {
+        assert!(t.iter().any(|x| x == name), "option {name} is labelled: {t:?}");
+    }
+    // The highlight is on the selected option's cell, and only there (BOIIOrange, `cod9button.lua`).
+    let orange: Vec<String> = prims
+        .iter()
+        .filter_map(|p| match p {
+            Prim::Text { text, argb, .. } if *argb == bo2::argb(bo2::BOII_ORANGE, 1.0) => Some(text.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(orange, vec![opts[e.option].clone()], "one highlighted cell, on the chosen perk");
 }
 
 #[test]
@@ -237,9 +379,9 @@ fn the_editor_screens_draw_their_boxes_and_prompts() {
     let mut e = Editor::new(Draft::default());
     e.slot = Slot::Perk2;
     let mut prims = Vec::new();
-    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true });
+    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true, now: 0.0, set_change: None });
     let t = texts(&prims);
-    for label in ["PERK 1", "PERK 2", "PERK 3", "LETHAL", "TACTICAL", "ATTACHMENTS", "BONUS CARDS"] {
+    for label in ["PERK 1", "PERK 2", "PERK 3", "LETHAL", "TACTICAL", "ATTACHMENTS", "WILDCARDS"] {
         assert!(t.iter().any(|x| x == label), "editor label {label}: {t:?}");
     }
     assert!(t.iter().any(|x| x == "Remove"), "the R Remove prompt: {t:?}");
@@ -249,7 +391,7 @@ fn the_editor_screens_draw_their_boxes_and_prompts() {
     // A perk list shows the tier's grid.
     e.picking = true;
     let mut prims = Vec::new();
-    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true });
+    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true, now: 0.0, set_change: None });
     let t = texts(&prims);
     assert!(t.iter().any(|x| x == "Scavenger"), "tier 2 perks are listed: {t:?}");
     assert!(t.iter().any(|x| x == "FastHands"), "tier 2 perks are listed");
@@ -257,11 +399,10 @@ fn the_editor_screens_draw_their_boxes_and_prompts() {
 
 #[test]
 fn a_launcher_shows_attachments_not_available() {
-    let mut d = Draft::default();
-    d.secondary = "smaw_mp".into();
+    let d = Draft { secondary: "smaw_mp".into(), ..Draft::default() };
     let e = Editor::new(d);
     let mut prims = Vec::new();
-    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true });
+    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true, now: 0.0, set_change: None });
     let t = texts(&prims);
     assert!(t.iter().any(|x| x == "Attachments not available"), "BO2's launcher line: {t:?}");
 }
@@ -356,6 +497,105 @@ fn the_category_column_rotates_so_the_active_one_is_on_top() {
     assert_eq!(sorted, (0..cats.len()).collect::<Vec<_>>(), "no duplicates");
 }
 
+/// Press a key until the editor's slot is `want` (the walk wraps from Save back to Name), returning
+/// the frames' cues.
+fn walk_to_slot(e: &mut Editor, prev: &mut MenuPrev, want: Slot) -> Vec<Option<&'static str>> {
+    let mut cues = Vec::new();
+    for _ in 0..e.slots().len() {
+        if e.slot == want {
+            break;
+        }
+        cues.push(press(e, prev, &[Key::Down]).cue);
+    }
+    assert_eq!(e.slot, want, "the walk reaches {want:?}");
+    cues
+}
+
+#[test]
+fn the_editor_plays_the_luas_cue_at_each_call_site() {
+    let mut e = Editor::new(Draft::default());
+    let mut prev = MenuPrev::default();
+    // Opening the primary slot is CACEditClass's WeaponChosen: the weapon picker's select cue.
+    assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::WEAPON_SELECT));
+    assert!(e.picking);
+    // The carousel's moves are the slide cues (`cardcarousellist.lua`), not the grid's.
+    assert_eq!(press(&mut e, &mut prev, &[Key::Right]).cue, Some(cues::SLIDE_LR));
+    assert_eq!(press(&mut e, &mut prev, &[Key::Down]).cue, Some(cues::SLIDE_DOWN));
+    assert_eq!(press(&mut e, &mut prev, &[Key::Up]).cue, Some(cues::SLIDE_UP));
+    // Choosing a gun is the carousel's equip.
+    assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::SLIDE_EQUIP));
+    assert!(!e.picking);
+    // Backing out of a picker without choosing is the menu's back-out.
+    press(&mut e, &mut prev, &[Key::Enter]);
+    assert!(e.picking);
+    assert_eq!(press(&mut e, &mut prev, &[Key::Escape]).cue, Some(cues::BACKOUT));
+    assert!(!e.picking);
+    // A content grid's move and choice are the grid's nav and equip (a perk, not a gun).
+    e.slot = Slot::Perk1;
+    assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::SUBMENU_SELECT));
+    // A grid's cell walk is Up/Down today (the pure editor has no per-cell left/right links yet).
+    assert_eq!(press(&mut e, &mut prev, &[Key::Down]).cue, Some(cues::GRID_NAV));
+    assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::GRID_EQUIP));
+    // An attachment is `cac_equipment_add` (`attachmentgridbutton.lua`'s actionSFX). A fresh
+    // editor: the default draft carries two attachments at 9/10, so the earlier perk left no room.
+    let mut e = Editor::new(Draft::default());
+    let mut prev = MenuPrev::default();
+    e.slot = Slot::PrimaryAtts;
+    assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::SUBMENU_SELECT));
+    // The first option is the held Grenade Launcher: choosing it unequips it.
+    assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::EQUIPMENT_ADD));
+    // Removing a filled slot is `cac_cmn_item_remove`.
+    assert_eq!(press(&mut e, &mut prev, &[Key::R]).cue, Some(cues::ITEM_REMOVE));
+    // A refused choice is the deny alone: the host surfaces `denied` (its cue and the rim) and no
+    // second cue plays, as BO2's handlers pick denySFX *instead of* the action sound.
+    let mut e = Editor::new(Draft { wildcards: vec![Wildcard::Tactician, Wildcard::Overkill], ..Draft::default() });
+    let mut prev = MenuPrev::default();
+    e.slot = Slot::Save;
+    let frame = press(&mut e, &mut prev, &[Key::Enter]);
+    assert!(frame.denied, "eleven points will not save");
+    assert_eq!(frame.cue, None, "the deny is the only sound");
+}
+
+#[test]
+fn the_slot_walk_plays_the_loadout_nav_and_the_wildcard_row_its_own() {
+    let mut e = Editor::new(Draft::default());
+    let mut prev = MenuPrev::default();
+    let cues = walk_to_slot(&mut e, &mut prev, Slot::Wildcards);
+    let (last, rest) = cues.split_last().expect("the walk moved");
+    assert!(rest.iter().all(|c| *c == Some(cues::LOADOUT_NAV)), "every slot row is cac_loadout_nav: {cues:?}");
+    // The strip that lands on the bonus cards has its own focus cue (`CACUtility.WildcardGainFocusSFX`).
+    assert_eq!(*last, Some(cues::WILDCARD_NAV));
+}
+
+#[test]
+fn a_bonus_card_plays_its_own_equip_alias() {
+    let mut e = Editor::new(Draft::default());
+    let mut prev = MenuPrev::default();
+    e.slot = Slot::Wildcards;
+    assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::SUBMENU_SELECT));
+    // Walk to a known card and equip it: the alias belongs to that card (`bonuscardbutton.lua`).
+    e.option = Wildcard::ALL.iter().position(|w| *w == Wildcard::Overkill).expect("Overkill is a card");
+    let frame = press(&mut e, &mut prev, &[Key::Enter]);
+    assert_eq!(frame.cue, Some(cues::wildcard_equip(Wildcard::Overkill)), "the equipped card's alias");
+    assert!(e.draft.wildcards.contains(&Wildcard::Overkill));
+    // Overkill is BO2's third card: `cac_wildcard_equip_3`.
+    assert_eq!(frame.cue, Some("ZHBO_UI_cac_wildcard_equip_3"));
+}
+
+#[test]
+fn a_pickers_title_is_the_luas_heading() {
+    let mut e = Editor::new(Draft::default());
+    // BO2 titles the weapon screens `PRIMARY`/`SECONDARY` (`MPUI_<slot>_CAPS`), the wildcard screen
+    // `MENU_WILDCARDS_CAPS` (menus/cacbonuscards.lua), the others by their slot.
+    for (slot, want) in [(Slot::Primary, "PRIMARY"), (Slot::Secondary, "SECONDARY"), (Slot::Wildcards, "WILDCARDS"), (Slot::Perk2, "PERK 2")] {
+        e.slot = slot;
+        assert_eq!(picker_title(&e), want, "{slot:?}'s picker title");
+    }
+    // The attachment screen names the gun it edits (`<WEAPON> ATTACHMENTS`).
+    e.slot = Slot::PrimaryAtts;
+    assert!(picker_title(&e).ends_with(" ATTACHMENTS"), "{}", picker_title(&e));
+}
+
 #[test]
 fn the_secondary_slot_lists_pistols_first() {
     let d = Draft { secondary: "fnp45_mp".into(), ..Draft::default() };
@@ -369,8 +609,7 @@ fn the_secondary_slot_lists_pistols_first() {
 
 #[test]
 fn r_clears_the_highlighted_slot_and_an_empty_one_is_a_no_op() {
-    let mut d = Draft::default();
-    d.primary_atts = vec!["gl".into(), "reflex".into()];
+    let d = Draft { primary_atts: vec!["gl".into(), "reflex".into()], ..Draft::default() };
     let mut e = Editor::new(d);
     let mut prev = MenuPrev::default();
     // R on the primary clears the gun and its attachments (BO2's ClearWeapon).
@@ -401,30 +640,29 @@ fn r_clears_the_highlighted_slot_and_an_empty_one_is_a_no_op() {
 
 #[test]
 fn the_circled_x_clears_only_the_selected_filled_box() {
-    let mut d = Draft::default();
-    d.primary_atts = vec!["gl".into(), "reflex".into()];
+    let d = Draft { primary_atts: vec!["gl".into(), "reflex".into()], ..Draft::default() };
     let mut e = Editor::new(d);
-    let l = editor_layout(1280.0, 720.0, 1.0);
+    let l = editor_layout(1280.0, 720.0);
     // Select the attachment strip, then click the second attachment's X.
     e.slot = Slot::PrimaryAtts;
     let cells = editor_cells(&l, &e);
     let second = cells.iter().find(|c| c.slot == Slot::PrimaryAtts && c.index == 1).expect("the second box");
-    let (rx, ry, rw, rh) = remove_rect(second, 1.0);
-    assert_eq!(editor_remove_at(&cells, &e, 1.0, rx + rw * 0.5, ry + rh * 0.5), Some((Slot::PrimaryAtts, 1)));
+    let r = l.frame.px(remove_rect(second));
+    assert_eq!(editor_remove_at(&l, &cells, &e, r.x + r.w * 0.5, r.y + r.h * 0.5), Some((Slot::PrimaryAtts, 1)));
     // The X is not live on an unselected slot (BO2 draws it on the highlighted one).
     e.slot = Slot::Primary;
-    assert_eq!(editor_remove_at(&cells, &e, 1.0, rx + rw * 0.5, ry + rh * 0.5), None);
+    assert_eq!(editor_remove_at(&l, &cells, &e, r.x + r.w * 0.5, r.y + r.h * 0.5), None);
     // Clicking it removes exactly that attachment.
     let mut e = Editor::new(Draft { primary: "an94_mp".into(), primary_atts: vec!["gl".into(), "reflex".into()], ..Draft::default() });
     e.slot = Slot::PrimaryAtts;
     let cells = editor_cells(&l, &e);
     let second = cells.iter().find(|c| c.slot == Slot::PrimaryAtts && c.index == 1).cloned().expect("the second box");
-    let (rx, ry, rw, rh) = remove_rect(&second, 1.0);
+    let r = l.frame.px(remove_rect(&second));
     let mut prev = MenuPrev::default();
     let mut pointer = MenuPointer { screen_w: 1280.0, screen_h: 720.0, ..Default::default() };
-    pointer.mouse_x = rx + rw * 0.5;
-    pointer.mouse_y = ry + rh * 0.5;
-    let frame = editor_frame(&mut e, &pointer, &prev);
+    pointer.mouse_x = r.x + r.w * 0.5;
+    pointer.mouse_y = r.y + r.h * 0.5;
+    let _ = editor_frame(&mut e, &pointer, &prev);
     prev.update(&pointer);
     pointer.mouse_buttons = crate::input::mouse_buttons::LEFT;
     let frame = editor_frame(&mut e, &pointer, &prev);
