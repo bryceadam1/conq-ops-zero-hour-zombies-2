@@ -253,7 +253,8 @@ fn diag_real_maps() {
             r.frame();
             let px = shot.lock().unwrap().take().unwrap();
             let n = (px.len() / 4) as f32;
-            let avg: Vec<f32> = (0..3).map(|c| px.chunks_exact(4).map(|p| p[2 - c] as f32).sum::<f32>() / n).collect();
+            let (px, _) = px.as_chunks::<4>();
+            let avg: Vec<f32> = (0..3).map(|c| px.iter().map(|p| p[2 - c] as f32).sum::<f32>() / n).collect();
             eprintln!("{label}: avg RGB {avg:?}");
         }
     });
@@ -327,7 +328,8 @@ fn diag_real_viewmodel() {
     });
     let px = shot.lock().unwrap().take().unwrap();
     let mut ppm = format!("P6 {w} {h} 255\n").into_bytes();
-    for p in px.chunks_exact(4) {
+    let (px, _) = px.as_chunks::<4>();
+    for p in px {
         ppm.extend_from_slice(&[p[2], p[1], p[0]]);
     }
     std::fs::write(std::env::var("ZHBO_DIAG_OUT").unwrap(), ppm).unwrap();
