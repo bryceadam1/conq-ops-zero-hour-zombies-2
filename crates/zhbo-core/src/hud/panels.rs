@@ -180,7 +180,7 @@ pub(super) fn draw_ammo(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, p: &Playe
     let text_w = (wpn.def.display_name.chars().count() as f32 * 7.2).max(44.0) * s;
     let box_right = right - 82.0 * s;
     let mid_left = box_right - art * 0.5 - text_w;
-    let titled = prims.push(Prim::Image { name: sprites::GUN_TITLE[1].to_string(), x: mid_left, y: art_top, w: text_w, h: art, argb: 0xFFFF_FFFF, fallback: Vec::new() });
+    let _titled = prims.push(Prim::Image { name: sprites::GUN_TITLE[1].to_string(), x: mid_left, y: art_top, w: text_w, h: art, argb: 0xFFFF_FFFF, fallback: Vec::new() });
     prims.push(Prim::Image { name: sprites::GUN_TITLE[0].to_string(), x: mid_left - art, y: art_top, w: art, h: art, argb: 0xFFFF_FFFF, fallback: Vec::new() });
     prims.push(Prim::Image { name: sprites::GUN_TITLE[2].to_string(), x: mid_left + text_w, y: art_top, w: art, h: art, argb: 0xFFFF_FFFF, fallback: Vec::new() });
     prims.push(Prim::Text { x: mid_left + text_w * 0.5, y: row + 3.0 * s, text: wpn.def.display_name.to_string(), argb: WHITE, size: (13.0 * s) as i32, align: 1 });

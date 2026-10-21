@@ -7,7 +7,7 @@
 */
 
 use super::def::WeaponDef;
-use super::table::{parse_full_table, parse_table, Table};
+use super::table::{parse_full_table, Table};
 use crate::attachments::{self, AttachmentDef};
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};

@@ -7,14 +7,12 @@
 */
 
 use super::catalog::{catalog, weapon, weapon_or_none};
-use super::def::{Class, Effect, FireMode, Place, WeaponDef, ALT_CLIPS, KICK_TO_DEGREES, MELEE_DAMAGE, MELEE_FX_WEAPON, MELEE_RANGE};
-use super::table::{fire_name, parse_fire};
+use super::def::{Class, Effect, FireMode, Place, WeaponDef, KICK_TO_DEGREES};
 use super::loadout::Loadout;
 use super::perks::Perk;
 use super::rng::Rng;
-use crate::attachments;
 use crate::input::buttons;
-use crate::units::{inches, LOGIC_DT};
+use crate::units::LOGIC_DT;
 
 
 /// A reload in progress.

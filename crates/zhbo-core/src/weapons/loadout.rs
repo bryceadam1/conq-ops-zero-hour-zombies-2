@@ -8,8 +8,6 @@
 
 use super::catalog::{weapon, weapon_or_none};
 use super::perks::Perk;
-use crate::config;
-use std::collections::HashMap;
 
 
 /// What the General carries. Weapons are catalog ids, so they can later be picked up, swapped or

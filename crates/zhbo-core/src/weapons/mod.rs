@@ -23,7 +23,6 @@ pub use rng::*;
 pub use table::*;
 
 pub use crate::attachments::AttachmentDef;
-pub(crate) use crate::attachments;
 
 #[cfg(test)]
 mod tests {

@@ -13,7 +13,7 @@
 */
 
 use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
+use std::sync::Mutex;
 
 /// The gameplay tuning: movement, health regeneration, building rates, projectile physics and the
 /// field computer's raise time. Defaults are the values the mod has always used.
