@@ -6,13 +6,13 @@ Rust ownership split and [CONFIG.md](CONFIG.md) for every `ZHBO_*` variable.
 ## Crate graph
 
 ```
-zhbo-requirements   zhbo-formats   zhbo-gfx
-        │               │             │
-        └── zhbo-core ──┘             │
-        │       │                     │
-        │       └──(optional, feature "renderer")
-        │               │
-        └─ zhbo-assets ─┘
+zhbo-requirements   zhbo-formats   zhbo-gfx   zhbo-native
+        │               │             │            │
+        └── zhbo-core ──┘             │            │
+        │       │  └──────────────────┼────────────┤
+        │       └──(optional, feature "renderer")  │
+        │               │                          │
+        └─ zhbo-assets ─┘──────────────────────────┘
                 │
         └─ zhbo-launcher
 
@@ -40,6 +40,14 @@ translator. Depends on nothing. Split into `runtime` (`mod.rs` device/resource p
 (the C ABI the engine's backend calls). Optional dependency of `zhbo-core` behind the
 `renderer` feature.
 
+### `crates/zhbo-native`
+The mod's own blobs for BO2 art drawn natively (Track R), and the pose math that plays them:
+`model` (`.zbm`: skeleton, LODs, four-influence skinned surfaces, materials with BO2's blend and
+texture paths), `anim` (`.zba`: keyframe tracks and notetracks), `viewmodel` (`.zbv`: the DObj
+recipe — parts on tags, hidden tags, marker tags, slot → clip), `pose` (composition, sampling,
+crossfade, additive layers, notetracks, the skinning palette), `tga` (reading the converter's
+textures back) and `math`. Depends on nothing; the converter writes it, the core reads it.
+
 ### `crates/zhbo-core`
 The Rust gameplay core: BO2-style movement, weapons, hitscan, field computer, camera, HUD,
 and the deterministic lockstep simulation. This is the mod's brain; everything reachable
@@ -56,6 +64,9 @@ from `zhbo_logic_*` must stay deterministic. Depends on `zhbo-requirements` and 
 - `config.rs` (env vars parsed once at init), `names.rs` (the naming registry),
   `tuning.rs` (the gameplay tuning pack), `strings.rs` (the localised strings),
   `equipment.rs` (BO2 equipment behavior, driven by the weapon table's `Equipment` block).
+- `nativevm/`: the native first-person viewmodel (Track R, `ZHBO_NATIVE_VIEWMODEL`): files asked
+  of the bridge, composition and posing (pure, tested without a GPU), the renderer upload/submit
+  (`gpu.rs`, feature `renderer`) and its C ABI (`ffi.rs`).
 
 ### `crates/zhbo-assets`
 The BO2 → mod converter: reads your BO2 install (through `zhbo-formats`), converts HUD art,
@@ -112,11 +123,11 @@ calls into Rust internals. Name literals shared across the boundary are generate
 
 ## Dependency rules
 
-1. `zhbo-formats`, `zhbo-requirements`, `zhbo-gfx` depend on nothing in this repo.
-2. `zhbo-core` may depend on `zhbo-requirements` and, behind the `renderer` feature,
-   `zhbo-gfx`. It must never depend on `zhbo-assets` (the converter depends on the core,
+1. `zhbo-formats`, `zhbo-requirements`, `zhbo-gfx`, `zhbo-native` depend on nothing in this repo.
+2. `zhbo-core` may depend on `zhbo-requirements`, `zhbo-native` and, behind the `renderer`
+   feature, `zhbo-gfx`. It must never depend on `zhbo-assets` (the converter depends on the core,
    not the other way round).
-3. `zhbo-assets` may depend on `zhbo-core` and `zhbo-formats`.
+3. `zhbo-assets` may depend on `zhbo-core`, `zhbo-formats` and `zhbo-native`.
 4. `zhbo-launcher` may depend on `zhbo-requirements` and `zhbo-assets`.
 5. Engine code (`host/GeneralsGameCode`) is never modified; changes go through
    `host/patches/*.patch`. The bridge (`host/zhbo/*.cpp`) is the only engine-side mod code

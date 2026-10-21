@@ -14,10 +14,9 @@ use zhbo_native::model::{self as nm, Blend};
 use zhbo_native::pose::{PartRef, Skeleton};
 use zhbo_native::viewmodel::Marker;
 
-/// The marker the native viewmodel lines up with the eye when aiming down the sights: BO2's
-/// `tag_sights`, an optic's window, or the gun's front sight (the same choice the W3D path makes,
-/// `viewmodels::weapon_viewmodels`). A name of its own, so it never collides with BO2's bones.
-pub const AIM_TAG: &str = "tag_zhbo_aim";
+/// The aim marker's name (placed by the same rule as the W3D path's `tag_sights`,
+/// `viewmodels::weapon_viewmodels`).
+pub use zhbo_native::AIM_TAG;
 
 fn blend(b: w3d::Blend) -> Blend {
     match b {

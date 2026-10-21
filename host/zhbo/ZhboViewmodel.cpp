@@ -14,6 +14,7 @@
 #include "Common/File.h"
 #include "Common/FileSystem.h"
 #include "Common/GameAudio.h"
+#include "Common/GlobalData.h"
 #include "GameClient/FXList.h"
 #include "W3DDevice/GameClient/W3DDisplay.h"
 #include "W3DDevice/GameClient/W3DScene.h"
@@ -21,6 +22,7 @@
 #include "WW3D2/hanim.h"
 #include "WW3D2/rendobj.h"
 
+#include <algorithm>
 #include <cmath>
 #include <map>
 #include <sstream>
@@ -198,6 +200,123 @@ namespace
 		return TRUE;
 	}
 
+	// --- The native BO2 pass (Track R; zhbo-core nativevm, opt-in ZHBO_NATIVE_VIEWMODEL=1) -------
+
+	// BgfxBackend's view ids: the scene the viewmodel draws into (kBgfxEngineView) and the composite
+	// it draws before (kBgfxSceneCompositeView), so bloom and the tonemap see it.
+	const uint16_t k_scene_view = 1;
+	const uint16_t k_composite_view = 9;
+
+	// An archive file's bytes; FALSE when there is no such file.
+	Bool readArchiveFile(const char *path, std::string &out)
+	{
+		File *f = TheFileSystem ? TheFileSystem->openFile(path, File::READ | File::BINARY) : nullptr;
+		if (!f)
+			return FALSE;
+		const Int size = f->size();
+		char *buf = f->readEntireAndClose();
+		if (!buf)
+			return FALSE;
+		out.assign(buf, size);
+		delete[] buf;
+		return TRUE;
+	}
+
+	// Answer the core's file requests and print its log lines.
+	void serveNative()
+	{
+		std::vector<std::string> wanted;
+		char path[512];
+		for (int i = 0; zhbo_native_wanted(i, path, sizeof(path)) >= 0; ++i)
+			wanted.push_back(path);
+		for (const std::string &p : wanted)
+		{
+			std::string bytes;
+			if (readArchiveFile(p.c_str(), bytes))
+				zhbo_native_provide(p.c_str(), reinterpret_cast<const uint8_t *>(bytes.data()), (int32_t)bytes.size());
+			else
+				zhbo_native_provide(p.c_str(), nullptr, -1);
+		}
+		char line[512];
+		while (zhbo_native_take_log(line, sizeof(line)) >= 0)
+			Zhbo_Log("%s", line);
+	}
+
+	// An FXList at a bone of the native viewmodel's last pose.
+	void nativeBoneFx(const char *fxName, const char *bone)
+	{
+		float m[12];
+		const FXList *fx = TheFXListStore ? TheFXListStore->findFXList(fxName) : nullptr;
+		if (!fx || !zhbo_native_bone(bone, m))
+			return;
+		Matrix3D mtx(true);
+		mtx[0].Set(m[0], m[1], m[2], m[3]);
+		mtx[1].Set(m[4], m[5], m[6], m[7]);
+		mtx[2].Set(m[8], m[9], m[10], m[11]);
+		Coord3D pos;
+		pos.set(m[3], m[7], m[11]);
+		FXList::doFXPos(fx, &pos, &mtx);
+	}
+
+	// The scene's lights as the native pass takes them: Zero Hour's global lights for the time of
+	// day (`lightPos` is the direction the light travels, so the light is the other way).
+	void sceneLights(ZhboNativeIn &in)
+	{
+		if (!TheGlobalData)
+			return;
+		const int n = std::min(std::max(TheGlobalData->m_numGlobalLights, 0), 3);
+		for (int i = 0; i < n; ++i)
+		{
+			const GlobalData::TerrainLighting &l = TheGlobalData->m_terrainObjectsLighting[TheGlobalData->m_timeOfDay][i];
+			in.lights[i].dir[0] = -l.lightPos.x;
+			in.lights[i].dir[1] = -l.lightPos.y;
+			in.lights[i].dir[2] = -l.lightPos.z;
+			in.lights[i].color[0] = l.diffuse.red;
+			in.lights[i].color[1] = l.diffuse.green;
+			in.lights[i].color[2] = l.diffuse.blue;
+			in.ambient[0] += l.ambient.red;
+			in.ambient[1] += l.ambient.green;
+			in.ambient[2] += l.ambient.blue;
+		}
+		in.light_count = n;
+	}
+
+	// Draw the weapon through the native pass; TRUE when it did (the W3D model stays hidden).
+	Bool nativeViewmodel(const Coord3D &eye, const Coord3D &dir, Int clip, Int weapon, const AsciiString &name, Real time, Real ads,
+		const Coord3D &offset, const Coord3D &angles, Bool fired)
+	{
+		if (weapon < 0 || name.getLength() < 5 || !name.startsWith("ZV"))
+			return FALSE;
+		static const float s_debug = getenv("ZHBO_BO2_DEBUG") ? static_cast<float>(atoi(getenv("ZHBO_BO2_DEBUG"))) : 0.0f;
+		ZhboNativeIn in = {};
+		in.eye[0] = eye.x; in.eye[1] = eye.y; in.eye[2] = eye.z;
+		in.dir[0] = dir.x; in.dir[1] = dir.y; in.dir[2] = dir.z;
+		in.offset[0] = offset.x; in.offset[1] = offset.y; in.offset[2] = offset.z;
+		in.angles[0] = angles.x; in.angles[1] = angles.y; in.angles[2] = angles.z;
+		in.clip = clip;
+		in.vm = weapon;
+		in.faction = name.getCharAt(4);
+		in.time = time;
+		in.ads = ads;
+		in.rate = 1.0f;
+		sceneLights(in);
+		in.target_view = k_scene_view;
+		in.before_view = k_composite_view;
+		in.debug = s_debug;
+		const int32_t result = zhbo_native_viewmodel(&in);
+		serveNative();
+		if (result != ZHBO_NATIVE_DRAWN)
+			return FALSE;
+		if (s_model)
+			s_model->Set_Hidden(true);
+		if (fired)
+		{
+			nativeBoneFx("ZHBO_ViewmodelMuzzle", "tag_flash");
+			nativeBoneFx("ZHBO_ViewmodelBrass", "tag_brass");
+		}
+		return TRUE;
+	}
+
 	// Columns: X forward along `dir`, Y to the left, Z up; origin at the eye.
 	Matrix3D viewTransform(const Coord3D &eye, const Coord3D &dir, Vector3 &x, Vector3 &y, Vector3 &z)
 	{
@@ -228,6 +347,7 @@ void ZhboViewmodel_Reset()
 	s_lastClip = -1;
 	s_lastWeapon = -2;
 	s_lastTime = 0.0f;
+	zhbo_native_reset();
 }
 
 void ZhboViewmodel_Preload(char faction, const int *weapons, int count)
@@ -275,6 +395,8 @@ void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)
 	if (!s_notesLoaded)
 		loadNotes();
 	playNotes(weapon, clip, time);
+	if (nativeViewmodel(eye, dir, clip, weapon, name, time, ads, offset, angles, fired))
+		return;
 	if (name != s_modelName && name != s_missing && !load(name, weapon))
 		return;
 	if (!s_model)

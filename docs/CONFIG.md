@@ -10,6 +10,7 @@ environment mid-game.
 | Variable | Meaning |
 |---|---|
 | `ZHBO_LOADOUT` | The General's kit spec (`weapons::Loadout::with_spec`, e.g. `primary=dsr50_mp+acog;perks=Hardline`). Every player in a lockstep game must set it identically — it is a sim input, like the map. Empty or unset: the built-in kit. The converter reads the same variable so the kit's art gets converted. |
+| `ZHBO_NATIVE_VIEWMODEL` | `1`/`true`/`yes`/`on`: draw the first-person weapon through the renderer's native BO2 pass (`nativevm`, Track R) instead of the W3D conversion. Presentation only (never a sim input); wgpu builds only (elsewhere it is ignored and W3D draws). Off by default until verified in game. A weapon whose native files are missing falls back to W3D, logged once. |
 | `ZHBO_AUTOPILOT` | The in-game test harness. `manual`: the scene spawns but input stays with the player or a test driver. Any other non-empty value: scripted input drives the General; `equipment` adds the Black Hat / Trophy System scene, `build` scripts first-person construction, `classpick` runs the create-a-class editor (open from the pick screen, name the class, change the secondary, save), `showcase` films the General (see the bridge's showcase variables below). |
 
 ## The bridge (`host/zhbo/ZhboBridge.cpp`, parsed in `readConfig` at `Zhbo_Init`)
@@ -23,6 +24,7 @@ environment mid-game.
 | `ZHBO_SHOWCASE_PITCH` | Camera pitch in radians (default: the view's own). |
 | `ZHBO_SHOWCASE_ANGLE` | Camera angle offset in radians around the General (default: the view's own). |
 | `ZHBO_CLOSEUP` | Follow the General closely in captures; the value is the zoom distance. |
+| `ZHBO_BO2_DEBUG` | BO2 shading term view, read by the backend's `bo2Shade` (host patch 0009) and passed to the native pass by `ZhboViewmodel.cpp`: -1 BO2 shading off (W3D path only), 1 flat normals, 2 normals, 3 diffuse light, 4 specular, 5 reflection. |
 
 ## The renderer (`crates/zhbo-gfx`, read at device init; client-side, exempt from determinism)
 

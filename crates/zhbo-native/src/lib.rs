@@ -20,9 +20,19 @@ pub mod io;
 pub mod math;
 pub mod model;
 pub mod pose;
+pub mod tga;
 pub mod viewmodel;
 
 pub use io::FormatError;
+
+/// BO2 inches to the art's world units: the scale the converter builds BO2 models at (the
+/// W3D conversion's `zhbo_assets::character::SCALE`) and the native viewmodel draws them at.
+pub const ART_SCALE: f32 = 11.0 / 72.0;
+
+/// The marker the converter places on every native viewmodel for aiming down the sights: BO2's
+/// `tag_sights`, an optic's window, or the gun's front sight (`zhbo_assets::native::aim_marker`).
+/// A name of its own, so it never collides with BO2's bones.
+pub const AIM_TAG: &str = "tag_zhbo_aim";
 
 /// Where the converter puts the native blobs in the mod's archive (`ConquerOps_BO2.big`).
 pub const DIR: &str = "Art\\Native\\";

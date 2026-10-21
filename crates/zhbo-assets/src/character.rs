@@ -16,8 +16,9 @@ use zhbo_formats::w3d::{self, Channel, Pivot, SkinMesh};
 use zhbo_formats::xanim::Anim;
 use zhbo_formats::xmodel::Model;
 
-/// BO2 inches to Zero Hour world units: a 72" soldier becomes 11 units tall, like stock infantry.
-pub const SCALE: f32 = 11.0 / 72.0;
+/// BO2 inches to Zero Hour world units: a 72" soldier becomes 11 units tall, like stock infantry
+/// (one source with the native viewmodel's scale).
+pub const SCALE: f32 = zhbo_native::ART_SCALE;
 pub const HIERARCHY: &str = "ZHBO_PLR_SKL";
 /// The bone a third-person weapon hangs from.
 pub const WEAPON_TAG: &str = "tag_weapon_right";
