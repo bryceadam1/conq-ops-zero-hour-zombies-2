@@ -16,7 +16,7 @@ use zhbo_formats::iwi::Rgba;
 use zhbo_formats::t6zone::Zone;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive.
-pub const VERSION: u32 = 52;
+pub const VERSION: u32 = 53;
 pub use zhbo_core::names::BO2_ARCHIVE_NAME as ARCHIVE_NAME;
 pub use zhbo_core::names::BO2_ARCHIVE_VERSION_PATH as VERSION_FILE;
 /// Stem of each page's TGA; every MappedImage names the page it was packed into.

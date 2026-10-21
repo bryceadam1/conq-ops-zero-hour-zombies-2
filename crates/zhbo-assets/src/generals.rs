@@ -696,6 +696,7 @@ mod tests {
             assert!(rts.contains(&format!("Weapon {name}\n")), "no {name}");
         }
         native_blobs_are_whole(&files);
+        wrist_datapads_are_off(&files);
     }
 
     /// Every native viewmodel (Track R) reads back, names models, clips and textures that are in
@@ -726,6 +727,32 @@ mod tests {
             }
         }
         native_bodies_are_whole(files);
+    }
+
+    /// The first-person hands' wrist datapad is BO2's campaign map/readout screen. Multiplayer's
+    /// watch face is not that screen, and drawn statically its yellow readouts look like caution
+    /// stripes and its radar like a magenta dot; the converted hands must use the neutral off
+    /// screen, and the campaign image must never reach the archive.
+    fn wrist_datapads_are_off(files: &[(String, Vec<u8>)]) {
+        use zhbo_native::model::Model;
+        let file = |path: &str| files.iter().find(|(p, _)| p == path).map(|(_, b)| b.as_slice());
+        let off = format!("Art\\Textures\\{}", crate::textures::DATAPAD_OFF);
+        let campaign = "Art\\Textures\\zhbo_viewarm_datapad_c.tga";
+        assert!(!files.iter().any(|(p, _)| p == campaign), "the campaign datapad screen was written");
+        assert!(files.iter().any(|(p, _)| p == &off), "the neutral datapad screen was not written");
+        for f in FACTIONS {
+            let path = zhbo_native::model_path(f.hands);
+            let m = Model::from_bytes(file(&path).unwrap_or_else(|| panic!("no {path}"))).unwrap_or_else(|e| panic!("{path}: {e}"));
+            let mut found = 0;
+            for mat in &m.materials {
+                if mat.name.contains("datapad") {
+                    found += 1;
+                    assert_eq!(mat.color.as_deref(), Some(off.as_str()), "{}: the campaign datapad screen is still assigned", f.hands);
+                }
+                assert!(!mat.color.as_deref().is_some_and(|t| t.contains("viewarm_datapad_c")), "{}: the campaign datapad screen leaked", f.hands);
+            }
+            assert_eq!(found, 1, "{}: expected its wrist datapad", f.hands);
+        }
     }
 
     /// Track R7: every faction body reads back, is a 72-inch player with its weapon tag and every

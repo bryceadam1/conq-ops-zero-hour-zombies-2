@@ -2169,6 +2169,60 @@ dialog popup chrome; a reference-guided pass follows.
 Verified: cargo test --workspace green; the full real-install suite green; clippy clean; `cargo
 xtask build` clean; autotest 13/13 default, `--classpick` all checks, 14/14 `--rts`; the nine
 harness shots regenerated with every sprite resolving.
+## The viewhands' magenta/hazard patches: the wrist datapad's campaign screen (2026-10-21, v1/viewhands-art)
+
+The watch item from the Track R rounds is the first-person wrist **datapad**, not a renderer
+placeholder. `zhbo-assets model faction_seals_mp.ff c_usa_mp_seal6_longsleeve_viewhands` shows
+surface 2 = `mc/mtl_viewarm_gen_datapad` on all three factions' long-sleeve hands (and the
+shortsleeve variants): BO2's `~-gviewarm_datapad_c` 1024x512 image. It is the campaign
+map/readout screen — "DEEGAN", "KARACHI", a topo map with a yellow/red marker, a white radar ring
+and columns of yellow text. Dumped to PNG, the "yellow/black hazard stripes" are its yellow
+readout columns; the "magenta patch with a white dot" is the map marker/radar under the
+watchglass. The hands model is the MP one, but BO2's MP watch face is not the campaign screen; the
+converter drew the static campaign texture, so the UI leaked onto the arm.
+
+Fix: `textures::textures` maps any `viewarm_gen_datapad` material to a generated neutral screen,
+`zhbo_viewarm_gen_datapad_off.tga` (256x256, [16,18,20] RGB), instead of the campaign colour map.
+The normal/spec maps and the watchglass stay, so the geometry and glass are unchanged; both the
+W3D mesh and the native blob get the neutral name (one shared name). The campaign
+`zhbo_viewarm_datapad_c.tga` is no longer written. This is a principled "screen off" rather than
+dropping the device: the watch is still there, the campaign UI is not.
+
+Tests: `textures::tests::the_wrist_datapad_screen_is_a_dark_neutral_panel`; the real-install
+`generals::tests::converts_from_real_install` now calls `wrist_datapads_are_off`, which asserts
+the campaign image is absent, the neutral texture is written, and every faction's hands datapad
+material points to it (and never to `viewarm_datapad_c`). Verified: `env -u ZHBO_BO2_DIR -u
+ZHBO_ZH_DIR cargo test -p zhbo-assets -p zhbo-formats` green (45 + 21, 8 ignored each);
+`ZHBO_BO2_DIR=~/Games/BlackOps2 cargo test -q --release -p zhbo-assets -p zhbo-formats --
+--ignored` green (8 + 8); clippy has no warnings in the touched files. Converter output changed,
+so the integrator must rebuild `ConquerOps_BO2.big`; **`hud::VERSION` is deliberately not
+bumped** here (task rule), so the launcher will keep an older archive until the bump is made with
+the rebuild.
+
+## Integrating the viewhands datapad fix — and what the "magenta blob" really is (2026-10-21)
+
+Merged `v1/viewhands-art` (1 commit): BO2's wrist datapad material (`mc/mtl_viewarm_gen_datapad`,
+on every faction's viewhands, long- and short-sleeve) carries a **campaign UI readout screen**
+(topo map, magenta cursor, yellow text columns) that BO2 never shows in MP; the converter now
+substitutes a generated neutral dark panel (`zhbo_viewarm_gen_datapad_off.tga`) and keeps the
+watchglass and the datapad's normal/spec. The campaign texture is out of the archive (verified
+by `strings`: the neutral texture is in, `mc/mtl_viewarm_gen_datapad` points at it; note BO2
+also has `mtl_viewarm_gen_datapad_cl`, `mtl_viewarm_frnd_datapad`, and the character body's
+`mtl_c_gen_mp_datapad` family — the fix keys on the exact material the drawn viewhands use,
+verified per variant with the `model` CLI). Archive VERSION 52 → 53.
+
+**The "magenta blob at the screen edge" watch item is RESOLVED — it is not stray art.** It is
+Track H's damage-direction indicator (`hit_direction`), drawn exactly when the General is under
+fire (the same frames print "Unit under attack"; frames without combat never show it). Its
+shape/colour fidelity against BO2's arc is a Track-H polish question, not a defect. The
+yellow/black "hazard stripes" are the viewarm sleeve-cuff texture peeking in only in the
+high-arms pistol-draw frames — BO2's own sleeve art (a yellow-striped UV island whose edge the
+cuff vertices sample); the vm-sweep harness's close-up renders will confirm per faction whether
+the cuff reads as BO2 intends.
+
+Verified: cargo test --workspace green; the full real-install suite green (incl. the new
+`wrist_datapads_are_off` over all three factions); clippy clean; `cargo xtask build` clean;
+autotest 13/13 default, 13/13 native+compare, 14/14 `--rts`.
 
 ## Next steps
 
