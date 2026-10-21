@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 23u
+#define ZHBO_ABI_VERSION 24u
 
 /* Field counts of the API tables below. The Rust side derives its layout asserts and
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:

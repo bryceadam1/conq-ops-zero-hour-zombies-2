@@ -1908,6 +1908,35 @@ each world weapon composes alone) with no missing tag. **Not run here — this m
 install; the integrator's run is the first real check of the clip names.** Archive `VERSION`
 (`zhbo_assets::hud`) needs a bump for the new blobs, deliberately left to the integrator.
 
+## Track R7 milestone 3: the General's body native (Rust side)
+
+The Rust side of the body mode is in `nativebody`: `load` reads the faction's `ZB<f>.zbc`
+manifest, its body `.zbm`, and its `.zba` clips, composes the skeleton with the body first (no tag)
+and the weapon's base part on the body's `weapon_tag`, then builds one mesh from all of it. The
+mode is part of the cache key (`(faction, vm, mode)`), so switching from weapon-only to body mode
+reloads the rig. `Loaded::clip_for` picks the movement state's clip, falling back through
+`state::fallbacks` when the body has no clip for that stance/gait. `ffi::frame` now allows
+`Mode::Body` through, reads the clip and hands it to `pose`, which samples the clip at the frame's
+time and rate. The weapon-only mode still draws the rigid gun on the engine's `tag_weapon_right`.
+
+**Deliberately skipped (M3 scope):** the full BO2 transition graph (start/stop/turn clips,
+left/right strafes), the per-state blend times, and the reload/throw/melee clips. The body snaps
+between clips rather than blending; a weapon reload/throw plays no body clip. The five W3D-proven
+clip spellings plus the word-scan fallback cover idle/walk/run/sprint/ADS/crouch/prone/pistol.
+
+**Bridge hook not compile-checked (integrator):** in body mode (`ZHBO_NATIVE_BODY=2`) the C++
+bridge must hide the whole W3D General body when `zhbo_native_body` returns `ZHBO_NATIVE_DRAWN`,
+not only the W3D weapon sub-objects. The bridge already reads `zhbo_native_body_enabled` and calls
+`zhbo_native_body` per General in `applyWorldPoses`; the change is to set the drawable hidden
+(`draw->setHidden(true)` or the equivalent model-condition state) while the native body drew, and
+unhide when it stops succeeding. The Rust side places the native body at the General object's
+`pos`/`yaw` (the sim's `NativePose`), so the W3D object's own transform is not needed.
+
+Tests: `zhbo-core` 336 headless (6 nativebody, including the clip-by-state test and the tag-scaled-
+once test) and 337 with the renderer feature; `zhbo-native` 20; `zhbo-assets` 43 + 8 ignored;
+`zhbo-formats` 21. The in-game body check (does the native body sit on the General, do the clips
+look right) is the integrator's.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

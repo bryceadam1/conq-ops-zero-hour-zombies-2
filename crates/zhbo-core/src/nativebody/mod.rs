@@ -1,31 +1,42 @@
-//! The native third person (Track R7): the weapon in the General's hand, and (milestone 3) the
-//! General's body, drawn through the renderer's native BO2 pass instead of the W3D conversion.
+//! The native third person (Track R7): the General's body and the weapon in his hand, drawn
+//! through the renderer's native BO2 pass instead of the W3D conversion.
 //!
 //! **The data.** The converter writes a faction body manifest (`ZB<faction>.zbc`) and a
 //! world-weapon manifest per converted weapon (`ZW<vm>.zbw`), `zhbo_native::thirdperson`. The body
-//! is composed from the body model and the weapon's world model hung on the body's
-//! `tag_weapon_right`; world attachments hang from the weapon's own bones. The manifests are
-//! separate because the weapon changes with the General's loadout while the body does not.
+//! manifest names the body's model blob and one animation blob per movement [`state`]; the weapon
+//! manifest lists its `world_model` (the base part) and each world attachment. The manifests are
+//! separate because the weapon changes with the General's loadout while the body does not; the core
+//! composes the two at run time, the weapon hung on the body's `weapon_tag` (`tag_weapon_right`) and
+//! its attachments on their own bones.
 //!
 //! **The two modes.** In *weapon* mode (milestone 2) Zero Hour still draws the W3D body, so the
 //! native pass draws only the weapon, placed by the engine's world-space `tag_weapon_right`
 //! transform (`zhbo_native_body`'s `tag`, read from the drawable by the bridge). In *body* mode
-//! (milestone 3) the body is native too: the weapon rides the body's own posed
-//! `tag_weapon_right`, and the whole rig is placed at the General object's world transform.
+//! (milestone 3) the body is native too: the weapon rides the body's own posed `tag_weapon_right`,
+//! and the whole rig is placed at the General object's world transform. The bridge hides the W3D
+//! body when body mode draws.
+//!
+//! **The body clip.** Milestone 3 picks one clip per movement state from the sim's facts (stance,
+//! gait, ADS, pistol stance): a body's own clip for the state, else the nearest stance/gait the
+//! body has (`zhbo_native::thirdperson::state::fallbacks`). It deliberately does NOT drive BO2's
+//! full transition graph: no per-state blend times, no upper-body layers (reload/throw/melee), no
+//! additive flinch. The clip plays at the request's `time` and `rate`; the bridge supplies both
+//! from the sim's movement state. Idle/walk/run/sprint/crouch/prone/ADS all loop; a one-shot clip
+//! (none are requested today) would hold at its end.
 //!
 //! **Placement.** BO2 inches are scaled once, at the root: `root = transform × ART_SCALE`, so a
-//! skinned vertex is `root × pose × inv_bind × vertex`. The tag transform comes from Zero Hour's
-//! own units, so the same root puts the native gun exactly where the engine's W3D gun sits.
+//! skinned vertex is `root × pose × inv_bind × vertex`. In weapon mode the transform is the
+//! engine's own `tag_weapon_right` world matrix; in body mode it is the General object's world
+//! transform (feet at `pos`, yawed about +Z). The tag transform comes from Zero Hour's own units,
+//! so the same root puts the native gun exactly where the engine's W3D gun sits.
 //!
 //! Presentation only: nothing here feeds the sim, and the bridge keeps drawing the W3D model until
 //! this says it drew.
 
-use std::collections::HashMap;
-
-use zhbo_native::math::{axis_angle, mat4, mat4_mul, qnorm, Mat4, MAT4_IDENTITY};
+use zhbo_native::math::{axis_angle, mat4, mat4_mul, qnorm, Mat4, IDENTITY, MAT4_IDENTITY};
 use zhbo_native::model::Model;
 use zhbo_native::pose::{PartRef, Skeleton};
-use zhbo_native::thirdperson::{state, Weapon};
+use zhbo_native::thirdperson::{state, Body, Weapon};
 
 use crate::nativevm::{build_mesh, Files, Mesh, Posed};
 
@@ -73,14 +84,23 @@ pub struct WeaponAsset {
     pub models: Vec<Model>,
 }
 
-/// A composed rig ready to pose. The body (milestone 3) is always the first part; the weapon hangs
+/// A faction body's manifest, model and the clips it loaded (by state id; a clip the archive lacks
+/// is absent, and [`Loaded::clip_for`] falls back to a nearer state).
+pub struct BodyAsset {
+    pub manifest: Body,
+    pub model: Model,
+    pub clips: Vec<(u16, AnimClip)>,
+}
+
+/// A composed rig ready to pose. The body (body mode) is always the first part; the weapon hangs
 /// from its `weapon_tag`.
 pub struct Loaded {
-    pub key: (u8, i32),
+    /// `(faction, vm, mode)`: the mode matters because a weapon-only rig has no body.
+    pub key: (u8, i32, u8),
     pub weapon: WeaponAsset,
+    pub body: Option<BodyAsset>,
     pub skeleton: Skeleton,
     pub mesh: Mesh,
-    pub anims: HashMap<String, AnimClip>,
 }
 
 /// A body clip, decoded (`zhbo_native::anim::Anim`).
@@ -106,21 +126,83 @@ pub fn load(files: &mut Files, req: &Request) -> Result<Option<Loaded>, String> 
             None => waiting = true,
         }
     }
-    // Milestone 3's body part comes from the body manifest; until then the weapon stands alone.
     if waiting {
         return Ok(None);
     }
-    let parts: Vec<PartRef> = manifest.parts.iter().zip(&models).map(|(p, m)| PartRef { model: m, tag: p.tag.as_deref(), offset: p.offset, rigid: p.rigid }).collect();
+    // Body mode also needs the faction's body: its manifest, its model and its clips. The weapon
+    // hangs on the body's `weapon_tag`.
+    let mut body = None;
+    if req.mode == Mode::Body {
+        let bpath = zhbo_native::body_path(req.faction as char);
+        if files.is_missing(&bpath) {
+            return Err(format!("{bpath} is not in the archive (reconvert the BO2 art)"));
+        }
+        let Some(bbytes) = files.get(&bpath) else { return Ok(None) };
+        let bmanifest = Body::from_bytes(&bbytes).map_err(|e| format!("{bpath}: {e}"))?;
+        if files.is_missing(&bmanifest.model) {
+            return Err(format!("{bpath}: {} is not in the archive", bmanifest.model));
+        }
+        let Some(mbytes) = files.get(&bmanifest.model) else { return Ok(None) };
+        let bmodel = Model::from_bytes(&mbytes).map_err(|e| format!("{}: {e}", bmanifest.model))?;
+        // The clips: a state the archive lacks is absent (the fallback chain handles it).
+        let mut clips = Vec::with_capacity(bmanifest.clips.len());
+        for (state, cpath) in &bmanifest.clips {
+            if files.is_missing(cpath) {
+                continue;
+            }
+            match files.get(cpath) {
+                Some(b) => clips.push((*state, AnimClip::from_bytes(&b).map_err(|e| format!("{cpath}: {e}"))?)),
+                None => return Ok(None),
+            }
+        }
+        for (_, cpath) in &bmanifest.clips {
+            files.forget(cpath);
+        }
+        files.forget(&bmanifest.model);
+        files.forget(&bpath);
+        body = Some(BodyAsset { manifest: bmanifest, model: bmodel, clips });
+    }
+    // Compose: the body first (no tag), then the weapon's base part on the body's weapon_tag, then
+    // its attachments on their own tags. Weapon-only mode hangs the base part from the model's
+    // origin.
+    let mut all_models: Vec<&Model> = Vec::new();
+    let mut parts: Vec<PartRef> = Vec::new();
+    match &body {
+        Some(b) => {
+            all_models.push(&b.model);
+            parts.push(PartRef { model: &b.model, tag: None, offset: IDENTITY, rigid: false });
+            for (i, (p, m)) in manifest.parts.iter().zip(&models).enumerate() {
+                let tag = if i == 0 { Some(b.manifest.weapon_tag.as_str()) } else { p.tag.as_deref() };
+                all_models.push(m);
+                parts.push(PartRef { model: m, tag, offset: p.offset, rigid: p.rigid });
+            }
+        }
+        None => {
+            for (p, m) in manifest.parts.iter().zip(&models) {
+                all_models.push(m);
+                parts.push(PartRef { model: m, tag: p.tag.as_deref(), offset: p.offset, rigid: p.rigid });
+            }
+        }
+    }
     let (skeleton, problems) = Skeleton::compose(&parts, &[], &manifest.hide);
     if !problems.is_empty() {
         return Err(format!("{path}: {}", problems.join("; ")));
     }
-    let mesh = build_mesh(&skeleton, &models)?;
+    let mesh = build_mesh(&skeleton, all_models.into_iter())?;
     for p in &manifest.parts {
         files.forget(&p.model);
     }
     files.forget(&path);
-    Ok(Some(Loaded { key: (req.faction, req.vm), weapon: WeaponAsset { vm: req.vm, manifest, models }, skeleton, mesh, anims: HashMap::new() }))
+    Ok(Some(Loaded { key: (req.faction, req.vm, req.mode as u8), weapon: WeaponAsset { vm: req.vm, manifest, models }, body, skeleton, mesh }))
+}
+
+impl Loaded {
+    /// The body clip for `state`: its own, else the nearest stance/gait the body has. `None` in
+    /// weapon-only mode (the gun is rigid) or when the body loaded no clip at all.
+    pub fn clip_for(&self, state: u16) -> Option<&AnimClip> {
+        let body = self.body.as_ref()?;
+        zhbo_native::thirdperson::state::fallbacks(state).iter().find_map(|&s| body.clips.iter().find(|c| c.0 == s).map(|c| &c.1))
+    }
 }
 
 /// The world matrix a 3x4 tag transform makes, then the art scale: `tag × scale`. The tag's rows

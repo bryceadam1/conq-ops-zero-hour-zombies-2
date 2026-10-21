@@ -79,7 +79,7 @@ const _: () = assert!(std::mem::size_of::<ZhboNativePose>() == 28);
 pub(crate) struct State {
     pub(crate) files: crate::nativevm::Files,
     pub(crate) loaded: Option<Loaded>,
-    failed: HashSet<(u8, i32)>,
+    failed: HashSet<(u8, i32, u8)>,
     pub(crate) posed: Posed,
     pub(crate) log: VecDeque<String>,
     logged: HashSet<String>,
@@ -110,16 +110,13 @@ impl State {
             2 => Mode::Body,
             _ => Mode::Weapon,
         };
-        // Milestone 2 draws only the weapon; the body mode lands with milestone 3.
-        if mode == Mode::Body {
-            return NOT_NATIVE;
-        }
         // The weapon-only mode is placed by the engine's tag: without one there is nowhere to draw.
+        // Body mode is placed by the General's own transform and needs no engine tag.
         if mode == Mode::Weapon && inp.tag_valid == 0 {
             return NOT_NATIVE;
         }
         let faction = inp.faction as u8;
-        let key = (faction, inp.vm);
+        let key = (faction, inp.vm, mode as u8);
         if self.failed.contains(&key) {
             return NOT_NATIVE;
         }
@@ -143,7 +140,10 @@ impl State {
         }
         let req = request(inp, mode);
         let Some(loaded) = self.loaded.as_ref() else { return NOT_NATIVE };
-        loaded.pose(&req, None, &mut self.posed);
+        // The body clip for this movement state, or the bind pose when the weapon-only mode (or a
+        // body with no clip) is drawing.
+        let clip = loaded.clip_for(inp.state as u16);
+        loaded.pose(&req, clip, &mut self.posed);
         #[cfg(feature = "renderer")]
         {
             super::gpu::draw(self, inp)

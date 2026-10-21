@@ -168,8 +168,9 @@ pub struct Mesh {
 }
 
 /// Concatenate the parts' LOD 0. `u16` indices: a composed viewmodel stays far below 65,536
-/// vertices (an arms + rifle + optic composite is ~20k); a larger one is refused.
-pub fn build_mesh(skel: &Skeleton, models: &[Model]) -> Result<Mesh, String> {
+/// vertices (an arms + rifle + optic composite is ~20k); a larger one is refused. Takes references
+/// so a body rig can borrow its own models while the weapon's are owned beside them.
+pub fn build_mesh<'a>(skel: &Skeleton, models: impl IntoIterator<Item = &'a Model>) -> Result<Mesh, String> {
     let mut mesh = Mesh::default();
     for (part, model) in skel.parts.iter().zip(models) {
         for s in model.lod0() {

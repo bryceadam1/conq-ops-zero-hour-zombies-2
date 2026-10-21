@@ -12,7 +12,7 @@ use crate::nativevm::{native_blend, native_cull};
 /// The rig's handles on the GPU.
 #[derive(Default)]
 pub(crate) struct Gpu {
-    key: Option<(u8, i32)>,
+    key: Option<(u8, i32, u8)>,
     mesh: Option<u16>,
     textures: Vec<u16>,
 }

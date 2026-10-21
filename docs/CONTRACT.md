@@ -205,7 +205,8 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
 * `zhbo_native_reset` runs from `ZhboViewmodel_Reset` (a game reset tears down the scene); it frees
   the renderer's meshes and textures.
 * ABI: the functions and `ZhboNativeIn` (168 bytes) / `ZhboNativeLight` (24) are new; the header and
-  Rust carry size asserts. They need the `ZHBO_ABI_VERSION` bump with their merge.
+  Rust carry size asserts. The `ZHBO_ABI_VERSION` bump to 24 covers them and the third person's
+  surface.
 
 ## The native third person (Track R7)
 
@@ -232,6 +233,44 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
   switch reloads only the weapon.
 * **Archive.** These are more files in `ConquerOps_BO2.big`; `zhbo_assets::hud::VERSION` must be
   bumped whenever converter output changes (left to the integrator on this branch).
+* **The bridge asks each frame, the core decides (M2, the weapon).** `applyWorldPoses`
+  (`ZhboRtsWeapons.cpp`) calls `zhbo_client_native_poses` for the overhead Generals' poses (the sim's
+  `Sim::native_poses`: the held weapon's converted index, stance, body clip, clip time and rate, the
+  pistol stance; first-person Generals are left to the viewmodel), fills one `ZhboNativeBodyIn` per
+  General from the drawable's `getTransformMatrix` (feet and yaw), the drawable's
+  `getCurrentWorldspaceClientBonePositions("tag_weapon_right")` (the engine's own world transform the
+  W3D gun hung from), Zero Hour's global lights and the RTS camera position, and calls
+  `zhbo_native_body`. `DRAWN` (1): the bridge hides the W3D `W<vm><k>` sub-objects. Anything else
+  (0 not native, 2 still loading) leaves the W3D weapon showing — and the `s_worldLooks` cache
+  remembers the native flag, so a failed native draw brings the W3D weapon back instead of leaving
+  nothing. `ZHBO_NATIVE_BODY=1` draws the weapon while the W3D body stays; `=2` will draw the body
+  too when milestone 3 lands. `zhbo_native_body_enabled` is the mode the bridge tests before doing
+  the third-person work at all.
+* **The two modes.** In *weapon* mode (M2) the gun is placed by the engine's world-space
+  `tag_weapon_right` transform (`ZhboNativeBodyIn.tag`, read from the drawable), scaled once at the
+  root. In *body* mode (M3) the gun rides the body's own posed `tag_weapon_right`, and the whole
+  rig is placed at the General object's world transform (`pos`/`yaw` from the sim's `NativePose`);
+  the bridge's tag is ignored. The body's clip is picked from the movement state with the
+  run-time fallback chain (`state::fallbacks`); the full BO2 transition graph and blend times are
+  deliberately skipped. The bridge must hide the whole W3D body in body mode when the native pass
+  returns `DRAWN`.
+* **The core cannot open the archive; it asks.** After each `zhbo_native_body` call the bridge
+  answers every `zhbo_native_body_wanted(i)` path with `zhbo_native_body_provide(path, bytes, len)`
+  (`len < 0`: not in the archive, after which that rig is given up and logged once) and prints every
+  `zhbo_native_body_take_log` line — the same channels as the viewmodel's. A rig draws once its
+  manifest and models are in; its textures fill in as they arrive.
+* **Where it draws.** Through the same native pass as the viewmodel: `target_view` 1 just before
+  `before_view` 9, with the scene's own view and projection (`view_proj = None`, so the world camera
+  frames it). The draw's frame carries the RTS camera's eye, Zero Hour's global lights and the scene
+  ambient.
+* **Placement.** BO2 inches are scaled once at the root: `root = transform × ART_SCALE`, so a skinned
+  vertex is `root × pose × inv_bind × vertex`. The weapon-only mode's transform is the engine's own
+  `tag_weapon_right` world matrix, so the native gun sits exactly where the W3D gun did. `state`,
+  `time` and `rate` are carried for milestone 3's body clip; the weapon-only pose is rigid.
+* ABI: the third person's functions (`zhbo_client_native_poses`, `zhbo_native_body_enabled`,
+  `zhbo_native_body`, the file request/answer loop, `zhbo_native_body_bone`, `zhbo_native_body_reset`)
+  and `ZhboNativePose` (28 bytes) / `ZhboNativeBodyIn` (204 bytes) are new; the header and Rust carry
+  size asserts. The `ZHBO_ABI_VERSION` bump to 24 covers them and the viewmodel's surface.
 
 ## Lifecycle
 
