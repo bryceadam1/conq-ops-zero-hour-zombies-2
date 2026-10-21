@@ -1130,6 +1130,56 @@ the aliases exist in `sounds::UiCue`, the screens still play the five coarse one
 transitions (the 250 ms slide/fade of `SetActiveClassSet`, the screen fade), the pixel pass
 against `cac/sweep/`, and the in-match class panel per `hud/class.lua`.
 
+## v1.0 Track C, third wave: the screens play the Lua's own sound cues (2026-10-21)
+
+The screens had a handful of coarse cues (`UI_OPEN`/`UI_NAVIGATE`/`UI_SELECT`/`UI_BACK`/`UI_DENY`) played
+by rules the hosts invented. BO2's menus do not work that way: every widget and handler names the
+exact alias, and the same alias is reused across screens. `classui/cues.rs` now names them,
+`classui/input.rs`'s folds decide which one a frame calls for, and the hosts only play what they
+are handed:
+
+- **The lobby** (`cacchooseclass.lua`): a row gaining focus is `cac_main_nav`
+  (`classButtonList.gainFocusSFX`); choosing a class to edit is `cac_main_edit_loadout`
+  (`ChooseClass`); the screen's back-out is `cac_main_exit_cac` (`setBackOutSFX`); the set pager is
+  `cac_safearea` (`Prev`/`NextClassSet` — the alias is not a safe-area sound); entering create-a-
+  class from the lobby is `cac_enter_cac` (`gamelobby.lua`); a dialog opening is
+  `cac_loadout_edit_sel` (`popup.lua`'s `OpenPopup`).
+- **The editor** (`caceditclass.lua`, `slotlistgridbutton.lua`, `attachmentgridbutton.lua`,
+  `bonuscardbutton.lua`, `cardcarousellist.lua`): opening the weapon picker is
+  `cac_loadout_edit_sel` (`WeaponSelectSFX`), any other submenu `cac_loadout_edit_submenu`
+  (`SubmenuSelectSFX`); a gun slot's focus is `cac_loadout_nav` and the bonus-card strip's
+  `cac_loadout_wildcard_nav`; a carousel move is `cac_slide_nav_lr`/`_up`/`_down` and its equip
+  `cac_slide_equip_item`; a grid's move and equip are `cac_grid_nav`/`cac_grid_equip_item`; an
+  attachment is `cac_equipment_add`; a bonus card is its own `cac_wildcard_equip_1..7` (Tactician,
+  BO2's `bonuscard_two_tacticals`, has no alias and falls back to the grid action, as the Lua's
+  table lookup does); `R`/the `X` is `cac_cmn_item_remove`; backing out of a picker or the editor
+  is `cac_cmn_backout`; a refused choice is `cac_cmn_deny` **alone** (the Lua's handlers play
+  `denySFX` instead of the action sound, so the fold returns no second cue).
+- **In a match** (`hud/class.lua`, `hud/changeclass.lua`): the panel opens with `uin_main_pause`,
+  rows use the grid's nav/equip, and leaving it is `cac_cmn_backout`. The `ClassChosen` sim event no
+  longer plays a cue: BO2 applies a class change silently on spawn, and the pick already played the
+  equip.
+
+Gotchas:
+- **`sounds::UI_*` is gone.** The alias-of-alias constants hid which Lua site a sound came from.
+  Use `classui::cues::*`; the converted event name is still `ZHBO_UI_<alias>`, so no archive change.
+- **Cues are decisions, not observations.** A denied action returns `cue: None`; a host that plays
+  `frame.cue` and its own deny sound must not also play a back-out for the same frame.
+- **Content grids walk Up/Down only.** The pure editor has no per-cell left/right links yet, so
+  BO2's 3-wide grids (a Right that stays in the row, a page step at the edges) are still to come;
+  the carousel is the only 2-D picker today.
+
+Tests: `cargo test -p zhbo-core -p zhbo-assets` green (267 + 37), clippy clean in every touched
+file. New: the cue table is asserted to be BO2 aliases and distinct per action, and the editor's
+walk is asserted to play the Lua's cue at each site (weapon select, slides, grid nav/equip,
+equipment add, the card's own alias, remove, back-out, and the deny alone).
+
+Remaining Track C scope: the LUI transitions (`SetActiveClassSet`'s 250 ms slide, the screen's
+fade, the highlight tweens — only the focused row's 650 ms pulse is in), the content grids'
+per-cell left/right links, the pixel pass against `cac/sweep/`, and the in-match class panel per
+`hud/class.lua` (the change applying on the next spawn is the sim's already; the panel that shows
+the active class in a match is not ported).
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

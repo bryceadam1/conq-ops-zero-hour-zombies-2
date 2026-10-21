@@ -18,9 +18,9 @@
 //! ABI).
 
 use crate::classmenu::{Draft, Editor, Outcome};
+use crate::classui::cues;
 use crate::classui::{self, Dialog, DialogItem, DialogOutcome, MenuPointer, MenuPrev, PickFooterAction, PickRow};
 use crate::input::{Key, KeySet};
-use crate::sounds;
 
 /// The menu frame's input (ABI: `ZhboMenuIn`). The bridge fills it from the shell window's draw
 /// callback: keys from the platform poll, the pointer and buttons from the engine's cursor, the
@@ -126,7 +126,7 @@ impl MenuState {
             highlight: 0,
             deny: 0.0,
             prev: MenuPrev::default(),
-            cues: vec![sounds::UI_OPEN],
+            cues: vec![cues::ENTER_CAC],
             closed: false,
             clock: 0.0,
         }
@@ -174,7 +174,7 @@ impl MenuState {
 
     /// Play BO2's deny cue and light the screen's rim (an over-budget choice, a full profile).
     fn deny(&mut self) {
-        self.cues.push(sounds::UI_DENY);
+        self.cues.push(cues::DENY);
         self.deny = classui::DENY_FLASH;
     }
 
@@ -183,7 +183,8 @@ impl MenuState {
         self.editor = Some(Editor::new(draft));
         self.editor_set = crate::profile::active_set();
         self.editor_slot = slot;
-        self.cues.push(sounds::UI_OPEN);
+        // BO2's ChooseClass handler: the lobby plays cac_main_edit_loadout as the editor opens.
+        self.cues.push(cues::EDIT_LOADOUT);
         // The opening key's edge must not reach the editor on the same frame.
         self.prev.buttons = 0;
     }
@@ -193,7 +194,8 @@ impl MenuState {
         self.dialog = Some(dialog);
         self.dialog_slot = slot;
         self.dialog_set = crate::profile::active_set();
-        self.cues.push(sounds::UI_OPEN);
+        // popup.lua's OpenPopup: a dialog opens with the loadout-editor select cue.
+        self.cues.push(cues::DIALOG_OPEN);
         self.prev.buttons = 0;
     }
 
@@ -208,14 +210,14 @@ impl MenuState {
                 self.dialog = Some(dialog);
             }
             DialogOutcome::Back => {
-                self.cues.push(sounds::UI_BACK);
+                self.cues.push(cues::BACKOUT);
             }
             DialogOutcome::Confirm(item) => {
                 if item == DialogItem::Rename && !was_naming {
                     // The entry opens the text field on the current name (BO2's rename popup).
                     let seed = self.dialog_seed();
                     dialog.begin_rename(&seed);
-                    self.cues.push(sounds::UI_SELECT);
+                    self.cues.push(cues::GRID_EQUIP);
                     self.dialog = Some(dialog);
                     return;
                 }
@@ -263,7 +265,7 @@ impl MenuState {
                 match text {
                     Some(text) => {
                         write_profile(out, classui::SAVE_PROFILE_EDIT, &text);
-                        self.cues.push(sounds::UI_SELECT);
+                        self.cues.push(cues::GRID_EQUIP);
                     }
                     None => self.deny(),
                 }
@@ -277,7 +279,7 @@ impl MenuState {
                         if let Some(i) = classui::pick_rows(true).iter().position(|r| *r == row) {
                             self.highlight = i;
                         }
-                        self.cues.push(sounds::UI_SELECT);
+                        self.cues.push(cues::GRID_EQUIP);
                     }
                     None => self.deny(),
                 },
@@ -286,7 +288,7 @@ impl MenuState {
             DialogItem::ResetSet => match crate::profile::reset_set(set) {
                 Some(text) => {
                     write_profile(out, classui::SAVE_PROFILE_EDIT, &text);
-                    self.cues.push(sounds::UI_BACK);
+                    self.cues.push(cues::SAVE);
                 }
                 None => self.deny(),
             },
@@ -310,7 +312,7 @@ impl MenuState {
                 match crate::profile::save_in_set(set, slot, class) {
                     Some(text) => {
                         write_profile(out, classui::SAVE_PROFILE_CLASS, &text);
-                        self.cues.push(if item == DialogItem::ResetDefault { sounds::UI_SAVE } else { sounds::UI_BACK });
+                        self.cues.push(if item == DialogItem::ResetDefault { cues::SAVE } else { cues::ITEM_REMOVE });
                     }
                     None => self.deny(),
                 }
@@ -356,12 +358,13 @@ impl MenuState {
             None => false,
         };
         if !switched && frame.navigated && frame.activate.is_none() {
-            self.cues.push(sounds::UI_NAVIGATE);
+            self.cues.push(cues::row_nav(true));
         }
         if switched {
-            self.cues.push(sounds::UI_NAVIGATE);
+            // Prev/NextClassSet plays cac_safearea (`cacchooseclass.lua`).
+            self.cues.push(cues::SET_STEP);
             if frame.back {
-                self.cues.push(sounds::UI_BACK);
+                self.cues.push(cues::screen_back(true));
                 self.closed = true;
             }
             return;
@@ -398,7 +401,7 @@ impl MenuState {
                 Some(text) => {
                     write_profile(out, classui::SAVE_PROFILE_EDIT, &text);
                     self.highlight = self.highlight.min(classui::pick_rows(true).len().saturating_sub(1));
-                    self.cues.push(sounds::UI_BACK);
+                    self.cues.push(cues::ITEM_REMOVE);
                 }
                 None => self.deny(),
             }
@@ -411,7 +414,7 @@ impl MenuState {
                     if let Some(i) = classui::pick_rows(true).iter().position(|r| *r == row) {
                         self.highlight = i;
                     }
-                    self.cues.push(sounds::UI_SELECT);
+                    self.cues.push(cues::GRID_EQUIP);
                 }
                 None => self.deny(),
             }
@@ -429,13 +432,13 @@ impl MenuState {
                 None => self.deny(),
             },
             Some(PickFooterAction::Back) => {
-                self.cues.push(sounds::UI_BACK);
+                self.cues.push(cues::screen_back(true));
                 self.closed = true;
             }
             None => {}
         }
         if frame.back {
-            self.cues.push(sounds::UI_BACK);
+            self.cues.push(cues::screen_back(true));
             self.closed = true;
         }
     }
@@ -461,7 +464,7 @@ impl MenuState {
                 match crate::profile::save_in_set(set, slot, class) {
                     Some(text) => {
                         write_profile(out, classui::SAVE_PROFILE_CLASS, &text);
-                        self.cues.push(sounds::UI_SAVE);
+                        self.cues.push(cues::SAVE);
                         // Back to the list with the saved slot highlighted.
                         let row = PickRow::Custom(slot);
                         if let Some(i) = classui::pick_rows(true).iter().position(|r| *r == row) {
@@ -477,7 +480,7 @@ impl MenuState {
                 }
             }
             Outcome::Cancel => {
-                self.cues.push(sounds::UI_BACK);
+                self.cues.push(cues::BACKOUT);
             }
             Outcome::Continue => {
                 self.editor = Some(editor);
@@ -647,7 +650,7 @@ mod tests {
         let _g = lock();
         crate::profile::reset();
         let mut menu = MenuState::new();
-        assert_eq!(menu.cues, vec![sounds::UI_OPEN], "the open sting queues on open");
+        assert_eq!(menu.cues, vec![cues::ENTER_CAC], "the open sting queues on open");
         menu.cues.clear();
         let inp = MenuIn::default();
         menu.frame(&inp);
@@ -775,7 +778,7 @@ mod tests {
         assert_eq!(out.save_profile, 0, "nothing was written");
         assert!(menu.editor.is_some(), "the draft survives: the editor stays up");
         assert_eq!(crate::profile::classes().len(), crate::profile::MAX_CLASSES);
-        assert!(menu.cues.contains(&sounds::UI_DENY), "the denied save is surfaced");
+        assert!(menu.cues.contains(&cues::DENY), "the denied save is surfaced");
         crate::profile::reset();
     }
 
@@ -911,7 +914,7 @@ mod tests {
         menu.cues.clear();
         press(&mut menu, &mut inp, Key::O);
         assert!(menu.dialog().is_none());
-        assert!(menu.cues.contains(&sounds::UI_DENY), "the refused O is surfaced");
+        assert!(menu.cues.contains(&cues::DENY), "the refused O is surfaced");
         // Escape in a dialog backs out to the list; the screen stays open.
         press(&mut menu, &mut inp, Key::S);
         assert!(menu.dialog().is_some());

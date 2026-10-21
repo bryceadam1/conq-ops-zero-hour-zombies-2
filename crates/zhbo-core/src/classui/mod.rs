@@ -48,6 +48,7 @@ use crate::weapons::{self, Class as WeaponClass, WeaponDef};
 pub mod bo2;
 mod categories;
 mod chrome;
+pub mod cues;
 mod dialog;
 mod edit;
 mod editor;

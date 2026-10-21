@@ -134,16 +134,6 @@ ui_cues! {
     UinToggleDrc = "uin_toggle_drc",
 }
 
-/// The create-a-class screens' current cues, each a BO2 alias. Track C of the v1.0 plan replaces
-/// these with the exact cue at each Lua call site; until then they keep the old mapping.
-pub const UI_OPEN: &str = UiCue::CacEnterCac.event();
-pub const UI_NAVIGATE: &str = UiCue::CacGridNav.event();
-pub const UI_SELECT: &str = UiCue::CacGridEquipItem.event();
-pub const UI_BACK: &str = UiCue::CacCmnBackout.event();
-pub const UI_DENY: &str = UiCue::CacCmnDeny.event();
-pub const UI_SAVE: &str = UiCue::CacLoadoutEditSubmenu.event();
-pub const UI_PICKED: &str = UiCue::CacLoadoutEditSel.event();
-
 /// Distance between footsteps (Zero Hour units; a 60" stride at the converter's 11/72 scale).
 const STRIDE: f32 = 9.0;
 const SPRINT_STRIDE: f32 = 11.5;

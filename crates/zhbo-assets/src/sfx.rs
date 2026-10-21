@@ -435,8 +435,9 @@ mod tests {
             assert!(c.alias().starts_with("cac_") || c.alias().starts_with("uin_"), "{}", c.alias());
             assert_eq!(c.event(), format!("ZHBO_UI_{}", c.alias()));
         }
-        // The create-a-class screens' cues are among the converted ones.
-        for event in [zhbo_core::sounds::UI_OPEN, zhbo_core::sounds::UI_DENY, zhbo_core::sounds::UI_PICKED] {
+        // The create-a-class screens' own cues are among the converted ones.
+        use zhbo_core::classui::cues;
+        for event in [cues::ENTER_CAC, cues::DENY, cues::WEAPON_SELECT] {
             assert!(UiCue::ALL.iter().any(|c| c.event() == event), "{event}");
         }
     }

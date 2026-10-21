@@ -3,6 +3,7 @@
 //!
 //! Nothing here affects the lockstep simulation except through the input messages it emits.
 
+use crate::classui::cues;
 use crate::input::{buttons, pack_move, FpsInput, Key, KeySet, MAX_PITCH};
 use crate::math::{dir_from_angles, lerp_angle, smoothstep, wrap_angle, Vec3};
 use crate::sim::{EventKind, Mode, Sim};
@@ -525,7 +526,7 @@ impl Client {
         let frame = crate::classui::pick_frame(&menu_pointer(inp), &self.menu_prev, self.class_pick_highlight, false);
         self.class_pick_highlight = frame.highlight;
         if frame.navigated && frame.activate.is_none() {
-            self.cues.play(sounds::UI_NAVIGATE);
+            self.cues.play(cues::GRID_NAV);
         }
         if let Some(i) = frame.activate {
             match crate::classui::pick_rows(false).get(i).copied() {
@@ -534,13 +535,13 @@ impl Client {
                     out.choose_class = j as i32 + 1;
                     out.choose_class_general = self.general;
                     out.choose_class_payload_len = 0;
-                    self.cues.play(sounds::UI_SELECT);
+                    self.cues.play(cues::GRID_EQUIP);
                     self.class_pick_forced = false;
                 }
                 Some(crate::classui::PickRow::Custom(j)) => {
                     if let Some(class) = crate::profile::classes().get(j) {
                         if pick_custom_class(out, self.general, class) {
-                            self.cues.play(sounds::UI_SELECT);
+                            self.cues.play(cues::GRID_EQUIP);
                             self.class_pick_forced = false;
                         } else {
                             // Never send a truncated payload: the sim could not decode it and the
@@ -586,7 +587,7 @@ impl Client {
                 return;
             }
         }
-        self.cues.play(sounds::UI_SELECT);
+        self.cues.play(cues::GRID_EQUIP);
         self.class_pick_forced = false;
     }
 
@@ -598,7 +599,7 @@ impl Client {
         if unclassed {
             self.class_pick_dismissed = true;
         }
-        self.cues.play(sounds::UI_BACK);
+        self.cues.play(cues::BACKOUT);
     }
 
     /// The class screen's input, from either the overhead view or first person. Returns true while
@@ -737,13 +738,14 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
             self.pick_class_button(&mut out, inp.class_button);
         }
 
-        // The class pick's entrance: its UI_OPEN cue once per open. The screen only shows when
-        // `class_pick_wanted` says so (the command-bar force in either view; first person's
-        // spawn offer while unclassed and not dismissed).
+        // The class pick's entrance: BO2's in-game class menu opens with `uin_main_pause`
+        // (`hud/class.lua`), once per open. The screen only shows when `class_pick_wanted` says so
+        // (the command-bar force in either view; first person's spawn offer while unclassed and not
+        // dismissed).
         if self.class_pick_wanted(unclassed) {
             if !self.hud.class_pick_seen {
                 self.hud.class_pick_seen = true;
-                self.cues.play(sounds::UI_OPEN);
+                self.cues.play(cues::IN_GAME_OPEN);
             }
         } else {
             self.hud.class_pick_seen = false;
@@ -995,7 +997,8 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 EventKind::Swapped => self.vm_events.swapped = true,
                 EventKind::FieldComputerOpened => {}
                 EventKind::ClassChosen { .. } => {
-                    self.cues.play(sounds::UI_PICKED);
+                    // No cue here: BO2's class change applies silently on spawn. The menu already
+                    // played the equip when the pick was made (and the command bar does too).
                     // A pick landed: the forced screen closes, and the next spawn's pick returns.
                     self.class_pick_forced = false;
                 }

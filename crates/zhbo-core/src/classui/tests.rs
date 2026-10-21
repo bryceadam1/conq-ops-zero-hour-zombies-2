@@ -452,6 +452,91 @@ fn the_category_column_rotates_so_the_active_one_is_on_top() {
     assert_eq!(sorted, (0..cats.len()).collect::<Vec<_>>(), "no duplicates");
 }
 
+/// Press a key until the editor's slot is `want` (the walk wraps from Save back to Name), returning
+/// the frames' cues.
+fn walk_to_slot(e: &mut Editor, prev: &mut MenuPrev, want: Slot) -> Vec<Option<&'static str>> {
+    let mut cues = Vec::new();
+    for _ in 0..e.slots().len() {
+        if e.slot == want {
+            break;
+        }
+        cues.push(press(e, prev, &[Key::Down]).cue);
+    }
+    assert_eq!(e.slot, want, "the walk reaches {want:?}");
+    cues
+}
+
+#[test]
+fn the_editor_plays_the_luas_cue_at_each_call_site() {
+    let mut e = Editor::new(Draft::default());
+    let mut prev = MenuPrev::default();
+    // Opening the primary slot is CACEditClass's WeaponChosen: the weapon picker's select cue.
+    assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::WEAPON_SELECT));
+    assert!(e.picking);
+    // The carousel's moves are the slide cues (`cardcarousellist.lua`), not the grid's.
+    assert_eq!(press(&mut e, &mut prev, &[Key::Right]).cue, Some(cues::SLIDE_LR));
+    assert_eq!(press(&mut e, &mut prev, &[Key::Down]).cue, Some(cues::SLIDE_DOWN));
+    assert_eq!(press(&mut e, &mut prev, &[Key::Up]).cue, Some(cues::SLIDE_UP));
+    // Choosing a gun is the carousel's equip.
+    assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::SLIDE_EQUIP));
+    assert!(!e.picking);
+    // Backing out of a picker without choosing is the menu's back-out.
+    press(&mut e, &mut prev, &[Key::Enter]);
+    assert!(e.picking);
+    assert_eq!(press(&mut e, &mut prev, &[Key::Escape]).cue, Some(cues::BACKOUT));
+    assert!(!e.picking);
+    // A content grid's move and choice are the grid's nav and equip (a perk, not a gun).
+    e.slot = Slot::Perk1;
+    assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::SUBMENU_SELECT));
+    // A grid's cell walk is Up/Down today (the pure editor has no per-cell left/right links yet).
+    assert_eq!(press(&mut e, &mut prev, &[Key::Down]).cue, Some(cues::GRID_NAV));
+    assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::GRID_EQUIP));
+    // An attachment is `cac_equipment_add` (`attachmentgridbutton.lua`'s actionSFX). A fresh
+    // editor: the default draft carries two attachments at 9/10, so the earlier perk left no room.
+    let mut e = Editor::new(Draft::default());
+    let mut prev = MenuPrev::default();
+    e.slot = Slot::PrimaryAtts;
+    assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::SUBMENU_SELECT));
+    // The first option is the held Grenade Launcher: choosing it unequips it.
+    assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::EQUIPMENT_ADD));
+    // Removing a filled slot is `cac_cmn_item_remove`.
+    assert_eq!(press(&mut e, &mut prev, &[Key::R]).cue, Some(cues::ITEM_REMOVE));
+    // A refused choice is the deny alone: the host surfaces `denied` (its cue and the rim) and no
+    // second cue plays, as BO2's handlers pick denySFX *instead of* the action sound.
+    let mut e = Editor::new(Draft { wildcards: vec![Wildcard::Tactician, Wildcard::Overkill], ..Draft::default() });
+    let mut prev = MenuPrev::default();
+    e.slot = Slot::Save;
+    let frame = press(&mut e, &mut prev, &[Key::Enter]);
+    assert!(frame.denied, "eleven points will not save");
+    assert_eq!(frame.cue, None, "the deny is the only sound");
+}
+
+#[test]
+fn the_slot_walk_plays_the_loadout_nav_and_the_wildcard_row_its_own() {
+    let mut e = Editor::new(Draft::default());
+    let mut prev = MenuPrev::default();
+    let cues = walk_to_slot(&mut e, &mut prev, Slot::Wildcards);
+    let (last, rest) = cues.split_last().expect("the walk moved");
+    assert!(rest.iter().all(|c| *c == Some(cues::LOADOUT_NAV)), "every slot row is cac_loadout_nav: {cues:?}");
+    // The strip that lands on the bonus cards has its own focus cue (`CACUtility.WildcardGainFocusSFX`).
+    assert_eq!(*last, Some(cues::WILDCARD_NAV));
+}
+
+#[test]
+fn a_bonus_card_plays_its_own_equip_alias() {
+    let mut e = Editor::new(Draft::default());
+    let mut prev = MenuPrev::default();
+    e.slot = Slot::Wildcards;
+    assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::SUBMENU_SELECT));
+    // Walk to a known card and equip it: the alias belongs to that card (`bonuscardbutton.lua`).
+    e.option = Wildcard::ALL.iter().position(|w| *w == Wildcard::Overkill).expect("Overkill is a card");
+    let frame = press(&mut e, &mut prev, &[Key::Enter]);
+    assert_eq!(frame.cue, Some(cues::wildcard_equip(Wildcard::Overkill)), "the equipped card's alias");
+    assert!(e.draft.wildcards.contains(&Wildcard::Overkill));
+    // Overkill is BO2's third card: `cac_wildcard_equip_3`.
+    assert_eq!(frame.cue, Some("ZHBO_UI_cac_wildcard_equip_3"));
+}
+
 #[test]
 fn a_pickers_title_is_the_luas_heading() {
     let mut e = Editor::new(Draft::default());
