@@ -105,6 +105,9 @@ pub struct MenuState {
     closed: bool,
     /// The screen's UI clock in seconds (60 Hz steps, like the deny rim): LUI pulses and fades.
     clock: f32,
+    /// The clock reading of the last class-set change, while `SetActiveClassSet`'s 250 ms
+    /// slide/fade runs (`cacchooseclass.lua`); `None` once it has landed.
+    set_change: Option<f32>,
 }
 
 impl Default for MenuState {
@@ -129,6 +132,7 @@ impl MenuState {
             cues: vec![cues::ENTER_CAC],
             closed: false,
             clock: 0.0,
+            set_change: None,
         }
     }
 
@@ -149,6 +153,10 @@ impl MenuState {
         // a 60 Hz step per frame.
         self.deny = (self.deny - 1.0 / 60.0).max(0.0);
         self.clock += 1.0 / 60.0;
+        // A set switch's slide/fade is over once its duration has run.
+        if self.set_change.is_some_and(|start| self.clock - start >= classui::SET_SWITCH_MS / 1000.0) {
+            self.set_change = None;
+        }
         if self.dialog.is_some() {
             self.dialog_frame(&pointer, &mut out);
         } else if let Some(editor) = self.editor.take() {
@@ -164,7 +172,8 @@ impl MenuState {
     /// What the screen draws (the same `ScreenView` the in-game Client produces, plus the shell's
     /// editor and management affordances).
     pub fn view(&self) -> classui::ScreenView<'_> {
-        classui::ScreenView { highlight: self.highlight, editor: self.editor.as_ref(), deny: self.deny, manage: true, now: self.clock }
+        let set_change = self.set_change.map(|start| (self.clock - start).max(0.0));
+        classui::ScreenView { highlight: self.highlight, editor: self.editor.as_ref(), deny: self.deny, manage: true, now: self.clock, set_change }
     }
 
     /// The open `S`/`O` dialog, for the host to draw over the screen (`classui::draw_dialog`).
@@ -353,6 +362,8 @@ impl MenuState {
             Some(text) => {
                 write_profile(out, classui::SAVE_PROFILE_EDIT, &text);
                 self.highlight = 0;
+                // `SetActiveClassSet` slides the new set's list in and fades its preview in.
+                self.set_change = Some(self.clock);
                 true
             }
             None => false,
@@ -518,6 +529,29 @@ mod tests {
             press(menu, inp, Key::Down);
         }
         press(menu, inp, Key::Enter)
+    }
+
+    #[test]
+    fn a_set_switch_starts_the_luas_250ms_slide_and_a_row_move_does_not() {
+        let _g = lock();
+        crate::profile::reset();
+        let mut menu = MenuState::new();
+        let mut inp = MenuIn::default();
+        menu.frame(&inp);
+        assert!(menu.view().set_change.is_none(), "the screen opens settled");
+        // A row move is not a set switch.
+        press(&mut menu, &mut inp, Key::Down);
+        assert!(menu.view().set_change.is_none(), "a row move has no slide");
+        // Right/Left walk the sets: `SetActiveClassSet` slides the new list in over 250 ms.
+        press(&mut menu, &mut inp, Key::Right);
+        let since = menu.view().set_change.expect("the switch started the transition");
+        assert!((0.0..classui::SET_SWITCH_MS / 1000.0).contains(&since), "just started: {since}");
+        // The hosts draw it in the transition until the duration elapses.
+        for _ in 0..16 {
+            menu.frame(&inp);
+        }
+        assert!(menu.view().set_change.is_none(), "the 250 ms have run: the screen is settled again");
+        crate::profile::reset();
     }
 
     #[test]

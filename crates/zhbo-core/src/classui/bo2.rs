@@ -132,6 +132,24 @@ pub fn text_w(family: Family, s: &str, height: f32) -> f32 {
     font::width(family, s, height)
 }
 
+/// Scale a group of prims' alpha (LUI's `alphaMultiplier`, the way an element animates in or out
+/// without anything under it changing). Image fallbacks fade with their image.
+pub fn fade(prims: &mut [Prim], a: f32) {
+    let k = a.clamp(0.0, 1.0);
+    for p in prims.iter_mut() {
+        match p {
+            Prim::Rect { argb, .. } | Prim::Line { argb, .. } | Prim::Text { argb, .. } | Prim::Image { argb, .. } => {
+                let alpha = ((*argb >> 24) as f32 * k) as u32;
+                *argb = (alpha << 24) | (*argb & 0x00FF_FFFF);
+            }
+            Prim::ClipBegin { .. } | Prim::ClipEnd => {}
+        }
+        if let Prim::Image { fallback, .. } = p {
+            fade(fallback, k);
+        }
+    }
+}
+
 /// `CoD.Border.new(thickness, r, g, b, alpha)`: four edge strips inside a box (the thickness is
 /// at least 2, as the widget clamps it).
 pub fn border(prims: &mut Vec<Prim>, f: &Frame, r: Rect, thickness: f32, argb: u32) {

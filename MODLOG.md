@@ -1180,6 +1180,40 @@ per-cell left/right links, the pixel pass against `cac/sweep/`, and the in-match
 `hud/class.lua` (the change applying on the next spawn is the sim's already; the panel that shows
 the active class in a match is not ported).
 
+## v1.0 Track C, fourth wave: the class-set switch moves with the Lua's 250 ms (2026-10-21)
+
+`SetActiveClassSet` (`cacchooseclass.lua`:500) is the one transition the choose-class screen has,
+and the port drew the new set as a hard cut. It now runs the Lua's two animations:
+
+- **The list slides in** from `-320 - buttonListWidth - 20` to its resting place with
+  `beginAnimation("onscreen", 250, false, true)` — an ease-out over the list's width plus 20 — and
+  is clipped to the menu while it travels so it cannot paint over the backing frame.
+- **The preview fades in** over the same 250 ms (`fade_in`, `250, true, false` — an ease-in) by
+  one alpha multiplier over the whole block, the way LUI's `alphaMultiplier` works; `bo2::fade`
+  scales a prim group (image fallbacks included).
+
+The hosts own the clock: `ScreenView` carries `set_change: Option<f32>` (seconds since the
+switch), `MenuState` starts it on `cycle_active` and clears it once 250 ms have run at its 60 Hz
+step, and the in-match pick reports `None` (a match never switches sets). `draw_pick` takes the
+`ScreenView` now instead of seven loose arguments, so the motion cannot be half-wired.
+
+Gotchas:
+- **A fade is a group, not a colour.** Prims carry their own alpha; fading an element means
+  drawing it into its own list and scaling that list, not passing an alpha down the call chain.
+- **Settled means byte-identical.** Outside a switch the draw must be exactly the static layout
+  (no clip prim, no fade list), or the screenshot harness's captures stop matching; the test
+  asserts both.
+
+Tests: `cargo test -p zhbo-core -p zhbo-assets` green (269 + 37), clippy clean in every touched
+file. New: at settle 0 the list's first row sits a list-width plus 20 to the left of its resting
+pen and the preview starts at alpha 0, at settle 1 both are static and unclipped, and the menu
+starts/clears the transition on a set switch but not on a row move.
+
+Remaining Track C motion: the picker/submenu open and close (BO2 fades a menu in on `openMenu`),
+the screen's own entrance, and eased highlight moves between rows (only the focused row's 650 ms
+`BOIIOrange` pulse is in). Remaining Track C scope otherwise: the pixel pass against `cac/sweep/`
+and the in-match class panel per `hud/class.lua`.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

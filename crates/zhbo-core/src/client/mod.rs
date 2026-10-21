@@ -516,6 +516,8 @@ impl Client {
             deny: 0.0,
             manage: false,
             now: self.ui_clock,
+            // A match is pick-only: the set is chosen in the lobby, so it never switches here.
+            set_change: None,
         }
     }
 

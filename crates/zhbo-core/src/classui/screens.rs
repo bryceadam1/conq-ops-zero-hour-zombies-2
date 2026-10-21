@@ -17,12 +17,15 @@ pub struct ScreenView<'a> {
     pub manage: bool,
     /// The host's UI clock in seconds (the focused button's pulse, LUI transitions).
     pub now: f32,
+    /// Seconds since the class set changed (`cacchooseclass.lua`'s `SetActiveClassSet`), while the
+    /// list is sliding in and the preview fading in; `None` when the screen is settled.
+    pub set_change: Option<f32>,
 }
 
 /// Draw the class screen for a host: the editor while one is open, else the pick list.
 pub fn draw_screen(prims: &mut Vec<Prim>, w: f32, h: f32, view: &ScreenView) {
     match view.editor {
         Some(editor) => draw_editor(prims, w, h, editor, view.deny, view.now),
-        None => draw_pick(prims, w, h, view.highlight, view.deny, view.manage, view.now),
+        None => draw_pick(prims, w, h, view),
     }
 }

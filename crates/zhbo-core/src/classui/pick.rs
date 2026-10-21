@@ -156,9 +156,18 @@ pub fn empty_slot_name(slot: usize) -> String {
     format!("Custom {}", slot + 1)
 }
 
-/// BO2's choose-class screen for a host (see the module doc). `highlighted` is the host's row;
-/// `now` the host's UI clock for the focused button's pulse.
-pub fn draw_pick(prims: &mut Vec<Prim>, w: f32, h: f32, highlighted: usize, deny: f32, manage: bool, now: f32) {
+/// `SetActiveClassSet`'s slide/fade (`cacchooseclass.lua`: `beginAnimation("onscreen", 250, …)` on
+/// the class list, `fade_in` 250 on the preview).
+pub const SET_SWITCH_MS: f32 = 250.0;
+/// How far left of its resting place the list starts: `-320 - buttonListWidth - 20` in the Lua,
+/// which is the list's own width plus 20 (`setLeftRight` aims the right edge at `-320`).
+const SET_SLIDE_INSET: f32 = 20.0;
+
+/// BO2's choose-class screen for a host (see the module doc): the host's highlighted row, its UI
+/// clock (the focused button's pulse) and, while `SetActiveClassSet` runs, the switch's age.
+pub fn draw_pick(prims: &mut Vec<Prim>, w: f32, h: f32, view: &ScreenView<'_>) {
+    let ScreenView { highlight: highlighted, deny, manage, now, .. } = *view;
+    let settle = view.set_change.map_or(1.0, |since| (since * 1000.0 / SET_SWITCH_MS).clamp(0.0, 1.0));
     let l = pick_layout(w, h, manage);
     let f = &l.frame;
     bo2::backdrop(prims, f, w, h);
@@ -175,28 +184,53 @@ pub fn draw_pick(prims: &mut Vec<Prim>, w: f32, h: f32, highlighted: usize, deny
     }
     let active = highlighted.min(rows.len().saturating_sub(1));
     let rects = row_rects(&l, &rows);
+    // The set switch: the list slides in from the left with an ease-out (`onscreen`) and the
+    // preview fades in with an ease-in (`fade_in`), both over 250 ms. Outside a switch this is the
+    // static layout exactly.
+    let settle = settle.clamp(0.0, 1.0);
+    let switching = settle < 1.0;
+    let slide = if switching { (l.list.w + SET_SLIDE_INSET) * (1.0 - crate::lui::anim::ease(settle, false, true)) } else { 0.0 };
+    if switching {
+        // The list is only inside the menu while it slides: clip it so it cannot paint over the
+        // backing frame's edge (the menu is the element that animates in BO2).
+        let m = f.px(f.menu);
+        prims.push(Prim::ClipBegin { x: m.x, y: m.y, w: m.w, h: m.h });
+    }
     let mut y = l.list.y;
     for item in list_items(&rows, manage) {
         match item {
             ListItem::SetName => {
-                let r = Rect { x: l.list.x, y, w: l.list.w, h: bo2::TEXT_CONDENSED };
+                let r = Rect { x: l.list.x - slide, y, w: l.list.w, h: bo2::TEXT_CONDENSED };
                 bo2::text(prims, f, Family::Condensed, &set_name, r, Align::Left, argb(OFF_WHITE, 1.0));
             }
             ListItem::Spacer => {}
             ListItem::Row(i) => {
                 let (name, _) = row_class(&rows[i], &presets, customs);
-                class_button(prims, f, rects[i], &name, i == active, now);
+                let cell = rects[i];
+                class_button(prims, f, Rect { x: cell.x - slide, ..cell }, &name, i == active, now);
             }
         }
         y += item_h(item) + ROW_SPACING;
     }
     if manage {
         let top = list_bottom(&l, &rows);
-        bo2::hint(prims, f, Rect { x: l.list.x, y: top, w: l.list.w, h: bo2::TEXT_DEFAULT }, SET_HINT);
+        bo2::hint(prims, f, Rect { x: l.list.x - slide, y: top, w: l.list.w, h: bo2::TEXT_DEFAULT }, SET_HINT);
+    }
+    if switching {
+        prims.push(Prim::ClipEnd);
     }
     if let Some(row) = rows.get(active) {
         let (_, draft) = row_class(row, &presets, customs);
-        preview::draw(prims, f, l.preview, draft.as_ref());
+        if switching {
+            // The preview draws into its own list so the fade is one alpha multiplier over the
+            // whole block, as LUI's `alphaMultiplier` on the element is.
+            let mut group = Vec::new();
+            preview::draw(&mut group, f, l.preview, draft.as_ref());
+            bo2::fade(&mut group, crate::lui::anim::ease(settle, true, false));
+            prims.extend(group);
+        } else {
+            preview::draw(prims, f, l.preview, draft.as_ref());
+        }
     }
     let footer: Vec<_> = pick_footer_actions(&l)
         .into_iter()
