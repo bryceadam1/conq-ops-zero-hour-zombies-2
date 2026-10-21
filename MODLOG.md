@@ -1591,6 +1591,45 @@ pixel pass disagrees. `sim::choose_class` still applies a mid-match pick immedia
 pause-menu "next spawn" semantics would need a `PlayerSim::pending_class` (deferred, see the
 Track C section above).
 
+## Fix: XModel blend weights are u16 fixed point, not half floats (2026-10-21, branch `fix/xmodel-weights`)
+
+The ignored real-install test `xmodel::tests::reads_an_mp_character` failed at "weights sum to 1"
+on `c_usa_mp_fbi_assault_fb`. Bracketed with the player's install: green at 27f274b (the reader's
+introduction), red from **48ad512** on — that commit ("half-float blend weights per OAT") switched
+the secondary weights of `XSurfaceVertexInfo::vertsBlend` from `val/65535` to `half_to_f32`,
+misreading OAT: its `BoneWeight16` (`ObjWriting/XModel/XModelToCommonConverter.cpp.template`) is
+`value / std::numeric_limits<uint16_t>::max()`. The prime suspect e60b814 (raw offsets → generated
+layout constants) was innocent: every constant it adopted in xmodel.rs, xanim.rs and sndalias.rs
+matches the old hand-maintained offset exactly. Against the real bytes the u16 reading is exact
+(bone slots all multiples of 64 and in range, secondaries ≤ 0.5, per-vertex secondary sums ≤ 0.68);
+the half-float reading landed hundreds of vertices per surface past a 1.01 secondary sum (max: inf),
+the implicit first weight clamped to 0 and the total blew past 1.01. The half-float companion
+asserts 48ad512 added had never passed — it landed red. Fix: read `val as f32 / 65535.0` again; the
+secondary-range check now spans the whole LOD because some surfaces are rigid gear with no blend
+stream. **Half floats in `GfxPackedVertex` are only the packed texcoords.** This also retires the
+Track R milestone-1 gotcha above about viewhands' "non-finite half-float weights": weights never
+decode non-finite; `native.rs`'s neutralizing filter stays as a defense but no real vertex hits it
+for weights.
+
+## Integrating fix/xmodel-weights: the skin weights were u16 fixed-point, not half floats (2026-10-21)
+
+`48ad512` (the format-reader hardening) read `XSurfaceVertexInfo::vertsBlend`'s secondary-weight
+u16 slots through `half_to_f32`, citing OAT — but OAT's `BoneWeight16` is `value / u16::MAX`,
+plain fixed point. The misread pushed hundreds of vertices per surface past a 1.01 weight sum
+(0x5600 reads as 96.0, 0xFFFF as -inf) and `reads_an_mp_character` failed from that commit on;
+its companion asserts had never passed (rigid gear surfaces have no blend stream). The fix
+(`fix/xmodel-weights`, `4075a9a`) reads u16/65535 again, corrects the comments, re-encodes the
+synthetic test to exact fixed-point values, and aggregates the secondary-range assert across
+the LOD. `e60b814`'s generated-layout adoption was exonerated field by field (xmodel, xanim,
+sndalias all match the old hand offsets).
+
+The converted native blobs' skin weights change (the non-finite filter used to neutralise these
+vertices): archive VERSION 48 → 49.
+
+Verified: cargo test --workspace green; the FULL real-install suite green (zhbo-formats 8,
+zhbo-assets 7); clippy clean in the touched crates; `cargo xtask build` clean; in-game autotest
+13/13 default, 13/13 with `ZHBO_NATIVE_VIEWMODEL=1 ZHBO_NATIVE_COMPARE=1`, 14/14 `--rts`.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
