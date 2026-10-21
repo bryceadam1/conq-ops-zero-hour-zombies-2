@@ -8,7 +8,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use zhbo_gfx::runtime::{InitDesc, NativeBlend, NativeDraw, NativeFrame, NativeLight, NativeSurface, NativeVertex, Renderer, WindowKind, INVALID};
+use zhbo_gfx::runtime::{InitDesc, NativeBlend, NativeCull, NativeDraw, NativeFrame, NativeLight, NativeSurface, NativeVertex, Renderer, WindowKind, INVALID};
 use zhbo_gfx::state;
 
 const W: u32 = 64;
@@ -63,6 +63,8 @@ fn translate(x: f32, y: f32) -> [f32; 16] {
 }
 
 /// A quad over pixels (x0, y0)-(x1, y1), facing the viewer, skinned wholly to `bone`.
+/// Index it `[0, 2, 1, 0, 3, 2]`: the pass keeps BO2's index order, whose front faces are
+/// clockwise in the framebuffer (the engine's content is the other way, `character.rs`).
 fn quad(x0: f32, y0: f32, x1: f32, y1: f32, bone: u16) -> [NativeVertex; 4] {
     [(x0, y0), (x0, y1), (x1, y1), (x1, y0)].map(|(x, y)| NativeVertex {
         position: [x, y, 0.0],
@@ -90,7 +92,7 @@ fn texture(r: &mut Renderer, rgba: [u8; 4]) -> u16 {
 }
 
 fn surface(color: u16, emissive: bool, count: u32) -> NativeSurface {
-    NativeSurface { first_index: 0, index_count: count, blend: NativeBlend::Opaque, emissive, color, maps: INVALID, sort_key: 0 }
+    NativeSurface { first_index: 0, index_count: count, blend: NativeBlend::Opaque, emissive, color, maps: INVALID, sort_key: 0, cull: NativeCull::None }
 }
 
 /// BGR at (x, y) of the last screenshot.
@@ -111,7 +113,7 @@ fn skins_by_bone_and_keeps_the_colour() {
     // Left quad on bone 0, right quad on bone 1; the palette moves bone 1 down by 32 pixels.
     let mut verts = quad(0.0, 0.0, 16.0, 16.0, 0).to_vec();
     verts.extend(quad(32.0, 0.0, 48.0, 16.0, 1));
-    let indices = [0u16, 1, 2, 0, 2, 3, 4, 5, 6, 4, 6, 7];
+    let indices = [0u16, 2, 1, 0, 3, 2, 4, 6, 5, 4, 7, 6];
     let mesh = r.native_create_mesh(&verts, &indices, &[surface(color, true, 12)]);
     assert_ne!(mesh, INVALID);
     let palette = [IDENTITY, translate(0.0, 32.0)];
@@ -131,8 +133,8 @@ fn light_brightens_a_lit_surface() {
     let color = texture(&mut r, [200, 200, 200, 255]);
     let mut verts = quad(0.0, 0.0, 16.0, 16.0, 0).to_vec();
     verts.extend(quad(32.0, 0.0, 48.0, 16.0, 0));
-    let left = r.native_create_mesh(&verts[..4], &[0, 1, 2, 0, 2, 3], &[surface(color, false, 6)]);
-    let right = r.native_create_mesh(&verts[4..], &[0, 1, 2, 0, 2, 3], &[surface(color, false, 6)]);
+    let left = r.native_create_mesh(&verts[..4], &[0, 2, 1, 0, 3, 2], &[surface(color, false, 6)]);
+    let right = r.native_create_mesh(&verts[4..], &[0, 2, 1, 0, 3, 2], &[surface(color, false, 6)]);
     assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh: left, palette: &[IDENTITY], frame: frame(0) }));
     assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh: right, palette: &[IDENTITY], frame: frame(1) }));
     r.request_screenshot(INVALID, "lit.png");
@@ -158,7 +160,7 @@ fn a_dark_finish_keeps_its_hue_under_zero_hour_light() {
     let maps = r.native_create_texture(4, 4, &data, false);
     let mut s = surface(olive, false, 6);
     s.maps = maps;
-    let mesh = r.native_create_mesh(&quad(0.0, 0.0, 64.0, 64.0, 0), &[0, 1, 2, 0, 2, 3], &[s]);
+    let mesh = r.native_create_mesh(&quad(0.0, 0.0, 64.0, 64.0, 0), &[0, 2, 1, 0, 3, 2], &[s]);
     let mut f = frame(1);
     f.ambient = [0.45, 0.45, 0.47];
     f.lights[0] = NativeLight { direction: [-0.5, 0.3, -0.8], color: [1.0, 0.97, 0.9] };
@@ -182,7 +184,7 @@ fn a_dark_finish_stays_dark_under_a_bright_ambient() {
     let maps = r.native_create_texture(4, 4, &data, false);
     let mut s = surface(dark, false, 6);
     s.maps = maps;
-    let mesh = r.native_create_mesh(&quad(0.0, 0.0, 64.0, 64.0, 0), &[0, 1, 2, 0, 2, 3], &[s]);
+    let mesh = r.native_create_mesh(&quad(0.0, 0.0, 64.0, 64.0, 0), &[0, 2, 1, 0, 3, 2], &[s]);
     let mut f = frame(1);
     f.ambient = [1.2, 1.2, 1.2];
     assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh, palette: &[IDENTITY], frame: f }));
@@ -192,6 +194,33 @@ fn a_dark_finish_stays_dark_under_a_bright_ambient() {
     let [b, g, rr] = pixel(&shot, 32, 32);
     eprintln!("dark finish, bright ambient: RGB {rr} {g} {b}");
     assert!(rr.max(g).max(b) < 110, "not washed out to grey: RGB {rr} {g} {b}");
+}
+
+/// R4: a surface culls the faces its material says to. The pass keeps BO2's own index order and
+/// treats it as clockwise-front (the engine's convention is the opposite, `character.rs`): two
+/// quads, one wound each way — `Back` leaves the front one, `Front` the back one, `None` both.
+#[test]
+fn culls_the_faces_the_surface_says() {
+    let Some((mut r, log, shot)) = renderer() else { return };
+    let green = texture(&mut r, [0, 200, 0, 255]);
+    let mut verts = quad(0.0, 0.0, 16.0, 16.0, 0).to_vec();
+    verts.extend(quad(32.0, 0.0, 48.0, 16.0, 0));
+    // The left quad BO2-wound (clockwise = front here); the right one the other way.
+    let indices = [0u16, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7];
+    for (cull, left, right) in [(NativeCull::Back, true, false), (NativeCull::Front, false, true), (NativeCull::None, true, true)] {
+        let mut s = surface(green, true, indices.len() as u32);
+        s.cull = cull;
+        let mesh = r.native_create_mesh(&verts, &indices, &[s]);
+        assert_ne!(mesh, INVALID);
+        assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh, palette: &[IDENTITY], frame: frame(0) }));
+        r.request_screenshot(INVALID, "cull.png");
+        r.frame();
+        assert_eq!(pixel(&shot, 8, 8) == [0, 200, 0], left, "{cull:?}: the front quad drawn == {left}");
+        assert_eq!(pixel(&shot, 40, 8) == [0, 200, 0], right, "{cull:?}: the back quad drawn == {right}");
+        r.native_destroy_mesh(mesh);
+        r.touch(1);
+    }
+    assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
 }
 
 #[test]
@@ -205,7 +234,7 @@ fn refuses_bad_input_without_errors() {
     bad[0].bones[0] = 300;
     assert_eq!(r.native_create_mesh(&bad, &[0, 1, 2], &[surface(INVALID, true, 3)]), INVALID, "bone past the palette's cap");
     assert_eq!(r.native_create_texture(4, 4, &[0; 10], true), INVALID, "short texture data");
-    let mesh = r.native_create_mesh(&verts, &[0, 1, 2, 0, 2, 3], &[surface(INVALID, true, 6)]);
+    let mesh = r.native_create_mesh(&verts, &[0, 2, 1, 0, 3, 2], &[surface(INVALID, true, 6)]);
     assert_ne!(mesh, INVALID);
     assert!(!r.native_submit(&draw(mesh, &[IDENTITY; 3], 1)), "skinned to bone 3, palette of 3");
     assert!(!r.native_submit(&draw(mesh, &[IDENTITY; 4], 999)), "view out of range");
@@ -223,7 +252,7 @@ fn refuses_bad_input_without_errors() {
 fn takes_the_target_views_transform_when_given_none() {
     let Some((mut r, log, shot)) = renderer() else { return };
     let red = texture(&mut r, [255, 0, 0, 255]);
-    let mesh = r.native_create_mesh(&quad(0.0, 0.0, 16.0, 16.0, 0), &[0, 1, 2, 0, 2, 3], &[surface(red, true, 6)]);
+    let mesh = r.native_create_mesh(&quad(0.0, 0.0, 16.0, 16.0, 0), &[0, 2, 1, 0, 3, 2], &[surface(red, true, 6)]);
     // The view's projection (bx order, the same bytes as the column-major ortho) and a view
     // matrix that moves the world 32 pixels right.
     r.set_view_transform(1, Some(&translate(32.0, 0.0)), Some(&ortho()));
@@ -241,7 +270,7 @@ fn takes_the_target_views_transform_when_given_none() {
 fn runs_before_its_view_or_at_the_end() {
     let Some((mut r, log, shot)) = renderer() else { return };
     let red = texture(&mut r, [255, 0, 0, 255]);
-    let mesh = r.native_create_mesh(&quad(0.0, 0.0, 64.0, 64.0, 0), &[0, 1, 2, 0, 2, 3], &[surface(red, true, 6)]);
+    let mesh = r.native_create_mesh(&quad(0.0, 0.0, 64.0, 64.0, 0), &[0, 2, 1, 0, 3, 2], &[surface(red, true, 6)]);
     // View 2 clears the left half blue after the native pass that runs before it; the native
     // pass queued before an unused view runs at the end, over everything.
     r.set_view_rect(2, 0, 0, 32, H as u16);

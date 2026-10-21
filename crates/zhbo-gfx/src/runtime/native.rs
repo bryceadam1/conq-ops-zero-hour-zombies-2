@@ -9,8 +9,11 @@
 //! rect, so the viewmodel sits in the scene before bloom and the tonemap see it. The pass has a
 //! depth buffer of its own, cleared, so the viewmodel draws over the world (BO2 draws its
 //! viewmodel in a separate depth range) and its parts sort among themselves. Opaque surfaces draw
-//! first, then blended ones in BO2's sort-key order. Shading is in display space, like the scene
-//! it joins (see `native.wgsl`).
+//! first, then blended ones in BO2's sort-key order. Each surface culls the faces its material's
+//! `cullFace` says to (R4); the pass keeps BO2's index order, whose front faces are clockwise in
+//! the framebuffer (the engine's content winds the other way — the W3D conversion swaps for that,
+//! `zhbo-assets` `character.rs`), so pipelines here use `FrontFace::Cw`. Shading is in display
+//! space, like the scene it joins (see `native.wgsl`).
 //!
 //! Submits are validated (handles, view ids, palette size against the mesh's bones, finite
 //! matrices) and refused with a one-time log line; nothing in the frame path panics.
@@ -73,6 +76,17 @@ impl NativeBlend {
     }
 }
 
+/// Which of a surface's faces draw (BO2's `cullFace`; `zhbo_native::model::Cull`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum NativeCull {
+    /// Both faces (BO2's double-sided materials: alpha-tested cutouts, glow planes).
+    #[default]
+    None,
+    /// The back faces: BO2's ordinary lit surfaces.
+    Back,
+    Front,
+}
+
 /// One surface of a mesh: an index range and how it draws.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NativeSurface {
@@ -86,6 +100,7 @@ pub struct NativeSurface {
     pub maps: u16,
     /// BO2's sort key: blended surfaces draw in its order.
     pub sort_key: u8,
+    pub cull: NativeCull,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -129,6 +144,7 @@ struct Surface {
     index_count: u32,
     blend: NativeBlend,
     sort_key: u8,
+    cull: NativeCull,
     bind_group: wgpu::BindGroup,
 }
 
@@ -153,6 +169,7 @@ struct Queued {
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 struct PipelineKey {
     blend: NativeBlend,
+    cull: NativeCull,
     color: wgpu::TextureFormat,
     samples: u32,
 }
@@ -381,7 +398,7 @@ impl Renderer {
                     wgpu::BindGroupEntry { binding: 3, resource: material.as_entire_binding() },
                 ],
             });
-            built.push(Surface { first_index: s.first_index, index_count: s.index_count, blend: s.blend, sort_key: s.sort_key, bind_group });
+            built.push(Surface { first_index: s.first_index, index_count: s.index_count, blend: s.blend, sort_key: s.sort_key, cull: s.cull, bind_group });
         }
         // Opaque first, then blended surfaces in BO2's sort order.
         built.sort_by_key(|s| (s.blend.blended(), s.sort_key));
@@ -507,6 +524,11 @@ impl Renderer {
         let attrs = wgpu::vertex_attr_array![0 => Float32x3, 1 => Float32x3, 2 => Float32x2, 3 => Uint16x4, 4 => Float32x4];
         let constants = [("decode_output", if key.color.is_srgb() { 1.0 } else { 0.0 })];
         let blended = key.blend.blended();
+        let cull_mode = match key.cull {
+            NativeCull::None => None,
+            NativeCull::Back => Some(wgpu::Face::Back),
+            NativeCull::Front => Some(wgpu::Face::Front),
+        };
         let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
         let pipeline = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some("native"),
@@ -517,7 +539,10 @@ impl Renderer {
                 compilation_options: Default::default(),
                 buffers: &[Some(wgpu::VertexBufferLayout { array_stride: VERTEX_BYTES, step_mode: wgpu::VertexStepMode::Vertex, attributes: &attrs })],
             },
-            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, cull_mode: None, ..Default::default() },
+            // BO2 and the engine use opposite front-face winding (the W3D conversion swaps the
+            // index order for that, verified in game: zhbo-assets `character.rs`); this pass keeps
+            // BO2's own order, so its front faces are clockwise in the framebuffer.
+            primitive: wgpu::PrimitiveState { topology: wgpu::PrimitiveTopology::TriangleList, front_face: wgpu::FrontFace::Cw, cull_mode, ..Default::default() },
             depth_stencil: Some(wgpu::DepthStencilState {
                 format: DEPTH_FORMAT,
                 depth_write_enabled: Some(!blended),
@@ -603,7 +628,7 @@ impl Renderer {
             for blended in [false, true] {
                 for q in &draws {
                     for s in q.mesh.surfaces.iter().filter(|s| s.blend.blended() == blended) {
-                        let key = PipelineKey { blend: s.blend, color: color_format, samples: target.samples };
+                        let key = PipelineKey { blend: s.blend, cull: s.cull, color: color_format, samples: target.samples };
                         if let Some(p) = self.native_pipeline(key) {
                             plans.push((p, *q, s));
                         }

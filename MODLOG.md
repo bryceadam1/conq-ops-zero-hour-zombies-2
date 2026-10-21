@@ -1132,6 +1132,31 @@ Also this round, chasing the other half of the finding ("the gun sits a little h
   `ZHBO_DIAG_BIG`/`ZHBO_DIAG_OUT` (`ConquerOps_BO2.big` → PPM; `ZHBO_DIAG_AMB` scales the
   ambient).
 
+## Track R, round 2b: R4's back-face culling (2026-10-21, branch `v1/track-r2`)
+
+Every surface now culls the faces its material's `cullFace` says to, end to end:
+`zhbo_formats::xmodel::cull_of` reads `GfxStateBits::loadBits[0]` bits 14-15 (`GFXS0_CULL_*`: 1
+none, 2 back, 3 front, 0 undefined → none; values from OAT's T6 `GfxStateBitsEnum`,
+git.alterware.dev/zone/OpenAssetTools commit 28011d6b64 — the same source `t6zone/layouts.rs` was
+generated from), the converter writes it into the `.zbm` materials (blob **version 2**), the core
+carries it through `SurfaceSpec`, and the renderer keys pipelines on it.
+
+- **Winding gotcha:** BO2 and the engine use opposite front-face winding (verified in game back
+  on the W3D conversion, `character.rs`: unswapped BO2 order "culls the outside of the model").
+  The native blob keeps BO2's own index order, so the pass's pipelines use `FrontFace::Cw` —
+  confirmed headless against the real AN-94: with a v1→v2-upgraded archive (cull = back on the
+  opaque surfaces) `Cw` renders the receiver's dark exterior correctly while `Ccw` shows the
+  chalky inside. The headless quads were CCW (engine-convention); they are re-wound to BO2's
+  order so the lit tests still exercise front faces.
+- `culls_the_faces_the_surface_says` (headless): back/front/none on both windings.
+- **The archive VERSION (`hud::VERSION`) is deliberately not bumped on this branch** (integrator
+  serializes version bumps): a v1 archive's blobs are refused with "reconvert the BO2 art" and
+  the viewmodel falls back to W3D until the integrator reconverts. Verified against the local v1
+  archive: clean refusal, no draws, no wgpu errors.
+- Reflection probes (the rest of R4) stay out: they need the zone loader to keep
+  `GfxImageLoadDef` data (`XFILE_BLOCK_TEMP`), the dead end already recorded above ("BO2's own
+  reflection probes" backlog item).
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

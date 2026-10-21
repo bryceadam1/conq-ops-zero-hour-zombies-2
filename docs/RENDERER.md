@@ -96,7 +96,11 @@ run in one pass immediately before their `before_view` (the scene composite), in
 frame. A `None` `view_proj` takes the target view's own view × projection at `frame()`. The pass
 has its own `Depth32Float` buffer, cleared and discarded, so the viewmodel draws over the world
 and its parts sort among themselves; opaque surfaces draw first, blended ones after in BO2's
-sort-key order. Shading is `bo2Shade` (host patch 0009) ported to WGSL **in display (gamma)
+sort-key order, and each surface culls the faces its material's `cullFace` says to
+(`GFXS0_CULL_*`, bits 14-15 of `GfxStateBits::loadBits[0]` — ordinary lit surfaces cull their
+back faces, cutouts and glows draw double-sided; the pass keeps BO2's index order, so front is
+clockwise: the engine's content winds the other way, which is why the W3D conversion swaps
+indices). Shading is `bo2Shade` (host patch 0009) ported to WGSL **in display (gamma)
 space**, as bo2Shade itself runs and as the rest of Zero Hour's scene is lit: colour maps upload
 raw, the lights are Zero Hour's display-encoded values used as-is, and the shaded result is
 written straight to the gamma-space scene target — unless that target is itself sRGB, in which
@@ -152,8 +156,9 @@ One invalid draw in a wgpu render pass invalidates the whole frame. The runtime 
 * `tests/native.rs` drives the native BO2 pass headless: bone-skinned quads move with their
   palette, an emissive colour comes through exactly, a dark BO2 finish keeps its hue under Zero
   Hour's day lights and stays dark under a bright map ambient (the grey wash-out regression),
-  light brightens a lit surface, a `None` matrix takes the view's transform, the pass runs before
-  its view (or at the end), and every refusal is counted without a wgpu error.
+  light brightens a lit surface, surfaces cull the faces their materials say to (BO2's winding is
+  clockwise-front here), a `None` matrix takes the view's transform, the pass runs before its
+  view (or at the end), and every refusal is counted without a wgpu error.
 * `tests/ffi.rs` locks the Rust side of the ABI: it mirrors the header's struct layouts and the
   API-table field counts with compile-time asserts and round-trips the encode functions through
   a `Vec<u8>` cursor, so header and Rust drift fail a plain `cargo test`.

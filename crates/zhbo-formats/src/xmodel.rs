@@ -93,12 +93,44 @@ impl Material {
         self.textures.iter().filter(|t| t.semantic == semantic).find_map(|t| t.image.as_ref())
     }
 
+    /// The render state of the material's main technique (the lit one, or the unlit/emissive one
+    /// of a glow).
+    fn main_state_bits(&self) -> Option<[u32; 2]> {
+        [2, 3].iter().find_map(|&t| self.state_bits.get(t).copied().flatten()).or_else(|| self.state_bits.iter().skip(2).find_map(|b| *b))
+    }
+
     /// How the material is drawn over what is behind it, from the render state of its main
     /// technique (the lit one, or the unlit/emissive one of a glow).
     pub fn blend(&self) -> crate::w3d::Blend {
-        let main = [2, 3].iter().find_map(|&t| self.state_bits.get(t).copied().flatten());
-        let main = main.or_else(|| self.state_bits.iter().skip(2).find_map(|b| *b));
-        main.map_or(crate::w3d::Blend::Opaque, |b| blend_of(b[0]))
+        self.main_state_bits().map_or(crate::w3d::Blend::Opaque, |b| blend_of(b[0]))
+    }
+
+    /// Which faces the material culls, from the same technique.
+    pub fn cull(&self) -> Cull {
+        self.main_state_bits().map_or(Cull::Back, |b| cull_of(b[0]))
+    }
+}
+
+/// Which of a surface's faces draw (`GfxStateBits::loadBits[0]` bits 14-15: BO2's
+/// `GFXS0_CULL_*`, as in OAT's T6 `GfxStateBitsEnum` — OpenAssetTools commit 28011d6b64).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Cull {
+    /// Both (alpha-tested cutouts, glow planes).
+    #[default]
+    None,
+    /// The back faces: BO2's ordinary lit surfaces.
+    Back,
+    Front,
+}
+
+/// `GfxStateBits::loadBits[0]` bits 14-15: 1 `GFXS0_CULL_NONE`, 2 `GFXS0_CULL_BACK`,
+/// 3 `GFXS0_CULL_FRONT`. 0 is undefined in the enum (no lit technique sets it): draw
+/// double-sided, as surfaces rendered before this was read at all.
+pub fn cull_of(bits: u32) -> Cull {
+    match (bits >> 14) & 3 {
+        2 => Cull::Back,
+        3 => Cull::Front,
+        _ => Cull::None,
     }
 }
 
@@ -157,7 +189,7 @@ fn unpack_unit_vec(packed: u32) -> [f32; 3] {
     let c = |shift: u32| {
         let v = (packed >> shift) & 0x3FF;
         let bits = v.wrapping_sub(2 * (v & 0x200)).wrapping_add(0x4040_0000);
-        (f32::from_bits(bits) - 3.0) * 8208.0312
+        (f32::from_bits(bits) - 3.0) * 8_208.031
     };
     [c(0), c(10), c(20)]
 }
@@ -368,6 +400,13 @@ mod tests {
         use crate::w3d::Blend;
         // As BO2's materials have them: a gun, the Reflex lens and reticle, the tablet's buttons.
         assert_eq!(blend_of(0x1812_8812), Blend::Opaque);
+        // The same words for culling (bits 14-15): the ordinary lit material culls back faces,
+        // 1 is double-sided, 3 culls front, and 0 (undefined in BO2's enum) stays double-sided.
+        assert_eq!(cull_of(0x1812_8812), Cull::Back);
+        assert_eq!(cull_of(0x0000_4065), Cull::None);
+        assert_eq!(cull_of(0x0000_8065), Cull::Back);
+        assert_eq!(cull_of(0x0000_C065), Cull::Front);
+        assert_eq!(cull_of(0x0000_0065), Cull::None);
         assert_eq!(blend_of(0x0000_0065), Blend::Alpha);
         assert_eq!(blend_of(0x0000_0862), Blend::Premultiplied);
         assert_eq!(blend_of(0x0000_082A), Blend::Additive { alpha: false });

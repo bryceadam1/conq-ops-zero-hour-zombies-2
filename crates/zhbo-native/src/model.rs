@@ -8,7 +8,8 @@ use crate::io::{FormatError, Reader, Writer};
 use crate::math::{Quat, Vec3};
 
 pub const MAGIC: [u8; 4] = *b"ZBM\0";
-pub const VERSION: u32 = 1;
+/// 2: materials carry `cull`.
+pub const VERSION: u32 = 2;
 
 /// No material on a surface (BO2 leaves the clan tag/emblem surfaces to code).
 pub const NO_MATERIAL: u32 = u32::MAX;
@@ -82,6 +83,35 @@ impl Blend {
     }
 }
 
+/// Which of a surface's faces draw: the material's `cullFace` (`zhbo_formats::xmodel::Cull`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Cull {
+    /// Both (BO2's double-sided: alpha-tested cutouts, glow planes; also the pre-cull default).
+    #[default]
+    None,
+    /// The back faces: BO2's ordinary lit surfaces.
+    Back,
+    Front,
+}
+
+impl Cull {
+    fn code(self) -> u8 {
+        match self {
+            Cull::None => 0,
+            Cull::Back => 1,
+            Cull::Front => 2,
+        }
+    }
+    fn from_code(c: u8) -> Result<Cull, FormatError> {
+        Ok(match c {
+            0 => Cull::None,
+            1 => Cull::Back,
+            2 => Cull::Front,
+            _ => return Err(FormatError::Corrupt(format!("cull {c}"))),
+        })
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Material {
     /// BO2's material name (for logs).
@@ -97,6 +127,8 @@ pub struct Material {
     pub maps: Option<String>,
     /// BO2's sort key (draw order of blended surfaces).
     pub sort_key: u8,
+    /// Which faces draw (R4; the material's `cullFace`).
+    pub cull: Cull,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -163,6 +195,7 @@ impl Model {
             w.opt_str(m.color.as_deref());
             w.opt_str(m.maps.as_deref());
             w.u8(m.sort_key);
+            w.u8(m.cull.code());
         }
         w.count(self.lods.len());
         for l in &self.lods {
@@ -210,7 +243,7 @@ impl Model {
             };
             bones.push(Bone { name, parent, local_rotation: r.f32n()?, local_position: r.f32n()?, rotation: r.f32n()?, position: r.f32n()? });
         }
-        let nm = r.count(8)?;
+        let nm = r.count(9)?;
         let mut materials = Vec::with_capacity(nm);
         for _ in 0..nm {
             materials.push(Material {
@@ -220,6 +253,7 @@ impl Model {
                 color: r.opt_str()?,
                 maps: r.opt_str()?,
                 sort_key: r.u8()?,
+                cull: Cull::from_code(r.u8()?)?,
             });
         }
         let nl = r.count(12)?;
@@ -293,7 +327,7 @@ pub(crate) mod tests {
         Model {
             name: "strip".into(),
             bones: vec![bone("j_root", None, 0.0), bone("j_arm", Some(0), 10.0)],
-            materials: vec![Material { name: "mtl_strip".into(), color: Some("Art\\Textures\\strip.tga".into()), maps: Some("Art\\Textures\\strip_nsg.tga".into()), ..Default::default() }],
+            materials: vec![Material { name: "mtl_strip".into(), color: Some("Art\\Textures\\strip.tga".into()), maps: Some("Art\\Textures\\strip_nsg.tga".into()), cull: Cull::Back, ..Default::default() }],
             lods: vec![Lod { distance: 0.0, first_surface: 0, surface_count: 1 }],
             surfaces: vec![Surface {
                 material: 0,

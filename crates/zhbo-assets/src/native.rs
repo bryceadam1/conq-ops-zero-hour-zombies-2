@@ -28,6 +28,14 @@ fn blend(b: w3d::Blend) -> Blend {
     }
 }
 
+fn cull(c: xmodel::Cull) -> nm::Cull {
+    match c {
+        xmodel::Cull::None => nm::Cull::None,
+        xmodel::Cull::Back => nm::Cull::Back,
+        xmodel::Cull::Front => nm::Cull::Front,
+    }
+}
+
 /// `m` as a native model: the textures the W3D pass already wrote for its surfaces (`tex`, from
 /// `textures::textures`), the packed maps and blends `looks` holds for them. Surfaces the W3D pass
 /// leaves out (`looks.dropped`: reticles, clan tags) are left out here too.
@@ -62,6 +70,8 @@ pub(crate) fn model(m: &xmodel::Model, tex: &[Option<String>], looks: &Looks) ->
                 color: texture.as_ref().map(|t| format!("Art\\Textures\\{t}")),
                 maps: texture.as_ref().and_then(|t| looks.maps.get(t)).map(|t| format!("Art\\Textures\\{t}")),
                 sort_key: mat.as_ref().map_or(0, |mat| mat.sort_key),
+                // Surfaces BO2 leaves to code (no material) stay double-sided, as they drew.
+                cull: mat.as_ref().map_or(nm::Cull::None, |mat| cull(mat.cull())),
             };
             out.materials.push(material);
             let vertices = surface.vertices.iter().map(vertex).collect();
@@ -262,6 +272,16 @@ mod tests {
         // A dropped texture drops its surface.
         looks.dropped.insert("gun.tga".into());
         assert!(model(&gun(), &[Some("gun.tga".into())], &looks).surfaces.is_empty());
+    }
+
+    /// R4: the material's `cullFace` carries into the blob; a surface BO2 left to code (no
+    /// material) stays double-sided, as it drew before culling was read.
+    #[test]
+    fn surfaces_cull_as_their_materials_do() {
+        let mut g = gun();
+        g.materials = vec![Some(xmodel::Material { name: "mtl".into(), textures: vec![], state_bits: vec![None, None, Some([0x0000_C000, 0])], sort_key: 0 })];
+        assert_eq!(model(&g, &[None], &Looks::default()).materials[0].cull, nm::Cull::Front, "GFXS0_CULL_FRONT (bits 14-15 = 3)");
+        assert_eq!(model(&gun(), &[None], &Looks::default()).materials[0].cull, nm::Cull::None);
     }
 
     /// The native pose agrees with the W3D rig (verified in game) bone by bone: the same weapon,
