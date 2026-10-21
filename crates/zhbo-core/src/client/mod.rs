@@ -633,6 +633,22 @@ impl Client {
 /// its spec instead of a registry index.
 const CHOOSE_CLASS_CUSTOM: i32 = i32::MIN;
 
+/// The match list's row for the class the General is wearing, so the pick screen can open on it
+/// (`hud/changeclass.lua`'s `Button_RowGainFocus` fires for the active class). The sim names a
+/// shipped class by its registry id and a custom one `custom:<name>`
+/// (`sim::choose_class`), and the profile stores customs by name, which is what the row lookup
+/// compares.
+fn current_class_row(class: Option<&str>) -> Option<usize> {
+    let class = class?;
+    let presets = crate::classes::get();
+    let customs = crate::profile::classes();
+    crate::classui::pick_rows(false).iter().position(|row| match *row {
+        crate::classui::PickRow::Preset(j) => presets.get(j).is_some_and(|c| c.id == class),
+        crate::classui::PickRow::Custom(j) => customs.get(j).is_some_and(|c| class == format!("custom:{}", c.name)),
+        crate::classui::PickRow::Empty(_) => false,
+    })
+}
+
 /// Fill a custom-class pick into the outgoing one-shot: the marker in `choose_class`, the class's
 /// wire words in the payload. The bridge turns it into `MSG_ZHBO_CHOOSE_CLASS` and the sim
 /// reassembles the spec ([`crate::classes::CustomClass::from_wire_words`]).
@@ -748,6 +764,12 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
             if !self.hud.class_pick_seen {
                 self.hud.class_pick_seen = true;
                 self.cues.play(cues::IN_GAME_OPEN);
+                // BO2's changeclass screen focuses the class the player is wearing (its rows fire
+                // `Button_RowGainFocus` on the active one), so opening the panel mid-life lands on
+                // it rather than on the first row.
+                if let Some(row) = current_class_row(player.as_ref().and_then(|p| p.class.as_deref())) {
+                    self.class_pick_highlight = row;
+                }
             }
         } else {
             self.hud.class_pick_seen = false;

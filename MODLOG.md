@@ -1214,6 +1214,29 @@ the screen's own entrance, and eased highlight moves between rows (only the focu
 `BOIIOrange` pulse is in). Remaining Track C scope otherwise: the pixel pass against `cac/sweep/`
 and the in-match class panel per `hud/class.lua`.
 
+## v1.0 Track C, fifth wave: the in-match panel opens on the class you wear (2026-10-21)
+
+BO2's in-game class panel is the pause menu's Class tab (`hud/class.lua`) and its changeclass
+screen focuses the class the player is wearing — `Button_RowGainFocus` runs on the active class,
+and the preview starts on it. The mod's in-match pick always opened on row 0, so a classed player
+pressing the command bar's entry saw the first slot focused and could not tell what they wore.
+
+`Client` now derives the row from the sim's class id when the panel opens
+(`current_class_row`: a shipped class by registry id, a custom by `custom:<name>` against the
+active set's profile list) and focuses it. The sim's `choose_class` is unchanged.
+
+On "applies on next spawn": the sim already applies a pick as it lands, which is right for the
+screen's real use — BO2's `changeclass` IS the spawn screen, and the mod's unclassed spawn offer
+is that screen. The command bar's mid-life entry is a mod affordance BO2 has no equivalent for, so
+its pick applies at once (with the kit's first raise) rather than waiting for a respawn; a
+`PlayerSim::pending_class` applied by `take_control` would be the way to get the pause-menu
+version, and it would change the classpick autotest's mid-life expectations. Left to the
+integrator as a design call.
+
+Tests: `cargo test -p zhbo-core -p zhbo-assets` green (270 + 37), clippy clean in the touched
+files. New: a two-custom profile, the second picked by its row key, the panel closed and forced
+open again — the highlight is the worn class's row.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

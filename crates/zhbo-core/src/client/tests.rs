@@ -533,6 +533,62 @@
         crate::profile::reset();
     }
 
+    /// BO2's changeclass focuses the class the player is wearing, so the in-match panel opens on
+    /// the equipped class rather than on the first row (the command bar's entry can be pressed at
+    /// any time, and landing on row 1 would make the player think they wear the default).
+    #[test]
+    fn the_in_match_panel_opens_on_the_class_the_general_is_wearing() {
+        let _g = crate::profile::lock();
+        crate::profile::reset();
+        crate::profile::save(crate::classes::CustomClass { name: "First".into(), ..Default::default() });
+        crate::profile::save(crate::classes::CustomClass { name: "Second".into(), primary: "fnp45_mp".into(), ..Default::default() });
+        let host = FakeHost::default();
+        host.add(general(7, 0));
+        let mut sim = Sim::new();
+        sim.rts_update(&host, 0, 7, 0, [0, 0, 0], None);
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, class_pick_force: 1, ..Default::default() };
+        for _ in 0..2 {
+            client.frame(&mut sim, &inp);
+            let f = sim.frame + 1;
+            sim.step(&host, f);
+            inp.logic_frame = f;
+        }
+        assert!(client.class_pick_open, "the command bar opened the panel");
+        // Pick the SECOND custom by its row key; deliver the one-shot as the bridge does.
+        let row = crate::classui::pick_rows(false)
+            .iter()
+            .position(|r| *r == crate::classui::PickRow::Custom(1))
+            .expect("the second custom's row");
+        let key = crate::classui::pick_key(row).expect("a digit key");
+        inp.keys.set_down(key, true);
+        let out = client.frame(&mut sim, &inp);
+        inp.keys.set_down(key, false);
+        client.frame(&mut sim, &inp);
+        let words = &out.choose_class_payload[..out.choose_class_payload_len as usize];
+        sim.choose_class(0, out.choose_class_general, usize::MAX, words);
+        assert_eq!(sim.player(0).expect("the record").class.as_deref(), Some("custom:Second"));
+        // Close the panel, then force it open again: it focuses the class now worn.
+        inp.class_pick_force = 0;
+        for _ in 0..2 {
+            client.frame(&mut sim, &inp);
+            let f = sim.frame + 1;
+            sim.step(&host, f);
+            inp.logic_frame = f;
+        }
+        assert!(!client.class_pick_open, "a classed General's panel is closed");
+        inp.class_pick_force = 1;
+        for _ in 0..2 {
+            client.frame(&mut sim, &inp);
+            let f = sim.frame + 1;
+            sim.step(&host, f);
+            inp.logic_frame = f;
+        }
+        assert!(client.class_pick_open);
+        assert_eq!(client.class_pick_highlight, row, "the panel opens on the worn class, not row 0");
+        crate::profile::reset();
+    }
+
     /// Bug 3's other half: a class picked from the command bar while the General is still under
     /// RTS control must target *that* General. The client only learned the General's id on entering
     /// first person, so a fresh General's overhead pick went to id 0 and the sim dropped it — the
