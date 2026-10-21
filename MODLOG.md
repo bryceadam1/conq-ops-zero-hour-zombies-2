@@ -1258,6 +1258,93 @@ fully exited when the next launcher checks the single-instance lock, so it bails
 "Generals is already running...Bail!" on stdout; the script's `rm -f` of the userdata log then
 leaves `wait_for_log` watching a log that never appears ("the script never reached first
 person"). Re-run the failed mode standalone.
+## Track R, round 2: the grey wash-out was linear light (2026-10-21, branch `v1/track-r2`)
+
+Root cause of finding #1 above: `native.wgsl` had ported `bo2Shade` to *linear* light — colour
+maps sampled through sRGB views, lights and ambient sRGB-decoded, the result re-encoded for the
+scene target. But bo2Shade was tuned in game in display (gamma) space, and in linear light its
+environment term (a sky/ground reflection scaled from the ambient and sun levels) keeps roughly
+its gamma-space strength while a dark albedo's diffuse collapses (42/255 ≈ 0.165 display → 0.024
+linear): the grey sky reflection swamps the finish's hue. It only bites under a bright map
+ambient (Zero Hour maps go well past the GameData defaults — the wash-out map's ambient is past
+1), which is why checking the day lights (all ≤ 1) found nothing. Fix: shade in display space,
+exactly like bo2Shade and like the scene the pass draws into. Colour maps upload raw (the core's
+`gpu.rs` and the renderer's `white` fallback drop their sRGB views), lights and ambient are Zero
+Hour's display-encoded values used as-is, and the result is written straight; only when the target
+view is itself an sRGB format is it decoded first, since the hardware re-encodes on write
+(`encode_srgb` inverted to `decode_output`).
+
+Validated headless on Metal: the new `a_dark_finish_stays_dark_under_a_bright_ambient` test (the
+AN-94's average finish 42/39/35 with its packed maps, ambient 1.2) renders **RGB 134/133/132 —
+exactly the reported light grey — against the old shader**, and RGB 93/90/86 with its hue on the
+new one; `a_dark_finish_keeps_its_hue_under_zero_hour_light` (olive 70/80/40, the day lights)
+passes on the new shader (85/94/56). With the real converted AN-94 maps
+(`nativevm::tests::diag_real_maps`, `#[ignore]`d) and the full viewmodel from the archive
+(`diag_real_viewmodel`, ambient 1.2) the gun renders its dark olive/metal finish, not grey.
+
+Also this round, chasing the other half of the finding ("the gun sits a little higher"):
+- `native_pose_matches_the_w3d_rig` (zhbo-assets, `#[ignore]`d, needs the BO2 install): the
+  native pose and the verified W3D rig must agree bone by bone (< 0.01 units) across weapons and
+  frames. **Not run here — no BO2 install on this machine; integrator.**
+- `ZHBO_NATIVE_COMPARE=1` (`ZhboViewmodel.cpp`, with `ZHBO_NATIVE_VIEWMODEL=1`): poses the W3D
+  model hidden alongside the native one and logs both paths' `tag_weapon`/`tag_flash` once a
+  second. **Not compile-checked here (no game build on the branch); integrator.**
+- The diag tests take `ZHBO_DIAG_DIR` (extracted `an94_col.tga`/`an94_nsg.tga`),
+  `ZHBO_DIAG_BIG`/`ZHBO_DIAG_OUT` (`ConquerOps_BO2.big` → PPM; `ZHBO_DIAG_AMB` scales the
+  ambient).
+
+## Track R, round 2b: R4's back-face culling (2026-10-21, branch `v1/track-r2`)
+
+Every surface now culls the faces its material's `cullFace` says to, end to end:
+`zhbo_formats::xmodel::cull_of` reads `GfxStateBits::loadBits[0]` bits 14-15 (`GFXS0_CULL_*`: 1
+none, 2 back, 3 front, 0 undefined → none; values from OAT's T6 `GfxStateBitsEnum`,
+git.alterware.dev/zone/OpenAssetTools commit 28011d6b64 — the same source `t6zone/layouts.rs` was
+generated from), the converter writes it into the `.zbm` materials (blob **version 2**), the core
+carries it through `SurfaceSpec`, and the renderer keys pipelines on it.
+
+- **Winding gotcha:** BO2 and the engine use opposite front-face winding (verified in game back
+  on the W3D conversion, `character.rs`: unswapped BO2 order "culls the outside of the model").
+  The native blob keeps BO2's own index order, so the pass's pipelines use `FrontFace::Cw` —
+  confirmed headless against the real AN-94: with a v1→v2-upgraded archive (cull = back on the
+  opaque surfaces) `Cw` renders the receiver's dark exterior correctly while `Ccw` shows the
+  chalky inside. The headless quads were CCW (engine-convention); they are re-wound to BO2's
+  order so the lit tests still exercise front faces.
+- `culls_the_faces_the_surface_says` (headless): back/front/none on both windings.
+- **The archive VERSION (`hud::VERSION`) is deliberately not bumped on this branch** (integrator
+  serializes version bumps): a v1 archive's blobs are refused with "reconvert the BO2 art" and
+  the viewmodel falls back to W3D until the integrator reconverts. Verified against the local v1
+  archive: clean refusal, no draws, no wgpu errors.
+- Reflection probes (the rest of R4) stay out: they need the zone loader to keep
+  `GfxImageLoadDef` data (`XFILE_BLOCK_TEMP`), the dead end already recorded above ("BO2's own
+  reflection probes" backlog item).
+
+## Integrating Track R round 2: display-space shading verified in game (2026-10-21)
+
+Merged `v1/track-r2` (3 commits): the grey wash-out fix (bo2Shade had been ported to linear
+light but was tuned in Zero Hour's display (gamma) space; under a bright map ambient the
+environment term kept its gamma strength while a dark albedo's diffuse collapsed, swamping the
+hue) and R4's back-face culling (`cullFace` from the material state bits, zbm blob v2,
+`FrontFace::Cw` anchored three ways: the in-game-verified opposite winding, the engine path's
+own setting, a headless A/B on the real AN-94). MODLOG.md was the only conflict; both sides
+kept. Archive VERSION 46 → 47 (zbm v2; old archives refuse cleanly and fall back to W3D).
+
+Verified: cargo test --workspace green; clippy clean in every Track R file (30 pre-existing
+warnings remain in unowned files); `cargo xtask build` clean (first compile of the round-2
+bridge changes); in-game autotest 13/13 on the W3D path and 13/13 with
+`ZHBO_NATIVE_VIEWMODEL=1 ZHBO_NATIVE_COMPARE=1`. The compare log shows the native and W3D rigs
+agreeing on `tag_weapon`/`tag_flash` to ≤ 0.006 units across clips and the whole ADS blend.
+Screenshots: the AN-94 and TAC-45 render dark gunmetal/olive again — no grey wash-out — and no
+inside-out surfaces from the culling.
+
+Residual, for the next Track R round:
+- Art scale is still unreconciled: `zhbo_native::ART_SCALE = 11/72` vs the sim's
+  `ZH_PER_INCH = 1/6` (12/72) — 9% off. Invisible in first person; must be settled before R7
+  (third-person/world placement).
+- One frame under enemy fire showed a magenta blob at the screen's right edge — world-side FX
+  (the native pass has no magenta placeholder); watch it in the next playtest.
+- Reflection probes (the rest of R4) stay skipped: the `XFILE_BLOCK_TEMP` dead end stands.
+- `native_pose_matches_the_w3d_rig` still needs the BO2 install to run ("the gun sits a little
+  higher"); the compare mode's two-tag log is the in-game substitute so far.
 
 ## Next steps
 

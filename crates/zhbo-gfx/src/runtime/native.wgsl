@@ -3,17 +3,19 @@
 // The lighting is the engine's bo2Shade (host patch 0009, MODLOG #74), which was tuned in game on
 // the W3D path: per-pixel normals with the tangent frame from screen-space derivatives, a
 // gloss-driven normalized Blinn-Phong highlight with Fresnel, and a reflection of a sky and ground
-// built from the scene's lights. Here it runs in linear light: the colour map is sampled through an
-// sRGB view and the light colours (Zero Hour's, display-encoded) are decoded, and the result is
-// encoded again for the gamma-space scene target unless the target view is itself sRGB
-// (`encode_srgb`).
+// built from the scene's lights. It runs in display (gamma) space, as bo2Shade does and as the rest
+// of Zero Hour's scene is lit: colour maps are sampled raw and the lights are Zero Hour's own
+// display-encoded values. (A linear-light port washed dark finishes out to grey under Zero Hour's
+// bright map ambients: the environment term, tuned in gamma space, is several times stronger in
+// linear light. Integrator finding #1, round 2.) Only when the target view is itself sRGB is the
+// result decoded first, since the hardware encodes it again (`decode_output`).
 
 const MAX_BONES: u32 = 256u;
 const MAX_POWER: f32 = 2048.0;
 const LIGHT_SATURATION: f32 = 0.35;
 const LUMA: vec3<f32> = vec3<f32>(0.2126, 0.7152, 0.0722);
 
-override encode_srgb: bool = true;
+override decode_output: bool = false;
 
 struct Frame {
     view_proj: mat4x4<f32>,
@@ -66,22 +68,16 @@ fn vs(v: VIn) -> VOut {
     return o;
 }
 
-fn decode(c: vec3<f32>) -> vec3<f32> {
+fn decode(v: vec3<f32>) -> vec3<f32> {
+    let c = max(v, vec3<f32>(0.0));
     let lo = c / 12.92;
     let hi = pow((c + 0.055) / 1.055, vec3<f32>(2.4));
     return select(hi, lo, c <= vec3<f32>(0.04045));
 }
 
-fn encode(c: vec3<f32>) -> vec3<f32> {
-    let x = max(c, vec3<f32>(0.0));
-    let lo = x * 12.92;
-    let hi = 1.055 * pow(x, vec3<f32>(1.0 / 2.4)) - 0.055;
-    return select(hi, lo, x <= vec3<f32>(0.0031308));
-}
-
 fn finish(c: vec3<f32>, a: f32) -> vec4<f32> {
-    if (encode_srgb) {
-        return vec4<f32>(encode(c), a);
+    if (decode_output) {
+        return vec4<f32>(decode(c), a);
     }
     return vec4<f32>(c, a);
 }
@@ -133,7 +129,7 @@ fn fs(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let ao = select(1.0, albedo.a, material.z > 0.5);
     let v = normalize(frame.eye.xyz - i.world);
 
-    var ambient = decode(frame.ambient.rgb);
+    let ambient = frame.ambient.rgb;
     var direct = vec3<f32>(0.0);
     var spec = vec3<f32>(0.0);
     var sun = vec3<f32>(0.0);
@@ -144,7 +140,7 @@ fn fs(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
         }
         let ld = frame.light_dir[li].xyz;
         let l = select(vec3<f32>(0.0, 0.0, 1.0), normalize(ld), length(ld) > 1e-5);
-        let raw = decode(frame.light_color[li].rgb);
+        let raw = frame.light_color[li].rgb;
         if (li == 0u) {
             sun = raw;
         }

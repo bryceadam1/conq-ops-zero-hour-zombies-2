@@ -217,3 +217,121 @@ fn draws_into_a_headless_renderer() {
     with_state(|s| s.gpu.release());
     zhgfx_shutdown();
 }
+
+#[cfg(feature = "renderer")]
+#[test]
+#[ignore = "diagnostic: ZHBO_DIAG_DIR holds an94_col.tga/an94_nsg.tga from the archive"]
+fn diag_real_maps() {
+    use std::sync::{Arc, Mutex};
+    use zhbo_gfx::ffi::{with_renderer, zhgfx_init, zhgfx_shutdown, ZhgfxInit};
+    use zhbo_gfx::runtime::*;
+    let dir = std::env::var("ZHBO_DIAG_DIR").unwrap();
+    let col = zhbo_native::tga::decode(&std::fs::read(format!("{dir}/an94_col.tga")).unwrap()).unwrap();
+    let nsg = zhbo_native::tga::decode(&std::fs::read(format!("{dir}/an94_nsg.tga")).unwrap()).unwrap();
+    let init = ZhgfxInit { kind: 0, window: std::ptr::null_mut(), display: std::ptr::null_mut(), width: 64, height: 64, reset: 0, transient_vb_size: 0, transient_ib_size: 0 };
+    assert!(unsafe { zhgfx_init(&init) });
+    let shot: Arc<Mutex<Option<Vec<u8>>>> = Arc::default();
+    let shot2 = shot.clone();
+    with_renderer((), |r| {
+        r.set_screenshot_fn(Box::new(move |_, _, _, _, d| *shot2.lock().unwrap() = Some(d.to_vec())));
+        r.set_view_rect(1, 0, 0, 64, 64);
+        r.touch(1);
+        let c = r.native_create_texture(col.width, col.height, &col.rgba, false);
+        let m = r.native_create_texture(nsg.width, nsg.height, &nsg.rgba, false);
+        let v = |x: f32, y: f32, u: f32, w: f32| NativeVertex { position: [x, y, 0.0], normal: [0.0, 0.0, -1.0], uv: [u, w], bones: [0; 4], weights: [1.0, 0.0, 0.0, 0.0] };
+        let verts = [v(0.0, 0.0, 0.0, 0.0), v(0.0, 64.0, 0.0, 1.0), v(64.0, 64.0, 1.0, 1.0), v(64.0, 0.0, 1.0, 0.0)];
+        for (maps, label) in [(INVALID, "no maps"), (m, "maps")] {
+            let mesh = r.native_create_mesh(&verts, &[0, 1, 2, 0, 2, 3], &[NativeSurface { first_index: 0, index_count: 6, blend: NativeBlend::Opaque, emissive: false, color: c, maps, sort_key: 0, cull: NativeCull::None }]);
+            let mut ortho = [0.0f32; 16];
+            ortho[0] = 2.0 / 64.0; ortho[5] = -2.0 / 64.0; ortho[12] = -1.0; ortho[13] = 1.0; ortho[14] = 0.5; ortho[15] = 1.0;
+            let mut lights = [NativeLight::default(); 3];
+            lights[0] = NativeLight { direction: [0.81, -0.38, 0.45], color: [1.0, 1.0, 1.0] };
+            lights[1] = NativeLight { direction: [-0.79, -0.62, 0.0], color: [0.24, 0.24, 0.31] };
+            let f = NativeFrame { view_proj: Some(ortho), eye: [32.0, 32.0, -100.0], ambient: [0.22, 0.2, 0.17], lights, light_count: 2, debug: 0.0 };
+            r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh, palette: &[zhbo_native::math::MAT4_IDENTITY], frame: f });
+            r.request_screenshot(INVALID, "x");
+            r.frame();
+            let px = shot.lock().unwrap().take().unwrap();
+            let n = (px.len() / 4) as f32;
+            let (px, _) = px.as_chunks::<4>();
+            let avg: Vec<f32> = (0..3).map(|c| px.iter().map(|p| p[2 - c] as f32).sum::<f32>() / n).collect();
+            eprintln!("{label}: avg RGB {avg:?}");
+        }
+    });
+    zhgfx_shutdown();
+}
+
+#[cfg(feature = "renderer")]
+#[test]
+#[ignore = "diagnostic: ZHBO_DIAG_BIG = ConquerOps_BO2.big, ZHBO_DIAG_OUT = out.ppm"]
+fn diag_real_viewmodel() {
+    use std::sync::{Arc, Mutex};
+    use zhbo_gfx::ffi::{with_renderer, zhgfx_init, zhgfx_shutdown, ZhgfxInit};
+    use zhbo_gfx::runtime::INVALID;
+    let big = std::fs::read(std::env::var("ZHBO_DIAG_BIG").unwrap()).unwrap();
+    let be = |a: usize| u32::from_be_bytes(big[a..a + 4].try_into().unwrap()) as usize;
+    let mut index = std::collections::HashMap::new();
+    let mut at = 16;
+    for _ in 0..be(8) {
+        let (off, size) = (be(at), be(at + 4));
+        let end = at + 8 + big[at + 8..].iter().position(|&b| b == 0).unwrap();
+        index.insert(String::from_utf8_lossy(&big[at + 8..end]).to_lowercase(), (off, size));
+        at = end + 1;
+    }
+    let (w, h) = (320u32, 200u32);
+    let init = ZhgfxInit { kind: 0, window: std::ptr::null_mut(), display: std::ptr::null_mut(), width: w, height: h, reset: 0, transient_vb_size: 0, transient_ib_size: 0 };
+    assert!(unsafe { zhgfx_init(&init) });
+    let shot: Arc<Mutex<Option<Vec<u8>>>> = Arc::default();
+    let shot2 = shot.clone();
+    with_renderer((), |r| {
+        r.set_screenshot_fn(Box::new(move |_, _, _, _, d| *shot2.lock().unwrap() = Some(d.to_vec())));
+        r.set_view_rect(1, 0, 0, w as u16, h as u16);
+        r.set_view_clear(1, zhbo_gfx::state::CLEAR_COLOR, 0x6080a0ff, 1.0, 0);
+        let view = [0.0, 0.0, 1.0, 0.0, -1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 1.0];
+        let (n, f) = (0.3f32, 100.0f32);
+        let t = 1.0 / (65f32.to_radians() / 2.0).tan();
+        let proj = [t * h as f32 / w as f32, 0.0, 0.0, 0.0, 0.0, t, 0.0, 0.0, 0.0, 0.0, f / (f - n), 1.0, 0.0, 0.0, -n * f / (f - n), 0.0];
+        r.set_view_transform(1, Some(&view), Some(&proj));
+        r.touch(1);
+    });
+    let vm: i32 = std::env::var("ZHBO_DIAG_VM").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+    let code = with_state(|s| {
+        *s = ffi::State::default();
+        let mut inp = input(1, 0.0);
+        inp.vm = vm;
+        inp.target_view = 1;
+        inp.before_view = 2;
+        let amb: f32 = std::env::var("ZHBO_DIAG_AMB").ok().and_then(|v| v.parse().ok()).unwrap_or(0.2);
+        inp.ambient = [amb; 3];
+        inp.lights[0] = ffi::ZhboNativeLight { dir: [0.81, -0.38, 0.45], color: [1.0, 1.0, 1.0] };
+        inp.lights[1] = ffi::ZhboNativeLight { dir: [-0.79, -0.62, 0.0], color: [0.24, 0.24, 0.31] };
+        inp.light_count = 2;
+        let mut code = 0;
+        for _ in 0..12 {
+            code = s.frame(&inp, true);
+            let wanted: Vec<String> = s.files.wanted().map(str::to_string).collect();
+            for p in wanted {
+                let bytes = index.get(&p.to_lowercase()).map(|&(o, n)| &big[o..o + n]);
+                s.files.provide(&p, bytes);
+            }
+        }
+        while let Some(l) = s.log.pop_front() {
+            eprintln!("{l}");
+        }
+        code
+    });
+    eprintln!("code {code}");
+    with_renderer((), |r| {
+        r.request_screenshot(INVALID, "x");
+        r.frame();
+        eprintln!("errors {} skipped {} live {:?}", r.stats().errors, r.stats().native_skipped, r.native_live());
+    });
+    let px = shot.lock().unwrap().take().unwrap();
+    let mut ppm = format!("P6 {w} {h} 255\n").into_bytes();
+    let (px, _) = px.as_chunks::<4>();
+    for p in px {
+        ppm.extend_from_slice(&[p[2], p[1], p[0]]);
+    }
+    std::fs::write(std::env::var("ZHBO_DIAG_OUT").unwrap(), ppm).unwrap();
+    zhgfx_shutdown();
+}

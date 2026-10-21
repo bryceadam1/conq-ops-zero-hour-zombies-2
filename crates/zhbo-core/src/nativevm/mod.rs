@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use zhbo_native::anim::Anim;
 use zhbo_native::math::{axis_angle, compose, mat4, mat4_mul, qmul, Mat4, Xf, MAT4_IDENTITY};
-use zhbo_native::model::{Blend, Model, Vertex};
+use zhbo_native::model::{Blend, Cull, Model, Vertex};
 use zhbo_native::pose::{PartRef, Skeleton};
 use zhbo_native::viewmodel::Viewmodel;
 
@@ -127,6 +127,7 @@ pub struct SurfaceSpec {
     pub color: Option<String>,
     pub maps: Option<String>,
     pub sort_key: u8,
+    pub cull: Cull,
 }
 
 /// The composed viewmodel's one mesh: every part's LOD 0 with its bones renumbered into the
@@ -160,6 +161,7 @@ pub fn build_mesh(skel: &Skeleton, models: &[Model]) -> Result<Mesh, String> {
                 color: m.and_then(|m| m.color.clone()),
                 maps: m.and_then(|m| m.maps.clone()),
                 sort_key: m.map_or(0, |m| m.sort_key),
+                cull: m.map_or(Cull::None, |m| m.cull),
             });
         }
     }
