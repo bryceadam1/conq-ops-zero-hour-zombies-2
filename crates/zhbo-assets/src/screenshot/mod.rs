@@ -159,7 +159,7 @@ fn editor_prims() -> Vec<Prim> {
 /// "Attachments not available" and the footer has no `R Remove`.
 fn empty_editor_prims() -> Vec<Prim> {
     let draft = Draft {
-        name: "CUSTOM 1".into(),
+        name: "Custom 1".into(),
         primary: String::new(),
         primary_atts: Vec::new(),
         secondary: String::new(),
