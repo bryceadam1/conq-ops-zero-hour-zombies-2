@@ -56,9 +56,10 @@ Ownership is listed so two tracks never edit the same module.
 
 ### Track 0 — Foundations (integrator, first, blocking)
 
-- Split `classui.rs` (~2,900 lines) along layout/draw vs. input folds vs. dialogs before Track C
-  touches it; split `hud.rs` by element before Track H (pattern: the `Prim` builders already per
-  element).
+- ~~Split `classui.rs` and `hud.rs`~~ — done: `classui/` (layout, categories, edit, input,
+  dialog, chrome, screens, tests) and `hud/` (one file per element, sprites, tests).
+- The workspace is **not** clippy-clean today (130 pre-existing warnings, mostly `sim/`,
+  `weapons/`, `hud/`); each track cleans the warnings in the files it owns.
 - A shared **BO2 UI primitives** module the HUD and CaC both use: LUI virtual-screen mapping
   (1280×720 → screen), nine-slice drawing of BO2 materials, BO2 fonts, LUI-style tweens
   (`beginAnimation` duration/easing semantics), and a UI sound cue API (alias → engine audio).
