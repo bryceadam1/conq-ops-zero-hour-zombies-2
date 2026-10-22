@@ -207,6 +207,16 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             _ => {}
         }
     }
+    // The personalize camo grid's thumbnails (`menu_camo_*_pattern`, `menu_theater_nodata` for
+    // `None`): the same `mp/attachmenttable.csv` rows the weapon table carries.
+    let names = crate::weapons::names(bo2_dir);
+    let patch = crate::generals::load_zone(bo2_dir, crate::fx::ZONE)?;
+    for c in crate::weapons::camo_options(&patch, &names) {
+        let image = c.image.clone();
+        if !image.is_empty() {
+            wanted.push((image.clone(), Source::Dynamic(image), 128));
+        }
+    }
     // One icon per attachment in the converted table, named by the core's short-name map. BO2's
     // variants share an art set (`silencer_smg`/`silencer` are both the suppressor); an attachment
     // the map has no art for is reported, never fatal.

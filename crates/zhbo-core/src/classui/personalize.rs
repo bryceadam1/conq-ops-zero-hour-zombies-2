@@ -103,10 +103,9 @@ pub fn personalize_title(kind: PersonalizeKind) -> &'static str {
     }
 }
 
-/// The host's choice lists for the personalize screens. The camo and knife lists are BO2's
-/// captured names, `None` first as the grid's first cell (`i-personalize/001`, `002`); the
-/// reticle and colour lists are the stock options until the converter supplies the weapon's own
-/// set (M2).
+/// The fallback choice lists: the captured camo/knife names, `None` first (`i-personalize/001`,
+/// `002`), and the stock reticle/colour options. [`personalize_choices_for`] replaces the camo list
+/// with the weapon's converted `CamoList` when the catalog has one.
 pub fn personalize_choices(kind: PersonalizeKind) -> Vec<String> {
     let names: &[&str] = match kind {
         PersonalizeKind::Camo | PersonalizeKind::Knife => &[
@@ -132,11 +131,33 @@ pub fn personalize_choices(kind: PersonalizeKind) -> Vec<String> {
     names.iter().map(|s| (*s).to_string()).collect()
 }
 
+/// The host's choices for a weapon-backed camo screen: the weapon's converted `CamoList`
+/// (`camo_none` first), or the captured fallback when the catalog has no BO2 table.
+pub fn personalize_choices_for(kind: PersonalizeKind, weapon: Option<&str>) -> Vec<String> {
+    if kind == PersonalizeKind::Camo {
+        if let Some(ids) = weapon.and_then(crate::weapons::weapon_or_none).map(|d| d.camo.clone()).filter(|ids| !ids.is_empty()) {
+            return ids;
+        }
+    }
+    personalize_choices(kind)
+}
+
 /// A cell's background: the same near-black plate as the editor's grid buttons.
 fn button_bg(prims: &mut Vec<Prim>, f: &Frame, r: Rect) {
     let p = f.px(r);
     let fallback = vec![Prim::Rect { x: p.x, y: p.y, w: p.w, h: p.h, argb: argb(BUTTON_TINT, BUTTON_ALPHA + 0.1) }];
     bo2::image(prims, f, "menu_mp_cac_grad_stretch", r, argb(BUTTON_TINT, BUTTON_ALPHA + 0.35), fallback);
+}
+
+/// The label a cell shows: the camo options' localized names (the choice is its `camo_*` id),
+/// or the choice itself for the reticle/colour lists.
+fn choice_label(kind: PersonalizeKind, choice: &str) -> String {
+    if matches!(kind, PersonalizeKind::Camo | PersonalizeKind::Knife) {
+        if let Some(c) = crate::weapons::catalog().camo(choice) {
+            return c.name.clone();
+        }
+    }
+    choice.to_string()
 }
 
 /// Draw the open personalize screen: its title, the choices as a grid of buttons, the highlighted
@@ -157,12 +178,13 @@ pub fn draw_personalize(prims: &mut Vec<Prim>, w: f32, h: f32, p: &Personalize, 
         Align::Left,
         argb(OFF_WHITE, 0.5),
     );
-    if let Some(name) = p.choices.get(p.highlight) {
+    if let Some(choice) = p.choices.get(p.highlight) {
+        let label = choice_label(p.kind, choice);
         bo2::text(
             prims,
             f,
             Family::Condensed,
-            name,
+            &label,
             Rect { x: f.menu.right() - 300.0, y: f.menu.y + 20.0 + bo2::TEXT_EXTRA_SMALL, w: 300.0, h: bo2::TEXT_CONDENSED },
             Align::Left,
             argb(OFF_WHITE, 1.0),
@@ -174,23 +196,36 @@ pub fn draw_personalize(prims: &mut Vec<Prim>, w: f32, h: f32, p: &Personalize, 
         let preview = Rect { x: f.menu.right() - 260.0, y: f.menu.bottom() - 200.0, w: 260.0, h: 120.0 };
         bo2::text(prims, f, Family::Big, &def.display_name, preview, Align::Right, argb(OFF_WHITE, 1.0));
     }
-    for (i, name) in p.choices.iter().enumerate() {
+    for (i, choice) in p.choices.iter().enumerate() {
         let r = l.cell_rect(i);
         button_bg(prims, f, r);
         if i == p.highlight {
             bo2::border(prims, f, r, 2.0, argb(BOII_ORANGE, 1.0));
         }
+        let label = choice_label(p.kind, choice);
+        if p.kind == PersonalizeKind::Camo {
+            if let Some(image) = crate::weapons::catalog().camo(choice).map(|c| c.image.as_str()).filter(|s| !s.is_empty()) {
+                bo2::image(
+                    prims,
+                    f,
+                    image,
+                    Rect { x: r.x + 4.0, y: r.y + 4.0, w: r.w - 8.0, h: r.h - bo2::TEXT_CONDENSED - 8.0 },
+                    argb(OFF_WHITE, 1.0),
+                    Vec::new(),
+                );
+            }
+        }
         bo2::text(
             prims,
             f,
             Family::Condensed,
-            name,
+            &label,
             Rect { x: r.x + 3.0, y: r.bottom() - bo2::TEXT_CONDENSED - 2.0, w: r.w, h: bo2::TEXT_CONDENSED },
             Align::Left,
             argb(if i == p.highlight { BOII_ORANGE } else { OFF_WHITE }, 1.0),
         );
         // The chosen cell carries BO2's `*` marker in the corner, as the editor's grids do.
-        let chosen = p.choices.get(p.highlight).is_some_and(|v| v == name);
+        let chosen = p.choices.get(p.highlight).is_some_and(|v| v == choice);
         if chosen {
             bo2::text(
                 prims,
@@ -260,4 +295,16 @@ pub fn personalize_frame(personalize: &mut Personalize, draft: &mut Draft, inp: 
         Outcome::Continue => None,
     };
     PersonalizeFrame { outcome, denied: false, cue }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_weapon_without_a_converted_camo_list_keeps_the_captured_fallback() {
+        assert_eq!(personalize_choices_for(PersonalizeKind::Camo, Some("an94_mp")), personalize_choices(PersonalizeKind::Camo));
+        assert_eq!(personalize_choices_for(PersonalizeKind::Camo, None), personalize_choices(PersonalizeKind::Camo));
+        assert_eq!(personalize_choices_for(PersonalizeKind::Reticle, Some("an94_mp")), personalize_choices(PersonalizeKind::Reticle));
+    }
 }

@@ -239,7 +239,16 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let atts = zhbo_formats::weapon::attachments(&common).map_err(|e| e.to_string())?;
     let names = crate::weapons::names(bo2_dir);
     let meta = crate::weapons::attachment_metadata(&patch, &patch_ui, &names);
-    let mut table = crate::weapons::table_with_metadata(&bo2, &atts, &names, &meta);
+    // BO2's camo choices (`mp/attachmenttable.csv`) and the 48 `camo_<weapon>` sets in
+    // `common_patch_mp` (the per-weapon material swap, `WeaponCamo`).
+    let camo = crate::weapons::camo_options(&patch, &names);
+    let common_patch = load_zone(bo2_dir, "common_patch_mp")?;
+    let camo_sets: std::collections::HashSet<String> = zhbo_formats::weapon::camo_all(&common_patch)
+        .map_err(|e| e.to_string())?
+        .into_iter()
+        .map(|c| c.name)
+        .collect();
+    let mut table = crate::weapons::table_with_metadata(&bo2, &atts, &names, &meta, &camo, &camo_sets);
     // What each perk does: its specialty set, from the player's own statstable (Ghidra G1).
     table.perks = crate::weapons::perk_rows(&patch);
     let converted = crate::weapons::converted(&bo2);

@@ -160,7 +160,7 @@ fn editor_prims() -> Vec<Prim> {
 fn personalize_prims() -> Vec<Prim> {
     let mut editor = editor_state();
     editor.picking = false;
-    let choices = classui::personalize_choices(PersonalizeKind::Camo);
+    let choices = classui::personalize_choices_for(PersonalizeKind::Camo, Some(editor.draft.primary.as_str()));
     let p = Personalize::new(PersonalizeKind::Camo, choices, &editor.draft);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
