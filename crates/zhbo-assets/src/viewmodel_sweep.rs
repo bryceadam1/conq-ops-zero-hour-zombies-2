@@ -134,12 +134,12 @@ mod tests {
         for id in ["hatchet_mp", "trophy_system_mp", "flash_grenade_mp", "proximity_grenade_mp", "emp_grenade_mp", "frag_grenade_mp", "sensor_grenade_mp", "an94_mp", "mp7_mp", "as50_mp", "dsr50_mp"] {
             show(id);
         }
-        for name in ["hatchet_mp", "trophy_system_mp", "flash_grenade_mp", "proximity_grenade_mp", "emp_grenade_mp", "frag_grenade_mp", "sensor_grenade_mp", "as50_mp", "dsr50_mp"] {
+        for name in ["hatchet_mp", "trophy_system_mp", "flash_grenade_mp", "proximity_grenade_mp", "emp_grenade_mp", "frag_grenade_mp", "sensor_grenade_mp", "mp7_mp", "as50_mp", "dsr50_mp"] {
             if let Some(w) = src.bo2.iter().find(|w| w.name == name) {
                 eprintln!("WEAPON {name}: view_model={:?} hide={:?} anims={:?} ads_aim_pitch={} dual={} attach_view_models={:?}", w.view_model, w.hide_tags, w.anims, w.view_pos.ads_aim_pitch, w.dual_wield, w.attach_view_models);
             }
         }
-        for (base, short) in [("as50_mp", "ir"), ("as50_mp", "silencer"), ("as50_mp", "swayreduc"), ("fnp45_mp", "dualclip"), ("fiveseven_mp", "dualclip"), ("kard_mp", "dualclip"), ("judge_mp", "dualclip"), ("beretta93r_mp", "dualclip"), ("kard_mp", "steadyaim"), ("ksg_mp", "steadyaim")] {
+        for (base, short) in [("mp7_mp", "reflex"), ("as50_mp", "ir"), ("as50_mp", "silencer"), ("as50_mp", "swayreduc"), ("fnp45_mp", "dualclip"), ("fiveseven_mp", "dualclip"), ("kard_mp", "dualclip"), ("judge_mp", "dualclip"), ("beretta93r_mp", "dualclip"), ("kard_mp", "steadyaim"), ("ksg_mp", "steadyaim")] {
             let id = format!("{base}+{short}");
             eprintln!("COMBO {id}");
             if let Some(w) = src.bo2.iter().find(|w| w.name == base) {
