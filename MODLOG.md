@@ -2421,6 +2421,49 @@ assets tests); the new fields survive the schema's format+parse round trip in th
 install-layer conversion (and its `generals::files` debug fixed-point assertion) still needs the
 real BO2 install; the converter now requires `patch_ui_mp`, so note that in the install-layer run.
 
+## Attachment panel consumption and popup slices (2026-10-22)
+
+The lower attachment panel now consumes the metadata added in the prior data pass. The Big title
+reads `AttachmentDef.full_name` ("Reflex Sight" rather than the tile's short "Reflex"), the
+reserved Default line at alpha 0.4 reads `AttachmentDef.description`, and the four
+`AttributeBarList` bars apply `AttachmentDef.attribute_deltas` to the base weapon's
+`weapon_stats`. The deltas are BO2's attribute-table columns in the order the Lua reads them
+(damage 0, range 1, accuracy 2, mobility 3, fire rate 4; the panel has four bars and leaves
+mobility unused). `stat_bars_delta` keeps BO2's white base, green positive ticks and red negative
+ticks (`attributebarlist.lua:16-30,266-273`; `weaponattributelist.lua:99-142`). The lower panel's
+geometry and text roles remain those of `cacattachmentsmenu.lua:238-536` (title `:268-306`,
+description `:307-353`, bars `:354-372`, `Engine.GetAttachmentDesc` `:1029-1038`), matching
+`d-attach/002`.
+
+The built-in stand-in table carries the Reflex's cited row (`mp/attachmenttable.csv` row 22:
+`MPUI_REFLEX`, `MPUI_REFLEX_DESC`) and the attribute row
+(`mp/attributestable.csv`: `weapon_attachment,reflex,15,0,5,0,0,0,,xm8` → [0,5,15,0,0]), and the
+MP7's stand-in gains `Allowed = reflex=reflex` so the screenshot fixture's attachment panel
+resolves the Reflex definition instead of falling back to the short name. The hermetic screenshot
+test now asserts the "Reflex Sight" title and "Precision red dot sight." description, so a
+regression in either field fails the suite.
+
+The S/O popup chrome now draws the real `menu_mp_popup_top`, `menu_mp_popup_stretch` and
+`menu_mp_popup_bottom` slices (`codmenu.lua:1400-1493`; `a-chooseclass/021`) in place of the
+`menu_mp_cac_backing` stand-in and the hand-drawn chamfer/pointer outline. `lui::materials::MATERIALS`
+lists the three names so the converter's material pass can archive them; the slice heights are the
+32-unit placeholder the ABI's image draw takes. No `hud::VERSION` bump.
+
+Before/after: the pre-change panel drew "Reflex" with a blank description and no green/red ticks
+because `AttachmentDef` had only the short tile name and no deltas. After the change the same
+fixture draws "Reflex Sight", "Precision red dot sight." and green ticks on the range and accuracy
+rows (the Reflex's +5/+15 columns). The pre-built archive still lacks the three popup slices, so a
+regenerated harness shot logs the missing materials and draws the documented fallback; the
+integrator's archive rebuild closes that gap. The real-install conversion suite passed
+against the local BO2 install (`ZHBO_BO2_DIR=$HOME/Games/BlackOps2`: 9 `zhbo-assets` ignored tests
+and 8 `zhbo-formats` ignored tests), including the converter's fixed-point assertion; the in-game
+autotest still needs the integration machine.
+
+Verified: `env -u ZHBO_BO2_DIR -u ZHBO_ZH_DIR cargo test -p zhbo-core -p zhbo-assets` green (342
+core tests, 45 assets tests, screenshot test included); clippy has no warnings in the touched files;
+nine harness shots regenerate (`cargo run -p zhbo-assets -- screenshot --size 3024x1890`), with the
+three popup materials logged as missing from the pre-built archive and their fallbacks drawn.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

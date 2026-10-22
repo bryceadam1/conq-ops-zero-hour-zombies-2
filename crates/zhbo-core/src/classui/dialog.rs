@@ -253,37 +253,28 @@ fn draw_dialog_body(prims: &mut Vec<Prim>, w: f32, h: f32, d: &Dialog) {
     let chrome = crate::lui::Rect { x: body.x - 16.0, y: body.y, w: body.w + 32.0, h: body.h };
     let p = f.px(chrome);
     prims.push(Prim::Rect { x: p.x, y: p.y, w: p.w, h: p.h, argb: DIALOG_FILL });
-    // The dotted backing, kept faint so the panel reads as BO2's textured popup.
-    bo2::image(prims, &f, "menu_mp_cac_backing", chrome, argb(OFF_WHITE, 0.05), Vec::new());
-    // The texture is the large-menu dotted backing; the popup's own `menu_mp_popup_*` materials
-    // are not in the converted archive yet (see MODLOG's integrator note).
-
-    let (l, t, r, b) = (p.x, p.y, p.right(), p.bottom());
-    let mid = (l + r) * 0.5;
-    // Fill the shallow bottom pointer before its edge, so the border stays visible.
-    for i in 0..10 {
-        let half = (70.0 - i as f32 * 7.0) * s;
-        prims.push(Prim::Rect { x: mid - half, y: b + i as f32 * s, w: half * 2.0, h: s, argb: DIALOG_FILL });
-    }
-
-    // The chamfered frame. `menu_mp_popup_top/bottom` carry the real corners; until they are
-    // converted, lines reproduce the same silhouette, including the bottom pointer.
-    let c = 8.0 * s;
-    let edge = DIALOG_EDGE;
-    for (x0, y0, x1, y1) in [
-        (l + c, t, r - c, t),
-        (r - c, t, r, t + c),
-        (r, t + c, r, b - c),
-        (r, b - c, r - c, b),
-        (l + c, b, r - c, b),
-        (l, b - c, l + c, b),
-        (l, t + c, l, b - c),
-        (l, t + c, l + c, t),
-    ] {
-        prims.push(Prim::Line { x0, y0, x1, y1, width: 1.5, argb: edge });
-    }
-    prims.push(Prim::Line { x0: mid - 70.0 * s, y0: b, x1: mid, y1: b + 10.0 * s, width: 1.5, argb: edge });
-    prims.push(Prim::Line { x0: mid, y0: b + 10.0 * s, x1: mid + 70.0 * s, y1: b, width: 1.5, argb: edge });
+    // The popup's own frame slices (`codmenu.lua:1400-1493`): `menu_mp_popup_top` and
+    // `menu_mp_popup_bottom` carry the bevelled corners and the bottom pointer, and
+    // `menu_mp_popup_stretch` fills the body. The slices replace the manual outline.
+    let top_h = 32.0;
+    let bottom_h = 32.0;
+    bo2::image(prims, &f, "menu_mp_popup_top", crate::lui::Rect { x: chrome.x, y: chrome.y, w: chrome.w, h: top_h }, argb(OFF_WHITE, 1.0), Vec::new());
+    bo2::image(
+        prims,
+        &f,
+        "menu_mp_popup_stretch",
+        crate::lui::Rect { x: chrome.x, y: chrome.y + top_h, w: chrome.w, h: (chrome.h - top_h - bottom_h).max(0.0) },
+        argb(OFF_WHITE, 1.0),
+        Vec::new(),
+    );
+    bo2::image(
+        prims,
+        &f,
+        "menu_mp_popup_bottom",
+        crate::lui::Rect { x: chrome.x, y: chrome.bottom() - bottom_h, w: chrome.w, h: bottom_h + 10.0 * s },
+        argb(OFF_WHITE, 1.0),
+        Vec::new(),
+    );
 
     // Header `Big` at 0,0, the set/class name in `Default` under it at alpha 0.5, then the
     // `CoD9Button` list at 93 (`cacclasssetoptions.lua:48-137`, `cacclassoptions.lua:79-137`).

@@ -76,7 +76,6 @@ pub const DENY_FLASH: f32 = 0.3;
 /// The dialog panel behind the shell's S/O menus (`a-chooseclass/021` samples the popup interior
 /// at ~36/255 over an ~10/255 dimmed backdrop).
 pub(super) const DIALOG_FILL: u32 = 0xFF26_2626;
-pub(super) const DIALOG_EDGE: u32 = 0xB0D8_DCDE;
 
 /// One row of the pick screen's composed list.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

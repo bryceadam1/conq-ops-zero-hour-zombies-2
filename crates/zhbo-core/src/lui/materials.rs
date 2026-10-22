@@ -27,6 +27,11 @@ pub const MATERIALS: &[(&str, u32)] = &[
     // `hinttext.lua`'s arrow, the grid buttons' gradients (`customclass.lua`, `growinggridbutton.lua`)
     // and the lock/restricted badges.
     ("menu_mp_cac_backing", 512),
+    // The small popup's own frame slices (`codmenu.lua:1400-1493`: top, stretch, bottom). Sizes
+    // like their neighbours; the captures show them as the popup's bevelled edge (`a-chooseclass/021`).
+    ("menu_mp_popup_top", 512),
+    ("menu_mp_popup_stretch", 512),
+    ("menu_mp_popup_bottom", 512),
     ("menu_mp_backing_frame", 512),
     ("menu_mp_backing_frame_flipv", 512),
     ("menu_vis_carousel_pip", 32),

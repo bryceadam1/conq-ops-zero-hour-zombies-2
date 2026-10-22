@@ -195,6 +195,9 @@ fn attachment_picker_prims() -> Vec<Prim> {
     prev.update(&pointer);
     pointer.keys.set_down(Key::Enter, false);
     classui::editor_frame(&mut editor, &pointer, &prev);
+    if let Some(i) = editor.options().iter().position(|o| o == "Reflex") {
+        editor.option = i;
+    }
     draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
@@ -454,6 +457,8 @@ mod tests {
         for label in ["FIRE RATE", "DAMAGE", "RANGE", "ACCURACY"] {
             assert!(att_text.contains(&label), "the attachment panel's {label} bar draws: {att_text:?}");
         }
+        assert!(att_text.contains(&"Reflex Sight"), "the full attachment title draws: {att_text:?}");
+        assert!(att_text.contains(&"Precision red dot sight."), "the attachment description draws: {att_text:?}");
 
         // The dialogs carry BO2's titles and entries.
         let set_prims = set_dialog_prims();
