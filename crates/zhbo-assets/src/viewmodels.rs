@@ -133,11 +133,19 @@ pub(crate) fn weapon_viewmodels(
         let Some(view) = w.view_model.as_deref() else { continue };
         let c = combo(w, atts, &shorts);
         let gun = find_model(patch, common, view).map_err(|e| format!("{id}: {e}"))?;
-        let mag = if w.is_gun() && !c.no_clip { magazine(common, view) } else { None };
-        let mut parts: Vec<(&xmodel::Model, &str)> = vec![(&gun, "tag_weapon")];
-        if let Some(m) = &mag {
-            parts.push((m, "j_gun"));
-        }
+        // The base magazine is the weapon's `attachViewModel` part (slot 7 on the MP7) and the
+        // offset is its authored `attachViewModelOffset`; the name search is the fallback.
+        let mag = if w.is_gun() && !c.no_clip {
+            w.attach_view_models
+                .iter()
+                .zip(&w.attach_view_offsets)
+                .find(|((m, _), _)| m.contains("attach_mag"))
+                .and_then(|((m, _), off)| find_model(patch, common, m).ok().map(|model| (model, *off)))
+                .or_else(|| magazine(common, view).map(|m| (m, [0.0; 3])))
+        } else {
+            None
+        };
+        let parts: Vec<(&xmodel::Model, &str)> = vec![(&gun, "tag_weapon")];
         // The attachments' models, each with where it goes.
         let mut extra: Vec<(xmodel::Model, Option<String>, crate::xf::Xf, u32)> = Vec::new();
         for (u, pt) in &c.parts {
@@ -147,11 +155,11 @@ pub(crate) fn weapon_viewmodels(
             extra.push((model, u.view_model_tag.clone(), offset, *pt));
         }
         let gun_tex = textures(&gun, paks, out, &mut looks);
-        let mag_tex = mag.as_ref().map(|m| textures(m, paks, out, &mut looks));
+        let mag_tex = mag.as_ref().map(|(m, _)| textures(m, paks, out, &mut looks));
         let extra_tex: Vec<Vec<Option<String>>> = extra.iter().map(|(m, ..)| textures(m, paks, out, &mut looks)).collect();
         // The native blobs (Track R): the same parts, unconverted, for the renderer's own BO2 pass.
         let native_gun = native::model(&gun, &gun_tex, &looks);
-        let native_mag = mag.as_ref().zip(mag_tex.as_ref()).map(|(m, t)| native::model(m, t, &looks));
+        let native_mag = mag.as_ref().zip(mag_tex.as_ref()).map(|((m, _), t)| native::model(m, t, &looks));
         let native_extra: Vec<zhbo_native::model::Model> = extra.iter().zip(&extra_tex).map(|((m, ..), t)| native::model(m, t, &looks)).collect();
         let mut native_factions: Vec<(char, zhbo_native::model::Model)> = Vec::new();
         let mut rig: Option<Rig> = None;
@@ -172,6 +180,10 @@ pub(crate) fn weapon_viewmodels(
                         rig.add_marker("tag_sights", root, local);
                     }
                 }
+                // The magazine rides the gun root at the authored `attachViewModelOffset`.
+                if let Some((m, off)) = &mag {
+                    rig.attach(m, root, character::scaled_xf((crate::xf::IDENTITY.0, *off)));
+                }
                 for (model, tag, offset, pt) in &extra {
                     let at = tag.as_deref().and_then(|t| rig.pivot(t)).unwrap_or(root);
                     rig.attach(model, at, *offset);
@@ -191,7 +203,7 @@ pub(crate) fn weapon_viewmodels(
             native_factions.push((f.letter, native::model(&hands, &hands_tex, &looks)));
             let mut meshes = character::skin(rig, &hands, "H", &hands_tex);
             meshes.extend(character::skin_hiding(rig, &gun, "G", &gun_tex, &c.hide));
-            if let (Some(m), Some(t)) = (&mag, &mag_tex) {
+            if let (Some((m, _)), Some(t)) = (&mag, &mag_tex) {
                 meshes.extend(character::skin(rig, m, "M", t));
                 // BO2's reloads bring the new magazine in on `tag_clip1` while the old one
                 // (`tag_clip`) drops away: a second copy rides there (off screen until then).
@@ -234,7 +246,7 @@ pub(crate) fn weapon_viewmodels(
         }
         let attachments: Vec<(Option<String>, crate::xf::Xf, bool)> =
             extra.iter().map(|(_, tag, offset, pt)| (tag.clone(), (offset.0, offset.1.map(|c| c / character::SCALE)), *pt == point::OPTIC as u32)).collect();
-        let vm_native = native::Viewmodel { vm, id, gun: &gun, extra_models: extra.iter().map(|e| &e.0).collect(), attachments, hide: &c.hide, clips: &native_clips };
+        let vm_native = native::Viewmodel { vm, id, gun: &gun, extra_models: extra.iter().map(|e| &e.0).collect(), attachments, hide: &c.hide, clips: &native_clips, mag_offset: mag.as_ref().map(|(_, off)| *off) };
         native::viewmodels(out, &vm_native, &native_gun, native_mag.as_ref(), &native_extra, &native_factions);
         let mask = |a: &[Option<String>]| a.iter().enumerate().take(128).filter(|(_, x)| x.is_some()).fold(0u128, |m, (i, _)| m | (1u128 << i));
         if let Some(d) = defs.iter_mut().find(|d| &d.id == id) {

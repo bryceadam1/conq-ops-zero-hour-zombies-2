@@ -2542,6 +2542,35 @@ native+compare, `--classpick` with `ZHBO_NATIVE_VIEWMODEL=1` all checks — **th
 solid in the captures: receiver top, rail and sight housing intact where the user's screenshot
 tore** — 14/14 `--rts`.
 
+## The MP7 magazine's authored offset (2026-10-22, branch `v1/vm-fixes-2`)
+
+**The MP7's base magazine was mounted at the gun's root with an identity offset.** BO2 carries the
+base magazine as the weapon's `attachViewModel` part: on the MP7 that is slot 7
+(`t6_attach_mag_mp7_view`) with an empty `attachViewModelTag` and an authored
+`attachViewModelOffset` of `[-0.473, 0, -3.817]` inches. The converter searched the magazine by
+name and mounted it at `j_gun` with no offset, so the magazine's top poked through the receiver's
+top rail in the hip pose (most visible at the reflex base in the harness's static pair). The
+converter now selects the `attachViewModel` entry whose model contains `attach_mag`, carries its
+offset through `Weapon::attach_view_offsets`, and mounts it at that offset from the gun root in
+both the W3D rig and the native manifest. The native pose adds the part's attach offset to the
+root track's base, because the magazine's `tag_clip` track is relative to the part's attach point,
+not the gun's root.
+
+Evidence, MP7 base static pair (`--weapon mp7_mp --no-attachments`):
+`.../opencode/vm-sweep/magfix/before_archive/mp7/base.png` (archive blob, old identity mount) vs
+`.../opencode/vm-sweep/magfix/after_convert/mp7/base.png` (fresh conversion,
+`ZHBO_SWEEP_CONVERT_ALL=1`). The before/after diff is confined to the receiver top at
+hip `x415-442, y200-229` and ADS `x952-968, y173-192`; the converted render no longer shows the
+magazine's top crossing the rail. The ignored real-install test
+`the_mp7_magazine_rides_its_authored_offset` pins the manifest part to `j_gun` and the authored
+offset. The converted archive's base weapons still hold the old mount until the integrator
+rebuilds the asset archive; no `hud::VERSION` or ABI change.
+
+Verified: `cargo test -p zhbo-core -p zhbo-assets -p zhbo-formats -p zhbo-native` green
+(45 passed / 12 ignored, 343, 21 / 8 ignored, 21); clippy on the touched crates clean;
+`ZHBO_BO2_DIR=~/Games/BlackOps2 cargo test -q --release -p zhbo-assets -p zhbo-formats --
+--ignored` green (12 + 8 passed).
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

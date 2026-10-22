@@ -319,8 +319,11 @@ pub struct Weapon {
     pub view_model: Option<String>,
     pub world_model: Option<String>,
     pub projectile_model: Option<String>,
-    /// Extra viewmodel parts (such as the magazine) and the tag each hangs from.
+    /// Extra viewmodel parts (such as the magazine) and the tag each hangs from (empty when BO2
+    /// leaves the part at the weapon root).
     pub attach_view_models: Vec<(String, String)>,
+    /// The authored view offset of each `attach_view_models` entry, in inches.
+    pub attach_view_offsets: Vec<[f32; 3]>,
     /// Attachment combinations; `kind == 0` entries are the base weapon's parts (its magazine).
     pub attachment_uniques: Vec<AttachmentUnique>,
     /// Bit `1 << eAttachment` for each attachment create-a-class offers on this weapon.
@@ -490,11 +493,18 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         .map(|i| if anims_at == 0 { None } else { opt_str(z, anims_at + 4 * i) })
         .collect();
     let mut attach_view_models = Vec::new();
+    let mut attach_view_offsets = Vec::new();
     let (models, tags) = (z.try_u32(v + WV::attachViewModel)?, z.try_u32(v + WV::attachViewModelTag)?);
-    if models != 0 && tags != 0 {
+    if models != 0 {
         for i in 0..8 {
-            if let (Some(m), Some(t)) = (named(z, models + 4 * i), opt_str(z, tags + 4 * i)) {
+            if let Some(m) = named(z, models + 4 * i) {
+                // The magazine's slot has an empty tag: BO2 leaves it at the weapon root and
+                // carries its placement in the inline `attachViewModelOffsets` float array.
+                let t = if tags != 0 { opt_str(z, tags + 4 * i).unwrap_or_default() } else { String::new() };
+                let at = v + WV::attachViewModelOffsets + 12 * i;
+                let off = [z.f32(at), z.f32(at + 4), z.f32(at + 8)];
                 attach_view_models.push((m, t));
+                attach_view_offsets.push(off);
             }
         }
     }
@@ -537,6 +547,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         display_name: opt_str(z, v + WV::szDisplayName).unwrap_or_default(),
         anims,
         attach_view_models,
+        attach_view_offsets,
         clip_size: int(z, v + WV::iClipSize),
         reload_time: ms(z, v + WV::iReloadTime),
         reload_empty_time: ms(z, v + WV::iReloadEmptyTime),

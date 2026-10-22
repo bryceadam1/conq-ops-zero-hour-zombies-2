@@ -88,6 +88,28 @@ mod tests {
         assert!(combo.len() > base.len());
     }
 
+    /// The base magazine is the weapon's `attachViewModel` part, placed at the authored
+    /// `attachViewModelOffset` from its root; the name search is only a fallback.
+    #[test]
+    #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
+    fn the_mp7_magazine_rides_its_authored_offset() {
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        let w = src.bo2.iter().find(|w| w.name == "mp7_mp").expect("mp7_mp");
+        let ((model, _), offset) = w
+            .attach_view_models
+            .iter()
+            .zip(&w.attach_view_offsets)
+            .find(|((m, _), _)| m.contains("attach_mag"))
+            .expect("the MP7's authored magazine");
+        assert!(offset.iter().any(|c| *c != 0.0), "the authored offset is not zero: {offset:?}");
+        let blobs = src.composition("mp7_mp").expect("the base MP7");
+        let vm = zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("a manifest")).expect("the manifest parses");
+        let mag = vm.parts.iter().find(|p| p.model.contains(model)).expect("the magazine part");
+        assert_eq!(mag.tag.as_deref(), Some("j_gun"), "the magazine hangs from the gun root");
+        assert_eq!(mag.offset.1, *offset, "the magazine keeps its authored offset");
+    }
+
     #[test]
     #[ignore = "probe: the flagged defects"]
     fn probe_defects() {
@@ -163,13 +185,60 @@ mod tests {
     fn probe_mp7_weights() {
         let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
         let src = Source::open(Path::new(&dir)).expect("open the install");
+        for name in ["t6_wpn_smg_mp7_view", "t6_attach_mag_mp7_view"] {
+            if let Ok(raw) = crate::viewmodels::find_model(&src.patch, &src.common, name) {
+                eprintln!("RAW {name}:");
+                for (i, b) in raw.bones.iter().enumerate() {
+                    eprintln!("  raw {i}: {} parent={:?} pos={:?}", b.name, b.parent, b.position);
+                }
+            }
+        }
         let blobs = src.composition("mp7_mp+reflex").expect("compose");
+        for anim_name in ["viewmodel_mp7_idle", "viewmodel_mp7_reload"] {
+            if let Some(bytes) = blobs.get(&zhbo_native::anim_path(anim_name)) {
+                if let Ok(anim) = zhbo_native::anim::Anim::from_bytes(bytes) {
+                    for b in &anim.bones {
+                        if b.name.contains("clip") || b.name.contains("reload") || b.name == "tag_weapon" {
+                            eprintln!("ANIM {anim_name} {} rot={:?} trans={:?}", b.name, b.rotation, b.translation);
+                        }
+                    }
+                }
+            }
+        }
         let vm = zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("manifest")).expect("parse");
+        if let Some(w) = src.bo2.iter().find(|w| w.name == "mp7_mp") {
+            eprintln!("BASE ATTACH {:?} OFFSETS {:?}", w.attach_view_models, w.attach_view_offsets);
+        }
+        let models: Vec<zhbo_native::model::Model> = vm.parts.iter().map(|p| zhbo_native::model::Model::from_bytes(blobs.get(&p.model).unwrap()).unwrap()).collect();
+        let refs: Vec<zhbo_native::pose::PartRef> = vm.parts.iter().zip(&models).map(|(p, m)| zhbo_native::pose::PartRef { model: m, tag: p.tag.as_deref(), offset: p.offset, rigid: p.rigid }).collect();
+        let (skel, problems) = zhbo_native::pose::Skeleton::compose(&refs, &vm.markers, &vm.hide);
+        eprintln!("COMPOSE problems={problems:?}");
+        if let Some(i) = skel.bone("tag_clip") {
+            let anim = zhbo_native::anim::Anim::from_bytes(blobs.get(&zhbo_native::anim_path("viewmodel_mp7_idle")).unwrap()).unwrap();
+            let (mut local, mut ms) = (Vec::new(), Vec::new());
+            skel.sample(&anim, 0.0, &mut local);
+            skel.model_space(&local, &mut ms);
+            eprintln!("TAG_CLIP posed={:?} local={:?} bind={:?}", skel.bone_point(&ms, i), local[i].1, skel.bones[i].bind.1);
+        }
         for (i, p) in vm.parts.iter().enumerate() {
             let m = zhbo_native::model::Model::from_bytes(blobs.get(&p.model).unwrap()).expect("model");
-            eprintln!("PART {i} {}", p.model.rsplit('\\').next().unwrap());
+            eprintln!("PART {i} {} tag={:?} offset={:?}", p.model.rsplit('\\').next().unwrap(), p.tag, p.offset.1);
             for (j, b) in m.bones.iter().enumerate() {
                 eprintln!("  bone {j}: {} parent={:?}", b.name, b.parent);
+            }
+            if p.model.contains("mp7_view") {
+                let mut low = ([f32::MAX; 3], [f32::MIN; 3]);
+                for s in m.lod0() {
+                    for v in &s.vertices {
+                        if v.position[2] < -1.5 && v.position[0] < 4.0 {
+                            for k in 0..3 {
+                                low.0[k] = low.0[k].min(v.position[k]);
+                                low.1[k] = low.1[k].max(v.position[k]);
+                            }
+                        }
+                    }
+                }
+                eprintln!("LOW-REAR grip bounds: mins={:?} maxs={:?}", low.0, low.1);
             }
             for (k, s) in m.lod0().iter().enumerate() {
                 let mut one = 0;
