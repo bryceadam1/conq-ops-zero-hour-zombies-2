@@ -8,8 +8,9 @@
 //! Optional flags: `--archive <ConquerOps_BO2.big>`, `--weapon <id>` (repeatable: only these
 //! weapons), `--no-attachments` (base weapons only), `--sweep` (render the first-raise clip across
 //! frames instead of the static pose pair; `ZHBO_SWEEP_ADS=1` sweeps the aimed pose instead of the
-//! hip). `--release` converts the combinations about ten times faster; a full sweep is a few
-//! minutes.
+//! hip). `ZHBO_SWEEP_NEAR=<world units>` overrides the camera near plane (default 0.1; 2.0
+//! reproduces the in-game rear clipping the native pass's old near caused). `--release` converts
+//! the combinations about ten times faster; a full sweep is a few minutes.
 //!
 //! **What it draws.** The pipeline the game draws with, not a lookalike: the core's `nativevm` path
 //! loads a viewmodel exactly as `host/zhbo/ZhboViewmodel.cpp` drives it (`zhbo_native_viewmodel`
@@ -333,7 +334,8 @@ fn open_renderer() -> Result<(), String> {
         let back: f32 = v.parse::<f32>().unwrap_or(0.0) / 6.0;
         view[14] += back;
     }
-    let proj = [t, 0.0, 0.0, 0.0, 0.0, t * aspect, 0.0, 0.0, 0.0, 0.0, FAR / (FAR - NEAR), 1.0, 0.0, 0.0, -NEAR * FAR / (FAR - NEAR), 0.0];
+    let near: f32 = std::env::var("ZHBO_SWEEP_NEAR").ok().and_then(|v| v.parse().ok()).unwrap_or(NEAR);
+    let proj = [t, 0.0, 0.0, 0.0, 0.0, t * aspect, 0.0, 0.0, 0.0, 0.0, FAR / (FAR - near), 1.0, 0.0, 0.0, -near * FAR / (FAR - near), 0.0];
     let adapter = with_renderer(String::new(), |r| {
         r.set_view_rect(VIEW, 0, 0, W as u16, H as u16);
         r.set_view_clear(VIEW, zhbo_gfx::state::CLEAR_COLOR, BACKGROUND, 1.0, 0);

@@ -2337,10 +2337,18 @@ The bisect (frame 39, `mp7/sweep_base` vs `mp7/sweep_att_reflex`):
   as `zhbo_assets::character::skin_hiding` does. (This changes no MP7 pixels because its sight
   vertices are single-bone, but it is the correct behavior for blended hidden geometry.)
 
-Remaining: the receiver-top tear is not the cull path or the hide path; the next branch is
-skinning under animation — compare the native pose with the W3D rig's and the torn vertices'
-weights. The harness sweep frames and the A/B outputs live under
-`.../opencode/vm-sweep/mp7-sweep` (baseline), `mp7-nocull`, `mp7-nohide`, `mp7-fix`.
+The remaining branch was the projection. A near-plane sweep (`ZHBO_SWEEP_NEAR`) reproduced the
+tear at 2.0 world units: the receiver top and reflex base clipped jaggedly (near 3.0 left only a
+fragment), while the harness's default 0.1 is solid. The engine's scene camera uses
+`NearZ = MAP_XY_FACTOR = 10` world units
+(`Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp:106`), and the native pass
+inherited that projection; the viewmodel sits at the eye, so its rear was inside the near plane.
+`zhbo-gfx`'s `viewmodel_projection` now rebuilds the scene projection with a 0.1-unit near,
+keeping the FOV/aspect and the far, so the viewmodel keeps the scene's projection but not its
+terrain near. The harness's near 0.1 is unchanged.
+
+Evidence: `.../opencode/vm-sweep/mp7-sweep` (baseline near 0.1), `mp7-nocull`, `mp7-nohide`,
+`mp7-near1.0`, `mp7-near2.0`, `mp7-near3.0`, and `near_compare.png` (0.1 / 1.0 / 2.0 / 3.0).
 
 ## Next steps
 

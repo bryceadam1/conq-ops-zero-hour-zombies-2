@@ -297,6 +297,29 @@ fn finite(m: &[f32]) -> bool {
     m.iter().all(|v| v.is_finite())
 }
 
+/// The scene projection with its near plane pulled in for the native viewmodel. The viewmodel sits
+/// at the eye, so the scene's near (`W3DView.cpp`: `NearZ = MAP_XY_FACTOR`, 10 world units) cuts the
+/// rear of the gun and the optic base into jagged holes; BO2's viewmodel has its own near close to
+/// the eye. The FOV/aspect and the far are kept, so the viewmodel still uses the scene's projection.
+fn viewmodel_projection(proj: &[f32; 16]) -> [f32; 16] {
+    /// The viewmodel's near, in world units (1 unit = 6 inches): the harness's `NEAR`, close enough
+    /// that the arms at the eye do not clip into a hole.
+    const NEAR: f32 = 0.1;
+    let (m10, m14) = (proj[10], proj[14]);
+    if !(m10 > 1.0 && m14 < 0.0) {
+        return *proj;
+    }
+    let near = -m14 / m10;
+    let far = near * m10 / (m10 - 1.0);
+    if !near.is_finite() || !far.is_finite() || near <= NEAR || far <= NEAR {
+        return *proj;
+    }
+    let mut out = *proj;
+    out[10] = far / (far - NEAR);
+    out[14] = -NEAR * far / (far - NEAR);
+    out
+}
+
 impl Renderer {
     /// An RGBA8 texture for native surfaces, with a box-filtered mip chain. `srgb` samples it
     /// decoded to linear; the native shader works in display space, so its maps are uploaded
@@ -486,6 +509,7 @@ impl Renderer {
 
     /// Upload this frame's native uniforms (called by `frame()` before encoding).
     pub(crate) fn native_upload(&mut self) {
+
         if self.native.queue.is_empty() {
             return;
         }
@@ -494,7 +518,7 @@ impl Renderer {
         for q in &self.native.queue {
             if q.view_proj_from_view {
                 let v = &self.views[q.target_view as usize];
-                let vp = super::math::mul(&v.view, &v.proj);
+                let vp = super::math::mul(&v.view, &viewmodel_projection(&v.proj));
                 let at = q.frame_offset as usize;
                 for (k, c) in vp.iter().enumerate() {
                     self.native.ring[at + 4 * k..at + 4 * k + 4].copy_from_slice(&c.to_le_bytes());
@@ -693,5 +717,19 @@ mod tests {
     fn blend_modes_write_depth_only_when_solid() {
         assert!(NativeBlend::Opaque.state().is_none() && !NativeBlend::AlphaTest.blended());
         assert!(NativeBlend::Alpha.blended() && NativeBlend::Additive.state().is_some());
+    }
+
+    #[test]
+    fn the_native_pass_pulls_the_near_plane_in_for_the_viewmodel() {
+        // A scene projection with Zero Hour's 10-unit near and a 100-unit far (wgpu depth 0..1).
+        let (n, f) = (10.0f32, 100.0f32);
+        let proj = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, f / (f - n), 1.0, 0.0, 0.0, -n * f / (f - n), 0.0];
+        let out = viewmodel_projection(&proj);
+        assert_eq!((out[0], out[5]), (1.0, 1.0), "the FOV and aspect are untouched");
+        assert!((out[10] - 100.0 / (100.0 - 0.1)).abs() < 1e-5);
+        assert!((out[14] + 0.1 * 100.0 / (100.0 - 0.1)).abs() < 1e-5);
+        // A projection already closer than the viewmodel near is left alone.
+        let close = [1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0 / (1.0 - 0.05), 1.0, 0.0, 0.0, -0.05 / (1.0 - 0.05), 0.0];
+        assert_eq!(viewmodel_projection(&close), close);
     }
 }
