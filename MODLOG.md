@@ -2567,6 +2567,63 @@ Verified: config tests green; `cargo xtask build` clean; autotest 13/13 default 
 native path with no env var)**, 13/13 with `ZHBO_NATIVE_VIEWMODEL=0` (the W3D fallback),
 `--classpick` all checks, 14/14 `--rts`.
 
+## Personalize M3: reticles, colours, the editor rows — and the camo tab cap (2026-10-22)
+
+The reticle and colour screens now use BO2's own data instead of the captured placeholder lists.
+`mp/attachmenttable.csv:57-74` has the base `reticle_0..10` rows (the localized name is "Dot" for
+all eleven) and `reticle_color_1..7` = Red, Green, Blue, Purple, Teal, Yellow, Orange; the table
+now carries `ReticleOption`/`ReticleColorOption` blocks (`CamoOption`'s shape, round-trip tested)
+and the catalog indexes them. The art is the 11 stock images per reflex/holo/acog optic in
+`code_post_gfx_mp.tsv:1073-1104` (materials `:2023-2054`: `mc/mtl_t6_attach_optic_<optic>_
+reticle_01..11`); `hud::build_archive` converts all 33, and its dynamic lookup now also tries the
+`mc/` material prefix. `cacreticles.lua:1150-1240,1390-1470` selects the optic's image by option
+index; `weapons::optic_of`/`reticle_art` encode that (`reticle_0` -> `_01`, `reticle_10` ->
+`_11`), the reticle grid draws it, and the colour grid draws the seven swatches. The HUD's ADS
+optic branch (`hud/center.rs`) now draws the class's choice: the `CustomClass`'s
+`reticle`/`reticle_color` are carried onto `PlayerSim` when the class lands, and the crosshair
+draws the optic's `reticle_N` art tinted by `reticle_color_N` (falling back to the red dot without
+a choice). A fake-host HUD test pins `reticle_3` -> `mtl_t6_attach_optic_reflex_reticle_04` with
+Green's tint.
+
+The editor rows follow `caceditclass.lua`: `:137/147` registers `AddCamoButton`/`AddReticleButton`
+and the functions are at `:748`/`:825`. `C` on the primary weapon row opens Camo and `V` on the
+primary attachment grid's optic row opens Reticles (the footer carries `C Camo`/`V Reticle`; `V`,
+not `R`, because `R` is the editor's Remove). `menu.rs` opens
+`Personalize::new(kind, personalize_choices_for(kind, Some(primary)), draft)`. Tests cover both
+rows, including the attachment grid, and the one-shot `Editor.personalize`.
+
+**Camo tab cap.** The single personalize grid has no tabs or scroll, so `WeaponDef.camo` now holds
+only BO2's base Camo tab: `camo_none` + 18 (`attachmenttable.csv:32-50`). `Table.camo` still
+carries every row (`:51-129`) for the follow-up. The same split applies to reticles: the base 11
+(`:57-67`) are in the table, while the DLC/MTX rows (`:87-119`) are not; the reticle colours are
+the seven base rows. **Follow-up:** add the DLC/MTX tabs (or a scrolling grid) to the camo,
+reticle and colour screens; the option tables already have the camo rows and the base reticle/
+colour rows, so the screens need the tab strip and the per-tab slices.
+
+**Knife stays blocked on art.** `weapons.rs:337-349`'s `is_player_weapon` includes only
+`knife_held_mp` and explicitly excludes `knife_mp`; `converted` (`:754-767`) therefore carries only
+the standard knife viewmodel. The `common_patch_mp` set has `camo_knife`/`camo_ballistic_knife`,
+but no second knife viewmodel is converted, so the knife screen cannot offer a real alternate.
+No values were invented.
+
+**Integrator note (camo swap).** The final table shape is `CamoList` (base tab ids, `camo_none`
+first), `CamoMaterial` (the weapon's `camo_<weapon>` `WeaponCamo` asset) and the `Camo` blocks
+(id/name/thumbnail/sort). The minimal path for the in-game swap is to keep `WeaponCamo`'s
+`camoMaterials` base->camo pairs and its `camoSets` images out of the table: the converter already
+reads them through `zhbo_formats::weapon::camo_all`, and the existing viewmodel/material
+conversion can bake the base patterns (the `CamoList` from `camo_multicam` on; `camo_none` has no
+pattern), so the native swap selects the converted set by the chosen `CamoList` index at runtime.
+That avoids a new table field; if a later DLC tab changes the order, add the pairs as a
+`CamoMaterialPair` table.
+The camo schema/materials need one `hud::VERSION` bump. `nativevm`/`zhbo-gfx` stay off-limits.
+
+Verified through M3: `cargo test -p zhbo-core -p zhbo-assets` (362 + 47), the real-install suite
+(`ZHBO_BO2_DIR=~/Games/BlackOps2 cargo test -q --release -p zhbo-assets -p zhbo-formats --
+--ignored`: 13 + 9), clippy clean in the touched files. The screenshot harness has the new
+`cac-reticles`/`cac-reticle-color` shots; the PNGs need the launcher's built
+`ConquerOps_BO2.big` (`cargo xtask build` was out of scope), so the harness test is the code
+evidence.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
