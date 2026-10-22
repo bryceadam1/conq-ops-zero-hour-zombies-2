@@ -2687,6 +2687,72 @@ MODLOG.md the usual.
 Verified: cargo test --workspace green; the full real-install suite green (incl. the camo-table
 and AN-94 camo-set assertions); clippy clean; `cargo xtask build` clean; autotest 13/13
 default, `--classpick` all checks, 14/14 `--rts`.
+## The MP7 magazine's authored offset (2026-10-22, branch `v1/vm-fixes-2`)
+
+**The MP7's base magazine was mounted at the gun's root with an identity offset.** BO2 carries the
+base magazine as the weapon's `attachViewModel` part: on the MP7 that is slot 7
+(`t6_attach_mag_mp7_view`) with an empty `attachViewModelTag` and an authored
+`attachViewModelOffset` of `[-0.473, 0, -3.817]` inches. The converter searched the magazine by
+name and mounted it at `j_gun` with no offset, so the magazine's top poked through the receiver's
+top rail in the hip pose (most visible at the reflex base in the harness's static pair). The
+converter now selects the `attachViewModel` entry whose model contains `attach_mag`, carries its
+offset through `Weapon::attach_view_offsets`, and mounts it at that offset from the gun root in
+both the W3D rig and the native manifest. The native pose adds the part's attach offset to the
+root track's base, because the magazine's `tag_clip` track is relative to the part's attach point,
+not the gun's root.
+
+Evidence, MP7 base static pair (`--weapon mp7_mp --no-attachments`):
+`.../opencode/vm-sweep/magfix/before_archive/mp7/base.png` (archive blob, old identity mount) vs
+`.../opencode/vm-sweep/magfix/after_convert/mp7/base.png` (fresh conversion,
+`ZHBO_SWEEP_CONVERT_ALL=1`). The before/after diff is confined to the receiver top at
+hip `x415-442, y200-229` and ADS `x952-968, y173-192`; the converted render no longer shows the
+magazine's top crossing the rail. The ignored real-install test
+`the_mp7_magazine_rides_its_authored_offset` pins the manifest part to `j_gun` and the authored
+offset. The converted archive's base weapons still hold the old mount until the integrator
+rebuilds the asset archive; no `hud::VERSION` or ABI change.
+
+Verified: `cargo test -p zhbo-core -p zhbo-assets -p zhbo-formats -p zhbo-native` green
+(45 passed / 12 ignored, 343, 21 / 8 ignored, 21); clippy on the touched crates clean;
+`ZHBO_BO2_DIR=~/Games/BlackOps2 cargo test -q --release -p zhbo-assets -p zhbo-formats --
+--ignored` green (12 + 8 passed).
+
+## Blank equipment poses: the hand/tag probe (2026-10-22, branch `v1/vm-fixes-2`)
+
+The sweep's equipment blanks are not missing art or a zero `view_pos`: `hatchet_mp`,
+`trophy_system_mp`, `flash_grenade_mp` and `proximity_grenade_mp` compose (74–90 bones, 6.8k–10k
+vertices) and their authored view positions are present (e.g. hatchet `stand_move [0,1,-1.5]`;
+G4 applies that stance value only while moving, so it is not the static hip offset). The new
+ignored probe `probe_equipment_idle_pose` samples the idle clip and shows the mount problem: the
+converted part hangs from the hands' `tag_weapon` at the animation's tag position, but the
+equipment idle tracks move that tag far away from either wrist. For the hatchet,
+`tag_weapon` is `[-80.29, 0.01, -6.74]`, the right wrist `[-13.28, -4.44, -29.46]` and the left
+wrist `[-4.32, 11.26, 9.30]`; the frag grenade (which appears in ADS) keeps its tag at the bind
+`[15.16, 0, -6.75]`. `handModel` is empty on all of these, so the faction's default two-arm
+viewhands are used. The ADS aim-marker alignment brings the eight hip-only cases into view; the
+four above stay off-screen because their tag is behind the camera. The fix belongs in the
+converter's equipment/hand attachment (and, if BO2 selects a different hand model for the
+offhand, in the hand-model lookup), not in the harness pose. Probe only in this commit.
+
+## Integrating the MP7 magazine mount and the equipment-pose probe (2026-10-22)
+
+Merged `v1/vm-fixes-2` (2 commits). **The MP7's magazine clipped through the receiver because
+the converter ignored BO2's `attachViewModelOffsets`: BO2 stores the base magazine as the
+weapon's `attachViewModel` part with an authored offset, but the converter searched by name and
+mounted it at `j_gun` with identity.** The converter now parses the offsets, selects the
+`attach_mag` part, and mounts it at the authored offset on both paths (the native part root
+uses the attach offset as its root-track base). Before/after sweep: the protruding mag top is
+gone; the diff is confined to the receiver-top region. The equipment-blank probe: the
+off-hand equipment (hatchet, trophy, flashbangs…) composes fine but hangs from the hands'
+`tag_weapon`, which the equipment idle tracks move away from both wrists (hatchet's tag sits at
+[-80, 0, -7] — behind the camera) — so the gear is off-screen at idle, not missing art or a bad
+`view_pos`; ADS aim-marker alignment is what brings the eight hip-only cases into view. The fix
+belongs in the converter's equipment/hand attachment (or BO2's offhand hand-model lookup);
+recorded, not hacked. Archive VERSION 55 → 56 (the mag mount in the baked archive). MODLOG.md
+was the only conflict; both kept.
+
+Verified: cargo test --workspace green; the full real-install suite green; clippy
+--workspace --all-targets clean; `cargo xtask build` clean; autotest 13/13 default,
+`--classpick` all checks, 14/14 `--rts`.
 
 ## Next steps
 

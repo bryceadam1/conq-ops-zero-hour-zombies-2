@@ -9,8 +9,10 @@
 //! weapons), `--no-attachments` (base weapons only), `--sweep` (render the first-raise clip across
 //! frames instead of the static pose pair; `ZHBO_SWEEP_ADS=1` sweeps the aimed pose instead of the
 //! hip). `ZHBO_SWEEP_NEAR=<world units>` overrides the camera near plane (default 0.1; 2.0
-//! reproduces the in-game rear clipping the native pass's old near caused). `--release` converts
-//! the combinations about ten times faster; a full sweep is a few minutes.
+//! reproduces the in-game rear clipping the native pass's old near caused).
+//! `ZHBO_SWEEP_CONVERT_ALL=1` converts every job, including base weapons, through the converter
+//! instead of reading the archive's baked blobs, for a converter A/B. `--release` converts the
+//! combinations about ten times faster; a full sweep is a few minutes.
 //!
 //! **What it draws.** The pipeline the game draws with, not a lookalike: the core's `nativevm` path
 //! loads a viewmodel exactly as `host/zhbo/ZhboViewmodel.cpp` drives it (`zhbo_native_viewmodel`
@@ -538,7 +540,11 @@ fn render_job(job: &Job, archive: &BigArchive, source: &mut Option<zhbo_assets::
     // Base weapons draw the archive's own blobs. A combination does too only when the table holds
     // that exact combination (the loadout's own kit, `weapons::converted`): everything else is
     // converted here, into memory for this render only.
-    let held = archive_vm(job).filter(|&vm| Art::Archive(archive).has(&zhbo_native::viewmodel_path(vm, FACTION as char)));
+    let held = if std::env::var_os("ZHBO_SWEEP_CONVERT_ALL").is_some() {
+        None
+    } else {
+        archive_vm(job).filter(|&vm| Art::Archive(archive).has(&zhbo_native::viewmodel_path(vm, FACTION as char)))
+    };
     let converted = match held {
         Some(_) => None,
         None => {

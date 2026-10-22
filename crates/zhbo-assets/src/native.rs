@@ -168,12 +168,14 @@ pub(crate) struct Viewmodel<'a> {
     pub attachments: Vec<(Option<String>, crate::xf::Xf, bool)>,
     pub hide: &'a [String],
     pub clips: &'a [(u16, String)],
+    /// The base magazine's authored `attachViewModelOffset`, in inches.
+    pub mag_offset: Option<[f32; 3]>,
 }
 
 /// One manifest per faction for weapon `v`: the faction's arms, the gun on `tag_weapon`, the
-/// magazine on `j_gun` (and its rigid copy on `tag_clip1`, where the reload brings the new one in),
-/// each attachment on its `viewModelTag` (else the gun's root) at its view offset, and the aim
-/// marker. Model blobs are written once each.
+/// magazine on the gun root (`j_gun`) at its authored `attachViewModelOffset` (and its rigid copy on
+/// `tag_clip1`, where the reload brings the new one in), each attachment on its `viewModelTag`
+/// (else the gun's root) at its view offset, and the aim marker. Model blobs are written once each.
 pub(crate) fn viewmodels(
     out: &mut BTreeMap<String, Vec<u8>>,
     v: &Viewmodel,
@@ -193,8 +195,9 @@ pub(crate) fn viewmodels(
         // (model, tag, offset, rigid, path) in composition order.
         let mut parts: Vec<(&nm::Model, Option<String>, zhbo_native::math::Xf, bool, String)> =
             vec![(arms, None, IDENTITY, false, arms_path), (gun, Some("tag_weapon".into()), IDENTITY, false, gun_path.clone())];
+        let mag_offset = v.mag_offset.map_or(IDENTITY, |t| (IDENTITY.0, t));
         if let (Some(m), Some(p)) = (mag, &mag_path) {
-            parts.push((m, Some("j_gun".into()), IDENTITY, false, p.clone()));
+            parts.push((m, Some("j_gun".into()), mag_offset, false, p.clone()));
         }
         let has = |name: &str, parts: &[(&nm::Model, Option<String>, zhbo_native::math::Xf, bool, String)]| parts.iter().any(|p| p.0.bone(name).is_some());
         if let (Some(m), Some(p)) = (mag, &mag_path) {

@@ -9,7 +9,8 @@
 //!
 //! **Sampling.** A bone the clip has a track for takes the track's rotation, and its translation
 //! added to the bone's own local offset (`anim_base`: the model's local position for a child bone,
-//! zero for a root, where BO2's track is the full offset); untracked bones keep the bind pose.
+//! a part's attach offset for a part's root, zero for an unattached root where BO2's track is the
+//! full offset); untracked bones keep the bind pose.
 //!
 //! **Hiding.** BO2 hides a tag (`hideTags`, an optic's iron sights) by collapsing it: the bone and
 //! everything under it skin with a zero matrix, so their triangles vanish.
@@ -85,7 +86,15 @@ impl Skeleton {
                     None => attach,
                 };
                 let bind_local = compose(inverse(parent.map_or(IDENTITY, |p| s.bones[p].bind)), world);
-                let anim_base = if b.parent.is_some() { b.local_position } else { [0.0; 3] };
+                // A part's root track is relative to the part's attach point, not the gun's root:
+                // the magazine's `tag_clip` track is zero and must leave the part at its offset.
+                let anim_base = if b.parent.is_some() {
+                    b.local_position
+                } else if attach.is_some() {
+                    offset.1
+                } else {
+                    [0.0; 3]
+                };
                 s.bones.push(Bone { name: b.name.clone(), parent, bind_local, anim_base, bind: world, inv_bind: inverse(own), hidden: false, animated: !rigid });
             }
             s.parts.push(PartBones { first, count: model.bones.len() });
@@ -291,6 +300,24 @@ mod tests {
         assert!(!skel.bones[2].hidden);
         let (_, missing) = Skeleton::compose(&[part(&arms, None, IDENTITY), part(&gun, Some("nope"), IDENTITY)], &[], &[]);
         assert_eq!(missing.len(), 1);
+    }
+
+    #[test]
+    fn an_attached_part_root_keeps_its_offset_under_a_root_track() {
+        let arms = strip();
+        let mut gun = strip();
+        gun.name = "gun".into();
+        gun.bones[0].name = "tag_clip".into();
+        let offset = (crate::math::QUAT_IDENTITY, [0.0, 0.0, 2.0]);
+        let (skel, problems) = Skeleton::compose(&[part(&arms, None, IDENTITY), part(&gun, Some("j_arm"), offset)], &[], &[]);
+        assert!(problems.is_empty(), "{problems:?}");
+        let mut a = bend();
+        a.bones = vec![crate::anim::BoneTrack { name: "tag_clip".into(), rotation: None, translation: Some(vec![(0, [0.0; 3]), (10, [0.0; 3])]) }];
+        let (mut local, mut ms) = (Vec::new(), Vec::new());
+        skel.sample(&a, 0.0, &mut local);
+        skel.model_space(&local, &mut ms);
+        // The arms' `j_arm` at (10,0,0), plus the part's 2" up — not the attach point alone.
+        assert!(close(skel.bone_point(&ms, 2), [10.0, 0.0, 2.0]), "{:?}", skel.bone_point(&ms, 2));
     }
 
     #[test]
