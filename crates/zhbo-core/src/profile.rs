@@ -671,6 +671,47 @@ mod tests {
     }
 
     #[test]
+    fn v2_round_trips_the_personalize_fields() {
+        let _g = lock();
+        let mut p = Profile::new();
+        p.save(CustomClass {
+            name: "Personalized".into(),
+            primary: "an94_mp".into(),
+            camo: "devgru".into(),
+            reticle: "reflex".into(),
+            reticle_color: "red".into(),
+            knife: "knife_held_mp".into(),
+            ..CustomClass::default()
+        });
+        let text = p.to_text();
+        assert!(
+            text.contains("camo=devgru;reticle=reflex;reticle_color=red;knife=knife_held_mp"),
+            "the spec carries the choices:\n{text}"
+        );
+        let back = Profile::from_text(&text);
+        let c = &back.customs()[0];
+        assert_eq!(c.camo, "devgru");
+        assert_eq!(c.reticle, "reflex");
+        assert_eq!(c.reticle_color, "red");
+        assert_eq!(c.knife, "knife_held_mp");
+    }
+
+    #[test]
+    fn a_v1_profile_loads_with_empty_personalize_fields() {
+        let _g = lock();
+        // A v1 record has no personalisation keys; the parser leaves them empty so the class uses
+        // the weapon's stock finish and the standard knife.
+        let text = "Old Rifle\nprimary=an94_mp;secondary=fnp45_mp;melee=knife_held_mp\n\n";
+        let p = Profile::from_text(text);
+        let c = &p.customs()[0];
+        assert_eq!(c.name, "Old Rifle");
+        assert!(c.camo.is_empty(), "old profile leaves camo empty");
+        assert!(c.reticle.is_empty(), "old profile leaves reticle empty");
+        assert!(c.reticle_color.is_empty(), "old profile leaves reticle_color empty");
+        assert!(c.knife.is_empty(), "old profile leaves knife empty");
+    }
+
+    #[test]
     fn a_v1_profile_migrates_into_sets_one_and_two() {
         let _g = lock();
         // Seven v1 records: the old file was one flat list of up to ten classes.

@@ -12,6 +12,101 @@ use super::*;
     }
 
     #[test]
+    fn tab_marks_the_personalize_action_without_touching_the_draft() {
+        let mut e = Editor::new(Draft::default());
+        let before = e.draft.clone();
+        let slot = e.slot;
+        assert_eq!(e.step(Edges { personalize: true, ..Default::default() }), Outcome::Continue);
+        assert!(e.personalize, "Tab marks the knife-personalization action");
+        assert_eq!(e.draft, before);
+        assert_eq!(e.slot, slot);
+        // The flag is one-shot: the next frame clears it.
+        assert_eq!(e.step(Edges::default()), Outcome::Continue);
+        assert!(!e.personalize);
+    }
+
+    #[test]
+    fn personalize_grids_use_bo2s_column_counts() {
+        // `caccamomenu.lua:9`: `CamoGridColumns = 6`; `cacreticles.lua:9`: `GridColumns = 5`.
+        assert_eq!(PersonalizeKind::Camo.columns(), 6);
+        assert_eq!(PersonalizeKind::Knife.columns(), 6);
+        assert_eq!(PersonalizeKind::Reticle.columns(), 5);
+        assert_eq!(PersonalizeKind::ReticleColor.columns(), 5);
+        // The walk wraps within the row and column exactly as `contentgrid.lua` does.
+        assert_eq!(grid_right(5, 12, 6), 0, "the last cell of a row wraps to its first");
+        assert_eq!(grid_down(0, 12, 6), 6);
+        assert_eq!(grid_up(0, 12, 6), 6, "the first row wraps to the last");
+    }
+
+    #[test]
+    fn personalize_opens_on_the_current_choice_and_applies_the_confirmed_cell() {
+        let mut d = Draft { camo: "gold".into(), ..Draft::default() };
+        let choices: Vec<String> = ["none", "gold", "diamond", "beast", "bengal", "blue"].iter().map(|s| s.to_string()).collect();
+        let mut p = Personalize::new(PersonalizeKind::Camo, choices, &d);
+        assert_eq!(p.highlight, 1, "opens on the draft's current camo");
+        // Right moves within the row.
+        assert_eq!(p.step(Edges { right: true, ..Default::default() }, &mut d), Outcome::Continue);
+        assert_eq!(p.highlight, 2);
+        // A single row wraps down back onto itself (`contentgrid.lua`'s back-link).
+        assert_eq!(p.step(Edges { down: true, ..Default::default() }, &mut d), Outcome::Continue);
+        assert_eq!(p.highlight, 2, "one row wraps down back onto itself");
+        // Confirm applies the highlighted choice and leaves the screen.
+        assert_eq!(p.step(Edges { confirm: true, ..Default::default() }, &mut d), Outcome::Save);
+        assert_eq!(d.camo, "diamond");
+    }
+
+    #[test]
+    fn personalize_cancel_leaves_the_draft_untouched() {
+        let mut d = Draft { reticle: "red_dot".into(), ..Draft::default() };
+        let choices: Vec<String> = ["none", "red_dot", "acog"].iter().map(|s| s.to_string()).collect();
+        let mut p = Personalize::new(PersonalizeKind::Reticle, choices, &d);
+        assert_eq!(p.highlight, 1);
+        assert_eq!(p.step(Edges { cancel: true, ..Default::default() }, &mut d), Outcome::Cancel);
+        assert_eq!(d.reticle, "red_dot");
+    }
+
+    #[test]
+    fn personalize_with_no_choices_closes_without_applying() {
+        let mut d = Draft::default();
+        let mut p = Personalize::new(PersonalizeKind::Knife, Vec::new(), &d);
+        assert_eq!(p.step(Edges { confirm: true, ..Default::default() }, &mut d), Outcome::Cancel);
+        assert!(d.knife.is_empty());
+    }
+
+    #[test]
+    fn personalize_editor_moves_the_highlight_and_applies_the_choice() {
+        let mut d = Draft { camo: "camo_1".into(), ..Default::default() };
+        let choices = vec!["camo_1".into(), "camo_2".into(), "camo_3".into()];
+        let mut p = Personalize::new(PersonalizeKind::Camo, choices, &d);
+        assert_eq!(p.highlight, 0, "opens on the draft's current camo");
+        // Six columns means three choices is one short row: Right walks to the second cell.
+        assert_eq!(p.step(Edges { right: true, ..Default::default() }, &mut d), Outcome::Continue);
+        assert_eq!(p.highlight, 1);
+        // Confirm applies the highlighted choice and closes the screen.
+        assert_eq!(p.step(Edges { confirm: true, ..Default::default() }, &mut d), Outcome::Save);
+        assert_eq!(d.camo, "camo_2");
+        // Cancel closes without applying.
+        let mut p = Personalize::new(PersonalizeKind::Reticle, vec!["ret_a".into()], &d);
+        d.reticle = "old".into();
+        assert_eq!(p.step(Edges { cancel: true, ..Default::default() }, &mut d), Outcome::Cancel);
+        assert_eq!(d.reticle, "old");
+    }
+
+    #[test]
+    fn personalize_editor_wraps_across_rows_like_contentgrid() {
+        let mut d = Draft::default();
+        let choices: Vec<String> = (0..12).map(|i| format!("camo_{i}")).collect();
+        let mut p = Personalize::new(PersonalizeKind::Camo, choices, &d);
+        assert_eq!(p.highlight, 0);
+        assert_eq!(p.step(Edges { up: true, ..Default::default() }, &mut d), Outcome::Continue);
+        assert_eq!(p.highlight, 6, "first row wraps to the last row");
+        assert_eq!(p.step(Edges { down: true, ..Default::default() }, &mut d), Outcome::Continue);
+        assert_eq!(p.highlight, 0, "last row wraps to the first");
+        assert_eq!(p.step(Edges { left: true, ..Default::default() }, &mut d), Outcome::Continue);
+        assert_eq!(p.highlight, 5, "first cell wraps to the row's last cell");
+    }
+
+    #[test]
     fn every_wildcard_costs_a_point_and_round_trips_through_its_id() {
         for w in Wildcard::ALL {
             assert_eq!(Wildcard::by_id(w.id()), Some(w));

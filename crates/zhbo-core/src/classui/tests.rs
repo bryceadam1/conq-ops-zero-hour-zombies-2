@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::classes::CustomClass;
+use crate::classmenu::{Outcome, Personalize, PersonalizeKind};
 
 fn lock() -> std::sync::MutexGuard<'static, ()> {
     crate::profile::lock()
@@ -172,7 +173,7 @@ fn the_lobby_shows_the_set_header_and_hint_and_the_match_the_sets_name() {
     crate::lui::font::load("");
     crate::profile::reset();
     let mut lobby = Vec::new();
-    draw_pick(&mut lobby, 1280.0, 720.0, &ScreenView { highlight: 0, editor: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
+    draw_pick(&mut lobby, 1280.0, 720.0, &ScreenView { highlight: 0, editor: None, personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
     let lobby_text = texts(&lobby);
     for want in ["CHOOSE CLASS", "CLASS SET 1", "Custom 1", "Custom 5", "Class Set Options", "Class Options", "PRIMARY", "WILDCARDS"] {
         assert!(lobby_text.iter().any(|t| t == want), "the lobby shows {want:?}: {lobby_text:?}");
@@ -180,7 +181,7 @@ fn the_lobby_shows_the_set_header_and_hint_and_the_match_the_sets_name() {
     // The hint wraps onto lines of the list's width.
     assert!(lobby_text.iter().any(|t| SET_HINT.starts_with(t.as_str()) && !t.is_empty()), "the hint: {lobby_text:?}");
     let mut game = Vec::new();
-    draw_pick(&mut game, 1280.0, 720.0, &ScreenView { highlight: 0, editor: None, deny: 0.0, manage: false, now: 0.0, set_change: None, open: None });
+    draw_pick(&mut game, 1280.0, 720.0, &ScreenView { highlight: 0, editor: None, personalize: None, deny: 0.0, manage: false, now: 0.0, set_change: None, open: None });
     let game_text = texts(&game);
     assert!(!game_text.iter().any(|t| t.starts_with("You will load")), "no hint in a match: {game_text:?}");
     assert!(game_text.iter().any(|t| t == "CLASS SET 1"), "the match list names the set");
@@ -196,7 +197,7 @@ fn a_class_set_switch_slides_the_list_in_and_fades_the_preview() {
     crate::profile::reset();
     let view = |settle: f32| {
         let mut prims = Vec::new();
-        draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: None, deny: 0.0, manage: true, now: 0.0, set_change: Some(settle * pick::SET_SWITCH_MS / 1000.0), open: None });
+        draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: None, personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: Some(settle * pick::SET_SWITCH_MS / 1000.0), open: None });
         prims
     };
     let started = view(0.0);
@@ -245,7 +246,7 @@ fn a_menu_fades_in_over_the_luas_250ms() {
     assert_eq!(MENU_OPEN_MS, 250.0, "codmenu.lua's animateIn duration");
     let draw = |open: Option<f32>, editor: Option<&Editor>| {
         let mut prims = Vec::new();
-        draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor, deny: 0.0, manage: true, now: 0.0, set_change: None, open });
+        draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor, personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open });
         prims
     };
     let alpha = |prims: &[Prim], want: &str| -> Option<u32> {
@@ -427,7 +428,7 @@ fn the_option_grid_labels_the_option_under_each_cell_and_highlights_the_chosen_o
     let opts = e.options();
     let (first, shown) = picker_window(e.slot, e.option);
     let mut prims = Vec::new();
-    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
+    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
     let t = texts(&prims);
     for name in &opts[first..(first + shown).min(opts.len())] {
         assert!(t.iter().any(|x| x == name), "option {name} is labelled: {t:?}");
@@ -448,7 +449,7 @@ fn the_editor_screens_draw_their_boxes_and_prompts() {
     let mut e = Editor::new(Draft::default());
     e.slot = Slot::Perk2;
     let mut prims = Vec::new();
-    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
+    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
     let t = texts(&prims);
     for label in ["PERK 1", "PERK 2", "PERK 3", "LETHAL", "TACTICAL", "ATTACHMENTS", "WILDCARDS"] {
         assert!(t.iter().any(|x| x == label), "editor label {label}: {t:?}");
@@ -462,7 +463,7 @@ fn the_editor_screens_draw_their_boxes_and_prompts() {
     // A perk list shows the tier's grid.
     e.picking = true;
     let mut prims = Vec::new();
-    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
+    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
     let t = texts(&prims);
     assert!(t.iter().any(|x| x == "Scavenger"), "tier 2 perks are listed: {t:?}");
     assert!(t.iter().any(|x| x == "FastHands"), "tier 2 perks are listed");
@@ -475,7 +476,7 @@ fn a_launcher_shows_attachments_not_available() {
     let d = Draft { secondary: "smaw_mp".into(), ..Draft::default() };
     let e = Editor::new(d);
     let mut prims = Vec::new();
-    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
+    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
     let t = texts(&prims);
     assert!(t.iter().any(|x| x == "Attachments not available"), "BO2's launcher line: {t:?}");
 }
@@ -917,4 +918,51 @@ fn a_rename_types_into_the_dialog_field_and_commits_on_enter() {
     pointer.keys.set_down(Key::Enter, true);
     assert_eq!(dialog_step(&mut d, &prev, &pointer), DialogOutcome::Confirm(DialogItem::Rename));
     assert!(!d.naming, "Enter closes the field");
+}
+
+#[test]
+fn the_personalize_screen_draws_bo2s_grid_and_labels() {
+    let _f = crate::lui::font::lock();
+    crate::lui::font::load("");
+    let draft = Draft::default();
+    let choices: Vec<String> = ["NONE", "GOLD", "DIAMOND", "BEAST", "BENGAL", "BLUE", "CHERRY", "CARBON"].iter().map(|s| s.to_string()).collect();
+    let p = Personalize::new(PersonalizeKind::Camo, choices, &draft);
+    let mut prims = Vec::new();
+    draw_personalize(&mut prims, 1280.0, 720.0, &p, None, 0.0, 0.0);
+    let t = texts(&prims);
+    assert!(t.iter().any(|s| s == "CAMO"), "the title: {t:?}");
+    assert!(t.iter().any(|s| s == "EQUIPPED"), "the Equipped label: {t:?}");
+    for name in ["NONE", "GOLD", "DIAMOND", "BEAST", "BENGAL", "BLUE"] {
+        assert!(t.iter().any(|s| s == name), "the choice {name:?}: {t:?}");
+    }
+    assert!(t.iter().any(|s| s == "Back"), "the ESC Back prompt: {t:?}");
+    assert!(t.iter().any(|s| s == "Select"), "the ENTER Select prompt: {t:?}");
+}
+
+#[test]
+fn the_personalize_screen_moves_and_selects_with_arrows() {
+    let _f = crate::lui::font::lock();
+    crate::lui::font::load("");
+    let mut draft = Draft::default();
+    let choices: Vec<String> = ["NONE", "GOLD", "DIAMOND", "BEAST", "BENGAL", "BLUE"].iter().map(|s| s.to_string()).collect();
+    let mut p = Personalize::new(PersonalizeKind::Camo, choices, &draft);
+    let mut prev = MenuPrev::default();
+    let mut inp = MenuPointer { screen_w: 1280.0, screen_h: 720.0, ..Default::default() };
+    inp.keys.set_down(Key::Right, true);
+    let frame = personalize_frame(&mut p, &mut draft, &inp, &prev);
+    assert_eq!(frame.outcome, Outcome::Continue);
+    assert_eq!(p.highlight, 1, "Right walks the grid");
+    assert_eq!(frame.cue, Some(cues::GRID_NAV));
+    prev.update(&inp);
+    inp.keys.clear();
+    personalize_frame(&mut p, &mut draft, &inp, &prev);
+    prev.update(&inp);
+    inp.keys.set_down(Key::Enter, true);
+    let frame = personalize_frame(&mut p, &mut draft, &inp, &prev);
+    assert_eq!(frame.outcome, Outcome::Save);
+    assert_eq!(draft.camo, "GOLD", "Enter equips the highlighted cell");
+    assert_eq!(frame.cue, Some(cues::GRID_EQUIP));
+    let mut prims = Vec::new();
+    draw_personalize(&mut prims, 1280.0, 720.0, &p, None, 0.0, 0.0);
+    assert!(texts(&prims).iter().any(|s| s == "GOLD"));
 }

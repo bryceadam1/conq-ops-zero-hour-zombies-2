@@ -2,15 +2,20 @@
 //! (`pick.rs`) or the editor (`editor.rs`).
 
 use super::*;
+use crate::classmenu::Personalize;
 
-/// What a host shows on the class screen this frame: the pick list (and its highlighted row) or
-/// the open editor, plus the shared deny-rim counter. The in-game `Client` and the shell
-/// `MenuState` both produce one; the drawing below never sees the hosts themselves.
+/// What a host shows on the class screen this frame: the pick list (and its highlighted row), the
+/// open editor, or one of BO2's personalize screens, plus the shared deny-rim counter. The in-game
+/// `Client` and the shell `MenuState` both produce one; the drawing below never sees the hosts
+/// themselves.
 pub struct ScreenView<'a> {
     /// The pick list's highlighted row (unused while the editor is up).
     pub highlight: usize,
     /// The open allocation editor, if any (shell only; a match is pick-only).
     pub editor: Option<&'a Editor>,
+    /// The open personalize screen, if any. It is a submenu of the editor, so it draws in the
+    /// editor's place while it is up.
+    pub personalize: Option<&'a Personalize>,
     /// Seconds left of the deny rim (a refused choice).
     pub deny: f32,
     /// The lobby's screen (class sets, set/class options). False in a match.
@@ -48,6 +53,12 @@ pub fn draw_screen(prims: &mut Vec<Prim>, w: f32, h: f32, view: &ScreenView) {
 
 /// The static screen, with no menu-open fade around it.
 fn draw_body(prims: &mut Vec<Prim>, w: f32, h: f32, view: &ScreenView) {
+    // A personalize screen is a submenu of the editor: BO2 opens it from the `TAB` prompt and it
+    // takes the screen over until it closes (`caccamomenu.lua`, `cacreticles.lua`).
+    if let Some(personalize) = view.personalize {
+        draw_personalize(prims, w, h, personalize, view.editor.map(|e| e.draft.primary.as_str()), view.deny, view.now);
+        return;
+    }
     match view.editor {
         Some(editor) => draw_editor(prims, w, h, editor, view.deny, view.now),
         None => draw_pick(prims, w, h, view),
