@@ -6,7 +6,7 @@
 ** License, or (at your option) any later version.
 */
 
-use super::def::{Class, Effect, FireMode, Kind, Kick, Place, WeaponDef};
+use super::def::{CamoOption, Class, Effect, FireMode, Kind, Kick, Place, WeaponDef};
 use super::feel::{nums, v3, GunKick, Sway};
 use super::specialty::Specialties;
 use crate::attachments::AttachmentDef;
@@ -15,6 +15,9 @@ use crate::attachments::AttachmentDef;
 pub struct Table {
     pub weapons: Vec<WeaponDef>,
     pub attachments: Vec<AttachmentDef>,
+    /// BO2's camo options (`Camo <id>` blocks): the screen's grid cells with their names and
+    /// thumbnails (`mp/attachmenttable.csv`'s `camo` rows).
+    pub camo: Vec<CamoOption>,
     /// Third-person meshes of the scorestreak tablet on the soldier model (`TB{k:02}`).
     pub tablet_meshes: u8,
     /// BO2's perk rows (`mp/statstable.csv`): the reference without `PERKS_` (`LIGHTWEIGHT`,
@@ -65,6 +68,9 @@ pub fn format_full_table(t: &Table) -> String {
     for a in &t.attachments {
         write_block(&mut s, "Attachment ", &a.id, ATTACHMENT_FIELDS, a);
     }
+    for c in &t.camo {
+        write_block(&mut s, "Camo ", &c.id, CAMO_FIELDS, c);
+    }
     for d in &t.weapons {
         write_block(&mut s, "Weapon ", &d.id, WEAPON_FIELDS, d);
     }
@@ -82,6 +88,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
     enum Block {
         Weapon(Box<WeaponDef>),
         Attachment(Box<AttachmentDef>),
+        Camo(Box<CamoOption>),
         Perk(String, Specialties),
     }
     let mut table = Table::default();
@@ -100,6 +107,10 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
             cur = Some(Block::Attachment(Box::new(AttachmentDef { id: id.trim().to_string(), ..Default::default() })));
             continue;
         }
+        if let Some(id) = line.strip_prefix("Camo ") {
+            cur = Some(Block::Camo(Box::new(CamoOption { id: id.trim().to_string(), ..Default::default() })));
+            continue;
+        }
         if let Some(id) = line.strip_prefix("Perk ") {
             cur = Some(Block::Perk(id.trim().to_string(), Specialties::NONE));
             continue;
@@ -108,6 +119,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
             match cur.take().ok_or_else(|| err("End without a block"))? {
                 Block::Weapon(w) => table.weapons.push(*w),
                 Block::Attachment(a) => table.attachments.push(*a),
+                Block::Camo(c) => table.camo.push(*c),
                 Block::Perk(stats, specialties) => table.perks.push((stats, specialties)),
             }
             continue;
@@ -122,6 +134,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
                 _ => return Err(err("value outside a block")),
             },
             Some(Block::Attachment(a)) => set_field(ATTACHMENT_FIELDS, a, key, values).map_err(|e| err(&e))?,
+            Some(Block::Camo(c)) => set_field(CAMO_FIELDS, c, key, values).map_err(|e| err(&e))?,
             Some(Block::Perk(_, specialties)) => {
                 if key == "Specialties" {
                     *specialties = Specialties::parse(value).map_err(|e| err(&e))?;
@@ -576,6 +589,25 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("ReticleArt", "The crosshair's centre and side materials (`-` for none).", FieldKind::Words,
         |d: &WeaponDef| d.reticle.format_art(),
         |d: &mut WeaponDef, v: Values| { d.reticle.set_art(v.text); Ok(()) }),
+    field!("CamoList", "The camouflage option ids this weapon offers, `camo_none` first.", FieldKind::Words,
+        |d: &WeaponDef| d.camo.join(" "),
+        |d: &mut WeaponDef, v: Values| { d.camo = v.text.split_whitespace().map(str::to_string).collect(); Ok(()) }),
+    field!("CamoMaterial", "The weapon's own camo material (`camo_<weapon>`), empty when none.", FieldKind::Str,
+        |d: &WeaponDef| d.camo_material.clone(),
+        |d: &mut WeaponDef, v: Values| { d.camo_material = v.text.into(); Ok(()) }),
+];
+
+/// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
+pub const CAMO_FIELDS: &[Field<CamoOption>] = &[
+    field!("Name", "The localized name the grid shows (`MPUI_*`).", FieldKind::Str,
+        |c: &CamoOption| c.name.clone(),
+        |c: &mut CamoOption, v: Values| { c.name = v.text.into(); Ok(()) }),
+    field!("Image", "The camo thumbnail image/material the grid cell draws.", FieldKind::Str,
+        |c: &CamoOption| c.image.clone(),
+        |c: &mut CamoOption, v: Values| { c.image = v.text.into(); Ok(()) }),
+    field!("Sort", "BO2's sort key (column 5 of the `camo` row).", FieldKind::Num,
+        |c: &CamoOption| c.sort.to_string(),
+        |c: &mut CamoOption, v: Values| { c.sort = v.text.parse().map_err(|_| "number")?; Ok(()) }),
 ];
 
 /// Apply one schema line to `t`. Unknown keys are tolerated (the parser skips them).
@@ -621,8 +653,10 @@ mod tests {
         }
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 67);
+        check(CAMO_FIELDS);
+        assert_eq!(WEAPON_FIELDS.len(), 69);
         assert_eq!(ATTACHMENT_FIELDS.len(), 17);
+        assert_eq!(CAMO_FIELDS.len(), 3);
     }
 
     #[test]
@@ -670,6 +704,23 @@ mod tests {
         };
         let text = format_full_table(&t);
         assert!(text.contains("Perk LIGHTWEIGHT\n  Specialties = fallheight movefaster\nEnd"), "{text}");
+        assert_eq!(parse_full_table(&text).unwrap(), t);
+    }
+
+    #[test]
+    fn camo_options_and_the_weapon_camo_set_round_trip() {
+        let d = WeaponDef {
+            id: "an94_mp".into(),
+            camo: vec!["camo_none".into(), "camo_multicam".into()],
+            camo_material: "camo_an94".into(),
+            ..Default::default()
+        };
+        let c = CamoOption { id: "camo_multicam".into(), name: "Multicam".into(), image: "menu_camo_multicam_pattern".into(), sort: 1 };
+        let t = Table { weapons: vec![d], camo: vec![c], ..Default::default() };
+        let text = format_full_table(&t);
+        assert!(text.contains("Camo camo_multicam\n  Name = Multicam\n  Image = menu_camo_multicam_pattern\n  Sort = 1\nEnd"), "{text}");
+        assert!(text.contains("CamoList = camo_none camo_multicam"), "{text}");
+        assert!(text.contains("CamoMaterial = camo_an94"), "{text}");
         assert_eq!(parse_full_table(&text).unwrap(), t);
     }
 }

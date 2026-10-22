@@ -6,7 +6,7 @@
 ** License, or (at your option) any later version.
 */
 
-use super::def::WeaponDef;
+use super::def::{CamoOption, WeaponDef};
 use super::table::{parse_full_table, Table};
 use crate::attachments::{self, AttachmentDef};
 use std::collections::HashMap;
@@ -19,6 +19,7 @@ pub struct Catalog {
     by_id: HashMap<String, &'static WeaponDef>,
     order: Vec<&'static WeaponDef>,
     attachments: HashMap<String, &'static AttachmentDef>,
+    camo: HashMap<String, &'static CamoOption>,
     built: Mutex<HashMap<String, &'static WeaponDef>>,
     pub tablet_meshes: u8,
 }
@@ -32,7 +33,8 @@ impl Catalog {
         let order: Vec<&'static WeaponDef> = t.weapons.into_iter().map(|d| &*Box::leak(Box::new(d))).collect();
         let by_id = order.iter().map(|d| (d.id.clone(), *d)).collect();
         let attachments = t.attachments.into_iter().map(|a| (a.id.clone(), &*Box::leak(Box::new(a)))).collect();
-        Catalog { by_id, order, attachments, built: Mutex::new(HashMap::new()), tablet_meshes: t.tablet_meshes }
+        let camo = t.camo.into_iter().map(|c| (c.id.clone(), &*Box::leak(Box::new(c)))).collect();
+        Catalog { by_id, order, attachments, camo, built: Mutex::new(HashMap::new()), tablet_meshes: t.tablet_meshes }
     }
 
     /// A weapon by id; `base+att+att` builds the attachments onto the base if the table doesn't
@@ -70,6 +72,11 @@ impl Catalog {
 
     pub fn attachment(&self, id: &str) -> Option<&'static AttachmentDef> {
         self.attachments.get(id).copied()
+    }
+
+    /// A camo option by id (`camo_multicam`), with its name and thumbnail image.
+    pub fn camo(&self, id: &str) -> Option<&'static CamoOption> {
+        self.camo.get(id).copied()
     }
 
     pub fn all(&self) -> &[&'static WeaponDef] {

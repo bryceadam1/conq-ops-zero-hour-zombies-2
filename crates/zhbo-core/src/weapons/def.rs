@@ -249,6 +249,22 @@ pub struct WeaponDef {
     pub ads_sway: Sway,
     pub view_pos: ViewPos,
     pub reticle: Reticle,
+    /// The camouflage options this weapon offers, as `camo_*` ids with `camo_none` first
+    /// (`mp/attachmenttable.csv`'s `camo` rows).
+    pub camo: Vec<String>,
+    /// The weapon's own camo material (`camo_<weapon>`, `common_patch_mp`), empty when BO2 has none.
+    pub camo_material: String,
+}
+
+/// One BO2 camouflage option (`mp/attachmenttable.csv`'s rows with `camo` in column 1): the id
+/// (`camo_none`, `camo_multicam`), the localized name the grid shows, the thumbnail image BO2's
+/// `CamoGridButton` draws, and the table's sort key.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct CamoOption {
+    pub id: String,
+    pub name: String,
+    pub image: String,
+    pub sort: u32,
 }
 
 /// What a weapon is as equipment, once down (claymore, C4, …). The converter writes it from the
@@ -408,6 +424,8 @@ impl Default for WeaponDef {
             ads_sway: Sway::default(),
             view_pos: ViewPos::default(),
             reticle: Reticle::default(),
+            camo: Vec::new(),
+            camo_material: String::new(),
         }
     }
 }

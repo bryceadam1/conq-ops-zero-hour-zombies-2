@@ -51,7 +51,7 @@ pub fn attachment_metadata(
     // accuracy = col 2, mobility = col 6, fire rate = col 5.
     let Ok(Some(rows)) = zhbo_formats::stringtable::rows(patch_ui, "mp/attributestable.csv") else { return meta };
     for row in rows {
-        if row.get(0).map(String::as_str) != Some("weapon_attachment") { continue; }
+        if row.first().map(String::as_str) != Some("weapon_attachment") { continue; }
         let Some(short) = row.get(1) else { continue };
         let num = |i: usize| row.get(i).and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(0.0);
         let deltas = [num(3), num(4), num(2), num(6), num(5)];
@@ -147,7 +147,7 @@ pub fn table_with_metadata(bo2: &[Weapon], atts: &[bo2::Attachment], names: &Has
         }
     }
     let attachments = atts.iter().filter(|a| a.kind != 0 && !a.name.starts_with(',')).map(|a| attachment_def(a, names, meta)).collect();
-    Table { weapons, attachments, tablet_meshes: 0, perks: Vec::new() }
+    Table { weapons, attachments, camo: Vec::new(), tablet_meshes: 0, perks: Vec::new() }
 }
 
 /// Weapons with attachments, and their alt modes, that [`converted`] asks for: built from their base
@@ -546,6 +546,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         ads_sway: Sway { horiz_scale: w.hip_sway.horiz_scale, vert_scale: w.hip_sway.vert_scale, ..sway(w.ads_sway) },
         view_pos: view_pos(w.view_pos),
         reticle: reticle(&w.reticle),
+        camo: Vec::new(),
+        camo_material: String::new(),
     };
     #[cfg(debug_assertions)]
     {
