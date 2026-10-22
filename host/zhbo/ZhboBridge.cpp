@@ -728,13 +728,19 @@ void Zhbo_ClientFrame()
 }
 
 
-Bool Zhbo_GetCameraOverride(Coord3D *eye, Coord3D *dir, Real *horizontalFov)
+Bool Zhbo_GetCameraOverride(Coord3D *eye, Coord3D *dir, Real *horizontalFov, Real *nearPlane)
 {
 	if (!s_ready || !s_out.camera_override)
 		return FALSE;
 	eye->set(s_out.eye.x, s_out.eye.y, s_out.eye.z);
 	dir->set(s_out.dir.x, s_out.dir.y, s_out.dir.z);
 	*horizontalFov = s_out.hfov;
+	// The viewmodel's near: the gun sits at the eye, so Zero Hour's scene near (NearZ = MAP_XY_FACTOR
+	// = 10 world units, W3DView.cpp:106) would cut its rear into jagged holes. 0.1 units is the
+	// value the native pass's viewmodel projection uses (zhbo-gfx's runtime/native.rs), and the
+	// near-plane sweep in MODLOG's MP7 tear fix found 0.1 solid; BO2's r_znear is 4" ~ 0.67 units,
+	// so 0.1 is as small as needed, not a cosmetic tightening of the terrain's own near.
+	*nearPlane = 0.1f;
 	return TRUE;
 }
 

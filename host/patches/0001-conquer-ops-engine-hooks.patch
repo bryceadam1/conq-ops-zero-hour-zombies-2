@@ -224,15 +224,15 @@ index 1ee5828..1783c7e 100644
  #include <stdlib.h>
  #include <windows.h>
  
-@@ -1678,8 +1679,39 @@ void W3DView::update()
+@@ -1678,8 +1679,42 @@ void W3DView::update()
  		updateCameraAreaConstraints();
  	}
  
 +	// ZHBO: the first-person General owns the camera while active
 +	static Bool s_zhboCameraWasOverridden = false;
 +	Coord3D zhboEye, zhboDir;
-+	Real zhboFov;
-+	if (Zhbo_GetCameraOverride(&zhboEye, &zhboDir, &zhboFov))
++	Real zhboFov, zhboNear;
++	if (Zhbo_GetCameraOverride(&zhboEye, &zhboDir, &zhboFov, &zhboNear))
 +	{
 +		// Keep the terrain draw window centred ahead of the eye.
 +		m_pos.x = zhboEye.x + zhboDir.x * 100.0f;
@@ -242,10 +242,13 @@ index 1ee5828..1783c7e 100644
 +		transform.Look_At_Dir(Vector3(zhboEye.x, zhboEye.y, zhboEye.z), Vector3(zhboDir.x, zhboDir.y, zhboDir.z), 0.0f);
 +		m_3DCamera->Set_View_Plane(zhboFov, -1);
 +		setCameraTransform(transform);
-+		// The RTS near plane (one map cell) is as far away as the General's eye height.
-+		float zhboNear, zhboFar;
-+		m_3DCamera->Get_Clip_Planes(zhboNear, zhboFar);
-+		m_3DCamera->Set_Clip_Planes(0.5f, std::max(zhboFar, 2000.0f));
++		// The first-person viewmodel's near: the bridge returns 0.1 units (the native pass's
++		// projection near; BO2's r_znear 4" is ~0.67 units), so the gun's rear at the eye is not
++		// cut by Zero Hour's terrain near. The terrain's far is kept; the RTS view's own near
++		// (NearZ = MAP_XY_FACTOR = 10) returns when the world camera takes over.
++		float zhboWorldNear, zhboFar;
++		m_3DCamera->Get_Clip_Planes(zhboWorldNear, zhboFar);
++		m_3DCamera->Set_Clip_Planes(zhboNear, std::max(zhboFar, 2000.0f));
 +		m_recalcCamera = false;
 +		s_zhboCameraWasOverridden = true;
 +	}
@@ -265,6 +268,7 @@ index 1ee5828..1783c7e 100644
  	{
  		updateCameraTransform();
  		m_recalcCamera = false;
+ 	}
 diff --git a/Core/GameEngineDevice/Source/Win32Device/Common/Win32BIGFileSystem.cpp b/Core/GameEngineDevice/Source/Win32Device/Common/Win32BIGFileSystem.cpp
 index b75c13d..5997cfe 100644
 --- a/Core/GameEngineDevice/Source/Win32Device/Common/Win32BIGFileSystem.cpp
