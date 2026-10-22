@@ -157,4 +157,50 @@ mod tests {
             show(&id);
         }
     }
+
+    #[test]
+    #[ignore = "probe: the MP7's skin weights, native smooth vs the W3D path's rigid"]
+    fn probe_mp7_weights() {
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        let blobs = src.composition("mp7_mp+reflex").expect("compose");
+        let vm = zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("manifest")).expect("parse");
+        for (i, p) in vm.parts.iter().enumerate() {
+            let m = zhbo_native::model::Model::from_bytes(blobs.get(&p.model).unwrap()).expect("model");
+            eprintln!("PART {i} {}", p.model.rsplit('\\').next().unwrap());
+            for (j, b) in m.bones.iter().enumerate() {
+                eprintln!("  bone {j}: {} parent={:?}", b.name, b.parent);
+            }
+            for (k, s) in m.lod0().iter().enumerate() {
+                let mut one = 0;
+                let mut multi = 0;
+                let mut by_bones = BTreeMap::<String, usize>::new();
+                let mut bounds = BTreeMap::<String, ([f32; 3], [f32; 3])>::new();
+                for v in &s.vertices {
+                    let n = v.weights.iter().filter(|w| **w > 0.001).count();
+                    if n <= 1 {
+                        one += 1
+                    } else {
+                        multi += 1
+                    }
+                    let names: Vec<&str> = v.bones.iter().zip(v.weights.iter()).filter(|(_, w)| **w > 0.001).map(|(b, _)| m.bones[*b as usize].name.as_str()).collect();
+                    *by_bones.entry(names.join("+")).or_default() += 1;
+                    for (b, _) in v.bones.iter().zip(v.weights.iter()).filter(|(_, w)| **w > 0.001) {
+                        let e = bounds.entry(m.bones[*b as usize].name.clone()).or_insert(([f32::MAX; 3], [f32::MIN; 3]));
+                        for k in 0..3 {
+                            e.0[k] = e.0[k].min(v.position[k]);
+                            e.1[k] = e.1[k].max(v.position[k]);
+                        }
+                    }
+                }
+                eprintln!("  surface {k}: {one} single-bone, {multi} multi-bone");
+                for (names, n) in by_bones.iter().take(16) {
+                    eprintln!("    {n:5} {names}");
+                }
+                for (name, (mn, mx)) in &bounds {
+                    eprintln!("    bounds {name}: mins={mn:?} maxs={mx:?}");
+                }
+            }
+        }
+    }
 }
