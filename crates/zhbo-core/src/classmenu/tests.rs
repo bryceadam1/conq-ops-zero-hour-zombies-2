@@ -17,12 +17,37 @@ use super::*;
         let before = e.draft.clone();
         let slot = e.slot;
         assert_eq!(e.step(Edges { personalize: true, ..Default::default() }), Outcome::Continue);
-        assert!(e.personalize, "Tab marks the knife-personalization action");
+        assert_eq!(e.personalize, Some(PersonalizeKind::Knife), "Tab marks the knife-personalization action");
         assert_eq!(e.draft, before);
         assert_eq!(e.slot, slot);
         // The flag is one-shot: the next frame clears it.
         assert_eq!(e.step(Edges::default()), Outcome::Continue);
-        assert!(!e.personalize);
+        assert_eq!(e.personalize, None);
+    }
+
+    #[test]
+    fn the_primary_weapon_row_opens_camo_and_an_optic_row_opens_reticles() {
+        // `caceditclass.lua:748` `AddCamoButton` on the primary weapon row, `:825`
+        // `AddReticleButton` on the primary optic row.
+        let mut e = Editor::new(Draft::default());
+        assert_eq!(e.step(Edges { camo: true, ..Default::default() }), Outcome::Continue);
+        assert_eq!(e.personalize, Some(PersonalizeKind::Camo));
+        assert_eq!(e.step(Edges::default()), Outcome::Continue);
+        assert_eq!(e.personalize, None);
+
+        e.slot = Slot::PrimaryAtts;
+        e.option = (0..e.options().len())
+            .find(|i| e.option_attachment(*i).is_some_and(|s| crate::hud::OPTICS.contains(&s)))
+            .expect("the default primary carries an optic");
+        assert_eq!(e.step(Edges { reticle: true, ..Default::default() }), Outcome::Continue);
+        assert_eq!(e.personalize, Some(PersonalizeKind::Reticle));
+        assert_eq!(e.step(Edges::default()), Outcome::Continue);
+        assert_eq!(e.personalize, None);
+
+        // The attachment grid (picking) carries the same reticle outcome.
+        e.picking = true;
+        assert_eq!(e.step(Edges { reticle: true, ..Default::default() }), Outcome::Continue);
+        assert_eq!(e.personalize, Some(PersonalizeKind::Reticle));
     }
 
     #[test]

@@ -193,8 +193,8 @@ pub struct EditorFrame {
     pub denied: bool,
     /// `R` (or the box's `X`) cleared the highlighted slot this frame.
     pub removed: bool,
-    /// The `TAB` prompt asked for the personalize screen this frame (`caceditclass.lua:52-63`).
-    pub personalize: bool,
+    /// The personalize screen the editor asked for this frame (`TAB` knife, `C` camo, `V` reticle).
+    pub personalize: Option<crate::classmenu::PersonalizeKind>,
     /// The frame's UI cue, if any.
     pub cue: Option<&'static str>,
 }

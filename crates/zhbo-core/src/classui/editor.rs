@@ -97,9 +97,20 @@ pub fn draw_editor(prims: &mut Vec<Prim>, w: f32, h: f32, editor: &Editor, deny:
         left = vec![("ENTER", "Done"), ("BKSP", "Delete")];
         Vec::new()
     } else if editor.picking {
+        if editor.slot == Slot::PrimaryAtts && editor.option_attachment(editor.option).is_some_and(|s| crate::hud::OPTICS.contains(&s)) {
+            left.push(("V", "Reticle"));
+        }
         Vec::new()
     } else {
         left = vec![("ESC", "Back"), ("TAB", "Personalize Knife")];
+        // BO2's `AddCamoButton` on the primary weapon row (`caceditclass.lua:748`) and
+        // `AddReticleButton` on the primary optic row (`:825`).
+        if editor.slot == Slot::Primary {
+            left.push(("C", "Camo"));
+        }
+        if editor.slot == Slot::PrimaryAtts && editor.option_attachment(editor.option).is_some_and(|s| crate::hud::OPTICS.contains(&s)) {
+            left.push(("V", "Reticle"));
+        }
         if removable {
             vec![("R", "Remove")]
         } else {

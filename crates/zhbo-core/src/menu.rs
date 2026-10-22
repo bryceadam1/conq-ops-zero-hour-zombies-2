@@ -17,7 +17,7 @@
 //! Everything is local UI state: no determinism or lockstep requirements (docs/CONTRACT.md's menu
 //! ABI).
 
-use crate::classmenu::{Draft, Editor, Outcome, Personalize, PersonalizeKind};
+use crate::classmenu::{Draft, Editor, Outcome, Personalize};
 use crate::classui::cues;
 use crate::classui::{self, Dialog, DialogItem, DialogOutcome, MenuPointer, MenuPrev, PickFooterAction, PickRow};
 use crate::input::{Key, KeySet};
@@ -542,9 +542,9 @@ impl MenuState {
                 self.menu_open = Some(self.clock);
             }
             Outcome::Continue => {
-                if frame.personalize {
-                    self.personalize =
-                        Some(Personalize::new(PersonalizeKind::Knife, classui::personalize_choices(PersonalizeKind::Knife), &editor.draft));
+                if let Some(kind) = frame.personalize {
+                    let weapon = (!editor.draft.primary.is_empty()).then_some(editor.draft.primary.as_str());
+                    self.personalize = Some(Personalize::new(kind, classui::personalize_choices_for(kind, weapon), &editor.draft));
                 }
                 self.editor = Some(editor);
             }

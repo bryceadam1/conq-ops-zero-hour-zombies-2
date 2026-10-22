@@ -722,9 +722,9 @@ pub struct Editor {
     /// caller plays BO2's deny cue and clears this; the state itself stays pure.
     pub denied: bool,
     /// One-shot: the player pressed Tab on the class row (`caceditclass.lua:52-63`'s
-    /// `knifePersonalization` prompt). The caller opens the personalize screen and clears this;
-    /// the pure editor only records the action.
-    pub personalize: bool,
+    /// `knifePersonalization` prompt) or `C`/`V` on the primary weapon/optic row. The caller opens
+    /// the personalize screen and clears this; the pure editor only records the action.
+    pub personalize: Option<PersonalizeKind>,
 }
 
 /// The editor's answer to one pointer frame, already hit-tested by the view (the editor knows
@@ -765,7 +765,7 @@ pub enum ApplyResult {
 
 impl Editor {
     pub fn new(draft: Draft) -> Editor {
-        Editor { draft, slot: Slot::Primary, option: 0, picking: false, naming: false, denied: false, personalize: false }
+        Editor { draft, slot: Slot::Primary, option: 0, picking: false, naming: false, denied: false, personalize: None }
     }
 
     /// The rows to draw and walk, in order: [`Slot::ALL`] with a second perk row spliced in after a
@@ -869,6 +869,11 @@ impl Editor {
             Slot::SecondaryAtts => attachment_shorts(&self.draft.secondary, &self.draft.secondary_atts).get(i).copied(),
             _ => None,
         }
+    }
+
+    /// Whether the highlighted primary attachment is one BO2 personalizes the reticle of.
+    fn option_is_optic(&self) -> bool {
+        self.option_attachment(self.option).is_some_and(|s| crate::hud::OPTICS.contains(&s))
     }
 
     /// The perk option `i` of a perk row, for its icon.
@@ -1000,6 +1005,10 @@ pub struct Edges {
     pub backspace: bool,
     /// Tab on the class row: BO2's `knifePersonalization` prompt (`caceditclass.lua:52-63`).
     pub personalize: bool,
+    /// `C` on the primary weapon row: BO2's `AddCamoButton` (`caceditclass.lua:748`).
+    pub camo: bool,
+    /// `V` on the primary optic row: BO2's `AddReticleButton` (`caceditclass.lua:825`).
+    pub reticle: bool,
     pub typed: Vec<Key>,
 }
 
@@ -1017,6 +1026,8 @@ impl Edges {
             cancel: edge(Key::Escape),
             backspace: edge(Key::Backspace),
             personalize: edge(Key::Tab),
+            camo: edge(Key::C),
+            reticle: edge(Key::V),
             typed,
         }
     }
@@ -1088,7 +1099,7 @@ impl Editor {
     /// of the budget, so the UI can also show it).
     pub fn step(&mut self, edges: Edges) -> Outcome {
         self.denied = false;
-        self.personalize = false;
+        self.personalize = None;
         if self.naming {
             return self.step_naming(edges);
         }
@@ -1098,7 +1109,17 @@ impl Editor {
         // BO2's `TAB Personalize Knife` prompt opens the personalize screen without moving the
         // row highlight or touching the draft (`caceditclass.lua:52-63`).
         if edges.personalize {
-            self.personalize = true;
+            self.personalize = Some(PersonalizeKind::Knife);
+            return Outcome::Continue;
+        }
+        // BO2's `AddCamoButton` on the primary weapon row (`caceditclass.lua:748`).
+        if edges.camo && self.slot == Slot::Primary {
+            self.personalize = Some(PersonalizeKind::Camo);
+            return Outcome::Continue;
+        }
+        // BO2's `AddReticleButton` on the primary optic row (`caceditclass.lua:825`).
+        if edges.reticle && self.slot == Slot::PrimaryAtts && self.option_is_optic() {
+            self.personalize = Some(PersonalizeKind::Reticle);
             return Outcome::Continue;
         }
         // The slot row is highlighted: up/down move the highlight, Enter opens the list.
@@ -1243,6 +1264,11 @@ impl Editor {
     /// row. The weapon carousel keeps the plain list walk here; its four arrows are consumed by the
     /// shared fold (`classui::editor_frame`) because they steer its categories.
     fn step_picking(&mut self, edges: Edges) -> Outcome {
+        // BO2's `AddReticleButton` on the primary optic row (`caceditclass.lua:825`).
+        if edges.reticle && self.slot == Slot::PrimaryAtts && self.option_is_optic() {
+            self.personalize = Some(PersonalizeKind::Reticle);
+            return Outcome::Continue;
+        }
         let n = self.options().len();
         if n == 0 {
             if edges.cancel || edges.confirm {
