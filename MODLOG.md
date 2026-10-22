@@ -2223,6 +2223,96 @@ the cuff reads as BO2 intends.
 Verified: cargo test --workspace green; the full real-install suite green (incl. the new
 `wrist_datapads_are_off` over all three factions); clippy clean; `cargo xtask build` clean;
 autotest 13/13 default, 13/13 native+compare, 14/14 `--rts`.
+## A headless viewmodel sweep (2026-10-21, branch `v1/vm-sweep`)
+
+The first-person artifacts a playtest reports (see-through patches, an optic in the wrong place, a
+gun off the aim axis) are hard to chase in game: each look is a match launch, a class, a gun. This
+round adds a review harness that draws the whole catalog without the game.
+
+`cargo run -p zhbo-core --example render_viewmodels --features renderer -- <outdir>` (with
+`--release`: the on-demand conversion dominates) walks every player weapon of the installed table
+and, for each, the bare weapon and the weapon with each of its `Allowed` attachments mounted solo.
+One PNG per (weapon, attachment): hip on the left, ADS on the right, 640x360 each, on a flat 0.72
+grey. `manifest.tsv` carries the result of every job (where the art came from, the part count,
+whether the attachment added a view-model part, the viewmodel's log lines).
+
+The harness is the game's own path, not a lookalike: `zhbo_native_viewmodel` with the
+`zhbo_native_wanted`/`zhbo_native_provide` protocol (what `ZhboViewmodel.cpp` drives), the core's
+composition, posing and `nativevm::place` (`ads = 0` hip, `ads = 1` aimed), and `nativevm::gpu`'s
+submit into a headless `zhbo-gfx` renderer — the real native BO2 pass, shading and culling included.
+
+* Base weapons draw the archive's own blobs (what the game draws today). A combination draws from
+  the archive only when the table itself holds it (the loadout's kit, e.g. `an94_mp+gl+reflex`);
+  every other combination is converted on demand by the new
+  `zhbo_assets::viewmodel_sweep::Source`, which runs the same `viewmodels::weapon_viewmodels` the
+  game build runs, straight out of the player's install, into memory for that render only. The
+  blobs and the images never leave the machine and nothing is written outside the output folder.
+* **Gotcha: `client::horizontal_fov` returns radians.** Its doc says degrees and its callers hand
+  the value to the engine as a radian horizontal FOV, but a harness that calls `.to_radians()` on
+  it again projects with a ~50x too narrow frustum: the first version drew a gun-sized sliver at
+  the bottom edge, and at `ads = 0` (the gun exactly on the axis) nothing at all while the aimed
+  pose showed a patch of the arms. The harness now uses the game's FOV as it is
+  (`1 / tan(hfov / 2)`, vertical from the aspect), which frames the gun like a match does.
+* **Gotcha: the clip arrives a round after the models.** The first frame that returns "drawn" can
+  still pose the bind pose (the clip is requested while the models decode), so each pose draws one
+  frame, discards it and draws the picture from the second. Without that, the hip and aimed images
+  of one weapon come from two different poses.
+* The pose numbers are the weapon definition's (`weapons::gunpos::GunPose::step` at stand, still:
+  no bob, no sway), so BO2 decides where the gun sits; the camera is the game's eye frame with a
+  fixed +X view direction, identical for every render.
+* The install is only needed for the combinations the archive lacks: a base-weapons-only sweep
+  (`--no-attachments`) runs off `ConquerOps_BO2.big` alone.
+
+The first full sweep (475 images: 59 weapons, 416 solo attachments, 0 failed jobs) also produced
+the first artifact list. The review findings, in the sweep's `FLAGS.md` beside the images:
+
+* Four equipment viewmodels compose but draw nothing (`hatchet_mp`, `trophy_system_mp`,
+  `flash_grenade_mp`, `proximity_grenade_mp`); `emp_grenade_mp` is a sliver at the bottom edge.
+  Eight more are blank in hip and appear only in ADS (`frag_grenade`, `sticky_grenade`,
+  `satchel_charge`, `tactical_insertion`, `bouncingbetty`, `willy_pete`, `sensor_grenade`,
+  `concussion_grenade`). The blobs load (e.g. hatchet: 74 bones, 6921 vertices), so this is the
+  clip/visibility or the hip `GunPose` offset, not missing art.
+* Ten attachments add a part and vertices in the manifest but render pixel-identical to base:
+  `as50_mp` `ir`/`silencer`/`swayreduc`, the pistol `dualclip`s (`fnp45`, `fiveseven`, `kard`,
+  `judge`, `beretta93r`), and `kard`/`ksg` `steadyaim`. The added part is hidden or inside the gun.
+* Dual wield still draws one pistol: the `*_dw_mp` bases have the same bone/vertex counts as the
+  single pistols, the `dw` attachment says "adds no view-model part", and neither `viewmodel.rs`
+  nor `ZhboViewmodel.cpp` has a second-instance path.
+* The AS50 is the placement outlier: hip fills 0.388 of the frame at mid-screen, where the DSR50
+  fills 0.101 at the bottom. `knife_held` ADS fills half the screen.
+* The guns are near-black silhouettes. The harness uses the `nativevm/tests.rs` light rig
+  (`ambient [0.22, 0.2, 0.17]`, two dim lights), not the scene's time-of-day lights, so this is
+  likely the harness, not the converted albedo. There is no magenta/checkerboard/missing-texture
+  output; the wrist datapad's neutral grey screen is the only flat surface.
+
+These are review findings, not fixes; the next pass should confirm them in game before changing
+the converter or the data.
+
+## Integrating the headless viewmodel sweep (2026-10-21)
+
+Merged `v1/vm-sweep` (1 commit): `cargo run --release -p zhbo-core --example render_viewmodels
+--features renderer -- <outdir>` renders every player weapon — base and with each `allowed`
+attachment solo — through the game's own pipeline (nativevm compose with the combination's
+models/hide_tags/clips, `place` hip vs ADS, the native pass headless) against flat grey,
+475 images over 59 weapons with zero failed jobs. MODLOG.md was the only conflict; both kept.
+
+The first artifact pass (FLAGS.md in the run's outdir, not committed): **no magenta anywhere**
+(independent confirmation of the datapad fix); real follow-ups, in order of weight —
+1. four equipment viewmodels draw nothing in hip (`hatchet`, `trophy_system`, `flash_grenade`,
+   `proximity_grenade`; `emp_grenade` a sliver) and eight more are hip-blank/ADS-only —
+   their blobs compose, so this is pose/clip placement;
+2. ten attachments add manifest geometry but render pixel-identical to base (hidden, inside
+   the gun, or zero-scaled — dump `hide_tags` for those combos);
+3. dual wield renders one pistol (no second-instance path in the conversion);
+4. the AS50 sits far larger/higher than its sibling snipers (check its `view_pos`);
+5. everything is near-black under the harness's test light rig — relight one weapon with the
+   scene's global lights before blaming albedos.
+`place::aligned` only translates the sight, so ADS keeps the hip body's orientation — a
+documented placement limitation, not a converter bug.
+
+Verified: cargo test --workspace green (the removed broken probe tests were the branch's own);
+full real-install suite green; `cargo clippy --workspace --all-targets` clean of new warnings;
+`cargo xtask build` clean; autotest 13/13 default, 13/13 native+compare, 14/14 `--rts`.
 
 ## Next steps
 

@@ -17,6 +17,7 @@ How each layer of the mod is verified, and what to run before declaring a change
 | Create-a-class run | the in-match screen is pick-only and shows the profile's ACTIVE class set: the script seeds a v2 profile with one custom (MP7 primary, claymore — deliberately unlike any premade kit) in set 1, picks it from the spawn screen by its row key (the custom leads the match list, `changeclass.lua`) and the sim logs `assumed the AB class`, with no profile write; the once-a-second pose line then names the MP7, proving the *kit* landed; it then leaves first person, takes control again, forces the screen open and Escapes it, and first-person play continues | `ZHBO_AUTOPILOT=classpick` with either autotest script (the macOS script seeds `ConquerOps.profile` first, then checks `assumed the AB class`, `MP7 <n>\|` in a pose line, no `create-a-class: saved` line, a second `entered first-person control`, and `taking control again`) |
 | Shell create-a-class | the lobby's class screen (the menu ABI): browse, edit, save, delete, copy, close — in the shell, no match | manual only: the in-game autotest does not cover the shell (see below) |
 | Class-screen screenshots | the shell list, the in-match pick list and the Pick-10 editor rendered through `classui::draw_screen` | `cargo run -p zhbo-assets -- screenshot` (uses the locally built `ConquerOps_BO2.big`; PNGs in `target/cac-shots/`) |
+| Viewmodel sweep | every player weapon and every attachment it offers drawn through the game's native first-person path (composition, `nativevm::place`, the native BO2 pass), hip and aimed side by side, for a human review of the catalog | `cargo run --release -p zhbo-core --example render_viewmodels --features renderer -- <outdir>` |
 
 ## The shell create-a-class screen (manual)
 
@@ -79,6 +80,25 @@ needs no Black Ops II install and never launches the game. Sprites resolve throu
 MappedImage INI and TGA pages; art the archive lacks draws its fallback prims exactly as
 `hud::render` does, and the harness prints those sprite names. Use it to iterate on layout and art
 without starting a match; the unit tests cover the same views with fallbacks only (no archive).
+
+## The headless viewmodel sweep
+
+`cargo run --release -p zhbo-core --example render_viewmodels --features renderer -- <outdir>`
+draws every player weapon of the installed table — the bare weapon first, then the weapon with each
+attachment its `Allowed` list offers, one at a time — through the game's own native first-person
+path: `zhbo_native_viewmodel` and the file protocol `ZhboViewmodel.cpp` drives, the core's
+composition and posing, `nativevm::place` (`ads = 0` hip, `ads = 1` aimed) and `nativevm::gpu`'s
+submit into a headless `zhbo-gfx` renderer (the real native BO2 pass). Each image is 1280x360: the
+hip pose on the left, the aimed pose on the right, 640x360 each, on a flat 0.72 grey with the
+game's field of view and a fixed eye-frame camera. `manifest.tsv` records where each render's art
+came from, its part count and the viewmodel's log lines.
+
+Base weapons come from the player's converted `ConquerOps_BO2.big` (the launcher's dist folder, or
+`--archive`/`ZHBO_BO2_ARCHIVE`); a combination the archive does not hold (anything but the
+loadout's own kit) is converted on demand from the Black Ops II install (`ZHBO_BO2_DIR`) by
+`zhbo_assets::viewmodel_sweep`, in memory for that render. `--weapon <id>` (repeatable) and
+`--no-attachments` narrow a run while iterating. The output is a review tool's images, not source:
+keep the folder outside the repository.
 
 ## Autopilot and the input path
 

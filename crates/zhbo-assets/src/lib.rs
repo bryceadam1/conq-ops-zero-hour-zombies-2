@@ -18,6 +18,7 @@ pub mod viewmodels;
 pub mod fonts;
 pub mod native;
 pub mod thirdperson;
+pub mod viewmodel_sweep;
 pub mod fx;
 pub mod sfx;
 pub mod manifest;
