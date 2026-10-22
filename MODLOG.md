@@ -2571,6 +2571,23 @@ Verified: `cargo test -p zhbo-core -p zhbo-assets -p zhbo-formats -p zhbo-native
 `ZHBO_BO2_DIR=~/Games/BlackOps2 cargo test -q --release -p zhbo-assets -p zhbo-formats --
 --ignored` green (12 + 8 passed).
 
+## Blank equipment poses: the hand/tag probe (2026-10-22, branch `v1/vm-fixes-2`)
+
+The sweep's equipment blanks are not missing art or a zero `view_pos`: `hatchet_mp`,
+`trophy_system_mp`, `flash_grenade_mp` and `proximity_grenade_mp` compose (74–90 bones, 6.8k–10k
+vertices) and their authored view positions are present (e.g. hatchet `stand_move [0,1,-1.5]`;
+G4 applies that stance value only while moving, so it is not the static hip offset). The new
+ignored probe `probe_equipment_idle_pose` samples the idle clip and shows the mount problem: the
+converted part hangs from the hands' `tag_weapon` at the animation's tag position, but the
+equipment idle tracks move that tag far away from either wrist. For the hatchet,
+`tag_weapon` is `[-80.29, 0.01, -6.74]`, the right wrist `[-13.28, -4.44, -29.46]` and the left
+wrist `[-4.32, 11.26, 9.30]`; the frag grenade (which appears in ADS) keeps its tag at the bind
+`[15.16, 0, -6.75]`. `handModel` is empty on all of these, so the faction's default two-arm
+viewhands are used. The ADS aim-marker alignment brings the eight hip-only cases into view; the
+four above stay off-screen because their tag is behind the camera. The fix belongs in the
+converter's equipment/hand attachment (and, if BO2 selects a different hand model for the
+offhand, in the hand-model lookup), not in the harness pose. Probe only in this commit.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

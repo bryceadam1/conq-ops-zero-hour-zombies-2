@@ -74,6 +74,35 @@ mod tests {
     use super::*;
 
     #[test]
+    #[ignore = "probe: where the equipment sits at idle"]
+    fn probe_equipment_idle_pose() {
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        for id in ["hatchet_mp", "trophy_system_mp", "flash_grenade_mp", "proximity_grenade_mp", "emp_grenade_mp", "frag_grenade_mp", "sensor_grenade_mp", "an94_mp"] {
+            let blobs = src.composition(id).expect(id);
+            let vm = zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("manifest")).expect("parse");
+            let models: Vec<zhbo_native::model::Model> = vm.parts.iter().map(|p| zhbo_native::model::Model::from_bytes(blobs.get(&p.model).unwrap()).unwrap()).collect();
+            let refs: Vec<zhbo_native::pose::PartRef> = vm.parts.iter().zip(&models).map(|(p, m)| zhbo_native::pose::PartRef { model: m, tag: p.tag.as_deref(), offset: p.offset, rigid: p.rigid }).collect();
+            let (skel, problems) = zhbo_native::pose::Skeleton::compose(&refs, &vm.markers, &vm.hide);
+            let Some(path) = vm.clip(zhbo_core::viewmodel::slot::IDLE as u16) else { eprintln!("{id}: no idle"); continue };
+            let anim = zhbo_native::anim::Anim::from_bytes(blobs.get(path).expect(path)).expect("anim");
+            let (mut local, mut ms) = (Vec::new(), Vec::new());
+            skel.sample(&anim, 0.0, &mut local);
+            skel.model_space(&local, &mut ms);
+            eprintln!("{id}: problems={problems:?} parts={:?}", vm.parts.iter().map(|p| (&p.model, &p.tag, p.offset.1)).collect::<Vec<_>>());
+            for name in ["tag_view", "tag_weapon", "tag_weapon1", "j_wrist_ri", "j_wrist_le", "j_gun"] {
+                if let Some(i) = skel.bone(name) {
+                    let track = anim.bones.iter().find(|t| t.name == name).and_then(|t| t.translation_at(0.0));
+                    eprintln!(
+                        "  {name}: bind={:?} bind_local={:?} anim_base={:?} track={:?} local={:?} posed={:?}",
+                        skel.bones[i].bind.1, skel.bones[i].bind_local.1, skel.bones[i].anim_base, track, local[i].1, skel.bone_point(&ms, i)
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
     #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
     fn converts_a_solo_combination() {
         let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
@@ -159,6 +188,9 @@ mod tests {
         for name in ["hatchet_mp", "trophy_system_mp", "flash_grenade_mp", "proximity_grenade_mp", "emp_grenade_mp", "frag_grenade_mp", "sensor_grenade_mp", "mp7_mp", "as50_mp", "dsr50_mp"] {
             if let Some(w) = src.bo2.iter().find(|w| w.name == name) {
                 eprintln!("WEAPON {name}: view_model={:?} hide={:?} anims={:?} ads_aim_pitch={} dual={} attach_view_models={:?}", w.view_model, w.hide_tags, w.anims, w.view_pos.ads_aim_pitch, w.dual_wield, w.attach_view_models);
+            }
+            if let Some(d) = src.defs.iter().find(|d| d.id == name) {
+                eprintln!("DEF {name}: view_pos={:?}", d.view_pos);
             }
         }
         for (base, short) in [("mp7_mp", "reflex"), ("as50_mp", "ir"), ("as50_mp", "silencer"), ("as50_mp", "swayreduc"), ("fnp45_mp", "dualclip"), ("fiveseven_mp", "dualclip"), ("kard_mp", "dualclip"), ("judge_mp", "dualclip"), ("beretta93r_mp", "dualclip"), ("kard_mp", "steadyaim"), ("ksg_mp", "steadyaim")] {
