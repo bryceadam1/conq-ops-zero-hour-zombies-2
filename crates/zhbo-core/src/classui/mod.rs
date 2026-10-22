@@ -54,6 +54,7 @@ mod edit;
 mod editor;
 mod input;
 mod layout;
+mod personalize;
 mod pick;
 mod preview;
 mod screens;
@@ -67,6 +68,7 @@ pub use edit::*;
 pub use editor::*;
 pub use input::*;
 pub use layout::*;
+pub use personalize::*;
 pub use pick::*;
 pub use screens::*;
 

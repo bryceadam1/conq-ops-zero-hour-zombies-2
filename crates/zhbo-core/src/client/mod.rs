@@ -531,6 +531,7 @@ impl Client {
         crate::classui::ScreenView {
             highlight: self.class_pick_highlight,
             editor: None,
+            personalize: None,
             deny: 0.0,
             manage: false,
             now: self.ui_clock,

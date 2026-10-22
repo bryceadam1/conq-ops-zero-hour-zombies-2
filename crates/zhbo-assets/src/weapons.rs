@@ -6,10 +6,12 @@
 //! swapping) can hand out any of them. Viewmodels, sounds and projectile models are converted for
 //! the weapons in [`converted`] (the General's loadout with its attachments, then every other weapon; `ZHBO_CONVERT_ALL_WEAPONS=0` limits it to the loadout).
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use zhbo_core::attachments::{self, AttachmentDef};
 use zhbo_core::units::inches;
-use zhbo_core::weapons::{format_table, parse_table, Class, Effect, FireMode, GunKick, Kick, Loadout, Place, Reticle, Specialties, Sway, Table, ViewPos, WeaponDef, ALT_CLIPS, MELEE_DAMAGE};
+use zhbo_core::weapons::{CamoOption, Class, Effect, FireMode, GunKick, Kick, Loadout, Place, Reticle, Specialties, Sway, Table, ViewPos, WeaponDef, ALT_CLIPS, MELEE_DAMAGE};
+#[cfg(debug_assertions)]
+use zhbo_core::weapons::{format_table, parse_table};
 use zhbo_formats::weapon::{self as bo2, Weapon};
 
 use crate::manifest;
@@ -51,7 +53,7 @@ pub fn attachment_metadata(
     // accuracy = col 2, mobility = col 6, fire rate = col 5.
     let Ok(Some(rows)) = zhbo_formats::stringtable::rows(patch_ui, "mp/attributestable.csv") else { return meta };
     for row in rows {
-        if row.get(0).map(String::as_str) != Some("weapon_attachment") { continue; }
+        if row.first().map(String::as_str) != Some("weapon_attachment") { continue; }
         let Some(short) = row.get(1) else { continue };
         let num = |i: usize| row.get(i).and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(0.0);
         let deltas = [num(3), num(4), num(2), num(6), num(5)];
@@ -114,14 +116,103 @@ pub fn perk_rows(patch: &zhbo_formats::t6zone::Zone) -> Vec<(String, Specialties
         .collect()
 }
 
+/// BO2's base camo cells: `camo_none` plus 18 (`lua-dump/patch_mp/mp/attachmenttable.csv:32-50`).
+/// The DLC/MTX rows (`:51-129`) are separate tabs the class screen does not have yet.
+pub const BASE_CAMO_OPTIONS: usize = 19;
+
+/// BO2's base reticle cells (`mp/attachmenttable.csv:57-67`: `reticle_0..10`); the DLC/MTX rows
+/// (`:87-119`) are separate tabs.
+pub const BASE_RETICLE_OPTIONS: usize = 11;
+
+/// BO2's reticle colours (`mp/attachmenttable.csv:68-74`: `reticle_color_1..7`).
+pub const BASE_RETICLE_COLORS: usize = 7;
+
+/// The `weaponoption` rows of one group in `mp/attachmenttable.csv` (`patch_mp`), in table order.
+fn weapon_options(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<String, String>, group: &str, take: usize) -> Vec<CamoOption> {
+    let Ok(Some(rows)) = zhbo_formats::stringtable::rows(patch, "mp/attachmenttable.csv") else { return Vec::new() };
+    rows.iter()
+        .filter(|r| r.get(1).is_some_and(|c| c == group))
+        .take(take)
+        .filter_map(|r| {
+            let id = r.get(4)?.trim();
+            if id.is_empty() {
+                return None;
+            }
+            let name = r.get(3).and_then(|k| names.get(k)).map(|s| s.trim().to_string()).unwrap_or_else(|| id.to_string());
+            let image = r.get(6).cloned().unwrap_or_default();
+            let sort = r.get(5).and_then(|s| s.trim().parse().ok()).unwrap_or(0);
+            Some(CamoOption { id: id.to_string(), name, image, sort })
+        })
+        .collect()
+}
+
+/// BO2's camo options: every `camo` row (`mp/attachmenttable.csv:32-129`), `camo_none` first.
+/// Column 4 is the id, 3 the `MPUI_*` name, 6 the `menu_camo_*_pattern` thumbnail and 5 the sort.
+pub fn camo_options(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<String, String>) -> Vec<CamoOption> {
+    weapon_options(patch, names, "camo", usize::MAX)
+}
+
+/// BO2's base reticle options (`reticle_0..10`), in the table's order. The art is the optic's
+/// `mtl_t6_attach_optic_{reflex,holo,acog}_reticle_XX` image (`cacreticles.lua`).
+pub fn reticle_options(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<String, String>) -> Vec<CamoOption> {
+    weapon_options(patch, names, "reticle", BASE_RETICLE_OPTIONS)
+}
+
+/// BO2's reticle colours (`reticle_color_1..7`): the names are Red, Green, Blue, Purple, Teal,
+/// Yellow, Orange (`MPUI_RETICLE_COLOR_*`).
+pub fn reticle_color_options(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<String, String>) -> Vec<CamoOption> {
+    weapon_options(patch, names, "reticle_color", BASE_RETICLE_COLORS)
+}
+
+/// The `camo_<weapon>` asset a weapon's camo set uses. BO2's asset names shorten a few weapon
+/// names (`saiga12` -> `camo_saiga`, `scar` -> `camo_scarh`, `qbb95` -> `camo_qbb`,
+/// `evoskorpion` -> `camo_scorpionevo`, the held knife -> `camo_knife`); the rest are
+/// `camo_<base>`. A weapon BO2 shipped no set for (some DLC guns) gets none.
+pub fn camo_material_for(weapon: &str, camo_sets: &HashSet<String>) -> Option<String> {
+    let base = weapon.strip_suffix("_mp").unwrap_or(weapon);
+    let base = base.strip_prefix("sf_").or_else(|| base.strip_prefix("gl_")).unwrap_or(base);
+    let base = base.strip_suffix("_dw").or_else(|| base.strip_suffix("_lh")).unwrap_or(base);
+    let name = match base {
+        "saiga12" => "camo_saiga",
+        "scar" => "camo_scarh",
+        "qbb95" => "camo_qbb",
+        "evoskorpion" => "camo_scorpionevo",
+        "knife_held" => "camo_knife",
+        "riotshield" => "camo_riot_shield",
+        _ => {
+            let name = format!("camo_{base}");
+            return camo_sets.contains(&name).then_some(name);
+        }
+    };
+    camo_sets.contains(name).then(|| name.to_string())
+}
+
+/// The option tables the converter feeds the weapon table: BO2's camo rows, each weapon's
+/// `camo_<weapon>` set (`common_patch_mp`), and the base reticle/colour rows.
+pub struct OptionTables<'a> {
+    pub camo: &'a [CamoOption],
+    pub camo_sets: &'a HashSet<String>,
+    pub reticles: &'a [CamoOption],
+    pub reticle_colors: &'a [CamoOption],
+}
+
 /// The whole table: every player weapon, the alt modes their attachments add, and every
 /// attachment.
 pub fn table(bo2: &[Weapon], atts: &[bo2::Attachment], names: &HashMap<String, String>) -> Table {
-    table_with_metadata(bo2, atts, names, &HashMap::new())
+    let sets = HashSet::new();
+    let opts = OptionTables { camo: &[], camo_sets: &sets, reticles: &[], reticle_colors: &[] };
+    table_with_metadata(bo2, atts, names, &HashMap::new(), &opts)
 }
 
-/// The whole table with attachment metadata (full name, description and attribute-table deltas).
-pub fn table_with_metadata(bo2: &[Weapon], atts: &[bo2::Attachment], names: &HashMap<String, String>, meta: &HashMap<String, AttachmentMeta>) -> Table {
+/// The whole table with attachment metadata (full name, description and attribute-table deltas)
+/// and the camo/reticle/colour option tables.
+pub fn table_with_metadata(
+    bo2: &[Weapon],
+    atts: &[bo2::Attachment],
+    names: &HashMap<String, String>,
+    meta: &HashMap<String, AttachmentMeta>,
+    opts: &OptionTables,
+) -> Table {
     let mut weapons: Vec<WeaponDef> = bo2.iter().filter(|w| is_player_weapon(w)).map(|w| to_def(w, names)).collect();
     let mut extra: Vec<String> = Vec::new();
     for d in &weapons {
@@ -147,7 +238,19 @@ pub fn table_with_metadata(bo2: &[Weapon], atts: &[bo2::Attachment], names: &Has
         }
     }
     let attachments = atts.iter().filter(|a| a.kind != 0 && !a.name.starts_with(',')).map(|a| attachment_def(a, names, meta)).collect();
-    Table { weapons, attachments, tablet_meshes: 0, perks: Vec::new() }
+    for d in &mut weapons {
+        d.camo = opts.camo.iter().take(BASE_CAMO_OPTIONS).map(|c| c.id.clone()).collect();
+        d.camo_material = camo_material_for(&d.id, opts.camo_sets).unwrap_or_default();
+    }
+    Table {
+        weapons,
+        attachments,
+        camo: opts.camo.to_vec(),
+        reticles: opts.reticles.to_vec(),
+        reticle_colors: opts.reticle_colors.to_vec(),
+        tablet_meshes: 0,
+        perks: Vec::new(),
+    }
 }
 
 /// Weapons with attachments, and their alt modes, that [`converted`] asks for: built from their base
@@ -546,6 +649,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         ads_sway: Sway { horiz_scale: w.hip_sway.horiz_scale, vert_scale: w.hip_sway.vert_scale, ..sway(w.ads_sway) },
         view_pos: view_pos(w.view_pos),
         reticle: reticle(&w.reticle),
+        camo: Vec::new(),
+        camo_material: String::new(),
     };
     #[cfg(debug_assertions)]
     {
@@ -729,6 +834,84 @@ mod tests {
         let d = to_def(&w, &HashMap::new());
         assert_eq!((d.clip, d.start_reserve, d.max_reserve), (30, 90, 210));
         assert_eq!(d.display_name, "AN94");
+    }
+
+    #[test]
+    fn camo_materials_follow_bo2s_asset_names() {
+        let sets: HashSet<String> = ["camo_an94", "camo_saiga", "camo_scarh", "camo_qbb", "camo_scorpionevo", "camo_knife", "camo_riot_shield"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        for (weapon, want) in [
+            ("an94_mp", "camo_an94"),
+            ("sf_an94_mp", "camo_an94"),
+            ("gl_an94_mp", "camo_an94"),
+            ("an94_dw_mp", "camo_an94"),
+            ("saiga12_mp", "camo_saiga"),
+            ("scar_mp", "camo_scarh"),
+            ("qbb95_mp", "camo_qbb"),
+            ("evoskorpion_mp", "camo_scorpionevo"),
+            ("knife_held_mp", "camo_knife"),
+            ("riotshield_mp", "camo_riot_shield"),
+        ] {
+            assert_eq!(camo_material_for(weapon, &sets).as_deref(), Some(want), "{weapon}");
+        }
+        assert_eq!(camo_material_for("mtar_mp", &sets), None);
+    }
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_installs_camo_options_are_bo2s_table() {
+        let bo2_dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let patch = crate::generals::load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
+        let options = camo_options(&patch, &names(&bo2_dir));
+        assert!(options.len() >= 19, "{} camo options", options.len());
+        assert_eq!(options[0].id, "camo_none");
+        assert_eq!(options[0].name, "None");
+        let multicam = options.iter().find(|c| c.id == "camo_multicam").expect("camo_multicam");
+        assert_eq!(multicam.image, "menu_camo_multicam_pattern");
+        assert_eq!(multicam.sort, 0, "the base rows carry the table order, not a DLC sort key");
+        let common_patch = crate::generals::load_zone(&bo2_dir, "common_patch_mp").unwrap();
+        let sets: HashSet<String> = bo2::camo_all(&common_patch).unwrap().into_iter().map(|c| c.name).collect();
+        assert_eq!(sets.len(), 48, "common_patch_mp's camo_<weapon> assets");
+        assert_eq!(camo_material_for("an94_mp", &sets).as_deref(), Some("camo_an94"));
+        assert_eq!(camo_material_for("saiga12_mp", &sets).as_deref(), Some("camo_saiga"));
+    }
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_installs_reticle_options_are_bo2s_base_tabs() {
+        let bo2_dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let patch = crate::generals::load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
+        let names = names(&bo2_dir);
+        let reticles = reticle_options(&patch, &names);
+        assert_eq!(reticles.len(), BASE_RETICLE_OPTIONS);
+        assert_eq!(reticles.first().map(|r| r.id.as_str()), Some("reticle_0"));
+        assert!(reticles.iter().all(|r| r.name == "Dot"), "{reticles:?}");
+        let colors = reticle_color_options(&patch, &names);
+        assert_eq!(
+            colors.iter().map(|c| c.name.as_str()).collect::<Vec<_>>(),
+            ["Red", "Green", "Blue", "Purple", "Teal", "Yellow", "Orange"]
+        );
+    }
+
+    #[test]
+    fn the_weapon_camo_list_is_bo2s_base_camo_tab() {
+        let camo: Vec<CamoOption> = (0..25)
+            .map(|i| CamoOption { id: format!("camo_{i}"), name: String::new(), image: String::new(), sort: 0 })
+            .collect();
+        let w = Weapon {
+            name: "an94_mp".into(),
+            class: bo2::class::RIFLE,
+            view_model: Some("t6_wpn_ar_an94_view".into()),
+            ..Default::default()
+        };
+        let sets = HashSet::new();
+        let opts = OptionTables { camo: &camo, camo_sets: &sets, reticles: &[], reticle_colors: &[] };
+        let table = table_with_metadata(&[w], &[], &HashMap::new(), &HashMap::new(), &opts);
+        assert_eq!(table.weapons.len(), 1);
+        assert_eq!(table.weapons[0].camo.len(), BASE_CAMO_OPTIONS, "the base tab is camo_none + 18");
+        assert_eq!(table.camo.len(), 25, "the table keeps every row for the DLC tabs");
     }
 
     #[test]

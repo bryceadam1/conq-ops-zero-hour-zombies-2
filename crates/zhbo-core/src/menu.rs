@@ -17,7 +17,7 @@
 //! Everything is local UI state: no determinism or lockstep requirements (docs/CONTRACT.md's menu
 //! ABI).
 
-use crate::classmenu::{Draft, Editor, Outcome};
+use crate::classmenu::{Draft, Editor, Outcome, Personalize};
 use crate::classui::cues;
 use crate::classui::{self, Dialog, DialogItem, DialogOutcome, MenuPointer, MenuPrev, PickFooterAction, PickRow};
 use crate::input::{Key, KeySet};
@@ -85,6 +85,8 @@ fn write_profile(out: &mut MenuOut, reason: i32, text: &str) {
 pub struct MenuState {
     /// The open editor, or `None` while the pick list is up.
     editor: Option<Editor>,
+    /// The personalize screen opened over the editor (Tab on the knife row), or `None`.
+    personalize: Option<Personalize>,
     /// The class set the open editor belongs to, and the slot it was opened on (`None` for
     /// CREATE A CLASS: the class goes into the set's first free slot).
     editor_set: usize,
@@ -127,6 +129,7 @@ impl MenuState {
         // BO2's open sting plays once per open, like the in-game pick screen's entrance.
         MenuState {
             editor: None,
+            personalize: None,
             editor_set: 0,
             editor_slot: None,
             dialog: None,
@@ -178,6 +181,8 @@ impl MenuState {
         }
         if self.dialog.is_some() {
             self.dialog_frame(&pointer, &mut out);
+        } else if self.personalize.is_some() {
+            self.personalize_frame(&pointer, &mut out);
         } else if let Some(editor) = self.editor.take() {
             self.editor_frame(editor, &pointer, &mut out);
         } else {
@@ -193,7 +198,7 @@ impl MenuState {
     pub fn view(&self) -> classui::ScreenView<'_> {
         let set_change = self.set_change.map(|start| (self.clock - start).max(0.0));
         let open = self.menu_open.map(|start| (self.clock - start).max(0.0));
-        classui::ScreenView { highlight: self.highlight, editor: self.editor.as_ref(), deny: self.deny, manage: true, now: self.clock, set_change, open }
+        classui::ScreenView { highlight: self.highlight, editor: self.editor.as_ref(), personalize: self.personalize.as_ref(), deny: self.deny, manage: true, now: self.clock, set_change, open }
     }
 
     /// The open `S`/`O` dialog, for the host to draw over the screen (`classui::draw_dialog`).
@@ -537,6 +542,36 @@ impl MenuState {
                 self.menu_open = Some(self.clock);
             }
             Outcome::Continue => {
+                if let Some(kind) = frame.personalize {
+                    let weapon = (!editor.draft.primary.is_empty()).then_some(editor.draft.primary.as_str());
+                    self.personalize = Some(Personalize::new(kind, classui::personalize_choices_for(kind, weapon), &editor.draft));
+                }
+                self.editor = Some(editor);
+            }
+        }
+    }
+
+    /// The personalize screen's frame: fold the pointer/keys into the pure editor. Save and Cancel
+    /// close the screen and return to the editor underneath; Continue keeps it up.
+    fn personalize_frame(&mut self, pointer: &MenuPointer, _out: &mut MenuOut) {
+        let Some(mut personalize) = self.personalize.take() else { return };
+        let Some(mut editor) = self.editor.take() else {
+            self.personalize = None;
+            return;
+        };
+        let frame = classui::personalize_frame(&mut personalize, &mut editor.draft, pointer, &self.prev);
+        if frame.denied {
+            self.deny();
+        }
+        if let Some(cue) = frame.cue {
+            self.cues.push(cue);
+        }
+        match frame.outcome {
+            Outcome::Continue => {
+                self.personalize = Some(personalize);
+                self.editor = Some(editor);
+            }
+            Outcome::Save | Outcome::Cancel => {
                 self.editor = Some(editor);
             }
         }
@@ -694,6 +729,35 @@ mod tests {
         press(&mut menu, &mut inp, Key::Enter);
         let editor = menu.editor.as_ref().expect("an untouched slot opens a fresh draft");
         assert_eq!(editor.draft, Draft::default());
+        crate::profile::reset();
+    }
+
+    #[test]
+    fn tab_opens_the_knife_personalize_screen_and_saves_the_choice() {
+        let _g = lock();
+        crate::profile::reset();
+        crate::profile::save(custom("AB", "tar21_mp"));
+        let mut menu = MenuState::new();
+        let mut inp = MenuIn::default();
+        menu.frame(&inp); // settle the open frame
+        press(&mut menu, &mut inp, Key::Enter); // open the class editor
+        assert!(menu.editor.is_some());
+        // Tab is the `TAB Personalize Knife` prompt (`caceditclass.lua:52-63`): the screen opens
+        // over the editor with BO2's knife grid, `None` first.
+        press(&mut menu, &mut inp, Key::Tab);
+        let personalize = menu.view().personalize.expect("the personalize screen opens");
+        assert_eq!(personalize.kind, crate::classmenu::PersonalizeKind::Knife);
+        assert_eq!(personalize.choices.first().map(String::as_str), Some("None"));
+        assert!(menu.editor.is_some(), "the editor stays underneath");
+        // Enter equips the highlighted cell (cell 0 is `None`) and closes the screen.
+        press(&mut menu, &mut inp, Key::Enter);
+        assert!(menu.view().personalize.is_none(), "the personalize screen closed");
+        let editor = menu.editor.as_ref().expect("the editor is still open");
+        assert_eq!(editor.draft.knife, "None");
+        // The editor's Save writes the class, choice and all, to the profile.
+        let out = save_open_editor(&mut menu, &mut inp);
+        assert_eq!(out.save_profile, classui::SAVE_PROFILE_CLASS, "the class was written");
+        assert_eq!(crate::profile::classes()[0].knife, "None");
         crate::profile::reset();
     }
 

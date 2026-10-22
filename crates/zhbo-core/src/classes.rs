@@ -190,6 +190,18 @@ pub struct CustomClass {
     pub perks: Vec<String>,
     /// Spare rounds for the primary/secondary, overriding BO2's defaults (0 = unset).
     pub reserve: [u16; 2],
+    /// The primary's camo id (`none` = the weapon's stock finish). BO2's Personalize → Camouflage;
+    /// empty means "not personalised" and serialises as no key, so older specs keep loading.
+    pub camo: String,
+    /// The primary optic's reticle id (`none` = the optic's stock reticle). BO2's Personalize →
+    /// Reticle; empty means "not personalised" and serialises as no key.
+    pub reticle: String,
+    /// The reticle's colour id (`none` = the reticle's stock colour). BO2's Personalize → Reticle
+    /// colour; empty means "not personalised" and serialises as no key.
+    pub reticle_color: String,
+    /// The melee viewmodel id (`knife_held_mp` = the standard combat knife). BO2's Personalize →
+    /// Knife; empty means "not personalised" and serialises as no key.
+    pub knife: String,
 }
 
 impl CustomClass {
@@ -215,6 +227,10 @@ impl CustomClass {
         push("tactical", &self.tactical);
         push("melee", &self.melee);
         push("perks", &self.perks.join(","));
+        push("camo", &self.camo);
+        push("reticle", &self.reticle);
+        push("reticle_color", &self.reticle_color);
+        push("knife", &self.knife);
         if self.reserve[0] > 0 {
             push("primary_reserve", &self.reserve[0].to_string());
         }
@@ -238,6 +254,10 @@ impl CustomClass {
                 "tactical" => c.tactical = value.into(),
                 "melee" => c.melee = value.into(),
                 "perks" => c.perks = value.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect(),
+                "camo" => c.camo = value.into(),
+                "reticle" => c.reticle = value.into(),
+                "reticle_color" => c.reticle_color = value.into(),
+                "knife" => c.knife = value.into(),
                 "primary_reserve" => c.reserve[0] = value.parse().unwrap_or(0),
                 "secondary_reserve" => c.reserve[1] = value.parse().unwrap_or(0),
                 _ => {}
@@ -478,20 +498,50 @@ mod tests {
             melee: "knife_held_mp".into(),
             perks: vec!["Lightweight".into(), "Dexterity".into()],
             reserve: [60, 0],
+            camo: "none".into(),
+            reticle: "none".into(),
+            reticle_color: "none".into(),
+            knife: "knife_held_mp".into(),
         };
         let spec = c.to_spec();
         // The empty tactical is skipped (it inherits the base kit's slot).
-        assert_eq!(spec, "primary=dsr50_mp+acog;secondary=fnp45_mp;lethal=claymore_mp;melee=knife_held_mp;perks=Lightweight,Dexterity;primary_reserve=60");
+        assert_eq!(spec, "primary=dsr50_mp+acog;secondary=fnp45_mp;lethal=claymore_mp;melee=knife_held_mp;perks=Lightweight,Dexterity;camo=none;reticle=none;reticle_color=none;knife=knife_held_mp;primary_reserve=60");
         // Round-tripping through the spec grammar preserves every set field (the name is not
         // part of a spec, so the parsed entry is nameless).
         assert_eq!(CustomClass::from_spec(&spec), CustomClass { name: String::new(), ..c.clone() });
         // The wire format is name + spec, and round-trips too.
         let wire = c.to_wire();
-        assert_eq!(wire, "My Sniper\nprimary=dsr50_mp+acog;secondary=fnp45_mp;lethal=claymore_mp;melee=knife_held_mp;perks=Lightweight,Dexterity;primary_reserve=60");
+        assert_eq!(wire, "My Sniper\nprimary=dsr50_mp+acog;secondary=fnp45_mp;lethal=claymore_mp;melee=knife_held_mp;perks=Lightweight,Dexterity;camo=none;reticle=none;reticle_color=none;knife=knife_held_mp;primary_reserve=60");
         assert_eq!(CustomClass::from_wire(&wire), Some(c));
         // A newline in the name would break the wire framing; `to_wire` replaces it.
         let named = CustomClass { name: "bad\nname".into(), ..CustomClass::default() };
         assert!(!named.to_wire().contains("bad\nname"));
+    }
+
+    /// A spec written before Personalize existed carries none of the new keys: it must still load,
+    /// with the four personalisation fields left empty (empty = "not personalised", the default).
+    /// Unknown keys — including a future field this build doesn't know — are ignored, never an
+    /// error and never a partial overwrite.
+    #[test]
+    fn older_specs_without_personalisation_keys_load_with_empty_fields() {
+        // A v1 spec: the pre-Personalize grammar, as shipped in a player's old profile.
+        let c = CustomClass::from_spec("primary=an94_mp+gl;secondary=fnp45_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,Toughness,Dexterity");
+        assert_eq!(c.primary, "an94_mp+gl");
+        assert_eq!(c.secondary, "fnp45_mp");
+        assert_eq!(c.melee, "knife_held_mp");
+        assert_eq!(c.perks.len(), 3);
+        assert!(c.camo.is_empty(), "old spec leaves camo empty");
+        assert!(c.reticle.is_empty(), "old spec leaves reticle empty");
+        assert!(c.reticle_color.is_empty(), "old spec leaves reticle_color empty");
+        assert!(c.knife.is_empty(), "old spec leaves knife empty");
+        // An empty spec is a default entry: every personalisation field empty.
+        let d = CustomClass::from_spec("");
+        assert!(d.camo.is_empty() && d.reticle.is_empty() && d.reticle_color.is_empty() && d.knife.is_empty());
+        // Unknown keys are ignored; the known ones around them still parse.
+        let u = CustomClass::from_spec("primary=an94_mp;future_field=x;camo=gold;another_unknown=1");
+        assert_eq!(u.primary, "an94_mp");
+        assert_eq!(u.camo, "gold");
+        assert!(u.reticle.is_empty() && u.reticle_color.is_empty() && u.knife.is_empty());
     }
 
     #[test]

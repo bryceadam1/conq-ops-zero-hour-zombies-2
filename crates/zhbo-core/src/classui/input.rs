@@ -193,6 +193,8 @@ pub struct EditorFrame {
     pub denied: bool,
     /// `R` (or the box's `X`) cleared the highlighted slot this frame.
     pub removed: bool,
+    /// The personalize screen the editor asked for this frame (`TAB` knife, `C` camo, `V` reticle).
+    pub personalize: Option<crate::classmenu::PersonalizeKind>,
     /// The frame's UI cue, if any.
     pub cue: Option<&'static str>,
 }
@@ -326,7 +328,7 @@ pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> 
             _ => None,
         }
     };
-    EditorFrame { outcome, denied, removed, cue }
+    EditorFrame { outcome, denied, removed, personalize: editor.personalize, cue }
 }
 
 /// Whether a slot's picker is BO2's weapon carousel (the two gun slots), as opposed to a content

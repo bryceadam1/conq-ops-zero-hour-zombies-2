@@ -2606,6 +2606,87 @@ default, **13/13 with `ZHBO_NATIVE_VIEWMODEL=0` (the W3D fallback, exercising th
 `--classpick` all checks, 14/14 `--rts`. Eyeball item for the playtest: first-person terrain
 z-fighting from the wider near/far ratio (the noted trade-off; the fix if it appears is the
 separate viewmodel pass, not a smaller terrain near).
+## Personalize M3: reticles, colours, the editor rows — and the camo tab cap (2026-10-22)
+
+The reticle and colour screens now use BO2's own data instead of the captured placeholder lists.
+`mp/attachmenttable.csv:57-74` has the base `reticle_0..10` rows (the localized name is "Dot" for
+all eleven) and `reticle_color_1..7` = Red, Green, Blue, Purple, Teal, Yellow, Orange; the table
+now carries `ReticleOption`/`ReticleColorOption` blocks (`CamoOption`'s shape, round-trip tested)
+and the catalog indexes them. The art is the 11 stock images per reflex/holo/acog optic in
+`code_post_gfx_mp.tsv:1073-1104` (materials `:2023-2054`: `mc/mtl_t6_attach_optic_<optic>_
+reticle_01..11`); `hud::build_archive` converts all 33, and its dynamic lookup now also tries the
+`mc/` material prefix. `cacreticles.lua:1150-1240,1390-1470` selects the optic's image by option
+index; `weapons::optic_of`/`reticle_art` encode that (`reticle_0` -> `_01`, `reticle_10` ->
+`_11`), the reticle grid draws it, and the colour grid draws the seven swatches. The HUD's ADS
+optic branch (`hud/center.rs`) now draws the class's choice: the `CustomClass`'s
+`reticle`/`reticle_color` are carried onto `PlayerSim` when the class lands, and the crosshair
+draws the optic's `reticle_N` art tinted by `reticle_color_N` (falling back to the red dot without
+a choice). A fake-host HUD test pins `reticle_3` -> `mtl_t6_attach_optic_reflex_reticle_04` with
+Green's tint.
+
+The editor rows follow `caceditclass.lua`: `:137/147` registers `AddCamoButton`/`AddReticleButton`
+and the functions are at `:748`/`:825`. `C` on the primary weapon row opens Camo and `V` on the
+primary attachment grid's optic row opens Reticles (the footer carries `C Camo`/`V Reticle`; `V`,
+not `R`, because `R` is the editor's Remove). `menu.rs` opens
+`Personalize::new(kind, personalize_choices_for(kind, Some(primary)), draft)`. Tests cover both
+rows, including the attachment grid, and the one-shot `Editor.personalize`.
+
+**Camo tab cap.** The single personalize grid has no tabs or scroll, so `WeaponDef.camo` now holds
+only BO2's base Camo tab: `camo_none` + 18 (`attachmenttable.csv:32-50`). `Table.camo` still
+carries every row (`:51-129`) for the follow-up. The same split applies to reticles: the base 11
+(`:57-67`) are in the table, while the DLC/MTX rows (`:87-119`) are not; the reticle colours are
+the seven base rows. **Follow-up:** add the DLC/MTX tabs (or a scrolling grid) to the camo,
+reticle and colour screens; the option tables already have the camo rows and the base reticle/
+colour rows, so the screens need the tab strip and the per-tab slices.
+
+**Knife stays blocked on art.** `weapons.rs:337-349`'s `is_player_weapon` includes only
+`knife_held_mp` and explicitly excludes `knife_mp`; `converted` (`:754-767`) therefore carries only
+the standard knife viewmodel. The `common_patch_mp` set has `camo_knife`/`camo_ballistic_knife`,
+but no second knife viewmodel is converted, so the knife screen cannot offer a real alternate.
+No values were invented.
+
+**Integrator note (camo swap).** The final table shape is `CamoList` (base tab ids, `camo_none`
+first), `CamoMaterial` (the weapon's `camo_<weapon>` `WeaponCamo` asset) and the `Camo` blocks
+(id/name/thumbnail/sort). The minimal path for the in-game swap is to keep `WeaponCamo`'s
+`camoMaterials` base->camo pairs and its `camoSets` images out of the table: the converter already
+reads them through `zhbo_formats::weapon::camo_all`, and the existing viewmodel/material
+conversion can bake the base patterns (the `CamoList` from `camo_multicam` on; `camo_none` has no
+pattern), so the native swap selects the converted set by the chosen `CamoList` index at runtime.
+That avoids a new table field; if a later DLC tab changes the order, add the pairs as a
+`CamoMaterialPair` table.
+The camo schema/materials need one `hud::VERSION` bump. `nativevm`/`zhbo-gfx` stay off-limits.
+
+Verified through M3: `cargo test -p zhbo-core -p zhbo-assets` (362 + 47), the real-install suite
+(`ZHBO_BO2_DIR=~/Games/BlackOps2 cargo test -q --release -p zhbo-assets -p zhbo-formats --
+--ignored`: 13 + 9), clippy clean in the touched files. The screenshot harness has the new
+`cac-reticles`/`cac-reticle-color` shots; the PNGs need the launcher's built
+`ConquerOps_BO2.big` (`cargo xtask build` was out of scope), so the harness test is the code
+evidence.
+
+## Integrating Personalize: camo, reticles, colours and the knife row (2026-10-22)
+
+Merged `v1/personalize` (6 commits, milestones M1–M3). The class carries `camo`, `reticle`,
+`reticle_color` and `knife` through the tolerant profile/spec (`classes.rs`); the editor's pure
+machine has the personalize grid edges (`classmenu.rs`, `PersonalizeKind`, the TAB one-shot);
+the screens are BO2's (`caccamomenu.lua`/`cacreticles.lua` geometry — 6-column camo, 5-column
+reticle grids, `None` first, the `*` chosen marker, `EQUIPPED` label) matched to the
+`cac/sweep/i-personalize/` captures. M2 makes the choices REAL: the 48 per-weapon `WeaponCamo`
+assets parse (`common_patch_mp`), the weapon table carries the camo options (the 98-row table
+with BO2's base tab = `camo_none` + 18 as the weapon's list), the `menu_camo_*` thumbnails
+convert, and the screen draws the weapon's own set. M3: the 11 reticles and 7 colours from
+`attachmenttable.csv:57-74` are tables with their 33 optic art images converted, the editor's
+weapon row opens camo (`C`) and the optic row reticles (`V`; `R` is Remove), and the HUD's ADS
+optic branch draws the class's reticle+colour choice. **Knife is blocked-on-art** (only the
+standard knife converts; the ballistic-knife viewmodel isn't in the player's weapon set —
+evidence in the branch's MODLOG). Archive VERSION 54 → 55 (camo schema + camo/reticle art).
+The in-game camo MATERIAL SWAP is the documented integrator follow-up (nativevm selects the
+converted `camo_<weapon>` set by the chosen index; the screen/profile carry the choice).
+classmenu.rs had one trivial conflict (explicit fields + the default spread — both kept);
+MODLOG.md the usual.
+
+Verified: cargo test --workspace green; the full real-install suite green (incl. the camo-table
+and AN-94 camo-set assertions); clippy clean; `cargo xtask build` clean; autotest 13/13
+default, `--classpick` all checks, 14/14 `--rts`.
 
 ## Next steps
 

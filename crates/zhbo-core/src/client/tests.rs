@@ -548,6 +548,10 @@
             melee: "knife_held_mp".into(),
             perks: vec!["Toughness".into(), "FlakJacket".into()],
             reserve: [40, 20],
+            camo: String::new(),
+            reticle: String::new(),
+            reticle_color: String::new(),
+            knife: String::new(),
         };
         // Seed it the way the shell writes it: through the profile file's text.
         crate::profile::load(&format!("{}\n", custom.to_wire()));

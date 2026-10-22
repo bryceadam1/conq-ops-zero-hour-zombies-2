@@ -6,7 +6,10 @@
 //! view/world models and the viewmodel animation for each `weapAnimFiles_t` slot. Field offsets
 //! come from the generated `t6zone::layouts`. Times are converted from milliseconds to seconds.
 
-use crate::t6zone::layouts::{WeaponAttachment as WA, WeaponAttachmentUnique as WU, WeaponDef as WD, WeaponVariantDef as WV};
+use crate::t6zone::layouts::{
+    WeaponAttachment as WA, WeaponAttachmentUnique as WU, WeaponCamo as WC, WeaponCamoMaterial as WCMat,
+    WeaponCamoMaterialSet as WCMatSet, WeaponCamoSet as WCSet, WeaponDef as WD, WeaponVariantDef as WV,
+};
 use crate::t6zone::Zone;
 use crate::FormatError;
 
@@ -752,6 +755,88 @@ pub fn all(z: &Zone) -> Result<Vec<Weapon>, FormatError> {
     z.assets.iter().filter(|a| a.kind == kind).map(|a| read(z, a.addr)).collect()
 }
 
+/// One `WeaponCamo` asset (`camo_<weapon>` in `common_patch_mp`, the `camo` type in the asset
+/// dumps): the per-weapon camouflage material set and the pattern images it swaps in. The
+/// `attachmenttable.csv` camo rows are the *choices*; this is what BO2 swaps on the weapon.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WeaponCamo {
+    pub name: String,
+    pub solid_base_image: Option<String>,
+    pub pattern_base_image: Option<String>,
+    pub sets: Vec<CamoSet>,
+    pub materials: Vec<CamoMaterial>,
+}
+
+/// One `WeaponCamoSet`: the solid and pattern images and the pattern's UV transform.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CamoSet {
+    pub solid_image: Option<String>,
+    pub pattern_image: Option<String>,
+    pub offset: [f32; 2],
+    pub scale: f32,
+}
+
+/// One `WeaponCamoMaterial`: the base weapon material and the camo material that replaces it
+/// (which textures the `replaceFlags` cover).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CamoMaterial {
+    pub replace_flags: u16,
+    pub base: Option<String>,
+    pub camo: Option<String>,
+}
+
+/// Read the `WeaponCamo` at `a`.
+pub fn read_camo(z: &Zone, a: u32) -> Result<WeaponCamo, FormatError> {
+    let sets_at = z.try_u32(a + WC::camoSets)?;
+    let n_sets = z.try_u32(a + WC::numCamoSets)?.min(64);
+    let mut sets = Vec::new();
+    if sets_at != 0 {
+        for i in 0..n_sets {
+            let s = sets_at + i * WCSet::SIZE;
+            sets.push(CamoSet {
+                solid_image: named(z, s + WCSet::solidCamoImage),
+                pattern_image: named(z, s + WCSet::patternCamoImage),
+                offset: [z.f32(s + WCSet::patternOffset), z.f32(s + WCSet::patternOffset + 4)],
+                scale: z.f32(s + WCSet::patternScale),
+            });
+        }
+    }
+    let mats_at = z.try_u32(a + WC::camoMaterials)?;
+    let n_mats = z.try_u32(a + WC::numCamoMaterials)?.min(64);
+    let mut materials = Vec::new();
+    if mats_at != 0 {
+        for i in 0..n_mats {
+            let set = mats_at + i * WCMatSet::SIZE;
+            let num = z.u32(set + WCMatSet::numMaterials).min(64);
+            let at = z.u32(set + WCMatSet::materials);
+            if at == 0 {
+                continue;
+            }
+            for j in 0..num {
+                let m = at + j * WCMat::SIZE;
+                materials.push(CamoMaterial {
+                    replace_flags: z.u16(m + WCMat::replaceFlags),
+                    base: named(z, m + WCMat::baseMaterials),
+                    camo: named(z, m + WCMat::camoMaterials),
+                });
+            }
+        }
+    }
+    Ok(WeaponCamo {
+        name: z.try_str_ptr(a + WC::name)?,
+        solid_base_image: named(z, a + WC::solidBaseImage),
+        pattern_base_image: named(z, a + WC::patternBaseImage),
+        sets,
+        materials,
+    })
+}
+
+/// Every `WeaponCamo` asset in a loaded zone (`common_patch_mp` in a stock install).
+pub fn camo_all(z: &Zone) -> Result<Vec<WeaponCamo>, FormatError> {
+    let Some(kind) = crate::fastfile::asset_type_id("weaponcamo") else { return Ok(Vec::new()) };
+    z.assets.iter().filter(|a| a.kind == kind).map(|a| read_camo(z, a.addr)).collect()
+}
+
 impl Weapon {
     /// The base weapon's extra view parts (the default magazine) and their tags.
     pub fn base_view_parts(&self) -> Vec<(String, String)> {
@@ -838,5 +923,17 @@ mod tests {
             let o = all(&z).unwrap().into_iter().find(|w| w.name == name).unwrap();
             assert!(o.view_model.is_some(), "{name} has a view model");
         }
+    }
+
+    /// Needs the player's BO2 install (with Multiplayer).
+    #[test]
+    #[ignore]
+    fn reads_the_an94_camo() {
+        let z = zone("common_patch_mp");
+        let all = camo_all(&z).unwrap();
+        assert_eq!(all.len(), 48, "common_patch_mp's camo_<weapon> assets (ASSETS.md:389-396)");
+        let c = all.iter().find(|c| c.name == "camo_an94").expect("camo_an94");
+        assert!(!c.materials.is_empty(), "camo_an94's material set: {c:?}");
+        assert!(c.materials.iter().any(|m| m.base.is_some() && m.camo.is_some()), "{c:?}");
     }
 }

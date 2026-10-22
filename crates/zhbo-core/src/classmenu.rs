@@ -230,6 +230,92 @@ impl Slot {
     }
 }
 
+/// BO2's personalize screens, in the order the create-a-class screen offers them: camouflage,
+/// reticle, reticle colour and the knife prompt (`caceditclass.lua:52-63`'s `knifePersonalization`,
+/// its `AddCamoButton`/`AddReticleButton` handlers and `caccamomenu.lua`/`cacreticles.lua`). The
+/// camo and knife grids are six wide (`caccamomenu.lua:9`: `CamoGridColumns = 6`); the reticle
+/// grids are five (`cacreticles.lua:9`: `GridColumns = 5`). The pure editor only describes the
+/// rows and columns; the class UI draws them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PersonalizeKind {
+    Camo,
+    Reticle,
+    ReticleColor,
+    Knife,
+}
+
+impl PersonalizeKind {
+    /// The grid's column count, BO2's own for each screen.
+    pub fn columns(self) -> usize {
+        match self {
+            PersonalizeKind::Camo | PersonalizeKind::Knife => 6,
+            PersonalizeKind::Reticle | PersonalizeKind::ReticleColor => 5,
+        }
+    }
+}
+
+/// The pure personalize editor: one screen's choices and highlighted cell. The host fills the
+/// choices (the converted camo list, the reticle list) and the class UI draws the grid; `step`
+/// only moves the highlight and applies the chosen value to the draft. The row order is the
+/// choices' order, exactly the order the host builds from BO2's camo/reticle lists.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Personalize {
+    pub kind: PersonalizeKind,
+    pub choices: Vec<String>,
+    pub highlight: usize,
+}
+
+impl Personalize {
+    /// Open the screen on the draft's current choice (the first cell when the draft has none).
+    pub fn new(kind: PersonalizeKind, choices: Vec<String>, draft: &Draft) -> Personalize {
+        let current = match kind {
+            PersonalizeKind::Camo => &draft.camo,
+            PersonalizeKind::Reticle => &draft.reticle,
+            PersonalizeKind::ReticleColor => &draft.reticle_color,
+            PersonalizeKind::Knife => &draft.knife,
+        };
+        let highlight = choices.iter().position(|c| c == current).unwrap_or(0);
+        Personalize { kind, choices, highlight }
+    }
+
+    /// Move the highlight and confirm the choice. `Outcome::Save` means the host closes the
+    /// personalize screen and keeps the draft; `Cancel` means it closes without applying.
+    pub fn step(&mut self, edges: Edges, draft: &mut Draft) -> Outcome {
+        let n = self.choices.len();
+        if n == 0 {
+            return if edges.cancel || edges.confirm { Outcome::Cancel } else { Outcome::Continue };
+        }
+        let cols = self.kind.columns();
+        if edges.left {
+            self.highlight = grid_left(self.highlight, n, cols);
+        }
+        if edges.right {
+            self.highlight = grid_right(self.highlight, n, cols);
+        }
+        if edges.up {
+            self.highlight = grid_up(self.highlight, n, cols);
+        }
+        if edges.down {
+            self.highlight = grid_down(self.highlight, n, cols);
+        }
+        if edges.confirm {
+            if let Some(v) = self.choices.get(self.highlight) {
+                match self.kind {
+                    PersonalizeKind::Camo => draft.camo = v.clone(),
+                    PersonalizeKind::Reticle => draft.reticle = v.clone(),
+                    PersonalizeKind::ReticleColor => draft.reticle_color = v.clone(),
+                    PersonalizeKind::Knife => draft.knife = v.clone(),
+                }
+            }
+            return Outcome::Save;
+        }
+        if edges.cancel {
+            return Outcome::Cancel;
+        }
+        Outcome::Continue
+    }
+}
+
 // ------------------------------------------------------------------------------------------------
 // BO2's content-grid links (`contentgrid.lua`)
 // ------------------------------------------------------------------------------------------------
@@ -333,6 +419,18 @@ pub struct Draft {
     pub wildcards: Vec<Wildcard>,
     /// Spare rounds for the primary and secondary; 0 = BO2's default.
     pub reserve: [u16; 2],
+    /// The primary's camo id (`none` = the weapon's stock finish), BO2's Personalize → Camouflage.
+    /// Empty means "not personalised" and serialises as no key, so older specs keep loading.
+    pub camo: String,
+    /// The primary optic's reticle id (`none` = the optic's stock reticle), BO2's Personalize →
+    /// Reticle. Empty means "not personalised" and serialises as no key.
+    pub reticle: String,
+    /// The reticle's colour id (`none` = the reticle's stock colour), BO2's Personalize → Reticle
+    /// colour. Empty means "not personalised" and serialises as no key.
+    pub reticle_color: String,
+    /// The melee viewmodel id (`knife_held_mp` = the standard combat knife), BO2's Personalize →
+    /// Knife. Empty means "not personalised" and serialises as no key.
+    pub knife: String,
 }
 
 impl Default for Draft {
@@ -351,6 +449,10 @@ impl Default for Draft {
             extra_perks: [None, None, None],
             wildcards: Vec::new(),
             reserve: [0, 0],
+            camo: String::new(),
+            reticle: String::new(),
+            reticle_color: String::new(),
+            knife: String::new(),
         }
     }
 }
@@ -470,6 +572,10 @@ impl Draft {
         push("melee", "knife_held_mp");
         let perks: Vec<&str> = self.perks_in_order().iter().map(|p| p.def().id).collect();
         push("perks", &perks.join(","));
+        push("camo", &self.camo);
+        push("reticle", &self.reticle);
+        push("reticle_color", &self.reticle_color);
+        push("knife", &self.knife);
         if self.reserve[0] > 0 {
             push("primary_reserve", &self.reserve[0].to_string());
         }
@@ -490,6 +596,10 @@ impl Draft {
             melee: "knife_held_mp".into(),
             perks: self.perks_in_order().iter().map(|p| p.def().id.to_string()).collect(),
             reserve: self.reserve,
+            camo: self.camo.clone(),
+            reticle: self.reticle.clone(),
+            reticle_color: self.reticle_color.clone(),
+            knife: self.knife.clone(),
             ..CustomClass::default()
         }
     }
@@ -521,6 +631,10 @@ impl Draft {
             extra_perks,
             wildcards: wildcards_of(c),
             reserve: c.reserve,
+            camo: c.camo.clone(),
+            reticle: c.reticle.clone(),
+            reticle_color: c.reticle_color.clone(),
+            knife: c.knife.clone(),
         }
     }
 }
@@ -608,6 +722,10 @@ pub struct Editor {
     /// One-shot: the last confirm was refused (over budget, or an attachment at its cap). The
     /// caller plays BO2's deny cue and clears this; the state itself stays pure.
     pub denied: bool,
+    /// One-shot: the player pressed Tab on the class row (`caceditclass.lua:52-63`'s
+    /// `knifePersonalization` prompt) or `C`/`V` on the primary weapon/optic row. The caller opens
+    /// the personalize screen and clears this; the pure editor only records the action.
+    pub personalize: Option<PersonalizeKind>,
 }
 
 /// The editor's answer to one pointer frame, already hit-tested by the view (the editor knows
@@ -648,7 +766,7 @@ pub enum ApplyResult {
 
 impl Editor {
     pub fn new(draft: Draft) -> Editor {
-        Editor { draft, slot: Slot::Primary, option: 0, picking: false, naming: false, denied: false }
+        Editor { draft, slot: Slot::Primary, option: 0, picking: false, naming: false, denied: false, personalize: None }
     }
 
     /// The rows to draw and walk, in order: [`Slot::ALL`] with a second perk row spliced in after a
@@ -752,6 +870,11 @@ impl Editor {
             Slot::SecondaryAtts => attachment_shorts(&self.draft.secondary, &self.draft.secondary_atts).get(i).copied(),
             _ => None,
         }
+    }
+
+    /// Whether the highlighted primary attachment is one BO2 personalizes the reticle of.
+    fn option_is_optic(&self) -> bool {
+        self.option_attachment(self.option).is_some_and(|s| crate::hud::OPTICS.contains(&s))
     }
 
     /// The perk option `i` of a perk row, for its icon.
@@ -881,6 +1004,12 @@ pub struct Edges {
     pub confirm: bool,
     pub cancel: bool,
     pub backspace: bool,
+    /// Tab on the class row: BO2's `knifePersonalization` prompt (`caceditclass.lua:52-63`).
+    pub personalize: bool,
+    /// `C` on the primary weapon row: BO2's `AddCamoButton` (`caceditclass.lua:748`).
+    pub camo: bool,
+    /// `V` on the primary optic row: BO2's `AddReticleButton` (`caceditclass.lua:825`).
+    pub reticle: bool,
     pub typed: Vec<Key>,
 }
 
@@ -897,6 +1026,9 @@ impl Edges {
             confirm: edge(Key::Enter),
             cancel: edge(Key::Escape),
             backspace: edge(Key::Backspace),
+            personalize: edge(Key::Tab),
+            camo: edge(Key::C),
+            reticle: edge(Key::V),
             typed,
         }
     }
@@ -968,11 +1100,28 @@ impl Editor {
     /// of the budget, so the UI can also show it).
     pub fn step(&mut self, edges: Edges) -> Outcome {
         self.denied = false;
+        self.personalize = None;
         if self.naming {
             return self.step_naming(edges);
         }
         if self.picking {
             return self.step_picking(edges);
+        }
+        // BO2's `TAB Personalize Knife` prompt opens the personalize screen without moving the
+        // row highlight or touching the draft (`caceditclass.lua:52-63`).
+        if edges.personalize {
+            self.personalize = Some(PersonalizeKind::Knife);
+            return Outcome::Continue;
+        }
+        // BO2's `AddCamoButton` on the primary weapon row (`caceditclass.lua:748`).
+        if edges.camo && self.slot == Slot::Primary {
+            self.personalize = Some(PersonalizeKind::Camo);
+            return Outcome::Continue;
+        }
+        // BO2's `AddReticleButton` on the primary optic row (`caceditclass.lua:825`).
+        if edges.reticle && self.slot == Slot::PrimaryAtts && self.option_is_optic() {
+            self.personalize = Some(PersonalizeKind::Reticle);
+            return Outcome::Continue;
         }
         // The slot row is highlighted: up/down move the highlight, Enter opens the list.
         if edges.up {
@@ -1116,6 +1265,11 @@ impl Editor {
     /// row. The weapon carousel keeps the plain list walk here; its four arrows are consumed by the
     /// shared fold (`classui::editor_frame`) because they steer its categories.
     fn step_picking(&mut self, edges: Edges) -> Outcome {
+        // BO2's `AddReticleButton` on the primary optic row (`caceditclass.lua:825`).
+        if edges.reticle && self.slot == Slot::PrimaryAtts && self.option_is_optic() {
+            self.personalize = Some(PersonalizeKind::Reticle);
+            return Outcome::Continue;
+        }
         let n = self.options().len();
         if n == 0 {
             if edges.cancel || edges.confirm {

@@ -40,7 +40,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use zhbo_core::classes::CustomClass;
-use zhbo_core::classmenu::{Draft, Editor, Slot, Wildcard};
+use zhbo_core::classmenu::{Draft, Editor, Personalize, PersonalizeKind, Slot, Wildcard};
 use zhbo_core::classui::{self, Dialog, MenuPointer, MenuPrev, PickRow, ScreenView};
 use zhbo_core::hud::Prim;
 use zhbo_core::input::{Key, KeySet};
@@ -96,6 +96,9 @@ fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> 
         ("cac-editor-empty", empty_editor_prims()),
         ("cac-editor-weapons", weapon_picker_prims()),
         ("cac-editor-attachments", attachment_picker_prims()),
+        ("cac-personalize", personalize_prims()),
+        ("cac-reticles", reticle_personalize_prims()),
+        ("cac-reticle-color", reticle_color_personalize_prims()),
         ("cac-dialog-set", set_dialog_prims()),
         ("cac-dialog-class", class_dialog_prims()),
     ];
@@ -127,7 +130,7 @@ fn browse_prims() -> Vec<Prim> {
     // Highlight the first custom row: the shot then shows the player's own classes and their kit,
     // not just the shipped presets.
     let highlight = rows.iter().position(|r| matches!(r, PickRow::Custom(0))).unwrap_or(0);
-    draw(&ScreenView { highlight, editor: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+    draw(&ScreenView { highlight, editor: None, personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
 /// The shell screen on an untouched class set: the pager's marker sits mid-row, as BO2's does on
@@ -135,7 +138,7 @@ fn browse_prims() -> Vec<Prim> {
 fn pager_prims() -> Vec<Prim> {
     let set = profile::active_set();
     profile::set_active(3);
-    let prims = draw(&ScreenView { highlight: 0, editor: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
+    let prims = draw(&ScreenView { highlight: 0, editor: None, personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
     profile::set_active(set);
     prims
 }
@@ -145,14 +148,42 @@ fn pager_prims() -> Vec<Prim> {
 fn pick_prims() -> Vec<Prim> {
     let rows = classui::pick_rows(false);
     let highlight = rows.iter().position(|r| matches!(r, PickRow::Custom(1))).unwrap_or(0);
-    draw(&ScreenView { highlight, editor: None, deny: 0.0, manage: false, now: 0.0, set_change: None, open: None })
+    draw(&ScreenView { highlight, editor: None, personalize: None, deny: 0.0, manage: false, now: 0.0, set_change: None, open: None })
 }
 
 /// The allocation editor on a populated draft, its boxed grid closed (`b-editor/028`).
 fn editor_prims() -> Vec<Prim> {
     let mut editor = editor_state();
     editor.picking = false;
-    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// The personalize screen: BO2's six-column camo grid with `None` first (`i-personalize/001`).
+fn personalize_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.picking = false;
+    let choices = classui::personalize_choices_for(PersonalizeKind::Camo, Some(editor.draft.primary.as_str()));
+    let p = Personalize::new(PersonalizeKind::Camo, choices, &editor.draft);
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// BO2's reticle grid on the primary's optic (`cacreticles.lua:9-24`); each cell is the optic's
+/// stock reticle art (`mtl_t6_attach_optic_reflex_reticle_XX`).
+fn reticle_personalize_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.picking = false;
+    let choices = classui::personalize_choices_for(PersonalizeKind::Reticle, Some(editor.draft.primary.as_str()));
+    let p = Personalize::new(PersonalizeKind::Reticle, choices, &editor.draft);
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// BO2's seven stock reticle colours (`attachmenttable.csv:68-74`).
+fn reticle_color_personalize_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.picking = false;
+    let choices = classui::personalize_choices_for(PersonalizeKind::ReticleColor, Some(editor.draft.primary.as_str()));
+    let p = Personalize::new(PersonalizeKind::ReticleColor, choices, &editor.draft);
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
 /// BO2's pristine empty class (`b-editor/002`): nothing chosen, so the attachment rows read
@@ -170,16 +201,20 @@ fn empty_editor_prims() -> Vec<Prim> {
         extra_perks: [None, None, None],
         wildcards: Vec::new(),
         reserve: [0, 0],
+        camo: String::new(),
+        reticle: String::new(),
+        reticle_color: String::new(),
+        knife: String::new(),
     };
     let editor = Editor::new(draft);
-    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
 /// The primary weapon screen: the category column, the category's tiles and the segmented bars
 /// (`c-primary/001`).
 fn weapon_picker_prims() -> Vec<Prim> {
     let editor = editor_state();
-    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
 /// The attachment picker of the primary (`d-attach/001`).
@@ -198,7 +233,7 @@ fn attachment_picker_prims() -> Vec<Prim> {
     if let Some(i) = editor.options().iter().position(|o| o == "Reflex") {
         editor.option = i;
     }
-    draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
 /// The shell's `S Class Set Options` dialog over the choose-class screen (`a-chooseclass/021`).
@@ -245,6 +280,10 @@ fn editor_state() -> Editor {
         extra_perks: [Some(Perk::FLAK_JACKET), None, None],
         wildcards: vec![Wildcard::Perk1Greed],
         reserve: [0, 0],
+        camo: String::new(),
+        reticle: String::new(),
+        reticle_color: String::new(),
+        knife: String::new(),
     };
     let mut editor = Editor::new(draft);
     let mut prev = MenuPrev::default();
@@ -287,6 +326,10 @@ fn seed_profile() {
             melee: "knife_held_mp".into(),
             perks: perks.iter().map(|p| (*p).to_string()).collect(),
             reserve: [0, 0],
+            camo: String::new(),
+            reticle: String::new(),
+            reticle_color: String::new(),
+            knife: String::new(),
         });
     }
 }
@@ -460,6 +503,26 @@ mod tests {
         assert!(att_text.contains(&"Reflex Sight"), "the full attachment title draws: {att_text:?}");
         assert!(att_text.contains(&"Precision red dot sight."), "the attachment description draws: {att_text:?}");
 
+        // The personalize screen carries BO2's title and the six-column grid, `None` first.
+        let personalize = personalize_prims();
+        let personalize_text = texts(&personalize);
+        assert!(personalize_text.contains(&"CAMO"), "the personalize title draws: {personalize_text:?}");
+        assert!(personalize_text.contains(&"None"), "the first camo cell draws: {personalize_text:?}");
+        assert!(personalize_text.contains(&"EQUIPPED"), "the Equipped label draws: {personalize_text:?}");
+        assert!(personalize_text.contains(&"MP7"), "the weapon preview draws: {personalize_text:?}");
+        assert!(personalize_text.contains(&"Back"), "the ESC Back prompt draws: {personalize_text:?}");
+
+        // The reticle/colour screens carry BO2's titles and prompts; each reticle cell is the
+        // primary optic's stock art (`cacreticles.lua:1150-1240,1390-1470`).
+        let reticles = reticle_personalize_prims();
+        let reticle_text = texts(&reticles);
+        assert!(reticle_text.contains(&"RETICLES"), "the reticle title draws: {reticle_text:?}");
+        assert!(reticle_text.contains(&"Back"), "the reticle ESC Back prompt draws: {reticle_text:?}");
+        let colors = reticle_color_personalize_prims();
+        let color_text = texts(&colors);
+        assert!(color_text.contains(&"RETICLE COLOR"), "the colour title draws: {color_text:?}");
+        assert!(color_text.contains(&"Back"), "the colour ESC Back prompt draws: {color_text:?}");
+
         // The dialogs carry BO2's titles and entries.
         let set_prims = set_dialog_prims();
         let set_dialog = texts(&set_prims);
@@ -474,11 +537,12 @@ mod tests {
         // image falling back exactly as `hud::render` would.
         let atlas = Atlas::empty();
         let mut missing = BTreeSet::new();
-        for prims in [&browse, &pager, &pick, &editor, &empty, &weapons, &att] {
+        for prims in [&browse, &pager, &pick, &editor, &empty, &weapons, &att, &personalize] {
             let canvas = raster::render(prims, &atlas, WIDTH, HEIGHT, &mut missing);
             let distinct: BTreeSet<[u8; 4]> = canvas.pixels().as_chunks::<4>().0.iter().copied().collect();
-            // The empty class is legitimately sparse (no icons at all): a handful of chrome shades.
-            assert!(distinct.len() > 8, "only {} colours drawn", distinct.len());
+            // The empty class and the personalize grid are legitimately sparse (no icons): a
+            // handful of chrome shades.
+            assert!(distinct.len() > 6, "only {} colours drawn", distinct.len());
         }
         assert!(!missing.is_empty(), "the fallbacks were exercised");
         clear_profile();

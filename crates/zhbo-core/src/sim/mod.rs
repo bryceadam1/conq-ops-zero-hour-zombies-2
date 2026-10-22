@@ -167,6 +167,10 @@ pub struct PlayerSim {
     /// The class the General assumed (`classes.rs` id), or `None` while the pick menu is up:
     /// the first control after a spawn (a fresh `PlayerSim`) picks once.
     pub class: Option<String>,
+    /// The class's reticle choice (`reticle_N`), carried when a `CustomClass` lands.
+    pub reticle: String,
+    /// The class's reticle colour choice (`reticle_color_N`), carried when a `CustomClass` lands.
+    pub reticle_color: String,
     pub mode: Mode,
     pub body: Body,
     pub yaw: f32,
@@ -201,6 +205,8 @@ impl PlayerSim {
         PlayerSim {
             general: 1,
             class: Some("assault".into()),
+            reticle: String::new(),
+            reticle_color: String::new(),
             mode: Mode::Fps,
             body: Body::new(Vec3::ZERO, &MoveTuning::default()),
             yaw: 0.0,
@@ -338,6 +344,8 @@ impl Sim {
                 PlayerSim {
                     general,
                     class: None,
+                    reticle: String::new(),
+                    reticle_color: String::new(),
                     mode: Mode::Fps,
                     body: Body::new(pos, &tuning),
                     yaw,
@@ -398,6 +406,8 @@ impl Sim {
                 PlayerSim {
                     general,
                     class: None,
+                    reticle: String::new(),
+                    reticle_color: String::new(),
                     mode: Mode::Rts,
                     body: Body::new(Vec3::ZERO, &tuning),
                     yaw: 0.0,
@@ -421,18 +431,20 @@ impl Sim {
             self.players[idx] = Some(p);
             return;
         }
-        let (class_id, class_name, loadout) = if payload.is_empty() {
+        let (class_id, class_name, loadout, reticle, reticle_color) = if payload.is_empty() {
             let Some(c) = crate::classes::at(index) else { self.players[idx] = Some(p); return };
-            (c.id.clone(), ClassName::new(&c.name), crate::classes::loadout_of(&c))
+            (c.id.clone(), ClassName::new(&c.name), crate::classes::loadout_of(&c), String::new(), String::new())
         } else {
             let Some(c) = crate::classes::CustomClass::from_wire_words(payload) else {
                 self.players[idx] = Some(p);
                 return;
             };
             let name = if c.name.is_empty() { "Custom Class".to_string() } else { c.name.clone() };
-            (format!("custom:{}", c.name), ClassName::new(&name), c.loadout())
+            (format!("custom:{}", c.name), ClassName::new(&name), c.loadout(), c.reticle.clone(), c.reticle_color.clone())
         };
         p.class = Some(class_id);
+        p.reticle = reticle;
+        p.reticle_color = reticle_color;
         p.arsenal = Arsenal::with_loadout(loadout);
         // The kit is ready as soon as the class lands, whichever view the player is in. In first
         // person the weapon still has to come up (BO2: the pick happens between spawns, not
@@ -1030,7 +1042,7 @@ pub(crate) mod tests {
                     }
                     // Melee swings.
                     300..=329 => {
-                        if t % 6 == 0 {
+                        if t.is_multiple_of(6) {
                             pressed |= buttons::MELEE;
                         }
                     }
@@ -1326,7 +1338,7 @@ pub(crate) mod tests {
         sim.choose_class(0, 1, usize::MAX, &words);
         let ev = events(&sim);
         let logged = ev.iter().find_map(|e| match e {
-            EventKind::ClassChosen { class, .. } => Some(class.clone()),
+            EventKind::ClassChosen { class, .. } => Some(*class),
             _ => None,
         });
         match logged {
@@ -1645,7 +1657,7 @@ pub(crate) mod tests {
         let mut v = proj.vel;
         while v.z > 0.0 || p.z > 0.0 {
             v.z -= crate::projectiles::GRAVITY * LOGIC_DT;
-            p = p + v * LOGIC_DT;
+            p += v * LOGIC_DT;
         }
         assert!((Vec3::new(p.x, p.y, 0.0) - Vec3::new(150.0, 40.0, 0.0)).length() < 8.0, "lands at {p:?}");
     }

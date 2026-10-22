@@ -102,6 +102,8 @@ impl Sim {
             self.players[idx] = Some(PlayerSim {
                 general,
                 class: None,
+                reticle: String::new(),
+                reticle_color: String::new(),
                 mode: Mode::Rts,
                 body: Body::new(info.pos, &self.tuning),
                 yaw: info.yaw,
