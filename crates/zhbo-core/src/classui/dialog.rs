@@ -1,6 +1,8 @@
 //! The shell's set and class option dialogs: their entries, input fold and drawing.
 
+use super::bo2::{self, argb, BOII_ORANGE, OFF_WHITE};
 use super::*;
+use crate::lui::font::{Align, Family};
 
 /// Which of the shell's two dialogs is up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -178,21 +180,38 @@ pub fn dialog_step(d: &mut Dialog, prev: &MenuPrev, now: &MenuPointer) -> Dialog
     DialogOutcome::Continue
 }
 
+/// BO2's popup body: `CoD.Menu.SmallPopupWidth` x `SmallPopupHeight` (448 x 256,
+/// `codmenu.lua:35-36`), centred; the class dialog asks for 15 more (`cacclassoptions.lua:15-18`).
+pub(super) const DIALOG_W: f32 = 448.0;
+pub(super) const DIALOG_H: f32 = 256.0;
+pub(super) const DIALOG_CLASS_H: f32 = DIALOG_H + 15.0;
+/// `CoD.textSize.Big` / `Default` / `Condensed` and `CoD9Button.Height` (`codbase.lua:344-348`,
+/// `cod9button.lua:6`).
+const DIALOG_TITLE_H: f32 = 48.0;
+const DIALOG_SUBTITLE_H: f32 = 25.0;
+const DIALOG_ITEM_H: f32 = 30.0;
+/// The button list starts under the header and subtitle plus 20 (`cacclasssetoptions.lua:120-134`,
+/// `cacclassoptions.lua:120-134`).
+const DIALOG_LIST_TOP: f32 = DIALOG_TITLE_H + DIALOG_SUBTITLE_H + 20.0;
+
 /// The dialog's box on screen (BO2's centred panel).
-pub(super) fn dialog_box(w: f32, h: f32, s: f32, items: usize) -> (f32, f32, f32, f32) {
-    let bw = 460.0 * s;
-    let bh = (120.0 + items as f32 * 30.0) * s;
+pub(super) fn dialog_box(w: f32, h: f32, s: f32, kind: DialogKind) -> (f32, f32, f32, f32) {
+    let bw = DIALOG_W * s;
+    let bh = match kind {
+        DialogKind::SetOptions => DIALOG_H,
+        DialogKind::ClassOptions => DIALOG_CLASS_H,
+    } * s;
     ((w - bw) * 0.5, (h - bh) * 0.5, bw, bh)
 }
 
 /// The entry row under a screen point, if any.
 pub(super) fn dialog_item_at(d: &Dialog, w: f32, h: f32, s: f32, x: f32, y: f32) -> Option<usize> {
-    let (bx, by, bw, _) = dialog_box(w, h, s, d.items.len());
+    let (bx, by, bw, _) = dialog_box(w, h, s, d.kind);
     if x < bx || x > bx + bw {
         return None;
     }
-    let top = by + (76.0 + if d.naming { 26.0 } else { 0.0 }) * s;
-    let row = 30.0 * s;
+    let top = by + (DIALOG_LIST_TOP + if d.naming { DIALOG_SUBTITLE_H } else { 0.0 }) * s;
+    let row = DIALOG_ITEM_H * s;
     if y < top {
         return None;
     }
@@ -224,24 +243,67 @@ pub fn draw_dialog(prims: &mut Vec<Prim>, w: f32, h: f32, d: &Dialog, open: Opti
 /// The settled dialog prims (no open fade).
 fn draw_dialog_body(prims: &mut Vec<Prim>, w: f32, h: f32, d: &Dialog) {
     let s = (h / 720.0).max(0.5);
+    let f = bo2::Frame::new(w, h);
     prims.push(Prim::Rect { x: 0.0, y: 0.0, w, h, argb: 0xB400_0000 });
-    let (bx, by, bw, bh) = dialog_box(w, h, s, d.items.len());
-    prims.push(Prim::Rect { x: bx, y: by, w: bw, h: bh, argb: DIALOG_FILL });
-    hud::outline_rect(prims, bx, by, bw, bh, 1.5 * s, DIALOG_EDGE);
-    prims.push(Prim::Text { x: bx + 22.0 * s, y: by + 16.0 * s, text: d.kind.title().to_string(), argb: WHITE, size: (24.0 * s) as i32, align: 0 });
-    prims.push(Prim::Text { x: bx + 22.0 * s, y: by + 50.0 * s, text: d.subtitle.clone(), argb: DIM, size: (13.0 * s) as i32, align: 0 });
-    let mut top = by + 76.0 * s;
+    let (bx, by, bw, bh) = dialog_box(w, h, s, d.kind);
+    let body = crate::lui::Rect { x: bx / s, y: by / s, w: bw / s, h: bh / s };
+    // `addSmallPopupBackground_Multiplayer` draws a 498-wide image for the 448-wide menu
+    // (`codmenu.lua:1400-1417`): 25 units of texture bleed each side. The captured popup shows
+    // ~480 visible units, so the frame sits 16 units outside the content box (`a-chooseclass/021`).
+    let chrome = crate::lui::Rect { x: body.x - 16.0, y: body.y, w: body.w + 32.0, h: body.h };
+    let p = f.px(chrome);
+    prims.push(Prim::Rect { x: p.x, y: p.y, w: p.w, h: p.h, argb: DIALOG_FILL });
+    // The dotted backing, kept faint so the panel reads as BO2's textured popup.
+    bo2::image(prims, &f, "menu_mp_cac_backing", chrome, argb(OFF_WHITE, 0.05), Vec::new());
+    // The texture is the large-menu dotted backing; the popup's own `menu_mp_popup_*` materials
+    // are not in the converted archive yet (see MODLOG's integrator note).
+
+    let (l, t, r, b) = (p.x, p.y, p.right(), p.bottom());
+    let mid = (l + r) * 0.5;
+    // Fill the shallow bottom pointer before its edge, so the border stays visible.
+    for i in 0..10 {
+        let half = (70.0 - i as f32 * 7.0) * s;
+        prims.push(Prim::Rect { x: mid - half, y: b + i as f32 * s, w: half * 2.0, h: s, argb: DIALOG_FILL });
+    }
+
+    // The chamfered frame. `menu_mp_popup_top/bottom` carry the real corners; until they are
+    // converted, lines reproduce the same silhouette, including the bottom pointer.
+    let c = 8.0 * s;
+    let edge = DIALOG_EDGE;
+    for (x0, y0, x1, y1) in [
+        (l + c, t, r - c, t),
+        (r - c, t, r, t + c),
+        (r, t + c, r, b - c),
+        (r, b - c, r - c, b),
+        (l + c, b, r - c, b),
+        (l, b - c, l + c, b),
+        (l, t + c, l, b - c),
+        (l, t + c, l + c, t),
+    ] {
+        prims.push(Prim::Line { x0, y0, x1, y1, width: 1.5, argb: edge });
+    }
+    prims.push(Prim::Line { x0: mid - 70.0 * s, y0: b, x1: mid, y1: b + 10.0 * s, width: 1.5, argb: edge });
+    prims.push(Prim::Line { x0: mid, y0: b + 10.0 * s, x1: mid + 70.0 * s, y1: b, width: 1.5, argb: edge });
+
+    // Header `Big` at 0,0, the set/class name in `Default` under it at alpha 0.5, then the
+    // `CoD9Button` list at 93 (`cacclasssetoptions.lua:48-137`, `cacclassoptions.lua:79-137`).
+    let title = crate::lui::Rect { x: body.x, y: body.y, w: body.w, h: DIALOG_TITLE_H };
+    bo2::text(prims, &f, Family::Big, d.kind.title(), title, Align::Left, argb(OFF_WHITE, 1.0));
+    let sub = crate::lui::Rect { x: body.x, y: body.y + DIALOG_TITLE_H, w: body.w, h: DIALOG_SUBTITLE_H };
+    bo2::text(prims, &f, Family::Default, &d.subtitle, sub, Align::Left, argb(OFF_WHITE, 0.5));
+    let mut top = body.y + DIALOG_LIST_TOP;
     if d.naming {
-        prims.push(Prim::Text { x: bx + 22.0 * s, y: top, text: format!("{}_", d.buffer), argb: ORANGE, size: (16.0 * s) as i32, align: 0 });
-        top += 26.0 * s;
+        let field = crate::lui::Rect { x: body.x, y: top, w: body.w, h: DIALOG_SUBTITLE_H };
+        bo2::text(prims, &f, Family::Default, &format!("{}_", d.buffer), field, Align::Left, argb(OFF_WHITE, 1.0));
+        top += DIALOG_SUBTITLE_H;
     }
     for (i, item) in d.items.iter().enumerate() {
-        let y = top + i as f32 * 30.0 * s;
+        let row = crate::lui::Rect { x: body.x, y: top + i as f32 * DIALOG_ITEM_H, w: body.w, h: DIALOG_ITEM_H };
         let on = i == d.highlight && !d.naming;
-        prims.push(Prim::Text { x: bx + 22.0 * s, y, text: item.label().to_string(), argb: if on { ORANGE } else { WHITE }, size: (16.0 * s) as i32, align: 0 });
+        let colour = if on { BOII_ORANGE } else { OFF_WHITE };
+        bo2::text(prims, &f, Family::Condensed, item.label(), row, Align::Left, argb(colour, 1.0));
     }
-    // BO2's prompt strip below the panel, over the dimmed screen.
-    prims.push(Prim::Rect { x: 0.0, y: h - 40.0 * s, w, h: 40.0 * s, argb: 0xFF10_1214 });
-    footer_prompts(prims, w, s, h - 34.0 * s, &[Prompt { key: "ESC", label: "Back" }], &[]);
-    let _ = bh;
+    // The popup is its own menu, so its one prompt is the normal footer (`codmenu.lua:185-226`).
+    let boxes = bo2::prompt_boxes(&f, &[("ESC", "Back")], &[]);
+    bo2::draw_prompts(prims, &f, &boxes);
 }
