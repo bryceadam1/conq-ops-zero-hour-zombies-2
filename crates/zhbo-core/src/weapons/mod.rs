@@ -21,7 +21,7 @@ pub mod table;
 pub use arsenal::*;
 pub use catalog::*;
 pub use def::*;
-pub use feel::{GunKick, Reticle, Sway, ViewPos};
+pub use feel::{optic_of, reticle_art, GunKick, Reticle, Sway, ViewPos};
 pub use loadout::*;
 pub use perks::*;
 pub use rng::*;

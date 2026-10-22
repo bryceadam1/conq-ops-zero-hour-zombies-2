@@ -20,6 +20,10 @@ pub struct Catalog {
     order: Vec<&'static WeaponDef>,
     attachments: HashMap<String, &'static AttachmentDef>,
     camo: HashMap<String, &'static CamoOption>,
+    reticles: HashMap<String, &'static CamoOption>,
+    reticle_order: Vec<&'static CamoOption>,
+    reticle_colors: HashMap<String, &'static CamoOption>,
+    reticle_color_order: Vec<&'static CamoOption>,
     built: Mutex<HashMap<String, &'static WeaponDef>>,
     pub tablet_meshes: u8,
 }
@@ -34,7 +38,22 @@ impl Catalog {
         let by_id = order.iter().map(|d| (d.id.clone(), *d)).collect();
         let attachments = t.attachments.into_iter().map(|a| (a.id.clone(), &*Box::leak(Box::new(a)))).collect();
         let camo = t.camo.into_iter().map(|c| (c.id.clone(), &*Box::leak(Box::new(c)))).collect();
-        Catalog { by_id, order, attachments, camo, built: Mutex::new(HashMap::new()), tablet_meshes: t.tablet_meshes }
+        let reticle_order: Vec<&'static CamoOption> = t.reticles.into_iter().map(|r| &*Box::leak(Box::new(r))).collect();
+        let reticles = reticle_order.iter().map(|r| (r.id.clone(), *r)).collect();
+        let reticle_color_order: Vec<&'static CamoOption> = t.reticle_colors.into_iter().map(|c| &*Box::leak(Box::new(c))).collect();
+        let reticle_colors = reticle_color_order.iter().map(|c| (c.id.clone(), *c)).collect();
+        Catalog {
+            by_id,
+            order,
+            attachments,
+            camo,
+            reticles,
+            reticle_order,
+            reticle_colors,
+            reticle_color_order,
+            built: Mutex::new(HashMap::new()),
+            tablet_meshes: t.tablet_meshes,
+        }
     }
 
     /// A weapon by id; `base+att+att` builds the attachments onto the base if the table doesn't
@@ -77,6 +96,26 @@ impl Catalog {
     /// A camo option by id (`camo_multicam`), with its name and thumbnail image.
     pub fn camo(&self, id: &str) -> Option<&'static CamoOption> {
         self.camo.get(id).copied()
+    }
+
+    /// A reticle option by id (`reticle_3`), in BO2's base `reticle_0..10` order.
+    pub fn reticle(&self, id: &str) -> Option<&'static CamoOption> {
+        self.reticles.get(id).copied()
+    }
+
+    /// The base reticle options, in BO2's table order.
+    pub fn reticles(&self) -> &[&'static CamoOption] {
+        &self.reticle_order
+    }
+
+    /// A reticle colour by id (`reticle_color_1`), with its localized colour name.
+    pub fn reticle_color(&self, id: &str) -> Option<&'static CamoOption> {
+        self.reticle_colors.get(id).copied()
+    }
+
+    /// The base reticle colours, in BO2's table order.
+    pub fn reticle_colors(&self) -> &[&'static CamoOption] {
+        &self.reticle_color_order
     }
 
     pub fn all(&self) -> &[&'static WeaponDef] {

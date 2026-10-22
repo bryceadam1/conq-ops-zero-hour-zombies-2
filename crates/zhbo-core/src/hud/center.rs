@@ -31,6 +31,22 @@ pub fn crosshair_offset(spread_deg: f32, hfov: f32, w: f32, h: f32) -> f32 {
     px480 * h / 480.0
 }
 
+/// The seven stock reticle colours (`lua-dump/patch_mp/mp/attachmenttable.csv:68-74`; the
+/// localized names are Red, Green, Blue, Purple, Teal, Yellow, Orange). The RGB is the grid
+/// swatch and `draw_crosshair`'s tint for the optic art.
+pub fn reticle_color_rgb(id: &str) -> Option<(f32, f32, f32)> {
+    match id {
+        "reticle_color_1" => Some((1.0, 0.16, 0.16)),
+        "reticle_color_2" => Some((0.2, 1.0, 0.2)),
+        "reticle_color_3" => Some((0.25, 0.45, 1.0)),
+        "reticle_color_4" => Some((0.65, 0.25, 1.0)),
+        "reticle_color_5" => Some((0.2, 1.0, 0.9)),
+        "reticle_color_6" => Some((1.0, 0.9, 0.2)),
+        "reticle_color_7" => Some((1.0, 0.55, 0.1)),
+        _ => None,
+    }
+}
+
 pub(super) fn draw_crosshair(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, client: &Client, p: &PlayerSim) {
     // Unarmed (knife only): there is no gun to aim, so no crosshair.
     if p.arsenal.is_unarmed() {
@@ -38,22 +54,30 @@ pub(super) fn draw_crosshair(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, clie
     }
     let (cx, cy) = (w * 0.5, h * 0.5);
     let ads = p.arsenal.ads;
-    // Aiming through an optic: BO2's red-dot glow, translucent, on the line of sight (BO2 projects
-    // the reticle to infinity, so it stays centred). Iron sights have none.
-    let optic = p.arsenal.current().def.attachments.iter().any(|a| OPTICS.contains(&a.as_str()));
+    let wpn = p.arsenal.current();
+    // Aiming through an optic: BO2's reticle art on the line of sight (BO2 projects the reticle
+    // to infinity, so it stays centred). Iron sights have none.
+    let optic = wpn.def.attachments.iter().any(|a| OPTICS.contains(&a.as_str()));
     if ads > 0.6 && !optic {
         return;
     }
     if ads > 0.6 {
         let size = 30.0 * s;
+        // The chosen stock reticle through the optic (`reticle_3` -> the optic's `_reticle_04`),
+        // tinted by the chosen colour (`reticle_color_1` is Red). Without a choice, the red dot.
+        let art = crate::weapons::optic_of(&wpn.def.attachments)
+            .and_then(|o| crate::weapons::reticle_art(o, &p.reticle));
+        let rgb = reticle_color_rgb(&p.reticle_color).unwrap_or((1.0, 1.0, 1.0));
+        let col = argb(rgb, 1.0);
+        let name = art.unwrap_or_else(|| sprites::RED_DOT.to_string());
         prims.push(Prim::Image {
-            name: sprites::RED_DOT.to_string(),
+            name,
             x: cx - size * 0.5,
             y: cy - size * 0.5,
             w: size,
             h: size,
-            argb: 0xFFFF_FFFF,
-            fallback: vec![Prim::Rect { x: cx - 2.0 * s, y: cy - 2.0 * s, w: 4.0 * s, h: 4.0 * s, argb: RED }],
+            argb: if p.reticle.is_empty() { 0xFFFF_FFFF } else { col },
+            fallback: vec![Prim::Rect { x: cx - 2.0 * s, y: cy - 2.0 * s, w: 4.0 * s, h: 4.0 * s, argb: col }],
         });
         return;
     }
@@ -65,7 +89,6 @@ pub(super) fn draw_crosshair(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, clie
         crate::movement::Stance::Crouch => 1,
         crate::movement::Stance::Prone => 2,
     };
-    let wpn = p.arsenal.current();
     let spread = wpn.spread_deg(stance, ads);
     let gap = crosshair_offset(spread, client.last_hfov, w, h);
     // aimSpreadScale: how far the bloom has opened the cone between its stance min and max.

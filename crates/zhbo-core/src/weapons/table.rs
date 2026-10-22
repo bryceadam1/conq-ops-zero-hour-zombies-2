@@ -18,6 +18,10 @@ pub struct Table {
     /// BO2's camo options (`Camo <id>` blocks): the screen's grid cells with their names and
     /// thumbnails (`mp/attachmenttable.csv`'s `camo` rows).
     pub camo: Vec<CamoOption>,
+    /// BO2's reticle options (`ReticleOption <id>` blocks): the base `reticle_0..10` rows.
+    pub reticles: Vec<CamoOption>,
+    /// BO2's reticle colours (`ReticleColorOption <id>` blocks): the base `reticle_color_1..7` rows.
+    pub reticle_colors: Vec<CamoOption>,
     /// Third-person meshes of the scorestreak tablet on the soldier model (`TB{k:02}`).
     pub tablet_meshes: u8,
     /// BO2's perk rows (`mp/statstable.csv`): the reference without `PERKS_` (`LIGHTWEIGHT`,
@@ -71,6 +75,12 @@ pub fn format_full_table(t: &Table) -> String {
     for c in &t.camo {
         write_block(&mut s, "Camo ", &c.id, CAMO_FIELDS, c);
     }
+    for r in &t.reticles {
+        write_block(&mut s, "ReticleOption ", &r.id, CAMO_FIELDS, r);
+    }
+    for c in &t.reticle_colors {
+        write_block(&mut s, "ReticleColorOption ", &c.id, CAMO_FIELDS, c);
+    }
     for d in &t.weapons {
         write_block(&mut s, "Weapon ", &d.id, WEAPON_FIELDS, d);
     }
@@ -89,6 +99,8 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
         Weapon(Box<WeaponDef>),
         Attachment(Box<AttachmentDef>),
         Camo(Box<CamoOption>),
+        Reticle(Box<CamoOption>),
+        ReticleColor(Box<CamoOption>),
         Perk(String, Specialties),
     }
     let mut table = Table::default();
@@ -111,6 +123,14 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
             cur = Some(Block::Camo(Box::new(CamoOption { id: id.trim().to_string(), ..Default::default() })));
             continue;
         }
+        if let Some(id) = line.strip_prefix("ReticleOption ") {
+            cur = Some(Block::Reticle(Box::new(CamoOption { id: id.trim().to_string(), ..Default::default() })));
+            continue;
+        }
+        if let Some(id) = line.strip_prefix("ReticleColorOption ") {
+            cur = Some(Block::ReticleColor(Box::new(CamoOption { id: id.trim().to_string(), ..Default::default() })));
+            continue;
+        }
         if let Some(id) = line.strip_prefix("Perk ") {
             cur = Some(Block::Perk(id.trim().to_string(), Specialties::NONE));
             continue;
@@ -120,6 +140,8 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
                 Block::Weapon(w) => table.weapons.push(*w),
                 Block::Attachment(a) => table.attachments.push(*a),
                 Block::Camo(c) => table.camo.push(*c),
+                Block::Reticle(r) => table.reticles.push(*r),
+                Block::ReticleColor(c) => table.reticle_colors.push(*c),
                 Block::Perk(stats, specialties) => table.perks.push((stats, specialties)),
             }
             continue;
@@ -135,6 +157,8 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
             },
             Some(Block::Attachment(a)) => set_field(ATTACHMENT_FIELDS, a, key, values).map_err(|e| err(&e))?,
             Some(Block::Camo(c)) => set_field(CAMO_FIELDS, c, key, values).map_err(|e| err(&e))?,
+            Some(Block::Reticle(r)) => set_field(CAMO_FIELDS, r, key, values).map_err(|e| err(&e))?,
+            Some(Block::ReticleColor(c)) => set_field(CAMO_FIELDS, c, key, values).map_err(|e| err(&e))?,
             Some(Block::Perk(_, specialties)) => {
                 if key == "Specialties" {
                     *specialties = Specialties::parse(value).map_err(|e| err(&e))?;
@@ -721,6 +745,17 @@ mod tests {
         assert!(text.contains("Camo camo_multicam\n  Name = Multicam\n  Image = menu_camo_multicam_pattern\n  Sort = 1\nEnd"), "{text}");
         assert!(text.contains("CamoList = camo_none camo_multicam"), "{text}");
         assert!(text.contains("CamoMaterial = camo_an94"), "{text}");
+        assert_eq!(parse_full_table(&text).unwrap(), t);
+    }
+
+    #[test]
+    fn reticle_options_and_colours_round_trip() {
+        let r = CamoOption { id: "reticle_0".into(), name: "Dot".into(), image: String::new(), sort: 0 };
+        let c = CamoOption { id: "reticle_color_1".into(), name: "Red".into(), image: String::new(), sort: 0 };
+        let t = Table { reticles: vec![r], reticle_colors: vec![c], ..Default::default() };
+        let text = format_full_table(&t);
+        assert!(text.contains("ReticleOption reticle_0\n  Name = Dot\n  Image = \n  Sort = 0\nEnd"), "{text}");
+        assert!(text.contains("ReticleColorOption reticle_color_1\n  Name = Red\n  Image = \n  Sort = 0\nEnd"), "{text}");
         assert_eq!(parse_full_table(&text).unwrap(), t);
     }
 }

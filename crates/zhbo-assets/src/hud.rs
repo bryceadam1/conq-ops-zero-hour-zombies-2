@@ -217,6 +217,14 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             wanted.push((image.clone(), Source::Dynamic(image), 128));
         }
     }
+    // The reticle grid's stock art: 11 images per optic (`code_post_gfx_mp.tsv:1073-1104`; their
+    // materials at `:2023-2054` are named `mc/mtl_t6_attach_optic_*_reticle_*`).
+    for optic in ["reflex", "holo", "acog"] {
+        for n in 1..=11 {
+            let image = format!("mtl_t6_attach_optic_{optic}_reticle_{n:02}");
+            wanted.push((image.clone(), Source::Dynamic(image), 128));
+        }
+    }
     // One icon per attachment in the converted table, named by the core's short-name map. BO2's
     // variants share an art set (`silencer_smg`/`silencer` are both the suppressor); an attachment
     // the map has no art for is reported, never fatal.
@@ -264,11 +272,25 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                 // inside another asset (`hud_mp_firerate_*` lives inside `common_mp`'s weapons).
                 let order = ["common_mp", "code_post_gfx_mp", "ui_mp", "patch_mp", "patch_ui_mp", "frontend"];
                 let image = |m: zhbo_formats::xmodel::Material| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash)).filter(|h| *h != 0);
+                let mc = format!("mc/{material}");
                 order
                     .iter()
                     .filter_map(|z| zones.get(z))
-                    .find_map(|z| zhbo_formats::xmodel::find_asset_material(z, material).and_then(image))
-                    .or_else(|| order.iter().filter_map(|z| zones.get(z)).find_map(|z| zhbo_formats::xmodel::find_inline_material(z, material).and_then(image)))
+                    .find_map(|z| {
+                        zhbo_formats::xmodel::find_asset_material(z, material)
+                            .or_else(|| zhbo_formats::xmodel::find_asset_material(z, &mc))
+                            .and_then(image)
+                    })
+                    .or_else(|| {
+                        order
+                            .iter()
+                            .filter_map(|z| zones.get(z))
+                            .find_map(|z| {
+                                zhbo_formats::xmodel::find_inline_material(z, material)
+                                    .or_else(|| zhbo_formats::xmodel::find_inline_material(z, &mc))
+                                    .and_then(image)
+                            })
+                    })
             }
         };
         match hash.and_then(|h| paks.image(h)) {

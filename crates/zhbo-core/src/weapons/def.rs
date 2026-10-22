@@ -267,6 +267,14 @@ pub struct CamoOption {
     pub sort: u32,
 }
 
+/// One BO2 reticle option (`reticle_0..10` from `mp/attachmenttable.csv`): the same id/name/image/
+/// sort shape as a camo row; the art depends on the optic (`cacreticles.lua`).
+pub type ReticleOption = CamoOption;
+
+/// One BO2 reticle colour (`reticle_color_1..7`): the same shape; the name is the colour
+/// (`MPUI_RETICLE_COLOR_1` is "Red").
+pub type ReticleColorOption = CamoOption;
+
 /// What a weapon is as equipment, once down (claymore, C4, …). The converter writes it from the
 /// weapon table's `Equipment` block; `Kind::of` is just the field read (refactor plan 3.2).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]

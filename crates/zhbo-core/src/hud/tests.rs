@@ -128,6 +128,45 @@ fn map_key_shows_the_radar_or_says_there_is_none() {
 }
 
 #[test]
+fn the_crosshair_uses_the_classs_reticle_and_colour() {
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    let mut sim = Sim::new();
+    let mut client = Client::default();
+    sim.take_control(&host, 0, 1);
+    let custom = crate::classes::CustomClass {
+        name: "Reticle Kit".into(),
+        primary: "an94_mp+reflex".into(),
+        reticle: "reticle_3".into(),
+        reticle_color: "reticle_color_2".into(),
+        ..Default::default()
+    };
+    sim.choose_class(0, 1, usize::MAX, &custom.to_wire_words());
+    let mut inp = ClientIn::default();
+    for f in 1..160 {
+        client.frame(&mut sim, &inp);
+        sim.step(&host, f);
+        inp.logic_frame = f;
+    }
+    let p = sim.players[0].as_mut().expect("the player");
+    assert_eq!(p.reticle, "reticle_3");
+    assert_eq!(p.reticle_color, "reticle_color_2");
+    p.arsenal.ads = 1.0;
+    let rec = Recorder { has_art: true, ..Default::default() };
+    let prims = draw_hud(&rec, &client, &sim);
+    let argb = prims
+        .iter()
+        .find_map(|prim| match prim {
+            Prim::Image { name, argb, .. } if name == "mtl_t6_attach_optic_reflex_reticle_04" => Some(*argb),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("the class's reticle art draws: {prims:?}"));
+    // `reticle_color_2` is Green: the tint's green channel dominates red and blue.
+    assert!(((argb >> 8) & 0xFF) > ((argb >> 16) & 0xFF), "{argb:#010x}");
+    assert!(((argb >> 8) & 0xFF) > (argb & 0xFF), "{argb:#010x}");
+}
+
+#[test]
 fn falls_back_to_text_without_the_art() {
     let (sim, client) = fps_state();
     let rec = Recorder::default();

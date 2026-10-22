@@ -131,15 +131,24 @@ pub fn personalize_choices(kind: PersonalizeKind) -> Vec<String> {
     names.iter().map(|s| (*s).to_string()).collect()
 }
 
-/// The host's choices for a weapon-backed camo screen: the weapon's converted `CamoList`
-/// (`camo_none` first), or the captured fallback when the catalog has no BO2 table.
+/// The host's choices for a personalize screen: the weapon's converted `CamoList`, the converted
+/// reticle/colour tables, or the captured fallback when the catalog has no BO2 data.
 pub fn personalize_choices_for(kind: PersonalizeKind, weapon: Option<&str>) -> Vec<String> {
-    if kind == PersonalizeKind::Camo {
-        if let Some(ids) = weapon.and_then(crate::weapons::weapon_or_none).map(|d| d.camo.clone()).filter(|ids| !ids.is_empty()) {
-            return ids;
+    let real = match kind {
+        PersonalizeKind::Camo => {
+            weapon.and_then(crate::weapons::weapon_or_none).map(|d| d.camo.clone()).filter(|ids| !ids.is_empty())
         }
-    }
-    personalize_choices(kind)
+        PersonalizeKind::Reticle => {
+            let ids: Vec<String> = crate::weapons::catalog().reticles().iter().map(|r| r.id.clone()).collect();
+            (!ids.is_empty()).then_some(ids)
+        }
+        PersonalizeKind::ReticleColor => {
+            let ids: Vec<String> = crate::weapons::catalog().reticle_colors().iter().map(|c| c.id.clone()).collect();
+            (!ids.is_empty()).then_some(ids)
+        }
+        PersonalizeKind::Knife => None,
+    };
+    real.unwrap_or_else(|| personalize_choices(kind))
 }
 
 /// A cell's background: the same near-black plate as the editor's grid buttons.
@@ -149,15 +158,15 @@ fn button_bg(prims: &mut Vec<Prim>, f: &Frame, r: Rect) {
     bo2::image(prims, f, "menu_mp_cac_grad_stretch", r, argb(BUTTON_TINT, BUTTON_ALPHA + 0.35), fallback);
 }
 
-/// The label a cell shows: the camo options' localized names (the choice is its `camo_*` id),
-/// or the choice itself for the reticle/colour lists.
+/// The label a cell shows: the camo/reticle/colour option's localized name, or the choice itself
+/// for the fallback lists.
 fn choice_label(kind: PersonalizeKind, choice: &str) -> String {
-    if matches!(kind, PersonalizeKind::Camo | PersonalizeKind::Knife) {
-        if let Some(c) = crate::weapons::catalog().camo(choice) {
-            return c.name.clone();
-        }
-    }
-    choice.to_string()
+    let opt = match kind {
+        PersonalizeKind::Camo | PersonalizeKind::Knife => crate::weapons::catalog().camo(choice),
+        PersonalizeKind::Reticle => crate::weapons::catalog().reticle(choice),
+        PersonalizeKind::ReticleColor => crate::weapons::catalog().reticle_color(choice),
+    };
+    opt.map(|c| c.name.clone()).unwrap_or_else(|| choice.to_string())
 }
 
 /// Draw the open personalize screen: its title, the choices as a grid of buttons, the highlighted
@@ -213,6 +222,33 @@ pub fn draw_personalize(prims: &mut Vec<Prim>, w: f32, h: f32, p: &Personalize, 
                     argb(OFF_WHITE, 1.0),
                     Vec::new(),
                 );
+            }
+        }
+        if p.kind == PersonalizeKind::Reticle {
+            if let Some(image) = weapon
+                .and_then(crate::weapons::weapon_or_none)
+                .and_then(|d| crate::weapons::optic_of(&d.attachments).and_then(|o| crate::weapons::reticle_art(o, choice)))
+            {
+                bo2::image(
+                    prims,
+                    f,
+                    &image,
+                    Rect { x: r.x + 4.0, y: r.y + 4.0, w: r.w - 8.0, h: r.h - bo2::TEXT_CONDENSED - 8.0 },
+                    argb(OFF_WHITE, 1.0),
+                    Vec::new(),
+                );
+            }
+        }
+        if p.kind == PersonalizeKind::ReticleColor {
+            if let Some(rgb) = crate::hud::reticle_color_rgb(choice) {
+                let sw = (r.h - bo2::TEXT_CONDENSED - 12.0).max(8.0);
+                prims.push(Prim::Rect {
+                    x: r.x + r.w * 0.5 - sw * 0.5,
+                    y: r.y + 4.0 + (r.h - bo2::TEXT_CONDENSED - 8.0 - sw) * 0.5,
+                    w: sw,
+                    h: sw,
+                    argb: argb(rgb, 1.0),
+                });
             }
         }
         bo2::text(

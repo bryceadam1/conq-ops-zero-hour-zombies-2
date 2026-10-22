@@ -28,7 +28,6 @@ pub mod damage;
 pub mod digit;
 pub mod frame;
 pub mod map;
-mod numerals;
 mod panels;
 pub mod rewards;
 pub mod score;
@@ -40,9 +39,9 @@ pub mod state;
 mod tests;
 
 use center::*;
+pub use center::reticle_color_rgb;
 use damage::*;
 use map::*;
-pub(crate) use numerals::*;
 use panels::*;
 pub(crate) use shapes::*;
 
@@ -101,7 +100,7 @@ pub(crate) const PANEL: u32 = 0x9010_1214;
 pub(crate) const OUTLINE: u32 = 0xB0C8_CCD0;
 
 /// BO2's sight attachments (a reticle on the line of sight).
-pub(super) const OPTICS: &[&str] = &["reflex", "acog", "holo", "rangefinder", "dualoptic", "mms", "ir", "vzoom"];
+pub(crate) const OPTICS: &[&str] = &["reflex", "acog", "holo", "rangefinder", "dualoptic", "mms", "ir", "vzoom"];
 
 /// Minimap radius in world units.
 pub(super) const MINIMAP_RANGE: f32 = 320.0;

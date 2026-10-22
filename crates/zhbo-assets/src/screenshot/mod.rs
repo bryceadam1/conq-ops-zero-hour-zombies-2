@@ -97,6 +97,8 @@ fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> 
         ("cac-editor-weapons", weapon_picker_prims()),
         ("cac-editor-attachments", attachment_picker_prims()),
         ("cac-personalize", personalize_prims()),
+        ("cac-reticles", reticle_personalize_prims()),
+        ("cac-reticle-color", reticle_color_personalize_prims()),
         ("cac-dialog-set", set_dialog_prims()),
         ("cac-dialog-class", class_dialog_prims()),
     ];
@@ -162,6 +164,25 @@ fn personalize_prims() -> Vec<Prim> {
     editor.picking = false;
     let choices = classui::personalize_choices_for(PersonalizeKind::Camo, Some(editor.draft.primary.as_str()));
     let p = Personalize::new(PersonalizeKind::Camo, choices, &editor.draft);
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// BO2's reticle grid on the primary's optic (`cacreticles.lua:9-24`); each cell is the optic's
+/// stock reticle art (`mtl_t6_attach_optic_reflex_reticle_XX`).
+fn reticle_personalize_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.picking = false;
+    let choices = classui::personalize_choices_for(PersonalizeKind::Reticle, Some(editor.draft.primary.as_str()));
+    let p = Personalize::new(PersonalizeKind::Reticle, choices, &editor.draft);
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// BO2's seven stock reticle colours (`attachmenttable.csv:68-74`).
+fn reticle_color_personalize_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.picking = false;
+    let choices = classui::personalize_choices_for(PersonalizeKind::ReticleColor, Some(editor.draft.primary.as_str()));
+    let p = Personalize::new(PersonalizeKind::ReticleColor, choices, &editor.draft);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
@@ -490,6 +511,17 @@ mod tests {
         assert!(personalize_text.contains(&"EQUIPPED"), "the Equipped label draws: {personalize_text:?}");
         assert!(personalize_text.contains(&"MP7"), "the weapon preview draws: {personalize_text:?}");
         assert!(personalize_text.contains(&"Back"), "the ESC Back prompt draws: {personalize_text:?}");
+
+        // The reticle/colour screens carry BO2's titles and prompts; each reticle cell is the
+        // primary optic's stock art (`cacreticles.lua:1150-1240,1390-1470`).
+        let reticles = reticle_personalize_prims();
+        let reticle_text = texts(&reticles);
+        assert!(reticle_text.contains(&"RETICLES"), "the reticle title draws: {reticle_text:?}");
+        assert!(reticle_text.contains(&"Back"), "the reticle ESC Back prompt draws: {reticle_text:?}");
+        let colors = reticle_color_personalize_prims();
+        let color_text = texts(&colors);
+        assert!(color_text.contains(&"RETICLE COLOR"), "the colour title draws: {color_text:?}");
+        assert!(color_text.contains(&"Back"), "the colour ESC Back prompt draws: {color_text:?}");
 
         // The dialogs carry BO2's titles and entries.
         let set_prims = set_dialog_prims();
