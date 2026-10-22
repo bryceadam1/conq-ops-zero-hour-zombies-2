@@ -601,6 +601,14 @@ fn build(opts: &Opts) -> Result<PathBuf> {
                 return Err(format!("the deploy script did not stage generalszh into {}", stage.display()));
             }
             copy_dir_if_changed(&stage, &dist)?;
+            // macOS kills a freshly rewritten binary at its old path when a previous build was
+            // run recently (the kernel's signature registration for the path outlives the file:
+            // execs SIGKILL before main even though codesign verifies). Force a re-sign so the
+            // new content gets a fresh registration — the user playtesting while we stage is
+            // exactly when this bites (2026-10-21).
+            if cfg!(target_os = "macos") && dist.join("generalszh").is_file() {
+                run_cmd(Command::new("codesign").args(["--force", "--sign", "-"]).arg(dist.join("generalszh")))?;
+            }
         }
     }
 

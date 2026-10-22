@@ -27,8 +27,9 @@ pub struct Config {
     /// deterministic sim inputs).
     pub loadout: Option<String>,
     pub autopilot: Autopilot,
-    /// `ZHBO_NATIVE_VIEWMODEL=1`: draw the first-person weapon through the renderer's native BO2
-    /// pass (`nativevm`) instead of the W3D conversion. Presentation only, never a sim input.
+    /// `ZHBO_NATIVE_VIEWMODEL`: draw the first-person weapon through the renderer's native BO2
+    /// pass (`nativevm`) instead of the W3D conversion. **On by default** (the W3D conversion is
+    /// the fallback: `0`/`false`/`no`/`off`); presentation only, never a sim input.
     pub native_viewmodel: bool,
     /// `ZHBO_NATIVE_BODY`: the third-person General through the same native pass (`nativebody`).
     /// 0 off (W3D), 1 the weapon in his hand while the W3D body draws, 2 the body too (Track R7's
@@ -44,8 +45,16 @@ impl Config {
 
     /// Read the environment once at init.
     pub fn from_env() -> Config {
-        Config { native_viewmodel: flag(env("ZHBO_NATIVE_VIEWMODEL")), native_body: body_mode(env("ZHBO_NATIVE_BODY")), ..Config::parse(env("ZHBO_LOADOUT"), env("ZHBO_AUTOPILOT")) }
+        Config { native_viewmodel: on_by_default(env("ZHBO_NATIVE_VIEWMODEL")), native_body: body_mode(env("ZHBO_NATIVE_BODY")), ..Config::parse(env("ZHBO_LOADOUT"), env("ZHBO_AUTOPILOT")) }
     }
+}
+
+/// `ZHBO_NATIVE_VIEWMODEL`: since the native pass out-verified the W3D conversion (the 2026-10-21
+/// fixes: display-space shading, culling, skin weights, the near plane, hide tags), the native
+/// BO2 viewmodel is the DEFAULT and the W3D conversion is the fallback: off only for `0`,
+/// `false`, `no` or `off` (any case), on otherwise or unset.
+fn on_by_default(value: Option<&str>) -> bool {
+    !matches!(value.map(|v| v.trim().to_ascii_lowercase()), Some(v) if matches!(v.as_str(), "0" | "false" | "no" | "off"))
 }
 
 /// `ZHBO_NATIVE_BODY`: 0 off, 1 the weapon only (the W3D body draws), 2 the body and the weapon.
@@ -101,6 +110,13 @@ pub fn get() -> &'static Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn native_viewmodel_is_on_by_default() {
+        assert!(on_by_default(None));
+        assert!(on_by_default(Some("1")) && on_by_default(Some("weird")));
+        assert!(!on_by_default(Some("0")) && !on_by_default(Some("OFF")) && !on_by_default(Some("no")) && !on_by_default(Some(" false ")));
+    }
 
     #[test]
     fn a_read_before_init_does_not_lock_in_the_defaults() {

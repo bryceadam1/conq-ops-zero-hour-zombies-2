@@ -411,9 +411,9 @@ float zhbo_general_build_rate(void); /* a General's building speed, share of a d
 int32_t zhbo_check_requirements(char *msg, uint32_t cap);
 
 /* The native first-person viewmodel (Track R; nativevm/ffi.rs, CONTRACT.md "Native viewmodel").
-   Opt-in (ZHBO_NATIVE_VIEWMODEL=1). Each frame: zhbo_native_viewmodel, then answer every
-   zhbo_native_wanted path with zhbo_native_provide (len < 0: not in the archive), and log each
-   zhbo_native_take_log line. */
+   On by default; ZHBO_NATIVE_VIEWMODEL=0/false/no/off falls back to the W3D conversion. Each
+   frame: zhbo_native_viewmodel, then answer every zhbo_native_wanted path with
+   zhbo_native_provide (len < 0: not in the archive), and log each zhbo_native_take_log line. */
 typedef struct ZhboNativeLight
 {
 	float dir[3];   /* towards the light, world space */

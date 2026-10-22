@@ -2542,6 +2542,31 @@ native+compare, `--classpick` with `ZHBO_NATIVE_VIEWMODEL=1` all checks — **th
 solid in the captures: receiver top, rail and sight housing intact where the user's screenshot
 tore** — 14/14 `--rts`.
 
+## The native viewmodel becomes the default — and the macOS signature-cache trap (2026-10-22)
+
+`ZHBO_NATIVE_VIEWMODEL` flips to **on by default** (`0`/`false`/`no`/`off` falls back to the W3D
+conversion): after the 10-21 fixes (display-space shading, culling, skin weights, the near
+plane, hide tags, R6 placement) the native pass out-verifies the W3D path it was built to
+replace. The user's "still tearing" report that night had a simpler explanation than a bad fix:
+they play the DEFAULT path, which was W3D — the native fixes never applied to their game. One
+Rust config read is the whole gate (`config::get().native_viewmodel`; the C++ delegates to the
+core). CONFIG.md and zhbo_core.h updated; a `native_viewmodel_is_on_by_default` config test
+pins the semantics.
+
+**Gotcha (build environment):** the evening's "the game won't start at all" cascade was macOS,
+not code. After an in-place rewrite of `dist/generalszh` WHILE a previous build from that path
+was (or had recently been) running — the user playtesting — the kernel kills new execs of the
+path with SIGKILL before `main`, even though `codesign --verify` passes ("valid on disk"). The
+launches printed nothing (killed before stdout flushed), which read as a launcher failure, a
+lock, and a bad build in turn. `codesign --force --sign -` refreshes the registration
+instantly; `cargo xtask build` now re-signs `dist/generalszh` after staging on macOS. Second
+member of the single-instance family: when a leg fails with "never entered first person",
+check `pgrep -f generalszh` AND, if a build just rewrote the binary, re-sign.
+
+Verified: config tests green; `cargo xtask build` clean; autotest 13/13 default **(now the
+native path with no env var)**, 13/13 with `ZHBO_NATIVE_VIEWMODEL=0` (the W3D fallback),
+`--classpick` all checks, 14/14 `--rts`.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
