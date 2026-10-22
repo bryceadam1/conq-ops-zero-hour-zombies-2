@@ -6,8 +6,11 @@
 //! ```
 //!
 //! Optional flags: `--archive <ConquerOps_BO2.big>`, `--weapon <id>` (repeatable: only these
-//! weapons), `--no-attachments` (base weapons only). `--release` converts the combinations about ten
-//! times faster; a full sweep is a few minutes.
+//! weapons), `--no-attachments` (base weapons only), `--sweep` (render the first-raise clip across
+//! frames instead of the static pose pair; `ZHBO_SWEEP_ADS=1` sweeps the aimed pose instead of the
+//! hip). `ZHBO_SWEEP_NEAR=<world units>` overrides the camera near plane (default 0.1; 2.0
+//! reproduces the in-game rear clipping the native pass's old near caused). `--release` converts
+//! the combinations about ten times faster; a full sweep is a few minutes.
 //!
 //! **What it draws.** The pipeline the game draws with, not a lookalike: the core's `nativevm` path
 //! loads a viewmodel exactly as `host/zhbo/ZhboViewmodel.cpp` drives it (`zhbo_native_viewmodel`
@@ -111,7 +114,7 @@ fn run() -> Result<(), String> {
     let mut counts = Counts::default();
     for (i, job) in jobs.iter().enumerate() {
         let stamp = format!("[{}/{}]", i + 1, jobs.len());
-        match render_job(job, &archive, &mut source, &args.out) {
+        match render_job(job, &archive, &mut source, &args.out, args.sweep) {
             Ok(note) => {
                 counts.rendered += 1;
                 println!("{stamp} {:<14} {:<12} {note}", job.weapon.id, job.attachment.as_deref().unwrap_or("-"));
@@ -148,18 +151,22 @@ struct Args {
     /// Only these weapon ids (`an94_mp`).
     weapons: Vec<String>,
     attachments: bool,
+    /// Render the first-raise clip across frames instead of the static pose pair.
+    sweep: bool,
 }
 
 impl Args {
     fn parse(mut argv: impl Iterator<Item = String>) -> Result<Args, String> {
-        const USAGE: &str = "usage: render_viewmodels <outdir> [--archive <big>] [--weapon <id>]... [--no-attachments]";
+        const USAGE: &str = "usage: render_viewmodels <outdir> [--archive <big>] [--weapon <id>]... [--no-attachments] [--sweep]";
         let mut out = None;
         let (mut archive, mut weapons, mut attachments) = (None, Vec::new(), true);
+        let mut sweep = false;
         while let Some(arg) = argv.next() {
             match arg.as_str() {
                 "--archive" => archive = Some(PathBuf::from(argv.next().ok_or("--archive needs a path")?)),
                 "--weapon" => weapons.push(argv.next().ok_or("--weapon needs a weapon id")?),
                 "--no-attachments" => attachments = false,
+                "--sweep" => sweep = true,
                 "-h" | "--help" => return Err(USAGE.into()),
                 other if other.starts_with('-') => return Err(format!("unknown flag {other}\n{USAGE}")),
                 other => {
@@ -170,7 +177,7 @@ impl Args {
                 }
             }
         }
-        Ok(Args { out: out.ok_or(USAGE)?, archive, weapons, attachments })
+        Ok(Args { out: out.ok_or(USAGE)?, archive, weapons, attachments, sweep })
     }
 }
 
@@ -327,7 +334,8 @@ fn open_renderer() -> Result<(), String> {
         let back: f32 = v.parse::<f32>().unwrap_or(0.0) / 6.0;
         view[14] += back;
     }
-    let proj = [t, 0.0, 0.0, 0.0, 0.0, t * aspect, 0.0, 0.0, 0.0, 0.0, FAR / (FAR - NEAR), 1.0, 0.0, 0.0, -NEAR * FAR / (FAR - NEAR), 0.0];
+    let near: f32 = std::env::var("ZHBO_SWEEP_NEAR").ok().and_then(|v| v.parse().ok()).unwrap_or(NEAR);
+    let proj = [t, 0.0, 0.0, 0.0, 0.0, t * aspect, 0.0, 0.0, 0.0, 0.0, FAR / (FAR - near), 1.0, 0.0, 0.0, -near * FAR / (FAR - near), 0.0];
     let adapter = with_renderer(String::new(), |r| {
         r.set_view_rect(VIEW, 0, 0, W as u16, H as u16);
         r.set_view_clear(VIEW, zhbo_gfx::state::CLEAR_COLOR, BACKGROUND, 1.0, 0);
@@ -375,18 +383,20 @@ fn pose(def: &WeaponDef, ads: f32) -> Pose {
 /// Draw one pose and return its RGB pixels plus the viewmodel's log lines.
 ///
 /// The native state is reset first, so each render composes its own viewmodel and the previous
-/// one's GPU resources go: the harness walks the whole catalog in one process.
-fn render_pose(art: &Art, vm: i32, p: Pose) -> Result<(Rgb, Vec<String>), String> {
+/// one's GPU resources go: the harness walks the whole catalog in one process. `clip` and `time`
+/// pick the BO2 viewmodel slot and how far into it; the catalog pass uses `IDLE` at its first
+/// frame, the time sweep uses `FIRST_RAISE` across the raise.
+fn render_pose(art: &Art, vm: i32, p: Pose, clip: i32, time: f32) -> Result<(Rgb, Vec<String>), String> {
     ffi::zhbo_native_reset();
     let inp = ZhboNativeIn {
         eye: [0.0; 3],
         dir: [1.0, 0.0, 0.0],
         offset: p.offset,
         angles: p.angles,
-        clip: zhbo_core::viewmodel::slot::IDLE,
+        clip,
         vm,
         faction: FACTION as i32,
-        time: IDLE_TIME,
+        time,
         ads: p.ads,
         rate: 1.0,
         ambient: [0.22, 0.2, 0.17],
@@ -522,8 +532,9 @@ impl Rgb {
 // ---------------------------------------------------------------------------------------------
 // One job
 
-/// Render `job`: hip and ADS, stitched, plus the note for the manifest.
-fn render_job(job: &Job, archive: &BigArchive, source: &mut Option<zhbo_assets::viewmodel_sweep::Source>, out: &Path) -> Result<String, String> {
+/// Render `job`: hip and ADS, stitched, plus the note for the manifest. With `sweep`, render the
+/// first-raise clip across frames instead: one PNG per frame in a subdirectory.
+fn render_job(job: &Job, archive: &BigArchive, source: &mut Option<zhbo_assets::viewmodel_sweep::Source>, out: &Path, sweep: bool) -> Result<String, String> {
     // Base weapons draw the archive's own blobs. A combination does too only when the table holds
     // that exact combination (the loadout's own kit, `weapons::converted`): everything else is
     // converted here, into memory for this render only.
@@ -543,10 +554,13 @@ fn render_job(job: &Job, archive: &BigArchive, source: &mut Option<zhbo_assets::
         Some(map) => (Art::Converted(map), 0, "converted"),
         None => (Art::Archive(archive), held.unwrap_or(job.weapon.viewmodel), "archive"),
     };
+    if sweep {
+        return render_sweep_job(job, &art, vm, from, out);
+    }
     let count = part_count(&art, vm);
     let base = window_base_parts(archive, job);
-    let (hip, mut logs) = render_pose(&art, vm, pose(job.weapon, 0.0))?;
-    let (ads, more) = render_pose(&art, vm, pose(job.weapon, 1.0))?;
+    let (hip, mut logs) = render_pose(&art, vm, pose(job.weapon, 0.0), zhbo_core::viewmodel::slot::IDLE, IDLE_TIME)?;
+    let (ads, more) = render_pose(&art, vm, pose(job.weapon, 1.0), zhbo_core::viewmodel::slot::IDLE, IDLE_TIME)?;
     logs.extend(more);
     let path = out.join(job.relative());
     if let Some(parent) = path.parent() {
@@ -561,6 +575,37 @@ fn render_job(job: &Job, archive: &BigArchive, source: &mut Option<zhbo_assets::
         }
     }
     logs.retain(|l| !l.is_empty());
+    if !logs.is_empty() {
+        note.push_str(&format!("; {}", logs.join("; ")));
+    }
+    Ok(note)
+}
+
+/// The time sweep: the first-raise clip across frames, one PNG per frame. The static pose pair does
+/// not animate the gun, so a tear that only shows while the gun comes up is invisible to the
+/// catalog sweep. The lighting and eye frame are the game's own: the afternoon rig from
+/// `TerrainObjectsLightingAfternoon*` in the shipped INI and the eye at the origin looking down +X.
+fn render_sweep_job(job: &Job, art: &Art, vm: i32, from: &str, out: &Path) -> Result<String, String> {
+    const SWEEP_FRAMES: usize = 40;
+    const SWEEP_STEP: f32 = 0.05;
+    let dir = out.join(weapon_dir(&job.weapon.id)).join(match &job.attachment {
+        None => "sweep_base".to_string(),
+        Some(short) => format!("sweep_att_{short}"),
+    });
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let ads = if std::env::var_os("ZHBO_SWEEP_ADS").is_some() { 1.0 } else { 0.0 };
+    let mut logs = Vec::new();
+    for i in 0..SWEEP_FRAMES {
+        let time = i as f32 * SWEEP_STEP;
+        let p = pose(job.weapon, ads);
+        let (rgb, mut frame_logs) = render_pose(art, vm, p, zhbo_core::viewmodel::slot::FIRST_RAISE, time)?;
+        logs.append(&mut frame_logs);
+        let path = dir.join(format!("frame_{:02}.png", i));
+        rgb.write_png(&path)?;
+    }
+    logs.dedup();
+    logs.retain(|l| !l.is_empty());
+    let mut note = format!("sweep {from}, {SWEEP_FRAMES} frames at {SWEEP_STEP:.2}s");
     if !logs.is_empty() {
         note.push_str(&format!("; {}", logs.join("; ")));
     }

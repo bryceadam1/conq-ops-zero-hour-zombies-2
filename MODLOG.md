@@ -2482,6 +2482,65 @@ assertions); clippy clean; `cargo xtask build` clean; autotest 13/13 default, `-
 checks, 14/14 `--rts`; the harness shots show the real strings, deltas and slices (the
 pre-rebuild fallback was documented in the branch note). The mobility delta is carried but
 undrawn (the panel has four bars) — a presentation choice, recorded.
+## The MP7/reflex tear: the clip sweep, the light rig, and the hide tags (2026-10-21, branch `v1/vm-fixes`)
+
+The MP7 + Reflex in-game artifact (jagged see-through gaps along the receiver top and the reflex
+base) needs the harness to animate the weapon, not hold `IDLE` at frame 0. `render_viewmodels
+--sweep` now draws the `FIRST_RAISE` clip across 40 frames (0.05 s each) at the game's own eye
+frame and light rig. The rig is not a test rig: the harness's `ambient`/`lights` already match
+Zero Hour's shipped `TerrainObjectsLightingAfternoon*` from `INIZH.big` (ambient 56/52/44,
+diffuse 255/255/255 at lightPos -0.81/0.38/-0.45; second light 60/60/80 at 0.79/0.62/0), the
+values `ZhboViewmodel.cpp::sceneLights` hands the native pass. The eye is the same frame the
+bridge uses: origin, +X forward, Z up.
+
+The bisect (frame 39, `mp7/sweep_base` vs `mp7/sweep_att_reflex`):
+- **Culling is not the cause.** Forcing every surface's cull off (`ZHBO_SWEEP_NO_CULL`) leaves the
+  base-vs-reflex difference unchanged (0 pixels at frame 39; 5 at frame 10).
+- **Hide tags are the only difference.** Clearing the hide list (`ZHBO_SWEEP_NO_HIDE`) removes the
+  200-pixel gap at `(376,200)-(404,217)` — the iron-sight post the reflex's `hide=["tag_sights"]`
+  correctly removes. The receiver top under it stays solid.
+- The native hide mechanism itself diverged from the W3D path: `Skeleton::palette` zeroed a
+  hidden bone, so blended vertices collapsed toward the model origin. `build_mesh` now omits a
+  triangle whose heaviest bone is hidden and drops hidden weights from the kept vertices, exactly
+  as `zhbo_assets::character::skin_hiding` does. (This changes no MP7 pixels because its sight
+  vertices are single-bone, but it is the correct behavior for blended hidden geometry.)
+
+The remaining branch was the projection. A near-plane sweep (`ZHBO_SWEEP_NEAR`) reproduced the
+tear at 2.0 world units: the receiver top and reflex base clipped jaggedly (near 3.0 left only a
+fragment), while the harness's default 0.1 is solid. The engine's scene camera uses
+`NearZ = MAP_XY_FACTOR = 10` world units
+(`Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp:106`), and the native pass
+inherited that projection; the viewmodel sits at the eye, so its rear was inside the near plane.
+`zhbo-gfx`'s `viewmodel_projection` now rebuilds the scene projection with a 0.1-unit near,
+keeping the FOV/aspect and the far, so the viewmodel keeps the scene's projection but not its
+terrain near. The harness's near 0.1 is unchanged.
+
+Evidence: `.../opencode/vm-sweep/mp7-sweep` (baseline near 0.1), `mp7-nocull`, `mp7-nohide`,
+`mp7-near1.0`, `mp7-near2.0`, `mp7-near3.0`, and `near_compare.png` (0.1 / 1.0 / 2.0 / 3.0).
+
+## Integrating the MP7 tear fix: the viewmodel was inside the scene's near plane (2026-10-21)
+
+Merged `v1/vm-fixes` (4 commits). **Root cause of the user's in-game MP7+Reflex tear (jagged
+sky-through gaps along the receiver top and the reflex base): the native pass inherited the
+scene camera's near plane — Zero Hour's `NearZ = MAP_XY_FACTOR = 10` world units
+(`W3DView.cpp:106`) — and the viewmodel sits at the eye, so the gun's rear third was inside the
+near plane and clipped into jagged holes.** The pass now rebuilds the projection with a
+0.1-unit near (scene FOV/aspect/far kept), renderer-side only. The harness's near-plane sweep
+reproduces the report exactly (solid at 0.1/1.0, the tear at 2.0, a fragment at 3.0). The
+bisect exonerated the other suspects with committed evidence: forcing cull off changed 0 px at
+the affected frames (R4's mapping is innocent); the 200-px gap by the reflex is its
+`hide=["tag_sights"]` correctly removing the iron post — and the native hide path now omits
+hidden-bone triangles like the W3D path (`build_mesh`); the receiver top is single-bone
+(`j_gun`), so no skinning tear (the only blended verts are the sling straps). The harness grew
+the fidelity tooling that pinned it: clip sweeps across frames, the game's eye frame, the
+`TerrainObjectsLightingAfternoon*` rig, the skin-weight and cull probes. No ABI/VERSION change.
+MODLOG.md was the only conflict; both kept.
+
+Verified: cargo test --workspace green; full real-install suite green; clippy
+--workspace --all-targets clean; `cargo xtask build` clean; autotest 13/13 default, 13/13
+native+compare, `--classpick` with `ZHBO_NATIVE_VIEWMODEL=1` all checks — **the in-game MP7 is
+solid in the captures: receiver top, rail and sight housing intact where the user's screenshot
+tore** — 14/14 `--rts`.
 
 ## Next steps
 
