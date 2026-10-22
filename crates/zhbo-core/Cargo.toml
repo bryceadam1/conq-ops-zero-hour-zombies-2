@@ -21,3 +21,13 @@ autopilot = []
 zhbo-requirements = { path = "../zhbo-requirements" }
 zhbo-native = { path = "../zhbo-native" }
 zhbo-gfx = { path = "../zhbo-gfx", optional = true }
+
+[[example]]
+# The headless viewmodel sweep (docs/TESTING.md): it draws through the wgpu renderer.
+name = "render_viewmodels"
+required-features = ["renderer"]
+
+[dev-dependencies]
+zhbo-assets = { path = "../zhbo-assets" }
+zhbo-formats = { path = "../zhbo-formats" }
+png = "0.17"
