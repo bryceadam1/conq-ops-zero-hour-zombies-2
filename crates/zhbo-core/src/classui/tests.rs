@@ -809,6 +809,28 @@ fn the_attachment_grid_and_lower_panel_follow_the_luas_derived_geometry() {
 }
 
 #[test]
+fn the_attachment_panel_consumes_the_bo2_metadata() {
+    // `mp/attachmenttable.csv` row 22 and `mp/attributestable.csv`'s reflex row: the lower
+    // title is the full name, the description is the localized description key, and the four
+    // bars use the attribute deltas (damage, range, accuracy, mobility, fire rate).
+    let reflex = weapons::catalog().attachment("reflex").expect("reflex in the built-in table");
+    assert_eq!(reflex.full_name, "Reflex Sight");
+    assert_eq!(reflex.description, "Precision red dot sight.");
+    assert_eq!(reflex.attribute_deltas, [0.0, 5.0, 15.0, 0.0, 0.0]);
+    let base = WeaponStats { damage: 0.5, range: 0.5, fire_rate: 0.5, accuracy: 0.5 };
+    let modified = WeaponStats {
+        damage: (base.damage + reflex.attribute_deltas[0] / 100.0).clamp(0.0, 1.0),
+        range: (base.range + reflex.attribute_deltas[1] / 100.0).clamp(0.0, 1.0),
+        accuracy: (base.accuracy + reflex.attribute_deltas[2] / 100.0).clamp(0.0, 1.0),
+        fire_rate: (base.fire_rate + reflex.attribute_deltas[4] / 100.0).clamp(0.0, 1.0),
+    };
+    assert_eq!(modified.range, 0.55, "the reflex's +5 range");
+    assert_eq!(modified.accuracy, 0.65, "the reflex's +15 accuracy");
+    assert_eq!(modified.damage, base.damage);
+    assert_eq!(modified.fire_rate, base.fire_rate);
+}
+
+#[test]
 fn the_small_popup_uses_bo2s_448_wide_body_and_its_entries_start_at_93() {
     // `codmenu.lua:35-36` and `cacclassoptions.lua:15-18`: 448×256, and 271 for the class dialog.
     let (x, y, w, h) = super::dialog::dialog_box(3024.0, 1890.0, 2.625, DialogKind::SetOptions);

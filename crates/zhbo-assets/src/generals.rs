@@ -229,6 +229,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let weapon = xmodel::find(&common, WEAPON).map_err(|e| e.to_string())?;
     let paks = Paks::open(bo2_dir)?;
     let patch = load_zone(bo2_dir, crate::fx::ZONE)?;
+    let patch_ui = load_zone(bo2_dir, "patch_ui_mp")?;
     let mut out: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut summary = Vec::new();
 
@@ -237,7 +238,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let bo2 = zhbo_formats::weapon::all(&common).map_err(|e| e.to_string())?;
     let atts = zhbo_formats::weapon::attachments(&common).map_err(|e| e.to_string())?;
     let names = crate::weapons::names(bo2_dir);
-    let mut table = crate::weapons::table(&bo2, &atts, &names);
+    let meta = crate::weapons::attachment_metadata(&patch, &patch_ui, &names);
+    let mut table = crate::weapons::table_with_metadata(&bo2, &atts, &names, &meta);
     // What each perk does: its specialty set, from the player's own statstable (Ghidra G1).
     table.perks = crate::weapons::perk_rows(&patch);
     let converted = crate::weapons::converted(&bo2);

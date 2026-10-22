@@ -464,24 +464,50 @@ fn draw_option_grid(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor) {
     }
 }
 
+/// The highlighted attachment's definition, from the current weapon's allowed list.
+fn highlighted_attachment(editor: &Editor) -> Option<&'static crate::attachments::AttachmentDef> {
+    let (base_id, _) = match editor.slot {
+        Slot::PrimaryAtts => (editor.draft.primary.as_str(), &editor.draft.primary_atts),
+        _ => (editor.draft.secondary.as_str(), &editor.draft.secondary_atts),
+    };
+    let short = editor.option_attachment(editor.option)?;
+    let base = weapons::weapon(base_id);
+    let asset_id = base.allowed.iter().find(|(s, _)| s == short).map(|(_, a)| a.as_str())?;
+    weapons::catalog().attachment(asset_id)
+}
+
 /// The attachment picker's lower half: the highlighted attachment's Big title, its description
 /// line, the four stat bars with the attachment applied, the weapon image, and the `Equipped`
-/// slot-list box (`cacattachmentsmenu.lua:268-536`; `d-attach/002`). BO2's description comes from
-/// `Engine.GetAttachmentDesc`; the weapon table has no description field yet, so that line is
-/// reserved and left blank (the integrator needs the string data, not a hand-copied sentence).
+/// slot-list box (`cacattachmentsmenu.lua:268-536`; `d-attach/002`). The title and description
+/// come from the attachment table's localized keys (`mp/attachmenttable.csv`), and the bars use
+/// BO2's attribute-table deltas (`mp/attributestable.csv`).
 fn draw_attachment_panel(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor) {
     let f = &l.frame;
     let opts = editor.options();
     let Some(name) = opts.get(editor.option) else { return };
-    let title = attachment_title(l);
-    bo2::text(prims, f, Family::Big, name, title, Align::Left, argb(OFF_WHITE, 1.0));
+    let att = highlighted_attachment(editor);
+    let title = att.map(|a| a.full_name.as_str()).unwrap_or(name);
+    let title_rect = attachment_title(l);
+    bo2::text(prims, f, Family::Big, title, title_rect, Align::Left, argb(OFF_WHITE, 1.0));
 
-    // The description line (`cacattachmentsmenu.lua:307-353`) is reserved but has no data yet.
-    let _description = attachment_description(l);
+    if let Some(a) = att {
+        if !a.description.is_empty() {
+            let desc = attachment_description(l);
+            bo2::text(prims, f, Family::Default, &a.description, desc, Align::Left, argb(OFF_WHITE, 0.4));
+        }
+    }
 
-    let (base, modified) = attachment_weapon(editor);
+    let (base, _modified) = attachment_weapon(editor);
     let stats = weapon_stats(base);
-    stat_bars_delta(prims, f, attachment_stats(l), &stats, modified.map(weapon_stats).as_ref(), 70.0, bo2::TEXT_EXTRA_SMALL);
+    let modified_stats = att.map(|a| {
+        let mut m = stats;
+        m.damage = (m.damage + a.attribute_deltas[0] / 100.0).clamp(0.0, 1.0);
+        m.range = (m.range + a.attribute_deltas[1] / 100.0).clamp(0.0, 1.0);
+        m.accuracy = (m.accuracy + a.attribute_deltas[2] / 100.0).clamp(0.0, 1.0);
+        m.fire_rate = (m.fire_rate + a.attribute_deltas[4] / 100.0).clamp(0.0, 1.0);
+        m
+    });
+    stat_bars_delta(prims, f, attachment_stats(l), &stats, modified_stats.as_ref(), 70.0, bo2::TEXT_EXTRA_SMALL);
 
     let pic = attachment_weapon_image(l);
     bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&base.id)), pic, argb(OFF_WHITE, 1.0), Vec::new());

@@ -149,6 +149,9 @@ pub const BUILTIN: &str = "
 Attachment reflex
   Short = reflex
   DisplayName = Reflex
+  FullName = Reflex Sight
+  Description = Precision red dot sight.
+  AttributeDeltas = 0 5 15 0 0
   Point = 1
   Ads = 50 1 1 1
 End
@@ -301,6 +304,7 @@ End
 Weapon mp7_mp
   DisplayName = MP7
   Class = smg
+  Allowed = reflex=reflex
 End
 
 Weapon mk48_mp
