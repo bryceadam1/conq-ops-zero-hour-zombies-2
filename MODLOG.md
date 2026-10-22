@@ -2314,6 +2314,34 @@ Verified: cargo test --workspace green (the removed broken probe tests were the 
 full real-install suite green; `cargo clippy --workspace --all-targets` clean of new warnings;
 `cargo xtask build` clean; autotest 13/13 default, 13/13 native+compare, 14/14 `--rts`.
 
+## The MP7/reflex tear: the clip sweep, the light rig, and the hide tags (2026-10-21, branch `v1/vm-fixes`)
+
+The MP7 + Reflex in-game artifact (jagged see-through gaps along the receiver top and the reflex
+base) needs the harness to animate the weapon, not hold `IDLE` at frame 0. `render_viewmodels
+--sweep` now draws the `FIRST_RAISE` clip across 40 frames (0.05 s each) at the game's own eye
+frame and light rig. The rig is not a test rig: the harness's `ambient`/`lights` already match
+Zero Hour's shipped `TerrainObjectsLightingAfternoon*` from `INIZH.big` (ambient 56/52/44,
+diffuse 255/255/255 at lightPos -0.81/0.38/-0.45; second light 60/60/80 at 0.79/0.62/0), the
+values `ZhboViewmodel.cpp::sceneLights` hands the native pass. The eye is the same frame the
+bridge uses: origin, +X forward, Z up.
+
+The bisect (frame 39, `mp7/sweep_base` vs `mp7/sweep_att_reflex`):
+- **Culling is not the cause.** Forcing every surface's cull off (`ZHBO_SWEEP_NO_CULL`) leaves the
+  base-vs-reflex difference unchanged (0 pixels at frame 39; 5 at frame 10).
+- **Hide tags are the only difference.** Clearing the hide list (`ZHBO_SWEEP_NO_HIDE`) removes the
+  200-pixel gap at `(376,200)-(404,217)` — the iron-sight post the reflex's `hide=["tag_sights"]`
+  correctly removes. The receiver top under it stays solid.
+- The native hide mechanism itself diverged from the W3D path: `Skeleton::palette` zeroed a
+  hidden bone, so blended vertices collapsed toward the model origin. `build_mesh` now omits a
+  triangle whose heaviest bone is hidden and drops hidden weights from the kept vertices, exactly
+  as `zhbo_assets::character::skin_hiding` does. (This changes no MP7 pixels because its sight
+  vertices are single-bone, but it is the correct behavior for blended hidden geometry.)
+
+Remaining: the receiver-top tear is not the cull path or the hide path; the next branch is
+skinning under animation — compare the native pose with the W3D rig's and the torn vertices'
+weights. The harness sweep frames and the A/B outputs live under
+`.../opencode/vm-sweep/mp7-sweep` (baseline), `mp7-nocull`, `mp7-nohide`, `mp7-fix`.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

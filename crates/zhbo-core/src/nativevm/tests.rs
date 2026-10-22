@@ -38,6 +38,48 @@ fn model(name: &str, bones: Vec<Bone>) -> Model {
     }
 }
 
+#[test]
+fn hidden_bones_omit_their_triangles_and_weights() {
+    // A body bone and a sight bone: a triangle on each, and a triangle blended between them.
+    let bones = vec![bone("j_gun", None, [0.0; 3]), bone("tag_sights", Some(0), [0.0, 0.0, 2.0])];
+    let v = |p: [f32; 3], b: u16, w: [f32; 4]| Vertex { position: p, normal: [0.0, 0.0, 1.0], uv: [0.0; 2], bones: [b, 0, 0, 0], weights: w };
+    let model = Model {
+        name: "gun".into(),
+        bones,
+        materials: vec![Material { name: "m".into(), ..Default::default() }],
+        lods: vec![Lod { distance: 0.0, first_surface: 0, surface_count: 1 }],
+        surfaces: vec![Surface {
+            material: 0,
+            vertices: vec![
+                v([0.0, 0.0, 0.0], 0, [1.0, 0.0, 0.0, 0.0]),
+                v([1.0, 0.0, 0.0], 0, [1.0, 0.0, 0.0, 0.0]),
+                v([0.0, 1.0, 0.0], 0, [1.0, 0.0, 0.0, 0.0]),
+                v([0.0, 0.0, 2.0], 1, [1.0, 0.0, 0.0, 0.0]),
+                v([1.0, 0.0, 2.0], 1, [1.0, 0.0, 0.0, 0.0]),
+                v([0.0, 1.0, 2.0], 1, [1.0, 0.0, 0.0, 0.0]),
+                // Mostly on the body, partly on the sight: the triangle stays, but the sight's
+                // weight goes so the palette's zero matrix cannot drag the vertex to the origin.
+                Vertex { position: [0.0, 0.0, 1.0], normal: [0.0, 0.0, 1.0], uv: [0.0; 2], bones: [0, 1, 0, 0], weights: [0.75, 0.25, 0.0, 0.0] },
+                Vertex { position: [1.0, 0.0, 1.0], normal: [0.0, 0.0, 1.0], uv: [0.0; 2], bones: [0, 1, 0, 0], weights: [0.75, 0.25, 0.0, 0.0] },
+                Vertex { position: [0.0, 1.0, 1.0], normal: [0.0, 0.0, 1.0], uv: [0.0; 2], bones: [0, 1, 0, 0], weights: [0.75, 0.25, 0.0, 0.0] },
+            ],
+            // The blended vertices name bone 0 first and bone 1 second.
+            indices: vec![0, 1, 2, 3, 4, 5, 6, 7, 8],
+        }],
+        ..Default::default()
+    };
+    let parts = [PartRef { model: &model, tag: None, offset: IDENTITY, rigid: false }];
+    let (skel, problems) = Skeleton::compose(&parts, &[], &["tag_sights".into()]);
+    assert!(problems.is_empty());
+    assert!(skel.bones[1].hidden);
+    let mesh = build_mesh(&skel, [&model]).unwrap();
+    // The sight triangle is left out; the body and blended triangles stay.
+    assert_eq!(mesh.indices.len(), 6);
+    assert_eq!(mesh.surfaces[0].index_count, 6);
+    let blended = mesh.vertices[6];
+    assert_eq!(blended.weights, [1.0, 0.0, 0.0, 0.0], "the hidden bone's weight is dropped and the visible one renormalized");
+}
+
 struct Fixture {
     files: Vec<(String, Vec<u8>)>,
 }

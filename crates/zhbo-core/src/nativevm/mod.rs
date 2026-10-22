@@ -178,13 +178,41 @@ pub fn build_mesh<'a>(skel: &Skeleton, models: impl IntoIterator<Item = &'a Mode
             if base + s.vertices.len() > u16::MAX as usize {
                 return Err(format!("{}: more than 65535 vertices composed", model.name));
             }
-            mesh.vertices.extend(s.vertices.iter().map(|v| Vertex { bones: v.bones.map(|b| (b as usize + part.first) as u16), ..*v }));
+            // Hide tags are a triangle omission, as the W3D path does (`skin_hiding`): a hidden
+            // bone's weights are dropped and the visible weights renormalized. The palette zeroes
+            // a hidden bone, so a leftover weight would pull that vertex to the model origin and
+            // tear the receiver under an optic.
+            let visible = |bone: u16| !skel.bones.get(bone as usize).is_some_and(|b| b.hidden);
+            mesh.vertices.extend(s.vertices.iter().map(|v| {
+                let mut out = Vertex { bones: v.bones.map(|b| (b as usize + part.first) as u16), ..*v };
+                let total: f32 = out.bones.iter().zip(v.weights.iter()).filter(|(b, _)| visible(**b)).map(|(_, w)| *w).sum();
+                if total > 0.0 && total < 1.0 {
+                    for (b, w) in out.bones.iter().zip(out.weights.iter_mut()) {
+                        *w = if visible(*b) { *w / total } else { 0.0 };
+                    }
+                }
+                out
+            }));
             let first = mesh.indices.len() as u32;
-            mesh.indices.extend(s.indices.iter().map(|&i| i + base as u16));
+            for tri in s.indices.as_chunks::<3>().0 {
+                let hidden = tri.iter().any(|&i| {
+                    let v = &s.vertices[i as usize];
+                    let heaviest = v
+                        .bones
+                        .iter()
+                        .zip(v.weights.iter())
+                        .fold((0u16, 0.0f32), |a, w| if *w.1 > a.1 { (*w.0, *w.1) } else { a })
+                        .0;
+                    !visible(heaviest + part.first as u16)
+                });
+                if !hidden {
+                    mesh.indices.extend(tri.iter().map(|&i| i + base as u16));
+                }
+            }
             let m = model.materials.get(s.material as usize);
             mesh.surfaces.push(SurfaceSpec {
                 first_index: first,
-                index_count: s.indices.len() as u32,
+                index_count: (mesh.indices.len() as u32) - first,
                 blend: m.map_or(Blend::Opaque, |m| m.blend),
                 emissive: m.is_some_and(|m| m.emissive),
                 color: m.and_then(|m| m.color.clone()),
