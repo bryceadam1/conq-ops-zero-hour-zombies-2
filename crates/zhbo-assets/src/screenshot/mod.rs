@@ -446,6 +446,15 @@ mod tests {
         assert!(drawn.len() >= 2, "the category column draws: {weapon_text:?}");
         assert!(drawn.windows(2).all(|w| w[0] < w[1]), "BO2's category order: {drawn:?}");
 
+        // The attachment picker's lower half carries the highlighted entry, the four bars and
+        // the `Equipped` box (`cacattachmentsmenu.lua:268-536`, `d-attach/002`).
+        let att = attachment_picker_prims();
+        let att_text = texts(&att);
+        assert!(att_text.contains(&"Equipped"), "the slot-list title draws: {att_text:?}");
+        for label in ["FIRE RATE", "DAMAGE", "RANGE", "ACCURACY"] {
+            assert!(att_text.contains(&label), "the attachment panel's {label} bar draws: {att_text:?}");
+        }
+
         // The dialogs carry BO2's titles and entries.
         let set_prims = set_dialog_prims();
         let set_dialog = texts(&set_prims);
@@ -460,7 +469,7 @@ mod tests {
         // image falling back exactly as `hud::render` would.
         let atlas = Atlas::empty();
         let mut missing = BTreeSet::new();
-        for prims in [&browse, &pager, &pick, &editor, &empty, &weapons] {
+        for prims in [&browse, &pager, &pick, &editor, &empty, &weapons, &att] {
             let canvas = raster::render(prims, &atlas, WIDTH, HEIGHT, &mut missing);
             let distinct: BTreeSet<[u8; 4]> = canvas.pixels().as_chunks::<4>().0.iter().copied().collect();
             // The empty class is legitimately sparse (no icons at all): a handful of chrome shades.
