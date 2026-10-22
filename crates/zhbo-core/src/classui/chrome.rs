@@ -1,46 +1,7 @@
-//! The class screens' shared chrome: the footer prompt strip, the deny rim, the allocation clamp,
-//! element names and the weapon stat readout's values.
+//! The class screens' shared chrome: the deny rim, the allocation clamp, element names and the
+//! weapon stat readout's values.
 
 use super::*;
-
-/// The prompt width at `s` (the engine font's advance is close enough for the layout and the
-/// prompt's clickable box).
-pub(super) fn prompt_width(p: &Prompt, s: f32) -> f32 {
-    (p.key.chars().count() + p.label.chars().count() + 1) as f32 * PROMPT_SIZE * 6.0 / 7.0 * s
-}
-
-/// The footer strip: a slanted gold-edged command line, BO2's prompt strip.
-pub(super) fn footer_bar(prims: &mut Vec<Prim>, w: f32, s: f32, y: f32) {
-    let x = w * 0.05;
-    prims.extend(hud::slant_box(x, y, w - 2.0 * x, 26.0 * s, 0x8010_1214, Some(GOLD)));
-}
-
-/// One footer prompt: BO2's gold key then the white label. Returns the prompt's width.
-pub(super) fn draw_prompt(prims: &mut Vec<Prim>, x: f32, y: f32, s: f32, p: &Prompt) -> f32 {
-    let size = (PROMPT_SIZE * s) as i32;
-    let adv = PROMPT_SIZE * 6.0 / 7.0 * s;
-    prims.push(Prim::Text { x, y, text: p.key.to_string(), argb: GOLD, size, align: 0 });
-    let tx = x + (p.key.chars().count() as f32 + 1.0) * adv;
-    prims.push(Prim::Text { x: tx, y, text: p.label.to_string(), argb: WHITE, size, align: 0 });
-    prompt_width(p, s)
-}
-
-/// The prompt strip: `left` prompts from the left margin, `right` prompts ending at the right one.
-pub(super) fn footer_prompts(prims: &mut Vec<Prim>, w: f32, s: f32, y: f32, left: &[Prompt], right: &[Prompt]) {
-    footer_bar(prims, w, s, y);
-    let ty = y + 7.0 * s;
-    let gap = 24.0 * s;
-    let mut x = w * 0.05 + 12.0 * s;
-    for p in left {
-        x += draw_prompt(prims, x, ty, s, p) + gap;
-    }
-    let right_edge = w * 0.95 - 12.0 * s;
-    let mut x = right_edge - right.iter().map(|p| prompt_width(p, s) + gap).sum::<f32>() + gap;
-    for p in right {
-        x += draw_prompt(prims, x, ty, s, p) + gap;
-        let _ = x;
-    }
-}
 
 /// A red rim while a denied choice's flash is up.
 pub(super) fn deny_flash(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, flash: f32) {

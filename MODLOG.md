@@ -2314,6 +2314,86 @@ Verified: cargo test --workspace green (the removed broken probe tests were the 
 full real-install suite green; `cargo clippy --workspace --all-targets` clean of new warnings;
 `cargo xtask build` clean; autotest 13/13 default, 13/13 native+compare, 14/14 `--rts`.
 
+## v1.0 Track C, pixel pass 2: the attachment picker's lower half and the popup chrome (2026-10-21)
+
+The first pixel pass left two presentation deltas; this pass closes both and corrects one
+measurement in the earlier report.
+
+**Attachment picker (`cac-editor-attachments`).** The grid's pitch is **268 px** at 3024×1890
+(94 LUI cell + 8 LUI gap), not the 171 px an earlier note recorded; the 312/483/654 rows were
+the cell's inner edges, not three rows. BO2 derives the cell from
+`cacattachmentsmenu.lua:12-25`: `GridItemWidth = (Menu.Width - 8*5)/6 = 137.33 LUI` (360.5 px)
+and `GridItemHeight = 64 + ContentGridButton.TitleHeight + 10 = 94 LUI` (246.75 px), because
+`TitleHeight` is `textSize.ExtraSmall = 20` (`contentgridbutton.lua:5-10`,
+`codbase.lua:344-345`). The declared `CACAttachments.GridTop = 60` (`:8`) is never read; the
+menu's own title/bar layout would derive 83 (`:116-168`), but `d-attach/002` puts the selected
+cell's top border at y≈305, i.e. 80 LUI (`layout.rs`'s `GRID_TOP`; the Lua's 60 would sit inside
+the allocation bar). The port now uses the captured 80 and keeps the 94-unit cell.
+
+The screen now draws BO2's lower half (`cacattachmentsmenu.lua:238-536`): the panel starts at
+414 LUI (`83 + 3*94 + 2*8 + 3 + HintText.Height 25 + 5`, `:238-247`; title box y≈1181, Big glyph
+y≈1205 in both the capture and the shot), the highlighted entry's Big title, its reserved
+description line (Default, alpha 0.4), the four `AttributeBarList` bars (18 dashed blocks,
+`attributebarlist.lua:266-273`; base white, positive green, negative red, `:16-30`), the 300×150
+weapon image lifted 40 above the panel top (`:422-450`), and the `Equipped` slot list: a 168×74
+box with two 64-unit bottom notches (`:452-536`, `:707-724`). The attachment grid shows exactly
+three rows above that panel (`picker_window`/`grid_rows_visible`), instead of four.
+
+Remaining data gaps for the integrator (not hand-copied): `AttachmentDef` has no description
+(`Engine.GetAttachmentDesc`, `cacattachmentsmenu.lua:1029-1038`) and its `display_name` is the
+tile's short name, so the lower title reads “Reflex” rather than “Reflex Sight”; the table also
+has no BO2 attribute-table deltas, so a Reflex shows no green range/accuracy ticks. Add those
+fields to the weapon-table schema/converter and the panel will read them; no new numbers were
+invented here.
+
+**S/O popups (`cac-dialog-set`, `cac-dialog-class`).** The dialogs were a 460-wide square with a
+bright custom footer and sat too low. They now use `CoD.Menu.NewSmallPopup`'s 448×256 body, 271
+for the class dialog (`codmenu.lua:35-36`, `cacclassoptions.lua:15-18`), centred; the Big title at
+0, the set/class name in Default at 48/alpha 0.5 and the `CoD9Button` list at 93
+(`cacclasssetoptions.lua:48-137`, `cacclassoptions.lua:79-137`). `addSmallPopupBackground_Multiplayer`
+(`codmenu.lua:1377-1622`) supplies the shape: a 498-wide dotted image bled around the 448 content,
+a light bevel and a shallow bottom pointer. The popup-specific `menu_mp_popup_top/stretch/bottom`
+materials are not in the converted archive, so the existing `menu_mp_cac_backing` supplies the
+texture and lines the chamfer/pointer; adding the popup materials to `lui::materials::MATERIALS`
+and rebuilding the archive is the next fidelity step. The prompt is the normal `ESC Back` footer
+(`codmenu.lua:185-226`) instead of the extra bar, and the panel fill is opaque #262626 (the
+capture's interior ~36/255 over the dimmed screen). Measured at 3024×1890: panel width 1262 px vs
+the capture's 1264; title glyph top 632 vs 633; RENAME 868 vs 870.
+
+Verified: `env -u ZHBO_BO2_DIR -u ZHBO_ZH_DIR cargo test -p zhbo-core -p zhbo-assets` green (340
+core + 45 assets at the attachment commit; 341 core after the dialog test landed); clippy has no
+warnings in the touched files; nine harness shots re-render with every sprite resolved
+(`cargo run -p zhbo-assets -- screenshot --size 3024x1890`). Commits: `1926b54` (attachment
+picker), `cc94cff` (popup chrome). Not this pass's scope (still open): profile-level readout,
+`Tac-45` display name, the LAUNCHERS category, set COPY, and the attachment order/extra entries.
+
+## Integrating the CaC pixel pass 2: the attachment picker's lower half and the popup chrome (2026-10-21)
+
+Merged `v1/cac-pixel` round 2 (3 commits). The attachment picker gains BO2's whole lower panel
+(`cacattachmentsmenu.lua:238-536`: the Big attachment title, the reserved description line, the
+four stat bars as BO2's 18 dashed blocks with white base and green/red deltas per
+`attributebarlist.lua:16-30,266-273`, the large weapon image, and the notched `Equipped` box) —
+the Lua's `GridTop = 60` is never read and the capture's pitch is 268 px, both settled with
+measurements (`d-attach/002`). The S/O dialogs now use BO2's `NewSmallPopup` chrome
+(`codmenu.lua:35-36,1377-1622`: the bevelled panel with the shallow bottom pointer, opaque
+`#262626`, the list at 93 LUI, the normal `ESC Back` footer) — panel width 1262 px vs the
+capture's 1264. MODLOG.md auto-merged; the only integration work was the ladder.
+
+Recorded data gaps for the follow-up (all single-data-source, none hand-copied): attachment
+description/full-name fields (the table has only the short tile name) and the BO2 attribute
+deltas for the stat bars (needs the attribute table through the converter); the popup's own
+materials (`menu_mp_popup_top/stretch/bottom`) are not yet in the archive.
+
+Gotcha, second sighting of the class: the default leg failed with "the General never entered
+first person" because an ORPHANED launcher-spawned `generalszh` squatted the single-instance
+lock and took seconds to die even after SIGTERM. The back-to-back guard drains normal exits,
+not orphans: before re-running a failed leg, check `pgrep -f generalszh` is clear (and give a
+TERM'd process a few seconds).
+
+Verified: cargo test --workspace green; full real-install suite green; clippy clean; `cargo
+xtask build` clean; autotest 13/13 default, `--classpick` all checks, 14/14 `--rts`; the nine
+harness shots regenerate with every sprite resolving.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

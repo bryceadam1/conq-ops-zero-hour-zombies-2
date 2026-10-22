@@ -24,10 +24,23 @@ pub const SLOT_W: f32 = 64.0 * 1.4;
 pub const SLOT_PITCH: f32 = SLOT_W + 15.0;
 pub const INNER_BORDER: f32 = 5.0;
 
-/// `CoD.CACAttachments.GridTop` for the grid pickers (the captures' ~80, `d-attach/002`).
+/// The picker grid's top. `CACAttachments.GridTop = 60` (`cacattachmentsmenu.lua:8`) is never read;
+/// the menu's own layout would derive 83 from Big (48) + bar (10) + 25 (`:116-168`), but the
+/// captures place the selected cell's top border at y≈305 on a 1890-tall screen — 80 LUI below the
+/// menu top (`d-attach/002`, 3024×1890). The captures win; the 60 would sit inside the allocation
+/// bar.
 pub const GRID_TOP: f32 = 80.0;
 /// `CoD.CACAttachments.GridItemSpacing` (and `CACPerksP`'s).
 pub const GRID_ITEM_GAP: f32 = 8.0;
+/// `CoD.CACAttachments.GridItemHeight`: `64 + ContentGridButton.TitleHeight + 10`
+/// (`cacattachmentsmenu.lua:21-25`), where `TitleHeight` is `textSize.ExtraSmall` = 20
+/// (`contentgridbutton.lua:5-10`, `codbase.lua:344-345`).
+pub const ATTACH_GRID_H: f32 = 64.0 + bo2::TEXT_EXTRA_SMALL + 10.0;
+/// The attachment picker's lower panel starts under three full grid rows and the hint line.
+/// `cacattachmentsmenu.lua:238-247` computes it from the menu's own grid top (83): 83 + 3*94 +
+/// 2*8 + 3 + 25 + 5 = 414; the captures put the Big title's box there (`d-attach/002`). It is not
+/// tied to the captured [`GRID_TOP`] 80, which is 3 units higher.
+pub const ATTACH_PANEL_TOP: f32 = 414.0;
 
 /// The editor's geometry: the class name as the heading (Big), the allocation bar under it
 /// (element top 3, 10 tall across the menu's width), then the left column (PRIMARY, ATTACHMENTS,
@@ -261,10 +274,70 @@ pub fn grid_columns(slot: Slot) -> usize {
 pub fn grid_cell(l: &EditorLayout, slot: Slot, i: usize) -> Rect {
     let cols = grid_columns(slot);
     let w = (bo2::MENU_W - GRID_ITEM_GAP * (cols as f32 - 1.0)) / cols as f32;
-    let h = if cols == 6 { 64.0 + bo2::TEXT_EXTRA_SMALL + 10.0 } else { 96.0 + bo2::TEXT_EXTRA_SMALL + 10.0 };
+    let h = if cols == 6 { ATTACH_GRID_H } else { 96.0 + bo2::TEXT_EXTRA_SMALL + 10.0 };
     let x = (i % cols) as f32 * (w + GRID_ITEM_GAP);
     let y = GRID_TOP + (i / cols) as f32 * (h + GRID_ITEM_GAP);
     l.frame.in_menu(Place::new((true, false, x, x + w), (true, false, y, y + h)))
+}
+
+/// The attachment picker's lower half (`cacattachmentsmenu.lua:247-267`): full menu width from
+/// under the third grid row to the menu's bottom.
+pub fn attachment_panel(l: &EditorLayout) -> Rect {
+    l.frame.in_menu(Place::new((true, true, 0.0, 0.0), (true, true, ATTACH_PANEL_TOP, 0.0)))
+}
+
+/// The highlighted attachment's title (`cacattachmentsmenu.lua:268-305`: Big at panel top).
+pub fn attachment_title(l: &EditorLayout) -> Rect {
+    let p = attachment_panel(l);
+    Rect { x: p.x, y: p.y, w: bo2::MENU_W * 0.5, h: bo2::TEXT_BIG }
+}
+
+/// The description line (`cacattachmentsmenu.lua:307-353`: Default, half the menu wide, alpha 0.4).
+pub fn attachment_description(l: &EditorLayout) -> Rect {
+    let p = attachment_panel(l);
+    Rect { x: p.x, y: p.y + bo2::TEXT_BIG, w: bo2::MENU_W * 0.5, h: bo2::TEXT_DEFAULT }
+}
+
+/// The four stat bars (`cacattachmentsmenu.lua:354-372`: half the menu wide, from `Big + Default*2 +
+/// 10` to 80 above the panel's bottom; their labels are the `maxTextWidth` 60 left of the bars).
+pub fn attachment_stats(l: &EditorLayout) -> Rect {
+    let p = attachment_panel(l);
+    Rect {
+        x: p.x,
+        y: p.y + bo2::TEXT_BIG + 2.0 * bo2::TEXT_DEFAULT + 10.0,
+        w: bo2::MENU_W * 0.5,
+        h: p.h - (bo2::TEXT_BIG + 2.0 * bo2::TEXT_DEFAULT + 10.0) - 80.0,
+    }
+}
+
+/// The large weapon image on the panel's right (`cacattachmentsmenu.lua:422-450`: 300 x 150,
+/// right-anchored, lifted 40 above the panel top).
+pub fn attachment_weapon_image(l: &EditorLayout) -> Rect {
+    let p = attachment_panel(l);
+    Rect { x: l.frame.menu.right() - 290.0, y: p.y - 40.0, w: 300.0, h: 150.0 }
+}
+
+/// The `Equipped` slot-list box (`cacattachmentsmenu.lua:452-501`: `SlotListSize + 10` tall, sitting
+/// `Prompt.Height + 30` above the menu bottom; width from [`attachment_slot_box_w`]).
+pub fn attachment_slot_box(l: &EditorLayout, dips: usize) -> Rect {
+    let p = attachment_panel(l);
+    let w = attachment_slot_box_w(dips);
+    let h = 64.0 + 10.0;
+    Rect { x: p.x + bo2::MENU_W * 0.5 + 10.0 + 5.0, y: p.bottom() - bo2::PROMPT_H - 30.0 - h, w, h }
+}
+
+/// `GetSlotlistBackgroundWidth`: half a spacing at each end, the dips at `SlotListSize` (64) with
+/// `SlotListSpacing` (20) between (`cacattachmentsmenu.lua:707-724`).
+pub fn attachment_slot_box_w(dips: usize) -> f32 {
+    let n = dips.max(1) as f32;
+    10.0 + 64.0 * n + 20.0 * (n - 1.0) + 10.0
+}
+
+/// The `Equipped` label above the slot list (`cacattachmentsmenu.lua:502-536`: Default, alpha 0.5,
+/// two units above the box).
+pub fn attachment_slot_title(l: &EditorLayout, dips: usize) -> Rect {
+    let b = attachment_slot_box(l, dips);
+    Rect { x: b.x, y: b.y - 2.0 - bo2::TEXT_DEFAULT, w: b.w, h: bo2::TEXT_DEFAULT }
 }
 
 /// The first option the picker shows (scrolled so the highlighted one is in view) and how many
@@ -283,10 +356,15 @@ pub fn picker_window(slot: Slot, highlighted: usize) -> (usize, usize) {
     }
 }
 
-/// How many grid rows show at once (`d-attach/002`: two plus a third peeking).
+/// How many grid rows show at once. The attachment picker reserves the lower half for the
+/// highlighted entry (`cacattachmentsmenu.lua:238-247`), so exactly three of its 94-unit rows fit
+/// above `ATTACH_PANEL_TOP` (`d-attach/002`); the other pickers have no lower panel.
 fn grid_rows_visible(slot: Slot) -> usize {
-    let h = if grid_columns(slot) == 6 { 64.0 + bo2::TEXT_EXTRA_SMALL + 10.0 } else { 96.0 + bo2::TEXT_EXTRA_SMALL + 10.0 };
-    let avail = bo2::MENU_H - GRID_TOP - bo2::PROMPT_H - 130.0; // the name/description block below
+    if slot.option_columns() == Some(6) {
+        return 3;
+    }
+    let h = 96.0 + bo2::TEXT_EXTRA_SMALL + 10.0;
+    let avail = bo2::MENU_H - GRID_TOP - bo2::PROMPT_H - 130.0;
     ((avail + GRID_ITEM_GAP) / (h + GRID_ITEM_GAP)).max(1.0).floor() as usize
 }
 

@@ -664,7 +664,7 @@ mod tests {
         assert!(menu.dialog_open().is_none(), "the popup has settled after 250 ms");
         let mut landed = Vec::new();
         classui::draw_dialog(&mut landed, 1280.0, 720.0, menu.dialog().expect("still open"), menu.dialog_open());
-        assert_eq!(title(&landed), Some(crate::hud::WHITE >> 24), "and lands at its full alpha");
+        assert_eq!(title(&landed), Some(classui::bo2::argb(classui::bo2::OFF_WHITE, 1.0) >> 24), "and lands at its full alpha");
         crate::profile::reset();
     }
 

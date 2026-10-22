@@ -99,8 +99,6 @@ pub(crate) const GOLD: u32 = 0xFFF2_C230;
 /// Panel fills and outlines.
 pub(crate) const PANEL: u32 = 0x9010_1214;
 pub(crate) const OUTLINE: u32 = 0xB0C8_CCD0;
-/// Horizontal lean of BO2's slanted boxes, as a share of their height.
-pub(super) const SLANT: f32 = 0.35;
 
 /// BO2's sight attachments (a reticle on the line of sight).
 pub(super) const OPTICS: &[&str] = &["reflex", "acog", "holo", "rangefinder", "dualoptic", "mms", "ir", "vzoom"];

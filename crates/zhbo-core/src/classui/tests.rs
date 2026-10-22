@@ -781,6 +781,50 @@ fn the_bonus_card_list_follows_bo2s_grid_order() {
 }
 
 #[test]
+fn the_attachment_grid_and_lower_panel_follow_the_luas_derived_geometry() {
+    // The declared `GridTop = 60` (line 8) is unused; the captures put the selected cell's top
+    // border at y≈305 at 3024×1890, i.e. GRID_TOP 80 (`d-attach/002`).
+    assert_eq!(GRID_TOP, 80.0);
+    assert_eq!(ATTACH_GRID_H, 94.0);
+    let l = editor_layout(3024.0, 1890.0);
+    let first = l.frame.px(grid_cell(&l, Slot::PrimaryAtts, 0));
+    assert!((first.y - 304.5).abs() <= 1.0, "the first cell starts at the captured y≈305: {first:?}");
+    assert!((first.w - 360.5).abs() <= 1.0, "GridItemWidth = (864 - 8*5)/6 LUI: {first:?}");
+    assert!((first.h - 246.75).abs() <= 1.0, "GridItemHeight = 64 + 20 + 10 LUI: {first:?}");
+
+    // `cacattachmentsmenu.lua:238-247` fixes the lower panel at 83 + 3*94 + 2*8 + 3 + 25 + 5.
+    assert_eq!(ATTACH_PANEL_TOP, 414.0);
+    let panel = l.frame.px(attachment_panel(&l));
+    assert!((panel.y - 1181.25).abs() <= 1.0, "the lower panel starts at the captured y≈1181: {panel:?}");
+    let title = l.frame.px(attachment_title(&l));
+    assert!((title.y - panel.y).abs() <= 0.01, "the Big title is at the panel's top");
+    let stats = l.frame.px(attachment_stats(&l));
+    assert!((stats.y - 1464.75).abs() <= 1.0, "the stats start at Big + Default*2 + 10: {stats:?}");
+    // The `Equipped` box is `SlotListSize + 10` tall, `Prompt.Height + 30` above the menu bottom.
+    let box_ = l.frame.px(attachment_slot_box(&l, 2));
+    assert!((box_.w - 441.0).abs() <= 1.0, "two 64-unit dips and 20-unit spacing: {box_:?}");
+    assert!((box_.y - 1456.875).abs() <= 1.0, "the box sits 55 LUI above the menu bottom: {box_:?}");
+    // The attachment picker shows three rows; the fourth is behind the lower panel.
+    assert_eq!(picker_window(Slot::PrimaryAtts, 0).1, 18);
+}
+
+#[test]
+fn the_small_popup_uses_bo2s_448_wide_body_and_its_entries_start_at_93() {
+    // `codmenu.lua:35-36` and `cacclassoptions.lua:15-18`: 448×256, and 271 for the class dialog.
+    let (x, y, w, h) = super::dialog::dialog_box(3024.0, 1890.0, 2.625, DialogKind::SetOptions);
+    assert!((w - 448.0 * 2.625).abs() <= 0.01);
+    assert!((h - 256.0 * 2.625).abs() <= 0.01);
+    assert!((x + w * 0.5 - 1512.0).abs() <= 0.01, "the popup is centred");
+    assert!((y + h * 0.5 - 945.0).abs() <= 0.01, "the popup is centred");
+    let (_, _, _, class_h) = super::dialog::dialog_box(3024.0, 1890.0, 2.625, DialogKind::ClassOptions);
+    assert!((class_h - 271.0 * 2.625).abs() <= 0.01);
+    // The list starts at Big + Default + 20 (`cacclasssetoptions.lua:120-134`).
+    let d = Dialog::set_options("CLASS SET 1");
+    let (_, by, _, _) = super::dialog::dialog_box(3024.0, 1890.0, 2.625, d.kind);
+    assert_eq!(super::dialog::dialog_item_at(&d, 3024.0, 1890.0, 2.625, 950.0, by + 94.0 * 2.625), Some(0));
+}
+
+#[test]
 fn the_stat_bars_are_in_bo2s_order_and_segmented() {
     assert_eq!(STAT_LABELS, ["FIRE RATE", "DAMAGE", "RANGE", "ACCURACY"]);
     let an94 = weapons::weapon("an94_mp");

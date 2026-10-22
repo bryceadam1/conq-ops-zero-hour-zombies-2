@@ -381,17 +381,37 @@ fn draw_weapon_picker(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor) 
 
 /// BO2's segmented stat readout: four rows of blocks, FIRE RATE first (`c-primary/001`).
 fn stat_bars(prims: &mut Vec<Prim>, f: &Frame, r: Rect, stats: &WeaponStats) {
-    let label_w = 100.0;
-    let row_h = r.h / 4.0;
-    let gap = 3.0;
-    let seg_w = ((r.w - label_w - gap * (STAT_SEGMENTS as f32 - 1.0)) / STAT_SEGMENTS as f32).max(1.0);
+    stat_bars_delta(prims, f, r, stats, None, 100.0, r.h / 4.0);
+}
+
+/// The same bars with BO2's attachment-modified values: white up to the base value, green segments
+/// where the highlighted attachment helps and red where it hurts (`attributebarlist.lua:16-30`).
+fn stat_bars_delta(prims: &mut Vec<Prim>, f: &Frame, r: Rect, base: &WeaponStats, modified: Option<&WeaponStats>, label_w: f32, row_h: f32) {
+    // BO2's `setupDashes` draws a row of small blocks; an unlit block is an outline, a lit one a
+    // filled block (`attributebarlist.lua:266-273`; `d-attach/002`, `c-primary/001`). The capture
+    // puts 18 dashes from x≈563 to ≈1280 on a 3024-wide screen, i.e. a 272-unit bar.
+    let bar_w = (r.w - label_w).clamp(1.0, 272.0);
+    let pitch = (bar_w / STAT_SEGMENTS as f32).max(1.0);
+    let dash_w = 7.0;
     for (i, label) in STAT_LABELS.iter().enumerate() {
         let top = r.y + i as f32 * row_h;
-        bo2::text(prims, f, Family::ExtraSmall, label, Rect { x: r.x, y: top, w: label_w, h: bo2::TEXT_EXTRA_SMALL }, Align::Left, argb(OFF_WHITE, 0.5));
-        let lit = stat_lit(stat_value(stats, i));
+        bo2::text(prims, f, Family::ExtraSmall, label, Rect { x: r.x, y: top, w: label_w, h: bo2::TEXT_EXTRA_SMALL }, Align::Left, argb(OFF_WHITE, 0.4));
+        let base_lit = stat_lit(stat_value(base, i));
+        let mod_lit = modified.map_or(base_lit, |m| stat_lit(stat_value(m, i)));
         for k in 0..STAT_SEGMENTS {
-            let b = Rect { x: r.x + label_w + k as f32 * (seg_w + gap), y: top + 2.0, w: seg_w, h: 8.0 };
-            bo2::fill(prims, f, b, if k < lit { argb(OFF_WHITE, 0.9) } else { argb(BLACK, 0.4) });
+            let b = Rect { x: r.x + label_w + k as f32 * pitch, y: top + 5.0, w: dash_w, h: 5.0 };
+            let colour = if k < base_lit.min(mod_lit) {
+                argb(OFF_WHITE, 0.6)
+            } else if mod_lit > base_lit && k < mod_lit {
+                argb((0.25, 0.65, 0.25), 1.0)
+            } else if mod_lit < base_lit && k < base_lit {
+                argb((0.70, 0.25, 0.25), 1.0)
+            } else {
+                argb(BLACK, 0.35)
+            };
+            bo2::fill(prims, f, b, colour);
+            let p = f.px(b);
+            hud::outline_rect(prims, p.x, p.y, p.w, p.h, 1.0, argb(OFF_WHITE, if k < base_lit.max(mod_lit) { 0.15 } else { 0.22 }));
         }
     }
 }
@@ -428,15 +448,80 @@ fn draw_option_grid(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor) {
     if opts.is_empty() {
         bo2::text(prims, f, Family::Condensed, "NOTHING TO CHOOSE", Rect { x: f.menu.x, y: GRID_TOP, w: 400.0, h: bo2::TEXT_CONDENSED }, Align::Left, argb(OFF_WHITE, 0.5));
     }
-    // The highlighted entry's name under the grid (`d-attach/002`, `e-perks/001`).
-    if let Some(name) = opts.get(editor.option) {
+    if matches!(editor.slot, Slot::PrimaryAtts | Slot::SecondaryAtts) {
+        // BO2's attachment menu carries the highlighted entry's whole panel under the grid
+        // (`cacattachmentsmenu.lua:238-536`, `d-attach/002`).
+        draw_attachment_panel(prims, l, editor);
+    } else if let Some(name) = opts.get(editor.option) {
+        // The other content pickers carry only the highlighted entry's name under the grid
+        // (`e-perks/001`, `f-wildcards/001`).
         let cols = grid_columns(editor.slot);
-        let h = if cols == 6 { 64.0 + bo2::TEXT_EXTRA_SMALL + 10.0 } else { 96.0 + bo2::TEXT_EXTRA_SMALL + 10.0 };
+        let h = if cols == 6 { ATTACH_GRID_H } else { 96.0 + bo2::TEXT_EXTRA_SMALL + 10.0 };
         let rows = opts.len().div_ceil(cols);
         let y = GRID_TOP + rows as f32 * (h + GRID_ITEM_GAP) + 10.0;
         let r = f.in_menu(crate::lui::Place::new((true, false, 0.0, bo2::MENU_W * 0.5), (true, false, y, y + bo2::TEXT_CONDENSED)));
         bo2::text(prims, f, Family::Condensed, name, r, Align::Left, argb(OFF_WHITE, 1.0));
     }
+}
+
+/// The attachment picker's lower half: the highlighted attachment's Big title, its description
+/// line, the four stat bars with the attachment applied, the weapon image, and the `Equipped`
+/// slot-list box (`cacattachmentsmenu.lua:268-536`; `d-attach/002`). BO2's description comes from
+/// `Engine.GetAttachmentDesc`; the weapon table has no description field yet, so that line is
+/// reserved and left blank (the integrator needs the string data, not a hand-copied sentence).
+fn draw_attachment_panel(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor) {
+    let f = &l.frame;
+    let opts = editor.options();
+    let Some(name) = opts.get(editor.option) else { return };
+    let title = attachment_title(l);
+    bo2::text(prims, f, Family::Big, name, title, Align::Left, argb(OFF_WHITE, 1.0));
+
+    // The description line (`cacattachmentsmenu.lua:307-353`) is reserved but has no data yet.
+    let _description = attachment_description(l);
+
+    let (base, modified) = attachment_weapon(editor);
+    let stats = weapon_stats(base);
+    stat_bars_delta(prims, f, attachment_stats(l), &stats, modified.map(weapon_stats).as_ref(), 70.0, bo2::TEXT_EXTRA_SMALL);
+
+    let pic = attachment_weapon_image(l);
+    bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&base.id)), pic, argb(OFF_WHITE, 1.0), Vec::new());
+
+    // The `Equipped` slot list: the weapon's attachment dips, right of the stats
+    // (`cacattachmentsmenu.lua:452-536`).
+    let dips = match editor.slot {
+        Slot::PrimaryAtts => editor.draft.primary_att_max(),
+        Slot::SecondaryAtts => editor.draft.secondary_att_max(),
+        _ => 0,
+    };
+    let box_ = attachment_slot_box(l, dips);
+    let bp = f.px(box_);
+    hud::outline_rect(prims, bp.x, bp.y, bp.w, bp.h, 1.0, argb(OFF_WHITE, 0.20));
+    bo2::text(prims, f, Family::Default, "Equipped", attachment_slot_title(l, dips), Align::Left, argb(OFF_WHITE, 0.5));
+    // The slot list's dips are notches along the box's bottom edge, not full cells
+    // (`slotlist.lua`'s `BorderDip`; `d-attach/002`).
+    for i in 0..dips {
+        let notch = Rect { x: box_.x + 10.0 + i as f32 * 84.0, y: box_.bottom() - 10.0, w: 64.0, h: 10.0 };
+        let p = f.px(notch);
+        prims.push(Prim::Rect { x: p.x, y: p.y, w: p.w, h: p.h, argb: argb(bo2::BLACK, 0.25) });
+        hud::outline_rect(prims, p.x, p.y, p.w, p.h, 1.0, argb(OFF_WHITE, 0.18));
+    }
+}
+
+/// The weapon as the attachment panel shows it: the draft's gun without and with the highlighted
+/// attachment applied (`ContentButtonHighlighted` calls `updateWeaponAttributes(weapon, content)`).
+fn attachment_weapon(editor: &Editor) -> (&'static crate::weapons::WeaponDef, Option<&'static crate::weapons::WeaponDef>) {
+    let (base_id, current) = match editor.slot {
+        Slot::PrimaryAtts => (editor.draft.primary.as_str(), &editor.draft.primary_atts),
+        _ => (editor.draft.secondary.as_str(), &editor.draft.secondary_atts),
+    };
+    let base = weapons::weapon(base_id);
+    let Some(short) = editor.option_attachment(editor.option) else { return (base, None) };
+    let mut shorts: Vec<&str> = current.iter().map(String::as_str).collect();
+    if !shorts.contains(&short) {
+        shorts.push(short);
+    }
+    let modified = weapons::weapon(&crate::attachments::variant_id(base_id, &shorts));
+    (base, Some(modified))
 }
 
 /// The icon of an option row in the editor's list.
