@@ -490,6 +490,7 @@ impl Draft {
             melee: "knife_held_mp".into(),
             perks: self.perks_in_order().iter().map(|p| p.def().id.to_string()).collect(),
             reserve: self.reserve,
+            ..CustomClass::default()
         }
     }
 

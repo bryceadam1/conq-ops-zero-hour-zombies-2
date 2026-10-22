@@ -2567,6 +2567,46 @@ Verified: config tests green; `cargo xtask build` clean; autotest 13/13 default 
 native path with no env var)**, 13/13 with `ZHBO_NATIVE_VIEWMODEL=0` (the W3D fallback),
 `--classpick` all checks, 14/14 `--rts`.
 
+## The W3D viewmodel's near plane: the fallback gets the native pass's 0.1 (2026-10-22)
+
+The W3D fallback (`ZHBO_NATIVE_VIEWMODEL=0`) drew the gun through the engine's first-person
+camera, whose near plane was `0.5f` — set by patch 0001's camera override, itself replacing
+Zero Hour's terrain near `NearZ = MAP_XY_FACTOR = 10` (`W3DView.cpp:106`). The gun sits at the
+eye, so its rear geometry was inside that near and clipped into jagged holes — the same defect
+the native pass fixed by rebuilding its projection with a 0.1-unit near. The bridge now owns
+the first-person view's near: `Zhbo_GetCameraOverride` returns `0.1f` (`ZhboBridge.cpp`), and
+patch 0001's `W3DView::update` hook uses it in `Set_Clip_Planes` instead of the hardcoded 0.5.
+The RTS view is untouched: when first person releases the camera, the engine's own
+`NearZ = MAP_XY_FACTOR = 10` is what `updateCameraClipPlanes` applies again. The first-person
+terrain's far is kept (`std::max(zhboFar, 2000.0f)`); its far/near ratio widens as the near
+shrinks, so 0.1 is the smallest value that clears the clip — the "care" the near choice needs.
+0.1 is the value the native pass's viewmodel projection uses (`zhbo-gfx`'s
+`runtime/native.rs`); the MP7 near-plane sweep in the 10-21 entry found 0.1/1.0 solid and
+2.0/3.0 torn. BO2's `r_znear 4` inches (`ghidra/answers/G4.md`) is ~0.67 ZH units, so 0.1 is as
+small as needed, not a cosmetic tightening. No ABI/VERSION change; Rust behavior untouched.
+
+## Integrating the W3D fallback's near plane (2026-10-22)
+
+Merged `v1/w3d-near` (1 commit): the bridge-owned first-person near plane. `Zhbo_GetCameraOverride`
+now returns `nearPlane` (0.1 world units — the value the native pass's projection uses, proven by
+the MP7 sweep; BO2's `r_znear` 4″ ≈ 0.67 units is the parity anchor), and patch 0001's existing
+first-person hook sets the camera's clip planes from it in place of the hardcoded 0.5. The world's
+own `NearZ = MAP_XY_FACTOR = 10` (`W3DView.cpp:106`) is untouched and returns when the RTS camera
+takes over; the terrain's far is kept. CONTRACT.md's camera row documents the split.
+
+**Integration gotcha: patch SERIES, not patch.** The agent verified its 0001 edit against the
+pristine engine but not against the patch series — 0004 anchors on the `Set_Clip_Planes(0.5f, …)`
+line the new 0001 replaced, so the build's patch step failed at 0004. Any patch edit must be
+checked by applying the whole `host/patches/*.patch` series in order (`git apply` loop) before
+handoff; 0004's context now follows the new line.
+
+Verified: full 16-patch series applies cleanly; cargo test --workspace green; real-install suite
+green; `cargo xtask build` clean (engine recompiled the patched W3DView.cpp); autotest 13/13
+default, **13/13 with `ZHBO_NATIVE_VIEWMODEL=0` (the W3D fallback, exercising the 0.1 near)**,
+`--classpick` all checks, 14/14 `--rts`. Eyeball item for the playtest: first-person terrain
+z-fighting from the wider near/far ratio (the noted trade-off; the fix if it appears is the
+separate viewmodel pass, not a smaller terrain near).
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

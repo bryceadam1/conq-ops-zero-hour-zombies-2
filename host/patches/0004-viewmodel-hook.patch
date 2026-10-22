@@ -1,7 +1,7 @@
 --- a/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
 +++ b/Core/GameEngineDevice/Source/W3DDevice/GameClient/W3DView.cpp
 @@ -1699,10 +1699,12 @@
- 		m_3DCamera->Set_Clip_Planes(0.5f, std::max(zhboFar, 2000.0f));
+ 		m_3DCamera->Set_Clip_Planes(zhboNear, std::max(zhboFar, 2000.0f));
  		m_recalcCamera = false;
  		s_zhboCameraWasOverridden = true;
 +		ZhboViewmodel_Update(TRUE, zhboEye, zhboDir); // ZHBO: arms and weapon in front of the eye
