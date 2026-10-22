@@ -21,8 +21,49 @@ pub fn short_name(attachment: &str) -> String {
     attachment.split('_').next().unwrap_or(attachment).to_string()
 }
 
+/// The attachment's metadata from BO2's tables: the full name and description keys' localized text,
+/// and its attribute-table deltas.
+#[derive(Clone, Debug, Default)]
+pub struct AttachmentMeta {
+    pub full_name: String,
+    pub description: String,
+    pub attribute_deltas: [f32; 5],
+}
+
+/// BO2's attachment metadata from the player's `mp/attachmenttable.csv` (`patch_mp`) and
+/// `mp/attributestable.csv` (`patch_ui_mp`). The attachment table gives each short name's display
+/// and description keys; the attribute table gives its stat-bar deltas. Missing rows are omitted.
+pub fn attachment_metadata(
+    patch: &zhbo_formats::t6zone::Zone,
+    patch_ui: &zhbo_formats::t6zone::Zone,
+    names: &HashMap<String, String>,
+) -> HashMap<String, AttachmentMeta> {
+    let mut meta = HashMap::new();
+    let Ok(Some(rows)) = zhbo_formats::stringtable::rows(patch, "mp/attachmenttable.csv") else { return meta };
+    for row in rows {
+        // Column 4 is the display name key, column 5 the short name, column 8 the description key.
+        let (Some(short), Some(display_key), Some(desc_key)) = (row.get(4), row.get(3), row.get(7)) else { continue };
+        let full_name = names.get(display_key).map(|s| s.trim().to_string()).unwrap_or_default();
+        let description = names.get(desc_key).map(|s| s.trim().to_string()).unwrap_or_default();
+        meta.insert(short.clone(), AttachmentMeta { full_name, description, attribute_deltas: [0.0; 5] });
+    }
+    // The attribute table's Lua constants are 0-based: damage = col 3, range = col 4,
+    // accuracy = col 2, mobility = col 6, fire rate = col 5.
+    let Ok(Some(rows)) = zhbo_formats::stringtable::rows(patch_ui, "mp/attributestable.csv") else { return meta };
+    for row in rows {
+        if row.get(0).map(String::as_str) != Some("weapon_attachment") { continue; }
+        let Some(short) = row.get(1) else { continue };
+        let num = |i: usize| row.get(i).and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(0.0);
+        let deltas = [num(3), num(4), num(2), num(6), num(5)];
+        meta.entry(short.clone()).or_default().attribute_deltas = deltas;
+    }
+    meta
+}
+
 /// The core's definition of a BO2 attachment. `names` maps localize keys to text.
-pub fn attachment_def(a: &bo2::Attachment, names: &HashMap<String, String>) -> AttachmentDef {
+pub fn attachment_def(a: &bo2::Attachment, names: &HashMap<String, String>, meta: &HashMap<String, AttachmentMeta>) -> AttachmentDef {
+    let short = short_name(&a.name);
+    let m = meta.get(&short).cloned().unwrap_or_default();
     let fire = a.fire_type.map(|f| match f {
         bo2::fire::FULLAUTO => FireMode::Auto,
         bo2::fire::BURST2 | bo2::fire::BURST3 | bo2::fire::BURST4 | bo2::fire::BURST5 => FireMode::Burst((f - bo2::fire::BURST2 + 2) as u8),
@@ -30,8 +71,11 @@ pub fn attachment_def(a: &bo2::Attachment, names: &HashMap<String, String>) -> A
     });
     AttachmentDef {
         id: a.name.clone(),
-        short: short_name(&a.name),
-        display_name: names.get(&a.display_name).map(|s| s.trim().to_string()).unwrap_or_else(|| short_name(&a.name)),
+        short: short.clone(),
+        display_name: names.get(&a.display_name).map(|s| s.trim().to_string()).unwrap_or_else(|| short.clone()),
+        full_name: m.full_name,
+        description: m.description,
+        attribute_deltas: m.attribute_deltas,
         point: a.point as u8,
         silenced: a.silenced,
         laser: a.laser_sight,
@@ -73,6 +117,11 @@ pub fn perk_rows(patch: &zhbo_formats::t6zone::Zone) -> Vec<(String, Specialties
 /// The whole table: every player weapon, the alt modes their attachments add, and every
 /// attachment.
 pub fn table(bo2: &[Weapon], atts: &[bo2::Attachment], names: &HashMap<String, String>) -> Table {
+    table_with_metadata(bo2, atts, names, &HashMap::new())
+}
+
+/// The whole table with attachment metadata (full name, description and attribute-table deltas).
+pub fn table_with_metadata(bo2: &[Weapon], atts: &[bo2::Attachment], names: &HashMap<String, String>, meta: &HashMap<String, AttachmentMeta>) -> Table {
     let mut weapons: Vec<WeaponDef> = bo2.iter().filter(|w| is_player_weapon(w)).map(|w| to_def(w, names)).collect();
     let mut extra: Vec<String> = Vec::new();
     for d in &weapons {
@@ -97,7 +146,7 @@ pub fn table(bo2: &[Weapon], atts: &[bo2::Attachment], names: &HashMap<String, S
             weapons.push(d);
         }
     }
-    let attachments = atts.iter().filter(|a| a.kind != 0 && !a.name.starts_with(',')).map(|a| attachment_def(a, names)).collect();
+    let attachments = atts.iter().filter(|a| a.kind != 0 && !a.name.starts_with(',')).map(|a| attachment_def(a, names, meta)).collect();
     Table { weapons, attachments, tablet_meshes: 0, perks: Vec::new() }
 }
 

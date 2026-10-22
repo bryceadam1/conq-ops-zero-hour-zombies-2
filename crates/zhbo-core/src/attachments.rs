@@ -27,6 +27,13 @@ pub struct AttachmentDef {
     pub short: String,
     /// As BO2's menus show it, e.g. `Suppressor`.
     pub display_name: String,
+    /// The full name BO2's attachment menu's lower title shows, e.g. `Reflex Sight`.
+    pub full_name: String,
+    /// The attachment's description line, from its `MPUI_*_DESC` key.
+    pub description: String,
+    /// BO2's attribute-table deltas for the stat bars (percent 0..100), in the table's order:
+    /// damage, range, accuracy, mobility, fire rate (`mp/attributestable.csv`).
+    pub attribute_deltas: [f32; 5],
     pub point: u8,
     pub silenced: bool,
     pub laser: bool,
@@ -60,6 +67,9 @@ impl Default for AttachmentDef {
             id: String::new(),
             short: String::new(),
             display_name: String::new(),
+            full_name: String::new(),
+            description: String::new(),
+            attribute_deltas: [0.0; 5],
             point: 0,
             silenced: false,
             laser: false,

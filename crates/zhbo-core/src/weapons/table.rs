@@ -269,6 +269,19 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
     field!("Specialties", "The specialties it grants (`WeaponAttachment.perks`), by name.", FieldKind::Words,
         |a: &AttachmentDef| a.specialties.format(),
         |a: &mut AttachmentDef, v: Values| { a.specialties = Specialties::parse(v.text)?; Ok(()) }),
+    field!("FullName", "The full name BO2's attachment menu's lower title shows.", FieldKind::Str,
+        |a: &AttachmentDef| a.full_name.clone(),
+        |a: &mut AttachmentDef, v: Values| { a.full_name = v.text.into(); Ok(()) }),
+    field!("Description", "The attachment's description line.", FieldKind::Str,
+        |a: &AttachmentDef| a.description.clone(),
+        |a: &mut AttachmentDef, v: Values| { a.description = v.text.into(); Ok(()) }),
+    field!("AttributeDeltas", "BO2's attribute-table deltas for the stat bars.", FieldKind::Nums(5),
+        |a: &AttachmentDef| a.attribute_deltas.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" "),
+        |a: &mut AttachmentDef, v: Values| {
+            v.need(5)?;
+            for i in 0..5 { a.attribute_deltas[i] = v.num(i); }
+            Ok(())
+        }),
 ];
 
 /// Every `Weapon` block line, in table order.
@@ -609,7 +622,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         assert_eq!(WEAPON_FIELDS.len(), 67);
-        assert_eq!(ATTACHMENT_FIELDS.len(), 14);
+        assert_eq!(ATTACHMENT_FIELDS.len(), 17);
     }
 
     #[test]

@@ -2394,6 +2394,33 @@ Verified: cargo test --workspace green; full real-install suite green; clippy cl
 xtask build` clean; autotest 13/13 default, `--classpick` all checks, 14/14 `--rts`; the nine
 harness shots regenerate with every sprite resolving.
 
+## Attachment metadata: full names, descriptions, and attribute-table deltas (2026-10-22)
+
+The prior pass reserved the attachment panel's description line and computed its stat bars from the
+weapon's own fields because `AttachmentDef` had only the short tile name and no attribute deltas.
+The schema now carries BO2's own metadata:
+
+- `AttachmentDef.full_name` and `AttachmentDef.description`, filled from
+  `mp/attachmenttable.csv` in `patch_mp` (row 22 for the Reflex: display key `MPUI_REFLEX` in column
+  4, short name `reflex` in column 5, description key `MPUI_REFLEX_DESC` in column 8; the localized
+  text comes from the same `names` map the converter already uses).
+- `AttachmentDef.attribute_deltas[5]`, filled from `mp/attributestable.csv` in `patch_ui_mp`. The
+  Lua's `WeaponAttributeList.SetupWeaponAttributeBars` uses 0-based column constants 3, 4, 2, 6,
+  5 (`patch_mp/ui/t6/weaponattributelist.lua:99-142`), i.e. damage = col 3, range = col 4,
+  accuracy = col 2, mobility = col 6, fire rate = col 5. The converter writes them to the table as
+  `FullName`, `Description`, and `AttributeDeltas`.
+
+The converter's `generals::files` now loads `patch_ui_mp` and calls `weapons::table_with_metadata`;
+`weapons::table` remains as a wrapper with an empty map so the tests and viewmodel sweep compile
+unchanged. The attachment table's row 22 gives the Reflex's description key; the attribute table's
+row for the Reflex (`weapon_attachment,reflex,15,0,5,0,0,0,,xm8`) yields deltas [damage 0, range 5,
+accuracy 15, mobility 0, fire rate 0], matching the capture's green range/accuracy ticks.
+
+Verified: `env -u ZHBO_BO2_DIR -u ZHBO_ZH_DIR cargo test --workspace` green (341 core tests, 45
+assets tests); the new fields survive the schema's format+parse round trip in the unit tests. The
+install-layer conversion (and its `generals::files` debug fixed-point assertion) still needs the
+real BO2 install; the converter now requires `patch_ui_mp`, so note that in the install-layer run.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
