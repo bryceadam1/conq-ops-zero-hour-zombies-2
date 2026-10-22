@@ -170,6 +170,10 @@ fn empty_editor_prims() -> Vec<Prim> {
         extra_perks: [None, None, None],
         wildcards: Vec::new(),
         reserve: [0, 0],
+        camo: String::new(),
+        reticle: String::new(),
+        reticle_color: String::new(),
+        knife: String::new(),
     };
     let editor = Editor::new(draft);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
@@ -245,6 +249,10 @@ fn editor_state() -> Editor {
         extra_perks: [Some(Perk::FLAK_JACKET), None, None],
         wildcards: vec![Wildcard::Perk1Greed],
         reserve: [0, 0],
+        camo: String::new(),
+        reticle: String::new(),
+        reticle_color: String::new(),
+        knife: String::new(),
     };
     let mut editor = Editor::new(draft);
     let mut prev = MenuPrev::default();
@@ -287,6 +295,10 @@ fn seed_profile() {
             melee: "knife_held_mp".into(),
             perks: perks.iter().map(|p| (*p).to_string()).collect(),
             reserve: [0, 0],
+            camo: String::new(),
+            reticle: String::new(),
+            reticle_color: String::new(),
+            knife: String::new(),
         });
     }
 }

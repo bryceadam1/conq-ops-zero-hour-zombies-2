@@ -333,6 +333,18 @@ pub struct Draft {
     pub wildcards: Vec<Wildcard>,
     /// Spare rounds for the primary and secondary; 0 = BO2's default.
     pub reserve: [u16; 2],
+    /// The primary's camo id (`none` = the weapon's stock finish), BO2's Personalize → Camouflage.
+    /// Empty means "not personalised" and serialises as no key, so older specs keep loading.
+    pub camo: String,
+    /// The primary optic's reticle id (`none` = the optic's stock reticle), BO2's Personalize →
+    /// Reticle. Empty means "not personalised" and serialises as no key.
+    pub reticle: String,
+    /// The reticle's colour id (`none` = the reticle's stock colour), BO2's Personalize → Reticle
+    /// colour. Empty means "not personalised" and serialises as no key.
+    pub reticle_color: String,
+    /// The melee viewmodel id (`knife_held_mp` = the standard combat knife), BO2's Personalize →
+    /// Knife. Empty means "not personalised" and serialises as no key.
+    pub knife: String,
 }
 
 impl Default for Draft {
@@ -351,6 +363,10 @@ impl Default for Draft {
             extra_perks: [None, None, None],
             wildcards: Vec::new(),
             reserve: [0, 0],
+            camo: String::new(),
+            reticle: String::new(),
+            reticle_color: String::new(),
+            knife: String::new(),
         }
     }
 }
@@ -470,6 +486,10 @@ impl Draft {
         push("melee", "knife_held_mp");
         let perks: Vec<&str> = self.perks_in_order().iter().map(|p| p.def().id).collect();
         push("perks", &perks.join(","));
+        push("camo", &self.camo);
+        push("reticle", &self.reticle);
+        push("reticle_color", &self.reticle_color);
+        push("knife", &self.knife);
         if self.reserve[0] > 0 {
             push("primary_reserve", &self.reserve[0].to_string());
         }
@@ -490,6 +510,10 @@ impl Draft {
             melee: "knife_held_mp".into(),
             perks: self.perks_in_order().iter().map(|p| p.def().id.to_string()).collect(),
             reserve: self.reserve,
+            camo: self.camo.clone(),
+            reticle: self.reticle.clone(),
+            reticle_color: self.reticle_color.clone(),
+            knife: self.knife.clone(),
         }
     }
 
@@ -520,6 +544,10 @@ impl Draft {
             extra_perks,
             wildcards: wildcards_of(c),
             reserve: c.reserve,
+            camo: c.camo.clone(),
+            reticle: c.reticle.clone(),
+            reticle_color: c.reticle_color.clone(),
+            knife: c.knife.clone(),
         }
     }
 }

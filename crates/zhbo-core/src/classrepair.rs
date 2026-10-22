@@ -229,6 +229,10 @@ mod tests {
             melee: "knife_held_mp".into(),
             perks: perks.iter().map(|p| (*p).to_string()).collect(),
             reserve: [0, 0],
+            camo: String::new(),
+            reticle: String::new(),
+            reticle_color: String::new(),
+            knife: String::new(),
         }
     }
 
