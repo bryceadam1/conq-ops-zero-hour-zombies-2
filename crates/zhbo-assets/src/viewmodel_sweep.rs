@@ -87,4 +87,74 @@ mod tests {
         assert_eq!(parts(&combo), 5, "the optic rides the gun's view-model tag");
         assert!(combo.len() > base.len());
     }
+
+    #[test]
+    #[ignore = "probe: the flagged defects"]
+    fn probe_defects() {
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        let summary = |id: &str| {
+            let mut out = BTreeMap::new();
+            let mut defs = src.defs.clone();
+            match crate::viewmodels::weapon_viewmodels(&src.patch, &src.common, &src.zones, &src.paks, &mut out, &src.bo2, &src.atts, &mut defs, &[id.to_string()]) {
+                Ok((s, _)) => eprintln!("SUMMARY {id}: {s}"),
+                Err(e) => eprintln!("SUMMARY {id}: ERR {e}"),
+            }
+        };
+        let tga_dir = std::env::var_os("ZHBO_SWEEP_TGA").map(std::path::PathBuf::from);
+        let show = |id: &str| {
+            summary(id);
+            let blobs = src.composition(id).expect(id);
+            if let Some(root) = &tga_dir {
+                let dir = root.join(id);
+                std::fs::create_dir_all(&dir).ok();
+                for (path, bytes) in &blobs {
+                    if let Some(name) = path.rsplit('\\').next().filter(|n| n.ends_with(".tga")) {
+                        std::fs::write(dir.join(name), bytes).ok();
+                    }
+                }
+            }
+            let vm = zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("manifest")).expect("parse");
+            eprintln!("=== {id} ===");
+            eprintln!("  hide: {:?}", vm.hide);
+            for (i, p) in vm.parts.iter().enumerate() {
+                let m = zhbo_native::model::Model::from_bytes(blobs.get(&p.model).unwrap()).unwrap();
+                eprintln!("  part {i}: {} tag={:?} offset={:?} rigid={} mins={:?} maxs={:?} root={:?}", p.model.rsplit('\\').next().unwrap(), p.tag, p.offset.1, p.rigid, m.mins, m.maxs, m.bones.first().map(|b| (&b.name, b.position)));
+                for (j, mat) in m.materials.iter().enumerate() {
+                    eprintln!("    mat {j}: {:?} blend={:?} cull={:?} emissive={} color={:?} maps={:?}", mat.name, mat.blend, mat.cull, mat.emissive, mat.color, mat.maps);
+                }
+                for (j, surf) in m.lod0().iter().enumerate() {
+                    let blend = m.materials.get(surf.material as usize).map(|x| x.blend);
+                    eprintln!("    surf {j}: material={} blend={:?}", surf.material, blend);
+                }
+            }
+            eprintln!("  markers: {:?}", vm.markers.iter().map(|m| (&m.name, &m.parent, m.local.1)).collect::<Vec<_>>());
+            eprintln!("  clips: {:?}", vm.clips);
+        };
+        for id in ["hatchet_mp", "trophy_system_mp", "flash_grenade_mp", "proximity_grenade_mp", "emp_grenade_mp", "frag_grenade_mp", "sensor_grenade_mp", "an94_mp", "mp7_mp", "as50_mp", "dsr50_mp"] {
+            show(id);
+        }
+        for name in ["hatchet_mp", "trophy_system_mp", "flash_grenade_mp", "proximity_grenade_mp", "emp_grenade_mp", "frag_grenade_mp", "sensor_grenade_mp", "as50_mp", "dsr50_mp"] {
+            if let Some(w) = src.bo2.iter().find(|w| w.name == name) {
+                eprintln!("WEAPON {name}: view_model={:?} hide={:?} anims={:?} ads_aim_pitch={} dual={} attach_view_models={:?}", w.view_model, w.hide_tags, w.anims, w.view_pos.ads_aim_pitch, w.dual_wield, w.attach_view_models);
+            }
+        }
+        for (base, short) in [("as50_mp", "ir"), ("as50_mp", "silencer"), ("as50_mp", "swayreduc"), ("fnp45_mp", "dualclip"), ("fiveseven_mp", "dualclip"), ("kard_mp", "dualclip"), ("judge_mp", "dualclip"), ("beretta93r_mp", "dualclip"), ("kard_mp", "steadyaim"), ("ksg_mp", "steadyaim")] {
+            let id = format!("{base}+{short}");
+            eprintln!("COMBO {id}");
+            if let Some(w) = src.bo2.iter().find(|w| w.name == base) {
+                let variant = w.attachment_variants.iter().find(|(_, v)| crate::weapons::short_name(v) == short);
+                eprintln!("  variant: {variant:?}");
+                if let Some((kind, aid)) = variant {
+                    if let Some(u) = w.attachment_uniques.iter().find(|u| u.kind == *kind && u.combined == 0) {
+                        eprintln!("  unique: name={:?} kind={} view_model={:?} tag={:?} offset={:?} rot={:?} hide={:?} disable_base_clip={} dual={:?}", u.name, u.kind, u.view_model, u.view_model_tag, u.view_offset, u.view_rotation, u.hide_tags, u.disable_base_clip, u.dual_wield_weapon);
+                    }
+                    if let Some(a) = src.atts.iter().find(|a| &a.name == aid) {
+                        eprintln!("  Attachment: name={:?} point={} dual_wield={} dual_mag={} laser={}", a.name, a.point, a.dual_wield, a.dual_mag, a.laser_sight);
+                    }
+                }
+            }
+            show(&id);
+        }
+    }
 }
