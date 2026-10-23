@@ -2812,6 +2812,75 @@ Verified: cargo test --workspace green; the full real-install suite green (the n
 included); clippy clean; `cargo xtask build` clean; autotest 13/13 default (the offhand-throw
 behavioral guard).
 
+## The equipment hip pose: sample the held slot and retire the pixel criterion (2026-10-23, branch `v1/equipment-hip-pose`)
+
+The `equipment-hip-pose` cycle (research and plan in `~/.opencode/plan/equipment-hip-pose/`; base
+`main` @ `22c1f1e`). The blank equipment hip half in the viewmodel sweep was **not** a transform
+bug: the harness's hip placement is the game's — identity at stand-still — and the equipment's own
+clips author the item at the waist. The left palm (`tag_knife_attach`) sits 9.6–26.5″ below the eye,
+so its NDC y is −1.55 to −18.8 and the first-person cone is empty for 12 of 13 items (the trophy's
+tall geometry is the edge sliver). A hand-tuned hip offset would move the harness away from the game,
+so the cycle changes only how the sweep samples and labels the pose.
+
+The sweep now samples the slot the game actually plays while an off-hand is held: `HOLD_FIRE` at
+frame 0 (`viewmodel.rs:181-190`), with a manifest check and an `IDLE` fallback note for a stale
+archive (`nativevm/mod.rs:304-310`); guns and the melee knife keep `IDLE` (the knife's game slot is
+`MELEE`, out of this cycle's scope). Both halves use the same slot and time, so the only difference
+between them remains `ads`. The aimed half stays — it is the one image that shows the item in the
+palm — but its `manifest.tsv` note now starts with the stable marker `ads half: harness artifact`,
+because equipment never ADSes and `place::aligned` lifts the rig by the item's palm aim marker. The
+old `equipment-offhand` ">200 px at hip" criterion is retired: the new install-gated ignored test
+`the_equipment_palm_is_outside_the_hip_frame` asserts the mount in model space instead — the item
+part hangs from `tag_knife_attach`, its root coincides with the palm, the palm is within 8″ of
+`j_wrist_le`, and the palm is outside the hip view volume (`forward <= 0` or `ndc_y < −1`); it prints
+one row per item. The AN-94 control keeps its gun-at-hip pose.
+
+Verified: `cargo test --workspace` green (496 passed, 28 ignored across 19 suites); the three
+real-install ignored tests green (`the_offhand_items_ride_the_knife_attach`, the new palm test with
+13 printed rows all outside the frame, `equipment_subbone_tracks_are_bo2s_authored_parking`);
+`cargo clippy --workspace --all-targets` exit 0 (warnings only in untouched files). The after set's
+14 renders: all 13 equipment hip halves are 0 px (the trophy's idle sliver is gone — the plan allows
+present or absent), the aimed halves keep the same order of magnitude but their counts move with the
+sampled clip (flash 38,135 → 95,611; trophy 165,603 → 81,297), and the AN-94 pair is byte-identical
+to the before set. Gotcha: the plan's §3.3 calls `ZHBO_SWEEP_BACK=12` "72 inches"; the argument is
+inches (the code divides by 6 for world units), so 12 is 12 inches — a bottom sliver — and 72 is the
+whole rig; the repo docs now say 72. Every pixel that is background in both a before and an after image is unchanged
+(0 such pixels changed), so the camera, FOV and near plane are untouched. No autotest leg: the change
+is a development-only example plus docs and an ignored test; the game's drawn path is unchanged
+(AGENTS.md's ladder: no sim or ABI change). The ADS label and the slot line are in every equipment
+row; the AN-94 row keeps its gun note. Follow-ups recorded in the plan: the primary-gun composition
+gap (separate cycle), the frame-of-hold choice (one-constant change if the orchestrator wants the
+steady pose), `Class::Melee`'s `MELEE` slot, and `--sweep`'s `FIRST_RAISE` for equipment.
+
+## Integrating the sweep's equipment pose fidelity (2026-10-23)
+
+Merged `v1/equipment-hip-pose` (2 commits; harness + one ignored test + docs — no shipped path,
+no VERSION bump). The `equipment-hip-pose` cycle's verdict, measured: the blank equipment hip
+halves were **BO2's own geometry, faithfully rendered** — the harness's hip transform already
+equals the game's (stand-still `GunPos::step` returns zero), and the equipment clips hold the
+palm 9.6–26.5″ BELOW the eye (NDC y −1.55…−18.8), so 12/13 blank is what BO2's numbers do, not
+missing art. The real infidelities fixed: the harness sampled `IDLE` where the game plays
+`HOLD_FIRE` for a held item (now sampled for off-hand classes, with a manifest `has_clip`
+check and a labeled fallback note), and the equipment ADS half is now labeled in the manifest
+note as the harness artifact it is (`place::aligned` lifts the rig by the palm aim marker —
+equipment has no ADS). The old ">200 px at hip" criterion is retired for
+`the_equipment_palm_is_outside_the_hip_frame` (model-space: mount on `tag_knife_attach`, palm
+within 8″ of the left wrist, and outside the hip view volume — 13 pass, printed rows). The
+AN-94 control pair is byte-identical; the background invariant held (camera/FOV/near
+untouched). Doc note: `ZHBO_SWEEP_BACK`'s argument is INCHES (12 = bottom sliver; 72 = the
+whole rig) — the plan's "12 = 72 inches" was a slip, corrected in the sweep's docs and
+TESTING.md.
+
+Verified: cargo test --workspace green (496/19 suites); the three install-gated suites green
+(off-hand mount, palm-outside-frame, sub-bone parks); clippy clean both ways; `cargo xtask
+build` clean. No autotest legs (approved plan §4.2: dev-only example + docs + ignored test;
+no sim/ABI path).
+
+Deferred (recorded in MODLOG/plan): the primary-gun composition gap (cycle
+`equipment-offhand-composition`, gated on the user-routed VM capture of a held item at hip);
+the frame-of-hold choice (`HOLD_TIME = 5.0` is a one-constant change); `Class::Melee`'s MELEE
+slot; `--sweep`'s FIRST_RAISE for equipment.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

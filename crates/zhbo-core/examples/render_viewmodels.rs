@@ -10,6 +10,10 @@
 //! frames instead of the static pose pair; `ZHBO_SWEEP_ADS=1` sweeps the aimed pose instead of the
 //! hip). `ZHBO_SWEEP_NEAR=<world units>` overrides the camera near plane (default 0.1; 2.0
 //! reproduces the in-game rear clipping the native pass's old near caused).
+//! `ZHBO_SWEEP_BACK=<inches>` pulls the review camera that many inches back (the argument is
+//! converted to world units at 6 inches each; `72` = 72" shows the whole off-hand rig, whose held
+//! clip authors the item at the waist, below the default first-person cone; `12` = 12" catches only
+//! its bottom sliver).
 //! `ZHBO_SWEEP_CONVERT_ALL=1` converts every job, including base weapons, through the converter
 //! instead of reading the archive's baked blobs, for a converter A/B. `--release` converts the
 //! combinations about ten times faster; a full sweep is a few minutes.
@@ -35,6 +39,15 @@
 //! sway), so BO2's own pose numbers decide, never a hand-tuned constant here. No effects and no
 //! muzzle flash.
 //!
+//! A gun's pair samples its `IDLE` clip at frame 0. An off-hand class (`Class::is_offhand()`:
+//! lethal, tactical, equipment) samples the game's held slot, `HOLD_FIRE`, at frame 0
+//! (`viewmodel.rs:181-190`); when the manifest lacks that clip (or the def's `anims` bit is clear)
+//! the sweep stays on `IDLE` and the note says so. The melee knife stays on `IDLE`: its game slot is
+//! `MELEE`, a pre-existing sweep inaccuracy outside this cycle. An off-hand's aimed half is a
+//! **harness artifact**, not a game pose: equipment never ADSes, and `place::aligned` lifts the
+//! whole rig by the item's palm-as-aim-marker, so its note starts with the stable marker
+//! `ads half: harness artifact`.
+//!
 //! **Content.** Base weapons come from the player's converted archive (`ConquerOps_BO2.big`, in the
 //! launcher's dist folder; `--archive` or `ZHBO_BO2_ARCHIVE` override): exactly the blobs the game
 //! draws today. The archive only holds the base weapons and the loadout's own combination — the
@@ -47,8 +60,11 @@
 //!
 //! **Output.** `<outdir>/<weapon>/base.png` and `<outdir>/<weapon>/att_<attachment>.png`, plus
 //! `<outdir>/manifest.tsv` (`weapon`, `attachment`, `image`, `notes`: where the art came from, the
-//! viewmodel's part count and log lines, and whether the renderer refused a draw). The background is
-//! flat light grey (0.72) so dark gunmetal silhouettes and see-through holes read at a glance.
+//! viewmodel's part count and log lines, and whether the renderer refused a draw). An off-hand's
+//! note leads with `ads half: harness artifact` and then names its sampled slot (`HOLD_FIRE` frame
+//! 0, or `IDLE` with the fallback reason), so the lifted aimed rig is never read as the hold pose.
+//! The background is flat light grey (0.72) so dark gunmetal silhouettes and see-through holes read
+//! at a glance.
 //!
 //! Development tool only, on no shipped path; the rendered images are output, not source.
 
@@ -76,6 +92,10 @@ const BEFORE_VIEW: u16 = 2;
 /// The time every render holds the idle clip at: its first frame, the authored neutral pose, so two
 /// renders of the same weapon differ only in the pose asked for.
 const IDLE_TIME: f32 = 0.0;
+/// The time an off-hand's held clip is sampled at: its first frame. The same convention as
+/// `IDLE_TIME` — the authored neutral pose — and the frame the palm measurements use; the game
+/// plays `HOLD_FIRE` while an off-hand item is held (`viewmodel.rs:181-190`).
+const HOLD_TIME: f32 = 0.0;
 /// A flat light grey background (`bgfx::setViewClear` takes RRGGBBAA): ~0.72 in 8 bits.
 const BACKGROUND: u32 = 0xb8b8b8ff;
 /// The near and far planes, in world units (1 unit = 6 inches). The arms start at the eye, so the
@@ -565,8 +585,21 @@ fn render_job(job: &Job, archive: &BigArchive, source: &mut Option<zhbo_assets::
     }
     let count = part_count(&art, vm);
     let base = window_base_parts(archive, job);
-    let (hip, mut logs) = render_pose(&art, vm, pose(job.weapon, 0.0), zhbo_core::viewmodel::slot::IDLE, IDLE_TIME)?;
-    let (ads, more) = render_pose(&art, vm, pose(job.weapon, 1.0), zhbo_core::viewmodel::slot::IDLE, IDLE_TIME)?;
+    // The slot the game plays: an off-hand item is held on `HOLD_FIRE` (`viewmodel.rs:181-190`);
+    // guns and the melee knife keep `IDLE` (the knife's game slot is `MELEE`, out of this cycle's
+    // scope). The manifest check is authoritative — the native path silently falls back to `IDLE`
+    // when a slot is absent (`nativevm/mod.rs:304-310`) — so request the idle and say so.
+    let offhand = job.weapon.class.is_offhand();
+    let hold = offhand
+        && job.weapon.has_anim(zhbo_core::viewmodel::slot::HOLD_FIRE as usize)
+        && has_clip(&art, vm, zhbo_core::viewmodel::slot::HOLD_FIRE);
+    let (clip, time) = if hold {
+        (zhbo_core::viewmodel::slot::HOLD_FIRE, HOLD_TIME)
+    } else {
+        (zhbo_core::viewmodel::slot::IDLE, IDLE_TIME)
+    };
+    let (hip, mut logs) = render_pose(&art, vm, pose(job.weapon, 0.0), clip, time)?;
+    let (ads, more) = render_pose(&art, vm, pose(job.weapon, 1.0), clip, time)?;
     logs.extend(more);
     let path = out.join(job.relative());
     if let Some(parent) = path.parent() {
@@ -583,6 +616,16 @@ fn render_job(job: &Job, archive: &BigArchive, source: &mut Option<zhbo_assets::
     logs.retain(|l| !l.is_empty());
     if !logs.is_empty() {
         note.push_str(&format!("; {}", logs.join("; ")));
+    }
+    if offhand {
+        // The aimed half's label leads, so the lifted rig cannot be read as the hold pose; the slot
+        // line follows it and the base note stays after both.
+        let slot = if hold {
+            "slot HOLD_FIRE frame 0 (the game's held slot, viewmodel.rs:181-190)"
+        } else {
+            "slot IDLE frame 0 (no HOLD_FIRE clip in the manifest; the native path falls back, nativevm/mod.rs:304-310)"
+        };
+        note = format!("ads half: harness artifact (equipment has no ADS state; place::aligned lifts the rig by the item's palm aim marker); {slot}; {note}");
     }
     Ok(note)
 }
@@ -637,6 +680,14 @@ fn part_count(art: &Art, vm: i32) -> usize {
     art.bytes(&zhbo_native::viewmodel_path(vm, FACTION as char))
         .and_then(|b| zhbo_native::viewmodel::Viewmodel::from_bytes(&b).ok())
         .map_or(0, |v| v.parts.len())
+}
+
+/// Whether the composed manifest carries a clip in `slot`: the authoritative check the native path's
+/// silent fallback needs (`nativevm/mod.rs:304-310`).
+fn has_clip(art: &Art, vm: i32, slot: i32) -> bool {
+    art.bytes(&zhbo_native::viewmodel_path(vm, FACTION as char))
+        .and_then(|b| zhbo_native::viewmodel::Viewmodel::from_bytes(&b).ok())
+        .is_some_and(|v| u16::try_from(slot).ok().and_then(|s| v.clip(s)).is_some())
 }
 
 /// The Black Ops II install the converter reads: `ZHBO_BO2_DIR`, else the requirements' detection.

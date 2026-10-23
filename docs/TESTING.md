@@ -100,6 +100,31 @@ loadout's own kit) is converted on demand from the Black Ops II install (`ZHBO_B
 `--no-attachments` narrow a run while iterating. The output is a review tool's images, not source:
 keep the folder outside the repository.
 
+**The poses and the notes.** A gun's pair samples its `IDLE` clip at frame 0. An off-hand item's
+game path plays `HOLD_FIRE` while it is held (`viewmodel.rs:181-190`), so the sweep samples that
+slot at frame 0 too; when the manifest lacks the 0x5 clip (or the def's `anims` bit is clear) the
+sweep stays on `IDLE` and the note says so — the native path silently falls back
+(`nativevm/mod.rs:304-310`). The melee knife stays on `IDLE`: its game slot is `MELEE`, a
+pre-existing sweep inaccuracy. An off-hand's aimed half is a **harness artifact**, not a game
+pose: equipment has no ADS state, and `place::aligned` lifts the whole rig by the item's
+palm-as-aim-marker, so its `manifest.tsv` note starts with the stable marker
+`ads half: harness artifact`.
+
+**Verifying the equipment pose.** The hip half's pixels are descriptive, not a pass/fail: the
+held clips author the item at the waist, so its palm is outside the game's first-person cone and
+the hip crop is expected to be blank for most items. The pass/fail is the ignored, install-gated
+test `the_equipment_palm_is_outside_the_hip_frame` in `zhbo-assets`, which composes each of the
+13 off-hand manifests and asserts the mount in model space: the item's part hangs from
+`tag_knife_attach`, its root coincides with the palm, the palm is within 8″ of `j_wrist_le`, and
+the palm is outside the hip view volume (`forward <= 0` or `ndc_y < −1`, the NDC from the
+harness's own projection). It prints one row per item (id, slot, clip name, forward/left/up,
+`ndc_y`). Run it with
+`ZHBO_BO2_DIR=… cargo test -q --release -p zhbo-assets the_equipment_palm_is_outside_the_hip_frame -- --ignored --nocapture`;
+the mount core is also covered by `the_offhand_items_ride_the_knife_attach`. For the human review
+of the held pose, run the sweep with `ZHBO_SWEEP_BACK=72`: the argument is in inches (the code
+converts to world units at 6 inches each), so 72 pulls the review camera 72″ back and the whole
+arm/item rig is in frame. A smaller value catches only the rig's bottom sliver.
+
 ## Autopilot and the input path
 
 The autopilot replaces all input inside the Rust core, so `autotest.ps1` never exercises the OS
