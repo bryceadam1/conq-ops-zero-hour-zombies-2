@@ -165,6 +165,74 @@ mod tests {
         assert_eq!(gun_tag("an94_mp").as_deref(), Some("tag_weapon"), "the gun control stays on the gun anchor");
     }
 
+    /// The equipment's held/idle clips author the item at the waist, so its palm sits outside the
+    /// game's hip view volume: at stand-still the hip placement is the identity eye frame, and the
+    /// projection puts the palm's NDC y from just past the bottom edge to several frame-heights
+    /// below it (the hatchet is behind the eye). This is the pose, not a harness bug — a hand-tuned
+    /// hip offset would move the harness away from the game. The old ">200 px at hip" criterion
+    /// asked the pose to do something it does not do; this asserts the mount in model space instead.
+    /// One row per item is printed: id, slot, clip name, fwd/left/up and ndc_y. Cycle:
+    /// `~/.opencode/plan/equipment-hip-pose/` (§3.1).
+    #[test]
+    #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
+    fn the_equipment_palm_is_outside_the_hip_frame() {
+        use zhbo_core::viewmodel::slot;
+
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        // The harness's projection, computed the same way (`render_viewmodels.rs`: t = 1/tan(hfov/2),
+        // proj[5] = t * aspect). NDC y = proj[5] * up / forward; ±1 is the top/bottom edge of the
+        // picture. Model space is the eye frame in inches: X forward, Y left, Z up.
+        let aspect = 16.0 / 9.0;
+        let t = 1.0 / (zhbo_core::client::horizontal_fov(zhbo_core::tuning::Tuning::default().cg_fov, aspect) / 2.0).tan();
+        let proj5 = t * aspect;
+
+        for id in [
+            "frag_grenade_mp", "sticky_grenade_mp", "emp_grenade_mp", "concussion_grenade_mp",
+            "willy_pete_mp", "flash_grenade_mp", "sensor_grenade_mp", "hatchet_mp",
+            "trophy_system_mp", "tactical_insertion_mp", "bouncingbetty_mp",
+            "satchel_charge_mp", "proximity_grenade_mp",
+        ] {
+            let blobs = src.composition(id).expect(id);
+            let vm = zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("a manifest")).expect("the manifest parses");
+            // The mount: the item's own part hangs from the left palm's tag.
+            let w = src.bo2.iter().find(|w| w.name == id).expect(id);
+            let view = w.view_model.as_deref().expect("a view model");
+            let item = vm.parts.iter().find(|p| p.model.contains(view)).expect("the item part");
+            assert_eq!(item.tag.as_deref(), Some("tag_knife_attach"), "{id}: the item hangs from the left palm");
+            // The slot the game plays while an item is held; fall back to the idle only to report a
+            // stale manifest (the native path does the same, `nativevm/mod.rs:304-310`).
+            let (slot_name, clip_path) = match vm.clip(slot::HOLD_FIRE as u16) {
+                Some(path) => ("HOLD_FIRE", path),
+                None => ("IDLE", vm.clip(slot::IDLE as u16).expect("an idle clip")),
+            };
+            let anim = zhbo_native::anim::Anim::from_bytes(blobs.get(clip_path).expect(clip_path)).expect(clip_path);
+            let models: Vec<zhbo_native::model::Model> = vm.parts.iter().map(|p| zhbo_native::model::Model::from_bytes(blobs.get(&p.model).expect(&p.model)).expect("a model")).collect();
+            let refs: Vec<zhbo_native::pose::PartRef> = vm.parts.iter().zip(&models).map(|(p, m)| zhbo_native::pose::PartRef { model: m, tag: p.tag.as_deref(), offset: p.offset, rigid: p.rigid }).collect();
+            let (skel, problems) = zhbo_native::pose::Skeleton::compose(&refs, &vm.markers, &vm.hide);
+            assert!(problems.is_empty(), "{id}: {problems:?}");
+            let (mut local, mut ms) = (Vec::new(), Vec::new());
+            skel.sample(&anim, 0.0, &mut local);
+            skel.model_space(&local, &mut ms);
+            let palm_i = skel.bone("tag_knife_attach").unwrap_or_else(|| panic!("{id}: no tag_knife_attach bone"));
+            let palm = skel.bone_point(&ms, palm_i);
+            let gun_i = skel.bone("j_gun").unwrap_or_else(|| panic!("{id}: no j_gun bone"));
+            let gun = skel.bone_point(&ms, gun_i);
+            let wrist_i = skel.bone("j_wrist_le").unwrap_or_else(|| panic!("{id}: no j_wrist_le bone"));
+            let wrist = skel.bone_point(&ms, wrist_i);
+            // The part root coincides with the palm: the item's mount offset is zero.
+            assert!((0..3).all(|k| (gun[k] - palm[k]).abs() <= 0.01), "{id}: j_gun {gun:?} should sit on the palm {palm:?}");
+            // It is the left hand: the parked gun anchor (`tag_weapon`) sits ~80" away on equipment.
+            let gap = ((0..3).map(|k| (palm[k] - wrist[k]).powi(2)).sum::<f32>()).sqrt();
+            assert!(gap <= 8.0, "{id}: the palm {palm:?} should be within 8\" of j_wrist_le {wrist:?} (distance {gap:.2}\")");
+            // Outside the hip view volume: the palm's NDC y is below the bottom edge, or its forward
+            // is non-positive (the hatchet, behind the eye, has no meaningful NDC).
+            let ndc_y = proj5 * palm[2] / palm[0];
+            assert!(palm[0] <= 0.0 || ndc_y < -1.0, "{id}: the palm {palm:?} is in the hip frame (fwd {:.2}, ndc_y {ndc_y:.2})", palm[0]);
+            eprintln!("{id}: {slot_name} {} fwd={:.2} left={:.2} up={:.2} ndc_y={ndc_y:.2}{}", anim.name, palm[0], palm[1], palm[2], if palm[0] <= 0.0 { " (behind the eye)" } else { "" });
+        }
+    }
+
     /// BO2 hides equipment sub-bones by parking them hundreds of inches away: the trophy's deploy
     /// flies its panels off (`sndnt#fly_falling_panels` at 0.463) and the M84's `tag_clip` leaves
     /// the hand. The tracks are authored data, not a conversion artefact — do not filter large
