@@ -14,7 +14,7 @@ use crate::paks::{load_zone, Paks};
 use crate::textures::{finish, textures, Looks};
 use zhbo_formats::iwi::Rgba;
 use zhbo_formats::{t6zone::Zone, w3d, xanim, xmodel};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 
 /// The magazine model of a gun's viewmodel: BO2 names them `t6_attach_mag_<weapon>_view` after a
@@ -36,6 +36,97 @@ pub(crate) fn find_model(patch: &Zone, common: &Zone, name: &str) -> Result<xmod
     patched.map_or_else(|| xmodel::find(common, name).map_err(|e| format!("{name}: {e}")), Ok)
 }
 
+/// One of a weapon's base `attachViewModel` parts: the magazine, or the base attachment art (the
+/// snipers' scope, the M32's sight leaf) that BO2 composes before any attachment. The magazine and
+/// the attachment art are separate replacement channels (`disableBaseWeaponClip` /
+/// `disableBaseWeaponAttachment`).
+pub(crate) struct BasePart {
+    /// The model as loaded from the zones.
+    pub model: xmodel::Model,
+    /// The authored `attachViewModelTag`; empty/absent today (every base part hangs at the gun
+    /// root, `j_gun`, and the authored offset places it).
+    pub tag: Option<String>,
+    /// The authored `attachViewModelOffset`, in inches (view frame; there is no rotation field).
+    pub offset: [f32; 3],
+    /// The magazine channel (`attach_mag`), with its rigid `tag_clip1` copy.
+    pub magazine: bool,
+    /// The model carries the weapon's sight (`tag_scope`/`tag_sights`): it drives `tag_sights`.
+    pub optic: bool,
+}
+
+/// The base parts of `w` for the combination `c`: the magazine (the `attach_mag` array entry, the
+/// name search only as its fallback, gated by `is_gun` and `no_clip`) and, unless the combination
+/// replaces the base attachment art, every other non-empty `attachViewModel` entry as an
+/// attachment-channel part. The raw parallel arrays are authoritative (`Weapon::base_view_parts`
+/// loses the offsets and appends the kind-0 unique's model).
+///
+/// Only the seven weapons with a non-magazine entry have more than the magazine today (the four
+/// snipers and the M32's three ids); everything else is unchanged.
+pub(crate) fn base_parts(patch: &Zone, common: &Zone, w: &zhbo_formats::weapon::Weapon, c: &Combo, view: &str) -> Vec<BasePart> {
+    let mut out = Vec::new();
+    if w.is_gun() && !c.no_clip {
+        let authored = w
+            .attach_view_models
+            .iter()
+            .zip(&w.attach_view_offsets)
+            .find(|((m, _), _)| m.contains("attach_mag"))
+            .and_then(|((m, _), off)| find_model(patch, common, m).ok().map(|model| (model, *off)));
+        if let Some((model, offset)) = authored {
+            out.push(BasePart { model, tag: None, offset, magazine: true, optic: false });
+        } else if let Some(model) = magazine(common, view) {
+            out.push(BasePart { model, tag: None, offset: [0.0; 3], magazine: true, optic: false });
+        }
+    }
+    if !c.no_base_attachment {
+        for ((name, tag), offset) in w.attach_view_models.iter().zip(&w.attach_view_offsets) {
+            if name.is_empty() || name.contains("attach_mag") {
+                continue;
+            }
+            let Ok(model) = find_model(patch, common, name) else { continue };
+            if out.iter().any(|p| !p.magazine && same_sight(&p.model, &model)) {
+                continue;
+            }
+            let optic = model.bones.iter().any(|b| b.name == "tag_scope" || b.name == "tag_sights");
+            out.push(BasePart { model, tag: (!tag.is_empty()).then(|| tag.clone()), offset: *offset, magazine: false, optic });
+        }
+    }
+    out
+}
+
+/// Whether `b` is the same sight as `a`: the same non-empty set of surface-material names and a
+/// bounding box overlapping at IoU ≥ 0.9. The M32 lists its sight twice — `_view` (hip) and `_ads`
+/// (aim) — as complete alternatives with the same lens and reticle, differing only in the housing
+/// mesh; drawing both would double-draw the glass. The first entry (the hip sight) is kept.
+fn same_sight(a: &xmodel::Model, b: &xmodel::Model) -> bool {
+    let (ma, mb) = (material_names(a), material_names(b));
+    if ma.is_empty() || ma != mb {
+        return false;
+    }
+    let (mut intersection, mut union) = (1.0f32, 1.0f32);
+    for k in 0..3 {
+        let overlap = (a.maxs[k].min(b.maxs[k]) - a.mins[k].max(b.mins[k])).max(0.0);
+        let span = (a.maxs[k].max(b.maxs[k]) - a.mins[k].min(b.mins[k])).max(0.0);
+        intersection *= overlap;
+        union *= span;
+    }
+    union > 0.0 && intersection / union >= 0.9
+}
+
+fn material_names(m: &xmodel::Model) -> BTreeSet<&str> {
+    m.materials.iter().flatten().map(|m| m.name.as_str()).filter(|n| !n.is_empty()).collect()
+}
+
+/// The base-part clause of the conversion report: the count and every model's name, so a part that
+/// silently stops loading is visible in the launcher log (the report used to be silent exactly
+/// because the scope was never loaded).
+fn base_part_note(base: &[BasePart]) -> String {
+    if base.is_empty() {
+        return String::new();
+    }
+    let names: Vec<&str> = base.iter().map(|p| p.model.name.as_str()).collect();
+    format!(", {} base parts ({})", base.len(), names.join(", "))
+}
+
 /// A notetrack source: viewmodel, clip (BO2 slot or tablet clip) and the BO2 animation.
 pub type Clip = (i32, i32, xanim::Anim);
 
@@ -48,6 +139,10 @@ pub struct Combo<'a> {
     pub hide: Vec<String>,
     /// An attachment replaces the weapon's own magazine.
     pub no_clip: bool,
+    /// The combination replaces the base `attachViewModel` art (its scope), not the magazine. The
+    /// two channels are BO2's own flags (`disableBaseWeaponClip` / `disableBaseWeaponAttachment`)
+    /// and are independent.
+    pub no_base_attachment: bool,
     pub fire_sound_player: Option<String>,
     pub fire_sound: Option<String>,
 }
@@ -90,6 +185,10 @@ pub fn combo<'a>(w: &'a zhbo_formats::weapon::Weapon, atts: &[zhbo_formats::weap
     let sounds = parts.iter().map(|(u, _)| *u).find(|u| u.fire_sound_player.is_some() && u.fire_sound_player != w.fire_sound_player);
     Combo {
         no_clip: parts.iter().any(|(u, _)| u.disable_base_clip),
+        // Read over both selection paths, as `hide` does: the single-attachment uniques and the
+        // exact multi-attachment unique. Data-driven, never a name match or a hide tag.
+        no_base_attachment: parts.iter().any(|(u, _)| u.disable_base_attachment)
+            || exact.is_some_and(|u| u.disable_base_attachment),
         fire_sound_player: sounds.and_then(|u| u.fire_sound_player.clone()).or_else(|| w.fire_sound_player.clone()),
         fire_sound: sounds.and_then(|u| u.fire_sound.clone()).or_else(|| w.fire_sound.clone()),
         parts,
@@ -144,10 +243,10 @@ fn dual_clip_name(left: &str) -> String {
 }
 
 /// The first-person viewmodels of `converted` weapons: each faction's arms holding the weapon, its
-/// magazine and its attachments (placed where BO2 puts them, iron sights hidden under an optic), on
-/// one hierarchy per weapon, with a W3D clip for every BO2 animation slot it has, and its alt mode's
-/// clips after them. Sets each definition's `viewmodel` (and its alt mode's). Returns a summary and
-/// the clips (for sounds).
+/// base parts (magazine, scope/optic) and its attachments (placed where BO2 puts them, iron sights
+/// hidden under an optic), on one hierarchy per weapon, with a W3D clip for every BO2 animation
+/// slot it has, and its alt mode's clips after them. Sets each definition's `viewmodel` (and its
+/// alt mode's). Returns a summary and the clips (for sounds).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn weapon_viewmodels(
     patch: &Zone,
@@ -182,18 +281,10 @@ pub(crate) fn weapon_viewmodels(
         let dual = lh_w.filter(|_| lh_gun.is_some());
         let c = combo(w, atts, &shorts);
         let gun = find_model(patch, common, view).map_err(|e| format!("{id}: {e}"))?;
-        // The base magazine is the weapon's `attachViewModel` part (slot 7 on the MP7) and the
-        // offset is its authored `attachViewModelOffset`; the name search is the fallback.
-        let mag = if w.is_gun() && !c.no_clip {
-            w.attach_view_models
-                .iter()
-                .zip(&w.attach_view_offsets)
-                .find(|((m, _), _)| m.contains("attach_mag"))
-                .and_then(|((m, _), off)| find_model(patch, common, m).ok().map(|model| (model, *off)))
-                .or_else(|| magazine(common, view).map(|m| (m, [0.0; 3])))
-        } else {
-            None
-        };
+        // The base `attachViewModel` parts: the magazine (its authored offset; the name search is
+        // the fallback) and the base attachment art (the snipers' scope), unless the combination
+        // replaces that art (the ACOG) or the magazine (the dualclip).
+        let base = base_parts(patch, common, w, &c, view);
         let parts: Vec<(&xmodel::Model, &str)> = vec![(&gun, mount_tag(w))];
         // The attachments' models, each with where it goes.
         let mut extra: Vec<(xmodel::Model, Option<String>, crate::xf::Xf, u32)> = Vec::new();
@@ -204,14 +295,14 @@ pub(crate) fn weapon_viewmodels(
             extra.push((model, u.view_model_tag.clone(), offset, *pt));
         }
         let gun_tex = textures(&gun, paks, out, &mut looks);
-        let mag_tex = mag.as_ref().map(|(m, _)| textures(m, paks, out, &mut looks));
+        let base_tex: Vec<Vec<Option<String>>> = base.iter().map(|p| textures(&p.model, paks, out, &mut looks)).collect();
         let extra_tex: Vec<Vec<Option<String>>> = extra.iter().map(|(m, ..)| textures(m, paks, out, &mut looks)).collect();
         // The left gun of a dual-wield pair: its own textures and native blob, written once.
         let lh_tex = lh_gun.as_ref().map(|m| textures(m, paks, out, &mut looks));
         let native_lh = lh_gun.as_ref().zip(lh_tex.as_ref()).map(|(m, t)| native::model(m, t, &looks));
         // The native blobs (Track R): the same parts, unconverted, for the renderer's own BO2 pass.
         let native_gun = native::model(&gun, &gun_tex, &looks);
-        let native_mag = mag.as_ref().zip(mag_tex.as_ref()).map(|((m, _), t)| native::model(m, t, &looks));
+        let native_base: Vec<zhbo_native::model::Model> = base.iter().zip(&base_tex).map(|(p, t)| native::model(&p.model, t, &looks)).collect();
         let native_extra: Vec<zhbo_native::model::Model> = extra.iter().zip(&extra_tex).map(|((m, ..), t)| native::model(m, t, &looks)).collect();
         let mut native_factions: Vec<(char, zhbo_native::model::Model)> = Vec::new();
         let mut rig: Option<Rig> = None;
@@ -220,9 +311,32 @@ pub(crate) fn weapon_viewmodels(
             let rig = rig.get_or_insert_with(|| {
                 let mut rig = Rig::new(&hands, &parts);
                 let root = gun.bones.first().and_then(|b| rig.pivot(&b.name)).unwrap_or(0);
-                // Aiming lines `tag_sights` up with the eye; many BO2 viewmodels (every pistol) have
-                // none, so give them one where their sights are.
-                if rig.pivot("tag_sights").is_none() {
+                // The base parts ride the gun root at their authored `attachViewModelOffset` (the
+                // empty authored tag is `j_gun`), before the sight marker so the base optic can
+                // drive it.
+                for part in &base {
+                    let at = part.tag.as_deref().and_then(|t| rig.pivot(t)).unwrap_or(root);
+                    rig.attach(&part.model, at, character::scaled_xf((crate::xf::IDENTITY.0, part.offset)));
+                }
+                // Aim through the base optic (the snipers' scope): the line of sight goes up to the
+                // middle of its glass. It creates the marker when the gun has none, and moves it
+                // when the gun already carries one; an attachment optic below still wins.
+                let base_optic = base
+                    .iter()
+                    .find(|p| p.optic)
+                    .and_then(|p| p.model.bones.first().and_then(|b| rig.pivot(&b.name)).map(|pivot| (pivot, &p.model)));
+                if let Some((optic, model)) = base_optic {
+                    let mid = (model.mins[2] + (model.maxs[2] - model.mins[2]) * OPTIC_WINDOW) * character::SCALE;
+                    let pos = crate::xf::apply(rig.bind[optic], [0.0, 0.0, mid]);
+                    if rig.pivot("tag_sights").is_some() {
+                        rig.move_pivot("tag_sights", pos);
+                    } else {
+                        let local = crate::xf::compose(crate::xf::inverse(rig.bind[root]), (crate::xf::IDENTITY.0, pos));
+                        rig.add_marker("tag_sights", root, local);
+                    }
+                } else if rig.pivot("tag_sights").is_none() {
+                    // Aiming lines `tag_sights` up with the eye; many BO2 viewmodels (every pistol)
+                    // have none, so give them one where their sights are.
                     let at = rig.pivot("tag_sights_on").map(|p| rig.bind[p].1).or_else(|| {
                         let weapon = rig.pivot(mount_tag(w)).map_or(crate::xf::IDENTITY, |p| rig.bind[p]);
                         sight_point(&gun).map(|p| crate::xf::apply(weapon, character::scaled(p)))
@@ -231,10 +345,6 @@ pub(crate) fn weapon_viewmodels(
                         let local = crate::xf::compose(crate::xf::inverse(rig.bind[root]), (crate::xf::IDENTITY.0, at));
                         rig.add_marker("tag_sights", root, local);
                     }
-                }
-                // The magazine rides the gun root at the authored `attachViewModelOffset`.
-                if let Some((m, off)) = &mag {
-                    rig.attach(m, root, character::scaled_xf((crate::xf::IDENTITY.0, *off)));
                 }
                 for (model, tag, offset, pt) in &extra {
                     let at = tag.as_deref().and_then(|t| rig.pivot(t)).unwrap_or(root);
@@ -255,12 +365,17 @@ pub(crate) fn weapon_viewmodels(
             native_factions.push((f.letter, native::model(&hands, &hands_tex, &looks)));
             let mut meshes = character::skin(rig, &hands, "H", &hands_tex);
             meshes.extend(character::skin_hiding(rig, &gun, "G", &gun_tex, &c.hide));
-            if let (Some((m, _)), Some(t)) = (&mag, &mag_tex) {
-                meshes.extend(character::skin(rig, m, "M", t));
-                // BO2's reloads bring the new magazine in on `tag_clip1` while the old one
-                // (`tag_clip`) drops away: a second copy rides there (off screen until then).
-                if let Some(new_mag) = rig.pivot("tag_clip1") {
-                    meshes.extend(character::skin_rigid(m, new_mag, crate::xf::IDENTITY, "N", 0, t, &[]));
+            // The base parts: the magazine keeps its `M` prefix and its rigid `N` copy on
+            // `tag_clip1` (the reload's incoming magazine); the attachment art (the scope) gets the
+            // free `B` prefix.
+            for (k, (part, tex)) in base.iter().zip(&base_tex).enumerate() {
+                if part.magazine {
+                    meshes.extend(character::skin(rig, &part.model, "M", tex));
+                    if let Some(new_mag) = rig.pivot("tag_clip1") {
+                        meshes.extend(character::skin_rigid(&part.model, new_mag, crate::xf::IDENTITY, "N", 0, tex, &[]));
+                    }
+                } else {
+                    meshes.extend(character::skin(rig, &part.model, &format!("B{k}"), tex));
                 }
             }
             for (k, ((model, ..), tex)) in extra.iter().zip(&extra_tex).enumerate() {
@@ -317,10 +432,15 @@ pub(crate) fn weapon_viewmodels(
         }
         let attachments: Vec<(Option<String>, crate::xf::Xf, bool)> =
             extra.iter().map(|(_, tag, offset, pt)| (tag.clone(), (offset.0, offset.1.map(|c| c / character::SCALE)), *pt == point::OPTIC as u32)).collect();
+        let base_native_parts: Vec<native::BasePart> = base
+            .iter()
+            .zip(&native_base)
+            .map(|(p, m)| native::BasePart { model: m, tag: p.tag.clone(), offset: (crate::xf::IDENTITY.0, p.offset), magazine: p.magazine, optic: p.optic })
+            .collect();
         let dual_tag = dual_mount();
         let dual_native = dual.zip(native_lh.as_ref()).map(|(w, m)| native::DualGun { gun: m, tag: dual_tag.as_str(), hide: &w.hide_tags });
-        let vm_native = native::Viewmodel { vm, id, gun: &gun, gun_tag: mount_tag(w), extra_models: extra.iter().map(|e| &e.0).collect(), attachments, hide: &c.hide, clips: &native_clips, mag_offset: mag.as_ref().map(|(_, off)| *off), dual: dual_native };
-        native::viewmodels(out, &vm_native, &native_gun, native_mag.as_ref(), &native_extra, &native_factions);
+        let vm_native = native::Viewmodel { vm, id, gun: &gun, gun_tag: mount_tag(w), base_parts: base_native_parts, extra_models: extra.iter().map(|e| &e.0).collect(), attachments, hide: &c.hide, clips: &native_clips, dual: dual_native };
+        native::viewmodels(out, &vm_native, &native_gun, &native_base, &native_extra, &native_factions);
         let mask = |a: &[Option<String>]| a.iter().enumerate().take(128).filter(|(_, x)| x.is_some()).fold(0u128, |m, (i, _)| m | (1u128 << i));
         if let Some(d) = defs.iter_mut().find(|d| &d.id == id) {
             d.viewmodel = vm;
@@ -332,8 +452,9 @@ pub(crate) fn weapon_viewmodels(
             d.anims = mask(&a);
         }
         made.push(format!(
-            "{id} ({n} clips{}{})",
-            if mag.is_some() { ", magazine" } else { "" },
+            "{id} ({n} clips{}{}{})",
+            if base.iter().any(|p| p.magazine) { ", magazine" } else { "" },
+            base_part_note(&base),
             if extra.is_empty() { String::new() } else { format!(", {} attachment models", extra.len()) }
         ));
     }
@@ -616,8 +737,83 @@ pub(crate) fn tablet_world(patch: &Zone, common: &Zone, paks: &Paks, out: &mut B
 
 #[cfg(test)]
 mod tests {
-    use super::{is_dual_wield, mount_tag};
-    use zhbo_formats::weapon::{inventory, Weapon};
+    use super::{base_part_note, is_dual_wield, mount_tag, same_sight, BasePart};
+    use zhbo_formats::weapon::{inventory, AttachmentUnique, Weapon};
+
+    fn sight(name: &str, mins: [f32; 3], maxs: [f32; 3]) -> zhbo_formats::xmodel::Model {
+        zhbo_formats::xmodel::Model {
+            name: name.into(),
+            bones: Vec::new(),
+            surfaces: Vec::new(),
+            lods: Vec::new(),
+            radius: 0.0,
+            mins,
+            maxs,
+            materials: vec![Some(zhbo_formats::xmodel::Material { name: name.into(), textures: Vec::new(), state_bits: Vec::new(), sort_key: 0 })],
+        }
+    }
+
+    /// BO2's two replacement channels are separate fields: `disableBaseWeaponClip` suppresses the
+    /// magazine, `disableBaseWeaponAttachment` the base attachment art (the AS50's ACOG). The flag
+    /// is read over both selection paths — the single-attachment uniques and the exact
+    /// multi-attachment unique — and never inferred from a name or a hide tag.
+    #[test]
+    fn the_replacement_flags_are_read_from_the_selection() {
+        let unique = |kind: u32, clip: bool, attachment: bool| AttachmentUnique {
+            kind,
+            disable_base_clip: clip,
+            disable_base_attachment: attachment,
+            ..Default::default()
+        };
+        let acog = Weapon { attachment_variants: vec![(1, "acog".into())], attachment_uniques: vec![unique(1, false, true)], ..Default::default() };
+        let c = super::combo(&acog, &[], &["acog"]);
+        assert!(c.no_base_attachment, "the ACOG replaces the base scope");
+        assert!(!c.no_clip, "it keeps the magazine (disableBaseWeaponClip is 0)");
+
+        let dualclip = Weapon { attachment_variants: vec![(5, "dualclip".into())], attachment_uniques: vec![unique(5, true, false)], ..Default::default() };
+        let c = super::combo(&dualclip, &[], &["dualclip"]);
+        assert!(c.no_clip, "the dualclip replaces the magazine");
+        assert!(!c.no_base_attachment, "the flags select disjoint sets: it keeps the base art");
+
+        // The multi-attachment path: the flag lives on the exact `combined` unique, not on the
+        // single-attachment entries (the mask is `1 << 2 | 1 << 11`).
+        let combined = AttachmentUnique { kind: 0, combined: 0x804, disable_base_attachment: true, ..Default::default() };
+        let pair = Weapon { attachment_variants: vec![(2, "a".into()), (11, "b".into())], attachment_uniques: vec![combined], ..Default::default() };
+        let c = super::combo(&pair, &[], &["a", "b"]);
+        assert!(c.no_base_attachment, "the exact combination's unique suppresses the base art");
+        assert!(!c.no_clip);
+    }
+
+    /// The M32 lists `_view` and `_ads` as two complete sights: the same non-empty material set and
+    /// a near-identical bounding box. A genuinely different model (another material, or a distant
+    /// box) is not the same sight.
+    #[test]
+    fn the_sight_variant_dedupe_collapses_the_m32_pair() {
+        let view = sight("mc/mtl_t6_attach_optic_m32", [4.80, -0.80, 4.80], [8.54, 0.70, 6.84]);
+        let ads = sight("mc/mtl_t6_attach_optic_m32", [4.79, -0.80, 4.78], [8.55, 0.70, 6.85]);
+        assert!(same_sight(&view, &ads), "the same sight's hip and ADS variants collapse");
+        let other_material = sight("mc/mtl_t6_attach_optic_other", [4.80, -0.80, 4.80], [8.54, 0.70, 6.84]);
+        assert!(!same_sight(&view, &other_material), "a different material set is a different part");
+        let elsewhere = sight("mc/mtl_t6_attach_optic_m32", [20.0, 0.0, 0.0], [24.0, 1.0, 2.0]);
+        assert!(!same_sight(&view, &elsewhere), "a disjoint box is a different part");
+    }
+
+    /// The conversion report names every base part, so a part that silently stops loading (the
+    /// scope, before this change) is visible in the launcher log.
+    #[test]
+    fn the_conversion_report_names_the_base_parts() {
+        let part = |name: &str, magazine: bool| BasePart {
+            model: sight(name, [0.0; 3], [1.0; 3]),
+            tag: None,
+            offset: [0.0; 3],
+            magazine,
+            optic: !magazine,
+        };
+        let note = base_part_note(&[part("t6_attach_mag_xpr50_view", true), part("t6_wpn_sniper_xpr50_scope_view", false)]);
+        assert!(note.contains("2 base parts"), "{note}");
+        assert!(note.contains("t6_wpn_sniper_xpr50_scope_view"), "{note}");
+        assert_eq!(base_part_note(&[]), "", "no base parts, no clause");
+    }
 
     /// The mount follows the inventory type: `OFFHAND` and `ITEM` equipment hangs from the left
     /// palm's `tag_knife_attach`, while primaries, the melee knife, alt modes and dual-wield
