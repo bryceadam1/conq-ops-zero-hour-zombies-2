@@ -104,6 +104,17 @@ pub fn base_id(id: &str) -> &str {
     id.split('~').next().unwrap_or(id).split('+').next().unwrap_or(id)
 }
 
+/// The bone a weapon's viewmodel hangs from: the off-hand equipment clips key the raised item on
+/// `tag_knife_attach` (a bone under the left wrist on the faction viewhands), while the primary
+/// gun's `tag_weapon` anchor is what those same clips park or hide. Everything that is not
+/// `OFFHAND` (1) or `ITEM` (2) — primaries, the melee knife, alt modes — stays on `tag_weapon`.
+/// The raw `attachViewModelTag` array is empty for all thirteen off-hand items (the parser only
+/// reads it when `attachViewModel` is non-empty), so the inventory type is the rule.
+pub(crate) fn mount_tag(w: &zhbo_formats::weapon::Weapon) -> &'static str {
+    use zhbo_formats::weapon::inventory;
+    if w.inventory == inventory::OFFHAND || w.inventory == inventory::ITEM { "tag_knife_attach" } else { "tag_weapon" }
+}
+
 /// The first-person viewmodels of `converted` weapons: each faction's arms holding the weapon, its
 /// magazine and its attachments (placed where BO2 puts them, iron sights hidden under an optic), on
 /// one hierarchy per weapon, with a W3D clip for every BO2 animation slot it has, and its alt mode's
@@ -145,7 +156,7 @@ pub(crate) fn weapon_viewmodels(
         } else {
             None
         };
-        let parts: Vec<(&xmodel::Model, &str)> = vec![(&gun, "tag_weapon")];
+        let parts: Vec<(&xmodel::Model, &str)> = vec![(&gun, mount_tag(w))];
         // The attachments' models, each with where it goes.
         let mut extra: Vec<(xmodel::Model, Option<String>, crate::xf::Xf, u32)> = Vec::new();
         for (u, pt) in &c.parts {
@@ -172,7 +183,7 @@ pub(crate) fn weapon_viewmodels(
                 // none, so give them one where their sights are.
                 if rig.pivot("tag_sights").is_none() {
                     let at = rig.pivot("tag_sights_on").map(|p| rig.bind[p].1).or_else(|| {
-                        let weapon = rig.pivot("tag_weapon").map_or(crate::xf::IDENTITY, |p| rig.bind[p]);
+                        let weapon = rig.pivot(mount_tag(w)).map_or(crate::xf::IDENTITY, |p| rig.bind[p]);
                         sight_point(&gun).map(|p| crate::xf::apply(weapon, character::scaled(p)))
                     });
                     if let Some(at) = at {
@@ -246,7 +257,7 @@ pub(crate) fn weapon_viewmodels(
         }
         let attachments: Vec<(Option<String>, crate::xf::Xf, bool)> =
             extra.iter().map(|(_, tag, offset, pt)| (tag.clone(), (offset.0, offset.1.map(|c| c / character::SCALE)), *pt == point::OPTIC as u32)).collect();
-        let vm_native = native::Viewmodel { vm, id, gun: &gun, extra_models: extra.iter().map(|e| &e.0).collect(), attachments, hide: &c.hide, clips: &native_clips, mag_offset: mag.as_ref().map(|(_, off)| *off) };
+        let vm_native = native::Viewmodel { vm, id, gun: &gun, gun_tag: mount_tag(w), extra_models: extra.iter().map(|e| &e.0).collect(), attachments, hide: &c.hide, clips: &native_clips, mag_offset: mag.as_ref().map(|(_, off)| *off) };
         native::viewmodels(out, &vm_native, &native_gun, native_mag.as_ref(), &native_extra, &native_factions);
         let mask = |a: &[Option<String>]| a.iter().enumerate().take(128).filter(|(_, x)| x.is_some()).fold(0u128, |m, (i, _)| m | (1u128 << i));
         if let Some(d) = defs.iter_mut().find(|d| &d.id == id) {
@@ -539,4 +550,25 @@ pub(crate) fn tablet_world(patch: &Zone, common: &Zone, paks: &Paks, out: &mut B
     let mut meshes = character::skin_rigid(&model, tag, crate::xf::IDENTITY, "TB", 0, &tex, &[]);
     finish(&mut meshes, looks);
     meshes
+}
+
+#[cfg(test)]
+mod tests {
+    use super::mount_tag;
+    use zhbo_formats::weapon::{inventory, Weapon};
+
+    /// The mount follows the inventory type: `OFFHAND` and `ITEM` equipment hangs from the left
+    /// palm's `tag_knife_attach`, while primaries, the melee knife, alt modes and dual-wield
+    /// offhands stay on the primary gun's `tag_weapon` anchor (the tag those clips park or hide).
+    #[test]
+    fn the_mount_tag_follows_the_inventory_type() {
+        for inv in [inventory::OFFHAND, inventory::ITEM] {
+            let w = Weapon { inventory: inv, ..Default::default() };
+            assert_eq!(mount_tag(&w), "tag_knife_attach", "inventory {inv} should hang from the left palm");
+        }
+        for inv in [inventory::PRIMARY, inventory::MELEE, inventory::ALTMODE, inventory::DWLEFTHAND] {
+            let w = Weapon { inventory: inv, ..Default::default() };
+            assert_eq!(mount_tag(&w), "tag_weapon", "inventory {inv} should stay on the gun anchor");
+        }
+    }
 }

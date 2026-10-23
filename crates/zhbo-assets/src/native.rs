@@ -136,7 +136,12 @@ pub(crate) fn aim_marker(skel: &Skeleton, gun: &xmodel::Model, optic: Option<(us
         Some(apply(bind(root), [0.0, 0.0, mid]))
     } else {
         skel.bone("tag_sights").or_else(|| skel.bone("tag_sights_on")).map(|i| bind(i).1).or_else(|| {
-            let weapon = skel.bone("tag_weapon").map_or(zhbo_native::math::IDENTITY, bind);
+            // The fallback sight anchor follows the gun's mount: the gun part's first bone
+            // (`j_gun`) hangs from the part's mount tag (`tag_weapon` for primaries,
+            // `tag_knife_attach` for off-hand equipment). A part with no tag hangs from the
+            // base's origin, so fall back to `tag_weapon` only when the parent is absent.
+            let mount = skel.bones.get(gun_root).and_then(|b| b.parent);
+            let weapon = mount.map_or_else(|| skel.bone("tag_weapon").map_or(zhbo_native::math::IDENTITY, bind), bind);
             crate::generals::sight_point(gun).map(|p| apply(weapon, p))
         })
     }?;
@@ -162,6 +167,9 @@ pub(crate) struct Viewmodel<'a> {
     pub vm: i32,
     pub id: &'a str,
     pub gun: &'a xmodel::Model,
+    /// The bone the gun hangs from: `tag_weapon` for primaries, `tag_knife_attach` for off-hand
+    /// equipment (the left palm).
+    pub gun_tag: &'a str,
     /// The attachment models found, in order, with their tag, offset (inches) and whether each
     /// is an optic.
     pub extra_models: Vec<&'a xmodel::Model>,
@@ -172,10 +180,11 @@ pub(crate) struct Viewmodel<'a> {
     pub mag_offset: Option<[f32; 3]>,
 }
 
-/// One manifest per faction for weapon `v`: the faction's arms, the gun on `tag_weapon`, the
-/// magazine on the gun root (`j_gun`) at its authored `attachViewModelOffset` (and its rigid copy on
-/// `tag_clip1`, where the reload brings the new one in), each attachment on its `viewModelTag`
-/// (else the gun's root) at its view offset, and the aim marker. Model blobs are written once each.
+/// One manifest per faction for weapon `v`: the faction's arms, the gun on its mount tag
+/// (`tag_weapon` for primaries, `tag_knife_attach` for off-hand equipment), the magazine on the
+/// gun root (`j_gun`) at its authored `attachViewModelOffset` (and its rigid copy on `tag_clip1`,
+/// where the reload brings the new one in), each attachment on its `viewModelTag` (else the gun's
+/// root) at its view offset, and the aim marker. Model blobs are written once each.
 pub(crate) fn viewmodels(
     out: &mut BTreeMap<String, Vec<u8>>,
     v: &Viewmodel,
@@ -194,7 +203,7 @@ pub(crate) fn viewmodels(
         let arms_path = put_model(out, arms);
         // (model, tag, offset, rigid, path) in composition order.
         let mut parts: Vec<(&nm::Model, Option<String>, zhbo_native::math::Xf, bool, String)> =
-            vec![(arms, None, IDENTITY, false, arms_path), (gun, Some("tag_weapon".into()), IDENTITY, false, gun_path.clone())];
+            vec![(arms, None, IDENTITY, false, arms_path), (gun, Some(v.gun_tag.into()), IDENTITY, false, gun_path.clone())];
         let mag_offset = v.mag_offset.map_or(IDENTITY, |t| (IDENTITY.0, t));
         if let (Some(m), Some(p)) = (mag, &mag_path) {
             parts.push((m, Some("j_gun".into()), mag_offset, false, p.clone()));

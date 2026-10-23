@@ -729,6 +729,15 @@ mod tests {
         assert!(manifests.len() >= FACTIONS.len(), "{} native viewmodels", manifests.len());
         for (path, bytes) in manifests {
             let vm = Viewmodel::from_bytes(bytes).unwrap_or_else(|e| panic!("{path}: {e}"));
+            // The gun part is the first part that hangs from a tag (the arms base is untagged) and
+            // its model is the weapon's view model. Off-hand equipment rides the left palm's
+            // `tag_knife_attach`; the gun control stays on the primary gun's `tag_weapon`.
+            let gun_part = vm.parts.iter().find(|p| p.tag.is_some()).unwrap_or_else(|| panic!("{path}: no gun part"));
+            if crate::manifest::LETHALS.iter().chain(crate::manifest::TACTICALS.iter()).any(|id| vm.id == *id) {
+                assert_eq!(gun_part.tag.as_deref(), Some("tag_knife_attach"), "{path} ({}): the equipment should hang from the left palm", vm.id);
+            } else if vm.id == "an94_mp" {
+                assert_eq!(gun_part.tag.as_deref(), Some("tag_weapon"), "{path}: the gun control stays on the gun anchor");
+            }
             let models: Vec<Model> = vm.parts.iter().map(|p| Model::from_bytes(file(&p.model).unwrap_or_else(|| panic!("{path}: no {}", p.model))).unwrap_or_else(|e| panic!("{}: {e}", p.model))).collect();
             for m in &models {
                 for mat in &m.materials {

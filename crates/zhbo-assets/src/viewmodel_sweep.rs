@@ -139,11 +139,48 @@ mod tests {
         assert_eq!(mag.offset.1, *offset, "the magazine keeps its authored offset");
     }
 
+    /// The off-hand equipment rides the knife attach bone (the left palm), not the primary gun's
+    /// `tag_weapon` anchor that the equipment clips park or hide. The inventory-2 claymore and PDA
+    /// are in the same set; the AN-94 stays on the gun anchor as the control.
+    #[test]
+    #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
+    fn the_offhand_items_ride_the_knife_attach() {
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        let gun_tag = |id: &str| {
+            let w = src.bo2.iter().find(|w| w.name == id).expect(id);
+            let view = w.view_model.as_deref().expect("a view model");
+            let blobs = src.composition(id).expect(id);
+            let vm = zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("a manifest")).expect("the manifest parses");
+            vm.parts.iter().find(|p| p.model.contains(view)).and_then(|p| p.tag.clone())
+        };
+        for id in [
+            "hatchet_mp", "frag_grenade_mp", "sticky_grenade_mp", "emp_grenade_mp",
+            "flash_grenade_mp", "concussion_grenade_mp", "sensor_grenade_mp", "willy_pete_mp",
+            "proximity_grenade_mp", "trophy_system_mp", "tactical_insertion_mp",
+            "bouncingbetty_mp", "satchel_charge_mp", "claymore_mp", "pda_hack_mp",
+        ] {
+            assert_eq!(gun_tag(id).as_deref(), Some("tag_knife_attach"), "{id} should hang from the left palm");
+        }
+        assert_eq!(gun_tag("an94_mp").as_deref(), Some("tag_weapon"), "the gun control stays on the gun anchor");
+    }
+
     #[test]
     #[ignore = "probe: the flagged defects"]
     fn probe_defects() {
         let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
         let src = Source::open(Path::new(&dir)).expect("open the install");
+        // STEP 0 raw-tag probe: the parser only reads `attachViewModelTag` when `attachViewModel`
+        // is non-empty; read the raw array directly for the thirteen off-hand items and the gun
+        // control (`an94_mp`) to see whether BO2 authored the knife tag on the equipment.
+        let kind = zhbo_formats::fastfile::asset_type_id("weapon").expect("weapon assets");
+        for name in ["hatchet_mp", "frag_grenade_mp", "sticky_grenade_mp", "emp_grenade_mp", "flash_grenade_mp", "concussion_grenade_mp", "sensor_grenade_mp", "willy_pete_mp", "proximity_grenade_mp", "trophy_system_mp", "tactical_insertion_mp", "bouncingbetty_mp", "satchel_charge_mp", "an94_mp"] {
+            let raw = src.common.find(kind, name).map_or_else(|| "MISSING".to_string(), |a| {
+                let tags = src.common.try_u32(a.addr + zhbo_formats::t6zone::layouts::WeaponVariantDef::attachViewModelTag).unwrap_or(0);
+                if tags == 0 { "EMPTY (null)".to_string() } else { (0..8).map(|i| src.common.str_ptr(tags + 4 * i)).collect::<Vec<_>>().join(", ") }
+            });
+            eprintln!("RAW attachViewModelTag {name}: [{raw}]");
+        }
         let summary = |id: &str| {
             let mut out = BTreeMap::new();
             let mut defs = src.defs.clone();

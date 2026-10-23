@@ -42,7 +42,8 @@ pub fn scaled(p: [f32; 3]) -> [f32; 3] {
 
 impl Rig {
     /// Build from a base model (a body or a pair of arms) and models hung from its bones, e.g. a
-    /// weapon on `tag_weapon_right`, or a viewmodel gun on `tag_weapon` with its magazine on `j_gun`.
+    /// weapon on `tag_weapon_right`, or a viewmodel gun on `tag_weapon` (primaries) or
+    /// `tag_knife_attach` (off-hand equipment) with its magazine on `j_gun`.
     /// Attachments are added in order, so a later one may hang from an earlier one's bone.
     pub fn new(base: &Model, attachments: &[(&Model, &str)]) -> Rig {
         let mut rig = Rig {

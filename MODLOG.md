@@ -2754,6 +2754,32 @@ Verified: cargo test --workspace green; the full real-install suite green; clipp
 --workspace --all-targets clean; `cargo xtask build` clean; autotest 13/13 default,
 `--classpick` all checks, 14/14 `--rts`.
 
+## Integrating the off-hand attach fix: the equipment rides the left palm's `tag_knife_attach` (2026-10-22)
+
+The first full research → plan → implement cycle (the `parity-cycle` skill; artifacts in
+`~/.opencode/plan/equipment-offhand/`). **BO2's first-person off-hand equipment hangs from
+`tag_knife_attach` (parented to `j_wrist_le`, the left wrist)** — not `tag_weapon` (the primary
+gun's mount, which the equipment clips park behind the camera), not `tag_weapon1` (a static
+torso duplicate), and `tag_weapon_left` does not exist on the viewhands at all (body-only
+bones). The converter mounted all 13 there; all 13 are the wrong tag, none BO2-parity blank.
+The fix is one `mount_tag` helper (`inventory == OFFHAND || ITEM → tag_knife_attach`) carried
+through the W3D `Rig::new` tag, the native manifest's gun part, and the aim-marker fallback;
+the raw `attachViewModelTag[0..8]` probe came back empty for every item, so the inventory rule
+stands (the plan's fallback branch). The knife stays on `tag_weapon`. Archive VERSION 56 → 57.
+
+Caveat recorded for the follow-up cycle: the sweep harness's hip pose puts the equipment
+viewmodel behind the camera for 12 of 13 items in BOTH before and after, so the plan's §5 hip
+criterion could not pass as written — the harness's equipment `view_pos` is its own follow-up.
+The tag fix is proven independently: the manifest assertions (13 + claymore + pda_hack on
+`tag_knife_attach`, `an94_mp` on `tag_weapon`), the extended real-install blob check, and the
+ADS renders (items move from the primary-gun position to the left hand). The trophy's door
+tracks and the flash's `tag_clip` track remain the predicted sub-bone follow-up, with the
+after-renders as evidence.
+
+Verified: cargo test --workspace green (496 across 19 suites); the full real-install suite
+green; clippy clean; `cargo xtask build` clean; autotest 13/13 default (**throws both
+offhands — the engine-rule arbiter**), `--classpick` all checks, 14/14 `--rts`.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
