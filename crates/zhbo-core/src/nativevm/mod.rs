@@ -302,11 +302,15 @@ pub struct Posed {
 
 impl Loaded {
     /// The clip to show for `clip`: its own, else the idle of its mode, else the idle (the W3D
-    /// path's fallback, `ZhboViewmodel.cpp`).
+    /// path's fallback, `ZhboViewmodel.cpp`). A dual-wield clip's id carries `INSTANCE_LEFT` in its
+    /// high byte; the fallbacks keep that bit so the left gun falls back to its own idle.
     pub fn clip_path(&self, clip: i32) -> Option<&str> {
+        use zhbo_native::viewmodel::INSTANCE_LEFT;
         let alt = crate::weapons::ALT_CLIPS;
-        let mode_idle = if clip >= alt { alt + crate::viewmodel::slot::IDLE } else { crate::viewmodel::slot::IDLE };
-        [clip, mode_idle, crate::viewmodel::slot::IDLE].into_iter().find_map(|c| u16::try_from(c).ok().and_then(|c| self.manifest.clip(c)))
+        let instance = (clip as u16) & INSTANCE_LEFT;
+        let base = (clip as u16) & !INSTANCE_LEFT;
+        let mode_idle = if i32::from(base) >= alt { alt as u16 + crate::viewmodel::slot::IDLE as u16 } else { crate::viewmodel::slot::IDLE as u16 };
+        [base, mode_idle, crate::viewmodel::slot::IDLE as u16].into_iter().find_map(|c| self.manifest.clip(c | instance))
     }
 
     /// Pose for `req`: the clip (if loaded) at its frame, then placement. `anim` is the clip.

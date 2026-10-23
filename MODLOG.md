@@ -2996,3 +2996,42 @@ the real-install suite green (`ZHBO_BO2_DIR=~/Games/BlackOps2 cargo test -q --re
 zhbo-assets -p zhbo-formats -- --ignored`: 19 + 9 passed); the c1 diagnostic test prints the
 convention table. No VERSION/ABI bump (the c2 fix changes only the chosen tag; the manifest
 schema is unchanged).
+
+## Dual-wield viewmodels: the left gun as a second rig on the left palm (2026-10-23, branch `v1/dual-wield`)
+
+BO2 ships dual-wield pistols as two single-gun viewmodels — the base `t6_wpn_pistol_<x>_view` and a
+bone-suffixed `_lh` duplicate — not as one composite model. The converter now detects the pair
+(the weapon id's `_dw` suffix, the `DWLEFTHAND` inventory, or the base pistol plus the
+`au_<weapon>_dw` attachment), loads the `_lh` companion, and composes it as a second rig on the
+left palm. The five DW pistols (`fnp45_dw_mp`, `fiveseven_dw_mp`, `kard_dw_mp`, `judge_dw_mp`,
+`beretta93r_dw_mp`) each gain the left gun's bones, vertices and surfaces over the base composite;
+the ignored `the_dual_wield_composite_loads_both_guns` test proves it from the real install.
+
+**Mount A/B.** The candidates were `tag_knife_attach` (the equipment-offhand default, parented to
+`j_wrist_le`) and the fallback `j_wrist_le`. The `zhbo-assets pose` renders of the `_lh` guns on
+the USA viewhands (`c_usa_mp_seal6_longsleeve_viewhands`) put the gun at the left palm for
+`tag_knife_attach`; its bind position (`[16.49, 6.45, -14.09]`) is the palm, 2.7″ from the wrist
+joint (`[13.79, 8.04, -13.77]`). The verdict is `tag_knife_attach`; the fallback stays available
+via `ZHBO_DW_MOUNT=j_wrist_le` for a future comparison. Renders: `/tmp/dw_knife.png` (default),
+`/tmp/dw_wrist.png` (fallback), `/tmp/dw_kard.png`, `/tmp/dw_judge.png`; the 640×360 hip slot's
+left-palm region is x ≈ 180–360 px, y ≈ 220–340 px. The `pose` CLI's CPU rasterizer was used
+because the GPU `render_viewmodels` example needs the converted archive, which this workstation
+does not have; the integrator should fill the full-sweep rows on a machine with the archive.
+
+**Clip routing.** The left gun's clips are keyed by the matching right slot with the
+`INSTANCE_LEFT` (`0x100`) bit in the manifest's flat clip table. `nativevm::Loaded::clip_path`
+masks the bit off for the lookup and reapplies it to the fallback, so a left clip falls back to the
+left idle, not the base idle. The base W3D path's clip list stays unchanged; the left gun's clips
+are native-only. The clip-routing unit test in `zhbo-core/src/nativevm/tests.rs` proves the base
+and left clips resolve independently.
+
+**Classpick.** The autotest's `--classpick` seed keeps its MP7 primary: changing it would break the
+`MP7 <n>\|` kit assertion. The manual-capture procedure is in `docs/TESTING.md`; the seeded
+profile's `secondary=` can be swapped to a DW pistol in a local run without touching the script.
+
+Verified: `cargo test --workspace` green; the real-install suite green (`ZHBO_BO2_DIR=… cargo test
+-q --release -p zhbo-assets -p zhbo-formats -- --ignored`: 20 + 9 passed); `cargo clippy
+--workspace` clean in the touched files (pre-existing warnings elsewhere). No VERSION/ABI bump:
+the serialized manifest's `Part`/`Viewmodel` structs are unchanged; the clip id's high bit is
+reused and the blob `VERSION` stays 1. The converter's input `native::Viewmodel` gains an optional
+`dual` field; the integrator should decide whether that warrants a bump when merging.

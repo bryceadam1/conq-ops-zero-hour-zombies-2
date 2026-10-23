@@ -108,7 +108,12 @@ fn fixture() -> Fixture {
         ],
         markers: vec![Marker { name: AIM_TAG.into(), parent: "tag_weapon".into(), local: (QUAT_IDENTITY, [0.0, 2.0, 4.0]) }],
         hide: vec![],
-        clips: vec![(1, zhbo_native::anim_path("idle")), (0x10, zhbo_native::anim_path("reload"))],
+        clips: vec![
+            (1, zhbo_native::anim_path("idle")),
+            (0x10, zhbo_native::anim_path("reload")),
+            (0x101, zhbo_native::anim_path("left_idle")),
+            (0x110, zhbo_native::anim_path("left_reload")),
+        ],
     };
     Fixture {
         files: vec![
@@ -117,6 +122,8 @@ fn fixture() -> Fixture {
             (zhbo_native::model_path("gun"), gun.to_bytes()),
             (zhbo_native::anim_path("idle"), clip("idle", 1.0).to_bytes()),
             (zhbo_native::anim_path("reload"), clip("reload", -3.0).to_bytes()),
+            (zhbo_native::anim_path("left_idle"), clip("left_idle", 1.0).to_bytes()),
+            (zhbo_native::anim_path("left_reload"), clip("left_reload", -3.0).to_bytes()),
         ],
     }
 }
@@ -229,6 +236,26 @@ fn falls_back_to_the_idle_and_plays_at_the_rate() {
         let mut req = ffi::request(&input(0x10, 0.0));
         req.rate = 0.0;
         assert!(req.rate == 0.0 && ffi::request(&ZhboNativeIn { rate: f32::NAN, ..input(1, 0.0) }).rate == 1.0);
+    });
+}
+
+/// The clip table routes the left gun's clips by the instance bit (`INSTANCE_LEFT`): the plain id
+/// finds the base's clip, the id with the bit finds the left's, and a slot the left gun lacks falls
+/// back to the left's idle (the bit kept in the fallback, not the base's idle).
+#[test]
+fn routes_the_left_guns_clips_by_the_instance_bit() {
+    let f = fixture();
+    with_state(|s| {
+        *s = ffi::State::default();
+        for _ in 0..6 {
+            s.frame(&input(0x10, 0.0), true);
+            answer(s, &f);
+        }
+        let l = s.loaded.as_ref().unwrap();
+        assert_eq!(l.clip_path(0x10).unwrap(), zhbo_native::anim_path("reload"), "the base's clip");
+        assert_eq!(l.clip_path(0x110).unwrap(), zhbo_native::anim_path("left_reload"), "the left's clip");
+        assert_eq!(l.clip_path(0x117).unwrap(), zhbo_native::anim_path("left_idle"), "the left's fallback keeps the bit");
+        assert_eq!(l.clip_path(0x17).unwrap(), zhbo_native::anim_path("idle"), "the base's fallback");
     });
 }
 

@@ -125,6 +125,22 @@ of the held pose, run the sweep with `ZHBO_SWEEP_BACK=72`: the argument is in in
 converts to world units at 6 inches each), so 72 pulls the review camera 72″ back and the whole
 arm/item rig is in frame. A smaller value catches only the rig's bottom sliver.
 
+**Verifying the dual-wield left gun.** A dual-wield weapon's viewmodel is two rigs: the base gun
+(`t6_wpn_pistol_<x>_view`) on `tag_weapon` and its `_lh` companion (`t6_wpn_pistol_<x>_view_lh`) on
+`tag_knife_attach` (the left palm, parented to `j_wrist_le`). The detection cascades: the weapon
+id's `_dw` suffix, the `DWLEFTHAND` inventory, or the base pistol plus the `au_<weapon>_dw`
+attachment. The install-gated test `the_dual_wield_composite_loads_both_guns` in `zhbo-assets`
+composes each of the five DW pistols and asserts the composite adds the left gun's bones, vertices,
+surfaces and part over the base composite. Run it with
+`ZHBO_BO2_DIR=… cargo test -q --release -p zhbo-assets the_dual_wield_composite_loads_both_guns -- --ignored --nocapture`.
+For a visual check, run the headless sweep with `--weapon fnp45_dw_mp` and inspect the hip pose's
+left palm region (x ≈ 180–360 px, y ≈ 220–340 px in the 640×360 slot): the left gun's geometry
+should sit there, not at the torso center or floating near the base gun. The autotest's
+`--classpick` leg keeps its MP7 seed — changing the primary would break the `MP7 <n>\|` kit
+assertion — so to exercise the DW path in-game, edit the seeded profile's `secondary=` to a DW
+pistol (e.g., `secondary=fnp45_dw_mp`) in a local capture run and confirm the left gun renders in
+the left palm.
+
 ## Autopilot and the input path
 
 The autopilot replaces all input inside the Rust core, so `autotest.ps1` never exercises the OS

@@ -139,6 +139,56 @@ mod tests {
         assert_eq!(mag.offset.1, *offset, "the magazine keeps its authored offset");
     }
 
+    /// The dual-wield composite loads both guns: the base pistol's composite (the arms and the
+    /// base gun) and the DW composite (the arms, the base gun and the `_lh` gun). The base's
+    /// counts match RESEARCH.md's table (79 bones / 8058 vertices / 7 surfaces); the DW composite
+    /// adds the `_lh` gun's ~6 bones / ~2205 vertices / 5 surfaces, giving ~10k vertices and 12
+    /// surfaces. Each of the five DW pistols composes both guns.
+    #[test]
+    #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
+    fn the_dual_wield_composite_loads_both_guns() {
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        let counts = |id: &str| {
+            let blobs = src.composition(id).expect(id);
+            let manifest = zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("a manifest")).expect("the manifest parses");
+            let models: Vec<zhbo_native::model::Model> =
+                manifest.parts.iter().map(|p| zhbo_native::model::Model::from_bytes(blobs.get(&p.model).expect(&p.model)).expect("a model")).collect();
+            let refs: Vec<zhbo_native::pose::PartRef> = manifest.parts.iter().zip(&models).map(|(p, m)| zhbo_native::pose::PartRef { model: m, tag: p.tag.as_deref(), offset: p.offset, rigid: p.rigid }).collect();
+            let (skel, _) = zhbo_native::pose::Skeleton::compose(&refs, &manifest.markers, &manifest.hide);
+            let bones = skel.bones.len();
+            let verts: usize = models.iter().flat_map(|m| m.lods.iter().flat_map(|l| (l.first_surface..l.first_surface + l.surface_count).filter_map(|s| m.surfaces.get(s as usize)).map(|s| s.vertices.len()))).sum();
+            let surfaces: usize = models.iter().map(|m| m.surfaces.len()).sum();
+            (bones, verts, surfaces, manifest.parts.len())
+        };
+        // The base's composite: the arms and the base gun. Its counts match RESEARCH.md's table.
+        let (bb, bv, bs, _) = counts("fnp45_mp");
+        assert_eq!((bb, bv, bs), (79, 8058, 7), "the base pistol's composite");
+        // The DW composite: the base's parts plus the `_lh` gun's, a separate rig on the left palm.
+        let (db, dv, ds, dp) = counts("fnp45_dw_mp");
+        assert!(db >= 81, "the DW composite adds the left gun's bones: {db} vs {bb}");
+        assert!(dv >= 10_000, "the DW composite adds the left gun's vertices: {dv} vs {bv}");
+        // The raw `_lh` model carries 12 surfaces; the native path drops the reticle and clan-tag
+        // surfaces the W3D pass leaves out too (`looks.dropped`), leaving 10.
+        assert!(ds >= 10, "the DW composite adds the left gun's surfaces to the base's 7: {ds}");
+        assert!(dp > 2, "the DW composite adds a part: {dp}");
+        // Each of the five DW pistols composes both guns, whatever its per-weapon surface counts.
+        for (base, dw) in [
+            ("fnp45_mp", "fnp45_dw_mp"),
+            ("fiveseven_mp", "fiveseven_dw_mp"),
+            ("kard_mp", "kard_dw_mp"),
+            ("judge_mp", "judge_dw_mp"),
+            ("beretta93r_mp", "beretta93r_dw_mp"),
+        ] {
+            let (_, bv, bs, bp) = counts(base);
+            let (db, dv, ds, dp) = counts(dw);
+            assert!(db > bb, "{dw} adds the left gun's bones");
+            assert!(dv > bv, "{dw} adds the left gun's vertices: {dv} vs {bv}");
+            assert!(ds > bs, "{dw} adds the left gun's surfaces: {ds} vs {bs}");
+            assert!(dp > bp, "{dw} adds a part: {dp} vs {bp}");
+        }
+    }
+
     /// The off-hand equipment rides the knife attach bone (the left palm), not the primary gun's
     /// `tag_weapon` anchor that the equipment clips park or hide. The inventory-2 claymore and PDA
     /// are in the same set; the AN-94 stays on the gun anchor as the control.
