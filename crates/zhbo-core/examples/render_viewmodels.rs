@@ -607,6 +607,13 @@ fn render_job(job: &Job, archive: &BigArchive, source: &mut Option<zhbo_assets::
     }
     hip.beside(&ads).write_png(&path)?;
     let mut note = format!("{from}, {count} parts");
+    // The converter's base-part count (the magazine and the base scope/optic art): a part that
+    // stops loading changes it, so a shifted total is attributable without reading the launcher log.
+    if from == "converted" {
+        if let Some(n) = source.as_ref().and_then(|s| s.base_part_count(&job.id)) {
+            note.push_str(&format!(", {n} base parts"));
+        }
+    }
     if let Some(short) = &job.attachment {
         note.push_str(&format!(", attachment `{short}`"));
         if Some(count) == base {

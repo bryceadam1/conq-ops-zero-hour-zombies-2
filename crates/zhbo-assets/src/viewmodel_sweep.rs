@@ -67,6 +67,18 @@ impl Source {
         out.retain(|path, _| path.starts_with(zhbo_native::DIR) || path.starts_with("Art\\Textures\\"));
         Ok(out)
     }
+
+    /// How many base parts (`attachViewModel` entries: the magazine plus the base scope/optic art)
+    /// the converter loads for `id`, by the same classifier the conversion runs. The sweep's note
+    /// names the count, so a part that stops loading is attributable to the row. `None` when the
+    /// install's weapon is unknown.
+    pub fn base_part_count(&self, id: &str) -> Option<usize> {
+        let (base, shorts) = zhbo_core::attachments::split_id(id);
+        let w = self.bo2.iter().find(|w| w.name == base)?;
+        let view = w.view_model.as_deref()?;
+        let c = crate::viewmodels::combo(w, &self.atts, &shorts);
+        Some(crate::viewmodels::base_parts(&self.patch, &self.common, w, &c, view).len())
+    }
 }
 
 #[cfg(test)]
@@ -137,6 +149,83 @@ mod tests {
         let mag = vm.parts.iter().find(|p| p.model.contains(model)).expect("the magazine part");
         assert_eq!(mag.tag.as_deref(), Some("j_gun"), "the magazine hangs from the gun root");
         assert_eq!(mag.offset.1, *offset, "the magazine keeps its authored offset");
+    }
+
+    /// The snipers' base scope is a second `attachViewModel` part: the conversion loads it, hangs
+    /// it at the gun root (`j_gun`, the authored tag is empty) and keeps its authored offset. The
+    /// four weapons are the complete set with non-magazine base art (the M32 is the fifth).
+    #[test]
+    #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
+    fn the_sniper_scope_is_a_base_part() {
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        for (id, offset) in [
+            ("as50_mp", [4.456, 0.0, 4.253]),
+            ("ballista_mp", [5.312, 0.0, 4.737]),
+            ("dsr50_mp", [-5.701, 0.0, 4.843]),
+            ("svu_mp", [4.253, -0.033, 6.839]),
+        ] {
+            let blobs = src.composition(id).expect(id);
+            let vm = zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("a manifest")).expect("the manifest parses");
+            assert_eq!(vm.parts.len(), 4, "{id}: the arms, the gun, the magazine and the scope");
+            let scope = vm.parts.iter().find(|p| p.model.contains("_scope_view")).unwrap_or_else(|| panic!("{id}: the base scope part"));
+            assert_eq!(scope.tag.as_deref(), Some("j_gun"), "{id}: the empty authored tag is the gun root");
+            assert_eq!(scope.offset.1, offset, "{id}: the scope keeps its authored offset");
+        }
+    }
+
+    /// An attachment with `disableBaseWeaponAttachment` replaces the base art: the ACOG swaps its
+    /// scope for the base one, and the Ballista's `is` (an iron sight with no view model at all)
+    /// simply takes it off. Neither stack the base scope under the replacement.
+    #[test]
+    #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
+    fn the_acog_replaces_the_base_scope() {
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        let parts = |blobs: &BTreeMap<String, Vec<u8>>| {
+            zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("a manifest")).expect("the manifest parses").parts
+        };
+        let as50 = parts(&src.composition("as50_mp+acog").expect("the AS50 with its ACOG"));
+        assert_eq!(as50.len(), 4, "the ACOG replaces the scope, so the count is the base's 4");
+        assert!(!as50.iter().any(|p| p.model.contains("xpr50_scope_view")), "the base scope is suppressed: {as50:?}");
+        assert!(as50.iter().any(|p| p.model.contains("acog")), "the ACOG is mounted");
+        let ballista = parts(&src.composition("ballista_mp+is").expect("the Ballista's iron sight"));
+        assert_eq!(ballista.len(), 3, "suppression with no replacement geometry: the scope comes off");
+        assert!(!ballista.iter().any(|p| p.model.contains("ballista_scope_view")), "the base scope is suppressed: {ballista:?}");
+    }
+
+    /// The M32 lists its sight twice (`_view` for the hip, `_ads` for the aim): the same lens and
+    /// reticle at the same offset. Only the first loads; loading both would double-draw the glass.
+    #[test]
+    #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
+    fn the_m32_sight_loads_once() {
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        let blobs = src.composition("m32_mp").expect("the base M32");
+        let vm = zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("a manifest")).expect("the manifest parses");
+        assert_eq!(vm.parts.len(), 3, "the arms, the gun and the sight");
+        let sights = vm.parts.iter().filter(|p| p.model.contains("optic_m32")).count();
+        assert_eq!(sights, 1, "one `_view` sight, not the hip `_view` and the ADS `_ads` pair: {vm:?}");
+    }
+
+    /// The five pistol dualclips set neither replacement flag: their fast-mag sleeve is additive
+    /// over the baked magazine, and the base art does not change. Suppression here would hide the
+    /// attachment (the offset frame is a separate cycle).
+    #[test]
+    #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
+    fn the_pistol_dualclip_suppresses_nothing() {
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        let w = src.bo2.iter().find(|w| w.name == "fnp45_mp").expect("fnp45_mp");
+        let c = crate::viewmodels::combo(w, &src.atts, &["dualclip"]);
+        assert!(!c.parts.is_empty(), "the dualclip resolves to a unique");
+        assert!(!c.no_base_attachment, "disableBaseWeaponAttachment is 0: the fast mag stacks");
+        assert!(!c.no_clip, "disableBaseWeaponClip is 0: there is no separate base clip part");
+        assert_eq!(
+            src.base_part_count("fnp45_mp+dualclip"),
+            src.base_part_count("fnp45_mp"),
+            "the dualclip adds no base part and suppresses none (its own sleeve is an attachment part)"
+        );
     }
 
     /// The dual-wield composite loads both guns: the base pistol's composite (the arms and the

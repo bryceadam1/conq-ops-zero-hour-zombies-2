@@ -124,15 +124,16 @@ pub(crate) fn anim(a: &xanim::Anim) -> zhbo_native::anim::Anim {
 }
 
 /// Where the aim marker goes (model space of the composed viewmodel, inches), by the W3D path's
-/// rule: an optic's window (`OPTIC_WINDOW` of the way up it, above its root), else BO2's own
-/// `tag_sights`, else `tag_sights_on`, else the front sight found from the gun's shape. Returned
-/// as a marker under the gun's root bone (`gun_root`).
-pub(crate) fn aim_marker(skel: &Skeleton, gun: &xmodel::Model, optic: Option<(usize, &xmodel::Model)>) -> Option<Marker> {
+/// rule: an optic's window (`OPTIC_WINDOW` of the way up it, above its root; the base scope or a
+/// mounted attachment optic), else BO2's own `tag_sights`, else `tag_sights_on`, else the front
+/// sight found from the gun's shape. Returned as a marker under the gun's root bone (`gun_root`).
+/// The optic is `(part index, model mins, model maxs)`.
+pub(crate) fn aim_marker(skel: &Skeleton, gun: &xmodel::Model, optic: Option<(usize, [f32; 3], [f32; 3])>) -> Option<Marker> {
     let gun_root = skel.parts.get(1)?.first;
     let bind = |i: usize| skel.bones[i].bind;
-    let at = if let Some((part, optic)) = optic {
+    let at = if let Some((part, mins, maxs)) = optic {
         let root = skel.parts.get(part)?.first;
-        let mid = optic.mins[2] + (optic.maxs[2] - optic.mins[2]) * crate::generals::OPTIC_WINDOW;
+        let mid = mins[2] + (maxs[2] - mins[2]) * crate::generals::OPTIC_WINDOW;
         Some(apply(bind(root), [0.0, 0.0, mid]))
     } else {
         skel.bone("tag_sights").or_else(|| skel.bone("tag_sights_on")).map(|i| bind(i).1).or_else(|| {
@@ -170,16 +171,33 @@ pub(crate) struct Viewmodel<'a> {
     /// The bone the gun hangs from: `tag_weapon` for primaries, `tag_knife_attach` for off-hand
     /// equipment (the left palm).
     pub gun_tag: &'a str,
+    /// The base parts (the magazine and the base attachment art), pushed after the gun and before
+    /// the attachments.
+    pub base_parts: Vec<BasePart<'a>>,
     /// The attachment models found, in order, with their tag, offset (inches) and whether each
     /// is an optic.
     pub extra_models: Vec<&'a xmodel::Model>,
     pub attachments: Vec<(Option<String>, crate::xf::Xf, bool)>,
     pub hide: &'a [String],
     pub clips: &'a [(u16, String)],
-    /// The base magazine's authored `attachViewModelOffset`, in inches.
-    pub mag_offset: Option<[f32; 3]>,
     /// The left gun of a dual-wield pair: the `_lh` model as a second rig on the left palm.
     pub dual: Option<DualGun<'a>>,
+}
+
+/// One of a weapon's base `attachViewModel` parts: the magazine or the base attachment art (the
+/// snipers' scope). It carries its own role flags so the composition and the aim marker stay
+/// data-driven.
+pub(crate) struct BasePart<'a> {
+    pub model: &'a nm::Model,
+    /// The authored tag; empty/absent hangs the part at the gun root (`j_gun`), like the magazine.
+    pub tag: Option<String>,
+    /// The authored offset, in inches.
+    pub offset: zhbo_native::math::Xf,
+    /// The magazine channel: keep its rigid copy on `tag_clip1` when the gun has one.
+    pub magazine: bool,
+    /// The model carries the weapon's sight: it drives the aim marker when no attachment optic is
+    /// mounted.
+    pub optic: bool,
 }
 
 /// The left-hand companion of a dual-wield pair: its own model (bones suffixed `1`) and mount.
@@ -214,15 +232,17 @@ fn dist_sq(a: [f32; 3], b: [f32; 3]) -> f32 {
 }
 
 /// One manifest per faction for weapon `v`: the faction's arms, the gun on its mount tag
-/// (`tag_weapon` for primaries, `tag_knife_attach` for off-hand equipment), the magazine on the
-/// gun root (`j_gun`) at its authored `attachViewModelOffset` (and its rigid copy on `tag_clip1`,
+/// (`tag_weapon` for primaries, `tag_knife_attach` for off-hand equipment), the base parts on the
+/// gun root (`j_gun`) at their authored offsets (the magazine and, when the combination does not
+/// replace it, the base attachment art — the magazine also keeps its rigid copy on `tag_clip1`,
 /// where the reload brings the new one in), each attachment on its `viewModelTag` (else the gun's
-/// root) at its view offset, and the aim marker. Model blobs are written once each.
+/// root) at its view offset, and the aim marker (a base optic's window, else an attachment optic's,
+/// else the gun's own sights). Model blobs are written once each.
 pub(crate) fn viewmodels(
     out: &mut BTreeMap<String, Vec<u8>>,
     v: &Viewmodel,
     gun: &nm::Model,
-    mag: Option<&nm::Model>,
+    base: &[nm::Model],
     extra: &[nm::Model],
     factions: &[(char, nm::Model)],
 ) {
@@ -230,7 +250,7 @@ pub(crate) fn viewmodels(
     use zhbo_native::viewmodel::{Part, Viewmodel as Manifest};
     if gun.bones.is_empty() { return; }
     let gun_path = put_model(out, gun);
-    let mag_path = mag.map(|m| put_model(out, m));
+    let base_paths: Vec<String> = base.iter().map(|m| put_model(out, m)).collect();
     let extra_paths: Vec<String> = extra.iter().map(|m| put_model(out, m)).collect();
     let dual_path = v.dual.as_ref().map(|d| put_model(out, d.gun));
     for (letter, arms) in factions {
@@ -238,21 +258,24 @@ pub(crate) fn viewmodels(
         // (model, tag, offset, rigid, path) in composition order.
         let mut parts: Vec<(&nm::Model, Option<String>, zhbo_native::math::Xf, bool, String)> =
             vec![(arms, None, IDENTITY, false, arms_path), (gun, Some(v.gun_tag.into()), IDENTITY, false, gun_path.clone())];
-        let mag_offset = v.mag_offset.map_or(IDENTITY, |t| (IDENTITY.0, t));
-        if let (Some(m), Some(p)) = (mag, &mag_path) {
-            parts.push((m, Some("j_gun".into()), mag_offset, false, p.clone()));
-        }
         let has = |name: &str, parts: &[(&nm::Model, Option<String>, zhbo_native::math::Xf, bool, String)]| parts.iter().any(|p| p.0.bone(name).is_some());
-        if let (Some(m), Some(p)) = (mag, &mag_path) {
-            if has("tag_clip1", &parts) {
-                parts.push((m, Some("tag_clip1".into()), IDENTITY, true, p.clone()));
+        // The base parts after the gun and before the attachments: `aim_marker` reads `parts[1]`
+        // as the gun, and an attachment optic later overrides a base optic in `optic`.
+        let mut optic = None;
+        for (bp, path) in v.base_parts.iter().zip(&base_paths) {
+            let tag = bp.tag.clone().filter(|t| has(t, &parts)).unwrap_or_else(|| "j_gun".into());
+            if bp.optic {
+                optic = Some((parts.len(), bp.model.mins, bp.model.maxs));
+            }
+            parts.push((bp.model, Some(tag), bp.offset, false, path.clone()));
+            if bp.magazine && has("tag_clip1", &parts) {
+                parts.push((bp.model, Some("tag_clip1".into()), IDENTITY, true, path.clone()));
             }
         }
-        let mut optic = None;
         for (k, ((tag, offset, is_optic), (model, path))) in v.attachments.iter().zip(extra.iter().zip(&extra_paths)).enumerate() {
             let tag = tag.clone().filter(|t| has(t, &parts)).unwrap_or_else(|| nearest_bone(gun, offset.1));
             if *is_optic {
-                optic = Some((parts.len(), v.extra_models[k]));
+                optic = Some((parts.len(), v.extra_models[k].mins, v.extra_models[k].maxs));
             }
             parts.push((model, Some(tag), *offset, false, path.clone()));
         }
