@@ -165,6 +165,159 @@ mod tests {
         assert_eq!(gun_tag("an94_mp").as_deref(), Some("tag_weapon"), "the gun control stays on the gun anchor");
     }
 
+    /// BO2 hides equipment sub-bones by parking them hundreds of inches away: the trophy's deploy
+    /// flies its panels off (`sndnt#fly_falling_panels` at 0.463) and the M84's `tag_clip` leaves
+    /// the hand. The tracks are authored data, not a conversion artefact — do not filter large
+    /// translations, and do not read a track as absolute: playback composes
+    /// `posed local = the model's stored local + the track` (`zhbo_native::pose`), the rule the MP
+    /// body rig proves where the two readings differ (`pb_death_faceplant`'s `j_spinelower` is a
+    /// faceplant as an offset and a collapse as an absolute). The game plays `HOLD_FIRE` while an
+    /// off-hand item is held and `FIRE` while it is thrown, never `IDLE`
+    /// (`zhbo_core::viewmodel`, `OffhandUse`), so the sweep's `IDLE` half is not the clip the game
+    /// shows. Cycle: `~/.opencode/plan/equipment-subbone-tracks/`.
+    #[test]
+    #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
+    fn equipment_subbone_tracks_are_bo2s_authored_parking() {
+        use zhbo_core::viewmodel::slot;
+        use zhbo_native::anim::Anim;
+
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+
+        // One weapon's converted manifest and blobs, through the sweep's own conversion.
+        let load = |id: &str| -> (zhbo_native::viewmodel::Viewmodel, BTreeMap<String, Vec<u8>>) {
+            let blobs = src.composition(id).expect(id);
+            let vm = zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("a manifest")).expect("the manifest parses");
+            (vm, blobs)
+        };
+        let clip = |vm: &zhbo_native::viewmodel::Viewmodel, blobs: &BTreeMap<String, Vec<u8>>, slot: i32| -> Anim {
+            let blob = vm.clip(slot as u16).unwrap_or_else(|| panic!("no clip in slot {slot:#x}"));
+            Anim::from_bytes(blobs.get(blob).unwrap_or_else(|| panic!("{blob} is not in the conversion"))).expect(blob)
+        };
+        let track = |a: &Anim, bone: &str| -> Vec<(u16, [f32; 3])> {
+            a.bones.iter().find(|b| b.name == bone).and_then(|b| b.translation.clone()).unwrap_or_else(|| panic!("{}: no {bone} translation track", a.name))
+        };
+        let near = |a: [f32; 3], b: [f32; 3], what: &str| assert!((0..3).all(|k| (a[k] - b[k]).abs() <= 0.01), "{what}: {a:?}, BO2 authored {b:?}");
+        let bounds = |t: &[(u16, [f32; 3])]| {
+            t.iter().fold(([f32::MAX; 3], [f32::MIN; 3]), |(mut lo, mut hi), (_, p)| {
+                for k in 0..3 {
+                    lo[k] = lo[k].min(p[k]);
+                    hi[k] = hi[k].max(p[k]);
+                }
+                (lo, hi)
+            })
+        };
+        let anim_path = zhbo_native::anim_path;
+
+        // (a) The trophy's doors. `_idle` (the clip the harness renders) holds the deployed park
+        // constantly and `_fire` starts on the same park; `_hold_fire` — the clip the game plays
+        // while the trophy is held — flies the panels off through BO2's open numbers to that park.
+        let (trophy, tb) = load("trophy_system_mp");
+        assert_eq!(trophy.clip(slot::IDLE as u16), Some(anim_path("viewmodel_trophy_system_idle").as_str()), "the sweep's slot");
+        assert_eq!(trophy.clip(slot::HOLD_FIRE as u16), Some(anim_path("viewmodel_trophy_system_hold_fire").as_str()), "the game's held clip");
+        assert_eq!(trophy.clip(slot::FIRE as u16), Some(anim_path("viewmodel_trophy_system_fire").as_str()), "the game's throw clip");
+        let idle = clip(&trophy, &tb, slot::IDLE);
+        let fire = clip(&trophy, &tb, slot::FIRE);
+        for (bone, park) in [("tag_left_door", [25.11, -554.70, -547.91]), ("tag_right_door", [22.66, -530.85, -547.27])] {
+            for a in [&idle, &fire] {
+                let t = track(a, bone);
+                assert_eq!(t.len(), 1, "{}: {bone} is parked by one constant key", a.name);
+                near(t[0].1, park, &format!("{} {bone}", a.name));
+            }
+        }
+        let hold = clip(&trophy, &tb, slot::HOLD_FIRE);
+        for (bone, (lo, hi)) in [
+            ("tag_left_door", ([-58.38, -554.75, -547.99], [25.14, 0.0, 0.0])),
+            ("tag_right_door", ([-15.59, -530.90, -547.35], [22.69, 28.71, 0.0])),
+        ] {
+            let t = track(&hold, bone);
+            assert_eq!(t.len(), 24, "{}: {bone}'s authored deploy keys", hold.name);
+            near(t[0].1, [0.0; 3], &format!("{} {bone} first key: the bind pose, panels on", hold.name));
+            let (blo, bhi) = bounds(&t);
+            near(blo, lo, &format!("{} {bone} low", hold.name));
+            near(bhi, hi, &format!("{} {bone} high", hold.name));
+        }
+        assert!(
+            hold.notes.iter().any(|n| n.name == "sndnt#fly_falling_panels" && (n.time - 0.463).abs() < 5e-4),
+            "{}: the deploy's own notify says what the park is: {:?}",
+            hold.name,
+            hold.notes
+        );
+
+        // (b) The M84: idle parked, `_pullpin` (held) comes in near the palm then leaves, `_throw`
+        // (fire) carries it to ±200″ — it leaves the hand.
+        let (flash, fb) = load("flash_grenade_mp");
+        assert_eq!(flash.clip(slot::HOLD_FIRE as u16), Some(anim_path("viewmodel_m84_pullpin").as_str()), "the game's held clip");
+        assert_eq!(flash.clip(slot::FIRE as u16), Some(anim_path("viewmodel_m84_throw").as_str()), "the game's throw clip");
+        let m84_idle = clip(&flash, &fb, slot::IDLE);
+        let t = track(&m84_idle, "tag_clip");
+        assert_eq!(t.len(), 1, "{}: the idle parks `tag_clip`", m84_idle.name);
+        near(t[0].1, [-18.14, -24.69, 15.12], "m84 idle tag_clip");
+        let pull = clip(&flash, &fb, slot::HOLD_FIRE);
+        let t = track(&pull, "tag_clip");
+        assert_eq!(t.len(), 27, "{}: the authored pull-pin keys", pull.name);
+        near(t[0].1, [-4.54, 4.50, -1.86], "m84 pullpin tag_clip first key: near the palm");
+        let (lo, hi) = bounds(&t);
+        near(lo, [-18.14, -24.69, -1.86], "m84 pullpin tag_clip low");
+        near(hi, [2.49, 4.50, 15.12], "m84 pullpin tag_clip high");
+        let throw = clip(&flash, &fb, slot::FIRE);
+        let t = track(&throw, "tag_clip");
+        assert_eq!(t.len(), 22, "{}: the authored throw keys", throw.name);
+        near(t[0].1, [-12.78, -12.08, 9.66], "m84 throw tag_clip first key");
+        let (lo, hi) = bounds(&t);
+        near(lo, [-198.27, -171.94, -203.84], "m84 throw tag_clip low: the ±200″ park");
+        near(hi, [100.47, 73.31, 9.66], "m84 throw tag_clip high");
+
+        // (c) The slot assertions above are the point: what the game plays (`HOLD_FIRE`, `FIRE`)
+        // carries the tracks. Equipment also has no ADS pass to pose — the M84 carries no ADS clip
+        // at all and the trophy's are the empty torso-only ones — so the sweep's aimed half
+        // (`nativevm::place::aligned`) stages it with no equipment clip.
+        for ads in [zhbo_formats::weapon::anim::ADS_UP as u16, zhbo_formats::weapon::anim::ADS_DOWN as u16] {
+            assert_eq!(flash.clip(ads), None, "the M84 carries no ADS clip");
+            let ads_path = trophy.clip(ads).expect("the trophy's authored ADS clip");
+            let a = Anim::from_bytes(tb.get(ads_path).expect(ads_path)).expect(ads_path);
+            assert_eq!(a.bones.len(), 1, "{}: the ADS clip keys only the torso", a.name);
+            assert_eq!(a.bones[0].name, "tag_torso", "{}", a.name);
+        }
+
+        // (d) Playback composes `posed local = the model's stored local + the track`. The trophy's
+        // doors are where the two readings differ (their stored local is real, unlike the
+        // viewhands' zeros), so this is the body-rig proof's shape on converted equipment: at the
+        // deploy's end the door sits its stored local away from the authored park, and reading the
+        // track as absolute would move it (RESEARCH §2: `j_handle`/`j_sensor` collapse that way).
+        let skeleton = |vm: &zhbo_native::viewmodel::Viewmodel, blobs: &BTreeMap<String, Vec<u8>>| {
+            let models: Vec<zhbo_native::model::Model> = vm.parts.iter().map(|p| zhbo_native::model::Model::from_bytes(blobs.get(&p.model).unwrap_or_else(|| panic!("{}", p.model))).expect("a model")).collect();
+            let refs: Vec<zhbo_native::pose::PartRef> = vm.parts.iter().zip(&models).map(|(p, m)| zhbo_native::pose::PartRef { model: m, tag: p.tag.as_deref(), offset: p.offset, rigid: p.rigid }).collect();
+            let (skel, problems) = zhbo_native::pose::Skeleton::compose(&refs, &vm.markers, &vm.hide);
+            assert!(problems.is_empty(), "{problems:?}");
+            skel
+        };
+        let posed = |skel: &zhbo_native::pose::Skeleton, anim: &Anim, bone: &str| {
+            let i = skel.bone(bone).unwrap_or_else(|| panic!("{}: no {bone}", anim.name));
+            let mut local = Vec::new();
+            skel.sample(anim, anim.num_frames as f32, &mut local);
+            let end = anim.bones.iter().find(|b| b.name == bone).and_then(|b| b.translation_at(anim.num_frames as f32)).unwrap_or_else(|| panic!("{}: no {bone} track", anim.name));
+            (local[i].1, skel.bones[i].bind_local.1, end)
+        };
+        let ts = skeleton(&trophy, &tb);
+        for (bone, stored, park) in [
+            ("tag_left_door", [-0.03, -4.74, 5.27], [25.11, -554.70, -547.91]),
+            ("tag_right_door", [-0.03, 4.75, 5.27], [22.66, -530.85, -547.27]),
+        ] {
+            let (at_end, bind, end) = posed(&ts, &hold, bone);
+            near(bind, stored, &format!("{bone}: the model's stored local"));
+            near(end, park, &format!("{bone}: the deploy ends on the idle's park"));
+            near(at_end, [stored[0] + end[0], stored[1] + end[1], stored[2] + end[2]], &format!("{bone}: posed = stored + track at the deploy's end"));
+            assert!((0..3).any(|k| (at_end[k] - end[k]).abs() > 1.0), "{bone}: reading the track as absolute would differ ({at_end:?} vs {end:?})");
+        }
+        // The M84's `tag_clip` is its part's root with an identity attach offset, so here — as for
+        // the viewhands — the two readings coincide; the composed value is still stored + track.
+        let fs = skeleton(&flash, &fb);
+        let (at_end, bind, end) = posed(&fs, &throw, "tag_clip");
+        near(bind, [0.0; 3], "m84 tag_clip: the part root's attach offset");
+        near(at_end, [bind[0] + end[0], bind[1] + end[1], bind[2] + end[2]], "m84 tag_clip: posed = stored + track at the throw's end");
+    }
+
     #[test]
     #[ignore = "probe: the flagged defects"]
     fn probe_defects() {
