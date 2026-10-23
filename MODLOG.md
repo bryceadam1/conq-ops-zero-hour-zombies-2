@@ -2915,6 +2915,30 @@ Verified: cargo test --workspace green; the full real-install suite green; clipp
 --workspace --all-targets clean; `cargo xtask build` clean; autotest 13/13 default,
 `--classpick` all checks, 14/14 `--rts`.
 
+## The AS50 placement is BO2-parity, proven with numbers (2026-10-23)
+
+The `as50-placement` cycle's verdict: **the AS50's big, forward pose is BO2's own data; nothing
+is wrong.** The read-only probe (raw fields from the install's `common_mp.ff`, plus converted
+bboxes) against the sibling snipers:
+
+- `stand_move` is IDENTICAL to the DSR50's (`[-0.4, 0, 0]`) — the "offset too close/high"
+  suspicion in the sweep's FLAGS.md §3.3 is false for the field.
+- The AS50's MESH is the outlier, authored: it starts ~5.94″ closer to the camera
+  (`mins[0] = -8.04` vs DSR50's `-13.98`) and extends ~9.49″ further forward
+  (`maxs[0] = 42.62` vs `33.13`).
+- `stand_min_speed = 0` (DSR50/Ballista: 80; SVU also 0) — BO2's value, keeping the stand
+  offset applied at all speeds.
+- The aim marker sits at the MUZZLE (`[42.345, 0, 3.163]` from `j_gun` vs DSR50's
+  `[-0.811, 0, 3.668]`) — BO2's value, so the R6 `place::aligned` slide pulls the AS50 back
+  ~42″ into ADS. Large, but data-correct.
+- Raw and converted values match exactly; the schema round-trip covers them.
+
+The "base-pose caveat" (the AS50 rows were "conditional until the base pose is confirmed")
+lifts to: data-proven parity; the remaining check is the human eyeball in game (does the big
+forward pose + the 42″ ADS slide READ right), a playtest item, not a bug. The AS50 trio's
+attachment rows in the invisible-attachments cycle are no longer conditional on the base pose.
+Cycle artifacts: `~/.opencode/plan/as50-placement/`.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
