@@ -89,14 +89,14 @@ struct Fixture {
 fn fixture() -> Fixture {
     let arms = model("arms", vec![bone("j_root", None, [0.0; 3]), bone("tag_weapon", Some(0), [20.0, 0.0, -5.0])]);
     let gun = model("gun", vec![bone("tag_weapon", None, [0.0; 3]), bone("j_gun", Some(0), [3.0, 0.0, 0.0])]);
-    let clip = |name: &str, z: f32| Anim {
+    let clip = |name: &str, bone: &str, z: f32| Anim {
         name: name.into(),
         num_frames: 10,
         frame_rate: 10.0,
         looping: false,
         delta: false,
         asset_type: 0,
-        bones: vec![BoneTrack { name: "tag_weapon".into(), rotation: None, translation: Some(vec![(0, [0.0, 0.0, z]), (10, [0.0, 0.0, z])]) }],
+        bones: vec![BoneTrack { name: bone.into(), rotation: None, translation: Some(vec![(0, [0.0, 0.0, z]), (10, [0.0, 0.0, z])]) }],
         notes: vec![],
     };
     let manifest = Viewmodel {
@@ -108,15 +108,22 @@ fn fixture() -> Fixture {
         ],
         markers: vec![Marker { name: AIM_TAG.into(), parent: "tag_weapon".into(), local: (QUAT_IDENTITY, [0.0, 2.0, 4.0]) }],
         hide: vec![],
-        clips: vec![(1, zhbo_native::anim_path("idle")), (0x10, zhbo_native::anim_path("reload"))],
+        clips: vec![
+            (1, zhbo_native::anim_path("idle")),
+            (0x10, zhbo_native::anim_path("reload")),
+            (0x101, zhbo_native::anim_path("left_idle")),
+            (0x110, zhbo_native::anim_path("left_reload")),
+        ],
     };
     Fixture {
         files: vec![
             (zhbo_native::viewmodel_path(7, 'U'), manifest.to_bytes()),
             (zhbo_native::model_path("arms"), arms.to_bytes()),
             (zhbo_native::model_path("gun"), gun.to_bytes()),
-            (zhbo_native::anim_path("idle"), clip("idle", 1.0).to_bytes()),
-            (zhbo_native::anim_path("reload"), clip("reload", -3.0).to_bytes()),
+            (zhbo_native::anim_path("idle"), clip("idle", "tag_weapon", 1.0).to_bytes()),
+            (zhbo_native::anim_path("reload"), clip("reload", "tag_weapon", -3.0).to_bytes()),
+            (zhbo_native::anim_path("left_idle"), clip("left_idle", "j_gun", 2.0).to_bytes()),
+            (zhbo_native::anim_path("left_reload"), clip("left_reload", "j_gun", -4.0).to_bytes()),
         ],
     }
 }
@@ -151,8 +158,9 @@ fn loads_through_requests_then_poses_and_aims() {
         assert_eq!(s.frame(&input(1, 0.0), true), LOADING, "asks for the models");
         assert_eq!(answer(s, &f), 2);
         s.frame(&input(1, 0.0), true);
-        // The idle clip and the colour map were requested; the texture is absent (draws white).
-        assert_eq!(answer(s, &f), 1 + cfg!(feature = "renderer") as usize);
+        // The idle clip, the dual-wield left idle (the fixture's manifest has the instance-bit
+        // entry) and the colour map were requested; the texture is absent (draws white).
+        assert_eq!(answer(s, &f), 2 + cfg!(feature = "renderer") as usize);
         s.frame(&input(1, 0.0), true);
         let loaded = s.loaded.as_ref().expect("composed");
         assert_eq!(loaded.skeleton.bones.len(), 5);
@@ -229,6 +237,46 @@ fn falls_back_to_the_idle_and_plays_at_the_rate() {
         let mut req = ffi::request(&input(0x10, 0.0));
         req.rate = 0.0;
         assert!(req.rate == 0.0 && ffi::request(&ZhboNativeIn { rate: f32::NAN, ..input(1, 0.0) }).rate == 1.0);
+    });
+}
+
+/// The clip table routes the left gun's clips by the instance bit (`INSTANCE_LEFT`): the plain id
+/// finds the base's clip, the id with the bit finds the left's, and a slot the left gun lacks falls
+/// back to the left's idle (the bit kept in the fallback, not the base's idle).
+#[test]
+fn routes_the_left_guns_clips_by_the_instance_bit() {
+    let f = fixture();
+    with_state(|s| {
+        *s = ffi::State::default();
+        for _ in 0..6 {
+            s.frame(&input(0x10, 0.0), true);
+            answer(s, &f);
+        }
+        let l = s.loaded.as_ref().unwrap();
+        assert_eq!(l.clip_path(0x10).unwrap(), zhbo_native::anim_path("reload"), "the base's clip");
+        assert_eq!(l.clip_path(0x110).unwrap(), zhbo_native::anim_path("left_reload"), "the left's clip");
+        assert_eq!(l.clip_path(0x117).unwrap(), zhbo_native::anim_path("left_idle"), "the left's fallback keeps the bit");
+        assert_eq!(l.clip_path(0x17).unwrap(), zhbo_native::anim_path("idle"), "the base's fallback");
+    });
+}
+
+/// The requested (base) clip and the left instance's clip are both sampled: the base idle drives
+/// `tag_weapon`, the left idle drives the `_lh` gun's `j_gun`, and the overlay leaves the base
+/// clip's track intact. Without the overlay the left gun stays at the base clip's/bind pose.
+#[test]
+fn the_left_clip_overlays_the_base_pose() {
+    let f = fixture();
+    with_state(|s| {
+        *s = ffi::State::default();
+        for _ in 0..6 {
+            s.frame(&input(1, 0.0), true);
+            answer(s, &f);
+        }
+        let l = s.loaded.as_ref().unwrap();
+        let gun = l.skeleton.bone("j_gun").unwrap();
+        assert_eq!(s.posed.local[gun].1, [3.0, 0.0, 2.0], "the left clip's j_gun translation is applied");
+        let mount = l.skeleton.bone("tag_weapon").unwrap();
+        assert_eq!(s.posed.local[mount].1, [20.0, 0.0, -4.0], "the base clip's tag_weapon translation");
     });
 }
 

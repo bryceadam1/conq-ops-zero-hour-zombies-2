@@ -2939,6 +2939,35 @@ forward pose + the 42″ ADS slide READ right), a playtest item, not a bug. The 
 attachment rows in the invisible-attachments cycle are no longer conditional on the base pose.
 Cycle artifacts: `~/.opencode/plan/as50-placement/`.
 
+## Integrating dual wield: the left gun composes, animates, and mounts on `tag_weapon1` (2026-10-23)
+
+Merged `v1/dual-wield` (3 commits). BO2 composes dual wield at runtime from the base
+`t6_wpn_pistol_<x>_view` and a left companion `t6_wpn_pistol_<x>_view_lh` (suffixed bones); no
+monolithic `*_dw_view` exists. The converter's cascading detection (`_dw` suffix → `DWLEFTHAND`
+inventory → `au_<weapon>_dw` attachment) loads the `_lh` model; the manifest records both
+instances' clip tables (the `INSTANCE_LEFT = 0x100` clip-id bit; the blob VERSION stays 1).
+Archive VERSION 58 → 59 (the DW composites add the second rig's blobs).
+
+Two defects were caught by the integrator's GPU sweep and fixed in the branch: (1) **the left
+instance was never animated** — only the base clip was sampled, so the left gun sat at the bind
+pose; `nativevm::Loaded::pose` now overlays the left clip via `Skeleton::sample_over`, with the
+`the_left_clip_overlays_the_base_pose` test. (2) **the mount was wrong** — the GPU A/B proved
+`tag_knife_attach` is the equipment palm (barrel up/back) and `j_wrist_le` sits behind the hand;
+the viewhands' **`tag_weapon1`** is the mount the `viewmodel_fnp45_dw_left_idle` clip animates
+to the left gun's authored pose (track `[19.48, 5.90, -1.92]`, near-identity rotation), with
+`the_dual_wield_mount_is_the_clips_left_weapon_mount` pinning it and `ZHBO_DW_MOUNT` as the dev
+override. The final sweep: both pistols visible in BO2's DW pose, no degenerate spike.
+`fiveseven_dw`'s left clip isn't in the searched zones (composition covered by the test).
+Recorded follow-ups: a thin dark artifact at a fixed screen position in the pulled-back view
+across three `_lh` models AND the base viewmodel's aimed half — an arms/nativevm artifact
+exposed by the DW clips, outside the composition, to re-check on the rebuilt archive; the
+third-person `_world_lh` path stays out of scope (its own cycle).
+
+Verified: cargo test --workspace green; the full real-install suite green (incl.
+`the_dual_wield_composite_loads_both_guns` over all five); clippy --workspace --all-targets
+clean; `cargo xtask build` clean; autotest 13/13 default, `--classpick` all checks, 14/14
+`--rts`.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
@@ -2996,3 +3025,82 @@ the real-install suite green (`ZHBO_BO2_DIR=~/Games/BlackOps2 cargo test -q --re
 zhbo-assets -p zhbo-formats -- --ignored`: 19 + 9 passed); the c1 diagnostic test prints the
 convention table. No VERSION/ABI bump (the c2 fix changes only the chosen tag; the manifest
 schema is unchanged).
+
+## Dual-wield viewmodels: the left gun as a second rig on the left palm (2026-10-23, branch `v1/dual-wield`)
+
+BO2 ships dual-wield pistols as two single-gun viewmodels — the base `t6_wpn_pistol_<x>_view` and a
+bone-suffixed `_lh` duplicate — not as one composite model. The converter now detects the pair
+(the weapon id's `_dw` suffix, the `DWLEFTHAND` inventory, or the base pistol plus the
+`au_<weapon>_dw` attachment), loads the `_lh` companion, and composes it as a second rig on the
+left palm. The five DW pistols (`fnp45_dw_mp`, `fiveseven_dw_mp`, `kard_dw_mp`, `judge_dw_mp`,
+`beretta93r_dw_mp`) each gain the left gun's bones, vertices and surfaces over the base composite;
+the ignored `the_dual_wield_composite_loads_both_guns` test proves it from the real install.
+
+**Mount A/B.** The candidates were `tag_knife_attach` (the equipment-offhand default, parented to
+`j_wrist_le`) and the fallback `j_wrist_le`. The `zhbo-assets pose` renders of the `_lh` guns on
+the USA viewhands (`c_usa_mp_seal6_longsleeve_viewhands`) put the gun at the left palm for
+`tag_knife_attach`; its bind position (`[16.49, 6.45, -14.09]`) is the palm, 2.7″ from the wrist
+joint (`[13.79, 8.04, -13.77]`). The verdict is `tag_knife_attach`; the fallback stays available
+via `ZHBO_DW_MOUNT=j_wrist_le` for a future comparison. Renders: `/tmp/dw_knife.png` (default),
+`/tmp/dw_wrist.png` (fallback), `/tmp/dw_kard.png`, `/tmp/dw_judge.png`; the 640×360 hip slot's
+left-palm region is x ≈ 180–360 px, y ≈ 220–340 px. The `pose` CLI's CPU rasterizer was used
+because the GPU `render_viewmodels` example needs the converted archive, which this workstation
+does not have; the integrator should fill the full-sweep rows on a machine with the archive.
+
+**Clip routing.** The left gun's clips are keyed by the matching right slot with the
+`INSTANCE_LEFT` (`0x100`) bit in the manifest's flat clip table. `nativevm::Loaded::clip_path`
+masks the bit off for the lookup and reapplies it to the fallback, so a left clip falls back to the
+left idle, not the base idle. The base W3D path's clip list stays unchanged; the left gun's clips
+are native-only. The clip-routing unit test in `zhbo-core/src/nativevm/tests.rs` proves the base
+and left clips resolve independently.
+
+**Classpick.** The autotest's `--classpick` seed keeps its MP7 primary: changing it would break the
+`MP7 <n>\|` kit assertion. The manual-capture procedure is in `docs/TESTING.md`; the seeded
+profile's `secondary=` can be swapped to a DW pistol in a local run without touching the script.
+
+Verified: `cargo test --workspace` green; the real-install suite green (`ZHBO_BO2_DIR=… cargo test
+-q --release -p zhbo-assets -p zhbo-formats -- --ignored`: 20 + 9 passed); `cargo clippy
+--workspace` clean in the touched files (pre-existing warnings elsewhere). No VERSION/ABI bump:
+the serialized manifest's `Part`/`Viewmodel` structs are unchanged; the clip id's high bit is
+reused and the blob `VERSION` stays 1. The converter's input `native::Viewmodel` gains an optional
+`dual` field; the integrator should decide whether that warrants a bump when merging.
+
+## Dual-wield integration fix: the left clip overlay and the `tag_weapon1` mount (2026-10-23, `v1/dual-wield`)
+
+The integrator's GPU sweep with the rebuilt archive showed two defects the CPU A/B missed. **First,
+the left gun was absent from the normal hip frame.** The base/right clip never tracks the left arm
+or the `_lh` gun, so the native composite posed the left instance at the base clip's bind; the
+`clip_path` routing table was correct but nothing ever requested or sampled the left clip. **Second,
+the `tag_knife_attach` mount rotated the gun up/back** (a thin dark spike in the 12″-pulled-back
+view; the grip was at the left edge, the barrel off-frame).
+
+**Fix — sample both clips.** `nativevm::Loaded::pose` now takes the base and left anims, samples the
+base, then overlays the left with the new `Skeleton::sample_over` (`crates/zhbo-native/src/pose.rs`):
+the left clip's tracks (left arm, `tag_knife_attach`/`tag_weapon1`, the `_lh` gun) replace the base
+clip's for those bones, while the right arm and base gun keep the base clip. `ffi::frame` loads
+`clip_path(clip)` and `clip_path(clip | INSTANCE_LEFT)` (skipping the duplicate for shared clips).
+New test `the_left_clip_overlays_the_base_pose`; the load-count test expects the extra left clip.
+
+**Fix — mount `tag_weapon1`.** The plan's A/B candidates were `tag_knife_attach`, `j_wrist_le` and
+`tag_weapon1`. The GPU A/B renders: `tag_knife_attach` points the gun up/back (the equipment palm's
+rotation, not a gun mount); `j_wrist_le` points it forward but sits behind the hand; `tag_weapon1`
+is the viewhands' second weapon mount and the dual-wield left clip animates it to the left gun's
+authored pose (`viewmodel_fnp45_dw_left_idle`'s `tag_weapon1` track, `[19.48, 5.90, -1.92]`, rotation
+near identity). The default `DW_MOUNT` is now `tag_weapon1`, with the `ZHBO_DW_MOUNT` dev override
+kept for future A/B. New test `the_dual_wield_mount_is_the_clips_left_weapon_mount`.
+
+**Acceptance evidence.** The normal 640×360 hip frames for all five DW pistols with the overlay and
+`tag_weapon1` show the left gun in the left side of the frame (fnp45/judge/kard inspected; fiveseven
+and beretta rendered too): `/tmp/dw-final/<weapon>/base.png`. The normal frame is clean. The
+12″-pulled-back fnp45 hip frame still shows a thin dark artifact at the right edge of the hip half;
+hiding the dual gun's `tag_clip1` magazine or the viewhands' `tag_knife_attach` knife does **not**
+remove it, and the base viewmodel's pulled-back aimed half shows the same class of artifact, so it
+is a pre-existing nativevm/arms artifact outside this change set, not the dual gun's skin data
+(the real-install probe showed the `_lh` model's vertices use bones 0–4 of its six-bone table, and
+the per-part max indices stay inside each part). The acceptance hip frame is clean; the integrator
+should re-check the pulled-back view against the base on the rebuilt archive.
+
+Verified: `cargo test --workspace` green (52 `zhbo-assets`, 364 `zhbo-core`, 21 `zhbo-native`);
+the real-install suite green (`ZHBO_BO2_DIR=… cargo test -q --release -p zhbo-assets
+-p zhbo-formats -- --ignored`: 20 + 9 passed); clippy clean in the touched files (the remaining
+warnings are pre-existing in untouched modules). No VERSION/ABI bump.

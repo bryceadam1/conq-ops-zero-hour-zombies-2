@@ -142,6 +142,25 @@ impl Skeleton {
         }
     }
 
+    /// Apply `anim`'s tracks on top of an existing local pose, without clearing it. A dual-wield
+    /// pair samples the base (right) clip first, then overlays the left clip: the tracks name
+    /// disjoint bones (the right arm and gun vs the left arm, `tag_weapon1` and the `_lh` gun),
+    /// so the overlay composes the two halves. Bones the clip does not track keep the pose
+    /// the base clip left them in.
+    pub fn sample_over(&self, anim: &Anim, frame: f32, out: &mut [Xf]) {
+        for (i, b) in self.bones.iter().enumerate() {
+            let Some(local) = out.get_mut(i) else { continue };
+            if let Some(t) = anim.bones.iter().find(|t| b.animated && t.name == b.name) {
+                if let Some(q) = t.rotation_at(frame) {
+                    local.0 = q;
+                }
+                if let Some(p) = t.translation_at(frame) {
+                    local.1 = [b.anim_base[0] + p[0], b.anim_base[1] + p[1], b.anim_base[2] + p[2]];
+                }
+            }
+        }
+    }
+
     /// Model-space transforms of a local pose (parents precede children).
     pub fn model_space(&self, local: &[Xf], out: &mut Vec<Xf>) {
         out.clear();

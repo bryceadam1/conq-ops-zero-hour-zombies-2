@@ -125,12 +125,25 @@ impl State {
         }
         let req = request(inp);
         let path = self.loaded.as_ref().and_then(|l| l.clip_path(req.clip)).map(str::to_string);
+        // A dual-wield pair's left half carries its own clip (`_left_*`) under the instance bit.
+        // It is a separate animation over the same composite: the base clip never tracks the
+        // left arm or the `_lh` gun, so without this the left gun stays at its bind pose.
+        let left_path = self
+            .loaded
+            .as_ref()
+            .and_then(|l| l.clip_path(req.clip | zhbo_native::viewmodel::INSTANCE_LEFT as i32))
+            .map(str::to_string)
+            .filter(|p| Some(p.as_str()) != path.as_deref());
         if let Some(p) = &path {
+            self.anim(p);
+        }
+        if let Some(p) = &left_path {
             self.anim(p);
         }
         let Some(loaded) = self.loaded.as_ref() else { return NOT_NATIVE };
         let anim = path.as_deref().and_then(|p| loaded.anims.get(p));
-        loaded.pose(&req, anim, &mut self.posed);
+        let left = left_path.as_deref().and_then(|p| loaded.anims.get(p));
+        loaded.pose(&req, anim, left, &mut self.posed);
         #[cfg(feature = "renderer")]
         {
             super::gpu::draw(self, inp)

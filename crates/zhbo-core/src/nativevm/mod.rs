@@ -302,25 +302,37 @@ pub struct Posed {
 
 impl Loaded {
     /// The clip to show for `clip`: its own, else the idle of its mode, else the idle (the W3D
-    /// path's fallback, `ZhboViewmodel.cpp`).
+    /// path's fallback, `ZhboViewmodel.cpp`). A dual-wield clip's id carries `INSTANCE_LEFT` in its
+    /// high byte; the fallbacks keep that bit so the left gun falls back to its own idle.
     pub fn clip_path(&self, clip: i32) -> Option<&str> {
+        use zhbo_native::viewmodel::INSTANCE_LEFT;
         let alt = crate::weapons::ALT_CLIPS;
-        let mode_idle = if clip >= alt { alt + crate::viewmodel::slot::IDLE } else { crate::viewmodel::slot::IDLE };
-        [clip, mode_idle, crate::viewmodel::slot::IDLE].into_iter().find_map(|c| u16::try_from(c).ok().and_then(|c| self.manifest.clip(c)))
+        let instance = (clip as u16) & INSTANCE_LEFT;
+        let base = (clip as u16) & !INSTANCE_LEFT;
+        let mode_idle = if i32::from(base) >= alt { alt as u16 + crate::viewmodel::slot::IDLE as u16 } else { crate::viewmodel::slot::IDLE as u16 };
+        [base, mode_idle, crate::viewmodel::slot::IDLE as u16].into_iter().find_map(|c| self.manifest.clip(c | instance))
     }
 
-    /// Pose for `req`: the clip (if loaded) at its frame, then placement. `anim` is the clip.
-    pub fn pose(&self, req: &Request, anim: Option<&Anim>, out: &mut Posed) {
+    /// Pose for `req`: the clip (if loaded) at its frame, then placement. `anim` is the base
+    /// (right) clip; `left` is the dual-wield left instance's clip, sampled over it so the left
+    /// arm, `tag_weapon1` and the `_lh` gun are driven by the `_left_*` set instead of the
+    /// base clip (which never tracks them) leaving them at bind.
+    pub fn pose(&self, req: &Request, anim: Option<&Anim>, left: Option<&Anim>, out: &mut Posed) {
+        let looping = crate::viewmodel::slot::loops(req.clip);
+        let time = req.time * req.rate.max(0.0);
         match anim {
             Some(a) => {
-                let looping = crate::viewmodel::slot::loops(req.clip);
-                let frame = a.frame_at(req.time * req.rate.max(0.0), looping);
+                let frame = a.frame_at(time, looping);
                 self.skeleton.sample(a, frame, &mut out.local);
             }
             None => {
                 out.local.clear();
                 out.local.extend(self.skeleton.bind_pose());
             }
+        }
+        if let Some(l) = left {
+            let frame = l.frame_at(time, looping);
+            self.skeleton.sample_over(l, frame, &mut out.local);
         }
         self.skeleton.model_space(&out.local, &mut out.model);
         out.root = self.placement(req, &out.model);

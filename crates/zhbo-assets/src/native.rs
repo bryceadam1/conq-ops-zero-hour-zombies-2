@@ -178,6 +178,17 @@ pub(crate) struct Viewmodel<'a> {
     pub clips: &'a [(u16, String)],
     /// The base magazine's authored `attachViewModelOffset`, in inches.
     pub mag_offset: Option<[f32; 3]>,
+    /// The left gun of a dual-wield pair: the `_lh` model as a second rig on the left palm.
+    pub dual: Option<DualGun<'a>>,
+}
+
+/// The left-hand companion of a dual-wield pair: its own model (bones suffixed `1`) and mount.
+pub(crate) struct DualGun<'a> {
+    pub gun: &'a nm::Model,
+    /// The viewhands bone it hangs from (the plan's default `tag_knife_attach`).
+    pub tag: &'a str,
+    /// The `_lh` weapon's hide tags (its bones carry the `1` suffix).
+    pub hide: &'a [String],
 }
 
 /// Find the base gun's bone whose bind position (model space, inches) is nearest the attachment's
@@ -221,6 +232,7 @@ pub(crate) fn viewmodels(
     let gun_path = put_model(out, gun);
     let mag_path = mag.map(|m| put_model(out, m));
     let extra_paths: Vec<String> = extra.iter().map(|m| put_model(out, m)).collect();
+    let dual_path = v.dual.as_ref().map(|d| put_model(out, d.gun));
     for (letter, arms) in factions {
         let arms_path = put_model(out, arms);
         // (model, tag, offset, rigid, path) in composition order.
@@ -244,14 +256,25 @@ pub(crate) fn viewmodels(
             }
             parts.push((model, Some(tag), *offset, false, path.clone()));
         }
+        // The left gun is a second rig on the left palm, not a merge into the base hierarchy: its
+        // `1`-suffixed bones append after every base part and hang from the mount tag.
+        if let (Some(dual), Some(path)) = (&v.dual, &dual_path) {
+            parts.push((dual.gun, Some(dual.tag.to_string()), IDENTITY, false, path.clone()));
+        }
         let skel = skeleton(&parts.iter().map(|p| (p.0, p.1.as_deref(), p.2, p.3)).collect::<Vec<_>>());
         let markers = aim_marker(&skel, v.gun, optic).into_iter().collect();
+        let mut hide = v.hide.to_vec();
+        if let Some(dual) = &v.dual {
+            hide.extend(dual.hide.iter().cloned());
+        }
+        hide.sort();
+        hide.dedup();
         let manifest = Manifest {
             id: v.id.to_string(),
             faction: *letter as u8,
             parts: parts.iter().map(|p| Part { model: p.4.clone(), tag: p.1.clone(), offset: p.2, rigid: p.3 }).collect(),
             markers,
-            hide: v.hide.to_vec(),
+            hide,
             clips: v.clips.to_vec(),
         };
         out.insert(zhbo_native::viewmodel_path(v.vm, *letter), manifest.to_bytes());

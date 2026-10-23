@@ -14,6 +14,12 @@ use crate::math::Xf;
 pub const MAGIC: [u8; 4] = *b"ZBV\0";
 pub const VERSION: u32 = 1;
 
+/// The left instance's bit in a clip id's high byte, for a dual-wield pair's split clips. The base
+/// (right) instance keeps the plain id; the core's request for a left-gun clip sets this bit
+/// (`id | INSTANCE_LEFT`), and the manifest's flat clip table carries both entries. BO2's own slot
+/// table tops out at 0x58 + ALT_CLIPS (0x58), well below 0x100, so the bit is free.
+pub const INSTANCE_LEFT: u16 = 0x100;
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct Part {
     /// The model blob's archive path ([`crate::model_path`]).
