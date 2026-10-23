@@ -3104,3 +3104,107 @@ Verified: `cargo test --workspace` green (52 `zhbo-assets`, 364 `zhbo-core`, 21 
 the real-install suite green (`ZHBO_BO2_DIR=… cargo test -q --release -p zhbo-assets
 -p zhbo-formats -- --ignored`: 20 + 9 passed); clippy clean in the touched files (the remaining
 warnings are pre-existing in untouched modules). No VERSION/ABI bump.
+
+## Base parts and scope replacement: the base-attachment channel (2026-10-23, `v1/base-parts-scope`)
+
+The sniper scopes were missing from every converted viewmodel. BO2 composes the AS50 — and the
+Ballista, DSR50, SVU and M32 — from the gun body **plus** a second `attachViewModel` part. The
+converter read that array only to find the magazine (`viewmodels.rs` `find("attach_mag")`), so
+the scope model was never loaded, textured, attached or drawn: the AS50's 744 px ADS "hole" was
+the empty scope mount, not an aperture. Adding any optic attachment collapsed it (0–12 px), which
+is the A/B proof.
+
+**Two channels, BO2's own two flags.** `AttachmentUnique` now parses
+`disableBaseWeaponAttachment`, `overrideBaseWeaponAttachmentOffsets` and
+`viewModelOffsetBaseAttachment` (flags used; offsets parsed now, **not applied** — see the
+deferrals). `Combo::no_base_attachment` is computed over both selection paths (the single
+uniques and the exact multi-attachment unique), read **only** from the flag — never from a
+name and never from `hide_tags`:
+
+| Channel | Members | Suppressed by |
+|---|---|---|
+| magazine | the `attach_mag` entry (`no_clip` already governed it) | `disableBaseWeaponClip` |
+| attachment art | every other non-empty `attachViewModel` entry | `disableBaseWeaponAttachment` |
+
+The exhaustive sweep gave exactly four weapons a setter: the AS50/DSR50/SVU/Ballista ACOGs and
+`au_ballista_is`. All five have `disableBaseWeaponClip=0` (the ACOG keeps the magazine) and every
+dualclip sets the clip flag with the attachment flag 0 — the two flags select disjoint sets.
+`au_ballista_is` has no view model at all, so suppression must fire with no replacement geometry:
+the scope simply comes off. IR/VZOOM uniques leave the flag 0 and stack on the scope, so optic-
+point matching would have been wrong.
+
+**Which base parts are separate art.** The non-magazine parts are not baked into the gun: each
+has its own `tag_scope` and its own lens/body materials, and none is fully inside the gun's
+bounding box (the magazine is 96–100 % inside and still drawn, so "inside the bbox" cannot mean
+"baked" — the rule is a sanity check on this channel only):
+
+| weapon | non-mag part | authored offset (in) | part bbox in the gun frame | inside gun bbox |
+|---|---|---|---|---|
+| as50_mp | `t6_wpn_sniper_xpr50_scope_view` | [4.456, 0, 4.253] | [-1.24,-1.77,3.93]..[12.20,1.71,7.40] | 10 % |
+| dsr50_mp | `t6_wpn_sniper_dsr50_scope_view` | [-5.701, 0, 4.843] | [-4.90,-1.66,3.04]..[8.89,1.64,6.51] | 56 % |
+| svu_mp | `t6_wpn_sniper_svu_scope_view` | [4.253, -0.033, 6.839] | [-2.22,-1.07,4.18]..[10.05,1.08,6.93] | 6 % |
+| ballista_mp | `t6_wpn_sniper_ballista_scope_view` | [5.312, 0, 4.737] | [-0.83,-1.71,3.10]..[13.55,1.64,6.76] | 38 % |
+| m32_mp ×3 ids | `t6_attach_optic_m32_view` | tag `j_reload`, [5.191, 0, 1.563] | [4.80,-0.80,4.80]..[8.54,0.70,6.84] | 18 % |
+
+**The implementation.** `weapon_viewmodels` builds a `BasePart { model, tag, offset, magazine,
+optic }` list from the raw `attach_view_models`/`attach_view_offsets` pairs (not
+`base_view_parts`, which loses the offsets). The magazine keeps its exact old semantics (first
+`attach_mag` entry, its authored offset, the `magazine()` name search only as the fallback, gated
+by `is_gun`/`no_clip`). Every other non-empty entry loads when `!no_base_attachment`, at the gun
+root (`j_gun`) with its authored offset; the empty authored tag is `j_gun`. `optic` is the model
+having a `tag_scope`/`tag_sights` bone, not its name. The W3D meshes use the free `B{k}` prefix
+(the magazine keeps `M` and its rigid `N` copy on `tag_clip1`). The conversion report now appends
+`, N base parts (names)` so a dropped part is visible in the launcher log — it was silent before
+precisely because the scope was never loaded.
+
+**Native plumbing.** `native::Viewmodel` carries `base_parts: Vec<BasePart>` in place of
+`mag_offset`; the parts are pushed after the gun and before the attachments, so
+`aim_marker`'s `parts[1]` is still the gun and an attachment optic still overrides a base optic.
+`aim_marker` takes the optic's part index + mins/maxs instead of an `xmodel::Model`. The base
+optic drives `tag_sights` (`OPTIC_WINDOW` up its glass): the marker is created when the gun has
+none and moved when the gun already carries one. That changes the four snipers' ADS eye from the
+bare gun's top-front to the scope window — the intended fix, and the reason the ADS A/B below
+matters.
+
+**M32 dedupe.** The M32 lists `_view` (hip) and `_ads` (aim) at the same offset: complete
+alternatives with identical lens/reticle materials and bboxes within 0.12 in. Loading both would
+draw the glass twice and there is no ADS-state swap in our manifest, so `same_sight` skips a later
+part with the same non-empty surface-material set and bbox IoU ≥ 0.9. The first entry (the hip
+sight) wins. The `_ads` swap is deferred, not a bug to rediscover.
+
+**Sweep (§4.2).** Part counts moved on exactly the five weapons and nowhere else (475-row
+manifest diff): as50 3→4, svu 3→4, dsr50 3→4, ballista 3→4, m32 2→3; every combination follows
+(+1, except the ACOG/`is` combos, which stay level because the base scope is suppressed). The
+AS50's ADS hole collapses from the baseline's 744 (749 by the locally reimplemented heuristic) to
+**0**; svu 21→7; m32's 1→7 is the sight's own aperture (a see-through ring, visible in the
+render), not an enclosed background region. The ACOG render is 4 parts with no `xpr50_scope_view`
+and the Ballista's `is` is 3 parts with no `ballista_scope_view`.
+
+**ADS usability A/B: FAIL.** The AS50's `base.png` aimed half now shows the scope's eyepiece
+filling the centre of the frame; the world is visible only above the tube, not through the glass.
+The physical scope is on the aim axis and blocks the centre at full ADS without BO2's full-screen
+`scope_overlay_*` mask (unparsed). The part-count goal is met; the ADS goal is **not**. Do not
+hack the lens or hide the base optic by name — the fix is the overlay feature cycle, as §3.6
+says. The integrator's manual in-game AS50 capture should settle the eye position in a real
+match (the harness camera is fixed).
+
+**Three deferrals (carried from §7).** (1) `overrideBaseWeaponAttachmentOffsets` and
+`viewModelAdditional` parse but are not applied: the IR override frame is not established from
+data (the AS50 IR optic sits at x≈1 while the overridden base scope sits at x≈9.9) and every
+acceptance combo has `overrideOff=0`; the IR combos stay "partial". (2) The pistol dualclips set
+neither flag and have no separate base clip part, so their fast-mag sleeve is an additive overlay
+on the baked magazine — no suppression, no new part; the offset-frame defect is the c1 cycle.
+(3) The M32 `_ads` sight swap and the ADS overlay are future cycles.
+
+**Pre-existing, not this change:** the macOS sweep refuses 101 of 475 jobs because a freshly
+converted model can contain a zero-index surface (`zhbo-gfx`'s "surface 5 indices N..N") — it
+reproduces on unmodified HEAD for ballista, dsr50 and many attachment models, and predates this
+cycle. Those rows still report the composed bone/vertex/surface counts, and the part deltas are
++1 exactly where the table says. The ballista/dsr50 ADS hole rows could not be measured on this
+workstation; the Windows VM sweep should fill them.
+
+Verified: `cargo test --workspace` green; `ZHBO_BO2_DIR=… cargo test -q --release -p zhbo-assets
+-p zhbo-formats -- --ignored` green (24 + 9: the new base-part tests, equipment, dual wield,
+MP7); `cargo clippy --workspace --all-targets` clean in the touched files (the remaining warnings
+are pre-existing). No `hud::VERSION` or ABI bump: `Part` is unchanged, the manifest gains only
+more entries, and the integrator bumps `zhbo_assets::hud::VERSION` 59→60 when merging.
