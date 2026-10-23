@@ -115,10 +115,12 @@ pub(crate) fn mount_tag(w: &zhbo_formats::weapon::Weapon) -> &'static str {
     if w.inventory == inventory::OFFHAND || w.inventory == inventory::ITEM { "tag_knife_attach" } else { "tag_weapon" }
 }
 
-/// The left gun of a dual-wield pair hangs from the left palm's dedicated equipment mount. The A/B
-/// sweep can override it with `ZHBO_DW_MOUNT` (a dev-only knob, like `ZHBO_SWEEP_*`); the plan's
-/// default is `tag_knife_attach`, the fallback `j_wrist_le`.
-pub(crate) const DW_MOUNT: &str = "tag_knife_attach";
+/// The left gun of a dual-wield pair hangs from `tag_weapon1`, the viewhands' second weapon mount
+/// that the dual-wield left clip animates to the left gun's authored pose. The A/B sweep showed the
+/// equipment mount (`tag_knife_attach`) rotated the gun off the view and the wrist (`j_wrist_le`)
+/// left it behind the hand; `tag_weapon1` is the clip's own mount and keeps the barrel on the view.
+/// The sweep can override it with `ZHBO_DW_MOUNT` (a dev-only knob, like `ZHBO_SWEEP_*`).
+pub(crate) const DW_MOUNT: &str = "tag_weapon1";
 
 pub(crate) fn dual_mount() -> String {
     std::env::var("ZHBO_DW_MOUNT").ok().filter(|m| !m.is_empty()).unwrap_or_else(|| DW_MOUNT.to_string())
@@ -654,5 +656,14 @@ mod tests {
         let base = Weapon { name: "fnp45_mp".into(), attachment_variants: vec![(4, "au_fnp45_dw".into())], ..Default::default() };
         assert!(is_dual_wield(&base, &["dw"]), "the base + dw attachment should compose the left gun");
         assert!(!is_dual_wield(&base, &[]), "the bare base is not a pair");
+    }
+
+    /// The left gun's mount is `tag_weapon1`, the viewhands' second weapon mount. The dual-wield
+    /// left clips animate it to the left gun's authored pose (`viewmodel_fnp45_dw_left_idle`'s
+    /// `tag_weapon1` track); `tag_knife_attach` (the equipment palm) rotated the gun off the view,
+    /// and `j_wrist_le` left it behind the hand.
+    #[test]
+    fn the_dual_wield_mount_is_the_clips_left_weapon_mount() {
+        assert_eq!(super::DW_MOUNT, "tag_weapon1");
     }
 }

@@ -127,14 +127,17 @@ arm/item rig is in frame. A smaller value catches only the rig's bottom sliver.
 
 **Verifying the dual-wield left gun.** A dual-wield weapon's viewmodel is two rigs: the base gun
 (`t6_wpn_pistol_<x>_view`) on `tag_weapon` and its `_lh` companion (`t6_wpn_pistol_<x>_view_lh`) on
-`tag_knife_attach` (the left palm, parented to `j_wrist_le`). The detection cascades: the weapon
-id's `_dw` suffix, the `DWLEFTHAND` inventory, or the base pistol plus the `au_<weapon>_dw`
-attachment. The install-gated test `the_dual_wield_composite_loads_both_guns` in `zhbo-assets`
-composes each of the five DW pistols and asserts the composite adds the left gun's bones, vertices,
-surfaces and part over the base composite. Run it with
+`tag_weapon1`, the viewhands' second weapon mount that the dual-wield left clip animates to the
+left gun's authored pose. The native pose samples the right/base clip and overlays the left clip
+(its `_left_*` tracks drive the left arm, `tag_weapon1` and the `_lh` gun); without the overlay the
+left gun stays at the base clip's bind pose. The detection cascades: the weapon id's `_dw` suffix,
+the `DWLEFTHAND` inventory, or the base pistol plus the `au_<weapon>_dw` attachment. The
+install-gated test `the_dual_wield_composite_loads_both_guns` in `zhbo-assets` composes each of the
+five DW pistols and asserts the composite adds the left gun's bones, vertices, surfaces and part
+over the base composite. Run it with
 `ZHBO_BO2_DIR=… cargo test -q --release -p zhbo-assets the_dual_wield_composite_loads_both_guns -- --ignored --nocapture`.
 For a visual check, run the headless sweep with `--weapon fnp45_dw_mp` and inspect the hip pose's
-left palm region (x ≈ 180–360 px, y ≈ 220–340 px in the 640×360 slot): the left gun's geometry
+left-palm region (x ≈ 180–360 px, y ≈ 220–340 px in the 640×360 slot): the left gun's geometry
 should sit there, not at the torso center or floating near the base gun. The autotest's
 `--classpick` leg keeps its MP7 seed — changing the primary would break the `MP7 <n>\|` kit
 assertion — so to exercise the DW path in-game, edit the seeded profile's `secondary=` to a DW
