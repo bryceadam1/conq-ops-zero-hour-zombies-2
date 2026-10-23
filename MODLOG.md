@@ -384,6 +384,22 @@ has nothing to do with ZH maps, so a live passthrough would only add latency and
     front sight (the highest point of the front third of the gun); an optic still moves it to its
     window. Blending toward the ADS fire clip's first frame does not work: BO2's fire clips are not
     whole poses (the arms fold up).
+81. BO2 hides equipment sub-bones by **parking** them hundreds of inches away, and the trophy's and
+    the M84's track extremes are authored, not a conversion bug: `viewmodel_trophy_system_hold_fire`
+    flies the panels off (`sndnt#fly_falling_panels` at 0.463) to the park the idle holds
+    (`tag_left_door` `[25.11,-554.70,-547.91]`, `tag_right_door` `[22.66,-530.85,-547.27]`), and
+    `viewmodel_m84_throw` carries `tag_clip` to `[-198.27,-171.94,-203.84]..[100.47,73.31,9.66]`
+    (the pin leaves the hand) after `_pullpin` brings it in near the palm. Do not filter large
+    translations and do not read a track as absolute: playback composes **posed local = the model's
+    stored local + the track**, which is BO2's rule (proven on the MP body rig, where
+    `pb_death_faceplant`'s `j_spinelower` is a faceplant as an offset and a collapse as an
+    absolute). The sweep's aimed-half blow-outs are a *staging* signature — the harness renders
+    slot `IDLE`, which the game never plays for off-hand equipment (`HOLD_FIRE`/`FIRE`), and
+    `nativevm::place::aligned` aims it though equipment has no ADS clips (the M84 has none at all;
+    the trophy's key only `tag_torso`) — so the equipment-silhouette fix belongs to its own staging
+    cycle, not to the track rule. Pinned by the ignored real-install test
+    `equipment_subbone_tracks_are_bo2s_authored_parking`; evidence in
+    `~/.opencode/plan/equipment-subbone-tracks/`.
 
 ## Verification log
 
@@ -2779,6 +2795,22 @@ after-renders as evidence.
 Verified: cargo test --workspace green (496 across 19 suites); the full real-install suite
 green; clippy clean; `cargo xtask build` clean; autotest 13/13 default (**throws both
 offhands — the engine-rule arbiter**), `--classpick` all checks, 14/14 `--rts`.
+
+## Integrating the sub-bone parking pin (2026-10-22)
+
+Merged `v1/subbone-pin` (1 commit, test + docs only). The `equipment-subbone-tracks` cycle's
+verdict: the trophy's ±550″ door tracks and the m84's ±200″ `tag_clip` track are **authored BO2
+parking** (the deploy panels fly off on `sndnt#fly_falling_panels`; the pin leaves the hand),
+the playback rule `posed local = stored local + track` is BO2's (proven on the body rig), and
+the sweep's aimed-half blow-outs are a harness staging signature — not a track bug. The new
+ignored real-install test `equipment_subbone_tracks_are_bo2s_authored_parking` pins all of it
+on the converted clips (exact values, slot mapping, the compose rule); gotcha #81 carries the
+"do not filter large translations / do not read a track as absolute" warning. No VERSION bump
+(test/docs only). The silhouette fix belongs to the `equipment-hip-pose` staging cycle.
+
+Verified: cargo test --workspace green; the full real-install suite green (the new test
+included); clippy clean; `cargo xtask build` clean; autotest 13/13 default (the offhand-throw
+behavioral guard).
 
 ## Next steps
 
