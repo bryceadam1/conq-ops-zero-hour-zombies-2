@@ -562,4 +562,63 @@ mod tests {
             }
         }
     }
+
+    /// c1 diagnostic dump (phase 3a): for each of the ten invisible attachments, print the mount
+    /// tag's bind transform, the gun's root bind transform, the authored view offset, and the
+    /// attachment's composed position under Convention A (weapon-origin frame) and Convention B
+    /// (mount-tag frame), compared against the base gun's bounding box and the view cone. No
+    /// behavior change: this only prints. The output is the per-item convention verdict table the
+    /// plan's §3.1 asks for.
+    #[test]
+    #[ignore = "diagnostic: needs the BO2 install: ZHBO_BO2_DIR"]
+    fn dump_attachment_conventions() {
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        let aspect = 16.0 / 9.0;
+        let t = 1.0 / (zhbo_core::client::horizontal_fov(zhbo_core::tuning::Tuning::default().cg_fov, aspect) / 2.0).tan();
+        let proj5 = t * aspect;
+        let items = [
+            ("as50_mp", "ir"),
+            ("as50_mp", "silencer"),
+            ("as50_mp", "swayreduc"),
+            ("fnp45_mp", "dualclip"),
+            ("fiveseven_mp", "dualclip"),
+            ("kard_mp", "dualclip"),
+            ("judge_mp", "dualclip"),
+            ("beretta93r_mp", "dualclip"),
+            ("kard_mp", "steadyaim"),
+            ("ksg_mp", "steadyaim"),
+        ];
+        for (weapon, att) in items {
+            let blobs = src.composition(weapon).expect(weapon);
+            let vm = zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("a manifest")).expect("the manifest parses");
+            let models: Vec<zhbo_native::model::Model> = vm.parts.iter().map(|p| zhbo_native::model::Model::from_bytes(blobs.get(&p.model).expect(&p.model)).expect("a model")).collect();
+            let refs: Vec<zhbo_native::pose::PartRef> = vm.parts.iter().zip(&models).map(|(p, m)| zhbo_native::pose::PartRef { model: m, tag: p.tag.as_deref(), offset: p.offset, rigid: p.rigid }).collect();
+            let (skel, _) = zhbo_native::pose::Skeleton::compose(&refs, &vm.markers, &vm.hide);
+            let w = src.bo2.iter().find(|w| w.name == weapon).expect(weapon);
+            let view_name = w.view_model.as_deref().expect("a view model");
+            let gun_part = vm.parts.iter().position(|p| p.model.contains(view_name)).expect("the gun part");
+            let gun_model = &models[gun_part];
+            let gun_bind = skel.bones[skel.parts[gun_part].first].bind;
+            let tag_weapon_bind = skel.bones[skel.bone("tag_weapon").expect("tag_weapon")].bind;
+            let u = w.attachment_variants.iter().find(|(_, id)| crate::weapons::short_name(id) == att).and_then(|(kind, _)| w.attachment_uniques.iter().find(|u| u.kind == *kind && u.combined == 0)).expect(att);
+            let offset = (crate::xf::from_angles(u.view_rotation), u.view_offset);
+            let mount_tag = u.view_model_tag.as_deref().unwrap_or("j_gun");
+            let tag_bind = skel.bone(mount_tag).map(|i| skel.bones[i].bind).unwrap_or(zhbo_native::math::IDENTITY);
+            let pos_a = zhbo_native::math::compose(gun_bind, offset).1;
+            let pos_b = zhbo_native::math::compose(tag_bind, offset).1;
+            let eye_a = zhbo_native::math::apply(tag_weapon_bind, pos_a);
+            let eye_b = zhbo_native::math::apply(tag_weapon_bind, pos_b);
+            let in_bbox_a = (0..3).all(|k| pos_a[k] >= gun_model.mins[k] && pos_a[k] <= gun_model.maxs[k]);
+            let in_bbox_b = (0..3).all(|k| pos_b[k] >= gun_model.mins[k] && pos_b[k] <= gun_model.maxs[k]);
+            let ndc_a = proj5 * eye_a[2] / eye_a[0];
+            let ndc_b = proj5 * eye_b[2] / eye_b[0];
+            let in_cone_a = eye_a[0] > 0.0 && ndc_a.abs() <= 1.0;
+            let in_cone_b = eye_b[0] > 0.0 && ndc_b.abs() <= 1.0;
+            eprintln!("{weapon}+{att}: tag={mount_tag} offset={:?}", u.view_offset);
+            eprintln!("  tag_bind={:?} gun_bind={:?}", tag_bind.1, gun_bind.1);
+            eprintln!("  A pos={:?} in_bbox={in_bbox_a} eye={:?} ndc={ndc_a:.2} in_cone={in_cone_a}", pos_a, eye_a);
+            eprintln!("  B pos={:?} in_bbox={in_bbox_b} eye={:?} ndc={ndc_b:.2} in_cone={in_cone_b}", pos_b, eye_b);
+        }
+    }
 }
