@@ -136,6 +136,14 @@ pub struct AttachmentUnique {
     pub combined: u32,
     /// The attachment replaces the weapon's own magazine (extended or dual magazines).
     pub disable_base_clip: bool,
+    /// The attachment replaces the weapon's base `attachViewModel` art — the AS50's ACOG takes
+    /// the place of its scope. The two replacement channels are independent: a combination may
+    /// replace the magazine, the attachment art, both or neither.
+    pub disable_base_attachment: bool,
+    /// The attachment moves the base attachment art (`viewModelOffsetBaseAttachment`).
+    pub override_base_attachment_offsets: bool,
+    /// The base attachment's new view offset, in inches (view frame; no rotation field exists).
+    pub base_attachment_offset: [f32; 3],
     /// Viewmodel animations the combination overrides (`anim` slots), e.g. a grip's or extended
     /// magazine's reloads.
     pub anims: Vec<Option<String>>,
@@ -528,6 +536,9 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 world_model_tag: opt_str(z, u + WU::worldModelTag),
                 combined: z.u32(u + WU::combinedAttachmentTypeMask),
                 disable_base_clip: z.u8(u + WU::disableBaseWeaponClip) != 0,
+                disable_base_attachment: z.u8(u + WU::disableBaseWeaponAttachment) != 0,
+                override_base_attachment_offsets: z.u8(u + WU::overrideBaseWeaponAttachmentOffsets) != 0,
+                base_attachment_offset: vec3(z, u + WU::viewModelOffsetBaseAttachment),
                 anims: {
                     let at = z.u32(u + WU::szXAnims);
                     (0..anim::COUNT as u32).map(|i| if at == 0 { None } else { opt_str(z, at + 4 * i) }).collect()
