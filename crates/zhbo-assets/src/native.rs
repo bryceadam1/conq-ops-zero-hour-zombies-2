@@ -180,6 +180,28 @@ pub(crate) struct Viewmodel<'a> {
     pub mag_offset: Option<[f32; 3]>,
 }
 
+/// Find the base gun's bone whose bind position (model space, inches) is nearest the attachment's
+/// authored offset (gun-local inches). Used when an attachment's `viewModelTag` is absent or names
+/// no bone in the base gun: the authored offset was measured against the gun's origin, so the
+/// nearest mount point is the best data-driven fallback instead of blindly taking the first bone
+/// (`j_gun`).
+fn nearest_bone(gun: &nm::Model, offset: [f32; 3]) -> String {
+    gun.bones
+        .iter()
+        .min_by(|a, b| {
+            let da = dist_sq(a.position, offset);
+            let db = dist_sq(b.position, offset);
+            da.partial_cmp(&db).unwrap_or(std::cmp::Ordering::Equal)
+        })
+        .map(|b| b.name.clone())
+        .unwrap_or_else(|| gun.bones.first().map(|b| b.name.clone()).unwrap_or_default())
+}
+
+fn dist_sq(a: [f32; 3], b: [f32; 3]) -> f32 {
+    let d = [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
+    d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
+}
+
 /// One manifest per faction for weapon `v`: the faction's arms, the gun on its mount tag
 /// (`tag_weapon` for primaries, `tag_knife_attach` for off-hand equipment), the magazine on the
 /// gun root (`j_gun`) at its authored `attachViewModelOffset` (and its rigid copy on `tag_clip1`,
@@ -195,7 +217,7 @@ pub(crate) fn viewmodels(
 ) {
     use zhbo_native::math::IDENTITY;
     use zhbo_native::viewmodel::{Part, Viewmodel as Manifest};
-    let Some(gun_root) = gun.bones.first().map(|b| b.name.clone()) else { return };
+    if gun.bones.is_empty() { return; }
     let gun_path = put_model(out, gun);
     let mag_path = mag.map(|m| put_model(out, m));
     let extra_paths: Vec<String> = extra.iter().map(|m| put_model(out, m)).collect();
@@ -216,7 +238,7 @@ pub(crate) fn viewmodels(
         }
         let mut optic = None;
         for (k, ((tag, offset, is_optic), (model, path))) in v.attachments.iter().zip(extra.iter().zip(&extra_paths)).enumerate() {
-            let tag = tag.clone().filter(|t| has(t, &parts)).unwrap_or_else(|| gun_root.clone());
+            let tag = tag.clone().filter(|t| has(t, &parts)).unwrap_or_else(|| nearest_bone(gun, offset.1));
             if *is_optic {
                 optic = Some((parts.len(), v.extra_models[k]));
             }
@@ -370,5 +392,26 @@ mod tests {
         assert_eq!(m.parent, "tag_weapon");
         // The front third's highest vertex (20, 0, 4) in the gun's frame, which sits at x = 5.
         assert!((m.local.1[0] - 20.0).abs() < 1e-4 && (m.local.1[2] - 4.0).abs() < 1e-4, "{:?}", m.local.1);
+    }
+
+    /// A `tag=None` attachment with an offset near a named bone resolves to that bone, not the
+    /// gun's first bone (`j_gun`). This is the c2 fallback: the authored offset was measured in
+    /// the gun's frame, so the nearest mount point is the best data-driven mount.
+    #[test]
+    fn tag_none_attachment_resolves_to_the_nearest_bone() {
+        let bone = |name: &str, parent: Option<usize>, pos: [f32; 3]| Bone { name: name.into(), parent, local_rotation: QUAT_IDENTITY, local_position: pos, rotation: QUAT_IDENTITY, position: pos };
+        let mut g = gun();
+        g.bones = vec![
+            bone("j_gun", None, [0.0; 3]),
+            bone("tag_rail", Some(0), [4.0, 0.0, 0.0]),
+            bone("tag_scope", Some(0), [10.0, 0.0, 0.0]),
+        ];
+        let nm_g = model(&g, &[None], &Looks::default());
+        // An offset near the rail resolves to it, not to the first bone.
+        assert_eq!(nearest_bone(&nm_g, [3.5, 0.0, 0.0]), "tag_rail");
+        // An offset near the scope mount resolves to it.
+        assert_eq!(nearest_bone(&nm_g, [9.0, 0.0, 0.0]), "tag_scope");
+        // An offset near the origin resolves to the root.
+        assert_eq!(nearest_bone(&nm_g, [0.0, 0.0, 0.0]), "j_gun");
     }
 }
