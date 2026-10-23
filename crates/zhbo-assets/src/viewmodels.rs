@@ -307,7 +307,8 @@ pub(crate) fn weapon_viewmodels(
                 let anim = anim_cache.entry(name.clone()).or_insert_with(|| xanim::find(common, name).ok());
                 let Some(anim) = anim else { continue };
                 native_clips.push(((right_slot as u16) | zhbo_native::viewmodel::INSTANCE_LEFT, native::put_anim(out, anim)));
-                // The base W3D path keeps its own clip list; the left gun's clips are native-only.
+                // The left gun's clips feed the native path and the sound events; the base W3D render
+                // path's animation table stays as is.
                 clips.push((vm, (right_slot as i32) | zhbo_native::viewmodel::INSTANCE_LEFT as i32, anim.clone()));
                 n += 1;
             }
