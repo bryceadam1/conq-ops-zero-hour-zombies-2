@@ -2892,3 +2892,49 @@ the docs read order there. The list below is the older gameplay backlog.
 3. BO2's own reflection probes: keep `GfxImageLoadDef` data when the zone loader reads it.
 4. Save/load of first-person state; two-client multiplayer test.
 5. Strike Force (`so_rts_*`) content as a natural next theme.
+
+## Invisible attachments phase 3a: nearest-bone tag fallback and the convention dump (2026-10-23, branch `v1/inv-att-3a`)
+
+The `invisible-attachments` cycle's phase 3a landed two changes and one diagnostic. The ten
+weapon+attachment combinations that render pixel-identical to their base weapon split into three
+sub-shapes of (c) mounting, not hide tags: the `ZHBO_SWEEP_NO_HIDE` A/B (run per the plan's §2
+pre-step) leaves MAD at 0.0 in both legs for all ten, confirming RESEARCH §2.4's triangle-omission
+reasoning — an attachment's vertices weight to its own bones, so the base gun's hide list cannot
+drop them. The hide hypothesis is ruled out.
+
+**c2 — nearest-bone tag fallback.** When an attachment's `viewModelTag` is None or names a bone
+absent from the base gun, the converter fell back to the gun's first bone (`j_gun`). The authored
+`viewModelOffset` is measured in the gun's local frame, so the nearest bone to that offset is the
+better mount. `nearest_bone` in `crates/zhbo-assets/src/native.rs` now resolves the tag by
+minimum bind-position distance; the four c2 items (`as50_mp+ir`, `as50_mp+swayreduc`,
+`judge_mp+dualclip`, `kard_mp+steadyaim`) take this path. A unit test proves a tag=None attachment
+near a named bone resolves to that bone, not `j_gun`. No manifest schema change, no VERSION bump.
+
+**c1 — convention dump.** The ignored test `dump_attachment_conventions` in
+`crates/zhbo-assets/src/viewmodel_sweep.rs` prints, per item, the mount tag's bind, the gun's root
+bind, the authored offset, and the composed position under Convention A (weapon-origin frame) and
+Convention B (mount-tag frame), compared against the gun's mins/maxs and the view cone. The
+verdict table (saved in the plan directory as `c1_convention_verdict.txt`) settles one rotated-tag
+item — `as50_mp+silencer` lands outside the bbox and inside the cone under B — and leaves the four
+pistol dualclips and `ksg_mp+steadyaim` ambiguous (both conventions put the part outside the bbox
+but below the cone). The plan's §3.1 default applies: adopt Convention A behind a manifest flag in
+cycle 3b, so the regression guard can flip to B per item. The four tag=None items coincide under A
+and B; their path is c2/c3, not the frame convention. The AS50 trio carries the base-pose caveat
+(PLAN §7.1): its base pose is an outlier, so its rows are conditional until the base pose is
+confirmed in game.
+
+**Blocker for the sweep evidence.** The `render_viewmodels` example requires the converted
+`ConquerOps_BO2.big` for base weapons; the archive does not exist on this workstation (the
+launcher's dist folder holds only `ConquerOps.big`), and the cycle's instructions forbid
+`cargo xtask build`. The §5.2 before/after sweep sets and the §7.2 full-sweep regression guard
+therefore could not be run here. The unit tests, the real-install suite (`converts_from_real_install`,
+the equipment sub-bone pin, the off-hand mount and palm tests), and clippy are green; the sweep
+rows remain to be filled by the integrator on a machine with the archive. The c2 fix's behavior
+is proven by the unit test and the real-install suite's mount assertions, not by the sweep.
+
+Verified: `cargo test --workspace` green (all suites); `cargo clippy --workspace --all-targets`
+clean for `zhbo-assets` (pre-existing warnings in `zhbo-gfx`/`zhbo-core`/`zhbo-formats` only);
+the real-install suite green (`ZHBO_BO2_DIR=~/Games/BlackOps2 cargo test -q --release -p
+zhbo-assets -p zhbo-formats -- --ignored`: 19 + 9 passed); the c1 diagnostic test prints the
+convention table. No VERSION/ABI bump (the c2 fix changes only the chosen tag; the manifest
+schema is unchanged).
