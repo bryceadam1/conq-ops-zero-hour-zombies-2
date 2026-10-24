@@ -107,6 +107,49 @@ fn a_fully_hidden_surface_is_not_pushed() {
     assert_eq!(mesh.indices.len(), 3);
 }
 
+#[test]
+fn ads_frame_samples_by_fraction() {
+    // The scrub: linear in the aim fraction because `arsenal.ads` is linear in time; 1 is the
+    // authored aimed key (`num_frames` is BO2's last frame index), and the down clip is its mirror.
+    assert_eq!(ads_frame(0.0, false, 17), 0.0);
+    assert!((ads_frame(0.5, false, 17) - 8.5).abs() < 1e-6);
+    assert!((ads_frame(1.0, false, 17) - 17.0).abs() < 1e-6);
+    assert!((ads_frame(0.0, true, 17) - 17.0).abs() < 1e-6, "leaving from the aimed key");
+    assert!((ads_frame(0.5, true, 17) - 8.5).abs() < 1e-6);
+    assert_eq!(ads_frame(1.0, true, 17), 0.0, "at the hip the down clip is back at its first frame");
+    // Out-of-range fractions cannot scrub past the authored keys.
+    assert_eq!(ads_frame(-1.0, false, 17), 0.0);
+    assert!((ads_frame(2.0, false, 17) - 17.0).abs() < 1e-6);
+}
+
+#[test]
+fn the_ads_slot_follows_the_alt_mode_table() {
+    // A manifest whose base and alt mode both carry the ADS layer. The alt mode's clips sit
+    // `ALT_CLIPS` after its weapon's (`weapons::def`), so 0x80 + 0x55/0x56; the base's are plain.
+    let (up, down) = (zhbo_native::anim_path("ads_up"), zhbo_native::anim_path("ads_down"));
+    let (alt_up, alt_down) = (zhbo_native::anim_path("gl_up"), zhbo_native::anim_path("gl_down"));
+    let clips = vec![
+        (1, zhbo_native::anim_path("idle")),
+        (crate::viewmodel::slot::ADS_UP as u16, up.clone()),
+        (crate::viewmodel::slot::ADS_DOWN as u16, down.clone()),
+        ((crate::weapons::ALT_CLIPS + crate::viewmodel::slot::ADS_UP) as u16, alt_up.clone()),
+        ((crate::weapons::ALT_CLIPS + crate::viewmodel::slot::ADS_DOWN) as u16, alt_down.clone()),
+    ];
+    let loaded = |clips: Vec<(u16, String)>| Loaded { key: (7, b'U'), manifest: Viewmodel { id: "test_mp".into(), faction: b'U', parts: vec![], markers: vec![], hide: vec![], clips }, skeleton: Skeleton::default(), mesh: Mesh::default(), mesh_aimed: None, aim: None, anims: HashMap::new() };
+    let l = loaded(clips);
+    assert_eq!(l.ads_clip(1, false), Some(up.as_str()));
+    assert_eq!(l.ads_clip(1, true), Some(down.as_str()));
+    // A mode's own clip resolves that mode's layer.
+    assert_eq!(l.ads_clip(crate::weapons::ALT_CLIPS + 4, false), Some(alt_up.as_str()));
+    assert_eq!(l.ads_clip(crate::weapons::ALT_CLIPS + 4, true), Some(alt_down.as_str()));
+    // The dual-wield instance bit is masked, never added: the base's track carries both guns.
+    assert_eq!(l.ads_clip(1 | zhbo_native::viewmodel::INSTANCE_LEFT as i32, false), Some(up.as_str()));
+    // A weapon with no layer is `None` — never the idle fallback `clip_path` would take.
+    let bare = loaded(vec![(1, zhbo_native::anim_path("idle"))]);
+    assert!(bare.ads_clip(1, false).is_none() && bare.ads_clip(1, true).is_none());
+    assert!(bare.clip_path(1).is_some(), "the action clip is still the idle, as before");
+}
+
 struct Fixture {
     files: Vec<(String, Vec<u8>)>,
 }

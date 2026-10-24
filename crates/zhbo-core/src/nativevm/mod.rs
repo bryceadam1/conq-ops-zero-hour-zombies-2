@@ -404,6 +404,22 @@ impl Loaded {
         [base, mode_idle, crate::viewmodel::slot::IDLE as u16].into_iter().find_map(|c| self.manifest.clip(c | instance))
     }
 
+    /// The ADS layer's clip for `clip`'s mode: [`slot::ADS_UP`] entering, [`slot::ADS_DOWN`]
+    /// leaving. Resolved from the manifest **directly**, never `clip_path`: that falls back to the
+    /// mode's idle (`:386-393`), and an idle keys every bone — overlaying it with `sample_over`
+    /// would replace the action pose instead of layering on it. An alt mode's clips follow its
+    /// weapon's by [`crate::weapons::ALT_CLIPS`], so its ADS clips are `ALT_CLIPS + 0x55/0x56`;
+    /// a dual-wield pair's left instance has no ADS clip of its own (the base's track carries both
+    /// guns), so the instance bit is masked, never added.
+    pub fn ads_clip(&self, clip: i32, down: bool) -> Option<&str> {
+        use crate::weapons::ALT_CLIPS;
+        use zhbo_native::viewmodel::INSTANCE_LEFT;
+        let base = (clip as u16) & !INSTANCE_LEFT;
+        let mode = if i32::from(base) >= ALT_CLIPS { ALT_CLIPS } else { 0 };
+        let slot = if down { crate::viewmodel::slot::ADS_DOWN } else { crate::viewmodel::slot::ADS_UP };
+        self.manifest.clip((mode + slot) as u16)
+    }
+
     /// Pose for `req`: the clip (if loaded) at its frame, then placement. `anim` is the base
     /// (right) clip; `left` is the dual-wield left instance's clip, sampled over it so the left
     /// arm, `tag_weapon1` and the `_lh` gun are driven by the `_left_*` set instead of the
@@ -448,6 +464,16 @@ impl Loaded {
         let m = mat4_mul(&posed.root, &mat4(*posed.model.get(i)?));
         Some([[m[0], m[4], m[8], m[12]], [m[1], m[5], m[9], m[13]], [m[2], m[6], m[10], m[14]]])
     }
+}
+
+/// The ADS layer's frame for the aim fraction: `ads · num_frames` entering, `(1 − ads) · num_frames`
+/// leaving. `num_frames` is BO2's last frame index (`zhbo_native::anim::Anim`), so 1 lands the
+/// authored aimed key. Stateless by design: the clip is compressed into the def's ADS time by the
+/// fraction itself (`weapons::arsenal` moves `ads` linearly), so no second clock is kept. The
+/// research's mp7 measurement — 63 % of the move at half — is this function at N/2.
+pub fn ads_frame(ads: f32, down: bool, num_frames: u16) -> f32 {
+    let k = ads.clamp(0.0, 1.0);
+    (if down { 1.0 - k } else { k }) * num_frames as f32
 }
 
 #[cfg(test)]
