@@ -9,7 +9,7 @@ use std::collections::{HashSet, VecDeque};
 use std::ffi::{c_char, CStr};
 use std::sync::Mutex;
 
-use super::{load, Files, GunPose, Loaded, Posed, Request};
+use super::{ads_frame, load, Files, GunPose, Loaded, Posed, Request};
 use zhbo_native::anim::Anim;
 
 /// A scene light: towards the light (world space) and its display-encoded colour.
@@ -61,6 +61,10 @@ pub(crate) struct State {
     pub(crate) loaded: Option<Loaded>,
     failed: HashSet<(i32, u8)>,
     pub(crate) posed: Posed,
+    /// The ADS fraction last frame and the layer's direction (falling → `ads_down`). Presentation
+    /// only, like `Motion`'s springs; reset when the viewmodel changes.
+    pub(crate) ads_prev: f32,
+    pub(crate) ads_down: bool,
     pub(crate) log: VecDeque<String>,
     logged: HashSet<String>,
     bad_anims: HashSet<String>,
@@ -122,11 +126,22 @@ impl State {
                 Ok(None) => return LOADING,
                 Ok(Some(l)) => {
                     self.log_once(format!("ZV{:02}{} composed: {} bones, {} vertices, {} surfaces", l.key.0, l.key.1 as char, l.skeleton.bones.len(), l.mesh.vertices.len(), l.mesh.surfaces.len()));
+                    // A new viewmodel starts the layer fresh: no direction history from the last gun.
+                    self.ads_prev = inp.ads;
+                    self.ads_down = false;
                     self.loaded = Some(l);
                 }
             }
         }
         let req = request(inp);
+        // The layer's direction: rising → up, falling → down, held keeps the last one (firing at
+        // full ADS stays on the up clip's last frame). `ads` is the arsenal's own fraction.
+        if req.ads < self.ads_prev - 1e-5 {
+            self.ads_down = true;
+        } else if req.ads > self.ads_prev + 1e-5 {
+            self.ads_down = false;
+        }
+        self.ads_prev = req.ads;
         let path = self.loaded.as_ref().and_then(|l| l.clip_path(req.clip)).map(str::to_string);
         // A dual-wield pair's left half carries its own clip (`_left_*`) under the instance bit.
         // It is a separate animation over the same composite: the base clip never tracks the
@@ -137,16 +152,44 @@ impl State {
             .and_then(|l| l.clip_path(req.clip | zhbo_native::viewmodel::INSTANCE_LEFT as i32))
             .map(str::to_string)
             .filter(|p| Some(p.as_str()) != path.as_deref());
+        // Both ADS clips are asked for on the first aiming frame, so a reversal never waits for
+        // its clip. A missing one is "no layer" (never the idle fallback): `ads_clip` decides.
+        let (ads_up_path, ads_down_path) = if req.ads > 0.0 {
+            let loaded = self.loaded.as_ref();
+            (
+                loaded.and_then(|l| l.ads_clip(req.clip, false)).map(str::to_string),
+                loaded.and_then(|l| l.ads_clip(req.clip, true)).map(str::to_string),
+            )
+        } else {
+            (None, None)
+        };
         if let Some(p) = &path {
             self.anim(p);
         }
         if let Some(p) = &left_path {
             self.anim(p);
         }
+        if let Some(p) = &ads_up_path {
+            self.anim(p);
+        }
+        if let Some(p) = &ads_down_path {
+            self.anim(p);
+        }
         let Some(loaded) = self.loaded.as_ref() else { return NOT_NATIVE };
         let anim = path.as_deref().and_then(|p| loaded.anims.get(p));
         let left = left_path.as_deref().and_then(|p| loaded.anims.get(p));
-        loaded.pose(&req, anim, left, &mut self.posed);
+        // Prefer the direction's clip. If a weapon lacks it, sample the other one at its *own*
+        // frame rule (`ads·N` on up, `(1−ads)·N` on down) — a reverse play of the same authored
+        // keys, continuous at the flip. That is a fallback, not the normal path.
+        let (layer_path, layer_down) = match (self.ads_down, ads_down_path.as_deref(), ads_up_path.as_deref()) {
+            (true, Some(d), _) => (Some(d), true),
+            (true, None, Some(u)) => (Some(u), false),
+            (false, Some(u), _) => (Some(u), false),
+            (false, None, Some(d)) => (Some(d), true),
+            _ => (None, false),
+        };
+        let ads = layer_path.and_then(|p| loaded.anims.get(p)).map(|a| (a, ads_frame(req.ads, layer_down, a.num_frames)));
+        loaded.pose(&req, anim, left, ads, &mut self.posed);
         #[cfg(feature = "renderer")]
         {
             super::gpu::draw(self, inp)

@@ -423,8 +423,11 @@ impl Loaded {
     /// Pose for `req`: the clip (if loaded) at its frame, then placement. `anim` is the base
     /// (right) clip; `left` is the dual-wield left instance's clip, sampled over it so the left
     /// arm, `tag_weapon1` and the `_lh` gun are driven by the `_left_*` set instead of the
-    /// base clip (which never tracks them) leaving them at bind.
-    pub fn pose(&self, req: &Request, anim: Option<&Anim>, left: Option<&Anim>, out: &mut Posed) {
+    /// base clip (which never tracks them) leaving them at bind; `ads` is the ADS transition layer
+    /// — its clip and frame — sampled over both, because it keys only `tag_torso`, the arms' rig
+    /// root (BO2's second anim channel). Bones no clip names keep what the previous layer left them
+    /// in (`zhbo_native::pose::sample_over`).
+    pub fn pose(&self, req: &Request, anim: Option<&Anim>, left: Option<&Anim>, ads: Option<(&Anim, f32)>, out: &mut Posed) {
         let looping = crate::viewmodel::slot::loops(req.clip);
         let time = req.time * req.rate.max(0.0);
         match anim {
@@ -440,6 +443,11 @@ impl Loaded {
         if let Some(l) = left {
             let frame = l.frame_at(time, looping);
             self.skeleton.sample_over(l, frame, &mut out.local);
+        }
+        // The ADS layer last: a `tag_torso`-only track, so it adds the rig root over both halves
+        // (the torso is not a left-gun bone; the order is free and ADS-last is the semantic one).
+        if let Some((a, frame)) = ads {
+            self.skeleton.sample_over(a, frame, &mut out.local);
         }
         self.skeleton.model_space(&out.local, &mut out.model);
         out.root = self.placement(req, &out.model);
