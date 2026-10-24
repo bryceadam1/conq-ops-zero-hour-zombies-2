@@ -210,6 +210,50 @@ fn a_fully_hidden_surface_is_not_pushed() {
 }
 
 #[test]
+fn attached_part_on_a_hidden_stub_draws_while_the_stub_stays_hidden() {
+    // Base: a gun bone with a hidden sight stub that owns its own surface geometry.
+    // Attachment: a part hung from the hidden stub; its own geometry must remain visible.
+    let bones = vec![
+        bone("j_gun", None, [0.0; 3]),
+        bone("tag_sights", Some(0), [0.0, 0.0, 2.0]),
+    ];
+    let v = |p: [f32; 3], b: u16| Vertex { position: p, normal: [0.0, 0.0, 1.0], uv: [0.0; 2], bones: [b, 0, 0, 0], weights: [1.0, 0.0, 0.0, 0.0] };
+    let base = Model {
+        name: "gun".into(),
+        bones,
+        materials: vec![Material { name: "m".into(), ..Default::default() }],
+        lods: vec![Lod { distance: 0.0, first_surface: 0, surface_count: 2 }],
+        surfaces: vec![
+            Surface { material: 0, vertices: vec![v([0.0, 0.0, 0.0], 0), v([1.0, 0.0, 0.0], 0), v([0.0, 1.0, 0.0], 0)], indices: vec![0, 1, 2] },
+            Surface { material: 0, vertices: vec![v([0.0, 0.0, 2.0], 1), v([1.0, 0.0, 2.0], 1), v([0.0, 1.0, 2.0], 1)], indices: vec![0, 1, 2] },
+        ],
+        ..Default::default()
+    };
+    // The attachment's own bones are not in the hide list, so its geometry must draw.
+    let mut attachment = base.clone();
+    attachment.name = "attachment".into();
+    attachment.bones[0].name = "tag_attachment_root".into();
+    attachment.bones[1].name = "tag_attachment_stub".into();
+    let parts = [
+        PartRef { model: &base, tag: None, offset: IDENTITY, rigid: false },
+        PartRef { model: &attachment, tag: Some("tag_sights"), offset: IDENTITY, rigid: true },
+    ];
+    let (skel, problems) = Skeleton::compose(&parts, &[], &["tag_sights".into()]);
+    assert!(problems.is_empty(), "{problems:?}");
+    // The base's stub bone is hidden, but the attachment's bones are not.
+    assert!(skel.bones[skel.bone("tag_sights").unwrap()].hidden);
+    let att_root = skel.bone("tag_attachment_root").unwrap();
+    assert!(!skel.bones[att_root].hidden, "an attached part must not inherit the stub's hide");
+    // The mesh keeps the attachment's geometry and drops the stub's own all-hidden surface.
+    let mesh = build_mesh_visible(&skel, [&base, &attachment], |_| true).unwrap();
+    // Base's "tag_sights" surface drops; base's "j_gun" surface and both attachment surfaces remain.
+    assert_eq!(mesh.surfaces.len(), 3, "one base surface + two attachment surfaces");
+    // The attachment's surfaces have non-zero index counts.
+    let att_tris = mesh.surfaces.iter().filter(|s| s.index_count > 0).count();
+    assert!(att_tris >= 2, "the attachment's geometry is retained");
+}
+
+#[test]
 fn ads_frame_samples_by_fraction() {
     // The scrub: linear in the aim fraction because `arsenal.ads` is linear in time; 1 is the
     // authored aimed key (`num_frames` is BO2's last frame index), and the down clip is its mirror.

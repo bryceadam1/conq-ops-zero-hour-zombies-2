@@ -3214,6 +3214,28 @@ build` clean; autotest 13/13 default, `--classpick` all checks, 14/14 `--rts`. S
 and diamond change the right pixels per weapon (style pairs share `zhbo_camo_code_spc` — the
 MP7's gold/diamond are identical, a `shaderConsts` fidelity note, not a bug).
 
+## Integrating the per-bone hide: 71,435 attachment triangles back (2026-10-24)
+
+Merged `v1/per-bone-hide` (2 commits). The composer's `under_hidden` collapsed the whole
+subtree below a hidden bone, so an attachment mounted on a hidden sight/grip stub tag (the
+nearest-bone fallback's target when BO2 leaves `viewModelTag` empty — most attachment
+uniques) had its WHOLE part hidden even though the part isn't skinned to the stub. The parity
+model is the in-game-verified W3D path's: **`hidden = hidden_here`** — only the geometry
+skinned to the hidden bone is hidden; what mounts on it draws (`pose.rs`, `character.rs`'s
+precedent). The evidence chain: a hidden mount must not hide what is mounted on it; BO2's
+hide lists enumerate sibling bones rather than relying on hierarchy; and the W3D path already
+draws these same attachments correctly in game. Class A (directly-named empty surfaces) is
+unchanged by construction. **Measured acceptance: +71,435 triangles across the 40 affected
+combos (optics, silencers, grips, GL, DBAL, BCPU, IR, vzoom), zero gun-triangle change.** BO2's
+exact hide granularity and its default mount for an empty `viewModelTag` stay open as the
+user-routed Ghidra question (the exact ask is in the cycle's plan dir); if it proves BO2 hides
+more, the mount rule is the separable follow-up. No converter/blob/ABI change and no VERSION
+bump.
+
+Verified: cargo test --workspace green; the full real-install suite green; clippy
+--workspace --all-targets clean; `cargo xtask build` clean; autotest 13/13 default,
+`--classpick` all checks, 14/14 `--rts`.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
@@ -3686,3 +3708,39 @@ cells draw stock.
 **Versions.** `zhbo_native::camo::VERSION = 1` (new blob). The model blob's material record gains
 the semantic-22 camo layer; its version bump 2→3 and the archive bump 64→65 are integrator-owned
 (this branch deliberately leaves `model::VERSION = 2` and `hud::VERSION = 64`).
+
+## Hiding is per bone: mounted external hardware keeps drawing (2026-10-24, branch `v1/per-bone-hide`)
+
+`pose::compose` propagated a hide tag down the whole subtree (`under_hidden`: a child of a hidden
+bone was hidden too). That is not BO2's rule — the W3D path hides only the geometry skinned to the
+bone named in `hideTags` (`zhbo_assets::character::skin_hiding`) — so a part mounted on a hidden
+stub was being hidden with the stub. The composer now sets `Bone.hidden` from the name match alone.
+Class A is unchanged: a hidden stub's own all-hidden surface still drops (its triangles are skinned
+to the directly named bone), its weights still vanish and the gun receiver is untouched. The
+restored population is class B: 130 surfaces over 40 jobs / 17 attachment models — mounted optics,
+silencers, grips, launchers and lasers whose geometry the subtree collapse silently removed. The
+invisible-attachments ten are a mounting/placement population and stay out of scope.
+
+**Sweep acceptance.** Full render sweep before/after against the real installs (`ZHBO_BO2_DIR`,
+475 jobs, 0 failed each): triangles **7,095,953 → 7,167,388 (+71,435)**, surfaces **6,152 → 6,282
+(+130)**, **40 affected jobs**, and **zero base-only jobs changed** (the gun and every Class A
+directly named surface keep their counts; no negative delta anywhere). The affected jobs' frames
+change by 3–47,083 pixels in the mount regions. One combo, `mp7_mp+silencer`, composes its +126
+triangles but its sweep frames are byte-identical — the added surface is occluded/internal from the
+hip/ADS camera; its geometry is composed and would draw from another angle. The delta is exact to
+the triangle.
+
+**Plan fixture anchors.** The plan's `strip()` fixtures assumed a `tag_stub` bone that `strip()`
+does not carry. The base's second bone is renamed `tag_stub` and the attached part's bones are
+`tag_stub_mount`/`tag_stub_child`; mounting the part on its own first bone was self-referential.
+The rest of the plan's tests apply verbatim. The module and `compose` docs now state the per-bone
+rule.
+
+**Verified.** `cargo test --workspace` green (546 passed; the ignored counts unchanged);
+`cargo clippy --workspace --all-targets` exit 0 (no warnings in the touched files; the 48 warnings
+elsewhere are pre-existing); `ZHBO_BO2_DIR=… cargo test -q --release -p zhbo-assets -p zhbo-formats
+-- --ignored` green (27 + 9). No version/ABI bump: only the value the composer assigns to
+`Bone.hidden` changes; the blob, ABI and `hud::VERSION` are untouched. The in-game autotest and the
+Windows VM legs were not run (protocol: no game launch); the change is platform-neutral composer
+logic.
+
