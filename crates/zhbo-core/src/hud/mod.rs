@@ -105,6 +105,18 @@ pub(crate) const OPTICS: &[&str] = &["reflex", "acog", "holo", "rangefinder", "d
 /// Minimap radius in world units.
 pub(super) const MINIMAP_RANGE: f32 = 320.0;
 
+/// The snipers' full-screen ADS overlay materials (`scope_overlay_<weapon>`), each kept at 1024 px
+/// as its own standalone page (not packed into the atlas).
+pub const OVERLAY_MATERIALS: &[(&str, u32)] = &[
+    ("scope_overlay_ballista", 1024),
+    ("scope_overlay_dsr50", 1024),
+    ("scope_overlay_envg_ir", 1024),
+    ("scope_overlay_specter", 1024),
+    ("scope_overlay_svu", 1024),
+    ("scope_overlay_vzoom", 1024),
+    ("scope_overlay_xpr50", 1024),
+];
+
 /// Every BO2 material the HUD draws, for the converter (`zhbo_core::lui::materials`).
 pub fn materials() -> impl Iterator<Item = &'static str> {
     digit::MATERIALS
@@ -122,6 +134,33 @@ fn team_color(host: &dyn ClientHost, p: &PlayerSim) -> u32 {
     let mut objs = Vec::new();
     host.query(p.body.pos, 2.0, p.general, &mut objs);
     objs.iter().find(|o| o.id == p.general).map_or(0xFFFF_FFFF, |o| o.color)
+}
+
+/// The snipers' 2D screen-space ADS overlay. BO2 hands the scope view off to a type-7 HUD material
+/// at full ADS (`playerads() >= 1`), while the physical scope part is hidden by the viewmodel draw.
+/// The material's own art carries the black surround and the clear lens centre; a full-screen image
+/// needs no scissor of its own (the host's clip callback clips 2D images only, not the 3D view).
+/// A weapon without an overlay material gets no hand-off and keeps its physical scope.
+fn draw_scope_overlay(prims: &mut Vec<Prim>, w: f32, h: f32, p: &PlayerSim) {
+    if p.arsenal.ads < 1.0 {
+        return;
+    }
+    let def = p.arsenal.current_weapon();
+    if def.overlay_material.is_empty() {
+        return;
+    }
+    // The converted MappedImage name. If the install lacks the art, the empty fallback draws
+    // nothing (log-or-skip); the converter reports the missing material and the install-gated
+    // test catches a sniper whose overlay did not convert.
+    prims.push(Prim::Image {
+        name: crate::lui::materials::image(&def.overlay_material),
+        x: 0.0,
+        y: 0.0,
+        w,
+        h,
+        argb: WHITE,
+        fallback: Vec::new(),
+    });
 }
 
 pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: &Sim, local_player: i32) {
@@ -167,6 +206,10 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
     } else {
         if !tablet_up && !map_open {
             draw_marks(host, prims, w, h, s, client, sim, p);
+            // BO2's scoped-overlay hand-off: at full ADS the physical scope is hidden by the
+            // viewmodel draw and this screen-space material replaces it. A weapon without an
+            // overlay material keeps its physical scope (no hand-off).
+            draw_scope_overlay(prims, w, h, p);
             draw_crosshair(prims, w, h, s, client, p);
             draw_hitmarker(prims, w, h, client);
             draw_score_popup(&l, prims, client);

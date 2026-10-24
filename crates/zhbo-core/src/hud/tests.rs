@@ -167,6 +167,30 @@ fn the_crosshair_uses_the_classs_reticle_and_colour() {
 }
 
 #[test]
+fn the_scope_overlay_draws_at_full_ads_and_not_before() {
+    // The hand-off's seam: at `ads < 1.0` the physical scope is drawn by the viewmodel and the 2D
+    // overlay must not; at `ads == 1.0` the overlay material replaces it (PLAN §4's hard swap).
+    let (mut sim, client) = fps_state();
+    let def = {
+        let mut d = sim.players[0].as_ref().expect("the player").arsenal.current_weapon().clone();
+        d.overlay_material = "scope_overlay_xpr50".into();
+        Box::leak(Box::new(d))
+    };
+    {
+        let p = sim.players[0].as_mut().expect("the player");
+        p.arsenal.current_mut().def = def;
+        p.arsenal.ads = 0.99;
+    }
+    let name = crate::lui::materials::image("scope_overlay_xpr50");
+    let has_overlay = |prims: &[Prim]| prims.iter().any(|p| matches!(p, Prim::Image { name: n, .. } if n == &name));
+    let rec = Recorder { has_art: true, ..Default::default() };
+    assert!(!has_overlay(&draw_hud(&rec, &client, &sim)), "no overlay before full ADS");
+    sim.players[0].as_mut().expect("the player").arsenal.ads = 1.0;
+    let rec = Recorder { has_art: true, ..Default::default() };
+    assert!(has_overlay(&draw_hud(&rec, &client, &sim)), "the overlay replaces the scope at full ADS");
+}
+
+#[test]
 fn falls_back_to_text_without_the_art() {
     let (sim, client) = fps_state();
     let rec = Recorder::default();

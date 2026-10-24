@@ -171,8 +171,35 @@ pub struct Mesh {
 /// vertices (an arms + rifle + optic composite is ~20k); a larger one is refused. Takes references
 /// so a body rig can borrow its own models while the weapon's are owned beside them.
 pub fn build_mesh<'a>(skel: &Skeleton, models: impl IntoIterator<Item = &'a Model>) -> Result<Mesh, String> {
+    build_mesh_visible(skel, models, |_| true)
+}
+
+/// Which parts are drawn at `ads`: a base optic (a part whose model carries `tag_scope`/`tag_sights`)
+/// is hidden at full ADS, when the screen-space overlay replaces it. The gun and magazine remain.
+/// Only the first-person path uses this; the third-person `nativebody` keeps `build_mesh`'s
+/// all-visible default.
+pub fn visible_parts(models: &[Model], ads: f32) -> Vec<bool> {
+    models
+        .iter()
+        .map(|m| {
+            let optic = m.bones.iter().any(|b| b.name == "tag_scope" || b.name == "tag_sights");
+            !(optic && ads >= 1.0)
+        })
+        .collect()
+}
+
+/// As [`build_mesh`], but skips the parts whose mask entry is false. The skeleton still holds every
+/// part's bones (the pose and the aim marker keep working); only the hidden parts' surfaces drop.
+pub fn build_mesh_visible<'a>(
+    skel: &Skeleton,
+    models: impl IntoIterator<Item = &'a Model>,
+    visible: impl Fn(usize) -> bool,
+) -> Result<Mesh, String> {
     let mut mesh = Mesh::default();
-    for (part, model) in skel.parts.iter().zip(models) {
+    for (i, (part, model)) in skel.parts.iter().zip(models).enumerate() {
+        if !visible(i) {
+            continue;
+        }
         for s in model.lod0() {
             let base = mesh.vertices.len();
             if base + s.vertices.len() > u16::MAX as usize {
@@ -233,11 +260,12 @@ pub struct Loaded {
     pub mesh: Mesh,
     pub aim: Option<usize>,
     pub anims: HashMap<String, Anim>,
+    pub mask: Vec<bool>,
 }
 
 /// Load step for `key`: `Ok(None)` while files are still coming, `Err` when the viewmodel can't be
 /// built (logged once by the caller; the W3D path keeps drawing).
-pub fn load(files: &mut Files, vm: i32, faction: u8) -> Result<Option<Loaded>, String> {
+pub fn load(files: &mut Files, vm: i32, faction: u8, ads: f32) -> Result<Option<Loaded>, String> {
     let path = zhbo_native::viewmodel_path(vm, faction as char);
     if files.is_missing(&path) {
         return Err(format!("{path} is not in the archive (reconvert the BO2 art)"));
@@ -263,14 +291,15 @@ pub fn load(files: &mut Files, vm: i32, faction: u8) -> Result<Option<Loaded>, S
     if !problems.is_empty() {
         return Err(format!("{path}: {}", problems.join("; ")));
     }
-    let mesh = build_mesh(&skeleton, &models)?;
+    let mask = visible_parts(&models, ads);
+    let mesh = build_mesh_visible(&skeleton, &models, |i| mask[i])?;
     // The bytes are decoded now; keep the cache small.
     for p in &manifest.parts {
         files.forget(&p.model);
     }
     files.forget(&path);
     let aim = skeleton.bone(AIM_TAG);
-    Ok(Some(Loaded { key: (vm, faction), manifest, skeleton, mesh, aim, anims: HashMap::new() }))
+    Ok(Some(Loaded { key: (vm, faction), manifest, skeleton, mesh, aim, anims: HashMap::new(), mask }))
 }
 
 /// The eye's frame as a transform: X along `dir`, Y to the left, Z up, at `eye`.
