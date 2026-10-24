@@ -5,7 +5,7 @@ use zhbo_gfx::ffi::with_renderer;
 use zhbo_gfx::runtime::{NativeDraw, NativeFrame, NativeLight, NativeSurface, NativeVertex, INVALID};
 
 use super::ffi::{State, ZhboNativeIn, DRAWN, LOADING, NOT_NATIVE};
-use super::{native_blend, native_cull};
+use super::{native_blend, native_cull, Mesh};
 
 /// The handles of the viewmodel on the GPU.
 #[derive(Default)]
@@ -83,7 +83,7 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeIn) -> i32 {
                 .collect();
             let handle = |p: &Option<String>| p.as_ref().and_then(|p| handles.iter().find(|(q, _)| q == p)).map_or(INVALID, |(_, h)| *h);
             // Both meshes share the texture handles; only the optic's surfaces differ.
-            let upload = |m: &Mesh| {
+            let mut upload = |m: &Mesh| {
                 let vertices: Vec<NativeVertex> = m.vertices.iter().map(|v| NativeVertex { position: v.position, normal: v.normal, uv: v.uv, bones: v.bones, weights: v.weights }).collect();
                 let surfaces: Vec<NativeSurface> = m
                     .surfaces

@@ -168,6 +168,8 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     let paks = crate::generals::Paks::open(bo2_dir)?;
     let mut zones: HashMap<&str, Zone> = HashMap::new();
     let mut found: Vec<(String, Rgba)> = Vec::new();
+    // Full-screen art that cannot share a 1024-px atlas page (the snipers' scope overlays).
+    let mut standalone: Vec<(String, Rgba)> = Vec::new();
     // The fixed HUD and create-a-class sprites, then each converted weapon's own HUD icon
     // (`ZHBO_BO2_Icon_<weapon>`, the lethal and tactical counters use them).
     let mut wanted: Vec<(String, Source, u32)> = SPRITES
@@ -183,6 +185,11 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     // A name ending in `_flipv` is its base material mirrored vertically (LUI draws an image whose
     // top is below its bottom upside down; `addLargePopupBackground`'s bottom rule is one).
     for (material, max) in zhbo_core::lui::materials::MATERIALS {
+        let base = material.strip_suffix(zhbo_core::lui::materials::FLIP_V).unwrap_or(material);
+        wanted.push((zhbo_core::lui::materials::image(material), Source::Dynamic(base.to_string()), *max));
+    }
+    // The snipers' full-screen ADS overlays: standalone pages, not the HUD atlas.
+    for (material, max) in zhbo_core::hud::OVERLAY_MATERIALS {
         let base = material.strip_suffix(zhbo_core::lui::materials::FLIP_V).unwrap_or(material);
         wanted.push((zhbo_core::lui::materials::image(material), Source::Dynamic(base.to_string()), *max));
     }
@@ -244,6 +251,7 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             _ => report.missing.push((format!("ZHBO_BO2_Attach_{short}"), "no BO2 icon material".into())),
         }
     }
+    let overlay_names: std::collections::HashSet<String> = zhbo_core::hud::OVERLAY_MATERIALS.iter().map(|(m, _)| zhbo_core::lui::materials::image(m)).collect();
     for (name, source, max) in &wanted {
         let hash = match source {
             Source::Hash(h) => Some(*h),
@@ -300,7 +308,11 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                 if name.ends_with(zhbo_core::lui::materials::FLIP_V) {
                     flip_vertical(&mut img);
                 }
-                found.push((name.clone(), img));
+                if overlay_names.contains(name) {
+                    standalone.push((name.clone(), img));
+                } else {
+                    found.push((name.clone(), img));
+                }
                 report.found.push(name.clone());
             }
             None => report.missing.push((name.clone(), "not in this install".into())),
@@ -337,11 +349,27 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             at.1 + img.height - 1
         ));
     }
+    // The standalone overlay pages: one texture each, named after the material.
+    let mut standalone_files: Vec<(String, Vec<u8>)> = Vec::new();
+    for (name, img) in standalone {
+        standalone_files.push((format!("Art\\Textures\\{name}.tga"), images::tga_bytes(&img)));
+        ini.push_str(&format!(
+            "MappedImage {}\n  Texture = {}\n  TextureWidth = {}\n  TextureHeight = {}\n  \
+             Coords = Left:0 Top:0 Right:{} Bottom:{}\n  Status = NONE\nEnd\n\n",
+            name,
+            name,
+            img.width,
+            img.height,
+            img.width - 1,
+            img.height - 1
+        ));
+    }
     let mut files: Vec<(String, Vec<u8>)> = atlases
         .iter()
         .enumerate()
         .map(|(page, atlas)| (format!("Art\\Textures\\{}", texture_name(page)), images::tga_bytes(atlas)))
         .collect();
+    files.extend(standalone_files);
     files.push(("Data\\INI\\MappedImages\\HandCreated\\ZHBO_BO2.ini".to_string(), ini.into_bytes()));
     files.push((VERSION_FILE.to_string(), version_stamp().into_bytes()));
     // BO2's UI fonts. Without them the screens keep the engine font.

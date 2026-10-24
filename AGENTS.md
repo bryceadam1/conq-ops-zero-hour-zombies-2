@@ -53,7 +53,7 @@ the ground rules.
   logic step, RNG through the seeded streams, input via the event stream. The fake-host
   harness (`crates/zhbo-core/tests/`) is the arbiter — sim logic needs no engine.
 - **Single data sources.** Gameplay numbers come from the tuning pack (`tuning.rs` defaults +
-  the mod INIs) and the weapon table schema (`crates/zhbo-core/src/weapons/schema.rs`);
+  the mod INIs) and the weapon table schema (`crates/zhbo-core/src/weapons/table.rs`);
   never hand-copy a number between sites. Input uses the `Key` enum, never raw VK codes;
   sim→UI text goes through `describe_event`.
 

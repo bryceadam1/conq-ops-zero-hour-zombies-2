@@ -378,6 +378,11 @@ answers false and those prims draw their outline fallbacks. Adding it is an appe
 `ZhboClientApi` with a version bump. The damage indicators also need the engine to report where
 damage came from (`HudLui::damage_from`); until then no indicator shows.
 
+The snipers' ADS hand-off draws in the HUD's 2D pass: at `ads >= 1.0` the screen-space overlay
+material replaces the physical scope (which the viewmodel draw hides at the same threshold). The
+overlay is a full-screen `Prim::Image`; its art carries the black surround and the clear lens
+centre. A weapon without an overlay material keeps its physical scope.
+
 ## Tuning
 
 The gameplay tuning pack (`crates/zhbo-core/src/tuning.rs`, filled from

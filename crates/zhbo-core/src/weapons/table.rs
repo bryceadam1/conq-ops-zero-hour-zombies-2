@@ -778,7 +778,7 @@ mod tests {
             overlay_reticle: 1,
             ..Default::default()
         };
-        let text = format_table(&[d.clone()]);
+        let text = format_table(std::slice::from_ref(&d));
         assert!(text.contains("OverlayMaterial = scope_overlay_xpr50"), "{text}");
         assert!(text.contains("OverlayMaterialLowRes = scope_overlay_xpr50_low_res"), "{text}");
         assert!(text.contains("OverlayReticle = 1"), "{text}");

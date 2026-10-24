@@ -3239,3 +3239,15 @@ Verified: `cargo test --workspace` green; `ZHBO_BO2_DIR=… cargo test -q --rele
 MP7); `cargo clippy --workspace --all-targets` clean in the touched files (the remaining warnings
 are pre-existing). No `hud::VERSION` or ABI bump: `Part` is unchanged, the manifest gains only
 more entries, and the integrator bumps `zhbo_assets::hud::VERSION` 59→60 when merging.
+
+## Scope overlay (2026-10-2X)
+
+* The AS50's ADS hand-off: at `ads >= 1.0` the physical scope part is hidden by the viewmodel draw
+  and the screen-space overlay material replaces it. The HUD draws the overlay in the 2D pass;
+  the native viewmodel's `visible_parts` filter drops the optic's surfaces at full ADS.
+* The overlay materials are standalone 1024-px pages (not packed into the HUD atlas): each is
+  written as its own texture named after the material (`ZHBO_Mat_<material>`). The HUD's
+  `OVERLAY_MATERIALS` list in `crates/zhbo-core/src/hud/mod.rs` defines the seven snipers.
+* No ABI change: the draw uses the existing `Prim::Image` and the host's clip callback (which clips
+  2D images only, not the 3D view). The base-optic hide is a one-line `visible_parts` predicate.
+* Verified: `cargo test --workspace` green; the converter test is install-gated (the AS50 parser test uses a synthetic zone); the ignored `builds_from_real_install` test reports three overlay materials missing from this install (`scope_overlay_envg_ir`, `scope_overlay_specter`, `scope_overlay_vzoom`).
