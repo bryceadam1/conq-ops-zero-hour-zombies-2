@@ -249,6 +249,34 @@ fn refuses_bad_input_without_errors() {
 }
 
 #[test]
+fn skips_a_surface_with_no_indices() {
+    let Some((mut r, log, shot)) = renderer() else { return };
+    let green = texture(&mut r, [0, 200, 0, 255]);
+    // One index buffer, two surfaces: the left quad draws, and the second surface covers the right
+    // quad's indices but has none — a fully hidden surface, a no-op, not a refusal.
+    let mut verts = quad(0.0, 0.0, 16.0, 16.0, 0).to_vec();
+    verts.extend(quad(32.0, 0.0, 48.0, 16.0, 0));
+    let indices = [0u16, 2, 1, 0, 3, 2, 4, 6, 5, 4, 7, 6];
+    let mut empty = surface(green, true, 0);
+    empty.first_index = 6;
+    let mesh = r.native_create_mesh(&verts, &indices, &[surface(green, true, 6), empty]);
+    assert_ne!(mesh, INVALID, "an empty surface does not refuse the mesh");
+    assert!(r.native_submit(&draw(mesh, &[IDENTITY], 1)));
+    r.request_screenshot(INVALID, "empty-surface.png");
+    r.frame();
+    assert!(close(pixel(&shot, 8, 8), [0, 200, 0]), "the surface with indices still draws: {:?}", pixel(&shot, 8, 8));
+    assert!(close(pixel(&shot, 40, 8), [0, 0, 0]), "the empty surface draws nothing: {:?}", pixel(&shot, 40, 8));
+    r.native_destroy_mesh(mesh);
+    // Nothing drawable at all: refused, so the caller falls back (the core then draws W3D).
+    let mut none = surface(green, true, 0);
+    none.first_index = 0;
+    assert_eq!(r.native_create_mesh(&verts, &indices, &[none]), INVALID, "a mesh with no drawable surface");
+    let logged = log.lock().unwrap().join("\n");
+    assert_eq!(r.stats().errors, 0, "wgpu errors:\n{logged}");
+    assert!(logged.contains("has no indices"), "the skip is logged:\n{logged}");
+}
+
+#[test]
 fn takes_the_target_views_transform_when_given_none() {
     let Some((mut r, log, shot)) = renderer() else { return };
     let red = texture(&mut r, [255, 0, 0, 255]);

@@ -191,6 +191,9 @@ pub fn visible_parts(models: &[Model], ads: f32, overlay_art_present: bool) -> V
 
 /// As [`build_mesh`], but skips the parts whose mask entry is false. The skeleton still holds every
 /// part's bones (the pose and the aim marker keep working); only the hidden parts' surfaces drop.
+/// A surface whose triangles are *all* hidden drops with them, as the W3D path drops an all-hidden
+/// mesh (`zhbo_assets::character::skin_hiding`): the composed mesh never carries a zero-index
+/// surface, because an empty surface is never a drawable surface — only "entirely hidden".
 pub fn build_mesh_visible<'a>(
     skel: &Skeleton,
     models: impl IntoIterator<Item = &'a Model>,
@@ -237,10 +240,19 @@ pub fn build_mesh_visible<'a>(
                     mesh.indices.extend(tri.iter().map(|&i| i + base as u16));
                 }
             }
+            // Every triangle hidden: the surface has nothing to draw, and BO2 has no empty surface.
+            // Push no record for it, exactly as the W3D path drops an all-hidden mesh
+            // (`character::skin_hiding`). The skipped surface's vertices stay in the mesh above:
+            // nothing indexes them, and reordering the vertex push to drop them would need a second
+            // triangle pass for no visible gain.
+            let index_count = (mesh.indices.len() as u32) - first;
+            if index_count == 0 {
+                continue;
+            }
             let m = model.materials.get(s.material as usize);
             mesh.surfaces.push(SurfaceSpec {
                 first_index: first,
-                index_count: (mesh.indices.len() as u32) - first,
+                index_count,
                 blend: m.map_or(Blend::Opaque, |m| m.blend),
                 emissive: m.is_some_and(|m| m.emissive),
                 color: m.and_then(|m| m.color.clone()),

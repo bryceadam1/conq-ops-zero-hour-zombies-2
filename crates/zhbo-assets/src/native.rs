@@ -345,6 +345,9 @@ mod tests {
         let m = model(&gun(), &[Some("gun.tga".into())], &looks);
         let back = nm::Model::from_bytes(&m.to_bytes()).expect("a valid blob");
         assert_eq!(back.surfaces[0].indices, vec![0, 1, 2]);
+        // The blob never holds a surface with no indices: an empty surface can never draw, and the
+        // composer's hide rule is what empties a surface, never the converter.
+        assert!(back.surfaces.iter().all(|s| !s.indices.is_empty()), "the converter wrote an empty surface");
         let w = back.surfaces[0].vertices[1].weights;
         assert!((w.iter().sum::<f32>() - 1.0).abs() < 1e-5 && w[0] >= w[1], "{w:?}");
         assert_eq!(back.surfaces[0].vertices[2].weights, [1.0, 0.0, 0.0, 0.0], "no weights: the first bone");

@@ -740,6 +740,7 @@ mod tests {
             }
             let models: Vec<Model> = vm.parts.iter().map(|p| Model::from_bytes(file(&p.model).unwrap_or_else(|| panic!("{path}: no {}", p.model))).unwrap_or_else(|e| panic!("{}: {e}", p.model))).collect();
             for m in &models {
+                no_empty_surfaces(m);
                 for mat in &m.materials {
                     for t in mat.color.iter().chain(&mat.maps) {
                         assert!(file(t).is_some(), "{}: texture {t} not written", m.name);
@@ -755,6 +756,17 @@ mod tests {
             }
         }
         native_bodies_are_whole(files);
+    }
+
+    /// The converter never writes a surface with no indices: BO2 has none in the converted zones
+    /// (the catalogue scan over `common_mp`, `patch_mp`, the faction zones, `common_patch_mp`,
+    /// `common` and `code_post_gfx`), the W3D path skips an empty source surface, and an empty blob
+    /// surface can never draw. The composer skips a surface its hide tags empty; the blob is never
+    /// allowed to hold one in the first place.
+    fn no_empty_surfaces(m: &zhbo_native::model::Model) {
+        for (i, s) in m.surfaces.iter().enumerate() {
+            assert!(!s.indices.is_empty(), "{}: surface {i} has no indices (the converter must not write an empty surface)", m.name);
+        }
     }
 
     /// The first-person hands' wrist datapad is BO2's campaign map/readout screen. Multiplayer's
@@ -790,7 +802,11 @@ mod tests {
         use zhbo_native::thirdperson::{state, Body, Weapon};
         use zhbo_native::{anim::Anim, model::Model, pose::{PartRef, Skeleton}};
         let file = |path: &str| files.iter().find(|(p, _)| p == path).map(|(_, b)| b.as_slice());
-        let model = |path: &str| Model::from_bytes(file(path).unwrap_or_else(|| panic!("no model {path}"))).unwrap_or_else(|e| panic!("{path}: {e}"));
+        let model = |path: &str| {
+            let m = Model::from_bytes(file(path).unwrap_or_else(|| panic!("no model {path}"))).unwrap_or_else(|e| panic!("{path}: {e}"));
+            no_empty_surfaces(&m);
+            m
+        };
         let textures_are_in = |m: &Model, what: &str| {
             for mat in &m.materials {
                 for t in mat.color.iter().chain(&mat.maps) {

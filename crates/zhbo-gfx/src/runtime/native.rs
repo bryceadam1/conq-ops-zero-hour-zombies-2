@@ -361,9 +361,11 @@ impl Renderer {
         self.native.textures.remove(h);
     }
 
-    /// Upload a mesh. Refused (`INVALID`, logged) if a surface's range leaves the indices, an
-    /// index leaves the vertices, a bone index is past [`NATIVE_MAX_BONES`], or a texture handle
-    /// is stale. Surfaces keep their textures alive after the textures are destroyed.
+    /// Upload a mesh. A surface with no indices is a no-op draw: it is skipped and logged, not an
+    /// error, but a mesh left with no drawable surface at all is refused. Refused (`INVALID`,
+    /// logged) if a surface's count is not whole triangles, its range leaves the indices, an index
+    /// leaves the vertices, a bone index is past [`NATIVE_MAX_BONES`], or a texture handle is
+    /// stale. Surfaces keep their textures alive after the textures are destroyed.
     pub fn native_create_mesh(&mut self, vertices: &[NativeVertex], indices: &[u16], surfaces: &[NativeSurface]) -> u16 {
         let refuse = |r: &mut Renderer, why: String| {
             r.report(format!("zhbo-gfx: native mesh refused: {why}"));
@@ -385,7 +387,15 @@ impl Renderer {
         let mut built = Vec::with_capacity(surfaces.len());
         for (k, s) in surfaces.iter().enumerate() {
             let end = s.first_index as u64 + s.index_count as u64;
-            if s.index_count == 0 || s.index_count % 3 != 0 || end > indices.len() as u64 {
+            if s.index_count == 0 {
+                // A surface with no triangles is a no-op draw, not corruption. The composer never
+                // sends one (a wholly hidden surface drops at compose), but the ABI must not lose a
+                // whole mesh over one. `report` dedups by message and this runs at mesh upload, not
+                // per frame, so the line costs nothing.
+                self.report(format!("zhbo-gfx: native mesh surface {k} of {} has no indices; skipped", surfaces.len()));
+                continue;
+            }
+            if s.index_count % 3 != 0 || end > indices.len() as u64 {
                 return refuse(self, format!("surface {k} indices {}..{end} of {}", s.first_index, indices.len()));
             }
             let view = |r: &Renderer, h: u16, fallback: &wgpu::TextureView| -> Option<wgpu::TextureView> {
@@ -422,6 +432,11 @@ impl Renderer {
                 ],
             });
             built.push(Surface { first_index: s.first_index, index_count: s.index_count, blend: s.blend, sort_key: s.sort_key, cull: s.cull, bind_group });
+        }
+        if built.is_empty() {
+            // `DRAWN` hides the W3D body in third person (CONTRACT.md), so a mesh that can only draw
+            // nothing must report failure and let the caller fall back.
+            return refuse(self, format!("{} surfaces, none with indices", surfaces.len()));
         }
         // Opaque first, then blended surfaces in BO2's sort order.
         built.sort_by_key(|s| (s.blend.blended(), s.sort_key));

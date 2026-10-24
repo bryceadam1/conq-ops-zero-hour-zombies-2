@@ -80,6 +80,33 @@ fn hidden_bones_omit_their_triangles_and_weights() {
     assert_eq!(blended.weights, [1.0, 0.0, 0.0, 0.0], "the hidden bone's weight is dropped and the visible one renormalized");
 }
 
+#[test]
+fn a_fully_hidden_surface_is_not_pushed() {
+    // Two surfaces on one model: one on the body bone, one wholly on the sight bone. Hiding the
+    // sight drops the second surface's record rather than pushing an empty one (the W3D path drops
+    // an all-hidden mesh the same way), and the body's surface keeps its triangle.
+    let bones = vec![bone("j_gun", None, [0.0; 3]), bone("tag_sights", Some(0), [0.0, 0.0, 2.0])];
+    let tri = |b: u16, z: f32| -> [Vertex; 3] {
+        [[0.0, 0.0, z], [1.0, 0.0, z], [0.0, 1.0, z]].map(|p| Vertex { position: p, normal: [0.0, 0.0, 1.0], uv: [0.0; 2], bones: [b, 0, 0, 0], weights: [1.0, 0.0, 0.0, 0.0] })
+    };
+    let surface = |b: u16, z: f32| Surface { material: 0, vertices: tri(b, z).to_vec(), indices: vec![0, 1, 2] };
+    let model = Model {
+        name: "gun".into(),
+        bones,
+        materials: vec![Material { name: "m".into(), ..Default::default() }],
+        lods: vec![Lod { distance: 0.0, first_surface: 0, surface_count: 2 }],
+        surfaces: vec![surface(0, 0.0), surface(1, 2.0)],
+        ..Default::default()
+    };
+    let parts = [PartRef { model: &model, tag: None, offset: IDENTITY, rigid: false }];
+    let (skel, problems) = Skeleton::compose(&parts, &[], &["tag_sights".into()]);
+    assert!(problems.is_empty());
+    let mesh = build_mesh(&skel, [&model]).unwrap();
+    assert_eq!(mesh.surfaces.len(), 1, "the all-hidden surface is not in the composed mesh");
+    assert_eq!(mesh.surfaces[0].index_count, 3, "the visible surface keeps its triangle");
+    assert_eq!(mesh.indices.len(), 3);
+}
+
 struct Fixture {
     files: Vec<(String, Vec<u8>)>,
 }
