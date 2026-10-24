@@ -54,6 +54,93 @@ fn the_mesh_carries_the_material_name_and_camo_layer() {
 }
 
 #[test]
+fn a_camo_option_changes_only_the_surfaces_its_recipe_names() {
+    // Three surfaces: camo1 is a pattern-layer surface, camo2 a solid-layer surface, and a bullet
+    // surface has no layer. The recipe's style pair names camo1 only.
+    let bones = vec![bone("tag_weapon", None, [0.0; 3])];
+    let v = |p: [f32; 3]| Vertex { position: p, normal: [0.0, 0.0, 1.0], uv: [0.0; 2], bones: [0, 0, 0, 0], weights: [1.0, 0.0, 0.0, 0.0] };
+    let gun = Model {
+        name: "gun".into(),
+        bones,
+        materials: vec![
+            Material { name: "mc/mtl_t6_wpn_ar_an94_camo1".into(), camo: zhbo_native::model::CamoLayer::Pattern, ..Default::default() },
+            Material { name: "mc/mtl_t6_wpn_ar_an94_camo2".into(), camo: zhbo_native::model::CamoLayer::Solid, ..Default::default() },
+            Material { name: "mc/mtl_t6_attach_bullet".into(), camo: zhbo_native::model::CamoLayer::None, ..Default::default() },
+        ],
+        lods: vec![Lod { distance: 0.0, first_surface: 0, surface_count: 3 }],
+        surfaces: vec![
+            Surface { material: 0, vertices: vec![v([0.0, 0.0, 0.0]), v([1.0, 0.0, 0.0]), v([0.0, 1.0, 0.0])], indices: vec![0, 1, 2] },
+            Surface { material: 1, vertices: vec![v([0.0, 0.0, 0.0]), v([1.0, 0.0, 0.0]), v([0.0, 1.0, 0.0])], indices: vec![0, 1, 2] },
+            Surface { material: 2, vertices: vec![v([0.0, 0.0, 0.0]), v([1.0, 0.0, 0.0]), v([0.0, 1.0, 0.0])], indices: vec![0, 1, 2] },
+        ],
+        ..Default::default()
+    };
+    let parts = [PartRef { model: &gun, tag: None, offset: IDENTITY, rigid: false }];
+    let (skel, problems) = Skeleton::compose(&parts, &[], &[]);
+    assert!(problems.is_empty());
+    let mesh = build_mesh(&skel, [&gun]).unwrap();
+
+    let blob = zhbo_native::camo::Camo {
+        name: "camo_test".into(),
+        solid_base: None,
+        pattern_base: None,
+        sets: vec![zhbo_native::camo::Set {
+            solid: Some("Art\\Textures\\solid.tga".into()),
+            pattern: Some("Art\\Textures\\pattern.tga".into()),
+            offset: [0.25, 0.5],
+            scale: 2.0,
+            gain: 2.0,
+        }],
+        styles: vec![zhbo_native::camo::Style { entries: vec![zhbo_native::camo::Entry {
+            flags: 6,
+            pairs: vec![zhbo_native::camo::Pair { base: "mc/mtl_t6_wpn_ar_an94_camo1".into(), camo: "mc/mtl_weapon_camo_gold".into() }],
+            consts: [0.0; 8],
+        }] }],
+        materials: vec![zhbo_native::model::Material {
+            name: "mc/mtl_weapon_camo_gold".into(),
+            color: Some("Art\\Textures\\gold.tga".into()),
+            maps: Some("Art\\Textures\\gold_nsg.tga".into()),
+            ..Default::default()
+        }],
+        options: vec![
+            zhbo_native::camo::CamoOption { id: "camo_none".into(), pattern: None, style: None },
+            zhbo_native::camo::CamoOption { id: "camo_atacs".into(), pattern: Some(0), style: None },
+            zhbo_native::camo::CamoOption { id: "camo_gold".into(), pattern: None, style: Some(0) },
+            zhbo_native::camo::CamoOption { id: "camo_multicam".into(), pattern: None, style: None },
+        ],
+    };
+
+    // A pattern camo: camo1 takes the pattern image, camo2 the solid one, bullet nothing.
+    let mut m = mesh.clone();
+    super::camo::apply(&mut m, &blob, "camo_atacs");
+    assert_eq!(m.surfaces[0].camo.as_deref(), Some("Art\\Textures\\pattern.tga"));
+    assert_eq!(m.surfaces[0].camo_uv, [0.25, 0.5, 2.0, 2.0]);
+    assert_eq!(m.surfaces[1].camo.as_deref(), Some("Art\\Textures\\solid.tga"));
+    assert_eq!(m.surfaces[2].camo, None);
+
+    // A style camo: camo1's material is replaced and its layer cleared; camo2 is untouched.
+    let mut m = mesh.clone();
+    let before = m.surfaces[1].color.clone();
+    super::camo::apply(&mut m, &blob, "camo_gold");
+    assert_eq!(m.surfaces[0].color.as_deref(), Some("Art\\Textures\\gold.tga"));
+    assert_eq!(m.surfaces[0].maps.as_deref(), Some("Art\\Textures\\gold_nsg.tga"));
+    assert_eq!(m.surfaces[0].camo, None);
+    assert_eq!(m.surfaces[1].color, before);
+    assert_eq!(m.surfaces[2].camo, None);
+
+    // A no-art option changes nothing.
+    let mut m = mesh.clone();
+    super::camo::apply(&mut m, &blob, "camo_multicam");
+    assert_eq!(m, mesh);
+    super::camo::apply(&mut m, &blob, "camo_none");
+    assert_eq!(m, mesh);
+
+    // The cache key separates options and is 0 for none.
+    assert_eq!(super::camo::key_of("camo_test", "camo_none"), 0);
+    assert_ne!(super::camo::key_of("camo_test", "camo_atacs"), super::camo::key_of("camo_test", "camo_gold"));
+}
+
+#[test]
 fn hidden_bones_omit_their_triangles_and_weights() {
     // A body bone and a sight bone: a triangle on each, and a triangle blended between them.
     let bones = vec![bone("j_gun", None, [0.0; 3]), bone("tag_sights", Some(0), [0.0, 0.0, 2.0])];

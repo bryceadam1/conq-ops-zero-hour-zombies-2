@@ -176,6 +176,8 @@ pub struct PlayerSim {
     pub reticle: String,
     /// The class's reticle colour choice (`reticle_color_N`), carried when a `CustomClass` lands.
     pub reticle_color: String,
+    /// The class's camo choice (`camo_*`), carried when a `CustomClass` lands.
+    pub camo: String,
     pub mode: Mode,
     pub body: Body,
     pub yaw: f32,
@@ -212,6 +214,7 @@ impl PlayerSim {
             class: Some("assault".into()),
             reticle: String::new(),
             reticle_color: String::new(),
+            camo: String::new(),
             mode: Mode::Fps,
             body: Body::new(Vec3::ZERO, &MoveTuning::default()),
             yaw: 0.0,
@@ -351,6 +354,7 @@ impl Sim {
                     class: None,
                     reticle: String::new(),
                     reticle_color: String::new(),
+                    camo: String::new(),
                     mode: Mode::Fps,
                     body: Body::new(pos, &tuning),
                     yaw,
@@ -413,6 +417,7 @@ impl Sim {
                     class: None,
                     reticle: String::new(),
                     reticle_color: String::new(),
+                    camo: String::new(),
                     mode: Mode::Rts,
                     body: Body::new(Vec3::ZERO, &tuning),
                     yaw: 0.0,
@@ -436,20 +441,21 @@ impl Sim {
             self.players[idx] = Some(p);
             return;
         }
-        let (class_id, class_name, loadout, reticle, reticle_color) = if payload.is_empty() {
+        let (class_id, class_name, loadout, reticle, reticle_color, camo) = if payload.is_empty() {
             let Some(c) = crate::classes::at(index) else { self.players[idx] = Some(p); return };
-            (c.id.clone(), ClassName::new(&c.name), crate::classes::loadout_of(&c), String::new(), String::new())
+            (c.id.clone(), ClassName::new(&c.name), crate::classes::loadout_of(&c), String::new(), String::new(), String::new())
         } else {
             let Some(c) = crate::classes::CustomClass::from_wire_words(payload) else {
                 self.players[idx] = Some(p);
                 return;
             };
             let name = if c.name.is_empty() { "Custom Class".to_string() } else { c.name.clone() };
-            (format!("custom:{}", c.name), ClassName::new(&name), c.loadout(), c.reticle.clone(), c.reticle_color.clone())
+            (format!("custom:{}", c.name), ClassName::new(&name), c.loadout(), c.reticle.clone(), c.reticle_color.clone(), c.camo.clone())
         };
         p.class = Some(class_id);
         p.reticle = reticle;
         p.reticle_color = reticle_color;
+        p.camo = camo;
         p.arsenal = Arsenal::with_loadout(loadout);
         // The kit is ready as soon as the class lands, whichever view the player is in. In first
         // person the weapon still has to come up (BO2: the pick happens between spawns, not
@@ -1353,6 +1359,17 @@ pub(crate) mod tests {
             Some(name) => assert_eq!(name.as_str(), "Ghost Recon"),
             other => panic!("expected custom class name, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn a_custom_class_carries_its_camo_choice() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        let custom = crate::classes::CustomClass { camo: "camo_gold".into(), ..Default::default() };
+        sim.choose_class(0, 1, usize::MAX, &custom.to_wire_words());
+        assert_eq!(sim.player(0).unwrap().camo, "camo_gold");
     }
 
     #[test]

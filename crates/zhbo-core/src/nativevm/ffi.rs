@@ -9,7 +9,7 @@ use std::collections::{HashSet, VecDeque};
 use std::ffi::{c_char, CStr};
 use std::sync::Mutex;
 
-use super::{load, Files, GunPose, Loaded, Posed, Request};
+use super::{local_camo, load, Files, GunPose, Loaded, Posed, Request};
 use zhbo_native::anim::Anim;
 
 /// A scene light: towards the light (world space) and its display-encoded colour.
@@ -105,23 +105,29 @@ impl State {
         if !enabled {
             return NOT_NATIVE;
         }
-        let key = (inp.vm, inp.faction as u8);
-        if inp.vm < 0 || self.failed.contains(&key) {
+        let vmkey = (inp.vm, inp.faction as u8);
+        let camo = local_camo(inp.vm);
+        let camo_key = camo.as_ref().map_or(0, |c| super::camo::key_of(&c.asset, &c.option));
+        let key = (inp.vm, inp.faction as u8, camo_key);
+        if inp.vm < 0 || self.failed.contains(&vmkey) {
             return NOT_NATIVE;
         }
         if self.loaded.as_ref().is_none_or(|l| l.key != key) {
             #[cfg(feature = "renderer")]
             self.gpu.release();
             self.loaded = None;
-            match load(&mut self.files, inp.vm, inp.faction as u8, self.overlay_material_override.as_deref()) {
+            match load(&mut self.files, inp.vm, inp.faction as u8, self.overlay_material_override.as_deref(), camo.as_ref().map(|c| (c.asset.as_str(), c.option.as_str()))) {
                 Err(e) => {
-                    self.failed.insert(key);
+                    self.failed.insert(vmkey);
                     self.log_once(e);
                     return NOT_NATIVE;
                 }
                 Ok(None) => return LOADING,
                 Ok(Some(l)) => {
                     self.log_once(format!("ZV{:02}{} composed: {} bones, {} vertices, {} surfaces", l.key.0, l.key.1 as char, l.skeleton.bones.len(), l.mesh.vertices.len(), l.mesh.surfaces.len()));
+                    if camo_key != 0 && l.camo.is_none() {
+                        self.log_once("native viewmodel: the camo art is not in the archive (reconvert the BO2 art)".into());
+                    }
                     self.loaded = Some(l);
                 }
             }

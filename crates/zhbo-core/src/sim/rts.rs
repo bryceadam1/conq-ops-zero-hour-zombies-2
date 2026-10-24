@@ -104,6 +104,7 @@ impl Sim {
                 class: None,
                 reticle: String::new(),
                 reticle_color: String::new(),
+                camo: String::new(),
                 mode: Mode::Rts,
                 body: Body::new(info.pos, &self.tuning),
                 yaw: info.yaw,
