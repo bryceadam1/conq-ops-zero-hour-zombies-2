@@ -132,6 +132,22 @@ fn base_part_note(base: &[BasePart]) -> String {
     format!(", {} base parts ({})", base.len(), names.join(", "))
 }
 
+/// The models one attachment adds, in draw order, with their placement and whether each is the
+/// attachment's optic. An IR optic's `viewModelAdditional` (the dual-band rail mount) comes first,
+/// at the unique's own `viewModelAddOffsets`/`viewModelAddRotations` (as50: `[1, 0, 4.711]` under
+/// the optic's `[1.045, 0, 5.568]`); only the single-attachment IR uniques carry one.
+fn attachment_parts(u: &zhbo_formats::weapon::AttachmentUnique, pt: u32) -> Vec<(&str, crate::xf::Xf, u32)> {
+    let xf = |rotation: [f32; 3], offset: [f32; 3]| character::scaled_xf((crate::xf::from_angles(rotation), offset));
+    let mut out = Vec::new();
+    if let Some(name) = u.view_model_additional.as_deref() {
+        out.push((name, xf(u.view_add_rotation, u.view_add_offset), 0));
+    }
+    if let Some(name) = u.view_model.as_deref() {
+        out.push((name, xf(u.view_rotation, u.view_offset), pt));
+    }
+    out
+}
+
 /// A notetrack source: viewmodel, clip (BO2 slot or tablet clip) and the BO2 animation.
 pub type Clip = (i32, i32, xanim::Anim);
 
@@ -300,13 +316,14 @@ pub(crate) fn weapon_viewmodels(
         // replaces that art (the ACOG) or the magazine (the dualclip).
         let base = base_parts(patch, common, w, &c, view);
         let parts: Vec<(&xmodel::Model, &str)> = vec![(&gun, mount_tag(w))];
-        // The attachments' models, each with where it goes.
+        // The attachments' models, each with where it goes: an attachment's additional mount (the
+        // IR rail) before its own model, both on the unique's tag.
         let mut extra: Vec<(xmodel::Model, Option<String>, crate::xf::Xf, u32)> = Vec::new();
         for (u, pt) in &c.parts {
-            let Some(name) = &u.view_model else { continue };
-            let Ok(model) = find_model(patch, common, name) else { continue };
-            let offset = character::scaled_xf((crate::xf::from_angles(u.view_rotation), u.view_offset));
-            extra.push((model, u.view_model_tag.clone(), offset, *pt));
+            for (name, offset, point) in attachment_parts(u, *pt) {
+                let Ok(model) = find_model(patch, common, name) else { continue };
+                extra.push((model, u.view_model_tag.clone(), offset, point));
+            }
         }
         let gun_tex = textures(&gun, paks, out, &mut looks);
         let base_tex: Vec<Vec<Option<String>>> = base.iter().map(|p| textures(&p.model, paks, out, &mut looks)).collect();
@@ -751,7 +768,7 @@ pub(crate) fn tablet_world(patch: &Zone, common: &Zone, paks: &Paks, out: &mut B
 
 #[cfg(test)]
 mod tests {
-    use super::{base_part_note, is_dual_wield, mount_tag, same_sight, BasePart};
+    use super::{attachment_parts, base_part_note, is_dual_wield, mount_tag, same_sight, BasePart};
     use zhbo_formats::weapon::{inventory, AttachmentUnique, Weapon};
 
     fn sight(name: &str, mins: [f32; 3], maxs: [f32; 3]) -> zhbo_formats::xmodel::Model {
@@ -816,6 +833,30 @@ mod tests {
         let combined = AttachmentUnique { kind: 14, combined: 0x8004000, override_base_attachment_offsets: true, base_attachment_offset: [1.5, 0.0, 2.5], ..Default::default() };
         let pair = weapon(vec![ir, AttachmentUnique { kind: 27, ..Default::default() }, combined], vec![(14, "ir".into()), (27, "swayreduc".into())]);
         assert_eq!(super::combo(&pair, &[], &["swayreduc", "ir"]).base_attachment_offset, Some([1.5, 0.0, 2.5]), "the exact combination's unique wins");
+    }
+
+    /// The IR optic's `viewModelAdditional` is a second model of the same attachment: the dual-band
+    /// rail. It draws **before** the optic, on the unique's `viewModelTag`, at its own
+    /// `viewModelAddOffsets`/`viewModelAddRotations` — under the optic, not at it (as50: `[1, 0,
+    /// 4.711]` against the optic's `[1.045, 0, 5.568]`) — and is not the optic for the aim marker.
+    #[test]
+    fn the_additional_mount_precedes_the_optic_at_its_own_offset() {
+        let ir = AttachmentUnique {
+            view_model: Some("t6_attach_optic_dualband_view".into()),
+            view_model_additional: Some("t6_attach_optic_dualband_mount_view".into()),
+            view_offset: [1.045, 0.0, 5.568],
+            view_add_offset: [1.0, 0.0, 4.711],
+            ..Default::default()
+        };
+        let parts = attachment_parts(&ir, 10);
+        assert_eq!(parts.len(), 2, "{parts:?}");
+        let (mount, at, point) = parts[0];
+        assert_eq!((mount, point), ("t6_attach_optic_dualband_mount_view", 0), "the mount draws first and must not drive the aim marker");
+        assert_eq!(at.1, crate::character::scaled([1.0, 0.0, 4.711]), "the mount rides its own add offset");
+        let (optic, at, point) = parts[1];
+        assert_eq!((optic, point), ("t6_attach_optic_dualband_view", 10), "the optic keeps the attachment's point");
+        assert_eq!(at.1, crate::character::scaled([1.045, 0.0, 5.568]));
+        assert_eq!(attachment_parts(&AttachmentUnique { view_model: Some("t6_attach_bcpu_view".into()), ..Default::default() }, 10).len(), 1, "no mount without viewModelAdditional");
     }
 
     /// The M32 lists `_view` and `_ads` as two complete sights: the same non-empty material set and
