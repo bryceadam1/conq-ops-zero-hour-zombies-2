@@ -249,12 +249,12 @@ pub unsafe extern "C" fn zhbo_init(logic: *const LogicApi, client: *const Client
         crate::config::Autopilot::Manual => {
             state.logic.log("autopilot scene enabled, manual input (ZHBO_AUTOPILOT=manual)")
         }
-        crate::config::Autopilot::Scripted { equipment, build, classpick } => {
+        crate::config::Autopilot::Scripted { equipment, build, classpick, scope } => {
             #[cfg(feature = "autopilot")]
             {
-                state.client.autopilot = Some(crate::client::Autopilot { equipment, build, classpick, ..Default::default() });
+                state.client.autopilot = Some(crate::client::Autopilot { equipment, build, classpick, scope, ..Default::default() });
             }
-            let _ = (equipment, build, classpick);
+            let _ = (equipment, build, classpick, scope);
             state.logic.log("autopilot enabled (ZHBO_AUTOPILOT)");
         }
     }

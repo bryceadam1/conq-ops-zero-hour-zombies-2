@@ -43,6 +43,7 @@ mode=autopilot
 [[ "${1:-}" == "--rts-dry" ]] && mode=rts-dry
 [[ "${1:-}" == "--build" ]] && mode=build
 [[ "${1:-}" == "--classpick" ]] && mode=classpick
+[[ "${1:-}" == "--scope" ]] && mode=scope
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="$HOME/Library/Application Support/ConquerOps/dist"
@@ -359,6 +360,26 @@ EOF
     check "returned to RTS" "returned General [0-9]+ to RTS control"
     check "re-entered" "taking control again"
     check "took enemy fire" "General took [0-9]+ damage"
+    echo "screenshots and log: $out"
+    exit $ok
+fi
+
+if [[ "$mode" == "scope" ]]; then
+    # The AS50's scope-overlay hand-off: hold ADS past the 0.40 s transition. The native draw logs
+    # "native viewmodel: base optic hidden at full ADS" and the HUD draws the 2D overlay.
+    out="$repo/.autotest/scope"
+    mkdir -p "$out"
+    ZHBO_AUTOPILOT=scope "$bin" > "$out/run.log" 2>&1 &
+    pid=$!
+    sleep 12
+    kill "$pid" 2>/dev/null || true
+    if grep -q "base optic hidden at full ADS" "$out/run.log"; then
+        echo "scope overlay: the base optic is hidden at full ADS"
+        ok=0
+    else
+        echo "scope overlay: no hand-off log line" >&2
+        ok=1
+    fi
     echo "screenshots and log: $out"
     exit $ok
 fi
