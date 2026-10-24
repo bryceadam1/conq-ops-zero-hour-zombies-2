@@ -248,6 +248,18 @@ fn dist_sq(a: [f32; 3], b: [f32; 3]) -> f32 {
     d[0] * d[0] + d[1] * d[1] + d[2] * d[2]
 }
 
+/// The fallback mount for an attachment whose authored tag names no bone in the base gun. An
+/// optic prefers the gun's `tag_sights` (the rail mount the optic occupies: the unique's own
+/// `hideTags` hides it when the optic is on); everything else takes the bone nearest the
+/// authored offset. The authored offset stays gun-frame and is not translated.
+fn fallback_mount(is_optic: bool, gun: &nm::Model, offset: [f32; 3], has: impl Fn(&str) -> bool) -> String {
+    if is_optic && has("tag_sights") {
+        "tag_sights".into()
+    } else {
+        nearest_bone(gun, offset)
+    }
+}
+
 /// One manifest per faction for weapon `v`: the faction's arms, the gun on its mount tag
 /// (`tag_weapon` for primaries, `tag_knife_attach` for off-hand equipment), the base parts on the
 /// gun root (`j_gun`) at their authored offsets (the magazine and, when the combination does not
@@ -291,7 +303,7 @@ pub(crate) fn viewmodels(
             }
         }
         for (k, ((tag, offset, is_optic), (model, path))) in v.attachments.iter().zip(extra.iter().zip(&extra_paths)).enumerate() {
-            let tag = tag.clone().filter(|t| has(t, &parts)).unwrap_or_else(|| nearest_bone(gun, offset.1));
+            let tag = tag.clone().filter(|t| has(t, &parts)).unwrap_or_else(|| fallback_mount(*is_optic, gun, offset.1, |n| has(n, &parts)));
             if *is_optic {
                 optic = Some((parts.len(), v.extra_models[k].mins, v.extra_models[k].maxs));
             }
@@ -502,5 +514,35 @@ mod tests {
         assert_eq!(nearest_bone(&nm_g, [9.0, 0.0, 0.0]), "tag_scope");
         // An offset near the origin resolves to the root.
         assert_eq!(nearest_bone(&nm_g, [0.0, 0.0, 0.0]), "j_gun");
+    }
+
+    /// An optic's missing `viewModelTag` falls back to the gun's `tag_sights` (the rail mount),
+    /// not the bone nearest its authored offset: the MP7's reflex offset `[0.025, 0, 2.564]`
+    /// sits near the receiver rear-centre, where the plain nearest-bone fallback picked
+    /// `tag_brass`; `tag_sights` (bind `[5.91, 0, 3.38]`) is the mount the unique's `hideTags`
+    /// already hides when the optic is on. The authored offset is unchanged.
+    #[test]
+    fn optic_fallback_prefers_tag_sights_over_the_nearest_bone() {
+        let bone = |name: &str, parent: Option<usize>, pos: [f32; 3]| Bone { name: name.into(), parent, local_rotation: QUAT_IDENTITY, local_position: pos, rotation: QUAT_IDENTITY, position: pos };
+        let mut g = gun();
+        // The MP7's relevant bones: brass near the authored offset, sights on the rail.
+        g.bones = vec![
+            bone("j_gun", None, [0.0; 3]),
+            bone("tag_brass", Some(0), [0.025, 0.0, 2.564]),
+            bone("tag_sights", Some(0), [5.91, 0.0, 3.38]),
+        ];
+        let nm_g = model(&g, &[None], &Looks::default());
+        let authored = [0.025, 0.0, 2.564]; // the MP7 reflex's view offset, gun-frame.
+        // A non-optic keeps the nearest-bone fallback (tag_brass).
+        assert_eq!(nearest_bone(&nm_g, authored), "tag_brass");
+        // An optic prefers tag_sights, the bone the unique's hideTags hides when it is on.
+        assert_eq!(fallback_mount(true, &nm_g, authored, |n| nm_g.bone(n).is_some()), "tag_sights");
+        // A gun without tag_sights (e.g. a pistol) keeps the nearest-bone fallback for optics.
+        let mut no_sights = g.clone();
+        no_sights.bones.retain(|b| b.name != "tag_sights");
+        let nm_ns = model(&no_sights, &[None], &Looks::default());
+        assert_eq!(fallback_mount(true, &nm_ns, authored, |n| nm_ns.bone(n).is_some()), "tag_brass");
+        // A non-optic still takes the nearest bone even when tag_sights exists.
+        assert_eq!(fallback_mount(false, &nm_g, authored, |n| nm_g.bone(n).is_some()), "tag_brass");
     }
 }
