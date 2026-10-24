@@ -26,7 +26,7 @@ pub(crate) fn key_of(asset: &str, option: &str) -> u64 {
         return 0;
     }
     let mut h: u64 = 0xcbf29ce484222325;
-    for b in asset.as_bytes().iter().chain([b'|'].iter()).chain(option.as_bytes()) {
+    for b in asset.as_bytes().iter().chain(b"|".iter()).chain(option.as_bytes()) {
         h ^= *b as u64;
         h = h.wrapping_mul(0x100000001b3);
     }

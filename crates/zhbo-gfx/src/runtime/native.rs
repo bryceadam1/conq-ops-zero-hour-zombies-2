@@ -98,6 +98,10 @@ pub struct NativeSurface {
     pub color: u16,
     /// The packed normal/gloss/specular map (linear), or `INVALID` for a flat matte surface.
     pub maps: u16,
+    /// The chosen camo layer's texture handle, or `INVALID` for none.
+    pub camo: u16,
+    /// The camo layer's UV transform: offset.xy, scale, gain. Ignored when `camo` is `INVALID`.
+    pub camo_uv: [f32; 4],
     /// BO2's sort key: blended surfaces draw in its order.
     pub sort_key: u8,
     pub cull: NativeCull,
@@ -235,9 +239,10 @@ impl NativeState {
                 wgpu::BindGroupLayoutEntry {
                     binding: 3,
                     visibility: wgpu::ShaderStages::FRAGMENT,
-                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: wgpu::BufferSize::new(16) },
+                    ty: wgpu::BindingType::Buffer { ty: wgpu::BufferBindingType::Uniform, has_dynamic_offset: false, min_binding_size: wgpu::BufferSize::new(32) },
                     count: None,
                 },
+                tex(4),
             ],
         });
         let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("native"), bind_group_layouts: &[Some(&bgl0), Some(&bgl1)], immediate_size: 0 });
@@ -405,18 +410,26 @@ impl Renderer {
                     r.native.textures.get(h).map(|t| t.view.clone())
                 }
             };
-            let (Some(color), Some(maps)) = (view(self, s.color, &self.native.white), view(self, s.maps, &self.native.flat)) else {
+            let (Some(color), Some(maps), Some(camo)) = (
+                view(self, s.color, &self.native.white),
+                view(self, s.maps, &self.native.flat),
+                view(self, s.camo, &self.native.white),
+            ) else {
                 return refuse(self, format!("surface {k} names a destroyed texture"));
             };
             let params = [
                 if s.blend == NativeBlend::AlphaTest { 1.0f32 } else { 0.0 },
                 if s.emissive { 1.0 } else { 0.0 },
                 if s.maps != INVALID { 1.0 } else { 0.0 },
-                0.0,
+                if s.camo != INVALID { 1.0 } else { 0.0 },
+                s.camo_uv[0],
+                s.camo_uv[1],
+                s.camo_uv[2],
+                s.camo_uv[3],
             ];
             let material = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("native material"),
-                size: 16,
+                size: 32,
                 usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
                 mapped_at_creation: false,
             });
@@ -429,6 +442,7 @@ impl Renderer {
                     wgpu::BindGroupEntry { binding: 1, resource: wgpu::BindingResource::TextureView(&maps) },
                     wgpu::BindGroupEntry { binding: 2, resource: wgpu::BindingResource::Sampler(&self.native.sampler) },
                     wgpu::BindGroupEntry { binding: 3, resource: material.as_entire_binding() },
+                    wgpu::BindGroupEntry { binding: 4, resource: wgpu::BindingResource::TextureView(&camo) },
                 ],
             });
             built.push(Surface { first_index: s.first_index, index_count: s.index_count, blend: s.blend, sort_key: s.sort_key, cull: s.cull, bind_group });

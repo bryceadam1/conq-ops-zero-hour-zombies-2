@@ -233,7 +233,8 @@ pub struct Summary {
 
 /// Build every camo blob and write it beside the art. `table` supplies each asset's option ids
 /// (`WeaponDef.camo`, already the base-tab list).
-pub fn files(
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn files(
     common: &Zone,
     patch: &Zone,
     inline: &Zone,
