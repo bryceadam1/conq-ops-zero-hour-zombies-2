@@ -25,7 +25,7 @@ use std::sync::Arc;
 
 use zhbo_native::anim::Anim;
 use zhbo_native::math::{axis_angle, mat4, mat4_mul, qmul, Mat4, Xf};
-use zhbo_native::model::{Blend, Cull, Model, Vertex};
+use zhbo_native::model::{Blend, CamoLayer, Cull, Model, Vertex};
 use zhbo_native::pose::{PartRef, Skeleton};
 use zhbo_native::viewmodel::Viewmodel;
 
@@ -156,6 +156,15 @@ pub struct SurfaceSpec {
     pub maps: Option<String>,
     pub sort_key: u8,
     pub cull: Cull,
+    /// BO2's material name (`mc/mtl_t6_wpn_...`): the key a style camo's material pairs match.
+    pub material: String,
+    /// The surface's semantic-22 camo layer default: which of a chosen pattern camo's two images
+    /// it takes. Filled by `camo::apply`.
+    pub camo_layer: CamoLayer,
+    /// The chosen pattern camo's image path, or `None` for no camo.
+    pub camo: Option<String>,
+    /// The chosen camo's UV transform: offset.xy, scale, gain.
+    pub camo_uv: [f32; 4],
 }
 
 /// The composed viewmodel's one mesh: every part's LOD 0 with its bones renumbered into the
@@ -259,6 +268,10 @@ pub fn build_mesh_visible<'a>(
                 maps: m.and_then(|m| m.maps.clone()),
                 sort_key: m.map_or(0, |m| m.sort_key),
                 cull: m.map_or(Cull::None, |m| m.cull),
+                material: m.map_or_else(String::new, |m| m.name.clone()),
+                camo_layer: m.map_or(CamoLayer::None, |m| m.camo),
+                camo: None,
+                camo_uv: [0.0, 0.0, 1.0, 1.0],
             });
         }
     }

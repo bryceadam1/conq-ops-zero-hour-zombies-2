@@ -39,6 +39,21 @@ fn model(name: &str, bones: Vec<Bone>) -> Model {
 }
 
 #[test]
+fn the_mesh_carries_the_material_name_and_camo_layer() {
+    // Reuse the fixture's builder; set one material's name and layer and read them back.
+    let mut gun = model("gun", vec![bone("tag_weapon", None, [0.0; 3])]);
+    gun.materials[0].name = "mc/mtl_t6_wpn_ar_an94_camo1".into();
+    gun.materials[0].camo = zhbo_native::model::CamoLayer::Pattern;
+    let parts = [PartRef { model: &gun, tag: None, offset: IDENTITY, rigid: false }];
+    let (skel, problems) = Skeleton::compose(&parts, &[], &[]);
+    assert!(problems.is_empty());
+    let mesh = build_mesh(&skel, [&gun]).unwrap();
+    assert_eq!(mesh.surfaces[0].material, "mc/mtl_t6_wpn_ar_an94_camo1");
+    assert_eq!(mesh.surfaces[0].camo_layer, zhbo_native::model::CamoLayer::Pattern);
+    assert_eq!(mesh.surfaces[0].camo, None);
+}
+
+#[test]
 fn hidden_bones_omit_their_triangles_and_weights() {
     // A body bone and a sight bone: a triangle on each, and a triangle blended between them.
     let bones = vec![bone("j_gun", None, [0.0; 3]), bone("tag_sights", Some(0), [0.0, 0.0, 2.0])];
