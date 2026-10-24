@@ -3176,6 +3176,44 @@ autotest 13/13 default (the aimed burst), `--classpick` all checks, 14/14 `--rts
 PASS (the AS50 held past the transition with the new pose). The sweep's ADS halves change
 exactly per family (hip halves untouched everywhere).
 
+## Integrating the camo swap: the class's camo renders on the weapon (2026-10-24)
+
+Merged `v1/camo-swap` (6 commits). **BO2 camos via a camo LAYER texture (semantic 22): every
+camo-capable surface carries a layer whose default is `camo_off_solid`/`camo_off_pattern`;
+pattern camos replace that one image (tiled by the per-weapon `WeaponCamoSet` offset/scale +
+`shaderConsts`), and the 15 style camos additionally swap whole materials (the
+`camoMaterialSets` pair list, name-matched per surface material).** The cycle fixed five gaps
+in dependency order: the parser (`read_camo` returned None images, mojibake pair names, one
+pair, no boundaries, no shaderConsts — its ignored test passed on garbage); no camo art
+converted (only the 46 thumbnails); the blob/`SurfaceSpec` dropped the layer and the material
+name; the choice never left the class layer (`PlayerSim.camo` now carries it, transported
+core-global with NO ABI change); and the renderer had no camo input (a second texture binding,
+a 32-byte material uniform, and `albedo * mix(1, camo.rgb * gain, camo.a)` with `gain = 2.0`
+— picked by the C0 probe's coverage-alpha evidence, 1.0 the recorded fallback). The recipes
+live in a new versioned `camo_<weapon>.zcm` blob per weapon; the table's `CamoList`/
+`CamoMaterial` fields are unchanged; `replaceFlags`/`shaderConsts` are carried, NOT
+interpreted (no hand-copied numbers).
+
+**38 camo assets resolve** through a data-driven view-model join (never an alias table):
+`camo_xpr50` → `as50_mp` and peers; the 7 attachment camo sets are excluded by design
+(optic-camo is a follow-up, recorded); 3 assets stay unresolved (`camo_b23r`, the model is
+`b2023r`; `camo_peacekeeper`, `camo_specter` — absent from the table); `multicam`/`matuka`
+have no art anywhere in the 48 assets and draw stock (the option-id enum is a user-routed
+Ghidra question). First-person native viewmodel only this cycle (W3D fallback and the
+third-person native body draw no camo — documented divergences). The sweep found and fixed a
+load-order bug (the stock mesh cached before the `.zcm` arrived). `zhbo_native::model::VERSION`
+2 → 3 (the camo byte) and archive VERSION 64 → 65.
+
+One merge-semantics fix beyond the branch: `nativevm`'s `Loaded` gained both the 3-tuple key
+and the `camo` field on the two sides of the merge; the test fixture needed
+`key: (7, b'U', 0), camo: None`.
+
+Verified: cargo test --workspace green (incl. --all-features for the shader); the full
+real-install suite green (26 + 9); clippy --workspace --all-targets clean; `cargo xtask
+build` clean; autotest 13/13 default, `--classpick` all checks, 14/14 `--rts`. Sweep: gold
+and diamond change the right pixels per weapon (style pairs share `zhbo_camo_code_spc` — the
+MP7's gold/diamond are identical, a `shaderConsts` fidelity note, not a bug).
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
@@ -3594,3 +3632,57 @@ zhbo-assets -p zhbo-formats -- --ignored`, 25 + 9 green); the in-game autotest a
   transition. Unit tests 2–3 (`the_reversal_switches_to_the_down_clip_at_the_same_fraction`,
   `a_twin_pair_reverses_without_a_step`) are the guard; a scripted reversal leg is an optional
   follow-up, not this cycle's acceptance.
+## Camo swap: the class camo on the native viewmodel (2026-10-24, `v1/camo-swap`)
+
+**The parser was the first defect.** `zhbo_formats::weapon::read_camo` read the set images
+(`GfxImage*`) and the pair arrays (`Material**`) with the `char*` helper, so every set image came
+back `None`, only pair element 0 survived, `shaderConsts` was unread and the fifteen style recipes
+were flattened into one list. A synthetic-zone test now fails on those reads; the install-gated
+`reads_the_an94_camo` asserts the AN-94's 40 pattern slots, 15 style recipes, gold's exact
+base/camo names and `shaderConsts[0] == 10.0`.
+
+**C0 (pre-flight probe).** The atacs set's art, decoded through `zhbo-assets image` from
+`base.ipak` (the patch zone's copies are name-only stubs with `stream_hash == 0`):
+`t6_camo_atacs_solid` is 32×32, mean RGB (86.7, 79.8, 69.6), alpha 41/46.5/47;
+`t6_camo_atacs_pattern` is 256×256, mean RGB (90.5, 84.6, 71.5), alpha 0/52.5/110, and it tiles at
+its edges (mean |Δ| 4.2 left↔right, 3.2 top↔bottom). The layer's alpha is coverage, not opaque, so
+the mix rule (`albedo * mix(1, camo.rgb * gain, camo.a)`) is the right shape and `CAMO_GAIN = 2.0`
+stays the default; 1.0 is the fallback if the capture comparison rejects it. `camo_off_solid` /
+`camo_off_pattern` are not in `common_mp` via `find_image` (only the patch stubs exist); the set
+images are the real art.
+
+**The option→weapon mapping needed the view-model join.** BO2 names camo assets after the weapon's
+view model — `camo_xpr50` is `as50_mp`, whose view model is `t6_wpn_sniper_xpr50_view`. The
+converter now matches by weapon id first and then by a data-driven token join through the parsed
+BO2 weapon's `view_model` (no alias table). On this install that resolves 38 of the 48 assets,
+including `camo_xpr50`, `camo_x95l`, `camo_chicom`, `camo_msmc`, `camo_ballistic_knife` and
+`camo_riot_shield`; `camo_b23r` (the B23R's model is `b2023r`), `camo_peacekeeper` and
+`camo_specter` do not resolve because their weapons/models are outside `common_mp`'s parsed table.
+The seven optic camo assets (`camo_reflex`, `camo_holo`, `camo_ir`, `camo_acog`, `camo_hybrid`,
+`camo_mms`, `camo_targetfinder`) are attachment recipes, excluded by design; optic-camo handling is
+a follow-up, consistent with the `Neutral` layer's deferral. The converter's summary lists the 38
+assets, 39 pattern images, 72 style materials and the art-less options (`camo_multicam`,
+`camo_matuka`; DLC `camo_mtp`/`camo_snake` are mapped but not in the base tab).
+
+**The sweep found a load-order bug.** `nativevm::camo::read` requested the `.zcm` through
+`Files::get` but `load` cached the stock mesh immediately, so the blob arrived a frame after the
+mesh and the camo never applied (the "camo art is not in the archive" log was misleading). The read
+now reports `waiting` and `load` returns `Ok(None)` until the blob arrives; the sweep's 9
+`--camo` images then apply with no missing-art log.
+
+**Style materials and D8.** The style camos are material replacements; their colour maps are
+largely the shared `zhbo_camo_code_spc` (the gold pair is `mc/mtl_weapon_camo_gold` (unresolved on
+this install) + `mc/mtl_weapon_camo_gold_1` → `zhbo_camo_code_spc.tga`), and the per-style
+differences live in `shaderConsts`, which the blob carries verbatim but does not interpret (D8).
+MP7's gold and diamond renders are therefore identical; AN-94's differ (its diamond pairs resolve
+different art). This is a known residual until the style technique is ported.
+
+**Divergences.** The camo is first-person native-viewmodel only: the W3D fallback bakes textures
+and has no override, and the third-person native body pins `camo` to `INVALID`. Only the primary's
+viewmodel inherits the class camo (the class stores one). The Ghidra query for the engine's
+camo-id table and an A/B Multicam-vs-None capture remain recorded follow-ups; until then those
+cells draw stock.
+
+**Versions.** `zhbo_native::camo::VERSION = 1` (new blob). The model blob's material record gains
+the semantic-22 camo layer; its version bump 2→3 and the archive bump 64→65 are integrator-owned
+(this branch deliberately leaves `model::VERSION = 2` and `hud::VERSION = 64`).

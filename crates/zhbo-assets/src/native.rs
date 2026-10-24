@@ -18,7 +18,7 @@ use zhbo_native::viewmodel::Marker;
 /// `viewmodels::weapon_viewmodels`).
 pub use zhbo_native::AIM_TAG;
 
-fn blend(b: w3d::Blend) -> Blend {
+pub(crate) fn blend(b: w3d::Blend) -> Blend {
     match b {
         w3d::Blend::Opaque => Blend::Opaque,
         w3d::Blend::AlphaTest => Blend::AlphaTest,
@@ -28,7 +28,7 @@ fn blend(b: w3d::Blend) -> Blend {
     }
 }
 
-fn cull(c: xmodel::Cull) -> nm::Cull {
+pub(crate) fn cull(c: xmodel::Cull) -> nm::Cull {
     match c {
         xmodel::Cull::None => nm::Cull::None,
         xmodel::Cull::Back => nm::Cull::Back,
@@ -62,17 +62,7 @@ pub(crate) fn model(m: &xmodel::Model, tex: &[Option<String>], looks: &Looks) ->
                 continue;
             }
             let mat = m.materials.get(s).cloned().flatten();
-            let b = mat.as_ref().map_or(Blend::Opaque, |mat| blend(mat.blend()));
-            let material = nm::Material {
-                name: mat.as_ref().map_or_else(String::new, |mat| mat.name.clone()),
-                blend: b,
-                emissive: matches!(b, Blend::Additive { .. }),
-                color: texture.as_ref().map(|t| format!("Art\\Textures\\{t}")),
-                maps: texture.as_ref().and_then(|t| looks.maps.get(t)).map(|t| format!("Art\\Textures\\{t}")),
-                sort_key: mat.as_ref().map_or(0, |mat| mat.sort_key),
-                // Surfaces BO2 leaves to code (no material) stay double-sided, as they drew.
-                cull: mat.as_ref().map_or(nm::Cull::None, |mat| cull(mat.cull())),
-            };
+            let material = material_record(mat.as_ref(), texture.as_deref(), looks);
             out.materials.push(material);
             let vertices = surface.vertices.iter().map(vertex).collect();
             let indices = surface.triangles.iter().flatten().copied().collect();
@@ -81,6 +71,33 @@ pub(crate) fn model(m: &xmodel::Model, tex: &[Option<String>], looks: &Looks) ->
         out.lods.push(nm::Lod { distance: lod.distance, first_surface: first, surface_count: out.surfaces.len() as u32 - first });
     }
     out
+}
+
+/// One BO2 material as the blob records it, with `texture` (the converted colour map's file name)
+/// resolved by the caller. Shared by the model conversion and the camo art conversion.
+pub(crate) fn material_record(mat: Option<&xmodel::Material>, texture: Option<&str>, looks: &Looks) -> nm::Material {
+    let b = mat.map_or(Blend::Opaque, |m| blend(m.blend()));
+    nm::Material {
+        name: mat.map_or_else(String::new, |m| m.name.clone()),
+        blend: b,
+        emissive: matches!(b, Blend::Additive { .. }),
+        color: texture.map(|t| format!("Art\\Textures\\{t}")),
+        maps: texture.and_then(|t| looks.maps.get(t)).map(|t| format!("Art\\Textures\\{t}")),
+        sort_key: mat.map_or(0, |m| m.sort_key),
+        // Surfaces BO2 leaves to code (no material) stay double-sided, as they drew.
+        cull: mat.map_or(nm::Cull::None, |m| cull(m.cull())),
+        camo: mat.map_or(nm::CamoLayer::None, camo_layer),
+    }
+}
+
+/// Which camo layer a surface carries, from the semantic-22 image's name (research §2.1).
+pub(crate) fn camo_layer(m: &xmodel::Material) -> nm::CamoLayer {
+    match m.image(xmodel::TS_CAMO_MAP).map(|i| i.name.as_str()) {
+        Some("camo_off_solid") => nm::CamoLayer::Solid,
+        Some("camo_off_pattern") => nm::CamoLayer::Pattern,
+        Some("weapon_camo_neutral") => nm::CamoLayer::Neutral,
+        _ => nm::CamoLayer::None,
+    }
 }
 
 /// A vertex with its four heaviest influences, renormalized (BO2 skins with at most four). The
@@ -336,6 +353,28 @@ mod tests {
             maxs: [30.0, 0.0, 4.0],
             materials: vec![None],
         }
+    }
+
+    #[test]
+    fn the_semantic_22_layer_classifies_the_surface() {
+        let image = |name: &str| xmodel::Image {
+            name: name.into(),
+            hash: 0,
+            stream_hash: 1,
+            streamed_parts: 1,
+            width: 8,
+            height: 8,
+        };
+        let mat = |name: &str| xmodel::Material {
+            name: "mtl".into(),
+            textures: vec![xmodel::Texture { semantic: xmodel::TS_CAMO_MAP, image: Some(image(name)) }],
+            state_bits: Vec::new(),
+            sort_key: 0,
+        };
+        assert_eq!(camo_layer(&mat("camo_off_solid")), nm::CamoLayer::Solid);
+        assert_eq!(camo_layer(&mat("camo_off_pattern")), nm::CamoLayer::Pattern);
+        assert_eq!(camo_layer(&mat("weapon_camo_neutral")), nm::CamoLayer::Neutral);
+        assert_eq!(camo_layer(&mat("t6_camo_atacs_pattern")), nm::CamoLayer::None);
     }
 
     #[test]

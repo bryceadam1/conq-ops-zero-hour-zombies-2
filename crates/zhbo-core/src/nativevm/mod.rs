@@ -24,18 +24,21 @@
 //! viewmodel FOV (G4).
 
 use std::collections::{BTreeSet, HashMap};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use zhbo_native::anim::Anim;
 use zhbo_native::math::{axis_angle, mat4, mat4_mul, qmul, Mat4, Xf};
-use zhbo_native::model::{Blend, Cull, Model, Vertex};
+use zhbo_native::model::{Blend, CamoLayer, Cull, Model, Vertex};
 use zhbo_native::pose::{PartRef, Skeleton};
 use zhbo_native::viewmodel::Viewmodel;
 
 #[cfg(feature = "renderer")]
 mod gpu;
+pub mod camo;
 pub mod ffi;
 pub mod place;
+
+use camo::LocalCamo;
 
 /// BO2 inches to the art's world units: [`zhbo_native::ART_SCALE`], the same factor as the sim's
 /// [`crate::units::ZH_PER_INCH`] (one source; the converter's `character::SCALE` reads it too).
@@ -159,11 +162,20 @@ pub struct SurfaceSpec {
     pub maps: Option<String>,
     pub sort_key: u8,
     pub cull: Cull,
+    /// BO2's material name (`mc/mtl_t6_wpn_...`): the key a style camo's material pairs match.
+    pub material: String,
+    /// The surface's semantic-22 camo layer default: which of a chosen pattern camo's two images
+    /// it takes. Filled by `camo::apply`.
+    pub camo_layer: CamoLayer,
+    /// The chosen pattern camo's image path, or `None` for no camo.
+    pub camo: Option<String>,
+    /// The chosen camo's UV transform: offset.xy, scale, gain.
+    pub camo_uv: [f32; 4],
 }
 
 /// The composed viewmodel's one mesh: every part's LOD 0 with its bones renumbered into the
 /// composed skeleton, so one palette skins it all.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Mesh {
     pub vertices: Vec<Vertex>,
     pub indices: Vec<u16>,
@@ -262,6 +274,10 @@ pub fn build_mesh_visible<'a>(
                 maps: m.and_then(|m| m.maps.clone()),
                 sort_key: m.map_or(0, |m| m.sort_key),
                 cull: m.map_or(Cull::None, |m| m.cull),
+                material: m.map_or_else(String::new, |m| m.name.clone()),
+                camo_layer: m.map_or(CamoLayer::None, |m| m.camo),
+                camo: None,
+                camo_uv: [0.0, 0.0, 1.0, 1.0],
             });
         }
     }
@@ -270,7 +286,9 @@ pub fn build_mesh_visible<'a>(
 
 /// A composed viewmodel, ready to pose.
 pub struct Loaded {
-    pub key: (i32, u8),
+    pub key: (i32, u8, u64),
+    /// The camo option applied to this mesh, or `None` for the stock finish.
+    pub camo: Option<String>,
     pub manifest: Viewmodel,
     pub skeleton: Skeleton,
     pub mesh: Mesh,
@@ -280,6 +298,31 @@ pub struct Loaded {
     pub mesh_aimed: Option<Mesh>,
     pub aim: Option<usize>,
     pub anims: HashMap<String, Anim>,
+}
+
+/// The local player's camo choice from the last client frame: the primary's viewmodel, its camo
+/// asset and the chosen option id. Set by `ffi::zhbo_client_frame`; read by the viewmodel draw.
+static LOCAL_CAMO: Mutex<Option<LocalCamo>> = Mutex::new(None);
+
+/// Record (or clear) the local player's camo choice. Called once per client frame.
+pub fn set_local_camo(choice: Option<LocalCamo>) {
+    *LOCAL_CAMO.lock().unwrap_or_else(|e| e.into_inner()) = choice;
+}
+
+/// The choice when it belongs to viewmodel `vm`.
+pub(crate) fn local_camo(vm: i32) -> Option<LocalCamo> {
+    LOCAL_CAMO.lock().unwrap_or_else(|e| e.into_inner()).clone().filter(|c| c.vm == vm)
+}
+
+/// The camo choice for a weapon definition, or `None` for the stock finish. `none`, `camo_none`
+/// and an empty camo material are the stock finish.
+pub fn choice_for(def: &crate::weapons::WeaponDef, camo: &str) -> Option<LocalCamo> {
+    let off = camo.is_empty() || camo == "none" || camo == "camo_none";
+    (!off && def.viewmodel >= 0 && !def.camo_material.is_empty()).then(|| LocalCamo {
+        vm: def.viewmodel,
+        asset: def.camo_material.clone(),
+        option: camo.to_string(),
+    })
 }
 
 /// Whether the weapon's screen-space ADS overlay art is in the archive. The HUD's image fallback
@@ -317,7 +360,7 @@ fn overlay_art_present(files: &mut Files, id: &str, override_material: Option<&s
 
 /// Load step for `key`: `Ok(None)` while files are still coming, `Err` when the viewmodel can't be
 /// built (logged once by the caller; the W3D path keeps drawing).
-pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: Option<&str>) -> Result<Option<Loaded>, String> {
+pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: Option<&str>, camo_choice: Option<(&str, &str)>) -> Result<Option<Loaded>, String> {
     let path = zhbo_native::viewmodel_path(vm, faction as char);
     if files.is_missing(&path) {
         return Err(format!("{path} is not in the archive (reconvert the BO2 art)"));
@@ -348,23 +391,39 @@ pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: 
     if !problems.is_empty() {
         return Err(format!("{path}: {}", problems.join("; ")));
     }
-    let mesh = build_mesh(&skeleton, &models)?;
+    let mut mesh = build_mesh(&skeleton, &models)?;
     // The aimed-half mesh: the base optic's surfaces are dropped at full ADS. Built once here so
     // the draw path only swaps handles. The mask's indices are the manifest's part order, which
     // the skeleton preserves.
     let aimed = visible_parts(&models, 1.0, overlay_art_present);
-    let mesh_aimed = if aimed.iter().any(|v| !v) {
+    let mut mesh_aimed = if aimed.iter().any(|v| !v) {
         Some(build_mesh_visible(&skeleton, &models, |i| aimed.get(i).copied().unwrap_or(true))?)
     } else {
         None
     };
+    // The class's camo recipe, when this is the primary weapon. A blob that is not in the archive
+    // is not an error: the weapon draws its stock finish and the caller logs once.
+    let mut applied = None;
+    if let Some((asset, option)) = camo_choice {
+        if let Some(recipe) = camo::read(files, asset, &mut waiting)? {
+            camo::apply(&mut mesh, &recipe, option);
+            if let Some(m) = &mut mesh_aimed {
+                camo::apply(m, &recipe, option);
+            }
+            applied = Some(option.to_string());
+        }
+    }
+    if waiting {
+        return Ok(None);
+    }
+    let camo_key = camo_choice.map_or(0, |(asset, option)| camo::key_of(asset, option));
     // The bytes are decoded now; keep the cache small.
     for p in &manifest.parts {
         files.forget(&p.model);
     }
     files.forget(&path);
     let aim = skeleton.bone(AIM_TAG);
-    Ok(Some(Loaded { key: (vm, faction), manifest, skeleton, mesh, mesh_aimed, aim, anims: HashMap::new() }))
+    Ok(Some(Loaded { key: (vm, faction, camo_key), camo: applied, manifest, skeleton, mesh, mesh_aimed, aim, anims: HashMap::new() }))
 }
 
 /// The eye's frame as a transform: X along `dir`, Y to the left, Z up, at `eye`.

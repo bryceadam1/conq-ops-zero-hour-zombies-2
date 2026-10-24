@@ -820,37 +820,51 @@ pub fn all(z: &Zone) -> Result<Vec<Weapon>, FormatError> {
 }
 
 /// One `WeaponCamo` asset (`camo_<weapon>` in `common_patch_mp`, the `camo` type in the asset
-/// dumps): the per-weapon camouflage material set and the pattern images it swaps in. The
-/// `attachmenttable.csv` camo rows are the *choices*; this is what BO2 swaps on the weapon.
+/// dumps): the per-weapon camouflage recipes. `sets` is the global pattern list (an id slot per
+/// camo: its solid swatch and tiling pattern, plus this weapon's UV transform); `materials` is one
+/// material-replacement recipe per style camo (gold, diamond, …).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WeaponCamo {
     pub name: String,
-    pub solid_base_image: Option<String>,
-    pub pattern_base_image: Option<String>,
+    pub solid_base_image: Option<crate::xmodel::Image>,
+    pub pattern_base_image: Option<crate::xmodel::Image>,
     pub sets: Vec<CamoSet>,
-    pub materials: Vec<CamoMaterial>,
+    pub materials: Vec<CamoMaterialSet>,
 }
 
 /// One `WeaponCamoSet`: the solid and pattern images and the pattern's UV transform.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CamoSet {
-    pub solid_image: Option<String>,
-    pub pattern_image: Option<String>,
+    pub solid_image: Option<crate::xmodel::Image>,
+    pub pattern_image: Option<crate::xmodel::Image>,
     pub offset: [f32; 2],
     pub scale: f32,
 }
 
-/// One `WeaponCamoMaterial`: the base weapon material and the camo material that replaces it
-/// (which textures the `replaceFlags` cover).
+/// One `WeaponCamoMaterialSet`: one style camo's whole recipe for a weapon (1–2 entries).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CamoMaterialSet {
+    pub entries: Vec<CamoMaterial>,
+}
+
+/// One `WeaponCamoMaterial`: parallel `base`/`camo` material-name lists (each pair replaces one base
+/// surface material with one camo material) and the entry's shader constants. `replaceFlags` is
+/// carried uninterpreted (research §5.5).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct CamoMaterial {
     pub replace_flags: u16,
-    pub base: Option<String>,
-    pub camo: Option<String>,
+    pub base: Vec<String>,
+    pub camo: Vec<String>,
+    pub shader_consts: [f32; 8],
 }
 
 /// Read the `WeaponCamo` at `a`.
 pub fn read_camo(z: &Zone, a: u32) -> Result<WeaponCamo, FormatError> {
+    // A set image is a GfxImage* (its name at +72), not a char*; the base images are the same.
+    let image = |field: u32| {
+        let p = z.u32(field);
+        (p != 0).then(|| crate::xmodel::read_image(z, p))
+    };
     let sets_at = z.try_u32(a + WC::camoSets)?;
     let n_sets = z.try_u32(a + WC::numCamoSets)?.min(64);
     let mut sets = Vec::new();
@@ -858,8 +872,8 @@ pub fn read_camo(z: &Zone, a: u32) -> Result<WeaponCamo, FormatError> {
         for i in 0..n_sets {
             let s = sets_at + i * WCSet::SIZE;
             sets.push(CamoSet {
-                solid_image: named(z, s + WCSet::solidCamoImage),
-                pattern_image: named(z, s + WCSet::patternCamoImage),
+                solid_image: image(s + WCSet::solidCamoImage),
+                pattern_image: image(s + WCSet::patternCamoImage),
                 offset: [z.f32(s + WCSet::patternOffset), z.f32(s + WCSet::patternOffset + 4)],
                 scale: z.f32(s + WCSet::patternScale),
             });
@@ -871,25 +885,42 @@ pub fn read_camo(z: &Zone, a: u32) -> Result<WeaponCamo, FormatError> {
     if mats_at != 0 {
         for i in 0..n_mats {
             let set = mats_at + i * WCMatSet::SIZE;
-            let num = z.u32(set + WCMatSet::numMaterials).min(64);
+            let n = z.u32(set + WCMatSet::numMaterials).min(64);
             let at = z.u32(set + WCMatSet::materials);
-            if at == 0 {
-                continue;
+            let mut entries = Vec::new();
+            if at != 0 {
+                for j in 0..n {
+                    let m = at + j * WCMat::SIZE;
+                    // `numBaseMaterials` is the length of BOTH parallel Material* arrays; the
+                    // fields themselves are pointers to those arrays, not names.
+                    let count = z.u16(m + WCMat::numBaseMaterials) as u32;
+                    let names = |field: u32| {
+                        let arr = z.u32(field);
+                        if arr == 0 {
+                            return Vec::new();
+                        }
+                        (0..count)
+                            .filter_map(|k| {
+                                let p = z.u32(arr + 4 * k);
+                                (p != 0).then(|| z.str_ptr(p).trim_start_matches(',').to_string())
+                            })
+                            .collect::<Vec<_>>()
+                    };
+                    entries.push(CamoMaterial {
+                        replace_flags: z.u16(m + WCMat::replaceFlags),
+                        base: names(m + WCMat::baseMaterials),
+                        camo: names(m + WCMat::camoMaterials),
+                        shader_consts: std::array::from_fn(|k| z.f32(m + WCMat::shaderConsts + 4 * k as u32)),
+                    });
+                }
             }
-            for j in 0..num {
-                let m = at + j * WCMat::SIZE;
-                materials.push(CamoMaterial {
-                    replace_flags: z.u16(m + WCMat::replaceFlags),
-                    base: named(z, m + WCMat::baseMaterials),
-                    camo: named(z, m + WCMat::camoMaterials),
-                });
-            }
+            materials.push(CamoMaterialSet { entries });
         }
     }
     Ok(WeaponCamo {
         name: z.try_str_ptr(a + WC::name)?,
-        solid_base_image: named(z, a + WC::solidBaseImage),
-        pattern_base_image: named(z, a + WC::patternBaseImage),
+        solid_base_image: image(a + WC::solidBaseImage),
+        pattern_base_image: image(a + WC::patternBaseImage),
         sets,
         materials,
     })
@@ -989,16 +1020,119 @@ mod tests {
         }
     }
 
-    /// Needs the player's BO2 install (with Multiplayer).
+    #[test]
+    fn reads_a_synthetic_camo_asset() {
+        // One pattern set and one style entry of two material pairs. The set images are GfxImage
+        // pointers (name at +72); the pair fields are Material* arrays. The old reader stringifies
+        // the image struct address and the array pointer, so this test fails on it: images come back
+        // None and the pair names are mojibake.
+        let mut mem = vec![0u8; 0x500];
+        let put32 = |m: &mut Vec<u8>, at: usize, v: u32| m[at..at + 4].copy_from_slice(&v.to_le_bytes());
+        let put16 = |m: &mut Vec<u8>, at: usize, v: u16| m[at..at + 2].copy_from_slice(&v.to_le_bytes());
+        let putf = |m: &mut Vec<u8>, at: usize, v: f32| m[at..at + 4].copy_from_slice(&v.to_le_bytes());
+        let put_str = |m: &mut Vec<u8>, at: usize, s: &str| {
+            m[at..at + s.len()].copy_from_slice(s.as_bytes());
+            m[at + s.len()] = 0;
+        };
+        // The asset at 0x40.
+        put_str(&mut mem, 0x300, "camo_an94");
+        put32(&mut mem, 0x40, 0x300);
+        // The set's solid image at 0x80 (name at +72 -> 0x320) and pattern at 0xD0 (-> 0x340).
+        put_str(&mut mem, 0x320, "camo_off_solid");
+        put32(&mut mem, 0x80 + 72, 0x320);
+        put16(&mut mem, 0x80 + 20, 32);
+        put16(&mut mem, 0x80 + 22, 32);
+        put32(&mut mem, 0x80 + 40, 0x1111);
+        put_str(&mut mem, 0x340, "t6_camo_atacs_pattern");
+        put32(&mut mem, 0xD0 + 72, 0x340);
+        put16(&mut mem, 0xD0 + 20, 128);
+        put16(&mut mem, 0xD0 + 22, 128);
+        put32(&mut mem, 0xD0 + 40, 0x2222);
+        // The set array at 0x140: one 20-byte set.
+        put32(&mut mem, 0x40 + 12, 0x140); // camoSets
+        put32(&mut mem, 0x40 + 16, 1); // numCamoSets
+        put32(&mut mem, 0x140, 0x80); // solidCamoImage
+        put32(&mut mem, 0x144, 0xD0); // patternCamoImage
+        putf(&mut mem, 0x148, 0.25); // patternOffset.x
+        putf(&mut mem, 0x14C, 0.5); // patternOffset.y
+        putf(&mut mem, 0x150, 2.0); // patternScale
+        // The material set array at 0x180: one set with one 44-byte entry at 0x190.
+        put32(&mut mem, 0x40 + 20, 0x180); // camoMaterials
+        put32(&mut mem, 0x40 + 24, 1); // numCamoMaterials
+        put32(&mut mem, 0x180, 1); // numMaterials
+        put32(&mut mem, 0x184, 0x190); // materials
+        put16(&mut mem, 0x190, 6); // replaceFlags
+        put16(&mut mem, 0x192, 2); // numBaseMaterials
+        put32(&mut mem, 0x194, 0x1D0); // baseMaterials
+        put32(&mut mem, 0x198, 0x1E0); // camoMaterials
+        putf(&mut mem, 0x19C, 10.0); // shaderConsts[0]
+        // The two parallel arrays: base then camo, each two Material* pointers. A Material's name is
+        // its first field (a char*), so each entry at 0x400/0x410/0x420/0x430 names a string.
+        put32(&mut mem, 0x1D0, 0x400);
+        put32(&mut mem, 0x1D4, 0x410);
+        put32(&mut mem, 0x1E0, 0x420);
+        put32(&mut mem, 0x1E4, 0x430);
+        put_str(&mut mem, 0x480, "mc/mtl_t6_wpn_ar_an94_camo1");
+        put_str(&mut mem, 0x4A0, "mc/mtl_t6_wpn_ar_an94_camo3");
+        put_str(&mut mem, 0x4C0, "mc/mtl_weapon_camo_gold");
+        put_str(&mut mem, 0x4E0, "mc/mtl_weapon_camo_gold_1");
+        put32(&mut mem, 0x400, 0x480);
+        put32(&mut mem, 0x410, 0x4A0);
+        put32(&mut mem, 0x420, 0x4C0);
+        put32(&mut mem, 0x430, 0x4E0);
+        // The base images the asset states it supersedes.
+        put32(&mut mem, 0x40 + 4, 0x80);
+        put32(&mut mem, 0x40 + 8, 0xD0);
+        let zone = crate::t6zone::synthetic_zone("camo", mem, Vec::new(), Vec::new());
+        let c = read_camo(&zone, 0x40).expect("the camo reads");
+        assert_eq!(c.name, "camo_an94");
+        assert_eq!(c.solid_base_image.as_ref().map(|i| i.name.as_str()), Some("camo_off_solid"));
+        assert_eq!(c.pattern_base_image.as_ref().map(|i| i.name.as_str()), Some("t6_camo_atacs_pattern"));
+        assert_eq!(c.sets.len(), 1);
+        assert_eq!(c.sets[0].solid_image.as_ref().map(|i| i.name.as_str()), Some("camo_off_solid"));
+        assert_eq!(c.sets[0].pattern_image.as_ref().map(|i| i.name.as_str()), Some("t6_camo_atacs_pattern"));
+        assert_eq!(c.sets[0].offset, [0.25, 0.5]);
+        assert_eq!(c.sets[0].scale, 2.0);
+        assert_eq!(c.materials.len(), 1, "the set boundary survives");
+        let e = &c.materials[0].entries[0];
+        assert_eq!(e.replace_flags, 6);
+        assert_eq!(e.base, ["mc/mtl_t6_wpn_ar_an94_camo1", "mc/mtl_t6_wpn_ar_an94_camo3"]);
+        assert_eq!(e.camo, ["mc/mtl_weapon_camo_gold", "mc/mtl_weapon_camo_gold_1"]);
+        assert_eq!(e.shader_consts[0], 10.0);
+    }
+
+    /// Needs the player's BO2 install with Multiplayer.
     #[test]
     #[ignore]
     fn reads_the_an94_camo() {
         let z = zone("common_patch_mp");
         let all = camo_all(&z).unwrap();
-        assert_eq!(all.len(), 48, "common_patch_mp's camo_<weapon> assets (ASSETS.md:389-396)");
+        assert_eq!(all.len(), 48, "common_patch_mp's camo_<weapon> assets (research §1.1)");
         let c = all.iter().find(|c| c.name == "camo_an94").expect("camo_an94");
-        assert!(!c.materials.is_empty(), "camo_an94's material set: {c:?}");
-        assert!(c.materials.iter().any(|m| m.base.is_some() && m.camo.is_some()), "{c:?}");
+        assert_eq!(c.sets.len(), 40, "the patch zone's pattern slots");
+        assert_eq!(c.materials.len(), 15, "gold/carbon/diamond/… style recipes");
+        assert_eq!(c.solid_base_image.as_ref().map(|i| i.name.as_str()), Some("camo_off_solid"));
+        assert_eq!(c.pattern_base_image.as_ref().map(|i| i.name.as_str()), Some("camo_off_pattern"));
+        // The set list is the global slot list: devgru first, atacs second (research §1.2).
+        assert_eq!(c.sets[0].pattern_image.as_ref().map(|i| i.name.as_str()), Some("t6_camo_devgru_pattern"));
+        assert_eq!(c.sets[1].pattern_image.as_ref().map(|i| i.name.as_str()), Some("t6_camo_atacs_pattern"));
+        assert_eq!(c.sets[1].solid_image.as_ref().map(|i| i.name.as_str()), Some("t6_camo_atacs_solid"));
+        assert!(c.sets.iter().all(|s| s.pattern_image.is_some() && s.scale > 0.0));
+        // Gold: two entries, the pattern-kind surfaces then the solid-kind ones (research §1.3).
+        let gold = &c.materials[0];
+        assert_eq!(gold.entries.len(), 2);
+        let e = &gold.entries[0];
+        assert_eq!(e.replace_flags, 0x6);
+        assert_eq!(e.base, ["mc/mtl_t6_wpn_ar_an94_camo1", "mc/mtl_t6_wpn_ar_an94_camo3"]);
+        assert_eq!(e.camo, ["mc/mtl_weapon_camo_gold", "mc/mtl_weapon_camo_gold_1"]);
+        assert_eq!(e.shader_consts[0], 10.0);
+        assert_eq!(gold.entries[1].base, ["mc/mtl_t6_wpn_ar_an94_camo2", "mc/mtl_t6_wpn_ar_an94_camo4"]);
+        for set in &c.materials {
+            for e in &set.entries {
+                assert_eq!(e.base.len(), e.camo.len(), "{e:?}");
+                assert!(e.base.iter().all(|n| n.starts_with("mc/mtl_") || n.starts_with("mtl_")), "{e:?}");
+            }
+        }
     }
 
     #[test]

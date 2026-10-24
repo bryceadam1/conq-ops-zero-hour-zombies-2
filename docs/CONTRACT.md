@@ -258,6 +258,30 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   so does a mesh left with no drawable surface: the core then returns `NOT_NATIVE` and the W3D path
   draws, which is what keeps a third-person rig from going invisible.
 
+* **The class camo (`camo_<weapon>.zcm`, PLAN D1–D8).** A class's camo (`CustomClass.camo`) rides
+  `PlayerSim.camo`; `zhbo_client_frame` records the local primary's `(viewmodel, camo asset,
+  option)` in a core-global (`nativevm::set_local_camo`) and `zhbo_native_viewmodel` reads it when
+  the `vm` matches — **no `ZhboNativeIn` field and no ABI bump**. The converter writes
+  `Art\Native\<camo_asset>.zcm` (`ZCM\0`, v1): the asset's 40 pattern sets (solid/pattern image,
+  UV offset/scale, gain), its 15 style recipes (base→camo material pairs; `replaceFlags` and
+  `shaderConsts` carried verbatim, not interpreted), the converted style materials, and each option
+  id's resolved `(pattern slot, style slot)`. `nativevm::camo::apply` first replaces style pairs by
+  exact material name and clears those surfaces' layer, then paints the chosen pattern set onto the
+  surfaces whose semantic-22 layer is `Pattern` (pattern image) or `Solid` (solid image); `Neutral`
+  (the reflex `_camo2` group) and `None` draw stock. Options with no art (`camo_multicam`,
+  `camo_matuka`, and DLC `camo_mtp`/`camo_snake`) are recorded with no slots and draw stock. The
+  seven optic camo assets (`camo_reflex/holo/ir/acog/hybrid/mms/targetfinder`) are attachment
+  recipes and are excluded from per-weapon blobs; `camo_b23r`/`peacekeeper`/`specter` do not resolve
+  on the stock install (their weapons/models are outside the parsed `common_mp` table). Weapon
+  matching is the weapon id, then a data-driven join through the weapon's BO2 view-model name
+  (`camo_xpr50` → `as50_mp`, `camo_ballistic_knife`, `camo_riot_shield`). The `.zcm` version is new
+  (`camo::VERSION = 1`); the model blob's material record gains the camo layer, and its version
+  bump (2→3) and the archive bump (64→65) are integrator-owned.
+  - **Divergences.** The camo applies to the first-person native viewmodel only: the W3D fallback
+    bakes textures and has no texture override, and the third-person native body pins `camo` to
+    `INVALID` (no third-person camo). Only the primary's viewmodel inherits the class camo, as the
+    class stores one camo.
+
 ## The native third person (Track R7)
 
 The converter also writes the General's third-person art as native blobs, so the renderer can draw

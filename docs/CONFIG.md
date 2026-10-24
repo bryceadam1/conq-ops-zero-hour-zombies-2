@@ -42,3 +42,12 @@ environment mid-game.
 | `ZHBO_WORK_DIR` | Where the launcher keeps its work tree (converted data, engine checkout); defaults to the user data dir. |
 | `ZHBO_GLUE_DIR` | Set by `cargo xtask build` for the engine build: where the bridge glue sources are copied. |
 | `ZHBO_CONVERT_ALL_WEAPONS` | Set by the converter's user: convert every BO2 player weapon, not just the loadout's kit. |
+## The archive and the camo conversion
+
+`ConquerOps_BO2.big` carries the class camo art (`Art\Textures\zhbo_t6_camo_*`,
+`zhbo_camo_code_spc`, …) and one `Art\Native\<camo_<weapon>>.zcm` recipe per converted weapon. The
+archive's version is bumped with a conversion that changes its contents (the integrator owns the
+camo bump, 64→65), so after a mod update the launcher regenerates the archive. With a stale
+archive the native viewmodel logs `the camo art is not in the archive (reconvert the BO2 art)` and
+draws the stock finish; the class camo never reaches the W3D fallback or the third-person body
+(CONTRACT.md, "The native viewmodel").

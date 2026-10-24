@@ -738,6 +738,14 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
         for r in std::mem::take(&mut s.client.cues.queue) {
             s.client_host.sound(r.event, r.at);
         }
+        // The local player's class camo, for the native viewmodel's next draw (PLAN D4). The
+        // primary's definition names the camo asset; a secondary or melee weapon gets none.
+        let choice = s.sim.player(inp.local_player).and_then(|p| {
+            crate::weapons::catalog()
+                .get(&p.arsenal.loadout.primary)
+                .and_then(|d| crate::nativevm::choice_for(d, &p.camo))
+        });
+        crate::nativevm::set_local_camo(choice);
         out
     })
     .unwrap_or_default();

@@ -5,6 +5,7 @@
 //! decrypted by `zhbo_formats::fastfile` from the player's own install.
 
 pub mod cac;
+pub mod camo;
 pub mod hud;
 pub mod images;
 pub mod sounds;

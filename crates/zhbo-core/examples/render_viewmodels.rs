@@ -136,26 +136,46 @@ fn run() -> Result<(), String> {
     std::fs::create_dir_all(&args.out).map_err(|e| format!("{}: {e}", args.out.display()))?;
     let manifest_path = args.out.join("manifest.tsv");
     let mut manifest = std::fs::File::create(&manifest_path).map_err(|e| format!("{}: {e}", manifest_path.display()))?;
-    writeln!(manifest, "weapon\tattachment\timage\tnotes").map_err(|e| e.to_string())?;
+    writeln!(manifest, "weapon\tattachment\tcamo\timage\tnotes").map_err(|e| e.to_string())?;
     zhbo_core::config::init(zhbo_core::config::Config { native_viewmodel: true, ..Default::default() });
     open_renderer()?;
     let mut source: Option<zhbo_assets::viewmodel_sweep::Source> = None;
     let mut counts = Counts::default();
     for (i, job) in jobs.iter().enumerate() {
         let stamp = format!("[{}/{}]", i + 1, jobs.len());
-        match render_job(job, &archive, &mut source, &args.out, args.sweep) {
-            Ok(note) => {
-                counts.rendered += 1;
-                println!("{stamp} {:<14} {:<12} {note}", job.weapon.id, job.attachment.as_deref().unwrap_or("-"));
-                writeln!(manifest, "{}\t{}\t{}\t{}", job.weapon.id, job.attachment.as_deref().unwrap_or("-"), job.relative(), one_line(&note)).map_err(|e| e.to_string())?;
+        let camos: Vec<Option<&str>> = if args.camo.is_empty() { vec![None] } else { args.camo.iter().map(|c| Some(c.as_str())).collect() };
+        for camo in camos {
+            let label = camo.unwrap_or("-");
+            if let Some(id) = camo {
+                if job.weapon.camo_material.is_empty() {
+                    counts.failed += 1;
+                    println!("{stamp} {:<14} {:<12} camo {label} FAILED no camo material", job.weapon.id, job.attachment.as_deref().unwrap_or("-"));
+                    writeln!(manifest, "{}\t{}\t{}\t-\tfailed: no camo material", job.weapon.id, job.attachment.as_deref().unwrap_or("-"), label).map_err(|e| e.to_string())?;
+                    continue;
+                }
+                zhbo_core::nativevm::set_local_camo(Some(zhbo_core::nativevm::camo::LocalCamo {
+                    vm: job.weapon.viewmodel,
+                    asset: job.weapon.camo_material.clone(),
+                    option: id.to_string(),
+                }));
             }
-            Err(e) => {
-                counts.failed += 1;
-                println!("{stamp} {:<14} {:<12} FAILED {e}", job.weapon.id, job.attachment.as_deref().unwrap_or("-"));
-                writeln!(manifest, "{}\t{}\t-\tfailed: {}", job.weapon.id, job.attachment.as_deref().unwrap_or("-"), one_line(&e)).map_err(|e| e.to_string())?;
+            let result = render_job(job, &archive, &mut source, &args.out, args.sweep, camo);
+            zhbo_core::nativevm::set_local_camo(None);
+            match result {
+                Ok(note) => {
+                    counts.rendered += 1;
+                    let rel = camo.map_or_else(|| job.relative(), |c| job.relative_camo(c));
+                    println!("{stamp} {:<14} {:<12} camo {label} {note}", job.weapon.id, job.attachment.as_deref().unwrap_or("-"));
+                    writeln!(manifest, "{}\t{}\t{}\t{}\t{}", job.weapon.id, job.attachment.as_deref().unwrap_or("-"), label, rel, one_line(&note)).map_err(|e| e.to_string())?;
+                }
+                Err(e) => {
+                    counts.failed += 1;
+                    println!("{stamp} {:<14} {:<12} camo {label} FAILED {e}", job.weapon.id, job.attachment.as_deref().unwrap_or("-"));
+                    writeln!(manifest, "{}\t{}\t{}\t-\tfailed: {}", job.weapon.id, job.attachment.as_deref().unwrap_or("-"), label, one_line(&e)).map_err(|e| e.to_string())?;
+                }
             }
+            manifest.flush().map_err(|e| e.to_string())?;
         }
-        manifest.flush().map_err(|e| e.to_string())?;
     }
     close_renderer();
     println!("render_viewmodels: {} images, {} failed, into {}", counts.rendered, counts.failed, args.out.display());
@@ -182,20 +202,24 @@ struct Args {
     attachments: bool,
     /// Render the first-raise clip across frames instead of the static pose pair.
     sweep: bool,
+    /// Camo option ids to draw the weapon with (`camo_gold`, `camo_atacs`), one image each.
+    camo: Vec<String>,
 }
 
 impl Args {
     fn parse(mut argv: impl Iterator<Item = String>) -> Result<Args, String> {
-        const USAGE: &str = "usage: render_viewmodels <outdir> [--archive <big>] [--weapon <id>]... [--no-attachments] [--sweep]";
+        const USAGE: &str = "usage: render_viewmodels <outdir> [--archive <big>] [--weapon <id>]... [--no-attachments] [--sweep] [--camo <id>]...";
         let mut out = None;
         let (mut archive, mut weapons, mut attachments) = (None, Vec::new(), true);
         let mut sweep = false;
+        let mut camo = Vec::new();
         while let Some(arg) = argv.next() {
             match arg.as_str() {
                 "--archive" => archive = Some(PathBuf::from(argv.next().ok_or("--archive needs a path")?)),
                 "--weapon" => weapons.push(argv.next().ok_or("--weapon needs a weapon id")?),
                 "--no-attachments" => attachments = false,
                 "--sweep" => sweep = true,
+                "--camo" => camo.push(argv.next().ok_or("--camo needs a camo id")?),
                 "-h" | "--help" => return Err(USAGE.into()),
                 other if other.starts_with('-') => return Err(format!("unknown flag {other}\n{USAGE}")),
                 other => {
@@ -206,7 +230,7 @@ impl Args {
                 }
             }
         }
-        Ok(Args { out: out.ok_or(USAGE)?, archive, weapons, attachments, sweep })
+        Ok(Args { out: out.ok_or(USAGE)?, archive, weapons, attachments, sweep, camo })
     }
 }
 
@@ -227,6 +251,10 @@ impl Job {
             Some(short) => format!("att_{short}.png"),
         };
         format!("{}/{}", weapon_dir(&self.weapon.id), file)
+    }
+
+    fn relative_camo(&self, camo: &str) -> String {
+        format!("{}/camo_{camo}.png", weapon_dir(&self.weapon.id))
     }
 }
 
@@ -563,7 +591,7 @@ impl Rgb {
 
 /// Render `job`: hip and ADS, stitched, plus the note for the manifest. With `sweep`, render the
 /// first-raise clip across frames instead: one PNG per frame in a subdirectory.
-fn render_job(job: &Job, archive: &BigArchive, source: &mut Option<zhbo_assets::viewmodel_sweep::Source>, out: &Path, sweep: bool) -> Result<String, String> {
+fn render_job(job: &Job, archive: &BigArchive, source: &mut Option<zhbo_assets::viewmodel_sweep::Source>, out: &Path, sweep: bool, camo: Option<&str>) -> Result<String, String> {
     // Base weapons draw the archive's own blobs. A combination does too only when the table holds
     // that exact combination (the loadout's own kit, `weapons::converted`): everything else is
     // converted here, into memory for this render only.
@@ -608,7 +636,7 @@ fn render_job(job: &Job, archive: &BigArchive, source: &mut Option<zhbo_assets::
     let (hip, mut logs) = render_pose(&art, vm, pose(job.weapon, 0.0), clip, time)?;
     let (ads, more) = render_pose(&art, vm, pose(job.weapon, 1.0), clip, time)?;
     logs.extend(more);
-    let path = out.join(job.relative());
+    let path = out.join(match camo { Some(c) => job.relative_camo(c), None => job.relative() });
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent).map_err(|e| format!("{}: {e}", parent.display()))?;
     }

@@ -245,11 +245,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let reticles = crate::weapons::reticle_options(&patch, &names);
     let reticle_colors = crate::weapons::reticle_color_options(&patch, &names);
     let common_patch = load_zone(bo2_dir, "common_patch_mp")?;
-    let camo_sets: std::collections::HashSet<String> = zhbo_formats::weapon::camo_all(&common_patch)
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .map(|c| c.name)
-        .collect();
+    let camo_assets = zhbo_formats::weapon::camo_all(&common_patch).map_err(|e| e.to_string())?;
+    let camo_sets: std::collections::HashSet<String> = camo_assets.iter().map(|c| c.name.clone()).collect();
     let options = crate::weapons::OptionTables {
         camo: &camo,
         camo_sets: &camo_sets,
@@ -261,6 +258,14 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     table.perks = crate::weapons::perk_rows(&patch);
     let converted = crate::weapons::converted(&bo2);
     crate::weapons::add_variants(&mut table, &converted);
+    let camo = crate::camo::files(&common, &patch, &common_patch, &paks, &camo_assets, &bo2, &table, &mut out)?;
+    summary.push(format!(
+        "camo: {} assets, {} pattern images, {} style materials, no art: {}",
+        camo.assets,
+        camo.images,
+        camo.styles,
+        if camo.unresolved.is_empty() { "none".to_string() } else { camo.unresolved.join(" ") }
+    ));
     #[cfg(debug_assertions)]
     {
         // The schema-driven table (refactor plan 1.4) must survive format+parse unchanged: a

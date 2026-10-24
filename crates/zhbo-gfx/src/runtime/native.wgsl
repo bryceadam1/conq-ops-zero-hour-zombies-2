@@ -34,8 +34,14 @@ struct Frame {
 @group(1) @binding(0) var color_map: texture_2d<f32>;
 @group(1) @binding(1) var maps_map: texture_2d<f32>;
 @group(1) @binding(2) var samp: sampler;
-// x: alpha test (BO2's GE128), y: emissive, z: has packed maps
-@group(1) @binding(3) var<uniform> material: vec4<f32>;
+// x: alpha test (BO2's GE128), y: emissive, z: has packed maps, w: has a camo layer
+// camo: offset.xy, scale, gain
+struct Material {
+    params: vec4<f32>,
+    camo: vec4<f32>,
+}
+@group(1) @binding(3) var<uniform> material: Material;
+@group(1) @binding(4) var camo_map: texture_2d<f32>;
 
 struct VIn {
     @location(0) pos: vec3<f32>,
@@ -85,17 +91,25 @@ fn finish(c: vec3<f32>, a: f32) -> vec4<f32> {
 @fragment
 fn fs(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     // Everything that needs uniform control flow first: samples and derivatives.
-    let albedo = textureSample(color_map, samp, i.uv);
+    var albedo = textureSample(color_map, samp, i.uv);
     let maps = textureSample(maps_map, samp, i.uv);
+    // The chosen camo layer. Sampled unconditionally: implicit derivatives need uniform control
+    // flow. Surfaces with no camo bind the 1x1 white texture and skip the mix below.
+    let camo = textureSample(camo_map, samp, i.uv * material.camo.z + material.camo.xy);
+    if (material.params.w > 0.5) {
+        // BO2 replaces the surface's camo layer; the mod multiplies it over the base colour at the
+        // layer's coverage. The gain is per weapon/camo in the blob (research §5.3).
+        albedo = vec4<f32>(albedo.rgb * mix(vec3<f32>(1.0), camo.rgb * material.camo.w, camo.a), albedo.a);
+    }
     let dp1 = dpdx(i.world);
     let dp2 = dpdy(i.world);
     let duv1 = dpdx(i.uv);
     let duv2 = dpdy(i.uv);
 
-    if (material.x > 0.5 && albedo.a < 0.5) {
+    if (material.params.x > 0.5 && albedo.a < 0.5) {
         discard;
     }
-    if (material.y > 0.5) {
+    if (material.params.y > 0.5) {
         return finish(albedo.rgb, albedo.a);
     }
 
@@ -108,7 +122,7 @@ fn fs(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
 
     // The normal map's tangent-space normal, framed by the surface's position/UV derivatives.
     var n = geo;
-    if (material.z > 0.5 && !(debug_mode > 0.5 && debug_mode < 1.5)) {
+    if (material.params.z > 0.5 && !(debug_mode > 0.5 && debug_mode < 1.5)) {
         let xy = maps.rg * 2.0 - 1.0;
         let dp2perp = cross(dp2, geo);
         let dp1perp = cross(geo, dp1);
@@ -121,12 +135,12 @@ fn fs(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
             n = normalize(t * (xy.x * inv) + b * (xy.y * inv) + geo * z);
         }
     }
-    let gloss = select(0.0, maps.b, material.z > 0.5);
-    let f0 = select(0.0, maps.a * maps.a, material.z > 0.5);
+    let gloss = select(0.0, maps.b, material.params.z > 0.5);
+    let f0 = select(0.0, maps.a * maps.a, material.params.z > 0.5);
     let power = min(exp2(1.0 + gloss * 11.0), MAX_POWER);
     let norm = (power + 8.0) / 8.0;
     // Opaque surfaces carry ambient occlusion in the colour map's alpha; others carry coverage.
-    let ao = select(1.0, albedo.a, material.z > 0.5);
+    let ao = select(1.0, albedo.a, material.params.z > 0.5);
     let v = normalize(frame.eye.xyz - i.world);
 
     let ambient = frame.ambient.rgb;
@@ -180,6 +194,6 @@ fn fs(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
             color = env * env_fresnel * ao;
         }
     }
-    let alpha = select(albedo.a, 1.0, material.z > 0.5);
+    let alpha = select(albedo.a, 1.0, material.params.z > 0.5);
     return finish(color, alpha);
 }
