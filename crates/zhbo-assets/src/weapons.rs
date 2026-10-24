@@ -651,6 +651,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         reticle: reticle(&w.reticle),
         camo: Vec::new(),
         camo_material: String::new(),
+        overlay_material: w.overlay_material.clone(),
+        overlay_material_low_res: w.overlay_material_low_res.clone(),
+        overlay_reticle: w.overlay_reticle,
     };
     #[cfg(debug_assertions)]
     {
