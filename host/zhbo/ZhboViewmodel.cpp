@@ -258,24 +258,34 @@ namespace
 		FXList::doFXPos(fx, &pos, &mtx);
 	}
 
-	// The weapon's own BO2 first-person effects (Track R8) at its flash and brass tags; the
-	// generic converted fallbacks when the weapon's effect was not convertible.
+	// The weapon's own BO2 first-person effects (Track R8) at its flash and brass tags. Brass is the
+	// def's alone: BO2 ejects a shell only when `viewShellEjectEffect` is set (41 of 172 MP defs; the
+	// AN-94 and every other AR and sniper define none), so only the muzzle flash has a fallback.
+	// `tag_brass1` is the `_lh` model's left port, present only on a dual-wield pair, so a single
+	// gun's second call is a no-op.
 	void viewmodelFx(int weapon, Bool native)
 	{
 		char flash[128] = "";
 		char shell[128] = "";
 		zhbo_viewmodel_fx(weapon, flash, static_cast<int32_t>(sizeof(flash)), shell, static_cast<int32_t>(sizeof(shell)));
 		const char *flashFx = flash[0] ? flash : "ZHBO_ViewmodelMuzzle";
-		const char *shellFx = shell[0] ? shell : "ZHBO_ViewmodelBrass";
 		if (native)
 		{
 			nativeBoneFx(flashFx, "tag_flash");
-			nativeBoneFx(shellFx, "tag_brass");
+			if (shell[0])
+			{
+				nativeBoneFx(shell, "tag_brass");
+				nativeBoneFx(shell, "tag_brass1");
+			}
 		}
 		else
 		{
 			boneFx(flashFx, "tag_flash");
-			boneFx(shellFx, "tag_brass");
+			if (shell[0])
+			{
+				boneFx(shell, "tag_brass");
+				boneFx(shell, "tag_brass1");
+			}
 		}
 	}
 

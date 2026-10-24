@@ -4,7 +4,9 @@
 //! generic `ZHBO_ViewmodelMuzzle` FXList (BO2's `fxt_fire_gas_flash` sprite) stays as the fallback
 //! for a weapon whose effect the converter could not build. Model elements (the ejected shell
 //! casing) are drawn as small sprites from the model's own colour map: Zero Hour's FXList has no
-//! model element.
+//! model element. A shell is spawned at the posed `tag_brass`, so its FXList takes the bone's
+//! matrix (`OrientToObject`) and keeps BO2's axes — the tag's X is the eject direction — and a
+//! weapon whose def has no `viewShellEjectEffect` gets no shell FXList at all, as in BO2.
 
 use crate::images;
 use std::collections::BTreeMap;
@@ -129,56 +131,65 @@ impl Converted {
 
     /// [`Converted::add`], with the looping parts running `looping_secs` (a smoke screen's time).
     pub fn add_timed(&mut self, effect: &Effect, looping_secs: f32, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>) -> String {
-        self.add_timed_with(effect, looping_secs, paks, None)
+        self.add_timed_with(effect, looping_secs, paks, None, false)
     }
 
     /// [`Converted::add`] for an effect whose model elements (a shell casing) should be drawn as
-    /// sprites from the model's own colour map (`zone` provides the model).
-    pub fn add_shell(&mut self, effect: &Effect, zone: &Zone, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>) -> String {
+    /// sprites from the model's own colour map. A shell is spawned at the posed `tag_brass`, whose
+    /// X is BO2's eject direction, so its systems take the bone's matrix and keep BO2's axes. The
+    /// `zones` are tried in order: a patch zone's copy of a shell model or its material can be a
+    /// reference stub while the base zone (or the patch zone's material asset) carries the real
+    /// one.
+    pub fn add_shell(&mut self, effect: &Effect, zones: &[&Zone], paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>) -> String {
         let secs = (effect.looping_life_msec as f32 / 1000.0).clamp(1.0, 20.0);
-        self.add_timed_with(effect, secs, paks, Some(zone))
+        self.add_timed_with(effect, secs, paks, Some(zones), true)
     }
 
-    fn add_timed_with(&mut self, effect: &Effect, looping_secs: f32, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>, zone: Option<&Zone>) -> String {
+    fn add_timed_with(&mut self, effect: &Effect, looping_secs: f32, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>, zones: Option<&[&Zone]>, orient: bool) -> String {
         let name = fxlist_name(&effect.name);
         if !self.done.insert(name.clone()) {
             return name;
         }
         let mut systems = Vec::new();
         let mut bright = false;
-        self.add_elems(effect, 0.0, looping_secs, &name, paks, zone, &mut systems, &mut bright);
+        self.add_elems(effect, 0.0, looping_secs, &name, paks, zones, orient, &mut systems, &mut bright);
         let mut fx = format!("FXList {name}\n");
         if bright {
             fx.push_str("  LightPulse\n    Color = R:255 G:190 B:110\n    Radius = 40\n    IncreaseTime = 0\n    DecreaseTime = 400\n  End\n");
         }
-        for s in &systems {
-            fx.push_str(&format!("  ParticleSystem\n    Name = {s}\n  End\n"));
-        }
+        fx.push_str(&fxlist_particles(&systems, orient));
         fx.push_str("End\n\n");
         self.fxlists.push_str(&fx);
         name
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn add_elems(&mut self, effect: &Effect, delay_ms: f32, looping_secs: f32, prefix: &str, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>, zone: Option<&Zone>, systems: &mut Vec<String>, bright: &mut bool) {
+    fn add_elems(&mut self, effect: &Effect, delay_ms: f32, looping_secs: f32, prefix: &str, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>, zones: Option<&[&Zone]>, orient: bool, systems: &mut Vec<String>, bright: &mut bool) {
         for el in &effect.elems {
             if el.kind == kind::RUNNER {
                 for child in &el.children {
-                    self.add_elems(child, delay_ms + el.delay_msec.base, looping_secs, prefix, paks, zone, systems, bright);
+                    self.add_elems(child, delay_ms + el.delay_msec.base, looping_secs, prefix, paks, zones, orient, systems, bright);
                 }
                 continue;
             }
             // A model element (BO2's ejected shell casing) becomes a sprite of the model's own
             // colour map: Zero Hour's FXList has no model element.
             if el.kind == kind::MODEL {
-                let Some(z) = zone else { continue };
+                let Some(zones) = zones else { continue };
                 for model_name in &el.models {
-                    let Ok(model) = xmodel::find(z, model_name) else { continue };
-                    let Some(m) = model.materials.iter().flatten().next() else { continue };
-                    let Some(img) = m.color_map() else { continue };
+                    // A patch zone's copy of a shell model can be a reference stub (BO2's
+                    // comma-prefixed asset) with no surfaces; the base zone has the real model.
+                    let Some(model) = zones.iter().find_map(|z| xmodel::find(z, model_name).ok().filter(|m| !m.surfaces.is_empty())) else { continue };
+                    let Some(mat) = model.materials.iter().flatten().next() else { continue };
+                    // The base zone's inline material can be a stub with no textures; its real
+                    // material (mc/mtl_fx_shell) is an asset in the patch zone.
+                    let colour = mat.color_map().cloned().or_else(|| {
+                        zones.iter().find_map(|z| xmodel::find_material(z, &mat.name).and_then(|m| m.color_map().cloned()))
+                    });
+                    let Some(img) = colour else { continue };
                     let Some(tex) = self.texture(&img.name, img.stream_hash, (1, 1), paks) else { continue };
                     let sys = format!("{prefix}_shell{}", systems.len());
-                    self.particles.push_str(&model_particle_system(&sys, el, &tex.0, delay_ms));
+                    self.particles.push_str(&model_particle_system(&sys, el, &tex.0, delay_ms, orient));
                     systems.push(sys);
                 }
                 continue;
@@ -201,7 +212,7 @@ impl Converted {
             };
             *bright |= additive;
             let sys = format!("{prefix}_{}", systems.len());
-            self.particles.push_str(&particle_system(&sys, el, &tex.0, additive, delay_ms, looping_secs));
+            self.particles.push_str(&particle_system(&sys, el, &tex.0, additive, delay_ms, looping_secs, orient));
             systems.push(sys);
         }
     }
@@ -228,8 +239,15 @@ impl Converted {
     }
 }
 
+/// The `ParticleSystem` nuggets of an FXList; `orient` makes each take its spawner's matrix
+/// (`OrientToObject`): a shell is spawned at the posed `tag_brass` and flies along the tag's X.
+fn fxlist_particles(systems: &[String], orient: bool) -> String {
+    let orient = if orient { "    OrientToObject = Yes\n" } else { "" };
+    systems.iter().map(|s| format!("  ParticleSystem\n    Name = {s}\n{orient}  End\n")).collect()
+}
+
 /// One BO2 effect element as a Zero Hour particle system.
-fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_ms: f32, looping_secs: f32) -> String {
+fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_ms: f32, looping_secs: f32, orient: bool) -> String {
     let frames = |ms: f32| (ms / MS_PER_FRAME).max(1.0);
     let life = (frames(el.life_msec.min()), frames(el.life_msec.max()));
     let first = el.vis.first().copied().unwrap_or_default();
@@ -251,14 +269,15 @@ fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_m
         keys.push_str(&format!("  Alpha{} = {a:.2} {a:.2} {t}\n", k + 1));
         keys.push_str(&format!("  Color{} = R:{} G:{} B:{} {t}\n", k + 1, r.round() as u32, g.round() as u32, b.round() as u32));
     }
-    // Velocity: BO2's effect frame has X along the surface normal (up here).
+    // Velocity: a world effect's frame has X along the surface normal (up here); a shell's frame is
+    // its tag's, so its axes pass through unchanged.
     let per_frame = |v: f32| units(v * MS_PER_FRAME);
     let (vb, va) = el.velocity;
     let axis = |i: usize| {
         let (lo, hi) = (per_frame(vb[i]), per_frame(vb[i] + va[i]));
         (lo.min(hi), lo.max(hi))
     };
-    let (up, x, y) = (axis(0), axis(1), axis(2));
+    let (up, x, y) = if orient { (axis(2), axis(0), axis(1)) } else { (axis(0), axis(1), axis(2)) };
     let gravity = -G_PER_FRAME2 * (el.gravity.base + el.gravity.amplitude * 0.5);
     let radius = units(el.offset_radius.max());
     let delay = (frames(delay_ms + el.delay_msec.min()) - 1.0, frames(delay_ms + el.delay_msec.max()) - 1.0);
@@ -295,7 +314,7 @@ fn particle_system(name: &str, el: &Elem, texture: &str, additive: bool, delay_m
 
 /// A model element (an ejected shell) as a small sprite. The model's own colour map is the
 /// particle texture; BO2's model element gives no size, so a shell-sized default is used.
-fn model_particle_system(name: &str, el: &Elem, texture: &str, delay_ms: f32) -> String {
+fn model_particle_system(name: &str, el: &Elem, texture: &str, delay_ms: f32, orient: bool) -> String {
     let mut e = el.clone();
     if e.vis.is_empty() {
         e.vis = vec![
@@ -306,7 +325,7 @@ fn model_particle_system(name: &str, el: &Elem, texture: &str, delay_ms: f32) ->
     if e.life_msec.base <= 0.0 {
         e.life_msec = Range { base: 700.0, amplitude: 200.0 };
     }
-    particle_system(name, &e, texture, false, delay_ms, 1.0)
+    particle_system(name, &e, texture, false, delay_ms, 1.0, orient)
 }
 
 #[cfg(test)]
@@ -330,7 +349,7 @@ mod effect_tests {
             ],
             ..Default::default()
         };
-        let ini = particle_system("ZHBO_test_0", &el, "zhbo_fx_smoke.tga", false, 0.0, 15.0);
+        let ini = particle_system("ZHBO_test_0", &el, "zhbo_fx_smoke.tga", false, 0.0, 15.0, false);
         assert!(ini.contains("Lifetime = 30 45"), "{ini}");
         assert!(ini.contains("BurstCount = 5 7"));
         assert!(ini.contains("InitialDelay = 2 2"));
@@ -341,18 +360,31 @@ mod effect_tests {
         assert!(ini.contains("Gravity = -0.1481"), "{ini}");
         // Looping parts end.
         let looping = Elem { looping: true, interval_msec: 3000, ..el };
-        let ini = particle_system("ZHBO_test_1", &looping, "zhbo_fx_smoke.tga", false, 0.0, 15.0);
+        let ini = particle_system("ZHBO_test_1", &looping, "zhbo_fx_smoke.tga", false, 0.0, 15.0, false);
         assert!(ini.contains("SystemLifetime = 450") && ini.contains("BurstDelay = 90 90"), "{ini}");
     }
 
     #[test]
     fn a_model_element_becomes_a_shell_sprite() {
         let el = Elem { kind: kind::MODEL, models: vec!["fx_rifle_shell".into()], ..Default::default() };
-        let ini = model_particle_system("ZHBO_test_shell", &el, "zhbo_fx_shell.tga", 0.0);
+        let ini = model_particle_system("ZHBO_test_shell", &el, "zhbo_fx_shell.tga", 0.0, false);
         assert!(ini.contains("ParticleSystem ZHBO_test_shell"), "{ini}");
         assert!(ini.contains("ParticleName = zhbo_fx_shell.tga"));
         // BO2's model element has no size: a shell-sized default life and sprite.
         assert!(ini.contains("Lifetime = 21 27"), "{ini}");
         assert!(ini.contains("Size = 0.17 0.17"), "{ini}");
+    }
+
+    #[test]
+    fn a_shell_fxlist_orients_to_the_tag_with_bo2_axes() {
+        let el = Elem { kind: kind::MODEL, velocity: ([0.3, 0.0, 0.0], [0.1, 0.0, 0.0]), ..Default::default() };
+        let ini = particle_system("ZHBO_test_shell", &el, "zhbo_fx_shell.tga", false, 0.0, 1.0, true);
+        // The tag's X is the eject direction: identity axes, nothing on Z (the world effects' map
+        // puts it there, and the existing test still pins that).
+        assert!(ini.contains("VelOrthoX = 1.667 2.222"), "{ini}");
+        assert!(ini.contains("VelOrthoY = 0.000 0.000") && ini.contains("VelOrthoZ = 0.000 0.000"), "{ini}");
+        let systems = vec!["ZHBO_test_shell".to_string()];
+        assert!(fxlist_particles(&systems, true).contains("    Name = ZHBO_test_shell\n    OrientToObject = Yes\n"), "shell");
+        assert!(!fxlist_particles(&systems, false).contains("OrientToObject"), "world");
     }
 }
