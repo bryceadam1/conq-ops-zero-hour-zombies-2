@@ -9,7 +9,7 @@ How each layer of the mod is verified, and what to run before declaring a change
 | Unit tests | sim, weapons, movement, hitscan, HUD, formats, requirements | `cargo test --workspace` |
 | Shot impacts (R8d) | the surface vocabulary and the converted table (classification, default-cell and blood-variant fallbacks); the sim's per-pellet `Impact` event and its absence on a miss; the client record and its cap; the ABI lookup; every converted gun's bucket and cells resolve to a converted FXList | `cargo test -p zhbo-core impacts`; `cargo test --workspace`; the real-install check: `ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets converts_from_real_install -- --ignored` (asserts each gun's `ImpactType`, `pellets <= 8`, and that every row names an `FXList` in the effects INI) |
 | Headless renderer | frame encoding, transient and dynamic buffers, read-back pixels, draw validation, ABI asserts, the native BO2 pass (skinning, sRGB, lighting, view order, refusals) | `cargo test -p zhbo-gfx` (`tests/headless.rs`, `tests/ffi.rs`, `tests/native.rs`) |
-| Native viewmodel (Track R) | blob formats round-trip and refuse damage (`zhbo-native`); the core's request/answer loading, composition, posing and ADS slide without a GPU; end to end into a headless renderer | `cargo test -p zhbo-native`; `cargo test -p zhbo-core nativevm` and `cargo test -p zhbo-core --features renderer nativevm`; the real-install conversion test checks every converted viewmodel's blobs (`ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets converts_from_real_install -- --ignored`); the equipment's authored sub-bone parking and the `stored local + track` playback rule (`ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets equipment_subbone_tracks_are_bo2s_authored_parking -- --ignored`); the base parts — the snipers' scope is loaded at its authored offset, the ACOG/`is` replace it, the M32's hip sight loads once (`ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets the_sniper_scope_is_a_base_part the_acog_replaces_the_base_scope the_m32_sight_loads_once the_pistol_dualclip_suppresses_nothing -- --ignored`); the IR combination moves the base scope and adds the dual-band mount (`ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets the_ir_combo_moves_the_base_scope_and_adds_the_mount -- --ignored`); the AS50 base unique parser test (synthetic zone: `cargo test -q --release -p zhbo-formats the_base_unique_carries_the_overlay_material -- --nocapture`) |
+| Native viewmodel (Track R) | blob formats round-trip and refuse damage (`zhbo-native`); the core's request/answer loading, composition, posing and the ADS pose layer without a GPU — the 0x55/0x56 `tag_torso` overlay over the action clip, its fraction scrub and clip switch, and the clip-less eye-frame slide fallback; end to end into a headless renderer | `cargo test -p zhbo-native`; `cargo test -p zhbo-core nativevm` and `cargo test -p zhbo-core --features renderer nativevm`; the real-install conversion test checks every converted viewmodel's blobs (`ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets converts_from_real_install -- --ignored`); the ADS pose against BO2's measured per-family table, the twin (`ads_down` frame 0 == `ads_up` frame N) and the launchers' rotation (`ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets the_ads_clip_reproduces_bo2s_authored_pose -- --ignored`); the equipment's authored sub-bone parking and the `stored local + track` playback rule (`ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets equipment_subbone_tracks_are_bo2s_authored_parking -- --ignored`); the base parts — the snipers' scope is loaded at its authored offset, the ACOG/`is` replace it, the M32's hip sight loads once (`ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets the_sniper_scope_is_a_base_part the_acog_replaces_the_base_scope the_m32_sight_loads_once the_pistol_dualclip_suppresses_nothing -- --ignored`); the IR combination moves the base scope and adds the dual-band mount (`ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets the_ir_combo_moves_the_base_scope_and_adds_the_mount -- --ignored`); the AS50 base unique parser test (synthetic zone: `cargo test -q --release -p zhbo-formats the_base_unique_carries_the_overlay_material -- --nocapture`) |
 | Native third person (Track R7) | the body and world-weapon manifests round-trip (`zhbo-native`); the clip resolver's state scan (`zhbo-assets`); the core's third-person composition, state selection and world placement without a GPU | `cargo test -p zhbo-native -p zhbo-assets -p zhbo-core nativebody`; the real-install conversion test additionally checks every faction body (72 inches, weapon tag, all states' clips, textures) composes with every world weapon (`ZHBO_BO2_DIR=… cargo test -p zhbo-assets converts_from_real_install -- --ignored`) |
 | Asset conformance | BO2/ConquerOps zones load with 0 bytes left over; weapon table round-trips; shell ejection matches BO2 — exactly the 41 defs that define `viewShellEjectEffect` and their FXList oriented at `tag_brass` on BO2's axes | `cargo test -p zhbo-assets`; install-gated: `ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets every_mp_weapon_converts_and_plays_like_bo2 converts_from_real_install -- --ignored` |
 | In-game scripted test | full loop: take control, move, fight, throw both offhands, toggle the grenade launcher, field computer, RTS hand-back. The script seeds a v2 profile with one custom class in the active set — the AN-94 with its under-barrel launcher, plus the frag, concussion, pistol and knife — because BO2's premades carry no attachments and the alt-mode step needs one; the autopilot picks that custom from the spawn screen by its computed row key (the match list is the set's custom slots, then the defaults, `changeclass.lua`) | `scripts/autotest.ps1` (Windows) / `scripts/autotest-mac.sh` (macOS; seeds `ConquerOps.profile` with the GL custom before launch — the standard autopilot picks the first profile custom when there is one, else the first default class) |
@@ -90,7 +90,8 @@ without starting a match; the unit tests cover the same views with fallbacks onl
 draws every player weapon of the installed table — the bare weapon first, then the weapon with each
 attachment its `Allowed` list offers, one at a time — through the game's own native first-person
 path: `zhbo_native_viewmodel` and the file protocol `ZhboViewmodel.cpp` drives, the core's
-composition and posing, `nativevm::place` (`ads = 0` hip, `ads = 1` aimed) and `nativevm::gpu`'s
+composition and posing, `nativevm::place` (`ads = 0` hip, `ads = 1` aimed — the 0x55 ADS layer's
+last key, or the clip-less slide for a weapon without one) and `nativevm::gpu`'s
 submit into a headless `zhbo-gfx` renderer (the real native BO2 pass). Each image is 1280x360: the
 hip pose on the left, the aimed pose on the right, 640x360 each, on a flat 0.72 grey with the
 game's field of view and a fixed eye-frame camera. `manifest.tsv` records where each render's art
@@ -103,15 +104,26 @@ loadout's own kit) is converted on demand from the Black Ops II install (`ZHBO_B
 `--no-attachments` narrow a run while iterating. The output is a review tool's images, not source:
 keep the folder outside the repository.
 
-**The poses and the notes.** A gun's pair samples its `IDLE` clip at frame 0. An off-hand item's
-game path plays `HOLD_FIRE` while it is held (`viewmodel.rs:181-190`), so the sweep samples that
+**The poses and the notes.** A gun's pair samples its `IDLE` clip at frame 0; its aimed half is
+BO2's own ADS animation — the 0x55/0x56 `tag_torso` layer over that idle, scrubbed to the up
+clip's last key (`nativevm::Loaded::pose`, the state the game draws at `ads = 1`), including the
+authored eye relief and the launchers' rotation. An off-hand item's game path plays `HOLD_FIRE`
+while it is held (`viewmodel.rs:181-190`), so the sweep samples that
 slot at frame 0 too; when the manifest lacks the 0x5 clip (or the def's `anims` bit is clear) the
 sweep stays on `IDLE` and the note says so — the native path silently falls back
 (`nativevm/mod.rs:304-310`). The melee knife stays on `IDLE`: its game slot is `MELEE`, a
 pre-existing sweep inaccuracy. An off-hand's aimed half is a **harness artifact**, not a game
-pose: equipment has no ADS state, and `place::aligned` lifts the whole rig by the item's
-palm-as-aim-marker, so its `manifest.tsv` note starts with the stable marker
-`ads half: harness artifact`.
+pose: equipment has no ADS state (an item that carries the authored empty torso-only clip — the
+trophy, say — now stands at its hip pose there, and one without any ADS clip keeps the fallback
+lift), and `place::aligned` lifts the whole rig by the item's palm-as-aim-marker, so its
+`manifest.tsv` note starts with the stable marker `ads half: harness artifact`.
+
+**Reviewing the aimed halves.** Judge the ADS half by BO2's authored line, never by the frame
+centre: `the_ads_clip_reproduces_bo2s_authored_pose` pins each family's measured value, and the
+authored residuals must *show* — the KSG's `tag_sights` 2.2″ below the axis, the AS50's 1.3″ (its
+clip is authored to a different reference), the launchers' 1.7–2.9″ marker offset, the dual-wield
+pair's zero move (its hip and aimed halves are the same picture). Eye relief and the launchers'
+rotation do the rest: the rifles/SMGs come closer to the eye, the SMAW/FHJ-18 tubes straighten.
 
 **Verifying the equipment pose.** The hip half's pixels are descriptive, not a pass/fail: the
 held clips author the item at the waist, so its palm is outside the game's first-person cone and

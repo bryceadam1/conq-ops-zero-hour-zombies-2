@@ -3496,3 +3496,69 @@ zhbo-assets -p zhbo-formats -- --ignored`, 25 + 9 green); the in-game autotest a
 * The impact-count log line is sampled on `frame % 30` and counts only that logic step's events
   (the client clears the buffer each frame), so watch a few sampled lines in a firing burst rather
   than expecting every second to print.
+
+## ADS pose clips: the aimed pose is BO2's animation, not a slide (2026-10-24, `v1/ads-pose`)
+
+* **R6's stand-in is gone on the native path.** `place::aligned` slid the aim marker onto the view
+  axis by the ADS fraction. That is a *sight-point* solution, and it agrees with BO2 only when three
+  coincidences hold (the marker is the animator's point, the eye relief does not change, the
+  rotation is negligible) — i.e. almost nowhere: −6.28″ of eye relief wrong on the AS50, −11.48″ on
+  the Ballista, +8.55″ on the M32, and a whole family of "the marker is the optic's 0.72 window, not
+  the line". BO2's aimed pose is instead `weapAnimFiles_t` 0x55/0x56, a `tag_torso`-only layer on a
+  second anim channel: the whole hip→aimed rig move (translation on all three axes plus the
+  launchers' rotation) is authored data. The native path now samples it with
+  `zhbo_native::pose::sample_over` over the action clip and keeps the slide only as the fallback
+  (no 0x55/0x56 in the manifest — equipment, a partial conversion — or the clip still loading),
+  which is also the W3D path's rule. The W3D path itself is untouched.
+* **The scrub rule: `ads · num_frames` up, `(1 − ads) · num_frames` down**, `num_frames` being BO2's
+  last frame index, so `ads = 1` lands the authored aimed key. Scrubbing (not "play at
+  `length / adsTime`") because `arsenal.ads` moves linearly at `1/ads_in_time`, which makes the two
+  coincide — and the scrub is stateless, so it cannot desync from the fraction, inherits quickdraw
+  and the exit delay, and makes a reversal exact without a clock. The research's mp7 fingerprint
+  (63 % of the move at half) *is* this function at N/2.
+* **Reversal is switch-and-step, no cross-fade.** The twins make it continuous: `ads_down`'s first
+  key equals `ads_up`'s last within 0.02″ on every weapon the install test probes, and the frame
+  rule follows *which clip* ran (up is always `ads·N`, down always `(1−ads)·N`) so the one-clip
+  fallback does not jump by `1−2·ads`. A per-weapon twin deviation is the only reason to add a blend,
+  and it should be measured before it is coded.
+* **The authored residuals are parity — do not "fix" them onto the crosshair.** The aimed tag is
+  not always on the axis and that is BO2's data: the KSG's `tag_sights` 2.198″ low at 13.1″, the
+  AS50's `tag_scope` 1.302″ below BO2's line (its clip is authored to a different reference), the
+  launchers' heuristic marker 1.7–2.9″ off, the dual-wield pair deliberately zero-move. The
+  acceptance test measures the authored tag against the research's table, never "on-axis", or it
+  would re-introduce the bug this cycle removed. The FHJ-18 keeps a 2.32° authored cant after the
+  overlay (its hip is 25.34° off; the SMAW goes 19.86° → 0.38°) — the research measured only the
+  SMAW's end angles, so that number is recorded here, not treated as a failure.
+* **The research's an94/mp7 table rows are the reflex compositions.** Taken literally against the
+  bare ids they read (−0.003, +0.491) and (−0.002, +0.050): with no optic mounted, `tag_sights` is
+  the gun's own iron tag. They reproduce exactly on `an94_mp+reflex` (0.0336, 0.0170) and
+  `mp7_mp+reflex` (0.0328, −0.5611). The install test pins the reflex rows and says why; the other
+  nine families reproduce on the bare id to the thousandth.
+* **Measured sweep (14 weapons, hip|aimed, before/after, outside the repo).** `manifest.tsv` is
+  byte-identical before/after — no converter, archive or VERSION change (the clips have been
+  converted since R6; only the state machine never asked for them). The dual-wield pair's aimed half
+  is now *pixel-identical* to its hip half (3 px of float noise) where 26.3 % of the pixels moved
+  before: the pair no longer slides 5.5–6.0″. Changed aimed-half pixels: SMAW 43.1 % (tube
+  straightened), M32 25.9 %, KSG 17.6 % (the authored 2.2″ residual now visible), an94 10.5 %,
+  snipers 2.6–6.0 % (their eye relief is large but they were already far from the camera). AS50: the
+  scope leaves the eye (its rig moves +6.28″ forward).
+* **Two flagged decisions stand as planned:** `tag_scope`'s converter read (snipers) and the
+  mounted-optic mount (`(identity, view_offset)` at `view_model_tag`, the MP7 reflex on
+  `tag_brass`) are **not** in this cycle. The clip path never consumes `AIM_TAG` for placement, so
+  reading `tag_scope` would change only the W3D fallback and the manifest marker; the optic still
+  *draws* in the wrong place. They get their own cycle.
+* **Ghidra follow-up (open).** The site that sets 0x55/0x56 (the caller of `FUN_0078b1a0`) is not
+  disassembled: whether the engine time-scales the clip into `fOOPosAnimLength` or cross-fades the
+  root pose by `fWeaponPosFrac`, and what blend time a direction flip passes, is still inferred.
+  It does not block — scrubbing and rate-scaling coincide while the fraction is linear — but the
+  theory is only closed by reading it. Recorded in `docs/CONTRACT.md` too.
+* **Plan-snippet bugs the tests caught** (worth knowing for the next clip layer): the clip-choice
+  match in the plan had its rising arms bound to the *down* path (a rise sampled `ads_down`
+  reversed) — the unit suite caught it in one run; and the plan's `fixture` notes say the DW track
+  is "constant (0,0,0)" when it is constant at the rig root's *bind local* ([-4.64, 0, −1.38] on
+  the viewhands): what must be zero is the *move*, not the value.
+* **No reversals are covered in game.** The default autotest aims (4.5–7.5 s) and fires aimed
+  (5.0–7.0 s), and the swap at 7.2 s snaps ADS to 0 — but no leg releases and re-presses mid
+  transition. Unit tests 2–3 (`the_reversal_switches_to_the_down_clip_at_the_same_fraction`,
+  `a_twin_pair_reverses_without_a_step`) are the guard; a scripted reversal leg is an optional
+  follow-up, not this cycle's acceptance.

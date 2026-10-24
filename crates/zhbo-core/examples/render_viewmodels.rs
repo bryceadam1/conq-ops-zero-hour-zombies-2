@@ -23,8 +23,9 @@
 //! plus the `zhbo_native_wanted`/`zhbo_native_provide` file protocol), composes the parts (the
 //! faction's arms, the gun, its magazine and the attachment on the attachment's own view-model tag,
 //! the manifest's `hide` tags, the combination's clip set), poses the clip and places the gun with
-//! `nativevm::place` (hip: `ads = 0`; aimed: `ads = 1`, which slides the aim marker onto the view
-//! axis). `nativevm::gpu` uploads the mesh and textures and submits the draw to a headless
+//! `nativevm::place` (hip: `ads = 0`; aimed: `ads = 1` — the authored 0x55/0x56 `tag_torso` ADS
+//! layer's last key over the action clip, which is BO2's whole hip→aimed move; a weapon without
+//! that clip keeps the eye-frame slide, `place::aligned`). `nativevm::gpu` uploads the mesh and textures and submits the draw to a headless
 //! `zhbo-gfx` renderer, which runs the real native BO2 pass. The pixels are therefore whatever the
 //! game's shading, culling and blending make of the art — a see-through patch, a floating optic or
 //! a gun off the aim axis shows up here as it would in a match.
@@ -39,12 +40,18 @@
 //! sway), so BO2's own pose numbers decide, never a hand-tuned constant here. No effects and no
 //! muzzle flash.
 //!
-//! A gun's pair samples its `IDLE` clip at frame 0. An off-hand class (`Class::is_offhand()`:
-//! lethal, tactical, equipment) samples the game's held slot, `HOLD_FIRE`, at frame 0
+//! A gun's pair samples its `IDLE` clip at frame 0; the aimed half overlays the ADS layer
+//! (0x55/0x56, `tag_torso` only) at its last key — the state the game draws at `ads = 1`,
+//! eye relief and the launchers' rotation included, and with BO2's own residuals (the KSG's 2.2″,
+//! the launchers' 1.7–2.9″), which are the aim, not a defect to look for. An off-hand class
+//! (`Class::is_offhand()`: lethal, tactical, equipment) samples the game's held slot,
+//! `HOLD_FIRE`, at frame 0
 //! (`viewmodel.rs:181-190`); when the manifest lacks that clip (or the def's `anims` bit is clear)
 //! the sweep stays on `IDLE` and the note says so. The melee knife stays on `IDLE`: its game slot is
 //! `MELEE`, a pre-existing sweep inaccuracy outside this cycle. An off-hand's aimed half is a
-//! **harness artifact**, not a game pose: equipment never ADSes, and `place::aligned` lifts the
+//! **harness artifact**, not a game pose: equipment never ADSes (an item with the authored empty
+//! torso-only clip now stands at its hip pose there; one with no ADS clip keeps the fallback), and
+//! `place::aligned` lifts the
 //! whole rig by the item's palm-as-aim-marker, so its note starts with the stable marker
 //! `ads half: harness artifact`.
 //!

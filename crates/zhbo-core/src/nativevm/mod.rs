@@ -1,7 +1,8 @@
 //! The native first-person viewmodel (Track R): the converter's BO2 blobs
 //! (`zhbo_native`), composed, posed and drawn through the renderer's native BO2 pass instead of
-//! the W3D conversion. Opt-in with `ZHBO_NATIVE_VIEWMODEL=1` (`config::Config::native_viewmodel`)
-//! until it is verified in game; the W3D path stays the default and the fallback.
+//! the W3D conversion. The default since the native pass out-verified the W3D one
+//! (`config::Config::native_viewmodel`: `ZHBO_NATIVE_VIEWMODEL=0` turns it off); the W3D path is
+//! the fallback.
 //!
 //! Presentation only: nothing here feeds the sim. The bridge (`ZhboViewmodel.cpp`) calls
 //! [`ffi::zhbo_native_viewmodel`] each frame with what it already gets for the W3D model (clip, time,
@@ -13,11 +14,13 @@
 //! next frame. A viewmodel draws once its manifest and models are in; clips and textures fill in
 //! as they arrive (bind pose, white).
 //!
-//! **Placement.** As the W3D path: the model's frame is the eye's (X along the view, Y left, Z up),
-//! the gun's view-space transform ([`GunPose`], built by the client's `viewmodel::Motion` from the
-//! weapon def's gun-position numbers — `weapons::gunpos`, G4), BO2's inches scaled to the art's
-//! scale, and aiming down the sights slides the aim marker onto the view axis by the ADS fraction
-//! ([`place`]). Projection is the scene's own (`NativeFrame::view_proj = None`): BO2 has no
+//! **Placement.** The model's frame is the eye's (X along the view, Y left, Z up) times the gun's
+//! view-space transform ([`GunPose`], built by the client's `viewmodel::Motion` from the weapon
+//! def's gun-position numbers — `weapons::gunpos`, G4), with BO2's inches scaled to the art's
+//! scale ([`place`]). **Aiming is the authored 0x55/0x56 ADS animation**, a `tag_torso`-only layer
+//! over the action clip ([`Loaded::pose`]); the eye-frame marker slide ([`place::aligned`]) is the
+//! fallback for a weapon with no ADS clip, or one whose clip has not loaded yet — and the W3D
+//! path's rule. Projection is the scene's own (`NativeFrame::view_proj = None`): BO2 has no
 //! viewmodel FOV (G4).
 
 use std::collections::{BTreeSet, HashMap};
@@ -387,7 +390,8 @@ pub struct Posed {
     pub local: Vec<Xf>,
     pub model: Vec<Xf>,
     pub palette: Vec<Mat4>,
-    /// Model to world: the eye's frame, the gun's pose, the ADS slide, the art's scale.
+    /// Model to world: the eye's frame, the gun's pose, the art's scale — and the ADS slide only
+    /// when the layer did not pose this frame (see [`Loaded::placement`]).
     pub root: Mat4,
 }
 
@@ -404,10 +408,11 @@ impl Loaded {
         [base, mode_idle, crate::viewmodel::slot::IDLE as u16].into_iter().find_map(|c| self.manifest.clip(c | instance))
     }
 
-    /// The ADS layer's clip for `clip`'s mode: [`slot::ADS_UP`] entering, [`slot::ADS_DOWN`]
-    /// leaving. Resolved from the manifest **directly**, never `clip_path`: that falls back to the
-    /// mode's idle (`:386-393`), and an idle keys every bone — overlaying it with `sample_over`
-    /// would replace the action pose instead of layering on it. An alt mode's clips follow its
+    /// The ADS layer's clip for `clip`'s mode: [`crate::viewmodel::slot::ADS_UP`] entering,
+    /// [`crate::viewmodel::slot::ADS_DOWN`] leaving. Resolved from the manifest **directly**, never
+    /// through [`Loaded::clip_path`]: that falls back to the mode's idle, and an idle keys every
+    /// bone — overlaying it with `sample_over` would replace the action pose instead of layering
+    /// on it. An alt mode's clips follow its
     /// weapon's by [`crate::weapons::ALT_CLIPS`], so its ADS clips are `ALT_CLIPS + 0x55/0x56`;
     /// a dual-wield pair's left instance has no ADS clip of its own (the base's track carries both
     /// guns), so the instance bit is masked, never added.

@@ -212,14 +212,40 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
 * **Placement and the aim axis (R6).** `nativevm::place` composes the model's root from the eye's
   frame (`ZhboNativeIn.eye`/`dir`: the client writes them from the sim's `Body::eye()` and the view
   angles, the eye→aim axis `sim::fire` traces shots along), the gun's transform and the art's
-  scale. Aiming slides the aim marker (`zhbo_native::AIM_TAG`: BO2's `tag_sights`, an optic's
-  window when one is mounted, or the front sight the converter found) onto that axis by
-  `ZhboNativeIn.ads` — BO2's `fWeaponPosFrac`, moved at the weapon's own ADS in/out times — keeping
-  the marker's forward distance; at 0 the pose is the hip pose untouched. Placement never derives
-  an eye or axis of its own, so at full ADS the sight sits on the ray the shot takes. (The camera
-  axis carries the client's cosmetic view kick, `hud.view_kick_*`, which the sim's ray does not;
-  the crosshair is drawn on the same camera axis, so the sight picture matches the crosshair while
-  the sim stays authoritative for where the round goes.)
+  scale. **The aimed pose is BO2's own animation data, not a computed alignment**: the
+  `weapAnimFiles_t` 0x55 (`ads_up`) / 0x56 (`ads_down`) clips — a second anim channel that keys
+  only `tag_torso`, the arms' rig root — are layered over the action clip with
+  `zhbo_native::pose::sample_over` and scrubbed by the fraction: frame `ads · num_frames` on up,
+  `(1 − ads) · num_frames` on down, where `num_frames` is BO2's last frame index, so `ads = 1`
+  lands the authored aimed key. Rising plays up, falling plays down, held keeps the last direction
+  (an aimed burst stays on the up clip's last frame); both clips are requested on the first aiming
+  frame so a reversal never waits for its clip. The eye-frame slide (`place::aligned`, which moves
+  the aim marker — `zhbo_native::AIM_TAG`: BO2's `tag_sights`, an optic's window when one is
+  mounted, or the front sight the converter found — onto the axis by `ZhboNativeIn.ads`, BO2's
+  `fWeaponPosFrac`, keeping its forward distance) is the **fallback**: it runs only when the
+  manifest has no ADS clip (equipment, a partial conversion) or the clip has not loaded yet, and
+  it is the W3D path's rule. Applying both would double-correct mid-transition and keep the hip's
+  depth forever. The clip owns the whole hip→aimed transform, eye relief and the launchers'
+  rotation included; the def's ADS time still owns FOV, the offset fade (`max(0, 1 − 2·ads)`),
+  `fAdsAimPitch`, bob, sway and kick. Placement never derives an eye or axis of its own, so the
+  shot's ray and the sight picture share one axis. (The camera axis carries the client's cosmetic
+  view kick, `hud.view_kick_*`, which the sim's ray does not; the crosshair is drawn on the same
+  camera axis, so the sight picture matches the crosshair while the sim stays authoritative for
+  where the round goes.)
+  - **Open reference question (Ghidra).** Whether the engine time-scales 0x55/0x56 into
+    `fOOPosAnimLength` or cross-fades the root pose by `fWeaponPosFrac`, and what blend time a
+    direction flip passes, is still inferred: the site that sets 0x55/0x56 (the caller of
+    `FUN_0078b1a0`) is not disassembled. Scrubbing and rate-scaling coincide while `ads` moves
+    linearly (`weapons::arsenal`), which is why the fraction scrub reproduces the measured blend
+    (mp7: 63 % of the move at half, `ads-alignment` §1.1).
+  - **Authored residuals are parity, not placement errors.** The tag does not always sit on the
+    axis: the KSG's `tag_sights` is 2.198″ low at 13.1″, the AS50's `tag_scope` 1.302″ below BO2's
+    line (its clip is authored to a different reference), the launchers' heuristic marker 1.7–2.9″
+    off. Never "fix" those onto the axis — BO2's data is the acceptance (test:
+    `the_ads_clip_reproduces_bo2s_authored_pose`). `tag_scope`'s converter read and the
+    mounted-optics mount (`(identity, view_offset)` at `view_model_tag`) are out of this point's
+    scope: the clip path does not consume the marker, so they would change only the W3D fallback
+    and the attachment art.
 * `zhbo_native_reset` runs from `ZhboViewmodel_Reset` (a game reset tears down the scene); it frees
   the renderer's meshes and textures.
 * ABI: the functions and `ZhboNativeIn` (168 bytes) / `ZhboNativeLight` (24) are new; the header and
