@@ -54,6 +54,9 @@ pub const TS_COLOR_MAP: u8 = 2;
 pub const TS_NORMAL_MAP: u8 = 5;
 pub const TS_SPECULAR_MAP: u8 = 8;
 pub const TS_OCCLUSION_MAP: u8 = 10;
+/// The camo layer: `camo_off_solid`/`camo_off_pattern`/`weapon_camo_neutral` sit here on exactly
+/// the surfaces a `WeaponCamo` acts on. Inferred, not read from an enum table (research §2.1).
+pub const TS_CAMO_MAP: u8 = 22;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Image {
@@ -346,6 +349,26 @@ fn read_surface(z: &Zone, sh: u32) -> Result<Surface, FormatError> {
     Ok(Surface { vertices, triangles })
 }
 
+/// The `GfxImage` named `name` with real pixel data (not a patch-zone stub): an image asset of its
+/// own, or one loaded inline inside another asset (`t6_camo_*` in `common_mp`; research §4.3).
+pub fn find_image(z: &Zone, name: &str) -> Option<Image> {
+    let sized = |i: &Image| i.width > 0 && i.height > 0 && i.stream_hash != 0;
+    crate::fastfile::asset_type_id("image")
+        .and_then(|kind| z.find(kind, name))
+        .map(|a| read_image(z, a.addr))
+        .filter(sized)
+        .or_else(|| {
+            // The image's name pointer is at +72 (`GfxImage::name`), so a pointer-to-name's slot
+            // address minus 72 is the image's start. Validate the read before trusting it.
+            z.strings(name)
+                .into_iter()
+                .flat_map(|s| z.pointers_to(s))
+                .filter_map(|p| p.checked_sub(72))
+                .map(|g| read_image(z, g))
+                .find(|i| i.name == name && sized(i))
+        })
+}
+
 /// A material asset by name (2D HUD art is a material too), or `None` if the zone has none.
 pub fn find_material(z: &Zone, name: &str) -> Option<Material> {
     find_asset_material(z, name).or_else(|| find_inline_material(z, name))
@@ -510,6 +533,27 @@ mod tests {
         assert_eq!(s.triangles, vec![[0, 1, 2]]);
         assert!((s.vertices[0].position[0] - 1.0).abs() < 1e-5, "{:?}", s.vertices[0].position);
         assert!(s.vertices[0].normal[0] > 0.9, "{:?}", s.vertices[0].normal);
+    }
+
+    #[test]
+    fn find_image_skips_stubs_and_finds_inline_images() {
+        // Two images named "camo_off_solid": a stub (0x0, hash 0) first and a real 32x32 second. The
+        // finder must return the real one; the stub is what the patch zone's copies look like.
+        let mut mem = vec![0u8; 0x200];
+        let put32 = |m: &mut Vec<u8>, at: usize, v: u32| m[at..at + 4].copy_from_slice(&v.to_le_bytes());
+        let put16 = |m: &mut Vec<u8>, at: usize, v: u16| m[at..at + 2].copy_from_slice(&v.to_le_bytes());
+        let name = 0x20;
+        mem[name..name + 15].copy_from_slice(b"camo_off_solid\0");
+        // The stub at 0x40: name pointer at +72 -> the name; width/height 0; stream hash 0.
+        put32(&mut mem, 0x40 + 72, name as u32);
+        // The real image at 0x80: same name, 32x32, a stream hash.
+        put32(&mut mem, 0x80 + 72, name as u32);
+        put16(&mut mem, 0x80 + 20, 32);
+        put16(&mut mem, 0x80 + 22, 32);
+        put32(&mut mem, 0x80 + 40, 0x1234);
+        let zone = crate::t6zone::synthetic_zone("img", mem, Vec::new(), Vec::new());
+        let img = find_image(&zone, "camo_off_solid").expect("the real image");
+        assert_eq!((img.width, img.height, img.stream_hash), (32, 32, 0x1234));
     }
 
     fn zone(name: &str) -> Zone {
