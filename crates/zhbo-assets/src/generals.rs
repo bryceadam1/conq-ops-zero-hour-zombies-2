@@ -440,6 +440,28 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         rts_fx.push_str(&format!("{slot} {flesh} {metal} {hard}\n"));
     }
     out.insert(RTS_FX_PATH.into(), rts_fx.into_bytes());
+    // R8d: BO2's whole impact table for the buckets the converted guns use, keyed by the mod's
+    // surface slots (the local player's own shots). Must run before the effects INI is written.
+    // Bullet buckets only: the launchers' impact types (7, 9) are the explosion table's
+    // (`explosion_entry`, played by the projectile's own explosion) and the crossbow/ballistic
+    // knife's 14 is BO2's "missing impact" row, so neither belongs in a bullet's cells.
+    let impact_types: Vec<u32> = {
+        let mut t: Vec<u32> = table
+            .weapons
+            .iter()
+            .filter(|d| d.class.is_gun() && zhbo_formats::fx::bullet_entry(d.impact_type as u32).is_some())
+            .map(|d| d.impact_type as u32)
+            .collect();
+        t.sort_unstable();
+        t.dedup();
+        t
+    };
+    let (impact_text, unmapped) = crate::impacts::table_text(&common, &impact_types, &mut effects, &|h| paks.image(h));
+    if !unmapped.is_empty() {
+        summary.push(format!("impact types with no BO2 row (no impact FX): {unmapped:?}"));
+    }
+    summary.push(format!("{} BO2 impact cells", impact_text.lines().filter(|l| !l.starts_with(';')).count()));
+    out.insert(zhbo_core::names::IMPACT_FX_PATH.into(), impact_text.into_bytes());
     summary.push(format!("{} BO2 effects ({} textures)", effects.fxlists.matches("FXList ").count(), effects.textures.len()));
     out.insert("Data\\INI\\ParticleSystem\\ZHBO_BO2_Effects.ini".into(), effects.particles.clone().into_bytes());
     out.insert("Data\\INI\\FXList\\ZHBO_BO2_Effects.ini".into(), effects.fxlists.clone().into_bytes());
@@ -709,6 +731,37 @@ mod tests {
         for slot in ["0 ", "1 "] {
             let line = hits.lines().find(|l| l.starts_with(slot)).unwrap_or_else(|| panic!("no impacts for slot {slot}: {hits}"));
             assert!(line.split(' ').skip(1).all(|fx| fx.starts_with("ZHBO_BO2FX_")), "{line}");
+        }
+        // R8d: every converted gun's bullet bucket has cells, and every cell names a converted
+        // FXList. A row that points at nothing is a silent "no impact" in game, so it fails here.
+        let table = zhbo_core::weapons::parse_full_table(&text(crate::weapons::TABLE_PATH)).unwrap();
+        let impacts = text(zhbo_core::names::IMPACT_FX_PATH);
+        let effects_ini = text("Data\\INI\\FXList\\ZHBO_BO2_Effects.ini");
+        let mut buckets = std::collections::BTreeSet::new();
+        for d in table.weapons.iter().filter(|d| d.class.is_gun()) {
+            assert!(d.impact_type > 0, "{} has no impact type", d.id);
+            assert!(d.pellets as usize <= zhbo_core::client::CLIENT_HITS, "{} fires {} pellets", d.id, d.pellets);
+            // Launchers use the explosion table and the crossbow/knife's 14 is BO2's own "missing
+            // impact" row; only the bullet buckets get cells here.
+            if zhbo_formats::fx::bullet_entry(d.impact_type as u32).is_some() {
+                buckets.insert(d.impact_type);
+            }
+        }
+        for line in impacts.lines().filter(|l| !l.starts_with(';') && !l.trim().is_empty()) {
+            let w: Vec<&str> = line.split_whitespace().collect();
+            assert!(w.len() == 4, "bad impact row: {line}");
+            assert!(buckets.contains(&w[1].parse().unwrap()), "row for a bucket no gun has: {line}");
+            assert!(w[3].starts_with("ZHBO_BO2FX_"), "{line}");
+            assert!(effects_ini.contains(&format!("FXList {}\n", w[3])), "{} names a missing FXList", w[3]);
+        }
+        for bucket in &buckets {
+            assert!(impacts.contains(&format!("impact {bucket} default ")), "bucket {bucket} has no default cell");
+            // BO2 leaves some nonfatal blood cells null (bucket 1 ships only the two fatal exit
+            // effects), so require at least one blood cell per bucket, not the nonfatal one.
+            assert!(
+                impacts.lines().any(|l| l.starts_with(&format!("flesh {bucket} "))),
+                "bucket {bucket} has no blood cell"
+            );
         }
         // Its guns flash as BO2's do, from their own muzzles.
         let weapons = text(crate::sfx::WEAPON_INI_PATH);

@@ -19,6 +19,7 @@ pub mod equipment;
 pub mod ffi;
 pub mod hitscan;
 pub mod host;
+pub mod impacts;
 pub mod hud;
 pub mod input;
 pub mod lui;

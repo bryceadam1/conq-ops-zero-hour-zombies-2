@@ -185,6 +185,9 @@ pub struct WeaponDef {
     pub projectile_speed_up: f32,
     pub projectile_gravity: bool,
     pub impact_explode: bool,
+    /// BO2's `WeaponDef.impactType` (+40): the impact-table bucket an impact-table lookup uses
+    /// (`crates/zhbo-core/src/impacts.rs`); 0 when BO2 has none.
+    pub impact_type: i32,
     pub sticky: bool,
     /// Zero Hour assets made for this weapon by the converter (empty when absent).
     pub fx_weapon: String,
@@ -403,6 +406,7 @@ impl Default for WeaponDef {
             projectile_speed_up: 0.0,
             projectile_gravity: true,
             impact_explode: false,
+            impact_type: 0,
             sticky: false,
             fx_weapon: String::new(),
             explosion_fx: String::new(),

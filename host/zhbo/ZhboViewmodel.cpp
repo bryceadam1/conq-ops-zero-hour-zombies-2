@@ -6,6 +6,7 @@
 // and down until the weapon's tag_sights bone sits on the line of sight. Built into
 // z_gameenginedevice; W3DView::update calls ZhboViewmodel_Update (host/patches/0001).
 #include "ZhboBridge.h"
+#include "ZhboBridgeInternal.h"
 #include "ZhboNames.h"
 #include "zhbo_core.h"
 #include "ZhboPlatform.h"
@@ -355,12 +356,29 @@ namespace
 			y.Set(0.0f, 1.0f, 0.0f);
 		y.Normalize();
 		Vector3::Cross_Product(x, y, &z);
-		Matrix3D m(true);
-		m[0].Set(x.X, y.X, z.X, eye.x);
-		m[1].Set(x.Y, y.Y, z.Y, eye.y);
-		m[2].Set(x.Z, y.Z, z.Z, eye.z);
-		return m;
+		return zhboFrameAt(eye, x);
 	}
+}
+
+// Columns: X along `normal`, Y to the left, Z up; origin at `at`. The one frame builder for point
+// FX: the viewmodel's eye frame and R8d's impact orientation.
+Matrix3D zhboFrameAt(const Coord3D &at, const Vector3 &normal)
+{
+	Vector3 x = normal;
+	if (x.Length2() < 1e-6f)
+		x.Set(1.0f, 0.0f, 0.0f);
+	x.Normalize();
+	Vector3 y, z;
+	Vector3::Cross_Product(Vector3(0.0f, 0.0f, 1.0f), x, &y);
+	if (y.Length2() < 1e-6f)
+		y.Set(0.0f, 1.0f, 0.0f);
+	y.Normalize();
+	Vector3::Cross_Product(x, y, &z);
+	Matrix3D m(true);
+	m[0].Set(x.X, y.X, z.X, at.x);
+	m[1].Set(x.Y, y.Y, z.Y, at.y);
+	m[2].Set(x.Z, y.Z, z.Z, at.z);
+	return m;
 }
 
 // A game reset tears down the 3D scene (W3DScene) and reloads assets, so the held model and clip

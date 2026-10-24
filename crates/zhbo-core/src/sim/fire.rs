@@ -7,6 +7,7 @@
 */
 
 use super::*;
+use crate::impacts::Surface;
 
 impl Sim {
     pub(super) fn apply_weapon_action(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, action: WeaponAction) {
@@ -35,6 +36,8 @@ impl Sim {
                     }
                     let e = self.equipment.destroy(host, i, Some(idx));
                     self.equipment_events(vec![e]);
+                    // BO2's equipment is metal: a spark at the round, never blood.
+                    self.emit(idx, EventKind::Impact { at: eye + dir * t, dir, surface: Surface::Metal, head: false, fatal: false, impact_type: def.impact_type });
                     if pellet == 0 {
                         self.emit(idx, EventKind::Shot { origin: eye, end: eye + dir * t });
                         self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1, roll_deg: recoil.2, gun_kick });
@@ -60,6 +63,10 @@ impl Sim {
                                 kill |= host.damage(p.general, next, def.damage_at(distance) * mult * PENETRATION_DAMAGE * BO2_TO_ZH_DAMAGE, damage_kind::SMALL_ARMS);
                             }
                         }
+                        // BO2's blood is picked by the hit region and its lethality (FxFleshType);
+                        // every other surface comes from what was hit. One impact per pellet, at
+                        // its entry point (an FMJ round's exit impact is a separate feature).
+                        self.emit(idx, EventKind::Impact { at: point, dir, surface: Surface::of_object(victim.as_ref()), head: headshot, fatal: kill, impact_type: def.impact_type });
                         self.emit(idx, EventKind::HitMarker { headshot, kill });
                         if kill && p.arsenal.has_specialty(Specialty::Scavenger) {
                             p.arsenal.scavenge();
@@ -68,6 +75,13 @@ impl Sim {
                     other => {
                         if let Some(fx) = fx {
                             host.fire_fx(p.general, fx, 0, other.point());
+                        }
+                        // The ground: Zero Hour's terrain class at the point (the host's query).
+                        // A shot that flew out to its full range hit nothing, so it raises nothing.
+                        if matches!(other, HitResult::Terrain { .. }) {
+                            let at = other.point();
+                            let surface = host.surface_at(at.x, at.y);
+                            self.emit(idx, EventKind::Impact { at, dir, surface, head: false, fatal: false, impact_type: def.impact_type });
                         }
                     }
                 }

@@ -80,6 +80,12 @@ pub trait LogicHost {
     fn log(&self, msg: &str);
     fn ground_height(&self, x: f32, y: f32) -> f32;
     fn is_walkable(&self, x: f32, y: f32) -> bool;
+    /// The ground's surface at a world point, for the impact effect: Zero Hour's terrain class
+    /// there (a [`crate::impacts::Surface`]). **Presentation only** — it is read in the logic step
+    /// but must never feed damage, movement or any other sim state (docs/CONTRACT.md).
+    fn surface_at(&self, _x: f32, _y: f32) -> crate::impacts::Surface {
+        crate::impacts::Surface::Default
+    }
     fn extent(&self) -> (Vec3, Vec3);
     /// Object by id, with relationship flags relative to `viewer`'s owner.
     fn object(&self, id: u32, viewer: u32) -> Option<ObjInfo>;
@@ -200,6 +206,8 @@ pub struct LogicApi {
     pub work_site: Option<extern "C" fn(general: u32, pos: *const Vec3, reach: f32, out: *mut crate::building::Site) -> u32>,
     pub work: Option<extern "C" fn(general: u32, site: u32, rate: f32) -> f32>,
     pub choose_class: Option<extern "C" fn(player: i32, general: u32, index: i32)>,
+    /// ABI 26 (R8d): the ground's surface at a point (a `ZHBO_SURF_*`).
+    pub surface_at: Option<extern "C" fn(x: f32, y: f32) -> i32>,
 }
 
 #[repr(C)]
@@ -247,6 +255,11 @@ impl LogicHost for CLogicHost {
 
     fn is_walkable(&self, x: f32, y: f32) -> bool {
         self.0.is_walkable.map_or(true, |f| f(x, y) != 0)
+    }
+
+    fn surface_at(&self, x: f32, y: f32) -> crate::impacts::Surface {
+        // An engine without the query (a shell, a test) reports the default cell.
+        crate::impacts::Surface::from_i32(self.0.surface_at.map_or(0, |f| f(x, y)))
     }
 
     fn extent(&self) -> (Vec3, Vec3) {

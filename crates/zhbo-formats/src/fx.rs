@@ -229,24 +229,38 @@ fn find_depth(z: &Zone, name: &str, depth: u32) -> Option<Effect> {
         .filter(|e| !e.elems.is_empty())
 }
 
-/// BO2's surface types (`surfaceType`): which explosion an impact plays depends on the ground.
+/// BO2's surface types (`materialSurfType_t`, `T6_Assets.h:5064-5099`): which explosion an impact
+/// plays depends on the ground. `FLESH` is the bit index BO2 keeps *out* of `nonflesh[]` — a
+/// soldier's hit uses the four `flesh[]` cells instead (`impact_flesh_variant`).
 pub mod surface {
     pub const DEFAULT: usize = 0;
     pub const BRICK: usize = 2;
     pub const CONCRETE: usize = 5;
     pub const DIRT: usize = 6;
+    pub const FLESH: usize = 7;
     pub const GRASS: usize = 10;
     pub const METAL: usize = 13;
+    pub const ROCK: usize = 17;
+    pub const SAND: usize = 18;
+    pub const SNOW: usize = 19;
+    pub const WATER: usize = 20;
+    pub const WOOD: usize = 21;
+    pub const ASPHALT: usize = 22;
 }
 
 /// The impact table's entry for a bullet's `impactType`: small (pistols, SMGs), large (rifles),
-/// armour-piercing (snipers, shotguns), extreme.
+/// armour-piercing (snipers), extreme, and shotgun. BO2's table orders its rows in entry/exit
+/// pairs (1/2 small, 3/4 large, 5/6 the next bucket, 7/8 AP, 9/10 extreme); the four verified
+/// pairs are the ones the RTS path uses. The shotgun pair (5) is the standing inference — the
+/// converter logs it and `zhbo-assets fx --impacts` names the row, so a wrong guess is visible
+/// rather than silent (PLAN.md §8.6).
 pub fn bullet_entry(impact_type: u32) -> Option<u32> {
     match impact_type {
         1 => Some(1),
         2 => Some(3),
         3 => Some(7),
         4 => Some(9),
+        5 => Some(5),
         _ => None,
     }
 }
@@ -261,6 +275,25 @@ pub fn impact_flesh(z: &Zone, entry: u32) -> Option<Effect> {
         return None;
     }
     (0..4).map(|i| z.u32(entries + entry * IE::SIZE + IE::flesh + 4 * i)).find(|p| *p != 0).map(|p| read(z, p)).filter(|e| !e.elems.is_empty())
+}
+
+/// One of the four blood cells of table entry `entry`, by BO2's `FxFleshType` (0 body nonfatal,
+/// 1 body fatal, 2 head nonfatal, 3 head fatal). A null cell falls back to the body-nonfatal one,
+/// the way a null non-flesh cell falls back to `SURF_TYPE_DEFAULT`.
+pub fn impact_flesh_variant(z: &Zone, entry: u32, variant: usize) -> Option<Effect> {
+    use crate::t6zone::layouts::{FxImpactEntry as IE, FxImpactTable as IT};
+    let kind = crate::fastfile::asset_type_id("impactfx")?;
+    let table = z.assets.iter().find(|a| a.kind == kind)?;
+    let entries = z.u32(table.addr + IT::table);
+    if entries == 0 || entry == 0 || entry > 32 || variant >= 4 {
+        return None;
+    }
+    [variant, 0]
+        .into_iter()
+        .map(|v| z.u32(entries + entry * IE::SIZE + IE::flesh + 4 * v as u32))
+        .find(|p| *p != 0)
+        .map(|p| read(z, p))
+        .filter(|e| !e.elems.is_empty())
 }
 
 /// The impact table's entry for an explosive weapon's `impactType` (the table orders its entries
@@ -292,4 +325,20 @@ pub fn impact(z: &Zone, entry: u32, surface: usize) -> Option<Effect> {
         .find(|p| *p != 0)
         .map(|p| read(z, p))
         .filter(|e| !e.elems.is_empty())
+}
+
+#[cfg(test)]
+mod flesh_tests {
+    use crate::t6zone::layouts::{FxImpactEntry as IE, FxImpactTable as IT};
+
+    /// `FxImpactEntry` is 32 non-flesh pointers (128 bytes) followed by the four flesh pointers,
+    /// and `impact_flesh_variant` reads `IE::flesh + 4 * variant`.
+    #[test]
+    fn the_four_flesh_cells_sit_after_the_nonflesh_ones() {
+        assert_eq!(IE::nonflesh, 0);
+        assert_eq!(IE::flesh, 32 * 4);
+        assert_eq!(IE::flesh + 4 * 4, IE::SIZE);
+        assert_eq!(IE::SIZE, 144);
+        assert_eq!(IT::table, 4);
+    }
 }

@@ -11,6 +11,7 @@ pub mod sounds;
 pub mod xf;
 pub mod character;
 pub mod generals;
+pub mod impacts;
 pub mod ini;
 pub mod paks;
 pub mod textures;

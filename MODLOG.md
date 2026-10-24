@@ -3115,6 +3115,35 @@ compile); autotest 13/13 default, `--classpick` all checks, 14/14 `--rts`, zero
 missing-FXList lines. Eyeball for the playtest: AN-94 ejects nothing; the MP7's shell leaves
 along the port's X, not straight up.
 
+## Integrating R8d: first-person impacts with the surface's effect and blood (2026-10-24)
+
+Merged `v1/r8d-impacts` (6 commits + 3 integrator fixes). The local player's shots now land
+with BO2's impact table: per pellet the sim emits `EventKind::Impact { at, dir, surface, head,
+fatal, impact_type }` (terrain surface from the NEW `LogicHost::surface_at` — the engine's
+`TheTerrainVisual->getTerrainTile(...)->getClass()`, called from logic per the BuildAssistant
+precedent; object surfaces from `objflags`; the bogus air-impact sound is gone with the
+`Nothing` arm). The bridge resolves the name through `zhbo_impact_fx` (the table's
+`nonflesh[surface]` cell, or the 4-way `flesh[]` blood variant = `head<<1|fatal`, BO2's own
+FxFleshType) and plays it with `FXList::doFXPos` at the point with X = −dir. Tracers are OUT
+(parity: `cg_firstPersonTracerChance` defaults 0). Two data findings are pinned: buckets are
+bullet-only (7/9 are launcher explosion types, 14 is `fx_missing_impact`), and bucket 1 has no
+nonfatal blood cells in BO2's data (so a nonfatal body hit plays no blood — faithful; the
+fallback policy is the place to change it if it reads wrong). ABI 25 → 26 (both sides
+together: `ZhboClientHit[8]` + `LogicApi.surface_at`, field counts, size asserts, FakeHost,
+the CONTRACT rule that the surface value travels ONLY to FX/sound, never gameplay). Archive
+VERSION 63 → 64 (`impacts.txt`).
+
+The three integrator fixes beyond the branch: the bridge's shared `zhboFrameAt` needed
+`ZhboBridgeInternal.h` in `ZhboViewmodel.cpp` (use-before-declaration); the script's impact
+greps used `player 0` where this game logs `player 2` (now `player [0-9]+`); and **the impact
+oracle's first form was defeated by the client's per-client-frame `sim.events.clear()`** — a
+frame-indexed count only ever saw the print frame's events, hiding any kill on the other 29
+frames — so it now accumulates counts every logic frame into a static per-player table and
+prints + resets on the 30s. Verified: cargo test --workspace green; the full real-install
+suite green (25 + 9); clippy --workspace --all-targets clean; `cargo xtask build` clean;
+autotest 13/13 default INCLUDING `impacts: flesh`, `impacts: terrain`, and `impact fx played
+(N played, 0 missing)`, `--classpick` all checks, 14/14 `--rts`.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
@@ -3436,3 +3465,34 @@ flash FXLists. The integrator's merge bumps `hud::VERSION` 62 → 63; no ABI cha
 phase: `cargo test --workspace`, clippy, and the install-gated suite (`cargo test -q --release -p
 zhbo-assets -p zhbo-formats -- --ignored`, 25 + 9 green); the in-game autotest and the eyeball pass
 (AN-94 silent, MP7 along its port) are the integrator's merge legs.
+## R8d: first-person impacts
+
+* BO2 draws **no first-person tracer** by default: `cg_firstPersonTracerChance` is registered
+  `default = 0, min = 0, max = 1` (`~/Documents/BO2-reference/ghidra/answers/raw/_g_view.c:210-213`)
+  and it is the only tracer-chance dvar. Their absence here is parity, not an omission — do not
+  "fix" it without a decision to diverge.
+* BO2's impact is table data, not a per-weapon effect: the weapon's `impactType` picks an
+  `FxImpactTable` entry, the hit surface picks the cell, and the four `flesh[]` cells are
+  body/head × nonfatal/fatal. The mod carries the bucket on the weapon row (`ImpactType`) and the
+  cells in `Data\ConquerOps\impacts.txt`.
+* **The terrain surface comes from `TheTerrainVisual->getTerrainTile(x, y)->getClass()`.** The
+  research thought no runtime getter existed; the engine's own `BuildAssistant::checkSampleBuildLocation`
+  (`GeneralsMD/…/Common/System/BuildAssistant.cpp:488-492`) calls exactly this from logic code, and it
+  reads the map's tile indices (`WorldHeightMap::getTerrainNameAt`), not a render product. Water is
+  a water table over the terrain, so `TerrainLogic::isUnderwater` answers it.
+* The impact record is the *local* player's only (the `ClientOut` path), so other players' shots
+  still play the converted `FireFX` at the victim. Fixing that is a separate carrier.
+* `ZHBO_CLIENT_HITS` is 8: one shot per logic frame, and the converter now fails an install test if
+  any gun's `pellets` exceeds it — bump both if that ever trips.
+* The impact frame is X = `-dir` (the surface's outward normal). BO2's exact basis is unverified;
+  a wrong one shows as a sideways puff, so this is a look-check item.
+* Install findings that changed the plan: the launcher buckets (7, 9) belong to the *explosion*
+  table (`explosion_entry`, played by the projectile's own blast), and the crossbow/ballistic
+  knife's 14 is BO2's own `fx_missing_impact` row, so only the four bullet buckets
+  (`bullet_entry`: 1-5) get impact cells. The shotgun guess (5) resolves to `impacts/fx_small_dirt`
+  in `fx --impacts`, a real effect. Bucket 1's row ships no nonfatal blood cells (only the two
+  fatal-exit ones), so a nonfatal pistol/SMG hit resolves no blood FX — that is BO2's data, not a
+  lookup bug; the install test asserts one blood cell per bucket, not the nonfatal one.
+* The impact-count log line is sampled on `frame % 30` and counts only that logic step's events
+  (the client clears the buffer each frame), so watch a few sampled lines in a firing burst rather
+  than expecting every second to print.

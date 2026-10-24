@@ -322,6 +322,7 @@ void Zhbo_Init()
 		.work_site = cbWorkSite,
 		.work = cbWork,
 		.choose_class = cbChooseClass,
+		.surface_at = cbSurfaceAt,
 	};
 	static const ZhboClientApi clientApi = {
 		.screen_size = cbScreenSize,
@@ -354,6 +355,13 @@ void Zhbo_Init()
 	zhbo_load_strings(readTextFile(zhbo_names::STRINGS_PATH).c_str());
 	zhbo_load_tuning(readTextFile(zhbo_names::TUNING_PATH).c_str());
 	zhbo_load_classes(readTextFile(zhbo_names::CLASSES_PATH).c_str());
+	// BO2's impact table (R8d): the FXLists the converted archive carries for each bucket and
+	// surface. Without it (or without the archive) no impact FX plays; the sound still does.
+	const std::string impacts = readTextFile(zhbo_names::IMPACT_FX_PATH);
+	if (!impacts.empty())
+		logf("impacts: %d BO2 impact cells installed", (int)zhbo_load_impacts(impacts.c_str()));
+	else
+		logLine("impacts: no converted BO2 impact table");
 	zhbo_load_fonts(readTextFile(zhbo_names::FONTS_PATH).c_str());
 	// The player's create-a-class profile: a small text file next to the mod's log, in the game's
 	// user-data directory (see zhbo_core::profile). Its custom classes join the pick screen's list.
@@ -623,8 +631,15 @@ static void gatherClientInput(ZhboClientIn &in, Bool focused, Bool menuUp)
 	in.rts_pivot.x = pivot.x; in.rts_pivot.y = pivot.y; in.rts_pivot.z = pivot.z;
 }
 
+// R8d: the shot impacts played this second (the counter line is the autotest's proof that the
+// names resolved and the FXLists ran).
+static UnsignedInt s_impactFrames = 0;
+static UnsignedInt s_impactPlayed = 0;
+static UnsignedInt s_impactMissing = 0;
+static Bool s_impactNameLogged = FALSE;
+
 // Apply what the core asked for this frame: the input message, mouse capture, UI and sky state,
-// the hidden body, and the RTS camera's look-at.
+// the hidden body, the RTS camera's look-at, and the local player's shot impacts.
 static void applyClientOutput(Bool focused, Bool menuUp)
 {
 	if (s_out.send_input)
@@ -696,6 +711,50 @@ static void applyClientOutput(Bool focused, Bool menuUp)
 		target.set(s_out.rts_look_at.x, s_out.rts_look_at.y, s_out.rts_look_at.z);
 		TheTacticalView->lookAt(&target);
 		s_out.rts_look_at_valid = 0;
+	}
+
+	// The local player's shot impacts (R8d): BO2's impact-table cell at the hit point, oriented by
+	// the surface frame. Each pellet has its own hit, so a shotgun raises up to eight.
+	for (int32_t i = 0; i < s_out.hits_len && i < ZHBO_CLIENT_HITS; ++i)
+	{
+		const ZhboClientHit &hit = s_out.hits[i];
+		char name[128] = "";
+		if (!zhbo_impact_fx(hit.impact_type, hit.surface, hit.head, hit.fatal, name, (int32_t)sizeof(name)) || !name[0])
+		{
+			++s_impactMissing;
+			continue;
+		}
+		const FXList *fx = TheFXListStore ? TheFXListStore->findFXList(name) : nullptr;
+		if (!fx)
+		{
+			++s_impactMissing;
+			if (!s_impactNameLogged)
+			{
+				s_impactNameLogged = TRUE;
+				logf("impact fx: '%s' is not a converted FXList (stale archive?)", name);
+			}
+			continue;
+		}
+		Coord3D at;
+		at.set(hit.point.x, hit.point.y, hit.point.z);
+		// The surface's outward normal is the shot's reverse: the puff leaves the wall toward the
+		// shooter, as BO2's impact frame does (the particle velocity axis 0 is the normal).
+		Vector3 normal(-hit.dir.x, -hit.dir.y, -hit.dir.z);
+		Matrix3D m = zhboFrameAt(at, normal);
+		FXList::doFXPos(fx, &at, &m);
+		++s_impactPlayed;
+	}
+	if (s_out.hits_len)
+		s_out.hits_len = 0;
+
+	// What they did, once a second, only while something happened.
+	if (++s_impactFrames >= 60)
+	{
+		if (s_impactPlayed || s_impactMissing)
+			logf("impact fx: %u played, %u missing", (unsigned)s_impactPlayed, (unsigned)s_impactMissing);
+		s_impactFrames = 0;
+		s_impactPlayed = 0;
+		s_impactMissing = 0;
 	}
 }
 

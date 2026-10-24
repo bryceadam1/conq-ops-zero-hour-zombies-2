@@ -56,6 +56,11 @@ $checks = [ordered]@{
     "returned to RTS"         = $text -match "returned General \d+ to RTS control"
     "re-entered"              = $text -match "taking control again"
     "took enemy fire"         = $text -match "General took \d+ damage"
+    # R8d: impacts land (flesh on the rebels, a terrain surface on the misses) and the bridge's
+    # name lookup resolved and ran an FXList.
+    "impacts: flesh"          = $text -match "player 0 impacts:.*flesh [1-9]"
+    "impacts: terrain"        = $text -match "player 0 impacts:.*(concrete|dirt|grass|asphalt|rock|sand|snow|wood) [1-9]"
+    "impact fx played"        = $text -match "impact fx: [1-9][0-9]* played, 0 missing"
 }
 $checks.GetEnumerator() | ForEach-Object { "{0,-22} {1}" -f $_.Key, ($(if ($_.Value) { "PASS" } else { "FAIL" })) }
 "screenshots and log: $Out"

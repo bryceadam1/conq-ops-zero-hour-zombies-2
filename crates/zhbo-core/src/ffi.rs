@@ -5,7 +5,7 @@
 //! `zhbo_logic_*`/`zhbo_client_*` function from inside one; `zhbo_logic_is_controlled` and
 //! `zhbo_string` are lock-free for exactly that reason.
 
-use crate::client::{Client, ClientIn, ClientOut};
+use crate::client::{Client, ClientHit, ClientIn, ClientOut};
 use crate::host::{CClientHost, CLogicHost, ClientApi, ClientHost, LogicApi};
 use crate::input::FpsInput;
 use crate::sim::{Sim, MAX_PLAYERS};
@@ -27,6 +27,9 @@ static STATE: Mutex<Option<State>> = Mutex::new(None);
 
 /// Lock-free mirror of `Sim::controlled_ids` for the AI/physics suppression hooks.
 static CONTROLLED: [AtomicU32; MAX_PLAYERS] = [const { AtomicU32::new(0) }; MAX_PLAYERS];
+/// Per-player impact counts by surface (12 slots), accumulated every logic frame and printed
+/// + reset on the 30s — the client's per-client-frame `sim.events.clear()` can't eat a kill.
+static IMPACT_ACCUM: [[AtomicU32; 12]; MAX_PLAYERS] = [const { [const { AtomicU32::new(0) }; 12] }; MAX_PLAYERS];
 
 fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> Option<R> {
     let mut guard = STATE.lock().unwrap_or_else(|e| e.into_inner());
@@ -40,11 +43,11 @@ fn publish_controlled(sim: &Sim) {
     }
 }
 
-pub const ABI_VERSION: u32 = 25;
+pub const ABI_VERSION: u32 = 26;
 
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
-pub const LOGIC_API_FIELDS: u64 = 23;
+pub const LOGIC_API_FIELDS: u64 = 24;
 pub const CLIENT_API_FIELDS: u64 = 13;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
@@ -53,7 +56,8 @@ const _: () = {
     assert!(size_of::<crate::host::ObjInfo>() == 56);
     assert!(size_of::<FpsInput>() == 20);
     assert!(size_of::<ClientIn>() == 136);
-    assert!(size_of::<ClientOut>() == 4508);
+    assert!(size_of::<ClientOut>() == 4832);
+    assert!(size_of::<ClientHit>() == 40);
     assert!(size_of::<crate::sim::RtsWeapons>() == 192);
     assert!(size_of::<crate::sim::RtsIcons>() == 240);
     assert!(size_of::<crate::building::BuildOption>() == 64);
@@ -104,6 +108,21 @@ pub unsafe extern "C" fn zhbo_load_fonts(text: *const c_char) {
     }
     let text = unsafe { CStr::from_ptr(text).to_string_lossy() };
     crate::lui::font::load(&text);
+}
+
+/// Load the converted BO2 impact table (`Data\ConquerOps\impacts.txt`, read by the bridge's
+/// `readTextFile`); until it runs no impact FX plays (the impact sound still does). See
+/// `crate::impacts`. Returns the number of rows installed (-1 for a null text).
+///
+/// # Safety
+/// `text` must be null or a NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_load_impacts(text: *const c_char) -> i32 {
+    if text.is_null() {
+        return -1;
+    }
+    let text = unsafe { CStr::from_ptr(text).to_string_lossy() };
+    crate::impacts::install(&text) as i32
 }
 
 /// Load the class preset list (`Data/ConquerOps/classes.ini`, read by the bridge's
@@ -342,7 +361,19 @@ pub extern "C" fn zhbo_logic_step(frame: u32) {
 fn log_step(s: &State, first_new_event: usize, frame: u32) {
     use crate::host::LogicHost;
     log_events(s, first_new_event);
+    // R8d: count the Impact events into the per-player accumulator EVERY frame (the client clears
+    // `sim.events` per client frame, so the events must be counted before they go); the print +
+    // reset happens on the 30s, so a kill on a non-print frame still shows in the next line.
+    {
+        use crate::sim::EventKind;
+        for e in s.sim.events.iter().skip(first_new_event) {
+            if let EventKind::Impact { surface, .. } = e.kind {
+                IMPACT_ACCUM[e.player as usize % IMPACT_ACCUM.len()][surface as usize].fetch_add(1, Ordering::Relaxed);
+            }
+        }
+    }
     if frame.is_multiple_of(30) {
+        use crate::impacts::Surface;
         for (i, p) in s.sim.players.iter().enumerate() {
             if let Some(p) = p.as_ref().filter(|p| p.is_first_person()) {
                 let w = p.arsenal.current();
@@ -351,6 +382,19 @@ fn log_step(s: &State, first_new_event: usize, frame: u32) {
                     p.body.pos.x, p.body.pos.y, p.body.pos.z, p.yaw, p.pitch, p.body.stance,
                     p.health, p.max_health, w.def.display_name, w.ammo, w.reserve
                 ));
+                let counts = &IMPACT_ACCUM[i % IMPACT_ACCUM.len()];
+                let by: Vec<String> = Surface::ALL
+                    .iter()
+                    .enumerate()
+                    .filter_map(|(k, s)| {
+                        let n = counts[k].swap(0, Ordering::Relaxed);
+                        (n > 0).then(|| format!("{} {n}", s.name()))
+                    })
+                    .collect();
+                if !by.is_empty() {
+                    let landed: u32 = by.iter().map(|t| t.rsplit(' ').next().unwrap().parse::<u32>().unwrap_or(0)).sum();
+                    s.logic.log(&format!("player {i} impacts: {landed} ({})", by.join(", ")));
+                }
             }
         }
     }
@@ -651,6 +695,21 @@ pub unsafe extern "C" fn zhbo_viewmodel_fx(vm: i32, flash: *mut c_char, flash_ca
     1
 }
 
+/// The FXList BO2 plays for a shot of `impact_type` on `surface` (a `ZHBO_SURF_*`), for a hit that
+/// was `head`/`fatal` (the flesh variants). Returns 1 when the table has a cell (the name may be
+/// empty when nothing was converted for it), 0 when it has no row at all. The bridge plays the
+/// name; the core owns the table, so no FXList name is written in C++.
+///
+/// # Safety
+/// `out` must point to `cap` writable bytes, or be null.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_impact_fx(impact_type: i32, surface: i32, head: i32, fatal: i32, out: *mut c_char, cap: i32) -> i32 {
+    let surface = crate::impacts::Surface::from_i32(surface);
+    let Some(name) = crate::impacts::fx_name(impact_type, surface, head != 0, fatal != 0) else { return 0 };
+    unsafe { write_c_str(out, cap, &name) };
+    1
+}
+
 /// How fast a General builds, as a share of a dozer's speed.
 #[no_mangle]
 pub extern "C" fn zhbo_general_build_rate() -> f32 {
@@ -885,6 +944,37 @@ mod tests {
         assert_eq!(found, 0);
         assert_eq!(flash[0], 1, "no weapon writes nothing");
         assert_eq!(shell[0], 1);
+    }
+
+    #[test]
+    fn impact_fx_resolves_through_the_converted_table() {
+        // One install for the whole test binary: no other test reads the impact table.
+        let text = "impact 2 default ZHBO_BO2FX_b2_default\n\
+                    impact 2 concrete ZHBO_BO2FX_b2_concrete\n\
+                    flesh 2 3 ZHBO_BO2FX_b2_head_fatal\n";
+        let c = std::ffi::CString::new(text).unwrap();
+        unsafe { zhbo_load_impacts(c.as_ptr()) };
+
+        let mut buf = [0u8; 64];
+        let n = unsafe { zhbo_impact_fx(2, crate::impacts::Surface::Concrete as i32, 0, 0, buf.as_mut_ptr().cast(), 64) };
+        assert_eq!(n, 1);
+        assert_eq!(ctext(&buf), "ZHBO_BO2FX_b2_concrete");
+
+        // No cell for the surface: the bucket's default cell (BO2's SURF_TYPE_DEFAULT).
+        let mut buf = [0u8; 64];
+        unsafe { zhbo_impact_fx(2, crate::impacts::Surface::Metal as i32, 0, 0, buf.as_mut_ptr().cast(), 64) };
+        assert_eq!(ctext(&buf), "ZHBO_BO2FX_b2_default");
+
+        // Blood: head + fatal is BO2's FxFleshType 3.
+        let mut buf = [0u8; 64];
+        unsafe { zhbo_impact_fx(2, crate::impacts::Surface::Flesh as i32, 1, 1, buf.as_mut_ptr().cast(), 64) };
+        assert_eq!(ctext(&buf), "ZHBO_BO2FX_b2_head_fatal");
+
+        // A bucket with no rows: 0, and nothing written.
+        let mut buf = [1u8; 8];
+        let n = unsafe { zhbo_impact_fx(9, crate::impacts::Surface::Concrete as i32, 0, 0, buf.as_mut_ptr().cast(), 8) };
+        assert_eq!(n, 0);
+        assert_eq!(buf[0], 1);
     }
 
     fn ctext(buf: &[u8]) -> &str {
