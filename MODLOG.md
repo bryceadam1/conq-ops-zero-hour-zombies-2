@@ -3236,6 +3236,26 @@ Verified: cargo test --workspace green; the full real-install suite green; clipp
 --workspace --all-targets clean; `cargo xtask build` clean; autotest 13/13 default,
 `--classpick` all checks, 14/14 `--rts`.
 
+## Integrating the optic mount rule: sights ride the rail, not the nearest port (2026-10-24)
+
+Merged `v1/mp7-mount` (2 commits). The MP7's reflex mounted on `tag_brass` (the shell-eject
+port) because the nearest-bone fallback is plain Euclidean — the reflex's authored offset
+`[0.025, 0, 2.564]` sits near the receiver's rear-centre, nearest the port, while the correct
+mount `tag_sights` is 5.9″ forward. BO2's in-data hint was the unique's own `hideTags` hiding
+`tag_sights` when the optic is mounted: the optic occupies that bone. The fallback is now
+model-family aware: when the authored tag is missing, an attachment whose model is in the
+`attach_optic_` family prefers `tag_sights` (when the base gun has it); everything else keeps
+nearest-bone unchanged, and the authored offset is never rewritten. The coarse
+`Attachment.point` field proved too broad (it tags the tactical knife `OPTIC`) — the rule keys
+on the model family instead, which also ADMITS the Ballista's IR optic the point field missed.
+**39 optic combos move to the rail** (the MP7's four optics from `tag_brass`; the rest from
+`j_bolt`, `j_ring`, `j_gun`, etc. across 12 weapons); zero non-optic-model deltas. Archive
+VERSION 65 → 66.
+
+Verified: cargo test --workspace green; the full real-install suite green; clippy clean in the
+changed file; `cargo xtask build` clean; autotest 13/13 default, `--classpick` all checks,
+14/14 `--rts`.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
