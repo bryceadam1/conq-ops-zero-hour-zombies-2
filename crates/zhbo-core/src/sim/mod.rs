@@ -22,6 +22,7 @@ pub use rts::{RtsIcons, RtsState, RtsWeapons, Third};
 
 use crate::host::{damage_kind, geom, objflags, LogicHost, ObjInfo};
 use crate::hitscan::{self, HitResult, Shape, Target, INFANTRY_HEAD_FRACTION, INFANTRY_HIT_RADIUS};
+use crate::impacts::Surface;
 use crate::input::{buttons, FpsInput};
 use crate::math::{basis_xy, dir_from_angles, Vec3};
 use crate::movement::{self, Blocker, Body, MoveModifiers, MoveTuning, World};
@@ -110,6 +111,10 @@ pub enum EventKind {
     FieldComputerOpened,
     ReturnedToRts { general: u32 },
     Shot { origin: Vec3, end: Vec3 },
+    /// One pellet landed on something (a miss emits nothing): where, the direction it was going,
+    /// what it hit, and the shooting weapon's BO2 impact bucket. The client turns it into BO2's
+    /// impact FX (through `ZhboClientOut.hits`) and the surface's impact sound.
+    Impact { at: Vec3, dir: Vec3, surface: Surface, head: bool, fatal: bool, impact_type: i32 },
     HitMarker { headshot: bool, kill: bool },
     /// A shot's view kick (G5: pitch up, yaw, roll -0.5 x yaw) and the gun kick spring's impulse
     /// (`weapons::recoil::GunKickSpring`).
@@ -839,6 +844,9 @@ pub(crate) mod tests {
         fn is_walkable(&self, _x: f32, _y: f32) -> bool {
             true
         }
+        fn surface_at(&self, _x: f32, _y: f32) -> Surface {
+            Surface::Dirt
+        }
         fn extent(&self) -> (Vec3, Vec3) {
             (Vec3::new(-5000.0, -5000.0, -100.0), Vec3::new(5000.0, 5000.0, 1000.0))
         }
@@ -1404,6 +1412,110 @@ pub(crate) mod tests {
         let ev = events(&sim);
         assert!(ev.iter().any(|e| matches!(e, EventKind::HitMarker { kill: true, .. })));
         assert!(host.fx.borrow().iter().all(|(s, w, _)| *s == 1 && w == "ZHBO_MTAR_FX"));
+    }
+
+    #[test]
+    fn a_pellet_reports_the_surface_it_hit() {
+        // An enemy structure straight ahead: the pellets land on concrete, not on the ground.
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.add(ObjInfo {
+            id: 2,
+            owner_player: 1,
+            flags: objflags::STRUCTURE,
+            geom_type: geom::BOX,
+            major_radius: 20.0,
+            minor_radius: 20.0,
+            height: 40.0,
+            health: 5000.0,
+            max_health: 5000.0,
+            pos: Vec3::new(60.0, 0.0, 0.0),
+            ..Default::default()
+        });
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        wait_until_ready(&mut sim, &host);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, ..Default::default() }, 20);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::FIRE, ..Default::default() }, 20);
+        let impacts: Vec<_> = events(&sim)
+            .into_iter()
+            .filter_map(|k| match k {
+                EventKind::Impact { surface, at, .. } => {
+                    assert!((at.x - 40.0).abs() < 1.0, "the impact is on the wall's near face, got {at:?}");
+                    Some(surface)
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(!impacts.is_empty(), "the wall took pellets");
+        assert!(impacts.iter().all(|s| *s == Surface::Concrete), "{impacts:?}");
+    }
+
+    #[test]
+    fn a_shot_that_hits_nothing_raises_no_impact() {
+        // Up into the sky, nothing in front: the bullet flies to its range and stops in the air.
+        // (Level fire is not enough: the hip spread cone reaches the ground at long range, which
+        // is a real ground hit and rightly raises an impact.)
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        wait_until_ready(&mut sim, &host);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, pitch: 0.3, ..Default::default() }, 10);
+        assert!(
+            !events(&sim).iter().any(|k| matches!(k, EventKind::Impact { .. })),
+            "no hit, no impact (and so no impact sound)"
+        );
+    }
+
+    #[test]
+    fn a_missed_shot_into_the_ground_asks_the_host_for_its_surface() {
+        // Firing down: the pellets stop on the terrain, whose surface is the host's answer.
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        wait_until_ready(&mut sim, &host);
+        let down = FpsInput { held: buttons::FIRE, pitch: -0.6, ..Default::default() };
+        run(&mut sim, &host, 0, 1, down, 10);
+        let impacts: Vec<_> = events(&sim)
+            .into_iter()
+            .filter_map(|k| match k {
+                EventKind::Impact { surface, .. } => Some(surface),
+                _ => None,
+            })
+            .collect();
+        assert!(!impacts.is_empty(), "the ground took pellets");
+        assert!(impacts.iter().all(|s| *s == Surface::Dirt), "{impacts:?}");
+    }
+
+    #[test]
+    fn a_kill_reports_a_fatal_flesh_impact() {
+        // The template test's shot, asserting the record's blood bits: body (not head), fatal.
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.add(soldier(2, 1, 60.0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        wait_until_ready(&mut sim, &host);
+        let pitch = -(4.0f32 / 60.0).atan();
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, pitch, ..Default::default() }, 20);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::FIRE, pitch, ..Default::default() }, 20);
+        assert!(host.get(2).has(objflags::DEAD), "the soldier was killed");
+        let flesh: Vec<_> = events(&sim)
+            .into_iter()
+            .filter_map(|k| match k {
+                EventKind::Impact { surface, head, fatal, .. } => (surface == Surface::Flesh).then_some((head, fatal)),
+                _ => None,
+            })
+            .collect();
+        assert!(!flesh.is_empty(), "blood on the soldier");
+        assert!(flesh.iter().all(|(head, _)| !head), "a body shot: {flesh:?}");
+        assert!(flesh.iter().any(|(_, fatal)| *fatal), "one of them killed: {flesh:?}");
     }
 
     #[test]

@@ -343,6 +343,8 @@ fn log_step(s: &State, first_new_event: usize, frame: u32) {
     use crate::host::LogicHost;
     log_events(s, first_new_event);
     if frame.is_multiple_of(30) {
+        use crate::impacts::Surface;
+        use crate::sim::EventKind;
         for (i, p) in s.sim.players.iter().enumerate() {
             if let Some(p) = p.as_ref().filter(|p| p.is_first_person()) {
                 let w = p.arsenal.current();
@@ -351,6 +353,22 @@ fn log_step(s: &State, first_new_event: usize, frame: u32) {
                     p.body.pos.x, p.body.pos.y, p.body.pos.z, p.yaw, p.pitch, p.body.stance,
                     p.health, p.max_health, w.def.display_name, w.ammo, w.reserve
                 ));
+                // R8d: the shots that landed this second, by surface — the in-game oracle for the
+                // autotest (`player 0 impacts: 3 (flesh 1, concrete 2)`) and for eyeballing which
+                // surface a map actually reports. Quiet while not shooting.
+                let mut counts = [0u32; Surface::ALL.len()];
+                let mut landed = 0u32;
+                for e in s.sim.events.iter().skip(first_new_event).filter(|e| e.player as usize == i) {
+                    if let EventKind::Impact { surface, .. } = e.kind {
+                        counts[surface as usize] += 1;
+                        landed += 1;
+                    }
+                }
+                if landed > 0 {
+                    let by: Vec<String> =
+                        Surface::ALL.iter().zip(counts).filter(|(_, n)| *n > 0).map(|(s, n)| format!("{} {n}", s.name())).collect();
+                    s.logic.log(&format!("player {i} impacts: {landed} ({})", by.join(", ")));
+                }
             }
         }
     }

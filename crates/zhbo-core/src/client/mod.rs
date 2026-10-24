@@ -1059,6 +1059,9 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     self.cues.play(sounds::HURT);
                     self.hud.damage_flash = (self.hud.damage_flash + amount / 60.0).min(1.0);
                 }
+                // R8d: the impact cue and the client's hit record land with the ABI append (the
+                // `ClientOut.hits` phase); until then the pellet's event is carried and ignored.
+                EventKind::Impact { .. } => {}
                 EventKind::Shot { .. } => self.vm_events.shot = true,
                 EventKind::ReloadStarted => self.vm_events.reload_started = true,
                 EventKind::Swapped => self.vm_events.swapped = true,

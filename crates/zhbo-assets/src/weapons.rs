@@ -597,6 +597,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         projectile_speed_up: inches(w.projectile_speed_up as f32),
         projectile_gravity: w.class != bo2::class::ROCKETLAUNCHER,
         impact_explode: w.projectile_impact_explode,
+        // BO2's impact bucket: which `FxImpactTable` entry this weapon's hits use (R8d).
+        impact_type: w.impact_type as i32,
         sticky,
         fx_weapon: String::new(),
         view_flash_fx: String::new(),

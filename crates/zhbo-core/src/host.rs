@@ -80,6 +80,12 @@ pub trait LogicHost {
     fn log(&self, msg: &str);
     fn ground_height(&self, x: f32, y: f32) -> f32;
     fn is_walkable(&self, x: f32, y: f32) -> bool;
+    /// The ground's surface at a world point, for the impact effect: Zero Hour's terrain class
+    /// there (a [`crate::impacts::Surface`]). **Presentation only** — it is read in the logic step
+    /// but must never feed damage, movement or any other sim state (docs/CONTRACT.md).
+    fn surface_at(&self, _x: f32, _y: f32) -> crate::impacts::Surface {
+        crate::impacts::Surface::Default
+    }
     fn extent(&self) -> (Vec3, Vec3);
     /// Object by id, with relationship flags relative to `viewer`'s owner.
     fn object(&self, id: u32, viewer: u32) -> Option<ObjInfo>;

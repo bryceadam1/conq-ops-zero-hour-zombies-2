@@ -482,6 +482,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("ExplosionFx", "Zero Hour FXList for the blast (grenades, rockets).", FieldKind::Str,
         |d: &WeaponDef| d.explosion_fx.clone(),
         |d: &mut WeaponDef, v: Values| { d.explosion_fx = v.text.into(); Ok(()) }),
+    field!("ImpactType", "BO2's `impactType` (+40): the impact-table bucket (0: none).", FieldKind::Num,
+        |d: &WeaponDef| d.impact_type.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.impact_type = v.text_num()? as i32; Ok(()) }),
     field!("ViewFlashFx", "Zero Hour FXList for the first-person muzzle flash (`viewFlashEffect`).", FieldKind::Str,
         |d: &WeaponDef| d.view_flash_fx.clone(),
         |d: &mut WeaponDef, v: Values| { d.view_flash_fx = v.text.into(); Ok(()) }),
@@ -688,7 +691,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 72);
+        assert_eq!(WEAPON_FIELDS.len(), 73);
         assert_eq!(ATTACHMENT_FIELDS.len(), 17);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }
@@ -723,6 +726,15 @@ mod tests {
         assert_eq!(back[0].view_flash_fx, "ZHBO_BO2FX_fx_muzzle");
         assert_eq!(back[0].view_shell_fx, "ZHBO_BO2FX_fx_rifle");
         assert_eq!(back[0].view_last_shot_shell_fx, "ZHBO_BO2FX_fx_rifle_last");
+    }
+
+    #[test]
+    fn the_impact_bucket_round_trips() {
+        // BO2 assigns every gun a bucket; the table carries it so the sim can name the row.
+        let d = WeaponDef { id: "an94_mp".into(), impact_type: 2, ..Default::default() };
+        let text = format_table(&[d]);
+        assert!(text.contains("ImpactType = 2"), "{text}");
+        assert_eq!(parse_table(&text).unwrap()[0].impact_type, 2);
     }
 
     #[test]
