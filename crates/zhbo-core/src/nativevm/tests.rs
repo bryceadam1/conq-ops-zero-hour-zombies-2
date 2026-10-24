@@ -157,7 +157,30 @@ struct Fixture {
 /// Arms with `tag_weapon` 20" ahead; a gun on it whose sights sit 4" up and 2" left; an idle clip
 /// that lifts the arms' `tag_weapon` 1" and a reload that lowers it 3".
 fn fixture() -> Fixture {
-    let arms = model("arms", vec![bone("j_root", None, [0.0; 3]), bone("tag_weapon", Some(0), [20.0, 0.0, -5.0])]);
+    fixture_with(false)
+}
+
+/// As `fixture`, plus (when `ads`) the arms' `tag_torso` rig root and the 0x55/0x56 clips that key
+/// it. `ads_up` moves the torso from the bind local (frame 0) to `(-6, 3, 1)` on an S-curve — 30 %
+/// of the move at N/2 — so a test can tell the clip from a 50 % slide. `ads_down` is deliberately
+/// **not** a twin (40 % at N/2) so a reversal test can prove which clip ran.
+fn fixture_with(ads: bool) -> Fixture {
+    let up = vec![(0, [0.0, 0.0, 0.0]), (5, [-1.8, 0.9, 0.3]), (10, [-6.0, 3.0, 1.0])];
+    let down = vec![(0, [-6.0, 3.0, 1.0]), (5, [-2.4, 1.2, 0.4]), (10, [0.0, 0.0, 0.0])];
+    fixture_torso(ads.then_some((up, down)))
+}
+
+/// A `tag_torso` track's keys: `(frame, translation)`.
+type TorsoKeys = Vec<(u16, [f32; 3])>;
+
+/// The builder behind [`fixture_with`]: `torso` is the ADS layer's (up, down) `tag_torso` keys —
+/// and the rig root they drive — or `None` for the clip-less shape `fixture()` pins.
+fn fixture_torso(torso: Option<(TorsoKeys, TorsoKeys)>) -> Fixture {
+    let arms = if torso.is_some() {
+        model("arms", vec![bone("tag_torso", None, [0.0; 3]), bone("j_root", Some(0), [0.0; 3]), bone("tag_weapon", Some(1), [20.0, 0.0, -5.0])])
+    } else {
+        model("arms", vec![bone("j_root", None, [0.0; 3]), bone("tag_weapon", Some(0), [20.0, 0.0, -5.0])])
+    };
     let gun = model("gun", vec![bone("tag_weapon", None, [0.0; 3]), bone("j_gun", Some(0), [3.0, 0.0, 0.0])]);
     let clip = |name: &str, bone: &str, z: f32| Anim {
         name: name.into(),
@@ -169,6 +192,37 @@ fn fixture() -> Fixture {
         bones: vec![BoneTrack { name: bone.into(), rotation: None, translation: Some(vec![(0, [0.0, 0.0, z]), (10, [0.0, 0.0, z])]) }],
         notes: vec![],
     };
+    let mut clips = vec![
+        (1, zhbo_native::anim_path("idle")),
+        (0x10, zhbo_native::anim_path("reload")),
+        (0x101, zhbo_native::anim_path("left_idle")),
+        (0x110, zhbo_native::anim_path("left_reload")),
+    ];
+    let mut files = vec![
+        (zhbo_native::model_path("arms"), arms.to_bytes()),
+        (zhbo_native::model_path("gun"), gun.to_bytes()),
+        (zhbo_native::anim_path("idle"), clip("idle", "tag_weapon", 1.0).to_bytes()),
+        (zhbo_native::anim_path("reload"), clip("reload", "tag_weapon", -3.0).to_bytes()),
+        (zhbo_native::anim_path("left_idle"), clip("left_idle", "j_gun", 2.0).to_bytes()),
+        (zhbo_native::anim_path("left_reload"), clip("left_reload", "j_gun", -4.0).to_bytes()),
+    ];
+    // The layer: one `tag_torso` track per clip, the arms' rig root — nothing else is keyed.
+    if let Some((up, down)) = torso {
+        let torso_clip = |name: &str, keys: TorsoKeys| Anim {
+            name: name.into(),
+            num_frames: 10,
+            frame_rate: 10.0,
+            looping: false,
+            delta: false,
+            asset_type: 0,
+            bones: vec![BoneTrack { name: "tag_torso".into(), rotation: None, translation: Some(keys) }],
+            notes: vec![],
+        };
+        clips.push((crate::viewmodel::slot::ADS_UP as u16, zhbo_native::anim_path("ads_up")));
+        clips.push((crate::viewmodel::slot::ADS_DOWN as u16, zhbo_native::anim_path("ads_down")));
+        files.push((zhbo_native::anim_path("ads_up"), torso_clip("ads_up", up).to_bytes()));
+        files.push((zhbo_native::anim_path("ads_down"), torso_clip("ads_down", down).to_bytes()));
+    }
     let manifest = Viewmodel {
         id: "test_mp".into(),
         faction: b'U',
@@ -178,24 +232,10 @@ fn fixture() -> Fixture {
         ],
         markers: vec![Marker { name: AIM_TAG.into(), parent: "tag_weapon".into(), local: (QUAT_IDENTITY, [0.0, 2.0, 4.0]) }],
         hide: vec![],
-        clips: vec![
-            (1, zhbo_native::anim_path("idle")),
-            (0x10, zhbo_native::anim_path("reload")),
-            (0x101, zhbo_native::anim_path("left_idle")),
-            (0x110, zhbo_native::anim_path("left_reload")),
-        ],
+        clips,
     };
-    Fixture {
-        files: vec![
-            (zhbo_native::viewmodel_path(7, 'U'), manifest.to_bytes()),
-            (zhbo_native::model_path("arms"), arms.to_bytes()),
-            (zhbo_native::model_path("gun"), gun.to_bytes()),
-            (zhbo_native::anim_path("idle"), clip("idle", "tag_weapon", 1.0).to_bytes()),
-            (zhbo_native::anim_path("reload"), clip("reload", "tag_weapon", -3.0).to_bytes()),
-            (zhbo_native::anim_path("left_idle"), clip("left_idle", "j_gun", 2.0).to_bytes()),
-            (zhbo_native::anim_path("left_reload"), clip("left_reload", "j_gun", -4.0).to_bytes()),
-        ],
-    }
+    files.insert(0, (zhbo_native::viewmodel_path(7, 'U'), manifest.to_bytes()));
+    Fixture { files }
 }
 
 fn input(clip: i32, ads: f32) -> ZhboNativeIn {
@@ -215,6 +255,159 @@ fn answer(s: &mut ffi::State, f: &Fixture) -> usize {
 fn aim_in_eye(s: &ffi::State) -> [f32; 3] {
     let m = s.loaded.as_ref().unwrap().bone_world(&s.posed, AIM_TAG).expect("the aim marker");
     [m[0][3], m[1][3], m[2][3]]
+}
+
+/// Drive the fixture to a composited, posed viewmodel at the hip, answering every request (the
+/// manifest, then the models, then the clips the hip asks for).
+fn settle(s: &mut ffi::State, f: &Fixture) {
+    for _ in 0..8 {
+        s.frame(&input(1, 0.0), true);
+        answer(s, f);
+    }
+}
+
+/// One aimed frame: rising to `ads` asks for the layer's clips on the first frame, so a second
+/// frame at the same fraction is the frame the layer is actually sampled on.
+fn aim(s: &mut ffi::State, f: &Fixture, ads: f32) {
+    s.frame(&input(1, ads), true);
+    answer(s, f);
+    s.frame(&input(1, ads), true);
+}
+
+/// The torso bone's local translation — the layer's whole output in the fixture.
+fn torso_local(s: &ffi::State) -> [f32; 3] {
+    let i = s.loaded.as_ref().unwrap().skeleton.bone("tag_torso").expect("the rig root");
+    s.posed.local[i].1
+}
+
+fn near3(a: [f32; 3], b: [f32; 3], what: &str) {
+    assert!((0..3).all(|k| (a[k] - b[k]).abs() < 1e-4), "{what}: {a:?} vs {b:?}");
+}
+
+#[test]
+fn the_ads_clip_layers_over_the_action_clip_and_retires_the_slide() {
+    let f = fixture_with(true);
+    with_state(|s| {
+        *s = ffi::State::default();
+        settle(s, &f);
+        near3(torso_local(s), [0.0; 3], "at the hip the layer is the bind local");
+        let hip = aim_in_eye(s);
+        // Half way: the clip's own S-curve at N/2 — 30 % of the move, not the slide's 50 %.
+        aim(s, &f, 0.5);
+        near3(torso_local(s), [-1.8, 0.9, 0.3], "the up clip at N/2");
+        let half = aim_in_eye(s);
+        assert!(((half[1] - hip[1]) - 0.9 * ART_SCALE).abs() < 1e-4, "{half:?} vs hip {hip:?}");
+        assert!(((half[2] - hip[2]) - 0.3 * ART_SCALE).abs() < 1e-4, "{half:?} vs hip {hip:?}");
+        assert!(half[2].abs() > 0.01, "the slide would have pulled z onto the axis: {half:?}");
+        // The action clip is intact: the layer adds the rig root, it never replaces the pose.
+        let weapon = s.loaded.as_ref().unwrap().skeleton.bone("tag_weapon").unwrap();
+        near3(s.posed.local[weapon].1, [20.0, 0.0, -4.0], "the idle clip's 1.0 is intact");
+        // Fully aimed: the authored key, and the marker off the axis by the clip's own (3, 1).
+        s.frame(&input(1, 1.0), true);
+        near3(torso_local(s), [-6.0, 3.0, 1.0], "the authored aimed key");
+        let aimed = aim_in_eye(s);
+        assert!((aimed[1] - (2.0 + 3.0) * ART_SCALE).abs() < 1e-4, "no slide: {aimed:?}");
+        assert!((aimed[2] - 1.0 * ART_SCALE).abs() < 1e-4, "no slide: {aimed:?}");
+    });
+}
+
+#[test]
+fn the_reversal_switches_to_the_down_clip_at_the_same_fraction() {
+    let f = fixture_with(true);
+    with_state(|s| {
+        *s = ffi::State::default();
+        settle(s, &f);
+        aim(s, &f, 0.5);
+        near3(torso_local(s), [-1.8, 0.9, 0.3], "rising: the up clip at N/2");
+        // Falling: the down clip at (1 − 0.4)·N = frame 6 — not the up clip's frame 4.
+        s.frame(&input(1, 0.4), true);
+        let down = torso_local(s);
+        near3(down, [-1.92, 0.96, 0.32], "the down clip at frame 6");
+        assert!((down[1] - 0.72).abs() > 0.1, "not the up clip at frame 4: {down:?}");
+    });
+}
+
+#[test]
+fn a_twin_pair_reverses_without_a_step() {
+    // `down(f) = up(N − f)`: BO2's authored twins are the same keys in reverse, which is why the
+    // layer switches clip and steps, with no cross-fade.
+    let up = vec![(0, [0.0, 0.0, 0.0]), (5, [-1.8, 0.9, 0.3]), (10, [-6.0, 3.0, 1.0])];
+    let down = up.iter().rev().map(|&(f, p)| (10 - f, p)).collect::<Vec<_>>();
+    let f = fixture_torso(Some((up, down)));
+    with_state(|s| {
+        *s = ffi::State::default();
+        settle(s, &f);
+        aim(s, &f, 0.5);
+        let before = torso_local(s);
+        near3(before, [-1.8, 0.9, 0.3], "the up clip at N/2");
+        // Rise past half, then fall back to the same fraction: the first falling frame is the flip.
+        s.frame(&input(1, 0.6), true);
+        s.frame(&input(1, 0.5), true);
+        let after = torso_local(s);
+        near3(after, before, "no step at the flip");
+        // And the exit keeps going down the same keys.
+        s.frame(&input(1, 0.4), true);
+        let lower = torso_local(s);
+        near3(lower, [-1.44, 0.72, 0.24], "the twin down clip at frame 6: the up clip's frame 4");
+        assert!(lower[1] < after[1], "leaving the aim continues down: {lower:?}");
+    });
+}
+
+#[test]
+fn a_constant_ads_clip_leaves_the_rig_where_it_was() {
+    // The dual-wield shape: a `tag_torso` track of (0, 0, 0) throughout, so the pair does not move
+    // as it aims (BO2 authors the DW pair on the same spot).
+    let constant = vec![(0, [0.0; 3]), (10, [0.0; 3])];
+    let f = fixture_torso(Some((constant.clone(), constant)));
+    with_state(|s| {
+        *s = ffi::State::default();
+        settle(s, &f);
+        let hip = aim_in_eye(s);
+        for ads in [0.5, 1.0] {
+            s.frame(&input(1, ads), true);
+            answer(s, &f);
+            s.frame(&input(1, ads), true);
+            near3(torso_local(s), [0.0; 3], "the constant layer at every fraction");
+            near3(aim_in_eye(s), hip, "the pair stays where it was");
+        }
+    });
+}
+
+#[test]
+fn the_ads_layer_is_absent_at_the_hip_and_until_it_loads() {
+    let f = fixture_with(true);
+    with_state(|s| {
+        *s = ffi::State::default();
+        settle(s, &f);
+        let i = s.loaded.as_ref().unwrap().skeleton.bone("tag_torso").unwrap();
+        assert_eq!(s.posed.local[i], s.loaded.as_ref().unwrap().skeleton.bones[i].bind_local, "at the hip the base pose is untouched");
+        // The first aimed frame, before the clips arrive: the clip-less fallback still lands the
+        // sight, exactly as the W3D path does — the layer only takes over once it is sampled.
+        s.frame(&input(1, 1.0), true);
+        let early = aim_in_eye(s);
+        assert!(early[1].abs() < 1e-4 && early[2].abs() < 1e-4, "the slide while the layer loads: {early:?}");
+        answer(s, &f);
+        s.frame(&input(1, 1.0), true);
+        let late = aim_in_eye(s);
+        assert!((late[1] - 5.0 * ART_SCALE).abs() < 1e-4 && (late[2] - 1.0 * ART_SCALE).abs() < 1e-4, "the layer, once loaded: {late:?}");
+    });
+}
+
+#[test]
+fn a_weapon_without_an_ads_clip_keeps_the_slide() {
+    let f = fixture();
+    with_state(|s| {
+        *s = ffi::State::default();
+        settle(s, &f);
+        let l = s.loaded.as_ref().unwrap();
+        assert!(l.ads_clip(1, false).is_none() && l.ads_clip(1, true).is_none(), "no layer in the manifest");
+        // The fallback branch is the slide (`place::aligned`); the layer branch is the plain gun.
+        let req = ffi::request(&input(1, 1.0));
+        let aim = l.aim.and_then(|i| s.posed.model.get(i).copied()).expect("the aim marker");
+        assert_eq!(l.placement(&req, &s.posed.model, false), place::root(req.eye, req.dir, place::aligned(req.gun.0, aim, 1.0)));
+        assert_eq!(l.placement(&req, &s.posed.model, true), place::root(req.eye, req.dir, req.gun.0));
+        assert_ne!(l.placement(&req, &s.posed.model, false), l.placement(&req, &s.posed.model, true), "the clip-less fallback is not the layer");
+    });
 }
 
 #[test]

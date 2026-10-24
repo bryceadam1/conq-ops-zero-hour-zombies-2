@@ -184,8 +184,8 @@ impl State {
         let (layer_path, layer_down) = match (self.ads_down, ads_down_path.as_deref(), ads_up_path.as_deref()) {
             (true, Some(d), _) => (Some(d), true),
             (true, None, Some(u)) => (Some(u), false),
-            (false, Some(u), _) => (Some(u), false),
-            (false, None, Some(d)) => (Some(d), true),
+            (false, _, Some(u)) => (Some(u), false),
+            (false, Some(d), None) => (Some(d), true),
             _ => (None, false),
         };
         let ads = layer_path.and_then(|p| loaded.anims.get(p)).map(|a| (a, ads_frame(req.ads, layer_down, a.num_frames)));
