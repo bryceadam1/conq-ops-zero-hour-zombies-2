@@ -33,6 +33,7 @@ inline void tabletMesh(char *out, size_t cap, int k)
 // File paths inside the mod's BIG files (written by zhbo-assets, opened here).
 inline constexpr const char *WEAPON_TABLE_PATH = "Data\\ConquerOps\\weapons.ini";
 inline constexpr const char *RTS_FX_PATH = "Data\\ConquerOps\\rts_fx.txt";
+inline constexpr const char *IMPACT_FX_PATH = "Data\\ConquerOps\\impacts.txt";
 inline constexpr const char *VIEWMODEL_SOUNDS_PATH = "Data\\ConquerOps\\viewmodel_sounds.txt";
 inline constexpr const char *STRINGS_PATH = "ConquerOps\\strings_en.ini";
 inline constexpr const char *TUNING_PATH = "ConquerOps\\tuning.ini";

@@ -15,7 +15,7 @@
 /* Field counts of the API tables below. The Rust side derives its layout asserts and
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
    append the field here, bump both counts, bump ZHBO_ABI_VERSION, and see CONTRACT.md. */
-#define ZHBO_LOGIC_API_FIELDS 23u
+#define ZHBO_LOGIC_API_FIELDS 24u
 #define ZHBO_CLIENT_API_FIELDS 13u
 
 #ifdef __cplusplus
@@ -39,6 +39,26 @@ enum ZhboObjFlags
 	ZHBO_OBJ_PROJECTILE = 1u << 10, /* a missile or shell in flight: the Trophy System shoots it down */
 	ZHBO_OBJ_SHROUDED   = 1u << 11, /* client queries: hidden from the local player by shroud or fog */
 	ZHBO_OBJ_FIRING     = 1u << 12, /* firing a weapon right now */
+};
+
+/* What a shot hit (zhbo_core::impacts::Surface). The sim classifies an object hit from its kind
+   flags; the bridge classifies the ground from Zero Hour's terrain class (cbSurfaceAt). The values
+   are the ABI's: they go into ZhboClientHit.surface and back into zhbo_impact_fx. */
+enum ZhboSurfaces
+{
+	ZHBO_SURF_DEFAULT = 0,
+	ZHBO_SURF_FLESH,
+	ZHBO_SURF_METAL,
+	ZHBO_SURF_CONCRETE,
+	ZHBO_SURF_DIRT,
+	ZHBO_SURF_GRASS,
+	ZHBO_SURF_ASPHALT,
+	ZHBO_SURF_SAND,
+	ZHBO_SURF_SNOW,
+	ZHBO_SURF_ROCK,
+	ZHBO_SURF_WOOD,
+	ZHBO_SURF_WATER,
+	ZHBO_SURFS
 };
 
 enum ZhboGeom { ZHBO_GEOM_SPHERE = 0, ZHBO_GEOM_CYLINDER = 1, ZHBO_GEOM_BOX = 2 };
@@ -128,6 +148,10 @@ typedef struct ZhboLogicApi
 	/* The pick menu's choice: the General assumes the class at the shared list's index
 	   (crates/zhbo-core/src/classes.rs; the list ships in the mod's BIG file). */
 	void (*choose_class)(int32_t player, uint32_t general, int32_t index);
+	/* ABI 26: the ground's surface at a world point (a ZHBO_SURF_*), from Zero Hour's terrain
+	   class (crates/zhbo-core/src/impacts.rs; CONTRACT.md "Shot impacts (R8d)"). Presentation
+	   only: it feeds the impact FX, never damage or sim state. */
+	int32_t (*surface_at)(float x, float y);
 } ZhboLogicApi;
 
 /* zhbo_core::host::damage_kind and disable_kind. */
@@ -194,6 +218,20 @@ typedef struct ZhboClientIn
 	int32_t class_button;
 } ZhboClientIn;
 
+/* ABI 26 (R8d): one shot impact of the local player's this frame (zhbo_core::client::ClientHit).
+   The bridge plays BO2's impact-table cell at `point`, oriented by `dir`; `surface` picks the cell,
+   `head`/`fatal` the blood variant, `impact_type` the bucket. */
+enum { ZHBO_CLIENT_HITS = 8 };
+typedef struct ZhboClientHit
+{
+	ZhboVec3 point;       /* world, Zero Hour units */
+	ZhboVec3 dir;         /* the pellet's direction; the effect faces back along it */
+	int32_t  surface;     /* ZHBO_SURF_* */
+	int32_t  head;        /* the hit is in the head band */
+	int32_t  fatal;       /* the hit killed */
+	int32_t  impact_type; /* BO2's WeaponDef.impactType: the impact-table bucket */
+} ZhboClientHit;
+
 typedef struct ZhboClientOut
 {
 	int32_t camera_override;
@@ -231,6 +269,9 @@ typedef struct ZhboClientOut
 	/* The class screen (pick or editor) is up: the bridge leaves the cursor free and swallows the
 	   game-bound mouse/key messages behind it. */
 	int32_t menu_open;
+	/* The local player's shot impacts this frame, in shot order (at most ZHBO_CLIENT_HITS). */
+	ZhboClientHit hits[ZHBO_CLIENT_HITS];
+	int32_t hits_len;
 } ZhboClientOut;
 
 /* The shell create-a-class screen (the lobby's class menu; docs/CONTRACT.md's menu ABI): the
@@ -332,6 +373,9 @@ void zhbo_load_strings(const char *text);
 void zhbo_load_tuning(const char *text);
 /* Load the class presets (see classes.rs); the five basic BO2 classes hold until this runs. */
 void zhbo_load_classes(const char *text);
+/* Load the converted BO2 impact table (Data\ConquerOps\impacts.txt; see impacts.rs); returns the
+   number of cells, -1 for null. */
+int32_t zhbo_load_impacts(const char *text);
 /* Load the BO2 font metrics (see lui/font.rs); empty text leaves the engine font in use. */
 void zhbo_load_fonts(const char *text);
 /* Load the player's create-a-class profile (see profile.rs); the empty profile holds until this runs. */
@@ -407,6 +451,10 @@ int32_t zhbo_loadout_viewmodels(int32_t *out, int32_t cap); /* the General's kit
    eject, converted from BO2's `viewFlashEffect`/`viewShellEjectEffect`. Non-zero when the weapon is
    in the table; empty strings mean "none converted". */
 int32_t zhbo_viewmodel_fx(int32_t vm, char *flash, int32_t flash_cap, char *shell, int32_t shell_cap);
+/* ABI 26: the FXList BO2 plays for `impact_type` on `surface` (a ZHBO_SURF_*); `head`/`fatal` pick
+   the flesh variant. Non-zero when the table has the cell (an empty name means nothing converted);
+   the core owns the table, so the bridge names no FXList. */
+int32_t zhbo_impact_fx(int32_t impact_type, int32_t surface, int32_t head, int32_t fatal, char *out, int32_t cap);
 float zhbo_general_build_rate(void); /* a General's building speed, share of a dozer's */
 int32_t zhbo_check_requirements(char *msg, uint32_t cap);
 
@@ -502,7 +550,8 @@ void zhbo_native_body_reset(void);
 static_assert(sizeof(ZhboObjInfo) == 56, "ZhboObjInfo layout must match host.rs");
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
 static_assert(sizeof(ZhboClientIn) == 136, "ZhboClientIn layout must match client.rs");
-static_assert(sizeof(ZhboClientOut) == 4508, "ZhboClientOut layout must match client.rs");
+static_assert(sizeof(ZhboClientOut) == 4832, "ZhboClientOut layout must match client.rs");
+static_assert(sizeof(ZhboClientHit) == 40, "ZhboClientHit layout must match client.rs");
 static_assert(sizeof(ZhboMenuIn) == 56, "ZhboMenuIn layout must match menu.rs");
 static_assert(sizeof(ZhboMenuOut) == 4108, "ZhboMenuOut layout must match menu.rs");
 static_assert(sizeof(ZhboLogicApi) == ZHBO_LOGIC_API_FIELDS * sizeof(void *), "ZhboLogicApi layout must match host.rs");

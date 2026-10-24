@@ -31,6 +31,7 @@
 #include "Common/PlayerTemplate.h"
 #include "Common/Radar.h"
 #include "Common/Team.h"
+#include "Common/TerrainTypes.h"
 #include "Common/ThingFactory.h"
 #include "Common/ThingTemplate.h"
 #include "GameClient/ControlBar.h"
@@ -126,6 +127,11 @@ const ZhboFaction *zhboFactionOfGeneralName(const AsciiString &name);
 // --- Logic API callbacks (ZhboLogicApi.cpp) ---------------------------------------------------
 void cbLog(const char *msg);
 float cbGroundHeight(float x, float y);
+/* The ground's surface at a point (a ZHBO_SURF_*): Zero Hour's terrain class there (R8d). */
+int32_t cbSurfaceAt(float x, float y);
+/* A point-FX frame: columns X along `normal`, Y to the left, Z up, origin at `at`. One builder for
+   the viewmodel's eye frame and R8d's impact orientation (defined in ZhboViewmodel.cpp). */
+Matrix3D zhboFrameAt(const Coord3D &at, const Vector3 &normal);
 int32_t cbIsWalkable(float x, float y);
 void cbExtent(ZhboVec3 *lo, ZhboVec3 *hi);
 int32_t cbObject(uint32_t id, uint32_t viewerId, ZhboObjInfo *out);

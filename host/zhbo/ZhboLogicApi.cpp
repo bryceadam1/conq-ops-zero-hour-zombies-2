@@ -102,6 +102,63 @@ int32_t cbIsWalkable(float x, float y)
 	return 1;
 }
 
+int32_t cbSurfaceAt(float x, float y)
+{
+	// A water table over the ground: BO2's water cell.
+	if (TheTerrainLogic && TheTerrainLogic->isUnderwater(x, y))
+		return ZHBO_SURF_WATER;
+	// Zero Hour's own terrain classification: the map's tile class at the point
+	// (Common/TerrainTypes.h). `getTerrainTile` reads the map's height-map tile indices, not a
+	// render product, and the logic already uses it for build placement
+	// (BuildAssistant::checkSampleBuildLocation), so this is a legal logic-step query.
+	// Presentation only: the surface never feeds damage (docs/CONTRACT.md).
+	TerrainType *tile = TheTerrainVisual ? TheTerrainVisual->getTerrainTile(x, y) : nullptr;
+	if (!tile)
+		return ZHBO_SURF_DEFAULT;
+	switch (tile->getClass())
+	{
+		case TERRAIN_ASPHALT: return ZHBO_SURF_ASPHALT;
+		case TERRAIN_CONCRETE:
+		case TERRAIN_RESIDENTIAL:
+		case TERRAIN_URBAN:
+		case TERRAIN_CHINA:
+		case TERRAIN_COBBLESTONE_GRASS: return ZHBO_SURF_CONCRETE;
+		case TERRAIN_GRASS:
+		case TERRAIN_ACCENT_GRASS:
+		case TERRAIN_EASTERN_EUROPE_1:
+		case TERRAIN_EASTERN_EUROPE_2:
+		case TERRAIN_EASTERN_EUROPE_3:
+		case TERRAIN_SWISS_1:
+		case TERRAIN_SWISS_2:
+		case TERRAIN_SWISS_3:
+		case TERRAIN_FIELD:
+		case TERRAIN_BEACH_PARK: return ZHBO_SURF_GRASS;
+		case TERRAIN_SNOW_1:
+		case TERRAIN_SNOW_2:
+		case TERRAIN_SNOW_3:
+		case TERRAIN_RUGGED_SNOW:
+		case TERRAIN_FLAT_SNOW: return ZHBO_SURF_SNOW;
+		case TERRAIN_ROCK:
+		case TERRAIN_ACCENT_ROCK:
+		case TERRAIN_CLIFF:
+		case TERRAIN_RUGGED_MOUNTAIN:
+		case TERRAIN_TRANSITION: return ZHBO_SURF_ROCK;
+		case TERRAIN_WOOD: return ZHBO_SURF_WOOD;
+		case TERRAIN_SAND:
+		case TERRAIN_ACCENT_SAND:
+		case TERRAIN_DESERT_1:
+		case TERRAIN_DESERT_2:
+		case TERRAIN_DESERT_3:
+		case TERRAIN_LIVE_DESERT:
+		case TERRAIN_DRY_DESERT:
+		case TERRAIN_TROPICAL_BEACH: return ZHBO_SURF_SAND;
+		case TERRAIN_DIRT:
+		case TERRAIN_BLEND_EDGES:
+		case TERRAIN_NONE:
+		default: return ZHBO_SURF_DIRT;
+	}
+}
+
 void cbExtent(ZhboVec3 *lo, ZhboVec3 *hi)
 {
 	// The map-less fallback: the caller's generous default bounds (zhbo-core pre-fills them), so a
