@@ -721,7 +721,7 @@ mod tests {
             let line = hits.lines().find(|l| l.starts_with(slot)).unwrap_or_else(|| panic!("no impacts for slot {slot}: {hits}"));
             assert!(line.split(' ').skip(1).all(|fx| fx.starts_with("ZHBO_BO2FX_")), "{line}");
         }
-        // R8d: every converted gun's impact bucket has cells, and every cell names a converted
+        // R8d: every converted gun's bullet bucket has cells, and every cell names a converted
         // FXList. A row that points at nothing is a silent "no impact" in game, so it fails here.
         let table = zhbo_core::weapons::parse_full_table(&text(crate::weapons::TABLE_PATH)).unwrap();
         let impacts = text(zhbo_core::names::IMPACT_FX_PATH);

@@ -3317,3 +3317,35 @@ more entries, and the integrator bumps `zhbo_assets::hud::VERSION` 59→60 when 
 * Verified: `cargo test --workspace` green; the converter test is install-gated (the AS50 parser test
   uses a synthetic zone); the ignored `builds_from_real_install` test now passes with the relaxed
   rule and reports the three missing map-zone overlay materials.
+
+## R8d: first-person impacts
+
+* BO2 draws **no first-person tracer** by default: `cg_firstPersonTracerChance` is registered
+  `default = 0, min = 0, max = 1` (`~/Documents/BO2-reference/ghidra/answers/raw/_g_view.c:210-213`)
+  and it is the only tracer-chance dvar. Their absence here is parity, not an omission — do not
+  "fix" it without a decision to diverge.
+* BO2's impact is table data, not a per-weapon effect: the weapon's `impactType` picks an
+  `FxImpactTable` entry, the hit surface picks the cell, and the four `flesh[]` cells are
+  body/head × nonfatal/fatal. The mod carries the bucket on the weapon row (`ImpactType`) and the
+  cells in `Data\ConquerOps\impacts.txt`.
+* **The terrain surface comes from `TheTerrainVisual->getTerrainTile(x, y)->getClass()`.** The
+  research thought no runtime getter existed; the engine's own `BuildAssistant::checkSampleBuildLocation`
+  (`GeneralsMD/…/Common/System/BuildAssistant.cpp:488-492`) calls exactly this from logic code, and it
+  reads the map's tile indices (`WorldHeightMap::getTerrainNameAt`), not a render product. Water is
+  a water table over the terrain, so `TerrainLogic::isUnderwater` answers it.
+* The impact record is the *local* player's only (the `ClientOut` path), so other players' shots
+  still play the converted `FireFX` at the victim. Fixing that is a separate carrier.
+* `ZHBO_CLIENT_HITS` is 8: one shot per logic frame, and the converter now fails an install test if
+  any gun's `pellets` exceeds it — bump both if that ever trips.
+* The impact frame is X = `-dir` (the surface's outward normal). BO2's exact basis is unverified;
+  a wrong one shows as a sideways puff, so this is a look-check item.
+* Install findings that changed the plan: the launcher buckets (7, 9) belong to the *explosion*
+  table (`explosion_entry`, played by the projectile's own blast), and the crossbow/ballistic
+  knife's 14 is BO2's own `fx_missing_impact` row, so only the four bullet buckets
+  (`bullet_entry`: 1-5) get impact cells. The shotgun guess (5) resolves to `impacts/fx_small_dirt`
+  in `fx --impacts`, a real effect. Bucket 1's row ships no nonfatal blood cells (only the two
+  fatal-exit ones), so a nonfatal pistol/SMG hit resolves no blood FX — that is BO2's data, not a
+  lookup bug; the install test asserts one blood cell per bucket, not the nonfatal one.
+* The impact-count log line is sampled on `frame % 30` and counts only that logic step's events
+  (the client clears the buffer each frame), so watch a few sampled lines in a firing burst rather
+  than expecting every second to print.

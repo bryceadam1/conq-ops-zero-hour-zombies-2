@@ -291,6 +291,36 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
   and `ZhboNativePose` (28 bytes) / `ZhboNativeBodyIn` (204 bytes) are new; the header and Rust carry
   size asserts. The `ZHBO_ABI_VERSION` bump to 24 covers them and the viewmodel's surface.
 
+## Shot impacts (R8d)
+
+BO2 has no per-weapon impact effect: the weapon carries a bucket (`impactType`) and the effect is a
+cell of the global `FxImpactTable` (32 surfaces, plus four body/head × nonfatal/fatal blood cells).
+The mod reproduces that split: the **sim classifies**, the **client carries**, the **bridge plays**.
+
+* **The sim emits one `EventKind::Impact` per pellet that hit** (`at`, `dir`, `surface`, `head`,
+  `fatal`, `impact_type`); a shot that hits nothing emits none. `Shot` stays once per shot (the
+  gunshot and the viewmodel) and no longer names an impact.
+* **The surface is presentation data.** Objects are classified from the `objflags` the bridge
+  already reports (`INFANTRY → FLESH`, `VEHICLE|AIRCRAFT → METAL`, `STRUCTURE → CONCRETE`); the
+  ground from the new `LogicApi.surface_at(x, y)`, which answers Zero Hour's terrain class
+  (`TheTerrainVisual->getTerrainTile`, the same query the logic's build placement uses) and a water
+  table. It is read in the logic step but **never feeds damage, movement or any other sim state**:
+  a peer whose terrain visual disagreed could only differ in its own screen.
+* **The client carries at most `ZHBO_CLIENT_HITS` (8) impacts per frame** in `ZhboClientOut.hits`,
+  filled by `consume_events` (so the impact sound is the surface's, not a guess); a frame that
+  overflows drops the extras.
+* **The bridge plays the name the core resolves.** `zhbo_impact_fx(impact_type, surface, head,
+  fatal, …)` looks the cell up in the converted `Data\ConquerOps\impacts.txt` (loaded by
+  `zhbo_load_impacts` at init) and the bridge calls `FXList::doFXPos` with a frame whose X is
+  `-dir` (the surface's outward normal). A missing/stale archive plays nothing and is counted, never
+  a bogus name — the same degrade-don't-panic rule as the renderer's draws.
+* **What is out**: first-person tracers (BO2's `cg_firstPersonTracerChance` defaults to 0), other
+  players' impacts (they keep the converted `FireFX`), exit/through-and-through impacts, and
+  per-surface impact *sounds* (flesh vs hard only).
+* ABI: `surface_at` is appended to `ZhboLogicApi` (fields 23 → 24), `ZhboClientOut` grows by 324
+  bytes (4508 → 4832) and `ZHBO_ABI_VERSION` goes to 26; `zhbo_load_impacts` and `zhbo_impact_fx`
+  are new free functions on the append-only surface.
+
 ## Lifecycle
 
 1. `GameEngine::init` end → `Zhbo_Init`: ABI check, **requirements check (both games must be installed,
