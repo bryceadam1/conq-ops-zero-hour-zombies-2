@@ -206,6 +206,8 @@ pub struct LogicApi {
     pub work_site: Option<extern "C" fn(general: u32, pos: *const Vec3, reach: f32, out: *mut crate::building::Site) -> u32>,
     pub work: Option<extern "C" fn(general: u32, site: u32, rate: f32) -> f32>,
     pub choose_class: Option<extern "C" fn(player: i32, general: u32, index: i32)>,
+    /// ABI 26 (R8d): the ground's surface at a point (a `ZHBO_SURF_*`).
+    pub surface_at: Option<extern "C" fn(x: f32, y: f32) -> i32>,
 }
 
 #[repr(C)]
@@ -253,6 +255,11 @@ impl LogicHost for CLogicHost {
 
     fn is_walkable(&self, x: f32, y: f32) -> bool {
         self.0.is_walkable.map_or(true, |f| f(x, y) != 0)
+    }
+
+    fn surface_at(&self, x: f32, y: f32) -> crate::impacts::Surface {
+        // An engine without the query (a shell, a test) reports the default cell.
+        crate::impacts::Surface::from_i32(self.0.surface_at.map_or(0, |f| f(x, y)))
     }
 
     fn extent(&self) -> (Vec3, Vec3) {

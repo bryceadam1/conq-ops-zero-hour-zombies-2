@@ -179,6 +179,30 @@ impl Default for ClientIn {
     }
 }
 
+/// How many shot impacts one client frame can carry (`host/zhbo/zhbo_core.h`'s
+/// `ZHBO_CLIENT_HITS`). One shot per logic frame and at most a shotgun's pellets per shot; a
+/// render frame that spans two logic frames can overflow it, and the extras are dropped.
+pub const CLIENT_HITS: usize = 8;
+
+/// One shot impact of the local player's this frame: BO2 plays the impact table's cell at `point`,
+/// oriented by `dir`, in that surface's way (docs/CONTRACT.md "Shot impacts (R8d)").
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ClientHit {
+    /// Where the pellet stopped, Zero Hour units.
+    pub point: Vec3,
+    /// The pellet's direction; the impact effect faces back along it.
+    pub dir: Vec3,
+    /// `impacts::Surface` as its ABI value (`ZHBO_SURF_*`).
+    pub surface: i32,
+    /// The hit is in the head band (BO2's `FxFleshType` head bit).
+    pub head: i32,
+    /// The hit killed (BO2's `FxFleshType` fatal bit).
+    pub fatal: i32,
+    /// BO2's `WeaponDef.impactType`: the impact-table bucket.
+    pub impact_type: i32,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ClientOut {
@@ -235,6 +259,10 @@ pub struct ClientOut {
     /// The in-match class pick is up: the bridge leaves the cursor free and swallows the
     /// game-bound mouse/key messages behind it.
     pub menu_open: i32,
+    /// The local player's shot impacts this frame, in shot order (at most [`CLIENT_HITS`]).
+    pub hits: [ClientHit; CLIENT_HITS],
+    /// How many `hits` are valid.
+    pub hits_len: i32,
 }
 
 // Manual Default: `[u32; 64]` has none (arrays above 32 don't), and the rest are plain.
@@ -268,6 +296,8 @@ impl Default for ClientOut {
             save_profile_payload: [0; 1024],
             save_profile_payload_len: 0,
             menu_open: 0,
+            hits: [ClientHit::default(); CLIENT_HITS],
+            hits_len: 0,
         }
     }
 }
@@ -403,6 +433,9 @@ pub struct Client {
     vm_kick: Option<(f32, f32)>,
     /// BO2 sound cues queued this frame (drained by the FFI layer into the host).
     pub cues: Cues,
+    /// This frame's shot impacts (the local player's), copied into `ClientOut`.
+    pub hits: [ClientHit; CLIENT_HITS],
+    pub hits_len: usize,
     /// Set while the pick screen was forced open from outside a spawn (the command bar's
     /// Create-a-Class entry). It keeps the screen up even when a class is already chosen, so a
     /// pick can be replaced, and clears once one lands or Escape closes it.
@@ -459,6 +492,8 @@ impl Client {
             vm_events: viewmodel::Events::default(),
             vm_kick: None,
             cues: Cues::default(),
+            hits: [ClientHit::default(); CLIENT_HITS],
+            hits_len: 0,
             class_pick_forced: false,
             class_pick_dismissed: false,
             class_pick_open: false,
@@ -926,6 +961,9 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         let was_open = self.class_pick_open;
         self.class_pick_open = self.class_pick_wanted(unclassed);
         out.menu_open = self.class_pick_open as i32;
+        // The frame's impacts (consume_events filled them above).
+        out.hits = self.hits;
+        out.hits_len = self.hits_len as i32;
         // A fresh open starts `animateIn`'s entrance fade (`codmenu.lua:2300-2326`); a screen that
         // stays up keeps its clock, and a closed one starts over on the next open.
         if self.class_pick_open && !was_open {
@@ -1002,13 +1040,13 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         let me = inp.local_player;
         let mine: Vec<EventKind> = sim.events.iter().filter(|e| e.player == me).map(|e| e.kind).collect();
         sim.events.clear();
-        // A shot's impact is flesh if the same frame scored a hit.
-        let hit = mine.iter().any(|k| matches!(k, EventKind::HitMarker { .. }));
+        self.hits_len = 0;
         let fire = sim.player(me).map_or(sounds::FIRE, |p| sounds::fire_for(p.arsenal.current().def));
         for kind in &mine {
-            if let EventKind::Shot { end, .. } = kind {
+            // The gunshot is per shot; the impact is per pellet and comes from its own event (a
+            // shot into the air no longer plays a hard-surface sound).
+            if let EventKind::Shot { .. } = kind {
                 self.cues.play(fire);
-                self.cues.play_at(if hit { sounds::IMPACT_FLESH } else { sounds::IMPACT }, *end);
             }
         }
         for kind in mine {
@@ -1059,9 +1097,16 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     self.cues.play(sounds::HURT);
                     self.hud.damage_flash = (self.hud.damage_flash + amount / 60.0).min(1.0);
                 }
-                // R8d: the impact cue and the client's hit record land with the ABI append (the
-                // `ClientOut.hits` phase); until then the pellet's event is carried and ignored.
-                EventKind::Impact { .. } => {}
+                // A pellet landed: BO2's impact FX (the bridge plays it from `ClientOut.hits`) and
+                // the surface's sound here. Blood for a soldier, the hard-surface cue otherwise.
+                EventKind::Impact { at, dir, surface, head, fatal, impact_type } => {
+                    self.cues.play_at(if surface == crate::impacts::Surface::Flesh { sounds::IMPACT_FLESH } else { sounds::IMPACT }, at);
+                    if self.hits_len < CLIENT_HITS {
+                        self.hits[self.hits_len] =
+                            ClientHit { point: at, dir, surface: surface as i32, head: head as i32, fatal: fatal as i32, impact_type };
+                        self.hits_len += 1;
+                    }
+                }
                 EventKind::Shot { .. } => self.vm_events.shot = true,
                 EventKind::ReloadStarted => self.vm_events.reload_started = true,
                 EventKind::Swapped => self.vm_events.swapped = true,

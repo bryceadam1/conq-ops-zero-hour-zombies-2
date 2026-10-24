@@ -63,6 +63,78 @@
         assert_eq!(out.viewmodel_fired, 1);
     }
 
+    fn impact(player: i32, surface: crate::impacts::Surface, head: bool, fatal: bool) -> crate::sim::Event {
+        crate::sim::Event {
+            player,
+            kind: crate::sim::EventKind::Impact {
+                at: Vec3::new(5.0, 0.0, 1.0),
+                dir: Vec3::new(0.0, 1.0, 0.0),
+                surface,
+                head,
+                fatal,
+                impact_type: 2,
+            },
+        }
+    }
+
+    #[test]
+    fn local_impacts_fill_the_record_and_pick_the_cue() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        assert_eq!(client.view, ViewMode::Fps);
+        client.cues.queue.clear();
+
+        // Another player's impact is not the local player's FX.
+        sim.events.push(impact(1, crate::impacts::Surface::Metal, false, false));
+        let out = client.frame(&mut sim, &inp);
+        assert_eq!(out.hits_len, 0);
+        let cues: Vec<&str> = client.cues.queue.iter().map(|c| c.event).collect();
+        assert!(!cues.contains(&sounds::IMPACT) && !cues.contains(&sounds::IMPACT_FLESH), "no cue for someone else's hit: {cues:?}");
+
+        // A blood kill and a wall.
+        sim.events.push(impact(0, crate::impacts::Surface::Flesh, true, true));
+        sim.events.push(impact(0, crate::impacts::Surface::Concrete, false, false));
+        let out = client.frame(&mut sim, &inp);
+        assert_eq!(out.hits_len, 2);
+        assert_eq!(out.hits[0].surface, crate::impacts::Surface::Flesh as i32);
+        assert_eq!((out.hits[0].head, out.hits[0].fatal), (1, 1));
+        assert_eq!(out.hits[0].impact_type, 2);
+        assert_eq!(out.hits[1].surface, crate::impacts::Surface::Concrete as i32);
+        let cues: Vec<&str> = client.cues.queue.iter().map(|c| c.event).collect();
+        assert!(cues.contains(&sounds::IMPACT_FLESH), "{cues:?}");
+        assert!(cues.contains(&sounds::IMPACT), "{cues:?}");
+
+        // A shot on its own no longer plays an impact sound (the pellet's event does).
+        client.cues.queue.clear();
+        sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO } });
+        client.frame(&mut sim, &inp);
+        let cues: Vec<&str> = client.cues.queue.iter().map(|c| c.event).collect();
+        assert!(!cues.contains(&sounds::IMPACT) && !cues.contains(&sounds::IMPACT_FLESH), "{cues:?}");
+    }
+
+    #[test]
+    fn the_record_clamps_at_its_cap() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        for _ in 0..CLIENT_HITS + 1 {
+            sim.events.push(impact(0, crate::impacts::Surface::Dirt, false, false));
+        }
+        let out = client.frame(&mut sim, &inp);
+        assert_eq!(out.hits_len, CLIENT_HITS as i32);
+    }
+
     #[test]
     fn mouse_right_turns_right_and_w_walks_forward() {
         let host = FakeHost::default();
