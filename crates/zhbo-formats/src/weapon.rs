@@ -151,6 +151,11 @@ pub struct AttachmentUnique {
     /// pitch, yaw, roll), from `view_model_tag` or the weapon's origin.
     pub view_offset: [f32; 3],
     pub view_rotation: [f32; 3],
+    /// A second model drawn with the attachment's own (`viewModelAdditional`): the dual-band IR
+    /// optic's rail mount, at its own `viewModelAddOffsets`/`viewModelAddRotations`.
+    pub view_model_additional: Option<String>,
+    pub view_add_offset: [f32; 3],
+    pub view_add_rotation: [f32; 3],
     pub world_offset: [f32; 3],
     pub world_rotation: [f32; 3],
     /// Bones of the weapon hidden with this combination (iron sights under an optic).
@@ -557,6 +562,9 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 },
                 view_offset: vec3(z, u + WU::viewModelOffsets),
                 view_rotation: vec3(z, u + WU::viewModelRotations),
+                view_model_additional: named(z, u + WU::viewModelAdditional),
+                view_add_offset: vec3(z, u + WU::viewModelAddOffsets),
+                view_add_rotation: vec3(z, u + WU::viewModelAddRotations),
                 world_offset: vec3(z, u + WU::worldModelOffsets),
                 world_rotation: vec3(z, u + WU::worldModelRotations),
                 hide_tags: hide_tags(z, z.u32(u + WU::hideTags)),

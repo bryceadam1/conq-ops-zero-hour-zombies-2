@@ -414,7 +414,7 @@ fn run(args: &[String]) -> Result<(), String> {
                     let names: Vec<&str> = all.iter().filter(|a| w.allowed_attachments & (1 << a.kind) != 0).map(|a| a.name.as_str()).collect();
                     println!("{} allows {:#x}: {names:?}\n  variants {:?} hide {:?} alt {:?}", w.name, w.allowed_attachments, w.attachment_variants, w.hide_tags, w.alt_weapon);
                     for u in &w.attachment_uniques {
-                        println!("  unique {} kind {} combined {:#x} vm {:?} world {:?} tag {:?}/{:?} noclip {} nobaseatt {} override {} baseoff {:?} anims {} off {:?} rot {:?} woff {:?} hide {:?} snd {:?} alt {:?} dw {:?}", u.name, u.kind, u.combined, u.view_model, u.world_model, u.view_model_tag, u.world_model_tag, u.disable_base_clip, u.disable_base_attachment, u.override_base_attachment_offsets, u.base_attachment_offset, u.anims.iter().filter(|a| a.is_some()).count(), u.view_offset, u.view_rotation, u.world_offset, u.hide_tags, u.fire_sound_player, u.alt_weapon, u.dual_wield_weapon);
+                        println!("  unique {} kind {} combined {:#x} vm {:?} vmad {:?} addoff {:?} world {:?} tag {:?}/{:?} noclip {} nobaseatt {} override {} baseoff {:?} anims {} off {:?} rot {:?} woff {:?} hide {:?} snd {:?} alt {:?} dw {:?}", u.name, u.kind, u.combined, u.view_model, u.view_model_additional, u.view_add_offset, u.world_model, u.view_model_tag, u.world_model_tag, u.disable_base_clip, u.disable_base_attachment, u.override_base_attachment_offsets, u.base_attachment_offset, u.anims.iter().filter(|a| a.is_some()).count(), u.view_offset, u.view_rotation, u.world_offset, u.hide_tags, u.fire_sound_player, u.alt_weapon, u.dual_wield_weapon);
                     }
                 }
             }

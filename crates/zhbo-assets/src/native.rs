@@ -236,7 +236,8 @@ fn dist_sq(a: [f32; 3], b: [f32; 3]) -> f32 {
 /// gun root (`j_gun`) at their authored offsets (the magazine and, when the combination does not
 /// replace it, the base attachment art — the magazine also keeps its rigid copy on `tag_clip1`,
 /// where the reload brings the new one in), each attachment on its `viewModelTag` (else the gun's
-/// root) at its view offset, and the aim marker (a base optic's window, else an attachment optic's,
+/// root) at its view offset (an IR mount is a second part at its add offset), and the aim marker
+/// (a base optic's window, else an attachment optic's,
 /// else the gun's own sights). Model blobs are written once each.
 pub(crate) fn viewmodels(
     out: &mut BTreeMap<String, Vec<u8>>,

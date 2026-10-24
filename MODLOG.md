@@ -3032,6 +3032,31 @@ incl. the relaxed overlay-materials rule); clippy --workspace --all-targets clea
 xtask build` clean; autotest 13/13 default, `--classpick` all checks, 14/14 `--rts`,
 `--scope` PASS. Archive VERSION 60 → 61 (standalone pages + new INI entries).
 
+## Integrating the IR override: the base scope slides for the dual-band, and the mount has its own offset pair (2026-10-23)
+
+Merged `v1/ir-override` (5 commits + the integrator's amendment). The IR combos' two parsed-
+but-unapplied channels are now live: `overrideBaseWeaponAttachmentOffsets` REPLACES the base
+scope part's offset in the weapon's viewmodel frame (measured — not additive: as50
+`[4.456,0,4.253]` → `[9.889,0,4.253]`, ballista → `[12.529,0,4.737]`, dsr50 → `[-0.339,0,4.843]`,
+svu → `[10.523,-0.033,6.564]`; the part is moved, never suppressed, and only when the flag is
+set), and `viewModelAdditional` (the dualband mount) loads as its own part drawn BEFORE the
+optic. **Correction to the cycle's research §4: the mount has its OWN offset/rotation pair
+(`viewModelAddOffsets`/`viewModelAddRotations`, layouts offsets 116/140)** — the research said
+"no offset of its own" because it missed the parallel pair; measured, the rail sits 0.73–1.09″
+BELOW the optic (as50: `[1,0,4.711]` vs the optic's `[1.045,0,5.568]`), applied absolutely.
+
+The amendment (the implementation's stop-and-report, decided by the integrator): `+ir`
+COMBINED combos include the mount pair because `combo()` keeps the single `au_<w>_ir` entry
+per short regardless of the exact combined unique — the same single-entry-vs-combined-unique
+rule that was already drawing the dual-band OPTIC on combined combos (a pre-existing
+over-draw, neither introduced nor fixed here; documented at the test). Measured acceptance:
+`as50_mp+ir` 5 → 6 parts with every other weapon's render byte-identical. Archive VERSION
+61 → 62.
+
+Verified: cargo test --workspace green; the full real-install suite green (25 + 9, incl. the
+amended combined-combo assertion); clippy --workspace --all-targets clean; `cargo xtask
+build` clean; autotest 13/13 default, `--classpick` all checks, 14/14 `--rts`.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

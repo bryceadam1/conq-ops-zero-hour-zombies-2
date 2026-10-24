@@ -58,7 +58,8 @@ pub(crate) struct BasePart {
 /// name search only as its fallback, gated by `is_gun` and `no_clip`) and, unless the combination
 /// replaces the base attachment art, every other non-empty `attachViewModel` entry as an
 /// attachment-channel part. The raw parallel arrays are authoritative (`Weapon::base_view_parts`
-/// loses the offsets and appends the kind-0 unique's model).
+/// loses the offsets and appends the kind-0 unique's model). A combination that moves that art
+/// (the IR optics) replaces the part's offset.
 ///
 /// Only the seven weapons with a non-magazine entry have more than the magazine today (the four
 /// snipers and the M32's three ids); everything else is unchanged.
@@ -87,7 +88,11 @@ pub(crate) fn base_parts(patch: &Zone, common: &Zone, w: &zhbo_formats::weapon::
                 continue;
             }
             let optic = model.bones.iter().any(|b| b.name == "tag_scope" || b.name == "tag_sights");
-            out.push(BasePart { model, tag: (!tag.is_empty()).then(|| tag.clone()), offset: *offset, magazine: false, optic });
+            // `viewModelOffsetBaseAttachment` replaces this part's authored offset when the
+            // combination sets `overrideBaseWeaponAttachmentOffsets` (the IR optics); the part
+            // stays. It is in the same frame (the AS50's Y/Z match), so it replaces, never adds.
+            let offset = c.base_attachment_offset.unwrap_or(*offset);
+            out.push(BasePart { model, tag: (!tag.is_empty()).then(|| tag.clone()), offset, magazine: false, optic });
         }
     }
     out
@@ -127,6 +132,22 @@ fn base_part_note(base: &[BasePart]) -> String {
     format!(", {} base parts ({})", base.len(), names.join(", "))
 }
 
+/// The models one attachment adds, in draw order, with their placement and whether each is the
+/// attachment's optic. An IR optic's `viewModelAdditional` (the dual-band rail mount) comes first,
+/// at the unique's own `viewModelAddOffsets`/`viewModelAddRotations` (as50: `[1, 0, 4.711]` under
+/// the optic's `[1.045, 0, 5.568]`); only the single-attachment IR uniques carry one.
+fn attachment_parts(u: &zhbo_formats::weapon::AttachmentUnique, pt: u32) -> Vec<(&str, crate::xf::Xf, u32)> {
+    let xf = |rotation: [f32; 3], offset: [f32; 3]| character::scaled_xf((crate::xf::from_angles(rotation), offset));
+    let mut out = Vec::new();
+    if let Some(name) = u.view_model_additional.as_deref() {
+        out.push((name, xf(u.view_add_rotation, u.view_add_offset), 0));
+    }
+    if let Some(name) = u.view_model.as_deref() {
+        out.push((name, xf(u.view_rotation, u.view_offset), pt));
+    }
+    out
+}
+
 /// A notetrack source: viewmodel, clip (BO2 slot or tablet clip) and the BO2 animation.
 pub type Clip = (i32, i32, xanim::Anim);
 
@@ -143,6 +164,9 @@ pub struct Combo<'a> {
     /// two channels are BO2's own flags (`disableBaseWeaponClip` / `disableBaseWeaponAttachment`)
     /// and are independent.
     pub no_base_attachment: bool,
+    /// The base attachment art's moved offset (`viewModelOffsetBaseAttachment`), when a unique sets
+    /// `overrideBaseWeaponAttachmentOffsets`: moved, not removed. `None` keeps the authored one.
+    pub base_attachment_offset: Option<[f32; 3]>,
     pub fire_sound_player: Option<String>,
     pub fire_sound: Option<String>,
 }
@@ -189,6 +213,12 @@ pub fn combo<'a>(w: &'a zhbo_formats::weapon::Weapon, atts: &[zhbo_formats::weap
         // exact multi-attachment unique. Data-driven, never a name match or a hide tag.
         no_base_attachment: parts.iter().any(|(u, _)| u.disable_base_attachment)
             || exact.is_some_and(|u| u.disable_base_attachment),
+        // Read over both selection paths like the flag above: the exact combination's unique is
+        // the more specific entry and wins.
+        base_attachment_offset: exact
+            .filter(|u| u.override_base_attachment_offsets)
+            .or_else(|| parts.iter().map(|(u, _)| *u).find(|u| u.override_base_attachment_offsets))
+            .map(|u| u.base_attachment_offset),
         fire_sound_player: sounds.and_then(|u| u.fire_sound_player.clone()).or_else(|| w.fire_sound_player.clone()),
         fire_sound: sounds.and_then(|u| u.fire_sound.clone()).or_else(|| w.fire_sound.clone()),
         parts,
@@ -286,13 +316,14 @@ pub(crate) fn weapon_viewmodels(
         // replaces that art (the ACOG) or the magazine (the dualclip).
         let base = base_parts(patch, common, w, &c, view);
         let parts: Vec<(&xmodel::Model, &str)> = vec![(&gun, mount_tag(w))];
-        // The attachments' models, each with where it goes.
+        // The attachments' models, each with where it goes: an attachment's additional mount (the
+        // IR rail) before its own model, both on the unique's tag.
         let mut extra: Vec<(xmodel::Model, Option<String>, crate::xf::Xf, u32)> = Vec::new();
         for (u, pt) in &c.parts {
-            let Some(name) = &u.view_model else { continue };
-            let Ok(model) = find_model(patch, common, name) else { continue };
-            let offset = character::scaled_xf((crate::xf::from_angles(u.view_rotation), u.view_offset));
-            extra.push((model, u.view_model_tag.clone(), offset, *pt));
+            for (name, offset, point) in attachment_parts(u, *pt) {
+                let Ok(model) = find_model(patch, common, name) else { continue };
+                extra.push((model, u.view_model_tag.clone(), offset, point));
+            }
         }
         let gun_tex = textures(&gun, paks, out, &mut looks);
         let base_tex: Vec<Vec<Option<String>>> = base.iter().map(|p| textures(&p.model, paks, out, &mut looks)).collect();
@@ -737,7 +768,7 @@ pub(crate) fn tablet_world(patch: &Zone, common: &Zone, paks: &Paks, out: &mut B
 
 #[cfg(test)]
 mod tests {
-    use super::{base_part_note, is_dual_wield, mount_tag, same_sight, BasePart};
+    use super::{attachment_parts, base_part_note, is_dual_wield, mount_tag, same_sight, BasePart};
     use zhbo_formats::weapon::{inventory, AttachmentUnique, Weapon};
 
     fn sight(name: &str, mins: [f32; 3], maxs: [f32; 3]) -> zhbo_formats::xmodel::Model {
@@ -782,6 +813,50 @@ mod tests {
         let c = super::combo(&pair, &[], &["a", "b"]);
         assert!(c.no_base_attachment, "the exact combination's unique suppresses the base art");
         assert!(!c.no_clip);
+    }
+
+    /// `viewModelOffsetBaseAttachment` applies only when the unique sets
+    /// `overrideBaseWeaponAttachmentOffsets` (12 uniques in the catalog, all the four snipers' IR
+    /// combinations) and is read over both selection paths as `disableBaseWeaponAttachment` is:
+    /// the exact multi-attachment unique is the more specific entry.
+    #[test]
+    fn the_base_attachment_override_is_read_from_the_selection() {
+        let ir = AttachmentUnique { kind: 14, override_base_attachment_offsets: true, base_attachment_offset: [9.889, 0.0, 4.253], ..Default::default() };
+        let weapon = |us: Vec<AttachmentUnique>, vs: Vec<(u32, String)>| Weapon { attachment_variants: vs, attachment_uniques: us, ..Default::default() };
+        let one = weapon(vec![ir.clone()], vec![(14, "ir".into())]);
+        assert_eq!(super::combo(&one, &[], &["ir"]).base_attachment_offset, Some([9.889, 0.0, 4.253]), "the IR unique moves the base scope");
+        let acog = weapon(vec![AttachmentUnique { kind: 1, disable_base_attachment: true, ..Default::default() }], vec![(1, "acog".into())]);
+        assert_eq!(super::combo(&acog, &[], &["acog"]).base_attachment_offset, None, "the ACOG replaces the base art, it does not move it");
+        let vzoom = weapon(vec![AttachmentUnique { kind: 29, ..Default::default() }], vec![(29, "vzoom".into())]);
+        assert_eq!(super::combo(&vzoom, &[], &["vzoom"]).base_attachment_offset, None, "the VZOOM leaves the base scope where it is");
+        // The `+ir` combined unique is read too, and its offset wins over the single entry's.
+        let combined = AttachmentUnique { kind: 14, combined: 0x8004000, override_base_attachment_offsets: true, base_attachment_offset: [1.5, 0.0, 2.5], ..Default::default() };
+        let pair = weapon(vec![ir, AttachmentUnique { kind: 27, ..Default::default() }, combined], vec![(14, "ir".into()), (27, "swayreduc".into())]);
+        assert_eq!(super::combo(&pair, &[], &["swayreduc", "ir"]).base_attachment_offset, Some([1.5, 0.0, 2.5]), "the exact combination's unique wins");
+    }
+
+    /// The IR optic's `viewModelAdditional` is a second model of the same attachment: the dual-band
+    /// rail. It draws **before** the optic, on the unique's `viewModelTag`, at its own
+    /// `viewModelAddOffsets`/`viewModelAddRotations` — under the optic, not at it (as50: `[1, 0,
+    /// 4.711]` against the optic's `[1.045, 0, 5.568]`) — and is not the optic for the aim marker.
+    #[test]
+    fn the_additional_mount_precedes_the_optic_at_its_own_offset() {
+        let ir = AttachmentUnique {
+            view_model: Some("t6_attach_optic_dualband_view".into()),
+            view_model_additional: Some("t6_attach_optic_dualband_mount_view".into()),
+            view_offset: [1.045, 0.0, 5.568],
+            view_add_offset: [1.0, 0.0, 4.711],
+            ..Default::default()
+        };
+        let parts = attachment_parts(&ir, 10);
+        assert_eq!(parts.len(), 2, "{parts:?}");
+        let (mount, at, point) = parts[0];
+        assert_eq!((mount, point), ("t6_attach_optic_dualband_mount_view", 0), "the mount draws first and must not drive the aim marker");
+        assert_eq!(at.1, crate::character::scaled([1.0, 0.0, 4.711]), "the mount rides its own add offset");
+        let (optic, at, point) = parts[1];
+        assert_eq!((optic, point), ("t6_attach_optic_dualband_view", 10), "the optic keeps the attachment's point");
+        assert_eq!(at.1, crate::character::scaled([1.045, 0.0, 5.568]));
+        assert_eq!(attachment_parts(&AttachmentUnique { view_model: Some("t6_attach_bcpu_view".into()), ..Default::default() }, 10).len(), 1, "no mount without viewModelAdditional");
     }
 
     /// The M32 lists `_view` and `_ads` as two complete sights: the same non-empty material set and
