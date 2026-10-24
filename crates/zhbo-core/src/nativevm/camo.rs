@@ -8,12 +8,17 @@ use zhbo_native::model::CamoLayer;
 use super::{Files, Mesh};
 
 /// Read a weapon's camo blob, or `None` when the archive lacks it (the weapon then draws stock).
-pub(crate) fn read(files: &mut Files, asset: &str) -> Result<Option<Camo>, String> {
+pub(crate) fn read(files: &mut Files, asset: &str, waiting: &mut bool) -> Result<Option<Camo>, String> {
     let path = zhbo_native::camo_path(asset);
     if files.is_missing(&path) {
         return Ok(None);
     }
-    let Some(bytes) = files.get(&path) else { return Ok(None) };
+    let Some(bytes) = files.get(&path) else {
+        // The request is in flight: the caller must retry the load next frame, not cache a stock
+        // mesh (the key would never change and the camo would never apply).
+        *waiting = true;
+        return Ok(None);
+    };
     let camo = Camo::from_bytes(&bytes).map_err(|e| format!("{path}: {e}"))?;
     files.forget(&path);
     Ok(Some(camo))

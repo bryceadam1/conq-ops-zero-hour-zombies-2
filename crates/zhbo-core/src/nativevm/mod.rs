@@ -402,13 +402,16 @@ pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: 
     // is not an error: the weapon draws its stock finish and the caller logs once.
     let mut applied = None;
     if let Some((asset, option)) = camo_choice {
-        if let Some(recipe) = camo::read(files, asset)? {
+        if let Some(recipe) = camo::read(files, asset, &mut waiting)? {
             camo::apply(&mut mesh, &recipe, option);
             if let Some(m) = &mut mesh_aimed {
                 camo::apply(m, &recipe, option);
             }
             applied = Some(option.to_string());
         }
+    }
+    if waiting {
+        return Ok(None);
     }
     let camo_key = camo_choice.map_or(0, |(asset, option)| camo::key_of(asset, option));
     // The bytes are decoded now; keep the cache small.

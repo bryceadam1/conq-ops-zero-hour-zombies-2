@@ -43,7 +43,8 @@ translator. Depends on nothing. Split into `runtime` (`mod.rs` device/resource p
 ### `crates/zhbo-native`
 The mod's own blobs for BO2 art drawn natively (Track R), and the pose math that plays them:
 `model` (`.zbm`: skeleton, LODs, four-influence skinned surfaces, materials with BO2's blend and
-texture paths), `anim` (`.zba`: keyframe tracks and notetracks), `viewmodel` (`.zbv`: the DObj
+texture paths), `camo` (`.zcm`: a weapon's camo pattern sets, style material recipes and resolved
+option slots), `anim` (`.zba`: keyframe tracks and notetracks), `viewmodel` (`.zbv`: the DObj
 recipe — parts on tags, hidden tags, marker tags, slot → clip), `pose` (composition, sampling,
 crossfade, additive layers, notetracks, the skinning palette), `tga` (reading the converter's
 textures back) and `math`. It also holds `ZH_PER_INCH`, the one BO2-inches → Zero Hour-units
@@ -78,7 +79,8 @@ from `zhbo_logic_*` must stay deterministic. Depends on `zhbo-requirements` and 
   `equipment.rs` (BO2 equipment behavior, driven by the weapon table's `Equipment` block).
 - `nativevm/`: the native first-person viewmodel (Track R, `ZHBO_NATIVE_VIEWMODEL`): files asked
   of the bridge, composition and posing (pure, tested without a GPU), the renderer upload/submit
-  (`gpu.rs`, feature `renderer`) and its C ABI (`ffi.rs`).
+  (`gpu.rs`, feature `renderer`), the class camo swap (`camo.rs`: the `.zcm` recipe applied to the
+  composed mesh, plus the core-global transport) and its C ABI (`ffi.rs`).
 
 ### `crates/zhbo-assets`
 The BO2 → mod converter: reads your BO2 install (through `zhbo-formats`), converts HUD art,
@@ -86,8 +88,9 @@ sound, weapon viewmodels and the weapon table, and writes `ConquerOps_BO2.big`. 
 to list/export BO2 sounds, images and fonts. `fonts.rs` converts BO2's UI fonts. Depends on `zhbo-formats`, `zhbo-requirements`, and
 `zhbo-core`. After Phase 2.5 the module is split into `textures.rs` (the texture pipeline),
 `ini.rs` (the INI rewriters), `viewmodels.rs` (the viewmodel conversion), `generals.rs`
-(the Zero Hour names, factions and the `files()` orchestrator), and `paks.rs`
-(pack-file access, the shrinker and the zone loader).
+(the Zero Hour names, factions and the `files()` orchestrator), `camo.rs` (the camo art and the
+`.zcm` recipes, with the weapon-id/view-model join) and `paks.rs` (pack-file access, the shrinker
+and the zone loader).
 
 ### `crates/zhbo-launcher`
 `ConquerOps.exe` / `conquerops`: requirement check, BO2 art conversion on first launch,

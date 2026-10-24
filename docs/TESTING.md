@@ -21,6 +21,7 @@ How each layer of the mod is verified, and what to run before declaring a change
 | Shell create-a-class | the lobby's class screen (the menu ABI): browse, edit, save, delete, copy, close — in the shell, no match | manual only: the in-game autotest does not cover the shell (see below) |
 | Class-screen screenshots | the shell list, the in-match pick list and the Pick-10 editor rendered through `classui::draw_screen` | `cargo run -p zhbo-assets -- screenshot` (uses the locally built `ConquerOps_BO2.big`; PNGs in `target/cac-shots/`) |
 | Viewmodel sweep | every player weapon and every attachment it offers drawn through the game's native first-person path (composition, `nativevm::place`, the native BO2 pass), hip and aimed side by side, for a human review of the catalog | `cargo run --release -p zhbo-core --example render_viewmodels --features renderer -- <outdir>` |
+| Camo swap | the parser's synthetic/real camo reads; the `.zcm` round-trip and refusals; the converter's 38 weapon blobs (including the view-model join for `camo_xpr50`) and 7 excluded optic sets; the class camo's transport and the draw-swap; the renderer's second texture and tint | `cargo test -p zhbo-formats`; `cargo test -p zhbo-native`; `cargo test -p zhbo-core`; `ZHBO_BO2_DIR=… cargo test -q --release -p zhbo-assets the_camo_assets_convert_with_their_art -- --ignored`; the sweep's `--camo` (below) |
 
 ## The shell create-a-class screen (manual)
 
@@ -146,6 +147,15 @@ should sit there, not at the torso center or floating near the base gun. The aut
 assertion — so to exercise the DW path in-game, edit the seeded profile's `secondary=` to a DW
 pistol (e.g., `secondary=fnp45_dw_mp`) in a local capture run and confirm the left gun renders in
 the left palm.
+
+**The camo sweep.** `--camo <id>` (repeatable) draws the weapon with that class camo set and writes
+`<weapon>/camo_<id>.png`; the manifest's `camo` column names the option. Compare it with the stock
+`base.png` and the BO2 captures (`~/Documents/BO2-reference/cac/sweep/i-personalize/`). C0's
+evidence: the atacs solid is 32×32 with alpha 41–47, the pattern 256×256 with alpha 0–110 and
+edge-tiling (edge mean difference 4.2/3.2); `CAMO_GAIN` is 2.0 (1.0 is the fallback if the
+comparison rejects it). The style camos' colour maps are largely the shared
+`zhbo_camo_code_spc` and their differences live in `shaderConsts`, which the swap carries but does
+not interpret (D8), so a style pair can look alike until the technique is ported.
 
 ## Autopilot and the input path
 

@@ -113,6 +113,17 @@ it is a no-op draw (a surface the compose step's hide tags emptied), so it is sk
 the mesh's other surfaces draw; only a malformed count or a range past the index buffer refuses the
 mesh, and a mesh left with no drawable surface at all is refused so the W3D fallback draws.
 
+**The camo layer (PLAN D1/E).** A native surface may carry a second texture: `NativeSurface.camo`
+(the chosen pattern/solid image, `INVALID` for none) and `camo_uv = [offset.x, offset.y, scale,
+gain]`. The material bind group has binding 4 (the camo texture; the 1×1 white page is bound when
+absent) and the material uniform is 32 bytes (`params: vec4` + `camo: vec4`). `native.wgsl` samples
+`camo_map` unconditionally at `uv * scale + offset` (implicit derivatives need uniform control
+flow) and, when `params.w > 0.5`, multiplies the albedo by `mix(1, camo.rgb * gain, camo.a)` — the
+layer's alpha is its coverage on the converted art, and `gain` is per set (2.0 from the C0 probe;
+1.0 is the fallback). A stock surface binds white and skips the mix. Style camos are material
+replacements, not a layer: `nativevm::camo::apply` swaps the surface's
+colour/maps/blend/emissive/sort/cull to the converted style material.
+
 ### Robustness
 
 One invalid draw in a wgpu render pass invalidates the whole frame. The runtime therefore:
