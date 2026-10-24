@@ -201,7 +201,13 @@ mod tests {
         assert_eq!(scope(&manifest("as50_mp+vzoom")), [4.456, 0.0, 4.253], "no override flag, no move");
         let combined = manifest("as50_mp+swayreduc+ir");
         assert_eq!(scope(&combined), [9.889, 0.0, 4.253], "the combined IR unique moves the base scope too");
-        assert!(!combined.parts.iter().any(|p| p.model.contains("dualband_mount_view")), "the +ir combination adds no mount: {:?}", combined.parts.iter().map(|p| &p.model).collect::<Vec<_>>());
+        // The exact combined unique authors no mount of its own (`viewModelAdditional` is 0), but
+        // the composition is per single attachment: `combo()` keeps the single `au_<w>_ir` entry
+        // for the `ir` short regardless of the exact combined unique, so its mount loads here too —
+        // the same single-entry rule that already drew the dual-band optic on combined combos
+        // before this change (a pre-existing over-draw, neither introduced nor fixed here).
+        assert!(combined.parts.iter().any(|p| p.model.contains("dualband_mount_view")), "the mount follows the single IR entry, like the optic: {:?}", combined.parts.iter().map(|p| &p.model).collect::<Vec<_>>());
+        assert!(combined.parts.iter().any(|p| p.model.contains("t6_attach_optic_dualband_view")), "the dual-band optic is the pre-existing single-entry over-draw: {:?}", combined.parts.iter().map(|p| &p.model).collect::<Vec<_>>());
     }
 
     /// An attachment with `disableBaseWeaponAttachment` replaces the base art: the ACOG swaps its
