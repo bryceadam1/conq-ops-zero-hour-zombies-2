@@ -2999,6 +2999,39 @@ incl. the four new base-part tests and the equipment/DW/MP7 suites); clippy
 --workspace --all-targets clean; `cargo xtask build` clean; autotest 13/13 default,
 `--classpick` all checks, 14/14 `--rts`.
 
+## Integrating the scope overlay: the AS50 hands off to BO2's 2D scope at full ADS (2026-10-23)
+
+Merged `v1/scope-overlay` (6 commits; the first cycle run under the diff-level plan rule —
+`IMPLEMENTATION.md` carried exact edits and the implementation applied them mechanically in
+per-sub-phase commits). The overlay material path: `overlayMaterial`/`overlayMaterialLowRes`/
+`overlayReticle` parse from the `AttachmentUnique` (the AS50's base unique `au_as50_none` →
+`scope_overlay_xpr50`, probe-confirmed) into the weapon table (schema 69 → 72; AGENTS.md's
+stale schema path fixed in the same commit); the 1024-px overlay image converts as a
+standalone page (not the atlas); at `ads == 1.0` the native viewmodel hides the base optic
+**only when the overlay art is present** (the amendment: otherwise the physical scope stays —
+three weapons' overlays live in map zones `Source::Dynamic` doesn't cover, recorded as the
+search-extension follow-up) and the HUD draws the 2D overlay full-screen (the host's clip
+callback clips 2D only, so the scissor is the image's own alpha — the plan's fallback, chosen).
+FOV snap and no fade, per the dvar evidence.
+
+Three integrator fixes were needed beyond the branch: the `--scope` autotest leg's shell code
+(it broke the script's conventions — `$bin` undefined, repo-relative output, a custom log
+path; rewritten to the standard `wait_for_log` pattern), **`Client::reset()` dropped the
+`scope` autopilot flag** (it rebuilt the autopilot with only equipment/build/classpick, so
+loading the save silently reverted the run to the default timeline — the reason the leg first
+"ran the default script"), and the leg needed its own AS50 profile seed (the pick key selects
+whatever the profile holds; it had the classpick leg's MP7 "AB"). The leg passes: `base optic
+hidden at full ADS` logged in game with the AS50 in hand. The 150-frame screenshot interval
+misses the 75-frame hold window, so the overlay's exact look remains the manual-capture item
+(alongside the hide-whole-vs-scope-part and fade-vs-snap questions for it). Also recorded:
+attachment variants inherit the base overlay material (variant-propagation follow-up), and
+the sweep's `steadyaim` mesh-size refusal (pre-existing).
+
+Verified: cargo test --workspace green (509); the full real-install suite green (24 + 9,
+incl. the relaxed overlay-materials rule); clippy --workspace --all-targets clean; `cargo
+xtask build` clean; autotest 13/13 default, `--classpick` all checks, 14/14 `--rts`,
+`--scope` PASS. Archive VERSION 60 → 61 (standalone pages + new INI entries).
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
@@ -3239,3 +3272,23 @@ Verified: `cargo test --workspace` green; `ZHBO_BO2_DIR=… cargo test -q --rele
 MP7); `cargo clippy --workspace --all-targets` clean in the touched files (the remaining warnings
 are pre-existing). No `hud::VERSION` or ABI bump: `Part` is unchanged, the manifest gains only
 more entries, and the integrator bumps `zhbo_assets::hud::VERSION` 59→60 when merging.
+
+## Scope overlay (2026-10-2X)
+
+* The AS50's ADS hand-off: at `ads >= 1.0` the physical scope part is hidden by the viewmodel draw
+  and the screen-space overlay material replaces it. The HUD draws the overlay in the 2D pass;
+  the native viewmodel's `visible_parts` filter drops the optic's surfaces at full ADS.
+* The overlay materials are standalone 1024-px pages (not packed into the HUD atlas): each is
+  written as its own texture named after the material (`ZHBO_Mat_<material>`). The HUD's
+  `OVERLAY_MATERIALS` list in `crates/zhbo-core/src/hud/mod.rs` defines the seven snipers.
+* No ABI change: the draw uses the existing `Prim::Image` and the host's clip callback (which clips
+  2D images only, not the 3D view). The base-optic hide is the `visible_parts` predicate, gated on
+  the overlay material's MappedImage being present in the archive's `ZHBO_BO2.ini`: a weapon whose
+  overlay art never converted keeps its physical scope rather than leaving neither sight.
+* The three map-zone-only overlay materials (`scope_overlay_envg_ir`, `scope_overlay_specter`,
+  `scope_overlay_vzoom`) are allowed-and-reported by the install-gated build test; the four that
+  convert from `common_mp` (`ballista`, `dsr50`, `svu`, `xpr50`) must stay present. Follow-up: extend
+  the converter's `Source::Dynamic` search to the map zones (`pakistan`, `angola_2`) for these three.
+* Verified: `cargo test --workspace` green; the converter test is install-gated (the AS50 parser test
+  uses a synthetic zone); the ignored `builds_from_real_install` test now passes with the relaxed
+  rule and reports the three missing map-zone overlay materials.

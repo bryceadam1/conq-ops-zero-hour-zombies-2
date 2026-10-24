@@ -619,6 +619,16 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("CamoMaterial", "The weapon's own camo material (`camo_<weapon>`), empty when none.", FieldKind::Str,
         |d: &WeaponDef| d.camo_material.clone(),
         |d: &mut WeaponDef, v: Values| { d.camo_material = v.text.into(); Ok(()) }),
+    field!("OverlayMaterial", "The 2D screen-space ADS overlay material (`scope_overlay_<weapon>`).",
+        FieldKind::Str,
+        |d: &WeaponDef| d.overlay_material.clone(),
+        |d: &mut WeaponDef, v: Values| { d.overlay_material = v.text.into(); Ok(()) }),
+    field!("OverlayMaterialLowRes", "The low-resolution ADS overlay material.", FieldKind::Str,
+        |d: &WeaponDef| d.overlay_material_low_res.clone(),
+        |d: &mut WeaponDef, v: Values| { d.overlay_material_low_res = v.text.into(); Ok(()) }),
+    field!("OverlayReticle", "The overlay reticle enum (`weapOverlayReticle_t`).", FieldKind::Num,
+        |d: &WeaponDef| d.overlay_reticle.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.overlay_reticle = v.text_num()? as u32; Ok(()) }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -678,7 +688,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 69);
+        assert_eq!(WEAPON_FIELDS.len(), 72);
         assert_eq!(ATTACHMENT_FIELDS.len(), 17);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }
@@ -757,5 +767,22 @@ mod tests {
         assert!(text.contains("ReticleOption reticle_0\n  Name = Dot\n  Image = \n  Sort = 0\nEnd"), "{text}");
         assert!(text.contains("ReticleColorOption reticle_color_1\n  Name = Red\n  Image = \n  Sort = 0\nEnd"), "{text}");
         assert_eq!(parse_full_table(&text).unwrap(), t);
+    }
+
+    #[test]
+    fn overlay_material_round_trips() {
+        let d = WeaponDef {
+            id: "as50_mp".into(),
+            overlay_material: "scope_overlay_xpr50".into(),
+            overlay_material_low_res: "scope_overlay_xpr50_low_res".into(),
+            overlay_reticle: 1,
+            ..Default::default()
+        };
+        let text = format_table(std::slice::from_ref(&d));
+        assert!(text.contains("OverlayMaterial = scope_overlay_xpr50"), "{text}");
+        assert!(text.contains("OverlayMaterialLowRes = scope_overlay_xpr50_low_res"), "{text}");
+        assert!(text.contains("OverlayReticle = 1"), "{text}");
+        let back = parse_table(&text).unwrap();
+        assert_eq!(back[0], d);
     }
 }

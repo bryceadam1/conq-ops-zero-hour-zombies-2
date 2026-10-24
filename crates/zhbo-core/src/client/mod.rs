@@ -472,7 +472,7 @@ impl Client {
     pub fn reset(&mut self) {
         #[cfg(feature = "autopilot")]
         let autopilot =
-            self.autopilot.as_ref().map(|a| Autopilot { equipment: a.equipment, build: a.build, classpick: a.classpick, ..Default::default() });
+            self.autopilot.as_ref().map(|a| Autopilot { equipment: a.equipment, build: a.build, classpick: a.classpick, scope: a.scope, ..Default::default() });
         *self = Client::new(self.cfg);
         #[cfg(feature = "autopilot")]
         {

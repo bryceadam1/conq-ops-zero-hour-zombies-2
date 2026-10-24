@@ -66,6 +66,9 @@ pub(crate) struct State {
     bad_anims: HashSet<String>,
     #[cfg(feature = "renderer")]
     pub(crate) gpu: super::gpu::Gpu,
+    /// A test-only override for the weapon's ADS overlay material. Production leaves it `None`
+    /// and looks the material up in the installed weapon catalog.
+    pub(crate) overlay_material_override: Option<String>,
 }
 
 impl State {
@@ -110,7 +113,7 @@ impl State {
             #[cfg(feature = "renderer")]
             self.gpu.release();
             self.loaded = None;
-            match load(&mut self.files, inp.vm, inp.faction as u8) {
+            match load(&mut self.files, inp.vm, inp.faction as u8, self.overlay_material_override.as_deref()) {
                 Err(e) => {
                     self.failed.insert(key);
                     self.log_once(e);

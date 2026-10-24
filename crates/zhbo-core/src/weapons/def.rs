@@ -254,6 +254,12 @@ pub struct WeaponDef {
     pub camo: Vec<String>,
     /// The weapon's own camo material (`camo_<weapon>`, `common_patch_mp`), empty when BO2 has none.
     pub camo_material: String,
+    /// The 2D screen-space ADS overlay material (the snipers' `scope_overlay_<weapon>`), or empty.
+    pub overlay_material: String,
+    /// The low-resolution variant of [`Self::overlay_material`], or empty.
+    pub overlay_material_low_res: String,
+    /// `weapOverlayReticle_t`: which reticle the overlay draws (0: none).
+    pub overlay_reticle: u32,
 }
 
 /// One BO2 camouflage option (`mp/attachmenttable.csv`'s rows with `camo` in column 1): the id
@@ -434,6 +440,9 @@ impl Default for WeaponDef {
             reticle: Reticle::default(),
             camo: Vec::new(),
             camo_material: String::new(),
+            overlay_material: String::new(),
+            overlay_material_low_res: String::new(),
+            overlay_reticle: 0,
         }
     }
 }

@@ -161,6 +161,12 @@ pub struct AttachmentUnique {
     /// The weapon the attachment toggles to (select fire, grenade launcher, dual optic).
     pub alt_weapon: Option<String>,
     pub dual_wield_weapon: Option<String>,
+    /// The 2D screen-space ADS overlay material (`scope_overlay_<weapon>`), or empty.
+    pub overlay_material: String,
+    /// The low-resolution variant of [`Self::overlay_material`], or empty.
+    pub overlay_material_low_res: String,
+    /// `weapOverlayReticle_t`: which reticle the overlay draws (0: none).
+    pub overlay_reticle: u32,
 }
 
 /// A BO2 attachment (`WeaponAttachment`): how it changes any weapon it goes on. Scales multiply the
@@ -460,6 +466,12 @@ pub struct Weapon {
     pub view_shell_eject_effect: Option<crate::fx::Effect>,
     /// The first-person shell eject on the last round (`viewLastShotEjectEffect`).
     pub view_last_shot_eject_effect: Option<crate::fx::Effect>,
+    /// The 2D screen-space ADS overlay material (`scope_overlay_<weapon>`), or empty.
+    pub overlay_material: String,
+    /// The low-resolution variant of [`Self::overlay_material`], or empty.
+    pub overlay_material_low_res: String,
+    /// `weapOverlayReticle_t`: which reticle the overlay draws (0: none).
+    pub overlay_reticle: u32,
 }
 
 fn ms(z: &Zone, at: u32) -> f32 {
@@ -552,9 +564,28 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 fire_sound: opt_str(z, u + WU::fireSound),
                 alt_weapon: opt_str(z, u + WU::szAltWeaponName),
                 dual_wield_weapon: opt_str(z, u + WU::szDualWieldWeaponName),
+                overlay_material: named(z, u + WU::overlayMaterial).unwrap_or_default(),
+                overlay_material_low_res: named(z, u + WU::overlayMaterialLowRes).unwrap_or_default(),
+                overlay_reticle: z.u32(u + WU::overlayReticle),
             });
         }
     }
+    // The base unique (kind == 0) carries the weapon's overlay material; the raw attachment
+    // struct has no overlay pointer. Fall back to the variant's own fields when the base unique
+    // is absent.
+    let variant_overlay_material = named(z, v + WV::overlayMaterial).unwrap_or_default();
+    let variant_overlay_material_low_res = named(z, v + WV::overlayMaterialLowRes).unwrap_or_default();
+    let variant_overlay_reticle = 0;
+    let base_unique = attachment_uniques.iter().find(|u| u.kind == 0);
+    let overlay_material = base_unique
+        .map(|u| u.overlay_material.clone())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| variant_overlay_material.clone());
+    let overlay_material_low_res = base_unique
+        .map(|u| u.overlay_material_low_res.clone())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| variant_overlay_material_low_res.clone());
+    let overlay_reticle = base_unique.map_or(variant_overlay_reticle, |u| u.overlay_reticle);
     let mut w = Weapon {
         attachment_uniques,
         name: z.str_ptr(v + WV::szInternalName),
@@ -588,6 +619,9 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         dpad_icon: named(z, v + WV::dpadIcon),
         perks: (z.u32(v + WV::perks), z.u32(v + WV::perks + 4)),
         view_kick_center: (z.f32(v + WV::fAdsViewKickCenterSpeed), z.f32(v + WV::fHipViewKickCenterSpeed)),
+        overlay_material,
+        overlay_material_low_res,
+        overlay_reticle,
         ..Default::default()
     };
     if d == 0 {
@@ -957,5 +991,43 @@ mod tests {
         let c = all.iter().find(|c| c.name == "camo_an94").expect("camo_an94");
         assert!(!c.materials.is_empty(), "camo_an94's material set: {c:?}");
         assert!(c.materials.iter().any(|m| m.base.is_some() && m.camo.is_some()), "{c:?}");
+    }
+
+    #[test]
+    fn the_base_unique_carries_the_overlay_material() {
+        // The base unique's kind == 0 entry is the weapon's base configuration. The synthetic zone's
+        // base unique points at `scope_overlay_xpr50`; the weapon surfaces it.
+        let mut mem = vec![0u8; 512];
+        let put32 = |mem: &mut Vec<u8>, at: usize, v: u32| {
+            mem[at..at + 4].copy_from_slice(&v.to_le_bytes());
+        };
+        let put_str = |mem: &mut Vec<u8>, at: usize, s: &str| {
+            let b = s.as_bytes();
+            mem[at..at + b.len()].copy_from_slice(b);
+            mem[at + b.len()] = 0;
+        };
+        put_str(&mut mem, 16, "as50_mp");
+        put32(&mut mem, 0, 16);
+        put_str(&mut mem, 32, "AS50");
+        put32(&mut mem, 4, 32);
+        // The base unique array at 64: one pointer to 128.
+        put32(&mut mem, 64, 128);
+        put32(&mut mem, 68, 0);
+        put32(&mut mem, 28, 64); // WeaponVariantDef.attachmentUniques = 64
+        // The AttachmentUnique at 128: the name is a pointer at offset 0.
+        put32(&mut mem, 128, 148);
+        put_str(&mut mem, 148, "au_as50_none");
+        // attachmentType at offset 4 is 0.
+        // overlayMaterial at offset 196 points to a Material at 300 whose name pointer is at 340.
+        put32(&mut mem, 300, 340);
+        put_str(&mut mem, 340, "scope_overlay_xpr50");
+        put32(&mut mem, 128 + 196, 300);
+        // overlayMaterialLowRes at offset 200 is 0.
+        // overlayReticle at offset 204 is 1.
+        put32(&mut mem, 128 + 204, 1);
+        let zone = crate::t6zone::synthetic_zone("t", mem, Vec::new(), Vec::new());
+        let w = read(&zone, 0).expect("the weapon reads");
+        assert_eq!(w.overlay_material, "scope_overlay_xpr50");
+        assert_eq!(w.overlay_reticle, 1);
     }
 }

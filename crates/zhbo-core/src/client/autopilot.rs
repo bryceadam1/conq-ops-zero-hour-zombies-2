@@ -57,6 +57,8 @@ pub struct Autopilot {
     pub build: bool,
     /// The create-a-class run: pick the seeded custom, then Escape a second offer.
     pub classpick: bool,
+    /// The scope-overlay run: the AS50 in hand, hold ADS past the hand-off and report the log line.
+    pub scope: bool,
     /// The classpick script's next action and whether the previous key still needs a release frame
     /// (a render hitch may jump `t` past several windows; one action per frame keeps every edge).
     pub(crate) classpick_step: usize,
@@ -87,6 +89,9 @@ pub struct Scripted {
 impl Autopilot {
     /// What it does at time `t`.
     pub fn input_at(&mut self, b: &Bindings) -> Scripted {
+        if self.scope {
+            return self.scope_input(b);
+        }
         if self.equipment {
             let pick = (0.3..0.4).contains(&self.t).then(custom_class_key);
             return Scripted { keys: self.equipment_input(b), class_pick: pick, ..Default::default() };
@@ -247,6 +252,18 @@ impl Autopilot {
             scripted.keys.set_down(b.forward, true);
         }
         scripted
+    }
+
+    /// The scope-overlay run (`ZHBO_AUTOPILOT=scope`): pick the seeded AS50 class and hold ADS from
+    /// 0.5 s so the AS50's 0.40 s transition reaches full ADS; the native draw then logs the physical
+    /// scope's suppression and the screen overlay's hand-off. The autotest waits for that line.
+    pub fn scope_input(&self, b: &Bindings) -> Scripted {
+        let mut keys = KeySet::default();
+        let pick = (0.3..0.4).contains(&self.t).then(custom_class_key);
+        if (0.5..3.0).contains(&self.t) {
+            keys.set_down(b.ads, true);
+        }
+        Scripted { keys, class_pick: pick, ..Default::default() }
     }
 
     /// The equipment run: throw the lethal (C4), hold the tactical up for four seconds (the Black

@@ -171,8 +171,36 @@ pub struct Mesh {
 /// vertices (an arms + rifle + optic composite is ~20k); a larger one is refused. Takes references
 /// so a body rig can borrow its own models while the weapon's are owned beside them.
 pub fn build_mesh<'a>(skel: &Skeleton, models: impl IntoIterator<Item = &'a Model>) -> Result<Mesh, String> {
+    build_mesh_visible(skel, models, |_| true)
+}
+
+/// Which parts are drawn at `ads`: a base optic (a part whose model carries `tag_scope`/`tag_sights`)
+/// is hidden at full ADS, when the screen-space overlay replaces it. The gun and magazine remain.
+/// Only the first-person path uses this; the third-person `nativebody` keeps `build_mesh`'s
+/// all-visible default. The hide also requires the overlay art to be present: a material the
+/// install lacks cannot draw, so the physical scope stays rather than leaving neither sight.
+pub fn visible_parts(models: &[Model], ads: f32, overlay_art_present: bool) -> Vec<bool> {
+    models
+        .iter()
+        .map(|m| {
+            let optic = m.bones.iter().any(|b| b.name == "tag_scope" || b.name == "tag_sights");
+            !(optic && ads >= 1.0 && overlay_art_present)
+        })
+        .collect()
+}
+
+/// As [`build_mesh`], but skips the parts whose mask entry is false. The skeleton still holds every
+/// part's bones (the pose and the aim marker keep working); only the hidden parts' surfaces drop.
+pub fn build_mesh_visible<'a>(
+    skel: &Skeleton,
+    models: impl IntoIterator<Item = &'a Model>,
+    visible: impl Fn(usize) -> bool,
+) -> Result<Mesh, String> {
     let mut mesh = Mesh::default();
-    for (part, model) in skel.parts.iter().zip(models) {
+    for (i, (part, model)) in skel.parts.iter().zip(models).enumerate() {
+        if !visible(i) {
+            continue;
+        }
         for s in model.lod0() {
             let base = mesh.vertices.len();
             if base + s.vertices.len() > u16::MAX as usize {
@@ -231,13 +259,50 @@ pub struct Loaded {
     pub manifest: Viewmodel,
     pub skeleton: Skeleton,
     pub mesh: Mesh,
+    /// The same mesh with the base optic's surfaces dropped: what the first-person draw submits at
+    /// full ADS, when the 2D scope overlay replaces the physical scope. `None` when the weapon has
+    /// no optic part (the gun and magazine are all there is).
+    pub mesh_aimed: Option<Mesh>,
     pub aim: Option<usize>,
     pub anims: HashMap<String, Anim>,
 }
 
+/// Whether the weapon's screen-space ADS overlay art is in the archive. The HUD's image fallback
+/// consults TheMappedImageCollection; the archive's `ZHBO_BO2.ini` is that collection's source.
+/// A material absent from the INI cannot draw, so the base optic must stay. The INI request may
+/// still be in flight: `waiting` is set and the caller retries next frame.
+fn overlay_art_present(files: &mut Files, id: &str, override_material: Option<&str>, waiting: &mut bool) -> bool {
+    let name = match override_material {
+        Some(m) => crate::lui::materials::image(m),
+        None => {
+            let Some(name) = crate::weapons::catalog()
+                .get(id)
+                .filter(|d| !d.overlay_material.is_empty())
+                .map(|d| crate::lui::materials::image(&d.overlay_material))
+            else {
+                return false;
+            };
+            name
+        }
+    };
+    let ini = "Data\\INI\\MappedImages\\HandCreated\\ZHBO_BO2.ini";
+    if files.is_missing(ini) {
+        return false;
+    }
+    match files.get(ini) {
+        Some(bytes) => String::from_utf8_lossy(&bytes)
+            .lines()
+            .any(|line| line.trim_start().strip_prefix("MappedImage ").is_some_and(|n| n.trim() == name)),
+        None => {
+            *waiting = true;
+            false
+        }
+    }
+}
+
 /// Load step for `key`: `Ok(None)` while files are still coming, `Err` when the viewmodel can't be
 /// built (logged once by the caller; the W3D path keeps drawing).
-pub fn load(files: &mut Files, vm: i32, faction: u8) -> Result<Option<Loaded>, String> {
+pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: Option<&str>) -> Result<Option<Loaded>, String> {
     let path = zhbo_native::viewmodel_path(vm, faction as char);
     if files.is_missing(&path) {
         return Err(format!("{path} is not in the archive (reconvert the BO2 art)"));
@@ -255,6 +320,11 @@ pub fn load(files: &mut Files, vm: i32, faction: u8) -> Result<Option<Loaded>, S
             None => waiting = true,
         }
     }
+    // The physical scope may only hand off to the screen-space overlay when the overlay art is in
+    // the archive. The HUD's image fallback consults TheMappedImageCollection; the archive's
+    // MappedImage INI is that collection's source. A material absent from the INI cannot draw, so
+    // the base optic stays. The INI request may still be in flight: wait a frame.
+    let overlay_art_present = overlay_art_present(files, &manifest.id, overlay_material_override, &mut waiting);
     if waiting {
         return Ok(None);
     }
@@ -264,13 +334,22 @@ pub fn load(files: &mut Files, vm: i32, faction: u8) -> Result<Option<Loaded>, S
         return Err(format!("{path}: {}", problems.join("; ")));
     }
     let mesh = build_mesh(&skeleton, &models)?;
+    // The aimed-half mesh: the base optic's surfaces are dropped at full ADS. Built once here so
+    // the draw path only swaps handles. The mask's indices are the manifest's part order, which
+    // the skeleton preserves.
+    let aimed = visible_parts(&models, 1.0, overlay_art_present);
+    let mesh_aimed = if aimed.iter().any(|v| !v) {
+        Some(build_mesh_visible(&skeleton, &models, |i| aimed.get(i).copied().unwrap_or(true))?)
+    } else {
+        None
+    };
     // The bytes are decoded now; keep the cache small.
     for p in &manifest.parts {
         files.forget(&p.model);
     }
     files.forget(&path);
     let aim = skeleton.bone(AIM_TAG);
-    Ok(Some(Loaded { key: (vm, faction), manifest, skeleton, mesh, aim, anims: HashMap::new() }))
+    Ok(Some(Loaded { key: (vm, faction), manifest, skeleton, mesh, mesh_aimed, aim, anims: HashMap::new() }))
 }
 
 /// The eye's frame as a transform: X along `dir`, Y to the left, Z up, at `eye`.
