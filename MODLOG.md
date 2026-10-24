@@ -1947,7 +1947,10 @@ Integration caught one bad assertion: the agent asserted the AN-94 has a
 `viewShellEjectEffect`; the real data says NO (probe: flash=yes, shell=no, last-shot=no; only
 41 of 172 weapons define a shell effect). The AN-94's brass rides its xanim in BO2 — our
 generic shell fallback is correct for it. A notetrack-driven `shell_eject` event (Track R3's
-notetrack events) would match BO2 exactly; recorded as a follow-up. ABI 23 → 24 (the
+notetrack events) would match BO2 exactly; recorded as a follow-up. **[Retracted 2026-10-24, cycle
+`notetrack-brass`: the AN-94's brass rides nothing. BO2 has no eject notetrack; brass is
+`viewShellEjectEffect` + `EV_EJECT_BRASS`, and this def has no shell effect, so BO2 shows none —
+the generic fallback was wrong for all 131 defs without one. See the entry at the end.]** ABI 23 → 24 (the
 `zhbo_viewmodel_fx` free function); archive VERSION 50 → 51 (the per-weapon FXLists and shell
 textures).
 
@@ -3317,3 +3320,34 @@ more entries, and the integrator bumps `zhbo_assets::hud::VERSION` 59→60 when 
 * Verified: `cargo test --workspace` green; the converter test is install-gated (the AS50 parser test
   uses a synthetic zone); the ignored `builds_from_real_install` test now passes with the relaxed
   rule and reports the three missing map-zone overlay materials.
+
+## Shell ejection is the def's effect, not a notetrack (2026-10-24)
+
+Phase 1 settled the R8c follow-up's premise: BO2 has no eject notetrack at all — common_mp's 4,233
+XAnimParts carry only `sndnt#`/`rmbnt#` prefixes plus `end`, `laser_on/off` and `melee_knife_stab`,
+and no `*_fire` clip has a note but `end`. Brass is `EV_EJECT_BRASS` → `CG_EjectWeaponBrass` → the
+def's `viewShellEjectEffect` at the posed `tag_brass` (its X is the eject direction; `fx_pistol`'s
+velocity is all +X). 41 of 172 common_mp defs define it; the other 131 — the AN-94, every other AR,
+every sniper, the M32, the launchers, the crossbow — are silent, with no default
+(`defaultweapon_mp` carries `fx_rifle` explicitly). The only brass-shaped note is the pump guns'
+`sndnt#prj_brass_impact_plr_shell_default` on rechamber: audio, not a spawn.
+
+The generic `ZHBO_ViewmodelBrass` fallback is gone (its FXList deleted from `ZHBO_FX.ini`): a shell
+plays only when the table has a `ViewShellFx`. Three conversion defects went with it, all of which
+made the 41 look wrong: the shell FXList never set `OrientToObject`, so ZH never applied the bone's
+matrix and the velocity stayed in world axes; `fx::particle_system` mapped BO2 `(X,Y,Z)` to
+`(VelOrthoZ,VelOrthoX,VelOrthoY)` — the surface-normal convention of the world effects — putting
+the eject on the tag's Z; and the shell resolver looked for the model and its material in the patch
+zone only, where several families are comma-prefixed reference stubs (the pistol's real model lives
+in `common_mp`, its `mc/mtl_fx_shell` material in `patch_mp`), leaving those FXLists empty. Shell
+FXLists now orient and use an identity map, and the resolver takes the base zone as well, falling
+back to a material asset by name when the inline stub has no colour map; world effects are
+unchanged. `tag_brass1` is played too, self-gating on the bone: a dual pair ejects both ports, a
+single gun one.
+
+Not done: `vViewShellEjectOffset`/`Rotation` (nonzero for scar/hamr/svu/ksg), the last-shot field
+(identical in all 41, not on the ABI), world brass, the same `OrientToObject` gap in the per-weapon
+flash FXLists. The integrator's merge bumps `hud::VERSION` 62 → 63; no ABI change. Verified in this
+phase: `cargo test --workspace`, clippy, and the install-gated suite (`cargo test -q --release -p
+zhbo-assets -p zhbo-formats -- --ignored`, 25 + 9 green); the in-game autotest and the eyeball pass
+(AN-94 silent, MP7 along its port) are the integrator's merge legs.

@@ -405,7 +405,8 @@ int32_t zhbo_world_mesh_count(int32_t vm); /* -2: the tablet */
 int32_t zhbo_loadout_viewmodels(int32_t *out, int32_t cap); /* the General's kit's viewmodels */
 /* The first-person FXList names for viewmodel `vm`'s weapon (Track R8): its muzzle flash and shell
    eject, converted from BO2's `viewFlashEffect`/`viewShellEjectEffect`. Non-zero when the weapon is
-   in the table; empty strings mean "none converted". */
+   in the table; an empty string means the def has none (BO2 ejects no brass for it — only the
+   muzzle flash has a fallback). */
 int32_t zhbo_viewmodel_fx(int32_t vm, char *flash, int32_t flash_cap, char *shell, int32_t shell_cap);
 float zhbo_general_build_rate(void); /* a General's building speed, share of a dozer's */
 int32_t zhbo_check_requirements(char *msg, uint32_t cap);

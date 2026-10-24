@@ -391,10 +391,13 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
             }
         }
         if let Some(f) = &w.view_shell_eject_effect {
-            d.view_shell_fx = effects.add_shell(f, &patch, &|h| paks.image(h));
+            // The patch zone's copies of the shell models and materials are reference stubs for
+            // some families (the pistol's live in `common_mp`); the shell resolver tries these in
+            // order, per model and per material.
+            d.view_shell_fx = effects.add_shell(f, &[&patch, &common], &|h| paks.image(h));
         }
         if let Some(f) = &w.view_last_shot_eject_effect {
-            d.view_last_shot_shell_fx = effects.add_shell(f, &patch, &|h| paks.image(h));
+            d.view_last_shot_shell_fx = effects.add_shell(f, &[&patch, &common], &|h| paks.image(h));
         }
         // BO2's smoke grenade plays its cloud from script: use it by name, for the screen's time.
         if d.effect == zhbo_core::weapons::Effect::Smoke {
@@ -487,13 +490,21 @@ mod tests {
         let names = crate::weapons::names(&bo2_dir);
         let bo2 = zhbo_formats::weapon::all(&common).unwrap();
         let atts = zhbo_formats::weapon::attachments(&common).unwrap();
-        // The weapon's own first-person effects are parsed (R8): the AN-94 carries both.
+        // The weapon's own first-person effects are parsed (R8): the AN-94 has a flash only.
         let an94 = bo2.iter().find(|w| w.name == "an94_mp").expect("an94_mp");
         assert!(an94.view_flash_effect.is_some(), "the AN-94 has a viewFlashEffect");
-        // The AN-94's brass rides its xanim: like most BO2 weapons it has no
-        // `viewShellEjectEffect` (41 of 172 do), so its shell is the generic fallback.
-        assert!(an94.view_shell_eject_effect.is_none(), "the AN-94's brass rides its xanim");
-        assert!(bo2.iter().filter(|w| w.view_shell_eject_effect.is_some()).count() > 30, "many weapons define a shell effect");
+        // BO2 ejects a shell only when the def defines `viewShellEjectEffect` — no notetrack, no
+        // animation, no default — so the AN-94 and every other AR and sniper eject nothing.
+        assert!(an94.view_shell_eject_effect.is_none(), "the AN-94 has no viewShellEjectEffect");
+        let shell = |n: &str| bo2.iter().find(|w| w.name == n).unwrap_or_else(|| panic!("{n}")).view_shell_eject_effect.is_some();
+        for n in ["hk416_mp", "dsr50_mp", "m32_mp", "crossbow_mp"] {
+            assert!(!shell(n), "{n} defines none and must eject nothing");
+        }
+        for n in ["mp7_mp", "mk48_mp", "870mcs_mp"] {
+            assert!(shell(n), "{n} defines its own shell effect");
+        }
+        assert_eq!(bo2.iter().filter(|w| w.view_shell_eject_effect.is_some()).count(), 41, "41 of 172 common_mp defs");
+        assert_eq!(bo2.iter().filter(|w| w.view_last_shot_eject_effect.is_some()).count(), 41, "and their last-shot twins");
         let mut defs: Vec<zhbo_core::weapons::WeaponDef> =
             bo2.iter().filter(|w| crate::weapons::is_player_weapon(w)).map(|w| crate::weapons::to_def(w, &names)).collect();
         assert!(defs.len() > 50, "{} player weapons", defs.len());
@@ -714,6 +725,37 @@ mod tests {
             assert!(name.len() < zhbo_core::names::RTS_WEAPON_NAME_CAP, "{name} is too long for the ABI");
             assert!(rts.contains(&format!("Weapon {name}\n")), "no {name}");
         }
+        // Shell ejection (notetrack-brass): only a def that defines one converts a shell FXList, and
+        // that FXList is spawned at the posed `tag_brass` — oriented to the bone, on BO2's axes.
+        let by_id = |id: &str| table.weapons.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("no {id}"));
+        assert!(by_id("an94_mp").view_shell_fx.is_empty(), "the AN-94 must stay silent");
+        assert!(!by_id("mp7_mp").view_shell_fx.is_empty(), "the MP7's shell effect must convert");
+        let fxs = text("Data\\INI\\FXList\\ZHBO_BO2_Effects.ini");
+        let at = fxs.find("FXList ZHBO_BO2FX_weapon_shellejects_fx_pistol\n").expect("the pistol shell FXList");
+        let rest = &fxs[at..];
+        let pistol = &rest[..rest.find("\nEnd\n").unwrap()];
+        // fx_pistol's model and material are split across the patch and base zones, so this is the
+        // one shell FXList that proves the cross-zone resolution: a stub-only lookup leaves it empty.
+        assert!(pistol.contains("  ParticleSystem"), "the pistol shell FXList must convert a system: {pistol}");
+        assert!(pistol.contains("OrientToObject = Yes"), "{pistol}");
+        // The axes are on the particle systems the FXList names (a nugget carries only the name and
+        // orientation), so read their definitions from the same run's ParticleSystem file.
+        let names: Vec<String> = pistol.lines().filter_map(|l| l.trim().strip_prefix("Name = ")).map(str::to_string).collect();
+        assert!(!names.is_empty(), "the pistol shell FXList names no system: {pistol}");
+        let particles = text("Data\\INI\\ParticleSystem\\ZHBO_BO2_Effects.ini");
+        let defs: Vec<&str> = names
+            .iter()
+            .map(|name| {
+                let at = particles.find(&format!("ParticleSystem {name}\n")).unwrap_or_else(|| panic!("no ParticleSystem {name}"));
+                let rest = &particles[at..];
+                &rest[..rest.find("\nEnd\n").unwrap()]
+            })
+            .collect();
+        // fx_pistol's velocity is all +X (a little Y) in the tag's frame: identity axes leave every
+        // VelOrthoZ at zero, where the old up-is-X swap put BO2's X.
+        let vel = |a: &str| defs.iter().flat_map(|d| d.lines().filter(|l| l.trim_start().starts_with(a))).map(str::trim).collect::<Vec<_>>();
+        assert!(vel("VelOrthoZ =").iter().all(|l| l.ends_with("0.000 0.000")), "{defs:?}");
+        assert!(vel("VelOrthoX =").iter().any(|l| !l.ends_with("0.000 0.000")), "{defs:?}");
         native_blobs_are_whole(&files);
         wrist_datapads_are_off(&files);
     }

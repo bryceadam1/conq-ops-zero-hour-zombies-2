@@ -135,22 +135,24 @@ impl Converted {
     }
 
     /// [`Converted::add`] for an effect whose model elements (a shell casing) should be drawn as
-    /// sprites from the model's own colour map (`zone` provides the model). A shell is spawned at
-    /// the posed `tag_brass`, whose X is BO2's eject direction, so its systems take the bone's
-    /// matrix and keep BO2's axes.
-    pub fn add_shell(&mut self, effect: &Effect, zone: &Zone, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>) -> String {
+    /// sprites from the model's own colour map. A shell is spawned at the posed `tag_brass`, whose
+    /// X is BO2's eject direction, so its systems take the bone's matrix and keep BO2's axes. The
+    /// `zones` are tried in order: a patch zone's copy of a shell model or its material can be a
+    /// reference stub while the base zone (or the patch zone's material asset) carries the real
+    /// one.
+    pub fn add_shell(&mut self, effect: &Effect, zones: &[&Zone], paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>) -> String {
         let secs = (effect.looping_life_msec as f32 / 1000.0).clamp(1.0, 20.0);
-        self.add_timed_with(effect, secs, paks, Some(zone), true)
+        self.add_timed_with(effect, secs, paks, Some(zones), true)
     }
 
-    fn add_timed_with(&mut self, effect: &Effect, looping_secs: f32, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>, zone: Option<&Zone>, orient: bool) -> String {
+    fn add_timed_with(&mut self, effect: &Effect, looping_secs: f32, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>, zones: Option<&[&Zone]>, orient: bool) -> String {
         let name = fxlist_name(&effect.name);
         if !self.done.insert(name.clone()) {
             return name;
         }
         let mut systems = Vec::new();
         let mut bright = false;
-        self.add_elems(effect, 0.0, looping_secs, &name, paks, zone, orient, &mut systems, &mut bright);
+        self.add_elems(effect, 0.0, looping_secs, &name, paks, zones, orient, &mut systems, &mut bright);
         let mut fx = format!("FXList {name}\n");
         if bright {
             fx.push_str("  LightPulse\n    Color = R:255 G:190 B:110\n    Radius = 40\n    IncreaseTime = 0\n    DecreaseTime = 400\n  End\n");
@@ -162,22 +164,29 @@ impl Converted {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn add_elems(&mut self, effect: &Effect, delay_ms: f32, looping_secs: f32, prefix: &str, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>, zone: Option<&Zone>, orient: bool, systems: &mut Vec<String>, bright: &mut bool) {
+    fn add_elems(&mut self, effect: &Effect, delay_ms: f32, looping_secs: f32, prefix: &str, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>, zones: Option<&[&Zone]>, orient: bool, systems: &mut Vec<String>, bright: &mut bool) {
         for el in &effect.elems {
             if el.kind == kind::RUNNER {
                 for child in &el.children {
-                    self.add_elems(child, delay_ms + el.delay_msec.base, looping_secs, prefix, paks, zone, orient, systems, bright);
+                    self.add_elems(child, delay_ms + el.delay_msec.base, looping_secs, prefix, paks, zones, orient, systems, bright);
                 }
                 continue;
             }
             // A model element (BO2's ejected shell casing) becomes a sprite of the model's own
             // colour map: Zero Hour's FXList has no model element.
             if el.kind == kind::MODEL {
-                let Some(z) = zone else { continue };
+                let Some(zones) = zones else { continue };
                 for model_name in &el.models {
-                    let Ok(model) = xmodel::find(z, model_name) else { continue };
-                    let Some(m) = model.materials.iter().flatten().next() else { continue };
-                    let Some(img) = m.color_map() else { continue };
+                    // A patch zone's copy of a shell model can be a reference stub (BO2's
+                    // comma-prefixed asset) with no surfaces; the base zone has the real model.
+                    let Some(model) = zones.iter().find_map(|z| xmodel::find(z, model_name).ok().filter(|m| !m.surfaces.is_empty())) else { continue };
+                    let Some(mat) = model.materials.iter().flatten().next() else { continue };
+                    // The base zone's inline material can be a stub with no textures; its real
+                    // material (mc/mtl_fx_shell) is an asset in the patch zone.
+                    let colour = mat.color_map().cloned().or_else(|| {
+                        zones.iter().find_map(|z| xmodel::find_material(z, &mat.name).and_then(|m| m.color_map().cloned()))
+                    });
+                    let Some(img) = colour else { continue };
                     let Some(tex) = self.texture(&img.name, img.stream_hash, (1, 1), paks) else { continue };
                     let sys = format!("{prefix}_shell{}", systems.len());
                     self.particles.push_str(&model_particle_system(&sys, el, &tex.0, delay_ms, orient));

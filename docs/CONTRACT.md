@@ -175,8 +175,15 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   muzzle-flash/shell-eject FXLists play at `zhbo_native_bone("tag_flash"/"tag_brass")` when the
   sim's shot event reaches the client. The names come from `zhbo_viewmodel_fx(vm, ...)` — the
   weapon table's `ViewFlashFx`/`ViewShellFx`/`ViewLastShotShellFx`, converted from BO2's
-  `viewFlashEffect`/`viewShellEjectEffect`/`viewLastShotEjectEffect` by `zhbo-assets`; the generic
-  `ZHBO_ViewmodelMuzzle` FXList is the fallback when a weapon's effect was not convertible.
+  `viewFlashEffect`/`viewShellEjectEffect`/`viewLastShotEjectEffect` by `zhbo-assets`. The generic
+  `ZHBO_ViewmodelMuzzle` FXList is the fallback when a weapon's **flash** was not convertible;
+  brass has none, because BO2's rule is the def alone — a weapon without `viewShellEjectEffect`
+  ejects nothing (131 of 172 MP defs, the AN-94 among them; no eject notetrack and no default), so
+  the bridge skips the shell call when `ViewShellFx` is empty. The port is `tag_brass` plus
+  `tag_brass1` (the `_lh` model's left port, present only on a dual-wield pair, whose guns the mod
+  draws firing each trigger); a missing bone makes the second call a no-op. A shell's X is the
+  eject direction, so its converted FXList sets `OrientToObject = Yes` and keeps BO2's axes, unlike
+  the world/impact effects' normal-up swap; `vViewShellEjectOffset`/`Rotation` are not applied.
   `LOADING` (2) and `NOT_NATIVE` (0): the W3D path draws this frame. Viewmodel sound notetracks
   are unchanged (the bridge's `playNotes` runs before either path).
   - **Effects draw through the engine's `FXList` path, not the native pass.** The engine already
