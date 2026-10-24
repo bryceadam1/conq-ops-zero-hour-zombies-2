@@ -18,6 +18,7 @@
 //! Depends on nothing (docs/ARCHITECTURE.md): the converter and the core both depend on it.
 
 pub mod anim;
+pub mod camo;
 pub mod io;
 pub mod math;
 pub mod model;
@@ -26,6 +27,7 @@ pub mod tga;
 pub mod thirdperson;
 pub mod viewmodel;
 
+pub use camo::camo_path;
 pub use io::FormatError;
 
 /// Zero Hour world units per Black Ops II inch: **1/6**, six inches to a unit, so BO2's 72" player
