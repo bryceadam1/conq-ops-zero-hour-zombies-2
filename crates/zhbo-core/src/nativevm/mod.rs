@@ -177,13 +177,14 @@ pub fn build_mesh<'a>(skel: &Skeleton, models: impl IntoIterator<Item = &'a Mode
 /// Which parts are drawn at `ads`: a base optic (a part whose model carries `tag_scope`/`tag_sights`)
 /// is hidden at full ADS, when the screen-space overlay replaces it. The gun and magazine remain.
 /// Only the first-person path uses this; the third-person `nativebody` keeps `build_mesh`'s
-/// all-visible default.
-pub fn visible_parts(models: &[Model], ads: f32) -> Vec<bool> {
+/// all-visible default. The hide also requires the overlay art to be present: a material the
+/// install lacks cannot draw, so the physical scope stays rather than leaving neither sight.
+pub fn visible_parts(models: &[Model], ads: f32, overlay_art_present: bool) -> Vec<bool> {
     models
         .iter()
         .map(|m| {
             let optic = m.bones.iter().any(|b| b.name == "tag_scope" || b.name == "tag_sights");
-            !(optic && ads >= 1.0)
+            !(optic && ads >= 1.0 && overlay_art_present)
         })
         .collect()
 }
@@ -266,9 +267,42 @@ pub struct Loaded {
     pub anims: HashMap<String, Anim>,
 }
 
+/// Whether the weapon's screen-space ADS overlay art is in the archive. The HUD's image fallback
+/// consults TheMappedImageCollection; the archive's `ZHBO_BO2.ini` is that collection's source.
+/// A material absent from the INI cannot draw, so the base optic must stay. The INI request may
+/// still be in flight: `waiting` is set and the caller retries next frame.
+fn overlay_art_present(files: &mut Files, id: &str, override_material: Option<&str>, waiting: &mut bool) -> bool {
+    let name = match override_material {
+        Some(m) => crate::lui::materials::image(m),
+        None => {
+            let Some(name) = crate::weapons::catalog()
+                .get(id)
+                .filter(|d| !d.overlay_material.is_empty())
+                .map(|d| crate::lui::materials::image(&d.overlay_material))
+            else {
+                return false;
+            };
+            name
+        }
+    };
+    let ini = "Data\\INI\\MappedImages\\HandCreated\\ZHBO_BO2.ini";
+    if files.is_missing(ini) {
+        return false;
+    }
+    match files.get(ini) {
+        Some(bytes) => String::from_utf8_lossy(&bytes)
+            .lines()
+            .any(|line| line.trim_start().strip_prefix("MappedImage ").is_some_and(|n| n.trim() == name)),
+        None => {
+            *waiting = true;
+            false
+        }
+    }
+}
+
 /// Load step for `key`: `Ok(None)` while files are still coming, `Err` when the viewmodel can't be
 /// built (logged once by the caller; the W3D path keeps drawing).
-pub fn load(files: &mut Files, vm: i32, faction: u8) -> Result<Option<Loaded>, String> {
+pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: Option<&str>) -> Result<Option<Loaded>, String> {
     let path = zhbo_native::viewmodel_path(vm, faction as char);
     if files.is_missing(&path) {
         return Err(format!("{path} is not in the archive (reconvert the BO2 art)"));
@@ -286,6 +320,11 @@ pub fn load(files: &mut Files, vm: i32, faction: u8) -> Result<Option<Loaded>, S
             None => waiting = true,
         }
     }
+    // The physical scope may only hand off to the screen-space overlay when the overlay art is in
+    // the archive. The HUD's image fallback consults TheMappedImageCollection; the archive's
+    // MappedImage INI is that collection's source. A material absent from the INI cannot draw, so
+    // the base optic stays. The INI request may still be in flight: wait a frame.
+    let overlay_art_present = overlay_art_present(files, &manifest.id, overlay_material_override, &mut waiting);
     if waiting {
         return Ok(None);
     }
@@ -298,7 +337,7 @@ pub fn load(files: &mut Files, vm: i32, faction: u8) -> Result<Option<Loaded>, S
     // The aimed-half mesh: the base optic's surfaces are dropped at full ADS. Built once here so
     // the draw path only swaps handles. The mask's indices are the manifest's part order, which
     // the skeleton preserves.
-    let aimed = visible_parts(&models, 1.0);
+    let aimed = visible_parts(&models, 1.0, overlay_art_present);
     let mesh_aimed = if aimed.iter().any(|v| !v) {
         Some(build_mesh_visible(&skeleton, &models, |i| aimed.get(i).copied().unwrap_or(true))?)
     } else {

@@ -657,7 +657,25 @@ mod tests {
         let (bytes, report) = build_archive(&bo2.path).unwrap();
         println!("{report:?}");
         // A few weapons have no HUD icon image in BO2 (the HUD then shows their short name).
-        assert!(report.missing.iter().all(|(name, _)| name.starts_with("ZHBO_BO2_Icon_")), "{:?}", report.missing);
+        // The map-zone-only overlay materials (`envg_ir`, `specter`, `vzoom`) are not in the
+        // `Source::Dynamic` search's zones; they are reported and allowed. The four that convert
+        // from `common_mp` must still be present.
+        for name in [
+            "ZHBO_Mat_scope_overlay_ballista",
+            "ZHBO_Mat_scope_overlay_dsr50",
+            "ZHBO_Mat_scope_overlay_svu",
+            "ZHBO_Mat_scope_overlay_xpr50",
+        ] {
+            assert!(report.found.iter().any(|f| f == name), "{name} did not convert: {:?}", report.missing);
+        }
+        assert!(
+            report
+                .missing
+                .iter()
+                .all(|(name, _)| name.starts_with("ZHBO_BO2_Icon_") || name.starts_with("ZHBO_Mat_scope_overlay_")),
+            "{:?}",
+            report.missing
+        );
         let dir = std::env::temp_dir().join("zhbo-hud-test");
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join(ARCHIVE_NAME);

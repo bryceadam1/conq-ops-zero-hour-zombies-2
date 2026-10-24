@@ -177,10 +177,10 @@ fn loads_through_requests_then_poses_and_aims() {
 }
 
 #[test]
-fn the_base_optic_is_hidden_at_full_ads() {
+fn the_base_optic_is_hidden_only_when_the_overlay_art_is_present() {
     // The base optic's model carries `tag_sights`; the gun's and arms' do not. At full ADS the
-    // physical scope's surfaces drop while the gun and magazine remain — the screen-space overlay
-    // replaces the scope (PLAN §3). The skeleton keeps every bone, so the aim marker still lands.
+    // physical scope's surfaces drop only when the screen-space overlay art is in the archive.
+    // The skeleton keeps every bone, so the aim marker still lands.
     let arms = model("arms", vec![bone("j_root", None, [0.0; 3]), bone("tag_weapon", Some(0), [20.0, 0.0, -5.0])]);
     let gun = model("gun", vec![bone("tag_weapon", None, [0.0; 3]), bone("j_gun", Some(0), [3.0, 0.0, 0.0])]);
     let optic = model("optic", vec![bone("tag_weapon", None, [0.0; 3]), bone("tag_sights", Some(0), [0.0, 0.0, 2.0])]);
@@ -206,6 +206,9 @@ fn the_base_optic_is_hidden_at_full_ads() {
         hide: vec![],
         clips: vec![(1, zhbo_native::anim_path("idle"))],
     };
+    let ini = "Data\\INI\\MappedImages\\HandCreated\\ZHBO_BO2.ini";
+    let art_present = "MappedImage ZHBO_Mat_scope_overlay_xpr50\n  Texture = scope_overlay_xpr50.tga\nEnd\n";
+    // Art present: the INI lists the material; the optic's surfaces drop at full ADS.
     let f = Fixture {
         files: vec![
             (zhbo_native::viewmodel_path(7, 'U'), manifest.to_bytes()),
@@ -213,19 +216,45 @@ fn the_base_optic_is_hidden_at_full_ads() {
             (zhbo_native::model_path("gun"), gun.to_bytes()),
             (zhbo_native::model_path("optic"), optic.to_bytes()),
             (zhbo_native::anim_path("idle"), idle("idle").to_bytes()),
+            (ini.into(), art_present.as_bytes().to_vec()),
         ],
     };
     with_state(|s| {
         *s = ffi::State::default();
+        s.overlay_material_override = Some("scope_overlay_xpr50".into());
         for _ in 0..8 {
             s.frame(&input(1, 0.0), true);
             answer(s, &f);
         }
         let l = s.loaded.as_ref().unwrap();
         assert_eq!(l.mesh.surfaces.len(), 3, "arms, gun and optic");
-        let aimed = l.mesh_aimed.as_ref().expect("the optic part is filtered");
+        let aimed = l.mesh_aimed.as_ref().expect("the optic part is filtered when the art is present");
         assert_eq!(aimed.surfaces.len(), 2, "the gun and arms remain");
         // The optic's bone stays in the skeleton: the aim marker still resolves.
+        assert!(l.skeleton.bone("tag_sights").is_some());
+        assert!(aim_in_eye(s)[0] > 0.0);
+    });
+    // Art absent: the INI has no entry; the physical scope stays rather than leaving neither sight.
+    let f = Fixture {
+        files: vec![
+            (zhbo_native::viewmodel_path(7, 'U'), manifest.to_bytes()),
+            (zhbo_native::model_path("arms"), arms.to_bytes()),
+            (zhbo_native::model_path("gun"), gun.to_bytes()),
+            (zhbo_native::model_path("optic"), optic.to_bytes()),
+            (zhbo_native::anim_path("idle"), idle("idle").to_bytes()),
+            (ini.into(), "MappedImage ZHBO_Mat_other\nEnd\n".as_bytes().to_vec()),
+        ],
+    };
+    with_state(|s| {
+        *s = ffi::State::default();
+        s.overlay_material_override = Some("scope_overlay_xpr50".into());
+        for _ in 0..8 {
+            s.frame(&input(1, 0.0), true);
+            answer(s, &f);
+        }
+        let l = s.loaded.as_ref().unwrap();
+        assert_eq!(l.mesh.surfaces.len(), 3, "arms, gun and optic");
+        assert!(l.mesh_aimed.is_none(), "the optic stays when the overlay art is absent");
         assert!(l.skeleton.bone("tag_sights").is_some());
         assert!(aim_in_eye(s)[0] > 0.0);
     });

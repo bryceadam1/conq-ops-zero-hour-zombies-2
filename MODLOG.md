@@ -3249,5 +3249,13 @@ more entries, and the integrator bumps `zhbo_assets::hud::VERSION` 59→60 when 
   written as its own texture named after the material (`ZHBO_Mat_<material>`). The HUD's
   `OVERLAY_MATERIALS` list in `crates/zhbo-core/src/hud/mod.rs` defines the seven snipers.
 * No ABI change: the draw uses the existing `Prim::Image` and the host's clip callback (which clips
-  2D images only, not the 3D view). The base-optic hide is a one-line `visible_parts` predicate.
-* Verified: `cargo test --workspace` green; the converter test is install-gated (the AS50 parser test uses a synthetic zone); the ignored `builds_from_real_install` test reports three overlay materials missing from this install (`scope_overlay_envg_ir`, `scope_overlay_specter`, `scope_overlay_vzoom`).
+  2D images only, not the 3D view). The base-optic hide is the `visible_parts` predicate, gated on
+  the overlay material's MappedImage being present in the archive's `ZHBO_BO2.ini`: a weapon whose
+  overlay art never converted keeps its physical scope rather than leaving neither sight.
+* The three map-zone-only overlay materials (`scope_overlay_envg_ir`, `scope_overlay_specter`,
+  `scope_overlay_vzoom`) are allowed-and-reported by the install-gated build test; the four that
+  convert from `common_mp` (`ballista`, `dsr50`, `svu`, `xpr50`) must stay present. Follow-up: extend
+  the converter's `Source::Dynamic` search to the map zones (`pakistan`, `angola_2`) for these three.
+* Verified: `cargo test --workspace` green; the converter test is install-gated (the AS50 parser test
+  uses a synthetic zone); the ignored `builds_from_real_install` test now passes with the relaxed
+  rule and reports the three missing map-zone overlay materials.
