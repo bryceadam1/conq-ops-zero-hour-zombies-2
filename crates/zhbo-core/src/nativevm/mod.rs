@@ -446,21 +446,24 @@ impl Loaded {
         }
         // The ADS layer last: a `tag_torso`-only track, so it adds the rig root over both halves
         // (the torso is not a left-gun bone; the order is free and ADS-last is the semantic one).
+        let layer = ads.is_some();
         if let Some((a, frame)) = ads {
             self.skeleton.sample_over(a, frame, &mut out.local);
         }
         self.skeleton.model_space(&out.local, &mut out.model);
-        out.root = self.placement(req, &out.model);
+        out.root = self.placement(req, &out.model, layer);
         self.skeleton.palette(&out.model, &out.root, &mut out.palette);
     }
 
-    /// The model-to-world matrix: eye frame × gun pose × ADS slide × scale ([`place`]). Aiming
-    /// slides the gun (in the eye's frame) so the aim marker's sideways and vertical offsets go to
-    /// zero at full ADS, as the W3D path does with `tag_sights`.
-    pub fn placement(&self, req: &Request, model_space: &[Xf]) -> Mat4 {
-        let gun = match self.aim.and_then(|i| model_space.get(i)) {
-            Some(aim) => place::aligned(req.gun.0, *aim, req.ads),
-            None => req.gun.0,
+    /// The model-to-world matrix: eye frame × gun pose × scale. Aiming is the authored ADS clip's
+    /// job — the rig root's hip→aimed translation (eye relief included) and rotation — so when the
+    /// layer posed this frame the eye-frame slide is off: applying both double-corrects
+    /// mid-transition and keeps the hip's depth forever. A weapon whose manifest has no ADS clip
+    /// (or one still loading) keeps the slide, exactly as the W3D path does.
+    pub fn placement(&self, req: &Request, model_space: &[Xf], layer: bool) -> Mat4 {
+        let gun = match (self.aim.and_then(|i| model_space.get(i)), layer) {
+            (Some(aim), false) => place::aligned(req.gun.0, *aim, req.ads),
+            _ => req.gun.0,
         };
         place::root(req.eye, req.dir, gun)
     }
