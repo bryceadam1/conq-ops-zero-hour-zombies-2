@@ -85,6 +85,16 @@ impl Source {
 mod tests {
     use super::*;
 
+    /// One viewmodel's composed skeleton from its converted blobs — the pose every native path
+    /// starts from.
+    fn skeleton(vm: &zhbo_native::viewmodel::Viewmodel, blobs: &BTreeMap<String, Vec<u8>>) -> zhbo_native::pose::Skeleton {
+        let models: Vec<zhbo_native::model::Model> = vm.parts.iter().map(|p| zhbo_native::model::Model::from_bytes(blobs.get(&p.model).unwrap_or_else(|| panic!("{}", p.model))).expect("a model")).collect();
+        let refs: Vec<zhbo_native::pose::PartRef> = vm.parts.iter().zip(&models).map(|(p, m)| zhbo_native::pose::PartRef { model: m, tag: p.tag.as_deref(), offset: p.offset, rigid: p.rigid }).collect();
+        let (skel, problems) = zhbo_native::pose::Skeleton::compose(&refs, &vm.markers, &vm.hide);
+        assert!(problems.is_empty(), "{problems:?}");
+        skel
+    }
+
     #[test]
     #[ignore = "probe: where the equipment sits at idle"]
     fn probe_equipment_idle_pose() {
@@ -528,13 +538,6 @@ mod tests {
         // viewhands' zeros), so this is the body-rig proof's shape on converted equipment: at the
         // deploy's end the door sits its stored local away from the authored park, and reading the
         // track as absolute would move it (RESEARCH §2: `j_handle`/`j_sensor` collapse that way).
-        let skeleton = |vm: &zhbo_native::viewmodel::Viewmodel, blobs: &BTreeMap<String, Vec<u8>>| {
-            let models: Vec<zhbo_native::model::Model> = vm.parts.iter().map(|p| zhbo_native::model::Model::from_bytes(blobs.get(&p.model).unwrap_or_else(|| panic!("{}", p.model))).expect("a model")).collect();
-            let refs: Vec<zhbo_native::pose::PartRef> = vm.parts.iter().zip(&models).map(|(p, m)| zhbo_native::pose::PartRef { model: m, tag: p.tag.as_deref(), offset: p.offset, rigid: p.rigid }).collect();
-            let (skel, problems) = zhbo_native::pose::Skeleton::compose(&refs, &vm.markers, &vm.hide);
-            assert!(problems.is_empty(), "{problems:?}");
-            skel
-        };
         let posed = |skel: &zhbo_native::pose::Skeleton, anim: &Anim, bone: &str| {
             let i = skel.bone(bone).unwrap_or_else(|| panic!("{}: no {bone}", anim.name));
             let mut local = Vec::new();
@@ -559,6 +562,122 @@ mod tests {
         let (at_end, bind, end) = posed(&fs, &throw, "tag_clip");
         near(bind, [0.0; 3], "m84 tag_clip: the part root's attach offset");
         near(at_end, [bind[0] + end[0], bind[1] + end[1], bind[2] + end[2]], "m84 tag_clip: posed = stored + track at the throw's end");
+    }
+
+    /// BO2's aimed pose is animation data: `ads_up`'s last key is the whole hip→aimed rig move
+    /// (translation on all three axes plus the rig root's rotation), so the authored tag lands
+    /// where BO2 authored it. The acceptance is therefore "the authored tag lands at the measured
+    /// value", not "the marker is on the axis": the KSG's 2.198″, the launchers' 1.7–2.9″ and the
+    /// AS50's 1.302″ are BO2's own residuals — forcing them onto the axis would re-introduce the
+    /// bug this cycle removes. Values from `ads-alignment` §2.1/§3 and `ads-transition-clips`
+    /// §1.3, in composed space, inches, with no `gunpos` and no aim pitch (the probe's reading).
+    #[test]
+    #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
+    fn the_ads_clip_reproduces_bo2s_authored_pose() {
+        use zhbo_core::viewmodel::slot;
+        use zhbo_native::anim::Anim;
+
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        // (id, the bone the family's authored line lands on, expected (y, z) after `ads_up`'s last
+        // key). Scoped snipers read `tag_scope`; the no-tag families read the converter's marker.
+        // The an94/mp7 rows are the research's *reflex-mounted* compositions: their measured
+        // `tag_sights` values reproduce exactly (`an94_mp` bare reads (−0.003, +0.491), `mp7_mp`
+        // bare (−0.002, +0.050), because with the optic off, `tag_sights` is the gun's own iron
+        // tag; the optic replaces it). Asserting the bare ids against these numbers would pin two
+        // different measurements to one row.
+        let table: &[(&str, &str, [f32; 2])] = &[
+            ("an94_mp+reflex", "tag_sights", [0.034, 0.017]),
+            ("mp7_mp+reflex", "tag_sights", [0.033, -0.561]),
+            ("mk48_mp", "tag_sights", [-0.002, -0.025]),
+            ("ksg_mp", "tag_sights", [0.005, -2.198]),
+            ("dsr50_mp", "tag_scope", [0.009, 0.011]),
+            ("ballista_mp", "tag_scope", [0.027, -0.117]),
+            ("as50_mp", "tag_scope", [0.004, -1.302]),
+            ("fnp45_mp", zhbo_native::AIM_TAG, [-0.038, -0.035]),
+            ("smaw_mp", zhbo_native::AIM_TAG, [0.011, 0.419]),
+            ("fhj18_mp", zhbo_native::AIM_TAG, [-2.917, 0.488]),
+            ("m32_mp", zhbo_native::AIM_TAG, [0.002, 0.107]),
+        ];
+        // The idle at frame 0, then the ADS clip over it at `frame` — the game's own order
+        // (`Skeleton::sample`, then `sample_over`) — read in composed model space.
+        let posed = |skel: &zhbo_native::pose::Skeleton, idle: &Anim, layer: Option<(&Anim, f32)>, tag: &str, id: &str| -> ([f32; 3], [f32; 3]) {
+            let (mut local, mut ms) = (Vec::new(), Vec::new());
+            skel.sample(idle, 0.0, &mut local);
+            if let Some((a, frame)) = layer {
+                skel.sample_over(a, frame, &mut local);
+            }
+            skel.model_space(&local, &mut ms);
+            let i = skel.bone(tag).unwrap_or_else(|| panic!("{id}: no {tag} bone"));
+            let gun = skel.bone("j_gun").unwrap_or_else(|| panic!("{id}: no j_gun bone"));
+            // The barrel's direction is the bone's own +X (a vector: the bone's rotation only).
+            (skel.bone_point(&ms, i), zhbo_native::math::qrot(ms[gun].0, [1.0, 0.0, 0.0]))
+        };
+        let angle = |d: [f32; 3]| {
+            let n = (d[0] * d[0] + d[1] * d[1] + d[2] * d[2]).sqrt();
+            (d[0] / n).clamp(-1.0, 1.0).acos().to_degrees()
+        };
+        let load = |id: &str| -> (zhbo_native::viewmodel::Viewmodel, BTreeMap<String, Vec<u8>>) {
+            let blobs = src.composition(id).expect(id);
+            let vm = zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("a manifest")).expect("the manifest parses");
+            (vm, blobs)
+        };
+        let anim = |id: &str, blobs: &BTreeMap<String, Vec<u8>>, path: &str| Anim::from_bytes(blobs.get(path).unwrap_or_else(|| panic!("{id}: {path} is not in the conversion"))).expect(path);
+
+        for &(id, tag, want) in table {
+            let (vm, blobs) = load(id);
+            // Every gun def carries both transitions; a missing one is a conversion defect, and
+            // failing here is louder than silently sliding.
+            let up_path = vm.clip(slot::ADS_UP as u16).unwrap_or_else(|| panic!("{id}: no 0x55 ads_up clip"));
+            let down_path = vm.clip(slot::ADS_DOWN as u16).unwrap_or_else(|| panic!("{id}: no 0x56 ads_down clip"));
+            let idle_path = vm.clip(slot::IDLE as u16).unwrap_or_else(|| panic!("{id}: no idle clip"));
+            let (up, down, idle) = (anim(id, &blobs, up_path), anim(id, &blobs, down_path), anim(id, &blobs, idle_path));
+            let skel = skeleton(&vm, &blobs);
+            let (aimed, barrel) = posed(&skel, &idle, Some((&up, up.num_frames as f32)), tag, id);
+            assert!(
+                (aimed[1] - want[0]).abs() <= 0.05 && (aimed[2] - want[1]).abs() <= 0.05,
+                "{id}: {tag} lands at ({:.3}, {:.3}) in, BO2 authored ({:.3}, {:.3})",
+                aimed[1],
+                aimed[2],
+                want[0],
+                want[1]
+            );
+            // The twins: `ads_down`'s first key is `ads_up`'s last, so the layer's switch-and-step
+            // reversal is continuous without a cross-fade.
+            let (start, _) = posed(&skel, &idle, Some((&down, 0.0)), tag, id);
+            assert!((0..3).all(|k| (start[k] - aimed[k]).abs() <= 0.02), "{id}: ads_down frame 0 {start:?} is not ads_up frame {} {aimed:?}", up.num_frames);
+            if matches!(id, "smaw_mp" | "fhj18_mp") {
+                // The launchers are the only real rotations in the set (SMAW +16.52°/−10.60°,
+                // FHJ-18 +14.59°/−19.43° at the hip): the barrel ends on the view axis only if the
+                // rotation track — not just the translation — is applied.
+                let (_, hip_barrel) = posed(&skel, &idle, None, tag, id);
+                assert!(angle(hip_barrel) > 10.0, "{id}: the hip barrel is {:.2}° off — the overlay must be what straightens it", angle(hip_barrel));
+                // SMAW 19.86° → 0.38° (the research's own −0.38°/−0.01°); the FHJ-18 25.34° → 2.32°,
+                // its tube keeping a small authored cant (the research measured the SMAW's end
+                // angles only and called the FHJ-18 "likewise straightened"). Both are the authored
+                // data's business, never forced onto the axis.
+                let limit = if id == "smaw_mp" { 0.5 } else { 3.0 };
+                assert!(angle(barrel) <= limit, "{id}: the barrel is {:.2}° off the view axis after the overlay (hip {:.2}°)", angle(barrel), angle(hip_barrel));
+            }
+        }
+
+        // The dual-wield shape: the pair's `tag_torso` track is constant at the bind local, so the
+        // layer's root *move* is zero — aiming does not shift the guns (BO2 authors the pair on the
+        // same spot; the pair stays symmetric). The authored value is the rig root's own local
+        // ([-4.64, 0, −1.38] on this viewhands rig), not the origin: what must be zero is the move.
+        let (vm, blobs) = load("fnp45_dw_mp");
+        let up_path = vm.clip(slot::ADS_UP as u16).expect("fnp45_dw_mp: a 0x55 ads_up clip");
+        assert!(vm.clip(slot::ADS_DOWN as u16).is_some(), "fnp45_dw_mp: a 0x56 ads_down clip");
+        let up = anim("fnp45_dw_mp", &blobs, up_path);
+        let track = up.bones.iter().find(|b| b.name == "tag_torso").unwrap_or_else(|| panic!("fnp45_dw_mp: the layer keys tag_torso"));
+        let first = track.translation_at(0.0).expect("a tag_torso translation track");
+        for f in [0.0, 0.25, 0.5, 0.75, 1.0] {
+            let at = track.translation_at(f * up.num_frames as f32).expect("a tag_torso translation track");
+            assert!((0..3).all(|k| (at[k] - first[k]).abs() <= 0.05), "fnp45_dw_mp: at {f} the layer is {at:?}, not the constant {first:?}");
+        }
+        let skel = skeleton(&vm, &blobs);
+        let root = skel.bone("tag_torso").map(|i| skel.bones[i].bind_local.1).expect("the rig root");
+        assert!((0..3).all(|k| (first[k] - root[k]).abs() <= 0.05), "fnp45_dw_mp: the layer's root move is {first:?}, not the bind local {root:?} — the pair would move");
     }
 
     #[test]

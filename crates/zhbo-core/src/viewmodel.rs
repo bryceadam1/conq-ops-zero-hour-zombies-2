@@ -54,6 +54,10 @@ pub mod slot {
     pub const ADS_FIRE: i32 = 0x3D;
     pub const ADS_LASTSHOT: i32 = 0x3E;
     pub const ADS_RECHAMBER: i32 = 0x40;
+    /// The ADS transition layer's clips (`weapAnimFiles_t` 0x55/0x56): a `tag_torso`-only overlay
+    /// on a second anim channel, not part of the action-clip rotation.
+    pub const ADS_UP: i32 = 0x55;
+    pub const ADS_DOWN: i32 = 0x56;
     pub const COUNT: i32 = 0x58;
 
     /// Clips that loop (an alt mode's clips too, which sit [`crate::weapons::ALT_CLIPS`] later).

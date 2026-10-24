@@ -1,7 +1,8 @@
 //! The native first-person viewmodel (Track R): the converter's BO2 blobs
 //! (`zhbo_native`), composed, posed and drawn through the renderer's native BO2 pass instead of
-//! the W3D conversion. Opt-in with `ZHBO_NATIVE_VIEWMODEL=1` (`config::Config::native_viewmodel`)
-//! until it is verified in game; the W3D path stays the default and the fallback.
+//! the W3D conversion. The default since the native pass out-verified the W3D one
+//! (`config::Config::native_viewmodel`: `ZHBO_NATIVE_VIEWMODEL=0` turns it off); the W3D path is
+//! the fallback.
 //!
 //! Presentation only: nothing here feeds the sim. The bridge (`ZhboViewmodel.cpp`) calls
 //! [`ffi::zhbo_native_viewmodel`] each frame with what it already gets for the W3D model (clip, time,
@@ -13,11 +14,13 @@
 //! next frame. A viewmodel draws once its manifest and models are in; clips and textures fill in
 //! as they arrive (bind pose, white).
 //!
-//! **Placement.** As the W3D path: the model's frame is the eye's (X along the view, Y left, Z up),
-//! the gun's view-space transform ([`GunPose`], built by the client's `viewmodel::Motion` from the
-//! weapon def's gun-position numbers — `weapons::gunpos`, G4), BO2's inches scaled to the art's
-//! scale, and aiming down the sights slides the aim marker onto the view axis by the ADS fraction
-//! ([`place`]). Projection is the scene's own (`NativeFrame::view_proj = None`): BO2 has no
+//! **Placement.** The model's frame is the eye's (X along the view, Y left, Z up) times the gun's
+//! view-space transform ([`GunPose`], built by the client's `viewmodel::Motion` from the weapon
+//! def's gun-position numbers — `weapons::gunpos`, G4), with BO2's inches scaled to the art's
+//! scale ([`place`]). **Aiming is the authored 0x55/0x56 ADS animation**, a `tag_torso`-only layer
+//! over the action clip ([`Loaded::pose`]); the eye-frame marker slide ([`place::aligned`]) is the
+//! fallback for a weapon with no ADS clip, or one whose clip has not loaded yet — and the W3D
+//! path's rule. Projection is the scene's own (`NativeFrame::view_proj = None`): BO2 has no
 //! viewmodel FOV (G4).
 
 use std::collections::{BTreeSet, HashMap};
@@ -387,7 +390,8 @@ pub struct Posed {
     pub local: Vec<Xf>,
     pub model: Vec<Xf>,
     pub palette: Vec<Mat4>,
-    /// Model to world: the eye's frame, the gun's pose, the ADS slide, the art's scale.
+    /// Model to world: the eye's frame, the gun's pose, the art's scale — and the ADS slide only
+    /// when the layer did not pose this frame (see [`Loaded::placement`]).
     pub root: Mat4,
 }
 
@@ -404,11 +408,31 @@ impl Loaded {
         [base, mode_idle, crate::viewmodel::slot::IDLE as u16].into_iter().find_map(|c| self.manifest.clip(c | instance))
     }
 
+    /// The ADS layer's clip for `clip`'s mode: [`crate::viewmodel::slot::ADS_UP`] entering,
+    /// [`crate::viewmodel::slot::ADS_DOWN`] leaving. Resolved from the manifest **directly**, never
+    /// through [`Loaded::clip_path`]: that falls back to the mode's idle, and an idle keys every
+    /// bone — overlaying it with `sample_over` would replace the action pose instead of layering
+    /// on it. An alt mode's clips follow its
+    /// weapon's by [`crate::weapons::ALT_CLIPS`], so its ADS clips are `ALT_CLIPS + 0x55/0x56`;
+    /// a dual-wield pair's left instance has no ADS clip of its own (the base's track carries both
+    /// guns), so the instance bit is masked, never added.
+    pub fn ads_clip(&self, clip: i32, down: bool) -> Option<&str> {
+        use crate::weapons::ALT_CLIPS;
+        use zhbo_native::viewmodel::INSTANCE_LEFT;
+        let base = (clip as u16) & !INSTANCE_LEFT;
+        let mode = if i32::from(base) >= ALT_CLIPS { ALT_CLIPS } else { 0 };
+        let slot = if down { crate::viewmodel::slot::ADS_DOWN } else { crate::viewmodel::slot::ADS_UP };
+        self.manifest.clip((mode + slot) as u16)
+    }
+
     /// Pose for `req`: the clip (if loaded) at its frame, then placement. `anim` is the base
     /// (right) clip; `left` is the dual-wield left instance's clip, sampled over it so the left
     /// arm, `tag_weapon1` and the `_lh` gun are driven by the `_left_*` set instead of the
-    /// base clip (which never tracks them) leaving them at bind.
-    pub fn pose(&self, req: &Request, anim: Option<&Anim>, left: Option<&Anim>, out: &mut Posed) {
+    /// base clip (which never tracks them) leaving them at bind; `ads` is the ADS transition layer
+    /// — its clip and frame — sampled over both, because it keys only `tag_torso`, the arms' rig
+    /// root (BO2's second anim channel). Bones no clip names keep what the previous layer left them
+    /// in (`zhbo_native::pose::sample_over`).
+    pub fn pose(&self, req: &Request, anim: Option<&Anim>, left: Option<&Anim>, ads: Option<(&Anim, f32)>, out: &mut Posed) {
         let looping = crate::viewmodel::slot::loops(req.clip);
         let time = req.time * req.rate.max(0.0);
         match anim {
@@ -425,18 +449,26 @@ impl Loaded {
             let frame = l.frame_at(time, looping);
             self.skeleton.sample_over(l, frame, &mut out.local);
         }
+        // The ADS layer last: a `tag_torso`-only track, so it adds the rig root over both halves
+        // (the torso is not a left-gun bone; the order is free and ADS-last is the semantic one).
+        let layer = ads.is_some();
+        if let Some((a, frame)) = ads {
+            self.skeleton.sample_over(a, frame, &mut out.local);
+        }
         self.skeleton.model_space(&out.local, &mut out.model);
-        out.root = self.placement(req, &out.model);
+        out.root = self.placement(req, &out.model, layer);
         self.skeleton.palette(&out.model, &out.root, &mut out.palette);
     }
 
-    /// The model-to-world matrix: eye frame × gun pose × ADS slide × scale ([`place`]). Aiming
-    /// slides the gun (in the eye's frame) so the aim marker's sideways and vertical offsets go to
-    /// zero at full ADS, as the W3D path does with `tag_sights`.
-    pub fn placement(&self, req: &Request, model_space: &[Xf]) -> Mat4 {
-        let gun = match self.aim.and_then(|i| model_space.get(i)) {
-            Some(aim) => place::aligned(req.gun.0, *aim, req.ads),
-            None => req.gun.0,
+    /// The model-to-world matrix: eye frame × gun pose × scale. Aiming is the authored ADS clip's
+    /// job — the rig root's hip→aimed translation (eye relief included) and rotation — so when the
+    /// layer posed this frame the eye-frame slide is off: applying both double-corrects
+    /// mid-transition and keeps the hip's depth forever. A weapon whose manifest has no ADS clip
+    /// (or one still loading) keeps the slide, exactly as the W3D path does.
+    pub fn placement(&self, req: &Request, model_space: &[Xf], layer: bool) -> Mat4 {
+        let gun = match (self.aim.and_then(|i| model_space.get(i)), layer) {
+            (Some(aim), false) => place::aligned(req.gun.0, *aim, req.ads),
+            _ => req.gun.0,
         };
         place::root(req.eye, req.dir, gun)
     }
@@ -448,6 +480,16 @@ impl Loaded {
         let m = mat4_mul(&posed.root, &mat4(*posed.model.get(i)?));
         Some([[m[0], m[4], m[8], m[12]], [m[1], m[5], m[9], m[13]], [m[2], m[6], m[10], m[14]]])
     }
+}
+
+/// The ADS layer's frame for the aim fraction: `ads · num_frames` entering, `(1 − ads) · num_frames`
+/// leaving. `num_frames` is BO2's last frame index (`zhbo_native::anim::Anim`), so 1 lands the
+/// authored aimed key. Stateless by design: the clip is compressed into the def's ADS time by the
+/// fraction itself (`weapons::arsenal` moves `ads` linearly), so no second clock is kept. The
+/// research's mp7 measurement — 63 % of the move at half — is this function at N/2.
+pub fn ads_frame(ads: f32, down: bool, num_frames: u16) -> f32 {
+    let k = ads.clamp(0.0, 1.0);
+    (if down { 1.0 - k } else { k }) * num_frames as f32
 }
 
 #[cfg(test)]
