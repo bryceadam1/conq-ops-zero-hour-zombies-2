@@ -108,7 +108,10 @@ case the result is decoded to linear first (the hardware re-encodes on write). A
 port washed dark finishes out to grey: bo2Shade's environment term, tuned in gamma space, ends up
 several times stronger than a dark albedo's diffuse when both are decoded to linear (MODLOG,
 Track R round 2). Bad meshes and draws are refused, logged once and counted in
-`stats().native_skipped`; they never reach wgpu validation.
+`stats().native_skipped`; they never reach wgpu validation. A surface with no indices is not bad:
+it is a no-op draw (a surface the compose step's hide tags emptied), so it is skipped and logged and
+the mesh's other surfaces draw; only a malformed count or a range past the index buffer refuses the
+mesh, and a mesh left with no drawable surface at all is refused so the W3D fallback draws.
 
 ### Robustness
 

@@ -3317,3 +3317,34 @@ more entries, and the integrator bumps `zhbo_assets::hud::VERSION` 59→60 when 
 * Verified: `cargo test --workspace` green; the converter test is install-gated (the AS50 parser test
   uses a synthetic zone); the ignored `builds_from_real_install` test now passes with the relaxed
   rule and reports the three missing map-zone overlay materials.
+
+## Zero-index surfaces (2026-10-24)
+
+* The `native mesh refused: surface N indices X..X of X` refusal (101 of 475 sweep jobs) is neither
+  BO2 data nor the converter: no converted blob (all 475 jobs, every LOD) and no raw `XSurface` in
+  the converted zones has a zero-index or vertex-less surface. The **composer** created them —
+  `nativevm::build_mesh_visible` dropped the triangles of hidden bones (`27b95ec`, merged
+  `d146434`) and still pushed a `SurfaceSpec` with a surviving count of zero. The earlier "0 failed
+  jobs" sweep (`9202b3b`) predates that commit by 4h53m; the "pre-existing" reading at
+  `MODLOG:2993`/`:3289` was relative to the base-parts cycle, not to the base game.
+* Fix: the composer skips an all-hidden surface (W3D parity, `character::skin_hiding` drops an
+  all-hidden mesh), the renderer skips a zero-index surface with one dedup'd log line instead of
+  refusing the mesh (a no-op draw is not corruption; the `% 3` and range checks still refuse), a
+  mesh left with no drawable surface is refused so the caller falls back to W3D, and the
+  converter's real-install test now asserts no blob surface is empty. Expected sweep deltas:
+  101 → 0 failed, and the composed **surface** counts drop by the empty surfaces (255 across the
+  101 rows); composed **triangles must not move** (the hidden ones are still dropped).
+* **Not fixed here (separate cycle):** those same surfaces are why 71,435 triangles of attachment
+  art never draw — `pose::compose`'s `under_hidden` hides a whole attached part when its
+  nearest-bone-fallback mount lands on a stub tag the combination's `hideTags` hide (class B: 130
+  surfaces over 40 jobs, 17 attachment models). Striking an empty surface makes those triangles
+  invisible *quietly*; that cycle's acceptance is +71,435 composed triangles with no other change,
+  measured with the same sweep after this one lands.
+* Latent, documented not fixed: `zhbo-formats/src/xmodel.rs:285-287` returns `Surface::default()`
+  for a quantized surface, which would fabricate an empty blob surface for a zone that had one
+  (none in the converted zones; the new blob assertion would catch it).
+* Third person is code-path reasoning only: a ballista/DSR50 world model carries the same
+  `tag_sights` surface, so `ZHBO_NATIVE_BODY=2` would previously have lost the whole rig to a
+  refusal; it now loses one surface and draws. Not captured in game.
+* No `hud::VERSION` or ABI bump: the blob content and the ABI are unchanged; only the composed
+  mesh's surface list changes.

@@ -218,6 +218,12 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
 * ABI: the functions and `ZhboNativeIn` (168 bytes) / `ZhboNativeLight` (24) are new; the header and
   Rust carry size asserts. The `ZHBO_ABI_VERSION` bump to 24 covers them and the third person's
   surface.
+* **A surface with no indices is a no-op, not corruption.** The composer never emits one (a surface
+  whose triangles are all hidden by the hide tags drops with them, as the W3D path drops an
+  all-hidden mesh), and if one ever reaches `native_create_mesh` the renderer skips it and logs it.
+  A count that is not whole triangles or a range past the index buffer still refuses the mesh, and
+  so does a mesh left with no drawable surface: the core then returns `NOT_NATIVE` and the W3D path
+  draws, which is what keeps a third-person rig from going invisible.
 
 ## The native third person (Track R7)
 
