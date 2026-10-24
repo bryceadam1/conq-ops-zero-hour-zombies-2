@@ -174,6 +174,36 @@ mod tests {
         }
     }
 
+    /// The IR combination moves the base scope instead of replacing it: `viewModelOffsetBaseAttachment`
+    /// is in the same `j_gun` frame as `attachViewModelOffset` (the AS50 keeps the authored Y/Z of
+    /// `[9.889, 0, 4.253]`), so it REPLACES the part's offset; the optic's mount then loads at its own
+    /// `viewModelAddOffsets` (`[1, 0, 4.711]`, under the optic's `[1.045, 0, 5.568]`) and before it.
+    #[test]
+    #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
+    fn the_ir_combo_moves_the_base_scope_and_adds_the_mount() {
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        let manifest = |id: &str| {
+            let blobs = src.composition(id).expect(id);
+            zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("a manifest")).expect("the manifest parses")
+        };
+        let vm = manifest("as50_mp+ir");
+        let names: Vec<&str> = vm.parts.iter().map(|p| p.model.as_str()).collect();
+        let at = |needle: &str| vm.parts.iter().position(|p| p.model.contains(needle)).unwrap_or_else(|| panic!("{needle} in {names:?}"));
+        assert_eq!(names.len(), 6, "the arms, the gun, the magazine, the moved scope, the mount and the optic: {names:?}");
+        assert_eq!(vm.parts[at("xpr50_scope_view")].offset.1, [9.889, 0.0, 4.253], "the base scope is moved, not removed: {names:?}");
+        let near = |part: usize, want: [f32; 3]| (0..3).all(|k| (vm.parts[part].offset.1[k] - want[k]).abs() < 1e-4);
+        let (mount, optic) = (at("dualband_mount_view"), at("dualband_view"));
+        assert!(near(mount, [1.0, 0.0, 4.711]), "the mount rides viewModelAddOffsets: {:?}", vm.parts[mount].offset.1);
+        assert!(near(optic, [1.045, 0.0, 5.568]), "the optic keeps viewModelOffsets: {:?}", vm.parts[optic].offset.1);
+        assert!(mount < optic, "the mount draws before the optic ({mount} < {optic}): {names:?}");
+        let scope = |vm: &zhbo_native::viewmodel::Viewmodel| vm.parts.iter().find(|p| p.model.contains("xpr50_scope_view")).expect("the base scope").offset.1;
+        assert_eq!(scope(&manifest("as50_mp+vzoom")), [4.456, 0.0, 4.253], "no override flag, no move");
+        let combined = manifest("as50_mp+swayreduc+ir");
+        assert_eq!(scope(&combined), [9.889, 0.0, 4.253], "the combined IR unique moves the base scope too");
+        assert!(!combined.parts.iter().any(|p| p.model.contains("dualband_mount_view")), "the +ir combination adds no mount: {:?}", combined.parts.iter().map(|p| &p.model).collect::<Vec<_>>());
+    }
+
     /// An attachment with `disableBaseWeaponAttachment` replaces the base art: the ACOG swaps its
     /// scope for the base one, and the Ballista's `is` (an iron sight with no view model at all)
     /// simply takes it off. Neither stack the base scope under the replacement.
