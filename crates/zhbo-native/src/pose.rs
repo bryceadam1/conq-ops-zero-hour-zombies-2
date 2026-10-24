@@ -12,8 +12,8 @@
 //! a part's attach offset for a part's root, zero for an unattached root where BO2's track is the
 //! full offset); untracked bones keep the bind pose.
 //!
-//! **Hiding.** BO2 hides a tag (`hideTags`, an optic's iron sights) by collapsing it: the bone and
-//! everything under it skin with a zero matrix, so their triangles vanish.
+//! **Hiding.** BO2 hides a tag (`hideTags`, an optic's iron sights) by dropping the geometry skinned
+//! to that bone; attached parts mounted on the hidden bone keep drawing.
 
 use crate::anim::{Anim, Note};
 use crate::math::{apply, compose, inverse, mat4, nlerp, qmul, qconj, qnorm, Mat4, Xf, IDENTITY};
@@ -63,8 +63,9 @@ pub struct Skeleton {
 
 impl Skeleton {
     /// Compose `parts` (a model, the tag it hangs from, its offset in the tag's frame) in order,
-    /// then the marker tags, then hide `hide` and everything under it. A part whose tag is
-    /// missing hangs from the base's origin (logged by the caller: BO2 would fail the attach).
+    /// then the marker tags, then hide the bones named in `hide` (per bone: a hidden bone's
+    /// children and mounted parts keep drawing). A part whose tag is missing hangs from the base's
+    /// origin (logged by the caller: BO2 would fail the attach).
     pub fn compose(parts: &[PartRef<'_>], markers: &[Marker], hide: &[String]) -> (Skeleton, Vec<String>) {
         let mut s = Skeleton::default();
         let mut problems = Vec::new();
@@ -108,9 +109,7 @@ impl Skeleton {
             s.bones.push(Bone { name: m.name.clone(), parent: Some(parent), bind_local: m.local, anim_base: m.local.1, bind, inv_bind: inverse(bind), hidden: false, animated: true });
         }
         for i in 0..s.bones.len() {
-            let hidden_here = hide.iter().any(|h| h == &s.bones[i].name);
-            let under_hidden = s.bones[i].parent.is_some_and(|p| s.bones[p].hidden);
-            s.bones[i].hidden = hidden_here || under_hidden;
+            s.bones[i].hidden = hide.iter().any(|h| h == &s.bones[i].name);
         }
         (s, problems)
     }
@@ -319,6 +318,32 @@ mod tests {
         assert!(!skel.bones[2].hidden);
         let (_, missing) = Skeleton::compose(&[part(&arms, None, IDENTITY), part(&gun, Some("nope"), IDENTITY)], &[], &[]);
         assert_eq!(missing.len(), 1);
+    }
+
+    #[test]
+    fn attached_part_on_a_hidden_stub_keeps_its_bones_visible() {
+        // The base carries the hidden stub bone (`tag_stub`, Class A: its own geometry hides).
+        // The attached part hangs from that stub; its own bones are not in the hide list.
+        let mut arms = strip();
+        arms.bones[1].name = "tag_stub".into();
+        let mut stub = strip();
+        stub.name = "stub".into();
+        stub.bones[0].name = "tag_stub_mount".into();
+        stub.bones[1].name = "tag_stub_child".into();
+        let offset = (crate::math::QUAT_IDENTITY, [0.0, 0.0, 1.0]);
+        let (skel, problems) = Skeleton::compose(
+            &[part(&arms, None, IDENTITY), part(&stub, Some("tag_stub"), offset)],
+            &[],
+            &["tag_stub".to_string()],
+        );
+        assert!(problems.is_empty(), "{problems:?}");
+        // The stub bone itself is hidden (Class A behavior).
+        let stub_bone = skel.bone("tag_stub").unwrap();
+        assert!(skel.bones[stub_bone].hidden);
+        // The attached part's own bones are not named in the hide list and must remain visible.
+        let att_root = skel.parts[1].first;
+        assert!(!skel.bones[att_root].hidden, "an attached part must not inherit the stub's hide");
+        assert!(!skel.bones[att_root + 1].hidden, "the part's child bone must remain visible too");
     }
 
     #[test]
