@@ -258,14 +258,17 @@ pub struct Loaded {
     pub manifest: Viewmodel,
     pub skeleton: Skeleton,
     pub mesh: Mesh,
+    /// The same mesh with the base optic's surfaces dropped: what the first-person draw submits at
+    /// full ADS, when the 2D scope overlay replaces the physical scope. `None` when the weapon has
+    /// no optic part (the gun and magazine are all there is).
+    pub mesh_aimed: Option<Mesh>,
     pub aim: Option<usize>,
     pub anims: HashMap<String, Anim>,
-    pub mask: Vec<bool>,
 }
 
 /// Load step for `key`: `Ok(None)` while files are still coming, `Err` when the viewmodel can't be
 /// built (logged once by the caller; the W3D path keeps drawing).
-pub fn load(files: &mut Files, vm: i32, faction: u8, ads: f32) -> Result<Option<Loaded>, String> {
+pub fn load(files: &mut Files, vm: i32, faction: u8) -> Result<Option<Loaded>, String> {
     let path = zhbo_native::viewmodel_path(vm, faction as char);
     if files.is_missing(&path) {
         return Err(format!("{path} is not in the archive (reconvert the BO2 art)"));
@@ -291,15 +294,23 @@ pub fn load(files: &mut Files, vm: i32, faction: u8, ads: f32) -> Result<Option<
     if !problems.is_empty() {
         return Err(format!("{path}: {}", problems.join("; ")));
     }
-    let mask = visible_parts(&models, ads);
-    let mesh = build_mesh_visible(&skeleton, &models, |i| mask[i])?;
+    let mesh = build_mesh(&skeleton, &models)?;
+    // The aimed-half mesh: the base optic's surfaces are dropped at full ADS. Built once here so
+    // the draw path only swaps handles. The mask's indices are the manifest's part order, which
+    // the skeleton preserves.
+    let aimed = visible_parts(&models, 1.0);
+    let mesh_aimed = if aimed.iter().any(|v| !v) {
+        Some(build_mesh_visible(&skeleton, &models, |i| aimed.get(i).copied().unwrap_or(true))?)
+    } else {
+        None
+    };
     // The bytes are decoded now; keep the cache small.
     for p in &manifest.parts {
         files.forget(&p.model);
     }
     files.forget(&path);
     let aim = skeleton.bone(AIM_TAG);
-    Ok(Some(Loaded { key: (vm, faction), manifest, skeleton, mesh, aim, anims: HashMap::new(), mask }))
+    Ok(Some(Loaded { key: (vm, faction), manifest, skeleton, mesh, mesh_aimed, aim, anims: HashMap::new() }))
 }
 
 /// The eye's frame as a transform: X along `dir`, Y to the left, Z up, at `eye`.

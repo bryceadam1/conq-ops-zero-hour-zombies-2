@@ -110,7 +110,7 @@ impl State {
             #[cfg(feature = "renderer")]
             self.gpu.release();
             self.loaded = None;
-            match load(&mut self.files, inp.vm, inp.faction as u8, inp.ads) {
+            match load(&mut self.files, inp.vm, inp.faction as u8) {
                 Err(e) => {
                     self.failed.insert(key);
                     self.log_once(e);
