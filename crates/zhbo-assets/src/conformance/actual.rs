@@ -15,8 +15,12 @@ use std::collections::{BTreeMap, HashMap};
 use zhbo_conformance::schema::{f32_value, Row, RowBuilder, Schema};
 use zhbo_conformance::weapons::{self as cols, enum_name, ATTACHMENTS};
 use super::cac::group_of;
-use zhbo_core::weapons::{self, FireMode, WeaponDef};
+use zhbo_core::weapons::{self, Class, Effect, FireMode, Place, WeaponDef};
 use zhbo_native::viewmodel::{Viewmodel, INSTANCE_LEFT};
+
+/// A part with no tag rides the composed skeleton's origin (`Skeleton::compose`: `IDENTITY`) — in
+/// third person the body's, not the gun's `j_gun`.
+const ORIGIN: &str = "(origin)";
 
 /// The archive's MappedImage INI (the HUD's sprite collection).
 const MAPPED_IMAGES: &str = "Data\\INI\\MappedImages\\HandCreated\\ZHBO_BO2.ini";
@@ -34,6 +38,9 @@ pub struct Shipped {
     /// The BO2 weapons as the converter parsed them (for the icon sprites' sources).
     bo2: Vec<zhbo_formats::weapon::Weapon>,
     sprites: String,
+    /// The converter's third-person FX weapons: `ZHBO_FX_<key>` → its `FireFX` (the flash others
+    /// see), from `weapons::sounds_and_fx`'s INI.
+    fx_weapons: HashMap<String, String>,
 }
 
 impl Shipped {
@@ -57,7 +64,16 @@ impl Shipped {
         let bo2 = zhbo_formats::weapon::all(&common).map_err(|e| e.to_string())?;
         let atts = zhbo_formats::weapon::attachments(&common).map_err(|e| e.to_string())?;
         let mut defs = zhbo_core::weapons::parse_full_table(&text)?.weapons;
-        let (events, _) = crate::weapons::sounds_and_fx(&bo2, &atts, &mut defs, &crate::weapons::converted(&bo2));
+        let (events, fx_ini) = crate::weapons::sounds_and_fx(&bo2, &atts, &mut defs, &crate::weapons::converted(&bo2));
+        let mut fx_weapons = HashMap::new();
+        let mut current = None;
+        for line in fx_ini.lines().map(str::trim) {
+            if let Some(name) = line.strip_prefix("Weapon ") {
+                current = Some(name.trim().to_string());
+            } else if let (Some(w), Some(v)) = (&current, line.strip_prefix("FireFX")) {
+                fx_weapons.insert(w.clone(), v.trim_start_matches([' ', '=']).trim().to_string());
+            }
+        }
         let mut ev = HashMap::new();
         for e in events {
             ev.insert(e.event, e.layers);
@@ -72,7 +88,7 @@ impl Shipped {
             }
         }
         let sprites = files.get(MAPPED_IMAGES).map(|b| String::from_utf8_lossy(b).to_string()).unwrap_or_default();
-        Ok(Shipped { files, events: ev, fx, bo2, sprites })
+        Ok(Shipped { files, events: ev, fx, bo2, sprites, fx_weapons })
     }
 
     fn viewmodel(&self, vm: i32) -> Option<Viewmodel> {
@@ -99,8 +115,18 @@ impl Shipped {
         Some(self.fx.get(fxlist).map_or_else(|| fxlist.to_string(), |n| n.join("|")))
     }
 
+    /// The third-person flash of a def's FX weapon (a Zero Hour FXList; `NONE` is no flash).
+    fn world_flash(&self, fx_weapon: &str) -> Option<String> {
+        self.fx_weapons.get(fx_weapon).filter(|f| *f != "NONE").cloned()
+    }
+
+    /// The first BO2 alias a sound event mixes: a converted weapon's own (`DynSfx`) or a fixed one
+    /// (`sfx::SFX`); `None` when the conversion made no such event.
     fn sound(&self, event: &str) -> Option<String> {
-        self.events.get(event).and_then(|l| l.first().cloned())
+        self.events
+            .get(event)
+            .and_then(|l| l.first().cloned())
+            .or_else(|| crate::sfx::SFX.iter().find(|x| x.event == event).and_then(|x| x.layers.first()).map(|a| a.to_string()))
     }
 
     pub(crate) fn has_sprite(&self, name: &str) -> bool {
@@ -118,6 +144,8 @@ struct Job {
     group: String,
     slot: String,
     requires: Vec<&'static str>,
+    /// The row is an alt mode (BO2's `WEAPINVENTORY_ALTMODE`).
+    alt: bool,
 }
 
 /// The attachment shorts in `eAttachment` order (an unknown short last, by name).
@@ -163,8 +191,11 @@ fn jobs() -> Vec<Job> {
         ("primarygrenade", &o.lethal, (0, 0), ""),
         ("specialgrenade", &o.tactical, (0, 0), ""),
     ];
-    for (slot, ids, (base_cap, cap), card) in slots {
+    // Every slot an item is offered in (the editor lists the launchers in both weapon slots).
+    let slots_of = |id: &str| -> String { slots.iter().filter(|(_, l, _, _)| l.contains(&id)).map(|(s, ..)| *s).collect::<Vec<_>>().join("+") };
+    for (_, ids, (base_cap, cap), card) in slots {
         for &base in ids {
+            let slot = slots_of(base);
             let shorts = offered_attachments(base);
             for set in subsets(&shorts, cap) {
                 let Some(def) = cat.get(&draft_weapon_id(base, &set)) else { continue };
@@ -173,7 +204,7 @@ fn jobs() -> Vec<Job> {
                     continue;
                 }
                 let requires = if set.len() > base_cap { vec![card] } else { Vec::new() };
-                out.push(Job { weapon: base.to_string(), combo: combo.clone(), def, vm_def: def, group: group_of(def.class).to_string(), slot: slot.to_string(), requires: requires.clone() });
+                out.push(Job { weapon: base.to_string(), combo: combo.clone(), def, vm_def: def, group: group_of(def.class).to_string(), slot: slot.clone(), requires: requires.clone(), alt: false });
                 if def.alt.is_empty() {
                     continue;
                 }
@@ -181,7 +212,7 @@ fn jobs() -> Vec<Job> {
                     let alt_base = crate::generals::base_id(&def.alt).to_string();
                     if seen.insert((alt_base.clone(), combo.clone())) {
                         let vm_def = if alt.viewmodel >= 0 { alt } else { def };
-                        out.push(Job { weapon: alt_base, combo, def: alt, vm_def, group: String::new(), slot: String::new(), requires });
+                        out.push(Job { weapon: alt_base, combo, def: alt, vm_def, group: String::new(), slot: String::new(), requires, alt: true });
                     }
                 }
             }
@@ -190,7 +221,7 @@ fn jobs() -> Vec<Job> {
     let melee = weapons::Loadout::default().melee;
     if let Some(def) = cat.get(&melee) {
         if seen.insert((melee.clone(), Vec::new())) {
-            out.push(Job { weapon: melee, combo: Vec::new(), def, vm_def: def, group: String::new(), slot: String::new(), requires: Vec::new() });
+            out.push(Job { weapon: melee, combo: Vec::new(), def, vm_def: def, group: String::new(), slot: String::new(), requires: Vec::new(), alt: false });
         }
     }
     out
@@ -266,9 +297,48 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .filter_map(|s| base_def.allowed.iter().find(|(short, _)| short == s).and_then(|(_, asset)| cat.attachment(asset)).map(|a| a.display_name.clone()))
         .collect();
     b.list("attachment_names", &names);
-    for c in ["weap_type", "weap_class", "inventory", "offhand_class"] {
-        b.absent(c);
-    }
+    // The mod has no weapType/weapClass/inventory fields; where its own class and sim branch
+    // carry the same fact it is reported (a class with no BO2 counterpart stays empty):
+    // `weap_type` is how the sim delivers the shot (`Arsenal`'s Launch vs hitscan branch,
+    // `arsenal.rs` "WeaponAction::Launch"; an offhand's `Place`), `weap_class` the class the
+    // converter derived from BO2's (`class_of`), `inventory` the row's role.
+    let launches = d.class == Class::Launcher || (d.projectile_speed > 0.0 && d.class != Class::Shotgun && d.effect != Effect::None);
+    let weap_type = match d.class {
+        Class::Melee => Some("melee"),
+        c if c.is_offhand() => match d.place {
+            Place::Throw => Some("grenade"),
+            Place::Plant => Some("mine"),
+            Place::Hack => None,
+        },
+        _ if launches => Some("projectile"),
+        _ => Some("bullet"),
+    };
+    let weap_class = match d.class {
+        Class::Rifle | Class::Sniper => Some("rifle"),
+        Class::Smg => Some("smg"),
+        Class::Lmg => Some("mg"),
+        Class::Shotgun => Some("spread"),
+        Class::Pistol => Some("pistol"),
+        Class::Launcher => Some("rocketlauncher"),
+        Class::Melee => Some("melee"),
+        Class::Special | Class::Lethal | Class::Tactical | Class::Equipment => None,
+    };
+    let inventory = if j.alt {
+        "altmode"
+    } else if d.class == Class::Melee {
+        "melee"
+    } else if d.class.is_offhand() {
+        "offhand"
+    } else {
+        "primary"
+    };
+    let offhand_slot = match d.class {
+        Class::Lethal => "lethal_grenade",
+        Class::Tactical => "tactical_grenade",
+        Class::Equipment => "equipment",
+        _ => "none",
+    };
+    b.opt_text("weap_type", weap_type).opt_text("weap_class", weap_class).text("inventory", inventory).absent("offhand_class").text("offhand_slot", offhand_slot);
     let fire = match d.fire {
         FireMode::Auto => "fullauto".to_string(),
         FireMode::Semi => "singleshot".to_string(),
@@ -277,11 +347,15 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     };
     b.text("fire_type", fire).int("shot_count", d.pellets as i64).absent("shots_before_rechamber").absent("bolt_action");
 
+    // The arsenal melees with the loadout's knife, whatever is held (`arsenal.rs` "Melee interrupts":
+    // `self.melee.melee_time`, `self.melee.melee_damage`), striking on the press.
+    let knife = cat.get(&weapons::Loadout::default().melee).unwrap_or(d);
+    let alt_toggles = !d.alt.is_empty();
     // Timing.
     for (c, v) in [
         ("fire_time", Some(d.fire_time)),
         ("last_fire_time", None),
-        ("fire_delay", None),
+        ("fire_delay", d.class.is_gun().then_some(0.0)),
         ("burst_delay", Some(d.burst_delay)),
         ("rechamber_time", None),
         ("rechamber_bolt_time", None),
@@ -298,20 +372,24 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         ("raise_time", Some(d.raise_time)),
         ("first_raise_time", Some(d.first_raise_time)),
         ("drop_time", Some(d.drop_time)),
-        ("alt_raise_time", None),
-        ("alt_drop_time", None),
+        // An alt toggle raises the mode in max(quick raise, raise / 2) and has no drop (`toggle_alt`).
+        ("alt_raise_time", alt_toggles.then(|| d.quick_raise_time.max(d.raise_time * 0.5))),
+        ("alt_drop_time", alt_toggles.then_some(0.0)),
         ("quick_raise_time", Some(d.quick_raise_time)),
         ("quick_drop_time", Some(d.quick_drop_time)),
-        ("empty_raise_time", None),
-        ("empty_drop_time", None),
-        ("sprint_in_time", None),
+        // A swap raises and drops in the same times loaded or empty (`switch_to`).
+        ("empty_raise_time", d.class.is_gun().then_some(d.raise_time)),
+        ("empty_drop_time", d.class.is_gun().then_some(d.drop_time)),
+        // Sprinting blocks the trigger from its first frame (`blocked = sprinting || ...`).
+        ("sprint_in_time", d.class.is_gun().then_some(0.0)),
         ("sprint_out_time", Some(d.sprint_out_time)),
         ("ads_in_time", Some(d.ads_in_time)),
         ("ads_out_time", Some(d.ads_out_time)),
-        ("melee_time", Some(d.melee_time)),
-        ("melee_delay", None),
+        ("melee_time", Some(knife.melee_time.max(0.3))),
+        ("melee_delay", Some(0.0)),
         ("spin_up_time", Some(d.spin_up_time)),
-        ("spin_down_time", None),
+        // The barrels spin down at the rate they spin up (`w.spin - dt`).
+        ("spin_down_time", (d.fire == FireMode::Minigun).then_some(d.spin_up_time)),
         ("fuse_time", Some(d.fuse_time)),
         ("detonate_time", None),
     ] {
@@ -324,22 +402,32 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     // and an end (the converter's `shells`).
     b.int("reload_ammo_add", d.reload_ammo_add as i64).absent("reload_start_add").bool("segmented_reload", d.reload_ammo_add > 0 && d.reload_start_time > 0.0);
 
-    // Ammo: a gun carries its spare rounds beside the magazine; an offhand's reserve is the count
-    // in hand (the converter's `to_def`).
-    let (start, max) = if d.class.is_offhand() { (d.start_reserve as i64, d.max_reserve as i64) } else { (d.clip as i64 + d.start_reserve as i64, d.clip as i64 + d.max_reserve as i64) };
+    // Ammo. Start: what a spawn gives, the loaded magazine included (a gun's magazine plus its
+    // spare rounds; an offhand's reserve is its count, the converter's `to_def`). Max: the spare
+    // rounds the weapon can carry beside its magazine — BO2's `iMaxAmmo` is that stock cap, not a
+    // total (the crossbow starts with 6 rounds, a 3-round clip, and `iMaxAmmo` 3).
+    // An alt mode without its own ammo carries none: it fires the weapon's magazine and its def's
+    // reserve is never read (`toggle_alt` swaps only for `alt_own_ammo`).
+    let shared_alt = j.alt && !d.alt_own_ammo;
+    let start = if shared_alt { 0 } else if d.class.is_offhand() { d.start_reserve as i64 } else { d.clip as i64 + d.start_reserve as i64 };
+    let max = if shared_alt { 0 } else { d.max_reserve as i64 };
     b.int("clip_size", d.clip as i64)
         .int("start_ammo_rounds", start)
         .int("max_ammo_rounds", max)
         .absent("clip_only")
         .absent("dual_mag")
-        .absent("shared_ammo");
+        // An alt mode without its own ammo fires the weapon's magazine (`toggle_alt` swaps
+        // magazines only for one with its own): that pair — the weapon and its alt — shares.
+        .bool("shared_ammo", if j.alt { !d.alt_own_ammo } else { cat.get(&d.alt).is_some_and(|a| !a.alt_own_ammo && !d.alt_own_ammo) });
 
     // Damage.
     b.list("damage", &d.damage.map(|x| format!("{}", x as i64)))
         .floats("damage_range", &d.damage_range.map(inch))
         .absent("min_player_damage")
-        .int("melee_damage", d.melee_damage as i64)
-        .absent("location_multipliers")
+        .int("melee_damage", knife.melee_damage as i64)
+        // The mod's hits are head or body (`hitscan::trace`'s `headshot`, `sim/fire.rs`): its
+        // head zone covers BO2's helmet and head, every other location takes 1.
+        .floats("location_multipliers", &(0..21).map(|i| if i == 1 || i == 2 { f32_value(d.head_multiplier) } else { 1.0 }).collect::<Vec<_>>())
         .float("max_range", inch(d.max_range))
         .absent("penetrate_type")
         .float("explosion_radius", inch(d.explosion_radius))
@@ -349,7 +437,9 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .float("projectile_speed", inch(d.projectile_speed))
         .float("projectile_speed_up", inch(d.projectile_speed_up))
         .bool("projectile_impact_explode", d.impact_explode)
-        .absent("projectile_model")
+        // The projectile object the def fires is converted from its base weapon's BO2
+        // `projectileModel` (`generals::files`).
+        .opt_text("projectile_model", (!d.projectile_object.is_empty()).then(|| sh.bo2.iter().find(|w| w.name == crate::generals::base_id(&d.id)).and_then(|w| w.projectile_model.clone())).flatten())
         .text("impact_type", enum_name(cols::IMPACT_TYPE, d.impact_type.max(0) as u32));
 
     // Spread.
@@ -363,10 +453,14 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
 
     // ADS: one zoomed field of view; the ADS walk is the converter's base times BO2's scale.
     b.float("ads_zoom_fov1", fl(d.ads_fov))
-        .absent("ads_zoom_fov2")
-        .absent("ads_zoom_fov3")
+        // One zoom: every zoom level of the weapon is that field of view.
+        .float("ads_zoom_fov2", fl(d.ads_fov))
+        .float("ads_zoom_fov3", fl(d.ads_fov))
         .absent("ads_zoom_in_frac")
         .absent("ads_zoom_out_frac")
+        // The mod stores the ADS walk as the converter's base (0.35 of a walk) times BO2's scale,
+        // clamped to a full walk (`to_def`, `attachments::apply`): divided back, it is the scale
+        // the mod applies (verified on evoskorpion_mp: BO2 2 → mod 0.7 → 2).
         .float("ads_move_speed_scale", fl(d.ads_move_scale / crate::weapons::ADS_MOVE_BASE))
         .float("move_speed_scale", fl(d.move_scale))
         .float("sprint_duration_scale", fl(d.sprint_duration_scale))
@@ -477,7 +571,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
             let skip = 2.min(m.parts.len());
             b.opt_text("view_model", gun.map(|p| stem(&p.model)))
                 .list("view_part_models", &parts.iter().filter(|p| !p.ads_only).map(|p| stem(&p.model)).collect::<Vec<_>>())
-                .list("view_part_tags", &parts.iter().filter(|p| !p.ads_only).map(|p| p.tag.clone().unwrap_or_default()).collect::<Vec<_>>())
+                .list("view_part_tags", &parts.iter().filter(|p| !p.ads_only).map(|p| p.tag.clone().unwrap_or_else(|| ORIGIN.to_string())).collect::<Vec<_>>())
                 .floats("view_part_offsets", &parts.iter().filter(|p| !p.ads_only).flat_map(|p| p.offset.1).map(f32_value).collect::<Vec<_>>())
                 .floats("view_part_rotations", &parts.iter().filter(|p| !p.ads_only).flat_map(|p| quat(p.offset.0)).collect::<Vec<_>>());
             // The aimed half: the game's own part mask at full ADS.
@@ -504,7 +598,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
             rest.sort_by_key(|p| cols::part_order(&stem(&p.model), p.tag.as_deref().unwrap_or("")));
             b.opt_text("world_model", w.parts.first().map(|p| stem(&p.model)))
                 .list("world_part_models", &rest.iter().map(|p| stem(&p.model)).collect::<Vec<_>>())
-                .list("world_part_tags", &rest.iter().map(|p| p.tag.clone().unwrap_or_default()).collect::<Vec<_>>())
+                .list("world_part_tags", &rest.iter().map(|p| p.tag.clone().unwrap_or_else(|| ORIGIN.to_string())).collect::<Vec<_>>())
                 .floats("world_part_offsets", &rest.iter().flat_map(|p| p.offset.1).map(f32_value).collect::<Vec<_>>())
                 .floats("world_part_rotations", &rest.iter().flat_map(|p| quat(p.offset.0)).collect::<Vec<_>>());
         }
@@ -538,10 +632,23 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
 
     // Sounds: the player's gunshot event and the FX weapon's third-person event; the loadout's
     // offhand and knife share the global throw/pin/blast/swing events.
-    let l = weapons::Loadout::default();
+    // Sounds: the client's cues (`client/mod.rs`): a hitscan shot plays `sounds::fire_for` (the
+    // def's event, else the global rifle/pistol shot), a launch `FIRE_LAUNCHER`, an offhand
+    // `PULL_PIN` then `THROW`, any melee `MELEE_SWING`, any blast `EXPLOSION`; the FX weapon's
+    // event is the shot others hear. A cue the conversion never made plays nothing.
     let key = d.fx_weapon.strip_prefix("ZHBO_FX_").unwrap_or("");
     let npc = (!key.is_empty()).then(|| sh.sound(&format!("ZHBO_BO2_FireNpc_{key}"))).flatten();
-    let plr = if d.id == l.lethal { sh.sound(zhbo_core::sounds::THROW) } else { (!d.fire_sound.is_empty()).then(|| sh.sound(&d.fire_sound)).flatten() };
+    let thrown = d.class.is_offhand() && d.place == Place::Throw;
+    let plr = if d.class.is_offhand() {
+        thrown.then(|| sh.sound(zhbo_core::sounds::THROW)).flatten()
+    } else if d.class == Class::Melee {
+        None
+    } else if launches {
+        sh.sound(zhbo_core::sounds::FIRE_LAUNCHER)
+    } else {
+        sh.sound(zhbo_core::sounds::fire_for(d))
+    };
+    let explodes = launches || d.class.is_offhand();
     for c in cols::OVERRIDE_SOUNDS {
         match c {
             "fire_sound" => b.opt_text(c, npc.clone()),
@@ -549,20 +656,18 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
             _ => b.absent(c),
         };
     }
-    // The mod's dry fire is one event for every gun (`sfx::SFX`'s `ZHBO_BO2_DryFire`).
-    let dry = crate::sfx::SFX.iter().find(|x| x.event == "ZHBO_BO2_DryFire").and_then(|x| x.layers.first()).map(|a| a.to_string());
     for c in cols::DEF_SOUNDS {
         let v = match c {
-            "empty_fire_sound_player" if d.class.is_gun() => dry.clone(),
-            "pullback_sound_player" if d.id == l.lethal => sh.sound(zhbo_core::sounds::PULL_PIN),
-            "projectile_explosion_sound" if d.id == l.lethal => sh.sound(zhbo_core::sounds::EXPLOSION),
-            "melee_swipe_sound_player" if d.id == l.melee => sh.sound(zhbo_core::sounds::MELEE_SWING),
+            "empty_fire_sound_player" if d.class.is_gun() => sh.sound(zhbo_core::sounds::DRY_FIRE),
+            "pullback_sound_player" if thrown => sh.sound(zhbo_core::sounds::PULL_PIN),
+            "projectile_explosion_sound" if explodes => sh.sound(zhbo_core::sounds::EXPLOSION),
+            "melee_swipe_sound_player" => sh.sound(zhbo_core::sounds::MELEE_SWING),
             _ => None,
         };
         b.opt_text(c, v);
     }
     b.opt_text("view_flash_effect", sh.effect(&d.view_flash_fx))
-        .absent("world_flash_effect")
+        .opt_text("world_flash_effect", sh.world_flash(&d.fx_weapon))
         .opt_text("view_shell_eject_effect", sh.effect(&d.view_shell_fx))
         .absent("world_shell_eject_effect")
         .opt_text("view_last_shot_eject_effect", sh.effect(&d.view_last_shot_shell_fx))

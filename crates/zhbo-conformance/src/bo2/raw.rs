@@ -229,6 +229,7 @@ getters!(Def, WD {
     u32 inventory = inventoryType;
     u32 fire_type = fireType;
     u32 offhand_class = offhandClass;
+    u32 offhand_slot = offhandSlot;
     u32 impact_type = impactType;
     u32 penetrate_type = penetrateTWeaponAttachmentype;
     i32 start_ammo = iStartAmmo;

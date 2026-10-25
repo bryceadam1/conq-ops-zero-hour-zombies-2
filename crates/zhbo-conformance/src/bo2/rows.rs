@@ -162,12 +162,18 @@ impl<'a> Expected<'a> {
         b.text("weap_type", enum_name(cols::WEAP_TYPE, d.weap_type()))
             .text("weap_class", enum_name(cols::WEAP_CLASS, d.weap_class()))
             .text("inventory", enum_name(cols::INVENTORY, d.inventory()))
-            .text("offhand_class", enum_name(cols::OFFHAND_CLASS, d.offhand_class()));
+            .text("offhand_class", enum_name(cols::OFFHAND_CLASS, d.offhand_class()))
+            .text("offhand_slot", enum_name(cols::OFFHAND_SLOT, d.offhand_slot()));
         let fire = w.atts_walk().into_iter().find(|a| a.kind() as usize == STACKFIRE).map_or(d.fire_type(), |a| a.fire_type());
         b.text("fire_type", enum_name(cols::FIRE_TYPE, fire))
             .int("shot_count", d.shot_count() as i64)
             .int("shots_before_rechamber", d.shots_before_rechamber() as i64)
             .bool("bolt_action", d.bolt_action());
+
+        // MP melee is the class's melee weapon whatever is held: every class gets `knife_mp`
+        // (`_class.gsc:586`) and every `MOD_MELEE` kill but the riot shield's is a stab
+        // (`_scoreevents.gsc:375`). A melee or riot-shield weapon melees with itself.
+        let md = if d.weap_type() == 7 || d.weap_type() == 8 { d } else { self.variants.get("knife_mp").and_then(|k| k.def()).unwrap_or(d) };
 
         // Timing.
         let ms = |b: &mut RowBuilder, c: &str, x: i32| {
@@ -203,8 +209,8 @@ impl<'a> Expected<'a> {
         ms(&mut b, "sprint_out_time", d.sprint_out_time());
         ms(&mut b, "ads_in_time", resolve::scaled_ms(v.ads_in_time(), w.scale(|a| a.ads_in_scale())));
         ms(&mut b, "ads_out_time", resolve::scaled_ms(v.ads_out_time(), w.scale(|a| a.ads_out_scale())));
-        ms(&mut b, "melee_time", d.melee_time());
-        ms(&mut b, "melee_delay", d.melee_delay());
+        ms(&mut b, "melee_time", md.melee_time());
+        ms(&mut b, "melee_delay", md.melee_delay());
         ms(&mut b, "spin_up_time", d.spin_up_time());
         ms(&mut b, "spin_down_time", d.spin_down_time());
         ms(&mut b, "fuse_time", d.fuse_time());
@@ -228,7 +234,7 @@ impl<'a> Expected<'a> {
         b.list("damage", &d.damage().map(|x| x.to_string()))
             .floats("damage_range", &fls(&d.damage_range().map(|r| r * range_scale)))
             .int("min_player_damage", d.min_player_damage() as i64)
-            .int("melee_damage", d.melee_damage() as i64);
+            .int("melee_damage", md.melee_damage() as i64);
         let def_mults = d.location_multipliers();
         let mults: Vec<f32> = match w.base() {
             None => def_mults.clone(),
@@ -243,7 +249,7 @@ impl<'a> Expected<'a> {
         };
         b.floats("location_multipliers", &fls(&mults))
             .float("max_range", fl(d.max_range()))
-            .text("penetrate_type", enum_name(cols::PENETRATE_TYPE, d.penetrate_type()))
+            .text("penetrate_type", enum_name(cols::PENETRATE_TYPE, w.atts_walk().iter().map(|a| a.penetrate_type()).find(|&p| p != 0).unwrap_or(d.penetrate_type())))
             .float("explosion_radius", d.explosion_radius() as f64)
             .float("explosion_radius_min", d.explosion_radius_min() as f64)
             .int("explosion_inner_damage", d.explosion_inner_damage() as i64)
@@ -448,7 +454,9 @@ impl<'a> Expected<'a> {
         b.opt_text("view_model", gun.clone()).list("view_ads_part_models", &ads_models);
         let mut hip = hip;
         hip.sort_by_key(|p| cols::part_order(&p.model, &p.tag));
-        b.set("view_hide_tags", &resolve::hide_tags(w));
+        // An alt mode's hide bits are its parent's too (`FUN_00535540` swaps an ALTMODE weapon for
+        // `ps+0x1c0` before `CG_SetWeaponHidePartBits`).
+        b.set("view_hide_tags", &resolve::hide_tags(pw));
         let mats: Vec<String> = gun.iter().cloned().chain(hip.iter().map(|p| p.model.clone())).map(|m| self.model_materials(&m)).collect();
         b.list("view_part_materials", &mats);
         b.opt_text("world_model", d.world_model());
@@ -467,7 +475,9 @@ impl<'a> Expected<'a> {
             b.opt_text(c, resolve::sound(w, i as u32, d.sound(f)));
         }
         for (c, f) in cols::DEF_SOUNDS.iter().zip(DEF_SOUND_FIELDS) {
-            b.opt_text(c, d.sound(f));
+            // A melee's swing and hit are the melee weapon's (see `md`).
+            let from = if f == WD::meleeSwipeSoundPlayer || f == WD::meleeHitSound { md } else { d };
+            b.opt_text(c, from.sound(f));
         }
         b.opt_text("view_flash_effect", resolve::effect(w, 0, d.effect(WD::viewFlashEffect)))
             .opt_text("world_flash_effect", resolve::effect(w, 1, d.effect(WD::worldFlashEffect)));

@@ -114,7 +114,9 @@ fn signature(kind: Kind, e: &str, a: &str) -> String {
             let y: Vec<&str> = a.split('|').collect();
             let missing: Vec<&str> = x.iter().copied().filter(|v| !y.contains(v)).collect();
             let extra: Vec<&str> = y.iter().copied().filter(|v| !x.contains(v)).collect();
-            if missing.is_empty() && extra.is_empty() {
+            if missing.is_empty() && extra.is_empty() && x.len() != y.len() {
+                format!("same items, BO2 {} entries, mod {}", x.len(), y.len())
+            } else if missing.is_empty() && extra.is_empty() {
                 "same items, different order".to_string()
             } else {
                 let mut parts = Vec::new();

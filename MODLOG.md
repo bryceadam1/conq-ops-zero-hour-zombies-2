@@ -4147,3 +4147,69 @@ zhbo-assets -- --ignored`: 30 passed, the new gate failing by design with the ba
 (110 s); `-p zhbo-formats -- --ignored`: 10 passed (cargo stops at the first failing crate, so run
 the two separately). The in-game autotest was not run (no game launch; nothing in the game's path
 changed).
+
+## 2026-10-25 — Conformance false-gap audit
+
+Every differing cluster of the first run was spot-checked against the raw data and given a
+verdict: **REAL** (with evidence) or **GENERATOR ARTIFACT** (fixed in the generator, never in the
+mod). A cluster counts as an artifact when the mod carries the fact, as a field or as explicit sim
+behaviour, and the emitter missed it. A BO2 field the mod lacks stays REAL with an empty mod side
+(ruling 1). Fixes touch only `zhbo-conformance` and `zhbo-assets/src/conformance`.
+
+**The artifacts we fixed.**
+- **Actual side:**
+  - Identity is now derived from the mod's own data, not left blank. `weap_type` comes from melee,
+    `Place` and whether the sim launches a projectile; `weap_class` is the inverse of the mod's
+    `Class`; `inventory` is derived too; and a new `offhand_slot` column was added.
+    `offhand_class` stays absent (the mod has no counterpart). These blanks caused the identical
+    37,364 count shared by identity and flags.
+  - Max ammo is `max_reserve`, BO2's stock cap. Shared-ammo alt modes get 0 start and 0 max, and
+    `shared_ammo` is derived from `alt_own_ammo`.
+  - Behaviour the mod hard-codes is now emitted as its value. Alt raise uses
+    max(quick raise, raise/2) and alt drop is 0. Empty raise and drop reuse the plain raise and
+    drop. Sprint-in and fire delay are 0. The minigun's spin-down equals its spin-up.
+  - Zoom FOV levels 2 and 3 map to `ads_fov`. Hit-location multipliers are head ×
+    `head_multiplier` and every other location ×1. The third-person flash comes from the FX
+    weapon INI.
+  - Sounds come from the client cues: fire, launcher, throw, pull pin, swing, explosion and dry
+    fire.
+  - Untagged world parts are reported as `(origin)`. Melee values come from the loadout knife.
+    `projectile_model` is emitted. `cac_slot` and the CaC `slot` join every slot list that
+    contains the weapon.
+- **Expected side:**
+  - Penetration applies the first attachment with a non-zero `penetrateType`
+    (`FUN_008ecec0`).
+  - Alt-mode hide tags use the parent weapon (`FUN_00535540`).
+  - Melee columns describe the melee weapon. In MP that is the class knife `knife_mp` unless
+    the row is itself melee or a riot shield. This rule is **plausible, not engine-verified**:
+    the evidence is `_class.gsc:586`, `_scoreevents.gsc:375` and `_challenges.gsc:608`.
+- **Differ:** near-1 ratios are printed as an offset. Lists with the same items but different
+  counts now say so ("same items, BO2 N entries, mod M").
+
+**Judgment calls checked.**
+- Reserve ammo: BO2 `iMaxAmmo` is the stock cap, not the magazine plus spares. Evidence is the
+  crossbow: start 6, clip 3, max 3. The old mapping hid a real converter gap, which subtracts a
+  magazine (an94: 240 → 210).
+- ADS walk ÷0.35: verified on evoskorpion (BO2 2 → mod 0.7 → 2). The ×1.12 rows are real: BO2's
+  attachment value replaces the base (`FUN_008ed080`), while the mod multiplies and clamps.
+
+**Corrected totals.**
+- weapons: 11,605 expected vs 10,088 actual rows. 860,769 cells differ, in 198 clusters. 2,264
+  rows exist only in BO2 and 747 only in the mod.
+- cac: 608 vs 552 rows. 881 cells differ, in 7 clusters. 62 and 6 one-sided rows.
+- Together that is 209 gap clusters, down from 211. Cells rose from the first run's 897,888 to
+  854k after the artifact fixes, then to 860k. The rise came from the ammo and melee
+  corrections, which exposed real gaps the old mappings had hidden.
+
+Every remaining cluster is REAL. The per-cluster list with evidence is in the audit report
+attached to the commit.
+
+**Gotchas.**
+- BO2's GL alt variants name the view model as `worldModel`. This is a data quirk: compare world
+  models at the parent.
+- The HAMR+ACOG hide merge keeps a base tag only if every unique lists it (`FUN_008ec1a0`).
+- `WEAPON_CONCUSSION/EMP/FLASH_GRENADE` are defined in no english zone, so BO2 shows the raw
+  key.
+
+**Verified.** `cargo test --workspace` passes. `cargo clippy` adds no warning in the conformance
+files. The real-install CLI run produced the totals above. No game was launched.
