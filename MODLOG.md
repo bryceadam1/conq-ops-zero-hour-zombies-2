@@ -3317,6 +3317,39 @@ Verified: cargo test --workspace green; the full real-install suite green (incl.
 xtask build` clean; autotest 13/13 default, `--classpick` all checks, 14/14 `--rts`; dsr50/m32
 renders sane.
 
+## The M32 aims through its own `_ads` sight (2026-10-24)
+
+Merged `v1/m32-ads-sight` (1 commit + integrator completions). BO2 lists the M32's sight twice in
+`attachViewModel` — `t6_attach_optic_m32_view` (hip) and `t6_attach_optic_m32_ads` (aimed):
+identical materials, lens (21 verts) and reticle (9 verts), but the `_ads` housing is the reduced
+one (981 vs 2047 tris) so it blocks less of the eyepiece. The converter's material-set+bbox-IoU
+dedupe collapsed the pair and loaded only `_view`. Now: the dedupe keeps an `_ads`-suffixed pair
+(`duplicate_sight`), the manifest `Part` carries `ads_only` (`.zbv` VERSION 1→2; the shared
+`.zbw` WEAPON_VERSION 1→2 — the research missed that `Part` is shared), and `visible_parts`
+swaps the pair at full ADS regardless of overlay art (the M32 has none). The W3D path keeps
+drawing only the hip sight (it has no ADS-state swap). **Integrator completion:** the plan's
+`visible_parts` gained the `ads < 1.0` hip arm but its diffs never routed the HIP mesh through it
+— without that, both housings draw at hip; the hip mesh now builds with the hip mask, and the
+new swap test's expectation was corrected to match (hip 3 surfaces, aimed 3). The aimed/hip GPU
+swap already existed (`gpu.rs` on `inp.ads >= 1.0`) — no new plumbing. Every other weapon is
+unchanged (no `ads_only` part, no rule change). M32 part count 3 → 4; archive VERSION 68 → 69.
+Render acceptance: hip half pixel-identical to before; aimed half 1.7 % changed (the slimmer
+housing); dsr50 overlay handoff unchanged.
+
+* The `_ads` suffix is BO2's aimed-state selector convention; the M32 is the only converted weapon
+  with such a pair (inventoried via the CLI). A future one gets the same swap for free.
+* **The MP7 grip open item is CLOSED — parity.** `au_mp7_grip` has `vm None` in BO2's authored
+  data (with `hide ["tag_grip_off"]` and its own 42-clip anim set): the base model carries the
+  folding foregrip, the attachment is stat/animation-only, and the converter faithfully reads
+  `None` (viewmodels.rs:156-159). Cross-check: the PDW57's grip is also `vm None` (integral
+  design); the Vector/XM8/QCW05 carry grip models. **New follow-up question:** attachment uniques
+  can carry their OWN anim set (the MP7 grip's 42 clips pose the hand on the unfolded grip) —
+  does the mod use unique anim-set overrides, and for which attachments? Queued.
+
+Verified: cargo test --workspace green; the full real-install suite green (incl. the flipped
+`the_m32_sight_loads_both`); clippy clean (no new warnings); `cargo xtask build` clean; autotest
+13/13 default, `--classpick` all checks, 14/14 `--rts`; render acceptance as above.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

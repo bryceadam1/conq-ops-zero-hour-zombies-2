@@ -52,6 +52,9 @@ pub(crate) struct BasePart {
     pub magazine: bool,
     /// The model carries the weapon's sight (`tag_scope`/`tag_sights`): it drives `tag_sights`.
     pub optic: bool,
+    /// The M32's `_ads` sight variant: drawn only at full ADS. The hip `_view` variant carries the
+    /// same sight; the pair swaps at the ADS handoff. The W3D path draws only the hip sight.
+    pub ads_only: bool,
 }
 
 /// The base parts of `w` for the combination `c`: the magazine (the `attach_mag` array entry, the
@@ -73,9 +76,9 @@ pub(crate) fn base_parts(patch: &Zone, common: &Zone, w: &zhbo_formats::weapon::
             .find(|((m, _), _)| m.contains("attach_mag"))
             .and_then(|((m, _), off)| find_model(patch, common, m).ok().map(|model| (model, *off)));
         if let Some((model, offset)) = authored {
-            out.push(BasePart { model, tag: None, offset, magazine: true, optic: false });
+            out.push(BasePart { model, tag: None, offset, magazine: true, optic: false, ads_only: false });
         } else if let Some(model) = magazine(common, view) {
-            out.push(BasePart { model, tag: None, offset: [0.0; 3], magazine: true, optic: false });
+            out.push(BasePart { model, tag: None, offset: [0.0; 3], magazine: true, optic: false, ads_only: false });
         }
     }
     if !c.no_base_attachment {
@@ -84,7 +87,7 @@ pub(crate) fn base_parts(patch: &Zone, common: &Zone, w: &zhbo_formats::weapon::
                 continue;
             }
             let Ok(model) = find_model(patch, common, name) else { continue };
-            if out.iter().any(|p| !p.magazine && same_sight(&p.model, &model)) {
+            if duplicate_sight(&out, &model) {
                 continue;
             }
             let optic = model.bones.iter().any(|b| b.name == "tag_scope" || b.name == "tag_sights");
@@ -92,7 +95,8 @@ pub(crate) fn base_parts(patch: &Zone, common: &Zone, w: &zhbo_formats::weapon::
             // combination sets `overrideBaseWeaponAttachmentOffsets` (the IR optics); the part
             // stays. It is in the same frame (the AS50's Y/Z match), so it replaces, never adds.
             let offset = c.base_attachment_offset.unwrap_or(*offset);
-            out.push(BasePart { model, tag: (!tag.is_empty()).then(|| tag.clone()), offset, magazine: false, optic });
+            let ads_only = model.name.ends_with("_ads");
+            out.push(BasePart { model, tag: (!tag.is_empty()).then(|| tag.clone()), offset, magazine: false, optic, ads_only });
         }
     }
     out
@@ -115,6 +119,16 @@ fn same_sight(a: &xmodel::Model, b: &xmodel::Model) -> bool {
         union *= span;
     }
     union > 0.0 && intersection / union >= 0.9
+}
+
+/// Whether `model` is a duplicate sight of an existing base part: the same material set and a
+/// bounding box overlapping at IoU ≥ 0.9. The M32's `_view`/`_ads` pair is not a duplicate: the
+/// two are the same sight at the same mount, but the ADS variant replaces the hip housing at full
+/// ADS, so both must load.
+fn duplicate_sight(out: &[BasePart], model: &xmodel::Model) -> bool {
+    !model.name.ends_with("_ads")
+        && !out.iter().any(|p| p.ads_only)
+        && out.iter().any(|p| !p.magazine && same_sight(&p.model, model))
 }
 
 fn material_names(m: &xmodel::Model) -> BTreeSet<&str> {
@@ -346,6 +360,9 @@ pub(crate) fn weapon_viewmodels(
                 // empty authored tag is `j_gun`), before the sight marker so the base optic can
                 // drive it.
                 for part in &base {
+                    if part.ads_only {
+                        continue;
+                    }
                     let at = part.tag.as_deref().and_then(|t| rig.pivot(t)).unwrap_or(root);
                     rig.attach(&part.model, at, character::scaled_xf((crate::xf::IDENTITY.0, part.offset)));
                 }
@@ -400,6 +417,9 @@ pub(crate) fn weapon_viewmodels(
             // `tag_clip1` (the reload's incoming magazine); the attachment art (the scope) gets the
             // free `B` prefix.
             for (k, (part, tex)) in base.iter().zip(&base_tex).enumerate() {
+                if part.ads_only {
+                    continue;
+                }
                 if part.magazine {
                     meshes.extend(character::skin(rig, &part.model, "M", tex));
                     if let Some(new_mag) = rig.pivot("tag_clip1") {
@@ -466,7 +486,7 @@ pub(crate) fn weapon_viewmodels(
         let base_native_parts: Vec<native::BasePart> = base
             .iter()
             .zip(&native_base)
-            .map(|(p, m)| native::BasePart { model: m, tag: p.tag.clone(), offset: (crate::xf::IDENTITY.0, p.offset), magazine: p.magazine, optic: p.optic })
+            .map(|(p, m)| native::BasePart { model: m, tag: p.tag.clone(), offset: (crate::xf::IDENTITY.0, p.offset), magazine: p.magazine, optic: p.optic, ads_only: p.ads_only })
             .collect();
         let dual_tag = dual_mount();
         let dual_native = dual.zip(native_lh.as_ref()).map(|(w, m)| native::DualGun { gun: m, tag: dual_tag.as_str(), hide: &w.hide_tags });
@@ -530,6 +550,7 @@ pub(crate) fn world_weapons(
             tag: None,
             offset: crate::xf::IDENTITY,
             rigid: true,
+            ads_only: false,
         }];
         for (u, _) in &c.parts {
             let Some(model) = u.world_model.as_deref().and_then(|m| find_model(patch, common, m).ok()) else { continue };
@@ -548,6 +569,7 @@ pub(crate) fn world_weapons(
                 tag: u.world_model_tag.clone().filter(|n| world.bones.iter().any(|b| &b.name == n)),
                 offset: crate::xf::compose(native_base, (crate::xf::from_angles(u.world_rotation), u.world_offset)),
                 rigid: true,
+                ads_only: false,
             });
         }
         out.insert(
@@ -768,7 +790,7 @@ pub(crate) fn tablet_world(patch: &Zone, common: &Zone, paks: &Paks, out: &mut B
 
 #[cfg(test)]
 mod tests {
-    use super::{attachment_parts, base_part_note, is_dual_wield, mount_tag, same_sight, BasePart};
+    use super::{attachment_parts, base_part_note, duplicate_sight, is_dual_wield, mount_tag, same_sight, BasePart};
     use zhbo_formats::weapon::{inventory, AttachmentUnique, Weapon};
 
     fn sight(name: &str, mins: [f32; 3], maxs: [f32; 3]) -> zhbo_formats::xmodel::Model {
@@ -873,6 +895,21 @@ mod tests {
         assert!(!same_sight(&view, &elsewhere), "a disjoint box is a different part");
     }
 
+    /// The M32's `_view` and `_ads` sights are the same sight at the same mount. The ADS variant is
+    /// not a duplicate: both load for the native manifest's ADS handoff. A true duplicate still
+    /// dedupes, and the hip sight is not a duplicate when the ADS variant is present.
+    #[test]
+    fn the_m32_ads_sight_is_not_deduped() {
+        let view = sight("t6_attach_optic_m32_view", [4.80, -0.80, 4.80], [8.54, 0.70, 6.84]);
+        let ads = sight("t6_attach_optic_m32_ads", [4.79, -0.80, 4.78], [8.55, 0.70, 6.85]);
+        let base = |model: zhbo_formats::xmodel::Model, ads_only: bool| BasePart { model, tag: None, offset: [0.0; 3], magazine: false, optic: true, ads_only };
+        let mut out = vec![base(view.clone(), false)];
+        assert!(!duplicate_sight(&out, &ads), "the ADS variant is not a duplicate of the hip sight");
+        assert!(duplicate_sight(&out, &view), "a true duplicate still dedupes");
+        out.push(base(ads, true));
+        assert!(!duplicate_sight(&out, &view), "the hip sight is not a duplicate when the ADS variant is present");
+    }
+
     /// The conversion report names every base part, so a part that silently stops loading (the
     /// scope, before this change) is visible in the launcher log.
     #[test]
@@ -883,6 +920,7 @@ mod tests {
             offset: [0.0; 3],
             magazine,
             optic: !magazine,
+            ads_only: false,
         };
         let note = base_part_note(&[part("t6_attach_mag_xpr50_view", true), part("t6_wpn_sniper_xpr50_scope_view", false)]);
         assert!(note.contains("2 base parts"), "{note}");
