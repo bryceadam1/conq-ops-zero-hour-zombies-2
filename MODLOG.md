@@ -3350,6 +3350,44 @@ Verified: cargo test --workspace green; the full real-install suite green (incl.
 `the_m32_sight_loads_both`); clippy clean (no new warnings); `cargo xtask build` clean; autotest
 13/13 default, `--classpick` all checks, 14/14 `--rts`; render acceptance as above.
 
+## Camo option art: multicam and matuka resolve to devgru and bloodshot (2026-10-24)
+
+Merged `v1/camo-option-art` (1 commit). The base 19 camo options' `OPTION_ART` entries for
+`camo_multicam` (weaponoptions.csv id 1, e4=1) and `camo_matuka` (id 7, e4=7) were `None` — the
+converter recorded no slots and the options drew the stock finish. Ghidra G11 had located the
+option table (`FUN_00529360` loads `mp/weaponoptions.csv`), and the CSV itself sits in the
+reference mirror (`lua-dump/patch_mp/mp/weaponoptions.csv`) — **the first research agent
+"reconstructed" the table instead of finding the file and produced four wrong ids; the table in
+this entry is the verified one.** The full 19-option audit (attachmenttable.csv:32-50 ×
+weaponoptions.csv × the 48-asset set order) found exactly two mismatches: multicam's art is set
+0's `t6_camo_devgru_*`, matuka's is set 6's `t6_camo_bloodshot_*` — BO2 ships the 3D pattern art
+under the devgru/bloodshot stems; the option's own name survives only in the menu thumbnail. The
+two `OPTION_ART` stems now name those sets; every base option resolves (unit test
+`the_base_camo_options_all_name_art`; the install test fills the base tab from the patch's own
+table and asserts no base option reports "has no art"). `camo_mtp`/`camo_snake` stay `None` BY
+DECISION: they are MTX-only rows (`attachmenttable.csv:77,85`), outside the base 19 the class
+screen takes (`BASE_CAMO_OPTIONS`), and the 40-set list carries no `mtx_mil`/`mtx_snake` set —
+draw stock, no conversion. CONTRACT.md's "no art" sentence corrected in the same commit. The
+`.zcm` schema is unchanged (only two u32 slot values); no ABI. Archive VERSION 69 → 70.
+
+Verified: cargo test --workspace green; the full real-install suite green (incl. the updated
+`the_camo_assets_convert_with_their_art`); clippy clean; `cargo xtask build` clean; autotest
+13/13 default, `--classpick` all checks, 14/14 `--rts`; render acceptance: per-option renders
+are distinct (below).
+
+* **Render-acceptance gotchas learned (the hard way):** the harness writes ONE camo PNG per
+  weapon (`camo_<id>.png`) that every attachment job OVERWRITES in order — the file is the LAST
+  job's composition, so cross-run comparisons must use `--no-attachments` to pin the composition.
+  The harness is deterministic (byte-identical reruns).
+* **Open follow-up — pattern-camo visibility.** With the composition pinned: multicam vs matuka
+  vs bare are distinct (good: the options resolve and apply), but the pixel delta is noise-level
+  (max channel diff 3–10/255 — the devgru/bloodshot patterns are not visibly reading on the
+  an94), and `camo_gold` (a style camo) moves only 4.22 % of pixels without reading as gold.
+  Whether that's the an94's legitimately-dark/muted BO2 camo coverage, a weak gain/UV-scale in
+  the pattern layer, or a surface-classification gap is unmeasured — a look-parity cycle against
+  BO2's actual camo rendering is queued (the harness now makes it measurable). Camo's end-to-end
+  visual confirmation stays on the user's playtest list.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

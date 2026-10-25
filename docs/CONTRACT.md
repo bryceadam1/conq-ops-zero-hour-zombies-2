@@ -270,8 +270,9 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   id's resolved `(pattern slot, style slot)`. `nativevm::camo::apply` first replaces style pairs by
   exact material name and clears those surfaces' layer, then paints the chosen pattern set onto the
   surfaces whose semantic-22 layer is `Pattern` (pattern image) or `Solid` (solid image); `Neutral`
-  (the reflex `_camo2` group) and `None` draw stock. Options with no art (`camo_multicam`,
-  `camo_matuka`, and DLC `camo_mtp`/`camo_snake`) are recorded with no slots and draw stock. The
+  (the reflex `_camo2` group) and `None` draw stock. Options with no art (`camo_mtp`/`camo_snake`,
+  the MTX-only rows) are recorded with no slots and draw stock; `camo_multicam` and `camo_matuka`
+  resolve to the devgru (set 0) and bloodshot (set 6) patterns. The
   seven optic camo assets (`camo_reflex/holo/ir/acog/hybrid/mms/targetfinder`) are attachment
   recipes and are excluded from per-weapon blobs; `camo_b23r`/`peacekeeper`/`specter` do not resolve
   on the stock install (their weapons/models are outside the parsed `common_mp` table). Weapon

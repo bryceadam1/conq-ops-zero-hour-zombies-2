@@ -145,8 +145,8 @@ fn weapon_by_view_model<'a>(bo2w: &'a [weapon::Weapon], stem: &str) -> Option<&'
 /// for it: the option stays selectable and draws the stock finish (research §5.1/§5.4).
 const OPTION_ART: &[(&str, Option<&str>, Option<&str>)] = &[
     ("camo_none", None, None),
-    ("camo_multicam", None, None),
-    ("camo_matuka", None, None),
+    ("camo_multicam", Some("t6_camo_devgru"), None),
+    ("camo_matuka", Some("t6_camo_bloodshot"), None),
     ("camo_mtp", None, None),
     ("camo_snake", None, None),
     ("camo_atacs", Some("t6_camo_atacs"), None),
@@ -326,11 +326,15 @@ mod tests {
         // The plain table leaves the option lists empty; fill what this test needs from the
         // converted set names (the real path uses table_with_metadata).
         let set_names: std::collections::HashSet<String> = sets.iter().map(|c| c.name.clone()).collect();
+        // The plain table's option list is empty; take the base tab from the patch's own table
+        // (the production path does this in `table_with_metadata` with `camo_options`).
+        let base: Vec<String> = crate::weapons::camo_options(&patch, &names)
+            .iter()
+            .take(crate::weapons::BASE_CAMO_OPTIONS)
+            .map(|c| c.id.clone())
+            .collect();
         for w in &mut table.weapons {
-            w.camo = vec![
-                "camo_none".into(), "camo_multicam".into(), "camo_atacs".into(), "camo_gold".into(),
-                "camo_diamond".into(), "camo_carbon".into(),
-            ];
+            w.camo = base.clone();
             w.camo_material = crate::weapons::camo_material_for(&w.id, &set_names).unwrap_or_default();
         }
         let mut out = std::collections::BTreeMap::new();
@@ -349,18 +353,52 @@ mod tests {
         assert!(resolved.contains(&"camo_xpr50"), "the AS50's camo must convert: {resolved:?}");
         assert!(resolved.contains(&"camo_riot_shield"), "the riot shield's camo must convert: {resolved:?}");
         assert_eq!(s.assets, resolved.len(), "assets count matches the written blobs");
-        assert!(s.unresolved.iter().any(|u| u.ends_with("camo_multicam has no art")), "{:?}", s.unresolved);
+        let no_art: Vec<&String> = base
+            .iter()
+            .filter(|id| id.as_str() != "camo_none" && s.unresolved.iter().any(|u| u.ends_with(&format!("{id} has no art"))))
+            .collect();
+        assert!(no_art.is_empty(), "base options without art: {no_art:?}");
         let an94 = zhbo_native::camo::Camo::from_bytes(&out[&zhbo_native::camo_path("camo_an94")]).unwrap();
         assert_eq!((an94.sets.len(), an94.styles.len()), (40, 15));
         let opt = |id: &str| an94.options.iter().find(|o| o.id == id).unwrap();
         assert!(opt("camo_atacs").pattern.is_some());
         assert_eq!(opt("camo_gold").style, Some(0));
-        assert_eq!((opt("camo_multicam").pattern, opt("camo_multicam").style), (None, None));
+        assert_eq!(opt("camo_multicam").style, None);
+        assert!(opt("camo_multicam").pattern.is_some(), "multicam resolves to the devgru set");
+        assert!(opt("camo_matuka").pattern.is_some(), "matuka resolves to the bloodshot set");
+        let multicam = opt("camo_multicam").pattern.unwrap() as usize;
+        let matuka = opt("camo_matuka").pattern.unwrap() as usize;
+        assert!(an94.sets[multicam].pattern.as_deref().is_some_and(|p| p.contains("devgru")), "{:?}", an94.sets[multicam].pattern);
+        assert!(an94.sets[matuka].pattern.as_deref().is_some_and(|p| p.contains("bloodshot")), "{:?}", an94.sets[matuka].pattern);
         assert!(an94.sets[1].pattern.as_deref().is_some_and(|p| p.contains("atacs")));
         assert!(out.keys().any(|k| k.contains("camo_atacs_pattern")), "the pattern art");
         // The gold style's real colour map is `~-gcamo_code_spc`; `character::texture_file` strips
         // the `~-g` prefix, so the archive path is `zhbo_camo_code_spc.tga` (the plan's assumed
         // `camo_gold_col` name is not what this install's material carries).
         assert!(out.keys().any(|k| k.contains("camo_code_spc")), "the style art");
+    }
+
+    /// The base 19 camo options (`attachmenttable.csv:32-50`) all name art in `OPTION_ART`,
+    /// except `camo_none` (stock). The two formerly art-less names resolve to the devgru and
+    /// bloodshot sets the CSV's e4 indices select (multicam e4=1 -> set 0; matuka e4=7 -> set 6).
+    #[test]
+    fn the_base_camo_options_all_name_art() {
+        const BASE: [&str; 19] = [
+            "camo_none", "camo_multicam", "camo_atacs", "camo_erdl", "camo_siberia", "camo_choco",
+            "camo_tiger_blue", "camo_matuka", "camo_ghostex", "camo_kryptek", "camo_carbon",
+            "camo_blossom", "camo_artofwar", "camo_ronin", "camo_skulls", "camo_gold",
+            "camo_diamond", "camo_elite1", "camo_collectors",
+        ];
+        let entry = |id: &str| OPTION_ART.iter().copied().find(|(o, _, _)| *o == id);
+        for id in BASE {
+            let (_, stem, family) = entry(id).unwrap_or_else(|| panic!("{id} missing from OPTION_ART"));
+            if id == "camo_none" {
+                assert!(stem.is_none() && family.is_none(), "camo_none must draw the stock finish");
+            } else {
+                assert!(stem.is_some() || family.is_some(), "{id} names no art");
+            }
+        }
+        assert_eq!(entry("camo_multicam").and_then(|(_, s, _)| s), Some("t6_camo_devgru"));
+        assert_eq!(entry("camo_matuka").and_then(|(_, s, _)| s), Some("t6_camo_bloodshot"));
     }
 }
