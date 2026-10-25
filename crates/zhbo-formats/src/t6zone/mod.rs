@@ -342,10 +342,15 @@ pub struct Zone {
     pub trailing_bytes: usize,
 }
 
-/// A zone assembled from raw memory (reader tests build one without a fastfile stream).
+/// A zone assembled from raw memory: reader tests (here and in the conformance oracle) build one
+/// without a fastfile stream.
+pub fn synthetic(name: &str, mem: Vec<u8>, script_strings: Vec<String>, assets: Vec<Asset>) -> Zone {
+    Zone { name: name.to_string(), mem, script_strings, assets, trailing_bytes: 0 }
+}
+
 #[cfg(test)]
 pub(crate) fn synthetic_zone(name: &str, mem: Vec<u8>, script_strings: Vec<String>, assets: Vec<Asset>) -> Zone {
-    Zone { name: name.to_string(), mem, script_strings, assets, trailing_bytes: 0 }
+    synthetic(name, mem, script_strings, assets)
 }
 
 /// Load every asset of a decrypted zone. On failure the error says which asset broke.

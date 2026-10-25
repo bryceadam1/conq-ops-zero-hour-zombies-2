@@ -12,3 +12,4 @@ pub mod bo2;
 pub mod csv;
 pub mod diff;
 pub mod schema;
+pub mod weapons;

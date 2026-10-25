@@ -248,7 +248,7 @@ pub fn markdown(report: &Report) -> String {
     }
     s.push_str("## By area\n\n| area | columns | cells |\n|---|---|---|\n");
     let mut by_area: Vec<_> = areas.into_iter().collect();
-    by_area.sort_by(|a, b| b.1 .1.cmp(&a.1 .1));
+    by_area.sort_by_key(|a| std::cmp::Reverse(a.1 .1));
     for (a, (cols, cells)) in &by_area {
         s.push_str(&format!("| {a} | {cols} | {cells} |\n"));
     }

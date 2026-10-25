@@ -55,9 +55,10 @@ keep the parent's attachment fields (G14 §5: the alt index replaces only the va
 ## Phases
 
 - [x] 0. Ghidra G14 (combination resolution) and G15 (CaC legality), read-only.
-- [ ] 1. Crate skeleton, schema, CSV, differ + unit tests.
-- [ ] 2. Parser additions in `zhbo-formats` + synthetic-zone tests.
-- [ ] 3. Oracle: combos, resolve, expected weapon rows.
+- [x] 1. Crate skeleton, schema, CSV, differ + unit tests.
+- [x] 2. Parser additions: none needed — the oracle reads the raw structs through the layouts
+      (`bo2/raw.rs`); `t6zone::synthetic` is public for the oracle's fixture tests.
+- [x] 3. Oracle: combos, resolve, expected weapon rows (G16: `getloadoutweapon`, ammo, camo).
 - [ ] 4. Actual weapon rows from the in-memory conversion.
 - [ ] 5. Havok Lua reader; CaC CSV on both sides.
 - [ ] 6. CLI subcommand, install-gated test, docs (TESTING rung, ARCHITECTURE crate, MODLOG).
