@@ -144,14 +144,19 @@ pub(crate) fn anim(a: &xanim::Anim) -> zhbo_native::anim::Anim {
 /// rule: an optic's window (`OPTIC_WINDOW` of the way up it, above its root; the base scope or a
 /// mounted attachment optic), else BO2's own `tag_sights`, else `tag_sights_on`, else the front
 /// sight found from the gun's shape. Returned as a marker under the gun's root bone (`gun_root`).
-/// The optic is `(part index, model mins, model maxs)`.
-pub(crate) fn aim_marker(skel: &Skeleton, gun: &xmodel::Model, optic: Option<(usize, [f32; 3], [f32; 3])>) -> Option<Marker> {
+/// A `_scope_view` optic instead reads its root bone, the scope's authored `tag_scope`.
+/// The optic is `(part index, model mins, model maxs, model name)`.
+pub(crate) fn aim_marker(skel: &Skeleton, gun: &xmodel::Model, optic: Option<(usize, [f32; 3], [f32; 3], &str)>) -> Option<Marker> {
     let gun_root = skel.parts.get(1)?.first;
     let bind = |i: usize| skel.bones[i].bind;
-    let at = if let Some((part, mins, maxs)) = optic {
-        let root = skel.parts.get(part)?.first;
-        let mid = mins[2] + (maxs[2] - mins[2]) * crate::generals::OPTIC_WINDOW;
-        Some(apply(bind(root), [0.0, 0.0, mid]))
+    let at = if let Some((part, mins, maxs, model)) = optic {
+        if model.contains("_scope_view") {
+            Some(bind(skel.parts.get(part)?.first).1)
+        } else {
+            let root = skel.parts.get(part)?.first;
+            let mid = mins[2] + (maxs[2] - mins[2]) * crate::generals::OPTIC_WINDOW;
+            Some(apply(bind(root), [0.0, 0.0, mid]))
+        }
     } else {
         skel.bone("tag_sights").or_else(|| skel.bone("tag_sights_on")).map(|i| bind(i).1).or_else(|| {
             // The fallback sight anchor follows the gun's mount: the gun part's first bone
@@ -261,7 +266,7 @@ pub(crate) fn viewmodels(
         for (bp, path) in v.base_parts.iter().zip(&base_paths) {
             let tag = bp.tag.clone().filter(|t| has(t, &parts)).unwrap_or_else(|| "j_gun".into());
             if bp.optic {
-                optic = Some((parts.len(), bp.model.mins, bp.model.maxs));
+                optic = Some((parts.len(), bp.model.mins, bp.model.maxs, bp.model.name.as_str()));
             }
             parts.push((bp.model, Some(tag), bp.offset, false, path.clone()));
             if bp.magazine && has("tag_clip1", &parts) {
@@ -275,7 +280,7 @@ pub(crate) fn viewmodels(
             // origin (`pose.rs`'s missing-tag rule).
             let tag = tag.clone().filter(|t| has(t, &parts)).or_else(|| has("j_gun", &parts).then(|| "j_gun".into()));
             if *is_optic {
-                optic = Some((parts.len(), v.extra_models[k].mins, v.extra_models[k].maxs));
+                optic = Some((parts.len(), v.extra_models[k].mins, v.extra_models[k].maxs, v.extra_models[k].name.as_str()));
             }
             parts.push((model, tag, *offset, false, path.clone()));
         }
@@ -492,6 +497,60 @@ mod tests {
         let manifest = zhbo_native::viewmodel::Viewmodel::from_bytes(out.get(&path).unwrap()).unwrap();
         let part = manifest.parts.iter().find(|p| p.tag.as_deref() == Some("j_gun")).expect("the attachment mounts at j_gun");
         assert_eq!(part.offset, authored, "the authored offset is unchanged");
+    }
+
+    /// A `_scope_view` optic's marker reads the part's `tag_scope` bone, not the computed window.
+    #[test]
+    fn aim_marker_prefers_tag_scope_for_scope_view_optics() {
+        let mut scope = gun();
+        scope.name = "t6_wpn_sniper_test_scope_view".into();
+        scope.bones[0].name = "tag_scope".into();
+        scope.mins = [0.0; 3];
+        scope.maxs = [30.0, 0.0, 4.0];
+        let scope_nm = model(&scope, &[None], &Looks::default());
+        let gun_model = gun();
+        let gun_nm = model(&gun_model, &[None], &Looks::default());
+        let arms = nm::Model {
+            name: "arms".into(),
+            bones: vec![nm::Bone { name: "tag_weapon".into(), parent: None, local_rotation: QUAT_IDENTITY, local_position: [0.0; 3], rotation: QUAT_IDENTITY, position: [0.0; 3] }],
+            ..Default::default()
+        };
+        let skel = skeleton(&[
+            (&arms, None, zhbo_native::math::IDENTITY, false),
+            (&gun_nm, Some("tag_weapon"), zhbo_native::math::IDENTITY, false),
+            (&scope_nm, Some("j_gun"), zhbo_native::math::IDENTITY, false),
+        ]);
+        let m = aim_marker(&skel, &gun_model, Some((2, scope.mins, scope.maxs, "t6_wpn_sniper_test_scope_view"))).expect("a sight");
+        assert_eq!(m.parent, "tag_weapon");
+        assert!((m.local.1[0] - 1.0).abs() < 1e-4, "{:?}", m.local.1);
+        assert!((m.local.1[2] - 0.0).abs() < 1e-4, "{:?}", m.local.1);
+    }
+
+    /// A non-`_scope_view` optic (the M32's sight family) keeps the computed window point.
+    #[test]
+    fn aim_marker_keeps_the_window_for_a_non_scope_view_optic() {
+        let mut sight = gun();
+        sight.name = "t6_attach_optic_m32_view".into();
+        sight.bones[0].name = "tag_scope".into();
+        sight.mins = [0.0; 3];
+        sight.maxs = [30.0, 0.0, 4.0];
+        let sight_nm = model(&sight, &[None], &Looks::default());
+        let gun_model = gun();
+        let gun_nm = model(&gun_model, &[None], &Looks::default());
+        let arms = nm::Model {
+            name: "arms".into(),
+            bones: vec![nm::Bone { name: "tag_weapon".into(), parent: None, local_rotation: QUAT_IDENTITY, local_position: [0.0; 3], rotation: QUAT_IDENTITY, position: [0.0; 3] }],
+            ..Default::default()
+        };
+        let skel = skeleton(&[
+            (&arms, None, zhbo_native::math::IDENTITY, false),
+            (&gun_nm, Some("tag_weapon"), zhbo_native::math::IDENTITY, false),
+            (&sight_nm, Some("j_gun"), zhbo_native::math::IDENTITY, false),
+        ]);
+        let m = aim_marker(&skel, &gun_model, Some((2, sight.mins, sight.maxs, "t6_attach_optic_m32_view"))).expect("a sight");
+        assert_eq!(m.parent, "tag_weapon");
+        assert!((m.local.1[0] - 1.0).abs() < 1e-4, "{:?}", m.local.1);
+        assert!((m.local.1[2] - 2.88).abs() < 1e-3, "{:?}", m.local.1);
     }
 
 }
