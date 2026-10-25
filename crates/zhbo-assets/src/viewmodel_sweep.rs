@@ -184,6 +184,46 @@ mod tests {
         }
     }
 
+    /// The `_scope_view` snipers read the part's `tag_scope` bone; the M32's non-`_scope_view`
+    /// sight keeps the computed window. The marker's `local` is in the gun root's frame, so both
+    /// assertions compose the target bone's bind through the gun root's inverse.
+    #[test]
+    #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
+    fn the_scope_view_marker_reads_tag_scope_and_the_m32_keeps_the_window() {
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        let load = |id: &str| {
+            let blobs = src.composition(id).expect(id);
+            let vm = zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("a manifest")).expect("the manifest parses");
+            (vm, blobs)
+        };
+        for id in ["dsr50_mp", "ballista_mp"] {
+            let (vm, blobs) = load(id);
+            let marker = vm.markers.iter().find(|m| m.name == zhbo_native::AIM_TAG).expect("an aim marker");
+            let skel = skeleton(&vm, &blobs);
+            let gun_root = skel.parts.get(1).expect("the gun part").first;
+            let scope = skel.bone("tag_scope").expect("the scope's tag_scope bone");
+            let expected = zhbo_native::math::compose(zhbo_native::math::inverse(skel.bones[gun_root].bind), (zhbo_native::math::QUAT_IDENTITY, skel.bones[scope].bind.1));
+            assert!((marker.local.1[0] - expected.1[0]).abs() < 1e-4, "{id}: x");
+            assert!((marker.local.1[1] - expected.1[1]).abs() < 1e-4, "{id}: y");
+            assert!((marker.local.1[2] - expected.1[2]).abs() < 1e-4, "{id}: z");
+        }
+        // The M32's sight model is not `_scope_view`: its marker stays on the window point.
+        let (vm, blobs) = load("m32_mp");
+        let marker = vm.markers.iter().find(|m| m.name == zhbo_native::AIM_TAG).expect("an aim marker");
+        let skel = skeleton(&vm, &blobs);
+        let gun_root = skel.parts.get(1).expect("the gun part").first;
+        let sight = vm.parts.iter().position(|p| p.model.contains("attach_optic_m32")).expect("the M32's sight part");
+        let sight_bone = skel.parts.get(sight).expect("the sight's part bones").first;
+        let model = zhbo_native::model::Model::from_bytes(blobs.get(&vm.parts[sight].model).expect("the sight's model")).expect("the model");
+        let mid = model.mins[2] + (model.maxs[2] - model.mins[2]) * crate::generals::OPTIC_WINDOW;
+        let window = zhbo_native::math::apply(skel.bones[sight_bone].bind, [0.0, 0.0, mid]);
+        let expected = zhbo_native::math::compose(zhbo_native::math::inverse(skel.bones[gun_root].bind), (zhbo_native::math::QUAT_IDENTITY, window));
+        assert!((marker.local.1[0] - expected.1[0]).abs() < 1e-4, "m32: x");
+        assert!((marker.local.1[1] - expected.1[1]).abs() < 1e-4, "m32: y");
+        assert!((marker.local.1[2] - expected.1[2]).abs() < 1e-4, "m32: z");
+    }
+
     /// The IR combination moves the base scope instead of replacing it: `viewModelOffsetBaseAttachment`
     /// is in the same `j_gun` frame as `attachViewModelOffset` (the AS50 keeps the authored Y/Z of
     /// `[9.889, 0, 4.253]`), so it REPLACES the part's offset; the optic's mount then loads at its own

@@ -3294,6 +3294,29 @@ Verified: cargo test --workspace green; the full real-install suite green; clipp
 xtask build` clean; autotest 13/13 default, `--classpick` all checks, 14/14 `--rts`; render
 acceptance as above.
 
+## The snipers' aim marker reads the scope's authored `tag_scope` (2026-10-24)
+
+Merged `v1/tag-scope-marker` (1 commit). The converter's aim marker for optic parts was R6's
+window heuristic (`OPTIC_WINDOW`, 0.72 up the part's Z bounds); the scoped snipers' ADS clips are
+instead authored to the scope's own `tag_scope` bone — the scope model's root (sweep-pinned:
+dsr50 [0.009, 0.011] and ballista [0.027, -0.117] off the eye line at full ADS). The marker now
+reads `tag_scope` for the sniper-scope family (model name contains `_scope_view`, the sweep's own
+key) and keeps the window everywhere else. **The scoping is the point:** the M32's sight models
+carry `tag_scope` too, but its clip is authored to the window point ([0.002, 0.107] pinned), so a
+blanket rule would have regressed its W3D slide ~0.47″. Marker deltas: dsr50 0.70″, ballista
+1.00″, as50 2.18″ — and the AS50's scope is the XPR-50's model (`t6_wpn_sniper_as50_scope_view`
+does not exist; the AS50 borrows `t6_wpn_sniper_xpr50_scope_view` and its mag, which is why the
+earlier probe missed it). The AS50's clip is authored 1.302″ off its `tag_scope` (pinned parity,
+unchanged — its W3D slide fidelity was already compromised). No attachment optic is named
+`_scope_view` (checked all four snipers' uniques; `xpr50_mp` is not in the MP weapon set). The
+clip path never consumes the marker: this moves only the W3D fallback slide and the manifest
+marker. Archive VERSION 67 → 68.
+
+Verified: cargo test --workspace green; the full real-install suite green (incl. the new
+`the_scope_view_marker_reads_tag_scope_and_the_m32_keeps_the_window`); clippy clean; `cargo
+xtask build` clean; autotest 13/13 default, `--classpick` all checks, 14/14 `--rts`; dsr50/m32
+renders sane.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

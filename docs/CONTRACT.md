@@ -221,7 +221,8 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   (an aimed burst stays on the up clip's last frame); both clips are requested on the first aiming
   frame so a reversal never waits for its clip. The eye-frame slide (`place::aligned`, which moves
   the aim marker — `zhbo_native::AIM_TAG`: BO2's `tag_sights`, an optic's window when one is
-  mounted, or the front sight the converter found — onto the axis by `ZhboNativeIn.ads`, BO2's
+  mounted (a sniper scope's own authored `tag_scope` for the `_scope_view` family), or the front
+  sight the converter found — onto the axis by `ZhboNativeIn.ads`, BO2's
   `fWeaponPosFrac`, keeping its forward distance) is the **fallback**: it runs only when the
   manifest has no ADS clip (equipment, a partial conversion) or the clip has not loaded yet, and
   it is the W3D path's rule. Applying both would double-correct mid-transition and keep the hip's
