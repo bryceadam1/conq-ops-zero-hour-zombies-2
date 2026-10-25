@@ -257,7 +257,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     // What each perk does: its specialty set, from the player's own statstable (Ghidra G1).
     table.perks = crate::weapons::perk_rows(&patch);
     let converted = crate::weapons::converted(&bo2);
-    crate::weapons::add_variants(&mut table, &converted);
+    crate::weapons::add_variants(&mut table, &converted, &bo2);
     let camo = crate::camo::files(&common, &patch, &common_patch, &paks, &camo_assets, &bo2, &table, &mut out)?;
     summary.push(format!(
         "camo: {} assets, {} pattern images, {} style materials, no art: {}",
@@ -597,7 +597,7 @@ mod tests {
             for (short, _) in &base.allowed {
                 let id = zhbo_core::attachments::variant_id(&base.id, &[short.as_str()]);
                 let mut t = table.clone();
-                crate::weapons::add_variants(&mut t, std::slice::from_ref(&id));
+                crate::weapons::add_variants(&mut t, std::slice::from_ref(&id), &bo2);
                 let Some(d) = t.weapons.iter().find(|d| d.id == id).cloned() else {
                     fails.push(format!("{id}: not built"));
                     continue;
@@ -716,10 +716,30 @@ mod tests {
         let atts = zhbo_formats::weapon::attachments(&common).unwrap();
         let mut table = crate::weapons::table(&bo2, &atts, &names);
         let converted = crate::weapons::converted(&bo2);
-        crate::weapons::add_variants(&mut table, &converted);
+        crate::weapons::add_variants(&mut table, &converted, &bo2);
         let text = zhbo_core::weapons::format_full_table(&table);
         let back = zhbo_core::weapons::parse_full_table(&text).expect("the table re-parses");
         assert_eq!(zhbo_core::weapons::format_full_table(&back), text, "format ∘ parse is the identity on the converter's table");
+    }
+
+    /// The synthesized per-combination defs carry the mounted optic's overlay, not the base's: the
+    /// base AS50 keeps `scope_overlay_xpr50`, the ACOG's empty unique means no overlay, and FMJ
+    /// leaves the base scope (so the base fields stand). The production `converted` list only
+    /// carries the loadout's combo, so this pins the AS50 combos explicitly.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_installs_synthesized_combos_overlay_follows_the_mounted_optic() {
+        let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
+        let common = load_zone(&bo2_dir, "common_mp").unwrap();
+        let names = crate::weapons::names(&bo2_dir);
+        let bo2 = zhbo_formats::weapon::all(&common).unwrap();
+        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        let mut table = crate::weapons::table(&bo2, &atts, &names);
+        crate::weapons::add_variants(&mut table, &["as50_mp+acog".to_string(), "as50_mp+fmj".to_string()], &bo2);
+        let def = |id: &str| table.weapons.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("no {id}"));
+        assert_eq!(def("as50_mp").overlay_material, "scope_overlay_xpr50");
+        assert!(def("as50_mp+acog").overlay_material.is_empty(), "the ACOG's unique has no overlay");
+        assert_eq!(def("as50_mp+fmj").overlay_material, "scope_overlay_xpr50", "FMJ leaves the base scope");
     }
 
     #[test]
