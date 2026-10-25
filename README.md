@@ -111,7 +111,8 @@ The two scripts take `-Dist` to test a given build.
 | `crates/zhbo-requirements` | Finds and validates both game installs (Steam libraries, SteamCMD folders, Wine/CrossOver/Proton prefixes) |
 | `crates/zhbo-launcher` | `ConquerOps.exe` / `conquerops`: requirement check, BO2 art, starting the game |
 | `crates/zhbo-formats` | `.big` (Zero Hour); `.sabs`/`.sabl` sound banks, `.ipak` image packs, `IWi` images, LZO1X (Black Ops II) |
-| `crates/zhbo-assets` | BO2 HUD art converter, plus a CLI to list/export your BO2 sounds and images |
+| `crates/zhbo-assets` | BO2 HUD art converter, plus a CLI to list/export your BO2 sounds and images and run the BO2 conformance diff |
+| `crates/zhbo-conformance` | BO2 parity conformance: the shared CSV schema, BO2's own rules over your install (the expected side), the differ |
 | `host/zhbo` | C++ compiled into the engine: bridge, platform layer (SDL3/Win32), bgfx-on-wgpu adapter |
 | `host/patches` | The engine hooks (~120 lines) and the `wgpu` renderer option for the engine's CMake |
 | `data/` | Mod INI files, packed into `ConquerOps.big` |

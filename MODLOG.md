@@ -3546,6 +3546,47 @@ Verified: cargo test --workspace green; the full real-install suite green; clipp
 xtask build` clean; autotest 13/13 default, `--classpick` all checks, 14/14 `--rts`, `--scope`
 PASS; render acceptance as measured above.
 
+## The BO2 conformance layer: parity is now measured, not eyeballed (2026-10-25)
+
+Merged `v1/conformance` (4 commits, +5,204/−22). The playtest report's verdict — "visual
+analysis is not working" — gets its answer: a new `zhbo-conformance` crate that emits
+**expected.csv** (BO2's side: its own combination rules — new Ghidra notes G14–G17 — applied to
+the player's parsed install; compiled UI scripts read for the class caps/category order via a
+new read-only Havok-Lua reader in zhbo-formats) and **actual.csv** (the mod's side: the
+converter's real archive built in memory, each class resolved through the runtime lookup, so an
+unconverted combo shows the base gun's art/anims exactly as the game draws it), then diffs them
+per cell across every legal combination (Gunfighter three-attachment combos included — BO2
+allows THREE on primaries; my earlier ≤2 framing was wrong). 275 weapons columns + a CaC table;
+11,605 expected rows vs 10,088 actual; **897,888 differing cells in ~200 clusters, plus 2,264
+BO2-only and 747 mod-only rows** — the parity backlog, on record. Run it:
+`cargo run --release -p zhbo-assets -- conformance <dir>`; the install-gated test
+(`cargo test --release -p zhbo-assets conformance -- --ignored`, ~110 s) is the gate.
+
+* **The stance (documented in TESTING.md's new section):** the conformance test is
+  red-by-design and does NOT block merges — the cluster/cell counts are the burn-down metric,
+  tracked per integration. The rest of the real-install suite runs with `--skip conformance`.
+  Any difference is a parity gap (no allowlist); every column is both-sides-or-not-a-column;
+  f32 columns carry documented representation epsilons in the schema.
+* The mod-side hooks are read-only and behavior-identical: `nativevm::clip_for` (extracted, not
+  changed), `big::members` (in-memory archive read), the synthetic-zone builder's visibility,
+  the class-editor offer list. No version/ABI moves.
+* First-run findings now queued for fix cycles (each is its own cycle, CSV-verified): the
+  animation selection rule (BO2: optic-first for aim slots then attachment order; the mod:
+  most-anims), millisecond truncation in attachment time scaling, hide-merge semantics,
+  silencer fire sound + muzzle flash swap, the AN-94 dry-fire everywhere, the magazine's
+  authored −15° rotation, per-attachment camo, 153 combined-attachment uniques the converter
+  never selects, ~40 uncarried field kinds (rechamber/quick-reload times, zoom FOVs 2/3, depth
+  of field, tracers), combination legality (compatibility lists vs the mount-point rule),
+  dual-wield as separate weapons (BO2's `fnp45_dw_mp` vs the mod's `+dw`), the 3-attachment
+  Gunfighter rows.
+* Coordination: the generator false-gap audit runs in parallel (the other session); the
+  identical 37,364 cell counts in `identity`/`flags` are the first suspect cluster there.
+
+Verified: cargo test --workspace green; the real-install suite (`--skip conformance`) green;
+clippy clean; `cargo xtask build` clean; autotest 13/13 default, `--classpick` all checks,
+14/14 `--rts`, `--scope` PASS. Conformance baseline: 897,888 cells / ~200 clusters (burn-down
+starts here).
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
@@ -4083,3 +4124,67 @@ asserts `[32,64,128]` for texture `[128,64,32]`), so the red camo layer over a b
 `[0,0,255]`, not `[255,0,0]`. The plan's assertion had the byte order inverted; the applied test
 uses the BGR value. The plan's separate `mod tests` block was folded into the module already at the
 end of `camo.rs` (a second `mod tests` would not compile).
+
+## BO2 conformance layer: parity as data (2026-10-25, branch `v1/conformance`)
+
+Parity is now checked mechanically. `crates/zhbo-conformance` (depends on `zhbo-formats` only)
+holds one CSV schema per table, BO2's own rules over the player's install (the expected side) and
+the differ; `zhbo-assets::conformance` emits what the mod ships (the actual side), the
+`zhbo-assets conformance <dir>` subcommand writes both CSVs, the long-form diff, the schema and a
+clustered report outside the repo, and the ignored test `conformance::tests::conformance` fails
+while any gap cluster exists. TESTING.md "BO2 conformance" documents the rung. Nothing the mod
+ships changed (no version or ABI bump); the core gained two read-only hooks
+(`nativevm::clip_for`, `classmenu::offer`) and `classui::perk_name` is exported.
+
+**Owner decisions (2026-10-25).** A fact is excluded only when meaningless in one world (streaks,
+ZH factions, the arms); a BO2 fact the mod lacks is a column whose mod side is empty and fails.
+`actual` is what ships, so an unconverted combination draws its base's art and anims exactly as the
+game does. Combinations include Primary Gunfighter's third and Secondary Gunfighter's second
+attachment. The expected side is transcribed from Ghidra (offline emulation of a pure numeric
+function is allowed if a diff hinges on one). Lua-only CaC facts come from a small Havok-Script
+reader (`zhbo_formats::havok_lua`) over the install's own bytecode.
+
+**New Ghidra answers** (read-only, `~/Documents/BO2-reference/ghidra/answers/`): G14 (how a
+combination resolves — the canonical `eAttachment` order, `attachmentUniques[kind]` single uniques
+vs the `childLink`/`siblingLink` combined children `FUN_008eb690` picks, the part lists, ~60
+per-field accessors, the hide-tag merge, override-gated sounds/flash, the anim table), G15 (the
+mutual `compatibleAttachments` rule and the Gunfighter caps), G16 (`getloadoutweapon`: a pistol
+with `dw` is the `R_dw_mp` variant; start/max ammo; per-part camo), G17 (CaC list order: statstable
+column 9 then the index; column-8 tokens are cut at `_`; an item's attachment costs 1).
+
+**Gotchas.**
+- `zhbo_formats::weapon::read` already makes converter choices (ms→s, the overlay fallback, the
+  base-parts merge); the oracle reads the raw structs through the layouts instead (`bo2/raw.rs`).
+- `attachmentUniques` is 95 long, not the 0x3f the clip-unique loop walks; children start at 63.
+- BO2's statstable tokens are not asset names: `grip_smg` has no `WeaponAttachment` but is the grip
+  (`strtok(token, "_")`). Resolving tokens by asset name dropped every SMG grip.
+- `attachmenttable.csv` column 12 is not the CaC cost (holo's is 10000); the two-argument
+  `GetItemAttachmentAllocationCost` answers 1.
+- `Draft::default()` is a populated class: measure an element's cost from an emptied draft.
+- Havok Script: the `DATA` pseudo-op (76) after `GETFIELD_R1` writes no register; a store scan
+  that treats it as one loses every global path.
+- `hud::build_archive` (not `generals::files`) is the launcher's archive: the HUD/CaC sprites and
+  their MappedImage INI live only there. `big::members` reads it from memory.
+- BO2 binds the `_LEFT` anim slots on a single gun too, with nothing behind them; the columns are
+  the dual-wield left gun's only. Part order is not a fact either game shows: parts are listed
+  sorted. Rotations are compared as canonical quaternions (the oracle's own `AnglesToAxis`).
+
+**The backlog (first run, the deliverable's proof — not fixed here).** weapons: 11,605 expected vs
+10,088 actual rows, 897,888 differing cells in 200 column clusters, 2,264 rows only BO2 has, 747
+only the mod has; cac: 608 vs 552 rows, 881 cells in 7 clusters, 62/6 one-sided rows — 211 gap
+clusters in all. The largest areas: anims (unconverted combinations play the base clips; BO2 merges
+per slot, optic first for ADS slots), timing (BO2 truncates `(int)(ms × Π scale)`; the mod
+substitutes defaults such as `reload_empty_add_time`), the many BO2 fields the mod does not carry
+(rechamber/hold-fire/quick-reload times, zoom FOV 2/3, DOF, tracers, world flashes, hit-location
+multipliers), parts (combined uniques never used, the magazine's authored −15° roll missing, a mod
+rigid reload magazine on `tag_clip1`, per-attachment camo), coverage (the mod's one-per-point rule
+vs BO2's compatibility lists; DLC camos/reticles), sounds/flash not following the silencer, the
+AN-94 dry fire for every gun, and the dual-wield representation (`fnp45_mp+dw` vs `fnp45_dw_mp`).
+
+**Verified.** `cargo test --workspace` green (zhbo-conformance 25 unit tests, zhbo-core 394);
+`cargo clippy --workspace --all-targets` adds no warning (the ~20 that remain predate this branch,
+in lines it did not change); the real-install suite — `ZHBO_BO2_DIR=… cargo test -q --release -p
+zhbo-assets -- --ignored`: 30 passed, the new gate failing by design with the backlog above
+(110 s); `-p zhbo-formats -- --ignored`: 10 passed (cargo stops at the first failing crate, so run
+the two separately). The in-game autotest was not run (no game launch; nothing in the game's path
+changed).

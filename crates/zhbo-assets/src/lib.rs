@@ -6,6 +6,7 @@
 
 pub mod cac;
 pub mod camo;
+pub mod conformance;
 pub mod hud;
 pub mod images;
 pub mod sounds;

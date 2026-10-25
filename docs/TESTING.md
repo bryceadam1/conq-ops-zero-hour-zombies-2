@@ -12,6 +12,7 @@ How each layer of the mod is verified, and what to run before declaring a change
 | Native viewmodel (Track R) | blob formats round-trip and refuse damage (`zhbo-native`); the core's request/answer loading, composition, posing and the ADS pose layer without a GPU — the 0x55/0x56 `tag_torso` overlay over the action clip, its fraction scrub and clip switch, and the clip-less eye-frame slide fallback; end to end into a headless renderer | `cargo test -p zhbo-native`; `cargo test -p zhbo-core nativevm` and `cargo test -p zhbo-core --features renderer nativevm`; the real-install conversion test checks every converted viewmodel's blobs (`ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets converts_from_real_install -- --ignored`); the ADS pose against BO2's measured per-family table, the twin (`ads_down` frame 0 == `ads_up` frame N) and the launchers' rotation (`ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets the_ads_clip_reproduces_bo2s_authored_pose -- --ignored`); the equipment's authored sub-bone parking and the `stored local + track` playback rule (`ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets equipment_subbone_tracks_are_bo2s_authored_parking -- --ignored`); the base parts — the snipers' scope is loaded at its authored offset, the ACOG/`is` replace it, the M32's hip sight loads once (`ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets the_sniper_scope_is_a_base_part the_acog_replaces_the_base_scope the_m32_sight_loads_once the_pistol_dualclip_suppresses_nothing -- --ignored`); the IR combination moves the base scope and adds the dual-band mount (`ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets the_ir_combo_moves_the_base_scope_and_adds_the_mount -- --ignored`); the AS50 base unique parser test (synthetic zone: `cargo test -q --release -p zhbo-formats the_base_unique_carries_the_overlay_material -- --nocapture`); the converter's synthesized combos' overlays (`cargo test -q -p zhbo-assets weapons::tests::the_synthesized_combos_overlay_follows_the_mounted_optic`; `ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets the_installs_synthesized_combos_overlay_follows_the_mounted_optic -- --ignored`) |
 | Native third person (Track R7) | the body and world-weapon manifests round-trip (`zhbo-native`); the clip resolver's state scan (`zhbo-assets`); the core's third-person composition, state selection and world placement without a GPU | `cargo test -p zhbo-native -p zhbo-assets -p zhbo-core nativebody`; the real-install conversion test additionally checks every faction body (72 inches, weapon tag, all states' clips, textures) composes with every world weapon (`ZHBO_BO2_DIR=… cargo test -p zhbo-assets converts_from_real_install -- --ignored`) |
 | Asset conformance | BO2/ConquerOps zones load with 0 bytes left over; weapon table round-trips; shell ejection matches BO2 — exactly the 41 defs that define `viewShellEjectEffect` and their FXList oriented at `tag_brass` on BO2's axes | `cargo test -p zhbo-assets`; install-gated: `ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets every_mp_weapon_converts_and_plays_like_bo2 converts_from_real_install -- --ignored` |
+| BO2 conformance | Every fact of every weapon+attachment combination (and the create-a-class lists) the mod ships against BO2's own rules over the player's install: one CSV schema, `expected.csv` (BO2) vs `actual.csv` (the mod), clustered diffs. Fails while any gap exists — no allowlist | unit: `cargo test -p zhbo-conformance` (schema, CSV, differ, BO2 rules on synthetic zones), `cargo test -p zhbo-formats havok_lua big`; the gate: `ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets conformance -- --ignored` (~110 s; files in `ZHBO_CONFORMANCE_OUT`, default the temp dir; it fails while gaps remain, so run it apart from `-p zhbo-formats -- --ignored` — cargo stops at the first failing crate); the files for analysis: `cargo run --release -p zhbo-assets -- conformance <dir outside the repo>` (see "BO2 conformance" below) |
 | In-game scripted test | full loop: take control, move, fight, throw both offhands, toggle the grenade launcher, field computer, RTS hand-back. The script seeds a v2 profile with one custom class in the active set — the AN-94 with its under-barrel launcher, plus the frag, concussion, pistol and knife — because BO2's premades carry no attachments and the alt-mode step needs one; the autopilot picks that custom from the spawn screen by its computed row key (the match list is the set's custom slots, then the defaults, `changeclass.lua`) | `scripts/autotest.ps1` (Windows) / `scripts/autotest-mac.sh` (macOS; seeds `ConquerOps.profile` with the GL custom before launch — the standard autopilot picks the first profile custom when there is one, else the first default class) |
 | Shot impacts in game | the default autopilot run greps `player 0 impacts:` (flesh on the rebels, a terrain surface on the misses) and the bridge's `impact fx: N played, 0 missing` line — the latter proves the name resolved and `FXList::doFXPos` ran | `scripts/autotest.ps1` / `scripts/autotest-mac.sh` (default leg) |
 | Scope-overlay test | the AS50 in hand, hold ADS past the 0.40 s transition; the native draw logs "base optic hidden at full ADS" and the HUD draws the 2D overlay | `scripts/autotest-mac.sh --scope` |
@@ -23,6 +24,39 @@ How each layer of the mod is verified, and what to run before declaring a change
 | Class-screen screenshots | the shell list, the in-match pick list and the Pick-10 editor rendered through `classui::draw_screen` | `cargo run -p zhbo-assets -- screenshot` (uses the locally built `ConquerOps_BO2.big`; PNGs in `target/cac-shots/`) |
 | Viewmodel sweep | every player weapon and every attachment it offers drawn through the game's native first-person path (composition, `nativevm::place`, the native BO2 pass), hip and aimed side by side, for a human review of the catalog | `cargo run --release -p zhbo-core --example render_viewmodels --features renderer -- <outdir>` |
 | Camo swap | the parser's synthetic/real camo reads; the `.zcm` round-trip and refusals; the converter's 38 weapon blobs (including the view-model join for `camo_xpr50`) and 7 excluded optic sets; the class camo's transport and the draw-swap; the renderer's second texture and tint | `cargo test -p zhbo-formats`; `cargo test -p zhbo-native`; `cargo test -p zhbo-core`; `ZHBO_BO2_DIR=… cargo test -q --release -p zhbo-assets the_camo_assets_convert_with_their_art -- --ignored`; the sweep's `--camo` (below) |
+
+## BO2 conformance
+
+Parity is proved or disproved by data, not by eye. `zhbo-conformance` holds one schema per table
+— `weapons` (a row per BO2 variant and attachment combination: every combination Create-a-Class
+allows, Gunfighter's third/second attachments included, each one's alt mode, the knives every class
+gets) and `cac` (a row per weapon, attachment, perk, wildcard, camo/reticle option, class cap,
+weapon category and dual-wield outcome) — and both sides fill exactly those columns:
+
+* **expected** (`zhbo_conformance::bo2`): BO2's rules over the player's own install, transcribed
+  from the engine — `~/Documents/BO2-reference/ghidra/answers/G14.md` (how a combination resolves:
+  canonical order, single vs combined uniques, parts, per-field stacking, sounds, effects, hide
+  tags, the anim table), `G15.md` (which combinations a class can carry), `G16.md` (the weapon a
+  class gets, ammo, per-part camo), `G17.md` (CaC list order, attachment tokens, costs) — and the
+  compiled UI Lua (`zhbo_formats::havok_lua`: the `CoD.CACUtility` caps, the weapon categories).
+  It reads raw structs through the layouts and depends on `zhbo-formats` only.
+* **actual** (`zhbo_assets::conformance`): what ships — the launcher's archive built in memory
+  (`hud::build_archive`), its weapon table installed as the game installs it, every class the mod's
+  editor accepts (`classmenu::offer`) resolved by the runtime catalog, the viewmodel/world-weapon
+  manifests the def's `viewmodel` names (an unconverted combination draws its base's art, as the
+  game does), the model blobs, the converter's sound events and FXLists. A fact the mod does not
+  carry stays empty — it fails, never synthesized.
+
+Units are BO2's (ms, inches, degrees; rotations as canonical quaternions); a float column's epsilon
+is the only tolerance and is written in the schema (`<table>-schema.csv`). Every difference is a
+gap; there are no informational columns and no allowlist. The output directory must be outside the
+repository (the run refuses one inside it): per table `<t>-expected.csv`, `<t>-actual.csv`,
+`<t>-diff.csv` (one line per differing cell: key, area, column, both values, the gap signature),
+`<t>-schema.csv` and `<t>-report.md` (clusters by area and column, grouped by signature — "mod side
+empty", a constant ratio or offset, items a set lacks or adds). The CSVs load into any SQL/CSV tool
+(`duckdb`, `sqlite3 .import`) for queries such as "every row whose `view_part_models` lacks the
+optic". The first run (2026-10-25) is the backlog: 211 gap clusters (see MODLOG); a parity fix is
+done when its clusters leave the report.
 
 ## The shell create-a-class screen (manual)
 

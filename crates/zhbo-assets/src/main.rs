@@ -557,6 +557,21 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             Ok(())
         }
+        "conformance" => {
+            // conformance <out-dir>: expected.csv (BO2's rules over the install) and actual.csv (what
+            // the mod ships), diffed and clustered, for every table. The directory must be outside
+            // the repository; the install is ZHBO_BO2_DIR or the detected one.
+            let out = args.get(1).filter(|a| !a.starts_with("--")).map(PathBuf::from).ok_or("usage: zhbo-assets conformance <out-dir outside the repository>")?;
+            let bo2 = match std::env::var("ZHBO_BO2_DIR") {
+                Ok(d) if !d.is_empty() => PathBuf::from(d),
+                _ => bo2_dir()?,
+            };
+            let tables = zhbo_assets::conformance::run(&bo2, &out)?;
+            print!("{}", zhbo_assets::conformance::summary(&tables, &out));
+            let gaps: usize = tables.iter().map(|t| t.report.gap_count()).sum();
+            println!("{gaps} gap clusters (0 is parity)");
+            Ok(())
+        }
         "screenshot" => {
             // screenshot [out-dir] [--archive path]: the class screens through the real drawing code.
             let out = args
@@ -802,7 +817,7 @@ fn run(args: &[String]) -> Result<(), String> {
             let parts = groups.get(&hash).ok_or("no image with that hash")?;
             images::write_png(&out, &images::load(&pak, parts)?)
         }
-        _ => Err("usage: zhbo-assets <banks|list|export|paks|images|sheets|image> ...".into()),
+        _ => Err("usage: zhbo-assets <banks|list|export|paks|images|sheets|image|conformance> ...".into()),
     }
 }
 

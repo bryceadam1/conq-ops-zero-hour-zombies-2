@@ -71,6 +71,7 @@ pub use layout::*;
 pub use personalize::*;
 pub use pick::*;
 pub use screens::*;
+pub use preview::perk_name;
 
 /// How long the deny flash stays up after a refused choice (seconds).
 pub const DENY_FLASH: f32 = 0.3;

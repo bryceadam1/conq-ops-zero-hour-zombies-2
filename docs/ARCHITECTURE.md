@@ -7,12 +7,13 @@ Rust ownership split and [CONFIG.md](CONFIG.md) for every `ZHBO_*` variable.
 
 ```
 zhbo-requirements   zhbo-formats   zhbo-gfx   zhbo-native
-        │               │             │            │
-        └── zhbo-core ──┘             │            │
-        │       │  └──────────────────┼────────────┤
+        │               │   │         │            │
+        └── zhbo-core ──┘   │         │            │
+        │       │  └────────┼─────────┼────────────┤
         │       └──(optional, feature "renderer")  │
-        │               │                          │
-        └─ zhbo-assets ─┘──────────────────────────┘
+        │               │   └ zhbo-conformance     │
+        │               │          │               │
+        └─ zhbo-assets ─┘──────────┴───────────────┘
                 │
         └─ zhbo-launcher
 
@@ -27,8 +28,9 @@ Wine/CrossOver/Proton prefixes. Depends on nothing. Used by the launcher and by 
 (install paths for the weapon table).
 
 ### `crates/zhbo-formats`
-Parsers for game data: Zero Hour `.big`, Black Ops II `.sabs`/`.sabl` sound banks, `.ipak`
-image packs, `IWi` images, LZO1X, and the BO2 fastfile decryption. Depends on nothing. All
+Parsers for game data: Zero Hour `.big` (from a file or, `big::members`, from memory), Black Ops II
+`.sabs`/`.sabl` sound banks, `.ipak` image packs, `IWi` images, LZO1X, the BO2 fastfile decryption,
+and the compiled UI Lua (`havok_lua`: Havok Script chunks and their constant stores). Depends on nothing. All
 readers are hardened against corrupt input (refactor plan Phase 0.3) and used by the
 converter (`zhbo-assets`) and the runtime (`zhbo-core` reads the BO2 zone through the host's
 own data).
@@ -92,6 +94,17 @@ to list/export BO2 sounds, images and fonts. `fonts.rs` converts BO2's UI fonts.
 `.zcm` recipes, with the weapon-id/view-model join) and `paks.rs` (pack-file access, the shrinker
 and the zone loader).
 
+### `crates/zhbo-conformance`
+BO2 parity conformance (see [TESTING.md](TESTING.md) "BO2 conformance"): the shared CSV schema
+(`schema`, the `weapons` and `cac` column sets), one CSV writer/reader (`csv`), the differ that joins
+the two sides and clusters every mismatch (`diff`), and the expected side (`bo2/`): BO2's own rules
+— transcribed from the engine (Ghidra answers G14–G17 in the reference folder) and the UI Lua — over
+the player's install, reading the raw weapon structs through the generated layouts (`bo2/raw.rs`),
+never `zhbo_formats::weapon::read` or the converter. Depends on `zhbo-formats` only, so the expected
+side cannot reach the converter's or the core's rules. The actual side lives in
+`zhbo-assets::conformance` (the launcher's archive built in memory, the runtime catalog, the class
+editor's offer).
+
 ### `crates/zhbo-launcher`
 `ConquerOps.exe` / `conquerops`: requirement check, BO2 art conversion on first launch,
 starting the game. Depends on `zhbo-requirements` and `zhbo-assets`.
@@ -142,7 +155,9 @@ calls into Rust internals. Name literals shared across the boundary are generate
 2. `zhbo-core` may depend on `zhbo-requirements`, `zhbo-native` and, behind the `renderer`
    feature, `zhbo-gfx`. It must never depend on `zhbo-assets` (the converter depends on the core,
    not the other way round).
-3. `zhbo-assets` may depend on `zhbo-core`, `zhbo-formats` and `zhbo-native`.
+3. `zhbo-assets` may depend on `zhbo-core`, `zhbo-formats`, `zhbo-native` and `zhbo-conformance`.
+   `zhbo-conformance` depends on `zhbo-formats` only — never on the core or the converter (the
+   expected side must not share the mod's rules).
 4. `zhbo-launcher` may depend on `zhbo-requirements` and `zhbo-assets`.
 5. Engine code (`host/GeneralsGameCode`) is never modified; changes go through
    `host/patches/*.patch`. The bridge (`host/zhbo/*.cpp`) is the only engine-side mod code
