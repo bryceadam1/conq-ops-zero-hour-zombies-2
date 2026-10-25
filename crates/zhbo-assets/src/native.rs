@@ -220,6 +220,9 @@ pub(crate) struct BasePart<'a> {
     /// The model carries the weapon's sight: it drives the aim marker when no attachment optic is
     /// mounted.
     pub optic: bool,
+    /// The M32's `_ads` sight variant: drawn only at full ADS. The hip `_view` variant carries the
+    /// same sight; the pair swaps at the ADS handoff.
+    pub ads_only: bool,
 }
 
 /// The left-hand companion of a dual-wield pair: its own model (bones suffixed `1`) and mount.
@@ -256,10 +259,11 @@ pub(crate) fn viewmodels(
     let dual_path = v.dual.as_ref().map(|d| put_model(out, d.gun));
     for (letter, arms) in factions {
         let arms_path = put_model(out, arms);
-        // (model, tag, offset, rigid, path) in composition order.
-        let mut parts: Vec<(&nm::Model, Option<String>, zhbo_native::math::Xf, bool, String)> =
-            vec![(arms, None, IDENTITY, false, arms_path), (gun, Some(v.gun_tag.into()), IDENTITY, false, gun_path.clone())];
-        let has = |name: &str, parts: &[(&nm::Model, Option<String>, zhbo_native::math::Xf, bool, String)]| parts.iter().any(|p| p.0.bone(name).is_some());
+        // (model, tag, offset, rigid, ads_only, path) in composition order.
+        type PartRow<'a> = (&'a nm::Model, Option<String>, zhbo_native::math::Xf, bool, bool, String);
+        let mut parts: Vec<PartRow> =
+            vec![(arms, None, IDENTITY, false, false, arms_path), (gun, Some(v.gun_tag.into()), IDENTITY, false, false, gun_path.clone())];
+        let has = |name: &str, parts: &[PartRow]| parts.iter().any(|p| p.0.bone(name).is_some());
         // The base parts after the gun and before the attachments: `aim_marker` reads `parts[1]`
         // as the gun, and an attachment optic later overrides a base optic in `optic`.
         let mut optic = None;
@@ -268,9 +272,9 @@ pub(crate) fn viewmodels(
             if bp.optic {
                 optic = Some((parts.len(), bp.model.mins, bp.model.maxs, bp.model.name.as_str()));
             }
-            parts.push((bp.model, Some(tag), bp.offset, false, path.clone()));
+            parts.push((bp.model, Some(tag), bp.offset, false, bp.ads_only, path.clone()));
             if bp.magazine && has("tag_clip1", &parts) {
-                parts.push((bp.model, Some("tag_clip1".into()), IDENTITY, true, path.clone()));
+                parts.push((bp.model, Some("tag_clip1".into()), IDENTITY, true, false, path.clone()));
             }
         }
         for (k, ((tag, offset, is_optic), (model, path))) in v.attachments.iter().zip(extra.iter().zip(&extra_paths)).enumerate() {
@@ -282,12 +286,12 @@ pub(crate) fn viewmodels(
             if *is_optic {
                 optic = Some((parts.len(), v.extra_models[k].mins, v.extra_models[k].maxs, v.extra_models[k].name.as_str()));
             }
-            parts.push((model, tag, *offset, false, path.clone()));
+            parts.push((model, tag, *offset, false, false, path.clone()));
         }
         // The left gun is a second rig on the left palm, not a merge into the base hierarchy: its
         // `1`-suffixed bones append after every base part and hang from the mount tag.
         if let (Some(dual), Some(path)) = (&v.dual, &dual_path) {
-            parts.push((dual.gun, Some(dual.tag.to_string()), IDENTITY, false, path.clone()));
+            parts.push((dual.gun, Some(dual.tag.to_string()), IDENTITY, false, false, path.clone()));
         }
         let skel = skeleton(&parts.iter().map(|p| (p.0, p.1.as_deref(), p.2, p.3)).collect::<Vec<_>>());
         let markers = aim_marker(&skel, v.gun, optic).into_iter().collect();
@@ -300,7 +304,7 @@ pub(crate) fn viewmodels(
         let manifest = Manifest {
             id: v.id.to_string(),
             faction: *letter as u8,
-            parts: parts.iter().map(|p| Part { model: p.4.clone(), tag: p.1.clone(), offset: p.2, rigid: p.3 }).collect(),
+            parts: parts.iter().map(|p| Part { model: p.5.clone(), tag: p.1.clone(), offset: p.2, rigid: p.3, ads_only: p.4 }).collect(),
             markers,
             hide,
             clips: v.clips.to_vec(),

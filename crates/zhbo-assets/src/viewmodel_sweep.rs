@@ -281,17 +281,18 @@ mod tests {
     }
 
     /// The M32 lists its sight twice (`_view` for the hip, `_ads` for the aim): the same lens and
-    /// reticle at the same offset. Only the first loads; loading both would double-draw the glass.
+    /// reticle at the same offset. Both load; the native manifest's ADS handoff swaps them.
     #[test]
     #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
-    fn the_m32_sight_loads_once() {
+    fn the_m32_sight_loads_both() {
         let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
         let src = Source::open(Path::new(&dir)).expect("open the install");
         let blobs = src.composition("m32_mp").expect("the base M32");
         let vm = zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("a manifest")).expect("the manifest parses");
-        assert_eq!(vm.parts.len(), 3, "the arms, the gun and the sight");
+        assert_eq!(vm.parts.len(), 4, "the arms, the gun and both sights");
         let sights = vm.parts.iter().filter(|p| p.model.contains("optic_m32")).count();
-        assert_eq!(sights, 1, "one `_view` sight, not the hip `_view` and the ADS `_ads` pair: {vm:?}");
+        assert_eq!(sights, 2, "both the hip `_view` and the ADS `_ads` pair: {vm:?}");
+        assert!(vm.parts.iter().any(|p| p.model.contains("_ads") && p.ads_only), "the ADS variant is marked ads_only: {vm:?}");
     }
 
     /// The five pistol dualclips set neither replacement flag: their fast-mag sleeve is additive

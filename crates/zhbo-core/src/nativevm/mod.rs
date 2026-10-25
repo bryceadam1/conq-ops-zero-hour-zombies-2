@@ -30,7 +30,7 @@ use zhbo_native::anim::Anim;
 use zhbo_native::math::{axis_angle, mat4, mat4_mul, qmul, Mat4, Xf};
 use zhbo_native::model::{Blend, CamoLayer, Cull, Model, Vertex};
 use zhbo_native::pose::{PartRef, Skeleton};
-use zhbo_native::viewmodel::Viewmodel;
+use zhbo_native::viewmodel::{Part, Viewmodel};
 
 #[cfg(feature = "renderer")]
 mod gpu;
@@ -194,12 +194,26 @@ pub fn build_mesh<'a>(skel: &Skeleton, models: impl IntoIterator<Item = &'a Mode
 /// Only the first-person path uses this; the third-person `nativebody` keeps `build_mesh`'s
 /// all-visible default. The hide also requires the overlay art to be present: a material the
 /// install lacks cannot draw, so the physical scope stays rather than leaving neither sight.
-pub fn visible_parts(models: &[Model], ads: f32, overlay_art_present: bool) -> Vec<bool> {
+/// The M32's `_view`/`_ads` pair is the exception: at full ADS the ADS variant shows and the hip
+/// variant hides regardless of overlay art (the M32 has no overlay; the pair swaps the housing).
+pub fn visible_parts(parts: &[Part], models: &[Model], ads: f32, overlay_art_present: bool) -> Vec<bool> {
+    let has_ads = parts.iter().any(|p| p.ads_only);
     models
         .iter()
-        .map(|m| {
+        .zip(parts)
+        .map(|(m, p)| {
             let optic = m.bones.iter().any(|b| b.name == "tag_scope" || b.name == "tag_sights");
-            !(optic && ads >= 1.0 && overlay_art_present)
+            if ads >= 1.0 {
+                if p.ads_only {
+                    true
+                } else if has_ads && optic {
+                    false
+                } else {
+                    !(optic && overlay_art_present)
+                }
+            } else {
+                !p.ads_only
+            }
         })
         .collect()
 }
@@ -391,11 +405,18 @@ pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: 
     if !problems.is_empty() {
         return Err(format!("{path}: {}", problems.join("; ")));
     }
-    let mut mesh = build_mesh(&skeleton, &models)?;
+    // The hip half hides an `_ads` variant part (the M32's aimed housing) until full ADS — the
+    // plan's `ads < 1.0` arm of `visible_parts`; without it both housings would draw at hip.
+    let hip = visible_parts(&manifest.parts, &models, 0.0, overlay_art_present);
+    let mut mesh = if hip.iter().any(|v| !v) {
+        build_mesh_visible(&skeleton, &models, |i| hip.get(i).copied().unwrap_or(true))?
+    } else {
+        build_mesh(&skeleton, &models)?
+    };
     // The aimed-half mesh: the base optic's surfaces are dropped at full ADS. Built once here so
     // the draw path only swaps handles. The mask's indices are the manifest's part order, which
     // the skeleton preserves.
-    let aimed = visible_parts(&models, 1.0, overlay_art_present);
+    let aimed = visible_parts(&manifest.parts, &models, 1.0, overlay_art_present);
     let mut mesh_aimed = if aimed.iter().any(|v| !v) {
         Some(build_mesh_visible(&skeleton, &models, |i| aimed.get(i).copied().unwrap_or(true))?)
     } else {
