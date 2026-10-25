@@ -379,4 +379,32 @@ mod tests {
             assert!((q[3].abs() - 1.0).abs() < 1e-4, "{q:?}");
         }
     }
+
+    /// A `tag_torso`-only ADS layer produces a one-channel W3D animation. The engine's
+    /// `HAnimComboClass` masks that channel over the action clip; the writer's job is only to
+    /// emit the layer's bone. This is the W3D ADS pose's writer-side gate.
+    #[test]
+    fn a_torso_only_layer_writes_one_channel() {
+        let model = two_bone_model();
+        let rig = Rig::new(&model, &[]);
+        let base = &rig.pivots[2];
+        let anim = Anim {
+            name: "ads".into(),
+            num_frames: 1,
+            frame_rate: 30.0,
+            looping: false,
+            delta: false,
+            asset_type: 0,
+            bones: vec![BoneTrack {
+                name: "arm".into(),
+                rotation: Some(vec![(0, base.rotation)]),
+                translation: Some(vec![(0, [0.0; 3])]),
+            }],
+            notifies: vec![],
+        };
+        let (frames, channels) = animate(&rig, &anim);
+        assert_eq!(frames, 2);
+        assert_eq!(channels.len(), 1, "only the layer's bone is written");
+        assert_eq!(channels[0].pivot, 2, "the arm's pivot");
+    }
 }

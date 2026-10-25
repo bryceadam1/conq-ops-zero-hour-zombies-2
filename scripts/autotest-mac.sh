@@ -44,6 +44,7 @@ mode=autopilot
 [[ "${1:-}" == "--build" ]] && mode=build
 [[ "${1:-}" == "--classpick" ]] && mode=classpick
 [[ "${1:-}" == "--scope" ]] && mode=scope
+[[ "${1:-}" == "--w3d-ads" ]] && mode=w3d-ads
 
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="$HOME/Library/Application Support/ConquerOps/dist"
@@ -395,6 +396,26 @@ EOF
     echo "scope overlay: the base optic is hidden at full ADS   PASS"
     echo "screenshots and log: $out"
     exit 0
+fi
+
+if [[ "$mode" == "w3d-ads" ]]; then
+    # The W3D fallback's ADS layer: the authored 0x55/0x56 clip composed over the action clip
+    # (ZHBO_NATIVE_VIEWMODEL=0 forces the W3D path). The scope autopilot enters ADS; the bridge
+    # logs the layer when it plays, and the slide is skipped because the clip owns the pose.
+    export ZHBO_NATIVE_VIEWMODEL=0 ZHBO_AUTOPILOT=scope GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS:-30}
+    "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
+    wait_for_log "entered first-person" 90 || { echo "the General never entered first person; see $log" >&2; exit 1; }
+    for _ in $(seq 20); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
+    finish
+    trap - EXIT
+    ok=0
+    check() { # name, pattern
+        if grep -qE "$2" "$out/ConquerOps.log"; then printf '%-28s PASS\n' "$1"; else printf '%-28s FAIL\n' "$1"; ok=1; fi
+    }
+    check "w3d ADS layer played" "viewmodel: ADS layer"
+    check "w3d slide skipped" "viewmodel: ADS slide skipped"
+    echo "screenshots and log: $out"
+    exit $ok
 fi
 
 # Real-input test.
