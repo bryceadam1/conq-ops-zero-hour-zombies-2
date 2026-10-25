@@ -9,6 +9,7 @@
 //! Development tool only: it reads the player's install and never launches or connects to BO2.
 
 pub mod bo2;
+pub mod cac;
 pub mod csv;
 pub mod diff;
 pub mod schema;

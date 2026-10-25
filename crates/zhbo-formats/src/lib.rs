@@ -7,6 +7,7 @@ pub mod big;
 pub mod fastfile;
 pub mod font;
 pub mod fx;
+pub mod havok_lua;
 pub mod ipak;
 pub mod iwi;
 pub mod localize;

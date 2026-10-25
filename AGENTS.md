@@ -64,9 +64,13 @@ layer you can reach:
 
 1. `cargo test --workspace` (unit, headless, conformance — runs everywhere, no installs).
 2. `cargo clippy --workspace` — clean.
-3. In-game scripted autotest: `scripts/autotest.ps1` (Windows) or `scripts/autotest-mac.sh`
+3. For parity work (anything that should match BO2): the BO2 conformance gate,
+   `ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets conformance -- --ignored`, and its CSVs
+   (`cargo run --release -p zhbo-assets -- conformance <dir outside the repo>`); a fix is done when
+   its gap clusters leave the report (TESTING.md "BO2 conformance").
+4. In-game scripted autotest: `scripts/autotest.ps1` (Windows) or `scripts/autotest-mac.sh`
    (macOS; `--input` for the real-keyboard/mouse test). `scripts/inputtest.ps1` is Windows-only.
-4. Windows-only checks still needing the Windows VM: the DX8 reference build for side-by-side
+5. Windows-only checks still needing the Windows VM: the DX8 reference build for side-by-side
    visual comparison, and regressions in the 64-bit Windows wgpu build.
 
 A behavior change to the sim or the ABI is not done until the in-game autotest passes. Install

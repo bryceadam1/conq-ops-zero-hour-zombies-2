@@ -176,6 +176,15 @@ impl<'a> RowBuilder<'a> {
         self.put(name, |k| k == Kind::Set, items.join("|"))
     }
 
+    /// As [`RowBuilder::finish`], but a column never set is empty: for a table whose kinds use
+    /// different columns (the CaC table). A column one side forgets still diffs against the other.
+    pub fn finish_sparse(mut self) -> Result<Row, String> {
+        for c in self.cells.iter_mut().filter(|c| c.is_none()) {
+            *c = Some(String::new());
+        }
+        self.finish()
+    }
+
     pub fn finish(self) -> Result<Row, String> {
         let mut errors = self.errors;
         let missing: Vec<&str> = self.cells.iter().zip(&self.schema.columns).filter(|(c, _)| c.is_none()).map(|(_, col)| col.name.as_str()).collect();

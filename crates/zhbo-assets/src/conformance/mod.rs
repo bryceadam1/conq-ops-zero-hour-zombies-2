@@ -6,6 +6,7 @@
 //! Development tool only: it reads the player's install and never launches or connects to BO2.
 
 pub mod actual;
+pub mod cac;
 
 use std::path::{Path, PathBuf};
 use zhbo_conformance::{csv, diff, schema::Schema};
@@ -72,11 +73,12 @@ pub fn run(bo2_dir: &Path, out_dir: &Path) -> Result<Vec<Table>, String> {
         return Err(format!("{} is inside the repository; the conformance CSVs are generated artifacts — choose a directory outside it", out_dir.display()));
     }
     std::fs::create_dir_all(out_dir).map_err(|e| format!("{}: {e}", out_dir.display()))?;
-    let weapons = zhbo_conformance::weapons::schema();
-    let expected = zhbo_conformance::bo2::weapon_rows(bo2_dir)?;
+    let (weapons, cac_schema) = (zhbo_conformance::weapons::schema(), zhbo_conformance::cac::schema());
+    let (expected, expected_cac) = zhbo_conformance::bo2::expected(bo2_dir)?;
     let shipped = actual::Shipped::convert(bo2_dir)?;
     let actual = actual::rows(&shipped, &weapons)?;
-    Ok(vec![table(out_dir, "weapons", &weapons, &expected, &actual)?])
+    let actual_cac = cac::rows(&shipped, bo2_dir, &cac_schema)?;
+    Ok(vec![table(out_dir, "weapons", &weapons, &expected, &actual)?, table(out_dir, "cac", &cac_schema, &expected_cac, &actual_cac)?])
 }
 
 /// One line per table, for the CLI and the test's failure message.

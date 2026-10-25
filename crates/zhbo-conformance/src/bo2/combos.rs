@@ -106,15 +106,24 @@ impl Combo {
     }
 }
 
-/// The attachment kinds an item's tokens name on this variant (`FUN_008e7fd0`: a kind the variant
-/// lacks is dropped), ascending.
-pub fn offered(item: &Item, v: &Variant, atts: &BTreeMap<String, Attachment>) -> Vec<usize> {
-    let mut kinds: Vec<usize> = item
-        .attachments
-        .iter()
-        .filter_map(|t| atts.get(t).map(|a| a.kind() as usize))
-        .filter(|&k| k > 0 && k < KINDS && v.attachment(k).is_some())
-        .collect();
+/// The attachment kinds an item lists, in its column-8 order: each token's text before the first
+/// `_` against the `eAttachment` names (`FUN_008cdfb0`'s `strtok(token, "_")`), so `grip_smg` is
+/// the grip whether or not an attachment asset of that name exists.
+pub fn listed(item: &Item) -> Vec<usize> {
+    let mut out = Vec::new();
+    for t in &item.attachments {
+        if let Some(k) = kind_of(t.split('_').next().unwrap_or(t)).filter(|&k| k > 0) {
+            if !out.contains(&k) {
+                out.push(k);
+            }
+        }
+    }
+    out
+}
+
+/// The kinds an item lists that its variant has (`FUN_008e7fd0` drops one it lacks), ascending.
+pub fn offered(item: &Item, v: &Variant, _atts: &BTreeMap<String, Attachment>) -> Vec<usize> {
+    let mut kinds: Vec<usize> = listed(item).into_iter().filter(|&k| k < KINDS && v.attachment(k).is_some()).collect();
     kinds.sort_unstable();
     kinds.dedup();
     kinds
@@ -217,6 +226,21 @@ mod tests {
         ]);
         let nade = Item { slot: "primarygrenade".into(), ..item };
         assert_eq!(combos(&nade, &[acog], &t).len(), 1);
+    }
+
+    #[test]
+    fn a_token_is_its_text_before_the_first_underscore() {
+        let item = Item {
+            reference: "mp7".into(),
+            variant: "mp7_mp".into(),
+            group: "weapon_smg".into(),
+            slot: "primary".into(),
+            cost: 1,
+            attachments: ["reflex", "grip_smg", "silencer_smg", "rf_fast", "bogus_x", "grip"].map(String::from).to_vec(),
+            index: 13,
+        };
+        // grip (12) once, in its first place; an unknown name is no attachment.
+        assert_eq!(listed(&item), vec![20, 12, 23, 21]);
     }
 
     #[test]

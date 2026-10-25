@@ -14,7 +14,8 @@
 use std::collections::{BTreeMap, HashMap};
 use zhbo_conformance::schema::{f32_value, Row, RowBuilder, Schema};
 use zhbo_conformance::weapons::{self as cols, enum_name, ATTACHMENTS};
-use zhbo_core::weapons::{self, Class, FireMode, WeaponDef};
+use super::cac::group_of;
+use zhbo_core::weapons::{self, FireMode, WeaponDef};
 use zhbo_native::viewmodel::{Viewmodel, INSTANCE_LEFT};
 
 /// The archive's MappedImage INI (the HUD's sprite collection).
@@ -102,7 +103,7 @@ impl Shipped {
         self.events.get(event).and_then(|l| l.first().cloned())
     }
 
-    fn has_sprite(&self, name: &str) -> bool {
+    pub(crate) fn has_sprite(&self, name: &str) -> bool {
         self.sprites.lines().any(|l| l.trim_start().strip_prefix("MappedImage ").is_some_and(|n| n.trim() == name))
     }
 }
@@ -124,22 +125,6 @@ fn bo2_order(shorts: &[String]) -> Vec<String> {
     let mut v = shorts.to_vec();
     v.sort_by_key(|s| (ATTACHMENTS.iter().position(|a| a == s).unwrap_or(usize::MAX), s.clone()));
     v
-}
-
-/// The CaC group a mod class lists under (statstable's groups).
-fn group_of(c: Class) -> &'static str {
-    match c {
-        Class::Rifle => "weapon_assault",
-        Class::Smg => "weapon_smg",
-        Class::Lmg => "weapon_lmg",
-        Class::Sniper => "weapon_sniper",
-        Class::Shotgun => "weapon_cqb",
-        Class::Pistol => "weapon_pistol",
-        Class::Launcher => "weapon_launcher",
-        Class::Special => "weapon_special",
-        Class::Lethal | Class::Tactical | Class::Equipment => "weapon_grenade",
-        Class::Melee => "",
-    }
 }
 
 fn subsets<'a>(items: &[&'a str], max: usize) -> Vec<Vec<&'a str>> {
@@ -170,7 +155,9 @@ fn jobs() -> Vec<Job> {
     let cat = weapons::catalog();
     let mut out: Vec<Job> = Vec::new();
     let mut seen = std::collections::HashSet::new();
-    let slots: [(&str, &Vec<&'static str>, (usize, usize), &'static str); 4] = [
+    // (slot, its weapons, its caps without/with the card, the card).
+    type Slot<'a> = (&'a str, &'a Vec<&'static str>, (usize, usize), &'static str);
+    let slots: [Slot; 4] = [
         ("primary", &o.primary, o.primary_caps, "primarygunfighter"),
         ("secondary", &o.secondary, o.secondary_caps, "secondarygunfighter"),
         ("primarygrenade", &o.lethal, (0, 0), ""),
@@ -260,7 +247,7 @@ fn clip_id(s: usize, base: i32) -> i32 {
         _ => s as i32,
     };
     // The alt offset applies to the slot, the instance bit stays in the high byte.
-    (id & !(INSTANCE_LEFT as i32)) + base | (id & INSTANCE_LEFT as i32)
+    ((id & !(INSTANCE_LEFT as i32)) + base) | (id & INSTANCE_LEFT as i32)
 }
 
 fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
