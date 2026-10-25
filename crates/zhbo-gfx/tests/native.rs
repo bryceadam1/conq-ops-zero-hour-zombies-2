@@ -95,6 +95,35 @@ fn surface(color: u16, emissive: bool, count: u32) -> NativeSurface {
     NativeSurface { first_index: 0, index_count: count, blend: NativeBlend::Opaque, emissive, color, maps: INVALID, camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: 0, cull: NativeCull::None }
 }
 
+/// A camo layer replaces the base colour at its own coverage. A multiply would leave the base
+/// black (base * camo), so a full-coverage red layer over a blue base must come back red.
+#[test]
+fn camo_layer_replaces_the_base_colour() {
+    let Some((mut r, log, shot)) = renderer() else { return };
+    let base = texture(&mut r, [0, 0, 255, 255]);
+    let camo = texture(&mut r, [255, 0, 0, 255]);
+    let verts = quad(0.0, 0.0, 16.0, 16.0, 0);
+    let camo_surface = NativeSurface {
+        first_index: 0,
+        index_count: 6,
+        blend: NativeBlend::Opaque,
+        emissive: true,
+        color: base,
+        maps: INVALID,
+        camo,
+        camo_uv: [0.0, 0.0, 1.0, 2.0],
+        sort_key: 0,
+        cull: NativeCull::None,
+    };
+    let mesh = r.native_create_mesh(&verts, &[0, 2, 1, 0, 3, 2], &[camo_surface]);
+    assert_ne!(mesh, INVALID);
+    assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh, palette: &[IDENTITY], frame: frame(0) }));
+    r.request_screenshot(INVALID, "camo.png");
+    r.frame();
+    assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
+    assert!(close(pixel(&shot, 8, 8), [0, 0, 255]), "the camo layer replaced the base: {:?}", pixel(&shot, 8, 8));
+}
+
 /// BGR at (x, y) of the last screenshot.
 fn pixel(shot: &Shot, x: u32, y: u32) -> [u8; 3] {
     let px = shot.lock().unwrap().clone().expect("a screenshot");

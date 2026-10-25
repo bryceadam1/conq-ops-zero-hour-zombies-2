@@ -47,10 +47,14 @@ pub(crate) fn apply(mesh: &mut Mesh, camo: &Camo, option: &str) {
     if let Some(style) = recipe.style.and_then(|i| camo.styles.get(i as usize)) {
         for entry in &style.entries {
             for pair in &entry.pairs {
-                let Some(material) = camo.materials.iter().find(|m| m.name == pair.camo) else { continue };
+                let material = camo.materials.iter().find(|m| m.name == pair.camo)
+                    .or_else(|| camo.materials.iter().find(|m| m.name == format!("{}_1", pair.camo)));
+                let Some(material) = material else { continue };
                 for s in mesh.surfaces.iter_mut().filter(|s| s.material == pair.base) {
-                    s.color = material.color.clone();
-                    s.maps = material.maps.clone();
+                    if material.color.is_some() {
+                        s.color = material.color.clone();
+                        s.maps = material.maps.clone();
+                    }
                     s.blend = material.blend;
                     s.emissive = material.emissive;
                     s.sort_key = material.sort_key;
