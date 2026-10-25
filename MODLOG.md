@@ -3388,6 +3388,41 @@ are distinct (below).
   BO2's actual camo rendering is queued (the harness now makes it measurable). Camo's end-to-end
   visual confirmation stays on the user's playtest list.
 
+## Overlay variant propagation: the mounted optic owns the overlay (2026-10-24)
+
+Merged `v1/overlay-propagation` (1 commit). The scope-overlay cycle's deferred item (MODLOG
+above: "attachment variants inherit the base overlay material") is fixed. The bug was NOT in the
+parser: `zhbo_formats::weapon::read`'s base-unique-wins precedence only ever serves base/special
+zone assets (`weapon::all` reads zone assets; BO2 ships no per-combo weapon assets), where it is
+correct. The inheritance happened in the CONVERTER's synthesis: `add_variants` →
+`zhbo_core::attachments::apply` clones the base WeaponDef (overlay fields included) and never
+touches them, so `as50+acog`/`+ir`/`+vzoom` drew the AS50's `scope_overlay_xpr50` and the runtime
+hid the mounted optic at full ADS. The fix is converter-side: `overlay_for` picks the combo's
+replacement optic by its STRUCTURAL kinds (`Weapon.attachment_variants` — `AttachmentDef` has no
+`kind`; REPLACEMENT_OPTIC_KINDS = ACOG 1, IR/dual-band 14, IS 15, VZOOM 29) and the
+`combined`-mask preference mirroring `viewmodels::combo()`, then the synthesized def takes THAT
+unique's overlay fields; empty means NO overlay (the physical sight stays) and the base unique's
+material is never inherited. Non-optic combos (`+fmj`, `+dualclip`, …) keep the base def's
+fields. **Real-install probe: the ACOG unique genuinely carries no overlay** (as50+acog → empty,
+physical ACOG — empirically confirmed, not assumed); the ir/vzoom/combined values stay
+synthetic-pinned until the Source::Dynamic follow-up reads their map-zone art. Archive VERSION
+70 → 71.
+
+* Two plans were rejected on the way: the first was garbled and reversed the rule (its fallback
+  WAS the bug); the second located the fix in the parser with `+`-suffix name matching — dead
+  code, since `read()` never sees a combo name. The converter-synthesis location is the real
+  flow. Gate lesson: trace WHO CALLS the code with WHICH names before placing the diff.
+* Gotcha: `add_variants`' combo ids are canonicalized by `attachments::apply` (`variant_id`
+  sorts/dedupes the shorts) — the def is `as50_mp+ir+swayreduc`, not input order. Tests and
+  consumers must use the canonical id.
+* The `--scope` autotest leg now runs in the standard integration ladder (the overlay handoff
+  is a runtime behavior gate).
+
+Verified: cargo test --workspace green; the full real-install suite green (incl. the new
+`the_installs_synthesized_combos_overlay_follows_the_mounted_optic`: base xpr50, acog empty,
+fmj xpr50); clippy clean; `cargo xtask build` clean; autotest 13/13 default, `--classpick` all
+checks, 14/14 `--rts`, `--scope` PASS.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

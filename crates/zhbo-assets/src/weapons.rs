@@ -23,6 +23,37 @@ pub fn short_name(attachment: &str) -> String {
     attachment.split('_').next().unwrap_or(attachment).to_string()
 }
 
+/// The replacement optics whose unique supplies a combo's 2D ADS overlay: ACOG (1), IR/dual-band
+/// (14), IS (15), VZOOM (29). The base-parts cycle probed these kinds; the set belongs to the
+/// converter, not the parser.
+const REPLACEMENT_OPTIC_KINDS: [u32; 4] = [1, 14, 15, 29];
+
+/// The overlay fields a combo's mounted replacement optic supplies: the base parsed weapon's
+/// `attachment_uniques` for the combo's structural kinds, with the `combined`-mask preference
+/// `viewmodels::combo` uses. `None` when the combo mounts no replacement optic (the base def's
+/// fields stand); `Some` with empty strings/0 when it mounts one whose unique has no overlay (the
+/// physical sight stays).
+fn overlay_for(w: &Weapon, shorts: &[&str]) -> Option<(String, String, u32)> {
+    let mut mask = 0u32;
+    let mut optic: Option<u32> = None;
+    for short in shorts {
+        let Some((kind, _)) = w.attachment_variants.iter().find(|(_, id)| short_name(id) == *short) else { continue };
+        mask |= 1 << kind;
+        if REPLACEMENT_OPTIC_KINDS.contains(kind) && optic.is_none() {
+            optic = Some(*kind);
+        }
+    }
+    let optic = optic?;
+    let exact = (shorts.len() > 1).then(|| w.attachment_uniques.iter().find(|u| u.combined == mask)).flatten();
+    let unique = exact
+        .filter(|u| REPLACEMENT_OPTIC_KINDS.contains(&u.kind))
+        .or_else(|| w.attachment_uniques.iter().find(|u| u.kind == optic && u.combined == 0));
+    Some(match unique {
+        Some(u) => (u.overlay_material.clone(), u.overlay_material_low_res.clone(), u.overlay_reticle),
+        None => (String::new(), String::new(), 0),
+    })
+}
+
 /// The attachment's metadata from BO2's tables: the full name and description keys' localized text,
 /// and its attribute-table deltas.
 #[derive(Clone, Debug, Default)]
@@ -255,8 +286,10 @@ pub fn table_with_metadata(
 
 /// Weapons with attachments, and their alt modes, that [`converted`] asks for: built from their base
 /// definitions (the core's own rules) and added to the table, so their art can be set on them. An
-/// alt mode for a converted weapon is `<alt>~<weapon>` (it shares the weapon's viewmodel).
-pub fn add_variants(table: &mut Table, converted: &[String]) {
+/// alt mode for a converted weapon is `<alt>~<weapon>` (it shares the weapon's viewmodel). The
+/// overlay fields follow the mounted optic: a replacement optic's unique supplies them, an empty
+/// unique leaves an empty overlay, and no replacement optic keeps the base def's.
+pub fn add_variants(table: &mut Table, converted: &[String], bo2: &[Weapon]) {
     for id in converted.iter().filter(|id| id.contains('+')) {
         if table.weapons.iter().any(|d| &d.id == id) {
             continue;
@@ -265,11 +298,27 @@ pub fn add_variants(table: &mut Table, converted: &[String]) {
         let Some(base) = table.weapons.iter().find(|d| d.id == base_id).cloned() else { continue };
         let atts = attachments::resolve(&base, &shorts, |a| table.attachments.iter().find(|x| x.id == a));
         let mut d = attachments::apply(&base, &atts);
+        let combo_shorts: Vec<&str> = d.attachments.iter().map(String::as_str).collect();
+        if let Some((overlay_material, overlay_material_low_res, overlay_reticle)) =
+            bo2.iter().find(|w| w.name == base_id).and_then(|w| overlay_for(w, &combo_shorts))
+        {
+            d.overlay_material = overlay_material;
+            d.overlay_material_low_res = overlay_material_low_res;
+            d.overlay_reticle = overlay_reticle;
+        }
         if let Some((short, alt_id)) = base.alt_modes.iter().find(|(short, _)| d.attachments.contains(short)) {
             if let Some(alt_base) = table.weapons.iter().find(|w| &w.id == alt_id).cloned() {
                 // Select fire and the second optic keep the weapon's other attachments.
                 let others: Vec<&AttachmentDef> = atts.iter().copied().filter(|a| &a.short != short).collect();
                 let mut alt = if alt_base.alt_own_ammo { alt_base.clone() } else { attachments::apply(&alt_base, &others) };
+                let alt_shorts: Vec<&str> = alt.attachments.iter().map(String::as_str).collect();
+                if let Some((overlay_material, overlay_material_low_res, overlay_reticle)) =
+                    bo2.iter().find(|w| &w.name == alt_id).and_then(|w| overlay_for(w, &alt_shorts))
+                {
+                    alt.overlay_material = overlay_material;
+                    alt.overlay_material_low_res = overlay_material_low_res;
+                    alt.overlay_reticle = overlay_reticle;
+                }
                 alt.id = format!("{alt_id}~{}", d.id);
                 alt.alt = d.id.clone();
                 alt.alt_own_ammo = alt_base.alt_own_ammo;
@@ -839,6 +888,212 @@ mod tests {
         let d = to_def(&w, &HashMap::new());
         assert_eq!((d.clip, d.start_reserve, d.max_reserve), (30, 90, 210));
         assert_eq!(d.display_name, "AN94");
+    }
+
+    /// The regression pin: a replacement optic's unique supplies the combo's overlay, and an empty
+    /// unique means NO overlay — the base unique's material is never inherited. FMJ leaves the base
+    /// scope, so the base def's fields stand.
+    #[test]
+    fn the_synthesized_combos_overlay_follows_the_mounted_optic() {
+        let base = bo2::AttachmentUnique {
+            name: "au_as50_none".into(),
+            kind: 0,
+            overlay_material: "scope_overlay_xpr50".into(),
+            overlay_material_low_res: "scope_overlay_xpr50_low_res".into(),
+            overlay_reticle: 1,
+            ..Default::default()
+        };
+        let acog = bo2::AttachmentUnique { name: "au_as50_acog".into(), kind: 1, ..Default::default() };
+        let fmj = bo2::AttachmentUnique { name: "au_as50_fmj".into(), kind: 10, ..Default::default() };
+        let w = Weapon {
+            name: "as50_mp".into(),
+            clip_size: 5,
+            start_ammo: 1,
+            max_ammo: 2,
+            fire_time: 0.1,
+            overlay_material: "scope_overlay_xpr50".into(),
+            overlay_material_low_res: "scope_overlay_xpr50_low_res".into(),
+            overlay_reticle: 1,
+            attachment_variants: vec![(1, "acog".into()), (10, "fmj".into())],
+            attachment_uniques: vec![base, acog, fmj],
+            ..Default::default()
+        };
+        let mut table = Table {
+            weapons: vec![to_def(&w, &HashMap::new())],
+            attachments: vec![
+                AttachmentDef { id: "acog".into(), short: "acog".into(), point: 1, ..Default::default() },
+                AttachmentDef { id: "fmj".into(), short: "fmj".into(), ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        add_variants(&mut table, &["as50_mp+acog".into(), "as50_mp+fmj".into()], std::slice::from_ref(&w));
+        let def = |id: &str| table.weapons.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("no {id}"));
+        assert_eq!(def("as50_mp").overlay_material, "scope_overlay_xpr50");
+        assert!(def("as50_mp+acog").overlay_material.is_empty(), "the ACOG's unique has no overlay");
+        assert_eq!(def("as50_mp+fmj").overlay_material, "scope_overlay_xpr50", "FMJ leaves the base scope");
+    }
+
+    #[test]
+    fn a_replacement_optic_carries_its_own_overlay() {
+        let base = bo2::AttachmentUnique {
+            name: "au_as50_none".into(),
+            kind: 0,
+            overlay_material: "scope_overlay_xpr50".into(),
+            overlay_reticle: 1,
+            ..Default::default()
+        };
+        let acog = bo2::AttachmentUnique {
+            name: "au_as50_acog".into(),
+            kind: 1,
+            overlay_material: "scope_overlay_acog".into(),
+            overlay_material_low_res: "scope_overlay_acog_low_res".into(),
+            overlay_reticle: 2,
+            ..Default::default()
+        };
+        let w = Weapon {
+            name: "as50_mp".into(),
+            clip_size: 5,
+            start_ammo: 1,
+            max_ammo: 2,
+            fire_time: 0.1,
+            overlay_material: "scope_overlay_xpr50".into(),
+            overlay_reticle: 1,
+            attachment_variants: vec![(1, "acog".into())],
+            attachment_uniques: vec![base, acog],
+            ..Default::default()
+        };
+        let mut table = Table {
+            weapons: vec![to_def(&w, &HashMap::new())],
+            attachments: vec![AttachmentDef { id: "acog".into(), short: "acog".into(), point: 1, ..Default::default() }],
+            ..Default::default()
+        };
+        add_variants(&mut table, &["as50_mp+acog".into()], std::slice::from_ref(&w));
+        let d = table.weapons.iter().find(|d| d.id == "as50_mp+acog").expect("the ACOG combo");
+        assert_eq!(d.overlay_material, "scope_overlay_acog");
+        assert_eq!(d.overlay_material_low_res, "scope_overlay_acog_low_res");
+        assert_eq!(d.overlay_reticle, 2);
+    }
+
+    #[test]
+    fn a_combined_unique_wins_the_overlay() {
+        let base = bo2::AttachmentUnique {
+            name: "au_as50_none".into(),
+            kind: 0,
+            overlay_material: "scope_overlay_xpr50".into(),
+            overlay_reticle: 1,
+            ..Default::default()
+        };
+        let ir = bo2::AttachmentUnique {
+            name: "au_as50_ir".into(),
+            kind: 14,
+            overlay_material: "scope_overlay_ir".into(),
+            overlay_reticle: 2,
+            ..Default::default()
+        };
+        let sway = bo2::AttachmentUnique { name: "au_as50_swayreduc".into(), kind: 27, ..Default::default() };
+        let combined = bo2::AttachmentUnique {
+            name: "au_as50_swayreduc+ir".into(),
+            kind: 14,
+            combined: 0x8004000,
+            overlay_material: "scope_overlay_ir_combined".into(),
+            overlay_reticle: 3,
+            ..Default::default()
+        };
+        let w = Weapon {
+            name: "as50_mp".into(),
+            clip_size: 5,
+            start_ammo: 1,
+            max_ammo: 2,
+            fire_time: 0.1,
+            overlay_material: "scope_overlay_xpr50".into(),
+            overlay_reticle: 1,
+            attachment_variants: vec![(14, "ir".into()), (27, "swayreduc".into())],
+            attachment_uniques: vec![base, ir, sway, combined],
+            ..Default::default()
+        };
+        let mut table = Table {
+            weapons: vec![to_def(&w, &HashMap::new())],
+            attachments: vec![
+                AttachmentDef { id: "ir".into(), short: "ir".into(), point: 1, ..Default::default() },
+                AttachmentDef { id: "swayreduc".into(), short: "swayreduc".into(), ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        add_variants(&mut table, &["as50_mp+swayreduc+ir".into()], std::slice::from_ref(&w));
+        let d = table.weapons.iter().find(|d| d.id == "as50_mp+ir+swayreduc").expect("the combined combo");
+        assert_eq!(d.overlay_material, "scope_overlay_ir_combined", "the exact combined unique wins");
+        assert_eq!(d.overlay_reticle, 3);
+    }
+
+    #[test]
+    fn an_alt_mode_carries_its_own_overlay() {
+        let base = bo2::AttachmentUnique {
+            name: "au_as50_none".into(),
+            kind: 0,
+            overlay_material: "scope_overlay_xpr50".into(),
+            overlay_reticle: 1,
+            ..Default::default()
+        };
+        let fmj = bo2::AttachmentUnique {
+            name: "au_as50_fmj".into(),
+            kind: 10,
+            alt_weapon: Some("sf_as50_mp".into()),
+            ..Default::default()
+        };
+        let acog = bo2::AttachmentUnique { name: "au_as50_acog".into(), kind: 1, ..Default::default() };
+        let w = Weapon {
+            name: "as50_mp".into(),
+            clip_size: 5,
+            start_ammo: 1,
+            max_ammo: 2,
+            fire_time: 0.1,
+            overlay_material: "scope_overlay_xpr50".into(),
+            overlay_reticle: 1,
+            attachment_variants: vec![(1, "acog".into()), (10, "fmj".into())],
+            attachment_uniques: vec![base, fmj, acog],
+            ..Default::default()
+        };
+        let sf_base = bo2::AttachmentUnique {
+            name: "au_sf_as50_none".into(),
+            kind: 0,
+            overlay_material: "scope_overlay_sf_base".into(),
+            overlay_reticle: 5,
+            ..Default::default()
+        };
+        let sf_acog = bo2::AttachmentUnique {
+            name: "au_sf_as50_acog".into(),
+            kind: 1,
+            overlay_material: "scope_overlay_sf_acog".into(),
+            overlay_reticle: 4,
+            ..Default::default()
+        };
+        let sf = Weapon {
+            name: "sf_as50_mp".into(),
+            clip_size: 5,
+            start_ammo: 1,
+            max_ammo: 2,
+            fire_time: 0.1,
+            inventory: bo2::inventory::ALTMODE,
+            overlay_material: "scope_overlay_sf_base".into(),
+            overlay_reticle: 5,
+            attachment_variants: vec![(1, "acog".into())],
+            attachment_uniques: vec![sf_base, sf_acog],
+            ..Default::default()
+        };
+        let mut table = Table {
+            weapons: vec![to_def(&w, &HashMap::new()), to_def(&sf, &HashMap::new())],
+            attachments: vec![
+                AttachmentDef { id: "acog".into(), short: "acog".into(), point: 1, ..Default::default() },
+                AttachmentDef { id: "fmj".into(), short: "fmj".into(), ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        add_variants(&mut table, &["as50_mp+acog+fmj".into()], &[w.clone(), sf.clone()]);
+        let d = table.weapons.iter().find(|d| d.id == "as50_mp+acog+fmj").expect("the base combo");
+        assert!(d.overlay_material.is_empty(), "the base combo's ACOG has no overlay");
+        let alt = table.weapons.iter().find(|a| !d.alt.is_empty() && a.id == d.alt).expect("the alt mode");
+        assert_eq!(alt.overlay_material, "scope_overlay_sf_acog", "the alt base's ACOG unique");
+        assert_eq!(alt.overlay_reticle, 4);
     }
 
     #[test]
