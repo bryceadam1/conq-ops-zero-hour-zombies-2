@@ -3482,6 +3482,23 @@ Verified: cargo test --workspace green; the full real-install suite green (incl.
 autotest 13/13 default, `--classpick` all checks, 14/14 `--rts`, `--scope` PASS, `--w3d-ads`
 PASS.
 
+## The dualclip offset-frame question closes as BO2-faithful (2026-10-25)
+
+No merge, no code change. The c1 verdict's four `tag_clip` pistol dualclips (fnp45/fiveseven/
+kard/beretta93r) plus `judge_mp` were re-examined after the j_gun mount rule (`c39bcc4`): the
+research's "neither convention works (outside bbox AND view cone)" proved non-fatal on
+examination. Geometric verification from the CLI dumps (fnp45): the fastmag model hangs down
+from its origin (z [-1.57, 0]); the Convention-B mount (tag_clip + authored offset, the VERIFIED
+rule for authored tags) places the assembly at z ∈ [-6.29, -4.72] gun-local vs the gun's z ≥
+-5.22 — the twin mag's top overlaps the lower grip and protrudes ~1.1″ below: BO2's taped
+fast-mag look. "Outside the bbox" is the protruding-part precedent (the suppressor case);
+"below the cone" is the SWEEP camera's framing, not BO2's in-game frame — the part rides the
+animated `tag_clip` bone, so it appears during reloads (when BO2 shows twin mags). `judge_mp`'s
+[0, -6, 0] sideways offset is BO2's authored value for a cylinder-fed weapon and stands.
+**Playtest item: watch a dualclip pistol's reload in game.** Gate lesson: a diagnostic table's
+fail booleans are only as meaningful as the camera/bbox assumptions behind them — re-derive from
+the raw bounds before accepting a "wrong placement" verdict.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
