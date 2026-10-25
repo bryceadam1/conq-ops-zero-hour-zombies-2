@@ -51,6 +51,8 @@ pub const MS_EPS: f64 = 1e-3;
 pub const INCH_EPS: f64 = 1e-3;
 /// The epsilon of a dimensionless or degree column stored as `f32` on both sides.
 pub const F32_EPS: f64 = 1e-5;
+/// The epsilon of a rotation quaternion component: degrees through `f32` trigonometry on both sides.
+pub const QUAT_EPS: f64 = 1e-4;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Column {

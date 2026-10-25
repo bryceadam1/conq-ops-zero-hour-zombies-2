@@ -103,6 +103,8 @@ fn signature(kind: Kind, e: &str, a: &str) -> String {
     }
     match kind {
         Kind::Float(_) | Kind::Int => match (parse(e), parse(a)) {
+            // A ratio that rounds to 1 says nothing: name the offset instead.
+            (Some(x), Some(y)) if x != 0.0 && (y / x - 1.0).abs() < 5e-4 => format!("mod = BO2 {} {}", if y >= x { "+" } else { "−" }, sig4((y - x).abs())),
             (Some(x), Some(y)) if x != 0.0 => format!("mod = BO2 × {}", sig4(y / x)),
             (Some(_), Some(y)) => format!("BO2 0, mod {}", sig4(y)),
             _ => format!("`{}` → `{}`", short(e), short(a)),

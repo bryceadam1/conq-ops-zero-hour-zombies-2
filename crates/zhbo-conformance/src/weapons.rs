@@ -12,7 +12,7 @@
 //! faction hands are Zero Hour's), killcam sounds, AI/bot fields, scorestreak-only fields, network
 //! and stat-tracking fields.
 
-use crate::schema::{Kind, Schema, F32_EPS, INCH_EPS, MS_EPS};
+use crate::schema::{Kind, Schema, F32_EPS, INCH_EPS, MS_EPS, QUAT_EPS};
 
 /// `weapAnimFiles_t` (OAT `T6_Assets.h`), `WEAP_ANIM_` dropped and lowercased; index = slot.
 pub const ANIM_SLOTS: [&str; 0x58] = [
@@ -58,6 +58,20 @@ pub const ATTACHMENTS: [&str; 30] = [
     "grip", "holo", "ir", "is", "longbreath", "mk", "mms", "rangefinder", "reflex", "rf", "sf", "silencer", "stackfire",
     "stalker", "steadyaim", "swayreduc", "tacknife", "vzoom",
 ];
+
+/// Whether `weapAnimFiles_t` slot `s` is one of the dual-wield left gun's (`FIRE_LEFT` ..
+/// `RELOAD_LEFT`): a column only a dual-wield weapon fills — BO2 binds the slots on a single gun
+/// too (`FUN_0052d3e0`), but nothing ever plays them.
+pub fn is_left_slot(s: usize) -> bool {
+    (0x4e..=0x54).contains(&s)
+}
+
+/// The order both sides list parts in: by model, then tag. Which part an engine composes first is
+/// not a fact either game shows, so the part columns hold the parts sorted (models, tags, offsets
+/// and rotations stay index-aligned).
+pub fn part_order(model: &str, tag: &str) -> (String, String) {
+    (model.to_string(), tag.to_string())
+}
 
 /// An enum value's name, or its number when out of range (so an unknown value still diffs).
 pub fn enum_name(table: &[&str], v: u32) -> String {
@@ -184,7 +198,10 @@ pub fn schema() -> Schema {
         .col("stack_fire_accuracy_decay", "spread", f, "same rule (FUN_008ece00)");
 
     // ADS.
-    s.col("ads_zoom_fov", "ads", v3, "fAdsZoomFov1..3: per component, the last attachment differing from defaultattachment wins (FUN_008ec3f0)")
+    for (i, c) in ["ads_zoom_fov1", "ads_zoom_fov2", "ads_zoom_fov3"].into_iter().enumerate() {
+        s.col(c, "ads", f, format!("fAdsZoomFov{}: the last attachment differing from defaultattachment wins (FUN_008ec3f0)", i + 1));
+    }
+    s
         .col("ads_zoom_in_frac", "ads", f, "first attachment differing from defaultattachment, else the variant's (FUN_008ec4b0)")
         .col("ads_zoom_out_frac", "ads", f, "same rule (FUN_008ec520)")
         .col("ads_move_speed_scale", "ads", f, "the def's if > 0 else 1, then the last attachment differing from defaultattachment (FUN_008ed080)")
@@ -261,7 +278,7 @@ pub fn schema() -> Schema {
         .col("view_part_models", "parts", Kind::List, "hip draw: base attachViewModel slots then each attachment's resolved unique (and its additional model)")
         .col("view_part_tags", "parts", Kind::List, "each part's tag (`j_gun` when the authored one is empty)")
         .col("view_part_offsets", "parts", Kind::Floats(INCH_EPS), "each part's offset, x,y,z flattened, inches")
-        .col("view_part_rotations", "parts", Kind::Floats(F32_EPS), "each part's rotation, pitch,yaw,roll flattened, degrees")
+        .col("view_part_rotations", "parts", Kind::Floats(QUAT_EPS), "each part's rotation as a unit quaternion x,y,z,w (w >= 0), flattened; BO2's pitch,yaw,roll degrees through the engine's AnglesToAxis")
         .col("view_ads_part_models", "parts", Kind::List, "ADS draw: the same list with attachViewModel[7] / viewModelADS swaps")
         .col("view_hide_tags", "hide", Kind::Set, "the merged hideTags (G14 §4, FUN_008ec1a0)")
         .col("view_part_materials", "materials", Kind::List, "each hip part's LOD0 surface materials, `;`-joined per part")
@@ -269,11 +286,16 @@ pub fn schema() -> Schema {
         .col("world_part_models", "worldparts", Kind::List, "third person: base attachWorldModel slots then each attachment's resolved unique (FUN_008ace30)")
         .col("world_part_tags", "worldparts", Kind::List, "each world part's tag")
         .col("world_part_offsets", "worldparts", Kind::Floats(INCH_EPS), "each world part's offset, flattened, inches")
-        .col("world_part_rotations", "worldparts", Kind::Floats(F32_EPS), "each world part's rotation, flattened, degrees");
+        .col("world_part_rotations", "worldparts", Kind::Floats(QUAT_EPS), "each world part's rotation as a unit quaternion x,y,z,w (w >= 0), flattened");
 
     // The animation each slot plays (G14 §5; an empty slot plays IDLE).
     for name in &ANIM_SLOTS[1..] {
-        s.col(format!("anim_{name}"), "anims", Kind::Text, "the xanim this weapAnimFiles_t slot plays (G14 §5)");
+        let doc = if is_left_slot(ANIM_SLOTS.iter().position(|n| n == name).unwrap_or(0)) {
+            "the dual-wield left gun's xanim for this slot (G14 §5); empty for a single gun"
+        } else {
+            "the xanim this weapAnimFiles_t slot plays (G14 §5)"
+        };
+        s.col(format!("anim_{name}"), "anims", Kind::Text, doc);
     }
 
     // Sounds and effects.
@@ -290,6 +312,7 @@ pub fn schema() -> Schema {
 
     // Camouflage and the CaC context of the row.
     s.col("view_part_camos", "camo", Kind::List, "the WeaponCamo a class camo uses on the gun and each hip part: the def's for the gun and base parts, the attachment's single unique's for its parts (FUN_00529600)")
+        .col("cac_group", "cac", Kind::Text, "the CaC group the weapon lists under (statstable column 2: weapon_assault, weapon_smg, ...); `` for weapons CaC never offers")
         .col("cac_slot", "cac", Kind::Text, "statstable column 13: primary, secondary, primarygrenade, specialgrenade; `` for weapons CaC never offers")
         .col("cac_requires", "cac", Kind::Set, "the wildcards a class needs for this combination (G15: primarygunfighter for a primary's third attachment, secondarygunfighter for a secondary's second)");
     s

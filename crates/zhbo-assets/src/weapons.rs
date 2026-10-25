@@ -343,7 +343,7 @@ pub fn alt_clip(slot: usize) -> usize {
 }
 
 /// BO2's base aim-down-sights walking speed, as a share of the normal walk.
-const ADS_MOVE_BASE: f32 = 0.35;
+pub(crate) const ADS_MOVE_BASE: f32 = 0.35;
 
 /// Where the weapon table goes in the archive (the bridge hands it to the core).
 pub use zhbo_core::names::WEAPON_TABLE_PATH as TABLE_PATH;

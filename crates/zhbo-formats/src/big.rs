@@ -108,6 +108,30 @@ fn parse_table(table: &[u8], count: usize) -> Result<Vec<BigEntry>> {
     Ok(entries)
 }
 
+/// Every member of an archive held in memory, `(path, contents)` in table order (the launcher's
+/// `ConquerOps_BO2.big` as `zhbo_assets::hud::build_archive` returns it, read without a file).
+pub fn members(bytes: &[u8]) -> Result<Vec<(String, Vec<u8>)>> {
+    let header = bytes.get(..16).ok_or(FormatError::Truncated("BIG header"))?;
+    let magic: [u8; 4] = header[0..4].try_into().unwrap();
+    if &magic != b"BIGF" && &magic != b"BIG4" {
+        return Err(FormatError::BadMagic { expected: "BIGF/BIG4", found: magic });
+    }
+    let count = u32::from_be_bytes(header[8..12].try_into().unwrap()) as usize;
+    let data_start = u32::from_be_bytes(header[12..16].try_into().unwrap()) as usize;
+    if data_start < 16 {
+        return Err(FormatError::Corrupt(format!("header size {data_start} < 16")));
+    }
+    let table = bytes.get(16..data_start).ok_or(FormatError::Truncated("BIG file table"))?;
+    parse_table(table, count)?
+        .into_iter()
+        .map(|e| {
+            let (start, end) = (e.offset as usize, e.offset as usize + e.size as usize);
+            let data = bytes.get(start..end).ok_or_else(|| FormatError::Corrupt(format!("BIG member {:?} extends past the end of the archive", e.path)))?;
+            Ok((e.path, data.to_vec()))
+        })
+        .collect()
+}
+
 /// Engine-style path key: lower case, backslashes.
 pub fn normalize(path: &str) -> String {
     path.replace('/', "\\").to_ascii_lowercase()
@@ -162,6 +186,18 @@ mod tests {
         let b = big.find("Data\\B.txt").unwrap();
         assert_eq!(big.read(b).unwrap(), b"hi");
         std::fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn reads_an_archive_held_in_memory() {
+        let bytes = build(&[("Data\\INI\\A.ini", b"Object A\nEnd\n"), ("data\\b.txt", b"hi")]);
+        let m = members(&bytes).unwrap();
+        assert_eq!(m, vec![("Data\\INI\\A.ini".to_string(), b"Object A\nEnd\n".to_vec()), ("data\\b.txt".to_string(), b"hi".to_vec())]);
+        assert!(matches!(members(b"NOPE0000000000000000"), Err(FormatError::BadMagic { .. })));
+        // A member past the end is refused, not read short.
+        let mut cut = bytes.clone();
+        cut.truncate(bytes.len() - 1);
+        assert!(members(&cut).is_err());
     }
 
     #[test]

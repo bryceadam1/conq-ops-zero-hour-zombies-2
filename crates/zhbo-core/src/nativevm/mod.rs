@@ -447,6 +447,18 @@ pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: 
     Ok(Some(Loaded { key: (vm, faction, camo_key), camo: applied, manifest, skeleton, mesh, mesh_aimed, aim, anims: HashMap::new() }))
 }
 
+/// The clip a manifest shows for `clip` ([`Loaded::clip_path`]'s rule, also read by the conformance
+/// emitter): its own, else the idle of its mode, else the idle. A dual-wield clip's id carries
+/// `INSTANCE_LEFT` in its high byte; the fallbacks keep that bit.
+pub fn clip_for(manifest: &Viewmodel, clip: i32) -> Option<&str> {
+    use zhbo_native::viewmodel::INSTANCE_LEFT;
+    let alt = crate::weapons::ALT_CLIPS;
+    let instance = (clip as u16) & INSTANCE_LEFT;
+    let base = (clip as u16) & !INSTANCE_LEFT;
+    let mode_idle = if i32::from(base) >= alt { alt as u16 + crate::viewmodel::slot::IDLE as u16 } else { crate::viewmodel::slot::IDLE as u16 };
+    [base, mode_idle, crate::viewmodel::slot::IDLE as u16].into_iter().find_map(|c| manifest.clip(c | instance))
+}
+
 /// The eye's frame as a transform: X along `dir`, Y to the left, Z up, at `eye`.
 pub fn eye_frame(eye: [f32; 3], dir: [f32; 3]) -> Mat4 {
     let norm = |v: [f32; 3]| {
@@ -480,12 +492,7 @@ impl Loaded {
     /// path's fallback, `ZhboViewmodel.cpp`). A dual-wield clip's id carries `INSTANCE_LEFT` in its
     /// high byte; the fallbacks keep that bit so the left gun falls back to its own idle.
     pub fn clip_path(&self, clip: i32) -> Option<&str> {
-        use zhbo_native::viewmodel::INSTANCE_LEFT;
-        let alt = crate::weapons::ALT_CLIPS;
-        let instance = (clip as u16) & INSTANCE_LEFT;
-        let base = (clip as u16) & !INSTANCE_LEFT;
-        let mode_idle = if i32::from(base) >= alt { alt as u16 + crate::viewmodel::slot::IDLE as u16 } else { crate::viewmodel::slot::IDLE as u16 };
-        [base, mode_idle, crate::viewmodel::slot::IDLE as u16].into_iter().find_map(|c| self.manifest.clip(c | instance))
+        clip_for(&self.manifest, clip)
     }
 
     /// The ADS layer's clip for `clip`'s mode: [`crate::viewmodel::slot::ADS_UP`] entering,

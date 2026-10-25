@@ -790,3 +790,16 @@ fn a_grid_picker_walks_two_dimensions_and_a_wide_slot_says_so() {
     e.step(Edges { up: true, ..Default::default() });
     assert_eq!(e.option, 0);
 }
+
+#[test]
+fn the_offer_is_the_editors_own_lists_and_caps() {
+    let o = offer();
+    assert_eq!(o.primary, gun_ids(&PRIMARY_CLASSES));
+    assert_eq!(o.secondary, gun_ids(&SECONDARY_CLASSES));
+    assert_eq!((o.lethal.clone(), o.tactical.clone()), (equipment_ids(WeaponClass::Lethal), equipment_ids(WeaponClass::Tactical)));
+    // BO2's two attachments, three with Primary Gunfighter; one, two with Secondary Gunfighter.
+    assert_eq!((o.primary_caps, o.secondary_caps), ((2, 3), (1, 2)));
+    let first = o.primary[0];
+    assert_eq!(offered_attachments(first), allowed_shorts(first));
+    assert_eq!(draft_weapon_id("an94_mp", &["reflex", "grip"]), "an94_mp+grip+reflex");
+}

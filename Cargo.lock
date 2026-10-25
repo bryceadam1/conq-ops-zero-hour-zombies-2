@@ -1427,6 +1427,7 @@ version = "0.1.0"
 dependencies = [
  "claxon",
  "png",
+ "zhbo-conformance",
  "zhbo-core",
  "zhbo-formats",
  "zhbo-native",

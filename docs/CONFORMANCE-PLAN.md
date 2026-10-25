@@ -59,7 +59,8 @@ keep the parent's attachment fields (G14 §5: the alt index replaces only the va
 - [x] 2. Parser additions: none needed — the oracle reads the raw structs through the layouts
       (`bo2/raw.rs`); `t6zone::synthetic` is public for the oracle's fixture tests.
 - [x] 3. Oracle: combos, resolve, expected weapon rows (G16: `getloadoutweapon`, ammo, camo).
-- [ ] 4. Actual weapon rows from the in-memory conversion.
+- [x] 4. Actual weapon rows from the launcher's in-memory archive (`hud::build_archive`), the
+      runtime catalog and the classmenu offer; the install-gated `conformance` test.
 - [ ] 5. Havok Lua reader; CaC CSV on both sides.
 - [ ] 6. CLI subcommand, install-gated test, docs (TESTING rung, ARCHITECTURE crate, MODLOG).
 - [ ] 7. Verify: `cargo test --workspace`, clippy `--all-targets`, real-install suite.

@@ -44,6 +44,7 @@ struct Job<'z> {
     w: Weapon<'z>,
     parent: Option<Weapon<'z>>,
     key: String,
+    group: String,
     slot: String,
     requires: Vec<&'static str>,
 }
@@ -104,13 +105,13 @@ impl<'a> Expected<'a> {
                     continue;
                 }
                 let alt = alt_weapon(&w);
-                jobs.push(Job { w, parent: None, key: key.clone(), slot: item.slot.clone(), requires: c.requires.clone() });
+                jobs.push(Job { w, parent: None, key: key.clone(), group: item.group.clone(), slot: item.slot.clone(), requires: c.requires.clone() });
                 // The alt mode keeps the combination's attachment fields (only the variant byte
                 // changes, `FUN_008ec9e0`).
                 if let Some(alt) = alt.and_then(|a| self.variants.get(&a).copied()) {
                     if let Some(aw) = Weapon::new(alt, &kinds) {
                         if seen.insert((alt.name(), key.clone())) {
-                            jobs.push(Job { w: aw, parent: Some(w), key, slot: String::new(), requires: c.requires.clone() });
+                            jobs.push(Job { w: aw, parent: Some(w), key, group: String::new(), slot: String::new(), requires: c.requires.clone() });
                         }
                     }
                 }
@@ -119,7 +120,7 @@ impl<'a> Expected<'a> {
         for k in KNIVES {
             if let Some(w) = self.variants.get(k).and_then(|v| Weapon::new(*v, &[])) {
                 if seen.insert((k.to_string(), String::new())) {
-                    jobs.push(Job { w, parent: None, key: String::new(), slot: String::new(), requires: Vec::new() });
+                    jobs.push(Job { w, parent: None, key: String::new(), group: String::new(), slot: String::new(), requires: Vec::new() });
                 }
             }
         }
@@ -280,7 +281,9 @@ impl<'a> Expected<'a> {
             resolve::last_differing(w, da, |a| a.ads_zoom_fov3(), v.ads_zoom_fov3()),
         ];
         let move_base = if d.ads_move_speed_scale() > 0.0 { d.ads_move_speed_scale() } else { 1.0 };
-        b.floats("ads_zoom_fov", &fls(&fov))
+        b.float("ads_zoom_fov1", fl(fov[0]))
+            .float("ads_zoom_fov2", fl(fov[1]))
+            .float("ads_zoom_fov3", fl(fov[2]))
             .float("ads_zoom_in_frac", fl(resolve::first_att_differing(w, da, |a| a.ads_zoom_in_frac(), v.ads_zoom_in_frac())))
             .float("ads_zoom_out_frac", fl(resolve::first_att_differing(w, da, |a| a.ads_zoom_out_frac(), v.ads_zoom_out_frac())))
             .float("ads_move_speed_scale", fl(resolve::last_differing(w, da, |a| a.ads_move_speed_scale(), move_base)))
@@ -440,7 +443,11 @@ impl<'a> Expected<'a> {
         let hip = resolve::view_parts(pw, false);
         let ads = resolve::view_parts(pw, true);
         part_cols(&mut b, "view_part", &hip);
-        b.opt_text("view_model", gun.clone()).list("view_ads_part_models", &ads.iter().map(|p| p.model.clone()).collect::<Vec<_>>());
+        let mut ads_models: Vec<String> = ads.iter().map(|p| p.model.clone()).collect();
+        ads_models.sort();
+        b.opt_text("view_model", gun.clone()).list("view_ads_part_models", &ads_models);
+        let mut hip = hip;
+        hip.sort_by_key(|p| cols::part_order(&p.model, &p.tag));
         b.set("view_hide_tags", &resolve::hide_tags(w));
         let mats: Vec<String> = gun.iter().cloned().chain(hip.iter().map(|p| p.model.clone())).map(|m| self.model_materials(&m)).collect();
         b.list("view_part_materials", &mats);
@@ -450,7 +457,8 @@ impl<'a> Expected<'a> {
         // Animations.
         let table = resolve::anims(w, left);
         for (s, name) in cols::ANIM_SLOTS.iter().enumerate().skip(1) {
-            b.opt_text(&format!("anim_{name}"), table.get(s).cloned().flatten());
+            let clip = if cols::is_left_slot(s) && !dw { None } else { table.get(s).cloned().flatten() };
+            b.opt_text(&format!("anim_{name}"), clip);
         }
         debug_assert_eq!(table.len(), ANIMS);
 
@@ -470,16 +478,56 @@ impl<'a> Expected<'a> {
         b.opt_text("tracer", w.singles_walk().iter().find_map(|u| u.tracer()).or_else(|| d.tracer()));
 
         let camos: Vec<String> = std::iter::once(d.weapon_camo()).chain(hip.iter().map(|p| p.camo.clone())).map(Option::unwrap_or_default).collect();
-        b.list("view_part_camos", &camos).text("cac_slot", &j.slot).set("cac_requires", &j.requires);
+        b.list("view_part_camos", &camos).text("cac_group", &j.group).text("cac_slot", &j.slot).set("cac_requires", &j.requires);
         b.finish()
     }
 }
 
 fn part_cols(b: &mut RowBuilder, prefix: &str, parts: &[Part]) {
+    let mut parts = parts.to_vec();
+    parts.sort_by_key(|p| cols::part_order(&p.model, &p.tag));
     b.list(&format!("{prefix}_models"), &parts.iter().map(|p| p.model.clone()).collect::<Vec<_>>())
         .list(&format!("{prefix}_tags"), &parts.iter().map(|p| p.tag.clone()).collect::<Vec<_>>())
         .floats(&format!("{prefix}_offsets"), &parts.iter().flat_map(|p| p.offset).map(f32_value).collect::<Vec<_>>())
-        .floats(&format!("{prefix}_rotations"), &parts.iter().flat_map(|p| p.rotation).map(f32_value).collect::<Vec<_>>());
+        .floats(&format!("{prefix}_rotations"), &parts.iter().flat_map(|p| angles_to_quat(p.rotation)).collect::<Vec<_>>());
+}
+
+/// BO2's pitch/yaw/roll (degrees) as a unit quaternion `x, y, z, w` with `w >= 0`: the engine's
+/// `AnglesToAxis` (forward `(cp·cy, cp·sy, −sp)`, left `(sr·sp·cy − cr·sy, sr·sp·sy + cr·cy, sr·cp)`,
+/// up `(cr·sp·cy + sr·sy, cr·sp·sy − sr·cy, cr·cp)`) and the standard matrix-to-quaternion step.
+pub fn angles_to_quat(a: [f32; 3]) -> [f64; 4] {
+    let r = |d: f32| (d as f64).to_radians();
+    let (sp, cp) = r(a[0]).sin_cos();
+    let (sy, cy) = r(a[1]).sin_cos();
+    let (sr, cr) = r(a[2]).sin_cos();
+    let f = [cp * cy, cp * sy, -sp];
+    let l = [sr * sp * cy - cr * sy, sr * sp * sy + cr * cy, sr * cp];
+    let u = [cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp];
+    // Columns of the rotation matrix are the axes: m[row][col].
+    let m = [[f[0], l[0], u[0]], [f[1], l[1], u[1]], [f[2], l[2], u[2]]];
+    let tr = m[0][0] + m[1][1] + m[2][2];
+    let q = if tr > 0.0 {
+        let s = (tr + 1.0).sqrt() * 2.0;
+        [(m[2][1] - m[1][2]) / s, (m[0][2] - m[2][0]) / s, (m[1][0] - m[0][1]) / s, 0.25 * s]
+    } else if m[0][0] > m[1][1] && m[0][0] > m[2][2] {
+        let s = (1.0 + m[0][0] - m[1][1] - m[2][2]).sqrt() * 2.0;
+        [0.25 * s, (m[0][1] + m[1][0]) / s, (m[0][2] + m[2][0]) / s, (m[2][1] - m[1][2]) / s]
+    } else if m[1][1] > m[2][2] {
+        let s = (1.0 + m[1][1] - m[0][0] - m[2][2]).sqrt() * 2.0;
+        [(m[0][1] + m[1][0]) / s, 0.25 * s, (m[1][2] + m[2][1]) / s, (m[0][2] - m[2][0]) / s]
+    } else {
+        let s = (1.0 + m[2][2] - m[0][0] - m[1][1]).sqrt() * 2.0;
+        [(m[0][2] + m[2][0]) / s, (m[1][2] + m[2][1]) / s, 0.25 * s, (m[1][0] - m[0][1]) / s]
+    };
+    canonical_quat(q)
+}
+
+/// A unit quaternion with `w >= 0` (q and −q are the same rotation), components rounded to 1e-6
+/// so `-0` and noise do not print.
+pub fn canonical_quat(q: [f64; 4]) -> [f64; 4] {
+    let n = q.iter().map(|c| c * c).sum::<f64>().sqrt().max(1e-12);
+    let sign = if q[3] < 0.0 || (q[3] == 0.0 && q.iter().find(|c| **c != 0.0).is_some_and(|c| *c < 0.0)) { -1.0 } else { 1.0 };
+    q.map(|c| ((c / n * sign) * 1e6).round() / 1e6 + 0.0)
 }
 
 /// `FUN_008ec9e0`: the weapon the combination toggles to. The `*Index` fields are resolved from
@@ -509,3 +557,23 @@ pub fn dual_wield_weapon(w: &Weapon) -> Option<String> {
     w.d.dual_wield_weapon_name()
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn angles_become_the_id_tech_rotation() {
+        assert_eq!(angles_to_quat([0.0, 0.0, 0.0]), [0.0, 0.0, 0.0, 1.0]);
+        // Yaw 90: +X turns to +Y — a rotation of 90 about +Z.
+        let q = angles_to_quat([0.0, 90.0, 0.0]);
+        assert!((q[2] - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-6 && (q[3] - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-6, "{q:?}");
+        // Pitch 90 looks down: forward becomes −Z — +90 about +Y.
+        let q = angles_to_quat([90.0, 0.0, 0.0]);
+        assert!((q[1] - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-6, "{q:?}");
+        // Roll 90 about +X; and 360° is the identity.
+        let q = angles_to_quat([0.0, 0.0, 90.0]);
+        assert!((q[0] - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-6, "{q:?}");
+        assert_eq!(angles_to_quat([0.0, 360.0, 0.0]), [0.0, 0.0, 0.0, 1.0]);
+    }
+}
