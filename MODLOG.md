@@ -4021,3 +4021,32 @@ elsewhere are pre-existing); `ZHBO_BO2_DIR=… cargo test -q --release -p zhbo-a
 Windows VM legs were not run (protocol: no game launch); the change is platform-neutral composer
 logic.
 
+
+## Camo look parity: replacement blend, suffix variants and the black shared map (2026-10-25, branch `v1/camo-look-parity`)
+
+Three things kept the camo look from matching BO2. The style materials' colour map was often the
+shared 32x32 black `_spc` texture (`zhbo_camo_code_spc.tga` after `character::texture_file` strips
+the `~-g` prefix), so using it as the base colour turned the surface black; the blob names the base
+material while the zones carry the `_1` variant, so the lookup missed it; and the shader multiplied
+the layer over the base instead of replacing it. The converter now skips the black `_spc` map (the
+surface keeps its stock map), tries the `_1` suffix after the exact name in the patch/common/inline
+chain, records every unresolved image/material name in the summary (never fatal), and deduplicates
+the blob's material list by name. The shader's `mix` is now a replacement:
+`mix(albedo.rgb, camo.rgb * material.camo.w, camo.a)` — the layer's colour takes the base's place at
+its own per-pixel coverage. `material.camo` stays `(offset.xy, scale, gain)` and the
+`params.w > 0.5` guard still leaves a camo-less surface intact. `shaderConsts` remain
+uninterpreted; if gold still reads stock after these fixes, the follow-up is to read gold's
+`[10,10,0.46,0.53,...]` as the tint rather than extend the blanket gain.
+
+**Install audit (integrator-owned).** After the archive rebuild the summary must report no
+unresolved set images or style materials, the three solids that used to be `None` must resolve
+(`devgru` set[0], `bo2collectors` set[13], `urban_russia` set[26]), and gold's base names must be
+present and unique (`mc/mtl_weapon_camo_gold`, `mc/mtl_weapon_camo_gold_alt`) with no
+`zhbo_camo_code_spc.tga` colour map on a style material. The version bump (`hud::VERSION` 71→72)
+is integrator-owned; this branch leaves it at 71.
+
+**Test-anchor note.** The headless pin's `pixel()` helper returns BGR (the existing skin test
+asserts `[32,64,128]` for texture `[128,64,32]`), so the red camo layer over a blue base reads
+`[0,0,255]`, not `[255,0,0]`. The plan's assertion had the byte order inverted; the applied test
+uses the BGR value. The plan's separate `mod tests` block was folded into the module already at the
+end of `camo.rs` (a second `mod tests` would not compile).

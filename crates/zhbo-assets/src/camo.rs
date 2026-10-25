@@ -19,6 +19,14 @@ pub(crate) struct Art {
     pub images: BTreeMap<String, String>,
     /// Converted style materials by BO2 material name.
     pub materials: BTreeMap<String, nm::Material>,
+    /// Names whose pixels resolved in none of the zones (reported, never fatal).
+    pub unresolved: Vec<String>,
+}
+
+/// The variant suffixes a style material's base name may be stored under (the blob names the base,
+/// the zones carry the `_1` variant; research §3(d) bug D2).
+fn suffix_candidates(name: &str) -> Vec<String> {
+    vec![format!("{name}_1")]
 }
 
 /// Convert every image and style material the camo assets name, once each. Missing art is skipped
@@ -36,18 +44,24 @@ pub(crate) fn art(
             xmodel::find_image(common, &img.name).and_then(|i| paks.image(i.stream_hash))
         })
     };
-    let mut names: BTreeSet<String> = BTreeSet::new();
+    let mut wanted_images: BTreeMap<String, &xmodel::Image> = BTreeMap::new();
     for c in sets {
         for s in &c.sets {
             for i in [&s.solid_image, &s.pattern_image].into_iter().flatten() {
-                names.insert(i.name.clone());
+                wanted_images.entry(i.name.clone()).or_insert(i);
             }
         }
     }
     let mut images = BTreeMap::new();
-    for name in names {
-        let Some(img) = xmodel::find_image(common, &name) else { continue };
-        let Some(rgba) = paks.image(img.stream_hash) else { continue };
+    let mut unresolved: Vec<String> = Vec::new();
+    for (name, image) in wanted_images {
+        let found = paks.image(image.stream_hash)
+            .or_else(|| xmodel::find_image(common, &name).and_then(|i| paks.image(i.stream_hash)))
+            .or_else(|| xmodel::find_image(patch, &name).and_then(|i| paks.image(i.stream_hash)));
+        let Some(rgba) = found else {
+            unresolved.push(name);
+            continue;
+        };
         let rgba = shrink(rgba, MAX_TEXTURE);
         let path = format!("Art\\Textures\\{}", character::texture_file(&name));
         out.entry(path.clone()).or_insert_with(|| tga_bytes(&rgba));
@@ -66,25 +80,52 @@ pub(crate) fn art(
         let bare = name.trim_start_matches("mc/");
         let found = xmodel::find_asset_material(patch, &name)
             .or_else(|| xmodel::find_asset_material(patch, bare))
+            .or_else(|| xmodel::find_asset_material(common, &name))
+            .or_else(|| xmodel::find_asset_material(common, bare))
             .or_else(|| xmodel::find_inline_material(inline, &name))
             .or_else(|| xmodel::find_inline_material(inline, bare))
-            .or_else(|| xmodel::find_inline_material(common, &name));
-        let Some(mat) = found else { continue };
-        let Some(color) = mat.color_map() else { continue };
-        let Some(rgba) = pixel(color) else { continue };
-        let file = character::texture_file(&color.name);
-        let path = format!("Art\\Textures\\{file}");
-        if !out.contains_key(&path) {
-            let mut rgba = shrink(rgba, MAX_TEXTURE);
-            put_occlusion(&mut rgba, mat.image(xmodel::TS_OCCLUSION_MAP).and_then(pixel).as_ref());
-            let maps = surface_maps(
-                rgba.width,
-                rgba.height,
-                mat.image(xmodel::TS_NORMAL_MAP).and_then(pixel).as_ref(),
-                mat.image(xmodel::TS_SPECULAR_MAP).and_then(pixel).as_ref(),
-            );
-            out.insert(format!("Art\\Textures\\{}", maps_file(&file)), tga_bytes(&maps));
-            out.insert(path.clone(), tga_bytes(&rgba));
+            .or_else(|| xmodel::find_inline_material(common, &name))
+            .or_else(|| suffix_candidates(&name).into_iter().find_map(|n| {
+                let bare = n.trim_start_matches("mc/");
+                xmodel::find_asset_material(patch, &n)
+                    .or_else(|| xmodel::find_asset_material(common, &n))
+                    .or_else(|| xmodel::find_inline_material(inline, &n))
+                    .or_else(|| xmodel::find_inline_material(common, &n))
+                    .or_else(|| xmodel::find_asset_material(patch, bare))
+                    .or_else(|| xmodel::find_asset_material(common, bare))
+            }));
+        let Some(mat) = found else {
+            unresolved.push(name);
+            continue;
+        };
+        let color = mat.color_map();
+        let rgba = color.and_then(pixel);
+        // The shared style map is a 32x32 black specular-named texture; using it as the base colour
+        // turns the surface black. Keep the surface's stock map instead (research §3(d) bug D2).
+        let black = color.is_some_and(|c| c.name.contains("_spc"));
+        let mut texture = None;
+        let mut maps_texture = None;
+        if let (Some(color), Some(rgba), false) = (color, rgba, black) {
+            let file = character::texture_file(&color.name);
+            let path = format!("Art\\Textures\\{file}");
+            let maps_path = format!("Art\\Textures\\{}", maps_file(&file));
+            if !out.contains_key(&path) {
+                let mut rgba = shrink(rgba, MAX_TEXTURE);
+                put_occlusion(&mut rgba, mat.image(xmodel::TS_OCCLUSION_MAP).and_then(pixel).as_ref());
+                let maps = surface_maps(
+                    rgba.width,
+                    rgba.height,
+                    mat.image(xmodel::TS_NORMAL_MAP).and_then(pixel).as_ref(),
+                    mat.image(xmodel::TS_SPECULAR_MAP).and_then(pixel).as_ref(),
+                );
+                out.insert(maps_path.clone(), tga_bytes(&maps));
+                out.insert(path.clone(), tga_bytes(&rgba));
+            }
+            texture = Some(path);
+            maps_texture = Some(maps_path);
+        }
+        if texture.is_none() {
+            unresolved.push(name.clone());
         }
         let blend = crate::native::blend(mat.blend());
         let opaque = mat.blend() == zhbo_formats::w3d::Blend::Opaque;
@@ -94,15 +135,15 @@ pub(crate) fn art(
                 name: mat.name.clone(),
                 blend,
                 emissive: matches!(blend, nm::Blend::Additive { .. }),
-                color: Some(path),
-                maps: opaque.then(|| format!("Art\\Textures\\{}", maps_file(&file))),
+                color: texture,
+                maps: opaque.then_some(maps_texture).flatten(),
                 sort_key: mat.sort_key,
                 cull: crate::native::cull(mat.cull()),
                 camo: nm::CamoLayer::None,
             },
         );
     }
-    Art { images, materials }
+    Art { images, materials, unresolved }
 }
 
 /// Camo assets that belong to attachments (the optic's own camo), not to a weapon's recipe: the
@@ -245,7 +286,7 @@ pub(crate) fn files(
     out: &mut BTreeMap<String, Vec<u8>>,
 ) -> Result<Summary, String> {
     let art = art(common, patch, inline, paks, sets, out);
-    let mut summary = Summary { assets: 0, images: art.images.len(), styles: art.materials.len(), unresolved: Vec::new(), excluded: Vec::new() };
+    let mut summary = Summary { assets: 0, images: art.images.len(), styles: art.materials.len(), unresolved: art.unresolved.clone(), excluded: Vec::new() };
     for c in sets {
         // Optic camo assets are attachment recipes, not per-weapon ones (PLAN D5's follow-up).
         if ATTACHMENT_CAMO.contains(&c.name.as_str()) {
@@ -287,8 +328,12 @@ pub(crate) fn files(
                     }
                 }).collect(),
             }).collect(),
-            materials: c.materials.iter().flat_map(|s| s.entries.iter().flat_map(|e| e.camo.iter()))
-                .filter_map(|n| art.materials.get(n).cloned()).collect(),
+            materials: {
+                let mut seen: BTreeSet<&str> = BTreeSet::new();
+                c.materials.iter().flat_map(|s| s.entries.iter().flat_map(|e| e.camo.iter()))
+                    .filter(|n| seen.insert(n.as_str()))
+                    .filter_map(|n| art.materials.get(n).cloned()).collect()
+            },
             options: Vec::new(),
         };
         for id in &camo_ids {
@@ -342,6 +387,7 @@ mod tests {
         let resolved: Vec<&str> = sets.iter().map(|c| c.name.as_str()).filter(|n| out.contains_key(&zhbo_native::camo_path(n))).collect();
         println!("resolved camo assets ({}): {resolved:?}", resolved.len());
         println!("excluded attachment camo assets ({}): {:?}", s.excluded.len(), s.excluded);
+        println!("unresolved ({}): {:?}", s.unresolved.len(), s.unresolved);
         // The seven optic camo assets are attachment recipes: they must produce no blob.
         for name in ["camo_reflex", "camo_holo", "camo_ir", "camo_acog", "camo_hybrid", "camo_mms", "camo_targetfinder"] {
             assert!(!out.contains_key(&zhbo_native::camo_path(name)), "{name} must not convert");
@@ -372,10 +418,10 @@ mod tests {
         assert!(an94.sets[matuka].pattern.as_deref().is_some_and(|p| p.contains("bloodshot")), "{:?}", an94.sets[matuka].pattern);
         assert!(an94.sets[1].pattern.as_deref().is_some_and(|p| p.contains("atacs")));
         assert!(out.keys().any(|k| k.contains("camo_atacs_pattern")), "the pattern art");
-        // The gold style's real colour map is `~-gcamo_code_spc`; `character::texture_file` strips
-        // the `~-g` prefix, so the archive path is `zhbo_camo_code_spc.tga` (the plan's assumed
-        // `camo_gold_col` name is not what this install's material carries).
-        assert!(out.keys().any(|k| k.contains("camo_code_spc")), "the style art");
+        // The gold style's real colour map is `~-gcamo_code_spc`; the converter now skips the
+        // shared black `_spc` map (the surface keeps its stock map), so the archive must not
+        // carry it as a colour map (Change 2c / plan 5c).
+        assert!(!out.keys().any(|k| k.contains("camo_code_spc")), "the black _spc map must not be a colour map");
     }
 
     /// The base 19 camo options (`attachmenttable.csv:32-50`) all name art in `OPTION_ART`,
@@ -400,5 +446,13 @@ mod tests {
         }
         assert_eq!(entry("camo_multicam").and_then(|(_, s, _)| s), Some("t6_camo_devgru"));
         assert_eq!(entry("camo_matuka").and_then(|(_, s, _)| s), Some("t6_camo_bloodshot"));
+    }
+
+    use super::suffix_candidates;
+
+    #[test]
+    fn suffix_candidates_try_the_variant() {
+        assert_eq!(suffix_candidates("mc/mtl_weapon_camo_gold"), vec!["mc/mtl_weapon_camo_gold_1".to_string()]);
+        assert_eq!(suffix_candidates("mc/mtl_weapon_camo_gold_alt"), vec!["mc/mtl_weapon_camo_gold_alt_1".to_string()]);
     }
 }

@@ -97,9 +97,9 @@ fn fs(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     // flow. Surfaces with no camo bind the 1x1 white texture and skip the mix below.
     let camo = textureSample(camo_map, samp, i.uv * material.camo.z + material.camo.xy);
     if (material.params.w > 0.5) {
-        // BO2 replaces the surface's camo layer; the mod multiplies it over the base colour at the
-        // layer's coverage. The gain is per weapon/camo in the blob (research §5.3).
-        albedo = vec4<f32>(albedo.rgb * mix(vec3<f32>(1.0), camo.rgb * material.camo.w, camo.a), albedo.a);
+        // BO2 replaces the surface's camo layer: the layer's colour takes the base colour's place
+        // at its own per-pixel coverage. The gain is per set in the blob (camo_uv.w; §5.3).
+        albedo = vec4<f32>(mix(albedo.rgb, camo.rgb * material.camo.w, camo.a), albedo.a);
     }
     let dp1 = dpdx(i.world);
     let dp2 = dpdy(i.world);
