@@ -342,6 +342,10 @@ typedef struct ZhboClassButton
 #define ZHBO_VM_SLOT_SPRINT_EMPTY_LOOP 0x24
 #define ZHBO_VM_SLOT_ADS_FIRE 0x3D
 #define ZHBO_VM_SLOT_ADS_LASTSHOT 0x3E
+/* The ADS transition layer (weapAnimFiles_t 0x55/0x56): a tag_torso-only overlay on a second
+   channel, composed over the action clip (zhbo_core::viewmodel::slot::ADS_UP/ADS_DOWN). */
+#define ZHBO_VM_ADS_UP 0x55
+#define ZHBO_VM_ADS_DOWN 0x56
 #define ZHBO_VM_SLOT_COUNT 0x58
 #define ZHBO_VM_TABLET_PULLOUT 0x60
 #define ZHBO_VM_TABLET_IDLE 0x61

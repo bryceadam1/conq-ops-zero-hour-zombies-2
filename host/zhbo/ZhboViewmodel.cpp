@@ -61,6 +61,12 @@ namespace
 	// The loaded model's clips by clip id (BO2 slot or tablet clip).
 	std::map<int, HAnimClass *> s_anims;
 	AsciiString s_missing; // a model that failed to load; not retried
+	// ADS layer state: the fraction's direction (rising → up, falling → down) and the combo that
+	// layers the authored clip over the action clip. The combo lives as long as the model; the
+	// direction follows the native path's rule (`nativevm/ffi.rs`).
+	Real s_adsPrev = 0.0f;
+	Bool s_adsDown = FALSE;
+	HAnimComboClass *s_combo = nullptr;
 
 	// Sound notetracks of the clips (zhbo_assets::sfx): played as the clip passes their time.
 	struct Note
@@ -172,6 +178,13 @@ namespace
 			REF_PTR_RELEASE(a.second);
 		}
 		s_anims.clear();
+		s_adsPrev = 0.0f;
+		s_adsDown = FALSE;
+		if (s_combo)
+		{
+			delete s_combo;
+			s_combo = nullptr;
+		}
 		if (s_model)
 		{
 			s_model->Remove();
@@ -476,21 +489,93 @@ namespace
 			it = s_anims.find((clip >= ZHBO_VM_ALT_CLIPS ? ZHBO_VM_ALT_CLIPS : 0) + ZHBO_VM_SLOT_IDLE);
 		if (it == s_anims.end())
 			it = s_anims.find(ZHBO_VM_SLOT_IDLE);
+		HAnimClass *anim = nullptr;
+		Real baseFrame = 0.0f;
 		if (it != s_anims.end())
 		{
-			HAnimClass *anim = it->second;
+			anim = it->second;
 			const Real frames = (Real)anim->Get_Num_Frames();
-			Real frame = time * anim->Get_Frame_Rate();
+			baseFrame = time * anim->Get_Frame_Rate();
 			if (loops(it->first))
-				frame = frames > 1.0f ? fmodf(frame, frames - 1.0f) : 0.0f;
+				baseFrame = frames > 1.0f ? fmodf(baseFrame, frames - 1.0f) : 0.0f;
 			else
-				frame = std::min(frame, std::max(frames - 1.0f, 0.0f));
-			s_model->Set_Animation(anim, frame, RenderObjClass::ANIM_MODE_MANUAL);
+				baseFrame = std::min(baseFrame, std::max(frames - 1.0f, 0.0f));
+		}
+
+		// The ADS layer's direction: rising → up, falling → down, held keeps the last one (the
+		// native path's rule, `nativevm/ffi.rs:144-148`). A new model starts fresh in `load`.
+		if (ads < s_adsPrev - 1e-5f)
+			s_adsDown = TRUE;
+		else if (ads > s_adsPrev + 1e-5f)
+			s_adsDown = FALSE;
+		s_adsPrev = ads;
+
+		// The authored 0x55/0x56 ADS clip: a `tag_torso`-only layer over the action clip. The engine
+		// composes it with an `HAnimComboClass` whose pivot maps mask the action clip's torso to
+		// zero and the ADS clip's other bones to zero — the W3D twin of the native `sample_over`
+		// (`nativevm/place.rs:7-13`). The slide below is the fallback when there is no clip:
+		// equipment, a partial conversion, a clip still loading. Applying both would double-correct.
+		HAnimClass *adsAnim = nullptr;
+		if (ads > 0.0f && anim)
+		{
+			const int mode = clip >= ZHBO_VM_ALT_CLIPS ? ZHBO_VM_ALT_CLIPS : 0;
+			const int up = mode + ZHBO_VM_ADS_UP;
+			const int down = mode + ZHBO_VM_ADS_DOWN;
+			std::map<int, HAnimClass *>::iterator ai = s_anims.find(s_adsDown ? down : up);
+			if (ai == s_anims.end()) // a weapon with only one direction's clip: use the other
+				ai = s_anims.find(s_adsDown ? up : down);
+			if (ai != s_anims.end())
+				adsAnim = ai->second;
+		}
+
+		if (adsAnim)
+		{
+			if (!s_combo)
+				s_combo = new HAnimComboClass(2);
+			s_combo->Set_Motion(0, anim);
+			s_combo->Set_Frame(0, baseFrame);
+			s_combo->Set_Weight(0, 1.0f);
+			// The action clip's pivot map: 1.0 everywhere except `tag_torso` (0.0), so the ADS
+			// layer owns the torso.
+			NamedPivotMapClass *baseMap = NEW_REF(NamedPivotMapClass, ());
+			baseMap->Update_Pivot_Map(s_model->Get_HTree());
+			baseMap->Add("tag_torso", 0.0f);
+			s_combo->Set_Pivot_Weight_Map(0, baseMap);
+			REF_PTR_RELEASE(baseMap);
+
+			s_combo->Set_Motion(1, adsAnim);
+			const Real adsFrames = (Real)adsAnim->Get_Num_Frames();
+			s_combo->Set_Frame(1, (s_adsDown ? 1.0f - ads : ads) * std::max(adsFrames - 1.0f, 0.0f));
+			s_combo->Set_Weight(1, 1.0f);
+			// The ADS clip's pivot map: 1.0 only at the pivots it keys (`tag_torso`).
+			s_combo->Peek_Anim_Combo_Data(1)->Build_Active_Pivot_Map();
+			s_model->Set_Animation(s_combo);
+			static Bool s_layerWarned = FALSE;
+			if (!s_layerWarned)
+			{
+				s_layerWarned = TRUE;
+				Zhbo_Log("viewmodel: ADS layer %s over clip %d", s_adsDown ? "down" : "up", clip);
+				Zhbo_Log("viewmodel: ADS slide skipped (the clip owns the pose)");
+			}
+		}
+		else
+		{
+			if (anim)
+				s_model->Set_Animation(anim, baseFrame, RenderObjClass::ANIM_MODE_MANUAL);
+			else
+				s_model->Set_Animation();
+			if (s_combo)
+			{
+				delete s_combo;
+				s_combo = nullptr;
+			}
 		}
 
 		// Aim down the sights: move the model so the sight bone is on the view axis (the converter
-		// gives every gun one: BO2's, an optic's window, or its rear sight's top).
-		if (ads > 0.0f)
+		// gives every gun one: BO2's, an optic's window, or its rear sight's top). This is the
+		// fallback when the ADS clip owns the pose — the clip already carries the eye relief and
+		// the launchers' rotation, so sliding as well would double-correct.
+		if (ads > 0.0f && !adsAnim)
 		{
 			const int sights = s_model->Get_Bone_Index("tag_sights");
 			static Bool s_warned = FALSE;

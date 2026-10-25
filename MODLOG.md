@@ -3444,6 +3444,44 @@ playable, merely not BO2's 2D-overlay look for those optics. Re-queued post-1.0 
 name-hash crack". Gate lesson: when a plan's verification claim is checkable in minutes, check
 it before approving.
 
+## The W3D fallback aims with the authored ADS clips too (2026-10-25)
+
+Merged `v1/w3d-ads-pose` (1 commit). The W3D fallback's ADS was a translation-only slide in
+`poseW3d` — the sight-point solution the ads-pose cycle proved wrong for the native path (eye
+relief and launcher rotation wrong by family). The engine's WW3D2 animation system layers a
+`tag_torso`-only clip over the action clip exactly like the native path's `sample_over`:
+`HAnimComboClass` + `NamedPivotMapClass` (1.0 everywhere except `tag_torso`) +
+`Build_Active_Pivot_Map` (1.0 only at the keyed pivot) + `Set_Animation(combo)` (MULTIPLE_ANIM).
+The bridge now builds that combo when the weapon has an ADS clip (direction tracked statically:
+rising → up, falling → down, held keeps the last — the native rule) and the slide runs only when
+no clip exists (equipment, a partial conversion, a clip still loading) — the native path's own
+split, no double-correction. **No converter change and NO archive version bump: the converter
+has emitted the ADS slots as .w3d files all along** (`Art\W3D\ZV*_A55/A56.w3d` verified in the
+archive's index — the plan's bump premise was stale; a bump would have forced a pointless 675 MB
+regeneration). No ABI change (the direction is static C++ state); no HANIM/MESH layout change
+(the clips are data in the existing layouts). Equipment keeps the slide.
+
+* Gotcha: `git worktree` does NOT populate the `host/GeneralsGameCode` submodule — the C++ was
+  applied against the main checkout's pinned engine source and compiles only at integration (the
+  ladder's build leg). C++ cycles: the worktree is Rust-only unless the submodule is initialized
+  there.
+* Plan defect the build leg caught: the plan cited `ZHBO_VM_ADS_UP`/`ZHBO_VM_ADS_DOWN` as existing
+  in `zhbo_core.h` — they were Rust-only (`viewmodel.rs:59-60`); the header gained them next to
+  `ZHBO_VM_SLOT_IDLE` (constant sync, NOT an ABI change: no function/table/layout change,
+  `ZHBO_ABI_VERSION` stays 26). The C++-at-integration rule above is exactly why it surfaced
+  late — a plan citing C++ constants must verify them in the header, not just the Rust twin.
+* The engine's ref-counting idiom verified against the pinned source: the combo's `Set_HAnim`/
+  `Set_Pivot_Map` Add_Ref the incoming pointer (NEW_REF → Set → REF_PTR_RELEASE balances);
+  `HAnimComboClass` itself is a plain class (new/delete), unlike the ref-counted `PivotMapClass`.
+* The new `--w3d-ads` autotest leg (mac + Windows): `ZHBO_NATIVE_VIEWMODEL=0` + the scope
+  autopilot; asserts `viewmodel: ADS layer` + `viewmodel: ADS slide skipped`. The Windows leg is
+  additive (its default path untouched) but untested here (no pwsh; the Windows VM runs it).
+
+Verified: cargo test --workspace green; the full real-install suite green (incl. the new
+`the_w3d_ads_layer_composes_over_the_action_clip`); clippy clean; `cargo xtask build` clean;
+autotest 13/13 default, `--classpick` all checks, 14/14 `--rts`, `--scope` PASS, `--w3d-ads`
+PASS.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

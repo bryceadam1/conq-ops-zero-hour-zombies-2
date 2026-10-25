@@ -721,6 +721,67 @@ mod tests {
         assert!((0..3).all(|k| (first[k] - root[k]).abs() <= 0.05), "fnp45_dw_mp: the layer's root move is {first:?}, not the bind local {root:?} — the pair would move");
     }
 
+    /// The W3D ADS layer's engine composition: the action clip's pose everywhere except
+    /// `tag_torso`, where the ADS clip's pose takes over — the native `sample_over` rule, which
+    /// the C++ `HAnimComboClass` pivot maps mirror. This checks the layer's authored pose against
+    /// the same table as `the_ads_clip_reproduces_bo2s_authored_pose`; the in-game `--w3d-ads`
+    /// leg exercises the actual engine combo.
+    #[test]
+    #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
+    fn the_w3d_ads_layer_composes_over_the_action_clip() {
+        use zhbo_core::viewmodel::slot;
+        use zhbo_native::anim::Anim;
+
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        let table: &[(&str, &str, [f32; 2])] = &[
+            ("an94_mp+reflex", "tag_sights", [0.034, 0.017]),
+            ("mp7_mp+reflex", "tag_sights", [0.033, -0.561]),
+            ("mk48_mp", "tag_sights", [-0.002, -0.025]),
+            ("ksg_mp", "tag_sights", [0.005, -2.198]),
+            ("dsr50_mp", "tag_scope", [0.009, 0.011]),
+            ("ballista_mp", "tag_scope", [0.027, -0.117]),
+            ("as50_mp", "tag_scope", [0.004, -1.302]),
+            ("fnp45_mp", zhbo_native::AIM_TAG, [-0.038, -0.035]),
+            ("smaw_mp", zhbo_native::AIM_TAG, [0.011, 0.419]),
+            ("fhj18_mp", zhbo_native::AIM_TAG, [-2.917, 0.488]),
+            ("m32_mp", zhbo_native::AIM_TAG, [0.002, 0.107]),
+        ];
+        // The engine's composition: the action clip at frame 0, then the ADS clip's tag_torso over
+        // it. `sample_over` is the native twin; the C++ combo's pivot maps produce the same result.
+        let posed = |skel: &zhbo_native::pose::Skeleton, idle: &Anim, layer: (&Anim, f32), tag: &str, id: &str| -> [f32; 3] {
+            let (mut local, mut ms) = (Vec::new(), Vec::new());
+            skel.sample(idle, 0.0, &mut local);
+            skel.sample_over(layer.0, layer.1, &mut local);
+            skel.model_space(&local, &mut ms);
+            let i = skel.bone(tag).unwrap_or_else(|| panic!("{id}: no {tag} bone"));
+            skel.bone_point(&ms, i)
+        };
+        let load = |id: &str| -> (zhbo_native::viewmodel::Viewmodel, BTreeMap<String, Vec<u8>>) {
+            let blobs = src.composition(id).expect(id);
+            let vm = zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("a manifest")).expect("the manifest parses");
+            (vm, blobs)
+        };
+        let anim = |id: &str, blobs: &BTreeMap<String, Vec<u8>>, path: &str| Anim::from_bytes(blobs.get(path).unwrap_or_else(|| panic!("{id}: {path} is not in the conversion"))).expect(path);
+
+        for &(id, tag, want) in table {
+            let (vm, blobs) = load(id);
+            let up_path = vm.clip(slot::ADS_UP as u16).unwrap_or_else(|| panic!("{id}: no 0x55 ads_up clip"));
+            let idle_path = vm.clip(slot::IDLE as u16).unwrap_or_else(|| panic!("{id}: no idle clip"));
+            let (up, idle) = (anim(id, &blobs, up_path), anim(id, &blobs, idle_path));
+            let skel = skeleton(&vm, &blobs);
+            let aimed = posed(&skel, &idle, (&up, up.num_frames as f32), tag, id);
+            assert!(
+                (aimed[1] - want[0]).abs() <= 0.05 && (aimed[2] - want[1]).abs() <= 0.05,
+                "{id}: the W3D layer's {tag} lands at ({:.3}, {:.3}) in, BO2 authored ({:.3}, {:.3})",
+                aimed[1],
+                aimed[2],
+                want[0],
+                want[1]
+            );
+        }
+    }
+
     #[test]
     #[ignore = "probe: the flagged defects"]
     fn probe_defects() {
