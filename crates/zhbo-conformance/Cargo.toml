@@ -1,0 +1,9 @@
+[package]
+name = "zhbo-conformance"
+description = "BO2 parity conformance: the shared CSV schema, BO2's own combination rules over the player's install (the expected side), and the differ."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+zhbo-formats = { path = "../zhbo-formats" }
