@@ -3499,6 +3499,20 @@ animated `tag_clip` bone, so it appears during reloads (when BO2 shows twin mags
 fail booleans are only as meaningful as the camera/bbox assumptions behind them — re-derive from
 the raw bounds before accepting a "wrong placement" verdict.
 
+## Unique anim-set overrides were already honored (2026-10-25)
+
+No merge, no code change. The MP7 grip research's open follow-up ("attachment uniques can carry
+their OWN anim set — does the mod use them?") closes: the mechanism has been complete since the
+base-parts era. `au_mp7_grip`'s parsed table carries 42 non-empty entries vs the base's 36 (the
+parse is slot-aligned at fixed `anim::COUNT` length, `weapon.rs:519-521`); `combo()` picks "the
+entry for exactly this combination, else the attachment with the most of its own (a grip or
+launcher changes the hands)" and merges per slot over the base's (`viewmodels.rs:202-213`); the
+merged set feeds the per-combo manifest's clip list (`:451-463`). Verified visually: the sweep's
+mp7 base-vs-grip renders differ by 1.00 % of pixels (max 179) concentrated in the left-hand/
+foregrip region of both halves — the grip's own idle pose renders. The background claim that the
+mod "plays the base weapon's clips for every combo" was wrong. **Playtest item: mp7 with the
+grip — the left hand holds the unfolded foregrip.**
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
