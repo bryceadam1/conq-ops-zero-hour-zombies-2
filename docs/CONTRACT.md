@@ -232,20 +232,21 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   view kick, `hud.view_kick_*`, which the sim's ray does not; the crosshair is drawn on the same
   camera axis, so the sight picture matches the crosshair while the sim stays authoritative for
   where the round goes.)
-  - **Open reference question (Ghidra).** Whether the engine time-scales 0x55/0x56 into
-    `fOOPosAnimLength` or cross-fades the root pose by `fWeaponPosFrac`, and what blend time a
-    direction flip passes, is still inferred: the site that sets 0x55/0x56 (the caller of
-    `FUN_0078b1a0`) is not disassembled. Scrubbing and rate-scaling coincide while `ads` moves
-    linearly (`weapons::arsenal`), which is why the fraction scrub reproduces the measured blend
-    (mp7: 63 % of the move at half, `ads-alignment` §1.1).
+  - **The engine cross-fades 0x55/0x56 by the fraction (Ghidra G12, answered).** `FUN_0052b750`
+    weights slot 0x55 by `fWeaponPosFrac` and 0x56 by its complement — no time-scale into the
+    def's ADS times (those live in the fraction integrator, G3), and a direction flip passes no
+    blend time (`0xffffffff`). Under the twin-clip property (down frame `(1 − ads) · N` ≈ up
+    frame `ads · N` within 0.02″) the cross-fade coincides with the fraction scrub above, so the
+    scrub is the cross-fade and reversal needs no blend — the mod's switch-and-step is parity.
   - **Authored residuals are parity, not placement errors.** The tag does not always sit on the
     axis: the KSG's `tag_sights` is 2.198″ low at 13.1″, the AS50's `tag_scope` 1.302″ below BO2's
     line (its clip is authored to a different reference), the launchers' heuristic marker 1.7–2.9″
     off. Never "fix" those onto the axis — BO2's data is the acceptance (test:
-    `the_ads_clip_reproduces_bo2s_authored_pose`). `tag_scope`'s converter read and the
-    mounted-optics mount (`(identity, view_offset)` at `view_model_tag`) are out of this point's
-    scope: the clip path does not consume the marker, so they would change only the W3D fallback
-    and the attachment art.
+    `the_ads_clip_reproduces_bo2s_authored_pose`). `tag_scope`'s converter read is out of this
+    point's scope: the clip path does not consume the marker, so it would change only the W3D
+    fallback. The attachment mount is BO2's own rule (Ghidra G10): an authored `viewModelTag`
+    mounts the part there with its offset in the tag's frame; an empty or missing one mounts at
+    the gun's root `j_gun` (the engine's registered default) with the gun-local offset unchanged.
 * `zhbo_native_reset` runs from `ZhboViewmodel_Reset` (a game reset tears down the scene); it frees
   the renderer's meshes and textures.
 * ABI: the functions and `ZhboNativeIn` (168 bytes) / `ZhboNativeLight` (24) are new; the header and

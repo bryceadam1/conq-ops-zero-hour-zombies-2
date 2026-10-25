@@ -3256,6 +3256,44 @@ Verified: cargo test --workspace green; the full real-install suite green; clipp
 changed file; `cargo xtask build` clean; autotest 13/13 default, `--classpick` all checks,
 14/14 `--rts`.
 
+## Empty attachment tags mount at `j_gun` — BO2's default, not a displaced bone (2026-10-24)
+
+Merged `v1/empty-tag-mount` (1 commit). Ghidra G10 answered the question the stub-tag research
+queued: when a WeaponAttachmentUnique's `viewModelTag` is empty, BO2 mounts the part at the base
+viewmodel's root **`j_gun`** (registered in `FUN_00678440`, with `attachViewModelTag1`–`8` as the
+numbered defaults), at the authored offset — so the offset is gun-local and the mount bone is only
+the motion parent. The mod's two fallback heuristics were frame-wrong: `Skeleton::compose` applies
+the offset in the mount tag's frame (`pose.rs:80`), so nearest-bone (`e837a0c`) double-applied the
+chosen bone's displacement, and the optic-family rule (`149e5d2`, `tag_sights`) floated the MP7's
+reflex ~6.8″ off the gun — render-confirmed (the sight hovered detached above the rail; the
+autotest cannot see this, it greps logs). Both heuristics are deleted; an empty/missing tag mounts
+at `j_gun` with the offset unchanged, mirroring the base-parts and W3D paths which already did
+exactly that. **Acceptance was the render, not a mount-name audit** (the miss in the optic-rule
+cycle): the MP7's reflex/holo/mms/rangefinder sit on the rail and the ADS view looks through the
+sight; authored-tag cases (tag-frame offsets) untouched; dsr50/fnp45 regression renders sane.
+Archive VERSION 66 → 67.
+
+* **G10 also confirms the hide granularity** (per-bone-tag bitmask, `CG_SetWeaponHidePartBits`
+  `FUN_0052d800`; children and attached models unaffected) — the per-bone-hide cycle (`67ddfbc`)
+  is parity.
+* **G12 closes the ADS clip theory** (the ads-pose cycle's open question): the engine CROSS-FADES
+  0x55/0x56 by complementary `fWeaponPosFrac` weights (`FUN_0052b750`) — no time-scale into the
+  def's ADS times, and no blend on a direction flip (`0xffffffff`). Under the twin-clip property
+  the cross-fade coincides with the mod's scrub-and-switch to within 0.02″ — the scrub is parity,
+  and reversal needs no blend. CONTRACT.md updated.
+* **G11:** the camo option-id table is not in the executable — `FUN_00529360` loads
+  `mp/weaponoptions.csv` (row index = option id; pattern/style slots are columns 3–5). The four
+  art-less camos' (multicam/matuka/mtp/snake) ids live in the zone CSV; queued as a small
+  follow-up read through the converter's zone access.
+* **Open item (the MP7 grip):** the render harness reports `grip` "adds no view-model part: no
+  attachment art" before AND after (byte-identical renders) — the MP7's grip contributes no
+  geometry at all. Whether BO2's `au_mp7_grip` carries view art the converter skips, or the
+  attachment is stat-only in BO2, is a queued research question, not a mount bug.
+
+Verified: cargo test --workspace green; the full real-install suite green; clippy clean; `cargo
+xtask build` clean; autotest 13/13 default, `--classpick` all checks, 14/14 `--rts`; render
+acceptance as above.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
