@@ -3423,6 +3423,27 @@ Verified: cargo test --workspace green; the full real-install suite green (incl.
 fmj xpr50); clippy clean; `cargo xtask build` clean; autotest 13/13 default, `--classpick` all
 checks, 14/14 `--rts`, `--scope` PASS.
 
+## The map-zone overlay search is BLOCKED on the ipak name hash — interim behavior stands (2026-10-25)
+
+No merge. The scope-overlay cycle's search-extension follow-up (the `scope_overlay_envg_ir`/
+`specter`/`vzoom` materials) was investigated to a verdict: the three materials exist nowhere as
+findable `Material` structs (every candidate zone probed at HEAD, plain/`mc/`/reference forms —
+the `material` subcommand's usage is `material <ff> <out dir> <name>...`), the map zones carry no
+image assets in their tables (T6 streamed images are not top-level zone assets), and the image
+name strings are absent from the fastfiles. The only route to the pixels is the map zones' IPAK
+indexes, keyed by a `name_hash` the mod cannot compute: the algorithm is compiler-baked (G13:
+the exe's IPAK loader only reads precomputed entries), the community-documented `R_HashString`
+fails the proven oracle (`hash("scope_overlay_xpr50_1024") == 0x1c99c1b0`, from the working
+xpr50 conversion), and ~700+ brute-force variants plus a 20+ standard-hash sweep fail it. Full
+evidence and the retry strategy (crack from a pair set — every converted material yields a
+name+hash pair) are in `~/.opencode/plan/overlay-map-zones/RESEARCH.md` (orchestrator addenda).
+Also disproven along the way: the plan's step-0 verdict ("genuine Material assets, just add the
+zones") — its "rebuilt probe" claim did not survive the control. **The interim is correct**: the
+IR/VZOOM/Specter combos keep their physical 3D sights at ADS (`overlay_art_present` false) —
+playable, merely not BO2's 2D-overlay look for those optics. Re-queued post-1.0 as "the ipak
+name-hash crack". Gate lesson: when a plan's verification claim is checkable in minutes, check
+it before approving.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
