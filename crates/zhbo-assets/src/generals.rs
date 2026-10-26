@@ -253,7 +253,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         reticles: &reticles,
         reticle_colors: &reticle_colors,
     };
-    let mut table = crate::weapons::table_with_metadata(&bo2, &atts, &names, &meta, &options);
+    let mut table = crate::weapons::table_with_metadata(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names, &meta, &options);
     // What each perk does: its specialty set, from the player's own statstable (Ghidra G1).
     table.perks = crate::weapons::perk_rows(&patch);
     let converted = crate::weapons::converted(&patch, &bo2);
@@ -607,7 +607,7 @@ mod tests {
         let names = crate::weapons::names(&bo2_dir);
         let bo2 = zhbo_formats::weapon::all(&common).unwrap();
         let atts = zhbo_formats::weapon::attachments(&common).unwrap();
-        let table = crate::weapons::table(&bo2, &atts, &names);
+        let table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
         let mut fails = Vec::new();
         let mut combos = 0;
         for base in table.weapons.iter().filter(|d| !d.allowed.is_empty()) {
@@ -732,7 +732,7 @@ mod tests {
         let names = crate::weapons::names(&bo2_dir);
         let bo2 = zhbo_formats::weapon::all(&common).unwrap();
         let atts = zhbo_formats::weapon::attachments(&common).unwrap();
-        let mut table = crate::weapons::table(&bo2, &atts, &names);
+        let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
         let converted = crate::weapons::converted(&patch, &bo2);
         crate::weapons::add_variants(&mut table, &converted, &bo2);
         let text = zhbo_core::weapons::format_full_table(&table);
@@ -749,10 +749,11 @@ mod tests {
     fn the_installs_synthesized_combos_overlay_follows_the_mounted_optic() {
         let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
         let common = load_zone(&bo2_dir, "common_mp").unwrap();
+        let patch = load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
         let names = crate::weapons::names(&bo2_dir);
         let bo2 = zhbo_formats::weapon::all(&common).unwrap();
         let atts = zhbo_formats::weapon::attachments(&common).unwrap();
-        let mut table = crate::weapons::table(&bo2, &atts, &names);
+        let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
         crate::weapons::add_variants(&mut table, &["as50_mp+acog".to_string(), "as50_mp+fmj".to_string()], &bo2);
         let def = |id: &str| table.weapons.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("no {id}"));
         assert_eq!(def("as50_mp").overlay_material, "scope_overlay_xpr50");

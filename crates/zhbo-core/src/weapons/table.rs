@@ -269,7 +269,7 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
     field!("DamageRangeScale", "Scales the damage curve's ranges.", FieldKind::Num,
         |a: &AttachmentDef| a.damage_range_scale.to_string(),
         |a: &mut AttachmentDef, v: Values| { a.damage_range_scale = v.text_num()?; Ok(()) }),
-    field!("Ads", "ADS field of view, in/out scale and move scale.", FieldKind::Nums(4),
+    field!("Ads", "ADS field of view, in/out scale, and the ADS move scale that replaces the weapon's (0 keeps it).", FieldKind::Nums(4),
         |a: &AttachmentDef| format!("{} {} {} {}", a.ads_fov, a.ads_in_scale, a.ads_out_scale, a.ads_move_scale),
         |a: &mut AttachmentDef, v: Values| {
             v.need(4)?;

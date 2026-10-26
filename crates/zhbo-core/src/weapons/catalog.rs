@@ -199,7 +199,7 @@ Attachment reflex
   Description = Precision red dot sight.
   AttributeDeltas = 0 5 15 0 0
   Point = 1
-  Ads = 50 1 1 1
+  Ads = 50 1 1 0
 End
 
 Attachment gl

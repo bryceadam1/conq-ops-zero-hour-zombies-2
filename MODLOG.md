@@ -4464,3 +4464,42 @@ stays "W00" and the INI's hidden list/draw indices keep working.
 **Verified.** `cargo test -p zhbo-assets` green; `cargo test --workspace` green; `cargo clippy
 --workspace --all-targets` exit 0; the real-install suite (`--skip conformance`) green. No game
 launched. Conformance was not run on the full archive this round.
+
+## The ADS walk is replaced, not multiplied — against the real `defaultattachment` (2026-10-25, `v1/ads-move-ammo`)
+
+The corrected ADS-move rule (the attachment-stacking cycle reverted the first try). `FUN_008ed080`
+starts from `WeaponDef.adsMoveSpeedScale` (1 when ≤ 0), walks the three a-list attachments
+(stopping at a NULL), and every attachment whose `adsMoveSpeedScale` differs from
+`DAT_0316fc84`'s (the `defaultattachment` asset) **replaces** the value — the last such wins. No
+product, and no clamp in the function or its callers (`FUN_008c4110`/`FUN_008c4690`, G2).
+
+* **The sentinel is the real `defaultattachment`, and it lives in `patch_mp`.** `common_mp` (and
+  every other zone) carries only a `,defaultattachment` reference stub whose fields are all 0.0 —
+  that is where the reverted plan's 0.0 sentinel came from, and why every attachment's generic 1.0
+  fired. `patch_mp`'s asset holds 1.0; the expected side already read it (870mcs+dualclip = 2).
+  The converter now reads it (`weapons::default_attachment`) and keeps an attachment's
+  `adsMoveSpeedScale` only when it differs (stored 0 otherwise, like `ads_fov`'s 0 = none); the
+  core's `apply` replaces `ads_move_scale = ADS_MOVE_BASE × value` for each such attachment.
+* **The install's data:** every attachment is 1.0 except `stalker` 2.3, `stalker_smg` 2.55,
+  `stalker_lmg` 1.8 — only one kind ever differs, so no real combination has two setters and
+  first-vs-last cannot be told apart on the data; the decompile says last. BO2's canonical a-list
+  order is ascending `eAttachment`, which is the short names' alphabetical order — the order
+  `apply` already sorts by.
+* **The clamp went too** (both the attachment walk's and the base build's `.min(1.0)`): BO2 has
+  none. It only mattered for the SMGs' stalker (0.35 × 2 × 2.55 clamped to a full walk = the ×1.12
+  rows); under replacement the largest ADS walk is 0.35 × 2.55 ≈ 0.89 of a walk anyway.
+
+Measured: `ads_move_speed_scale` 924 → 234 (−690), no other column moved; weapons cells
+706,586 → 705,896; gap clusters 214 → 214 (the column keeps a cluster). **The residual 234 are
+alt-mode rows** (`sf_*` 156, `dualoptic_*` 78): `weapons::add_variants` applies the parent's
+attachments to the alt mode, but BO2's alt variants have empty attachment tables
+(`sf_xm8_mp allows 0x0, variants []`), so no attachment applies to an alt in BO2. The same root
+cause drives ~20 other columns of alt rows (ADS in/out, reload times, clip, hip spread, damage
+range…); it is its own queue item, not an ADS-move rule question.
+
+Tests: core `ads_move_scale_is_replaced_by_the_attachment_that_sets_one`,
+`ads_move_scale_last_setter_wins_without_a_clamp`; fake-host
+`an_aimed_stalker_smg_walks_at_the_attachments_ads_speed` (aimed walk ratio 2.55/2.0 through the
+whole sim); converter `the_ads_move_override_is_what_differs_from_defaultattachment`. The shipped
+weapon table's `Ads` attachment field changes meaning (4th value: the override, 0 = keep), so the
+archive VERSION needs the integrator's bump.

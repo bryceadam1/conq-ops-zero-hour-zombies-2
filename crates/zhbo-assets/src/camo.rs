@@ -367,7 +367,7 @@ mod tests {
         let names = crate::weapons::names(&bo2);
         let bo2w = zhbo_formats::weapon::all(&common).unwrap();
         let atts = zhbo_formats::weapon::attachments(&common).unwrap();
-        let mut table = crate::weapons::table(&bo2w, &atts, &names);
+        let mut table = crate::weapons::table(&bo2w, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
         // The plain table leaves the option lists empty; fill what this test needs from the
         // converted set names (the real path uses table_with_metadata).
         let set_names: std::collections::HashSet<String> = sets.iter().map(|c| c.name.clone()).collect();

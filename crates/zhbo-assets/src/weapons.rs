@@ -109,8 +109,16 @@ pub fn attachment_metadata(
     meta
 }
 
-/// The core's definition of a BO2 attachment. `names` maps localize keys to text.
-pub fn attachment_def(a: &bo2::Attachment, names: &HashMap<String, String>, meta: &HashMap<String, AttachmentMeta>) -> AttachmentDef {
+/// BO2's `defaultattachment`, the asset the stacking accessors compare each attachment's field
+/// against (`DAT_0316fc84`, e.g. `FUN_008ed080`). It lives in `patch_mp`: `common_mp` carries only
+/// a zeroed `,defaultattachment` reference stub, whose 0.0s are not the engine's values.
+pub fn default_attachment(patch: &zhbo_formats::t6zone::Zone) -> Option<bo2::Attachment> {
+    bo2::attachments(patch).ok()?.into_iter().find(|a| a.name == "defaultattachment")
+}
+
+/// The core's definition of a BO2 attachment. `names` maps localize keys to text; `default` is
+/// [`default_attachment`] (without it every authored value counts as a change).
+pub fn attachment_def(a: &bo2::Attachment, default: Option<&bo2::Attachment>, names: &HashMap<String, String>, meta: &HashMap<String, AttachmentMeta>) -> AttachmentDef {
     let short = short_name(&a.name);
     let m = meta.get(&short).cloned().unwrap_or_default();
     let fire = a.fire_type.map(|f| match f {
@@ -134,7 +142,9 @@ pub fn attachment_def(a: &bo2::Attachment, names: &HashMap<String, String>, meta
         ads_fov: if a.ads_zoom_fov > 1.0 { a.ads_zoom_fov } else { 0.0 },
         ads_in_scale: a.ads_in_scale,
         ads_out_scale: a.ads_out_scale,
-        ads_move_scale: a.ads_move_scale,
+        // Kept only when it differs from `defaultattachment`'s: that is when BO2 lets it replace
+        // the weapon's ADS walk (`FUN_008ed080`); 0 leaves the weapon's own.
+        ads_move_scale: if default.is_some_and(|d| d.ads_move_scale == a.ads_move_scale) { 0.0 } else { a.ads_move_scale },
         hip_spread_min_scale: a.hip_spread_min_scale,
         hip_spread_max_scale: a.hip_spread_max_scale,
         fire_time_scale: a.fire_time_scale,
@@ -244,11 +254,11 @@ pub struct OptionTables<'a> {
 }
 
 /// The whole table: every player weapon, the alt modes their attachments add, and every
-/// attachment.
-pub fn table(bo2: &[Weapon], atts: &[bo2::Attachment], names: &HashMap<String, String>) -> Table {
+/// attachment. `default_att` is [`default_attachment`].
+pub fn table(bo2: &[Weapon], atts: &[bo2::Attachment], default_att: Option<&bo2::Attachment>, names: &HashMap<String, String>) -> Table {
     let sets = HashSet::new();
     let opts = OptionTables { camo: &[], camo_sets: &sets, reticles: &[], reticle_colors: &[] };
-    table_with_metadata(bo2, atts, names, &HashMap::new(), &opts)
+    table_with_metadata(bo2, atts, default_att, names, &HashMap::new(), &opts)
 }
 
 /// The whole table with attachment metadata (full name, description and attribute-table deltas)
@@ -256,6 +266,7 @@ pub fn table(bo2: &[Weapon], atts: &[bo2::Attachment], names: &HashMap<String, S
 pub fn table_with_metadata(
     bo2: &[Weapon],
     atts: &[bo2::Attachment],
+    default_att: Option<&bo2::Attachment>,
     names: &HashMap<String, String>,
     meta: &HashMap<String, AttachmentMeta>,
     opts: &OptionTables,
@@ -284,7 +295,7 @@ pub fn table_with_metadata(
             weapons.push(d);
         }
     }
-    let attachments = atts.iter().filter(|a| a.kind != 0 && !a.name.starts_with(',')).map(|a| attachment_def(a, names, meta)).collect();
+    let attachments = atts.iter().filter(|a| a.kind != 0 && !a.name.starts_with(',')).map(|a| attachment_def(a, default_att, names, meta)).collect();
     for d in &mut weapons {
         d.camo = opts.camo.iter().take(BASE_CAMO_OPTIONS).map(|c| c.id.clone()).collect();
         d.camo_material = camo_material_for(&d.id, opts.camo_sets).unwrap_or_default();
@@ -686,7 +697,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         move_scale: if w.move_speed_scale > 0.0 { w.move_speed_scale } else { 1.0 },
         // BO2's adsMoveSpeedScale multiplies the base ADS walk speed (rifles 1, LMGs 0.8, SMGs,
         // pistols and shotguns 2); the base itself is engine tuning, about a third of a walk.
-        ads_move_scale: (ADS_MOVE_BASE * if w.ads_move_speed_scale > 0.0 { w.ads_move_speed_scale } else { 1.0 }).min(1.0),
+        // `FUN_008ed080` starts from it (1 when unset) and clamps nothing.
+        ads_move_scale: ADS_MOVE_BASE * if w.ads_move_speed_scale > 0.0 { w.ads_move_speed_scale } else { 1.0 },
         sprint_duration_scale: if w.sprint_duration_scale > 0.0 { w.sprint_duration_scale } else { 1.0 },
         melee_damage: if w.melee_damage > 0 { w.melee_damage as f32 } else { MELEE_DAMAGE },
         melee_time: if w.melee_time > 0.0 { w.melee_time } else { 0.6 },
@@ -1005,6 +1017,25 @@ mod tests {
         assert_eq!(dry_fire_event(Some("wpn_rpg_dryfire_plr")), "ZHBO_BO2_DryFireRpg");
         assert_eq!(dry_fire_event(Some("wpn_beretta93r_dryfire_plr")), "ZHBO_BO2_DryFireBeretta");
         assert_eq!(dry_fire_event(None), "ZHBO_BO2_DryFireGeneric");
+    }
+
+    /// An attachment's ADS walk is kept only when it differs from `defaultattachment`'s (the
+    /// install's: 1.0 everywhere but the stalker variants), so the generic 1.0 never replaces a
+    /// weapon's own value (`FUN_008ed080`); the zeroed `,defaultattachment` stub is not the default.
+    #[test]
+    fn the_ads_move_override_is_what_differs_from_defaultattachment() {
+        let default = bo2::Attachment { name: "defaultattachment".into(), ads_move_scale: 1.0, ..Default::default() };
+        let att = |name: &str, kind: u32, ads_move_scale: f32| bo2::Attachment { name: name.into(), kind, ads_move_scale, ..Default::default() };
+        let names = HashMap::new();
+        let meta = HashMap::new();
+        assert_eq!(attachment_def(&att("dualclip", 2, 1.0), Some(&default), &names, &meta).ads_move_scale, 0.0);
+        assert_eq!(attachment_def(&att("stalker_smg", 25, 2.55), Some(&default), &names, &meta).ads_move_scale, 2.55);
+        // The whole table drops the stub and keeps the comparison.
+        let atts = [att(",defaultattachment", 0, 0.0), att("dualclip", 2, 1.0), att("stalker_lmg", 25, 1.8)];
+        let t = table(&[], &atts, Some(&default), &names);
+        let by = |id: &str| t.attachments.iter().find(|a| a.id == id).unwrap().ads_move_scale;
+        assert_eq!(t.attachments.len(), 2);
+        assert_eq!((by("dualclip"), by("stalker_lmg")), (0.0, 1.8));
     }
 
     #[test]
@@ -1366,7 +1397,7 @@ mod tests {
         };
         let sets = HashSet::new();
         let opts = OptionTables { camo: &camo, camo_sets: &sets, reticles: &[], reticle_colors: &[] };
-        let table = table_with_metadata(&[w], &[], &HashMap::new(), &HashMap::new(), &opts);
+        let table = table_with_metadata(&[w], &[], None, &HashMap::new(), &HashMap::new(), &opts);
         assert_eq!(table.weapons.len(), 1);
         assert_eq!(table.weapons[0].camo.len(), BASE_CAMO_OPTIONS, "the base tab is camo_none + 18");
         assert_eq!(table.camo.len(), 25, "the table keeps every row for the DLC tabs");
