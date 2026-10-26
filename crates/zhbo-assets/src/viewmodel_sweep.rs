@@ -134,8 +134,8 @@ mod tests {
         let parts = |blobs: &BTreeMap<String, Vec<u8>>| {
             zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("a manifest")).expect("the manifest parses").parts.len()
         };
-        assert_eq!(parts(&base), 4, "the arms, the gun and the magazine twice");
-        assert_eq!(parts(&combo), 5, "the optic rides the gun's view-model tag");
+        assert_eq!(parts(&base), 3, "the arms, the gun and the magazine (the spare on tag_clip1 is the gun's own mesh)");
+        assert_eq!(parts(&combo), 4, "the optic rides the gun's view-model tag");
         assert!(combo.len() > base.len());
     }
 
@@ -159,6 +159,26 @@ mod tests {
         let mag = vm.parts.iter().find(|p| p.model.contains(model)).expect("the magazine part");
         assert_eq!(mag.tag.as_deref(), Some("j_gun"), "the magazine hangs from the gun root");
         assert_eq!(mag.offset.1, *offset, "the magazine keeps its authored offset");
+    }
+
+    /// The AN-94 authors its magazine rolled −15° (`attachViewModelRotations`): the manifest's
+    /// magazine carries that rotation, and it is the only magazine part — the reload's spare on
+    /// `tag_clip1` is skinned into the gun model, so no copy hangs there.
+    #[test]
+    #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
+    fn the_an94_magazine_keeps_its_authored_roll() {
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        let w = src.bo2.iter().find(|w| w.name == "an94_mp").expect("an94_mp");
+        let i = w.attach_view_models.iter().position(|(m, _)| m.contains("attach_mag")).expect("the AN-94's authored magazine");
+        let rotation = w.attach_view_rotations[i];
+        assert!(rotation.iter().any(|c| *c != 0.0), "the authored rotation is not zero: {rotation:?}");
+        let blobs = src.composition("an94_mp").expect("the base AN-94");
+        let vm = zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("a manifest")).expect("the manifest parses");
+        let mags: Vec<_> = vm.parts.iter().filter(|p| p.model.contains(&w.attach_view_models[i].0)).collect();
+        assert_eq!(mags.len(), 1, "one magazine part: {:?}", vm.parts);
+        assert_eq!(mags[0].offset, (crate::xf::from_angles(rotation), w.attach_view_offsets[i]), "the authored rotation and offset");
+        assert!(vm.parts.iter().all(|p| p.tag.as_deref() != Some("tag_clip1")), "no copy on tag_clip1");
     }
 
     /// The snipers' base scope is a second `attachViewModel` part: the conversion loads it, hangs

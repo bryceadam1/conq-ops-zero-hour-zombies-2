@@ -4464,3 +4464,42 @@ stays "W00" and the INI's hidden list/draw indices keep working.
 **Verified.** `cargo test -p zhbo-assets` green; `cargo test --workspace` green; `cargo clippy
 --workspace --all-targets` exit 0; the real-install suite (`--skip conformance`) green. No game
 launched. Conformance was not run on the full archive this round.
+
+## The AN-94 magazine's authored −15° roll; no second magazine on `tag_clip1` (2026-10-25, branch `v1/mag-rotation`)
+
+**BO2 places each `attachViewModel` part with a rotation as well as an offset, and the converter
+never read it.** `attachViewModelRotations` (the inline `float[24]` at WeaponVariantDef + 248,
+pitch/yaw/roll degrees per slot, parallel to the offsets) is now parsed into
+`Weapon::attach_view_rotations`; `viewmodels::BasePart::offset` is a full `Xf` built with
+`xf::from_angles` (a unit test pins it to the oracle's `AnglesToAxis`), and both the native manifest
+and the W3D rig attach the part with it. Only the AN-94 family authors a non-zero one: its magazine
+is rolled −15° about the barrel (the real AN-94's canted magazine). The AN-94 clips already key
+`tag_clip` at that same −15° (an absolute local rotation that replaces the bind), so animated frames
+drew it right before; the bind pose, any clip without a `tag_clip` track and the manifest did not.
+With the rotation in the bind the track still replaces it with the same value — no double rotation.
+
+**The rigid magazine copy on `tag_clip1` was a double draw, and it is gone (native and W3D `N`).**
+The reload's spare magazine is skinned into the gun model itself: `t6_wpn_ar_an94_view` has 559
+vertices on `tag_clip1` whose bone-relative extents equal `t6_attach_mag_an94_view`'s
+(x −1.719..3.2125), and `tag_clip1`'s bind rotation is the same −15°; `t6_wpn_lmg_hamr_view` has 292
+on `tag_clip1` with the HAMR magazine's ±2.92 width. BO2's dual-mag unique even hides `tag_clip1` on
+the gun (`view_hide_tags`). BO2 lists no such part. Entry 68's "both get one" predates reading the
+gun's own skin weights. The viewmodel manifest's `rigid` flag is now unused by first-person parts
+(kept: the schema is unchanged, the third-person rig uses it). Only the AN-94 and HAMR families had
+the copy (their guns are the only ones with an `attach_mag` part and a `tag_clip1` bone).
+
+**Measured (conformance CLI vs the 2026-10-25 baseline).** weapons differing cells 706,586 →
+703,235 (−3,351); `parts` area 9,561 → 6,355: `view_part_models`, `view_part_tags`,
+`view_part_offsets`, `view_part_rotations` each −674 (1,357/1,357/1,405/1,392 → 683/683/731/718);
+`view_ads_part_models` 3,399 → 2,889; `view_part_camos` 7,301 → 7,156. No column rose. The 34
+remaining −15° rows are combinations the mod does not convert (mod side empty). Clusters 214 → 214
+(every touched column still carries other kinds: unconverted combos, the IR dualband mount, the
+dual-wield `_lh` part). Needs an archive `hud::VERSION` bump at integration (the manifests change).
+
+Probe (not in the repo): `~/.opencode/plan/mag-rotation/probe` reads a model's per-bone vertex
+counts and bounds, and a clip's `tag_clip*` tracks.
+
+**Verified.** `cargo test --workspace` green; `cargo clippy --workspace --all-targets` adds no
+warning; the real-install suites (`-p zhbo-assets -- --ignored --skip conformance`, 32 incl. the
+new `the_an94_magazine_keeps_its_authored_roll`; `-p zhbo-formats -- --ignored`, 10) green;
+`converts_a_solo_combination` now expects 3 base parts (arms, gun, magazine). No game launched.
