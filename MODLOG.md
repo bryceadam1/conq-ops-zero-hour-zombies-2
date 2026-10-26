@@ -3719,6 +3719,35 @@ incl. both new real-install tests; clippy clean; `cargo xtask build` clean; auto
 default, `--classpick` all checks, 14/14 `--rts`, `--scope` PASS; the conformance run as
 measured above. Archive VERSION 75 → 76.
 
+## Attachment stacking: the time fields truncate, the clip rounds even — and the ADS-move rule went back (2026-10-25)
+
+Merged `v1/attachment-stacking` (2 commits + integrator decisions). BO2's three combine
+families replace the mod's naive multiplies, per G14 §4:
+
+* **Time fields** (`fire_time`, `reload_time`, `reload_empty_time`, `reload_add_time`,
+  `reload_empty_add_time`, `ads_in_time`, `ads_out_time`): multiply all scales, then truncate to
+  whole milliseconds once after the loop. −3,018 cells exactly (`timing` 168,355 → 165,337).
+* **Clip size**: multiply all scales, then round to nearest-even. The plan's `+9.3e-10` epsilon
+  pushed exact ties up (31 × 1.5 = 46.5 → 47); the f64 product of the f32 fields is exact, so a
+  true tie is a true tie (46.5 → 46) — pure `round_ties_even`, its own test.
+* **A 0 scale multiplies by 0** (the `scale()` helper's 0-means-1 fallback is gone; no authored
+  attachment has a 0 multiply-family scale today, so no data moves).
+* **The ADS-move rule went back.** The plan's replacement walk fired on every attachment's
+  generic 1.0 and erased the base's distinctive value — the conformance column QUADRUPLED
+  (924 → 3,903 rows; `870mcs+dualclip` at mod = BO2 × 0.5: the dualclip's 1.0 replaced the
+  shotgun's authored 2.0). BO2's no-change sentinel here is 1.0, not the plan's 0.0. The walk
+  and the base build's clamp are reverted to multiply-and-clamp (the pre-change behavior; the
+  ×1.112 stalker rows stand at 690); the corrected rule — first-differing-from-1.0, per the
+  expected side's own values — gets its own cycle. The plan's ads_move tests are rewritten to
+  pin the kept rule.
+
+Net measured: totals 709,604 → 706,586 (−3,018) with zero regressions. Archive VERSION
+76 → 77; no ABI.
+
+Verified: cargo test --workspace green; the real-install suite (`--skip conformance`) green;
+clippy clean; `cargo xtask build` clean; autotest 13/13 default, `--classpick` all checks,
+14/14 `--rts`.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

@@ -470,9 +470,9 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .float("ads_zoom_fov3", fl(d.ads_fov))
         .absent("ads_zoom_in_frac")
         .absent("ads_zoom_out_frac")
-        // The mod stores the ADS walk as the converter's base (0.35 of a walk) times BO2's scale,
-        // clamped to a full walk (`to_def`, `attachments::apply`): divided back, it is the scale
-        // the mod applies (verified on evoskorpion_mp: BO2 2 → mod 0.7 → 2).
+        // The definition stores the ADS walk as the converter's base (0.35 of a walk) times BO2's
+        // scale (`to_def`, `attachments::apply`): divided back, it is BO2's scale. The replacement
+        // walk never stacks the base and an attachment (evoskorpion_mp: BO2 2.55 → mod 0.8925 → 2.55).
         .float("ads_move_speed_scale", fl(d.ads_move_scale / crate::weapons::ADS_MOVE_BASE))
         .float("move_speed_scale", fl(d.move_scale))
         .float("sprint_duration_scale", fl(d.sprint_duration_scale))

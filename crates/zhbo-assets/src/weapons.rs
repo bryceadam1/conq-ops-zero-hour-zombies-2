@@ -358,8 +358,9 @@ pub fn alt_clip(slot: usize) -> usize {
     slot + ALT_CLIPS as usize
 }
 
-/// BO2's base aim-down-sights walking speed, as a share of the normal walk.
-pub(crate) const ADS_MOVE_BASE: f32 = 0.35;
+/// BO2's base aim-down-sights walking speed, as a share of the normal walk: one definition in the
+/// core, so the converter's base build and the core's attachment replacement walk agree.
+pub(crate) use zhbo_core::weapons::ADS_MOVE_BASE;
 
 /// Where the weapon table goes in the archive (the bridge hands it to the core).
 pub use zhbo_core::names::WEAPON_TABLE_PATH as TABLE_PATH;
