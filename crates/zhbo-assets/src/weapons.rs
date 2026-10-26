@@ -39,35 +39,31 @@ pub(crate) fn dry_fire_event(alias: Option<&str>) -> &'static str {
     }
 }
 
-/// The replacement optics whose unique supplies a combo's 2D ADS overlay: ACOG (1), IR/dual-band
-/// (14), IS (15), VZOOM (29). The base-parts cycle probed these kinds; the set belongs to the
-/// converter, not the parser.
-const REPLACEMENT_OPTIC_KINDS: [u32; 4] = [1, 14, 15, 29];
-
-/// The overlay fields a combo's mounted replacement optic supplies: the base parsed weapon's
-/// `attachment_uniques` for the combo's structural kinds, with the `combined`-mask preference
-/// `viewmodels::combo` uses. `None` when the combo mounts no replacement optic (the base def's
-/// fields stand); `Some` with empty strings/0 when it mounts one whose unique has no overlay (the
-/// physical sight stays).
-fn overlay_for(w: &Weapon, shorts: &[&str]) -> Option<(String, String, u32)> {
-    let mut mask = 0u32;
-    let mut optic: Option<u32> = None;
-    for short in shorts {
-        let Some((kind, _)) = w.attachment_variants.iter().find(|(_, id)| short_name(id) == *short) else { continue };
-        mask |= 1 << kind;
-        if REPLACEMENT_OPTIC_KINDS.contains(kind) && optic.is_none() {
-            optic = Some(*kind);
-        }
-    }
-    let optic = optic?;
-    let exact = (shorts.len() > 1).then(|| w.attachment_uniques.iter().find(|u| u.combined == mask)).flatten();
-    let unique = exact
-        .filter(|u| REPLACEMENT_OPTIC_KINDS.contains(&u.kind))
-        .or_else(|| w.attachment_uniques.iter().find(|u| u.kind == optic && u.combined == 0));
-    Some(match unique {
-        Some(u) => (u.overlay_material.clone(), u.overlay_material_low_res.clone(), u.overlay_reticle),
-        None => (String::new(), String::new(), 0),
-    })
+/// A combo's 2D ADS overlay (material, low-res material, reticle), BO2's way (`FUN_008ed570/5f0/670`,
+/// G14 §4): each field independently is the first SINGLE unique's value (in the combo's ascending
+/// `eAttachment` order; a kind without a unique stands in as the base unique) that differs from the
+/// base unique's, else the weapon's own. An optic whose unique carries no overlay therefore clears
+/// it (the physical sight stays), a non-optic leaves the base scope, and in `ir+vzoom` the IR
+/// supplies the material while the VZOOM supplies the reticle the IR leaves at the base's. A
+/// combined child (`au_as50_swayreduc+ir`) never supplies the overlay.
+fn overlay_for(w: &Weapon, shorts: &[&str]) -> (String, String, u32) {
+    let own = (w.overlay_material.clone(), w.overlay_material_low_res.clone(), w.overlay_reticle);
+    let Some(base) = w.single_unique(0) else { return own };
+    let mut kinds: Vec<u32> = shorts
+        .iter()
+        .filter_map(|short| w.attachment_variants.iter().find(|(_, id)| short_name(id) == *short))
+        .map(|(kind, _)| *kind)
+        .collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    kinds.truncate(3);
+    let singles: Vec<&bo2::AttachmentUnique> = kinds.iter().map(|k| w.single_unique(*k).unwrap_or(base)).collect();
+    let first = |differs: &dyn Fn(&bo2::AttachmentUnique) -> bool| singles.iter().copied().find(|u| differs(u));
+    (
+        first(&|u| u.overlay_material != base.overlay_material).map_or(own.0, |u| u.overlay_material.clone()),
+        first(&|u| u.overlay_material_low_res != base.overlay_material_low_res).map_or(own.1, |u| u.overlay_material_low_res.clone()),
+        first(&|u| u.overlay_reticle != base.overlay_reticle).map_or(own.2, |u| u.overlay_reticle),
+    )
 }
 
 /// The attachment's metadata from BO2's tables: the full name and description keys' localized text,
@@ -316,7 +312,7 @@ pub fn add_variants(table: &mut Table, converted: &[String], bo2: &[Weapon]) {
         let mut d = attachments::apply(&base, &atts);
         let combo_shorts: Vec<&str> = d.attachments.iter().map(String::as_str).collect();
         if let Some((overlay_material, overlay_material_low_res, overlay_reticle)) =
-            bo2.iter().find(|w| w.name == base_id).and_then(|w| overlay_for(w, &combo_shorts))
+            bo2.iter().find(|w| w.name == base_id).map(|w| overlay_for(w, &combo_shorts))
         {
             d.overlay_material = overlay_material;
             d.overlay_material_low_res = overlay_material_low_res;
@@ -329,7 +325,7 @@ pub fn add_variants(table: &mut Table, converted: &[String], bo2: &[Weapon]) {
                 let mut alt = if alt_base.alt_own_ammo { alt_base.clone() } else { attachments::apply(&alt_base, &others) };
                 let alt_shorts: Vec<&str> = alt.attachments.iter().map(String::as_str).collect();
                 if let Some((overlay_material, overlay_material_low_res, overlay_reticle)) =
-                    bo2.iter().find(|w| &w.name == alt_id).and_then(|w| overlay_for(w, &alt_shorts))
+                    bo2.iter().find(|w| &w.name == alt_id).map(|w| overlay_for(w, &alt_shorts))
                 {
                     alt.overlay_material = overlay_material;
                     alt.overlay_material_low_res = overlay_material_low_res;
@@ -1029,7 +1025,9 @@ mod tests {
             ..Default::default()
         };
         let acog = bo2::AttachmentUnique { name: "au_as50_acog".into(), kind: 1, ..Default::default() };
-        let fmj = bo2::AttachmentUnique { name: "au_as50_fmj".into(), kind: 10, ..Default::default() };
+        // A non-optic unique carries the weapon's overlay as authored (no difference from the base
+        // unique), so it leaves the base scope.
+        let fmj = bo2::AttachmentUnique { name: "au_as50_fmj".into(), kind: 10, ..base.clone() };
         let w = Weapon {
             name: "as50_mp".into(),
             clip_size: 5,
@@ -1099,8 +1097,27 @@ mod tests {
         assert_eq!(d.overlay_reticle, 2);
     }
 
+    /// G14 §4: each overlay field is the first single unique differing from the base unique, field
+    /// by field — in `ir+vzoom` the IR supplies the material and the VZOOM the reticle the IR leaves
+    /// at the base's (the conformance rows `hamr_mp ir+vzoom`: `scope_overlay_envg_ir`, crosshair).
     #[test]
-    fn a_combined_unique_wins_the_overlay() {
+    fn each_overlay_field_is_the_first_differing_single() {
+        let base = bo2::AttachmentUnique { name: "au_hamr_none".into(), kind: 0, ..Default::default() };
+        let ir = bo2::AttachmentUnique { name: "au_hamr_ir".into(), kind: 14, overlay_material: "scope_overlay_envg_ir".into(), ..Default::default() };
+        let vzoom = bo2::AttachmentUnique { name: "au_hamr_vzoom".into(), kind: 29, overlay_material: "scope_overlay_specter".into(), overlay_reticle: 1, ..Default::default() };
+        let w = Weapon {
+            name: "hamr_mp".into(),
+            attachment_variants: vec![(14, "ir".into()), (29, "vzoom".into()), (10, "fmj".into())],
+            attachment_uniques: vec![base, ir, vzoom],
+            ..Default::default()
+        };
+        assert_eq!(super::overlay_for(&w, &["vzoom", "ir"]), ("scope_overlay_envg_ir".to_string(), String::new(), 1));
+        assert_eq!(super::overlay_for(&w, &["vzoom"]), ("scope_overlay_specter".to_string(), String::new(), 1));
+        assert_eq!(super::overlay_for(&w, &["fmj"]), (String::new(), String::new(), 0), "a kind without a unique stands in as the base: the weapon's own");
+    }
+
+    #[test]
+    fn a_combined_unique_never_supplies_the_overlay() {
         let base = bo2::AttachmentUnique {
             name: "au_as50_none".into(),
             kind: 0,
@@ -1146,8 +1163,10 @@ mod tests {
         };
         add_variants(&mut table, &["as50_mp+swayreduc+ir".into()], std::slice::from_ref(&w));
         let d = table.weapons.iter().find(|d| d.id == "as50_mp+ir+swayreduc").expect("the combined combo");
-        assert_eq!(d.overlay_material, "scope_overlay_ir_combined", "the exact combined unique wins");
-        assert_eq!(d.overlay_reticle, 3);
+        // G14 §4: the overlay accessors read the single uniques; the combined child is only ever
+        // read for the drawn parts and the animations.
+        assert_eq!(d.overlay_material, "scope_overlay_ir", "the IR's single unique supplies the overlay");
+        assert_eq!(d.overlay_reticle, 2);
     }
 
     /// The converter's legal-combo set must equal the conformance expected set: the mechanical

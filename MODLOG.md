@@ -4464,3 +4464,51 @@ stays "W00" and the INI's hidden list/draw indices keep working.
 **Verified.** `cargo test -p zhbo-assets` green; `cargo test --workspace` green; `cargo clippy
 --workspace --all-targets` exit 0; the real-install suite (`--skip conformance`) green. No game
 launched. Conformance was not run on the full archive this round.
+
+## Combined uniques: BO2's two unique lookups, the override bits and the hide merge (2026-10-25, `v1/combined-uniques`)
+
+BO2 keeps 153 *combined* `WeaponAttachmentUnique`s (`au_xm8_acog+grip`, slots ≥ 63 of
+`attachmentUniques`), reached from a single unique's `childLink` and then each child's
+`siblingLink`; `FUN_008eb690` (G14 §2) picks the first child whose `combinedAttachmentTypeMask`
+shares one of the combination's *other* kinds. 151 of them are selected by some legal combo
+(1,242 expected rows); the converter selected none of them correctly. The fix ports BO2's two
+lookups and the rules that read them, field by field:
+
+* **The parser keeps the links**: each unique's slot (`index`), `childLink`, `siblingLink`,
+  `viewModelADS` and the `animationOverrides` bitset. `Weapon::single_unique` /
+  `Weapon::resolved_unique` (the `FUN_008eb690` walk) are the one source; the conformance
+  oracle keeps its own transcription (it must not call the converter).
+* **Gotcha: a child's `attachmentType` names the PARTNER, not the parent** —
+  `au_xm8_acog+grip` (a child of the acog) has kind 12. The old `kind == k && combined == mask`
+  match therefore gave the grip the acog's child, and an exact mask never matched a
+  three-attachment combo (the children's masks have two bits).
+* **Resolved unique → parts and anims only** (G14 §3/§5): the drawn parts (first and third
+  person) and the animation table read the resolved unique. **Single uniques → everything else**
+  (§4): the clip/base-art flags, the base-art offset, the hide tags, the overlay and the sounds.
+  The converter used to read the exact-mask combined unique for hide/flags/offset/overlay; BO2
+  never does.
+* **The animation table is gated by `animationOverrides`**, not by a non-empty name: BO2 fills
+  every slot of every unique's table (the an94's acog unique names the plain idle), so a name
+  without its bit must never be read; a slot is a candidate only when a single unique sets the
+  bit, then the five tiers run over the resolved uniques' bits, and tier 5 is the base unique's
+  clip. The "fill only an empty variant slot" heuristic is gone — the bits are the rule.
+* **The overlay is per field** (`FUN_008ed570/5f0/670`): each of material / low-res / reticle is
+  the first single unique differing from the base unique's. In `ir+vzoom` the IR supplies the
+  material and the VZOOM the reticle; the hard-coded replacement-optic kind list is gone.
+* **The hide merge** (`FUN_008ec1a0`): a variant tag stays hidden only if every single unique
+  (a kind without one standing in as the base unique) lists it too; every single's own tags are
+  added. The old union kept e.g. the AS50's `tag_rail` under every attachment.
+
+Measured (conformance CLI vs the 2026-10-25 baseline): weapons **706,586 → 677,855 cells
+(−28,731)**, clusters 203 → 201, **gap clusters 214 → 212** (both overlay clusters closed);
+`view_hide_tags` 4,228 → 490 (the rest is mod-side-empty rows), every anim column down to its
+mod-side-empty floor except the dual-optic alt raise and the DW left slots (e.g. `anim_ads_fire`
+3,217 → 651, `anim_alt_drop` 2,517 → 1,007), parts −25…−73 per column, `overlay_reticle`
+28 → 0, `overlay_material` 5 → 0. **No cell newly differs** (row-level check against the
+baseline). Left for their own items: the attachment optics' `viewModelADS` swap
+(`view_ads_part_models`, ~2,100 holo/rangefinder rows — a runtime per-part hip/ADS pairing),
+the magazine's rigid `tag_clip1` copy and authored roll (item 1).
+
+Verified: cargo test --workspace green; clippy adds no warning; the real-install suite
+(`--skip conformance`) green, incl. the new `reads_the_combined_children_and_their_links`. No
+game launched. Archive VERSION bump needed at integration (manifests and defs change).

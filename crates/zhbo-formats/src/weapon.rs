@@ -132,7 +132,16 @@ pub struct AttachmentUnique {
     pub name: String,
     /// `eAttachment` (0: none, the weapon's base parts).
     pub kind: u32,
+    /// The unique's slot in the variant's `attachmentUniques` array: the single uniques sit at
+    /// their `eAttachment` (0 = the base unique), the combined children above them.
+    pub index: u32,
+    /// `childLink`: the slot of this unique's first combined child (0 = none).
+    pub child: u32,
+    /// `siblingLink`: the slot of the next combined child of the same parent (0 = none).
+    pub sibling: u32,
     pub view_model: Option<String>,
+    /// `viewModelADS`: the model drawn instead of [`Self::view_model`] while aiming, if any.
+    pub view_model_ads: Option<String>,
     pub view_model_tag: Option<String>,
     pub world_model: Option<String>,
     pub world_model_tag: Option<String>,
@@ -148,9 +157,12 @@ pub struct AttachmentUnique {
     pub override_base_attachment_offsets: bool,
     /// The base attachment's new view offset, in inches (view frame; no rotation field exists).
     pub base_attachment_offset: [f32; 3],
-    /// Viewmodel animations the combination overrides (`anim` slots), e.g. a grip's or extended
-    /// magazine's reloads.
+    /// The unique's animation table (`anim` slots), e.g. a grip's or extended magazine's reloads.
+    /// BO2 fills it for every slot; only the slots in [`Self::anim_overrides`] replace anything.
     pub anims: Vec<Option<String>>,
+    /// `animationOverrides`: one bit per `anim` slot the unique overrides (G14 §5). A set bit with
+    /// an empty name overrides to empty (the slot then plays its idle).
+    pub anim_overrides: [u32; 3],
     /// Where the attachment's view model sits on the weapon (inches) and its rotation (degrees:
     /// pitch, yaw, roll), from `view_model_tag` or the weapon's origin.
     pub view_offset: [f32; 3],
@@ -362,6 +374,9 @@ pub struct Weapon {
     pub allowed_attachments: u64,
     /// The `WeaponAttachment` this weapon uses for each kind it allows, e.g. (23, `silencer_smg`).
     pub attachment_variants: Vec<(u32, String)>,
+    /// `attachments[0]` is set (the `defaultattachment` entry): BO2 merges the uniques' hide tags
+    /// only when it is (`FUN_008ec1a0`, G14 §4).
+    pub has_default_attachment: bool,
     /// Bones hidden on the plain weapon.
     pub hide_tags: Vec<String>,
     /// Alt-mode weapon (the select-fire, launcher or second optic variant `sf_an94_mp`).
@@ -557,7 +572,11 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
             attachment_uniques.push(AttachmentUnique {
                 name: z.str_ptr(u + WU::szInternalName),
                 kind: z.u32(u + WU::attachmentType),
+                index: i,
+                child: z.u32(u + WU::childLink),
+                sibling: z.u32(u + WU::siblingLink),
                 view_model: named(z, u + WU::viewModel),
+                view_model_ads: named(z, u + WU::viewModelADS),
                 view_model_tag: opt_str(z, u + WU::viewModelTag),
                 world_model: named(z, u + WU::worldModel),
                 world_model_tag: opt_str(z, u + WU::worldModelTag),
@@ -570,6 +589,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                     let at = z.u32(u + WU::szXAnims);
                     (0..anim::COUNT as u32).map(|i| if at == 0 { None } else { opt_str(z, at + 4 * i) }).collect()
                 },
+                anim_overrides: [0, 1, 2].map(|i| z.u32(u + WU::animationOverrides + 4 * i)),
                 view_offset: vec3(z, u + WU::viewModelOffsets),
                 view_rotation: vec3(z, u + WU::viewModelRotations),
                 view_model_additional: named(z, u + WU::viewModelAdditional),
@@ -631,6 +651,10 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 }
             }
             out
+        },
+        has_default_attachment: {
+            let at = z.try_u32(v + WV::attachments)?;
+            at != 0 && z.u32(at) != 0
         },
         hide_tags: hide_tags(z, z.try_u32(v + WV::hideTags)?),
         alt_weapon: opt_str(z, v + WV::szAltWeaponName),
@@ -942,6 +966,13 @@ pub fn camo_all(z: &Zone) -> Result<Vec<WeaponCamo>, FormatError> {
     z.assets.iter().filter(|a| a.kind == kind).map(|a| read_camo(z, a.addr)).collect()
 }
 
+impl AttachmentUnique {
+    /// Whether the unique overrides `anim` slot `s` (its `animationOverrides` bit).
+    pub fn overrides_anim(&self, s: usize) -> bool {
+        self.anim_overrides.get(s / 32).is_some_and(|w| w & (1 << (s % 32)) != 0)
+    }
+}
+
 impl Weapon {
     /// The base weapon's extra view parts (the default magazine) and their tags.
     pub fn base_view_parts(&self) -> Vec<(String, String)> {
@@ -957,6 +988,37 @@ impl Weapon {
 
     pub fn anim(&self, slot: usize) -> Option<&str> {
         self.anims.get(slot).and_then(|a| a.as_deref())
+    }
+
+    /// The single unique of attachment kind `kind` (`attachmentUniques[kind]`; kind 0 is the base
+    /// unique `au_<w>_none`). Singles sit at their own `eAttachment` slot with no combined mask.
+    pub fn single_unique(&self, kind: u32) -> Option<&AttachmentUnique> {
+        self.attachment_uniques.iter().find(|u| u.kind == kind && u.combined == 0)
+    }
+
+    /// The unique at slot `index` of `attachmentUniques` (a combined child; 0 is never a child).
+    fn unique_at(&self, index: u32) -> Option<&AttachmentUnique> {
+        (index != 0).then(|| self.attachment_uniques.iter().find(|u| u.index == index)).flatten()
+    }
+
+    /// The unique attachment `kind` uses in the combination of `combo` kinds — BO2's resolution
+    /// (`FUN_008eb690`, G14 §2): from the single unique, walk its `childLink` then each child's
+    /// `siblingLink`, and take the first child whose `combinedAttachmentTypeMask` shares a bit with
+    /// one of the combination's *other* kinds; none, the single unique itself. The combined child's
+    /// own `attachmentType` is not consulted (it names the partner, not the parent). BO2 reads this
+    /// unique for the drawn parts and the animation table only; every stat, flag, sound, hide and
+    /// overlay accessor reads the single uniques.
+    pub fn resolved_unique(&self, kind: u32, combo: &[u32]) -> Option<&AttachmentUnique> {
+        let single = self.single_unique(kind)?;
+        let others = combo.iter().fold(0u32, |m, &k| m | (1u32 << (k & 31))) & !(1u32 << (kind & 31)) & !1;
+        let mut j = single.child;
+        while let Some(c) = self.unique_at(j) {
+            if c.combined & others != 0 {
+                return Some(c);
+            }
+            j = c.sibling;
+        }
+        Some(single)
     }
 
     /// Damage at `distance` inches: BO2 interpolates linearly between the curve's points.
@@ -1006,10 +1068,53 @@ mod tests {
         assert_eq!(w.damage_at(5000.0), 30.0);
     }
 
+    /// G14 §2 (`FUN_008eb690`), on the shape BO2 authors for the xm8: the acog's children are
+    /// `acog+gl` (slot 63) then `acog+grip` (64, whose own `attachmentType` is the grip's, 12).
+    #[test]
+    fn a_kind_resolves_to_the_first_child_sharing_another_combo_kind() {
+        let single = |kind: u32, child: u32| AttachmentUnique { name: format!("s{kind}"), kind, index: kind, child, ..Default::default() };
+        let child = |index: u32, kind: u32, sibling: u32, combined: u32| AttachmentUnique { name: format!("c{index}"), kind, index, sibling, combined, ..Default::default() };
+        let w = Weapon {
+            attachment_uniques: vec![
+                single(0, 0),
+                single(1, 63),
+                single(10, 0),
+                single(11, 0),
+                single(12, 0),
+                child(63, 1, 64, (1 << 1) | (1 << 11)),
+                child(64, 12, 0, (1 << 1) | (1 << 12)),
+            ],
+            ..Default::default()
+        };
+        let name = |k: u32, combo: &[u32]| w.resolved_unique(k, combo).map(|u| u.name.clone());
+        assert_eq!(name(1, &[1, 11]).as_deref(), Some("c63"), "acog+gl: the first child");
+        assert_eq!(name(1, &[1, 12]).as_deref(), Some("c64"), "acog+grip: along the sibling link");
+        assert_eq!(name(1, &[1, 10, 12]).as_deref(), Some("c64"), "a third kind does not block the overlap");
+        assert_eq!(name(1, &[1, 10]).as_deref(), Some("s1"), "no child shares fmj: the single");
+        assert_eq!(name(1, &[1]).as_deref(), Some("s1"), "alone: the single");
+        assert_eq!(name(12, &[1, 12]).as_deref(), Some("s12"), "the grip has no children: the child's attachmentType is not its parent");
+        assert_eq!(name(13, &[1, 13]), None, "a kind the weapon has no unique for");
+    }
+
     fn zone(name: &str) -> Zone {
         let dir = std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR");
         let file = std::fs::read(std::path::Path::new(&dir).join(format!("zone/all/{name}.ff"))).unwrap();
         crate::t6zone::load(&crate::fastfile::read(&file).unwrap()).unwrap()
+    }
+
+    /// Needs the player's BO2 install: the combined children keep their slot and links, and the
+    /// xm8's acog resolves to `au_xm8_acog+grip` with a grip (and a third kind) mounted.
+    #[test]
+    #[ignore]
+    fn reads_the_combined_children_and_their_links() {
+        let z = zone("common_mp");
+        let w = all(&z).unwrap().into_iter().find(|w| w.name == "xm8_mp").expect("xm8_mp");
+        let children = w.attachment_uniques.iter().filter(|u| u.combined != 0).count();
+        assert!(children >= 2, "the xm8 has combined children: {children}");
+        assert!(w.attachment_uniques.iter().filter(|u| u.combined != 0).all(|u| u.index >= 31), "children sit above the eAttachment slots");
+        let r = w.resolved_unique(1, &[1, 10, 12]).expect("the acog");
+        assert_eq!(r.name, "au_xm8_acog+grip");
+        assert_eq!(w.resolved_unique(1, &[1, 10]).expect("the acog").name, "au_xm8_acog");
     }
 
     /// Needs the player's BO2 install (with Multiplayer).

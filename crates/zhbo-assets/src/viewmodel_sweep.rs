@@ -250,14 +250,12 @@ mod tests {
         let scope = |vm: &zhbo_native::viewmodel::Viewmodel| vm.parts.iter().find(|p| p.model.contains("xpr50_scope_view")).expect("the base scope").offset.1;
         assert_eq!(scope(&manifest("as50_mp+vzoom")), [4.456, 0.0, 4.253], "no override flag, no move");
         let combined = manifest("as50_mp+swayreduc+ir");
-        assert_eq!(scope(&combined), [9.889, 0.0, 4.253], "the combined IR unique moves the base scope too");
-        // The exact combined unique authors no mount of its own (`viewModelAdditional` is 0), but
-        // the composition is per single attachment: `combo()` keeps the single `au_<w>_ir` entry
-        // for the `ir` short regardless of the exact combined unique, so its mount loads here too —
-        // the same single-entry rule that already drew the dual-band optic on combined combos
-        // before this change (a pre-existing over-draw, neither introduced nor fixed here).
-        assert!(combined.parts.iter().any(|p| p.model.contains("dualband_mount_view")), "the mount follows the single IR entry, like the optic: {:?}", combined.parts.iter().map(|p| &p.model).collect::<Vec<_>>());
-        assert!(combined.parts.iter().any(|p| p.model.contains("t6_attach_optic_dualband_view")), "the dual-band optic is the pre-existing single-entry over-draw: {:?}", combined.parts.iter().map(|p| &p.model).collect::<Vec<_>>());
+        assert_eq!(scope(&combined), [9.889, 0.0, 4.253], "the single IR unique moves the base scope in the combination too");
+        // BO2's resolution (G14 §2/§3): the swayreduc resolves to its `au_as50_swayreduc+ir` child
+        // (the same BCPU art), the IR has no children and draws its single unique — the dual-band
+        // optic with its rail mount. Both are what BO2 draws for this combination.
+        assert!(combined.parts.iter().any(|p| p.model.contains("dualband_mount_view")), "the IR draws its single unique: the mount: {:?}", combined.parts.iter().map(|p| &p.model).collect::<Vec<_>>());
+        assert!(combined.parts.iter().any(|p| p.model.contains("t6_attach_optic_dualband_view")), "and the dual-band optic: {:?}", combined.parts.iter().map(|p| &p.model).collect::<Vec<_>>());
     }
 
     /// An attachment with `disableBaseWeaponAttachment` replaces the base art: the ACOG swaps its
