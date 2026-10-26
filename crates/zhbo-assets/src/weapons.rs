@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use zhbo_core::attachments::{self, AttachmentDef};
 use zhbo_core::units::inches;
-use zhbo_core::weapons::{CamoOption, Class, Effect, FireMode, GunKick, Kick, Loadout, Place, Reticle, Specialties, Sway, Table, ViewPos, WeaponDef, ALT_CLIPS, MELEE_DAMAGE};
+use zhbo_core::weapons::{CamoOption, Class, Effect, FireMode, GunKick, Kick, Loadout, OffhandClass, Penetrate, Place, Reticle, Specialties, Sway, Table, Timing, Traits, ViewPos, WeaponDef, Zoom, ALT_CLIPS, MELEE_DAMAGE};
 #[cfg(debug_assertions)]
 use zhbo_core::weapons::{format_table, parse_table};
 use zhbo_formats::weapon::{self as bo2, Weapon};
@@ -70,6 +70,32 @@ fn overlay_for(w: &Weapon, shorts: &[&str]) -> Option<(String, String, u32)> {
     })
 }
 
+/// The first of a combo's single uniques (its kinds ascending, each kind's own unique) whose field
+/// differs from the base unique's, else `None` — BO2's `FUN_008ed2c0` (reload start add) and
+/// `FUN_008ebdb0` (ADS depth of field) pattern (G14 §4). No base unique: `None` (the def's stands).
+fn first_differing_unique<T: PartialEq>(w: &Weapon, shorts: &[&str], get: impl Fn(&bo2::AttachmentUnique) -> T) -> Option<T> {
+    let base = get(w.attachment_uniques.iter().find(|u| u.kind == 0 && u.combined == 0)?);
+    let mut kinds: Vec<u32> =
+        shorts.iter().filter_map(|s| w.attachment_variants.iter().find(|(_, id)| short_name(id) == *s).map(|(k, _)| *k)).collect();
+    kinds.sort_unstable();
+    kinds.iter().filter_map(|k| w.attachment_uniques.iter().find(|u| u.kind == *k && u.combined == 0)).map(get).find(|x| *x != base)
+}
+
+/// The unique-carried handling fields of a combo: the segmented reload's start add and the aimed
+/// depth of field (each component on its own), over the def's own values.
+fn apply_unique_fields(d: &mut WeaponDef, w: &Weapon) {
+    let shorts: Vec<&str> = d.attachments.iter().map(String::as_str).collect();
+    if let Some(n) = first_differing_unique(w, &shorts, |u| u.reload_start_add) {
+        d.timing.reload_start_add = n.max(0) as u16;
+    }
+    if let Some(x) = first_differing_unique(w, &shorts, |u| u.ads_dof.0) {
+        d.zoom.dof.0 = x;
+    }
+    if let Some(x) = first_differing_unique(w, &shorts, |u| u.ads_dof.1) {
+        d.zoom.dof.1 = x;
+    }
+}
+
 /// The attachment's metadata from BO2's tables: the full name and description keys' localized text,
 /// and its attribute-table deltas.
 #[derive(Clone, Debug, Default)]
@@ -110,7 +136,11 @@ pub fn attachment_metadata(
 }
 
 /// The core's definition of a BO2 attachment. `names` maps localize keys to text.
-pub fn attachment_def(a: &bo2::Attachment, names: &HashMap<String, String>, meta: &HashMap<String, AttachmentMeta>) -> AttachmentDef {
+///
+/// `default` is BO2's `defaultattachment` (`patch_mp`): an attachment field equal to its value
+/// changes nothing in BO2's first/last-differing accessors (G14 §4), so it is carried as `None`.
+pub fn attachment_def(a: &bo2::Attachment, default: &bo2::Attachment, names: &HashMap<String, String>, meta: &HashMap<String, AttachmentMeta>) -> AttachmentDef {
+    let differs = |x: f32, base: f32| (x != base).then_some(x);
     let short = short_name(&a.name);
     let m = meta.get(&short).cloned().unwrap_or_default();
     let fire = a.fire_type.map(|f| match f {
@@ -144,7 +174,34 @@ pub fn attachment_def(a: &bo2::Attachment, names: &HashMap<String, String>, meta
         clip_scale: a.clip_size_scale,
         recoil_reduction: a.recoil_reduction,
         specialties: Specialties::from_words(a.perks.0, a.perks.1),
+        kind: a.kind as u8,
+        reload_quick_scale: (a.reload_quick_scale, a.reload_quick_empty_scale, a.reload_quick_add_scale),
+        ads_idle_scale: a.ads_idle_amount_scale,
+        hip_idle: differs(a.hip_idle_amount, default.hip_idle_amount),
+        fov2: differs(a.ads_zoom_fov2, default.ads_zoom_fov2),
+        fov3: differs(a.ads_zoom_fov3, default.ads_zoom_fov3),
+        zoom_in_frac: differs(a.ads_zoom_in_frac, default.ads_zoom_in_frac),
+        zoom_out_frac: differs(a.ads_zoom_out_frac, default.ads_zoom_out_frac),
+        alt_scope_in_time: differs(a.alt_scope_ads_in_time, default.alt_scope_ads_in_time),
+        alt_scope_out_time: differs(a.alt_scope_ads_out_time, default.alt_scope_ads_out_time),
+        stack_fire: (a.stack_fire_spread, a.stack_fire_accuracy_decay),
+        penetrate: Penetrate::from_bo2(a.penetrate_type),
+        dual_mag: a.dual_mag,
+        infrared: a.infrared,
+        mms: a.mms_weapon,
+        use_as_melee: a.use_as_melee,
+        alt_ads_only: a.alt_weapon_ads_only,
+        alt_disable_switching: a.alt_weapon_disable_switching,
     }
+}
+
+/// BO2's `defaultattachment`: the comparison base of the first/last-differing accessors. The real
+/// asset is in `patch_mp` (`common_mp`'s `,defaultattachment` is a zeroed reference stub); a list
+/// without it (a fixture) compares against zeros.
+pub const DEFAULT_ATTACHMENT: &str = "defaultattachment";
+
+pub fn default_attachment(atts: &[bo2::Attachment]) -> bo2::Attachment {
+    atts.iter().find(|a| a.name == DEFAULT_ATTACHMENT).cloned().unwrap_or_default()
 }
 
 /// BO2's perk rows from the player's `mp/statstable.csv` (`patch_mp`): each `specialty` row's
@@ -284,7 +341,8 @@ pub fn table_with_metadata(
             weapons.push(d);
         }
     }
-    let attachments = atts.iter().filter(|a| a.kind != 0 && !a.name.starts_with(',')).map(|a| attachment_def(a, names, meta)).collect();
+    let default = default_attachment(atts);
+    let attachments = atts.iter().filter(|a| a.kind != 0 && !a.name.starts_with(',')).map(|a| attachment_def(a, &default, names, meta)).collect();
     for d in &mut weapons {
         d.camo = opts.camo.iter().take(BASE_CAMO_OPTIONS).map(|c| c.id.clone()).collect();
         d.camo_material = camo_material_for(&d.id, opts.camo_sets).unwrap_or_default();
@@ -322,6 +380,9 @@ pub fn add_variants(table: &mut Table, converted: &[String], bo2: &[Weapon]) {
             d.overlay_material_low_res = overlay_material_low_res;
             d.overlay_reticle = overlay_reticle;
         }
+        if let Some(w) = bo2.iter().find(|w| w.name == base_id) {
+            apply_unique_fields(&mut d, w);
+        }
         if let Some((short, alt_id)) = base.alt_modes.iter().find(|(short, _)| d.attachments.contains(short)) {
             if let Some(alt_base) = table.weapons.iter().find(|w| &w.id == alt_id).cloned() {
                 // Select fire and the second optic keep the weapon's other attachments.
@@ -334,6 +395,9 @@ pub fn add_variants(table: &mut Table, converted: &[String], bo2: &[Weapon]) {
                     alt.overlay_material = overlay_material;
                     alt.overlay_material_low_res = overlay_material_low_res;
                     alt.overlay_reticle = overlay_reticle;
+                }
+                if let Some(w) = bo2.iter().find(|w| &w.name == alt_id) {
+                    apply_unique_fields(&mut alt, w);
                 }
                 alt.id = format!("{alt_id}~{}", d.id);
                 alt.alt = d.id.clone();
@@ -765,6 +829,49 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         overlay_material: w.overlay_material.clone(),
         overlay_material_low_res: w.overlay_material_low_res.clone(),
         overlay_reticle: w.overlay_reticle,
+        timing: Timing {
+            last_fire_time: w.last_fire_time,
+            fire_delay: w.fire_delay,
+            rechamber_time: w.rechamber_time,
+            rechamber_bolt_time: w.rechamber_bolt_time,
+            hold_fire_time: w.hold_fire_time,
+            shots_before_rechamber: w.shots_before_rechamber.max(0) as u16,
+            bolt_action: w.bolt_action,
+            reload_quick_time: w.reload_quick_time,
+            reload_quick_empty_time: w.reload_quick_empty_time,
+            reload_quick_add_time: w.reload_quick_add_time,
+            reload_start_add: w.reload_start_add.max(0) as u16,
+            spin_down_time: w.spin_down_time,
+            detonate_time: w.detonate_time,
+            sprint_in_time: w.sprint_in_time,
+        },
+        zoom: Zoom {
+            fov2: w.ads_zoom_fov2,
+            fov3: w.ads_zoom_fov3,
+            in_frac: w.ads_zoom_in_frac,
+            out_frac: w.ads_zoom_out_frac,
+            alt_scope_in_time: w.alt_scope_ads_in_time,
+            alt_scope_out_time: w.alt_scope_ads_out_time,
+            dof: w.ads_dof,
+            overlay_alpha_scale: w.overlay_alpha_scale,
+            idle_amount: (w.ads_idle_amount, w.hip_idle_amount),
+        },
+        traits: Traits {
+            clip_only: w.clip_only,
+            dual_mag: w.dual_mag,
+            infrared: w.infrared,
+            mms: w.mms_weapon,
+            // `FUN_008da950`: the def's bayonet counts as using the weapon to melee.
+            use_as_melee: w.use_as_melee || w.has_bayonet,
+            rifle_bullet: w.rifle_bullet,
+            alt_ads_only: w.alt_weapon_ads_only,
+            alt_disable_switching: w.alt_weapon_disable_switching,
+            ignore_attachments: w.ignore_attachments,
+            stack_fire: (w.stack_fire_spread, w.stack_fire_accuracy_decay),
+            min_player_damage: w.min_player_damage as f32,
+            penetrate: Penetrate::from_bo2(w.penetrate_type),
+            offhand: OffhandClass::from_bo2(w.offhand_class),
+        },
     };
     #[cfg(debug_assertions)]
     {
@@ -984,6 +1091,43 @@ pub fn converted(patch: &zhbo_formats::t6zone::Zone, all: &[Weapon]) -> Vec<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An attachment field equal to `defaultattachment`'s changes nothing (`None`); the real
+    /// default's zoom levels are 1.0, so a silencer's authored 1.0 is no change while an optic's
+    /// 35 is.
+    #[test]
+    fn attachment_fields_equal_to_the_default_attachment_are_no_change() {
+        let default = bo2::Attachment { name: DEFAULT_ATTACHMENT.into(), ads_zoom_fov2: 1.0, ads_zoom_fov3: 1.0, ..Default::default() };
+        let silencer = bo2::Attachment { name: "silencer".into(), kind: 23, ads_zoom_fov2: 1.0, ads_zoom_fov3: 1.0, ..Default::default() };
+        let acog = bo2::Attachment { name: "acog".into(), kind: 1, ads_zoom_fov2: 35.0, ads_zoom_fov3: 35.0, ads_zoom_in_frac: 0.5, ..Default::default() };
+        let atts = [default.clone(), silencer.clone(), acog.clone()];
+        assert_eq!(default_attachment(&atts).name, DEFAULT_ATTACHMENT);
+        let s = attachment_def(&silencer, &default, &HashMap::new(), &HashMap::new());
+        assert_eq!((s.fov2, s.fov3, s.zoom_in_frac, s.kind), (None, None, None, 23));
+        let a = attachment_def(&acog, &default, &HashMap::new(), &HashMap::new());
+        assert_eq!((a.fov2, a.fov3, a.zoom_in_frac), (Some(35.0), Some(35.0), Some(0.5)));
+    }
+
+    /// The reload start add and the ADS depth of field come from the first single unique that
+    /// differs from the base unique (`FUN_008ed2c0`, `FUN_008ebdb0`), each DOF component alone.
+    #[test]
+    fn unique_fields_take_the_first_single_differing_from_the_base() {
+        let u = |kind: u32, start_add: i32, dof: (f32, f32)| bo2::AttachmentUnique { kind, reload_start_add: start_add, ads_dof: dof, ..Default::default() };
+        let w = Weapon {
+            name: "an94_mp".into(),
+            attachment_variants: vec![(1, "acog".into()), (6, "dualclip".into()), (23, "silencer".into())],
+            attachment_uniques: vec![u(0, 0, (2.2, 6.4)), u(1, 0, (3.4, 3.9)), u(6, 2, (2.2, 5.0)), u(23, 0, (2.2, 6.4))],
+            ..Default::default()
+        };
+        let mut d = WeaponDef { attachments: vec!["dualclip".into(), "silencer".into()], ..Default::default() };
+        d.zoom.dof = (2.2, 6.4);
+        apply_unique_fields(&mut d, &w);
+        assert_eq!(d.timing.reload_start_add, 2);
+        assert_eq!(d.zoom.dof, (2.2, 5.0), "start: none differs; end: the dualclip's");
+        let mut d = WeaponDef { attachments: vec!["acog".into(), "dualclip".into()], ..Default::default() };
+        apply_unique_fields(&mut d, &w);
+        assert_eq!(d.zoom.dof, (3.4, 3.9), "kind 1 is walked first");
+    }
 
     #[test]
     fn maps_bo2_types_to_classes() {

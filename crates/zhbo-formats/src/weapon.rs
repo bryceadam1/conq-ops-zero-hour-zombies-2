@@ -176,6 +176,12 @@ pub struct AttachmentUnique {
     pub overlay_material_low_res: String,
     /// `weapOverlayReticle_t`: which reticle the overlay draws (0: none).
     pub overlay_reticle: u32,
+    /// `iReloadStartAdd`: rounds the segmented reload's start adds (first single unique
+    /// differing from the base unique wins, `FUN_008ed2c0`).
+    pub reload_start_add: i32,
+    /// `adsDofStart`, `adsDofEnd` (each from the first single unique differing from the base
+    /// unique, `FUN_008ebdb0`).
+    pub ads_dof: (f32, f32),
 }
 
 /// A BO2 attachment (`WeaponAttachment`): how it changes any weapon it goes on. Scales multiply the
@@ -219,6 +225,35 @@ pub struct Attachment {
     pub first_raise_priority: i32,
     /// `bAltWeaponAdsOnly`: the alt-mode's ADS-only flag (G14 §5).
     pub alt_weapon_ads_only: bool,
+    /// `bAltWeaponDisableSwitching`, OR-ed into the weapon's (`FUN_008ecb60`).
+    pub alt_weapon_disable_switching: bool,
+    /// `fAdsZoomFov2`, `fAdsZoomFov3`: the second and third zoom levels (the last attachment
+    /// differing from `defaultattachment` wins, `FUN_008ec3f0`).
+    pub ads_zoom_fov2: f32,
+    pub ads_zoom_fov3: f32,
+    /// `fAdsZoomInFrac`, `fAdsZoomOutFrac` (first differing from `defaultattachment` wins).
+    pub ads_zoom_in_frac: f32,
+    pub ads_zoom_out_frac: f32,
+    /// `altScopeADSTransIn/OutTime`, seconds (first differing from `defaultattachment` wins).
+    pub alt_scope_ads_in_time: f32,
+    pub alt_scope_ads_out_time: f32,
+    /// `fHipIdleAmount` (first differing from `defaultattachment` wins) and
+    /// `fAdsIdleAmountScale` (a product).
+    pub hip_idle_amount: f32,
+    pub ads_idle_amount_scale: f32,
+    /// `fReloadQuick{,Empty,Add}TimeScale` (products, then truncated to whole ms).
+    pub reload_quick_scale: f32,
+    pub reload_quick_empty_scale: f32,
+    pub reload_quick_add_scale: f32,
+    /// `stackFireSpread`, `stackFireAccuracyDecay` (the first positive wins).
+    pub stack_fire_spread: f32,
+    pub stack_fire_accuracy_decay: f32,
+    /// `PenetrateType` (the first non-zero wins, `FUN_008ecec0`).
+    pub penetrate_type: u32,
+    /// OR-ed flags: `bInfraRed`, `mmsWeapon`, `bUseAsMelee`.
+    pub infrared: bool,
+    pub mms_weapon: bool,
+    pub use_as_melee: bool,
 }
 
 /// Every attachment in a loaded zone.
@@ -258,6 +293,24 @@ pub fn attachments(z: &Zone) -> Result<Vec<Attachment>, FormatError> {
                 perks: (z.u32(at + WA::perks), z.u32(at + WA::perks + 4)),
                 first_raise_priority: z.u32(at + WA::firstRaisePriority) as i32,
                 alt_weapon_ads_only: z.u8(at + WA::bAltWeaponAdsOnly) != 0,
+                alt_weapon_disable_switching: z.u8(at + WA::bAltWeaponDisableSwitching) != 0,
+                ads_zoom_fov2: z.f32(at + WA::fAdsZoomFov2),
+                ads_zoom_fov3: z.f32(at + WA::fAdsZoomFov3),
+                ads_zoom_in_frac: z.f32(at + WA::fAdsZoomInFrac),
+                ads_zoom_out_frac: z.f32(at + WA::fAdsZoomOutFrac),
+                alt_scope_ads_in_time: z.f32(at + WA::altScopeADSTransInTime),
+                alt_scope_ads_out_time: z.f32(at + WA::altScopeADSTransOutTime),
+                hip_idle_amount: z.f32(at + WA::fHipIdleAmount),
+                ads_idle_amount_scale: z.f32(at + WA::fAdsIdleAmountScale),
+                reload_quick_scale: z.f32(at + WA::fReloadQuickTimeScale),
+                reload_quick_empty_scale: z.f32(at + WA::fReloadQuickEmptyTimeScale),
+                reload_quick_add_scale: z.f32(at + WA::fReloadQuickAddTimeScale),
+                stack_fire_spread: z.f32(at + WA::stackFireSpread),
+                stack_fire_accuracy_decay: z.f32(at + WA::stackFireAccuracyDecay),
+                penetrate_type: z.u32(at + WA::penetrateType),
+                infrared: z.u8(at + WA::bInfraRed) != 0,
+                mms_weapon: z.u8(at + WA::mmsWeapon) != 0,
+                use_as_melee: z.u8(at + WA::bUseAsMelee) != 0,
             })
         })
         .collect()
@@ -487,6 +540,48 @@ pub struct Weapon {
     pub overlay_material_low_res: String,
     /// `weapOverlayReticle_t`: which reticle the overlay draws (0: none).
     pub overlay_reticle: u32,
+    // The variant's own fields.
+    /// `bIgnoreAttachments`: the variant's flags ignore its attachments' (G14 §4).
+    pub ignore_attachments: bool,
+    /// `iReloadQuickTime`, `iReloadQuickEmptyTime` (seconds; the variant's).
+    pub reload_quick_time: f32,
+    pub reload_quick_empty_time: f32,
+    /// `fAdsZoomFov2`, `fAdsZoomFov3` (the variant's second and third zoom levels).
+    pub ads_zoom_fov2: f32,
+    pub ads_zoom_fov3: f32,
+    /// `fAdsZoomInFrac`, `fAdsZoomOutFrac`.
+    pub ads_zoom_in_frac: f32,
+    pub ads_zoom_out_frac: f32,
+    /// `fOverlayAlphaScale`.
+    pub overlay_alpha_scale: f32,
+    /// `bDualMag`, `bInfraRed`, `mmsWeapon` (the variant's).
+    pub dual_mag: bool,
+    pub infrared: bool,
+    pub mms_weapon: bool,
+    // The def's fields.
+    /// `iReloadQuickAddTime` (seconds).
+    pub reload_quick_add_time: f32,
+    /// `iReloadStartAdd`: rounds the segmented reload's start adds.
+    pub reload_start_add: i32,
+    /// `PenetrateType`: 0 none, 1 small, 2 medium, 3 large.
+    pub penetrate_type: u32,
+    /// `stackFireSpread`, `stackFireAccuracyDecay`.
+    pub stack_fire_spread: f32,
+    pub stack_fire_accuracy_decay: f32,
+    /// `adsDofStart`, `adsDofEnd`.
+    pub ads_dof: (f32, f32),
+    /// `altScopeADSTransInTime`, `altScopeADSTransOutTime` (seconds, authored as floats).
+    pub alt_scope_ads_in_time: f32,
+    pub alt_scope_ads_out_time: f32,
+    /// `bAltWeaponAdsOnly`, `bAltWeaponDisableSwitching`.
+    pub alt_weapon_ads_only: bool,
+    pub alt_weapon_disable_switching: bool,
+    /// `bUseAsMelee`, `bHasBayonet`.
+    pub use_as_melee: bool,
+    pub has_bayonet: bool,
+    /// `fAdsIdleAmount`, `fHipIdleAmount`.
+    pub ads_idle_amount: f32,
+    pub hip_idle_amount: f32,
 }
 
 fn ms(z: &Zone, at: u32) -> f32 {
@@ -585,6 +680,8 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 overlay_material: named(z, u + WU::overlayMaterial).unwrap_or_default(),
                 overlay_material_low_res: named(z, u + WU::overlayMaterialLowRes).unwrap_or_default(),
                 overlay_reticle: z.u32(u + WU::overlayReticle),
+                reload_start_add: int(z, u + WU::iReloadStartAdd),
+                ads_dof: (z.f32(u + WU::adsDofStart), z.f32(u + WU::adsDofEnd)),
             });
         }
     }
@@ -640,6 +737,17 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         overlay_material,
         overlay_material_low_res,
         overlay_reticle,
+        ignore_attachments: z.u8(v + WV::bIgnoreAttachments) != 0,
+        reload_quick_time: ms(z, v + WV::iReloadQuickTime),
+        reload_quick_empty_time: ms(z, v + WV::iReloadQuickEmptyTime),
+        ads_zoom_fov2: z.f32(v + WV::fAdsZoomFov2),
+        ads_zoom_fov3: z.f32(v + WV::fAdsZoomFov3),
+        ads_zoom_in_frac: z.f32(v + WV::fAdsZoomInFrac),
+        ads_zoom_out_frac: z.f32(v + WV::fAdsZoomOutFrac),
+        overlay_alpha_scale: z.f32(v + WV::fOverlayAlphaScale),
+        dual_mag: z.u8(v + WV::bDualMag) != 0,
+        infrared: z.u8(v + WV::bInfraRed) != 0,
+        mms_weapon: z.u8(v + WV::mmsWeapon) != 0,
         ..Default::default()
     };
     if d == 0 {
@@ -796,6 +904,20 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.dual_wield = z.u8(d + WD::bDualWield) != 0;
     w.clip_only = z.u8(d + WD::bClipOnly) != 0;
     w.rifle_bullet = z.u8(d + WD::bRifleBullet) != 0;
+    w.reload_quick_add_time = ms(z, d + WD::iReloadQuickAddTime);
+    w.reload_start_add = int(z, d + WD::iReloadStartAdd);
+    w.penetrate_type = z.u32(d + WD::penetrateTWeaponAttachmentype);
+    w.stack_fire_spread = z.f32(d + WD::stackFireSpread);
+    w.stack_fire_accuracy_decay = z.f32(d + WD::stackFireAccuracyDecay);
+    w.ads_dof = (z.f32(d + WD::adsDofStart), z.f32(d + WD::adsDofEnd));
+    w.alt_scope_ads_in_time = z.f32(d + WD::altScopeADSTransInTime);
+    w.alt_scope_ads_out_time = z.f32(d + WD::altScopeADSTransOutTime);
+    w.alt_weapon_ads_only = z.u8(d + WD::bAltWeaponAdsOnly) != 0;
+    w.alt_weapon_disable_switching = z.u8(d + WD::bAltWeaponDisableSwitching) != 0;
+    w.use_as_melee = z.u8(d + WD::bUseAsMelee) != 0;
+    w.has_bayonet = z.u8(d + WD::bHasBayonet) != 0;
+    w.ads_idle_amount = z.f32(d + WD::fAdsIdleAmount);
+    w.hip_idle_amount = z.f32(d + WD::fHipIdleAmount);
     w.fire_sound = opt_str(z, d + WD::fireSound);
     w.fire_sound_player = opt_str(z, d + WD::fireSoundPlayer);
     w.fire_last_sound_player = opt_str(z, d + WD::fireLastSoundPlayer);

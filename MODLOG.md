@@ -4464,3 +4464,63 @@ stays "W00" and the INI's hidden list/draw indices keep working.
 **Verified.** `cargo test -p zhbo-assets` green; `cargo test --workspace` green; `cargo clippy
 --workspace --all-targets` exit 0; the real-install suite (`--skip conformance`) green. No game
 launched. Conformance was not run on the full archive this round.
+
+## Uncarried weapon fields: BO2's fire-cycle times, zoom levels, traits now ride the table (2026-10-26, branch `v1/uncarried-fields`)
+
+The weapon table now carries 36 BO2 fields it used to drop. The conformance gate had them all as
+"mod side empty". There are 16 new `Weapon` lines (`WEAPON_FIELDS` 78 → 94) and 8 new `Attachment`
+lines (`ATTACHMENT_FIELDS` 17 → 25). The new `weapons/handling.rs` holds the `Timing`, `Zoom` and
+`Traits` groups.
+
+* **Timing:** last-fire, fire delay, rechamber, rechamber bolt, hold fire, shots before
+  rechamber, bolt action, quick reload ×3, reload start add, spin-down, detonate and sprint-in.
+* **Zoom:** zoom levels 2 and 3, zoom in/out fractions, alt-scope ADS times, ADS DOF,
+  overlay alpha and idle amount.
+* **Traits:** clip only, dual mag, infrared, MMS, use-as-melee/bayonet, rifle bullet, the
+  alt-mode flags, ignore attachments, stack fire, min player damage, penetration and offhand
+  class.
+
+`attachments::apply` combines each field with its G14 §4 rule and walks the combo in `eAttachment`
+order. That order is the new attachment `Kind` line; `apply`'s existing short-name order is left
+as it was for the old fields.
+
+* **Products:** the quick reloads are `(int)(ms × Π)`, truncated to whole ms. The aimed idle
+  amount is a plain product.
+* **First differing:** the zoom fractions, the alt-scope times and the hip idle amount.
+* **Last differing:** zoom levels 2 and 3.
+* **First positive / first non-none:** stack fire takes the first positive value; penetration
+  takes the first non-none.
+* **OR flags:** the dual mag is gated by `bIgnoreAttachments`.
+* **First single unique differing from the base unique:** the reload start add and the ADS DOF.
+  They are computed per combo in `add_variants`, like the overlay.
+
+* **Gotcha: `common_mp`'s `,defaultattachment` is a zeroed reference stub.** The real
+  `defaultattachment` is in `patch_mp`. Its zoom levels, scales and move scale are 1.0; its
+  fractions, alt-scope times and hip idle are 0. It is the "no change" sentinel of every
+  first/last-differing accessor.
+  * Reading the stub would have made every silencer's authored fov 1.0 "win" the zoom.
+  * This also explains the earlier ADS-move lesson: its sentinel was 1.0 because the default's
+    value is 1.0.
+  * The converter now loads the patch asset (`weapons::default_attachment`). It stores an
+    attachment field that equals the default as `None`, written `-` in the table.
+  * The converter still reads weapon variants from `common_mp` only, while the oracle lets
+    `patch_mp` override them. No in-scope column showed a difference from this, but it is worth
+    remembering.
+* **The projectile model followed only the base set.** Combos and `gl_*` alt modes had no
+  `projectile_object`, so `crossbow_mp+acog` and every under-barrel grenade launched an invisible
+  object.
+  * `projectiles()` now also converts the base weapons' alt modes.
+  * `share_projectiles` gives each def without an object its base weapon's object.
+* **What stays (another queue item):** the alt-mode rows. In this install, BO2's alt variants
+  (`sf_*`, `dualoptic_*`, `gl_*`) have no attachment table (`allows 0x0`), so no attachment field
+  applies on an alt row. The mod applies the parent combo's attachments.
+  * This is one structural cluster: ~2.3k cells in this item's columns (fov2/3 513 each, the
+    same rows as fov1; dual mag, quick reload ×2 and idle 210–400; MMS 117; in-frac 140).
+  * The same rows make up the existing `reload_time`, `ads_in_time`, `clip_size`, `hip_spread`
+    and `silenced` clusters.
+  * It changes alt-mode gameplay (the shared magazine's size), so it belongs to the alt-mode
+    structural cycle, not here.
+
+Measured (conformance CLI, against the 2026-10-25 baseline): weapons cells **706,586 → 397,145**
+and clusters **203 → 174**; gap clusters **214 → 185**. All in-scope columns cleared to 0, except
+the alt-row residue above. No other column moved.

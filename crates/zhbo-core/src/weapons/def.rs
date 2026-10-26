@@ -7,6 +7,7 @@
 */
 
 use super::feel::{GunKick, Reticle, Sway, ViewPos};
+use super::handling::{Timing, Traits, Zoom};
 use super::specialty::Specialties;
 use crate::units::inches;
 
@@ -278,6 +279,12 @@ pub struct WeaponDef {
     pub overlay_material_low_res: String,
     /// `weapOverlayReticle_t`: which reticle the overlay draws (0: none).
     pub overlay_reticle: u32,
+    /// The fire cycle's and reload's extra times (`handling::Timing`).
+    pub timing: Timing,
+    /// The zoom levels and fractions, depth of field and idle sway (`handling::Zoom`).
+    pub zoom: Zoom,
+    /// BO2's per-weapon flags, stack-fire spread, damage floor, penetration, offhand class.
+    pub traits: Traits,
 }
 
 /// One BO2 camouflage option (`mp/attachmenttable.csv`'s rows with `camo` in column 1): the id
@@ -467,6 +474,9 @@ impl Default for WeaponDef {
             overlay_material: String::new(),
             overlay_material_low_res: String::new(),
             overlay_reticle: 0,
+            timing: Timing::default(),
+            zoom: Zoom::default(),
+            traits: Traits::default(),
         }
     }
 }

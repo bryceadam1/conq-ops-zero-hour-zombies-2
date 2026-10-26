@@ -8,6 +8,7 @@
 
 use super::def::{CamoOption, Class, Effect, FireMode, Kind, Kick, Place, WeaponDef};
 use super::feel::{nums, v3, GunKick, Sway};
+use super::handling::{OffhandClass, Penetrate};
 use super::specialty::Specialties;
 use crate::attachments::AttachmentDef;
 
@@ -55,6 +56,24 @@ pub(crate) fn parse_fire(value: &str) -> Option<FireMode> {
         "burst" => FireMode::Burst(words.next().and_then(|n| n.parse().ok()).unwrap_or(3)),
         _ => return None,
     })
+}
+
+/// An optional number: the number, or `-` for none (an attachment field equal to
+/// `defaultattachment`'s, which changes nothing).
+pub(crate) fn opt_num(x: Option<f32>) -> String {
+    x.map_or_else(|| "-".to_string(), |v| v.to_string())
+}
+
+/// Parse `n` optional numbers (`-` for none).
+pub(crate) fn parse_opt_nums(text: &str, n: usize) -> Result<Vec<Option<f32>>, String> {
+    let out: Vec<Option<f32>> = text
+        .split_whitespace()
+        .map(|w| if w == "-" { Ok(None) } else { w.parse::<f32>().map(Some).map_err(|_| "number or -".to_string()) })
+        .collect::<Result<_, _>>()?;
+    if out.len() < n {
+        return Err("too few values".into());
+    }
+    Ok(out)
 }
 
 /// Write the table in the format [`parse_table`] reads (Zero Hour INI style: `Weapon <id>` and
@@ -317,6 +336,47 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
         |a: &mut AttachmentDef, v: Values| {
             v.need(5)?;
             for i in 0..5 { a.attribute_deltas[i] = v.num(i); }
+            Ok(())
+        }),
+    field!("Kind", "BO2's `eAttachment`: the order a combination's attachments are walked in.", FieldKind::Num,
+        |a: &AttachmentDef| a.kind.to_string(),
+        |a: &mut AttachmentDef, v: Values| { a.kind = v.text_num()? as u8; Ok(()) }),
+    field!("QuickReloadScale", "Scales the quick reload, quick empty reload and quick add times.", FieldKind::Nums(3),
+        |a: &AttachmentDef| nums(&[a.reload_quick_scale.0, a.reload_quick_scale.1, a.reload_quick_scale.2]),
+        |a: &mut AttachmentDef, v: Values| { v.need(3)?; a.reload_quick_scale = (v.num(0), v.num(1), v.num(2)); Ok(()) }),
+    field!("IdleAmount", "Aimed idle-sway scale, and the hip idle amount (`-`: unchanged).", FieldKind::Words,
+        |a: &AttachmentDef| format!("{} {}", a.ads_idle_scale, opt_num(a.hip_idle)),
+        |a: &mut AttachmentDef, v: Values| {
+            let o = parse_opt_nums(v.text, 2)?;
+            a.ads_idle_scale = o[0].ok_or("idle scale")?;
+            a.hip_idle = o[1];
+            Ok(())
+        }),
+    field!("AdsZoom", "Zoom levels 2 and 3, zoom in and out fractions (`-`: unchanged).", FieldKind::Words,
+        |a: &AttachmentDef| [a.fov2, a.fov3, a.zoom_in_frac, a.zoom_out_frac].map(opt_num).join(" "),
+        |a: &mut AttachmentDef, v: Values| {
+            let o = parse_opt_nums(v.text, 4)?;
+            (a.fov2, a.fov3, a.zoom_in_frac, a.zoom_out_frac) = (o[0], o[1], o[2], o[3]);
+            Ok(())
+        }),
+    field!("AltScopeAds", "The second optic's ADS in and out times, seconds (`-`: unchanged).", FieldKind::Words,
+        |a: &AttachmentDef| [a.alt_scope_in_time, a.alt_scope_out_time].map(opt_num).join(" "),
+        |a: &mut AttachmentDef, v: Values| {
+            let o = parse_opt_nums(v.text, 2)?;
+            (a.alt_scope_in_time, a.alt_scope_out_time) = (o[0], o[1]);
+            Ok(())
+        }),
+    field!("StackFire", "Stack-fire spread and accuracy decay (0: unchanged).", FieldKind::Nums(2),
+        |a: &AttachmentDef| nums(&[a.stack_fire.0, a.stack_fire.1]),
+        |a: &mut AttachmentDef, v: Values| { v.need(2)?; a.stack_fire = (v.num(0), v.num(1)); Ok(()) }),
+    field!("Penetrate", "BO2's penetration type: none, small, medium, large (`none`: unchanged).", FieldKind::Enum,
+        |a: &AttachmentDef| a.penetrate.name().into(),
+        |a: &mut AttachmentDef, v: Values| { a.penetrate = Penetrate::parse(v.text).ok_or("unknown penetration")?; Ok(()) }),
+    field!("Traits", "dual magazine, infrared, millimetre-wave scanner, use as melee, alt mode ADS only, alt switching disabled.", FieldKind::Nums(6),
+        |a: &AttachmentDef| [a.dual_mag, a.infrared, a.mms, a.use_as_melee, a.alt_ads_only, a.alt_disable_switching].map(|b| (b as u8).to_string()).join(" "),
+        |a: &mut AttachmentDef, v: Values| {
+            v.need(6)?;
+            (a.dual_mag, a.infrared, a.mms, a.use_as_melee, a.alt_ads_only, a.alt_disable_switching) = (v.flag(0), v.flag(1), v.flag(2), v.flag(3), v.flag(4), v.flag(5));
             Ok(())
         }),
 ];
@@ -646,7 +706,73 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
         |d: &mut WeaponDef, v: Values| { d.overlay_material_low_res = v.text.into(); Ok(()) }),
     field!("OverlayReticle", "The overlay reticle enum (`weapOverlayReticle_t`).", FieldKind::Num,
         |d: &WeaponDef| d.overlay_reticle.to_string(),
-        |d: &mut WeaponDef, v: Values| { d.overlay_reticle = v.text_num()? as u32; Ok(()) }),
+        |d: &mut WeaponDef, v: Values| { d.overlay_reticle = v.text_num()? as u32; Ok(()) }),    field!("FireCycle", "Last-round fire time, fire delay, rechamber, rechamber bolt, hold fire (seconds); shots before a rechamber; bolt action.", FieldKind::Nums(7),
+        |d: &WeaponDef| { let t = &d.timing; format!("{} {} {} {} {} {} {}", t.last_fire_time, t.fire_delay, t.rechamber_time, t.rechamber_bolt_time, t.hold_fire_time, t.shots_before_rechamber, t.bolt_action as u8) },
+        |d: &mut WeaponDef, v: Values| {
+            v.need(7)?;
+            let t = &mut d.timing;
+            (t.last_fire_time, t.fire_delay, t.rechamber_time, t.rechamber_bolt_time, t.hold_fire_time) = (v.num(0), v.num(1), v.num(2), v.num(3), v.num(4));
+            (t.shots_before_rechamber, t.bolt_action) = (v.num(5) as u16, v.flag(6));
+            Ok(())
+        }),
+    field!("QuickReload", "Quick reload, quick empty reload and quick rounds-in times (seconds).", FieldKind::Nums(3),
+        |d: &WeaponDef| nums(&[d.timing.reload_quick_time, d.timing.reload_quick_empty_time, d.timing.reload_quick_add_time]),
+        |d: &mut WeaponDef, v: Values| {
+            v.need(3)?;
+            (d.timing.reload_quick_time, d.timing.reload_quick_empty_time, d.timing.reload_quick_add_time) = (v.num(0), v.num(1), v.num(2));
+            Ok(())
+        }),
+    field!("ReloadStartAdd", "Rounds the segmented reload's start adds (`iReloadStartAdd`).", FieldKind::Num,
+        |d: &WeaponDef| d.timing.reload_start_add.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.timing.reload_start_add = v.text_num()? as u16; Ok(()) }),
+    field!("SpinDownTime", "Minigun spin-down (seconds).", FieldKind::Num,
+        |d: &WeaponDef| d.timing.spin_down_time.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.timing.spin_down_time = v.text_num()?; Ok(()) }),
+    field!("DetonateTime", "The detonator press (seconds).", FieldKind::Num,
+        |d: &WeaponDef| d.timing.detonate_time.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.timing.detonate_time = v.text_num()?; Ok(()) }),
+    field!("SprintInTime", "Lowering into a sprint (seconds).", FieldKind::Num,
+        |d: &WeaponDef| d.timing.sprint_in_time.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.timing.sprint_in_time = v.text_num()?; Ok(()) }),
+    field!("AdsZoom", "Zoom levels 2 and 3 (degrees), zoom in and out fractions of the ADS lerp.", FieldKind::Nums(4),
+        |d: &WeaponDef| { let z = &d.zoom; nums(&[z.fov2, z.fov3, z.in_frac, z.out_frac]) },
+        |d: &mut WeaponDef, v: Values| { v.need(4)?; let z = &mut d.zoom; (z.fov2, z.fov3, z.in_frac, z.out_frac) = (v.num(0), v.num(1), v.num(2), v.num(3)); Ok(()) }),
+    field!("AltScopeAds", "The second optic's ADS in and out times (seconds).", FieldKind::Nums(2),
+        |d: &WeaponDef| nums(&[d.zoom.alt_scope_in_time, d.zoom.alt_scope_out_time]),
+        |d: &mut WeaponDef, v: Values| { v.need(2)?; (d.zoom.alt_scope_in_time, d.zoom.alt_scope_out_time) = (v.num(0), v.num(1)); Ok(()) }),
+    field!("AdsDof", "The aimed depth of field's start and end (inches).", FieldKind::Nums(2),
+        |d: &WeaponDef| nums(&[d.zoom.dof.0, d.zoom.dof.1]),
+        |d: &mut WeaponDef, v: Values| { v.need(2)?; d.zoom.dof = (v.num(0), v.num(1)); Ok(()) }),
+    field!("OverlayAlphaScale", "The scope overlay's opacity (`fOverlayAlphaScale`).", FieldKind::Num,
+        |d: &WeaponDef| d.zoom.overlay_alpha_scale.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.zoom.overlay_alpha_scale = v.text_num()?; Ok(()) }),
+    field!("IdleAmount", "Idle sway amount, aimed and hip.", FieldKind::Nums(2),
+        |d: &WeaponDef| nums(&[d.zoom.idle_amount.0, d.zoom.idle_amount.1]),
+        |d: &mut WeaponDef, v: Values| { v.need(2)?; d.zoom.idle_amount = (v.num(0), v.num(1)); Ok(()) }),
+    field!("StackFire", "Stack-fire spread and accuracy decay.", FieldKind::Nums(2),
+        |d: &WeaponDef| nums(&[d.traits.stack_fire.0, d.traits.stack_fire.1]),
+        |d: &mut WeaponDef, v: Values| { v.need(2)?; d.traits.stack_fire = (v.num(0), v.num(1)); Ok(()) }),
+    field!("Traits", "clip only, dual magazine, infrared, millimetre-wave scanner, use as melee, rifle bullet, alt mode ADS only, alt switching disabled, ignores attachments.", FieldKind::Nums(9),
+        |d: &WeaponDef| {
+            let t = &d.traits;
+            [t.clip_only, t.dual_mag, t.infrared, t.mms, t.use_as_melee, t.rifle_bullet, t.alt_ads_only, t.alt_disable_switching, t.ignore_attachments].map(|b| (b as u8).to_string()).join(" ")
+        },
+        |d: &mut WeaponDef, v: Values| {
+            v.need(9)?;
+            let t = &mut d.traits;
+            (t.clip_only, t.dual_mag, t.infrared, t.mms, t.use_as_melee) = (v.flag(0), v.flag(1), v.flag(2), v.flag(3), v.flag(4));
+            (t.rifle_bullet, t.alt_ads_only, t.alt_disable_switching, t.ignore_attachments) = (v.flag(5), v.flag(6), v.flag(7), v.flag(8));
+            Ok(())
+        }),
+    field!("MinPlayerDamage", "The least a hit on a player does (`minPlayerDamage`).", FieldKind::Num,
+        |d: &WeaponDef| d.traits.min_player_damage.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.traits.min_player_damage = v.text_num()?; Ok(()) }),
+    field!("Penetrate", "BO2's penetration type: none, small, medium, large.", FieldKind::Enum,
+        |d: &WeaponDef| d.traits.penetrate.name().into(),
+        |d: &mut WeaponDef, v: Values| { d.traits.penetrate = Penetrate::parse(v.text).ok_or("unknown penetration")?; Ok(()) }),
+    field!("OffhandClass", "BO2's offhand class: none, frag_grenade, smoke_grenade, flash_grenade, gear, supplydrop_marker.", FieldKind::Enum,
+        |d: &WeaponDef| d.traits.offhand.name().into(),
+        |d: &mut WeaponDef, v: Values| { d.traits.offhand = OffhandClass::parse(v.text).ok_or("unknown offhand class")?; Ok(()) }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -706,8 +832,8 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 78);
-        assert_eq!(ATTACHMENT_FIELDS.len(), 17);
+        assert_eq!(WEAPON_FIELDS.len(), 94);
+        assert_eq!(ATTACHMENT_FIELDS.len(), 25);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }
 
@@ -830,5 +956,32 @@ mod tests {
         assert!(text.contains("OverlayReticle = 1"), "{text}");
         let back = parse_table(&text).unwrap();
         assert_eq!(back[0], d);
+    }
+
+    #[test]
+    fn the_handling_fields_round_trip() {
+        use super::super::handling::{OffhandClass, Penetrate, Timing, Traits, Zoom};
+        let d = WeaponDef {
+            id: "dsr50_mp".into(),
+            timing: Timing { last_fire_time: 0.528, rechamber_time: 1.0, rechamber_bolt_time: 0.4, shots_before_rechamber: 4, bolt_action: true, reload_quick_time: 1.012, reload_start_add: 2, spin_down_time: 1.0, sprint_in_time: 0.25, ..Default::default() },
+            zoom: Zoom { fov2: 12.5, fov3: 30.0, in_frac: 0.016, out_frac: 0.05, alt_scope_in_time: 0.15, dof: (2.2, 6.4), overlay_alpha_scale: 1.0, idle_amount: (60.0, 20.0), ..Default::default() },
+            traits: Traits { dual_mag: true, rifle_bullet: true, ignore_attachments: true, stack_fire: (1.5, 1.0), min_player_damage: 5.0, penetrate: Penetrate::Large, offhand: OffhandClass::Gear, ..Default::default() },
+            ..Default::default()
+        };
+        let text = format_table(std::slice::from_ref(&d));
+        assert!(text.contains("FireCycle = 0.528 0 1 0.4 0 4 1"), "{text}");
+        assert!(text.contains("Penetrate = large"), "{text}");
+        assert!(text.contains("OffhandClass = gear"), "{text}");
+        assert_eq!(parse_table(&text).unwrap()[0], d);
+    }
+
+    #[test]
+    fn optional_attachment_fields_round_trip_as_dashes() {
+        let a = AttachmentDef { id: "acog".into(), short: "acog".into(), kind: 1, fov2: Some(35.0), zoom_out_frac: Some(0.4), hip_idle: None, ..Default::default() };
+        let t = Table { attachments: vec![a], ..Default::default() };
+        let text = format_full_table(&t);
+        assert!(text.contains("AdsZoom = 35 - - 0.4"), "{text}");
+        assert!(text.contains("IdleAmount = 1 -"), "{text}");
+        assert_eq!(parse_full_table(&text).unwrap(), t);
     }
 }

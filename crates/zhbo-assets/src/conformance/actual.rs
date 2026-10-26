@@ -350,35 +350,39 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         Class::Equipment => "equipment",
         _ => "none",
     };
-    b.opt_text("weap_type", weap_type).opt_text("weap_class", weap_class).text("inventory", inventory).absent("offhand_class").text("offhand_slot", offhand_slot);
+    b.opt_text("weap_type", weap_type).opt_text("weap_class", weap_class).text("inventory", inventory).text("offhand_class", d.traits.offhand.name()).text("offhand_slot", offhand_slot);
     let fire = match d.fire {
         FireMode::Auto => "fullauto".to_string(),
         FireMode::Semi => "singleshot".to_string(),
         FireMode::Burst(n) => format!("burstfire{n}"),
         FireMode::Minigun => "minigun".to_string(),
     };
-    b.text("fire_type", fire).int("shot_count", d.pellets as i64).absent("shots_before_rechamber").absent("bolt_action");
+    b.text("fire_type", fire)
+        .int("shot_count", d.pellets as i64)
+        .int("shots_before_rechamber", d.timing.shots_before_rechamber as i64)
+        .bool("bolt_action", d.timing.bolt_action);
 
     // The arsenal melees with the loadout's knife, whatever is held (`arsenal.rs` "Melee interrupts":
     // `self.melee.melee_time`, `self.melee.melee_damage`), striking on the press.
     let knife = cat.get(&weapons::Loadout::default().melee).unwrap_or(d);
     let alt_toggles = !d.alt.is_empty();
     // Timing.
+    let t = &d.timing;
     for (c, v) in [
         ("fire_time", Some(d.fire_time)),
-        ("last_fire_time", None),
-        ("fire_delay", d.class.is_gun().then_some(0.0)),
+        ("last_fire_time", Some(t.last_fire_time)),
+        ("fire_delay", Some(t.fire_delay)),
         ("burst_delay", Some(d.burst_delay)),
-        ("rechamber_time", None),
-        ("rechamber_bolt_time", None),
-        ("hold_fire_time", None),
+        ("rechamber_time", Some(t.rechamber_time)),
+        ("rechamber_bolt_time", Some(t.rechamber_bolt_time)),
+        ("hold_fire_time", Some(t.hold_fire_time)),
         ("reload_time", Some(d.reload_time)),
         ("reload_empty_time", Some(d.reload_empty_time)),
         ("reload_add_time", Some(d.reload_add_time)),
         ("reload_empty_add_time", Some(d.reload_empty_add_time)),
-        ("reload_quick_time", None),
-        ("reload_quick_empty_time", None),
-        ("reload_quick_add_time", None),
+        ("reload_quick_time", Some(t.reload_quick_time)),
+        ("reload_quick_empty_time", Some(t.reload_quick_empty_time)),
+        ("reload_quick_add_time", Some(t.reload_quick_add_time)),
         ("reload_start_time", Some(d.reload_start_time)),
         ("reload_end_time", Some(d.reload_end_time)),
         ("raise_time", Some(d.raise_time)),
@@ -392,18 +396,16 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         // A swap raises and drops in the same times loaded or empty (`switch_to`).
         ("empty_raise_time", d.class.is_gun().then_some(d.raise_time)),
         ("empty_drop_time", d.class.is_gun().then_some(d.drop_time)),
-        // Sprinting blocks the trigger from its first frame (`blocked = sprinting || ...`).
-        ("sprint_in_time", d.class.is_gun().then_some(0.0)),
+        ("sprint_in_time", Some(t.sprint_in_time)),
         ("sprint_out_time", Some(d.sprint_out_time)),
         ("ads_in_time", Some(d.ads_in_time)),
         ("ads_out_time", Some(d.ads_out_time)),
         ("melee_time", Some(knife.melee_time.max(0.3))),
         ("melee_delay", Some(0.0)),
         ("spin_up_time", Some(d.spin_up_time)),
-        // The barrels spin down at the rate they spin up (`w.spin - dt`).
-        ("spin_down_time", (d.fire == FireMode::Minigun).then_some(d.spin_up_time)),
+        ("spin_down_time", Some(t.spin_down_time)),
         ("fuse_time", Some(d.fuse_time)),
-        ("detonate_time", None),
+        ("detonate_time", Some(t.detonate_time)),
     ] {
         match v {
             Some(s) => b.float(c, ms(s)),
@@ -412,7 +414,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     }
     // The mod's shell-by-shell reload is BO2's segmented reload: rounds per cycle with a start
     // and an end (the converter's `shells`).
-    b.int("reload_ammo_add", d.reload_ammo_add as i64).absent("reload_start_add").bool("segmented_reload", d.reload_ammo_add > 0 && d.reload_start_time > 0.0);
+    b.int("reload_ammo_add", d.reload_ammo_add as i64).int("reload_start_add", t.reload_start_add as i64).bool("segmented_reload", d.reload_ammo_add > 0 && d.reload_start_time > 0.0);
 
     // Ammo. Start: what a spawn gives, the loaded magazine included (a gun's magazine plus its
     // spare rounds; an offhand's reserve is its count, the converter's `to_def`). Max: the spare
@@ -426,8 +428,8 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     b.int("clip_size", d.clip as i64)
         .int("start_ammo_rounds", start)
         .int("max_ammo_rounds", max)
-        .absent("clip_only")
-        .absent("dual_mag")
+        .bool("clip_only", d.traits.clip_only)
+        .bool("dual_mag", d.traits.dual_mag)
         // An alt mode without its own ammo fires the weapon's magazine (`toggle_alt` swaps
         // magazines only for one with its own): that pair — the weapon and its alt — shares.
         .bool("shared_ammo", if j.alt { !d.alt_own_ammo } else { cat.get(&d.alt).is_some_and(|a| !a.alt_own_ammo && !d.alt_own_ammo) });
@@ -435,13 +437,13 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     // Damage.
     b.list("damage", &d.damage.map(|x| format!("{}", x as i64)))
         .floats("damage_range", &d.damage_range.map(inch))
-        .absent("min_player_damage")
+        .int("min_player_damage", d.traits.min_player_damage as i64)
         .int("melee_damage", knife.melee_damage as i64)
         // The mod's hits are head or body (`hitscan::trace`'s `headshot`, `sim/fire.rs`): its
         // head zone covers BO2's helmet and head, every other location takes 1.
         .floats("location_multipliers", &(0..21).map(|i| if i == 1 || i == 2 { f32_value(d.head_multiplier) } else { 1.0 }).collect::<Vec<_>>())
         .float("max_range", inch(d.max_range))
-        .absent("penetrate_type")
+        .text("penetrate_type", d.traits.penetrate.name())
         .float("explosion_radius", inch(d.explosion_radius))
         .float("explosion_radius_min", inch(d.explosion_radius_min))
         .int("explosion_inner_damage", d.explosion_inner_damage as i64)
@@ -460,26 +462,25 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .float("hip_spread_fire_add", fl(d.spread_fire_add))
         .float("hip_spread_move_add", fl(d.spread_move_add))
         .float("ads_spread", fl(d.ads_spread))
-        .absent("stack_fire_spread")
-        .absent("stack_fire_accuracy_decay");
+        .float("stack_fire_spread", fl(d.traits.stack_fire.0))
+        .float("stack_fire_accuracy_decay", fl(d.traits.stack_fire.1));
 
     // ADS: one zoomed field of view; the ADS walk is the converter's base times BO2's scale.
     b.float("ads_zoom_fov1", fl(d.ads_fov))
-        // One zoom: every zoom level of the weapon is that field of view.
-        .float("ads_zoom_fov2", fl(d.ads_fov))
-        .float("ads_zoom_fov3", fl(d.ads_fov))
-        .absent("ads_zoom_in_frac")
-        .absent("ads_zoom_out_frac")
+        .float("ads_zoom_fov2", fl(d.zoom.fov2))
+        .float("ads_zoom_fov3", fl(d.zoom.fov3))
+        .float("ads_zoom_in_frac", fl(d.zoom.in_frac))
+        .float("ads_zoom_out_frac", fl(d.zoom.out_frac))
         // The definition stores the ADS walk as the converter's base (0.35 of a walk) times BO2's
         // scale (`to_def`, `attachments::apply`): divided back, it is BO2's scale. The replacement
         // walk never stacks the base and an attachment (evoskorpion_mp: BO2 2.55 → mod 0.8925 → 2.55).
         .float("ads_move_speed_scale", fl(d.ads_move_scale / crate::weapons::ADS_MOVE_BASE))
         .float("move_speed_scale", fl(d.move_scale))
         .float("sprint_duration_scale", fl(d.sprint_duration_scale))
-        .absent("alt_scope_ads_in_time")
-        .absent("alt_scope_ads_out_time")
-        .absent("ads_dof")
-        .absent("overlay_alpha_scale");
+        .float("alt_scope_ads_in_time", fl(d.zoom.alt_scope_in_time))
+        .float("alt_scope_ads_out_time", fl(d.zoom.alt_scope_out_time))
+        .floats("ads_dof", &fls(&[d.zoom.dof.0, d.zoom.dof.1]))
+        .float("overlay_alpha_scale", fl(d.zoom.overlay_alpha_scale));
 
     // Kick and recoil.
     let gk = |k: &weapons::GunKick| fls(&[k.pitch.0, k.pitch.1, k.yaw.0, k.yaw.1, k.accel, k.speed_max, k.speed_decay, k.static_decay, k.reduced_percent]);
@@ -500,7 +501,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     let p = &d.view_pos;
     b.floats("hip_sway", &sw(&d.hip_sway))
         .floats("ads_sway", &sw(&d.ads_sway))
-        .absent("idle_amount")
+        .floats("idle_amount", &fls(&[d.zoom.idle_amount.0, d.zoom.idle_amount.1]))
         .floats("stand_move", &fls(&p.stand_move))
         .floats("stand_rot", &fls(&p.stand_rot))
         .floats("strafe_move", &fls(&p.strafe_move))
@@ -553,18 +554,18 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
 
     // Alt mode, dual wield, flags, specialties.
     b.opt_text("alt_weapon", (!d.alt.is_empty()).then(|| crate::generals::base_id(&d.alt).to_string()))
-        .absent("alt_weapon_ads_only")
-        .absent("alt_weapon_disable_switching")
+        .bool("alt_weapon_ads_only", d.traits.alt_ads_only)
+        .bool("alt_weapon_disable_switching", d.traits.alt_disable_switching)
         .bool("dual_wield", dual)
         .absent("dual_wield_weapon")
         .opt_text("dual_wield_view_model", lh.map(|p| stem(&p.model)))
         .bool("silenced", d.silenced)
         .bool("laser_sight", d.laser)
-        .absent("infrared")
-        .absent("mms_weapon")
-        .absent("use_as_melee")
+        .bool("infrared", d.traits.infrared)
+        .bool("mms_weapon", d.traits.mms)
+        .bool("use_as_melee", d.traits.use_as_melee)
         .bool("cook_off_hold", d.cook)
-        .absent("rifle_bullet");
+        .bool("rifle_bullet", d.traits.rifle_bullet);
     let bits: Vec<String> = (0..64u32).filter(|i| d.specialties.0 & (1u64 << i) != 0).map(|i| i.to_string()).collect();
     b.set("specialties", &bits);
 

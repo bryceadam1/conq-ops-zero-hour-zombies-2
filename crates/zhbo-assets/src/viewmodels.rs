@@ -691,10 +691,16 @@ pub(crate) fn projectiles(
     // The converted weapons and their alt modes (an under-barrel launcher's grenade).
     let mut ids: Vec<String> = converted.to_vec();
     for id in converted {
-        if let Some(alt) = defs.iter().find(|d| &d.id == id).map(|d| d.alt.clone()).filter(|a| !a.is_empty()) {
-            ids.push(alt);
+        if let Some(d) = defs.iter().find(|d| &d.id == id) {
+            if !d.alt.is_empty() {
+                ids.push(d.alt.clone());
+            }
+            // A base weapon's alt modes (the under-barrel launcher `gl_an94_mp`) launch their own
+            // projectile; every combo carrying one shares it (`share_projectiles`).
+            ids.extend(d.alt_modes.iter().map(|(_, alt)| alt.clone()).filter(|a| !ids_contains(converted, a)));
         }
     }
+    ids.dedup();
     for (n, id) in ids.iter().enumerate() {
         let Some(w) = bo2.iter().find(|w| w.name == base_id(id)) else { continue };
         let Some(d) = defs.iter_mut().find(|d| &d.id == id) else { continue };
@@ -731,6 +737,23 @@ pub(crate) fn projectiles(
     }
     out.insert("Data\\INI\\Object\\ZHBO_BO2_Projectiles.ini".into(), ini.into_bytes());
     format!("projectiles {}", made.join(", "))
+}
+
+fn ids_contains(ids: &[String], id: &str) -> bool {
+    ids.iter().any(|x| x == id)
+}
+
+/// A combo or alt-mode def fires its base weapon's BO2 `projectileModel`: give every def without a
+/// projectile object the one its base (`base_id`) was converted with — the crossbow with an optic,
+/// the under-barrel launcher of any combo (`gl_an94_mp~an94_mp+gl`).
+pub(crate) fn share_projectiles(defs: &mut [zhbo_core::weapons::WeaponDef]) {
+    let objects: BTreeMap<String, String> =
+        defs.iter().filter(|d| !d.projectile_object.is_empty()).map(|d| (d.id.clone(), d.projectile_object.clone())).collect();
+    for d in defs.iter_mut().filter(|d| d.projectile_object.is_empty()) {
+        if let Some(o) = objects.get(base_id(&d.id)) {
+            d.projectile_object = o.clone();
+        }
+    }
 }
 
 /// Each faction's arms holding the scorestreak tablet, with its lit screen.
@@ -875,6 +898,23 @@ pub(crate) fn tablet_world(patch: &Zone, common: &Zone, paks: &Paks, out: &mut B
 
 #[cfg(test)]
 mod tests {
+    /// A combo or an alt mode of a combo fires its base weapon's converted projectile.
+    #[test]
+    fn combos_share_their_base_weapons_projectile() {
+        use zhbo_core::weapons::WeaponDef;
+        let mut defs = vec![
+            WeaponDef { id: "crossbow_mp".into(), projectile_object: "ZHBO_Proj_crossbow_mp".into(), ..Default::default() },
+            WeaponDef { id: "crossbow_mp+acog".into(), ..Default::default() },
+            WeaponDef { id: "gl_an94_mp".into(), projectile_object: "ZHBO_Proj_gl_an94_mp".into(), ..Default::default() },
+            WeaponDef { id: "gl_an94_mp~an94_mp+gl".into(), ..Default::default() },
+            WeaponDef { id: "an94_mp+gl".into(), ..Default::default() },
+        ];
+        super::share_projectiles(&mut defs);
+        assert_eq!(defs[1].projectile_object, "ZHBO_Proj_crossbow_mp");
+        assert_eq!(defs[3].projectile_object, "ZHBO_Proj_gl_an94_mp");
+        assert_eq!(defs[4].projectile_object, "", "the rifle itself fires bullets");
+    }
+
     use super::{attachment_parts, base_part_note, duplicate_sight, is_dual_wield, mount_tag, same_sight, BasePart};
     use zhbo_formats::weapon::{inventory, Attachment, AttachmentUnique, Weapon};
 
