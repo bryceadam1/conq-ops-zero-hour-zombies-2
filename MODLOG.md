@@ -4332,3 +4332,28 @@ fallback for a non-base combo keeps its base weapon's mesh. The single-id sweep 
 - `the_legal_combo_set_covers_every_base_weapon` asserts the legal set covers the statstable-backed
   base ids only: `knife_held_mp` is the loadout's melee table row, not a CaC item, so the
   enumerator's `items` filter excludes it. It also asserts `all_legal_combos` ⊆ `converted()`.
+
+### The third-person body carries the base set only
+
+The full build's size was the third-person body, not the first-person split: `generals.rs` fed the
+full combo list to `viewmodels::world_weapons`, so each `Art\W3D\ZHBO_{GLA,USA,CHN}_SKN.w3d`
+aggregated every combo's world mesh. The integrator's fix: `world_weapons` now takes
+`converted_base`, so the body W3D and the `.zbw` world-weapon manifests are base-set only. A combo's
+third-person view shows its base weapon's world model — the fallback unconverted combos already use.
+Projectiles, FX and sounds were already on `converted_base`; the full `converted` list now feeds only
+the weapon table and the first-person viewmodels' manifest-only split. The base set still includes
+the default loadout's combo ids (they are first in `converted_base`), so the primary's world mesh
+stays "W00" and the INI's hidden list/draw indices keep working.
+
+**Measured on this workstation.**
+- Base build (`ZHBO_CONVERT_ALL_COMBOS=0`): 1:31.24 wall, 697,360,255 bytes — unchanged, as expected
+  (`converted == converted_base` when the flag is off).
+- Full build (all legal combos): 2:17.40 wall, 857,499,388 bytes, down from 7,275,758,249 bytes
+  (6.42 GB smaller). The base archive has 4,746 entries; the full has 33,963.
+- Both archives validate: magic `BIGF`, the header's total field (little-endian at [4:8]) equals the
+  byte length exactly, and the largest entry's `offset+size` equals the file length. No u32 wrap.
+  The prior full build's total field wrapped; this one fits.
+
+**Verified.** `cargo test -p zhbo-assets` green; `cargo test --workspace` green; `cargo clippy
+--workspace --all-targets` exit 0; the real-install suite (`--skip conformance`) green. No game
+launched. Conformance was not run on the full archive this round.

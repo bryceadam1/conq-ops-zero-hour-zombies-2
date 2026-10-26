@@ -296,7 +296,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     // tablet.
     let mut rig = Rig::new(&xmodel::find(&zones[0], FACTIONS[0].body).map_err(|e| e.to_string())?, &[(&weapon, character::WEAPON_TAG)]);
     let mut looks = textures::Looks::default();
-    let (held, flashes) = viewmodels::world_weapons(&patch, &common, &paks, &mut out, &rig, &bo2, &atts, &mut table.weapons, &converted, &mut looks);
+    // The base set is what the third-person body carries; combos beyond it show the base weapon, same as today.
+    let (held, flashes) = viewmodels::world_weapons(&patch, &common, &paks, &mut out, &rig, &bo2, &atts, &mut table.weapons, &converted_base, &mut looks);
     let tablet = viewmodels::tablet_world(&patch, &common, &paks, &mut out, &rig, &mut looks);
     // Each weapon's muzzle on the hand, so shots and flashes leave the gun in hand.
     let hand = rig.pivot(character::WEAPON_TAG).unwrap_or(0);
