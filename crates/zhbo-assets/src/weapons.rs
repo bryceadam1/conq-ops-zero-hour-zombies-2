@@ -324,9 +324,15 @@ pub fn add_variants(table: &mut Table, converted: &[String], bo2: &[Weapon]) {
         }
         if let Some((short, alt_id)) = base.alt_modes.iter().find(|(short, _)| d.attachments.contains(short)) {
             if let Some(alt_base) = table.weapons.iter().find(|w| &w.id == alt_id).cloned() {
-                // Select fire and the second optic keep the weapon's other attachments.
-                let others: Vec<&AttachmentDef> = atts.iter().copied().filter(|a| &a.short != short).collect();
-                let mut alt = if alt_base.alt_own_ammo { alt_base.clone() } else { attachments::apply(&alt_base, &others) };
+                // Select fire and the second optic keep the weapon's other attachments by name, but
+                // BO2 resolves them against the alt's own (empty) table: none changes its numbers
+                // (`attachments::alt_mode`, G14 `FUN_008ec9e0`).
+                let others: Vec<&str> = atts.iter().filter(|a| &a.short != short).map(|a| a.short.as_str()).collect();
+                let mut alt = if alt_base.alt_own_ammo {
+                    alt_base.clone()
+                } else {
+                    attachments::alt_mode(&alt_base, &others, |a| table.attachments.iter().find(|x| x.id == a))
+                };
                 let alt_shorts: Vec<&str> = alt.attachments.iter().map(String::as_str).collect();
                 if let Some((overlay_material, overlay_material_low_res, overlay_reticle)) =
                     bo2.iter().find(|w| &w.name == alt_id).and_then(|w| overlay_for(w, &alt_shorts))
@@ -1221,6 +1227,50 @@ mod tests {
         for id in &full {
             assert!(converted.contains(id), "the full set must include the legal combo {id}");
         }
+    }
+
+    /// The alt mode keeps the combination's attachment fields, but BO2 resolves them against the
+    /// alt variant's own table (`FUN_008ec9e0`, `FUN_008eb300`; G14): `sf_mp7_mp` offers none, so
+    /// `mp7_mp+extclip+rf+sf`'s select fire keeps its own clip, fire time and laser while the
+    /// weapon takes the extended mag, rapid fire and laser. The names still ride along (the parts
+    /// it draws are the parent's).
+    #[test]
+    fn an_alt_mode_takes_none_of_the_weapons_attachment_numbers() {
+        let sf_unique = bo2::AttachmentUnique { name: "au_mp7_sf".into(), kind: 22, alt_weapon: Some("sf_mp7_mp".into()), ..Default::default() };
+        let w = Weapon {
+            name: "mp7_mp".into(),
+            clip_size: 40,
+            start_ammo: 4,
+            max_ammo: 8,
+            fire_time: 0.08,
+            attachment_variants: vec![(6, "extclip".into()), (21, "rf".into()), (22, "sf".into()), (14, "steadyaim".into())],
+            attachment_uniques: vec![sf_unique],
+            ..Default::default()
+        };
+        let sf = Weapon { name: "sf_mp7_mp".into(), clip_size: 40, start_ammo: 4, max_ammo: 8, fire_time: 0.064, inventory: bo2::inventory::ALTMODE, ..Default::default() };
+        let mut table = Table {
+            weapons: vec![to_def(&w, &HashMap::new()), to_def(&sf, &HashMap::new())],
+            attachments: vec![
+                AttachmentDef { id: "extclip".into(), short: "extclip".into(), clip_scale: 1.35, ..Default::default() },
+                AttachmentDef { id: "rf".into(), short: "rf".into(), fire_time_scale: 0.75, ..Default::default() },
+                AttachmentDef { id: "sf".into(), short: "sf".into(), ..Default::default() },
+                AttachmentDef { id: "steadyaim".into(), short: "steadyaim".into(), laser: true, hip_spread_min_scale: 0.65, ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let own = table.weapons[1].clone();
+        add_variants(&mut table, &["mp7_mp+extclip+rf+sf".into(), "mp7_mp+sf+steadyaim".into()], &[w, sf]);
+        let d = table.weapons.iter().find(|d| d.id == "mp7_mp+extclip+rf+sf").expect("the combo");
+        assert_eq!(d.clip, 54);
+        assert!((d.fire_time - 0.06).abs() < 1e-6, "{}", d.fire_time);
+        let alt = table.weapons.iter().find(|a| a.id == d.alt).expect("the alt mode");
+        assert_eq!(alt.id, "sf_mp7_mp~mp7_mp+extclip+rf+sf");
+        assert_eq!((alt.clip, alt.fire_time, alt.reload_time, alt.start_reserve, alt.max_reserve), (own.clip, own.fire_time, own.reload_time, own.start_reserve, own.max_reserve));
+        assert_eq!(alt.attachments, vec!["extclip", "rf"]);
+        let d = table.weapons.iter().find(|d| d.id == "mp7_mp+sf+steadyaim").expect("the combo");
+        assert!(d.laser);
+        let alt = table.weapons.iter().find(|a| a.id == d.alt).expect("the alt mode");
+        assert!(!alt.laser && alt.hip_spread == own.hip_spread && alt.specialties == own.specialties);
     }
 
     #[test]

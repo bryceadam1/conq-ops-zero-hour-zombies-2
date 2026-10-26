@@ -242,6 +242,24 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
     d
 }
 
+/// The alt mode `alt_base` (select fire, the second optic) of a weapon that also carries `others`
+/// (the combination's attachments except the one that made the alt). BO2 keeps the combination's
+/// attachment fields on the alt's weapon index and swaps only the variant (`FUN_008ec9e0`), so every
+/// accessor resolves them against the **alt variant's own** attachment table (`FUN_008eb300`,
+/// `FUN_008eb360`, e.g. the clip size `FUN_008e5e50`; G14 §2/§4) — here `alt_base.allowed`. An
+/// attachment the alt does not offer changes none of its numbers; BO2's alt variants offer none, so
+/// the alt plays by its own definition. The names stay in `attachments`: the alt draws its parent's
+/// parts (`FUN_00535170`), so the optic and its reticle are still the parent's.
+pub fn alt_mode<'a>(alt_base: &WeaponDef, others: &[&str], lookup: impl Fn(&str) -> Option<&'a AttachmentDef>) -> WeaponDef {
+    let own = resolve(alt_base, others, lookup);
+    let mut d = apply(alt_base, &own);
+    let mut names: Vec<String> = others.iter().filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
+    names.sort_unstable();
+    names.dedup();
+    d.attachments = names;
+    d
+}
+
 /// The attachments of `shorts` that `base` offers, as definitions from `lookup` (by BO2 asset id).
 pub fn resolve<'a>(base: &WeaponDef, shorts: &[&str], lookup: impl Fn(&str) -> Option<&'a AttachmentDef>) -> Vec<&'a AttachmentDef> {
     shorts
@@ -362,6 +380,27 @@ mod tests {
         let strong = AttachmentDef { id: "s2".into(), short: "s2".into(), ads_move_scale: 2.55, ..Default::default() };
         let d = apply(&base, &[&strong]);
         assert!((d.ads_move_scale - 1.0).abs() < 1e-6, "{}", d.ads_move_scale);
+    }
+
+    /// G14 `FUN_008ec9e0`/`FUN_008eb300`: the alt mode resolves the parent's attachments against
+    /// its own table. One that offers nothing (every BO2 alt) keeps all its numbers; one that
+    /// offers an attachment takes that one only. The names carry over either way.
+    #[test]
+    fn an_alt_mode_takes_only_the_attachments_it_offers_itself() {
+        let alt = WeaponDef { id: "sf_an94_mp".into(), clip: 30, fire_time: 0.1, reload_time: 2.4, ads_fov: 55.0, ..Default::default() };
+        let ext = AttachmentDef { id: "extclip".into(), short: "extclip".into(), clip_scale: 1.345, point: 3, ..Default::default() };
+        let rf = AttachmentDef { id: "rf".into(), short: "rf".into(), fire_time_scale: 0.65, ..Default::default() };
+        let acog = AttachmentDef { id: "acog".into(), short: "acog".into(), ads_fov: 35.0, point: point::OPTIC, laser: true, ..Default::default() };
+        let all = [&ext, &rf, &acog];
+        let lookup = |id: &str| all.iter().copied().find(|a| a.id == id);
+        let d = alt_mode(&alt, &["rf", "extclip", "acog"], lookup);
+        assert_eq!((d.clip, d.fire_time, d.reload_time, d.ads_fov, d.laser), (30, 0.1, 2.4, 55.0, false));
+        assert_eq!(d.attachments, vec!["acog", "extclip", "rf"]);
+
+        let offers = WeaponDef { allowed: vec![("acog".into(), "acog".into())], ..alt.clone() };
+        let d = alt_mode(&offers, &["rf", "extclip", "acog"], lookup);
+        assert_eq!((d.clip, d.fire_time, d.ads_fov), (30, 0.1, 35.0));
+        assert_eq!(d.attachments, vec!["acog", "extclip", "rf"]);
     }
 
     #[test]

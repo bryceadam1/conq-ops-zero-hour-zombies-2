@@ -4464,3 +4464,38 @@ stays "W00" and the INI's hidden list/draw indices keep working.
 **Verified.** `cargo test -p zhbo-assets` green; `cargo test --workspace` green; `cargo clippy
 --workspace --all-targets` exit 0; the real-install suite (`--skip conformance`) green. No game
 launched. Conformance was not run on the full archive this round.
+
+## Alt modes take none of the weapon's attachment numbers (2026-10-26, branch `v1/alt-attachments`)
+
+`weapons::add_variants` built a select-fire / second-optic alt mode as
+`attachments::apply(alt_base, <the weapon's other attachments>)`, so `sf_mp7_mp` under
+`mp7_mp+extclip+rf+sf` took the extended mag, rapid fire's 0.75 fire time, Quickdraw's ADS times,
+the laser, the suppressor flag, the ACOG's FOV and the attachments' specialties. BO2 does not:
+
+- `FUN_008ec9e0` gives the alt's weapon index as the parent's with **only the variant byte swapped**
+  — the three attachment kind fields stay.
+- Every accessor (`FUN_008eb300` a-list, `FUN_008eb360` singles; clip `FUN_008e5e50`, silenced
+  `FUN_008eba20`, the scale products, FOV, flags, perks) indexes the attachment table of the
+  variant in that index — the **alt's own**, which offers nothing for every BO2 alt (the expected
+  CSV: across all 37 alt weapons and 2,377 rows, no numeric or flag column varies by combo; only
+  parts, hide tags, camo and `cac_requires`, which come from the parent via `FUN_00535170` /
+  `FUN_00535540`).
+
+Fix: `zhbo_core::attachments::alt_mode(alt_base, others, lookup)` resolves the other attachments
+against the alt's own `allowed` (BO2's table, so data-driven: an alt that did offer one would take
+it — the existing `sf_as50` overlay test is that case) and applies only those. The names stay in
+the alt's `attachments`, because the alt draws the parent's parts: the HUD's reticle through the
+optic is unchanged. Launcher alts (`gl_*`, `alt_own_ammo`) already skipped `apply`. The runtime
+`Catalog::get` path already pointed at the bare alt def.
+
+Gotcha: in BO2, flipping to select fire with Rapid Fire, Fast Mag, Laser or an extended mag *loses*
+their effect (and the ACOG keeps its model but the alt's own FOV) — that is the engine, not a
+converter bug; do not "fix" it back.
+
+Measured (conformance vs the 2026-10-25 baseline): weapons differing cells 706,586 → 701,608,
+column clusters 203 → 195, gap clusters 214 → 206; no column regressed. Alt rows reach 0 in
+ads_zoom_fov1/2/3 (513 each), hip_spread (318), silenced (274), clip_size (238), laser_sight,
+ads_move_speed_scale, ads_in/out_time (234 each), specialties (223), reload/reload_empty/
+reload_add_time (210 each), fire_time (94); damage_range 992 → 558 (the rest are `gl_*`, another
+cause), ads_recoil_reduction 308 → 32 (`dualoptic_hamr_mp`'s own 0.03|0.15 is not carried by the
+base def — not attachments), reload_empty_add_time 1806 → 1790.
