@@ -38,11 +38,12 @@ pub(crate) fn key_of(asset: &str, option: &str) -> u64 {
     h | 1
 }
 
-/// Apply `option`'s recipe to every matching surface of `mesh`. A style camo replaces the named
-/// surfaces' materials (and clears their camo layer); a pattern camo sets the layer image the
-/// surface's own default kind takes. `camo_none`, an unmapped id and a blob without the option
-/// change nothing.
-pub(crate) fn apply(mesh: &mut Mesh, camo: &Camo, option: &str) {
+/// Apply `option`'s recipe to every matching surface of `mesh` whose part `wears` this blob's
+/// asset (BO2 paints each part with its own entry's `WeaponCamo`, `FUN_00529600`). A style camo
+/// replaces the named surfaces' materials (and clears their camo layer); a pattern camo sets the
+/// layer image the surface's own default kind takes. `camo_none`, an unmapped id and a blob without
+/// the option change nothing.
+pub(crate) fn apply(mesh: &mut Mesh, camo: &Camo, option: &str, wears: impl Fn(u16) -> bool) {
     let Some(recipe) = camo.options.iter().find(|o| o.id == option) else { return };
     if let Some(style) = recipe.style.and_then(|i| camo.styles.get(i as usize)) {
         for entry in &style.entries {
@@ -50,7 +51,7 @@ pub(crate) fn apply(mesh: &mut Mesh, camo: &Camo, option: &str) {
                 let material = camo.materials.iter().find(|m| m.name == pair.camo)
                     .or_else(|| camo.materials.iter().find(|m| m.name == format!("{}_1", pair.camo)));
                 let Some(material) = material else { continue };
-                for s in mesh.surfaces.iter_mut().filter(|s| s.material == pair.base) {
+                for s in mesh.surfaces.iter_mut().filter(|s| s.material == pair.base && wears(s.part)) {
                     if material.color.is_some() {
                         s.color = material.color.clone();
                         s.maps = material.maps.clone();
@@ -67,12 +68,12 @@ pub(crate) fn apply(mesh: &mut Mesh, camo: &Camo, option: &str) {
         }
     }
     if let Some(set) = recipe.pattern.and_then(|i| camo.sets.get(i as usize)) {
-        paint(mesh, set);
+        paint(mesh, set, &wears);
     }
 }
 
-fn paint(mesh: &mut Mesh, set: &Set) {
-    for s in &mut mesh.surfaces {
+fn paint(mesh: &mut Mesh, set: &Set, wears: &impl Fn(u16) -> bool) {
+    for s in mesh.surfaces.iter_mut().filter(|s| wears(s.part)) {
         s.camo = match s.camo_layer {
             CamoLayer::Pattern => set.pattern.clone(),
             CamoLayer::Solid => set.solid.clone(),
@@ -88,6 +89,8 @@ fn paint(mesh: &mut Mesh, set: &Set) {
 #[derive(Clone, Debug, PartialEq)]
 pub struct LocalCamo {
     pub vm: i32,
+    /// The def's own `weaponCamo` (the gun's asset): the cache key and the "has a camo" gate. Each
+    /// part's asset comes from its manifest entry (`Part::camo`).
     pub asset: String,
     pub option: String,
 }

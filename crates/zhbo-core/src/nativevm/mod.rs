@@ -171,6 +171,9 @@ pub struct SurfaceSpec {
     pub camo: Option<String>,
     /// The chosen camo's UV transform: offset.xy, scale, gain.
     pub camo_uv: [f32; 4],
+    /// The manifest part (composition index) the surface came from: which `WeaponCamo` it wears
+    /// (`Part::camo`, per part as BO2's `FUN_00529600`).
+    pub part: u16,
 }
 
 /// The composed viewmodel's one mesh: every part's LOD 0 with its bones renumbered into the
@@ -292,6 +295,7 @@ pub fn build_mesh_visible<'a>(
                 camo_layer: m.map_or(CamoLayer::None, |m| m.camo),
                 camo: None,
                 camo_uv: [0.0, 0.0, 1.0, 1.0],
+                part: i as u16,
             });
         }
     }
@@ -422,14 +426,19 @@ pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: 
     } else {
         None
     };
-    // The class's camo recipe, when this is the primary weapon. A blob that is not in the archive
-    // is not an error: the weapon draws its stock finish and the caller logs once.
+    // The class's camo, when this is the primary weapon: one option, painted per part with that
+    // part's own `WeaponCamo` (the gun's on the gun and its base parts, an optic's own on the
+    // optic — BO2's `FUN_00529600`). A blob that is not in the archive is not an error: those
+    // parts draw their stock finish and the caller logs once when none applied.
     let mut applied = None;
-    if let Some((asset, option)) = camo_choice {
-        if let Some(recipe) = camo::read(files, asset, &mut waiting)? {
-            camo::apply(&mut mesh, &recipe, option);
+    if let Some((_, option)) = camo_choice {
+        let assets: std::collections::BTreeSet<&str> = manifest.parts.iter().filter_map(|p| p.camo.as_deref()).collect();
+        for asset in assets {
+            let Some(recipe) = camo::read(files, asset, &mut waiting)? else { continue };
+            let wears = |part: u16| manifest.parts.get(part as usize).and_then(|p| p.camo.as_deref()) == Some(asset);
+            camo::apply(&mut mesh, &recipe, option, wears);
             if let Some(m) = &mut mesh_aimed {
-                camo::apply(m, &recipe, option);
+                camo::apply(m, &recipe, option, wears);
             }
             applied = Some(option.to_string());
         }

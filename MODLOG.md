@@ -4464,3 +4464,35 @@ stays "W00" and the INI's hidden list/draw indices keep working.
 **Verified.** `cargo test -p zhbo-assets` green; `cargo test --workspace` green; `cargo clippy
 --workspace --all-targets` exit 0; the real-install suite (`--skip conformance`) green. No game
 launched. Conformance was not run on the full archive this round.
+
+## Per-attachment camo: each part wears its own `WeaponCamo` (2026-10-25, branch `v1/attach-camo`)
+
+BO2's camo pass walks the viewmodel DObj's entries and paints each with the asset of the entry it
+came from (`FUN_00529600`, G16): the gun and its base `attachViewModel` parts take
+`WeaponDef.weaponCamo`, an attachment's models its **single** unique's `weaponCamo` (+0xa4) — a
+reflex wears `camo_reflex`, not the gun's. The mod painted the def's one recipe over the whole
+composed mesh, excluded the seven optic assets by a hand list, and named each def's asset with a
+weapon-name alias table plus a view-model token join, so every gun whose asset is not
+`camo_<id>` — the INSAS/QCW-05/TAR-21/AS50… (`camo_msmc`, `camo_chicom`, `camo_x95l`, `camo_xpr50`)
+— had no camo in game at all.
+
+* **Data, not names.** `zhbo-formats` now reads `weaponCamo` on the def and on every unique. The
+  def's `CamoMaterial` is that pointer (`camo_material_for` and its alias table are gone); the
+  converter writes a `.zcm` for every asset a def or unique points at — 47 on the stock install
+  (the seven optic assets, `camo_specter` and `camo_b23r` are new), `camo_peacekeeper` the one
+  unreferenced — and every base option resolves art on the optic assets too (the same 95-name
+  style/set tail as before, nothing new).
+* **The manifest carries it.** `viewmodel::Part` gains `camo` (`.zbv`; the `.zbw` third-person
+  blob does not carry it — third person still draws no camo). `nativevm::load` reads each distinct
+  part asset and paints only that part's surfaces (`SurfaceSpec::part`) with the class's one option.
+* **Versions (integrator-owned, NOT bumped here):** `zhbo_native::viewmodel::VERSION` 2 → 3 (the
+  part record gained an `opt_str`) and the archive `hud::VERSION` bump. No C ABI change.
+* **For the composition items:** the camo is the single unique's even when a combined unique
+  supplies the model (`lsat_mp+ir+rf+vzoom`: BO2 draws `specter_view` with `camo_ir`), so a switch
+  to resolved uniques' models must keep `u.weapon_camo` from the single.
+
+Measured (conformance CLI vs the 2026-10-25 baseline): `view_part_camos` 7,301 → 1,363 cells, no
+other column moved; weapons 706,586 → 700,648 differing cells; gap clusters 214 → 214 (the column
+keeps cells). Every remaining cell is a part-list difference, not a camo one: 651 rows with no mod
+manifest (steadyaim/fmj/sf… combos — combo coverage), 682 where the mod composes the extra rigid
+`tag_clip1` magazine BO2 doesn't list, and 30 dual-wield `_lh` / `ir+vzoom` part-count rows.

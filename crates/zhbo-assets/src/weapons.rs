@@ -9,7 +9,7 @@
 //! General's loadout with its attachments, then every other weapon; `ZHBO_CONVERT_ALL_WEAPONS=0`
 //! limits it to the loadout).
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use zhbo_core::attachments::{self, AttachmentDef};
 use zhbo_core::units::inches;
 use zhbo_core::weapons::{CamoOption, Class, Effect, FireMode, GunKick, Kick, Loadout, Place, Reticle, Specialties, Sway, Table, ViewPos, WeaponDef, ALT_CLIPS, MELEE_DAMAGE};
@@ -211,34 +211,10 @@ pub fn reticle_color_options(patch: &zhbo_formats::t6zone::Zone, names: &HashMap
     weapon_options(patch, names, "reticle_color", BASE_RETICLE_COLORS)
 }
 
-/// The `camo_<weapon>` asset a weapon's camo set uses. BO2's asset names shorten a few weapon
-/// names (`saiga12` -> `camo_saiga`, `scar` -> `camo_scarh`, `qbb95` -> `camo_qbb`,
-/// `evoskorpion` -> `camo_scorpionevo`, the held knife -> `camo_knife`); the rest are
-/// `camo_<base>`. A weapon BO2 shipped no set for (some DLC guns) gets none.
-pub fn camo_material_for(weapon: &str, camo_sets: &HashSet<String>) -> Option<String> {
-    let base = weapon.strip_suffix("_mp").unwrap_or(weapon);
-    let base = base.strip_prefix("sf_").or_else(|| base.strip_prefix("gl_")).unwrap_or(base);
-    let base = base.strip_suffix("_dw").or_else(|| base.strip_suffix("_lh")).unwrap_or(base);
-    let name = match base {
-        "saiga12" => "camo_saiga",
-        "scar" => "camo_scarh",
-        "qbb95" => "camo_qbb",
-        "evoskorpion" => "camo_scorpionevo",
-        "knife_held" => "camo_knife",
-        "riotshield" => "camo_riot_shield",
-        _ => {
-            let name = format!("camo_{base}");
-            return camo_sets.contains(&name).then_some(name);
-        }
-    };
-    camo_sets.contains(name).then(|| name.to_string())
-}
-
-/// The option tables the converter feeds the weapon table: BO2's camo rows, each weapon's
-/// `camo_<weapon>` set (`common_patch_mp`), and the base reticle/colour rows.
+/// The option tables the converter feeds the weapon table: BO2's camo rows and the base
+/// reticle/colour rows. Each weapon's camo asset is its own def's `weaponCamo` ([`to_def`]).
 pub struct OptionTables<'a> {
     pub camo: &'a [CamoOption],
-    pub camo_sets: &'a HashSet<String>,
     pub reticles: &'a [CamoOption],
     pub reticle_colors: &'a [CamoOption],
 }
@@ -246,8 +222,7 @@ pub struct OptionTables<'a> {
 /// The whole table: every player weapon, the alt modes their attachments add, and every
 /// attachment.
 pub fn table(bo2: &[Weapon], atts: &[bo2::Attachment], names: &HashMap<String, String>) -> Table {
-    let sets = HashSet::new();
-    let opts = OptionTables { camo: &[], camo_sets: &sets, reticles: &[], reticle_colors: &[] };
+    let opts = OptionTables { camo: &[], reticles: &[], reticle_colors: &[] };
     table_with_metadata(bo2, atts, names, &HashMap::new(), &opts)
 }
 
@@ -287,7 +262,6 @@ pub fn table_with_metadata(
     let attachments = atts.iter().filter(|a| a.kind != 0 && !a.name.starts_with(',')).map(|a| attachment_def(a, names, meta)).collect();
     for d in &mut weapons {
         d.camo = opts.camo.iter().take(BASE_CAMO_OPTIONS).map(|c| c.id.clone()).collect();
-        d.camo_material = camo_material_for(&d.id, opts.camo_sets).unwrap_or_default();
     }
     Table {
         weapons,
@@ -761,7 +735,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         view_pos: view_pos(w.view_pos),
         reticle: reticle(&w.reticle),
         camo: Vec::new(),
-        camo_material: String::new(),
+        // BO2's own pointer (`WeaponDef.weaponCamo`, G16): the INSAS's is `camo_msmc`, the AS50's
+        // `camo_xpr50` — never derived from the weapon's name.
+        camo_material: w.weapon_camo.clone().unwrap_or_default(),
         overlay_material: w.overlay_material.clone(),
         overlay_material_low_res: w.overlay_material_low_res.clone(),
         overlay_reticle: w.overlay_reticle,
@@ -984,6 +960,7 @@ pub fn converted(patch: &zhbo_formats::t6zone::Zone, all: &[Weapon]) -> Vec<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::HashSet;
 
     #[test]
     fn maps_bo2_types_to_classes() {
@@ -1295,26 +1272,11 @@ mod tests {
     }
 
     #[test]
-    fn camo_materials_follow_bo2s_asset_names() {
-        let sets: HashSet<String> = ["camo_an94", "camo_saiga", "camo_scarh", "camo_qbb", "camo_scorpionevo", "camo_knife", "camo_riot_shield"]
-            .iter()
-            .map(|s| s.to_string())
-            .collect();
-        for (weapon, want) in [
-            ("an94_mp", "camo_an94"),
-            ("sf_an94_mp", "camo_an94"),
-            ("gl_an94_mp", "camo_an94"),
-            ("an94_dw_mp", "camo_an94"),
-            ("saiga12_mp", "camo_saiga"),
-            ("scar_mp", "camo_scarh"),
-            ("qbb95_mp", "camo_qbb"),
-            ("evoskorpion_mp", "camo_scorpionevo"),
-            ("knife_held_mp", "camo_knife"),
-            ("riotshield_mp", "camo_riot_shield"),
-        ] {
-            assert_eq!(camo_material_for(weapon, &sets).as_deref(), Some(want), "{weapon}");
-        }
-        assert_eq!(camo_material_for("mtar_mp", &sets), None);
+    fn the_camo_material_is_the_defs_own_weapon_camo() {
+        let w = Weapon { name: "insas_mp".into(), class: bo2::class::RIFLE, weapon_camo: Some("camo_msmc".into()), ..Default::default() };
+        assert_eq!(to_def(&w, &HashMap::new()).camo_material, "camo_msmc");
+        let none = Weapon { name: "mtar_mp".into(), class: bo2::class::RIFLE, ..Default::default() };
+        assert_eq!(to_def(&none, &HashMap::new()).camo_material, "");
     }
 
     #[test]
@@ -1332,8 +1294,19 @@ mod tests {
         let common_patch = crate::generals::load_zone(&bo2_dir, "common_patch_mp").unwrap();
         let sets: HashSet<String> = bo2::camo_all(&common_patch).unwrap().into_iter().map(|c| c.name).collect();
         assert_eq!(sets.len(), 48, "common_patch_mp's camo_<weapon> assets");
-        assert_eq!(camo_material_for("an94_mp", &sets).as_deref(), Some("camo_an94"));
-        assert_eq!(camo_material_for("saiga12_mp", &sets).as_deref(), Some("camo_saiga"));
+        // Every camo asset a def or a unique names is one of those sets (G16's per-part camo).
+        let common = crate::generals::load_zone(&bo2_dir, "common_mp").unwrap();
+        let bo2w = bo2::all(&common).unwrap();
+        let camo_of = |id: &str| bo2w.iter().find(|w| w.name == id).and_then(|w| w.weapon_camo.clone());
+        assert_eq!(camo_of("an94_mp").as_deref(), Some("camo_an94"));
+        assert_eq!(camo_of("saiga12_mp").as_deref(), Some("camo_saiga"));
+        assert_eq!(camo_of("insas_mp").as_deref(), Some("camo_msmc"));
+        let an94 = bo2w.iter().find(|w| w.name == "an94_mp").unwrap();
+        let reflex = an94.attachment_uniques.iter().find(|u| u.combined == 0 && u.name.ends_with("_reflex")).map(|u| u.weapon_camo.clone());
+        assert_eq!(reflex.flatten().as_deref(), Some("camo_reflex"), "the reflex unique's own camo");
+        let named: BTreeSet<String> = bo2w.iter().flat_map(|w| w.weapon_camo.iter().chain(w.attachment_uniques.iter().flat_map(|u| u.weapon_camo.iter()))).cloned().collect();
+        let missing: Vec<&String> = named.iter().filter(|n| !sets.contains(*n)).collect();
+        println!("camo assets named by defs/uniques ({}): {named:?}; not in common_patch_mp: {missing:?}", named.len());
     }
 
     #[test]
@@ -1364,8 +1337,7 @@ mod tests {
             view_model: Some("t6_wpn_ar_an94_view".into()),
             ..Default::default()
         };
-        let sets = HashSet::new();
-        let opts = OptionTables { camo: &camo, camo_sets: &sets, reticles: &[], reticle_colors: &[] };
+        let opts = OptionTables { camo: &camo, reticles: &[], reticle_colors: &[] };
         let table = table_with_metadata(&[w], &[], &HashMap::new(), &HashMap::new(), &opts);
         assert_eq!(table.weapons.len(), 1);
         assert_eq!(table.weapons[0].camo.len(), BASE_CAMO_OPTIONS, "the base tab is camo_none + 18");

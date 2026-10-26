@@ -149,7 +149,7 @@ impl Weapon {
             if i == 0 && tag.is_some() {
                 return Err(FormatError::Corrupt(format!("part {i}: only the base part has no tag")));
             }
-            parts.push(Part { model, tag, offset: (r.f32n()?, r.f32n()?), rigid: r.u8()? != 0, ads_only: r.u8()? != 0 });
+            parts.push(Part { model, tag, offset: (r.f32n()?, r.f32n()?), rigid: r.u8()? != 0, ads_only: r.u8()? != 0, camo: None });
         }
         let nh = r.count(4)?;
         let mut hide = Vec::with_capacity(nh);
@@ -196,8 +196,8 @@ mod tests {
         Weapon {
             id: "an94_mp+reflex".into(),
             parts: vec![
-                Part { model: "Art\\Native\\t6_wpn_ar_an94_world.zbm".into(), tag: None, offset: IDENTITY, rigid: true, ads_only: false },
-                Part { model: "Art\\Native\\au_an94_reflex_world.zbm".into(), tag: Some("tag_reflex".into()), offset: ([0.0, 0.0, 0.0, 1.0], [2.0, 0.0, 3.0]), rigid: true, ads_only: false },
+                Part { model: "Art\\Native\\t6_wpn_ar_an94_world.zbm".into(), tag: None, offset: IDENTITY, rigid: true, ads_only: false, camo: None },
+                Part { model: "Art\\Native\\au_an94_reflex_world.zbm".into(), tag: Some("tag_reflex".into()), offset: ([0.0, 0.0, 0.0, 1.0], [2.0, 0.0, 3.0]), rigid: true, ads_only: false, camo: None },
             ],
             hide: vec!["tag_sight_on".into()],
         }

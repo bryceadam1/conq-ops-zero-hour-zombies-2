@@ -47,7 +47,7 @@ The mod's own blobs for BO2 art drawn natively (Track R), and the pose math that
 `model` (`.zbm`: skeleton, LODs, four-influence skinned surfaces, materials with BO2's blend and
 texture paths), `camo` (`.zcm`: a weapon's camo pattern sets, style material recipes and resolved
 option slots), `anim` (`.zba`: keyframe tracks and notetracks), `viewmodel` (`.zbv`: the DObj
-recipe — parts on tags, hidden tags, marker tags, slot → clip), `pose` (composition, sampling,
+recipe — parts on tags with each part's camo asset, hidden tags, marker tags, slot → clip), `pose` (composition, sampling,
 crossfade, additive layers, notetracks, the skinning palette), `tga` (reading the converter's
 textures back) and `math`. It also holds `ZH_PER_INCH`, the one BO2-inches → Zero Hour-units
 factor the converter's art (`ART_SCALE`) and the sim's `units` both read. Depends on nothing; the
@@ -91,7 +91,7 @@ to list/export BO2 sounds, images and fonts. `fonts.rs` converts BO2's UI fonts.
 `zhbo-core`. After Phase 2.5 the module is split into `textures.rs` (the texture pipeline),
 `ini.rs` (the INI rewriters), `viewmodels.rs` (the viewmodel conversion), `generals.rs`
 (the Zero Hour names, factions and the `files()` orchestrator), `camo.rs` (the camo art and the
-`.zcm` recipes, with the weapon-id/view-model join) and `paks.rs` (pack-file access, the shrinker
+`.zcm` recipes for every `WeaponCamo` a def or attachment unique points at) and `paks.rs` (pack-file access, the shrinker
 and the zone loader).
 
 ### `crates/zhbo-conformance`

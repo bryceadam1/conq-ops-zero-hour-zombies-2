@@ -272,12 +272,18 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   surfaces whose semantic-22 layer is `Pattern` (pattern image) or `Solid` (solid image); `Neutral`
   (the reflex `_camo2` group) and `None` draw stock. Options with no art (`camo_mtp`/`camo_snake`,
   the MTX-only rows) are recorded with no slots and draw stock; `camo_multicam` and `camo_matuka`
-  resolve to the devgru (set 0) and bloodshot (set 6) patterns. The
-  seven optic camo assets (`camo_reflex/holo/ir/acog/hybrid/mms/targetfinder`) are attachment
-  recipes and are excluded from per-weapon blobs; `camo_b23r`/`peacekeeper`/`specter` do not resolve
-  on the stock install (their weapons/models are outside the parsed `common_mp` table). Weapon
-  matching is the weapon id, then a data-driven join through the weapon's BO2 view-model name
-  (`camo_xpr50` → `as50_mp`, `camo_ballistic_knife`, `camo_riot_shield`). The `.zcm` version is new
+  resolve to the devgru (set 0) and bloodshot (set 6) patterns.
+  **Camo is per part, as BO2 resolves it (`FUN_00529600`, G16).** Each `.zbv` manifest part
+  carries its `WeaponCamo` asset (`Part::camo`): none on the arms; the def's own `weaponCamo`
+  pointer on the gun and its base `attachViewModel` parts (the magazine and its `tag_clip1` copy,
+  a sniper's scope, the `_lh` gun its own def's); the attachment's **single** unique's
+  `weaponCamo` on its models (an IR rail mount too) — so a reflex wears `camo_reflex`, not the
+  gun's. `nativevm::load` reads every distinct asset the manifest names and paints each part's
+  surfaces (`SurfaceSpec::part`) from its own blob with the class's one option id. The converter
+  writes a blob for every asset a BO2 def or unique points at (47 on the stock install: the guns'
+  and the seven optic assets plus `camo_specter`); only `camo_peacekeeper` is unreferenced. A def's
+  `CamoMaterial` is its `weaponCamo` (the INSAS's `camo_msmc`, the AS50's `camo_xpr50`) — no
+  name-derived alias. The `.zcm` version is new
   (`camo::VERSION = 1`); the model blob's material record gains the camo layer, and its version
   bump (2→3) and the archive bump (64→65) are integrator-owned.
   - **Divergences.** The camo applies to the first-person native viewmodel only: the W3D fallback

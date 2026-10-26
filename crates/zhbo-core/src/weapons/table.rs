@@ -634,7 +634,7 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("CamoList", "The camouflage option ids this weapon offers, `camo_none` first.", FieldKind::Words,
         |d: &WeaponDef| d.camo.join(" "),
         |d: &mut WeaponDef, v: Values| { d.camo = v.text.split_whitespace().map(str::to_string).collect(); Ok(()) }),
-    field!("CamoMaterial", "The weapon's own camo material (`camo_<weapon>`), empty when none.", FieldKind::Str,
+    field!("CamoMaterial", "The weapon's own camo asset (BO2's `WeaponDef.weaponCamo`: `camo_an94`, the INSAS's `camo_msmc`), empty when none; attachment parts wear their own (the viewmodel manifest's per-part camo).", FieldKind::Str,
         |d: &WeaponDef| d.camo_material.clone(),
         |d: &mut WeaponDef, v: Values| { d.camo_material = v.text.into(); Ok(()) }),
     field!("OverlayMaterial", "The 2D screen-space ADS overlay material (`scope_overlay_<weapon>`).",

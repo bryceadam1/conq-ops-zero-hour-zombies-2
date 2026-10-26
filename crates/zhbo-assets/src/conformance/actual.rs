@@ -691,9 +691,14 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .opt_text("projectile_explosion_effect", sh.effect(&d.explosion_fx))
         .absent("tracer");
 
-    // Camo: the mod applies the def's one recipe over the whole composed mesh.
-    let n = manifest.as_ref().map_or(0, |m| 1 + m.parts.iter().skip(2).filter(|p| !p.ads_only).count());
-    b.list("view_part_camos", &vec![d.camo_material.clone(); n]).text("cac_group", &j.group).text("cac_slot", &j.slot).set("cac_requires", &j.requires);
+    // Camo: the asset each drawn part wears (`Part::camo`, what `nativevm::load` paints it with) —
+    // the gun first, then the hip parts in `view_part_materials`' order.
+    let camos: Vec<String> = manifest.as_ref().map_or_else(Vec::new, |m| {
+        let mut hip: Vec<&zhbo_native::viewmodel::Part> = m.parts.iter().skip(2).filter(|p| !p.ads_only).collect();
+        hip.sort_by_key(|p| cols::part_order(&stem(&p.model), p.tag.as_deref().unwrap_or("")));
+        m.parts.get(1).into_iter().chain(hip).map(|p| p.camo.clone().unwrap_or_default()).collect()
+    });
+    b.list("view_part_camos", &camos).text("cac_group", &j.group).text("cac_slot", &j.slot).set("cac_requires", &j.requires);
     b.finish()
 }
 

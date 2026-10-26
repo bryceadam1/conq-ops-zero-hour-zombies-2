@@ -53,6 +53,68 @@ fn the_mesh_carries_the_material_name_and_camo_layer() {
     assert_eq!(mesh.surfaces[0].camo, None);
 }
 
+/// BO2 paints each viewmodel part with its own `WeaponCamo` (`FUN_00529600`, G16): the gun with the
+/// def's, an optic with its unique's. `load` reads every asset the manifest's parts name and paints
+/// each part from its own blob; the arms (no camo) stay stock.
+#[test]
+fn each_part_wears_its_own_camo_asset() {
+    let pattern_model = |name: &str, bones: Vec<Bone>| {
+        let mut m = model(name, bones);
+        m.materials[0].camo = zhbo_native::model::CamoLayer::Pattern;
+        m
+    };
+    let arms = pattern_model("arms", vec![bone("tag_weapon", None, [0.0; 3])]);
+    let gun = pattern_model("gun", vec![bone("j_gun", None, [0.0; 3])]);
+    let optic = pattern_model("optic", vec![bone("tag_optic", None, [0.0; 3])]);
+    let blob = |name: &str, image: &str| zhbo_native::camo::Camo {
+        name: name.into(),
+        solid_base: None,
+        pattern_base: None,
+        sets: vec![zhbo_native::camo::Set { solid: None, pattern: Some(image.into()), offset: [0.0; 2], scale: 1.0, gain: 2.0 }],
+        styles: vec![],
+        materials: vec![],
+        options: vec![zhbo_native::camo::CamoOption { id: "camo_atacs".into(), pattern: Some(0), style: None }],
+    };
+    let manifest = Viewmodel {
+        id: "test_mp+reflex".into(),
+        faction: b'U',
+        parts: vec![
+            Part { model: zhbo_native::model_path("arms"), tag: None, offset: IDENTITY, rigid: false, ads_only: false, camo: None },
+            Part { model: zhbo_native::model_path("gun"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false, camo: Some("camo_gun".into()) },
+            Part { model: zhbo_native::model_path("optic"), tag: Some("j_gun".into()), offset: IDENTITY, rigid: false, ads_only: false, camo: Some("camo_optic".into()) },
+        ],
+        markers: vec![],
+        hide: vec![],
+        clips: vec![],
+    };
+    let files_in: Vec<(String, Vec<u8>)> = vec![
+        (zhbo_native::viewmodel_path(7, 'U'), manifest.to_bytes()),
+        (zhbo_native::model_path("arms"), arms.to_bytes()),
+        (zhbo_native::model_path("gun"), gun.to_bytes()),
+        (zhbo_native::model_path("optic"), optic.to_bytes()),
+        (zhbo_native::camo_path("camo_gun"), blob("camo_gun", "gun_atacs.tga").to_bytes()),
+        (zhbo_native::camo_path("camo_optic"), blob("camo_optic", "optic_atacs.tga").to_bytes()),
+    ];
+    let mut files = Files::default();
+    let mut loaded = None;
+    for _ in 0..8 {
+        if let Some(l) = load(&mut files, 7, b'U', None, Some(("camo_gun", "camo_atacs"))).unwrap() {
+            loaded = Some(l);
+            break;
+        }
+        let wanted: Vec<String> = files.wanted().map(str::to_string).collect();
+        for w in &wanted {
+            files.provide(w, files_in.iter().find(|(p, _)| p == w).map(|(_, b)| b.as_slice()));
+        }
+    }
+    let l = loaded.expect("the viewmodel loads");
+    let by_part = |part: u16| l.mesh.surfaces.iter().find(|s| s.part == part).map(|s| s.camo.clone()).expect("a surface");
+    assert_eq!(by_part(0), None, "the arms wear no camo");
+    assert_eq!(by_part(1).as_deref(), Some("gun_atacs.tga"), "the gun wears the def's asset");
+    assert_eq!(by_part(2).as_deref(), Some("optic_atacs.tga"), "the optic wears its unique's asset");
+    assert_eq!(l.camo.as_deref(), Some("camo_atacs"));
+}
+
 #[test]
 fn a_camo_option_changes_only_the_surfaces_its_recipe_names() {
     // Three surfaces: camo1 is a pattern-layer surface, camo2 a solid-layer surface, and a bullet
@@ -112,7 +174,7 @@ fn a_camo_option_changes_only_the_surfaces_its_recipe_names() {
 
     // A pattern camo: camo1 takes the pattern image, camo2 the solid one, bullet nothing.
     let mut m = mesh.clone();
-    super::camo::apply(&mut m, &blob, "camo_atacs");
+    super::camo::apply(&mut m, &blob, "camo_atacs", |_| true);
     assert_eq!(m.surfaces[0].camo.as_deref(), Some("Art\\Textures\\pattern.tga"));
     assert_eq!(m.surfaces[0].camo_uv, [0.25, 0.5, 2.0, 2.0]);
     assert_eq!(m.surfaces[1].camo.as_deref(), Some("Art\\Textures\\solid.tga"));
@@ -121,7 +183,7 @@ fn a_camo_option_changes_only_the_surfaces_its_recipe_names() {
     // A style camo: camo1's material is replaced and its layer cleared; camo2 is untouched.
     let mut m = mesh.clone();
     let before = m.surfaces[1].color.clone();
-    super::camo::apply(&mut m, &blob, "camo_gold");
+    super::camo::apply(&mut m, &blob, "camo_gold", |_| true);
     assert_eq!(m.surfaces[0].color.as_deref(), Some("Art\\Textures\\gold.tga"));
     assert_eq!(m.surfaces[0].maps.as_deref(), Some("Art\\Textures\\gold_nsg.tga"));
     assert_eq!(m.surfaces[0].camo, None);
@@ -130,9 +192,14 @@ fn a_camo_option_changes_only_the_surfaces_its_recipe_names() {
 
     // A no-art option changes nothing.
     let mut m = mesh.clone();
-    super::camo::apply(&mut m, &blob, "camo_multicam");
+    super::camo::apply(&mut m, &blob, "camo_multicam", |_| true);
     assert_eq!(m, mesh);
-    super::camo::apply(&mut m, &blob, "camo_none");
+    super::camo::apply(&mut m, &blob, "camo_none", |_| true);
+    assert_eq!(m, mesh);
+
+    // A part the blob does not belong to is left alone.
+    let mut m = mesh.clone();
+    super::camo::apply(&mut m, &blob, "camo_atacs", |part| part != 0);
     assert_eq!(m, mesh);
 
     // The cache key separates options and is 0 for none.
@@ -373,8 +440,8 @@ fn fixture_torso(torso: Option<(TorsoKeys, TorsoKeys)>) -> Fixture {
         id: "test_mp".into(),
         faction: b'U',
         parts: vec![
-            Part { model: zhbo_native::model_path("arms"), tag: None, offset: IDENTITY, rigid: false, ads_only: false },
-            Part { model: zhbo_native::model_path("gun"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false },
+            Part { model: zhbo_native::model_path("arms"), tag: None, offset: IDENTITY, rigid: false, ads_only: false, camo: None },
+            Part { model: zhbo_native::model_path("gun"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false, camo: None },
         ],
         markers: vec![Marker { name: AIM_TAG.into(), parent: "tag_weapon".into(), local: (QUAT_IDENTITY, [0.0, 2.0, 4.0]) }],
         hide: vec![],
@@ -607,9 +674,9 @@ fn the_base_optic_is_hidden_only_when_the_overlay_art_is_present() {
         id: "test_mp".into(),
         faction: b'U',
         parts: vec![
-            Part { model: zhbo_native::model_path("arms"), tag: None, offset: IDENTITY, rigid: false, ads_only: false },
-            Part { model: zhbo_native::model_path("gun"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false },
-            Part { model: zhbo_native::model_path("optic"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: true, ads_only: false },
+            Part { model: zhbo_native::model_path("arms"), tag: None, offset: IDENTITY, rigid: false, ads_only: false, camo: None },
+            Part { model: zhbo_native::model_path("gun"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false, camo: None },
+            Part { model: zhbo_native::model_path("optic"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: true, ads_only: false, camo: None },
         ],
         markers: vec![Marker { name: AIM_TAG.into(), parent: "tag_weapon".into(), local: (QUAT_IDENTITY, [0.0, 2.0, 4.0]) }],
         hide: vec![],
@@ -691,10 +758,10 @@ fn the_m32_ads_sight_swaps_at_full_ads() {
         id: "test_mp".into(),
         faction: b'U',
         parts: vec![
-            Part { model: zhbo_native::model_path("arms"), tag: None, offset: IDENTITY, rigid: false, ads_only: false },
-            Part { model: zhbo_native::model_path("gun"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false },
-            Part { model: zhbo_native::model_path("optic_view"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: true, ads_only: false },
-            Part { model: zhbo_native::model_path("optic_ads"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: true, ads_only: true },
+            Part { model: zhbo_native::model_path("arms"), tag: None, offset: IDENTITY, rigid: false, ads_only: false, camo: None },
+            Part { model: zhbo_native::model_path("gun"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false, camo: None },
+            Part { model: zhbo_native::model_path("optic_view"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: true, ads_only: false, camo: None },
+            Part { model: zhbo_native::model_path("optic_ads"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: true, ads_only: true, camo: None },
         ],
         markers: vec![Marker { name: AIM_TAG.into(), parent: "tag_weapon".into(), local: (QUAT_IDENTITY, [0.0, 2.0, 4.0]) }],
         hide: vec![],
