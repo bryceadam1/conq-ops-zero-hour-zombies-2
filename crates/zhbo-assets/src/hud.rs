@@ -15,7 +15,8 @@ use zhbo_formats::big::write_archive;
 use zhbo_formats::iwi::Rgba;
 use zhbo_formats::t6zone::Zone;
 
-/// Bump when the spec or layout changes so launchers regenerate the archive.
+/// Bump when the spec or layout changes so launchers regenerate the archive. The weapon table is
+/// archive content: the attachment stacking fix changes its synthesized variant lines.
 pub const VERSION: u32 = 76;
 pub use zhbo_core::names::BO2_ARCHIVE_NAME as ARCHIVE_NAME;
 pub use zhbo_core::names::BO2_ARCHIVE_VERSION_PATH as VERSION_FILE;

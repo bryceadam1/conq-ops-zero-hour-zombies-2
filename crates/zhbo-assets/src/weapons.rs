@@ -358,8 +358,9 @@ pub fn alt_clip(slot: usize) -> usize {
     slot + ALT_CLIPS as usize
 }
 
-/// BO2's base aim-down-sights walking speed, as a share of the normal walk.
-pub(crate) const ADS_MOVE_BASE: f32 = 0.35;
+/// BO2's base aim-down-sights walking speed, as a share of the normal walk: one definition in the
+/// core, so the converter's base build and the core's attachment replacement walk agree.
+pub(crate) use zhbo_core::weapons::ADS_MOVE_BASE;
 
 /// Where the weapon table goes in the archive (the bridge hands it to the core).
 pub use zhbo_core::names::WEAPON_TABLE_PATH as TABLE_PATH;
@@ -684,8 +685,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         hip_kick: kick(w.hip_view_kick),
         move_scale: if w.move_speed_scale > 0.0 { w.move_speed_scale } else { 1.0 },
         // BO2's adsMoveSpeedScale multiplies the base ADS walk speed (rifles 1, LMGs 0.8, SMGs,
-        // pistols and shotguns 2); the base itself is engine tuning, about a third of a walk.
-        ads_move_scale: (ADS_MOVE_BASE * if w.ads_move_speed_scale > 0.0 { w.ads_move_speed_scale } else { 1.0 }).min(1.0),
+        // pistols and shotguns 2); the base itself is engine tuning, about a third of a walk. The
+        // definition keeps the walk as a share of the normal walk; BO2 does not clamp it.
+        ads_move_scale: ADS_MOVE_BASE * if w.ads_move_speed_scale > 0.0 { w.ads_move_speed_scale } else { 1.0 },
         sprint_duration_scale: if w.sprint_duration_scale > 0.0 { w.sprint_duration_scale } else { 1.0 },
         melee_damage: if w.melee_damage > 0 { w.melee_damage as f32 } else { MELEE_DAMAGE },
         melee_time: if w.melee_time > 0.0 { w.melee_time } else { 0.6 },

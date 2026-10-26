@@ -99,13 +99,22 @@ pub const FMJ_VEHICLE_DAMAGE: f32 = 1.35;
 /// Tactical knife: melee this much quicker.
 pub const TACTICAL_KNIFE_MELEE: f32 = 0.6;
 
-/// A scale BO2 left unset (0) is no change.
+/// A scale of 1 leaves the value alone; a 0 multiplies by 0 (G14 §4). BO2 authors an unused scale
+/// as 1.0, not 0.0: the install's real attachment rows all carry 1.0 in the columns they do not
+/// change (only `,defaultattachment`, filtered from the table, carries 0.0).
 fn scale(s: f32) -> f32 {
-    if s > 0.0 {
-        s
-    } else {
-        1.0
-    }
+    s
+}
+
+/// Truncate a seconds value to whole milliseconds, as BO2's time products do (G14 §4). The
+/// definition stores seconds as `f32`, so snap a value within `MS_EPS` (1e-3 ms) of a whole
+/// millisecond first: the seconds round trip must not turn 700 ms into 699 ms. The authored scales
+/// have three decimals and the base times are whole ms, so a real product cannot land that close to
+/// an integer on the wrong side.
+fn trunc_ms(s: f32) -> f32 {
+    let ms = s * 1000.0;
+    let ms = if (ms - ms.round()).abs() < 1e-3 { ms.round() } else { ms.trunc() };
+    ms / 1000.0
 }
 
 /// The id of `base` with `shorts` (sorted, without repeats): `an94_mp+grip+reflex`.
@@ -149,7 +158,10 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
     d.alt_modes.clear();
     d.alt.clear();
     let old_clip = d.clip.max(1);
+    let mut clip_product = 1.0f64;
+    let mut clip_fixed = false;
     for a in &atts {
+        clip_product *= a.clip_scale as f64;
         d.fire_time *= scale(a.fire_time_scale);
         for r in d.damage_range.iter_mut() {
             *r *= scale(a.damage_range_scale);
@@ -159,7 +171,12 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
         }
         d.ads_in_time *= scale(a.ads_in_scale);
         d.ads_out_time *= scale(a.ads_out_scale);
-        d.ads_move_scale = (d.ads_move_scale * scale(a.ads_move_scale)).min(1.0);
+        // BO2 replaces the ADS walk with the last attachment whose raw value differs from the
+        // default attachment's 0.0 (`FUN_008ed080`; G14 §4). The definition stores the walk as a
+        // share of the normal walk, so convert the raw scale here. 0 leaves the base alone.
+        if a.ads_move_scale > 0.0 {
+            d.ads_move_scale = crate::weapons::ADS_MOVE_BASE * a.ads_move_scale;
+        }
         for s in d.hip_spread.iter_mut() {
             s.0 *= scale(a.hip_spread_min_scale);
             s.1 *= scale(a.hip_spread_max_scale);
@@ -168,14 +185,13 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
         d.reload_empty_time *= scale(a.reload_empty_scale);
         d.reload_add_time *= scale(a.reload_add_scale);
         d.reload_empty_add_time *= scale(a.reload_add_scale);
-        if (scale(a.clip_scale) - 1.0).abs() > 1e-3 {
-            d.clip = ((d.clip as f32 * a.clip_scale).round() as u16).max(1);
-        }
+        // The clip scales are multiplied as one product and rounded once after the loop (G14 §4).
         if let Some(f) = a.fire {
             d.fire = f;
             if a.clip > 1 {
                 // Tri-bolt: one pull fires all three bolts of a three-bolt load, so the magazine
                 // is one shot and spare bolts count in threes.
+                clip_fixed = true;
                 d.pellets = a.clip;
                 let per = a.clip as u32;
                 d.clip = ((d.clip as u32 / per).max(1)) as u16;
@@ -206,6 +222,22 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
             "rangefinder" => d.target_finder = true,
             _ => {}
         }
+    }
+    // BO2 truncates every time product to whole milliseconds after all scales are applied
+    // (`FUN_008ec740`, `FUN_008ec7a0`, `FUN_008ec860`, `FUN_008ecca0`; G14 §4).
+    d.fire_time = trunc_ms(d.fire_time);
+    d.reload_time = trunc_ms(d.reload_time);
+    d.reload_empty_time = trunc_ms(d.reload_empty_time);
+    d.reload_add_time = trunc_ms(d.reload_add_time);
+    d.reload_empty_add_time = trunc_ms(d.reload_empty_add_time);
+    d.ads_in_time = trunc_ms(d.ads_in_time);
+    d.ads_out_time = trunc_ms(d.ads_out_time);
+    if !clip_fixed && old_clip > 1 {
+        // BO2 multiplies every clip-size scale, then rounds to nearest-even (`FUN_008e5e50`;
+        // G14 §4). The f64 product of the f32 fields is exact, so an exact tie is a true tie
+        // (46.5 -> 46): no epsilon (the plan's +9.3e-10 pushed exact ties up; measured
+        // contradiction). `round_ties_even` is nearest-even, not `f32::round`'s ties-away.
+        d.clip = ((old_clip as f64 * clip_product).round_ties_even() as u16).max(1);
     }
     // BO2 counts spare ammo in magazines, so a bigger magazine carries more spare rounds.
     if d.clip != old_clip && !atts.iter().any(|a| a.fire.is_some() && a.clip > 1) {
@@ -289,5 +321,60 @@ mod tests {
         assert_eq!(d.fire_sound, "ZHBO_BO2_Fire_an94_mp_silenced");
         assert_eq!(d.fx_weapon, "ZHBO_FX_an94_mp_silenced");
         assert_eq!(d.view_flash_fx, "ZHBO_BO2FX_fx_muz_silencer_md");
+    }
+
+    #[test]
+    fn time_scales_truncate_to_whole_milliseconds() {
+        let base = WeaponDef { fire_time: 0.1, reload_time: 2.4, ..Default::default() };
+        let fast = AttachmentDef {
+            id: "fast".into(),
+            short: "fast".into(),
+            fire_time_scale: 0.75,
+            reload_scale: 0.675,
+            ..Default::default()
+        };
+        let d = apply(&base, &[&fast]);
+        assert!((d.fire_time - 0.075).abs() < 1e-6, "fire_time {}", d.fire_time);
+        assert!((d.reload_time - 1.62).abs() < 1e-6, "reload_time {}", d.reload_time);
+    }
+
+    #[test]
+    fn a_zero_scale_zeroes_the_product() {
+        let base = WeaponDef { ads_in_time: 0.3, ..Default::default() };
+        let none = AttachmentDef { id: "none".into(), short: "none".into(), ads_in_scale: 0.0, ..Default::default() };
+        let d = apply(&base, &[&none]);
+        assert_eq!(d.ads_in_time, 0.0);
+    }
+
+    #[test]
+    fn ads_move_scale_replaces_instead_of_stacking() {
+        let base = WeaponDef { ads_move_scale: 0.7, ..Default::default() };
+        let stalker = AttachmentDef {
+            id: "stalker".into(),
+            short: "stalker".into(),
+            ads_move_scale: 2.55,
+            point: 5,
+            ..Default::default()
+        };
+        let d = apply(&base, &[&stalker]);
+        assert!((d.ads_move_scale - crate::weapons::ADS_MOVE_BASE * 2.55).abs() < 1e-6, "{}", d.ads_move_scale);
+
+        // An unused raw row is 1.0, which differs from the default attachment's 0.0 and replaces.
+        let plain = AttachmentDef { id: "grip".into(), short: "grip".into(), ..Default::default() };
+        let d = apply(&base, &[&plain]);
+        assert!((d.ads_move_scale - crate::weapons::ADS_MOVE_BASE).abs() < 1e-6, "{}", d.ads_move_scale);
+
+        // A raw 0 equals the default row and leaves the base alone.
+        let zero = AttachmentDef { id: "zero".into(), short: "zero".into(), ads_move_scale: 0.0, ..Default::default() };
+        let d = apply(&base, &[&zero]);
+        assert!((d.ads_move_scale - 0.7).abs() < 1e-6, "{}", d.ads_move_scale);
+    }
+
+    #[test]
+    fn clip_scales_multiply_then_round_to_nearest_even() {
+        let base = WeaponDef { clip: 31, ..Default::default() };
+        let ext = AttachmentDef { id: "extclip".into(), short: "extclip".into(), clip_scale: 1.5, point: 3, ..Default::default() };
+        let d = apply(&base, &[&ext]);
+        assert_eq!(d.clip, 46, "31 × 1.5 = 46.5 rounds to even 46");
     }
 }
