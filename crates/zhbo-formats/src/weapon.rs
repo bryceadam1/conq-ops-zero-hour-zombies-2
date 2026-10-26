@@ -32,6 +32,8 @@ pub mod anim {
     pub const RAISE: usize = 0x17;
     pub const FIRST_RAISE: usize = 0x18;
     pub const DROP: usize = 0x19;
+    pub const ALT_RAISE: usize = 0x1A;
+    pub const ALT_DROP: usize = 0x1B;
     pub const QUICK_RAISE: usize = 0x1C;
     pub const QUICK_DROP: usize = 0x1D;
     pub const EMPTY_RAISE: usize = 0x1E;
@@ -45,9 +47,11 @@ pub mod anim {
     pub const DETONATE: usize = 0x3A;
     pub const ADS_FIRE: usize = 0x3D;
     pub const ADS_LASTSHOT: usize = 0x3E;
+    pub const ADS_FIRE_INTRO: usize = 0x3F;
     pub const ADS_RECHAMBER: usize = 0x40;
     pub const ADS_UP: usize = 0x55;
     pub const ADS_DOWN: usize = 0x56;
+    pub const ADS_UP_OTHER_SCOPE: usize = 0x57;
     pub const COUNT: usize = 0x58;
 }
 
@@ -211,6 +215,10 @@ pub struct Attachment {
     pub recoil_reduction: (f32, f32),
     /// `WeaponAttachment.perks`: the specialty bits the attachment grants (G1).
     pub perks: (u32, u32),
+    /// `firstRaisePriority`: the first-raise slot's tie-break priority (G14 §5).
+    pub first_raise_priority: i32,
+    /// `bAltWeaponAdsOnly`: the alt-mode's ADS-only flag (G14 §5).
+    pub alt_weapon_ads_only: bool,
 }
 
 /// Every attachment in a loaded zone.
@@ -248,6 +256,8 @@ pub fn attachments(z: &Zone) -> Result<Vec<Attachment>, FormatError> {
                 clip_size: int(z, at + WA::iClipSize),
                 recoil_reduction: (z.f32(at + WA::fAdsRecoilReductionRate), z.f32(at + WA::fAdsRecoilReductionLimit)),
                 perks: (z.u32(at + WA::perks), z.u32(at + WA::perks + 4)),
+                first_raise_priority: z.u32(at + WA::firstRaisePriority) as i32,
+                alt_weapon_ads_only: z.u8(at + WA::bAltWeaponAdsOnly) != 0,
             })
         })
         .collect()
