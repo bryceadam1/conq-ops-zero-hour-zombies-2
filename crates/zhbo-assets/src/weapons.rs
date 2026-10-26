@@ -286,10 +286,11 @@ pub fn table_with_metadata(
                 // A launcher alt mode has its own grenades; select fire and a second optic share
                 // the weapon's magazine.
                 d.alt_own_ammo = d.class == Class::Launcher;
-                // BO2 counts the alt launcher's grenades as rounds, not magazines.
+                // BO2 counts the alt launcher's grenades as rounds, not magazines: the start count
+                // includes the loaded one, the max is the spare cap (`FUN_005e08d0`; G16).
                 if d.alt_own_ammo {
                     d.start_reserve = (w.start_ammo - w.clip_size).max(0) as u16;
-                    d.max_reserve = ((w.max_ammo - w.clip_size).max(0) as u16).max(d.start_reserve);
+                    d.max_reserve = (w.max_ammo.max(0) as u16).max(d.start_reserve);
                 }
             }
             weapons.push(d);
@@ -630,11 +631,14 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         // Offhands: how many you spawn with, and carry at most.
         (w.start_ammo.max(1) as u16, w.max_ammo.max(w.start_ammo).max(1) as u16)
     } else if w.ammo_clip_relative || (w.start_ammo > 0 && w.start_ammo < w.clip_size) {
-        // BO2 multiplayer counts gun ammo in magazines (the loaded one included): the AN-94's 4/8
-        // is 30/90 at spawn and 210 spare at most.
-        (((w.start_ammo - 1).max(0) * w.clip_size) as u16, ((w.max_ammo - 1).max(0) * w.clip_size) as u16)
+        // BO2 multiplayer counts gun ammo in magazines. `iStartAmmo` is what a spawn tops up to,
+        // the loaded magazine included (`FUN_005e0910`); `iMaxAmmo` is the stock cap, the spare
+        // rounds beside the magazine (`FUN_005e08d0`; G16): the AN-94's 4/8 is 30 + 90 at spawn
+        // and 240 spare at most.
+        (((w.start_ammo - 1).max(0) * w.clip_size) as u16, (w.max_ammo.max(0) * w.clip_size) as u16)
     } else {
-        ((w.start_ammo - w.clip_size).max(0) as u16, (w.max_ammo - w.clip_size).max(0) as u16)
+        // The same in rounds: the crossbow's start 6 is 3 loaded + 3 spare, its max 3 spare.
+        ((w.start_ammo - w.clip_size).max(0) as u16, w.max_ammo.max(0) as u16)
     };
     let range = |r: f32| if r >= 999_999.0 { inches(100_000.0) } else { inches(r) };
     let key = manifest::display_name_key(w.display_name.trim_start_matches("WEAPON_"));
@@ -1042,8 +1046,26 @@ mod tests {
     fn clip_relative_ammo_counts_magazines() {
         let w = Weapon { name: "an94_mp".into(), clip_size: 30, start_ammo: 4, max_ammo: 8, ammo_clip_relative: false, fire_time: 0.096, ..Default::default() };
         let d = to_def(&w, &HashMap::new());
-        assert_eq!((d.clip, d.start_reserve, d.max_reserve), (30, 90, 210));
+        assert_eq!((d.clip, d.start_reserve, d.max_reserve), (30, 90, 240));
         assert_eq!(d.display_name, "AN94");
+    }
+
+    /// `iMaxAmmo` is the spare cap beside the magazine, never minus one (`FUN_005e08d0`; G16): the
+    /// crossbow (start 6, clip 3, max 3, in rounds) starts and caps at 3 spare; the SMAW's 1/1/1
+    /// keeps one spare rocket at most (it was 0); an LMG's 3/4 magazines of 100 are 200 spare at
+    /// spawn and 400 at most.
+    #[test]
+    fn max_ammo_is_the_spare_cap_beside_the_magazine() {
+        let rounds = |name: &str, clip_size, start_ammo, max_ammo| {
+            let w = Weapon { name: name.into(), clip_size, start_ammo, max_ammo, fire_time: 0.1, ..Default::default() };
+            let d = to_def(&w, &HashMap::new());
+            (d.clip, d.start_reserve, d.max_reserve)
+        };
+        assert_eq!(rounds("crossbow_mp", 3, 6, 3), (3, 3, 3));
+        assert_eq!(rounds("smaw_mp", 1, 1, 1), (1, 0, 1));
+        let lmg = Weapon { name: "lsat_mp".into(), clip_size: 100, start_ammo: 3, max_ammo: 4, ammo_clip_relative: true, fire_time: 0.1, ..Default::default() };
+        let d = to_def(&lmg, &HashMap::new());
+        assert_eq!((d.clip, d.start_reserve, d.max_reserve), (100, 200, 400));
     }
 
     /// The regression pin: a replacement optic's unique supplies the combo's overlay, and an empty

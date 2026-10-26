@@ -1465,6 +1465,32 @@ pub(crate) mod tests {
         assert!(host.fx.borrow().iter().all(|(s, w, _)| *s == 1 && w == "ZHBO_MTAR_FX"));
     }
 
+    /// Scavenger tops the reserve up to BO2's stock cap: `iMaxAmmo` spare rounds beside the
+    /// magazine (`FUN_005e08d0`; a rifle's 8 magazines of 30 = 240), not a magazine fewer. The
+    /// magazine is untouched; the HUD's reserve is that number.
+    #[test]
+    fn a_scavenger_kill_tops_the_reserve_up_to_the_stock_cap() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.add(soldier(2, 1, 60.0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        wait_until_ready(&mut sim, &host);
+        let p = sim.players[0].as_mut().unwrap();
+        p.arsenal.loadout.perks.push(crate::weapons::Perk::SCAVENGER);
+        let w = p.arsenal.current_mut();
+        assert_eq!((w.def.clip, w.def.max_reserve), (30, 240), "{}: BO2's 30-round magazine, 8 of them spare", w.def.id);
+        w.reserve = 230;
+        let pitch = -(4.0f32 / 60.0).atan();
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, pitch, ..Default::default() }, 20);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::FIRE, pitch, ..Default::default() }, 20);
+        assert!(host.get(2).has(objflags::DEAD), "enemy killed");
+        let a = &sim.player(0).unwrap().arsenal;
+        assert_eq!(a.current().reserve, 240, "topped up to the stock cap, not past it");
+        assert!(a.current().ammo > 0 && a.current().ammo < 30, "the magazine is the one being fired");
+    }
+
     #[test]
     fn a_pellet_reports_the_surface_it_hit() {
         // An enemy structure straight ahead: the pellets land on concrete, not on the ground.

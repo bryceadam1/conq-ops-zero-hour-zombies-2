@@ -138,7 +138,10 @@ pub struct WeaponDef {
     pub spin_up_time: f32,
     pub pellets: u16,
     pub clip: u16,
+    /// Spare rounds at spawn, beside the loaded magazine (BO2's `iStartAmmo` minus a magazine).
     pub start_reserve: u16,
+    /// Spare rounds at most, beside the magazine: BO2's stock cap `iMaxAmmo` (`FUN_005e08d0`).
+    /// Scavenger and refills top the reserve up to it; the HUD shows the reserve.
     pub max_reserve: u16,
     pub reload_time: f32,
     pub reload_empty_time: f32,
@@ -376,7 +379,7 @@ impl Default for WeaponDef {
             pellets: 1,
             clip: 30,
             start_reserve: 90,
-            max_reserve: 210,
+            max_reserve: 240,
             reload_time: 2.0,
             reload_empty_time: 2.5,
             reload_add_time: 1.5,

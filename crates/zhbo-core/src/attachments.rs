@@ -267,7 +267,7 @@ mod tests {
             id: "an94_mp".into(),
             clip: 30,
             start_reserve: 90,
-            max_reserve: 210,
+            max_reserve: 240,
             fire_time: 0.1,
             ads_fov: 55.0,
             ads_in_time: 0.3,
@@ -282,7 +282,7 @@ mod tests {
         let reflex = AttachmentDef { id: "reflex".into(), short: "reflex".into(), ads_fov: 50.0, point: point::OPTIC, ..Default::default() };
         let d = apply(&base(), &[&reflex, &ext]);
         assert_eq!(d.id, "an94_mp+extclip+reflex");
-        assert_eq!((d.clip, d.start_reserve, d.max_reserve), (40, 120, 280));
+        assert_eq!((d.clip, d.start_reserve, d.max_reserve), (40, 120, 320));
         assert_eq!(d.ads_fov, 50.0);
         assert_eq!(d.attachments, vec!["extclip", "reflex"]);
     }

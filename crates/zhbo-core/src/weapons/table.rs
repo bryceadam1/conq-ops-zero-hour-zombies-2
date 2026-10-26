@@ -350,7 +350,7 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("StartReserve", "Spare rounds at spawn.", FieldKind::Num,
         |d: &WeaponDef| d.start_reserve.to_string(),
         |d: &mut WeaponDef, v: Values| { d.start_reserve = v.text.parse().map_err(|_| "number")?; Ok(()) }),
-    field!("MaxReserve", "Spare rounds at most.", FieldKind::Num,
+    field!("MaxReserve", "Spare rounds at most, beside the magazine (BO2's iMaxAmmo).", FieldKind::Num,
         |d: &WeaponDef| d.max_reserve.to_string(),
         |d: &mut WeaponDef, v: Values| { d.max_reserve = v.text.parse().map_err(|_| "number")?; Ok(()) }),
     field!("Reload", "Reload, empty reload, rounds-in time, empty rounds-in time.", FieldKind::Nums(4),

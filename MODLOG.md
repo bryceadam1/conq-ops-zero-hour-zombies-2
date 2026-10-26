@@ -4503,3 +4503,34 @@ Tests: core `ads_move_scale_is_replaced_by_the_attachment_that_sets_one`,
 whole sim); converter `the_ads_move_override_is_what_differs_from_defaultattachment`. The shipped
 weapon table's `Ads` attachment field changes meaning (4th value: the override, 0 = keep), so the
 archive VERSION needs the integrator's bump.
+
+## Max ammo is BO2's stock cap, not a magazine fewer (2026-10-25, `v1/ads-move-ammo`)
+
+The conformance audit's open finding: the converter subtracted a magazine from `iMaxAmmo`
+(AN-94 240 → 210). BO2 (`FUN_005e08d0`/`FUN_005e0910`, G16) has two different meanings for its
+two counts: `iStartAmmo` is what a spawn tops up to, **the loaded magazine included**; `iMaxAmmo`
+is the stock cap, the spare rounds **beside** the magazine (the crossbow proves it: start 6, clip 3,
+max 3 — a cap that included the clip would be below the start). Both are × clip when
+`ammoCountClipRelative`.
+
+`weapons::to_def` now maps `max_reserve = clip × iMaxAmmo` (clip-relative) or `iMaxAmmo` (rounds);
+`start_reserve` keeps subtracting the loaded magazine; the alt launcher's own grenades follow the
+same rule. The sim's meaning of `max_reserve` does not change — it was already "spare rounds at
+most, beside the magazine": Scavenger (`Arsenal::scavenge`, the spawn top-up) caps the reserve at
+it, the HUD shows the reserve, a reload draws from it. Only the number is now BO2's. The default
+def and the BUILTIN stand-in table follow (AN-94 240, FNP45 80). The attachment stacking's
+"spare scales with the magazine" rule stays right under the new meaning for clip-relative guns
+(AN-94 + extclip: 40 × 8 = 320).
+
+All 8 kinds of the cluster were understood: ×0.875 (8-magazine guns), ×0.75 (LMGs, 4), ×0.8
+(HAMR, 5), ×0.8333 (KSG, 6), ×0.9167 (DSR-50, 12), ×0.9375 (dual-wield pistols, 16), ×0 (SMAW,
+1 − 1) are this root cause. ×0.3333 (5 crossbow+stackfire rows, also in `clip_size` and
+`start_ammo_rounds`) is not: the mod counts the tri-bolt's ammo in shots of three (`apply`'s
+`clip_fixed` path) — a representation question for its own item.
+
+Measured: `max_ammo_rounds` 7,343 → 5, no other column moved; weapons cells 705,896 → 698,558
+(baseline 706,586 → 698,558 with the ADS-move fix); gap clusters 214 → 214 (both columns keep a
+residual cluster). Tests: converter `max_ammo_is_the_spare_cap_beside_the_magazine` (crossbow,
+SMAW, LMG) and the updated AN-94 pin (30/90/240); fake-host
+`a_scavenger_kill_tops_the_reserve_up_to_the_stock_cap`. The shipped table's `MaxReserve` values
+change, so the archive VERSION needs the integrator's bump.

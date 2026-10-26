@@ -235,7 +235,7 @@ Weapon an94_mp
   FireTime = 0.096
   Clip = 30
   StartReserve = 90
-  MaxReserve = 210
+  MaxReserve = 240
   Reload = 2.47 3.11 1.3 1.9
   Raise = 0.6 1.1 0.4 0.35 0.3
   SprintOutTime = 0.25
@@ -262,7 +262,7 @@ Weapon fnp45_mp
   FireTime = 0.096
   Clip = 10
   StartReserve = 30
-  MaxReserve = 70
+  MaxReserve = 80
   Reload = 1.48 1.8 1.1 1.4
   Raise = 0.25 0.6 0.25 0.2 0.2
   SprintOutTime = 0.15
