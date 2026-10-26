@@ -171,12 +171,7 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
         }
         d.ads_in_time *= scale(a.ads_in_scale);
         d.ads_out_time *= scale(a.ads_out_scale);
-        // BO2 replaces the ADS walk with the last attachment whose raw value differs from the
-        // default attachment's 0.0 (`FUN_008ed080`; G14 §4). The definition stores the walk as a
-        // share of the normal walk, so convert the raw scale here. 0 leaves the base alone.
-        if a.ads_move_scale > 0.0 {
-            d.ads_move_scale = crate::weapons::ADS_MOVE_BASE * a.ads_move_scale;
-        }
+        d.ads_move_scale = (d.ads_move_scale * scale(a.ads_move_scale)).min(1.0);
         for s in d.hip_spread.iter_mut() {
             s.0 *= scale(a.hip_spread_min_scale);
             s.1 *= scale(a.hip_spread_max_scale);
@@ -346,28 +341,27 @@ mod tests {
         assert_eq!(d.ads_in_time, 0.0);
     }
 
+    /// The ADS walk keeps the multiply-and-clamp rule: the replacement walk the plan proposed was
+    /// reverted (it fired on every attachment's generic 1.0 and erased the base's distinctive
+    /// value — the conformance column quadrupled, 924 -> 3,903 rows). The corrected rule needs
+    /// its own cycle; BO2's no-change sentinel here is 1.0, not 0.0.
     #[test]
-    fn ads_move_scale_replaces_instead_of_stacking() {
+    fn ads_move_scale_multiplies_and_clamps() {
         let base = WeaponDef { ads_move_scale: 0.7, ..Default::default() };
         let stalker = AttachmentDef {
             id: "stalker".into(),
             short: "stalker".into(),
-            ads_move_scale: 2.55,
+            ads_move_scale: 1.12,
             point: 5,
             ..Default::default()
         };
         let d = apply(&base, &[&stalker]);
-        assert!((d.ads_move_scale - crate::weapons::ADS_MOVE_BASE * 2.55).abs() < 1e-6, "{}", d.ads_move_scale);
+        assert!((d.ads_move_scale - 0.7 * 1.12).abs() < 1e-6, "{}", d.ads_move_scale);
 
-        // An unused raw row is 1.0, which differs from the default attachment's 0.0 and replaces.
-        let plain = AttachmentDef { id: "grip".into(), short: "grip".into(), ..Default::default() };
-        let d = apply(&base, &[&plain]);
-        assert!((d.ads_move_scale - crate::weapons::ADS_MOVE_BASE).abs() < 1e-6, "{}", d.ads_move_scale);
-
-        // A raw 0 equals the default row and leaves the base alone.
-        let zero = AttachmentDef { id: "zero".into(), short: "zero".into(), ads_move_scale: 0.0, ..Default::default() };
-        let d = apply(&base, &[&zero]);
-        assert!((d.ads_move_scale - 0.7).abs() < 1e-6, "{}", d.ads_move_scale);
+        // The clamp holds at 1.0: a bigger scale on a high base cannot pass it.
+        let strong = AttachmentDef { id: "s2".into(), short: "s2".into(), ads_move_scale: 2.55, ..Default::default() };
+        let d = apply(&base, &[&strong]);
+        assert!((d.ads_move_scale - 1.0).abs() < 1e-6, "{}", d.ads_move_scale);
     }
 
     #[test]
