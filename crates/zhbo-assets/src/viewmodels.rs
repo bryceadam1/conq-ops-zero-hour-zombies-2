@@ -265,11 +265,15 @@ pub fn combo<'a>(w: &'a zhbo_formats::weapon::Weapon, atts: &[zhbo_formats::weap
             }
         }
         if found { continue; }
-        // 5. Base unique fallback.
-        if let Some(u) = base {
-            if let Some(a) = u.anims.get(s) {
-                if a.is_some() {
-                    anims[s] = a.clone();
+        // 5. Base unique fallback: fills only a slot the variant left EMPTY (BO2 keeps the
+        // variant's own clip for every populated slot — the bare an94's putaway_quick stands;
+        // measured on the conformance rows).
+        if anims[s].is_none() {
+            if let Some(u) = base {
+                if let Some(a) = u.anims.get(s) {
+                    if a.is_some() {
+                        anims[s] = a.clone();
+                    }
                 }
             }
         }
@@ -1097,7 +1101,7 @@ mod tests {
         assert_eq!(c.anims[0x01].as_deref(), Some("u1_idle"), "ascending kind 1 wins over kind 2");
     }
 
-    /// G14 §5 priority 5: the base unique's table is the final fallback.
+    /// G14 §5 priority 5: the base unique's table fills a slot the variant left EMPTY.
     #[test]
     fn the_base_unique_is_the_final_fallback() {
         let att = Attachment { kind: 1, ..Default::default() };
@@ -1105,9 +1109,23 @@ mod tests {
         base.anims = vec![None; 0x58]; base.anims[0x01] = Some("base_idle".into());
         let u = AttachmentUnique { kind: 1, ..Default::default() };
         let mut w = Weapon { attachment_variants: vec![(1, "a".into())], attachment_uniques: vec![base, u], ..Default::default() };
-        w.anims = vec![None; 0x58]; w.anims[0x01] = Some("variant_idle".into());
+        w.anims = vec![None; 0x58]; // the variant leaves 0x01 EMPTY: the base unique fills it.
         let c = super::combo(&w, &[att], &["a"]);
-        assert_eq!(c.anims[0x01].as_deref(), Some("base_idle"), "the base unique's table is the fallback");
+        assert_eq!(c.anims[0x01].as_deref(), Some("base_idle"), "the base unique fills the variant's empty slot");
+    }
+
+    /// G14 §5 priority 5 is a FALLBACK, not an override: the variant's populated slot survives
+    /// the base unique (measured on the conformance rows: the bare an94 keeps its putaway_quick).
+    #[test]
+    fn the_variants_populated_slot_survives_the_base_unique() {
+        let att = Attachment { kind: 1, ..Default::default() };
+        let mut base = AttachmentUnique { kind: 0, ..Default::default() };
+        base.anims = vec![None; 0x58]; base.anims[0x19] = Some("base_putaway".into());
+        let u = AttachmentUnique { kind: 1, ..Default::default() };
+        let mut w = Weapon { attachment_variants: vec![(1, "a".into())], attachment_uniques: vec![base, u], ..Default::default() };
+        w.anims = vec![None; 0x58]; w.anims[0x19] = Some("variant_putaway_quick".into());
+        let c = super::combo(&w, &[att], &["a"]);
+        assert_eq!(c.anims[0x19].as_deref(), Some("variant_putaway_quick"), "the variant's own clip stands");
     }
 
     /// G14 §5: the exact-combined unique participates as the mask-matched resolved child.
@@ -1142,7 +1160,7 @@ mod tests {
         let mut w = Weapon { attachment_variants: vec![(1, "a".into())], attachment_uniques: vec![base, u], ..Default::default() };
         w.anims = vec![None; 0x58]; w.anims[0x01] = Some("variant_idle".into());
         let c = super::combo(&w, &[att], &["a"]);
-        assert_eq!(c.anims[0x01].as_deref(), Some("base_idle"), "the unique's None falls through to the base");
+        assert_eq!(c.anims[0x01].as_deref(), Some("variant_idle"), "the unique's None does not erase the base");
     }
 
     /// The MP7+grip single-attachment case: the grip's idle wins, as verified parity today.
