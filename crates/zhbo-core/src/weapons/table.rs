@@ -500,6 +500,21 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("FireSound", "The shot's BO2 sound event.", FieldKind::Str,
         |d: &WeaponDef| d.fire_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.fire_sound = v.text.into(); Ok(()) }),
+    field!("EmptyFireSound", "The empty magazine's BO2 sound event.", FieldKind::Str,
+        |d: &WeaponDef| d.empty_fire_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.empty_fire_sound = v.text.into(); Ok(()) }),
+    field!("SilencedFireSound", "The suppressed shot's player BO2 sound event.", FieldKind::Str,
+        |d: &WeaponDef| d.silenced_fire_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.silenced_fire_sound = v.text.into(); Ok(()) }),
+    field!("SilencedFireSoundNpc", "The suppressed shot's third-person BO2 sound event.", FieldKind::Str,
+        |d: &WeaponDef| d.silenced_fire_sound_npc.clone(),
+        |d: &mut WeaponDef, v: Values| { d.silenced_fire_sound_npc = v.text.into(); Ok(()) }),
+    field!("SilencedFxWeapon", "The FX weapon whose INI block carries the suppressed shot.", FieldKind::Str,
+        |d: &WeaponDef| d.silenced_fx_weapon.clone(),
+        |d: &mut WeaponDef, v: Values| { d.silenced_fx_weapon = v.text.into(); Ok(()) }),
+    field!("SilencedViewFlashFx", "The shared suppressed first-person FXList.", FieldKind::Str,
+        |d: &WeaponDef| d.silenced_view_flash_fx.clone(),
+        |d: &mut WeaponDef, v: Values| { d.silenced_view_flash_fx = v.text.into(); Ok(()) }),
     field!("ExplodeSound", "The blast's BO2 sound event.", FieldKind::Str,
         |d: &WeaponDef| d.explode_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.explode_sound = v.text.into(); Ok(()) }),
@@ -691,9 +706,28 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 73);
+        assert_eq!(WEAPON_FIELDS.len(), 78);
         assert_eq!(ATTACHMENT_FIELDS.len(), 17);
         assert_eq!(CAMO_FIELDS.len(), 3);
+    }
+
+    #[test]
+    fn the_silencer_fields_round_trip() {
+        let mut d = WeaponDef::default();
+        d.id = "an94_mp".into();
+        d.empty_fire_sound = "ZHBO_BO2_DryFireGeneric".into();
+        d.silenced_fire_sound = "ZHBO_BO2_Fire_an94_mp_silenced".into();
+        d.silenced_fire_sound_npc = "ZHBO_BO2_FireNpc_an94_mp_silenced".into();
+        d.silenced_fx_weapon = "ZHBO_FX_an94_mp_silenced".into();
+        d.silenced_view_flash_fx = "ZHBO_BO2FX_fx_muz_silencer_md".into();
+        let text = format_table(std::slice::from_ref(&d));
+        let back = parse_table(&text).expect("the table re-parses");
+        assert_eq!(back.len(), 1);
+        assert_eq!(back[0].empty_fire_sound, d.empty_fire_sound);
+        assert_eq!(back[0].silenced_fire_sound, d.silenced_fire_sound);
+        assert_eq!(back[0].silenced_fire_sound_npc, d.silenced_fire_sound_npc);
+        assert_eq!(back[0].silenced_fx_weapon, d.silenced_fx_weapon);
+        assert_eq!(back[0].silenced_view_flash_fx, d.silenced_view_flash_fx);
     }
 
     #[test]

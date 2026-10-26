@@ -23,6 +23,19 @@ pub fn short_name(attachment: &str) -> String {
     attachment.split('_').next().unwrap_or(attachment).to_string()
 }
 
+/// The converted event for BO2's `emptyFireSoundPlayer` alias. The shipped table carries five
+/// aliases; anything else falls back to the generic click.
+pub(crate) fn dry_fire_event(alias: Option<&str>) -> &'static str {
+    match alias {
+        Some("wpn_generic_dryfire_plr") => "ZHBO_BO2_DryFireGeneric",
+        Some("wpn_gl_rifle_dryfire_plr") => "ZHBO_BO2_DryFireGlRifle",
+        Some("wpn_crossbow_dryfire_plr") => "ZHBO_BO2_DryFireCrossbow",
+        Some("wpn_rpg_dryfire_plr") => "ZHBO_BO2_DryFireRpg",
+        Some("wpn_beretta93r_dryfire_plr") => "ZHBO_BO2_DryFireBeretta",
+        _ => "ZHBO_BO2_DryFireGeneric",
+    }
+}
+
 /// The replacement optics whose unique supplies a combo's 2D ADS overlay: ACOG (1), IR/dual-band
 /// (14), IS (15), VZOOM (29). The base-parts cycle probed these kinds; the set belongs to the
 /// converter, not the parser.
@@ -389,6 +402,7 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
         let base = crate::generals::base_id(id);
         let Some(w) = bo2.iter().find(|w| w.name == base) else { continue };
         let Some(d) = defs.iter_mut().find(|d| &d.id == id) else { continue };
+        d.empty_fire_sound = dry_fire_event(w.empty_fire_sound_player.as_deref()).to_string();
         // Attachments can change the shot (a suppressor).
         let (_, shorts) = attachments::split_id(id.split('~').next().unwrap_or(id));
         let c = crate::generals::combo(w, atts, &shorts);
@@ -414,6 +428,34 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
                 if launcher { "WeaponFX_RocketBuggyMissileFire" } else if d.silenced { "NONE" } else { "WeaponFX_GenericMachineGunFire" }
             ));
             d.fx_weapon = fx;
+        }
+        // The suppressor's own shot and flash: BO2's `AttachmentUnique` for the weapon's silenced
+        // attachment variant. The base def carries them; `attachments::apply` swaps a combo's
+        // sound/fx to them when the combo mounts the silencer.
+        if let Some(short) = w.attachment_variants.iter().find_map(|(kind, id)| {
+            atts.iter().find(|a| a.kind == *kind && a.silenced).map(|_| short_name(id))
+        }) {
+            let c = crate::generals::combo(w, atts, &[short.as_str()]);
+            let key_sil = format!("{key}_silenced");
+            if let Some(plr) = &c.fire_sound_player {
+                let event = format!("ZHBO_BO2_Fire_{key_sil}");
+                events.push(DynSfx { event: event.clone(), layers: layers(plr), kind: Kind::Player, limit: 3 });
+                d.silenced_fire_sound = event;
+            }
+            if let Some(npc) = &c.fire_sound {
+                let event = format!("ZHBO_BO2_FireNpc_{key_sil}");
+                events.push(DynSfx { event: event.clone(), layers: vec![npc.clone(), format!("{npc}_decay")], kind: Kind::Others, limit: 3 });
+                d.silenced_fire_sound_npc = event;
+            }
+            let fx_sil = format!("ZHBO_FX_{key_sil}");
+            ini.push_str(&format!(
+                "Weapon {fx_sil}\n  PrimaryDamage           = 0.0\n  PrimaryDamageRadius     = 0.0\n  AttackRange             = 1000.0\n  \
+                 DamageType              = SMALL_ARMS\n  DeathType               = NORMAL\n  WeaponSpeed             = 999999.0\n  \
+                 ProjectileObject        = NONE\n  FireFX                  = NONE\n  FireSound               = {}\n  \
+                 RadiusDamageAffects     = ENEMIES\n  DelayBetweenShots       = 0\n  ClipSize                = 0\nEnd\n\n",
+                d.silenced_fire_sound_npc
+            ));
+            d.silenced_fx_weapon = fx_sil;
         }
         let general = |event: &str, alias: &Option<String>, kind: Kind| alias.as_ref().map(|a| DynSfx { event: event.into(), layers: vec![a.clone()], kind, limit: 2 });
         if *id == l.lethal {
@@ -663,6 +705,11 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         .to_string(),
         projectile_object: String::new(),
         fire_sound: String::new(),
+        empty_fire_sound: String::new(),
+        silenced_fire_sound: String::new(),
+        silenced_fire_sound_npc: String::new(),
+        silenced_fx_weapon: String::new(),
+        silenced_view_flash_fx: String::new(),
         explode_sound: String::new(),
         viewmodel: -1,
         anims: w.anims.iter().enumerate().take(128).filter(|(_, a)| a.is_some()).fold(0u128, |m, (i, _)| m | (1u128 << i)),
@@ -880,6 +927,16 @@ mod tests {
         assert_eq!((class_of(&frag), effect_of(&frag)), (Class::Lethal, Effect::Explode));
         let conc = Weapon { name: "concussion_grenade_mp".into(), weap_type: bo2::kind::GRENADE, ..Default::default() };
         assert_eq!((class_of(&conc), effect_of(&conc)), (Class::Tactical, Effect::Stun));
+    }
+
+    #[test]
+    fn dry_fire_events_cover_the_five_bo2_aliases() {
+        assert_eq!(dry_fire_event(Some("wpn_generic_dryfire_plr")), "ZHBO_BO2_DryFireGeneric");
+        assert_eq!(dry_fire_event(Some("wpn_gl_rifle_dryfire_plr")), "ZHBO_BO2_DryFireGlRifle");
+        assert_eq!(dry_fire_event(Some("wpn_crossbow_dryfire_plr")), "ZHBO_BO2_DryFireCrossbow");
+        assert_eq!(dry_fire_event(Some("wpn_rpg_dryfire_plr")), "ZHBO_BO2_DryFireRpg");
+        assert_eq!(dry_fire_event(Some("wpn_beretta93r_dryfire_plr")), "ZHBO_BO2_DryFireBeretta");
+        assert_eq!(dry_fire_event(None), "ZHBO_BO2_DryFireGeneric");
     }
 
     #[test]

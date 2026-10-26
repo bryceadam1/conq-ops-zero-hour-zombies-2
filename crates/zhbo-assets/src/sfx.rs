@@ -67,6 +67,11 @@ pub const SFX: &[Sfx] = &[
     Sfx { event: "ZHBO_BO2_Fire", from: From::Common, layers: &["wpn_an94_fire_plr", "wpn_an94_fire_plr_decay", "wpn_an94_lfe"], kind: Kind::Player, limit: 3 },
     Sfx { event: "ZHBO_BO2_FirePistol", from: From::Common, layers: &["wpn_beretta93r_fire_plr", "wpn_beretta93r_fire_plr_decay", "wpn_beretta93r_LFE"], kind: Kind::Player, limit: 3 },
     Sfx { event: "ZHBO_BO2_DryFire", from: From::Common, layers: &["wpn_an94_dryfire_plr"], kind: Kind::Player, limit: 1 },
+    Sfx { event: "ZHBO_BO2_DryFireGeneric", from: From::Common, layers: &["wpn_generic_dryfire_plr"], kind: Kind::Player, limit: 1 },
+    Sfx { event: "ZHBO_BO2_DryFireGlRifle", from: From::Common, layers: &["wpn_gl_rifle_dryfire_plr"], kind: Kind::Player, limit: 1 },
+    Sfx { event: "ZHBO_BO2_DryFireCrossbow", from: From::Common, layers: &["wpn_crossbow_dryfire_plr"], kind: Kind::Player, limit: 1 },
+    Sfx { event: "ZHBO_BO2_DryFireRpg", from: From::Common, layers: &["wpn_rpg_dryfire_plr"], kind: Kind::Player, limit: 1 },
+    Sfx { event: "ZHBO_BO2_DryFireBeretta", from: From::Common, layers: &["wpn_beretta93r_dryfire_plr"], kind: Kind::Player, limit: 1 },
     Sfx { event: "ZHBO_BO2_HitMarker", from: From::Common, layers: &["mpl_hit_alert"], kind: Kind::Player, limit: 2 },
     Sfx { event: "ZHBO_BO2_Heartbeat", from: From::Common, layers: &["mpl_player_heartbeat"], kind: Kind::Player, limit: 1 },
     Sfx { event: "ZHBO_BO2_Hurt", from: From::World, layers: &["prj_bullet_impact_large_player"], kind: Kind::Player, limit: 2 },
@@ -449,5 +454,12 @@ mod tests {
         assert!(ini.contains("FireSound               = ZHBO_BO2_FireRts"));
         assert!(!ini.contains("RangerWeapon"), "no Zero Hour rifle sound left");
         assert!(ini.contains("HeroUSAKnifeAttack"), "weapons not listed keep their sound");
+    }
+
+    #[test]
+    fn the_dry_fire_events_cover_the_five_bo2_aliases() {
+        for alias in ["wpn_generic_dryfire_plr", "wpn_gl_rifle_dryfire_plr", "wpn_crossbow_dryfire_plr", "wpn_rpg_dryfire_plr", "wpn_beretta93r_dryfire_plr"] {
+            assert!(SFX.iter().any(|s| s.layers.contains(&alias)), "no event for {alias}");
+        }
     }
 }

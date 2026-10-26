@@ -111,6 +111,11 @@ pub fn fxlist_name(effect: &str) -> String {
     zhbo_core::names::bo2_fx(effect)
 }
 
+/// BO2's shared suppressed muzzle flash (`weapon/muzzleflashes/fx_muz_silencer_md`): first person.
+pub const SILENCER_VIEW_FLASH: &str = "weapon/muzzleflashes/fx_muz_silencer_md";
+/// The third-person half (`weapon/muzzleflashes/fx_muz_silencer_md_3p`).
+pub const SILENCER_WORLD_FLASH: &str = "weapon/muzzleflashes/fx_muz_silencer_md_3p";
+
 /// Converted effects: the particle system and FXList INI text, and their textures.
 #[derive(Default)]
 pub struct Converted {

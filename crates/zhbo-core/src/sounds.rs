@@ -30,6 +30,14 @@ pub fn fire_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
         FIRE
     }
 }
+/// The empty magazine's click for a weapon: its own converted BO2 sound, else the generic event.
+pub fn dry_fire_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
+    if !def.empty_fire_sound.is_empty() {
+        def.empty_fire_sound.as_str()
+    } else {
+        DRY_FIRE
+    }
+}
 pub const DRY_FIRE: &str = "ZHBO_BO2_DryFire";
 pub const HIT_MARKER: &str = "ZHBO_BO2_HitMarker";
 pub const HEARTBEAT: &str = "ZHBO_BO2_Heartbeat";
@@ -221,7 +229,7 @@ impl Cues {
 
         let w = p.arsenal.current();
         if fire_held && !self.fire_was_held && w.ammo == 0 && !w.is_reloading() {
-            self.play(DRY_FIRE);
+            self.play(dry_fire_for(w.def));
         }
         self.fire_was_held = fire_held;
     }
@@ -233,6 +241,14 @@ mod tests {
 
     fn events(c: &mut Cues) -> Vec<&'static str> {
         c.queue.drain(..).map(|r| r.event).collect()
+    }
+
+    #[test]
+    fn dry_fire_follows_the_def() {
+        let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef { empty_fire_sound: "ZHBO_BO2_DryFireGlRifle".into(), ..Default::default() }));
+        assert_eq!(dry_fire_for(def), "ZHBO_BO2_DryFireGlRifle");
+        let plain: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef::default()));
+        assert_eq!(dry_fire_for(plain), DRY_FIRE);
     }
 
     #[test]
