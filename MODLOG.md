@@ -4464,3 +4464,32 @@ stays "W00" and the INI's hidden list/draw indices keep working.
 **Verified.** `cargo test -p zhbo-assets` green; `cargo test --workspace` green; `cargo clippy
 --workspace --all-targets` exit 0; the real-install suite (`--skip conformance`) green. No game
 launched. Conformance was not run on the full archive this round.
+
+## The command bar's class kits stuck after deselecting the General (2026-10-26)
+
+Playtest: in the overhead view the General's class buttons (the kit icons — primary large,
+secondary/lethal/tactical minis, perk pips — and Back's `<`) stayed painted on the command bar
+after clicking empty ground. Zero Hour itself had cleared the bar; our overlay had not.
+
+**Cause.** The bridge's overlays (`drawClassButtons`, `drawRtsAmmo`, and the dispatch-time
+`pressedClassButton`) decided whether a `ControlBar.wnd:ButtonCommandNN` button was on screen with
+`win->winIsHidden()`, which tests only that window's own `WIN_STATUS_HIDDEN` bit
+(`GameWindow.cpp:731`). An empty selection runs `switchToContext(CB_CONTEXT_NONE)`
+(`ControlBar.cpp:2182`), which hides only the parent `ControlBar.wnd:CommandWindow`
+(`m_contextParent[CP_COMMAND]`); the children stay unhidden and keep the last command set's
+`CommandButton` pointers as gadget data. The window manager skips the hidden subtree, so the
+buttons vanished, but `drawClassButtons` — not selection-gated — still matched the class buttons
+on the children and drew their kits every frame. `drawRtsAmmo` was selection-gated, so it only
+shared the latent flaw for contexts that hide `CP_COMMAND` with a General selected.
+
+**Fix.** `zhboCommandWindowShown(win)` (ZhboControlBar.cpp) walks the window and its ancestors;
+all three loops use it. `drawClassButtons` is also gated on the selection being the one General,
+the same rule as the ammo overlay. **Gotcha:** never test a Zero Hour control-bar child's
+visibility with `winIsHidden` alone — context switches hide parents, not children.
+
+**Verified.** No Rust changed (the decision is engine window state, nothing to move into the
+core); `cargo test --workspace` green (610 passed), `cargo clippy --workspace --all-targets` adds no warning. The C++ was
+not built here (`cargo xtask build` belongs to the integrator). In-game check owed: build, run
+`scripts/autotest-mac.sh --rts`, then by hand select an unclassed General (class kits show),
+click empty ground (bar and kits clear), select another unit (its own commands, no kits), select a
+classed General (gun/offhand icons and ammo show), deselect (they clear).

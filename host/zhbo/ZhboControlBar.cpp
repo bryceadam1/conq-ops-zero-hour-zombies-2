@@ -165,7 +165,7 @@ public:
 		for (Int i = 0; i < MAX_COMMANDS_PER_SET; ++i)
 		{
 			GameWindow *win = TheControlBar->m_commandWindows[i];
-			if (!win || win->winIsHidden())
+			if (!zhboCommandWindowShown(win))
 				continue;
 			WinInstanceData *inst = win->winGetInstanceData();
 			if (!inst || !BitIsSet(inst->getState(), WIN_STATE_SELECTED))
@@ -283,17 +283,19 @@ public:
 
 	/// Draw each class's kit over its command-bar button (the ammo overlay's pattern): the primary
 	/// weapon large, the secondary/lethal/tactical as minis, the perks as pips, plus Back's glyph on
-	/// its plain tile. Only present classes whose buttons are visible are drawn.
+	/// its plain tile. Only present classes whose buttons are on screen are drawn, and only while the
+	/// selection is the one General (the class set is only ever his override): with nothing or
+	/// another unit selected the bar has no class buttons, so nothing is drawn.
 	static void drawClassButtons()
 	{
-		if (!TheControlBar || !TheWindowManager || s_classButtonCount <= 0)
+		if (!TheControlBar || !TheWindowManager || s_classButtonCount <= 0 || !selectedGeneral())
 			return;
 		for (Int i = 1; i <= 14; ++i)
 		{
 			char name[64];
 			snprintf(name, sizeof(name), "ControlBar.wnd:ButtonCommand%02d", i);
 			GameWindow *win = TheWindowManager->winGetWindowFromId(nullptr, TheNameKeyGenerator->nameToKey(name));
-			if (!win || win->winIsHidden())
+			if (!zhboCommandWindowShown(win))
 				continue;
 			const CommandButton *button = (const CommandButton *)GadgetButtonGetData(win);
 			if (!button)
@@ -484,6 +486,19 @@ void trackIdleGenerals()
 			s_idleGenerals.erase(obj->getID());
 		logf("General %u %s the idle workers", (unsigned)obj->getID(), idle ? "joined" : "left");
 	}
+}
+
+// A command button window is on screen only if it and every ancestor are unhidden. Its own hidden
+// bit is not enough (GameWindow::winIsHidden tests only that bit): an empty selection switches the
+// bar to CB_CONTEXT_NONE, which hides just the parent ControlBar.wnd:CommandWindow and leaves the
+// ButtonCommandNN children unhidden and still carrying the last command set's buttons. Testing
+// only the child made the class kits stick on the bar after the General was deselected.
+Bool zhboCommandWindowShown(GameWindow *win)
+{
+	for (GameWindow *w = win; w; w = w->winGetParent())
+		if (w->winIsHidden())
+			return FALSE;
+	return win != nullptr;
 }
 
 AsciiString zhboBuildSetFor(const Object *general)

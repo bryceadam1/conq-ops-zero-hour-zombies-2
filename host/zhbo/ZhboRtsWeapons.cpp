@@ -311,7 +311,7 @@ void drawRtsAmmo()
 		char name[64];
 		snprintf(name, sizeof(name), "ControlBar.wnd:ButtonCommand%02d", i);
 		GameWindow *win = TheWindowManager->winGetWindowFromId(nullptr, TheNameKeyGenerator->nameToKey(name));
-		if (!win || win->winIsHidden())
+		if (!zhboCommandWindowShown(win))
 			continue;
 		const CommandButton *button = (const CommandButton *)GadgetButtonGetData(win);
 		if (!button)
