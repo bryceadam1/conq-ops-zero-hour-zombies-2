@@ -184,6 +184,17 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
             }
         }
         d.silenced |= a.silenced;
+        if a.silenced {
+            if !d.silenced_fire_sound.is_empty() {
+                d.fire_sound = d.silenced_fire_sound.clone();
+            }
+            if !d.silenced_fx_weapon.is_empty() {
+                d.fx_weapon = d.silenced_fx_weapon.clone();
+            }
+            if !d.silenced_view_flash_fx.is_empty() {
+                d.view_flash_fx = d.silenced_view_flash_fx.clone();
+            }
+        }
         d.laser |= a.laser;
         d.specialties = d.specialties.union(a.specialties);
         if a.recoil_reduction.1 > 0.0 {
@@ -258,5 +269,25 @@ mod tests {
         let reflex = AttachmentDef { id: "reflex".into(), short: "reflex".into(), ..Default::default() };
         let got = resolve(&base(), &["reflex", "silencer"], |id| (id == "reflex").then_some(&reflex));
         assert_eq!(got.len(), 1);
+    }
+
+    #[test]
+    fn a_silenced_attachment_swaps_the_shot_and_flash() {
+        let base = WeaponDef {
+            id: "an94_mp".into(),
+            fire_sound: "ZHBO_BO2_Fire_an94_mp".into(),
+            fx_weapon: "ZHBO_FX_an94_mp".into(),
+            view_flash_fx: "ZHBO_BO2FX_fx_muz_ar_flash_1p".into(),
+            silenced_fire_sound: "ZHBO_BO2_Fire_an94_mp_silenced".into(),
+            silenced_fx_weapon: "ZHBO_FX_an94_mp_silenced".into(),
+            silenced_view_flash_fx: "ZHBO_BO2FX_fx_muz_silencer_md".into(),
+            ..Default::default()
+        };
+        let silencer = AttachmentDef { id: "silencer".into(), short: "silencer".into(), silenced: true, ..Default::default() };
+        let d = apply(&base, &[&silencer]);
+        assert!(d.silenced);
+        assert_eq!(d.fire_sound, "ZHBO_BO2_Fire_an94_mp_silenced");
+        assert_eq!(d.fx_weapon, "ZHBO_FX_an94_mp_silenced");
+        assert_eq!(d.view_flash_fx, "ZHBO_BO2FX_fx_muz_silencer_md");
     }
 }

@@ -201,6 +201,16 @@ pub struct WeaponDef {
     pub view_last_shot_shell_fx: String,
     pub projectile_object: String,
     pub fire_sound: String,
+    /// The empty magazine's click in BO2's vocabulary (`emptyFireSoundPlayer`), as a converted event.
+    pub empty_fire_sound: String,
+    /// The suppressed shot's player event (`AttachmentUnique.fire_sound_player`).
+    pub silenced_fire_sound: String,
+    /// The suppressed shot's third-person event (`AttachmentUnique.fire_sound`).
+    pub silenced_fire_sound_npc: String,
+    /// The FX weapon whose INI block carries the suppressed shot and flash.
+    pub silenced_fx_weapon: String,
+    /// The shared suppressed first-person FXList (`weapon/muzzleflashes/fx_muz_silencer_md`).
+    pub silenced_view_flash_fx: String,
     pub explode_sound: String,
     /// Viewmodel index in the converted art, or -1.
     pub viewmodel: i32,
@@ -415,6 +425,11 @@ impl Default for WeaponDef {
             view_last_shot_shell_fx: String::new(),
             projectile_object: String::new(),
             fire_sound: String::new(),
+            empty_fire_sound: String::new(),
+            silenced_fire_sound: String::new(),
+            silenced_fire_sound_npc: String::new(),
+            silenced_fx_weapon: String::new(),
+            silenced_view_flash_fx: String::new(),
             explode_sound: String::new(),
             viewmodel: -1,
             anims: 0,

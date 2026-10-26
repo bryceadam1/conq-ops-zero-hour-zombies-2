@@ -78,9 +78,20 @@ impl Shipped {
         for e in events {
             ev.insert(e.event, e.layers);
         }
+        for s in crate::sfx::SFX {
+            ev.entry(s.event.to_string()).or_insert_with(|| s.layers.iter().map(|a| a.to_string()).collect());
+        }
         let mut fx: HashMap<String, Vec<String>> = HashMap::new();
         for w in &bo2 {
             for e in [&w.view_flash_effect, &w.world_flash_effect, &w.view_shell_eject_effect, &w.view_last_shot_eject_effect, &w.explosion_effect].into_iter().flatten() {
+                let names = fx.entry(crate::fx::fxlist_name(&e.name)).or_default();
+                if !names.contains(&e.name) {
+                    names.push(e.name.clone());
+                }
+            }
+        }
+        for name in [crate::fx::SILENCER_VIEW_FLASH, crate::fx::SILENCER_WORLD_FLASH] {
+            if let Some(e) = zhbo_formats::fx::find(&common, name) {
                 let names = fx.entry(crate::fx::fxlist_name(&e.name)).or_default();
                 if !names.contains(&e.name) {
                     names.push(e.name.clone());
@@ -656,9 +667,13 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
             _ => b.absent(c),
         };
     }
+    // The mod's dry fire: the def's own event when it carries one, else the generic click.
     for c in cols::DEF_SOUNDS {
         let v = match c {
-            "empty_fire_sound_player" if d.class.is_gun() => sh.sound(zhbo_core::sounds::DRY_FIRE),
+            "empty_fire_sound_player" if d.class.is_gun() => {
+                let event = if d.empty_fire_sound.is_empty() { "ZHBO_BO2_DryFire" } else { d.empty_fire_sound.as_str() };
+                sh.sound(event)
+            }
             "pullback_sound_player" if thrown => sh.sound(zhbo_core::sounds::PULL_PIN),
             "projectile_explosion_sound" if explodes => sh.sound(zhbo_core::sounds::EXPLOSION),
             "melee_swipe_sound_player" => sh.sound(zhbo_core::sounds::MELEE_SWING),

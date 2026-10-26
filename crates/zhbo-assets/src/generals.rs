@@ -395,6 +395,20 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
                 d.view_flash_fx = effects.add(f, &|h| paks.image(h));
             }
         }
+        // The shared suppressor flash pair (BO2's `fx_muz_silencer_md` + `_3p`). BO2's
+        // `AttachmentUnique` carries no flash fields (weapon.rs:127-175), so the shared pair is the
+        // value when the weapon offers a silenced attachment.
+        if w.attachment_variants.iter().any(|(kind, _)| atts.iter().any(|a| a.kind == *kind && a.silenced)) {
+            if let Some(e) = zhbo_formats::fx::find(&common, crate::fx::SILENCER_VIEW_FLASH) {
+                d.silenced_view_flash_fx = effects.add(&e, &|h| paks.image(h));
+            }
+            if !d.silenced_fx_weapon.is_empty() {
+                if let Some(e) = zhbo_formats::fx::find(&common, crate::fx::SILENCER_WORLD_FLASH) {
+                    let world_fx = effects.add(&e, &|h| paks.image(h));
+                    fx_ini = ini_set(&fx_ini, "Weapon", &d.silenced_fx_weapon, "FireFX", &world_fx)?;
+                }
+            }
+        }
         if let Some(f) = &w.view_shell_eject_effect {
             // The patch zone's copies of the shell models and materials are reference stubs for
             // some families (the pistol's live in `common_mp`); the shell resolver tries these in

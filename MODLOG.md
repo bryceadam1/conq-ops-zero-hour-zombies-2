@@ -3641,6 +3641,41 @@ Verified: cargo test --workspace green; the real-install suite (`--skip conforma
 clippy clean; `cargo xtask build` clean; autotest 13/13 default, `--classpick` all checks,
 14/14 `--rts`; the conformance run as measured above.
 
+## Sounds: the dry-fire is per-weapon, silencers swap the shot and the flash (2026-10-25)
+
+Merged `v1/sounds-swap` (3 commits + the integrator's `actual.rs` conflict resolution). The
+mod's sound behavior gets three BO2-driven corrections, all measured by the conformance gate:
+
+* **Dry-fire is per-weapon** (9,331 cells cleared). BO2 carries `emptyFireSoundPlayer` per
+  weapon (five aliases: generic 8,758, GL-rifle 558, crossbow 12, RPG 2, Beretta 1); the mod
+  hard-coded the AN-94's click for every gun and the field was parsed but never consumed. Five
+  static events registered; `WeaponDef.empty_fire_sound` (populated for EVERY def, the
+  dual-optic/alt variants via `attachments::apply`'s clone — the 1,978-row residue the first
+  pass missed); `dry_fire_for` plays the def's event, the UI error beeps keep the generic.
+* **The generic alias's bank was a hunt**: `wpn_generic_dryfire_plr` is NOT in `mpl_common.all`'s
+  parsed alias array (the raw string IS in the decompressed `common_mp` zone — **a raw-string
+  grep is not proof the bank parser exposes an alias**); it lives in the map zone `mp_raid`'s
+  `mpl_raid.all`. `sfx`'s `pick` now keeps ALL prefix-matching banks (not the first) and a
+  common-missing event falls back to the world/map source; every alias that already resolved is
+  unchanged.
+* **Silencers swap the shot and the flash** (~1,759 cells per column). BO2's silenced gunshot is
+  the unique's `fire_sound_player`/`fire_sound`; the silenced flash is a SHARED pair
+  (`fx_muz_silencer_md`/`_3p` — BO2's uniques carry no flash field, so the pair is a converter
+  constant). New `WeaponDef` fields (`silenced_fire_sound`, `silenced_fire_sound_npc`,
+  `silenced_fx_weapon`, `silenced_view_flash_fx`; `WEAPON_FIELDS` 73 → 78); `attachments::apply`
+  swaps them when the attachment is silenced. `fire_sound_player`/`fire_sound` hit their plan
+  targets exactly; the `effects` area dropped precisely −1,759.
+
+Cumulative conformance: `sounds` 48,003 → 35,154 (the rest is the uncarried sound fields —
+first-raise/putaway/ads-zoom/melee/etc. — folded into the missing-fields cycle, and the
+LFE-layer mismatches, a separate question); `effects` 50,384 → 48,625; the
+`world_flash_effect` rows stay the generator's artifact (the other session's adapter cell).
+Archive VERSION 74 → 75; no ABI.
+
+Verified: cargo test --workspace green; the real-install suite (`--skip conformance`) green;
+clippy clean; `cargo xtask build` clean; autotest 13/13 default, `--classpick` all checks,
+14/14 `--rts`, `--rts-dry` PASS.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
