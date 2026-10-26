@@ -178,8 +178,12 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   `viewFlashEffect`/`viewShellEjectEffect`/`viewLastShotEjectEffect` by `zhbo-assets`. The generic
   `ZHBO_ViewmodelMuzzle` FXList is the fallback when a weapon's **flash** was not convertible;
   brass has none, because BO2's rule is the def alone — a weapon without `viewShellEjectEffect`
-  ejects nothing (131 of 172 MP defs, the AN-94 among them; no eject notetrack and no default), so
-  the bridge skips the shell call when `ViewShellFx` is empty. The port is `tag_brass` plus
+  ejects nothing (the launchers, the crossbow, the M32; no eject notetrack and no default), so the
+  bridge skips the shell call when `ViewShellFx` is empty. The def's effect is bound as BO2's asset
+  pool binds it (`zhbo_formats::weapon::all_in`): `common_mp` carries `weapon/shellejects/fx_rifle`
+  only as a reference stub and `patch_mp` the full asset, so the AN-94, the other ARs and the
+  snipers do eject. Every attachment combination in the table carries its base's converted
+  flash/brass/shot (`zhbo_assets::weapons::inherit_converted_assets`, the silencer swap applied). The port is `tag_brass` plus
   `tag_brass1` (the `_lh` model's left port, present only on a dual-wield pair, whose guns the mod
   draws firing each trigger); a missing bone makes the second call a no-op. A shell's X is the
   eject direction, so its converted FXList sets `OrientToObject = Yes` and keeps BO2's axes, unlike

@@ -62,10 +62,13 @@ impl Shipped {
         // `generals::files` ran; deterministic over the same inputs).
         let common = crate::generals::load_zone(bo2_dir, "common_mp")?;
         let patch = crate::generals::load_zone(bo2_dir, crate::fx::ZONE)?;
-        let bo2 = zhbo_formats::weapon::all(&common).map_err(|e| e.to_string())?;
+        let bo2 = zhbo_formats::weapon::all_in(&common, &[&patch]).map_err(|e| e.to_string())?;
         let atts = zhbo_formats::weapon::attachments(&common).map_err(|e| e.to_string())?;
         let mut defs = zhbo_core::weapons::parse_full_table(&text)?.weapons;
-        let (events, fx_ini) = crate::weapons::sounds_and_fx(&bo2, &atts, &mut defs, &crate::weapons::converted(&patch, &bo2));
+        let (events, _) = crate::weapons::sounds_and_fx(&bo2, &atts, &mut defs, &crate::weapons::converted(&patch, &bo2));
+        // The FX weapons as shipped: the converter sets each one's `FireFX` to BO2's own world
+        // flash after `sounds_and_fx` wrote the block, so the regenerated INI is not what plays.
+        let fx_ini = files.get(crate::generals::FX_WEAPONS_INI_PATH).map(|b| String::from_utf8_lossy(b).to_string()).ok_or("the conversion shipped no FX weapons")?;
         let mut fx_weapons = HashMap::new();
         let mut current = None;
         for line in fx_ini.lines().map(str::trim) {
@@ -127,9 +130,10 @@ impl Shipped {
         Some(self.fx.get(fxlist).map_or_else(|| fxlist.to_string(), |n| n.join("|")))
     }
 
-    /// The third-person flash of a def's FX weapon (a Zero Hour FXList; `NONE` is no flash).
+    /// The third-person flash of a def's FX weapon, as the BO2 effect its FXList was made from
+    /// (`NONE` is no flash).
     fn world_flash(&self, fx_weapon: &str) -> Option<String> {
-        self.fx_weapons.get(fx_weapon).filter(|f| *f != "NONE").cloned()
+        self.fx_weapons.get(fx_weapon).filter(|f| *f != "NONE").and_then(|f| self.effect(f))
     }
 
     /// The first BO2 alias a sound event mixes: a converted weapon's own (`DynSfx`) or a fixed one

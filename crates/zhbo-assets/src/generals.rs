@@ -216,6 +216,9 @@ pub(crate) const OPTIC_WINDOW: f32 = 0.72;
 const SMOKE_EFFECT: &str = "weapon/grenade/fx_smoke_willy_pete";
 /// The overhead General's bullet impacts (see `ZhboBridge.cpp`, `loadRtsFx`).
 pub use zhbo_core::names::RTS_FX_PATH;
+/// The FX weapons INI: each converted gun's third-person shot (`FireFX`, `FireSound`) and the
+/// overhead General's weapons.
+pub const FX_WEAPONS_INI_PATH: &str = "Data\\INI\\Weapon\\ZHBO_BO2_Weapons.ini";
 /// The box a BO2 soldier is clicked by (inches: a man standing, with some room).
 const SOLDIER_BOX_CENTRE: [f32; 3] = [0.0, 0.0, 36.0];
 const SOLDIER_BOX_EXTENT: [f32; 3] = [18.0, 18.0, 38.0];
@@ -235,7 +238,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
 
     // Every BO2 multiplayer weapon a player can carry, with its attachments and alt modes, as the
     // core's weapon table; art for the converted ones (the loadout first, then the rest).
-    let bo2 = zhbo_formats::weapon::all(&common).map_err(|e| e.to_string())?;
+    let bo2 = zhbo_formats::weapon::all_in(&common, &[&patch]).map_err(|e| e.to_string())?;
     let atts = zhbo_formats::weapon::attachments(&common).map_err(|e| e.to_string())?;
     let names = crate::weapons::names(bo2_dir);
     let meta = crate::weapons::attachment_metadata(&patch, &patch_ui, &names);
@@ -377,7 +380,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     // BO2's own explosions for the converted weapons (and equipment breaking), as Zero Hour
     // particle systems.
     let mut effects = crate::fx::Converted::default();
-    let mut ids: Vec<String> = converted_base.clone();
+    let mut ids: Vec<String> = crate::weapons::with_alt_modes(&table.weapons, &converted_base);
     ids.extend(table.weapons.iter().filter(|d| d.id.contains('~')).map(|d| d.id.clone()));
     // Each gun's muzzle flash as others see it (BO2's `worldFlashEffect`), by weapon id.
     let mut flashes: BTreeMap<String, String> = BTreeMap::new();
@@ -447,7 +450,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     // The overhead General's weapon for every player weapon (swapped in by class and order).
     let has_event = |name: &str| extra.iter().any(|e| e.event == name);
     fx_ini.push_str(&crate::weapons::rts_weapons_ini(&table.weapons, &flashes, &has_event));
-    out.insert("Data\\INI\\Weapon\\ZHBO_BO2_Weapons.ini".into(), fx_ini.into_bytes());
+    out.insert(FX_WEAPONS_INI_PATH.into(), fx_ini.into_bytes());
     // Under RTS control: the rifle's and pistol's BO2 hits on what they shoot, by what it is
     // (ZhboBridge plays them as the shots land).
     let loadout = zhbo_core::weapons::Loadout::default();
@@ -503,6 +506,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         out.insert(crate::sfx::WEAPON_INI_PATH.into(), text.into_bytes());
     }
 
+    // The combinations were built before the passes above filled their bases' sounds and FX.
+    crate::weapons::inherit_converted_assets(&mut table, &bo2);
     out.insert(crate::weapons::TABLE_PATH.into(), zhbo_core::weapons::format_full_table(&table).into_bytes());
     summary.push(format!("{} weapons and {} attachments in the table", table.weapons.len(), table.attachments.len()));
 
@@ -532,23 +537,27 @@ mod tests {
         let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(&bo2_dir, f.zone).unwrap()).collect();
         let paks = Paks::open(&bo2_dir).unwrap();
         let names = crate::weapons::names(&bo2_dir);
-        let bo2 = zhbo_formats::weapon::all(&common).unwrap();
+        let bo2 = zhbo_formats::weapon::all_in(&common, &[&patch]).unwrap();
         let atts = zhbo_formats::weapon::attachments(&common).unwrap();
-        // The weapon's own first-person effects are parsed (R8): the AN-94 has a flash only.
+        // The weapon's own first-person effects are parsed (R8) and bound as BO2's asset pool binds
+        // them: `common_mp` holds `weapon/shellejects/fx_rifle` only as a reference stub, the full
+        // asset is `patch_mp`'s — so the AN-94, the other ARs and the snipers DO eject brass.
         let an94 = bo2.iter().find(|w| w.name == "an94_mp").expect("an94_mp");
         assert!(an94.view_flash_effect.is_some(), "the AN-94 has a viewFlashEffect");
-        // BO2 ejects a shell only when the def defines `viewShellEjectEffect` — no notetrack, no
-        // animation, no default — so the AN-94 and every other AR and sniper eject nothing.
-        assert!(an94.view_shell_eject_effect.is_none(), "the AN-94 has no viewShellEjectEffect");
+        assert_eq!(an94.view_shell_eject_effect.as_ref().map(|e| e.name.as_str()), Some("weapon/shellejects/fx_rifle"), "bound from patch_mp");
         let shell = |n: &str| bo2.iter().find(|w| w.name == n).unwrap_or_else(|| panic!("{n}")).view_shell_eject_effect.is_some();
-        for n in ["hk416_mp", "dsr50_mp", "m32_mp", "crossbow_mp"] {
+        for n in ["m32_mp", "crossbow_mp"] {
             assert!(!shell(n), "{n} defines none and must eject nothing");
         }
-        for n in ["mp7_mp", "mk48_mp", "870mcs_mp"] {
+        for n in ["mp7_mp", "mk48_mp", "870mcs_mp", "hk416_mp", "dsr50_mp"] {
             assert!(shell(n), "{n} defines its own shell effect");
         }
-        assert_eq!(bo2.iter().filter(|w| w.view_shell_eject_effect.is_some()).count(), 41, "41 of 172 common_mp defs");
-        assert_eq!(bo2.iter().filter(|w| w.view_last_shot_eject_effect.is_some()).count(), 41, "and their last-shot twins");
+        // Without the later zone the stub stays unbound: the pool, not the parse, decides.
+        let common_only = zhbo_formats::weapon::all(&common).unwrap();
+        assert!(common_only.iter().find(|w| w.name == "an94_mp").unwrap().view_shell_eject_effect.is_none());
+        for w in &bo2 {
+            assert_eq!(w.view_shell_eject_effect.is_some(), w.view_last_shot_eject_effect.is_some(), "{}: the last-shot twin", w.name);
+        }
         let mut defs: Vec<zhbo_core::weapons::WeaponDef> =
             bo2.iter().filter(|w| crate::weapons::is_player_weapon(w)).map(|w| crate::weapons::to_def(w, &names)).collect();
         assert!(defs.len() > 50, "{} player weapons", defs.len());
@@ -814,7 +823,7 @@ mod tests {
         assert!(draw.contains("WeaponFireFXBone    = SECONDARY ZF01") && draw.contains("ZHBO_PLR_PRL"));
         // Every player weapon has the overhead General's Zero Hour weapon, and its name fits the
         // ABI's slot (`ZhboRtsWeapons::templates`).
-        let rts = text("Data\\INI\\Weapon\\ZHBO_BO2_Weapons.ini");
+        let rts = text(FX_WEAPONS_INI_PATH);
         let table = zhbo_core::weapons::parse_full_table(&text(crate::weapons::TABLE_PATH)).unwrap();
         for d in table.weapons.iter().filter(|d| !d.id.contains(['+', '~'])) {
             let name = zhbo_core::names::rts_weapon(&d.id);
@@ -824,7 +833,8 @@ mod tests {
         // Shell ejection (notetrack-brass): only a def that defines one converts a shell FXList, and
         // that FXList is spawned at the posed `tag_brass` — oriented to the bone, on BO2's axes.
         let by_id = |id: &str| table.weapons.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("no {id}"));
-        assert!(by_id("an94_mp").view_shell_fx.is_empty(), "the AN-94 must stay silent");
+        assert!(!by_id("an94_mp").view_shell_fx.is_empty(), "the AN-94's patch_mp fx_rifle must convert");
+        assert_eq!(by_id("an94_mp+grip").view_shell_fx, by_id("an94_mp").view_shell_fx, "a combination ejects its base's brass");
         assert!(!by_id("mp7_mp").view_shell_fx.is_empty(), "the MP7's shell effect must convert");
         let fxs = text("Data\\INI\\FXList\\ZHBO_BO2_Effects.ini");
         let at = fxs.find("FXList ZHBO_BO2FX_weapon_shellejects_fx_pistol\n").expect("the pistol shell FXList");

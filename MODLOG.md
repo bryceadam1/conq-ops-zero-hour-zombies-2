@@ -4464,3 +4464,46 @@ stays "W00" and the INI's hidden list/draw indices keep working.
 **Verified.** `cargo test -p zhbo-assets` green; `cargo test --workspace` green; `cargo clippy
 --workspace --all-targets` exit 0; the real-install suite (`--skip conformance`) green. No game
 launched. Conformance was not run on the full archive this round.
+
+## Combinations carry their base's shot, flash and brass; brass binds through `patch_mp` (2026-10-26, branch `v1/sounds-effects`)
+
+Item 5b's first family. Three converter defects, all measured by the conformance gate:
+
+* **The combinations in the table had no converted sounds or FX at all.** `generals::files` builds
+  every legal combination (`add_variants`) before `sounds_and_fx` and the effects pass fill the
+  base defs' events and FXLists, and both passes only touch the base set — so ~20,000 combination
+  entries shipped with an empty `FireSound`/`FxWeapon`/`ViewFlashFx`/`ViewShellFx`: a picked class
+  fired the global (AN-94) shot, drew no flash, ejected no brass and was silent and flashless to
+  others. New `inherit_converted_assets` re-derives each combination (and its alt mode) from its
+  now-converted base through the same `build_variant` rule `add_variants` uses (the core's
+  `attachments::apply`, so the silencer swap comes for free) and takes only the asset family
+  (`WeaponDef::take_converted_assets` — one list; a new converted field added there is inherited
+  everywhere). The sound and FX passes now also cover every alt weapon a base's attachments add
+  (`with_alt_modes`: `gl_an94_mp`, `sf_an94_mp`, …), which the combinations' alt modes derive from.
+* **Duplicate table entries shadowed converted combinations.** Several BO2-legal ids collapse under
+  the mod's one-per-mount-point rule to an id already built (`mp7_mp+rf+steadyaim` three times,
+  `an94_mp+fmj` twice); `add_variants` deduplicated on the requested spelling, not the built id, so
+  the later copy (no viewmodel, no sounds) won the catalog lookup. Deduplicated on the built id —
+  this alone cleared 651 `view_model` rows and ~650 cells in every anim column. (The collapse itself
+  — BO2 allowing two attachments the mod puts on one point — is the combination-legality item's.)
+* **The AN-94 does eject brass.** The R8c-era finding "41 of 172 defs eject, the AN-94 and every AR
+  and sniper are silent" was a parse artifact: `common_mp` holds `weapon/shellejects/fx_rifle` only
+  as a `,`-prefixed reference stub (no elements) and the full asset lives in `patch_mp`; BO2's asset
+  pool binds by name, so those defs eject `fx_rifle`. `zhbo_formats::weapon::all_in(common,
+  &[patch])` binds stub effects (both flashes, both view shells) through the pool, latest zone first;
+  `all()` keeps the zone-local behavior. **Gotcha: an FX pointer to an element-less asset is a
+  reference, not "no effect" — resolve it by name in the later zones before concluding absence.**
+* `world_flash_effect`'s base-row mismatch was, as the audit said, the adapter's artifact: it
+  regenerated the FX-weapon INI with `sounds_and_fx` and read `FireFX` before `generals` sets it to
+  the converted BO2 world flash. It now reads the shipped INI (`generals::FX_WEAPONS_INI_PATH`) and
+  maps the FXList back to its BO2 effect like every other effect column.
+
+Measured (baseline main fc03d7b → this commit): weapons cells **706,586 → 600,049 (−106,537)**,
+clusters 203 → 199, gap clusters 214 → 210, zero regressions. Per column: `view_flash_effect`
+7,407 → 0, `view_shell_eject_effect`/`view_last_shot_eject_effect` 8,148 → 0 each,
+`world_flash_effect` 9,332 → 1, `fire_sound` 9,296 → 9, `fire_sound_player` 8,938 → 674 (the LFE
+layers of item 16 and the launcher alt shots remain), `view_model` 651 → 0, anims −51,747 in total,
+parts −2,874, camo −322, hide −328, `ads_recoil_reduction` −30. In game this is audible and visible
+(the integrator's eyeball leg): every picked combination now fires its own gun's shot and flash, and
+the ARs/snipers eject brass. No ABI change; the archive content changed (VERSION bump is the
+integrator's).

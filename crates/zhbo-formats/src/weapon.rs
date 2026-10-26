@@ -805,15 +805,15 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.melee_swipe_sound_player = opt_str(z, d + WD::meleeSwipeSoundPlayer);
     w.impact_type = z.u32(d + WD::impactType);
     let flash = z.try_u32(d + WD::worldFlashEffect)?;
-    w.world_flash_effect = (flash != 0).then(|| crate::fx::read(z, flash)).filter(|e| !e.elems.is_empty());
+    w.world_flash_effect = crate::fx::read_or_stub(z, flash);
     let view_flash = z.try_u32(d + WD::viewFlashEffect)?;
-    w.view_flash_effect = (view_flash != 0).then(|| crate::fx::read(z, view_flash)).filter(|e| !e.elems.is_empty());
+    w.view_flash_effect = crate::fx::read_or_stub(z, view_flash);
     let shell = z.try_u32(d + WD::viewShellEjectEffect)?;
-    w.view_shell_eject_effect = (shell != 0).then(|| crate::fx::read(z, shell)).filter(|e| !e.elems.is_empty());
+    w.view_shell_eject_effect = crate::fx::read_or_stub(z, shell);
     let last_shell = z.try_u32(d + WD::viewLastShotEjectEffect)?;
-    w.view_last_shot_eject_effect = (last_shell != 0).then(|| crate::fx::read(z, last_shell)).filter(|e| !e.elems.is_empty());
+    w.view_last_shot_eject_effect = crate::fx::read_or_stub(z, last_shell);
     let fx = z.try_u32(d + WD::projExplosionEffect)?;
-    w.explosion_effect = (fx != 0).then(|| crate::fx::read(z, fx)).filter(|e| !e.elems.is_empty()).or_else(|| crate::fx::explosion_entry(w.impact_type).and_then(|e| crate::fx::impact(z, e, crate::fx::surface::DIRT)));
+    w.explosion_effect = crate::fx::bind(crate::fx::read_or_stub(z, fx), &[z]).or_else(|| crate::fx::explosion_entry(w.impact_type).and_then(|e| crate::fx::impact(z, e, crate::fx::surface::DIRT)));
     w.hud_icon = named(z, d + WD::hudIcon);
     let icon = z.try_u32(d + WD::hudIcon)?;
     w.hud_icon_hash = (icon != 0)
@@ -825,8 +825,23 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
 
 /// Every weapon in a loaded zone.
 pub fn all(z: &Zone) -> Result<Vec<Weapon>, FormatError> {
+    all_in(z, &[])
+}
+
+/// The weapons of `z` with their effects bound as BO2's asset pool binds them: a def pointing at a
+/// reference stub (`common_mp`'s `,weapon/shellejects/fx_rifle`) plays the full asset of that name
+/// from a later zone (`later`, latest-loaded first — `patch_mp`), then from `z` itself.
+pub fn all_in(z: &Zone, later: &[&Zone]) -> Result<Vec<Weapon>, FormatError> {
     let Some(kind) = crate::fastfile::asset_type_id("weapon") else { return Ok(Vec::new()) };
-    z.assets.iter().filter(|a| a.kind == kind).map(|a| read(z, a.addr)).collect()
+    let mut pool: Vec<&Zone> = later.to_vec();
+    pool.push(z);
+    let mut out: Vec<Weapon> = z.assets.iter().filter(|a| a.kind == kind).map(|a| read(z, a.addr)).collect::<Result<_, _>>()?;
+    for w in &mut out {
+        for e in [&mut w.world_flash_effect, &mut w.view_flash_effect, &mut w.view_shell_eject_effect, &mut w.view_last_shot_eject_effect] {
+            *e = crate::fx::bind(e.take(), &pool);
+        }
+    }
+    Ok(out)
 }
 
 /// One `WeaponCamo` asset (`camo_<weapon>` in `common_patch_mp`, the `camo` type in the asset

@@ -310,40 +310,73 @@ pub fn add_variants(table: &mut Table, converted: &[String], bo2: &[Weapon]) {
         if table.weapons.iter().any(|d| &d.id == id) {
             continue;
         }
-        let (base_id, shorts) = attachments::split_id(id);
-        let Some(base) = table.weapons.iter().find(|d| d.id == base_id).cloned() else { continue };
-        let atts = attachments::resolve(&base, &shorts, |a| table.attachments.iter().find(|x| x.id == a));
-        let mut d = attachments::apply(&base, &atts);
-        let combo_shorts: Vec<&str> = d.attachments.iter().map(String::as_str).collect();
-        if let Some((overlay_material, overlay_material_low_res, overlay_reticle)) =
-            bo2.iter().find(|w| w.name == base_id).and_then(|w| overlay_for(w, &combo_shorts))
-        {
-            d.overlay_material = overlay_material;
-            d.overlay_material_low_res = overlay_material_low_res;
-            d.overlay_reticle = overlay_reticle;
+        let Some((d, alt)) = build_variant(table, id, bo2) else { continue };
+        // An id whose attachments do not all resolve on the weapon builds a combination already in
+        // the table (`an94_mp+fmj+<unoffered>` is `an94_mp+fmj`): one entry per id, or the
+        // catalog's later duplicate (no art, no sounds) shadows the converted one.
+        if table.weapons.iter().any(|w| w.id == d.id) {
+            continue;
         }
-        if let Some((short, alt_id)) = base.alt_modes.iter().find(|(short, _)| d.attachments.contains(short)) {
-            if let Some(alt_base) = table.weapons.iter().find(|w| &w.id == alt_id).cloned() {
-                // Select fire and the second optic keep the weapon's other attachments.
-                let others: Vec<&AttachmentDef> = atts.iter().copied().filter(|a| &a.short != short).collect();
-                let mut alt = if alt_base.alt_own_ammo { alt_base.clone() } else { attachments::apply(&alt_base, &others) };
-                let alt_shorts: Vec<&str> = alt.attachments.iter().map(String::as_str).collect();
-                if let Some((overlay_material, overlay_material_low_res, overlay_reticle)) =
-                    bo2.iter().find(|w| &w.name == alt_id).and_then(|w| overlay_for(w, &alt_shorts))
-                {
-                    alt.overlay_material = overlay_material;
-                    alt.overlay_material_low_res = overlay_material_low_res;
-                    alt.overlay_reticle = overlay_reticle;
-                }
-                alt.id = format!("{alt_id}~{}", d.id);
-                alt.alt = d.id.clone();
-                alt.alt_own_ammo = alt_base.alt_own_ammo;
-                alt.display_name = alt_base.display_name.clone();
-                d.alt = alt.id.clone();
-                table.weapons.push(alt);
+        table.weapons.extend(alt.filter(|a| !table.weapons.iter().any(|w| w.id == a.id)));
+        table.weapons.push(d);
+    }
+}
+
+/// One combination `id` and its alt mode (when an attachment adds one), derived from the table's
+/// base defs by the core's attachment rule, with the overlay of the mounted optic.
+fn build_variant(table: &Table, id: &str, bo2: &[Weapon]) -> Option<(WeaponDef, Option<WeaponDef>)> {
+    let (base_id, shorts) = attachments::split_id(id);
+    let base = table.weapons.iter().find(|d| d.id == base_id)?;
+    let atts = attachments::resolve(base, &shorts, |a| table.attachments.iter().find(|x| x.id == a));
+    let mut d = attachments::apply(base, &atts);
+    let combo_shorts: Vec<&str> = d.attachments.iter().map(String::as_str).collect();
+    if let Some((overlay_material, overlay_material_low_res, overlay_reticle)) =
+        bo2.iter().find(|w| w.name == base_id).and_then(|w| overlay_for(w, &combo_shorts))
+    {
+        d.overlay_material = overlay_material;
+        d.overlay_material_low_res = overlay_material_low_res;
+        d.overlay_reticle = overlay_reticle;
+    }
+    let mut alt_out = None;
+    if let Some((short, alt_id)) = base.alt_modes.iter().find(|(short, _)| d.attachments.contains(short)) {
+        if let Some(alt_base) = table.weapons.iter().find(|w| &w.id == alt_id) {
+            // Select fire and the second optic keep the weapon's other attachments.
+            let others: Vec<&AttachmentDef> = atts.iter().copied().filter(|a| &a.short != short).collect();
+            let mut alt = if alt_base.alt_own_ammo { alt_base.clone() } else { attachments::apply(alt_base, &others) };
+            let alt_shorts: Vec<&str> = alt.attachments.iter().map(String::as_str).collect();
+            if let Some((overlay_material, overlay_material_low_res, overlay_reticle)) =
+                bo2.iter().find(|w| &w.name == alt_id).and_then(|w| overlay_for(w, &alt_shorts))
+            {
+                alt.overlay_material = overlay_material;
+                alt.overlay_material_low_res = overlay_material_low_res;
+                alt.overlay_reticle = overlay_reticle;
+            }
+            alt.id = format!("{alt_id}~{}", d.id);
+            alt.alt = d.id.clone();
+            alt.alt_own_ammo = alt_base.alt_own_ammo;
+            alt.display_name = alt_base.display_name.clone();
+            d.alt = alt.id.clone();
+            alt_out = Some(alt);
+        }
+    }
+    Some((d, alt_out))
+}
+
+/// The combinations [`add_variants`] built before the converter filled the base defs' sounds and
+/// FX (`sounds_and_fx`, the effects pass): re-derive each one from its now-converted base by the
+/// same rule and take its converted assets ([`WeaponDef::take_converted_assets`]), so a combination
+/// plays its own weapon's shot, flash and brass — and the silencer swap — exactly as a combination
+/// the runtime builds (`Catalog::get`) would. Everything else on the entry (its viewmodel, clips,
+/// overlay) is left as the art passes set it.
+pub fn inherit_converted_assets(table: &mut Table, bo2: &[Weapon]) {
+    let ids: Vec<String> = table.weapons.iter().filter(|d| d.id.contains('+') && !d.id.contains('~')).map(|d| d.id.clone()).collect();
+    for id in ids {
+        let Some((fresh, fresh_alt)) = build_variant(table, &id, bo2) else { continue };
+        for fresh in std::iter::once(fresh).chain(fresh_alt) {
+            if let Some(d) = table.weapons.iter_mut().find(|d| d.id == fresh.id) {
+                d.take_converted_assets(&fresh);
             }
         }
-        table.weapons.push(d);
     }
 }
 
@@ -405,13 +438,10 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
             d.empty_fire_sound = dry_fire_event(w.empty_fire_sound_player.as_deref()).to_string();
         }
     }
-    // The converted weapons and their alt modes.
-    let mut ids: Vec<String> = converted.to_vec();
-    for id in converted {
-        if let Some(alt) = defs.iter().find(|d| &d.id == id).map(|d| d.alt.clone()).filter(|a| !a.is_empty()) {
-            ids.push(alt);
-        }
-    }
+    // The converted weapons and their alt modes: the one a combination toggles to, and every alt
+    // weapon a base's attachments add (`gl_an94_mp`), so the combinations derived from them later
+    // (`inherit_converted_assets`) find their sounds.
+    let ids = with_alt_modes(defs, converted);
     for id in &ids {
         let base = crate::generals::base_id(id);
         let Some(w) = bo2.iter().find(|w| w.name == base) else { continue };
@@ -481,6 +511,22 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
         }
     }
     (events, ini)
+}
+
+/// `ids` and the alt modes they reach: each one's current alt (`d.alt`) and every alt weapon its
+/// attachments add (`alt_modes`), each once, in first-seen order.
+pub fn with_alt_modes(defs: &[WeaponDef], ids: &[String]) -> Vec<String> {
+    let mut out: Vec<String> = ids.to_vec();
+    for id in ids {
+        let Some(d) = defs.iter().find(|d| &d.id == id) else { continue };
+        let alts = std::iter::once(&d.alt).chain(d.alt_modes.iter().map(|(_, alt)| alt));
+        for alt in alts.filter(|a| !a.is_empty()) {
+            if !out.contains(alt) {
+                out.push(alt.clone());
+            }
+        }
+    }
+    out
 }
 
 /// A weapon a player can carry in BO2 multiplayer (not killstreak, turret or alt-mode entries).
@@ -1056,6 +1102,65 @@ mod tests {
         assert_eq!(def("as50_mp").overlay_material, "scope_overlay_xpr50");
         assert!(def("as50_mp+acog").overlay_material.is_empty(), "the ACOG's unique has no overlay");
         assert_eq!(def("as50_mp+fmj").overlay_material, "scope_overlay_xpr50", "FMJ leaves the base scope");
+    }
+
+    /// The combinations are built before the converter fills the base defs' sounds and FX; the
+    /// inheritance pass must hand every combination (and its alt mode) its base's assets, with the
+    /// silencer's swap, and leave its art alone.
+    #[test]
+    fn combinations_inherit_the_converted_sounds_and_fx_with_the_silencer_swap() {
+        let w = Weapon { name: "an94_mp".into(), clip_size: 30, fire_time: 0.1, ..Default::default() };
+        let gl = Weapon { name: "gl_an94_mp".into(), clip_size: 1, fire_time: 0.1, ..Default::default() };
+        let mut base = to_def(&w, &HashMap::new());
+        base.alt_modes = vec![("gl".into(), "gl_an94_mp".into())];
+        base.allowed = ["silencer", "grip", "gl"].map(|s| (s.to_string(), s.to_string())).to_vec();
+        let mut alt = to_def(&gl, &HashMap::new());
+        alt.alt_own_ammo = true;
+        let mut table = Table {
+            weapons: vec![base, alt],
+            attachments: vec![
+                AttachmentDef { id: "silencer".into(), short: "silencer".into(), point: 2, silenced: true, ..Default::default() },
+                AttachmentDef { id: "grip".into(), short: "grip".into(), point: 3, ..Default::default() },
+                AttachmentDef { id: "gl".into(), short: "gl".into(), point: 3, ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let ids: Vec<String> = ["an94_mp+grip", "an94_mp+grip+silencer", "an94_mp+gl"].map(String::from).to_vec();
+        add_variants(&mut table, &ids, &[w.clone(), gl.clone()]);
+        // The art pass marks a combination's own viewmodel; inheritance must keep it.
+        table.weapons.iter_mut().find(|d| d.id == "an94_mp+grip").unwrap().viewmodel = 7;
+        // The sound and FX passes fill the bases only.
+        let b = table.weapons.iter_mut().find(|d| d.id == "an94_mp").unwrap();
+        b.fire_sound = "ZHBO_BO2_Fire_an94_mp".into();
+        b.fx_weapon = "ZHBO_FX_an94_mp".into();
+        b.view_flash_fx = "ZHBO_BO2FX_fx_muz_ar_flash_1p".into();
+        b.view_shell_fx = "ZHBO_BO2FX_fx_rifle".into();
+        b.silenced_fire_sound = "ZHBO_BO2_Fire_an94_mp_silenced".into();
+        b.silenced_fx_weapon = "ZHBO_FX_an94_mp_silenced".into();
+        b.silenced_view_flash_fx = "ZHBO_BO2FX_fx_muz_silencer_md".into();
+        table.weapons.iter_mut().find(|d| d.id == "gl_an94_mp").unwrap().explosion_fx = "ZHBO_BO2FX_gl".into();
+        let def = |t: &Table, id: &str| t.weapons.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("no {id}")).clone();
+        assert!(def(&table, "an94_mp+grip").fire_sound.is_empty(), "the precondition: built before the passes");
+        inherit_converted_assets(&mut table, &[w, gl]);
+        let grip = def(&table, "an94_mp+grip");
+        assert_eq!((grip.fire_sound.as_str(), grip.fx_weapon.as_str()), ("ZHBO_BO2_Fire_an94_mp", "ZHBO_FX_an94_mp"));
+        assert_eq!((grip.view_flash_fx.as_str(), grip.view_shell_fx.as_str()), ("ZHBO_BO2FX_fx_muz_ar_flash_1p", "ZHBO_BO2FX_fx_rifle"));
+        assert_eq!(grip.viewmodel, 7, "the combination's art is untouched");
+        let sil = def(&table, "an94_mp+grip+silencer");
+        assert_eq!(sil.fire_sound, "ZHBO_BO2_Fire_an94_mp_silenced");
+        assert_eq!(sil.fx_weapon, "ZHBO_FX_an94_mp_silenced");
+        assert_eq!(sil.view_flash_fx, "ZHBO_BO2FX_fx_muz_silencer_md");
+        assert_eq!(def(&table, "gl_an94_mp~an94_mp+gl").explosion_fx, "ZHBO_BO2FX_gl", "the alt mode inherits from its alt weapon");
+    }
+
+    #[test]
+    fn with_alt_modes_adds_each_reachable_alt_once() {
+        let mut a = WeaponDef { id: "an94_mp".into(), ..Default::default() };
+        a.alt_modes = vec![("gl".into(), "gl_an94_mp".into()), ("sf".into(), "sf_an94_mp".into())];
+        let mut c = WeaponDef { id: "an94_mp+gl".into(), alt: "gl_an94_mp~an94_mp+gl".into(), ..Default::default() };
+        c.alt_modes = vec![("gl".into(), "gl_an94_mp".into())];
+        let ids = with_alt_modes(&[a, c], &["an94_mp".into(), "an94_mp+gl".into()]);
+        assert_eq!(ids, ["an94_mp", "an94_mp+gl", "gl_an94_mp", "sf_an94_mp", "gl_an94_mp~an94_mp+gl"]);
     }
 
     #[test]

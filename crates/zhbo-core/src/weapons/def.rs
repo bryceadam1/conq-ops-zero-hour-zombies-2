@@ -479,6 +479,25 @@ pub const MELEE_RANGE: f32 = inches(64.0);
 pub const MELEE_FX_WEAPON: &str = "ZHBO_Knife_FX";
 
 impl WeaponDef {
+    /// Take the converter's sound and FX assets from `from` (the same combination derived from its
+    /// fully converted base): the events and FXLists the converter fills on the base defs after the
+    /// table's combinations were built. One list, so a new converted asset field is inherited by
+    /// every combination the moment it is added here.
+    pub fn take_converted_assets(&mut self, from: &WeaponDef) {
+        self.fx_weapon.clone_from(&from.fx_weapon);
+        self.explosion_fx.clone_from(&from.explosion_fx);
+        self.view_flash_fx.clone_from(&from.view_flash_fx);
+        self.view_shell_fx.clone_from(&from.view_shell_fx);
+        self.view_last_shot_shell_fx.clone_from(&from.view_last_shot_shell_fx);
+        self.fire_sound.clone_from(&from.fire_sound);
+        self.empty_fire_sound.clone_from(&from.empty_fire_sound);
+        self.silenced_fire_sound.clone_from(&from.silenced_fire_sound);
+        self.silenced_fire_sound_npc.clone_from(&from.silenced_fire_sound_npc);
+        self.silenced_fx_weapon.clone_from(&from.silenced_fx_weapon);
+        self.silenced_view_flash_fx.clone_from(&from.silenced_view_flash_fx);
+        self.explode_sound.clone_from(&from.explode_sound);
+    }
+
     /// Damage at `distance` (ZH units). BO2's curve has six slots: unused middle slots have no
     /// range, and the last is the minimum damage at the end of the curve. Damage interpolates
     /// linearly between the used points and stays at the last one beyond it.
