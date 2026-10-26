@@ -7,7 +7,7 @@
 */
 
 use super::feel::{GunKick, Reticle, Sway, ViewPos};
-use super::handling::{Timing, Traits, Zoom};
+use super::handling::{CycleTimes, Traits, Zoom};
 use super::specialty::Specialties;
 use crate::units::inches;
 
@@ -279,8 +279,8 @@ pub struct WeaponDef {
     pub overlay_material_low_res: String,
     /// `weapOverlayReticle_t`: which reticle the overlay draws (0: none).
     pub overlay_reticle: u32,
-    /// The fire cycle's and reload's extra times (`handling::Timing`).
-    pub timing: Timing,
+    /// The fire cycle's and reload's extra times (`handling::CycleTimes`).
+    pub timing: CycleTimes,
     /// The zoom levels and fractions, depth of field and idle sway (`handling::Zoom`).
     pub zoom: Zoom,
     /// BO2's per-weapon flags, stack-fire spread, damage floor, penetration, offhand class.
@@ -474,7 +474,8 @@ impl Default for WeaponDef {
             overlay_material: String::new(),
             overlay_material_low_res: String::new(),
             overlay_reticle: 0,
-            timing: Timing::default(),
+            // The stand-in sprint-in, as `sprint_out_time` above (BO2 rifles author 200-300 ms).
+            timing: CycleTimes { sprint_in_time: 0.25, ..CycleTimes::default() },
             zoom: Zoom::default(),
             traits: Traits::default(),
         }

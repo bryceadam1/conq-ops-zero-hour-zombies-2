@@ -4469,7 +4469,7 @@ launched. Conformance was not run on the full archive this round.
 
 The weapon table now carries 36 BO2 fields it used to drop. The conformance gate had them all as
 "mod side empty". There are 16 new `Weapon` lines (`WEAPON_FIELDS` 78 → 94) and 8 new `Attachment`
-lines (`ATTACHMENT_FIELDS` 17 → 25). The new `weapons/handling.rs` holds the `Timing`, `Zoom` and
+lines (`ATTACHMENT_FIELDS` 17 → 25). The new `weapons/handling.rs` holds the `CycleTimes`, `Zoom` and
 `Traits` groups.
 
 * **Timing:** last-fire, fire delay, rechamber, rechamber bolt, hold fire, shots before
@@ -4524,3 +4524,47 @@ as it was for the old fields.
 Measured (conformance CLI, against the 2026-10-25 baseline): weapons cells **706,586 → 397,145**
 and clusters **203 → 174**; gap clusters **214 → 185**. All in-scope columns cleared to 0, except
 the alt-row residue above. No other column moved.
+
+**The sim consumers wired.** All are ported from read-only t6mp decompiles
+(`~/.opencode/plan/uncarried-fields/dec_*.c`). Each has an arsenal test in `weapons/mod.rs`.
+
+* **Rechamber.** A shot from a `bBoltAction` weapon sets BO2's per-weapon "owes a rechamber"
+  flag (`FUN_008dc260`). This happens on every shot, or once the shot counter reaches
+  `iShotsBeforeRechamber`, as on the SRM.
+  * When the fire state ends, the rechamber runs for `iRechamberTime` (`FUN_008db0d0`), and the
+    weapon cannot fire until it ends (`FUN_008db020`).
+  * Starting a reload drops the flag (`FUN_008e1510`), and the `rof` tick scales the rechamber.
+  * `iRechamberBoltTime` only marks the 7→8 sub-state (the bolt event), so it adds no time.
+  * The viewmodel now plays the rechamber clip from the sim's `WeaponState::rechamber` for bolt
+    actions; the old fire-time heuristic stays for the rest.
+  * `conformance::check` (the real-install "plays like BO2" test) now counts the rechambers in
+    its held-fire span.
+* **Last-fire time.** The magazine's last round (`FUN_008dc1e0`: clip < 2) fires over
+  `iLastFireTime`: the pistols' 240 ms slide lock, the pump's 528 ms, the crossbow's 320 ms.
+  * The automatic empty reload now waits for that fire state to end (`WeaponState::reload_owed`)
+    instead of starting on the shot's frame. One test was updated for this.
+  * A burst's threshold is its round count + 1, and no BO2 burst weapon authors the field, so
+    bursts keep the plain fire time.
+* **Spin-down.** Minigun barrels spin down over `iSpinDownTime` rather than at the spin-up rate.
+* **Sprint-in.** The viewmodel's fixed 0.25 s sprint-in is now the def's `sprintInTime`
+  (150–500 ms). The stand-in def keeps 0.25.
+
+**Carried but unused (follow-up, each needs its consumer):**
+
+* `iFireDelay` and `iHoldFireTime`: the offhand throw's wind-up and hold. The mod's offhand flow
+  is its own and needs a port of `FUN_008dc260`'s grenade branch.
+* The quick reloads: what selects `iReloadQuick*` was not found in G3. Find its caller.
+* `fAdsZoomInFrac`/`OutFrac` and the alt-scope times: the zoom lerp `FUN_004a0380` decompiles
+  with its FOV write lost (x87). It needs a disassembly read before porting.
+* `minPlayerDamage`: 0 on every weapon in the install, so a floor is a no-op until a weapon
+  authors it.
+* `penetrateType` and DOF: the mod has no surface penetration or depth of field.
+* `idle_amount`: gunpos's idle sway does not read it yet.
+* `overlay_alpha_scale`, `clip_only`, `infrared`, `mms`, `use_as_melee`, `rifle_bullet`, the
+  alt-mode flags, `offhand_class` and `stack_fire`: carried for their features (thermal, MMS
+  marking, the tri-bolt spread, the ADS-only alt).
+
+Verified: cargo test --workspace green; clippy --all-targets adds no warning in the changed lines;
+the real-install suites (zhbo-assets `--skip conformance` incl. `every_mp_weapon_converts_and_plays_like_bo2`,
+zhbo-formats) green; the conformance CLI as measured above. The in-game autotest is the integrator's.
+An archive VERSION bump is needed (the table gained lines; old tables still parse).

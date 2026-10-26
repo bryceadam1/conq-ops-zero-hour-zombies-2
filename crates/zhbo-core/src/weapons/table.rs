@@ -960,10 +960,10 @@ mod tests {
 
     #[test]
     fn the_handling_fields_round_trip() {
-        use super::super::handling::{OffhandClass, Penetrate, Timing, Traits, Zoom};
+        use super::super::handling::{CycleTimes, OffhandClass, Penetrate, Traits, Zoom};
         let d = WeaponDef {
             id: "dsr50_mp".into(),
-            timing: Timing { last_fire_time: 0.528, rechamber_time: 1.0, rechamber_bolt_time: 0.4, shots_before_rechamber: 4, bolt_action: true, reload_quick_time: 1.012, reload_start_add: 2, spin_down_time: 1.0, sprint_in_time: 0.25, ..Default::default() },
+            timing: CycleTimes { last_fire_time: 0.528, rechamber_time: 1.0, rechamber_bolt_time: 0.4, shots_before_rechamber: 4, bolt_action: true, reload_quick_time: 1.012, reload_start_add: 2, spin_down_time: 1.0, sprint_in_time: 0.25, ..Default::default() },
             zoom: Zoom { fov2: 12.5, fov3: 30.0, in_frac: 0.016, out_frac: 0.05, alt_scope_in_time: 0.15, dof: (2.2, 6.4), overlay_alpha_scale: 1.0, idle_amount: (60.0, 20.0), ..Default::default() },
             traits: Traits { dual_mag: true, rifle_bullet: true, ignore_attachments: true, stack_fire: (1.5, 1.0), min_player_damage: 5.0, penetrate: Penetrate::Large, offhand: OffhandClass::Gear, ..Default::default() },
             ..Default::default()

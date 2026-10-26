@@ -37,6 +37,19 @@ fn near(got: usize, want: f32, slack: usize) -> bool {
     (got as f32 - want).abs() <= 1.01 + slack as f32
 }
 
+/// Seconds from the first to the `fired`th shot of held fire: the fire time between rounds, and a
+/// bolt or pump action's rechamber after every round (or every `shots_before_rechamber`).
+fn held_fire_span(def: &WeaponDef, fired: usize) -> f32 {
+    let t = &def.timing;
+    let gaps = fired.saturating_sub(1);
+    let rechambers = match (t.bolt_action, t.shots_before_rechamber) {
+        (false, _) => 0,
+        (true, 0) => gaps,
+        (true, n) => gaps / n as usize,
+    };
+    def.fire_time * gaps as f32 + t.rechamber_time * rechambers as f32
+}
+
 /// Every way `def` departs from its BO2 definition in the simulation (empty if none).
 pub fn check(def: &'static WeaponDef) -> Vec<String> {
     let mut fails = Vec::new();
@@ -76,7 +89,7 @@ pub fn check(def: &'static WeaponDef) -> Vec<String> {
                 // Hold: the magazine empties at BO2's fire time.
                 let mut first = None;
                 let mut last = 0;
-                for f in 0..frames(def.fire_time * def.clip as f32 + def.spin_up_time + 1.0) {
+                for f in 0..frames(held_fire_span(def, def.clip as usize + 1) + def.spin_up_time + 1.0) {
                     let before = shots(&out);
                     step(&mut a, buttons::FIRE, if f == 0 { buttons::FIRE } else { 0 }, &mut out, &mut rng);
                     if out.contains(&WeaponAction::ReloadStarted) {
@@ -100,8 +113,9 @@ pub fn check(def: &'static WeaponDef) -> Vec<String> {
                 }
                 if fired > 2 {
                     let span = last - first.unwrap_or(0);
-                    if !near(span, def.fire_time * (fired - 1) as f32, fired / 10) {
-                        fail(format!("{fired} rounds took {span} frames, BO2 says {:.1}", def.fire_time * (fired - 1) as f32 / LOGIC_DT));
+                    let want = held_fire_span(def, fired);
+                    if !near(span, want, fired / 10) {
+                        fail(format!("{fired} rounds took {span} frames, BO2 says {:.1}", want / LOGIC_DT));
                     }
                 }
             }

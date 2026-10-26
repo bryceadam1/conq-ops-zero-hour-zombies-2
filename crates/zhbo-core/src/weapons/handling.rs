@@ -9,7 +9,7 @@
 /// The fire cycle's and reload's extra times (seconds), as BO2's `WeaponDef`/`WeaponVariantDef`
 /// author them.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Timing {
+pub struct CycleTimes {
     /// `iLastFireTime`: the fire state's length for the magazine's last round.
     pub last_fire_time: f32,
     /// `iFireDelay`: the wait between the trigger and the shot (grenade throws, launchers).

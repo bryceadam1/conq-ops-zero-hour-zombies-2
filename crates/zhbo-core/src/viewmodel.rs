@@ -92,8 +92,6 @@ pub const HAMMER_SWING_TIME: f32 = 21.0 / 30.0;
 
 /// How long the fire clip owns the viewmodel after a shot before idle resumes.
 const FIRE_HOLD: f32 = 0.3;
-/// BO2's sprint-in transition before the sprint loop.
-const SPRINT_IN_TIME: f32 = 0.25;
 
 /// What happened to the local player's weapon this frame.
 #[derive(Clone, Copy, Debug, Default)]
@@ -233,14 +231,22 @@ impl Viewmodel {
         }
         if p.body.sprinting && a.ads < 0.5 {
             let (sin, sloop) = if empty { (slot::SPRINT_EMPTY_IN, slot::SPRINT_EMPTY_LOOP) } else { (slot::SPRINT_IN, slot::SPRINT_LOOP) };
-            return if self.since_sprint_start < SPRINT_IN_TIME && def.has_anim(sin as usize) {
+            let sprint_in = def.timing.sprint_in_time;
+            return if self.since_sprint_start < sprint_in && def.has_anim(sin as usize) {
                 wf(sin, self.since_sprint_start)
             } else {
-                wf(or(def, sloop, slot::SPRINT_LOOP), (self.since_sprint_start - SPRINT_IN_TIME).max(0.0))
+                wf(or(def, sloop, slot::SPRINT_LOOP), (self.since_sprint_start - sprint_in).max(0.0))
             };
         }
         if a.since_sprint < def.sprint_out_time && def.has_anim(slot::SPRINT_OUT as usize) {
             return wf(if empty { or(def, slot::SPRINT_EMPTY_OUT, slot::SPRINT_OUT) } else { slot::SPRINT_OUT }, a.since_sprint);
+        }
+        // A bolt or pump action's rechamber is the sim's (`WeaponState::rechamber`).
+        let rechamber = if self.shot_aimed { or(def, slot::ADS_RECHAMBER, slot::RECHAMBER) } else { slot::RECHAMBER };
+        if let Some(t) = w.rechamber {
+            if def.has_anim(rechamber as usize) {
+                return wf(rechamber, t);
+            }
         }
         // Fire (or the last shot), then the pump/bolt rechamber if the weapon has one.
         let fire_len = FIRE_HOLD.max(def.fire_time);
@@ -253,8 +259,7 @@ impl Viewmodel {
             };
             return wf(clip, self.since_shot);
         }
-        let rechamber = if self.shot_aimed { or(def, slot::ADS_RECHAMBER, slot::RECHAMBER) } else { slot::RECHAMBER };
-        if def.has_anim(rechamber as usize) && !self.shot_was_last && self.since_shot < fire_len + def.fire_time {
+        if !def.timing.bolt_action && def.has_anim(rechamber as usize) && !self.shot_was_last && self.since_shot < fire_len + def.fire_time {
             return wf(rechamber, self.since_shot - FIRE_HOLD.min(def.fire_time * 0.3));
         }
         wf(if empty { or(def, slot::EMPTY_IDLE, slot::IDLE) } else { slot::IDLE }, self.since_shot)
@@ -312,9 +317,10 @@ impl Motion {
             self.bob = (self.bob + speed_zh * dt / BOB_STRIDE * std::f32::consts::PI) % std::f32::consts::TAU;
         }
 
-        // The sprint pose comes up over the sprint-in clip and drops at the def's sprint-out time.
+        // The sprint pose comes up over the def's sprint-in time (`sprintInTime`) and drops over its
+        // sprint-out time.
         let target = if p.body.sprinting { 1.0 } else { 0.0 };
-        let rate = if target > self.sprint { 1.0 / SPRINT_IN_TIME } else { 1.0 / def.sprint_out_time.max(1e-3) };
+        let rate = if target > self.sprint { 1.0 / def.timing.sprint_in_time.max(1e-3) } else { 1.0 / def.sprint_out_time.max(1e-3) };
         let step = rate * dt;
         self.sprint = if (target - self.sprint).abs() <= step { target } else { self.sprint + step * (target - self.sprint).signum() };
 

@@ -60,6 +60,16 @@ pub struct WeaponState {
     /// The grip's recoil-reduction accumulator, and seconds since the last shot (G5).
     pub recoil_acc: f32,
     pub since_shot: f32,
+    /// A bolt or pump action owes a rechamber (BO2's per-weapon flag, set by the shot in
+    /// `FUN_008dc260`, cleared when the rechamber ends `FUN_008db020` or a reload starts
+    /// `FUN_008e1510`).
+    pub rechamber_pending: bool,
+    /// Shots since the last rechamber, for `shots_before_rechamber` (`ps+0x4f0`).
+    pub rechamber_shots: u16,
+    /// Seconds into the rechamber in progress (BO2's weapon state 7/8), or `None`.
+    pub rechamber: Option<f32>,
+    /// The magazine ran dry: the reload starts once the last shot's fire state ends.
+    pub reload_owed: bool,
 }
 
 impl WeaponState {
@@ -84,6 +94,10 @@ impl WeaponState {
             string: 0,
             recoil_acc: 0.0,
             since_shot: 10.0,
+            rechamber_pending: false,
+            rechamber_shots: 0,
+            rechamber: None,
+            reload_owed: false,
         }
         .with_alt_ammo()
     }
@@ -120,6 +134,9 @@ impl WeaponState {
         }
         let d = self.def;
         self.burst_left = 0;
+        // Starting a reload drops an owed rechamber (`FUN_008e1510`).
+        self.rechamber_pending = false;
+        self.rechamber = None;
         self.reload = Some(if d.shell_by_shell() {
             Reload::Shells { phase: ShellPhase::Start, t: 0.0, stop: false }
         } else {
@@ -128,6 +145,34 @@ impl WeaponState {
             let add_at = if add_at > 0.0 { add_at } else { length };
             Reload::Magazine { t: 0.0, length, add_at: add_at.min(length), added: false, empty }
         });
+    }
+
+    /// The rechamber (`FUN_008db0d0`): once the shot's fire time has run out, an owed rechamber
+    /// runs for `iRechamberTime` and the weapon cannot fire until it ends (`FUN_008db020`). The
+    /// `rof` tick scales it like the fire state (G3: states 6, 7, 8).
+    fn step_rechamber(&mut self, tick: f32) {
+        let t = &self.def.timing;
+        if let Some(e) = self.rechamber {
+            let e = e + tick;
+            if e >= t.rechamber_time {
+                self.rechamber = None;
+                self.rechamber_pending = false;
+                // The time past the rechamber's end carries into the next shot's wait (the
+                // cooldown's own count-down during the rechamber is discarded).
+                self.cooldown = -(e - t.rechamber_time);
+            } else {
+                self.rechamber = Some(e);
+            }
+            return;
+        }
+        if self.rechamber_pending && t.bolt_action && self.cooldown <= 0.0 && !self.is_reloading() {
+            // The rechamber starts where the fire state ended, mid-frame.
+            self.rechamber_shots = 0;
+            let carried = -self.cooldown;
+            self.cooldown = 0.0;
+            self.rechamber = Some(0.0);
+            self.step_rechamber(carried);
+        }
     }
 
     fn take(&mut self, n: u16) {
@@ -757,9 +802,25 @@ impl Arsenal {
         let fire_tick = self.tick(Timing::Fire);
         let w = self.current_mut();
         w.cooldown -= fire_tick;
-        // Minigun barrels spin while the trigger is held.
+        // BO2 reloads by itself when the magazine runs dry, once the last shot's fire state
+        // (`iLastFireTime` or the fire time) is over.
+        if w.reload_owed && w.cooldown <= 0.0 {
+            w.reload_owed = false;
+            if w.ammo == 0 && w.can_reload() {
+                w.start_reload();
+                out.push(WeaponAction::ReloadStarted);
+            }
+        }
+        w.step_rechamber(fire_tick);
+        // Minigun barrels spin up while the trigger is held and down over `spin_down_time`.
         if def.fire == FireMode::Minigun {
-            w.spin = if held & buttons::FIRE != 0 && !blocked { (w.spin + dt).min(def.spin_up_time) } else { (w.spin - dt).max(0.0) };
+            w.spin = if held & buttons::FIRE != 0 && !blocked {
+                (w.spin + dt).min(def.spin_up_time)
+            } else {
+                let down = def.timing.spin_down_time;
+                let rate = if down > 0.0 { def.spin_up_time / down } else { f32::INFINITY };
+                (w.spin - dt * rate).max(0.0)
+            };
         }
         // A tube-shotgun reload stops after the current shell when the trigger is pressed.
         if pressed & buttons::FIRE != 0 {
@@ -780,7 +841,7 @@ impl Arsenal {
                 w.burst_left > 0
             }
         };
-        if !trigger || blocked || w.is_reloading() {
+        if !trigger || blocked || w.is_reloading() || w.rechamber.is_some() {
             if w.cooldown < 0.0 {
                 w.cooldown = 0.0;
             }
@@ -834,10 +895,29 @@ impl Arsenal {
                     out.push(WeaponAction::Fire { spread_deg: spread, jitter, recoil, gun_kick, pellet });
                 }
             }
+            // The magazine's last round fires over `iLastFireTime` when the weapon has one
+            // (`FUN_008dc260` with `FUN_008dc1e0`'s clip < 2 test). A burst's threshold is its
+            // round count + 1 there; no BO2 burst weapon authors a last-fire time, so bursts keep
+            // the plain fire time.
+            let last = w.ammo < 2 && !matches!(def.fire, FireMode::Burst(_));
+            let t = &def.timing;
+            w.cooldown += if last && t.last_fire_time > 0.0 { t.last_fire_time } else { def.fire_time };
             w.ammo -= 1;
             w.string = w.string.saturating_add(1);
             w.bloom += def.spread_fire_add;
-            w.cooldown += def.fire_time;
+            // A bolt or pump action owes a rechamber after every shot, or after every
+            // `iShotsBeforeRechamber` shots (`FUN_008dc260`).
+            if t.bolt_action {
+                if t.shots_before_rechamber == 0 {
+                    w.rechamber_pending = true;
+                } else {
+                    w.rechamber_shots = w.rechamber_shots.saturating_add(1);
+                    w.rechamber_pending |= w.rechamber_shots >= t.shots_before_rechamber;
+                }
+                if w.rechamber_pending {
+                    break;
+                }
+            }
             fired_semi = true;
             if let FireMode::Burst(_) = def.fire {
                 w.burst_left = w.burst_left.saturating_sub(1);
@@ -848,9 +928,7 @@ impl Arsenal {
             }
         }
         if w.ammo == 0 && w.reserve > 0 {
-            // BO2 reloads by itself when the magazine runs dry.
-            w.start_reload();
-            out.push(WeaponAction::ReloadStarted);
+            w.reload_owed = true;
         }
     }
 
