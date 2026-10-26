@@ -391,6 +391,16 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
         vec![base.to_string(), format!("{base}_decay"), format!("{stem}_lfe"), format!("{stem}_LFE")]
     };
     let l = Loadout::default();
+    // Every def derived from a parsed weapon carries its own empty-fire alias, not only the
+    // converted ones: dual-optic and alt table variants share their base weapon's field. Set it
+    // for all defs here so the shipped table and the conformance read-back both see it; the
+    // synthesized variants inherit it when `attachments::apply` clones their base def.
+    for d in defs.iter_mut() {
+        let base = crate::generals::base_id(&d.id);
+        if let Some(w) = bo2.iter().find(|w| w.name == base) {
+            d.empty_fire_sound = dry_fire_event(w.empty_fire_sound_player.as_deref()).to_string();
+        }
+    }
     // The converted weapons and their alt modes.
     let mut ids: Vec<String> = converted.to_vec();
     for id in converted {
@@ -402,7 +412,6 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
         let base = crate::generals::base_id(id);
         let Some(w) = bo2.iter().find(|w| w.name == base) else { continue };
         let Some(d) = defs.iter_mut().find(|d| &d.id == id) else { continue };
-        d.empty_fire_sound = dry_fire_event(w.empty_fire_sound_player.as_deref()).to_string();
         // Attachments can change the shot (a suppressor).
         let (_, shorts) = attachments::split_id(id.split('~').next().unwrap_or(id));
         let c = crate::generals::combo(w, atts, &shorts);
