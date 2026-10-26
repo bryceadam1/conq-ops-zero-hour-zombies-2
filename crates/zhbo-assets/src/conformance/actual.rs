@@ -1,12 +1,13 @@
 //! `actual.csv`'s weapon rows: what the mod ships, read back from the launcher's own conversion.
 //!
 //! The rows are the mod's own create-a-class space — [`zhbo_core::classmenu::offer`]'s weapons with
-//! every attachment set the editor accepts (any offered shorts up to the slot's cap, Gunfighter
-//! included), resolved by the runtime catalog exactly as a class is (`Catalog::get`: one
-//! attachment per point), each one's alt mode, and the loadout's knife. Every fact comes from what
-//! ships: the converted weapon table (`weapons.ini`), the native viewmodel and world-weapon
-//! manifests the def's `viewmodel` names (a combination the archive has no art for draws its
-//! base's, as the game does), the model blobs, the converter's sound events and FXLists.
+//! every attachment set the editor accepts (offered shorts up to the slot's cap, Gunfighter
+//! included, no two mutually exclusive: `classmenu::legal`), resolved by the runtime catalog
+//! exactly as a class is (`Catalog::get`), each one's alt mode, and the loadout's knife. Every
+//! fact comes from what ships: the converted weapon table (`weapons.ini`), the native viewmodel
+//! and world-weapon manifests the def's `viewmodel` names (a combination the archive has no art
+//! for draws its base's, as the game does), the model blobs, the converter's sound events and
+//! FXLists.
 //!
 //! Each column carries the mod's value of the same fact in BO2's vocabulary and unit; a fact the
 //! mod does not carry is left empty (it fails, owner decision 1) — never synthesized.
@@ -209,7 +210,8 @@ fn jobs() -> Vec<Job> {
         for &base in ids {
             let slot = slots_of(base);
             let shorts = offered_attachments(base);
-            for set in subsets(&shorts, cap) {
+            // The sets the editor can build: a mutually exclusive pair is never carried together.
+            for set in subsets(&shorts, cap).into_iter().filter(|set| zhbo_core::classmenu::legal::legal(base, set)) {
                 let Some(def) = cat.get(&draft_weapon_id(base, &set)) else { continue };
                 let combo = bo2_order(&def.attachments);
                 if !seen.insert((base.to_string(), combo.clone())) {

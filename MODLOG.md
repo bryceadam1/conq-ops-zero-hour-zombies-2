@@ -4464,3 +4464,50 @@ stays "W00" and the INI's hidden list/draw indices keep working.
 **Verified.** `cargo test -p zhbo-assets` green; `cargo test --workspace` green; `cargo clippy
 --workspace --all-targets` exit 0; the real-install suite (`--skip conformance`) green. No game
 launched. Conformance was not run on the full archive this round.
+
+## Combination legality: BO2's compatibility lists replace the one-per-point rule (2026-10-26)
+
+The mod had no attachment-compatibility rule at all. The editor's `toggle_att` only capped the
+count; what went together was decided by `attachments::apply` keeping one attachment per asset
+`attachPoint`. BO2 never uses the point for legality: two attachments pair only when each one's
+`compatibleAttachments` list (`mp/attachmenttable.csv` column 11, `FUN_008e70f0`) names the other
+(`FUN_008e6b20`, G15). The converter's combo set (`all_legal_combos`) already followed BO2's rule;
+the editor, the class repair and the catalog did not. So the mod offered dualoptic+gl,
+dualoptic+sf, fmj+mms, acog+ir, … (different points, BO2 forbids them) and refused grip+sf,
+fastads+stalker, dualclip+fmj, … (one point, BO2 allows them).
+
+* Data: `AttachmentDef::compatible` (table field `Compatible`, Words), converted in
+  `attachment_metadata` through the conformance crate's own reader
+  (`zhbo_conformance::bo2::combos::table`) — one parse of the install, no list in the mod.
+* Rule: `attachments::compatible` (mutual) and `attachments::sanitize` (`FUN_008eb870`, the
+  `tu6_conflictingAttachmentCheck` pass: over the eAttachment-ordered first three, drop the third
+  if it conflicts with either, then the second if it conflicts with the first). `apply` uses it
+  instead of the point collapse.
+* Editor (`classmenu::legal`, its own file — `classmenu.rs` is at the size limit): picking an
+  attachment unequips the equipped ones it is mutually exclusive with, then needs room under the
+  cap (`cacattachmentsmenu.lua` `ContentButtonSelected` → `UnequipAttachment` over
+  `mutuallyExclusiveIndices`, filled by `attachmentgridbutton.lua` from
+  `Engine.AreAttachmentsCompatible`). `classrepair` sanitizes stored ids the same way. The
+  pairing rule is separate from the Gunfighter counts so the dual-wield/alt-base items extend
+  one place. The grid's "mutually exclusive with X" hint (`MPUI_ITEM_MUTUALLY_EXCLUSIVE*`) is not
+  drawn yet; `legal::exclusive_with` is the query for it.
+* Gotcha: the converter's `add_variants` builds every BO2-legal combo through the core's `apply`;
+  under the point collapse a legal three-attachment combo (`insas_mp+fastads+steadyaim`) came out
+  with a two-attachment id and **overwrote** that id's real def in the catalog. That is why the
+  common rows improved too (`view_model` 651 → 0, the `anim_*` columns −60–70 %). Twenty cells
+  that had matched only through a clobbered def now show their own value (`view_hide_tags`:
+  `tag_rails`/`tag_fast_mag` the mod hides and BO2 does not — the hide-tag item's).
+* Built-in stand-in table: the reflex and the grenade launcher list each other, so the default
+  AN-94 class stays legal with no install.
+
+Measured (conformance CLI vs the 2026-10-25 baseline): weapons one-sided rows 2,264 BO2-only →
+8 (equipment/knife rows the mod has none for) and 747 mod-only → 7 (five `+dw`, item 7;
+`crossbow_mp+ir+stackfire+vzoom`, the crossbow is a BO2 secondary but a mod primary;
+`m32_mp`, not a BO2 CaC item). cac `members` 316 → 0. Differing cells 706,586 → 804,416: the
+2,256 newly paired rows bring their own cells (every per-row column grew by ~2,256); on rows
+present in both runs 56,277 cells newly match and 20 newly differ. Gap clusters 214 → 212.
+The archive's weapon table gains a field, so the archive VERSION must bump (left to the
+integrator): an old archive has no `Compatible` lines and every pair would read as exclusive.
+
+Verified: `cargo test --workspace` green; clippy adds no warning; the real-install suite
+(`--skip conformance`) green, plus the new `the_converted_compatibility_matches_bo2s_rule`.

@@ -13,7 +13,8 @@
 
 use crate::weapons::{FireMode, Specialties, WeaponDef};
 
-/// BO2's attachment points (`eAttachmentPoint`): one attachment per point.
+/// BO2's attachment points (`eAttachmentPoint`). The point says where the art mounts; it does not
+/// decide which attachments go together — the compatibility lists do ([`compatible`]).
 pub mod point {
     pub const OPTIC: u8 = 1;
 }
@@ -59,6 +60,10 @@ pub struct AttachmentDef {
     /// The specialties the attachment grants (`WeaponAttachment.perks`: fast mag's `fastreload`,
     /// quickdraw's `fastads`, the laser's `bulletaccuracy`, rapid fire's `rof`).
     pub specialties: Specialties,
+    /// The attachment shorts this one may be combined with: BO2's `compatibleAttachments`
+    /// (`mp/attachmenttable.csv` column 11, `FUN_008e70f0`). Pairing needs both lists to name the
+    /// other ([`compatible`]).
+    pub compatible: Vec<String>,
 }
 
 impl Default for AttachmentDef {
@@ -89,8 +94,38 @@ impl Default for AttachmentDef {
             clip_scale: 1.0,
             recoil_reduction: (0.0, 0.0),
             specialties: Specialties::NONE,
+            compatible: Vec::new(),
         }
     }
+}
+
+/// The most attachments one weapon carries: the weapon index has three attachment fields
+/// (`FUN_008e7fd0`, "More than %d attachments on weapon named %s").
+pub const MAX_PER_WEAPON: usize = 3;
+
+/// `FUN_008e6b20` (`AreAttachmentsCompatible`): two attachments go together only when each one's
+/// compatibility list names the other. The same attachment is never compatible with itself.
+pub fn compatible(a: &AttachmentDef, b: &AttachmentDef) -> bool {
+    a.short != b.short && a.compatible.contains(&b.short) && b.compatible.contains(&a.short)
+}
+
+/// BO2's conflicting-attachment check on a weapon (`FUN_008eb870`, `tu6_conflictingAttachmentCheck`,
+/// on by default) over `atts` in canonical order (`eAttachment` order, the shorts' sorted order;
+/// `FUN_008e7f10`), repeats dropped, at most [`MAX_PER_WEAPON`]: the third goes if it conflicts
+/// with the first or the second, then the second goes (the third moving up) if it conflicts with
+/// the first. A legal set comes back unchanged.
+pub fn sanitize<'a>(atts: &[&'a AttachmentDef]) -> Vec<&'a AttachmentDef> {
+    let mut v: Vec<&AttachmentDef> = atts.to_vec();
+    v.sort_by(|a, b| a.short.cmp(&b.short));
+    v.dedup_by(|a, b| a.short == b.short);
+    v.truncate(MAX_PER_WEAPON);
+    if v.len() == 3 && (!compatible(v[1], v[2]) || !compatible(v[0], v[2])) {
+        v.pop();
+    }
+    if v.len() >= 2 && !compatible(v[0], v[1]) {
+        v.remove(1);
+    }
+    v
 }
 
 /// FMJ: bullets go through the first infantry target, and hit vehicles and structures harder (BO2's
@@ -132,23 +167,13 @@ pub fn split_id(id: &str) -> (&str, Vec<&str>) {
     (base, parts.collect())
 }
 
-/// `base` with `atts` on it, as BO2 plays it. Attachments sharing a point keep the last; ones the
-/// weapon doesn't offer must be filtered out by the caller (see [`resolve`]). Art fields
+/// `base` with `atts` on it, as BO2 plays it. A set BO2 forbids is cut down by its own check
+/// ([`sanitize`]); ones the weapon doesn't offer must be filtered out by the caller (see
+/// [`resolve`]). Art fields
 /// (viewmodel, sounds) are the base weapon's; the converter overrides them for the combinations it
 /// converts.
 pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
-    let mut atts: Vec<&AttachmentDef> = atts.to_vec();
-    // One per point, the last given wins.
-    let mut seen = Vec::new();
-    atts.reverse();
-    atts.retain(|a| a.point == 0 || {
-        let fresh = !seen.contains(&a.point);
-        seen.push(a.point);
-        fresh
-    });
-    atts.reverse();
-    atts.sort_by(|a, b| a.short.cmp(&b.short));
-    atts.dedup_by(|a, b| a.short == b.short);
+    let atts = sanitize(atts);
 
     let mut d = base.clone();
     let shorts: Vec<&str> = atts.iter().map(|a| a.short.as_str()).collect();
@@ -271,8 +296,8 @@ mod tests {
 
     #[test]
     fn extended_mags_carry_more_spare_rounds_and_optics_zoom() {
-        let ext = AttachmentDef { id: "extclip".into(), short: "extclip".into(), clip_scale: 1.345, point: 3, ..Default::default() };
-        let reflex = AttachmentDef { id: "reflex".into(), short: "reflex".into(), ads_fov: 50.0, point: point::OPTIC, ..Default::default() };
+        let ext = AttachmentDef { id: "extclip".into(), short: "extclip".into(), clip_scale: 1.345, point: 3, compatible: vec!["reflex".into()], ..Default::default() };
+        let reflex = AttachmentDef { id: "reflex".into(), short: "reflex".into(), ads_fov: 50.0, point: point::OPTIC, compatible: vec!["extclip".into()], ..Default::default() };
         let d = apply(&base(), &[&reflex, &ext]);
         assert_eq!(d.id, "an94_mp+extclip+reflex");
         assert_eq!((d.clip, d.start_reserve, d.max_reserve), (40, 120, 280));
@@ -280,13 +305,55 @@ mod tests {
         assert_eq!(d.attachments, vec!["extclip", "reflex"]);
     }
 
+    /// A test attachment with BO2's compatibility list.
+    fn att(short: &str, point: u8, with: &[&str]) -> AttachmentDef {
+        AttachmentDef { id: short.into(), short: short.into(), point, compatible: with.iter().map(|s| s.to_string()).collect(), ..Default::default() }
+    }
+
     #[test]
-    fn one_optic_at_a_time() {
-        let reflex = AttachmentDef { id: "reflex".into(), short: "reflex".into(), ads_fov: 50.0, point: point::OPTIC, ..Default::default() };
-        let acog = AttachmentDef { id: "acog".into(), short: "acog".into(), ads_fov: 35.0, point: point::OPTIC, ..Default::default() };
+    fn compatibility_is_mutual_and_not_the_attach_point() {
+        // BO2's grip and select fire share the bottom point yet list each other; the grenade
+        // launcher lists the ACOG, which does not list it back.
+        let grip = att("grip", 2, &["sf", "acog"]);
+        let sf = att("sf", 2, &["grip"]);
+        let acog = att("acog", 1, &["grip"]);
+        let gl = att("gl", 2, &["acog"]);
+        assert!(compatible(&grip, &sf) && compatible(&sf, &grip));
+        assert!(!compatible(&gl, &acog), "gl lists acog, but acog does not list gl");
+        assert!(!compatible(&grip, &grip));
+        let d = apply(&base(), &[&grip, &sf]);
+        assert_eq!(d.attachments, vec!["grip", "sf"], "a same-point pair BO2 allows stays");
+    }
+
+    #[test]
+    fn a_forbidden_pair_keeps_the_first_in_canonical_order() {
+        let reflex = AttachmentDef { ads_fov: 50.0, ..att("reflex", point::OPTIC, &[]) };
+        let acog = AttachmentDef { ads_fov: 35.0, ..att("acog", point::OPTIC, &[]) };
         let d = apply(&base(), &[&reflex, &acog]);
-        assert_eq!(d.attachments, vec!["acog"]);
+        assert_eq!(d.attachments, vec!["acog"], "acog sorts first; reflex conflicts with it");
         assert_eq!(d.ads_fov, 35.0);
+    }
+
+    /// `FUN_008eb870`: the third is checked first, against both; then the second against the first.
+    #[test]
+    fn the_sanitizer_follows_bo2s_order() {
+        // a–b conflict, a–c fine, b–c conflict: the third goes (it conflicts with b), then b goes.
+        let a = att("a", 0, &["c"]);
+        let b = att("b", 0, &[]);
+        let c = att("c", 0, &["a"]);
+        let got: Vec<&str> = sanitize(&[&c, &b, &a]).iter().map(|x| x.short.as_str()).collect();
+        assert_eq!(got, vec!["a"]);
+        // a–b conflict only: the third survives and moves up.
+        let a = att("a", 0, &["c"]);
+        let b = att("b", 0, &["c"]);
+        let c = att("c", 0, &["a", "b"]);
+        let got: Vec<&str> = sanitize(&[&a, &b, &c]).iter().map(|x| x.short.as_str()).collect();
+        assert_eq!(got, vec!["a", "c"]);
+        // A legal set is untouched; a fourth is past the weapon index's three fields.
+        let all = ["a", "b", "c", "d"];
+        let defs: Vec<AttachmentDef> = all.iter().map(|s| att(s, 0, &all)).collect();
+        let refs: Vec<&AttachmentDef> = defs.iter().collect();
+        assert_eq!(sanitize(&refs).len(), MAX_PER_WEAPON);
     }
 
     #[test]

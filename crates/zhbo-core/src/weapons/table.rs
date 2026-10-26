@@ -319,6 +319,9 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
             for i in 0..5 { a.attribute_deltas[i] = v.num(i); }
             Ok(())
         }),
+    field!("Compatible", "The shorts it may be combined with (BO2's `compatibleAttachments`; pairing needs both lists).", FieldKind::Words,
+        |a: &AttachmentDef| a.compatible.join(" "),
+        |a: &mut AttachmentDef, v: Values| { a.compatible = v.text.split_whitespace().map(str::to_string).collect(); Ok(()) }),
 ];
 
 /// Every `Weapon` block line, in table order.
@@ -707,8 +710,16 @@ mod tests {
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
         assert_eq!(WEAPON_FIELDS.len(), 78);
-        assert_eq!(ATTACHMENT_FIELDS.len(), 17);
+        assert_eq!(ATTACHMENT_FIELDS.len(), 18);
         assert_eq!(CAMO_FIELDS.len(), 3);
+    }
+
+    #[test]
+    fn an_attachments_compatibility_list_round_trips() {
+        let a = AttachmentDef { id: "reflex".into(), short: "reflex".into(), compatible: vec!["dualclip".into(), "gl".into()], ..Default::default() };
+        let t = Table { attachments: vec![a.clone()], ..Default::default() };
+        let back = parse_full_table(&format_full_table(&t)).expect("the table re-parses");
+        assert_eq!(back.attachments[0].compatible, a.compatible);
     }
 
     #[test]

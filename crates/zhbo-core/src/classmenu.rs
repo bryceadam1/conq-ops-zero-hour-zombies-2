@@ -26,6 +26,11 @@
 //! built here needs no new transport: the sim receives its spec and applies it as-is.
 
 use crate::classes::{self, CustomClass};
+
+/// Which attachments go together: BO2's compatibility lists (its own file: this one is at the
+/// module-size limit).
+#[path = "classmenu/legal.rs"]
+pub mod legal;
 use crate::input::Key;
 use crate::weapons::{self, Class as WeaponClass, Perk, WeaponDef};
 
@@ -1384,7 +1389,8 @@ impl Editor {
                 let shorts = attachment_shorts(&self.draft.primary, &self.draft.primary_atts);
                 let max = self.draft.primary_att_max();
                 if let Some(short) = shorts.get(i).copied() {
-                    if !toggle_att(&mut self.draft.primary_atts, short, max) {
+                    let base = self.draft.primary.clone();
+                    if !toggle_att(&mut self.draft.primary_atts, short, max, |a, b| legal::compatible(&base, a, b)) {
                         return false;
                     }
                 }
@@ -1393,7 +1399,8 @@ impl Editor {
                 let shorts = attachment_shorts(&self.draft.secondary, &self.draft.secondary_atts);
                 let max = self.draft.secondary_att_max();
                 if let Some(short) = shorts.get(i).copied() {
-                    if !toggle_att(&mut self.draft.secondary_atts, short, max) {
+                    let base = self.draft.secondary.clone();
+                    if !toggle_att(&mut self.draft.secondary_atts, short, max, |a, b| legal::compatible(&base, a, b)) {
                         return false;
                     }
                 }
@@ -1480,17 +1487,26 @@ impl Editor {
         let max = if primary { self.draft.primary_att_max() } else { self.draft.secondary_att_max() };
         let atts = if primary { &mut self.draft.primary_atts } else { &mut self.draft.secondary_atts };
         atts.retain(|s| allowed.iter().any(|a| a == s));
+        // BO2's compatibility is per attachment kind, so a kept set stays legal; the check is the
+        // same one a stored class gets.
+        let kept: Vec<String> = legal::sanitize(&base, &atts.iter().map(String::as_str).collect::<Vec<_>>()).into_iter().map(str::to_string).collect();
+        atts.retain(|s| kept.contains(s));
         atts.truncate(max);
     }
 }
 
-/// Toggle an attachment short in the list, capped at `max`. False means it could not be added
-/// (the cap is reached): the caller turns that into the editor's deny cue.
-fn toggle_att(atts: &mut Vec<String>, short: &str, max: usize) -> bool {
+/// Toggle an attachment short in the list, capped at `max`. Adding one first unequips the equipped
+/// ones it is mutually exclusive with (`compatible` false; BO2's `ContentButtonSelected`, see
+/// [`legal`]), then needs room under the cap. False means it could not be added (the cap is
+/// reached): the caller turns that into the editor's deny cue and the list is left as it was.
+fn toggle_att(atts: &mut Vec<String>, short: &str, max: usize, compatible: impl Fn(&str, &str) -> bool) -> bool {
     if let Some(pos) = atts.iter().position(|s| s == short) {
         atts.remove(pos);
-        true
-    } else if atts.len() < max {
+        return true;
+    }
+    let kept: Vec<String> = atts.iter().filter(|s| compatible(s, short)).cloned().collect();
+    if kept.len() < max {
+        *atts = kept;
         atts.push(short.to_string());
         true
     } else {

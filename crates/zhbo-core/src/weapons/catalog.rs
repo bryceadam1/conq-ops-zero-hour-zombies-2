@@ -200,12 +200,14 @@ Attachment reflex
   AttributeDeltas = 0 5 15 0 0
   Point = 1
   Ads = 50 1 1 1
+  Compatible = gl
 End
 
 Attachment gl
   Short = gl
   DisplayName = Grenade Launcher
   Point = 2
+  Compatible = reflex
 End
 
 Weapon gl_an94_mp

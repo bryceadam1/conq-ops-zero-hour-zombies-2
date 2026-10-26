@@ -61,8 +61,8 @@ pub fn repair(c: &mut CustomClass) -> Cleared {
 /// A weapon slot: an unknown id or a non-gun clears the weapon and its attachments together
 /// (`ClearWeapon`); attachments the weapon does not offer are dropped (the per-weapon
 /// `GetNumAttachments` check), and so are the ones past the slot's cap (`maxAttachments`, plus the
-/// Gunfighter card's extra on the primary). An empty slot means "inherit the base kit" and stays
-/// empty.
+/// Gunfighter card's extra on the primary) and the ones BO2's compatibility lists forbid together.
+/// An empty slot means "inherit the base kit" and stays empty.
 fn repair_weapon(c: &mut CustomClass, primary: bool, cleared: &mut Cleared) {
     let (slot, id) = if primary { ("primary", &mut c.primary) } else { ("secondary", &mut c.secondary) };
     if id.is_empty() {
@@ -81,6 +81,9 @@ fn repair_weapon(c: &mut CustomClass, primary: bool, cleared: &mut Cleared) {
     }
     let max = if primary { MAX_ATTACHMENTS + 1 } else { MAX_ATTACHMENTS };
     let offered: Vec<&str> = shorts.iter().copied().filter(|s| def.allowed.iter().any(|(a, _)| a == s)).take(max).collect();
+    // A pair BO2's compatibility lists forbid is cut down by its conflicting-attachment check
+    // (`FUN_008eb870`, `classmenu::legal::sanitize`).
+    let offered = crate::classmenu::legal::sanitize(base, &offered);
     if offered.len() != shorts.len() {
         cleared.push(if primary { "primaryattachment" } else { "secondaryattachment" });
         *id = variant_id(base, &offered);

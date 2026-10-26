@@ -189,19 +189,19 @@ use super::*;
         let shorts = allowed_shorts(&d.primary);
         assert!(shorts.len() >= 2);
         let mut max = d.primary_att_max();
-        toggle_att(&mut d.primary_atts, shorts[0], max);
-        toggle_att(&mut d.primary_atts, shorts[1], max);
+        toggle_att(&mut d.primary_atts, shorts[0], max, |_, _| true);
+        toggle_att(&mut d.primary_atts, shorts[1], max, |_, _| true);
         // A third is refused without the wildcard.
         let third = shorts.get(2).copied();
         if let Some(t) = third {
-            toggle_att(&mut d.primary_atts, t, max);
+            toggle_att(&mut d.primary_atts, t, max, |_, _| true);
             assert_eq!(d.primary_atts.len(), 2, "capped at 2");
         }
         d.wildcards.push(Wildcard::PrimaryGunfighter);
         max = d.primary_att_max();
         assert_eq!(max, 3);
         if let Some(t) = third {
-            toggle_att(&mut d.primary_atts, t, max);
+            toggle_att(&mut d.primary_atts, t, max, |_, _| true);
             assert_eq!(d.primary_atts.len(), 3);
         }
     }
@@ -636,9 +636,35 @@ fn an_over_budget_save_is_denied_instead_of_closing() {
 #[test]
 fn an_attachment_at_its_cap_is_refused() {
     let mut atts = vec!["reflex".to_string(), "gl".to_string()];
-    assert!(!toggle_att(&mut atts, "stock", 2), "no room for a third");
+    assert!(!toggle_att(&mut atts, "stock", 2, |_, _| true), "no room for a third");
     assert_eq!(atts, vec!["reflex".to_string(), "gl".to_string()]);
-    assert!(toggle_att(&mut atts, "reflex", 2), "removing one frees a slot");
+    assert!(toggle_att(&mut atts, "reflex", 2, |_, _| true), "removing one frees a slot");
+}
+
+/// BO2's attachment grid: picking an attachment unequips the equipped ones it is mutually
+/// exclusive with, so a forbidden pair is never built (`cacattachmentsmenu.lua`).
+#[test]
+fn picking_an_exclusive_attachment_replaces_the_one_it_conflicts_with() {
+    // reflex–acog are exclusive (two optics); grip goes with both.
+    let ok = |a: &str, b: &str| !matches!((a, b), ("reflex", "acog") | ("acog", "reflex"));
+    let mut atts = vec!["reflex".to_string(), "grip".to_string()];
+    assert!(toggle_att(&mut atts, "acog", 2, ok), "at the cap, but the conflict frees a slot");
+    assert_eq!(atts, vec!["grip".to_string(), "acog".to_string()]);
+    // At the cap with nothing exclusive, the pick is refused untouched.
+    assert!(!toggle_att(&mut atts, "fmj", 2, ok));
+    assert_eq!(atts, vec!["grip".to_string(), "acog".to_string()]);
+}
+
+/// The installed catalog's compatibility lists drive the editor (the built-in table: the AN-94's
+/// reflex and grenade launcher list each other).
+#[test]
+fn the_catalog_decides_compatibility() {
+    assert!(legal::compatible("an94_mp", "reflex", "gl"));
+    assert!(legal::legal("an94_mp", &["gl", "reflex"]));
+    assert!(!legal::compatible("an94_mp", "reflex", "reflex"));
+    assert!(!legal::compatible("an94_mp", "reflex", "stock"), "an attachment the weapon lacks goes with nothing");
+    assert!(legal::exclusive_with("an94_mp", "gl", &["reflex".to_string()]).is_empty());
+    assert_eq!(legal::sanitize("an94_mp", &["reflex", "gl"]), vec!["gl", "reflex"]);
 }
 
 // --- The bonus-card cap (BO2's maxBonusCards) ---

@@ -77,6 +77,10 @@ pub struct AttachmentMeta {
     pub full_name: String,
     pub description: String,
     pub attribute_deltas: [f32; 5],
+    /// The shorts it may be combined with: the `attachment` row's `compatibleAttachments`, parsed by
+    /// the conformance rule's own reader (`zhbo_conformance::bo2::combos::table`, `FUN_008e70f0`:
+    /// an unknown name sets nothing), in `eAttachment` order.
+    pub compatible: Vec<String>,
 }
 
 /// BO2's attachment metadata from the player's `mp/attachmenttable.csv` (`patch_mp`) and
@@ -89,12 +93,17 @@ pub fn attachment_metadata(
 ) -> HashMap<String, AttachmentMeta> {
     let mut meta = HashMap::new();
     let Ok(Some(rows)) = zhbo_formats::stringtable::rows(patch, "mp/attachmenttable.csv") else { return meta };
+    let compat = zhbo_conformance::bo2::combos::table(&rows);
     for row in rows {
         // Column 4 is the display name key, column 5 the short name, column 8 the description key.
         let (Some(short), Some(display_key), Some(desc_key)) = (row.get(4), row.get(3), row.get(7)) else { continue };
         let full_name = names.get(display_key).map(|s| s.trim().to_string()).unwrap_or_default();
         let description = names.get(desc_key).map(|s| s.trim().to_string()).unwrap_or_default();
-        meta.insert(short.clone(), AttachmentMeta { full_name, description, attribute_deltas: [0.0; 5] });
+        let compatible = zhbo_conformance::bo2::combos::kind_of(short)
+            .and_then(|k| compat.rows.get(&k))
+            .map(|(_, mask)| (0..64).filter(|b| mask & (1u64 << b) != 0).filter_map(|b| zhbo_conformance::weapons::ATTACHMENTS.get(b)).map(|s| s.to_string()).collect())
+            .unwrap_or_default();
+        meta.insert(short.clone(), AttachmentMeta { full_name, description, attribute_deltas: [0.0; 5], compatible });
     }
     // The attribute table's Lua constants are 0-based: damage = col 3, range = col 4,
     // accuracy = col 2, mobility = col 6, fire rate = col 5.
@@ -144,6 +153,7 @@ pub fn attachment_def(a: &bo2::Attachment, names: &HashMap<String, String>, meta
         clip_scale: a.clip_size_scale,
         recoil_reduction: a.recoil_reduction,
         specialties: Specialties::from_words(a.perks.0, a.perks.1),
+        compatible: m.compatible,
     }
 }
 
@@ -1139,8 +1149,8 @@ mod tests {
         let mut table = Table {
             weapons: vec![to_def(&w, &HashMap::new())],
             attachments: vec![
-                AttachmentDef { id: "ir".into(), short: "ir".into(), point: 1, ..Default::default() },
-                AttachmentDef { id: "swayreduc".into(), short: "swayreduc".into(), ..Default::default() },
+                AttachmentDef { id: "ir".into(), short: "ir".into(), point: 1, compatible: vec!["swayreduc".into()], ..Default::default() },
+                AttachmentDef { id: "swayreduc".into(), short: "swayreduc".into(), compatible: vec!["ir".into()], ..Default::default() },
             ],
             ..Default::default()
         };
@@ -1186,6 +1196,39 @@ mod tests {
             })
             .collect();
         assert_eq!(ours, theirs, "the converter's legal-combo set must equal the conformance expected set");
+    }
+
+    /// The converted attachments carry BO2's compatibility so the core's pairing rule
+    /// (`attachments::compatible`, what the editor, the class repair and the catalog decide with)
+    /// agrees with the conformance rule (`bo2::combos::Table::compatible`, `FUN_008e6b20`) on
+    /// every pair of attachment kinds the install defines — one parse, no hand-copied list.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_converted_compatibility_matches_bo2s_rule() {
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
+        let patch = crate::generals::load_zone(&dir, crate::fx::ZONE).unwrap();
+        let patch_ui = crate::generals::load_zone(&dir, "patch_ui_mp").unwrap();
+        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        let meta = attachment_metadata(&patch, &patch_ui, &HashMap::new());
+        let defs: Vec<AttachmentDef> = atts.iter().filter(|a| a.kind != 0 && !a.name.starts_with(',')).map(|a| attachment_def(a, &HashMap::new(), &meta)).collect();
+        let rows = zhbo_formats::stringtable::rows(&patch, "mp/attachmenttable.csv").unwrap().unwrap();
+        let t = zhbo_conformance::bo2::combos::table(&rows);
+        let kind = |d: &AttachmentDef| zhbo_conformance::bo2::combos::kind_of(&d.short).expect("a known kind");
+        let mut checked = 0;
+        for a in &defs {
+            for b in defs.iter().filter(|b| b.short != a.short) {
+                assert_eq!(zhbo_core::attachments::compatible(a, b), t.compatible(kind(a), kind(b)), "{} + {}", a.id, b.id);
+                checked += 1;
+            }
+        }
+        assert!(checked > 1000, "only {checked} pairs");
+        // The pairs this item was about: BO2 forbids dualoptic+gl and fmj+mms (the mod used to
+        // allow them: different attach points) and allows fastads+stalker (one point, gunperk).
+        let by = |s: &str| defs.iter().find(|d| d.short == s).unwrap();
+        assert!(!zhbo_core::attachments::compatible(by("dualoptic"), by("gl")));
+        assert!(!zhbo_core::attachments::compatible(by("fmj"), by("mms")));
+        assert!(zhbo_core::attachments::compatible(by("fastads"), by("stalker")));
     }
 
     /// The full set includes every statstable-backed base id and at least one combination per base
@@ -1281,8 +1324,8 @@ mod tests {
         let mut table = Table {
             weapons: vec![to_def(&w, &HashMap::new()), to_def(&sf, &HashMap::new())],
             attachments: vec![
-                AttachmentDef { id: "acog".into(), short: "acog".into(), point: 1, ..Default::default() },
-                AttachmentDef { id: "fmj".into(), short: "fmj".into(), ..Default::default() },
+                AttachmentDef { id: "acog".into(), short: "acog".into(), point: 1, compatible: vec!["fmj".into()], ..Default::default() },
+                AttachmentDef { id: "fmj".into(), short: "fmj".into(), compatible: vec!["acog".into()], ..Default::default() },
             ],
             ..Default::default()
         };
