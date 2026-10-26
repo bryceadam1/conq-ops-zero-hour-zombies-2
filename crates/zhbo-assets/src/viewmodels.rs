@@ -355,9 +355,16 @@ fn dual_clip_name(left: &str) -> String {
 
 /// The first-person viewmodels of `converted` weapons: each faction's arms holding the weapon, its
 /// base parts (magazine, scope/optic) and its attachments (placed where BO2 puts them, iron sights
-/// hidden under an optic), on one hierarchy per weapon, with a W3D clip for every BO2 animation
-/// slot it has, and its alt mode's clips after them. Sets each definition's `viewmodel` (and its
-/// alt mode's). Returns a summary and the clips (for sounds).
+/// hidden under an optic), with a W3D clip for every BO2 animation slot it has, and its alt mode's
+/// clips after them. Sets each definition's `viewmodel` (and its alt mode's). Returns a summary and
+/// the clips (for sounds).
+///
+/// The first `base_count` ids are the base set (`converted_base`, a prefix of `converted`): only
+/// those emit the composed W3D viewmodel meshes and hierarchies. The remaining legal combinations
+/// emit native manifests only; their W3D path falls back to the base weapon's mesh (the fallback's
+/// deprecation direction), while the native path gets its own manifest per combination. The shared
+/// `.zbm`/`.zba` blobs and textures are deduplicated by name, so a combination adds only its
+/// manifests.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn weapon_viewmodels(
     patch: &Zone,
@@ -369,6 +376,7 @@ pub(crate) fn weapon_viewmodels(
     atts: &[zhbo_formats::weapon::Attachment],
     defs: &mut [zhbo_core::weapons::WeaponDef],
     converted: &[String],
+    base_count: usize,
 ) -> Result<(String, Vec<Clip>), String> {
     use zhbo_core::attachments::point;
     let mut looks = Looks::default();
@@ -376,6 +384,7 @@ pub(crate) fn weapon_viewmodels(
     let mut clips = Vec::new();
     let mut anim_cache: BTreeMap<String, Option<xanim::Anim>> = BTreeMap::new();
     for (vm, id) in converted.iter().enumerate() {
+        let write_w3d = vm < base_count;
         let vm = vm as i32;
         let (base, shorts) = zhbo_core::attachments::split_id(id);
         let Some(w) = bo2.iter().find(|w| w.name == base) else { continue };
@@ -420,92 +429,99 @@ pub(crate) fn weapon_viewmodels(
         let mut rig: Option<Rig> = None;
         for (f, zone) in FACTIONS.iter().zip(zones) {
             let hands = xmodel::find(zone, f.hands).map_err(|e| e.to_string())?;
-            let rig = rig.get_or_insert_with(|| {
-                let mut rig = Rig::new(&hands, &parts);
-                let root = gun.bones.first().and_then(|b| rig.pivot(&b.name)).unwrap_or(0);
-                // The base parts ride the gun root at their authored `attachViewModelOffset` (the
-                // empty authored tag is `j_gun`), before the sight marker so the base optic can
-                // drive it.
-                for part in &base {
+            let hands_tex = textures(&hands, paks, out, &mut looks);
+            native_factions.push((f.letter, native::model(&hands, &hands_tex, &looks)));
+            if write_w3d {
+                let rig = rig.get_or_insert_with(|| {
+                    let mut rig = Rig::new(&hands, &parts);
+                    let root = gun.bones.first().and_then(|b| rig.pivot(&b.name)).unwrap_or(0);
+                    // The base parts ride the gun root at their authored `attachViewModelOffset` (the
+                    // empty authored tag is `j_gun`), before the sight marker so the base optic can
+                    // drive it.
+                    for part in &base {
+                        if part.ads_only {
+                            continue;
+                        }
+                        let at = part.tag.as_deref().and_then(|t| rig.pivot(t)).unwrap_or(root);
+                        rig.attach(&part.model, at, character::scaled_xf((crate::xf::IDENTITY.0, part.offset)));
+                    }
+                    // Aim through the base optic (the snipers' scope): the line of sight goes up to the
+                    // middle of its glass. It creates the marker when the gun has none, and moves it
+                    // when the gun already carries one; an attachment optic below still wins.
+                    let base_optic = base
+                        .iter()
+                        .find(|p| p.optic)
+                        .and_then(|p| p.model.bones.first().and_then(|b| rig.pivot(&b.name)).map(|pivot| (pivot, &p.model)));
+                    if let Some((optic, model)) = base_optic {
+                        let mid = (model.mins[2] + (model.maxs[2] - model.mins[2]) * OPTIC_WINDOW) * character::SCALE;
+                        let pos = crate::xf::apply(rig.bind[optic], [0.0, 0.0, mid]);
+                        if rig.pivot("tag_sights").is_some() {
+                            rig.move_pivot("tag_sights", pos);
+                        } else {
+                            let local = crate::xf::compose(crate::xf::inverse(rig.bind[root]), (crate::xf::IDENTITY.0, pos));
+                            rig.add_marker("tag_sights", root, local);
+                        }
+                    } else if rig.pivot("tag_sights").is_none() {
+                        // Aiming lines `tag_sights` up with the eye; many BO2 viewmodels (every pistol)
+                        // have none, so give them one where their sights are.
+                        let at = rig.pivot("tag_sights_on").map(|p| rig.bind[p].1).or_else(|| {
+                            let weapon = rig.pivot(mount_tag(w)).map_or(crate::xf::IDENTITY, |p| rig.bind[p]);
+                            sight_point(&gun).map(|p| crate::xf::apply(weapon, character::scaled(p)))
+                        });
+                        if let Some(at) = at {
+                            let local = crate::xf::compose(crate::xf::inverse(rig.bind[root]), (crate::xf::IDENTITY.0, at));
+                            rig.add_marker("tag_sights", root, local);
+                        }
+                    }
+                    for (model, tag, offset, pt) in &extra {
+                        let at = tag.as_deref().and_then(|t| rig.pivot(t)).unwrap_or(root);
+                        rig.attach(model, at, *offset);
+                        // Aim through the optic: the line of sight goes up to the middle of its glass
+                        // (the window sits in the upper part of the sight, above its mount).
+                        if *pt == point::OPTIC as u32 {
+                            if let Some(optic) = model.bones.first().and_then(|b| rig.pivot(&b.name)) {
+                                let mid = (model.mins[2] + (model.maxs[2] - model.mins[2]) * OPTIC_WINDOW) * character::SCALE;
+                                let pos = crate::xf::apply(rig.bind[optic], [0.0, 0.0, mid]);
+                                rig.move_pivot("tag_sights", pos);
+                            }
+                        }
+                    }
+                    rig
+                });
+                let mut meshes = character::skin(rig, &hands, "H", &hands_tex);
+                meshes.extend(character::skin_hiding(rig, &gun, "G", &gun_tex, &c.hide));
+                // The base parts: the magazine keeps its `M` prefix and its rigid `N` copy on
+                // `tag_clip1` (the reload's incoming magazine); the attachment art (the scope) gets the
+                // free `B` prefix.
+                for (k, (part, tex)) in base.iter().zip(&base_tex).enumerate() {
                     if part.ads_only {
                         continue;
                     }
-                    let at = part.tag.as_deref().and_then(|t| rig.pivot(t)).unwrap_or(root);
-                    rig.attach(&part.model, at, character::scaled_xf((crate::xf::IDENTITY.0, part.offset)));
-                }
-                // Aim through the base optic (the snipers' scope): the line of sight goes up to the
-                // middle of its glass. It creates the marker when the gun has none, and moves it
-                // when the gun already carries one; an attachment optic below still wins.
-                let base_optic = base
-                    .iter()
-                    .find(|p| p.optic)
-                    .and_then(|p| p.model.bones.first().and_then(|b| rig.pivot(&b.name)).map(|pivot| (pivot, &p.model)));
-                if let Some((optic, model)) = base_optic {
-                    let mid = (model.mins[2] + (model.maxs[2] - model.mins[2]) * OPTIC_WINDOW) * character::SCALE;
-                    let pos = crate::xf::apply(rig.bind[optic], [0.0, 0.0, mid]);
-                    if rig.pivot("tag_sights").is_some() {
-                        rig.move_pivot("tag_sights", pos);
-                    } else {
-                        let local = crate::xf::compose(crate::xf::inverse(rig.bind[root]), (crate::xf::IDENTITY.0, pos));
-                        rig.add_marker("tag_sights", root, local);
-                    }
-                } else if rig.pivot("tag_sights").is_none() {
-                    // Aiming lines `tag_sights` up with the eye; many BO2 viewmodels (every pistol)
-                    // have none, so give them one where their sights are.
-                    let at = rig.pivot("tag_sights_on").map(|p| rig.bind[p].1).or_else(|| {
-                        let weapon = rig.pivot(mount_tag(w)).map_or(crate::xf::IDENTITY, |p| rig.bind[p]);
-                        sight_point(&gun).map(|p| crate::xf::apply(weapon, character::scaled(p)))
-                    });
-                    if let Some(at) = at {
-                        let local = crate::xf::compose(crate::xf::inverse(rig.bind[root]), (crate::xf::IDENTITY.0, at));
-                        rig.add_marker("tag_sights", root, local);
-                    }
-                }
-                for (model, tag, offset, pt) in &extra {
-                    let at = tag.as_deref().and_then(|t| rig.pivot(t)).unwrap_or(root);
-                    rig.attach(model, at, *offset);
-                    // Aim through the optic: the line of sight goes up to the middle of its glass
-                    // (the window sits in the upper part of the sight, above its mount).
-                    if *pt == point::OPTIC as u32 {
-                        if let Some(optic) = model.bones.first().and_then(|b| rig.pivot(&b.name)) {
-                            let mid = (model.mins[2] + (model.maxs[2] - model.mins[2]) * OPTIC_WINDOW) * character::SCALE;
-                            let pos = crate::xf::apply(rig.bind[optic], [0.0, 0.0, mid]);
-                            rig.move_pivot("tag_sights", pos);
+                    if part.magazine {
+                        meshes.extend(character::skin(rig, &part.model, "M", tex));
+                        if let Some(new_mag) = rig.pivot("tag_clip1") {
+                            meshes.extend(character::skin_rigid(&part.model, new_mag, crate::xf::IDENTITY, "N", 0, tex, &[]));
                         }
+                    } else {
+                        meshes.extend(character::skin(rig, &part.model, &format!("B{k}"), tex));
                     }
                 }
-                rig
-            });
-            let hands_tex = textures(&hands, paks, out, &mut looks);
-            native_factions.push((f.letter, native::model(&hands, &hands_tex, &looks)));
-            let mut meshes = character::skin(rig, &hands, "H", &hands_tex);
-            meshes.extend(character::skin_hiding(rig, &gun, "G", &gun_tex, &c.hide));
-            // The base parts: the magazine keeps its `M` prefix and its rigid `N` copy on
-            // `tag_clip1` (the reload's incoming magazine); the attachment art (the scope) gets the
-            // free `B` prefix.
-            for (k, (part, tex)) in base.iter().zip(&base_tex).enumerate() {
-                if part.ads_only {
-                    continue;
+                for (k, ((model, ..), tex)) in extra.iter().zip(&extra_tex).enumerate() {
+                    meshes.extend(character::skin(rig, model, &format!("A{k}"), tex));
                 }
-                if part.magazine {
-                    meshes.extend(character::skin(rig, &part.model, "M", tex));
-                    if let Some(new_mag) = rig.pivot("tag_clip1") {
-                        meshes.extend(character::skin_rigid(&part.model, new_mag, crate::xf::IDENTITY, "N", 0, tex, &[]));
-                    }
-                } else {
-                    meshes.extend(character::skin(rig, &part.model, &format!("B{k}"), tex));
-                }
+                finish(&mut meshes, &looks);
+                let name = vm_model(vm, f.letter);
+                out.insert(format!("Art\\W3D\\{name}.w3d"), w3d::skin_model(&name, &vm_hierarchy(vm), &meshes));
             }
-            for (k, ((model, ..), tex)) in extra.iter().zip(&extra_tex).enumerate() {
-                meshes.extend(character::skin(rig, model, &format!("A{k}"), tex));
-            }
-            finish(&mut meshes, &looks);
-            let name = vm_model(vm, f.letter);
-            out.insert(format!("Art\\W3D\\{name}.w3d"), w3d::skin_model(&name, &vm_hierarchy(vm), &meshes));
         }
-        let rig = rig.ok_or("no viewmodel arms")?;
-        let hierarchy = vm_hierarchy(vm);
-        out.insert(format!("Art\\W3D\\{hierarchy}.w3d"), rig.hierarchy_file(&hierarchy));
+        // The W3D mesh output stays on the base set; a non-base combination's W3D path falls back
+        // to its base weapon's mesh (the fallback's deprecation direction). Its native manifest is
+        // still emitted below.
+        let rig = if write_w3d { Some(rig.ok_or("no viewmodel arms")?) } else { None };
+        let hierarchy = write_w3d.then(|| vm_hierarchy(vm));
+        if let (Some(rig), Some(hierarchy)) = (&rig, &hierarchy) {
+            out.insert(format!("Art\\W3D\\{hierarchy}.w3d"), rig.hierarchy_file(hierarchy));
+        }
         // The weapon's clips, then its alt mode's after them on the same viewmodel.
         let alt_id = defs.iter().find(|d| &d.id == id).map(|d| d.alt.clone()).unwrap_or_default();
         let alt_anims = (!alt_id.is_empty()).then(|| bo2.iter().find(|a| a.name == base_id(&alt_id))).flatten().map(|a| a.anims.clone());
@@ -520,10 +536,12 @@ pub(crate) fn weapon_viewmodels(
                 let Some(anim_name) = anim_name else { continue };
                 let anim = anim_cache.entry(anim_name.clone()).or_insert_with(|| xanim::find(common, anim_name).ok());
                 let Some(anim) = anim else { continue };
-                let (frames, channels) = character::animate(&rig, anim);
-                let fps = anim.frame_rate.round().max(1.0) as u32;
-                let clip = vm_anim(vm, base_slot + slot);
-                out.insert(format!("Art\\W3D\\{clip}.w3d"), w3d::animation(&clip, &hierarchy, frames, fps, &channels));
+                if let (Some(rig), Some(hierarchy)) = (&rig, &hierarchy) {
+                    let (frames, channels) = character::animate(rig, anim);
+                    let fps = anim.frame_rate.round().max(1.0) as u32;
+                    let clip = vm_anim(vm, base_slot + slot);
+                    out.insert(format!("Art\\W3D\\{clip}.w3d"), w3d::animation(&clip, hierarchy, frames, fps, &channels));
+                }
                 native_clips.push(((base_slot + slot) as u16, native::put_anim(out, anim)));
                 clips.push((vm, (base_slot + slot) as i32, anim.clone()));
                 n += 1;

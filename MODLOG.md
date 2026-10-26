@@ -3676,6 +3676,49 @@ Verified: cargo test --workspace green; the real-install suite (`--skip conforma
 clippy clean; `cargo xtask build` clean; autotest 13/13 default, `--classpick` all checks,
 14/14 `--rts`, `--rts-dry` PASS.
 
+## Full combo conversion: every legal combo has a manifest (2026-10-25)
+
+Merged `v1/combo-coverage` (3 commits + the integrator's agreement-test fix). The mechanism
+behind the playtest's two strangest findings (attachment art invisible in game, the grip's
+hand pose silent) is fixed: the archive converted only the default loadout's combos, so every
+picked class's attachments had no manifest — art absent, clips base. `converted()` now covers
+every BO2-legal combo (~20,700 ids; the enumeration is shared with the conformance crate's
+`bo2::combos` rules via one `offered_kinds` bridge, pinned by the real-install agreement
+test). Coverage is MANIFESTS-ONLY per combo: the native `.zbv` (~2 KB) per faction, the shared
+`.zbm`/`.zba`/texture blobs deduped by name; the composed W3D mesh and the third-person body
+stay on the base set (`converted_base`) — consistent with the W3D fallback's deprecation
+direction, and what kept the archive at **857 MB** (the first full attempt wrote W3D meshes
+per combo: 8.1 GiB, overflowing the .big format's u32 size field; the body files alone were
+2.14 GB each before `world_weapons` was split to the base set too). The stamp records
+`ZHBO_CONVERT_ALL_COMBOS` (default ON; `=0` opts out for dev iteration).
+
+The burn, measured: totals **898,147 → 709,604 cells (−21 %)**; anims 218,889 → 78,787
+(−64 %); parts 41,722 → 9,561 (−77 %); hide 5,439 → 4,228; identity 37,364 → 9,948; camo
+8,407 → 7,301. Clusters 200 → 203, gaps 211 → 214: coverage SURFACED new real differences
+where the base-fallback previously hid them (sounds 35,154 → 66,689; effects 48,625 → 59,665;
+worldparts 36,734 → 45,959 — combos now emit their own values, and those values differ from
+BO2's; that is the next cycles' work, not regressions). The Q1/Q10 playtest items should be
+visibly fixed in game (re-check: mp7+reflex shows the sight, mp7+grip holds the foregrip).
+
+* Gotchas: the .big u32 size field overflows past 4 GiB (the first attempt proved it; the
+  ceiling is recorded for when the archive approaches it); the agreement test initially read
+  the CaC expected table (608 rows) instead of the weapons one (11,605) — fixed at integration
+  with the key mapping; the `offered_kinds` bridge needed the sort+dedup the plan's text
+  omitted (caught by the loadout's canonical-id check).
+* **The agreement test earned its keep twice**: with the table fixed it exposed two REAL
+  structural gaps, now tracked cycles — (a) the alt-weapon combo bases (`dualoptic_*`/`sf_*`
+  families, 2,379 rows: BO2 offers the alt weapons as their own attachment bases; the mod's
+  enumeration covers only base weapons — part of the structural CaC/alt work), and (b) the
+  dual-wield representation (`beretta93r_dw_mp`-style separate weapons vs the mod's `+dw`
+  attachment — the N3 playtest item, mechanically pinned). The test is renamed into the
+  conformance family's red-by-design set (`conformance_the_enumerator_matches_the_expected_rows`)
+  so the blocking suite's `--skip conformance` covers it while the gaps stand.
+
+Verified: cargo test --workspace green; the real-install suite (`--skip conformance`) green
+incl. both new real-install tests; clippy clean; `cargo xtask build` clean; autotest 13/13
+default, `--classpick` all checks, 14/14 `--rts`, `--scope` PASS; the conformance run as
+measured above. Archive VERSION 75 → 76.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and
@@ -4343,3 +4386,52 @@ attached to the commit.
 
 **Verified.** `cargo test --workspace` passes. `cargo clippy` adds no warning in the conformance
 files. The real-install CLI run produced the totals above. No game was launched.
+
+## Combo conversion coverage (2026-10-25)
+
+The converter's `converted()` now appends every legal Create-a-Class combination to the base set
+(`converted_base`), so a locally built archive names a native viewmodel manifest per legal combo.
+`ZHBO_CONVERT_ALL_COMBOS=0` builds the base set only. The full set is split at the viewmodels
+emission: the first `base_count = converted_base.len()` ids get the native blobs and the composed
+W3D meshes/hierarchies/clips; the remaining legal combinations get native manifests only. The W3D
+fallback for a non-base combo keeps its base weapon's mesh. The single-id sweep callers pass 0
+(W3D dropped) and the single-id tests pass 1.
+
+**Measured on this workstation.**
+- Base build (`ZHBO_CONVERT_ALL_COMBOS=0`): 1:31.95 wall, 697,360,255 bytes.
+- Full build (all legal combos): 2:41.92 wall, 7,275,758,249 bytes. The `.big` header's u32 size
+  field wraps at 4 GiB (declared 2,980,790,953 = 7,275,758,249 mod 2^32), so the full build still
+  overflows the engine's u32 archive size even with the first-person split.
+- The full archive's 6.66 GB of `.w3d` is dominated by the three third-person body files
+  (`Art\W3D\ZHBO_{GLA,USA,CHN}_SKN.w3d`, ~2.14 GB each). The first-person `weapon_viewmodels` split
+  worked (2,124 `ZV*.w3d` files total ~0.24 GB), but `generals.rs`'s body W3D still aggregates every
+  `world_weapons` mesh for the full combo set. Extending the manifest-only split to the third-person
+  world weapons is the remaining fix; the first-person split alone leaves the full build over 3 GiB.
+- `the_legal_combo_set_covers_every_base_weapon` asserts the legal set covers the statstable-backed
+  base ids only: `knife_held_mp` is the loadout's melee table row, not a CaC item, so the
+  enumerator's `items` filter excludes it. It also asserts `all_legal_combos` ⊆ `converted()`.
+
+### The third-person body carries the base set only
+
+The full build's size was the third-person body, not the first-person split: `generals.rs` fed the
+full combo list to `viewmodels::world_weapons`, so each `Art\W3D\ZHBO_{GLA,USA,CHN}_SKN.w3d`
+aggregated every combo's world mesh. The integrator's fix: `world_weapons` now takes
+`converted_base`, so the body W3D and the `.zbw` world-weapon manifests are base-set only. A combo's
+third-person view shows its base weapon's world model — the fallback unconverted combos already use.
+Projectiles, FX and sounds were already on `converted_base`; the full `converted` list now feeds only
+the weapon table and the first-person viewmodels' manifest-only split. The base set still includes
+the default loadout's combo ids (they are first in `converted_base`), so the primary's world mesh
+stays "W00" and the INI's hidden list/draw indices keep working.
+
+**Measured on this workstation.**
+- Base build (`ZHBO_CONVERT_ALL_COMBOS=0`): 1:31.24 wall, 697,360,255 bytes — unchanged, as expected
+  (`converted == converted_base` when the flag is off).
+- Full build (all legal combos): 2:17.40 wall, 857,499,388 bytes, down from 7,275,758,249 bytes
+  (6.42 GB smaller). The base archive has 4,746 entries; the full has 33,963.
+- Both archives validate: magic `BIGF`, the header's total field (little-endian at [4:8]) equals the
+  byte length exactly, and the largest entry's `offset+size` equals the file length. No u32 wrap.
+  The prior full build's total field wrapped; this one fits.
+
+**Verified.** `cargo test -p zhbo-assets` green; `cargo test --workspace` green; `cargo clippy
+--workspace --all-targets` exit 0; the real-install suite (`--skip conformance`) green. No game
+launched. Conformance was not run on the full archive this round.

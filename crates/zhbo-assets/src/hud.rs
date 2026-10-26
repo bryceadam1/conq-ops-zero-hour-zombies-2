@@ -16,7 +16,7 @@ use zhbo_formats::iwi::Rgba;
 use zhbo_formats::t6zone::Zone;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive.
-pub const VERSION: u32 = 75;
+pub const VERSION: u32 = 76;
 pub use zhbo_core::names::BO2_ARCHIVE_NAME as ARCHIVE_NAME;
 pub use zhbo_core::names::BO2_ARCHIVE_VERSION_PATH as VERSION_FILE;
 /// Stem of each page's TGA; every MappedImage names the page it was packed into.
@@ -198,7 +198,7 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     // The create-a-class weapon pictures: each item's image in BO2's `mp/statstable.csv` plus
     // `_big` (`classpreview.lua`'s `GetItemImage(...) .. "_big"`).
     let item_images = crate::cac::item_images(bo2_dir);
-    for id in crate::weapons::converted(&weapons) {
+    for id in crate::weapons::converted_base(&weapons) {
         let Some(w) = weapons.iter().find(|w| w.name == crate::generals::base_id(&id)) else { continue };
         let base = crate::generals::base_id(&id);
         if let Some(image) = item_images.get(base.trim_end_matches("_mp")) {
@@ -508,12 +508,12 @@ fn blit(dst: &mut Rgba, src: &Rgba, at: (u32, u32)) {
 }
 
 /// What the archive was built from: the converter version, and the loadout overrides that pick which
-/// weapons' art is converted (`ZHBO_LOADOUT`, `ZHBO_CONVERT_ALL_WEAPONS`).
+/// weapons' art is converted (`ZHBO_LOADOUT`, `ZHBO_CONVERT_ALL_WEAPONS`, `ZHBO_CONVERT_ALL_COMBOS`).
 fn version_stamp() -> String {
     let var = |k: &str| std::env::var(k).unwrap_or_default();
     // Only the parts that pick art: spare rounds (`primary_reserve`, ...) don't change it.
     let loadout: Vec<String> = var("ZHBO_LOADOUT").split(';').filter(|p| !p.trim_start().contains("_reserve")).map(str::to_string).collect();
-    format!("{VERSION}\nloadout={}\nall={}\n", loadout.join(";"), var("ZHBO_CONVERT_ALL_WEAPONS"))
+    format!("{VERSION}\nloadout={}\nall={}\ncombos={}\n", loadout.join(";"), var("ZHBO_CONVERT_ALL_WEAPONS"), var("ZHBO_CONVERT_ALL_COMBOS"))
 }
 
 /// Version stored in an existing archive, if it is one of ours and was built for this loadout.

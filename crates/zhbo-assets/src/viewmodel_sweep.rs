@@ -51,7 +51,7 @@ impl Source {
         let atts = zhbo_formats::weapon::attachments(&common).map_err(|e| e.to_string())?;
         let names = crate::weapons::names(bo2_dir);
         let mut table = crate::weapons::table(&bo2, &atts, &names);
-        crate::weapons::add_variants(&mut table, &crate::weapons::converted(&bo2), &bo2);
+        crate::weapons::add_variants(&mut table, &crate::weapons::converted(&patch, &bo2), &bo2);
         Ok(Source { common, patch, zones, paks, bo2, atts, defs: table.weapons })
     }
 
@@ -63,7 +63,7 @@ impl Source {
     pub fn composition(&self, id: &str) -> Result<BTreeMap<String, Vec<u8>>, String> {
         let mut out: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         let mut defs = self.defs.clone();
-        weapon_viewmodels(&self.patch, &self.common, &self.zones, &self.paks, &mut out, &self.bo2, &self.atts, &mut defs, std::slice::from_ref(&id.to_string()))?;
+        weapon_viewmodels(&self.patch, &self.common, &self.zones, &self.paks, &mut out, &self.bo2, &self.atts, &mut defs, std::slice::from_ref(&id.to_string()), 0)?;
         out.retain(|path, _| path.starts_with(zhbo_native::DIR) || path.starts_with("Art\\Textures\\"));
         Ok(out)
     }
@@ -801,7 +801,7 @@ mod tests {
         let summary = |id: &str| {
             let mut out = BTreeMap::new();
             let mut defs = src.defs.clone();
-            match crate::viewmodels::weapon_viewmodels(&src.patch, &src.common, &src.zones, &src.paks, &mut out, &src.bo2, &src.atts, &mut defs, &[id.to_string()]) {
+            match crate::viewmodels::weapon_viewmodels(&src.patch, &src.common, &src.zones, &src.paks, &mut out, &src.bo2, &src.atts, &mut defs, &[id.to_string()], 0) {
                 Ok((s, _)) => eprintln!("SUMMARY {id}: {s}"),
                 Err(e) => eprintln!("SUMMARY {id}: ERR {e}"),
             }
