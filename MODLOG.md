@@ -3612,6 +3612,35 @@ Verified: cargo test --workspace green; the real-install suite (`--skip conforma
 clippy clean; `cargo xtask build` clean; autotest 13/13 default, `--classpick` all checks,
 14/14 `--rts`, `--scope` PASS.
 
+## The animation selector ports BO2's five-tier per-slot rule (2026-10-25)
+
+Merged `v1/anim-selection-rule` (1 commit + 1 integrator correction). The mod picked ONE unique
+per combo for its clips ("the attachment with the most of its own"); BO2 resolves PER SLOT in
+five tiers (G14 §5): slot 0x18 → highest `firstRaisePriority`; alt-ADS-only weapons keep
+0x1A/0x1B/0x55–0x57 on the variant; aim slots 0x3D–0x40/0x55–0x57 → the mounted optic's
+resolved unique; otherwise the combo kinds' resolved uniques in ascending `eAttachment` order;
+final fallback → the base unique's table. The parser gained the two fields the rule needs
+(`Attachment.first_raise_priority`, `Attachment.alt_weapon_ads_only`); the selector in
+`combo()` is the tier loop; the merge semantics are per-slot override, a unique's `None` is
+never an erase. **Measured honestly: the cluster barely moved (218,630 → 218,889) because most
+of it is conversion COVERAGE, not the rule** — the loadout combo's ADS slots now take the
+optic's clips (the 2 rows that proved the port), 320 tier-5 rows cleared, and the remaining
+mass belongs to the coverage cycle (see the next entry). The integrator correction: tier 5 was
+coded as an override of populated variant slots, but the measured rows prove BO2 keeps the
+variant's own clip (the bare an94's `putaway_quick` stands) — tier 5 now fills only EMPTY slots,
+and the plan's two wrong test fixtures were corrected with it. Archive VERSION 72 → 73; no ABI.
+
+* The plan's own fixture discipline caught the right lesson again: when a plan's test fixture
+  contradicts measured BO2 behavior, the measurement wins and the fixture gets corrected — the
+  conformance rows are the oracle.
+* The `anim_alt_drop`/mms rows left standing are conversion coverage (the adapter resolves
+  clips via the manifest the game loads; unconverted combos get base clips), folded into the
+  coverage cycle's scope.
+
+Verified: cargo test --workspace green; the real-install suite (`--skip conformance`) green;
+clippy clean; `cargo xtask build` clean; autotest 13/13 default, `--classpick` all checks,
+14/14 `--rts`; the conformance run as measured above.
+
 ## Next steps
 
 The macOS port is built and passing its in-game autotest (`scripts/autotest-mac.sh`); setup and

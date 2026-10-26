@@ -190,24 +190,87 @@ pub fn combo<'a>(w: &'a zhbo_formats::weapon::Weapon, atts: &[zhbo_formats::weap
     use crate::weapons::short_name;
     let mut parts = Vec::new();
     let mut mask = 0u32;
+    let mut combo_kinds = Vec::new();
     for short in shorts {
         let Some((kind, id)) = w.attachment_variants.iter().find(|(_, id)| short_name(id) == *short) else { continue };
         mask |= 1 << kind;
         let point = atts.iter().find(|a| &a.name == id).map_or(0, |a| a.point);
+        combo_kinds.push((*kind, point));
         if let Some(u) = w.attachment_uniques.iter().find(|u| u.kind == *kind && u.combined == 0) {
             parts.push((u, point));
         }
     }
-    let count = |a: &[Option<String>]| a.iter().filter(|x| x.is_some()).count();
-    // The animations: the entry for exactly this combination, else the attachment with the most
-    // of its own (a grip or launcher changes the hands), over the weapon's.
+    // The animations: per-slot, five tiers (G14 §5). The base table is the variant's; each slot is
+    // resolved independently. A unique's `None` is "no override", never an erase.
     let exact = (shorts.len() > 1).then(|| w.attachment_uniques.iter().find(|u| u.combined == mask)).flatten();
-    let source = exact.or_else(|| parts.iter().map(|(u, _)| *u).max_by_key(|u| count(&u.anims)));
+    let base = w.attachment_uniques.iter().find(|u| u.kind == 0 && u.combined == mask)
+        .or_else(|| w.attachment_uniques.iter().find(|u| u.kind == 0 && u.combined == 0));
+    let optic_kind = combo_kinds.iter().find(|(_, p)| *p == 1).map(|(k, _)| *k);
+    let alt_ads_only = combo_kinds.iter().any(|(kind, _)| {
+        atts.iter().find(|a| a.kind == *kind).map_or(false, |a| a.alt_weapon_ads_only)
+    });
+    let resolved = |kind: u32| -> Option<&'a zhbo_formats::weapon::AttachmentUnique> {
+        w.attachment_uniques.iter().find(|u| u.kind == kind && u.combined == mask)
+            .or_else(|| w.attachment_uniques.iter().find(|u| u.kind == kind && u.combined == 0))
+    };
+    let priority = |kind: u32| -> i32 {
+        atts.iter().find(|a| a.kind == kind).map_or(0, |a| a.first_raise_priority)
+    };
     let mut anims = w.anims.clone();
-    if let Some(u) = source {
-        for (i, a) in u.anims.iter().enumerate() {
-            if a.is_some() && i < anims.len() {
-                anims[i] = a.clone();
+    for s in 0..anims.len() {
+        // 1. First-raise slot 0x18: the resolved unique with the highest firstRaisePriority.
+        if s == 0x18 {
+            let best = combo_kinds.iter()
+                .filter_map(|(k, _)| resolved(*k).map(|u| (u, priority(*k))))
+                .filter(|(u, _)| u.anims.get(s).map_or(false, |a| a.is_some()))
+                .fold(None, |acc: Option<(&zhbo_formats::weapon::AttachmentUnique, i32)>, (u, p)| {
+                    match acc {
+                        Some((_, ap)) if ap >= p => acc,
+                        _ => Some((u, p)),
+                    }
+                });
+            if let Some(a) = best.and_then(|(u, _)| u.anims.get(s).cloned()).flatten() {
+                anims[s] = Some(a);
+            }
+            continue;
+        }
+        // 2. Alt-mode ADS-only: slots 0x1A, 0x1B, 0x55-0x57 stay the variant's.
+        if alt_ads_only && [0x1A, 0x1B, 0x55, 0x56, 0x57].contains(&s) {
+            continue;
+        }
+        // 3. Aim slots 0x3D-0x40 and 0x55-0x57: the optic's resolved unique.
+        if [0x3D, 0x3E, 0x3F, 0x40, 0x55, 0x56, 0x57].contains(&s) {
+            if let Some(k) = optic_kind {
+                if let Some(u) = resolved(k) {
+                    if let Some(a) = u.anims.get(s) {
+                        anims[s] = a.clone();
+                        continue;
+                    }
+                }
+            }
+        }
+        // 4. Otherwise: the first field kind's resolved unique, ascending eAttachment order.
+        let mut sorted: Vec<u32> = combo_kinds.iter().map(|(k, _)| *k).collect();
+        sorted.sort();
+        let mut found = false;
+        for k in sorted {
+            if let Some(u) = resolved(k) {
+                if let Some(a) = u.anims.get(s) {
+                    if a.is_some() {
+                        anims[s] = a.clone();
+                        found = true;
+                        break;
+                    }
+                }
+            }
+        }
+        if found { continue; }
+        // 5. Base unique fallback.
+        if let Some(u) = base {
+            if let Some(a) = u.anims.get(s) {
+                if a.is_some() {
+                    anims[s] = a.clone();
+                }
             }
         }
     }
@@ -791,7 +854,7 @@ pub(crate) fn tablet_world(patch: &Zone, common: &Zone, paks: &Paks, out: &mut B
 #[cfg(test)]
 mod tests {
     use super::{attachment_parts, base_part_note, duplicate_sight, is_dual_wield, mount_tag, same_sight, BasePart};
-    use zhbo_formats::weapon::{inventory, AttachmentUnique, Weapon};
+    use zhbo_formats::weapon::{inventory, Attachment, AttachmentUnique, Weapon};
 
     fn sight(name: &str, mins: [f32; 3], maxs: [f32; 3]) -> zhbo_formats::xmodel::Model {
         zhbo_formats::xmodel::Model {
@@ -955,6 +1018,156 @@ mod tests {
         assert!(is_dual_wield(&lh, &[]), "the DWLEFTHAND companion is the left half");
         let base = Weapon { name: "fnp45_mp".into(), ..Default::default() };
         assert!(!is_dual_wield(&base, &[]), "the bare base pistol is not a pair");
+    }
+
+    /// G14 §5 priority 1: slot 0x18 takes the resolved unique whose attachment's
+    /// `firstRaisePriority` is highest; first wins ties.
+    #[test]
+    fn the_first_raise_priority_wins_slot_0x18() {
+        let att1 = Attachment { kind: 1, first_raise_priority: 10, ..Default::default() };
+        let att2 = Attachment { kind: 2, first_raise_priority: 20, ..Default::default() };
+        let att3 = Attachment { kind: 3, first_raise_priority: 20, ..Default::default() };
+        let mut u1 = AttachmentUnique { kind: 1, ..Default::default() };
+        u1.anims = vec![None; 0x58]; u1.anims[0x18] = Some("u1_first_raise".into());
+        let mut u2 = AttachmentUnique { kind: 2, ..Default::default() };
+        u2.anims = vec![None; 0x58]; u2.anims[0x18] = Some("u2_first_raise".into());
+        let mut u3 = AttachmentUnique { kind: 3, ..Default::default() };
+        u3.anims = vec![None; 0x58]; u3.anims[0x18] = Some("u3_first_raise".into());
+        let mut w = Weapon {
+            attachment_variants: vec![(1, "a".into()), (2, "b".into()), (3, "c".into())],
+            attachment_uniques: vec![u1, u2, u3],
+            ..Default::default()
+        };
+        w.anims = vec![None; 0x58];
+        let c = super::combo(&w, &[att1, att2, att3], &["a", "b", "c"]);
+        assert_eq!(c.anims[0x18].as_deref(), Some("u2_first_raise"), "the higher firstRaisePriority wins; the first of the ties wins");
+    }
+
+    /// G14 §5 priority 2: an alt-mode ADS-only weapon keeps the variant's clips for
+    /// 0x1A/0x1B/0x55-0x57.
+    #[test]
+    fn the_alt_mode_ads_only_slots_stay_on_the_variant() {
+        let att = Attachment { kind: 1, alt_weapon_ads_only: true, ..Default::default() };
+        let mut u = AttachmentUnique { kind: 1, ..Default::default() };
+        u.anims = vec![None; 0x58]; u.anims[0x1A] = Some("unique_alt_raise".into());
+        let mut w = Weapon { attachment_variants: vec![(1, "gl".into())], attachment_uniques: vec![u], ..Default::default() };
+        w.anims = vec![None; 0x58]; w.anims[0x1A] = Some("variant_alt_raise".into());
+        let c = super::combo(&w, &[att], &["gl"]);
+        assert_eq!(c.anims[0x1A].as_deref(), Some("variant_alt_raise"), "the alt-mode slot keeps the variant's clip");
+    }
+
+    /// G14 §5 priority 3: the aim slots take the mounted optic's resolved unique, not the grip's.
+    #[test]
+    fn the_optic_wins_the_aim_slots() {
+        let optic_att = Attachment { name: "reflex".into(), kind: 20, point: 1, ..Default::default() };
+        let grip_att = Attachment { name: "grip".into(), kind: 12, point: 2, ..Default::default() };
+        let mut optic_u = AttachmentUnique { kind: 20, ..Default::default() };
+        optic_u.anims = vec![None; 0x58]; optic_u.anims[0x3D] = Some("optic_ads_fire".into());
+        let mut grip_u = AttachmentUnique { kind: 12, ..Default::default() };
+        grip_u.anims = vec![None; 0x58];
+        grip_u.anims[0x01] = Some("grip_idle".into());
+        grip_u.anims[0x3D] = Some("grip_ads_fire".into());
+        let mut w = Weapon {
+            attachment_variants: vec![(20, "reflex".into()), (12, "grip".into())],
+            attachment_uniques: vec![optic_u, grip_u],
+            ..Default::default()
+        };
+        w.anims = vec![None; 0x58];
+        let c = super::combo(&w, &[optic_att, grip_att], &["reflex", "grip"]);
+        assert_eq!(c.anims[0x3D].as_deref(), Some("optic_ads_fire"), "the optic's unique wins the aim slot");
+        assert_eq!(c.anims[0x01].as_deref(), Some("grip_idle"), "the hand-pose slot takes the grip's clip");
+    }
+
+    /// G14 §5 priority 4: the first field kind's resolved unique wins, ascending eAttachment order.
+    #[test]
+    fn the_attachment_order_picks_the_first_field_kind() {
+        let att1 = Attachment { kind: 1, ..Default::default() };
+        let att2 = Attachment { kind: 2, ..Default::default() };
+        let mut u1 = AttachmentUnique { kind: 1, ..Default::default() };
+        u1.anims = vec![None; 0x58]; u1.anims[0x01] = Some("u1_idle".into());
+        let mut u2 = AttachmentUnique { kind: 2, ..Default::default() };
+        u2.anims = vec![None; 0x58]; u2.anims[0x01] = Some("u2_idle".into());
+        let mut w = Weapon {
+            attachment_variants: vec![(2, "b".into()), (1, "a".into())],
+            attachment_uniques: vec![u2, u1],
+            ..Default::default()
+        };
+        w.anims = vec![None; 0x58];
+        let c = super::combo(&w, &[att2, att1], &["b", "a"]);
+        assert_eq!(c.anims[0x01].as_deref(), Some("u1_idle"), "ascending kind 1 wins over kind 2");
+    }
+
+    /// G14 §5 priority 5: the base unique's table is the final fallback.
+    #[test]
+    fn the_base_unique_is_the_final_fallback() {
+        let att = Attachment { kind: 1, ..Default::default() };
+        let mut base = AttachmentUnique { kind: 0, ..Default::default() };
+        base.anims = vec![None; 0x58]; base.anims[0x01] = Some("base_idle".into());
+        let u = AttachmentUnique { kind: 1, ..Default::default() };
+        let mut w = Weapon { attachment_variants: vec![(1, "a".into())], attachment_uniques: vec![base, u], ..Default::default() };
+        w.anims = vec![None; 0x58]; w.anims[0x01] = Some("variant_idle".into());
+        let c = super::combo(&w, &[att], &["a"]);
+        assert_eq!(c.anims[0x01].as_deref(), Some("base_idle"), "the base unique's table is the fallback");
+    }
+
+    /// G14 §5: the exact-combined unique participates as the mask-matched resolved child.
+    #[test]
+    fn the_exact_combined_unique_participates_as_the_resolved_child() {
+        let att1 = Attachment { kind: 1, ..Default::default() };
+        let att2 = Attachment { kind: 2, ..Default::default() };
+        let mut u1 = AttachmentUnique { kind: 1, ..Default::default() };
+        u1.anims = vec![None; 0x58]; u1.anims[0x01] = Some("u1_idle".into());
+        let mut u2 = AttachmentUnique { kind: 2, ..Default::default() };
+        u2.anims = vec![None; 0x58]; u2.anims[0x01] = Some("u2_idle".into());
+        let mut exact = AttachmentUnique { kind: 1, combined: 6, ..Default::default() };
+        exact.anims = vec![None; 0x58]; exact.anims[0x01] = Some("exact_idle".into());
+        let mut w = Weapon {
+            attachment_variants: vec![(1, "a".into()), (2, "b".into())],
+            attachment_uniques: vec![u1, u2, exact],
+            ..Default::default()
+        };
+        w.anims = vec![None; 0x58];
+        let c = super::combo(&w, &[att1, att2], &["a", "b"]);
+        assert_eq!(c.anims[0x01].as_deref(), Some("exact_idle"), "the exact combined child participates");
+    }
+
+    /// A unique's `None` is "no override", never an erase: the base value survives.
+    #[test]
+    fn a_uniques_none_does_not_erase_the_base() {
+        let att = Attachment { kind: 1, ..Default::default() };
+        let mut base = AttachmentUnique { kind: 0, ..Default::default() };
+        base.anims = vec![None; 0x58]; base.anims[0x01] = Some("base_idle".into());
+        let mut u = AttachmentUnique { kind: 1, ..Default::default() };
+        u.anims = vec![None; 0x58]; u.anims[0x01] = None;
+        let mut w = Weapon { attachment_variants: vec![(1, "a".into())], attachment_uniques: vec![base, u], ..Default::default() };
+        w.anims = vec![None; 0x58]; w.anims[0x01] = Some("variant_idle".into());
+        let c = super::combo(&w, &[att], &["a"]);
+        assert_eq!(c.anims[0x01].as_deref(), Some("base_idle"), "the unique's None falls through to the base");
+    }
+
+    /// The MP7+grip single-attachment case: the grip's idle wins, as verified parity today.
+    #[test]
+    fn the_mp7_grip_idle_keeps_its_clip() {
+        let att = Attachment { kind: 12, ..Default::default() };
+        let mut u = AttachmentUnique { kind: 12, ..Default::default() };
+        u.anims = vec![None; 0x58]; u.anims[0x01] = Some("viewmodel_mp7_grip_idle".into());
+        let mut w = Weapon { name: "mp7_mp".into(), attachment_variants: vec![(12, "grip".into())], attachment_uniques: vec![u], ..Default::default() };
+        w.anims = vec![None; 0x58]; w.anims[0x01] = Some("viewmodel_mp7_idle".into());
+        let c = super::combo(&w, &[att], &["grip"]);
+        assert_eq!(c.anims[0x01].as_deref(), Some("viewmodel_mp7_grip_idle"), "the grip's idle wins");
+    }
+
+    /// The erase guard: slot 0x18's tier-1 pass must not write `None` over the base table when
+    /// no combo unique offers a first-raise clip. The variant's clip survives.
+    #[test]
+    fn no_first_raise_offer_keeps_the_variants_0x18() {
+        let att = Attachment { kind: 1, first_raise_priority: 10, ..Default::default() };
+        let mut u = AttachmentUnique { kind: 1, ..Default::default() };
+        u.anims = vec![None; 0x58]; u.anims[0x18] = None;
+        let mut w = Weapon { attachment_variants: vec![(1, "a".into())], attachment_uniques: vec![u], ..Default::default() };
+        w.anims = vec![None; 0x58]; w.anims[0x18] = Some("variant_first_raise".into());
+        let c = super::combo(&w, &[att], &["a"]);
+        assert_eq!(c.anims[0x18].as_deref(), Some("variant_first_raise"), "no first-raise offer keeps the variant's clip");
     }
 
     /// The base pistol + the `dw` attachment is the composition path: the attachment the
