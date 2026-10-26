@@ -48,6 +48,8 @@ pub const IMPACT_TYPE: &[&str] = &[
     "none", "bullet_small", "bullet_large", "bullet_ap", "bullet_xtreme", "shotgun", "grenade_bounce", "grenade_explode",
     "rifle_grenade", "rocket_explode", "rocket_explode_xtreme", "projectile_dud", "mortar_shell", "tank_shell", "bolt", "blade",
 ];
+/// `OffhandSlot`.
+pub const OFFHAND_SLOT: &[&str] = &["none", "lethal_grenade", "tactical_grenade", "equipment", "specific_use"];
 /// `PenetrateType`.
 pub const PENETRATE_TYPE: &[&str] = &["none", "small", "medium", "large"];
 /// `weapOverlayReticle_t`.
@@ -113,6 +115,7 @@ pub fn schema() -> Schema {
         .col("weap_class", "identity", Kind::Text, "weapClass_t")
         .col("inventory", "identity", Kind::Text, "weapInventoryType_t")
         .col("offhand_class", "identity", Kind::Text, "OffhandClass")
+        .col("offhand_slot", "identity", Kind::Text, "OffhandSlot (WeaponDef.offhandSlot): which offhand button the weapon is on")
         .col("fire_type", "fire", Kind::Text, "weapFireType_t; stackfire's replaces the def's (G14 §4, FUN_008ecd90)")
         .col("shot_count", "fire", Kind::Int, "pellets per shot")
         .col("shots_before_rechamber", "fire", Kind::Int, "iShotsBeforeRechamber")
@@ -149,8 +152,8 @@ pub fn schema() -> Schema {
         ("sprint_out_time", "sprintOutTime"),
         ("ads_in_time", "iAdsTransInTime × Π fAdsTransInTimeScale (FUN_008ecca0)"),
         ("ads_out_time", "iAdsTransOutTime × Π fAdsTransOutTimeScale (FUN_008ecca0)"),
-        ("melee_time", "iMeleeTime"),
-        ("melee_delay", "iMeleeDelay"),
+        ("melee_time", "iMeleeTime of the weapon a melee uses: the class's knife_mp, a melee/riot-shield weapon itself (_class.gsc:586, _scoreevents.gsc:375)"),
+        ("melee_delay", "iMeleeDelay of the same melee weapon"),
         ("spin_up_time", "iSpinUpTime"),
         ("spin_down_time", "iSpinDownTime"),
         ("fuse_time", "fuseTime"),
@@ -164,8 +167,8 @@ pub fn schema() -> Schema {
 
     // Ammo.
     s.col("clip_size", "ammo", Kind::Int, "stackfire's iClipSize, else round(iClipSize × Π clipSizeScale) (FUN_008e5e50)")
-        .col("start_ammo_rounds", "ammo", Kind::Int, "rounds given at spawn incl. the clip: clip × iStartAmmo when ammoCountClipRelative (FUN_005e0910)")
-        .col("max_ammo_rounds", "ammo", Kind::Int, "the engine's max ammo: clip × iMaxAmmo when ammoCountClipRelative (FUN_005e08d0); mod side clip + max reserve")
+        .col("start_ammo_rounds", "ammo", Kind::Int, "rounds given at spawn, the loaded clip included: clip × iStartAmmo when ammoCountClipRelative (FUN_005e0910); the mod's magazine plus start reserve (an offhand's start count)")
+        .col("max_ammo_rounds", "ammo", Kind::Int, "the stock cap: the spare rounds carried beside the magazine, clip × iMaxAmmo when ammoCountClipRelative (FUN_005e08d0); iMaxAmmo excludes the loaded clip (crossbow_mp: iStartAmmo 6, clip 3, iMaxAmmo 3); the mod's max reserve")
         .col("clip_only", "ammo", Kind::Bool, "bClipOnly")
         .col("dual_mag", "ammo", Kind::Bool, "the variant's OR any attachment's (FUN_008eba90)")
         .col("shared_ammo", "ammo", Kind::Bool, "the def's OR any attachment's (FUN_008ebc00)");
@@ -174,10 +177,10 @@ pub fn schema() -> Schema {
     s.col("damage", "damage", Kind::List, "damage[6]")
         .col("damage_range", "damage", Kind::Floats(INCH_EPS), "damageRange[6] × Π fDamageRangeScale (FUN_008edb80), inches")
         .col("min_player_damage", "damage", Kind::Int, "minPlayerDamage")
-        .col("melee_damage", "damage", Kind::Int, "iMeleeDamage")
+        .col("melee_damage", "damage", Kind::Int, "iMeleeDamage of the weapon a melee uses (see melee_time)")
         .col("location_multipliers", "damage", Kind::Floats(F32_EPS), "21 hit locations: first unique differing from the base unique, else the def's (FUN_008ed780)")
         .col("max_range", "damage", inch, "maxRange")
-        .col("penetrate_type", "damage", Kind::Text, "PenetrateType of the def")
+        .col("penetrate_type", "damage", Kind::Text, "PenetrateType: the first attachment's non-zero penetrateType, else the def's (FUN_008ecec0)")
         .col("explosion_radius", "damage", inch, "iExplosionRadius")
         .col("explosion_radius_min", "damage", inch, "iExplosionRadiusMin")
         .col("explosion_inner_damage", "damage", Kind::Int, "iExplosionInnerDamage")
@@ -204,7 +207,7 @@ pub fn schema() -> Schema {
     s
         .col("ads_zoom_in_frac", "ads", f, "first attachment differing from defaultattachment, else the variant's (FUN_008ec4b0)")
         .col("ads_zoom_out_frac", "ads", f, "same rule (FUN_008ec520)")
-        .col("ads_move_speed_scale", "ads", f, "the def's if > 0 else 1, then the last attachment differing from defaultattachment (FUN_008ed080)")
+        .col("ads_move_speed_scale", "ads", f, "the def's if > 0 else 1, then the last attachment differing from defaultattachment replaces it (FUN_008ed080); the mod's side is its stored ADS walk divided by the converter's 0.35 base")
         .col("move_speed_scale", "ads", f, "moveSpeedScale")
         .col("sprint_duration_scale", "ads", f, "sprintDurationScale")
         .col("alt_scope_ads_in_time", "ads", f, "first attachment differing from defaultattachment, else the def's (FUN_008ecbc0)")

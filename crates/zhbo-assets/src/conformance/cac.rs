@@ -65,6 +65,8 @@ pub fn rows(shipped: &Shipped, bo2_dir: &std::path::Path, schema: &Schema) -> Re
 
     // Weapons, per slot list; each one's place among its group's entries in that list.
     let lists: [(&str, &Vec<&'static str>); 4] = [("primary", &o.primary), ("secondary", &o.secondary), ("primarygrenade", &o.lethal), ("specialgrenade", &o.tactical)];
+    // Every slot list an item appears in (the editor offers the launchers in both weapon slots).
+    let slots_of = |id: &str| -> String { lists.iter().filter(|(_, l)| l.contains(&id)).map(|(s, _)| *s).collect::<Vec<_>>().join("+") };
     for (slot, ids) in lists {
         for (i, &id) in ids.iter().enumerate() {
             let Some(d) = cat.get(id) else { continue };
@@ -72,12 +74,13 @@ pub fn rows(shipped: &Shipped, bo2_dir: &std::path::Path, schema: &Schema) -> Re
             if !seen.insert(reference.clone()) {
                 continue;
             }
+            let slots = slots_of(id);
             let group = group_of(d.class);
             let order = ids[..i].iter().filter(|x| cat.get(x).is_some_and(|e| group_of(e.class) == group)).count() as i64;
             let image = shipped.has_sprite(&zhbo_core::names::cac_weapon_image(id)).then(|| images.get(&reference).cloned()).flatten();
             let cost = cost_of(|dr| if slot == "secondary" { dr.secondary = id.to_string() } else if slot == "primary" { dr.primary = id.to_string() } else if slot == "primarygrenade" { dr.lethal = id.to_string() } else { dr.tactical = id.to_string() });
             out.push(row(schema, "weapon", &reference, |b| {
-                b.text("name", &d.display_name).opt_text("image", image).text("group", group).text("slot", slot).int("cost", cost).int("order", order);
+                b.text("name", &d.display_name).opt_text("image", image).text("group", group).text("slot", &slots).int("cost", cost).int("order", order);
             })?);
             // Its attachments, in the editor's order; what each can be combined with is what the
             // runtime keeps together (`attachments::apply`: one per attach point).
