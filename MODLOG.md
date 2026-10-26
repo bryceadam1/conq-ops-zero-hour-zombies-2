@@ -4308,3 +4308,27 @@ attached to the commit.
 
 **Verified.** `cargo test --workspace` passes. `cargo clippy` adds no warning in the conformance
 files. The real-install CLI run produced the totals above. No game was launched.
+
+## Combo conversion coverage (2026-10-25)
+
+The converter's `converted()` now appends every legal Create-a-Class combination to the base set
+(`converted_base`), so a locally built archive names a native viewmodel manifest per legal combo.
+`ZHBO_CONVERT_ALL_COMBOS=0` builds the base set only. The full set is split at the viewmodels
+emission: the first `base_count = converted_base.len()` ids get the native blobs and the composed
+W3D meshes/hierarchies/clips; the remaining legal combinations get native manifests only. The W3D
+fallback for a non-base combo keeps its base weapon's mesh. The single-id sweep callers pass 0
+(W3D dropped) and the single-id tests pass 1.
+
+**Measured on this workstation.**
+- Base build (`ZHBO_CONVERT_ALL_COMBOS=0`): 1:31.95 wall, 697,360,255 bytes.
+- Full build (all legal combos): 2:41.92 wall, 7,275,758,249 bytes. The `.big` header's u32 size
+  field wraps at 4 GiB (declared 2,980,790,953 = 7,275,758,249 mod 2^32), so the full build still
+  overflows the engine's u32 archive size even with the first-person split.
+- The full archive's 6.66 GB of `.w3d` is dominated by the three third-person body files
+  (`Art\W3D\ZHBO_{GLA,USA,CHN}_SKN.w3d`, ~2.14 GB each). The first-person `weapon_viewmodels` split
+  worked (2,124 `ZV*.w3d` files total ~0.24 GB), but `generals.rs`'s body W3D still aggregates every
+  `world_weapons` mesh for the full combo set. Extending the manifest-only split to the third-person
+  world weapons is the remaining fix; the first-person split alone leaves the full build over 3 GiB.
+- `the_legal_combo_set_covers_every_base_weapon` asserts the legal set covers the statstable-backed
+  base ids only: `knife_held_mp` is the loadout's melee table row, not a CaC item, so the
+  enumerator's `items` filter excludes it. It also asserts `all_legal_combos` ⊆ `converted()`.

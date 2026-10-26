@@ -3,8 +3,11 @@
 //!
 //! The converted table (`Data\ConquerOps\weapons.ini`) holds every player weapon, every attachment
 //! and the alt modes they add, so later features (picking up, buying,
-//! swapping) can hand out any of them. Viewmodels, sounds and projectile models are converted for
-//! the weapons in [`converted`] (the General's loadout with its attachments, then every other weapon; `ZHBO_CONVERT_ALL_WEAPONS=0` limits it to the loadout).
+//! swapping) can hand out any of them. Viewmodels are converted for the weapons in [`converted`]
+//! (the base set plus every legal Create-a-Class combination; `ZHBO_CONVERT_ALL_COMBOS=0` limits it
+//! to the base set), and sounds, projectile models and HUD icons for [`converted_base`] (the
+//! General's loadout with its attachments, then every other weapon; `ZHBO_CONVERT_ALL_WEAPONS=0`
+//! limits it to the loadout).
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use zhbo_core::attachments::{self, AttachmentDef};
@@ -850,8 +853,10 @@ pub fn rts_weapons_ini(defs: &[WeaponDef], flashes: &BTreeMap<String, String>, h
     ini
 }
 
-/// The ids whose art is converted: the loadout's (with its attachments) first, then every other player weapon unless `ZHBO_CONVERT_ALL_WEAPONS=0`.
-pub fn converted(all: &[Weapon]) -> Vec<String> {
+/// The ids whose art is converted for the base weapons only: the loadout's (with its attachments)
+/// first, then every other player weapon unless `ZHBO_CONVERT_ALL_WEAPONS=0`. Used for HUD icons,
+/// FX and sound tables, where a combo's entry is its base weapon's.
+pub fn converted_base(all: &[Weapon]) -> Vec<String> {
     let l = Loadout::default();
     let mut ids = vec![l.primary, l.secondary, l.lethal, l.tactical, l.melee];
     // Every weapon's art, so any of them can be picked up, bought or swapped to; `=0` converts only
@@ -860,6 +865,59 @@ pub fn converted(all: &[Weapon]) -> Vec<String> {
         for w in all.iter().filter(|w| is_player_weapon(w)) {
             if !ids.contains(&w.name) {
                 ids.push(w.name.clone());
+            }
+        }
+    }
+    ids
+}
+
+/// The attachment kinds an item lists that its variant has, mirroring
+/// `zhbo_conformance::bo2::combos::offered` over the parsed weapon (the conformance crate reads the
+/// raw structs; the converter's parsed `Weapon` carries the same `attachment_variants`). This is
+/// the one place the converter bridges the conformance rule to its own type; the install test
+/// `the_enumerator_matches_the_conformance_expected_rows` pins the two together.
+fn offered_kinds(item: &zhbo_conformance::bo2::combos::Item, w: &Weapon) -> Vec<usize> {
+    let mut kinds: Vec<usize> = zhbo_conformance::bo2::combos::listed(item)
+        .into_iter()
+        .filter(|&k| w.attachment_variants.iter().any(|(kind, _)| *kind as usize == k))
+        .collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    kinds
+}
+
+/// Every legal combo id a class can carry, from BO2's own rules (`zhbo_conformance::bo2::combos`):
+/// each Create-a-Class item's variant with every attachment set its slot allows. The base weapon
+/// itself is first (the empty combination).
+pub fn all_legal_combos(patch: &zhbo_formats::t6zone::Zone, all: &[Weapon]) -> Vec<String> {
+    let Ok(Some(statstable)) = zhbo_formats::stringtable::rows(patch, "mp/statstable.csv") else { return Vec::new() };
+    let Ok(Some(attachmenttable)) = zhbo_formats::stringtable::rows(patch, "mp/attachmenttable.csv") else { return Vec::new() };
+    let items = zhbo_conformance::bo2::combos::items(&statstable);
+    let t = zhbo_conformance::bo2::combos::table(&attachmenttable);
+    let mut ids = Vec::new();
+    for item in items.iter() {
+        let Some(w) = all.iter().find(|w| w.name == item.variant) else { continue };
+        let kinds = offered_kinds(item, w);
+        for combo in zhbo_conformance::bo2::combos::combos(item, &kinds, &t) {
+            let key = combo.key();
+            let id = if key.is_empty() { w.name.clone() } else { format!("{}+{}", w.name, key) };
+            if !ids.contains(&id) {
+                ids.push(id);
+            }
+        }
+    }
+    ids
+}
+
+/// The ids whose art is converted: the base set, plus every legal combination unless
+/// `ZHBO_CONVERT_ALL_COMBOS=0` (on by default, so a locally built archive covers every legal combo;
+/// developers set it to `0` for a quicker base-only build).
+pub fn converted(patch: &zhbo_formats::t6zone::Zone, all: &[Weapon]) -> Vec<String> {
+    let mut ids = converted_base(all);
+    if !matches!(std::env::var("ZHBO_CONVERT_ALL_COMBOS").as_deref(), Ok("0")) {
+        for id in all_legal_combos(patch, all) {
+            if !ids.contains(&id) {
+                ids.push(id);
             }
         }
     }
@@ -1023,6 +1081,71 @@ mod tests {
         let d = table.weapons.iter().find(|d| d.id == "as50_mp+ir+swayreduc").expect("the combined combo");
         assert_eq!(d.overlay_material, "scope_overlay_ir_combined", "the exact combined unique wins");
         assert_eq!(d.overlay_reticle, 3);
+    }
+
+    /// The converter's legal-combo set must equal the conformance expected set: the mechanical
+    /// agreement between `all_legal_combos` and BO2's own CaC rows. The variant's `_mp` suffix is
+    /// stripped so `an94_mp+reflex` compares to the conformance `item` `an94+reflex`.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_enumerator_matches_the_conformance_expected_rows() {
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
+        let patch = crate::generals::load_zone(&dir, crate::fx::ZONE).unwrap();
+        let all = zhbo_formats::weapon::all(&common).unwrap();
+        let ours: std::collections::BTreeSet<String> = all_legal_combos(&patch, &all)
+            .into_iter()
+            .map(|id| {
+                let (base, rest) = id.split_once('+').map(|(b, r)| (b, Some(r))).unwrap_or((&id, None));
+                let base = base.strip_suffix("_mp").unwrap_or(base);
+                match rest {
+                    Some(r) => format!("{base}+{r}"),
+                    None => base.to_string(),
+                }
+            })
+            .collect();
+        let expected = zhbo_conformance::bo2::expected(&dir).unwrap().1;
+        let theirs: std::collections::BTreeSet<String> = expected
+            .iter()
+            .filter(|r| r.key.0 == "weapon" || r.key.0 == "attachment")
+            .map(|r| r.key.1.clone())
+            .collect();
+        assert_eq!(ours, theirs, "the converter's legal-combo set must equal the conformance expected set");
+    }
+
+    /// The full set includes every statstable-backed base id and at least one combination per base
+    /// weapon that has attachments. A base id the Create-a-Class enumerator does not offer (the
+    /// loadout's melee `knife_held_mp`, a table row rather than a CaC item) is excluded by the same
+    /// `items` filter the enumerator uses. The plan's §7.2 direction: every legal combo is in the
+    /// full `converted()` set.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_legal_combo_set_covers_every_base_weapon() {
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
+        let patch = crate::generals::load_zone(&dir, crate::fx::ZONE).unwrap();
+        let all = zhbo_formats::weapon::all(&common).unwrap();
+        let base = converted_base(&all);
+        let full = all_legal_combos(&patch, &all);
+        // The base set's statstable-backed ids: the enumerator's `items` are the only CaC bases.
+        let statstable = zhbo_formats::stringtable::rows(&patch, "mp/statstable.csv").unwrap().unwrap();
+        let backed: std::collections::BTreeSet<String> = zhbo_conformance::bo2::combos::items(&statstable)
+            .into_iter()
+            .map(|i| i.variant)
+            .filter(|v| all.iter().any(|w| &w.name == v))
+            .collect();
+        for id in &base {
+            let base_weapon = crate::generals::base_id(id);
+            if backed.contains(base_weapon) {
+                assert!(full.contains(id), "the full set must include the base id {id}");
+            }
+        }
+        assert!(full.len() > base.len(), "the full set must have combinations beyond the base weapons");
+        // The plan's §7.2 direction: every legal combo is in `converted()` (the full set).
+        let converted = converted(&patch, &all);
+        for id in &full {
+            assert!(converted.contains(id), "the full set must include the legal combo {id}");
+        }
     }
 
     #[test]

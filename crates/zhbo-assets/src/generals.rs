@@ -256,7 +256,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let mut table = crate::weapons::table_with_metadata(&bo2, &atts, &names, &meta, &options);
     // What each perk does: its specialty set, from the player's own statstable (Ghidra G1).
     table.perks = crate::weapons::perk_rows(&patch);
-    let converted = crate::weapons::converted(&bo2);
+    let converted = crate::weapons::converted(&patch, &bo2);
+    let converted_base = crate::weapons::converted_base(&bo2);
     crate::weapons::add_variants(&mut table, &converted, &bo2);
     let camo = crate::camo::files(&common, &patch, &common_patch, &paks, &camo_assets, &bo2, &table, &mut out)?;
     summary.push(format!(
@@ -276,7 +277,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     }
 
     let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(bo2_dir, f.zone)).collect::<Result<_, _>>()?;
-    let (vm_summary, mut clips) = viewmodels::weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &atts, &mut table.weapons, &converted)?;
+    let base_count = converted_base.len();
+    let (vm_summary, mut clips) = viewmodels::weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &atts, &mut table.weapons, &converted, base_count)?;
     summary.push(vm_summary);
 
     // Track R7: the third-person body's clips. BO2's MP bodies share the player skeleton, so one
@@ -361,12 +363,12 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         Err(e) => summary.push(format!("no hammer viewmodel: {e}")),
     }
     let mut projectile_models = BTreeMap::new();
-    summary.push(viewmodels::projectiles(&patch, &common, &paks, &mut out, &bo2, &mut table.weapons, &converted, &mut projectile_models));
+    summary.push(viewmodels::projectiles(&patch, &common, &paks, &mut out, &bo2, &mut table.weapons, &converted_base, &mut projectile_models));
 
     // BO2 sound effects: the general ones, each converted weapon's own shots, and the viewmodel
     // clips' sound notetracks.
     let world = load_zone(bo2_dir, crate::sfx::WORLD_ZONE)?;
-    let (extra, mut fx_ini) = crate::weapons::sounds_and_fx(&bo2, &atts, &mut table.weapons, &converted);
+    let (extra, mut fx_ini) = crate::weapons::sounds_and_fx(&bo2, &atts, &mut table.weapons, &converted_base);
     let (sound_files, sound_summary) = crate::sfx::files(&common, &world, bo2_dir, &clips, &extra)?;
     out.extend(sound_files);
     summary.push(sound_summary);
@@ -374,7 +376,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     // BO2's own explosions for the converted weapons (and equipment breaking), as Zero Hour
     // particle systems.
     let mut effects = crate::fx::Converted::default();
-    let mut ids: Vec<String> = converted.clone();
+    let mut ids: Vec<String> = converted_base.clone();
     ids.extend(table.weapons.iter().filter(|d| d.id.contains('~')).map(|d| d.id.clone()));
     // Each gun's muzzle flash as others see it (BO2's `worldFlashEffect`), by weapon id.
     let mut flashes: BTreeMap<String, String> = BTreeMap::new();
@@ -546,7 +548,7 @@ mod tests {
         let ids: Vec<String> = defs.iter().map(|d| d.id.clone()).collect();
         for (i, id) in ids.iter().enumerate() {
             let mut out = BTreeMap::new();
-            match weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &atts, &mut defs, std::slice::from_ref(id)) {
+            match weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &atts, &mut defs, std::slice::from_ref(id), 1) {
                 Ok((summary, clips)) => {
                     let d = defs.iter().find(|d| &d.id == id).unwrap();
                     let models = out.keys().filter(|k| k.contains("_SKN")).count();
@@ -613,7 +615,7 @@ mod tests {
                     fails.extend(zhbo_core::conformance::check(Box::leak(Box::new(c))));
                 }
                 let mut out = BTreeMap::new();
-                match weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &atts, &mut t.weapons, std::slice::from_ref(&id)) {
+                match weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &atts, &mut t.weapons, std::slice::from_ref(&id), 1) {
                     Ok((summary, clips)) => {
                         let has_model = base_weapon(&bo2, &base.id).attachment_uniques.iter().any(|u| u.combined == 0 && u.view_model.is_some() && crate::weapons::short_name(&base.allowed.iter().find(|(s, _)| s == short).unwrap().1) == *short && w_kind(&bo2, &base.id, short) == Some(u.kind));
                         if has_model && !summary.contains("attachment model") {
@@ -711,11 +713,12 @@ mod tests {
     fn weapon_table_is_a_fixed_point() {
         let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
         let common = load_zone(&bo2_dir, "common_mp").unwrap();
+        let patch = load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
         let names = crate::weapons::names(&bo2_dir);
         let bo2 = zhbo_formats::weapon::all(&common).unwrap();
         let atts = zhbo_formats::weapon::attachments(&common).unwrap();
         let mut table = crate::weapons::table(&bo2, &atts, &names);
-        let converted = crate::weapons::converted(&bo2);
+        let converted = crate::weapons::converted(&patch, &bo2);
         crate::weapons::add_variants(&mut table, &converted, &bo2);
         let text = zhbo_core::weapons::format_full_table(&table);
         let back = zhbo_core::weapons::parse_full_table(&text).expect("the table re-parses");
