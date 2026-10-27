@@ -162,8 +162,8 @@ fn editor_prims() -> Vec<Prim> {
 fn personalize_prims() -> Vec<Prim> {
     let mut editor = editor_state();
     editor.picking = false;
-    let choices = classui::personalize_choices_for(PersonalizeKind::Camo, Some(editor.draft.primary.as_str()));
-    let p = Personalize::new(PersonalizeKind::Camo, choices, &editor.draft);
+    let tabs = classui::personalize_tabs_for(PersonalizeKind::Camo, Some(editor.draft.primary.as_str()));
+    let p = Personalize::with_tabs(PersonalizeKind::Camo, tabs, &editor.draft);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
@@ -172,8 +172,8 @@ fn personalize_prims() -> Vec<Prim> {
 fn reticle_personalize_prims() -> Vec<Prim> {
     let mut editor = editor_state();
     editor.picking = false;
-    let choices = classui::personalize_choices_for(PersonalizeKind::Reticle, Some(editor.draft.primary.as_str()));
-    let p = Personalize::new(PersonalizeKind::Reticle, choices, &editor.draft);
+    let tabs = classui::personalize_tabs_for(PersonalizeKind::Reticle, Some(editor.draft.primary.as_str()));
+    let p = Personalize::with_tabs(PersonalizeKind::Reticle, tabs, &editor.draft);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
@@ -181,8 +181,8 @@ fn reticle_personalize_prims() -> Vec<Prim> {
 fn reticle_color_personalize_prims() -> Vec<Prim> {
     let mut editor = editor_state();
     editor.picking = false;
-    let choices = classui::personalize_choices_for(PersonalizeKind::ReticleColor, Some(editor.draft.primary.as_str()));
-    let p = Personalize::new(PersonalizeKind::ReticleColor, choices, &editor.draft);
+    let tabs = classui::personalize_tabs_for(PersonalizeKind::ReticleColor, Some(editor.draft.primary.as_str()));
+    let p = Personalize::with_tabs(PersonalizeKind::ReticleColor, tabs, &editor.draft);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
@@ -507,10 +507,11 @@ mod tests {
         // The personalize screen carries BO2's title and the six-column grid, `None` first.
         let personalize = personalize_prims();
         let personalize_text = texts(&personalize);
-        assert!(personalize_text.contains(&"CAMO"), "the personalize title draws: {personalize_text:?}");
+        assert!(personalize_text.contains(&"PERSONALIZE MP7"), "the personalize title draws (`MPUI_PERSONALIZE_N`): {personalize_text:?}");
         assert!(personalize_text.contains(&"None"), "the first camo cell draws: {personalize_text:?}");
-        assert!(personalize_text.contains(&"EQUIPPED"), "the Equipped label draws: {personalize_text:?}");
-        assert!(personalize_text.contains(&"MP7"), "the weapon preview draws: {personalize_text:?}");
+        assert!(personalize_text.contains(&"Equipped"), "the Equipped box draws: {personalize_text:?}");
+        let personalize_images: Vec<&str> = personalize.iter().filter_map(|p| if let Prim::Image { name, .. } = p { Some(name.as_str()) } else { None }).collect();
+        assert!(personalize_images.contains(&zhbo_core::names::cac_weapon_image("mp7_mp").as_str()), "the weapon's `_big` picture draws: {personalize_images:?}");
         assert!(personalize_text.contains(&"Back"), "the ESC Back prompt draws: {personalize_text:?}");
 
         // The reticle/colour screens carry BO2's titles and prompts; each reticle cell is the

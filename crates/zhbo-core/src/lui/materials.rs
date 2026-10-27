@@ -45,6 +45,9 @@ pub const MATERIALS: &[(&str, u32)] = &[
     ("cac_restricted", 32),
     ("menu_mp_lobby_locked", 32),
     ("menu_mp_lobby_locked_big", 128),
+    // `tabmanagerlite.lua`'s `AddTab`: the current tab's plate and its right end cap.
+    ("menu_mp_tab", 64),
+    ("menu_mp_tab_end", 16),
 ];
 
 /// A [`MATERIALS`] name ending in this is its base material mirrored top to bottom (LUI draws an

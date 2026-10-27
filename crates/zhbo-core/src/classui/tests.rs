@@ -1063,7 +1063,7 @@ fn the_personalize_screen_draws_bo2s_grid_and_labels() {
     draw_personalize(&mut prims, 1280.0, 720.0, &p, None, 0.0, 0.0);
     let t = texts(&prims);
     assert!(t.iter().any(|s| s == "CAMO"), "the title: {t:?}");
-    assert!(t.iter().any(|s| s == "EQUIPPED"), "the Equipped label: {t:?}");
+    assert!(t.iter().any(|s| s == "Equipped"), "the Equipped box: {t:?}");
     for name in ["NONE", "GOLD", "DIAMOND", "BEAST", "BENGAL", "BLUE"] {
         assert!(t.iter().any(|s| s == name), "the choice {name:?}: {t:?}");
     }

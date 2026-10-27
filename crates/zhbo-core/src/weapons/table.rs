@@ -6,7 +6,7 @@
 ** License, or (at your option) any later version.
 */
 
-use super::def::{CamoOption, Class, Effect, FireMode, Kind, Kick, Place, WeaponDef};
+use super::def::{CamoOption, Class, OptionTab, Effect, FireMode, Kind, Kick, Place, WeaponDef};
 use super::feel::{nums, v3, GunKick, Sway};
 use super::specialty::Specialties;
 use crate::attachments::AttachmentDef;
@@ -660,6 +660,12 @@ pub const CAMO_FIELDS: &[Field<CamoOption>] = &[
     field!("Sort", "BO2's sort key (column 5 of the `camo` row).", FieldKind::Num,
         |c: &CamoOption| c.sort.to_string(),
         |c: &mut CamoOption, v: Values| { c.sort = v.text.parse().map_err(|_| "number")?; Ok(()) }),
+    field!("Tab", "The personalize tab it sits on: base, dlc or dlc2 (`AddCamos`'s rule).", FieldKind::Enum,
+        |c: &CamoOption| c.tab.name().into(),
+        |c: &mut CamoOption, v: Values| { c.tab = OptionTab::parse(v.text).ok_or("unknown tab")?; Ok(()) }),
+    field!("Mtx", "1 for a store option (column 16 names an `mtx_weapon*` item).", FieldKind::Num,
+        |c: &CamoOption| (c.mtx as u8).to_string(),
+        |c: &mut CamoOption, v: Values| { c.mtx = v.text.trim() == "1"; Ok(()) }),
 ];
 
 /// Apply one schema line to `t`. Unknown keys are tolerated (the parser skips them).
@@ -708,7 +714,7 @@ mod tests {
         check(CAMO_FIELDS);
         assert_eq!(WEAPON_FIELDS.len(), 78);
         assert_eq!(ATTACHMENT_FIELDS.len(), 17);
-        assert_eq!(CAMO_FIELDS.len(), 3);
+        assert_eq!(CAMO_FIELDS.len(), 5);
     }
 
     #[test]
@@ -795,10 +801,10 @@ mod tests {
             camo_material: "camo_an94".into(),
             ..Default::default()
         };
-        let c = CamoOption { id: "camo_multicam".into(), name: "Multicam".into(), image: "menu_camo_multicam_pattern".into(), sort: 1 };
+        let c = CamoOption { id: "camo_multicam".into(), name: "Multicam".into(), image: "menu_camo_multicam_pattern".into(), sort: 1, ..Default::default() };
         let t = Table { weapons: vec![d], camo: vec![c], ..Default::default() };
         let text = format_full_table(&t);
-        assert!(text.contains("Camo camo_multicam\n  Name = Multicam\n  Image = menu_camo_multicam_pattern\n  Sort = 1\nEnd"), "{text}");
+        assert!(text.contains("Camo camo_multicam\n  Name = Multicam\n  Image = menu_camo_multicam_pattern\n  Sort = 1\n  Tab = base\n  Mtx = 0\nEnd"), "{text}");
         assert!(text.contains("CamoList = camo_none camo_multicam"), "{text}");
         assert!(text.contains("CamoMaterial = camo_an94"), "{text}");
         assert_eq!(parse_full_table(&text).unwrap(), t);
@@ -806,12 +812,12 @@ mod tests {
 
     #[test]
     fn reticle_options_and_colours_round_trip() {
-        let r = CamoOption { id: "reticle_0".into(), name: "Dot".into(), image: String::new(), sort: 0 };
-        let c = CamoOption { id: "reticle_color_1".into(), name: "Red".into(), image: String::new(), sort: 0 };
+        let r = CamoOption { id: "reticle_0".into(), name: "Dot".into(), ..Default::default() };
+        let c = CamoOption { id: "reticle_color_1".into(), name: "Red".into(), ..Default::default() };
         let t = Table { reticles: vec![r], reticle_colors: vec![c], ..Default::default() };
         let text = format_full_table(&t);
-        assert!(text.contains("ReticleOption reticle_0\n  Name = Dot\n  Image = \n  Sort = 0\nEnd"), "{text}");
-        assert!(text.contains("ReticleColorOption reticle_color_1\n  Name = Red\n  Image = \n  Sort = 0\nEnd"), "{text}");
+        assert!(text.contains("ReticleOption reticle_0\n  Name = Dot\n  Image = \n  Sort = 0\n  Tab = base\n  Mtx = 0\nEnd"), "{text}");
+        assert!(text.contains("ReticleColorOption reticle_color_1\n  Name = Red\n  Image = \n  Sort = 0\n  Tab = base\n  Mtx = 0\nEnd"), "{text}");
         assert_eq!(parse_full_table(&text).unwrap(), t);
     }
 

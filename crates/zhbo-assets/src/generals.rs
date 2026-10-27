@@ -260,6 +260,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let converted_base = crate::weapons::converted_base(&bo2);
     crate::weapons::add_variants(&mut table, &converted, &bo2);
     let camo = crate::camo::files(&common, &patch, &common_patch, &paks, &camo_assets, &bo2, &table, &mut out)?;
+    crate::camo::offer_what_converted(&mut table, &camo.with_art);
     summary.push(format!(
         "camo: {} assets, {} pattern images, {} style materials, no art: {}",
         camo.assets,

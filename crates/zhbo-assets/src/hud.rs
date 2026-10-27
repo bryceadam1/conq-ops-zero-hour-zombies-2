@@ -222,7 +222,12 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     for c in crate::weapons::camo_options(&patch, &names) {
         let image = c.image.clone();
         if !image.is_empty() {
-            wanted.push((image.clone(), Source::Dynamic(image), 128));
+            wanted.push((image.clone(), Source::Dynamic(image.clone()), 128));
+            // A store camo's class-preview swatch is its own `<image>_32` (`SetupMTXCamoSwatch`).
+            if c.mtx {
+                let swatch = format!("{image}_32");
+                wanted.push((swatch.clone(), Source::Dynamic(swatch), 32));
+            }
         }
     }
     // The reticle grid's stock art: 11 images per optic (`code_post_gfx_mp.tsv:1073-1104`; their

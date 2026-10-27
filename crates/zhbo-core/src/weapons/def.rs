@@ -282,13 +282,54 @@ pub struct WeaponDef {
 
 /// One BO2 camouflage option (`mp/attachmenttable.csv`'s rows with `camo` in column 1): the id
 /// (`camo_none`, `camo_multicam`), the localized name the grid shows, the thumbnail image BO2's
-/// `CamoGridButton` draws, and the table's sort key.
+/// `CamoGridButton` draws, the table's sort key, and which personalize tab offers it.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct CamoOption {
     pub id: String,
     pub name: String,
     pub image: String,
     pub sort: u32,
+    /// The personalize tab the option sits on ([`OptionTab::of`]).
+    pub tab: OptionTab,
+    /// A store (MTX) option: column 16 of its row names an `mtx_weapon*` item. Its class-preview
+    /// swatch is the whole `<image>_32` (`classpreview.lua`'s `SetupMTXCamoSwatch`).
+    pub mtx: bool,
+}
+
+/// BO2's personalize tabs for a weapon option (`caccamomenu.lua`'s `AddCamos`,
+/// `cacreticles.lua`'s twin): the base tab holds the challenge-unlocked rows; DLC the
+/// `digital_unlock` rows (`mp/statsmilestones*.csv` column 4) and the store rows without a DLC2 sort
+/// key; DLC2 the store rows with one (column 5 > 0), in that key's order.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum OptionTab {
+    #[default]
+    Base,
+    Dlc,
+    Dlc2,
+}
+
+impl OptionTab {
+    /// The tab `AddCamos` puts a row on: `mtx` from column 16, `dlc2_sort` column 5, and whether a
+    /// `digital_unlock` milestone names the option.
+    pub fn of(mtx: bool, dlc2_sort: u32, digital_unlock: bool) -> OptionTab {
+        match (mtx, dlc2_sort > 0, digital_unlock) {
+            (true, true, _) => OptionTab::Dlc2,
+            (true, false, _) | (false, _, true) => OptionTab::Dlc,
+            (false, _, false) => OptionTab::Base,
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            OptionTab::Base => "base",
+            OptionTab::Dlc => "dlc",
+            OptionTab::Dlc2 => "dlc2",
+        }
+    }
+
+    pub fn parse(s: &str) -> Option<OptionTab> {
+        [OptionTab::Base, OptionTab::Dlc, OptionTab::Dlc2].into_iter().find(|t| t.name() == s)
+    }
 }
 
 /// One BO2 reticle option (`reticle_0..10` from `mp/attachmenttable.csv`): the same id/name/image/

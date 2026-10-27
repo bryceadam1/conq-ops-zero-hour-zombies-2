@@ -270,6 +270,23 @@ pub struct Summary {
     pub unresolved: Vec<String>,
     /// Attachment camo assets skipped by design (they are not per-weapon recipes).
     pub excluded: Vec<String>,
+    /// Per asset, the options whose art this install converted ([`zhbo_native::camo::Camo::has_art`]):
+    /// what [`offer_what_converted`] keeps of a weapon's DLC rows.
+    pub with_art: BTreeMap<String, BTreeSet<String>>,
+}
+
+/// Trim each weapon's camo list to what the install can draw: the base tab's rows stay (BO2 lists
+/// them on every gun and they all resolve), a DLC/DLC2 row stays only when the weapon's own camo
+/// asset converted art for it. BO2 lists the store rows the player owns or can buy
+/// (`ShouldDisplayWeaponOptionMTX`); the mod's equivalent of "owned" is "its art is in this install".
+pub fn offer_what_converted(table: &mut zhbo_core::weapons::Table, with_art: &BTreeMap<String, BTreeSet<String>>) {
+    let tab: std::collections::HashMap<&str, zhbo_core::weapons::OptionTab> = table.camo.iter().map(|c| (c.id.as_str(), c.tab)).collect();
+    for w in &mut table.weapons {
+        let art = with_art.get(&w.camo_material);
+        w.camo.retain(|id| {
+            tab.get(id.as_str()).is_none_or(|t| *t == zhbo_core::weapons::OptionTab::Base) || art.is_some_and(|a| a.contains(id))
+        });
+    }
 }
 
 /// Build every camo blob and write it beside the art. `table` supplies each asset's option ids
@@ -286,7 +303,8 @@ pub(crate) fn files(
     out: &mut BTreeMap<String, Vec<u8>>,
 ) -> Result<Summary, String> {
     let art = art(common, patch, inline, paks, sets, out);
-    let mut summary = Summary { assets: 0, images: art.images.len(), styles: art.materials.len(), unresolved: art.unresolved.clone(), excluded: Vec::new() };
+    let mut summary = Summary { assets: 0, images: art.images.len(), styles: art.materials.len(), unresolved: art.unresolved.clone(), excluded: Vec::new(), with_art: BTreeMap::new() };
+    let base_tab = |id: &str| table.camo.iter().find(|c| c.id == id).is_none_or(|c| c.tab == zhbo_core::weapons::OptionTab::Base);
     for c in sets {
         // Optic camo assets are attachment recipes, not per-weapon ones (PLAN D5's follow-up).
         if ATTACHMENT_CAMO.contains(&c.name.as_str()) {
@@ -340,11 +358,15 @@ pub(crate) fn files(
             let (stem, family) = OPTION_ART.iter().find(|(o, _, _)| o == id).map(|(_, s, f)| (*s, *f)).unwrap_or((None, None));
             let pattern = stem.and_then(|s| pattern_slot(c, s));
             let style = family.and_then(|f| style_slot(c, f));
-            if id != "camo_none" && pattern.is_none() && style.is_none() {
+            // A DLC row without art is expected (the install lacks that pack); the class screen
+            // simply does not offer it ([`offer_what_converted`]).
+            if id != "camo_none" && pattern.is_none() && style.is_none() && base_tab(id) {
                 summary.unresolved.push(format!("{}: {id} has no art", c.name));
             }
             blob.options.push(zhbo_native::camo::CamoOption { id: id.clone(), pattern, style });
         }
+        let painted: BTreeSet<String> = blob.options.iter().filter(|o| blob.has_art(&o.id)).map(|o| o.id.clone()).collect();
+        summary.with_art.insert(c.name.clone(), painted);
         out.insert(zhbo_native::camo_path(&c.name), blob.to_bytes());
         summary.assets += 1;
     }

@@ -118,6 +118,12 @@ pub fn draw(prims: &mut Vec<Prim>, f: &Frame, p: Rect, draft: Option<&Draft>) {
         let pic = Rect { x: r.right() - right_pad - pic_w, y: pic_top, w: pic_w, h: pic_h };
         bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&def.id)), pic, argb(OFF_WHITE, 1.0), Vec::new());
         prims.extend(name(r, &def.display_name, Family::Condensed, bo2::TEXT_CONDENSED, r.bottom() - bo2::TEXT_CONDENSED));
+        // `primaryCamoImageContainer`: the class camo's swatch, 31 square, 45 in from the block's
+        // right and 5 up (`UpdateClass`'s `primarycamo`; the mod's class holds the primary's only).
+        if r == pr {
+            let swatch = Rect { x: r.right() - 45.0 - 31.0, y: r.bottom() - 5.0 - 31.0, w: 31.0, h: 31.0 };
+            super::personalize::camo_swatch(prims, f, swatch, id, &d.camo);
+        }
     }
     // Attachments: up to three 61-unit icons from the row's right, 4 apart, the names stacked in
     // ExtraSmall at the left (`primaryWeaponAttachmentsImage1..3`).

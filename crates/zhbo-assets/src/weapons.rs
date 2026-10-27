@@ -163,8 +163,9 @@ pub fn perk_rows(patch: &zhbo_formats::t6zone::Zone) -> Vec<(String, Specialties
         .collect()
 }
 
-/// BO2's base camo cells: `camo_none` plus 18 (`lua-dump/patch_mp/mp/attachmenttable.csv:32-50`).
-/// The DLC/MTX rows (`:51-129`) are separate tabs the class screen does not have yet.
+/// BO2's first 19 camo rows: `camo_none` plus 18 (`lua-dump/patch_mp/mp/attachmenttable.csv:32-50`),
+/// the recipe list of a camo asset no player weapon wears. The class screen's tabs come from each
+/// row's [`zhbo_core::weapons::OptionTab`].
 pub const BASE_CAMO_OPTIONS: usize = 19;
 
 /// BO2's base reticle cells (`mp/attachmenttable.csv:57-67`: `reticle_0..10`); the DLC/MTX rows
@@ -174,9 +175,24 @@ pub const BASE_RETICLE_OPTIONS: usize = 11;
 /// BO2's reticle colours (`mp/attachmenttable.csv:68-74`: `reticle_color_1..7`).
 pub const BASE_RETICLE_COLORS: usize = 7;
 
-/// The `weaponoption` rows of one group in `mp/attachmenttable.csv` (`patch_mp`), in table order.
+/// The option ids a `digital_unlock` milestone grants (`mp/statsmilestones1..4.csv`: column 4 the
+/// type, column 9 the option, e.g. `camo_elite1`, `camo_ghost`, `reticle_31`). BO2's personalize
+/// screens put these on the DLC tab (`AddCamos`: `GetChallengeForItemOption` then the milestone's
+/// column 4).
+fn digital_unlocks(patch: &zhbo_formats::t6zone::Zone) -> std::collections::HashSet<String> {
+    (1..=4)
+        .filter_map(|n| zhbo_formats::stringtable::rows(patch, &format!("mp/statsmilestones{n}.csv")).ok().flatten())
+        .flat_map(|rows| rows.into_iter())
+        .filter(|r| r.get(4).is_some_and(|t| t.trim() == "digital_unlock"))
+        .filter_map(|r| r.get(9).map(|o| o.trim().to_string()).filter(|o| !o.is_empty()))
+        .collect()
+}
+
+/// The `weaponoption` rows of one group in `mp/attachmenttable.csv` (`patch_mp`), in table order,
+/// each with its personalize tab ([`zhbo_core::weapons::OptionTab::of`]).
 fn weapon_options(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<String, String>, group: &str, take: usize) -> Vec<CamoOption> {
     let Ok(Some(rows)) = zhbo_formats::stringtable::rows(patch, "mp/attachmenttable.csv") else { return Vec::new() };
+    let unlocks = digital_unlocks(patch);
     rows.iter()
         .filter(|r| r.get(1).is_some_and(|c| c == group))
         .take(take)
@@ -188,7 +204,9 @@ fn weapon_options(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<String, St
             let name = r.get(3).and_then(|k| names.get(k)).map(|s| s.trim().to_string()).unwrap_or_else(|| id.to_string());
             let image = r.get(6).cloned().unwrap_or_default();
             let sort = r.get(5).and_then(|s| s.trim().parse().ok()).unwrap_or(0);
-            Some(CamoOption { id: id.to_string(), name, image, sort })
+            let mtx = r.get(16).is_some_and(|m| m.trim().starts_with("mtx_"));
+            let tab = zhbo_core::weapons::OptionTab::of(mtx, sort, unlocks.contains(id));
+            Some(CamoOption { id: id.to_string(), name, image, sort, tab, mtx })
         })
         .collect()
 }
@@ -286,7 +304,9 @@ pub fn table_with_metadata(
     }
     let attachments = atts.iter().filter(|a| a.kind != 0 && !a.name.starts_with(',')).map(|a| attachment_def(a, names, meta)).collect();
     for d in &mut weapons {
-        d.camo = opts.camo.iter().take(BASE_CAMO_OPTIONS).map(|c| c.id.clone()).collect();
+        // Every row in table order; the camo pass trims the DLC rows the install has no art for
+        // (`camo::offer_what_converted`) and the class screen sorts them onto their tabs.
+        d.camo = opts.camo.iter().map(|c| c.id.clone()).collect();
         d.camo_material = camo_material_for(&d.id, opts.camo_sets).unwrap_or_default();
     }
     Table {
@@ -1354,9 +1374,10 @@ mod tests {
     }
 
     #[test]
-    fn the_weapon_camo_list_is_bo2s_base_camo_tab() {
+    fn the_weapon_camo_list_starts_as_every_row_in_table_order() {
+        use zhbo_core::weapons::OptionTab;
         let camo: Vec<CamoOption> = (0..25)
-            .map(|i| CamoOption { id: format!("camo_{i}"), name: String::new(), image: String::new(), sort: 0 })
+            .map(|i| CamoOption { id: format!("camo_{i}"), tab: if i < 19 { OptionTab::Base } else { OptionTab::Dlc }, ..Default::default() })
             .collect();
         let w = Weapon {
             name: "an94_mp".into(),
@@ -1368,8 +1389,27 @@ mod tests {
         let opts = OptionTables { camo: &camo, camo_sets: &sets, reticles: &[], reticle_colors: &[] };
         let table = table_with_metadata(&[w], &[], &HashMap::new(), &HashMap::new(), &opts);
         assert_eq!(table.weapons.len(), 1);
-        assert_eq!(table.weapons[0].camo.len(), BASE_CAMO_OPTIONS, "the base tab is camo_none + 18");
+        let ids: Vec<String> = camo.iter().map(|c| c.id.clone()).collect();
+        assert_eq!(table.weapons[0].camo, ids, "every row, in the table's order");
         assert_eq!(table.camo.len(), 25, "the table keeps every row for the DLC tabs");
+        // The camo pass then keeps the base rows and the DLC rows with converted art.
+        let mut table = table;
+        table.weapons[0].camo_material = "camo_an94".into();
+        let with_art = BTreeMap::from([("camo_an94".to_string(), BTreeSet::from(["camo_20".to_string()]))]);
+        crate::camo::offer_what_converted(&mut table, &with_art);
+        let want: Vec<String> = (0..19).chain([20]).map(|i| format!("camo_{i}")).collect();
+        assert_eq!(table.weapons[0].camo, want, "base rows stay; only DLC rows with art join them");
+    }
+
+    #[test]
+    fn the_option_tabs_follow_addcamos() {
+        use zhbo_core::weapons::OptionTab;
+        // `caccamomenu.lua`'s `AddCamos`: challenge rows on the base tab, `digital_unlock` rows and
+        // store rows without a DLC2 key on DLC, store rows with one on DLC2.
+        assert_eq!(OptionTab::of(false, 0, false), OptionTab::Base, "camo_atacs");
+        assert_eq!(OptionTab::of(false, 0, true), OptionTab::Dlc, "camo_elite1 / camo_ghost");
+        assert_eq!(OptionTab::of(true, 0, false), OptionTab::Dlc, "camo_mtp");
+        assert_eq!(OptionTab::of(true, 2, false), OptionTab::Dlc2, "camo_dragon (column 5 = 2)");
     }
 
     #[test]

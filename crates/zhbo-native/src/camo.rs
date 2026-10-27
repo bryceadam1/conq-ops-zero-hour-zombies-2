@@ -82,6 +82,23 @@ fn read_opt_u32(r: &mut Reader) -> Result<Option<u32>, FormatError> {
 }
 
 impl Camo {
+    /// Whether `option` paints anything on this asset: its pattern set carries converted solid or
+    /// pattern art, or one of its style's pairs names a converted material with a colour map (the
+    /// lookup `nativevm::camo::apply` does, `_1` suffix included). An option without art draws the
+    /// stock finish, so the class screen does not offer the DLC rows that lack it.
+    pub fn has_art(&self, option: &str) -> bool {
+        let Some(o) = self.options.iter().find(|o| o.id == option) else { return false };
+        let pattern = o.pattern.and_then(|i| self.sets.get(i as usize)).is_some_and(|s| s.solid.is_some() || s.pattern.is_some());
+        let material = |name: &str| {
+            self.materials.iter().any(|m| (m.name == name || m.name == format!("{name}_1")) && m.color.is_some())
+        };
+        let style = o
+            .style
+            .and_then(|i| self.styles.get(i as usize))
+            .is_some_and(|st| st.entries.iter().any(|e| e.pairs.iter().any(|p| material(&p.camo))));
+        pattern || style
+    }
+
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut w = Writer::header(MAGIC, VERSION);
         w.str(&self.name);
@@ -186,6 +203,19 @@ mod tests {
                 CamoOption { id: "camo_gold".into(), pattern: None, style: Some(0) },
             ],
         }
+    }
+
+    #[test]
+    fn an_option_has_art_only_when_its_slot_converted() {
+        let mut c = sample();
+        assert!(c.has_art("camo_atacs"), "a pattern set with images");
+        assert!(c.has_art("camo_gold"), "a style whose material has a colour map");
+        assert!(!c.has_art("camo_none"));
+        assert!(!c.has_art("camo_dragon"), "an option the blob does not list");
+        c.sets[0] = Set { solid: None, pattern: None, ..c.sets[0].clone() };
+        c.materials[0].color = None;
+        assert!(!c.has_art("camo_atacs"), "the set's images are not in this install");
+        assert!(!c.has_art("camo_gold"), "the style's material has no colour");
     }
 
     #[test]

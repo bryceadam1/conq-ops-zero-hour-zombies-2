@@ -193,6 +193,12 @@ fn draw_cell(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor, cell: &Ed
                 let pic = Rect { x: r.right() - 90.0 - iw, y: r.y + 10.0, w: iw, h: ih };
                 bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&def.id)), pic, argb(OFF_WHITE, 1.0), Vec::new());
                 bo2::text(prims, f, Family::Condensed, &def.display_name, Rect { x: r.x + 3.0, y: r.bottom() - bo2::TEXT_CONDENSED - 2.0, w: r.w, h: bo2::TEXT_CONDENSED }, Align::Left, argb(OFF_WHITE, 1.0));
+                // The class camo's swatch (`CACWeaponButton.GetCamoSwatch`: 32 square, its right
+                // edge `ImageBorder + 39` in, 5 up). The class holds one camo, the primary's.
+                if cell.slot == Slot::Primary {
+                    let swatch = Rect { x: r.right() - 10.0 - 39.0 - 32.0, y: r.bottom() - 5.0 - 32.0, w: 32.0, h: 32.0 };
+                    super::personalize::camo_swatch(prims, f, swatch, id, &editor.draft.camo);
+                }
             }
             if on {
                 focus_frame(prims, f, r);

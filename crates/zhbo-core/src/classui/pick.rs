@@ -349,7 +349,7 @@ pub fn pager_at(l: &PickLayout, x: f32, y: f32) -> Option<PagerHit> {
 }
 
 /// The shoulder prompts' PC glyph (`^BBUTTON_CYCLE_LEFT^`/`RIGHT^`): a solid white triangle.
-fn arrow(prims: &mut Vec<Prim>, f: &Frame, r: Rect, dir: i32) {
+pub(super) fn arrow(prims: &mut Vec<Prim>, f: &Frame, r: Rect, dir: i32) {
     let p = f.px(r);
     let (cy, half) = (p.y + p.h * 0.5, p.h * 0.32);
     let w = p.w * 0.45;
