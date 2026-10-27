@@ -4532,3 +4532,48 @@ the launchers in both slots (BO2: secondaries only).
   primary now use the MP7.
 * The table gains fields, so the archive VERSION must bump (integrator): an old archive has no
   `CacSlot` and the editor's weapon lists would be empty.
+
+## Dual wield is its own weapon; the alt-base and Gunfighter-3 gaps were already closed (2026-10-27, `v1/cac-structure`)
+
+**Dual wield (the N3 playtest item).** BO2's CaC offers Dual Wield as a pistol attachment, but the
+weapon a class *gets* is separate: `GetLoadoutWeapon` (`FUN_00631780`, G16) switches the `dw`
+attachment to the underscore form, `<ref>_dw_mp`, whose def names its left gun (`fnp45_lh_mp`).
+The mod gave the pistol with a `dw` part (`fnp45_mp+dw`, the core's `apply` over the base) and
+also listed the `_dw` weapons as items of their own.
+
+* Core: `classmenu::items::given_weapon`/`given_parts` mirror the rule both ways (`given_parts`
+  reads `<ref>_dw_mp` back only when `<ref>_mp` offers `dw`). Draft ids, `from_custom`, the
+  attachment panel's preview and `classrepair` go through it; the repair migrates an older
+  profile's `fnp45_mp+dw` to `fnp45_dw_mp` silently, and its trim pops Dual Wield as the
+  secondary's attachment before the pistol. The editor still offers Dual Wield in the pistol's
+  attachment grid, as BO2 does.
+* Converter: `combos::given` (conformance crate, used by the expected rows and by
+  `all_legal_combos`) names the combination, so the combo set holds `fnp45_dw_mp`, not `+dw`.
+  The viewmodel converter finds the left gun through the def's `DualWieldWeapon` (new table
+  field, from `szDualWieldWeaponName`), not the `{view}_lh` name or the `dw` short.
+* The sim still runs the `_dw_mp` def as one gun (BO2 fires two guns with their own clips) — a
+  behaviour gap, not a structure one.
+* Built-in stand-ins: a `dw` attachment, the Five-seven offering it and a `fiveseven_dw_mp`, so the
+  headless editor/repair/fake-host tests (`a_dual_wield_class_spawns_with_the_dw_weapon`) are real.
+
+**Item 8 (alt-weapon combo bases) was an agreement-test artefact.** The expected rows carry each
+combination's alt mode as its own row (`gl_an94_mp`/`sf_*`/`dualoptic_*` under the combination's
+key); the weapons conformance table had no one-sided alt row, because the converter builds each
+combination's alt def (`add_variants`, `<alt>~<combo>`). The test compared the expected rows
+against the CaC combos alone. Its "ours" side is now what the converter builds: the legal combos,
+the alt defs `add_variants` makes for them (the table built with the attachment metadata, or
+`apply`'s compatibility check shrinks the multi-attachment ids), and the loadout's melee. It leaves
+one real gap: BO2 gives every class `knife_mp` beside `knife_held_mp`; the mod has only the held
+knife (a melee item, outside Create-a-Class).
+
+**Item 9 (Gunfighter-3) needed no code**: `primary_att_max` is three with Primary Gunfighter, the
+strip draws one plate per allowed attachment, each costs a point, dropping the card truncates, and
+`wildcards_of`/`classrepair` derive and cap it; the cac `requires` gaps were only the crossbow's
+slot. A classui test now pins the third plate drawing its attachment.
+
+Measured (conformance CLI vs `v1/combo-legality`): weapons 804,416 → 804,392 cells (−24:
+`cac_slot` 14 → 0, `cac_requires` 5 → 0, `dual_wield_weapon` 5 → 0; zero newly differing cells on
+common rows); one-sided rows 8/7 → 8/0; cac 565 → 556 (`slot` 12 → 8, `value` 12 → 7), one-sided
+62/6 → 62/0; gap clusters 212 → 207. The 8 BO2-only weapon rows are content the mod has no item
+for: the placed equipment (claymore, bouncing betty, C4, tactical insertion, trophy system, black
+hat), the assault shield, and `knife_mp`.

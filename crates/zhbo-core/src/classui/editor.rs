@@ -553,11 +553,15 @@ fn attachment_weapon(editor: &Editor) -> (&'static crate::weapons::WeaponDef, Op
     };
     let base = weapons::weapon(base_id);
     let Some(short) = editor.option_attachment(editor.option) else { return (base, None) };
-    let mut shorts: Vec<&str> = current.iter().map(String::as_str).collect();
+    // Picking it unequips what it is mutually exclusive with (`classmenu::legal`), so the panel
+    // shows the set the pick would make.
+    let exclusive = crate::classmenu::legal::exclusive_with(base_id, short, current);
+    let mut shorts: Vec<&str> = current.iter().map(String::as_str).filter(|s| !exclusive.contains(s)).collect();
     if !shorts.contains(&short) {
         shorts.push(short);
     }
-    let modified = weapons::weapon(&crate::attachments::variant_id(base_id, &shorts));
+    // The weapon the class would get (Dual Wield is the pistol's `_dw_mp` weapon).
+    let modified = weapons::weapon(&crate::classmenu::items::given_weapon(base_id, &shorts));
     (base, Some(modified))
 }
 

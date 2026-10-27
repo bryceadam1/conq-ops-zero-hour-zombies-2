@@ -6,9 +6,18 @@
 //!   is not a class item (the `_dw` pistols, the War Machine, the held knife).
 //! * **The slots**: the primary lists the `primary` items; the secondary the `secondary` items,
 //!   and the `primary` ones too under Overkill (`MPUI_BONUSCARD_OVERKILL`: a second primary).
+//! * **The given weapon** (`GetLoadoutWeapon`, `FUN_00631780`, G16): `<ref>_mp` with `+name` per
+//!   attachment, except that the dual-wield attachment (`eAttachment` 4, `dw`) switches to the
+//!   underscore form `<ref>_dw[_name…]_mp` — a pistol with `dw` is the separate weapon
+//!   `fnp45_dw_mp`, whose def names its left gun. [`given_weapon`] builds that id and
+//!   [`given_parts`] reads one back into the item and its attachments.
 
 use super::Wildcard;
+use crate::attachments::variant_id;
 use crate::weapons::{self, Class as WeaponClass, WeaponDef};
+
+/// BO2's dual-wield attachment (`ATTACHMENT_DW`), the one that renames the given weapon.
+pub const DUAL_WIELD: &str = "dw";
 
 /// The slot names of `mp/statstable.csv` column 13 that hold guns.
 pub const PRIMARY: &str = "primary";
@@ -70,4 +79,37 @@ pub fn fits_slot(base: &str, primary: bool) -> bool {
 /// Whether the item `base` is a primary item (in the secondary slot it needs Overkill).
 pub fn is_primary_item(base: &str) -> bool {
     weapons::catalog().get(base).is_some_and(|d| d.cac_slot == PRIMARY)
+}
+
+/// The weapon a class with item `base` and attachments `shorts` gets (`GetLoadoutWeapon`): the
+/// `+` form (`an94_mp+gl+reflex`, sorted) or, with `dw`, the underscore form (`fnp45_dw_mp`).
+pub fn given_weapon(base: &str, shorts: &[&str]) -> String {
+    if !shorts.contains(&DUAL_WIELD) {
+        return variant_id(base, shorts);
+    }
+    let reference = base.strip_suffix("_mp").unwrap_or(base);
+    let mut others: Vec<&str> = shorts.iter().copied().filter(|s| *s != DUAL_WIELD && !s.is_empty()).collect();
+    others.sort_unstable();
+    others.dedup();
+    std::iter::once(reference).chain(std::iter::once(DUAL_WIELD)).chain(others).collect::<Vec<_>>().join("_") + "_mp"
+}
+
+/// The item and attachment shorts of a given weapon id ([`given_weapon`]'s inverse): `an94_mp+gl`
+/// is `an94_mp` with `gl`; `fnp45_dw_mp` is `fnp45_mp` with `dw` — only when the catalog's
+/// `fnp45_mp` offers `dw`, so no other name with a `_dw` in it is mistaken for one.
+pub fn given_parts(id: &str) -> (String, Vec<String>) {
+    let mut parts = id.split('+');
+    let base = parts.next().unwrap_or("");
+    let shorts: Vec<String> = parts.map(str::to_string).collect();
+    if shorts.is_empty() {
+        if let Some((reference, rest)) = base.strip_suffix("_mp").and_then(|b| b.split_once(&format!("_{DUAL_WIELD}"))) {
+            let item = format!("{reference}_mp");
+            let others: Vec<&str> = rest.split('_').filter(|s| !s.is_empty()).collect();
+            let offers = |s: &str| weapons::catalog().get(&item).is_some_and(|d| d.allowed.iter().any(|(a, _)| a == s));
+            if (rest.is_empty() || rest.starts_with('_')) && offers(DUAL_WIELD) && others.iter().all(|s| offers(s)) {
+                return (item, std::iter::once(DUAL_WIELD).chain(others).map(str::to_string).collect());
+            }
+        }
+    }
+    (base.to_string(), shorts)
 }

@@ -467,16 +467,11 @@ impl Default for Draft {
 }
 
 impl Draft {
-    /// The weapon id with its attachments (`an94_mp+gl+reflex`).
+    /// The weapon a class with these choices gets (`an94_mp+gl+reflex`; a pistol with `dw` is its
+    /// `_dw_mp` weapon), BO2's `GetLoadoutWeapon` ([`items::given_weapon`]).
     fn weapon_with_atts(base: &str, atts: &[String]) -> String {
-        if atts.is_empty() {
-            base.to_string()
-        } else {
-            let mut shorts: Vec<&str> = atts.iter().map(|s| s.as_str()).collect();
-            shorts.sort_unstable();
-            shorts.dedup();
-            std::iter::once(base).chain(shorts).collect::<Vec<_>>().join("+")
-        }
+        let shorts: Vec<&str> = atts.iter().map(|s| s.as_str()).collect();
+        items::given_weapon(base, &shorts)
     }
 
     /// The primary weapon id plus its attachments.
@@ -648,11 +643,10 @@ impl Draft {
     }
 }
 
-/// Split a weapon id into its base and attachment shorts (`an94_mp+gl+reflex`).
+/// Split a given weapon id into its item and attachment shorts (`an94_mp+gl+reflex`;
+/// `fnp45_dw_mp` is the Tac-45 with `dw`), [`items::given_parts`].
 fn split_atts(id: &str) -> (String, Vec<String>) {
-    let mut parts = id.split('+');
-    let base = parts.next().unwrap_or("").to_string();
-    (base, parts.map(|s| s.to_string()).collect())
+    items::given_parts(id)
 }
 
 /// The perks of a saved class into the three tiers' first and second picks: the first perk in a

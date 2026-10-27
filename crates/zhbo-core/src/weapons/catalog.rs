@@ -210,6 +210,14 @@ Attachment gl
   Compatible = reflex
 End
 
+; Dual wield pairs with nothing (its `compatibleAttachments` is empty): a pistol with it is
+; the separate `_dw_mp` weapon (G16), stood in below for the Five-seven.
+Attachment dw
+  Short = dw
+  DisplayName = Dual Wield
+  Point = 2
+End
+
 Weapon gl_an94_mp
   DisplayName = Grenade Launcher
   Class = launcher
@@ -391,5 +399,13 @@ Weapon fiveseven_mp
   DisplayName = Five-Seven
   Class = pistol
   CacSlot = secondary
+  Allowed = dw=dw
+End
+
+; What a class with the Five-seven and Dual Wield gets: no CaC item of its own.
+Weapon fiveseven_dw_mp
+  DisplayName = Five-Seven Dual Wield
+  Class = pistol
+  DualWieldWeapon = fiveseven_lh_mp
 End
 ";

@@ -29,7 +29,7 @@
 //! rule the arsenal uses), so a corrupt profile shows up in the log instead of quietly turning into
 //! some default kit.
 
-use crate::attachments::{split_id, variant_id};
+use crate::classmenu::items::{given_parts, given_weapon};
 use crate::classes::{CustomClass, MAX_ATTACHMENTS, MAX_BONUS_CARDS, MAX_SPECIALTY_SLOTS};
 use crate::classmenu::{Draft, PICK_10};
 use crate::weapons::{self, Class as WeaponClass, Perk};
@@ -68,7 +68,10 @@ fn repair_weapon(c: &mut CustomClass, primary: bool, cleared: &mut Cleared) {
     if id.is_empty() {
         return;
     }
-    let (base, shorts) = split_id(id);
+    // The stored id is the weapon BO2 gives (`fnp45_dw_mp` for a pistol with `dw`); read it back
+    // into the item and its attachments.
+    let (base, shorts) = given_parts(id);
+    let (base, shorts): (&str, Vec<&str>) = (&base, shorts.iter().map(String::as_str).collect());
     let Some(def) = weapons::catalog::weapon_or_none(base) else {
         id.clear();
         cleared.push(slot);
@@ -88,7 +91,12 @@ fn repair_weapon(c: &mut CustomClass, primary: bool, cleared: &mut Cleared) {
     let offered = crate::classmenu::legal::sanitize(base, &offered);
     if offered.len() != shorts.len() {
         cleared.push(if primary { "primaryattachment" } else { "secondaryattachment" });
-        *id = variant_id(base, &offered);
+    }
+    // Stored as the weapon BO2 gives: an older profile's `fnp45_mp+dw` migrates to `fnp45_dw_mp`
+    // (no slot was cleared, so nothing is reported).
+    let given = given_weapon(base, &offered);
+    if *id != given {
+        *id = given;
     }
 }
 
@@ -211,12 +219,12 @@ fn drop_one(c: &mut CustomClass, cleared: &mut Cleared) -> bool {
 
 /// Remove the last attachment from a weapon id, if it has one.
 fn pop_attachment(id: &mut String) -> bool {
-    let (base, shorts) = split_id(id);
+    let (base, shorts) = given_parts(id);
     if shorts.is_empty() {
         return false;
     }
-    let kept = &shorts[..shorts.len() - 1];
-    *id = variant_id(base, kept);
+    let kept: Vec<&str> = shorts[..shorts.len() - 1].iter().map(String::as_str).collect();
+    *id = given_weapon(&base, &kept);
     true
 }
 
@@ -261,6 +269,24 @@ mod tests {
         let mut c = class("frag_grenade_mp", &[]);
         assert_eq!(repair(&mut c), vec!["primary"]);
         assert!(c.primary.is_empty());
+    }
+
+    #[test]
+    fn a_stored_dual_wield_attachment_migrates_to_the_dw_weapon() {
+        // Older profiles stored the pistol with a `dw` attachment; BO2's class gives the separate
+        // `_dw_mp` weapon (G16). The migration clears nothing.
+        let mut c = class("an94_mp", &[]);
+        c.secondary = "fiveseven_mp+dw".into();
+        assert!(repair(&mut c).is_empty());
+        assert_eq!(c.secondary, "fiveseven_dw_mp");
+        // The new form is already valid.
+        let before = c.clone();
+        assert!(repair(&mut c).is_empty());
+        assert_eq!(c, before);
+        // The trim drops Dual Wield as the secondary's attachment, before the pistol itself.
+        let mut id = c.secondary.clone();
+        assert!(pop_attachment(&mut id));
+        assert_eq!(id, "fiveseven_mp");
     }
 
     #[test]

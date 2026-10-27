@@ -214,11 +214,14 @@ fn jobs() -> Vec<Job> {
             for set in subsets(&shorts, cap).into_iter().filter(|set| zhbo_core::classmenu::legal::legal(base, set)) {
                 let Some(def) = cat.get(&draft_weapon_id(base, &set)) else { continue };
                 let combo = bo2_order(&def.attachments);
-                if !seen.insert((base.to_string(), combo.clone())) {
+                // The row is the weapon the class gets: the item's (`an94_mp` + its combination),
+                // or a separate weapon (a pistol with Dual Wield is `fnp45_dw_mp`, G16).
+                let weapon = zhbo_core::attachments::split_id(&def.id).0.to_string();
+                if !seen.insert((weapon.clone(), combo.clone())) {
                     continue;
                 }
                 let requires = if set.len() > base_cap { vec![card] } else { Vec::new() };
-                out.push(Job { weapon: base.to_string(), combo: combo.clone(), def, vm_def: def, group: group_of(def.class).to_string(), slot: slot.clone(), requires: requires.clone(), alt: false });
+                out.push(Job { weapon, combo: combo.clone(), def, vm_def: def, group: group_of(def.class).to_string(), slot: slot.clone(), requires: requires.clone(), alt: false });
                 if def.alt.is_empty() {
                     continue;
                 }
@@ -558,7 +561,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .absent("alt_weapon_ads_only")
         .absent("alt_weapon_disable_switching")
         .bool("dual_wield", dual)
-        .absent("dual_wield_weapon")
+        .opt_text("dual_wield_weapon", opt(&d.dual_wield_weapon))
         .opt_text("dual_wield_view_model", lh.map(|p| stem(&p.model)))
         .bool("silenced", d.silenced)
         .bool("laser_sight", d.laser)

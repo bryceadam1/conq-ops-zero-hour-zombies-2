@@ -843,3 +843,35 @@ fn the_offer_is_the_editors_own_lists_and_caps() {
     assert_eq!(offered_attachments(first), allowed_shorts(first));
     assert_eq!(draft_weapon_id("an94_mp", &["reflex", "grip"]), "an94_mp+grip+reflex");
 }
+
+/// BO2's `GetLoadoutWeapon` (G16): attachments join with `+`, but Dual Wield renames the weapon
+/// to the underscore form — and the inverse reads a stored id back into the item.
+#[test]
+fn dual_wield_gives_the_dw_weapon_and_reads_back() {
+    assert_eq!(items::given_weapon("an94_mp", &["reflex", "gl"]), "an94_mp+gl+reflex");
+    assert_eq!(items::given_weapon("fiveseven_mp", &["dw"]), "fiveseven_dw_mp");
+    assert_eq!(items::given_weapon("fiveseven_mp", &[]), "fiveseven_mp");
+    assert_eq!(items::given_parts("fiveseven_dw_mp"), ("fiveseven_mp".to_string(), vec!["dw".to_string()]));
+    assert_eq!(items::given_parts("an94_mp+gl+reflex"), ("an94_mp".to_string(), vec!["gl".to_string(), "reflex".to_string()]));
+    // Only a weapon whose item offers `dw` reads as one: the Tac-45 stand-in offers none.
+    assert_eq!(items::given_parts("fnp45_dw_mp"), ("fnp45_dw_mp".to_string(), Vec::new()));
+}
+
+/// The editor picks Dual Wield like any attachment; the class it saves holds BO2's weapon, and
+/// re-opening it shows the pistol with Dual Wield equipped.
+#[test]
+fn picking_dual_wield_saves_the_dw_weapon() {
+    let mut e = Editor::new(Draft { secondary: "fiveseven_mp".into(), ..Draft::default() });
+    e.slot = Slot::SecondaryAtts;
+    let i = attachment_shorts(&e.draft.secondary, &e.draft.secondary_atts).iter().position(|s| *s == "dw").expect("Dual Wield is offered");
+    assert!(e.apply_option(i));
+    assert_eq!(e.draft.secondary_id(), "fiveseven_dw_mp");
+    let c = e.draft.to_custom();
+    assert_eq!(c.secondary, "fiveseven_dw_mp");
+    assert!(e.draft.to_spec().contains("secondary=fiveseven_dw_mp"));
+    let back = Draft::from_stored(&c);
+    assert_eq!((back.secondary.as_str(), back.secondary_atts.clone()), ("fiveseven_mp", vec!["dw".to_string()]));
+    assert_eq!(back.spent(), e.draft.spent(), "Dual Wield costs its attachment point");
+    // The `_dw` weapon is no item of its own: the secondary list never shows it.
+    assert!(!gun_ids(&[items::SECONDARY]).contains(&"fiveseven_dw_mp"));
+}

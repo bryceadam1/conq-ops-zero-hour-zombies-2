@@ -960,7 +960,7 @@ pub fn converted_base(all: &[Weapon]) -> Vec<String> {
 /// `zhbo_conformance::bo2::combos::offered` over the parsed weapon (the conformance crate reads the
 /// raw structs; the converter's parsed `Weapon` carries the same `attachment_variants`). This is
 /// the one place the converter bridges the conformance rule to its own type; the install test
-/// `the_enumerator_matches_the_conformance_expected_rows` pins the two together.
+/// `conformance_the_enumerator_matches_the_expected_rows` pins the two together.
 fn offered_kinds(item: &zhbo_conformance::bo2::combos::Item, w: &Weapon) -> Vec<usize> {
     let mut kinds: Vec<usize> = zhbo_conformance::bo2::combos::listed(item)
         .into_iter()
@@ -984,8 +984,13 @@ pub fn all_legal_combos(patch: &zhbo_formats::t6zone::Zone, all: &[Weapon]) -> V
         let Some(w) = all.iter().find(|w| w.name == item.variant) else { continue };
         let kinds = offered_kinds(item, w);
         for combo in zhbo_conformance::bo2::combos::combos(item, &kinds, &t) {
-            let key = combo.key();
-            let id = if key.is_empty() { w.name.clone() } else { format!("{}+{}", w.name, key) };
+            // The weapon the class gets (`combos::given`, G16): a pistol with Dual Wield is the
+            // separate `<ref>_dw_mp` weapon, not the pistol with a `dw` part.
+            let (name, key) = zhbo_conformance::bo2::combos::given(item, &combo);
+            if !all.iter().any(|x| x.name == name) {
+                continue;
+            }
+            let id = if key.is_empty() { name } else { format!("{name}+{key}") };
             if !ids.contains(&id) {
                 ids.push(id);
             }
@@ -1178,15 +1183,17 @@ mod tests {
         assert_eq!(d.overlay_reticle, 3);
     }
 
-    /// The converter's legal-combo set must equal the conformance expected set: the mechanical
-    /// agreement between `all_legal_combos` and BO2's own CaC rows. The variant's `_mp` suffix is
-    /// stripped so `an94_mp+reflex` compares to the conformance `item` `an94+reflex`.
+    /// The converter's built rows must equal the conformance expected set: the mechanical
+    /// agreement between what the converter makes and BO2's own CaC rows. The expected side has a
+    /// row per weapon a class can be given (`combos::given`: an item's combination, or a pistol's
+    /// separate `_dw_mp` weapon), per such row's alt mode (`gl_an94_mp` under `an94_mp+gl`, its
+    /// key the combination's), and per always-given melee weapon. So "ours" is the same three
+    /// things as the converter builds them: [`all_legal_combos`], the alt defs [`add_variants`]
+    /// adds for them (`<alt>~<combo>`), and the loadout's melee. The variant's `_mp` suffix is
+    /// stripped so `an94_mp+reflex` compares to the conformance `an94+reflex`.
     /// This is a parity-gap detector, not a unit test: it lives in the conformance family's
-    /// red-by-design set (the blocking suite runs `--skip conformance`). Its two known gaps are
-    /// tracked cycles: the alt-weapon combo bases (`dualoptic_*`/`sf_*` families, 2,379 rows —
-    /// BO2 offers the alt weapons as their own attachment bases; the mod's enumeration covers
-    /// only base weapons) and the dual-wield representation (`beretta93r_dw_mp`-style separate
-    /// weapons vs the mod's `+dw` attachment, 5 rows — the N3 item).
+    /// red-by-design set (the blocking suite runs `--skip conformance`). Its known gap: BO2 gives
+    /// every class `knife_mp` beside `knife_held_mp`; the mod's melee is the held knife only.
     #[test]
     #[ignore = "reads this machine's Black Ops II install"]
     fn conformance_the_enumerator_matches_the_expected_rows() {
@@ -1194,17 +1201,34 @@ mod tests {
         let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
         let patch = crate::generals::load_zone(&dir, crate::fx::ZONE).unwrap();
         let all = zhbo_formats::weapon::all(&common).unwrap();
-        let ours: std::collections::BTreeSet<String> = all_legal_combos(&patch, &all)
-            .into_iter()
-            .map(|id| {
-                let (base, rest) = id.split_once('+').map(|(b, r)| (b, Some(r))).unwrap_or((&id, None));
-                let base = base.strip_suffix("_mp").unwrap_or(base);
-                match rest {
-                    Some(r) => format!("{base}+{r}"),
-                    None => base.to_string(),
-                }
-            })
-            .collect();
+        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        let strip = |id: &str| -> String {
+            let (base, rest) = id.split_once('+').map(|(b, r)| (b, Some(r))).unwrap_or((id, None));
+            let base = base.strip_suffix("_mp").unwrap_or(base);
+            match rest {
+                Some(r) => format!("{base}+{r}"),
+                None => base.to_string(),
+            }
+        };
+        let patch_ui = crate::generals::load_zone(&dir, "patch_ui_mp").unwrap();
+        let combos = all_legal_combos(&patch, &all);
+        // The table as the converter builds it: the attachments carry BO2's compatibility, so
+        // `apply` keeps every legal combination whole.
+        let meta = attachment_metadata(&patch, &patch_ui, &HashMap::new());
+        let sets = HashSet::new();
+        let opts = OptionTables { camo: &[], camo_sets: &sets, reticles: &[], reticle_colors: &[] };
+        let mut built = table_with_metadata(&all, &atts, &HashMap::new(), &meta, &opts);
+        add_variants(&mut built, &combos, &all);
+        let mut ours: std::collections::BTreeSet<String> = combos.iter().map(|id| strip(id)).collect();
+        for d in &built.weapons {
+            // An alt mode `<alt>~<combo>` is the alt variant's row under the combination's key.
+            let Some((alt, combo)) = d.id.split_once('~') else { continue };
+            if combos.iter().any(|c| c == combo) {
+                let key = combo.split_once('+').map_or("", |(_, k)| k);
+                ours.insert(strip(&format!("{alt}+{key}")));
+            }
+        }
+        ours.insert(strip(&Loadout::default().melee));
         let expected = zhbo_conformance::bo2::expected(&dir).unwrap().0;
         let theirs: std::collections::BTreeSet<String> = expected
             .iter()
@@ -1213,7 +1237,9 @@ mod tests {
                 if r.key.1.is_empty() { base.to_string() } else { format!("{base}+{}", r.key.1) }
             })
             .collect();
-        assert_eq!(ours, theirs, "the converter's legal-combo set must equal the conformance expected set");
+        let only_ours: Vec<&String> = ours.difference(&theirs).collect();
+        let only_theirs: Vec<&String> = theirs.difference(&ours).collect();
+        assert!(only_ours.is_empty() && only_theirs.is_empty(), "the converter's rows must equal the conformance expected set: only ours {only_ours:?}, only theirs {only_theirs:?}");
     }
 
     /// The converted attachments carry BO2's compatibility so the core's pairing rule

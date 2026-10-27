@@ -611,7 +611,7 @@
         crate::profile::reset();
         let custom = crate::classes::CustomClass {
             name: "Loud Kit".into(),
-            // Deliberately the reverse of the stock kit: the pistol as primary, the rifle as
+            // Deliberately unlike the stock kit: an SMG primary, the rifle as an Overkill
             // secondary, a claymore, a shorter magazine reserve, and no stock perks.
             primary: "mp7_mp".into(),
             secondary: "an94_mp".into(),
@@ -669,6 +669,54 @@
         assert!(a.has(crate::weapons::Perk::TOUGHNESS), "the class's perks");
         assert!(a.has(crate::weapons::Perk::FLAK_JACKET), "the class's perks");
         assert!(!a.has(crate::weapons::Perk::LIGHTWEIGHT), "no stock perks leaked through");
+        crate::profile::reset();
+    }
+
+    /// Dual wield is a weapon of its own (G16): a class whose pistol carries `dw` spawns holding
+    /// the `_dw_mp` weapon, not the pistol with a `dw` attachment. The class is seeded the way an
+    /// older profile stored it (`fiveseven_mp+dw`), so this also proves the load-time migration.
+    #[test]
+    fn a_dual_wield_class_spawns_with_the_dw_weapon() {
+        let _g = crate::profile::lock();
+        crate::profile::reset();
+        let legacy = crate::classes::CustomClass {
+            name: "Akimbo".into(),
+            primary: "mp7_mp".into(),
+            secondary: "fiveseven_mp+dw".into(),
+            lethal: "frag_grenade_mp".into(),
+            tactical: "concussion_grenade_mp".into(),
+            melee: "knife_held_mp".into(),
+            ..Default::default()
+        };
+        crate::profile::load(&format!("{}\n", legacy.to_wire()));
+        let stored = crate::profile::classes();
+        assert_eq!(stored[0].secondary, "fiveseven_dw_mp", "the profile migrates to BO2's weapon");
+
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        sim.take_control(&host, 0, 1);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        let rows = crate::classui::pick_rows(false);
+        let row = rows.iter().position(|r| matches!(r, crate::classui::PickRow::Custom(0))).expect("the custom row");
+        let key = crate::classui::pick_key(row).expect("a digit key");
+        inp.keys.set_down(key, true);
+        let out = client.frame(&mut sim, &inp);
+        inp.keys.set_down(key, false);
+        client.frame(&mut sim, &inp);
+        let words: Vec<u32> = out.choose_class_payload[..out.choose_class_payload_len as usize].to_vec();
+        sim.choose_class(0, out.choose_class_general, usize::MAX, &words);
+        let f = sim.frame + 1;
+        sim.step(&host, f);
+
+        let a = &sim.player(0).expect("the General is in first person").arsenal;
+        assert_eq!(a.weapons[1].main.id, "fiveseven_dw_mp", "the secondary is the dual-wield weapon");
+        assert_eq!(a.weapons[1].main.dual_wield_weapon, "fiveseven_lh_mp", "its def names the left gun");
+        // (Other tests share the unresolved list; only this class's ids matter here.)
+        let missing = crate::weapons::catalog::unresolved();
+        assert!(!missing.iter().any(|id| id.contains("fiveseven")), "{missing:?}");
         crate::profile::reset();
     }
 

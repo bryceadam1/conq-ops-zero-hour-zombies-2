@@ -966,3 +966,23 @@ fn the_personalize_screen_moves_and_selects_with_arrows() {
     draw_personalize(&mut prims, 1280.0, 720.0, &p, None, 0.0, 0.0);
     assert!(texts(&prims).iter().any(|s| s == "GOLD"));
 }
+
+/// Primary Gunfighter opens BO2's third primary attachment (`checkclasses.lua`: two, three with
+/// the card): the strip grows a third plate and a stored third attachment draws in it.
+#[test]
+fn primary_gunfighter_shows_a_third_attachment_plate() {
+    let l = editor_layout(1280.0, 720.0);
+    let plates = |e: &Editor| editor_cells(&l, e).into_iter().filter(|c| c.slot == Slot::PrimaryAtts).collect::<Vec<_>>();
+    let without = Editor::new(Draft::default());
+    assert_eq!(plates(&without).len(), 2);
+    let mut d = Draft { wildcards: vec![Wildcard::PrimaryGunfighter], ..Draft::default() };
+    d.primary_atts = vec!["gl".into(), "reflex".into(), "grip".into()];
+    let with = Editor::new(d);
+    let third = plates(&with);
+    assert_eq!(third.len(), 3, "the card adds the third plate");
+    assert_eq!(with.draft.spent(), 11, "each attachment and the card cost a point");
+    let mut prims = Vec::new();
+    draw_editor(&mut prims, 1280.0, 720.0, &with, 0.0, 0.0);
+    let grip_drawn = prims.iter().any(|p| matches!(p, Prim::Image { name, .. } if name == "ZHBO_BO2_Attach_Grip"));
+    assert!(grip_drawn, "the third plate draws its attachment");
+}

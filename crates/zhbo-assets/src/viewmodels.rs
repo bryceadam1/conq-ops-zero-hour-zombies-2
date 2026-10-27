@@ -336,15 +336,13 @@ pub(crate) fn dual_mount() -> String {
     std::env::var("ZHBO_DW_MOUNT").ok().filter(|m| !m.is_empty()).unwrap_or_else(|| DW_MOUNT.to_string())
 }
 
-/// Whether a converted weapon instance is the right/base half of a dual-wield pair, so the
-/// converter loads the `_lh` companion as a second rig. The rule cascades:
-/// 1. the weapon id carries the `_dw` suffix (`fnp45_dw_mp` and the other four pistols);
-/// 2. the def's inventory is `DWLEFTHAND` (the `_lh` companion weapon def);
-/// 3. the converted instance mounts the `dw` attachment (the base pistol + `au_<weapon>_dw`).
-pub(crate) fn is_dual_wield(w: &zhbo_formats::weapon::Weapon, shorts: &[&str]) -> bool {
-    use zhbo_formats::weapon::inventory;
-    let base = w.name.strip_suffix("_mp").unwrap_or(&w.name);
-    base.ends_with("_dw") || w.inventory == inventory::DWLEFTHAND || shorts.contains(&"dw")
+/// The left gun of a dual-wield weapon, which the converter loads as a second rig: the def's own
+/// `szDualWieldWeaponName` (`fnp45_dw_mp` names `fnp45_lh_mp`, G16). BO2's class never gives a
+/// pistol with a `dw` attachment — the attachment switches the given weapon to the `_dw_mp` one —
+/// so a single gun (and the `DWLEFTHAND` companion itself, which names none) has no pair.
+pub(crate) fn left_gun<'a>(w: &zhbo_formats::weapon::Weapon, bo2: &'a [zhbo_formats::weapon::Weapon]) -> Option<&'a zhbo_formats::weapon::Weapon> {
+    let name = w.dual_wield_weapon.as_deref()?;
+    bo2.iter().find(|x| x.name == name && x.name != w.name)
 }
 
 /// The right-hand twin of a dual-wield left clip: `viewmodel_<w>_left_idle` -> `..._right_idle`.
@@ -389,15 +387,10 @@ pub(crate) fn weapon_viewmodels(
         let (base, shorts) = zhbo_core::attachments::split_id(id);
         let Some(w) = bo2.iter().find(|w| w.name == base) else { continue };
         let Some(view) = w.view_model.as_deref() else { continue };
-        // The dual-wield pair: the base gun plus its `_lh` companion as a second rig on the left
-        // palm. The five `_dw` pistols carry the suffix; the base + `dw` attachment path mounts the
-        // same pair. The `_lh` def itself is the companion, not a pair: its DWLEFTHAND inventory
-        // fires the rule, so its `_lh` suffix is excluded explicitly.
-        let wbase = w.name.strip_suffix("_mp").unwrap_or(&w.name);
-        let dual_pair = is_dual_wield(w, &shorts) && !wbase.ends_with("_lh");
-        let lh_view = dual_pair.then(|| format!("{view}_lh"));
-        let lh_w = lh_view.as_deref().and_then(|name| bo2.iter().find(|x| x.view_model.as_deref() == Some(name)));
-        let lh_gun = lh_view.as_deref().and_then(|name| find_model(patch, common, name).ok());
+        // The dual-wield pair: the gun plus the left gun its def names, as a second rig on the left
+        // palm.
+        let lh_w = left_gun(w, bo2);
+        let lh_gun = lh_w.and_then(|l| l.view_model.as_deref()).and_then(|name| find_model(patch, common, name).ok());
         let dual = lh_w.filter(|_| lh_gun.is_some());
         let c = combo(w, atts, &shorts);
         let gun = find_model(patch, common, view).map_err(|e| format!("{id}: {e}"))?;
@@ -875,7 +868,7 @@ pub(crate) fn tablet_world(patch: &Zone, common: &Zone, paks: &Paks, out: &mut B
 
 #[cfg(test)]
 mod tests {
-    use super::{attachment_parts, base_part_note, duplicate_sight, is_dual_wield, mount_tag, same_sight, BasePart};
+    use super::{attachment_parts, base_part_note, duplicate_sight, left_gun, mount_tag, same_sight, BasePart};
     use zhbo_formats::weapon::{inventory, Attachment, AttachmentUnique, Weapon};
 
     fn sight(name: &str, mins: [f32; 3], maxs: [f32; 3]) -> zhbo_formats::xmodel::Model {
@@ -1028,18 +1021,17 @@ mod tests {
         }
     }
 
-    /// The five DW pistols carry the `_dw` suffix; the left companion is the `DWLEFTHAND`
-    /// inventory; a bare base pistol is not a pair.
+    /// A dual-wield weapon's left gun is the one its def names; a single gun and the left
+    /// companion itself have none.
     #[test]
-    fn the_five_dw_pistols_are_dual_wield() {
-        for name in ["fnp45_dw_mp", "fiveseven_dw_mp", "kard_dw_mp", "judge_dw_mp", "beretta93r_dw_mp"] {
-            let w = Weapon { name: name.into(), ..Default::default() };
-            assert!(is_dual_wield(&w, &[]), "{name} should be a dual-wield pair");
-        }
+    fn the_left_gun_is_the_one_the_def_names() {
         let lh = Weapon { name: "fnp45_lh_mp".into(), inventory: inventory::DWLEFTHAND, ..Default::default() };
-        assert!(is_dual_wield(&lh, &[]), "the DWLEFTHAND companion is the left half");
+        let dw = Weapon { name: "fnp45_dw_mp".into(), dual_wield_weapon: Some("fnp45_lh_mp".into()), ..Default::default() };
         let base = Weapon { name: "fnp45_mp".into(), ..Default::default() };
-        assert!(!is_dual_wield(&base, &[]), "the bare base pistol is not a pair");
+        let all = vec![lh.clone(), dw.clone(), base.clone()];
+        assert_eq!(left_gun(&dw, &all).map(|w| w.name.as_str()), Some("fnp45_lh_mp"));
+        assert!(left_gun(&base, &all).is_none(), "the bare pistol is not a pair");
+        assert!(left_gun(&lh, &all).is_none(), "the companion is the left half, not a pair");
     }
 
     /// G14 §5 priority 1: slot 0x18 takes the resolved unique whose attachment's
@@ -1204,16 +1196,6 @@ mod tests {
         w.anims = vec![None; 0x58]; w.anims[0x18] = Some("variant_first_raise".into());
         let c = super::combo(&w, &[att], &["a"]);
         assert_eq!(c.anims[0x18].as_deref(), Some("variant_first_raise"), "no first-raise offer keeps the variant's clip");
-    }
-
-    /// The base pistol + the `dw` attachment is the composition path: the attachment the
-    /// converter mounts (`au_<weapon>_dw`) turns the base weapon into a pair, without the `_dw`
-    /// suffix on the weapon itself.
-    #[test]
-    fn the_base_pistol_with_the_dw_attachment_is_dual_wield() {
-        let base = Weapon { name: "fnp45_mp".into(), attachment_variants: vec![(4, "au_fnp45_dw".into())], ..Default::default() };
-        assert!(is_dual_wield(&base, &["dw"]), "the base + dw attachment should compose the left gun");
-        assert!(!is_dual_wield(&base, &[]), "the bare base is not a pair");
     }
 
     /// The left gun's mount is `tag_weapon1`, the viewhands' second weapon mount. The dual-wield
