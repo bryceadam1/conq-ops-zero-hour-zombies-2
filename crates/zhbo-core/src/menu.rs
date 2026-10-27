@@ -10,7 +10,7 @@
 //! (an existing custom, a preset as a template, or a fresh draft); the editor's Save writes back
 //! into THAT slot of THAT class set, and the list's `S Class Set Options` / `O Class Options`
 //! dialogs (`classui::Dialog`) rename/reset the set and rename/copy/reset/clear the class through
-//! the `save_profile` one-shot. Left/Right (BO2's shoulders) walk the ten class sets, making the
+//! the `save_profile` one-shot. `A`/`D` (BO2's shoulders) walk the ten class sets, making the
 //! shown one the active set a match will load (`cacchooseclass.lua`'s `SetActiveClassSet`), and
 //! every edit lands in the set being browsed. There is no *pick* in the shell — no match is
 //! running — and Escape/Back closes the screen (Escape backs out of a dialog or the editor first).

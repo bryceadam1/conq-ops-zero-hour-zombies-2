@@ -4464,3 +4464,49 @@ stays "W00" and the INI's hidden list/draw indices keep working.
 **Verified.** `cargo test -p zhbo-assets` green; `cargo test --workspace` green; `cargo clippy
 --workspace --all-targets` exit 0; the real-install suite (`--skip conformance`) green. No game
 launched. Conformance was not run on the full archive this round.
+
+## Create-a-Class navigation follows BO2's LUI links (2026-10-27, branch `v1/cac-navigation`)
+
+Playtest: "up/down and left/right are swapped, and the mouse is wrong" in the CaC screens. The full
+BO2 map, with citations, is the plan dir's `NAV.md`; the decisions:
+
+- **How input reaches LUI.** t6mp's `gamepad_button` dispatcher (`FUN_009376a0`, read-only Ghidra)
+  sends the arrows as `up/down/left/right`, **each mouse-wheel notch as `up`/`down`** (qualifier
+  `mwheel`, which no CaC Lua checks), and **`A`/`D` as `shoulderl`/`shoulderr`**. Focus moves only
+  along explicit `navigation` links (`luielement.lua:714-785`); a moving cursor over a focusable
+  button gives it focus (`:316-348`) and a release inside is its action (`luibutton.lua:106-128`).
+  `classui::LuiNav` is that translation; every class screen reads its moves through it, so the
+  wheel always moves what Up/Down move on that screen.
+- **Weapon carousel** (`cardcarousellist.lua`): Left/Right = the guns of the category, stopping at
+  the ends (`PerformEdgeBounce`, `cardcarousel.lua:254-381`); Up/Down and the wheel = the category,
+  wrapping (`ScrollList`, `:723-772`); each category keeps its card while the picker is open
+  (`Editor::carousel`). The mod had the axes swapped. Mouse: hover does nothing
+  (`setHandleMouseMove(false)`), a click on another card focuses it, a click on the focused card
+  equips (`CardMouseClick`). Gotcha fixed on the way: the fold sized the drawn window from the
+  *global* option index, not the position in the category, and added the window start twice, so
+  carousel clicks hit the wrong gun or none.
+- **Editor grid** (`customclass.lua:863-991`): an explicit link table, now data in
+  `classmenu/nav.rs` (`LINKS`), plus the two `gain_focus` hooks as data (`Perk12Button_GainFocus`:
+  PRIMARY's Right returns to the perk last on; `BonusCardButton_GainFocus`: the column above and
+  below a card return to it). The mod used to walk a flat slot list with Up/Down and ignore
+  Left/Right. Each bonus card is its own focus now (`Editor::card`): `R`/the X clear that card.
+  The mod's own rows join the column cycles where they are drawn: the class-name heading above
+  PRIMARY, SAVE CLASS under card 3, a Greed plate under its tier (sharing the tier's Left/Right
+  and hook). While a picker is open the grid's boxes are no longer hit-tested (a click beside a
+  picker used to open whatever invisible box was under it).
+- **Grids / personalize / dialogs**: the wheel is a grid *row* (it was ±1 cell); the options
+  dialogs now take hover focus and the wheel (`CoD.ButtonList`).
+- **Class-set pager**: `A`/`D` (BO2's shoulder prompts, `cacchooseclass.lua:299-318`) plus clicks on
+  the `‹`/`›` prompts and on a pip (`ClassSetPip_LeftMouseUp`, `:1418-1432`). Left/Right no longer
+  page: the class list is a vertical list with no left/right links, and the capture notes confirm
+  the arrows do not page (`cac/sweep/PROGRESS.md:127`).
+- Not ported: carousel mouse drag (`MouseDrag`, 80 units per card), the pip hover glow, the
+  personalize screens' `A`/`D` tabs (the mod has one page per kind — item 11's area).
+
+**Verified.** `cargo test --workspace` green (new: the full link table from every box, the
+back-links, Greed splice, wheel on grid/carousel/editor/dialog/personalize, carousel click
+semantics, per-card focus/remove, pager keys and clicks); clippy adds no warning. The headless
+screenshot run could not render on this workstation (the installed `ConquerOps_BO2.big` is missing
+`ZHBO_Mat_scope_overlay_ballista`, unrelated); the screen drawing is covered by the screenshot
+module's prims test. No game launched; the shell CaC screen still has no scripted in-game test —
+see TESTING.md's manual list.

@@ -31,7 +31,7 @@
 //!   category as tiles, and the highlighted gun's four segmented bars in BO2's order (FIRE RATE,
 //!   DAMAGE, RANGE, ACCURACY).
 //!
-//! The *shell* walks the ten sets with Left/Right and carries the set/class options (`S`/`O`,
+//! The *shell* walks the ten sets with `A`/`D` (BO2's shoulders) and carries the set/class options (`S`/`O`,
 //! `menu::Dialog`); in a match the screen is pick-only (BO2 only creates classes in the lobby) and
 //! an untouched slot is not pickable. Missing art falls back to drawn shapes (`Prim::Image`'s
 //! fallback), so the screens work without the converted archive.
