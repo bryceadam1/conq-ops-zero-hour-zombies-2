@@ -29,6 +29,9 @@ use crate::classes::{self, CustomClass};
 use crate::input::Key;
 use crate::weapons::{self, Class as WeaponClass, Perk, WeaponDef};
 
+pub mod nav;
+pub use nav::{Dir, Focus};
+
 /// The Pick-10 budget: ten points per class, exactly BO2's.
 pub const PICK_10: i32 = 10;
 
@@ -155,8 +158,9 @@ pub enum Slot {
 }
 
 impl Slot {
-    /// Every slot, in BO2's create-a-class order. `Save` is the row below the elements, so it is
-    /// last in the walk and the arrows wrap from it back to the name. The second perk rows
+    /// Every slot, in BO2's create-a-class order (the draw and hit-test order; the arrows follow the
+    /// grid's links, `nav.rs`, not this order). `Save` is the mod's row below the elements. The
+    /// second perk rows
     /// ([`Slot::Perk1b`] and its siblings) are *not* here: they only exist while their Greed wildcard
     /// is on, so the editor's [`Editor::slots`] inserts them into a copy of this list.
     pub const ALL: [Slot; 12] = [
@@ -712,6 +716,16 @@ pub struct Editor {
     pub draft: Draft,
     /// The highlighted slot.
     pub slot: Slot,
+    /// Which bonus card is highlighted while `slot` is [`Slot::Wildcards`] (BO2's three
+    /// `bonusCardButtons` are separate focuses); 0 otherwise.
+    pub card: usize,
+    /// The grid's focus links and the back-links this session's moves wrote (`nav.rs`).
+    pub nav: nav::Nav,
+    /// The weapon carousel's per-category card (BO2 keeps one `CardCarousel` per category for the
+    /// menu's life, so a category is re-entered on the card it was left on,
+    /// `cardcarousellist.lua:723-772`): option indices, by category position. Cleared when a
+    /// picker opens.
+    pub carousel: Vec<Option<usize>>,
     /// The highlighted option within the slot's list.
     pub option: usize,
     /// Whether the slot's option list is open (picking) or the slot row is just highlighted.
@@ -735,6 +749,8 @@ pub struct Editor {
 pub struct PointerEvent {
     /// Hovered slot row (an index into [`Editor::slots`]).
     pub slot: Option<usize>,
+    /// Which bonus card of the card row the pointer is on (0 for any other row).
+    pub card: usize,
     /// Hovered option row (an index into [`Editor::options`]) while a list is open.
     pub option: Option<usize>,
     /// The left button went down this frame.
@@ -766,7 +782,54 @@ pub enum ApplyResult {
 
 impl Editor {
     pub fn new(draft: Draft) -> Editor {
-        Editor { draft, slot: Slot::Primary, option: 0, picking: false, naming: false, denied: false, personalize: None }
+        Editor {
+            draft,
+            slot: Slot::Primary,
+            card: 0,
+            nav: nav::Nav::default(),
+            carousel: Vec::new(),
+            option: 0,
+            picking: false,
+            naming: false,
+            denied: false,
+            personalize: None,
+        }
+    }
+
+    /// The highlighted box of the grid.
+    pub fn focus(&self) -> Focus {
+        Focus { slot: self.slot, card: if self.slot == Slot::Wildcards { self.card } else { 0 } }
+    }
+
+    /// The grid's focusable boxes this frame ([`Editor::slots`] with the three cards).
+    pub fn boxes(&self) -> Vec<Focus> {
+        nav::boxes(&self.slots())
+    }
+
+    /// Move the highlight onto box `f` (a key move or a hover) and run its `gain_focus` hook.
+    pub fn focus_on(&mut self, f: Focus) {
+        let boxes = self.boxes();
+        if !boxes.contains(&f) {
+            return;
+        }
+        if f != self.focus() {
+            self.option = 0;
+        }
+        self.slot = f.slot;
+        self.card = f.card;
+        self.nav.focused(&boxes, f);
+    }
+
+    /// Follow the grid link `dir` from the highlighted box (no link: nothing moves).
+    pub fn navigate(&mut self, dir: Dir) -> bool {
+        let boxes = self.boxes();
+        match self.nav.target(&boxes, self.focus(), dir) {
+            Some(t) => {
+                self.focus_on(t);
+                true
+            }
+            None => false,
+        }
     }
 
     /// The rows to draw and walk, in order: [`Slot::ALL`] with a second perk row spliced in after a
@@ -1123,14 +1186,11 @@ impl Editor {
             self.personalize = Some(PersonalizeKind::Reticle);
             return Outcome::Continue;
         }
-        // The slot row is highlighted: up/down move the highlight, Enter opens the list.
-        if edges.up {
-            self.slot = self.prev_slot(self.slot);
-            self.option = 0;
-        }
-        if edges.down {
-            self.slot = self.next_slot(self.slot);
-            self.option = 0;
+        // A box is highlighted: the arrows follow BO2's grid links (`nav.rs`), Enter opens the list.
+        for (pressed, dir) in [(edges.up, Dir::Up), (edges.down, Dir::Down), (edges.left, Dir::Left), (edges.right, Dir::Right)] {
+            if pressed {
+                self.navigate(dir);
+            }
         }
         if edges.confirm {
             return self.confirm();
@@ -1159,6 +1219,7 @@ impl Editor {
         }
         self.picking = true;
         self.option = self.current_option_index();
+        self.carousel.clear();
         Outcome::Continue
     }
 
@@ -1177,8 +1238,9 @@ impl Editor {
         }
         if self.picking {
             let n = self.options().len();
+            // The wheel is LUI's Up/Down (t6mp `FUN_009376a0`): a grid row per notch.
             if pointer.wheel != 0 && n > 0 {
-                self.option = (self.option as i32 + pointer.wheel).rem_euclid(n as i32) as usize;
+                self.step_rows(pointer.wheel, n);
             }
             if pointer.moved {
                 if let Some(i) = pointer.option {
@@ -1195,36 +1257,44 @@ impl Editor {
                         }
                         self.picking = false;
                     }
-                } else if let Some(i) = pointer.slot {
-                    // A click outside the open list returns to the row walk and confirms that row.
-                    if let Some(slot) = self.slots().get(i).copied() {
-                        self.slot = slot;
-                        self.option = 0;
-                        self.picking = false;
-                        return self.confirm();
-                    }
                 }
+                // A click beside the open list does nothing: the picker owns the screen.
             }
             return Outcome::Continue;
         }
-        if pointer.wheel != 0 {
-            let list = self.slots();
-            let i = list.iter().position(|s| *s == self.slot).unwrap_or(0) as i32;
-            self.slot = list[(i + pointer.wheel).rem_euclid(list.len() as i32) as usize];
-            self.option = 0;
+        // The wheel is LUI's Up/Down (t6mp `FUN_009376a0`): one grid link per notch.
+        for _ in 0..pointer.wheel.unsigned_abs() {
+            self.navigate(if pointer.wheel > 0 { Dir::Down } else { Dir::Up });
         }
+        // Hover focuses the box (`luielement.lua:316-348`, running its `gain_focus` hook); a click
+        // activates it (`luibutton.lua:106-128`).
         if pointer.moved || pointer.click {
-            if let Some(i) = pointer.slot {
-                if let Some(slot) = self.slots().get(i).copied() {
-                    self.slot = slot;
-                    self.option = 0;
-                }
+            if let Some(f) = self.pointer_box(&pointer) {
+                self.focus_on(f);
             }
         }
         if pointer.click && pointer.slot.is_some() {
             return self.confirm();
         }
         Outcome::Continue
+    }
+
+    /// The box a pointer frame hit: its row in [`Editor::slots`], and the card on the card row.
+    fn pointer_box(&self, pointer: &PointerEvent) -> Option<Focus> {
+        let slot = self.slots().get(pointer.slot?).copied()?;
+        Some(Focus { slot, card: if slot == Slot::Wildcards { pointer.card } else { 0 } })
+    }
+
+    /// Walk the open list `rows` rows (positive down) by the grid's column links, or by one
+    /// option per step in a list without a grid.
+    fn step_rows(&mut self, rows: i32, n: usize) {
+        for _ in 0..rows.unsigned_abs() {
+            self.option = match self.slot.option_columns() {
+                Some(cols) if rows > 0 => grid_down(self.option, n, cols),
+                Some(cols) => grid_up(self.option, n, cols),
+                None => (self.option as i32 + rows.signum()).rem_euclid(n as i32) as usize,
+            };
+        }
     }
 
     /// The name row has text entry: printable keys append, Backspace deletes, Enter/Escape leave
@@ -1244,19 +1314,6 @@ impl Editor {
             self.naming = false;
         }
         Outcome::Continue
-    }
-
-    /// The rows to walk, in order: [`Editor::slots`].
-    fn next_slot(&self, s: Slot) -> Slot {
-        let list = self.slots();
-        let i = list.iter().position(|x| *x == s).unwrap_or(0);
-        list[(i + 1) % list.len()]
-    }
-
-    fn prev_slot(&self, s: Slot) -> Slot {
-        let list = self.slots();
-        let i = list.iter().position(|x| *x == s).unwrap_or(0);
-        list[(i + list.len() - 1) % list.len()]
     }
 
     /// The option list is open: the arrows move, Enter picks, Escape closes the list (one step

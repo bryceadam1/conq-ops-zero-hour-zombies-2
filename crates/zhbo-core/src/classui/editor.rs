@@ -170,7 +170,7 @@ fn draw_editor_grid(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor, no
 fn draw_cell(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor, cell: &EditorCell) {
     let f = &l.frame;
     let r = cell.rect;
-    let on = cell.slot == editor.slot;
+    let on = cell_focused(editor, cell);
     let filled = cell_filled(editor, cell);
     match cell.slot {
         Slot::Name => {} // the title draws it

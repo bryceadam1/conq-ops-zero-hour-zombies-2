@@ -364,7 +364,8 @@ impl MenuState {
         }
     }
 
-    /// The pick list's frame: browse the active set's slots; Left/Right walk the ten sets (making
+    /// The pick list's frame: browse the active set's slots; `A`/`D` (BO2's shoulders) or a click
+    /// on the header's arrows/pips walk the ten sets (making
     /// the shown one the active set, BO2's "you will load into the game with this class set"); an
     /// activated row opens the editor on it (an existing custom, a preset as a template, or a fresh
     /// draft); `S` opens the class-set options, `O` the highlighted class's; Escape closes the
@@ -393,7 +394,14 @@ impl MenuState {
         // The set pager: switching sets is a profile change (the active set persists), so it rides
         // the same one-shot as the edits. The switch owns the frame: the stale row indices the
         // fold computed against the old set are not acted on.
-        let switched = frame.set_step != 0 && match crate::profile::cycle_active(frame.set_step) {
+        let change = match frame.set_select {
+            // A pip names its set; picking the active one is no change.
+            Some(set) if set != crate::profile::active_set() => crate::profile::set_active(set),
+            Some(_) => None,
+            None if frame.set_step != 0 => crate::profile::cycle_active(frame.set_step),
+            None => None,
+        };
+        let switched = match change {
             Some(text) => {
                 write_profile(out, classui::SAVE_PROFILE_EDIT, &text);
                 self.highlight = 0;
@@ -601,11 +609,17 @@ mod tests {
         out
     }
 
-    /// Walk to the Save row and confirm it (the editor must be open).
+    /// Walk to the Save row and confirm it (the editor must be open). SAVE sits in the right
+    /// column's Up/Down cycle (`classmenu::nav`), so a walk that has lapped the left column once
+    /// crosses over with Right.
     fn save_open_editor(menu: &mut MenuState, inp: &mut MenuIn) -> MenuOut {
-        while menu.editor.as_ref().expect("editor open").slot != crate::classmenu::Slot::Save {
-            press(menu, inp, Key::Down);
+        for i in 0..32 {
+            if menu.editor.as_ref().expect("editor open").slot == crate::classmenu::Slot::Save {
+                break;
+            }
+            press(menu, inp, if i == 12 { Key::Right } else { Key::Down });
         }
+        assert_eq!(menu.editor.as_ref().expect("editor open").slot, crate::classmenu::Slot::Save, "the walk reaches SAVE");
         press(menu, inp, Key::Enter)
     }
 
@@ -620,8 +634,11 @@ mod tests {
         // A row move is not a set switch.
         press(&mut menu, &mut inp, Key::Down);
         assert!(menu.view().set_change.is_none(), "a row move has no slide");
-        // Right/Left walk the sets: `SetActiveClassSet` slides the new list in over 250 ms.
+        // The arrows never page (the list has no left/right links); `D` (BO2's shoulderr) walks
+        // the sets: `SetActiveClassSet` slides the new list in over 250 ms.
         press(&mut menu, &mut inp, Key::Right);
+        assert!(menu.view().set_change.is_none(), "Right is not a set switch");
+        press(&mut menu, &mut inp, classui::SHOULDER_R);
         let since = menu.view().set_change.expect("the switch started the transition");
         assert!((0.0..classui::SET_SWITCH_MS / 1000.0).contains(&since), "just started: {since}");
         // The hosts draw it in the transition until the duration elapses.
@@ -776,10 +793,10 @@ mod tests {
         assert_eq!(classui::pick_rows(true)[menu.highlight], PickRow::Empty(crate::profile::MAX_CLASSES - 1));
         press(&mut menu, &mut inp, Key::Enter);
         assert!(menu.editor.is_some());
-        // The editor opens on Primary; walk down to the Lethal row (Primary -> PrimaryAtts ->
-        // Secondary -> SecondaryAtts -> Lethal).
-        for _ in 0..4 {
-            press(&mut menu, &mut inp, Key::Down);
+        // The editor opens on Primary; walk to LETHAL along BO2's grid links (Primary -> PrimaryAtts
+        // -> Secondary, then Right across to Lethal, `customclass.lua:863-991`).
+        for k in [Key::Down, Key::Down, Key::Right] {
+            press(&mut menu, &mut inp, k);
         }
         assert_eq!(menu.editor.as_ref().expect("editor open").slot, crate::classmenu::Slot::Lethal);
         press(&mut menu, &mut inp, Key::Enter); // open the Lethal slot's list
@@ -909,7 +926,7 @@ mod tests {
     }
 
     #[test]
-    fn left_and_right_walk_the_class_sets_and_persist_the_active_one() {
+    fn the_shoulder_keys_walk_the_class_sets_and_persist_the_active_one() {
         let _g = lock();
         crate::profile::reset();
         crate::profile::save(custom("Set One", "an94_mp"));
@@ -917,9 +934,15 @@ mod tests {
         let mut inp = MenuIn::default();
         menu.frame(&inp);
 
-        // Right: the next set becomes the active one (BO2: the set a match loads into) and the
-        // profile write one-shot carries it.
-        let out = press(&mut menu, &mut inp, Key::Right);
+        // The arrows have no link on the vertical class list: Left/Right change nothing.
+        for k in [Key::Left, Key::Right] {
+            let out = press(&mut menu, &mut inp, k);
+            assert_eq!(out.save_profile, 0, "{k:?} is not a set switch");
+            assert_eq!(crate::profile::active_set(), 0);
+        }
+        // `D` (BO2's shoulderr, t6mp `FUN_009376a0`): the next set becomes the active one (BO2:
+        // the set a match loads into) and the profile write one-shot carries it.
+        let out = press(&mut menu, &mut inp, classui::SHOULDER_R);
         assert_eq!(out.save_profile, classui::SAVE_PROFILE_EDIT);
         assert_eq!(crate::profile::active_set(), 1);
         let text = crate::profile::unpack_text(&out.save_profile_payload[..out.save_profile_payload_len as usize]).expect("the payload");
@@ -927,11 +950,42 @@ mod tests {
         assert_eq!(menu.highlight, 0, "the highlight restarts on the new set's list");
         // The new set is empty: the list is the five defaults and CREATE.
         assert_eq!(classui::pick_rows(true).iter().filter(|r| matches!(r, PickRow::Custom(_))).count(), 0);
-        // Left twice wraps through the first set to the last.
-        press(&mut menu, &mut inp, Key::Left);
+        // `A` twice wraps through the first set to the last.
+        press(&mut menu, &mut inp, classui::SHOULDER_L);
         assert_eq!(crate::profile::active_set(), 0);
-        press(&mut menu, &mut inp, Key::Left);
+        press(&mut menu, &mut inp, classui::SHOULDER_L);
         assert_eq!(crate::profile::active_set(), 9, "BO2's shoulders wrap");
+        crate::profile::reset();
+    }
+
+    #[test]
+    fn clicking_the_set_arrows_and_pips_switches_the_set() {
+        let _g = lock();
+        crate::profile::reset();
+        let mut menu = MenuState::new();
+        let mut inp = MenuIn { screen_w: 1280.0, screen_h: 720.0, ..MenuIn::default() };
+        menu.frame(&inp);
+        let l = classui::pick_layout(1280.0, 720.0, true);
+        let header = l.header.expect("the lobby has the set header");
+        let click = |menu: &mut MenuState, inp: &mut MenuIn, r: crate::lui::Rect| {
+            let p = l.frame.px(r);
+            inp.mouse_x = p.x + p.w * 0.5;
+            inp.mouse_y = p.y + p.h * 0.5;
+            menu.frame(inp);
+            inp.mouse_buttons = crate::input::mouse_buttons::LEFT;
+            let out = menu.frame(inp);
+            inp.mouse_buttons = 0;
+            menu.frame(inp);
+            out
+        };
+        let [prev, next] = classui::set_arrows(header);
+        assert_eq!(click(&mut menu, &mut inp, next).save_profile, classui::SAVE_PROFILE_EDIT, "`›` is next_class_set");
+        assert_eq!(crate::profile::active_set(), 1);
+        click(&mut menu, &mut inp, prev);
+        assert_eq!(crate::profile::active_set(), 0, "`‹` is prev_class_set");
+        click(&mut menu, &mut inp, classui::set_pip(header, 6, crate::profile::MAX_SETS));
+        assert_eq!(crate::profile::active_set(), 6, "a pip selects its set");
+        assert_eq!(click(&mut menu, &mut inp, classui::set_pip(header, 6, crate::profile::MAX_SETS)).save_profile, 0, "the active pip is no change");
         crate::profile::reset();
     }
 
@@ -953,9 +1007,10 @@ mod tests {
         let editor = menu.editor.as_ref().expect("the B row opens the editor");
         assert_eq!(editor.draft.name, "B");
         assert_eq!(editor.draft.primary, "tar21_mp");
-        // Edit the lethal and save: the class stays in slot 2, A untouched in slot 1.
-        for _ in 0..4 {
-            press(&mut menu, &mut inp, Key::Down);
+        // Edit the lethal and save: the class stays in slot 2, A untouched in slot 1. LETHAL is
+        // Right of SECONDARY (`customclass.lua:863-991`).
+        for k in [Key::Down, Key::Down, Key::Right] {
+            press(&mut menu, &mut inp, k);
         }
         press(&mut menu, &mut inp, Key::Enter);
         // The lethal list is a content grid: Right walks its row (Down leaves a row only when

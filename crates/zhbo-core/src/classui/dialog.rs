@@ -151,13 +151,18 @@ pub fn dialog_step(d: &mut Dialog, prev: &MenuPrev, now: &MenuPointer) -> Dialog
         }
         return DialogOutcome::Continue;
     }
+    // The entries are a `CoD.ButtonList` (`cacclasssetoptions.lua:121`, `cacclassoptions.lua:157`):
+    // a wrapping vertical list that Up/Down and the wheel walk, and whose buttons take focus under
+    // a moving cursor (`luielement.lua:316-348`).
     let n = d.items.len();
     if n > 0 {
-        if prev.edge(now, Key::Up) {
-            d.highlight = (d.highlight + n - 1) % n;
-        }
-        if prev.edge(now, Key::Down) {
-            d.highlight = (d.highlight + 1) % n;
+        let step = LuiNav::read(prev, now).vertical();
+        d.highlight = (d.highlight as i32 + step).rem_euclid(n as i32) as usize;
+        if prev.moved(now) {
+            let s = now.scale();
+            if let Some(i) = dialog_item_at(d, now.screen_w, now.screen_h, s, now.mouse_x, now.mouse_y) {
+                d.highlight = i;
+            }
         }
     }
     if prev.edge(now, Key::Enter) {

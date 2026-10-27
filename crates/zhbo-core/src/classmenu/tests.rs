@@ -253,22 +253,111 @@ use super::*;
         assert_eq!(l.perks, vec![Perk::FLAK_JACKET]);
     }
 
-    #[test]
-    fn slot_navigation_wraps_around_bo2s_order() {
-        let e = Editor::new(Draft::default());
-        assert_eq!(e.next_slot(Slot::Name), Slot::Primary);
-        assert_eq!(e.next_slot(Slot::Primary), Slot::PrimaryAtts);
-        // The first row wraps up to the Save row, and Save wraps down to the first row.
-        assert_eq!(e.prev_slot(Slot::Name), Slot::Save);
-        assert_eq!(e.next_slot(Slot::Wildcards), Slot::Save);
-        assert_eq!(e.next_slot(Slot::Save), Slot::Name);
-        assert_eq!(e.prev_slot(Slot::Save), Slot::Wildcards);
-        // Walk the whole list and come back.
-        let mut s = Slot::Name;
-        for _ in 0..Slot::ALL.len() {
-            s = e.next_slot(s);
+    /// Walk `e` along `dirs` and return where it lands.
+    fn walk(e: &mut Editor, dirs: &[Dir]) -> Focus {
+        for d in dirs {
+            e.navigate(*d);
         }
-        assert_eq!(s, Slot::Name);
+        e.focus()
+    }
+
+    #[test]
+    fn the_editor_grid_follows_bo2s_links() {
+        // `customclass.lua:863-991`, through the pure editor's key fold, from every box. The mod's
+        // name and save rows are spliced in (name above PRIMARY, SAVE under card 3), so the links
+        // that would cross them are checked through them.
+        use Dir::*;
+        let s = Focus::slot;
+        let cases: &[(Focus, Dir, Focus)] = &[
+            (s(Slot::Primary), Up, s(Slot::Name)),
+            (s(Slot::Name), Up, Focus::card(0)),
+            (s(Slot::Primary), Down, s(Slot::PrimaryAtts)),
+            (s(Slot::Primary), Right, s(Slot::Perk1)),
+            (s(Slot::PrimaryAtts), Down, s(Slot::Secondary)),
+            (s(Slot::PrimaryAtts), Left, s(Slot::Perk3)),
+            (s(Slot::PrimaryAtts), Right, s(Slot::Perk3)),
+            (s(Slot::Secondary), Down, s(Slot::SecondaryAtts)),
+            (s(Slot::Secondary), Right, s(Slot::Lethal)),
+            (s(Slot::SecondaryAtts), Down, Focus::card(0)),
+            (s(Slot::SecondaryAtts), Right, s(Slot::Tactical)),
+            (s(Slot::Perk1), Up, s(Slot::Save)),
+            (s(Slot::Save), Up, Focus::card(2)),
+            (s(Slot::Perk1), Down, s(Slot::Perk2)),
+            (s(Slot::Perk1), Left, s(Slot::Primary)),
+            (s(Slot::Perk2), Right, s(Slot::Primary)),
+            (s(Slot::Perk3), Down, s(Slot::Lethal)),
+            (s(Slot::Perk3), Left, s(Slot::PrimaryAtts)),
+            (s(Slot::Lethal), Left, s(Slot::Secondary)),
+            (s(Slot::Tactical), Down, Focus::card(2)),
+            (s(Slot::Tactical), Right, s(Slot::SecondaryAtts)),
+            (Focus::card(0), Up, s(Slot::SecondaryAtts)),
+            (Focus::card(0), Down, s(Slot::Name)),
+            (Focus::card(0), Right, Focus::card(1)),
+            (Focus::card(1), Left, Focus::card(0)),
+            (Focus::card(1), Up, s(Slot::SecondaryAtts)),
+            (Focus::card(2), Up, s(Slot::Tactical)),
+            (Focus::card(2), Down, s(Slot::Save)),
+            (s(Slot::Save), Down, s(Slot::Perk1)),
+        ];
+        for (from, dir, to) in cases {
+            let mut e = Editor::new(Draft::default());
+            e.focus_on(*from);
+            assert_eq!(e.focus(), *from);
+            assert_eq!(walk(&mut e, &[*dir]), *to, "{from:?} {dir:?}");
+        }
+        // No link, no move: the card row's ends and the left column's Left.
+        for (from, dir) in [(Focus::card(0), Left), (Focus::card(2), Right), (s(Slot::Primary), Left), (s(Slot::Name), Left)] {
+            let mut e = Editor::new(Draft::default());
+            e.focus_on(from);
+            assert!(!e.navigate(dir), "{from:?} {dir:?} has no link");
+            assert_eq!(e.focus(), from);
+        }
+    }
+
+    #[test]
+    fn the_column_jumps_return_to_the_box_they_came_from() {
+        use Dir::*;
+        // `Perk12Button_GainFocus`: PRIMARY's Right goes back to the perk last focused.
+        let mut e = Editor::new(Draft::default());
+        assert_eq!(walk(&mut e, &[Right, Down, Left]), Focus::slot(Slot::Primary), "perk 2's Left is PRIMARY");
+        assert_eq!(walk(&mut e, &[Right]), Focus::slot(Slot::Perk2), "and PRIMARY's Right now returns to perk 2");
+        // `BonusCardButton_GainFocus`: the column above and below a card return to it.
+        let mut e = Editor::new(Draft::default());
+        e.focus_on(Focus::card(1));
+        assert_eq!(walk(&mut e, &[Up, Down]), Focus::card(1), "SECONDARY ATTS' Down returns to card 2");
+        assert_eq!(walk(&mut e, &[Down, Up]), Focus::card(1), "the name row's Up returns to card 2");
+        // Card 3 belongs to the right column only: TACTICAL never leads to card 2.
+        e.focus_on(Focus::slot(Slot::Tactical));
+        assert_eq!(walk(&mut e, &[Down]), Focus::card(2));
+        // A hover runs the same hook (hover is `gain_focus`).
+        let mut e = Editor::new(Draft::default());
+        e.step_pointer(PointerEvent { slot: e.slots().iter().position(|s| *s == Slot::Perk2), moved: true, ..Default::default() });
+        assert_eq!(e.focus(), Focus::slot(Slot::Perk2));
+        e.focus_on(Focus::slot(Slot::Primary));
+        assert_eq!(walk(&mut e, &[Right]), Focus::slot(Slot::Perk2));
+    }
+
+    #[test]
+    fn a_greed_plate_joins_its_tiers_column_and_links() {
+        use Dir::*;
+        let mut e = Editor::new(Draft { wildcards: vec![Wildcard::Perk1Greed], ..Draft::default() });
+        e.focus_on(Focus::slot(Slot::Perk1));
+        assert_eq!(walk(&mut e, &[Down]), Focus::slot(Slot::Perk1b));
+        assert_eq!(walk(&mut e, &[Down]), Focus::slot(Slot::Perk2));
+        assert_eq!(walk(&mut e, &[Up, Up]), Focus::slot(Slot::Perk1));
+        e.focus_on(Focus::slot(Slot::Perk1b));
+        assert_eq!(walk(&mut e, &[Left]), Focus::slot(Slot::Primary), "the plate shares perk 1's Left");
+        assert_eq!(walk(&mut e, &[Right]), Focus::slot(Slot::Perk1b), "and its back-link");
+    }
+
+    #[test]
+    fn the_wheel_walks_the_grid_links() {
+        // LUI's wheel is Up/Down (t6mp `FUN_009376a0`): PRIMARY -> PRIMARY ATTS -> SECONDARY.
+        let mut e = Editor::new(Draft::default());
+        e.step_pointer(PointerEvent { wheel: 2, ..Default::default() });
+        assert_eq!(e.slot, Slot::Secondary);
+        e.step_pointer(PointerEvent { wheel: -1, ..Default::default() });
+        assert_eq!(e.slot, Slot::PrimaryAtts);
     }
 
     #[test]
@@ -277,11 +366,12 @@ use super::*;
         e.slot = Slot::Save;
         // The Save row carries no options, so it can never open a list.
         assert!(e.options().is_empty());
-        // Confirming it leaves the editor with a save; a down edge walks off it to the first row.
+        // Confirming it leaves the editor with a save; a down edge walks off it to the top of the
+        // right column (SAVE sits under card 3 in that column's cycle).
         assert_eq!(e.step(Edges { confirm: true, ..Default::default() }), Outcome::Save);
         assert!(!e.picking, "the save row does not enter the list state");
         assert_eq!(e.step(Edges { down: true, ..Default::default() }), Outcome::Continue);
-        assert_eq!(e.slot, Slot::Name);
+        assert_eq!(e.slot, Slot::Perk1);
         // Escape still cancels (without saving).
         e.slot = Slot::Save;
         assert_eq!(e.step(Edges { cancel: true, ..Default::default() }), Outcome::Cancel);

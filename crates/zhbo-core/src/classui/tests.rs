@@ -2,7 +2,7 @@
 
 use super::*;
 use crate::classes::CustomClass;
-use crate::classmenu::{Outcome, Personalize, PersonalizeKind};
+use crate::classmenu::{Focus, Outcome, Personalize, PersonalizeKind};
 
 fn lock() -> std::sync::MutexGuard<'static, ()> {
     crate::profile::lock()
@@ -85,19 +85,26 @@ fn the_pick_list_describes_the_active_class_set() {
     assert_eq!(list.set_name, "SNIPERS");
     assert_eq!(list.marker(), 1, "the second pip marks set 2");
     assert_eq!(list.rows[..2], [PickRow::Custom(0), PickRow::Empty(1)], "one custom in this set");
-    // Left/Right step the set only in the lobby; a match's fold ignores them.
+    // BO2's shoulders (`A`/`D` on PC, t6mp `FUN_009376a0`) step the set only in the lobby; a
+    // match's fold ignores them. The arrows never page: the class list is a vertical list.
     let mut inp = MenuPointer { screen_w: 1280.0, screen_h: 720.0, ..Default::default() };
     let prev = MenuPrev::default();
-    inp.keys.set_down(Key::Right, true);
+    inp.keys.set_down(SHOULDER_R, true);
     assert_eq!(pick_frame(&inp, &prev, 0, true).set_step, 1);
     assert_eq!(pick_frame(&inp, &prev, 0, false).set_step, 0);
-    inp.keys.set_down(Key::Right, false);
-    inp.keys.set_down(Key::Left, true);
+    inp.keys.set_down(SHOULDER_R, false);
+    inp.keys.set_down(SHOULDER_L, true);
     assert_eq!(pick_frame(&inp, &prev, 0, true).set_step, -1);
+    inp.keys.set_down(SHOULDER_L, false);
+    for k in [Key::Left, Key::Right] {
+        inp.keys.set_down(k, true);
+        assert_eq!(pick_frame(&inp, &prev, 0, true).set_step, 0, "{k:?} does not page");
+        inp.keys.set_down(k, false);
+    }
     crate::profile::reset();
 }
 
-/// The pager the shell's Left/Right drives: ten steps of +1 walk all ten sets and come back to
+/// The pager the shell's shoulders drive: ten steps of +1 walk all ten sets and come back to
 /// the first, and the marker follows (BO2's pager wraps, `a-chooseclass/011`).
 #[test]
 fn the_set_pager_steps_through_all_ten_sets_and_wraps() {
@@ -505,39 +512,115 @@ fn two_categories() -> Vec<Category> {
 }
 
 #[test]
-fn left_right_walk_the_categories_and_up_down_the_guns_inside_one() {
+fn up_down_walk_the_categories_and_left_right_the_guns_inside_one() {
     let cats = two_categories();
     let mut e = Editor::new(Draft::default());
     e.slot = Slot::Primary;
     e.picking = true;
     e.option = 1;
-    // Down/Up stay inside the SMG category and wrap inside it.
+    // Left/Right stay inside the SMG category and stop at its ends (the edge bounce,
+    // `cardcarousel.lua:254-381`).
     assert!(step_within_category(&mut e, &cats, 1));
     assert_eq!(e.option, 2);
+    assert!(!step_within_category(&mut e, &cats, 1), "Right at the last card bounces");
+    assert_eq!(e.option, 2, "and does not wrap");
+    e.option = 0;
+    assert!(!step_within_category(&mut e, &cats, -1), "Left at the first card bounces");
+    assert_eq!(e.option, 0);
+    // Up/Down step the category and wrap across the column (`ScrollList`, `cardcarousellist.lua:723-772`).
+    e.option = 1;
+    step_category(&mut e, &cats, 1);
+    assert_eq!(e.option, 3, "an unvisited category opens on its first gun");
     step_within_category(&mut e, &cats, 1);
-    assert_eq!(e.option, 0, "Down at the end of a category wraps to its first gun");
-    step_within_category(&mut e, &cats, -1);
-    assert_eq!(e.option, 2, "Up at the start wraps to its last");
-    // Right/Left move to the neighbouring category's first gun and wrap across the column.
+    assert_eq!(e.option, 4);
     step_category(&mut e, &cats, 1);
-    assert_eq!(e.option, 3, "Right lands on the next category's first gun");
-    step_category(&mut e, &cats, 1);
-    assert_eq!(e.option, 0, "the last category wraps back to the first");
+    assert_eq!(e.option, 1, "the last category wraps to the first, back on the card it was left on");
     step_category(&mut e, &cats, -1);
-    assert_eq!(e.option, 3, "and back to the last");
-    // Through the fold: a right press moves the highlight to the next category.
+    assert_eq!(e.option, 4, "and each category keeps its own card");
+    // Through the fold: Down moves to the next category, Left/Right walk the guns.
     let mut e = Editor::new(Draft::default());
     let mut prev = MenuPrev::default();
     press(&mut e, &mut prev, &[Key::Enter]);
     let cats = weapon_categories(&e);
     let before = category_of(&cats, e.option);
-    press(&mut e, &mut prev, &[Key::Right]);
-    assert_eq!(category_of(&cats, e.option), (before + 1) % cats.len(), "the fold walks the categories");
-    press(&mut e, &mut prev, &[Key::Left]);
-    assert_eq!(category_of(&cats, e.option), before, "and back");
-    // Down never leaves the category, however long the list is.
     press(&mut e, &mut prev, &[Key::Down]);
-    assert_eq!(category_of(&cats, e.option), before, "Up/Down stay inside the active category");
+    assert_eq!(category_of(&cats, e.option), (before + 1) % cats.len(), "Down walks the categories");
+    press(&mut e, &mut prev, &[Key::Up]);
+    assert_eq!(category_of(&cats, e.option), before, "and Up back");
+    press(&mut e, &mut prev, &[Key::Up]);
+    assert_eq!(category_of(&cats, e.option), (before + cats.len() - 1) % cats.len(), "Up wraps");
+    press(&mut e, &mut prev, &[Key::Down]);
+    // Right never leaves the category, however often it is pressed.
+    for _ in 0..12 {
+        press(&mut e, &mut prev, &[Key::Right]);
+        assert_eq!(category_of(&cats, e.option), before, "Left/Right stay inside the active category");
+    }
+    let last = *cats[before].options.last().expect("a category has guns");
+    assert_eq!(e.option, last, "Right ends on the category's last gun");
+    // The wheel is Up/Down (t6mp `FUN_009376a0`): a notch is a category.
+    let mut inp = MenuPointer { wheel: 1.0, ..Default::default() };
+    editor_frame(&mut e, &inp, &prev);
+    assert_eq!(category_of(&cats, e.option), (before + 1) % cats.len(), "a wheel notch down is the next category");
+    inp.wheel = -1.0;
+    editor_frame(&mut e, &inp, &prev);
+    assert_eq!(e.option, last, "a notch up returns, onto the remembered card");
+}
+
+#[test]
+fn the_carousel_mouse_clicks_to_focus_and_clicks_the_focused_card_to_equip() {
+    // `cardcarousel.lua`: the cards ignore hover (`setHandleMouseMove(false)`, :853-857); a click on
+    // another card focuses it, a click on the focused card is its action (`CardMouseClick`,
+    // :1576-1643).
+    let mut e = Editor::new(Draft::default());
+    let mut prev = MenuPrev::default();
+    press(&mut e, &mut prev, &[Key::Enter]);
+    let cats = weapon_categories(&e);
+    let opts = cats[category_of(&cats, e.option)].options.clone();
+    // Start on the category's first gun so its successor is drawn as the first tile.
+    e.option = opts[0];
+    assert!(opts.len() > 1, "the held gun's category has more than one gun");
+    let l = editor_layout(1280.0, 720.0);
+    let (tx, ty) = centre(&l, carousel_tile(&l, 0));
+    let hover = MenuPointer { screen_w: 1280.0, screen_h: 720.0, mouse_x: tx, mouse_y: ty, ..Default::default() };
+    editor_frame(&mut e, &hover, &prev);
+    prev.update(&hover);
+    assert_eq!(e.option, opts[0], "hovering a tile does not move the highlight");
+    let click = MenuPointer { mouse_buttons: crate::input::mouse_buttons::LEFT, ..hover };
+    let f = editor_frame(&mut e, &click, &prev);
+    prev.update(&click);
+    assert_eq!(e.option, opts[1], "a click on a tile focuses that gun");
+    assert!(e.picking, "without equipping it");
+    assert_eq!(f.cue, Some(cues::SLIDE_LR), "with the carousel's LR slide (carouselLRSFX)");
+    let up = MenuPointer { mouse_buttons: 0, ..hover };
+    editor_frame(&mut e, &up, &prev);
+    prev.update(&up);
+    let want = e.option_weapon(opts[1]).expect("a gun").id.clone();
+    let (cx, cy) = centre(&l, carousel_card(&l));
+    let on_card = MenuPointer { mouse_x: cx, mouse_y: cy, ..up };
+    editor_frame(&mut e, &on_card, &prev);
+    prev.update(&on_card);
+    let f = editor_frame(&mut e, &MenuPointer { mouse_buttons: crate::input::mouse_buttons::LEFT, ..on_card }, &prev);
+    assert!(!e.picking, "a click on the focused card equips it");
+    assert_eq!(e.draft.primary, want);
+    assert_eq!(f.cue, Some(cues::SLIDE_EQUIP));
+}
+
+#[test]
+fn a_click_beside_an_open_picker_opens_nothing_else() {
+    // The picker owns the screen: the editor's boxes are not drawn, so they are not hit-tested.
+    let mut e = Editor::new(Draft::default());
+    let mut prev = MenuPrev::default();
+    e.slot = Slot::Perk1;
+    press(&mut e, &mut prev, &[Key::Enter]);
+    assert!(e.picking);
+    let l = editor_layout(1280.0, 720.0);
+    let (x, y) = centre(&l, l.wildcards[2]);
+    let p = MenuPointer { screen_w: 1280.0, screen_h: 720.0, mouse_x: x, mouse_y: y, ..Default::default() };
+    editor_frame(&mut e, &p, &prev);
+    prev.update(&p);
+    let p = MenuPointer { mouse_buttons: crate::input::mouse_buttons::LEFT, ..p };
+    editor_frame(&mut e, &p, &prev);
+    assert_eq!(e.slot, Slot::Perk1, "still the perk picker");
 }
 
 #[test]
@@ -547,8 +630,10 @@ fn enter_picks_the_highlighted_gun_of_the_active_category() {
     press(&mut e, &mut prev, &[Key::Enter]);
     let cats = weapon_categories(&e);
     let active = category_of(&cats, e.option);
-    // Walk within the category, then choose.
-    press(&mut e, &mut prev, &[Key::Down]);
+    // Walk within the category (from its first gun, so Right always has somewhere to go), then
+    // choose.
+    e.option = cats[active].options[0];
+    press(&mut e, &mut prev, &[Key::Right]);
     assert_eq!(category_of(&cats, e.option), active);
     let target = e.option_weapon(e.option).expect("a gun under the highlight").id.clone();
     press(&mut e, &mut prev, &[Key::Enter]);
@@ -571,8 +656,8 @@ fn the_category_column_rotates_so_the_active_one_is_on_top() {
     assert_eq!(sorted, (0..cats.len()).collect::<Vec<_>>(), "no duplicates");
 }
 
-/// Press a key until the editor's slot is `want` (the walk wraps from Save back to Name), returning
-/// the frames' cues.
+/// Press Down until the editor's slot is `want` (the left column's cycle: PRIMARY, its attachments,
+/// SECONDARY, its attachments, card 1, the name), returning the frames' cues.
 fn walk_to_slot(e: &mut Editor, prev: &mut MenuPrev, want: Slot) -> Vec<Option<&'static str>> {
     let mut cues = Vec::new();
     for _ in 0..e.slots().len() {
@@ -592,7 +677,10 @@ fn the_editor_plays_the_luas_cue_at_each_call_site() {
     // Opening the primary slot is CACEditClass's WeaponChosen: the weapon picker's select cue.
     assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::WEAPON_SELECT));
     assert!(e.picking);
-    // The carousel's moves are the slide cues (`cardcarousellist.lua`), not the grid's.
+    // The carousel's moves are the slide cues (`cardcarousellist.lua`), not the grid's. From the
+    // category's first gun Right always moves (an end card bounces silently).
+    let cats = weapon_categories(&e);
+    e.option = cats[category_of(&cats, e.option)].options[0];
     assert_eq!(press(&mut e, &mut prev, &[Key::Right]).cue, Some(cues::SLIDE_LR));
     assert_eq!(press(&mut e, &mut prev, &[Key::Down]).cue, Some(cues::SLIDE_DOWN));
     assert_eq!(press(&mut e, &mut prev, &[Key::Up]).cue, Some(cues::SLIDE_UP));
@@ -607,7 +695,7 @@ fn the_editor_plays_the_luas_cue_at_each_call_site() {
     // A content grid's move and choice are the grid's nav and equip (a perk, not a gun).
     e.slot = Slot::Perk1;
     assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::SUBMENU_SELECT));
-    // A grid's cell walk is Up/Down today (the pure editor has no per-cell left/right links yet).
+    // A grid's cell walk (here Down, a column link) is the grid's nav.
     assert_eq!(press(&mut e, &mut prev, &[Key::Down]).cue, Some(cues::GRID_NAV));
     assert_eq!(press(&mut e, &mut prev, &[Key::Enter]).cue, Some(cues::GRID_EQUIP));
     // An attachment is `cac_equipment_add` (`attachmentgridbutton.lua`'s actionSFX). A fresh
@@ -699,17 +787,61 @@ fn r_clears_the_highlighted_slot_and_an_empty_one_is_a_no_op() {
     // R on a perk tier clears that tier only.
     let mut e = Editor::new(Draft::default());
     let mut prev = MenuPrev::default();
-    press(&mut e, &mut prev, &[Key::Down]); // Primary -> PrimaryAtts
-    press(&mut e, &mut prev, &[Key::Down]); // -> Secondary
-    press(&mut e, &mut prev, &[Key::Down]); // -> SecondaryAtts
-    press(&mut e, &mut prev, &[Key::Down]); // -> Lethal
-    press(&mut e, &mut prev, &[Key::Down]); // -> Tactical
-    press(&mut e, &mut prev, &[Key::Down]); // -> Perk 1
+    press(&mut e, &mut prev, &[Key::Right]); // Primary -> Perk 1 (`customclass.lua:863-991`)
     assert_eq!(e.slot, Slot::Perk1);
     let frame = press(&mut e, &mut prev, &[Key::R]);
     assert!(frame.removed);
     assert!(e.draft.perks[0].is_none(), "tier 1 is empty");
     assert!(e.draft.perks[1].is_some(), "tier 2 is untouched");
+    // R on a bonus card clears that card alone: each card is its own button.
+    let d = Draft { primary_atts: vec![], wildcards: vec![Wildcard::Perk1Greed, Wildcard::Overkill], ..Draft::default() };
+    let mut e = Editor::new(d);
+    let mut prev = MenuPrev::default();
+    e.focus_on(Focus::card(1));
+    assert!(press(&mut e, &mut prev, &[Key::R]).removed);
+    assert_eq!(e.draft.wildcards, vec![Wildcard::Perk1Greed], "only the second card went");
+}
+
+#[test]
+fn the_card_row_highlights_and_hover_focuses_one_card() {
+    let d = Draft { primary_atts: vec![], wildcards: vec![Wildcard::Perk1Greed], ..Draft::default() };
+    let mut e = Editor::new(d);
+    let mut prev = MenuPrev::default();
+    let l = editor_layout(1280.0, 720.0);
+    // Hovering the third card focuses that card (hover is `gain_focus`, `luielement.lua:316-348`).
+    let (x, y) = centre(&l, l.wildcards[2]);
+    let p = MenuPointer { screen_w: 1280.0, screen_h: 720.0, mouse_x: x, mouse_y: y, ..Default::default() };
+    let f = editor_frame(&mut e, &p, &prev);
+    prev.update(&p);
+    assert_eq!(e.focus(), Focus::card(2));
+    assert_eq!(f.cue, Some(cues::WILDCARD_NAV));
+    let cells = editor_cells(&l, &e);
+    let focused: Vec<usize> = cells.iter().filter(|c| cell_focused(&e, c)).map(|c| c.index).collect();
+    assert_eq!(focused, vec![2], "only the hovered card is outlined");
+    // Left walks the strip, and moving between cards is the strip's own cue.
+    assert_eq!(press(&mut e, &mut prev, &[Key::Left]).cue, Some(cues::WILDCARD_NAV));
+    assert_eq!(e.focus(), Focus::card(1));
+    // The wheel follows the links too: card 2's Up is SECONDARY ATTS.
+    // (The cursor rests where `press` left it, off the grid, so no hover competes.)
+    let w = MenuPointer { wheel: -1.0, screen_w: 1280.0, screen_h: 720.0, ..Default::default() };
+    editor_frame(&mut e, &w, &prev);
+    assert_eq!(e.slot, Slot::SecondaryAtts);
+}
+
+#[test]
+fn the_grids_wheel_moves_a_row() {
+    // The wheel is LUI's Up/Down: a whole grid row (`contentgrid.lua`'s column links), not one cell.
+    let mut e = Editor::new(Draft::default());
+    let mut prev = MenuPrev::default();
+    e.slot = Slot::Perk3;
+    press(&mut e, &mut prev, &[Key::Enter]);
+    assert!(e.picking);
+    e.option = 1;
+    let w = MenuPointer { wheel: 1.0, ..Default::default() };
+    editor_frame(&mut e, &w, &prev);
+    assert_eq!(e.option, 1 + grid_columns(Slot::Perk3), "a notch down is the cell below");
+    editor_frame(&mut e, &MenuPointer { wheel: -1.0, ..Default::default() }, &prev);
+    assert_eq!(e.option, 1);
 }
 
 #[test]
@@ -965,4 +1097,41 @@ fn the_personalize_screen_moves_and_selects_with_arrows() {
     let mut prims = Vec::new();
     draw_personalize(&mut prims, 1280.0, 720.0, &p, None, 0.0, 0.0);
     assert!(texts(&prims).iter().any(|s| s == "GOLD"));
+}
+
+#[test]
+fn a_dialog_takes_hover_focus_and_the_wheel() {
+    // The options dialogs are `CoD.ButtonList`s: a moving cursor focuses an entry and the wheel is
+    // Up/Down, wrapping like the arrows (`cacclassoptions.lua:157`).
+    let mut d = Dialog::class_options("Custom 5");
+    let prev = MenuPrev::default();
+    let s = 1.0;
+    let (x, y) = (0..720)
+        .map(|y| (640.0, y as f32))
+        .find(|(x, y)| dialog_item_at(&d, 1280.0, 720.0, s, *x, *y) == Some(2))
+        .expect("the third entry is on screen");
+    let hover = MenuPointer { screen_w: 1280.0, screen_h: 720.0, mouse_x: x, mouse_y: y, ..Default::default() };
+    dialog_step(&mut d, &prev, &hover);
+    assert_eq!(d.highlight, 2, "hover focuses the entry under the cursor");
+    let mut at_rest = prev;
+    at_rest.update(&hover);
+    let wheel = MenuPointer { wheel: 1.0, ..hover };
+    dialog_step(&mut d, &at_rest, &wheel);
+    assert_eq!(d.highlight, 3, "a notch down is the next entry");
+    dialog_step(&mut d, &at_rest, &wheel);
+    assert_eq!(d.highlight, 0, "and wraps");
+}
+
+#[test]
+fn the_personalize_wheel_moves_a_row() {
+    let mut draft = Draft::default();
+    let choices: Vec<String> = (0..15).map(|i| format!("C{i}")).collect();
+    let mut p = Personalize::new(PersonalizeKind::Camo, choices, &draft);
+    let prev = MenuPrev::default();
+    let w = MenuPointer { wheel: 1.0, ..Default::default() };
+    personalize_frame(&mut p, &mut draft, &w, &prev);
+    assert_eq!(p.highlight, PersonalizeKind::Camo.columns(), "a notch down is the cell below (6 wide)");
+    let w = MenuPointer { wheel: -1.0, ..Default::default() };
+    personalize_frame(&mut p, &mut draft, &w, &prev);
+    assert_eq!(p.highlight, 0);
 }

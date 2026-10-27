@@ -89,20 +89,30 @@ pub fn category_column(cats: &[Category], active: usize) -> Vec<usize> {
     (0..cats.len()).map(|i| (active + i) % cats.len()).collect()
 }
 
-/// Move the highlight to the neighbouring category (BO2's Left/Right), landing on its first gun.
+/// Move the highlight to the neighbouring category: BO2's Up/Down (and the wheel) on the card
+/// carousel list (`cardcarousellist.lua:723-772`, `ScrollList`), wrapping past either end. Each
+/// category is its own `CardCarousel` that keeps its card while the menu is open, so the move lands
+/// on the card the category was left on (its first gun when it was never visited); the card being
+/// left is remembered in [`Editor::carousel`].
 pub fn step_category(editor: &mut Editor, cats: &[Category], step: i32) -> bool {
     if cats.is_empty() || step == 0 {
         return false;
     }
     let active = category_of(cats, editor.option);
     let next = (active as i32 + step).rem_euclid(cats.len() as i32) as usize;
-    let target = cats[next].options[0];
+    if editor.carousel.len() < cats.len() {
+        editor.carousel.resize(cats.len(), None);
+    }
+    editor.carousel[active] = Some(editor.option);
+    let target = editor.carousel[next].filter(|o| cats[next].options.contains(o)).unwrap_or(cats[next].options[0]);
     let moved = target != editor.option;
     editor.option = target;
     moved
 }
 
-/// Move the highlight within the active category (BO2's Up/Down), wrapping inside it.
+/// Move the highlight within the active category: BO2's Left/Right on the carousel. The first and
+/// last cards do not wrap — `CoD_CardCarousel_PerformEdgeBounce` eats the press with a bounce
+/// (`cardcarousel.lua:254-381`) — so a press at an end is refused (`false`).
 pub fn step_within_category(editor: &mut Editor, cats: &[Category], step: i32) -> bool {
     if cats.is_empty() || step == 0 {
         return false;
@@ -111,12 +121,18 @@ pub fn step_within_category(editor: &mut Editor, cats: &[Category], step: i32) -
     if cat.options.is_empty() {
         return false;
     }
-    let pos = cat.options.iter().position(|i| *i == editor.option).unwrap_or(0);
-    let next = (pos as i32 + step).rem_euclid(cat.options.len() as i32) as usize;
-    let target = cat.options[next];
-    let moved = target != editor.option;
-    editor.option = target;
-    moved
+    let pos = cat.options.iter().position(|i| *i == editor.option).unwrap_or(0) as i32;
+    let next = pos + step.signum();
+    if next < 0 || next >= cat.options.len() as i32 {
+        return false;
+    }
+    editor.option = cat.options[next as usize];
+    true
+}
+
+/// The highlighted gun's position inside its category (the carousel's `m_currentCardIndex`, 0-based).
+pub fn position_in_category(cats: &[Category], option: usize) -> usize {
+    cats.get(category_of(cats, option)).and_then(|c| c.options.iter().position(|i| *i == option)).unwrap_or(0)
 }
 
 // ------------------------------------------------------------------------------------------------

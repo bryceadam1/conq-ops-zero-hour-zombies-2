@@ -73,6 +73,65 @@ impl MenuPrev {
     }
 }
 
+/// BO2's PC keys for LUI's shoulder buttons: t6mp's `gamepad_button` dispatcher
+/// (`FUN_009376a0`) sends `A`/`a` as `shoulderl` and `D`/`d` as `shoulderr` (the pad's LB/RB). The
+/// choose-class screen pages its class sets on them (`cacchooseclass.lua:299-318`), the
+/// personalize screens their tabs (`tabmanagerlite.lua:535-555`).
+pub const SHOULDER_L: Key = Key::A;
+pub const SHOULDER_R: Key = Key::D;
+
+/// One frame of LUI's navigation buttons, translated from the PC input exactly as t6mp's
+/// `gamepad_button` dispatcher (`FUN_009376a0`) does: the arrow keys are `up`/`down`/`left`/
+/// `right`, every mouse-wheel notch is `up`/`down` (`MWHEELUP`/`MWHEELDOWN` with the `mwheel`
+/// qualifier, which no create-a-class screen tells apart from the arrows), and `A`/`D` are the
+/// shoulders. Every class screen reads its moves through this, so the wheel moves exactly what Up/
+/// Down move on that screen: a list row, a grid row, an editor link, a carousel category.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct LuiNav {
+    /// `up` presses this frame (the Up arrow plus wheel-up notches).
+    pub up: u32,
+    /// `down` presses this frame (the Down arrow plus wheel-down notches).
+    pub down: u32,
+    pub left: bool,
+    pub right: bool,
+    pub shoulder_l: bool,
+    pub shoulder_r: bool,
+}
+
+impl LuiNav {
+    pub fn read(prev: &MenuPrev, now: &MenuPointer) -> LuiNav {
+        let notches = wheel_notches(now);
+        LuiNav {
+            up: prev.edge(now, Key::Up) as u32 + (-notches).max(0) as u32,
+            down: prev.edge(now, Key::Down) as u32 + notches.max(0) as u32,
+            left: prev.edge(now, Key::Left),
+            right: prev.edge(now, Key::Right),
+            shoulder_l: prev.edge(now, SHOULDER_L),
+            shoulder_r: prev.edge(now, SHOULDER_R),
+        }
+    }
+
+    /// The net vertical move, positive down.
+    pub fn vertical(&self) -> i32 {
+        self.down as i32 - self.up as i32
+    }
+
+    /// The net horizontal move, positive right.
+    pub fn horizontal(&self) -> i32 {
+        self.right as i32 - self.left as i32
+    }
+
+    /// The net shoulder move, positive for `shoulderr`.
+    pub fn shoulder(&self) -> i32 {
+        self.shoulder_r as i32 - self.shoulder_l as i32
+    }
+}
+
+/// The wheel's whole notches this frame, positive down (the hosts' `wheel` convention).
+pub fn wheel_notches(now: &MenuPointer) -> i32 {
+    now.wheel.trunc() as i32
+}
+
 /// One frame of the pick screen, folded: navigation (hover, arrows, the wheel) and the intents a
 /// host turns into its own behavior — `activate` is a row the player confirmed (in-game it picks;
 /// the shell opens the editor on it), `delete`/`copy` name a *profile* slot (shell only). Escape is
@@ -92,10 +151,14 @@ pub struct PickFrame {
     pub copy: Option<usize>,
     /// A clickable footer action (the shell's set/class options and back affordances).
     pub footer: Option<PickFooterAction>,
-    /// Left/Right on the shell's list: move the active class set by this many (−1/+1, wrapping).
-    /// A match ignores it (the set is picked in the lobby) and shows the pager as a read-only
-    /// display of the active set.
+    /// The shell's set pager: move the active class set by this many (−1/+1, wrapping). BO2 pages
+    /// on the shoulder buttons (`A`/`D` on PC) and on clicks on the `‹`/`›` prompts; the arrow keys
+    /// never page (the class list is a vertical list with no left/right links). A match ignores it
+    /// (the set is picked in the lobby) and shows the pager as a read-only display.
     pub set_step: i32,
+    /// A click on one of the shell's set pips: make that set active (`ClassSetPip_LeftMouseUp`,
+    /// `cacchooseclass.lua:1418-1432`).
+    pub set_select: Option<usize>,
     /// Escape went down this frame.
     pub back: bool,
 }
@@ -121,16 +184,10 @@ pub fn pick_frame(inp: &MenuPointer, prev: &MenuPrev, highlight: usize, manage: 
             }
         }
     }
-    let mut step = 0i32;
-    if prev.edge(inp, Key::Up) {
-        step -= 1;
-    }
-    if prev.edge(inp, Key::Down) {
-        step += 1;
-    }
-    if inp.wheel.abs() >= 1.0 {
-        step += inp.wheel.signum() as i32;
-    }
+    // A `CoD.ButtonList` is a wrapping vertical list (`luiverticallist.lua:178-292`): Up/Down and
+    // the wheel walk it, Left/Right have no link.
+    let nav = LuiNav::read(prev, inp);
+    let step = nav.vertical();
     if step != 0 {
         hl = (hl as i32 + step).rem_euclid(rows.len() as i32) as usize;
         out.navigated = true;
@@ -150,6 +207,12 @@ pub fn pick_frame(inp: &MenuPointer, prev: &MenuPrev, highlight: usize, manage: 
         if let Some(i) = hover {
             hl = i;
             out.activate = Some(i);
+        } else if let Some(hit) = manage.then(|| pager_at(&layout, inp.mouse_x, inp.mouse_y)).flatten() {
+            // The class-set header's `‹`/`›` prompts and its pips are clickable.
+            match hit {
+                PagerHit::Step(step) => out.set_step += step,
+                PagerHit::Pip(set) => out.set_select = Some(set),
+            }
         } else {
             // The shell's footer prompts (set/class options, back) are clickable.
             out.footer = pick_footer_at(&layout, inp.mouse_x, inp.mouse_y);
@@ -165,15 +228,10 @@ pub fn pick_frame(inp: &MenuPointer, prev: &MenuPrev, highlight: usize, manage: 
                 out.copy = Some(j);
             }
         }
-        // The shell's set pager (BO2's shoulders): Left/Right move the active class set. A match
-        // is pick-only, so it never changes the set the fight loads into.
+        // The shell's set pager: BO2's shoulder prompts (`A`/`D`). A match is pick-only, so it never
+        // changes the set the fight loads into.
         if manage {
-            if prev.edge(inp, Key::Left) {
-                out.set_step -= 1;
-            }
-            if prev.edge(inp, Key::Right) {
-                out.set_step += 1;
-            }
+            out.set_step += nav.shoulder();
         }
     }
     out.back = prev.edge(inp, Key::Escape);
@@ -207,72 +265,98 @@ pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> 
     let mut edges = Edges::between(&prev.keys, &inp.keys);
     let clicked = prev.clicked(inp);
     let moved = prev.moved(inp);
-    // A weapon picker is two-dimensional, as BO2's is: Left/Right walk the category column, Up/Down
-    // the guns inside the active category. The fold consumes those edges here, before the pure
-    // editor sees them, so the highlighted option always stays inside the drawn category.
+    let mut wheel = wheel_notches(inp);
+    // The weapon picker is BO2's card carousel list (`cardcarousellist.lua`): Left/Right walk the
+    // guns of the active category and stop at its ends (`cardcarousel.lua:254-381`, the edge
+    // bounce), Up/Down — and so the wheel, LUI's Up/Down — step the category and wrap
+    // (`ScrollList`, `:723-772`). The fold consumes those edges here, before the pure editor sees
+    // them, so the highlighted option always stays inside the drawn category.
     let cats = if editor.picking && !editor.naming { weapon_categories(editor) } else { Vec::new() };
     // The carousel's moves carry its own cue (`cardcarousellist.lua`): sideways is the LR slide,
     // up and down their own (`cac_slide_nav_*`), while the grids all share `cac_grid_nav`.
     let mut slide: Option<&'static str> = None;
     if !cats.is_empty() {
-        if edges.left {
-            step_category(editor, &cats, -1);
+        if edges.left && step_within_category(editor, &cats, -1) {
             slide = Some(cues::SLIDE_LR);
         }
-        if edges.right {
-            step_category(editor, &cats, 1);
+        if edges.right && step_within_category(editor, &cats, 1) {
             slide = Some(cues::SLIDE_LR);
         }
-        if edges.up {
-            step_within_category(editor, &cats, -1);
-            slide = Some(cues::SLIDE_UP);
-        }
-        if edges.down {
-            step_within_category(editor, &cats, 1);
-            slide = Some(cues::SLIDE_DOWN);
+        let rows = edges.down as i32 - edges.up as i32 + wheel;
+        for _ in 0..rows.unsigned_abs() {
+            let step = rows.signum();
+            if step_category(editor, &cats, step) {
+                slide = Some(if step > 0 { cues::SLIDE_DOWN } else { cues::SLIDE_UP });
+            }
         }
         edges.up = false;
         edges.down = false;
         edges.left = false;
         edges.right = false;
+        wheel = 0;
     }
+    // The categories just moved: re-derive them for the hit-test below.
+    let cats = if cats.is_empty() { cats } else { weapon_categories(editor) };
     let cells = editor_cells(&layout, editor);
-    // The box's circled X (mouse) and `R` (keyboard) clear the highlighted slot, BO2's `R Remove`.
+    // The box's circled X (mouse) and `R` (keyboard) clear the highlighted box, BO2's `R Remove`:
+    // on the card row that is the highlighted card alone (each card is its own button).
     let mut removed = false;
     if !editor.picking && !editor.naming {
         if let Some((slot, index)) = editor_remove_at(&layout, &cells, editor, inp.mouse_x, inp.mouse_y).filter(|_| clicked) {
             removed = clear_cell(&mut editor.draft, slot, index);
         } else if prev.edge(inp, Key::R) {
-            removed = clear_slot(&mut editor.draft, editor.slot);
+            removed = if editor.slot == Slot::Wildcards {
+                clear_cell(&mut editor.draft, Slot::Wildcards, editor.card)
+            } else {
+                clear_slot(&mut editor.draft, editor.slot)
+            };
         }
     }
     // Hit-test every frame, not only when the cursor moved: a click with the cursor at rest is
-    // still a click on the row under it. `moved` gates hover-only highlight changes (see
+    // still a click on the box under it. `moved` gates hover-only highlight changes (see
     // `classmenu::PointerEvent`), so a resting cursor cannot fight the keyboard.
     // The cells repeat a slot (three bonus-card boxes, two attachment boxes), so a hit box maps to
-    // the walk's slot index, not to its own.
+    // the walk's slot index plus, on the card row, which card. While a picker is open the grid is
+    // not on screen, so it is not hit-tested at all.
     let slots = editor.slots();
-    let slot = editor_cell_at(&layout, &cells, inp.mouse_x, inp.mouse_y)
-        .and_then(|i| cells.get(i))
-        .and_then(|c| slots.iter().position(|s| *s == c.slot));
-    let (start, _) = picker_window(editor.slot, editor.option);
+    let hit = if editor.picking { None } else { editor_cell_at(&layout, &cells, inp.mouse_x, inp.mouse_y).and_then(|i| cells.get(i)) };
+    let slot = hit.and_then(|c| slots.iter().position(|s| *s == c.slot));
+    let card = hit.filter(|c| c.slot == Slot::Wildcards).map_or(0, |c| c.index);
+    let start = if cats.is_empty() { picker_window(editor.slot, editor.option).0 } else { picker_window(editor.slot, position_in_category(&cats, editor.option)).0 };
     let drawn = if editor.picking {
         picker_option_at(&layout, editor.slot, inp.mouse_x, inp.mouse_y, start, drawn_option_count(editor, &cats))
     } else {
         None
     };
-    // A weapon picker's drawn rows are the active category's guns; every other picker's are the
-    // option list itself.
-    let option = drawn.map(|row| {
+    // A weapon picker's drawn cards are the active category's guns (from its highlighted card);
+    // every other picker's cells are the option list itself.
+    let mut option = drawn.map(|i| {
         if cats.is_empty() {
-            start + row
+            i
         } else {
             let cat = &cats[category_of(&cats, editor.option)];
-            cat.options.get(start + row).copied().unwrap_or(editor.option)
+            cat.options.get(i).copied().unwrap_or(editor.option)
         }
     });
-    let pointer = crate::classmenu::PointerEvent { slot, option, click: clicked && !removed, wheel: inp.wheel.trunc() as i32, moved };
+    let mut click = clicked && !removed;
+    if !cats.is_empty() {
+        // The carousel's cards do not take focus on hover (`setHandleMouseMove(false)`,
+        // `cardcarousel.lua:853-857`). A click on another card focuses it; a click on the focused
+        // card is its action, the equip (`CardMouseClick`, `:1576-1643`).
+        match option.filter(|_| click) {
+            Some(o) if o != editor.option => {
+                editor.option = o;
+                slide = Some(cues::SLIDE_LR);
+                option = None;
+                click = false;
+            }
+            Some(_) => {}
+            None => option = None,
+        }
+    }
+    let pointer = crate::classmenu::PointerEvent { slot, card, option, click, wheel, moved: moved && cats.is_empty() };
     let before_slot = editor.slot;
+    let before_card = editor.card;
     let before_option = editor.option;
     let before_picking = editor.picking;
     let before_naming = editor.naming;
@@ -280,7 +364,7 @@ pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> 
     // Hover moves the highlight only on a real move; a click/wheel is always an action. While the
     // name field has text entry, keys win unless the frame also clicked (to leave the field).
     let hover = moved && !editor.naming && (pointer.slot.is_some() || pointer.option.is_some());
-    let has_pointer = pointer.is_action() || hover || (clicked && !removed);
+    let has_pointer = pointer.is_action() || hover;
     let outcome = if has_pointer { editor.step_pointer(pointer) } else { editor.step(edges) };
     let denied = editor.denied;
     editor.denied = false;
@@ -317,7 +401,7 @@ pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> 
                     // The carousel's moves are folded before the snapshot, so `slide` (not the option
                     // delta) is what tells this frame apart.
                     Some(slide.unwrap_or(cues::GRID_NAV))
-                } else if editor.slot != before_slot {
+                } else if editor.slot != before_slot || (editor.slot == Slot::Wildcards && editor.card != before_card) {
                     Some(if editor.slot == Slot::Wildcards { cues::WILDCARD_NAV } else { cues::LOADOUT_NAV })
                 } else if chose {
                     Some(equip_cue(editor))

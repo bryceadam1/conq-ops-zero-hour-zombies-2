@@ -319,8 +319,15 @@ pub fn personalize_frame(personalize: &mut Personalize, draft: &mut Draft, inp: 
             edges.confirm = true;
         }
     }
+    // The wheel is LUI's Up/Down (t6mp `FUN_009376a0`): one grid row per notch, like the arrows.
+    let notches = wheel_notches(inp);
+    for _ in 0..notches.unsigned_abs() {
+        let step = if notches > 0 { Edges { down: true, ..Default::default() } } else { Edges { up: true, ..Default::default() } };
+        personalize.step(step, draft);
+    }
     let outcome = personalize.step(edges, draft);
-    let navigated = prev.edge(inp, Key::Up)
+    let navigated = notches != 0
+        || prev.edge(inp, Key::Up)
         || prev.edge(inp, Key::Down)
         || prev.edge(inp, Key::Left)
         || prev.edge(inp, Key::Right);

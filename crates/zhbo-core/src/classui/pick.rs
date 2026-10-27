@@ -295,14 +295,11 @@ pub fn pulse_alpha(now: f32) -> f32 {
 fn set_header(prims: &mut Vec<Prim>, f: &Frame, r: Rect, name: &str, set: usize, sets: usize) {
     let line = bo2::TEXT_EXTRA_SMALL;
     bo2::text(prims, f, Family::ExtraSmall, name, Rect { x: r.x, y: r.y, w: r.w, h: line }, Align::Center, argb(OFF_WHITE, 1.0));
-    let a = bo2::PROMPT_H;
-    let arrow_y = r.y + line / 2.0 - a / 2.0;
-    arrow(prims, f, Rect { x: r.x, y: arrow_y, w: a, h: a }, -1);
-    arrow(prims, f, Rect { x: r.right() - a, y: arrow_y, w: a, h: a }, 1);
-    let pip = 10.0;
-    let left = r.x + r.w / 2.0 - pip * sets as f32 / 2.0;
+    let [prev, next] = set_arrows(r);
+    arrow(prims, f, prev, -1);
+    arrow(prims, f, next, 1);
     for i in 0..sets {
-        let rect = Rect { x: left + pip * i as f32, y: r.bottom() - pip, w: pip, h: pip };
+        let rect = set_pip(r, i, sets);
         let material = if i == set { "menu_vis_carousel_pip_fill" } else { "menu_vis_carousel_pip" };
         let p = f.px(rect);
         let fallback = if i == set {
@@ -312,6 +309,43 @@ fn set_header(prims: &mut Vec<Prim>, f: &Frame, r: Rect, name: &str, set: usize,
         };
         bo2::image(prims, f, material, rect, argb(OFF_WHITE, 1.0), fallback);
     }
+}
+
+/// The header's two shoulder prompts, `‹` (previous set) then `›` (next): `ButtonPrompt.Height`
+/// squares at either end, centred on the name's line (root units).
+pub fn set_arrows(header: Rect) -> [Rect; 2] {
+    let a = bo2::PROMPT_H;
+    let y = header.y + bo2::TEXT_EXTRA_SMALL / 2.0 - a / 2.0;
+    [Rect { x: header.x, y, w: a, h: a }, Rect { x: header.right() - a, y, w: a, h: a }]
+}
+
+/// Set pip `i` of `sets`: 10 units square along the header's bottom, the row centred.
+pub fn set_pip(header: Rect, i: usize, sets: usize) -> Rect {
+    let pip = 10.0;
+    let left = header.x + header.w / 2.0 - pip * sets as f32 / 2.0;
+    Rect { x: left + pip * i as f32, y: header.bottom() - pip, w: pip, h: pip }
+}
+
+/// What a click on the class-set header hit.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PagerHit {
+    /// The `‹` (−1) or `›` (+1) prompt: `prev_class_set` / `next_class_set`.
+    Step(i32),
+    /// A pip: `select_class_set` with its index.
+    Pip(usize),
+}
+
+/// The header element under a screen point (lobby only; a match has no header).
+pub fn pager_at(l: &PickLayout, x: f32, y: f32) -> Option<PagerHit> {
+    let header = l.header?;
+    let [prev, next] = set_arrows(header);
+    if bo2::hit(&l.frame, prev, x, y) {
+        return Some(PagerHit::Step(-1));
+    }
+    if bo2::hit(&l.frame, next, x, y) {
+        return Some(PagerHit::Step(1));
+    }
+    (0..profile::MAX_SETS).find(|i| bo2::hit(&l.frame, set_pip(header, *i, profile::MAX_SETS), x, y)).map(PagerHit::Pip)
 }
 
 /// The shoulder prompts' PC glyph (`^BBUTTON_CYCLE_LEFT^`/`RIGHT^`): a solid white triangle.

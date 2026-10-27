@@ -168,15 +168,21 @@ pub fn remove_rect(cell: &EditorCell) -> Rect {
     Rect { x: cell.rect.right() - d * 0.5, y: cell.rect.y - d * 0.5, w: d, h: d }
 }
 
-/// The `(slot, box)` a click clears at this point: only the selected slot's filled boxes carry the
-/// `X` (BO2 shows it on the highlighted slot alone).
+/// The `(slot, box)` a click clears at this point: only the highlighted box's filled plates carry
+/// the `X` (BO2 shows it on the highlighted button alone).
 pub fn editor_remove_at(l: &EditorLayout, cells: &[EditorCell], editor: &Editor, x: f32, y: f32) -> Option<(Slot, usize)> {
     cells.iter().find_map(|c| {
-        if c.slot != editor.slot || !cell_filled(editor, c) {
+        if !cell_focused(editor, c) || !cell_filled(editor, c) {
             return None;
         }
         bo2::hit(&l.frame, remove_rect(c), x, y).then_some((c.slot, c.index))
     })
+}
+
+/// Whether a box is the highlighted one: its slot is, and on the card row it is the highlighted
+/// card (each bonus card is its own button, `customclass.lua:772-802`).
+pub fn cell_focused(editor: &Editor, cell: &EditorCell) -> bool {
+    cell.slot == editor.slot && (cell.slot != Slot::Wildcards || cell.index == editor.card)
 }
 
 /// Whether a box holds something (so it draws a value and can be removed).

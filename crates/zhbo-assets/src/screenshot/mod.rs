@@ -288,9 +288,10 @@ fn editor_state() -> Editor {
     let mut editor = Editor::new(draft);
     let mut prev = MenuPrev::default();
     let mut pointer = MenuPointer { screen_w: size().0, screen_h: size().1, ..Default::default() };
-    // Enter opens the Primary list; the two Downs walk it to a different gun, whose stat bars the
-    // view then shows.
-    for key in [Key::Enter, Key::Down, Key::Down] {
+    // Enter opens the Primary list; the two Rights walk the carousel to a different gun of the
+    // category (BO2's Left/Right are the guns, Up/Down the categories), whose stat bars the view
+    // then shows.
+    for key in [Key::Enter, Key::Right, Key::Right] {
         pointer.keys = KeySet::default();
         pointer.keys.set_down(key, true);
         classui::editor_frame(&mut editor, &pointer, &prev);
