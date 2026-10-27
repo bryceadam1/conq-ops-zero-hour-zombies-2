@@ -157,6 +157,8 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
     d.allowed.clear();
     d.alt_modes.clear();
     d.alt.clear();
+    d.attachment_fire_sounds.clear();
+    d.attachment_fire_start_sounds.clear();
     let old_clip = d.clip.max(1);
     let mut clip_product = 1.0f64;
     let mut clip_fixed = false;
@@ -219,6 +221,21 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
             "tacknife" => d.melee_time *= TACTICAL_KNIFE_MELEE,
             "rangefinder" => d.target_finder = true,
             _ => {}
+        }
+    }
+    // A sound another attachment's unique overrides (`FUN_008ebe80`): the silencer's, swapped in
+    // above, wins; else the first mounted attachment in `eAttachment` order (the base lists them in
+    // that order) that overrides it.
+    let silencer = |swapped: &str| atts.iter().any(|a| a.silenced) && !swapped.is_empty();
+    let first = |overrides: &[(String, String)]| overrides.iter().find(|(short, _)| shorts.contains(&short.as_str())).map(|(_, e)| e.clone());
+    if !silencer(&base.silenced_fire_sound) {
+        if let Some(e) = first(&base.attachment_fire_sounds) {
+            d.fire_sound = e;
+        }
+    }
+    if !silencer(&base.silenced_fire_start_sound) {
+        if let Some(e) = first(&base.attachment_fire_start_sounds) {
+            d.fire_start_sound = e;
         }
     }
     // BO2 truncates every time product to whole milliseconds after all scales are applied
@@ -319,6 +336,32 @@ mod tests {
         assert_eq!(d.fire_sound, "ZHBO_BO2_Fire_an94_mp_silenced");
         assert_eq!(d.fx_weapon, "ZHBO_FX_an94_mp_silenced");
         assert_eq!(d.view_flash_fx, "ZHBO_BO2FX_fx_muz_silencer_md");
+    }
+
+    /// Another attachment's sound override (`FUN_008ebe80`): the first one mounted in the base's
+    /// (`eAttachment`) order; a silencer that overrides the same sound wins, one that does not
+    /// leaves it to the others.
+    #[test]
+    fn an_attachment_overrides_the_shot_and_opening_after_the_silencer() {
+        let base = WeaponDef {
+            id: "sig556_mp".into(),
+            fire_sound: "ZHBO_BO2_Fire_sig556_mp".into(),
+            fire_start_sound: "ZHBO_BO2_Snd_wpn_sig556_fire_plr_burst".into(),
+            silenced_fire_sound: "ZHBO_BO2_Fire_sig556_mp_silenced".into(),
+            attachment_fire_sounds: vec![("gl".into(), "gl_shot".into()), ("sf".into(), "sf_shot".into())],
+            attachment_fire_start_sounds: vec![("sf".into(), "NONE".into())],
+            ..Default::default()
+        };
+        let att = |short: &str, silenced| AttachmentDef { id: short.into(), short: short.into(), silenced, ..Default::default() };
+        let (sf, gl, sil, reflex) = (att("sf", false), att("gl", false), att("silencer", true), att("reflex", false));
+        let d = apply(&base, &[&reflex, &sf]);
+        assert_eq!((d.fire_sound.as_str(), d.fire_start_sound.as_str()), ("sf_shot", "NONE"));
+        assert!(d.attachment_fire_sounds.is_empty() && d.attachment_fire_start_sounds.is_empty());
+        assert_eq!(apply(&base, &[&sf, &gl]).fire_sound, "gl_shot", "the base's order, not the mount order");
+        let d = apply(&base, &[&sf, &sil]);
+        assert_eq!(d.fire_sound, "ZHBO_BO2_Fire_sig556_mp_silenced", "the silencer's override wins");
+        assert_eq!(d.fire_start_sound, "NONE", "it does not override the opening: the select fire's stands");
+        assert_eq!(apply(&base, &[&reflex]).fire_start_sound, base.fire_start_sound);
     }
 
     #[test]

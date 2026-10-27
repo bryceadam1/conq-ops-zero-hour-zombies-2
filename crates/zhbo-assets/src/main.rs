@@ -526,13 +526,15 @@ fn run(args: &[String]) -> Result<(), String> {
                     let v = &a.variants;
                     let first = v.first();
                     println!(
-                        "  {:<48} {} variant(s), asset {:#010x} vol {:.2}..{:.2} {}",
+                        "  {:<48} {} variant(s), asset {:#010x} vol {:.2}..{:.2} dist {:?} {}{}",
                         a.name,
                         v.len(),
                         first.map_or(0, |v| v.asset_id),
                         first.map_or(0.0, |v| v.volume.0),
                         first.map_or(0.0, |v| v.volume.1),
-                        first.map_or("", |v| v.file.as_str())
+                        first.map(|v| v.distance),
+                        first.map_or("", |v| v.file.as_str()),
+                        first.and_then(|v| v.secondary.as_deref()).map_or(String::new(), |s| format!(" then {s}"))
                     );
                 }
             }

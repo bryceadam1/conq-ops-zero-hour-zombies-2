@@ -546,6 +546,12 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("SilencedFireStartSound", "The fire string's opening with the silencer (its unique's override, `FUN_008ebe80`).", FieldKind::Str,
         |d: &WeaponDef| d.silenced_fire_start_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.silenced_fire_start_sound = v.text.into(); Ok(()) }),
+    field!("AttachmentFireSounds", "Base weapons: the shot another attachment's unique overrides (`short=event`, `FUN_008ebe80`).", FieldKind::Pairs,
+        |d: &WeaponDef| pairs(&d.attachment_fire_sounds),
+        |d: &mut WeaponDef, v: Values| { d.attachment_fire_sounds = parse_pairs(v.text); Ok(()) }),
+    field!("AttachmentFireStartSounds", "Base weapons: the fire string's opening another attachment overrides (`short=event`).", FieldKind::Pairs,
+        |d: &WeaponDef| pairs(&d.attachment_fire_start_sounds),
+        |d: &mut WeaponDef, v: Values| { d.attachment_fire_start_sounds = parse_pairs(v.text); Ok(()) }),
     field!("ExplodeSound", "The blast's BO2 sound event.", FieldKind::Str,
         |d: &WeaponDef| d.explode_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.explode_sound = v.text.into(); Ok(()) }),
@@ -737,7 +743,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 88);
+        assert_eq!(WEAPON_FIELDS.len(), 90);
         assert_eq!(ATTACHMENT_FIELDS.len(), 17);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

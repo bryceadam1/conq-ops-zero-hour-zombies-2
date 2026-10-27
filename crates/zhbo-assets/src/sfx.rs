@@ -27,7 +27,7 @@ pub struct Sfx {
     /// AudioEvent name (zhbo_core::sounds uses the same names).
     pub event: &'static str,
     pub from: From,
-    /// Aliases mixed into each variant.
+    /// Aliases mixed into each variant, each with its `secondaryName` chain ([`secondary_chain`]).
     pub layers: &'static [&'static str],
     pub kind: Kind,
     pub limit: u8,
@@ -37,7 +37,8 @@ pub struct Sfx {
 #[derive(Clone, Debug)]
 pub struct DynSfx {
     pub event: String,
-    /// Aliases mixed into each variant; ones the bank lacks are skipped.
+    /// Aliases mixed into each variant, each with its `secondaryName` chain; ones the bank lacks
+    /// are skipped.
     pub layers: Vec<String>,
     pub kind: Kind,
     pub limit: u8,
@@ -64,8 +65,8 @@ impl Kind {
 }
 
 pub const SFX: &[Sfx] = &[
-    Sfx { event: "ZHBO_BO2_Fire", from: From::Common, layers: &["wpn_an94_fire_plr", "wpn_an94_fire_plr_decay", "wpn_an94_lfe"], kind: Kind::Player, limit: 3 },
-    Sfx { event: "ZHBO_BO2_FirePistol", from: From::Common, layers: &["wpn_beretta93r_fire_plr", "wpn_beretta93r_fire_plr_decay", "wpn_beretta93r_LFE"], kind: Kind::Player, limit: 3 },
+    Sfx { event: "ZHBO_BO2_Fire", from: From::Common, layers: &["wpn_an94_fire_plr"], kind: Kind::Player, limit: 3 },
+    Sfx { event: "ZHBO_BO2_FirePistol", from: From::Common, layers: &["wpn_beretta93r_fire_plr"], kind: Kind::Player, limit: 3 },
     Sfx { event: "ZHBO_BO2_DryFire", from: From::Common, layers: &["wpn_an94_dryfire_plr"], kind: Kind::Player, limit: 1 },
     Sfx { event: "ZHBO_BO2_DryFireGeneric", from: From::Common, layers: &["wpn_generic_dryfire_plr"], kind: Kind::Player, limit: 1 },
     Sfx { event: "ZHBO_BO2_DryFireGlRifle", from: From::Common, layers: &["wpn_gl_rifle_dryfire_plr"], kind: Kind::Player, limit: 1 },
@@ -82,9 +83,9 @@ pub const SFX: &[Sfx] = &[
     Sfx { event: "ZHBO_BO2_ImpactFlesh", from: From::World, layers: &["prj_bullet_impact_large_player"], kind: Kind::World, limit: 4 },
     // Third-person gunshots: the FX weapons fire these for everyone but the shooter, the RTS rifle
     // for everyone (ZHBO_Weapons.ini's FireSound, rewritten below).
-    Sfx { event: "ZHBO_BO2_FireNpc", from: From::Common, layers: &["wpn_an94_fire_npc", "wpn_an94_fire_npc_decay"], kind: Kind::Others, limit: 3 },
-    Sfx { event: "ZHBO_BO2_FirePistolNpc", from: From::Common, layers: &["wpn_beretta93r_fire_npc", "wpn_beretta93r_fire_npc_decay"], kind: Kind::Others, limit: 3 },
-    Sfx { event: "ZHBO_BO2_FireRts", from: From::Common, layers: &["wpn_an94_fire_npc", "wpn_an94_fire_npc_decay"], kind: Kind::World, limit: 3 },
+    Sfx { event: "ZHBO_BO2_FireNpc", from: From::Common, layers: &["wpn_an94_fire_npc"], kind: Kind::Others, limit: 3 },
+    Sfx { event: "ZHBO_BO2_FirePistolNpc", from: From::Common, layers: &["wpn_beretta93r_fire_npc"], kind: Kind::Others, limit: 3 },
+    Sfx { event: "ZHBO_BO2_FireRts", from: From::Common, layers: &["wpn_an94_fire_npc"], kind: Kind::World, limit: 3 },
     // Equipment planted, and the C4 detonator.
     Sfx { event: "ZHBO_BO2_Plant", from: From::Common, layers: &["fly_claymore_plant_plr"], kind: Kind::Player, limit: 1 },
     Sfx { event: "ZHBO_BO2_Detonate", from: From::Common, layers: &["wpn_c4detpack_trigger_plr"], kind: Kind::Player, limit: 1 },
@@ -215,9 +216,33 @@ impl Source<'_> {
         self.banks.iter().find_map(|b| b.alias(name))
     }
 
+    /// `layers` with every alias BO2 starts alongside each one: its `secondaryName` chain.
+    fn chained(&self, layers: &[&str]) -> Vec<&Alias> {
+        secondary_chain(layers, |n| self.alias(n))
+    }
+
     fn decode(&self, asset_id: u32) -> Option<Pcm> {
         self.lib.decode(asset_id)
     }
+}
+
+/// The aliases BO2 plays for `layers`: each one, then its `secondaryName`, that one's secondary, …
+/// (`wpn_sig556_fire_plr` -> `wpn_sig556_LFE` -> `wpn_sig556_fire_plr_decay`: the shot, its low
+/// end, its tail). Missing aliases end their chain; each alias once (a cycle ends too), first-seen
+/// order.
+fn secondary_chain<'a>(layers: &[&str], alias: impl Fn(&str) -> Option<&'a Alias>) -> Vec<&'a Alias> {
+    let mut out: Vec<&Alias> = Vec::new();
+    for name in layers {
+        let mut next = alias(name);
+        while let Some(a) = next {
+            if out.iter().any(|o| o.name == a.name) {
+                break;
+            }
+            out.push(a);
+            next = a.variants.first().and_then(|v| v.secondary.as_deref()).and_then(&alias);
+        }
+    }
+    out
 }
 
 /// Resample (linear) and remix to `rate` Hz, `channels` channels.
@@ -310,8 +335,7 @@ pub fn files(
     let mut missing: Vec<String> = Vec::new();
 
     let mut add = |event: &str, src: &Source, layers: &[&str], kind: Kind, limit: u8, out: &mut BTreeMap<String, Vec<u8>>| -> bool {
-        let mut aliases: Vec<_> = layers.iter().filter_map(|n| src.alias(n)).collect();
-        aliases.dedup_by(|a, b| a.name == b.name);
+        let aliases = src.chained(layers);
         if aliases.is_empty() {
             return false;
         }
@@ -429,6 +453,40 @@ mod tests {
         assert_eq!(m.samples.len(), 192);
         assert!(m.samples[..96].iter().all(|&s| (1240..=1260).contains(&s)), "{:?}", &m.samples[..4]);
         assert!(m.samples[96..].iter().all(|&s| (990..=1010).contains(&s)));
+    }
+
+    /// BO2 starts an alias's `secondaryName` with it, and that one's secondary, …: the burst
+    /// SIG556's per-shot alias is its low end, whose secondary is the tail; the full shot chains
+    /// to the low end. Each alias once (a cycle ends the chain); a missing one ends its chain.
+    #[test]
+    fn layers_follow_the_secondary_chain() {
+        let alias = |name: &str, secondary: Option<&str>| Alias {
+            name: name.into(),
+            variants: vec![sndalias::Variant {
+                asset_id: 1,
+                file: String::new(),
+                volume: (1.0, 1.0),
+                pitch: (1.0, 1.0),
+                distance: (0.0, 0.0),
+                start_delay_ms: 0,
+                secondary: secondary.map(String::from),
+            }],
+        };
+        let bank = [
+            alias("wpn_sig556_fire_plr", Some("wpn_sig556_LFE")),
+            alias("wpn_sig556_LFE", Some("wpn_sig556_fire_plr_decay")),
+            alias("wpn_sig556_fire_plr_decay", None),
+            alias("loop_a", Some("loop_b")),
+            alias("loop_b", Some("loop_a")),
+            alias("dangling", Some("not_in_any_bank")),
+        ];
+        let find = |n: &str| bank.iter().find(|a| a.name.eq_ignore_ascii_case(n));
+        let names = |layers: &[&str]| secondary_chain(layers, find).iter().map(|a| a.name.clone()).collect::<Vec<_>>();
+        assert_eq!(names(&["wpn_sig556_fire_plr"]), ["wpn_sig556_fire_plr", "wpn_sig556_LFE", "wpn_sig556_fire_plr_decay"]);
+        assert_eq!(names(&["wpn_sig556_LFE"]), ["wpn_sig556_LFE", "wpn_sig556_fire_plr_decay"], "the burst gun's shot: low end and tail");
+        assert_eq!(names(&["wpn_sig556_fire_plr", "wpn_sig556_fire_plr_decay"]), ["wpn_sig556_fire_plr", "wpn_sig556_LFE", "wpn_sig556_fire_plr_decay"]);
+        assert_eq!(names(&["loop_a"]), ["loop_a", "loop_b"]);
+        assert_eq!(names(&["dangling", "missing"]), ["dangling"]);
     }
 
     #[test]

@@ -236,6 +236,14 @@ pub struct WeaponDef {
     pub pullback_sound: String,
     /// The fire string's opening with the silencer (its unique's override, `FUN_008ebe80`).
     pub silenced_fire_start_sound: String,
+    /// Base weapons: the player's shot another attachment's unique overrides (`short=event`, in
+    /// `eAttachment` order), when the base unique's `soundOverrides` lets it (`FUN_008ebe80`): the
+    /// SIG556/XM8 select fire's full shot in place of the burst gun's low-end-only one. The
+    /// silencer's override is [`Self::silenced_fire_sound`], which wins (G14 §4).
+    pub attachment_fire_sounds: Vec<(String, String)>,
+    /// Base weapons: the fire string's opening another attachment overrides (`short=event`, same
+    /// rule; Zero Hour's `NONE` when overridden to nothing): the select fire's `null_sound`.
+    pub attachment_fire_start_sounds: Vec<(String, String)>,
     pub explode_sound: String,
     /// Viewmodel index in the converted art, or -1.
     pub viewmodel: i32,
@@ -465,6 +473,8 @@ impl Default for WeaponDef {
             fire_last_sound: String::new(),
             pullback_sound: String::new(),
             silenced_fire_start_sound: String::new(),
+            attachment_fire_sounds: Vec::new(),
+            attachment_fire_start_sounds: Vec::new(),
             explode_sound: String::new(),
             viewmodel: -1,
             anims: 0,
@@ -536,11 +546,13 @@ impl WeaponDef {
         self.fire_last_sound.clone_from(&from.fire_last_sound);
         self.pullback_sound.clone_from(&from.pullback_sound);
         self.silenced_fire_start_sound.clone_from(&from.silenced_fire_start_sound);
+        self.attachment_fire_sounds.clone_from(&from.attachment_fire_sounds);
+        self.attachment_fire_start_sounds.clone_from(&from.attachment_fire_start_sounds);
     }
 
     /// Every def-level sound event this def plays (`names::def_sound_event`), with whether it is
     /// positional (the blast) rather than the player's own; empty ones included.
-    pub fn def_sound_events(&self) -> [(&str, bool); 12] {
+    pub fn def_sound_events(&self) -> impl Iterator<Item = (&str, bool)> + '_ {
         [
             (&self.fire_sound, false),
             (&self.raise_sound, false),
@@ -555,7 +567,9 @@ impl WeaponDef {
             (&self.silenced_fire_start_sound, false),
             (&self.explode_sound, true),
         ]
+        .into_iter()
         .map(|(e, world)| (e.as_str(), world))
+        .chain(self.attachment_fire_start_sounds.iter().map(|(_, e)| (e.as_str(), false)))
     }
 
     /// Damage at `distance` (ZH units). BO2's curve has six slots: unused middle slots have no

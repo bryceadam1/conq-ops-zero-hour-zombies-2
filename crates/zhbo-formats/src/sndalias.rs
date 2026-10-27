@@ -28,6 +28,9 @@ pub struct Variant {
     /// Inches.
     pub distance: (f32, f32),
     pub start_delay_ms: u16,
+    /// `secondaryName`: the alias BO2 starts together with this one (a gunshot's low-end layer,
+    /// whose own secondary is the tail: `wpn_an94_fire_plr` -> `wpn_an94_lfe` -> `_fire_plr_decay`).
+    pub secondary: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -58,8 +61,11 @@ pub struct Bank {
 }
 
 impl Bank {
+    /// The alias named `name`, ignoring ASCII case: BO2 looks aliases up by a hash of the
+    /// lowercased name (`FUN_0083c1d0`: seed 0x1505, ×0x1003f + `tolower(c)`), so a reference
+    /// spelt `wpn_sig556_silencer_LFE` plays the alias `wpn_sig556_silencer_lfe`.
     pub fn alias(&self, name: &str) -> Option<&Alias> {
-        self.aliases.iter().find(|a| a.name == name)
+        self.aliases.iter().find(|a| a.name.eq_ignore_ascii_case(name))
     }
 }
 
@@ -91,6 +97,7 @@ fn read_bank(z: &Zone, b: u32) -> Result<Bank, FormatError> {
                         asset_id: z.u32(a + SA::assetId),
                         file: z.str_ptr(a + 20),
                         start_delay_ms: z.u16(a + 54),
+                        secondary: Some(z.str_ptr(a + SA::secondaryName)).filter(|s| !s.is_empty()),
                         volume: (unit(z.u16(a + 60)), unit(z.u16(a + 62))),
                         pitch: (unit(z.u16(a + 64)) * 2.0, unit(z.u16(a + 66)) * 2.0),
                         distance: (z.u16(a + 68) as f32, z.u16(a + 70) as f32),
