@@ -4464,3 +4464,26 @@ stays "W00" and the INI's hidden list/draw indices keep working.
 **Verified.** `cargo test -p zhbo-assets` green; `cargo test --workspace` green; `cargo clippy
 --workspace --all-targets` exit 0; the real-install suite (`--skip conformance`) green. No game
 launched. Conformance was not run on the full archive this round.
+
+## The third-person tear: a gap in the world meshes' numbering (2026-10-27, branch `v1/third-person`)
+
+The playtest's "the MP7 tears in third person" is not skinning, bone budgets or index limits: the
+W3D world weapon is rigid on `tag_weapon_right` and its vertices are intact. **The bridge shows a
+held weapon by count** — `W<vm><k>` for `k < WorldMeshes` (`ZhboRtsWeapons.cpp`) — while
+`world_weapons` named the meshes *before* `textures::finish` dropped the unconvertible surfaces
+(the clan tag and the emblem decals, `mtl_clan_tag_world`/`mtl_player_icon_world`, which sit in
+the middle of nearly every BO2 world model). The MP7's surfaces became `W0500 W0501 W0504 W0505`
+with a count of 4, so the bridge showed `W0500..W0503`: two of the four surfaces, the rest never
+shown — see-through holes in the receiver and the grip. **40 of the 60 base weapons** were missing
+surfaces this way (and on the primary's `W00` set the stray meshes stayed visible from the INI's
+initial show list, whatever was in hand). The tablet's `TB<k>` meshes had the same shape.
+`viewmodels::number` renames the kept meshes `0..n` after `finish`, for the weapons and the
+tablet; nothing on the C++ side changes.
+
+Found headlessly: a probe posing the converted W3D data through `preview::pose_w3d` (the probe
+patch is kept outside the repo) rendered exactly the meshes the bridge's loop would show. The
+regression test `every_world_weapon_shows_all_its_meshes` (install-gated) asserts the numbering
+against `WorldMeshes` for every base weapon, plus every vertex on the hand and every index valid;
+it failed with 40 problems before the fix. `world_meshes_are_numbered_without_gaps_after_the_dropped_surfaces`
+pins the rule without the install. Archive output changes (mesh names): `hud::VERSION` bump is
+the integrator's.

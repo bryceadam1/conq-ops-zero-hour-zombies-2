@@ -760,6 +760,56 @@ mod tests {
         assert_eq!(def("as50_mp+fmj").overlay_material, "scope_overlay_xpr50", "FMJ leaves the base scope");
     }
 
+    /// The third-person tear, across every base weapon: each weapon's world meshes on the soldier
+    /// are exactly `W<vm>00 .. W<vm><n-1>` with `n` its `WorldMeshes` (the bridge shows `k < n`, so a
+    /// gap hides every surface after it — the MP7 drew two of four), every vertex rides the hand,
+    /// and every triangle indexes a finite vertex.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn every_world_weapon_shows_all_its_meshes() {
+        let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
+        let common = load_zone(&bo2_dir, "common_mp").unwrap();
+        let patch = load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
+        let paks = Paks::open(&bo2_dir).unwrap();
+        let names = crate::weapons::names(&bo2_dir);
+        let bo2 = zhbo_formats::weapon::all(&common).unwrap();
+        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        let mut table = crate::weapons::table(&bo2, &atts, &names);
+        let ids = crate::weapons::converted_base(&bo2);
+        crate::weapons::add_variants(&mut table, &ids, &bo2);
+        let weapon = xmodel::find(&common, WEAPON).unwrap();
+        let body = xmodel::find(&load_zone(&bo2_dir, FACTIONS[0].zone).unwrap(), FACTIONS[0].body).unwrap();
+        let rig = Rig::new(&body, &[(&weapon, character::WEAPON_TAG)]);
+        let hand = rig.pivot(character::WEAPON_TAG).unwrap() as u16;
+        let mut out = BTreeMap::new();
+        let mut looks = textures::Looks::default();
+        let (held, _) = viewmodels::world_weapons(&patch, &common, &paks, &mut out, &rig, &bo2, &atts, &mut table.weapons, &ids, &mut looks);
+        let mut fails = Vec::new();
+        let mut shown = 0;
+        for (vm, id) in ids.iter().enumerate() {
+            let Some(d) = table.weapons.iter().find(|d| &d.id == id) else { continue };
+            let prefix = format!("W{vm:02}");
+            let mut mine: Vec<&str> = held.iter().map(|m| m.name.as_str()).filter(|n| n.starts_with(&prefix) && n.len() == prefix.len() + 2).collect();
+            mine.sort_unstable();
+            let want: Vec<String> = (0..d.world_meshes as usize).map(|k| world_mesh(vm as i32, k)).collect();
+            if mine != want {
+                fails.push(format!("{id}: meshes {mine:?}, the bridge shows {want:?}"));
+            }
+            shown += mine.len();
+        }
+        for m in &held {
+            if m.bones.iter().any(|&b| b != hand) {
+                fails.push(format!("{}: a vertex off the hand", m.name));
+            }
+            if m.positions.iter().flatten().any(|c| !c.is_finite()) || m.triangles.iter().flatten().any(|&i| i as usize >= m.positions.len()) {
+                fails.push(format!("{}: a bad vertex or index", m.name));
+            }
+        }
+        println!("{} base weapons, {shown} world meshes", ids.len());
+        assert_eq!(shown, held.len(), "every world mesh belongs to its weapon's shown range");
+        assert!(fails.is_empty(), "{} problems:\n{}", fails.len(), fails.join("\n"));
+    }
+
     #[test]
     #[ignore = "reads this machine's Black Ops II install"]
     fn converts_from_real_install() {

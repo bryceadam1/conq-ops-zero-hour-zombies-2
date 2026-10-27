@@ -662,6 +662,7 @@ pub(crate) fn world_weapons(
             zhbo_native::thirdperson::Weapon { id: (*id).to_string(), parts: native_parts, hide: c.hide.clone() }.to_bytes(),
         );
         finish(&mut mine, looks);
+        number(&mut mine, |k| crate::generals::world_mesh(vm as i32, k));
         let count = mine.len().min(99) as u8;
         for d in defs.iter_mut().filter(|d| &d.id == id || d.alt == *id && d.id.contains('~')) {
             d.world_meshes = count;
@@ -870,12 +871,23 @@ pub(crate) fn tablet_world(patch: &Zone, common: &Zone, paks: &Paks, out: &mut B
     let tex = textures(&model, paks, out, looks);
     let mut meshes = character::skin_rigid(&model, tag, crate::xf::IDENTITY, "TB", 0, &tex, &[]);
     finish(&mut meshes, looks);
+    number(&mut meshes, crate::generals::tablet_mesh);
     meshes
+}
+
+/// Name a sub-object set `0..n` after [`finish`] dropped its unconvertible surfaces (the clan tag,
+/// the emblem, reticles). The bridge shows a weapon by its count — `W<vm><k>` for `k` below
+/// `WorldMeshes` — so a gap in the numbering left the surfaces after it never shown: the
+/// third-person MP7 drew two of its four surfaces, see-through holes in the receiver and grip.
+pub(crate) fn number(meshes: &mut [w3d::SkinMesh], name: impl Fn(usize) -> String) {
+    for (k, m) in meshes.iter_mut().enumerate() {
+        m.name = name(k);
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{attachment_parts, base_part_note, duplicate_sight, is_dual_wield, mount_tag, same_sight, BasePart};
+    use super::{attachment_parts, base_part_note, duplicate_sight, finish, is_dual_wield, mount_tag, number, same_sight, w3d, BasePart, Looks};
     use zhbo_formats::weapon::{inventory, Attachment, AttachmentUnique, Weapon};
 
     fn sight(name: &str, mins: [f32; 3], maxs: [f32; 3]) -> zhbo_formats::xmodel::Model {
@@ -895,6 +907,21 @@ mod tests {
     /// magazine, `disableBaseWeaponAttachment` the base attachment art (the AS50's ACOG). The flag
     /// is read over both selection paths — the single-attachment uniques and the exact
     /// multi-attachment unique — and never inferred from a name or a hide tag.
+    /// The third-person tear: `finish` drops the clan-tag/emblem surfaces in the middle of a world
+    /// model, and the bridge shows `W<vm><k>` for `k` below the count. The kept meshes must be
+    /// numbered `0..n` with no gap, or the ones after the gap are never shown.
+    #[test]
+    fn world_meshes_are_numbered_without_gaps_after_the_dropped_surfaces() {
+        let mut looks = Looks::default();
+        looks.dropped.insert("zhbo_clan_tag.tga".into());
+        let mesh = |name: &str, t: &str| w3d::SkinMesh { name: name.into(), texture: Some(t.into()), ..Default::default() };
+        let mut meshes = vec![mesh("W3000", "gun.tga"), mesh("W3001", "zhbo_clan_tag.tga"), mesh("W3002", "gun.tga"), mesh("W3003", "gun.tga")];
+        finish(&mut meshes, &looks);
+        number(&mut meshes, |k| crate::generals::world_mesh(30, k));
+        let names: Vec<&str> = meshes.iter().map(|m| m.name.as_str()).collect();
+        assert_eq!(names, ["W3000", "W3001", "W3002"], "every kept mesh is below the count the bridge shows");
+    }
+
     #[test]
     fn the_replacement_flags_are_read_from_the_selection() {
         let unique = |kind: u32, clip: bool, attachment: bool| AttachmentUnique {
