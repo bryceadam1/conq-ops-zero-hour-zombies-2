@@ -515,6 +515,37 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("SilencedViewFlashFx", "The shared suppressed first-person FXList.", FieldKind::Str,
         |d: &WeaponDef| d.silenced_view_flash_fx.clone(),
         |d: &mut WeaponDef, v: Values| { d.silenced_view_flash_fx = v.text.into(); Ok(()) }),
+    // 5b: the def-level sound events (one per BO2 alias, `ZHBO_BO2_Snd_<alias>`).
+    field!("RaiseSound", "The raise's BO2 sound event (`raiseSoundPlayer`), played as a raise begins.", FieldKind::Str,
+        |d: &WeaponDef| d.raise_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.raise_sound = v.text.into(); Ok(()) }),
+    field!("FirstRaiseSound", "The first raise's event (`firstRaiseSoundPlayer`).", FieldKind::Str,
+        |d: &WeaponDef| d.first_raise_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.first_raise_sound = v.text.into(); Ok(()) }),
+    field!("PutawaySound", "The putaway's event (`putawaySoundPlayer`), played as the drop begins.", FieldKind::Str,
+        |d: &WeaponDef| d.putaway_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.putaway_sound = v.text.into(); Ok(()) }),
+    field!("AdsZoomSound", "The zoom-in event as aiming starts (`adsZoomSound`; scoped weapons).", FieldKind::Str,
+        |d: &WeaponDef| d.ads_zoom_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.ads_zoom_sound = v.text.into(); Ok(()) }),
+    field!("MeleeSwipeSound", "The melee swing with this weapon in hand (`meleeSwipeSoundPlayer`).", FieldKind::Str,
+        |d: &WeaponDef| d.melee_swipe_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.melee_swipe_sound = v.text.into(); Ok(()) }),
+    field!("MeleeHitSound", "The melee landing on someone (`meleeHitSound`).", FieldKind::Str,
+        |d: &WeaponDef| d.melee_hit_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.melee_hit_sound = v.text.into(); Ok(()) }),
+    field!("FireStartSound", "The fire string's opening (`fireStartSoundPlayer`: a burst's recording).", FieldKind::Str,
+        |d: &WeaponDef| d.fire_start_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.fire_start_sound = v.text.into(); Ok(()) }),
+    field!("FireLastSound", "The last round's shot in place of the shot (`fireLastSoundPlayer`).", FieldKind::Str,
+        |d: &WeaponDef| d.fire_last_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.fire_last_sound = v.text.into(); Ok(()) }),
+    field!("PullbackSound", "The offhand's pull-back (`pullbackSoundPlayer`).", FieldKind::Str,
+        |d: &WeaponDef| d.pullback_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.pullback_sound = v.text.into(); Ok(()) }),
+    field!("SilencedFireStartSound", "The fire string's opening with the silencer (its unique's override, `FUN_008ebe80`).", FieldKind::Str,
+        |d: &WeaponDef| d.silenced_fire_start_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.silenced_fire_start_sound = v.text.into(); Ok(()) }),
     field!("ExplodeSound", "The blast's BO2 sound event.", FieldKind::Str,
         |d: &WeaponDef| d.explode_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.explode_sound = v.text.into(); Ok(()) }),
@@ -706,7 +737,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 78);
+        assert_eq!(WEAPON_FIELDS.len(), 88);
         assert_eq!(ATTACHMENT_FIELDS.len(), 17);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }
@@ -728,6 +759,24 @@ mod tests {
         assert_eq!(back[0].silenced_fire_sound_npc, d.silenced_fire_sound_npc);
         assert_eq!(back[0].silenced_fx_weapon, d.silenced_fx_weapon);
         assert_eq!(back[0].silenced_view_flash_fx, d.silenced_view_flash_fx);
+    }
+
+    #[test]
+    fn the_def_sound_fields_round_trip() {
+        let mut d = WeaponDef { id: "sig556_mp".into(), ..Default::default() };
+        let ev = |a: &str| format!("ZHBO_BO2_Snd_{a}");
+        d.raise_sound = ev("fly_generic_raise_plr");
+        d.first_raise_sound = ev("fly_generic_first_raise_plr");
+        d.putaway_sound = ev("fly_generic_down_plr");
+        d.ads_zoom_sound = ev("fly_scope_zoom");
+        d.melee_swipe_sound = ev("wpn_melee_whoosh_plr");
+        d.melee_hit_sound = ev("wpn_melee_knife_hit_body");
+        d.fire_start_sound = ev("wpn_sig556_fire_plr_burst");
+        d.fire_last_sound = ev("wpn_strela_fire_plr");
+        d.pullback_sound = ev("wpn_semtex_charge");
+        d.silenced_fire_start_sound = ev("null_sound");
+        let back = parse_table(&format_table(std::slice::from_ref(&d))).expect("the table re-parses");
+        assert_eq!(back, vec![d]);
     }
 
     #[test]

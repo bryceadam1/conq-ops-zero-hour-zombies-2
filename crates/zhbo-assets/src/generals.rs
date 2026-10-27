@@ -789,6 +789,21 @@ mod tests {
         let table = zhbo_core::weapons::parse_full_table(&text(crate::weapons::TABLE_PATH)).unwrap();
         let impacts = text(zhbo_core::names::IMPACT_FX_PATH);
         let effects_ini = text("Data\\INI\\FXList\\ZHBO_BO2_Effects.ini");
+        // 5b: every def-level sound the table names (raise, putaway, zoom, melee, fire start/last,
+        // pull-back, blast) ships as an AudioEvent, or is one BO2 itself leaves silent: its alias is
+        // `null_sound` or in no multiplayer bank (then the converter reports it missing).
+        let audio = text("Data\\INI\\SoundEffects\\ZHBO_BO2.ini");
+        let mut dangling = std::collections::BTreeSet::new();
+        for d in &table.weapons {
+            for (event, _) in d.def_sound_events() {
+                let silent = zhbo_core::names::def_sound_alias(event) == Some(zhbo_core::sounds::NULL_SOUND_ALIAS)
+                    || summary.contains(&format!("weapon sound {event}\""));
+                if zhbo_core::names::def_sound_alias(event).is_some() && !silent && !audio.contains(&format!("AudioEvent {event}\n")) {
+                    dangling.insert(event.to_string());
+                }
+            }
+        }
+        assert!(dangling.is_empty(), "def sounds with no converted event: {dangling:?}");
         let mut buckets = std::collections::BTreeSet::new();
         for d in table.weapons.iter().filter(|d| d.class.is_gun()) {
             assert!(d.impact_type > 0, "{} has no impact type", d.id);

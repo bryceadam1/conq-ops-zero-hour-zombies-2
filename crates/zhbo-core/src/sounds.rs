@@ -168,7 +168,67 @@ pub struct Cues {
     fall_speed: f32,
     heartbeat_in: f32,
     fire_was_held: bool,
+    weapon: WeaponCues,
     pub queue: Vec<Request>,
+}
+
+/// The arsenal state the weapon cues compare against, from the last frame.
+#[derive(Clone, Debug, Default)]
+struct WeaponCues {
+    seen: bool,
+    raise_left: f32,
+    raise_played: bool,
+    drop_left: f32,
+    ads: f32,
+}
+
+/// A sound field overridden to nothing (Zero Hour's `NONE`): BO2's attachment override with an
+/// empty alias (the XM8's silencer silences the burst opening), distinct from "no override".
+pub const NO_SOUND: &str = "NONE";
+
+/// BO2's silent alias: an attachment that overrides a sound to `null_sound` plays nothing.
+pub const NULL_SOUND_ALIAS: &str = "null_sound";
+
+/// A def-level sound event to play, or `None` when the def names none, names [`NO_SOUND`], or
+/// names BO2's silent [`NULL_SOUND_ALIAS`].
+pub fn some(event: &str) -> Option<&str> {
+    let silent = event.is_empty() || event == NO_SOUND || crate::names::def_sound_alias(event) == Some(NULL_SOUND_ALIAS);
+    (!silent).then_some(event)
+}
+
+/// The player's own shot for this round: the def's last-round sound on the magazine's last
+/// round (`fireLastSoundPlayer`, the Strela), else `normal`.
+pub fn shot_for(def: &'static crate::weapons::WeaponDef, ammo_left: u16, normal: &'static str) -> &'static str {
+    if ammo_left == 0 {
+        some(def.fire_last_sound.as_str()).unwrap_or(normal)
+    } else {
+        normal
+    }
+}
+
+/// A launch's shot: the def's own converted shot, else the global launcher sound.
+pub fn launch_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
+    some(def.fire_sound.as_str()).unwrap_or(FIRE_LAUNCHER)
+}
+
+/// A throw: the offhand's own throw (`fireSoundPlayer`), else the global one.
+pub fn throw_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
+    some(def.fire_sound.as_str()).unwrap_or(THROW)
+}
+
+/// The pull-back: the offhand's own (`pullbackSoundPlayer`), else the pin.
+pub fn pullback_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
+    some(def.pullback_sound.as_str()).unwrap_or(PULL_PIN)
+}
+
+/// A melee swing with `def` in hand: its own swipe (`meleeSwipeSoundPlayer`), else the knife's.
+pub fn melee_swing_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
+    some(def.melee_swipe_sound.as_str()).unwrap_or(MELEE_SWING)
+}
+
+/// A blast: the projectile def's own (`projExplosionSound`), else the generic one.
+pub fn explosion_for(sound: &'static str) -> &'static str {
+    some(sound).unwrap_or(EXPLOSION)
 }
 
 impl Cues {
@@ -232,6 +292,45 @@ impl Cues {
             self.play(dry_fire_for(w.def));
         }
         self.fire_was_held = fire_held;
+        self.weapon_moments(p);
+    }
+
+    /// BO2's def-level weapon sounds at their moments, read off the arsenal's state changes: the
+    /// putaway as a drop begins (the weapon going away), the raise — or the first raise — once
+    /// the drop is done and the raise runs, and the zoom as aiming starts. An alt toggle's raise
+    /// plays nothing (BO2's alt switch is not a weapon raise).
+    fn weapon_moments(&mut self, p: &PlayerSim) {
+        use crate::weapons::arsenal::RaiseKind;
+        let a = &p.arsenal;
+        let prev = std::mem::take(&mut self.weapon);
+        let mut now = WeaponCues { seen: true, raise_left: a.raise_left, raise_played: prev.raise_played, drop_left: a.drop_left, ads: a.ads };
+        if a.drop_left > prev.drop_left + 1e-6 {
+            if let Some(e) = a.weapons.get(a.previous).and_then(|w| some(w.def.putaway_sound.as_str())) {
+                self.play(e);
+            }
+        }
+        // A new raise (the timer jumped up, or the first frame seen with one running) re-arms it.
+        if !prev.seen || a.raise_left > prev.raise_left + 1e-6 {
+            now.raise_played = false;
+        }
+        if a.raise_left > 0.0 && a.drop_left <= 0.0 && !now.raise_played {
+            now.raise_played = true;
+            let def = a.current().def;
+            let e = match a.raise_kind {
+                RaiseKind::First => some(def.first_raise_sound.as_str()),
+                RaiseKind::Normal | RaiseKind::Quick => some(def.raise_sound.as_str()),
+                RaiseKind::Alt => None,
+            };
+            if let Some(e) = e {
+                self.play(e);
+            }
+        }
+        if prev.ads <= 0.0 && a.ads > 0.0 {
+            if let Some(e) = some(a.current().def.ads_zoom_sound.as_str()) {
+                self.play(e);
+            }
+        }
+        self.weapon = now;
     }
 }
 
@@ -249,6 +348,72 @@ mod tests {
         assert_eq!(dry_fire_for(def), "ZHBO_BO2_DryFireGlRifle");
         let plain: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef::default()));
         assert_eq!(dry_fire_for(plain), DRY_FIRE);
+    }
+
+    #[test]
+    fn raise_putaway_and_zoom_play_the_defs_sounds_at_their_moments() {
+        use crate::weapons::arsenal::RaiseKind;
+        let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef {
+            raise_sound: "ZHBO_BO2_Snd_fly_generic_raise_plr".into(),
+            first_raise_sound: "ZHBO_BO2_Snd_fly_generic_first_raise_plr".into(),
+            putaway_sound: "ZHBO_BO2_Snd_fly_generic_down_plr".into(),
+            ads_zoom_sound: "ZHBO_BO2_Snd_fly_scope_zoom".into(),
+            ..Default::default()
+        }));
+        let mut p = PlayerSim::spawn_for_tests();
+        for w in p.arsenal.weapons.iter_mut() {
+            w.def = def;
+        }
+        let mut c = Cues::default();
+        // Only the weapon's own cues (the first frame also takes a footstep).
+        let weapon = |c: &mut Cues| -> Vec<&'static str> { events(c).into_iter().filter(|e| e.starts_with(crate::names::DEF_SOUND_PREFIX)).collect() };
+        let a = &mut p.arsenal;
+        (a.raise_left, a.raise_kind, a.drop_left, a.ads) = (0.5, RaiseKind::First, 0.0, 0.0);
+        c.update(0.016, &p, false);
+        assert_eq!(weapon(&mut c), vec!["ZHBO_BO2_Snd_fly_generic_first_raise_plr"], "the spawn's first raise");
+        p.arsenal.raise_left = 0.4;
+        c.update(0.016, &p, false);
+        assert!(weapon(&mut c).is_empty(), "once per raise");
+        // A swap: the drop starts (putaway), then the raise once the drop is done.
+        let a = &mut p.arsenal;
+        (a.drop_left, a.raise_left, a.raise_kind) = (0.3, 0.6, RaiseKind::Normal);
+        c.update(0.016, &p, false);
+        assert_eq!(weapon(&mut c), vec!["ZHBO_BO2_Snd_fly_generic_down_plr"]);
+        p.arsenal.drop_left = 0.0;
+        c.update(0.016, &p, false);
+        assert_eq!(weapon(&mut c), vec!["ZHBO_BO2_Snd_fly_generic_raise_plr"]);
+        // An alt toggle's raise is silent.
+        let a = &mut p.arsenal;
+        (a.raise_left, a.raise_kind) = (0.7, RaiseKind::Alt);
+        c.update(0.016, &p, false);
+        assert!(weapon(&mut c).is_empty());
+        p.arsenal.raise_left = 0.0;
+        p.arsenal.ads = 0.2;
+        c.update(0.016, &p, false);
+        assert_eq!(weapon(&mut c), vec!["ZHBO_BO2_Snd_fly_scope_zoom"], "zoom as aiming starts");
+        p.arsenal.ads = 0.6;
+        c.update(0.016, &p, false);
+        assert!(weapon(&mut c).is_empty());
+    }
+
+    #[test]
+    fn the_defs_own_events_replace_the_globals_when_present() {
+        let leak = |d: crate::weapons::WeaponDef| -> &'static crate::weapons::WeaponDef { Box::leak(Box::new(d)) };
+        let plain = leak(Default::default());
+        assert_eq!((launch_for(plain), throw_for(plain), pullback_for(plain), melee_swing_for(plain)), (FIRE_LAUNCHER, THROW, PULL_PIN, MELEE_SWING));
+        assert_eq!(explosion_for(""), EXPLOSION);
+        let strela = leak(crate::weapons::WeaponDef { fire_sound: "A".into(), fire_last_sound: "LAST".into(), ..Default::default() });
+        assert_eq!(launch_for(strela), "A");
+        assert_eq!(shot_for(strela, 0, "A"), "LAST", "the last round's own shot");
+        assert_eq!(shot_for(strela, 1, "A"), "A");
+        assert_eq!(shot_for(plain, 0, FIRE), FIRE);
+        let semtex = leak(crate::weapons::WeaponDef { fire_sound: "T".into(), pullback_sound: "P".into(), melee_swipe_sound: "S".into(), ..Default::default() });
+        assert_eq!((throw_for(semtex), pullback_for(semtex), melee_swing_for(semtex)), ("T", "P", "S"));
+        assert_eq!(explosion_for("B"), "B");
+        // Overridden to nothing, or to BO2's silent alias: no cue.
+        assert_eq!(some(NO_SOUND), None);
+        assert_eq!(some(&crate::names::def_sound_event(NULL_SOUND_ALIAS)), None);
+        assert_eq!(some("ZHBO_BO2_Snd_fly_scope_zoom"), Some("ZHBO_BO2_Snd_fly_scope_zoom"));
     }
 
     #[test]

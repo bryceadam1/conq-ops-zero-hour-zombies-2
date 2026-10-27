@@ -205,6 +205,9 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
             if !d.silenced_view_flash_fx.is_empty() {
                 d.view_flash_fx = d.silenced_view_flash_fx.clone();
             }
+            if !d.silenced_fire_start_sound.is_empty() {
+                d.fire_start_sound = d.silenced_fire_start_sound.clone();
+            }
         }
         d.laser |= a.laser;
         d.specialties = d.specialties.union(a.specialties);

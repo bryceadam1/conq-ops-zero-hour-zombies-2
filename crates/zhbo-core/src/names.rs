@@ -73,6 +73,18 @@ pub fn notetrack_event(alias: &str) -> String {
     format!("ZHBO_NT_{alias}")
 }
 
+/// A weapon def's own BO2 sound (`raiseSoundPlayer`, `meleeHitSound`, …) as its converted event:
+/// one per alias, shared by every def that names it (`fly_generic_raise_plr` plays
+/// `ZHBO_BO2_Snd_fly_generic_raise_plr`).
+pub const DEF_SOUND_PREFIX: &str = "ZHBO_BO2_Snd_";
+pub fn def_sound_event(alias: &str) -> String {
+    format!("{DEF_SOUND_PREFIX}{alias}")
+}
+/// The BO2 alias a def-sound event plays, if `event` is one.
+pub fn def_sound_alias(event: &str) -> Option<&str> {
+    event.strip_prefix(DEF_SOUND_PREFIX)
+}
+
 /// A converted BO2 effect's Zero Hour FXList (`ZHBO_BO2FX_weapon_shellejects_fx_rifle`): BO2's
 /// effect name with every non-alphanumeric rune replaced by `_`.
 pub fn bo2_fx(effect: &str) -> String {

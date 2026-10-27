@@ -367,7 +367,8 @@ pub fn files(
     let mut extra_made = 0;
     for e in extra {
         let layers: Vec<&str> = e.layers.iter().map(String::as_str).collect();
-        if add(&e.event, &common_src, &layers, e.kind, e.limit, &mut out) {
+        // As the fixed events: some aliases live only in the map's bank (gear pull-outs).
+        if add(&e.event, &common_src, &layers, e.kind, e.limit, &mut out) || add(&e.event, &world_src, &layers, e.kind, e.limit, &mut out) {
             extra_made += 1;
         } else {
             missing.push(format!("weapon sound {}", e.event));

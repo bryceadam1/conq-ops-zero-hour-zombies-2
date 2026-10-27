@@ -141,7 +141,7 @@ impl Sim {
                 // Points for what the C4 kills (the owner's own state is out of the table now).
                 for e in &ev {
                     if let EquipEvent::Exploded { at, hit_enemy, kill, .. } = *e {
-                        self.emit(idx, EventKind::Exploded { at });
+                        self.emit(idx, EventKind::Exploded { at, sound: "" });
                         if hit_enemy {
                             self.emit(idx, EventKind::HitMarker { headshot: false, kill });
                         }
@@ -209,6 +209,7 @@ impl Sim {
             });
         if let Some(v) = victim {
             host.fire_fx(p.general, MELEE_FX_WEAPON, v.id, v.pos);
+            self.emit(idx, EventKind::MeleeHit);
             let kill = host.damage(p.general, v.id, damage * BO2_TO_ZH_DAMAGE, damage_kind::MELEE);
             self.emit(idx, EventKind::HitMarker { headshot: false, kill });
             if kill && p.arsenal.has_specialty(Specialty::Scavenger) {

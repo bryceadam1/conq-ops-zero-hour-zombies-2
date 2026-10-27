@@ -432,10 +432,18 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
     // converted ones: dual-optic and alt table variants share their base weapon's field. Set it
     // for all defs here so the shipped table and the conformance read-back both see it; the
     // synthesized variants inherit it when `attachments::apply` clones their base def.
+    // MP melee is the class's melee weapon whatever is held (`_class.gsc:586`: every class gets
+    // `knife_mp`): a gun's swing and hit are `knife_mp`'s; a melee weapon or riot shield swings
+    // itself (its own fields, from `to_def`).
+    let class_melee = bo2.iter().find(|w| w.name == CLASS_MELEE);
     for d in defs.iter_mut() {
         let base = crate::generals::base_id(&d.id);
         if let Some(w) = bo2.iter().find(|w| w.name == base) {
             d.empty_fire_sound = dry_fire_event(w.empty_fire_sound_player.as_deref()).to_string();
+            if let Some(m) = class_melee.filter(|_| !matches!(w.weap_type, bo2::kind::MELEE | bo2::kind::RIOTSHIELD)) {
+                d.melee_swipe_sound = def_sound(&m.melee_swipe_sound_player);
+                d.melee_hit_sound = def_sound(&m.melee_hit_sound);
+            }
         }
     }
     // The converted weapons and their alt modes: the one a combination toggles to, and every alt
@@ -475,9 +483,16 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
         // The suppressor's own shot and flash: BO2's `AttachmentUnique` for the weapon's silenced
         // attachment variant. The base def carries them; `attachments::apply` swaps a combo's
         // sound/fx to them when the combo mounts the silencer.
-        if let Some(short) = w.attachment_variants.iter().find_map(|(kind, id)| {
-            atts.iter().find(|a| a.kind == *kind && a.silenced).map(|_| short_name(id))
+        if let Some((sil_kind, short)) = w.attachment_variants.iter().find_map(|(kind, id)| {
+            atts.iter().find(|a| a.kind == *kind && a.silenced).map(|_| (*kind, short_name(id)))
         }) {
+            // The fire string's opening follows BO2's override gate (`FUN_008ebe80`): the base
+            // unique's bit lets the silencer's unique replace it (`null_sound` on the burst guns).
+            if let Some(start) = overridden_sound(w, sil_kind, FIRE_START_SOUND_PLAYER_BIT, |u| &u.fire_start_sound_player) {
+                // Overridden to nothing is BO2's empty alias: Zero Hour's `NONE`, so the swap
+                // still happens (a blank field means "no override").
+                d.silenced_fire_start_sound = start.as_ref().map_or_else(|| zhbo_core::sounds::NO_SOUND.to_string(), |a| zhbo_core::names::def_sound_event(a));
+            }
             let c = crate::generals::combo(w, atts, &[short.as_str()]);
             let key_sil = format!("{key}_silenced");
             if let Some(plr) = &c.fire_sound_player {
@@ -510,7 +525,36 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
             events.extend(general(zhbo_core::sounds::MELEE_SWING, &w.melee_swipe_sound_player, Kind::Player));
         }
     }
+    // The def-level sounds (raise, putaway, ADS zoom, melee, fire start/last, pull-back, blast):
+    // one event per BO2 alias any def names, shared by every def that names it.
+    let mut def_events = BTreeSet::new();
+    for d in defs.iter() {
+        for (event, world) in d.def_sound_events() {
+            if let Some(alias) = zhbo_core::names::def_sound_alias(event) {
+                if def_events.insert(event.to_string()) {
+                    let kind = if world { Kind::World } else { Kind::Player };
+                    events.push(DynSfx { event: event.to_string(), layers: vec![alias.to_string()], kind, limit: 2 });
+                }
+            }
+        }
+    }
     (events, ini)
+}
+
+/// The melee weapon every MP class carries (`_class.gsc:586`), whose swing a held gun plays.
+const CLASS_MELEE: &str = "knife_mp";
+
+/// `soundOverrides` bit of `fireStartSoundPlayer` (the ninth overridable sound, G14 §4).
+const FIRE_START_SOUND_PLAYER_BIT: u32 = 1 << 8;
+
+/// BO2's override gate for one sound with the attachment `kind` mounted (`FUN_008ebe80`): when the
+/// base unique's `bit` is set and `kind`'s unique sets it too, that unique's field (`Some(None)`:
+/// overridden to nothing); `None` when the def's own sound stands.
+fn overridden_sound(w: &Weapon, kind: u32, bit: u32, field: impl Fn(&bo2::AttachmentUnique) -> &Option<String>) -> Option<Option<String>> {
+    let single = |k: u32| w.attachment_uniques.iter().find(|u| u.kind == k && u.combined == 0);
+    let u0 = single(0)?;
+    let u = single(kind)?;
+    (u0.sound_overrides & bit != 0 && u.sound_overrides & bit != 0).then(|| field(u).clone())
 }
 
 /// `ids` and the alt modes they reach: each one's current alt (`d.alt`) and every alt weapon its
@@ -658,6 +702,12 @@ fn reticle(r: &bo2::Reticle) -> Reticle {
 /// In debug builds the result is round-tripped through the table schema (format then parse), so
 /// a schema line that `to_def` does not write — or one whose value does not survive the text
 /// form — fails here instead of silently drifting (refactor plan 1.4 / 3.2).
+/// A def-level BO2 sound as its converted event (`zhbo_core::names::def_sound_event`); empty when
+/// BO2 names none. [`sounds_and_fx`] registers one event per alias any def uses.
+fn def_sound(alias: &Option<String>) -> String {
+    alias.as_deref().map(zhbo_core::names::def_sound_event).unwrap_or_default()
+}
+
 pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
     let class = class_of(w);
     let clip = w.clip_size.max(0) as u16;
@@ -763,13 +813,25 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         }
         .to_string(),
         projectile_object: String::new(),
-        fire_sound: String::new(),
+        // A gun's shot is its own `ZHBO_BO2_Fire_<id>` mix (`sounds_and_fx`); an offhand's throw is
+        // its def-level alias.
+        fire_sound: if class.is_offhand() { def_sound(&w.fire_sound_player) } else { String::new() },
         empty_fire_sound: String::new(),
         silenced_fire_sound: String::new(),
         silenced_fire_sound_npc: String::new(),
         silenced_fx_weapon: String::new(),
         silenced_view_flash_fx: String::new(),
-        explode_sound: String::new(),
+        explode_sound: def_sound(&w.projectile_explosion_sound),
+        raise_sound: def_sound(&w.raise_sound_player),
+        first_raise_sound: def_sound(&w.first_raise_sound_player),
+        putaway_sound: def_sound(&w.putaway_sound_player),
+        ads_zoom_sound: def_sound(&w.ads_zoom_sound),
+        melee_swipe_sound: def_sound(&w.melee_swipe_sound_player),
+        melee_hit_sound: def_sound(&w.melee_hit_sound),
+        fire_start_sound: def_sound(&w.fire_start_sound_player),
+        fire_last_sound: def_sound(&w.fire_last_sound_player),
+        pullback_sound: def_sound(&w.pullback_sound_player),
+        silenced_fire_start_sound: String::new(),
         viewmodel: -1,
         anims: w.anims.iter().enumerate().take(128).filter(|(_, a)| a.is_some()).fold(0u128, |m, (i, _)| m | (1u128 << i)),
         clip_base: 0,
@@ -1151,6 +1213,32 @@ mod tests {
         assert_eq!(sil.fx_weapon, "ZHBO_FX_an94_mp_silenced");
         assert_eq!(sil.view_flash_fx, "ZHBO_BO2FX_fx_muz_silencer_md");
         assert_eq!(def(&table, "gl_an94_mp~an94_mp+gl").explosion_fx, "ZHBO_BO2FX_gl", "the alt mode inherits from its alt weapon");
+    }
+
+    /// BO2's gate (`FUN_008ebe80`): the silencer's unique replaces the fire-string opening only when
+    /// both the base unique and it set the bit — to its alias, or to nothing.
+    #[test]
+    fn the_silencer_overrides_the_fire_start_only_through_both_bits() {
+        let u = |kind, bits, start: Option<&str>| bo2::AttachmentUnique { kind, sound_overrides: bits, fire_start_sound_player: start.map(String::from), ..Default::default() };
+        let w = |u0_bits, sil_bits, start| Weapon { attachment_uniques: vec![u(0, u0_bits, None), u(9, sil_bits, start)], ..Default::default() };
+        let bit = FIRE_START_SOUND_PLAYER_BIT;
+        assert_eq!(overridden_sound(&w(bit, bit, Some("null_sound")), 9, bit, |u| &u.fire_start_sound_player), Some(Some("null_sound".into())));
+        assert_eq!(overridden_sound(&w(bit, bit, None), 9, bit, |u| &u.fire_start_sound_player), Some(None), "overridden to nothing");
+        assert_eq!(overridden_sound(&w(0, bit, Some("x")), 9, bit, |u| &u.fire_start_sound_player), None, "the base unique gates it");
+        assert_eq!(overridden_sound(&w(bit, 0, Some("x")), 9, bit, |u| &u.fire_start_sound_player), None);
+    }
+
+    /// A held gun swings and lands with the class knife's sounds; a melee weapon with its own.
+    #[test]
+    fn guns_melee_with_the_class_knifes_sounds() {
+        let knife = Weapon { name: CLASS_MELEE.into(), weap_type: bo2::kind::MELEE, melee_swipe_sound_player: Some("wpn_melee_whoosh_plr".into()), melee_hit_sound: Some("wpn_melee_knife_hit_body".into()), ..Default::default() };
+        let gun = Weapon { name: "an94_mp".into(), class: bo2::class::RIFLE, melee_swipe_sound_player: Some("wpn_com_knife_whoosh_plr".into()), ..Default::default() };
+        let held = Weapon { name: "knife_held_mp".into(), weap_type: bo2::kind::MELEE, melee_swipe_sound_player: Some("wpn_com_knife_whoosh_plr".into()), ..Default::default() };
+        let mut defs: Vec<WeaponDef> = [&gun, &held].iter().map(|w| to_def(w, &HashMap::new())).collect();
+        sounds_and_fx(&[knife, gun, held], &[], &mut defs, &[]);
+        assert_eq!(defs[0].melee_swipe_sound, zhbo_core::names::def_sound_event("wpn_melee_whoosh_plr"));
+        assert_eq!(defs[0].melee_hit_sound, zhbo_core::names::def_sound_event("wpn_melee_knife_hit_body"));
+        assert_eq!(defs[1].melee_swipe_sound, zhbo_core::names::def_sound_event("wpn_com_knife_whoosh_plr"), "a melee weapon swings itself");
     }
 
     #[test]

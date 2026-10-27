@@ -4507,3 +4507,46 @@ parts −2,874, camo −322, hide −328, `ads_recoil_reduction` −30. In game 
 (the integrator's eyeball leg): every picked combination now fires its own gun's shot and flash, and
 the ARs/snipers eject brass. No ABI change; the archive content changed (VERSION bump is the
 integrator's).
+
+## The def-level weapon sounds play at their moments (2026-10-27, branch `v1/sounds-effects`)
+
+Item 5b's second family: the sounds BO2 carries per def that the mod never parsed or played.
+
+* **Carried, one event per alias.** The parser reads `raiseSoundPlayer`, `firstRaiseSoundPlayer`,
+  `putawaySoundPlayer`, `adsZoomSound`, `meleeHitSound`, `fireStartSoundPlayer` (plus the already
+  parsed swipe, last-shot, pull-back and blast); `WeaponDef` gains a grouped block of ten event
+  fields (`WEAPON_FIELDS` 78 → 88: `RaiseSound` … `SilencedFireStartSound`; `ExplodeSound`, long
+  in the schema but never filled, now is). Each holds `zhbo_core::names::def_sound_event(alias)`
+  (`ZHBO_BO2_Snd_<alias>`), registered once per alias by `sounds_and_fx`; converter events now fall
+  back to the map bank like the fixed ones. An offhand's throw is its own `fireSoundPlayer`.
+* **Played where the game has the moment** (`sounds::Cues::weapon_moments`, read off the arsenal's
+  state changes, client-side so the sim stays deterministic): the putaway as a drop starts (the
+  weapon going away), the first raise / raise once the drop is done (an alt toggle's raise is
+  silent), the zoom as ADS starts. In `consume_events`: the fire string's opening on the frame the
+  string's first round leaves (the burst guns' `_fire_plr_burst`), the last round's own shot
+  (`fireLastSoundPlayer`, the Strela), a launch's own shot instead of the global launcher sound,
+  the offhand's own pull-back and throw, the held weapon's melee swing, and a new `MeleeHit` event
+  for the landing; `Exploded` carries the projectile def's blast event.
+* **MP melee is the class knife's** (the expected side's `_class.gsc:586` rule): a held gun swings
+  and lands with `knife_mp`'s aliases, a melee weapon or riot shield with its own.
+* **Override-to-nothing is a value.** The silencer's fire-start override follows BO2's gate
+  (`FUN_008ebe80`: the base unique's and the silencer unique's `soundOverrides` bit 8; new parsed
+  `AttachmentUnique.sound_overrides`/`fire_start_sound_player`). The XM8's silencer overrides it to
+  an EMPTY alias — distinct from "no override" — so the table stores Zero Hour's `NONE`
+  (`sounds::NO_SOUND`); `null_sound` (BO2's silent alias, the SIG/B23R silencers) is kept as the
+  value and never played. **Gotcha: a blank field cannot mean both "no override" and "override to
+  silence"; the precedent's non-empty guard needed the sentinel.**
+* The real-install test now fails on any def-level sound the table names that ships no AudioEvent
+  unless BO2 leaves it silent too (`null_sound`, or an alias in no MP bank — `fly_hatchet_hit_npc`,
+  reported missing by the converter).
+
+Measured (after family A → this commit): weapons cells **600,049 → 551,144 (−48,905)**, gap
+clusters 210 → 202, zero regressions. `raise_sound_player`/`first_raise_sound_player` 9,331 → 0,
+`putaway_sound_player` 8,761 → 0, `melee_swipe_sound_player` 9,340 → 0, `melee_hit_sound` 9,341 →
+0, `ads_zoom_sound` 1,597 → 0, `fire_start_sound_player` 719 → 100, `fire_last_sound_player` 1 → 0,
+`pullback_sound_player` 3 → 0, `fire_sound_player` 674 → 100, `projectile_explosion_sound` 22 → 15.
+Left: the SIG556/XM8 select-fire unique's override of the shot and burst opening (`sf` combos:
+100 + 100 rows — the LFE-layer architecture, item 16); the 15 blasts BO2 leaves silent where the
+mod plays its generic blast; the third-person `fire_start_sound`/`fire_last_sound` (8 + 1 rows: the
+B23R's and Strela's NPC variants need a per-shooter cue the FX weapon does not have). No ABI change;
+the table schema and archive content changed (VERSION bump is the integrator's).

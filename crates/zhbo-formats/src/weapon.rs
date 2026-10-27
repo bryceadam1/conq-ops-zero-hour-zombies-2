@@ -167,6 +167,11 @@ pub struct AttachmentUnique {
     /// The player's gunshot with this combination (suppressors), if it changes.
     pub fire_sound_player: Option<String>,
     pub fire_sound: Option<String>,
+    /// `soundOverrides`: bit `i` lets this unique replace the def's `i`-th overridable sound
+    /// (fireSound, fireSoundPlayer, …, fireStartSoundPlayer = bit 8; `FUN_008ebe80`, G14 §4).
+    pub sound_overrides: u32,
+    /// The overriding fire-string start (bit 8); `None` with the bit set overrides to nothing.
+    pub fire_start_sound_player: Option<String>,
     /// The weapon the attachment toggles to (select fire, grenade launcher, dual optic).
     pub alt_weapon: Option<String>,
     pub dual_wield_weapon: Option<String>,
@@ -464,6 +469,15 @@ pub struct Weapon {
     pub projectile_explosion_sound: Option<String>,
     pub pullback_sound_player: Option<String>,
     pub melee_swipe_sound_player: Option<String>,
+    /// The weapon's def-level sounds the mod plays at their moments (G14: none is
+    /// attachment-overridable): the melee hit, the raises, the putaway, the ADS zoom.
+    pub melee_hit_sound: Option<String>,
+    pub raise_sound_player: Option<String>,
+    pub first_raise_sound_player: Option<String>,
+    pub putaway_sound_player: Option<String>,
+    pub ads_zoom_sound: Option<String>,
+    /// The start of a fire string (a burst's opening): overridable by attachment (`soundOverrides`).
+    pub fire_start_sound_player: Option<String>,
     /// HUD art (material names).
     pub hud_icon: Option<String>,
     /// The HUD icon's image in the `.ipak` packs (its material is inline in the weapon).
@@ -580,6 +594,8 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 hide_tags: hide_tags(z, z.u32(u + WU::hideTags)),
                 fire_sound_player: opt_str(z, u + WU::fireSoundPlayer),
                 fire_sound: opt_str(z, u + WU::fireSound),
+                sound_overrides: z.u32(u + WU::soundOverrides),
+                fire_start_sound_player: opt_str(z, u + WU::fireStartSoundPlayer),
                 alt_weapon: opt_str(z, u + WU::szAltWeaponName),
                 dual_wield_weapon: opt_str(z, u + WU::szDualWieldWeaponName),
                 overlay_material: named(z, u + WU::overlayMaterial).unwrap_or_default(),
@@ -803,6 +819,12 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.projectile_explosion_sound = opt_str(z, d + WD::projExplosionSound);
     w.pullback_sound_player = opt_str(z, d + WD::pullbackSoundPlayer);
     w.melee_swipe_sound_player = opt_str(z, d + WD::meleeSwipeSoundPlayer);
+    w.melee_hit_sound = opt_str(z, d + WD::meleeHitSound);
+    w.raise_sound_player = opt_str(z, d + WD::raiseSoundPlayer);
+    w.first_raise_sound_player = opt_str(z, d + WD::firstRaiseSoundPlayer);
+    w.putaway_sound_player = opt_str(z, d + WD::putawaySoundPlayer);
+    w.ads_zoom_sound = opt_str(z, d + WD::adsZoomSound);
+    w.fire_start_sound_player = opt_str(z, d + WD::fireStartSoundPlayer);
     w.impact_type = z.u32(d + WD::impactType);
     let flash = z.try_u32(d + WD::worldFlashEffect)?;
     w.world_flash_effect = crate::fx::read_or_stub(z, flash);

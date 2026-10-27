@@ -1041,12 +1041,21 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         let mine: Vec<EventKind> = sim.events.iter().filter(|e| e.player == me).map(|e| e.kind).collect();
         sim.events.clear();
         self.hits_len = 0;
-        let fire = sim.player(me).map_or(sounds::FIRE, |p| sounds::fire_for(p.arsenal.current().def));
-        for kind in &mine {
-            // The gunshot is per shot; the impact is per pellet and comes from its own event (a
-            // shot into the air no longer plays a hard-surface sound).
-            if let EventKind::Shot { .. } = kind {
-                self.cues.play(fire);
+        // The weapon in hand after the step: its sounds for this frame's shots, swing and throws.
+        let held = sim.player(me).map(|p| (p.arsenal.current().def, p.arsenal.current().ammo, p.arsenal.current().string, p.arsenal.lethal.def, p.arsenal.tactical.def));
+        let fire = held.map_or(sounds::FIRE, |(def, ..)| sounds::fire_for(def));
+        let shots = mine.iter().filter(|k| matches!(k, EventKind::Shot { .. })).count();
+        if let Some((def, ammo, string, ..)) = held {
+            // A fire string's opening (`fireStartSoundPlayer`: a burst's recording) plays once, on
+            // the frame its first round leaves — the trigger string was empty before this step.
+            if let Some(start) = sounds::some(def.fire_start_sound.as_str()).filter(|_| shots > 0 && string as usize <= shots) {
+                self.cues.play(start);
+            }
+            for i in 0..shots {
+                // The gunshot is per shot; the impact is per pellet and comes from its own event (a
+                // shot into the air no longer plays a hard-surface sound). The last one this frame
+                // left the magazine at `ammo`.
+                self.cues.play(if i + 1 == shots { sounds::shot_for(def, ammo, fire) } else { fire });
             }
         }
         for kind in mine {
@@ -1117,11 +1126,18 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     // A pick landed: the forced screen closes, and the next spawn's pick returns.
                     self.class_pick_forced = false;
                 }
-                EventKind::Melee => self.cues.play(sounds::MELEE_SWING),
-                EventKind::OffhandReady { .. } => self.cues.play(sounds::PULL_PIN),
-                EventKind::Thrown { .. } => self.cues.play(sounds::THROW),
-                EventKind::Launched => self.cues.play(sounds::FIRE_LAUNCHER),
-                EventKind::Exploded { at } => self.cues.play_at(sounds::EXPLOSION, at),
+                EventKind::Melee => self.cues.play(held.map_or(sounds::MELEE_SWING, |(def, ..)| sounds::melee_swing_for(def))),
+                EventKind::MeleeHit => {
+                    if let Some((def, ..)) = held.filter(|(def, ..)| !def.melee_hit_sound.is_empty()) {
+                        self.cues.play(def.melee_hit_sound.as_str());
+                    }
+                }
+                EventKind::OffhandReady { lethal } => {
+                    self.cues.play(held.map_or(sounds::PULL_PIN, |(_, _, _, l, t)| sounds::pullback_for(if lethal { l } else { t })))
+                }
+                EventKind::Thrown { lethal } => self.cues.play(held.map_or(sounds::THROW, |(_, _, _, l, t)| sounds::throw_for(if lethal { l } else { t }))),
+                EventKind::Launched => self.cues.play(held.map_or(sounds::FIRE_LAUNCHER, |(def, ammo, ..)| sounds::shot_for(def, ammo, sounds::launch_for(def)))),
+                EventKind::Exploded { at, sound } => self.cues.play_at(sounds::explosion_for(sound), at),
                 EventKind::Intercepted { at } => self.cues.play_at(sounds::EXPLOSION, at),
                 EventKind::Hacking { progress } => {
                     self.hud.hack_progress = progress;

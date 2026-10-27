@@ -649,26 +649,33 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     // Sounds: the player's gunshot event and the FX weapon's third-person event; the loadout's
     // offhand and knife share the global throw/pin/blast/swing events.
     // Sounds: the client's cues (`client/mod.rs`): a hitscan shot plays `sounds::fire_for` (the
-    // def's event, else the global rifle/pistol shot), a launch `FIRE_LAUNCHER`, an offhand
-    // `PULL_PIN` then `THROW`, any melee `MELEE_SWING`, any blast `EXPLOSION`; the FX weapon's
-    // event is the shot others hear. A cue the conversion never made plays nothing.
+    // def's event, else the global rifle/pistol shot), a launch `launch_for`, an offhand
+    // `pullback_for` then `throw_for`, a melee `melee_swing_for`, a blast `explosion_for` — each the
+    // def's own event, else the global one; the FX weapon's event is the shot others hear. A cue
+    // the conversion never made plays nothing.
     let key = d.fx_weapon.strip_prefix("ZHBO_FX_").unwrap_or("");
     let npc = (!key.is_empty()).then(|| sh.sound(&format!("ZHBO_BO2_FireNpc_{key}"))).flatten();
     let thrown = d.class.is_offhand() && d.place == Place::Throw;
     let plr = if d.class.is_offhand() {
-        thrown.then(|| sh.sound(zhbo_core::sounds::THROW)).flatten()
+        thrown.then(|| sh.sound(zhbo_core::sounds::throw_for(d))).flatten()
     } else if d.class == Class::Melee {
         None
     } else if launches {
-        sh.sound(zhbo_core::sounds::FIRE_LAUNCHER)
+        sh.sound(zhbo_core::sounds::launch_for(d))
     } else {
         sh.sound(zhbo_core::sounds::fire_for(d))
     };
     let explodes = launches || d.class.is_offhand();
+    // A def-level event the client plays at its moment (`sounds::Cues`), as the alias it mixes.
+    // The field's alias as the table names it (`null_sound` included: BO2's own value for a
+    // silenced burst opening); blank or `NONE` is no sound.
+    let own = |event: &str| (!event.is_empty() && event != zhbo_core::sounds::NO_SOUND).then(|| sh.sound(event)).flatten();
     for c in cols::OVERRIDE_SOUNDS {
         match c {
             "fire_sound" => b.opt_text(c, npc.clone()),
             "fire_sound_player" => b.opt_text(c, plr.clone()),
+            "fire_start_sound_player" => b.opt_text(c, own(&d.fire_start_sound)),
+            "fire_last_sound_player" => b.opt_text(c, own(&d.fire_last_sound)),
             _ => b.absent(c),
         };
     }
@@ -679,9 +686,14 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
                 let event = if d.empty_fire_sound.is_empty() { "ZHBO_BO2_DryFire" } else { d.empty_fire_sound.as_str() };
                 sh.sound(event)
             }
-            "pullback_sound_player" if thrown => sh.sound(zhbo_core::sounds::PULL_PIN),
-            "projectile_explosion_sound" if explodes => sh.sound(zhbo_core::sounds::EXPLOSION),
-            "melee_swipe_sound_player" => sh.sound(zhbo_core::sounds::MELEE_SWING),
+            "pullback_sound_player" if thrown => sh.sound(zhbo_core::sounds::pullback_for(d)),
+            "projectile_explosion_sound" if explodes => sh.sound(zhbo_core::sounds::explosion_for(d.explode_sound.as_str())),
+            "melee_swipe_sound_player" => sh.sound(zhbo_core::sounds::melee_swing_for(d)),
+            "melee_hit_sound" => own(&d.melee_hit_sound),
+            "raise_sound_player" => own(&d.raise_sound),
+            "first_raise_sound_player" => own(&d.first_raise_sound),
+            "putaway_sound_player" => own(&d.putaway_sound),
+            "ads_zoom_sound" => own(&d.ads_zoom_sound),
             _ => None,
         };
         b.opt_text(c, v);
