@@ -40,8 +40,8 @@ fn fixture() -> Fixture {
     let manifest = Weapon {
         id: "test_mp+reflex".into(),
         parts: vec![
-            ViewmodelPart { model: zhbo_native::model_path("gun"), tag: None, offset: IDENTITY, rigid: true, ads_only: false },
-            ViewmodelPart { model: zhbo_native::model_path("reflex"), tag: Some("tag_reflex".into()), offset: (QUAT_IDENTITY, [0.0, 0.0, 0.0]), rigid: true, ads_only: false },
+            ViewmodelPart { model: zhbo_native::model_path("gun"), tag: None, offset: IDENTITY, rigid: true, ads_only: false, ads_swap: None },
+            ViewmodelPart { model: zhbo_native::model_path("reflex"), tag: Some("tag_reflex".into()), offset: (QUAT_IDENTITY, [0.0, 0.0, 0.0]), rigid: true, ads_only: false, ads_swap: None },
         ],
         hide: vec!["tag_iron".into()],
     };

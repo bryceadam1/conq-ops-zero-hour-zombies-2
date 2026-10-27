@@ -14,7 +14,7 @@ use crate::paks::{load_zone, Paks};
 use crate::textures::{finish, textures, Looks};
 use zhbo_formats::iwi::Rgba;
 use zhbo_formats::{t6zone::Zone, w3d, xanim, xmodel};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 
 /// The magazine model of a gun's viewmodel: BO2 names them `t6_attach_mag_<weapon>_view` after a
@@ -52,9 +52,12 @@ pub(crate) struct BasePart {
     pub magazine: bool,
     /// The model carries the weapon's sight (`tag_scope`/`tag_sights`): it drives `tag_sights`.
     pub optic: bool,
-    /// The M32's `_ads` sight variant: drawn only at full ADS. The hip `_view` variant carries the
-    /// same sight; the pair swaps at the ADS handoff. The W3D path draws only the hip sight.
+    /// `attachViewModel[7]`, slot 0's ADS model (the M32's `_ads` sight): drawn only while aiming
+    /// (G14 §3). The W3D path draws only the hip parts.
     pub ads_only: bool,
+    /// The base part (an index into the same list) this ADS-only part replaces while aiming: slot
+    /// 0's, when the weapon has one.
+    pub ads_of: Option<usize>,
 }
 
 /// The base parts of `w` for the combination `c`: the magazine (the `attach_mag` array entry, the
@@ -76,64 +79,38 @@ pub(crate) fn base_parts(patch: &Zone, common: &Zone, w: &zhbo_formats::weapon::
             .find(|((m, _), _)| m.contains("attach_mag"))
             .and_then(|((m, _), off)| find_model(patch, common, m).ok().map(|model| (model, *off)));
         if let Some((model, offset)) = authored {
-            out.push(BasePart { model, tag: None, offset, magazine: true, optic: false, ads_only: false });
+            out.push(BasePart { model, tag: None, offset, magazine: true, optic: false, ads_only: false, ads_of: None });
         } else if let Some(model) = magazine(common, view) {
-            out.push(BasePart { model, tag: None, offset: [0.0; 3], magazine: true, optic: false, ads_only: false });
+            out.push(BasePart { model, tag: None, offset: [0.0; 3], magazine: true, optic: false, ads_only: false, ads_of: None });
         }
     }
     if !c.no_base_attachment {
-        for ((name, tag), offset) in w.attach_view_models.iter().zip(&w.attach_view_offsets) {
+        // Slot 0's part, for slot 7 (its ADS model) to replace.
+        let mut slot0 = None;
+        for (((name, tag), offset), &slot) in w.attach_view_models.iter().zip(&w.attach_view_offsets).zip(&w.attach_view_slots) {
             if name.is_empty() || name.contains("attach_mag") {
                 continue;
             }
             let Ok(model) = find_model(patch, common, name) else { continue };
-            if duplicate_sight(&out, &model) {
-                continue;
-            }
             let optic = model.bones.iter().any(|b| b.name == "tag_scope" || b.name == "tag_sights");
             // `viewModelOffsetBaseAttachment` replaces this part's authored offset when the
             // combination sets `overrideBaseWeaponAttachmentOffsets` (the IR optics); the part
             // stays. It is in the same frame (the AS50's Y/Z match), so it replaces, never adds.
             let offset = c.base_attachment_offset.unwrap_or(*offset);
-            let ads_only = model.name.ends_with("_ads");
-            out.push(BasePart { model, tag: (!tag.is_empty()).then(|| tag.clone()), offset, magazine: false, optic, ads_only });
+            let ads_only = slot == ADS_SLOT;
+            if slot == 0 {
+                slot0 = Some(out.len());
+            }
+            let ads_of = if ads_only { slot0 } else { None };
+            out.push(BasePart { model, tag: (!tag.is_empty()).then(|| tag.clone()), offset, magazine: false, optic, ads_only, ads_of });
         }
     }
     out
 }
 
-/// Whether `b` is the same sight as `a`: the same non-empty set of surface-material names and a
-/// bounding box overlapping at IoU ≥ 0.9. The M32 lists its sight twice — `_view` (hip) and `_ads`
-/// (aim) — as complete alternatives with the same lens and reticle, differing only in the housing
-/// mesh; drawing both would double-draw the glass. The first entry (the hip sight) is kept.
-fn same_sight(a: &xmodel::Model, b: &xmodel::Model) -> bool {
-    let (ma, mb) = (material_names(a), material_names(b));
-    if ma.is_empty() || ma != mb {
-        return false;
-    }
-    let (mut intersection, mut union) = (1.0f32, 1.0f32);
-    for k in 0..3 {
-        let overlap = (a.maxs[k].min(b.maxs[k]) - a.mins[k].max(b.mins[k])).max(0.0);
-        let span = (a.maxs[k].max(b.maxs[k]) - a.mins[k].min(b.mins[k])).max(0.0);
-        intersection *= overlap;
-        union *= span;
-    }
-    union > 0.0 && intersection / union >= 0.9
-}
-
-/// Whether `model` is a duplicate sight of an existing base part: the same material set and a
-/// bounding box overlapping at IoU ≥ 0.9. The M32's `_view`/`_ads` pair is not a duplicate: the
-/// two are the same sight at the same mount, but the ADS variant replaces the hip housing at full
-/// ADS, so both must load.
-fn duplicate_sight(out: &[BasePart], model: &xmodel::Model) -> bool {
-    !model.name.ends_with("_ads")
-        && !out.iter().any(|p| p.ads_only)
-        && out.iter().any(|p| !p.magazine && same_sight(&p.model, model))
-}
-
-fn material_names(m: &xmodel::Model) -> BTreeSet<&str> {
-    m.materials.iter().flatten().map(|m| m.name.as_str()).filter(|n| !n.is_empty()).collect()
-}
+/// `attachViewModel[7]`: slot 0's ADS model. BO2 draws it only while aiming, and slot 0 then only
+/// when it is empty (`FUN_00535170`, G14 §3).
+const ADS_SLOT: u8 = 7;
 
 /// The base-part clause of the conversion report: the count and every model's name, so a part that
 /// silently stops loading is visible in the launcher log (the report used to be silent exactly
@@ -146,24 +123,60 @@ fn base_part_note(base: &[BasePart]) -> String {
     format!(", {} base parts ({})", base.len(), names.join(", "))
 }
 
+/// One model an attachment adds, as [`attachment_parts`] lists it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct AttachmentModel<'a> {
+    name: &'a str,
+    /// The unique's offset and rotation for this model (scaled).
+    xf: crate::xf::Xf,
+    /// The attachment's point, or 0 for a model that is not its optic (the IR rail mount).
+    point: u32,
+    /// The unique's `viewModelADS`: drawn only while aiming.
+    ads_only: bool,
+    /// The model (an index into the same list) the ADS model replaces while aiming.
+    ads_of: Option<usize>,
+}
+
 /// The models one attachment adds, in draw order, with their placement and whether each is the
 /// attachment's optic. An IR optic's `viewModelAdditional` (the dual-band rail mount) comes first,
 /// at the unique's own `viewModelAddOffsets`/`viewModelAddRotations` (as50: `[1, 0, 4.711]` under
 /// the optic's `[1.045, 0, 5.568]`); only the single-attachment IR uniques carry one.
-fn attachment_parts(u: &zhbo_formats::weapon::AttachmentUnique, pt: u32) -> Vec<(&str, crate::xf::Xf, u32)> {
+///
+/// A unique's `viewModelADS` (the holo's and the rangefinder's `_ads`) follows its `viewModel`: BO2
+/// draws it instead, on the same tag at the same offset and rotation, while aiming; the additional
+/// model draws in both lists (`FUN_00535170`, G14 §3). It keeps the attachment's point: at full ADS
+/// it is the sight the eye lines up with.
+fn attachment_parts(u: &zhbo_formats::weapon::AttachmentUnique, pt: u32) -> Vec<AttachmentModel<'_>> {
     let xf = |rotation: [f32; 3], offset: [f32; 3]| character::scaled_xf((crate::xf::from_angles(rotation), offset));
+    let part = |name, xf, point| AttachmentModel { name, xf, point, ads_only: false, ads_of: None };
     let mut out = Vec::new();
     if let Some(name) = u.view_model_additional.as_deref() {
-        out.push((name, xf(u.view_add_rotation, u.view_add_offset), 0));
+        out.push(part(name, xf(u.view_add_rotation, u.view_add_offset), 0));
     }
-    if let Some(name) = u.view_model.as_deref() {
-        out.push((name, xf(u.view_rotation, u.view_offset), pt));
+    let hip = u.view_model.as_deref().map(|name| {
+        out.push(part(name, xf(u.view_rotation, u.view_offset), pt));
+        out.len() - 1
+    });
+    if let Some(name) = u.view_model_ads.as_deref() {
+        out.push(AttachmentModel { ads_only: true, ads_of: hip, ..part(name, xf(u.view_rotation, u.view_offset), pt) });
     }
     out
 }
 
 /// A notetrack source: viewmodel, clip (BO2 slot or tablet clip) and the BO2 animation.
 pub type Clip = (i32, i32, xanim::Anim);
+
+/// One loaded attachment model of a combination, with where it goes and its ADS role
+/// ([`AttachmentModel`] with the model found).
+struct Extra {
+    model: xmodel::Model,
+    tag: Option<String>,
+    xf: crate::xf::Xf,
+    point: u32,
+    ads_only: bool,
+    /// The `extra` index of the model this ADS model replaces while aiming.
+    ads_of: Option<usize>,
+}
 
 /// What a weapon's attachments change about its art: BO2's `WeaponAttachmentUnique` for each, the
 /// animation set to use, the weapon's bones to hide, and the gunshot.
@@ -394,23 +407,30 @@ pub(crate) fn weapon_viewmodels(
         let parts: Vec<(&xmodel::Model, &str)> = vec![(&gun, mount_tag(w))];
         // The attachments' models, each with where it goes: an attachment's additional mount (the
         // IR rail) before its own model, both on the unique's tag.
-        let mut extra: Vec<(xmodel::Model, Option<String>, crate::xf::Xf, u32)> = Vec::new();
+        let mut extra: Vec<Extra> = Vec::new();
         for (u, pt) in &c.parts {
-            for (name, offset, point) in attachment_parts(u, *pt) {
-                let Ok(model) = find_model(patch, common, name) else { continue };
-                extra.push((model, u.view_model_tag.clone(), offset, point));
+            // The list index of each of this unique's models in `extra`, for the ADS pairing.
+            let mut at: Vec<Option<usize>> = Vec::new();
+            for a in attachment_parts(u, *pt) {
+                let Ok(model) = find_model(patch, common, a.name) else {
+                    at.push(None);
+                    continue;
+                };
+                at.push(Some(extra.len()));
+                let ads_of = a.ads_of.and_then(|k| at.get(k).copied().flatten());
+                extra.push(Extra { model, tag: u.view_model_tag.clone(), xf: a.xf, point: a.point, ads_only: a.ads_only, ads_of });
             }
         }
         let gun_tex = textures(&gun, paks, out, &mut looks);
         let base_tex: Vec<Vec<Option<String>>> = base.iter().map(|p| textures(&p.model, paks, out, &mut looks)).collect();
-        let extra_tex: Vec<Vec<Option<String>>> = extra.iter().map(|(m, ..)| textures(m, paks, out, &mut looks)).collect();
+        let extra_tex: Vec<Vec<Option<String>>> = extra.iter().map(|e| textures(&e.model, paks, out, &mut looks)).collect();
         // The left gun of a dual-wield pair: its own textures and native blob, written once.
         let lh_tex = lh_gun.as_ref().map(|m| textures(m, paks, out, &mut looks));
         let native_lh = lh_gun.as_ref().zip(lh_tex.as_ref()).map(|(m, t)| native::model(m, t, &looks));
         // The native blobs (Track R): the same parts, unconverted, for the renderer's own BO2 pass.
         let native_gun = native::model(&gun, &gun_tex, &looks);
         let native_base: Vec<zhbo_native::model::Model> = base.iter().zip(&base_tex).map(|(p, t)| native::model(&p.model, t, &looks)).collect();
-        let native_extra: Vec<zhbo_native::model::Model> = extra.iter().zip(&extra_tex).map(|((m, ..), t)| native::model(m, t, &looks)).collect();
+        let native_extra: Vec<zhbo_native::model::Model> = extra.iter().zip(&extra_tex).map(|(e, t)| native::model(&e.model, t, &looks)).collect();
         let mut native_factions: Vec<(char, zhbo_native::model::Model)> = Vec::new();
         let mut rig: Option<Rig> = None;
         for (f, zone) in FACTIONS.iter().zip(zones) {
@@ -459,9 +479,9 @@ pub(crate) fn weapon_viewmodels(
                             rig.add_marker("tag_sights", root, local);
                         }
                     }
-                    for (model, tag, offset, pt) in &extra {
+                    for Extra { model, tag, xf, point: pt, .. } in extra.iter().filter(|e| !e.ads_only) {
                         let at = tag.as_deref().and_then(|t| rig.pivot(t)).unwrap_or(root);
-                        rig.attach(model, at, *offset);
+                        rig.attach(model, at, *xf);
                         // Aim through the optic: the line of sight goes up to the middle of its glass
                         // (the window sits in the upper part of the sight, above its mount).
                         if *pt == point::OPTIC as u32 {
@@ -492,8 +512,11 @@ pub(crate) fn weapon_viewmodels(
                         meshes.extend(character::skin(rig, &part.model, &format!("B{k}"), tex));
                     }
                 }
-                for (k, ((model, ..), tex)) in extra.iter().zip(&extra_tex).enumerate() {
-                    meshes.extend(character::skin(rig, model, &format!("A{k}"), tex));
+                for (k, (e, tex)) in extra.iter().zip(&extra_tex).enumerate() {
+                    if e.ads_only {
+                        continue;
+                    }
+                    meshes.extend(character::skin(rig, &e.model, &format!("A{k}"), tex));
                 }
                 finish(&mut meshes, &looks);
                 let name = vm_model(vm, f.letter);
@@ -552,16 +575,24 @@ pub(crate) fn weapon_viewmodels(
                 n += 1;
             }
         }
-        let attachments: Vec<(Option<String>, crate::xf::Xf, bool)> =
-            extra.iter().map(|(_, tag, offset, pt)| (tag.clone(), (offset.0, offset.1.map(|c| c / character::SCALE)), *pt == point::OPTIC as u32)).collect();
+        let attachments: Vec<native::AttachmentPart> = extra
+            .iter()
+            .map(|e| native::AttachmentPart {
+                tag: e.tag.clone(),
+                offset: (e.xf.0, e.xf.1.map(|c| c / character::SCALE)),
+                optic: e.point == point::OPTIC as u32,
+                ads_only: e.ads_only,
+                ads_of: e.ads_of,
+            })
+            .collect();
         let base_native_parts: Vec<native::BasePart> = base
             .iter()
             .zip(&native_base)
-            .map(|(p, m)| native::BasePart { model: m, tag: p.tag.clone(), offset: (crate::xf::IDENTITY.0, p.offset), magazine: p.magazine, optic: p.optic, ads_only: p.ads_only })
+            .map(|(p, m)| native::BasePart { model: m, tag: p.tag.clone(), offset: (crate::xf::IDENTITY.0, p.offset), magazine: p.magazine, optic: p.optic, ads_only: p.ads_only, ads_of: p.ads_of })
             .collect();
         let dual_tag = dual_mount();
         let dual_native = dual.zip(native_lh.as_ref()).map(|(w, m)| native::DualGun { gun: m, tag: dual_tag.as_str(), hide: &w.hide_tags });
-        let vm_native = native::Viewmodel { vm, id, gun: &gun, gun_tag: mount_tag(w), base_parts: base_native_parts, extra_models: extra.iter().map(|e| &e.0).collect(), attachments, hide: &c.hide, clips: &native_clips, dual: dual_native };
+        let vm_native = native::Viewmodel { vm, id, gun: &gun, gun_tag: mount_tag(w), base_parts: base_native_parts, extra_models: extra.iter().map(|e| &e.model).collect(), attachments, hide: &c.hide, clips: &native_clips, dual: dual_native };
         native::viewmodels(out, &vm_native, &native_gun, &native_base, &native_extra, &native_factions);
         let mask = |a: &[Option<String>]| a.iter().enumerate().take(128).filter(|(_, x)| x.is_some()).fold(0u128, |m, (i, _)| m | (1u128 << i));
         if let Some(d) = defs.iter_mut().find(|d| &d.id == id) {
@@ -622,6 +653,7 @@ pub(crate) fn world_weapons(
             offset: crate::xf::IDENTITY,
             rigid: true,
             ads_only: false,
+            ads_swap: None,
         }];
         for (u, _) in &c.parts {
             let Some(model) = u.world_model.as_deref().and_then(|m| find_model(patch, common, m).ok()) else { continue };
@@ -641,6 +673,7 @@ pub(crate) fn world_weapons(
                 offset: crate::xf::compose(native_base, (crate::xf::from_angles(u.world_rotation), u.world_offset)),
                 rigid: true,
                 ads_only: false,
+                ads_swap: None,
             });
         }
         out.insert(
@@ -861,7 +894,7 @@ pub(crate) fn tablet_world(patch: &Zone, common: &Zone, paks: &Paks, out: &mut B
 
 #[cfg(test)]
 mod tests {
-    use super::{attachment_parts, base_part_note, duplicate_sight, is_dual_wield, mount_tag, same_sight, BasePart};
+    use super::{attachment_parts, base_part_note, is_dual_wield, mount_tag, BasePart};
     use zhbo_formats::weapon::{inventory, Attachment, AttachmentUnique, Weapon};
 
     fn sight(name: &str, mins: [f32; 3], maxs: [f32; 3]) -> zhbo_formats::xmodel::Model {
@@ -949,42 +982,39 @@ mod tests {
         };
         let parts = attachment_parts(&ir, 10);
         assert_eq!(parts.len(), 2, "{parts:?}");
-        let (mount, at, point) = parts[0];
+        let (mount, at, point) = (parts[0].name, parts[0].xf, parts[0].point);
         assert_eq!((mount, point), ("t6_attach_optic_dualband_mount_view", 0), "the mount draws first and must not drive the aim marker");
         assert_eq!(at.1, crate::character::scaled([1.0, 0.0, 4.711]), "the mount rides its own add offset");
-        let (optic, at, point) = parts[1];
+        let (optic, at, point) = (parts[1].name, parts[1].xf, parts[1].point);
         assert_eq!((optic, point), ("t6_attach_optic_dualband_view", 10), "the optic keeps the attachment's point");
         assert_eq!(at.1, crate::character::scaled([1.045, 0.0, 5.568]));
         assert_eq!(attachment_parts(&AttachmentUnique { view_model: Some("t6_attach_bcpu_view".into()), ..Default::default() }, 10).len(), 1, "no mount without viewModelAdditional");
     }
 
-    /// The M32 lists `_view` and `_ads` as two complete sights: the same non-empty material set and
-    /// a near-identical bounding box. A genuinely different model (another material, or a distant
-    /// box) is not the same sight.
+    /// A unique's `viewModelADS` is a second model of the same attachment: drawn only while
+    /// aiming, instead of its `viewModel`, on the same tag at the same offset and rotation, and
+    /// still the attachment's optic (G14 §3). The additional model is not paired: it draws in both
+    /// lists.
     #[test]
-    fn the_sight_variant_dedupe_collapses_the_m32_pair() {
-        let view = sight("mc/mtl_t6_attach_optic_m32", [4.80, -0.80, 4.80], [8.54, 0.70, 6.84]);
-        let ads = sight("mc/mtl_t6_attach_optic_m32", [4.79, -0.80, 4.78], [8.55, 0.70, 6.85]);
-        assert!(same_sight(&view, &ads), "the same sight's hip and ADS variants collapse");
-        let other_material = sight("mc/mtl_t6_attach_optic_other", [4.80, -0.80, 4.80], [8.54, 0.70, 6.84]);
-        assert!(!same_sight(&view, &other_material), "a different material set is a different part");
-        let elsewhere = sight("mc/mtl_t6_attach_optic_m32", [20.0, 0.0, 0.0], [24.0, 1.0, 2.0]);
-        assert!(!same_sight(&view, &elsewhere), "a disjoint box is a different part");
-    }
-
-    /// The M32's `_view` and `_ads` sights are the same sight at the same mount. The ADS variant is
-    /// not a duplicate: both load for the native manifest's ADS handoff. A true duplicate still
-    /// dedupes, and the hip sight is not a duplicate when the ADS variant is present.
-    #[test]
-    fn the_m32_ads_sight_is_not_deduped() {
-        let view = sight("t6_attach_optic_m32_view", [4.80, -0.80, 4.80], [8.54, 0.70, 6.84]);
-        let ads = sight("t6_attach_optic_m32_ads", [4.79, -0.80, 4.78], [8.55, 0.70, 6.85]);
-        let base = |model: zhbo_formats::xmodel::Model, ads_only: bool| BasePart { model, tag: None, offset: [0.0; 3], magazine: false, optic: true, ads_only };
-        let mut out = vec![base(view.clone(), false)];
-        assert!(!duplicate_sight(&out, &ads), "the ADS variant is not a duplicate of the hip sight");
-        assert!(duplicate_sight(&out, &view), "a true duplicate still dedupes");
-        out.push(base(ads, true));
-        assert!(!duplicate_sight(&out, &view), "the hip sight is not a duplicate when the ADS variant is present");
+    fn the_ads_model_pairs_with_its_view_model() {
+        let holo = AttachmentUnique {
+            view_model: Some("t6_attach_optic_holo_view".into()),
+            view_model_ads: Some("t6_attach_optic_holo_ads".into()),
+            view_offset: [2.0, 0.0, 4.5],
+            view_rotation: [0.0, 1.0, 0.0],
+            ..Default::default()
+        };
+        let parts = attachment_parts(&holo, 1);
+        assert_eq!(parts.len(), 2, "{parts:?}");
+        assert_eq!((parts[0].name, parts[0].ads_only, parts[0].ads_of), ("t6_attach_optic_holo_view", false, None));
+        assert_eq!((parts[1].name, parts[1].ads_only, parts[1].ads_of), ("t6_attach_optic_holo_ads", true, Some(0)), "the ADS model replaces the view model");
+        assert_eq!((parts[1].xf, parts[1].point), (parts[0].xf, 1), "the same placement and the optic's point");
+        let mounted = AttachmentUnique { view_model_additional: Some("mount".into()), ..holo.clone() };
+        let parts = attachment_parts(&mounted, 1);
+        assert_eq!(parts.iter().map(|p| (p.name, p.ads_of)).collect::<Vec<_>>(), [("mount", None), ("t6_attach_optic_holo_view", None), ("t6_attach_optic_holo_ads", Some(1))]);
+        let ads_alone = AttachmentUnique { view_model_ads: Some("x_ads".into()), ..Default::default() };
+        let parts = attachment_parts(&ads_alone, 1);
+        assert_eq!((parts.len(), parts[0].ads_only, parts[0].ads_of), (1, true, None), "an ADS model with no view model draws only while aiming");
     }
 
     /// The conversion report names every base part, so a part that silently stops loading (the
@@ -998,6 +1028,7 @@ mod tests {
             magazine,
             optic: !magazine,
             ads_only: false,
+            ads_of: None,
         };
         let note = base_part_note(&[part("t6_attach_mag_xpr50_view", true), part("t6_wpn_sniper_xpr50_scope_view", false)]);
         assert!(note.contains("2 base parts"), "{note}");

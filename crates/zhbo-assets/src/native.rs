@@ -196,10 +196,10 @@ pub(crate) struct Viewmodel<'a> {
     /// The base parts (the magazine and the base attachment art), pushed after the gun and before
     /// the attachments.
     pub base_parts: Vec<BasePart<'a>>,
-    /// The attachment models found, in order, with their tag, offset (inches) and whether each
-    /// is an optic.
+    /// The attachment models found, in order, with their tag, offset (inches), whether each is an
+    /// optic and its ADS role.
     pub extra_models: Vec<&'a xmodel::Model>,
-    pub attachments: Vec<(Option<String>, crate::xf::Xf, bool)>,
+    pub attachments: Vec<AttachmentPart>,
     pub hide: &'a [String],
     pub clips: &'a [(u16, String)],
     /// The left gun of a dual-wield pair: the `_lh` model as a second rig on the left palm.
@@ -220,9 +220,27 @@ pub(crate) struct BasePart<'a> {
     /// The model carries the weapon's sight: it drives the aim marker when no attachment optic is
     /// mounted.
     pub optic: bool,
-    /// The M32's `_ads` sight variant: drawn only at full ADS. The hip `_view` variant carries the
-    /// same sight; the pair swaps at the ADS handoff.
+    /// BO2's `attachViewModel[7]` (the M32's `_ads` sight): drawn only while aiming.
     pub ads_only: bool,
+    /// The base part (an index into the same list) this ADS-only part replaces while aiming:
+    /// slot 7 replaces slot 0 (G14 §3).
+    pub ads_of: Option<usize>,
+}
+
+/// One attachment model of a viewmodel: where it hangs and its roles.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct AttachmentPart {
+    /// The unique's `viewModelTag`; `None` (or a bone the composition lacks) mounts at `j_gun`.
+    pub tag: Option<String>,
+    /// The unique's view offset and rotation, in inches.
+    pub offset: crate::xf::Xf,
+    /// The attachment's optic: it drives the aim marker.
+    pub optic: bool,
+    /// A unique's `viewModelADS`: drawn only while aiming.
+    pub ads_only: bool,
+    /// The attachment model (an index into the same list) this ADS-only model replaces while
+    /// aiming: the unique's own `viewModel`.
+    pub ads_of: Option<usize>,
 }
 
 /// The left-hand companion of a dual-wield pair: its own model (bones suffixed `1`) and mount.
@@ -261,32 +279,46 @@ pub(crate) fn viewmodels(
         let arms_path = put_model(out, arms);
         // (model, tag, offset, rigid, ads_only, path) in composition order.
         type PartRow<'a> = (&'a nm::Model, Option<String>, zhbo_native::math::Xf, bool, bool, String);
+        // (ADS part, the hip part it replaces) as composition indices: `Part::ads_swap`.
+        let mut swaps: Vec<(usize, usize)> = Vec::new();
         let mut parts: Vec<PartRow> =
             vec![(arms, None, IDENTITY, false, false, arms_path), (gun, Some(v.gun_tag.into()), IDENTITY, false, false, gun_path.clone())];
         let has = |name: &str, parts: &[PartRow]| parts.iter().any(|p| p.0.bone(name).is_some());
         // The base parts after the gun and before the attachments: `aim_marker` reads `parts[1]`
         // as the gun, and an attachment optic later overrides a base optic in `optic`.
         let mut optic = None;
+        let mut base_at = Vec::with_capacity(v.base_parts.len());
         for (bp, path) in v.base_parts.iter().zip(&base_paths) {
             let tag = bp.tag.clone().filter(|t| has(t, &parts)).unwrap_or_else(|| "j_gun".into());
+            // The last optic drives the marker: an ADS model after its hip model, so the eye lines
+            // up with the sight drawn at full ADS.
             if bp.optic {
                 optic = Some((parts.len(), bp.model.mins, bp.model.maxs, bp.model.name.as_str()));
             }
+            if let Some(hip) = bp.ads_of.and_then(|k| base_at.get(k).copied()) {
+                swaps.push((parts.len(), hip));
+            }
+            base_at.push(parts.len());
             parts.push((bp.model, Some(tag), bp.offset, false, bp.ads_only, path.clone()));
             if bp.magazine && has("tag_clip1", &parts) {
                 parts.push((bp.model, Some("tag_clip1".into()), IDENTITY, true, false, path.clone()));
             }
         }
-        for (k, ((tag, offset, is_optic), (model, path))) in v.attachments.iter().zip(extra.iter().zip(&extra_paths)).enumerate() {
+        let mut extra_at = Vec::with_capacity(v.attachments.len());
+        for (k, (a, (model, path))) in v.attachments.iter().zip(extra.iter().zip(&extra_paths)).enumerate() {
             // A missing tag mounts at the gun's root (`j_gun`), BO2's default (G10): the authored
             // offset is gun-local and applies unchanged in `j_gun`'s frame. The gun composes before
             // its attachments, so `j_gun` holds; a gun blob without it hangs the part from the base
             // origin (`pose.rs`'s missing-tag rule).
-            let tag = tag.clone().filter(|t| has(t, &parts)).or_else(|| has("j_gun", &parts).then(|| "j_gun".into()));
-            if *is_optic {
+            let tag = a.tag.clone().filter(|t| has(t, &parts)).or_else(|| has("j_gun", &parts).then(|| "j_gun".into()));
+            if a.optic {
                 optic = Some((parts.len(), v.extra_models[k].mins, v.extra_models[k].maxs, v.extra_models[k].name.as_str()));
             }
-            parts.push((model, tag, *offset, false, false, path.clone()));
+            if let Some(hip) = a.ads_of.and_then(|k| extra_at.get(k).copied()) {
+                swaps.push((parts.len(), hip));
+            }
+            extra_at.push(parts.len());
+            parts.push((model, tag, a.offset, false, a.ads_only, path.clone()));
         }
         // The left gun is a second rig on the left palm, not a merge into the base hierarchy: its
         // `1`-suffixed bones append after every base part and hang from the mount tag.
@@ -304,7 +336,18 @@ pub(crate) fn viewmodels(
         let manifest = Manifest {
             id: v.id.to_string(),
             faction: *letter as u8,
-            parts: parts.iter().map(|p| Part { model: p.5.clone(), tag: p.1.clone(), offset: p.2, rigid: p.3, ads_only: p.4 }).collect(),
+            parts: parts
+                .iter()
+                .enumerate()
+                .map(|(i, p)| Part {
+                    model: p.5.clone(),
+                    tag: p.1.clone(),
+                    offset: p.2,
+                    rigid: p.3,
+                    ads_only: p.4,
+                    ads_swap: swaps.iter().find(|s| s.1 == i).map(|s| s.0 as u16),
+                })
+                .collect(),
             markers,
             hide,
             clips: v.clips.to_vec(),
@@ -490,7 +533,7 @@ mod tests {
             gun_tag: "tag_weapon",
             base_parts: Vec::new(),
             extra_models: vec![&g],
-            attachments: vec![(None, authored, false)],
+            attachments: vec![AttachmentPart { tag: None, offset: authored, optic: false, ads_only: false, ads_of: None }],
             hide: &[],
             clips: &[],
             dual: None,

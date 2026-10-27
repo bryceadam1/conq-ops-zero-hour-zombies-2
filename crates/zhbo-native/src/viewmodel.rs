@@ -31,10 +31,19 @@ pub struct Part {
     /// Not driven by the clips: it rides its tag as modelled (the reload's incoming magazine on
     /// `tag_clip1`, whose bones share the magazine's names).
     pub rigid: bool,
-    /// The M32's `_ads` sight variant: drawn only at full ADS. The hip `_view` variant carries the
-    /// same sight; the pair swaps at the ADS handoff. The W3D path draws only the hip sight.
+    /// An ADS model (BO2's `attachViewModel[7]` or an attachment unique's `viewModelADS`): drawn
+    /// only while aiming, in place of the hip part that names it in [`Self::ads_swap`]. The W3D
+    /// path draws only the hip models.
     pub ads_only: bool,
+    /// The index of the [`Self::ads_only`] part BO2 draws instead of this one while aiming (the
+    /// holo's `t6_attach_optic_holo_ads` for its `_view`, the M32's slot 7 for its slot 0), or
+    /// `None` when this part keeps its model at ADS. Per part: only the paired parts swap (G14 §3,
+    /// `FUN_00535170`). Viewmodel (`.zbv`) only: the third-person `.zbw` does not carry it.
+    pub ads_swap: Option<u16>,
 }
+
+/// The part-record value of [`Part::ads_swap`]'s `None`.
+const NO_SWAP: u16 = u16::MAX;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Marker {
@@ -75,6 +84,7 @@ impl Viewmodel {
             w.f32s(&p.offset.1);
             w.u8(p.rigid as u8);
             w.u8(p.ads_only as u8);
+            w.u16(p.ads_swap.unwrap_or(NO_SWAP));
         }
         w.count(self.markers.len());
         for m in &self.markers {
@@ -99,7 +109,7 @@ impl Viewmodel {
         let mut r = Reader::open(data, MAGIC, "viewmodel", VERSION)?;
         let id = r.str()?;
         let faction = r.u8()?;
-        let np = r.count(34)?;
+        let np = r.count(36)?;
         let mut parts = Vec::with_capacity(np);
         for i in 0..np {
             let model = r.str()?;
@@ -107,7 +117,17 @@ impl Viewmodel {
             if (i == 0) != tag.is_none() {
                 return Err(FormatError::Corrupt(format!("part {i}: only the base part has no tag")));
             }
-            parts.push(Part { model, tag, offset: (r.f32n()?, r.f32n()?), rigid: r.u8()? != 0, ads_only: r.u8()? != 0 });
+            let (offset, rigid, ads_only) = ((r.f32n()?, r.f32n()?), r.u8()? != 0, r.u8()? != 0);
+            let ads_swap = Some(r.u16()?).filter(|&s| s != NO_SWAP);
+            parts.push(Part { model, tag, offset, rigid, ads_only, ads_swap });
+        }
+        // A swap names an ADS-only part; an ADS-only part never swaps itself.
+        for (i, p) in parts.iter().enumerate() {
+            if let Some(s) = p.ads_swap {
+                if s as usize == i || !parts.get(s as usize).is_some_and(|t| t.ads_only) || p.ads_only {
+                    return Err(FormatError::Corrupt(format!("part {i}: ADS swap {s} is not an ADS-only part")));
+                }
+            }
         }
         let nm = r.count(36)?;
         let mut markers = Vec::with_capacity(nm);
@@ -140,9 +160,10 @@ mod tests {
             id: "an94_mp+reflex".into(),
             faction: b'U',
             parts: vec![
-                Part { model: "Art\\Native\\arms.zbm".into(), tag: None, offset: IDENTITY, rigid: false, ads_only: false },
-                Part { model: "Art\\Native\\gun.zbm".into(), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false },
-                Part { model: "Art\\Native\\reflex.zbm".into(), tag: Some("tag_weapon".into()), offset: ([0.0, 0.0, 0.0, 1.0], [3.0, 0.0, 4.5]), rigid: true, ads_only: true },
+                Part { model: "Art\\Native\\arms.zbm".into(), tag: None, offset: IDENTITY, rigid: false, ads_only: false, ads_swap: None },
+                Part { model: "Art\\Native\\gun.zbm".into(), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false, ads_swap: None },
+                Part { model: "Art\\Native\\holo_view.zbm".into(), tag: Some("tag_weapon".into()), offset: ([0.0, 0.0, 0.0, 1.0], [3.0, 0.0, 4.5]), rigid: true, ads_only: false, ads_swap: Some(3) },
+                Part { model: "Art\\Native\\holo_ads.zbm".into(), tag: Some("tag_weapon".into()), offset: ([0.0, 0.0, 0.0, 1.0], [3.0, 0.0, 4.5]), rigid: true, ads_only: true, ads_swap: None },
             ],
             markers: vec![Marker { name: "tag_sights".into(), parent: "tag_weapon".into(), local: ([0.0, 0.0, 0.0, 1.0], [2.0, 0.0, 5.0]) }],
             hide: vec!["tag_sight_on".into()],
@@ -157,5 +178,11 @@ mod tests {
         let mut no_base = v.clone();
         no_base.parts[0].tag = Some("x".into());
         assert!(Viewmodel::from_bytes(&no_base.to_bytes()).is_err());
+        // A swap must name an ADS-only part: not a hip part, not itself, not out of range.
+        for bad in [1u16, 2, 9] {
+            let mut v2 = v.clone();
+            v2.parts[2].ads_swap = Some(bad);
+            assert!(Viewmodel::from_bytes(&v2.to_bytes()).is_err(), "swap to {bad}");
+        }
     }
 }

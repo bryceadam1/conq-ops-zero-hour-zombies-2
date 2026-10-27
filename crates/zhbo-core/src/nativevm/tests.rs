@@ -373,8 +373,8 @@ fn fixture_torso(torso: Option<(TorsoKeys, TorsoKeys)>) -> Fixture {
         id: "test_mp".into(),
         faction: b'U',
         parts: vec![
-            Part { model: zhbo_native::model_path("arms"), tag: None, offset: IDENTITY, rigid: false, ads_only: false },
-            Part { model: zhbo_native::model_path("gun"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false },
+            Part { model: zhbo_native::model_path("arms"), tag: None, offset: IDENTITY, rigid: false, ads_only: false, ads_swap: None },
+            Part { model: zhbo_native::model_path("gun"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false, ads_swap: None },
         ],
         markers: vec![Marker { name: AIM_TAG.into(), parent: "tag_weapon".into(), local: (QUAT_IDENTITY, [0.0, 2.0, 4.0]) }],
         hide: vec![],
@@ -607,9 +607,9 @@ fn the_base_optic_is_hidden_only_when_the_overlay_art_is_present() {
         id: "test_mp".into(),
         faction: b'U',
         parts: vec![
-            Part { model: zhbo_native::model_path("arms"), tag: None, offset: IDENTITY, rigid: false, ads_only: false },
-            Part { model: zhbo_native::model_path("gun"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false },
-            Part { model: zhbo_native::model_path("optic"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: true, ads_only: false },
+            Part { model: zhbo_native::model_path("arms"), tag: None, offset: IDENTITY, rigid: false, ads_only: false, ads_swap: None },
+            Part { model: zhbo_native::model_path("gun"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false, ads_swap: None },
+            Part { model: zhbo_native::model_path("optic"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: true, ads_only: false, ads_swap: None },
         ],
         markers: vec![Marker { name: AIM_TAG.into(), parent: "tag_weapon".into(), local: (QUAT_IDENTITY, [0.0, 2.0, 4.0]) }],
         hide: vec![],
@@ -669,8 +669,9 @@ fn the_base_optic_is_hidden_only_when_the_overlay_art_is_present() {
     });
 }
 
-/// The M32's `_view`/`_ads` pair: at full ADS the ADS variant shows and the hip variant hides,
-/// regardless of overlay art. The pair is marked by `ads_only`; the models carry `tag_scope`.
+/// The M32's `_view`/`_ads` pair (`attachViewModel[0]`/`[7]`): at full ADS the ADS variant shows
+/// and the hip variant hides, regardless of overlay art. The hip part names its ADS part in
+/// `ads_swap`; the models carry `tag_scope`.
 #[test]
 fn the_m32_ads_sight_swaps_at_full_ads() {
     let arms = model("arms", vec![bone("j_root", None, [0.0; 3]), bone("tag_weapon", Some(0), [20.0, 0.0, -5.0])]);
@@ -691,10 +692,10 @@ fn the_m32_ads_sight_swaps_at_full_ads() {
         id: "test_mp".into(),
         faction: b'U',
         parts: vec![
-            Part { model: zhbo_native::model_path("arms"), tag: None, offset: IDENTITY, rigid: false, ads_only: false },
-            Part { model: zhbo_native::model_path("gun"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false },
-            Part { model: zhbo_native::model_path("optic_view"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: true, ads_only: false },
-            Part { model: zhbo_native::model_path("optic_ads"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: true, ads_only: true },
+            Part { model: zhbo_native::model_path("arms"), tag: None, offset: IDENTITY, rigid: false, ads_only: false, ads_swap: None },
+            Part { model: zhbo_native::model_path("gun"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false, ads_swap: None },
+            Part { model: zhbo_native::model_path("optic_view"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: true, ads_only: false, ads_swap: Some(3) },
+            Part { model: zhbo_native::model_path("optic_ads"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: true, ads_only: true, ads_swap: None },
         ],
         markers: vec![Marker { name: AIM_TAG.into(), parent: "tag_weapon".into(), local: (QUAT_IDENTITY, [0.0, 2.0, 4.0]) }],
         hide: vec![],
@@ -726,6 +727,39 @@ fn the_m32_ads_sight_swaps_at_full_ads() {
         let aimed = l.mesh_aimed.as_ref().expect("the M32 pair swaps at full ADS without overlay art");
         assert_eq!(aimed.surfaces.len(), 3, "the hip sight drops, the ADS sight stays");
     });
+}
+
+/// BO2's ADS part list is per part and switches at `cg_opticAttachmentViewmodelSwitch` (1.0): a
+/// holo with a `viewModelADS` gives way to its `_ads` model, while the magazine and an unpaired
+/// optic beside it keep theirs; one step below the switch the hip list still draws.
+#[test]
+fn the_ads_models_swap_per_part_at_the_switch() {
+    let plain = |name: &str| model(name, vec![bone("tag_weapon", None, [0.0; 3])]);
+    let sight = |name: &str| model(name, vec![bone("tag_weapon", None, [0.0; 3]), bone("tag_sights", Some(0), [0.0, 0.0, 2.0])]);
+    let part = |name: &str, ads_only: bool, ads_swap: Option<u16>| Part {
+        model: zhbo_native::model_path(name),
+        tag: Some("tag_weapon".into()),
+        offset: IDENTITY,
+        rigid: true,
+        ads_only,
+        ads_swap,
+    };
+    let parts = vec![
+        Part { tag: None, ..part("arms", false, None) },
+        part("gun", false, None),
+        part("mag", false, None),
+        part("holo_view", false, Some(5)),
+        part("mms_view", false, None),
+        part("holo_ads", true, None),
+    ];
+    let models = vec![plain("arms"), plain("gun"), plain("mag"), sight("holo_view"), sight("mms_view"), sight("holo_ads")];
+    let hip = [true, true, true, true, true, false];
+    let aimed = [true, true, true, false, true, true];
+    assert_eq!(visible_parts(&parts, &models, 0.0, false), hip);
+    assert_eq!(visible_parts(&parts, &models, OPTIC_VIEWMODEL_SWITCH - 1e-4, false), hip, "the hip list until the switch");
+    assert_eq!(visible_parts(&parts, &models, OPTIC_VIEWMODEL_SWITCH, false), aimed, "only the paired part swaps");
+    assert_eq!(visible_parts(&parts, &models, 1.0, false), aimed);
+    assert_eq!(OPTIC_VIEWMODEL_SWITCH, 1.0, "cg_opticAttachmentViewmodelSwitch's default (FUN_004cc260)");
 }
 
 /// Perpendicular distance from `p` to the ray `(eye, dir)` — the shot's own line.

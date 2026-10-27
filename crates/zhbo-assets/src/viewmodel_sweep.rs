@@ -290,7 +290,31 @@ mod tests {
         assert_eq!(vm.parts.len(), 4, "the arms, the gun and both sights");
         let sights = vm.parts.iter().filter(|p| p.model.contains("optic_m32")).count();
         assert_eq!(sights, 2, "both the hip `_view` and the ADS `_ads` pair: {vm:?}");
-        assert!(vm.parts.iter().any(|p| p.model.contains("_ads") && p.ads_only), "the ADS variant is marked ads_only: {vm:?}");
+        // The pairing is by slot (`attachViewModel[0]`/`[7]`), not by name: the `_ads` is slot 7.
+        let ads = vm.parts.iter().position(|p| p.model.contains("optic_m32_ads")).expect("the slot-7 sight");
+        assert!(vm.parts[ads].ads_only, "slot 7 draws only while aiming: {vm:?}");
+        let view = vm.parts.iter().position(|p| p.model.contains("optic_m32_view")).expect("the slot-0 sight");
+        assert_eq!(vm.parts[view].ads_swap, Some(ads as u16), "slot 0 gives way to slot 7 while aiming: {vm:?}");
+    }
+
+    /// The holo's unique carries a `viewModelADS` (`t6_attach_optic_holo_ads`): it converts, rides
+    /// the holo's tag and offset, draws only while aiming, and the holo's `_view` names it as its
+    /// ADS swap. The magazine keeps its model at ADS.
+    #[test]
+    #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
+    fn the_holo_swaps_to_its_ads_model() {
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        let blobs = src.composition("an94_mp+holo").expect("the AN-94 with its holo");
+        let vm = zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("a manifest")).expect("the manifest parses");
+        let ads = vm.parts.iter().position(|p| p.model.contains("optic_holo_ads")).unwrap_or_else(|| panic!("the ADS model converts: {vm:?}"));
+        let view = vm.parts.iter().position(|p| p.model.contains("optic_holo_view")).expect("the hip model");
+        assert!(vm.parts[ads].ads_only && !vm.parts[view].ads_only, "{vm:?}");
+        assert_eq!(vm.parts[view].ads_swap, Some(ads as u16), "the holo gives way to its ADS model: {vm:?}");
+        assert_eq!((&vm.parts[ads].tag, vm.parts[ads].offset), (&vm.parts[view].tag, vm.parts[view].offset), "same tag and placement");
+        assert!(blobs.contains_key(&vm.parts[ads].model), "the ADS model's blob is written");
+        let swapping: Vec<&str> = vm.parts.iter().filter(|p| p.ads_swap.is_some()).map(|p| p.model.as_str()).collect();
+        assert_eq!(swapping.len(), 1, "only the holo swaps: {swapping:?}");
     }
 
     /// The five pistol dualclips set neither replacement flag: their fast-mag sleeve is additive

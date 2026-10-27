@@ -189,31 +189,39 @@ pub fn build_mesh<'a>(skel: &Skeleton, models: impl IntoIterator<Item = &'a Mode
     build_mesh_visible(skel, models, |_| true)
 }
 
-/// Which parts are drawn at `ads`: a base optic (a part whose model carries `tag_scope`/`tag_sights`)
-/// is hidden at full ADS, when the screen-space overlay replaces it. The gun and magazine remain.
-/// Only the first-person path uses this; the third-person `nativebody` keeps `build_mesh`'s
-/// all-visible default. The hide also requires the overlay art to be present: a material the
-/// install lacks cannot draw, so the physical scope stays rather than leaving neither sight.
-/// The M32's `_view`/`_ads` pair is the exception: at full ADS the ADS variant shows and the hip
-/// variant hides regardless of overlay art (the M32 has no overlay; the pair swaps the housing).
+/// BO2's `cg_opticAttachmentViewmodelSwitch` (default 1.0, range 0..1: "Zoom factor to switch
+/// Optic 1 ADS viewmodel"). The viewmodel's DObj is built with the ADS part list while the weapon
+/// position fraction is at or above it (`FUN_0053a340` → `FUN_00535540` → `FUN_00535170`), and
+/// rebuilt with the hip list the moment it drops below: the swap is instantaneous, at full ADS.
+pub const OPTIC_VIEWMODEL_SWITCH: f32 = 1.0;
+
+/// Which parts are drawn at `ads`. From [`OPTIC_VIEWMODEL_SWITCH`] up, BO2 draws the ADS part list
+/// (G14 §3): each part that names an ADS model ([`Part::ads_swap`]) gives way to it, every other
+/// part keeps its model; below it the ADS-only models are hidden. The swap is per part — a holo's
+/// `_ads` replaces the holo, never the magazine or another optic.
+///
+/// Separately, a base optic (a part whose model carries `tag_scope`/`tag_sights`) is hidden at the
+/// same moment when the screen-space overlay replaces it — only when the overlay art is present: a
+/// material the install lacks cannot draw, so the physical scope stays rather than leaving neither
+/// sight. Only the first-person path uses this; the third-person `nativebody` keeps `build_mesh`'s
+/// all-visible default.
 pub fn visible_parts(parts: &[Part], models: &[Model], ads: f32, overlay_art_present: bool) -> Vec<bool> {
-    let has_ads = parts.iter().any(|p| p.ads_only);
+    let aimed = ads >= OPTIC_VIEWMODEL_SWITCH;
     models
         .iter()
         .zip(parts)
         .map(|(m, p)| {
-            let optic = m.bones.iter().any(|b| b.name == "tag_scope" || b.name == "tag_sights");
-            if ads >= 1.0 {
-                if p.ads_only {
-                    true
-                } else if has_ads && optic {
-                    false
-                } else {
-                    !(optic && overlay_art_present)
-                }
-            } else {
-                !p.ads_only
+            if !aimed {
+                return !p.ads_only;
             }
+            if p.ads_only {
+                return true;
+            }
+            if p.ads_swap.is_some() {
+                return false;
+            }
+            let optic = m.bones.iter().any(|b| b.name == "tag_scope" || b.name == "tag_sights");
+            !(optic && overlay_art_present)
         })
         .collect()
 }
@@ -405,18 +413,19 @@ pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: 
     if !problems.is_empty() {
         return Err(format!("{path}: {}", problems.join("; ")));
     }
-    // The hip half hides an `_ads` variant part (the M32's aimed housing) until full ADS — the
-    // plan's `ads < 1.0` arm of `visible_parts`; without it both housings would draw at hip.
+    // The hip half hides the ADS-only models (the holo's `_ads`, the M32's slot 7) — the
+    // below-the-switch arm of `visible_parts`; without it both models of a pair would draw at hip.
     let hip = visible_parts(&manifest.parts, &models, 0.0, overlay_art_present);
     let mut mesh = if hip.iter().any(|v| !v) {
         build_mesh_visible(&skeleton, &models, |i| hip.get(i).copied().unwrap_or(true))?
     } else {
         build_mesh(&skeleton, &models)?
     };
-    // The aimed-half mesh: the base optic's surfaces are dropped at full ADS. Built once here so
+    // The aimed-half mesh: each paired part gives way to its ADS model, and the base optic's
+    // surfaces drop under an overlay, at the switch. Built once here so
     // the draw path only swaps handles. The mask's indices are the manifest's part order, which
     // the skeleton preserves.
-    let aimed = visible_parts(&manifest.parts, &models, 1.0, overlay_art_present);
+    let aimed = visible_parts(&manifest.parts, &models, OPTIC_VIEWMODEL_SWITCH, overlay_art_present);
     let mut mesh_aimed = if aimed.iter().any(|v| !v) {
         Some(build_mesh_visible(&skeleton, &models, |i| aimed.get(i).copied().unwrap_or(true))?)
     } else {

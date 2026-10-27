@@ -114,11 +114,13 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeIn) -> i32 {
             None => return NOT_NATIVE,
         }
     }
-    // At full ADS the base optic is hidden and the screen-space overlay takes over; the aimed
-    // mesh carries the gun and magazine only. The draw swaps handles, not the blob.
-    let mesh = if inp.ads >= 1.0 { s.gpu.mesh_aimed.or(s.gpu.mesh) } else { s.gpu.mesh };
-    if inp.ads >= 1.0 && s.gpu.mesh_aimed.is_some() {
-        s.log_once("native viewmodel: base optic hidden at full ADS; the screen overlay takes over".into());
+    // From BO2's optic switch (full ADS) the aimed mesh draws: each paired part shows its ADS
+    // model, and a base optic under a screen-space overlay is hidden. The draw swaps handles, not
+    // the blob.
+    let aimed = inp.ads >= super::OPTIC_VIEWMODEL_SWITCH;
+    let mesh = if aimed { s.gpu.mesh_aimed.or(s.gpu.mesh) } else { s.gpu.mesh };
+    if aimed && s.gpu.mesh_aimed.is_some() {
+        s.log_once("native viewmodel: the ADS part list draws at full ADS (ADS models, overlay-hidden optic)".into());
     }
     let Some(mesh) = mesh else { return NOT_NATIVE };
     let mut lights = [NativeLight::default(); 3];

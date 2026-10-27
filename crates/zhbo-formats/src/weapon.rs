@@ -368,6 +368,9 @@ pub struct Weapon {
     pub attach_view_models: Vec<(String, String)>,
     /// The authored view offset of each `attach_view_models` entry, in inches.
     pub attach_view_offsets: Vec<[f32; 3]>,
+    /// The `attachViewModel` slot (0..8) of each `attach_view_models` entry. BO2 reads the slots
+    /// by role (G14 §3): 0 the base attachment art, 6 the magazine, 7 slot 0's ADS model.
+    pub attach_view_slots: Vec<u8>,
     /// Attachment combinations; `kind == 0` entries are the base weapon's parts (its magazine).
     pub attachment_uniques: Vec<AttachmentUnique>,
     /// Bit `1 << eAttachment` for each attachment create-a-class offers on this weapon.
@@ -547,6 +550,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         .collect();
     let mut attach_view_models = Vec::new();
     let mut attach_view_offsets = Vec::new();
+    let mut attach_view_slots = Vec::new();
     let (models, tags) = (z.try_u32(v + WV::attachViewModel)?, z.try_u32(v + WV::attachViewModelTag)?);
     if models != 0 {
         for i in 0..8 {
@@ -558,6 +562,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 let off = [z.f32(at), z.f32(at + 4), z.f32(at + 8)];
                 attach_view_models.push((m, t));
                 attach_view_offsets.push(off);
+                attach_view_slots.push(i as u8);
             }
         }
     }
@@ -631,6 +636,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         anims,
         attach_view_models,
         attach_view_offsets,
+        attach_view_slots,
         clip_size: int(z, v + WV::iClipSize),
         reload_time: ms(z, v + WV::iReloadTime),
         reload_empty_time: ms(z, v + WV::iReloadEmptyTime),
