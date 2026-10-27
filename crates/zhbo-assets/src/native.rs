@@ -366,7 +366,7 @@ mod tests {
         };
         let mat = |name: &str| xmodel::Material {
             name: "mtl".into(),
-            textures: vec![xmodel::Texture { semantic: xmodel::TS_CAMO_MAP, image: Some(image(name)) }],
+            textures: vec![xmodel::Texture { name_hash: 0, semantic: xmodel::TS_CAMO_MAP, image: Some(image(name)) }],
             state_bits: Vec::new(),
             sort_key: 0,
         };

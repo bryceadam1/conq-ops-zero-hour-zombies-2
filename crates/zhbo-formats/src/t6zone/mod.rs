@@ -338,6 +338,11 @@ pub struct Zone {
     mem: Vec<u8>,
     pub script_strings: Vec<String>,
     pub assets: Vec<Asset>,
+    /// Every asset the load registered, nested ones included: a `Material` an `XModel` loads
+    /// inline, a `GfxImage` a material loads. The game adds each to its asset pool as it loads
+    /// (`DB_AddXAsset`), so these are as much the zone's assets as the top-level list; OAT's
+    /// `Unlinker --list` (the reference catalog) shows them too. In load order.
+    pub linked: Vec<Asset>,
     /// Bytes of zone data left over after the last asset (0 for a clean load).
     pub trailing_bytes: usize,
 }
@@ -345,7 +350,7 @@ pub struct Zone {
 /// A zone assembled from raw memory: reader tests (here and in the conformance oracle) build one
 /// without a fastfile stream.
 pub fn synthetic(name: &str, mem: Vec<u8>, script_strings: Vec<String>, assets: Vec<Asset>) -> Zone {
-    Zone { name: name.to_string(), mem, script_strings, assets, trailing_bytes: 0 }
+    Zone { name: name.to_string(), mem, script_strings, linked: assets.clone(), assets, trailing_bytes: 0 }
 }
 
 #[cfg(test)]
@@ -424,7 +429,12 @@ pub fn load(zone: &fastfile::Zone) -> Result<Zone, LoadError> {
     }
     s.pop_block();
 
-    Ok(Zone { name: zone.name.clone(), trailing_bytes: d.len() - s.pos, mem: s.mem, script_strings, assets })
+    let linked = s
+        .linked
+        .iter()
+        .filter_map(|&(structure, addr)| ASSET_STRUCTS.iter().find(|(_, n)| *n == structure).map(|&(kind, _)| Asset { kind, structure, addr }))
+        .collect();
+    Ok(Zone { name: zone.name.clone(), trailing_bytes: d.len() - s.pos, mem: s.mem, script_strings, assets, linked })
 }
 
 fn cstr_at(mem: &[u8], addr: u32) -> String {

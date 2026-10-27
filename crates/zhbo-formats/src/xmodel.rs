@@ -72,6 +72,9 @@ pub struct Image {
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Texture {
+    /// `MaterialTextureDef::nameHash`: the shader sampler this image feeds, as BO2's
+    /// [`sampler_hash`] of its name (`colorMap`, `normalMap`, ...).
+    pub name_hash: u32,
     pub semantic: u8,
     pub image: Option<Image>,
 }
@@ -91,6 +94,13 @@ impl Material {
     pub fn color_map(&self) -> Option<&Image> {
         let is_color = |t: &&Texture| t.semantic == TS_COLOR_MAP || (0xC..=0x1B).contains(&t.semantic);
         self.textures.iter().filter(is_color).find_map(|t| t.image.as_ref())
+    }
+    /// The image bound to the shader sampler `name` (`colorMap`), matched by the def's name hash.
+    /// Style camo materials carry several colour-semantic images (`camo_code_spc`, a spec-rgb
+    /// map, the real `_col`); only the sampler name says which one is the colour.
+    pub fn sampler(&self, name: &str) -> Option<&Image> {
+        let h = sampler_hash(name);
+        self.textures.iter().filter(|t| t.name_hash == h).find_map(|t| t.image.as_ref())
     }
     pub fn image(&self, semantic: u8) -> Option<&Image> {
         self.textures.iter().filter(|t| t.semantic == semantic).find_map(|t| t.image.as_ref())
@@ -112,6 +122,13 @@ impl Material {
     pub fn cull(&self) -> Cull {
         self.main_state_bits().map_or(Cull::Back, |b| cull_of(b[0]))
     }
+}
+
+/// The hash BO2 stores in `MaterialTextureDef::nameHash` for a sampler name: `h = 33·h ^ c` over
+/// the lower-cased name from 0 (`R_HashString`). Checked against the install: an ordinary gun
+/// material's `colorMap` and the style camos' `_col` both carry `0xa0ab1041`.
+pub fn sampler_hash(name: &str) -> u32 {
+    name.bytes().fold(0u32, |h, c| h.wrapping_mul(33) ^ c.to_ascii_lowercase() as u32)
 }
 
 /// Which of a surface's faces draw (`GfxStateBits::loadBits[0]` bits 14-15: BO2's
@@ -357,6 +374,7 @@ pub fn find_image(z: &Zone, name: &str) -> Option<Image> {
         .and_then(|kind| z.find(kind, name))
         .map(|a| read_image(z, a.addr))
         .filter(sized)
+        .or_else(|| find_linked(z, "image", name).map(|a| read_image(z, a)).filter(sized))
         .or_else(|| {
             // The image's name pointer is at +72 (`GfxImage::name`), so a pointer-to-name's slot
             // address minus 72 is the image's start. Validate the read before trusting it.
@@ -380,6 +398,24 @@ pub fn find_asset_material(z: &Zone, name: &str) -> Option<Material> {
     let kind = crate::fastfile::asset_type_id("material")?;
     let asset = z.find(kind, name).or_else(|| z.find(kind, &format!(",{name}")))?;
     Some(read_material(z, asset.addr))
+}
+
+/// A material the zone loads nested inside another asset (an `XModel`'s, a `WeaponCamo`'s): BO2
+/// registers it in its pool like a top-level one (`Zone::linked`). A reference stub (`,name`, no
+/// textures) is skipped, so a zone that only points at the material answers `None`.
+pub fn find_linked_material(z: &Zone, name: &str) -> Option<Material> {
+    let kind = crate::fastfile::asset_type_id("material")?;
+    z.linked
+        .iter()
+        .filter(|a| a.kind == kind && z.asset_name(a).as_deref() == Some(name))
+        .map(|a| read_material(z, a.addr))
+        .find(|m| !m.textures.is_empty())
+}
+
+/// The address of the full (non-reference) linked asset of type `kind` named `name`.
+fn find_linked(z: &Zone, kind: &str, name: &str) -> Option<u32> {
+    let kind = crate::fastfile::asset_type_id(kind)?;
+    z.linked.iter().find(|a| a.kind == kind && z.asset_name(a).as_deref() == Some(name)).map(|a| a.addr)
 }
 
 /// A material that is not one of the zone's own assets but is loaded inline inside another (a
@@ -409,7 +445,7 @@ pub fn read_material(z: &Zone, m: u32) -> Material {
             .map(|t| {
                 let d = table + 16 * t;
                 let img = z.u32(d + 12);
-                Texture { semantic: z.u8(d + 7), image: (img != 0).then(|| read_image(z, img)) }
+                Texture { name_hash: z.u32(d), semantic: z.u8(d + 7), image: (img != 0).then(|| read_image(z, img)) }
             })
             .collect()
     };
@@ -554,6 +590,64 @@ mod tests {
         let zone = crate::t6zone::synthetic_zone("img", mem, Vec::new(), Vec::new());
         let img = find_image(&zone, "camo_off_solid").expect("the real image");
         assert_eq!((img.width, img.height, img.stream_hash), (32, 32, 0x1234));
+    }
+
+    #[test]
+    fn sampler_names_hash_as_bo2_stores_them() {
+        // From the install: an ordinary gun material's `colorMap`, the style camos' spec-rgb.
+        assert_eq!(sampler_hash("colorMap"), 0xa0ab_1041);
+        assert_eq!(sampler_hash("SpecularAndGloss"), 0x8c29_7e80);
+        assert_eq!(sampler_hash("specularMap"), 0x34ec_ccb3);
+    }
+
+    #[test]
+    fn nested_materials_resolve_and_their_colour_is_the_colormap_sampler() {
+        // A material loaded nested inside another asset (on `linked`, not on `assets`), preceded
+        // by a same-named `,` reference stub. Two colour-semantic images: a helper first, then the
+        // `colorMap` one; `sampler` must pick by name hash, not semantic order.
+        let mut mem = vec![0u8; 0x400];
+        let put32 = |m: &mut Vec<u8>, at: usize, v: u32| m[at..at + 4].copy_from_slice(&v.to_le_bytes());
+        mem[0x10..0x18].copy_from_slice(b",mat_ab\0");
+        mem[0x20..0x27].copy_from_slice(b"mat_ab\0");
+        mem[0x30..0x37].copy_from_slice(b"helper\0");
+        mem[0x38..0x3e].copy_from_slice(b"color\0");
+        // Stub at 0x40 (no textures), real material at 0x100.
+        put32(&mut mem, 0x40, 0x10);
+        put32(&mut mem, 0x100, 0x20);
+        mem[0x100 + 84] = 2;
+        put32(&mut mem, 0x100 + 96, 0x200);
+        // Texture defs at 0x200: helper (some other hash, semantic 2) then colorMap (semantic 2).
+        put32(&mut mem, 0x200, sampler_hash("SpecularAndGloss"));
+        mem[0x200 + 7] = TS_COLOR_MAP;
+        put32(&mut mem, 0x200 + 12, 0x280);
+        put32(&mut mem, 0x210, sampler_hash("colorMap"));
+        mem[0x210 + 7] = TS_COLOR_MAP;
+        put32(&mut mem, 0x210 + 12, 0x300);
+        put32(&mut mem, 0x280 + 72, 0x30);
+        put32(&mut mem, 0x300 + 72, 0x38);
+        let mut zone = crate::t6zone::synthetic_zone("nested", mem, Vec::new(), Vec::new());
+        let asset = |addr| crate::t6zone::Asset { kind: crate::fastfile::asset_type_id("material").unwrap(), structure: "Material", addr };
+        zone.linked = vec![asset(0x40), asset(0x100)];
+        assert!(find_asset_material(&zone, "mat_ab").is_none(), "not a top-level asset");
+        let m = find_linked_material(&zone, "mat_ab").expect("the nested material");
+        assert_eq!(m.color_map().map(|i| i.name.as_str()), Some("helper"), "the semantic order picks the helper");
+        assert_eq!(m.sampler("colorMap").map(|i| i.name.as_str()), Some("color"));
+        assert_eq!(m.sampler("SpecularAndGloss").map(|i| i.name.as_str()), Some("helper"));
+    }
+
+    /// The load registers every nested asset, as the reference catalog (OAT `Unlinker --list`)
+    /// counts them: `common_mp` declares 6,082 top-level assets but loads 9,285, among them all
+    /// 1,472 materials, the style camos (`mc/mtl_weapon_camo_gold`) included.
+    #[test]
+    #[ignore]
+    fn common_mp_registers_its_nested_assets() {
+        let z = zone("common_mp");
+        let count = |k: &str| z.linked.iter().filter(|a| a.kind == crate::fastfile::asset_type_id(k).unwrap()).count();
+        assert_eq!((z.linked.len(), count("material"), count("image")), (9285, 1472, 1541));
+        let gold = find_linked_material(&z, "mc/mtl_weapon_camo_gold").expect("gold is nested in common_mp");
+        let col = gold.sampler("colorMap").expect("gold's colorMap");
+        assert_eq!(col.name, "~-gcamo_gold_col");
+        assert!(find_image(&z, "t6_camo_devgru_solid").is_some_and(|i| i.stream_hash != 0));
     }
 
     fn zone(name: &str) -> Zone {
