@@ -545,6 +545,12 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("Alt", "The weapon this toggles to (its alt mode, or back from it).", FieldKind::Str,
         |d: &WeaponDef| d.alt.clone(),
         |d: &mut WeaponDef, v: Values| { d.alt = v.text.into(); Ok(()) }),
+    field!("CacSlot", "The Create-a-Class slot BO2 offers it in (statstable column 13); empty: not a CaC item.", FieldKind::Str,
+        |d: &WeaponDef| d.cac_slot.clone(),
+        |d: &mut WeaponDef, v: Values| { d.cac_slot = v.text.into(); Ok(()) }),
+    field!("DualWieldWeapon", "A dual-wield weapon's left gun (BO2's `szDualWieldWeaponName`).", FieldKind::Str,
+        |d: &WeaponDef| d.dual_wield_weapon.clone(),
+        |d: &mut WeaponDef, v: Values| { d.dual_wield_weapon = v.text.into(); Ok(()) }),
     field!("Flags", "alt keeps its own ammo, silenced, laser, FMJ, target finder.", FieldKind::Nums(5),
         |d: &WeaponDef| format!("{} {} {} {} {}", d.alt_own_ammo as u8, d.silenced as u8, d.laser as u8, d.fmj as u8, d.target_finder as u8),
         |d: &mut WeaponDef, v: Values| {
@@ -709,7 +715,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 78);
+        assert_eq!(WEAPON_FIELDS.len(), 80);
         assert_eq!(ATTACHMENT_FIELDS.len(), 18);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

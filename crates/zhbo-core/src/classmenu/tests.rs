@@ -1,4 +1,5 @@
 use super::*;
+use super::items::cac_entries;
 
     #[test]
     fn the_default_draft_spends_the_base_kit_points() {
@@ -160,7 +161,7 @@ use super::*;
     fn weapon_lists_skip_alt_mode_variants_and_repeat_no_display_name() {
         // `gl_an94_mp` is the AN-94's under-barrel launcher, not a class weapon of its own. The
         // built-in table carries it so the assertion is real without a BO2 install.
-        let ids = gun_ids(&PRIMARY_CLASSES);
+        let ids = gun_ids(&items::slots_of(true, &[]));
         assert!(!ids.contains(&"gl_an94_mp"), "an alt-mode variant is not in the class list: {ids:?}");
         assert_eq!(ids.iter().filter(|id| **id == "an94_mp").count(), 1, "the base appears once");
         // Every listed id is a base entry (no alt back-pointer, no `+`/`~` variant id), and no
@@ -293,7 +294,7 @@ use super::*;
         let mut e = Editor::new(Draft { secondary: "fnp45_mp".into(), ..Draft::default() });
         e.slot = Slot::Secondary;
         let idx = e.current_option_index();
-        assert_eq!(gun_ids(&SECONDARY_CLASSES)[idx], "fnp45_mp");
+        assert_eq!(gun_ids(&e.secondary_slots())[idx], "fnp45_mp");
         e.picking = true;
         e.option = idx;
         // Confirming the held weapon leaves the draft unchanged.
@@ -529,18 +530,32 @@ use super::*;
     #[test]
     fn overkill_offers_primary_guns_in_the_secondary_list() {
         let mut e = Editor::new(Draft::default());
-        let base = e.secondary_classes();
-        assert_eq!(base, SECONDARY_CLASSES.to_vec(), "pistols and launchers only");
+        // The secondary lists BO2's `secondary` items: the pistols and the launchers.
+        let base = gun_ids(&e.secondary_slots());
+        assert!(base.contains(&"fnp45_mp") && base.contains(&"smaw_mp"), "{base:?}");
+        assert!(!base.contains(&"an94_mp"), "a primary item needs Overkill");
         e.draft.wildcards.push(Wildcard::Overkill);
-        let with_overkill = e.secondary_classes();
-        // The primary-class guns are offered in the secondary slot.
-        for c in PRIMARY_CLASSES {
-            assert!(with_overkill.contains(&c), "Overkill offers {c:?}");
+        let with_overkill = gun_ids(&e.secondary_slots());
+        // Every primary item is offered in the secondary slot too.
+        for id in gun_ids(&items::slots_of(true, &[])) {
+            assert!(with_overkill.contains(&id), "Overkill offers {id}");
         }
-        // The option list walks the same categories.
+        // The option list walks the same items.
         e.slot = Slot::Secondary;
         let options = e.options();
         assert!(options.contains(&weapons::weapon("an94_mp").display_name.to_string()));
+    }
+
+    #[test]
+    fn each_weapon_slot_lists_bo2s_items_of_that_slot() {
+        // The statstable's slot decides, not the weapon class: the SMAW is a `secondary` item, so
+        // the primary never lists it (BO2's launchers are secondaries only).
+        let primary = gun_ids(&items::slots_of(true, &[]));
+        assert!(primary.contains(&"an94_mp") && !primary.contains(&"smaw_mp"), "{primary:?}");
+        assert!(primary.iter().all(|id| weapons::weapon(id).cac_slot == items::PRIMARY));
+        // A weapon with no slot is no class item: the built-in launcher alt mode and the knife.
+        let all: Vec<&str> = cac_entries().iter().map(|d| d.id.as_str()).collect();
+        assert!(!all.contains(&"gl_an94_mp") && !all.contains(&"knife_held_mp"), "{all:?}");
     }
 
     #[test]
@@ -548,8 +563,7 @@ use super::*;
         let mut e = Editor::new(Draft::default());
         e.draft.wildcards.push(Wildcard::Overkill);
         e.slot = Slot::Secondary;
-        let classes = e.secondary_classes();
-        let ids = gun_ids(&classes);
+        let ids = gun_ids(&e.secondary_slots());
         // Pick the first primary-class gun offered in the secondary list.
         let target = "an94_mp";
         let i = ids.iter().position(|id| *id == target).expect("AN-94 is offered");
@@ -820,8 +834,8 @@ fn a_grid_picker_walks_two_dimensions_and_a_wide_slot_says_so() {
 #[test]
 fn the_offer_is_the_editors_own_lists_and_caps() {
     let o = offer();
-    assert_eq!(o.primary, gun_ids(&PRIMARY_CLASSES));
-    assert_eq!(o.secondary, gun_ids(&SECONDARY_CLASSES));
+    assert_eq!(o.primary, gun_ids(&[items::PRIMARY]));
+    assert_eq!(o.secondary, gun_ids(&[items::SECONDARY]));
     assert_eq!((o.lethal.clone(), o.tactical.clone()), (equipment_ids(WeaponClass::Lethal), equipment_ids(WeaponClass::Tactical)));
     // BO2's two attachments, three with Primary Gunfighter; one, two with Secondary Gunfighter.
     assert_eq!((o.primary_caps, o.secondary_caps), ((2, 3), (1, 2)));

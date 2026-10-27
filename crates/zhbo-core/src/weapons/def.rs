@@ -237,6 +237,14 @@ pub struct WeaponDef {
     pub alt: String,
     /// This alt mode keeps its own ammo (a grenade launcher), not the weapon's magazine.
     pub alt_own_ammo: bool,
+    /// The Create-a-Class slot BO2 offers this weapon in (`mp/statstable.csv` column 13:
+    /// `primary`, `secondary`, `primarygrenade`, `specialgrenade`); empty when it is not a
+    /// Create-a-Class item (a negative allocation cost: the `_dw` pistols, the War Machine, the
+    /// held knife). A combination inherits its base's.
+    pub cac_slot: String,
+    /// The left gun of a dual-wield weapon (BO2's `szDualWieldWeaponName`, `fnp45_lh_mp`); empty
+    /// for a single gun.
+    pub dual_wield_weapon: String,
     pub silenced: bool,
     pub laser: bool,
     /// FMJ: penetrates infantry, hits vehicles and structures harder.
@@ -445,6 +453,8 @@ impl Default for WeaponDef {
             alt_modes: Vec::new(),
             alt: String::new(),
             alt_own_ammo: false,
+            cac_slot: String::new(),
+            dual_wield_weapon: String::new(),
             silenced: false,
             laser: false,
             fmj: false,

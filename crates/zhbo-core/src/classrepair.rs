@@ -58,7 +58,7 @@ pub fn repair(c: &mut CustomClass) -> Cleared {
     cleared
 }
 
-/// A weapon slot: an unknown id or a non-gun clears the weapon and its attachments together
+/// A weapon slot: an unknown id, a non-gun or an item of another slot clears the weapon and its attachments together
 /// (`ClearWeapon`); attachments the weapon does not offer are dropped (the per-weapon
 /// `GetNumAttachments` check), and so are the ones past the slot's cap (`maxAttachments`, plus the
 /// Gunfighter card's extra on the primary) and the ones BO2's compatibility lists forbid together.
@@ -74,7 +74,9 @@ fn repair_weapon(c: &mut CustomClass, primary: bool, cleared: &mut Cleared) {
         cleared.push(slot);
         return;
     };
-    if !def.class.is_gun() {
+    // A non-gun, or a gun BO2 does not offer in this slot (a `secondary` item in the primary, a
+    // weapon that is no class item at all), is not a valid item for it (`CheckItems`).
+    if !def.class.is_gun() || !crate::classmenu::items::fits_slot(base, primary) {
         id.clear();
         cleared.push(slot);
         return;
@@ -259,6 +261,18 @@ mod tests {
         let mut c = class("frag_grenade_mp", &[]);
         assert_eq!(repair(&mut c), vec!["primary"]);
         assert!(c.primary.is_empty());
+    }
+
+    #[test]
+    fn a_weapon_of_the_other_slot_is_cleared() {
+        // The SMAW is a `secondary` item: BO2's primary never holds it.
+        let mut c = class("smaw_mp", &[]);
+        assert_eq!(repair(&mut c), vec!["primary"]);
+        assert!(c.primary.is_empty());
+        // A primary item in the secondary is Overkill's, a valid class (the card is re-derived).
+        let mut c = class("an94_mp", &[]);
+        c.secondary = "mk48_mp".into();
+        assert!(repair(&mut c).is_empty());
     }
 
     #[test]

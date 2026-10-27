@@ -31,8 +31,12 @@ use crate::classes::{self, CustomClass};
 /// module-size limit).
 #[path = "classmenu/legal.rs"]
 pub mod legal;
+/// Which weapons the editor offers in which slot (BO2's statstable items).
+#[path = "classmenu/items.rs"]
+pub mod items;
+use items::{equipment_ids, gun_ids};
 use crate::input::Key;
-use crate::weapons::{self, Class as WeaponClass, Perk, WeaponDef};
+use crate::weapons::{self, Class as WeaponClass, Perk};
 
 /// The Pick-10 budget: ten points per class, exactly BO2's.
 pub const PICK_10: i32 = 10;
@@ -701,10 +705,8 @@ fn wildcards_of(c: &CustomClass) -> Vec<Wildcard> {
     if sec_atts.len() > 1 {
         out.push(Wildcard::SecondaryGunfighter);
     }
-    // The secondary holding a primary-class gun is Overkill.
-    if weapons::weapon(&split_atts(&c.secondary).0).class.is_gun()
-        && !SECONDARY_CLASSES.contains(&weapons::weapon(&split_atts(&c.secondary).0).class)
-    {
+    // The secondary holding a primary item is Overkill.
+    if items::is_primary_item(&split_atts(&c.secondary).0) {
         out.push(Wildcard::Overkill);
     }
     out
@@ -799,9 +801,9 @@ impl Editor {
     pub fn options(&self) -> Vec<String> {
         match self.slot {
             Slot::Name => Vec::new(),
-            Slot::Primary => weapon_options(&PRIMARY_CLASSES),
+            Slot::Primary => weapon_options(&items::slots_of(true, &self.draft.wildcards)),
             Slot::PrimaryAtts => attachment_options(&self.draft.primary, &self.draft.primary_atts),
-            Slot::Secondary => weapon_options(&self.secondary_classes()),
+            Slot::Secondary => weapon_options(&self.secondary_slots()),
             Slot::SecondaryAtts => attachment_options(&self.draft.secondary, &self.draft.secondary_atts),
             Slot::Lethal => equipment_options(WeaponClass::Lethal),
             Slot::Tactical => equipment_options(WeaponClass::Tactical),
@@ -813,18 +815,10 @@ impl Editor {
         }
     }
 
-    /// The secondary slot's categories: BO2's pistols and launchers, plus the primary-class guns
-    /// when Overkill puts a second primary there.
-    fn secondary_classes(&self) -> Vec<WeaponClass> {
-        let mut out: Vec<WeaponClass> = SECONDARY_CLASSES.to_vec();
-        if self.draft.wildcards.contains(&Wildcard::Overkill) {
-            for c in PRIMARY_CLASSES {
-                if !out.contains(&c) {
-                    out.push(c);
-                }
-            }
-        }
-        out
+    /// The item slots the secondary lists: its own, plus the primary items when Overkill puts a
+    /// second primary there.
+    fn secondary_slots(&self) -> Vec<&'static str> {
+        items::slots_of(false, &self.draft.wildcards)
     }
 
     /// Whether option `i` of the highlighted slot is already in the draft (so the list can mark it).
@@ -833,8 +827,8 @@ impl Editor {
     pub fn option_chosen(&self, i: usize) -> bool {
         match self.slot {
             Slot::Name => false,
-            Slot::Primary => gun_ids(&PRIMARY_CLASSES).get(i).is_some_and(|id| *id == self.draft.primary),
-            Slot::Secondary => gun_ids(&self.secondary_classes()).get(i).is_some_and(|id| *id == self.draft.secondary),
+            Slot::Primary => gun_ids(&items::slots_of(true, &self.draft.wildcards)).get(i).is_some_and(|id| *id == self.draft.primary),
+            Slot::Secondary => gun_ids(&self.secondary_slots()).get(i).is_some_and(|id| *id == self.draft.secondary),
             Slot::PrimaryAtts => {
                 attachment_shorts(&self.draft.primary, &self.draft.primary_atts).get(i).is_some_and(|s| self.draft.primary_atts.iter().any(|a| a == s))
             }
@@ -859,8 +853,8 @@ impl Editor {
     /// `None` when the slot does not list guns (perks, attachments, wildcards).
     pub fn option_weapon(&self, i: usize) -> Option<&'static crate::weapons::WeaponDef> {
         let id = match self.slot {
-            Slot::Primary => gun_ids(&PRIMARY_CLASSES).get(i).copied(),
-            Slot::Secondary => gun_ids(&self.secondary_classes()).get(i).copied(),
+            Slot::Primary => gun_ids(&items::slots_of(true, &self.draft.wildcards)).get(i).copied(),
+            Slot::Secondary => gun_ids(&self.secondary_slots()).get(i).copied(),
             Slot::Lethal => equipment_ids(WeaponClass::Lethal).get(i).copied(),
             Slot::Tactical => equipment_ids(WeaponClass::Tactical).get(i).copied(),
             _ => None,
@@ -962,7 +956,8 @@ fn att_names(atts: &[String]) -> String {
 
 /// The display names of the catalog's guns in the given categories, in catalog order. The editor
 /// opens on the held weapon through [`Editor::current_option_index`], not by reordering the list.
-fn weapon_options(classes: &[WeaponClass]) -> Vec<String> {    gun_ids(classes).iter().map(|id| weapons::weapon(id).display_name.clone()).collect()
+fn weapon_options(slots: &[&str]) -> Vec<String> {
+    gun_ids(slots).iter().map(|id| weapons::weapon(id).display_name.clone()).collect()
 }
 
 /// The attachment display names the weapon offers (`WeaponDef::allowed`); the ones already on it
@@ -1322,8 +1317,8 @@ impl Editor {
     fn current_option_index(&self) -> usize {
         match self.slot {
             Slot::Name => 0,
-            Slot::Primary => weapon_index(&PRIMARY_CLASSES, &self.draft.primary),
-            Slot::Secondary => weapon_index(&self.secondary_classes(), &self.draft.secondary),
+            Slot::Primary => weapon_index(&items::slots_of(true, &self.draft.wildcards), &self.draft.primary),
+            Slot::Secondary => weapon_index(&self.secondary_slots(), &self.draft.secondary),
             Slot::PrimaryAtts | Slot::SecondaryAtts => 0,
             Slot::Lethal => equipment_index(WeaponClass::Lethal, &self.draft.lethal),
             Slot::Tactical => equipment_index(WeaponClass::Tactical, &self.draft.tactical),
@@ -1372,14 +1367,14 @@ impl Editor {
         match self.slot {
             Slot::Name => {}
             Slot::Primary => {
-                let ids = gun_ids(&PRIMARY_CLASSES);
+                let ids = gun_ids(&items::slots_of(true, &self.draft.wildcards));
                 if let Some(id) = ids.get(i).copied() {
                     self.draft.primary = id.to_string();
                     self.keep_offered_atts(true);
                 }
             }
             Slot::Secondary => {
-                let ids = gun_ids(&self.secondary_classes());
+                let ids = gun_ids(&self.secondary_slots());
                 if let Some(id) = ids.get(i).copied() {
                     self.draft.secondary = id.to_string();
                     self.keep_offered_atts(false);
@@ -1514,43 +1509,6 @@ fn toggle_att(atts: &mut Vec<String>, short: &str, max: usize, compatible: impl 
     }
 }
 
-/// The catalog's player-facing create-a-class entries: base weapons and offhands only, once per
-/// display name. BO2 lists each weapon once; the converted table also carries the alt-mode
-/// variants an attachment adds (`gl_an94_mp`, `sf_an94_mp`, a second optic), which are not
-/// classes of their own. `WeaponDef::alt` is the table's alt-variant marker (the weapon the entry
-/// toggles back to); a base also lists the variants in `alt_modes`, so either side catches one.
-/// Every returned id is a base id, which is what the converter draws an icon for
-/// (`ZHBO_BO2_Icon_<base id>`).
-fn cac_entries() -> Vec<&'static WeaponDef> {
-    let all = weapons::catalog().all();
-    let mut seen: Vec<&str> = Vec::new();
-    all.iter()
-        .copied()
-        .filter(|d| d.alt.is_empty())
-        .filter(|d| !all.iter().any(|base| base.alt_modes.iter().any(|(_, alt)| alt == &d.id)))
-        .filter(|d| {
-            // Safety net: no weapon may appear twice under one display name.
-            let name = d.display_name.as_str();
-            if seen.contains(&name) {
-                false
-            } else {
-                seen.push(name);
-                true
-            }
-        })
-        .collect()
-}
-
-/// The gun ids of the categories, in the same order as [`weapon_options`].
-fn gun_ids(classes: &[WeaponClass]) -> Vec<&'static str> {
-    cac_entries().into_iter().filter(|d| classes.contains(&d.class)).map(|d| d.id.as_str()).collect()
-}
-
-/// The equipment ids of a class.
-fn equipment_ids(class: WeaponClass) -> Vec<&'static str> {
-    cac_entries().into_iter().filter(|d| d.class == class).map(|d| d.id.as_str()).collect()
-}
-
 /// The attachment shorts the weapon offers.
 fn allowed_shorts(base: &str) -> Vec<&'static str> {
     weapons::weapon(base).allowed.iter().map(|(s, _)| s.as_str()).collect()
@@ -1575,9 +1533,9 @@ fn attachment_shorts(base: &str, current: &[String]) -> Vec<&'static str> {
 /// read-only.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Offer {
-    /// The primary slot's weapons ([`PRIMARY_CLASSES`]).
+    /// The primary slot's weapons (BO2's `primary` items, [`items`]).
     pub primary: Vec<&'static str>,
-    /// The secondary slot's weapons without Overkill ([`SECONDARY_CLASSES`]).
+    /// The secondary slot's weapons without Overkill (BO2's `secondary` items).
     pub secondary: Vec<&'static str>,
     pub lethal: Vec<&'static str>,
     pub tactical: Vec<&'static str>,
@@ -1596,8 +1554,8 @@ pub fn offer() -> Offer {
         (base, if primary { d.primary_att_max() } else { d.secondary_att_max() })
     };
     Offer {
-        primary: gun_ids(&PRIMARY_CLASSES),
-        secondary: gun_ids(&SECONDARY_CLASSES),
+        primary: gun_ids(&items::slots_of(true, &[])),
+        secondary: gun_ids(&items::slots_of(false, &[])),
         lethal: equipment_ids(WeaponClass::Lethal),
         tactical: equipment_ids(WeaponClass::Tactical),
         primary_caps: caps(Wildcard::PrimaryGunfighter, true),
@@ -1621,8 +1579,8 @@ fn perk_list(tier: u8) -> Vec<Perk> {
 }
 
 /// The index of the held weapon in the category list.
-fn weapon_index(classes: &[WeaponClass], current: &str) -> usize {
-    gun_ids(classes).iter().position(|id| *id == current).unwrap_or(0)
+fn weapon_index(slots: &[&str], current: &str) -> usize {
+    gun_ids(slots).iter().position(|id| *id == current).unwrap_or(0)
 }
 
 /// The index of the held equipment in the class list.

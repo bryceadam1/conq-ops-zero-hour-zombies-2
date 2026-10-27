@@ -4511,3 +4511,24 @@ integrator): an old archive has no `Compatible` lines and every pair would read 
 
 Verified: `cargo test --workspace` green; clippy adds no warning; the real-install suite
 (`--skip conformance`) green, plus the new `the_converted_compatibility_matches_bo2s_rule`.
+
+## Create-a-Class items are BO2's statstable items (2026-10-27, branch `v1/cac-structure`)
+
+The editor listed every converted base weapon, sorted into the primary or secondary slot by its
+weapon class. BO2 lists `mp/statstable.csv`'s weapon rows with a non-negative allocation cost, in
+their column-13 slot (G15). So the mod offered five weapons BO2 does not (`fnp45_dw_mp` and the
+other `_dw` pistols — cost -1, they are what a pistol with the `dw` attachment *gives*; the War
+Machine `m32_mp`, cost -1, a pickup only), put the crossbow in the primary (BO2: a secondary) and
+the launchers in both slots (BO2: secondaries only).
+
+* Data: `WeaponDef::cac_slot` (table field `CacSlot`), set by the converter's `set_cac_slots` from
+  the same `zhbo_conformance::bo2::combos::items` parse the enumerator uses; a combination inherits
+  its base's. Built-in stand-ins carry the slot.
+* Editor (`classmenu::items`, its own file): the primary lists the `primary` items, the secondary
+  the `secondary` items plus the `primary` ones under Overkill; categories still group by class
+  (the crossbow lands in the secondary's SPECIALS). `wildcards_of` derives Overkill from a primary
+  *item* in the secondary slot; `classrepair` clears a weapon its slot does not offer (a pistol
+  or launcher in the primary), as `CheckItems` does — test fixtures that used the Tac-45 as a
+  primary now use the MP7.
+* The table gains fields, so the archive VERSION must bump (integrator): an old archive has no
+  `CacSlot` and the editor's weapon lists would be empty.

@@ -357,6 +357,21 @@ pub fn add_variants(table: &mut Table, converted: &[String], bo2: &[Weapon]) {
     }
 }
 
+/// Mark the Create-a-Class items: each `mp/statstable.csv` weapon item with a non-negative
+/// allocation cost (`zhbo_conformance::bo2::combos::items`, the same parse the enumerator and the
+/// conformance expected side use) gives its variant's def the item's slot (column 13). A weapon
+/// no item names stays off the class editor's lists (the `_dw` pistols, whose rows cost -1, are
+/// what a pistol with the `dw` attachment gives; the War Machine is a pickup only).
+pub fn set_cac_slots(table: &mut Table, patch: &zhbo_formats::t6zone::Zone) {
+    let Ok(Some(statstable)) = zhbo_formats::stringtable::rows(patch, "mp/statstable.csv") else { return };
+    let items = zhbo_conformance::bo2::combos::items(&statstable);
+    for d in &mut table.weapons {
+        if let Some(item) = items.iter().find(|i| i.variant == d.id) {
+            d.cac_slot = item.slot.clone();
+        }
+    }
+}
+
 /// The alt mode entry of a converted weapon, if it has one.
 pub fn alt_of<'a>(table: &'a Table, id: &str) -> Option<&'a WeaponDef> {
     let d = table.weapons.iter().find(|d| d.id == id)?;
@@ -752,6 +767,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
             .collect(),
         alt: if w.inventory == bo2::inventory::ALTMODE { w.alt_weapon.clone().unwrap_or_default() } else { String::new() },
         alt_own_ammo: false,
+        // Set from the statstable by `set_cac_slots` (the table is not this weapon's data).
+        cac_slot: String::new(),
+        dual_wield_weapon: w.dual_wield_weapon.clone().unwrap_or_default(),
         silenced: w.silenced,
         laser: false,
         fmj: false,

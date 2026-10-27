@@ -468,7 +468,7 @@
         let _g = crate::profile::lock();
         crate::profile::reset();
         // Deliberately not the stock kit: the primary is the pistol and the lethal a claymore.
-        crate::profile::load("AB\nprimary=fnp45_mp;secondary=an94_mp;lethal=claymore_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Toughness,FastHands,Dexterity");
+        crate::profile::load("AB\nprimary=mp7_mp;secondary=an94_mp;lethal=claymore_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Toughness,FastHands,Dexterity");
         let host = FakeHost::default();
         host.add(general(1, 0));
         let mut sim = Sim::new();
@@ -533,7 +533,7 @@
         assert_eq!(class.name, "AB", "the seeded custom is picked by name");
         // The kit, not just the name: this is what the classpick autotest now greps for too.
         let a = &sim.player(0).expect("the General").arsenal;
-        assert_eq!(a.weapons[0].main.id, "fnp45_mp", "the seeded primary landed");
+        assert_eq!(a.weapons[0].main.id, "mp7_mp", "the seeded primary landed");
         assert_eq!(a.lethal.def.id, "claymore_mp", "the seeded lethal landed");
         assert!(a.has(crate::weapons::Perk::TOUGHNESS));
         assert!(reopened, "the script forces the screen open after the next take-control");
@@ -613,7 +613,7 @@
             name: "Loud Kit".into(),
             // Deliberately the reverse of the stock kit: the pistol as primary, the rifle as
             // secondary, a claymore, a shorter magazine reserve, and no stock perks.
-            primary: "fnp45_mp".into(),
+            primary: "mp7_mp".into(),
             secondary: "an94_mp".into(),
             lethal: "claymore_mp".into(),
             tactical: "concussion_grenade_mp".into(),
@@ -659,7 +659,7 @@
         assert_eq!(p.class.as_deref(), Some("custom:Loud Kit"));
         let a = &p.arsenal;
         assert_eq!(a.weapons.len(), 2, "both guns came from the class");
-        assert_eq!(a.weapons[0].main.id, "fnp45_mp", "primary is the class's, not the stock AN-94");
+        assert_eq!(a.weapons[0].main.id, "mp7_mp", "primary is the class's, not the stock AN-94");
         assert_eq!(a.weapons[1].main.id, "an94_mp", "secondary is the class's");
         assert_eq!(a.weapons[0].reserve, 40, "the class's primary reserve");
         assert_eq!(a.weapons[1].reserve, 20, "the class's secondary reserve");
@@ -680,7 +680,7 @@
         let _g = crate::profile::lock();
         crate::profile::reset();
         crate::profile::save(crate::classes::CustomClass { name: "First".into(), ..Default::default() });
-        crate::profile::save(crate::classes::CustomClass { name: "Second".into(), primary: "fnp45_mp".into(), ..Default::default() });
+        crate::profile::save(crate::classes::CustomClass { name: "Second".into(), primary: "mp7_mp".into(), ..Default::default() });
         let host = FakeHost::default();
         host.add(general(7, 0));
         let mut sim = Sim::new();
@@ -739,7 +739,7 @@
         crate::profile::reset();
         crate::profile::save(crate::classes::CustomClass {
             name: "Overhead Kit".into(),
-            primary: "fnp45_mp".into(),
+            primary: "mp7_mp".into(),
             secondary: "an94_mp".into(),
             lethal: "claymore_mp".into(),
             tactical: "concussion_grenade_mp".into(),
@@ -772,7 +772,7 @@
         let words: Vec<u32> = out.choose_class_payload[..out.choose_class_payload_len as usize].to_vec();
         sim.choose_class(0, out.choose_class_general, usize::MAX, &words);
         let a = &sim.player(0).expect("the record").arsenal;
-        assert_eq!(a.weapons[0].main.id, "fnp45_mp", "the overhead pick applied the custom kit");
+        assert_eq!(a.weapons[0].main.id, "mp7_mp", "the overhead pick applied the custom kit");
         assert_eq!(a.lethal.def.id, "claymore_mp");
         assert_eq!(out.choose_class_general, 7, "the pick names the General under command, not 0");
         crate::profile::reset();
@@ -827,7 +827,7 @@
         crate::profile::reset();
         let custom = crate::classes::CustomClass {
             name: "Bar Kit".into(),
-            primary: "fnp45_mp".into(),
+            primary: "mp7_mp".into(),
             secondary: "an94_mp".into(),
             lethal: "claymore_mp".into(),
             tactical: "concussion_grenade_mp".into(),
@@ -857,7 +857,7 @@
         inp.logic_frame = f;
         let p = sim.player(0).expect("the record");
         assert_eq!(p.class.as_deref(), Some("custom:Bar Kit"));
-        assert_eq!(p.arsenal.weapons[0].main.id, "fnp45_mp", "the custom's primary landed");
+        assert_eq!(p.arsenal.weapons[0].main.id, "mp7_mp", "the custom's primary landed");
 
         // The next custom slot is empty: pressing its button must send nothing at all.
         inp.class_button = custom_button + 1;
