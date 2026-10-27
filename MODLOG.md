@@ -4550,3 +4550,52 @@ Left: the SIG556/XM8 select-fire unique's override of the shot and burst opening
 mod plays its generic blast; the third-person `fire_start_sound`/`fire_last_sound` (8 + 1 rows: the
 B23R's and Strela's NPC variants need a per-shooter cue the FX weapon does not have). No ABI change;
 the table schema and archive content changed (VERSION bump is the integrator's).
+
+## The LFE layer is a secondary alias; the sound gate covers every attachment (2026-10-27, branch `v1/lfe-layer`)
+
+Item 16, stacked on `v1/sounds-effects`. The 100 + 100 `fire_sound_player`/`fire_start_sound_player`
+rows were the SIG556's and XM8's 50 select-fire combinations without a silencer each.
+
+* **BO2's "LFE layer" is the alias's `secondaryName` chain**, not a naming convention:
+  `wpn_sig556_fire_plr` → `wpn_sig556_LFE` → `wpn_sig556_fire_plr_decay` (SndAlias +12); the third
+  person's is `fire_npc` → `LFE_npc` → `fire_npc_dist` → `fire_npc_decay`. A burst gun's per-shot
+  `fireSoundPlayer` *is* the low-end alias (thump + tail) and its `fireStartSoundPlayer`
+  (`_fire_plr_burst`) carries the whole three-round recording. `sndalias::Variant.secondary` is now
+  parsed and `sfx::secondary_chain` mixes each layer with its chain (each alias once; a cycle or a
+  missing alias ends it); the converter's `_decay`/`_lfe`/`_LFE` suffix guesses are gone (they gave
+  the burst shot no tail and the third person `_npc_decay` instead of `_npc_dist`). The fixed
+  `ZHBO_BO2_Fire*` events name one alias now. `zhbo-assets aliases` prints ` then <secondary>` and the
+  distances.
+* **Alias lookup ignores case**: BO2 hashes `tolower(c)` (`FUN_0083c1d0`: seed 0x1505, ×0x1003f;
+  checked against the bank's ids), and its own data relies on it (`wpn_sig556_silencer_fire_plr`'s
+  secondary is `wpn_sig556_silencer_LFE`, the alias is `_lfe`). **Gotcha: never match alias names
+  exactly.**
+* **The sound override gate is the whole `FUN_008ebe80` now** (`weapons::gated_sound`): base unique's
+  bit, then the silencer's unique if mounted and it has the bit, else the first other single unique
+  in `eAttachment` order. The select fire's unique overrides the shot (bit 1, the full `_fire_plr`)
+  and the opening (bit 8, `null_sound`). Base defs carry the non-silencer overrides as
+  `AttachmentFireSounds`/`AttachmentFireStartSounds` (`short=event`, `eAttachment` order;
+  `WEAPON_FIELDS` 88 → 90) and `attachments::apply` takes the first mounted one unless the silencer
+  overrode that sound; the silencer's own shot/npc shot/opening are only set where the gate lets it
+  (before, a silencer without the bit still produced a `_silenced` event that blocked the others).
+  `generals::combo`'s shot goes through the same gate instead of "first unique that differs".
+  The third-person shot (bit 0) of a non-silencer unique is not carried — no BO2 MP unique sets it.
+* **Explosions: BO2 plays the impact table, the def fields are extras.** `FUN_004c0ac0` (the
+  projectile-explode event) calls `FUN_00533210(weapon, surface)`, which picks the FX from the
+  impact table entry for the def's `impactType` (+0x28) and the sound from the per-type family
+  `<family>_<surface>` (`FUN_004d4440`: `wpn_grenade_explode`, `wpn_rifle_grenade`,
+  `wpn_rocket_explode`, `wpn_rocket_explode_xtreme`, `wpn_tank_shell`, `wpn_mortar_shell`,
+  `prj_bolt_impact`, …), plays both, then `projExplosionEffect` (+0x6f0) if set and
+  `projExplosionSound` (+0x71c). So the `projectile_explosion_effect` (576) and
+  `projectile_explosion_sound` (15) rows — expected empty, mod the impact-type fallback / generic
+  blast — compare the def field, not what plays; the expected side is right about the field and was
+  not changed. The mod's effect fallback is BO2's rule on dirt; its blast sound is not (BO2: the
+  type's `_<surface>` alias with its secondary chain, e.g. `wpn_rocket_explode_dirt` →
+  `wpn_rocket_explode` → `_close` → …) — a follow-up item.
+
+Measured (v1/sounds-effects confB → this branch): weapons cells **551,144 → 550,944 (−200)**,
+gap clusters 202 → 200, zero regressions: `fire_sound_player` 100 → 0, `fire_start_sound_player`
+100 → 0; cac unchanged. Left from the sounds family: the third-person `fire_start_sound` (8: the
+B23R's silenced `null_sound` and the DW's `_fire_npc_burst`) and `fire_last_sound` (1: the Strela)
+need a per-shooter third-person cue. No ABI change; the table schema and archive content changed
+(VERSION bump is the integrator's).
