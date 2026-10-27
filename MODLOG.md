@@ -4496,3 +4496,57 @@ other column moved; weapons 706,586 → 700,648 differing cells; gap clusters 21
 keeps cells). Every remaining cell is a part-list difference, not a camo one: 651 rows with no mod
 manifest (steadyaim/fmj/sf… combos — combo coverage), 682 where the mod composes the extra rigid
 `tag_clip1` magazine BO2 doesn't list, and 30 dual-wield `_lh` / `ir+vzoom` part-count rows.
+
+## The camo art tail: nested assets and sampler names, 95 → 20 unresolved (2026-10-27, branch `v1/camo-art-tail`)
+
+Stacked on `v1/attach-camo`. The 95 names the camo converter could not resolve were, almost all,
+**in `common_mp` the whole time** — loaded nested inside other assets, not on the zone's top-level
+asset list. The T6 zone loader already walked every nested asset (`link_asset`) but discarded the
+list, and the converter's fallback (a string-then-pointer scan) missed them. `t6zone::Zone::linked`
+now keeps every asset the load registers; `common_mp` loads 9,285 (6,082 top-level), among them
+1,472 materials and 1,541 images — exactly the reference catalog's counts
+(`lua-dump/assets/common_mp.tsv`, OAT `Unlinker --list`, which lists nested assets too).
+`xmodel::find_image` consults it and `find_linked_material` is new; the camo art phase looks each
+exact name up in pool order (`patch_mp`, `common_patch_mp`, `common_mp`), and the `_1` suffix
+guesses (converter and `nativevm::camo::apply`) are gone — `gold` and `gold_1` are separate BO2
+materials and both resolve now.
+
+* **The colour is a sampler, not a semantic.** The style materials bind several colour-semantic
+  images: gold = `camo_gold_nml` (5), `~-gcamo_code_spc` (14), `camo_code_nml` (13), the spec-rgb
+  map (2) and `~-gcamo_gold_col` (2). `color_map()` picked the first (the shared black `_spc` the
+  look-parity cycle had to skip by name). `MaterialTextureDef::nameHash` is BO2's `R_HashString`
+  of the sampler name (`h = 33h ^ lower(c)`; `colorMap` = `0xa0ab1041` on the AN-94's own colour
+  and the styles' `_col` alike). `xmodel::Texture` now carries it and `Material::sampler(name)`
+  matches it; the camo colour is `colorMap` (toxic's layered technique: `layer1Map`), the specular
+  `specularMap`/`SpecularAndGloss` — names found by hashing every string in `common_mp`'s compiled
+  shaders against the unknown hashes (`SparkleMap`, `WarpMap` and `radiantDiffuseMap` are diamond's
+  others). The `_spc` name skip is gone.
+* **The remainder (20), pinned by the install test with reasons:** `t6_camo_dayofdead_{solid,pattern}`
+  and the `3layer`/`zmb_dlc2` style families are `,name` reference stubs (no pixels, no stream hash)
+  in `common_patch_mp` and in the ZM `zm_transit_patch` (checked in the VM-staged copy) and are
+  defined in no zone of the install nor of the 126-zone catalog — DLC content the base game does not
+  ship. This is **not** the ipak name-hash wall: there is no full `GfxImage` anywhere to hash. The
+  six diamond (non-alt) materials bind no colour sampler (sparkle/warp/spec-rgb only), so they keep
+  the stock colour.
+* **Gold's look.** Verified art: gold's `colorMap` is a 128×128 **flat (21,20,13)** and its
+  `SpecularAndGloss` map 128×128 mean (158,135,83) — BO2's gold is a metal whose hue lives entirely
+  in the coloured specular. `shaderConsts [10,10,0.46,0.53,…]` carry no gold-hued triple, so they are
+  not the tint (the earlier guess). The native pass reads specular as a luminance level
+  (`surface_maps`), so gold now draws as polished dark metal (spec level 136), not gold — before this
+  branch it was byte-identical to stock. The faithful fix is a specular colour in the native maps/
+  shader (model blob format + renderer, integrator-owned): queued, not done here. Sweep A/B
+  (`--no-attachments`, `~/.opencode/plan/camo-art-tail/sweep-{before,after}`): gold/carbon/diamond
+  on an94/mp7/scar go from 0 changed pixels to 4–10 % (max Δ 125–244); multicam on the an94 5.1 % →
+  10.6 % (the devgru solid now converts).
+* **Found for item 17 (not acted on here):** the three "map-zone" overlay materials
+  `scope_overlay_envg_ir`/`specter`/`vzoom` are nested in `common_mp` too, with real images
+  (`scope_overlay_envg_1024` etc., 1024², stream hashes `0x1d0782e5`/`0x154691c9`/`0x1239abaf`);
+  the ipak name-hash wall was this same discarded nested-asset list. `find_material` does not consult
+  `linked` yet, so the HUD/overlay conversion still reports them missing — a one-line change for the
+  overlay item, with its `--scope` autotest.
+
+Measured: conformance unchanged against the `v1/attach-camo` base (weapons 700,648 cells, cac 881,
+214 gap clusters; no column moved — the schema has no camo-art column). No VERSION/ABI change here;
+the archive contents change (new textures, gold's real colour), so the integrator's archive
+`hud::VERSION` bump applies. Verified: cargo test --workspace green; clippy adds no warning; real-
+install suites green (zhbo-assets `--ignored --skip conformance`, zhbo-formats `--ignored`).

@@ -45,8 +45,8 @@ environment mid-game.
 | `ZHBO_CONVERT_ALL_COMBOS` | Set to `0` to skip the legal Create-a-Class combination sweep and build only the base set; on by default, so a locally built archive covers every legal combination (the archive stamp records the flag). |
 ## The archive and the camo conversion
 
-`ConquerOps_BO2.big` carries the class camo art (`Art\Textures\zhbo_t6_camo_*`,
-`zhbo_camo_code_spc`, …) and one `Art\Native\<camo_<weapon>>.zcm` recipe per converted weapon. The
+`ConquerOps_BO2.big` carries the class camo art (the set images `Art\Textures\zhbo_t6_camo_*`,
+the style materials' colour maps such as `zhbo_camo_gold_col` and their `_nsg` maps, …) and one `Art\Native\<camo_<weapon>>.zcm` recipe per converted weapon. The
 archive's version is bumped with a conversion that changes its contents (the integrator owns the
 camo bump, 64→65), so after a mod update the launcher regenerates the archive. With a stale
 archive the native viewmodel logs `the camo art is not in the archive (reconvert the BO2 art)` and

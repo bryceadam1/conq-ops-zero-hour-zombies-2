@@ -201,9 +201,13 @@ the left palm.
 `base.png` and the BO2 captures (`~/Documents/BO2-reference/cac/sweep/i-personalize/`). C0's
 evidence: the atacs solid is 32×32 with alpha 41–47, the pattern 256×256 with alpha 0–110 and
 edge-tiling (edge mean difference 4.2/3.2); `CAMO_GAIN` is 2.0 (1.0 is the fallback if the
-comparison rejects it). The style camos' colour maps are largely the shared
-`zhbo_camo_code_spc` and their differences live in `shaderConsts`, which the swap carries but does
-not interpret (D8), so a style pair can look alike until the technique is ported.
+comparison rejects it). A style camo's colour is its material's `colorMap` sampler (the layered
+toxic's `layer1Map`) and its specular the `SpecularAndGloss` spec-rgb map; `shaderConsts` are
+carried but not interpreted (D8). Metals keep their hue in the coloured specular (gold's colour map
+is a flat 21/20/13, its spec-rgb gold), which the native pass reads as a level only, so gold draws as
+polished dark metal until the renderer carries a specular colour. The real-install test
+`the_camo_assets_convert_with_their_art` pins the converter's unresolved list to the 20 provably
+unreachable names (DLC-only stubs and diamond's colour-less technique).
 
 ## Autopilot and the input path
 

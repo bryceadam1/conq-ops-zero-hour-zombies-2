@@ -1,7 +1,9 @@
 //! BO2's weapon camo art: the solid/pattern layer images and the style materials, converted into
-//! the archive beside the models. Pixels come from `common_mp` (the patch zone's copies are
-//! name-only stubs); the style materials come from the patch's registered assets or are inline in
-//! the camo asset itself. The recipe phase (C3) writes the blobs; this phase only writes textures.
+//! the archive beside the models. Every name is looked up in BO2's asset pool order (`patch_mp`,
+//! `common_patch_mp`, `common_mp`) among each zone's registered assets, nested ones included — the
+//! patch zones mostly hold `,name` reference stubs, and `common_mp` loads the style materials and
+//! most set images nested inside other assets. Pixels come from the image packs. The recipe phase
+//! writes the blobs; this phase only writes textures.
 
 use crate::character;
 use crate::generals::MAX_TEXTURE;
