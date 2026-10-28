@@ -5,6 +5,7 @@
 //! Runs inside the lockstep logic: no randomness, fixed step.
 
 use crate::host::{damage_kind, disable_kind, objflags, LogicHost, ObjInfo};
+use crate::impacts::Surface;
 use crate::math::Vec3;
 use crate::units::{inches, BO2_TO_ZH_DAMAGE, LOGIC_DT};
 use crate::weapons::{Effect, WeaponDef};
@@ -25,7 +26,8 @@ const EMP_SECONDS: f32 = 10.0;
 /// A smoke grenade's screen: how long it stays up and how wide it is (BO2's Willy Pete).
 pub const SMOKE_TIME: f32 = 15.0;
 pub const SMOKE_RADIUS: f32 = inches(220.0);
-/// Zero Hour FX for a blast when the weapon names none.
+/// Zero Hour FX for a blast when neither the impact table nor the weapon names one (an archive
+/// without the converted table, or a mod-only def).
 const DEFAULT_EXPLOSION_FX: &str = "FX_BoobyTrapExplosion";
 
 #[derive(Clone, Debug, PartialEq)]
@@ -55,7 +57,8 @@ pub struct Projectile {
 /// What happened this step, for the client (sounds, hit markers).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Outcome {
-    Exploded { at: Vec3, hit_enemy: bool, kill: bool },
+    /// Went off on `surface` (what it hit directly, else the ground under it).
+    Exploded { at: Vec3, hit_enemy: bool, kill: bool, surface: Surface },
     Hit { at: Vec3, kill: bool },
     /// Came to rest (or stuck to `stuck_to`) as equipment; its object stays.
     Landed { at: Vec3, stuck_to: Option<u32> },
@@ -172,8 +175,8 @@ impl Projectile {
     /// The blast (or stun, EMP, smoke).
     fn go_off(&mut self, host: &dyn LogicHost, direct: Option<ObjInfo>) -> Outcome {
         self.remove_object(host);
-        let (hit_enemy, kill) = blast(host, self.def, self.owner, self.pos, direct, self.self_blast_scale, self.self_stun_scale);
-        Outcome::Exploded { at: self.pos, hit_enemy, kill }
+        let b = blast(host, self.def, self.owner, self.pos, direct, self.self_blast_scale, self.self_stun_scale);
+        Outcome::Exploded { at: self.pos, hit_enemy: b.hit_enemy, kill: b.kill, surface: b.surface }
     }
 
     /// Stop it where it is (a Trophy System shot it down).
@@ -189,13 +192,46 @@ impl Projectile {
     }
 }
 
+/// What a blast did: whether it hit or killed an enemy, and the surface it went off on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Blast {
+    pub hit_enemy: bool,
+    pub kill: bool,
+    pub surface: Surface,
+}
+
+/// The surface a blast at `at` goes off on: what it hit directly, else the ground there (BO2 passes
+/// the projectile's hit surface to its impact routine, `FUN_004c0ac0` -> `FUN_00533210`).
+/// **Presentation only**, like every surface (docs/CONTRACT.md).
+pub fn blast_surface(host: &dyn LogicHost, at: Vec3, direct: Option<&ObjInfo>) -> Surface {
+    match direct {
+        Some(o) => Surface::of_object(Some(o)),
+        None => host.surface_at(at.x, at.y),
+    }
+}
+
+/// The effects BO2 plays for `def` going off on `surface`: the impact table's cell for the def's
+/// `impactType` and the surface, then the def's own `projExplosionEffect` on top
+/// (`FUN_004c0ac0`). Neither -> the stand-in (no converted table, or a mod-only def).
+pub fn blast_fx(def: &WeaponDef, surface: Surface) -> (Option<String>, Option<&str>) {
+    let table = crate::impacts::fx_name(def.impact_type, surface, false, false);
+    let own = (!def.explosion_fx.is_empty()).then_some(def.explosion_fx.as_str());
+    if table.is_none() && own.is_none() {
+        return (None, Some(DEFAULT_EXPLOSION_FX));
+    }
+    (table, own)
+}
+
 /// `def` going off at `at` for `owner` (a General's id): explosion damage, stun, EMP or smoke over
-/// its radius, and its effect. `direct` took a direct hit. Returns (hit an enemy, killed one).
-pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct: Option<ObjInfo>, self_blast_scale: f32, self_stun_scale: f32) -> (bool, bool) {
+/// its radius, and its effects. `direct` took a direct hit.
+pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct: Option<ObjInfo>, self_blast_scale: f32, self_stun_scale: f32) -> Blast {
     let d = def;
-    let fx = if d.explosion_fx.is_empty() { DEFAULT_EXPLOSION_FX } else { d.explosion_fx.as_str() };
+    let surface = blast_surface(host, at, direct.as_ref());
     if d.effect != Effect::None {
-        host.fx(fx, at);
+        let (table, own) = blast_fx(d, surface);
+        for fx in table.as_deref().into_iter().chain(own) {
+            host.fx(fx, at);
+        }
     }
     let mut objs = Vec::new();
     host.query(at, d.explosion_radius.max(1.0) + 12.0, owner, &mut objs);
@@ -255,7 +291,7 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
             Effect::Smoke | Effect::None | Effect::Impact => {}
         }
     }
-    (hit_enemy, kill)
+    Blast { hit_enemy, kill, surface }
 }
 
 #[cfg(test)]

@@ -15,6 +15,10 @@
 //! reach as `Data\ConquerOps\impacts.txt` ([`crate::names::IMPACT_FX_PATH`]); the bridge asks
 //! [`fx_name`] through `zhbo_impact_fx` and plays the returned FXList at the hit point.
 //!
+//! The same file carries BO2's impact *sounds* for the projectile impact types (`sound
+//! <impactType> <surface> <event>`): a blast plays the type's `<family>_<surface>` alias
+//! ([`sound_name`], `zhbo_formats::fx::ImpactKind`), the way it plays the type's FX cell.
+//!
 //! A surface comes from what was hit: objects from their kind flags ([`Surface::of_object`], the
 //! same three-way split the overhead General's hits use) and the ground from Zero Hour's own
 //! terrain class through [`crate::host::LogicHost::surface_at`]. **Surface data is presentation
@@ -165,6 +169,38 @@ pub fn find(rows: &[Row], impact_type: i32, surface: Surface, head: bool, fatal:
     cell(surface).or_else(|| cell(Surface::Default))
 }
 
+/// One converted impact sound: the event a blast of `impact_type` on `surface` plays.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SoundRow {
+    pub impact_type: i32,
+    pub surface: Surface,
+    /// The converted AudioEvent (`ZHBO_BO2_Snd_<family>_<surface>`).
+    pub event: String,
+}
+
+/// The `sound <impactType> <surface> <event>` rows of the converted table (malformed ones skipped).
+pub fn parse_sounds(text: &str) -> Vec<SoundRow> {
+    let mut rows = Vec::new();
+    for line in text.lines() {
+        let line = line.split(';').next().unwrap_or("").trim();
+        let mut w = line.split_whitespace();
+        if let (Some("sound"), Some(t), Some(s), Some(event), None) = (w.next(), w.next(), w.next(), w.next(), w.next()) {
+            if let (Ok(t), Some(surface)) = (t.parse(), Surface::parse(s)) {
+                rows.push(SoundRow { impact_type: t, surface, event: event.to_string() });
+            }
+        }
+    }
+    rows
+}
+
+/// The sound for `impact_type` on `surface`: the exact cell, else the type's default-surface cell
+/// (BO2 builds every family over all 32 surfaces, but some aliases are absent from the install —
+/// `wpn_rocket_explode_flesh` — and the mod falls back as the FX table does rather than go silent).
+pub fn find_sound<S: AsRef<str>>(rows: &[(i32, Surface, S)], impact_type: i32, surface: Surface) -> Option<&S> {
+    let cell = |s: Surface| rows.iter().find(|r| r.0 == impact_type && r.1 == s).map(|r| &r.2);
+    cell(surface).or_else(|| cell(Surface::Default))
+}
+
 /// The table itself: installed once before play from the converted file. The empty table holds
 /// until then, so a missing/stale archive plays no impact FX (the impact sound still plays).
 static TABLE: OnceLock<RwLock<Vec<Row>>> = OnceLock::new();
@@ -173,12 +209,31 @@ fn table() -> &'static RwLock<Vec<Row>> {
     TABLE.get_or_init(|| RwLock::new(Vec::new()))
 }
 
-/// Install the converted table (`Data\ConquerOps\impacts.txt`); returns the row count.
+/// The installed sound cells. The events are interned (`'static`, leaked once per install — the
+/// table is installed once per archive load) so a cue can name them like every other sound.
+type SoundCell = (i32, Surface, &'static str);
+static SOUNDS: OnceLock<RwLock<Vec<SoundCell>>> = OnceLock::new();
+
+fn sounds() -> &'static RwLock<Vec<SoundCell>> {
+    SOUNDS.get_or_init(|| RwLock::new(Vec::new()))
+}
+
+/// Install the converted table (`Data\ConquerOps\impacts.txt`); returns the row count (FX and
+/// sound cells).
 pub fn install(text: &str) -> usize {
     let rows = parse(text);
-    let n = rows.len();
+    let cells: Vec<SoundCell> =
+        parse_sounds(text).into_iter().map(|r| (r.impact_type, r.surface, &*Box::leak(r.event.into_boxed_str()))).collect();
+    let n = rows.len() + cells.len();
     *table().write().unwrap_or_else(|e| e.into_inner()) = rows;
+    *sounds().write().unwrap_or_else(|e| e.into_inner()) = cells;
     n
+}
+
+/// The converted sound event for a blast of `impact_type` on `surface` (`None`: no cell).
+pub fn sound_name(impact_type: i32, surface: Surface) -> Option<&'static str> {
+    let cells = sounds().read().unwrap_or_else(|e| e.into_inner());
+    find_sound(&cells, impact_type, surface).copied()
 }
 
 /// The converted FXList for a hit through the installed table (the ABI's lookup).
@@ -197,6 +252,9 @@ impact 2 default ZHBO_BO2FX_b2_dirt
 impact 2 concrete ZHBO_BO2FX_b2_concrete
 flesh 2 0 ZHBO_BO2FX_b2_flesh_body
 flesh 2 3 ZHBO_BO2FX_b2_flesh_head_fatal
+sound 7 default ZHBO_BO2_Snd_wpn_grenade_explode_default
+sound 7 concrete ZHBO_BO2_Snd_wpn_grenade_explode_concrete
+sound 7 bogus ZHBO_BO2_Snd_x
 garbage line
 ";
 
@@ -226,6 +284,16 @@ garbage line
         assert_eq!(find(&rows, 2, Surface::Flesh, false, false), Some("ZHBO_BO2FX_b2_flesh_body"));
         assert_eq!(find(&rows, 2, Surface::Flesh, true, true), Some("ZHBO_BO2FX_b2_flesh_head_fatal"));
         assert_eq!(find(&rows, 2, Surface::Flesh, true, false), Some("ZHBO_BO2FX_b2_flesh_body"));
+    }
+
+    #[test]
+    fn a_blast_picks_its_sound_cell_and_falls_back_to_default() {
+        let rows: Vec<_> = parse_sounds(TABLE).into_iter().map(|r| (r.impact_type, r.surface, r.event)).collect();
+        assert_eq!(rows.len(), 2, "the unknown surface is skipped");
+        assert_eq!(parse(TABLE).len(), 4, "sound rows are not FX rows");
+        assert_eq!(find_sound(&rows, 7, Surface::Concrete).map(String::as_str), Some("ZHBO_BO2_Snd_wpn_grenade_explode_concrete"));
+        assert_eq!(find_sound(&rows, 7, Surface::Water).map(String::as_str), Some("ZHBO_BO2_Snd_wpn_grenade_explode_default"));
+        assert_eq!(find_sound(&rows, 9, Surface::Concrete), None);
     }
 
     #[test]

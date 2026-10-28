@@ -846,14 +846,11 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         view_flash_fx: String::new(),
         view_shell_fx: String::new(),
         view_last_shot_shell_fx: String::new(),
-        explosion_fx: match effect {
-            Effect::Explode => "FX_BoobyTrapExplosion",
-            Effect::Stun => "WeaponFX_RangerFlashBangGrenadeDetonation",
-            Effect::Emp => "WeaponFX_EMPPulseImpact",
-            Effect::Smoke => "FX_OverlordSmoke",
-            Effect::Impact | Effect::None => "",
-        }
-        .to_string(),
+        // The def's own `projExplosionEffect` only (set by the effects pass): BO2 plays the impact
+        // table's cell for the `impactType` and surface first (`impacts.txt`), and the sim falls
+        // back to a stand-in only when neither exists. The smoke screen keeps Zero Hour's cloud
+        // until the effects pass names BO2's.
+        explosion_fx: if effect == Effect::Smoke { "FX_OverlordSmoke".to_string() } else { String::new() },
         projectile_object: String::new(),
         // A gun's shot is its own `ZHBO_BO2_Fire_<id>` mix (`sounds_and_fx`); an offhand's throw is
         // its def-level alias.

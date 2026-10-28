@@ -226,9 +226,16 @@ pub fn melee_swing_for(def: &'static crate::weapons::WeaponDef) -> &'static str 
     some(def.melee_swipe_sound.as_str()).unwrap_or(MELEE_SWING)
 }
 
-/// A blast: the projectile def's own (`projExplosionSound`), else the generic one.
-pub fn explosion_for(sound: &'static str) -> &'static str {
-    some(sound).unwrap_or(EXPLOSION)
+/// A blast's cues, in BO2's order (`FUN_004c0ac0`): the impact table's sound for the def's
+/// `impactType` on `surface` (`<family>_<surface>`, `impacts::sound_name`), then the def's own
+/// `projExplosionSound` on top. Neither -> the generic blast (no converted table, a mod-only def).
+pub fn explosion_cues(sound: &'static str, impact_type: i32, surface: crate::impacts::Surface) -> [Option<&'static str>; 2] {
+    let table = crate::impacts::sound_name(impact_type, surface);
+    let own = some(sound);
+    if table.is_none() && own.is_none() {
+        return [Some(EXPLOSION), None];
+    }
+    [table, own]
 }
 
 impl Cues {
@@ -401,7 +408,7 @@ mod tests {
         let leak = |d: crate::weapons::WeaponDef| -> &'static crate::weapons::WeaponDef { Box::leak(Box::new(d)) };
         let plain = leak(Default::default());
         assert_eq!((launch_for(plain), throw_for(plain), pullback_for(plain), melee_swing_for(plain)), (FIRE_LAUNCHER, THROW, PULL_PIN, MELEE_SWING));
-        assert_eq!(explosion_for(""), EXPLOSION);
+        assert_eq!(explosion_cues("", 0, crate::impacts::Surface::Dirt), [Some(EXPLOSION), None]);
         let strela = leak(crate::weapons::WeaponDef { fire_sound: "A".into(), fire_last_sound: "LAST".into(), ..Default::default() });
         assert_eq!(launch_for(strela), "A");
         assert_eq!(shot_for(strela, 0, "A"), "LAST", "the last round's own shot");
@@ -409,7 +416,7 @@ mod tests {
         assert_eq!(shot_for(plain, 0, FIRE), FIRE);
         let semtex = leak(crate::weapons::WeaponDef { fire_sound: "T".into(), pullback_sound: "P".into(), melee_swipe_sound: "S".into(), ..Default::default() });
         assert_eq!((throw_for(semtex), pullback_for(semtex), melee_swing_for(semtex)), ("T", "P", "S"));
-        assert_eq!(explosion_for("B"), "B");
+        assert_eq!(explosion_cues("B", 0, crate::impacts::Surface::Dirt), [None, Some("B")], "no table cell: the def's own only");
         // Overridden to nothing, or to BO2's silent alias: no cue.
         assert_eq!(some(NO_SOUND), None);
         assert_eq!(some(&crate::names::def_sound_event(NULL_SOUND_ALIAS)), None);

@@ -135,9 +135,11 @@ pub enum EventKind {
     Thrown { lethal: bool },
     /// A launcher fired.
     Launched,
-    /// A grenade, rocket or other projectile went off; `sound` is its def's blast event
-    /// (`projExplosionSound`), empty when it has none (equipment, or a def BO2 gives none).
-    Exploded { at: Vec3, sound: &'static str },
+    /// A grenade, rocket, other projectile or piece of equipment went off on `surface` (what it hit
+    /// directly, else the ground). `sound` is its def's own blast event (`projExplosionSound`, empty
+    /// when it has none) and `impact_type` its `impactType`: the client plays the impact table's
+    /// sound for the type and surface, then the def's own (`sounds::explosion_cues`).
+    Exploded { at: Vec3, sound: &'static str, impact_type: i32, surface: crate::impacts::Surface },
     /// Equipment set down (planted, or a thrown piece came to rest).
     Planted { kind: EquipKind },
     /// The player's C4 went off.
@@ -522,8 +524,9 @@ impl Sim {
         for (i, owner, outcome) in done.iter().rev() {
             let (_, proj) = self.projectiles.remove(*i);
             match *outcome {
-                Outcome::Exploded { at, hit_enemy, kill } => {
-                    self.emit(*owner, EventKind::Exploded { at, sound: proj.def.explode_sound.as_str() });
+                Outcome::Exploded { at, hit_enemy, kill, surface } => {
+                    let d = proj.def;
+                    self.emit(*owner, EventKind::Exploded { at, sound: d.explode_sound.as_str(), impact_type: d.impact_type, surface });
                     if proj.def.effect == crate::weapons::Effect::Smoke {
                         let radius = proj.def.explosion_radius.max(crate::projectiles::SMOKE_RADIUS);
                         self.smokes.push((at, radius, crate::projectiles::SMOKE_TIME));
@@ -562,8 +565,8 @@ impl Sim {
     fn equipment_events(&mut self, events: Vec<EquipEvent>) {
         for e in events {
             match e {
-                EquipEvent::Exploded { owner, at, hit_enemy, kill } => {
-                    self.emit(owner, EventKind::Exploded { at, sound: "" });
+                EquipEvent::Exploded { owner, at, hit_enemy, kill, sound, impact_type, surface } => {
+                    self.emit(owner, EventKind::Exploded { at, sound, impact_type, surface });
                     if hit_enemy {
                         self.emit(owner, EventKind::HitMarker { headshot: false, kill });
                     }
@@ -825,6 +828,8 @@ pub(crate) mod tests {
         /// Building: the build menu, and the structures to work on (laid out, or damaged).
         pub options: RefCell<Vec<crate::building::BuildOption>>,
         pub sites: RefCell<Vec<FakeSite>>,
+        /// The ground's surface (`surface_at`); dirt when unset.
+        pub ground: std::cell::Cell<Option<Surface>>,
     }
 
     impl FakeHost {
@@ -855,7 +860,7 @@ pub(crate) mod tests {
             true
         }
         fn surface_at(&self, _x: f32, _y: f32) -> Surface {
-            Surface::Dirt
+            self.ground.get().unwrap_or(Surface::Dirt)
         }
         fn extent(&self) -> (Vec3, Vec3) {
             (Vec3::new(-5000.0, -5000.0, -100.0), Vec3::new(5000.0, 5000.0, 1000.0))
@@ -1830,6 +1835,50 @@ pub(crate) mod tests {
         assert_eq!(sim.player(0).unwrap().mode, Mode::Rts);
         assert_eq!(sim.rts_update(&host, 0, 1, 0, [0, 0, 0], None).lock, 1, "the pistol, which was in hand");
         assert_eq!(sim.rts_update(&host, 0, 1, 1, [0, 0, 0], None).lock, -1, "once");
+    }
+
+    /// BO2's blast is the impact table's for the def's `impactType` and the surface it went off on
+    /// (`FUN_004c0ac0` -> `FUN_00533210`): the sim reports the surface in the event, the effect and
+    /// the client's cues follow it.
+    #[test]
+    fn a_blast_on_two_surfaces_plays_their_own_effect_and_sound() {
+        crate::impacts::install(
+            "impact 77 default FX_D\nimpact 77 concrete FX_C\nsound 77 default SND_D\nsound 77 concrete SND_C\n",
+        );
+        let frag: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef {
+            id: "test_frag_mp".into(),
+            effect: crate::weapons::Effect::Explode,
+            impact_type: 77,
+            explode_sound: "OWN".into(),
+            fuse_time: 0.1,
+            ..Default::default()
+        }));
+        let blast_on = |ground: Surface| {
+            let host = FakeHost::default();
+            host.ground.set(Some(ground));
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            sim.projectiles.push((0, Projectile::launch(frag, 1, Vec3::new(0.0, 0.0, 1.0), Vec3::new(1.0, 0.0, 0.0), 0.1, &host, 0.0)));
+            run(&mut sim, &host, 0, 1, FpsInput::default(), frames(0.5));
+            let ev = events(&sim)
+                .into_iter()
+                .find_map(|k| match k {
+                    EventKind::Exploded { sound, impact_type, surface, .. } => Some((sound, impact_type, surface)),
+                    _ => None,
+                })
+                .expect("it went off");
+            let fx = host.played_fx.borrow().clone();
+            (ev, fx)
+        };
+        let ((sound, t, on_concrete), fx_concrete) = blast_on(Surface::Concrete);
+        assert_eq!((sound, t, on_concrete), ("OWN", 77, Surface::Concrete));
+        let ((_, _, on_dirt), fx_dirt) = blast_on(Surface::Dirt);
+        assert_eq!(on_dirt, Surface::Dirt);
+        // The table's cell, then the def's own: dirt has no cell of its own and takes the default.
+        assert_eq!(fx_concrete, vec!["FX_C".to_string()]);
+        assert_eq!(fx_dirt, vec!["FX_D".to_string()]);
+        assert_eq!(crate::sounds::explosion_cues(sound, t, on_concrete), [Some("SND_C"), Some("OWN")]);
+        assert_eq!(crate::sounds::explosion_cues(sound, t, on_dirt), [Some("SND_D"), Some("OWN")]);
     }
 
     #[test]

@@ -687,7 +687,9 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
                 sh.sound(event)
             }
             "pullback_sound_player" if thrown => sh.sound(zhbo_core::sounds::pullback_for(d)),
-            "projectile_explosion_sound" if explodes => sh.sound(zhbo_core::sounds::explosion_for(d.explode_sound.as_str())),
+            // The def field only: the impact-type/surface sound BO2 plays first is the impact
+            // table's (`impacts.txt`), not `projExplosionSound`.
+            "projectile_explosion_sound" if explodes => own(&d.explode_sound),
             "melee_swipe_sound_player" => sh.sound(zhbo_core::sounds::melee_swing_for(d)),
             "melee_hit_sound" => own(&d.melee_hit_sound),
             "raise_sound_player" => own(&d.raise_sound),

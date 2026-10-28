@@ -372,7 +372,23 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     // BO2 sound effects: the general ones, each converted weapon's own shots, and the viewmodel
     // clips' sound notetracks.
     let world = load_zone(bo2_dir, crate::sfx::WORLD_ZONE)?;
-    let (extra, mut fx_ini) = crate::weapons::sounds_and_fx(&bo2, &atts, &mut table.weapons, &converted_base);
+    let (mut extra, mut fx_ini) = crate::weapons::sounds_and_fx(&bo2, &atts, &mut table.weapons, &converted_base);
+    // A blast's own sound is its impact type's family alias for the surface (`impacts::sound_rows`),
+    // from whichever bank has it (the bolt family lives only in the map's), like every converter event.
+    let blast_types = crate::impacts::blast_types(&table.weapons);
+    let alias_names: std::collections::HashSet<String> = [&common, &world]
+        .into_iter()
+        .flat_map(|z| zhbo_formats::sndalias::banks(z).unwrap_or_default())
+        .filter(|b| b.name.starts_with("mpl_"))
+        .flat_map(|b| b.aliases.into_iter().map(|a| a.name.to_ascii_lowercase()))
+        .collect();
+    let (impact_sounds, blast_aliases) = crate::impacts::sound_rows(&blast_types, &|a| alias_names.contains(&a.to_ascii_lowercase()));
+    extra.extend(blast_aliases.into_iter().map(|a| crate::sfx::DynSfx {
+        event: zhbo_core::names::def_sound_event(&a),
+        layers: vec![a],
+        kind: crate::sfx::Kind::World,
+        limit: 2,
+    }));
     let (sound_files, sound_summary) = crate::sfx::files(&common, &world, bo2_dir, &clips, &extra)?;
     out.extend(sound_files);
     summary.push(sound_summary);
@@ -431,6 +447,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
             }
             continue;
         }
+        // The def's own `projExplosionEffect`, played on top of the impact table's cell (BO2's
+        // `FUN_004c0ac0`); most explosives leave it empty and blow up with the table's alone.
         let Some(e) = &w.explosion_effect else { continue };
         if matches!(d.effect, zhbo_core::weapons::Effect::Explode | zhbo_core::weapons::Effect::Stun | zhbo_core::weapons::Effect::Emp) {
             d.explosion_fx = effects.add(e, &|h| paks.image(h));
@@ -465,23 +483,24 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         rts_fx.push_str(&format!("{slot} {flesh} {metal} {hard}\n"));
     }
     out.insert(RTS_FX_PATH.into(), rts_fx.into_bytes());
-    // R8d: BO2's whole impact table for the buckets the converted guns use, keyed by the mod's
-    // surface slots (the local player's own shots). Must run before the effects INI is written.
-    // Bullet buckets only: the launchers' impact types (7, 9) are the explosion table's
-    // (`explosion_entry`, played by the projectile's own explosion) and the crossbow/ballistic
-    // knife's 14 is BO2's "missing impact" row, so neither belongs in a bullet's cells.
+    // R8d: BO2's whole impact table for the bullet buckets the converted guns use and the impact
+    // types of everything that goes off, keyed by the mod's surface slots: the local player's shots
+    // read the bullet rows, every blast its type's row for the surface it went off on (each type
+    // reads its own row, `fx::ImpactKind`). Must run before the effects INI is written.
     let impact_types: Vec<u32> = {
         let mut t: Vec<u32> = table
             .weapons
             .iter()
             .filter(|d| d.class.is_gun() && zhbo_formats::fx::bullet_entry(d.impact_type as u32).is_some())
             .map(|d| d.impact_type as u32)
+            .chain(blast_types.iter().copied())
             .collect();
         t.sort_unstable();
         t.dedup();
         t
     };
-    let (impact_text, unmapped) = crate::impacts::table_text(&common, &impact_types, &mut effects, &|h| paks.image(h));
+    let (mut impact_text, unmapped) = crate::impacts::table_text(&common, &impact_types, &mut effects, &|h| paks.image(h));
+    impact_text.push_str(&impact_sounds);
     if !unmapped.is_empty() {
         summary.push(format!("impact types with no BO2 row (no impact FX): {unmapped:?}"));
     }
@@ -808,23 +827,36 @@ mod tests {
         for d in table.weapons.iter().filter(|d| d.class.is_gun()) {
             assert!(d.impact_type > 0, "{} has no impact type", d.id);
             assert!(d.pellets as usize <= zhbo_core::client::CLIENT_HITS, "{} fires {} pellets", d.id, d.pellets);
-            // Launchers use the explosion table and the crossbow/knife's 14 is BO2's own "missing
-            // impact" row; only the bullet buckets get cells here.
             if zhbo_formats::fx::bullet_entry(d.impact_type as u32).is_some() {
                 buckets.insert(d.impact_type);
             }
         }
+        // Everything that goes off brings its impact type's row (FX) and family (sound).
+        let blasts: std::collections::BTreeSet<i32> = crate::impacts::blast_types(&table.weapons).into_iter().map(|t| t as i32).collect();
+        assert!(blasts.contains(&7) && blasts.contains(&9), "the frag's and the rocket's types: {blasts:?}");
         for line in impacts.lines().filter(|l| !l.starts_with(';') && !l.trim().is_empty()) {
             let w: Vec<&str> = line.split_whitespace().collect();
             assert!(w.len() == 4, "bad impact row: {line}");
-            assert!(buckets.contains(&w[1].parse().unwrap()), "row for a bucket no gun has: {line}");
-            assert!(w[3].starts_with("ZHBO_BO2FX_"), "{line}");
-            assert!(effects_ini.contains(&format!("FXList {}\n", w[3])), "{} names a missing FXList", w[3]);
+            let t: i32 = w[1].parse().unwrap();
+            assert!(buckets.contains(&t) || blasts.contains(&t), "row for a type nothing carries: {line}");
+            if w[0] == "sound" {
+                assert!(blasts.contains(&t), "a bullet type got a blast sound: {line}");
+                assert!(audio.contains(&format!("AudioEvent {}\n", w[3])), "{} ships no AudioEvent", w[3]);
+            } else {
+                assert!(w[3].starts_with("ZHBO_BO2FX_"), "{line}");
+                assert!(effects_ini.contains(&format!("FXList {}\n", w[3])), "{} names a missing FXList", w[3]);
+            }
+        }
+        for t in buckets.iter().chain(&blasts) {
+            assert!(impacts.contains(&format!("impact {t} default ")), "type {t} has no default cell");
+        }
+        // The grenade's blast sounds differ by surface (BO2's `wpn_grenade_explode_<surface>`).
+        for s in ["default", "dirt", "concrete", "metal", "water"] {
+            assert!(impacts.contains(&format!("sound 7 {s} ZHBO_BO2_Snd_wpn_grenade_explode_{s}\n")), "no grenade blast sound on {s}");
         }
         for bucket in &buckets {
-            assert!(impacts.contains(&format!("impact {bucket} default ")), "bucket {bucket} has no default cell");
-            // BO2 leaves some nonfatal blood cells null (bucket 1 ships only the two fatal exit
-            // effects), so require at least one blood cell per bucket, not the nonfatal one.
+            // BO2 leaves some nonfatal blood cells null, so require at least one blood cell per
+            // bucket, not the nonfatal one.
             assert!(
                 impacts.lines().any(|l| l.starts_with(&format!("flesh {bucket} "))),
                 "bucket {bucket} has no blood cell"

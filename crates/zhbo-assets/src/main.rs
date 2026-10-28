@@ -434,12 +434,17 @@ fn run(args: &[String]) -> Result<(), String> {
                 return Ok(());
             }
             if name == "--impacts" {
-                for t in 0..20u32 {
-                    let n = fx::impact(&zone, t, fx::surface::DIRT).map(|e| e.name).unwrap_or_default();
-                    println!("impact type {t}: {n}");
+                // Every table row on dirt and concrete, its first blood cell, and the impact type
+                // that reads it (`fx::IMPACT_KINDS`).
+                for row in 0..24u32 {
+                    let n = |s| fx::impact(&zone, row, s).map(|e| e.name).unwrap_or_default();
+                    let blood = fx::impact_flesh(&zone, row).map(|e| e.name).unwrap_or_default();
+                    let types: Vec<u32> = fx::IMPACT_KINDS.iter().filter(|k| k.row == row).map(|k| k.impact_type).collect();
+                    println!("row {row} (impact types {types:?}): dirt {} concrete {} blood {blood}", n(fx::surface::DIRT), n(fx::surface::CONCRETE));
                 }
-                for w in weapon::all(&zone).map_err(|e| e.to_string())?.iter().filter(|w| ["frag_grenade_mp", "claymore_mp", "gl_an94_mp", "m32_mp", "satchel_charge_mp", "usrpg_mp", "an94_mp", "fnp45_mp", "bouncingbetty_mp", "sticky_grenade_mp"].contains(&w.name.as_str())) {
-                    println!("{} impact type {}", w.name, w.impact_type);
+                for w in weapon::all(&zone).map_err(|e| e.to_string())?.iter().filter(|w| !fx::is_bullet(w.impact_type)) {
+                    let own = w.explosion_effect.as_ref().map(|e| e.name.as_str()).unwrap_or("-");
+                    println!("{} impact type {} own effect {own} own sound {}", w.name, w.impact_type, w.projectile_explosion_sound.as_deref().unwrap_or("-"));
                 }
                 return Ok(());
             }

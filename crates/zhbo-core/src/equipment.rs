@@ -13,6 +13,7 @@
 use crate::hitscan::{ray_vs_target, Shape, Target};
 use crate::host::{objflags, LogicHost, ObjInfo};
 use crate::math::{basis_xy, Vec3};
+use crate::impacts::Surface;
 use crate::projectiles::blast;
 use crate::units::{inches, LOGIC_DT};
 use crate::weapons::WeaponDef;
@@ -87,7 +88,8 @@ pub struct Placed {
 /// What happened to equipment this frame, for hit markers and sounds.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum EquipEvent {
-    Exploded { owner: usize, at: Vec3, hit_enemy: bool, kill: bool },
+    /// Went off: `def`'s blast sound and impact type, on `surface` (the client picks the cues).
+    Exploded { owner: usize, at: Vec3, hit_enemy: bool, kill: bool, sound: &'static str, impact_type: i32, surface: Surface },
     /// Shot or blown up by an enemy.
     Destroyed { owner: usize, by: Option<usize>, at: Vec3 },
     /// A Trophy System shot a projectile down.
@@ -145,8 +147,9 @@ impl Placed {
     /// Blow it up where it is.
     fn explode(&mut self, host: &dyn LogicHost) -> EquipEvent {
         self.remove(host);
-        let (hit_enemy, kill) = blast(host, self.def, self.general, self.pos, None, 1.0, 1.0);
-        EquipEvent::Exploded { owner: self.owner, at: self.pos, hit_enemy, kill }
+        let b = blast(host, self.def, self.general, self.pos, None, 1.0, 1.0);
+        let d = self.def;
+        EquipEvent::Exploded { owner: self.owner, at: self.pos, hit_enemy: b.hit_enemy, kill: b.kill, sound: d.explode_sound.as_str(), impact_type: d.impact_type, surface: b.surface }
     }
 }
 

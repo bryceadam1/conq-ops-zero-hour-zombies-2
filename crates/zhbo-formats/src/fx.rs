@@ -266,21 +266,12 @@ pub mod surface {
     pub const ASPHALT: usize = 22;
 }
 
-/// The impact table's entry for a bullet's `impactType`: small (pistols, SMGs), large (rifles),
-/// armour-piercing (snipers), extreme, and shotgun. BO2's table orders its rows in entry/exit
-/// pairs (1/2 small, 3/4 large, 5/6 the next bucket, 7/8 AP, 9/10 extreme); the four verified
-/// pairs are the ones the RTS path uses. The shotgun pair (5) is the standing inference — the
-/// converter logs it and `zhbo-assets fx --impacts` names the row, so a wrong guess is visible
-/// rather than silent (PLAN.md §8.6).
+/// The impact table's row for a bullet's `impactType` (an entry hit): small (pistols, SMGs) 0,
+/// large (rifles) 3, armour-piercing 7, extreme 9, shotgun 5 — `IMPACT_KINDS`, from BO2's
+/// `FUN_00533210`. (Rows 1/4/6/8/10 are the exit hits; before this was read from the switch the
+/// small bucket used row 1, its exit row, which ships only fatal-exit blood.)
 pub fn bullet_entry(impact_type: u32) -> Option<u32> {
-    match impact_type {
-        1 => Some(1),
-        2 => Some(3),
-        3 => Some(7),
-        4 => Some(9),
-        5 => Some(5),
-        _ => None,
-    }
+    impact_kind(impact_type).filter(|_| is_bullet(impact_type)).map(|k| k.row)
 }
 
 /// The blood a bullet of table entry `entry` raises on a soldier (the first of its flesh effects).
@@ -289,7 +280,7 @@ pub fn impact_flesh(z: &Zone, entry: u32) -> Option<Effect> {
     let kind = crate::fastfile::asset_type_id("impactfx")?;
     let table = z.assets.iter().find(|a| a.kind == kind)?;
     let entries = z.u32(table.addr + IT::table);
-    if entries == 0 || entry == 0 || entry > 32 {
+    if entries == 0 || entry > 32 {
         return None;
     }
     (0..4).map(|i| z.u32(entries + entry * IE::SIZE + IE::flesh + 4 * i)).find(|p| *p != 0).map(|p| read(z, p)).filter(|e| !e.elems.is_empty())
@@ -303,7 +294,7 @@ pub fn impact_flesh_variant(z: &Zone, entry: u32, variant: usize) -> Option<Effe
     let kind = crate::fastfile::asset_type_id("impactfx")?;
     let table = z.assets.iter().find(|a| a.kind == kind)?;
     let entries = z.u32(table.addr + IT::table);
-    if entries == 0 || entry == 0 || entry > 32 || variant >= 4 {
+    if entries == 0 || entry > 32 || variant >= 4 {
         return None;
     }
     [variant, 0]
@@ -314,15 +305,60 @@ pub fn impact_flesh_variant(z: &Zone, entry: u32, variant: usize) -> Option<Effe
         .filter(|e| !e.elems.is_empty())
 }
 
-/// The impact table's entry for an explosive weapon's `impactType` (the table orders its entries
-/// differently from the enum): grenades and rifle grenades, rockets, and shells.
-pub fn explosion_entry(impact_type: u32) -> Option<u32> {
-    match impact_type {
-        7 | 8 => Some(12),
-        9 | 10 => Some(13),
-        12 | 13 => Some(17),
-        _ => None,
-    }
+/// What BO2's impact routine plays for an entry hit (no exit/vehicle flags) of one `impactType`:
+/// the `FxImpactTable` row the FX comes from and the sound family, whose alias for a surface is
+/// `<family>_<surface>` (`FUN_00533210`, t6mp; families registered by `FUN_004d4440` through
+/// `FUN_004d42d0`, which hashes `"%s_%s"` with the 32 surface names). The projectile-explode event
+/// (`FUN_004c0ac0`) and the grenade/equipment explode event (`FUN_004c1590`) both call it with the
+/// surface the projectile hit, play the row's cell and the alias, and then the def's own
+/// `projExplosionEffect`/`projExplosionSound` on top.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ImpactKind {
+    /// BO2's `impactType` (the enum: 0 none, 1 bullet_small … 15 blade).
+    pub impact_type: u32,
+    /// The `FxImpactTable` row (`FUN_00533210`'s `uVar3` for an entry hit).
+    pub row: u32,
+    /// The sound family (`None`: the def's own field — `bounceSound`, `projDudSound` — which the
+    /// mod does not carry).
+    pub sound_family: Option<&'static str>,
+}
+
+/// BO2's `impactType` -> impact row and sound family, transcribed from the switch in
+/// `FUN_00533210` and the family-table addresses `FUN_004d4440` loads before each
+/// `FUN_004d42d0` call (`ESI = 0x1061b88` grenade_explode, `0x1061c08` rifle_grenade, `0x1061c88`
+/// rocket_explode, `0x1061d08` rocket_explode_xtreme, `0x1061d88` mortar_shell, `0x1061e08`
+/// tank_shell, `0x1061f08` bullet_impact_small … `0x1062208` blade). The one source of this mapping:
+/// the impact FX, the explosion FX and the explosion sounds all read it. Notes from the switch:
+/// `rocket_explode_xtreme` (10) reads the plain `wpn_rocket_explode` table (its own family is
+/// registered but unread), `mortar_shell`/`tank_shell` (12/13) prefer the def's
+/// `mortarShellSound`/`tankShellSound` (+0x724/+0x728) when set (no MP def sets them), and the
+/// rows skip 1/2/4/6/8/10 (exit hits) and 18.
+pub const IMPACT_KINDS: [ImpactKind; 15] = [
+    ImpactKind { impact_type: 1, row: 0, sound_family: Some("prj_bullet_impact_small") },
+    ImpactKind { impact_type: 2, row: 3, sound_family: Some("prj_bullet_impact_large") },
+    ImpactKind { impact_type: 3, row: 7, sound_family: Some("prj_bullet_impact_ap") },
+    ImpactKind { impact_type: 4, row: 9, sound_family: Some("prj_bullet_impact_xtreme") },
+    ImpactKind { impact_type: 5, row: 5, sound_family: Some("prj_bulletspray_small") },
+    ImpactKind { impact_type: 6, row: 11, sound_family: None },
+    ImpactKind { impact_type: 7, row: 12, sound_family: Some("wpn_grenade_explode") },
+    ImpactKind { impact_type: 8, row: 12, sound_family: Some("wpn_rifle_grenade") },
+    ImpactKind { impact_type: 9, row: 13, sound_family: Some("wpn_rocket_explode") },
+    ImpactKind { impact_type: 10, row: 14, sound_family: Some("wpn_rocket_explode") },
+    ImpactKind { impact_type: 11, row: 15, sound_family: None },
+    ImpactKind { impact_type: 12, row: 16, sound_family: Some("wpn_mortar_shell") },
+    ImpactKind { impact_type: 13, row: 17, sound_family: Some("wpn_tank_shell") },
+    ImpactKind { impact_type: 14, row: 19, sound_family: Some("prj_bolt_impact") },
+    ImpactKind { impact_type: 15, row: 20, sound_family: Some("prj_blade_impact") },
+];
+
+/// The impact kind of `impact_type` (`None` for 0, "none", and out-of-range values).
+pub fn impact_kind(impact_type: u32) -> Option<ImpactKind> {
+    IMPACT_KINDS.iter().copied().find(|k| k.impact_type == impact_type)
+}
+
+/// The five bullet impact types (`bullet_small` … `shotgun`); the rest belong to projectiles.
+pub fn is_bullet(impact_type: u32) -> bool {
+    (1..=5).contains(&impact_type)
 }
 
 /// The effect BO2's impact table (`FxImpactTable`) plays for table entry `entry` on `surface`,
@@ -333,7 +369,7 @@ pub fn impact(z: &Zone, entry: u32, surface: usize) -> Option<Effect> {
     let kind = crate::fastfile::asset_type_id("impactfx")?;
     let table = z.assets.iter().find(|a| a.kind == kind)?;
     let entries = z.u32(table.addr + IT::table);
-    if entries == 0 || impact_type == 0 || impact_type > 32 {
+    if entries == 0 || impact_type > 32 {
         return None;
     }
     let entry = entries + impact_type * IE::SIZE;

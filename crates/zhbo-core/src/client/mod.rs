@@ -1137,7 +1137,11 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 }
                 EventKind::Thrown { lethal } => self.cues.play(held.map_or(sounds::THROW, |(_, _, _, l, t)| sounds::throw_for(if lethal { l } else { t }))),
                 EventKind::Launched => self.cues.play(held.map_or(sounds::FIRE_LAUNCHER, |(def, ammo, ..)| sounds::shot_for(def, ammo, sounds::launch_for(def)))),
-                EventKind::Exploded { at, sound } => self.cues.play_at(sounds::explosion_for(sound), at),
+                EventKind::Exploded { at, sound, impact_type, surface } => {
+                    for cue in sounds::explosion_cues(sound, impact_type, surface).into_iter().flatten() {
+                        self.cues.play_at(cue, at);
+                    }
+                }
                 EventKind::Intercepted { at } => self.cues.play_at(sounds::EXPLOSION, at),
                 EventKind::Hacking { progress } => {
                     self.hud.hack_progress = progress;

@@ -140,8 +140,8 @@ impl Sim {
                 }
                 // Points for what the C4 kills (the owner's own state is out of the table now).
                 for e in &ev {
-                    if let EquipEvent::Exploded { at, hit_enemy, kill, .. } = *e {
-                        self.emit(idx, EventKind::Exploded { at, sound: "" });
+                    if let EquipEvent::Exploded { at, hit_enemy, kill, sound, impact_type, surface, .. } = *e {
+                        self.emit(idx, EventKind::Exploded { at, sound, impact_type, surface });
                         if hit_enemy {
                             self.emit(idx, EventKind::HitMarker { headshot: false, kill });
                         }

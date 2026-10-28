@@ -483,8 +483,9 @@ pub struct Weapon {
     /// The HUD icon's image in the `.ipak` packs (its material is inline in the weapon).
     pub hud_icon_hash: Option<u32>,
     pub dpad_icon: Option<String>,
-    /// What a projectile does when it goes off (`projExplosionEffect`), or the impact table's
-    /// effect for its `impactType` on dirt.
+    /// The def's own blast effect (`projExplosionEffect`). BO2 plays it *on top of* the impact
+    /// table's cell for the `impactType` and the surface hit (`fx::ImpactKind`), so most
+    /// explosives leave it empty.
     pub explosion_effect: Option<crate::fx::Effect>,
     pub impact_type: u32,
     /// The muzzle flash others see (`worldFlashEffect`).
@@ -835,7 +836,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     let last_shell = z.try_u32(d + WD::viewLastShotEjectEffect)?;
     w.view_last_shot_eject_effect = crate::fx::read_or_stub(z, last_shell);
     let fx = z.try_u32(d + WD::projExplosionEffect)?;
-    w.explosion_effect = crate::fx::bind(crate::fx::read_or_stub(z, fx), &[z]).or_else(|| crate::fx::explosion_entry(w.impact_type).and_then(|e| crate::fx::impact(z, e, crate::fx::surface::DIRT)));
+    w.explosion_effect = crate::fx::bind(crate::fx::read_or_stub(z, fx), &[z]);
     w.hud_icon = named(z, d + WD::hudIcon);
     let icon = z.try_u32(d + WD::hudIcon)?;
     w.hud_icon_hash = (icon != 0)
