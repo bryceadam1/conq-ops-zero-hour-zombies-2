@@ -17,7 +17,7 @@ use zhbo_formats::t6zone::Zone;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive. The weapon table is
 /// archive content: the attachment stacking fix changes its synthesized variant lines.
-pub const VERSION: u32 = 77;
+pub const VERSION: u32 = 78;
 pub use zhbo_core::names::BO2_ARCHIVE_NAME as ARCHIVE_NAME;
 pub use zhbo_core::names::BO2_ARCHIVE_VERSION_PATH as VERSION_FILE;
 /// Stem of each page's TGA; every MappedImage names the page it was packed into.
@@ -277,8 +277,9 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                         }
                     }
                 }
-                // Each zone's own assets first; only then the slow scan for a material loaded inline
-                // inside another asset (`hud_mp_firerate_*` lives inside `common_mp`'s weapons).
+                // Each zone's own assets first, then the materials nested inside other assets (also
+                // pool members); only then the slow scan for a material loaded inline inside another
+                // asset (`hud_mp_firerate_*` lives inside `common_mp`'s weapons).
                 let order = ["common_mp", "code_post_gfx_mp", "ui_mp", "patch_mp", "patch_ui_mp", "frontend"];
                 let image = |m: zhbo_formats::xmodel::Material| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash)).filter(|h| *h != 0);
                 let mc = format!("mc/{material}");
@@ -289,6 +290,16 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                         zhbo_formats::xmodel::find_asset_material(z, material)
                             .or_else(|| zhbo_formats::xmodel::find_asset_material(z, &mc))
                             .and_then(image)
+                    })
+                    .or_else(|| {
+                        // A material nested inside another asset is in BO2's pool too
+                        // (`Zone::linked`): the map-only ADS overlays (`envg_ir`, `specter`,
+                        // `vzoom`) are nested in `common_mp`'s attachment uniques.
+                        order.iter().filter_map(|z| zones.get(z)).find_map(|z| {
+                            zhbo_formats::xmodel::find_linked_material(z, material)
+                                .or_else(|| zhbo_formats::xmodel::find_linked_material(z, &mc))
+                                .and_then(image)
+                        })
                     })
                     .or_else(|| {
                         order
@@ -658,25 +669,22 @@ mod tests {
         let (bytes, report) = build_archive(&bo2.path).unwrap();
         println!("{report:?}");
         // A few weapons have no HUD icon image in BO2 (the HUD then shows their short name).
-        // The map-zone-only overlay materials (`envg_ir`, `specter`, `vzoom`) are not in the
-        // `Source::Dynamic` search's zones; they are reported and allowed. The four that convert
-        // from `common_mp` must still be present.
+        // Every ADS overlay converts: the four sniper ones are `patch_mp` assets, `envg_ir`,
+        // `specter` and `vzoom` are nested in `common_mp` (`Zone::linked`), as is the Willy
+        // Pete's HUD icon.
         for name in [
             "ZHBO_Mat_scope_overlay_ballista",
             "ZHBO_Mat_scope_overlay_dsr50",
+            "ZHBO_Mat_scope_overlay_envg_ir",
+            "ZHBO_Mat_scope_overlay_specter",
             "ZHBO_Mat_scope_overlay_svu",
+            "ZHBO_Mat_scope_overlay_vzoom",
             "ZHBO_Mat_scope_overlay_xpr50",
+            "ZHBO_BO2_Icon_willy_pete_mp",
         ] {
             assert!(report.found.iter().any(|f| f == name), "{name} did not convert: {:?}", report.missing);
         }
-        assert!(
-            report
-                .missing
-                .iter()
-                .all(|(name, _)| name.starts_with("ZHBO_BO2_Icon_") || name.starts_with("ZHBO_Mat_scope_overlay_")),
-            "{:?}",
-            report.missing
-        );
+        assert!(report.missing.iter().all(|(name, _)| name.starts_with("ZHBO_BO2_Icon_")), "{:?}", report.missing);
         let dir = std::env::temp_dir().join("zhbo-hud-test");
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join(ARCHIVE_NAME);

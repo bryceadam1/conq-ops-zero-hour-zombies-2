@@ -387,9 +387,11 @@ pub fn find_image(z: &Zone, name: &str) -> Option<Image> {
         })
 }
 
-/// A material asset by name (2D HUD art is a material too), or `None` if the zone has none.
+/// A material asset by name (2D HUD art is a material too), or `None` if the zone has none: the
+/// zone's own asset, then one nested inside another asset (BO2 registers both in the material
+/// pool, `Zone::linked`), then the slow scan for an inline copy.
 pub fn find_material(z: &Zone, name: &str) -> Option<Material> {
-    find_asset_material(z, name).or_else(|| find_inline_material(z, name))
+    find_asset_material(z, name).or_else(|| find_linked_material(z, name)).or_else(|| find_inline_material(z, name))
 }
 
 /// A material that is one of the zone's own assets (fast; [`find_material`] also scans for
