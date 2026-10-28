@@ -4555,3 +4555,11 @@ Composability: `v1/attach-camo` gives attachment parts their own asset with the 
 (`take(BASE_CAMO_OPTIONS)`); after both merge, a DLC camo will paint the gun but not an optic part
 unless that fallback also takes every row. No ABI change; the weapon table text gained two keys per
 option (archive `hud::VERSION` bump is the integrator's).
+
+Measured (conformance CLI vs the 2026-10-25 baseline): cac BO2-only rows 62 → 42 (20 DLC camo rows
+now offered; the 7 left — `camo_mtp`, `snake`, `bacon`, `dayofdead`, `ghost`, `paladin`, `pap` —
+have no art on this install); cac differing cells 881 → 901: +20 `camo.order` cells, the new rows'
+position in the trimmed list vs BO2's group index (BO2's grid also skips undisplayed rows, so the
+expected side's raw index is not the on-screen slot); weapons unchanged (706,586 cells); gap
+clusters 214 → 214. Verified: cargo test --workspace green; clippy unchanged (39 warnings before
+and after); the real-install suite green (31); headless screenshots render with a fresh archive.
