@@ -86,6 +86,11 @@ verify it by hand after touching the menu ABI, the shell window, or the shared c
    - Option grids (attachments, perks, grenades, wildcards, camo/reticle): one wheel notch moves
      one row; Left/Right wrap within a row.
    - The S/O dialogs: hover highlights an entry, the wheel walks them.
+   - Camo (`C` on PRIMARY): every tile shows its thumbnail; the title reads `PERSONALIZE <GUN>`;
+     the tabs (CAMO, DLC, DLC2 when the install has a DLC2 camo) page with `A`/`D` (wrapping) and
+     by clicking a tab; the panel under the grid shows the focused camo's name, the gun's picture
+     and the `Equipped` box. Equip a camo: the editor's PRIMARY button and the class list's preview
+     show its swatch in the corner; the reticle page has the same RETICLES/DLC tabs.
 4. Edit something, walk to **SAVE CLASS**, confirm: `ConquerOps.profile` (in the game's user-data
    directory) is rewritten with the new class, and the list shows it highlighted.
 5. On a custom row: **C** copies it (`NAME COPY` appears), **Backspace** deletes it — both rewrite

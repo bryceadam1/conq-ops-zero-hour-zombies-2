@@ -97,6 +97,7 @@ fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> 
         ("cac-editor-weapons", weapon_picker_prims()),
         ("cac-editor-attachments", attachment_picker_prims()),
         ("cac-personalize", personalize_prims()),
+        ("cac-personalize-dlc", personalize_tab_prims(1)),
         ("cac-reticles", reticle_personalize_prims()),
         ("cac-reticle-color", reticle_color_personalize_prims()),
         ("cac-dialog-set", set_dialog_prims()),
@@ -164,6 +165,16 @@ fn personalize_prims() -> Vec<Prim> {
     editor.picking = false;
     let tabs = classui::personalize_tabs_for(PersonalizeKind::Camo, Some(editor.draft.primary.as_str()));
     let p = Personalize::with_tabs(PersonalizeKind::Camo, tabs, &editor.draft);
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// The camo screen on tab `tab` (`D` pages right, as BO2's `shoulderr`).
+fn personalize_tab_prims(tab: i32) -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.picking = false;
+    let tabs = classui::personalize_tabs_for(PersonalizeKind::Camo, Some(editor.draft.primary.as_str()));
+    let mut p = Personalize::with_tabs(PersonalizeKind::Camo, tabs, &editor.draft);
+    p.step_tab(tab);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
@@ -280,7 +291,8 @@ fn editor_state() -> Editor {
         extra_perks: [Some(Perk::FLAK_JACKET), None, None],
         wildcards: vec![Wildcard::Perk1Greed],
         reserve: [0, 0],
-        camo: String::new(),
+        // A-TACS AU: the PRIMARY button's swatch and the camo page's Equipped box show it.
+        camo: "camo_atacs".into(),
         reticle: String::new(),
         reticle_color: String::new(),
         knife: String::new(),
