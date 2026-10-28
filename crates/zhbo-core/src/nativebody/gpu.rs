@@ -40,7 +40,7 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeBodyIn) -> i32 {
         // space shading (native.wgsl): every map uploads raw.
         let mut paths: Vec<(String, bool)> = Vec::new();
         for surf in &loaded.mesh.surfaces {
-            for p in [&surf.color, &surf.maps].into_iter().flatten() {
+            for p in [&surf.color, &surf.maps, &surf.specular].into_iter().flatten() {
                 if !paths.iter().any(|(q, _)| q == p) {
                     paths.push((p.clone(), false));
                 }
@@ -80,7 +80,7 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeBodyIn) -> i32 {
             let surfaces: Vec<NativeSurface> = mesh
                 .surfaces
                 .iter()
-                .map(|s| NativeSurface { first_index: s.first_index, index_count: s.index_count, blend: native_blend(s.blend), emissive: s.emissive, color: handle(&s.color), maps: handle(&s.maps), camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: s.sort_key, cull: native_cull(s.cull) })
+                .map(|s| NativeSurface { first_index: s.first_index, index_count: s.index_count, blend: native_blend(s.blend), emissive: s.emissive, color: handle(&s.color), maps: handle(&s.maps), specular: handle(&s.specular), camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: s.sort_key, cull: native_cull(s.cull) })
                 .collect();
             let m = r.native_create_mesh(&vertices, &mesh.indices, &surfaces);
             Some((m, handles.into_iter().map(|(_, h)| h).filter(|&h| h != INVALID).collect::<Vec<_>>()))

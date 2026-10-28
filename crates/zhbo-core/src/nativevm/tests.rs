@@ -162,6 +162,7 @@ fn a_camo_option_changes_only_the_surfaces_its_recipe_names() {
             name: "mc/mtl_weapon_camo_gold".into(),
             color: Some("Art\\Textures\\gold.tga".into()),
             maps: Some("Art\\Textures\\gold_nsg.tga".into()),
+            specular: Some("Art\\Textures\\gold_spc.tga".into()),
             ..Default::default()
         }],
         options: vec![
@@ -186,6 +187,7 @@ fn a_camo_option_changes_only_the_surfaces_its_recipe_names() {
     super::camo::apply(&mut m, &blob, "camo_gold", |_| true);
     assert_eq!(m.surfaces[0].color.as_deref(), Some("Art\\Textures\\gold.tga"));
     assert_eq!(m.surfaces[0].maps.as_deref(), Some("Art\\Textures\\gold_nsg.tga"));
+    assert_eq!(m.surfaces[0].specular.as_deref(), Some("Art\\Textures\\gold_spc.tga"), "gold's hue is its spec colour");
     assert_eq!(m.surfaces[0].camo, None);
     assert_eq!(m.surfaces[1].color, before);
     assert_eq!(m.surfaces[2].camo, None);
@@ -1004,7 +1006,7 @@ fn diag_real_maps() {
         let v = |x: f32, y: f32, u: f32, w: f32| NativeVertex { position: [x, y, 0.0], normal: [0.0, 0.0, -1.0], uv: [u, w], bones: [0; 4], weights: [1.0, 0.0, 0.0, 0.0] };
         let verts = [v(0.0, 0.0, 0.0, 0.0), v(0.0, 64.0, 0.0, 1.0), v(64.0, 64.0, 1.0, 1.0), v(64.0, 0.0, 1.0, 0.0)];
         for (maps, label) in [(INVALID, "no maps"), (m, "maps")] {
-            let mesh = r.native_create_mesh(&verts, &[0, 1, 2, 0, 2, 3], &[NativeSurface { first_index: 0, index_count: 6, blend: NativeBlend::Opaque, emissive: false, color: c, maps, camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: 0, cull: NativeCull::None }]);
+            let mesh = r.native_create_mesh(&verts, &[0, 1, 2, 0, 2, 3], &[NativeSurface { first_index: 0, index_count: 6, blend: NativeBlend::Opaque, emissive: false, color: c, maps, specular: INVALID, camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: 0, cull: NativeCull::None }]);
             let mut ortho = [0.0f32; 16];
             ortho[0] = 2.0 / 64.0; ortho[5] = -2.0 / 64.0; ortho[12] = -1.0; ortho[13] = 1.0; ortho[14] = 0.5; ortho[15] = 1.0;
             let mut lights = [NativeLight::default(); 3];

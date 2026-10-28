@@ -92,7 +92,7 @@ fn texture(r: &mut Renderer, rgba: [u8; 4]) -> u16 {
 }
 
 fn surface(color: u16, emissive: bool, count: u32) -> NativeSurface {
-    NativeSurface { first_index: 0, index_count: count, blend: NativeBlend::Opaque, emissive, color, maps: INVALID, camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: 0, cull: NativeCull::None }
+    NativeSurface { first_index: 0, index_count: count, blend: NativeBlend::Opaque, emissive, color, maps: INVALID, specular: INVALID, camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: 0, cull: NativeCull::None }
 }
 
 /// A camo layer replaces the base colour at its own coverage. A multiply would leave the base
@@ -110,6 +110,7 @@ fn camo_layer_replaces_the_base_colour() {
         emissive: true,
         color: base,
         maps: INVALID,
+        specular: INVALID,
         camo,
         camo_uv: [0.0, 0.0, 1.0, 2.0],
         sort_key: 0,
@@ -201,6 +202,46 @@ fn a_dark_finish_keeps_its_hue_under_zero_hour_light() {
     eprintln!("olive lit: RGB {rr} {g} {b}");
     assert!(g > b + 10 && rr > b + 5, "kept its olive hue: RGB {rr} {g} {b}");
     assert!(g < 160, "stayed a dark finish, not washed out: RGB {rr} {g} {b}");
+}
+
+/// BO2's gold camo is a metal: a flat dark colour map (21,20,13) whose whole hue is its spec map
+/// (mean 158,135,83). With the specular colour bound the highlight and reflection take that hue;
+/// with only the packed maps' scalar level (136, the same map's luminance) it is dark polished
+/// metal. A grey spec colour equal to the level draws exactly as the level does.
+#[test]
+fn a_coloured_spec_map_tints_the_metal() {
+    let Some((mut r, log, shot)) = renderer() else { return };
+    let dark = texture(&mut r, [21, 20, 13, 255]);
+    let data: Vec<u8> = std::iter::repeat_n([128u8, 128, 200, 136], 16).flatten().collect();
+    let maps = r.native_create_texture(4, 4, &data, false);
+    let gold = texture(&mut r, [158, 135, 83, 255]);
+    let grey = texture(&mut r, [136, 136, 136, 255]);
+    let lit = |specular| {
+        let mut s = surface(dark, false, 6);
+        s.maps = maps;
+        s.specular = specular;
+        s
+    };
+    let mut f = frame(1);
+    f.ambient = [0.45, 0.45, 0.47];
+    // Off the mirror direction: the pixel reads the reflection, not a saturated highlight.
+    f.lights[0] = NativeLight { direction: [-0.5, 0.3, -0.8], color: [1.0, 0.97, 0.9] };
+    let mut shots = Vec::new();
+    for specular in [INVALID, gold, grey] {
+        let mesh = r.native_create_mesh(&quad(0.0, 0.0, 64.0, 64.0, 0), &[0, 2, 1, 0, 3, 2], &[lit(specular)]);
+        assert_ne!(mesh, INVALID);
+        assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh, palette: &[IDENTITY], frame: f }));
+        r.request_screenshot(INVALID, "gold.png");
+        r.frame();
+        assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
+        shots.push(pixel(&shot, 32, 32));
+        r.native_destroy_mesh(mesh);
+    }
+    let ([lb, lg, lr], [gb, gg, gr], grey_px) = (shots[0], shots[1], shots[2]);
+    eprintln!("level only: RGB {lr} {lg} {lb}; gold spec: RGB {gr} {gg} {gb}; grey spec: {grey_px:?}");
+    assert!(gr > gb + 15 && gg > gb + 10, "the gold spec colour tints the metal gold: RGB {gr} {gg} {gb}");
+    assert!(gr.abs_diff(gb) > 2 * lr.abs_diff(lb), "the scalar level leaves it near neutral: RGB {lr} {lg} {lb}");
+    assert!(close(grey_px, shots[0]), "a grey spec colour is the level: {grey_px:?} vs {:?}", shots[0]);
 }
 
 /// Under a bright map ambient (Zero Hour maps go well past the GameData defaults) a dark finish

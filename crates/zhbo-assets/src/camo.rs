@@ -9,7 +9,7 @@ use crate::character;
 use crate::generals::MAX_TEXTURE;
 use crate::images::tga_bytes;
 use crate::paks::{shrink, Paks};
-use crate::textures::{maps_file, put_occlusion, surface_maps};
+use crate::textures::{maps_file, put_occlusion, specular_color, specular_file, surface_maps};
 use std::collections::{BTreeMap, BTreeSet};
 use zhbo_formats::iwi::Rgba;
 use zhbo_formats::t6zone::Zone;
@@ -52,7 +52,8 @@ fn pool_material(zones: &[&Zone], name: &str) -> Option<xmodel::Material> {
 const COLOR_SAMPLERS: [&str; 2] = ["colorMap", "layer1Map"];
 
 /// The style techniques' specular sampler: `SpecularAndGloss` (the metals' coloured spec-rgb map,
-/// e.g. gold's), bound with the colour semantic, so [`xmodel::TS_SPECULAR_MAP`] misses it. The
+/// e.g. gold's: its RGB becomes the material's specular colour, its alpha the gloss), bound with
+/// the colour semantic, so [`xmodel::TS_SPECULAR_MAP`] misses it. The
 /// sampler names are the strings in the zone's compiled shaders (`common_mp`), matched by hash.
 const SPECULAR_SAMPLERS: [&str; 2] = ["specularMap", "SpecularAndGloss"];
 
@@ -110,24 +111,26 @@ pub(crate) fn art(
         let rgba = color.and_then(pixel);
         let mut texture = None;
         let mut maps_texture = None;
+        let mut spec_texture = None;
         if let (Some(color), Some(rgba)) = (color, rgba) {
             let file = character::texture_file(&color.name);
             let path = format!("Art\\Textures\\{file}");
             let maps_path = format!("Art\\Textures\\{}", maps_file(&file));
+            let spec_path = format!("Art\\Textures\\{}", specular_file(&file));
             if !out.contains_key(&path) {
                 let mut rgba = shrink(rgba, MAX_TEXTURE);
                 put_occlusion(&mut rgba, mat.image(xmodel::TS_OCCLUSION_MAP).and_then(pixel).as_ref());
-                let maps = surface_maps(
-                    rgba.width,
-                    rgba.height,
-                    mat.image(xmodel::TS_NORMAL_MAP).and_then(pixel).as_ref(),
-                    SPECULAR_SAMPLERS.iter().find_map(|s| mat.sampler(s)).or(mat.image(xmodel::TS_SPECULAR_MAP)).and_then(pixel).as_ref(),
-                );
+                let spec = SPECULAR_SAMPLERS.iter().find_map(|s| mat.sampler(s)).or(mat.image(xmodel::TS_SPECULAR_MAP)).and_then(pixel);
+                let maps = surface_maps(rgba.width, rgba.height, mat.image(xmodel::TS_NORMAL_MAP).and_then(pixel).as_ref(), spec.as_ref());
                 out.insert(maps_path.clone(), tga_bytes(&maps));
+                if let Some(spec) = spec {
+                    out.insert(spec_path.clone(), tga_bytes(&specular_color(spec)));
+                }
                 out.insert(path.clone(), tga_bytes(&rgba));
             }
             texture = Some(path);
             maps_texture = Some(maps_path);
+            spec_texture = out.contains_key(&spec_path).then_some(spec_path);
         }
         if texture.is_none() {
             unresolved.push(format!("{name}: no colour sampler"));
@@ -142,6 +145,7 @@ pub(crate) fn art(
                 emissive: matches!(blend, nm::Blend::Additive { .. }),
                 color: texture,
                 maps: opaque.then_some(maps_texture).flatten(),
+                specular: opaque.then_some(spec_texture).flatten(),
                 sort_key: mat.sort_key,
                 cull: crate::native::cull(mat.cull()),
                 camo: nm::CamoLayer::None,
@@ -427,13 +431,18 @@ mod tests {
             assert!(w > 0 && h > 0 && rgb.iter().sum::<f64>() > 15.0, "{key}: {w}x{h} {rgb:?}");
         }
         // Gold is a metal: its colour map is a flat dark (21,20,13) and the gold hue lives in its
-        // `SpecularAndGloss` spec-rgb map, which feeds the surface maps' specular level.
+        // `SpecularAndGloss` spec-rgb map, which feeds the surface maps' specular level and, in
+        // colour, the material's specular map.
         let maps = out.iter().find(|(k, _)| k.ends_with("camo_gold_col_nsg.tga")).map(|(_, b)| b).expect("gold's surface maps");
         let level = maps[18..].as_chunks::<4>().0.iter().map(|p| p[3] as f64).sum::<f64>() / ((maps.len() - 18) / 4) as f64;
         println!("gold spec level {level}");
         assert!(level > 100.0, "gold's spec-rgb must reach its surface maps: {level}");
         let gold_mat = &an94.materials.iter().find(|m| m.name == "mc/mtl_weapon_camo_gold").expect("gold's base material is in the blob");
         assert!(gold_mat.color.as_deref().is_some_and(|c| c.ends_with("camo_gold_col.tga")), "{:?}", gold_mat.color);
+        assert!(gold_mat.specular.as_deref().is_some_and(|c| c.ends_with("camo_gold_col_spc.tga")), "{:?}", gold_mat.specular);
+        let (w, h, spec) = tga("camo_gold_col_spc.tga");
+        println!("gold spec colour: {w}x{h} mean rgb {spec:?}");
+        assert!(spec[0] > spec[1] && spec[1] > spec[2] && spec[0] > 120.0, "gold's spec colour is gold (R > G > B): {spec:?}");
     }
 
     /// The base 19 camo options (`attachmenttable.csv:32-50`) all name art in `OPTION_ART`,

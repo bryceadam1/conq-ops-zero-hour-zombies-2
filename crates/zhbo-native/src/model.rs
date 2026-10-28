@@ -167,6 +167,11 @@ pub struct Material {
     pub cull: Cull,
     /// The surface's camo layer default (semantic 22): which camo image a pattern camo uses.
     pub camo: CamoLayer,
+    /// BO2's specular colour (`*_spc.tga`: the spec map's RGB at its own size, raw like `maps`;
+    /// `zhbo_assets::textures::specular_color`), or `None` for the packed maps' scalar level. A
+    /// metal's hue lives here: gold's colour map is a flat dark, its spec map gold. Appended to
+    /// the record (model `VERSION` 3 -> 4 and camo `VERSION` 1 -> 2 are integrator-owned).
+    pub specular: Option<String>,
 }
 
 impl Material {
@@ -181,6 +186,7 @@ impl Material {
         w.u8(self.sort_key);
         w.u8(self.cull.code());
         w.u8(self.camo.code());
+        w.opt_str(self.specular.as_deref());
     }
     /// Read one material record written by [`Self::write`].
     pub fn read(r: &mut Reader) -> Result<Material, FormatError> {
@@ -193,6 +199,7 @@ impl Material {
             sort_key: r.u8()?,
             cull: Cull::from_code(r.u8()?)?,
             camo: CamoLayer::from_code(r.u8()?)?,
+            specular: r.opt_str()?,
         })
     }
 }
@@ -379,7 +386,7 @@ pub(crate) mod tests {
         Model {
             name: "strip".into(),
             bones: vec![bone("j_root", None, 0.0), bone("j_arm", Some(0), 10.0)],
-            materials: vec![Material { name: "mtl_strip".into(), color: Some("Art\\Textures\\strip.tga".into()), maps: Some("Art\\Textures\\strip_nsg.tga".into()), cull: Cull::Back, ..Default::default() }],
+            materials: vec![Material { name: "mtl_strip".into(), color: Some("Art\\Textures\\strip.tga".into()), maps: Some("Art\\Textures\\strip_nsg.tga".into()), specular: Some("Art\\Textures\\strip_spc.tga".into()), cull: Cull::Back, ..Default::default() }],
             lods: vec![Lod { distance: 0.0, first_surface: 0, surface_count: 1 }],
             surfaces: vec![Surface {
                 material: 0,

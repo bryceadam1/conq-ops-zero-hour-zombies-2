@@ -179,7 +179,7 @@ mod tests {
                 Entry { flags: 6, pairs: vec![Pair { base: "mc/mtl_t6_wpn_ar_an94_camo1".into(), camo: "mc/mtl_weapon_camo_gold".into() }], consts: [10.0, 10.0, 0.46, 0.53, 0.0, 0.0, 0.0, 0.0] },
                 Entry { flags: 0, pairs: Vec::new(), consts: [0.0; 8] },
             ] }],
-            materials: vec![Material { name: "mc/mtl_weapon_camo_gold".into(), blend: Blend::Opaque, color: Some("Art\\Textures\\zhbo_camo_gold_col.tga".into()), maps: Some("Art\\Textures\\zhbo_camo_gold_col_nsg.tga".into()), sort_key: 0, cull: Cull::None, camo: CamoLayer::None, emissive: false }],
+            materials: vec![Material { name: "mc/mtl_weapon_camo_gold".into(), blend: Blend::Opaque, color: Some("Art\\Textures\\zhbo_camo_gold_col.tga".into()), maps: Some("Art\\Textures\\zhbo_camo_gold_col_nsg.tga".into()), sort_key: 0, cull: Cull::None, camo: CamoLayer::None, emissive: false, specular: Some("Art\\Textures\\zhbo_camo_gold_col_spc.tga".into()) }],
             options: vec![
                 CamoOption { id: "camo_none".into(), pattern: None, style: None },
                 CamoOption { id: "camo_atacs".into(), pattern: Some(0), style: None },

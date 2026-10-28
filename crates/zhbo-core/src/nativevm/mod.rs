@@ -160,6 +160,8 @@ pub struct SurfaceSpec {
     pub emissive: bool,
     pub color: Option<String>,
     pub maps: Option<String>,
+    /// BO2's specular colour map (`Material::specular`), or `None` for the maps' scalar level.
+    pub specular: Option<String>,
     pub sort_key: u8,
     pub cull: Cull,
     /// BO2's material name (`mc/mtl_t6_wpn_...`): the key a style camo's material pairs match.
@@ -289,6 +291,7 @@ pub fn build_mesh_visible<'a>(
                 emissive: m.is_some_and(|m| m.emissive),
                 color: m.and_then(|m| m.color.clone()),
                 maps: m.and_then(|m| m.maps.clone()),
+                specular: m.and_then(|m| m.specular.clone()),
                 sort_key: m.map_or(0, |m| m.sort_key),
                 cull: m.map_or(Cull::None, |m| m.cull),
                 material: m.map_or_else(String::new, |m| m.name.clone()),

@@ -36,12 +36,17 @@ struct Frame {
 @group(1) @binding(2) var samp: sampler;
 // x: alpha test (BO2's GE128), y: emissive, z: has packed maps, w: has a camo layer
 // camo: offset.xy, scale, gain
+// spec: x: has a specular colour map
 struct Material {
     params: vec4<f32>,
     camo: vec4<f32>,
+    spec: vec4<f32>,
 }
 @group(1) @binding(3) var<uniform> material: Material;
 @group(1) @binding(4) var camo_map: texture_2d<f32>;
+// BO2's spec map colour (raw). Surfaces without one bind the 1x1 white texture and take the
+// packed maps' scalar level instead.
+@group(1) @binding(5) var spec_map: texture_2d<f32>;
 
 struct VIn {
     @location(0) pos: vec3<f32>,
@@ -96,6 +101,7 @@ fn fs(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     // The chosen camo layer. Sampled unconditionally: implicit derivatives need uniform control
     // flow. Surfaces with no camo bind the 1x1 white texture and skip the mix below.
     let camo = textureSample(camo_map, samp, i.uv * material.camo.z + material.camo.xy);
+    let spec_color = textureSample(spec_map, samp, i.uv).rgb;
     if (material.params.w > 0.5) {
         // BO2 replaces the surface's camo layer: the layer's colour takes the base colour's place
         // at its own per-pixel coverage. The gain is per set in the blob (camo_uv.w; §5.3).
@@ -136,7 +142,13 @@ fn fs(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
         }
     }
     let gloss = select(0.0, maps.b, material.params.z > 0.5);
-    let f0 = select(0.0, maps.a * maps.a, material.params.z > 0.5);
+    // Reflectance at normal incidence: BO2's spec map is a colour (`*_spc-rgb`), so a metal's
+    // highlight and reflection take its hue (gold: a flat dark colour map, a gold spec map). The
+    // raw value is squared as the scalar level always was; a grey map gives the same f0 as before.
+    var f0 = vec3<f32>(select(0.0, maps.a * maps.a, material.params.z > 0.5));
+    if (material.spec.x > 0.5) {
+        f0 = spec_color * spec_color;
+    }
     let power = min(exp2(1.0 + gloss * 11.0), MAX_POWER);
     let norm = (power + 8.0) / 8.0;
     // Opaque surfaces carry ambient occlusion in the colour map's alpha; others carry coverage.
@@ -165,7 +177,7 @@ fn fs(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
         direct = direct + light * n_dot_l * facing;
         let h = normalize(l + v);
         let v_dot_h = max(0.0, dot(v, h));
-        let fresnel = f0 + (1.0 - f0) * pow(1.0 - v_dot_h, 5.0) * gloss * gloss;
+        let fresnel = f0 + (vec3<f32>(1.0) - f0) * (pow(1.0 - v_dot_h, 5.0) * gloss * gloss);
         spec = spec + light * (pow(max(0.0, dot(n, h)), power) * norm * n_dot_l * facing * fresnel);
     }
 
@@ -179,10 +191,10 @@ fn fs(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     let horizon = exp(-r.z * r.z * (40.0 - blur * 36.0)) * (0.25 + 0.5 * gloss);
     let env = mix(ground, sky, up) + sky * horizon;
     let n_dot_v = max(0.0, dot(n, v));
-    let env_fresnel = f0 + (1.0 - f0) * pow(1.0 - n_dot_v, 5.0) * gloss * gloss;
+    let env_fresnel = f0 + (vec3<f32>(1.0) - f0) * (pow(1.0 - n_dot_v, 5.0) * gloss * gloss);
 
     let diffuse_light = min(ambient * ao + direct, vec3<f32>(1.0));
-    var color = albedo.rgb * diffuse_light * (1.0 - f0) + spec + env * env_fresnel * ao;
+    var color = albedo.rgb * diffuse_light * (vec3<f32>(1.0) - f0) + spec + env * env_fresnel * ao;
     if (debug_mode > 1.5) {
         if (debug_mode < 2.5) {
             return vec4<f32>(n * 0.5 + 0.5, 1.0);

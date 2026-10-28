@@ -24,6 +24,8 @@ pub(crate) struct Looks {
     pub(crate) dropped: BTreeSet<String>,
     /// Opaque surfaces' packed BO2 maps (see [`surface_maps`]), by colour map.
     pub(crate) maps: BTreeMap<String, String>,
+    /// Opaque surfaces' specular colour (see [`specular_color`]), by colour map.
+    pub(crate) specular: BTreeMap<String, String>,
 }
 
 /// BO2's wrist datapad: the campaign map/readout screen on the first-person hands. Multiplayer's
@@ -87,13 +89,20 @@ pub(crate) fn textures(model: &xmodel::Model, paks: &Paks, files: &mut BTreeMap<
                 if blend == w3d::Blend::Opaque {
                     let map = |semantic| m.image(semantic).and_then(|i| paks.image(i.stream_hash));
                     put_occlusion(&mut rgba, map(xmodel::TS_OCCLUSION_MAP).as_ref());
-                    let maps = surface_maps(rgba.width, rgba.height, map(xmodel::TS_NORMAL_MAP).as_ref(), map(xmodel::TS_SPECULAR_MAP).as_ref());
+                    let spec = map(xmodel::TS_SPECULAR_MAP);
+                    let maps = surface_maps(rgba.width, rgba.height, map(xmodel::TS_NORMAL_MAP).as_ref(), spec.as_ref());
                     files.insert(format!("Art\\Textures\\{}", maps_file(&name)), images::tga_bytes(&maps));
+                    if let Some(spec) = spec {
+                        files.insert(format!("Art\\Textures\\{}", specular_file(&name)), images::tga_bytes(&specular_color(spec)));
+                    }
                 }
                 files.insert(path, images::tga_bytes(&rgba));
             }
             if blend == w3d::Blend::Opaque {
                 looks.maps.insert(name.clone(), maps_file(&name));
+                if files.contains_key(&format!("Art\\Textures\\{}", specular_file(&name))) {
+                    looks.specular.insert(name.clone(), specular_file(&name));
+                }
             }
             Some(name)
         })
@@ -103,6 +112,24 @@ pub(crate) fn textures(model: &xmodel::Model, paks: &Paks, files: &mut BTreeMap<
 /// The packed BO2 maps of the opaque surface whose colour map is `color`.
 pub(crate) fn maps_file(color: &str) -> String {
     color.replace(".tga", "_nsg.tga")
+}
+
+/// The specular colour of the opaque surface whose colour map is `color`.
+pub(crate) fn specular_file(color: &str) -> String {
+    color.replace(".tga", "_spc.tga")
+}
+
+/// A BO2 surface's specular colour: its spec map's RGB, raw, at the map's own size (shrunk to the
+/// texture cap), alpha opaque. BO2's spec maps are colour maps (`*_spc-rgb`), not levels: a brass
+/// cartridge, a red tritium vial, a lens coating and the gold camo — whose colour map is a flat
+/// dark and whose whole hue is here — reflect in colour. The packed maps keep the luminance as
+/// the level for surfaces drawn without this map.
+pub(crate) fn specular_color(spec: Rgba) -> Rgba {
+    let mut spec = shrink(spec, MAX_TEXTURE);
+    for p in spec.pixels.as_chunks_mut::<4>().0 {
+        p[3] = 255;
+    }
+    spec
 }
 
 /// The texel of `img` at `(x, y)` of a `w` x `h` image (nearest).
@@ -164,5 +191,19 @@ mod tests {
         assert_eq!(off.pixels.len(), (256 * 256 * 4) as usize);
         assert!(off.pixels.as_chunks::<4>().0.iter().all(|p| p[3] == 255 && p[0] < 40 && p[1] < 40 && p[2] < 40));
         assert!(DATAPAD_OFF.starts_with("zhbo_") && DATAPAD_OFF.ends_with(".tga"));
+    }
+
+    /// The spec map's colour survives as it is (gold's hue), at the map's own size, opaque; the
+    /// file sits beside the colour map's packed maps.
+    #[test]
+    fn the_specular_colour_keeps_the_spec_maps_rgb() {
+        let gold = Rgba { width: 4, height: 2, pixels: [158u8, 135, 83, 40].repeat(8) };
+        let spec = specular_color(gold);
+        assert_eq!((spec.width, spec.height), (4, 2));
+        assert!(spec.pixels.as_chunks::<4>().0.iter().all(|p| *p == [158, 135, 83, 255]));
+        assert_eq!(specular_file("zhbo_camo_gold_col.tga"), "zhbo_camo_gold_col_spc.tga");
+        // The packed maps keep the luminance as the level for draws without the colour.
+        let maps = surface_maps(2, 2, None, Some(&Rgba { width: 1, height: 1, pixels: vec![158, 135, 83, 40] }));
+        assert_eq!(maps.pixels[2..4], [40, 136]);
     }
 }
