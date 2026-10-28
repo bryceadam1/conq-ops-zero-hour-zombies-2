@@ -4577,8 +4577,8 @@ install suites green (zhbo-assets `--ignored --skip conformance`, zhbo-formats `
   base.ipak) — a latent follow-up. Research: `~/.opencode/plan/ipak-hash/RESEARCH.md`.
 * **Runtime effect / integrator:** IR/VZOOM/Specter combos now get `overlay_art_present` at full
   ADS, so the 2D overlay draws and `visible_parts` hides the base scope part, as for the four base
-  sniper overlays. Run `scripts/autotest-mac.sh --scope` (and an IR/VZOOM look check). `hud::VERSION`
-  77 → 78 (archive contents change).
+  sniper overlays. Run `scripts/autotest-mac.sh --scope` (and an IR/VZOOM look check). The archive
+  contents change, so the integrator's `hud::VERSION` bump applies (left at 77 on this branch).
 
 Measured (conformance vs the `v1/camo-art-tail` base): weapons 700,648 → 700,811 cells, 203 clusters,
 214 gap clusters unchanged; `overlay/hud_icon` 1422 → 1421 (willy_pete fixed);

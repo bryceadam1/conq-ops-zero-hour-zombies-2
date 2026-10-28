@@ -17,7 +17,7 @@ use zhbo_formats::t6zone::Zone;
 
 /// Bump when the spec or layout changes so launchers regenerate the archive. The weapon table is
 /// archive content: the attachment stacking fix changes its synthesized variant lines.
-pub const VERSION: u32 = 78;
+pub const VERSION: u32 = 77;
 pub use zhbo_core::names::BO2_ARCHIVE_NAME as ARCHIVE_NAME;
 pub use zhbo_core::names::BO2_ARCHIVE_VERSION_PATH as VERSION_FILE;
 /// Stem of each page's TGA; every MappedImage names the page it was packed into.
