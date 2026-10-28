@@ -4550,3 +4550,41 @@ Measured: conformance unchanged against the `v1/attach-camo` base (weapons 700,6
 the archive contents change (new textures, gold's real colour), so the integrator's archive
 `hud::VERSION` bump applies. Verified: cargo test --workspace green; clippy adds no warning; real-
 install suites green (zhbo-assets `--ignored --skip conformance`, zhbo-formats `--ignored`).
+
+## The last three ADS overlays come from nested materials; the ipak "name-hash wall" was a mislabel
+
+* **The overlays.** `scope_overlay_envg_ir`/`_specter`/`_vzoom` (IR/dual-band and VZOOM/Specter
+  combos of AS50, DSR50, SVU, HAMR, LSAT, MK48, QBB95) are nested in `common_mp` (inside the
+  attachment uniques), not top-level assets. `xmodel::find_material` and the HUD converter's
+  `Source::Dynamic` search now consult `Zone::linked` (BO2 registers nested assets in the same pool)
+  after each zone's own assets and before the slow inline scan. The images are
+  `scope_overlay_{envg,specter,vzoom}_1024`, 1024², streamed from `base.ipak` (stream hashes
+  `0x1d0782e5`/`0x154691c9`/`0x1239abaf`). Pinned by `common_mp_registers_its_nested_assets`
+  (zhbo-formats, install-gated); `builds_from_real_install` now requires all seven overlays.
+* **Reference-stub images resolve by name.** `hud_willy_pete` (common_mp) binds `,hud_us_smokegrenade`,
+  a `,` stub with no stream hash; the converter now looks the image up by name in the zones' image
+  pools (`find_image`: assets, linked, inline), as BO2 resolves references — `patch_mp` holds the
+  full image. The real-install HUD build now reports **nothing** missing.
+* **Gotcha — the ipak index fields are swapped in `ipak.rs`.** The 16-byte entry is
+  `{dataHash, nameHash, offset, size}` (OpenAssetTools `IPakIndexEntryKey`); the reader calls the
+  first `name_hash`. The value every lookup uses is `GfxImage.streamedParts[0].hash` (+40) = the
+  first field; the second is `GfxImage.hash` (+76) = `R_HashString(image name)` (`33h ^ (c|0x20)`,
+  seed 0). The "uncracked name hash" (G13, ~700 variants) was the right function compared against
+  the wrong field: `R_HashString("scope_overlay_xpr50_1024") = 0x9c4755f7` is the second field of
+  the `0x1c99c1b0` entry; 17,152 of the reference catalog's 18,151 image names hit a second field,
+  none a first. Not renamed here (behaviour-neutral, separate cleanup); `images::group_by_name`
+  groups by the first field, so its "multi-part" groups are distinct images that share it (157 in
+  base.ipak) — a latent follow-up. Research: `~/.opencode/plan/ipak-hash/RESEARCH.md`.
+* **Runtime effect / integrator:** IR/VZOOM/Specter combos now get `overlay_art_present` at full
+  ADS, so the 2D overlay draws and `visible_parts` hides the base scope part, as for the four base
+  sniper overlays. Run `scripts/autotest-mac.sh --scope` (and an IR/VZOOM look check). `hud::VERSION`
+  77 → 78 (archive contents change).
+
+Measured (conformance vs the `v1/camo-art-tail` base): weapons 700,648 → 700,811 cells, 203 clusters,
+214 gap clusters unchanged; `overlay/hud_icon` 1422 → 1421 (willy_pete fixed);
+`parts/view_ads_part_models` 3399 → 3563 (+164, all IR/VZOOM combos joining the existing
+"mod lacks `t6_wpn_sniper_*_scope_view`" signature the base overlays already have — the expected side
+lists BO2's model parts, not the overlay-time hide). cac unchanged. Verified: cargo test --workspace
+green (except `zhbo-requirements` prefix-library test, which fails only with `ZHBO_BO2_DIR` set and
+passes without it), no new clippy warnings, install-gated `builds_from_real_install` and
+`common_mp_registers_its_nested_assets` green.
