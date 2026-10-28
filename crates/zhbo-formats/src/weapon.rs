@@ -205,6 +205,9 @@ pub struct AttachmentUnique {
     pub overlay_material_low_res: String,
     /// `weapOverlayReticle_t`: which reticle the overlay draws (0: none).
     pub overlay_reticle: u32,
+    /// The `WeaponCamo` asset the class camo uses on this attachment's own models (`weaponCamo`,
+    /// `camo_reflex`, …); read from the single-attachment unique (`FUN_00529600`, G16).
+    pub weapon_camo: Option<String>,
 }
 
 /// A BO2 attachment (`WeaponAttachment`): how it changes any weapon it goes on. Scales multiply the
@@ -496,6 +499,9 @@ pub struct Weapon {
     pub projectile_explosion_sound: Option<String>,
     pub pullback_sound_player: Option<String>,
     pub melee_swipe_sound_player: Option<String>,
+    /// The `WeaponCamo` asset the class camo uses on the gun and its base `attachViewModel` parts
+    /// (`WeaponDef.weaponCamo`: `camo_an94`, the INSAS's `camo_msmc`), or `None`.
+    pub weapon_camo: Option<String>,
     /// HUD art (material names).
     pub hud_icon: Option<String>,
     /// The HUD icon's image in the `.ipak` packs (its material is inline in the weapon).
@@ -636,6 +642,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 overlay_material: named(z, u + WU::overlayMaterial).unwrap_or_default(),
                 overlay_material_low_res: named(z, u + WU::overlayMaterialLowRes).unwrap_or_default(),
                 overlay_reticle: z.u32(u + WU::overlayReticle),
+                weapon_camo: named(z, u + WU::weaponCamo),
             });
         }
     }
@@ -867,6 +874,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     let fx = z.try_u32(d + WD::projExplosionEffect)?;
     w.explosion_effect = (fx != 0).then(|| crate::fx::read(z, fx)).filter(|e| !e.elems.is_empty()).or_else(|| crate::fx::explosion_entry(w.impact_type).and_then(|e| crate::fx::impact(z, e, crate::fx::surface::DIRT)));
     w.hud_icon = named(z, d + WD::hudIcon);
+    w.weapon_camo = named(z, d + WD::weaponCamo);
     let icon = z.try_u32(d + WD::hudIcon)?;
     w.hud_icon_hash = (icon != 0)
         .then(|| crate::xmodel::read_material(z, icon))

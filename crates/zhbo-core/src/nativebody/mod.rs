@@ -101,6 +101,8 @@ pub struct Loaded {
     pub body: Option<BodyAsset>,
     pub skeleton: Skeleton,
     pub mesh: Mesh,
+    /// The class camo option painted on it (`None`: stock), part of the cache identity.
+    pub camo: Option<String>,
 }
 
 /// A body clip, decoded (`zhbo_native::anim::Anim`).
@@ -108,7 +110,11 @@ pub type AnimClip = zhbo_native::anim::Anim;
 
 /// Load step: `Ok(None)` while files are coming, `Err` when the rig can't be built (logged once by
 /// the caller; the W3D path keeps drawing).
-pub fn load(files: &mut Files, req: &Request) -> Result<Option<Loaded>, String> {
+///
+/// `camo` is the General's class camo option when the weapon in hand is his class primary: each
+/// part wears its own `WeaponCamo` (`Part::camo`, BO2's `FUN_00529600`) with that one option, as the
+/// first-person viewmodel does. A part whose camo blob is not in the archive draws stock.
+pub fn load(files: &mut Files, req: &Request, camo: Option<&str>) -> Result<Option<Loaded>, String> {
     let path = zhbo_native::world_weapon_path(req.vm);
     if files.is_missing(&path) {
         return Err(format!("{path} is not in the archive (reconvert the BO2 art)"));
@@ -191,12 +197,35 @@ pub fn load(files: &mut Files, req: &Request) -> Result<Option<Loaded>, String> 
     if !problems.is_empty() {
         return Err(format!("{path}: {}", problems.join("; ")));
     }
-    let mesh = build_mesh(&skeleton, all_models.into_iter())?;
+    let mut mesh = build_mesh(&skeleton, all_models.into_iter())?;
+    // The camo, per part: a surface's `part` indexes the composition, whose first part is the body
+    // in body mode.
+    if let Some(option) = camo {
+        let first = body.is_some() as usize;
+        let assets: std::collections::BTreeSet<&str> = manifest.parts.iter().filter_map(|p| p.camo.as_deref()).collect();
+        let mut waiting = false;
+        for asset in assets {
+            let Some(recipe) = crate::nativevm::camo::read(files, asset, &mut waiting)? else { continue };
+            let wears = |part: u16| (part as usize).checked_sub(first).and_then(|i| manifest.parts.get(i)).and_then(|p| p.camo.as_deref()) == Some(asset);
+            crate::nativevm::camo::apply(&mut mesh, &recipe, option, wears);
+        }
+        if waiting {
+            return Ok(None);
+        }
+    }
     for p in &manifest.parts {
         files.forget(&p.model);
     }
     files.forget(&path);
-    Ok(Some(Loaded { key: (req.faction, req.vm, req.mode as u8), weapon: WeaponAsset { vm: req.vm, manifest, models }, body, skeleton, mesh }))
+    let camo = camo.map(str::to_string);
+    Ok(Some(Loaded { key: (req.faction, req.vm, req.mode as u8), weapon: WeaponAsset { vm: req.vm, manifest, models }, body, skeleton, mesh, camo }))
+}
+
+/// The class camo option a General's weapon `vm` wears in third person: his class camo when `vm` is
+/// his class primary's (the class stores one camo, which only the primary inherits — the same rule
+/// as the first-person `nativevm::choice_for`), else none.
+pub fn camo_for(primary: &crate::weapons::WeaponDef, camo: &str, vm: i32) -> Option<String> {
+    crate::nativevm::choice_for(primary, camo).filter(|c| c.vm == vm).map(|c| c.option)
 }
 
 impl Loaded {

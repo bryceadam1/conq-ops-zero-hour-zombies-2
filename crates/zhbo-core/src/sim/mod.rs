@@ -694,6 +694,14 @@ impl Sim {
             .collect()
     }
 
+    /// The class camo option General `general`'s weapon `vm` wears in third person
+    /// ([`crate::nativebody::camo_for`]).
+    pub fn third_person_camo(&self, general: u32, vm: i32) -> Option<String> {
+        let p = self.players.iter().flatten().find(|p| p.general == general)?;
+        let primary = crate::weapons::catalog().get(&p.arsenal.loadout.primary)?;
+        crate::nativebody::camo_for(primary, &p.camo, vm)
+    }
+
     /// What each General's native third person needs this frame (Track R7): the weapon in hand
     /// (`WeaponDef::viewmodel`, -1 for none), the stance and the body clip the sim's movement
     /// state picks, the clip's clock and the pistol stance. `moving` is the engine's answer for

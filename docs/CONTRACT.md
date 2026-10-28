@@ -280,10 +280,15 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   (`camo_xpr50` → `as50_mp`, `camo_ballistic_knife`, `camo_riot_shield`). The `.zcm` version is new
   (`camo::VERSION = 1`); the model blob's material record gains the camo layer, and its version
   bump (2→3) and the archive bump (64→65) are integrator-owned.
-  - **Divergences.** The camo applies to the first-person native viewmodel only: the W3D fallback
-    bakes textures and has no texture override, and the third-person native body pins `camo` to
-    `INVALID` (no third-person camo). Only the primary's viewmodel inherits the class camo, as the
-    class stores one camo.
+  - **Third person.** The native third person (`ZHBO_NATIVE_BODY` ≥ 1) wears the class camo too:
+    each `.zbw` part carries its `WeaponCamo` (`Part::camo`: the def's on the world model and its
+    base slots, the attachment's single unique's on its models) and `nativebody::load` paints each
+    part's surfaces (`SurfaceSpec::part`) from its own blob with the General's one option, read from
+    the sim by General id (`Sim::third_person_camo`, no ABI change) when the weapon in hand is his
+    class primary. The rig's cache identity includes the option.
+  - **Divergences.** The W3D fallback (the first-person W3D viewmodel and the default W3D
+    third-person body, `ZHBO_NATIVE_BODY=0`) bakes textures and has no texture override, so it
+    draws no camo. Only the primary inherits the class camo, as the class stores one camo.
 
 ## The native third person (Track R7)
 

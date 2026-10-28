@@ -171,6 +171,9 @@ pub struct SurfaceSpec {
     pub camo: Option<String>,
     /// The chosen camo's UV transform: offset.xy, scale, gain.
     pub camo_uv: [f32; 4],
+    /// The manifest part (composition index) the surface came from: which `WeaponCamo` it wears
+    /// (`Part::camo`, per part as BO2's `FUN_00529600`).
+    pub part: u16,
 }
 
 /// The composed viewmodel's one mesh: every part's LOD 0 with its bones renumbered into the
@@ -292,6 +295,7 @@ pub fn build_mesh_visible<'a>(
                 camo_layer: m.map_or(CamoLayer::None, |m| m.camo),
                 camo: None,
                 camo_uv: [0.0, 0.0, 1.0, 1.0],
+                part: i as u16,
             });
         }
     }
@@ -427,9 +431,9 @@ pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: 
     let mut applied = None;
     if let Some((asset, option)) = camo_choice {
         if let Some(recipe) = camo::read(files, asset, &mut waiting)? {
-            camo::apply(&mut mesh, &recipe, option);
+            camo::apply(&mut mesh, &recipe, option, |_| true);
             if let Some(m) = &mut mesh_aimed {
-                camo::apply(m, &recipe, option);
+                camo::apply(m, &recipe, option, |_| true);
             }
             applied = Some(option.to_string());
         }

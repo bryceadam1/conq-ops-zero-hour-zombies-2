@@ -304,7 +304,7 @@ pub(crate) fn viewmodels(
         let manifest = Manifest {
             id: v.id.to_string(),
             faction: *letter as u8,
-            parts: parts.iter().map(|p| Part { model: p.5.clone(), tag: p.1.clone(), offset: p.2, rigid: p.3, ads_only: p.4 }).collect(),
+            parts: parts.iter().map(|p| Part { model: p.5.clone(), tag: p.1.clone(), offset: p.2, rigid: p.3, ads_only: p.4, camo: None }).collect(),
             markers,
             hide,
             clips: v.clips.to_vec(),

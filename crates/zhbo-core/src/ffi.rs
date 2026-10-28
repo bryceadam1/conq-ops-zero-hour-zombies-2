@@ -641,6 +641,12 @@ pub unsafe extern "C" fn zhbo_client_native_poses(out: *mut crate::nativebody::f
     n as i32
 }
 
+/// The class camo option General `general`'s weapon `vm` wears in third person (the sim's
+/// [`crate::sim::Sim::third_person_camo`]); `None` before a game or for any other weapon.
+pub(crate) fn third_person_camo(general: u32, vm: i32) -> Option<String> {
+    with_state(|s| s.sim.third_person_camo(general, vm)).flatten()
+}
+
 /// Third-person meshes of viewmodel `vm`'s weapon on the soldier model, or of the tablet for -2.
 #[no_mangle]
 pub extern "C" fn zhbo_world_mesh_count(vm: i32) -> i32 {

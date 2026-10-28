@@ -34,6 +34,11 @@ pub struct Part {
     /// The M32's `_ads` sight variant: drawn only at full ADS. The hip `_view` variant carries the
     /// same sight; the pair swaps at the ADS handoff. The W3D path draws only the hip sight.
     pub ads_only: bool,
+    /// The `WeaponCamo` asset (`camo_an94`, `camo_reflex`) the class camo paints on this part, or
+    /// `None` (the arms). BO2 resolves it per part (`FUN_00529600`, G16): the gun and its base
+    /// `attachViewModel` parts take the def's `weaponCamo`, an attachment's models its single
+    /// unique's. Viewmodel (`.zbv`) only: the third-person `.zbw` does not carry it.
+    pub camo: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -75,6 +80,7 @@ impl Viewmodel {
             w.f32s(&p.offset.1);
             w.u8(p.rigid as u8);
             w.u8(p.ads_only as u8);
+            w.opt_str(p.camo.as_deref());
         }
         w.count(self.markers.len());
         for m in &self.markers {
@@ -107,7 +113,7 @@ impl Viewmodel {
             if (i == 0) != tag.is_none() {
                 return Err(FormatError::Corrupt(format!("part {i}: only the base part has no tag")));
             }
-            parts.push(Part { model, tag, offset: (r.f32n()?, r.f32n()?), rigid: r.u8()? != 0, ads_only: r.u8()? != 0 });
+            parts.push(Part { model, tag, offset: (r.f32n()?, r.f32n()?), rigid: r.u8()? != 0, ads_only: r.u8()? != 0, camo: r.opt_str()? });
         }
         let nm = r.count(36)?;
         let mut markers = Vec::with_capacity(nm);
@@ -140,9 +146,9 @@ mod tests {
             id: "an94_mp+reflex".into(),
             faction: b'U',
             parts: vec![
-                Part { model: "Art\\Native\\arms.zbm".into(), tag: None, offset: IDENTITY, rigid: false, ads_only: false },
-                Part { model: "Art\\Native\\gun.zbm".into(), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false },
-                Part { model: "Art\\Native\\reflex.zbm".into(), tag: Some("tag_weapon".into()), offset: ([0.0, 0.0, 0.0, 1.0], [3.0, 0.0, 4.5]), rigid: true, ads_only: true },
+                Part { model: "Art\\Native\\arms.zbm".into(), tag: None, offset: IDENTITY, rigid: false, ads_only: false, camo: None },
+                Part { model: "Art\\Native\\gun.zbm".into(), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false, camo: Some("camo_an94".into()) },
+                Part { model: "Art\\Native\\reflex.zbm".into(), tag: Some("tag_weapon".into()), offset: ([0.0, 0.0, 0.0, 1.0], [3.0, 0.0, 4.5]), rigid: true, ads_only: true, camo: Some("camo_reflex".into()) },
             ],
             markers: vec![Marker { name: "tag_sights".into(), parent: "tag_weapon".into(), local: ([0.0, 0.0, 0.0, 1.0], [2.0, 0.0, 5.0]) }],
             hide: vec!["tag_sight_on".into()],

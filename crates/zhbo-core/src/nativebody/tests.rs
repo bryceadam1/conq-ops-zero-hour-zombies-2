@@ -40,8 +40,8 @@ fn fixture() -> Fixture {
     let manifest = Weapon {
         id: "test_mp+reflex".into(),
         parts: vec![
-            ViewmodelPart { model: zhbo_native::model_path("gun"), tag: None, offset: IDENTITY, rigid: true, ads_only: false },
-            ViewmodelPart { model: zhbo_native::model_path("reflex"), tag: Some("tag_reflex".into()), offset: (QUAT_IDENTITY, [0.0, 0.0, 0.0]), rigid: true, ads_only: false },
+            ViewmodelPart { model: zhbo_native::model_path("gun"), tag: None, offset: IDENTITY, rigid: true, ads_only: false, camo: None },
+            ViewmodelPart { model: zhbo_native::model_path("reflex"), tag: Some("tag_reflex".into()), offset: (QUAT_IDENTITY, [0.0, 0.0, 0.0]), rigid: true, ads_only: false, camo: None },
         ],
         hide: vec!["tag_iron".into()],
     };
@@ -94,22 +94,22 @@ fn a_world_weapon_loads_through_requests_and_rides_the_tag() {
     let f = fixture();
     with_state(|s| {
         *s = ffi::State::default();
-        assert_eq!(s.frame(&input(7, Some(tag([0.0; 3]))), 0), NOT_NATIVE, "off unless asked for");
-        assert_eq!(s.frame(&input(7, Some(tag([0.0; 3]))), 1), LOADING, "asks for the manifest");
+        assert_eq!(s.frame(&input(7, Some(tag([0.0; 3]))), 0, None), NOT_NATIVE, "off unless asked for");
+        assert_eq!(s.frame(&input(7, Some(tag([0.0; 3]))), 1, None), LOADING, "asks for the manifest");
         assert_eq!(answer(s, &f), 1);
-        assert_eq!(s.frame(&input(7, Some(tag([0.0; 3]))), 1), LOADING, "asks for the models");
+        assert_eq!(s.frame(&input(7, Some(tag([0.0; 3]))), 1, None), LOADING, "asks for the models");
         assert_eq!(answer(s, &f), 2);
-        s.frame(&input(7, Some(tag([0.0; 3]))), 1);
+        s.frame(&input(7, Some(tag([0.0; 3]))), 1, None);
         // The colour map is asked for next when the renderer uploads; absent textures draw
         // white/flat. Without the renderer nothing asks for textures.
         assert_eq!(answer(s, &f), cfg!(feature = "renderer") as usize);
-        s.frame(&input(7, Some(tag([0.0; 3]))), 1);
+        s.frame(&input(7, Some(tag([0.0; 3]))), 1, None);
         let loaded = s.loaded.as_ref().expect("composed");
         // The gun's j_gun plus the reflex's bone, on the gun's tag_reflex.
         assert_eq!(loaded.skeleton.bones.len(), 3, "gun bones and the reflex's root");
         // A tag at (10, 20, 30): the gun's origin (j_gun, at 0") lands there; the reflex hangs 2"
         // ahead and 4" up in the gun's frame, all scaled once.
-        s.frame(&input(7, Some(tag([10.0, 20.0, 30.0]))), 1);
+        s.frame(&input(7, Some(tag([10.0, 20.0, 30.0]))), 1, None);
         let m = s.loaded.as_ref().unwrap().bone_world(&s.posed, "j_gun").expect("the gun bone");
         let want = [10.0, 20.0, 30.0];
         assert!((0..3).all(|k| (m[k][3] - want[k]).abs() < 1e-4), "{:?} vs {want:?}", [m[0][3], m[1][3], m[2][3]]);
@@ -123,7 +123,7 @@ fn a_world_weapon_loads_through_requests_and_rides_the_tag() {
 fn a_weapon_without_its_tag_keeps_the_w3d_model() {
     with_state(|s| {
         *s = ffi::State::default();
-        assert_eq!(s.frame(&input(7, None), 1), NOT_NATIVE, "no tag, no native draw");
+        assert_eq!(s.frame(&input(7, None), 1, None), NOT_NATIVE, "no tag, no native draw");
     });
     // The bridge asks this before it bothers with the draw; it takes no state lock itself.
     assert_eq!(unsafe { ffi::zhbo_native_body_ready(&input(7, None)) }, 0);
@@ -135,7 +135,7 @@ fn a_missing_manifest_is_refused_once() {
     with_state(|s| {
         *s = ffi::State::default();
         s.files.provide(&zhbo_native::world_weapon_path(9), None);
-        assert_eq!(s.frame(&input(9, Some(tag([0.0; 3]))), 1), NOT_NATIVE);
+        assert_eq!(s.frame(&input(9, Some(tag([0.0; 3]))), 1, None), NOT_NATIVE);
         assert!(s.logged().any(|l| l.contains("ZW09") && l.contains("reconvert")), "{:?}", s.logged().collect::<Vec<_>>());
     });
 }
@@ -187,8 +187,8 @@ fn a_tagless_world_part_rides_the_weapon_in_body_mode() {
     let manifest = Weapon {
         id: "test_mp".into(),
         parts: vec![
-            ViewmodelPart { model: zhbo_native::model_path("gun"), tag: None, offset: IDENTITY, rigid: true, ads_only: false },
-            ViewmodelPart { model: zhbo_native::model_path("mag"), tag: None, offset: (QUAT_IDENTITY, [-11.0, 0.0, -4.0]), rigid: true, ads_only: false },
+            ViewmodelPart { model: zhbo_native::model_path("gun"), tag: None, offset: IDENTITY, rigid: true, ads_only: false, camo: None },
+            ViewmodelPart { model: zhbo_native::model_path("mag"), tag: None, offset: (QUAT_IDENTITY, [-11.0, 0.0, -4.0]), rigid: true, ads_only: false, camo: None },
         ],
         hide: vec![],
     };
@@ -204,7 +204,7 @@ fn a_tagless_world_part_rides_the_weapon_in_body_mode() {
     let mut files = Files::default();
     let mut loaded = None;
     for _ in 0..8 {
-        if let Some(l) = load(&mut files, &req).unwrap() {
+        if let Some(l) = load(&mut files, &req, None).unwrap() {
             loaded = Some(l);
             break;
         }
@@ -217,4 +217,76 @@ fn a_tagless_world_part_rides_the_weapon_in_body_mode() {
     let clip = l.skeleton.bone("tag_clip").expect("the magazine's bone");
     let at = l.skeleton.bones[clip].bind.1;
     assert!((at[0] - -1.0).abs() < 1e-4 && (at[1] - -28.0).abs() < 1e-4 && (at[2] - 36.0).abs() < 1e-4, "the magazine sits on the hand's weapon: {at:?}");
+}
+
+/// Third-person camo is per part, as in first person (`FUN_00529600`, G16): the world gun wears
+/// the def's `WeaponCamo`, the optic its own unique's; in body mode the body (part 0) wears none.
+#[test]
+fn each_world_part_wears_its_own_camo_asset() {
+    let camo_model = |name: &str, bones: Vec<Bone>| {
+        let mut m = model(name, bones);
+        m.materials[0].camo = zhbo_native::model::CamoLayer::Pattern;
+        m
+    };
+    let body = camo_model("body", vec![bone("tag_origin", None, [0.0; 3]), bone("tag_weapon_right", Some(0), [10.0, -28.0, 40.0])]);
+    let gun = camo_model("gun", vec![bone("tag_weapon", None, [0.0; 3]), bone("tag_reflex", Some(0), [2.0, 0.0, 4.0])]);
+    let optic = camo_model("optic", vec![bone("j_root", None, [0.0; 3])]);
+    let blob = |name: &str, image: &str| zhbo_native::camo::Camo {
+        name: name.into(),
+        solid_base: None,
+        pattern_base: None,
+        sets: vec![zhbo_native::camo::Set { solid: None, pattern: Some(image.into()), offset: [0.0; 2], scale: 1.0, gain: 2.0 }],
+        styles: vec![],
+        materials: vec![],
+        options: vec![zhbo_native::camo::CamoOption { id: "camo_atacs".into(), pattern: Some(0), style: None }],
+    };
+    let manifest = Weapon {
+        id: "test_mp+reflex".into(),
+        parts: vec![
+            ViewmodelPart { model: zhbo_native::model_path("gun"), tag: None, offset: IDENTITY, rigid: true, ads_only: false, camo: Some("camo_gun".into()) },
+            ViewmodelPart { model: zhbo_native::model_path("optic"), tag: Some("tag_reflex".into()), offset: IDENTITY, rigid: true, ads_only: false, camo: Some("camo_optic".into()) },
+        ],
+        hide: vec![],
+    };
+    let files_in = [
+        (zhbo_native::world_weapon_path(7), manifest.to_bytes()),
+        (zhbo_native::model_path("gun"), gun.to_bytes()),
+        (zhbo_native::model_path("optic"), optic.to_bytes()),
+        (zhbo_native::body_path('U'), zhbo_native::thirdperson::Body { faction: b'U', model: zhbo_native::model_path("body"), weapon_tag: "tag_weapon_right".into(), clips: vec![] }.to_bytes()),
+        (zhbo_native::model_path("body"), body.to_bytes()),
+        (zhbo_native::camo_path("camo_gun"), blob("camo_gun", "gun_atacs.tga").to_bytes()),
+        (zhbo_native::camo_path("camo_optic"), blob("camo_optic", "optic_atacs.tga").to_bytes()),
+    ];
+    for mode in [Mode::Weapon, Mode::Body] {
+        let req = Request { vm: 7, faction: b'U', mode, state: 0, time: 0.0, rate: 1.0, pos: [0.0; 3], yaw: 0.0, tag: None };
+        let mut files = Files::default();
+        let mut loaded = None;
+        for _ in 0..8 {
+            if let Some(l) = load(&mut files, &req, Some("camo_atacs")).unwrap() {
+                loaded = Some(l);
+                break;
+            }
+            let wanted: Vec<String> = files.wanted().map(str::to_string).collect();
+            for w in &wanted {
+                files.provide(w, files_in.iter().find(|(p, _)| p == w).map(|(_, b)| b.as_slice()));
+            }
+        }
+        let l = loaded.expect("the rig loads");
+        let camos: Vec<Option<&str>> = l.mesh.surfaces.iter().map(|s| s.camo.as_deref()).collect();
+        let want: &[Option<&str>] = match mode {
+            Mode::Weapon => &[Some("gun_atacs.tga"), Some("optic_atacs.tga")],
+            Mode::Body => &[None, Some("gun_atacs.tga"), Some("optic_atacs.tga")],
+        };
+        assert_eq!(camos, want, "{mode:?}");
+        assert_eq!(l.camo.as_deref(), Some("camo_atacs"));
+    }
+}
+
+/// Only the class primary inherits the class camo; another weapon in hand, or no camo, is stock.
+#[test]
+fn the_class_camo_follows_the_primary_into_third_person() {
+    let primary = crate::weapons::WeaponDef { id: "mp7_mp".into(), viewmodel: 5, camo_material: "camo_mp7".into(), ..Default::default() };
+    assert_eq!(camo_for(&primary, "camo_atacs", 5).as_deref(), Some("camo_atacs"));
+    assert_eq!(camo_for(&primary, "camo_atacs", 6), None, "the secondary");
+    assert_eq!(camo_for(&primary, "camo_none", 5), None);
 }

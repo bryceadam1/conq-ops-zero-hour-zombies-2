@@ -201,6 +201,10 @@ pub struct WorldPart {
     pub tag: String,
     pub offset: [f32; 3],
     pub rotation: [f32; 3],
+    /// The `WeaponCamo` the class camo paints on it (`FUN_00529600`, G16): the def's on a base
+    /// slot, the attachment's **single** unique's on its models (even when a combined unique
+    /// supplies the model).
+    pub camo: Option<String>,
 }
 
 /// BO2's third-person parts after the world model (`FUN_008ace30`, the conformance layer's
@@ -220,7 +224,7 @@ pub fn world_parts(w: &zhbo_formats::weapon::Weapon, c: &Combo) -> Vec<WorldPart
         }
         let offset = if a.slot == 0 { moved.unwrap_or(a.offset) } else { a.offset };
         let tag = a.tag.clone().unwrap_or_else(|| WORLD_DEFAULT_TAG.to_string());
-        out.push(WorldPart { model: a.model.clone(), tag, offset, rotation: a.rotation });
+        out.push(WorldPart { model: a.model.clone(), tag, offset, rotation: a.rotation, camo: w.weapon_camo.clone() });
     }
     for s in singles() {
         if s.world_model.is_none() {
@@ -229,9 +233,9 @@ pub fn world_parts(w: &zhbo_formats::weapon::Weapon, c: &Combo) -> Vec<WorldPart
         let r = resolved_unique(w, s, c.mask);
         let Some(model) = r.world_model.clone() else { continue };
         let tag = r.world_model_tag.clone().filter(|t| !t.is_empty()).unwrap_or_else(|| WORLD_DEFAULT_TAG.to_string());
-        out.push(WorldPart { model, tag: tag.clone(), offset: r.world_offset, rotation: r.world_rotation });
+        out.push(WorldPart { model, tag: tag.clone(), offset: r.world_offset, rotation: r.world_rotation, camo: s.weapon_camo.clone() });
         if let Some(add) = r.world_model_additional.clone() {
-            out.push(WorldPart { model: add, tag, offset: r.world_add_offset, rotation: r.world_add_rotation });
+            out.push(WorldPart { model: add, tag, offset: r.world_add_offset, rotation: r.world_add_rotation, camo: s.weapon_camo.clone() });
         }
     }
     out
@@ -731,6 +735,7 @@ pub(crate) fn world_weapons(
             offset: crate::xf::IDENTITY,
             rigid: true,
             ads_only: false,
+            camo: w.weapon_camo.clone(),
         }];
         // The base parts (the magazine, a sniper's scope) and the attachments, as BO2 mounts them.
         for u in world_parts(w, &c) {
@@ -753,6 +758,7 @@ pub(crate) fn world_weapons(
                 offset: crate::xf::compose(native_base, (crate::xf::from_angles(u.rotation), u.offset)),
                 rigid: true,
                 ads_only: false,
+                camo: u.camo,
             });
         }
         out.insert(

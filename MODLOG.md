@@ -4522,3 +4522,30 @@ Residual `worldparts` (3,326): 645–651 rows per column with no mod manifest at
 `world_part_rotations` rows where a 180° roll's quaternion is `(1,0,0,~0)`: the mod's f32
 `from_angles` leaves w at −4e-8, so `canonical_quat` flips the sign before rounding — the same
 rotation, a canonicalisation tie (the quat-canonical item).
+
+## Third-person camo: the native weapon wears the class camo per part (2026-10-27, branch `v1/third-person`)
+
+The W3D third person can never show a per-player camo (its textures are baked into one shared
+body W3D), so the camo lives on the native third person (`ZHBO_NATIVE_BODY=1`/`2`):
+
+* `.zbw` parts carry their `WeaponCamo` (`Part::camo`, serialized after `ads_only`): the def's
+  `weaponCamo` on the world model and its `attachWorldModel` slots, the attachment's single
+  unique's on its models — the rule `v1/attach-camo` established for first person (G16,
+  `FUN_00529600`). `zhbo_native::thirdperson::WEAPON_VERSION` must go 2 → 3 (integrator-owned, not
+  bumped here) with the archive `hud::VERSION`.
+* `nativebody::load` takes the option and paints each part's surfaces from its own blob
+  (`camo::apply` with the per-part predicate; the body, part 0 in body mode, wears none). The
+  option comes from the sim by General id (`Sim::third_person_camo` → `nativebody::camo_for`: the
+  class camo when the weapon in hand is the class primary) — no ABI change. The rig's cache
+  identity includes the option.
+* **Composes with `v1/attach-camo`:** this branch carries that branch's `zhbo-formats` `weapon_camo`
+  fields, `viewmodel::Part::camo` (+ the `.zbv` serialization), `nativevm::camo::apply`'s `wears`
+  predicate and `SurfaceSpec::part` as **identical hunks** (they merge clean). Expected conflicts,
+  each trivially "take attach-camo's": `nativevm::load`'s camo block (here it still paints the whole
+  first-person mesh, `|_| true`) and `native.rs`'s `.zbv` part builder (here `camo: None`). Until
+  attach-camo lands, the optic `.zcm` blobs are not converted, so attachments draw stock in third
+  person; the guns' blobs are.
+* **Not the default view.** The default third person is still the W3D body (`ZHBO_NATIVE_BODY=0`),
+  which draws no camo. Making the native weapon (`=1`) the default — verified 14/14 `--rts` when
+  it landed, and now also the only path that draws combinations' attachments — is the
+  integrator's call after the in-game check.
