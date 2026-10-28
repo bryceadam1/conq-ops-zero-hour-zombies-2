@@ -4512,3 +4512,48 @@ the magazine's rigid `tag_clip1` copy and authored roll (item 1).
 Verified: cargo test --workspace green; clippy adds no warning; the real-install suite
 (`--skip conformance`) green, incl. the new `reads_the_combined_children_and_their_links`. No
 game launched. Archive VERSION bump needed at integration (manifests and defs change).
+
+## The optics' ADS models: BO2's ADS part list, per part, at full ADS (2026-10-27, `v1/ads-models`)
+
+BO2 draws a different part list while aiming (G14 §3, `FUN_00535170`'s ADS flag): each resolved
+attachment unique contributes `viewModelADS` instead of `viewModel` when it has one (the holo's
+`t6_attach_optic_holo_ads`, the rangefinder's `_ads`), on the same tag at the same offset and
+rotation; the base `attachViewModel[7]` replaces slot 0 (the M32's `_ads` sight); every other part
+keeps its model. The converter never loaded a unique's `viewModelADS` (~2,100 conformance rows),
+paired the M32 by the `_ads` **name**, and `visible_parts` hid **every** optic at full ADS when any
+ADS part existed.
+
+**When BO2 swaps** (read-only Ghidra, t6mp): `FUN_0053a340` (per frame) computes the ADS flag as
+`cg+0x48288` (the weapon position fraction) `>=` dvar `cg_opticAttachmentViewmodelSwitch`
+(`DAT_00fca374`, registered in `FUN_004cc260`: default 1.0, range 0..1, "Zoom factor to switch
+Optic 1 ADS viewmodel"; the default read from `.rdata` 0x00b0c268), and rebuilds the viewmodel DObj
+(`FUN_00535540`, flag stored at `cg+0x696c8`) whenever the flag changes. So the swap is
+instantaneous at full ADS, with no cross-fade, and reverts the moment the fraction drops below 1.
+The mod already chose its aimed mesh at `ads >= 1.0`; the threshold is now the named
+`nativevm::OPTIC_VIEWMODEL_SWITCH`.
+
+* **Format**: `zhbo_native::viewmodel::Part` gains `ads_swap: Option<u16>` (the `ads_only` part
+  that replaces this one while aiming; `u16::MAX` = none), written after `ads_only`, validated on
+  read (it must name an `ads_only` part). The record changed: `viewmodel::VERSION` needs a bump at
+  integration — 2→3 alone, or 3→4 on top of `v1/attach-camo` (whose per-part `camo` goes before
+  `ads_swap` in the record). The `.zbw` third-person record is unchanged (`ads_swap: None`).
+* **Converter**: `Weapon::attach_view_slots` keeps each `attachViewModel` entry's slot; slot 7 is
+  `ads_only` and pairs with slot 0. The M32's name test and the material/bbox `same_sight` dedupe are
+  gone (BO2 has neither). `attachment_parts` appends the unique's `viewModelADS` after its
+  `viewModel`, ADS-only and paired; it keeps the attachment's point, so (like the M32's slot 7
+  already did) the ADS model is the last optic and places the aim marker — the eye lines up with the
+  sight drawn at full ADS. The W3D path skips the ADS-only models.
+* **Gotcha — the autotest log string moved**: the draw's once-log is now "native viewmodel: the ADS
+  part list draws at full ADS (...)"; `autotest-mac.sh --scope` waits for that text.
+
+Measured (conformance CLI vs `v1/combined-uniques`' `conf-hide`): weapons **677,855 → 675,893
+cells (−1,962)**, all in `view_ads_part_models` (3,374 → 1,412); both "mod lacks
+`t6_attach_optic_holo_ads` / `rangefinder_ads`" clusters (1,063 each) are gone. 164 of those rows
+still differ only by the magazine's rigid `tag_clip1` copy (item 1's "BO2 n entries, mod n+1"
+clusters); no cell newly differs. Gap clusters 212 → 212 (the column keeps other kinds: mod-side
+empty, the magazine copy, the four snipers' overlay-hidden scopes, the DW `_lh`).
+
+Verified: `cargo test --workspace` green; clippy adds no warning; the real-install suite
+(`--skip conformance`, 32) green incl. `the_holo_swaps_to_its_ads_model` and the slot-based
+`the_m32_sight_loads_both`. No game launched. In-game (integrator): `autotest-mac.sh --scope` and a
+holo/rangefinder ADS look. Archive VERSION bump needed (manifests change).

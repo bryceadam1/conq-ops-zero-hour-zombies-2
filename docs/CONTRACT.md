@@ -259,6 +259,13 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   A count that is not whole triangles or a range past the index buffer still refuses the mesh, and
   so does a mesh left with no drawable surface: the core then returns `NOT_NATIVE` and the W3D path
   draws, which is what keeps a third-person rig from going invisible.
+* **The ADS part list (per part, at full ADS).** A `.zbv` part may name, in `ads_swap`, the
+  `ads_only` part BO2 draws instead of it while aiming: an attachment unique's `viewModelADS` (the
+  holo's and rangefinder's `_ads`) for its `viewModel`, and `attachViewModel[7]` for slot 0 (the
+  M32). `nativevm::visible_parts` switches at `OPTIC_VIEWMODEL_SWITCH` (1.0, BO2's
+  `cg_opticAttachmentViewmodelSwitch`): from it up the paired parts swap and every other part keeps
+  its model; below it the `ads_only` parts are hidden. Presentation only; the hip and aimed meshes
+  are built once at load and the draw swaps handles. The W3D path draws the hip models.
 
 * **The class camo (`camo_<weapon>.zcm`, PLAN D1–D8).** A class's camo (`CustomClass.camo`) rides
   `PlayerSim.camo`; `zhbo_client_frame` records the local primary's `(viewmodel, camo asset,

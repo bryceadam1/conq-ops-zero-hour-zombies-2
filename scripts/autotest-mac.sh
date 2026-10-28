@@ -373,7 +373,7 @@ fi
 
 if [[ "$mode" == "scope" ]]; then
     # The AS50's scope-overlay hand-off: the autopilot holds ADS past the 0.40 s transition; the
-    # native draw logs "native viewmodel: base optic hidden at full ADS" and the HUD draws the
+    # native draw logs "native viewmodel: the ADS part list draws at full ADS" and the HUD draws the
     # 2D overlay (when its art converted). Seed the profile with an AS50 primary ("SC") so the
     # script's pick key selects it (it reuses the classpick row key).
     profile="$userdata/ConquerOps.profile"
@@ -389,7 +389,7 @@ end
 EOF
     export ZHBO_AUTOPILOT=scope GGC_AUTO_EXIT_SECONDS=${GGC_AUTO_EXIT_SECONDS:-30}
     "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
-    wait_for_log "base optic hidden at full ADS" 90 || { echo "the scope overlay never handed off; see $log" >&2; exit 1; }
+    wait_for_log "the ADS part list draws at full ADS" 90 || { echo "the scope overlay never handed off; see $log" >&2; exit 1; }
     for _ in $(seq 20); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
     finish
     trap - EXIT
