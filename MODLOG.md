@@ -4510,3 +4510,48 @@ screenshot run could not render on this workstation (the installed `ConquerOps_B
 `ZHBO_Mat_scope_overlay_ballista`, unrelated); the screen drawing is covered by the screenshot
 module's prims test. No game launched; the shell CaC screen still has no scripted in-game test —
 see TESTING.md's manual list.
+
+## Camo in Create-a-Class: the tiles draw, the pick shows, the tabs page (2026-10-27, branch `v1/cac-camo`)
+
+Playtest: "the camo page's tiles are blank, and picking a camo doesn't update the weapon preview."
+
+- **Blank tiles were a name-space mismatch.** The converter writes the camo thumbnails under their
+  own names (`menu_camo_*_pattern`, `hud.rs`), but `personalize.rs` drew them through
+  `bo2::image`, which looks up `ZHBO_Mat_<material>` — an image that never existed. The reticle
+  tiles had the same bug (the HUD's reticle uses the raw name and worked). Both now draw the
+  converter's sprite, in `CamoGridButton`'s picture box (8 in, `None` a centred square). **Gotcha:**
+  `bo2::image` is for `lui::materials::MATERIALS` entries only; converter-named art is
+  `bo2::sprite`.
+- **BO2 never re-renders the gun with the camo on these screens.** `caccamomenu.lua`'s
+  `weaponImage` is the static `_big` picture; what changes on a pick is (1) the `Equipped` box
+  (`UpdateCamoPreview`: the equipped option's thumbnail, `None`'s `menu_theater_nodata` a 70-unit
+  square) and (2) the class camo **swatch** on the editor's weapon button
+  (`CACWeaponButton.GetCamoSwatch`: a 32-unit stencilled box showing the bottom-right corner of the
+  140×70 thumbnail) and on the choose-class preview (`ClassPreview`, 31 units); a store option
+  shows its whole `<image>_32` (`SetupMTXCamoSwatch`, the converter now packs those). The mod had
+  only the gun's name as text. The camo page now has BO2's lower panel (focused name in Big, the
+  gun's `_big` picture, the `Equipped` box) and title (`MPUI_PERSONALIZE_N`: `PERSONALIZE MP7`);
+  the equipped tile gets `selectedFill` (BOIIOrange 0.2) instead of the mod's `*`.
+- **Tabs.** `TabManager` (`tabmanagerlite.lua`): CAMO / DLC / DLC2 (DLC2 only with a row,
+  `ShouldDisplayDlc2Tab`), RETICLES / DLC / DLC2 on the reticle page; `A`/`D` (shoulders) page and
+  wrap, a click on a tab or a `‹`/`›` selects. EMBLEM AND TAG is not ported (no emblems/clan tags).
+  Each option row carries its tab, computed by the converter with `AddCamos`' rule: a
+  `digital_unlock` milestone (`mp/statsmilestones*.csv` col 4, option in col 9: `camo_elite1`,
+  `camo_collectors`, `camo_ghost`, `camo_roxann`) or a store row (col 16 `mtx_weapon*`) without a
+  DLC2 key → DLC; a store row with col 5 > 0 → DLC2 by that key; everything else base. Option 0 is
+  the first cell of every tab. (So `camo_elite1`/`camo_collectors`, which the old "first 19 rows"
+  base list put on the CAMO page, are on DLC as in BO2.) Weapon table: `Camo` blocks gain `Tab` and
+  `Mtx` (the reticle blocks share the schema).
+- **"What the install has".** A weapon's `CamoList` is now every row in table order;
+  `camo::offer_what_converted` keeps the base rows and only the DLC rows whose art this install
+  converted for the weapon's own asset (`zhbo_native::camo::Camo::has_art`: a pattern set with
+  images, or a style pair naming a material with a colour map). On the stock Steam install the MP7
+  offers 14 DLC rows (`cac-personalize-dlc`) and a DLC2 tab. The "has no art" summary now only reports base-tab rows.
+- **Screenshot harness:** it failed on every archive (`ZHBO_Mat_scope_overlay_ballista is
+  missing`): the standalone overlay pages are named without `.tga` in their MappedImage; the atlas
+  loader now tries `<texture>.tga`, as the engine does.
+
+Composability: `v1/attach-camo` gives attachment parts their own asset with the first 19 rows
+(`take(BASE_CAMO_OPTIONS)`); after both merge, a DLC camo will paint the gun but not an optic part
+unless that fallback also takes every row. No ABI change; the weapon table text gained two keys per
+option (archive `hud::VERSION` bump is the integrator's).
