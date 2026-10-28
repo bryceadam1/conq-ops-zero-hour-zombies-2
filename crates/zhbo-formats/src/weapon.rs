@@ -125,6 +125,21 @@ pub const HIT_LOCATIONS: usize = 21;
 /// `HITLOC_HEAD`.
 pub const HIT_LOCATION_HEAD: usize = 2;
 
+/// One `attachWorldModel` slot of a weapon variant: a base part of the third-person weapon. The
+/// slot matters: BO2 drops slot 0 (the base attachment art) under `disableBaseWeaponAttachment`
+/// and slot 6 (the clip) under `disableBaseWeaponClip` (`FUN_008ace30`).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AttachWorldModel {
+    pub slot: u32,
+    pub model: String,
+    /// `attachWorldModelTag[slot]`, `None` when BO2 leaves it empty (the default tag).
+    pub tag: Option<String>,
+    /// Inches, in the tag's frame.
+    pub offset: [f32; 3],
+    /// Degrees: pitch, yaw, roll.
+    pub rotation: [f32; 3],
+}
+
 /// One of a weapon's attachment combinations (`WeaponAttachmentUnique`): BO2 hangs the default
 /// magazine and every attachment's view model this way.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -138,6 +153,12 @@ pub struct AttachmentUnique {
     pub world_model_tag: Option<String>,
     /// Bits (`1 << eAttachment`) of the attachments this combination stands for.
     pub combined: u32,
+    /// The unique's slot in the variant's `attachmentUniques[95]` (a single sits at its kind), and
+    /// its `childLink`/`siblingLink` slots: the combined uniques under a single, which BO2 walks to
+    /// resolve the entry a combination uses (`FUN_008eb690`). 0 ends a chain.
+    pub index: u32,
+    pub child: u32,
+    pub sibling: u32,
     /// The attachment replaces the weapon's own magazine (extended or dual magazines).
     pub disable_base_clip: bool,
     /// The attachment replaces the weapon's base `attachViewModel` art — the AS50's ACOG takes
@@ -162,6 +183,14 @@ pub struct AttachmentUnique {
     pub view_add_rotation: [f32; 3],
     pub world_offset: [f32; 3],
     pub world_rotation: [f32; 3],
+    /// The third-person twin of `view_model_additional` (`worldModelAdditional`), at its own
+    /// `worldModelAddOffsets`/`worldModelAddRotations`.
+    pub world_model_additional: Option<String>,
+    pub world_add_offset: [f32; 3],
+    pub world_add_rotation: [f32; 3],
+    /// The base attachment art's moved world offset (`worldModelOffsetBaseAttachment`), applied
+    /// when `override_base_attachment_offsets` is set.
+    pub world_base_attachment_offset: [f32; 3],
     /// Bones of the weapon hidden with this combination (iron sights under an optic).
     pub hide_tags: Vec<String>,
     /// The player's gunshot with this combination (suppressors), if it changes.
@@ -356,6 +385,9 @@ pub struct Weapon {
     pub attach_view_models: Vec<(String, String)>,
     /// The authored view offset of each `attach_view_models` entry, in inches.
     pub attach_view_offsets: Vec<[f32; 3]>,
+    /// The third-person base parts (`attachWorldModel[8]`): the magazine, a sniper's scope, the
+    /// ballistic knife's blade, each with its slot, tag and placement.
+    pub attach_world_models: Vec<AttachWorldModel>,
     /// Attachment combinations; `kind == 0` entries are the base weapon's parts (its magazine).
     pub attachment_uniques: Vec<AttachmentUnique>,
     /// Bit `1 << eAttachment` for each attachment create-a-class offers on this weapon.
@@ -546,6 +578,18 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
             }
         }
     }
+    let mut attach_world_models = Vec::new();
+    let (models, tags) = (z.try_u32(v + WV::attachWorldModel)?, z.try_u32(v + WV::attachWorldModelTag)?);
+    if models != 0 {
+        for slot in 0..8 {
+            if let Some(model) = named(z, models + 4 * slot) {
+                let tag = if tags != 0 { opt_str(z, tags + 4 * slot).filter(|t| !t.is_empty()) } else { None };
+                let offset = vec3(z, v + WV::attachWorldModelOffsets + 12 * slot);
+                let rotation = vec3(z, v + WV::attachWorldModelRotations + 12 * slot);
+                attach_world_models.push(AttachWorldModel { slot, model, tag, offset, rotation });
+            }
+        }
+    }
     let mut attachment_uniques = Vec::new();
     let uniques = z.try_u32(v + WV::attachmentUniques)?;
     if uniques != 0 {
@@ -562,6 +606,9 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 world_model: named(z, u + WU::worldModel),
                 world_model_tag: opt_str(z, u + WU::worldModelTag),
                 combined: z.u32(u + WU::combinedAttachmentTypeMask),
+                index: i,
+                child: z.u32(u + WU::childLink),
+                sibling: z.u32(u + WU::siblingLink),
                 disable_base_clip: z.u8(u + WU::disableBaseWeaponClip) != 0,
                 disable_base_attachment: z.u8(u + WU::disableBaseWeaponAttachment) != 0,
                 override_base_attachment_offsets: z.u8(u + WU::overrideBaseWeaponAttachmentOffsets) != 0,
@@ -577,6 +624,10 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 view_add_rotation: vec3(z, u + WU::viewModelAddRotations),
                 world_offset: vec3(z, u + WU::worldModelOffsets),
                 world_rotation: vec3(z, u + WU::worldModelRotations),
+                world_model_additional: named(z, u + WU::worldModelAdditional),
+                world_add_offset: vec3(z, u + WU::worldModelAddOffsets),
+                world_add_rotation: vec3(z, u + WU::worldModelAddRotations),
+                world_base_attachment_offset: vec3(z, u + WU::worldModelOffsetBaseAttachment),
                 hide_tags: hide_tags(z, z.u32(u + WU::hideTags)),
                 fire_sound_player: opt_str(z, u + WU::fireSoundPlayer),
                 fire_sound: opt_str(z, u + WU::fireSound),
@@ -611,6 +662,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         anims,
         attach_view_models,
         attach_view_offsets,
+        attach_world_models,
         clip_size: int(z, v + WV::iClipSize),
         reload_time: ms(z, v + WV::iReloadTime),
         reload_empty_time: ms(z, v + WV::iReloadEmptyTime),

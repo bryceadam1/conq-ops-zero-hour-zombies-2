@@ -183,6 +183,79 @@ pub struct Combo<'a> {
     pub base_attachment_offset: Option<[f32; 3]>,
     pub fire_sound_player: Option<String>,
     pub fire_sound: Option<String>,
+    /// Bits `1 << eAttachment` of the combination's attachments (a combined unique's mask).
+    pub mask: u32,
+}
+
+/// The default mount of a third-person part: `FUN_008ace30` takes it from its callers as
+/// `DAT_0240749c`, the script string `FUN_00678440` registers for `tag_weapon` — the world models'
+/// root bone (the viewmodel's default is `j_gun`, which no world model has).
+pub const WORLD_DEFAULT_TAG: &str = "tag_weapon";
+
+/// One third-person part after the world model: a base `attachWorldModel` slot or an attachment's
+/// world model, with its tag (BO2's, or [`WORLD_DEFAULT_TAG`] when it names none) and placement
+/// (inches, degrees).
+#[derive(Clone, Debug, PartialEq)]
+pub struct WorldPart {
+    pub model: String,
+    pub tag: String,
+    pub offset: [f32; 3],
+    pub rotation: [f32; 3],
+}
+
+/// BO2's third-person parts after the world model (`FUN_008ace30`, the conformance layer's
+/// `resolve::world_parts`): the variant's `attachWorldModel` slots — slot 0 (the base attachment
+/// art) dropped when a single unique disables it and moved by the first that overrides its
+/// offsets, slot 6 (the clip) dropped when one disables the base clip — then, per attachment whose
+/// single unique has a world model, the resolved unique's world model and its additional model.
+pub fn world_parts(w: &zhbo_formats::weapon::Weapon, c: &Combo) -> Vec<WorldPart> {
+    let singles = || c.parts.iter().map(|(u, _)| *u);
+    let no_base_attachment = singles().any(|u| u.disable_base_attachment);
+    let no_base_clip = singles().any(|u| u.disable_base_clip);
+    let moved = singles().find(|u| u.override_base_attachment_offsets).map(|u| u.world_base_attachment_offset);
+    let mut out = Vec::new();
+    for a in &w.attach_world_models {
+        if (a.slot == 0 && no_base_attachment) || (a.slot == 6 && no_base_clip) {
+            continue;
+        }
+        let offset = if a.slot == 0 { moved.unwrap_or(a.offset) } else { a.offset };
+        let tag = a.tag.clone().unwrap_or_else(|| WORLD_DEFAULT_TAG.to_string());
+        out.push(WorldPart { model: a.model.clone(), tag, offset, rotation: a.rotation });
+    }
+    for s in singles() {
+        if s.world_model.is_none() {
+            continue;
+        }
+        let r = resolved_unique(w, s, c.mask);
+        let Some(model) = r.world_model.clone() else { continue };
+        let tag = r.world_model_tag.clone().filter(|t| !t.is_empty()).unwrap_or_else(|| WORLD_DEFAULT_TAG.to_string());
+        out.push(WorldPart { model, tag: tag.clone(), offset: r.world_offset, rotation: r.world_rotation });
+        if let Some(add) = r.world_model_additional.clone() {
+            out.push(WorldPart { model: add, tag, offset: r.world_add_offset, rotation: r.world_add_rotation });
+        }
+    }
+    out
+}
+
+/// The unique a combination uses for its attachment whose single unique is `single`
+/// (`FUN_008eb690`): the first entry along the single's child/sibling chain whose combined mask
+/// shares an attachment with the combination's others, else the single.
+pub fn resolved_unique<'a>(w: &'a zhbo_formats::weapon::Weapon, single: &'a zhbo_formats::weapon::AttachmentUnique, mask: u32) -> &'a zhbo_formats::weapon::AttachmentUnique {
+    let others = mask & !(1u32 << (single.kind & 31)) & !1;
+    let at = |i: u32| w.attachment_uniques.iter().find(|u| u.index == i);
+    let mut j = single.child;
+    // The chain is BO2's data; a malformed one (a cycle) stops at the table's size.
+    for _ in 0..95 {
+        if j == 0 {
+            break;
+        }
+        let Some(c) = at(j) else { break };
+        if c.combined & others != 0 {
+            return c;
+        }
+        j = c.sibling;
+    }
+    single
 }
 
 /// The art of `w` with the attachments `shorts` (BO2 create-a-class names).
@@ -305,6 +378,7 @@ pub fn combo<'a>(w: &'a zhbo_formats::weapon::Weapon, atts: &[zhbo_formats::weap
         parts,
         anims,
         hide,
+        mask,
     }
 }
 
@@ -597,9 +671,15 @@ pub(crate) fn weapon_viewmodels(
     Ok((format!("viewmodels {} (surfaces left out: {})", made.join(", "), looks.dropped.into_iter().collect::<Vec<_>>().join(" ")), clips))
 }
 
-/// The third-person weapons on the soldier model: each converted weapon's BO2 world model and its
-/// attachments' (at BO2's world offsets), rigid on the right hand as `W<vm><k>` meshes, so the bridge
-/// shows the one in hand. Sets each definition's `world_meshes` (its alt mode shares them).
+/// A world model loaded once: its parsed form, its textures and its native blob's path.
+type WorldModel = (std::rc::Rc<xmodel::Model>, Vec<Option<String>>, String);
+
+/// The third-person weapons: each converted weapon's BO2 world model with its base parts and its
+/// attachments' (at BO2's world offsets, [`world_parts`]) as a native `.zbw` manifest for every id
+/// in `converted`, and — for the first `base_count` (the base set) — rigid on the right hand as
+/// `W<vm><k>` meshes on the soldier model, so the bridge shows the one in hand. Sets each base
+/// definition's `world_meshes` (its alt mode shares them); a combination beyond the base set has
+/// none, and the W3D body shows its base weapon's meshes (`Catalog::world_viewmodel`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn world_weapons(
     patch: &Zone,
@@ -611,48 +691,66 @@ pub(crate) fn world_weapons(
     atts: &[zhbo_formats::weapon::Attachment],
     defs: &mut [zhbo_core::weapons::WeaponDef],
     converted: &[String],
+    base_count: usize,
     looks: &mut Looks,
 ) -> (Vec<w3d::SkinMesh>, Vec<(usize, crate::xf::Xf)>) {
     let hand = rig.pivot(character::WEAPON_TAG).unwrap_or(0);
     let mut meshes = Vec::new();
     let mut flashes = Vec::new();
+    // Each model once: its parsed form, its textures and its native blob's path. The ~20,000
+    // legal combinations share a few hundred models, so a combination costs only its manifest.
+    let mut cache: BTreeMap<String, Option<WorldModel>> = BTreeMap::new();
+    let mut load = |name: &str, out: &mut BTreeMap<String, Vec<u8>>, looks: &mut Looks| {
+        cache
+            .entry(name.to_string())
+            .or_insert_with(|| {
+                let model = find_model(patch, common, name).ok()?;
+                let tex = textures(&model, paks, out, looks);
+                let path = crate::native::put_model(out, &crate::native::model(&model, &tex, looks));
+                Some((std::rc::Rc::new(model), tex, path))
+            })
+            .clone()
+    };
     for (vm, id) in converted.iter().enumerate() {
         let (base, shorts) = zhbo_core::attachments::split_id(id);
         let Some(w) = bo2.iter().find(|w| w.name == base) else { continue };
-        let Some(world) = w.world_model.as_deref().and_then(|m| find_model(patch, common, m).ok()) else { continue };
+        let Some((world, tex, world_path)) = w.world_model.as_deref().and_then(|m| load(m, out, looks)) else { continue };
         let c = combo(w, atts, &shorts);
         let prefix = format!("W{vm:02}");
-        if let Some(b) = world.bones.iter().find(|b| b.name == "tag_flash") {
+        let write_w3d = vm < base_count;
+        if let Some(b) = world.bones.iter().find(|b| b.name == "tag_flash").filter(|_| write_w3d) {
             flashes.push((vm, character::scaled_xf((b.rotation, b.position))));
         }
-        let tex = textures(&world, paks, out, looks);
-        let mut mine = character::skin_rigid(&world, hand, crate::xf::IDENTITY, &prefix, 0, &tex, &c.hide);
+        let mut mine = if write_w3d { character::skin_rigid(&world, hand, crate::xf::IDENTITY, &prefix, 0, &tex, &c.hide) } else { Vec::new() };
         // Track R7: the same world model and attachments as native blobs, composed at run time on
         // the General's `tag_weapon_right` (`zhbo_core::nativebody`). The native side takes BO2
         // inches, so its offsets stay unscaled (the W3D path's are scaled above).
         let mut native_parts = vec![zhbo_native::viewmodel::Part {
-            model: crate::native::put_model(out, &crate::native::model(&world, &tex, looks)),
+            model: world_path,
             tag: None,
             offset: crate::xf::IDENTITY,
             rigid: true,
             ads_only: false,
         }];
-        for (u, _) in &c.parts {
-            let Some(model) = u.world_model.as_deref().and_then(|m| find_model(patch, common, m).ok()) else { continue };
-            // From the world model's own tag, or its origin.
-            let tag = u.world_model_tag.as_deref().and_then(|t| world.bones.iter().find(|b| b.name == t));
+        // The base parts (the magazine, a sniper's scope) and the attachments, as BO2 mounts them.
+        for u in world_parts(w, &c) {
+            let Some((model, t, path)) = load(&u.model, out, looks) else { continue };
+            // On the world model's own tag (`tag_weapon`, its root, by default), or its origin when
+            // the model lacks the named bone.
+            let tag = world.bones.iter().find(|b| b.name == u.tag);
             let base_xf = tag.map_or(crate::xf::IDENTITY, |b| character::scaled_xf((b.rotation, b.position)));
-            let offset = crate::xf::compose(base_xf, character::scaled_xf((crate::xf::from_angles(u.world_rotation), u.world_offset)));
-            let t = textures(&model, paks, out, looks);
-            let first = mine.len();
-            mine.extend(character::skin_rigid(&model, hand, offset, &prefix, first, &t, &[]));
+            let offset = crate::xf::compose(base_xf, character::scaled_xf((crate::xf::from_angles(u.rotation), u.offset)));
+            if write_w3d {
+                let first = mine.len();
+                mine.extend(character::skin_rigid(&model, hand, offset, &prefix, first, &t, &[]));
+            }
             let native_base = tag.map_or(crate::xf::IDENTITY, |b| (b.rotation, b.position));
             native_parts.push(zhbo_native::viewmodel::Part {
-                model: crate::native::put_model(out, &crate::native::model(&model, &t, looks)),
+                model: path,
                 // A tag the world model does not have hangs the attachment at its origin, as the
                 // W3D path does; the native composition treats a missing tag the same way.
-                tag: u.world_model_tag.clone().filter(|n| world.bones.iter().any(|b| &b.name == n)),
-                offset: crate::xf::compose(native_base, (crate::xf::from_angles(u.world_rotation), u.world_offset)),
+                tag: tag.map(|b| b.name.clone()),
+                offset: crate::xf::compose(native_base, (crate::xf::from_angles(u.rotation), u.offset)),
                 rigid: true,
                 ads_only: false,
             });
@@ -661,6 +759,9 @@ pub(crate) fn world_weapons(
             zhbo_native::world_weapon_path(vm as i32),
             zhbo_native::thirdperson::Weapon { id: (*id).to_string(), parts: native_parts, hide: c.hide.clone() }.to_bytes(),
         );
+        if !write_w3d {
+            continue;
+        }
         finish(&mut mine, looks);
         number(&mut mine, |k| crate::generals::world_mesh(vm as i32, k));
         let count = mine.len().min(99) as u8;
@@ -903,10 +1004,6 @@ mod tests {
         }
     }
 
-    /// BO2's two replacement channels are separate fields: `disableBaseWeaponClip` suppresses the
-    /// magazine, `disableBaseWeaponAttachment` the base attachment art (the AS50's ACOG). The flag
-    /// is read over both selection paths — the single-attachment uniques and the exact
-    /// multi-attachment unique — and never inferred from a name or a hide tag.
     /// The third-person tear: `finish` drops the clan-tag/emblem surfaces in the middle of a world
     /// model, and the bridge shows `W<vm><k>` for `k` below the count. The kept meshes must be
     /// numbered `0..n` with no gap, or the ones after the gap are never shown.
@@ -922,6 +1019,56 @@ mod tests {
         assert_eq!(names, ["W3000", "W3001", "W3002"], "every kept mesh is below the count the bridge shows");
     }
 
+    /// The third-person parts follow BO2's `FUN_008ace30`: the base `attachWorldModel` slots
+    /// (slot 0 the base attachment art, slot 6 the clip) dropped by the single uniques' replacement
+    /// flags and slot 0 moved by the overriding unique, then each attachment's world model and its
+    /// additional model.
+    #[test]
+    fn the_world_parts_are_the_base_slots_then_the_attachments() {
+        use zhbo_formats::weapon::AttachWorldModel;
+        let slot = |slot: u32, model: &str| AttachWorldModel { slot, model: model.into(), tag: None, offset: [slot as f32, 0.0, 0.0], rotation: [0.0; 3] };
+        let unique = |kind: u32, world: &str| AttachmentUnique { kind, world_model: Some(world.into()), world_model_tag: Some("tag_rail".into()), world_offset: [1.0, 2.0, 3.0], ..Default::default() };
+        let mut ir = unique(2, "ir_world");
+        ir.world_model_additional = Some("ir_mount_world".into());
+        ir.override_base_attachment_offsets = true;
+        ir.world_base_attachment_offset = [9.0, 0.0, 0.0];
+        let mut ext = unique(3, "extclip_world");
+        ext.disable_base_clip = true;
+        let w = Weapon {
+            attach_world_models: vec![slot(0, "scope_world"), slot(6, "mag_world")],
+            attachment_variants: vec![(2, "ir".into()), (3, "extclip".into())],
+            attachment_uniques: vec![ir, ext],
+            ..Default::default()
+        };
+        let models = |shorts: &[&str]| super::world_parts(&w, &super::combo(&w, &[], shorts)).into_iter().map(|p| (p.model, p.offset[0])).collect::<Vec<_>>();
+        assert_eq!(models(&[]), [("scope_world".to_string(), 0.0), ("mag_world".to_string(), 6.0)], "the bare weapon carries its base parts");
+        assert_eq!(
+            models(&["ir"]),
+            [("scope_world".to_string(), 9.0), ("mag_world".to_string(), 6.0), ("ir_world".to_string(), 1.0), ("ir_mount_world".to_string(), 0.0)],
+            "the IR moves the base scope and adds its mount"
+        );
+        assert_eq!(models(&["extclip"]), [("scope_world".to_string(), 0.0), ("extclip_world".to_string(), 1.0)], "the extended clip replaces slot 6");
+        let tags: Vec<String> = super::world_parts(&w, &super::combo(&w, &[], &["ir"])).into_iter().map(|p| p.tag).collect();
+        assert_eq!(tags, ["tag_weapon", "tag_weapon", "tag_rail", "tag_rail"], "an empty tag is the world default, `tag_weapon`");
+    }
+
+    /// A combination resolves each attachment through its single's child/sibling chain
+    /// (`FUN_008eb690`): the first combined unique sharing an attachment with the others.
+    #[test]
+    fn the_resolved_unique_walks_the_childs_chain() {
+        let single = AttachmentUnique { kind: 11, index: 11, child: 40, world_model: Some("grip_world".into()), ..Default::default() };
+        let other = AttachmentUnique { kind: 11, index: 40, combined: 1 << 5, sibling: 41, ..Default::default() };
+        let acog = AttachmentUnique { kind: 11, index: 41, combined: 1 << 2, world_model: Some("grip_acog_world".into()), ..Default::default() };
+        let w = Weapon { attachment_uniques: vec![single.clone(), other, acog], ..Default::default() };
+        let mask = (1 << 11) | (1 << 2);
+        assert_eq!(super::resolved_unique(&w, &w.attachment_uniques[0], mask).index, 41, "the acog+grip entry");
+        assert_eq!(super::resolved_unique(&w, &w.attachment_uniques[0], 1 << 11).index, 11, "alone: the single");
+    }
+
+    /// BO2's two replacement channels are separate fields: `disableBaseWeaponClip` suppresses the
+    /// magazine, `disableBaseWeaponAttachment` the base attachment art (the AS50's ACOG). The flag
+    /// is read over both selection paths — the single-attachment uniques and the exact
+    /// multi-attachment unique — and never inferred from a name or a hide tag.
     #[test]
     fn the_replacement_flags_are_read_from_the_selection() {
         let unique = |kind: u32, clip: bool, attachment: bool| AttachmentUnique {

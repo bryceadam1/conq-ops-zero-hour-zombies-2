@@ -14,6 +14,10 @@ pub const SILENCER: usize = 23;
 pub const STACKFIRE: usize = 24;
 /// The default attachment mount when a tag is empty (G10).
 pub const DEFAULT_TAG: &str = "j_gun";
+/// The default mount of a third-person part: `FUN_008ace30`'s `param_4`, which both of its callers
+/// pass as `DAT_0240749c` — the script string `FUN_00678440` registers for **`tag_weapon`**, the
+/// world models' root bone (not the viewmodel's `j_gun`).
+pub const WORLD_DEFAULT_TAG: &str = "tag_weapon";
 
 /// A weapon index: the variant and up to three attachment kinds, ascending with zeros last
 /// (`FUN_008e7fd0` + `FUN_008e7f10`).
@@ -357,6 +361,10 @@ fn tag_or_default(t: Option<String>) -> String {
     t.filter(|t| !t.is_empty()).unwrap_or_else(|| DEFAULT_TAG.to_string())
 }
 
+fn world_tag_or_default(t: Option<String>) -> String {
+    t.filter(|t| !t.is_empty()).unwrap_or_else(|| WORLD_DEFAULT_TAG.to_string())
+}
+
 /// `FUN_00535170`: the first-person parts after the gun itself, hip (`ads == false`) or aimed.
 /// An alt mode draws its parent's parts (`parent`).
 pub fn view_parts(w: &Weapon, ads: bool) -> Vec<Part> {
@@ -418,7 +426,7 @@ pub fn world_parts(w: &Weapon) -> Vec<Part> {
             (0, Some(u)) => u.world_offset_base_attachment(),
             _ => w.v.attach_world_offset(i),
         };
-        out.push(Part { model, tag: tag_or_default(tag), offset, rotation: w.v.attach_world_rotation(i), camo: w.d.weapon_camo() });
+        out.push(Part { model, tag: world_tag_or_default(tag), offset, rotation: w.v.attach_world_rotation(i), camo: w.d.weapon_camo() });
     }
     for s in w.singles().into_iter().flatten() {
         if s.world_model().is_none() {
@@ -426,7 +434,7 @@ pub fn world_parts(w: &Weapon) -> Vec<Part> {
         }
         let Some(r) = w.resolved(s.kind() as usize) else { continue };
         let Some(model) = r.world_model() else { continue };
-        let tag = tag_or_default(r.world_model_tag());
+        let tag = world_tag_or_default(r.world_model_tag());
         out.push(Part { model, tag: tag.clone(), offset: r.world_offset(), rotation: r.world_rotation(), camo: s.weapon_camo() });
         if let Some(add) = r.world_model_additional() {
             out.push(Part { model: add, tag, offset: r.world_add_offset(), rotation: r.world_add_rotation(), camo: s.weapon_camo() });
@@ -656,6 +664,24 @@ mod tests {
         assert_eq!(names(view_parts(&Weapon::new(v, &[ACOG]).unwrap(), false)), [s("scope_view", "j_gun"), s("mag_view", "tag_clip"), s("acog_view", "j_gun")]);
         assert_eq!(names(view_parts(&Weapon::new(v, &[ACOG, GL]).unwrap(), false))[2], s("acog_on_gl_view", "tag_acog"));
         assert_eq!(view_parts(&Weapon::new(v, &[]).unwrap(), false)[1].offset, [2.5, 0.0, 0.0]);
+    }
+
+    /// Third person mounts an untagged part on `tag_weapon` (`FUN_008ace30`'s default, the
+    /// `DAT_0240749c` script string `FUN_00678440` registers), not the viewmodel's `j_gun`.
+    #[test]
+    fn world_parts_default_to_tag_weapon() {
+        let (mut m, g, [_, acog, _, _, _, _]) = gun();
+        let models = m.alloc(32);
+        let tags = m.alloc(32);
+        m.put_named(models + 24, "mag_world");
+        m.put32(g.v + WV::attachWorldModel, models);
+        m.put32(g.v + WV::attachWorldModelTag, tags);
+        m.put_named(acog + WU::worldModel, "acog_world");
+        let z = m.zone();
+        let v = g.variant(&z);
+        let names = |ps: Vec<Part>| ps.into_iter().map(|p| (p.model, p.tag)).collect::<Vec<_>>();
+        let s = |a: &str, b: &str| (a.to_string(), b.to_string());
+        assert_eq!(names(world_parts(&Weapon::new(v, &[ACOG]).unwrap())), [s("mag_world", "tag_weapon"), s("acog_world", "tag_weapon")]);
     }
 
     #[test]

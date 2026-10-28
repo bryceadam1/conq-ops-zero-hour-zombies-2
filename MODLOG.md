@@ -4487,3 +4487,38 @@ against `WorldMeshes` for every base weapon, plus every vertex on the hand and e
 it failed with 40 problems before the fix. `world_meshes_are_numbered_without_gaps_after_the_dropped_surfaces`
 pins the rule without the install. Archive output changes (mesh names): `hud::VERSION` bump is
 the integrator's.
+
+## Third-person parts: BO2's world rule, every combination, and the `tag_weapon` default (2026-10-27, branch `v1/third-person`)
+
+Three gaps behind "the third-person weapon looks wrong", measured by the conformance `worldparts`
+area (45,959 → 3,326 cells):
+
+* **The base parts were never mounted.** BO2's third person draws the variant's
+  `attachWorldModel[8]` slots after the world model (`FUN_008ace30`, G14 §3): the magazine on
+  24 base weapons, the snipers' scopes, the ballistic knife's blade. The parser now reads them
+  (`Weapon::attach_world_models`, with the slot) and the unique's `worldModelAdditional`,
+  add offsets and `worldModelOffsetBaseAttachment`; `viewmodels::world_parts` ports the rule
+  (slot 0 dropped/moved by the single uniques' flags, slot 6 dropped by `disableBaseWeaponClip`,
+  then each attachment's **resolved** unique — the child/sibling chain, `resolved_unique`, which
+  the old `combined == mask` lookup missed: `an94+acog+grip` drew the ACOG twice and no grip).
+  Both the W3D meshes and the `.zbw` use it.
+* **Combinations drew nothing in third person.** Since full combo coverage, a class weapon's def
+  has its own viewmodel index (≥ the base set) but neither W3D meshes nor a `.zbw` — the claim
+  that it "shows its base weapon" was false: the bridge's `vm == p.weapon` loop matched nothing.
+  Every legal combination now gets its `.zbw` (models parsed and converted once; a combination
+  costs only its manifest), and `Catalog::world_viewmodel` makes the W3D body show the base
+  weapon's meshes for a def without its own (`Sim::world_poses`).
+* **The world default tag is `tag_weapon`, not `j_gun`.** Read-only Ghidra: both callers pass
+  `FUN_008ace30` `DAT_0240749c`, which `FUN_00678440` registers as `FUN_00621d80("tag_weapon")` —
+  the world models' root bone (no world model has `j_gun`). **The expected side's
+  `resolve::world_parts` used the viewmodel default `j_gun`: a transcription bug against BO2's
+  engine, corrected (`WORLD_DEFAULT_TAG`), pinned by the fixture test
+  `world_parts_default_to_tag_weapon`.** The mod mounts there too (`viewmodels::WORLD_DEFAULT_TAG`);
+  body mode hangs a tagless part from the weapon's root instead of the body's origin.
+
+Residual `worldparts` (3,326): 645–651 rows per column with no mod manifest at all (the
+`steadyaim`/`sf_*` combos the enumerator does not produce — the combo-coverage/alt-weapon work),
+60 `gl_sa58` rows whose BO2 `world_model` is the `_view` model (BO2's data), and 35
+`world_part_rotations` rows where a 180° roll's quaternion is `(1,0,0,~0)`: the mod's f32
+`from_angles` leaves w at −4e-8, so `canonical_quat` flips the sign before rounding — the same
+rotation, a canonicalisation tie (the quat-canonical item).

@@ -302,10 +302,18 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
   exact spelling of the stances the W3D path never needed (walk, crouch, prone) can differ between
   installs; a state the body has no clip for falls back to the nearest stance and gait at run time
   (`state::fallbacks`).
-* **The weapon.** Each converted weapon's `world_model` and its attachments' world models are
-  written as `.zbm` blobs and a `ZW<vm>.zbw` manifest: the world model first, each attachment on
-  its `worldModelTag` (or the model's origin when BO2 names no tag) at BO2's world offset, and the
-  combination's `hideTags`. Offsets stay in BO2 inches; the renderer's scale is applied once, at
+* **The weapon.** Every legal combination's world weapon is a `ZW<vm>.zbw` manifest (the models
+  are shared `.zbm` blobs, converted once): the world model first, then BO2's third-person parts
+  (`FUN_008ace30`, `viewmodels::world_parts`) — the variant's `attachWorldModel` slots (the
+  magazine, a sniper's scope; slot 0 dropped by `disableBaseWeaponAttachment` and moved by
+  `worldModelOffsetBaseAttachment`, slot 6 dropped by `disableBaseWeaponClip`), then each
+  attachment's resolved unique (the child/sibling chain, `FUN_008eb690`) with its additional model
+  — each on its tag, **`tag_weapon` (the world model's root) when BO2 names none** (the default
+  `FUN_008ace30` is passed: `DAT_0240749c`, registered by `FUN_00678440`), at BO2's world offset,
+  and the combination's `hideTags`. Only the base set (`converted_base`) also rides the W3D body as
+  `W<vm><k>` meshes, numbered `0..WorldMeshes` with no gap after the dropped decal surfaces (the
+  bridge shows `k < WorldMeshes`); the W3D body shows a combination's base weapon
+  (`Catalog::world_viewmodel`). Offsets stay in BO2 inches; the renderer's scale is applied once, at
   draw. The body manifest never names a weapon: the core composes the two at run time, so a weapon
   switch reloads only the weapon.
 * **Archive.** These are more files in `ConquerOps_BO2.big`; `zhbo_assets::hud::VERSION` must be

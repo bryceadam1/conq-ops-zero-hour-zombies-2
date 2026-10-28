@@ -675,7 +675,8 @@ impl Sim {
 
 
     /// How each controlled General looks in third person: its General, the viewmodel index of the
-    /// weapon in hand (its world model is shown), the tablet (0 none, 1 coming up for the field
+    /// weapon in hand whose W3D world meshes are shown (`Catalog::world_viewmodel`: a combination
+    /// shows its base weapon's), the tablet (0 none, 1 coming up for the field
     /// computer, 2 going down as first person starts), and whether the sidearm is in hand.
     pub fn world_poses(&self) -> Vec<(u32, i32, i32, bool)> {
         self.players
@@ -688,7 +689,7 @@ impl Sim {
                     Mode::Fps if a.raise_left > a.raise_total + 1e-4 => 2,
                     _ => 0,
                 };
-                (p.general, a.current().def.viewmodel.max(0), tablet, a.active == 1)
+                (p.general, crate::weapons::catalog().world_viewmodel(a.current().def).max(0), tablet, a.active == 1)
             })
             .collect()
     }

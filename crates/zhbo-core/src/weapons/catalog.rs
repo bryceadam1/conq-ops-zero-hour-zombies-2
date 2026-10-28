@@ -121,6 +121,22 @@ impl Catalog {
     pub fn all(&self) -> &[&'static WeaponDef] {
         &self.order
     }
+
+    /// The viewmodel whose third-person W3D meshes (`W<vm><k>`) the soldier shows for `def`: its
+    /// own when the converter put its world model on the body (the base set), else the base
+    /// weapon's — a combination (`mp7_mp+reflex`) or its alt mode (`gl_an94_mp~an94_mp+gl`) has a
+    /// viewmodel of its own but no body meshes (`converted_base`), and the native third person
+    /// draws it from its own `.zbw` instead.
+    pub fn world_viewmodel(&self, def: &WeaponDef) -> i32 {
+        if def.world_meshes > 0 {
+            return def.viewmodel;
+        }
+        def.id
+            .split('~')
+            .filter_map(|part| self.by_id.get(attachments::split_id(part).0))
+            .find(|b| b.world_meshes > 0)
+            .map_or(def.viewmodel, |b| b.viewmodel)
+    }
 }
 
 static CATALOG: OnceLock<Catalog> = OnceLock::new();
@@ -378,3 +394,19 @@ Weapon fiveseven_mp
   Class = pistol
 End
 ";
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A converted combination has its own viewmodel but no body meshes: the W3D third person shows
+    /// its base weapon's, and an alt mode's falls back through its parent combination.
+    #[test]
+    fn a_combination_shows_its_base_weapons_world_meshes() {
+        let def = |id: &str, vm: i32, meshes: u8| WeaponDef { id: id.into(), viewmodel: vm, world_meshes: meshes, ..WeaponDef::default() };
+        let c = Catalog::new(vec![def("mp7_mp", 5, 4), def("mp7_mp+reflex", 900, 0), def("gl_an94_mp~an94_mp+gl", 901, 0), def("an94_mp", 1, 5)]);
+        let world = |id: &str| c.world_viewmodel(c.get(id).unwrap());
+        assert_eq!(world("mp7_mp"), 5, "a base weapon shows its own");
+        assert_eq!(world("mp7_mp+reflex"), 5, "a combination shows its base weapon's");
+        assert_eq!(world("gl_an94_mp~an94_mp+gl"), 1, "an alt mode falls back through its parent");
+    }
+}

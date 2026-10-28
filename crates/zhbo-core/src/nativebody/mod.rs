@@ -171,8 +171,11 @@ pub fn load(files: &mut Files, req: &Request) -> Result<Option<Loaded>, String> 
         Some(b) => {
             all_models.push(&b.model);
             parts.push(PartRef { model: &b.model, tag: None, offset: IDENTITY, rigid: false });
+            // A part with no tag (the magazine: BO2's default `j_gun` is not a bone of the world
+            // models) hangs from the world model's root, as in weapon mode — not the body's origin.
+            let weapon_root = models.first().and_then(|m| m.bones.first()).map(|b| b.name.as_str());
             for (i, (p, m)) in manifest.parts.iter().zip(&models).enumerate() {
-                let tag = if i == 0 { Some(b.manifest.weapon_tag.as_str()) } else { p.tag.as_deref() };
+                let tag = if i == 0 { Some(b.manifest.weapon_tag.as_str()) } else { p.tag.as_deref().or(weapon_root) };
                 all_models.push(m);
                 parts.push(PartRef { model: m, tag, offset: p.offset, rigid: p.rigid });
             }

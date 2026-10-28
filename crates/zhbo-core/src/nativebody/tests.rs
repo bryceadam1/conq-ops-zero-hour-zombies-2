@@ -176,3 +176,45 @@ fn the_body_root_is_the_object_yawed_about_z() {
     let want = [1.0, 2.0 + 72.0 * ART_SCALE, 3.0];
     assert!((0..3).all(|k| (side[k] - want[k]).abs() < 1e-4), "{side:?} vs {want:?}");
 }
+
+/// Body mode: a world part with no tag (the magazine — BO2's default `j_gun` is not a bone of the
+/// world models) hangs from the weapon's root on the hand, not from the body's origin.
+#[test]
+fn a_tagless_world_part_rides_the_weapon_in_body_mode() {
+    let body = model("body", vec![bone("tag_origin", None, [0.0; 3]), bone("tag_weapon_right", Some(0), [10.0, -28.0, 40.0])]);
+    let gun = model("gun", vec![bone("tag_weapon", None, [0.0; 3])]);
+    let mag = model("mag", vec![bone("tag_clip", None, [0.0; 3])]);
+    let manifest = Weapon {
+        id: "test_mp".into(),
+        parts: vec![
+            ViewmodelPart { model: zhbo_native::model_path("gun"), tag: None, offset: IDENTITY, rigid: true, ads_only: false },
+            ViewmodelPart { model: zhbo_native::model_path("mag"), tag: None, offset: (QUAT_IDENTITY, [-11.0, 0.0, -4.0]), rigid: true, ads_only: false },
+        ],
+        hide: vec![],
+    };
+    let body_manifest = zhbo_native::thirdperson::Body { faction: b'U', model: zhbo_native::model_path("body"), weapon_tag: "tag_weapon_right".into(), clips: vec![] };
+    let files_in = [
+        (zhbo_native::world_weapon_path(7), manifest.to_bytes()),
+        (zhbo_native::model_path("gun"), gun.to_bytes()),
+        (zhbo_native::model_path("mag"), mag.to_bytes()),
+        (zhbo_native::body_path('U'), body_manifest.to_bytes()),
+        (zhbo_native::model_path("body"), body.to_bytes()),
+    ];
+    let req = Request { vm: 7, faction: b'U', mode: Mode::Body, state: 0, time: 0.0, rate: 1.0, pos: [0.0; 3], yaw: 0.0, tag: None };
+    let mut files = Files::default();
+    let mut loaded = None;
+    for _ in 0..8 {
+        if let Some(l) = load(&mut files, &req).unwrap() {
+            loaded = Some(l);
+            break;
+        }
+        let wanted: Vec<String> = files.wanted().map(str::to_string).collect();
+        for w in &wanted {
+            files.provide(w, files_in.iter().find(|(p, _)| p == w).map(|(_, b)| b.as_slice()));
+        }
+    }
+    let l = loaded.expect("the body rig loads");
+    let clip = l.skeleton.bone("tag_clip").expect("the magazine's bone");
+    let at = l.skeleton.bones[clip].bind.1;
+    assert!((at[0] - -1.0).abs() < 1e-4 && (at[1] - -28.0).abs() < 1e-4 && (at[2] - 36.0).abs() < 1e-4, "the magazine sits on the hand's weapon: {at:?}");
+}

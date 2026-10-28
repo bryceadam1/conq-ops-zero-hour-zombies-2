@@ -296,8 +296,10 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     // tablet.
     let mut rig = Rig::new(&xmodel::find(&zones[0], FACTIONS[0].body).map_err(|e| e.to_string())?, &[(&weapon, character::WEAPON_TAG)]);
     let mut looks = textures::Looks::default();
-    // The base set is what the third-person body carries; combos beyond it show the base weapon, same as today.
-    let (held, flashes) = viewmodels::world_weapons(&patch, &common, &paks, &mut out, &rig, &bo2, &atts, &mut table.weapons, &converted_base, &mut looks);
+    // Every legal combination gets its native world-weapon manifest (the shared models deduped by
+    // name); only the base set's meshes ride the W3D body, and a combination shows its base weapon
+    // there (`Catalog::world_viewmodel`).
+    let (held, flashes) = viewmodels::world_weapons(&patch, &common, &paks, &mut out, &rig, &bo2, &atts, &mut table.weapons, &converted, base_count, &mut looks);
     let tablet = viewmodels::tablet_world(&patch, &common, &paks, &mut out, &rig, &mut looks);
     // Each weapon's muzzle on the hand, so shots and flashes leave the gun in hand.
     let hand = rig.pivot(character::WEAPON_TAG).unwrap_or(0);
@@ -783,7 +785,7 @@ mod tests {
         let hand = rig.pivot(character::WEAPON_TAG).unwrap() as u16;
         let mut out = BTreeMap::new();
         let mut looks = textures::Looks::default();
-        let (held, _) = viewmodels::world_weapons(&patch, &common, &paks, &mut out, &rig, &bo2, &atts, &mut table.weapons, &ids, &mut looks);
+        let (held, _) = viewmodels::world_weapons(&patch, &common, &paks, &mut out, &rig, &bo2, &atts, &mut table.weapons, &ids, ids.len(), &mut looks);
         let mut fails = Vec::new();
         let mut shown = 0;
         for (vm, id) in ids.iter().enumerate() {
