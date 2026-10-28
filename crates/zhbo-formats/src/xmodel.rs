@@ -635,6 +635,8 @@ mod tests {
         assert_eq!(m.color_map().map(|i| i.name.as_str()), Some("helper"), "the semantic order picks the helper");
         assert_eq!(m.sampler("colorMap").map(|i| i.name.as_str()), Some("color"));
         assert_eq!(m.sampler("SpecularAndGloss").map(|i| i.name.as_str()), Some("helper"));
+        // The general lookup the HUD converter uses finds it too (the stub is skipped).
+        assert_eq!(find_material(&zone, "mat_ab").map(|m| m.textures.len()), Some(2));
     }
 
     /// The load registers every nested asset, as the reference catalog (OAT `Unlinker --list`)
@@ -647,6 +649,16 @@ mod tests {
         let count = |k: &str| z.linked.iter().filter(|a| a.kind == crate::fastfile::asset_type_id(k).unwrap()).count();
         assert_eq!((z.linked.len(), count("material"), count("image")), (9285, 1472, 1541));
         let gold = find_linked_material(&z, "mc/mtl_weapon_camo_gold").expect("gold is nested in common_mp");
+        // The ADS overlays BO2 ships only nested (in the attachment uniques), with real streamed art.
+        for (material, image, hash) in [
+            ("scope_overlay_envg_ir", "scope_overlay_envg_1024", 0x1d07_82e5),
+            ("scope_overlay_specter", "scope_overlay_specter_1024", 0x1546_91c9),
+            ("scope_overlay_vzoom", "scope_overlay_vzoom_1024", 0x1239_abaf),
+        ] {
+            let m = find_material(&z, material).unwrap_or_else(|| panic!("{material} is nested in common_mp"));
+            let i = m.textures.iter().find_map(|t| t.image.as_ref()).expect("an image");
+            assert_eq!((i.name.as_str(), i.width, i.height, i.stream_hash), (image, 1024, 1024, hash));
+        }
         let col = gold.sampler("colorMap").expect("gold's colorMap");
         assert_eq!(col.name, "~-gcamo_gold_col");
         assert!(find_image(&z, "t6_camo_devgru_solid").is_some_and(|i| i.stream_hash != 0));

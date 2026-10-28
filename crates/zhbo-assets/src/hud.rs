@@ -281,7 +281,16 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                 // pool members); only then the slow scan for a material loaded inline inside another
                 // asset (`hud_mp_firerate_*` lives inside `common_mp`'s weapons).
                 let order = ["common_mp", "code_post_gfx_mp", "ui_mp", "patch_mp", "patch_ui_mp", "frontend"];
-                let image = |m: zhbo_formats::xmodel::Material| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash)).filter(|h| *h != 0);
+                // The material's first image; a `,name` reference stub (no stream hash) is resolved
+                // by name in the image pool, as BO2 does: `hud_willy_pete` in `common_mp` points at
+                // `,hud_us_smokegrenade`, whose full image is `patch_mp`'s.
+                let image = |m: zhbo_formats::xmodel::Material| {
+                    let i = m.textures.iter().find_map(|t| t.image.clone())?;
+                    if i.stream_hash != 0 {
+                        return Some(i.stream_hash);
+                    }
+                    order.iter().filter_map(|z| zones.get(z)).find_map(|z| zhbo_formats::xmodel::find_image(z, &i.name)).map(|i| i.stream_hash)
+                };
                 let mc = format!("mc/{material}");
                 order
                     .iter()
