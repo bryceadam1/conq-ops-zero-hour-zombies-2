@@ -4550,3 +4550,45 @@ Measured: conformance unchanged against the `v1/attach-camo` base (weapons 700,6
 the archive contents change (new textures, gold's real colour), so the integrator's archive
 `hud::VERSION` bump applies. Verified: cargo test --workspace green; clippy adds no warning; real-
 install suites green (zhbo-assets `--ignored --skip conformance`, zhbo-formats `--ignored`).
+
+## The specular colour: metals reflect in their spec map's hue (2026-10-30, branch `v1/spec-colour`)
+
+Stacked on `v1/camo-art-tail`. The camo art tail left gold drawing as dark polished metal: its
+`colorMap` is a flat (21,20,13) and its whole gold hue is the `SpecularAndGloss` map (mean
+158,135,83), while the native pass read the spec map only as a luminance level (`maps.a`, f0 =
+level²). This is not a gold special case: BO2's spec maps are colour maps (`*_spc-rgb` in the image
+names). A probe over the 201 distinct spec maps `common_mp`'s materials bind (`specularMap`/
+`SpecularAndGloss` sampler, else semantic 8): 122 have a mean chroma (max−min of RGB) above 4 —
+dogtags, the red tritium vials (160,20,20), bullet brass (148,130,65), lens coatings, the gold and
+diamond_alt camos — and only 15 are grey within 1. The probe was a throwaway ignored test; the
+numbers are in `~/.opencode/plan/spec-colour/PLAN.md`.
+
+* **Data.** `zhbo_native::model::Material` appends `specular`: `*_spec.tga`, the spec map's RGB at
+  its own size (shrunk to the cap), raw, alpha opaque (`textures::specular_color`). Written for every
+  opaque surface with a spec map, by the model texture pipeline and by the camo style art (gold's
+  `SpecularAndGloss`). The suffix is `_spec`, not `_spc`, so no converted file looks like a BO2 spec
+  image (the camo install test forbids any `camo_code_spc` file). The packed `_nsg` maps keep the
+  level for draws without the colour.
+* **Core.** `SurfaceSpec::specular`; `nativevm::camo::apply` swaps it with the style's colour/maps;
+  `nativevm::gpu` and `nativebody::gpu` upload it raw (display-space shading, like `maps`).
+* **Shader.** `NativeSurface.specular` → binding 5 (1×1 white when absent), the material uniform
+  grows to 48 bytes (`spec.x` flags the map; only with packed maps, whose gloss it needs). f0 becomes
+  a colour, `spec.rgb²` — the same square the level used — and feeds the highlight's Fresnel, the
+  environment reflection and the diffuse split `(1 − f0)`. A grey spec map draws exactly as its
+  level (headless pin `a_coloured_spec_map_tints_the_metal`: level-only RGB 35/34/28, gold spec
+  40/34/18, grey spec == level). No art-direction constant: the hue and its strength are the map's.
+* **Not used:** `shaderConsts [10,10,0.46,0.53,…]` stay uninterpreted. The compiled techniques name
+  `Specular_Amount`/`Reflection_Amount` constants (shader strings, `common_mp`), which these may be;
+  decoding them needs the DXBC (not done; no tint was invented in their place).
+
+Sweep (`render_viewmodels --no-attachments --camo …` on an94/mp7/scar against item 15's
+`sweep-after`, same base code; `~/.opencode/plan/spec-colour/strip_*.png`): gold changes 3.3–5.1 % of
+the frame, its changed pixels' mean going from grey (61,64,66) to gold (75,63,38) on the an94;
+diamond warms the same way (its `_alt` spec map is gold-tinted 134,120,84); carbon/multicam move
+≤0.5 % (stock brass and lens surfaces now take their tint).
+
+**Versions (integrator-owned, NOT bumped):** `zhbo_native::model::VERSION` 3→4 and
+`zhbo_native::camo::VERSION` 1→2 (the shared material record appends an `opt_str`; an old blob read
+by new code fails or misparses — the bump is required), and the archive `hud::VERSION` (new
+`_spec.tga` files in every model's textures; the archive grew 0.90 → 1.01 GB). No C ABI change:
+`NativeSurface` is Rust-only.
