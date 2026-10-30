@@ -647,6 +647,19 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("OverlayReticle", "The overlay reticle enum (`weapOverlayReticle_t`).", FieldKind::Num,
         |d: &WeaponDef| d.overlay_reticle.to_string(),
         |d: &mut WeaponDef, v: Values| { d.overlay_reticle = v.text_num()? as u32; Ok(()) }),
+    // 5b family C: what others see of a shot (the third-person brass and the tracer).
+    field!("WorldShellFxWeapon", "The FX weapon playing the third-person shell eject (`worldShellEjectEffect` at `tag_brass`).", FieldKind::Str,
+        |d: &WeaponDef| d.world_shell_fx_weapon.clone(),
+        |d: &mut WeaponDef, v: Values| { d.world_shell_fx_weapon = v.text.into(); Ok(()) }),
+    field!("WorldLastShotShellFxWeapon", "The same on the round that empties the clip (`worldLastShotEjectEffect`).", FieldKind::Str,
+        |d: &WeaponDef| d.world_last_shot_shell_fx_weapon.clone(),
+        |d: &mut WeaponDef, v: Values| { d.world_last_shot_shell_fx_weapon = v.text.into(); Ok(()) }),
+    field!("TracerFxWeapon", "The FX weapon drawing the bullet tracer (`tracerType`, `FUN_008eb420`).", FieldKind::Str,
+        |d: &WeaponDef| d.tracer_fx_weapon.clone(),
+        |d: &mut WeaponDef, v: Values| { d.tracer_fx_weapon = v.text.into(); Ok(()) }),
+    field!("TracerInterval", "A tracer every this many bullets (`TracerDef.drawInterval`; 0: none).", FieldKind::Num,
+        |d: &WeaponDef| d.tracer_interval.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.tracer_interval = v.text_num()? as u32; Ok(()) }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -706,7 +719,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 78);
+        assert_eq!(WEAPON_FIELDS.len(), 82);
         assert_eq!(ATTACHMENT_FIELDS.len(), 17);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

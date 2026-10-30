@@ -278,6 +278,17 @@ pub struct WeaponDef {
     pub overlay_material_low_res: String,
     /// `weapOverlayReticle_t`: which reticle the overlay draws (0: none).
     pub overlay_reticle: u32,
+    /// The third-person shell eject (BO2's `worldShellEjectEffect` at the world model's
+    /// `tag_brass`, `FUN_00531630`): the Zero Hour FX weapon whose `FireFX` plays it, fired once
+    /// per shot at the shooter. Empty: the gun ejects nothing others see.
+    pub world_shell_fx_weapon: String,
+    /// The same for the round that empties the clip (`worldLastShotEjectEffect`).
+    pub world_last_shot_shell_fx_weapon: String,
+    /// The FX weapon drawing the gun's bullet tracer (`tracerType`, the first single unique's
+    /// before the def's, `FUN_008eb420`); empty: no tracer.
+    pub tracer_fx_weapon: String,
+    /// Every how-many bullets a tracer is drawn (`TracerDef.drawInterval`; `FUN_007c65c0`).
+    pub tracer_interval: u32,
 }
 
 /// One BO2 camouflage option (`mp/attachmenttable.csv`'s rows with `camo` in column 1): the id
@@ -467,6 +478,10 @@ impl Default for WeaponDef {
             overlay_material: String::new(),
             overlay_material_low_res: String::new(),
             overlay_reticle: 0,
+            world_shell_fx_weapon: String::new(),
+            world_last_shot_shell_fx_weapon: String::new(),
+            tracer_fx_weapon: String::new(),
+            tracer_interval: 0,
         }
     }
 }

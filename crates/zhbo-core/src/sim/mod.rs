@@ -200,6 +200,8 @@ pub struct PlayerSim {
     /// field computer), and whether he is building it now.
     pub site: Option<Site>,
     pub building: bool,
+    /// BO2's per-shooter tracer countdown (`centity` byte `+0x35c`, `fire::tracer_due`).
+    pub tracer_count: u8,
 }
 
 impl PlayerSim {
@@ -231,6 +233,7 @@ impl PlayerSim {
             hammer: None,
             site: None,
             building: false,
+            tracer_count: 0,
         }
     }
 }
@@ -373,6 +376,7 @@ impl Sim {
             hammer: None,
             site: None,
             building: false,
+            tracer_count: 0,
                 }
             }
         };
@@ -434,6 +438,7 @@ impl Sim {
                     hammer: None,
                     site: None,
                     building: false,
+                    tracer_count: 0,
                 }
             }
         };
@@ -1438,6 +1443,53 @@ pub(crate) mod tests {
         let ev = events(&sim);
         assert!(ev.iter().any(|e| matches!(e, EventKind::HitMarker { kill: true, .. })));
         assert!(host.fx.borrow().iter().all(|(s, w, _)| *s == 1 && w == "ZHBO_MTAR_FX"));
+    }
+
+    #[test]
+    fn others_see_brass_every_shot_and_a_tracer_every_nth_bullet() {
+        // BO2's third-person shot (`FUN_00531630`, `FUN_007c65c0`): the world brass once per shot
+        // (the last-round twin on the round that empties the magazine) and a tracer on the 3rd,
+        // 6th, … bullet of an interval-3 gun. Deterministic: the countdown lives in the sim.
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        wait_until_ready(&mut sim, &host);
+        let w = sim.players[0].as_mut().unwrap().arsenal.current_mut();
+        let mut def = w.def.clone();
+        def.world_shell_fx_weapon = "BRASS".into();
+        def.world_last_shot_shell_fx_weapon = "BRASS_LAST".into();
+        def.tracer_fx_weapon = "TRACER".into();
+        def.tracer_interval = 3;
+        def.pellets = 1;
+        def.fire = crate::weapons::FireMode::Auto;
+        let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(def));
+        (w.def, w.main, w.ammo, w.reserve) = (def, def, 7, 0);
+        host.fx.borrow_mut().clear();
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, ..Default::default() }, frames(5.0));
+        let fx: Vec<String> = host.fx.borrow().iter().map(|(_, w, _)| w.clone()).filter(|w| w.starts_with("BRASS") || w == "TRACER").collect();
+        let brass: Vec<&str> = fx.iter().map(String::as_str).filter(|w| w.starts_with("BRASS")).collect();
+        assert_eq!(brass, ["BRASS", "BRASS", "BRASS", "BRASS", "BRASS", "BRASS", "BRASS_LAST"], "{fx:?}");
+        // The tracer follows its shot's brass: shots 3 and 6 of 7.
+        let after: Vec<usize> = fx.iter().enumerate().filter(|(_, w)| *w == "TRACER").map(|(i, _)| fx[..i].iter().filter(|w| w.starts_with("BRASS")).count()).collect();
+        assert_eq!(after, [3, 6], "{fx:?}");
+    }
+
+    #[test]
+    fn the_tracer_countdown_is_bo2s() {
+        let draws = |interval: u32, bullets: usize, start: u8| {
+            let mut c = start;
+            (1..=bullets).filter(|_| fire::tracer_due(&mut c, interval)).collect::<Vec<_>>()
+        };
+        assert_eq!(draws(1, 4, 0), [1, 2, 3, 4], "every bullet");
+        assert_eq!(draws(2, 6, 0), [2, 4, 6]);
+        assert_eq!(draws(3, 7, 0), [3, 6]);
+        assert!(draws(0, 50, 0).is_empty(), "no interval, no tracer");
+        // A countdown left above a new gun's interval is clamped to it (switching from an AR to an LMG).
+        assert_eq!(draws(1, 2, 2), [1, 2]);
+        // One below the interval carries over: the next draw comes sooner.
+        assert_eq!(draws(3, 3, 1), [1]);
     }
 
     #[test]

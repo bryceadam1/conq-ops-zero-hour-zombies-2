@@ -123,6 +123,7 @@ impl Sim {
                 hammer: None,
                 site: None,
                 building: false,
+                tracer_count: 0,
             });
         }
         let Some(mut p) = self.players[idx].take() else { return RtsWeapons::default() };

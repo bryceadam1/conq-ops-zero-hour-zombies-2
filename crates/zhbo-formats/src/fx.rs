@@ -216,6 +216,24 @@ fn read_elem(z: &Zone, e: u32, looping: bool, depth: u32) -> Elem {
 }
 
 /// The `FxEffectDef` named `name` in a zone, if it is there.
+/// The effect a def's pointer names: the pointed-at asset, or — when it is a reference stub
+/// (`,weapon/shellejects/fx_rifle`: a name with no elements, the full asset living in a later zone
+/// such as `patch_mp`) — the stub itself, name only, for [`bind`] to resolve against the pool.
+pub fn read_or_stub(z: &Zone, addr: u32) -> Option<Effect> {
+    (addr != 0).then(|| read(z, addr))
+}
+
+/// A parsed effect as BO2's asset pool binds it: kept when it has elements, else the first zone in
+/// `pool` (latest-loaded first) holding the full asset of that name; `None` when no zone does.
+pub fn bind(e: Option<Effect>, pool: &[&Zone]) -> Option<Effect> {
+    let e = e?;
+    if !e.elems.is_empty() {
+        return Some(e);
+    }
+    let name = e.name.trim_start_matches(',');
+    pool.iter().find_map(|z| find(z, name))
+}
+
 pub fn find(z: &Zone, name: &str) -> Option<Effect> {
     find_depth(z, name, 2)
 }

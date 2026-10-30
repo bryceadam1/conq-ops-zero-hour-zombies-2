@@ -10,6 +10,7 @@ use crate::t6zone::layouts::{
     WeaponAttachment as WA, WeaponAttachmentUnique as WU, WeaponCamo as WC, WeaponCamoMaterial as WCMat,
     WeaponCamoMaterialSet as WCMatSet, WeaponCamoSet as WCSet, WeaponDef as WD, WeaponVariantDef as WV,
 };
+use crate::t6zone::layouts::TracerDef as TD;
 use crate::t6zone::Zone;
 use crate::FormatError;
 
@@ -140,6 +141,81 @@ pub struct AttachWorldModel {
     pub rotation: [f32; 3],
 }
 
+/// A bullet tracer (`TracerDef`, the `tracer` asset): the streak BO2 draws for every
+/// `draw_interval`-th bullet (`FUN_007c65c0`) and how `Tracer_Spawn` (`FUN_007c6150`) draws it.
+/// Distances are inches, speed inches per second (0: the beam spans the whole shot at once,
+/// the `screw` kind), the five colours run from the beam's head to its tail (RGBA, 0..1).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Tracer {
+    pub name: String,
+    /// `tracerType_t`: 0 a straight beam flying at `speed`, 1 a corkscrew (`screw_*`).
+    pub kind: u32,
+    pub material: Option<String>,
+    pub draw_interval: u32,
+    pub speed: f32,
+    pub beam_length: f32,
+    pub beam_width: f32,
+    pub screw_radius: f32,
+    pub screw_dist: f32,
+    pub fade_time: f32,
+    pub fade_scale: f32,
+    pub tex_repeat_rate: f32,
+    pub colors: [[f32; 4]; 5],
+}
+
+/// The `TracerDef` at the pointer in `field`, if any. A comma-prefixed reference stub keeps its
+/// name; [`bind_tracer`] resolves it against the later zones.
+pub fn read_tracer(z: &Zone, field: u32) -> Option<Tracer> {
+    read_tracer_at(z, z.u32(field))
+}
+
+/// Every `TracerDef` asset in a zone, by name.
+pub fn tracers(z: &Zone) -> Vec<Tracer> {
+    let Some(kind) = crate::fastfile::asset_type_id("tracer") else { return Vec::new() };
+    let mut out = Vec::new();
+    for a in z.assets.iter().filter(|a| a.kind == kind) {
+        // The asset table holds the header's address: read it as a pointer field would.
+        if let Some(t) = read_tracer_at(z, a.addr) {
+            out.push(t);
+        }
+    }
+    out
+}
+
+/// A parsed tracer as BO2's asset pool binds it: kept when it is the full asset, else (a
+/// comma-prefixed reference stub) the first zone in `pool` holding the full asset of that name.
+pub fn bind_tracer(t: Option<Tracer>, pool: &[&Zone]) -> Option<Tracer> {
+    let t = t?;
+    let Some(name) = t.name.strip_prefix(',') else { return Some(t) };
+    pool.iter().find_map(|z| tracers(z).into_iter().find(|f| f.name == name)).or(Some(Tracer { name: name.to_string(), ..t }))
+}
+
+fn read_tracer_at(z: &Zone, t: u32) -> Option<Tracer> {
+    if t == 0 {
+        return None;
+    }
+    let mut colors = [[0.0; 4]; 5];
+    for (i, c) in colors.iter_mut().enumerate() {
+        let at = t + TD::colors + 16 * i as u32;
+        *c = [z.f32(at), z.f32(at + 4), z.f32(at + 8), z.f32(at + 12)];
+    }
+    Some(Tracer {
+        name: z.str_ptr(t + TD::name),
+        kind: z.u32(t + TD::r#type),
+        material: named(z, t + TD::material),
+        draw_interval: z.u32(t + TD::drawInterval),
+        speed: z.f32(t + TD::speed),
+        beam_length: z.f32(t + TD::beamLength),
+        beam_width: z.f32(t + TD::beamWidth),
+        screw_radius: z.f32(t + TD::screwRadius),
+        screw_dist: z.f32(t + TD::screwDist),
+        fade_time: z.f32(t + TD::fadeTime),
+        fade_scale: z.f32(t + TD::fadeScale),
+        tex_repeat_rate: z.f32(t + TD::texRepeatRate),
+        colors,
+    })
+}
+
 /// One of a weapon's attachment combinations (`WeaponAttachmentUnique`): BO2 hangs the default
 /// magazine and every attachment's view model this way.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -208,6 +284,10 @@ pub struct AttachmentUnique {
     /// The `WeaponCamo` asset the class camo uses on this attachment's own models (`weaponCamo`,
     /// `camo_reflex`, …); read from the single-attachment unique (`FUN_00529600`, G16).
     pub weapon_camo: Option<String>,
+    /// The combination's own tracers (`tracerType`, `enemyTracerType`): the first single unique
+    /// with one overrides the def's (`FUN_008eb420`, G14).
+    pub tracer: Option<Tracer>,
+    pub enemy_tracer: Option<Tracer>,
 }
 
 /// A BO2 attachment (`WeaponAttachment`): how it changes any weapon it goes on. Scales multiply the
@@ -519,6 +599,14 @@ pub struct Weapon {
     pub view_shell_eject_effect: Option<crate::fx::Effect>,
     /// The first-person shell eject on the last round (`viewLastShotEjectEffect`).
     pub view_last_shot_eject_effect: Option<crate::fx::Effect>,
+    /// The shell eject everyone else sees, at the world model's `tag_brass`
+    /// (`worldShellEjectEffect`; `FUN_00531630`), and its last-round twin
+    /// (`worldLastShotEjectEffect`, used when the shot empties the clip and both last fields are set).
+    pub world_shell_eject_effect: Option<crate::fx::Effect>,
+    pub world_last_shot_eject_effect: Option<crate::fx::Effect>,
+    /// The def's tracers for a friendly and an enemy shooter (`tracerType`, `enemyTracerType`).
+    pub tracer: Option<Tracer>,
+    pub enemy_tracer: Option<Tracer>,
     /// The 2D screen-space ADS overlay material (`scope_overlay_<weapon>`), or empty.
     pub overlay_material: String,
     /// The low-resolution variant of [`Self::overlay_material`], or empty.
@@ -643,6 +731,8 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 overlay_material_low_res: named(z, u + WU::overlayMaterialLowRes).unwrap_or_default(),
                 overlay_reticle: z.u32(u + WU::overlayReticle),
                 weapon_camo: named(z, u + WU::weaponCamo),
+                tracer: read_tracer(z, u + WU::tracerType),
+                enemy_tracer: read_tracer(z, u + WU::enemyTracerType),
             });
         }
     }
@@ -871,6 +961,11 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.view_shell_eject_effect = (shell != 0).then(|| crate::fx::read(z, shell)).filter(|e| !e.elems.is_empty());
     let last_shell = z.try_u32(d + WD::viewLastShotEjectEffect)?;
     w.view_last_shot_eject_effect = (last_shell != 0).then(|| crate::fx::read(z, last_shell)).filter(|e| !e.elems.is_empty());
+    // The world shells are bound against the pool by `all_in` (several are reference stubs here).
+    w.world_shell_eject_effect = crate::fx::read_or_stub(z, z.try_u32(d + WD::worldShellEjectEffect)?);
+    w.world_last_shot_eject_effect = crate::fx::read_or_stub(z, z.try_u32(d + WD::worldLastShotEjectEffect)?);
+    w.tracer = read_tracer(z, d + WD::tracerType);
+    w.enemy_tracer = read_tracer(z, d + WD::enemyTracerType);
     let fx = z.try_u32(d + WD::projExplosionEffect)?;
     w.explosion_effect = (fx != 0).then(|| crate::fx::read(z, fx)).filter(|e| !e.elems.is_empty()).or_else(|| crate::fx::explosion_entry(w.impact_type).and_then(|e| crate::fx::impact(z, e, crate::fx::surface::DIRT)));
     w.hud_icon = named(z, d + WD::hudIcon);
@@ -885,8 +980,32 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
 
 /// Every weapon in a loaded zone.
 pub fn all(z: &Zone) -> Result<Vec<Weapon>, FormatError> {
+    all_in(z, &[])
+}
+
+/// The weapons of `z` with their world shell effects and tracers bound as BO2's asset pool binds
+/// them: a def pointing at a reference stub (`common_mp`'s `,weapon/shellejects/fx_rifle`) uses
+/// the full asset of that name from a later zone (`later`, latest-loaded first — `patch_mp`),
+/// then from `z` itself; a stub nothing defines is dropped (effects) or kept by name (tracers).
+pub fn all_in(z: &Zone, later: &[&Zone]) -> Result<Vec<Weapon>, FormatError> {
     let Some(kind) = crate::fastfile::asset_type_id("weapon") else { return Ok(Vec::new()) };
-    z.assets.iter().filter(|a| a.kind == kind).map(|a| read(z, a.addr)).collect()
+    let mut pool: Vec<&Zone> = later.to_vec();
+    pool.push(z);
+    let mut out: Vec<Weapon> = z.assets.iter().filter(|a| a.kind == kind).map(|a| read(z, a.addr)).collect::<Result<_, _>>()?;
+    for w in &mut out {
+        for e in [&mut w.world_shell_eject_effect, &mut w.world_last_shot_eject_effect] {
+            *e = crate::fx::bind(e.take(), &pool);
+        }
+        for t in [&mut w.tracer, &mut w.enemy_tracer] {
+            *t = bind_tracer(t.take(), &pool);
+        }
+        for u in &mut w.attachment_uniques {
+            for t in [&mut u.tracer, &mut u.enemy_tracer] {
+                *t = bind_tracer(t.take(), &pool);
+            }
+        }
+    }
+    Ok(out)
 }
 
 /// One `WeaponCamo` asset (`camo_<weapon>` in `common_patch_mp`, the `camo` type in the asset
@@ -1073,6 +1192,40 @@ mod tests {
     }
 
     /// Needs the player's BO2 install (with Multiplayer).
+    #[test]
+    #[ignore]
+    fn reads_the_tracers_and_world_shells() {
+        let common = zone("common_mp");
+        let patch = zone("patch_mp");
+        let all = all_in(&common, &[&patch]).unwrap();
+        let an94 = all.iter().find(|w| w.name == "an94_mp").expect("an94_mp");
+        let t = an94.tracer.as_ref().expect("the AN-94's tracer");
+        assert_eq!(t.name, "assaultrifle");
+        assert!(t.draw_interval > 0 && t.speed > 0.0 && t.beam_length > 0.0 && t.beam_width > 0.0, "{t:?}");
+        assert!(t.colors.iter().any(|c| c[3] > 0.0), "{t:?}");
+        assert_eq!(an94.world_shell_eject_effect.as_ref().map(|e| e.name.as_str()), Some("weapon/shellejects/fx_rifle"), "bound from patch_mp");
+        assert!(!an94.world_shell_eject_effect.as_ref().unwrap().elems.is_empty());
+        if std::env::var_os("ZHBO_PROBE").is_some() {
+            let mut seen = std::collections::BTreeSet::new();
+            for w in &all {
+                for t in [&w.tracer, &w.enemy_tracer].into_iter().flatten().chain(w.attachment_uniques.iter().flat_map(|u| [&u.tracer, &u.enemy_tracer]).flatten()) {
+                    if seen.insert(t.name.clone()) {
+                        eprintln!("{t:?}");
+                    }
+                }
+                eprintln!(
+                    "{} tracer={:?} enemy={:?} shell={:?} last={:?} uniq={:?}",
+                    w.name,
+                    w.tracer.as_ref().map(|t| &t.name),
+                    w.enemy_tracer.as_ref().map(|t| &t.name),
+                    w.world_shell_eject_effect.as_ref().map(|e| (&e.name, e.elems.len())),
+                    w.world_last_shot_eject_effect.as_ref().map(|e| &e.name),
+                    w.attachment_uniques.iter().filter_map(|u| u.tracer.as_ref().map(|t| (&u.name, &t.name))).collect::<Vec<_>>()
+                );
+            }
+        }
+    }
+
     #[test]
     #[ignore]
     fn reads_the_an94() {

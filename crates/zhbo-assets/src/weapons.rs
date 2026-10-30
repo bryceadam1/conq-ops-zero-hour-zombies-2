@@ -765,6 +765,11 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         overlay_material: w.overlay_material.clone(),
         overlay_material_low_res: w.overlay_material_low_res.clone(),
         overlay_reticle: w.overlay_reticle,
+        // Set by `generals::files` once the effects are converted (`world_shot_fx`).
+        world_shell_fx_weapon: String::new(),
+        world_last_shot_shell_fx_weapon: String::new(),
+        tracer_fx_weapon: String::new(),
+        tracer_interval: 0,
     };
     #[cfg(debug_assertions)]
     {
