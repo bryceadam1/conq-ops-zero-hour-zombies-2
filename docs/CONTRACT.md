@@ -395,8 +395,10 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
   surface }` (equipment too); `projectiles::blast` plays the table cell then the def's effect
   through `LogicApi.fx` (presentation, like every FX call), and the client's `consume_events`
   plays `impacts::sound_name(impact_type, surface)` (`sound <type> <surface> <event>` rows of the
-  same file) then the def's own sound. A missing cell falls back to the type's default surface;
-  no cell and no def field falls back to the generic blast (an unconverted archive). The
+  same file) then the def's own sound. A missing *FX* cell falls back to the type's default
+  surface (`SURF_TYPE_DEFAULT`); a missing *sound* cell plays nothing, as BO2's hash miss does
+  (`FUN_0082df80`); a type with no sound cells at all and no def field falls back to the generic
+  blast (an unconverted archive). The
   `impactType` → row/family mapping lives once, in `zhbo_formats::fx::IMPACT_KINDS`. No ABI
   change: the rows ride in the existing file and the existing `fx` callback.
 * ABI: `surface_at` is appended to `ZhboLogicApi` (fields 23 → 24), `ZhboClientOut` grows by 324

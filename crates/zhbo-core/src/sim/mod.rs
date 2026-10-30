@@ -1843,7 +1843,7 @@ pub(crate) mod tests {
     #[test]
     fn a_blast_on_two_surfaces_plays_their_own_effect_and_sound() {
         crate::impacts::install(
-            "impact 77 default FX_D\nimpact 77 concrete FX_C\nsound 77 default SND_D\nsound 77 concrete SND_C\n",
+            "impact 77 default FX_D\nimpact 77 concrete FX_C\nsound 77 dirt SND_D\nsound 77 concrete SND_C\n",
         );
         let frag: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef {
             id: "test_frag_mp".into(),
@@ -1879,6 +1879,10 @@ pub(crate) mod tests {
         assert_eq!(fx_dirt, vec!["FX_D".to_string()]);
         assert_eq!(crate::sounds::explosion_cues(sound, t, on_concrete), [Some("SND_C"), Some("OWN")]);
         assert_eq!(crate::sounds::explosion_cues(sound, t, on_dirt), [Some("SND_D"), Some("OWN")]);
+        // A surface the family has no alias for plays no table sound (BO2's hash miss is silent),
+        // and not the generic blast either: the type's sounds are converted.
+        assert_eq!(crate::sounds::explosion_cues(sound, t, Surface::Water), [None, Some("OWN")]);
+        assert_eq!(crate::sounds::explosion_cues("", t, Surface::Water), [None, None]);
     }
 
     #[test]

@@ -193,12 +193,20 @@ pub fn parse_sounds(text: &str) -> Vec<SoundRow> {
     rows
 }
 
-/// The sound for `impact_type` on `surface`: the exact cell, else the type's default-surface cell
-/// (BO2 builds every family over all 32 surfaces, but some aliases are absent from the install —
-/// `wpn_rocket_explode_flesh` — and the mod falls back as the FX table does rather than go silent).
+/// The sound for `impact_type` on `surface`: the exact cell only. BO2 hashes `<family>_<surface>`
+/// and a hash no loaded bank holds plays nothing — `FUN_008352b0` (the sound thread's play command)
+/// asks `FUN_0082df80`, whose miss (negative-cached, `FUN_0082dec0` walks every bank's hash chain)
+/// returns 0 and calls the empty `FUN_00a06580`; there is no default-surface fallback.
+/// So `wpn_rocket_explode_flesh`, absent from the install, is silent as in BO2.
 pub fn find_sound<S: AsRef<str>>(rows: &[(i32, Surface, S)], impact_type: i32, surface: Surface) -> Option<&S> {
-    let cell = |s: Surface| rows.iter().find(|r| r.0 == impact_type && r.1 == s).map(|r| &r.2);
-    cell(surface).or_else(|| cell(Surface::Default))
+    rows.iter().find(|r| r.0 == impact_type && r.1 == surface).map(|r| &r.2)
+}
+
+/// Whether `impact_type` has any sound cell (its family converted): a blast of a type without one
+/// (an unconverted archive, a mod-only def) falls back to the generic blast, one with one plays
+/// BO2's cell or nothing.
+pub fn has_sounds<S>(rows: &[(i32, Surface, S)], impact_type: i32) -> bool {
+    rows.iter().any(|r| r.0 == impact_type)
 }
 
 /// The table itself: installed once before play from the converted file. The empty table holds
@@ -234,6 +242,11 @@ pub fn install(text: &str) -> usize {
 pub fn sound_name(impact_type: i32, surface: Surface) -> Option<&'static str> {
     let cells = sounds().read().unwrap_or_else(|e| e.into_inner());
     find_sound(&cells, impact_type, surface).copied()
+}
+
+/// Whether the installed table has sound cells for `impact_type` ([`has_sounds`]).
+pub fn type_has_sounds(impact_type: i32) -> bool {
+    has_sounds(&sounds().read().unwrap_or_else(|e| e.into_inner()), impact_type)
 }
 
 /// The converted FXList for a hit through the installed table (the ABI's lookup).
@@ -287,13 +300,15 @@ garbage line
     }
 
     #[test]
-    fn a_blast_picks_its_sound_cell_and_falls_back_to_default() {
+    fn a_blast_picks_its_exact_sound_cell_or_none_like_bo2() {
         let rows: Vec<_> = parse_sounds(TABLE).into_iter().map(|r| (r.impact_type, r.surface, r.event)).collect();
         assert_eq!(rows.len(), 2, "the unknown surface is skipped");
         assert_eq!(parse(TABLE).len(), 4, "sound rows are not FX rows");
         assert_eq!(find_sound(&rows, 7, Surface::Concrete).map(String::as_str), Some("ZHBO_BO2_Snd_wpn_grenade_explode_concrete"));
-        assert_eq!(find_sound(&rows, 7, Surface::Water).map(String::as_str), Some("ZHBO_BO2_Snd_wpn_grenade_explode_default"));
+        assert_eq!(find_sound(&rows, 7, Surface::Water), None, "no alias for the surface: BO2 plays nothing");
+        assert!(has_sounds(&rows, 7));
         assert_eq!(find_sound(&rows, 9, Surface::Concrete), None);
+        assert!(!has_sounds(&rows, 9));
     }
 
     #[test]

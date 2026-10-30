@@ -149,7 +149,7 @@ mod tests {
         // What the runtime reads back: two surfaces, two different sounds.
         let rows: Vec<_> = zhbo_core::impacts::parse_sounds(&text).into_iter().map(|r| (r.impact_type, r.surface, r.event)).collect();
         assert_ne!(zhbo_core::impacts::find_sound(&rows, 7, Surface::Dirt), zhbo_core::impacts::find_sound(&rows, 7, Surface::Concrete));
-        assert_eq!(zhbo_core::impacts::find_sound(&rows, 7, Surface::Water), zhbo_core::impacts::find_sound(&rows, 7, Surface::Default));
+        assert_eq!(zhbo_core::impacts::find_sound(&rows, 7, Surface::Water), None, "no alias, no sound (BO2's hash miss)");
     }
 
     #[test]

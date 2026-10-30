@@ -4647,3 +4647,18 @@ mod names it on the def) and `sensor_grenade_mp` (lands as equipment, its effect
 No ABI change (rows ride in the existing file and `fx` callback); the archive content changed
 (VERSION bump is the integrator's). In-game check owed: a frag on concrete vs grass sounds and
 looks different; pistol hits show the entry-row effect.
+
+## A blast sound with no alias for the surface is silent, as in BO2 (2026-10-30, `v1/explosion-sounds`)
+
+Corrects the previous entry's fallback choice (parity over a mod-side choice). BO2's play path:
+`FUN_005152b0` → `FUN_00837d20` → `FUN_00837b50` queues a play command; the sound thread's
+`FUN_00839c10` case 2 runs `FUN_008352b0(aliasHash, …)`, which asks `FUN_0082df80` for the alias.
+That function looks in a 1024-slot hash cache. On a miss it walks every loaded bank's hash chain
+(`FUN_0082dec0`), and a hash no bank holds is negative-cached and returns 0. `FUN_008352b0` then
+calls `FUN_00a06580`, a 1-byte empty function, and plays nothing. There is no default-surface
+fallback anywhere on the path. So `impacts::find_sound` is exact-only now:
+`wpn_rocket_explode_flesh` (absent from the install) is silent. The generic blast still plays, but
+only for an impact type with no converted sound cells at all and no def sound (an unconverted
+archive or a mod-only def): `impacts::type_has_sounds`. The FX table's default-surface fallback is
+unchanged (that one is BO2's `SURF_TYPE_DEFAULT` cell rule). Decompiles:
+`~/.opencode/plan/explosion-sounds/sndplay*.c`, `sndlookup*.c`, `sndq*.c`.
