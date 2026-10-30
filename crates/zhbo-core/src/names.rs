@@ -32,7 +32,8 @@ pub fn font_glyph(font: &str, code: u32) -> String {
     format!("ZHBO_Glyph_{font}_{code}")
 }
 
-/// A weapon's create-a-class picture (BO2's `<statstable image>_big`, `ZHBO_CaC_Weapon_mp7_mp`).
+/// A weapon's create-a-class picture (BO2's `<statstable image>_big`, `ZHBO_CaC_Weapon_mp7_mp`; the
+/// knife's is its statstable image as is, `combat_tab_knife`).
 pub fn cac_weapon_image(base_id: &str) -> String {
     format!("ZHBO_CaC_Weapon_{base_id}")
 }

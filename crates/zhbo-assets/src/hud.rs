@@ -197,13 +197,17 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     zones.insert("common_mp", crate::generals::load_zone(bo2_dir, "common_mp")?);
     let weapons = zhbo_formats::weapon::all(&zones["common_mp"]).map_err(|e| e.to_string())?;
     // The create-a-class weapon pictures: each item's image in BO2's `mp/statstable.csv` plus
-    // `_big` (`classpreview.lua`'s `GetItemImage(...) .. "_big"`).
+    // `_big` (`classpreview.lua`'s `GetItemImage(...) .. "_big"`). The knife's personalize page
+    // shows `knife_held`'s column 6 as it is (`caccamomenu.lua`'s `knifePersonalization` branch:
+    // `combat_tab_knife`, no `_big`).
     let item_images = crate::cac::item_images(bo2_dir);
     for id in crate::weapons::converted_base(&weapons) {
         let Some(w) = weapons.iter().find(|w| w.name == crate::generals::base_id(&id)) else { continue };
         let base = crate::generals::base_id(&id);
         if let Some(image) = item_images.get(base.trim_end_matches("_mp")) {
-            if image.starts_with("menu_mp_weapons_") {
+            if base == zhbo_core::weapons::KNIFE_HELD {
+                wanted.push((zhbo_core::names::cac_weapon_image(base), Source::Dynamic(image.clone()), 512));
+            } else if image.starts_with("menu_mp_weapons_") {
                 wanted.push((zhbo_core::names::cac_weapon_image(base), Source::Dynamic(format!("{image}_big")), 512));
             }
         }

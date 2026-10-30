@@ -199,8 +199,8 @@ pub struct CustomClass {
     /// The reticle's colour id (`none` = the reticle's stock colour). BO2's Personalize → Reticle
     /// colour; empty means "not personalised" and serialises as no key.
     pub reticle_color: String,
-    /// The melee viewmodel id (`knife_held_mp` = the standard combat knife). BO2's Personalize →
-    /// Knife; empty means "not personalised" and serialises as no key.
+    /// The knife's camo id (`camo_none` = its stock finish). BO2's Personalize Knife (the class's
+    /// `knifecamo`); empty means "not personalised" and serialises as no key.
     pub knife: String,
 }
 
@@ -501,17 +501,17 @@ mod tests {
             camo: "none".into(),
             reticle: "none".into(),
             reticle_color: "none".into(),
-            knife: "knife_held_mp".into(),
+            knife: "camo_gold".into(),
         };
         let spec = c.to_spec();
         // The empty tactical is skipped (it inherits the base kit's slot).
-        assert_eq!(spec, "primary=dsr50_mp+acog;secondary=fnp45_mp;lethal=claymore_mp;melee=knife_held_mp;perks=Lightweight,Dexterity;camo=none;reticle=none;reticle_color=none;knife=knife_held_mp;primary_reserve=60");
+        assert_eq!(spec, "primary=dsr50_mp+acog;secondary=fnp45_mp;lethal=claymore_mp;melee=knife_held_mp;perks=Lightweight,Dexterity;camo=none;reticle=none;reticle_color=none;knife=camo_gold;primary_reserve=60");
         // Round-tripping through the spec grammar preserves every set field (the name is not
         // part of a spec, so the parsed entry is nameless).
         assert_eq!(CustomClass::from_spec(&spec), CustomClass { name: String::new(), ..c.clone() });
         // The wire format is name + spec, and round-trips too.
         let wire = c.to_wire();
-        assert_eq!(wire, "My Sniper\nprimary=dsr50_mp+acog;secondary=fnp45_mp;lethal=claymore_mp;melee=knife_held_mp;perks=Lightweight,Dexterity;camo=none;reticle=none;reticle_color=none;knife=knife_held_mp;primary_reserve=60");
+        assert_eq!(wire, "My Sniper\nprimary=dsr50_mp+acog;secondary=fnp45_mp;lethal=claymore_mp;melee=knife_held_mp;perks=Lightweight,Dexterity;camo=none;reticle=none;reticle_color=none;knife=camo_gold;primary_reserve=60");
         assert_eq!(CustomClass::from_wire(&wire), Some(c));
         // A newline in the name would break the wire framing; `to_wire` replaces it.
         let named = CustomClass { name: "bad\nname".into(), ..CustomClass::default() };

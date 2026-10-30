@@ -487,8 +487,8 @@ pub struct Draft {
     /// The reticle's colour id (`none` = the reticle's stock colour), BO2's Personalize → Reticle
     /// colour. Empty means "not personalised" and serialises as no key.
     pub reticle_color: String,
-    /// The melee viewmodel id (`knife_held_mp` = the standard combat knife), BO2's Personalize →
-    /// Knife. Empty means "not personalised" and serialises as no key.
+    /// The knife's camo id (`camo_none` = its stock finish), BO2's Personalize Knife (the class's
+    /// `knifecamo`). Empty means "not personalised" and serialises as no key.
     pub knife: String,
 }
 
@@ -628,7 +628,7 @@ impl Draft {
         push("secondary", &self.secondary_id());
         push("lethal", &self.lethal);
         push("tactical", &self.tactical);
-        push("melee", "knife_held_mp");
+        push("melee", crate::weapons::KNIFE_HELD);
         let perks: Vec<&str> = self.perks_in_order().iter().map(|p| p.def().id).collect();
         push("perks", &perks.join(","));
         push("camo", &self.camo);
@@ -652,7 +652,7 @@ impl Draft {
             secondary: self.secondary_id(),
             lethal: self.lethal.clone(),
             tactical: self.tactical.clone(),
-            melee: "knife_held_mp".into(),
+            melee: crate::weapons::KNIFE_HELD.into(),
             perks: self.perks_in_order().iter().map(|p| p.def().id.to_string()).collect(),
             reserve: self.reserve,
             camo: self.camo.clone(),

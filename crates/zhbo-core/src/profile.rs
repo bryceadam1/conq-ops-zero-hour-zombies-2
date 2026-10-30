@@ -680,12 +680,12 @@ mod tests {
             camo: "devgru".into(),
             reticle: "reflex".into(),
             reticle_color: "red".into(),
-            knife: "knife_held_mp".into(),
+            knife: "camo_gold".into(),
             ..CustomClass::default()
         });
         let text = p.to_text();
         assert!(
-            text.contains("camo=devgru;reticle=reflex;reticle_color=red;knife=knife_held_mp"),
+            text.contains("camo=devgru;reticle=reflex;reticle_color=red;knife=camo_gold"),
             "the spec carries the choices:\n{text}"
         );
         let back = Profile::from_text(&text);
@@ -693,7 +693,7 @@ mod tests {
         assert_eq!(c.camo, "devgru");
         assert_eq!(c.reticle, "reflex");
         assert_eq!(c.reticle_color, "red");
-        assert_eq!(c.knife, "knife_held_mp");
+        assert_eq!(c.knife, "camo_gold");
     }
 
     #[test]

@@ -98,6 +98,7 @@ fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> 
         ("cac-editor-attachments", attachment_picker_prims()),
         ("cac-personalize", personalize_prims()),
         ("cac-personalize-dlc", personalize_tab_prims(1)),
+        ("cac-personalize-knife", knife_personalize_prims()),
         ("cac-reticles", reticle_personalize_prims()),
         ("cac-reticle-color", reticle_color_personalize_prims()),
         ("cac-dialog-set", set_dialog_prims()),
@@ -175,6 +176,16 @@ fn personalize_tab_prims(tab: i32) -> Vec<Prim> {
     let tabs = classui::personalize_tabs_for(PersonalizeKind::Camo, Some(editor.draft.primary.as_str()));
     let mut p = Personalize::with_tabs(PersonalizeKind::Camo, tabs, &editor.draft);
     p.step_tab(tab);
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// BO2's knife page (`TAB Personalize Knife`): the camo screen over `knife_held`'s own list.
+fn knife_personalize_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.picking = false;
+    let kind = PersonalizeKind::Knife;
+    let tabs = classui::personalize_tabs_for(kind, classui::personalize_weapon(kind, &editor.draft));
+    let p = Personalize::with_tabs(kind, tabs, &editor.draft);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
@@ -525,6 +536,16 @@ mod tests {
         let personalize_images: Vec<&str> = personalize.iter().filter_map(|p| if let Prim::Image { name, .. } = p { Some(name.as_str()) } else { None }).collect();
         assert!(personalize_images.contains(&zhbo_core::names::cac_weapon_image("mp7_mp").as_str()), "the weapon's `_big` picture draws: {personalize_images:?}");
         assert!(personalize_text.contains(&"Back"), "the ESC Back prompt draws: {personalize_text:?}");
+
+        // The knife page is the camo page over `knife_held` (`caccamomenu.lua`'s
+        // `knifePersonalization`): its title, its picture, the Equipped box. (The stand-in table has
+        // no camo rows; the tabs over a real list are `classui::personalize`'s unit test.)
+        let knife = knife_personalize_prims();
+        let knife_text = texts(&knife);
+        assert!(knife_text.contains(&"PERSONALIZE KNIFE"), "the knife's title: {knife_text:?}");
+        assert!(knife_text.contains(&"Equipped"), "the knife page's Equipped box: {knife_text:?}");
+        let knife_images: Vec<&str> = knife.iter().filter_map(|p| if let Prim::Image { name, .. } = p { Some(name.as_str()) } else { None }).collect();
+        assert!(knife_images.contains(&zhbo_core::names::cac_weapon_image(zhbo_core::weapons::KNIFE_HELD).as_str()), "the knife's picture: {knife_images:?}");
 
         // The reticle/colour screens carry BO2's titles and prompts; each reticle cell is the
         // primary optic's stock art (`cacreticles.lua:1150-1240,1390-1470`).

@@ -551,7 +551,7 @@ impl MenuState {
             }
             Outcome::Continue => {
                 if let Some(kind) = frame.personalize {
-                    let weapon = (!editor.draft.primary.is_empty()).then_some(editor.draft.primary.as_str());
+                    let weapon = classui::personalize_weapon(kind, &editor.draft);
                     self.personalize = Some(Personalize::with_tabs(kind, classui::personalize_tabs_for(kind, weapon), &editor.draft));
                 }
                 self.editor = Some(editor);

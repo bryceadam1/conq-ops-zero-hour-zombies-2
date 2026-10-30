@@ -9,6 +9,10 @@
 use super::catalog::{weapon, weapon_or_none};
 use super::perks::Perk;
 
+/// The class's melee weapon: BO2's `knife_held` (`mp/statstable.csv`), the one knife every class
+/// carries and the one its knife personalize page dresses (`caceditclass.lua`'s
+/// `OpenKnifePersonalization`; `caccamomenu.lua` reads `knife_held`'s row).
+pub const KNIFE_HELD: &str = "knife_held_mp";
 
 /// What the General carries. Weapons are catalog ids, so they can later be picked up, swapped or
 /// bought by changing the loadout.
@@ -56,7 +60,7 @@ impl Loadout {
             secondary: String::new(),
             lethal: String::new(),
             tactical: String::new(),
-            melee: "knife_held_mp".into(),
+            melee: KNIFE_HELD.into(),
             perks: Vec::new(),
             reserve: [None, None],
         }
@@ -72,7 +76,7 @@ impl Default for Loadout {
             secondary: "fnp45_mp".into(),
             lethal: "frag_grenade_mp".into(),
             tactical: "concussion_grenade_mp".into(),
-            melee: "knife_held_mp".into(),
+            melee: KNIFE_HELD.into(),
             perks: vec![Perk::LIGHTWEIGHT, Perk::FAST_HANDS, Perk::DEXTERITY],
             reserve: [None, None],
         };

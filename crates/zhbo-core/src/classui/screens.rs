@@ -56,7 +56,7 @@ fn draw_body(prims: &mut Vec<Prim>, w: f32, h: f32, view: &ScreenView) {
     // A personalize screen is a submenu of the editor: BO2 opens it from the `TAB` prompt and it
     // takes the screen over until it closes (`caccamomenu.lua`, `cacreticles.lua`).
     if let Some(personalize) = view.personalize {
-        draw_personalize(prims, w, h, personalize, view.editor.map(|e| e.draft.primary.as_str()), view.deny, view.now);
+        draw_personalize(prims, w, h, personalize, view.editor.and_then(|e| personalize_weapon(personalize.kind, &e.draft)), view.deny, view.now);
         return;
     }
     match view.editor {
