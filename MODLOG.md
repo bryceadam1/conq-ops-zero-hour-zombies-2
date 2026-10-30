@@ -4599,3 +4599,51 @@ gap clusters 202 → 200, zero regressions: `fire_sound_player` 100 → 0, `fire
 B23R's silenced `null_sound` and the DW's `_fire_npc_burst`) and `fire_last_sound` (1: the Strela)
 need a per-shooter third-person cue. No ABI change; the table schema and archive content changed
 (VERSION bump is the integrator's).
+
+## Explosions play the impact table's effect and sound for their type and surface (2026-10-30, branch `v1/explosion-sounds`)
+
+Stacked on `v1/lfe-layer` (item 16's finding). The mod played the impact row on dirt as every
+blast's effect and one generic `wpn_grenade_explode`.
+
+* **BO2's rule** (t6mp): the explode events (`FUN_004c0ac0` projectile, `FUN_004c1590` grenade and
+  equipment) call `FUN_00533210(weapon, surface)` — a switch on `WeaponDef.impactType` (+0x28) that
+  picks the `FxImpactTable` row and a per-surface sound-hash table — play both, then the def's own
+  `projExplosionEffect` (+0x6f0) and `projExplosionSound` (+0x71c). The families come from
+  `FUN_004d4440`: its disassembly loads `ESI` with each table's address before
+  `FUN_004d42d0(family)`, which hashes `"%s_%s"` over the 32 surface names (`FUN_0075f150`). The
+  family list exists only in code, so it lives once: **`zhbo_formats::fx::IMPACT_KINDS`** (type →
+  row, family), which the bullet impacts, the blast FX and the blast sounds all read. Probe:
+  `zhbo-assets fx --impacts` prints every row and the types reading it.
+* **Rows from the switch, not guessed.** 1 small 0, 2 large 3, 3 AP 7, 4 xtreme 9, 5 shotgun 5,
+  7/8 grenade/rifle grenade 12, 9 rocket 13, 10 rocket xtreme 14, 12 mortar 16, 13 tank 17, 14 bolt
+  19, 15 blade 20 (1/4/6/8/10 are exit rows). **Gotcha: the small bullet used row 1 — its exit row**
+  (that is why "bucket 1 ships no nonfatal blood"); row 0 is `fx_small_*` with body-nonfatal blood,
+  so pistols/SMGs now raise the entry effect. The crossbow's 14 reads row 19 (small impacts), not
+  row 14 (`fx_missing_impact`, which is the rocket-xtreme row). `rocket_explode_xtreme` reads the
+  plain `wpn_rocket_explode` sound table (its own family is registered but unread); mortar/tank
+  prefer the def's `mortarShellSound`/`tankShellSound` (no MP def sets them, not carried);
+  `grenade_bounce`/`projectile_dud` use def fields the mod does not carry.
+* **Data path.** `impacts.txt` now carries every blast type's FX cells and `sound <type> <surface>
+  <event>` rows, one per `<family>_<surface>` alias the install has (common or map bank,
+  case-insensitive); each alias is a converted event with its secondary chain
+  (`wpn_rocket_explode_dirt` → `wpn_rocket_explode` → `_close` …). `explosion_effect`/`ExplosionFx`
+  is the def field only; `to_def`'s Zero Hour stand-ins are gone (the sim falls back to
+  `FX_BoobyTrapExplosion` only when neither the table nor the def names an effect).
+* **Deterministic split.** The sim takes the blast's surface (the object hit directly, else
+  `surface_at`; presentation only) and puts it with the def's `impactType` in `Exploded`
+  (equipment too, which used to send no sound); `projectiles::blast` plays the table cell then the
+  def's effect; the client's `sounds::explosion_cues` plays the table sound then the def's own. A
+  surface whose alias the install lacks (`wpn_rocket_explode_flesh`) falls back to the type's
+  default surface, like the FX table — BO2 would hash a missing alias and play nothing; the mod
+  chooses the default cell rather than a silent direct hit.
+* **Conformance.** `projectile_explosion_*` compare the def fields, which BO2 leaves empty for most
+  explosives; the adapter reported the fallback under them. The sound column now emits the def
+  field only, and the effect column follows the converter (def field only).
+
+Measured (v1/lfe-layer → this branch): weapons cells **550,944 → 550,355 (−589)**, gap clusters
+200 → 199, zero regressions: `projectile_explosion_effect` 576 → 2, `projectile_explosion_sound`
+15 → 0; cac unchanged. The two left: `willy_pete_mp` (BO2's smoke cloud is played by script, the
+mod names it on the def) and `sensor_grenade_mp` (lands as equipment, its effect is not converted).
+No ABI change (rows ride in the existing file and `fx` callback); the archive content changed
+(VERSION bump is the integrator's). In-game check owed: a frag on concrete vs grass sounds and
+looks different; pistol hits show the entry-row effect.
