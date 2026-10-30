@@ -20,6 +20,7 @@ pub struct Catalog {
     order: Vec<&'static WeaponDef>,
     attachments: HashMap<String, &'static AttachmentDef>,
     camo: HashMap<String, &'static CamoOption>,
+    camo_order: Vec<&'static CamoOption>,
     reticles: HashMap<String, &'static CamoOption>,
     reticle_order: Vec<&'static CamoOption>,
     reticle_colors: HashMap<String, &'static CamoOption>,
@@ -37,7 +38,8 @@ impl Catalog {
         let order: Vec<&'static WeaponDef> = t.weapons.into_iter().map(|d| &*Box::leak(Box::new(d))).collect();
         let by_id = order.iter().map(|d| (d.id.clone(), *d)).collect();
         let attachments = t.attachments.into_iter().map(|a| (a.id.clone(), &*Box::leak(Box::new(a)))).collect();
-        let camo = t.camo.into_iter().map(|c| (c.id.clone(), &*Box::leak(Box::new(c)))).collect();
+        let camo_order: Vec<&'static CamoOption> = t.camo.into_iter().map(|c| &*Box::leak(Box::new(c))).collect();
+        let camo = camo_order.iter().map(|c| (c.id.clone(), *c)).collect();
         let reticle_order: Vec<&'static CamoOption> = t.reticles.into_iter().map(|r| &*Box::leak(Box::new(r))).collect();
         let reticles = reticle_order.iter().map(|r| (r.id.clone(), *r)).collect();
         let reticle_color_order: Vec<&'static CamoOption> = t.reticle_colors.into_iter().map(|c| &*Box::leak(Box::new(c))).collect();
@@ -47,6 +49,7 @@ impl Catalog {
             order,
             attachments,
             camo,
+            camo_order,
             reticles,
             reticle_order,
             reticle_colors,
@@ -96,6 +99,19 @@ impl Catalog {
     /// A camo option by id (`camo_multicam`), with its name and thumbnail image.
     pub fn camo(&self, id: &str) -> Option<&'static CamoOption> {
         self.camo.get(id).copied()
+    }
+
+    /// Every camo option in BO2's table order (`mp/attachmenttable.csv`'s `camo` rows; the
+    /// converter writes one `Camo` block per row, none skipped).
+    pub fn camos(&self) -> &[&'static CamoOption] {
+        &self.camo_order
+    }
+
+    /// A camo option's BO2 group index: its row's place among the `camo` rows, the index
+    /// `AddCamos` walks (`GetWeaponOptionGroupIndex(i, WEAPONOPTION_GROUP_CAMO)` for `i` in
+    /// `0..GetNumWeaponOptions`). A weapon's offered list is a subsequence of this order.
+    pub fn camo_index(&self, id: &str) -> Option<usize> {
+        self.camo_order.iter().position(|c| c.id == id)
     }
 
     /// A reticle option by id (`reticle_3`), in BO2's base `reticle_0..10` order.
@@ -378,3 +394,20 @@ Weapon fiveseven_mp
   Class = pistol
 End
 ";
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_camo_keeps_its_bo2_group_index_when_a_weapon_offers_a_subset() {
+        let camo: Vec<CamoOption> = ["camo_none", "camo_atacs", "camo_mtp", "camo_ukpunk"].iter().map(|id| CamoOption { id: (*id).into(), ..Default::default() }).collect();
+        // A weapon whose install converted no art for `camo_mtp`: the converter trims it.
+        let gun = WeaponDef { id: "an94_mp".into(), camo: vec!["camo_none".into(), "camo_atacs".into(), "camo_ukpunk".into()], ..Default::default() };
+        let cat = Catalog::from_table(Table { weapons: vec![gun], camo, ..Default::default() });
+        let ids: Vec<&str> = cat.camos().iter().map(|c| c.id.as_str()).collect();
+        assert_eq!(ids, ["camo_none", "camo_atacs", "camo_mtp", "camo_ukpunk"], "the table's order");
+        let offered: Vec<Option<usize>> = cat.get("an94_mp").unwrap().camo.iter().map(|c| cat.camo_index(c)).collect();
+        assert_eq!(offered, [Some(0), Some(1), Some(3)], "the trimmed list keeps BO2's indices, not its own positions");
+        assert_eq!(cat.camo_index("camo_unknown"), None);
+    }
+}

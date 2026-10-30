@@ -133,11 +133,19 @@ pub fn rows(shipped: &Shipped, bo2_dir: &std::path::Path, schema: &Schema) -> Re
         })?);
     }
 
-    // Camo options in the order the personalize grid walks a weapon's list (`WeaponDef::camo`, the
-    // first primary's: every weapon carries the same table), then the reticles and colours.
-    let camos: Vec<&zhbo_core::weapons::CamoOption> = o.primary.first().and_then(|id| cat.get(id)).map(|d| d.camo.iter().filter_map(|c| cat.camo(c)).collect()).unwrap_or_default();
-    for (kind, list) in [("camo", camos), ("reticle", cat.reticles().to_vec()), ("reticle_color", cat.reticle_colors().to_vec())] {
-        for (i, c) in list.iter().enumerate() {
+    // Camo options: the ones the personalize grid offers on a weapon (`WeaponDef::camo`, the first
+    // primary's: every weapon carries the same table), each at its BO2 group index — the order
+    // `AddCamos` walks, of which the offered list is a subsequence (`Catalog::camo_index`). Then
+    // the reticles and colours, whose lists are the whole base table.
+    let camos: Vec<(usize, &zhbo_core::weapons::CamoOption)> = o
+        .primary
+        .first()
+        .and_then(|id| cat.get(id))
+        .map(|d| d.camo.iter().filter_map(|c| Some((cat.camo_index(c)?, cat.camo(c)?))).collect())
+        .unwrap_or_default();
+    let listed = |l: &[&'static zhbo_core::weapons::CamoOption]| l.iter().copied().enumerate().collect::<Vec<_>>();
+    for (kind, list) in [("camo", camos), ("reticle", listed(cat.reticles())), ("reticle_color", listed(cat.reticle_colors()))] {
+        for (i, c) in list {
             out.push(row(schema, kind, &c.id, |b| {
                 b.text("name", &c.name).text("image", &c.image).int("order", i as i64);
             })?);
