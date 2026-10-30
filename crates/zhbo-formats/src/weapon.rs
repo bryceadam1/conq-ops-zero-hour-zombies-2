@@ -211,6 +211,9 @@ pub struct Attachment {
     pub damage_range_scale: f32,
     /// Zoomed field of view (0: the weapon's own).
     pub ads_zoom_fov: f32,
+    /// `fAdsZoomInFrac`, `fAdsZoomOutFrac`: the reticle-zoom window while aiming in / out
+    /// (`defaultattachment` carries the "unchanged" values; G14 §4 first-differing rule).
+    pub ads_zoom_frac: (f32, f32),
     pub ads_in_scale: f32,
     pub ads_out_scale: f32,
     pub ads_move_scale: f32,
@@ -255,6 +258,7 @@ pub fn attachments(z: &Zone) -> Result<Vec<Attachment>, FormatError> {
                 dual_wield: z.u8(at + WA::bDualWield) != 0,
                 damage_range_scale: z.f32(at + WA::fDamageRangeScale),
                 ads_zoom_fov: z.f32(at + WA::fAdsZoomFov1),
+                ads_zoom_frac: (z.f32(at + WA::fAdsZoomInFrac), z.f32(at + WA::fAdsZoomOutFrac)),
                 ads_in_scale: z.f32(at + WA::fAdsTransInTimeScale),
                 ads_out_scale: z.f32(at + WA::fAdsTransOutTimeScale),
                 ads_move_scale: z.f32(at + WA::adsMoveSpeedScale),
@@ -447,6 +451,10 @@ pub struct Weapon {
     pub hip_spread_move_add: f32,
     pub ads_spread: f32,
     pub ads_zoom_fov: f32,
+    /// The variant's `fAdsZoomInFrac`, `fAdsZoomOutFrac` (the reticle-zoom window, in / out).
+    pub ads_zoom_frac: (f32, f32),
+    /// The variant's `fOverlayAlphaScale` (the scope overlay's alpha divisor, floored at 1).
+    pub overlay_alpha_scale: f32,
     pub ads_view_kick: Kick,
     pub hip_view_kick: Kick,
     /// `f{Ads,Hip}ViewKickMinMagnitude`.
@@ -643,6 +651,8 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         ads_in_time: ms(z, v + WV::iAdsTransInTime),
         ads_out_time: ms(z, v + WV::iAdsTransOutTime),
         ads_zoom_fov: z.f32(v + WV::fAdsZoomFov1),
+        ads_zoom_frac: (z.f32(v + WV::fAdsZoomInFrac), z.f32(v + WV::fAdsZoomOutFrac)),
+        overlay_alpha_scale: z.f32(v + WV::fOverlayAlphaScale),
         silenced: z.u8(v + WV::bSilenced) != 0,
         allowed_attachments: z.u32(v + WV::iAttachments) as u64,
         attachment_variants: {

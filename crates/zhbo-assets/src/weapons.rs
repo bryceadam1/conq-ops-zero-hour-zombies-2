@@ -49,6 +49,19 @@ pub(crate) fn dry_fire_event(alias: Option<&str>) -> &'static str {
 fn overlay_for(w: &Weapon, shorts: &[&str]) -> (String, String, u32) {
     let own = (w.overlay_material.clone(), w.overlay_material_low_res.clone(), w.overlay_reticle);
     let Some(base) = w.single_unique(0) else { return own };
+    let kinds = combo_kinds(w, shorts);
+    let singles: Vec<&bo2::AttachmentUnique> = kinds.iter().map(|k| w.single_unique(*k).unwrap_or(base)).collect();
+    let first = |differs: &dyn Fn(&bo2::AttachmentUnique) -> bool| singles.iter().copied().find(|u| differs(u));
+    (
+        first(&|u| u.overlay_material != base.overlay_material).map_or(own.0, |u| u.overlay_material.clone()),
+        first(&|u| u.overlay_material_low_res != base.overlay_material_low_res).map_or(own.1, |u| u.overlay_material_low_res.clone()),
+        first(&|u| u.overlay_reticle != base.overlay_reticle).map_or(own.2, |u| u.overlay_reticle),
+    )
+}
+
+/// The combo's `eAttachment` kinds as BO2's accessors walk them (`FUN_008eb300`): ascending, at
+/// most three.
+fn combo_kinds(w: &Weapon, shorts: &[&str]) -> Vec<u32> {
     let mut kinds: Vec<u32> = shorts
         .iter()
         .filter_map(|short| w.attachment_variants.iter().find(|(_, id)| short_name(id) == *short))
@@ -57,13 +70,22 @@ fn overlay_for(w: &Weapon, shorts: &[&str]) -> (String, String, u32) {
     kinds.sort_unstable();
     kinds.dedup();
     kinds.truncate(3);
-    let singles: Vec<&bo2::AttachmentUnique> = kinds.iter().map(|k| w.single_unique(*k).unwrap_or(base)).collect();
-    let first = |differs: &dyn Fn(&bo2::AttachmentUnique) -> bool| singles.iter().copied().find(|u| differs(u));
-    (
-        first(&|u| u.overlay_material != base.overlay_material).map_or(own.0, |u| u.overlay_material.clone()),
-        first(&|u| u.overlay_material_low_res != base.overlay_material_low_res).map_or(own.1, |u| u.overlay_material_low_res.clone()),
-        first(&|u| u.overlay_reticle != base.overlay_reticle).map_or(own.2, |u| u.overlay_reticle),
-    )
+    kinds
+}
+
+/// A combo's reticle-zoom window (`fAdsZoomInFrac`, `fAdsZoomOutFrac`), BO2's way
+/// (`FUN_008ec4b0`/`FUN_008ec520`): each field independently is the first of the combo's
+/// `WeaponAttachment`s (walked in kind order, stopping at the first missing one) whose value differs
+/// from `defaultattachment`'s, else the variant's own. The snipers' `ir`/`vzoom` carry 0.016/0.05.
+fn zoom_fracs_for(w: &Weapon, shorts: &[&str], atts: &[bo2::Attachment]) -> (f32, f32) {
+    let default = atts.iter().find(|a| a.name == "defaultattachment").map(|a| a.ads_zoom_frac);
+    let walk: Vec<(f32, f32)> = combo_kinds(w, shorts)
+        .iter()
+        .map_while(|k| w.attachment_variants.iter().find(|(kind, _)| kind == k).and_then(|(_, id)| atts.iter().find(|a| &a.name == id)))
+        .map(|a| a.ads_zoom_frac)
+        .collect();
+    let first = |get: fn(&(f32, f32)) -> f32, own: f32| walk.iter().map(get).find(|x| Some(*x) != default.as_ref().map(get)).unwrap_or(own);
+    (first(|z| z.0, w.ads_zoom_frac.0), first(|z| z.1, w.ads_zoom_frac.1))
 }
 
 /// The attachment's metadata from BO2's tables: the full name and description keys' localized text,
@@ -301,7 +323,7 @@ pub fn table_with_metadata(
 /// alt mode for a converted weapon is `<alt>~<weapon>` (it shares the weapon's viewmodel). The
 /// overlay fields follow the mounted optic: a replacement optic's unique supplies them, an empty
 /// unique leaves an empty overlay, and no replacement optic keeps the base def's.
-pub fn add_variants(table: &mut Table, converted: &[String], bo2: &[Weapon]) {
+pub fn add_variants(table: &mut Table, converted: &[String], bo2: &[Weapon], bo2_atts: &[bo2::Attachment]) {
     for id in converted.iter().filter(|id| id.contains('+')) {
         if table.weapons.iter().any(|d| &d.id == id) {
             continue;
@@ -311,12 +333,9 @@ pub fn add_variants(table: &mut Table, converted: &[String], bo2: &[Weapon]) {
         let atts = attachments::resolve(&base, &shorts, |a| table.attachments.iter().find(|x| x.id == a));
         let mut d = attachments::apply(&base, &atts);
         let combo_shorts: Vec<&str> = d.attachments.iter().map(String::as_str).collect();
-        if let Some((overlay_material, overlay_material_low_res, overlay_reticle)) =
-            bo2.iter().find(|w| w.name == base_id).map(|w| overlay_for(w, &combo_shorts))
-        {
-            d.overlay_material = overlay_material;
-            d.overlay_material_low_res = overlay_material_low_res;
-            d.overlay_reticle = overlay_reticle;
+        if let Some(w) = bo2.iter().find(|w| w.name == base_id) {
+            (d.overlay_material, d.overlay_material_low_res, d.overlay_reticle) = overlay_for(w, &combo_shorts);
+            (d.ads_zoom_in_frac, d.ads_zoom_out_frac) = zoom_fracs_for(w, &combo_shorts, bo2_atts);
         }
         if let Some((short, alt_id)) = base.alt_modes.iter().find(|(short, _)| d.attachments.contains(short)) {
             if let Some(alt_base) = table.weapons.iter().find(|w| &w.id == alt_id).cloned() {
@@ -324,12 +343,9 @@ pub fn add_variants(table: &mut Table, converted: &[String], bo2: &[Weapon]) {
                 let others: Vec<&AttachmentDef> = atts.iter().copied().filter(|a| &a.short != short).collect();
                 let mut alt = if alt_base.alt_own_ammo { alt_base.clone() } else { attachments::apply(&alt_base, &others) };
                 let alt_shorts: Vec<&str> = alt.attachments.iter().map(String::as_str).collect();
-                if let Some((overlay_material, overlay_material_low_res, overlay_reticle)) =
-                    bo2.iter().find(|w| &w.name == alt_id).map(|w| overlay_for(w, &alt_shorts))
-                {
-                    alt.overlay_material = overlay_material;
-                    alt.overlay_material_low_res = overlay_material_low_res;
-                    alt.overlay_reticle = overlay_reticle;
+                if let Some(w) = bo2.iter().find(|w| &w.name == alt_id) {
+                    (alt.overlay_material, alt.overlay_material_low_res, alt.overlay_reticle) = overlay_for(w, &alt_shorts);
+                    (alt.ads_zoom_in_frac, alt.ads_zoom_out_frac) = zoom_fracs_for(w, &alt_shorts, bo2_atts);
                 }
                 alt.id = format!("{alt_id}~{}", d.id);
                 alt.alt = d.id.clone();
@@ -761,6 +777,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         overlay_material: w.overlay_material.clone(),
         overlay_material_low_res: w.overlay_material_low_res.clone(),
         overlay_reticle: w.overlay_reticle,
+        ads_zoom_in_frac: w.ads_zoom_frac.0,
+        ads_zoom_out_frac: w.ads_zoom_frac.1,
+        overlay_alpha_scale: w.overlay_alpha_scale,
     };
     #[cfg(debug_assertions)]
     {
@@ -1049,7 +1068,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        add_variants(&mut table, &["as50_mp+acog".into(), "as50_mp+fmj".into()], std::slice::from_ref(&w));
+        add_variants(&mut table, &["as50_mp+acog".into(), "as50_mp+fmj".into()], std::slice::from_ref(&w), &[]);
         let def = |id: &str| table.weapons.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("no {id}"));
         assert_eq!(def("as50_mp").overlay_material, "scope_overlay_xpr50");
         assert!(def("as50_mp+acog").overlay_material.is_empty(), "the ACOG's unique has no overlay");
@@ -1090,7 +1109,7 @@ mod tests {
             attachments: vec![AttachmentDef { id: "acog".into(), short: "acog".into(), point: 1, ..Default::default() }],
             ..Default::default()
         };
-        add_variants(&mut table, &["as50_mp+acog".into()], std::slice::from_ref(&w));
+        add_variants(&mut table, &["as50_mp+acog".into()], std::slice::from_ref(&w), &[]);
         let d = table.weapons.iter().find(|d| d.id == "as50_mp+acog").expect("the ACOG combo");
         assert_eq!(d.overlay_material, "scope_overlay_acog");
         assert_eq!(d.overlay_material_low_res, "scope_overlay_acog_low_res");
@@ -1161,8 +1180,14 @@ mod tests {
             ],
             ..Default::default()
         };
-        add_variants(&mut table, &["as50_mp+swayreduc+ir".into()], std::slice::from_ref(&w));
+        // The zoom window walks the combo's WeaponAttachments in kind order (ir 14, swayreduc 27):
+        // the first differing from `defaultattachment` wins, per field.
+        let att = |name: &str, z: (f32, f32)| bo2::Attachment { name: name.into(), ads_zoom_frac: z, ..Default::default() };
+        let atts = [att("defaultattachment", (0.5, 0.05)), att("ir", (0.016, 0.05)), att("swayreduc", (0.5, 0.4))];
+        let w = Weapon { ads_zoom_frac: (0.0, 0.05), ..w };
+        add_variants(&mut table, &["as50_mp+swayreduc+ir".into()], std::slice::from_ref(&w), &atts);
         let d = table.weapons.iter().find(|d| d.id == "as50_mp+ir+swayreduc").expect("the combined combo");
+        assert_eq!((d.ads_zoom_in_frac, d.ads_zoom_out_frac), (0.016, 0.4), "in: the IR differs first; out: the IR matches the default, the swayreduc differs");
         // G14 §4: the overlay accessors read the single uniques; the combined child is only ever
         // read for the drawn parts and the animations.
         assert_eq!(d.overlay_material, "scope_overlay_ir", "the IR's single unique supplies the overlay");
@@ -1305,7 +1330,7 @@ mod tests {
             ],
             ..Default::default()
         };
-        add_variants(&mut table, &["as50_mp+acog+fmj".into()], &[w.clone(), sf.clone()]);
+        add_variants(&mut table, &["as50_mp+acog+fmj".into()], &[w.clone(), sf.clone()], &[]);
         let d = table.weapons.iter().find(|d| d.id == "as50_mp+acog+fmj").expect("the base combo");
         assert!(d.overlay_material.is_empty(), "the base combo's ACOG has no overlay");
         let alt = table.weapons.iter().find(|a| !d.alt.is_empty() && a.id == d.alt).expect("the alt mode");

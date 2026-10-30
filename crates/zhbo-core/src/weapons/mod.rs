@@ -15,6 +15,7 @@ pub mod loadout;
 pub mod perks;
 pub mod recoil;
 pub mod rng;
+pub mod scope;
 pub mod specialty;
 pub mod table;
 

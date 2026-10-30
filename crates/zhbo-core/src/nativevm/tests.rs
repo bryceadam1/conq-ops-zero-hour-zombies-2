@@ -281,7 +281,7 @@ fn the_ads_slot_follows_the_alt_mode_table() {
         ((crate::weapons::ALT_CLIPS + crate::viewmodel::slot::ADS_UP) as u16, alt_up.clone()),
         ((crate::weapons::ALT_CLIPS + crate::viewmodel::slot::ADS_DOWN) as u16, alt_down.clone()),
     ];
-    let loaded = |clips: Vec<(u16, String)>| Loaded { key: (7, b'U', 0), camo: None, manifest: Viewmodel { id: "test_mp".into(), faction: b'U', parts: vec![], markers: vec![], hide: vec![], clips }, skeleton: Skeleton::default(), mesh: Mesh::default(), mesh_aimed: None, aim: None, anims: HashMap::new() };
+    let loaded = |clips: Vec<(u16, String)>| Loaded { key: (7, b'U', 0), camo: None, manifest: Viewmodel { id: "test_mp".into(), faction: b'U', parts: vec![], markers: vec![], hide: vec![], clips }, skeleton: Skeleton::default(), mesh: Mesh::default(), mesh_aimed: None, overlay_art_present: false, aim: None, anims: HashMap::new() };
     let l = loaded(clips);
     assert_eq!(l.ads_clip(1, false), Some(up.as_str()));
     assert_eq!(l.ads_clip(1, true), Some(down.as_str()));
@@ -586,10 +586,10 @@ fn loads_through_requests_then_poses_and_aims() {
 }
 
 #[test]
-fn the_base_optic_is_hidden_only_when_the_overlay_art_is_present() {
-    // The base optic's model carries `tag_sights`; the gun's and arms' do not. At full ADS the
-    // physical scope's surfaces drop only when the screen-space overlay art is in the archive.
-    // The skeleton keeps every bone, so the aim marker still lands.
+fn the_gun_stops_drawing_under_the_overlay_only_when_the_art_is_present() {
+    // BO2 keeps the scope in the ADS part list and instead skips the whole viewmodel while the
+    // overlay's reticle zoom is up (`FUN_005374c0`, drawGun = 0) — only when the overlay art is in
+    // the archive here, so a missing material never leaves neither sight.
     let arms = model("arms", vec![bone("j_root", None, [0.0; 3]), bone("tag_weapon", Some(0), [20.0, 0.0, -5.0])]);
     let gun = model("gun", vec![bone("tag_weapon", None, [0.0; 3]), bone("j_gun", Some(0), [3.0, 0.0, 0.0])]);
     let optic = model("optic", vec![bone("tag_weapon", None, [0.0; 3]), bone("tag_sights", Some(0), [0.0, 0.0, 2.0])]);
@@ -617,7 +617,8 @@ fn the_base_optic_is_hidden_only_when_the_overlay_art_is_present() {
     };
     let ini = "Data\\INI\\MappedImages\\HandCreated\\ZHBO_BO2.ini";
     let art_present = "MappedImage ZHBO_Mat_scope_overlay_xpr50\n  Texture = scope_overlay_xpr50.tga\nEnd\n";
-    // Art present: the INI lists the material; the optic's surfaces drop at full ADS.
+    // Art present: the INI lists the material; the scope part stays in the mesh, and the whole
+    // viewmodel is skipped while the client reports the reticle zoom up for this viewmodel.
     let f = Fixture {
         files: vec![
             (zhbo_native::viewmodel_path(7, 'U'), manifest.to_bytes()),
@@ -637,11 +638,19 @@ fn the_base_optic_is_hidden_only_when_the_overlay_art_is_present() {
         }
         let l = s.loaded.as_ref().unwrap();
         assert_eq!(l.mesh.surfaces.len(), 3, "arms, gun and optic");
-        let aimed = l.mesh_aimed.as_ref().expect("the optic part is filtered when the art is present");
-        assert_eq!(aimed.surfaces.len(), 2, "the gun and arms remain");
-        // The optic's bone stays in the skeleton: the aim marker still resolves.
-        assert!(l.skeleton.bone("tag_sights").is_some());
-        assert!(aim_in_eye(s)[0] > 0.0);
+        assert!(l.mesh_aimed.is_none(), "no part swaps: the scope stays in BO2's ADS part list");
+        assert!(l.overlay_art_present);
+        let hidden = |s: &ffi::State| s.log.iter().any(|m| m.contains("not drawn under the scope overlay"));
+        s.frame(&input(1, 1.0), true);
+        assert!(!hidden(s), "drawn until the client reports the reticle zoom");
+        super::set_gun_under_overlay(Some(8));
+        s.frame(&input(1, 1.0), true);
+        assert!(!hidden(s), "another viewmodel's zoom does not hide this one");
+        super::set_gun_under_overlay(Some(7));
+        s.frame(&input(1, 1.0), true);
+        super::set_gun_under_overlay(None);
+        assert!(hidden(s), "the whole viewmodel is skipped under the overlay");
+        assert!(aim_in_eye(s)[0] > 0.0, "still posed while hidden");
     });
     // Art absent: the INI has no entry; the physical scope stays rather than leaving neither sight.
     let f = Fixture {
@@ -663,8 +672,11 @@ fn the_base_optic_is_hidden_only_when_the_overlay_art_is_present() {
         }
         let l = s.loaded.as_ref().unwrap();
         assert_eq!(l.mesh.surfaces.len(), 3, "arms, gun and optic");
-        assert!(l.mesh_aimed.is_none(), "the optic stays when the overlay art is absent");
-        assert!(l.skeleton.bone("tag_sights").is_some());
+        assert!(!l.overlay_art_present);
+        super::set_gun_under_overlay(Some(7));
+        s.frame(&input(1, 1.0), true);
+        super::set_gun_under_overlay(None);
+        assert!(!s.log.iter().any(|m| m.contains("not drawn under the scope overlay")), "the gun keeps drawing when the overlay art is absent");
         assert!(aim_in_eye(s)[0] > 0.0);
     });
 }
@@ -734,8 +746,6 @@ fn the_m32_ads_sight_swaps_at_full_ads() {
 /// optic beside it keep theirs; one step below the switch the hip list still draws.
 #[test]
 fn the_ads_models_swap_per_part_at_the_switch() {
-    let plain = |name: &str| model(name, vec![bone("tag_weapon", None, [0.0; 3])]);
-    let sight = |name: &str| model(name, vec![bone("tag_weapon", None, [0.0; 3]), bone("tag_sights", Some(0), [0.0, 0.0, 2.0])]);
     let part = |name: &str, ads_only: bool, ads_swap: Option<u16>| Part {
         model: zhbo_native::model_path(name),
         tag: Some("tag_weapon".into()),
@@ -752,13 +762,12 @@ fn the_ads_models_swap_per_part_at_the_switch() {
         part("mms_view", false, None),
         part("holo_ads", true, None),
     ];
-    let models = vec![plain("arms"), plain("gun"), plain("mag"), sight("holo_view"), sight("mms_view"), sight("holo_ads")];
     let hip = [true, true, true, true, true, false];
     let aimed = [true, true, true, false, true, true];
-    assert_eq!(visible_parts(&parts, &models, 0.0, false), hip);
-    assert_eq!(visible_parts(&parts, &models, OPTIC_VIEWMODEL_SWITCH - 1e-4, false), hip, "the hip list until the switch");
-    assert_eq!(visible_parts(&parts, &models, OPTIC_VIEWMODEL_SWITCH, false), aimed, "only the paired part swaps");
-    assert_eq!(visible_parts(&parts, &models, 1.0, false), aimed);
+    assert_eq!(visible_parts(&parts, 0.0), hip);
+    assert_eq!(visible_parts(&parts, OPTIC_VIEWMODEL_SWITCH - 1e-4), hip, "the hip list until the switch");
+    assert_eq!(visible_parts(&parts, OPTIC_VIEWMODEL_SWITCH), aimed, "only the paired part swaps");
+    assert_eq!(visible_parts(&parts, 1.0), aimed);
     assert_eq!(OPTIC_VIEWMODEL_SWITCH, 1.0, "cg_opticAttachmentViewmodelSwitch's default (FUN_004cc260)");
 }
 

@@ -167,27 +167,45 @@ fn the_crosshair_uses_the_classs_reticle_and_colour() {
 }
 
 #[test]
-fn the_scope_overlay_draws_at_full_ads_and_not_before() {
-    // The hand-off's seam: at `ads < 1.0` the physical scope is drawn by the viewmodel and the 2D
-    // overlay must not; at `ads == 1.0` the overlay material replaces it (PLAN §4's hard swap).
-    let (mut sim, client) = fps_state();
+fn the_scope_overlay_follows_bo2s_reticle_zoom() {
+    // `FUN_004b51e0`: the overlay draws while the reticle zoom is up, at alpha zoom / max(scale, 1).
+    // A base sniper's in-window is empty (0): nothing while aiming in, even at full ADS, until the
+    // direction flips (`HudLui::tick`); aiming out it fades over the last 5 %.
+    let (mut sim, mut client) = fps_state();
     let def = {
         let mut d = sim.players[0].as_ref().expect("the player").arsenal.current_weapon().clone();
         d.overlay_material = "scope_overlay_xpr50".into();
+        (d.ads_zoom_in_frac, d.ads_zoom_out_frac, d.overlay_alpha_scale) = (0.0, 0.05, 1.0);
         Box::leak(Box::new(d))
     };
-    {
-        let p = sim.players[0].as_mut().expect("the player");
-        p.arsenal.current_mut().def = def;
-        p.arsenal.ads = 0.99;
-    }
+    sim.players[0].as_mut().expect("the player").arsenal.current_mut().def = def;
     let name = crate::lui::materials::image("scope_overlay_xpr50");
-    let has_overlay = |prims: &[Prim]| prims.iter().any(|p| matches!(p, Prim::Image { name: n, .. } if n == &name));
-    let rec = Recorder { has_art: true, ..Default::default() };
-    assert!(!has_overlay(&draw_hud(&rec, &client, &sim)), "no overlay before full ADS");
-    sim.players[0].as_mut().expect("the player").arsenal.ads = 1.0;
-    let rec = Recorder { has_art: true, ..Default::default() };
-    assert!(has_overlay(&draw_hud(&rec, &client, &sim)), "the overlay replaces the scope at full ADS");
+    let overlay_alpha = |client: &Client, sim: &Sim| {
+        let rec = Recorder { has_art: true, ..Default::default() };
+        draw_hud(&rec, client, sim).iter().find_map(|p| match p {
+            Prim::Image { name: n, argb, .. } if n == &name => Some(argb >> 24),
+            _ => None,
+        })
+    };
+    let set = |sim: &mut Sim, client: &mut Client, ads: f32| {
+        let p = sim.players[0].as_mut().expect("the player");
+        p.arsenal.ads = ads;
+        client.hud.lui.tick(0.016, Some(p));
+    };
+    set(&mut sim, &mut client, 0.0);
+    set(&mut sim, &mut client, 0.99);
+    assert_eq!(overlay_alpha(&client, &sim), None, "aiming in: no overlay");
+    assert!(!client.hud.lui.gun_under_overlay);
+    set(&mut sim, &mut client, 1.0);
+    assert!(!client.hud.lui.gun_under_overlay, "the first full-ADS frame still draws the gun (tested before the flip)");
+    assert_eq!(overlay_alpha(&client, &sim), Some(255), "the overlay is up once the direction flips");
+    set(&mut sim, &mut client, 1.0);
+    assert!(client.hud.lui.gun_under_overlay, "held: the viewmodel is not drawn");
+    set(&mut sim, &mut client, 0.975);
+    assert_eq!(overlay_alpha(&client, &sim), Some(128), "aiming out: half way through the 5 % window");
+    set(&mut sim, &mut client, 0.94);
+    assert_eq!(overlay_alpha(&client, &sim), None);
+    assert!(!client.hud.lui.gun_under_overlay);
 }
 
 #[test]

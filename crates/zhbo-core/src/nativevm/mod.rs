@@ -197,33 +197,29 @@ pub const OPTIC_VIEWMODEL_SWITCH: f32 = 1.0;
 
 /// Which parts are drawn at `ads`. From [`OPTIC_VIEWMODEL_SWITCH`] up, BO2 draws the ADS part list
 /// (G14 §3): each part that names an ADS model ([`Part::ads_swap`]) gives way to it, every other
-/// part keeps its model; below it the ADS-only models are hidden. The swap is per part — a holo's
-/// `_ads` replaces the holo, never the magazine or another optic.
-///
-/// Separately, a base optic (a part whose model carries `tag_scope`/`tag_sights`) is hidden at the
-/// same moment when the screen-space overlay replaces it — only when the overlay art is present: a
-/// material the install lacks cannot draw, so the physical scope stays rather than leaving neither
-/// sight. Only the first-person path uses this; the third-person `nativebody` keeps `build_mesh`'s
-/// all-visible default.
-pub fn visible_parts(parts: &[Part], models: &[Model], ads: f32, overlay_art_present: bool) -> Vec<bool> {
+/// part keeps its model — the scope included; below it the ADS-only models are hidden. The swap is
+/// per part — a holo's `_ads` replaces the holo, never the magazine or another optic. A scope under
+/// a 2D overlay is not dropped here: BO2 stops drawing the whole viewmodel while the reticle zoom
+/// is up ([`gun_under_overlay`]). Only the first-person path uses this; the third-person
+/// `nativebody` keeps `build_mesh`'s all-visible default.
+pub fn visible_parts(parts: &[Part], ads: f32) -> Vec<bool> {
     let aimed = ads >= OPTIC_VIEWMODEL_SWITCH;
-    models
-        .iter()
-        .zip(parts)
-        .map(|(m, p)| {
-            if !aimed {
-                return !p.ads_only;
-            }
-            if p.ads_only {
-                return true;
-            }
-            if p.ads_swap.is_some() {
-                return false;
-            }
-            let optic = m.bones.iter().any(|b| b.name == "tag_scope" || b.name == "tag_sights");
-            !(optic && overlay_art_present)
-        })
-        .collect()
+    parts.iter().map(|p| if aimed { p.ads_only || p.ads_swap.is_none() } else { !p.ads_only }).collect()
+}
+
+/// The viewmodel (`vm`) BO2 is not drawing this frame because its scope overlay's reticle zoom is
+/// up (`FUN_005374c0` → `FUN_00536f30` with `drawGun = 0`), or −1. Set once per client frame from
+/// [`crate::hud::state::HudLui::gun_under_overlay`]; read by the native draw.
+static GUN_UNDER_OVERLAY: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(-1);
+
+/// Record (or clear, with `None`) the viewmodel hidden under its scope overlay this frame.
+pub fn set_gun_under_overlay(vm: Option<i32>) {
+    GUN_UNDER_OVERLAY.store(vm.unwrap_or(-1), std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Whether viewmodel `vm` is under its scope overlay this frame.
+pub(crate) fn gun_under_overlay(vm: i32) -> bool {
+    vm >= 0 && GUN_UNDER_OVERLAY.load(std::sync::atomic::Ordering::Relaxed) == vm
 }
 
 /// As [`build_mesh`], but skips the parts whose mask entry is false. The skeleton still holds every
@@ -314,10 +310,11 @@ pub struct Loaded {
     pub manifest: Viewmodel,
     pub skeleton: Skeleton,
     pub mesh: Mesh,
-    /// The same mesh with the base optic's surfaces dropped: what the first-person draw submits at
-    /// full ADS, when the 2D scope overlay replaces the physical scope. `None` when the weapon has
-    /// no optic part (the gun and magazine are all there is).
+    /// The ADS part list's mesh ([`visible_parts`] at the switch): what the first-person draw
+    /// submits at full ADS. `None` when no part swaps (the hip mesh is also the aimed one).
     pub mesh_aimed: Option<Mesh>,
+    /// The weapon's scope overlay art is in the archive, so the draw may stop under the overlay.
+    pub overlay_art_present: bool,
     pub aim: Option<usize>,
     pub anims: HashMap<String, Anim>,
 }
@@ -400,10 +397,11 @@ pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: 
             None => waiting = true,
         }
     }
-    // The physical scope may only hand off to the screen-space overlay when the overlay art is in
-    // the archive. The HUD's image fallback consults TheMappedImageCollection; the archive's
+    // The gun may only stop drawing under the screen-space overlay when the overlay art is in the
+    // archive. The HUD's image fallback consults TheMappedImageCollection; the archive's
     // MappedImage INI is that collection's source. A material absent from the INI cannot draw, so
-    // the base optic stays. The INI request may still be in flight: wait a frame.
+    // the gun keeps drawing rather than leaving neither sight. The INI request may still be in
+    // flight: wait a frame.
     let overlay_art_present = overlay_art_present(files, &manifest.id, overlay_material_override, &mut waiting);
     if waiting {
         return Ok(None);
@@ -415,17 +413,16 @@ pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: 
     }
     // The hip half hides the ADS-only models (the holo's `_ads`, the M32's slot 7) — the
     // below-the-switch arm of `visible_parts`; without it both models of a pair would draw at hip.
-    let hip = visible_parts(&manifest.parts, &models, 0.0, overlay_art_present);
+    let hip = visible_parts(&manifest.parts, 0.0);
     let mut mesh = if hip.iter().any(|v| !v) {
         build_mesh_visible(&skeleton, &models, |i| hip.get(i).copied().unwrap_or(true))?
     } else {
         build_mesh(&skeleton, &models)?
     };
-    // The aimed-half mesh: each paired part gives way to its ADS model, and the base optic's
-    // surfaces drop under an overlay, at the switch. Built once here so
+    // The aimed-half mesh: each paired part gives way to its ADS model at the switch. Built once so
     // the draw path only swaps handles. The mask's indices are the manifest's part order, which
     // the skeleton preserves.
-    let aimed = visible_parts(&manifest.parts, &models, OPTIC_VIEWMODEL_SWITCH, overlay_art_present);
+    let aimed = visible_parts(&manifest.parts, OPTIC_VIEWMODEL_SWITCH);
     let mut mesh_aimed = if aimed.iter().any(|v| !v) {
         Some(build_mesh_visible(&skeleton, &models, |i| aimed.get(i).copied().unwrap_or(true))?)
     } else {
@@ -453,7 +450,7 @@ pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: 
     }
     files.forget(&path);
     let aim = skeleton.bone(AIM_TAG);
-    Ok(Some(Loaded { key: (vm, faction, camo_key), camo: applied, manifest, skeleton, mesh, mesh_aimed, aim, anims: HashMap::new() }))
+    Ok(Some(Loaded { key: (vm, faction, camo_key), camo: applied, manifest, skeleton, mesh, mesh_aimed, overlay_art_present, aim, anims: HashMap::new() }))
 }
 
 /// The clip a manifest shows for `clip` ([`Loaded::clip_path`]'s rule, also read by the conformance

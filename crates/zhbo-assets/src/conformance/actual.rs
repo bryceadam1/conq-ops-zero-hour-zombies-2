@@ -468,8 +468,8 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         // One zoom: every zoom level of the weapon is that field of view.
         .float("ads_zoom_fov2", fl(d.ads_fov))
         .float("ads_zoom_fov3", fl(d.ads_fov))
-        .absent("ads_zoom_in_frac")
-        .absent("ads_zoom_out_frac")
+        .float("ads_zoom_in_frac", fl(d.ads_zoom_in_frac))
+        .float("ads_zoom_out_frac", fl(d.ads_zoom_out_frac))
         // The definition stores the ADS walk as the converter's base (0.35 of a walk) times BO2's
         // scale (`to_def`, `attachments::apply`): divided back, it is BO2's scale. The replacement
         // walk never stacks the base and an attachment (evoskorpion_mp: BO2 2.55 → mod 0.8925 → 2.55).
@@ -479,7 +479,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .absent("alt_scope_ads_in_time")
         .absent("alt_scope_ads_out_time")
         .absent("ads_dof")
-        .absent("overlay_alpha_scale");
+        .float("overlay_alpha_scale", fl(d.overlay_alpha_scale));
 
     // Kick and recoil.
     let gk = |k: &weapons::GunKick| fls(&[k.pitch.0, k.pitch.1, k.yaw.0, k.yaw.1, k.accel, k.speed_max, k.speed_decay, k.static_decay, k.reduced_percent]);
@@ -587,9 +587,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
                 .floats("view_part_offsets", &parts.iter().filter(|p| !p.ads_only).flat_map(|p| p.offset.1).map(f32_value).collect::<Vec<_>>())
                 .floats("view_part_rotations", &parts.iter().filter(|p| !p.ads_only).flat_map(|p| quat(p.offset.0)).collect::<Vec<_>>());
             // The aimed half: the game's own part mask at full ADS.
-            let all: Vec<zhbo_native::model::Model> = models.iter().map(|m| m.clone().unwrap_or_default()).collect();
-            let overlay = !d.overlay_material.is_empty() && sh.has_sprite(&zhbo_core::lui::materials::image(&d.overlay_material));
-            let aimed = zhbo_core::nativevm::visible_parts(&m.parts, &all, 1.0, overlay);
+            let aimed = zhbo_core::nativevm::visible_parts(&m.parts, zhbo_core::nativevm::OPTIC_VIEWMODEL_SWITCH);
             let mut ads: Vec<String> = m.parts.iter().enumerate().skip(skip).filter(|(i, _)| aimed.get(*i).copied().unwrap_or(true)).map(|(_, p)| stem(&p.model)).collect();
             ads.sort();
             b.list("view_ads_part_models", &ads).set("view_hide_tags", &m.hide);

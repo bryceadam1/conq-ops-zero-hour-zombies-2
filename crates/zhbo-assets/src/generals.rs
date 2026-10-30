@@ -258,7 +258,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     table.perks = crate::weapons::perk_rows(&patch);
     let converted = crate::weapons::converted(&patch, &bo2);
     let converted_base = crate::weapons::converted_base(&bo2);
-    crate::weapons::add_variants(&mut table, &converted, &bo2);
+    crate::weapons::add_variants(&mut table, &converted, &bo2, &atts);
     let camo = crate::camo::files(&common, &patch, &common_patch, &paks, &camo_assets, &bo2, &table, &mut out)?;
     summary.push(format!(
         "camo: {} assets, {} pattern images, {} style materials, no art: {}",
@@ -614,7 +614,7 @@ mod tests {
             for (short, _) in &base.allowed {
                 let id = zhbo_core::attachments::variant_id(&base.id, &[short.as_str()]);
                 let mut t = table.clone();
-                crate::weapons::add_variants(&mut t, std::slice::from_ref(&id), &bo2);
+                crate::weapons::add_variants(&mut t, std::slice::from_ref(&id), &bo2, &atts);
                 let Some(d) = t.weapons.iter().find(|d| d.id == id).cloned() else {
                     fails.push(format!("{id}: not built"));
                     continue;
@@ -734,7 +734,7 @@ mod tests {
         let atts = zhbo_formats::weapon::attachments(&common).unwrap();
         let mut table = crate::weapons::table(&bo2, &atts, &names);
         let converted = crate::weapons::converted(&patch, &bo2);
-        crate::weapons::add_variants(&mut table, &converted, &bo2);
+        crate::weapons::add_variants(&mut table, &converted, &bo2, &atts);
         let text = zhbo_core::weapons::format_full_table(&table);
         let back = zhbo_core::weapons::parse_full_table(&text).expect("the table re-parses");
         assert_eq!(zhbo_core::weapons::format_full_table(&back), text, "format ∘ parse is the identity on the converter's table");
@@ -753,7 +753,7 @@ mod tests {
         let bo2 = zhbo_formats::weapon::all(&common).unwrap();
         let atts = zhbo_formats::weapon::attachments(&common).unwrap();
         let mut table = crate::weapons::table(&bo2, &atts, &names);
-        crate::weapons::add_variants(&mut table, &["as50_mp+acog".to_string(), "as50_mp+fmj".to_string()], &bo2);
+        crate::weapons::add_variants(&mut table, &["as50_mp+acog".to_string(), "as50_mp+fmj".to_string()], &bo2, &atts);
         let def = |id: &str| table.weapons.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("no {id}"));
         assert_eq!(def("as50_mp").overlay_material, "scope_overlay_xpr50");
         assert!(def("as50_mp+acog").overlay_material.is_empty(), "the ACOG's unique has no overlay");

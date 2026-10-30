@@ -51,7 +51,7 @@ impl Source {
         let atts = zhbo_formats::weapon::attachments(&common).map_err(|e| e.to_string())?;
         let names = crate::weapons::names(bo2_dir);
         let mut table = crate::weapons::table(&bo2, &atts, &names);
-        crate::weapons::add_variants(&mut table, &crate::weapons::converted(&patch, &bo2), &bo2);
+        crate::weapons::add_variants(&mut table, &crate::weapons::converted(&patch, &bo2), &bo2, &atts);
         Ok(Source { common, patch, zones, paks, bo2, atts, defs: table.weapons })
     }
 

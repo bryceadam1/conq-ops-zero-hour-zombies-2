@@ -136,19 +136,18 @@ fn team_color(host: &dyn ClientHost, p: &PlayerSim) -> u32 {
     objs.iter().find(|o| o.id == p.general).map_or(0xFFFF_FFFF, |o| o.color)
 }
 
-/// The snipers' 2D screen-space ADS overlay. BO2 hands the scope view off to a type-7 HUD material
-/// at full ADS (`playerads() >= 1`), while the physical scope part is hidden by the viewmodel draw.
-/// The material's own art carries the black surround and the clear lens centre; a full-screen image
-/// needs no scissor of its own (the host's clip callback clips 2D images only, not the 3D view).
-/// A weapon without an overlay material gets no hand-off and keeps its physical scope.
-fn draw_scope_overlay(prims: &mut Vec<Prim>, w: f32, h: f32, p: &PlayerSim) {
-    if p.arsenal.ads < 1.0 {
-        return;
-    }
+/// The scope's 2D screen-space ADS overlay (`FUN_004b51e0`). It draws while BO2's reticle zoom is
+/// up ([`crate::weapons::scope::reticle_zoom`], in the zoom direction as updated this frame), white
+/// at alpha `zoom / max(fOverlayAlphaScale, 1)`; over the same window the viewmodel is not drawn
+/// (`HudLui::gun_under_overlay`, the native viewmodel). The material's own art carries the black
+/// surround and the clear lens centre; a full-screen image needs no scissor of its own.
+fn draw_scope_overlay(prims: &mut Vec<Prim>, w: f32, h: f32, p: &PlayerSim, zooming_in: bool) {
     let def = p.arsenal.current_weapon();
+    let Some(zoom) = crate::weapons::scope::reticle_zoom(def, p.arsenal.ads, zooming_in) else { return };
     if def.overlay_material.is_empty() {
         return;
     }
+    let a = (crate::weapons::scope::overlay_alpha(def, zoom).clamp(0.0, 1.0) * 255.0).round() as u32;
     // The converted MappedImage name. If the install lacks the art, the empty fallback draws
     // nothing (log-or-skip); the converter reports the missing material and the install-gated
     // test catches a sniper whose overlay did not convert.
@@ -158,7 +157,7 @@ fn draw_scope_overlay(prims: &mut Vec<Prim>, w: f32, h: f32, p: &PlayerSim) {
         y: 0.0,
         w,
         h,
-        argb: WHITE,
+        argb: (a << 24) | (WHITE & 0x00FF_FFFF),
         fallback: Vec::new(),
     });
 }
@@ -206,10 +205,8 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
     } else {
         if !tablet_up && !map_open {
             draw_marks(host, prims, w, h, s, client, sim, p);
-            // BO2's scoped-overlay hand-off: at full ADS the physical scope is hidden by the
-            // viewmodel draw and this screen-space material replaces it. A weapon without an
-            // overlay material keeps its physical scope (no hand-off).
-            draw_scope_overlay(prims, w, h, p);
+            // BO2's scope overlay: up while the reticle zoom is, when the viewmodel is not drawn.
+            draw_scope_overlay(prims, w, h, p, st.ads_zoom_in);
             draw_crosshair(prims, w, h, s, client, p);
             draw_hitmarker(prims, w, h, client);
             draw_score_popup(&l, prims, client);

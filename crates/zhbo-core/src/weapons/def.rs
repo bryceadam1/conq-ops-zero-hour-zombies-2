@@ -278,6 +278,14 @@ pub struct WeaponDef {
     pub overlay_material_low_res: String,
     /// `weapOverlayReticle_t`: which reticle the overlay draws (0: none).
     pub overlay_reticle: u32,
+    /// `fAdsZoomInFrac` / `fAdsZoomOutFrac`: the last fraction of the ADS travel, aiming in / out,
+    /// over which an overlay weapon's reticle zoom runs (the overlay fades and the viewmodel is not
+    /// drawn; [`crate::weapons::scope`]). Combos: the first attachment differing from
+    /// `defaultattachment`, else the variant's (G14 §4).
+    pub ads_zoom_in_frac: f32,
+    pub ads_zoom_out_frac: f32,
+    /// `fOverlayAlphaScale`: the overlay's alpha is the reticle zoom over `max(this, 1)`.
+    pub overlay_alpha_scale: f32,
 }
 
 /// One BO2 camouflage option (`mp/attachmenttable.csv`'s rows with `camo` in column 1): the id
@@ -467,6 +475,9 @@ impl Default for WeaponDef {
             overlay_material: String::new(),
             overlay_material_low_res: String::new(),
             overlay_reticle: 0,
+            ads_zoom_in_frac: 0.0,
+            ads_zoom_out_frac: 0.0,
+            overlay_alpha_scale: 1.0,
         }
     }
 }
