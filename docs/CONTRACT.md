@@ -387,6 +387,18 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
 * **What is out**: first-person tracers (BO2's `cg_firstPersonTracerChance` defaults to 0), other
   players' impacts (they keep the converted `FireFX`), exit/through-and-through impacts, and
   per-surface impact *sounds* (flesh vs hard only).
+* **Blasts read the same table by their own impact type.** BO2's explode events (`FUN_004c0ac0`,
+  `FUN_004c1590`) call the impact routine `FUN_00533210(weapon, surface)` — the type's
+  `FxImpactTable` row and its sound family `<family>_<surface>` — then the def's own
+  `projExplosionEffect`/`projExplosionSound`. The sim takes the blast's surface (the object it hit
+  directly, else `surface_at`) and puts it in `EventKind::Exploded { at, sound, impact_type,
+  surface }` (equipment too); `projectiles::blast` plays the table cell then the def's effect
+  through `LogicApi.fx` (presentation, like every FX call), and the client's `consume_events`
+  plays `impacts::sound_name(impact_type, surface)` (`sound <type> <surface> <event>` rows of the
+  same file) then the def's own sound. A missing cell falls back to the type's default surface;
+  no cell and no def field falls back to the generic blast (an unconverted archive). The
+  `impactType` → row/family mapping lives once, in `zhbo_formats::fx::IMPACT_KINDS`. No ABI
+  change: the rows ride in the existing file and the existing `fx` callback.
 * ABI: `surface_at` is appended to `ZhboLogicApi` (fields 23 → 24), `ZhboClientOut` grows by 324
   bytes (4508 → 4832) and `ZHBO_ABI_VERSION` goes to 26; `zhbo_load_impacts` and `zhbo_impact_fx`
   are new free functions on the append-only surface.
