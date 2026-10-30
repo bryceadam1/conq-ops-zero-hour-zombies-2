@@ -1539,6 +1539,41 @@ pub(crate) mod tests {
         assert!(impacts.iter().all(|s| *s == Surface::Dirt), "{impacts:?}");
     }
 
+    /// A pellet's sound is BO2's `prj_bullet_impact_<size>_<surface>` for the gun's type: the sim
+    /// reports the ground's surface, the client's cue follows it (`sounds::impact_cue`).
+    #[test]
+    fn a_shot_into_two_grounds_plays_each_surfaces_hit_sound() {
+        crate::impacts::install(crate::impacts::TEST_TABLE);
+        let fire_into = |ground: Surface| {
+            let host = FakeHost::default();
+            host.ground.set(Some(ground));
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            sim.take_control(&host, 0, 1);
+            sim.choose_class(0, 1, 0, &[]);
+            wait_until_ready(&mut sim, &host);
+            run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, pitch: -0.6, ..Default::default() }, 10);
+            let surfaces: Vec<Surface> = events(&sim)
+                .into_iter()
+                .filter_map(|k| match k {
+                    EventKind::Impact { surface, .. } => Some(surface),
+                    _ => None,
+                })
+                .collect();
+            assert!(!surfaces.is_empty(), "the ground took pellets");
+            surfaces
+        };
+        let (concrete, dirt, water) = (fire_into(Surface::Concrete), fire_into(Surface::Dirt), fire_into(Surface::Water));
+        assert!(concrete.iter().all(|s| *s == Surface::Concrete) && dirt.iter().all(|s| *s == Surface::Dirt));
+        // The cue for a bullet type with converted sounds (78 in the test table).
+        let cue = |s: &[Surface]| crate::sounds::impact_cue(78, s[0]);
+        assert_eq!((cue(&concrete), cue(&dirt)), (Some("HIT_CONCRETE"), Some("HIT_DIRT")));
+        assert_eq!(cue(&water), None, "no alias for the surface: silent, as BO2's hash miss");
+        // A type with no converted sounds keeps the fixed cues (an unconverted archive).
+        assert_eq!(crate::sounds::impact_cue(2, Surface::Concrete), Some(crate::sounds::IMPACT));
+        assert_eq!(crate::sounds::impact_cue(2, Surface::Flesh), Some(crate::sounds::IMPACT_FLESH));
+    }
+
     #[test]
     fn a_kill_reports_a_fatal_flesh_impact() {
         // The template test's shot, asserting the record's blood bits: body (not head), fatal.
@@ -1842,9 +1877,7 @@ pub(crate) mod tests {
     /// the client's cues follow it.
     #[test]
     fn a_blast_on_two_surfaces_plays_their_own_effect_and_sound() {
-        crate::impacts::install(
-            "impact 77 default FX_D\nimpact 77 concrete FX_C\nsound 77 dirt SND_D\nsound 77 concrete SND_C\n",
-        );
+        crate::impacts::install(crate::impacts::TEST_TABLE);
         let frag: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef {
             id: "test_frag_mp".into(),
             effect: crate::weapons::Effect::Explode,

@@ -385,8 +385,11 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
   `-dir` (the surface's outward normal). A missing/stale archive plays nothing and is counted, never
   a bogus name — the same degrade-don't-panic rule as the renderer's draws.
 * **What is out**: first-person tracers (BO2's `cg_firstPersonTracerChance` defaults to 0), other
-  players' impacts (they keep the converted `FireFX`), exit/through-and-through impacts, and
-  per-surface impact *sounds* (flesh vs hard only).
+  players' impacts (they keep the converted `FireFX`) and exit/through-and-through impacts.
+* **The pellet's sound is the table's too**: `consume_events` plays `sounds::impact_cue(impact_type,
+  surface)` — the `sound` row for the gun's type (`prj_bullet_impact_<size>_<surface>`), silent on a
+  `NONE` row (BO2's hash miss), and the fixed flesh/hard cue only for a type with no sound rows (an
+  unconverted archive).
 * **Blasts read the same table by their own impact type.** BO2's explode events (`FUN_004c0ac0`,
   `FUN_004c1590`) call the impact routine `FUN_00533210(weapon, surface)` — the type's
   `FxImpactTable` row and its sound family `<family>_<surface>` — then the def's own
@@ -395,7 +398,8 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
   surface }` (equipment too); `projectiles::blast` plays the table cell then the def's effect
   through `LogicApi.fx` (presentation, like every FX call), and the client's `consume_events`
   plays `impacts::sound_name(impact_type, surface)` (`sound <type> <surface> <event>` rows of the
-  same file) then the def's own sound. A missing *FX* cell falls back to the type's default
+  same file; every surface of a family type has one, `NONE` where the install lacks the alias)
+  then the def's own sound. A missing *FX* cell falls back to the type's default
   surface (`SURF_TYPE_DEFAULT`); a missing *sound* cell plays nothing, as BO2's hash miss does
   (`FUN_0082df80`); a type with no sound cells at all and no def field falls back to the generic
   blast (an unconverted archive). The

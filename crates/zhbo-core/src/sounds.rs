@@ -232,12 +232,23 @@ pub fn melee_swing_for(def: &'static crate::weapons::WeaponDef) -> &'static str 
 /// only when the type has no converted sounds at all and the def none (an unconverted archive, a
 /// mod-only def).
 pub fn explosion_cues(sound: &'static str, impact_type: i32, surface: crate::impacts::Surface) -> [Option<&'static str>; 2] {
-    let table = crate::impacts::sound_name(impact_type, surface);
+    let table = crate::impacts::sound_name(impact_type, surface).and_then(some);
     let own = some(sound);
     if table.is_none() && own.is_none() && !crate::impacts::type_has_sounds(impact_type) {
         return [Some(EXPLOSION), None];
     }
     [table, own]
+}
+
+/// A pellet's hit sound: the impact table's for the gun's `impactType` on `surface` (BO2's
+/// `prj_bullet_impact_<size>_<surface>`, `FUN_00533210`), nothing where BO2 has no alias (`NONE`
+/// rows: its hash miss is silent). The fixed flesh/hard cue only when the type has no converted
+/// sound cells at all (an unconverted archive).
+pub fn impact_cue(impact_type: i32, surface: crate::impacts::Surface) -> Option<&'static str> {
+    if !crate::impacts::type_has_sounds(impact_type) {
+        return Some(if surface == crate::impacts::Surface::Flesh { IMPACT_FLESH } else { IMPACT });
+    }
+    crate::impacts::sound_name(impact_type, surface).and_then(some)
 }
 
 impl Cues {

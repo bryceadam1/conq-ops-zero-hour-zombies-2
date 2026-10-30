@@ -74,20 +74,24 @@ pub fn table_text(zone: &Zone, impact_types: &[u32], effects: &mut Converted, pa
     (text, unmapped)
 }
 
-/// The blast sounds for the projectile impact types `blast_types`: for each mod surface the type's
-/// family alias `<family>_<surface>` (BO2's `FUN_004d42d0` naming over its surface names, which the
-/// mod's slots share — `Surface::name`), when the install has it (`has_alias`, case-insensitive like
-/// BO2's hash). Returns the `sound` rows and the aliases, each once, for the sound conversion
-/// (its secondary chain — `wpn_rocket_explode_dirt` -> `wpn_rocket_explode` -> `_close` … — comes
-/// with it).
-pub fn sound_rows(blast_types: &[u32], has_alias: &dyn Fn(&str) -> bool) -> (String, Vec<String>) {
+/// BO2's impact sounds for `impact_types` (bullets and blasts alike): for each mod surface the
+/// type's family alias `<family>_<surface>` (BO2's `FUN_004d42d0` naming over its surface names,
+/// which the mod's slots share — `Surface::name`), when the install has it (`has_alias`,
+/// case-insensitive like BO2's hash), else `NONE`: BO2's hash miss plays nothing
+/// (`FUN_0082df80`), so a type's row set is complete and a missing alias is silent rather than a
+/// fallback (the shotgun's `prj_bulletspray_small` ships only exit and ricochet aliases, so its
+/// entry hits are silent). Types without a family (`grenade_bounce`, `projectile_dud`: def fields
+/// the mod does not carry) get no rows. Returns the `sound` rows and the aliases, each once, for
+/// the sound conversion (its secondary chain comes with it).
+pub fn sound_rows(impact_types: &[u32], has_alias: &dyn Fn(&str) -> bool) -> (String, Vec<String>) {
     let mut text = String::new();
     let mut aliases: Vec<String> = Vec::new();
-    for &t in blast_types.iter().filter(|t| !fx::is_bullet(**t)) {
+    for &t in impact_types {
         let Some(family) = fx::impact_kind(t).and_then(|k| k.sound_family) else { continue };
         for s in Surface::ALL {
             let alias = format!("{family}_{}", s.name());
             if !has_alias(&alias) {
+                text.push_str(&format!("sound {t} {} {}\n", s.name(), zhbo_core::sounds::NO_SOUND));
                 continue;
             }
             text.push_str(&format!("sound {t} {} {}\n", s.name(), zhbo_core::names::def_sound_event(&alias)));
@@ -131,25 +135,26 @@ mod tests {
     }
 
     #[test]
-    fn a_blast_type_gets_its_familys_alias_per_surface() {
-        // The install has the grenade family on dirt and concrete (and the default), not on water.
-        let have = ["wpn_grenade_explode_default", "WPN_GRENADE_EXPLODE_DIRT", "wpn_grenade_explode_concrete", "wpn_rocket_explode_dirt"];
+    fn a_type_gets_its_familys_alias_per_surface_and_none_where_bo2_has_none() {
+        // The install has the grenade family on dirt and concrete (and the default), the small
+        // bullet's on concrete only, nothing of the shotgun's entry family.
+        let have = ["wpn_grenade_explode_default", "WPN_GRENADE_EXPLODE_DIRT", "wpn_grenade_explode_concrete", "prj_bullet_impact_small_concrete"];
         let has = |a: &str| have.iter().any(|h| h.eq_ignore_ascii_case(a));
-        // 7 grenade_explode and 10 rocket_explode_xtreme (BO2 reads the plain rocket family for it);
-        // a bullet type and an unknown one are not blast rows.
-        let (text, aliases) = sound_rows(&[2, 7, 10, 99], &has);
-        assert_eq!(
-            text,
-            "sound 7 default ZHBO_BO2_Snd_wpn_grenade_explode_default\n\
-             sound 7 concrete ZHBO_BO2_Snd_wpn_grenade_explode_concrete\n\
-             sound 7 dirt ZHBO_BO2_Snd_wpn_grenade_explode_dirt\n\
-             sound 10 dirt ZHBO_BO2_Snd_wpn_rocket_explode_dirt\n"
-        );
-        assert_eq!(aliases, ["wpn_grenade_explode_default", "wpn_grenade_explode_concrete", "wpn_grenade_explode_dirt", "wpn_rocket_explode_dirt"]);
-        // What the runtime reads back: two surfaces, two different sounds.
+        let (text, aliases) = sound_rows(&[1, 5, 6, 7, 99], &has);
         let rows: Vec<_> = zhbo_core::impacts::parse_sounds(&text).into_iter().map(|r| (r.impact_type, r.surface, r.event)).collect();
-        assert_ne!(zhbo_core::impacts::find_sound(&rows, 7, Surface::Dirt), zhbo_core::impacts::find_sound(&rows, 7, Surface::Concrete));
-        assert_eq!(zhbo_core::impacts::find_sound(&rows, 7, Surface::Water), None, "no alias, no sound (BO2's hash miss)");
+        let cell = |t, s| zhbo_core::impacts::find_sound(&rows, t, s).map(String::as_str);
+        // Every surface of every family type has a row; a missing alias is NONE (silent).
+        for t in [1, 5, 7] {
+            assert_eq!(rows.iter().filter(|r| r.0 == t).count(), Surface::ALL.len(), "type {t}");
+        }
+        assert!(!rows.iter().any(|r| r.0 == 6 || r.0 == 99), "no family, no rows");
+        assert_eq!(cell(7, Surface::Dirt), Some("ZHBO_BO2_Snd_wpn_grenade_explode_dirt"));
+        assert_eq!(cell(7, Surface::Concrete), Some("ZHBO_BO2_Snd_wpn_grenade_explode_concrete"));
+        assert_eq!(cell(7, Surface::Water), Some(zhbo_core::sounds::NO_SOUND));
+        assert_eq!(cell(1, Surface::Concrete), Some("ZHBO_BO2_Snd_prj_bullet_impact_small_concrete"));
+        assert_eq!(cell(1, Surface::Dirt), Some(zhbo_core::sounds::NO_SOUND));
+        assert!(rows.iter().filter(|r| r.0 == 5).all(|r| r.2 == zhbo_core::sounds::NO_SOUND), "the shotgun's entry family is empty");
+        assert_eq!(aliases, ["prj_bullet_impact_small_concrete", "wpn_grenade_explode_default", "wpn_grenade_explode_concrete", "wpn_grenade_explode_dirt"]);
     }
 
     #[test]

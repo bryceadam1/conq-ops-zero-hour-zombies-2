@@ -255,6 +255,22 @@ pub fn fx_name(impact_type: i32, surface: Surface, head: bool, fatal: bool) -> O
     find(&rows, impact_type, surface, head, fatal).map(str::to_string)
 }
 
+/// The one table the in-process tests install (the table is global, so every test that installs
+/// one installs this same text): blast type 77 and bullet type 78, on dirt and concrete, with water
+/// absent (`NONE`, BO2's hash miss).
+#[cfg(test)]
+pub const TEST_TABLE: &str = "\
+impact 77 default FX_D
+impact 77 concrete FX_C
+sound 77 dirt SND_D
+sound 77 concrete SND_C
+sound 77 water NONE
+sound 78 dirt HIT_DIRT
+sound 78 concrete HIT_CONCRETE
+sound 78 flesh HIT_FLESH
+sound 78 water NONE
+";
+
 #[cfg(test)]
 mod tests {
     use super::*;

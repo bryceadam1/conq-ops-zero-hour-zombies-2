@@ -4662,3 +4662,20 @@ only for an impact type with no converted sound cells at all and no def sound (a
 archive or a mod-only def): `impacts::type_has_sounds`. The FX table's default-surface fallback is
 unchanged (that one is BO2's `SURF_TYPE_DEFAULT` cell rule). Decompiles:
 `~/.opencode/plan/explosion-sounds/sndplay*.c`, `sndlookup*.c`, `sndq*.c`.
+
+## Bullet hits play BO2's per-type, per-surface impact sound (2026-10-30, `v1/explosion-sounds`)
+
+The first-person pellet used to play one of two fixed cues (flesh or hard). BO2 uses the same rule
+for a bullet as for a blast: `FUN_00533210` takes the type's family (`prj_bullet_impact_small`,
+`_large`, `_ap`, `_xtreme`, and `prj_bulletspray_small` for the shotgun) and plays its alias for the
+surface. `impacts::sound_rows` now covers the gun buckets as well as the blast types, using the
+same `IMPACT_KINDS` and the same `sound` rows. It writes a row for every mod surface of every family
+type, and `NONE` where the install lacks the alias, so the table itself encodes BO2's silent hash
+miss. The client's `sounds::impact_cue` plays the row, or nothing on `NONE`; the fixed cue remains
+only for a type with no rows (an unconverted archive). Blasts read `NONE` rows the same way.
+**Gotcha: the bullet families live only in the map bank (`mp_raid`).** `common_mp` holds just
+`_riotshield`, so the alias check spans both banks. **The shotgun's entry family is empty in the
+install**: `prj_bulletspray_small` ships only `exit_*` and `ricochet`, so a shotgun pellet's entry
+hit is silent, as in BO2. Not carried: the exit sounds (`_exit_<surface>`, the routine's exit flag)
+and the vehicle overrides (flags 0x10/0x20 → `prj_impact_veh_armor`/`_locomotion` per impact type).
+The mod has no exit hits, and which callers set the vehicle flags is unverified (a follow-up).

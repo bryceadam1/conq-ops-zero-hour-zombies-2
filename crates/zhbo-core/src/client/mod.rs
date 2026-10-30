@@ -1107,9 +1107,11 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     self.hud.damage_flash = (self.hud.damage_flash + amount / 60.0).min(1.0);
                 }
                 // A pellet landed: BO2's impact FX (the bridge plays it from `ClientOut.hits`) and
-                // the surface's sound here. Blood for a soldier, the hard-surface cue otherwise.
+                // the impact table's sound for the gun's type and the surface here (`sounds::impact_cue`).
                 EventKind::Impact { at, dir, surface, head, fatal, impact_type } => {
-                    self.cues.play_at(if surface == crate::impacts::Surface::Flesh { sounds::IMPACT_FLESH } else { sounds::IMPACT }, at);
+                    if let Some(cue) = sounds::impact_cue(impact_type, surface) {
+                        self.cues.play_at(cue, at);
+                    }
                     if self.hits_len < CLIENT_HITS {
                         self.hits[self.hits_len] =
                             ClientHit { point: at, dir, surface: surface as i32, head: head as i32, fatal: fatal as i32, impact_type };
