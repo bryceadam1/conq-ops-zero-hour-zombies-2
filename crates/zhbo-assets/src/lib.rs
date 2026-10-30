@@ -23,6 +23,7 @@ pub mod native;
 pub mod thirdperson;
 pub mod viewmodel_sweep;
 pub mod fx;
+pub mod shotfx;
 pub mod sfx;
 pub mod manifest;
 pub mod screenshot;

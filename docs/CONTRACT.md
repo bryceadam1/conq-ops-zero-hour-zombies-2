@@ -435,6 +435,20 @@ Not yet covered: save/load keeps no first-person state (a loaded game starts in 
   at the camera. `cbFireFx` skips the local first-person General; this is lockstep-safe because
   the `*_FX` weapons deal no damage and have no scatter, so `fireWeaponTemplate` only plays
   client-side FX and sound for them.
+- **What others see of a shot besides the flash** rides the same `fire_fx` callback (no ABI
+  change). Per hitscan shot the sim also fires the def's `WorldShellFxWeapon` (its
+  `WorldLastShotShellFxWeapon` on the round that empties the magazine, `WeaponAction::Fire.last`)
+  — BO2's `worldShellEjectEffect` (`FUN_00531630`) — and, per bullet (each pellet), the
+  `TracerFxWeapon` when the shooter's tracer countdown says so (`sim::fire::tracer_due`, BO2's
+  per-entity byte countdown `FUN_007c65c0`: every `TracerInterval`-th bullet, kept in
+  `PlayerSim::tracer_count`, so it is deterministic and replayable). Both are client-only FX
+  weapons (`shotfx.rs`): the brass FXList is placed from the flash bone (`ZF<vm>`, the world
+  model's `tag_flash`) to `tag_brass` with the particle nuggets' `Offset`/`RotateX/Y/Z`; the
+  tracer is a Zero Hour `Tracer` nugget flying from the flash bone to the bullet's end. The
+  overhead General fires Zero Hour's own weapon (no sim shot), so his `FireFX` is one composed
+  FXList (`ZHBO_BO2FX_Rts_<id>`: flash, placed brass, and the tracer with `Probability =
+  1/drawInterval`). The shooter's own first-person view draws neither (`cbFireFx` skips him; BO2's
+  own view uses the view shells, and own-tracer chance `cg_firstPersonTracerChance` is not ported).
 - After the camera override, reset pitch/zoom/pivot (`resetPivotToGround`) or the RTS camera stays
   low; leaving first person flies back to the overhead camera as first person found it, not what
   the view reports then.

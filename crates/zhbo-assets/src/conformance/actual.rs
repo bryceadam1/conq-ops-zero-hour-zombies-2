@@ -41,6 +41,9 @@ pub struct Shipped {
     /// The converter's third-person FX weapons: `ZHBO_FX_<key>` → its `FireFX` (the flash others
     /// see), from `weapons::sounds_and_fx`'s INI.
     fx_weapons: HashMap<String, String>,
+    /// The shipped FX weapons INI's `FireFX` by weapon (the brass and tracer FX weapons,
+    /// `shotfx::convert`, live only there).
+    shipped_fx_weapons: HashMap<String, String>,
 }
 
 impl Shipped {
@@ -62,19 +65,24 @@ impl Shipped {
         // `generals::files` ran; deterministic over the same inputs).
         let common = crate::generals::load_zone(bo2_dir, "common_mp")?;
         let patch = crate::generals::load_zone(bo2_dir, crate::fx::ZONE)?;
-        let bo2 = zhbo_formats::weapon::all(&common).map_err(|e| e.to_string())?;
+        let bo2 = zhbo_formats::weapon::all_in(&common, &[&patch]).map_err(|e| e.to_string())?;
         let atts = zhbo_formats::weapon::attachments(&common).map_err(|e| e.to_string())?;
         let mut defs = zhbo_core::weapons::parse_full_table(&text)?.weapons;
         let (events, fx_ini) = crate::weapons::sounds_and_fx(&bo2, &atts, &mut defs, &crate::weapons::converted(&patch, &bo2));
-        let mut fx_weapons = HashMap::new();
-        let mut current = None;
-        for line in fx_ini.lines().map(str::trim) {
-            if let Some(name) = line.strip_prefix("Weapon ") {
-                current = Some(name.trim().to_string());
-            } else if let (Some(w), Some(v)) = (&current, line.strip_prefix("FireFX")) {
-                fx_weapons.insert(w.clone(), v.trim_start_matches([' ', '=']).trim().to_string());
+        let fire_fx = |ini: &str| {
+            let mut out = HashMap::new();
+            let mut current = None;
+            for line in ini.lines().map(str::trim) {
+                if let Some(name) = line.strip_prefix("Weapon ") {
+                    current = Some(name.trim().to_string());
+                } else if let (Some(w), Some(v)) = (&current, line.strip_prefix("FireFX")) {
+                    out.insert(w.clone(), v.trim_start_matches([' ', '=']).trim().to_string());
+                }
             }
-        }
+            out
+        };
+        let fx_weapons = fire_fx(&fx_ini);
+        let shipped_fx_weapons = files.get("Data\\INI\\Weapon\\ZHBO_BO2_Weapons.ini").map(|b| fire_fx(&String::from_utf8_lossy(b))).unwrap_or_default();
         let mut ev = HashMap::new();
         for e in events {
             ev.insert(e.event, e.layers);
@@ -91,6 +99,14 @@ impl Shipped {
                 }
             }
         }
+        // A weapon's placed world brass FXLists stand for its world shell effects.
+        for w in &bo2 {
+            for (e, last) in [(&w.world_shell_eject_effect, false), (&w.world_last_shot_eject_effect, true)] {
+                if let Some(e) = e {
+                    fx.entry(crate::shotfx::brass_fxlist(&w.name, last)).or_default().push(e.name.clone());
+                }
+            }
+        }
         for name in [crate::fx::SILENCER_VIEW_FLASH, crate::fx::SILENCER_WORLD_FLASH] {
             if let Some(e) = zhbo_formats::fx::find(&common, name) {
                 let names = fx.entry(crate::fx::fxlist_name(&e.name)).or_default();
@@ -100,7 +116,7 @@ impl Shipped {
             }
         }
         let sprites = files.get(MAPPED_IMAGES).map(|b| String::from_utf8_lossy(b).to_string()).unwrap_or_default();
-        Ok(Shipped { files, events: ev, fx, bo2, sprites, fx_weapons })
+        Ok(Shipped { files, events: ev, fx, bo2, sprites, fx_weapons, shipped_fx_weapons })
     }
 
     fn viewmodel(&self, vm: i32) -> Option<Viewmodel> {
@@ -130,6 +146,18 @@ impl Shipped {
     /// The third-person flash of a def's FX weapon (a Zero Hour FXList; `NONE` is no flash).
     fn world_flash(&self, fx_weapon: &str) -> Option<String> {
         self.fx_weapons.get(fx_weapon).filter(|f| *f != "NONE").cloned()
+    }
+
+    /// The BO2 effect a shipped FX weapon's `FireFX` plays (the world brass).
+    fn fx_weapon_effect(&self, fx_weapon: &str) -> Option<String> {
+        self.shipped_fx_weapons.get(fx_weapon).filter(|f| *f != "NONE").and_then(|f| self.effect(f))
+    }
+
+    /// The BO2 tracer a shipped tracer FX weapon draws (its `FireFX` is `ZHBO_BO2Tracer_<name>`).
+    fn tracer(&self, fx_weapon: &str) -> Option<String> {
+        let list = self.shipped_fx_weapons.get(fx_weapon)?;
+        let probe = crate::fx::tracer_fxlist("", 1.0);
+        list.strip_prefix(probe.as_str()).map(str::to_string)
     }
 
     /// The first BO2 alias a sound event mixes: a converted weapon's own (`DynSfx`) or a fixed one
@@ -685,11 +713,11 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     b.opt_text("view_flash_effect", sh.effect(&d.view_flash_fx))
         .opt_text("world_flash_effect", sh.world_flash(&d.fx_weapon))
         .opt_text("view_shell_eject_effect", sh.effect(&d.view_shell_fx))
-        .absent("world_shell_eject_effect")
+        .opt_text("world_shell_eject_effect", sh.fx_weapon_effect(&d.world_shell_fx_weapon))
         .opt_text("view_last_shot_eject_effect", sh.effect(&d.view_last_shot_shell_fx))
-        .absent("world_last_shot_eject_effect")
+        .opt_text("world_last_shot_eject_effect", sh.fx_weapon_effect(&d.world_last_shot_shell_fx_weapon))
         .opt_text("projectile_explosion_effect", sh.effect(&d.explosion_fx))
-        .absent("tracer");
+        .opt_text("tracer", sh.tracer(&d.tracer_fx_weapon));
 
     // Camo: the mod applies the def's one recipe over the whole composed mesh.
     let n = manifest.as_ref().map_or(0, |m| 1 + m.parts.iter().skip(2).filter(|p| !p.ads_only).count());
