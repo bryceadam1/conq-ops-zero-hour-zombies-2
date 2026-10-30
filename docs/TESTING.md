@@ -204,8 +204,9 @@ edge-tiling (edge mean difference 4.2/3.2); `CAMO_GAIN` is 2.0 (1.0 is the fallb
 comparison rejects it). A style camo's colour is its material's `colorMap` sampler (the layered
 toxic's `layer1Map`) and its specular the `SpecularAndGloss` spec-rgb map; `shaderConsts` are
 carried but not interpreted (D8). Metals keep their hue in the coloured specular (gold's colour map
-is a flat 21/20/13, its spec-rgb gold), which the native pass reads as a level only, so gold draws as
-polished dark metal until the renderer carries a specular colour. The real-install test
+is a flat 21/20/13, its spec-rgb gold), which the converter carries as the material's specular
+colour map and the native pass uses as the reflectance colour (RENDERER.md; pinned headless by
+`a_coloured_spec_map_tints_the_metal`). The real-install test
 `the_camo_assets_convert_with_their_art` pins the converter's unresolved list to the 20 provably
 unreachable names (DLC-only stubs and diamond's colour-less technique).
 

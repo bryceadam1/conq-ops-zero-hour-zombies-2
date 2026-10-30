@@ -286,6 +286,10 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   name-derived alias. The `.zcm` version is new
   (`camo::VERSION = 1`); the model blob's material record gains the camo layer, and its version
   bump (2→3) and the archive bump (64→65) are integrator-owned.
+  The material record (model and camo blobs alike, `Material::write`) then appends `specular`, the
+  converted spec colour map (`*_spec.tga`, RENDERER.md "The specular colour"); its bumps — model
+  `VERSION` 3→4, camo `VERSION` 1→2 and the archive's `hud::VERSION` — are integrator-owned. A
+  style camo replaces the surface's specular colour with the style's (gold's hue lives there).
   - **Divergences.** The camo applies to the first-person native viewmodel only: the W3D fallback
     bakes textures and has no texture override, and the third-person native body pins `camo` to
     `INVALID` (no third-person camo). Only the primary's viewmodel inherits the class camo, as the

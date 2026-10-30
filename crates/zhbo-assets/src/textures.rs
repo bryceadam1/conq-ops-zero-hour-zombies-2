@@ -114,9 +114,10 @@ pub(crate) fn maps_file(color: &str) -> String {
     color.replace(".tga", "_nsg.tga")
 }
 
-/// The specular colour of the opaque surface whose colour map is `color`.
+/// The specular colour of the opaque surface whose colour map is `color` (`_spec`, not BO2's own
+/// `_spc` image suffix, so no converted file can be mistaken for a BO2 spec image of that name).
 pub(crate) fn specular_file(color: &str) -> String {
-    color.replace(".tga", "_spc.tga")
+    color.replace(".tga", "_spec.tga")
 }
 
 /// A BO2 surface's specular colour: its spec map's RGB, raw, at the map's own size (shrunk to the
@@ -201,7 +202,7 @@ mod tests {
         let spec = specular_color(gold);
         assert_eq!((spec.width, spec.height), (4, 2));
         assert!(spec.pixels.as_chunks::<4>().0.iter().all(|p| *p == [158, 135, 83, 255]));
-        assert_eq!(specular_file("zhbo_camo_gold_col.tga"), "zhbo_camo_gold_col_spc.tga");
+        assert_eq!(specular_file("zhbo_camo_gold_col.tga"), "zhbo_camo_gold_col_spec.tga");
         // The packed maps keep the luminance as the level for draws without the colour.
         let maps = surface_maps(2, 2, None, Some(&Rgba { width: 1, height: 1, pixels: vec![158, 135, 83, 40] }));
         assert_eq!(maps.pixels[2..4], [40, 136]);

@@ -88,8 +88,8 @@ flags and texture formats, using bit layouts from bgfx's `defines.h`.
 
 Besides the engine's bgfx draws, the runtime draws BO2 models itself (Track R): the core uploads a
 skinned mesh once (`native_create_mesh`: 56-byte vertices with four bone influences, `u16`
-indices, surfaces with BO2's blend, emissive flag, colour map and packed normal/gloss/specular map
-from `native_create_texture`, which builds the mip chain; both upload raw — see shading) and
+indices, surfaces with BO2's blend, emissive flag, colour map, packed normal/gloss/specular map
+and specular colour map from `native_create_texture`, which builds the mip chain; both upload raw — see shading) and
 queues a draw per frame with its bone palette (`native_submit`, at most 256 bones). Queued draws
 run in one pass immediately before their `before_view` (the scene composite), into the
 `target_view`'s frame buffer and rect; a draw whose before-view never comes runs at the end of the
@@ -116,13 +116,24 @@ mesh, and a mesh left with no drawable surface at all is refused so the W3D fall
 **The camo layer (PLAN D1/E).** A native surface may carry a second texture: `NativeSurface.camo`
 (the chosen pattern/solid image, `INVALID` for none) and `camo_uv = [offset.x, offset.y, scale,
 gain]`. The material bind group has binding 4 (the camo texture; the 1×1 white page is bound when
-absent) and the material uniform is 32 bytes (`params: vec4` + `camo: vec4`). `native.wgsl` samples
+absent) and the material uniform carries `camo: vec4` after `params: vec4`. `native.wgsl` samples
 `camo_map` unconditionally at `uv * scale + offset` (implicit derivatives need uniform control
-flow) and, when `params.w > 0.5`, multiplies the albedo by `mix(1, camo.rgb * gain, camo.a)` — the
+flow) and, when `params.w > 0.5`, replaces the albedo: `mix(albedo.rgb, camo.rgb * gain, camo.a)` — the
 layer's alpha is its coverage on the converted art, and `gain` is per set (2.0 from the C0 probe;
 1.0 is the fallback). A stock surface binds white and skips the mix. Style camos are material
 replacements, not a layer: `nativevm::camo::apply` swaps the surface's
-colour/maps/blend/emissive/sort/cull to the converted style material.
+colour/maps/specular/blend/emissive/sort/cull to the converted style material.
+
+**The specular colour.** BO2's spec maps are colour maps (`*_spc-rgb`): a metal's hue lives in its
+specular, not its colour map (the gold camo's colour map is a flat 21/20/13, its spec map mean
+158/135/83; brass cartridges, tritium vials and lens coatings are tinted the same way).
+`NativeSurface.specular` (binding 5; the 1×1 white page when absent) carries the converted map
+(`*_spec.tga`, the spec map's RGB at its own size, raw), and the material uniform is 48 bytes
+(`params`, `camo`, `spec: vec4` whose `x` flags the map). The reflectance at normal incidence is
+then a colour, `f0 = spec.rgb²` — the same square the packed maps' scalar level (`maps.a²`) always
+used — so the highlight, the environment reflection and the diffuse energy split `(1 − f0)` take
+the hue. A grey spec map draws exactly as its level; a surface without the map (or without packed
+maps, whose gloss it needs) keeps the level.
 
 ### Robustness
 

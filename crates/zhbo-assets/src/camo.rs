@@ -439,8 +439,8 @@ mod tests {
         assert!(level > 100.0, "gold's spec-rgb must reach its surface maps: {level}");
         let gold_mat = &an94.materials.iter().find(|m| m.name == "mc/mtl_weapon_camo_gold").expect("gold's base material is in the blob");
         assert!(gold_mat.color.as_deref().is_some_and(|c| c.ends_with("camo_gold_col.tga")), "{:?}", gold_mat.color);
-        assert!(gold_mat.specular.as_deref().is_some_and(|c| c.ends_with("camo_gold_col_spc.tga")), "{:?}", gold_mat.specular);
-        let (w, h, spec) = tga("camo_gold_col_spc.tga");
+        assert!(gold_mat.specular.as_deref().is_some_and(|c| c.ends_with("camo_gold_col_spec.tga")), "{:?}", gold_mat.specular);
+        let (w, h, spec) = tga("camo_gold_col_spec.tga");
         println!("gold spec colour: {w}x{h} mean rgb {spec:?}");
         assert!(spec[0] > spec[1] && spec[1] > spec[2] && spec[0] > 120.0, "gold's spec colour is gold (R > G > B): {spec:?}");
     }

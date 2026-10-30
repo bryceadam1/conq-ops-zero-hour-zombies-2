@@ -162,7 +162,7 @@ fn a_camo_option_changes_only_the_surfaces_its_recipe_names() {
             name: "mc/mtl_weapon_camo_gold".into(),
             color: Some("Art\\Textures\\gold.tga".into()),
             maps: Some("Art\\Textures\\gold_nsg.tga".into()),
-            specular: Some("Art\\Textures\\gold_spc.tga".into()),
+            specular: Some("Art\\Textures\\gold_spec.tga".into()),
             ..Default::default()
         }],
         options: vec![
@@ -187,7 +187,7 @@ fn a_camo_option_changes_only_the_surfaces_its_recipe_names() {
     super::camo::apply(&mut m, &blob, "camo_gold", |_| true);
     assert_eq!(m.surfaces[0].color.as_deref(), Some("Art\\Textures\\gold.tga"));
     assert_eq!(m.surfaces[0].maps.as_deref(), Some("Art\\Textures\\gold_nsg.tga"));
-    assert_eq!(m.surfaces[0].specular.as_deref(), Some("Art\\Textures\\gold_spc.tga"), "gold's hue is its spec colour");
+    assert_eq!(m.surfaces[0].specular.as_deref(), Some("Art\\Textures\\gold_spec.tga"), "gold's hue is its spec colour");
     assert_eq!(m.surfaces[0].camo, None);
     assert_eq!(m.surfaces[1].color, before);
     assert_eq!(m.surfaces[2].camo, None);

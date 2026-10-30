@@ -381,7 +381,7 @@ mod tests {
     fn converts_a_model_with_four_normalized_influences() {
         let mut looks = Looks::default();
         looks.maps.insert("gun.tga".into(), "gun_nsg.tga".into());
-        looks.specular.insert("gun.tga".into(), "gun_spc.tga".into());
+        looks.specular.insert("gun.tga".into(), "gun_spec.tga".into());
         let m = model(&gun(), &[Some("gun.tga".into())], &looks);
         let back = nm::Model::from_bytes(&m.to_bytes()).expect("a valid blob");
         assert_eq!(back.surfaces[0].indices, vec![0, 1, 2]);
@@ -392,7 +392,7 @@ mod tests {
         assert!((w.iter().sum::<f32>() - 1.0).abs() < 1e-5 && w[0] >= w[1], "{w:?}");
         assert_eq!(back.surfaces[0].vertices[2].weights, [1.0, 0.0, 0.0, 0.0], "no weights: the first bone");
         assert_eq!(back.materials[0].maps.as_deref(), Some("Art\\Textures\\gun_nsg.tga"));
-        assert_eq!(back.materials[0].specular.as_deref(), Some("Art\\Textures\\gun_spc.tga"), "the spec colour reaches the blob");
+        assert_eq!(back.materials[0].specular.as_deref(), Some("Art\\Textures\\gun_spec.tga"), "the spec colour reaches the blob");
         // A dropped texture drops its surface.
         looks.dropped.insert("gun.tga".into());
         assert!(model(&gun(), &[Some("gun.tga".into())], &looks).surfaces.is_empty());
