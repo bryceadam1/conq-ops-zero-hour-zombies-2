@@ -5022,3 +5022,22 @@ joins `Arsenal::swaps_pending`. Test: `a_switch_during_a_melee_happens_after_it`
 
 Found, not done: the same check also holds a switch back while a shot's `weaponTime` runs (states 6
 and 0x28 with `weaponTime != 0`); the mod switches at once mid-shot.
+
+## The plant check's vehicle, entity and Tactical Insertion refusals (2026-10-31, `v1/offhand-rules`)
+
+Correction to the plant-check entry: there are no *silent* refusals. What `FUN_008e1780` sets on
+some paths (`ps+0x580 = toggle | 0x1a`) is a weapon animation, not the hint; the hint is event 0xd5,
+which every caller fires whenever the check returns false. So all of these show "Cannot Plant Here":
+
+* On a vehicle (`ps+0xfc & 0x4000`, the bit `FUN_008deb50` reads with
+  `player_disableWeaponsOnVehicle`): in the mod, a live, grounded Zero Hour vehicle whose roof is
+  within 4 in under the feet (a short ray down, `hitscan::ray_vs_target`).
+* The trace (mask `0x800a31`) hitting a non-world entity with contents `0x200` — the IW-family
+  `CONTENTS_VEHICLECLIP` (naming inferred from the IW engines, medium confidence): in the mod the trace
+  now meets every colliding object, and a vehicle, friend or foe, refuses; a structure just stops it.
+* The Tactical Insertion (`FUN_008e16d0`): on world ground (not on an entity) with the box mins
+  (-15, -15, 0) maxs (15, 15, 70) in at its origin clear (`DAT_00bd2434`/`DAT_00bd2440`, mask
+  `0x810011`): in the mod, no colliding object but the General overlapping that box. (Its pm-flag
+  tests, `ps+0xc & 0xa0000c`, are unnamed and not modelled.)
+
+`sim::can_plant` takes the General's id. Test: `the_plant_check_refuses_on_and_into_vehicles_and_a_crowded_insertion`.

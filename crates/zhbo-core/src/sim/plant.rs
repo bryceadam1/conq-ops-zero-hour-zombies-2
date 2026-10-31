@@ -6,8 +6,9 @@
 ** License, or (at your option) any later version.
 */
 
-use crate::host::LogicHost;
-use crate::hitscan::trace_terrain;
+use crate::host::{objflags, LogicHost};
+use crate::hitscan::{ray_vs_target, trace, trace_terrain, HitResult, Shape, Target};
+use crate::sim::fire::target_from;
 use crate::impacts::Surface;
 use crate::math::{dir_from_angles, Vec3};
 use crate::movement::Body;
@@ -18,23 +19,57 @@ use crate::weapons::WeaponDef;
 /// `start + dir * DAT_00f6dbf0`, 1000.0).
 pub const PLANT_TRACE_INCHES: f32 = 1000.0;
 
+/// The Tactical Insertion's clearance box (`FUN_008e16d0`: mins (-15, -15, 0), maxs (15, 15, 70)
+/// at the player's origin, `DAT_00bd2434`/`DAT_00bd2440`), in inches.
+const TI_BOX_HALF_INCHES: f32 = 15.0;
+const TI_BOX_HEIGHT_INCHES: f32 = 70.0;
+
+/// How far below the feet a vehicle's roof still counts as what the General stands on.
+const ON_VEHICLE_INCHES: f32 = 4.0;
+
 /// BO2's plant check (`FUN_008e1780`) in the mod's world. It applies to a `plantable` item whose
-/// throw does not go up (`iProjectileSpeedUp <= 0`), and refuses ("Cannot Plant Here") when:
+/// throw does not go up (`iProjectileSpeedUp <= 0`), and refuses — every caller then fires event
+/// 0xd5, the "Cannot Plant Here" hint — when:
 /// * the player is off the ground (`groundEntityNum` none);
+/// * the player is on a vehicle (`ps+0xfc & 0x4000`; the flag `FUN_008deb50` reads with
+///   `player_disableWeaponsOnVehicle`): in the mod, a Zero Hour vehicle's roof just under the feet;
+/// * the item is the Tactical Insertion and `FUN_008e16d0` fails: the player must stand on the world
+///   (`groundEntityNum` 0x3fe, not on an entity) with the 30 x 30 x 70 box at his origin clear — in
+///   the mod, no colliding object (other than himself) overlapping that box;
 /// * a trace from the eye along the throw (`forward * iProjectileSpeed + up *
-///   iProjectileSpeedUp`, normalised, [`PLANT_TRACE_INCHES`] long) ends in water deeper than
-///   `bg_plantInWaterDepth` (`bg_disableWeaponPlantingInWater` is on by default). The mod's
-///   world has no water depth; water the General cannot stand in (`is_walkable` false) is the
-///   deep kind, water he can stand in is shallow enough.
-///
-/// Not modelled: BO2's silent refusals on a vehicle and on a trace that hits a non-world entity
-/// with contents `0x200`, and the Tactical Insertion's extra test (`FUN_008e16d0`: on world
-/// ground, a clear box at the feet) beyond being on the ground — the mod's ground is all world.
-pub fn can_plant(def: &WeaponDef, body: &Body, yaw: f32, pitch: f32, host: &dyn LogicHost) -> bool {
+///   iProjectileSpeedUp`, normalised, [`PLANT_TRACE_INCHES`] long, mask `0x800a31`) hits a
+///   non-world entity whose contents have `0x200` — the IW-family `CONTENTS_VEHICLECLIP`; in the
+///   mod, a Zero Hour vehicle, friend or foe (a structure stops the trace without refusing) — or ends in
+///   water deeper than `bg_plantInWaterDepth` (`bg_disableWeaponPlantingInWater` is on by default).
+///   The mod's world has no water depth; water the General cannot stand in (`is_walkable` false)
+///   is the deep kind, water he can stand in is shallow enough.
+pub fn can_plant(def: &WeaponDef, body: &Body, yaw: f32, pitch: f32, general: u32, host: &dyn LogicHost) -> bool {
     if !def.plantable || def.projectile_speed_up > 0.0 {
         return true;
     }
     if !body.on_ground {
+        return false;
+    }
+    let ground = |x: f32, y: f32| host.ground_height(x, y);
+    let start = body.eye();
+    let reach = inches(PLANT_TRACE_INCHES);
+    // Everything the traces could meet (dead and non-colliding objects never block, `NO_COLLIDE`).
+    let mut objs = Vec::new();
+    host.query(body.pos, reach + body.eye_height, general, &mut objs);
+    let mut solids: Vec<Target> = objs.iter().filter(|o| o.id != general && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE)).map(target_from).collect();
+    solids.sort_by_key(|t| t.id);
+    let vehicles: Vec<Target> = objs
+        .iter()
+        .filter(|o| o.id != general && o.has(objflags::VEHICLE) && !o.has(objflags::DEAD) && !o.has(objflags::AIRBORNE))
+        .map(target_from)
+        .collect();
+    // On a vehicle: a roof right under the feet (a short ray down from just above them).
+    let down = Vec3::new(0.0, 0.0, -1.0);
+    let above_feet = body.pos + Vec3::new(0.0, 0.0, inches(ON_VEHICLE_INCHES));
+    if vehicles.iter().any(|v| ray_vs_target(above_feet, down, inches(2.0 * ON_VEHICLE_INCHES), v).is_some()) {
+        return false;
+    }
+    if def.equipment_kind == crate::equipment::Kind::Insertion && !ti_box_clear(body, &solids) {
         return false;
     }
     let throw = dir_from_angles(yaw, pitch) * def.projectile_speed + Vec3::new(0.0, 0.0, def.projectile_speed_up);
@@ -44,12 +79,28 @@ pub fn can_plant(def: &WeaponDef, body: &Body, yaw: f32, pitch: f32, host: &dyn 
         return true;
     }
     let dir = throw * (1.0 / len);
-    let start = body.eye();
-    let Some(t) = trace_terrain(start, dir, inches(PLANT_TRACE_INCHES), &|x, y| host.ground_height(x, y)) else {
-        return true;
-    };
-    let hit = start + dir * t;
-    !(host.surface_at(hit.x, hit.y) == Surface::Water && !host.is_walkable(hit.x, hit.y))
+    match trace(start, dir, reach, &solids, general, &ground) {
+        // Only an entity with vehicle clip (`0x200`) refuses; a structure stops the trace and is
+        // simply not water.
+        HitResult::Object { id, .. } => !objs.iter().any(|o| o.id == id && o.has(objflags::VEHICLE)),
+        HitResult::Terrain { point } => !(host.surface_at(point.x, point.y) == Surface::Water && !host.is_walkable(point.x, point.y)),
+        HitResult::Nothing { .. } => true,
+    }
+}
+
+/// `FUN_008e16d0`'s clearance: no solid overlaps the 30 x 30 x 70 inch box standing at the feet.
+fn ti_box_clear(body: &Body, solids: &[Target]) -> bool {
+    let (half, height) = (inches(TI_BOX_HALF_INCHES), inches(TI_BOX_HEIGHT_INCHES));
+    let (lo, hi) = (body.pos.z, body.pos.z + height);
+    !solids.iter().any(|t| {
+        let (reach, top) = match t.shape {
+            Shape::Cylinder { radius, height } => (radius, height),
+            Shape::Box { half_x, half_y, height, .. } => (half_x.max(half_y), height),
+            Shape::Sphere { radius } => (radius, radius * 2.0),
+        };
+        let d = t.pos - body.pos;
+        d.x.abs() < half + reach && d.y.abs() < half + reach && t.pos.z < hi && t.pos.z + top > lo
+    })
 }
 
 /// Longest flight [`plant_point`] follows before giving up and setting the item at the feet.
@@ -105,6 +156,48 @@ mod tests {
 
     fn body() -> Body {
         Body::new(Vec3::ZERO, &crate::movement::MoveTuning::default())
+    }
+
+    fn object(id: u32, flags: u32, x: f32) -> crate::host::ObjInfo {
+        crate::host::ObjInfo {
+            id,
+            flags,
+            pos: Vec3::new(x, 0.0, 0.0),
+            geom_type: crate::host::geom::BOX,
+            major_radius: 20.0,
+            minor_radius: 20.0,
+            height: 15.0,
+            health: 100.0,
+            max_health: 100.0,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn the_plant_check_refuses_on_and_into_vehicles_and_a_crowded_insertion() {
+        let b = body();
+        // A forward plant (no upward throw): the trace runs along the view.
+        let ahead = WeaponDef { plantable: true, projectile_speed: inches(100.0), ..Default::default() };
+        let host = FakeHost::default();
+        assert!(can_plant(&ahead, &b, 0.0, 0.0, 1, &host), "nothing in the way");
+        host.add(object(7, objflags::STRUCTURE, 60.0));
+        assert!(can_plant(&ahead, &b, 0.0, 0.0, 1, &host), "a structure stops the trace, no refusal");
+        let host = FakeHost::default();
+        host.add(object(7, objflags::VEHICLE, 60.0));
+        assert!(!can_plant(&ahead, &b, 0.0, 0.0, 1, &host), "the trace meets a vehicle");
+        // Standing on a vehicle's roof.
+        let host = FakeHost::default();
+        host.add(object(7, objflags::VEHICLE, 0.0));
+        let mut on_roof = body();
+        on_roof.pos.z = 15.0;
+        let down = WeaponDef { plantable: true, projectile_speed: inches(100.0), projectile_speed_up: inches(-10000.0), ..Default::default() };
+        assert!(!can_plant(&down, &on_roof, 0.0, 0.0, 1, &host), "on a vehicle");
+        // The Tactical Insertion: a soldier inside the 30 x 30 x 70 box at the feet.
+        let ti = WeaponDef { plantable: true, equipment_kind: crate::equipment::Kind::Insertion, ..Default::default() };
+        let host = FakeHost::default();
+        assert!(can_plant(&ti, &b, 0.0, 0.0, 1, &host));
+        host.add(crate::host::ObjInfo { id: 9, flags: objflags::INFANTRY, pos: Vec3::new(inches(20.0), 0.0, 0.0), geom_type: crate::host::geom::CYLINDER, major_radius: 5.0, height: 12.0, ..Default::default() });
+        assert!(!can_plant(&ti, &b, 0.0, 0.0, 1, &host), "the box is not clear");
     }
 
     #[test]
