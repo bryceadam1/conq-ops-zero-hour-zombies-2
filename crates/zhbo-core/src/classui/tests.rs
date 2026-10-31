@@ -1145,3 +1145,24 @@ fn an_empty_extra_offhand_box_shows_the_plus_sign() {
     e.draft.tactical.clear();
     assert!(!super::editor::offhand_plus(&e, &second));
 }
+
+/// The boxes an equipped bonus card adds sit on BO2's orange preview plate (`slotlist.lua`):
+/// Danger Close's second lethal, a Greed's second perk, a Gunfighter's extra attachment — not
+/// Tactician's lethal boxes, nor a slot's own.
+#[test]
+fn a_bonus_cards_box_is_marked_as_its_preview_slot() {
+    use crate::classmenu::Wildcard;
+    let l = editor_layout(1280.0, 720.0);
+    let marked = |e: &Editor| -> Vec<(Slot, usize)> {
+        editor_cells(&l, e).into_iter().filter(|c| super::editor::bonus_card_box(e, c)).map(|c| (c.slot, c.index)).collect()
+    };
+    let mut e = Editor::new(Draft::default());
+    assert!(marked(&e).is_empty(), "the tactical's second box is the slot's own");
+    e.draft.wildcards = vec![Wildcard::DangerClose, Wildcard::Perk1Greed, Wildcard::PrimaryGunfighter];
+    let m = marked(&e);
+    assert!(m.contains(&(Slot::Lethal, 1)) && m.contains(&(Slot::PrimaryAtts, 2)) && m.iter().any(|(s, _)| *s == Slot::Perk1b), "{m:?}");
+    assert!(!m.contains(&(Slot::Lethal, 0)) && !m.contains(&(Slot::Tactical, 1)));
+    e.draft.wildcards = vec![Wildcard::Tactician];
+    e.draft.lethal = "concussion_grenade_mp".into();
+    assert!(marked(&e).is_empty(), "Tactician's two boxes are the tactical item's own");
+}

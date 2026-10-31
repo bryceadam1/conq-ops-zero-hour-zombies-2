@@ -4995,3 +4995,21 @@ not) and no plus. Now `classui::editor::cell_icon` draws the picture on filled b
 Close's. `kd_chart_plus` (in `code_post_gfx_mp`) joins `lui::materials::MATERIALS`, so the
 archive must be rebuilt (`hud::VERSION`, the integrator's); without it a white `+` stands in.
 Test: `an_empty_extra_offhand_box_shows_the_plus_sign`.
+
+## A bonus card's box sits on BO2's preview plate (2026-10-31, `v1/cac-rules`)
+
+The box an equipped bonus card adds is built as a *preview* slot of its slot list:
+`slotlist.lua:880-930` (a Gunfighter's extra attachment), `:1003-1040` (a Greed's second perk) and
+`cacgrenadesbutton.lua:130-250` (Danger Close's second lethal; Tactician's two boxes are the
+tactical item's own, not a preview). `AddBonusCardPreviewElements` (`slotlist.lua:596-690`) gives
+it a `CoD.trueOrange` background inset 2 units, added over the button's own art and under its
+icon, which `UpdateSlotImages` (`:412-428`) shows at alpha 1 while the card is equipped, and a
+pulsing plate (alpha 0.05 ↔ 0.2, `PulseSpeed` 1000 ms) for a previewed card that is *not*
+equipped. The class editor's `BonusCardGainFocusFunctions` (`customclass.lua:1425-1620`) only fire
+for the wildcard row's buttons, which always hold an equipped card, so highlighting Danger Close
+there changes nothing visible: the plate is already shown. The pulse never shows in BO2's
+editor flow, and the mod does not draw it.
+
+`classui::editor::bonus_card_box` names those boxes and `bonus_card_plate` draws the plate.
+Not checked against a capture (the sweep has no editor shot with a card equipped), so this rests
+on the Lua alone. Test: `a_bonus_cards_box_is_marked_as_its_preview_slot`.

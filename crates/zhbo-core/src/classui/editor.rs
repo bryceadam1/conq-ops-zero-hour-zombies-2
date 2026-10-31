@@ -218,6 +218,7 @@ fn draw_cell(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor, cell: &Ed
         }
         Slot::PrimaryAtts | Slot::SecondaryAtts => {
             button_bg(prims, f, r);
+            bonus_card_plate(prims, f, editor, cell);
             let atts = if cell.slot == Slot::PrimaryAtts { &editor.draft.primary_atts } else { &editor.draft.secondary_atts };
             if let Some(short) = atts.get(cell.index) {
                 let icon = r.h - 8.0;
@@ -235,6 +236,7 @@ fn draw_cell(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor, cell: &Ed
         Slot::Lethal | Slot::Tactical | Slot::Perk1 | Slot::Perk2 | Slot::Perk3 | Slot::Perk1b | Slot::Perk2b | Slot::Perk3b => {
             // The slot's plate carries its icon; the button's label and name(s) draw once, left.
             button_bg(prims, f, r);
+            bonus_card_plate(prims, f, editor, cell);
             if let Some(art) = cell_icon(editor, cell) {
                 let icon = r.h;
                 bo2::sprite(prims, f, &art, Rect { x: r.x + (r.w - icon) * 0.5, y: r.y, w: icon, h: icon }, argb(OFF_WHITE, 1.0), Vec::new());
@@ -324,6 +326,34 @@ fn offhand_names(d: &Draft, lethal: bool) -> Vec<String> {
         0 => Vec::new(),
         1 => vec![weapons::weapon(id).display_name.clone()],
         n => vec![format!("{} x{n}", weapons::weapon(id).display_name)],
+    }
+}
+
+/// Whether a box is one an equipped bonus card adds: BO2's slot lists build it as a *preview* slot
+/// (`slotlist.lua:880-930` the Gunfighters' extra attachment, `:1003-1040` a Greed's second perk,
+/// `cacgrenadesbutton.lua:130-250` Danger Close's second lethal — not Tactician's, whose two boxes
+/// are the tactical slot's own).
+pub(super) fn bonus_card_box(editor: &Editor, cell: &EditorCell) -> bool {
+    use crate::classmenu::{items, Wildcard};
+    let d = &editor.draft;
+    match cell.slot {
+        Slot::PrimaryAtts => cell.index == crate::classes::MAX_ATTACHMENTS && d.wildcards.contains(&Wildcard::PrimaryGunfighter),
+        Slot::SecondaryAtts => cell.index == crate::classes::MAX_ATTACHMENTS - 1 && d.wildcards.contains(&Wildcard::SecondaryGunfighter),
+        Slot::Lethal => cell.index == 1 && d.wildcards.contains(&Wildcard::DangerClose) && !items::is_tactical_item(&d.lethal),
+        Slot::Perk1b | Slot::Perk2b | Slot::Perk3b => true,
+        _ => false,
+    }
+}
+
+/// A bonus card's box sits on BO2's preview plate: `AddBonusCardPreviewElements`' background, a
+/// `CoD.trueOrange` image inset 2 units, shown at alpha 1 while the card is equipped
+/// (`slotlist.lua:596-690`, `UpdateSlotImages` at `:412-428`), under the box's icon. Its pulse
+/// (alpha 0.05 to 0.2) is for a previewed card that is not equipped, which the editor's
+/// wildcard row never holds.
+fn bonus_card_plate(prims: &mut Vec<Prim>, f: &Frame, editor: &Editor, cell: &EditorCell) {
+    if bonus_card_box(editor, cell) {
+        let r = cell.rect;
+        bo2::fill(prims, f, Rect { x: r.x + 2.0, y: r.y + 2.0, w: r.w - 4.0, h: r.h - 4.0 }, argb(bo2::TRUE_ORANGE, 1.0));
     }
 }
 
