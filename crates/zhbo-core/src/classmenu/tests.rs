@@ -75,6 +75,44 @@ use super::*;
         assert_eq!(PersonalizeKind::SecondaryCamo.columns(), 6, "the same `CACCamo` grid");
     }
 
+    /// BO2's `SetClassItem` on a weapon slot with a new value zeroes that slot's camo and reticle
+    /// (`FUN_008d0650`); re-picking the same weapon changes nothing, and Remove clears them too.
+    #[test]
+    fn a_new_weapon_in_a_slot_resets_that_slots_camo() {
+        let personalised = Draft {
+            camo: "camo_gold".into(),
+            reticle: "reticle_2".into(),
+            reticle_color: "red".into(),
+            secondary_camo: "camo_atacs".into(),
+            knife: "camo_diamond".into(),
+            ..Draft::default()
+        };
+        // A different secondary: its camo goes, the primary's options and the knife's stay.
+        let mut e = Editor::new(personalised.clone());
+        e.slot = Slot::Secondary;
+        let ids = gun_ids(&e.secondary_classes());
+        let other = ids.iter().position(|id| *id != e.draft.secondary).expect("another sidearm");
+        let same = ids.iter().position(|id| *id == e.draft.secondary).expect("the current sidearm");
+        e.apply_option(same);
+        assert_eq!(e.draft.secondary_camo, "camo_atacs", "re-picking the same weapon keeps its camo");
+        e.apply_option(other);
+        assert!(e.draft.secondary_camo.is_empty());
+        assert_eq!((e.draft.camo.as_str(), e.draft.reticle.as_str(), e.draft.knife.as_str()), ("camo_gold", "reticle_2", "camo_diamond"));
+        // A different primary: its camo, reticle and reticle colour go; the secondary's stays.
+        let mut e = Editor::new(personalised.clone());
+        e.slot = Slot::Primary;
+        let ids = gun_ids(&PRIMARY_CLASSES);
+        let other = ids.iter().position(|id| *id != e.draft.primary).expect("another primary");
+        e.apply_option(other);
+        assert!(e.draft.camo.is_empty() && e.draft.reticle.is_empty() && e.draft.reticle_color.is_empty());
+        assert_eq!(e.draft.secondary_camo, "camo_atacs");
+        // Remove takes the slot's camo with the gun.
+        let mut d = personalised.clone();
+        assert!(crate::classui::clear_cell(&mut d, Slot::Secondary, 0));
+        assert!(d.secondary_camo.is_empty());
+        assert_eq!(d.camo, "camo_gold");
+    }
+
     #[test]
     fn the_secondary_camo_page_sets_secondarycamo_only() {
         let mut d = Draft { camo: "camo_gold".into(), secondary_camo: "camo_atacs".into(), ..Draft::default() };

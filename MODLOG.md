@@ -4701,3 +4701,23 @@ the knife picture.
   `v1/attach-camo` composes: its manifest gives the alt's own part list.
 - Test: `nativevm::tests::an_alt_mode_wears_its_parents_class_camo_through_its_own_def`.
   Verified: `cargo test --workspace` is green; clippy has 38 warnings, unchanged.
+
+## A new weapon resets its slot's camo (2026-10-31, branch `v1/secondary-camo`)
+
+- **BO2 (read-only Ghidra, t6mp).** LUI `Engine.SetClassItem` (`FUN_0093c800`) calls
+  `FUN_004943e0`. When the value really changes, that calls `FUN_008d0650`, which does this for
+  `primary` and `secondary`: it zeroes `<slot>attachment1..3`, `<slot>camo`, `<slot>reticle`,
+  `<slot>reticlecolor`, `<slot>lens`, `<slot>tag` and `<slot>emblem`. A camo is a global option
+  index (`calcweaponoptions`, `FUN_005e0cd0`, reads loadout item 4 / 0xe / 0x14 for
+  primary/secondary/knife camo with no weapon involved), so nothing reinterprets it later. The
+  reset on the weapon change is the whole rule.
+- **The mod.** `Draft::reset_weapon_options(primary)` clears that slot's camo, plus the
+  primary's reticle and reticle colour, the only optic the mod personalizes. The editor calls it
+  when a weapon pick changes the slot's weapon (re-picking the same gun keeps everything, as
+  BO2's changed-value guard does) and when `R Remove` empties the slot. `classrepair` already
+  clears a camo whose weapon is gone.
+- **Divergence left for another item:** BO2's same function also zeroes the slot's attachments.
+  The mod's editor keeps the attachments the new gun offers (`keep_offered_atts`). That predates
+  this branch, and this commit does not change it.
+- Test: `classmenu::tests::a_new_weapon_in_a_slot_resets_that_slots_camo`. Verified:
+  `cargo test --workspace` is green; clippy has 38 warnings, unchanged.

@@ -540,6 +540,21 @@ impl Draft {
         }
     }
 
+    /// A weapon slot took a different weapon (or was emptied): BO2's `SetClassItem` on `primary` /
+    /// `secondary` with a new value (`FUN_004943e0` → `FUN_008d0650`) zeroes that slot's
+    /// `<slot>camo`, `<slot>reticle` and `<slot>reticlecolor` (and its lens, tag, emblem and
+    /// attachments). The camo is option 0 (the stock finish, empty here); the reticle and its
+    /// colour are the primary's, the only optic the mod personalizes.
+    pub fn reset_weapon_options(&mut self, primary: bool) {
+        if primary {
+            self.camo.clear();
+            self.reticle.clear();
+            self.reticle_color.clear();
+        } else {
+            self.secondary_camo.clear();
+        }
+    }
+
     /// The primary weapon id plus its attachments.
     pub fn primary_id(&self) -> String {
         Draft::weapon_with_atts(&self.primary, &self.primary_atts)
@@ -1507,14 +1522,20 @@ impl Editor {
             Slot::Primary => {
                 let ids = gun_ids(&PRIMARY_CLASSES);
                 if let Some(id) = ids.get(i).copied() {
-                    self.draft.primary = id.to_string();
+                    if self.draft.primary != id {
+                        self.draft.primary = id.to_string();
+                        self.draft.reset_weapon_options(true);
+                    }
                     self.keep_offered_atts(true);
                 }
             }
             Slot::Secondary => {
                 let ids = gun_ids(&self.secondary_classes());
                 if let Some(id) = ids.get(i).copied() {
-                    self.draft.secondary = id.to_string();
+                    if self.draft.secondary != id {
+                        self.draft.secondary = id.to_string();
+                        self.draft.reset_weapon_options(false);
+                    }
                     self.keep_offered_atts(false);
                 }
             }
