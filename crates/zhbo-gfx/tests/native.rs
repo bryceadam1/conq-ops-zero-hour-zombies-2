@@ -8,7 +8,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use zhbo_gfx::runtime::{InitDesc, NativeBlend, NativeCull, NativeDraw, NativeFrame, NativeLight, NativeSurface, NativeVertex, Renderer, WindowKind, INVALID};
+use zhbo_gfx::runtime::{InitDesc, NativeBlend, NativeCull, NativeDraw, NativeFrame, NativeLight, NativeReticle, NativeSurface, NativeVertex, Renderer, WindowKind, INVALID};
 use zhbo_gfx::state;
 
 const W: u32 = 64;
@@ -83,6 +83,8 @@ fn frame(lights: u32) -> NativeFrame {
         lights: [NativeLight { direction: [0.0, 0.0, -1.0], color: [1.0, 1.0, 1.0] }; 3],
         light_count: lights,
         debug: 0.0,
+        ads: 0.0,
+        optics_off: 0.0,
     }
 }
 
@@ -92,7 +94,7 @@ fn texture(r: &mut Renderer, rgba: [u8; 4]) -> u16 {
 }
 
 fn surface(color: u16, emissive: bool, count: u32) -> NativeSurface {
-    NativeSurface { first_index: 0, index_count: count, blend: NativeBlend::Opaque, emissive, color, maps: INVALID, specular: INVALID, camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: 0, cull: NativeCull::None }
+    NativeSurface { first_index: 0, index_count: count, blend: NativeBlend::Opaque, emissive, color, maps: INVALID, specular: INVALID, camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: 0, cull: NativeCull::None, reticle: None }
 }
 
 /// A camo layer replaces the base colour at its own coverage. A multiply would leave the base
@@ -115,6 +117,7 @@ fn camo_layer_replaces_the_base_colour() {
         camo_uv: [0.0, 0.0, 1.0, 2.0],
         sort_key: 0,
         cull: NativeCull::None,
+        reticle: None,
     };
     let mesh = r.native_create_mesh(&verts, &[0, 2, 1, 0, 3, 2], &[camo_surface]);
     assert_ne!(mesh, INVALID);
@@ -387,4 +390,166 @@ fn runs_before_its_view_or_at_the_end() {
     r.frame();
     assert!(close(pixel(&shot, 8, 8), [0, 0, 255]), "the end-of-frame pass drew last: {:?}", pixel(&shot, 8, 8));
     assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
+}
+
+/// A 90° perspective from the origin down +Z (world +Y is screen-down, as `ortho`), depth 0..1.
+fn perspective() -> [f32; 16] {
+    let (near, far) = (1.0f32, 100.0f32);
+    let mut m = [0.0f32; 16];
+    m[0] = 1.0;
+    m[5] = -1.0;
+    m[10] = far / (far - near);
+    m[11] = 1.0;
+    m[14] = -near * far / (far - near);
+    m
+}
+
+/// A 6 x 6 lens 10 units in front of the eye, facing it, its UVs 0..1 along +X and +Y.
+fn lens() -> [NativeVertex; 4] {
+    [(-3.0, -3.0), (-3.0, 3.0), (3.0, 3.0), (3.0, -3.0)].map(|(x, y): (f32, f32)| NativeVertex {
+        position: [x, y, 10.0],
+        normal: [0.0, 0.0, -1.0],
+        uv: [(x + 3.0) / 6.0, (y + 3.0) / 6.0],
+        bones: [0; 4],
+        weights: [1.0, 0.0, 0.0, 0.0],
+    })
+}
+
+/// A 16 x 16 reticle image: the shape (red) a 2 x 2 dot at its centre, no glow, no background.
+fn dot_reticle(r: &mut Renderer) -> u16 {
+    let mut data = vec![0u8; 16 * 16 * 4];
+    for (x, y) in [(7, 7), (8, 7), (7, 8), (8, 8)] {
+        data[(y * 16 + x) * 4] = 255;
+    }
+    for p in data.chunks_mut(4) {
+        p[3] = 255;
+    }
+    r.native_create_texture(16, 16, &data, false)
+}
+
+fn reticle(scale: f32) -> NativeReticle {
+    NativeReticle { noise: INVALID, scale, color: [1.0, 1.0, 1.0], glow: [0.0; 3], glow_falloff: 1.0, emissive: 1.0, noise_scale: 1.0, noise_amount: 0.0, background: 0.0 }
+}
+
+fn translate3(x: f32, y: f32, z: f32) -> [f32; 16] {
+    let mut m = IDENTITY;
+    m[12] = x;
+    m[13] = y;
+    m[14] = z;
+    m
+}
+
+/// The centroid of the red pixels (BGRA screenshot) and their count.
+fn red_centroid(shot: &Shot) -> (f32, f32, usize) {
+    let px = shot.lock().unwrap().clone().expect("a screenshot");
+    let (mut sx, mut sy, mut n) = (0.0, 0.0, 0);
+    for y in 0..H {
+        for x in 0..W {
+            if px[((y * W + x) * 4 + 2) as usize] > 128 {
+                sx += x as f32 + 0.5;
+                sy += y as f32 + 0.5;
+                n += 1;
+            }
+        }
+    }
+    (sx / n.max(1) as f32, sy / n.max(1) as f32, n)
+}
+
+fn draw_lens(r: &mut Renderer, shot: &Shot, mesh: u16, palette: [f32; 16], ads: f32) -> (f32, f32, usize) {
+    let f = NativeFrame { view_proj: Some(perspective()), eye: [0.0; 3], ads, ..frame(0) };
+    // Clear the scene each frame (an untouched view keeps the last frame's pixels).
+    r.touch(1);
+    assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh, palette: &[palette], frame: f }));
+    r.request_screenshot(INVALID, "reticle.png");
+    r.frame();
+    red_centroid(shot)
+}
+
+/// BO2's reticle is projected to infinity: it is a function of the view direction only, so when
+/// the gun sways (the lens moves across the view) the dot stays on the screen's centre, where the
+/// optic's axis points. A dot painted on the lens by its UVs moves with the lens.
+#[test]
+fn the_lens_reticle_stays_on_the_line_of_sight_when_the_gun_sways() {
+    let Some((mut r, log, shot)) = renderer() else { return };
+    let tex = dot_reticle(&mut r);
+    let projected = NativeSurface { blend: NativeBlend::Premultiplied, reticle: Some(reticle(1.0)), ..surface(tex, false, 6) };
+    let painted = NativeSurface { blend: NativeBlend::Premultiplied, emissive: true, ..surface(tex, true, 6) };
+    let idx = [0u16, 2, 1, 0, 3, 2];
+    let lens_reticle = r.native_create_mesh(&lens(), &idx, &[projected]);
+    let lens_paint = r.native_create_mesh(&lens(), &idx, &[painted]);
+    assert!(lens_reticle != INVALID && lens_paint != INVALID);
+    let centre = W as f32 * 0.5;
+    for sway in [translate3(0.0, 0.0, 0.0), translate3(1.5, -1.0, 0.0), translate3(-2.0, 0.5, 1.0)] {
+        let (x, y, n) = draw_lens(&mut r, &shot, lens_reticle, sway, 1.0);
+        assert!(n > 0, "the reticle draws");
+        assert!((x - centre).abs() <= 0.75 && (y - centre).abs() <= 0.75, "the reticle stays on the axis at ({x}, {y}) for sway {:?}", &sway[12..15]);
+    }
+    let (x0, _, _) = draw_lens(&mut r, &shot, lens_paint, translate3(0.0, 0.0, 0.0), 1.0);
+    let (x1, _, _) = draw_lens(&mut r, &shot, lens_paint, translate3(1.5, -1.0, 0.0), 1.0);
+    assert!((x1 - x0).abs() > 3.0, "a dot painted on the lens moves with it ({x0} -> {x1})");
+    assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
+}
+
+/// The reticle follows the optic's axis: turning the lens by `a` moves the dot `tan(a)` of the
+/// half-screen (the 90° view's `f` = 1), the way the image is seen at infinity along the lens
+/// normal. Its size is the image's angular size, `1 / scale` radians across.
+#[test]
+fn the_lens_reticle_turns_with_the_optic_and_is_sized_by_its_scale() {
+    let Some((mut r, log, shot)) = renderer() else { return };
+    let tex = dot_reticle(&mut r);
+    let idx = [0u16, 2, 1, 0, 3, 2];
+    let mesh = r.native_create_mesh(&lens(), &idx, &[NativeSurface { blend: NativeBlend::Premultiplied, reticle: Some(reticle(0.5)), ..surface(tex, false, 6) }]);
+    // Yaw about the lens's centre (0, 0, 10).
+    let a = 0.1f32;
+    let (c, s) = (a.cos(), a.sin());
+    let mut yaw = IDENTITY;
+    yaw[0] = c;
+    yaw[2] = -s;
+    yaw[8] = s;
+    yaw[10] = c;
+    yaw[12] = -10.0 * s;
+    yaw[14] = 10.0 - 10.0 * c;
+    let (x0, _, n0) = draw_lens(&mut r, &shot, mesh, IDENTITY, 1.0);
+    let (x1, _, _) = draw_lens(&mut r, &shot, mesh, yaw, 1.0);
+    let expect = a.tan() * W as f32 * 0.5;
+    assert!(((x1 - x0).abs() - expect).abs() <= 1.0, "turned by {a} rad the dot moves {expect} px: {x0} -> {x1}");
+    // At scale 0.5 the 2/16-wide dot spans 0.25 rad of tangent: 8 px of the 32 px half-screen.
+    assert!((40..=100).contains(&n0), "an 8 x 8 px dot: {n0} px");
+    assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
+}
+
+/// BO2 fades the reticle in over the first half of the aim (`saturate(2 · fWeaponPosFrac)`) and
+/// hides it while the optics are knocked out; at the hip there is none.
+#[test]
+fn the_lens_reticle_fades_in_with_the_aim() {
+    let Some((mut r, log, shot)) = renderer() else { return };
+    let tex = dot_reticle(&mut r);
+    let mesh = r.native_create_mesh(&lens(), &[0, 2, 1, 0, 3, 2], &[NativeSurface { blend: NativeBlend::Premultiplied, reticle: Some(reticle(1.0)), ..surface(tex, false, 6) }]);
+    assert_eq!(draw_lens(&mut r, &shot, mesh, IDENTITY, 0.0).2, 0, "no reticle at the hip");
+    assert!(draw_lens(&mut r, &shot, mesh, IDENTITY, 0.5).2 > 0, "full by half the aim");
+    let f = NativeFrame { view_proj: Some(perspective()), eye: [0.0; 3], ads: 1.0, optics_off: 1.0, ..frame(0) };
+    r.touch(1);
+    assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh, palette: &[IDENTITY], frame: f }));
+    r.request_screenshot(INVALID, "reticle.png");
+    r.frame();
+    assert_eq!(red_centroid(&shot).2, 0, "optics knocked out: no reticle");
+    assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
+}
+
+/// A reticle with a broken constant is skipped at upload (logged), never drawn or fatal; the rest
+/// of the mesh still draws.
+#[test]
+fn a_non_finite_reticle_is_skipped_not_fatal() {
+    let Some((mut r, log, _shot)) = renderer() else { return };
+    let tex = dot_reticle(&mut r);
+    let mut bad = reticle(1.0);
+    bad.scale = f32::NAN;
+    let verts = quad(0.0, 0.0, 16.0, 16.0, 0);
+    let surfaces = [NativeSurface { blend: NativeBlend::Premultiplied, reticle: Some(bad), ..surface(tex, false, 6) }, surface(tex, true, 6)];
+    let mesh = r.native_create_mesh(&verts, &[0, 2, 1, 0, 3, 2], &surfaces);
+    assert_ne!(mesh, INVALID, "the mesh keeps its good surface");
+    assert!(log.lock().unwrap().iter().any(|l| l.contains("non-finite reticle")), "logged");
+    let only_bad = r.native_create_mesh(&verts, &[0, 2, 1, 0, 3, 2], &surfaces[..1]);
+    assert_eq!(only_bad, INVALID, "nothing drawable: refused so the caller falls back");
+    assert_eq!(r.stats().errors, 0);
 }

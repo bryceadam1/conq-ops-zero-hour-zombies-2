@@ -87,6 +87,30 @@ pub enum NativeCull {
     Front,
 }
 
+/// BO2's lens reticle on a surface (`zhbo_native::model::Reticle`; the `sw4_3d_reticle_dynamic`
+/// technique). The surface's `color` is the reticle image (R shape, G glow, B background), sampled
+/// not at the mesh's UVs but at `0.5 + scale · (T·v, −B·v)`: the eye→surface direction in the
+/// surface's tangent frame, so the reticle sits at infinity on the optic's axis.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NativeReticle {
+    /// The noise map (`Detail_Map`) handle, or `INVALID` for none (white).
+    pub noise: u16,
+    pub scale: f32,
+    pub color: [f32; 3],
+    pub glow: [f32; 3],
+    pub glow_falloff: f32,
+    pub emissive: f32,
+    pub noise_scale: f32,
+    pub noise_amount: f32,
+    pub background: f32,
+}
+
+impl NativeReticle {
+    fn finite(&self) -> bool {
+        finite(&[self.scale, self.glow_falloff, self.emissive, self.noise_scale, self.noise_amount, self.background]) && finite(&self.color) && finite(&self.glow)
+    }
+}
+
 /// One surface of a mesh: an index range and how it draws.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NativeSurface {
@@ -108,6 +132,8 @@ pub struct NativeSurface {
     /// BO2's sort key: blended surfaces draw in its order.
     pub sort_key: u8,
     pub cull: NativeCull,
+    /// The lens reticle technique, for a reticle surface (`None`: BO2's lit shading).
+    pub reticle: Option<NativeReticle>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -131,6 +157,12 @@ pub struct NativeFrame {
     pub light_count: u32,
     /// `ZHBO_BO2_DEBUG`'s views (0 off).
     pub debug: f32,
+    /// BO2's `fWeaponPosFrac` (0 hip, 1 aimed): the lens reticle fades in by `saturate(2·ads)`
+    /// (`weaponParam0.w`, `t6mp` `FUN_00529dd0`).
+    pub ads: f32,
+    /// 1 while the player's optics are knocked out (`weaponParam0.y`: BO2's EMP), which hides the
+    /// reticle; 0 otherwise.
+    pub optics_off: f32,
 }
 
 /// One queued draw: a mesh, its palette (world-space skinning matrices, column-major), and where.
@@ -142,8 +174,9 @@ pub struct NativeDraw<'a> {
     pub frame: NativeFrame,
 }
 
-/// The shader's `Material` uniform: params, camo UV, specular flags (three `vec4<f32>`).
-const MATERIAL_BYTES: u64 = 48;
+/// The shader's `Material` uniform: params, camo UV, specular flags and the reticle's three
+/// constant blocks (six `vec4<f32>`).
+const MATERIAL_BYTES: u64 = 96;
 
 struct NativeTexture {
     view: wgpu::TextureView,
@@ -155,6 +188,7 @@ struct Surface {
     blend: NativeBlend,
     sort_key: u8,
     cull: NativeCull,
+    reticle: bool,
     bind_group: wgpu::BindGroup,
 }
 
@@ -180,6 +214,8 @@ struct Queued {
 struct PipelineKey {
     blend: NativeBlend,
     cull: NativeCull,
+    /// The lens reticle's fragment stage (`fs_reticle`) instead of the lit one.
+    reticle: bool,
     color: wgpu::TextureFormat,
     samples: u32,
 }
@@ -417,9 +453,19 @@ impl Renderer {
                     r.native.textures.get(h).map(|t| t.view.clone())
                 }
             };
+            if s.reticle.is_some_and(|r| !r.finite()) {
+                // Log-or-skip: a reticle with a broken constant is left off, the mesh still draws.
+                self.report(format!("zhbo-gfx: native mesh surface {k}: non-finite reticle constants; skipped"));
+                continue;
+            }
+            // A reticle surface binds its noise map where the lit surfaces bind their packed maps.
+            let (maps_handle, maps_fallback) = match s.reticle {
+                Some(r) => (r.noise, &self.native.white),
+                None => (s.maps, &self.native.flat),
+            };
             let (Some(color), Some(maps), Some(camo), Some(specular)) = (
                 view(self, s.color, &self.native.white),
-                view(self, s.maps, &self.native.flat),
+                view(self, maps_handle, maps_fallback),
                 view(self, s.camo, &self.native.white),
                 view(self, s.specular, &self.native.white),
             ) else {
@@ -440,6 +486,22 @@ impl Renderer {
                 0.0,
                 0.0,
             ];
+            let r = s.reticle.unwrap_or(NativeReticle { noise: INVALID, scale: 0.0, color: [0.0; 3], glow: [0.0; 3], glow_falloff: 1.0, emissive: 0.0, noise_scale: 1.0, noise_amount: 0.0, background: 0.0 });
+            let reticle = [
+                r.scale,
+                r.glow_falloff,
+                r.emissive,
+                r.noise_scale,
+                r.color[0],
+                r.color[1],
+                r.color[2],
+                r.noise_amount,
+                r.glow[0],
+                r.glow[1],
+                r.glow[2],
+                r.background,
+            ];
+            let params: Vec<f32> = params.iter().chain(&reticle).copied().collect();
             let material = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("native material"),
                 size: MATERIAL_BYTES,
@@ -459,7 +521,7 @@ impl Renderer {
                     wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&specular) },
                 ],
             });
-            built.push(Surface { first_index: s.first_index, index_count: s.index_count, blend: s.blend, sort_key: s.sort_key, cull: s.cull, bind_group });
+            built.push(Surface { first_index: s.first_index, index_count: s.index_count, blend: s.blend, sort_key: s.sort_key, cull: s.cull, reticle: s.reticle.is_some(), bind_group });
         }
         if built.is_empty() {
             // `DRAWN` hides the W3D body in third person (CONTRACT.md), so a mesh that can only draw
@@ -504,7 +566,7 @@ impl Renderer {
     pub fn native_submit(&mut self, d: &NativeDraw) -> bool {
         let why = if d.target_view as usize >= MAX_VIEWS || d.before_view as usize >= MAX_VIEWS {
             Some(format!("view {} / {} out of range", d.target_view, d.before_view))
-        } else if !d.frame.view_proj.is_none_or(|m| finite(&m)) || !finite(&d.frame.eye) || d.palette.iter().any(|m| !finite(m)) {
+        } else if !d.frame.view_proj.is_none_or(|m| finite(&m)) || !finite(&d.frame.eye) || !finite(&[d.frame.ads, d.frame.optics_off]) || d.palette.iter().any(|m| !finite(m)) {
             Some("non-finite matrices".into())
         } else if d.palette.len() > NATIVE_MAX_BONES {
             Some(format!("{} bones past {NATIVE_MAX_BONES}", d.palette.len()))
@@ -537,7 +599,7 @@ impl Renderer {
         for l in &f.lights {
             block.extend([l.color[0], l.color[1], l.color[2], 0.0].iter().flat_map(|c| c.to_le_bytes()));
         }
-        block.extend([f.light_count.min(NATIVE_MAX_LIGHTS as u32) as f32, f.debug, 0.0, 0.0].iter().flat_map(|c| c.to_le_bytes()));
+        block.extend([f.light_count.min(NATIVE_MAX_LIGHTS as u32) as f32, f.debug, f.ads, f.optics_off].iter().flat_map(|c| c.to_le_bytes()));
         block.resize(FRAME_BYTES as usize, 0);
         ring.extend_from_slice(&block);
         ring.resize(ring.len().next_multiple_of(align), 0);
@@ -620,7 +682,7 @@ impl Renderer {
             multisample: wgpu::MultisampleState { count: key.samples, ..Default::default() },
             fragment: Some(wgpu::FragmentState {
                 module: &self.native.module,
-                entry_point: Some("fs"),
+                entry_point: Some(if key.reticle { "fs_reticle" } else { "fs" }),
                 compilation_options: wgpu::PipelineCompilationOptions { constants: &constants, ..Default::default() },
                 targets: &[Some(wgpu::ColorTargetState { format: key.color, blend: key.blend.state(), write_mask: wgpu::ColorWrites::ALL })],
             }),
@@ -695,7 +757,7 @@ impl Renderer {
             for blended in [false, true] {
                 for q in &draws {
                     for s in q.mesh.surfaces.iter().filter(|s| s.blend.blended() == blended) {
-                        let key = PipelineKey { blend: s.blend, cull: s.cull, color: color_format, samples: target.samples };
+                        let key = PipelineKey { blend: s.blend, cull: s.cull, reticle: s.reticle, color: color_format, samples: target.samples };
                         if let Some(p) = self.native_pipeline(key) {
                             plans.push((p, *q, s));
                         }

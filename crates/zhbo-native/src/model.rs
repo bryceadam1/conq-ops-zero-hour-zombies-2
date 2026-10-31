@@ -148,6 +148,59 @@ impl CamoLayer {
     }
 }
 
+/// BO2's lens reticle (the `sw4_3d_reticle_dynamic` techset: reflex, holo, ACOG, the dual optic's
+/// halves). The surface's colour map is the reticle image — red its shape, green its glow, blue
+/// the background's coverage — and it is not mapped by the lens's UVs: the vertex shader projects
+/// it to infinity, `0.5 + scale · (T·v, −B·v)` for the eye→surface direction `v` in the surface's
+/// tangent frame, so it sits on the optic's axis wherever the eye is (parallax-free). The numbers
+/// are the material's own constants, by the shader's names (DXBC of
+/// `pimp_shader_sw4_3d_reticle_dynamic_*`, MODLOG "The optic reticle on the lens").
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Reticle {
+    /// `Color_Map_Scale`: reticle image widths per radian off the axis.
+    pub scale: f32,
+    /// `Reticle_Color`: the shape's colour (HDR: above 1 saturates to a white-hot core).
+    pub color: [f32; 3],
+    /// `Glow_Color` and `Glow_Falloff`: the glow is `green^falloff · Glow_Color`.
+    pub glow: [f32; 3],
+    pub glow_falloff: f32,
+    /// `Emissive_Amount`: the whole reticle's gain.
+    pub emissive: f32,
+    /// `Noise_Scale` and `Color_Map_Noise`: the noise map, tiled over the lens UVs, modulates the
+    /// glow and dims the shape by `1 − amount · noise`.
+    pub noise_scale: f32,
+    pub noise_amount: f32,
+    /// `Background`: the blue channel's coverage (the alpha of a premultiplied blend).
+    pub background: f32,
+    /// The noise map (`Detail_Map`), raw; `None` draws without noise (white).
+    pub noise: Option<String>,
+}
+
+impl Reticle {
+    fn write(&self, w: &mut Writer) {
+        w.f32(self.scale);
+        w.f32s(&self.color);
+        w.f32s(&self.glow);
+        for v in [self.glow_falloff, self.emissive, self.noise_scale, self.noise_amount, self.background] {
+            w.f32(v);
+        }
+        w.opt_str(self.noise.as_deref());
+    }
+    fn read(r: &mut Reader) -> Result<Reticle, FormatError> {
+        Ok(Reticle {
+            scale: r.f32()?,
+            color: r.f32n()?,
+            glow: r.f32n()?,
+            glow_falloff: r.f32()?,
+            emissive: r.f32()?,
+            noise_scale: r.f32()?,
+            noise_amount: r.f32()?,
+            background: r.f32()?,
+            noise: r.opt_str()?,
+        })
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Material {
     /// BO2's material name (for logs).
@@ -172,6 +225,12 @@ pub struct Material {
     /// metal's hue lives here: gold's colour map is a flat dark, its spec map gold. Appended to
     /// the record (model `VERSION` 3 -> 4 and camo `VERSION` 1 -> 2 are integrator-owned).
     pub specular: Option<String>,
+    /// The lens reticle's projection and constants, for a reticle surface (appended with
+    /// `emblem`; the model/camo `VERSION` bumps are integrator-owned).
+    pub reticle: Option<Reticle>,
+    /// BO2's emblem surface (`sw4_3d_player_icon`): the core draws the player's faction emblem on
+    /// it in place of the material's own stand-in (`emblem_clear`).
+    pub emblem: bool,
 }
 
 impl Material {
@@ -187,6 +246,14 @@ impl Material {
         w.u8(self.cull.code());
         w.u8(self.camo.code());
         w.opt_str(self.specular.as_deref());
+        match &self.reticle {
+            None => w.u8(0),
+            Some(r) => {
+                w.u8(1);
+                r.write(w);
+            }
+        }
+        w.u8(self.emblem as u8);
     }
     /// Read one material record written by [`Self::write`].
     pub fn read(r: &mut Reader) -> Result<Material, FormatError> {
@@ -200,6 +267,16 @@ impl Material {
             cull: Cull::from_code(r.u8()?)?,
             camo: CamoLayer::from_code(r.u8()?)?,
             specular: r.opt_str()?,
+            reticle: match r.u8()? {
+                0 => None,
+                1 => Some(Reticle::read(r)?),
+                v => return Err(FormatError::Corrupt(format!("reticle tag {v}"))),
+            },
+            emblem: match r.u8()? {
+                0 => false,
+                1 => true,
+                v => return Err(FormatError::Corrupt(format!("emblem flag {v}"))),
+            },
         })
     }
 }
@@ -423,6 +500,18 @@ pub(crate) mod tests {
         // The codes are the blob's contract; a wrong one must be refused, not defaulted.
         assert_eq!(CamoLayer::from_code(2).unwrap(), CamoLayer::Pattern);
         assert!(CamoLayer::from_code(4).is_err());
+    }
+
+    #[test]
+    fn the_reticle_and_emblem_round_trip() {
+        let mut m = strip();
+        m.materials[0].reticle = Some(Reticle { scale: 14.6, color: [0.25, 1.0, 0.0], glow: [0.0, 1.0, 0.2], glow_falloff: 3.0, emissive: 8.3, noise_scale: 4.75, noise_amount: 0.1, background: 0.0, noise: Some("Art\\Textures\\n.tga".into()) });
+        m.materials[0].emblem = true;
+        let bytes = m.to_bytes();
+        assert_eq!(Model::from_bytes(&bytes).unwrap(), m);
+        for n in 0..bytes.len() {
+            assert!(Model::from_bytes(&bytes[..n]).is_err(), "prefix {n}");
+        }
     }
 
     #[test]

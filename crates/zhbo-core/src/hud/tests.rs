@@ -166,6 +166,34 @@ fn the_crosshair_uses_the_classs_reticle_and_colour() {
     assert!(((argb >> 8) & 0xFF) > (argb & 0xFF), "{argb:#010x}");
 }
 
+/// BO2 has one optic reticle, on the lens: while the native viewmodel draws it there, the HUD's
+/// 2D stand-in (the W3D fallback's) stays out.
+#[test]
+fn the_hud_reticle_gives_way_to_the_lens_reticle() {
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    let mut sim = Sim::new();
+    let mut client = Client::default();
+    sim.take_control(&host, 0, 1);
+    let custom = crate::classes::CustomClass { name: "Reflex".into(), primary: "an94_mp+reflex".into(), ..Default::default() };
+    sim.choose_class(0, 1, usize::MAX, &custom.to_wire_words());
+    let mut inp = ClientIn::default();
+    for f in 1..160 {
+        client.frame(&mut sim, &inp);
+        sim.step(&host, f);
+        inp.logic_frame = f;
+    }
+    sim.players[0].as_mut().expect("the player").arsenal.ads = 1.0;
+    let centre_images = |prims: &[Prim]| prims.iter().filter(|p| matches!(p, Prim::Image { name, .. } if name == sprites::RED_DOT || name.contains("_reticle"))).count();
+    let rec = Recorder { has_art: true, ..Default::default() };
+    assert_eq!(centre_images(&draw_hud(&rec, &client, &sim)), 1, "the W3D fallback: the 2D reticle");
+    crate::nativevm::set_lens_reticle_drawn(true);
+    let rec = Recorder { has_art: true, ..Default::default() };
+    let n = centre_images(&draw_hud(&rec, &client, &sim));
+    crate::nativevm::set_lens_reticle_drawn(false);
+    assert_eq!(n, 0, "the lens reticle draws: no 2D copy");
+}
+
 #[test]
 fn the_scope_overlay_draws_at_full_ads_and_not_before() {
     // The hand-off's seam: at `ads < 1.0` the physical scope is drawn by the viewmodel and the 2D

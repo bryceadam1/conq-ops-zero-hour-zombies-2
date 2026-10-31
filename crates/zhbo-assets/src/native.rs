@@ -38,7 +38,8 @@ pub(crate) fn cull(c: xmodel::Cull) -> nm::Cull {
 
 /// `m` as a native model: the textures the W3D pass already wrote for its surfaces (`tex`, from
 /// `textures::textures`), the packed maps and blends `looks` holds for them. Surfaces the W3D pass
-/// leaves out (`looks.dropped`: reticles, clan tags) are left out here too.
+/// leaves out (`looks.dropped`) are left out here too, except the ones only this pass can draw
+/// (`looks.native_only`: the lens reticle, the clan tag, the emblem).
 pub(crate) fn model(m: &xmodel::Model, tex: &[Option<String>], looks: &Looks) -> nm::Model {
     let bones = m
         .bones
@@ -58,7 +59,7 @@ pub(crate) fn model(m: &xmodel::Model, tex: &[Option<String>], looks: &Looks) ->
         for s in lod.first_surface..lod.first_surface + lod.surface_count {
             let Some(surface) = m.surfaces.get(s) else { continue };
             let texture = tex.get(s).cloned().flatten();
-            if texture.as_ref().is_some_and(|t| looks.dropped.contains(t)) {
+            if texture.as_ref().is_some_and(|t| looks.dropped.contains(t) && !looks.native_only.contains(t)) {
                 continue;
             }
             let mat = m.materials.get(s).cloned().flatten();
@@ -88,6 +89,8 @@ pub(crate) fn material_record(mat: Option<&xmodel::Material>, texture: Option<&s
         // Surfaces BO2 leaves to code (no material) stay double-sided, as they drew.
         cull: mat.map_or(nm::Cull::None, |m| cull(m.cull())),
         camo: mat.map_or(nm::CamoLayer::None, camo_layer),
+        reticle: texture.and_then(|t| looks.reticle.get(t)).cloned(),
+        emblem: texture.is_some_and(|t| looks.emblem.contains(t)),
     }
 }
 
@@ -368,8 +371,7 @@ mod tests {
         let mat = |name: &str| xmodel::Material {
             name: "mtl".into(),
             textures: vec![xmodel::Texture { name_hash: 0, semantic: xmodel::TS_CAMO_MAP, image: Some(image(name)) }],
-            state_bits: Vec::new(),
-            sort_key: 0,
+            ..Default::default()
         };
         assert_eq!(camo_layer(&mat("camo_off_solid")), nm::CamoLayer::Solid);
         assert_eq!(camo_layer(&mat("camo_off_pattern")), nm::CamoLayer::Pattern);
@@ -403,7 +405,7 @@ mod tests {
     #[test]
     fn surfaces_cull_as_their_materials_do() {
         let mut g = gun();
-        g.materials = vec![Some(xmodel::Material { name: "mtl".into(), textures: vec![], state_bits: vec![None, None, Some([0x0000_C000, 0])], sort_key: 0 })];
+        g.materials = vec![Some(xmodel::Material { name: "mtl".into(), textures: vec![], state_bits: vec![None, None, Some([0x0000_C000, 0])], sort_key: 0, ..Default::default() })];
         assert_eq!(model(&g, &[None], &Looks::default()).materials[0].cull, nm::Cull::Front, "GFXS0_CULL_FRONT (bits 14-15 = 3)");
         assert_eq!(model(&gun(), &[None], &Looks::default()).materials[0].cull, nm::Cull::None);
     }

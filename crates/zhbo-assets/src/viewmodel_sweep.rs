@@ -46,7 +46,10 @@ impl Source {
         let common = load_zone(bo2_dir, "common_mp")?;
         let patch = load_zone(bo2_dir, crate::fx::ZONE)?;
         let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(bo2_dir, f.zone)).collect::<Result<_, _>>()?;
-        let paks = Paks::open(bo2_dir)?;
+        let mut paks = Paks::open(bo2_dir)?;
+        if let Ok(z) = load_zone(bo2_dir, crate::textures::RETICLE_ZONE) {
+            paks.learn(&z);
+        }
         let bo2 = zhbo_formats::weapon::all(&common).map_err(|e| e.to_string())?;
         let atts = zhbo_formats::weapon::attachments(&common).map_err(|e| e.to_string())?;
         let names = crate::weapons::names(bo2_dir);

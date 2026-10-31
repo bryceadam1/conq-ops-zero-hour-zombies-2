@@ -149,6 +149,7 @@ pub(crate) fn art(
                 sort_key: mat.sort_key,
                 cull: crate::native::cull(mat.cull()),
                 camo: nm::CamoLayer::None,
+                ..Default::default()
             },
         );
     }

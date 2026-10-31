@@ -61,7 +61,13 @@ pub(super) fn draw_crosshair(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, clie
     if ads > 0.6 && !optic {
         return;
     }
+    if ads > 0.6 && crate::nativevm::lens_reticle_drawn() {
+        // The native viewmodel draws BO2's own reticle on the lens, projected to infinity
+        // (`native.wgsl` `fs_reticle`): BO2 has that one and no 2D copy over it.
+        return;
+    }
     if ads > 0.6 {
+        // The W3D fallback has no lens reticle: the optic's art on the line of sight stands in.
         let size = 30.0 * s;
         // The chosen stock reticle through the optic (`reticle_3` -> the optic's `_reticle_04`),
         // tinted by the chosen colour (`reticle_color_1` is Red). Without a choice, the red dot.

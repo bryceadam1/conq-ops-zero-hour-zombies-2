@@ -23,6 +23,10 @@ pub(crate) fn load_zone(bo2_dir: &Path, name: &str) -> Result<Zone, String> {
 /// Image packs, opened on demand, with their entries grouped by name hash.
 pub(crate) struct Paks {
     paks: Vec<(Ipak, BTreeMap<u32, Vec<IpakEntry>>)>,
+    /// Streamed images by name, from the zones [`Paks::learn`] saw: a material that only
+    /// references an image (`common_mp`'s optic reticles point at a 0 x 0 `..._reticle_noise`
+    /// stub) finds the zone that loads it.
+    names: BTreeMap<String, u32>,
 }
 
 impl Paks {
@@ -41,11 +45,30 @@ impl Paks {
             let groups = images::group_by_name(&pak);
             paks.push((pak, groups));
         }
-        Ok(Paks { paks })
+        Ok(Paks { paks, names: BTreeMap::new() })
     }
 
     pub(crate) fn image(&self, hash: u32) -> Option<Rgba> {
         self.paks.iter().find_map(|(pak, groups)| groups.get(&hash).and_then(|parts| images::load(pak, parts).ok()))
+    }
+
+    /// Remember the streamed images `zone` loads (top-level and nested), by name; the first zone
+    /// to name one wins.
+    pub(crate) fn learn(&mut self, zone: &Zone) {
+        let Some(kind) = fastfile::asset_type_id("image") else { return };
+        for a in zone.assets.iter().chain(&zone.linked).filter(|a| a.kind == kind) {
+            let img = zhbo_formats::xmodel::read_image(zone, a.addr);
+            if img.stream_hash != 0 {
+                self.names.entry(img.name).or_insert(img.stream_hash);
+            }
+        }
+    }
+
+    /// `img`'s pixels: its own streamed data, or for a reference stub (no stream hash) the data of
+    /// the image of that name a learned zone loads.
+    pub(crate) fn resolve(&self, img: &zhbo_formats::xmodel::Image) -> Option<Rgba> {
+        let hash = if img.stream_hash != 0 { img.stream_hash } else { *self.names.get(&img.name)? };
+        self.image(hash)
     }
 }
 

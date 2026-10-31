@@ -73,6 +73,39 @@ pub(crate) fn native_cull(c: Cull) -> zhbo_gfx::runtime::NativeCull {
     }
 }
 
+/// A surface's lens reticle as the renderer takes it, its noise map by `handle`. Shared with the
+/// third person.
+#[cfg(feature = "renderer")]
+pub(crate) fn native_reticle(r: &zhbo_native::model::Reticle, handle: impl Fn(&Option<String>) -> u16) -> zhbo_gfx::runtime::NativeReticle {
+    zhbo_gfx::runtime::NativeReticle {
+        noise: handle(&r.noise),
+        scale: r.scale,
+        color: r.color,
+        glow: r.glow,
+        glow_falloff: r.glow_falloff,
+        emissive: r.emissive,
+        noise_scale: r.noise_scale,
+        noise_amount: r.noise_amount,
+        background: r.background,
+    }
+}
+
+/// Whether the native viewmodel drew a lens reticle in its last frame: the HUD then leaves its
+/// own 2D optic reticle out (BO2 has one reticle, on the lens). Presentation only; per thread,
+/// as the viewmodel and the HUD are both driven from the game thread.
+pub fn lens_reticle_drawn() -> bool {
+    LENS_RETICLE.with(|d| d.get())
+}
+
+#[cfg_attr(not(feature = "renderer"), allow(dead_code))]
+pub(crate) fn set_lens_reticle_drawn(drawn: bool) {
+    LENS_RETICLE.with(|d| d.set(drawn));
+}
+
+thread_local! {
+    static LENS_RETICLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 /// Files the core asked the bridge for, and what came back.
 #[derive(Default)]
 pub struct Files {
@@ -176,6 +209,11 @@ pub struct SurfaceSpec {
     /// The manifest part (composition index) the surface came from: which `WeaponCamo` it wears
     /// (`Part::camo`, per part as BO2's `FUN_00529600`).
     pub part: u16,
+    /// The lens reticle's projection and constants (`Material::reticle`): drawn by the pass's
+    /// reticle technique, at infinity on the optic's axis, faded in by the aim.
+    pub reticle: Option<zhbo_native::model::Reticle>,
+    /// BO2's emblem surface (`Material::emblem`).
+    pub emblem: bool,
 }
 
 /// The composed viewmodel's one mesh: every part's LOD 0 with its bones renumbered into the
@@ -299,6 +337,8 @@ pub fn build_mesh_visible<'a>(
                 camo: None,
                 camo_uv: [0.0, 0.0, 1.0, 1.0],
                 part: i as u16,
+                reticle: m.and_then(|m| m.reticle.clone()),
+                emblem: m.is_some_and(|m| m.emblem),
             });
         }
     }

@@ -5,7 +5,7 @@ use zhbo_gfx::ffi::with_renderer;
 use zhbo_gfx::runtime::{NativeDraw, NativeFrame, NativeLight, NativeSurface, NativeVertex, INVALID};
 
 use super::ffi::{State, ZhboNativeIn, DRAWN, LOADING, NOT_NATIVE};
-use super::{native_blend, native_cull, Mesh};
+use super::{native_blend, native_cull, native_reticle, set_lens_reticle_drawn, Mesh};
 
 /// The handles of the viewmodel on the GPU.
 #[derive(Default)]
@@ -38,13 +38,22 @@ impl Gpu {
 
 /// Upload (once its textures are in) and submit. `LOADING` while textures are still coming.
 pub(crate) fn draw(s: &mut State, inp: &ZhboNativeIn) -> i32 {
+    let drawn = submit(s, inp);
+    // The HUD's 2D optic reticle gives way only to a lens reticle that is actually drawing.
+    let lens = drawn == DRAWN && s.loaded.as_ref().is_some_and(|l| l.mesh.surfaces.iter().any(|s| s.reticle.is_some()));
+    set_lens_reticle_drawn(lens);
+    drawn
+}
+
+fn submit(s: &mut State, inp: &ZhboNativeIn) -> i32 {
     let Some(loaded) = s.loaded.as_ref() else { return NOT_NATIVE };
     if s.gpu.key != Some(loaded.key) {
         // Every texture the surfaces name: decoded once in, absent ones draw white/flat.
         let mut paths: Vec<(String, bool)> = Vec::new();
         for surf in &loaded.mesh.surfaces {
             // Display-space shading (native.wgsl): every map uploads raw.
-            for (p, srgb) in [(&surf.color, false), (&surf.maps, false), (&surf.specular, false), (&surf.camo, false)] {
+            let noise = surf.reticle.as_ref().map_or(&None, |r| &r.noise);
+            for (p, srgb) in [(&surf.color, false), (&surf.maps, false), (&surf.specular, false), (&surf.camo, false), (noise, false)] {
                 if let Some(p) = p {
                     if !paths.iter().any(|(q, _)| q == p) {
                         paths.push((p.clone(), srgb));
@@ -88,7 +97,7 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeIn) -> i32 {
                 let surfaces: Vec<NativeSurface> = m
                     .surfaces
                     .iter()
-                    .map(|s| NativeSurface { first_index: s.first_index, index_count: s.index_count, blend: native_blend(s.blend), emissive: s.emissive, color: handle(&s.color), maps: handle(&s.maps), specular: handle(&s.specular), camo: handle(&s.camo), camo_uv: s.camo_uv, sort_key: s.sort_key, cull: native_cull(s.cull) })
+                    .map(|s| NativeSurface { first_index: s.first_index, index_count: s.index_count, blend: native_blend(s.blend), emissive: s.emissive, color: handle(&s.color), maps: handle(&s.maps), specular: handle(&s.specular), camo: handle(&s.camo), camo_uv: s.camo_uv, sort_key: s.sort_key, cull: native_cull(s.cull), reticle: s.reticle.as_ref().map(|r| native_reticle(r, handle)) })
                     .collect();
                 r.native_create_mesh(&vertices, &m.indices, &surfaces)
             };
@@ -125,7 +134,10 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeIn) -> i32 {
     for (l, i) in lights.iter_mut().zip(&inp.lights) {
         *l = NativeLight { direction: i.dir, color: i.color };
     }
-    let frame = NativeFrame { view_proj: None, eye: inp.eye, ambient: inp.ambient, lights, light_count: inp.light_count.clamp(0, 3) as u32, debug: inp.debug };
+    let frame = NativeFrame { view_proj: None, eye: inp.eye, ambient: inp.ambient, lights, light_count: inp.light_count.clamp(0, 3) as u32, debug: inp.debug,
+        // BO2's fWeaponPosFrac drives the lens reticle's fade (`weaponParam0.w`); the mod has no
+        // effect that knocks optics out (BO2's EMP, `weaponParam0.y`).
+        ads: inp.ads, optics_off: 0.0 };
     let palette = &s.posed.palette;
     let draw = NativeDraw { target_view: inp.target_view, before_view: inp.before_view, mesh, palette, frame };
     if with_renderer(false, |r| r.native_submit(&draw)) {
