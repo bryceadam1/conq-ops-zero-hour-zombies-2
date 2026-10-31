@@ -4679,3 +4679,25 @@ the knife picture.
   removed. The real-install suite is green (31). Headless shots `cac-editor-secondary` and
   `cac-personalize-secondary` render with every sprite resolved. The in-game check (equip a
   sidearm camo, switch to the pistol, see it painted) is the integrator's.
+
+## Alt modes wear the parent's class camo (2026-10-31, branch `v1/secondary-camo`)
+
+- **BO2 (read-only Ghidra, t6mp; dumps in the plan dir's `ghidra/`).** The `giveweapon` builtin
+  (`FUN_005ec770`, method table at `0x00b45250`) hands its weapon options to `FUN_00670460`. That
+  function stores the options on the weapon's held entry (`+4`), then walks the alt chain
+  (`FUN_008ec9e0`, until it loops back to an owned weapon) and stores the **same** options on
+  each alt's entry. It does the same for the `FUN_008eca70` companion. The viewmodel draw
+  (`FUN_00536f30`) passes the local centity's current-weapon options (`cent+0x268`) to the camo
+  pass (`FUN_0052a3e0` → `FUN_0052a010` → `FUN_00529600`). That pass paints each model entry
+  through its own def's `weaponCamo` (G16). So the launcher, the select-fire and the dual-optic
+  alts all wear the class camo option, each through its own def's asset.
+- **The mod.** `nativevm::class_camos(slots, current)` now joins each slot's alt chain (`def.alt`)
+  with the slot's camo. A combination's alt shares the parent's viewmodel (`ClipBase` past the
+  parent's clips). The held weapon (`arsenal.current()`) therefore claims a viewmodel first,
+  through its own def's asset, and draws stock when that def names none. The converted table
+  leaves `CamoMaterial` empty for the 13 `dualoptic_*` base rows, 3 `sf_*` rows and 1 `gl_*` row,
+  so those alts draw stock while held. That is data-driven: it is what their BO2 defs carry.
+  `LocalCamo` still carries only `(vm, asset, option)`, so the per-part painting on
+  `v1/attach-camo` composes: its manifest gives the alt's own part list.
+- Test: `nativevm::tests::an_alt_mode_wears_its_parents_class_camo_through_its_own_def`.
+  Verified: `cargo test --workspace` is green; clippy has 38 warnings, unchanged.

@@ -68,23 +68,65 @@ fn each_held_weapon_draws_its_own_class_camo() {
         def("frag_grenade_mp", 11, ""),
     ];
     let lookup = |id: &str| defs.iter().find(|d| d.id == id);
-    let choices = class_camos_in(lookup, &[("an94_mp", "camo_gold"), ("fnp45_mp", "camo_atacs"), ("knife_held_mp", "camo_diamond"), ("frag_grenade_mp", "camo_gold")]);
+    let choices = class_camos_in(lookup, &[("an94_mp", "camo_gold"), ("fnp45_mp", "camo_atacs"), ("knife_held_mp", "camo_diamond"), ("frag_grenade_mp", "camo_gold")], "an94_mp");
     let at = |vm: i32| camo_for_vm(&choices, vm).map(|c| (c.asset, c.option));
     assert_eq!(at(3), Some(("camo_an94".into(), "camo_gold".into())), "the primary wears the class camo");
     assert_eq!(at(5), Some(("camo_fnp45".into(), "camo_atacs".into())), "the secondary wears its own");
     assert_eq!(at(9), Some(("camo_knife".into(), "camo_diamond".into())), "the knife wears the knife camo");
     assert_eq!(at(11), None, "a weapon without a camo asset draws stock");
     // A stock choice and an unknown id contribute nothing; the knife alone still gets its own.
-    let only_knife = class_camos_in(lookup, &[("an94_mp", "camo_none"), ("nope_mp", "camo_gold"), ("knife_held_mp", "camo_gold")]);
+    let only_knife = class_camos_in(lookup, &[("an94_mp", "camo_none"), ("nope_mp", "camo_gold"), ("knife_held_mp", "camo_gold")], "an94_mp");
     assert_eq!(only_knife.len(), 1);
     assert_eq!(camo_for_vm(&only_knife, 9).map(|c| c.option).as_deref(), Some("camo_gold"));
     assert_eq!(camo_for_vm(&only_knife, 3), None, "the primary's stock finish stays stock");
     // The class's three slots in `PlayerSim::held_camos` order: a stock primary leaves the sidearm
     // its own `secondarycamo`, resolved through the sidearm's asset.
-    let held = class_camos_in(lookup, &[("an94_mp", ""), ("fnp45_mp", "camo_gold"), ("knife_held_mp", "")]);
+    let held = class_camos_in(lookup, &[("an94_mp", ""), ("fnp45_mp", "camo_gold"), ("knife_held_mp", "")], "fnp45_mp");
     assert_eq!(held.len(), 1);
     assert_eq!(camo_for_vm(&held, 5).map(|c| (c.asset, c.option)), Some(("camo_fnp45".into(), "camo_gold".into())), "the sidearm wears secondarycamo");
     assert_eq!(camo_for_vm(&held, 3), None);
+}
+
+/// BO2's give (`FUN_00670460`) copies the weapon's options onto every alt in its chain
+/// (`FUN_008ec9e0`), and the camo pass paints the current weapon's viewmodel with that weapon's
+/// own def's `weaponCamo`. A combination's alt shares the parent's viewmodel, so whichever is held
+/// decides it: the grenade launcher wears the class camo through its own asset, a dual-optic alt
+/// whose def names no camo asset draws stock, and an alt with its own viewmodel gets its own entry.
+#[test]
+fn an_alt_mode_wears_its_parents_class_camo_through_its_own_def() {
+    use crate::weapons::WeaponDef;
+    let def = |id: &str, vm: i32, asset: &str, alt: &str| WeaponDef {
+        id: id.into(),
+        viewmodel: vm,
+        camo_material: asset.into(),
+        alt: alt.into(),
+        ..WeaponDef::default()
+    };
+    let defs = [
+        def("an94_mp+gl", 0, "camo_an94", "gl_an94_mp~an94_mp+gl"),
+        def("gl_an94_mp~an94_mp+gl", 0, "camo_an94_gl", "an94_mp+gl"),
+        def("an94_mp+dualoptic", 2, "camo_an94", "dualoptic_an94_mp~an94_mp+dualoptic"),
+        def("dualoptic_an94_mp~an94_mp+dualoptic", 2, "", "an94_mp+dualoptic"),
+        def("hk416_mp+sf", 4, "camo_hk416", "sf_hk416_mp~hk416_mp+sf"),
+        def("sf_hk416_mp~hk416_mp+sf", 6, "camo_hk416", "hk416_mp+sf"),
+    ];
+    let lookup = |id: &str| defs.iter().find(|d| d.id == id);
+    let at = |c: &[LocalCamo], vm: i32| camo_for_vm(c, vm).map(|c| (c.asset, c.option));
+    // The parent held: the shared viewmodel wears the parent's asset.
+    let parent = class_camos_in(lookup, &[("an94_mp+gl", "camo_gold")], "an94_mp+gl");
+    assert_eq!(at(&parent, 0), Some(("camo_an94".into(), "camo_gold".into())));
+    // The launcher held: the same option, through the alt's own asset.
+    let alt = class_camos_in(lookup, &[("an94_mp+gl", "camo_gold")], "gl_an94_mp~an94_mp+gl");
+    assert_eq!(at(&alt, 0), Some(("camo_an94_gl".into(), "camo_gold".into())));
+    // A dual-optic alt whose def names no camo asset draws its viewmodel stock while held.
+    let dual = class_camos_in(lookup, &[("an94_mp+dualoptic", "camo_gold")], "dualoptic_an94_mp~an94_mp+dualoptic");
+    assert_eq!(at(&dual, 2), None);
+    let dual_parent = class_camos_in(lookup, &[("an94_mp+dualoptic", "camo_gold")], "an94_mp+dualoptic");
+    assert_eq!(at(&dual_parent, 2), Some(("camo_an94".into(), "camo_gold".into())));
+    // An alt with a viewmodel of its own carries the parent's option on it whatever is held.
+    let sf = class_camos_in(lookup, &[("hk416_mp+sf", "camo_atacs")], "hk416_mp+sf");
+    assert_eq!(at(&sf, 4), Some(("camo_hk416".into(), "camo_atacs".into())));
+    assert_eq!(at(&sf, 6), Some(("camo_hk416".into(), "camo_atacs".into())), "the alt carries the parent's option");
 }
 
 #[test]

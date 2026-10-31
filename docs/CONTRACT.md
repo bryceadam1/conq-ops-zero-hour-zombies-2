@@ -266,7 +266,10 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   `PlayerSim.knife_camo`; `zhbo_client_frame` records one `(viewmodel, camo asset, option)` per held
   weapon (`PlayerSim::held_camos`) — the primary with the class camo, the sidearm with the secondary
   camo, the melee weapon with the knife camo, each through its own def's asset
-  (`nativevm::class_camos`, `_class.gsc`'s `calcweaponoptions(class, 0|1|2)`) — in a
+  (`nativevm::class_camos`, `_class.gsc`'s `calcweaponoptions(class, 0|1|2)`). Each weapon's alt
+  chain (`gl_`/`sf_`/`dualoptic_`) joins with the same option, as BO2's give (`FUN_00670460`)
+  copies the weapon options onto every alt; the weapon currently held decides a viewmodel its alt
+  shares, through its own def's asset (none = stock) — in a
   core-global (`nativevm::set_local_camos`), and `zhbo_native_viewmodel` reads the one whose `vm`
   matches the viewmodel it draws — **no `ZhboNativeIn` field and no ABI bump**. The converter writes
   `Art\Native\<camo_asset>.zcm` (`ZCM\0`, v1): the asset's 40 pattern sets (solid/pattern image,

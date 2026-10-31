@@ -741,7 +741,7 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
         // The local player's class camos, for the native viewmodel's next draw: each held weapon
         // wears its own (`_class.gsc`: the primary `primarycamo`, the sidearm `secondarycamo`, the
         // melee weapon `knifecamo`).
-        let choices = s.sim.player(inp.local_player).map_or_else(Vec::new, |p| crate::nativevm::class_camos(&p.held_camos()));
+        let choices = s.sim.player(inp.local_player).map_or_else(Vec::new, |p| crate::nativevm::class_camos(&p.held_camos(), &p.arsenal.current().def.id));
         crate::nativevm::set_local_camos(choices);
         out
     })
