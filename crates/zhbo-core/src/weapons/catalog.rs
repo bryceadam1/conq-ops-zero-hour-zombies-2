@@ -6,7 +6,7 @@
 ** License, or (at your option) any later version.
 */
 
-use super::def::{BonusCard, CamoOption, WeaponDef};
+use super::def::{BonusCard, CamoOption, PerkRow, WeaponDef};
 use super::table::{parse_full_table, Table};
 use crate::attachments::{self, AttachmentDef};
 use std::collections::HashMap;
@@ -25,6 +25,7 @@ pub struct Catalog {
     reticle_colors: HashMap<String, &'static CamoOption>,
     reticle_color_order: Vec<&'static CamoOption>,
     bonus_cards: Vec<&'static BonusCard>,
+    perks: HashMap<String, &'static PerkRow>,
     built: Mutex<HashMap<String, &'static WeaponDef>>,
     pub tablet_meshes: u8,
 }
@@ -47,6 +48,7 @@ impl Catalog {
         // `UnlockablesComparisonFunction` — the sort key, then the item index (codbase.lua; G17).
         let mut bonus_cards: Vec<&'static BonusCard> = t.bonus_cards.into_iter().map(|b| &*Box::leak(Box::new(b))).collect();
         bonus_cards.sort_by_key(|b| (b.sort, b.index));
+        let perks = t.perks.into_iter().map(|p| (p.stats.to_ascii_uppercase(), &*Box::leak(Box::new(p)))).collect();
         Catalog {
             by_id,
             order,
@@ -57,6 +59,7 @@ impl Catalog {
             reticle_colors,
             reticle_color_order,
             bonus_cards,
+            perks,
             built: Mutex::new(HashMap::new()),
             tablet_meshes: t.tablet_meshes,
         }
@@ -134,6 +137,11 @@ impl Catalog {
         self.bonus_cards.iter().copied().find(|b| b.reference == reference)
     }
 
+    /// A perk's statstable row by its reference without `PERKS_` (`LIGHTWEIGHT`, `NINJA`).
+    pub fn perk(&self, stats: &str) -> Option<&'static PerkRow> {
+        self.perks.get(stats).copied()
+    }
+
     pub fn all(&self) -> &[&'static WeaponDef] {
         &self.order
     }
@@ -145,13 +153,25 @@ static CATALOG: OnceLock<Catalog> = OnceLock::new();
 pub fn install_catalog(text: &str) -> Result<usize, String> {
     let mut table = parse_full_table(text)?;
     let n = table.weapons.len();
+    let built_in = parse_full_table(BUILTIN)?;
     if table.bonus_cards.is_empty() {
-        // A table converted before the bonus cards were: the stand-in rows (BO2's own), as the
-        // perk table keeps its built-in sets.
-        table.bonus_cards = parse_full_table(BUILTIN)?.bonus_cards;
+        // A table converted before the bonus cards were: the stand-in rows (BO2's own).
+        table.bonus_cards = built_in.bonus_cards;
     }
-    if !table.perks.is_empty() {
-        super::perks::install_converted(&table.perks);
+    // The perk rows: a table converted before they carried their name and description (or before
+    // it carried perks at all) keeps its specialty sets and takes the stand-ins' text (BO2's own).
+    for b in built_in.perks {
+        match table.perks.iter_mut().find(|p| p.stats.eq_ignore_ascii_case(&b.stats)) {
+            Some(p) => {
+                if p.name.is_empty() {
+                    p.name = b.name;
+                }
+                if p.description.is_empty() {
+                    p.description = b.description;
+                }
+            }
+            None => table.perks.push(b),
+        }
     }
     CATALOG.set(Catalog::from_table(table)).map_err(|_| "weapon catalog already installed".to_string())?;
     Ok(n)
@@ -211,9 +231,107 @@ pub fn weapon(id: &str) -> &'static WeaponDef {
 }
 
 /// Stand-in table when BO2 is not converted: the default loadout's weapons with BO2's published
-/// multiplayer values (rounded), in the same format as the converted table, and BO2's eight bonus
-/// cards (`mp/statstable.csv:178-185`) so the wildcard grid has its rows.
+/// multiplayer values (rounded), in the same format as the converted table, BO2's sixteen perk rows
+/// (`mp/statstable.csv:151-166`: name, description, specialties) so the perk grid and every perk's
+/// effect have their rows, and BO2's eight bonus cards (`mp/statstable.csv:178-185`) so the
+/// wildcard grid has its rows.
 pub const BUILTIN: &str = "
+Perk LIGHTWEIGHT
+  Name = Lightweight
+  Description = Move faster.  Take no damage when falling.
+  Specialties = fallheight movefaster
+End
+
+Perk HARDLINE
+  Name = Hardline
+  Description = Earn Scorestreaks faster.
+  Specialties = earnmoremomentum
+End
+
+Perk BLIND_EYE
+  Name = Blind Eye
+  Description = Undetectable by AI controlled air support.
+  Specialties = nottargetedbyairsupport
+End
+
+Perk FLAK_JACKET
+  Name = Flak Jacket
+  Description = Take less explosive damage.
+  Specialties = flakjacket
+End
+
+Perk GHOST
+  Name = Ghost
+  Description = Cannot be detected by enemy UAVs while moving, planting or defusing bombs, or while controlling Scorestreaks.
+  Specialties = gpsjammer
+End
+
+Perk TOUGHNESS
+  Name = Toughness
+  Description = Flinch less when shot.
+  Specialties = bulletflinch
+End
+
+Perk COLD_BLOODED
+  Name = Cold Blooded
+  Description = Resistant to targeting systems including: Dual Band, Target Finder, Sensor Grenade, MMS, and player controlled aircraft.  No name or red crosshair when targeted.
+  Specialties = immunemms immunenvthermal immunerangefinder nokillstreakreticle nomotionsensor noname
+End
+
+Perk FAST_HANDS
+  Name = Fast Hands
+  Description = Swap weapons faster and use equipment faster.  Reset the fuse when throwing back frag grenades.
+  Specialties = fastequipmentuse fasttoss fastweaponswitch pin_back
+End
+
+Perk HARD_WIRED
+  Name = Hard Wired
+  Description = Immune to Counter-UAV and EMP.
+  Specialties = immunecounteruav immuneemp
+End
+
+Perk SCAVENGER
+  Name = Scavenger
+  Description = Replenish ammo and equipment from enemies killed by non-explosive weapons.
+  Specialties = scavenger
+End
+
+Perk DEXTERITY
+  Name = Dexterity
+  Description = Aim faster after sprinting.  Mantle and climb faster.
+  Specialties = fastladderclimb fastmantle fastmeleerecovery sprintrecovery
+End
+
+Perk EXTREME_CONDITIONING
+  Name = Extreme Conditioning
+  Description = Sprint for a longer duration.
+  Specialties = longersprint
+End
+
+Perk HACKER
+  Name = Engineer
+  Description = Show enemy equipment in the world.  Delay triggered explosives. Reroll and booby trap Care Packages.
+  Specialties = delayexplosive showenemyequipment
+End
+
+Perk TACTICAL_MASK
+  Name = Tactical Mask
+  Description = Reduce the effects of Flashbangs, Concussion Grenades, and Shock Charges.
+  Specialties = flashprotection proximityprotection stunprotection
+End
+
+Perk NINJA
+  Name = Dead Silence
+  Description = Move silently.
+  Specialties = quieter
+End
+
+Perk AWARENESS
+  Name = Awareness
+  Description = Enemy movements are easier to hear.
+  Specialties = loudenemies
+End
+
 BonusCard bonuscard_primary_gunfighter
   Name = Primary Gunfighter
   Description = Take a 3rd attachment for your primary weapon.

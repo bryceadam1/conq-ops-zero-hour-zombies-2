@@ -498,8 +498,11 @@ one line in `tuning.rs`'s field table (field, ini key, default, cited doc) and t
 `data/ConquerOps/tuning.ini`.
 
 **Perks are specialty sets.** What a perk does is the `specialty_*` bits it grants (the
-converted weapon table's `Perk` blocks, read from the player's `mp/statstable.csv`; built-in
-copies in `weapons/perks.rs`). Gameplay tests specialties, never perk names:
+converted weapon table's `Perk <reference>` blocks, BO2's `specialty` rows of the player's
+`mp/statstable.csv`, which also carry the localized name and description the perk grid shows; the
+built-in table carries the same sixteen rows, and a table predating the text takes the stand-ins'
+text). `weapons/perks.rs` only ties the perk ids and tiers to those rows (`Perk::row`). Gameplay
+tests specialties, never perk names:
 `Arsenal::has_specialty` is BO2's rule (the class's perks, or the weapon in hand's own bits and
 its attachments'; G1).
 

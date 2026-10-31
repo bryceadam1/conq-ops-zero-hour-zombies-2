@@ -342,6 +342,20 @@ pub struct BonusCard {
     pub unlock_level: i32,
 }
 
+/// One BO2 perk: a `specialty` row of `mp/statstable.csv`. Column 3 is both the reference and the
+/// name key (`PERKS_LIGHTWEIGHT`); without `PERKS_` (`LIGHTWEIGHT`, Dead Silence's `NINJA`) it is
+/// the row's identity ([`super::perks::PerkDef::stats`]). The localized name (column 3) and
+/// description (column 7, `PERKS_*_DESC`) are what the perk grid's lower panel shows
+/// (`cacperksp.lua`'s `perkTitle` / `perkDescription`); the specialties (column 4, `|`-separated)
+/// are what the perk does (Ghidra G1).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PerkRow {
+    pub stats: String,
+    pub name: String,
+    pub description: String,
+    pub specialties: super::specialty::Specialties,
+}
+
 /// One BO2 reticle option (`reticle_0..10` from `mp/attachmenttable.csv`): the same id/name/image/
 /// sort shape as a camo row; the art depends on the optic (`cacreticles.lua`).
 pub type ReticleOption = CamoOption;

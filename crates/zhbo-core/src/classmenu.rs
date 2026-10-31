@@ -1012,7 +1012,7 @@ fn equipment_options(class: WeaponClass) -> Vec<String> {
 
 /// The display names of the perks in a tier.
 fn perk_options(tier: u8) -> Vec<String> {
-    weapons::perks::PERKS.iter().filter(|p| p.tier == tier).map(|p| p.id.to_string()).collect()
+    perk_list(tier).into_iter().map(Perk::name).collect()
 }
 
 /// A key edge this frame (fresh press): the editor's input is edge-driven like the pick screen.

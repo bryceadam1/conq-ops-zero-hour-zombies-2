@@ -4678,3 +4678,20 @@ Gotchas:
 
 Measured: cac 555 → 532 (`slot` 8 → 0, cluster gone; `description` 90 → 82; `order` 441 → 434),
 weapons 781,251 unchanged, gap clusters 202 → 201.
+
+## Perk names and descriptions from the statstable (2026-10-31, `v1/perks-cards`)
+
+The perk grid showed the spec ids (`FastHands`) in its cells and only the name under the grid;
+BO2's (`cacperksp.lua:280-360`, `e-perks/002`) shows the localized name in each cell and, under the
+grid, the highlighted perk's name in Big over its description in Default at 0.4 alpha — the same
+panel as the wildcard grid's (`perkTitle`/`perkDescription`, set from `GetItemName`/`GetItemDesc`
+at `:505-545`). The `Perk <reference>` blocks of the weapon table now carry the `specialty` row's
+localized name (column 3) and description (column 7) beside the specialty set (column 4); the
+built-in table holds the same sixteen rows, so `PerkDef` lost its specialty copy and
+`Perk::specialties/name/description` read the installed catalog's row (`Catalog::perk`, replacing
+the `perks::install_converted` mutex). The editor's panel is one `draw_item_panel` for both grids.
+
+* A table converted before this keeps its specialty sets and takes the stand-ins' name and
+  description; the archive VERSION must bump (integrator) so players get the converted text.
+* Dexterity's BO2 description ends in a space (`... climb faster. `); the table format trims values,
+  so that one cell keeps differing like the attachments' trailing-space descriptions.

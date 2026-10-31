@@ -100,7 +100,8 @@ pub fn rows(shipped: &Shipped, bo2_dir: &std::path::Path, schema: &Schema) -> Re
         }
     }
 
-    // Perks: the perk table, keyed by BO2's statstable reference; the place within the tier.
+    // Perks: the perk table, keyed by BO2's statstable reference; the name and description its
+    // row's (what the perk grid's panel shows); the place within the tier.
     for (i, p) in PERKS.iter().enumerate() {
         let perk = Perk::by_id(p.id).ok_or_else(|| format!("perk {} not in the table", p.id))?;
         let order = PERKS[..i].iter().filter(|q| q.tier == p.tier).count() as i64;
@@ -108,7 +109,7 @@ pub fn rows(shipped: &Shipped, bo2_dir: &std::path::Path, schema: &Schema) -> Re
         let image = sprite_material(zhbo_core::hud::sprites::PERK_ICONS[i]);
         let cost = cost_of(|dr| dr.perks[(p.tier as usize).clamp(1, 3) - 1] = Some(perk));
         out.push(row(schema, "perk", &p.stats.to_lowercase(), |b| {
-            b.text("name", zhbo_core::classui::perk_name(perk)).opt_text("image", image).text("slot", format!("specialty{}", p.tier));
+            b.text("name", zhbo_core::classui::perk_name(perk)).text("description", perk.description()).opt_text("image", image).text("slot", format!("specialty{}", p.tier));
             b.int("cost", cost).int("order", order).set("members", &members);
         })?);
     }

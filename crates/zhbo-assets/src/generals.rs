@@ -254,8 +254,9 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         reticle_colors: &reticle_colors,
     };
     let mut table = crate::weapons::table_with_metadata(&bo2, &atts, &names, &meta, &options);
-    // What each perk does: its specialty set, from the player's own statstable (Ghidra G1).
-    table.perks = crate::weapons::perk_rows(&patch);
+    // The perks: their name, description and what each does (its specialty set, Ghidra G1), from
+    // the player's own statstable.
+    table.perks = crate::weapons::perk_rows(&patch, &names);
     // The wildcards: the same statstable's bonus-card rows (name, description, slot, cost, order).
     table.bonus_cards = crate::weapons::bonus_card_rows(&patch, &names);
     // Which weapons Create-a-Class offers, in which slot: the same statstable's weapon items.

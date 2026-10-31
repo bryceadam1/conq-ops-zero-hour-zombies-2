@@ -6,7 +6,7 @@
 ** License, or (at your option) any later version.
 */
 
-use super::def::{BonusCard, CamoOption, Class, Effect, FireMode, Kind, Kick, Place, WeaponDef};
+use super::def::{BonusCard, CamoOption, PerkRow, Class, Effect, FireMode, Kind, Kick, Place, WeaponDef};
 use super::feel::{nums, v3, GunKick, Sway};
 use super::specialty::Specialties;
 use crate::attachments::AttachmentDef;
@@ -24,9 +24,10 @@ pub struct Table {
     pub reticle_colors: Vec<CamoOption>,
     /// Third-person meshes of the scorestreak tablet on the soldier model (`TB{k:02}`).
     pub tablet_meshes: u8,
-    /// BO2's perk rows (`mp/statstable.csv`): the reference without `PERKS_` (`LIGHTWEIGHT`,
-    /// `NINJA`) and the specialties it grants (`Perk <ref>` blocks).
-    pub perks: Vec<(String, Specialties)>,
+    /// BO2's perk rows (`mp/statstable.csv`'s `specialty` rows, `Perk <ref>` blocks): keyed by the
+    /// reference without `PERKS_` (`LIGHTWEIGHT`, `NINJA`), with the localized name and description
+    /// and the specialties the perk grants.
+    pub perks: Vec<PerkRow>,
     /// BO2's bonus cards (`mp/statstable.csv`'s `bonuscard` rows, `BonusCard <ref>` blocks), in the
     /// table's row order.
     pub bonus_cards: Vec<BonusCard>,
@@ -69,8 +70,8 @@ pub fn format_table(defs: &[WeaponDef]) -> String {
 pub fn format_full_table(t: &Table) -> String {
     let mut s = String::from("; Black Ops II multiplayer weapons, converted from the player's own install by zhbo-assets.\n; Private data: do not redistribute.\n\n");
     s.push_str(&format!("TabletMeshes = {}\n\n", t.tablet_meshes));
-    for (stats, specialties) in &t.perks {
-        s.push_str(&format!("Perk {stats}\n  Specialties = {}\nEnd\n\n", specialties.format()));
+    for p in &t.perks {
+        write_block(&mut s, "Perk ", &p.stats, PERK_FIELDS, p);
     }
     for b in &t.bonus_cards {
         write_block(&mut s, "BonusCard ", &b.reference, BONUS_CARD_FIELDS, b);
@@ -107,7 +108,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
         Camo(Box<CamoOption>),
         Reticle(Box<CamoOption>),
         ReticleColor(Box<CamoOption>),
-        Perk(String, Specialties),
+        Perk(Box<PerkRow>),
         BonusCard(Box<BonusCard>),
     }
     let mut table = Table::default();
@@ -143,7 +144,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
             continue;
         }
         if let Some(id) = line.strip_prefix("Perk ") {
-            cur = Some(Block::Perk(id.trim().to_string(), Specialties::NONE));
+            cur = Some(Block::Perk(Box::new(PerkRow { stats: id.trim().to_string(), ..Default::default() })));
             continue;
         }
         if line == "End" {
@@ -153,7 +154,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
                 Block::Camo(c) => table.camo.push(*c),
                 Block::Reticle(r) => table.reticles.push(*r),
                 Block::ReticleColor(c) => table.reticle_colors.push(*c),
-                Block::Perk(stats, specialties) => table.perks.push((stats, specialties)),
+                Block::Perk(p) => table.perks.push(*p),
                 Block::BonusCard(b) => table.bonus_cards.push(*b),
             }
             continue;
@@ -171,11 +172,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
             Some(Block::Camo(c)) => set_field(CAMO_FIELDS, c, key, values).map_err(|e| err(&e))?,
             Some(Block::Reticle(r)) => set_field(CAMO_FIELDS, r, key, values).map_err(|e| err(&e))?,
             Some(Block::ReticleColor(c)) => set_field(CAMO_FIELDS, c, key, values).map_err(|e| err(&e))?,
-            Some(Block::Perk(_, specialties)) => {
-                if key == "Specialties" {
-                    *specialties = Specialties::parse(value).map_err(|e| err(&e))?;
-                }
-            }
+            Some(Block::Perk(p)) => set_field(PERK_FIELDS, p, key, values).map_err(|e| err(&e))?,
             Some(Block::BonusCard(b)) => set_field(BONUS_CARD_FIELDS, b, key, values).map_err(|e| err(&e))?,
             Some(Block::Weapon(d)) => set_field(WEAPON_FIELDS, d, key, values).map_err(|e| err(&e))?,
         }
@@ -690,6 +687,19 @@ pub const CAMO_FIELDS: &[Field<CamoOption>] = &[
         |c: &mut CamoOption, v: Values| { c.sort = v.text.parse().map_err(|_| "number")?; Ok(()) }),
 ];
 
+/// Every `Perk` block line: one `specialty` row of `mp/statstable.csv` ([`PerkRow`]).
+pub const PERK_FIELDS: &[Field<PerkRow>] = &[
+    field!("Name", "The localized name (column 3, `PERKS_*`).", FieldKind::Str,
+        |p: &PerkRow| p.name.clone(),
+        |p: &mut PerkRow, v: Values| { p.name = v.text.into(); Ok(()) }),
+    field!("Description", "The localized description (column 7, `PERKS_*_DESC`).", FieldKind::Str,
+        |p: &PerkRow| p.description.clone(),
+        |p: &mut PerkRow, v: Values| { p.description = v.text.into(); Ok(()) }),
+    field!("Specialties", "The specialties it grants (column 4), by name.", FieldKind::Words,
+        |p: &PerkRow| p.specialties.format(),
+        |p: &mut PerkRow, v: Values| { p.specialties = Specialties::parse(v.text)?; Ok(()) }),
+];
+
 /// Every `BonusCard` block line: one `bonuscard` row of `mp/statstable.csv` ([`BonusCard`]).
 pub const BONUS_CARD_FIELDS: &[Field<BonusCard>] = &[
     field!("Name", "The localized name (column 3, `BONUSCARD_*`).", FieldKind::Str,
@@ -843,11 +853,19 @@ mod tests {
         let t = Table {
             weapons: vec![d],
             attachments: vec![a],
-            perks: vec![("LIGHTWEIGHT".into(), Specialties::of(&[Specialty::MoveFaster, Specialty::FallHeight]))],
+            perks: vec![PerkRow {
+                stats: "LIGHTWEIGHT".into(),
+                name: "Lightweight".into(),
+                description: "Move faster.  Take no damage when falling.".into(),
+                specialties: Specialties::of(&[Specialty::MoveFaster, Specialty::FallHeight]),
+            }],
             ..Default::default()
         };
         let text = format_full_table(&t);
-        assert!(text.contains("Perk LIGHTWEIGHT\n  Specialties = fallheight movefaster\nEnd"), "{text}");
+        assert!(
+            text.contains("Perk LIGHTWEIGHT\n  Name = Lightweight\n  Description = Move faster.  Take no damage when falling.\n  Specialties = fallheight movefaster\nEnd"),
+            "{text}"
+        );
         assert_eq!(parse_full_table(&text).unwrap(), t);
     }
 

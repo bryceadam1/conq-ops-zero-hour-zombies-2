@@ -188,18 +188,9 @@ pub fn allocation_bar(prims: &mut Vec<Prim>, f: &Frame, r: Rect, spent: i32, max
     }
 }
 
-/// A perk's display name: the perk table's ids are BO2's English names run together
-/// (`FastHands` -> `Fast Hands`).
+/// A perk's display name: BO2's localized name from the perk's statstable row ([`Perk::name`]).
 pub fn perk_name(p: crate::weapons::Perk) -> String {
-    let id = p.def().id;
-    let mut out = String::with_capacity(id.len() + 2);
-    for (i, ch) in id.chars().enumerate() {
-        if i > 0 && ch.is_ascii_uppercase() {
-            out.push(' ');
-        }
-        out.push(ch);
-    }
-    out
+    p.name()
 }
 
 #[cfg(test)]

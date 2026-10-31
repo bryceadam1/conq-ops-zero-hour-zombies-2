@@ -158,17 +158,19 @@ pub fn attachment_def(a: &bo2::Attachment, names: &HashMap<String, String>, meta
 }
 
 /// BO2's perk rows from the player's `mp/statstable.csv` (`patch_mp`): each `specialty` row's
-/// reference (column d, `PERKS_LIGHTWEIGHT` -> `LIGHTWEIGHT`) and the specialties it grants
-/// (column e, `|`-separated). Rows with a specialty the core does not know are skipped (Ghidra
-/// G1's index table names all 62).
-pub fn perk_rows(patch: &zhbo_formats::t6zone::Zone) -> Vec<(String, Specialties)> {
+/// reference (column 3, `PERKS_LIGHTWEIGHT` -> `LIGHTWEIGHT`), its localized name (column 3's key)
+/// and description (column 7's key) from `names`, and the specialties it grants (column 4,
+/// `|`-separated). Rows with a specialty the core does not know are skipped (Ghidra G1's index table
+/// names all 62).
+pub fn perk_rows(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<String, String>) -> Vec<zhbo_core::weapons::PerkRow> {
     let Ok(Some(rows)) = zhbo_formats::stringtable::rows(patch, "mp/statstable.csv") else { return Vec::new() };
+    let loc = |k: Option<&String>| k.and_then(|k| names.get(k.trim())).map(|s| s.trim().to_string()).unwrap_or_default();
     rows.iter()
         .filter(|r| r.get(2).is_some_and(|c| c == "specialty"))
         .filter_map(|r| {
             let stats = r.get(3)?.strip_prefix("PERKS_")?.to_string();
-            let set = Specialties::parse(r.get(4)?).ok()?;
-            (!set.is_empty()).then_some((stats, set))
+            let specialties = Specialties::parse(r.get(4)?).ok()?;
+            (!specialties.is_empty()).then(|| zhbo_core::weapons::PerkRow { stats, name: loc(r.get(3)), description: loc(r.get(7)), specialties })
         })
         .collect()
 }
@@ -1541,15 +1543,17 @@ mod tests {
 
     #[test]
     #[ignore = "reads this machine's Black Ops II install"]
-    fn the_installs_perk_rows_are_the_built_in_sets_and_weapons_carry_their_bits() {
+    fn the_installs_perk_rows_are_the_built_in_rows_and_weapons_carry_their_bits() {
         use zhbo_core::weapons::{Perk, Specialty};
         let bo2 = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
         let patch = crate::generals::load_zone(&bo2, crate::fx::ZONE).unwrap();
-        let rows = perk_rows(&patch);
+        let rows = perk_rows(&patch, &names(&bo2));
+        let built_in = zhbo_core::weapons::parse_full_table(zhbo_core::weapons::BUILTIN).unwrap().perks;
         for perk in Perk::ALL {
             let d = perk.def();
-            let (_, set) = rows.iter().find(|(k, _)| k == d.stats).unwrap_or_else(|| panic!("statstable has {}", d.stats));
-            assert_eq!(*set, Specialties::of(d.specialties), "{}: the built-in set is the install's row", d.id);
+            let row = rows.iter().find(|r| r.stats == d.stats).unwrap_or_else(|| panic!("statstable has {}", d.stats));
+            let stand_in = built_in.iter().find(|r| r.stats == d.stats).unwrap_or_else(|| panic!("the built-in table has {}", d.stats));
+            assert_eq!(row, stand_in, "{}: the built-in row (name, description, set) is the install's", d.id);
         }
         // In this install only FMJ grants specialties through the data (`armorpiercing`,
         // `bulletpenetration`); fast mag and quickdraw work through their reload/ADS time scales.

@@ -469,26 +469,31 @@ fn draw_option_grid(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor) {
         let rows = opts.len().div_ceil(cols);
         let y = GRID_TOP + rows as f32 * (h + GRID_ITEM_GAP) + 10.0;
         if let Some(w) = editor.option_wildcard(editor.option) {
-            draw_wildcard_panel(prims, f, w, y);
+            // `cacbonuscards.lua:285-350`: `bonusCardName` / `bonusCardDescription`.
+            draw_item_panel(prims, f, w.name(), w.description(), y);
+        } else if let Some(p) = editor.option_perk(editor.option) {
+            // `cacperksp.lua:280-360`: `perkTitle` / `perkDescription`, set from the highlighted
+            // perk's `GetItemName` / `GetItemDesc` (`:505-545`, `e-perks/002`).
+            draw_item_panel(prims, f, &p.name(), p.description(), y);
         } else {
-            // The other content pickers carry only the highlighted entry's name under the grid
-            // (`e-perks/001`).
+            // The other content pickers carry only the highlighted entry's name under the grid.
             let r = f.in_menu(crate::lui::Place::new((true, false, 0.0, bo2::MENU_W * 0.5), (true, false, y, y + bo2::TEXT_CONDENSED)));
             bo2::text(prims, f, Family::Condensed, name, r, Align::Left, argb(OFF_WHITE, 1.0));
         }
     }
 }
 
-/// The wildcard grid's lower panel: the highlighted card's name in Big and its description in
-/// Default at 0.4 alpha under it, two cards and two gaps wide (`cacbonuscards.lua:285-350`'s
-/// `bonusCardName` / `bonusCardDescription`, set from the card's row by
-/// `ContentButtonHighlighted`). Both come from the card's weapon-table row.
-fn draw_wildcard_panel(prims: &mut Vec<Prim>, f: &Frame, w: Wildcard, y: f32) {
+/// The wildcard and perk grids' lower panel: the highlighted item's name in Big and its
+/// description in Default at 0.4 alpha under it, two cells and two gaps wide — the same panel in
+/// both Lua screens (`cacbonuscards.lua:285-350`'s `bonusCardName` / `bonusCardDescription`,
+/// `cacperksp.lua:280-360`'s `perkTitle` / `perkDescription`). Both strings come from the item's
+/// weapon-table row (the statstable's localized columns 3 and 7).
+fn draw_item_panel(prims: &mut Vec<Prim>, f: &Frame, name: &str, description: &str, y: f32) {
     let place = |top: f32, h: f32, wide: f32| f.in_menu(crate::lui::Place::new((true, false, 0.0, wide), (true, false, top, top + h)));
-    bo2::text(prims, f, Family::Big, w.name(), place(y, bo2::TEXT_BIG, bo2::MENU_W), Align::Left, argb(OFF_WHITE, 1.0));
+    bo2::text(prims, f, Family::Big, name, place(y, bo2::TEXT_BIG, bo2::MENU_W), Align::Left, argb(OFF_WHITE, 1.0));
     let card_w = (bo2::MENU_W - GRID_ITEM_GAP * 2.0) / 3.0;
     let desc = place(y + bo2::TEXT_BIG, bo2::TEXT_DEFAULT, card_w * 2.0 + GRID_ITEM_GAP * 2.0);
-    bo2::text(prims, f, Family::Default, w.description(), desc, Align::Left, argb(OFF_WHITE, 0.4));
+    bo2::text(prims, f, Family::Default, description, desc, Align::Left, argb(OFF_WHITE, 0.4));
 }
 
 /// The highlighted attachment's definition, from the current weapon's allowed list.

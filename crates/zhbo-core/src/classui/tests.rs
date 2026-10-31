@@ -466,7 +466,7 @@ fn the_editor_screens_draw_their_boxes_and_prompts() {
     draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
     let t = texts(&prims);
     assert!(t.iter().any(|x| x == "Scavenger"), "tier 2 perks are listed: {t:?}");
-    assert!(t.iter().any(|x| x == "FastHands"), "tier 2 perks are listed");
+    assert!(t.iter().any(|x| x == "Fast Hands"), "tier 2 perks are listed by BO2's name");
     assert!(t.iter().any(|x| x == "Back"), "the picker's only prompt from d-attach/002: {t:?}");
     assert!(!t.iter().any(|x| x == "Choose"), "no invented Enter Choose prompt: {t:?}");
 }
@@ -763,11 +763,12 @@ fn the_circled_x_clears_only_the_selected_filled_box() {
 
 #[test]
 fn the_perk_lists_follow_bo2s_grid_order() {
-    // e-perks/001, /006, /011: the grids read left to right, top to bottom.
+    // e-perks/001, /006, /011: the grids read left to right, top to bottom, each cell the perk's
+    // localized name.
     let expected = [
-        vec!["Lightweight", "Hardline", "BlindEye", "FlakJacket", "Ghost"],
-        vec!["Toughness", "ColdBlooded", "FastHands", "HardWired", "Scavenger"],
-        vec!["Dexterity", "ExtremeConditioning", "Engineer", "TacticalMask", "DeadSilence", "Awareness"],
+        vec!["Lightweight", "Hardline", "Blind Eye", "Flak Jacket", "Ghost"],
+        vec!["Toughness", "Cold Blooded", "Fast Hands", "Hard Wired", "Scavenger"],
+        vec!["Dexterity", "Extreme Conditioning", "Engineer", "Tactical Mask", "Dead Silence", "Awareness"],
     ];
     let mut e = Editor::new(Draft::default());
     for (tier, want) in expected.iter().enumerate() {
@@ -1023,4 +1024,26 @@ fn the_wildcard_grid_shows_the_highlighted_cards_description() {
     });
     assert_eq!(alpha, Some(bo2::argb(bo2::OFF_WHITE, 0.4) >> 24), "{:?}", texts(&prims));
     assert!(texts(&prims).iter().filter(|t| *t == "Danger Close").count() >= 2, "the cell and the panel title");
+}
+
+/// The perk grid's lower panel shows the highlighted perk's name (Big) and its description
+/// (Default, 0.4 alpha) from the perk's statstable row (`cacperksp.lua`'s `perkTitle` /
+/// `perkDescription`, `e-perks/002`: "Hardline" / "Earn Scorestreaks faster.").
+#[test]
+fn the_perk_grid_shows_the_highlighted_perks_description() {
+    let mut e = Editor::new(Draft::default());
+    e.slot = Slot::Perk1;
+    e.picking = true;
+    e.option = (0..8).position(|i| e.option_perk(i) == Some(crate::weapons::Perk::HARDLINE)).expect("Hardline is a Perk 1");
+    let mut prims = Vec::new();
+    draw_editor(&mut prims, 1280.0, 720.0, &e, 0.0, 0.0);
+    let desc = crate::weapons::Perk::HARDLINE.description();
+    assert_eq!(desc, "Earn Scorestreaks faster.");
+    let alpha = prims.iter().find_map(|p| match p {
+        Prim::Text { text, argb, .. } if text == desc => Some(*argb >> 24),
+        _ => None,
+    });
+    assert_eq!(alpha, Some(bo2::argb(bo2::OFF_WHITE, 0.4) >> 24), "{:?}", texts(&prims));
+    assert!(texts(&prims).iter().filter(|t| *t == "Hardline").count() >= 2, "the cell and the panel title");
+    assert!(texts(&prims).iter().any(|t| t == "Blind Eye"), "cells carry BO2's names: {:?}", texts(&prims));
 }
