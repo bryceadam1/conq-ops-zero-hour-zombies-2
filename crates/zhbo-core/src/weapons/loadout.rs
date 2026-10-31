@@ -47,8 +47,9 @@ pub struct Loadout {
     /// Spare rounds the primary and secondary start with, instead of BO2's (tests run a gun dry).
     pub reserve: [Option<u16>; 2],
     /// How many of the lethal the class carries: BO2's loadout `primarygrenadecount`
-    /// (`_class.gsc:718`, the clip `setweaponammoclip` gives at `:739`), two with Danger Close
-    /// (`cacgrenadesbutton.lua:130-160`). `None` gives the item's own start count.
+    /// (`_class.gsc:718`, the clip `setweaponammoclip` gives at `:739`): one per filled box, so one
+    /// lethal is one (a C4 too), two with Danger Close (`cacgrenadesbutton.lua:130-230`). `None` (a
+    /// spec without the key: the shipped presets) gives the item's own start count.
     pub lethal_count: Option<u16>,
     /// How many of the tactical the class carries: BO2's loadout `specialgrenadecount`
     /// (`_class.gsc:724`, the clip `setweaponammoclip` gives), one or two (a second tactical costs

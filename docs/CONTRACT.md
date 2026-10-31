@@ -515,9 +515,12 @@ class's cards are not stored in the profile but re-derived from what it holds (T
 tactical-slot item in the lethal slot, Danger Close from the class spec's `lethal_count=2`, the
 loadout's `primarygrenadecount` that the arsenal starts the lethal with). The spec's
 `tactical_count` (1 or 2, BO2's `specialgrenadecount`; a second tactical is a point of its own) is
-what the arsenal starts the tactical with, and Tactician's `lethal_count` is its chosen 1 or 2;
-both are capped by the item's `MaxReserve` (`classmenu::items::offhand_cap`). A spec without a
-count (a class saved before them) gives the item's start count.
+what the arsenal starts the tactical with, and the `lethal_count` (BO2's `primarygrenadecount`)
+the lethal's: one per filled box of the slot (`cacgrenadesbutton.lua:130-230`), so one lethal is
+one whatever the item's start count (a C4 too), Danger Close's two, Tactician's chosen 1 or 2;
+both are capped by the item's `MaxReserve` (`classmenu::items::offhand_cap`). The editor always
+writes both counts; repair makes a held item's 0 (a class saved before the counts) one. A spec
+without a count (the shipped presets) gives the item's start count.
 
 ## Versioning
 

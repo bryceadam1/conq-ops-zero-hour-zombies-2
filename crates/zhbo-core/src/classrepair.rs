@@ -26,8 +26,8 @@
 //!   counts (`lethal_count`: Danger Close's two, or Tactician's chosen one or two; `tactical_count`:
 //!   one or two), clamped the same way and to the item's own cap (`items::offhand_cap`), dropped
 //!   when the slot is empty. A tactical item in the lethal slot is Tactician's
-//!   (`checkclasses.lua:677-686`) and stays. A count of 0 (a class saved before the counts) gives
-//!   the item's start count.
+//!   (`checkclasses.lua:677-686`) and stays. A held item counts at least one (BO2's count is the
+//!   slot's filled boxes), so a 0 (a class saved before the counts) becomes one.
 //!
 //! Unknown ids are cleared, not substituted: `catalog::weapon_or_none` drops them loudly (the same
 //! rule the arsenal uses), so a corrupt profile shows up in the log instead of quietly turning into
@@ -122,21 +122,20 @@ fn repair_offhand(c: &mut CustomClass, lethal: bool, cleared: &mut Cleared) {
 }
 
 /// The stored grenade counts (`CheckItems` clamps a count to `maxGrenades`, and the slot list caps
-/// it at the item's own max ammo, [`crate::classmenu::items::offhand_cap`]). A lethal item stores only Danger
-/// Close's two (one is the item's own count); Tactician's tactical and the tactical slot store
-/// their chosen one or two; an empty slot stores none. A 0 (a class saved before the counts) stays
-/// 0: the item's own count.
+/// it at the item's own max ammo, [`crate::classmenu::items::offhand_cap`]). A held item counts at
+/// least one: BO2's count is the slot's filled boxes and an equipped item fills the first
+/// (`cacgrenadesbutton.lua:130-230`), so a 0 (a class saved before the counts) is one. A lethal
+/// item stores two only with Danger Close (re-derived from that count); Tactician's tactical and
+/// the tactical slot store their chosen one or two; an empty slot stores none.
 fn repair_counts(c: &mut CustomClass) {
     use crate::classmenu::items;
-    let clamp = |n: u8, id: &str| n.min(items::offhand_cap(id));
+    let clamp = |n: u8, id: &str| n.clamp(1, items::offhand_cap(id).max(1));
     c.lethal_count = if c.lethal.is_empty() {
         0
     } else if items::is_tactical_item(&c.lethal) {
         clamp(c.lethal_count, &c.lethal)
-    } else if c.lethal_count > 1 {
-        c.lethal_count.min(crate::classes::MAX_GRENADES as u8)
     } else {
-        0
+        c.lethal_count.clamp(1, crate::classes::MAX_GRENADES as u8)
     };
     c.tactical_count = if c.tactical.is_empty() { 0 } else { clamp(c.tactical_count, &c.tactical) };
 }
@@ -231,12 +230,13 @@ fn drop_one(c: &mut CustomClass, cleared: &mut Cleared) -> bool {
     // A second lethal (Danger Close's, Tactician's second tactical) goes before the first
     // (`primarygrenadecount` back to one).
     if c.lethal_count > 1 {
-        c.lethal_count = if crate::classmenu::items::is_tactical_item(&c.lethal) { 1 } else { 0 };
+        c.lethal_count = 1;
         cleared.push("primarygrenadecount");
         return true;
     }
     if !c.lethal.is_empty() {
         c.lethal.clear();
+        c.lethal_count = 0;
         cleared.push("primarygrenade");
         return true;
     }
@@ -283,8 +283,8 @@ mod tests {
             secondary: "fnp45_mp".into(),
             lethal: "frag_grenade_mp".into(),
             tactical: "concussion_grenade_mp".into(),
-            lethal_count: 0,
-            tactical_count: 0,
+            lethal_count: 1,
+            tactical_count: 1,
             melee: "knife_held_mp".into(),
             perks: perks.iter().map(|p| (*p).to_string()).collect(),
             reserve: [0, 0],
@@ -293,6 +293,17 @@ mod tests {
             reticle_color: String::new(),
             knife: String::new(),
         }
+    }
+
+    #[test]
+    fn a_held_offhand_counts_at_least_one() {
+        // BO2's count is the slot's filled boxes (`cacgrenadesbutton.lua:130-230`): a class saved
+        // before the counts (0) carries one of each, never the item's own start count.
+        let mut c = class("an94_mp", &["Lightweight"]);
+        (c.lethal_count, c.tactical_count) = (0, 0);
+        let _ = repair(&mut c);
+        assert_eq!((c.lethal_count, c.tactical_count), (1, 1));
+        assert_eq!((c.loadout().lethal_count, c.loadout().tactical_count), (Some(1), Some(1)));
     }
 
     #[test]

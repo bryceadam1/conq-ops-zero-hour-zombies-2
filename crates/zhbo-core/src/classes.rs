@@ -184,11 +184,14 @@ pub struct CustomClass {
     pub lethal: String,
     /// Tactical offhand (`concussion_grenade_mp`).
     pub tactical: String,
-    /// How many lethals the class carries (BO2's `primarygrenadecount`): 2 with Danger Close's
-    /// second lethal, 0 = the item's own count. Serialises only when set, so older specs load.
+    /// How many lethals the class carries (BO2's `primarygrenadecount`, the slot's filled boxes):
+    /// 1, or 2 with Danger Close's second lethal or Tactician's second tactical; 0 for an empty
+    /// slot or a class saved before the count (repair makes a held item's 0 one). Serialises only
+    /// when set, so older specs load.
     pub lethal_count: u8,
-    /// How many tacticals the class carries (BO2's `specialgrenadecount`): 1 or 2, 0 = the item's
-    /// own count (a class saved before the count existed). Serialises only when set.
+    /// How many tacticals the class carries (BO2's `specialgrenadecount`): 1 or 2; 0 for an empty
+    /// slot or a class saved before the count (repair makes a held item's 0 one). Serialises only
+    /// when set.
     pub tactical_count: u8,
     /// Melee slot (`knife_held_mp`).
     pub melee: String,

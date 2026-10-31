@@ -989,7 +989,23 @@ fn danger_close_carries_and_charges_a_second_lethal() {
     // No lethal, no second one: the card alone.
     let bare = Draft { lethal: String::new(), ..d.clone() };
     assert_eq!(bare.to_custom().lethal_count, 0);
-    assert_eq!(plain.to_custom().lethal_count, 0);
+    assert_eq!(plain.to_custom().lethal_count, 1);
+}
+
+/// One lethal is one: BO2's `primarygrenadecount` is the slot's filled boxes
+/// (`cacgrenadesbutton.lua:130-230`), the clip `_class.gsc:739` gives, whatever the item's own
+/// start count; the class and its spec carry it so the arsenal starts with exactly one.
+#[test]
+fn a_single_lethal_is_one_whatever_its_start_count() {
+    for lethal in equipment_ids(true) {
+        let d = Draft { lethal: lethal.to_string(), ..Draft::default() };
+        assert_eq!((d.lethal_count(), d.offhand_count(true), d.offhand_boxes(true)), (1, 1, 1), "{lethal}");
+        let c = d.to_custom();
+        assert_eq!(c.lethal_count, 1, "{lethal}");
+        assert!(c.to_spec().contains("lethal_count=1"), "{}", c.to_spec());
+        assert_eq!(c.loadout().lethal_count, Some(1), "{lethal}");
+        assert!(Draft::from_custom(&c).wildcards.is_empty(), "one lethal needs no card");
+    }
 }
 
 #[test]

@@ -133,10 +133,13 @@ impl Draft {
         self.wildcards.len() >= classes::MAX_BONUS_CARDS
     }
 
-    /// How many lethals the class carries: BO2's `primarygrenadecount`. A lethal item may be two
-    /// only with Danger Close (`cacgrenadesbutton.lua:130-160`, `checkclasses.lua:688-700`), whose
-    /// second lethal is taken with the card; 0 for a single one (the item's own count). Tactician's
-    /// tactical carries its chosen count, one or two, like the tactical slot ([`Draft::tactical_count`]).
+    /// How many lethals the class carries: BO2's `primarygrenadecount`, the filled boxes of the
+    /// slot's button (`cacgrenadesbutton.lua:130-230` counts the `statusN` boxes), which
+    /// `_class.gsc:718-739` gives as the item's clip — so one lethal is one, whatever the item's
+    /// own start count (one C4, one Trophy System). A lethal item may be two only with Danger
+    /// Close (`checkclasses.lua:688-700`), whose second lethal is taken with the card; Tactician's
+    /// tactical carries its chosen count, one or two, like the tactical slot
+    /// ([`Draft::tactical_count`]); 0 for an empty slot.
     pub fn lethal_count(&self) -> u8 {
         if self.lethal.is_empty() {
             0
@@ -145,7 +148,7 @@ impl Draft {
         } else if self.wildcards.contains(&Wildcard::DangerClose) {
             classes::MAX_GRENADES as u8
         } else {
-            0
+            1
         }
     }
 
@@ -159,15 +162,11 @@ impl Draft {
         }
     }
 
-    /// How many of its item an offhand slot holds (0 empty): the given count, a single lethal's one
-    /// included. The button's boxes fill to it and its name reads `x2` past one.
+    /// How many of its item an offhand slot holds (0 empty): the given count. The button's boxes
+    /// fill to it and its name reads `x2` past one.
     pub fn offhand_count(&self, lethal: bool) -> u8 {
         if lethal {
-            if self.lethal.is_empty() {
-                0
-            } else {
-                self.lethal_count().max(1)
-            }
+            self.lethal_count()
         } else {
             self.tactical_count()
         }

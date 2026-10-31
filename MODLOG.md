@@ -4910,3 +4910,24 @@ behind BO2's Assault Shield); weapons 781,587 unchanged; gap clusters 201 (the `
 stays for those two). The installed `ConquerOps_BO2.big` carries the old order until it is
 rebuilt (the integrator's `hud::VERSION` bump), so the screenshot harness shows the new grid only
 on a fresh archive.
+
+## One lethal is one: the class carries `primarygrenadecount` (2026-10-31, `v1/cac-rules`)
+
+BO2's grenade count is the slot's filled boxes: `cacgrenadesbutton.lua:130-230` counts the
+`statusN` boxes that are equipped, and `_class.gsc:718-739` gives `getloadoutitem(class,
+"primarygrenadecount")` as the item's clip (`setweaponammoclip`). An equipped item fills the first
+box, so one lethal point is one lethal — one C4, one claymore — whatever the weapon's own start
+count; the second box (Danger Close's) is the second. The mod stored 0 for a single lethal and the
+arsenal fell back to the item's `StartReserve` (two for a C4 or Trophy System on the real table).
+
+* `Draft::lethal_count` is 1 for a single lethal (2 with Danger Close, Tactician's chosen 1 or 2),
+  so the spec, `CustomClass` and `Loadout` always carry it, like `tactical_count`;
+  `offhand_count` is the count itself.
+* `classrepair::repair_counts` makes a held item's count at least one (a class saved before the
+  counts carried 0) and a trimmed lethal's 0; the trim takes a second lethal back to one.
+* A spec without the key (the shipped presets) still gives the item's start count (`None`).
+
+Tests: `a_single_lethal_is_one_whatever_its_start_count` (classmenu),
+`a_held_offhand_counts_at_least_one` (classrepair); the fixtures that stored 0 now store 1.
+Measured: cac 9, weapons 781,587, gap clusters 201 — unchanged (the conformance tables carry no
+grenade count; the movement is the class's, covered by the tests).
