@@ -892,6 +892,7 @@ mod tests {
             radius: 0.0,
             mins,
             maxs,
+            hit_boxes: Vec::new(),
             materials: vec![Some(zhbo_formats::xmodel::Material { name: name.into(), textures: Vec::new(), state_bits: Vec::new(), sort_key: 0 })],
         }
     }

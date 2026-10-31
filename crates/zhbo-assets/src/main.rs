@@ -199,6 +199,11 @@ fn run(args: &[String]) -> Result<(), String> {
                     println!("  surface {i}: {} verts, bones {bones:?}, centroid {:>7.2?}", s.vertices.len(), [c[0] / n, c[1] / n, c[2] / n]);
                 }
             }
+            if args.iter().any(|a| a == "--hitboxes") {
+                for (i, h) in model.hit_boxes.iter().enumerate().filter(|(_, h)| h.radius_squared > 0.0 || h.location != 0) {
+                    println!("  hit {i:>3} {:<24} loc {:>2} r2 {:>8.2} mins {:>7.2?} maxs {:>7.2?} offset {:>7.2?}", model.bones[i].name, h.location, h.radius_squared, h.mins, h.maxs, h.offset);
+                }
+            }
             if let Some(out) = flag(args, "--png") {
                 let textures = color_maps(&model, &paks);
                 preview::render(&model, &textures, Path::new(out)).map_err(|e| e.to_string())?;

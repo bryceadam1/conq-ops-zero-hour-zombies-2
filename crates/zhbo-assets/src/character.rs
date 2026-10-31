@@ -292,6 +292,7 @@ mod tests {
             radius: 1.0,
             mins: [0.0; 3],
             maxs: [0.0; 3],
+            hit_boxes: Vec::new(),
             materials: vec![None],
         }
     }

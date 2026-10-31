@@ -15,6 +15,8 @@ mod build;
 mod fire;
 mod hack;
 mod rts;
+#[cfg(test)]
+mod hit_tests;
 
 pub use build::{placement, HostWorld, PLANT_DISTANCE};
 pub use fire::{gather_targets, throw_velocity};
@@ -277,6 +279,8 @@ pub struct Sim {
     pub tuning: MoveTuning,
     /// BO2's bullet penetration table and dvars (`crate::penetration`, from the tuning pack).
     pub penetration: crate::penetration::Penetration,
+    /// The soldier's hit boxes, when not the installed table's (the tests set their own).
+    pub hit_body: Option<&'static crate::hitloc::Body>,
     pub frame: u32,
     pub events: Vec<Event>,
 }
@@ -296,6 +300,7 @@ impl Sim {
             smokes: Vec::new(),
             tuning: MoveTuning::default(),
             penetration: crate::penetration::Penetration::default(),
+            hit_body: None,
             frame: 0,
             events: Vec::new(),
         }
@@ -1011,7 +1016,7 @@ pub(crate) mod tests {
         ObjInfo { pos: Vec3::new(x, 0.0, 0.0), health: 120.0, max_health: 120.0, ..general(id, player) }
     }
 
-    fn run(sim: &mut Sim, host: &FakeHost, player: i32, general: u32, input: FpsInput, frames: u32) {
+    pub(crate) fn run(sim: &mut Sim, host: &FakeHost, player: i32, general: u32, input: FpsInput, frames: u32) {
         for _ in 0..frames {
             sim.input(player, general, input);
             let f = sim.frame + 1;
@@ -1025,7 +1030,7 @@ pub(crate) mod tests {
     }
 
     /// Let the camera fly in, the tablet go down and the weapon come up.
-    fn wait_until_ready(sim: &mut Sim, host: &FakeHost) {
+    pub(crate) fn wait_until_ready(sim: &mut Sim, host: &FakeHost) {
         let ready = sim.player(0).unwrap().arsenal.raise_left;
         run(sim, host, 0, 1, FpsInput::default(), frames(ready));
     }

@@ -172,6 +172,8 @@ pub struct AttachmentUnique {
     pub sound_overrides: u32,
     /// The overriding fire-string start (bit 8); `None` with the bit set overrides to nothing.
     pub fire_start_sound_player: Option<String>,
+    /// `locationDamageMultipliers` ([`HIT_LOCATIONS`]), empty when the pointer is NULL.
+    pub location_multipliers: Vec<f32>,
     /// The weapon the attachment toggles to (select fire, grenade launcher, dual optic).
     pub alt_weapon: Option<String>,
     pub dual_wield_weapon: Option<String>,
@@ -614,6 +616,10 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 fire_sound: opt_str(z, u + WU::fireSound),
                 sound_overrides: z.u32(u + WU::soundOverrides),
                 fire_start_sound_player: opt_str(z, u + WU::fireStartSoundPlayer),
+                location_multipliers: match z.u32(u + WU::locationDamageMultipliers) {
+                    0 => Vec::new(),
+                    p => (0..HIT_LOCATIONS as u32).map(|i| z.f32(p + 4 * i)).collect(),
+                },
                 alt_weapon: opt_str(z, u + WU::szAltWeaponName),
                 dual_wield_weapon: opt_str(z, u + WU::szDualWieldWeaponName),
                 overlay_material: named(z, u + WU::overlayMaterial).unwrap_or_default(),

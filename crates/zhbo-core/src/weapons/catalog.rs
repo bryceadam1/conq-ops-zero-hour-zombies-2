@@ -26,6 +26,8 @@ pub struct Catalog {
     reticle_color_order: Vec<&'static CamoOption>,
     built: Mutex<HashMap<String, &'static WeaponDef>>,
     pub tablet_meshes: u8,
+    /// The soldier's hit boxes (`HitBox` lines), `None` in a table without them.
+    hit_body: Option<&'static crate::hitloc::Body>,
 }
 
 impl Catalog {
@@ -53,6 +55,7 @@ impl Catalog {
             reticle_color_order,
             built: Mutex::new(HashMap::new()),
             tablet_meshes: t.tablet_meshes,
+            hit_body: (!t.hit_boxes.is_empty()).then(|| &*Box::leak(Box::new(crate::hitloc::Body::new(&t.hit_boxes)))),
         }
     }
 
@@ -116,6 +119,11 @@ impl Catalog {
     /// The base reticle colours, in BO2's table order.
     pub fn reticle_colors(&self) -> &[&'static CamoOption] {
         &self.reticle_color_order
+    }
+
+    /// The soldier's hit boxes, standing, when the table carries them.
+    pub fn hit_body(&self) -> Option<&'static crate::hitloc::Body> {
+        self.hit_body
     }
 
     pub fn all(&self) -> &[&'static WeaponDef] {
@@ -242,7 +250,7 @@ Weapon an94_mp
   Ads = 0.25 0.2 50
   Damage = 40 33 33 0 0 0
   DamageRange = 216.7 216.8 375 0 0 0
-  HeadMultiplier = 1.2
+  LocationMultipliers = 1 1.2 1.2 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
   HipSpread = 3 6.75 2.5 6 2 5
   Spread = 6 0.5 0.5 0
   AdsKick = 30 47.5 -50 50
@@ -269,7 +277,7 @@ Weapon fnp45_mp
   Ads = 0.12 0.1 60
   Damage = 55 45 45 0 0 0
   DamageRange = 58.3 58.4 125 0 0 0
-  HeadMultiplier = 1.1
+  LocationMultipliers = 1 1.1 1.1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
   HipSpread = 3 5 2.5 4.5 2 4
   Spread = 7 0.6 0.5 0.3
   AdsKick = 60 80 -40 40

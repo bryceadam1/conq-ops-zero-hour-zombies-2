@@ -297,6 +297,7 @@ pub fn table_with_metadata(
         reticle_colors: opts.reticle_colors.to_vec(),
         tablet_meshes: 0,
         perks: Vec::new(),
+        hit_boxes: Vec::new(),
     }
 }
 
@@ -630,6 +631,31 @@ pub fn is_player_weapon(w: &Weapon) -> bool {
     w.is_gun() && !w.name.contains("wager") && !w.name.starts_with("inventory_") && w.view_model.is_some() && !EXCLUDED_WEAPONS.contains(&w.name.as_str())
 }
 
+/// Per attachment (`eAttachment` order), the location multipliers its single unique sets
+/// differently from the base unique's — what `FUN_008ed780` takes over the def's. Empty when the
+/// weapon has no base unique (the def's stand alone).
+fn attachment_location_multipliers(w: &Weapon) -> Vec<(String, Vec<(u8, f32)>)> {
+    let single = |k: u32| w.attachment_uniques.iter().find(|u| u.kind == k && u.combined == 0);
+    let Some(u0) = single(0) else { return Vec::new() };
+    let mut kinds: Vec<(u32, String)> = w.attachment_variants.iter().map(|(k, id)| (*k, short_name(id))).collect();
+    kinds.sort();
+    kinds.dedup();
+    kinds
+        .into_iter()
+        .filter_map(|(k, short)| {
+            let u = single(k)?;
+            let differs: Vec<(u8, f32)> = u
+                .location_multipliers
+                .iter()
+                .enumerate()
+                .filter(|(p, m)| u0.location_multipliers.get(*p) != Some(*m))
+                .map(|(p, m)| (p as u8, *m))
+                .collect();
+            (!differs.is_empty()).then_some((short, differs))
+        })
+        .collect()
+}
+
 fn class_of(w: &Weapon) -> Class {
     use manifest::{LETHALS, TACTICALS};
     let name = w.name.as_str();
@@ -779,7 +805,6 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         damage[i] = w.damage[i] as f32;
         damage_range[i] = if w.damage_range[i] > 0.0 { range(w.damage_range[i]) } else { 0.0 };
     }
-    let mult = |i: usize| w.location_multipliers.get(i).copied().filter(|m| *m > 0.0).unwrap_or(1.0);
     let shells = w.reload_start_time > 0.0 && w.reload_ammo_add > 0;
     let d = WeaponDef {
         id: w.name.clone(),
@@ -812,7 +837,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         ads_fov: w.ads_zoom_fov,
         damage,
         damage_range,
-        head_multiplier: mult(bo2::HIT_LOCATION_HEAD),
+        location_multipliers: std::array::from_fn(|i| w.location_multipliers.get(i).copied().unwrap_or(1.0)),
+        attachment_location_multipliers: attachment_location_multipliers(w),
+        rifle_bullet: w.rifle_bullet,
         max_range: if w.max_range > 0.0 { inches(w.max_range) } else { inches(8000.0) },
         hip_spread: [w.hip_spread_stand, w.hip_spread_ducked, w.hip_spread_prone],
         spread_decay: w.hip_spread_decay,

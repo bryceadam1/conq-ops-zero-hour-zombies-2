@@ -17,6 +17,7 @@ pub mod config;
 pub mod conformance;
 pub mod equipment;
 pub mod ffi;
+pub mod hitloc;
 pub mod hitscan;
 pub mod host;
 pub mod impacts;

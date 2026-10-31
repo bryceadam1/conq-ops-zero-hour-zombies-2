@@ -36,12 +36,9 @@ pub(crate) fn cull(c: xmodel::Cull) -> nm::Cull {
     }
 }
 
-/// `m` as a native model: the textures the W3D pass already wrote for its surfaces (`tex`, from
-/// `textures::textures`), the packed maps and blends `looks` holds for them. Surfaces the W3D pass
-/// leaves out (`looks.dropped`: reticles, clan tags) are left out here too.
-pub(crate) fn model(m: &xmodel::Model, tex: &[Option<String>], looks: &Looks) -> nm::Model {
-    let bones = m
-        .bones
+/// The native skeleton of `m` (its bones, bind pose).
+pub(crate) fn bones(m: &xmodel::Model) -> Vec<nm::Bone> {
+    m.bones
         .iter()
         .map(|b| nm::Bone {
             name: b.name.clone(),
@@ -51,8 +48,14 @@ pub(crate) fn model(m: &xmodel::Model, tex: &[Option<String>], looks: &Looks) ->
             rotation: b.rotation,
             position: b.position,
         })
-        .collect();
-    let mut out = nm::Model { name: m.name.clone(), bones, mins: m.mins, maxs: m.maxs, radius: m.radius, ..Default::default() };
+        .collect()
+}
+
+/// `m` as a native model: the textures the W3D pass already wrote for its surfaces (`tex`, from
+/// `textures::textures`), the packed maps and blends `looks` holds for them. Surfaces the W3D pass
+/// leaves out (`looks.dropped`: reticles, clan tags) are left out here too.
+pub(crate) fn model(m: &xmodel::Model, tex: &[Option<String>], looks: &Looks) -> nm::Model {
+    let mut out = nm::Model { name: m.name.clone(), bones: bones(m), mins: m.mins, maxs: m.maxs, radius: m.radius, ..Default::default() };
     for lod in &m.lods {
         let first = out.surfaces.len() as u32;
         for s in lod.first_surface..lod.first_surface + lod.surface_count {
@@ -342,6 +345,7 @@ mod tests {
             radius: 30.0,
             mins: [0.0; 3],
             maxs: [30.0, 0.0, 4.0],
+            hit_boxes: Vec::new(),
             materials: vec![None],
         }
     }

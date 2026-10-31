@@ -162,7 +162,17 @@ pub struct WeaponDef {
     /// BO2's damage curve: damage at each range.
     pub damage: [f32; 6],
     pub damage_range: [f32; 6],
-    pub head_multiplier: f32,
+    /// BO2's `locationDamageMultipliers`, one per `hitLocation_t` ([`crate::hitloc`]): a bullet's
+    /// damage is multiplied by its location's (t6mp `FUN_005f05c0` via `FUN_005f0490` ->
+    /// `FUN_008ed780`). A combination's are resolved by [`crate::attachments::apply`].
+    pub location_multipliers: [f32; crate::hitloc::COUNT],
+    /// Base weapons: the location multipliers an attachment's unique sets differently from the base
+    /// unique's (`short`, `[(location, multiplier)]`, in `eAttachment` order). `FUN_008ed780` takes,
+    /// per location, the first mounted attachment's that differs, else the def's.
+    pub attachment_location_multipliers: Vec<(String, Vec<(u8, f32)>)>,
+    /// `bRifleBullet` (+0x631): the player trace ranks hit locations by the rifle priority table
+    /// (head first), else every body location ranks the same (nearest wins) ([`crate::hitloc`]).
+    pub rifle_bullet: bool,
     pub max_range: f32,
     /// Hip spread cone (degrees) min/max standing, crouched, prone.
     pub hip_spread: [(f32, f32); 3],
@@ -440,7 +450,9 @@ impl Default for WeaponDef {
             ads_fov: 55.0,
             damage: [40.0, 30.0, 0.0, 0.0, 0.0, 0.0],
             damage_range: [inches(1000.0), inches(2000.0), 0.0, 0.0, 0.0, 0.0],
-            head_multiplier: 1.0,
+            location_multipliers: [1.0; crate::hitloc::COUNT],
+            attachment_location_multipliers: Vec::new(),
+            rifle_bullet: false,
             max_range: inches(8000.0),
             hip_spread: [(3.0, 6.75), (2.5, 6.0), (2.0, 5.0)],
             spread_decay: 6.0,

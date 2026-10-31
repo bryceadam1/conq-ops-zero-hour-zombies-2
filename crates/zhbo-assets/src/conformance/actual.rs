@@ -443,7 +443,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .int("melee_damage", knife.melee_damage as i64)
         // The mod's hits are head or body (`hitscan::trace`'s `headshot`, `sim/fire.rs`): its
         // head zone covers BO2's helmet and head, every other location takes 1.
-        .floats("location_multipliers", &(0..21).map(|i| if i == 1 || i == 2 { f32_value(d.head_multiplier) } else { 1.0 }).collect::<Vec<_>>())
+        .floats("location_multipliers", &d.location_multipliers.iter().map(|m| f32_value(*m)).collect::<Vec<_>>())
         .float("max_range", inch(d.max_range))
         .text("penetrate_type", d.penetrate.name())
         .float("explosion_radius", inch(d.explosion_radius))
@@ -568,7 +568,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .absent("mms_weapon")
         .absent("use_as_melee")
         .bool("cook_off_hold", d.cook)
-        .absent("rifle_bullet");
+        .bool("rifle_bullet", d.rifle_bullet);
     let bits: Vec<String> = (0..64u32).filter(|i| d.specialties.0 & (1u64 << i) != 0).map(|i| i.to_string()).collect();
     b.set("specialties", &bits);
 

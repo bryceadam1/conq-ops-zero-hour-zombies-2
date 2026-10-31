@@ -239,6 +239,19 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
             d.fire_start_sound = e;
         }
     }
+    // Each hit location's multiplier: the first mounted attachment (in `eAttachment` order) whose
+    // unique sets it differently from the base unique, else the def's (`FUN_008ed780`).
+    for (l, m) in d.location_multipliers.iter_mut().enumerate() {
+        if let Some(x) = base
+            .attachment_location_multipliers
+            .iter()
+            .filter(|(short, _)| shorts.contains(&short.as_str()))
+            .find_map(|(_, list)| list.iter().find(|(loc, _)| *loc as usize == l).map(|(_, x)| *x))
+        {
+            *m = x;
+        }
+    }
+    d.attachment_location_multipliers.clear();
     // BO2 truncates every time product to whole milliseconds after all scales are applied
     // (`FUN_008ec740`, `FUN_008ec7a0`, `FUN_008ec860`, `FUN_008ecca0`; G14 §4).
     d.fire_time = trunc_ms(d.fire_time);
@@ -288,6 +301,26 @@ mod tests {
             allowed: vec![("extclip".into(), "extclip".into()), ("reflex".into(), "reflex".into()), ("acog".into(), "acog".into())],
             ..Default::default()
         }
+    }
+
+    /// `FUN_008ed780`: per location, the first mounted attachment whose unique sets it differently
+    /// from the base unique, else the def's (a sniper's silencer drops its arm multipliers).
+    #[test]
+    fn an_attachments_unique_replaces_the_location_multipliers_it_changes() {
+        let mut b = base();
+        b.allowed.push(("silencer".into(), "silencer".into()));
+        b.location_multipliers[2] = 2.0;
+        b.location_multipliers[9] = 1.5;
+        b.attachment_location_multipliers = vec![("silencer".into(), vec![(9, 1.0)])];
+        let sil = AttachmentDef { id: "silencer".into(), short: "silencer".into(), point: 4, ..Default::default() };
+        let ext = AttachmentDef { id: "extclip".into(), short: "extclip".into(), clip_scale: 1.345, point: 3, ..Default::default() };
+        let d = apply(&b, &[&sil, &ext]);
+        assert_eq!((d.location_multipliers[2], d.location_multipliers[9]), (2.0, 1.0));
+        assert!(d.attachment_location_multipliers.is_empty(), "a combination is not a base");
+        assert_eq!(apply(&b, &[&ext]).location_multipliers[9], 1.5);
+        // The table carries both.
+        let text = crate::weapons::format_table(&[b.clone()]);
+        assert_eq!(crate::weapons::parse_table(&text).unwrap()[0].attachment_location_multipliers, b.attachment_location_multipliers);
     }
 
     #[test]

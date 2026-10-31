@@ -21,7 +21,7 @@ impl Sim {
                 let radius = spread_deg.to_radians() * jitter.1.abs().sqrt();
                 let dir = dir_from_angles(p.yaw + radius * angle.cos(), p.pitch + radius * angle.sin());
 
-                let targets = gather_targets(host, eye, def.max_range, p.general);
+                let targets = gather_targets(host, eye, def.max_range, p.general, self.hit_body(), def.rifle_bullet);
                 let ground = |x: f32, y: f32| host.ground_height(x, y);
                 let hit = hitscan::trace(eye, dir, def.max_range, &targets, p.general, &ground);
                 // One tracer and sound per shot, not per pellet.
@@ -46,12 +46,12 @@ impl Sim {
                     return;
                 }
                 match hit {
-                    HitResult::Object { id, point, distance, headshot } => {
+                    HitResult::Object { id, point, distance, location } => {
                         if let Some(fx) = fx {
                             host.fire_fx(p.general, fx, id, point);
                         }
                         let general = p.general;
-                        let mut last = self.bullet_hit(host, idx, p, dir, Strike { id, point, distance, headshot, mult: 1.0, fx: true });
+                        let mut last = self.bullet_hit(host, idx, p, dir, Strike { id, point, distance, location, mult: 1.0, fx: true });
                         // BO2's penetration loop (`FUN_005d0350`): on through what it hit, the
                         // multiplier falling with each solid's thickness over its depth.
                         let surface_of = |id: u32| Surface::of_object(host.object(id, general).as_ref());
@@ -77,8 +77,8 @@ impl Sim {
                                     self.emit(idx, EventKind::Impact { at, dir, surface, head, fatal, impact_type: def.impact_type, exit: true });
                                 }
                                 penetration::Step::Exit { .. } => {}
-                                penetration::Step::Enter { hit: HitResult::Object { id, point, distance, headshot }, mult, fx } => {
-                                    last = self.bullet_hit(host, idx, p, dir, Strike { id, point, distance, headshot, mult, fx });
+                                penetration::Step::Enter { hit: HitResult::Object { id, point, distance, location }, mult, fx } => {
+                                    last = self.bullet_hit(host, idx, p, dir, Strike { id, point, distance, location, mult, fx });
                                 }
                                 penetration::Step::Enter { hit, fx, .. } => {
                                     if fx && matches!(hit, HitResult::Terrain { .. }) {
@@ -176,13 +176,13 @@ impl Sim {
     }
 }
 
-/// A bullet striking object `id` at `point`, `distance` from the muzzle, with BO2's damage
-/// multiplier `mult`; `fx`: it plays its impact.
+/// A bullet striking object `id` at `point`, `distance` from the muzzle, at hit `location`, with
+/// BO2's damage multiplier `mult`; `fx`: it plays its impact.
 struct Strike {
     id: u32,
     point: Vec3,
     distance: f32,
-    headshot: bool,
+    location: u8,
     mult: f32,
     fx: bool,
 }
@@ -197,16 +197,24 @@ struct BulletHit {
 }
 
 impl Sim {
+    /// The soldier's hit boxes the bullets trace: the test override, else the converted table's.
+    fn hit_body(&self) -> Option<&'static crate::hitloc::Body> {
+        self.hit_body.or_else(|| crate::weapons::catalog().hit_body())
+    }
+
     /// A bullet strikes (`FUN_005cfc60`: the range curve's damage times the multiplier; a
     /// penetrated round's next surface plays its impact only past `bullet_penetrationMinFxDist`).
     fn bullet_hit(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, dir: Vec3, s: Strike) -> BulletHit {
-        let Strike { id, point, distance, headshot, mult, fx } = s;
+        let Strike { id, point, distance, location, mult, fx } = s;
         let def = p.arsenal.current().def;
-        let head = if headshot { def.head_multiplier } else { 1.0 };
+        let headshot = crate::hitloc::is_head(location);
         let victim = host.object(id, p.general);
         let infantry = victim.is_some_and(|v| v.has(objflags::INFANTRY));
+        // A soldier's damage is multiplied by the weapon's for the location struck (BO2's player
+        // damage, `FUN_005f05c0`); anything else takes it unscaled.
+        let at = if infantry { def.location_multipliers.get(location as usize).copied().unwrap_or(1.0) } else { 1.0 };
         let fmj = if def.fmj && !infantry { FMJ_VEHICLE_DAMAGE } else { 1.0 };
-        let amount = def.damage_at(distance) * mult * head * fmj * BO2_TO_ZH_DAMAGE;
+        let amount = def.damage_at(distance) * mult * at * fmj * BO2_TO_ZH_DAMAGE;
         let kill = host.damage(p.general, id, amount, damage_kind::SMALL_ARMS);
         // BO2's blood is picked by the hit region and its lethality (FxFleshType); every other
         // surface comes from what was hit.
@@ -289,21 +297,25 @@ fn reach_radius(o: &ObjInfo) -> f32 {
 }
 
 /// Convert nearby objects into hitscan targets. Friendlies are skipped so bullets pass through them
-/// (BO2 has no friendly fire in core modes); dead and non-colliding objects are skipped.
-pub fn gather_targets(host: &dyn LogicHost, eye: Vec3, range: f32, shooter: u32) -> Vec<Target> {
+/// (BO2 has no friendly fire in core modes); dead and non-colliding objects are skipped. Infantry
+/// are traced as `body` (BO2's hit boxes) when there is one, ranked as a `rifle` bullet ranks them.
+pub fn gather_targets(host: &dyn LogicHost, eye: Vec3, range: f32, shooter: u32, body: Option<&'static crate::hitloc::Body>, rifle: bool) -> Vec<Target> {
     let mut objs = Vec::new();
     host.query(eye, range, shooter, &mut objs);
     let mut targets: Vec<Target> = objs
         .iter()
         .filter(|o| o.id != shooter && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::ALLY))
-        .map(target_from)
+        .map(|o| target_from(o, body, rifle))
         .collect();
     // Deterministic order regardless of partition iteration order.
     targets.sort_by_key(|t| t.id);
     targets
 }
 
-pub fn target_from(o: &ObjInfo) -> Target {
+pub fn target_from(o: &ObjInfo, body: Option<&'static crate::hitloc::Body>, rifle: bool) -> Target {
+    if let Some(body) = body.filter(|_| o.has(objflags::INFANTRY)) {
+        return Target { id: o.id, pos: o.pos, shape: Shape::Body { body, yaw: o.yaw, rifle }, head_fraction: 0.0 };
+    }
     if o.has(objflags::INFANTRY) {
         return Target {
             id: o.id,

@@ -5,7 +5,7 @@
 //! 32-bit PC layout from OpenAssetTools' `T6_Assets.h` (GPL-3.0).
 
 use crate::fastfile::ASSET_XMODEL;
-use crate::t6zone::layouts::{DObjAnimMat, GfxPackedVertex, XModel as XM, XModelLodInfo as XLI, XSurface as XS, XSurfaceVertexInfo as XV};
+use crate::t6zone::layouts::{DObjAnimMat, GfxPackedVertex, XBoneInfo as XBI, XModel as XM, XModelLodInfo as XLI, XSurface as XS, XSurfaceVertexInfo as XV};
 use crate::t6zone::Zone;
 use crate::FormatError;
 
@@ -170,6 +170,21 @@ pub struct Model {
     pub maxs: [f32; 3],
     /// One per surface (same index).
     pub materials: Vec<Option<Material>>,
+    /// Per bone (same index), the bone's hit box: `XModel.boneInfo` and the hit location
+    /// `partClassification` names. Empty when the model has neither.
+    pub hit_boxes: Vec<BoneHit>,
+}
+
+/// A bone's hit box (`XBoneInfo`) and its hit location (`partClassification`, a `hitLocation_t`).
+/// BO2's player trace (`FUN_007837a0`) tests the ray against `bounds` in the bone's own frame, after
+/// a sphere pre-test (`offset`, `radius_squared`) that skips bones under 4 sq in.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BoneHit {
+    pub location: u8,
+    pub mins: [f32; 3],
+    pub maxs: [f32; 3],
+    pub offset: [f32; 3],
+    pub radius_squared: f32,
 }
 
 fn vec3(z: &Zone, a: u32) -> [f32; 3] {
@@ -264,7 +279,22 @@ pub fn read(z: &Zone, h: u32) -> Result<Model, FormatError> {
             })
         })
         .collect::<Result<Vec<_>, _>>()?;
-    Ok(Model { name, bones, surfaces, lods, radius: z.try_f32(h + XM::radius)?, mins: vec3(z, h + XM::mins), maxs: vec3(z, h + XM::maxs), materials })
+    let (info, classes) = (z.try_u32(h + XM::boneInfo)?, z.try_u32(h + XM::partClassification)?);
+    let hit_boxes = if info != 0 || classes != 0 {
+        (0..num_bones as u32)
+            .map(|i| {
+                let b = info + XBI::SIZE * i;
+                let location = if classes != 0 { z.u8(classes + i) } else { 0 };
+                if info == 0 {
+                    return BoneHit { location, ..Default::default() };
+                }
+                BoneHit { location, mins: vec3(z, b + XBI::bounds), maxs: vec3(z, b + XBI::bounds + 12), offset: vec3(z, b + XBI::offset), radius_squared: z.f32(b + XBI::radiusSquared) }
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
+    Ok(Model { name, bones, surfaces, lods, radius: z.try_f32(h + XM::radius)?, mins: vec3(z, h + XM::mins), maxs: vec3(z, h + XM::maxs), materials, hit_boxes })
 }
 
 fn read_surface(z: &Zone, sh: u32) -> Result<Surface, FormatError> {

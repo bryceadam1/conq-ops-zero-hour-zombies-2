@@ -27,6 +27,8 @@ pub struct Table {
     /// BO2's perk rows (`mp/statstable.csv`): the reference without `PERKS_` (`LIGHTWEIGHT`,
     /// `NINJA`) and the specialties it grants (`Perk <ref>` blocks).
     pub perks: Vec<(String, Specialties)>,
+    /// The soldier's hit boxes, standing (`HitBox = …` lines, [`crate::hitloc::HitBox`]).
+    pub hit_boxes: Vec<crate::hitloc::HitBox>,
 }
 
 pub(crate) fn pairs(v: &[(String, String)]) -> String {
@@ -66,6 +68,12 @@ pub fn format_table(defs: &[WeaponDef]) -> String {
 pub fn format_full_table(t: &Table) -> String {
     let mut s = String::from("; Black Ops II multiplayer weapons, converted from the player's own install by zhbo-assets.\n; Private data: do not redistribute.\n\n");
     s.push_str(&format!("TabletMeshes = {}\n\n", t.tablet_meshes));
+    for b in &t.hit_boxes {
+        s.push_str(&format!("HitBox = {}\n", b.format()));
+    }
+    if !t.hit_boxes.is_empty() {
+        s.push('\n');
+    }
     for (stats, specialties) in &t.perks {
         s.push_str(&format!("Perk {stats}\n  Specialties = {}\nEnd\n\n", specialties.format()));
     }
@@ -153,6 +161,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
         match cur.as_mut() {
             None => match key {
                 "TabletMeshes" => table.tablet_meshes = values.text_num().map_err(|e| err(&e))? as u8,
+                "HitBox" => table.hit_boxes.push(crate::hitloc::HitBox::parse(value).map_err(|e| err(&e))?),
                 _ => return Err(err("value outside a block")),
             },
             Some(Block::Attachment(a)) => set_field(ATTACHMENT_FIELDS, a, key, values).map_err(|e| err(&e))?,
@@ -399,9 +408,31 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             d.damage_range.copy_from_slice(&v.nums[..6]);
             Ok(())
         }),
-    field!("HeadMultiplier", "Headshot damage multiplier.", FieldKind::Num,
-        |d: &WeaponDef| d.head_multiplier.to_string(),
-        |d: &mut WeaponDef, v: Values| { d.head_multiplier = v.text_num()?; Ok(()) }),
+    field!("LocationMultipliers", "BO2's `locationDamageMultipliers`: one per hit location (`hitLocation_t`, 21).", FieldKind::Nums(crate::hitloc::COUNT),
+        |d: &WeaponDef| d.location_multipliers.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" "),
+        |d: &mut WeaponDef, v: Values| {
+            v.need(crate::hitloc::COUNT)?;
+            d.location_multipliers.copy_from_slice(&v.nums[..crate::hitloc::COUNT]);
+            Ok(())
+        }),
+    field!("AttachmentLocationMultipliers", "Base weapons: the location multipliers an attachment's unique changes (`short=location:mult,...`, `FUN_008ed780`).", FieldKind::Pairs,
+        |d: &WeaponDef| d.attachment_location_multipliers.iter().map(|(s, m)| format!("{s}={}", m.iter().map(|(l, x)| format!("{l}:{x}")).collect::<Vec<_>>().join(","))).collect::<Vec<_>>().join(" "),
+        |d: &mut WeaponDef, v: Values| {
+            d.attachment_location_multipliers = parse_pairs(v.text)
+                .into_iter()
+                .map(|(short, list)| {
+                    let m = list
+                        .split(',')
+                        .map(|p| p.split_once(':').and_then(|(l, x)| Some((l.parse().ok()?, x.parse().ok()?))).ok_or_else(|| format!("bad location multiplier {p}")))
+                        .collect::<Result<Vec<(u8, f32)>, String>>()?;
+                    Ok((short, m))
+                })
+                .collect::<Result<_, String>>()?;
+            Ok(())
+        }),
+    field!("RifleBullet", "BO2's `bRifleBullet`: hit locations ranked head first (1), else nearest (0).", FieldKind::Num,
+        |d: &WeaponDef| (d.rifle_bullet as u8).to_string(),
+        |d: &mut WeaponDef, v: Values| { d.rifle_bullet = v.text_num()? != 0.0; Ok(()) }),
     field!("MaxRange", "Bullets fly this far (Zero Hour units).", FieldKind::Num,
         |d: &WeaponDef| d.max_range.to_string(),
         |d: &mut WeaponDef, v: Values| { d.max_range = v.text_num()?; Ok(()) }),
@@ -758,7 +789,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 95);
+        assert_eq!(WEAPON_FIELDS.len(), 97);
         assert_eq!(ATTACHMENT_FIELDS.len(), 17);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }
