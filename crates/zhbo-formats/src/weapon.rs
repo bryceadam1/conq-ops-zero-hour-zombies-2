@@ -130,6 +130,10 @@ pub const HIT_LOCATION_HEAD: usize = 2;
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AttachmentUnique {
     pub name: String,
+    /// Its index in the variant's `attachmentUniques` array: an `eAttachment` for a single
+    /// attachment's unique (0 the base unique), past them for the combined ones. BO2's accessors
+    /// read a kind's single unique by this index (`FUN_008eb360`).
+    pub slot: u32,
     /// `eAttachment` (0: none, the weapon's base parts).
     pub kind: u32,
     pub view_model: Option<String>,
@@ -176,6 +180,9 @@ pub struct AttachmentUnique {
     pub overlay_material_low_res: String,
     /// `weapOverlayReticle_t`: which reticle the overlay draws (0: none).
     pub overlay_reticle: u32,
+    /// Seconds to put the weapon away when toggling to its alt mode with this attachment
+    /// (`iAltDropTime`; `FUN_008ed1e0` takes the first single unique that differs from the base's).
+    pub alt_drop_time: f32,
 }
 
 /// A BO2 attachment (`WeaponAttachment`): how it changes any weapon it goes on. Scales multiply the
@@ -397,6 +404,10 @@ pub struct Weapon {
     pub drop_time: f32,
     pub quick_raise_time: f32,
     pub quick_drop_time: f32,
+    /// The alt toggle's raise into this variant (`WeaponVariantDef.iAltRaiseTime`, `FUN_008df320`).
+    pub alt_raise_time: f32,
+    /// The alt toggle's drop out of this weapon (`WeaponDef.iAltDropTime`, `FUN_008ed1e0`).
+    pub alt_drop_time: f32,
     pub sprint_in_time: f32,
     pub sprint_out_time: f32,
     pub ads_in_time: f32,
@@ -556,6 +567,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
             }
             attachment_uniques.push(AttachmentUnique {
                 name: z.str_ptr(u + WU::szInternalName),
+                slot: i,
                 kind: z.u32(u + WU::attachmentType),
                 view_model: named(z, u + WU::viewModel),
                 view_model_tag: opt_str(z, u + WU::viewModelTag),
@@ -585,6 +597,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 overlay_material: named(z, u + WU::overlayMaterial).unwrap_or_default(),
                 overlay_material_low_res: named(z, u + WU::overlayMaterialLowRes).unwrap_or_default(),
                 overlay_reticle: z.u32(u + WU::overlayReticle),
+                alt_drop_time: ms(z, u + WU::iAltDropTime),
             });
         }
     }
@@ -679,6 +692,8 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.drop_time = ms(z, d + WD::iDropTime);
     w.quick_raise_time = ms(z, d + WD::quickRaiseTime);
     w.quick_drop_time = ms(z, d + WD::quickDropTime);
+    w.alt_raise_time = ms(z, v + WV::iAltRaiseTime);
+    w.alt_drop_time = ms(z, d + WD::iAltDropTime);
     w.sprint_in_time = ms(z, d + WD::sprintInTime);
     w.sprint_out_time = ms(z, d + WD::sprintOutTime);
     w.melee_time = ms(z, d + WD::iMeleeTime);

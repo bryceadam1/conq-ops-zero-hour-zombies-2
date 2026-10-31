@@ -70,6 +70,24 @@ fn overlay_for(w: &Weapon, shorts: &[&str]) -> Option<(String, String, u32)> {
     })
 }
 
+/// The alt-toggle drop time of the combination `shorts` on `w` (`FUN_008ed1e0`): for a weapon that
+/// is not itself an alt mode, the first single unique — walked in `eAttachment` order, each kind's
+/// unique at its own index of `attachmentUniques` (`FUN_008eb360`) — whose `iAltDropTime` differs
+/// from the base unique's; `None` keeps the def's own. Select fire's unique carries the 500 ms the
+/// toggle into `sf_*` takes.
+fn alt_drop_for(w: &Weapon, shorts: &[&str]) -> Option<f32> {
+    if w.inventory == bo2::inventory::ALTMODE {
+        return None;
+    }
+    let mut kinds: Vec<u32> =
+        shorts.iter().filter_map(|s| w.attachment_variants.iter().find(|(_, id)| short_name(id) == *s).map(|(k, _)| *k)).collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    let unique = |slot: u32| w.attachment_uniques.iter().find(|u| u.slot == slot);
+    let base = unique(0)?.alt_drop_time;
+    kinds.iter().take(3).filter_map(|&k| unique(k)).map(|u| u.alt_drop_time).find(|&t| t != base)
+}
+
 /// The attachment's metadata from BO2's tables: the full name and description keys' localized text,
 /// and its attribute-table deltas.
 #[derive(Clone, Debug, Default)]
@@ -321,6 +339,9 @@ pub fn add_variants(table: &mut Table, converted: &[String], bo2: &[Weapon]) {
             d.overlay_material = overlay_material;
             d.overlay_material_low_res = overlay_material_low_res;
             d.overlay_reticle = overlay_reticle;
+        }
+        if let Some(t) = bo2.iter().find(|w| w.name == base_id).and_then(|w| alt_drop_for(w, &combo_shorts)) {
+            d.alt_drop_time = t;
         }
         if let Some((short, alt_id)) = base.alt_modes.iter().find(|(short, _)| d.attachments.contains(short)) {
             if let Some(alt_base) = table.weapons.iter().find(|w| &w.id == alt_id).cloned() {
@@ -674,6 +695,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         drop_time: w.drop_time,
         quick_raise_time: if w.quick_raise_time > 0.0 { w.quick_raise_time } else { w.raise_time * 0.6 },
         quick_drop_time: if w.quick_drop_time > 0.0 { w.quick_drop_time } else { w.drop_time * 0.6 },
+        alt_raise_time: w.alt_raise_time,
+        alt_drop_time: w.alt_drop_time,
         sprint_out_time: w.sprint_out_time,
         ads_in_time: w.ads_in_time.max(0.05),
         ads_out_time: w.ads_out_time.max(0.05),
@@ -1062,6 +1085,41 @@ mod tests {
         assert_eq!(def("as50_mp").overlay_material, "scope_overlay_xpr50");
         assert!(def("as50_mp+acog").overlay_material.is_empty(), "the ACOG's unique has no overlay");
         assert_eq!(def("as50_mp+fmj").overlay_material, "scope_overlay_xpr50", "FMJ leaves the base scope");
+    }
+
+    #[test]
+    fn a_combos_alt_drop_is_its_first_unique_that_differs_from_the_base() {
+        // FUN_008ed1e0 (hk416's data): base unique and def 16 ms, select fire's unique 500 ms, the
+        // launcher's 16 ms. A combined unique past the singles never stands in for a kind.
+        let u = |slot: u32, kind: u32, ms: f32, combined: u32| bo2::AttachmentUnique { slot, kind, combined, alt_drop_time: ms / 1000.0, ..Default::default() };
+        let w = Weapon {
+            name: "hk416_mp".into(),
+            clip_size: 30,
+            start_ammo: 1,
+            max_ammo: 2,
+            fire_time: 0.1,
+            alt_raise_time: 0.016,
+            alt_drop_time: 0.016,
+            attachment_variants: vec![(1, "acog".into()), (10, "gl".into()), (20, "sf".into())],
+            attachment_uniques: vec![u(0, 0, 16.0, 0), u(1, 1, 16.0, 0), u(10, 10, 16.0, 0), u(20, 20, 500.0, 0), u(60, 1, 900.0, 0x2)],
+            ..Default::default()
+        };
+        assert_eq!(alt_drop_for(&w, &["acog", "sf"]), Some(0.5));
+        assert_eq!(alt_drop_for(&w, &["gl"]), None, "the launcher's unique keeps the def's");
+        assert_eq!(alt_drop_for(&w, &["acog"]), None, "slot 60's combined unique is not the ACOG's single");
+        let alt = Weapon { inventory: bo2::inventory::ALTMODE, ..w.clone() };
+        assert_eq!(alt_drop_for(&alt, &["sf"]), None, "an alt mode always takes its own");
+        let mut table = Table {
+            weapons: vec![to_def(&w, &HashMap::new())],
+            attachments: ["acog", "gl", "sf"].iter().map(|s| AttachmentDef { id: s.to_string(), short: s.to_string(), ..Default::default() }).collect(),
+            ..Default::default()
+        };
+        add_variants(&mut table, &["hk416_mp+acog+sf".into(), "hk416_mp+gl".into()], std::slice::from_ref(&w));
+        let def = |id: &str| table.weapons.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("no {id}"));
+        assert_eq!((def("hk416_mp").alt_raise_time, def("hk416_mp").alt_drop_time), (0.016, 0.016));
+        assert_eq!(def("hk416_mp+acog+sf").alt_drop_time, 0.5);
+        assert_eq!(def("hk416_mp+acog+sf").alt_raise_time, 0.016, "no attachment scales the alt raise");
+        assert_eq!(def("hk416_mp+gl").alt_drop_time, 0.016);
     }
 
     #[test]

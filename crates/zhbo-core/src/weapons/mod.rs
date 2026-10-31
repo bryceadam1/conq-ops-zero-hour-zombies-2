@@ -268,6 +268,88 @@ mod tests {
         assert!((fast as f32 - 2.0 - expect * 0.5).abs() <= 1.0, "fast hands {fast} frames vs {}", expect * 0.5);
     }
 
+    /// Frames from an alt-mode press until the toggle's drop and raise are both done, and whether
+    /// the mode had already changed on the press frame.
+    fn alt_toggle_frames(a: &mut Arsenal) -> (usize, bool) {
+        let mut out = Vec::new();
+        let mut rng = Rng::new(3);
+        let before = a.current().def.id.clone();
+        a.step(0, buttons::ALT_MODE, false, 0, 0.0, &mut rng, &mut out);
+        let swapped_now = a.current().def.id != before;
+        let mut n = 1;
+        while a.drop_left > 0.0 || a.raise_left > 0.0 {
+            a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+            n += 1;
+        }
+        (n, swapped_now)
+    }
+
+    #[test]
+    fn a_launcher_toggle_raises_the_incoming_mode_over_its_alt_raise_time() {
+        // G16 / FUN_008df320: the alt raise is the incoming variant's iAltRaiseTime; the launcher
+        // pair's alt drop is 0, so the mode changes on the press frame (FUN_008e4da0).
+        let mut a = Arsenal::new();
+        a.raise_left = 0.0;
+        a.loadout.perks.clear();
+        let gl = weapon("gl_an94_mp");
+        let (ammo, gl_ammo) = (a.current().ammo, a.current().alt_ammo);
+        let (n, now) = alt_toggle_frames(&mut a);
+        assert!(now, "a zero alt drop changes the mode at once");
+        assert_eq!(a.current().def.id, "gl_an94_mp");
+        assert_eq!((a.current().ammo, a.current().alt_ammo), (gl_ammo, ammo), "the launcher trades magazines");
+        let expect = (gl.alt_raise_time / LOGIC_DT).ceil() as usize;
+        assert!(n.abs_diff(expect + 1) <= 1, "{n} frames vs {expect}");
+        // And back: the weapon's own alt raise.
+        let (n, now) = alt_toggle_frames(&mut a);
+        assert!(now);
+        assert!(a.current().def.id.starts_with("an94_mp"));
+        assert_eq!(a.raise_kind, RaiseKind::Alt);
+        let expect = (a.current().def.alt_raise_time / LOGIC_DT).ceil() as usize;
+        assert!(n.abs_diff(expect + 1) <= 1, "{n} frames vs {expect}");
+    }
+
+    #[test]
+    fn an_alt_toggle_drops_the_outgoing_weapon_first_and_fast_hands_speeds_both() {
+        // FUN_008db500: an alt pair's change starts with the OUTGOING weapon's alt drop
+        // (FUN_008ed1e0 — select fire's unique gives `an94_mp+sf` 500 ms), the mode changes when it
+        // ends, then the incoming mode raises over its own iAltRaiseTime (0 for `sf_*`). Both are
+        // raise/drop-family states, so Fast Hands halves them (G3).
+        let sf_like = || -> &'static WeaponDef {
+            let mut d = weapon("an94_mp+gl+reflex").clone();
+            d.alt_drop_time = 0.5;
+            Box::leak(Box::new(d))
+        };
+        let run = |fast: bool| {
+            let mut a = arsenal_with(sf_like());
+            if !fast {
+                a.loadout.perks.clear();
+            }
+            let before = a.current().def.id.clone();
+            let mut out = Vec::new();
+            let mut rng = Rng::new(3);
+            a.step(buttons::FIRE, buttons::ALT_MODE, false, 0, 0.0, &mut rng, &mut out);
+            assert!(a.alt_pending && a.drop_left > 0.0);
+            assert_eq!(a.current().def.id, before, "the outgoing mode is held through the drop");
+            let mut drop_frames: usize = 1;
+            while a.alt_pending {
+                out.clear();
+                a.step(buttons::FIRE, 0, false, 0, 0.0, &mut rng, &mut out);
+                assert!(a.alt_pending || a.current().def.id == "gl_an94_mp", "the mode changes as the drop ends");
+                if a.alt_pending {
+                    assert_eq!(shots(&out), 0, "no shot during the alt drop");
+                }
+                drop_frames += 1;
+            }
+            assert_eq!(a.raise_total, weapon("gl_an94_mp").alt_raise_time, "the incoming mode's alt raise");
+            drop_frames
+        };
+        let slow = run(false);
+        let fast = run(true);
+        let expect = (0.5 / LOGIC_DT).ceil() as usize;
+        assert!(slow.abs_diff(expect + 1) <= 1, "{slow} frames vs {expect}");
+        assert!(fast.abs_diff(expect / 2 + 1) <= 1, "fast hands {fast} frames vs {}", expect / 2);
+    }
+
     #[test]
     fn damage_curve_and_explosion_falloff() {
         let d = weapon("an94_mp");
