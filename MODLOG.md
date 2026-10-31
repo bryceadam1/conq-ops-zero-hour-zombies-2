@@ -4785,3 +4785,12 @@ the viewmodel plays `anim_reload_quick` / `anim_reload_quick_empty` (`weapAnimFi
 fallback. `conformance::check` now expects the quick first reload and BO2's add rule. In this install
 the Fast Mag times equal the normal ones (both × 0.675); the quick reload differs by its add time
 (an AN-94 Fast Mag puts the rounds in at 0.9 s instead of 0.877 s) and by its `fastmag_quick` clip.
+
+Measured (conformance vs `v1/view-kick`): unchanged — 381,867 weapons cells / 174 clusters, cac 881,
+185 gap clusters; both diff CSVs byte-identical (the zoom and quick reload are consumers of fields
+already carried). No table line was added, so neither commit needs a `hud::VERSION` bump.
+In-game (integrator): an ACOG's zoom holding the hip FOV for the first half of the aim and
+narrowing over the second; a sniper snapping to 15° on the frame the overlay appears and widening
+over its 5 % fade out; Variable Zoom starting at 30° and the melee key toggling 12.5° with a 125 ms
+blend (and no knife while scoped); the Hybrid's alt toggle blending 50° → 30°; the gun magnifying
+with the zoom; Fast Mag's quick/full alternation and its `fastmag_quick` clip.
