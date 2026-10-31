@@ -6,7 +6,7 @@
 use zhbo_gfx::ffi::with_renderer;
 use zhbo_gfx::runtime::{NativeDraw, NativeFrame, NativeLight, NativeSurface, NativeVertex, INVALID};
 
-use super::ffi::{State, ZhboNativeBodyIn, DRAWN, LOADING, NOT_NATIVE};
+use super::ffi::{Rig, State, ZhboNativeBodyIn, DRAWN, LOADING, NOT_NATIVE};
 use crate::nativevm::{native_blend, native_cull};
 
 /// The rig's handles on the GPU.
@@ -33,9 +33,9 @@ impl Gpu {
 }
 
 /// Upload (once its textures are in) and submit. `LOADING` while textures are still coming.
-pub(crate) fn draw(s: &mut State, inp: &ZhboNativeBodyIn) -> i32 {
-    let Some(loaded) = s.loaded.as_ref() else { return NOT_NATIVE };
-    if s.gpu.key != Some(loaded.key) {
+pub(crate) fn draw(s: &mut State, rig: &mut Rig, inp: &ZhboNativeBodyIn) -> i32 {
+    let loaded = &rig.loaded;
+    if rig.gpu.key != Some(loaded.key) {
         // Every texture the surfaces name: decoded once in, absent ones draw white/flat. Display
         // space shading (native.wgsl): every map uploads raw.
         let mut paths: Vec<(String, bool)> = Vec::new();
@@ -93,7 +93,7 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeBodyIn) -> i32 {
         }
         match uploaded {
             Some((m, textures)) if m != INVALID => {
-                s.gpu = Gpu { key: Some(key), mesh: Some(m), textures };
+                rig.gpu = Gpu { key: Some(key), mesh: Some(m), textures };
             }
             Some((_, textures)) => {
                 with_renderer((), |r| textures.into_iter().for_each(|t| r.native_destroy_texture(t)));
@@ -103,7 +103,7 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeBodyIn) -> i32 {
             None => return NOT_NATIVE,
         }
     }
-    let Some(mesh) = s.gpu.mesh else { return NOT_NATIVE };
+    let Some(mesh) = rig.gpu.mesh else { return NOT_NATIVE };
     let mut lights = [NativeLight::default(); 3];
     for (l, i) in lights.iter_mut().zip(&inp.lights) {
         *l = NativeLight { direction: i.dir, color: i.color };

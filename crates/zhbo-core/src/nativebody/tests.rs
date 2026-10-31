@@ -104,18 +104,54 @@ fn a_world_weapon_loads_through_requests_and_rides_the_tag() {
         // white/flat. Without the renderer nothing asks for textures.
         assert_eq!(answer(s, &f), cfg!(feature = "renderer") as usize);
         s.frame(&input(7, Some(tag([0.0; 3]))), 1, None);
-        let loaded = s.loaded.as_ref().expect("composed");
+        let loaded = s.loaded().expect("composed");
         // The gun's j_gun plus the reflex's bone, on the gun's tag_reflex.
         assert_eq!(loaded.skeleton.bones.len(), 3, "gun bones and the reflex's root");
         // A tag at (10, 20, 30): the gun's origin (j_gun, at 0") lands there; the reflex hangs 2"
         // ahead and 4" up in the gun's frame, all scaled once.
         s.frame(&input(7, Some(tag([10.0, 20.0, 30.0]))), 1, None);
-        let m = s.loaded.as_ref().unwrap().bone_world(&s.posed, "j_gun").expect("the gun bone");
+        let m = s.loaded().unwrap().bone_world(&s.posed, "j_gun").expect("the gun bone");
         let want = [10.0, 20.0, 30.0];
         assert!((0..3).all(|k| (m[k][3] - want[k]).abs() < 1e-4), "{:?} vs {want:?}", [m[0][3], m[1][3], m[2][3]]);
-        let m = s.loaded.as_ref().unwrap().bone_world(&s.posed, "j_root").expect("the reflex's root");
+        let m = s.loaded().unwrap().bone_world(&s.posed, "j_root").expect("the reflex's root");
         let want = [10.0 + 2.0 * ART_SCALE, 20.0, 30.0 + 4.0 * ART_SCALE];
         assert!((0..3).all(|k| (m[k][3] - want[k]).abs() < 1e-4), "{:?} vs {want:?}", [m[0][3], m[1][3], m[2][3]]);
+    });
+}
+
+/// Two Generals with different weapons each keep their rig: drawing them alternately composes
+/// each once and asks for no file again (one shared slot reloaded both every frame).
+#[test]
+fn each_general_keeps_his_own_rig() {
+    let mut f = fixture();
+    let manifest = f.files[0].1.clone();
+    f.files.push((zhbo_native::world_weapon_path(8), manifest));
+    let at = |general: u32, vm: i32| ZhboNativeBodyIn { general, ..input(vm, Some(tag([0.0; 3]))) };
+    with_state(|s| {
+        *s = ffi::State::default();
+        for _ in 0..6 {
+            s.frame(&at(1, 7), 1, None);
+            s.frame(&at(2, 8), 1, None);
+            answer(s, &f);
+        }
+        assert_eq!(s.rig_count(), 2);
+        let composed = |s: &ffi::State| s.logged().filter(|l| l.contains("composed")).count();
+        assert_eq!(composed(s), 2, "{:?}", s.logged().collect::<Vec<_>>());
+        for _ in 0..3 {
+            s.frame(&at(1, 7), 1, None);
+            s.frame(&at(2, 8), 1, None);
+            assert_eq!(answer(s, &f), 0, "nothing reloads");
+        }
+        assert_eq!(s.loaded().map(|l| l.key.1), Some(8), "the last posed is the bone source");
+        // A General's weapon change replaces his rig only: while his new one loads (the W3D
+        // weapon draws), the other General's stays.
+        assert_eq!(s.frame(&at(1, 8), 1, None), LOADING);
+        assert_eq!(s.rig_count(), 1);
+        for _ in 0..3 {
+            s.frame(&at(1, 8), 1, None);
+            answer(s, &f);
+        }
+        assert_eq!(s.rig_count(), 2);
     });
 }
 

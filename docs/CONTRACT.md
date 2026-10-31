@@ -286,8 +286,8 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
     part's surfaces (`SurfaceSpec::part`) from its own blob with the General's one option, read from
     the sim by General id (`Sim::third_person_camo`, no ABI change) when the weapon in hand is his
     class primary. The rig's cache identity includes the option.
-  - **Divergences.** The W3D fallback (the first-person W3D viewmodel and the default W3D
-    third-person body, `ZHBO_NATIVE_BODY=0`) bakes textures and has no texture override, so it
+  - **Divergences.** The W3D fallback (the first-person W3D viewmodel and the W3D third-person
+    weapon, `ZHBO_NATIVE_BODY=0`) bakes textures and has no texture override, so it
     draws no camo. Only the primary inherits the class camo, as the class stores one camo.
 
 ## The native third person (Track R7)
@@ -333,8 +333,11 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
   `zhbo_native_body`. `DRAWN` (1): the bridge hides the W3D `W<vm><k>` sub-objects. Anything else
   (0 not native, 2 still loading) leaves the W3D weapon showing — and the `s_worldLooks` cache
   remembers the native flag, so a failed native draw brings the W3D weapon back instead of leaving
-  nothing. `ZHBO_NATIVE_BODY=1` draws the weapon while the W3D body stays; `=2` draws the body and
-  the weapon and hides the W3D body (see *The two modes* below). `zhbo_native_body_enabled`
+  nothing. `ZHBO_NATIVE_BODY=1` (the default) draws the weapon while the W3D body stays; `=2` draws
+  the body and the weapon and hides the W3D body (see *The two modes* below); `=0` opts out.
+  Each General keeps his own composed rig and GPU upload (keyed by `ZhboNativeBodyIn.general`;
+  replaced when his weapon, mode or camo changes, all dropped by `zhbo_native_body_reset`), so
+  several on screen do not reload one another's every frame. `zhbo_native_body_enabled`
   is the mode the bridge tests before doing the third-person work at all.
 * **The two modes.** In *weapon* mode (M2) the gun is placed by the engine's world-space
   `tag_weapon_right` transform (`ZhboNativeBodyIn.tag`, read from the drawable), scaled once at the

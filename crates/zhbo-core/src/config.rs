@@ -32,8 +32,9 @@ pub struct Config {
     /// the fallback: `0`/`false`/`no`/`off`); presentation only, never a sim input.
     pub native_viewmodel: bool,
     /// `ZHBO_NATIVE_BODY`: the third-person General through the same native pass (`nativebody`).
-    /// 0 off (W3D), 1 the weapon in his hand while the W3D body draws, 2 the body too (Track R7's
-    /// staging: verify the weapon before the body). Presentation only.
+    /// 0 off (W3D), 1 the weapon in his hand while the W3D body draws (**the default**: the only
+    /// third person that shows a combination's attachments and the class camo), 2 the body too.
+    /// Presentation only.
     pub native_body: u8,
 }
 
@@ -58,12 +59,13 @@ fn on_by_default(value: Option<&str>) -> bool {
 }
 
 /// `ZHBO_NATIVE_BODY`: 0 off, 1 the weapon only (the W3D body draws), 2 the body and the weapon.
-/// `full` and `weapon` are the same spellings the plan uses in prose.
+/// The weapon mode is the default (unset, empty or unrecognised); `0`/`false`/`no`/`off` opt out to
+/// the W3D weapon. `full` and `weapon` are the same spellings the plan uses in prose.
 pub fn body_mode(value: Option<&str>) -> u8 {
     match value.map(|v| v.trim().to_ascii_lowercase()) {
         Some(v) if v == "2" || v == "full" => 2,
-        Some(v) if matches!(v.as_str(), "1" | "true" | "yes" | "on" | "weapon") => 1,
-        _ => 0,
+        Some(v) if matches!(v.as_str(), "0" | "false" | "no" | "off") => 0,
+        _ => 1,
     }
 }
 
@@ -170,13 +172,16 @@ mod tests {
 
     #[test]
     fn the_native_body_stages_the_weapon_before_the_body() {
-        assert_eq!(body_mode(None), 0);
+        assert_eq!(body_mode(None), 1, "the native weapon is the default");
+        assert_eq!(body_mode(Some("")), 1);
         assert_eq!(body_mode(Some("0")), 0);
+        assert_eq!(body_mode(Some("Off")), 0);
+        assert_eq!(body_mode(Some("false")), 0);
         assert_eq!(body_mode(Some("weapon")), 1);
         assert_eq!(body_mode(Some("TRUE")), 1);
         assert_eq!(body_mode(Some("2")), 2);
         assert_eq!(body_mode(Some("full")), 2);
-        assert_eq!(body_mode(Some("garbage")), 0);
+        assert_eq!(body_mode(Some("garbage")), 1);
     }
 
     #[test]
