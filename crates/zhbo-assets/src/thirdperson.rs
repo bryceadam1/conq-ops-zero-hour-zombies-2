@@ -4,9 +4,9 @@
 ** BO2's MP bodies share one player skeleton; the body clips are BO2's `pb_*` body animations in
 ** `common_mp` (the same zone the third-person W3D conversion reads: `generals::ANIMS`). The mod's
 ** native body plays one clip per movement state (`zhbo_native::thirdperson::state`); this module
-** resolves each state to a BO2 animation, by its known names first and then by scanning the zone
-** for a plausible one, because the exact spelling differs between installs for the stances the W3D
-** path never needed (walk, crouch, prone).
+** resolves each state to a BO2 animation by asking BO2's own player animation script
+** (`mp/playeranim.script`, `crate::playeranim`) what a rifleman in that state plays, else by its
+** known names, else by scanning the zone for a plausible one.
 **
 ** This program is free software: you can redistribute it and/or modify it under the terms of the
 ** GNU General Public License as published by the Free Software Foundation, either version 3 of the
@@ -39,10 +39,32 @@ const CANDIDATES: &[(u16, &[&str])] = &[
     (state::STAND_ADS_PISTOL, &["pb_stand_ads_pistol"]),
 ];
 
+/// The script's movement type and conditions for each state: a rifleman (`playerAnimType`
+/// default), hip or ADS, moving forward or still. Prone movement is the script's `walk` (its
+/// movement types have no prone run); crouched movement its `run` (`runcr`).
+fn script_query(st: u16) -> (&'static str, [(&'static str, &'static str); 6]) {
+    let ctx = |stance, pos, class, status, dir| [("stance", stance), ("weapon_position", pos), ("weaponclass", class), ("movestatus", status), ("direction", dir), ("playeranimtype", "default")];
+    match st {
+        state::STAND_WALK => ("walk", ctx("stand", "hip", "rifle", "walk", "forward")),
+        state::STAND_RUN => ("run", ctx("stand", "hip", "rifle", "run", "forward")),
+        state::STAND_SPRINT => ("sprint", ctx("stand", "hip", "rifle", "run", "forward")),
+        state::STAND_ADS => ("idle", ctx("stand", "ads", "rifle", "stationary", "none")),
+        state::CROUCH_IDLE => ("idle", ctx("crouch", "hip", "rifle", "stationary", "none")),
+        state::CROUCH_WALK => ("run", ctx("crouch", "hip", "rifle", "run", "forward")),
+        state::CROUCH_ADS => ("idle", ctx("crouch", "ads", "rifle", "stationary", "none")),
+        state::PRONE_IDLE => ("idle", ctx("prone", "hip", "rifle", "stationary", "none")),
+        state::PRONE_CRAWL => ("walk", ctx("prone", "hip", "rifle", "walk", "forward")),
+        state::STAND_IDLE_PISTOL => ("idle", ctx("stand", "hip", "pistol", "stationary", "none")),
+        state::STAND_ADS_PISTOL => ("idle", ctx("stand", "ads", "pistol", "stationary", "none")),
+        _ => ("idle", ctx("stand", "hip", "rifle", "stationary", "none")),
+    }
+}
+
 /// Every body state's clip from `common`, in [`CANDIDATES`] order, and the states that resolved to
 /// nothing (the body then falls back to a nearer stance at run time,
-/// `zhbo_native::thirdperson::state::fallbacks`).
+/// `zhbo_native::thirdperson::state::fallbacks`). BO2's player animation script picks first.
 pub(crate) fn clips(common: &Zone) -> (Vec<Clip>, Vec<u16>) {
+    let script = zhbo_formats::havok_lua::rawfile(common, crate::playeranim::PATH).map(|b| crate::playeranim::Script::parse(&String::from_utf8_lossy(&b)));
     let names: Vec<String> = common
         .assets
         .iter()
@@ -53,10 +75,11 @@ pub(crate) fn clips(common: &Zone) -> (Vec<Clip>, Vec<u16>) {
     let mut out = Vec::new();
     let mut missing = Vec::new();
     for &(st, candidates) in CANDIDATES {
-        let name = candidates
-            .iter()
-            .find(|c| names.iter().any(|n| n == *c))
-            .map(|c| (*c).to_string())
+        let (mv, ctx) = script_query(st);
+        let scripted = script.as_ref().and_then(|s| s.pick(mv, &ctx)).filter(|c| names.iter().any(|n| n.eq_ignore_ascii_case(c)));
+        let name = scripted
+            .map(|c| names.iter().find(|n| n.eq_ignore_ascii_case(c)).cloned().unwrap_or_default())
+            .or_else(|| candidates.iter().find(|c| names.iter().any(|n| n == *c)).map(|c| (*c).to_string()))
             .or_else(|| names.iter().find(|n| plausible(st, n)).cloned());
         match name.and_then(|n| xanim::find(common, &n).ok().map(|a| (n, a))) {
             Some((_, anim)) => out.push(Clip { state: st, anim }),
@@ -72,8 +95,9 @@ pub(crate) fn clips(common: &Zone) -> (Vec<Clip>, Vec<u16>) {
 fn plausible(state: u16, name: &str) -> bool {
     let n = name.to_ascii_lowercase();
     let has = |w: &str| n.contains(w);
-    // Not a body-locomotion clip at all (deaths, jumps, turns, the torso-only `pt_*` clips...).
-    let locomotion = ![
+    // Not a body-locomotion clip at all (a viewmodel's or anything else not `pb_*`, deaths, jumps,
+    // turns, the torso-only `pt_*` clips...).
+    let locomotion = n.starts_with("pb_") && ![
         "death", "jump", "land", "turn", "climb", "mantle", "melee", "grenade", "tablet", "reload", "backward", "back_", "left", "right", "strafe", "swim",
         "kill", "hit", "vault", "dive", "slide", "crawl_start", "crawl_end", "getup", "godown",
     ]
@@ -156,6 +180,7 @@ mod tests {
         assert!(!plausible(state::CROUCH_ADS, "pb_crouch_alert"));
         assert!(!plausible(state::PRONE_IDLE, "pb_prone_getup"), "a transition is not the idle");
         assert!(!plausible(state::STAND_RUN, "pt_rifle_fire_ads"), "a torso clip is not locomotion");
+        assert!(!plausible(state::STAND_SPRINT, "viewmodel_mp7_sprint_loop"), "a viewmodel clip is not the body's");
     }
 
     #[test]
@@ -229,23 +254,41 @@ mod tests {
         let zone = crate::paks::load_zone(&dir, f.zone).unwrap();
         let boxes = hit_boxes(&zhbo_formats::xmodel::find(&zone, f.body).unwrap(), &clips);
         let poses = Poses::new(&boxes);
-        let head_z = |s: u16| {
-            let b: Vec<_> = boxes.iter().filter(|b| b.state == s && b.bone == "j_head").collect();
+        // The head box's centre (model space, inches), from its posed bone.
+        let head = |s: u16| {
+            let b: Vec<_> = boxes.iter().filter(|b| b.state == s && b.bone == "head").cloned().collect();
             assert_eq!(b.len(), 1, "state {s}: one head bone");
-            b[0].position[2]
+            let p = &zhbo_core::hitloc::Body::new(&b).boxes[0];
+            let c = (p.mins + p.maxs) * 0.5;
+            (p.origin + p.axes[0] * c.x + p.axes[1] * c.y + p.axes[2] * c.z) * (1.0 / inches(1.0))
         };
-        let (stand, crouch, prone) = (head_z(state::STAND_IDLE), head_z(state::CROUCH_IDLE), head_z(state::PRONE_IDLE));
-        eprintln!("head z: stand {stand:.1}, crouch {crouch:.1}, prone {prone:.1}");
+        let (stand, crouch, prone) = (head(state::STAND_IDLE), head(state::CROUCH_IDLE), head(state::PRONE_IDLE));
         for c in &clips {
-            eprintln!("state {:>2} `{}`: head {:.1}", c.state, c.anim.name, head_z(c.state));
+            eprintln!("state {:>2} `{}`: head {:.1?}", c.state, c.anim.name, head(c.state));
         }
-        assert!(crouch < stand - 10.0, "crouched head {crouch} vs standing {stand}");
-        assert!(prone < 20.0, "prone head {prone}");
+        // BO2's player animation script's rifleman picks (`mp/playeranim.script`).
+        let name = |s: u16| clips.iter().find(|c| c.state == s).map(|c| c.anim.name.trim_start_matches(',').to_string());
+        for (s, want) in [
+            (state::STAND_IDLE, "pb_stand_alert"),
+            (state::STAND_WALK, "pb_stand_shoot_walk_forward"),
+            (state::STAND_RUN, "pb_combatrun_forward_loop"),
+            (state::STAND_SPRINT, "pb_sprint"),
+            (state::CROUCH_IDLE, "pb_crouch_alert"),
+            (state::CROUCH_WALK, "pb_crouch_run_forward"),
+            (state::PRONE_IDLE, "pb_prone_aim"),
+            (state::PRONE_CRAWL, "pb_prone_crawl"),
+        ] {
+            assert_eq!(name(s).as_deref(), Some(want), "state {s}");
+        }
+        assert!(crouch.z < stand.z - 10.0, "crouched head {crouch:?} vs standing {stand:?}");
+        assert!(prone.z < 20.0, "prone head {prone:?}");
+        // Level shots from in front (+X forward) at a head's height and side offset.
         let x = Vec3::new(1.0, 0.0, 0.0);
-        let level = |s: u16, z: f32| poses.get(s).unwrap().pick(Vec3::new(inches(-200.0), 0.0, inches(z)), x, 1000.0, true);
+        let level = |s: u16, at: Vec3| poses.get(s).unwrap().pick(Vec3::new(inches(-200.0), inches(at.y), inches(at.z)), x, 1000.0, true);
         assert!(level(state::STAND_IDLE, stand).is_some_and(|(_, l)| hitloc::is_head(l)));
+        assert!(level(state::CROUCH_IDLE, crouch).is_some_and(|(_, l)| hitloc::is_head(l)), "{:?}", level(state::CROUCH_IDLE, crouch));
+        assert!(level(state::PRONE_IDLE, prone).is_some_and(|(_, l)| hitloc::is_head(l)), "{:?}", level(state::PRONE_IDLE, prone));
         assert!(level(state::CROUCH_IDLE, stand).is_none(), "over the crouched head");
         assert!(level(state::PRONE_IDLE, crouch).is_none(), "over the prone soldier");
-        assert!(level(state::CROUCH_IDLE, crouch).is_some_and(|(_, l)| hitloc::is_head(l)), "{:?}", level(state::CROUCH_IDLE, crouch));
     }
 }
