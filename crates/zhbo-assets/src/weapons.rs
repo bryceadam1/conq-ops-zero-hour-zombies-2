@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use zhbo_core::attachments::{self, AttachmentDef};
 use zhbo_core::units::inches;
-use zhbo_core::weapons::{CamoOption, Class, Effect, FireMode, GunKick, Kick, Loadout, OffhandClass, Penetrate, Place, Reticle, Specialties, Sway, Table, CycleTimes, Traits, ViewPos, WeaponDef, Zoom, ALT_CLIPS, MELEE_DAMAGE};
+use zhbo_core::weapons::{CamoOption, Class, Effect, FireMode, GunKick, Kick, Loadout, OffhandClass, Penetrate, Place, Reticle, Specialties, Sway, Table, CycleTimes, Traits, ViewPos, WeapClass, WeaponDef, Zoom, ALT_CLIPS, MELEE_DAMAGE};
 #[cfg(debug_assertions)]
 use zhbo_core::weapons::{format_table, parse_table};
 use zhbo_formats::weapon::{self as bo2, Weapon};
@@ -689,7 +689,6 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
     } else {
         ((w.start_ammo - w.clip_size).max(0) as u16, (w.max_ammo - w.clip_size).max(0) as u16)
     };
-    let range = |r: f32| if r >= 999_999.0 { inches(100_000.0) } else { inches(r) };
     let key = manifest::display_name_key(w.display_name.trim_start_matches("WEAPON_"));
     let display_name = names
         .get(key)
@@ -703,7 +702,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
     let mut damage_range = [0.0; 6];
     for i in 0..6 {
         damage[i] = w.damage[i] as f32;
-        damage_range[i] = if w.damage_range[i] > 0.0 { range(w.damage_range[i]) } else { 0.0 };
+        // BO2's own inches, its "no falloff" 999999 included (the curve's last range is also a
+        // spread weapon's pellet range, `Bullet_Fire`).
+        damage_range[i] = w.damage_range[i].max(0.0);
     }
     let mult = |i: usize| w.location_multipliers.get(i).copied().filter(|m| *m > 0.0).unwrap_or(1.0);
     let shells = w.reload_start_time > 0.0 && w.reload_ammo_add > 0;
@@ -712,6 +713,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         equipment_kind: manifest::equipment_kind_of(&w.name),
         display_name,
         class,
+        weap_class: WeapClass::from_bo2(w.class),
         fire: fire_mode(w),
         fire_time: w.fire_time.max(0.01),
         burst_delay: w.burst_delay,
@@ -739,7 +741,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         damage,
         damage_range,
         head_multiplier: mult(bo2::HIT_LOCATION_HEAD),
-        max_range: if w.max_range > 0.0 { inches(w.max_range) } else { inches(8000.0) },
+        max_range: inches(w.max_range),
         hip_spread: [w.hip_spread_stand, w.hip_spread_ducked, w.hip_spread_prone],
         spread_decay: w.hip_spread_decay,
         spread_fire_add: w.hip_spread_fire_add,

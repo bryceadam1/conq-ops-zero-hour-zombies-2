@@ -82,18 +82,24 @@ pub fn stat_lit(value: f32) -> usize {
     (value.clamp(0.0, 1.0) * STAT_SEGMENTS as f32).round() as usize
 }
 
+/// How far the gun's round reaches: BO2's `Bullet_Fire` rule (`WeaponDef::bullet_range`), with
+/// the tuning pack's `bulletrange`. (BO2's own bar reads its attribute table; not carried yet.)
+fn reach(d: &WeaponDef) -> f32 {
+    d.bullet_range(crate::units::inches(crate::tuning::get().bulletrange))
+}
+
 /// The catalog's gun extremes, in one pass (no allocation).
 pub(super) fn gun_bounds() -> (f32, f32, f32, f32, f32) {
     let guns = || weapons::catalog().all().iter().copied().filter(|d| d.class.is_gun());
     let max_damage = guns().map(|d| d.damage[0]).fold(0.0, f32::max);
-    let max_range = guns().map(|d| d.max_range).fold(0.0, f32::max);
+    let max_range = guns().map(reach).fold(0.0, f32::max);
     let max_rpm = guns().map(|d| d.rounds_per_minute()).fold(0.0, f32::max);
     let min_spread = guns().map(|d| d.hip_spread[0].0).fold(f32::MAX, f32::min);
     let max_spread = guns().map(|d| d.hip_spread[0].0).fold(0.0, f32::max);
     (max_damage, max_range, max_rpm, min_spread, max_spread)
 }
 
-/// One gun's bars, derived only from its table fields: first damage point, max range, rounds per
+/// One gun's bars, derived only from its table fields: first damage point, reach, rounds per
 /// minute, and the standing hip spread (tighter is more accurate).
 pub fn weapon_stats(def: &WeaponDef) -> WeaponStats {
     let (max_damage, max_range, max_rpm, min_spread, max_spread) = gun_bounds();
@@ -105,7 +111,7 @@ pub fn weapon_stats(def: &WeaponDef) -> WeaponStats {
     };
     WeaponStats {
         damage: ratio(def.damage[0], max_damage),
-        range: ratio(def.max_range, max_range),
+        range: ratio(reach(def), max_range),
         fire_rate: ratio(def.rounds_per_minute(), max_rpm),
         accuracy,
     }

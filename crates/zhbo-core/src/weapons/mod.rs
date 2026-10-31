@@ -267,6 +267,25 @@ mod tests {
         assert_eq!(shots(&out), 3, "one burst while holding");
     }
 
+    /// `Bullet_Fire`'s range rule: a spread class (by BO2's `weapClass`, not the mod's class)
+    /// traces to its curve's last range; anything else to `bulletrange`.
+    #[test]
+    fn the_bullet_range_follows_bo2s_weap_class() {
+        let shotgun = def(|d| {
+            d.weap_class = WeapClass::Spread;
+            d.damage_range = [10.0, 0.0, 0.0, 20.0, 21.0, 30.0];
+        });
+        assert_eq!(shotgun.bullet_range(500.0), crate::units::inches(30.0));
+        let judge = def(|d| {
+            d.class = Class::Pistol;
+            d.weap_class = WeapClass::PistolSpread;
+            d.damage_range = [10.0, 11.0, 0.0, 0.0, 0.0, 25.0];
+        });
+        assert_eq!(judge.bullet_range(500.0), crate::units::inches(25.0));
+        let rifle = def(|d| d.damage_range = [10.0, 11.0, 0.0, 0.0, 0.0, 25.0]);
+        assert_eq!(rifle.bullet_range(500.0), 500.0);
+    }
+
     #[test]
     fn shotguns_fire_pellets_and_reload_shell_by_shell() {
         let d = def(|d| {

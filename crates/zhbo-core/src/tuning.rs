@@ -73,6 +73,8 @@ tuning! {
     friction: "friction" = 5.5, "Ground friction (G2).";
     stopspeed: "stopspeed" = 100.0, "Friction's stop speed, inches/s (G2).";
     jump_step_size: "jump_stepSize" = 18.0, "Step-up height, inches (G2).";
+    // ---- The bullet (Bullet_Fire, FUN_005d0c20) --------------------------------------------------
+    bulletrange: "bulletrange" = 8192.0, "How far a non-spread weapon's round is traced, inches (`bulletrange`, registered in `FUN_006e86b0`, default `0x00b12d08` = 8192, max 65536; read by `Bullet_Fire` `FUN_005d0c20`). Spread classes use their damage curve's last range.";
     // ---- Perk multipliers (G1; applied where each specialty is tested) --------------------------
     perk_speed_multiplier: "perk_speedMultiplier" = 1.07, "`movefaster`: run speed (G1).";
     perk_sprint_multiplier: "perk_sprintMultiplier" = 2.0, "`longersprint`: sprint length (G1).";

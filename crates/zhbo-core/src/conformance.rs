@@ -6,7 +6,7 @@
 //! player's own BO2 install, and by this crate's tests on the built-in table.
 
 use crate::input::buttons;
-use crate::units::LOGIC_DT;
+use crate::units::{inches, LOGIC_DT};
 use crate::weapons::{Arsenal, Class, FireMode, Offhand, Place, Rng, WeaponAction, WeaponDef, WeaponState, OFFHAND_PULLBACK};
 
 /// Frames for `seconds`, rounded up.
@@ -71,13 +71,14 @@ pub fn check(def: &'static WeaponDef) -> Vec<String> {
             if used.iter().any(|&j| j != i && (def.damage_range[j] - r).abs() < 1e-3) {
                 continue;
             }
-            if (def.damage_at(r) - def.damage[i]).abs() > 1e-3 {
-                fail(format!("damage {} at range point {i}, BO2 says {}", def.damage_at(r), def.damage[i]));
+            if (def.damage_at(inches(r)) - def.damage[i]).abs() > 1e-3 {
+                fail(format!("damage {} at range point {i}, BO2 says {}", def.damage_at(inches(r)), def.damage[i]));
             }
         }
         let last = *used.last().unwrap();
-        if bullets && (def.damage_at(def.damage_range[last] + 100.0) - def.damage[last]).abs() > 1e-3 {
-            fail(format!("damage beyond the curve {}, BO2 says {}", def.damage_at(def.damage_range[last] + 100.0), def.damage[last]));
+        let beyond = inches(def.damage_range[last] + 100.0);
+        if bullets && (def.damage_at(beyond) - def.damage[last]).abs() > 1e-3 {
+            fail(format!("damage beyond the curve {}, BO2 says {}", def.damage_at(beyond), def.damage[last]));
         }
 
         // Fire mode and rate, over one magazine.

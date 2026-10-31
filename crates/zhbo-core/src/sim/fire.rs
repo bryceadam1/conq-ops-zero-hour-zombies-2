@@ -20,9 +20,10 @@ impl Sim {
                 let radius = spread_deg.to_radians() * jitter.1.abs().sqrt();
                 let dir = dir_from_angles(p.yaw + radius * angle.cos(), p.pitch + radius * angle.sin());
 
-                let mut targets = gather_targets(host, eye, def.max_range, p.general);
+                let range = def.bullet_range(self.bullet_range);
+                let mut targets = gather_targets(host, eye, range, p.general);
                 let ground = |x: f32, y: f32| host.ground_height(x, y);
-                let hit = hitscan::trace(eye, dir, def.max_range, &targets, p.general, &ground);
+                let hit = hitscan::trace(eye, dir, range, &targets, p.general, &ground);
                 // One tracer and sound per shot, not per pellet.
                 let fx = if pellet == 0 { Some(def.fx_weapon.as_str()).filter(|f| !f.is_empty()) } else { None };
                 // Enemy equipment in the way takes the shot.
@@ -58,7 +59,7 @@ impl Sim {
                         // FMJ: on through the first soldier into whoever is behind.
                         if def.fmj && infantry {
                             targets.retain(|t| t.id != id);
-                            if let HitResult::Object { id: next, distance, headshot, .. } = hitscan::trace(point + dir * 0.1, dir, def.max_range - distance, &targets, p.general, &ground) {
+                            if let HitResult::Object { id: next, distance, headshot, .. } = hitscan::trace(point + dir * 0.1, dir, range - distance, &targets, p.general, &ground) {
                                 let mult = if headshot { def.head_multiplier } else { 1.0 };
                                 kill |= host.damage(p.general, next, def.damage_at(distance) * mult * PENETRATION_DAMAGE * BO2_TO_ZH_DAMAGE, damage_kind::SMALL_ARMS);
                             }

@@ -485,7 +485,7 @@ The gameplay tuning pack (`crates/zhbo-core/src/tuning.rs`, filled from
 `Data/ConquerOps/tuning.ini`) is the single source for the numbers gameplay code used to scatter
 across ~10 files (movement, regeneration, building rates, projectile physics, the field
 computer's raise time) and for BO2's engine numbers: movement, the `perk_*` multipliers, damage
-flinch, the view and bob dvars (v1.0 Track PW). BO2's numbers stay in BO2's units (inches,
+flinch, the view and bob dvars (v1.0 Track PW), `bulletrange` (how far a non-spread round is traced). BO2's numbers stay in BO2's units (inches,
 inches/s, seconds) under the engine's dvar names as ini keys (`g_speed`, `perk_weapSwitchMultiplier`),
 each field's doc citing the Ghidra answer it came from (`~/Documents/BO2-reference/ghidra/
 answers/G1-G7.md`); code converts at the point of use. The pack is part of the mod like

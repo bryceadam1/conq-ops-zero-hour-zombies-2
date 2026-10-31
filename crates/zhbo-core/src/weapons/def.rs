@@ -75,6 +75,80 @@ impl Class {
     }
 }
 
+/// BO2's `weapClass_t`, carried from the weapon's def. The engine branches on it where the mod's
+/// [`Class`] (a CaC/HUD grouping) would be wrong: a spread class fires `shotCount` pellets that
+/// fly only to the curve's last range, every other class one round to `bulletrange`
+/// (`Bullet_Fire`, `FUN_005d0c20`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum WeapClass {
+    #[default]
+    Rifle,
+    Mg,
+    Smg,
+    Spread,
+    Pistol,
+    Grenade,
+    RocketLauncher,
+    Turret,
+    NonPlayer,
+    Gas,
+    Item,
+    Melee,
+    KillstreakAltStoredWeapon,
+    PistolSpread,
+}
+
+impl WeapClass {
+    /// In BO2's enum order.
+    pub const ALL: [WeapClass; 14] = [
+        WeapClass::Rifle,
+        WeapClass::Mg,
+        WeapClass::Smg,
+        WeapClass::Spread,
+        WeapClass::Pistol,
+        WeapClass::Grenade,
+        WeapClass::RocketLauncher,
+        WeapClass::Turret,
+        WeapClass::NonPlayer,
+        WeapClass::Gas,
+        WeapClass::Item,
+        WeapClass::Melee,
+        WeapClass::KillstreakAltStoredWeapon,
+        WeapClass::PistolSpread,
+    ];
+
+    /// BO2's enum value; out of range → `Rifle` (BO2's 0).
+    pub fn from_bo2(v: u32) -> WeapClass {
+        Self::ALL.get(v as usize).copied().unwrap_or_default()
+    }
+    /// BO2's names (`rocketlauncher`, `pistol_spread`).
+    pub fn name(self) -> &'static str {
+        match self {
+            WeapClass::Rifle => "rifle",
+            WeapClass::Mg => "mg",
+            WeapClass::Smg => "smg",
+            WeapClass::Spread => "spread",
+            WeapClass::Pistol => "pistol",
+            WeapClass::Grenade => "grenade",
+            WeapClass::RocketLauncher => "rocketlauncher",
+            WeapClass::Turret => "turret",
+            WeapClass::NonPlayer => "non_player",
+            WeapClass::Gas => "gas",
+            WeapClass::Item => "item",
+            WeapClass::Melee => "melee",
+            WeapClass::KillstreakAltStoredWeapon => "killstreak_alt_stored_weapon",
+            WeapClass::PistolSpread => "pistol_spread",
+        }
+    }
+    pub fn parse(s: &str) -> Option<WeapClass> {
+        Self::ALL.into_iter().find(|c| c.name() == s)
+    }
+    /// `spread` and `pistol_spread`: the classes `Bullet_Fire` fires `shotCount` pellets for.
+    pub fn is_spread(self) -> bool {
+        matches!(self, WeapClass::Spread | WeapClass::PistolSpread)
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FireMode {
     Auto,
@@ -132,6 +206,8 @@ pub struct WeaponDef {
     /// As BO2's HUD shows it, e.g. `AN-94`.
     pub display_name: String,
     pub class: Class,
+    /// BO2's `weapClass_t` (the def's own, data).
+    pub weap_class: WeapClass,
     pub fire: FireMode,
     pub fire_time: f32,
     /// Extra wait after a burst before the next one.
@@ -162,8 +238,14 @@ pub struct WeaponDef {
     pub ads_fov: f32,
     /// BO2's damage curve: damage at each range.
     pub damage: [f32; 6],
+    /// The curve's ranges, BO2's inches (× the attachments' range scale). Kept in BO2's unit,
+    /// converted where a ZH distance is compared ([`WeaponDef::damage_at`]): its "no falloff"
+    /// sentinel, 999999.1 in, does not survive a trip through ZH units in an `f32`.
     pub damage_range: [f32; 6],
     pub head_multiplier: f32,
+    /// BO2's `maxRange`: a turret's AI engagement range (read only by the turret spawn,
+    /// `FUN_0067ee90`), 0 on every MP weapon. Not the bullet's reach: see
+    /// [`WeaponDef::bullet_range`].
     pub max_range: f32,
     /// Hip spread cone (degrees) min/max standing, crouched, prone.
     pub hip_spread: [(f32, f32); 3],
@@ -376,6 +458,7 @@ impl Default for WeaponDef {
             id: String::new(),
             display_name: String::new(),
             class: Class::Rifle,
+            weap_class: WeapClass::Rifle,
             fire: FireMode::Auto,
             fire_time: 0.1,
             burst_delay: 0.0,
@@ -401,9 +484,9 @@ impl Default for WeaponDef {
             ads_out_time: 0.2,
             ads_fov: 55.0,
             damage: [40.0, 30.0, 0.0, 0.0, 0.0, 0.0],
-            damage_range: [inches(1000.0), inches(2000.0), 0.0, 0.0, 0.0, 0.0],
+            damage_range: [1000.0, 2000.0, 0.0, 0.0, 0.0, 0.0],
             head_multiplier: 1.0,
-            max_range: inches(8000.0),
+            max_range: 0.0,
             hip_spread: [(3.0, 6.75), (2.5, 6.0), (2.0, 5.0)],
             spread_decay: 6.0,
             spread_fire_add: 0.5,
@@ -490,10 +573,23 @@ pub const MELEE_RANGE: f32 = inches(64.0);
 pub const MELEE_FX_WEAPON: &str = "ZHBO_Knife_FX";
 
 impl WeaponDef {
+    /// How far a round is traced (ZH units), BO2's `Bullet_Fire` rule (`FUN_005d0c20`): a spread
+    /// class's pellets fly to the damage curve's last range (`damageRange[5]` × the attachments'
+    /// range scale, already in `damage_range`); every other weapon's round flies `bulletrange`
+    /// (the `bulletrange` dvar in ZH units, passed in from the tuning pack).
+    pub fn bullet_range(&self, bulletrange: f32) -> f32 {
+        if self.weap_class.is_spread() {
+            inches(self.damage_range[5])
+        } else {
+            bulletrange
+        }
+    }
+
     /// Damage at `distance` (ZH units). BO2's curve has six slots: unused middle slots have no
     /// range, and the last is the minimum damage at the end of the curve. Damage interpolates
     /// linearly between the used points and stays at the last one beyond it.
     pub fn damage_at(&self, distance: f32) -> f32 {
+        let distance = distance / inches(1.0);
         let points: Vec<(f32, f32)> = (0..6).filter(|&i| i == 0 || self.damage_range[i] > 0.0).map(|i| (self.damage_range[i], self.damage[i])).collect();
         if distance <= points[0].0 || points.len() == 1 {
             return points[0].1;

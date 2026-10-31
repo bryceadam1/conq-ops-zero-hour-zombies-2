@@ -4568,3 +4568,30 @@ Verified: cargo test --workspace green; clippy --all-targets adds no warning in 
 the real-install suites (zhbo-assets `--skip conformance` incl. `every_mp_weapon_converts_and_plays_like_bo2`,
 zhbo-formats) green; the conformance CLI as measured above. The in-game autotest is the integrator's.
 An archive VERSION bump is needed (the table gained lines; old tables still parse).
+
+## The bullet's reach is BO2's `bulletrange`; `weapClass` and the damage curve are carried as data (2026-10-31, branch `v1/damage-identity`)
+
+* **`maxRange` is a turret field.** The only reader of `WeaponDef+0x8b0` in t6mp is the turret
+  spawn `FUN_0067ee90` (next to `toparc`/`bottomarc`/`convergencetime`/`suppressionTime`, squared
+  into the AI's engagement range); it is 0 on every MP weapon. The mod's `max_range` "bullets fly
+  8000 in" was a guess filling it. It now carries BO2's value (0) and nothing in the sim reads it.
+* **How far a round is traced** is `Bullet_Fire`'s rule (`FUN_005d0c20`, same branch in
+  `FUN_00535f80`, `FUN_005d0150`, `FUN_00538bf0`): `weapClass` spread (3) or pistol_spread (13) →
+  `shotCount` pellets traced to `damageRange[5] × Π fDamageRangeScale` (`FUN_008ed030`); every
+  other class → 1 round traced to the `bulletrange` dvar (`FUN_006e86b0`, default 8192 in, max
+  65536). `WeaponDef::bullet_range` + tuning key `bulletrange`; `Sim::bullet_range` holds it in ZH
+  units. **Feel change:** shotgun and Executioner pellets now stop at the curve's end (870 MCS
+  650 in, S12/M1216 600, KSG 1251, Executioner 500) — BO2's pellets vanish there — and rifles
+  reach 8192 in instead of 8000. The CaC range bar uses the same rule (BO2's own bar reads an
+  attribute stringtable, `weaponattributelist.lua`; not carried).
+* **`weapClass` carried** as `WeaponDef::weap_class` (`WeapClass`, table key `WeapClass`), the
+  def's own value — the `gl_*` alts are `grenade`, the Executioner `pistol_spread`. The mod's
+  `Class` stays the CaC/HUD/sound grouping; only the BO2 branches above read `weap_class`.
+* **`DamageRange` is now stored in BO2's inches** (converted in `damage_at`), not ZH units.
+  Gotcha: BO2's "no falloff" curve is `999999|0|0|0|0|999999.1`, and 999999.1 in through ZH units
+  (÷6) in an `f32` comes back 999999.19 — the old converter clamped it to 100000 in instead. Keep
+  big BO2 lengths in inches.
+
+Measured vs `v1/uncarried-fields`: weapons cells 397,145 → 386,617; gap clusters 185 → 183.
+`max_range` 9,341 → 0, `weap_class` 605 → 0, `damage_range` 1,016 → 434 (the rest are the
+select-fire/dual-optic alt rows that `v1/alt-attachments` clears).
