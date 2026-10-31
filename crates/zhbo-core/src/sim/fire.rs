@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::impacts::Surface;
+use crate::weapons::FireMode;
 
 impl Sim {
     pub(super) fn apply_weapon_action(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, action: WeaponAction) {
@@ -93,16 +94,18 @@ impl Sim {
             }
             WeaponAction::Launch { def, pellet } => {
                 let eye = p.body.eye();
-                // A stack's bolts fan across `stackFireSpread` degrees of yaw, bolt i of n at
-                // spread × (i / (n - 1) - 0.5) (`FUN_0066e320`).
+                // A stack's bolts fan across `stackFireSpread` degrees of yaw: the bolt fired with
+                // k rounds loaded of an n-round stack at spread × ((k - 1) / (n - 1) - 0.5)
+                // (`FUN_0066e320`; `pellet` is k - 1).
                 let n = def.rounds_per_shot();
-                let spread = if n > 1 { def.traits.stack_fire.0.to_radians() * (pellet as f32 / (n - 1) as f32 - 0.5) } else { 0.0 };
+                let spread = if def.fire == FireMode::Stacked && n > 1 { def.traits.stack_fire.0.to_radians() * (pellet as f32 / (n - 1) as f32 - 0.5) } else { 0.0 };
                 let dir = dir_from_angles(p.yaw + spread, p.pitch);
                 if !def.fx_weapon.is_empty() {
                     host.fire_fx(p.general, &def.fx_weapon, 0, eye + dir * 10.0);
                 }
                 let proj = Projectile::launch(def, p.general, eye + dir * 2.0, dir, def.fuse_time, host, p.yaw);
                 self.projectiles.push((idx, proj));
+                // One launch cue per pull: the stack's last bolt, everything else's only one.
                 if pellet == 0 {
                     self.emit(idx, EventKind::Launched);
                 }

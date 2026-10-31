@@ -4618,3 +4618,37 @@ Measured (this entry and the previous one, vs `v1/uncarried-fields`): weapons ce
 `fire_type` 5 → 0, `start_ammo_rounds` 5 → 0, `clip_size` 243 → 238, `max_ammo_rounds` 7,343 →
 7,338; no column regressed. Gotcha from the first push: compare a curve point in inches
 (`damage_at_inches`) — a ZH round trip turned the MK48's 45 into 44.996 at its own range point.
+
+## The create-a-class bars are BO2's attribute table; the stack's spread and emitter (2026-10-31, branch `v1/damage-identity`)
+
+* **Stat bars from `mp/attributestable.csv`** (`patch_ui_mp`), read the way
+  `weaponattributelist.lua` reads them: `TableLookup(table, 1, ref, col)` for the weapon and
+  `TableLookup(table, 1, attachment, 9, weapon, col)` for an attachment's deltas *on that weapon*.
+  Columns (0-based): accuracy 2, damage 3, range 4, and 6 for the bar MP labels FIRE RATE (the
+  Lua's "mobility" bar; column 5 is read but never drawn). Dashes are value / 5 of 20, i.e. the
+  bar is value / 100. `WeaponDef::attributes` (table `Attributes`) and `attachment_attributes`
+  (table `AttachmentAttributes`, `short=fire,damage,range,accuracy`) replace the old derived rule
+  (catalog extremes of damage, reach, RPM and hip spread) and the per-attachment
+  `AttributeDeltas`, which took the first row only and the fire-rate delta from column 5 — the
+  deltas are per weapon (`stalker` and `sf` vary). Gotcha: the Skorpion's silencer row sits under
+  `weapon_smg`; a row is an attachment's when its column 9 names a weapon, not by its group.
+  Picker before/after (headless harness): the Chicom's DAMAGE went from 1 lit segment to 12 and
+  RANGE from full to 5 — BO2's 65 and 30.
+* The screenshot harness found no texture for the standalone scope-overlay pages: their
+  MappedImage `Texture` lacks the `.tga` their file has (`hud::build_archive`). The harness now
+  tries the name with `.tga`; whether the engine resolves the extension-less name in game is
+  unverified (worth an eyeball of a sniper's ADS overlay).
+* **`stackFireAccuracyDecay`** (`FUN_008e41a0`, x87 `pow` at `0x008e4319`): a stacked weapon with a
+  stack above one round scales its hip cone min and max by `decay ^ (clip − 1)` (with
+  `tu12_zm_stack_fire_fix`, default 0, it would use the def's stack count). In `spread_range`. The
+  tri-bolt's decay is 1, so it plays the same; the rule is there for the data.
+* **The stacked pull's emitter, traced.** The fire event (`FUN_008e1b80`, `EV_FIRE_WEAPON` 0x20…
+  0x23) spends one round (`FUN_008dc5f0` is 1 for stacked) and carries the rounds loaded as its
+  parameter; the server's event loop (`FUN_005d2a30`) hands that to `FUN_0066e590` →
+  `FUN_0066e320`, which places the bolt at spread × ((k − 1)/(n − 1) − 0.5). The rest of the stack
+  follows without the trigger: `FUN_008e1320` (should-fire) is true while `FUN_008dc0c0` reports a
+  part-spent stack (stacked, rounds in the clip, clip not full — `FUN_008dc030` is "clip full"),
+  and `FUN_008e0780` zeroes the fire delay then. So one pull does launch the whole magazine, a bolt
+  per frame; the mod launches them in the same frame (a 50 ms difference at most). Corrected: a
+  part-loaded stack fires what it holds (the previous entry's full-magazine gate misread
+  `FUN_008dc030`), and each `Launch`'s `pellet` is now k − 1, so the fan is BO2's per-bolt place.

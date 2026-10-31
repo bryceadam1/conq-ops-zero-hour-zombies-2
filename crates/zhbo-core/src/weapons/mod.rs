@@ -299,8 +299,8 @@ mod tests {
         assert_eq!(out.iter().filter(|x| matches!(x, WeaponAction::Fire { .. })).count(), 1);
     }
 
-    /// The tri-bolt (`stacked`): one pull launches the whole three-bolt magazine, and a partly
-    /// loaded stack does not fire (`FUN_008dc030`).
+    /// The tri-bolt (`stacked`): one pull launches the whole three-bolt magazine, numbered by the
+    /// rounds loaded before each bolt; a part-loaded stack fires what it holds.
     #[test]
     fn a_stack_fires_its_full_magazine_at_once() {
         let d = def(|d| {
@@ -316,14 +316,15 @@ mod tests {
         let mut rng = Rng::new(4);
         let mut out = Vec::new();
         a.step(buttons::FIRE, buttons::FIRE, false, 0, 0.0, &mut rng, &mut out);
-        assert_eq!(out.iter().filter(|x| matches!(x, WeaponAction::Launch { .. })).count(), 3, "{out:?}");
+        let bolts: Vec<u16> = out.iter().filter_map(|x| if let WeaponAction::Launch { pellet, .. } = x { Some(*pellet) } else { None }).collect();
+        assert_eq!(bolts, [2, 1, 0], "{out:?}");
         assert_eq!(a.current().ammo, 0);
         let mut b = arsenal_with(d);
         b.weapons[0].ammo = 2;
         b.weapons[0].reserve = 0;
         let mut out = Vec::new();
         b.step(buttons::FIRE, buttons::FIRE, false, 0, 0.0, &mut rng, &mut out);
-        assert!(!out.iter().any(|x| matches!(x, WeaponAction::Launch { .. })), "a partial stack does not fire");
+        assert_eq!(out.iter().filter(|x| matches!(x, WeaponAction::Launch { .. })).count(), 2, "a part-loaded stack fires its two");
     }
 
     #[test]
