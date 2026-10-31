@@ -63,6 +63,33 @@
         assert_eq!(out.viewmodel_fired, 1);
     }
 
+    #[test]
+    fn the_camera_carries_the_sims_view_kick_and_its_roll_without_moving_the_mouse_aim() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        let rest = frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        assert_eq!(rest.view_roll, 0.0);
+        // A kick held at an angle (no velocity, no recentre speed on the stand-in MTAR's pull).
+        let k = &mut sim.players[0].as_mut().unwrap().view_kick;
+        k.angle = [-2.0, 1.0, 8.0];
+        let (yaw, pitch) = (client.yaw, client.pitch);
+        // Two logic frames: the interpolation's previous sample catches up too.
+        frame_with(&mut client, &mut sim, &host, &mut inp, 2);
+        let out = client.frame(&mut sim, &inp);
+        assert_eq!((client.yaw, client.pitch), (yaw, pitch), "the mouse aim never takes the kick");
+        let k = sim.player(0).unwrap().view_kick;
+        let (ky, kp) = k.aim_offset();
+        let want = crate::math::dir_from_angles(yaw + ky, pitch + kp);
+        assert!((out.dir - want).length() < 1e-4, "camera = aim + kick: {:?} vs {want:?}", out.dir);
+        assert!((out.view_roll - k.roll()).abs() < 1e-6 && out.view_roll > 0.0, "the roll axis reaches the camera");
+        assert!((out.viewmodel_angles.z - rest.viewmodel_angles.z - k.roll()).abs() < 0.02, "and the gun rolls with it");
+    }
+
     fn impact(player: i32, surface: crate::impacts::Surface, head: bool, fatal: bool) -> crate::sim::Event {
         crate::sim::Event {
             player,

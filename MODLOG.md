@@ -4670,3 +4670,18 @@ Feel, for the in-game check: an AN-94 hip burst climbs ~0.5° per shot with the 
 ±0.6°, plateaus around 2° over a one-second burst (the return balances the kick), and settles
 dead-centre ~170 ms after release; ADS uses the aimed set and recentres slower or faster per the
 optic/suppressor scale; crouched/prone ADS takes the def's stance scales.
+
+### View kick follow-up: the roll axis reaches the camera (branch `v1/view-kick`)
+
+The integrator's third axis (BO2's roll, `-0.5 × yaw` per shot) was integrated but never drawn.
+`ZhboClientOut.view_roll` (appended, 4832 → 4836 bytes) carries it, interpolated like the eye;
+`Zhbo_GetCameraOverride` gained a `roll` out-parameter and the `W3DView::update` hook (patch 0001)
+passes it to `Matrix3D::Look_At_Dir`, whose third argument was always 0. Sign gotcha:
+`Look_At_Dir` applies `Rotate_Z(-roll)` because the camera looks down −Z, which makes its roll a
+right-handed turn about the forward axis — the same as Quake/BO2's `+roll` (right side down) — so
+the value passes through unnegated. The viewmodel is placed in the unrolled eye frame
+(`nativevm::place::root`, the W3D pose), so the core adds the roll to `viewmodel_angles.z`
+(`Rotate_X` about forward, the same sense) and the gun stays square to the screen. Unbuilt C++:
+the integrator checks the patch applies, the horizon tilts right-side-down on a negative-yaw
+(rightward) kick's positive roll, and the gun does not counter-rotate. `ZHBO_ABI_VERSION` bump
+needed (the integrator's).

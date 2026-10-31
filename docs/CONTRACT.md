@@ -16,7 +16,7 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
 | The General's position while under RTS control (field computer up) | Zero Hour AI | Control returns through `set_controlled(id, false)`, which issues `aiIdle`. |
 | Shots: when, where, what is hit, how much damage | zhbo-core | Damage is applied with `Object::attemptDamage` (`DAMAGE_SMALL_ARMS` / `DAMAGE_MELEE`), so ZH armor, retaliation and kill credit work natively. |
 | Muzzle flash, tracer, fire sound | Zero Hour | `WeaponTemplate::fireWeaponTemplate(..., inflictDamage = FALSE)` with the `ZHBO_*_FX` weapons. |
-| Camera | zhbo-core while `camera_override`, otherwise `W3DView` | Override sets view plane (FOV) and the first-person view's near plane: 0.1 units, returned by the bridge (`Zhbo_GetCameraOverride`); `setWidth()` restores the RTS FOV. The RTS view keeps its own `NearZ = MAP_XY_FACTOR = 10`. |
+| Camera | zhbo-core while `camera_override`, otherwise `W3DView` | Override sets view plane (FOV), the camera's roll (`ZhboClientOut.view_roll`, the view kick's roll axis, passed to `Matrix3D::Look_At_Dir` unchanged — both are a right-handed turn about the forward axis) and the first-person view's near plane: 0.1 units, returned by the bridge (`Zhbo_GetCameraOverride`); `setWidth()` restores the RTS FOV. The RTS view keeps its own `NearZ = MAP_XY_FACTOR = 10`. |
 | Mouse/keyboard | zhbo-core while `camera_override` | `ZhboTranslator` (priority 5, before every stock translator) destroys raw mouse/key messages except Esc. Keys are polled with `GetAsyncKeyState`; the mouse is re-centred every frame. |
 | Control bar / RTS UI | Hidden while `hide_rts_ui` | `HideControlBar` / `ShowControlBar`. |
 
@@ -388,6 +388,15 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
 * ABI: `surface_at` is appended to `ZhboLogicApi` (fields 23 → 24), `ZhboClientOut` grows by 324
   bytes (4508 → 4832) and `ZHBO_ABI_VERSION` goes to 26; `zhbo_load_impacts` and `zhbo_impact_fx`
   are new free functions on the append-only surface.
+
+## The view kick's roll
+
+* `ZhboClientOut.view_roll` (appended; 4832 → 4836 bytes, both size asserts) is the sim's view
+  kick roll (`PlayerSim::view_kick`, BO2's `-0.5 × yaw` axis), interpolated across the logic frame
+  like the eye. The bridge returns it from `Zhbo_GetCameraOverride` and the `W3DView::update` hook
+  passes it as `Look_At_Dir`'s roll. The viewmodel is placed in the unrolled eye frame, so the core
+  adds the same roll to `viewmodel_angles.z` and the gun stays square to the screen, as BO2 draws
+  it in the view's axes. `ZHBO_ABI_VERSION` is not bumped on the branch (the integrator's).
 
 ## Lifecycle
 

@@ -261,6 +261,11 @@ pub struct ClientOut {
     pub hits: [ClientHit; CLIENT_HITS],
     /// How many `hits` are valid.
     pub hits_len: i32,
+    /// The camera's roll this frame, radians, as W3D's `Matrix3D::Look_At_Dir` takes it (the view
+    /// kick's roll axis). Both are a right-handed turn about the forward axis — `Look_At_Dir`
+    /// applies `Rotate_Z(-roll)` because the camera looks down −Z, and BO2's `+roll` drops the
+    /// right side — so the value passes unchanged. Appended at the end of the struct (ABI rule).
+    pub view_roll: f32,
 }
 
 // Manual Default: `[u32; 64]` has none (arrays above 32 don't), and the rest are plain.
@@ -296,6 +301,7 @@ impl Default for ClientOut {
             menu_open: 0,
             hits: [ClientHit::default(); CLIENT_HITS],
             hits_len: 0,
+            view_roll: 0.0,
         }
     }
 }
@@ -414,8 +420,8 @@ pub struct Client {
     eye_prev: Vec3,
     eye_curr: Vec3,
     /// The sim's view kick aim offset (yaw, pitch radians) at the last two logic frames.
-    kick_prev: (f32, f32),
-    kick_curr: (f32, f32),
+    kick_prev: (f32, f32, f32),
+    kick_curr: (f32, f32, f32),
     seen_frame: u32,
     since_logic: f32,
     pub last_hfov: f32,
@@ -483,8 +489,8 @@ impl Client {
             prev_held: 0,
             eye_prev: Vec3::ZERO,
             eye_curr: Vec3::ZERO,
-            kick_prev: (0.0, 0.0),
-            kick_curr: (0.0, 0.0),
+            kick_prev: (0.0, 0.0, 0.0),
+            kick_curr: (0.0, 0.0, 0.0),
             seen_frame: 0,
             since_logic: 0.0,
             last_hfov: 1.0,
@@ -798,7 +804,8 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 self.eye_prev = self.eye_curr;
                 self.eye_curr = p.body.eye();
                 self.kick_prev = self.kick_curr;
-                self.kick_curr = p.view_kick.aim_offset();
+                let (yaw, pitch) = p.view_kick.aim_offset();
+                self.kick_curr = (yaw, pitch, p.view_kick.roll());
             } else {
                 self.since_logic += dt;
             }
@@ -906,7 +913,9 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     // the sim's, interpolated across the logic frame like the eye.
                     let kick_yaw = self.kick_prev.0 + (self.kick_curr.0 - self.kick_prev.0) * alpha;
                     let kick_pitch = self.kick_prev.1 + (self.kick_curr.1 - self.kick_prev.1) * alpha + self.hud.flinch_pitch.to_radians();
+                    let kick_roll = self.kick_prev.2 + (self.kick_curr.2 - self.kick_prev.2) * alpha;
                     out.dir = dir_from_angles(self.yaw + kick_yaw, (self.pitch + kick_pitch).clamp(-MAX_PITCH, MAX_PITCH));
+                    out.view_roll = kick_roll;
                     out.hfov = hfov;
                     out.hide_rts_ui = 1;
                     out.hide_object = self.general;
@@ -920,7 +929,10 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     // sim's own stance/speed/aim; the view's `cg_fov` is G4's wide-FOV reference.
                     let pose = self.vm_motion.update(dt, self.yaw, self.pitch, self.cfg.cg_fov, p, self.vm_kick.take());
                     out.viewmodel_offset = pose.offset;
-                    out.viewmodel_angles = pose.angles;
+                    // The gun is placed in the unrolled eye frame (`nativevm::place::root`, the W3D
+                    // pose): it rolls with the camera (BO2 draws it in the view's axes), so it
+                    // stays square to the screen.
+                    out.viewmodel_angles = pose.angles + Vec3::new(0.0, 0.0, kick_roll);
                     self.cues.update(dt, p, p.input.held & buttons::FIRE != 0);
                     if let Mode::FieldComputer { t } = p.mode {
                         // A scorestreak: the tablet comes up before the view leaves.
@@ -994,8 +1006,8 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         self.pitch = 0.0;
         self.eye_prev = eye;
         self.eye_curr = eye;
-        self.kick_prev = (0.0, 0.0);
-        self.kick_curr = (0.0, 0.0);
+        self.kick_prev = (0.0, 0.0, 0.0);
+        self.kick_curr = (0.0, 0.0, 0.0);
         self.latch = 0;
         self.prev_held = u32::MAX; // ignore keys already held when entering (e.g. the click itself)
         let from_dir = if inp.rts_cam_dir.length() > 0.5 { inp.rts_cam_dir } else { Vec3::new(0.0, 0.6, -0.8) };

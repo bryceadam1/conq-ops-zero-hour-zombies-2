@@ -231,15 +231,15 @@ index 1ee5828..1783c7e 100644
 +	// ZHBO: the first-person General owns the camera while active
 +	static Bool s_zhboCameraWasOverridden = false;
 +	Coord3D zhboEye, zhboDir;
-+	Real zhboFov, zhboNear;
-+	if (Zhbo_GetCameraOverride(&zhboEye, &zhboDir, &zhboFov, &zhboNear))
++	Real zhboFov, zhboNear, zhboRoll;
++	if (Zhbo_GetCameraOverride(&zhboEye, &zhboDir, &zhboFov, &zhboNear, &zhboRoll))
 +	{
 +		// Keep the terrain draw window centred ahead of the eye.
 +		m_pos.x = zhboEye.x + zhboDir.x * 100.0f;
 +		m_pos.y = zhboEye.y + zhboDir.y * 100.0f;
 +		m_pos.z = zhboEye.z;
 +		Matrix3D transform;
-+		transform.Look_At_Dir(Vector3(zhboEye.x, zhboEye.y, zhboEye.z), Vector3(zhboDir.x, zhboDir.y, zhboDir.z), 0.0f);
++		transform.Look_At_Dir(Vector3(zhboEye.x, zhboEye.y, zhboEye.z), Vector3(zhboDir.x, zhboDir.y, zhboDir.z), zhboRoll);
 +		m_3DCamera->Set_View_Plane(zhboFov, -1);
 +		setCameraTransform(transform);
 +		// The first-person viewmodel's near: the bridge returns 0.1 units (the native pass's

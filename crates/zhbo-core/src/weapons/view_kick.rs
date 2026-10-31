@@ -106,6 +106,12 @@ impl ViewKick {
         (self.angle[1].to_radians(), -self.angle[0].to_radians())
     }
 
+    /// The roll axis, radians, BO2's sign (positive turns the camera clockwise as seen from
+    /// behind it).
+    pub fn roll(&self) -> f32 {
+        self.angle[2].to_radians()
+    }
+
     pub fn is_rest(&self) -> bool {
         *self == ViewKick::default()
     }

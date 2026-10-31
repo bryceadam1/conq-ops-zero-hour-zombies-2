@@ -787,13 +787,14 @@ void Zhbo_ClientFrame()
 }
 
 
-Bool Zhbo_GetCameraOverride(Coord3D *eye, Coord3D *dir, Real *horizontalFov, Real *nearPlane)
+Bool Zhbo_GetCameraOverride(Coord3D *eye, Coord3D *dir, Real *horizontalFov, Real *nearPlane, Real *roll)
 {
 	if (!s_ready || !s_out.camera_override)
 		return FALSE;
 	eye->set(s_out.eye.x, s_out.eye.y, s_out.eye.z);
 	dir->set(s_out.dir.x, s_out.dir.y, s_out.dir.z);
 	*horizontalFov = s_out.hfov;
+	*roll = s_out.view_roll; // the view kick's roll, Look_At_Dir's argument
 	// The viewmodel's near: the gun sits at the eye, so Zero Hour's scene near (NearZ = MAP_XY_FACTOR
 	// = 10 world units, W3DView.cpp:106) would cut its rear into jagged holes. 0.1 units is the
 	// value the native pass's viewmodel projection uses (zhbo-gfx's runtime/native.rs), and the
