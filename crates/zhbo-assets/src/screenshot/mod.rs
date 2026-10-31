@@ -19,6 +19,8 @@
 //! * `cac-editor-tactician.png` — the lethal slot's list under Tactician: the tactical items;
 //! * `cac-editor-lethal.png` — the lethal slot's list, BO2's `primarygrenade` items with the placed
 //!   equipment among the grenades (`g-nades/`);
+//! * `cac-editor-overkill.png` — the secondary weapon list under Overkill: the primary groups only,
+//!   less the primary's gun (`cacweaponsp.lua:638-720`);
 //! * `cac-editor-danger-close.png` / `cac-editor-danger-close-x2.png` — the lethal button under
 //!   Danger Close: its second box empty, then filled (`Frag x2`, a point of its own);
 //! * `cac-dialog-set.png` / `cac-dialog-class.png` — the shell's `S`/`O` dialogs
@@ -106,6 +108,7 @@ fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> 
         ("cac-editor-lethal", lethal_picker_prims()),
         ("cac-editor-tactician", tactician_picker_prims()),
         ("cac-editor-danger-close", danger_close_prims(false)),
+        ("cac-editor-overkill", overkill_secondary_prims()),
         ("cac-editor-danger-close-x2", danger_close_prims(true)),
         ("cac-personalize", personalize_prims()),
         ("cac-reticles", reticle_personalize_prims()),
@@ -226,6 +229,23 @@ fn empty_editor_prims() -> Vec<Prim> {
 /// (`c-primary/001`).
 fn weapon_picker_prims() -> Vec<Prim> {
     let editor = editor_state();
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// The secondary weapon list under Overkill, opened through the real edge fold.
+fn overkill_secondary_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.draft.wildcards = vec![Wildcard::Overkill];
+    editor.draft.extra_perks = [None; 3];
+    editor.picking = false;
+    editor.slot = Slot::Secondary;
+    let mut prev = MenuPrev::default();
+    let mut pointer = MenuPointer { screen_w: size().0, screen_h: size().1, ..Default::default() };
+    pointer.keys.set_down(Key::Enter, true);
+    classui::editor_frame(&mut editor, &pointer, &prev);
+    prev.update(&pointer);
+    pointer.keys.set_down(Key::Enter, false);
+    classui::editor_frame(&mut editor, &pointer, &prev);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
