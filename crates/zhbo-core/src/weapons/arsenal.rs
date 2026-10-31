@@ -544,6 +544,9 @@ impl Arsenal {
         }
     }
 
+    /// The specialty that speeds an offhand's states (G3): `fastequipmentuse` for BO2's offhand
+    /// slot 3 — `Class::Equipment` is that slot (the converter's `class_of`), whichever
+    /// Create-a-Class slot lists the item (the Sensor Grenade is a tactical there) — else `fasttoss`.
     fn offhand_timing(&self, lethal: bool) -> Timing {
         let def = self.offhand_def(lethal);
         if def.class == Class::Equipment {

@@ -540,11 +540,19 @@ pub fn is_player_weapon(w: &Weapon) -> bool {
 fn class_of(w: &Weapon) -> Class {
     use manifest::{LETHALS, TACTICALS};
     let name = w.name.as_str();
-    if LETHALS.contains(&name) {
-        return if matches!(name, "bouncingbetty_mp" | "claymore_mp" | "satchel_charge_mp") { Class::Equipment } else { Class::Lethal };
-    }
-    if TACTICALS.contains(&name) {
-        return if matches!(name, "trophy_system_mp" | "tactical_insertion_mp" | "pda_hack_mp") { Class::Equipment } else { Class::Tactical };
+    // An offhand's class is its BO2 `offhandSlot`: the slot picks the button (`FUN_008de050`) and
+    // the specialty that speeds its states (G3: slot 3 runs at `perk_weapEquipmentUseMultiplier`).
+    // The Create-a-Class slot it is listed under is the statstable's (`cac_slot`), a separate
+    // thing: the Sensor Grenade is a `specialgrenade` item on the equipment slot.
+    if LETHALS.contains(&name) || TACTICALS.contains(&name) {
+        return match w.offhand_slot {
+            bo2::offhand_slot::EQUIPMENT => Class::Equipment,
+            bo2::offhand_slot::TACTICAL => Class::Tactical,
+            bo2::offhand_slot::LETHAL => Class::Lethal,
+            // Not on an offhand button in BO2's data: the manifest list decides.
+            _ if LETHALS.contains(&name) => Class::Lethal,
+            _ => Class::Tactical,
+        };
     }
     if w.weap_type == bo2::kind::MELEE {
         return Class::Melee;
@@ -1049,10 +1057,22 @@ mod tests {
         assert_eq!(class_of(&rifle), Class::Rifle);
         let sniper = Weapon { name: "dsr50_mp".into(), class: bo2::class::RIFLE, view_model: Some("t6_wpn_sniper_dsr50_view".into()), ..Default::default() };
         assert_eq!(class_of(&sniper), Class::Sniper);
-        let frag = Weapon { name: "frag_grenade_mp".into(), weap_type: bo2::kind::GRENADE, ..Default::default() };
+        let frag = Weapon { name: "frag_grenade_mp".into(), weap_type: bo2::kind::GRENADE, offhand_slot: bo2::offhand_slot::LETHAL, ..Default::default() };
         assert_eq!((class_of(&frag), effect_of(&frag)), (Class::Lethal, Effect::Explode));
-        let conc = Weapon { name: "concussion_grenade_mp".into(), weap_type: bo2::kind::GRENADE, ..Default::default() };
+        let conc = Weapon { name: "concussion_grenade_mp".into(), weap_type: bo2::kind::GRENADE, offhand_slot: bo2::offhand_slot::TACTICAL, ..Default::default() };
         assert_eq!((class_of(&conc), effect_of(&conc)), (Class::Tactical, Effect::Stun));
+    }
+
+    #[test]
+    fn an_offhands_class_is_its_bo2_offhand_slot() {
+        // The claymore (a `primarygrenade` CaC item) and the Sensor Grenade (`specialgrenade`) are
+        // both on BO2's equipment slot, so both run at Fast Equipment Use's rate.
+        for name in ["claymore_mp", "sensor_grenade_mp", "trophy_system_mp"] {
+            let w = Weapon { name: name.into(), weap_type: bo2::kind::GRENADE, offhand_slot: bo2::offhand_slot::EQUIPMENT, ..Default::default() };
+            assert_eq!(class_of(&w), Class::Equipment, "{name}");
+        }
+        let flash = Weapon { name: "flash_grenade_mp".into(), weap_type: bo2::kind::GRENADE, offhand_slot: bo2::offhand_slot::TACTICAL, ..Default::default() };
+        assert_eq!(class_of(&flash), Class::Tactical);
     }
 
     #[test]

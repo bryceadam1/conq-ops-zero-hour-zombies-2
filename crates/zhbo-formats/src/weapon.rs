@@ -85,6 +85,14 @@ pub mod class {
     pub const PISTOL_SPREAD: u32 = 13;
 }
 
+/// `OffhandSlot` (`WeaponDef.offhandSlot`): which offhand button carries the weapon.
+pub mod offhand_slot {
+    pub const NONE: u32 = 0;
+    pub const LETHAL: u32 = 1;
+    pub const TACTICAL: u32 = 2;
+    pub const EQUIPMENT: u32 = 3;
+}
+
 /// `weapInventoryType_t`.
 pub mod inventory {
     pub const PRIMARY: u32 = 0;

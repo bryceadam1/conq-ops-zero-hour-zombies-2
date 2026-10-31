@@ -4807,3 +4807,23 @@ scaled the whole `melee_left` and had no re-raise.
 Measured: no conformance movement (weapons 769,947, cac 572, 202 gap clusters; the weapons diff is
 byte-identical to the previous commit's) — the table already matched `iMeleeTime` and
 `quickRaiseTime`; this is behaviour only. No table field, no archive VERSION bump.
+
+## An offhand's class is its BO2 offhand slot: the Sensor Grenade is equipment (2026-10-31, `v1/offhand-rules`)
+
+The converter's `class_of` made an offhand `Equipment` by two hand-written name lists (betty,
+claymore, C4; Trophy System, Tactical Insertion, Black Hat) and everything else on the manifest's
+lethal/tactical lists `Lethal`/`Tactical`. BO2's data has the answer: `WeaponDef.offhandSlot` (1 lethal,
+2 tactical, 3 equipment) picks the button (`FUN_008de050`) and the specialty that speeds the offhand
+states (G3: slot 3 runs at `perk_weapEquipmentUseMultiplier`). `sensor_grenade_mp` is slot 3, so in
+BO2 Fast Equipment Use speeds it; the mod's name list made it tactical (Fast Toss).
+
+* `zhbo_formats::weapon::offhand_slot` names the enum; `class_of` maps slot 3 → `Equipment`, 2 →
+  `Tactical`, 1 → `Lethal` for every manifest offhand. The six old names come out the same; the Sensor
+  Grenade becomes `Equipment`. The Create-a-Class list is unaffected: it reads the statstable slot
+  (`cac_slot`; the Sensor Grenade stays a `specialgrenade`, listed as a tactical).
+* `Arsenal::offhand_timing` already keyed `fastequipmentuse` on `Class::Equipment`; it now means the
+  slot. Test: `an_offhands_class_is_its_bo2_offhand_slot`.
+
+Measured (vs `v1/equipment-use` conf2): weapons 769,947 → 769,946 (`offhand_slot` 1 → 0); cac 572
+(identical diff); gap clusters 202 → 201. No table field (the class was already in the table); the
+archive changes content only (the Sensor Grenade's `Class`).
