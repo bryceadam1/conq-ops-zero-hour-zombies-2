@@ -34,6 +34,9 @@ pub struct Faction {
     pub viewmodel: &'static str,
     /// Letter in the weapon viewmodels' W3D names ([`vm_model`]).
     pub letter: char,
+    /// The Zero Hour side (`PlayerTemplate` base side) of the General: its `<side>_Logo` is the
+    /// faction's weapon emblem (`emblems`).
+    pub side: &'static str,
 }
 
 pub const FACTIONS: &[Faction] = &[
@@ -45,6 +48,7 @@ pub const FACTIONS: &[Faction] = &[
         hands: "c_usa_mp_seal6_longsleeve_viewhands",
         viewmodel: zhbo_core::names::FACTION_VIEWMODEL_USA,
         letter: 'U',
+        side: "USA",
     },
     Faction {
         object: "ZHBO_General_China",
@@ -54,6 +58,7 @@ pub const FACTIONS: &[Faction] = &[
         hands: "c_chn_mp_pla_longsleeve_viewhands",
         viewmodel: zhbo_core::names::FACTION_VIEWMODEL_CHN,
         letter: 'C',
+        side: "China",
     },
     Faction {
         object: "ZHBO_General_GLA",
@@ -63,6 +68,7 @@ pub const FACTIONS: &[Faction] = &[
         hands: "c_mul_mp_pmc_longsleeve_viewhands",
         viewmodel: zhbo_core::names::FACTION_VIEWMODEL_GLA,
         letter: 'G',
+        side: "GLA",
     },
 ];
 
@@ -282,6 +288,11 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let base_count = converted_base.len();
     let (vm_summary, mut clips) = viewmodels::weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &atts, &mut table.weapons, &converted, base_count)?;
     summary.push(vm_summary);
+    // The weapon emblem: each faction's Zero Hour logo, from the player's own Zero Hour install.
+    match zhbo_requirements::check_requirements().zero_hour {
+        Ok(zh) => summary.push(crate::emblems::faction_emblems(&zh.path, &mut out)),
+        Err(e) => summary.push(format!("faction emblems skipped: {e}")),
+    }
     // The CaC reticle options as lens materials, one blob for every optic.
     let reticle_zones: Vec<&Zone> = reticle_zone.iter().chain(std::iter::once(&common)).collect();
     let reticles = crate::reticles::reticles(&patch, &reticle_zones, &paks, &mut out);

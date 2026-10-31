@@ -1147,3 +1147,48 @@ fn the_reticle_choice_swaps_the_lens_material_only() {
     super::apply_reticle(&mut past, &set, 5);
     assert_eq!(past.surfaces[0].color.as_deref(), Some("mc/reflex.tga"), "a row past the set keeps the stock reticle");
 }
+
+/// The gun's emblem surface shows the viewmodel's faction's Zero Hour logo
+/// (`zhbo_native::emblem_path`) when the archive has it, and its own stand-in when not.
+#[test]
+fn the_emblem_surface_wears_the_factions_logo() {
+    let arms = model("arms", vec![bone("tag_weapon", None, [0.0; 3])]);
+    let mut gun = model("gun", vec![bone("j_gun", None, [0.0; 3])]);
+    gun.materials[0].emblem = true;
+    gun.materials[0].color = Some("Art\\Textures\\zhbo_emblem_clear_a.tga".into());
+    let manifest = Viewmodel {
+        id: "test_mp".into(),
+        faction: b'G',
+        parts: vec![
+            Part { model: zhbo_native::model_path("arms"), tag: None, offset: IDENTITY, rigid: false, ads_only: false, camo: None },
+            Part { model: zhbo_native::model_path("gun"), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false, camo: None },
+        ],
+        markers: vec![],
+        hide: vec![],
+        clips: vec![],
+    };
+    let run = |with_logo: bool| {
+        let mut files_in: Vec<(String, Vec<u8>)> = vec![
+            (zhbo_native::viewmodel_path(7, 'G'), manifest.to_bytes()),
+            (zhbo_native::model_path("arms"), arms.to_bytes()),
+            (zhbo_native::model_path("gun"), gun.to_bytes()),
+        ];
+        if with_logo {
+            files_in.push((zhbo_native::emblem_path('G'), vec![1, 2, 3]));
+        }
+        let mut files = Files::default();
+        for _ in 0..8 {
+            if let Some(l) = load(&mut files, 7, b'G', None, None, 0).unwrap() {
+                return l;
+            }
+            let wanted: Vec<String> = files.wanted().map(str::to_string).collect();
+            for w in &wanted {
+                files.provide(w, files_in.iter().find(|(p, _)| p == w).map(|(_, b)| b.as_slice()));
+            }
+        }
+        panic!("the viewmodel loads");
+    };
+    let emblem = |l: &Loaded| l.mesh.surfaces.iter().find(|s| s.emblem).and_then(|s| s.color.clone());
+    assert_eq!(emblem(&run(true)), Some(zhbo_native::emblem_path('G')), "the GLA logo");
+    assert_eq!(emblem(&run(false)).as_deref(), Some("Art\\Textures\\zhbo_emblem_clear_a.tga"), "no logo in the archive: the stand-in");
+}

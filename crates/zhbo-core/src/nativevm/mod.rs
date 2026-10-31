@@ -527,6 +527,22 @@ pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: 
             applied = Some(option.to_string());
         }
     }
+    // The emblem surfaces show the faction's Zero Hour logo (the converter's
+    // `zhbo_native::emblem_path`); an archive without it keeps the material's own stand-in.
+    if mesh.surfaces.iter().any(|s| s.emblem) {
+        let path = zhbo_native::emblem_path(faction as char);
+        if !files.is_missing(&path) {
+            if files.get(&path).is_some() {
+                for m in std::iter::once(&mut mesh).chain(mesh_aimed.as_mut()) {
+                    for s in m.surfaces.iter_mut().filter(|s| s.emblem) {
+                        s.color = Some(path.clone());
+                    }
+                }
+            } else {
+                waiting = true;
+            }
+        }
+    }
     // The class's reticle: the lens surfaces take the chosen `weaponoptions.csv` row. An archive
     // without the table draws the stock reticle.
     if reticle_row != 0 && mesh.surfaces.iter().any(|s| s.reticle.is_some()) {

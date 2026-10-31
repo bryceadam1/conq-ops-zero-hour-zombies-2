@@ -37,6 +37,8 @@ pub struct Source {
     bo2: Vec<zhbo_formats::weapon::Weapon>,
     atts: Vec<zhbo_formats::weapon::Attachment>,
     defs: Vec<zhbo_core::weapons::WeaponDef>,
+    /// The faction emblems from the Zero Hour install (empty without one), as the archive has them.
+    emblems: BTreeMap<String, Vec<u8>>,
 }
 
 impl Source {
@@ -55,7 +57,11 @@ impl Source {
         let names = crate::weapons::names(bo2_dir);
         let mut table = crate::weapons::table(&bo2, &atts, &names);
         crate::weapons::add_variants(&mut table, &crate::weapons::converted(&patch, &bo2), &bo2);
-        Ok(Source { common, patch, zones, paks, bo2, atts, defs: table.weapons })
+        let mut emblems = BTreeMap::new();
+        if let Ok(zh) = zhbo_requirements::check_requirements().zero_hour {
+            crate::emblems::faction_emblems(&zh.path, &mut emblems);
+        }
+        Ok(Source { common, patch, zones, paks, bo2, atts, defs: table.weapons, emblems })
     }
 
     /// The native blobs for converted viewmodel `id` — `an94_mp` or `an94_mp+reflex` — keyed by
@@ -68,6 +74,7 @@ impl Source {
         let mut defs = self.defs.clone();
         weapon_viewmodels(&self.patch, &self.common, &self.zones, &self.paks, &mut out, &self.bo2, &self.atts, &mut defs, std::slice::from_ref(&id.to_string()), 0)?;
         out.retain(|path, _| path.starts_with(zhbo_native::DIR) || path.starts_with("Art\\Textures\\"));
+        out.extend(self.emblems.clone());
         Ok(out)
     }
 

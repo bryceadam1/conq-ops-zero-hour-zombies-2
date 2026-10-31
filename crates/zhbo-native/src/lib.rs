@@ -67,6 +67,12 @@ pub fn viewmodel_path(vm: i32, faction: char) -> String {
     format!("{DIR}ZV{vm:02}{faction}.zbv")
 }
 
+/// The archive path of faction `faction`'s weapon emblem texture (`U`, `C`, `G`): its Zero Hour
+/// side logo, drawn on the gun's emblem surface (`model::Material::emblem`).
+pub fn emblem_path(faction: char) -> String {
+    format!("Art\\Textures\\zhbo_emblem_{}.tga", faction.to_ascii_lowercase())
+}
+
 /// The archive path of faction `faction`'s third-person body manifest (`U`, `C`, `G`).
 pub fn body_path(faction: char) -> String {
     format!("{DIR}ZB{faction}.zbc")

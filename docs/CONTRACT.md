@@ -314,9 +314,14 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   (`nativevm::lens_reticle_drawn`, per thread). The clan tag draws as BO2 does for a player
   without one: its shader's four glyph indices are all 0 (`FUN_0052a010`), so the converter bakes
   the font atlas's first cell four times across (transparent on the stock install). The emblem
-  draws its material's own `emblem_clear` stand-in: the faction emblem (`Material::emblem` marks
-  the surface for it) is not wired yet — Zero Hour's `<Side>_Logo` lives in its localized
-  `SCShellUserInterface512_006.tga` page, which the core would need the bridge to resolve. The
+  shows the faction's Zero Hour logo (the parity plan's divergence: ZH factions replace BO2's
+  emblem), resolved **at conversion**, not through the bridge: `zhbo_assets::emblems` reads the
+  player's Zero Hour install (`zhbo_requirements`, `ZHBO_ZH_DIR`), finds `MappedImage
+  <Side>_Logo` in its `Data\INI\MappedImages` INIs and crops that rect (right/bottom exclusive)
+  from the page in an `Art\Textures` folder of its archives (`SCShellUserInterface512_006.tga` in
+  `EnglishZH.big` on the stock install), writing `zhbo_native::emblem_path(letter)` per faction
+  (`Faction::side`). `nativevm::load` puts the viewmodel's faction's logo on every
+  `Material::emblem` surface; an archive without it keeps the material's own `emblem_clear`. The
   reticle colour option has no rendering effect found in BO2: `weaponoptions.csv` has no colour
   column and the reticle shader reads no code-set colour. The third-person body draws its world
   model's reticle with `ads = 0`, i.e. dark, as BO2 sets the fade for the local viewmodel only.

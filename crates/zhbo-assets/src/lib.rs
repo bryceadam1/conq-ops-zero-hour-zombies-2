@@ -15,6 +15,7 @@ pub mod character;
 pub mod generals;
 pub mod impacts;
 pub mod ini;
+pub mod emblems;
 pub mod paks;
 pub mod reticles;
 pub mod textures;
