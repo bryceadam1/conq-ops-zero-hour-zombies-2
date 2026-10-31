@@ -710,7 +710,7 @@ fn a_fourth_bonus_card_is_denied() {
         perks: [Some(Perk::LIGHTWEIGHT), None, None],
         ..Draft::default()
     });
-    let cards = crate::classes::MAX_BONUS_CARDS as i32;
+    let cards = crate::classes::max_bonus_cards() as i32;
     assert!(e.draft.spent() + cards < PICK_10, "room for every card: {}", e.draft.spent());
     e.slot = Slot::Wildcards;
     for (n, w) in [Wildcard::Perk1Greed, Wildcard::Perk2Greed, Wildcard::Tactician].into_iter().enumerate() {
@@ -721,7 +721,7 @@ fn a_fourth_bonus_card_is_denied() {
         assert!(!e.denied, "card {} is within the cap", n + 1);
         assert_eq!(e.draft.wildcards.len(), n + 1);
     }
-    assert_eq!(e.draft.wildcards.len(), crate::classes::MAX_BONUS_CARDS);
+    assert_eq!(e.draft.wildcards.len(), crate::classes::max_bonus_cards());
     // The fourth: refused with the deny flag, the draft untouched.
     let before = e.draft.clone();
     let overkill = wildcard_list().iter().position(|x| *x == Wildcard::Overkill).expect("in the list");
@@ -736,11 +736,11 @@ fn a_fourth_bonus_card_is_denied() {
     e.picking = true;
     e.option = tactician;
     e.step(Edges { confirm: true, ..Default::default() });
-    assert_eq!(e.draft.wildcards.len(), crate::classes::MAX_BONUS_CARDS - 1);
+    assert_eq!(e.draft.wildcards.len(), crate::classes::max_bonus_cards() - 1);
     e.picking = true;
     e.option = overkill;
     e.step(Edges { confirm: true, ..Default::default() });
-    assert_eq!(e.draft.wildcards.len(), crate::classes::MAX_BONUS_CARDS);
+    assert_eq!(e.draft.wildcards.len(), crate::classes::max_bonus_cards());
     assert!(e.draft.valid());
 }
 
@@ -748,7 +748,7 @@ fn a_fourth_bonus_card_is_denied() {
 fn an_over_capped_draft_is_not_valid() {
     // A hand-built draft (or one derived from a stored class) past the cap never saves.
     let d = Draft { wildcards: vec![Wildcard::Perk1Greed, Wildcard::Perk2Greed, Wildcard::Perk3Greed, Wildcard::Overkill], ..Draft::default() };
-    assert_eq!(d.wildcards.len(), crate::classes::MAX_BONUS_CARDS + 1);
+    assert_eq!(d.wildcards.len(), crate::classes::max_bonus_cards() + 1);
     assert!(!d.valid(), "over the card cap");
 }
 
@@ -998,7 +998,7 @@ fn danger_close_opens_a_second_lethal_box_that_costs_a_point() {
     assert_eq!(e.apply_second_offhand(true), ApplyResult::Changed);
     assert_eq!((e.draft.lethal_count(), e.draft.offhand_count(true), e.draft.spent()), (2, 2, base + 2), "the second lethal");
     let c = e.draft.to_custom();
-    assert_eq!(c.lethal_count, crate::classes::MAX_GRENADES as u8);
+    assert_eq!(c.lethal_count, crate::classes::max_grenades() as u8);
     assert_eq!(c.loadout().lethal_count, Some(2));
     assert!(c.to_spec().contains("lethal_count=2"), "{}", c.to_spec());
     let back = Draft::from_custom(&c);
@@ -1088,7 +1088,7 @@ fn a_second_tactical_costs_a_point_and_round_trips() {
     assert_eq!(e.draft.to_custom().tactical_count, 1, "the class's own count, not the item's start count");
     e.slot = Slot::Tactical;
     let i = e.offhand_list(false).iter().position(|id| *id == "concussion_grenade_mp").unwrap();
-    assert_eq!(items::offhand_cap("concussion_grenade_mp"), crate::classes::MAX_GRENADES as u8);
+    assert_eq!(items::offhand_cap("concussion_grenade_mp"), crate::classes::max_grenades() as u8);
     assert_eq!(e.apply(i), ApplyResult::Changed, "re-picking the held item takes its second box");
     assert_eq!((e.draft.tactical_count(), e.draft.spent()), (2, base + 1));
     let c = e.draft.to_custom();

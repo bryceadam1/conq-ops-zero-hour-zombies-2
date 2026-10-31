@@ -624,14 +624,14 @@ impl Client {
 
     /// A command-bar class button was pressed (`button` is 1-based, see `ClientIn::class_button`):
     /// emit the pick the class screen would emit for that class, so the bar and the screen share
-    /// one writer of `choose_class`. Buttons below `classicons::PRESETS` are the five default
+    /// one writer of `choose_class`. Buttons below `classicons::preset_rows()` are the five default
     /// classes by registry index (a 1-based `choose_class`); the rest are the ACTIVE class set's
     /// customs ([`crate::profile::classes`]), sent as their wire words. A button whose class is
     /// gone (an empty custom slot, or a registry with fewer presets than the bar drew) sends
     /// nothing, like an empty pick row.
     fn pick_class_button(&mut self, out: &mut ClientOut, button: i32) {
         let Some(index) = usize::try_from(button - 1).ok() else { return };
-        if index < crate::classicons::PRESETS {
+        if index < crate::classicons::preset_rows() {
             if crate::classes::at(index).is_none() {
                 return;
             }
@@ -642,7 +642,7 @@ impl Client {
         } else {
             // Snapshot the profile once, like the pick screen's draw does.
             let classes = crate::profile::classes();
-            let Some(class) = classes.get(index - crate::classicons::PRESETS) else { return };
+            let Some(class) = classes.get(index - crate::classicons::preset_rows()) else { return };
             if !pick_custom_class(out, self.general, class) {
                 // Never send a truncated payload (see `pick_custom_class`).
                 self.cues.play(sounds::DRY_FIRE);

@@ -164,14 +164,14 @@ pub fn rows(shipped: &Shipped, bo2_dir: &std::path::Path, schema: &Schema) -> Re
         t.len()
     };
     let caps: [(&str, Option<String>); 10] = [
-        ("maxCustomClass", Some(zhbo_core::classes::MAX_CUSTOM_CLASSES.to_string())),
-        ("maxGrenades", Some(zhbo_core::classes::MAX_GRENADES.to_string())),
-        ("maxSpecialtySlots", Some(zhbo_core::classes::MAX_SPECIALTY_SLOTS.to_string())),
+        ("maxCustomClass", Some(zhbo_core::classes::max_custom_class().to_string())),
+        ("maxGrenades", Some(zhbo_core::classes::max_grenades().to_string())),
+        ("maxSpecialtySlots", Some(zhbo_core::classes::max_specialty_slots().to_string())),
         ("maxPerks", Some(zhbo_core::classes::max_perks().to_string())),
-        ("maxAttachments", Some(zhbo_core::classes::MAX_ATTACHMENTS.to_string())),
+        ("maxAttachments", Some(zhbo_core::classes::max_attachments().to_string())),
         ("maxPerkCategories", Some(perk_tiers.to_string())),
         ("maxPerksInEachCategory", Some(zhbo_core::classes::max_perks_in_each_category().to_string())),
-        ("maxBonusCards", Some(zhbo_core::classes::MAX_BONUS_CARDS.to_string())),
+        ("maxBonusCards", Some(zhbo_core::classes::max_bonus_cards().to_string())),
         ("maxDefaultClass", Some(zhbo_core::classes::max_default_class().to_string())),
         ("maxAllocation", Some(classmenu::PICK_10.to_string())),
     ];

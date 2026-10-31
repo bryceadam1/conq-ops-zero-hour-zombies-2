@@ -553,8 +553,8 @@ pub unsafe extern "C" fn zhbo_class_buttons(out: *mut ClassButton, cap: i32) -> 
     }
     let icons = crate::classicons::icons();
     let labels = crate::classicons::labels();
-    let presets = icons.iter().take(crate::classicons::PRESETS).filter(|c| c.is_some()).count();
-    let customs = icons.iter().skip(crate::classicons::PRESETS).filter(|c| c.is_some()).count();
+    let presets = icons.iter().take(crate::classicons::preset_rows()).filter(|c| c.is_some()).count();
+    let customs = icons.iter().skip(crate::classicons::preset_rows()).filter(|c| c.is_some()).count();
     let n = icons.len().min(cap as usize);
     for i in 0..n {
         let mut b = ClassButton::default();
@@ -574,7 +574,7 @@ pub unsafe extern "C" fn zhbo_class_buttons(out: *mut ClassButton, cap: i32) -> 
                 put_text(&mut b.perks[k], c.perks[k]);
             }
             b.perk_count = perks as i32;
-            if i >= crate::classicons::PRESETS {
+            if i >= crate::classicons::preset_rows() {
                 let words = crate::classicons::custom_payload(i);
                 let len = words.len().min(64);
                 b.payload[..len].copy_from_slice(&words[..len]);
@@ -1010,14 +1010,14 @@ mod tests {
         assert!(ctext(&out[0].primary).starts_with("ZHBO_BO2_Icon_"));
         assert!(out[0].payload_len == 0, "a preset picks by index");
         // The one custom class sits on page one's first custom slot, with its wire words.
-        assert_eq!(out[crate::classicons::PRESETS].present, 1);
-        assert_eq!((out[crate::classicons::PRESETS].page, out[crate::classicons::PRESETS].slot), (1, 6));
-        assert_eq!(ctext(&out[crate::classicons::PRESETS].name), "My Sniper");
-        assert_eq!(ctext(&out[crate::classicons::PRESETS].primary), "ZHBO_BO2_Icon_dsr50_mp");
-        let len = out[crate::classicons::PRESETS].payload_len as usize;
-        assert_eq!(crate::classes::CustomClass::from_wire_words(&out[crate::classicons::PRESETS].payload[..len]), Some(c));
+        assert_eq!(out[crate::classicons::preset_rows()].present, 1);
+        assert_eq!((out[crate::classicons::preset_rows()].page, out[crate::classicons::preset_rows()].slot), (1, 6));
+        assert_eq!(ctext(&out[crate::classicons::preset_rows()].name), "My Sniper");
+        assert_eq!(ctext(&out[crate::classicons::preset_rows()].primary), "ZHBO_BO2_Icon_dsr50_mp");
+        let len = out[crate::classicons::preset_rows()].payload_len as usize;
+        assert_eq!(crate::classes::CustomClass::from_wire_words(&out[crate::classicons::preset_rows()].payload[..len]), Some(c));
         // The empty custom slots carry no class.
-        assert!(out[crate::classicons::PRESETS + 1..].iter().all(|b| b.present == 0));
+        assert!(out[crate::classicons::preset_rows() + 1..].iter().all(|b| b.present == 0));
         crate::profile::reset();
     }
 

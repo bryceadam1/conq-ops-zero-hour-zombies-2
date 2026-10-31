@@ -121,13 +121,13 @@ pub fn fits_offhand(id: &str, lethal: bool) -> bool {
 /// How many of an offhand item one slot may carry: BO2's slot list shows two boxes for a tactical
 /// (`cacgrenadesbutton.lua:150-180`: `math.min(2, Engine.GetMaxAmmoForItem(item))`), so an item
 /// whose weapon caps its ammo at one (the smoke, the Tactical Insertion) takes one; 0 for none.
-/// The two is `maxGrenades` ([`crate::classes::MAX_GRENADES`]), the cap `WeaponDef::max_reserve`
+/// The two is `maxGrenades` ([`crate::classes::max_grenades()`]), the cap `WeaponDef::max_reserve`
 /// (BO2's `iMaxAmmo`).
 pub fn offhand_cap(id: &str) -> u8 {
     if id.is_empty() {
         return 0;
     }
-    weapons::catalog().get(id).map_or(0, |d| (d.max_reserve.max(1) as usize).min(crate::classes::MAX_GRENADES) as u8)
+    weapons::catalog().get(id).map_or(0, |d| (d.max_reserve.max(1) as usize).min(crate::classes::max_grenades()) as u8)
 }
 
 /// Whether the item `base` is one the slot may hold: a gun item of the slot's own, or a primary

@@ -125,12 +125,12 @@ impl Draft {
 
     /// Whether the draft's choices fit the budget (never over ten) and the three-card cap.
     pub fn valid(&self) -> bool {
-        self.remaining() >= 0 && self.wildcards.len() <= classes::MAX_BONUS_CARDS
+        self.remaining() >= 0 && self.wildcards.len() <= classes::max_bonus_cards()
     }
 
     /// Whether every bonus-card slot is taken (`maxBonusCards`), so another card is denied.
     pub fn wildcards_full(&self) -> bool {
-        self.wildcards.len() >= classes::MAX_BONUS_CARDS
+        self.wildcards.len() >= classes::max_bonus_cards()
     }
 
     /// How many lethals the class carries: BO2's `primarygrenadecount`, the filled boxes of the
@@ -193,9 +193,9 @@ impl Draft {
     /// Primary Gunfighter.
     pub fn primary_att_max(&self) -> usize {
         if self.wildcards.contains(&Wildcard::PrimaryGunfighter) {
-            classes::MAX_ATTACHMENTS + 1
+            classes::max_attachments() + 1
         } else {
-            classes::MAX_ATTACHMENTS
+            classes::max_attachments()
         }
     }
 
@@ -203,9 +203,9 @@ impl Draft {
     /// or two with Secondary Gunfighter.
     pub fn secondary_att_max(&self) -> usize {
         if self.wildcards.contains(&Wildcard::SecondaryGunfighter) {
-            classes::MAX_ATTACHMENTS
+            classes::max_attachments()
         } else {
-            classes::MAX_ATTACHMENTS - 1
+            classes::max_attachments() - 1
         }
     }
 

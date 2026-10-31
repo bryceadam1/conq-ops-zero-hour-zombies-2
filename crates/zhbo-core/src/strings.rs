@@ -248,16 +248,16 @@ mod tests {
         load("");
         crate::profile::reset();
         // Every row that carries a class has a class when all five custom slots are filled: the
-        // five defaults plus the active set's five. The ABI's remaining rows ([`classicons::ROWS`]
+        // five defaults plus the active set's five. The ABI's remaining rows ([`classicons::class_rows()`]
         // up to `BUTTONS`) are absent, so the bridge never places their buttons.
-        for i in 0..crate::classicons::CUSTOMS {
+        for i in 0..crate::classicons::custom_rows() {
             crate::profile::save(custom(&format!("Custom {i}")));
         }
-        for i in 1..=crate::classicons::ROWS {
+        for i in 1..=crate::classicons::class_rows() {
             let label = format!("CONTROLBAR:ZHBO_ClassButton{i:02}");
             assert!(text(&label).is_some_and(|t| !t.is_empty()), "{label} must serve text");
         }
-        for i in crate::classicons::ROWS + 1..=crate::classicons::BUTTONS {
+        for i in crate::classicons::class_rows() + 1..=crate::classicons::BUTTONS {
             assert_eq!(text(&format!("CONTROLBAR:ZHBO_ClassButton{i:02}")), None, "row {i} carries no class");
         }
         let ini = include_str!("../../../data/Data/INI/CommandButton/ZHBO_CommandButtons.ini");
@@ -272,7 +272,7 @@ mod tests {
             // The INI still declares the ABI's fifteen class buttons; only the ten the core fills
             // carry a label (the bar is one page of Take Control + ten classes + Back).
             if let Some(n) = label.strip_prefix("CONTROLBAR:ZHBO_ClassButton").and_then(|n| n.parse::<usize>().ok()) {
-                if n > crate::classicons::ROWS {
+                if n > crate::classicons::class_rows() {
                     continue;
                 }
             }

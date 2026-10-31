@@ -5076,3 +5076,18 @@ The mod's secondary listed its own items plus the primary ones. `items::slots_of
 `items::fits_slot` (the repair's "may this slot hold it") still takes either kind in the
 secondary, since a pistol held before the card went on stays valid. Tests updated:
 `overkill_offers_primary_guns_in_the_secondary_list`, `overkill_puts_a_second_primary_into_the_secondary_slot`.
+
+## The six remaining class caps come from `cacutility.lua` too (2026-10-31, `v1/cac-rules`)
+
+`maxCustomClass`, `maxGrenades`, `maxSpecialtySlots`, `maxAttachments` and `maxBonusCards` were
+Rust constants (`classes::MAX_*`) copied by hand from `cacutility.lua`. They are now
+`classes::max_custom_class()` … `max_bonus_cards()`, reading `ClassCap.*` like the three before
+them (`DATA_CAPS` lists all eight; the converter writes them, the built-in table carries BO2's
+values, the ignored install test compares every one). The value tests stay, now on the functions.
+`profile::max_classes()` and the class bar's `classicons::preset_rows()`/`custom_rows()`/
+`class_rows()` follow; the bar's default-class rows are now `maxDefaultClass` (they were sized by
+`maxCustomClass`, the same five), and both are kept within page one's twelve class slots, since
+the command bar's fifteen `ZhboClassButton`s are fixed by the ABI. `maxPerkCategories` was never a
+constant: the conformance emitter counts the perk table's tiers, and still does.
+Measured: cac 2, weapons 781,587, gap clusters 200 — unchanged (the values are BO2's either way;
+the source is now the install).

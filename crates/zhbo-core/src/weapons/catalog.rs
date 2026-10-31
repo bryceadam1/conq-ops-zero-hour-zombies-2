@@ -280,9 +280,14 @@ pub fn weapon(id: &str) -> &'static WeaponDef {
 /// the `ClassCap.*` lines are `cacutility.lua`'s ([`crate::classes::DATA_CAPS`]).
 pub const BUILTIN: &str = "
 WeaponGroups = weapon_smg weapon_assault weapon_cqb weapon_lmg weapon_sniper weapon_pistol weapon_launcher weapon_special
-ClassCap.maxDefaultClass = 5
+ClassCap.maxCustomClass = 5
+ClassCap.maxGrenades = 2
+ClassCap.maxSpecialtySlots = 6
 ClassCap.maxPerks = 12
+ClassCap.maxAttachments = 2
 ClassCap.maxPerksInEachCategory = 2
+ClassCap.maxBonusCards = 3
+ClassCap.maxDefaultClass = 5
 
 UiText MPUI_PRIMARY_GRENADE_CAPS
   Text = LETHAL

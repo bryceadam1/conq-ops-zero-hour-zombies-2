@@ -328,5 +328,3 @@ fn arrow(prims: &mut Vec<Prim>, f: &Frame, r: Rect, dir: i32) {
         prims.push(Prim::Rect { x, y: cy - half + i as f32, w: span, h: 1.0, argb: argb(OFF_WHITE, 1.0) });
     }
 }
-
-const _: () = assert!(profile::MAX_CLASSES == 5, "BO2's sets hold five custom slots");

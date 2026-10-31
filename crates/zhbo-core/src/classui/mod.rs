@@ -192,9 +192,9 @@ pub fn pick_rows(manage: bool) -> Vec<PickRow> {
 /// `class_smg` 10 .. `class_sniper` 14); a preset outside those five keeps its registry order after
 /// them.
 pub fn pick_rows_for(presets: &[classes::ClassDef], customs: usize, manage: bool) -> Vec<PickRow> {
-    let customs = customs.min(profile::MAX_CLASSES);
+    let customs = customs.min(profile::max_classes());
     let mut rows: Vec<PickRow> = (0..customs).map(PickRow::Custom).collect();
-    rows.extend((customs..profile::MAX_CLASSES).map(PickRow::Empty));
+    rows.extend((customs..profile::max_classes()).map(PickRow::Empty));
     if !manage {
         const ORDER: [&str; 5] = ["smg", "cqb", "assault", "lmg", "sniper"];
         let mut order: Vec<usize> = (0..presets.len()).collect();

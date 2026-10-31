@@ -34,23 +34,42 @@ pub struct ClassDef {
 pub const MAX_CLASS_SETS: usize = 10;
 
 /// Custom class slots per class set: `CoD.CACUtility.maxCustomClass`.
-pub const MAX_CUSTOM_CLASSES: usize = 5;
+pub fn max_custom_class() -> usize {
+    class_cap("maxCustomClass")
+}
 
 /// Bonus cards (wildcards) per class: `CoD.CACUtility.maxBonusCards`.
-pub const MAX_BONUS_CARDS: usize = 3;
+pub fn max_bonus_cards() -> usize {
+    class_cap("maxBonusCards")
+}
 
 /// Attachment slots on a weapon before a Gunfighter card: `CoD.CACUtility.maxAttachments`.
-pub const MAX_ATTACHMENTS: usize = 2;
+pub fn max_attachments() -> usize {
+    class_cap("maxAttachments")
+}
 
 /// Perk slots a class can hold: `CoD.CACUtility.maxSpecialtySlots` (three tiers, two each).
-pub const MAX_SPECIALTY_SLOTS: usize = 6;
+pub fn max_specialty_slots() -> usize {
+    class_cap("maxSpecialtySlots")
+}
 
 /// Grenades of one kind a class can carry: `CoD.CACUtility.maxGrenades`.
-pub const MAX_GRENADES: usize = 2;
+pub fn max_grenades() -> usize {
+    class_cap("maxGrenades")
+}
 
 /// The `CoD.CACUtility` caps the core reads from the weapon table (`ClassCap.<name>`), converted
 /// from the install's `cacutility.lua` — the same Lua the conformance's expected side reads.
-pub const DATA_CAPS: [&str; 3] = ["maxDefaultClass", "maxPerks", "maxPerksInEachCategory"];
+pub const DATA_CAPS: [&str; 8] = [
+    "maxCustomClass",
+    "maxGrenades",
+    "maxSpecialtySlots",
+    "maxPerks",
+    "maxAttachments",
+    "maxPerksInEachCategory",
+    "maxBonusCards",
+    "maxDefaultClass",
+];
 
 /// A [`DATA_CAPS`] cap: the installed table's, else the built-in table's (a table converted before
 /// the caps); 0 for a name neither has.
@@ -429,13 +448,13 @@ mod tests {
     fn the_caps_hold_in_the_shipped_data() {
         let _g = lock();
         assert_eq!(MAX_CLASS_SETS, 10, "cacchooseclass.lua: ten class sets");
-        assert_eq!(MAX_CUSTOM_CLASSES, 5, "maxCustomClass");
-        assert_eq!(MAX_BONUS_CARDS, 3, "maxBonusCards");
-        assert_eq!(MAX_ATTACHMENTS, 2, "maxAttachments (a Gunfighter card adds the third)");
-        assert_eq!(MAX_SPECIALTY_SLOTS, 6, "maxSpecialtySlots: three tiers, two picks each");
+        assert_eq!(max_custom_class(), 5, "maxCustomClass");
+        assert_eq!(max_bonus_cards(), 3, "maxBonusCards");
+        assert_eq!(max_attachments(), 2, "maxAttachments (a Gunfighter card adds the third)");
+        assert_eq!(max_specialty_slots(), 6, "maxSpecialtySlots: three tiers, two picks each");
         // maxGrenades is the carried count, which is the weapon table's magazine: the standard
         // tactical carries exactly two.
-        assert_eq!(crate::weapons::weapon("concussion_grenade_mp").clip as usize, MAX_GRENADES);
+        assert_eq!(crate::weapons::weapon("concussion_grenade_mp").clip as usize, max_grenades());
         // Every premade fits the allocation: ten points per class.
         for c in basic() {
             let spent = crate::classmenu::Draft::from_custom(&CustomClass::from_spec(&c.spec)).spent();

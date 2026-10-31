@@ -773,7 +773,7 @@ mod tests {
         let rows = classui::pick_rows(true).len();
         press(&mut menu, &mut inp, Key::Up); // wraps to the last row
         assert_eq!(menu.highlight, rows - 1, "wrapped to the last row");
-        assert_eq!(classui::pick_rows(true)[menu.highlight], PickRow::Empty(crate::profile::MAX_CLASSES - 1));
+        assert_eq!(classui::pick_rows(true)[menu.highlight], PickRow::Empty(crate::profile::max_classes() - 1));
         press(&mut menu, &mut inp, Key::Enter);
         assert!(menu.editor.is_some());
         // The editor opens on Primary; walk down to the Lethal row (Primary -> PrimaryAtts ->
@@ -977,7 +977,7 @@ mod tests {
     fn a_sixth_class_is_refused_and_the_editor_stays_open() {
         let _g = lock();
         crate::profile::reset();
-        for i in 0..crate::profile::MAX_CLASSES - 1 {
+        for i in 0..crate::profile::max_classes() - 1 {
             crate::profile::save(custom(&format!("Filler {i}"), "an94_mp"));
         }
         let mut menu = MenuState::new();
@@ -985,7 +985,7 @@ mod tests {
         menu.frame(&inp);
         // The set's one untouched slot is the last row; open a fresh draft on it.
         press(&mut menu, &mut inp, Key::Up);
-        assert_eq!(classui::pick_rows(true)[menu.highlight], PickRow::Empty(crate::profile::MAX_CLASSES - 1));
+        assert_eq!(classui::pick_rows(true)[menu.highlight], PickRow::Empty(crate::profile::max_classes() - 1));
         press(&mut menu, &mut inp, Key::Enter);
         assert!(menu.editor.is_some());
         // The set fills while the draft is open (the bridge writes the profile from elsewhere).
@@ -993,7 +993,7 @@ mod tests {
         let out = save_open_editor(&mut menu, &mut inp);
         assert_eq!(out.save_profile, 0, "nothing was written");
         assert!(menu.editor.is_some(), "the draft survives: the editor stays up");
-        assert_eq!(crate::profile::classes().len(), crate::profile::MAX_CLASSES);
+        assert_eq!(crate::profile::classes().len(), crate::profile::max_classes());
         assert!(menu.cues.contains(&cues::DENY), "the denied save is surfaced");
         crate::profile::reset();
     }

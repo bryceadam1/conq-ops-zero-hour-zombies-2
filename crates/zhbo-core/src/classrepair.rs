@@ -34,7 +34,7 @@
 //! some default kit.
 
 use crate::classmenu::items::{given_parts, given_weapon};
-use crate::classes::{CustomClass, MAX_ATTACHMENTS, MAX_BONUS_CARDS, MAX_SPECIALTY_SLOTS};
+use crate::classes::{max_attachments, max_bonus_cards, max_specialty_slots, CustomClass};
 use crate::classmenu::{Draft, PICK_10};
 use crate::weapons::{self, Class as WeaponClass, Perk};
 
@@ -92,7 +92,7 @@ fn repair_weapon(c: &mut CustomClass, primary: bool, cleared: &mut Cleared) {
         cleared.push(slot);
         return;
     }
-    let max = if primary { MAX_ATTACHMENTS + 1 } else { MAX_ATTACHMENTS };
+    let max = if primary { max_attachments() + 1 } else { max_attachments() };
     let offered: Vec<&str> = shorts.iter().copied().filter(|s| def.allowed.iter().any(|(a, _)| a == s)).take(max).collect();
     // A pair BO2's compatibility lists forbid is cut down by its conflicting-attachment check
     // (`FUN_008eb870`, `classmenu::legal::sanitize`).
@@ -144,7 +144,7 @@ fn resolves_as(id: &str, class: WeaponClass) -> bool {
 /// goes, and a tier keeps at most two picks (`maxPerksInEachCategory`: BO2's two rows per tier).
 /// Six slots in all (`maxSpecialtySlots`), which three tiers of two reach exactly.
 fn repair_perks(c: &mut CustomClass, cleared: &mut Cleared) {
-    let mut kept: Vec<Perk> = Vec::with_capacity(MAX_SPECIALTY_SLOTS);
+    let mut kept: Vec<Perk> = Vec::with_capacity(max_specialty_slots());
     let mut tiers = [0usize; 3];
     for id in &c.perks {
         let Some(p) = Perk::by_id(id) else {
@@ -154,7 +154,7 @@ fn repair_perks(c: &mut CustomClass, cleared: &mut Cleared) {
         let tier = (p.def().tier as usize).clamp(1, 3) - 1;
         tiers[tier] += 1;
         let per_tier = crate::classes::max_perks_in_each_category();
-        if kept.contains(&p) || tiers[tier] > per_tier || kept.len() >= MAX_SPECIALTY_SLOTS {
+        if kept.contains(&p) || tiers[tier] > per_tier || kept.len() >= max_specialty_slots() {
             cleared.push(if tiers[tier] > per_tier { EXTRA_PERK_SLOTS[tier] } else { "specialty" });
             continue;
         }
@@ -170,7 +170,7 @@ fn repair_perks(c: &mut CustomClass, cleared: &mut Cleared) {
 fn trim(c: &mut CustomClass, cleared: &mut Cleared) {
     loop {
         let d = Draft::from_custom(c);
-        if d.spent() <= PICK_10 && d.wildcards.len() <= MAX_BONUS_CARDS {
+        if d.spent() <= PICK_10 && d.wildcards.len() <= max_bonus_cards() {
             return;
         }
         if !drop_one(c, cleared) {
@@ -400,7 +400,7 @@ mod tests {
         let mut c = class("an94_mp", &[]);
         c.lethal_count = 5;
         assert_eq!(repair(&mut c), Cleared::new());
-        assert_eq!(c.lethal_count, crate::classes::MAX_GRENADES as u8);
+        assert_eq!(c.lethal_count, crate::classes::max_grenades() as u8);
         let d = Draft::from_custom(&c);
         assert!(d.wildcards.contains(&crate::classmenu::Wildcard::DangerClose));
         // Trimming walks the slots backwards: the tactical, then the second lethal, then the lethal.
@@ -449,7 +449,7 @@ mod tests {
         );
         let d = Draft::from_custom(&c);
         assert!(d.spent() > PICK_10, "the seed is over budget: {}", d.spent());
-        assert_eq!(d.wildcards.len(), MAX_BONUS_CARDS, "and at the card cap: {:?}", d.wildcards);
+        assert_eq!(d.wildcards.len(), max_bonus_cards(), "and at the card cap: {:?}", d.wildcards);
         let cleared = repair(&mut c);
         assert!(Draft::from_custom(&c).spent() <= PICK_10);
         assert_eq!(&cleared[..2], ["specialty6", "specialty5"], "{cleared:?}");
@@ -471,10 +471,10 @@ mod tests {
         // A rifle in the secondary slot is Overkill's second primary.
         c.secondary = "an94_mp+gl".into();
         let d = Draft::from_custom(&c);
-        assert!(d.wildcards.len() > MAX_BONUS_CARDS, "{:?}", d.wildcards);
+        assert!(d.wildcards.len() > max_bonus_cards(), "{:?}", d.wildcards);
         let cleared = repair(&mut c);
         let after = Draft::from_custom(&c);
-        assert!(after.wildcards.len() <= MAX_BONUS_CARDS, "{:?} after {cleared:?}", after.wildcards);
+        assert!(after.wildcards.len() <= max_bonus_cards(), "{:?} after {cleared:?}", after.wildcards);
         assert!(Draft::from_custom(&c).spent() <= PICK_10);
         assert!(!cleared.is_empty());
     }

@@ -129,7 +129,7 @@ fn editor_title(editor: &Editor) -> String {
     if !name.is_empty() {
         return name.to_string();
     }
-    empty_slot_name(profile::get().customs().len().min(profile::MAX_CLASSES - 1))
+    empty_slot_name(profile::get().customs().len().min(profile::max_classes() - 1))
 }
 
 /// A picker's title (`cacweaponsp.lua`: `MPUI_<slot>_CAPS`; `cacattachmentsmenu.lua`:
@@ -337,8 +337,8 @@ pub(super) fn bonus_card_box(editor: &Editor, cell: &EditorCell) -> bool {
     use crate::classmenu::{items, Wildcard};
     let d = &editor.draft;
     match cell.slot {
-        Slot::PrimaryAtts => cell.index == crate::classes::MAX_ATTACHMENTS && d.wildcards.contains(&Wildcard::PrimaryGunfighter),
-        Slot::SecondaryAtts => cell.index == crate::classes::MAX_ATTACHMENTS - 1 && d.wildcards.contains(&Wildcard::SecondaryGunfighter),
+        Slot::PrimaryAtts => cell.index == crate::classes::max_attachments() && d.wildcards.contains(&Wildcard::PrimaryGunfighter),
+        Slot::SecondaryAtts => cell.index == crate::classes::max_attachments() - 1 && d.wildcards.contains(&Wildcard::SecondaryGunfighter),
         Slot::Lethal => cell.index == 1 && d.wildcards.contains(&Wildcard::DangerClose) && !items::is_tactical_item(&d.lethal),
         Slot::Perk1b | Slot::Perk2b | Slot::Perk3b => true,
         _ => false,
