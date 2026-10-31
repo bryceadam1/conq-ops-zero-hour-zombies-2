@@ -882,6 +882,7 @@ impl Arsenal {
             } else {
                 let spread = spread_now + if ads < 0.5 { def.spread_move_add * (speed / 30.0).min(1.0) } else { 0.0 };
                 // BO2's per-shot kick (G5): the view kick's velocity and the gun spring's impulse.
+                // A dual-wield pair calls `shot_kick_hands` with its hands' firing states.
                 let k = super::recoil::shot_kick(def, ads, w.string, &mut w.recoil_acc, w.since_shot, rng);
                 w.since_shot = 0.0;
                 for pellet in 0..def.pellets.max(1) {

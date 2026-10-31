@@ -24,6 +24,7 @@
 //! Axes are BO2's: pitch negative is up, yaw positive is left (the mod's yaw), roll.
 
 use super::def::WeaponDef;
+pub use super::recoil::Hands;
 
 /// The integrator's step, ms (`FUN_0051f150`: `min(msec, 5)`).
 pub const STEP_MS: f32 = 5.0;
@@ -41,18 +42,26 @@ pub struct ViewKick {
     pub angle: [f32; 3],
 }
 
+/// The recentre speed (deg/s²) for a single gun: [`centre_speed_hands`] with [`Hands::Single`].
+pub fn centre_speed(def: &WeaponDef, ads: f32, stance: usize) -> f32 {
+    centre_speed_hands(def, Hands::Single, ads, stance)
+}
+
 /// The recentre speed (deg/s²) for the weapon in hand at an aim fraction and stance (0 stand,
 /// 1 crouch, 2 prone), as `FUN_0051f150` picks it. Aimed (above [`ADS_SPLIT`]): the variant's
 /// aimed speed × Π attachment scale (`FUN_008ecf70`) × the crouched/prone scale (`FUN_008bfa60`:
-/// 1 prone → `fAdsViewKickCenterProneScale`, 2 crouched → `…DuckedScale`). At the hip the client
-/// reads the same aimed field, unscaled (`variant+0x21c`; only dual wield, which the mod does not
-/// have, reads `fHipViewKickCenterSpeed`).
-pub fn centre_speed(def: &WeaponDef, ads: f32, stance: usize) -> f32 {
-    let base = def.view_kick_center.0;
+/// 1 prone → `fAdsViewKickCenterProneScale`, 2 crouched → `…DuckedScale`). At the hip a single
+/// gun reads the same aimed field, unscaled (`variant+0x21c`); only a dual-wield pair reads
+/// `fHipViewKickCenterSpeed` (`+0x220`), through [`Hands::pick`]: both guns' summed while both
+/// fire, the left gun's while only it fires, else the right gun's.
+pub fn centre_speed_hands(def: &WeaponDef, hands: Hands, ads: f32, stance: usize) -> f32 {
     if ads <= ADS_SPLIT {
-        return base;
+        return match hands {
+            Hands::Single => def.view_kick_center.0,
+            Hands::Dual { .. } => hands.pick(def, |d| d.view_kick_center.1),
+        };
     }
-    let speed = base * def.ads_kick_center_scale;
+    let speed = def.view_kick_center.0 * def.ads_kick_center_scale;
     match stance {
         1 => speed * def.kick_center_stance.0,
         2 => speed * def.kick_center_stance.1,
@@ -224,6 +233,18 @@ mod tests {
         assert!(g < b * 0.8 && g > 0.0, "the grip's accumulator shrinks the kick: {g} vs {b}");
         let soft = WeaponDef { ads_kick: Kick { pitch: (15.0, 20.0), yaw: (0.0, 0.0) }, ..bare.clone() };
         assert!(aimed_peak(&soft) < b * 0.6, "half the kick velocity climbs well under half as far: the pull is quadratic");
+    }
+
+    #[test]
+    fn a_dual_wield_pair_recentres_on_the_hip_fields_of_the_hands_that_fire() {
+        let right = WeaponDef { view_kick_center: (0.0, 1100.0), ..Default::default() };
+        let left = WeaponDef { view_kick_center: (0.0, 900.0), ..Default::default() };
+        let dual = |r, l| Hands::Dual { left: &left, right_firing: r, left_firing: l };
+        assert_eq!(centre_speed_hands(&right, dual(true, true), 0.0, 0), 2000.0, "both fire: summed");
+        assert_eq!(centre_speed_hands(&right, dual(false, true), 0.0, 0), 900.0, "the left alone: its own");
+        assert_eq!(centre_speed_hands(&right, dual(true, false), 0.0, 0), 1100.0);
+        assert_eq!(centre_speed_hands(&right, dual(false, false), 0.0, 0), 1100.0, "idle: the right gun's hip field");
+        assert_eq!(centre_speed(&right, 0.0, 0), 0.0, "a single gun reads the aimed field even at the hip");
     }
 
     #[test]

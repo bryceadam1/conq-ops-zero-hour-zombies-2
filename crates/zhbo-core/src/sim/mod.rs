@@ -659,7 +659,8 @@ impl Sim {
                     for a in actions {
                         self.apply_weapon_action(host, idx, p, a);
                     }
-                    // The kick recentres at the weapon in hand's speed (`FUN_0051f150`).
+                    // The kick recentres at the weapon in hand's speed (`FUN_0051f150`; a dual-wield
+                    // pair goes through `centre_speed_hands` with its hands' firing states).
                     let centre = view_kick::centre_speed(p.arsenal.current().def, p.arsenal.ads, stance);
                     p.view_kick.step(LOGIC_DT, centre);
                     self.step_hack(host, idx, p);

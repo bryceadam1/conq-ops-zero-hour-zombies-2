@@ -4685,3 +4685,20 @@ the value passes through unnegated. The viewmodel is placed in the unrolled eye 
 the integrator checks the patch applies, the horizon tilts right-side-down on a negative-yaw
 (rightward) kick's positive roll, and the gun does not counter-rotate. `ZHBO_ABI_VERSION` bump
 needed (the integrator's).
+
+### View kick follow-up: the dual-wield reads (branch `v1/view-kick`)
+
+`FUN_008e3a00` and `FUN_0051f150` both special-case a dual-wield pair (`FUN_008eb9c0`; the left
+gun's def via `FUN_008eca70`) by the two hands' weapon states (`ps+0x1d0` right, `ps+0x1d4` left;
+6 or 0x28 = firing): both firing → the two guns' values **summed**, only the left firing → the left
+gun's, otherwise the right (own) gun's. That selection covers the hip view-kick ranges, the
+unaimed gun-kick ranges and the hip recentre speed — the one place `fHipViewKickCenterSpeed` is
+read at all. The dual view kick also skips the minimum-magnitude rescale the single gun applies.
+Ported as `recoil::Hands` (`Single` / `Dual { left, right_firing, left_firing }`, `Hands::pick`)
+with `shot_kick_hands` and `view_kick::centre_speed_hands`; the single-gun `shot_kick` /
+`centre_speed` wrap them, so this branch's sim is unchanged. Overlap with `v1/dual-wield-sim`
+(unmerged): that branch owns the per-hand state (`WeaponState::left`, `step_hand`, `Fire { left }`);
+at merge, `step_hand` passes `Hands::Dual` to `shot_kick_hands` with the left hand's def (the same
+def there) and "firing" = that hand's fire cycle still running, and the sim's recentre call does
+the same. The two branches also both edit `WeaponAction::Fire` (`left` there, `view_kick` here) —
+a one-line merge.

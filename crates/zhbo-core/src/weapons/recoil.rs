@@ -30,45 +30,99 @@ pub struct ShotKick {
     pub gun: (f32, f32),
 }
 
+/// Which guns are in hand for the kick: one, or a dual-wield pair (BO2's `FUN_008eb9c0`) with
+/// the left gun's def (`szDualWieldWeaponName`, `FUN_008eca70`) and which hands are in a firing
+/// weapon state now (`ps+0x1d0` right / `ps+0x1d4` left equal to 6 or 0x28). The dual-wield sim
+/// derives the firing flags from each hand's own fire cycle; a single gun passes `Single`.
+#[derive(Clone, Copy, Debug)]
+pub enum Hands<'a> {
+    Single,
+    Dual { left: &'a WeaponDef, right_firing: bool, left_firing: bool },
+}
+
+impl Hands<'_> {
+    /// The value a dual-wield read takes (`FUN_008e3a00`, `FUN_0051f150`): both hands' summed
+    /// when both fire, the left gun's when only it fires, else the right (own) gun's.
+    pub(crate) fn pick<T: std::ops::Add<Output = T>>(&self, own: &WeaponDef, get: impl Fn(&WeaponDef) -> T) -> T {
+        match *self {
+            Hands::Dual { left, right_firing: true, left_firing: true } => get(own) + get(left),
+            Hands::Dual { left, left_firing: true, .. } => get(left),
+            _ => get(own),
+        }
+    }
+}
+
+/// The kick of one shot of a single gun: [`shot_kick_hands`] with [`Hands::Single`].
+pub fn shot_kick(def: &WeaponDef, ads: f32, string: u16, reduction: &mut f32, since_shot: f32, rng: &mut Rng) -> ShotKick {
+    shot_kick_hands(def, Hands::Single, ads, string, reduction, since_shot, rng)
+}
+
 /// The kick of one shot. `ads` is the aim fraction, `string` the shots already fired in this
 /// string, `reduction` the grip's accumulator (updated) and `since_shot` seconds since the last
-/// shot.
-pub fn shot_kick(def: &WeaponDef, ads: f32, string: u16, reduction: &mut f32, since_shot: f32, rng: &mut Rng) -> ShotKick {
+/// shot. A dual-wield pair below full aim takes its hip view kick and (unaimed) hip gun kick
+/// ranges from [`Hands::pick`] — summed over both guns when both fire — and has no minimum
+/// magnitude (`FUN_008e3a00`'s dual branch skips it).
+pub fn shot_kick_hands(def: &WeaponDef, hands: Hands, ads: f32, string: u16, reduction: &mut f32, since_shot: f32, rng: &mut Rng) -> ShotKick {
     let aimed = ads >= 1.0;
+    let dual = matches!(hands, Hands::Dual { .. });
     // The reduced-kick window: the first bullets of a string kick at a percentage.
-    let gun_set = if ads > 0.0 { &def.ads_gun_kick } else { &def.hip_gun_kick };
     let window = if aimed { &def.ads_gun_kick } else { &def.hip_gun_kick };
     let scale = if (string as f32) < window.reduced_bullets && window.reduced_percent > 0.0 { window.reduced_percent * 0.01 } else { 1.0 };
 
     // ---- view kick
-    let (mut kick, min_mag) = if aimed { (def.ads_kick, def.view_kick_min.0) } else { (def.hip_kick, def.view_kick_min.1) };
-    let (rate, limit) = def.recoil_reduction;
-    let mut taken = 0.0;
-    if aimed && rate > 0.0 {
-        // The grip: the accumulator wears off at the return rate between shots and builds by its
-        // rate per shot, up to its limit; the kick ranges shrink by what it holds.
-        let acc = (*reduction - since_shot * def.recoil_return_rate).max(0.0);
-        let acc = (acc + rate).clamp(0.0, limit);
-        *reduction = acc;
-        let k = 1.0 - acc;
-        kick.pitch = (kick.pitch.0 * k, kick.pitch.1 * k);
-        kick.yaw = (kick.yaw.0 * k, kick.yaw.1 * k);
-        taken = rate;
-    }
-    let mut pitch = rng.range(kick.pitch);
-    let mut yaw = rng.range(kick.yaw);
-    let m = (1.0 - taken) * min_mag;
-    let len = (pitch * pitch + yaw * yaw).sqrt();
-    if len > 1e-6 && len < m {
-        pitch *= m / len;
-        yaw *= m / len;
-    }
-    let pitch = -pitch.abs() * scale;
-    let yaw = yaw * scale;
+    let (mut pitch, mut yaw) = if !aimed && dual {
+        let p = hands.pick(def, |d| Pair(d.hip_kick.pitch)).0;
+        let y = hands.pick(def, |d| Pair(d.hip_kick.yaw)).0;
+        (rng.range(p), rng.range(y))
+    } else {
+        let (mut kick, min_mag) = if aimed { (def.ads_kick, def.view_kick_min.0) } else { (def.hip_kick, def.view_kick_min.1) };
+        let (rate, limit) = def.recoil_reduction;
+        let mut taken = 0.0;
+        if aimed && rate > 0.0 {
+            // The grip: the accumulator wears off at the return rate between shots and builds by
+            // its rate per shot, up to its limit; the kick ranges shrink by what it holds.
+            let acc = (*reduction - since_shot * def.recoil_return_rate).max(0.0);
+            let acc = (acc + rate).clamp(0.0, limit);
+            *reduction = acc;
+            let k = 1.0 - acc;
+            kick.pitch = (kick.pitch.0 * k, kick.pitch.1 * k);
+            kick.yaw = (kick.yaw.0 * k, kick.yaw.1 * k);
+            taken = rate;
+        }
+        let mut pitch = rng.range(kick.pitch);
+        let mut yaw = rng.range(kick.yaw);
+        let m = (1.0 - taken) * min_mag;
+        let len = (pitch * pitch + yaw * yaw).sqrt();
+        if len > 1e-6 && len < m {
+            pitch *= m / len;
+            yaw *= m / len;
+        }
+        (pitch, yaw)
+    };
+    pitch = -pitch.abs() * scale;
+    yaw *= scale;
 
-    // ---- gun kick
-    let gun = (rng.range(gun_set.pitch) * scale, rng.range(gun_set.yaw) * scale);
+    // ---- gun kick: the aimed set at any aim; unaimed, a dual pair's picked hip set.
+    let (gp, gy) = if ads > 0.0 {
+        (def.ads_gun_kick.pitch, def.ads_gun_kick.yaw)
+    } else if dual {
+        (hands.pick(def, |d| Pair(d.hip_gun_kick.pitch)).0, hands.pick(def, |d| Pair(d.hip_gun_kick.yaw)).0)
+    } else {
+        (def.hip_gun_kick.pitch, def.hip_gun_kick.yaw)
+    };
+    let gun = (rng.range(gp) * scale, rng.range(gy) * scale);
     ShotKick { view: (pitch, yaw, yaw * -0.5), gun }
+}
+
+/// A (min, max) range that sums component-wise (two hands' ranges add, `FUN_008e3a00`).
+#[derive(Clone, Copy)]
+pub(crate) struct Pair(pub (f32, f32));
+
+impl std::ops::Add for Pair {
+    type Output = Pair;
+    fn add(self, o: Pair) -> Pair {
+        Pair((self.0 .0 + o.0 .0, self.0 .1 + o.0 .1))
+    }
 }
 
 /// The viewmodel's gun kick: angle and velocity per axis (pitch, yaw), a damped spring back to
@@ -178,6 +232,24 @@ mod tests {
         let aimed = shot_kick(&d, 1.0, 0, &mut acc, 1.0, &mut rng);
         assert!((-40.0..=-30.0).contains(&aimed.view.0));
         assert!((aimed.view.2 + 0.5 * aimed.view.1).abs() < 1e-6, "roll = -0.5 yaw");
+    }
+
+    #[test]
+    fn a_dual_wield_pair_sums_both_guns_kicks_while_both_fire() {
+        let right = gun();
+        let left = WeaponDef { hip_kick: Kick { pitch: (10.0, 10.0), yaw: (5.0, 5.0) }, hip_gun_kick: GunKick { pitch: (1.0, 1.0), yaw: (2.0, 2.0), ..right.hip_gun_kick }, ..gun() };
+        let right = WeaponDef { hip_kick: Kick { pitch: (50.0, 50.0), yaw: (-20.0, -20.0) }, hip_gun_kick: GunKick { pitch: (9.0, 9.0), yaw: (0.5, 0.5), ..right.hip_gun_kick }, view_kick_min: (0.0, 500.0), ..right };
+        let mut acc = 0.0;
+        let mut rng = Rng::new(1);
+        let both = shot_kick_hands(&right, Hands::Dual { left: &left, right_firing: true, left_firing: true }, 0.0, 0, &mut acc, 1.0, &mut rng);
+        assert_eq!(both.view, (-60.0, -15.0, 7.5), "summed ranges, no minimum magnitude");
+        assert_eq!(both.gun, (10.0, 2.5));
+        let left_only = shot_kick_hands(&right, Hands::Dual { left: &left, right_firing: false, left_firing: true }, 0.0, 0, &mut acc, 1.0, &mut rng);
+        assert_eq!((left_only.view.0, left_only.view.1, left_only.gun), (-10.0, 5.0, (1.0, 2.0)));
+        let right_only = shot_kick_hands(&right, Hands::Dual { left: &left, right_firing: true, left_firing: false }, 0.0, 0, &mut acc, 1.0, &mut rng);
+        assert_eq!((right_only.view.0, right_only.view.1), (-50.0, -20.0), "the minimum is the single gun's rule only");
+        let single = shot_kick(&right, 0.0, 0, &mut acc, 1.0, &mut rng);
+        assert!(single.view.0 < -400.0, "the single gun enforces its minimum: {single:?}");
     }
 
     #[test]
