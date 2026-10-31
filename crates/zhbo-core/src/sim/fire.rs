@@ -314,12 +314,13 @@ mod tests {
         thrown
     }
 
-    /// Danger Close: the class carries two lethals (`primarygrenadecount` 2, `_class.gsc:718-739`),
+    /// Danger Close with its second box filled: the class carries two lethals (`primarygrenadecount`
+    /// 2, `_class.gsc:718-739`),
     /// both thrown with the lethal button, and Scavenger refills to two (`_weapons.gsc:1840-1850`).
     #[test]
     fn danger_close_gives_a_second_lethal() {
         let host = FakeHost::default();
-        let draft = Draft { wildcards: vec![Wildcard::DangerClose], ..Draft::default() };
+        let draft = Draft { wildcards: vec![Wildcard::DangerClose], second_offhand: [true, false], ..Draft::default() };
         let mut sim = with_class(&host, &draft);
         let a = &sim.player(0).unwrap().arsenal;
         assert_eq!((a.lethal.def.id.as_str(), a.lethal.count), ("frag_grenade_mp", 2));

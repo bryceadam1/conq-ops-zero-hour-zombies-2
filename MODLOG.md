@@ -4931,3 +4931,33 @@ Tests: `a_single_lethal_is_one_whatever_its_start_count` (classmenu),
 `a_held_offhand_counts_at_least_one` (classrepair); the fixtures that stored 0 now store 1.
 Measured: cac 9, weapons 781,587, gap clusters 201 — unchanged (the conformance tables carry no
 grenade count; the movement is the class's, covered by the tests).
+
+## Danger Close opens a second lethal box; filling it costs a point (2026-10-31, `v1/cac-rules`)
+
+`cacgrenadesbutton.lua:130-180` gives the lethal button one box, plus a second under Danger Close
+(the tactical slot and Tactician's lethal have two), capped at the item's max ammo; the count is
+the filled boxes. So Danger Close does not hand over a second lethal: it opens a box the player
+fills, which is an element of its own (a point), exactly like the tactical's second box. Taking
+the card off lowers `primarygrenadecount` 2 → 1 and clears `status2`
+(`bonuscardbutton.lua:490-545`, `BonusCardUnequipped.bonuscard_danger_close`); taking Tactician
+off clears the lethal slot (`:546-597`), which the editor already did. perks-cards had made the
+second lethal automatic with the card.
+
+* `Draft::offhand_boxes(true)` is the item's cap under Danger Close (one box otherwise, for a
+  lethal item); `lethal_count`/`tactical_count` both count the filled boxes (`second_offhand`), so
+  the pointer's second-box click (`apply_second_offhand`), re-picking the held item and the
+  circled X work for the lethal exactly as for the tactical. `from_custom` restores the box from
+  `lethal_count > 1` (Danger Close re-derived from it, as before).
+* `toggle_wildcard`: the card off drops the second lethal.
+* `classrepair`: a lethal item's count is capped at the item's own cap too (BO2's
+  `math.min(boxes, GetMaxAmmoForItem)`).
+* Screenshot harness: `cac-editor-danger-close.png` / `-x2.png` (plan dir). The installed
+  archive predates the offhand `_256` pictures, so the boxes draw empty; BO2's `kd_chart_plus`
+  plus sign on an empty second box (`cacgrenadesbutton.lua:270-300`) is not drawn yet for either
+  offhand slot.
+
+Tests: `danger_close_opens_a_second_lethal_box_that_costs_a_point` (classmenu: one box without
+the card, the card alone is one point, the box another, re-pick toggles it, the card off drops
+it, the round trip), `danger_close_gives_a_second_lethal` (fake host, the filled box gives two).
+Measured: cac 9, weapons 781,587, gap clusters 201 — unchanged (the Danger Close card already
+cost 1 in the table; the count is not a conformance column).

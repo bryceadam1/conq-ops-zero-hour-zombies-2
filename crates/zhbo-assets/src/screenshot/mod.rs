@@ -19,6 +19,8 @@
 //! * `cac-editor-tactician.png` — the lethal slot's list under Tactician: the tactical items;
 //! * `cac-editor-lethal.png` — the lethal slot's list, BO2's `primarygrenade` items with the placed
 //!   equipment among the grenades (`g-nades/`);
+//! * `cac-editor-danger-close.png` / `cac-editor-danger-close-x2.png` — the lethal button under
+//!   Danger Close: its second box empty, then filled (`Frag x2`, a point of its own);
 //! * `cac-dialog-set.png` / `cac-dialog-class.png` — the shell's `S`/`O` dialogs
 //!   (`a-chooseclass/021`, `/023`).
 //!
@@ -103,6 +105,8 @@ fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> 
         ("cac-editor-perks", perk_picker_prims()),
         ("cac-editor-lethal", lethal_picker_prims()),
         ("cac-editor-tactician", tactician_picker_prims()),
+        ("cac-editor-danger-close", danger_close_prims(false)),
+        ("cac-editor-danger-close-x2", danger_close_prims(true)),
         ("cac-personalize", personalize_prims()),
         ("cac-reticles", reticle_personalize_prims()),
         ("cac-reticle-color", reticle_color_personalize_prims()),
@@ -293,6 +297,18 @@ fn tactician_picker_prims() -> Vec<Prim> {
     editor.slot = Slot::Lethal;
     editor.picking = true;
     editor.option = (0..editor.options().len()).find(|&i| editor.option_chosen(i)).unwrap_or(0);
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// The class under Danger Close, the lethal row highlighted: the lethal button's second box
+/// (`cacgrenadesbutton.lua:130-180`), empty or filled with a second frag.
+fn danger_close_prims(second: bool) -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.draft.wildcards = vec![Wildcard::DangerClose];
+    editor.draft.extra_perks = [None; 3];
+    editor.draft.second_offhand = [second, false];
+    editor.slot = Slot::Lethal;
+    editor.picking = false;
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 

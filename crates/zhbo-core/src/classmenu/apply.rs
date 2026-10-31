@@ -151,7 +151,7 @@ impl Editor {
 
     /// Toggle a wildcard on or off; turning one off drops the element it enabled (the third primary
     /// attachment, the second secondary attachment, a tier's Greed perk, Tactician's tactical in the
-    /// lethal slot). False when a fourth card
+    /// lethal slot, Danger Close's second lethal). False when a fourth card
     /// is refused (BO2 allows `maxBonusCards`, 3, per class), or a card [`Wildcard::excludes`] an
     /// equipped one: the option is denied untouched.
     pub(super) fn toggle_wildcard(&mut self, w: Wildcard) -> bool {
@@ -169,6 +169,15 @@ impl Editor {
                 Wildcard::Tactician => {
                     if items::is_tactical_item(&self.draft.lethal) {
                         self.draft.lethal.clear();
+                        self.draft.second_offhand[0] = false;
+                    }
+                }
+                // Without Danger Close a lethal item's button has one box again: BO2's
+                // `BonusCardUnequipped.bonuscard_danger_close` lowers `primarygrenadecount` 2 to 1
+                // and clears `status2` (`bonuscardbutton.lua:490-545`).
+                Wildcard::DangerClose => {
+                    if !items::is_tactical_item(&self.draft.lethal) {
+                        self.draft.second_offhand[0] = false;
                     }
                 }
                 _ => {

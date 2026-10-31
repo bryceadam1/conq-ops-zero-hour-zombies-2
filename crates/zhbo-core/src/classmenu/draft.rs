@@ -16,9 +16,9 @@ pub struct Draft {
     pub tactical: String,
     /// Whether the lethal (`[0]`) and the tactical (`[1]`) slot carry a second of their item, each
     /// its own element (BO2's second slot box, `caceditclass.lua:506-566`'s `EquipGrenade` raising
-    /// the slot's `count`). The tactical slot may; the lethal slot only with Tactician's tactical
-    /// (Danger Close's second lethal comes with the card, [`Draft::lethal_count`]). Ignored for an
-    /// item whose cap is one ([`items::offhand_cap`]).
+    /// the slot's `count`). The tactical slot may; the lethal slot with Tactician's tactical or
+    /// Danger Close's second lethal ([`Draft::offhand_boxes`]). Ignored while the slot's button
+    /// has one box.
     pub second_offhand: [bool; 2],
     /// The three perk tiers' first picks.
     pub perks: [Option<Perk>; 3],
@@ -102,7 +102,7 @@ impl Draft {
             n += 1;
         }
         // A second lethal (Danger Close's, or Tactician's second tactical) is its own element (BO2
-        // charges each grenade of a count), as is a second tactical.
+        // charges each filled box), as is a second tactical.
         if self.lethal_count() > 1 {
             n += 1;
         }
@@ -136,19 +136,14 @@ impl Draft {
     /// How many lethals the class carries: BO2's `primarygrenadecount`, the filled boxes of the
     /// slot's button (`cacgrenadesbutton.lua:130-230` counts the `statusN` boxes), which
     /// `_class.gsc:718-739` gives as the item's clip — so one lethal is one, whatever the item's
-    /// own start count (one C4, one Trophy System). A lethal item may be two only with Danger
-    /// Close (`checkclasses.lua:688-700`), whose second lethal is taken with the card; Tactician's
-    /// tactical carries its chosen count, one or two, like the tactical slot
-    /// ([`Draft::tactical_count`]); 0 for an empty slot.
+    /// own start count (one C4, one Trophy System), and two when the second box is filled (Danger
+    /// Close's second lethal, Tactician's second tactical, [`Draft::offhand_boxes`]); 0 for an
+    /// empty slot.
     pub fn lethal_count(&self) -> u8 {
         if self.lethal.is_empty() {
             0
-        } else if items::is_tactical_item(&self.lethal) {
-            self.chosen_count(&self.lethal, self.second_offhand[0])
-        } else if self.wildcards.contains(&Wildcard::DangerClose) {
-            classes::MAX_GRENADES as u8
         } else {
-            1
+            self.chosen_count(true)
         }
     }
 
@@ -158,7 +153,7 @@ impl Draft {
         if self.tactical.is_empty() {
             0
         } else {
-            self.chosen_count(&self.tactical, self.second_offhand[1])
+            self.chosen_count(false)
         }
     }
 
@@ -172,20 +167,22 @@ impl Draft {
         }
     }
 
-    /// One, or two when the second box is taken and the item allows it ([`items::offhand_cap`]).
-    pub(super) fn chosen_count(&self, id: &str, second: bool) -> u8 {
-        if second && items::offhand_cap(id) > 1 {
+    /// One, or two when the slot's second box is taken and the button has one.
+    pub(super) fn chosen_count(&self, lethal: bool) -> u8 {
+        if self.second_offhand[usize::from(!lethal)] && self.offhand_boxes(lethal) > 1 {
             2
         } else {
             1
         }
     }
 
-    /// How many boxes an offhand slot's button has for its item: the tactical slot's and
-    /// Tactician's lethal its cap ([`items::offhand_cap`], up to two); a lethal item's one.
+    /// How many boxes an offhand slot's button has for its item (`cacgrenadesbutton.lua:130-180`):
+    /// two in the tactical slot and for Tactician's tactical in the lethal slot, one for a lethal
+    /// item plus a second with Danger Close — each capped at the item's own
+    /// ([`items::offhand_cap`]: `math.min(boxes, Engine.GetMaxAmmoForItem(item))`), at least one.
     pub fn offhand_boxes(&self, lethal: bool) -> u8 {
         let id = if lethal { &self.lethal } else { &self.tactical };
-        if lethal && !items::is_tactical_item(id) {
+        if lethal && !items::is_tactical_item(id) && !self.wildcards.contains(&Wildcard::DangerClose) {
             1
         } else {
             items::offhand_cap(id).max(1)
@@ -307,7 +304,7 @@ impl Draft {
             secondary_atts,
             lethal: c.lethal.clone(),
             tactical: c.tactical.clone(),
-            second_offhand: [items::is_tactical_item(&c.lethal) && c.lethal_count > 1, c.tactical_count > 1],
+            second_offhand: [c.lethal_count > 1, c.tactical_count > 1],
             perks,
             extra_perks,
             wildcards: wildcards_of(c),

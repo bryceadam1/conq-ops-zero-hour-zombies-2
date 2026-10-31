@@ -141,7 +141,7 @@ pub fn editor_cells(l: &EditorLayout, editor: &Editor) -> Vec<EditorCell> {
         }
     }
     // An offhand button's second box, when its item takes two (the tactical slot's, Tactician's
-    // lethal: `cacgrenadesbutton.lua:150-180`).
+    // lethal, a lethal under Danger Close: `cacgrenadesbutton.lua:130-180`).
     for (slot, button, lethal) in [(Slot::Lethal, l.lethal, true), (Slot::Tactical, l.tactical, false)] {
         cell(slot, 0, slot_plate(button, 2, 0));
         if d.offhand_boxes(lethal) > 1 {

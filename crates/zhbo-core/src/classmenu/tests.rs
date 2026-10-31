@@ -973,39 +973,45 @@ fn an_old_profiles_class_reloads_with_its_cards() {
     assert_eq!(Draft::from_stored(&back.customs()[0]).wildcards, vec![Wildcard::Perk1Greed]);
 }
 
-/// Danger Close takes a second lethal with it (`primarygrenadecount` 2, `cacgrenadesbutton.lua:
-/// 130-160`): the card and the extra grenade are each an element, the class carries the count,
-/// and re-opening the stored class gives the card back (`checkclasses.lua:688-700`).
+/// Danger Close gives the lethal button a second box (`cacgrenadesbutton.lua:130-180`): the card
+/// costs its own point, the second lethal is filled like the tactical's second box and costs
+/// another, the class carries the count (`primarygrenadecount` 2) and re-opening the stored class
+/// gives the card back (`checkclasses.lua:688-700`). Taking the card off drops the second lethal
+/// (`bonuscardbutton.lua:490-545`).
 #[test]
-fn danger_close_carries_and_charges_a_second_lethal() {
+fn danger_close_opens_a_second_lethal_box_that_costs_a_point() {
     let plain = Draft::default();
-    let d = Draft { wildcards: vec![Wildcard::DangerClose], ..Draft::default() };
-    assert_eq!(d.spent(), plain.spent() + 2, "the card and the second lethal");
-    let c = d.to_custom();
+    let mut e = Editor::new(Draft { perks: [None, None, None], ..Draft::default() });
+    let base = e.draft.spent();
+    assert_eq!(e.draft.offhand_boxes(true), 1, "one box without the card");
+    assert_eq!(e.apply_second_offhand(true), ApplyResult::NoChange, "no second box to fill");
+    e.slot = Slot::Wildcards;
+    let dc = wildcard_list().iter().position(|w| *w == Wildcard::DangerClose).expect("the card is listed");
+    assert_eq!(e.apply(dc), ApplyResult::Changed);
+    assert_eq!((e.draft.offhand_boxes(true), e.draft.lethal_count(), e.draft.spent()), (2, 1, base + 1), "the card alone");
+    assert_eq!(e.apply_second_offhand(true), ApplyResult::Changed);
+    assert_eq!((e.draft.lethal_count(), e.draft.offhand_count(true), e.draft.spent()), (2, 2, base + 2), "the second lethal");
+    let c = e.draft.to_custom();
     assert_eq!(c.lethal_count, crate::classes::MAX_GRENADES as u8);
     assert_eq!(c.loadout().lethal_count, Some(2));
     assert!(c.to_spec().contains("lethal_count=2"), "{}", c.to_spec());
-    assert_eq!(Draft::from_custom(&c).wildcards, vec![Wildcard::DangerClose]);
+    let back = Draft::from_custom(&c);
+    assert_eq!((back.wildcards.clone(), back.lethal_count()), (vec![Wildcard::DangerClose], 2));
+    // Re-picking the held lethal toggles the second box, as the tactical slot does.
+    e.slot = Slot::Lethal;
+    let frag = e.offhand_list(true).iter().position(|id| *id == e.draft.lethal).expect("the frag is listed");
+    assert_eq!(e.apply(frag), ApplyResult::Changed);
+    assert_eq!(e.draft.lethal_count(), 1);
+    assert_eq!(e.apply(frag), ApplyResult::Changed);
+    assert_eq!(e.draft.lethal_count(), 2);
+    // The card off: one box, one lethal.
+    e.slot = Slot::Wildcards;
+    assert_eq!(e.apply(dc), ApplyResult::Changed);
+    assert_eq!((e.draft.offhand_boxes(true), e.draft.lethal_count(), e.draft.spent()), (1, 1, base));
     // No lethal, no second one: the card alone.
-    let bare = Draft { lethal: String::new(), ..d.clone() };
+    let bare = Draft { lethal: String::new(), wildcards: vec![Wildcard::DangerClose], ..Draft::default() };
     assert_eq!(bare.to_custom().lethal_count, 0);
     assert_eq!(plain.to_custom().lethal_count, 1);
-}
-
-/// One lethal is one: BO2's `primarygrenadecount` is the slot's filled boxes
-/// (`cacgrenadesbutton.lua:130-230`), the clip `_class.gsc:739` gives, whatever the item's own
-/// start count; the class and its spec carry it so the arsenal starts with exactly one.
-#[test]
-fn a_single_lethal_is_one_whatever_its_start_count() {
-    for lethal in equipment_ids(true) {
-        let d = Draft { lethal: lethal.to_string(), ..Draft::default() };
-        assert_eq!((d.lethal_count(), d.offhand_count(true), d.offhand_boxes(true)), (1, 1, 1), "{lethal}");
-        let c = d.to_custom();
-        assert_eq!(c.lethal_count, 1, "{lethal}");
-        assert!(c.to_spec().contains("lethal_count=1"), "{}", c.to_spec());
-        assert_eq!(c.loadout().lethal_count, Some(1), "{lethal}");
-        assert!(Draft::from_custom(&c).wildcards.is_empty(), "one lethal needs no card");
-    }
 }
 
 #[test]

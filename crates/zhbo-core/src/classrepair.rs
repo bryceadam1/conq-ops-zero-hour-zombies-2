@@ -125,18 +125,13 @@ fn repair_offhand(c: &mut CustomClass, lethal: bool, cleared: &mut Cleared) {
 /// it at the item's own max ammo, [`crate::classmenu::items::offhand_cap`]). A held item counts at
 /// least one: BO2's count is the slot's filled boxes and an equipped item fills the first
 /// (`cacgrenadesbutton.lua:130-230`), so a 0 (a class saved before the counts) is one. A lethal
-/// item stores two only with Danger Close (re-derived from that count); Tactician's tactical and
-/// the tactical slot store their chosen one or two; an empty slot stores none.
+/// item's second box is Danger Close's (the card is re-derived from that count); Tactician's
+/// tactical and the tactical slot store their chosen one or two; each is capped at the item's own
+/// max ammo, as the button's boxes are; an empty slot stores none.
 fn repair_counts(c: &mut CustomClass) {
     use crate::classmenu::items;
     let clamp = |n: u8, id: &str| n.clamp(1, items::offhand_cap(id).max(1));
-    c.lethal_count = if c.lethal.is_empty() {
-        0
-    } else if items::is_tactical_item(&c.lethal) {
-        clamp(c.lethal_count, &c.lethal)
-    } else {
-        c.lethal_count.clamp(1, crate::classes::MAX_GRENADES as u8)
-    };
+    c.lethal_count = if c.lethal.is_empty() { 0 } else { clamp(c.lethal_count, &c.lethal) };
     c.tactical_count = if c.tactical.is_empty() { 0 } else { clamp(c.tactical_count, &c.tactical) };
 }
 
