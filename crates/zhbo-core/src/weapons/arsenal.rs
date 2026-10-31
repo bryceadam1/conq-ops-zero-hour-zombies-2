@@ -844,11 +844,18 @@ impl Arsenal {
         // Swap (held back during the melee states 0x13-0x15, `FUN_008e0e60`).
         // The melee states hold a switch back the same way (`FUN_008e0e60` returns at 0x13-0x15
         // without touching the request): it happens once the swing and re-raise are done.
-        if pressed & buttons::SWAP_WEAPON != 0 && meleeing {
+        // So does a shot's own time (states 6/0x28 with `weaponTime` left; the check runs after the
+        // frame's tick, so this frame's fire tick counts first). The reload and rechamber states
+        // (0x0b-0x12, 7, 8) do not hold it: a switch cuts them short. The function's other
+        // hold-backs are states the mod has no counterpart of (0x1e-0x22, 0x2a/0x2b, 0x31-0x33) or a
+        // running `weaponDelay`, which here is the melee strike's or an offhand's, both covered.
+        let shot_running = !self.current().is_reloading() && self.current().cooldown - self.tick(Timing::Fire) > 1e-6;
+        let held_back = meleeing || shot_running;
+        if pressed & buttons::SWAP_WEAPON != 0 && held_back {
             self.swaps_pending = self.swaps_pending.wrapping_add(1);
         }
         let swaps = if self.swaps_pending > 0 { self.swaps_pending as usize } else { (pressed & buttons::SWAP_WEAPON != 0) as usize };
-        if swaps > 0 && self.weapons.len() > 1 && !meleeing {
+        if swaps > 0 && self.weapons.len() > 1 && !held_back {
             self.swaps_pending = 0;
             let next = (self.active + swaps) % self.weapons.len();
             if next != self.active {

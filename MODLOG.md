@@ -5071,3 +5071,14 @@ sim already has that: `projectiles::Projectile` bounces (`BOUNCE_ALONG`/`BOUNCE_
 * `textstyle 3` (IW's shadowed style): `draw_hint` draws the text in black one 480-line unit down and
   right under the white text, at the same alpha (the exact T6 pixel offset is not decoded).
 * Test: `the_hint_sits_below_the_centre_and_fades_in_each_600_ms` checks the shadow.
+
+## A switch pressed mid-shot waits for the shot's time (2026-10-31, `v1/offhand-rules`)
+
+`FUN_008e0e60` also holds the switch request while `weaponTime` runs in the fire states 6 and 0x28
+(after the frame's tick, so at the fire-rate specialty's rate); the reload family (0x0b-0x12) and the
+rechamber states 7/8 do not hold it (a switch cuts them short), and any other state holds it only
+while `weaponDelay` runs (in the mod: the melee strike's and an offhand's, both already held). Its
+remaining early returns are states the mod has no counterpart of (0x1e-0x22, 0x2a/0x2b, 0x31-0x33).
+The mod switched mid-shot at once; the press now joins `swaps_pending` while the shot's cooldown
+(after this frame's fire tick) is left. Test: fake-host
+`a_switch_pressed_after_a_shot_happens_when_the_shot_ends`.

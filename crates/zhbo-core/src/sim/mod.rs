@@ -1499,6 +1499,37 @@ pub(crate) mod tests {
         assert_eq!(sim.player(0).unwrap().arsenal.lethal.count, 0);
     }
 
+    /// A switch pressed right after a shot waits for the shot's time (`FUN_008e0e60` holds it in
+    /// state 6 while `weaponTime` runs), which the fire-rate specialty shortens as it does the shot.
+    #[test]
+    fn a_switch_pressed_after_a_shot_happens_when_the_shot_ends() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default());
+        wait_until_ready(&mut sim, &host);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, pressed: buttons::FIRE, ..Default::default() }, 1);
+        let a = &sim.player(0).unwrap().arsenal;
+        let shot = a.current().def.fire_time * a.multiplier(crate::weapons::Timing::Fire);
+        assert!(shot > 2.0 * LOGIC_DT, "the stand-in's shot spans frames ({shot})");
+        sim.events.clear();
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::SWAP_WEAPON, pressed: buttons::SWAP_WEAPON, ..Default::default() }, 1);
+        let mut at = None;
+        for f in 1..120u32 {
+            if events(&sim).iter().any(|k| matches!(k, EventKind::Swapped)) {
+                at = Some(f);
+                break;
+            }
+            run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+        }
+        let at = at.expect("switched") as i64;
+        // The shot's frames, the press being the second.
+        let want = (shot / LOGIC_DT - 1e-4).ceil() as i64 - 1;
+        assert!((at - want).abs() <= 1, "switched {at} frames after the press, want {want}");
+        assert!(at > 1, "not on the press");
+    }
+
     #[test]
     fn the_hammer_and_field_computer_work_unarmed() {
         let host = FakeHost::default();
