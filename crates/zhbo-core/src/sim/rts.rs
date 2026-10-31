@@ -186,6 +186,7 @@ impl Sim {
             });
             for _ in 0..strikes {
                 let damage = p.arsenal.melee.melee_damage;
+                self.emit(idx, EventKind::Melee);
                 self.melee_strike(host, idx, &mut p, damage, MeleeReach::Footprint(info.major_radius));
             }
             for def in uses {

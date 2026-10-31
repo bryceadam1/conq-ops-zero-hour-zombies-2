@@ -368,7 +368,8 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
 
     // The arsenal melees with `Arsenal::melee_weapon` (`arsenal.rs` "Melee interrupts": its
     // `melee_time` and `melee_damage`): a knife with itself, anything else with the class melee
-    // weapon (the held knife when the table has none), striking on the press.
+    // weapon (the held knife when the table has none); the strike lands its `melee_delay` after the
+    // press (`Arsenal::step`).
     let held_knife = cat.get(&weapons::Loadout::default().melee).unwrap_or(d);
     let knife = weapons::melee_weapon(d, cat.get(weapons::CLASS_MELEE).unwrap_or(held_knife));
     let alt_toggles = !d.alt.is_empty();
@@ -407,7 +408,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         ("ads_in_time", Some(d.ads_in_time)),
         ("ads_out_time", Some(d.ads_out_time)),
         ("melee_time", Some(knife.melee_time.max(0.3))),
-        ("melee_delay", Some(0.0)),
+        ("melee_delay", Some(knife.melee_delay)),
         ("spin_up_time", Some(d.spin_up_time)),
         // The barrels spin down at the rate they spin up (`w.spin - dt`).
         ("spin_down_time", (d.fire == FireMode::Minigun).then_some(d.spin_up_time)),

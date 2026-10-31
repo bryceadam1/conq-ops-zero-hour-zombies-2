@@ -729,6 +729,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         sprint_duration_scale: if w.sprint_duration_scale > 0.0 { w.sprint_duration_scale } else { 1.0 },
         melee_damage: if w.melee_damage > 0 { w.melee_damage as f32 } else { MELEE_DAMAGE },
         melee_time: if w.melee_time > 0.0 { w.melee_time } else { 0.6 },
+        melee_delay: w.melee_delay.max(0.0),
         effect,
         fuse_time: w.fuse_time,
         cook: w.cook_off_hold,

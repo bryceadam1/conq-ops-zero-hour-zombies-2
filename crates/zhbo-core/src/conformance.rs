@@ -277,8 +277,19 @@ pub fn check(def: &'static WeaponDef) -> Vec<String> {
         a.class_melee = def;
         let mut out = Vec::new();
         a.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
+        // The swing starts on the press; the strike lands after the weapon's `melee_delay`.
+        let mut frame = 0;
+        while !out.iter().any(|x| matches!(x, WeaponAction::Melee { .. })) && frame < frames(def.melee_delay) + 2 {
+            a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+            frame += 1;
+        }
+        if !out.iter().any(|x| matches!(x, WeaponAction::MeleeSwing)) {
+            fail("no swing on the melee press".into());
+        }
         if !out.iter().any(|x| matches!(x, WeaponAction::Melee { damage } if (*damage - def.melee_damage).abs() < 1e-3)) {
             fail(format!("melee did not deal {}", def.melee_damage));
+        } else if (frame as f32 * LOGIC_DT - def.melee_delay).abs() > LOGIC_DT {
+            fail(format!("the strike landed {:.3} s after the press, BO2 says {:.3}", frame as f32 * LOGIC_DT, def.melee_delay));
         }
     }
     fails

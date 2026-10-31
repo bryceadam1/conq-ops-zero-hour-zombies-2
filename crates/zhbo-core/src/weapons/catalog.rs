@@ -366,6 +366,7 @@ Weapon knife_held_mp
   DisplayName = Knife
   Class = melee
   Melee = 135 0.6
+  MeleeDelay = 0.05
   Viewmodel = 4
   Anims = 60200e6003f007f3804256
 End
@@ -376,6 +377,7 @@ Weapon knife_mp
   DisplayName = Knife
   Class = melee
   Melee = 135 0.75
+  MeleeDelay = 0.1
   Viewmodel = 4
 End
 

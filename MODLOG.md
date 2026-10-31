@@ -4700,3 +4700,31 @@ nothing to switch to.
 
 Measured: no conformance movement (781,587 / 572 / 204 gap clusters) — the table describes the
 defs, not what a class carries.
+
+## The melee strike lands after the melee weapon's `melee_delay` (2026-10-31, `v1/equipment-melee`)
+
+The mod struck on the melee press. BO2's state machine (read-only Ghidra, t6mp):
+`FUN_008e2070` (the melee check) calls `FUN_008dc770`, which picks the melee weapon (the held one
+when it is a melee weapon, else the class melee weapon at `ps+0x1cc` — the `melee_weapon(held,
+class_melee)` rule), sets `weaponTime = iMeleeTime` (+0x480), `weaponDelay = iMeleeDelay` (+0x434),
+weapon state 0x13, and fires event 0x27 (`EV_MELEE_SWIPE`). In `FUN_008e4da0` (the weapon frame),
+when the timer tick `FUN_008e0780` reports the delay ran out, state 0x13 becomes 0x14 and event 0x28
+(`EV_FIRE_MELEE`) fires — the strike. The delay is counted in plain time: the tick scales only
+state 0x15 by `perk_weapMeleeMultiplier`. (A lunge uses `meleeChargeTime`/`meleeChargeDelay`
+instead; the mod has no lunge.)
+
+* `WeaponDef::melee_delay` (table field `MeleeDelay`, from `iMeleeDelay`; the conformance actual
+  reads it through the same `melee_weapon` rule). `Arsenal::melee_delay_left` counts it down by
+  `LOGIC_DT`; the press emits `WeaponAction::MeleeSwing` (the sim's `EventKind::Melee`: the swipe
+  sound) and the strike `WeaponAction::Melee` lands when it runs out (immediately with no delay).
+  The RTS melee still swings and strikes together (Zero Hour drives its timing).
+* Tests: `the_strike_lands_after_the_melee_weapons_delay` (frame count, replay-identical, Dexterity
+  does not shorten it); `conformance::check` now requires the swing on the press and the strike at
+  the delay. Stand-in knives carry generic delays.
+* Found, not done: BO2's Fast Melee Recovery scales only state 0x15 — the gun coming back up after a
+  melee with a gun (`FUN_008e1f50`: `weaponTime` = the held weapon's `quickRaiseTime`, +0x4c8) — and
+  `iMeleeTime` runs unscaled; the mod scales its whole `melee_left` by the multiplier and has no
+  0x15 re-raise. A behaviour item for the melee timing.
+* The table gains a field: the archive VERSION must bump (integrator).
+
+Measured: weapons 781,587 → 769,983 (`melee_delay` 11,604 → 0); cac 572; gap clusters 204 → 203.

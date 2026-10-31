@@ -91,8 +91,14 @@ mod tests {
         assert_eq!(a.class_melee.id, CLASS_MELEE);
         let mut out = Vec::new();
         a.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
-        assert!(out.iter().any(|x| matches!(x, WeaponAction::Melee { damage } if *damage == class_melee.melee_damage)));
         assert_eq!(a.melee_left, class_melee.melee_time);
+        let strike = |a: &mut Arsenal, rng: &mut Rng, out: &mut Vec<WeaponAction>| {
+            while !out.iter().any(|x| matches!(x, WeaponAction::Melee { .. })) {
+                a.step(0, 0, false, 0, 0.0, rng, out);
+            }
+        };
+        strike(&mut a, &mut rng, &mut out);
+        assert!(out.iter().any(|x| matches!(x, WeaponAction::Melee { damage } if *damage == class_melee.melee_damage)));
         assert_eq!(a.current_weapon().id, CLASS_MELEE, "the current weapon while meleeing");
 
         let mut k = Arsenal::unarmed();
@@ -103,6 +109,38 @@ mod tests {
         k.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
         assert_eq!(k.melee_left, held.melee_time);
         assert_eq!(k.melee_weapon().id, "knife_held_mp");
+    }
+
+    /// BO2's melee: the swing (`EV_MELEE_SWIPE`) on the press, the strike (`EV_FIRE_MELEE`) when
+    /// the melee weapon's `iMeleeDelay` has run out (`FUN_008dc770` / `FUN_008e4da0`), in plain
+    /// time — Fast Melee Recovery does not shorten the delay. A replay strikes on the same frame.
+    #[test]
+    fn the_strike_lands_after_the_melee_weapons_delay() {
+        let class_melee = weapon(CLASS_MELEE);
+        assert!(class_melee.melee_delay > LOGIC_DT, "the stand-in has a delay to wait for");
+        let swing_and_strike = |perks: &str| {
+            let mut rng = Rng::new(1);
+            let mut a = Arsenal::with_loadout(Loadout::default().with_spec(perks));
+            a.raise_left = 0.0;
+            let mut out = Vec::new();
+            a.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
+            assert!(out.contains(&WeaponAction::MeleeSwing), "the swing starts on the press");
+            assert!(!out.iter().any(|x| matches!(x, WeaponAction::Melee { .. })), "no strike on the press");
+            let mut frames = 0;
+            loop {
+                out.clear();
+                a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+                frames += 1;
+                if out.iter().any(|x| matches!(x, WeaponAction::Melee { .. })) {
+                    break;
+                }
+            }
+            frames
+        };
+        let frames = swing_and_strike("perks=");
+        assert_eq!(frames, (class_melee.melee_delay / LOGIC_DT - 1e-4).ceil() as i32, "the strike after the delay");
+        assert_eq!(swing_and_strike("perks="), frames, "deterministic");
+        assert_eq!(swing_and_strike("perks=Dexterity"), frames, "Fast Melee Recovery leaves the delay alone");
     }
 
     #[test]

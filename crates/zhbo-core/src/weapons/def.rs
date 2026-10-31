@@ -192,6 +192,9 @@ pub struct WeaponDef {
     pub sprint_duration_scale: f32,
     pub melee_damage: f32,
     pub melee_time: f32,
+    /// Seconds from the melee press to the strike (`iMeleeDelay`): BO2's swing starts on the press
+    /// and the hit lands when this delay runs out.
+    pub melee_delay: f32,
     /// Grenades and launchers.
     pub effect: Effect,
     pub fuse_time: f32,
@@ -440,6 +443,7 @@ impl Default for WeaponDef {
             sprint_duration_scale: 1.0,
             melee_damage: MELEE_DAMAGE,
             melee_time: 0.6,
+            melee_delay: 0.0,
             effect: Effect::None,
             equipment_kind: Kind::Other,
             fuse_time: 0.0,

@@ -212,6 +212,10 @@ pub enum WeaponAction {
     Detonate,
     /// Switched to or from the weapon's alt mode.
     AltToggled,
+    /// The melee swing starts (BO2's `EV_MELEE_SWIPE`, event 0x27 in `FUN_008dc770`): the swipe sound.
+    MeleeSwing,
+    /// The melee strike lands (`EV_FIRE_MELEE`, 0x28): when the melee weapon's `melee_delay` has run
+    /// out after the swing (`FUN_008e4da0`, state 0x13 -> 0x14).
     Melee { damage: f32 },
     DryFire,
     ReloadStarted,
@@ -272,6 +276,8 @@ pub struct Arsenal {
     /// Seconds since sprinting stopped (weapon comes back up over `sprint_out_time`).
     pub since_sprint: f32,
     pub melee_left: f32,
+    /// Seconds until the swing's strike lands (`ps->weaponDelay` in state 0x13); 0 when none is due.
+    pub melee_delay_left: f32,
     pub offhand: Option<OffhandUse>,
     held_last: u32,
     /// Seconds since reload was last pressed (a second press soon after detonates C4).
@@ -335,6 +341,7 @@ impl Arsenal {
             ads: 0.0,
             since_sprint: 10.0,
             melee_left: 0.0,
+            melee_delay_left: 0.0,
             offhand: None,
             held_last: 0,
             since_reload_press: 10.0,
@@ -411,6 +418,7 @@ impl Arsenal {
             ads: 0.0,
             since_sprint: 10.0,
             melee_left: 0.0,
+            melee_delay_left: 0.0,
             offhand: None,
             held_last: 0,
             since_reload_press: 10.0,
@@ -690,6 +698,15 @@ impl Arsenal {
         let (sprint_tick, melee_tick, switch_tick) = (self.tick(Timing::SprintOut), self.tick(Timing::Melee), self.tick(Timing::Switch));
         self.since_sprint = if sprinting { 0.0 } else { self.since_sprint + sprint_tick };
         self.melee_left = (self.melee_left - melee_tick).max(0.0);
+        // The strike lands when the swing's delay runs out. BO2 counts the delay in plain time:
+        // state 0x13 takes no specialty scaling (`FUN_008e0780`; Fast Melee Recovery scales 0x15).
+        if self.melee_delay_left > 0.0 {
+            self.melee_delay_left -= dt;
+            if self.melee_delay_left <= 1e-6 {
+                self.melee_delay_left = 0.0;
+                out.push(WeaponAction::Melee { damage: self.melee_weapon().melee_damage });
+            }
+        }
         if self.drop_left > 0.0 {
             self.drop_left = (self.drop_left - switch_tick).max(0.0);
         } else {
@@ -730,13 +747,20 @@ impl Arsenal {
 
         // Melee interrupts a reload and firing, not a raise.
         if pressed & buttons::MELEE != 0 && self.melee_left <= 0.0 && self.raise_left <= 0.0 && self.drop_left <= 0.0 {
+            // The swing starts now and the strike lands after the melee weapon's delay
+            // (`FUN_008dc770`: weaponTime = iMeleeTime, weaponDelay = iMeleeDelay, state 0x13).
             let m = self.melee_weapon();
             self.melee_left = m.melee_time.max(0.3);
             let w = self.current_mut();
             w.burst_left = 0;
             w.reload = None;
             self.ads = 0.0;
-            out.push(WeaponAction::Melee { damage: m.melee_damage });
+            out.push(WeaponAction::MeleeSwing);
+            if m.melee_delay > 0.0 {
+                self.melee_delay_left = m.melee_delay;
+            } else {
+                out.push(WeaponAction::Melee { damage: m.melee_damage });
+            }
             return;
         }
 

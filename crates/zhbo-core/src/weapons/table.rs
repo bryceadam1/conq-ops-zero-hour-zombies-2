@@ -450,6 +450,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             (d.melee_damage, d.melee_time) = (v.num(0), v.num(1));
             Ok(())
         }),
+    field!("MeleeDelay", "Seconds from the melee press to the strike (BO2's iMeleeDelay).", FieldKind::Num,
+        |d: &WeaponDef| d.melee_delay.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.melee_delay = v.text_num()?; Ok(()) }),
     field!("Effect", "How the shot lands: explode, stun, emp, smoke, impact, none.", FieldKind::Enum,
         |d: &WeaponDef| d.effect.name().into(),
         |d: &mut WeaponDef, v: Values| { d.effect = Effect::parse(v.text).ok_or("unknown effect")?; Ok(()) }),
@@ -721,7 +724,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 82);
+        assert_eq!(WEAPON_FIELDS.len(), 83);
         assert_eq!(ATTACHMENT_FIELDS.len(), 18);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

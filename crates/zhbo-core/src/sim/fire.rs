@@ -122,6 +122,7 @@ impl Sim {
                 self.projectiles.push((idx, proj));
             }
             WeaponAction::OffhandReady { lethal } => self.emit(idx, EventKind::OffhandReady { lethal }),
+            WeaponAction::MeleeSwing => self.emit(idx, EventKind::Melee),
             WeaponAction::Melee { damage } => self.melee_strike(host, idx, p, damage, MeleeReach::Body),
             WeaponAction::Plant { def } => {
                 let (fwd, _) = basis_xy(p.yaw);
@@ -183,8 +184,9 @@ impl MeleeReach {
 
 impl Sim {
     /// BO2's knife: the nearest enemy in front of the General and in reach takes the hit.
+    /// The swing's event (`EventKind::Melee`, the swipe sound) is the caller's: first person emits
+    /// it on the press ([`WeaponAction::MeleeSwing`]), the RTS strike with the blow.
     pub(super) fn melee_strike(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, damage: f32, reach: MeleeReach) {
-        self.emit(idx, EventKind::Melee);
         let eye = p.body.eye();
         let (fwd, _) = basis_xy(p.yaw);
         let extra = match reach {
