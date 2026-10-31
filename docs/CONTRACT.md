@@ -261,10 +261,12 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   draws, which is what keeps a third-person rig from going invisible.
 
 * **The class camo (`camo_<weapon>.zcm`, PLAN D1–D8).** A class's camo (`CustomClass.camo`) rides
-  `PlayerSim.camo` and its knife camo (`CustomClass.knife`, BO2's `knifecamo`) rides
+  `PlayerSim.camo`, its secondary camo (`CustomClass.secondary_camo`, BO2's `secondarycamo`) rides
+  `PlayerSim.secondary_camo` and its knife camo (`CustomClass.knife`, BO2's `knifecamo`) rides
   `PlayerSim.knife_camo`; `zhbo_client_frame` records one `(viewmodel, camo asset, option)` per held
-  weapon — the primary with the class camo, the melee weapon with the knife camo, each through its
-  own def's asset (`nativevm::class_camos`, `_class.gsc`'s `calcweaponoptions(class, 0|2)`) — in a
+  weapon (`PlayerSim::held_camos`) — the primary with the class camo, the sidearm with the secondary
+  camo, the melee weapon with the knife camo, each through its own def's asset
+  (`nativevm::class_camos`, `_class.gsc`'s `calcweaponoptions(class, 0|1|2)`) — in a
   core-global (`nativevm::set_local_camos`), and `zhbo_native_viewmodel` reads the one whose `vm`
   matches the viewmodel it draws — **no `ZhboNativeIn` field and no ABI bump**. The converter writes
   `Art\Native\<camo_asset>.zcm` (`ZCM\0`, v1): the asset's 40 pattern sets (solid/pattern image,
@@ -288,9 +290,7 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   bump (2→3) and the archive bump (64→65) are integrator-owned.
   - **Divergences.** The camo applies to the first-person native viewmodel only: the W3D fallback
     bakes textures and has no texture override, and the third-person native body pins `camo` to
-    `INVALID` (no third-person camo). The sidearm draws stock: BO2 gives it its own
-    `secondarycamo` (`calcweaponoptions(class, 1)`), but the mod's class has no secondary camo
-    field or personalize page yet; `class_camos` takes it as one more slot once it does.
+    `INVALID` (no third-person camo, for any of the three weapons).
 
 ## The native third person (Track R7)
 

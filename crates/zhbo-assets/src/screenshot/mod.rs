@@ -99,6 +99,7 @@ fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> 
         ("cac-personalize", personalize_prims()),
         ("cac-personalize-dlc", personalize_tab_prims(1)),
         ("cac-personalize-knife", knife_personalize_prims()),
+        ("cac-editor-secondary", secondary_editor_prims()),
         ("cac-personalize-secondary", secondary_personalize_prims()),
         ("cac-reticles", reticle_personalize_prims()),
         ("cac-reticle-color", reticle_color_personalize_prims()),
@@ -188,6 +189,15 @@ fn knife_personalize_prims() -> Vec<Prim> {
     let tabs = classui::personalize_tabs_for(kind, classui::personalize_weapon(kind, &editor.draft));
     let p = Personalize::with_tabs(kind, tabs, &editor.draft);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// The editor grid with the SECONDARY box focused: its `secondarycamo` swatch and the `C` prompt
+/// (`SecondaryWeapon_Button_Over`).
+fn secondary_editor_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.picking = false;
+    editor.slot = Slot::Secondary;
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
 /// The SECONDARY box's `C Personalize Weapon` page: the camo screen over the sidearm's own list

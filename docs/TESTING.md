@@ -94,6 +94,10 @@ verify it by hand after touching the menu ABI, the shell window, or the shared c
    - Knife (`TAB` in the editor): the same page over the knife — `PERSONALIZE KNIFE`, the
      CAMO/DLC(/DLC2) tabs with the knife's own converted camos, the knife's picture and the
      `Equipped` box; a pick sets the class's knife camo, not the gun's.
+   - Secondary (`C` on SECONDARY, only while it holds a gun): the same page over the sidearm —
+     `PERSONALIZE <PISTOL>`, the sidearm's own converted camos, its picture; a pick sets the
+     class's secondary camo (the SECONDARY button and the preview's secondary block show its
+     swatch), not the primary's. In a match, switch to the sidearm: it wears that camo.
 4. Edit something, walk to **SAVE CLASS**, confirm: `ConquerOps.profile` (in the game's user-data
    directory) is rewritten with the new class, and the list shows it highlighted.
 5. On a custom row: **C** copies it (`NAME COPY` appears), **Backspace** deletes it — both rewrite
@@ -135,6 +139,8 @@ with the primary option list open), `cac-editor-empty.png` (BO2's pristine empty
 `cac-editor-weapons.png` (the category column and stat bars), `cac-editor-attachments.png` (the
 attachment strip), the personalize pages `cac-personalize.png` (camo, CAMO tab),
 `cac-personalize-dlc.png` (its DLC tab), `cac-personalize-knife.png` (the knife page),
+`cac-editor-secondary.png` (the grid with SECONDARY focused: its camo swatch and the `C` prompt),
+`cac-personalize-secondary.png` (the sidearm's own camo page),
 `cac-reticles.png` and `cac-reticle-color.png`, and `cac-dialog-set.png`/`cac-dialog-class.png`
 (the S/O dialogs). Default size
 is 1280x720 (BO2's 720p; the captures are 3024x1890). The default output is `target/cac-shots/`,

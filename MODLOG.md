@@ -4633,3 +4633,49 @@ the knife picture.
   cells / 7 clusters, 42/6; 214 gap clusters. Verified: `cargo test --workspace` green; clippy 39
   warnings before and after; the real-install suite (`--ignored --skip conformance`) green. The
   in-game check (equip a knife camo, switch to the knife, see it painted) is the integrator's.
+
+## The sidearm wears its own camo: secondarycamo, its personalize page and swatch (2026-10-31, branch `v1/secondary-camo`)
+
+- **BO2's path.** `customclass.lua`'s `SecondaryWeapon_Button_Over` sets `weaponSlot = "secondary"`
+  and adds the `C` (`MPUI_PERSONALIZE_WEAPON`) prompt, but only when the class holds a secondary.
+  `ButtonPromptCamo` opens the same `CACCamo` it opens for the primary (`knifePersonalization =
+  false`). That page reads `class[weaponSlot]` for the title, picture and `AddCamos`' item, and it
+  saves `SetClassItem(weaponSlot .. "camo")`, which is the class's `secondarycamo`
+  (`checkclasses.lua:891`). In the match, `_class.gsc:585-682` gives the sidearm
+  `calcweaponoptions(class, 1)`. `CACWeaponButton` draws each box's swatch from
+  `class[weaponStatName .. "camo"]`, and `ClassPreview` has a `secondaryCamoImageContainer` with
+  the same 45/5/31 geometry as the primary's.
+- **The mod.** `CustomClass`/`Draft` gain `secondary_camo`, with the spec key `secondary_camo`
+  written after `knife`. A missing key means "not personalised", so older profiles still load.
+  `PersonalizeKind::SecondaryCamo` is the camo page over the sidearm's own art-trimmed `CamoList`
+  (`personalize_weapon` returns `draft.secondary`). `Editor::camo_page` is the one gate for `C` and
+  its prompt: PRIMARY or SECONDARY, and only while the box holds a gun. The SECONDARY box and the
+  preview's secondary block draw the swatch. `PlayerSim.secondary_camo` and
+  `PlayerSim::held_camos()` give `nativevm::class_camos` its three slots in `zhbo_client_frame`.
+  No ABI change.
+- **classrepair checks each camo against its own weapon.** BO2 stores a camo as an index into
+  the weapon's own option group, and `ClearWeapon` clears it along with the weapon. The mod stores
+  ids, so `repair` now clears `primarycamo`/`secondarycamo`/`knifecamo` when the weapon slot is
+  empty or was cleared, or when that weapon's `CamoList` does not offer the id. A weapon without a
+  converted list (the built-in table) keeps the id. This applies to the primary and knife camos
+  as well as the new one.
+- **Composability with `v1/cac-save-rename`.** The new menu test saves through
+  `save_open_editor` (the SAVE row). That branch replaces the helper with `back_out_of_editor`, so
+  the merge needs to swap that one call. The editor change only touches the `C` branch and the
+  prompt list.
+- **Not done.** Third person still draws no camo for any weapon (`nativebody` pins `INVALID`).
+  Changing the secondary weapon in the editor keeps `secondary_camo`, as the primary keeps
+  `camo`. The repair pass drops the camo on the next load if the new gun does not offer it.
+- Measured (conformance CLI vs the `v1/knife-camo` base): no change, as expected, because the cac
+  table has no per-class camo column. Weapons: 706,586 cells / 203 clusters, 2264/747 one-sided
+  rows. Cac: 881 cells / 7 clusters, 42/6. 214 gap clusters. Verified: `cargo test --workspace`
+  is green (new: `c_on_each_weapon_box_opens_that_weapons_camo_page`,
+  `the_secondary_camo_page_sets_secondarycamo_only`,
+  `the_secondary_page_is_the_camo_page_over_the_sidearms_own_list`,
+  `c_on_the_secondary_opens_its_own_camo_page_and_saves_secondarycamo`,
+  `each_camo_is_checked_against_its_own_weapons_list`; extended: spec/profile round-trips,
+  `each_held_weapon_draws_its_own_class_camo`, and the sim landing test with `held_camos`).
+  Clippy warnings went from 39 to 38: `Draft::to_custom`'s struct update had no effect and is
+  removed. The real-install suite is green (31). Headless shots `cac-editor-secondary` and
+  `cac-personalize-secondary` render with every sprite resolved. The in-game check (equip a
+  sidearm camo, switch to the pistol, see it painted) is the integrator's.
