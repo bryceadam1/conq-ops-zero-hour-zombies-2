@@ -5091,3 +5091,13 @@ the command bar's fifteen `ZhboClassButton`s are fixed by the ABI. `maxPerkCateg
 constant: the conformance emitter counts the perk table's tiers, and still does.
 Measured: cac 2, weapons 781,587, gap clusters 200 — unchanged (the values are BO2's either way;
 the source is now the install).
+
+## A weapon list without the held gun opens on its first category's first gun (2026-10-31, `v1/cac-rules`)
+
+`cacweaponsp.lua:1020-1029` records the held gun's card as `initialCarousel`/`initialCard`; when
+no carousel holds it (a pistol secondary under Overkill) neither is set, and the carousel list
+keeps its default, carousel 1's first card (`cardcarousellist.lua:893`). The mod fell back to the
+option list's index 0 (the catalog's first gun, e.g. the MTAR under ASSAULT RIFLES). Now
+`Editor::weapon_open_index` falls back to the first gun of the first category in
+`category_order` (SUBMACHINE GUNS → the PDW-57). Test:
+`a_list_without_the_held_gun_opens_on_its_first_category`; screenshot `cac-editor-overkill.png`.

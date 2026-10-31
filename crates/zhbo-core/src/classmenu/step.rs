@@ -220,12 +220,27 @@ impl Editor {
         Outcome::Continue
     }
 
+    /// Where a weapon list opens: on the held gun's card (`cacweaponsp.lua:1020-1029` records it as
+    /// `initialCarousel`/`initialCard`); when the list does not offer it (a pistol secondary under
+    /// Overkill) no initial card is set and the carousel list keeps its default, the first
+    /// carousel's first card (`cardcarousellist.lua:893`) — the first gun of the first category.
+    fn weapon_open_index(&self) -> usize {
+        let primary = self.slot == Slot::Primary;
+        let ids = self.gun_list(primary);
+        let held = if primary { &self.draft.primary } else { &self.draft.secondary };
+        if let Some(i) = ids.iter().position(|id| id == held) {
+            return i;
+        }
+        let order = crate::classui::category_order(self.slot);
+        let rank = |id: &str| order.iter().position(|c| *c == weapons::weapon(id).cac_class()).unwrap_or(usize::MAX);
+        (0..ids.len()).min_by_key(|&i| (rank(ids[i]), i)).unwrap_or(0)
+    }
+
     /// The index in the option list of the slot's current value (so the list opens on it).
     pub(super) fn current_option_index(&self) -> usize {
         match self.slot {
             Slot::Name => 0,
-            Slot::Primary => weapon_index(&self.gun_list(true), &self.draft.primary),
-            Slot::Secondary => weapon_index(&self.gun_list(false), &self.draft.secondary),
+            Slot::Primary | Slot::Secondary => self.weapon_open_index(),
             // BO2 focuses the button of the attachment the chosen slot holds, else the first
             // (`cacattachmentsmenu.lua:855-879`, `attachmentIndexToReplace`): the row's first.
             Slot::PrimaryAtts => attachment_index(&self.draft.primary, &self.draft.primary_atts),

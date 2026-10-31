@@ -94,11 +94,6 @@ pub(super) fn perk_list(tier: u8) -> Vec<Perk> {
     weapons::perks::PERKS.iter().enumerate().filter(|(_, p)| p.tier == tier).map(|(i, _)| Perk(i as u8)).collect()
 }
 
-/// The index of the held weapon in the category list.
-pub(super) fn weapon_index(ids: &[&str], current: &str) -> usize {
-    ids.iter().position(|id| *id == current).unwrap_or(0)
-}
-
 /// The grid index of a weapon's first equipped attachment (the first cell when it has none).
 pub(super) fn attachment_index(base: &str, current: &[String]) -> usize {
     current.first().and_then(|c| attachment_shorts(base).iter().position(|s| s == c)).unwrap_or(0)

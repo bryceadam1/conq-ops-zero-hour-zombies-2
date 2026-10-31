@@ -1146,3 +1146,22 @@ fn the_attachment_grid_keeps_the_weapons_order_whatever_is_equipped() {
     let first = offered.iter().position(|s| *s == e.draft.primary_atts[0]).expect("the draft's attachment is offered");
     assert_eq!(e.current_option_index(), first);
 }
+
+/// A weapon list that does not offer the held gun opens on the first gun of its first category
+/// (BO2's carousel list keeps its first carousel's first card, `cardcarousellist.lua:893`): a
+/// pistol secondary under Overkill opens on a submachine gun, not the catalog's first gun.
+#[test]
+fn a_list_without_the_held_gun_opens_on_its_first_category() {
+    let mut e = Editor::new(Draft::default());
+    e.draft.wildcards.push(Wildcard::Overkill);
+    e.slot = Slot::Secondary;
+    assert!(!e.gun_list(false).contains(&e.draft.secondary.as_str()), "the pistol is not offered");
+    let i = e.current_option_index();
+    let first = crate::classui::category_order(Slot::Secondary).into_iter().find(|c| e.gun_list(false).iter().any(|id| weapons::weapon(id).cac_class() == *c)).unwrap();
+    assert_eq!(e.option_weapon(i).unwrap().cac_class(), first);
+    let ids = e.gun_list(false);
+    assert_eq!(ids.iter().position(|id| weapons::weapon(id).cac_class() == first), Some(i), "its first gun");
+    // The held gun, when offered, is still where the list opens.
+    e.slot = Slot::Primary;
+    assert_eq!(e.option_weapon(e.current_option_index()).unwrap().id, e.draft.primary);
+}
