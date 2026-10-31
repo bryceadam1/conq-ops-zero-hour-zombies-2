@@ -4801,3 +4801,55 @@ other column identical. Fake-host tests: a medium round through 4.5 in of concre
 soldier behind for half and plays the wall's exit; 7 in stops a small round but not a small FMJ
 round. In-game check owed: an exit puff on the far side of a thin structure corner, FMJ hits behind.
 Real-install suite green (`converts_from_real_install` now reads the `exit`-prefixed rows).
+
+## Soldiers are BO2's hit boxes; damage takes the location's multiplier (2026-10-31, `v1/hit-geometry`)
+
+Stacked on `v1/penetration`. The mod traced infantry as a 16-in cylinder with a head band, and
+damage took only `head_multiplier` on a headshot. Scope and decompiles in
+`~/.opencode/plan/hit-geometry/` (`SCOPE.md`, `g1-6.c`).
+
+* **The trace.** The bullet trace (`FUN_005cf2f0` → `FUN_006f43c0` → entity walk `FUN_006ba610` →
+  `FUN_006f2910`) poses a client's DObj from the server's animation and runs **`FUN_007837a0`
+  (DObjTraceline)**: every bone with `XBoneInfo.radiusSquared ≥ 4` (`0x00ca6094`) is an OBB
+  (`bounds[0..1]` in the bone's frame) whose location is `XModel.partClassification[bone]`. The
+  caller passes a rank per location: `bRifleBullet` (+0x631) → `0x00c8bcfc` (head/helmet/neck 11,
+  torso 10/9/8, arms 7/6, hands 5, legs 4, feet 3), else `0x00c8bce4` (every body location 3).
+  Ranks under 2 (none, gun) never hit; 101 is the riot shield's collmap path (not carried). **A
+  box of higher rank than the current best wins wherever it is on the ray; equal rank must be
+  nearer** — a rifle round through a hand into the head is a headshot; an SMG's is a hand.
+* **The damage.** `FUN_005f05c0` (G_Damage's client path): except melee (MOD 7), `damage =
+  ftol(damage × FUN_005f0490(loc))`, min 1; bullet/grenade/projectile weapons read
+  `FUN_008ed780` (the def's `locationDamageMultipliers`; per location the first mounted
+  attachment's single unique differing from the base unique), others the global
+  `info/mp_lochit_dmgtable`. **Only players** take the multiplier — vehicles/objects don't (some
+  defs have `none` = 0), so the mod applies it to infantry only. The mod keeps float damage.
+* **The geometry.** `zhbo-assets model <ff> <body> --hitboxes` dumps them. **Gotcha: the three
+  faction bodies carry identical boxes** (20 usable: head, j_helmet — classed head, not helmet —
+  neck, clavicles, back_mid, back_low, pelvis, the arms and legs), so one set serves; no MP body
+  bone is classed `helmet`, which is why the ARs' helmet multiplier of 0 never matters. The
+  converter poses them at the first frame of the stand-idle clip (`pb_stand_alert`, through
+  `zhbo_native::pose` — the same pose the renderer draws) and writes `HitBox = <loc> <bone> <quat>
+  <pos> <mins> <maxs>` lines (inches, model space) into the weapon table; the catalog builds
+  `hitloc::Body`. **Pose is fixed**: BO2 poses from the server's animation (stance, aim pitch,
+  gait); the mod's targets are Zero Hour infantry with no BO2 animation state, so standing idle it
+  is (deterministic, never render-time). Head 57–66 in, waist ~13 in deep (vs the cylinder's 32):
+  a pistol's 32 in of flesh no longer stops in one soldier.
+* **The data.** WeaponDef `location_multipliers[21]`, `attachment_location_multipliers`
+  (`short=loc:mult,…`, eAttachment order; `attachments::apply` resolves a combination's),
+  `rifle_bullet`; `HeadMultiplier` is gone. `HitResult::Object.location` replaces `headshot`
+  (`hitloc::is_head`: head or helmet). A table without `HitBox` lines (the built-in) keeps the
+  cylinder: head band = head, the rest torso_upper.
+* Not carried: the per-stance/animated pose, the riot-shield collmap ranks, the global
+  `mp_lochit_dmgtable` (no non-bullet weapon reaches the per-location path in the mod), damage
+  truncation.
+* `WEAPON_FIELDS` 95 → 97 and the table gains `HitBox` lines: the archive/table VERSION bump is the
+  integrator's. No ABI change.
+
+Measured (v1/penetration conf → this branch): weapons **541,014 → 522,332 (−18,682)**, clusters
+187 → 185, gap clusters **198 → 196**; the columns that moved are `location_multipliers`
+9,341 → 0 and `rifle_bullet` 9,341 → 0; cac 881 → 881; every other column identical. Fake-host
+tests: a head box takes ×2, a leg box ×0.5 (4:1), the gap between them misses; a medium round
+through a 10-in torso box keeps `1 − 10/cos(pitch)/64` for the soldier behind. Real-install suite
+green, incl. the new `the_soldier_hit_boxes_are_the_mp_bodys_standing`. In-game check owed:
+headshots land on the drawn head of Zero Hour's infantry (their W3D heads stand 14.3–16 units,
+taller than the 72-in body), body shots near the arms.

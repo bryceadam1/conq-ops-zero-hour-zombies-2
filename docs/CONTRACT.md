@@ -388,6 +388,18 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
   apart, at most two per round (the client's `FUN_00538e40` budget). The ground has no underside:
   a round that strikes it stops. All numbers are tuning-pack keys (`[Penetration]`, BO2's own key
   names); deterministic, sim-only inputs.
+* **Soldier hit geometry and locations** (t6mp `FUN_007837a0`, `FUN_005f05c0`; `zhbo_core::hitloc`).
+  An infantry target is BO2's MP body's hit boxes (`HitBox` lines of the weapon table: each bone's
+  `XBoneInfo` box with `radiusSquared ≥ 4` and its `partClassification` location, posed by the
+  converter at the stand-idle clip's first frame — the sim has no BO2 animation state, so the pose
+  is fixed, never render-time), standing on the object's position and turned by its yaw. Of the
+  boxes a ray crosses the highest-ranked location wins, nearest among equals (`bRifleBullet` ranks
+  the head first; other bullets rank the body alike). A soldier's damage is multiplied by the
+  def's `location_multipliers[location]` (a combination's resolved by `attachments::apply`:
+  first mounted attachment unique differing from the base unique, `FUN_008ed780`); other objects
+  take it unscaled. Penetration's chord through a soldier is the boxes' (the onward trace skips the
+  soldier the round is inside). A table without `HitBox` lines (the built-in one) keeps the
+  16-inch cylinder with a head band. Deterministic, sim-only inputs.
 * **The client carries at most `ZHBO_CLIENT_HITS` (8) impacts per frame** in `ZhboClientOut.hits`,
   filled by `consume_events` (so the impact sound is the surface's, not a guess); a frame that
   overflows drops the extras.
