@@ -196,7 +196,7 @@ pub fn check(def: &'static WeaponDef) -> Vec<String> {
                         fail(format!("shell reload took {done} frames, BO2 says {:.1}", want / LOGIC_DT));
                     }
                 } else {
-                    let (length, add) = if empty { (def.reload_empty_time, def.reload_empty_add_time) } else { (def.reload_time, def.reload_add_time) };
+                    let (length, add) = if empty { (def.reload_empty_time, def.reload_empty_add_at()) } else { (def.reload_time, def.reload_add_time) };
                     let add = if add > 0.0 { add.min(length) } else { length };
                     if !near(done, length, 0) {
                         fail(format!("{} reload took {done} frames, BO2 says {:.1}", if empty { "empty" } else { "partial" }, length / LOGIC_DT));

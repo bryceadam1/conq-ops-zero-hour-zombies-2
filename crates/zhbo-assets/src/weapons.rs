@@ -81,10 +81,17 @@ fn first_differing_unique<T: PartialEq>(w: &Weapon, shorts: &[&str], get: impl F
     kinds.iter().filter_map(|k| w.attachment_uniques.iter().find(|u| u.kind == *k && u.combined == 0)).map(get).find(|x| *x != base)
 }
 
-/// The unique-carried handling fields of a combo: the segmented reload's start add and the aimed
-/// depth of field (each component on its own), over the def's own values.
+/// The unique-carried handling fields of a combo: the first raise (`FUN_008ed100`), the
+/// segmented reload's rounds per cycle (`FUN_008ed250`) and start add, and the aimed depth of
+/// field (each component on its own), over the def's own values.
 fn apply_unique_fields(d: &mut WeaponDef, w: &Weapon) {
     let shorts: Vec<&str> = d.attachments.iter().map(String::as_str).collect();
+    if let Some(t) = first_differing_unique(w, &shorts, |u| u.first_raise_time) {
+        d.first_raise_time = t;
+    }
+    if let Some(n) = first_differing_unique(w, &shorts, |u| u.reload_ammo_add) {
+        d.reload_ammo_add = n.max(0) as u16;
+    }
     if let Some(n) = first_differing_unique(w, &shorts, |u| u.reload_start_add) {
         d.timing.reload_start_add = n.max(0) as u16;
     }
@@ -723,13 +730,16 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         reload_time: w.reload_time,
         reload_empty_time: if w.reload_empty_time > 0.0 { w.reload_empty_time } else { w.reload_time },
         reload_add_time: w.reload_add_time,
-        reload_empty_add_time: if w.reload_empty_add_time > 0.0 { w.reload_empty_add_time } else { w.reload_add_time },
+        // Raw: 0 means the rounds go in at the reload add time (the sim's fallback, `FUN_008dec90`).
+        reload_empty_add_time: w.reload_empty_add_time,
         reload_start_time: if shells { w.reload_start_time } else { 0.0 },
         reload_end_time: if shells { w.reload_end_time } else { 0.0 },
-        reload_ammo_add: if shells { w.reload_ammo_add.max(1) as u16 } else { 0 },
+        reload_ammo_add: w.reload_ammo_add.max(0) as u16,
         raise_time: w.raise_time,
-        first_raise_time: if w.first_raise_time > 0.0 { w.first_raise_time } else { w.raise_time },
+        first_raise_time: w.first_raise_time,
         drop_time: w.drop_time,
+        empty_raise_time: w.empty_raise_time,
+        empty_drop_time: w.empty_drop_time,
         quick_raise_time: if w.quick_raise_time > 0.0 { w.quick_raise_time } else { w.raise_time * 0.6 },
         quick_drop_time: if w.quick_drop_time > 0.0 { w.quick_drop_time } else { w.drop_time * 0.6 },
         sprint_out_time: w.sprint_out_time,
@@ -1127,6 +1137,26 @@ mod tests {
         let mut d = WeaponDef { attachments: vec!["acog".into(), "dualclip".into()], ..Default::default() };
         apply_unique_fields(&mut d, &w);
         assert_eq!(d.zoom.dof, (3.4, 3.9), "kind 1 is walked first");
+    }
+
+    /// The first raise and the segmented reload's rounds per cycle come from the first single
+    /// unique differing from the base unique (`FUN_008ed100`, `FUN_008ed250`): the 870's dual
+    /// magazine loads two shells, the INSAS grip raises first in its own time.
+    #[test]
+    fn first_raise_and_reload_ammo_add_take_the_first_differing_unique() {
+        let u = |kind: u32, first: f32, add: i32| bo2::AttachmentUnique { kind, first_raise_time: first, reload_ammo_add: add, ..Default::default() };
+        let w = Weapon {
+            name: "870mcs_mp".into(),
+            attachment_variants: vec![(4, "extbarrel".into()), (6, "dualclip".into()), (10, "grip".into())],
+            attachment_uniques: vec![u(0, 1.0, 1), u(4, 1.0, 1), u(6, 1.0, 2), u(10, 1.2, 1)],
+            ..Default::default()
+        };
+        let mut d = WeaponDef { attachments: vec!["extbarrel".into(), "dualclip".into(), "grip".into()], first_raise_time: 1.0, reload_ammo_add: 1, ..Default::default() };
+        apply_unique_fields(&mut d, &w);
+        assert_eq!((d.first_raise_time, d.reload_ammo_add), (1.2, 2));
+        let mut d = WeaponDef { attachments: vec!["extbarrel".into()], first_raise_time: 0.9, reload_ammo_add: 1, ..Default::default() };
+        apply_unique_fields(&mut d, &w);
+        assert_eq!((d.first_raise_time, d.reload_ammo_add), (0.9, 1), "no unique differs: the def's own");
     }
 
     #[test]

@@ -250,6 +250,72 @@ mod tests {
         assert!(t < 40);
     }
 
+    /// BO2 adds an empty reload's rounds at `iReloadEmptyAddTime`, or at the reload add time when
+    /// that is 0 (most rifles; `FUN_008dec90`).
+    #[test]
+    fn an_empty_reload_adds_at_its_own_add_time_else_the_reload_add_time() {
+        let add_frames = |empty_add: f32| {
+            let d = def(|d| {
+                d.reload_empty_time = 2.0;
+                d.reload_add_time = 0.8;
+                d.reload_empty_add_time = empty_add;
+            });
+            let mut a = arsenal_with(d);
+            a.weapons[0].ammo = 0;
+            let mut rng = Rng::new(2);
+            let mut out = Vec::new();
+            a.step(0, buttons::RELOAD, false, 0, 0.0, &mut rng, &mut out);
+            assert!(a.current().is_reloading());
+            let mut n = 0;
+            while a.current().ammo == 0 {
+                frames(&mut a, 0, 1, &mut rng);
+                n += 1;
+            }
+            assert!(a.current().is_reloading(), "the empty reload is still playing");
+            n as f32 * LOGIC_DT
+        };
+        assert!((add_frames(0.0) - 0.8).abs() <= 2.0 * LOGIC_DT, "0: the reload add time");
+        assert!((add_frames(1.5) - 1.5).abs() <= 2.0 * LOGIC_DT, "its own add time");
+    }
+
+    /// A swap puts an empty-clipped weapon away over its `iEmptyDropTime` and raises an empty one
+    /// over its `iEmptyRaiseTime`, even on its first raise (`FUN_008db500`, `FUN_008df320`).
+    #[test]
+    fn an_empty_gun_drops_and_raises_over_its_empty_times() {
+        let p = def(|d| {
+            d.drop_time = 0.4;
+            d.empty_drop_time = 0.9;
+        });
+        let s = def(|d| {
+            d.first_raise_time = 0.7;
+            d.raise_time = 0.5;
+            d.empty_raise_time = 1.3;
+        });
+        let mut a = arsenal_with(p);
+        a.loadout.perks.clear();
+        a.weapons[1] = WeaponState::new(s);
+        a.weapons[0].ammo = 0;
+        a.weapons[1].ammo = 0;
+        let mut rng = Rng::new(8);
+        let mut out = Vec::new();
+        a.step(0, buttons::SWAP_WEAPON, false, 0, 0.0, &mut rng, &mut out);
+        assert_eq!(a.active, 1);
+        assert_eq!((a.drop_total, a.raise_total, a.raise_kind), (0.9, 1.3, RaiseKind::Empty));
+        let mut n = 1;
+        while a.drop_left > 0.0 || a.raise_left > 0.0 {
+            a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+            n += 1;
+        }
+        let expect = ((0.9 + 1.3) / LOGIC_DT).ceil();
+        assert!((n as f32 - 2.0 - expect).abs() <= 1.0, "{n} frames vs {expect}");
+        // Loaded, the same pair swaps over the plain times (the first raise is spent).
+        let mut b = arsenal_with(p);
+        b.loadout.perks.clear();
+        b.weapons[1] = WeaponState::new(s);
+        b.step(0, buttons::SWAP_WEAPON, false, 0, 0.0, &mut rng, &mut out);
+        assert_eq!((b.drop_total, b.raise_total, b.raise_kind), (0.4, 0.7, RaiseKind::First));
+    }
+
     #[test]
     fn bursts_fire_n_per_press() {
         let d = def(|d| {

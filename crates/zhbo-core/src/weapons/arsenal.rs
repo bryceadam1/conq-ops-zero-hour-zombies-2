@@ -141,7 +141,9 @@ impl WeaponState {
             Reload::Shells { phase: ShellPhase::Start, t: 0.0, stop: false }
         } else {
             let empty = self.ammo == 0;
-            let (length, add_at) = if empty { (d.reload_empty_time, d.reload_empty_add_time) } else { (d.reload_time, d.reload_add_time) };
+            // An empty reload's rounds go in at `iReloadEmptyAddTime` when it is set, else at the
+            // (scaled) reload add time; no add time means at the end (`FUN_008dec90`).
+            let (length, add_at) = if empty { (d.reload_empty_time, d.reload_empty_add_at()) } else { (d.reload_time, d.reload_add_time) };
             let add_at = if add_at > 0.0 { add_at } else { length };
             Reload::Magazine { t: 0.0, length, add_at: add_at.min(length), added: false, empty }
         });
@@ -270,6 +272,8 @@ pub enum RaiseKind {
     First,
     Normal,
     Quick,
+    /// A swap to a weapon with an empty clip (BO2's empty raise).
+    Empty,
     /// Into or out of an alt mode (BO2's alt raise).
     Alt,
 }
@@ -622,19 +626,30 @@ impl Arsenal {
     }
 
     /// Raise and drop take the weapon's own times; `fastweaponswitch` runs them at its rate
-    /// ([`Timing::Switch`]) rather than switching to the quick animations (G3).
+    /// ([`Timing::Switch`]) rather than switching to the quick animations (G3). A weapon with an
+    /// empty clip drops over its `iEmptyDropTime` (`FUN_008db500`) and raises over its
+    /// `iEmptyRaiseTime`, which beats the first raise (`FUN_008df320`; the first raise is spent
+    /// either way).
     fn switch_to(&mut self, index: usize) {
         let from = self.current().def;
+        let from_empty = self.current().ammo == 0;
         self.current_mut().reload = None; // swapping cancels a reload, like BO2
         self.current_mut().burst_left = 0;
-        self.drop_left = from.drop_time;
+        self.drop_left = if from_empty { from.empty_drop_time } else { from.drop_time };
         self.drop_total = self.drop_left;
         self.previous = self.active;
         self.active = index;
         let to = self.current().def;
         let first = !self.current().raised_once;
+        let empty = self.current().ammo == 0;
         self.current_mut().raised_once = true;
-        (self.raise_left, self.raise_kind) = if first { (to.first_raise_time, RaiseKind::First) } else { (to.raise_time, RaiseKind::Normal) };
+        (self.raise_left, self.raise_kind) = if empty {
+            (to.empty_raise_time, RaiseKind::Empty)
+        } else if first {
+            (to.first_raise_time, RaiseKind::First)
+        } else {
+            (to.raise_time, RaiseKind::Normal)
+        };
         self.raise_total = self.raise_left;
         self.ads = 0.0;
     }

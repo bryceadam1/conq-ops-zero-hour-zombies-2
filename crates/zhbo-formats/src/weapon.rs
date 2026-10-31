@@ -182,6 +182,11 @@ pub struct AttachmentUnique {
     /// `adsDofStart`, `adsDofEnd` (each from the first single unique differing from the base
     /// unique, `FUN_008ebdb0`).
     pub ads_dof: (f32, f32),
+    /// `iFirstRaiseTime` in seconds (first single unique differing from the base unique wins,
+    /// `FUN_008ed100`).
+    pub first_raise_time: f32,
+    /// `iReloadAmmoAdd`: rounds per segmented-reload cycle (first differing wins, `FUN_008ed250`).
+    pub reload_ammo_add: i32,
 }
 
 /// A BO2 attachment (`WeaponAttachment`): how it changes any weapon it goes on. Scales multiply the
@@ -448,6 +453,10 @@ pub struct Weapon {
     pub raise_time: f32,
     pub first_raise_time: f32,
     pub drop_time: f32,
+    /// `iEmptyRaiseTime`, `iEmptyDropTime`: raising / putting away a weapon whose clip is empty
+    /// (`FUN_008df320`, `FUN_008db500`; raw, no attachment scale).
+    pub empty_raise_time: f32,
+    pub empty_drop_time: f32,
     pub quick_raise_time: f32,
     pub quick_drop_time: f32,
     pub sprint_in_time: f32,
@@ -682,6 +691,8 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 overlay_reticle: z.u32(u + WU::overlayReticle),
                 reload_start_add: int(z, u + WU::iReloadStartAdd),
                 ads_dof: (z.f32(u + WU::adsDofStart), z.f32(u + WU::adsDofEnd)),
+                first_raise_time: ms(z, u + WU::iFirstRaiseTime),
+                reload_ammo_add: int(z, u + WU::iReloadAmmoAdd),
             });
         }
     }
@@ -785,6 +796,8 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.raise_time = ms(z, d + WD::iRaiseTime);
     w.first_raise_time = ms(z, d + WD::iFirstRaiseTime);
     w.drop_time = ms(z, d + WD::iDropTime);
+    w.empty_raise_time = ms(z, d + WD::iEmptyRaiseTime);
+    w.empty_drop_time = ms(z, d + WD::iEmptyDropTime);
     w.quick_raise_time = ms(z, d + WD::quickRaiseTime);
     w.quick_drop_time = ms(z, d + WD::quickDropTime);
     w.sprint_in_time = ms(z, d + WD::sprintInTime);

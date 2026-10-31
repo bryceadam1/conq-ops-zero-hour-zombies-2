@@ -393,9 +393,9 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         ("alt_drop_time", alt_toggles.then_some(0.0)),
         ("quick_raise_time", Some(d.quick_raise_time)),
         ("quick_drop_time", Some(d.quick_drop_time)),
-        // A swap raises and drops in the same times loaded or empty (`switch_to`).
-        ("empty_raise_time", d.class.is_gun().then_some(d.raise_time)),
-        ("empty_drop_time", d.class.is_gun().then_some(d.drop_time)),
+        // A swap with an empty clip raises and drops over these (`switch_to`).
+        ("empty_raise_time", Some(d.empty_raise_time)),
+        ("empty_drop_time", Some(d.empty_drop_time)),
         ("sprint_in_time", Some(t.sprint_in_time)),
         ("sprint_out_time", Some(d.sprint_out_time)),
         ("ads_in_time", Some(d.ads_in_time)),

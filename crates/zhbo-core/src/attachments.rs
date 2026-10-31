@@ -227,8 +227,8 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
         }
         d.reload_time *= scale(a.reload_scale);
         d.reload_empty_time *= scale(a.reload_empty_scale);
+        // `iReloadEmptyAddTime` has no accessor: BO2 reads the def's raw value (G14 §4).
         d.reload_add_time *= scale(a.reload_add_scale);
-        d.reload_empty_add_time *= scale(a.reload_add_scale);
         // The clip scales are multiplied as one product and rounded once after the loop (G14 §4).
         if let Some(f) = a.fire {
             d.fire = f;
@@ -273,7 +273,6 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
     d.reload_time = trunc_ms(d.reload_time);
     d.reload_empty_time = trunc_ms(d.reload_empty_time);
     d.reload_add_time = trunc_ms(d.reload_add_time);
-    d.reload_empty_add_time = trunc_ms(d.reload_empty_add_time);
     d.ads_in_time = trunc_ms(d.ads_in_time);
     d.ads_out_time = trunc_ms(d.ads_out_time);
     if !clip_fixed && old_clip > 1 {
