@@ -228,8 +228,9 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let common = load_zone(bo2_dir, "common_mp")?;
     let weapon = xmodel::find(&common, WEAPON).map_err(|e| e.to_string())?;
     let mut paks = Paks::open(bo2_dir)?;
-    if let Ok(z) = load_zone(bo2_dir, crate::textures::RETICLE_ZONE) {
-        paks.learn(&z);
+    let reticle_zone = load_zone(bo2_dir, crate::textures::RETICLE_ZONE).ok();
+    if let Some(z) = &reticle_zone {
+        paks.learn(z);
     }
     let patch = load_zone(bo2_dir, crate::fx::ZONE)?;
     let patch_ui = load_zone(bo2_dir, "patch_ui_mp")?;
@@ -281,6 +282,11 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let base_count = converted_base.len();
     let (vm_summary, mut clips) = viewmodels::weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &atts, &mut table.weapons, &converted, base_count)?;
     summary.push(vm_summary);
+    // The CaC reticle options as lens materials, one blob for every optic.
+    let reticle_zones: Vec<&Zone> = reticle_zone.iter().chain(std::iter::once(&common)).collect();
+    let reticles = crate::reticles::reticles(&patch, &reticle_zones, &paks, &mut out);
+    summary.push(format!("{} reticle option sets", reticles.sets.len()));
+    out.insert(zhbo_native::reticles::reticles_path(), reticles.to_bytes());
 
     // Track R7: the third-person body's clips. BO2's MP bodies share the player skeleton, so one
     // set serves every faction; each faction's body manifest names them (`zhbo_native::body_path`).

@@ -98,7 +98,7 @@ fn each_part_wears_its_own_camo_asset() {
     let mut files = Files::default();
     let mut loaded = None;
     for _ in 0..8 {
-        if let Some(l) = load(&mut files, 7, b'U', None, Some(("camo_gun", "camo_atacs"))).unwrap() {
+        if let Some(l) = load(&mut files, 7, b'U', None, Some(("camo_gun", "camo_atacs")), 0).unwrap() {
             loaded = Some(l);
             break;
         }
@@ -350,7 +350,7 @@ fn the_ads_slot_follows_the_alt_mode_table() {
         ((crate::weapons::ALT_CLIPS + crate::viewmodel::slot::ADS_UP) as u16, alt_up.clone()),
         ((crate::weapons::ALT_CLIPS + crate::viewmodel::slot::ADS_DOWN) as u16, alt_down.clone()),
     ];
-    let loaded = |clips: Vec<(u16, String)>| Loaded { key: (7, b'U', 0), camo: None, manifest: Viewmodel { id: "test_mp".into(), faction: b'U', parts: vec![], markers: vec![], hide: vec![], clips }, skeleton: Skeleton::default(), mesh: Mesh::default(), mesh_aimed: None, aim: None, anims: HashMap::new() };
+    let loaded = |clips: Vec<(u16, String)>| Loaded { key: (7, b'U', 0, 0), camo: None, manifest: Viewmodel { id: "test_mp".into(), faction: b'U', parts: vec![], markers: vec![], hide: vec![], clips }, skeleton: Skeleton::default(), mesh: Mesh::default(), mesh_aimed: None, aim: None, anims: HashMap::new() };
     let l = loaded(clips);
     assert_eq!(l.ads_clip(1, false), Some(up.as_str()));
     assert_eq!(l.ads_clip(1, true), Some(down.as_str()));
@@ -1099,4 +1099,51 @@ fn diag_real_viewmodel() {
     }
     std::fs::write(std::env::var("ZHBO_DIAG_OUT").unwrap(), ppm).unwrap();
     zhgfx_shutdown();
+}
+
+/// The class's reticle option picks its `weaponoptions.csv` row: `reticle_N` is row `N + 1` (the
+/// CaC grid's `_reticle_0{N+1}` art); no choice is the optic's stock row 0.
+#[test]
+fn the_reticle_option_is_its_table_row() {
+    assert_eq!(super::reticle_row(""), 0);
+    assert_eq!(super::reticle_row("reticle_0"), 1);
+    assert_eq!(super::reticle_row("reticle_3"), 4);
+    assert_eq!(super::reticle_row("reticle_10"), 11);
+    assert_eq!(super::reticle_row("nonsense"), 0);
+}
+
+/// Only lens surfaces whose stock material starts a set change, and only to a row that is a lens.
+#[test]
+fn the_reticle_choice_swaps_the_lens_material_only() {
+    use zhbo_native::model::{Material, Reticle};
+    use zhbo_native::reticles::Reticles;
+    let lens = |name: &str, scale: f32| Material { name: name.into(), color: Some(format!("{name}.tga")), reticle: Some(Reticle { scale, ..Default::default() }), ..Default::default() };
+    let set = Reticles { sets: vec![vec![lens("mc/reflex", 14.6), lens("mc/reflex_01", 20.0)]] };
+    let surface = |material: &str, reticle: bool| SurfaceSpec {
+        first_index: 0,
+        index_count: 3,
+        blend: zhbo_native::model::Blend::Premultiplied,
+        emissive: false,
+        color: Some(format!("{material}.tga")),
+        maps: None,
+        specular: None,
+        sort_key: 62,
+        cull: zhbo_native::model::Cull::None,
+        material: material.into(),
+        camo_layer: zhbo_native::model::CamoLayer::None,
+        camo: None,
+        camo_uv: [0.0, 0.0, 1.0, 1.0],
+        part: 0,
+        reticle: reticle.then(|| Reticle { scale: 14.6, ..Default::default() }),
+        emblem: false,
+    };
+    let mut mesh = Mesh { surfaces: vec![surface("mc/reflex", true), surface("mc/gun", false), surface("mc/holo", true)], ..Default::default() };
+    super::apply_reticle(&mut mesh, &set, 1);
+    assert_eq!(mesh.surfaces[0].color.as_deref(), Some("mc/reflex_01.tga"));
+    assert_eq!(mesh.surfaces[0].reticle.as_ref().map(|r| r.scale), Some(20.0));
+    assert_eq!(mesh.surfaces[1].color.as_deref(), Some("mc/gun.tga"), "not a lens");
+    assert_eq!(mesh.surfaces[2].color.as_deref(), Some("mc/holo.tga"), "no set for this optic");
+    let mut past = Mesh { surfaces: vec![surface("mc/reflex", true)], ..Default::default() };
+    super::apply_reticle(&mut past, &set, 5);
+    assert_eq!(past.surfaces[0].color.as_deref(), Some("mc/reflex.tga"), "a row past the set keeps the stock reticle");
 }

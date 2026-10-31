@@ -23,6 +23,7 @@ pub mod io;
 pub mod math;
 pub mod model;
 pub mod pose;
+pub mod reticles;
 pub mod tga;
 pub mod thirdperson;
 pub mod viewmodel;

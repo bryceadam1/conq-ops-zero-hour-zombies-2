@@ -746,6 +746,12 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
                 .and_then(|d| crate::nativevm::choice_for(d, &p.camo))
         });
         crate::nativevm::set_local_camo(choice);
+        // And the class's reticle for the primary's optic lens.
+        let reticle = s.sim.player(inp.local_player).and_then(|p| {
+            let def = crate::weapons::catalog().get(&p.arsenal.loadout.primary)?;
+            (def.viewmodel >= 0).then(|| (def.viewmodel, crate::nativevm::reticle_row(&p.reticle)))
+        });
+        crate::nativevm::set_local_reticle(reticle);
         out
     })
     .unwrap_or_default();

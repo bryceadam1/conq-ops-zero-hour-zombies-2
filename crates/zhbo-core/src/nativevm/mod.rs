@@ -347,7 +347,8 @@ pub fn build_mesh_visible<'a>(
 
 /// A composed viewmodel, ready to pose.
 pub struct Loaded {
-    pub key: (i32, u8, u64),
+    /// Viewmodel, faction, camo choice, reticle row.
+    pub key: (i32, u8, u64, u32),
     /// The camo option applied to this mesh, or `None` for the stock finish.
     pub camo: Option<String>,
     pub manifest: Viewmodel,
@@ -359,6 +360,46 @@ pub struct Loaded {
     pub mesh_aimed: Option<Mesh>,
     pub aim: Option<usize>,
     pub anims: HashMap<String, Anim>,
+}
+
+/// The local player's reticle choice from the last client frame: the primary's viewmodel and the
+/// `weaponoptions.csv` row its lens takes (0: the optic's stock reticle). Set by
+/// `ffi::zhbo_client_frame`; read by the viewmodel draw.
+static LOCAL_RETICLE: Mutex<Option<(i32, u32)>> = Mutex::new(None);
+
+/// Record (or clear) the local player's reticle choice: `(viewmodel, row)`.
+pub fn set_local_reticle(choice: Option<(i32, u32)>) {
+    *LOCAL_RETICLE.lock().unwrap_or_else(|e| e.into_inner()) = choice;
+}
+
+/// The reticle row for viewmodel `vm` (0, the stock reticle, when the choice is another gun's).
+pub(crate) fn local_reticle(vm: i32) -> u32 {
+    LOCAL_RETICLE.lock().unwrap_or_else(|e| e.into_inner()).filter(|c| c.0 == vm).map_or(0, |c| c.1)
+}
+
+/// The `weaponoptions.csv` reticle row for a class's reticle option: `reticle_N` is row `N + 1`
+/// (the CaC grid shows `reticle_0` as the optic's `_reticle_01` art, `cacreticles.lua:1150-1240`;
+/// row `n` of the table is the `_reticle_0n` material); no choice is row 0, the optic's stock.
+pub fn reticle_row(id: &str) -> u32 {
+    id.strip_prefix("reticle_").and_then(|n| n.parse::<u32>().ok()).map_or(0, |n| n + 1)
+}
+
+/// Swap each lens surface's material for reticle row `row` of its optic's set (the converter's
+/// `weaponoptions.csv` table). A surface whose stock material has no set, or a row past the set,
+/// keeps its stock reticle.
+pub(crate) fn apply_reticle(mesh: &mut Mesh, set: &zhbo_native::reticles::Reticles, row: u32) {
+    for s in mesh.surfaces.iter_mut().filter(|s| s.reticle.is_some()) {
+        let Some(m) = set.option(&s.material, row as usize) else { continue };
+        if m.reticle.is_none() {
+            continue;
+        }
+        s.color = m.color.clone();
+        s.reticle = m.reticle.clone();
+        s.blend = m.blend;
+        s.emissive = m.emissive;
+        s.sort_key = m.sort_key;
+        s.cull = m.cull;
+    }
 }
 
 /// The local player's camo choice from the last client frame: the primary's viewmodel, its camo
@@ -421,7 +462,7 @@ fn overlay_art_present(files: &mut Files, id: &str, override_material: Option<&s
 
 /// Load step for `key`: `Ok(None)` while files are still coming, `Err` when the viewmodel can't be
 /// built (logged once by the caller; the W3D path keeps drawing).
-pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: Option<&str>, camo_choice: Option<(&str, &str)>) -> Result<Option<Loaded>, String> {
+pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: Option<&str>, camo_choice: Option<(&str, &str)>, reticle_row: u32) -> Result<Option<Loaded>, String> {
     let path = zhbo_native::viewmodel_path(vm, faction as char);
     if files.is_missing(&path) {
         return Err(format!("{path} is not in the archive (reconvert the BO2 art)"));
@@ -486,6 +527,23 @@ pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: 
             applied = Some(option.to_string());
         }
     }
+    // The class's reticle: the lens surfaces take the chosen `weaponoptions.csv` row. An archive
+    // without the table draws the stock reticle.
+    if reticle_row != 0 && mesh.surfaces.iter().any(|s| s.reticle.is_some()) {
+        let path = zhbo_native::reticles::reticles_path();
+        if !files.is_missing(&path) {
+            match files.get(&path) {
+                Some(bytes) => {
+                    let set = zhbo_native::reticles::Reticles::from_bytes(&bytes).map_err(|e| format!("{path}: {e}"))?;
+                    apply_reticle(&mut mesh, &set, reticle_row);
+                    if let Some(m) = &mut mesh_aimed {
+                        apply_reticle(m, &set, reticle_row);
+                    }
+                }
+                None => waiting = true,
+            }
+        }
+    }
     if waiting {
         return Ok(None);
     }
@@ -496,7 +554,7 @@ pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: 
     }
     files.forget(&path);
     let aim = skeleton.bone(AIM_TAG);
-    Ok(Some(Loaded { key: (vm, faction, camo_key), camo: applied, manifest, skeleton, mesh, mesh_aimed, aim, anims: HashMap::new() }))
+    Ok(Some(Loaded { key: (vm, faction, camo_key, reticle_row), camo: applied, manifest, skeleton, mesh, mesh_aimed, aim, anims: HashMap::new() }))
 }
 
 /// The clip a manifest shows for `clip` ([`Loaded::clip_path`]'s rule, also read by the conformance

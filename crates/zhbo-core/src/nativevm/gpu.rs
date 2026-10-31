@@ -10,7 +10,7 @@ use super::{native_blend, native_cull, native_reticle, set_lens_reticle_drawn, M
 /// The handles of the viewmodel on the GPU.
 #[derive(Default)]
 pub(crate) struct Gpu {
-    key: Option<(i32, u8, u64)>,
+    key: Option<(i32, u8, u64, u32)>,
     mesh: Option<u16>,
     /// The same mesh without the base optic, submitted at full ADS. `None` when the weapon has no
     /// optic part.

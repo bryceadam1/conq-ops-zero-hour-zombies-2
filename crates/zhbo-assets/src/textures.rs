@@ -160,6 +160,12 @@ fn native_only(m: &xmodel::Material, name: &str, looks: &mut Looks) {
     looks.native_only.insert(name.to_string());
 }
 
+/// A lens reticle material on its own (a CaC reticle option's), converted as [`textures`] converts
+/// one on a model: the reticle image's file name, its constants in `looks`.
+pub(crate) fn lens_reticle(m: &xmodel::Material, paks: &Paks, files: &mut BTreeMap<String, Vec<u8>>, looks: &mut Looks) -> Option<String> {
+    m.techset.contains(RETICLE_DYNAMIC).then(|| reticle(m, paks, files, looks)).flatten()
+}
+
 /// The lens reticle: its image (`Color_Map`, raw: the channels are shape/glow/background, not
 /// colour), its noise (`Detail_Map`) and the shader's constants (see `zhbo_native::model::Reticle`).
 fn reticle(m: &xmodel::Material, paks: &Paks, files: &mut BTreeMap<String, Vec<u8>>, looks: &mut Looks) -> Option<String> {
