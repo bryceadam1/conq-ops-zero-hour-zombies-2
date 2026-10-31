@@ -426,6 +426,15 @@ mod tests {
             .filter(|id| id.as_str() != "camo_none" && s.unresolved.iter().any(|u| u.ends_with(&format!("{id} has no art"))))
             .collect();
         assert!(no_art.is_empty(), "base options without art: {no_art:?}");
+        // The held knife wears the class's knife camo in the match: its row names `camo_knife`, that
+        // blob converts, and the base options it offers resolve to a recipe.
+        let knife_row = table.weapons.iter().find(|w| w.id == "knife_held_mp").expect("the knife row");
+        assert_eq!(knife_row.camo_material, "camo_knife");
+        let knife = zhbo_native::camo::Camo::from_bytes(&out[&zhbo_native::camo_path("camo_knife")]).expect("camo_knife converts");
+        let knife_opt = |id: &str| knife.options.iter().find(|o| o.id == id);
+        for id in ["camo_atacs", "camo_gold", "camo_diamond"] {
+            assert!(knife_opt(id).is_some_and(|o| o.pattern.is_some() || o.style.is_some()), "camo_knife has no recipe for {id}");
+        }
         let an94 = zhbo_native::camo::Camo::from_bytes(&out[&zhbo_native::camo_path("camo_an94")]).unwrap();
         assert_eq!((an94.sets.len(), an94.styles.len()), (40, 15));
         let opt = |id: &str| an94.options.iter().find(|o| o.id == id).unwrap();

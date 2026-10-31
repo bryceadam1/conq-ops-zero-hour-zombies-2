@@ -4604,3 +4604,27 @@ green; clippy has the same 39 warnings; the real-install suite is green. The hea
 from a fresh archive (379 images, one more than before: the knife picture), and
 `cac-personalize-knife` shows `PERSONALIZE COMBAT KNIFE` with CAMO/DLC/DLC2, the 17 base rows and
 the knife picture.
+
+## The in-match knife wears the class's knife camo (2026-10-30, branch `v1/knife-camo`)
+
+- **BO2's rule.** `_class.gsc:585-682` gives `knife_mp` (and `knife_held_mp` when the class has
+  fewer than two guns) `calcweaponoptions(class_num, 2)` — the class's `knifecamo`
+  (`checkclasses.lua:907`) — the sidearm `calcweaponoptions(class_num, 1)` (`secondarycamo`,
+  `:891`) and the primary `(class_num, 0)` (`primarycamo`, `:875`). The engine's camo pass
+  (`FUN_00529600`, G16) paints each viewmodel from its own def's `weaponCamo`; for the knife
+  that is `camo_knife` (the knife row's `CamoMaterial`).
+- **The transport.** `nativevm`'s core-global camo is now one `LocalCamo` per held weapon
+  (`set_local_camos`); `nativevm::class_camos` pairs each weapon id with the camo id it wears and
+  resolves it through that weapon's own def (`choice_for`), and the viewmodel draw takes the
+  choice whose `vm` it is drawing. `zhbo_client_frame` passes the primary with `PlayerSim.camo` and
+  the loadout's melee weapon with the new `PlayerSim.knife_camo` (from `CustomClass.knife`). No C
+  ABI change; it composes with `v1/attach-camo` (whose `load` paints per part from the manifest and
+  only uses the choice's option and key).
+- **Not done (belongs elsewhere).** The sidearm still draws stock: the mod's class has no secondary
+  camo field or personalize page (an editor item); `class_camos` takes it as a third slot when it
+  exists. An alt-mode weapon (the GL alt's own viewmodel) inherits nothing — whether BO2 gives the
+  alt the parent's options is unverified. Third person still draws no camo for any weapon
+  (`nativebody` pins `camo` to `INVALID`).
+- Tests: `nativevm::tests::each_held_weapon_draws_its_own_class_camo`; the sim test now checks the
+  knife camo lands on the player; the real-install `the_camo_assets_convert_with_their_art` checks
+  the knife row names `camo_knife`, the blob converts, and its atacs/gold/diamond options resolve.

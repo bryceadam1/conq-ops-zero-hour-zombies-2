@@ -153,14 +153,14 @@ fn run() -> Result<(), String> {
                     writeln!(manifest, "{}\t{}\t{}\t-\tfailed: no camo material", job.weapon.id, job.attachment.as_deref().unwrap_or("-"), label).map_err(|e| e.to_string())?;
                     continue;
                 }
-                zhbo_core::nativevm::set_local_camo(Some(zhbo_core::nativevm::camo::LocalCamo {
+                zhbo_core::nativevm::set_local_camos(vec![zhbo_core::nativevm::camo::LocalCamo {
                     vm: job.weapon.viewmodel,
                     asset: job.weapon.camo_material.clone(),
                     option: id.to_string(),
-                }));
+                }]);
             }
             let result = render_job(job, &archive, &mut source, &args.out, args.sweep, camo);
-            zhbo_core::nativevm::set_local_camo(None);
+            zhbo_core::nativevm::set_local_camos(Vec::new());
             match result {
                 Ok(note) => {
                     counts.rendered += 1;

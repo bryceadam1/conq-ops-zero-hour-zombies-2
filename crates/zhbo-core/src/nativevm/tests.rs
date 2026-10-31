@@ -53,6 +53,34 @@ fn the_mesh_carries_the_material_name_and_camo_layer() {
     assert_eq!(mesh.surfaces[0].camo, None);
 }
 
+/// BO2 gives each held weapon its own class camo (`_class.gsc`: the primary `calcweaponoptions(class,
+/// 0)`, the knife `(class, 2)`; `FUN_00529600` paints each from its def's own `weaponCamo`). The
+/// transport carries one choice per viewmodel, and each draw finds its own: the knife's viewmodel
+/// wears the knife camo through the knife's asset, the primary's the class camo through its own.
+#[test]
+fn each_held_weapon_draws_its_own_class_camo() {
+    use crate::weapons::WeaponDef;
+    let def = |id: &str, vm: i32, asset: &str| WeaponDef { id: id.into(), viewmodel: vm, camo_material: asset.into(), ..WeaponDef::default() };
+    let defs = [
+        def("an94_mp", 3, "camo_an94"),
+        def("fnp45_mp", 5, "camo_fnp45"),
+        def("knife_held_mp", 9, "camo_knife"),
+        def("frag_grenade_mp", 11, ""),
+    ];
+    let lookup = |id: &str| defs.iter().find(|d| d.id == id);
+    let choices = class_camos_in(lookup, &[("an94_mp", "camo_gold"), ("fnp45_mp", "camo_atacs"), ("knife_held_mp", "camo_diamond"), ("frag_grenade_mp", "camo_gold")]);
+    let at = |vm: i32| camo_for_vm(&choices, vm).map(|c| (c.asset, c.option));
+    assert_eq!(at(3), Some(("camo_an94".into(), "camo_gold".into())), "the primary wears the class camo");
+    assert_eq!(at(5), Some(("camo_fnp45".into(), "camo_atacs".into())), "the secondary wears its own");
+    assert_eq!(at(9), Some(("camo_knife".into(), "camo_diamond".into())), "the knife wears the knife camo");
+    assert_eq!(at(11), None, "a weapon without a camo asset draws stock");
+    // A stock choice and an unknown id contribute nothing; the knife alone still gets its own.
+    let only_knife = class_camos_in(lookup, &[("an94_mp", "camo_none"), ("nope_mp", "camo_gold"), ("knife_held_mp", "camo_gold")]);
+    assert_eq!(only_knife.len(), 1);
+    assert_eq!(camo_for_vm(&only_knife, 9).map(|c| c.option).as_deref(), Some("camo_gold"));
+    assert_eq!(camo_for_vm(&only_knife, 3), None, "the primary's stock finish stays stock");
+}
+
 #[test]
 fn a_camo_option_changes_only_the_surfaces_its_recipe_names() {
     // Three surfaces: camo1 is a pattern-layer surface, camo2 a solid-layer surface, and a bullet

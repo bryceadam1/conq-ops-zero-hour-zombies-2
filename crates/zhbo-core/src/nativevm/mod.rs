@@ -314,18 +314,45 @@ pub struct Loaded {
     pub anims: HashMap<String, Anim>,
 }
 
-/// The local player's camo choice from the last client frame: the primary's viewmodel, its camo
-/// asset and the chosen option id. Set by `ffi::zhbo_client_frame`; read by the viewmodel draw.
-static LOCAL_CAMO: Mutex<Option<LocalCamo>> = Mutex::new(None);
+/// The local player's camo choices from the last client frame: one per held weapon's viewmodel
+/// (the primary's, the secondary's, the knife's), each with its own asset and option. Set by
+/// `ffi::zhbo_client_frame`; read by the viewmodel draw for the viewmodel it is drawing.
+static LOCAL_CAMO: Mutex<Vec<LocalCamo>> = Mutex::new(Vec::new());
 
-/// Record (or clear) the local player's camo choice. Called once per client frame.
-pub fn set_local_camo(choice: Option<LocalCamo>) {
-    *LOCAL_CAMO.lock().unwrap_or_else(|e| e.into_inner()) = choice;
+/// Record the local player's camo choices (empty clears them). Called once per client frame.
+pub fn set_local_camos(choices: Vec<LocalCamo>) {
+    *LOCAL_CAMO.lock().unwrap_or_else(|e| e.into_inner()) = choices;
 }
 
-/// The choice when it belongs to viewmodel `vm`.
+/// The choice that belongs to viewmodel `vm`, if any held weapon draws through it.
 pub(crate) fn local_camo(vm: i32) -> Option<LocalCamo> {
-    LOCAL_CAMO.lock().unwrap_or_else(|e| e.into_inner()).clone().filter(|c| c.vm == vm)
+    camo_for_vm(&LOCAL_CAMO.lock().unwrap_or_else(|e| e.into_inner()), vm)
+}
+
+/// The choice among `choices` that belongs to viewmodel `vm`.
+pub(crate) fn camo_for_vm(choices: &[LocalCamo], vm: i32) -> Option<LocalCamo> {
+    choices.iter().find(|c| c.vm == vm).cloned()
+}
+
+/// Each held weapon's own camo choice: `slots` pairs a weapon id with the class camo id it wears
+/// (BO2's `_class.gsc` gives the primary `calcweaponoptions(class, 0)`, the sidearm `(class, 1)`
+/// and the knife `(class, 2)`; the engine paints each from its own def's `weaponCamo`,
+/// `FUN_00529600`). A weapon without a viewmodel or camo asset, an unknown id and a stock choice
+/// contribute nothing; a viewmodel already claimed by an earlier slot keeps the earlier choice.
+pub fn class_camos(slots: &[(&str, &str)]) -> Vec<LocalCamo> {
+    class_camos_in(|id| crate::weapons::catalog().get(id), slots)
+}
+
+/// [`class_camos`] over any definition lookup (the tests' own defs).
+pub(crate) fn class_camos_in<'a>(def: impl Fn(&str) -> Option<&'a crate::weapons::WeaponDef>, slots: &[(&str, &str)]) -> Vec<LocalCamo> {
+    let mut out: Vec<LocalCamo> = Vec::new();
+    for (weapon, camo) in slots {
+        let Some(choice) = def(weapon).and_then(|d| choice_for(d, camo)) else { continue };
+        if !out.iter().any(|c| c.vm == choice.vm) {
+            out.push(choice);
+        }
+    }
+    out
 }
 
 /// The camo choice for a weapon definition, or `None` for the stock finish. `none`, `camo_none`

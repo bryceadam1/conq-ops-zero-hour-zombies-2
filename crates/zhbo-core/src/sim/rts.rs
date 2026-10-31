@@ -105,6 +105,7 @@ impl Sim {
                 reticle: String::new(),
                 reticle_color: String::new(),
                 camo: String::new(),
+                knife_camo: String::new(),
                 mode: Mode::Rts,
                 body: Body::new(info.pos, &self.tuning),
                 yaw: info.yaw,
