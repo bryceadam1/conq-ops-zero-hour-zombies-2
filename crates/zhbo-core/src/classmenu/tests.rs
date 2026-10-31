@@ -50,6 +50,47 @@ use super::*;
         assert_eq!(e.personalize, Some(PersonalizeKind::Reticle));
     }
 
+    /// `customclass.lua`: `PrimaryWeapon_Button_Over` / `SecondaryWeapon_Button_Over` add the `C`
+    /// prompt only when the slot holds a weapon, each with its own `weaponSlot`.
+    #[test]
+    fn c_on_each_weapon_box_opens_that_weapons_camo_page() {
+        let mut e = Editor::new(Draft::default());
+        e.slot = Slot::Secondary;
+        assert_eq!(e.camo_page(), Some(PersonalizeKind::SecondaryCamo));
+        assert_eq!(e.step(Edges { camo: true, ..Default::default() }), Outcome::Continue);
+        assert_eq!(e.personalize, Some(PersonalizeKind::SecondaryCamo));
+        assert_eq!(e.slot, Slot::Secondary, "the focus stays");
+        // An empty slot has no prompt and `C` does nothing.
+        e.draft.secondary.clear();
+        assert_eq!(e.camo_page(), None);
+        e.step(Edges { camo: true, ..Default::default() });
+        assert_eq!(e.personalize, None);
+        e.slot = Slot::Primary;
+        e.draft.primary.clear();
+        assert_eq!(e.camo_page(), None);
+        // Nor anywhere but a weapon box.
+        let mut e = Editor::new(Draft::default());
+        e.slot = Slot::Lethal;
+        assert_eq!(e.camo_page(), None);
+        assert_eq!(PersonalizeKind::SecondaryCamo.columns(), 6, "the same `CACCamo` grid");
+    }
+
+    #[test]
+    fn the_secondary_camo_page_sets_secondarycamo_only() {
+        let mut d = Draft { camo: "camo_gold".into(), secondary_camo: "camo_atacs".into(), ..Draft::default() };
+        let choices: Vec<String> = ["camo_none", "camo_atacs", "camo_gold"].iter().map(|s| (*s).to_string()).collect();
+        let mut p = Personalize::new(PersonalizeKind::SecondaryCamo, choices, &d);
+        assert_eq!((p.equipped.as_str(), p.highlight), ("camo_atacs", 1), "opens on the class's secondarycamo");
+        p.highlight = 2;
+        assert_eq!(p.step(Edges { confirm: true, ..Default::default() }, &mut d), Outcome::Save);
+        assert_eq!((d.camo.as_str(), d.secondary_camo.as_str(), d.knife.as_str()), ("camo_gold", "camo_gold", ""));
+        // The draft carries it into the class and back.
+        let c = d.to_custom();
+        assert_eq!(c.secondary_camo, "camo_gold");
+        assert_eq!(Draft::from_custom(&c).secondary_camo, "camo_gold");
+        assert!(d.to_spec().contains("secondary_camo=camo_gold"), "{}", d.to_spec());
+    }
+
     #[test]
     fn personalize_grids_use_bo2s_column_counts() {
         // `caccamomenu.lua:9`: `CamoGridColumns = 6`; `cacreticles.lua:9`: `GridColumns = 5`.

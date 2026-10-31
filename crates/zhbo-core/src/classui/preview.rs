@@ -106,9 +106,9 @@ pub fn draw(prims: &mut Vec<Prim>, f: &Frame, p: Rect, draft: Option<&Draft>) {
     };
     // Weapons: the `_big` picture right of centre, below the slot label, and the name in
     // Condensed at the block's bottom.
-    for (r, id, pic_h, right_pad, pic_top) in [
-        (pr, d.primary.as_str(), c.primary_h * 0.9, 50.0, pr.y + bo2::TEXT_EXTRA_SMALL),
-        (sr, d.secondary.as_str(), SMALL_H * 0.8, 80.0, sr.y + bo2::TEXT_EXTRA_SMALL),
+    for (r, id, camo, pic_h, right_pad, pic_top) in [
+        (pr, d.primary.as_str(), d.camo.as_str(), c.primary_h * 0.9, 50.0, pr.y + bo2::TEXT_EXTRA_SMALL),
+        (sr, d.secondary.as_str(), d.secondary_camo.as_str(), SMALL_H * 0.8, 80.0, sr.y + bo2::TEXT_EXTRA_SMALL),
     ] {
         if id.is_empty() {
             continue;
@@ -118,12 +118,11 @@ pub fn draw(prims: &mut Vec<Prim>, f: &Frame, p: Rect, draft: Option<&Draft>) {
         let pic = Rect { x: r.right() - right_pad - pic_w, y: pic_top, w: pic_w, h: pic_h };
         bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&def.id)), pic, argb(OFF_WHITE, 1.0), Vec::new());
         prims.extend(name(r, &def.display_name, Family::Condensed, bo2::TEXT_CONDENSED, r.bottom() - bo2::TEXT_CONDENSED));
-        // `primaryCamoImageContainer`: the class camo's swatch, 31 square, 45 in from the block's
-        // right and 5 up (`UpdateClass`'s `primarycamo`; the mod's class holds the primary's only).
-        if r == pr {
-            let swatch = Rect { x: r.right() - 45.0 - 31.0, y: r.bottom() - 5.0 - 31.0, w: 31.0, h: 31.0 };
-            super::personalize::camo_swatch(prims, f, swatch, id, &d.camo);
-        }
+        // `primaryCamoImageContainer` / `secondaryCamoImageContainer`: the slot's camo swatch, 31
+        // square, 45 in from the block's right and 5 up (`UpdateClass`'s `primarycamo` and
+        // `secondarycamo`).
+        let swatch = Rect { x: r.right() - 45.0 - 31.0, y: r.bottom() - 5.0 - 31.0, w: 31.0, h: 31.0 };
+        super::personalize::camo_swatch(prims, f, swatch, id, camo);
     }
     // Attachments: up to three 61-unit icons from the row's right, 4 apart, the names stacked in
     // ExtraSmall at the left (`primaryWeaponAttachmentsImage1..3`).

@@ -99,6 +99,7 @@ fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> 
         ("cac-personalize", personalize_prims()),
         ("cac-personalize-dlc", personalize_tab_prims(1)),
         ("cac-personalize-knife", knife_personalize_prims()),
+        ("cac-personalize-secondary", secondary_personalize_prims()),
         ("cac-reticles", reticle_personalize_prims()),
         ("cac-reticle-color", reticle_color_personalize_prims()),
         ("cac-dialog-set", set_dialog_prims()),
@@ -189,6 +190,18 @@ fn knife_personalize_prims() -> Vec<Prim> {
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
+/// The SECONDARY box's `C Personalize Weapon` page: the camo screen over the sidearm's own list
+/// (`CACCamo` with `weaponSlot = "secondary"`), its `secondarycamo` equipped.
+fn secondary_personalize_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.picking = false;
+    editor.slot = Slot::Secondary;
+    let kind = editor.camo_page().expect("the SECONDARY box holds a gun");
+    let tabs = classui::personalize_tabs_for(kind, classui::personalize_weapon(kind, &editor.draft));
+    let p = Personalize::with_tabs(kind, tabs, &editor.draft);
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
 /// BO2's reticle grid on the primary's optic (`cacreticles.lua:9-24`); each cell is the optic's
 /// stock reticle art (`mtl_t6_attach_optic_reflex_reticle_XX`).
 fn reticle_personalize_prims() -> Vec<Prim> {
@@ -227,6 +240,7 @@ fn empty_editor_prims() -> Vec<Prim> {
         reticle: String::new(),
         reticle_color: String::new(),
         knife: String::new(),
+        secondary_camo: String::new(),
     };
     let editor = Editor::new(draft);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
@@ -307,6 +321,8 @@ fn editor_state() -> Editor {
         reticle: String::new(),
         reticle_color: String::new(),
         knife: String::new(),
+        // Gold on the sidearm: the SECONDARY button's swatch and its own camo page show it.
+        secondary_camo: "camo_gold".into(),
     };
     let mut editor = Editor::new(draft);
     let mut prev = MenuPrev::default();
@@ -354,6 +370,7 @@ fn seed_profile() {
             reticle: String::new(),
             reticle_color: String::new(),
             knife: String::new(),
+            secondary_camo: String::new(),
         });
     }
 }

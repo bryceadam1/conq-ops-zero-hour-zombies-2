@@ -624,6 +624,7 @@
             reticle: String::new(),
             reticle_color: String::new(),
             knife: String::new(),
+            secondary_camo: String::new(),
         };
         // Seed it the way the shell writes it: through the profile file's text.
         crate::profile::load(&format!("{}\n", custom.to_wire()));

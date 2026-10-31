@@ -79,6 +79,12 @@ fn each_held_weapon_draws_its_own_class_camo() {
     assert_eq!(only_knife.len(), 1);
     assert_eq!(camo_for_vm(&only_knife, 9).map(|c| c.option).as_deref(), Some("camo_gold"));
     assert_eq!(camo_for_vm(&only_knife, 3), None, "the primary's stock finish stays stock");
+    // The class's three slots in `PlayerSim::held_camos` order: a stock primary leaves the sidearm
+    // its own `secondarycamo`, resolved through the sidearm's asset.
+    let held = class_camos_in(lookup, &[("an94_mp", ""), ("fnp45_mp", "camo_gold"), ("knife_held_mp", "")]);
+    assert_eq!(held.len(), 1);
+    assert_eq!(camo_for_vm(&held, 5).map(|c| (c.asset, c.option)), Some(("camo_fnp45".into(), "camo_gold".into())), "the sidearm wears secondarycamo");
+    assert_eq!(camo_for_vm(&held, 3), None);
 }
 
 #[test]

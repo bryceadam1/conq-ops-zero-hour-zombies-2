@@ -779,6 +779,32 @@ mod tests {
     }
 
     #[test]
+    fn c_on_the_secondary_opens_its_own_camo_page_and_saves_secondarycamo() {
+        let _g = lock();
+        crate::profile::reset();
+        crate::profile::save(CustomClass { secondary: "fnp45_mp".into(), ..custom("AB", "tar21_mp") });
+        let mut menu = MenuState::new();
+        let mut inp = MenuIn::default();
+        menu.frame(&inp);
+        press(&mut menu, &mut inp, Key::Enter); // open the class editor
+        // Focus the SECONDARY box: `SecondaryWeapon_Button_Over` sets `weaponSlot = "secondary"`
+        // and adds the `C` prompt; `ButtonPromptCamo` opens `CACCamo` over it.
+        menu.editor.as_mut().expect("editor open").slot = crate::classmenu::Slot::Secondary;
+        press(&mut menu, &mut inp, Key::C);
+        let personalize = menu.view().personalize.expect("the secondary's camo page opens");
+        assert_eq!(personalize.kind, crate::classmenu::PersonalizeKind::SecondaryCamo);
+        // Enter equips the highlighted cell into `secondarycamo`; the primary's camo is untouched.
+        press(&mut menu, &mut inp, Key::Enter);
+        assert!(menu.view().personalize.is_none(), "the page closed");
+        let draft = &menu.editor.as_ref().expect("the editor is still open").draft;
+        assert_eq!((draft.secondary_camo.as_str(), draft.camo.as_str()), ("None", ""));
+        let out = save_open_editor(&mut menu, &mut inp);
+        assert_eq!(out.save_profile, classui::SAVE_PROFILE_CLASS, "the class was written");
+        assert_eq!(crate::profile::classes()[0].secondary_camo, "None");
+        crate::profile::reset();
+    }
+
+    #[test]
     fn browse_edit_save_writes_the_profile_text_out() {
         let _g = lock();
         crate::profile::reset();

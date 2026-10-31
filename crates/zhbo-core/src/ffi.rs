@@ -739,12 +739,9 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
             s.client_host.sound(r.event, r.at);
         }
         // The local player's class camos, for the native viewmodel's next draw: each held weapon
-        // wears its own (the primary the class camo, the melee weapon the knife camo). The mod's
-        // class has no secondary camo yet, so the sidearm draws stock.
-        let choices = s.sim.player(inp.local_player).map_or_else(Vec::new, |p| {
-            let kit = &p.arsenal.loadout;
-            crate::nativevm::class_camos(&[(kit.primary.as_str(), p.camo.as_str()), (kit.melee.as_str(), p.knife_camo.as_str())])
-        });
+        // wears its own (`_class.gsc`: the primary `primarycamo`, the sidearm `secondarycamo`, the
+        // melee weapon `knifecamo`).
+        let choices = s.sim.player(inp.local_player).map_or_else(Vec::new, |p| crate::nativevm::class_camos(&p.held_camos()));
         crate::nativevm::set_local_camos(choices);
         out
     })

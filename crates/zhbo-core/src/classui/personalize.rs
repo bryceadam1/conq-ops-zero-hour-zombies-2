@@ -101,15 +101,18 @@ pub fn personalize_title(kind: PersonalizeKind) -> &'static str {
         PersonalizeKind::Reticle => "RETICLES",
         PersonalizeKind::ReticleColor => "RETICLE COLOR",
         PersonalizeKind::Knife => "KNIFE",
+        PersonalizeKind::SecondaryCamo => "CAMO",
     }
 }
 
 /// The weapon a personalize screen dresses: the class's primary for the camo and reticle screens
-/// (none when the draft has no primary), BO2's `knife_held` for the knife (`caccamomenu.lua`'s
+/// (none when the draft has no primary), its secondary for the secondary's camo page (`CACCamo`
+/// reads `class[weaponSlot]`), BO2's `knife_held` for the knife (`caccamomenu.lua`'s
 /// `knifePersonalization` branches read that statstable row for the title, picture and options).
 pub fn personalize_weapon(kind: PersonalizeKind, draft: &Draft) -> Option<&str> {
     match kind {
         PersonalizeKind::Knife => Some(crate::weapons::KNIFE_HELD),
+        PersonalizeKind::SecondaryCamo => (!draft.secondary.is_empty()).then_some(draft.secondary.as_str()),
         _ => (!draft.primary.is_empty()).then_some(draft.primary.as_str()),
     }
 }
@@ -119,7 +122,7 @@ pub fn personalize_weapon(kind: PersonalizeKind, draft: &Draft) -> Option<&str> 
 /// with the weapon's converted `CamoList` when the catalog has one.
 pub fn personalize_choices(kind: PersonalizeKind) -> Vec<String> {
     let names: &[&str] = match kind {
-        PersonalizeKind::Camo | PersonalizeKind::Knife => &[
+        PersonalizeKind::Camo | PersonalizeKind::Knife | PersonalizeKind::SecondaryCamo => &[
             "None",
             "Gold",
             "Diamond",
@@ -175,7 +178,7 @@ pub fn personalize_tabs_for(kind: PersonalizeKind, weapon: Option<&str>) -> Vec<
 /// [`personalize_tabs_for`] over a given catalog.
 pub fn personalize_tabs_in(cat: &Catalog, kind: PersonalizeKind, weapon: Option<&str>) -> Vec<PersonalizeTab> {
     let ids: Vec<String> = match kind {
-        PersonalizeKind::Camo | PersonalizeKind::Knife => weapon.and_then(|w| cat.get(w)).map(|d| d.camo.clone()).unwrap_or_default(),
+        PersonalizeKind::Camo | PersonalizeKind::Knife | PersonalizeKind::SecondaryCamo => weapon.and_then(|w| cat.get(w)).map(|d| d.camo.clone()).unwrap_or_default(),
         PersonalizeKind::Reticle => cat.reticles().iter().map(|r| r.id.clone()).collect(),
         PersonalizeKind::ReticleColor => {
             let ids: Vec<String> = cat.reticle_colors().iter().map(|c| c.id.clone()).collect();
@@ -222,7 +225,7 @@ fn button_bg(prims: &mut Vec<Prim>, f: &Frame, r: Rect) {
 /// The option row behind a cell (`camo`, `reticle`, `reticle_color`).
 fn option_of(cat: &Catalog, kind: PersonalizeKind, choice: &str) -> Option<&'static crate::weapons::CamoOption> {
     match kind {
-        PersonalizeKind::Camo | PersonalizeKind::Knife => cat.camo(choice),
+        PersonalizeKind::Camo | PersonalizeKind::Knife | PersonalizeKind::SecondaryCamo => cat.camo(choice),
         PersonalizeKind::Reticle => cat.reticle(choice),
         PersonalizeKind::ReticleColor => cat.reticle_color(choice),
     }
@@ -410,7 +413,7 @@ fn equipped_choice(p: &Personalize) -> &str {
 /// the screen's own heading otherwise.
 fn screen_title(cat: &Catalog, kind: PersonalizeKind, weapon: Option<&str>) -> String {
     match (kind, weapon.and_then(|w| cat.get(w))) {
-        (PersonalizeKind::Camo | PersonalizeKind::Knife, Some(d)) => format!("PERSONALIZE {}", d.display_name.to_uppercase()),
+        (PersonalizeKind::Camo | PersonalizeKind::Knife | PersonalizeKind::SecondaryCamo, Some(d)) => format!("PERSONALIZE {}", d.display_name.to_uppercase()),
         _ => personalize_title(kind).to_string(),
     }
 }
@@ -442,7 +445,7 @@ pub fn draw_personalize_in(cat: &Catalog, prims: &mut Vec<Prim>, w: f32, h: f32,
         }
         let pic = cell_image_rect(r, i == 0);
         match p.kind {
-            PersonalizeKind::Camo | PersonalizeKind::Knife => {
+            PersonalizeKind::Camo | PersonalizeKind::Knife | PersonalizeKind::SecondaryCamo => {
                 if let Some(image) = camo_image(cat, choice) {
                     bo2::sprite(prims, f, image, pic, argb(OFF_WHITE, 1.0), Vec::new());
                 }
@@ -484,7 +487,7 @@ pub fn draw_personalize_in(cat: &Catalog, prims: &mut Vec<Prim>, w: f32, h: f32,
             argb(OFF_WHITE, 0.5),
         );
     }
-    if matches!(p.kind, PersonalizeKind::Camo | PersonalizeKind::Knife) {
+    if matches!(p.kind, PersonalizeKind::Camo | PersonalizeKind::Knife | PersonalizeKind::SecondaryCamo) {
         draw_camo_panel(cat, prims, &l, p, weapon);
     }
     // The screen is a submenu of the editor: BO2's personalize screens carry `ESC Back` and the
@@ -616,7 +619,43 @@ mod tests {
             camo: camo.iter().map(|c| c.id.clone()).filter(|c| c != "camo_dragon").collect(),
             ..Default::default()
         };
-        Catalog::from_table(Table { weapons: vec![gun, knife], camo, ..Default::default() })
+        // The sidearm's own list: base rows only (no DLC art converted for it).
+        let pistol = WeaponDef {
+            id: "fnp45_mp".into(),
+            display_name: "Tac-45".into(),
+            camo: vec!["camo_none".into(), "camo_atacs".into()],
+            ..Default::default()
+        };
+        Catalog::from_table(Table { weapons: vec![gun, knife, pistol], camo, ..Default::default() })
+    }
+
+    #[test]
+    fn the_secondary_page_is_the_camo_page_over_the_sidearms_own_list() {
+        // `SecondaryWeapon_Button_Over` sets `weaponSlot = "secondary"`; `CACCamo` then reads
+        // `class.secondary` for the title, picture and `AddCamos`' item, and the class's
+        // `secondarycamo` as the equipped cell.
+        let cat = catalog();
+        let draft = Draft { primary: "an94_mp".into(), secondary: "fnp45_mp".into(), camo: "camo_ukpunk".into(), secondary_camo: "camo_atacs".into(), ..Default::default() };
+        let kind = PersonalizeKind::SecondaryCamo;
+        let weapon = personalize_weapon(kind, &draft);
+        assert_eq!(weapon, Some("fnp45_mp"));
+        assert_eq!(personalize_weapon(kind, &Draft { secondary: String::new(), ..draft.clone() }), None);
+        let tabs = personalize_tabs_in(&cat, kind, weapon);
+        let labels: Vec<&str> = tabs.iter().map(|t| t.label.as_str()).collect();
+        assert_eq!(labels, ["CAMO", "DLC"], "the sidearm has no DLC2 row, so no DLC2 tab");
+        assert_eq!(tabs[0].choices, ["camo_none", "camo_atacs"], "the sidearm's list, not the primary's");
+        let p = Personalize::with_tabs(kind, tabs, &draft);
+        assert_eq!((p.equipped.as_str(), p.highlight), ("camo_atacs", 1), "the class's secondarycamo");
+        let _f = crate::lui::font::lock();
+        crate::lui::font::load("");
+        let mut prims = Vec::new();
+        draw_personalize_in(&cat, &mut prims, 1280.0, 720.0, &p, weapon, 0.0, 0.0);
+        let names = images(&prims);
+        assert!(names.iter().any(|n| n == "menu_camo_atacs_pattern"), "the tiles draw: {names:?}");
+        assert!(names.iter().any(|n| n == &crate::names::cac_weapon_image("fnp45_mp")), "the sidearm's picture: {names:?}");
+        let t: Vec<String> = prims.iter().filter_map(|p| if let Prim::Text { text, .. } = p { Some(text.clone()) } else { None }).collect();
+        assert!(t.iter().any(|s| s == "PERSONALIZE TAC-45"), "MPUI_PERSONALIZE_N over the secondary: {t:?}");
+        assert!(t.iter().any(|s| s == "Equipped"), "{t:?}");
     }
 
     fn images(prims: &[Prim]) -> Vec<String> {

@@ -681,6 +681,8 @@ mod tests {
             reticle: "reflex".into(),
             reticle_color: "red".into(),
             knife: "camo_gold".into(),
+            secondary: "fnp45_mp".into(),
+            secondary_camo: "camo_atacs".into(),
             ..CustomClass::default()
         });
         let text = p.to_text();
@@ -694,6 +696,8 @@ mod tests {
         assert_eq!(c.reticle, "reflex");
         assert_eq!(c.reticle_color, "red");
         assert_eq!(c.knife, "camo_gold");
+        assert!(text.contains("secondary_camo=camo_atacs"), "the sidearm's own camo is written:\n{text}");
+        assert_eq!(c.secondary_camo, "camo_atacs", "secondarycamo round-trips");
     }
 
     #[test]
@@ -709,6 +713,7 @@ mod tests {
         assert!(c.reticle.is_empty(), "old profile leaves reticle empty");
         assert!(c.reticle_color.is_empty(), "old profile leaves reticle_color empty");
         assert!(c.knife.is_empty(), "old profile leaves knife empty");
+        assert!(c.secondary_camo.is_empty(), "old profile leaves secondary_camo empty");
     }
 
     #[test]

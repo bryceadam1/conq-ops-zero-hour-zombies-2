@@ -242,17 +242,22 @@ impl Slot {
 /// rows and columns; the class UI draws them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PersonalizeKind {
+    /// The primary's camo page (BO2's `CACCamo` with `weaponSlot = "primary"`).
     Camo,
     Reticle,
     ReticleColor,
     Knife,
+    /// The secondary's camo page: the same `CACCamo` with `weaponSlot = "secondary"`
+    /// (`customclass.lua`'s `SecondaryWeapon_Button_Over` sets it; the pick lands in
+    /// `secondarycamo`, `caccamomenu.lua`'s `SetClassItem(weaponSlot .. "camo")`).
+    SecondaryCamo,
 }
 
 impl PersonalizeKind {
     /// The grid's column count, BO2's own for each screen.
     pub fn columns(self) -> usize {
         match self {
-            PersonalizeKind::Camo | PersonalizeKind::Knife => 6,
+            PersonalizeKind::Camo | PersonalizeKind::Knife | PersonalizeKind::SecondaryCamo => 6,
             PersonalizeKind::Reticle | PersonalizeKind::ReticleColor => 5,
         }
     }
@@ -299,6 +304,7 @@ impl Personalize {
             PersonalizeKind::Reticle => &draft.reticle,
             PersonalizeKind::ReticleColor => &draft.reticle_color,
             PersonalizeKind::Knife => &draft.knife,
+            PersonalizeKind::SecondaryCamo => &draft.secondary_camo,
         }
         .clone();
         let tabs = if tabs.is_empty() { vec![PersonalizeTab { label: String::new(), choices: Vec::new() }] } else { tabs };
@@ -364,6 +370,7 @@ impl Personalize {
                     PersonalizeKind::Reticle => draft.reticle = v.clone(),
                     PersonalizeKind::ReticleColor => draft.reticle_color = v.clone(),
                     PersonalizeKind::Knife => draft.knife = v.clone(),
+                    PersonalizeKind::SecondaryCamo => draft.secondary_camo = v.clone(),
                 }
             }
             return Outcome::Save;
@@ -490,6 +497,9 @@ pub struct Draft {
     /// The knife's camo id (`camo_none` = its stock finish), BO2's Personalize Knife (the class's
     /// `knifecamo`). Empty means "not personalised" and serialises as no key.
     pub knife: String,
+    /// The secondary's camo id (`camo_none` = its stock finish), BO2's `secondarycamo`: the
+    /// SECONDARY box's Personalize Weapon page. Empty means "not personalised" (no key).
+    pub secondary_camo: String,
 }
 
 impl Default for Draft {
@@ -512,6 +522,7 @@ impl Default for Draft {
             reticle: String::new(),
             reticle_color: String::new(),
             knife: String::new(),
+            secondary_camo: String::new(),
         }
     }
 }
@@ -635,6 +646,7 @@ impl Draft {
         push("reticle", &self.reticle);
         push("reticle_color", &self.reticle_color);
         push("knife", &self.knife);
+        push("secondary_camo", &self.secondary_camo);
         if self.reserve[0] > 0 {
             push("primary_reserve", &self.reserve[0].to_string());
         }
@@ -659,7 +671,7 @@ impl Draft {
             reticle: self.reticle.clone(),
             reticle_color: self.reticle_color.clone(),
             knife: self.knife.clone(),
-            ..CustomClass::default()
+            secondary_camo: self.secondary_camo.clone(),
         }
     }
 
@@ -694,6 +706,7 @@ impl Draft {
             reticle: c.reticle.clone(),
             reticle_color: c.reticle_color.clone(),
             knife: c.knife.clone(),
+            secondary_camo: c.secondary_camo.clone(),
         }
     }
 }
@@ -792,7 +805,7 @@ pub struct Editor {
     /// caller plays BO2's deny cue and clears this; the state itself stays pure.
     pub denied: bool,
     /// One-shot: the player pressed Tab on the class row (`caceditclass.lua:52-63`'s
-    /// `knifePersonalization` prompt) or `C`/`V` on the primary weapon/optic row. The caller opens
+    /// `knifePersonalization` prompt), `C` on a weapon box or `V` on the primary optic row. The caller opens
     /// the personalize screen and clears this; the pure editor only records the action.
     pub personalize: Option<PersonalizeKind>,
 }
@@ -990,6 +1003,17 @@ impl Editor {
         }
     }
 
+    /// The camo page `C` opens on the highlighted box: BO2's `PrimaryWeapon_Button_Over` /
+    /// `SecondaryWeapon_Button_Over` (`customclass.lua`) set `weaponSlot` and add the
+    /// `MPUI_PERSONALIZE_WEAPON` prompt only when the class holds a weapon in that slot.
+    pub fn camo_page(&self) -> Option<PersonalizeKind> {
+        match self.slot {
+            Slot::Primary if !self.draft.primary.is_empty() => Some(PersonalizeKind::Camo),
+            Slot::Secondary if !self.draft.secondary.is_empty() => Some(PersonalizeKind::SecondaryCamo),
+            _ => None,
+        }
+    }
+
     /// Whether the highlighted primary attachment is one BO2 personalizes the reticle of.
     fn option_is_optic(&self) -> bool {
         self.option_attachment(self.option).is_some_and(|s| crate::hud::OPTICS.contains(&s))
@@ -1124,7 +1148,7 @@ pub struct Edges {
     pub backspace: bool,
     /// Tab on the class row: BO2's `knifePersonalization` prompt (`caceditclass.lua:52-63`).
     pub personalize: bool,
-    /// `C` on the primary weapon row: BO2's `AddCamoButton` (`caceditclass.lua:748`).
+    /// `C` on a weapon box: BO2's `AddCamoButton` (`caceditclass.lua:748`).
     pub camo: bool,
     /// `V` on the primary optic row: BO2's `AddReticleButton` (`caceditclass.lua:825`).
     pub reticle: bool,
@@ -1231,10 +1255,12 @@ impl Editor {
             self.personalize = Some(PersonalizeKind::Knife);
             return Outcome::Continue;
         }
-        // BO2's `AddCamoButton` on the primary weapon row (`caceditclass.lua:748`).
-        if edges.camo && self.slot == Slot::Primary {
-            self.personalize = Some(PersonalizeKind::Camo);
-            return Outcome::Continue;
+        // BO2's `AddCamoButton` on a weapon box that holds a gun (`caceditclass.lua:748`).
+        if edges.camo {
+            if let Some(kind) = self.camo_page() {
+                self.personalize = Some(kind);
+                return Outcome::Continue;
+            }
         }
         // BO2's `AddReticleButton` on the primary optic row (`caceditclass.lua:825`).
         if edges.reticle && self.slot == Slot::PrimaryAtts && self.option_is_optic() {
