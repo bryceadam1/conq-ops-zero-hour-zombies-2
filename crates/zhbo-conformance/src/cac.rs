@@ -15,6 +15,7 @@ pub fn schema() -> Schema {
     s.col("name", "names", Kind::Text, "the localized name the menu shows (statstable/attachmenttable column 3)")
         .col("description", "names", Kind::Text, "the localized description (column 7)")
         .col("image", "art", Kind::Text, "the material the menu draws (column 6)")
+        .asset()
         .col("group", "menu", Kind::Text, "the item's group: a weapon's CaC group, an attachment's attach point, a perk's tier slot")
         .col("slot", "menu", Kind::Text, "the loadout slot (statstable column 13)")
         .col("cost", "allocation", Kind::Int, "the allocation points the item costs (statstable column 12)")

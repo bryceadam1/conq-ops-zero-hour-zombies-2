@@ -48,7 +48,7 @@ weapon category and dual-wield outcome) — and both sides fill exactly those co
   game does), the model blobs, the converter's sound events and FXLists. A fact the mod does not
   carry stays empty — it fails, never synthesized.
 
-Units are BO2's (ms, inches, degrees; rotations as canonical quaternions); a float column's epsilon
+Units are BO2's (ms, inches, degrees; rotations as canonical quaternions; asset names lowercased, because BO2 resolves them case-insensitively); a float column's epsilon
 is the only tolerance and is written in the schema (`<table>-schema.csv`). Every difference is a
 gap; there are no informational columns and no allowlist. The output directory must be outside the
 repository (the run refuses one inside it): per table `<t>-expected.csv`, `<t>-actual.csv`,

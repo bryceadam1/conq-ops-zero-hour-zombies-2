@@ -4649,3 +4649,21 @@ clusters 204 → 202; nothing else moved.
   GSC's `isbonuscardactive` indices do not follow it (`_challenges.gsc:341,730`). The mod's
   wildcards are a core enum, so emitting it needs the statstable's bonus-card rows carried as data
   (beside `perk_rows`) — queued as "wildcards from the statstable", not done here.
+
+## Conformance: asset names are compared in their canonical case (2026-10-31, branch `v1/asset-case`)
+
+A generator artifact, not a parity gap. BO2 resolves asset names case-insensitively (the zone
+lookup folds case — `t6zone::Zone::find` now does too — and the sound hash lowercases the name), so
+`knife_mp`'s `viewmodel_M4m203_knife_melee_1` (as its def spells it) and the zone's
+`viewmodel_m4m203_knife_melee_1` are one asset; the two sides differed only in which spelling they
+copied. Schema columns that name assets (xmodels, xanims, sound aliases, effects, materials, camos,
+tracers; the cac `image`) are now marked `asset`, and `RowBuilder` writes their cells lowercased for
+both sides — the canonical form, as rotations are canonical quaternions. Text that is not an asset
+name (localized strings, enums, tags, weapon names) keeps its case, and the differ still compares
+exactly. The schema CSV labels those columns "asset names, lowercased".
+
+Measured against `v1/cac-leftovers`: weapons 781,251 → 781,249 cells (exactly `knife_mp`'s
+`anim_melee` and `anim_melee_charge`), no cell newly differs, cac unchanged, gap clusters 202
+unchanged. Verified: `cargo test -p zhbo-conformance` (new
+`asset_names_are_written_lowercased_and_other_text_is_not`), clippy adds no warning in the crate,
+the conformance CLI as measured. Nothing the mod ships changed.

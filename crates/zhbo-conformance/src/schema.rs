@@ -62,6 +62,12 @@ pub struct Column {
     pub kind: Kind,
     /// What the fact is and where BO2 decides it (G14/G15 section, file or function).
     pub doc: String,
+    /// The cells name BO2 assets (xmodels, xanims, sound aliases, effects, materials, camos). BO2
+    /// resolves asset names case-insensitively (the zone lookup folds case; the sound hash
+    /// lowercases), so `viewmodel_M4m203_knife_melee_1` and `viewmodel_m4m203_knife_melee_1` are
+    /// one asset: both sides' cells are written lowercased, the canonical form, as rotations are
+    /// written as canonical quaternions.
+    pub asset: bool,
 }
 
 /// One table: its two key columns and its fact columns.
@@ -83,7 +89,13 @@ impl Schema {
         let name = name.into();
         assert!(!self.columns.iter().any(|c| c.name == name), "duplicate column {name}");
         assert!(!self.key.contains(&name.as_str()), "column {name} shadows a key");
-        self.columns.push(Column { name, area, kind, doc: doc.into() });
+        self.columns.push(Column { name, area, kind, doc: doc.into(), asset: false });
+        self
+    }
+
+    /// Mark the column just added as naming BO2 assets (see [`Column::asset`]).
+    pub fn asset(&mut self) -> &mut Schema {
+        self.columns.last_mut().expect("asset() follows col()").asset = true;
         self
     }
 
@@ -128,6 +140,7 @@ impl<'a> RowBuilder<'a> {
                 self.errors.push(format!("column {name} is {}, set with the wrong kind", self.schema.columns[i].kind))
             }
             Some(i) if self.cells[i].is_some() => self.errors.push(format!("column {name} set twice")),
+            Some(i) if self.schema.columns[i].asset => self.cells[i] = Some(text.to_ascii_lowercase()),
             Some(i) => self.cells[i] = Some(text),
         }
         self
@@ -248,6 +261,17 @@ mod tests {
         b.int("clip", 30).set("tags", &["tag_b", "tag_a", "tag_b"]).float("fov", f32_value(0.1));
         let row = b.finish().unwrap();
         assert_eq!(row.cells, vec!["30", "tag_a|tag_b", "0.1"]);
+    }
+
+    #[test]
+    fn asset_names_are_written_lowercased_and_other_text_is_not() {
+        // BO2 folds case on asset lookup: one asset, one canonical spelling on both sides.
+        let mut s = Schema::new("weapons", ["weapon", "combo"]);
+        s.col("anim", "anims", Kind::Text, "").asset().col("parts", "parts", Kind::List, "").asset().col("name", "names", Kind::Text, "");
+        let mut b = RowBuilder::new(&s, "knife_mp", "");
+        b.text("anim", "viewmodel_M4m203_knife_melee_1").list("parts", &["T6_Attach_Mag", "t6_wpn_x"]).text("name", "Combat Knife");
+        let row = b.finish().unwrap();
+        assert_eq!(row.cells, vec!["viewmodel_m4m203_knife_melee_1", "t6_attach_mag|t6_wpn_x", "Combat Knife"]);
     }
 
     #[test]

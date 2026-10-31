@@ -41,7 +41,7 @@ pub fn write_schema(schema: &Schema) -> String {
     let mut out = line(["column", "area", "kind", "doc"]);
     out.push('\n');
     for c in &schema.columns {
-        out.push_str(&line([c.name.as_str(), c.area, &c.kind.to_string(), c.doc.as_str()]));
+        out.push_str(&line([c.name.as_str(), c.area, &if c.asset { format!("{} (asset names, lowercased)", c.kind) } else { c.kind.to_string() }, c.doc.as_str()]));
         out.push('\n');
     }
     out
