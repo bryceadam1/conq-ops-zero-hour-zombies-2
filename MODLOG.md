@@ -4549,3 +4549,74 @@ body W3D), so the camo lives on the native third person (`ZHBO_NATIVE_BODY=1`/`2
   which draws no camo. Making the native weapon (`=1`) the default — verified 14/14 `--rts` when
   it landed, and now also the only path that draws combinations' attachments — is the
   integrator's call after the in-game check.
+
+## Third-person brass and tracers: what others see of a shot (2026-10-30, branch `v1/brass-tracers`)
+
+Item 5b family C. The mod drew neither BO2's world shell eject nor its tracers. Read-only Ghidra
+(t6mp; decompiles kept in the plan dir) settled the rules:
+
+* **Brass** — `FUN_00531630(cg, ent, weapon, tag, left, lastShot)`, from `EV_EJECT_BRASS` (event
+  0x26) with `tag_brass` (`tag_brass1` for the left gun): the shooter's own first-person view plays
+  `viewShellEjectEffect`/`viewLastShotEjectEffect` on the view model; **everyone else**
+  `worldShellEjectEffect` (+0x1d4) at the entity's `tag_brass`, or `worldLastShotEjectEffect`
+  (+0x1dc) when the shot is the last and both last fields are set. Like the view shells, several
+  defs point at `common_mp`'s comma stubs (`,weapon/shellejects/fx_rifle`): `weapon::all_in`
+  binds the world shells through `patch_mp`. In BO2's data every last-round effect equals its
+  every-shot one.
+* **Tracer cadence** — `FUN_007c65c0`: a per-entity **byte** countdown (`centity+0x35c`): if the
+  tracer's `drawInterval` is below it or it is 0, it restarts at the interval; it is decremented;
+  at 0 it restarts and the bullet draws a tracer. So interval `n` draws bullets `n, 2n, …`; 1
+  every bullet; 0 none. It runs per bullet (`FUN_00539800` loops a shotgun's pellets into
+  `FUN_00538e40`) and only for weapons that have a tracer.
+* **Which tracer** — `FUN_008eb420`: the first single unique (combination order, the base unique
+  standing in) with `enemyTracerType` when the shooter is not on the local client's team
+  (`FUN_004bbf10`) or `tracerType`, else the def's. The friendly and `_enemy` tracers differ only in
+  material (`gfx_tracer` vs `gfx_tracer_enemy`); the scoped LMGs' IR/VZOOM uniques carry
+  `lmg_scope`. `Tracer_Spawn` (`FUN_007c6150`) draws kind 0 as a beam flying at `speed` and kind 1
+  (the snipers' smoke, `speed` 1) spanning the shot and fading over `fadeTime`.
+
+What changed:
+
+* `zhbo-formats`: `Tracer` (the whole `TracerDef`: kind, material, drawInterval, speed, beam
+  length/width, screw, fade, colours), on the def and each unique (friendly and enemy), stubs bound
+  by name (`bind_tracer`); the def's world shell effects. The install-gated
+  `reads_the_tracers_and_world_shells` pins the AN-94's.
+* Table: `WorldShellFxWeapon`, `WorldLastShotShellFxWeapon`, `TracerFxWeapon`, `TracerInterval`
+  (`WEAPON_FIELDS` 78 → 82), set for **every** def including the combinations (brass is the def's;
+  the tracer is resolved per combination) by `zhbo-assets::shotfx::convert` — no inheritance pass
+  needed.
+* Converter (`shotfx.rs`): Zero Hour plays an FX weapon's `FireFX` at the soldier's flash bone
+  (`ZF<vm>` = the world model's `tag_flash`), so the brass FXList re-uses the shell's particle
+  systems with `Offset` and `RotateX/Y/Z` = `tag_brass` relative to `tag_flash` (`M·Rx·Ry·Rz`, WW3D
+  post-multiplies; `rotate_xyz` is unit-tested against that order). A tracer is a Zero Hour
+  `Tracer` nugget (length, width, speed in ZH units; colour = BO2's most opaque stop × the
+  material's mean hue). Each is a silent client-only FX weapon (`ZHBO_FX_Brass_<base>`,
+  `ZHBO_FX_Tracer_<name>`).
+* Sim: `WeaponAction::Fire` carries `last` (the round empties the magazine); per shot the sim fires
+  the brass FX weapon (the last-round one on `last`), per bullet `fire::tracer_due` (BO2's
+  countdown on `PlayerSim::tracer_count`) and the tracer FX weapon to that bullet's end. Fake-host
+  tests: `others_see_brass_every_shot_and_a_tracer_every_nth_bullet` (7 shots, interval 3 → brass
+  ×6 + last, tracers after shots 3 and 6) and `the_tracer_countdown_is_bo2s`.
+* The overhead General fires Zero Hour's own weapon, so his `FireFX` becomes one composed FXList
+  (`ZHBO_BO2FX_Rts_<id>`: flash + placed brass + the tracer at `Probability = 1/drawInterval`).
+* No ABI change (the existing `fire_fx` callback); no renderer change — the engine's FXList path
+  already owns particles and Zero Hour's `W3DTracerDraw` line, so no native-pass beam was added.
+
+**Gaps left, on purpose:** the enemy tracer (its material only) is not chosen per viewer — the sim
+fires one viewer-agnostic FX weapon, so everyone sees the friendly one; the tracer's texture is not
+drawn (Zero Hour's tracer is an untextured `Line3D`, tinted instead); the sniper trail (kind 1) is a
+beam of its length crossing itself in `fadeTime`, not a stationary fading trail;
+`worldShellEjectOffset`/`Rotation` (+0x1ec/+0x204) are not applied (as on the view side); the left
+gun's `tag_brass1` and own-view tracers (`cg_firstPersonTracerChance`) are not ported. **Overlap
+with `v1/sounds-effects`**: both add `fx::read_or_stub`/`fx::bind` (identical hunk) and
+`weapon::all_in` (this branch binds the world shells and tracers, that one the flashes and view
+shells — merge as the union of both lists); generals' `all_in(&common, &[&patch])` line is
+identical; the conformance `Shipped::convert` both switch to `all_in`.
+
+Measured (baseline main → this branch, which carries `v1/third-person`): weapons cells 706,586 →
+637,899; clusters 203 → 200; gap clusters 214 → 211. This item: `tracer` 8,758 → 0,
+`world_shell_eject_effect` 8,648 → 0, `world_last_shot_eject_effect` 8,648 → 0 (−26,054, the three
+clusters); the rest is `v1/third-person`'s `world_model`/`world_part_*` (−42,633). No column
+regressed. Archive output and the table schema changed: `hud::VERSION` bump is the integrator's.
+In-game check (the integrator's): another soldier and the overhead General firing — brass from the
+ejection port, tracers every 3rd AR round / every LMG round, none from your own first-person gun.

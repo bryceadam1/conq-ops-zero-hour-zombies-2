@@ -103,10 +103,10 @@ pub fn material_tint(zones: &[&Zone], material: Option<&str>, paks: &dyn Fn(u32)
     let Some(img) = zones.iter().find_map(|z| zhbo_formats::xmodel::find_material(z, name).and_then(|m| m.color_map().cloned())) else { return white };
     let Some(rgba) = paks(img.stream_hash) else { return white };
     let mut sum = [0.0f64; 3];
-    for p in rgba.pixels.chunks_exact(4) {
+    for p in rgba.pixels.as_chunks::<4>().0 {
         let a = p[3] as f64 / 255.0;
-        for i in 0..3 {
-            sum[i] += p[i] as f64 * a;
+        for (s, c) in sum.iter_mut().zip(p) {
+            *s += *c as f64 * a;
         }
     }
     let max = sum.iter().cloned().fold(0.0, f64::max);
@@ -163,7 +163,6 @@ pub fn convert(
         });
         (d.world_shell_fx_weapon, d.world_last_shot_shell_fx_weapon) = fx.clone();
         let (_, shorts) = zhbo_core::attachments::split_id(d.id.split('~').next().unwrap_or(&d.id));
-        let shorts = if d.id.contains('~') { Vec::new() } else { shorts };
         let Some(t) = resolved_tracer(w, &shorts).filter(|t| t.draw_interval > 0) else { continue };
         let name = tracers.entry(t.name.clone()).or_insert_with(|| {
             let tint = material_tint(zones, t.material.as_deref(), paks);
