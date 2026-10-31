@@ -98,31 +98,39 @@ fn plausible(state: u16, name: &str) -> bool {
     }
 }
 
-/// The soldier's hit boxes, standing: every bone of `body` with an `XBoneInfo` big enough for BO2's
-/// trace (`radiusSquared` at least [`zhbo_core::hitloc::MIN_RADIUS_SQUARED`]) and a location the
-/// trace can hit, at the bone's model-space transform in the first frame of `stand` (the
-/// stand-idle clip; BO2 poses the server's animation, the sim has none for Zero Hour's infantry).
-pub(crate) fn hit_boxes(body: &zhbo_formats::xmodel::Model, stand: &Anim) -> Vec<zhbo_core::hitloc::HitBox> {
+/// The soldier's hit boxes in every body state of `clips`: every bone of `body` with an `XBoneInfo`
+/// big enough for BO2's trace (`radiusSquared` at least [`zhbo_core::hitloc::MIN_RADIUS_SQUARED`])
+/// and a location the trace can hit, at the bone's model-space transform in the first frame of
+/// the state's clip. BO2 traces the pose the server animated (stance, gait, ADS); the sim picks the
+/// state from its own movement state (`zhbo_core::nativebody::state_of`), the same clips the
+/// third-person body draws, and Zero Hour's infantry take the stand-idle pose.
+pub(crate) fn hit_boxes(body: &zhbo_formats::xmodel::Model, clips: &[Clip]) -> Vec<zhbo_core::hitloc::HitBox> {
     use zhbo_native::pose::{PartRef, Skeleton};
     let model = zhbo_native::model::Model { name: body.name.clone(), bones: crate::native::bones(body), ..Default::default() };
     let (skel, _) = Skeleton::compose(&[PartRef { model: &model, tag: None, offset: zhbo_native::math::IDENTITY, rigid: false }], &[], &[]);
     let (mut local, mut pose) = (Vec::new(), Vec::new());
-    skel.sample(&crate::native::anim(stand), 0.0, &mut local);
-    skel.model_space(&local, &mut pose);
-    body.hit_boxes
-        .iter()
-        .enumerate()
-        .filter(|(_, h)| h.radius_squared >= zhbo_core::hitloc::MIN_RADIUS_SQUARED)
-        .filter(|(_, h)| zhbo_core::hitloc::rank(h.location, true).is_some())
-        .map(|(i, h)| zhbo_core::hitloc::HitBox {
-            location: h.location,
-            bone: body.bones[i].name.clone(),
-            rotation: pose[i].0,
-            position: pose[i].1,
-            mins: h.mins,
-            maxs: h.maxs,
-        })
-        .collect()
+    let mut out = Vec::new();
+    for clip in clips {
+        skel.sample(&crate::native::anim(&clip.anim), 0.0, &mut local);
+        skel.model_space(&local, &mut pose);
+        out.extend(
+            body.hit_boxes
+                .iter()
+                .enumerate()
+                .filter(|(_, h)| h.radius_squared >= zhbo_core::hitloc::MIN_RADIUS_SQUARED)
+                .filter(|(_, h)| zhbo_core::hitloc::rank(h.location, true).is_some())
+                .map(|(i, h)| zhbo_core::hitloc::HitBox {
+                    state: clip.state,
+                    location: h.location,
+                    bone: body.bones[i].name.clone(),
+                    rotation: pose[i].0,
+                    position: pose[i].1,
+                    mins: h.mins,
+                    maxs: h.maxs,
+                }),
+        );
+    }
+    out
 }
 
 #[cfg(test)]
@@ -175,7 +183,7 @@ mod tests {
         for f in crate::generals::FACTIONS {
             let zone = crate::paks::load_zone(&dir, f.zone).unwrap();
             let body = zhbo_formats::xmodel::find(&zone, f.body).unwrap();
-            sets.push(hit_boxes(&body, &stand.anim));
+            sets.push(hit_boxes(&body, std::slice::from_ref(stand)));
         }
         assert!(sets.iter().all(|s| s == &sets[0]), "the faction bodies share their hit boxes");
         let boxes = &sets[0];
@@ -203,5 +211,41 @@ mod tests {
         let depth = (inches(200.0) - back - front) / inches(1.0);
         eprintln!("torso depth at 36 in: {depth:.1} in");
         assert!(depth > 4.0 && depth < 20.0, "{depth}");
+    }
+
+    /// Each stance's pose from this machine's install: the crouched head is lower than the
+    /// standing one, the prone head near the ground, and a level shot at standing head height
+    /// passes over a crouched and a prone soldier.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_soldier_hit_boxes_follow_the_stance() {
+        use zhbo_core::hitloc::{self, Poses};
+        use zhbo_core::math::Vec3;
+        use zhbo_core::units::inches;
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let common = crate::paks::load_zone(&dir, "common_mp").unwrap();
+        let (clips, _) = clips(&common);
+        let f = &crate::generals::FACTIONS[0];
+        let zone = crate::paks::load_zone(&dir, f.zone).unwrap();
+        let boxes = hit_boxes(&zhbo_formats::xmodel::find(&zone, f.body).unwrap(), &clips);
+        let poses = Poses::new(&boxes);
+        let head_z = |s: u16| {
+            let b: Vec<_> = boxes.iter().filter(|b| b.state == s && b.bone == "j_head").collect();
+            assert_eq!(b.len(), 1, "state {s}: one head bone");
+            b[0].position[2]
+        };
+        let (stand, crouch, prone) = (head_z(state::STAND_IDLE), head_z(state::CROUCH_IDLE), head_z(state::PRONE_IDLE));
+        eprintln!("head z: stand {stand:.1}, crouch {crouch:.1}, prone {prone:.1}");
+        for c in &clips {
+            eprintln!("state {:>2} `{}`: head {:.1}", c.state, c.anim.name, head_z(c.state));
+        }
+        assert!(crouch < stand - 10.0, "crouched head {crouch} vs standing {stand}");
+        assert!(prone < 20.0, "prone head {prone}");
+        let x = Vec3::new(1.0, 0.0, 0.0);
+        let level = |s: u16, z: f32| poses.get(s).unwrap().pick(Vec3::new(inches(-200.0), 0.0, inches(z)), x, 1000.0, true);
+        assert!(level(state::STAND_IDLE, stand).is_some_and(|(_, l)| hitloc::is_head(l)));
+        assert!(level(state::CROUCH_IDLE, stand).is_none(), "over the crouched head");
+        assert!(level(state::PRONE_IDLE, crouch).is_none(), "over the prone soldier");
+        assert!(level(state::CROUCH_IDLE, crouch).is_some_and(|(_, l)| hitloc::is_head(l)), "{:?}", level(state::CROUCH_IDLE, crouch));
     }
 }

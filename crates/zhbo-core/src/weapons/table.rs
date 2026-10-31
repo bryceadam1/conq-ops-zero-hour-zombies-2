@@ -27,7 +27,7 @@ pub struct Table {
     /// BO2's perk rows (`mp/statstable.csv`): the reference without `PERKS_` (`LIGHTWEIGHT`,
     /// `NINJA`) and the specialties it grants (`Perk <ref>` blocks).
     pub perks: Vec<(String, Specialties)>,
-    /// The soldier's hit boxes, standing (`HitBox = …` lines, [`crate::hitloc::HitBox`]).
+    /// The soldier's hit boxes per body state (`HitBox = …` lines, [`crate::hitloc::HitBox`]).
     pub hit_boxes: Vec<crate::hitloc::HitBox>,
 }
 

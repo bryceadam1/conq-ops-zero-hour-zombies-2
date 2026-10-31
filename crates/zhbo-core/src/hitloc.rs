@@ -19,6 +19,7 @@
 
 use crate::math::Vec3;
 use crate::units::inches;
+use zhbo_native::thirdperson::state;
 
 /// `hitLocation_t` count (`HITLOC_NUM`): the names at t6mp `0x00c8bc90`.
 pub const COUNT: usize = 21;
@@ -71,10 +72,13 @@ pub fn parse(name: &str) -> Option<u8> {
 }
 
 /// One hit box of the soldier's body as the converter wrote it: the bone's `XBoneInfo` bounds in
-/// the bone's frame, the bone's model-space transform in the standing pose, and its location
-/// (`partClassification`). BO2 inches, model space (+X forward, +Z up, feet at the origin).
+/// the bone's frame, the bone's model-space transform in the pose of one body state, and its
+/// location (`partClassification`). BO2 inches, model space (+X forward, +Z up, feet at the origin).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct HitBox {
+    /// The body state this pose is (`zhbo_native::thirdperson::state`): the first frame of that
+    /// state's body clip.
+    pub state: u16,
     pub location: u8,
     pub bone: String,
     /// The bone's model-space rotation (x, y, z, w) and position.
@@ -85,20 +89,22 @@ pub struct HitBox {
 }
 
 impl HitBox {
-    /// The weapon table's `HitBox = <location> <bone> <rotation 4> <position 3> <mins 3> <maxs 3>`.
+    /// The weapon table's
+    /// `HitBox = <state> <location> <bone> <rotation 4> <position 3> <mins 3> <maxs 3>`.
     pub fn format(&self) -> String {
         let n = |v: &[f32]| v.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" ");
-        format!("{} {} {} {} {} {}", NAMES[self.location as usize], self.bone, n(&self.rotation), n(&self.position), n(&self.mins), n(&self.maxs))
+        format!("{} {} {} {} {} {} {}", self.state, NAMES[self.location as usize], self.bone, n(&self.rotation), n(&self.position), n(&self.mins), n(&self.maxs))
     }
 
     pub fn parse(value: &str) -> Result<HitBox, String> {
         let w: Vec<&str> = value.split_whitespace().collect();
-        if w.len() != 15 {
-            return Err(format!("hit box needs a location, a bone and 13 numbers: {value}"));
+        if w.len() != 16 {
+            return Err(format!("hit box needs a body state, a location, a bone and 13 numbers: {value}"));
         }
-        let location = parse(w[0]).ok_or_else(|| format!("unknown hit location {}", w[0]))?;
-        let f: Vec<f32> = w[2..].iter().map(|x| x.parse::<f32>().map_err(|e| format!("{x}: {e}"))).collect::<Result<_, _>>()?;
-        Ok(HitBox { location, bone: w[1].to_string(), rotation: [f[0], f[1], f[2], f[3]], position: [f[4], f[5], f[6]], mins: [f[7], f[8], f[9]], maxs: [f[10], f[11], f[12]] })
+        let state = w[0].parse::<u16>().map_err(|e| format!("body state {}: {e}", w[0]))?;
+        let location = parse(w[1]).ok_or_else(|| format!("unknown hit location {}", w[1]))?;
+        let f: Vec<f32> = w[3..].iter().map(|x| x.parse::<f32>().map_err(|e| format!("{x}: {e}"))).collect::<Result<_, _>>()?;
+        Ok(HitBox { state, location, bone: w[2].to_string(), rotation: [f[0], f[1], f[2], f[3]], position: [f[4], f[5], f[6]], mins: [f[7], f[8], f[9]], maxs: [f[10], f[11], f[12]] })
     }
 }
 
@@ -113,8 +119,7 @@ pub struct PosedBox {
     pub maxs: Vec3,
 }
 
-/// The soldier's hit boxes, standing (BO2 poses the server's own animation; the mod's infantry
-/// have no BO2 animation state, so the sim traces the standing idle's first frame).
+/// The soldier's hit boxes in one pose.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Body {
     pub boxes: Vec<PosedBox>,
@@ -161,6 +166,55 @@ impl Body {
     }
 }
 
+/// The soldier's hit boxes in every body state the converter posed. BO2 traces a player's DObj as
+/// the server animated it (`FUN_006f2910` -> `FUN_00649b50`, G_DObjCalcPose: the entity's
+/// controller, then the skeleton from its animation tree — stance, gait, ADS); the mod poses the
+/// boxes from the sim's own deterministic body state ([`crate::nativebody::state_of`], the same
+/// state the third-person body draws), at the first frame of that state's clip. Zero Hour's
+/// infantry have no BO2 animation state and stand ([`state::STAND_IDLE`]).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Poses {
+    by_state: Vec<(u16, Body)>,
+}
+
+impl Poses {
+    /// Group the table's boxes by body state.
+    pub fn new(boxes: &[HitBox]) -> Poses {
+        let mut states: Vec<u16> = boxes.iter().map(|b| b.state).collect();
+        states.sort_unstable();
+        states.dedup();
+        let by_state = states
+            .into_iter()
+            .map(|s| {
+                let set: Vec<HitBox> = boxes.iter().filter(|b| b.state == s).cloned().collect();
+                (s, Body::new(&set))
+            })
+            .collect();
+        Poses { by_state }
+    }
+
+    /// One pose for every state (tests, and a table posed only standing).
+    pub fn single(body: Body) -> Poses {
+        Poses { by_state: vec![(state::STAND_IDLE, body)] }
+    }
+
+    /// The boxes for body state `s`: its own pose, else the nearest the table has (the same
+    /// fallbacks the body clips use), else any.
+    pub fn get(&self, s: u16) -> Option<&Body> {
+        let find = |s: u16| self.by_state.iter().find(|(k, _)| *k == s).map(|(_, b)| b);
+        state::fallbacks(s).iter().find_map(|&s| find(s)).or_else(|| self.by_state.first().map(|(_, b)| b))
+    }
+
+    /// The standing pose (Zero Hour's infantry).
+    pub fn stand(&self) -> Option<&Body> {
+        self.get(state::STAND_IDLE)
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.by_state.is_empty()
+    }
+}
+
 impl PosedBox {
     fn local(&self, p: Vec3) -> Vec3 {
         let r = p - self.origin;
@@ -193,7 +247,7 @@ mod tests {
     }
 
     fn cube(location: u8, x: f32, half: f32) -> HitBox {
-        HitBox { location, bone: "b".into(), rotation: [0.0, 0.0, 0.0, 1.0], position: [x, 0.0, 40.0], mins: [-half; 3], maxs: [half; 3] }
+        HitBox { state: state::STAND_IDLE, location, bone: "b".into(), rotation: [0.0, 0.0, 0.0, 1.0], position: [x, 0.0, 40.0], mins: [-half; 3], maxs: [half; 3] }
     }
 
     #[test]
@@ -216,10 +270,22 @@ mod tests {
     fn a_box_turns_with_its_bone_and_the_table_line_round_trips() {
         // A 20 x 2 x 2 box along the bone's X, the bone turned 90 degrees about Z: it lies along Y.
         let h = (0.5f32).sqrt();
-        let b = HitBox { location: TORSO_MID, bone: "back_mid".into(), rotation: [0.0, 0.0, h, h], position: [0.0, 0.0, 0.0], mins: [-10.0, -1.0, -1.0], maxs: [10.0, 1.0, 1.0] };
+        let b = HitBox { state: state::PRONE_IDLE, location: TORSO_MID, bone: "back_mid".into(), rotation: [0.0, 0.0, h, h], position: [0.0, 0.0, 0.0], mins: [-10.0, -1.0, -1.0], maxs: [10.0, 1.0, 1.0] };
         let body = Body::new(std::slice::from_ref(&b));
         assert!(body.contains(Vec3::new(0.0, inches(9.0), 0.0)));
         assert!(!body.contains(Vec3::new(inches(9.0), 0.0, 0.0)));
         assert_eq!(HitBox::parse(&b.format()).unwrap(), b);
+    }
+
+    #[test]
+    fn a_state_without_its_own_pose_takes_the_nearest_stance() {
+        let at = |s: u16, z: f32| HitBox { state: s, position: [0.0, 0.0, z], ..cube(HEAD, 0.0, 2.0) };
+        let poses = Poses::new(&[at(state::STAND_IDLE, 60.0), at(state::CROUCH_IDLE, 40.0), at(state::PRONE_IDLE, 8.0)]);
+        let z = |s: u16| poses.get(s).unwrap().boxes[0].origin.z / inches(1.0);
+        assert!((z(state::CROUCH_WALK) - 40.0).abs() < 1e-3, "a crouch walk crouches");
+        assert!((z(state::PRONE_CRAWL) - 8.0).abs() < 1e-3);
+        assert!((z(state::STAND_SPRINT) - 60.0).abs() < 1e-3);
+        assert!((poses.stand().unwrap().boxes[0].origin.z / inches(1.0) - 60.0).abs() < 1e-3);
+        assert!(Poses::default().get(state::STAND_IDLE).is_none());
     }
 }

@@ -26,8 +26,8 @@ pub struct Catalog {
     reticle_color_order: Vec<&'static CamoOption>,
     built: Mutex<HashMap<String, &'static WeaponDef>>,
     pub tablet_meshes: u8,
-    /// The soldier's hit boxes (`HitBox` lines), `None` in a table without them.
-    hit_body: Option<&'static crate::hitloc::Body>,
+    /// The soldier's hit boxes per body state (`HitBox` lines), `None` in a table without them.
+    hit_body: Option<&'static crate::hitloc::Poses>,
 }
 
 impl Catalog {
@@ -55,7 +55,7 @@ impl Catalog {
             reticle_color_order,
             built: Mutex::new(HashMap::new()),
             tablet_meshes: t.tablet_meshes,
-            hit_body: (!t.hit_boxes.is_empty()).then(|| &*Box::leak(Box::new(crate::hitloc::Body::new(&t.hit_boxes)))),
+            hit_body: (!t.hit_boxes.is_empty()).then(|| &*Box::leak(Box::new(crate::hitloc::Poses::new(&t.hit_boxes)))),
         }
     }
 
@@ -121,8 +121,8 @@ impl Catalog {
         &self.reticle_color_order
     }
 
-    /// The soldier's hit boxes, standing, when the table carries them.
-    pub fn hit_body(&self) -> Option<&'static crate::hitloc::Body> {
+    /// The soldier's hit boxes per body state, when the table carries them.
+    pub fn hit_body(&self) -> Option<&'static crate::hitloc::Poses> {
         self.hit_body
     }
 

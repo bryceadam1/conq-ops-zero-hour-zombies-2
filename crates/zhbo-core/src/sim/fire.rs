@@ -21,7 +21,8 @@ impl Sim {
                 let radius = spread_deg.to_radians() * jitter.1.abs().sqrt();
                 let dir = dir_from_angles(p.yaw + radius * angle.cos(), p.pitch + radius * angle.sin());
 
-                let targets = gather_targets(host, eye, def.max_range, p.general, self.hit_body(), def.rifle_bullet);
+                let bodies = HitBodies { poses: self.hit_body(), states: &self.hit_states() };
+                let targets = gather_targets(host, eye, def.max_range, p.general, &bodies, def.rifle_bullet);
                 let ground = |x: f32, y: f32| host.ground_height(x, y);
                 let hit = hitscan::trace(eye, dir, def.max_range, &targets, p.general, &ground);
                 // One tracer and sound per shot, not per pellet.
@@ -198,7 +199,7 @@ struct BulletHit {
 
 impl Sim {
     /// The soldier's hit boxes the bullets trace: the test override, else the converted table's.
-    fn hit_body(&self) -> Option<&'static crate::hitloc::Body> {
+    fn hit_body(&self) -> Option<&'static crate::hitloc::Poses> {
         self.hit_body.or_else(|| crate::weapons::catalog().hit_body())
     }
 
@@ -296,25 +297,46 @@ fn reach_radius(o: &ObjInfo) -> f32 {
     }
 }
 
+/// How a trace poses soldiers: the converted hit boxes per body state, and the body state of each
+/// General the sim moves (`(object, state)`); every other soldier stands.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HitBodies<'a> {
+    pub poses: Option<&'static crate::hitloc::Poses>,
+    pub states: &'a [(u32, u16)],
+}
+
+impl HitBodies<'_> {
+    /// The boxes and their scale for soldier `id`: a General in his body state's pose at his
+    /// drawn size ([`crate::units::GENERAL_SCALE`]), Zero Hour's infantry standing at BO2's.
+    fn body(&self, id: u32) -> Option<(&'static crate::hitloc::Body, f32)> {
+        let poses = self.poses?;
+        match self.states.iter().find(|(g, _)| *g == id) {
+            Some(&(_, s)) => poses.get(s).map(|b| (b, crate::units::GENERAL_SCALE)),
+            None => poses.stand().map(|b| (b, 1.0)),
+        }
+    }
+}
+
 /// Convert nearby objects into hitscan targets. Friendlies are skipped so bullets pass through them
 /// (BO2 has no friendly fire in core modes); dead and non-colliding objects are skipped. Infantry
-/// are traced as `body` (BO2's hit boxes) when there is one, ranked as a `rifle` bullet ranks them.
-pub fn gather_targets(host: &dyn LogicHost, eye: Vec3, range: f32, shooter: u32, body: Option<&'static crate::hitloc::Body>, rifle: bool) -> Vec<Target> {
+/// are traced as BO2's hit boxes (`bodies`) when there are any, ranked as a `rifle` bullet ranks
+/// them.
+pub fn gather_targets(host: &dyn LogicHost, eye: Vec3, range: f32, shooter: u32, bodies: &HitBodies, rifle: bool) -> Vec<Target> {
     let mut objs = Vec::new();
     host.query(eye, range, shooter, &mut objs);
     let mut targets: Vec<Target> = objs
         .iter()
         .filter(|o| o.id != shooter && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::ALLY))
-        .map(|o| target_from(o, body, rifle))
+        .map(|o| target_from(o, bodies, rifle))
         .collect();
     // Deterministic order regardless of partition iteration order.
     targets.sort_by_key(|t| t.id);
     targets
 }
 
-pub fn target_from(o: &ObjInfo, body: Option<&'static crate::hitloc::Body>, rifle: bool) -> Target {
-    if let Some(body) = body.filter(|_| o.has(objflags::INFANTRY)) {
-        return Target { id: o.id, pos: o.pos, shape: Shape::Body { body, yaw: o.yaw, rifle }, head_fraction: 0.0 };
+pub fn target_from(o: &ObjInfo, bodies: &HitBodies, rifle: bool) -> Target {
+    if let Some((body, scale)) = o.has(objflags::INFANTRY).then(|| bodies.body(o.id)).flatten() {
+        return Target { id: o.id, pos: o.pos, shape: Shape::Body { body, yaw: o.yaw, scale, rifle }, head_fraction: 0.0 };
     }
     if o.has(objflags::INFANTRY) {
         return Target {

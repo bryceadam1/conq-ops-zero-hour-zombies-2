@@ -8,12 +8,18 @@
 
 use super::tests::{general, run, soldier, wait_until_ready, FakeHost};
 use super::*;
-use crate::hitloc::{self, Body, HitBox};
-use crate::units::inches;
+use crate::hitloc::{self, Body, HitBox, Poses};
+use crate::units::{inches, GENERAL_SCALE};
+use zhbo_native::thirdperson::state;
 
 /// A box `half` inches each way along X/Y and `half_z` along Z, centred `z` inches up.
 fn hit_box(location: u8, z: f32, half: [f32; 3]) -> HitBox {
-    HitBox { location, bone: "b".into(), rotation: [0.0, 0.0, 0.0, 1.0], position: [0.0, 0.0, z], mins: half.map(|h| -h), maxs: half }
+    HitBox { state: state::STAND_IDLE, location, bone: "b".into(), rotation: [0.0, 0.0, 0.0, 1.0], position: [0.0, 0.0, z], mins: half.map(|h| -h), maxs: half }
+}
+
+/// A box posed for body state `s`, centred at (`x`, 0, `z`) inches.
+fn posed(s: u16, location: u8, x: f32, z: f32, half: [f32; 3]) -> HitBox {
+    HitBox { state: s, position: [x, 0.0, z], ..hit_box(location, z, half) }
 }
 
 /// The General (object 1) fires one aimed round of a flat 40-damage gun at height `aim_z` (BO2
@@ -26,7 +32,7 @@ fn shoot(boxes: &[HitBox], others: &[(u32, f32)], aim: (f32, f32), tune: impl Fn
         host.add(ObjInfo { health: 5000.0, max_health: 5000.0, ..soldier(id, 1, x) });
     }
     let mut sim = Sim::new();
-    sim.hit_body = Some(Box::leak(Box::new(Body::new(boxes))));
+    sim.hit_body = Some(Box::leak(Box::new(Poses::single(Body::new(boxes)))));
     sim.take_control(&host, 0, 1);
     sim.choose_class(0, 1, 0, &[]);
     wait_until_ready(&mut sim, &host);
@@ -80,4 +86,100 @@ fn a_round_through_a_soldier_crosses_his_torso_box() {
     let pitch = ((eye - inches(40.0)) / 40.0).atan();
     let kept = 1.0 - 10.0 / pitch.cos() / 64.0;
     assert!((behind / front - kept).abs() < 0.01, "front {front}, behind {behind}, expected {kept}");
+}
+
+/// The poses of the tests below: the head 62 in up standing, 40 crouched, and prone a head 8 in
+/// off the ground with the body lying back along -X — each state's own boxes, as the converter
+/// writes them from the first frame of its clip.
+fn stance_poses() -> Vec<HitBox> {
+    vec![
+        posed(state::STAND_IDLE, hitloc::HEAD, 0.0, 62.0, [4.0, 4.0, 5.0]),
+        posed(state::STAND_IDLE, hitloc::TORSO_MID, 0.0, 40.0, [5.0, 8.0, 12.0]),
+        posed(state::CROUCH_IDLE, hitloc::HEAD, 0.0, 40.0, [4.0, 4.0, 5.0]),
+        posed(state::CROUCH_IDLE, hitloc::TORSO_MID, 0.0, 22.0, [5.0, 8.0, 10.0]),
+        posed(state::PRONE_IDLE, hitloc::HEAD, 10.0, 8.0, [4.0, 4.0, 4.0]),
+        posed(state::PRONE_IDLE, hitloc::TORSO_MID, -12.0, 6.0, [14.0, 8.0, 5.0]),
+    ]
+}
+
+/// The General (player 0, object 1) fires one aimed flat-40 round at height `z` (BO2 inches) on
+/// an enemy General (player 1, object 2) `x` units out in `stance`. Returns the damage log.
+fn duel(stance: crate::movement::Stance, aim: (f32, f32), tune: impl Fn(&mut crate::weapons::WeaponDef)) -> Vec<(u32, f32)> {
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    let (x, z) = aim;
+    host.add(ObjInfo { pos: Vec3::new(x, 0.0, 0.0), yaw: std::f32::consts::PI, health: 5000.0, max_health: 5000.0, ..general(2, 1) });
+    let mut sim = Sim::new();
+    sim.hit_body = Some(Box::leak(Box::new(Poses::new(&stance_poses()))));
+    sim.take_control(&host, 0, 1);
+    sim.choose_class(0, 1, 0, &[]);
+    sim.take_control(&host, 1, 2);
+    sim.choose_class(1, 2, 0, &[]);
+    wait_until_ready(&mut sim, &host);
+    sim.players[1].as_mut().unwrap().body.stance = stance;
+    let w = sim.players[0].as_mut().unwrap().arsenal.current_mut();
+    let mut def = w.def.clone();
+    def.damage = [40.0; 6];
+    def.damage_range = [0.0; 6];
+    def.pellets = 1;
+    def.specialties = crate::weapons::Specialties::default();
+    tune(&mut def);
+    let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(def));
+    (w.def, w.main) = (def, def);
+    let eye = sim.players[0].as_ref().unwrap().body.eye().z;
+    let pitch = -((eye - inches(z)) / x).atan();
+    run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, pitch, ..Default::default() }, 20);
+    host.damage_log.borrow_mut().clear();
+    run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::FIRE, pitch, ..Default::default() }, 1);
+    let log = host.damage_log.borrow().iter().filter(|d| d.1 == 2).map(|d| (d.1, d.2)).collect();
+    log
+}
+
+fn head_x2(d: &mut crate::weapons::WeaponDef) {
+    d.location_multipliers[hitloc::HEAD as usize] = 2.0;
+}
+
+/// BO2 traces a player as the server posed him; the mod poses an enemy General's boxes from the
+/// sim's body state, at his drawn size. Standing, the head is at 62 in; crouched, a shot there
+/// passes over him and the head is at 40 in.
+#[test]
+fn a_crouched_generals_head_is_lower_and_a_shot_over_it_misses() {
+    use crate::movement::Stance;
+    let s = GENERAL_SCALE;
+    let stand = duel(Stance::Stand, (60.0, 62.0 * s), head_x2);
+    let over = duel(Stance::Crouch, (60.0, 62.0 * s), head_x2);
+    let head = duel(Stance::Crouch, (60.0, 40.0 * s), head_x2);
+    let body = duel(Stance::Crouch, (60.0, 22.0 * s), head_x2);
+    assert_eq!(stand.len(), 1, "standing head: {stand:?}");
+    assert!(over.is_empty(), "over a crouched head: {over:?}");
+    assert_eq!((head.len(), body.len()), (1, 1), "{head:?} {body:?}");
+    assert!((head[0].1 / body[0].1 - 2.0).abs() < 1e-3, "the crouched head takes the head's x2: {head:?} {body:?}");
+    assert!((stand[0].1 - head[0].1).abs() < 1e-3);
+}
+
+/// Prone, the General is hit as BO2's prone pose: the head a few inches off the ground, the torso
+/// lying behind it — a shot at standing chest height misses.
+#[test]
+fn a_prone_general_is_hit_as_the_prone_pose() {
+    use crate::movement::Stance;
+    let s = GENERAL_SCALE;
+    assert!(duel(Stance::Prone, (60.0, 40.0 * s), head_x2).is_empty(), "nothing at chest height");
+    let head = duel(Stance::Prone, (90.0, 8.0 * s), head_x2);
+    assert_eq!(head.len(), 1, "{head:?}");
+    let stand_body = duel(Stance::Stand, (90.0, 40.0 * s), head_x2);
+    assert!((head[0].1 / stand_body[0].1 - 2.0).abs() < 1e-3, "{head:?} {stand_body:?}");
+}
+
+/// Zero Hour's infantry have no BO2 animation state and stand, whatever a General near them does.
+#[test]
+fn zero_hour_infantry_stand() {
+    let boxes = stance_poses();
+    let poses: &'static Poses = Box::leak(Box::new(Poses::new(&boxes)));
+    let bodies = HitBodies { poses: Some(poses), states: &[(2, state::PRONE_IDLE)] };
+    let soldier = soldier(3, 1, 60.0);
+    let t = fire::target_from(&soldier, &bodies, false);
+    assert!(matches!(t.shape, crate::hitscan::Shape::Body { scale, .. } if scale == 1.0));
+    let o = Vec3::new(0.0, 0.0, inches(62.0));
+    let hit = crate::hitscan::ray_location(o, Vec3::new(1.0, 0.0, 0.0), 1000.0, &t);
+    assert_eq!(hit.map(|h| h.1), Some(hitloc::HEAD), "{hit:?}");
 }

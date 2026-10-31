@@ -294,10 +294,13 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         summary.push(format!("native body clips missing for states {body_unresolved:?}"));
     }
     summary.push(format!("native body clips: {}", body_clips.iter().map(|c| format!("{}=`{}`", c.state, c.anim.name)).collect::<Vec<_>>().join(", ")));
-    // The soldier's hit boxes (the MP bodies share them), standing, for the sim's trace.
-    let stand = body_clips.iter().find(|c| c.state == zhbo_native::thirdperson::state::STAND_IDLE).ok_or("no stand-idle body clip for the hit boxes")?;
-    table.hit_boxes = crate::thirdperson::hit_boxes(&xmodel::find(&zones[0], FACTIONS[0].body).map_err(|e| e.to_string())?, &stand.anim);
-    summary.push(format!("soldier hit boxes: {}", table.hit_boxes.len()));
+    // The soldier's hit boxes (the MP bodies share them) in every body state, for the sim's trace;
+    // standing is the one every soldier without a sim body state takes.
+    if !body_clips.iter().any(|c| c.state == zhbo_native::thirdperson::state::STAND_IDLE) {
+        return Err("no stand-idle body clip for the hit boxes".into());
+    }
+    table.hit_boxes = crate::thirdperson::hit_boxes(&xmodel::find(&zones[0], FACTIONS[0].body).map_err(|e| e.to_string())?, &body_clips);
+    summary.push(format!("soldier hit boxes: {} over {} body states", table.hit_boxes.len(), body_clips.len()));
 
     // The soldiers: body, every converted weapon in the right hand (one shown at a time), and the
     // tablet.

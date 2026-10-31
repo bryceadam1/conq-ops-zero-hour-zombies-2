@@ -15,9 +15,10 @@ pub enum Shape {
     Cylinder { radius: f32, height: f32 },
     /// Box standing on the object's position, rotated by `yaw` about +Z.
     Box { half_x: f32, half_y: f32, height: f32, yaw: f32 },
-    /// BO2's soldier: the body's hit boxes standing on the object's position, turned by `yaw`
-    /// about +Z; `rifle`: the shot ranks locations as a rifle bullet does ([`crate::hitloc::rank`]).
-    Body { body: &'static crate::hitloc::Body, yaw: f32, rifle: bool },
+    /// BO2's soldier: the body's hit boxes (in the pose of his body state) standing on the
+    /// object's position, turned by `yaw` about +Z and grown by `scale` (the General's drawn
+    /// size); `rifle`: the shot ranks locations as a rifle bullet does ([`crate::hitloc::rank`]).
+    Body { body: &'static crate::hitloc::Body, yaw: f32, scale: f32, rifle: bool },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -67,8 +68,11 @@ fn unyaw(v: Vec3, yaw: f32) -> Vec3 {
 pub fn ray_location(origin: Vec3, dir: Vec3, max_t: f32, target: &Target) -> Option<(f32, u8)> {
     use crate::hitloc::{HEAD, NONE, TORSO_UPPER};
     let o = origin - target.pos;
-    if let Shape::Body { body, yaw, rifle } = target.shape {
-        return body.pick(unyaw(o, yaw), unyaw(dir, yaw), max_t, rifle);
+    if let Shape::Body { body, yaw, scale, rifle } = target.shape {
+        // The ray into the unscaled body's frame: positions shrink by the scale, the distance
+        // along the (unit) direction with them.
+        let k = 1.0 / scale;
+        return body.pick(unyaw(o, yaw) * k, unyaw(dir, yaw), max_t * k, rifle).map(|(t, l)| (t * scale, l));
     }
     let t = ray_shape(o, dir, max_t, target.shape)?;
     let location = match target.shape {
@@ -232,7 +236,7 @@ pub fn contains(target: &Target, point: Vec3) -> bool {
             let (x, y) = (o.x * c + o.y * s, -o.x * s + o.y * c);
             x.abs() <= half_x && y.abs() <= half_y && (0.0..=height).contains(&o.z)
         }
-        Shape::Body { body, yaw, .. } => body.contains(unyaw(o, yaw)),
+        Shape::Body { body, yaw, scale, .. } => body.contains(unyaw(o, yaw) * (1.0 / scale)),
     }
 }
 

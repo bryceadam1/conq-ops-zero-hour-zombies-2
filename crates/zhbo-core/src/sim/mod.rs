@@ -19,7 +19,7 @@ mod rts;
 mod hit_tests;
 
 pub use build::{placement, HostWorld, PLANT_DISTANCE};
-pub use fire::{gather_targets, throw_velocity};
+pub use fire::{gather_targets, throw_velocity, HitBodies};
 pub use rts::{RtsIcons, RtsState, RtsWeapons, Third};
 
 use crate::host::{damage_kind, geom, objflags, LogicHost, ObjInfo};
@@ -222,6 +222,22 @@ impl PlayerSim {
         matches!(self.mode, Mode::Fps | Mode::FieldComputer { .. })
     }
 
+    /// 0 stand, 1 crouch, 2 prone.
+    pub fn stance_index(&self) -> i32 {
+        match self.body.stance {
+            movement::Stance::Stand => 0,
+            movement::Stance::Crouch => 1,
+            movement::Stance::Prone => 2,
+        }
+    }
+
+    /// The body clip his movement state picks (`nativebody::state_of`); `engine_moving`: Zero
+    /// Hour is walking him (RTS control).
+    pub fn body_state(&self, engine_moving: bool, run_speed: f32) -> u16 {
+        let a = &self.arsenal;
+        crate::nativebody::state_of(self.stance_index(), self.body.horizontal_speed(), self.body.sprinting, a.ads, a.active == 1, engine_moving, run_speed)
+    }
+
     #[cfg(test)]
     pub fn spawn_for_tests() -> PlayerSim {
         PlayerSim {
@@ -279,8 +295,9 @@ pub struct Sim {
     pub tuning: MoveTuning,
     /// BO2's bullet penetration table and dvars (`crate::penetration`, from the tuning pack).
     pub penetration: crate::penetration::Penetration,
-    /// The soldier's hit boxes, when not the installed table's (the tests set their own).
-    pub hit_body: Option<&'static crate::hitloc::Body>,
+    /// The soldier's hit boxes per body state, when not the installed table's (the tests set
+    /// their own).
+    pub hit_body: Option<&'static crate::hitloc::Poses>,
     pub frame: u32,
     pub events: Vec<Event>,
 }
@@ -748,24 +765,25 @@ impl Sim {
             .filter(|p| !p.is_first_person())
             .map(|p| {
                 let a = &p.arsenal;
-                let stance = match p.body.stance {
-                    movement::Stance::Stand => 0,
-                    movement::Stance::Crouch => 1,
-                    movement::Stance::Prone => 2,
-                };
                 let engine_moving = moving.is_some_and(|(g, m)| g == p.general && m) && !p.is_first_person();
-                let speed = p.body.horizontal_speed();
                 NativePose {
                     general: p.general,
                     weapon: a.current().def.viewmodel,
-                    stance,
-                    state: crate::nativebody::state_of(stance, speed, p.body.sprinting, a.ads, a.active == 1, engine_moving, run_speed),
+                    stance: p.stance_index(),
+                    state: p.body_state(engine_moving, run_speed),
                     time,
                     rate: 1.0,
                     sidearm: a.active == 1,
                 }
             })
             .collect()
+    }
+
+    /// Every General's body state now (`nativebody::state_of`, from the sim's own stance, gait,
+    /// sprint and ADS — never the render clock): the pose his hit boxes take in a trace.
+    pub(super) fn hit_states(&self) -> Vec<(u32, u16)> {
+        let run_speed = self.tuning.run_speed(false);
+        self.players.iter().flatten().map(|p| (p.general, p.body_state(false, run_speed))).collect()
     }
 
     /// Whether `player` sees enemies at `pos` on the minimap through the shroud: one of their
