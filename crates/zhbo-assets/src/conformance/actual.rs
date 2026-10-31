@@ -658,7 +658,8 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     let thrown = d.class.is_offhand() && d.place == Place::Throw;
     let plr = if d.class.is_offhand() {
         thrown.then(|| sh.sound(zhbo_core::sounds::THROW)).flatten()
-    } else if d.class == Class::Melee {
+    } else if d.class == Class::Melee || d.class == Class::Shield {
+        // A knife or the Assault Shield fires no shot (the shield's trigger deploys it).
         None
     } else if launches {
         sh.sound(zhbo_core::sounds::FIRE_LAUNCHER)

@@ -5082,3 +5082,53 @@ remaining early returns are states the mod has no counterpart of (0x1e-0x22, 0x2
 The mod switched mid-shot at once; the press now joins `swaps_pending` while the shot's cooldown
 (after this frame's fire tick) is left. Test: fake-host
 `a_switch_pressed_after_a_shot_happens_when_the_shot_ends`.
+
+## The Assault Shield: converted, blocks held and stowed, deploys as cover (2026-10-31, `v1/assault-shield`)
+
+Stacked on `v1/offhand-rules`. Scope, decompiles and poses in `~/.opencode/plan/assault-shield/`
+(`SCOPE.md`, `blast*.c`, `dvars.txt`, `held2.png`).
+
+* **Class.** `riotshield_mp` (weapType `riotshield`, inventory primary) is no longer excluded; it
+  converts as the new `Class::Shield` — not a gun (`is_gun` false: no round, no RTS weapon, no
+  stat bars), but `is_slot_weapon`, so CaC lists it in the primary slot under SPECIALS by its
+  statstable slot/group and class repair keeps it. It melees with itself (`melee_weapon`), aims
+  (`ads_up`), moves at its `move_speed_scale` 0.9 and its swing is its own sound.
+* **Collmaps.** BO2 attaches `t6_wpn_shield_carry_world` on `tag_weapon_left` (held) and
+  `t6_wpn_shield_stow_world` on `tag_stowed_back` (stowed). `zhbo-assets/src/shield.rs` poses the
+  MP body — **gotcha: the rifle stand pose holds the shield sideways (`held.png`); the torso anim
+  `pt_riotshield_stand_raise`'s last frame holds it square in front** — and writes each model's
+  bounds on its tag as the weapon table's new `Shield` field (body-space inches). Real install:
+  held box centre 24 in ahead, 52 in up, facing forward.
+* **Block.** `zhbo-core/src/shield.rs`: each frame the sim snapshots every bearer (`Sim::shields`;
+  held while the shield is up, stowed otherwise unless it is deployed). A hitscan round, melee
+  strike or projectile crossing an enemy's box is location `riotshield`, which
+  `_globallogic_player.gsc:840-888` returns from without damage (metal impact; an explosive goes
+  off on it). **The mod's body is a cylinder, so the shield on the hit entity is compared with
+  where the ray passes the body's axis, not the cylinder skin** — otherwise a held shield would
+  also stop shots in the back (the cylinder's front is behind the shield's front face).
+* **Blasts.** `FUN_005f2130` → `FUN_00670940`: damage × (1 − p), p by the cosine between the shield
+  tag's forward axis and the blast: within 15°/30°/60°/90° → `shieldBlastDamageProtection_30/60/
+  120/180` = 0.4/0.2/0.1/0 (tuning pack). The stowed tag's x axis points back-and-down, so a
+  stowed shield rarely protects — the literal rule. `shieldPlayerBulletProtectionDegrees` (60) is
+  registered but never read in MP.
+* **Deploy** (`sim/deploy.rs`): the trigger spends the one round; the shield stands under where it
+  was held, refused by the `riotshield_deploy_*` dvars (zdiff 30 in, pitch 20°, roll 25°, 100 in
+  apart) or unwalkable ground (round back, the plant hint — BO2's own fail string was not found in
+  the localize zones); shown as the converter's `ZHBO_Proj_riotshield_mp` built from the script's
+  `deployedshieldmodel` (existing `host.spawn`, no new object kind); blocks everyone's shots;
+  takes `watchdeployedriotshielddamage`'s scaled damage to `riotshield_deployed_health` 300;
+  picked up by switching to the shield or the use key beside it; owner death destroys it.
+* **Not carried:** Zero Hour units' fire at the General is engine damage (`Object::attemptDamage`)
+  and is **not** blocked yet — that needs an engine hook asking the core (a lock-free shield
+  mirror + a new `zhbo_logic_*` ABI function: VERSION bump, integrator); ZH units also ignore the
+  deployed shield (its object is `UNATTACKABLE`). Third person still draws the shield in the right
+  hand like any weapon (BO2 holds it on the left and stows it on the back). The blocked-damage
+  score, the shield-hit view events and the `riotshield_impact` rumble are not carried.
+* `WEAPON_FIELDS` 87 → 88 (`Shield`): the table VERSION bump is the integrator's. No ABI change.
+
+Measured (v1/offhand-rules conf8 → this branch): weapons rows 11604 → 11605 actual, BO2-only rows
+**1 → 0**, cells 769,940 → 769,990 (+50: the new row's cells in columns every row already
+differs on; no new column cluster, clusters 193 → 193); cac actual rows 552 → 553, one-sided
+56 → 55, cells 572 → 573 (its description); gap clusters **200 → 199**. Tests: fake-host shield
+tests (front/back/stowed blocks, knife, blast arc, deploy, pick-up, refusal, destruction),
+`cargo test --workspace`, clippy (no new warnings), real-install suite (33 passed) green.

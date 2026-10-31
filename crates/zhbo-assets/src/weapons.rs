@@ -506,9 +506,10 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
             events.extend(general(zhbo_core::sounds::PULL_PIN, &w.pullback_sound_player, Kind::Player));
             events.extend(general(zhbo_core::sounds::EXPLOSION, &w.projectile_explosion_sound, Kind::World));
         }
-        // A melee weapon swings with its own sound; the class melee weapon's is also the global
-        // swing (a gun's melee, `sounds::melee_for`).
-        if d.class == Class::Melee {
+        // A melee weapon (and the Assault Shield, which melees with itself) swings with its own
+        // sound; the class melee weapon's is also the global swing (a gun's melee,
+        // `sounds::melee_for`).
+        if d.class == Class::Melee || d.class == Class::Shield {
             if let Some(event) = general(&format!("ZHBO_BO2_MeleeSwing_{key}"), &w.melee_swipe_sound_player, Kind::Player) {
                 d.melee_sound = event.event.clone();
                 events.push(event);
