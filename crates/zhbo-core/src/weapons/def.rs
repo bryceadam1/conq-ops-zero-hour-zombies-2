@@ -523,6 +523,12 @@ impl WeaponDef {
         60.0 / self.fire_time.max(1e-3)
     }
 
+    /// A dual-wield weapon: it names its left gun (BO2's `bDualWield` with `szDualWieldWeaponName`).
+    /// It fires two guns, one per trigger, and has no sights (`aimDownSight` 0 on every BO2 `_dw`).
+    pub fn is_dual_wield(&self) -> bool {
+        !self.dual_wield_weapon.is_empty()
+    }
+
     pub fn shell_by_shell(&self) -> bool {
         self.reload_start_time > 0.0 && self.reload_ammo_add > 0
     }

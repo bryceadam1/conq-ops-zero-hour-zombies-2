@@ -99,6 +99,8 @@ const SPRINT_IN_TIME: f32 = 0.25;
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Events {
     pub shot: bool,
+    /// The dual-wield left gun fired (`EventKind::Shot { left: true }`).
+    pub left_shot: bool,
     pub reload_started: bool,
     pub swapped: bool,
 }
@@ -109,6 +111,11 @@ pub struct Frame {
     pub model: i32,
     pub clip: i32,
     pub t: f32,
+    /// A dual-wield weapon's left gun on its own clip (its `_LEFT` slot: the matching right slot
+    /// with `INSTANCE_LEFT`) and seconds into it, while each hand fires, reloads or idles on its
+    /// own. `None` when both hands play the base clip (raise, drop, sprint, melee, offhand) or the
+    /// weapon is a single gun.
+    pub left: Option<(i32, f32)>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -119,6 +126,9 @@ pub struct Viewmodel {
     since_shot: f32,
     shot_was_last: bool,
     shot_aimed: bool,
+    /// The dual-wield left gun's own: seconds since its last shot, and whether that emptied it.
+    left_since_shot: f32,
+    left_shot_was_last: bool,
     since_sprint_start: f32,
     /// Seconds the hammer has been out, and into building (one swing after another).
     hammer_t: f32,
@@ -128,7 +138,7 @@ pub struct Viewmodel {
 impl Default for Viewmodel {
     fn default() -> Self {
         // First person starts from the field computer: the tablet goes down first.
-        Viewmodel { tablet_putaway: Some(0.0), since_shot: 10.0, shot_was_last: false, shot_aimed: false, since_sprint_start: 0.0, hammer_t: 0.0, swing_t: 0.0 }
+        Viewmodel { tablet_putaway: Some(0.0), since_shot: 10.0, shot_was_last: false, shot_aimed: false, left_since_shot: 10.0, left_shot_was_last: false, since_sprint_start: 0.0, hammer_t: 0.0, swing_t: 0.0 }
     }
 }
 
@@ -138,15 +148,55 @@ fn or(def: &WeaponDef, clip: i32, fallback: i32) -> i32 {
 }
 
 impl Viewmodel {
-    /// Advance by `dt` and pick this frame's model, clip and time.
+    /// Advance by `dt` and pick this frame's model, clip and time, and a dual-wield weapon's left
+    /// gun's own clip.
     pub fn update(&mut self, dt: f32, p: &PlayerSim, ev: Events) -> Frame {
+        let a = &p.arsenal;
+        let w = a.current();
+        if ev.left_shot {
+            self.left_since_shot = 0.0;
+            self.left_shot_was_last = w.left_ammo() == Some(0);
+        } else {
+            self.left_since_shot += dt;
+        }
+        let mut f = self.update_base(dt, p, ev);
+        // The hands part only where BO2 runs them apart (`PM_Weapon` per hand): firing, reloading
+        // and idling. Raise, drop, sprint, melee and offhands are one clip for both.
+        let together = a.offhand.is_some()
+            || a.melee_left > 0.0
+            || a.drop_left > 0.0
+            || a.raise_left > 0.0
+            || p.body.sprinting
+            || (a.since_sprint < w.def.sprint_out_time && w.def.has_anim(slot::SPRINT_OUT as usize));
+        if let (Some(h), false) = (w.left.as_ref(), together || f.model != w.def.viewmodel) {
+            let (clip, t) = self.left_clip(w.def, h);
+            f.left = Some(((clip + w.def.clip_base) | zhbo_native::viewmodel::INSTANCE_LEFT as i32, t.max(0.0)));
+        }
+        f
+    }
+
+    /// The left gun's clip, by BO2's `_LEFT` slots (`FIRE_LEFT`, `LASTSHOT_LEFT`, `IDLE_LEFT`,
+    /// `EMPTY_IDLE_LEFT`, `RELOAD_LEFT`, `RELOAD_EMPTY_LEFT`) as their right slots: its reload,
+    /// then its shot, then idle (empty idle when its magazine is dry).
+    fn left_clip(&self, def: &WeaponDef, h: &crate::weapons::Hand) -> (i32, f32) {
+        if let Some(Reload::Magazine { t, empty, .. }) = h.reload {
+            return (if empty { slot::RELOAD_EMPTY } else { slot::RELOAD }, t);
+        }
+        if self.left_since_shot < FIRE_HOLD.max(def.fire_time) {
+            return (if self.left_shot_was_last { slot::LASTSHOT } else { slot::FIRE }, self.left_since_shot);
+        }
+        (if h.ammo == 0 { slot::EMPTY_IDLE } else { slot::IDLE }, self.left_since_shot)
+    }
+
+    /// The base clip (both hands' when they move together, the right gun's otherwise).
+    fn update_base(&mut self, dt: f32, p: &PlayerSim, ev: Events) -> Frame {
         let a = &p.arsenal;
         let w = a.current();
         let def = w.def;
         let model = def.viewmodel;
-        let frame = |model: i32, clip: i32, t: f32| Frame { model, clip, t: t.max(0.0) };
+        let frame = |model: i32, clip: i32, t: f32| Frame { model, clip, t: t.max(0.0), left: None };
         // The held weapon's own clips (an alt mode's sit after its weapon's on the same viewmodel).
-        let wf = |clip: i32, t: f32| Frame { model, clip: clip + def.clip_base, t: t.max(0.0) };
+        let wf = |clip: i32, t: f32| Frame { model, clip: clip + def.clip_base, t: t.max(0.0), left: None };
 
         if let Some(t) = self.tablet_putaway.as_mut() {
             *t += dt;
@@ -370,6 +420,40 @@ mod tests {
 
     fn player() -> PlayerSim {
         PlayerSim::spawn_for_tests()
+    }
+
+    /// A dual-wield weapon's left gun plays its own `_LEFT` slots: its shot (last shot when it
+    /// emptied the gun), its reload and its idle, apart from the right gun's clip; raising moves
+    /// both hands together.
+    #[test]
+    fn the_left_gun_plays_its_own_slots() {
+        use zhbo_native::viewmodel::INSTANCE_LEFT;
+        let left = |c: i32| c | INSTANCE_LEFT as i32;
+        let mut p = player();
+        p.mode = Mode::Fps;
+        let w = p.arsenal.active;
+        p.arsenal.weapons[w] = crate::weapons::WeaponState::new(crate::weapons::weapon("fiveseven_dw_mp"));
+        p.arsenal.raise_left = 0.0;
+        let mut vm = Viewmodel::default();
+        vm.update(TABLET_PUTAWAY_TIME + 0.1, &p, Events::default());
+        let f = vm.update(0.5, &p, Events::default());
+        assert_eq!((f.clip, f.left.map(|l| l.0)), (slot::IDLE, Some(left(slot::IDLE))));
+        // The left gun fires alone: its fire clip, the right gun stays idle.
+        let f = vm.update(0.03, &p, Events { left_shot: true, ..Default::default() });
+        assert_eq!((f.clip, f.left.map(|l| l.0)), (slot::IDLE, Some(left(slot::FIRE))));
+        vm.update(0.5, &p, Events::default());
+        // Its last round: the last shot, then the empty idle.
+        p.arsenal.weapons[w].left.as_mut().unwrap().ammo = 0;
+        assert_eq!(vm.update(0.03, &p, Events { left_shot: true, ..Default::default() }).left.map(|l| l.0), Some(left(slot::LASTSHOT)));
+        assert_eq!(vm.update(0.5, &p, Events::default()).left.map(|l| l.0), Some(left(slot::EMPTY_IDLE)));
+        // Its empty reload while the right gun fires.
+        p.arsenal.weapons[w].left.as_mut().unwrap().reload = Some(Reload::Magazine { t: 0.4, length: 2.4, add_at: 1.3, added: false, empty: true });
+        let f = vm.update(0.03, &p, Events { shot: true, ..Default::default() });
+        assert_eq!((f.clip, f.left), (slot::FIRE, Some((left(slot::RELOAD_EMPTY), 0.4))));
+        // A raise moves both hands on the base clip.
+        p.arsenal.raise_left = 0.2;
+        p.arsenal.raise_total = 0.3;
+        assert_eq!(vm.update(0.03, &p, Events::default()).left, None);
     }
 
     #[test]

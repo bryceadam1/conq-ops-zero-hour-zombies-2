@@ -926,6 +926,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                         out.viewmodel_weapon = f.model;
                         out.viewmodel_time = f.t;
                         out.viewmodel_ads = p.arsenal.ads;
+                        crate::nativevm::ffi::set_left_clip(f.left);
                     }
                     self.build_input(inp, &mut out, allowed && !in_fc, p.hammer.is_some(), unclassed);
                 }
@@ -1107,7 +1108,8 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                         self.hits_len += 1;
                     }
                 }
-                EventKind::Shot { .. } => self.vm_events.shot = true,
+                EventKind::Shot { left: false, .. } => self.vm_events.shot = true,
+                EventKind::Shot { left: true, .. } => self.vm_events.left_shot = true,
                 EventKind::ReloadStarted => self.vm_events.reload_started = true,
                 EventKind::Swapped => self.vm_events.swapped = true,
                 EventKind::FieldComputerOpened => {}

@@ -60,6 +60,35 @@ pub struct WeaponState {
     /// The grip's recoil-reduction accumulator, and seconds since the last shot (G5).
     pub recoil_acc: f32,
     pub since_shot: f32,
+    /// A dual-wield weapon's left gun (BO2 runs `PM_Weapon` once per hand, `FUN_008c8420` with
+    /// `ps+0x71` the hand): its own magazine and timers. The spare rounds are shared — both guns
+    /// name the same `szAmmoName` — so `reserve` serves both. `None` for a single gun.
+    pub left: Option<Hand>,
+}
+
+/// One gun's own magazine and timers: what BO2 keeps per hand (`ammoCount[hand]`, the left hand's
+/// weapon state `ps+0x1d4` and times `ps+0x54`/`+0x58`). The right hand's live in [`WeaponState`]
+/// itself; [`WeaponState::swap_hand`] trades them so one set of rules runs either hand.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Hand {
+    pub ammo: u16,
+    pub cooldown: f32,
+    pub reload: Option<Reload>,
+    pub burst_left: u8,
+    pub string: u16,
+    pub recoil_acc: f32,
+    pub since_shot: f32,
+}
+
+impl Hand {
+    /// A full magazine of `def`'s.
+    fn full(def: &WeaponDef) -> Self {
+        Hand { ammo: def.clip, cooldown: 0.0, reload: None, burst_left: 0, string: 0, recoil_acc: 0.0, since_shot: 10.0 }
+    }
+
+    pub fn is_reloading(&self) -> bool {
+        self.reload.is_some()
+    }
 }
 
 impl WeaponState {
@@ -84,8 +113,40 @@ impl WeaponState {
             string: 0,
             recoil_acc: 0.0,
             since_shot: 10.0,
+            // The left gun's magazine is the dual-wield weapon's clip size: BO2's left-hand def
+            // (`szDualWieldWeaponName`) carries the same `iClipSize` and reload times as its pair
+            // for every dual-wield pistol, and is not a weapon the table converts.
+            left: (gun && def.is_dual_wield()).then(|| Hand::full(def)),
         }
         .with_alt_ammo()
+    }
+
+    /// Trade the right hand's magazine and timers with the left gun's (no-op for a single gun), so
+    /// the reload and trigger rules run the left hand on its own state. Call it again to trade back.
+    pub fn swap_hand(&mut self) {
+        let Some(h) = self.left.as_mut() else { return };
+        std::mem::swap(&mut self.ammo, &mut h.ammo);
+        std::mem::swap(&mut self.cooldown, &mut h.cooldown);
+        std::mem::swap(&mut self.reload, &mut h.reload);
+        std::mem::swap(&mut self.burst_left, &mut h.burst_left);
+        std::mem::swap(&mut self.string, &mut h.string);
+        std::mem::swap(&mut self.recoil_acc, &mut h.recoil_acc);
+        std::mem::swap(&mut self.since_shot, &mut h.since_shot);
+    }
+
+    /// Stop both hands' reloads and bursts (a swap, melee or offhand interrupts them).
+    fn interrupt(&mut self) {
+        self.reload = None;
+        self.burst_left = 0;
+        if let Some(h) = self.left.as_mut() {
+            h.reload = None;
+            h.burst_left = 0;
+        }
+    }
+
+    /// The left gun's rounds in its magazine, for a dual-wield weapon.
+    pub fn left_ammo(&self) -> Option<u16> {
+        self.left.as_ref().map(|h| h.ammo)
     }
 
     /// Load the alt mode's own magazine (an under-barrel launcher's grenades).
@@ -195,7 +256,8 @@ pub struct Offhand {
 pub enum WeaponAction {
     /// Fire one round (one pellet for shotguns) with the given cone (degrees), random offsets in
     /// [-1, 1), view kick (degrees pitch up, yaw, roll) and the gun kick spring's impulse.
-    Fire { spread_deg: f32, jitter: (f32, f32), recoil: (f32, f32, f32), gun_kick: (f32, f32), pellet: u16 },
+    /// `left`: the dual-wield left gun fired it (BO2's `EV_FIRE_WEAPON_LEFT`, `FUN_008e1b80`).
+    Fire { spread_deg: f32, jitter: (f32, f32), recoil: (f32, f32, f32), gun_kick: (f32, f32), pellet: u16, left: bool },
     /// Launch a projectile (launchers, crossbow, ballistic knife); `pellet` numbers the bolts of
     /// one shot (the tri-bolt's three).
     Launch { def: &'static WeaponDef, pellet: u16 },
@@ -580,8 +642,7 @@ impl Arsenal {
     /// ([`Timing::Switch`]) rather than switching to the quick animations (G3).
     fn switch_to(&mut self, index: usize) {
         let from = self.current().def;
-        self.current_mut().reload = None; // swapping cancels a reload, like BO2
-        self.current_mut().burst_left = 0;
+        self.current_mut().interrupt(); // swapping cancels a reload, like BO2
         self.drop_left = from.drop_time;
         self.drop_total = self.drop_left;
         self.previous = self.active;
@@ -715,14 +776,54 @@ impl Arsenal {
         // Melee interrupts a reload and firing, not a raise.
         if pressed & buttons::MELEE != 0 && self.melee_left <= 0.0 && self.raise_left <= 0.0 && self.drop_left <= 0.0 {
             self.melee_left = self.melee.melee_time.max(0.3);
-            let w = self.current_mut();
-            w.burst_left = 0;
-            w.reload = None;
+            self.current_mut().interrupt();
             self.ads = 0.0;
             out.push(WeaponAction::Melee { damage: self.melee.melee_damage });
             return;
         }
 
+        // ADS blend (`FUN_008e4470`): the fraction moves at 1/adsTransInTime in and
+        // 1/adsTransOutTime out, `fastads` dividing the rate by `perk_weapAdsMultiplier`; never
+        // while sprinting or until the weapon is back up from a sprint.
+        let def = self.current().def;
+        let sprint_ready = self.sprint_ready();
+        // Only a gun aims; a knife or a held offhand has no sights (and no ADS zoom). A dual-wield
+        // weapon has none either: its ADS button is the left gun's trigger.
+        let wants_ads = def.class.is_gun()
+            && !def.is_dual_wield()
+            && held & buttons::ADS != 0
+            && !sprinting
+            && sprint_ready
+            && self.raise_left <= 0.0
+            && self.drop_left <= 0.0
+            && !self.current().is_reloading();
+        let quickdraw = if self.has_specialty(Specialty::FastAds) && self.tuning.perk_weap_ads_multiplier > 0.0 { self.tuning.perk_weap_ads_multiplier } else { 1.0 };
+        self.ads = if wants_ads {
+            (self.ads + dt / (def.ads_in_time.max(1e-3) * quickdraw)).min(1.0)
+        } else {
+            (self.ads - dt / (def.ads_out_time.max(1e-3) * quickdraw)).max(0.0)
+        };
+
+        // Each hand runs the reload and trigger rules on its own magazine and timers (BO2's
+        // `PM_Weapon`, `FUN_008e4da0`, once per hand). The trigger is `FUN_008dbb20`'s button: the
+        // attack button for a single gun and a dual-wield pair's right gun, the ADS button for the
+        // left gun. The reload button reaches both hands (each checks it, `FUN_008dfd50`).
+        let dual = self.current().left.is_some();
+        self.step_hand(held, pressed, sprinting, stance, speed, rng, out, false);
+        if dual {
+            let trigger = |bits: u32| (bits & !buttons::FIRE) | if bits & buttons::ADS != 0 { buttons::FIRE } else { 0 };
+            self.current_mut().swap_hand();
+            self.step_hand(trigger(held), trigger(pressed), sprinting, stance, speed, rng, out, true);
+            self.current_mut().swap_hand();
+        }
+    }
+
+    /// One hand's reload progress and requests, then its trigger: `held`/`pressed` carry that
+    /// hand's trigger as `FIRE`. The left hand runs with its state swapped in
+    /// ([`WeaponState::swap_hand`]); its actions say so (`left`).
+    #[allow(clippy::too_many_arguments)]
+    fn step_hand(&mut self, held: u32, pressed: u32, sprinting: bool, stance: usize, speed: f32, rng: &mut Rng, out: &mut Vec<WeaponAction>, left: bool) {
+        let dt = LOGIC_DT;
         // Reload progress / requests.
         let reload_tick = self.tick(Timing::Reload);
         if self.current_mut().step_reload(reload_tick) {
@@ -733,20 +834,8 @@ impl Arsenal {
             out.push(WeaponAction::ReloadStarted);
         }
 
-        // ADS blend (`FUN_008e4470`): the fraction moves at 1/adsTransInTime in and
-        // 1/adsTransOutTime out, `fastads` dividing the rate by `perk_weapAdsMultiplier`; never
-        // while sprinting or until the weapon is back up from a sprint.
         let def = self.current().def;
         let sprint_ready = self.sprint_ready();
-        // Only a gun aims; a knife or a held offhand has no sights (and no ADS zoom).
-        let wants_ads = def.class.is_gun() && held & buttons::ADS != 0 && !sprinting && sprint_ready && self.raise_left <= 0.0 && self.drop_left <= 0.0 && !self.current().is_reloading();
-        let quickdraw = if self.has_specialty(Specialty::FastAds) && self.tuning.perk_weap_ads_multiplier > 0.0 { self.tuning.perk_weap_ads_multiplier } else { 1.0 };
-        self.ads = if wants_ads {
-            (self.ads + dt / (def.ads_in_time.max(1e-3) * quickdraw)).min(1.0)
-        } else {
-            (self.ads - dt / (def.ads_out_time.max(1e-3) * quickdraw)).max(0.0)
-        };
-
         if def.class == Class::Melee || def.class.is_offhand() {
             return;
         }
@@ -831,7 +920,7 @@ impl Arsenal {
                     } else {
                         ((0.0, 0.0, 0.0), (0.0, 0.0))
                     };
-                    out.push(WeaponAction::Fire { spread_deg: spread, jitter, recoil, gun_kick, pellet });
+                    out.push(WeaponAction::Fire { spread_deg: spread, jitter, recoil, gun_kick, pellet, left });
                 }
             }
             w.ammo -= 1;
@@ -872,9 +961,7 @@ impl Arsenal {
                     }
                     return false;
                 }
-                let w = self.current_mut();
-                w.reload = None;
-                w.burst_left = 0;
+                self.current_mut().interrupt();
                 self.ads = 0.0;
                 self.offhand = Some(OffhandUse::Holding { lethal, held_for: 0.0 });
                 self.cooked = 0.0;

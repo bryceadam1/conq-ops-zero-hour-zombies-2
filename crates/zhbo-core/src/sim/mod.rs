@@ -110,7 +110,8 @@ pub enum EventKind {
     ClassChosen { general: u32, class: ClassName },
     FieldComputerOpened,
     ReturnedToRts { general: u32 },
-    Shot { origin: Vec3, end: Vec3 },
+    /// `left`: the dual-wield left gun's shot (BO2's `EV_FIRE_WEAPON_LEFT`).
+    Shot { origin: Vec3, end: Vec3, left: bool },
     /// One pellet landed on something (a miss emits nothing): where, the direction it was going,
     /// what it hit, and the shooting weapon's BO2 impact bucket. The client turns it into BO2's
     /// impact FX (through `ZhboClientOut.hits`) and the surface's impact sound.

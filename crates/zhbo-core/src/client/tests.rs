@@ -54,11 +54,11 @@
         frame_with(&mut client, &mut sim, &host, &mut inp, 60);
         assert_eq!(client.view, ViewMode::Fps);
         // Another player's shot is not the local viewmodel's effect.
-        sim.events.push(crate::sim::Event { player: 1, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO } });
+        sim.events.push(crate::sim::Event { player: 1, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left: false } });
         let out = client.frame(&mut sim, &inp);
         assert_eq!(out.viewmodel_fired, 0);
         // The sim's own `Shot` event is what the bridge's `fired` flag comes from.
-        sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO } });
+        sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left: false } });
         let out = client.frame(&mut sim, &inp);
         assert_eq!(out.viewmodel_fired, 1);
     }
@@ -112,7 +112,7 @@
 
         // A shot on its own no longer plays an impact sound (the pellet's event does).
         client.cues.queue.clear();
-        sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO } });
+        sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left: false } });
         client.frame(&mut sim, &inp);
         let cues: Vec<&str> = client.cues.queue.iter().map(|c| c.event).collect();
         assert!(!cues.contains(&sounds::IMPACT) && !cues.contains(&sounds::IMPACT_FLESH), "{cues:?}");

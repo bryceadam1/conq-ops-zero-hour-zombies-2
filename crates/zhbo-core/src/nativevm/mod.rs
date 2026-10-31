@@ -149,6 +149,10 @@ pub struct Request {
     pub eye: [f32; 3],
     pub dir: [f32; 3],
     pub gun: GunPose,
+    /// A dual-wield weapon's left gun on its own clip (`INSTANCE_LEFT` set) and seconds into it,
+    /// when the hands differ (one fires or reloads alone); `None` plays the base clip's left half
+    /// at `time`.
+    pub left: Option<(i32, f32)>,
 }
 
 /// A surface of the composed mesh, with its textures by archive path.
@@ -533,7 +537,10 @@ impl Loaded {
             }
         }
         if let Some(l) = left {
-            let frame = l.frame_at(time, looping);
+            let frame = match req.left {
+                Some((clip, t)) => l.frame_at(t * req.rate.max(0.0), crate::viewmodel::slot::loops(clip & !(zhbo_native::viewmodel::INSTANCE_LEFT as i32))),
+                None => l.frame_at(time, looping),
+            };
             self.skeleton.sample_over(l, frame, &mut out.local);
         }
         // The ADS layer last: a `tag_torso`-only track, so it adds the rig root over both halves
