@@ -180,6 +180,40 @@ mod tests {
         }
     }
 
+    /// The weapon-switch key during a non-cancelable offhand (the frag): the switch is kept and
+    /// happens once the offhand is done; on a cancelable one it is the cancel, no switch.
+    #[test]
+    fn a_switch_during_a_frag_happens_after_it() {
+        let run = |cancelable: bool| {
+            let mut rng = Rng::new(1);
+            let mut a = Arsenal::with_loadout(Loadout::default());
+            a.raise_left = 0.0;
+            assert!(a.weapons.len() > 1);
+            let def: &'static WeaponDef = Box::leak(Box::new(WeaponDef { hold_cancelable: cancelable, ..a.lethal.def.clone() }));
+            a.lethal = Offhand { def, count: 2 };
+            let mut out = Vec::new();
+            a.step(buttons::LETHAL, buttons::LETHAL, false, 0, 0.0, &mut rng, &mut out);
+            for _ in 0..40 {
+                a.step(buttons::LETHAL, 0, false, 0, 0.0, &mut rng, &mut out);
+            }
+            a.step(buttons::LETHAL | buttons::SWAP_WEAPON, buttons::SWAP_WEAPON, false, 0, 0.0, &mut rng, &mut out);
+            a.step(buttons::LETHAL, 0, false, 0, 0.0, &mut rng, &mut out);
+            assert_eq!(a.active, 0, "no switch during the offhand");
+            let mut swapped_while_busy = false;
+            for _ in 0..200 {
+                let busy = a.offhand.is_some();
+                let mut step = Vec::new();
+                a.step(0, 0, false, 0, 0.0, &mut rng, &mut step);
+                swapped_while_busy |= busy && a.offhand.is_some() && step.contains(&WeaponAction::Swapped);
+                out.extend(step);
+            }
+            assert!(!swapped_while_busy);
+            (a.active, out.contains(&WeaponAction::Swapped), a.lethal.count)
+        };
+        assert_eq!(run(false), (1, true, 1), "thrown, then switched");
+        assert_eq!(run(true), (0, false, 2), "cancelled, no switch");
+    }
+
     /// BO2 runs the swing's `iMeleeTime` in plain time, then — a gun up, so the class melee
     /// weapon struck — brings the gun back up in its own `quickRaiseTime` (state 0x15,
     /// `FUN_008e1f50`), the one melee state Fast Melee Recovery speeds up (G3). The held knife

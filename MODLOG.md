@@ -4940,3 +4940,18 @@ unnamed.)
   the swing, its pending strike and the sprint-out are cleared. A press while still sprinting is
   unchanged.
 * Test: `an_offhand_mid_swing_drops_the_strike_and_waits_the_swing_out` (and the sprint-out).
+
+## A weapon switch pressed during an offhand happens after it (2026-10-31, `v1/offhand-rules`)
+
+BO2's weapnext on the client (`FUN_00537c20`) cycles the weapon selection (`FUN_005378d0`) unless the
+offhand is cancelable and in 0x16-0x1b, when it sends the cancel bit instead. The selection rides in
+every command (`usercmd` weapon, `in_EAX[7]` in `FUN_008e0e60`); the server's switch check refuses it
+while the offhand states 0x16-0x1d run (unless an equipment item with the cancel bit) and resets
+nothing, so the switch goes through once the offhand is done. The mod dropped the press.
+
+* `Arsenal::swaps_pending` counts switch presses during an offhand that are not a cancel (a
+  non-cancelable item such as the frag, or any item in its re-raise 0x1d); once the offhand is done
+  the swap applies them (`(active + n) % len`, so two presses on a two-gun kit come back to the
+  same gun, as BO2's cycling does). Test: `a_switch_during_a_frag_happens_after_it`.
+* The melee states also refuse a switch in `FUN_008e0e60`; a press during a swing is still dropped
+  by the mod (not checked whether BO2 keeps it the same way — likely).

@@ -338,6 +338,8 @@ pub struct Arsenal {
     /// item this frame; the sim sets it from the world before [`Arsenal::step`]
     /// ([`crate::sim::can_plant`]). Only `plantable` items read it.
     pub plant_ok: [bool; 2],
+    /// Weapon-switch presses made during an offhand, applied when it is done.
+    pub swaps_pending: u8,
     held_last: u32,
     /// Seconds since reload was last pressed (a second press soon after detonates C4).
     since_reload_press: f32,
@@ -405,6 +407,7 @@ impl Arsenal {
             melee_delay_left: 0.0,
             offhand: None,
             plant_ok: [true, true],
+            swaps_pending: 0,
             held_last: 0,
             since_reload_press: 10.0,
             cooked: 0.0,
@@ -484,6 +487,7 @@ impl Arsenal {
             melee_delay_left: 0.0,
             offhand: None,
             plant_ok: [true, true],
+            swaps_pending: 0,
             held_last: 0,
             since_reload_press: 10.0,
             cooked: 0.0,
@@ -804,6 +808,19 @@ impl Arsenal {
         }
 
         // Offhands: hold to pull back (and cook), release to throw.
+        // The weapon-switch key during an offhand: BO2's client cycles its weapon selection anyway
+        // (`FUN_00537c20` → `FUN_005378d0`) unless it sends a cancelable item's cancel instead
+        // (states 0x16-0x1b), and the server's switch check (`FUN_008e0e60`) only holds the
+        // request while the offhand states run — the command keeps carrying it, so the switch
+        // happens once the offhand is done. Each press cycles once more.
+        if pressed & buttons::SWAP_WEAPON != 0 {
+            if let Some(u) = self.offhand {
+                let cancels = self.offhand_def(u.lethal()).hold_cancelable && !matches!(u, OffhandUse::Raising { .. });
+                if !cancels {
+                    self.swaps_pending = self.swaps_pending.wrapping_add(1);
+                }
+            }
+        }
         if self.step_offhand(held, pressed, released, out) {
             return;
         }
@@ -825,10 +842,14 @@ impl Arsenal {
         }
 
         // Swap (never during the melee states 0x13-0x15, `FUN_008e0e60`).
-        if pressed & buttons::SWAP_WEAPON != 0 && self.weapons.len() > 1 && !meleeing {
-            let next = (self.active + 1) % self.weapons.len();
-            self.switch_to(next);
-            out.push(WeaponAction::Swapped);
+        let swaps = if self.swaps_pending > 0 { self.swaps_pending as usize } else { (pressed & buttons::SWAP_WEAPON != 0) as usize };
+        if swaps > 0 && self.weapons.len() > 1 && !meleeing {
+            self.swaps_pending = 0;
+            let next = (self.active + swaps) % self.weapons.len();
+            if next != self.active {
+                self.switch_to(next);
+                out.push(WeaponAction::Swapped);
+            }
         }
 
         // Melee interrupts a reload and firing, not a raise.
