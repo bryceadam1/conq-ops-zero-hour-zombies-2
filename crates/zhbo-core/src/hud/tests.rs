@@ -209,6 +209,96 @@ fn the_scope_overlay_follows_bo2s_reticle_zoom() {
 }
 
 #[test]
+fn the_scoped_hud_hides_the_map_compass_and_indicators() {
+    // `CoD.BIT_IS_SCOPED` (`FUN_0055a420` → the reticle zoom) hides the minimap container, which
+    // holds the map and the compass strip; the damage indicators' gate (`FUN_004adda0`) is the
+    // reticle zoom itself. All three switch at once. The ammo area stays; an IR sniper's optic
+    // draws no 2D reticle over the overlay.
+    let (mut sim, mut client) = fps_state();
+    let def = {
+        let mut d = sim.players[0].as_ref().expect("the player").arsenal.current_weapon().clone();
+        d.overlay_material = "scope_overlay_xpr50".into();
+        d.attachments = vec!["ir".into()];
+        (d.ads_zoom_in_frac, d.ads_zoom_out_frac, d.overlay_alpha_scale) = (0.0, 0.05, 1.0);
+        Box::leak(Box::new(d))
+    };
+    sim.players[0].as_mut().expect("the player").arsenal.current_mut().def = def;
+    client.hud.lui.damage_from(90.0, 0.0);
+    #[derive(Debug, PartialEq)]
+    struct Seen {
+        compass: bool,
+        indicator: bool,
+        ammo: bool,
+        reticle: bool,
+    }
+    let seen = |client: &Client, sim: &Sim| {
+        let rec = Recorder { has_art: true, ..Default::default() };
+        let prims = draw_hud(&rec, client, sim);
+        let has = |pred: &dyn Fn(&Prim) -> bool| prims.iter().any(pred);
+        let hit = crate::lui::materials::image("hit_direction");
+        let digit = crate::lui::materials::image("hud_mp_num_big_slash");
+        Seen {
+            compass: has(&|p| matches!(p, Prim::Image { name, .. } if name == sprites::COMPASS)),
+            indicator: has(&|p| matches!(p, Prim::Quad { name, .. } if *name == hit)),
+            ammo: has(&|p| matches!(p, Prim::Image { name, .. } if *name == digit)),
+            reticle: has(&|p| matches!(p, Prim::Image { name, .. } if name == sprites::RED_DOT || name.starts_with("mtl_t6_attach_optic"))),
+        }
+    };
+    let set = |sim: &mut Sim, client: &mut Client, ads: f32| {
+        let p = sim.players[0].as_mut().expect("the player");
+        p.arsenal.ads = ads;
+        client.hud.lui.tick(0.016, Some(p));
+    };
+    let shown = Seen { compass: true, indicator: true, ammo: true, reticle: true };
+    let scoped = Seen { compass: false, indicator: false, ammo: true, reticle: false };
+    set(&mut sim, &mut client, 0.0);
+    assert_eq!(seen(&client, &sim), Seen { reticle: false, ..shown }, "hip: everything, no optic reticle");
+    set(&mut sim, &mut client, 0.99);
+    assert_eq!(seen(&client, &sim), shown, "aiming in below the (empty) window: the sight's reticle, not scoped");
+    set(&mut sim, &mut client, 1.0);
+    assert_eq!(seen(&client, &sim), scoped, "the direction flipped at full ADS: scoped");
+    set(&mut sim, &mut client, 0.975);
+    assert_eq!(seen(&client, &sim), scoped, "aiming out inside the last 5 %: still scoped");
+    set(&mut sim, &mut client, 0.94);
+    assert_eq!(seen(&client, &sim), shown, "aiming out below the window: back at once");
+
+    // An in-window (IR's 0.016): scoped while aiming in through it.
+    let mut d = def.clone();
+    d.ads_zoom_in_frac = 0.016;
+    sim.players[0].as_mut().expect("the player").arsenal.current_mut().def = Box::leak(Box::new(d.clone()));
+    set(&mut sim, &mut client, 0.0);
+    set(&mut sim, &mut client, 0.98);
+    assert_eq!(seen(&client, &sim), shown, "aiming in, below the window");
+    set(&mut sim, &mut client, 0.995);
+    assert_eq!(seen(&client, &sim), scoped, "aiming in, inside the window");
+
+    // TV-guided: the overlay hides the indicators, but the scoped bit (map, compass) stays clear.
+    d.guided_missile_type = crate::weapons::scope::MISSILE_GUIDANCE_TVGUIDED;
+    sim.players[0].as_mut().expect("the player").arsenal.current_mut().def = Box::leak(Box::new(d));
+    set(&mut sim, &mut client, 0.995);
+    assert_eq!(seen(&client, &sim), Seen { compass: true, ..scoped });
+}
+
+#[test]
+fn the_crosshair_fades_under_the_overlay_to_the_floor() {
+    // `FUN_004b5ea0`: under the overlay the side pieces take `1 − zoom / max(scale, 1)` before
+    // `FUN_004b5e40`'s floor, `cg_crosshairAlphaMin` (`DAT_01062db4`, 0.5).
+    let (sim, client) = fps_state();
+    let p = sim.players[0].as_ref().expect("the player");
+    let alpha = |zoom: Option<f32>| {
+        let mut prims = Vec::new();
+        draw_crosshair(&mut prims, 1280.0, 720.0, 1.0, &client, p, zoom);
+        prims.iter().find_map(|q| match q {
+            Prim::Line { argb, .. } => Some(argb >> 24),
+            _ => None,
+        })
+    };
+    assert_eq!(alpha(None), Some(255));
+    assert_eq!(alpha(Some(0.25)), Some(191), "0.75 of full");
+    assert_eq!(alpha(Some(1.0)), Some(128), "floored at cg_crosshairAlphaMin");
+}
+
+#[test]
 fn falls_back_to_text_without_the_art() {
     let (sim, client) = fps_state();
     let rec = Recorder::default();

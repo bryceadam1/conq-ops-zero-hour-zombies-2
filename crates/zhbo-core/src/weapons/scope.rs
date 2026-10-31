@@ -32,6 +32,18 @@ pub fn reticle_zoom(def: &WeaponDef, pos_frac: f32, zooming_in: bool) -> Option<
     (z > RETICLE_ZOOM_MIN).then_some(z.min(1.0))
 }
 
+/// `MISSILE_GUIDANCE_TVGUIDED` (`guidedMissileType_t`): a TV-guided weapon never sets the HUD's
+/// scoped bit.
+pub const MISSILE_GUIDANCE_TVGUIDED: u32 = 6;
+
+/// `CoD.BIT_IS_SCOPED` (visibility bit 28), as `FUN_0055a420` sets it: the overlay is up
+/// (`FUN_005388d0` → [`reticle_zoom`]; its turret/vehicle branch has no counterpart here) and the
+/// weapon is not TV-guided (`WeaponDef+0x770`, `guidedMissileType`). The HUD's minimap and compass
+/// strip read it (`hud/compass.lua` `UpdateMinimapVisibility`: alpha 0/1, no fade).
+pub fn scoped(def: &WeaponDef, pos_frac: f32, zooming_in: bool) -> bool {
+    def.guided_missile_type != MISSILE_GUIDANCE_TVGUIDED && reticle_zoom(def, pos_frac, zooming_in).is_some()
+}
+
 /// `FUN_0052e170` (`cg+0x4ae38`): the zoom direction. It becomes "in" when the position fraction is
 /// at 0 (hip) and "out" at 1 (full ADS), and holds in between. BO2 updates it after the viewmodel's
 /// draw test and before the 2D overlay draws.
@@ -96,5 +108,17 @@ mod tests {
         d2.overlay_alpha_scale = 0.5;
         assert!((overlay_alpha(&d2, z) - z).abs() < 1e-6, "the divisor is floored at 1");
         assert_eq!(reticle_zoom(&d, 0.0, true), None);
+    }
+
+    #[test]
+    fn scoped_follows_the_zoom_except_tv_guided() {
+        let mut d = sniper(0.0, 0.05);
+        assert!(!scoped(&d, 1.0, true), "the first full-ADS frame: not yet");
+        assert!(scoped(&d, 1.0, false));
+        assert!(scoped(&d, 0.96, false));
+        assert!(!scoped(&d, 0.9504, false));
+        d.guided_missile_type = MISSILE_GUIDANCE_TVGUIDED;
+        assert!(!scoped(&d, 1.0, false), "TV-guided: the overlay is up but the bit stays clear");
+        assert!(reticle_zoom(&d, 1.0, false).is_some());
     }
 }

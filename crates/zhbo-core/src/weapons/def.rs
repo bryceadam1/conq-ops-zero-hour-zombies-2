@@ -286,6 +286,9 @@ pub struct WeaponDef {
     pub ads_zoom_out_frac: f32,
     /// `fOverlayAlphaScale`: the overlay's alpha is the reticle zoom over `max(this, 1)`.
     pub overlay_alpha_scale: f32,
+    /// `guidedMissileType_t`: a TV-guided weapon (6) keeps the HUD's scoped-hidden widgets under
+    /// its overlay ([`crate::weapons::scope::scoped`]).
+    pub guided_missile_type: u32,
 }
 
 /// One BO2 camouflage option (`mp/attachmenttable.csv`'s rows with `camo` in column 1): the id
@@ -478,6 +481,7 @@ impl Default for WeaponDef {
             ads_zoom_in_frac: 0.0,
             ads_zoom_out_frac: 0.0,
             overlay_alpha_scale: 1.0,
+            guided_missile_type: 0,
         }
     }
 }

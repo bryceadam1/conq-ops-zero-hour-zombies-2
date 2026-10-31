@@ -785,6 +785,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         ads_zoom_in_frac: w.ads_zoom_frac.0,
         ads_zoom_out_frac: w.ads_zoom_frac.1,
         overlay_alpha_scale: w.overlay_alpha_scale,
+        guided_missile_type: w.guided_missile_type,
     };
     #[cfg(debug_assertions)]
     {

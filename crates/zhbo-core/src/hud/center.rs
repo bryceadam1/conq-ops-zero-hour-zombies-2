@@ -3,7 +3,10 @@
 //! * Crosshair (Ghidra G6, `t6mp` 0x004b5d70/0x004b5ea0/0x004b5e40): four side pieces pushed out
 //!   from the centre by the weapon's spread, `tan(spread°) · 240 / tan(fovY/2)` in the 480-line
 //!   virtual space; alpha `1 − aimSpreadScale`, floored at `cg_crosshairAlphaMin` 0.5; gone once
-//!   aiming down the sights. The weapon's own `reticleSide` art, `iReticleSideSize` and
+//!   aiming down the sights. Under the scope overlay the alpha first takes BO2's fade,
+//!   `1 − zoom / max(fOverlayAlphaScale, 1)` (`FUN_004b5ea0`), before the floor; the optic reticle
+//!   art is not drawn there at all (the viewmodel, which carries the sight, is not drawn either).
+//!   The weapon's own `reticleSide` art, `iReticleSideSize` and
 //!   `iReticleMinOfs` are not in the weapon table yet, so the pieces are drawn strokes.
 //! * Hit marker (G6, `maps/mp/gametypes/_damagefeedback.gsc`): `damage_feedback` 24 x 48 at
 //!   (−12, −12) from the centre in the 480-line hudelem space, alpha 1 fading to 0 over 1 s; BO2 has
@@ -47,7 +50,9 @@ pub fn reticle_color_rgb(id: &str) -> Option<(f32, f32, f32)> {
     }
 }
 
-pub(super) fn draw_crosshair(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, client: &Client, p: &PlayerSim) {
+/// `zoom`: BO2's reticle zoom this frame ([`crate::weapons::scope::reticle_zoom`]), `None` when
+/// the scope overlay is not up.
+pub(super) fn draw_crosshair(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, client: &Client, p: &PlayerSim, zoom: Option<f32>) {
     // Unarmed (knife only): there is no gun to aim, so no crosshair.
     if p.arsenal.is_unarmed() {
         return;
@@ -62,6 +67,10 @@ pub(super) fn draw_crosshair(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, clie
         return;
     }
     if ads > 0.6 {
+        // The overlay replaces the sight: an IR or VZoom sniper's optic draws no 2D reticle on it.
+        if zoom.is_some() {
+            return;
+        }
         let size = 30.0 * s;
         // The chosen stock reticle through the optic (`reticle_3` -> the optic's `_reticle_04`),
         // tinted by the chosen colour (`reticle_color_1` is Red). Without a choice, the red dot.
@@ -94,7 +103,8 @@ pub(super) fn draw_crosshair(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, clie
     // aimSpreadScale: how far the bloom has opened the cone between its stance min and max.
     let (min, max) = wpn.def.hip_spread[stance];
     let aim_spread = if max > min { (wpn.bloom / (max - min)).clamp(0.0, 1.0) } else { 0.0 };
-    let alpha = (1.0 - aim_spread).max(CROSSHAIR_ALPHA_MIN);
+    let fade = zoom.map_or(1.0, |z| 1.0 - crate::weapons::scope::overlay_alpha(wpn.def, z));
+    let alpha = (fade * (1.0 - aim_spread)).max(CROSSHAIR_ALPHA_MIN);
     let col = argb((1.0, 1.0, 1.0), alpha);
     let len = 10.0 * s;
     for (dx, dy) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {

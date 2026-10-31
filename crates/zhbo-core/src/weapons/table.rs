@@ -650,6 +650,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("OverlayZoom", "Reticle zoom: `fAdsZoomInFrac`, `fAdsZoomOutFrac`, `fOverlayAlphaScale`.", FieldKind::Nums(3),
         |d: &WeaponDef| nums(&[d.ads_zoom_in_frac, d.ads_zoom_out_frac, d.overlay_alpha_scale]),
         |d: &mut WeaponDef, v: Values| { v.need(3)?; (d.ads_zoom_in_frac, d.ads_zoom_out_frac, d.overlay_alpha_scale) = (v.num(0), v.num(1), v.num(2)); Ok(()) }),
+    field!("GuidedMissileType", "The missile guidance enum (`guidedMissileType_t`; 6 is TV-guided).", FieldKind::Num,
+        |d: &WeaponDef| d.guided_missile_type.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.guided_missile_type = v.text_num()? as u32; Ok(()) }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -709,7 +712,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 79);
+        assert_eq!(WEAPON_FIELDS.len(), 80);
         assert_eq!(ATTACHMENT_FIELDS.len(), 17);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }
@@ -828,6 +831,7 @@ mod tests {
             ads_zoom_in_frac: 0.016,
             ads_zoom_out_frac: 0.05,
             overlay_alpha_scale: 1.0,
+            guided_missile_type: 6,
             ..Default::default()
         };
         let text = format_table(std::slice::from_ref(&d));
@@ -835,6 +839,7 @@ mod tests {
         assert!(text.contains("OverlayMaterial = scope_overlay_xpr50"), "{text}");
         assert!(text.contains("OverlayMaterialLowRes = scope_overlay_xpr50_low_res"), "{text}");
         assert!(text.contains("OverlayReticle = 1"), "{text}");
+        assert!(text.contains("GuidedMissileType = 6"), "{text}");
         let back = parse_table(&text).unwrap();
         assert_eq!(back[0], d);
     }

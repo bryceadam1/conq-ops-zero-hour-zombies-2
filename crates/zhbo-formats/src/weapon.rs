@@ -513,6 +513,8 @@ pub struct Weapon {
     pub overlay_material_low_res: String,
     /// `weapOverlayReticle_t`: which reticle the overlay draws (0: none).
     pub overlay_reticle: u32,
+    /// `guidedMissileType_t` (`WeaponDef+0x770`; 6 is `MISSILE_GUIDANCE_TVGUIDED`).
+    pub guided_missile_type: u32,
 }
 
 fn ms(z: &Zone, at: u32) -> f32 {
@@ -696,6 +698,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.inventory = z.u32(d + WD::inventoryType);
     w.fire_type = z.u32(d + WD::fireType);
     w.offhand_class = z.u32(d + WD::offhandClass);
+    w.guided_missile_type = z.u32(d + WD::guidedMissileType);
     w.start_ammo = int(z, d + WD::iStartAmmo);
     w.max_ammo = int(z, d + WD::iMaxAmmo);
     w.ammo_clip_relative = z.u8(d + WD::ammoCountClipRelative) != 0;

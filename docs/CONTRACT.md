@@ -494,6 +494,14 @@ window the viewmodel is not drawn at all (BO2's `drawGun = 0`), tested with the 
 frame's update. The overlay is a full-screen `Prim::Image`; its art carries the black surround and
 the clear lens centre.
 
+While the overlay is up the HUD also drops what BO2 drops, instantly (alpha 0, no fade): the damage
+indicators (their gate is the reticle zoom itself, `FUN_004adda0`), and the minimap and compass
+strip, which read `CoD.BIT_IS_SCOPED` (`weapons::scope::scoped`: the reticle zoom, unless the def's
+`guided_missile_type` is TV-guided, 6). The optic's 2D reticle art does not draw under the overlay,
+and the crosshair's side pieces take `1 − zoom / max(overlay_alpha_scale, 1)` before the
+`cg_crosshairAlphaMin` floor. The ammo area, score panel, scorestreak column, hit marker and score
+popup stay.
+
 ## Tuning
 
 The gameplay tuning pack (`crates/zhbo-core/src/tuning.rs`, filled from

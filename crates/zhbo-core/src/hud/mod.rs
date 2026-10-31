@@ -188,7 +188,16 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
     };
 
     draw_low_health(prims, w, h, st.low_health.alpha(st.clock));
-    draw_indicators(prims, w, h, client.yaw.to_degrees(), st);
+    // Under the scope overlay (BO2's reticle zoom, in this frame's zoom direction) BO2 hides the
+    // damage indicators (`FUN_004adda0`), and the scoped bit hides the minimap and the compass
+    // strip ([`crate::weapons::scope::scoped`]). Both switch at once, without a fade. The ammo
+    // area, score panel, scorestreak column, hit marker and score popup stay.
+    let def = p.arsenal.current_weapon();
+    let zoom = crate::weapons::scope::reticle_zoom(def, p.arsenal.ads, st.ads_zoom_in);
+    let scoped = crate::weapons::scope::scoped(def, p.arsenal.ads, st.ads_zoom_in);
+    if zoom.is_none() {
+        draw_indicators(prims, w, h, client.yaw.to_degrees(), st);
+    }
 
     // Using the field computer, the tablet is up (zhbo_core::viewmodel): no crosshair.
     let tablet_up = matches!(p.mode, Mode::FieldComputer { .. });
@@ -207,7 +216,7 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
             draw_marks(host, prims, w, h, s, client, sim, p);
             // BO2's scope overlay: up while the reticle zoom is, when the viewmodel is not drawn.
             draw_scope_overlay(prims, w, h, p, st.ads_zoom_in);
-            draw_crosshair(prims, w, h, s, client, p);
+            draw_crosshair(prims, w, h, s, client, p, zoom);
             draw_hitmarker(prims, w, h, client);
             draw_score_popup(&l, prims, client);
             draw_hack(prims, w, h, s, client);
@@ -216,9 +225,11 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
             }
         }
         draw_build(host, prims, w, h, s, client, p, !tablet_up && !map_open);
-        let reveal = |pos: Vec3| sim.reveals(local_player, pos);
-        draw_minimap(host, prims, &l, client.yaw, p, &reveal);
-        draw_compass(prims, &l, client.yaw);
+        if !scoped {
+            let reveal = |pos: Vec3| sim.reveals(local_player, pos);
+            draw_minimap(host, prims, &l, client.yaw, p, &reveal);
+            draw_compass(prims, &l, client.yaw);
+        }
         score::draw(&l, prims, team_color(host, p), host.cash(local_player).max(0) as u32);
         let can_build = !host.build_options(p.general).is_empty();
         rewards::draw(&l, prims, tablet_up, p.hammer.is_some(), can_build, st.weapon_ms());

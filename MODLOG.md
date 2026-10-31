@@ -4605,3 +4605,35 @@ regressed. Verified: `cargo test --workspace` green, clippy adds no warning, rea
 (`--skip conformance`) green. The shipped weapon table changes (new field), so the integrator's
 archive `hud::VERSION` bump applies. In-game (integrator): `autotest-mac.sh --scope` and an AS50
 look (gun visible while scoping in, gone under the overlay, back in the last 5 % out).
+
+## Under the scope overlay BO2 hides the minimap, compass and damage indicators (2026-10-30, `v1/hud-zoom-hide`)
+
+Read-only Ghidra (t6mp) plus the MP HUD Lua, on what the HUD drops while the 2D overlay is up:
+
+* **`CoD.BIT_IS_SCOPED` (bit 28)** is set by `FUN_0055a420` when `FUN_005388d0` holds and the
+  weapon's `WeaponDef+0x770` is not 6. `FUN_005388d0` is the reticle zoom (`FUN_004b4760`), or a
+  turret/vehicle weapon with an overlay past a client-state gate (no counterpart in the mod).
+* **Gotcha: `+0x770` is `guidedMissileType`, not `weapClass`.** The layout (`layouts.rs`
+  `WeaponDef::guidedMissileType = 1904`) and OAT's `guidedMissileType_t` make 6
+  `MISSILE_GUIDANCE_TVGUIDED`. (`weapClass` 6 would be `rocketlauncher`, a tempting misread.) The field
+  is now carried: formats `Weapon::guided_missile_type` → `WeaponDef` → table `GuidedMissileType`.
+* Only two MP Lua widgets read the bit: the minimap container (`compass.lua` `UpdateMinimapVisibility`,
+  `setAlpha(0/1)`, no fade; it holds both the map square and the compass strip) and the voice dock
+  (not in the mod). The ammo area, score panel, scorestreaks and popups do not read it.
+* **Damage indicators** (`FUN_004ade10`): their gate `FUN_004adda0` is false whenever the reticle zoom
+  is up (no TV-guided exception).
+* **Side crosshair** (`FUN_004b5ea0` → `FUN_004b5e40`): `max(fade · cg_crosshairAlpha ·
+  (1 − aimSpreadScale), cg_crosshairAlphaMin)`, with `fade = 1 − z / max(fOverlayAlphaScale, 1)`
+  under the overlay. `DAT_01062db4` is confirmed `cg_crosshairAlphaMin` (0.5,
+  `answers/dvars-t6mp.tsv`), so the floor keeps it at half alpha rather than fading out.
+* **Mod bug fixed**: `draw_crosshair` drew the optic's 2D reticle (or the red dot) at ADS > 0.6 for
+  any optic, and `OPTICS` lists `ir` and `vzoom`, so IR/VZoom snipers drew it on top of the overlay.
+  It is now suppressed while the reticle zoom is up (the sight is on the viewmodel, which is not drawn).
+* The hit marker (GSC hudelem) and the score popup (LUI, no bit) stay.
+
+Measured: conformance diff CSVs byte-identical to the `v1/scope-overlay-parts` baseline (weapons
+647,790 cells / 198 clusters, cac 881 / 7); the gate and the enumerator check fail on that same
+backlog. `cargo test --workspace` green; clippy adds no warning. The weapon table gains a field, so
+the integrator's archive `hud::VERSION` bump applies. In-game (integrator): AS50 scope in and out; the
+minimap, compass and damage indicators vanish under the overlay and return in the last 5 % out; the
+ammo area, score panel and hit marker stay throughout.
