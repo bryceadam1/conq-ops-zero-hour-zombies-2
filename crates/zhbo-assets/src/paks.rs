@@ -7,10 +7,9 @@
 */
 use crate::images;
 use zhbo_formats::fastfile;
-use zhbo_formats::ipak::{Ipak, IpakEntry};
+use zhbo_formats::ipak::{ImageKey, Ipak};
 use zhbo_formats::t6zone::{self, Zone};
 use zhbo_formats::iwi::Rgba;
-use std::collections::BTreeMap;
 use std::path::Path;
 
 pub(crate) fn load_zone(bo2_dir: &Path, name: &str) -> Result<Zone, String> {
@@ -20,9 +19,9 @@ pub(crate) fn load_zone(bo2_dir: &Path, name: &str) -> Result<Zone, String> {
     t6zone::load(&zone).map_err(|e| format!("{name}: {e}"))
 }
 
-/// Image packs, opened on demand, with their entries grouped by name hash.
+/// The image packs, in file-name order.
 pub(crate) struct Paks {
-    paks: Vec<(Ipak, BTreeMap<u32, Vec<IpakEntry>>)>,
+    paks: Vec<Ipak>,
 }
 
 impl Paks {
@@ -37,15 +36,14 @@ impl Paks {
         names.sort();
         let mut paks = Vec::new();
         for p in names {
-            let pak = Ipak::open(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-            let groups = images::group_by_name(&pak);
-            paks.push((pak, groups));
+            paks.push(Ipak::open(&p).map_err(|e| format!("{}: {e}", p.display()))?);
         }
         Ok(Paks { paks })
     }
 
-    pub(crate) fn image(&self, hash: u32) -> Option<Rgba> {
-        self.paks.iter().find_map(|(pak, groups)| groups.get(&hash).and_then(|parts| images::load(pak, parts).ok()))
+    /// The pixels of the image with this key (`xmodel::Image::key`).
+    pub(crate) fn image(&self, key: ImageKey) -> Option<Rgba> {
+        self.paks.iter().find_map(|pak| pak.entry(key).and_then(|e| images::load(pak, e).ok()))
     }
 }
 

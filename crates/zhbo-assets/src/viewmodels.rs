@@ -841,7 +841,7 @@ pub(crate) fn tablet_screen(m: &xmodel::Material, paks: &Paks) -> Option<Rgba> {
             .iter()
             .filter_map(|t| t.image.as_ref())
             .find(|i| i.name.contains(part))
-            .and_then(|i| paks.image(i.stream_hash))
+            .and_then(|i| paks.image(i.key()))
     };
     let mut screen = layer("background")?;
     if let Some(top) = layer("killstreaks_top") {

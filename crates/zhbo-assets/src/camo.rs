@@ -33,7 +33,7 @@ fn pool<'a>(common: &'a Zone, patch: &'a Zone, inline: &'a Zone) -> [&'a Zone; 3
 
 /// The full `GfxImage` named `name` from the pool, with pixels in the packs.
 fn pool_image(zones: &[&Zone], paks: &Paks, name: &str) -> Option<Rgba> {
-    zones.iter().find_map(|z| xmodel::find_image(z, name).and_then(|i| paks.image(i.stream_hash)))
+    zones.iter().find_map(|z| xmodel::find_image(z, name).and_then(|i| paks.image(i.key())))
 }
 
 /// The full `Material` named `name` from the pool: a top-level asset, or one a zone loads nested
@@ -67,7 +67,7 @@ pub(crate) fn art(
     out: &mut BTreeMap<String, Vec<u8>>,
 ) -> Art {
     let zones = pool(common, patch, inline);
-    let pixel = |img: &xmodel::Image| -> Option<Rgba> { paks.image(img.stream_hash).or_else(|| pool_image(&zones, paks, &img.name)) };
+    let pixel = |img: &xmodel::Image| -> Option<Rgba> { paks.image(img.key()).or_else(|| pool_image(&zones, paks, &img.name)) };
     let mut wanted_images: BTreeMap<String, &xmodel::Image> = BTreeMap::new();
     for c in sets {
         for s in &c.sets {

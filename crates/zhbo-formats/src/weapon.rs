@@ -473,7 +473,7 @@ pub struct Weapon {
     /// HUD art (material names).
     pub hud_icon: Option<String>,
     /// The HUD icon's image in the `.ipak` packs (its material is inline in the weapon).
-    pub hud_icon_hash: Option<u32>,
+    pub hud_icon_key: Option<crate::ipak::ImageKey>,
     pub dpad_icon: Option<String>,
     /// What a projectile does when it goes off (`projExplosionEffect`), or the impact table's
     /// effect for its `impactType` on dirt.
@@ -824,10 +824,10 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.hud_icon = named(z, d + WD::hudIcon);
     w.weapon_camo = named(z, d + WD::weaponCamo);
     let icon = z.try_u32(d + WD::hudIcon)?;
-    w.hud_icon_hash = (icon != 0)
+    w.hud_icon_key = (icon != 0)
         .then(|| crate::xmodel::read_material(z, icon))
-        .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash)))
-        .filter(|h| *h != 0);
+        .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.key())))
+        .filter(|k| k.data_hash != 0);
     Ok(w)
 }
 

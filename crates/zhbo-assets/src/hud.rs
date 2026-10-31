@@ -12,6 +12,7 @@ use crate::images;
 use std::collections::HashMap;
 use std::path::Path;
 use zhbo_formats::big::write_archive;
+use zhbo_formats::ipak::ImageKey;
 use zhbo_formats::iwi::Rgba;
 use zhbo_formats::t6zone::Zone;
 
@@ -26,8 +27,8 @@ const ATLAS: u32 = 1024;
 
 /// Where a sprite's image comes from.
 pub enum Source {
-    /// The image with this name hash in the packs.
-    Hash(u32),
+    /// The pack image with this key (picked by eye from a contact sheet).
+    Hash(ImageKey),
     /// The first image of a BO2 material in a zone.
     Material(&'static str, &'static str),
     /// A material named at conversion time (weapon HUD icons, the LUI ports' materials), searched
@@ -47,8 +48,8 @@ const fn mat(name: &'static str, material: &'static str, max: u32) -> Sprite {
     Sprite { name, source: Source::Material("common_mp", material), max }
 }
 
-const fn hash(name: &'static str, hash: u32, max: u32) -> Sprite {
-    Sprite { name, source: Source::Hash(hash), max }
+const fn hash(name: &'static str, data_hash: u32, name_hash: u32, max: u32) -> Sprite {
+    Sprite { name, source: Source::Hash(ImageKey { data_hash, name_hash }), max }
 }
 
 /// The BO2 HUD art Conquer Ops uses.
@@ -66,9 +67,9 @@ pub const SPRITES: &[Sprite] = &[
     mat("ZHBO_BO2_Digit9", "hud_mp_num_big_9", 64),
     mat("ZHBO_BO2_Slash", "hud_mp_num_big_slash", 64),
     // Blood splatter, used for the damage overlay.
-    hash("ZHBO_BO2_Blood", 0x0594_8908, 256),
+    hash("ZHBO_BO2_Blood", 0x0594_8908, 0xdf3a_5741, 256),
     // Red-dot sight glow.
-    hash("ZHBO_BO2_RedDot", 0x023f_fb05, 128),
+    hash("ZHBO_BO2_RedDot", 0x023f_fb05, 0xfeba_df16, 128),
     // Hit marker.
     mat("ZHBO_BO2_HitMarker", "damage_feedback", 128),
     // Minimap: your arrow, the dot for everyone else (tinted with their team colour), the compass.
@@ -208,7 +209,7 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             }
         }
         let name = format!("ZHBO_BO2_Icon_{id}");
-        match (w.hud_icon_hash, &w.hud_icon) {
+        match (w.hud_icon_key, &w.hud_icon) {
             (Some(hash), _) => wanted.push((name, Source::Hash(hash), 64)),
             // Equipment icons are stubs in common_mp; the menus' zones hold the real material.
             (None, Some(icon)) => wanted.push((name, Source::Dynamic(icon.clone()), 64)),
@@ -266,7 +267,7 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                 }
                 zones.get(zone)
                     .and_then(|z| zhbo_formats::xmodel::find_material(z, material))
-                    .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash)))
+                    .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.key())))
             }
             Source::Dynamic(material) => {
                 // Weapon menu art lives in the MP patches; a few DLC guns only in `frontend`.
@@ -287,9 +288,9 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                 let image = |m: zhbo_formats::xmodel::Material| {
                     let i = m.textures.iter().find_map(|t| t.image.clone())?;
                     if i.stream_hash != 0 {
-                        return Some(i.stream_hash);
+                        return Some(i.key());
                     }
-                    order.iter().filter_map(|z| zones.get(z)).find_map(|z| zhbo_formats::xmodel::find_image(z, &i.name)).map(|i| i.stream_hash)
+                    order.iter().filter_map(|z| zones.get(z)).find_map(|z| zhbo_formats::xmodel::find_image(z, &i.name)).map(|i| i.key())
                 };
                 let mc = format!("mc/{material}");
                 order

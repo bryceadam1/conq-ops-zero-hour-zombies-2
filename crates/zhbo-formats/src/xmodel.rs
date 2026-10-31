@@ -61,13 +61,20 @@ pub const TS_CAMO_MAP: u8 = 22;
 #[derive(Clone, Debug, PartialEq)]
 pub struct Image {
     pub name: String,
-    /// `GfxImage::hash`.
+    /// `GfxImage::hash`: [`crate::ipak::r_hash_string`] of the name, an ipak entry's name hash.
     pub hash: u32,
-    /// `streamedParts[0].hash`: the image's entry in the `.ipak` packs.
+    /// `streamedParts[0].hash`: an ipak entry's data hash.
     pub stream_hash: u32,
     pub streamed_parts: u8,
     pub width: u16,
     pub height: u16,
+}
+
+impl Image {
+    /// The image's `.ipak` entry (its pixels when streamed).
+    pub fn key(&self) -> crate::ipak::ImageKey {
+        crate::ipak::ImageKey { data_hash: self.stream_hash, name_hash: self.hash }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]

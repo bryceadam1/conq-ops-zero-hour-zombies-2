@@ -45,18 +45,17 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
     }
     // Every UI font draws from the same atlas; refuse a zone where they differ rather than
     // mapping glyphs onto the wrong page.
-    let hashes: Vec<u32> = fonts
+    let hashes: Vec<zhbo_formats::ipak::ImageKey> = fonts
         .iter()
-        .map(|f| f.material.as_ref().and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref())).map_or(0, |i| i.stream_hash))
+        .map(|f| f.material.as_ref().and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref())).map_or(Default::default(), |i| i.key()))
         .collect();
     let hash = hashes[0];
-    if hash == 0 || hashes.iter().any(|h| *h != hash) {
-        return Err(format!("the UI fonts do not share one streamed atlas ({hashes:08x?})"));
+    if hash.data_hash == 0 || hashes.iter().any(|h| *h != hash) {
+        return Err(format!("the UI fonts do not share one streamed atlas ({hashes:x?})"));
     }
     let pak_path = bo2_dir.join("zone").join(dir).join(format!("{prefix}_base.ipak"));
     let pak = Ipak::open(&pak_path).map_err(|e| format!("{}: {e}", pak_path.display()))?;
-    let groups = images::group_by_name(&pak);
-    let atlas = groups.get(&hash).ok_or("the font atlas is not in the language pack").and_then(|parts| images::load(&pak, parts).map_err(|_| "the font atlas does not decode"))?;
+    let atlas = pak.entry(hash).ok_or("the font atlas is not in the language pack").and_then(|e| images::load(&pak, e).map_err(|_| "the font atlas does not decode"))?;
     let (metrics, mapped) = describe(&fonts, &atlas);
     let summary = format!("{} fonts, {} glyphs, atlas {}x{}", fonts.len(), mapped.matches("MappedImage").count(), atlas.width, atlas.height);
     Ok((

@@ -83,9 +83,9 @@ pub(crate) fn textures(model: &xmodel::Model, paks: &Paks, files: &mut BTreeMap<
             }
             let path = format!("Art\\Textures\\{name}");
             if !files.contains_key(&path) {
-                let mut rgba = if neutral { datapad_off() } else { shrink(paks.image(img.stream_hash)?, MAX_TEXTURE) };
+                let mut rgba = if neutral { datapad_off() } else { shrink(paks.image(img.key())?, MAX_TEXTURE) };
                 if blend == w3d::Blend::Opaque {
-                    let map = |semantic| m.image(semantic).and_then(|i| paks.image(i.stream_hash));
+                    let map = |semantic| m.image(semantic).and_then(|i| paks.image(i.key()));
                     put_occlusion(&mut rgba, map(xmodel::TS_OCCLUSION_MAP).as_ref());
                     let maps = surface_maps(rgba.width, rgba.height, map(xmodel::TS_NORMAL_MAP).as_ref(), map(xmodel::TS_SPECULAR_MAP).as_ref());
                     files.insert(format!("Art\\Textures\\{}", maps_file(&name)), images::tga_bytes(&maps));

@@ -75,11 +75,11 @@ FXList ZHBO_ViewmodelMuzzle
 End
 ";
 
-/// The archive files; `paks` finds image data by stream hash.
-pub fn files(zone: &Zone, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>) -> Result<Vec<(String, Vec<u8>)>, String> {
+/// The archive files; `paks` finds image data by `Image::key`.
+pub fn files(zone: &Zone, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> Result<Vec<(String, Vec<u8>)>, String> {
     let asset = zone.find(ASSET_IMAGE, FLASH_IMAGE).ok_or_else(|| format!("no image {FLASH_IMAGE} in {ZONE}"))?;
     let img = xmodel::read_image(zone, asset.addr);
-    let rgba = paks(img.stream_hash).ok_or_else(|| format!("{FLASH_IMAGE} not in the image packs"))?;
+    let rgba = paks(img.key()).ok_or_else(|| format!("{FLASH_IMAGE} not in the image packs"))?;
     let mut out = BTreeMap::new();
     out.insert(format!("Art\\Textures\\{FLASH_TEXTURE}"), images::tga_bytes(&rgba));
     out.insert("Data\\INI\\ParticleSystem\\ZHBO_BO2.ini".to_string(), PARTICLES.as_bytes().to_vec());
@@ -129,13 +129,13 @@ pub struct Converted {
 impl Converted {
     /// Convert `effect` (with the effects its runners start) into an FXList; returns its name.
     /// Looping parts run for the effect's own looping life (at most 20 s).
-    pub fn add(&mut self, effect: &Effect, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>) -> String {
+    pub fn add(&mut self, effect: &Effect, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> String {
         let secs = (effect.looping_life_msec as f32 / 1000.0).clamp(1.0, 20.0);
         self.add_timed(effect, secs, paks)
     }
 
     /// [`Converted::add`], with the looping parts running `looping_secs` (a smoke screen's time).
-    pub fn add_timed(&mut self, effect: &Effect, looping_secs: f32, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>) -> String {
+    pub fn add_timed(&mut self, effect: &Effect, looping_secs: f32, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> String {
         self.add_timed_with(effect, looping_secs, paks, None, false)
     }
 
@@ -145,12 +145,12 @@ impl Converted {
     /// `zones` are tried in order: a patch zone's copy of a shell model or its material can be a
     /// reference stub while the base zone (or the patch zone's material asset) carries the real
     /// one.
-    pub fn add_shell(&mut self, effect: &Effect, zones: &[&Zone], paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>) -> String {
+    pub fn add_shell(&mut self, effect: &Effect, zones: &[&Zone], paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> String {
         let secs = (effect.looping_life_msec as f32 / 1000.0).clamp(1.0, 20.0);
         self.add_timed_with(effect, secs, paks, Some(zones), true)
     }
 
-    fn add_timed_with(&mut self, effect: &Effect, looping_secs: f32, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>, zones: Option<&[&Zone]>, orient: bool) -> String {
+    fn add_timed_with(&mut self, effect: &Effect, looping_secs: f32, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>, zones: Option<&[&Zone]>, orient: bool) -> String {
         let name = fxlist_name(&effect.name);
         if !self.done.insert(name.clone()) {
             return name;
@@ -169,7 +169,7 @@ impl Converted {
     }
 
     #[allow(clippy::too_many_arguments)]
-    fn add_elems(&mut self, effect: &Effect, delay_ms: f32, looping_secs: f32, prefix: &str, paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>, zones: Option<&[&Zone]>, orient: bool, systems: &mut Vec<String>, bright: &mut bool) {
+    fn add_elems(&mut self, effect: &Effect, delay_ms: f32, looping_secs: f32, prefix: &str, paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>, zones: Option<&[&Zone]>, orient: bool, systems: &mut Vec<String>, bright: &mut bool) {
         for el in &effect.elems {
             if el.kind == kind::RUNNER {
                 for child in &el.children {
@@ -192,7 +192,7 @@ impl Converted {
                         zones.iter().find_map(|z| xmodel::find_material(z, &mat.name).and_then(|m| m.color_map().cloned()))
                     });
                     let Some(img) = colour else { continue };
-                    let Some(tex) = self.texture(&img.name, img.stream_hash, (1, 1), paks) else { continue };
+                    let Some(tex) = self.texture(&img.name, img.key(), (1, 1), paks) else { continue };
                     let sys = format!("{prefix}_shell{}", systems.len());
                     self.particles.push_str(&model_particle_system(&sys, el, &tex.0, delay_ms, orient));
                     systems.push(sys);
@@ -207,7 +207,7 @@ impl Converted {
                 continue; // a screen-space ripple Zero Hour can't draw
             }
             let Some(img) = m.color_map() else { continue };
-            let Some(tex) = self.texture(&img.name, img.stream_hash, el.atlas, paks) else { continue };
+            let Some(tex) = self.texture(&img.name, img.key(), el.atlas, paks) else { continue };
             // As BO2 blends the material: glows add, smoke and debris mix by alpha (premultiplied
             // art too, the nearest Zero Hour has). Without a render state, art with no real alpha adds.
             let additive = match m.blend() {
@@ -224,9 +224,9 @@ impl Converted {
 
     /// The texture for a BO2 image (the first frame of a flipbook atlas), and whether it has no real
     /// alpha.
-    fn texture(&mut self, image: &str, hash: u32, atlas: (u32, u32), paks: &dyn Fn(u32) -> Option<zhbo_formats::iwi::Rgba>) -> Option<(String, bool)> {
+    fn texture(&mut self, image: &str, key: zhbo_formats::ipak::ImageKey, atlas: (u32, u32), paks: &dyn Fn(zhbo_formats::ipak::ImageKey) -> Option<zhbo_formats::iwi::Rgba>) -> Option<(String, bool)> {
         let file = format!("zhbo_fx_{}", crate::character::texture_file(image).trim_start_matches("zhbo_"));
-        let mut rgba = paks(hash)?;
+        let mut rgba = paks(key)?;
         // One cell of the atlas.
         let (cw, ch) = ((rgba.width / atlas.0.max(1)).max(1), (rgba.height / atlas.1.max(1)).max(1));
         if (cw, ch) != (rgba.width, rgba.height) {
