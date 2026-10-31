@@ -4563,3 +4563,44 @@ position in the trimmed list vs BO2's group index (BO2's grid also skips undispl
 expected side's raw index is not the on-screen slot); weapons unchanged (706,586 cells); gap
 clusters 214 → 214. Verified: cargo test --workspace green; clippy unchanged (39 warnings before
 and after); the real-install suite green (31); headless screenshots render with a fresh archive.
+
+## Camo follow-ups: the cac camo order is BO2's group index; the knife page is the camo page (2026-10-30, branch `v1/cac-camo-followups`)
+
+- **`camo.order` measured the wrong quantity, not a wrong order.** The cac schema's `order` for a
+  camo is the row's group index: `AddCamos` walks `GetWeaponOptionGroupIndex(i, camo)` for `i` in
+  `0..GetNumWeaponOptions` (the DLC2 tab then sorts by column 5). The mod's grid already followed
+  that (each tab is the table order filtered, DLC2 by `Sort`, and a weapon's art-trimmed
+  `CamoList` is a subsequence of the table), but the actual emitter wrote each offered camo's
+  position in the trimmed list, so the 20 DLC rows item 11 started offering read 19..38 against
+  BO2's 20..45. The catalog now keeps the `Camo` blocks in table order (`Catalog::camos`,
+  `Catalog::camo_index`) and the emitter writes that index. Expected side unchanged.
+- **The knife page.** BO2's `TAB Personalize Knife` (`caceditclass.lua`'s
+  `OpenKnifePersonalization`) does not open `cacknifemenu.lua` (`CACKnife`, a CAMO-only page
+  nothing opens): it sets `knifePersonalization` and opens `CACCamo`. Every `knifePersonalization`
+  branch there swaps in `knife_held`'s statstable row: the title (`MPUI_PERSONALIZE_N` over column
+  3), the picture (column 6 **as is**, `combat_tab_knife`, no `_big`), `AddCamos`' item, and the
+  class's `knifecamo` as the equipped cell; there's no EMBLEM AND TAG tab. The mod's knife page was
+  the captured placeholder name list; it is now `personalize_tabs_in` over `knife_held_mp`'s own
+  `CamoList` (trimmed by `camo_knife`'s converted art, like any gun), with the tiles and the lower
+  panel, and the converter packs `ZHBO_CaC_Weapon_knife_held_mp` from `combat_tab_knife`.
+  `personalize_weapon(kind, draft)` names the weapon a page dresses; `weapons::KNIFE_HELD` is the
+  knife id's one source (loadout, class editor). `Draft::knife`/`CustomClass::knife` hold the
+  knife's camo id (BO2's `knifecamo`), not a weapon id.
+- **Base rows on the knife.** `AddCamos` lists a non-store row only when
+  `GetChallengeForItemOption(item, option)` finds a challenge. For `knife_held` every base row
+  has one in the data: multicam … kryptek and carbon … skulls by name
+  (`statsmilestones1.csv:174-187`), gold through the special mastery row that lists `knife_held`
+  (`:145`), diamond through the `weapon_special` group row (`:195`), and elite/collectors through
+  the global `digital_unlock` rows. So the guns' rule (every base row) holds for the knife too.
+  This was checked against the data, not the engine function.
+- **Not done:** the in-match knife viewmodel doesn't wear the class's knife camo yet. `ffi.rs`
+  applies the class camo only to the primary.
+
+Measured (conformance CLI vs item 11's `v1/cac-camo` head): cac differing cells 901 → 881, all from
+`order` 461 → 441 (the 20 `camo.order` cells are gone, and no camo row differs). cac one-sided rows
+are unchanged at 42/6, and weapons are unchanged at 706,586 cells. There are still 214 gap clusters:
+the `order` cluster stays because of the attachment rows. Verified: `cargo test --workspace` is
+green; clippy has the same 39 warnings; the real-install suite is green. The headless shots render
+from a fresh archive (379 images, one more than before: the knife picture), and
+`cac-personalize-knife` shows `PERSONALIZE COMBAT KNIFE` with CAMO/DLC/DLC2, the 17 base rows and
+the knife picture.

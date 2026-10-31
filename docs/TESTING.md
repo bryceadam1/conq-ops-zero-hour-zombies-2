@@ -91,6 +91,9 @@ verify it by hand after touching the menu ABI, the shell window, or the shared c
      by clicking a tab; the panel under the grid shows the focused camo's name, the gun's picture
      and the `Equipped` box. Equip a camo: the editor's PRIMARY button and the class list's preview
      show its swatch in the corner; the reticle page has the same RETICLES/DLC tabs.
+   - Knife (`TAB` in the editor): the same page over the knife — `PERSONALIZE KNIFE`, the
+     CAMO/DLC(/DLC2) tabs with the knife's own converted camos, the knife's picture and the
+     `Equipped` box; a pick sets the class's knife camo, not the gun's.
 4. Edit something, walk to **SAVE CLASS**, confirm: `ConquerOps.profile` (in the game's user-data
    directory) is rewritten with the new class, and the list shows it highlighted.
 5. On a custom row: **C** copies it (`NAME COPY` appears), **Backspace** deletes it — both rewrite
@@ -125,12 +128,15 @@ says which. It reads the already-converted archive (no BO2 install needed, never
 
 `cargo run -p zhbo-assets -- screenshot [out-dir] [--archive <ConquerOps_BO2.big>] [--size WxH]`
 renders the class screens through the same drawing code the game runs (`classui::draw_screen`) and
-writes nine shots: `cac-browse.png` (the lobby list: the active set's five custom slots, the set
+writes these shots: `cac-browse.png` (the lobby list: the active set's five custom slots, the set
 header and the S/O footer), `cac-set-pager.png` (a browsed mid-row set), `cac-pick.png` (the
 in-match list: the slots, then the default classes), `cac-editor.png` (a populated Pick-10 draft
 with the primary option list open), `cac-editor-empty.png` (BO2's pristine empty class),
 `cac-editor-weapons.png` (the category column and stat bars), `cac-editor-attachments.png` (the
-attachment strip) and `cac-dialog-set.png`/`cac-dialog-class.png` (the S/O dialogs). Default size
+attachment strip), the personalize pages `cac-personalize.png` (camo, CAMO tab),
+`cac-personalize-dlc.png` (its DLC tab), `cac-personalize-knife.png` (the knife page),
+`cac-reticles.png` and `cac-reticle-color.png`, and `cac-dialog-set.png`/`cac-dialog-class.png`
+(the S/O dialogs). Default size
 is 1280x720 (BO2's 720p; the captures are 3024x1890). The default output is `target/cac-shots/`,
 which is inside the ignored build directory.
 
