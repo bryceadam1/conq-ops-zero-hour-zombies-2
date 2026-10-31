@@ -283,7 +283,8 @@ pub struct WeaponDef {
     pub alt_own_ammo: bool,
     pub silenced: bool,
     pub laser: bool,
-    /// FMJ: penetrates infantry, hits vehicles and structures harder.
+    /// FMJ: hits vehicles and structures harder (its penetration is the `bulletpenetration`
+    /// specialty it grants).
     pub fmj: bool,
     /// Target finder: enemies are marked while aiming.
     pub target_finder: bool,

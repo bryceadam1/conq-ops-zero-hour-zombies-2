@@ -4742,6 +4742,62 @@ The two flags the bullet-impact entry left open, traced to their callers (t6mp; 
 
 Measured (v1/explosion-sounds conf2 → this branch): weapons **550,355 → 550,355**, cac 881 → 881,
 gap clusters 199 → 199, every column identical — the schema has no bounce/dud/activation column,
-as expected. Real-install suite green. No ABI change; `WEAPON_FIELDS` 90 → 94 and the archive
+as expected.  No ABI change; `WEAPON_FIELDS` 90 → 94 and the archive
 content changed (VERSION bump is the integrator's). In-game check owed: a frag rattles per surface,
 a point-blank noob tube thuds as a dud.
+
+## Bullets penetrate by BO2's rule (2026-10-31, `v1/penetration`)
+
+Stacked on `v1/projectile-sounds`. The mod had one FMJ special case (through the first soldier at
+0.75 damage) and no exits. BO2's walk is t6mp `FUN_005d0350` (server; the client's `FUN_00538e40`
+is its FX twin); decompiles and the scope in `~/.opencode/plan/penetration/` (`pen1-3.c`,
+`SCOPE.md`).
+
+* **The rule.** After the first hit (`FUN_005cfc60`: damage = `damage_at(|hit - muzzle|) ×
+  damageMultiplier`, the multiplier 1 at the muzzle) the round loops up to `penetrationCount` (5):
+  depth = `table[penetrateType][entry surface]` (`FUN_008da6d0`; surface 0 reads 0), × 2 with
+  `bulletpenetration` (`perk_bulletPenetrationMultiplier`, perk index 6 — FMJ grants it; it
+  replaces, it does not add); ≤ 0 stops. Step 0.135 in past the entry, trace on to the next
+  surface, trace back from 0.01 in short of it to the exit; thickness `max(chord, 1 in)` over
+  `min(entry depth, exit depth)` comes off the multiplier; ≤ 0 stops. The exit and the next entry
+  play their impacts only past `bullet_penetrationMinFxDist` (30 in) apart; the client plays at
+  most **two** such effects per round (`local_ec < 2`).
+* **The data.** The table is the rawfile `info/bullet_penetration_mp` in **patch_mp** (an infostring
+  `BULLET_PEN_TABLE\small_asphalt\6.0\…`, loaded by `FUN_008da530`/`FUN_008da460` as `%s_%s` over
+  the 32 surface names). **Gotcha: code_post_gfx carries a different `BULLET_PEN_TABLE`** (SP's;
+  `zhbo-assets find` shows both) — dirt, grass, mud, sand and painted metal are 0 in MP. The depths
+  and the dvars are tuning-pack keys under `[Penetration]` with BO2's own key names
+  (`small_flesh = 32`…); the real-install test `the_penetration_table_is_the_installs` holds them
+  equal to the rawfile. `penetrateType` is `WeaponDef+0x24` (pistols small, most SMG/AR medium,
+  LMG/snipers large, shotguns none), carried as the def's `Penetrate` field. **No MP attachment
+  sets `penetrateType`** (every `WeaponAttachment+0x10` is 0), so a combination keeps its base's;
+  the unmerged `v1/uncarried-fields` carries the attachment side and the same `Penetrate` enum —
+  the integrator unifies the two.
+* **The mod's world.** The solids are `hitscan`'s convex target shapes, so the chord is exact
+  (`hitscan::contains` + `trace_where` skip the solid a round is inside, as a world trace leaving a
+  brush does; the exit is a reverse trace). The ground is a heightfield with no underside, so a
+  round that strikes it stops. Surfaces come from the objects' kind flags (sim state), so the walk
+  is deterministic; the ground's `surface_at` still never feeds damage. **Gotcha: the mod's soldier
+  is a 16-in-radius cylinder**, so a centre shot crosses 32 in of flesh — a small round's whole
+  depth: a pistol stops in a soldier, medium keeps half after one, large ~71 %. BO2's torso hitbox
+  is thinner. Buildings are solid boxes far deeper than any depth: a round passes only a corner.
+* **Exit hits.** `EventKind::Impact.exit`; the converter writes the exit rows (small 1, large 4,
+  AP 8, xtreme 10, shotgun 6) as `exit impact`/`exit flesh` lines and the exit families as
+  `exit sound` lines (`IMPACT_KINDS.exit`). The client plays `sounds::exit_cue`; the bridge asks
+  `zhbo_impact_exit_fx` when `ZhboClientHit.exit` is set. **The shotgun's exit family is silent**:
+  the exe hashes `prj_bulletspray_impact_small_exit_<surface>` (`0xb1a4b0`), the bank ships
+  `prj_bulletspray_small_exit_*`. An exit's blood uses the hit's own head/fatal bits.
+* Not carried: `bBulletImpactExplode` (+0x72f skips the loop), glass (surface flag 4: depth 100),
+  the charge-shot multiplier (fireType 8), riot-shield stops, and BO2's integer truncation of each
+  hit's damage (the mod's damage curve is float throughout).
+* ABI: `ZhboClientHit` 40 → 44 (`exit` appended), `ZhboClientOut` 4832 → 4864, new free function
+  `zhbo_impact_exit_fx`; **`ZHBO_ABI_VERSION` bump owed by the integrator**. `WEAPON_FIELDS` 94 → 95
+  and the archive changed (exit rows, exit aliases): VERSION bump is the integrator's too.
+
+Measured (v1/projectile-sounds conf → this branch): weapons **550,355 → 541,014 (−9,341)**,
+clusters 188 → 187, gap clusters **199 → 198**; the one column that moved is `penetrate_type`
+9,341 → 0 (the adapter reports the def's `Penetrate` instead of `absent`); cac 881 → 881; every
+other column identical. Fake-host tests: a medium round through 4.5 in of concrete hits the
+soldier behind for half and plays the wall's exit; 7 in stops a small round but not a small FMJ
+round. In-game check owed: an exit puff on the far side of a thin structure corner, FMJ hits behind.
+Real-install suite green (`converts_from_real_install` now reads the `exit`-prefixed rows).

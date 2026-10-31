@@ -445,7 +445,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         // head zone covers BO2's helmet and head, every other location takes 1.
         .floats("location_multipliers", &(0..21).map(|i| if i == 1 || i == 2 { f32_value(d.head_multiplier) } else { 1.0 }).collect::<Vec<_>>())
         .float("max_range", inch(d.max_range))
-        .absent("penetrate_type")
+        .text("penetrate_type", d.penetrate.name())
         .float("explosion_radius", inch(d.explosion_radius))
         .float("explosion_radius_min", inch(d.explosion_radius_min))
         .int("explosion_inner_damage", d.explosion_inner_damage as i64)

@@ -850,8 +850,11 @@ mod tests {
         let blasts: std::collections::BTreeSet<i32> = crate::impacts::blast_types(&table.weapons).into_iter().map(|t| t as i32).collect();
         assert!(blasts.contains(&7) && blasts.contains(&9), "the frag's and the rocket's types: {blasts:?}");
         for line in impacts.lines().filter(|l| !l.starts_with(';') && !l.trim().is_empty()) {
-            let w: Vec<&str> = line.split_whitespace().collect();
+            // An `exit`-prefixed row is a bullet's exit row or family (penetration's flag 4).
+            let exit = line.starts_with("exit ");
+            let w: Vec<&str> = line.split_whitespace().skip(exit as usize).collect();
             assert!(w.len() == 4, "bad impact row: {line}");
+            assert!(!exit || zhbo_formats::fx::is_bullet(w[1].parse().unwrap()), "an exit row for a non-bullet: {line}");
             let t: i32 = w[1].parse().unwrap();
             let bounce_dud: Vec<i32> = crate::impacts::bounce_dud_types(&table.weapons).into_iter().map(|t| t as i32).collect();
             assert!(buckets.contains(&t) || blasts.contains(&t) || bounce_dud.contains(&t), "row for a type nothing carries: {line}");

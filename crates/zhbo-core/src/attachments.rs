@@ -8,7 +8,8 @@
 //! their own in BO2.
 //!
 //! What BO2 does in script or the renderer rather than in these numbers is done by name: FMJ's
-//! penetration and extra damage to vehicles, the grip's recoil reduction (its ADS recoil reduction
+//! extra damage to vehicles (its penetration is the `bulletpenetration` specialty it grants,
+//! `crate::penetration`), the grip's recoil reduction (its ADS recoil reduction
 //! fields), the tactical knife's quicker melee, and the target finder marking enemies while aiming.
 
 use crate::weapons::{FireMode, Specialties, WeaponDef};
@@ -93,8 +94,8 @@ impl Default for AttachmentDef {
     }
 }
 
-/// FMJ: bullets go through the first infantry target, and hit vehicles and structures harder (BO2's
-/// FMJ does extra damage to scorestreaks and equipment).
+/// FMJ: hits vehicles and structures harder (BO2's FMJ does extra damage to scorestreaks and
+/// equipment). Its deeper penetration is the `bulletpenetration` specialty (`crate::penetration`).
 pub const FMJ_VEHICLE_DAMAGE: f32 = 1.35;
 /// Tactical knife: melee this much quicker.
 pub const TACTICAL_KNIFE_MELEE: f32 = 0.6;

@@ -321,6 +321,12 @@ pub struct ImpactKind {
     /// The sound family (`None`: the def's own field — `bounceSound`, `projDudSound` — which the
     /// mod does not carry).
     pub sound_family: Option<&'static str>,
+    /// The row and family of an exit hit (impact flag 4, set where a penetrating round leaves a
+    /// solid: `FUN_005d0350`/`FUN_00538e40`): `None` for the types that never penetrate. The
+    /// families are `FUN_004d4440`'s strings (`0xb1a530` … `0xb1a498`); the shotgun's
+    /// `prj_bulletspray_impact_small_exit` names no alias the install ships (its bank has
+    /// `prj_bulletspray_small_exit_*`), so BO2's hash misses and a pellet's exit is silent.
+    pub exit: Option<(u32, &'static str)>,
 }
 
 /// BO2's `impactType` -> impact row and sound family, transcribed from the switch in
@@ -334,21 +340,21 @@ pub struct ImpactKind {
 /// `mortarShellSound`/`tankShellSound` (+0x724/+0x728) when set (no MP def sets them), and the
 /// rows skip 1/2/4/6/8/10 (exit hits) and 18.
 pub const IMPACT_KINDS: [ImpactKind; 15] = [
-    ImpactKind { impact_type: 1, row: 0, sound_family: Some("prj_bullet_impact_small") },
-    ImpactKind { impact_type: 2, row: 3, sound_family: Some("prj_bullet_impact_large") },
-    ImpactKind { impact_type: 3, row: 7, sound_family: Some("prj_bullet_impact_ap") },
-    ImpactKind { impact_type: 4, row: 9, sound_family: Some("prj_bullet_impact_xtreme") },
-    ImpactKind { impact_type: 5, row: 5, sound_family: Some("prj_bulletspray_small") },
-    ImpactKind { impact_type: 6, row: 11, sound_family: None },
-    ImpactKind { impact_type: 7, row: 12, sound_family: Some("wpn_grenade_explode") },
-    ImpactKind { impact_type: 8, row: 12, sound_family: Some("wpn_rifle_grenade") },
-    ImpactKind { impact_type: 9, row: 13, sound_family: Some("wpn_rocket_explode") },
-    ImpactKind { impact_type: 10, row: 14, sound_family: Some("wpn_rocket_explode") },
-    ImpactKind { impact_type: 11, row: 15, sound_family: None },
-    ImpactKind { impact_type: 12, row: 16, sound_family: Some("wpn_mortar_shell") },
-    ImpactKind { impact_type: 13, row: 17, sound_family: Some("wpn_tank_shell") },
-    ImpactKind { impact_type: 14, row: 19, sound_family: Some("prj_bolt_impact") },
-    ImpactKind { impact_type: 15, row: 20, sound_family: Some("prj_blade_impact") },
+    ImpactKind { impact_type: 1, row: 0, sound_family: Some("prj_bullet_impact_small"), exit: Some((1, "prj_bullet_impact_small_exit")) },
+    ImpactKind { impact_type: 2, row: 3, sound_family: Some("prj_bullet_impact_large"), exit: Some((4, "prj_bullet_impact_large_exit")) },
+    ImpactKind { impact_type: 3, row: 7, sound_family: Some("prj_bullet_impact_ap"), exit: Some((8, "prj_bullet_impact_ap_exit")) },
+    ImpactKind { impact_type: 4, row: 9, sound_family: Some("prj_bullet_impact_xtreme"), exit: Some((10, "prj_bullet_impact_xtreme_exit")) },
+    ImpactKind { impact_type: 5, row: 5, sound_family: Some("prj_bulletspray_small"), exit: Some((6, "prj_bulletspray_impact_small_exit")) },
+    ImpactKind { impact_type: 6, row: 11, sound_family: None, exit: None },
+    ImpactKind { impact_type: 7, row: 12, sound_family: Some("wpn_grenade_explode"), exit: None },
+    ImpactKind { impact_type: 8, row: 12, sound_family: Some("wpn_rifle_grenade"), exit: None },
+    ImpactKind { impact_type: 9, row: 13, sound_family: Some("wpn_rocket_explode"), exit: None },
+    ImpactKind { impact_type: 10, row: 14, sound_family: Some("wpn_rocket_explode"), exit: None },
+    ImpactKind { impact_type: 11, row: 15, sound_family: None, exit: None },
+    ImpactKind { impact_type: 12, row: 16, sound_family: Some("wpn_mortar_shell"), exit: None },
+    ImpactKind { impact_type: 13, row: 17, sound_family: Some("wpn_tank_shell"), exit: None },
+    ImpactKind { impact_type: 14, row: 19, sound_family: Some("prj_bolt_impact"), exit: Some((19, "prj_bolt_impact_exit")) },
+    ImpactKind { impact_type: 15, row: 20, sound_family: Some("prj_blade_impact"), exit: None },
 ];
 
 /// The impact kind of `impact_type` (`None` for 0, "none", and out-of-range values).

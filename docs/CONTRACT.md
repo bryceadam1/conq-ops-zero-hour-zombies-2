@@ -368,28 +368,44 @@ cell of the global `FxImpactTable` (32 surfaces, plus four body/head × nonfatal
 The mod reproduces that split: the **sim classifies**, the **client carries**, the **bridge plays**.
 
 * **The sim emits one `EventKind::Impact` per pellet that hit** (`at`, `dir`, `surface`, `head`,
-  `fatal`, `impact_type`); a shot that hits nothing emits none. `Shot` stays once per shot (the
+  `fatal`, `impact_type`, `exit`); a shot that hits nothing emits none. A penetrating round
+  (below) adds its exit impacts (`exit` set) and its onward entries. `Shot` stays once per shot (the
   gunshot and the viewmodel) and no longer names an impact.
 * **The surface is presentation data.** Objects are classified from the `objflags` the bridge
   already reports (`INFANTRY → FLESH`, `VEHICLE|AIRCRAFT → METAL`, `STRUCTURE → CONCRETE`); the
   ground from the new `LogicApi.surface_at(x, y)`, which answers Zero Hour's terrain class
   (`TheTerrainVisual->getTerrainTile`, the same query the logic's build placement uses) and a water
-  table. It is read in the logic step but **never feeds damage, movement or any other sim state**:
-  a peer whose terrain visual disagreed could only differ in its own screen.
+  table. The ground's surface is read in the logic step but **never feeds damage, movement or any other
+  sim state**: a peer whose terrain visual disagreed could only differ in its own screen. An
+  *object's* surface (its kind flags, sim state) does feed damage: bullet penetration's depth.
+* **Bullet penetration** (t6mp `FUN_005d0350`; `zhbo_core::penetration`). After its first hit a
+  round goes on through up to `penetrationCount` (5) solids while its damage multiplier (1 at the
+  muzzle) stays positive: each solid costs its chord (≥ 1 in; the targets' convex shapes, exact)
+  over the smaller of the entry and exit surfaces' depths for the def's `Penetrate` type
+  (`info/bullet_penetration_mp`, doubled by `perk_bulletPenetrationMultiplier` with
+  `bulletpenetration` — FMJ), and each next object takes `damage_at(distance) × multiplier`. The
+  exit and the next entry play their impacts only when over `bullet_penetrationMinFxDist` (30 in)
+  apart, at most two per round (the client's `FUN_00538e40` budget). The ground has no underside:
+  a round that strikes it stops. All numbers are tuning-pack keys (`[Penetration]`, BO2's own key
+  names); deterministic, sim-only inputs.
 * **The client carries at most `ZHBO_CLIENT_HITS` (8) impacts per frame** in `ZhboClientOut.hits`,
   filled by `consume_events` (so the impact sound is the surface's, not a guess); a frame that
   overflows drops the extras.
 * **The bridge plays the name the core resolves.** `zhbo_impact_fx(impact_type, surface, head,
-  fatal, …)` looks the cell up in the converted `Data\ConquerOps\impacts.txt` (loaded by
+  fatal, …)` (or `zhbo_impact_exit_fx` for a hit with `ZhboClientHit.exit`: the type's exit row,
+  BO2's impact flag 4 — rows 1/4/8/10/6, `exit impact`/`exit flesh` lines) looks the cell up in the converted `Data\ConquerOps\impacts.txt` (loaded by
   `zhbo_load_impacts` at init) and the bridge calls `FXList::doFXPos` with a frame whose X is
   `-dir` (the surface's outward normal). A missing/stale archive plays nothing and is counted, never
   a bogus name — the same degrade-don't-panic rule as the renderer's draws.
 * **What is out**: first-person tracers (BO2's `cg_firstPersonTracerChance` defaults to 0), other
-  players' impacts (they keep the converted `FireFX`) and exit/through-and-through impacts.
+  players' impacts (they keep the converted `FireFX`).
 * **The pellet's sound is the table's too**: `consume_events` plays `sounds::impact_cue(impact_type,
   surface)` — the `sound` row for the gun's type (`prj_bullet_impact_<size>_<surface>`), silent on a
   `NONE` row (BO2's hash miss), and the fixed flesh/hard cue only for a type with no sound rows (an
-  unconverted archive).
+  unconverted archive). An exit plays `sounds::exit_cue` — the `exit sound` row of the type's exit
+  family (`prj_bullet_impact_<size>_exit_<surface>`; the shotgun's
+  `prj_bulletspray_impact_small_exit` has no alias in the install, so it is silent), nothing without
+  one.
 * **Blasts read the same table by their own impact type.** BO2's explode events (`FUN_004c0ac0`,
   `FUN_004c1590`) call the impact routine `FUN_00533210(weapon, surface)` — the type's
   `FxImpactTable` row and its sound family `<family>_<surface>` — then the def's own
@@ -421,6 +437,9 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
 * ABI: `surface_at` is appended to `ZhboLogicApi` (fields 23 → 24), `ZhboClientOut` grows by 324
   bytes (4508 → 4832) and `ZHBO_ABI_VERSION` goes to 26; `zhbo_load_impacts` and `zhbo_impact_fx`
   are new free functions on the append-only surface.
+* ABI (penetration): `ZhboClientHit` gains `exit` at its end (40 → 44 bytes; `ZhboClientOut`
+  4832 → 4864, only `hits_len` moves) and `zhbo_impact_exit_fx` is a new free function. **Needs the
+  `ZHBO_ABI_VERSION` bump with its merge** (not done on the branch).
 
 ## Lifecycle
 
