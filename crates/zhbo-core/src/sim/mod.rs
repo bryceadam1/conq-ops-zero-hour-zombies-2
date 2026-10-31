@@ -1190,6 +1190,34 @@ pub(crate) mod tests {
         assert!(host.controlled.borrow().is_empty());
     }
 
+    /// BO2 gives the held knife as a second weapon to a class with fewer than two
+    /// (`_class.gsc` `giveloadout`, `initialweaponcount < 2`): a one-gun class spawns holding the
+    /// gun, and the weapon switch brings up the knife, which strikes with itself.
+    #[test]
+    fn a_one_gun_class_carries_the_held_knife_as_its_second_weapon() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout { primary: "mp7_mp".into(), ..crate::weapons::Loadout::default().with_spec("secondary=") });
+        wait_until_ready(&mut sim, &host);
+        let a = &sim.player(0).unwrap().arsenal;
+        let ids: Vec<&str> = a.weapons.iter().map(|w| w.def.id.as_str()).collect();
+        assert_eq!(ids, ["mp7_mp", "knife_held_mp"]);
+        assert_eq!(a.active, 0, "it spawns holding the gun");
+        assert!(!a.is_unarmed());
+        run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::SWAP_WEAPON, ..Default::default() }, 1);
+        run(&mut sim, &host, 0, 1, FpsInput::default(), frames(3.0));
+        let a = &sim.player(0).unwrap().arsenal;
+        assert_eq!(a.current().def.id, "knife_held_mp", "the switch brings up the knife");
+        assert_eq!(a.melee_weapon().id, "knife_held_mp", "a knife in the hand strikes with itself");
+        // Two guns: no knife in the hand (it is still the melee); no guns: the knife alone.
+        let two = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default());
+        assert!(two.weapons.iter().all(|w| w.def.class.is_gun()) && two.weapons.len() == 2);
+        let none = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::unarmed());
+        assert_eq!(none.weapons.len(), 1);
+    }
+
     /// Bug 1: a General spawns with no guns and no grenades, only the melee knife, until a class
     /// is chosen. `Loadout::default()` (the classes' base kit) is untouched.
     #[test]

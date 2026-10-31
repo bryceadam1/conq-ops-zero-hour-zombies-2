@@ -381,11 +381,15 @@ impl Arsenal {
             Offhand { def, count: def.start_reserve.max(1) }
         };
         let melee = if loadout.melee.is_empty() { knife() } else { weapon_or_none(&loadout.melee).unwrap_or_else(knife) };
-        // A kit with no resolvable gun at all is unarmed (the knife is still there): never leave
-        // `weapons` empty, which every consumer reads through `current()`.
-        if weapons.is_empty() {
+        // BO2 gives the held knife as a weapon when the class has fewer than two
+        // (`_class.gsc` `giveloadout`: `if ( initialweaponcount < 2 ) giveweapon( "knife_held_mp" )`),
+        // after the guns, and spawns holding it only when there is no gun at all (`initialweaponcount
+        // == 0`). So a one-gun class switches between the gun and the knife, and a kit with no
+        // resolvable gun is unarmed but never leaves `weapons` empty (every consumer reads
+        // `current()`).
+        if weapons.len() < 2 {
             let mut knife = WeaponState::new(melee);
-            knife.raised_once = true;
+            knife.raised_once = weapons.is_empty();
             weapons.push(knife);
         }
         let raise = weapons[0].def.first_raise_time;

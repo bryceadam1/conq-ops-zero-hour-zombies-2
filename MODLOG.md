@@ -4679,3 +4679,24 @@ Shield); 781,251 → 781,587 cells — every added cell is on the six new rows (
 on any other row): they join the columns every row already differs in, plus two new clusters,
 `inventory` 0 → 6 and `weap_type` 0 → 5 (above). cac 555 → 572: the six new weapon rows join the
 offhands' existing `description` (+6), `image` (+6) and `order` (+5) gaps. Gap clusters 202 → 204.
+
+## A one-gun class carries the held knife as its second weapon (2026-10-31, `v1/equipment-melee`)
+
+BO2's `giveloadout` (`_class.gsc` ~680) gives the guns (secondary, then primary), counts them, and
+`if ( initialweaponcount < 2 ) giveweapon( "knife_held_mp" )` — spawning on the knife only when
+there is no gun. The mod gave the held knife only to a gunless kit, so a class with one gun had
+nothing to switch to.
+
+* `Arsenal::with_loadout` appends the held knife (`loadout.melee`) after the guns whenever there are
+  fewer than two; the spawn weapon stays the first gun (the knife only when there is none).
+  Switching brings it up and it strikes with itself (`melee_weapon`).
+* HUD: with a melee weapon in the hand the ammo digits hide (`CoD.AmmoArea.UpdateWeapon` sets
+  `hideAmmo` for weapType `melee`/`riotshield`/`grenade`); the label and offhand counters stay.
+  `is_unarmed` (no gun at all) is unchanged, so the crosshair rule for the gunless kit is too; with
+  the knife up in a one-gun class the crosshair still draws (BO2's knife crosshair is unverified).
+* RTS needs nothing: its slot templates already skip non-guns and a knife slot reads empty.
+* Tests: fake-host `a_one_gun_class_carries_the_held_knife_as_its_second_weapon`; HUD
+  `the_held_knife_hides_the_ammo_digits_only`.
+
+Measured: no conformance movement (781,587 / 572 / 204 gap clusters) — the table describes the
+defs, not what a class carries.
