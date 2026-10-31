@@ -805,6 +805,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("ViewKickCenterStance", "The aimed recentre speed's crouched and prone scales (`fAdsViewKickCenter{Ducked,Prone}Scale`).", FieldKind::Nums(2),
         |d: &WeaponDef| nums(&[d.kick_center_stance.0, d.kick_center_stance.1]),
         |d: &mut WeaponDef, v: Values| { v.need(2)?; d.kick_center_stance = (v.num(0), v.num(1)); Ok(()) }),
+    field!("ViewKickCenterScale", "The attachments' product of `fAdsViewKickCenterSpeedScale` on the aimed recentre speed (1 bare; a combination's stacked value).", FieldKind::Num,
+        |d: &WeaponDef| d.ads_kick_center_scale.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.ads_kick_center_scale = v.text_num()?; Ok(()) }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -864,7 +867,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 95);
+        assert_eq!(WEAPON_FIELDS.len(), 96);
         assert_eq!(ATTACHMENT_FIELDS.len(), 29);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

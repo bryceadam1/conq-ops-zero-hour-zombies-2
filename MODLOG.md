@@ -4611,3 +4611,62 @@ Verified: cargo test --workspace green; clippy --all-targets adds no warning; th
 zhbo-assets suite (`--ignored --skip conformance`, 31 tests) green; the conformance CLI as above.
 `hud::VERSION` bump needed (the weapon table gained Attachment lines; old tables still parse) — the
 integrator's.
+
+## View kick: BO2's camera recoil is a velocity, recentred by the client integrator, and it moves the aim (2026-10-31, branch `v1/view-kick`)
+
+G5 left the view kick's consumer unresolved, so the mod scaled the per-shot numbers by a made-up
+`KICK_TO_DEGREES` (1/80), moved the mouse aim by a made-up 35 % "permanent" share and settled the
+rest at 12/s. Traced in t6mp (dumps and notes in the item's plan dir, `ghidra/`):
+
+- **The shot writes a velocity, and overwrites it.** The fire event `FUN_00539df0` calls
+  `FUN_008e3a00(ps, cg+0x64a68, cg+0x697bc, …)`; the third argument is the kick's angular
+  velocity and is *set*, not added: `(-|p|·s, y·s, -0.5·y·s)` deg/s. `fHipViewKickPitchMax = 47.5`
+  is 47.5 deg/s, not degrees.
+- **The integrator** `FUN_0051f150` (CG frame, after prediction) slices the frame's msec into ≤5 ms
+  steps; per axis: skip when velocity and angle are both 0; when the angle is non-zero the velocity
+  accelerates toward centre by the recentre speed (deg/s²) — a fresh kick from rest gets no pull on
+  its first slice; a displacement toward centre is multiplied by **0.06** (`DAT_00c6f680`); crossing
+  centre stops dead (angle and velocity 0); otherwise the angle is clamped to **±10°**
+  (`DAT_00c7340c`) with the velocity dropped. Constants are .rdata literals, not dvars
+  (1/-1 signs `DAT_00b0c268`/`00b0c934`, 2400 no-weapon speed `DAT_00b265ac`, 0.5 aim split
+  `DAT_00c733cc`).
+- **Which speed.** Above aim 0.5: `fAdsViewKickCenterSpeed` × Π `fAdsViewKickCenterSpeedScale`
+  (`FUN_008ecf70`) × `fAdsViewKickCenterProneScale` when `FUN_008bfa60` says 1 (prone — its caller
+  `FUN_008c64f0` sets PMF_PRONE on 1) or `…DuckedScale` on 2 (crouched). **At the hip the client
+  reads the same aimed field, unscaled** (`variant+0x21c`; verified through the disassembly's stack
+  offsets, not just the decompile) — `fHipViewKickCenterSpeed` is read only for dual wield (summed
+  when both hands fire). Gotcha: `FUN_005d6d50` is a 50 ms copy of the integrator that does use the
+  hip field — it is the bot path, not the player's; do not "fix" the port to match it.
+- **It moves the aim, never the view.** `FUN_004b0fd0` hands the kick angles to `FUN_00543220`
+  (clientActive+0x2c00) and the user-command builder `FUN_00549fb0` sends
+  `ANGLE2SHORT(viewangles + kick)`. So bullets fly along view + kick, and since `cl.viewangles`
+  never takes it, all of BO2's recoil recentres — there is no permanent share. The climb you fight
+  in a long burst is the 0.06 return being slower than the next shot's kick.
+
+Port: `weapons::view_kick` (`ViewKick`, `centre_speed`, the integrator, consts cited above) owned by
+the sim (`PlayerSim::view_kick`): the frame's aim is the input angles + the kick the previous frame
+left; the shot (pellet 0) sets the velocity; the kick steps once per logic frame after the
+weapon's actions; leaving first person zeroes it, as BO2 does out of its playing state. The client
+camera is mouse aim + the sim's kick interpolated across the logic frame (like the eye);
+`EventKind::Recoil` carries only the gun kick. The damage flinch (G7, its own cg+0x697a8 channel)
+keeps its camera-only settle as `hud.flinch_pitch`. `WeaponDef.view_kick_center.0` is now the raw
+aimed speed with the attachment product in `ads_kick_center_scale` (`ViewKickCenterScale`; the
+conformance column is still the product), plus `kick_center_stance` (`ViewKickCenterStance`); both
+lines are appended to the weapon block. Gotcha: the product must be a table line, not a derived-only
+field — the converter stacks every legal combination (`add_variants` → `attachments::apply`) and
+*serializes* the stacked def, so a field the table does not write is lost (the first measurement
+showed `view_kick_center` back at 3,075 cells until it was a line).
+
+Measured (conformance vs `v1/gun-feel`): unchanged — 381,867 weapons cells, 881 cac, 185 gap
+clusters, every column identical (no kick column covers the integrator, the stance scales or the
+fire path; the view kick's numbers were already carried).
+Verified: cargo test --workspace green; clippy --all-targets adds no warning; the real-install
+zhbo-assets suite green. `hud::VERSION` bump needed (two weapon-table lines) — the integrator's.
+Not ported (no such weapon in the mod): charge-shot fire type 8's per-queued-bullet centre speed
+(`FUN_008dab80`, `bg_chargeShot*`), dual wield, weapon type 4's −0.001 pitch nudge. The camera has
+no roll channel, so the roll axis is integrated but not drawn.
+
+Feel, for the in-game check: an AN-94 hip burst climbs ~0.5° per shot with the yaw wandering
+±0.6°, plateaus around 2° over a one-second burst (the return balances the kick), and settles
+dead-centre ~170 ms after release; ADS uses the aimed set and recentres slower or faster per the
+optic/suppressor scale; crouched/prone ADS takes the def's stance scales.
