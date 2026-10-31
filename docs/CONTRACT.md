@@ -295,6 +295,34 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
     `INVALID` (no third-person camo). Only the primary's viewmodel inherits the class camo, as the
     class stores one camo.
 
+* **The engine-filled surfaces: the lens reticle, the clan tag, the emblem.** BO2 fills three
+  kinds of viewmodel surface at draw time; the converter now keeps them in the native models (the
+  W3D path still leaves them out: it has no shader for them) and flags them by the material's
+  technique set, never by name. The material record appends `reticle` (the
+  `sw4_3d_reticle_dynamic` constants by the shader's names, and the noise map) and `emblem`
+  (`sw4_3d_player_icon`); RENDERER.md "The lens reticle" has the technique. The local primary's
+  reticle choice rides a core-global like the camo (`nativevm::set_local_reticle`, set by
+  `zhbo_client_frame` from `PlayerSim.reticle`: `reticle_N` is `weaponoptions.csv` row `N + 1`,
+  no choice row 0) — **no `ZhboNativeIn` field and no ABI bump**; the composed viewmodel is keyed
+  by it. The converter writes `Art\Native\reticles.zbr` (`ZBR\0`, v1, new): BO2's
+  `mp/weaponoptions.csv` `reticle` rows (`t6mp` `FUN_00529360`: column 3 per optic, column 5 the
+  reflex's RMR) as one material set per optic column in row order, row 0 the stock material the
+  optic's model carries; `nativevm::apply_reticle` swaps each lens surface whose stock material
+  starts a set. The reticle fades with `ZhboNativeIn.ads` (BO2's `fWeaponPosFrac`); nothing in
+  the mod knocks optics out, so `optics_off` is 0. While the native viewmodel draws a lens
+  reticle, the HUD's 2D optic reticle (the W3D fallback's stand-in) stays out
+  (`nativevm::lens_reticle_drawn`, per thread). The clan tag draws as BO2 does for a player
+  without one: its shader's four glyph indices are all 0 (`FUN_0052a010`), so the converter bakes
+  the font atlas's first cell four times across (transparent on the stock install). The emblem
+  draws its material's own `emblem_clear` stand-in: the faction emblem (`Material::emblem` marks
+  the surface for it) is not wired yet — Zero Hour's `<Side>_Logo` lives in its localized
+  `SCShellUserInterface512_006.tga` page, which the core would need the bridge to resolve. The
+  reticle colour option has no rendering effect found in BO2: `weaponoptions.csv` has no colour
+  column and the reticle shader reads no code-set colour. The third-person body draws its world
+  model's reticle with `ads = 0`, i.e. dark, as BO2 sets the fade for the local viewmodel only.
+  Version bumps (integrator-owned, not made): model `VERSION` and camo `VERSION` (the shared
+  material record appends `reticle` and `emblem`) and the archive's `hud::VERSION`.
+
 ## The native third person (Track R7)
 
 The converter also writes the General's third-person art as native blobs, so the renderer can draw

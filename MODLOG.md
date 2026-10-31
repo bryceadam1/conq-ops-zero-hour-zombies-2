@@ -4632,3 +4632,69 @@ a clan tag/emblem — renderer features, not a converter fix.
 
 **Versions (integrator-owned, NOT bumped):** the archive's `hud::VERSION` (new sprites, a new
 weapon-table key). No C ABI change.
+
+## The optic reticle on the lens, projected to infinity (2026-10-31, branch `v1/lens-reticle`)
+
+Stacked on `v1/art-columns`. `view_part_materials` differed on every manifested row because
+`textures.rs` dropped three surface kinds BO2 fills at draw time — the optic reticle, the clan tag
+(`mc/mtl_clan_tag`) and the emblem (`mc/mtl_player_icon`) — and the HUD drew a 2D reticle on the
+line of sight instead. The native pass now draws them; the W3D path still leaves them out (no
+shader). All three are recognised by their **technique set** (`Material::techset`, now read with
+the material's constants), never by name.
+
+* **BO2's reticle technique, from its DXBC.** `mc/mtl_t6_attach_optic_*_reticle*` use
+  `mc_sw4_3d_reticle_dynamic` (technique 3: `pimp_shader_sw4_3d_reticle_dynamic_9b0c84e4` VS,
+  `_1f5ed1d` PS; dumped with a throwaway SM4 disassembler, `~/.opencode/plan/lens-reticle/tools`).
+  The VS: `uv = 0.5 + Color_Map_Scale · (dot(T, v), −dot(B, v))` with `v` the normalized
+  view-space position (eye→vertex) and `B = cross(N, T) · sign` — the reticle depends on direction
+  only, so it sits at infinity on the lens normal (parallax-free). The PS: `Color_Map` at that UV
+  (sampler state clamps U/V), red × `Reticle_Color` × `(1 − Color_Map_Noise · noise)` + green ^
+  `Glow_Falloff` × `Glow_Color` × noise (`Detail_Map` at the mesh UV × `Noise_Scale`), × 
+  `Emissive_Amount`; alpha blue × `Background`; squared, × `(1 − weaponParam0.y) ·
+  saturate(2 · weaponParam0.w)` × `hdrControl0.x`, then `sqrt`. Blend `ONE, INV_SRC_ALPHA`
+  (bits 0x19288962). `weaponParam0` is written by `t6mp` `FUN_00529dd0` (x, y via `FUN_0042ac00`
+  = the `FUN_0051f0a0` flag, w via `FUN_0042ac60` = `playerState + 0x1e0` from `FUN_00536f30`,
+  the ADS fraction): the reticle fades in over the first half of the aim. Ported as
+  `native.wgsl` `fs_reticle` (tangent frame from derivatives; RENDERER.md "The lens reticle").
+* **Gotcha: BO2's name hash folds case with `c | 0x20`.** `sampler_hash` used
+  `to_ascii_lowercase`, identical for letters but not for `_` (0x5f → 0x7f): `Color_Map` is
+  0xb607c0fe, `Reticle_Color` 0x29cdfd82. The old names (`colorMap`, `SpecularAndGloss`) hash the
+  same either way. The 12-byte `MaterialConstantDef::name` is truncated; match by hash.
+* **Gotcha: `common_mp`'s optic materials reference the noise image as a 0 × 0 stub** (no stream
+  hash); `code_post_gfx_mp` loads it in full. `Paks::learn` records a zone's streamed images by
+  name and `Paks::resolve` falls back to it.
+* **The CaC reticle option.** `mp/weaponoptions.csv` (`patch_mp`) is BO2's table: `FUN_00529360`
+  fills one table per optic column (column 3; column 5 for the reflex's RMR), row 0 the model's
+  stock material, row `n` option `n`'s. Converted to `Art\Native\reticles.zbr` (new
+  `zhbo_native::reticles`); the core swaps the lens surface by the class's row (`reticle_N` → row
+  `N + 1`, the CaC grid's `_reticle_0{N+1}` art, `cacreticles.lua:1150-1240`, as the HUD maps
+  it). **The reticle colour option has no render effect found:** the table has no colour column
+  and the shader reads no code constant besides `weaponParam0`/`hdrControl0`; each reticle's
+  colour is its own material's.
+* **The clan tag with no tag.** Its PS picks four glyphs from the font atlas, one per quarter of U,
+  by `weaponParam1.xyzw`; `FUN_0052a010` writes 0 for each when the player has no tag (flag 0x2000
+  clear). Baked at conversion: the atlas's first `Char_Size` cell four times across — alpha 0 on
+  the install, so nothing shows, as in BO2.
+* **The emblem** draws its material's own `emblem_clear` (transparent; BO2's look without an
+  emblem, flag 0x4000 clear). **Not done:** the faction-emblem swap (`Material::emblem` marks the
+  surface). Zero Hour's `USA_Logo`/`China_Logo`/`GLA_Logo` are 48×48 `MappedImage`s in
+  `SCShellUserInterface512.INI` on `Data\English\Art\Textures\SCShellUserInterface512_006.tga`
+  (`EnglishZH.big`): the core would need the bridge to resolve the localized page.
+* **The HUD.** `draw_crosshair` leaves its 2D optic reticle out while the native viewmodel drew a
+  lens reticle last frame (`nativevm::lens_reticle_drawn`, thread-local); the W3D fallback keeps it.
+* **Not ported:** `reticle_static` (MMS: mesh UV, screen-space noise), `reticle_ui3d` and
+  `reticle_dynamic_2colors` (the dual band's code-driven display) — still left out of both paths.
+
+Sweep (`render_viewmodels`, an94 + mp7, base `ba0918a` vs this branch, both converting every job;
+`~/.opencode/plan/lens-reticle/sweep-{before,after}`): only the aimed halves of the four lens
+optics change (an94: reflex 32 px, ACOG 22, holo 567, dual optic 49); every hip half and every
+other attachment is pixel-identical (the clan tag and emblem draw transparent). The dot sits on the
+frame centre; the dual optic's horseshoe reads upright, as its image. Conformance:
+`view_part_materials` 9,331 → 3,199 rows (the rest: the rangefinder/MMS reticles above, part
+counts, the 651 manifest-less combos); weapons cells 699,074 → 692,942; no other column moved;
+gap clusters 213 → 213.
+
+**Versions (integrator-owned, NOT bumped):** `zhbo_native::model::VERSION` and
+`zhbo_native::camo::VERSION` (the shared material record appends `reticle` and `emblem`), the
+archive's `hud::VERSION` (new textures and `reticles.zbr`). `reticles.zbr` is new at v1. No C ABI
+change (`NativeSurface`/`NativeFrame` are Rust-only; `ZhboNativeIn` is unchanged).

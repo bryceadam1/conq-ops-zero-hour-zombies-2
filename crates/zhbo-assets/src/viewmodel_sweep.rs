@@ -340,15 +340,17 @@ mod tests {
             let surfaces: usize = models.iter().map(|m| m.surfaces.len()).sum();
             (bones, verts, surfaces, manifest.parts.len())
         };
-        // The base's composite: the arms and the base gun. Its counts match RESEARCH.md's table.
+        // The base's composite: the arms and the base gun. RESEARCH.md's table (79 bones, 8058
+        // vertices, 7 surfaces) plus the gun's clan tag and emblem surfaces (87 vertices), which
+        // the native path draws since the lens-reticle work.
         let (bb, bv, bs, _) = counts("fnp45_mp");
-        assert_eq!((bb, bv, bs), (79, 8058, 7), "the base pistol's composite");
+        assert_eq!((bb, bv, bs), (79, 8145, 9), "the base pistol's composite");
         // The DW composite: the base's parts plus the `_lh` gun's, a separate rig on the left palm.
         let (db, dv, ds, dp) = counts("fnp45_dw_mp");
         assert!(db >= 81, "the DW composite adds the left gun's bones: {db} vs {bb}");
         assert!(dv >= 10_000, "the DW composite adds the left gun's vertices: {dv} vs {bv}");
-        // The raw `_lh` model carries 12 surfaces; the native path drops the reticle and clan-tag
-        // surfaces the W3D pass leaves out too (`looks.dropped`), leaving 10.
+        // The raw `_lh` model carries 12 surfaces; the native path keeps the clan tag and emblem
+        // the W3D pass leaves out (`looks.native_only`).
         assert!(ds >= 10, "the DW composite adds the left gun's surfaces to the base's 7: {ds}");
         assert!(dp > 2, "the DW composite adds a part: {dp}");
         // Each of the five DW pistols composes both guns, whatever its per-weapon surface counts.

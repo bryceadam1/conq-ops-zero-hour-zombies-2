@@ -135,6 +135,30 @@ used — so the highlight, the environment reflection and the diffuse energy spl
 the hue. A grey spec map draws exactly as its level; a surface without the map (or without packed
 maps, whose gloss it needs) keeps the level.
 
+**The lens reticle.** BO2 draws an optic's reticle on the lens with its own technique
+(`sw4_3d_reticle_dynamic`: the reflex, holo, ACOG and the dual optic's halves), and the pass ports
+it from the shader's DXBC as a second fragment stage, `fs_reticle`, selected per surface
+(`NativeSurface.reticle: Option<NativeReticle>`; the pipeline key carries it). The surface's
+`color` is the reticle image — red the shape, green its glow, blue the background's coverage — and
+it is **not** mapped by the lens's UVs: the reticle UV is `0.5 + Color_Map_Scale · (T·v, −B·v)`
+for the eye→surface direction `v` in the surface's tangent frame (from the position/UV
+derivatives, exact on a flat lens; BO2 does it per vertex from the vertex tangents). That is a
+function of direction only, so the reticle sits at infinity on the optic's axis: it stays on the
+line of sight however the gun sways and turns only when the optic turns. The UV is clamped (the
+image's sampler state clamps U and V). Colour: `(red · Reticle_Color · (1 − Color_Map_Noise ·
+noise) + green^Glow_Falloff · Glow_Color · noise) · Emissive_Amount`, the noise map
+(`NativeReticle.noise`, `Detail_Map`, bound where lit surfaces bind their packed maps) tiled over
+the lens UVs by `Noise_Scale`; alpha `blue · Background`; drawn premultiplied (BO2's
+`ONE, INV_SRC_ALPHA`). It fades in by `saturate(2 · ads)` — `NativeFrame.ads` is BO2's
+`fWeaponPosFrac`, `weaponParam0.w` — and out while `NativeFrame.optics_off` (BO2's EMP,
+`weaponParam0.y`) is set; BO2 squares the colour, scales by the fade and takes the root, so the
+colour is scaled by `sqrt(fade)`. `Emissive_Amount` (8–22) saturates the shape to a white-hot
+core with its colour at the falloff, as BO2's look. The material uniform is 96 bytes (`params`,
+`camo`, `spec`, then three reticle blocks); `NativeFrame` writes `ads`/`optics_off` into the
+frame block's `params.zw`. A reticle with a non-finite constant is skipped at upload (logged), the
+rest of the mesh draws. The MMS's `reticle_static` and the dual band's `reticle_ui3d` and
+`reticle_dynamic_2colors` (code-driven displays) are not ported; the converter leaves them out.
+
 ### Robustness
 
 One invalid draw in a wgpu render pass invalidates the whole frame. The runtime therefore:
@@ -183,7 +207,10 @@ One invalid draw in a wgpu render pass invalidates the whole frame. The runtime 
   Hour's day lights and stays dark under a bright map ambient (the grey wash-out regression),
   light brightens a lit surface, surfaces cull the faces their materials say to (BO2's winding is
   clockwise-front here), a `None` matrix takes the view's transform, the pass runs before its
-  view (or at the end), and every refusal is counted without a wgpu error.
+  view (or at the end), and every refusal is counted without a wgpu error. The lens reticle
+  stays on the screen's centre while the lens sways (a UV-painted dot moves), turns `tan(a)` with
+  the optic, is sized by its scale, fades in with the aim and out with the optics knocked out, and
+  a non-finite reticle is skipped, not fatal.
 * `tests/ffi.rs` locks the Rust side of the ABI: it mirrors the header's struct layouts and the
   API-table field counts with compile-time asserts and round-trips the encode functions through
   a `Vec<u8>` cursor, so header and Rust drift fail a plain `cargo test`.
