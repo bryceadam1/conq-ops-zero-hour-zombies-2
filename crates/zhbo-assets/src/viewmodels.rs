@@ -612,7 +612,11 @@ pub(crate) fn world_weapons(
     for (vm, id) in converted.iter().enumerate() {
         let (base, shorts) = zhbo_core::attachments::split_id(id);
         let Some(w) = bo2.iter().find(|w| w.name == base) else { continue };
-        let Some(world) = w.world_model.as_deref().and_then(|m| find_model(patch, common, m).ok()) else { continue };
+        // The Assault Shield is carried as the script's carry model on the left hand
+        // (`_riotshield.gsc` `refreshshieldattachment`), not its pickup world model.
+        let shield = crate::weapons::is_shield(w);
+        let world_name = if shield { Some(crate::shield::CARRY_MODEL) } else { w.world_model.as_deref() };
+        let Some(world) = world_name.and_then(|m| find_model(patch, common, m).ok()) else { continue };
         let c = combo(w, atts, &shorts);
         let prefix = format!("W{vm:02}");
         if let Some(b) = world.bones.iter().find(|b| b.name == "tag_flash") {
@@ -625,7 +629,7 @@ pub(crate) fn world_weapons(
         // inches, so its offsets stay unscaled (the W3D path's are scaled above).
         let mut native_parts = vec![zhbo_native::viewmodel::Part {
             model: crate::native::put_model(out, &crate::native::model(&world, &tex, looks)),
-            tag: None,
+            tag: shield.then(|| crate::shield::HELD_TAG.to_string()),
             offset: crate::xf::IDENTITY,
             rigid: true,
             ads_only: false,
@@ -649,6 +653,18 @@ pub(crate) fn world_weapons(
                 rigid: true,
                 ads_only: false,
             });
+        }
+        // Carried but not up, the shield hangs on the back (`tag_stowed_back`, the stow model).
+        if let Some(stow) = shield.then(|| find_model(patch, common, crate::shield::STOW_MODEL).ok()).flatten() {
+            let t = textures(&stow, paks, out, looks);
+            let part = zhbo_native::viewmodel::Part {
+                model: crate::native::put_model(out, &crate::native::model(&stow, &t, looks)),
+                tag: Some(crate::shield::STOWED_TAG.to_string()),
+                offset: crate::xf::IDENTITY,
+                rigid: true,
+                ads_only: false,
+            };
+            out.insert(zhbo_native::stowed_weapon_path(vm as i32), zhbo_native::thirdperson::Weapon { id: format!("{id}_stowed"), parts: vec![part], hide: Vec::new() }.to_bytes());
         }
         out.insert(
             zhbo_native::world_weapon_path(vm as i32),

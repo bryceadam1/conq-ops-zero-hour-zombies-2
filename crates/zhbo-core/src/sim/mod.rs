@@ -779,6 +779,17 @@ impl Sim {
             .collect()
     }
 
+    /// Each General's weapon carried but not up that the third-person body wears stowed: the
+    /// Assault Shield on his back (its converted index), while another weapon is up.
+    pub fn stowed_weapons(&self) -> Vec<(u32, i32)> {
+        self.players
+            .iter()
+            .flatten()
+            .filter(|p| !p.arsenal.current().def.is_shield())
+            .filter_map(|p| p.arsenal.weapons.iter().map(|w| w.def).find(|d| d.is_shield() && d.viewmodel >= 0).map(|d| (p.general, d.viewmodel)))
+            .collect()
+    }
+
     /// Whether `player` sees enemies at `pos` on the minimap through the shroud: one of their
     /// Sensor Grenades.
     pub fn reveals(&self, player: i32, pos: Vec3) -> bool {

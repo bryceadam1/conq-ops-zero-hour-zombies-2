@@ -176,3 +176,54 @@ fn the_body_root_is_the_object_yawed_about_z() {
     let want = [1.0, 2.0 + 72.0 * ART_SCALE, 3.0];
     assert!((0..3).all(|k| (side[k] - want[k]).abs() < 1e-4), "{side:?} vs {want:?}");
 }
+
+/// Body mode with the Assault Shield: in hand it rides `tag_weapon_left` (its manifest's own base
+/// tag), carried with another weapon up it hangs on `tag_stowed_back` (the stowed manifest).
+#[test]
+fn the_shield_rides_the_left_hand_and_the_back() {
+    let body = model("body", vec![bone("j_root", None, [0.0; 3]), bone("tag_weapon_right", Some(0), [10.0, -8.0, 40.0]), bone("tag_weapon_left", Some(0), [12.0, 8.0, 44.0]), bone("tag_stowed_back", Some(0), [-6.0, 0.0, 50.0])]);
+    let bmanifest = zhbo_native::thirdperson::Body { faction: b'U', model: zhbo_native::model_path("body"), weapon_tag: "tag_weapon_right".into(), clips: Vec::new() };
+    let shield = model("shield", vec![bone("j_shield", None, [0.0; 3])]);
+    let stow = model("stow", vec![bone("j_stow", None, [0.0; 3])]);
+    let rifle = model("rifle", vec![bone("j_gun", None, [0.0; 3])]);
+    let part = |m: &str, tag: Option<&str>| ViewmodelPart { model: zhbo_native::model_path(m), tag: tag.map(str::to_string), offset: IDENTITY, rigid: true, ads_only: false };
+    let f = Fixture {
+        files: vec![
+            (zhbo_native::body_path('U'), bmanifest.to_bytes()),
+            (zhbo_native::model_path("body"), body.to_bytes()),
+            (zhbo_native::world_weapon_path(9), Weapon { id: "riotshield_mp".into(), parts: vec![part("shield", Some("tag_weapon_left"))], hide: Vec::new() }.to_bytes()),
+            (zhbo_native::stowed_weapon_path(9), Weapon { id: "riotshield_mp_stowed".into(), parts: vec![part("stow", Some("tag_stowed_back"))], hide: Vec::new() }.to_bytes()),
+            (zhbo_native::world_weapon_path(3), Weapon { id: "rifle_mp".into(), parts: vec![part("rifle", None)], hide: Vec::new() }.to_bytes()),
+            (zhbo_native::model_path("shield"), shield.to_bytes()),
+            (zhbo_native::model_path("stow"), stow.to_bytes()),
+            (zhbo_native::model_path("rifle"), rifle.to_bytes()),
+        ],
+    };
+    let body_input = |vm: i32| ZhboNativeBodyIn { mode: 2, pos: [0.0; 3], ..input(vm, None) };
+    let at = |s: &ffi::State, bone: &str| {
+        let m = s.loaded.as_ref().unwrap().bone_world(&s.posed, bone).unwrap_or_else(|| panic!("no {bone}"));
+        [m[0][3], m[1][3], m[2][3]]
+    };
+    let close = |a: [f32; 3], inches: [f32; 3]| (0..3).all(|k| (a[k] - inches[k] * ART_SCALE).abs() < 1e-3);
+    let compose = |s: &mut ffi::State, vm: i32| {
+        for _ in 0..20 {
+            s.frame(&body_input(vm), 2);
+            answer(s, &f);
+        }
+        s.frame(&body_input(vm), 2);
+    };
+    with_state(|s| {
+        *s = ffi::State::default();
+        ffi::publish_stowed(&[]);
+        compose(s, 9);
+        assert!(s.loaded.is_some(), "{:?}", s.logged().collect::<Vec<_>>());
+        assert!(close(at(s, "j_shield"), [12.0, 8.0, 44.0]), "held on the left hand: {:?}", at(s, "j_shield"));
+        // The rifle up, the shield on the back.
+        ffi::publish_stowed(&[(1, 9)]);
+        compose(s, 3);
+        assert!(s.loaded.as_ref().is_some_and(|l| l.key.1 == 3), "{:?}", s.logged().collect::<Vec<_>>());
+        assert!(close(at(s, "j_gun"), [10.0, -8.0, 40.0]), "the rifle in the right hand");
+        assert!(close(at(s, "j_stow"), [-6.0, 0.0, 50.0]), "stowed on the back: {:?}", at(s, "j_stow"));
+        ffi::publish_stowed(&[]);
+    });
+}

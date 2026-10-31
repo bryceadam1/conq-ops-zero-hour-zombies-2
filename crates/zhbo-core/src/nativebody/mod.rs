@@ -75,7 +75,13 @@ pub struct Request {
     /// The engine's `tag_weapon_right` world transform (3 rows of 4, translation in each row's
     /// fourth lane), for [`Mode::Weapon`].
     pub tag: Option<[[f32; 4]; 3]>,
+    /// A converted weapon carried but not up whose stowed manifest the body wears (the Assault
+    /// Shield on the back, BO2's `tag_stowed_back`), or -1. Body mode only.
+    pub stowed: i32,
 }
+
+/// What a composed rig is: `(faction, vm, mode, stowed vm)`.
+pub type RigKey = (u8, i32, u8, i32);
 
 /// A world weapon's manifest and the models it names, decoded.
 pub struct WeaponAsset {
@@ -95,8 +101,8 @@ pub struct BodyAsset {
 /// A composed rig ready to pose. The body (body mode) is always the first part; the weapon hangs
 /// from its `weapon_tag`.
 pub struct Loaded {
-    /// `(faction, vm, mode)`: the mode matters because a weapon-only rig has no body.
-    pub key: (u8, i32, u8),
+    /// The mode matters because a weapon-only rig has no body.
+    pub key: RigKey,
     pub weapon: WeaponAsset,
     pub body: Option<BodyAsset>,
     pub skeleton: Skeleton,
@@ -162,9 +168,27 @@ pub fn load(files: &mut Files, req: &Request) -> Result<Option<Loaded>, String> 
         files.forget(&bpath);
         body = Some(BodyAsset { manifest: bmanifest, model: bmodel, clips });
     }
-    // Compose: the body first (no tag), then the weapon's base part on the body's weapon_tag, then
-    // its attachments on their own tags. Weapon-only mode hangs the base part from the model's
-    // origin.
+    // The stowed weapon's parts (body mode): each on its own body tag.
+    let mut stowed: Vec<(zhbo_native::viewmodel::Part, Model)> = Vec::new();
+    if req.stowed >= 0 && body.is_some() {
+        let spath = zhbo_native::stowed_weapon_path(req.stowed);
+        if !files.is_missing(&spath) {
+            let Some(sbytes) = files.get(&spath) else { return Ok(None) };
+            let smanifest = Weapon::from_bytes(&sbytes).map_err(|e| format!("{spath}: {e}"))?;
+            for p in smanifest.parts {
+                if files.is_missing(&p.model) {
+                    return Err(format!("{spath}: {} is not in the archive", p.model));
+                }
+                let Some(b) = files.get(&p.model) else { return Ok(None) };
+                let m = Model::from_bytes(&b).map_err(|e| format!("{}: {e}", p.model))?;
+                stowed.push((p, m));
+            }
+        }
+    }
+    // Compose: the body first (no tag), then the weapon's base part on its own tag when the
+    // manifest names one (the Assault Shield's `tag_weapon_left`) else the body's weapon_tag, then
+    // its attachments on their own tags, then a stowed weapon's parts on theirs. Weapon-only mode
+    // hangs the base part from the model's origin.
     let mut all_models: Vec<&Model> = Vec::new();
     let mut parts: Vec<PartRef> = Vec::new();
     match &body {
@@ -172,15 +196,21 @@ pub fn load(files: &mut Files, req: &Request) -> Result<Option<Loaded>, String> 
             all_models.push(&b.model);
             parts.push(PartRef { model: &b.model, tag: None, offset: IDENTITY, rigid: false });
             for (i, (p, m)) in manifest.parts.iter().zip(&models).enumerate() {
-                let tag = if i == 0 { Some(b.manifest.weapon_tag.as_str()) } else { p.tag.as_deref() };
+                let tag = if i == 0 { p.tag.as_deref().or(Some(b.manifest.weapon_tag.as_str())) } else { p.tag.as_deref() };
                 all_models.push(m);
                 parts.push(PartRef { model: m, tag, offset: p.offset, rigid: p.rigid });
             }
-        }
-        None => {
-            for (p, m) in manifest.parts.iter().zip(&models) {
+            for (p, m) in &stowed {
                 all_models.push(m);
                 parts.push(PartRef { model: m, tag: p.tag.as_deref(), offset: p.offset, rigid: p.rigid });
+            }
+        }
+        None => {
+            // No body: the base part hangs from the model's origin whatever body bone it names.
+            for (i, (p, m)) in manifest.parts.iter().zip(&models).enumerate() {
+                all_models.push(m);
+                let tag = if i == 0 { None } else { p.tag.as_deref() };
+                parts.push(PartRef { model: m, tag, offset: p.offset, rigid: p.rigid });
             }
         }
     }
@@ -192,8 +222,14 @@ pub fn load(files: &mut Files, req: &Request) -> Result<Option<Loaded>, String> 
     for p in &manifest.parts {
         files.forget(&p.model);
     }
+    for (p, _) in &stowed {
+        files.forget(&p.model);
+    }
+    if req.stowed >= 0 {
+        files.forget(&zhbo_native::stowed_weapon_path(req.stowed));
+    }
     files.forget(&path);
-    Ok(Some(Loaded { key: (req.faction, req.vm, req.mode as u8), weapon: WeaponAsset { vm: req.vm, manifest, models }, body, skeleton, mesh }))
+    Ok(Some(Loaded { key: (req.faction, req.vm, req.mode as u8, req.stowed), weapon: WeaponAsset { vm: req.vm, manifest, models }, body, skeleton, mesh }))
 }
 
 impl Loaded {

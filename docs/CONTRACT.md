@@ -291,6 +291,14 @@ The converter also writes the General's third-person art as native blobs, so the
 him and the weapon in his hand instead of the W3D conversion. Presentation only, as the viewmodel:
 the sim's General object is unchanged, and Zero Hour still owns his health, targeting and death.
 
+* **The Assault Shield.** Its world manifest's base part names its own body bone,
+  `tag_weapon_left`, with the script's carry model (`_riotshield.gsc` `refreshshieldattachment`); a
+  base part's tag overrides the body's `weapon_tag` (weapon-only mode ignores it). Carried with
+  another weapon up, the body also wears the shield's stowed manifest (`ZS<vm>.zbw`: the stow model
+  on `tag_stowed_back`). Which General carries a stowed shield comes from a lock-free mirror the core
+  publishes after each logic step (`Sim::stowed_weapons` → `nativebody::ffi::publish_stowed`), read
+  by `zhbo_native_body` through the frame's `general`: no ABI field. The W3D body still shows the
+  shield in the right hand.
 * **The body.** `zhbo-assets` writes each faction's MP body (`c_usa_mp_seal6_assault_fb`,
   `c_chn_mp_pla_assault_fb`, `c_mul_mp_pmc_assault_fb`) as one `.zbm` (skeleton, four-bone skin,
   surfaces and materials, in BO2 inches) and a `ZB<faction>.zbc` manifest naming it, the body bone

@@ -375,6 +375,7 @@ pub extern "C" fn zhbo_reset() {
         s.menu = None;
         publish_controlled(&s.sim);
         publish_shields(&s.sim);
+        crate::nativebody::ffi::publish_stowed(&s.sim.stowed_weapons());
     });
 }
 
@@ -384,6 +385,7 @@ pub extern "C" fn zhbo_logic_take_control(player: i32, general: u32) {
         s.sim.take_control(&s.logic, player, general);
         publish_controlled(&s.sim);
         publish_shields(&s.sim);
+        crate::nativebody::ffi::publish_stowed(&s.sim.stowed_weapons());
     });
 }
 
@@ -440,6 +442,7 @@ pub extern "C" fn zhbo_logic_step(frame: u32) {
         s.sim.step(&s.logic, frame);
         publish_controlled(&s.sim);
         publish_shields(&s.sim);
+        crate::nativebody::ffi::publish_stowed(&s.sim.stowed_weapons());
         log_step(s, before, frame);
     });
 }
