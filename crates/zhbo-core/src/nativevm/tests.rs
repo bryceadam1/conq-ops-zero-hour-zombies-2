@@ -808,6 +808,9 @@ fn routes_the_left_guns_clips_by_the_instance_bit() {
         assert_eq!(l.clip_path(0x10).unwrap(), zhbo_native::anim_path("reload"), "the base's clip");
         assert_eq!(l.clip_path(0x110).unwrap(), zhbo_native::anim_path("left_reload"), "the left's clip");
         assert_eq!(l.clip_path(0x117).unwrap(), zhbo_native::anim_path("left_idle"), "the left's fallback keeps the bit");
+        // A `_LEFT` slot (here `FINALSHOT_LEFT`, keyed at FINALSHOT with the bit) the converter left
+        // empty stays empty: BO2's registration already fell back (to the left variant's slot 1).
+        assert_eq!(l.clip_path(0x107), None, "an empty _LEFT slot has no fallback");
         assert_eq!(l.clip_path(0x17).unwrap(), zhbo_native::anim_path("idle"), "the base's fallback");
     });
 }

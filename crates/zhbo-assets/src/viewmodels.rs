@@ -539,9 +539,13 @@ pub(crate) fn weapon_viewmodels(
         // BO2's `_LEFT` slots (0x4E-0x54, the left variant's table, G14 §5) map by what each plays
         // (`slot::left_as_right`: `LASTSHOT_LEFT` is the left gun's last shot even when it names
         // the fire clip); a shared clip (`pullout`, `sprint_*`) keeps its own slot.
+        // An empty `_LEFT` slot registers the left variant's slot 1 (`FUN_0052d3e0`, G14 §5); when
+        // that is empty too the slot stays empty (the runtime does not fall back for these ids).
         if let Some(lh_w) = dual {
-            for (left_slot, name) in lh_w.anims.iter().enumerate() {
-                let Some(name) = name else { continue };
+            let registered = |s: usize| lh_w.anims.get(s).cloned().flatten().or_else(|| zhbo_core::viewmodel::slot::left_as_right(s).and_then(|_| lh_w.anims.get(1).cloned().flatten()));
+            for left_slot in 0..lh_w.anims.len() {
+                let Some(name) = registered(left_slot) else { continue };
+                let name = &name;
                 let right_slot = zhbo_core::viewmodel::slot::left_as_right(left_slot).map_or(left_slot, |r| r as usize);
                 let anim = anim_cache.entry(name.clone()).or_insert_with(|| xanim::find(common, name).ok());
                 let Some(anim) = anim else { continue };

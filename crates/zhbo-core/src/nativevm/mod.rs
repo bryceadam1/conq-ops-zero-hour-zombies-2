@@ -453,12 +453,18 @@ pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: 
 
 /// The clip a manifest shows for `clip` ([`Loaded::clip_path`]'s rule, also read by the conformance
 /// emitter): its own, else the idle of its mode, else the idle. A dual-wield clip's id carries
-/// `INSTANCE_LEFT` in its high byte; the fallbacks keep that bit.
+/// `INSTANCE_LEFT` in its high byte; the fallbacks keep that bit. The left gun's own slots (BO2's
+/// `_LEFT` set, [`crate::viewmodel::slot::left_as_right`]) never fall back here: the converter
+/// already applied BO2's registration rule to them (an empty `_LEFT` slot plays the left variant's
+/// slot 1, `FUN_0052d3e0`), so one it left out is empty in BO2 too.
 pub fn clip_for(manifest: &Viewmodel, clip: i32) -> Option<&str> {
     use zhbo_native::viewmodel::INSTANCE_LEFT;
     let alt = crate::weapons::ALT_CLIPS;
     let instance = (clip as u16) & INSTANCE_LEFT;
     let base = (clip as u16) & !INSTANCE_LEFT;
+    if instance != 0 && (0x4e..=0x54).any(|s| crate::viewmodel::slot::left_as_right(s) == Some(i32::from(base))) {
+        return manifest.clip(clip as u16);
+    }
     let mode_idle = if i32::from(base) >= alt { alt as u16 + crate::viewmodel::slot::IDLE as u16 } else { crate::viewmodel::slot::IDLE as u16 };
     [base, mode_idle, crate::viewmodel::slot::IDLE as u16].into_iter().find_map(|c| manifest.clip(c | instance))
 }

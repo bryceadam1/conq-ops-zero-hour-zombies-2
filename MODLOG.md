@@ -4673,3 +4673,9 @@ it. The five `anim_finalshot_left` cells stay: they are the registration fallbac
 BO2 binds an empty `_LEFT` slot to the `_lh` variant's own slot 1, which is empty, while the mod's
 `clip_for` falls back to its left idle (`IDLE_LEFT` keyed at `IDLE | INSTANCE_LEFT`). The actual
 side reports the mod's fallback as it is; nothing was changed to match.
+
+**Follow-up: the `_LEFT` fallback is BO2's registration rule.** The converter now writes each
+`_LEFT` slot as BO2 registers it (`FUN_0052d3e0`): the left variant's own clip, else its slot 1,
+else nothing; `nativevm::clip_for` no longer falls back for those left ids (other left ids keep
+the left-idle fallback). The `_lh` tables have no slot 1, so `FINALSHOT_LEFT` is empty as in BO2:
+weapons 804,389 → 804,384 (`anim_finalshot_left` 5 → 0), gap clusters 205 → 204; nothing else moved.
