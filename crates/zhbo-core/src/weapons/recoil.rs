@@ -17,7 +17,7 @@
 //! [`super::KICK_TO_DEGREES`] and settles it), and the reduced-kick window's exact meaning
 //! (G5, medium: here, the first `reduced_bullets` shots of a string).
 
-use super::def::WeaponDef;
+use super::def::{FireMode, WeaponDef};
 use super::feel::GunKick;
 use super::rng::Rng;
 use crate::tuning::Tuning;
@@ -139,7 +139,9 @@ pub fn flinch_degrees(damage: f32, toughness: bool, t: &Tuning) -> f32 {
 
 /// The hip spread cone's min and max (degrees) at an eye height (inches; `FUN_008e41a0`): blended
 /// prone -> crouched below the crouched height and crouched -> standing above it, x
-/// `perk_weapSpreadMultiplier` with `bulletaccuracy`.
+/// `stackFireAccuracyDecay ^ (clip - 1)` for a stacked weapon with more than one round in its
+/// stack (the x87 `pow` at `0x008e4319`; `tu12_zm_stack_fire_fix`, default off, would use the
+/// def's stack count instead of the clip), x `perk_weapSpreadMultiplier` with `bulletaccuracy`.
 pub fn spread_range(def: &WeaponDef, view_height: f32, accuracy: bool, t: &Tuning) -> (f32, f32) {
     let [stand, ducked, prone] = def.hip_spread;
     let lerp = |a: (f32, f32), b: (f32, f32), f: f32| (a.0 + (b.0 - a.0) * f, a.1 + (b.1 - a.1) * f);
@@ -150,7 +152,8 @@ pub fn spread_range(def: &WeaponDef, view_height: f32, accuracy: bool, t: &Tunin
         let f = ((view_height - t.view_height_crouch) / (t.player_standing_view_height - t.view_height_crouch).max(1e-3)).clamp(0.0, 1.0);
         lerp(ducked, stand, f)
     };
-    let m = if accuracy { t.perk_weap_spread_multiplier } else { 1.0 };
+    let stack = if def.fire == FireMode::Stacked && def.clip > 1 { def.traits.stack_fire.1.powi(def.clip as i32 - 1) } else { 1.0 };
+    let m = stack * if accuracy { t.perk_weap_spread_multiplier } else { 1.0 };
     (min * m, max * m)
 }
 
@@ -165,6 +168,17 @@ mod tests {
         d.hip_gun_kick = GunKick { pitch: (9.0, 10.0), ..d.ads_gun_kick };
         d.gun_max = (10.0, 10.0);
         d
+    }
+
+    /// A stack's hip cone is scaled by `stackFireAccuracyDecay ^ (clip - 1)` (`FUN_008e41a0`).
+    #[test]
+    fn a_stacks_hip_cone_takes_the_accuracy_decay_per_extra_round() {
+        let t = Tuning::default();
+        let mut d = WeaponDef { hip_spread: [(2.0, 4.0); 3], clip: 3, ..Default::default() };
+        d.traits.stack_fire = (1.5, 0.5);
+        assert_eq!(spread_range(&d, t.player_standing_view_height, false, &t), (2.0, 4.0), "not stacked: unscaled");
+        d.fire = FireMode::Stacked;
+        assert_eq!(spread_range(&d, t.player_standing_view_height, false, &t), (0.5, 1.0));
     }
 
     #[test]
