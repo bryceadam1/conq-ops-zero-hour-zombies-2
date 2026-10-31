@@ -565,4 +565,28 @@ mod sim_tests {
         assert!(sim.equipment.placed.is_empty(), "detonated");
         assert!(sim.events.iter().any(|e| e.kind == EventKind::Detonated));
     }
+
+    /// A class built in the editor with a claymore and a Trophy System (BO2 lists both by their
+    /// statstable slot) keeps them through the profile repair, spawns with both and plants both.
+    #[test]
+    fn an_editor_class_with_placed_equipment_spawns_with_it_and_plants_it() {
+        let d = crate::classmenu::Draft { lethal: "claymore_mp".into(), tactical: "trophy_system_mp".into(), ..Default::default() };
+        let mut c = d.to_custom();
+        assert!(crate::classrepair::repair(&mut c).is_empty(), "the repair keeps them");
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(c.loadout());
+        ready(&mut sim, &host);
+        let a = &sim.player(0).unwrap().arsenal;
+        assert_eq!((a.lethal.def.id.as_str(), a.tactical.def.id.as_str()), ("claymore_mp", "trophy_system_mp"));
+        for button in [buttons::LETHAL, buttons::TACTICAL] {
+            run(&mut sim, &host, FpsInput { held: button, pressed: button, ..Default::default() }, 1);
+            run(&mut sim, &host, FpsInput::default(), 120);
+        }
+        let planted: Vec<Kind> = sim.events.iter().filter_map(|e| if let EventKind::Planted { kind } = e.kind { Some(kind) } else { None }).collect();
+        assert_eq!(planted, vec![Kind::Claymore, Kind::Trophy]);
+        assert_eq!(sim.equipment.placed.len(), 2);
+    }
 }

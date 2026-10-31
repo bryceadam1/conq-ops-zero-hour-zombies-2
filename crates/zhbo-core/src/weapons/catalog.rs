@@ -540,7 +540,7 @@ End
 
 Weapon claymore_mp
   DisplayName = Claymore
-  Class = lethal
+  Class = equipment
   CacSlot = primarygrenade
   Fire = semi
   FireTime = 0.6
@@ -553,6 +553,7 @@ Weapon claymore_mp
   Projectile = 0 0 0 1 0
   Viewmodel = 2
   Place = plant
+  Equipment = claymore
 End
 
 Weapon concussion_grenade_mp
@@ -571,6 +572,22 @@ Weapon concussion_grenade_mp
   Projectile = 225 50 1 0 0
   Viewmodel = 3
   Anims = e800076
+End
+
+; Placed tactical equipment (BO2's `specialgrenade` slot lists it beside the grenades).
+Weapon trophy_system_mp
+  DisplayName = Trophy System
+  Class = equipment
+  CacSlot = specialgrenade
+  Fire = semi
+  FireTime = 0.6
+  Clip = 1
+  StartReserve = 1
+  MaxReserve = 1
+  Projectile = 0 0 0 1 0
+  Viewmodel = 3
+  Place = plant
+  Equipment = trophy
 End
 
 Weapon knife_held_mp
