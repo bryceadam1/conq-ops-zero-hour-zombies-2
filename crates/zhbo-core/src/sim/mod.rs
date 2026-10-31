@@ -1304,6 +1304,76 @@ pub(crate) mod tests {
         assert!(fast < plain);
     }
 
+    /// An offhand pressed mid-raise or mid-shot waits that state's time out (BO2's 0x16,
+    /// `FUN_008dcb70` keeps `weaponTime`), then pulls back; pressed at rest it pulls back at once.
+    #[test]
+    fn an_offhand_pressed_mid_raise_or_mid_shot_waits_that_state_out() {
+        use crate::weapons::OffhandUse;
+        // Frames from the press to the pull-back, and the time the interrupted state still had.
+        let pull_back_after = |setup: &dyn Fn(&mut Sim, &FakeHost) -> f32| {
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            sim.take_control(&host, 0, 1);
+            sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default());
+            let left = setup(&mut sim, &host);
+            run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, pressed: buttons::LETHAL, ..Default::default() }, 1);
+            for f in 0..120u32 {
+                let a = &sim.player(0).unwrap().arsenal;
+                match a.offhand {
+                    Some(OffhandUse::Holding { .. }) => return (f, left),
+                    Some(OffhandUse::Starting { .. }) => assert!(a.is_busy()),
+                    other => panic!("frame {f}: {other:?}"),
+                }
+                run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, ..Default::default() }, 1);
+            }
+            panic!("never pulled back");
+        };
+        let want = |left: f32| (left / LOGIC_DT - 1e-4).ceil() as i64 - 1;
+        // At rest: at once.
+        let (rest, _) = pull_back_after(&|sim, host| {
+            wait_until_ready(sim, host);
+            0.0
+        });
+        assert_eq!(rest, 0);
+        // Mid-raise: when the raise would have ended.
+        let (raise, left) = pull_back_after(&|sim, host| {
+            run(sim, host, 0, 1, FpsInput::default(), 5);
+            // The raise's time is left; 0x16 runs it at the offhand's (Fast Toss's) rate.
+            let a = &sim.player(0).unwrap().arsenal;
+            a.raise_left * a.multiplier(crate::weapons::Timing::Toss)
+        });
+        assert!(left > 0.1, "still raising ({left})");
+        assert!((raise as i64 - want(left)).abs() <= 1, "pulled back after {raise} frames, want {}", want(left));
+        assert_eq!(sim_replay_raise(), raise, "deterministic");
+        // Mid-shot: after the fire time.
+        let (shot, fire_time) = pull_back_after(&|sim, host| {
+            wait_until_ready(sim, host);
+            run(sim, host, 0, 1, FpsInput { held: buttons::FIRE, pressed: buttons::FIRE, ..Default::default() }, 1);
+            let a = &sim.player(0).unwrap().arsenal;
+            a.current().def.fire_time * a.multiplier(crate::weapons::Timing::Toss)
+        });
+        assert!((shot as i64 - want(fire_time)).abs() <= 1, "pulled back after {shot} frames, want {}", want(fire_time));
+        assert!(shot > 0);
+
+        fn sim_replay_raise() -> u32 {
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            sim.take_control(&host, 0, 1);
+            sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default());
+            run(&mut sim, &host, 0, 1, FpsInput::default(), 5);
+            run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, pressed: buttons::LETHAL, ..Default::default() }, 1);
+            (0..120u32)
+                .find(|_| {
+                    let holding = matches!(sim.player(0).unwrap().arsenal.offhand, Some(crate::weapons::OffhandUse::Holding { .. }));
+                    run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, ..Default::default() }, 1);
+                    holding
+                })
+                .unwrap()
+        }
+    }
+
     #[test]
     fn the_hammer_and_field_computer_work_unarmed() {
         let host = FakeHost::default();

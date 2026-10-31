@@ -190,6 +190,8 @@ impl Viewmodel {
         if let Some(use_) = a.offhand {
             let off = a.offhand_def(use_.lethal());
             return match use_ {
+                // Waiting out the interrupted state (0x16): the held weapon at rest.
+                OffhandUse::Starting { .. } => wf(slot::IDLE, self.since_shot),
                 OffhandUse::Holding { held_for, .. } => frame(off.viewmodel, slot::HOLD_FIRE, held_for),
                 OffhandUse::Throwing { t, .. } => frame(off.viewmodel, slot::FIRE, t),
                 OffhandUse::Detonating { t, .. } => frame(off.viewmodel, or(off, slot::DETONATE, slot::IDLE), t),

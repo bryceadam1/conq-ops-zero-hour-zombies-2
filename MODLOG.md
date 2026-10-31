@@ -4827,3 +4827,31 @@ BO2 Fast Equipment Use speeds it; the mod's name list made it tactical (Fast Tos
 Measured (vs `v1/equipment-use` conf2): weapons 769,947 → 769,946 (`offhand_slot` 1 → 0); cac 572
 (identical diff); gap clusters 202 → 201. No table field (the class was already in the table); the
 archive changes content only (the Sensor Grenade's `Class`).
+
+## An offhand pressed mid-raise or mid-shot waits that state out (2026-10-31, `v1/offhand-rules`)
+
+The mod started an offhand's pull-back on the press whatever the gun was doing. BO2 (read-only
+Ghidra, t6mp; raw in `~/.opencode/plan/offhand-rules/`): `FUN_008e2bb0` accepts the press in any state
+but the drops (3-5), the offhand states 0x16-0x1c, 0x1e-0x22, 0x31-0x33 and 0x38-0x3a. It goes
+straight to `FUN_008e2710` (the pull-back or the detonator) only with no held weapon or from 0x1d (the
+offhand's own re-raise); otherwise `FUN_008dcb70` enters 0x16, zeroes `weaponDelay` and **keeps
+`weaponTime`**. The weapon frame (`FUN_008e4da0`) runs its state switch only once `weaponTime` and
+`weaponDelay` are both 0, so 0x16 first waits out what the interrupted state had left — the raise, the
+shot's fire time, the reload, the 0x15 re-raise — and counts it at the offhand's rate (0x16 is one of
+G3's 0x16-0x1d states: Fast Toss / Fast Equipment Use, not the switch or ROF rate). Then
+`case 0x16 → FUN_008e2710`.
+
+* `OffhandUse::Starting { lethal, left }` is 0x16; `Arsenal::state_time_left` is the kept
+  `weaponTime` (raise, melee re-raise, reload part — a magazine reload's whole remaining length, its
+  ammo add being `weaponDelay`; a shell reload's current start/insert/end — or the shot's cooldown
+  after this frame's tick). The interrupted state is cleared (the reload is abandoned, as before, and
+  its ammo add with it if it had not happened). From rest `left` is 0 and the pull-back starts on the
+  press frame, as before. The viewmodel holds the gun's idle meanwhile (the 0x16 weapAnim is unread).
+* Test: fake-host `an_offhand_pressed_mid_raise_or_mid_shot_waits_that_state_out` (at rest: at once;
+  mid-raise: when the raise's time left, at the toss rate, runs out; mid-shot: after the fire time;
+  deterministic).
+* Found, not done: BO2 also accepts the press during a melee swing (0x13/0x14 are not excluded) and
+  during sprint-out (0x26); the mod keeps refusing it during the swing and ignores the sprint-out.
+
+Measured: no conformance movement (weapons diff byte-identical to the previous commit's; cac 572; 201
+gap clusters) — behaviour only, no table field.

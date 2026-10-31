@@ -110,6 +110,25 @@ impl WeaponState {
         }
     }
 
+    /// Weapon time left in the reload's current state: a magazine reload is one state for its
+    /// whole length (the ammo add is its `weaponDelay`); a shell reload's start, each insert and
+    /// its end are states of their own.
+    pub fn reload_part_left(&self) -> f32 {
+        let d = self.def;
+        match self.reload {
+            Some(Reload::Magazine { t, length, .. }) => (length - t).max(0.0),
+            Some(Reload::Shells { phase, t, .. }) => {
+                let part = match phase {
+                    ShellPhase::Start => d.reload_start_time,
+                    ShellPhase::Insert => d.reload_time,
+                    ShellPhase::End => d.reload_end_time,
+                };
+                (part - t).max(0.0)
+            }
+            None => 0.0,
+        }
+    }
+
     pub fn can_reload(&self) -> bool {
         !self.is_reloading() && self.ammo < self.def.clip && self.reserve > 0
     }
@@ -238,6 +257,12 @@ pub enum RaiseKind {
 /// Every `t` is weapon time, which runs at `fasttoss`/`fastequipmentuse`'s rate (G3).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum OffhandUse {
+    /// Pressed while another weapon state ran (0x16, `FUN_008dcb70`): that state ends, but its
+    /// `weaponTime` stays and runs out first — the weapon frame (`FUN_008e4da0`) switches state
+    /// only once `weaponTime` and `weaponDelay` are 0, and 0x16 zeroes only the delay — at the
+    /// offhand's rate (0x16 is one of G3's offhand states). `left` is that time; at 0 the
+    /// pull-back or the detonator starts (`FUN_008e2710`).
+    Starting { lethal: bool, left: f32 },
     /// The pull-back (state 0x17, the item's `hold_fire_time`), then held (0x1a) for as long as
     /// the button is (`FUN_008e28e0`). A cooking grenade's fuse burns from the end of the pull-back.
     Holding { lethal: bool, held_for: f32 },
@@ -259,7 +284,8 @@ impl OffhandUse {
     /// Whether the lethal slot's item (else the tactical's) is the one in use.
     pub fn lethal(self) -> bool {
         match self {
-            OffhandUse::Holding { lethal, .. }
+            OffhandUse::Starting { lethal, .. }
+            | OffhandUse::Holding { lethal, .. }
             | OffhandUse::Throwing { lethal, .. }
             | OffhandUse::Dropping { lethal, .. }
             | OffhandUse::Detonating { lethal, .. }
@@ -958,6 +984,14 @@ impl Arsenal {
         let def = self.offhand_def(lethal);
         let tick = self.tick(self.offhand_timing(lethal));
         match use_ {
+            OffhandUse::Starting { left, .. } => {
+                let left = left - tick;
+                if left <= 1e-6 {
+                    self.begin_offhand(lethal, out);
+                } else {
+                    self.offhand = Some(OffhandUse::Starting { lethal, left });
+                }
+            }
             OffhandUse::Holding { held_for, .. } => {
                 let held_for = held_for + tick;
                 let pulled_back = held_for >= def.hold_fire_time - 1e-6;
@@ -1042,7 +1076,9 @@ impl Arsenal {
     }
 
     /// The offhand buttons (`FUN_008e2bb0`): the slot's item starts its pull-back, or, a
-    /// `has_detonator` item with none left in hand, its detonator. Returns whether one started.
+    /// `has_detonator` item with none left in hand, its detonator — at once from rest or from the
+    /// offhand's own re-raise (0x1d), else once the interrupted state's time has run out
+    /// ([`OffhandUse::Starting`]). Returns whether one was started.
     fn start_offhand(&mut self, pressed: u32, out: &mut Vec<WeaponAction>) -> bool {
         let lethal = pressed & buttons::LETHAL != 0;
         let tactical = pressed & buttons::TACTICAL != 0;
@@ -1051,25 +1087,60 @@ impl Arsenal {
             return false;
         }
         let slot = if lethal { &self.lethal } else { &self.tactical };
-        let detonate = slot.count == 0 && slot.def.has_detonator;
-        if slot.count == 0 && !detonate {
+        if slot.count == 0 && !slot.def.has_detonator {
             return false;
         }
+        // `FUN_008e2bb0` goes straight to `FUN_008e2710` only from 0x1d; any other state is
+        // replaced by 0x16 with its `weaponTime` kept.
+        let left = if matches!(self.offhand, Some(OffhandUse::Raising { .. })) { 0.0 } else { self.state_time_left() };
         let w = self.current_mut();
         w.reload = None;
         w.burst_left = 0;
+        w.cooldown = 0.0;
         self.ads = 0.0;
         self.cooked = 0.0;
+        self.raise_left = 0.0;
         // An offhand may start while the gun comes back up from a melee (0x15 is not among
-        // `FUN_008e2bb0`'s exclusions); its own quick raise brings the gun back afterwards.
+        // `FUN_008e2bb0`'s exclusions); what is left of that re-raise is waited out first.
         self.melee_recover_left = 0.0;
-        if detonate {
+        if left > 1e-6 {
+            self.offhand = Some(OffhandUse::Starting { lethal, left });
+        } else {
+            self.begin_offhand(lethal, out);
+        }
+        true
+    }
+
+    /// The weapon time BO2's current state still holds (`ps->weaponTime`), which an offhand press
+    /// keeps: the raise (states 1/2), the re-raise after a melee (0x15), the reload (the whole
+    /// reload's time for a magazine, whose `weaponDelay` is the ammo add; the current part for a
+    /// shell-by-shell one), or the shot's fire time (6/7). Every timer here has already been
+    /// counted down this frame, as `FUN_008e0780` runs before the offhand check.
+    fn state_time_left(&self) -> f32 {
+        let w = self.current();
+        if self.raise_left > 0.0 {
+            self.raise_left
+        } else if self.melee_recover_left > 0.0 {
+            self.melee_recover_left
+        } else if w.is_reloading() {
+            w.reload_part_left()
+        } else {
+            // The fire block counts the cooldown down after the offhands; this frame's tick
+            // first.
+            (w.cooldown - self.tick(Timing::Fire)).max(0.0)
+        }
+    }
+
+    /// `FUN_008e2710`: the pull-back (0x17) or, a `has_detonator` item with none left, the
+    /// detonator (0x19).
+    fn begin_offhand(&mut self, lethal: bool, out: &mut Vec<WeaponAction>) {
+        let slot = if lethal { &self.lethal } else { &self.tactical };
+        if slot.count == 0 && slot.def.has_detonator {
             self.offhand = Some(OffhandUse::Detonating { lethal, t: 0.0, fired: false });
         } else {
             self.offhand = Some(OffhandUse::Holding { lethal, held_for: 0.0 });
             out.push(WeaponAction::OffhandReady { lethal });
         }
-        true
     }
 
     /// The Black Hat is up and aimed (seconds held), if it is.
