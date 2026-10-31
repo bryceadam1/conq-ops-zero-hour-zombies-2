@@ -381,7 +381,9 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         .into_iter()
         .flat_map(|z| zhbo_formats::sndalias::banks(z).unwrap_or_default())
         .filter(|b| b.name.starts_with("mpl_"))
-        .flat_map(|b| b.aliases.into_iter().map(|a| a.name.to_ascii_lowercase()))
+        // An alias with no sound in any variant (`prj_bullet_impact_small_snow`: asset 0, no
+        // secondary) plays nothing in BO2 either: it is a `NONE` row, not a dangling event.
+        .flat_map(|b| b.aliases.into_iter().filter(|a| a.variants.iter().any(|v| v.asset_id != 0 || v.secondary.is_some())).map(|a| a.name.to_ascii_lowercase()))
         .collect();
     // The bullet buckets the guns carry and every blast type: BO2's impact table and sounds for
     // each (`fx::ImpactKind`).

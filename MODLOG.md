@@ -4679,3 +4679,7 @@ install**: `prj_bulletspray_small` ships only `exit_*` and `ricochet`, so a shot
 hit is silent, as in BO2. Not carried: the exit sounds (`_exit_<surface>`, the routine's exit flag)
 and the vehicle overrides (flags 0x10/0x20 → `prj_impact_veh_armor`/`_locomotion` per impact type).
 The mod has no exit hits, and which callers set the vehicle flags is unverified (a follow-up).
+* **Gotcha: an alias can exist with no sound.** `prj_bullet_impact_small_snow` is in the map bank
+  with asset 0 and no secondary. BO2 finds the alias and plays nothing audible, so the converter
+  treats it as a `NONE` row, not a missing event. Only aliases with a variant asset or a secondary
+  count as present.
