@@ -4557,3 +4557,51 @@ Verified: `cargo test --workspace` green; clippy adds no warning; the real-insta
 (`--skip conformance`, 32) green incl. `the_holo_swaps_to_its_ads_model` and the slot-based
 `the_m32_sight_loads_both`. No game launched. In-game (integrator): `autotest-mac.sh --scope` and a
 holo/rangefinder ADS look. Archive VERSION bump needed (manifests change).
+
+## Under a 2D scope overlay BO2 skips the whole viewmodel, not the scope part (2026-10-30, `v1/scope-overlay-parts`)
+
+The mod hid the base scope part at full ADS when overlay art existed (the "Scope overlay" entry).
+BO2 does not drop a part: its ADS part list keeps `*_scope_view`, and while the overlay is up the
+**whole viewmodel** — arms, gun, scope — is not added to the scene. Read-only Ghidra, t6mp:
+
+* `FUN_005374c0` (per frame): `drawGun = !thirdPerson(cg+0xc) && cg_drawGun (DAT_00fce6e8) &&
+  !FUN_004b4760(cg, &zoom)`, passed to `FUN_00536f30`, which with `drawGun == 0` skips the DObj's
+  scene add (`FUN_004106e0`); the animation update (`FUN_0053a340`) and its notetracks still run.
+* `FUN_004b4760` (the reticle zoom): only a weapon with an overlay reticle (`FUN_008ed670`) or
+  overlay material (`FUN_008ed570`); `posFrac (cg+0x48288) != 0`; `frac = cg+0x4ae38 ?
+  fAdsZoomInFrac (FUN_008ec4b0) : fAdsZoomOutFrac (FUN_008ec520)`; `z = posFrac − (1 − frac)`,
+  `z /= frac` when positive; up when `z > 0.01` (`DAT_00c73410`), clamped to 1.
+* The window's two fields: the first of the combo's `WeaponAttachment`s (`FUN_008eb300`, kind order)
+  whose value differs from `defaultattachment`'s (`DAT_0316fc84`), else the variant's (+0x230/+0x234).
+* `cg+0x4ae38` (`FUN_0052e170`): 0 when `posFrac == 1`, 1 when `posFrac == 0`, held between. It is
+  updated **after** the gun test and before the 2D pass, so a base sniper (in-window 0) still draws
+  its gun on the first full-ADS frame, then the overlay takes over.
+* The overlay (`FUN_004b51e0`) draws on the same test, colour `(1,1,1, z / max(fOverlayAlphaScale, 1))`.
+* Data: base snipers in 0 / out 0.05 (no overlay while aiming in until full ADS; it fades over the
+  last 5 % aiming out); `ir`/`vzoom` 0.016 / 0.05 (fades in over the last 1.6 %); alpha scale 1.
+
+What changed: `weapons::scope` holds the rule; `WeaponDef` gains `ads_zoom_in_frac`,
+`ads_zoom_out_frac`, `overlay_alpha_scale` (table field `OverlayZoom`), read from the variant and
+resolved per combo by the converter (`zoom_fracs_for`). `HudLui::tick` tracks the direction and
+`gun_under_overlay` (tested before the update); the HUD overlay draws with BO2's alpha; the client
+frame publishes the hidden viewmodel (`nativevm::set_gun_under_overlay`, the `LOCAL_CAMO` pattern)
+and the native draw poses but answers `DRAWN` without submitting (the art-present guard stays).
+`visible_parts` no longer takes the overlay flag: the ADS list keeps the scope.
+
+* **Gotcha — `defaultattachment` is not in `common_mp`'s attachment list by that name.** Comparing
+  against `common_mp` alone finds no default, so every combo's first attachment "differs" (all zoom
+  cells came out 0). The production conversion now appends `patch_mp`'s attachments and takes the
+  last `defaultattachment` (the expected side's name map, later zone wins).
+* **Autotest log moved**: `autotest-mac.sh --scope` now waits for "the viewmodel is not drawn under
+  the scope overlay" (the AS50 has no ADS-swap part, so the "ADS part list" line never fires for it).
+* The W3D fallback path does not apply the hide (no ABI field for it); only the native draw does.
+
+Measured (conformance vs `~/.opencode/plan/ads-models/conf`): weapons **675,893 → 647,790 cells
+(−28,103)**, 201 → 198 clusters; `ads_zoom_in_frac` 9,341 → 0, `ads_zoom_out_frac` 9,341 → 0,
+`overlay_alpha_scale` 9,341 → 0, `view_ads_part_models` 1,412 → 1,332 (the 80 "mod lacks
+`*_scope_view`" rows gone; the 164 IR/VZOOM rows `v1/overlay-linked` adds will match too, since the
+list no longer depends on overlay art). cac unchanged (881). Gap clusters 212 → 209. No column
+regressed. Verified: `cargo test --workspace` green, clippy adds no warning, real-install suite
+(`--skip conformance`) green. The shipped weapon table changes (new field), so the integrator's
+archive `hud::VERSION` bump applies. In-game (integrator): `autotest-mac.sh --scope` and an AS50
+look (gun visible while scoping in, gone under the overlay, back in the last 5 % out).

@@ -77,8 +77,12 @@ fn combo_kinds(w: &Weapon, shorts: &[&str]) -> Vec<u32> {
 /// (`FUN_008ec4b0`/`FUN_008ec520`): each field independently is the first of the combo's
 /// `WeaponAttachment`s (walked in kind order, stopping at the first missing one) whose value differs
 /// from `defaultattachment`'s, else the variant's own. The snipers' `ir`/`vzoom` carry 0.016/0.05.
+/// `atts` is the zones' attachments in load order (`common_mp`, then `patch_mp`): the combo's own
+/// attachments are the first by name (the variant's pointers live in `common_mp`), while
+/// `defaultattachment` is the last one loaded (`patch_mp` holds the real asset; a later zone's
+/// asset replaces an earlier one, as the expected side's name map does).
 fn zoom_fracs_for(w: &Weapon, shorts: &[&str], atts: &[bo2::Attachment]) -> (f32, f32) {
-    let default = atts.iter().find(|a| a.name == "defaultattachment").map(|a| a.ads_zoom_frac);
+    let default = atts.iter().rev().find(|a| a.name == "defaultattachment").map(|a| a.ads_zoom_frac);
     let walk: Vec<(f32, f32)> = combo_kinds(w, shorts)
         .iter()
         .map_while(|k| w.attachment_variants.iter().find(|(kind, _)| kind == k).and_then(|(_, id)| atts.iter().find(|a| &a.name == id)))
@@ -319,7 +323,8 @@ pub fn table_with_metadata(
 }
 
 /// Weapons with attachments, and their alt modes, that [`converted`] asks for: built from their base
-/// definitions (the core's own rules) and added to the table, so their art can be set on them. An
+/// definitions (the core's own rules) and added to the table, so their art can be set on them.
+/// `bo2_atts` is every zone's attachments in load order (see `zoom_fracs_for`). An
 /// alt mode for a converted weapon is `<alt>~<weapon>` (it shares the weapon's viewmodel). The
 /// overlay fields follow the mounted optic: a replacement optic's unique supplies them, an empty
 /// unique leaves an empty overlay, and no replacement optic keeps the base def's.

@@ -258,7 +258,10 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     table.perks = crate::weapons::perk_rows(&patch);
     let converted = crate::weapons::converted(&patch, &bo2);
     let converted_base = crate::weapons::converted_base(&bo2);
-    crate::weapons::add_variants(&mut table, &converted, &bo2, &atts);
+    // `defaultattachment` lives in `patch_mp`: the variants' zoom rule compares against it.
+    let mut zone_atts = atts.clone();
+    zone_atts.extend(zhbo_formats::weapon::attachments(&patch).map_err(|e| e.to_string())?);
+    crate::weapons::add_variants(&mut table, &converted, &bo2, &zone_atts);
     let camo = crate::camo::files(&common, &patch, &common_patch, &paks, &camo_assets, &bo2, &table, &mut out)?;
     summary.push(format!(
         "camo: {} assets, {} pattern images, {} style materials, no art: {}",

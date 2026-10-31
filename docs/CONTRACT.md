@@ -265,7 +265,11 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   M32). `nativevm::visible_parts` switches at `OPTIC_VIEWMODEL_SWITCH` (1.0, BO2's
   `cg_opticAttachmentViewmodelSwitch`): from it up the paired parts swap and every other part keeps
   its model; below it the `ads_only` parts are hidden. Presentation only; the hip and aimed meshes
-  are built once at load and the draw swaps handles. The W3D path draws the hip models.
+  are built once at load and the draw swaps handles. The W3D path draws the hip models. The list
+  keeps a scope under a 2D overlay: instead, `zhbo_client_frame` records the viewmodel whose
+  reticle zoom is up (`nativevm::set_gun_under_overlay`, from `HudLui::gun_under_overlay`) and
+  `zhbo_native_viewmodel` poses it but answers `DRAWN` without submitting (so the W3D model stays
+  hidden too) — only when the overlay's art is in the archive, else the gun keeps drawing.
 
 * **The class camo (`camo_<weapon>.zcm`, PLAN D1–D8).** A class's camo (`CustomClass.camo`) rides
   `PlayerSim.camo`; `zhbo_client_frame` records the local primary's `(viewmodel, camo asset,
@@ -481,10 +485,14 @@ answers false and those prims draw their outline fallbacks. Adding it is an appe
 `ZhboClientApi` with a version bump. The damage indicators also need the engine to report where
 damage came from (`HudLui::damage_from`); until then no indicator shows.
 
-The snipers' ADS hand-off draws in the HUD's 2D pass: at `ads >= 1.0` the screen-space overlay
-material replaces the physical scope (which the viewmodel draw hides at the same threshold). The
-overlay is a full-screen `Prim::Image`; its art carries the black surround and the clear lens
-centre. A weapon without an overlay material keeps its physical scope.
+The scope overlay draws in the HUD's 2D pass while BO2's reticle zoom is up
+(`weapons::scope::reticle_zoom`, `FUN_004b4760`): the weapon has an overlay material or reticle, and
+`(ads − (1 − frac)) / frac > 0.01`, where `frac` is the def's `ads_zoom_in_frac` while aiming in and
+`ads_zoom_out_frac` otherwise (the direction flips to "in" at `ads == 0` and "out" at `ads == 1`,
+`HudLui::ads_zoom_in`). Its alpha is that zoom over `max(overlay_alpha_scale, 1)`. Over the same
+window the viewmodel is not drawn at all (BO2's `drawGun = 0`), tested with the direction before the
+frame's update. The overlay is a full-screen `Prim::Image`; its art carries the black surround and
+the clear lens centre.
 
 ## Tuning
 
