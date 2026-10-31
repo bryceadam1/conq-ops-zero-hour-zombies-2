@@ -4789,3 +4789,27 @@ one. Turning the card off clears a tactical from the lethal slot (`checkclasses.
 * Not done: BO2 retitles the lethal button `MPUI_SECOND_SPECIAL_GRENADE_CAPS` under Tactician; the
   mod's slot labels are fixed English and that string's text is not in the reference dumps.
 * Screenshot harness: `cac-editor-tactician.png`.
+
+## The tactical count: a second tactical costs a point (2026-10-31, `v1/cac-text`)
+
+BO2's tactical button has two boxes (`cacgrenadesbutton.lua:150-180`: `math.min(2,
+GetMaxAmmoForItem(item))`, the same for Tactician's lethal slot); the first opens the list
+(`CACGrenades.Equip` sets `count` 1), an empty second one equips another of the held item
+(`caceditclass.lua:400-566`, `GrenadesChosen` → `EquipGrenade`: `count + 1`), a filled one
+unequips one. Each grenade is an allocation element. `_class.gsc:724` gives the tactical with the
+loadout's `specialgrenadecount` (`setweaponammoclip`), so a single concussion is one concussion.
+
+* `Draft::second_offhand` ([lethal, tactical]) holds the second box; `tactical_count()` (and
+  Tactician's `lethal_count()`) is 1 or 2, `spent` charges it, `CustomClass`/`Loadout` carry
+  `tactical_count` (spec key, written when set), the arsenal starts the tactical with it and
+  Scavenger refills to it. The cap is `items::offhand_cap` (`maxGrenades` and the weapon's
+  `MaxReserve`, BO2's `iMaxAmmo`: the smoke and Tactical Insertion take one).
+* Editor: re-picking the held item in the list takes/returns the second (keyboard path); a click on
+  the button's empty second box takes it (pointer path, denied over budget); the circled X or `R`
+  on the second box returns one; the button reads `Concussion x2` (`cacgrenadesbutton.lua:215-228`).
+* Repair: counts clamp to the cap, the second tactical is trimmed before the tactical
+  (`specialgrenadecount`), and Tactician's second tactical now stays (perks-cards dropped it).
+* Behaviour change: an editor class with one tactical now gives one (it gave the item's start
+  count, the concussion's 2). Old profile entries without the key still give the start count until
+  re-saved. A single *lethal* still stores no count (perks-cards' choice): the C4's and Trophy's
+  start count 2 is still what one box gives — a follow-up for BO2's `primarygrenadecount` 1.

@@ -373,8 +373,9 @@ impl Arsenal {
         // Offhands start with BO2's start count (`start_reserve` for them); an empty or unknown
         // slot has none.
         let knife = || weapon("knife_held_mp");
-        // The lethal slot carries the class's count when it sets one (BO2's `primarygrenadecount`:
-        // Danger Close's two); whatever item it holds — a tactical under Tactician too.
+        // Each offhand slot carries the class's count when it sets one (BO2's `primarygrenadecount`
+        // — Danger Close's two — and `specialgrenadecount`); whatever item the lethal slot holds, a
+        // tactical under Tactician too.
         let offhand = |id: &str, count: Option<u16>| {
             if id.is_empty() {
                 return Offhand { def: knife(), count: 0 };
@@ -394,7 +395,7 @@ impl Arsenal {
         weapons[0].raised_once = true;
         Self {
             lethal: offhand(&loadout.lethal, loadout.lethal_count),
-            tactical: offhand(&loadout.tactical, None),
+            tactical: offhand(&loadout.tactical, loadout.tactical_count),
             melee,
             class_melee: class_melee(melee),
             loadout,
@@ -681,9 +682,9 @@ impl Arsenal {
     }
 
     /// How many of an offhand the class gives (the count [`Arsenal::with_loadout`] starts it with):
-    /// the loadout's lethal count, else the item's start count; none for an empty slot.
+    /// the loadout's lethal or tactical count, else the item's start count; none for an empty slot.
     pub fn class_count(&self, lethal: bool) -> u16 {
-        let (id, count) = if lethal { (&self.loadout.lethal, self.loadout.lethal_count) } else { (&self.loadout.tactical, None) };
+        let (id, count) = if lethal { (&self.loadout.lethal, self.loadout.lethal_count) } else { (&self.loadout.tactical, self.loadout.tactical_count) };
         if id.is_empty() {
             return 0;
         }

@@ -277,8 +277,8 @@ fn button_of(l: &EditorLayout, slot: Slot) -> Rect {
 fn button_text(editor: &Editor, slot: Slot) -> (&'static str, Vec<String>) {
     let d = &editor.draft;
     match slot {
-        Slot::Lethal => ("LETHAL", if d.lethal.is_empty() { Vec::new() } else { vec![weapons::weapon(&d.lethal).display_name.clone()] }),
-        Slot::Tactical => ("TACTICAL", if d.tactical.is_empty() { Vec::new() } else { vec![weapons::weapon(&d.tactical).display_name.clone()] }),
+        Slot::Lethal => ("LETHAL", offhand_names(d, true)),
+        Slot::Tactical => ("TACTICAL", offhand_names(d, false)),
         _ => {
             let tier = slot.perk_tier().unwrap_or(1) as usize - 1;
             let label = match tier {
@@ -295,6 +295,17 @@ fn button_text(editor: &Editor, slot: Slot) -> (&'static str, Vec<String>) {
             }
             (label, names)
         }
+    }
+}
+
+/// An offhand button's item name, `x2` past one (`cacgrenadesbutton.lua:215-228`'s subtitle:
+/// the localized name, then `" x" .. count` when more than one box is filled).
+fn offhand_names(d: &Draft, lethal: bool) -> Vec<String> {
+    let id = if lethal { &d.lethal } else { &d.tactical };
+    match d.offhand_count(lethal) {
+        0 => Vec::new(),
+        1 => vec![weapons::weapon(id).display_name.clone()],
+        n => vec![format!("{} x{n}", weapons::weapon(id).display_name)],
     }
 }
 

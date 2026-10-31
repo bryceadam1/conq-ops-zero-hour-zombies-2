@@ -618,6 +618,7 @@
             lethal: "claymore_mp".into(),
             tactical: "concussion_grenade_mp".into(),
             lethal_count: 0,
+            tactical_count: 0,
             melee: "knife_held_mp".into(),
             perks: vec!["Toughness".into(), "FlakJacket".into()],
             reserve: [40, 20],

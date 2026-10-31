@@ -140,8 +140,14 @@ pub fn editor_cells(l: &EditorLayout, editor: &Editor) -> Vec<EditorCell> {
             cell(Slot::SecondaryAtts, i, slot_plate(l.secondary_atts, 3, i));
         }
     }
-    cell(Slot::Lethal, 0, slot_plate(l.lethal, 2, 0));
-    cell(Slot::Tactical, 0, slot_plate(l.tactical, 2, 0));
+    // An offhand button's second box, when its item takes two (the tactical slot's, Tactician's
+    // lethal: `cacgrenadesbutton.lua:150-180`).
+    for (slot, button, lethal) in [(Slot::Lethal, l.lethal, true), (Slot::Tactical, l.tactical, false)] {
+        cell(slot, 0, slot_plate(button, 2, 0));
+        if d.offhand_boxes(lethal) > 1 {
+            cell(slot, 1, slot_plate(button, 2, 1));
+        }
+    }
     for tier in 1..=3u8 {
         let button = l.perks[(tier - 1) as usize];
         cell(perk_slot(tier), 0, slot_plate(button, 2, 0));
@@ -188,8 +194,8 @@ pub fn cell_filled(editor: &Editor, cell: &EditorCell) -> bool {
         Slot::PrimaryAtts => d.primary_atts.get(cell.index).is_some(),
         Slot::Secondary => !d.secondary.is_empty(),
         Slot::SecondaryAtts => d.secondary_atts.get(cell.index).is_some(),
-        Slot::Lethal => !d.lethal.is_empty(),
-        Slot::Tactical => !d.tactical.is_empty(),
+        Slot::Lethal => d.offhand_count(true) as usize > cell.index,
+        Slot::Tactical => d.offhand_count(false) as usize > cell.index,
         Slot::Perk1 | Slot::Perk2 | Slot::Perk3 => {
             d.perks[(cell.slot.perk_tier().unwrap_or(1) as usize) - 1].is_some()
         }

@@ -345,8 +345,23 @@ mod tests {
         let mut sim = with_class(&host, &draft);
         let a = &sim.player(0).unwrap().arsenal;
         assert_eq!(a.lethal.def.id, "concussion_grenade_mp");
-        assert_eq!(a.lethal.count, a.lethal.def.start_reserve.max(1), "the tactical's own count");
+        // The class's counts (`primarygrenadecount`/`specialgrenadecount`): one box each.
+        assert_eq!((a.lethal.count, a.tactical.count), (1, 1), "the class's counts, not the item's start count");
         assert_eq!(a.tactical.def.id, "concussion_grenade_mp");
         assert_eq!(throw_lethal(&mut sim, &host), vec!["concussion_grenade_mp".to_string()]);
+    }
+
+    /// A second tactical (BO2's second box, `specialgrenadecount` 2) is given and thrown: the
+    /// tactical slot's and, under Tactician, the lethal slot's; each costs a point in the draft.
+    #[test]
+    fn a_second_tactical_is_given_with_the_class() {
+        let host = FakeHost::default();
+        let draft = Draft { wildcards: vec![Wildcard::Tactician], lethal: "concussion_grenade_mp".into(), second_offhand: [true, true], ..Draft::default() };
+        assert_eq!(draft.spent(), Draft { second_offhand: [false; 2], ..draft.clone() }.spent() + 2);
+        let mut sim = with_class(&host, &draft);
+        let a = &sim.player(0).unwrap().arsenal;
+        assert_eq!((a.lethal.count, a.tactical.count), (2, 2));
+        assert_eq!(throw_lethal(&mut sim, &host).len(), 1);
+        assert_eq!(sim.player(0).unwrap().arsenal.lethal.count, 1);
     }
 }

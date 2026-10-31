@@ -108,6 +108,18 @@ pub fn fits_offhand(id: &str, lethal: bool) -> bool {
     weapons::catalog().get(id).is_some_and(|d| d.class.is_offhand() && d.cac_slot == offhand_slot(lethal))
 }
 
+/// How many of an offhand item one slot may carry: BO2's slot list shows two boxes for a tactical
+/// (`cacgrenadesbutton.lua:150-180`: `math.min(2, Engine.GetMaxAmmoForItem(item))`), so an item
+/// whose weapon caps its ammo at one (the smoke, the Tactical Insertion) takes one; 0 for none.
+/// The two is `maxGrenades` ([`crate::classes::MAX_GRENADES`]), the cap `WeaponDef::max_reserve`
+/// (BO2's `iMaxAmmo`).
+pub fn offhand_cap(id: &str) -> u8 {
+    if id.is_empty() {
+        return 0;
+    }
+    weapons::catalog().get(id).map_or(0, |d| (d.max_reserve.max(1) as usize).min(crate::classes::MAX_GRENADES) as u8)
+}
+
 /// Whether the item `base` is one the slot may hold: a gun item of the slot's own, or a primary
 /// item in the secondary slot (which Overkill allows, see [`super::wildcards_of`]).
 pub fn fits_slot(base: &str, primary: bool) -> bool {

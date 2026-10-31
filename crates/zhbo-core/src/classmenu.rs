@@ -441,6 +441,12 @@ pub struct Draft {
     pub secondary_atts: Vec<String>,
     pub lethal: String,
     pub tactical: String,
+    /// Whether the lethal (`[0]`) and the tactical (`[1]`) slot carry a second of their item, each
+    /// its own element (BO2's second slot box, `caceditclass.lua:506-566`'s `EquipGrenade` raising
+    /// the slot's `count`). The tactical slot may; the lethal slot only with Tactician's tactical
+    /// (Danger Close's second lethal comes with the card, [`Draft::lethal_count`]). Ignored for an
+    /// item whose cap is one ([`items::offhand_cap`]).
+    pub second_offhand: [bool; 2],
     /// The three perk tiers' first picks.
     pub perks: [Option<Perk>; 3],
     /// A tier's *second* pick, the one its Greed wildcard opens (BO2's "Perk n Greed"). Dead unless
@@ -476,6 +482,7 @@ impl Default for Draft {
             secondary_atts: Vec::new(),
             lethal: "frag_grenade_mp".into(),
             tactical: "concussion_grenade_mp".into(),
+            second_offhand: [false; 2],
             perks: [Some(Perk::LIGHTWEIGHT), Some(Perk::FAST_HANDS), Some(Perk::DEXTERITY)],
             extra_perks: [None, None, None],
             wildcards: Vec::new(),
@@ -521,11 +528,15 @@ impl Draft {
         if !self.lethal.is_empty() {
             n += 1;
         }
-        // Danger Close's second lethal is its own element (BO2 charges each grenade of a count).
+        // A second lethal (Danger Close's, or Tactician's second tactical) is its own element (BO2
+        // charges each grenade of a count), as is a second tactical.
         if self.lethal_count() > 1 {
             n += 1;
         }
         if !self.tactical.is_empty() {
+            n += 1;
+        }
+        if self.tactical_count() > 1 {
             n += 1;
         }
         n += self.perks.iter().filter(|p| p.is_some()).count() as i32;
@@ -549,15 +560,63 @@ impl Draft {
         self.wildcards.len() >= classes::MAX_BONUS_CARDS
     }
 
-    /// How many lethals the class carries: BO2's `primarygrenadecount`, which may be two only with
-    /// Danger Close (`cacgrenadesbutton.lua:130-160`, `checkclasses.lua:688-700`); 0 for the item's
-    /// own count (one lethal, or a tactical's under Tactician). The card's second lethal is taken
-    /// with it.
+    /// How many lethals the class carries: BO2's `primarygrenadecount`. A lethal item may be two
+    /// only with Danger Close (`cacgrenadesbutton.lua:130-160`, `checkclasses.lua:688-700`), whose
+    /// second lethal is taken with the card; 0 for a single one (the item's own count). Tactician's
+    /// tactical carries its chosen count, one or two, like the tactical slot ([`Draft::tactical_count`]).
     pub fn lethal_count(&self) -> u8 {
-        if !self.lethal.is_empty() && self.wildcards.contains(&Wildcard::DangerClose) {
+        if self.lethal.is_empty() {
+            0
+        } else if items::is_tactical_item(&self.lethal) {
+            self.chosen_count(&self.lethal, self.second_offhand[0])
+        } else if self.wildcards.contains(&Wildcard::DangerClose) {
             classes::MAX_GRENADES as u8
         } else {
             0
+        }
+    }
+
+    /// How many tacticals the class carries: BO2's `specialgrenadecount`, one, or two when the
+    /// slot's second box is taken (a point of its own); 0 for an empty slot.
+    pub fn tactical_count(&self) -> u8 {
+        if self.tactical.is_empty() {
+            0
+        } else {
+            self.chosen_count(&self.tactical, self.second_offhand[1])
+        }
+    }
+
+    /// How many of its item an offhand slot holds (0 empty): the given count, a single lethal's one
+    /// included. The button's boxes fill to it and its name reads `x2` past one.
+    pub fn offhand_count(&self, lethal: bool) -> u8 {
+        if lethal {
+            if self.lethal.is_empty() {
+                0
+            } else {
+                self.lethal_count().max(1)
+            }
+        } else {
+            self.tactical_count()
+        }
+    }
+
+    /// One, or two when the second box is taken and the item allows it ([`items::offhand_cap`]).
+    fn chosen_count(&self, id: &str, second: bool) -> u8 {
+        if second && items::offhand_cap(id) > 1 {
+            2
+        } else {
+            1
+        }
+    }
+
+    /// How many boxes an offhand slot's button has for its item: the tactical slot's and
+    /// Tactician's lethal its cap ([`items::offhand_cap`], up to two); a lethal item's one.
+    pub fn offhand_boxes(&self, lethal: bool) -> u8 {
+        let id = if lethal { &self.lethal } else { &self.tactical };
+        if lethal && !items::is_tactical_item(id) {
+            1
+        } else {
+            items::offhand_cap(id).max(1)
         }
     }
 
@@ -614,6 +673,9 @@ impl Draft {
         if self.lethal_count() > 0 {
             push("lethal_count", &self.lethal_count().to_string());
         }
+        if self.tactical_count() > 0 {
+            push("tactical_count", &self.tactical_count().to_string());
+        }
         push("melee", "knife_held_mp");
         let perks: Vec<&str> = self.perks_in_order().iter().map(|p| p.def().id).collect();
         push("perks", &perks.join(","));
@@ -639,6 +701,7 @@ impl Draft {
             lethal: self.lethal.clone(),
             tactical: self.tactical.clone(),
             lethal_count: self.lethal_count(),
+            tactical_count: self.tactical_count(),
             melee: "knife_held_mp".into(),
             perks: self.perks_in_order().iter().map(|p| p.def().id.to_string()).collect(),
             reserve: self.reserve,
@@ -646,7 +709,6 @@ impl Draft {
             reticle: self.reticle.clone(),
             reticle_color: self.reticle_color.clone(),
             knife: self.knife.clone(),
-            ..CustomClass::default()
         }
     }
 
@@ -673,6 +735,7 @@ impl Draft {
             secondary_atts,
             lethal: c.lethal.clone(),
             tactical: c.tactical.clone(),
+            second_offhand: [items::is_tactical_item(&c.lethal) && c.lethal_count > 1, c.tactical_count > 1],
             perks,
             extra_perks,
             wildcards: wildcards_of(c),
@@ -1458,12 +1521,12 @@ impl Editor {
             }
             Slot::Lethal => {
                 if let Some(id) = self.offhand_list(true).get(i).copied() {
-                    self.draft.lethal = id.to_string();
+                    self.pick_offhand(true, id);
                 }
             }
             Slot::Tactical => {
                 if let Some(id) = self.offhand_list(false).get(i).copied() {
-                    self.draft.tactical = id.to_string();
+                    self.pick_offhand(false, id);
                 }
             }
             Slot::Perk1 | Slot::Perk2 | Slot::Perk3 | Slot::Perk1b | Slot::Perk2b | Slot::Perk3b => {
@@ -1485,6 +1548,51 @@ impl Editor {
             Slot::Save => {}
         }
         true
+    }
+
+    /// Pick an offhand slot's item. Another item replaces the held one at a count of one (BO2's
+    /// `CACGrenades.Equip` sets `count` 1); picking the held item again takes or returns its second
+    /// box when the slot has two ([`Draft::offhand_boxes`]: BO2's second box equips another of the
+    /// held item, `caceditclass.lua:506-566`, and selecting a filled box unequips it).
+    fn pick_offhand(&mut self, lethal: bool, id: &str) {
+        let k = usize::from(!lethal);
+        let held = if lethal { &mut self.draft.lethal } else { &mut self.draft.tactical };
+        if held == id {
+            if self.draft.offhand_boxes(lethal) > 1 {
+                self.draft.second_offhand[k] = !self.draft.second_offhand[k];
+            }
+        } else {
+            *held = id.to_string();
+            self.draft.second_offhand[k] = false;
+        }
+    }
+
+    /// Take the second box of an offhand slot (BO2's click on the slot list's empty second box):
+    /// false when the slot holds nothing, has one box, or already carries two. The caller checks
+    /// the budget ([`Editor::apply_second_offhand`]).
+    fn take_second_offhand(&mut self, lethal: bool) -> bool {
+        let k = usize::from(!lethal);
+        let held = if lethal { &self.draft.lethal } else { &self.draft.tactical };
+        if held.is_empty() || self.draft.offhand_boxes(lethal) < 2 || self.draft.second_offhand[k] {
+            return false;
+        }
+        self.draft.second_offhand[k] = true;
+        true
+    }
+
+    /// The pointer's click on an offhand button's empty second box: a second of the held item, one
+    /// point, refused (the deny cue, the draft untouched) over budget or when there is no box.
+    pub fn apply_second_offhand(&mut self, lethal: bool) -> ApplyResult {
+        let before = self.draft.clone();
+        if !self.take_second_offhand(lethal) {
+            return ApplyResult::NoChange;
+        }
+        if !self.draft.valid() {
+            self.draft = before;
+            self.denied = true;
+            return ApplyResult::Denied;
+        }
+        ApplyResult::Changed
     }
 
     /// Set the highlighted row's perk in a tier. The base row and the Greed row hold separate picks;

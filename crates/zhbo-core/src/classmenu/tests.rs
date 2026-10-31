@@ -1047,3 +1047,41 @@ fn tactician_lists_the_tactical_items_in_the_lethal_slot() {
     again.slot = Slot::Lethal;
     assert_eq!(again.options(), equipment_options(&equipment_ids(true)));
 }
+
+/// BO2's `specialgrenadecount`: the tactical slot carries one or two of its item (each a point;
+/// `math.min(2, GetMaxAmmoForItem)` boxes), picking the held item again takes or returns the
+/// second, another item starts at one, and the saved class gives and re-opens with the count.
+#[test]
+fn a_second_tactical_costs_a_point_and_round_trips() {
+    let mut e = Editor::new(Draft::default());
+    let base = e.draft.spent();
+    assert_eq!(e.draft.tactical_count(), 1);
+    assert_eq!(e.draft.to_custom().tactical_count, 1, "the class's own count, not the item's start count");
+    e.slot = Slot::Tactical;
+    let i = e.offhand_list(false).iter().position(|id| *id == "concussion_grenade_mp").unwrap();
+    assert_eq!(items::offhand_cap("concussion_grenade_mp"), crate::classes::MAX_GRENADES as u8);
+    assert_eq!(e.apply(i), ApplyResult::Changed, "re-picking the held item takes its second box");
+    assert_eq!((e.draft.tactical_count(), e.draft.spent()), (2, base + 1));
+    let c = e.draft.to_custom();
+    assert_eq!((c.tactical_count, c.loadout().tactical_count), (2, Some(2)));
+    assert!(c.to_spec().contains("tactical_count=2"), "{}", c.to_spec());
+    let back = Draft::from_stored(&c);
+    assert_eq!((back.tactical_count(), back.spent()), (2, base + 1));
+    assert_eq!(e.apply(i), ApplyResult::Changed, "and again returns it");
+    assert_eq!(e.draft.tactical_count(), 1);
+    // Over budget, the second is denied and the draft untouched.
+    let mut full = Editor::new(Draft { wildcards: vec![Wildcard::Perk1Greed], extra_perks: [Some(Perk::HARDLINE), None, None], ..Draft::default() });
+    full.draft.secondary_atts = vec![];
+    while full.draft.remaining() > 0 {
+        full.draft.primary_atts.push("x".into());
+    }
+    full.slot = Slot::Tactical;
+    let before = full.draft.clone();
+    assert_eq!(full.apply(i), ApplyResult::Denied);
+    assert_eq!(full.draft, before);
+    // A stored count is clamped to the item's cap by the repair.
+    let mut c = Draft::default().to_custom();
+    c.tactical_count = 7;
+    let _ = crate::classrepair::repair(&mut c);
+    assert_eq!(c.tactical_count, items::offhand_cap(&c.tactical));
+}

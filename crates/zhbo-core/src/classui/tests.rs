@@ -1047,3 +1047,36 @@ fn the_perk_grid_shows_the_highlighted_perks_description() {
     assert!(texts(&prims).iter().filter(|t| *t == "Hardline").count() >= 2, "the cell and the panel title");
     assert!(texts(&prims).iter().any(|t| t == "Blind Eye"), "cells carry BO2's names: {:?}", texts(&prims));
 }
+
+/// The tactical button's second box (`cacgrenadesbutton.lua:150-180`): clicking it while empty
+/// equips a second of the held tactical for a point (`EquipGrenade`, `specialgrenadecount` 2), the
+/// button reads `x2`, and its circled X takes that one back. An item capped at one has no box.
+#[test]
+fn the_tactical_buttons_second_box_takes_a_second_tactical() {
+    let l = editor_layout(1280.0, 720.0);
+    let mut e = Editor::new(Draft::default());
+    let spent = e.draft.spent();
+    let cells = editor_cells(&l, &e);
+    let second = *cells.iter().find(|c| c.slot == Slot::Tactical && c.index == 1).expect("the concussion takes two");
+    assert!(!cell_filled(&e, &second));
+    let r = l.frame.px(second.rect);
+    let mut prev = MenuPrev::default();
+    let mut pointer = MenuPointer { screen_w: 1280.0, screen_h: 720.0, mouse_x: r.x + r.w * 0.5, mouse_y: r.y + r.h * 0.5, ..Default::default() };
+    let _ = editor_frame(&mut e, &pointer, &prev);
+    prev.update(&pointer);
+    pointer.mouse_buttons = crate::input::mouse_buttons::LEFT;
+    let frame = editor_frame(&mut e, &pointer, &prev);
+    assert!(!frame.denied && !e.picking, "the box equips directly, no list");
+    assert_eq!((e.draft.tactical_count(), e.draft.spent()), (2, spent + 1));
+    assert!(cell_filled(&e, &second));
+    assert_eq!(e.draft.to_custom().tactical_count, 2);
+    // The circled X on the second box returns it.
+    e.slot = Slot::Tactical;
+    assert_eq!(editor_remove_at(&l, &editor_cells(&l, &e), &e, l.frame.px(remove_rect(&second)).x + 10.0, l.frame.px(remove_rect(&second)).y + 10.0), Some((Slot::Tactical, 1)));
+    assert!(clear_cell(&mut e.draft, Slot::Tactical, 1));
+    assert_eq!((e.draft.tactical.as_str(), e.draft.tactical_count()), ("concussion_grenade_mp", 1));
+    // An item whose weapon caps its ammo at one has a single box.
+    let cap = crate::classmenu::items::offhand_cap("trophy_system_mp");
+    e.draft.tactical = "trophy_system_mp".into();
+    assert_eq!(editor_cells(&l, &e).iter().any(|c| c.slot == Slot::Tactical && c.index == 1), cap > 1);
+}

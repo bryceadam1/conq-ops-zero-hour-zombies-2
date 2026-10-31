@@ -271,7 +271,14 @@ pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> 
             cat.options.get(start + row).copied().unwrap_or(editor.option)
         }
     });
-    let pointer = crate::classmenu::PointerEvent { slot, option, click: clicked && !removed, wheel: inp.wheel.trunc() as i32, moved };
+    // A click on an offhand button's empty second box equips another of the held item (BO2's
+    // `GrenadesChosen` on an empty box → `EquipGrenade`, `caceditclass.lua:400-566`), one point.
+    let second_box = (clicked && !removed && !editor.picking && !editor.naming)
+        .then(|| editor_cell_at(&layout, &cells, inp.mouse_x, inp.mouse_y).and_then(|i| cells.get(i)))
+        .flatten()
+        .filter(|c| c.index == 1 && matches!(c.slot, Slot::Lethal | Slot::Tactical) && !cell_filled(editor, c))
+        .map(|c| c.slot == Slot::Lethal);
+    let pointer = crate::classmenu::PointerEvent { slot, option, click: clicked && !removed && second_box.is_none(), wheel: inp.wheel.trunc() as i32, moved };
     let before_slot = editor.slot;
     let before_option = editor.option;
     let before_picking = editor.picking;
@@ -280,7 +287,10 @@ pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> 
     // Hover moves the highlight only on a real move; a click/wheel is always an action. While the
     // name field has text entry, keys win unless the frame also clicked (to leave the field).
     let hover = moved && !editor.naming && (pointer.slot.is_some() || pointer.option.is_some());
-    let has_pointer = pointer.is_action() || hover || (clicked && !removed);
+    if let Some(lethal) = second_box {
+        editor.apply_second_offhand(lethal);
+    }
+    let has_pointer = pointer.is_action() || hover || (clicked && !removed && second_box.is_none());
     let outcome = if has_pointer { editor.step_pointer(pointer) } else { editor.step(edges) };
     let denied = editor.denied;
     editor.denied = false;
