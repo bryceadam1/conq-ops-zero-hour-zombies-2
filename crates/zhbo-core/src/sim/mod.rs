@@ -1271,6 +1271,39 @@ pub(crate) mod tests {
         assert!(events(&sim).contains(&EventKind::Melee));
     }
 
+    /// After a melee with a gun up the General's gun only fires again once the swing (plain time)
+    /// and its quick re-raise (BO2's state 0x15, Fast Melee Recovery's) are over; Dexterity
+    /// shortens only the re-raise.
+    #[test]
+    fn the_gun_fires_again_after_the_melee_and_its_re_raise() {
+        let first_shot = |perks: &str| {
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            sim.take_control(&host, 0, 1);
+            sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default().with_spec(perks));
+            wait_until_ready(&mut sim, &host);
+            run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::MELEE, ..Default::default() }, 1);
+            sim.events.clear();
+            let a = &sim.player(0).unwrap().arsenal;
+            let (swing, quick) = (a.melee_left, a.current().def.quick_raise_time);
+            for f in 1..120u32 {
+                run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, ..Default::default() }, 1);
+                if events(&sim).iter().any(|k| matches!(k, EventKind::Shot { .. })) {
+                    return (f, swing, quick);
+                }
+            }
+            panic!("never fired");
+        };
+        let (plain, swing, quick) = first_shot("perks=");
+        let (fast, ..) = first_shot("perks=Dexterity");
+        let want = |raise: f32| ((swing / LOGIC_DT - 1e-4).ceil() + (raise / LOGIC_DT - 1e-4).ceil()) as i64;
+        let m = crate::tuning::get().perk_weap_melee_multiplier;
+        assert!((plain as i64 - want(quick)).abs() <= 1, "fired at {plain}, want {}", want(quick));
+        assert!((fast as i64 - want(quick * m)).abs() <= 1, "with Dexterity fired at {fast}, want {}", want(quick * m));
+        assert!(fast < plain);
+    }
+
     #[test]
     fn the_hammer_and_field_computer_work_unarmed() {
         let host = FakeHost::default();

@@ -143,6 +143,58 @@ mod tests {
         assert_eq!(swing_and_strike("perks=Dexterity"), frames, "Fast Melee Recovery leaves the delay alone");
     }
 
+    /// BO2 runs the swing's `iMeleeTime` in plain time, then — a gun up, so the class melee
+    /// weapon struck — brings the gun back up in its own `quickRaiseTime` (state 0x15,
+    /// `FUN_008e1f50`), the one melee state Fast Melee Recovery speeds up (G3). The held knife
+    /// strikes with itself and is simply ready again.
+    #[test]
+    fn after_a_melee_the_gun_comes_back_up_and_fast_melee_recovery_speeds_only_that() {
+        let class_melee = weapon(CLASS_MELEE);
+        // Frames of the swing, of the re-raise, and whether the trigger did anything meanwhile.
+        let melee = |perks: &str| {
+            let mut rng = Rng::new(1);
+            let mut a = Arsenal::with_loadout(Loadout::default().with_spec(perks));
+            a.raise_left = 0.0;
+            let mut out = Vec::new();
+            a.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
+            let (mut swing, mut raise) = (1, 0);
+            while a.melee_left > 0.0 {
+                a.step(buttons::FIRE, 0, false, 0, 0.0, &mut rng, &mut out);
+                swing += 1;
+            }
+            let mut fired = shots(&out) > 0;
+            while a.melee_recover_left > 0.0 {
+                let mut step = Vec::new();
+                a.step(buttons::FIRE, 0, false, 0, 0.0, &mut rng, &mut step);
+                raise += 1;
+                // The frame the re-raise ends the gun is ready and may fire.
+                fired |= a.melee_recover_left > 0.0 && shots(&step) > 0;
+            }
+            (swing, raise, fired, a.multiplier(Timing::Melee), a.current().def.quick_raise_time)
+        };
+        let (swing, raise, fired, m, quick) = melee("perks=");
+        assert_eq!(m, 1.0);
+        assert_eq!(swing, 1 + (class_melee.melee_time / LOGIC_DT - 1e-4).ceil() as i32, "the press, then the swing in plain time");
+        assert_eq!(raise, (quick / LOGIC_DT - 1e-4).ceil() as i32, "the gun's quick raise");
+        assert!(!fired, "the gun is not up until the re-raise ends");
+        assert_eq!(melee("perks="), (swing, raise, fired, m, quick), "deterministic");
+        let (fast_swing, fast_raise, _, fast, _) = melee("perks=Dexterity");
+        assert!(fast < 1.0, "Dexterity grants Fast Melee Recovery");
+        assert_eq!(fast_swing, swing, "the swing is not shortened");
+        assert_eq!(fast_raise, (quick * fast / LOGIC_DT - 1e-4).ceil() as i32, "only the re-raise is");
+
+        // The held knife: no re-raise.
+        let mut rng = Rng::new(1);
+        let mut k = Arsenal::unarmed();
+        let mut out = Vec::new();
+        k.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
+        while k.melee_left > 0.0 {
+            k.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+        }
+        assert_eq!(k.melee_recover_left, 0.0);
+        assert!(!k.is_busy());
+    }
+
     #[test]
     fn the_unarmed_kit_is_knife_only_and_the_base_kit_is_untouched() {
         let a = Arsenal::unarmed();

@@ -4783,3 +4783,27 @@ the gun's full raise at the switch rate, and C4's detonator keyed on a sticky/th
 Measured (conformance CLI vs `v1/equipment-melee` conf3): weapons 769,983 → 769,947
 (`weap_type` 5 → 0, `hold_fire_time` 11,604 → 11,589, `fire_delay` 620 → 605, `detonate_time`
 11,604 → 11,603); cac 572; gap clusters 203 → 202. `inventory` stays 6 (above).
+
+## After a melee the gun comes back up; Fast Melee Recovery speeds only that (2026-10-31, `v1/equipment-use`)
+
+The previous entry's finding, done. BO2 runs the swing's `iMeleeTime` (states 0x13/0x14) in plain
+time; when it ends `FUN_008e1f50` compares the held weapon with the melee weapon (`melee_weapon(held,
+class_melee)`) and, when they differ — a gun was up and the class melee weapon struck — enters 0x15
+with weaponTime = the HELD weapon's `quickRaiseTime` (+0x4c8); a held knife is simply ready. The tick
+(`FUN_008e0780`, G3) scales only 0x15 by `perk_weapMeleeMultiplier` (`fastmeleerecovery`). The mod
+scaled the whole `melee_left` and had no re-raise.
+
+* `Arsenal::melee_left` now counts down by `LOGIC_DT`; `Arsenal::melee_recover_left` (0x15) is set to
+  the held gun's `quick_raise_time` when a class-melee swing ends and ticks at `Timing::Melee`. It
+  blocks fire, ADS, swap, alt toggle and another melee (`FUN_008e0e60` skips 0x13-0x15); an offhand may
+  start in it (`FUN_008e2bb0` does not exclude 0x15) and its own quick raise replaces it.
+  `anim_rate` is 1 during the swing and the perk's during the re-raise; the viewmodel plays the gun's
+  `QUICK_RAISE`.
+* Tests: `after_a_melee_the_gun_comes_back_up_and_fast_melee_recovery_speeds_only_that` (arsenal:
+  swing frames equal with and without Dexterity, re-raise `quick_raise_time` vs × the multiplier, no
+  shot before it ends, the held knife has none) and fake-host
+  `the_gun_fires_again_after_the_melee_and_its_re_raise` (first shot frame with and without the perk).
+
+Measured: no conformance movement (weapons 769,947, cac 572, 202 gap clusters; the weapons diff is
+byte-identical to the previous commit's) — the table already matched `iMeleeTime` and
+`quickRaiseTime`; this is behaviour only. No table field, no archive VERSION bump.

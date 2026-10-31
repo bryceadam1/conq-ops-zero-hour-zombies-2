@@ -210,6 +210,10 @@ impl Viewmodel {
             }
             return frame(m.viewmodel, slot::MELEE, t);
         }
+        // After a melee with the class melee weapon the gun comes back up in its quick raise (0x15).
+        if a.melee_recover_left > 0.0 {
+            return wf(or(def, slot::QUICK_RAISE, slot::RAISE), def.quick_raise_time - a.melee_recover_left);
+        }
         if a.drop_left > 0.0 {
             let prev = &a.weapons[a.previous];
             let clip = if a.drop_total <= prev.def.quick_drop_time + 1e-4 { slot::QUICK_DROP } else if prev.ammo == 0 { slot::EMPTY_DROP } else { slot::DROP };

@@ -297,7 +297,11 @@ pub struct Arsenal {
     pub ads: f32,
     /// Seconds since sprinting stopped (weapon comes back up over `sprint_out_time`).
     pub since_sprint: f32,
+    /// The melee weapon's `melee_time` left (states 0x13/0x14), in plain time.
     pub melee_left: f32,
+    /// The held gun coming back up after a melee with the class melee weapon (state 0x15,
+    /// `FUN_008e1f50`): its `quick_raise_time` left, which Fast Melee Recovery runs faster.
+    pub melee_recover_left: f32,
     /// Seconds until the swing's strike lands (`ps->weaponDelay` in state 0x13); 0 when none is due.
     pub melee_delay_left: f32,
     pub offhand: Option<OffhandUse>,
@@ -323,7 +327,8 @@ pub enum Timing {
     Reload,
     /// Firing and rechambering (6, 7, 8, 0x28): `rof`.
     Fire,
-    /// Melee (0x15): `fastmeleerecovery`.
+    /// The re-raise after a melee (0x15): `fastmeleerecovery` (the swing itself, 0x13/0x14, runs
+    /// in plain time).
     Melee,
     /// A grenade's or other thrown offhand's states (0x16-0x1d): `fasttoss`.
     Toss,
@@ -363,6 +368,7 @@ impl Arsenal {
             ads: 0.0,
             since_sprint: 10.0,
             melee_left: 0.0,
+            melee_recover_left: 0.0,
             melee_delay_left: 0.0,
             offhand: None,
             held_last: 0,
@@ -440,6 +446,7 @@ impl Arsenal {
             ads: 0.0,
             since_sprint: 10.0,
             melee_left: 0.0,
+            melee_recover_left: 0.0,
             melee_delay_left: 0.0,
             offhand: None,
             held_last: 0,
@@ -513,6 +520,8 @@ impl Arsenal {
         let family = if let Some(u) = self.offhand {
             Some(self.offhand_timing(u.lethal()))
         } else if self.melee_left > 0.0 {
+            None
+        } else if self.melee_recover_left > 0.0 {
             Some(Timing::Melee)
         } else if self.drop_left > 0.0 || self.raise_left > 0.0 {
             Some(Timing::Switch)
@@ -554,7 +563,7 @@ impl Arsenal {
 
     /// The weapon can't shoot right now (raising, putting away, reloading, meleeing, throwing).
     pub fn is_busy(&self) -> bool {
-        self.raise_left > 0.0 || self.drop_left > 0.0 || self.current().is_reloading() || self.melee_left > 0.0 || self.offhand.is_some()
+        self.raise_left > 0.0 || self.drop_left > 0.0 || self.current().is_reloading() || self.melee_left > 0.0 || self.melee_recover_left > 0.0 || self.offhand.is_some()
     }
 
     /// Movement speed multiplier from the held weapon: its `adsMoveSpeedScale` while aiming, else
@@ -722,7 +731,20 @@ impl Arsenal {
         // Weapon timers run in weapon-data time: each family at its specialty's rate (G3).
         let (sprint_tick, melee_tick, switch_tick) = (self.tick(Timing::SprintOut), self.tick(Timing::Melee), self.tick(Timing::Switch));
         self.since_sprint = if sprinting { 0.0 } else { self.since_sprint + sprint_tick };
-        self.melee_left = (self.melee_left - melee_tick).max(0.0);
+        // The swing runs its `melee_time` in plain time (0x13/0x14); when it ends with a gun up (the
+        // class melee weapon struck, `FUN_008e1f50`: held != melee weapon) the gun comes back up in
+        // its own `quick_raise_time` (0x15), the one melee state Fast Melee Recovery speeds up.
+        self.melee_recover_left = (self.melee_recover_left - melee_tick).max(0.0);
+        if self.melee_left > 0.0 {
+            self.melee_left = (self.melee_left - dt).max(0.0);
+            if self.melee_left <= 1e-6 {
+                self.melee_left = 0.0;
+                let held = self.current().def;
+                if held.id != self.melee_weapon().id {
+                    self.melee_recover_left = held.quick_raise_time;
+                }
+            }
+        }
         // The strike lands when the swing's delay runs out. BO2 counts the delay in plain time:
         // state 0x13 takes no specialty scaling (`FUN_008e0780`; Fast Melee Recovery scales 0x15).
         if self.melee_delay_left > 0.0 {
@@ -758,20 +780,21 @@ impl Arsenal {
         }
 
         // Alt mode (select fire, grenade launcher, second optic).
-        if pressed & buttons::ALT_MODE != 0 && !self.current().main.alt.is_empty() && self.melee_left <= 0.0 && self.drop_left <= 0.0 {
+        let meleeing = self.melee_left > 0.0 || self.melee_recover_left > 0.0;
+        if pressed & buttons::ALT_MODE != 0 && !self.current().main.alt.is_empty() && !meleeing && self.drop_left <= 0.0 {
             self.toggle_alt();
             out.push(WeaponAction::AltToggled);
         }
 
-        // Swap.
-        if pressed & buttons::SWAP_WEAPON != 0 && self.weapons.len() > 1 && self.melee_left <= 0.0 {
+        // Swap (never during the melee states 0x13-0x15, `FUN_008e0e60`).
+        if pressed & buttons::SWAP_WEAPON != 0 && self.weapons.len() > 1 && !meleeing {
             let next = (self.active + 1) % self.weapons.len();
             self.switch_to(next);
             out.push(WeaponAction::Swapped);
         }
 
         // Melee interrupts a reload and firing, not a raise.
-        if pressed & buttons::MELEE != 0 && self.melee_left <= 0.0 && self.raise_left <= 0.0 && self.drop_left <= 0.0 {
+        if pressed & buttons::MELEE != 0 && !meleeing && self.raise_left <= 0.0 && self.drop_left <= 0.0 {
             // The swing starts now and the strike lands after the melee weapon's delay
             // (`FUN_008dc770`: weaponTime = iMeleeTime, weaponDelay = iMeleeDelay, state 0x13).
             let m = self.melee_weapon();
@@ -805,7 +828,7 @@ impl Arsenal {
         let def = self.current().def;
         let sprint_ready = self.sprint_ready();
         // Only a gun aims; a knife or a held offhand has no sights (and no ADS zoom).
-        let wants_ads = def.class.is_gun() && held & buttons::ADS != 0 && !sprinting && sprint_ready && self.raise_left <= 0.0 && self.drop_left <= 0.0 && !self.current().is_reloading();
+        let wants_ads = def.class.is_gun() && held & buttons::ADS != 0 && !sprinting && sprint_ready && self.raise_left <= 0.0 && self.drop_left <= 0.0 && self.melee_recover_left <= 0.0 && !self.current().is_reloading();
         let quickdraw = if self.has_specialty(Specialty::FastAds) && self.tuning.perk_weap_ads_multiplier > 0.0 { self.tuning.perk_weap_ads_multiplier } else { 1.0 };
         self.ads = if wants_ads {
             (self.ads + dt / (def.ads_in_time.max(1e-3) * quickdraw)).min(1.0)
@@ -819,7 +842,7 @@ impl Arsenal {
 
         // Firing.
         let ads = self.ads;
-        let blocked = sprinting || !sprint_ready || self.raise_left > 0.0 || self.drop_left > 0.0 || self.melee_left > 0.0;
+        let blocked = sprinting || !sprint_ready || self.raise_left > 0.0 || self.drop_left > 0.0 || self.melee_left > 0.0 || self.melee_recover_left > 0.0;
         let fire_tick = self.tick(Timing::Fire);
         let w = self.current_mut();
         w.cooldown -= fire_tick;
@@ -1034,6 +1057,9 @@ impl Arsenal {
         w.burst_left = 0;
         self.ads = 0.0;
         self.cooked = 0.0;
+        // An offhand may start while the gun comes back up from a melee (0x15 is not among
+        // `FUN_008e2bb0`'s exclusions); its own quick raise brings the gun back afterwards.
+        self.melee_recover_left = 0.0;
         if detonate {
             self.offhand = Some(OffhandUse::Detonating { lethal, t: 0.0, fired: false });
         } else {
