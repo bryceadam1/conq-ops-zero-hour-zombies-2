@@ -1115,8 +1115,10 @@ impl Arsenal {
     fn start_offhand(&mut self, pressed: u32, out: &mut Vec<WeaponAction>) -> bool {
         let lethal = pressed & buttons::LETHAL != 0;
         let tactical = pressed & buttons::TACTICAL != 0;
-        // BO2 lets an offhand interrupt a raise, not a swap's put-away or a melee.
-        if !(lethal || tactical) || self.drop_left > 0.0 || self.melee_left > 0.0 {
+        // BO2 refuses the press only in the put-away states (3-5) and its own offhand states
+        // (`FUN_008e2bb0`); a raise, a shot, a reload, a melee swing (0x13/0x14) and the sprint-out
+        // (0x26) are waited out instead.
+        if !(lethal || tactical) || self.drop_left > 0.0 {
             return false;
         }
         let slot = if lethal { &self.lethal } else { &self.tactical };
@@ -1141,6 +1143,12 @@ impl Arsenal {
         // An offhand may start while the gun comes back up from a melee (0x15 is not among
         // `FUN_008e2bb0`'s exclusions); what is left of that re-raise is waited out first.
         self.melee_recover_left = 0.0;
+        // Mid-swing (0x13) the strike was due when `weaponDelay` ran out; 0x16 zeroes the delay,
+        // so a strike not yet landed never does. The swing's time is waited out.
+        self.melee_left = 0.0;
+        self.melee_delay_left = 0.0;
+        // The sprint-out (0x26) is the interrupted state too.
+        self.since_sprint = self.since_sprint.max(self.current().def.sprint_out_time);
         if left > 1e-6 {
             self.offhand = Some(OffhandUse::Starting { lethal, left });
         } else {
@@ -1165,8 +1173,14 @@ impl Arsenal {
             self.raise_left
         } else if self.melee_recover_left > 0.0 {
             self.melee_recover_left
+        } else if self.melee_left > 0.0 {
+            // The swing (0x13/0x14): its `iMeleeTime` left.
+            self.melee_left
         } else if w.is_reloading() {
             w.reload_part_left()
+        } else if self.since_sprint > 0.0 && self.since_sprint < w.def.sprint_out_time {
+            // The sprint-out (0x26) after a sprint that ended before this frame.
+            w.def.sprint_out_time - self.since_sprint
         } else {
             // The fire block counts the cooldown down after the offhands; this frame's tick
             // first.

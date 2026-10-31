@@ -143,6 +143,43 @@ mod tests {
         assert_eq!(swing_and_strike("perks=Dexterity"), frames, "Fast Melee Recovery leaves the delay alone");
     }
 
+    /// An offhand pressed mid-swing (0x13) takes the state over: the strike still due never lands
+    /// (0x16 zeroes `weaponDelay`) and the swing's time left is waited out first; pressed during the
+    /// sprint-out (0x26), its time left is.
+    #[test]
+    fn an_offhand_mid_swing_drops_the_strike_and_waits_the_swing_out() {
+        let mut rng = Rng::new(1);
+        let mut a = Arsenal::with_loadout(Loadout::default());
+        a.raise_left = 0.0;
+        let mut out = Vec::new();
+        a.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
+        let swing = a.melee_left;
+        assert!(a.melee_delay_left > LOGIC_DT, "the strike is still due");
+        out.clear();
+        a.step(buttons::LETHAL, buttons::LETHAL, false, 0, 0.0, &mut rng, &mut out);
+        match a.offhand {
+            // The swing ticked once more in plain time before the press.
+            Some(OffhandUse::Starting { left, .. }) => assert!((left - (swing - LOGIC_DT)).abs() < 1e-4, "{left} vs {swing}"),
+            other => panic!("{other:?}"),
+        }
+        for _ in 0..120 {
+            a.step(buttons::LETHAL, 0, false, 0, 0.0, &mut rng, &mut out);
+        }
+        assert!(!out.iter().any(|x| matches!(x, WeaponAction::Melee { .. })), "the strike never lands");
+        assert!(matches!(a.offhand, Some(OffhandUse::Holding { .. })), "then the pull-back");
+
+        let mut a = Arsenal::with_loadout(Loadout::default());
+        a.raise_left = 0.0;
+        a.since_sprint = 0.01;
+        let sprint_out = a.current().def.sprint_out_time;
+        assert!(sprint_out > 0.05, "the stand-in has a sprint-out");
+        a.step(buttons::LETHAL, buttons::LETHAL, false, 0, 0.0, &mut rng, &mut out);
+        match a.offhand {
+            Some(OffhandUse::Starting { left, .. }) => assert!(left > 0.0 && left < sprint_out, "{left}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
     /// BO2 runs the swing's `iMeleeTime` in plain time, then — a gun up, so the class melee
     /// weapon struck — brings the gun back up in its own `quickRaiseTime` (state 0x15,
     /// `FUN_008e1f50`), the one melee state Fast Melee Recovery speeds up (G3). The held knife

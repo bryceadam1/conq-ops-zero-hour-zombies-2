@@ -4924,3 +4924,19 @@ shot, the reload) keeps playing; the client rate for 0x16 is the offhand's (`FUN
 * `Viewmodel::update` plays its last frame on during `OffhandUse::Starting`, at `anim_rate()`; the
   clip picking moved to `pick`. Test: in `viewmodel` tests, a press mid-raise keeps the raise clip and
   advances it.
+
+## An offhand pressed mid-swing drops the strike; the sprint-out is waited out too (2026-10-31, `v1/offhand-rules`)
+
+The "found, not done" of the mid-raise entry. `FUN_008e2bb0`'s state exclusions do not list the melee
+swing (0x13/0x14) or the sprint-out (0x26), so the press there enters 0x16 like anywhere else. The
+swing's strike is due when 0x13's `weaponDelay` runs out (`FUN_008e4da0`: 0x13 → 0x14 + event 0x28);
+0x16 zeroes `weaponDelay`, and the offhand check runs before the frame's state switch, so a strike not
+yet landed is dropped. The swing's `weaponTime` (`iMeleeTime` left) is waited out, at the offhand's
+rate. (Medium confidence: two weapon-flag bits the check also tests, `ps+0x10 & 0x80/0x100`, are
+unnamed.)
+
+* `Arsenal::start_offhand` no longer refuses during the swing; `state_time_left` adds the swing
+  (`melee_left`) and the sprint-out (`sprint_out_time - since_sprint`, after a sprint that ended);
+  the swing, its pending strike and the sprint-out are cleared. A press while still sprinting is
+  unchanged.
+* Test: `an_offhand_mid_swing_drops_the_strike_and_waits_the_swing_out` (and the sprint-out).
