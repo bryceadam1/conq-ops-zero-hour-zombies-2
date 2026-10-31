@@ -178,9 +178,9 @@ use super::items::cac_entries;
         names.dedup();
         assert_eq!(names.len(), n, "no weapon is listed twice by display name");
         // The same filter backs the secondary and equipment lists.
-        for class in [WeaponClass::Pistol, WeaponClass::Lethal, WeaponClass::Tactical] {
-            let list = equipment_ids(class);
-            assert!(list.iter().all(|id| weapons::weapon(id).alt.is_empty()), "{class:?}: {list:?}");
+        for lethal in [true, false] {
+            let list = equipment_ids(lethal);
+            assert!(list.iter().all(|id| weapons::weapon(id).alt.is_empty()), "{lethal}: {list:?}");
         }
     }
 
@@ -836,7 +836,7 @@ fn the_offer_is_the_editors_own_lists_and_caps() {
     let o = offer();
     assert_eq!(o.primary, gun_ids(&[items::PRIMARY]));
     assert_eq!(o.secondary, gun_ids(&[items::SECONDARY]));
-    assert_eq!((o.lethal.clone(), o.tactical.clone()), (equipment_ids(WeaponClass::Lethal), equipment_ids(WeaponClass::Tactical)));
+    assert_eq!((o.lethal.clone(), o.tactical.clone()), (equipment_ids(true), equipment_ids(false)));
     // BO2's two attachments, three with Primary Gunfighter; one, two with Secondary Gunfighter.
     assert_eq!((o.primary_caps, o.secondary_caps), ((2, 3), (1, 2)));
     let first = o.primary[0];
@@ -874,4 +874,25 @@ fn picking_dual_wield_saves_the_dw_weapon() {
     assert_eq!(back.spent(), e.draft.spent(), "Dual Wield costs its attachment point");
     // The `_dw` weapon is no item of its own: the secondary list never shows it.
     assert!(!gun_ids(&[items::SECONDARY]).contains(&"fiveseven_dw_mp"));
+}
+
+#[test]
+fn the_offhand_slots_list_their_statstable_items_placed_equipment_included() {
+    // BO2 lists the offhands by statstable slot (column 13): the claymore is a `primarygrenade`
+    // item and the Trophy System a `specialgrenade` one, though both are placed equipment
+    // (`Class::Equipment`), not grenades.
+    let (lethal, tactical) = (equipment_ids(true), equipment_ids(false));
+    assert_eq!(weapons::weapon("claymore_mp").class, WeaponClass::Equipment);
+    assert_eq!(weapons::weapon("trophy_system_mp").class, WeaponClass::Equipment);
+    assert!(lethal.contains(&"frag_grenade_mp") && lethal.contains(&"claymore_mp"), "{lethal:?}");
+    assert!(tactical.contains(&"concussion_grenade_mp") && tactical.contains(&"trophy_system_mp"), "{tactical:?}");
+    assert!(!lethal.contains(&"trophy_system_mp") && !tactical.contains(&"claymore_mp"));
+    // Picking it from the list puts it in the draft.
+    let mut e = Editor::new(Draft::default());
+    e.slot = Slot::Lethal;
+    let i = lethal.iter().position(|id| *id == "claymore_mp").unwrap();
+    assert_eq!(e.options()[i], "Claymore");
+    assert!(e.apply_option(i));
+    assert_eq!(e.draft.lethal, "claymore_mp");
+    assert_eq!(e.current_option_index(), i);
 }

@@ -14,7 +14,7 @@
 
 use super::Wildcard;
 use crate::attachments::variant_id;
-use crate::weapons::{self, Class as WeaponClass, WeaponDef};
+use crate::weapons::{self, WeaponDef};
 
 /// BO2's dual-wield attachment (`ATTACHMENT_DW`), the one that renames the given weapon.
 pub const DUAL_WIELD: &str = "dw";
@@ -22,6 +22,21 @@ pub const DUAL_WIELD: &str = "dw";
 /// The slot names of `mp/statstable.csv` column 13 that hold guns.
 pub const PRIMARY: &str = "primary";
 pub const SECONDARY: &str = "secondary";
+/// The slot names of `mp/statstable.csv` column 13 that hold offhands: the lethal slot's
+/// (`primarygrenade`: frag, semtex, … and the placed claymore, Bouncing Betty, C4) and the
+/// tactical slot's (`specialgrenade`: concussion, … and the Trophy System, Tactical Insertion,
+/// Black Hat). The slot, not the weapon's class, decides — the placed ones are `Equipment`.
+pub const PRIMARY_GRENADE: &str = "primarygrenade";
+pub const SPECIAL_GRENADE: &str = "specialgrenade";
+
+/// The statstable slot of the lethal (`true`) or the tactical offhand slot.
+pub fn offhand_slot(lethal: bool) -> &'static str {
+    if lethal {
+        PRIMARY_GRENADE
+    } else {
+        SPECIAL_GRENADE
+    }
+}
 
 /// The catalog's create-a-class entries: the converted table's base weapons that are BO2 class
 /// items (a `CacSlot`), once per display name. The table also carries the alt-mode variants an
@@ -65,9 +80,16 @@ pub(super) fn gun_ids(slots: &[&str]) -> Vec<&'static str> {
     cac_entries().into_iter().filter(|d| d.class.is_gun() && slots.contains(&d.cac_slot.as_str())).map(|d| d.id.as_str()).collect()
 }
 
-/// The equipment ids of a class.
-pub(super) fn equipment_ids(class: WeaponClass) -> Vec<&'static str> {
-    cac_entries().into_iter().filter(|d| d.class == class).map(|d| d.id.as_str()).collect()
+/// The offhand ids the lethal (`true`) or the tactical slot lists: the items of its statstable
+/// slot ([`offhand_slot`]), in catalog order.
+pub(super) fn equipment_ids(lethal: bool) -> Vec<&'static str> {
+    let slot = offhand_slot(lethal);
+    cac_entries().into_iter().filter(|d| d.class.is_offhand() && d.cac_slot == slot).map(|d| d.id.as_str()).collect()
+}
+
+/// Whether `id` is an item the lethal (`true`) or the tactical slot may hold (`CheckItems`).
+pub fn fits_offhand(id: &str, lethal: bool) -> bool {
+    weapons::catalog().get(id).is_some_and(|d| d.class.is_offhand() && d.cac_slot == offhand_slot(lethal))
 }
 
 /// Whether the item `base` is one the slot may hold: a gun item of the slot's own, or a primary

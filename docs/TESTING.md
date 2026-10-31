@@ -105,12 +105,12 @@ says which. It reads the already-converted archive (no BO2 install needed, never
 
 `cargo run -p zhbo-assets -- screenshot [out-dir] [--archive <ConquerOps_BO2.big>] [--size WxH]`
 renders the class screens through the same drawing code the game runs (`classui::draw_screen`) and
-writes nine shots: `cac-browse.png` (the lobby list: the active set's five custom slots, the set
+writes the shots: `cac-browse.png` (the lobby list: the active set's five custom slots, the set
 header and the S/O footer), `cac-set-pager.png` (a browsed mid-row set), `cac-pick.png` (the
 in-match list: the slots, then the default classes), `cac-editor.png` (a populated Pick-10 draft
 with the primary option list open), `cac-editor-empty.png` (BO2's pristine empty class),
 `cac-editor-weapons.png` (the category column and stat bars), `cac-editor-attachments.png` (the
-attachment strip) and `cac-dialog-set.png`/`cac-dialog-class.png` (the S/O dialogs). Default size
+attachment strip), `cac-editor-lethal.png` (the lethal list: grenades and placed equipment) and `cac-dialog-set.png`/`cac-dialog-class.png` (the S/O dialogs). Default size
 is 1280x720 (BO2's 720p; the captures are 3024x1890). The default output is `target/cac-shots/`,
 which is inside the ignored build directory.
 

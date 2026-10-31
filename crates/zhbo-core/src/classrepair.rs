@@ -47,8 +47,8 @@ pub fn repair(c: &mut CustomClass) -> Cleared {
     let mut cleared: Cleared = Vec::new();
     repair_weapon(c, true, &mut cleared);
     repair_weapon(c, false, &mut cleared);
-    repair_offhand(c, WeaponClass::Lethal, true, &mut cleared);
-    repair_offhand(c, WeaponClass::Tactical, false, &mut cleared);
+    repair_offhand(c, true, &mut cleared);
+    repair_offhand(c, false, &mut cleared);
     if !c.melee.is_empty() && !resolves_as(&c.melee, WeaponClass::Melee) {
         c.melee.clear();
         cleared.push("melee");
@@ -100,11 +100,13 @@ fn repair_weapon(c: &mut CustomClass, primary: bool, cleared: &mut Cleared) {
     }
 }
 
-/// An offhand slot the class cannot hold is cleared (`ClearSlot`): the lethal slot takes the lethal
-/// class, the tactical slot the tactical class, exactly the two slots `loadoutSlotNames` names.
-fn repair_offhand(c: &mut CustomClass, class: WeaponClass, lethal: bool, cleared: &mut Cleared) {
-    let (slot, id) = if lethal { ("primarygrenade", &mut c.lethal) } else { ("specialgrenade", &mut c.tactical) };
-    if id.is_empty() || resolves_as(id, class) {
+/// An offhand slot holding an item that is not its own is cleared (`ClearSlot`): the lethal slot
+/// takes BO2's `primarygrenade` items (the claymore, Betty and C4 among them), the tactical slot the
+/// `specialgrenade` ones — the statstable slot the editor lists them by, not the weapon's class.
+fn repair_offhand(c: &mut CustomClass, lethal: bool, cleared: &mut Cleared) {
+    let slot = crate::classmenu::items::offhand_slot(lethal);
+    let id = if lethal { &mut c.lethal } else { &mut c.tactical };
+    if id.is_empty() || (weapons::catalog::weapon_or_none(id).is_some() && crate::classmenu::items::fits_offhand(id, lethal)) {
         return;
     }
     id.clear();
@@ -329,6 +331,20 @@ mod tests {
         let mut c = class("an94_mp", &[]);
         c.lethal = "nope_mp".into();
         assert_eq!(repair(&mut c), vec!["primarygrenade"]);
+    }
+
+    /// The placed equipment is the slot's own item (statstable column 13), not a stray class: a
+    /// stored claymore and Trophy System stay; swapped, they clear like any other wrong-slot item.
+    #[test]
+    fn placed_equipment_stays_in_its_statstable_slot() {
+        let mut c = class("an94_mp", &[]);
+        c.lethal = "claymore_mp".into();
+        c.tactical = "trophy_system_mp".into();
+        assert_eq!(repair(&mut c), Cleared::new());
+        assert_eq!((c.lethal.as_str(), c.tactical.as_str()), ("claymore_mp", "trophy_system_mp"));
+        c.lethal = "trophy_system_mp".into();
+        c.tactical = "claymore_mp".into();
+        assert_eq!(repair(&mut c), vec!["primarygrenade", "specialgrenade"]);
     }
 
     #[test]

@@ -4649,3 +4649,33 @@ clusters 204 → 202; nothing else moved.
   GSC's `isbonuscardactive` indices do not follow it (`_challenges.gsc:341,730`). The mod's
   wildcards are a core enum, so emitting it needs the statstable's bonus-card rows carried as data
   (beside `perk_rows`) — queued as "wildcards from the statstable", not done here.
+
+## Create-a-Class lists the placed equipment: offhands by statstable slot (2026-10-31, `v1/equipment-melee`)
+
+The claymore, Bouncing Betty, C4, Tactical Insertion, Trophy System and Black Hat were converted and
+played (`equipment.rs`) but never offered: `classmenu::items::equipment_ids` filtered the lethal and
+tactical lists by the mod's class (`Lethal`/`Tactical`), and these six are `Class::Equipment`;
+`classrepair::repair_offhand` even cleared a stored `lethal=claymore_mp`. BO2 lists offhands by
+`mp/statstable.csv` column 13 — betty, claymore, C4 are `primarygrenade` items; Black Hat, Tactical
+Insertion, Trophy System `specialgrenade` — the rule `v1/cac-structure` already applied to the guns.
+
+* `items::PRIMARY_GRENADE`/`SPECIAL_GRENADE`, `offhand_slot(lethal)`, `equipment_ids(lethal)` and
+  `fits_offhand(id, lethal)` read `WeaponDef::cac_slot`; the editor, `offer()` and the repair use
+  them (a claymore in the tactical slot still clears, as `CheckItems` does).
+* The in-match flow needed nothing: `Arsenal::with_loadout` takes whatever id the slot holds and
+  `equipment.rs` plants it. Fake-host test: an editor-built class with claymore + Trophy System
+  survives the repair, spawns with both and plants both.
+* Built-in stand-ins: the claymore is `Class = equipment` (as the converter makes it) with its
+  `Equipment = claymore`; a `trophy_system_mp` stand-in (`specialgrenade`).
+* Screenshot harness: `cac-editor-lethal.png` (the lethal list open on the claymore). The atlas
+  loader now finds the `ZHBO_Mat_*` material pages, whose MappedImage `Texture` has no `.tga`
+  (it failed on the current archive with "`ZHBO_Mat_scope_overlay_ballista` is missing").
+* Not done: BO2 makes these `item`-inventory weapons you switch to and fire to place (weapType
+  `grenade`); the mod plants them instantly from the offhand button. The conformance now shows it
+  (`inventory` item → offhand, `weap_type` grenade → mine on the planted five) — a behaviour item.
+
+Measured (conformance CLI vs `v1/cac-leftovers`): weapons BO2-only rows 7 → 1 (the Assault
+Shield); 781,251 → 781,587 cells — every added cell is on the six new rows (336; zero changed cells
+on any other row): they join the columns every row already differs in, plus two new clusters,
+`inventory` 0 → 6 and `weap_type` 0 → 5 (above). cac 555 → 572: the six new weapon rows join the
+offhands' existing `description` (+6), `image` (+6) and `order` (+5) gaps. Gap clusters 202 → 204.
