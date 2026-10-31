@@ -474,12 +474,15 @@ mod tests {
     fn a_planted_lethal_goes_down_in_front_of_him_facing_the_order() {
         let host = FakeHost::default();
         let mut sim = classed(&host);
+        // BO2's claymore launch (100 forward, -10000 up): down just in front of the feet.
         let claymore: &'static WeaponDef = Box::leak(Box::new(WeaponDef {
             id: "claymore_mp".into(),
             class: Class::Equipment,
             effect: Effect::Explode,
             place: Place::Plant,
             equipment_kind: EquipKind::Claymore,
+            projectile_speed: crate::units::inches(100.0),
+            projectile_speed_up: crate::units::inches(-10000.0),
             ..Default::default()
         }));
         arsenal(&mut sim).lethal = Offhand { def: claymore, count: 2 };
@@ -489,7 +492,10 @@ mod tests {
         assert!(sim.projectiles.is_empty(), "planted, not thrown");
         let placed = &sim.equipment.placed[0];
         assert_eq!(placed.kind, EquipKind::Claymore);
-        assert!((placed.pos - Vec3::new(0.0, PLANT_DISTANCE, 0.0)).length() < 1e-3, "in front of him: {:?}", placed.pos);
+        let eye = sim.player(0).unwrap().body.eye_height;
+        let ahead = eye * 100.0 / 10000.0;
+        assert!((placed.pos - Vec3::new(0.0, ahead, 0.0)).length() < 0.05 * eye.max(1.0), "in front of his feet: {:?} vs {ahead}", placed.pos);
+        assert!(placed.pos.y > 0.0);
         assert!((placed.yaw - std::f32::consts::FRAC_PI_2).abs() < 1e-4, "facing the order");
     }
 

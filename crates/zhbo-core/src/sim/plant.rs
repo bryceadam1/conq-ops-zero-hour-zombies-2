@@ -51,3 +51,80 @@ pub fn can_plant(def: &WeaponDef, body: &Body, yaw: f32, pitch: f32, host: &dyn 
     let hit = start + dir * t;
     !(host.surface_at(hit.x, hit.y) == Surface::Water && !host.is_walkable(hit.x, hit.y))
 }
+
+/// Longest flight [`plant_point`] follows before giving up and setting the item at the feet.
+const MAX_FLIGHT: f32 = 10.0;
+
+/// Where BO2 puts a planted item down. Its offhand fire (`FUN_008e2ac0`, event 0x30) launches the
+/// item from the eye with `forward * iProjectileSpeed + up * iProjectileSpeedUp` — the claymore's
+/// 100/-10000 drops it straight down in front of the feet, the Bouncing Betty (650) and the Trophy
+/// System (575) are lobbed under gravity when the def has it — and the item settles where it first
+/// meets the ground (the mod does not bounce it). An item with no launch speed (the Tactical
+/// Insertion) goes down at the feet.
+pub fn plant_point(def: &WeaponDef, body: &Body, yaw: f32, pitch: f32, host: &dyn LogicHost) -> Vec3 {
+    let ground = |x: f32, y: f32| host.ground_height(x, y);
+    let feet = Vec3::new(body.pos.x, body.pos.y, ground(body.pos.x, body.pos.y));
+    let vel = dir_from_angles(yaw, pitch) * def.projectile_speed + Vec3::new(0.0, 0.0, def.projectile_speed_up);
+    if vel.length() <= 1e-6 {
+        return feet;
+    }
+    let start = body.eye();
+    let landed = |p: Vec3| Vec3::new(p.x, p.y, ground(p.x, p.y));
+    if !def.projectile_gravity {
+        let len = vel.length();
+        let dir = vel * (1.0 / len);
+        return match trace_terrain(start, dir, len * MAX_FLIGHT, &ground) {
+            Some(t) => landed(start + dir * t),
+            None => feet,
+        };
+    }
+    // Under gravity: step the arc a logic frame at a time, settling at the first step below
+    // the ground (that step's ray found by the terrain trace).
+    let (mut p, mut v) = (start, vel);
+    let mut flown = 0.0;
+    while flown < MAX_FLIGHT {
+        v.z -= crate::projectiles::GRAVITY * crate::units::LOGIC_DT;
+        let step = v * crate::units::LOGIC_DT;
+        let len = step.length();
+        if len > 1e-6 {
+            if let Some(t) = trace_terrain(p, step * (1.0 / len), len, &ground) {
+                return landed(p + step * (t / len));
+            }
+        }
+        p = p + step;
+        flown += crate::units::LOGIC_DT;
+    }
+    feet
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sim::tests::FakeHost;
+    use crate::units::LOGIC_DT;
+
+    fn body() -> Body {
+        Body::new(Vec3::ZERO, &crate::movement::MoveTuning::default())
+    }
+
+    #[test]
+    fn the_plant_point_follows_bo2s_launch() {
+        let host = FakeHost::default();
+        let b = body();
+        // No launch speed (the Tactical Insertion): at the feet.
+        let ti = WeaponDef::default();
+        assert_eq!(plant_point(&ti, &b, 0.0, 0.0, &host), Vec3::ZERO);
+        // The claymore's 100 forward, -10000 up: straight down, a hair in front.
+        let claymore = WeaponDef { projectile_speed: inches(100.0), projectile_speed_up: inches(-10000.0), ..Default::default() };
+        let at = plant_point(&claymore, &b, 0.0, 0.0, &host);
+        assert!((at.x - b.eye_height * 0.01).abs() < 1e-3 && at.y.abs() < 1e-4 && at.z == 0.0, "{at:?}");
+        // The Betty's 650 under gravity: lobbed out, landing where the arc from the eye meets the
+        // ground (within one logic step).
+        let betty = WeaponDef { projectile_speed: inches(650.0), projectile_gravity: true, ..Default::default() };
+        let at = plant_point(&betty, &b, 0.0, 0.0, &host);
+        let fall = (2.0 * b.eye_height / crate::projectiles::GRAVITY).sqrt();
+        let want = inches(650.0) * fall;
+        assert!((at.x - want).abs() <= inches(650.0) * LOGIC_DT * 1.5, "{} vs {want}", at.x);
+        assert_eq!(plant_point(&betty, &b, 0.0, 0.0, &host), at, "deterministic");
+    }
+}

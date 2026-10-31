@@ -126,9 +126,8 @@ impl Sim {
             WeaponAction::MeleeSwing => self.emit(idx, EventKind::Melee),
             WeaponAction::Melee { damage } => self.melee_strike(host, idx, p, damage, MeleeReach::Body),
             WeaponAction::Plant { def } => {
-                let (fwd, _) = basis_xy(p.yaw);
-                let at = p.body.pos + fwd * PLANT_DISTANCE;
-                let at = Vec3::new(at.x, at.y, host.ground_height(at.x, at.y));
+                // Where BO2's launch sets it down, not a fixed distance in front.
+                let at = plant_point(def, &p.body, p.yaw, p.pitch, host);
                 let object = if def.projectile_object.is_empty() { 0 } else { host.spawn(&def.projectile_object, p.general, at, p.yaw) };
                 let placed = Placed::new(def, idx, p.general, object, at, p.yaw, None);
                 self.emit(idx, EventKind::Planted { kind: placed.kind });

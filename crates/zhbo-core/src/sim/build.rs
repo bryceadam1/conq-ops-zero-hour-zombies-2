@@ -94,6 +94,8 @@ impl Sim {
     }
 }
 
+/// How close Zero Hour walks the General to an RTS plant order (the plant weapon's `AttackRange`);
+/// where the item then goes down is BO2's launch ([`super::plant_point`]).
 pub const PLANT_DISTANCE: f32 = inches(30.0);
 /// [`World`] backed by the engine: terrain from `TheTerrainLogic`, solid footprints from structures
 /// and ground vehicles.

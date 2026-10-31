@@ -4955,3 +4955,20 @@ nothing, so the switch goes through once the offhand is done. The mod dropped th
   same gun, as BO2's cycling does). Test: `a_switch_during_a_frag_happens_after_it`.
 * The melee states also refuse a switch in `FUN_008e0e60`; a press during a swing is still dropped
   by the mod (not checked whether BO2 keeps it the same way — likely).
+
+## Planted items go down where BO2's launch puts them (2026-10-31, `v1/offhand-rules`)
+
+The mod set every `Place::Plant` item `PLANT_DISTANCE` (30 in) in front of the General. BO2 plants
+nothing itself: the offhand fire (`FUN_008e2ac0`, event 0x30) launches the item as a grenade from the
+eye with `forward * iProjectileSpeed + up * iProjectileSpeedUp` — the same vector `FUN_008e1780`
+traces — and the item's script settles it where it lands. BO2's data: the claymore 100/-10000
+(straight down, a hair in front of the feet), the Bouncing Betty 650/0 and the Trophy System 575/0
+(lobbed under gravity), the Tactical Insertion 0/0 (no launch: at the feet).
+
+* `sim::plant_point`: no launch speed → the feet; no gravity → the terrain trace along the launch;
+  gravity → the arc stepped a logic frame at a time (`projectiles::GRAVITY`) to its first ground
+  contact (no bounce). `apply_weapon_action`'s `Plant` uses it, in first person and for RTS orders
+  (`PLANT_DISTANCE` stays as the RTS approach range, the plant weapon's `AttackRange`).
+* Tests: `the_plant_point_follows_bo2s_launch` (feet; the claymore just ahead; the Betty's arc
+  distance `v·sqrt(2h/g)`; deterministic); the RTS plant test now expects the claymore at his feet.
+* Not done: BO2's bounce and settle (the grenade physics and `_claymore.gsc`'s orientation).
