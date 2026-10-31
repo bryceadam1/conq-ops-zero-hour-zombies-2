@@ -751,6 +751,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         hold_use: w.is_hold_use_grenade,
         hold_cancelable: w.offhand_hold_is_cancelable,
         plantable: w.plantable,
+        inventory: zhbo_core::weapons::Inventory::from_bo2(w.inventory),
         explosion_radius: inches(w.explosion_radius as f32),
         explosion_radius_min: inches(w.explosion_radius_min as f32),
         explosion_inner_damage: w.explosion_inner_damage as f32,
@@ -1077,6 +1078,18 @@ mod tests {
         }
         let flash = Weapon { name: "flash_grenade_mp".into(), weap_type: bo2::kind::GRENADE, offhand_slot: bo2::offhand_slot::TACTICAL, ..Default::default() };
         assert_eq!(class_of(&flash), Class::Tactical);
+    }
+
+    #[test]
+    fn the_def_carries_bo2s_inventory_type_and_combinations_inherit_it() {
+        use zhbo_core::weapons::Inventory;
+        let claymore = Weapon { name: "claymore_mp".into(), weap_type: bo2::kind::GRENADE, offhand_slot: bo2::offhand_slot::EQUIPMENT, inventory: bo2::inventory::ITEM, ..Default::default() };
+        let d = to_def(&claymore, &HashMap::new());
+        assert_eq!(d.inventory, Inventory::Item);
+        let text = zhbo_core::weapons::format_table(std::slice::from_ref(&d));
+        assert_eq!(zhbo_core::weapons::parse_table(&text).unwrap()[0].inventory, Inventory::Item, "round trip");
+        let gl = Weapon { name: "gl_an94_mp".into(), inventory: bo2::inventory::ALTMODE, ..Default::default() };
+        assert_eq!(to_def(&gl, &HashMap::new()).inventory, Inventory::AltMode);
     }
 
     #[test]

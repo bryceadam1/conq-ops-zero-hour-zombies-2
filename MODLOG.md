@@ -4995,3 +4995,20 @@ Unlinker; the menu lists `ui_mp/hud_*.txt` load it): menu `rect 0 40` align 9/9,
 * Tests: `the_hint_sits_below_the_centre_and_fades_in_each_600_ms`,
   `cant_plant_shows_the_hint_for_its_time`, `the_hud_strings_round_trip`.
 * The table format gains a line kind: the archive VERSION must bump (integrator).
+
+## The def carries BO2's `inventoryType`; the conformance reports it (2026-10-31, `v1/offhand-rules`)
+
+The conformance actual derived `inventory` from the row's role (alt → altmode, the class melee weapon
+→ melee, an offhand → offhand, else primary), so the six placed items (betty, claymore, C4, Trophy
+System, Tactical Insertion, Black Hat) read `offhand` against BO2's `item`. As the equipment-use entry
+found, no bg code branches on `inventoryType` (only a client HUD path, `FUN_005efeb0`), so it stays
+data the mod does not branch on either.
+
+* `weapons::Inventory` (`primary`/`offhand`/`item`/`altmode`/`melee`/`dwlefthand`, BO2's order),
+  `WeaponDef::inventory`, table field `Inventory`, filled by the converter from `inventoryType`;
+  attachment combinations are built from their base def and inherit it, alt modes carry their own
+  BO2 def's. The actual's `inventory` column reads it. Nothing else used the derived value.
+* Test: `the_def_carries_bo2s_inventory_type_and_combinations_inherit_it` (converter + round trip).
+* The table gains a field: the archive VERSION must bump (integrator).
+
+Measured: weapons 769,946 → 769,940 (`inventory` 6 → 0); cac 572 (identical); gap clusters 201 → 200.

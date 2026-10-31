@@ -6,7 +6,7 @@
 ** License, or (at your option) any later version.
 */
 
-use super::def::{CamoOption, Class, Effect, FireMode, Kind, Kick, Place, WeaponDef};
+use super::def::{CamoOption, Class, Effect, FireMode, Inventory, Kind, Kick, Place, WeaponDef};
 use super::feel::{nums, v3, GunKick, Sway};
 use super::specialty::Specialties;
 use crate::attachments::AttachmentDef;
@@ -495,6 +495,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("Plantable", "1 if BO2's plant check applies (its plantable flag).", FieldKind::Num,
         |d: &WeaponDef| (d.plantable as u8).to_string(),
         |d: &mut WeaponDef, v: Values| { d.plantable = v.text_num()? != 0.0; Ok(()) }),
+    field!("Inventory", "BO2's inventory type: primary, offhand, item, altmode, melee, dwlefthand.", FieldKind::Enum,
+        |d: &WeaponDef| d.inventory.name().into(),
+        |d: &mut WeaponDef, v: Values| { d.inventory = Inventory::parse(v.text).ok_or("unknown inventory type")?; Ok(()) }),
     field!("Explosion", "Blast radius, inner radius, inner damage, outer damage.", FieldKind::Nums(4),
         |d: &WeaponDef| format!("{} {} {} {}", d.explosion_radius, d.explosion_radius_min, d.explosion_inner_damage, d.explosion_outer_damage),
         |d: &mut WeaponDef, v: Values| {
@@ -756,7 +759,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 86);
+        assert_eq!(WEAPON_FIELDS.len(), 87);
         assert_eq!(ATTACHMENT_FIELDS.len(), 18);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

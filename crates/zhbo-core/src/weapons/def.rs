@@ -220,6 +220,8 @@ pub struct WeaponDef {
     /// `plantable`: set down where it lands, so BO2's plant check (`FUN_008e1780`,
     /// [`crate::sim::can_plant`]) can refuse it ("Cannot Plant Here").
     pub plantable: bool,
+    /// BO2's `inventoryType` ([`Inventory`]).
+    pub inventory: Inventory,
     pub explosion_radius: f32,
     pub explosion_radius_min: f32,
     pub explosion_inner_damage: f32,
@@ -392,6 +394,42 @@ impl Kind {
 /// An alt mode's viewmodel clips are its BO2 slots plus this.
 pub const ALT_CLIPS: i32 = 0x80;
 
+/// BO2's `weapInventoryType` (`WeaponDef.inventoryType`), carried as data: no bg code branches on it
+/// (only a client HUD path, `FUN_005efeb0`), and neither does the mod.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Inventory {
+    #[default]
+    Primary,
+    Offhand,
+    /// The placed equipment and the Black Hat.
+    Item,
+    AltMode,
+    Melee,
+    DwLeftHand,
+}
+
+impl Inventory {
+    pub const ALL: [Inventory; 6] = [Inventory::Primary, Inventory::Offhand, Inventory::Item, Inventory::AltMode, Inventory::Melee, Inventory::DwLeftHand];
+    /// BO2's name (`primary`, `offhand`, `item`, `altmode`, `melee`, `dwlefthand`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Inventory::Primary => "primary",
+            Inventory::Offhand => "offhand",
+            Inventory::Item => "item",
+            Inventory::AltMode => "altmode",
+            Inventory::Melee => "melee",
+            Inventory::DwLeftHand => "dwlefthand",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Inventory> {
+        Self::ALL.into_iter().find(|i| i.name() == s)
+    }
+    /// From `weapInventoryType_t`'s value (0 primary .. 5 dwlefthand).
+    pub fn from_bo2(v: u32) -> Inventory {
+        Self::ALL.get(v as usize).copied().unwrap_or_default()
+    }
+}
+
 /// How an offhand item is used.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum Place {
@@ -476,6 +514,7 @@ impl Default for WeaponDef {
             hold_use: false,
             hold_cancelable: false,
             plantable: false,
+            inventory: Inventory::Primary,
             explosion_radius: 0.0,
             explosion_radius_min: 0.0,
             explosion_inner_damage: 0.0,

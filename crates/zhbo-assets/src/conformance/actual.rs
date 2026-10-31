@@ -315,11 +315,11 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .filter_map(|s| base_def.allowed.iter().find(|(short, _)| short == s).and_then(|(_, asset)| cat.attachment(asset)).map(|a| a.display_name.clone()))
         .collect();
     b.list("attachment_names", &names);
-    // The mod has no weapType/weapClass/inventory fields; where its own class and sim branch
-    // carry the same fact it is reported (a class with no BO2 counterpart stays empty):
-    // `weap_type` is how the sim delivers the shot (`Arsenal`'s Launch vs hitscan branch,
-    // `arsenal.rs` "WeaponAction::Launch"; an offhand's `Place`), `weap_class` the class the
-    // converter derived from BO2's (`class_of`), `inventory` the row's role.
+    // The mod has no weapType/weapClass fields; where its own class and sim branch carry the
+    // same fact it is reported (a class with no BO2 counterpart stays empty): `weap_type` is how
+    // the sim delivers the shot (`Arsenal`'s Launch vs hitscan branch, `arsenal.rs`
+    // "WeaponAction::Launch"; an offhand's `Place`), `weap_class` the class the converter derived
+    // from BO2's (`class_of`). `inventory` is BO2's own, carried as data (`WeaponDef::inventory`).
     let launches = d.class == Class::Launcher || (d.projectile_speed > 0.0 && d.class != Class::Shotgun && d.effect != Effect::None);
     // Every offhand, thrown, set down or held up, runs the arsenal's one offhand state machine
     // (`Arsenal::step_offhand`), which is BO2's grenade offhand path (`FUN_008e2bb0` takes only
@@ -340,16 +340,8 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         Class::Melee => Some("melee"),
         Class::Special | Class::Lethal | Class::Tactical | Class::Equipment => None,
     };
-    let inventory = if j.alt {
-        "altmode"
-    } else if d.id == weapons::CLASS_MELEE {
-        // The class melee weapon is the melee inventory; the held knife is a weapon in the hand.
-        "melee"
-    } else if d.class.is_offhand() {
-        "offhand"
-    } else {
-        "primary"
-    };
+    // BO2's `inventoryType`, carried on the def (combinations inherit their base's).
+    let inventory = d.inventory.name();
     let offhand_slot = match d.class {
         Class::Lethal => "lethal_grenade",
         Class::Tactical => "tactical_grenade",
