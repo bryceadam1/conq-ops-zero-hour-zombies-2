@@ -4717,3 +4717,31 @@ carries either): they are the rows two client events read.
   (`BounceSounds`, `ActivateDist`, `DudFx`, `DudSound`).
 * Probe: `zhbo-assets fx --impacts` prints rows 11/15 cell by cell and each projectile def's
   activation distance, dud effect/sound and bounce array.
+
+## Exit hits and the vehicle overrides: who sets BO2's impact flags (2026-10-31, `v1/projectile-sounds`)
+
+The two flags the bullet-impact entry left open, traced to their callers (t6mp; probes in
+`~/.opencode/plan/projectile-sounds/`).
+
+* **Exit (flag 4).** `FUN_00533210` takes the exit row (small 1, large 4, AP 8, xtreme 10, shotgun 6,
+  bolt 19 with the flag) and the exit family: `prj_bullet_impact_{small,large,ap,xtreme}_exit`,
+  `prj_bulletspray_impact_small_exit`, `prj_bolt_impact_exit` (`FUN_004d4440`, strings at
+  `0xb1a530`…`0xb1a498`), alias `<family>_<surface>`. Set at **penetration exits only**: the
+  client's bullet loop `FUN_00538e40` (through `FUN_00538b80`) and the server's `FUN_005d0350`
+  (`FUN_005cf860(…, flags | 4)`) send one at the far side of each penetrated surface, at most two
+  per shot; `FUN_005385e0` adds a water exit (surface 20) for a downward shot. The mod models no
+  wall penetration, and its FMJ pass-through of a soldier emits only the entry impact. Carrying an
+  exit hit needs an exit bit on the ABI's impact record (`zhbo_impact_fx`'s row lookup), so it is
+  left to the integrator — not done here.
+* **Vehicle (flags 0x10/0x20)** replace the sound with `prj_impact_veh_armor_<impactType name>` /
+  `prj_impact_veh_locomotion_<…>` (`FUN_004d43a0`, `%s_%s` over the 16 type names). **No MP caller
+  sets either**: the server's flag byte (`+0xf6`, written by `FUN_005cf860` and ORed only in
+  `FUN_005cfc60`) carries bit 0 (hit location 1/2) and bit 4; the client trace passes `{0,1} | 4`;
+  every other writer of `+0xf6` belongs to another entity type. The override is unreachable in
+  t6mp, so the mod's metal-surface hit on a Zero Hour vehicle is BO2's behavior and nothing changes.
+
+Measured (v1/explosion-sounds conf2 → this branch): weapons **550,355 → 550,355**, cac 881 → 881,
+gap clusters 199 → 199, every column identical — the schema has no bounce/dud/activation column,
+as expected. Real-install suite green. No ABI change; `WEAPON_FIELDS` 90 → 94 and the archive
+content changed (VERSION bump is the integrator's). In-game check owed: a frag rattles per surface,
+a point-blank noob tube thuds as a dud.

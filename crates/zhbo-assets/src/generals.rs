@@ -880,7 +880,9 @@ mod tests {
             assert!(e == zhbo_core::sounds::NO_SOUND || audio.contains(&format!("AudioEvent {e}\n")), "{e} ships no AudioEvent");
         }
         assert!(impacts.lines().any(|l| l.starts_with("impact 6 dirt ")), "no bounce dust on dirt");
-        assert!(!impacts.lines().any(|l| l.starts_with("impact 6 flesh ") || l.starts_with("impact 6 default ")), "the bounce row has no flesh cell and no fallback");
+        // Cell by cell: BO2's own default-surface cell is a row, its empty flesh cell is none.
+        assert!(!impacts.lines().any(|l| l.starts_with("impact 6 flesh ")), "the bounce row has no flesh cell");
+        assert!(impacts.lines().any(|l| l.starts_with("impact 11 flesh ")), "the dud row's flesh cell (footstep dust)");
         let gl = table.weapons.iter().find(|d| d.id == "gl_an94_mp").expect("gl_an94_mp");
         assert!(gl.activate_dist > 0.0 && gl.impact_explode, "the launcher grenade arms after a distance");
         assert_eq!(gl.dud_sound, "ZHBO_BO2_Snd_wpn_grenade_bounce_flesh");
