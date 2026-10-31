@@ -279,6 +279,14 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     }
 
     let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(bo2_dir, f.zone)).collect::<Result<_, _>>()?;
+    // The Assault Shield's collision boxes, posed on the MP body (the factions share its skeleton).
+    if table.weapons.iter().any(|d| crate::weapons::is_shield_id(&d.id, &bo2)) {
+        let body = xmodel::find(&zones[0], FACTIONS[0].body).map_err(|e| e.to_string())?;
+        let geometry = crate::shield::geometry(&common, &body)?;
+        for d in table.weapons.iter_mut().filter(|d| crate::weapons::is_shield_id(&d.id, &bo2)) {
+            d.shield = Some(geometry);
+        }
+    }
     let base_count = converted_base.len();
     let (vm_summary, mut clips) = viewmodels::weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &atts, &mut table.weapons, &converted, base_count)?;
     summary.push(vm_summary);

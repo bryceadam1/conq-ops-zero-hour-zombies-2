@@ -75,9 +75,10 @@ pub(super) fn slots_of(primary: bool, wildcards: &[Wildcard]) -> Vec<&'static st
     }
 }
 
-/// The gun ids a weapon slot lists, in catalog order (the view groups them into categories).
+/// The gun ids a weapon slot lists, in catalog order (the view groups them into categories); the
+/// Assault Shield is one of the primary slot's items.
 pub(super) fn gun_ids(slots: &[&str]) -> Vec<&'static str> {
-    cac_entries().into_iter().filter(|d| d.class.is_gun() && slots.contains(&d.cac_slot.as_str())).map(|d| d.id.as_str()).collect()
+    cac_entries().into_iter().filter(|d| d.class.is_slot_weapon() && slots.contains(&d.cac_slot.as_str())).map(|d| d.id.as_str()).collect()
 }
 
 /// The offhand ids the lethal (`true`) or the tactical slot lists: the items of its statstable
@@ -92,10 +93,10 @@ pub fn fits_offhand(id: &str, lethal: bool) -> bool {
     weapons::catalog().get(id).is_some_and(|d| d.class.is_offhand() && d.cac_slot == offhand_slot(lethal))
 }
 
-/// Whether the item `base` is one the slot may hold: a gun item of the slot's own, or a primary
+/// Whether the item `base` is one the slot may hold: a gun (or shield) item of the slot's own, or a primary
 /// item in the secondary slot (which Overkill allows, see [`super::wildcards_of`]).
 pub fn fits_slot(base: &str, primary: bool) -> bool {
-    weapons::catalog().get(base).is_some_and(|d| d.class.is_gun() && slots_of(primary, &[Wildcard::Overkill]).contains(&d.cac_slot.as_str()))
+    weapons::catalog().get(base).is_some_and(|d| d.class.is_slot_weapon() && slots_of(primary, &[Wildcard::Overkill]).contains(&d.cac_slot.as_str()))
 }
 
 /// Whether the item `base` is a primary item (in the secondary slot it needs Overkill).

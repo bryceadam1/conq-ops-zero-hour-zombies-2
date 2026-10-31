@@ -324,7 +324,10 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     // Every offhand, thrown, set down or held up, runs the arsenal's one offhand state machine
     // (`Arsenal::step_offhand`), which is BO2's grenade offhand path (`FUN_008e2bb0` takes only
     // weapType grenade or mine there, and the arsenal has nothing mine-specific): a grenade.
+    // The Assault Shield's own branches: the sim's shield block, deploy and self-melee
+    // (`WeaponDef::is_shield`).
     let weap_type = match d.class {
+        _ if d.is_shield() => Some("riotshield"),
         Class::Melee => Some("melee"),
         c if c.is_offhand() => Some("grenade"),
         _ if launches => Some("projectile"),
@@ -338,7 +341,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         Class::Pistol => Some("pistol"),
         Class::Launcher => Some("rocketlauncher"),
         Class::Melee => Some("melee"),
-        Class::Special | Class::Lethal | Class::Tactical | Class::Equipment => None,
+        Class::Special | Class::Shield | Class::Lethal | Class::Tactical | Class::Equipment => None,
     };
     // BO2's `inventoryType`, carried on the def (combinations inherit their base's).
     let inventory = d.inventory.name();

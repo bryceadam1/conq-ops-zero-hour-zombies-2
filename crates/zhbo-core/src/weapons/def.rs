@@ -25,6 +25,9 @@ pub enum Class {
     Pistol,
     Launcher,
     Special,
+    /// The Assault Shield (BO2 weapType `riotshield`): a primary that blocks, deploys and melees
+    /// with itself, never fires a round.
+    Shield,
     Melee,
     Lethal,
     Tactical,
@@ -33,7 +36,11 @@ pub enum Class {
 
 impl Class {
     pub fn is_gun(self) -> bool {
-        !matches!(self, Class::Melee | Class::Lethal | Class::Tactical | Class::Equipment)
+        !matches!(self, Class::Shield | Class::Melee | Class::Lethal | Class::Tactical | Class::Equipment)
+    }
+    /// A weapon of the primary/secondary slots: a gun or the Assault Shield.
+    pub fn is_slot_weapon(self) -> bool {
+        self.is_gun() || self == Class::Shield
     }
     pub fn is_offhand(self) -> bool {
         matches!(self, Class::Lethal | Class::Tactical | Class::Equipment)
@@ -48,6 +55,7 @@ impl Class {
             Class::Pistol => "pistol",
             Class::Launcher => "launcher",
             Class::Special => "special",
+            Class::Shield => "shield",
             Class::Melee => "melee",
             Class::Lethal => "lethal",
             Class::Tactical => "tactical",
@@ -64,7 +72,7 @@ impl Class {
             Class::Shotgun => "weapon_cqb",
             Class::Pistol => "weapon_pistol",
             Class::Launcher => "weapon_launcher",
-            Class::Special => "weapon_special",
+            Class::Special | Class::Shield => "weapon_special",
             Class::Lethal | Class::Tactical | Class::Equipment => "weapon_grenade",
             Class::Melee => "",
         }
@@ -79,6 +87,7 @@ impl Class {
             Class::Pistol,
             Class::Launcher,
             Class::Special,
+            Class::Shield,
             Class::Melee,
             Class::Lethal,
             Class::Tactical,
@@ -334,6 +343,41 @@ pub struct WeaponDef {
     pub overlay_material_low_res: String,
     /// `weapOverlayReticle_t`: which reticle the overlay draws (0: none).
     pub overlay_reticle: u32,
+    /// An Assault Shield (BO2 weapType `riotshield`): its held and stowed collision boxes, posed on
+    /// the body by the converter. `None` for every other weapon.
+    pub shield: Option<ShieldGeometry>,
+}
+
+/// One posed shield collision box: BO2's riot-shield collmap (hit-location rank 101, above every
+/// body box) as the model's bounds on its tag. Inches, in the body's model space (x forward,
+/// y left, z up from the feet); `rot` (x, y, z, w) and `pos` place the box's own frame, whose x
+/// axis is the tag's forward (the axis BO2's blast protection measures against, `FUN_0066f680`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ShieldBox {
+    pub rot: [f32; 4],
+    pub pos: [f32; 3],
+    pub mins: [f32; 3],
+    pub maxs: [f32; 3],
+}
+
+impl ShieldBox {
+    pub const NUMS: usize = 13;
+    pub fn to_nums(&self) -> Vec<f32> {
+        [&self.rot[..], &self.pos[..], &self.mins[..], &self.maxs[..]].concat()
+    }
+    pub fn from_nums(n: &[f32]) -> Self {
+        let a = |i: usize| [n[i], n[i + 1], n[i + 2]];
+        ShieldBox { rot: [n[0], n[1], n[2], n[3]], pos: a(4), mins: a(7), maxs: a(10) }
+    }
+}
+
+/// The Assault Shield's two collision boxes (`_riotshield.gsc`): `t6_wpn_shield_carry_world` on
+/// `tag_weapon_left` while it is the weapon up, `t6_wpn_shield_stow_world` on `tag_stowed_back`
+/// while it is carried but not up.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ShieldGeometry {
+    pub held: ShieldBox,
+    pub stowed: ShieldBox,
 }
 
 /// One BO2 camouflage option (`mp/attachmenttable.csv`'s rows with `camo` in column 1): the id
@@ -573,6 +617,7 @@ impl Default for WeaponDef {
             overlay_material: String::new(),
             overlay_material_low_res: String::new(),
             overlay_reticle: 0,
+            shield: None,
         }
     }
 }
@@ -585,6 +630,11 @@ pub const MELEE_RANGE: f32 = inches(64.0);
 pub const MELEE_FX_WEAPON: &str = "ZHBO_Knife_FX";
 
 impl WeaponDef {
+    /// An Assault Shield: a primary that blocks, deploys and melees with itself.
+    pub fn is_shield(&self) -> bool {
+        self.class == Class::Shield
+    }
+
     /// The category Create-a-Class lists this weapon under: the gun class whose BO2 group is its
     /// statstable group ([`WeaponDef::cac_group`]), else its own class (not a CaC item, or a
     /// grenade-group item, which keeps its lethal/tactical/equipment class).

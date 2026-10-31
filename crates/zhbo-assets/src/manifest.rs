@@ -61,8 +61,8 @@ pub fn named_effect(name: &str) -> Option<Effect> {
 pub const STICKY: &[&str] = &["sticky_grenade_mp", "crossbow_mp", "satchel_charge_mp", "proximity_grenade_mp"];
 
 /// Weapons that exist in BO2's files but the mod never hands out (turrets and killstreak props
-/// are filtered by name patterns; these two are ordinary guns BO2 never gives in multiplayer).
-pub const EXCLUDED_WEAPONS: &[&str] = &["minigun_mp", "riotshield_mp"];
+/// are filtered by name patterns; this one is an ordinary gun BO2 never gives in multiplayer).
+pub const EXCLUDED_WEAPONS: &[&str] = &["minigun_mp"];
 
 /// A few weapons' own display keys have no text; BO2's menus use these instead.
 pub fn display_name_key(key: &str) -> &str {

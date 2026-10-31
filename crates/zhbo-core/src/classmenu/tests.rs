@@ -896,3 +896,11 @@ fn the_offhand_slots_list_their_statstable_items_placed_equipment_included() {
     assert_eq!(e.draft.lethal, "claymore_mp");
     assert_eq!(e.current_option_index(), i);
 }
+
+#[test]
+fn the_primary_slot_offers_the_assault_shield_and_repair_keeps_it() {
+    let ids = gun_ids(&items::slots_of(true, &[]));
+    assert!(ids.contains(&"riotshield_mp"), "{ids:?}");
+    assert!(!gun_ids(&items::slots_of(false, &[])).contains(&"riotshield_mp"), "a primary item only");
+    assert!(items::fits_slot("riotshield_mp", true));
+}

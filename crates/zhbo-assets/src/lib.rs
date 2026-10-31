@@ -26,4 +26,5 @@ pub mod fx;
 pub mod sfx;
 pub mod manifest;
 pub mod screenshot;
+pub mod shield;
 pub mod weapons;

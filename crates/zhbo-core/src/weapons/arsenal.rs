@@ -64,10 +64,11 @@ pub struct WeaponState {
 
 impl WeaponState {
     pub fn new(def: &'static WeaponDef) -> Self {
-        // A gun has its magazine; melee and the offhand classes have no rounds (the knife's table
-        // entry carries none, so its default clip would otherwise read as 30 rounds to the RTS
-        // ammo report and the unarmed no-fire veto).
-        let gun = def.class.is_gun();
+        // A gun has its magazine (the Assault Shield's one round is its deploy); melee and the
+        // offhand classes have no rounds (the knife's table entry carries none, so its default
+        // clip would otherwise read as 30 rounds to the RTS ammo report and the unarmed no-fire
+        // veto).
+        let gun = def.class.is_slot_weapon();
         Self {
             def,
             main: def,
@@ -898,8 +899,9 @@ impl Arsenal {
         // while sprinting or until the weapon is back up from a sprint.
         let def = self.current().def;
         let sprint_ready = self.sprint_ready();
-        // Only a gun aims; a knife or a held offhand has no sights (and no ADS zoom).
-        let wants_ads = def.class.is_gun() && held & buttons::ADS != 0 && !sprinting && sprint_ready && self.raise_left <= 0.0 && self.drop_left <= 0.0 && self.melee_recover_left <= 0.0 && !self.current().is_reloading();
+        // Only a gun aims, and the Assault Shield (raised, `viewmodel_riotshield_ads_up`); a knife
+        // or a held offhand has no sights (and no ADS zoom).
+        let wants_ads = def.class.is_slot_weapon() && held & buttons::ADS != 0 && !sprinting && sprint_ready && self.raise_left <= 0.0 && self.drop_left <= 0.0 && self.melee_recover_left <= 0.0 && !self.current().is_reloading();
         let quickdraw = if self.has_specialty(Specialty::FastAds) && self.tuning.perk_weap_ads_multiplier > 0.0 { self.tuning.perk_weap_ads_multiplier } else { 1.0 };
         self.ads = if wants_ads {
             (self.ads + dt / (def.ads_in_time.max(1e-3) * quickdraw)).min(1.0)
@@ -907,7 +909,8 @@ impl Arsenal {
             (self.ads - dt / (def.ads_out_time.max(1e-3) * quickdraw)).max(0.0)
         };
 
-        if def.class == Class::Melee || def.class.is_offhand() {
+        // The Assault Shield fires no round: its trigger deploys it (the sim's shield placement).
+        if def.class == Class::Melee || def.class == Class::Shield || def.class.is_offhand() {
             return;
         }
 

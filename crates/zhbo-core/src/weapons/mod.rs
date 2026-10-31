@@ -553,5 +553,29 @@ mod swap_tests {
         assert_eq!(a.active, 0);
         assert_eq!(a.current().ammo, 0, "{:?}", a.current().reload);
     }
-}
 
+    #[test]
+    fn the_assault_shield_is_a_primary_that_melees_with_itself_and_fires_nothing() {
+        let shield = catalog().get("riotshield_mp").expect("the built-in shield");
+        assert!(shield.is_shield() && shield.shield.is_some());
+        assert!(!shield.class.is_gun() && shield.class.is_slot_weapon());
+        assert_eq!(shield.cac_class(), Class::Special, "BO2 lists it under SPECIALS");
+        // `_scoreevents.gsc:375`: the shield's melee is its own, not the class knife's stab.
+        let knife = catalog().get(CLASS_MELEE).unwrap();
+        assert_eq!(melee_weapon(shield, knife).id, "riotshield_mp");
+        let mut a = Arsenal::new();
+        a.weapons[0] = WeaponState::new(shield);
+        a.raise_left = 0.0;
+        assert_eq!(a.current().ammo, 1, "its one round is the deploy");
+        let mut rng = Rng::new(1);
+        let mut out = Vec::new();
+        a.step(buttons::FIRE, buttons::FIRE, false, 0, 0.0, &mut rng, &mut out);
+        assert!(!out.iter().any(|w| matches!(w, WeaponAction::Fire { .. } | WeaponAction::Launch { .. })), "{out:?}");
+        // It raises (ADS) like a gun: BO2's `viewmodel_riotshield_ads_up`.
+        for _ in 0..30 {
+            a.step(buttons::ADS, 0, false, 0, 0.0, &mut rng, &mut out);
+        }
+        assert!(a.ads > 0.99);
+        assert_eq!(a.move_scale(), shield.ads_move_scale);
+    }
+}

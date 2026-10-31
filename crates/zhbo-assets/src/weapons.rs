@@ -536,7 +536,21 @@ pub fn is_player_weapon(w: &Weapon) -> bool {
     if LETHALS.contains(&w.name.as_str()) || TACTICALS.contains(&w.name.as_str()) {
         return true;
     }
+    // The Assault Shield: a primary of weapType `riotshield` (not a gun to `is_gun`).
+    if is_shield(w) {
+        return !EXCLUDED_WEAPONS.contains(&w.name.as_str());
+    }
     w.is_gun() && !w.name.contains("wager") && !w.name.starts_with("inventory_") && w.view_model.is_some() && !EXCLUDED_WEAPONS.contains(&w.name.as_str())
+}
+
+/// BO2's riot shield: weapType `riotshield` in the primary inventory (`riotshield_mp`).
+pub fn is_shield(w: &Weapon) -> bool {
+    w.weap_type == bo2::kind::RIOTSHIELD && w.inventory == bo2::inventory::PRIMARY && w.view_model.is_some()
+}
+
+/// Whether the converted weapon `id` is a riot shield in BO2's data.
+pub fn is_shield_id(id: &str, all: &[Weapon]) -> bool {
+    all.iter().any(|w| w.name == id && is_shield(w))
 }
 
 fn class_of(w: &Weapon) -> Class {
@@ -558,6 +572,9 @@ fn class_of(w: &Weapon) -> Class {
     }
     if w.weap_type == bo2::kind::MELEE {
         return Class::Melee;
+    }
+    if is_shield(w) {
+        return Class::Shield;
     }
     if w.view_model.as_deref().is_some_and(|m| m.contains("_sniper_")) {
         return Class::Sniper;
@@ -830,6 +847,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         overlay_material: w.overlay_material.clone(),
         overlay_material_low_res: w.overlay_material_low_res.clone(),
         overlay_reticle: w.overlay_reticle,
+        // Posed on the body by `shield::geometry` once the zones are open (`generals::files`).
+        shield: None,
     };
     #[cfg(debug_assertions)]
     {

@@ -77,9 +77,9 @@ fn repair_weapon(c: &mut CustomClass, primary: bool, cleared: &mut Cleared) {
         cleared.push(slot);
         return;
     };
-    // A non-gun, or a gun BO2 does not offer in this slot (a `secondary` item in the primary, a
+    // A non-gun (the shield counts as one of the slot's weapons), or a gun BO2 does not offer in this slot (a `secondary` item in the primary, a
     // weapon that is no class item at all), is not a valid item for it (`CheckItems`).
-    if !def.class.is_gun() || !crate::classmenu::items::fits_slot(base, primary) {
+    if !def.class.is_slot_weapon() || !crate::classmenu::items::fits_slot(base, primary) {
         id.clear();
         cleared.push(slot);
         return;

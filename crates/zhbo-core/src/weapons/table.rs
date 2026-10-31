@@ -6,7 +6,7 @@
 ** License, or (at your option) any later version.
 */
 
-use super::def::{CamoOption, Class, Effect, FireMode, Inventory, Kind, Kick, Place, WeaponDef};
+use super::def::{CamoOption, Class, Effect, FireMode, Inventory, Kind, Kick, Place, ShieldBox, ShieldGeometry, WeaponDef};
 use super::feel::{nums, v3, GunKick, Sway};
 use super::specialty::Specialties;
 use crate::attachments::AttachmentDef;
@@ -700,6 +700,17 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("OverlayReticle", "The overlay reticle enum (`weapOverlayReticle_t`).", FieldKind::Num,
         |d: &WeaponDef| d.overlay_reticle.to_string(),
         |d: &mut WeaponDef, v: Values| { d.overlay_reticle = v.text_num()? as u32; Ok(()) }),
+    field!("Shield", "An Assault Shield's held and stowed collision boxes, each rotation (x y z w), position, mins and maxs in inches on the posed body; empty for every other weapon.", FieldKind::Words,
+        |d: &WeaponDef| d.shield.map_or(String::new(), |g| nums(&[g.held.to_nums(), g.stowed.to_nums()].concat())),
+        |d: &mut WeaponDef, v: Values| {
+            d.shield = if v.text.is_empty() {
+                None
+            } else {
+                v.need(2 * ShieldBox::NUMS)?;
+                Some(ShieldGeometry { held: ShieldBox::from_nums(v.nums), stowed: ShieldBox::from_nums(&v.nums[ShieldBox::NUMS..]) })
+            };
+            Ok(())
+        }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -759,7 +770,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 87);
+        assert_eq!(WEAPON_FIELDS.len(), 88);
         assert_eq!(ATTACHMENT_FIELDS.len(), 18);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }
