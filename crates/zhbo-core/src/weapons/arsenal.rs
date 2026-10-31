@@ -841,7 +841,12 @@ impl Arsenal {
             out.push(WeaponAction::AltToggled);
         }
 
-        // Swap (never during the melee states 0x13-0x15, `FUN_008e0e60`).
+        // Swap (held back during the melee states 0x13-0x15, `FUN_008e0e60`).
+        // The melee states hold a switch back the same way (`FUN_008e0e60` returns at 0x13-0x15
+        // without touching the request): it happens once the swing and re-raise are done.
+        if pressed & buttons::SWAP_WEAPON != 0 && meleeing {
+            self.swaps_pending = self.swaps_pending.wrapping_add(1);
+        }
         let swaps = if self.swaps_pending > 0 { self.swaps_pending as usize } else { (pressed & buttons::SWAP_WEAPON != 0) as usize };
         if swaps > 0 && self.weapons.len() > 1 && !meleeing {
             self.swaps_pending = 0;

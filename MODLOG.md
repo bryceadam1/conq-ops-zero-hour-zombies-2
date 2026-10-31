@@ -5012,3 +5012,13 @@ data the mod does not branch on either.
 * The table gains a field: the archive VERSION must bump (integrator).
 
 Measured: weapons 769,946 → 769,940 (`inventory` 6 → 0); cac 572 (identical); gap clusters 201 → 200.
+
+## A switch pressed mid-melee happens after it (2026-10-31, `v1/offhand-rules`)
+
+`FUN_008e0e60` (the switch check) returns at its top for states 0x13, 0x14 and 0x15 without touching
+the command's weapon selection — the same hold-back as during the offhand states — so a switch pressed
+during a swing or the gun's re-raise goes through once they end. The mod dropped it. Now the press
+joins `Arsenal::swaps_pending`. Test: `a_switch_during_a_melee_happens_after_it`.
+
+Found, not done: the same check also holds a switch back while a shot's `weaponTime` runs (states 6
+and 0x28 with `weaponTime != 0`); the mod switches at once mid-shot.

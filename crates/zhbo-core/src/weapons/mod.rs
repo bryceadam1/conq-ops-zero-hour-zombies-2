@@ -180,6 +180,26 @@ mod tests {
         }
     }
 
+    /// A switch pressed mid-swing is held back, not dropped: it happens once the swing and the
+    /// gun's re-raise are done (`FUN_008e0e60` returns at 0x13-0x15 and the command keeps it).
+    #[test]
+    fn a_switch_during_a_melee_happens_after_it() {
+        let mut rng = Rng::new(1);
+        let mut a = Arsenal::with_loadout(Loadout::default());
+        a.raise_left = 0.0;
+        let mut out = Vec::new();
+        a.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
+        a.step(buttons::SWAP_WEAPON, buttons::SWAP_WEAPON, false, 0, 0.0, &mut rng, &mut out);
+        assert_eq!(a.active, 0, "not during the swing");
+        while a.melee_left > 0.0 || a.melee_recover_left > 0.0 {
+            out.clear();
+            a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+            assert!(!out.contains(&WeaponAction::Swapped) || (a.melee_left <= 0.0 && a.melee_recover_left <= 0.0));
+        }
+        a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+        assert_eq!(a.active, 1, "switched afterwards");
+    }
+
     /// The weapon-switch key during a non-cancelable offhand (the frag): the switch is kept and
     /// happens once the offhand is done; on a cancelable one it is the cancel, no switch.
     #[test]
