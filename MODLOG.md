@@ -4853,3 +4853,45 @@ through a 10-in torso box keeps `1 − 10/cos(pitch)/64` for the soldier behind.
 green, incl. the new `the_soldier_hit_boxes_are_the_mp_bodys_standing`. In-game check owed:
 headshots land on the drawn head of Zero Hour's infantry (their W3D heads stand 14.3–16 units,
 taller than the 72-in body), body shots near the arms.
+
+## Hit boxes follow the General's stance; body clips are BO2's playeranim picks (2026-10-31, `v1/stance-hitboxes`)
+
+Stacked on `v1/hit-geometry`, which traced every soldier as the MP body's boxes fixed at the stand
+idle. Notes and the dumped script in `~/.opencode/plan/stance-hitboxes/`.
+
+* **BO2's pose source.** The player trace (`FUN_006f2910`) builds the part bits
+  (`FUN_00782930`: bones with `radiusSquared ≥ 4`, not hidden) and calls `FUN_00649b50`
+  (G_DObjCalcPose: the entity handler's controller, then DObjCalcSkel) — the pose the server
+  animated, not a per-stance table. The server's player animation comes from
+  `mp/playeranim.script` (a common_mp rawfile): per movement type the first entry whose
+  conditions (stance, weapon_position, weaponclass, playerAnimType, direction, movestatus, perk…)
+  hold.
+* **The mod.** The converter poses the boxes at the first frame of each of the 12 body states'
+  clips (`HitBox = <state> <loc> <bone> …`); `hitloc::Poses` groups them (a missing state takes
+  the clip fallbacks' nearest stance). A General the sim moves is traced in the pose of
+  `PlayerSim::body_state` (`nativebody::state_of` over the sim's stance, speed, sprint, ADS,
+  sidearm — deterministic, never the render clock) at his drawn `GENERAL_SCALE` (`Shape::Body`
+  gained `scale`); everything else stands. Only Generals the sim moves have the state, so this
+  matters when a sim player's rounds meet another sim player's General.
+* **Zero Hour infantry stand.** ZH's only prone mechanism, `ProneUpdate`, is commented out in
+  every object of `INIZH.big`; there is no ZH state to map.
+* **Gotcha: the body clips were partly wrong.** Posing per state exposed that sprint had resolved
+  to `viewmodel_mp7_sprint_loop` (a viewmodel clip on the body skeleton: near bind pose, head at
+  67 in), and walk / crouch walk / prone idle / prone crawl had no name in the candidate lists
+  (prone idle scanned to the dual-wield `pb_prone_dw_idle_v1`). `zhbo_assets::playeranim` parses
+  the script (DEFINES incl. `all NOT`, `AND` alternatives, first `both`/`legs` clip) and
+  `thirdperson::clips` asks it first, as a rifleman (prone movement = `walk`, the script having
+  no prone run; crouched movement = `run`): stand `pb_stand_alert`, walk
+  `pb_stand_shoot_walk_forward`, run `pb_combatrun_forward_loop`, sprint `pb_sprint`, crouch
+  `pb_crouch_alert` / `pb_crouch_run_forward`, prone `pb_prone_aim` / `pb_prone_crawl`, ADS and
+  pistol as before. The plausible scan now needs a `pb_` clip. The third-person body draws the same
+  clips, so it changes too (in-game look owed). Head centres: stand 59.9 in, crouch 44.1, prone
+  14.7 (up on the elbows), sprint 53.5.
+* **`info/mp_lochit_dmgtable` not ported:** `FUN_005f0490` reads it only for weapons whose type is
+  not bullet/grenade/projectile, or for no weapon; melee (MOD 7) skips the multiplier entirely, and
+  every explosive def's body slots are 1 — no mod damage path reaches it.
+* Not carried: the aim-pitch torso/head controllers, strafe/back directions (the sim's body state
+  is forward-only), prone ADS (`pb_prone_aim_ads`, no state), per-weapon-class clips (SMG/LMG
+  sprint).
+* The table's `HitBox` line format changed (state prefix, 16 tokens) and the table now holds
+  12 × 20 boxes: the archive/table VERSION bump is the integrator's. No ABI change.

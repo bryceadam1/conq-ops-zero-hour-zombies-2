@@ -391,8 +391,13 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
 * **Soldier hit geometry and locations** (t6mp `FUN_007837a0`, `FUN_005f05c0`; `zhbo_core::hitloc`).
   An infantry target is BO2's MP body's hit boxes (`HitBox` lines of the weapon table: each bone's
   `XBoneInfo` box with `radiusSquared ≥ 4` and its `partClassification` location, posed by the
-  converter at the stand-idle clip's first frame — the sim has no BO2 animation state, so the pose
-  is fixed, never render-time), standing on the object's position and turned by its yaw. Of the
+  converter at the first frame of every body state's clip: `HitBox = <state> <loc> <bone> …`),
+  standing on the object's position and turned by its yaw. BO2 traces the pose the server animated
+  (G_DObjCalcPose, `FUN_00649b50`); a General the sim moves takes the pose of his body state
+  (`PlayerSim::body_state` = `nativebody::state_of` over the sim's stance, speed, sprint, ADS and
+  sidearm — never the render clock), at his drawn `GENERAL_SCALE`; Zero Hour infantry (no BO2
+  animation state) stand at 1.0. The state clips are BO2's `mp/playeranim.script` picks for a
+  rifleman (`zhbo_assets::playeranim`), the same clips the third-person body draws. Of the
   boxes a ray crosses the highest-ranked location wins, nearest among equals (`bRifleBullet` ranks
   the head first; other bullets rank the body alike). A soldier's damage is multiplied by the
   def's `location_multipliers[location]` (a combination's resolved by `attachments::apply`:
