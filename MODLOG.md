@@ -4649,3 +4649,32 @@ clusters 204 → 202; nothing else moved.
   GSC's `isbonuscardactive` indices do not follow it (`_challenges.gsc:341,730`). The mod's
   wildcards are a core enum, so emitting it needs the statstable's bonus-card rows carried as data
   (beside `perk_rows`) — queued as "wildcards from the statstable", not done here.
+
+## Wildcards from the statstable (2026-10-31, `v1/wildcards`)
+
+The wildcards were a core enum with names, order and cost in code. The converter now carries
+BO2's `bonuscard` rows of the player's `mp/statstable.csv` beside the perk rows
+(`weapons::bonus_card_rows` → `BonusCard <reference>` blocks: localized name and description,
+image, column-13 loadout slot, cost, sort key, index, unlock level). `Catalog::bonus_cards` lists
+them in the grid's order: `CoD.GetUnlockablesByGroupName("bonuscard")` sorted by
+`UnlockablesComparisonFunction` (sort key, then index; `codbase.lua:6466-6500`, G17). The
+`Wildcard` enum survives as the behaviour identity (Gunfighter caps, Overkill's list, Greed rows,
+equip aliases), tied to its card by the statstable reference; name, description and cost are the
+card's. `classmenu::wildcard_list()` drives the grid; `Draft::spent` charges the card's cost.
+Tactician and Danger Close now exclude each other (`bonuscardgridbutton.lua:239-275`). The grid's
+lower panel draws the card's name (Big) and description (Default, 0.4), per `cacbonuscards.lua`.
+
+Gotchas:
+* **Expected-side fix.** `bo2/cac.rs` ranked bonus cards per column-13 slot (all 0 except
+  two_tacticals = 1). The grid is ONE list of the group (`cacbonuscards.lua:197-199` →
+  `Engine.GetUnlockablesByGroupName`, G17 `FUN_008d1a10`), so wildcards rank over the group now;
+  perks keep the per-slot ranking.
+* A table converted before this (no `BonusCard` blocks) installs the built-in stand-ins, which an
+  ignored install test pins equal to the converted rows. The archive VERSION must still bump
+  (integrator) so players get the converted rows.
+* Profiles store no cards (re-derived from the class), so old profiles load unchanged.
+* The screenshot harness aborted on the scope overlays' MappedImage pages (named without the
+  `.tga` the archive stores); it now tries the extension, and a missing page only falls back.
+
+Measured: cac 555 → 532 (`slot` 8 → 0, cluster gone; `description` 90 → 82; `order` 441 → 434),
+weapons 781,251 unchanged, gap clusters 202 → 201.

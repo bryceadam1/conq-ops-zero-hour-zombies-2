@@ -503,6 +503,13 @@ copies in `weapons/perks.rs`). Gameplay tests specialties, never perk names:
 `Arsenal::has_specialty` is BO2's rule (the class's perks, or the weapon in hand's own bits and
 its attachments'; G1).
 
+**Wildcards are the statstable's bonus cards.** The converted weapon table's `BonusCard <reference>`
+blocks are BO2's `bonuscard` rows (name, description, image, column-13 loadout slot, cost, sort
+key, index, unlock level); the catalog lists them in the grid's order (sort key, then index) and
+falls back to the built-in stand-ins when a table predates them. The editor's rules key on the
+card's statstable reference (`classmenu::Wildcard::reference`), never on a list position; a
+class's cards are not stored in the profile but re-derived from what it holds.
+
 ## Versioning
 
 `ZHBO_ABI_VERSION` (`host/zhbo/zhbo_core.h`) must equal `zhbo_abi_version()`; struct sizes are asserted
