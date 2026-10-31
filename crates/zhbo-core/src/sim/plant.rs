@@ -103,49 +103,50 @@ fn ti_box_clear(body: &Body, solids: &[Target]) -> bool {
     })
 }
 
-/// Longest flight [`plant_point`] follows before giving up and setting the item at the feet.
+/// Longest straight flight [`plant_point`] follows before setting the item at the feet.
 const MAX_FLIGHT: f32 = 10.0;
 
-/// Where BO2 puts a planted item down. Its offhand fire (`FUN_008e2ac0`, event 0x30) launches the
-/// item from the eye with `forward * iProjectileSpeed + up * iProjectileSpeedUp` — the claymore's
-/// 100/-10000 drops it straight down in front of the feet, the Bouncing Betty (650) and the Trophy
-/// System (575) are lobbed under gravity when the def has it — and the item settles where it first
-/// meets the ground (the mod does not bounce it). An item with no launch speed (the Tactical
-/// Insertion) goes down at the feet.
-pub fn plant_point(def: &WeaponDef, body: &Body, yaw: f32, pitch: f32, host: &dyn LogicHost) -> Vec3 {
+/// Where BO2 puts a planted item down, if it goes straight there. Its offhand fire
+/// (`FUN_008e2ac0`, event 0x30) launches the item from the eye with `forward * iProjectileSpeed +
+/// up * iProjectileSpeedUp` and the item settles where it lands: an item with no launch speed (the
+/// Tactical Insertion) at the feet; one without gravity, or thrown down (the claymore's 100/-10000,
+/// straight down a hair in front of the feet), where that line meets the ground. `None` for a lobbed
+/// one (gravity and an upward-or-level launch: the Bouncing Betty's 650, the Trophy System's 575):
+/// it flies as a grenade, bouncing and settling with the projectile physics, and is placed where it
+/// comes to rest ([`plant_launch`]).
+pub fn plant_point(def: &WeaponDef, body: &Body, yaw: f32, pitch: f32, host: &dyn LogicHost) -> Option<Vec3> {
     let ground = |x: f32, y: f32| host.ground_height(x, y);
     let feet = Vec3::new(body.pos.x, body.pos.y, ground(body.pos.x, body.pos.y));
-    let vel = dir_from_angles(yaw, pitch) * def.projectile_speed + Vec3::new(0.0, 0.0, def.projectile_speed_up);
-    if vel.length() <= 1e-6 {
-        return feet;
+    let vel = plant_velocity(def, yaw, pitch);
+    let len = vel.length();
+    if len <= 1e-6 {
+        return Some(feet);
+    }
+    if def.projectile_gravity && vel.z > -len * 0.5 {
+        return None;
     }
     let start = body.eye();
-    let landed = |p: Vec3| Vec3::new(p.x, p.y, ground(p.x, p.y));
-    if !def.projectile_gravity {
-        let len = vel.length();
-        let dir = vel * (1.0 / len);
-        return match trace_terrain(start, dir, len * MAX_FLIGHT, &ground) {
-            Some(t) => landed(start + dir * t),
-            None => feet,
-        };
-    }
-    // Under gravity: step the arc a logic frame at a time, settling at the first step below
-    // the ground (that step's ray found by the terrain trace).
-    let (mut p, mut v) = (start, vel);
-    let mut flown = 0.0;
-    while flown < MAX_FLIGHT {
-        v.z -= crate::projectiles::GRAVITY * crate::units::LOGIC_DT;
-        let step = v * crate::units::LOGIC_DT;
-        let len = step.length();
-        if len > 1e-6 {
-            if let Some(t) = trace_terrain(p, step * (1.0 / len), len, &ground) {
-                return landed(p + step * (t / len));
-            }
+    let dir = vel * (1.0 / len);
+    Some(match trace_terrain(start, dir, len * MAX_FLIGHT, &ground) {
+        Some(t) => {
+            let p = start + dir * t;
+            Vec3::new(p.x, p.y, ground(p.x, p.y))
         }
-        p += step;
-        flown += crate::units::LOGIC_DT;
-    }
-    feet
+        None => feet,
+    })
+}
+
+/// BO2's launch velocity for a planted item (`forward * iProjectileSpeed + up * iProjectileSpeedUp`).
+pub fn plant_velocity(def: &WeaponDef, yaw: f32, pitch: f32) -> Vec3 {
+    dir_from_angles(yaw, pitch) * def.projectile_speed + Vec3::new(0.0, 0.0, def.projectile_speed_up)
+}
+
+/// A lobbed planted item as a grenade from the eye with BO2's launch velocity; the sim's
+/// projectile step bounces it and turns it into placed equipment where it rests.
+pub fn plant_launch(def: &'static WeaponDef, body: &Body, yaw: f32, pitch: f32, owner: u32, host: &dyn LogicHost) -> crate::projectiles::Projectile {
+    let mut proj = crate::projectiles::Projectile::launch(def, owner, body.eye(), Vec3::ZERO, def.fuse_time, host, yaw);
+    proj.vel = plant_velocity(def, yaw, pitch);
+    proj
 }
 
 #[cfg(test)]
@@ -206,18 +207,45 @@ mod tests {
         let b = body();
         // No launch speed (the Tactical Insertion): at the feet.
         let ti = WeaponDef::default();
-        assert_eq!(plant_point(&ti, &b, 0.0, 0.0, &host), Vec3::ZERO);
+        assert_eq!(plant_point(&ti, &b, 0.0, 0.0, &host), Some(Vec3::ZERO));
         // The claymore's 100 forward, -10000 up: straight down, a hair in front.
-        let claymore = WeaponDef { projectile_speed: inches(100.0), projectile_speed_up: inches(-10000.0), ..Default::default() };
-        let at = plant_point(&claymore, &b, 0.0, 0.0, &host);
+        let claymore = WeaponDef { projectile_speed: inches(100.0), projectile_speed_up: inches(-10000.0), projectile_gravity: true, ..Default::default() };
+        let at = plant_point(&claymore, &b, 0.0, 0.0, &host).expect("straight down");
         assert!((at.x - b.eye_height * 0.01).abs() < 1e-3 && at.y.abs() < 1e-4 && at.z == 0.0, "{at:?}");
-        // The Betty's 650 under gravity: lobbed out, landing where the arc from the eye meets the
-        // ground (within one logic step).
+        // The Betty's 650 under gravity: lobbed, so it flies as a grenade.
         let betty = WeaponDef { projectile_speed: inches(650.0), projectile_gravity: true, ..Default::default() };
-        let at = plant_point(&betty, &b, 0.0, 0.0, &host);
-        let fall = (2.0 * b.eye_height / crate::projectiles::GRAVITY).sqrt();
-        let want = inches(650.0) * fall;
-        assert!((at.x - want).abs() <= inches(650.0) * LOGIC_DT * 1.5, "{} vs {want}", at.x);
-        assert_eq!(plant_point(&betty, &b, 0.0, 0.0, &host), at, "deterministic");
+        assert_eq!(plant_point(&betty, &b, 0.0, 0.0, &host), None);
+    }
+
+    /// A lobbed Betty bounces with the grenade physics, comes to rest and is placed there.
+    #[test]
+    fn a_lobbed_betty_bounces_and_settles_as_equipment() {
+        let host = FakeHost::default();
+        let b = body();
+        let betty: &'static WeaponDef = Box::leak(Box::new(WeaponDef {
+            id: "bouncingbetty_mp".into(),
+            projectile_speed: inches(650.0),
+            projectile_gravity: true,
+            equipment_kind: crate::equipment::Kind::Betty,
+            ..Default::default()
+        }));
+        let mut proj = plant_launch(betty, &b, 0.0, 0.0, 1, &host);
+        let mut bounced = false;
+        let mut prev_vz = proj.vel.z;
+        let landed = (0..2000).find_map(|_| {
+            let out = proj.step(&host);
+            bounced |= prev_vz < 0.0 && proj.vel.z > 0.0;
+            prev_vz = proj.vel.z;
+            out
+        });
+        match landed {
+            Some(crate::projectiles::Outcome::Landed { at, .. }) => {
+                let fall = (2.0 * b.eye_height / crate::projectiles::GRAVITY).sqrt();
+                assert!(at.x > inches(650.0) * fall, "rolled on past the first contact: {at:?}");
+                assert_eq!(at.z, 0.0);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(bounced, "it bounced");
     }
 }

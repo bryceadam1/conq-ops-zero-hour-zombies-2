@@ -18,7 +18,7 @@ mod plant;
 mod rts;
 
 pub use build::{placement, HostWorld, PLANT_DISTANCE};
-pub use plant::{can_plant, plant_point, PLANT_TRACE_INCHES};
+pub use plant::{can_plant, plant_launch, plant_point, plant_velocity, PLANT_TRACE_INCHES};
 pub use fire::{gather_targets, throw_velocity, PENETRATION_DAMAGE};
 pub use rts::{RtsIcons, RtsState, RtsWeapons, Third};
 

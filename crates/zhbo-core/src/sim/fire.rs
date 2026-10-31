@@ -126,8 +126,13 @@ impl Sim {
             WeaponAction::MeleeSwing => self.emit(idx, EventKind::Melee),
             WeaponAction::Melee { damage } => self.melee_strike(host, idx, p, damage, MeleeReach::Body),
             WeaponAction::Plant { def } => {
-                // Where BO2's launch sets it down, not a fixed distance in front.
-                let at = plant_point(def, &p.body, p.yaw, p.pitch, host);
+                // Where BO2's launch sets it down, not a fixed distance in front: a lobbed item
+                // flies, bounces and is placed where it rests (the projectiles' `Landed`).
+                let Some(at) = plant_point(def, &p.body, p.yaw, p.pitch, host) else {
+                    let proj = plant_launch(def, &p.body, p.yaw, p.pitch, p.general, host);
+                    self.projectiles.push((idx, proj));
+                    return;
+                };
                 let object = if def.projectile_object.is_empty() { 0 } else { host.spawn(&def.projectile_object, p.general, at, p.yaw) };
                 let placed = Placed::new(def, idx, p.general, object, at, p.yaw, None);
                 self.emit(idx, EventKind::Planted { kind: placed.kind });

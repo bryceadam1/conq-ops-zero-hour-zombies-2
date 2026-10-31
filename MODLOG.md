@@ -5041,3 +5041,19 @@ which every caller fires whenever the check returns false. So all of these show 
   tests, `ps+0xc & 0xa0000c`, are unnamed and not modelled.)
 
 `sim::can_plant` takes the General's id. Test: `the_plant_check_refuses_on_and_into_vehicles_and_a_crowded_insertion`.
+
+## A lobbed Betty or Trophy System bounces and settles like a grenade (2026-10-31, `v1/offhand-rules`)
+
+The plant-position entry set a lobbed item down at its arc's first ground contact. BO2's offhand fire
+makes it a grenade entity, which bounces and rolls until it rests before its script places it. The
+sim already has that: `projectiles::Projectile` bounces (`BOUNCE_ALONG`/`BOUNCE_UP`, at rest below
+`REST_SPEED`) and turns a `lands` projectile (any equipment kind) into `Placed` equipment on
+`Outcome::Landed`, the path the thrown C4/Shock Charge/Sensor already use.
+
+* `sim::plant_point` now returns `None` for a lobbed item (gravity, launch not steeply down); the
+  `Plant` action then launches it with `sim::plant_launch` (BO2's launch velocity,
+  `plant_velocity`, from the eye) and the projectile step places it where it rests. The claymore
+  (straight down) and the Tactical Insertion (no speed) still go down directly.
+* Test: `a_lobbed_betty_bounces_and_settles_as_equipment` (it bounces and rests beyond the first
+  contact). This branch is not on `v1/projectile-sounds`, so no bounce event/sound is emitted here;
+  that base's bounce events apply to these projectiles once merged.
