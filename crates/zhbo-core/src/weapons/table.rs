@@ -379,7 +379,36 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
             (a.dual_mag, a.infrared, a.mms, a.use_as_melee, a.alt_ads_only, a.alt_disable_switching) = (v.flag(0), v.flag(1), v.flag(2), v.flag(3), v.flag(4), v.flag(5));
             Ok(())
         }),
+    field!("AdsKickCenterScale", "Scales the aimed view-kick recentre speed (`fAdsViewKickCenterSpeedScale`).", FieldKind::Num,
+        |a: &AttachmentDef| a.ads_kick_center_scale.to_string(),
+        |a: &mut AttachmentDef, v: Values| { a.ads_kick_center_scale = v.text_num()?; Ok(()) }),
+    field!("SwayOverride", "Hip sway override: max angle, lerp speed, pitch, yaw, horizontal, vertical scales (`-`: none).", FieldKind::Words,
+        |a: &AttachmentDef| opt_sway(a.sway),
+        |a: &mut AttachmentDef, v: Values| { a.sway = parse_opt_sway(v)?; Ok(()) }),
+    field!("AdsSwayOverride", "Aimed sway override, as SwayOverride (`-`: none).", FieldKind::Words,
+        |a: &AttachmentDef| opt_sway(a.ads_sway),
+        |a: &mut AttachmentDef, v: Values| { a.ads_sway = parse_opt_sway(v)?; Ok(()) }),
+    field!("ViewPosOverride", "Stand move forward, stand rotation pitch and roll, strafe rotation roll (`-`: unchanged).", FieldKind::Words,
+        |a: &AttachmentDef| [a.stand_move_f, a.stand_rot_pitch, a.stand_rot_roll, a.strafe_rot_roll].map(opt_num).join(" "),
+        |a: &mut AttachmentDef, v: Values| {
+            let o = parse_opt_nums(v.text, 4)?;
+            (a.stand_move_f, a.stand_rot_pitch, a.stand_rot_roll, a.strafe_rot_roll) = (o[0], o[1], o[2], o[3]);
+            Ok(())
+        }),
 ];
+
+/// An optional sway block: its six numbers, or `-` for none.
+fn opt_sway(s: Option<Sway>) -> String {
+    s.map_or_else(|| "-".to_string(), |s| s.format())
+}
+
+fn parse_opt_sway(v: Values) -> Result<Option<Sway>, String> {
+    if v.text == "-" {
+        return Ok(None);
+    }
+    v.need(6)?;
+    Ok(Some(Sway::from_nums(v.nums)))
+}
 
 /// Every `Weapon` block line, in table order.
 pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
@@ -833,7 +862,7 @@ mod tests {
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
         assert_eq!(WEAPON_FIELDS.len(), 94);
-        assert_eq!(ATTACHMENT_FIELDS.len(), 25);
+        assert_eq!(ATTACHMENT_FIELDS.len(), 29);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }
 
@@ -982,6 +1011,28 @@ mod tests {
         let text = format_full_table(&t);
         assert!(text.contains("AdsZoom = 35 - - 0.4"), "{text}");
         assert!(text.contains("IdleAmount = 1 -"), "{text}");
+        assert!(text.contains("SwayOverride = -"), "{text}");
+        assert_eq!(parse_full_table(&text).unwrap(), t);
+    }
+
+    #[test]
+    fn the_gun_feel_attachment_fields_round_trip() {
+        let sway = Sway { max_angle: 1.5, lerp_speed: 5.0, pitch_scale: 0.5, yaw_scale: -0.5, horiz_scale: 0.075, vert_scale: 0.075 };
+        let a = AttachmentDef {
+            id: "steadyaim".into(),
+            short: "steadyaim".into(),
+            ads_kick_center_scale: 0.975,
+            sway: Some(sway),
+            stand_rot_pitch: Some(-0.1),
+            stand_rot_roll: Some(0.0),
+            strafe_rot_roll: Some(1.0),
+            ..Default::default()
+        };
+        let t = Table { attachments: vec![a], ..Default::default() };
+        let text = format_full_table(&t);
+        assert!(text.contains("SwayOverride = 1.5 5 0.5 -0.5 0.075 0.075"), "{text}");
+        assert!(text.contains("AdsSwayOverride = -"), "{text}");
+        assert!(text.contains("ViewPosOverride = - -0.1 0 1"), "{text}");
         assert_eq!(parse_full_table(&text).unwrap(), t);
     }
 }

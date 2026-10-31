@@ -4568,3 +4568,46 @@ Verified: cargo test --workspace green; clippy --all-targets adds no warning in 
 the real-install suites (zhbo-assets `--skip conformance` incl. `every_mp_weapon_converts_and_plays_like_bo2`,
 zhbo-formats) green; the conformance CLI as measured above. The in-game autotest is the integrator's.
 An archive VERSION bump is needed (the table gained lines; old tables still parse).
+
+## Gun feel: aimed sway scales, the sway override blocks, kick-centre scale, Steady Aim's pose (2026-10-31, branch `v1/gun-feel`)
+
+Four converter gaps in the gun-feel columns, each transcribed from G14 §4:
+
+- **Aimed sway's horizontal/vertical scales live on the variant.** `WeaponVariantDef` carries
+  `fAdsSwayHorizScale`/`fAdsSwayVertScale` (+532/+536); the converter copied the def's *hip*
+  `swayHoriz/VertScale` instead, under a comment claiming BO2's ADS set had none (wrong — G4's
+  `FUN_008ec660` reads `V.fAdsSway*` when no attachment overrides). That is why the last two
+  `ads_sway` components were 0.3|0.3 on nearly every gun. `zhbo_formats::weapon::read` now reads
+  them.
+- **Sway override blocks** (`FUN_008ec590` hip / `FUN_008ec660` ADS): the first attachment in
+  `eAttachment` order with `swayOverride` (+100) / `adsSwayOverride` (+128) supplies all six
+  values. Steady Aim's hip block (1.5|5|0.5|-0.5|0.075|0.075) and the optics' aimed blocks were
+  never carried. `AttachmentDef.sway` / `ads_sway` (`SwayOverride` / `AdsSwayOverride` table lines,
+  `-` for none).
+- **Aimed view-kick centre speed** = `V.fAdsViewKickCenterSpeed` × Π `fAdsViewKickCenterSpeedScale`
+  (`FUN_008ecf70`; suppressor 0.975, ACOG 1.01, Rapid Fire 0.85); the hip one has no scale.
+  `AttachmentDef.ads_kick_center_scale` (`AdsKickCenterScale`).
+- **Movement-pose overrides** (`FUN_008ed410` / `FUN_008ed4f0`, last attachment differing from
+  `defaultattachment` wins per component): `standMoveF` → stand move forward, `vStandRot` pitch and
+  roll, `strafeRotR` → strafe roll. Steady Aim's −0.1|·|0 stand rotation and roll-1 strafe is what
+  keeps the gun level while you move. `AttachmentDef.stand_move_f/stand_rot_pitch/stand_rot_roll/
+  strafe_rot_roll` (`ViewPosOverride`).
+
+All stack in `attachments::apply_handling` (the single site). Consumers: `weapons::gunpos` already
+drives the viewmodel from `hip_sway`/`ads_sway` (lerped by aim) and `stand_rot`/`strafe_rot`, so
+Steady Aim's steadier hip sway and level move pose and the optics' aimed sway now reach the screen.
+`view_kick_center` still has **no consumer**: G5 leaves the view-kick recentring unresolved, so the
+camera kick keeps the mod's own settle; wiring it needs a Ghidra trace of the kick decay.
+
+Measured (conformance vs `v1/uncarried-fields`): weapons differing cells 397,145 → 381,867;
+`ads_sway` 9,338 → 336, `hip_sway` 1,450 → 234, `stand_rot` 1,442 → 234, `strafe_rot` 1,442 → 234,
+`view_kick_center` 3,075 → 431; every remaining row is an alt mode (`sf_*`, `dualoptic_*`). Of
+those, 1,133 are new: this base still applies the parent's attachments to alts, so an alt now takes
+Steady Aim's sway / the suppressor's kick scale too. BO2 gives alts none (`v1/alt-attachments`,
+`attachments::alt_mode`); with that branch merged they return to the alt's own values. The other
+336 (`ads_sway` on `sf_*`+optic) are the same cause and predate this branch.
+
+Verified: cargo test --workspace green; clippy --all-targets adds no warning; the real-install
+zhbo-assets suite (`--ignored --skip conformance`, 31 tests) green; the conformance CLI as above.
+`hud::VERSION` bump needed (the weapon table gained Attachment lines; old tables still parse) — the
+integrator's.

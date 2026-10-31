@@ -56,8 +56,9 @@ impl GunKick {
     }
 }
 
-/// View sway (`sway*` hip, `adsSway*` aimed; G4). BO2's aimed set has no horizontal/vertical
-/// scales; the hip ones apply there too.
+/// View sway (`sway*` hip, `adsSway*` aimed; G4). The aimed set's horizontal/vertical scales are
+/// the variant's `fAdsSway{Horiz,Vert}Scale`; an attachment's override block replaces all six
+/// (G14 §4).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Sway {
     pub max_angle: f32,

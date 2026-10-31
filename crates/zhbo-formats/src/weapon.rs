@@ -254,6 +254,20 @@ pub struct Attachment {
     pub infrared: bool,
     pub mms_weapon: bool,
     pub use_as_melee: bool,
+    /// `fAdsViewKickCenterSpeedScale`: scales the aimed view-kick recentre speed (a product,
+    /// `FUN_008ecf70`).
+    pub ads_view_kick_center_scale: f32,
+    /// The sway override blocks: `swayOverride` / `adsSwayOverride` set, the attachment's own six
+    /// `sway*` / `adsSway*` values (the first attachment with the flag supplies all,
+    /// `FUN_008ec590` / `FUN_008ec660`).
+    pub sway_override: Option<Sway>,
+    pub ads_sway_override: Option<Sway>,
+    /// The view-position overrides (`FUN_008ed410` / `FUN_008ed4f0`; the last attachment
+    /// differing from `defaultattachment` wins): `strafeRotR`, `standMoveF`, `vStandRot`
+    /// (pitch and roll are read).
+    pub strafe_rot_r: f32,
+    pub stand_move_f: f32,
+    pub stand_rot: [f32; 3],
 }
 
 /// Every attachment in a loaded zone.
@@ -311,6 +325,26 @@ pub fn attachments(z: &Zone) -> Result<Vec<Attachment>, FormatError> {
                 infrared: z.u8(at + WA::bInfraRed) != 0,
                 mms_weapon: z.u8(at + WA::mmsWeapon) != 0,
                 use_as_melee: z.u8(at + WA::bUseAsMelee) != 0,
+                ads_view_kick_center_scale: z.f32(at + WA::fAdsViewKickCenterSpeedScale),
+                sway_override: (z.u8(at + WA::swayOverride) != 0).then(|| Sway {
+                    max_angle: z.f32(at + WA::swayMaxAngle),
+                    lerp_speed: z.f32(at + WA::swayLerpSpeed),
+                    pitch_scale: z.f32(at + WA::swayPitchScale),
+                    yaw_scale: z.f32(at + WA::swayYawScale),
+                    horiz_scale: z.f32(at + WA::swayHorizScale),
+                    vert_scale: z.f32(at + WA::swayVertScale),
+                }),
+                ads_sway_override: (z.u8(at + WA::adsSwayOverride) != 0).then(|| Sway {
+                    max_angle: z.f32(at + WA::adsSwayMaxAngle),
+                    lerp_speed: z.f32(at + WA::adsSwayLerpSpeed),
+                    pitch_scale: z.f32(at + WA::adsSwayPitchScale),
+                    yaw_scale: z.f32(at + WA::adsSwayYawScale),
+                    horiz_scale: z.f32(at + WA::fAdsSwayHorizScale),
+                    vert_scale: z.f32(at + WA::fAdsSwayVertScale),
+                }),
+                strafe_rot_r: z.f32(at + WA::strafeRotR),
+                stand_move_f: z.f32(at + WA::standMoveF),
+                stand_rot: vec3(z, at + WA::vStandRot),
             })
         })
         .collect()
@@ -336,7 +370,8 @@ pub struct GunKick {
     pub reduced_percent: f32,
 }
 
-/// View sway (`sway*` / `adsSway*`; G4). BO2's ADS set has no horizontal/vertical scales.
+/// View sway (`sway*` / `adsSway*`; G4). The ADS set's horizontal/vertical scales live on the
+/// variant (`WeaponVariantDef.fAdsSway{Horiz,Vert}Scale`), the rest on the def.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Sway {
     pub max_angle: f32,
@@ -855,8 +890,8 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         lerp_speed: z.f32(d + WD::adsSwayLerpSpeed),
         pitch_scale: z.f32(d + WD::adsSwayPitchScale),
         yaw_scale: z.f32(d + WD::adsSwayYawScale),
-        horiz_scale: 0.0,
-        vert_scale: 0.0,
+        horiz_scale: z.f32(v + WV::fAdsSwayHorizScale),
+        vert_scale: z.f32(v + WV::fAdsSwayVertScale),
     };
     let v2 = |at: u32| [z.f32(at), z.f32(at + 4)];
     w.view_pos = ViewPos {

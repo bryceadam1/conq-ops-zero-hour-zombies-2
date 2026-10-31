@@ -192,6 +192,13 @@ pub fn attachment_def(a: &bo2::Attachment, default: &bo2::Attachment, names: &Ha
         use_as_melee: a.use_as_melee,
         alt_ads_only: a.alt_weapon_ads_only,
         alt_disable_switching: a.alt_weapon_disable_switching,
+        ads_kick_center_scale: a.ads_view_kick_center_scale,
+        sway: a.sway_override.map(sway),
+        ads_sway: a.ads_sway_override.map(sway),
+        stand_move_f: differs(a.stand_move_f, default.stand_move_f),
+        stand_rot_pitch: differs(a.stand_rot[0], default.stand_rot[0]),
+        stand_rot_roll: differs(a.stand_rot[2], default.stand_rot[2]),
+        strafe_rot_roll: differs(a.strafe_rot_r, default.strafe_rot_r),
     }
 }
 
@@ -820,8 +827,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         gun_max: w.gun_max,
         recoil_return_rate: w.recoil.2,
         hip_sway: sway(w.hip_sway),
-        // BO2's aimed sway has no horizontal/vertical scales of its own (G4): the hip ones apply.
-        ads_sway: Sway { horiz_scale: w.hip_sway.horiz_scale, vert_scale: w.hip_sway.vert_scale, ..sway(w.ads_sway) },
+        ads_sway: sway(w.ads_sway),
         view_pos: view_pos(w.view_pos),
         reticle: reticle(&w.reticle),
         camo: Vec::new(),

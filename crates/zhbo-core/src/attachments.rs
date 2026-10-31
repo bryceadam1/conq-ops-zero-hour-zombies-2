@@ -11,7 +11,7 @@
 //! penetration and extra damage to vehicles, the grip's recoil reduction (its ADS recoil reduction
 //! fields), the tactical knife's quicker melee, and the target finder marking enemies while aiming.
 
-use crate::weapons::{FireMode, Penetrate, Specialties, WeaponDef};
+use crate::weapons::{FireMode, Penetrate, Specialties, Sway, WeaponDef};
 
 /// BO2's attachment points (`eAttachmentPoint`): one attachment per point.
 pub mod point {
@@ -90,6 +90,20 @@ pub struct AttachmentDef {
     pub use_as_melee: bool,
     pub alt_ads_only: bool,
     pub alt_disable_switching: bool,
+    /// `fAdsViewKickCenterSpeedScale`: scales the aimed view-kick recentre speed (a product,
+    /// `FUN_008ecf70`).
+    pub ads_kick_center_scale: f32,
+    /// The hip and aimed sway override blocks (`swayOverride`, `adsSwayOverride`): the first
+    /// attachment carrying one supplies all six values (`FUN_008ec590` / `FUN_008ec660`).
+    pub sway: Option<Sway>,
+    pub ads_sway: Option<Sway>,
+    /// The view-position overrides, `None` where equal to `defaultattachment`'s (the last
+    /// differing wins, `FUN_008ed410` / `FUN_008ed4f0`): stand move forward, stand rotation
+    /// pitch and roll, strafe rotation roll.
+    pub stand_move_f: Option<f32>,
+    pub stand_rot_pitch: Option<f32>,
+    pub stand_rot_roll: Option<f32>,
+    pub strafe_rot_roll: Option<f32>,
 }
 
 impl Default for AttachmentDef {
@@ -138,6 +152,13 @@ impl Default for AttachmentDef {
             use_as_melee: false,
             alt_ads_only: false,
             alt_disable_switching: false,
+            ads_kick_center_scale: 1.0,
+            sway: None,
+            ads_sway: None,
+            stand_move_f: None,
+            stand_rot_pitch: None,
+            stand_rot_roll: None,
+            strafe_rot_roll: None,
         }
     }
 }
@@ -301,7 +322,8 @@ fn scaled_ms(s: f32, scale: f32) -> f32 {
 /// The handling fields' combine rules (G14 §4), walking the attachments in `eAttachment` order as
 /// BO2 does: products (quick reload truncated to whole ms, the aimed idle), first differing from
 /// `defaultattachment` (zoom fractions, alt-scope times, hip idle), last differing (zoom levels 2
-/// and 3), first positive (stack-fire spread), first non-`None` (penetration) and OR-ed flags.
+/// and 3, the view-position overrides), the override blocks (sway), first positive (stack-fire
+/// spread), first non-`None` (penetration) and OR-ed flags.
 fn apply_handling(d: &mut WeaponDef, atts: &[&AttachmentDef]) {
     let mut walk: Vec<&AttachmentDef> = atts.to_vec();
     walk.sort_by_key(|a| a.kind);
@@ -321,6 +343,18 @@ fn apply_handling(d: &mut WeaponDef, atts: &[&AttachmentDef]) {
     z.out_frac = first(|a| a.zoom_out_frac).unwrap_or(z.out_frac);
     z.alt_scope_in_time = first(|a| a.alt_scope_in_time).unwrap_or(z.alt_scope_in_time);
     z.alt_scope_out_time = first(|a| a.alt_scope_out_time).unwrap_or(z.alt_scope_out_time);
+    // The aimed view-kick recentre speed: the variant's × Π scale (`FUN_008ecf70`); the hip one
+    // has no attachment scale.
+    d.view_kick_center.0 *= product(|a| a.ads_kick_center_scale);
+    // The sway override blocks: the first attachment with one supplies all six values.
+    d.hip_sway = walk.iter().find_map(|a| a.sway).unwrap_or(d.hip_sway);
+    d.ads_sway = walk.iter().find_map(|a| a.ads_sway).unwrap_or(d.ads_sway);
+    // The gun's movement pose overrides (Steady Aim's level hold): the last differing wins.
+    let p = &mut d.view_pos;
+    p.stand_move[0] = last(|a| a.stand_move_f).unwrap_or(p.stand_move[0]);
+    p.stand_rot[0] = last(|a| a.stand_rot_pitch).unwrap_or(p.stand_rot[0]);
+    p.stand_rot[2] = last(|a| a.stand_rot_roll).unwrap_or(p.stand_rot[2]);
+    p.strafe_rot[2] = last(|a| a.strafe_rot_roll).unwrap_or(p.strafe_rot[2]);
     let tr = &mut d.traits;
     tr.stack_fire.0 = walk.iter().map(|a| a.stack_fire.0).find(|x| *x > 0.0).unwrap_or(tr.stack_fire.0);
     tr.stack_fire.1 = walk.iter().map(|a| a.stack_fire.1).find(|x| *x > 0.0).unwrap_or(tr.stack_fire.1);
@@ -511,5 +545,44 @@ mod tests {
         let mut ignoring = base.clone();
         ignoring.traits.ignore_attachments = true;
         assert!(!apply(&ignoring, &[&dualclip]).traits.dual_mag);
+    }
+
+    #[test]
+    fn gun_feel_fields_stack_bo2s_way() {
+        // an94-like base: its own sway and movement pose, a 1500 aimed recentre speed.
+        let mut base = base();
+        base.hip_sway = Sway { max_angle: 5.0, lerp_speed: 6.0, pitch_scale: -2.0, yaw_scale: -1.0, horiz_scale: 0.3, vert_scale: 0.3 };
+        base.ads_sway = Sway { max_angle: 0.75, lerp_speed: 5.5, pitch_scale: 0.15, yaw_scale: 0.15, horiz_scale: 0.15, vert_scale: 0.15 };
+        base.view_kick_center = (1500.0, 1500.0);
+        base.view_pos.stand_move = [-0.4, 0.0, 0.0];
+        base.view_pos.stand_rot = [1.4, 0.0, -1.4];
+        base.view_pos.strafe_rot = [0.0, 0.0, 5.0];
+        let steady_sway = Sway { max_angle: 1.5, lerp_speed: 5.0, pitch_scale: 0.5, yaw_scale: -0.5, horiz_scale: 0.075, vert_scale: 0.075 };
+        let other_sway = Sway { max_angle: 9.0, ..steady_sway };
+        let steady = AttachmentDef {
+            id: "steadyaim".into(),
+            short: "steadyaim".into(),
+            kind: 26,
+            sway: Some(steady_sway),
+            stand_rot_pitch: Some(-0.1),
+            stand_rot_roll: Some(0.0),
+            strafe_rot_roll: Some(1.0),
+            ..Default::default()
+        };
+        let silencer = AttachmentDef { id: "silencer".into(), short: "silencer".into(), kind: 23, ads_kick_center_scale: 0.975, sway: Some(other_sway), ..Default::default() };
+        let acog = AttachmentDef { id: "acog".into(), short: "acog".into(), kind: 1, ads_kick_center_scale: 1.01, strafe_rot_roll: Some(3.0), ..Default::default() };
+        let d = apply(&base, &[&steady, &silencer, &acog]);
+        // The aimed recentre speed is a product; the hip one has no scale.
+        assert_eq!(d.view_kick_center, (1500.0 * (1.01f32 * 0.975), 1500.0));
+        // The override block: the first in eAttachment order (silencer 23 before steadyaim 26)
+        // supplies all six; the aimed set is untouched without an aimed override.
+        assert_eq!(d.hip_sway, other_sway);
+        assert_eq!(d.ads_sway, base.ads_sway);
+        assert_eq!(apply(&base, &[&steady]).hip_sway, steady_sway);
+        // The movement pose: the last differing wins per component; yaw and stand move stay.
+        assert_eq!(d.view_pos.stand_rot, [-0.1, 0.0, 0.0]);
+        assert_eq!(d.view_pos.strafe_rot, [0.0, 0.0, 1.0], "steadyaim (26) walks after acog (1)");
+        assert_eq!(d.view_pos.stand_move, [-0.4, 0.0, 0.0]);
+        assert_eq!(apply(&base, &[&acog]).view_pos.strafe_rot, [0.0, 0.0, 3.0]);
     }
 }
