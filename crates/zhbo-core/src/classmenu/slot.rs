@@ -1,21 +1,5 @@
 //! The editor's rows (slots) and the weapon categories the weapon slots list.
 
-use super::*;
-
-/// The primary weapon slot's categories, as BO2's create-a-class lists them.
-pub const PRIMARY_CLASSES: [WeaponClass; 7] = [
-    WeaponClass::Rifle,
-    WeaponClass::Smg,
-    WeaponClass::Shotgun,
-    WeaponClass::Lmg,
-    WeaponClass::Sniper,
-    WeaponClass::Special,
-    WeaponClass::Launcher,
-];
-
-/// The secondary weapon slot's categories.
-pub const SECONDARY_CLASSES: [WeaponClass; 2] = [WeaponClass::Pistol, WeaponClass::Launcher];
-
 /// One editable slot of the class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slot {

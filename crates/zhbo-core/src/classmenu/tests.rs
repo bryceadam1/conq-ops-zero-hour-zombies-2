@@ -1020,8 +1020,8 @@ fn the_offhand_slots_list_their_statstable_items_placed_equipment_included() {
     // item and the Trophy System a `specialgrenade` one, though both are placed equipment
     // (`Class::Equipment`), not grenades.
     let (lethal, tactical) = (equipment_ids(true), equipment_ids(false));
-    assert_eq!(weapons::weapon("claymore_mp").class, WeaponClass::Equipment);
-    assert_eq!(weapons::weapon("trophy_system_mp").class, WeaponClass::Equipment);
+    assert_eq!(weapons::weapon("claymore_mp").class, crate::weapons::Class::Equipment);
+    assert_eq!(weapons::weapon("trophy_system_mp").class, crate::weapons::Class::Equipment);
     assert!(lethal.contains(&"frag_grenade_mp") && lethal.contains(&"claymore_mp"), "{lethal:?}");
     assert!(tactical.contains(&"concussion_grenade_mp") && tactical.contains(&"trophy_system_mp"), "{tactical:?}");
     assert!(!lethal.contains(&"trophy_system_mp") && !tactical.contains(&"claymore_mp"));

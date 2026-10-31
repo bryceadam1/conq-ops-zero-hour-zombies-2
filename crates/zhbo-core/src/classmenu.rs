@@ -28,7 +28,7 @@
 
 use crate::classes::{self, CustomClass};
 use crate::input::Key;
-use crate::weapons::{self, Class as WeaponClass, Perk};
+use crate::weapons::{self, Perk};
 use items::{equipment_ids, gun_ids};
 
 /// Which attachments go together: BO2's compatibility lists.

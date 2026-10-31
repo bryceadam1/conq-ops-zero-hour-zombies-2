@@ -341,6 +341,7 @@ pub fn table_with_metadata(
         perks: Vec::new(),
         bonus_cards: Vec::new(),
         ui_text: ui_text(names),
+        weapon_groups: Vec::new(),
     }
 }
 
@@ -1544,6 +1545,19 @@ mod tests {
         assert_eq!(sets.len(), 48, "common_patch_mp's camo_<weapon> assets");
         assert_eq!(camo_material_for("an94_mp", &sets).as_deref(), Some("camo_an94"));
         assert_eq!(camo_material_for("saiga12_mp", &sets).as_deref(), Some("camo_saiga"));
+    }
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_installs_weapon_groups_are_the_built_in_order() {
+        // `cacweaponslot.lua`'s weapon-group order, read as the converter reads it, is the
+        // stand-in table's, and the editor's primary categories follow it.
+        let bo2_dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let patch = crate::generals::load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
+        let patch_ui = crate::generals::load_zone(&bo2_dir, "patch_ui_mp").unwrap();
+        let groups = zhbo_conformance::bo2::cac::weapon_groups(&patch, &patch_ui).unwrap();
+        let built_in = zhbo_core::weapons::parse_full_table(zhbo_core::weapons::BUILTIN).unwrap().weapon_groups;
+        assert_eq!(groups, built_in);
     }
 
     #[test]

@@ -5013,3 +5013,25 @@ editor flow, and the mod does not draw it.
 `classui::editor::bonus_card_box` names those boxes and `bonus_card_plate` draws the plate.
 Not checked against a capture (the sweep has no editor shot with a card equipped), so this rests
 on the Lua alone. Test: `a_bonus_cards_box_is_marked_as_its_preview_slot`.
+
+## The weapon pickers' categories follow BO2's group order, from the UI Lua (2026-10-31, `v1/cac-rules`)
+
+`cacweaponslot.lua` adds the weapon groups in one order — `weapon_smg`, `weapon_assault`,
+`weapon_cqb`, `weapon_lmg`, `weapon_sniper`, `weapon_pistol`, `weapon_launcher`, `weapon_special`
+— and `cacweaponsp.lua:640-720` builds the primary carousel smg … sniper, special and the
+secondary pistol, launcher, special. The mod hand-coded the picker order in
+`classui::categories` and kept a second, different list (`classmenu::PRIMARY_CLASSES`, rifle
+first) that only the conformance emitter read.
+
+* `zhbo_conformance::bo2::cac::weapon_groups` (and `class_caps`) now take the two zones and are
+  public: the expected side and the converter read the same function. The converter writes
+  `WeaponGroups = …` at the top of the weapon table; `Catalog::weapon_groups` serves it, and a
+  table without it takes the built-in stand-in (checked against the install by the ignored
+  `the_installs_weapon_groups_are_the_built_in_order`).
+* `classui::category_order(slot)` is that order, the slot's own groups first (a group is the
+  slot's when one of its items is, statstable column 13). `PRIMARY_CLASSES`/`SECONDARY_CLASSES`
+  and the picker constants are gone; the conformance emitter reads `category_order`.
+
+Measured: cac 9 → 5 (the four `category` rows); weapons 781,587; gap clusters 201 (the
+`rules/value` cluster still holds the three caps). Test:
+`the_category_order_follows_the_catalogs_weapon_groups`.

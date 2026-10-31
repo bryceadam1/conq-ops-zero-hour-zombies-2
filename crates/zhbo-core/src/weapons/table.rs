@@ -33,6 +33,10 @@ pub struct Table {
     pub bonus_cards: Vec<BonusCard>,
     /// BO2's localized UI strings the core draws (`UiText <key>` blocks, [`UiText`]).
     pub ui_text: Vec<UiText>,
+    /// BO2's Create-a-Class weapon groups in the order its weapon-type list adds them
+    /// (`WeaponGroups = weapon_smg weapon_assault …`, `cacweaponslot.lua`); empty in a table from
+    /// before them.
+    pub weapon_groups: Vec<String>,
 }
 
 pub(crate) fn pairs(v: &[(String, String)]) -> String {
@@ -71,7 +75,11 @@ pub fn format_table(defs: &[WeaponDef]) -> String {
 
 pub fn format_full_table(t: &Table) -> String {
     let mut s = String::from("; Black Ops II multiplayer weapons, converted from the player's own install by zhbo-assets.\n; Private data: do not redistribute.\n\n");
-    s.push_str(&format!("TabletMeshes = {}\n\n", t.tablet_meshes));
+    s.push_str(&format!("TabletMeshes = {}\n", t.tablet_meshes));
+    if !t.weapon_groups.is_empty() {
+        s.push_str(&format!("WeaponGroups = {}\n", t.weapon_groups.join(" ")));
+    }
+    s.push('\n');
     for p in &t.perks {
         write_block(&mut s, "Perk ", &p.stats, PERK_FIELDS, p);
     }
@@ -177,6 +185,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
         match cur.as_mut() {
             None => match key {
                 "TabletMeshes" => table.tablet_meshes = values.text_num().map_err(|e| err(&e))? as u8,
+                "WeaponGroups" => table.weapon_groups = value.split_whitespace().map(str::to_string).collect(),
                 _ => return Err(err("value outside a block")),
             },
             Some(Block::Attachment(a)) => set_field(ATTACHMENT_FIELDS, a, key, values).map_err(|e| err(&e))?,
@@ -948,6 +957,14 @@ mod tests {
             text.contains("Perk LIGHTWEIGHT\n  Name = Lightweight\n  Description = Move faster.  Take no damage when falling.\n  Specialties = fallheight movefaster\nEnd"),
             "{text}"
         );
+        assert_eq!(parse_full_table(&text).unwrap(), t);
+    }
+
+    #[test]
+    fn weapon_groups_round_trip() {
+        let t = Table { weapon_groups: vec!["weapon_smg".into(), "weapon_assault".into()], ..Default::default() };
+        let text = format_full_table(&t);
+        assert!(text.contains("WeaponGroups = weapon_smg weapon_assault\n"), "{text}");
         assert_eq!(parse_full_table(&text).unwrap(), t);
     }
 

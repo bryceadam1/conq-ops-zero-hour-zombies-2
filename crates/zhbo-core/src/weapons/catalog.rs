@@ -27,6 +27,7 @@ pub struct Catalog {
     bonus_cards: Vec<&'static BonusCard>,
     perks: HashMap<String, &'static PerkRow>,
     ui_text: HashMap<String, &'static str>,
+    weapon_groups: Vec<String>,
     built: Mutex<HashMap<String, &'static WeaponDef>>,
     pub tablet_meshes: u8,
 }
@@ -63,6 +64,7 @@ impl Catalog {
             bonus_cards,
             perks,
             ui_text,
+            weapon_groups: t.weapon_groups,
             built: Mutex::new(HashMap::new()),
             tablet_meshes: t.tablet_meshes,
         }
@@ -136,6 +138,12 @@ impl Catalog {
         self.ui_text.get(key).copied()
     }
 
+    /// BO2's Create-a-Class weapon groups (`weapon_smg`, `weapon_assault`, …) in the order its
+    /// weapon-type list adds them (`cacweaponslot.lua`).
+    pub fn weapon_groups(&self) -> &[String] {
+        &self.weapon_groups
+    }
+
     /// BO2's bonus cards (the wildcards), in the grid's order.
     pub fn bonus_cards(&self) -> &[&'static BonusCard] {
         &self.bonus_cards
@@ -163,6 +171,10 @@ pub fn install_catalog(text: &str) -> Result<usize, String> {
     let mut table = parse_full_table(text)?;
     let n = table.weapons.len();
     let built_in = parse_full_table(BUILTIN)?;
+    // The weapon groups a table converted before them lacks: the stand-ins (BO2's own).
+    if table.weapon_groups.is_empty() {
+        table.weapon_groups = built_in.weapon_groups;
+    }
     // The UI strings a table converted before them lacks: the stand-ins (BO2's own).
     for u in built_in.ui_text {
         if !table.ui_text.iter().any(|t| t.key == u.key) {
@@ -251,8 +263,10 @@ pub fn weapon(id: &str) -> &'static WeaponDef {
 /// effect have their rows, BO2's eight bonus cards (`mp/statstable.csv:178-185`) so the
 /// wildcard grid has its rows, and the english UI strings of [`super::UI_TEXT_KEYS`]
 /// (`en_code_post_gfx_mp.ff`). An ignored install test checks the rows and strings against the
-/// player's install.
+/// player's install. `WeaponGroups` is the order `cacweaponslot.lua` adds the weapon groups in.
 pub const BUILTIN: &str = "
+WeaponGroups = weapon_smg weapon_assault weapon_cqb weapon_lmg weapon_sniper weapon_pistol weapon_launcher weapon_special
+
 UiText MPUI_PRIMARY_GRENADE_CAPS
   Text = LETHAL
 End

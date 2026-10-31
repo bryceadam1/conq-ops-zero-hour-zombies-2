@@ -261,6 +261,12 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     table.bonus_cards = crate::weapons::bonus_card_rows(&patch, &names);
     // Which weapons Create-a-Class offers, in which slot: the same statstable's weapon items.
     crate::weapons::set_cac_slots(&mut table, &patch, &names);
+    // The weapon groups' order (the editor's category order), from the UI Lua the conformance's
+    // expected side reads.
+    match zhbo_conformance::bo2::cac::weapon_groups(&patch, &patch_ui) {
+        Ok(groups) => table.weapon_groups = groups,
+        Err(e) => summary.push(format!("weapon groups: {e} (the built-in order stands in)")),
+    }
     let converted = crate::weapons::converted(&patch, &bo2);
     let converted_base = crate::weapons::converted_base(&bo2);
     crate::weapons::add_variants(&mut table, &converted, &bo2);

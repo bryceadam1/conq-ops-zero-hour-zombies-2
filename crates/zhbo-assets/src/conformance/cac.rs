@@ -181,10 +181,11 @@ pub fn rows(shipped: &Shipped, bo2_dir: &std::path::Path, schema: &Schema) -> Re
         })?);
     }
 
-    // The weapon categories: the primary slot's in the editor's order, then the secondary slot's.
+    // The weapon categories in the editor's order: the primary picker's columns, then the
+    // secondary's (`classui::category_order`).
     let mut groups: Vec<&str> = Vec::new();
-    for c in classmenu::PRIMARY_CLASSES.iter().chain(classmenu::SECONDARY_CLASSES.iter()) {
-        let g = group_of(*c);
+    for c in zhbo_core::classui::category_order(classmenu::Slot::Primary).into_iter().chain(zhbo_core::classui::category_order(classmenu::Slot::Secondary)) {
+        let g = group_of(c);
         if !groups.contains(&g) {
             groups.push(g);
         }

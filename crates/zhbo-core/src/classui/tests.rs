@@ -1166,3 +1166,14 @@ fn a_bonus_cards_box_is_marked_as_its_preview_slot() {
     e.draft.lethal = "concussion_grenade_mp".into();
     assert!(marked(&e).is_empty(), "Tactician's two boxes are the tactical item's own");
 }
+
+/// The weapon pickers' category order is the catalog's weapon groups (`cacweaponslot.lua`), the
+/// slot's own groups first: the primary opens on SUBMACHINE GUNS, the secondary on PISTOLS.
+#[test]
+fn the_category_order_follows_the_catalogs_weapon_groups() {
+    let groups = crate::weapons::catalog().weapon_groups();
+    let primary: Vec<&str> = category_order(Slot::Primary).into_iter().map(|c| c.cac_group()).collect();
+    assert_eq!(primary[0], "weapon_smg");
+    assert_eq!(category_order(Slot::Secondary)[0], WeaponClass::Pistol);
+    assert_eq!(primary.len(), groups.len(), "every group has a place");
+}

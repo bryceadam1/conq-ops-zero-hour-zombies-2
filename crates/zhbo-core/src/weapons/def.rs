@@ -54,6 +54,9 @@ impl Class {
             Class::Equipment => "equipment",
         }
     }
+    /// The gun classes, each one Create-a-Class weapon group ([`Class::cac_group`]).
+    pub const ALL_GUNS: [Class; 8] = [Class::Rifle, Class::Smg, Class::Lmg, Class::Sniper, Class::Shotgun, Class::Pistol, Class::Launcher, Class::Special];
+
     /// BO2's Create-a-Class group for a class (`mp/statstable.csv` column 2); empty for melee.
     pub fn cac_group(self) -> &'static str {
         match self {
@@ -580,8 +583,7 @@ impl WeaponDef {
     /// statstable group ([`WeaponDef::cac_group`]), else its own class (not a CaC item, or a
     /// grenade-group item, which keeps its lethal/tactical/equipment class).
     pub fn cac_class(&self) -> Class {
-        const GUNS: [Class; 8] = [Class::Rifle, Class::Smg, Class::Lmg, Class::Sniper, Class::Shotgun, Class::Pistol, Class::Launcher, Class::Special];
-        GUNS.into_iter().find(|c| !self.cac_group.is_empty() && c.cac_group() == self.cac_group).unwrap_or(self.class)
+        Class::ALL_GUNS.into_iter().find(|c| !self.cac_group.is_empty() && c.cac_group() == self.cac_group).unwrap_or(self.class)
     }
 
     /// Damage at `distance` (ZH units). BO2's curve has six slots: unused middle slots have no
