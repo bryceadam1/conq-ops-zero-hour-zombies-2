@@ -112,6 +112,10 @@ tuning! {
     bob_sprinting_v: "bg_weaponBobAmplitudeSprinting.y" = 0.014, "Sprinting bob, vertical (G4).";
     bob_roll: "bg_weaponBobAmplitudeRoll" = 1.5, "Bob roll multiplier (G4).";
     // ---- The mod's own ------------------------------------------------------------------------
+    shield_blast_protection_30: "shieldBlastDamageProtection_30" = 0.4, "Assault Shield: share of a blast it takes away within a 30-degree arc of its forward axis (`FUN_00670940`; dvar default).";
+    shield_blast_protection_60: "shieldBlastDamageProtection_60" = 0.2, "As above, within a 60-degree arc.";
+    shield_blast_protection_120: "shieldBlastDamageProtection_120" = 0.1, "As above, within a 120-degree arc.";
+    shield_blast_protection_180: "shieldBlastDamageProtection_180" = 0.0, "As above, within a 180-degree arc.";
     regen_delay: "RegenDelay" = 5.0, "Seconds after the last hit before health regenerates (the mod's value).";
     regen_full_time: "RegenFullTime" = 3.0, "Seconds to regenerate from empty (the mod's value).";
     building_rate: "BuildingRate" = 1.0, "Build/repair rate multiplier (the mod's value).";

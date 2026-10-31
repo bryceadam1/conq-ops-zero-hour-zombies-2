@@ -268,6 +268,9 @@ pub struct Sim {
     pub tuning: MoveTuning,
     pub frame: u32,
     pub events: Vec<Event>,
+    /// The Generals carrying an Assault Shield, as the frame began (held or stowed; see
+    /// [`crate::shield`]): the shots, melee strikes and blasts of this frame test them.
+    pub shields: Vec<crate::shield::Bearer>,
 }
 
 impl Default for Sim {
@@ -286,7 +289,22 @@ impl Sim {
             tuning: MoveTuning::default(),
             frame: 0,
             events: Vec::new(),
+            shields: Vec::new(),
         }
+    }
+
+    /// Every General's shield this frame: held while it is the weapon up, stowed on the back while
+    /// it is carried otherwise (`_riotshield.gsc` `refreshshieldattachment`).
+    fn shield_bearers(&self) -> Vec<crate::shield::Bearer> {
+        let mut out = Vec::new();
+        for p in self.players.iter().flatten() {
+            let up = p.arsenal.current().def;
+            let carried = if up.is_shield() { Some((up, true)) } else { p.arsenal.weapons.iter().map(|w| w.def).find(|d| d.is_shield()).map(|d| (d, false)) };
+            if let Some(b) = carried.and_then(|(d, held)| crate::shield::Bearer::of(p.general, p.body.pos, p.yaw, d, held)) {
+                out.push(b);
+            }
+        }
+        out
     }
 
     /// A sim configured from the gameplay tuning pack (`data/ConquerOps/tuning.ini`, loaded by the
@@ -497,6 +515,8 @@ impl Sim {
     /// Once per logic frame, after the frame's messages were dispatched.
     pub fn step(&mut self, host: &dyn LogicHost, frame: u32) {
         self.frame = frame;
+        self.shields = self.shield_bearers();
+        self.equipment.shields.clone_from(&self.shields);
         for idx in 0..self.players.len() {
             let Some(mut p) = self.players[idx].take() else { continue };
             let keep = self.step_player(host, idx, &mut p);
@@ -516,7 +536,7 @@ impl Sim {
     fn step_projectiles(&mut self, host: &dyn LogicHost) {
         let mut done = Vec::new();
         for (i, (owner, proj)) in self.projectiles.iter_mut().enumerate() {
-            if let Some(outcome) = proj.step(host) {
+            if let Some(outcome) = proj.step_shielded(host, &self.shields) {
                 done.push((i, *owner, outcome));
             }
         }
@@ -807,6 +827,9 @@ pub fn describe_event(e: &Event) -> Option<String> {
     };
     Some(msg)
 }
+
+#[cfg(test)]
+mod shield_tests;
 
 #[cfg(test)]
 pub(crate) mod tests {

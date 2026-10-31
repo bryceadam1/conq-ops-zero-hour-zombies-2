@@ -143,9 +143,9 @@ impl Placed {
     }
 
     /// Blow it up where it is.
-    fn explode(&mut self, host: &dyn LogicHost) -> EquipEvent {
+    fn explode(&mut self, host: &dyn LogicHost, shields: &[crate::shield::Bearer]) -> EquipEvent {
         self.remove(host);
-        let (hit_enemy, kill) = blast(host, self.def, self.general, self.pos, None, 1.0, 1.0);
+        let (hit_enemy, kill) = blast(host, self.def, self.general, self.pos, None, 1.0, 1.0, shields);
         EquipEvent::Exploded { owner: self.owner, at: self.pos, hit_enemy, kill }
     }
 }
@@ -154,6 +154,8 @@ impl Placed {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Equipment {
     pub placed: Vec<Placed>,
+    /// The frame's shield bearers (the sim's [`crate::sim::Sim::shields`]): blasts test them.
+    pub shields: Vec<crate::shield::Bearer>,
 }
 
 impl Equipment {
@@ -172,6 +174,7 @@ impl Equipment {
         events: &mut Vec<EquipEvent>,
     ) {
         let mut gone = Vec::new();
+        let shields = &self.shields;
         for (i, p) in self.placed.iter_mut().enumerate() {
             p.age += LOGIC_DT;
             // Riding on what it stuck to; gone with it.
@@ -200,7 +203,7 @@ impl Equipment {
                     if p.kind == Kind::Betty {
                         p.pos.z = host.ground_height(p.pos.x, p.pos.y) + BETTY_HOP;
                     }
-                    events.push(p.explode(host));
+                    events.push(p.explode(host, shields));
                     gone.push(i);
                 }
                 continue;
@@ -279,7 +282,7 @@ impl Equipment {
         while k < self.placed.len() {
             if self.placed[k].owner == owner && self.placed[k].kind == Kind::C4 {
                 let mut p = self.placed.remove(k);
-                events.push(p.explode(host));
+                events.push(p.explode(host, &self.shields));
             } else {
                 k += 1;
             }

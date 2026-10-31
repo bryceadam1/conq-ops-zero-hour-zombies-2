@@ -32,6 +32,7 @@ pub mod movement;
 pub mod profile;
 pub mod projectiles;
 pub mod sim;
+pub mod shield;
 pub mod sounds;
 pub mod strings;
 pub mod tuning;

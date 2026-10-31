@@ -44,6 +44,22 @@ impl Sim {
                     }
                     return;
                 }
+                // An enemy's Assault Shield on the ray: location `riotshield`, which outranks the
+                // body (rank 101) and takes no damage (`_globallogic_player.gsc:840-888`).
+                let hit_id = if let HitResult::Object { id, .. } = hit { Some(id) } else { None };
+                let enemy = |b: &crate::shield::Bearer| b.general != p.general && targets.iter().any(|t| t.id == b.general);
+                if let Some((_, t)) = crate::shield::blocking(&self.shields, &enemy, eye, dir, reach, def.max_range, hit_id) {
+                    let at = eye + dir * t;
+                    if let Some(fx) = fx {
+                        host.fire_fx(p.general, fx, 0, at);
+                    }
+                    self.emit(idx, EventKind::Impact { at, dir, surface: Surface::Metal, head: false, fatal: false, impact_type: def.impact_type });
+                    if pellet == 0 {
+                        self.emit(idx, EventKind::Shot { origin: eye, end: at });
+                        self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1, roll_deg: recoil.2, gun_kick });
+                    }
+                    return;
+                }
                 match hit {
                     HitResult::Object { id, point, distance, headshot } => {
                         if let Some(fx) = fx {
@@ -215,6 +231,16 @@ impl Sim {
                 da.total_cmp(&db).then(a.id.cmp(&b.id))
             });
         if let Some(v) = victim {
+            // The strike at a shield bearer's body crosses the shield first: no damage
+            // (location `riotshield`, `_globallogic_player.gsc:840`).
+            let chest = Vec3::new(v.pos.x, v.pos.y, v.pos.z + v.height * 0.6);
+            let to = chest - eye;
+            let mine = |b: &crate::shield::Bearer| b.general == v.id;
+            if let Some((_, t)) = crate::shield::blocking(&self.shields, &mine, eye, to.normalized_or_zero(), to.length(), to.length(), Some(v.id)) {
+                let at = eye + to.normalized_or_zero() * t;
+                self.emit(idx, EventKind::Impact { at, dir: to.normalized_or_zero(), surface: Surface::Metal, head: false, fatal: false, impact_type: 0 });
+                return;
+            }
             host.fire_fx(p.general, MELEE_FX_WEAPON, v.id, v.pos);
             let kill = host.damage(p.general, v.id, damage * BO2_TO_ZH_DAMAGE, damage_kind::MELEE);
             self.emit(idx, EventKind::HitMarker { headshot: false, kill });
