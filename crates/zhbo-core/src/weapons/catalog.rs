@@ -622,6 +622,7 @@ Weapon mp7_mp
   DisplayName = MP7
   Class = smg
   CacSlot = primary
+  Description = Fully automatic personal defense weapon.  Versatile and strong overall.
   Allowed = reflex=reflex
 End
 

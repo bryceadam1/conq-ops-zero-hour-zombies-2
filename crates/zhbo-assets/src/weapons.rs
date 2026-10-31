@@ -395,13 +395,16 @@ pub fn add_variants(table: &mut Table, converted: &[String], bo2: &[Weapon]) {
 /// (column 2, the editor's category: [`WeaponDef::cac_class`]). A weapon no item names stays off
 /// the class editor's lists (the `_dw` pistols, whose rows cost -1, are what a pistol with the
 /// `dw` attachment gives; the War Machine is a pickup only).
-pub fn set_cac_slots(table: &mut Table, patch: &zhbo_formats::t6zone::Zone) {
+pub fn set_cac_slots(table: &mut Table, patch: &zhbo_formats::t6zone::Zone, names: &HashMap<String, String>) {
     let Ok(Some(statstable)) = zhbo_formats::stringtable::rows(patch, "mp/statstable.csv") else { return };
     let items = zhbo_conformance::bo2::combos::items(&statstable);
     for d in &mut table.weapons {
         if let Some(item) = items.iter().find(|i| i.variant == d.id) {
             d.cac_slot = item.slot.clone();
             d.cac_group = item.group.clone();
+            // Column 7's localized description, exactly as BO2's string table has it.
+            let row = statstable.iter().find(|r| r.get(4).is_some_and(|c| *c == item.reference));
+            d.description = row.and_then(|r| r.get(7)).and_then(|k| names.get(k.trim())).cloned().unwrap_or_default();
         }
     }
 }
@@ -818,6 +821,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         // Set from the statstable by `set_cac_slots` (the table is not this weapon's data).
         cac_slot: String::new(),
         cac_group: String::new(),
+        description: String::new(),
         dual_wield_weapon: w.dual_wield_weapon.clone().unwrap_or_default(),
         silenced: w.silenced,
         laser: false,

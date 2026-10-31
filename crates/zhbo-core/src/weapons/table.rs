@@ -564,6 +564,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("CacGroup", "The Create-a-Class group BO2 lists it under (statstable column 2).", FieldKind::Str,
         |d: &WeaponDef| d.cac_group.clone(),
         |d: &mut WeaponDef, v: Values| { d.cac_group = v.text.into(); Ok(()) }),
+    field!("Description", "The Create-a-Class item's localized description (statstable column 7).", FieldKind::Str,
+        |d: &WeaponDef| d.description.clone(),
+        |d: &mut WeaponDef, v: Values| { d.description = v.text.into(); Ok(()) }),
     field!("DualWieldWeapon", "A dual-wield weapon's left gun (BO2's `szDualWieldWeaponName`).", FieldKind::Str,
         |d: &WeaponDef| d.dual_wield_weapon.clone(),
         |d: &mut WeaponDef, v: Values| { d.dual_wield_weapon = v.text.into(); Ok(()) }),
@@ -772,7 +775,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 82);
+        assert_eq!(WEAPON_FIELDS.len(), 83);
         assert_eq!(ATTACHMENT_FIELDS.len(), 18);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

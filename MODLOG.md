@@ -4813,3 +4813,24 @@ loadout's `specialgrenadecount` (`setweaponammoclip`), so a single concussion is
   count, the concussion's 2). Old profile entries without the key still give the start count until
   re-saved. A single *lethal* still stores no count (perks-cards' choice): the C4's and Trophy's
   start count 2 is still what one box gives — a follow-up for BO2's `primarygrenadecount` 1.
+
+## Weapon descriptions from the statstable (2026-10-31, `v1/cac-text`)
+
+BO2's weapon picker shows the highlighted item's description as the carousel's hint
+(`cacweaponsp.lua:540-590`: `Engine.Localize(GetItemDesc(...))` into the `CoD.HintText` the list
+was built with, `hintTextLeft 0`, `hintTextWidth 350`; `c-primary/001` puts it level with the stat
+bars). The mod had no description for weapons. `weapons::set_cac_slots` (the one statstable pass
+that already sets `CacSlot`/`CacGroup`) now also sets `WeaponDef::description` from column 7's
+localized string, exactly as the string table has it; the weapon table gains a `Description` line
+(combinations inherit the base's). The picker draws it with `bo2::hint`. This also covers the
+offhands' `description` cells (the grenades and the placed equipment are statstable items too).
+
+* The archive VERSION must bump (integrator) so players get the converted text; an old table has
+  empty descriptions and the picker draws none.
+* The trailing-space descriptions (AN-94, SIG 556, S12... `srm1216`) still differ: the table format
+  trims values (next entry).
+
+Measured (vs perks-cards' 517 + the cherry-picked equipment rows): cac `description` 67 → 24
+(every weapon row filled; left: 3 trailing-space weapons, Dexterity, 20 attachments); `image`
+9 → 15 and `order` 434 → 439 are the six equipment rows the cherry-pick adds; weapons 781,587
+unchanged (equipment-melee's number); cac 517 → 485.

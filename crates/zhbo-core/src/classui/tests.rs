@@ -1080,3 +1080,19 @@ fn the_tactical_buttons_second_box_takes_a_second_tactical() {
     e.draft.tactical = "trophy_system_mp".into();
     assert_eq!(editor_cells(&l, &e).iter().any(|c| c.slot == Slot::Tactical && c.index == 1), cap > 1);
 }
+
+/// The weapon picker shows the highlighted item's description as the carousel's hint
+/// (`cacweaponsp.lua:540-590`, `c-primary/001`): the table's statstable text, wrapped.
+#[test]
+fn the_weapon_picker_shows_the_items_description() {
+    let mut e = Editor::new(Draft::default());
+    e.slot = Slot::Primary;
+    e.picking = true;
+    e.option = e.options().iter().position(|o| o == "MP7").expect("the MP7 stand-in");
+    let desc = &weapons::weapon("mp7_mp").description;
+    assert!(!desc.is_empty());
+    let mut prims = Vec::new();
+    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
+    let joined = texts(&prims).join(" ");
+    assert!(joined.contains("Fully automatic personal defense weapon.") && joined.contains("Versatile and strong overall."), "{joined}");
+}

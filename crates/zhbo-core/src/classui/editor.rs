@@ -366,6 +366,13 @@ fn draw_weapon_picker(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor) 
             let r = f.in_menu(crate::lui::Place::new((true, false, x, x + bo2::MENU_W / 2.0), (true, false, 330.0, 430.0)));
             stat_bars(prims, f, r, &weapon_stats(def));
         }
+        // The highlighted item's description: the carousel's hint (`CoD.HintText`, 350 wide at
+        // the menu's left, `cacweaponsp.lua:206-209` and `:540-590`), level with the bars
+        // (`c-primary/001`).
+        if !def.description.is_empty() {
+            let r = f.in_menu(crate::lui::Place::new((true, false, 0.0, 350.0), (true, false, 330.0, 330.0 + bo2::TEXT_DEFAULT)));
+            bo2::hint(prims, f, r, &def.description);
+        }
     }
     // The tiles clip at the menu's edge, as BO2's carousel's partial cards do (`b-editor/016`).
     let p = f.px(f.menu);

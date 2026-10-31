@@ -265,6 +265,10 @@ pub struct WeaponDef {
     /// editor's categories follow it ([`WeaponDef::cac_class`]); `class` stays the weapon's own
     /// (the Ballistic Knife is a pistol that BO2 lists under SPECIALS).
     pub cac_group: String,
+    /// The Create-a-Class item's localized description (`mp/statstable.csv` column 7,
+    /// `GetItemDesc`), the hint the weapon picker shows under the card (`cacweaponsp.lua:540-590`);
+    /// empty when it is not an item. A combination inherits its base's.
+    pub description: String,
     /// The left gun of a dual-wield weapon (BO2's `szDualWieldWeaponName`, `fnp45_lh_mp`); empty
     /// for a single gun.
     pub dual_wield_weapon: String,
@@ -513,6 +517,7 @@ impl Default for WeaponDef {
             alt_own_ammo: false,
             cac_slot: String::new(),
             cac_group: String::new(),
+            description: String::new(),
             dual_wield_weapon: String::new(),
             silenced: false,
             laser: false,
