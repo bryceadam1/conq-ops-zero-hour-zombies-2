@@ -555,6 +555,18 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("ExplodeSound", "The blast's BO2 sound event.", FieldKind::Str,
         |d: &WeaponDef| d.explode_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.explode_sound = v.text.into(); Ok(()) }),
+    field!("BounceSounds", "A bounce's sound per surface (`surface=event`; BO2's `bounceSound[surface]`).", FieldKind::Pairs,
+        |d: &WeaponDef| pairs(&d.bounce_sounds),
+        |d: &mut WeaponDef, v: Values| { d.bounce_sounds = parse_pairs(v.text); Ok(()) }),
+    field!("ActivateDist", "Path length before the projectile arms (`iProjectileActivateDist`, ZH units); a hit sooner is a dud.", FieldKind::Num,
+        |d: &WeaponDef| d.activate_dist.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.activate_dist = v.text_num()?; Ok(()) }),
+    field!("DudFx", "Zero Hour FXList for a dud (`projDudEffect`).", FieldKind::Str,
+        |d: &WeaponDef| d.dud_fx.clone(),
+        |d: &mut WeaponDef, v: Values| { d.dud_fx = v.text.into(); Ok(()) }),
+    field!("DudSound", "A dud's own BO2 sound event (`projDudSound`).", FieldKind::Str,
+        |d: &WeaponDef| d.dud_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.dud_sound = v.text.into(); Ok(()) }),
     field!("Viewmodel", "Viewmodel index in the converted art, or -1.", FieldKind::Num,
         |d: &WeaponDef| d.viewmodel.to_string(),
         |d: &mut WeaponDef, v: Values| { d.viewmodel = v.text.parse().map_err(|_| "number")?; Ok(()) }),
@@ -743,7 +755,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 90);
+        assert_eq!(WEAPON_FIELDS.len(), 94);
         assert_eq!(ATTACHMENT_FIELDS.len(), 17);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

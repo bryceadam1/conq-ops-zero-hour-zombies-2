@@ -364,21 +364,22 @@ pub fn is_bullet(impact_type: u32) -> bool {
 /// The effect BO2's impact table (`FxImpactTable`) plays for table entry `entry` on `surface`,
 /// falling back to the default surface.
 pub fn impact(z: &Zone, entry: u32, surface: usize) -> Option<Effect> {
-    let impact_type = entry;
+    impact_cell(z, entry, surface).or_else(|| impact_cell(z, entry, surface::DEFAULT))
+}
+
+/// The table's own cell for `entry` on `surface`, without the default-surface fallback: what the
+/// grenade-bounce and dud events read (t6mp `FUN_004c1590` events 0x47 and 0x51 index
+/// `table[row].nonflesh[surface]` and play it only when it is set).
+pub fn impact_cell(z: &Zone, entry: u32, surface: usize) -> Option<Effect> {
     use crate::t6zone::layouts::{FxImpactEntry as IE, FxImpactTable as IT};
     let kind = crate::fastfile::asset_type_id("impactfx")?;
     let table = z.assets.iter().find(|a| a.kind == kind)?;
     let entries = z.u32(table.addr + IT::table);
-    if entries == 0 || impact_type > 32 {
+    if entries == 0 || entry > 32 || surface >= 32 {
         return None;
     }
-    let entry = entries + impact_type * IE::SIZE;
-    [surface, surface::DEFAULT]
-        .into_iter()
-        .map(|s| z.u32(entry + IE::nonflesh + 4 * s as u32))
-        .find(|p| *p != 0)
-        .map(|p| read(z, p))
-        .filter(|e| !e.elems.is_empty())
+    let p = z.u32(entries + entry * IE::SIZE + IE::nonflesh + 4 * surface as u32);
+    (p != 0).then(|| read(z, p)).filter(|e| !e.elems.is_empty())
 }
 
 #[cfg(test)]

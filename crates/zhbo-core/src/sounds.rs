@@ -240,6 +240,13 @@ pub fn explosion_cues(sound: &'static str, impact_type: i32, surface: crate::imp
     [table, own]
 }
 
+/// A dud's cues, in BO2's order (t6mp `FUN_004c1590` event 0x51): the large bullet's hit alias for
+/// `surface` (`prj_bullet_impact_large_<surface>`, `impacts::DUD_HIT_SOUND_TYPE`; nothing where
+/// the install has none), then the def's own `projDudSound`.
+pub fn dud_cues(sound: &'static str, surface: crate::impacts::Surface) -> [Option<&'static str>; 2] {
+    [crate::impacts::sound_name(crate::impacts::DUD_HIT_SOUND_TYPE, surface).and_then(some), some(sound)]
+}
+
 /// A pellet's hit sound: the impact table's for the gun's `impactType` on `surface` (BO2's
 /// `prj_bullet_impact_<size>_<surface>`, `FUN_00533210`), nothing where BO2 has no alias (`NONE`
 /// rows: its hash miss is silent). The fixed flesh/hard cue only when the type has no converted

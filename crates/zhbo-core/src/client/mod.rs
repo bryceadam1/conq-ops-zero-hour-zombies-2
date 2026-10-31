@@ -1144,6 +1144,16 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                         self.cues.play_at(cue, at);
                     }
                 }
+                EventKind::Bounced { at, sound } => {
+                    if let Some(cue) = sounds::some(sound) {
+                        self.cues.play_at(cue, at);
+                    }
+                }
+                EventKind::Dud { at, sound, surface } => {
+                    for cue in sounds::dud_cues(sound, surface).into_iter().flatten() {
+                        self.cues.play_at(cue, at);
+                    }
+                }
                 EventKind::Intercepted { at } => self.cues.play_at(sounds::EXPLOSION, at),
                 EventKind::Hacking { progress } => {
                     self.hud.hack_progress = progress;

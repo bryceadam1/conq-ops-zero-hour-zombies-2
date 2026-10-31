@@ -4683,3 +4683,37 @@ The mod has no exit hits, and which callers set the vehicle flags is unverified 
   with asset 0 and no secondary. BO2 finds the alias and plays nothing audible, so the converter
   treats it as a `NONE` row, not a missing event. Only aliases with a variant asset or a secondary
   count as present.
+
+## Grenade bounces and launcher duds play BO2's sounds and effects (2026-10-31, `v1/projectile-sounds`)
+
+Stacked on `v1/explosion-sounds`. The two impact types that branch left without a sound family —
+`grenade_bounce` (6) and `projectile_dud` (11) — are not weapon impact types at all (no MP def
+carries either): they are the rows two client events read.
+
+* **Bounce** (t6mp `FUN_004c1590` case 0x47, sent by `G_RunMissile` `FUN_00608c10` at every
+  rebound with the surface struck): `bounceSound` is a **per-surface array**, not a name with a
+  suffix — `WeaponDef+0x1b4` points at 32 xstrings (`wpn_grenade_bounce_<surface>`,
+  `wpn_smoke_bounce_*`, `wpn_sticky_gren_bounce_*`, `wpn_satchel_plant_*`, …) and the event plays
+  `bounceSound[surface]`, then `FxImpactTable[11].nonflesh[surface]` (footstep dust; none on flesh)
+  only when the cell is set. The parser reads the array; the def carries `BounceSounds`
+  (`surface=event` for the mod's slots); a cell whose alias no bank holds is `NONE`
+  (`impacts::silence_missing`, BO2's hash miss).
+* **Dud** (`FUN_00604280`): `G_RunMissile` sums the path each frame (`+0x238`) while the def has
+  `iProjectileActivateDist`; striking anything short of it turns the explosion type into `dud`
+  (`FUN_00608c10`: `local_2c = 4`) and sends event 0x51, which plays `prj_bullet_impact_large_<surface>`
+  (the table at `0x1061f88`), `FxImpactTable[15].nonflesh[surface]`, `projDudEffect` and
+  `projDudSound`. The direct hit still takes `iDamage` (`+0x3e4`, `damage[0]`). Only the launcher
+  grenades set it (every `gl_*` and the M32: 300 inches, `impacts/fx_dud_m203`,
+  `wpn_grenade_bounce_flesh`); the rockets do not. The mod had no arming at all: a point-blank
+  noob tube now thuds instead of exploding.
+* **Exact cells.** Both events index the row directly; the converter writes rows 6/11 with
+  `fx::impact_cell` for every slot (flesh included) and no default row, and the sim reads them with
+  `impacts::fx_cell`. **Gotcha: `FUN_00533210` itself indexes exact cells too** — the blast/bullet
+  default-surface fallback (`fx::impact`) is the mod's reading of the loader, not of this function;
+  left as it was.
+* Sim/client split as before: `Projectile::bounced`/`travelled`, `Outcome::Dud`,
+  `EventKind::Bounced { at, sound }` and `EventKind::Dud { at, sound, surface }`, `sounds::dud_cues`.
+  Combinations inherit the new fields through `take_converted_assets`. `WEAPON_FIELDS` 90 → 94
+  (`BounceSounds`, `ActivateDist`, `DudFx`, `DudSound`).
+* Probe: `zhbo-assets fx --impacts` prints rows 11/15 cell by cell and each projectile def's
+  activation distance, dud effect/sound and bounce array.

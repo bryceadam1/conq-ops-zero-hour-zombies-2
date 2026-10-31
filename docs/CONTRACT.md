@@ -405,6 +405,19 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
   blast (an unconverted archive). The
   `impactType` → row/family mapping lives once, in `zhbo_formats::fx::IMPACT_KINDS`. No ABI
   change: the rows ride in the existing file and the existing `fx` callback.
+* **Bounces and duds are their own events** (t6mp `FUN_004c1590`, sent by `G_RunMissile`
+  `FUN_00608c10`). A bounce (event 0x47, each time a grenade or thrown piece of equipment rebounds)
+  plays the def's `bounceSound[surface]` and the `grenade_bounce` row's cell for the surface; a
+  projectile that strikes something before flying its `iProjectileActivateDist` of path
+  (`FUN_00604280`; the launcher grenades' 300 inches) is a **dud** (event 0x51): no blast, the
+  direct hit takes its `iDamage`, and it plays `prj_bullet_impact_large_<surface>`, the
+  `projectile_dud` row's cell, then `projDudEffect`/`projDudSound`. The sim tracks the path
+  (`Projectile::travelled`), plays the cells through `LogicApi.fx` and emits
+  `EventKind::Bounced { at, sound }` (the def's `BounceSounds` cell for the surface, resolved in the
+  sim) and `EventKind::Dud { at, sound, surface }`; the client plays them (`sounds::dud_cues`). Both
+  rows are read cell by cell with **no default-surface fallback** (`impacts::fx_cell`; the bounce
+  row has no flesh cell, so a grenade off a soldier raises nothing), and their constants live once
+  in `zhbo_core::impacts` (`GRENADE_BOUNCE`, `PROJECTILE_DUD`, `DUD_HIT_SOUND_TYPE`). No ABI change.
 * ABI: `surface_at` is appended to `ZhboLogicApi` (fields 23 → 24), `ZhboClientOut` grows by 324
   bytes (4508 → 4832) and `ZHBO_ABI_VERSION` goes to 26; `zhbo_load_impacts` and `zhbo_impact_fx`
   are new free functions on the append-only surface.

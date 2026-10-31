@@ -52,6 +52,11 @@ pub struct Projectile {
     /// Becomes placed equipment where it comes to rest or sticks (C4, Shock Charge, Sensor
     /// Grenade) instead of going off.
     pub lands: bool,
+    /// Path length flown so far (BO2's `G_RunMissile` sums each frame's move), against the def's
+    /// `activate_dist`.
+    pub travelled: f32,
+    /// Bounced this step: where, and off what (the client's bounce sound). Cleared every step.
+    pub bounced: Option<(Vec3, Surface)>,
 }
 
 /// What happened this step, for the client (sounds, hit markers).
@@ -60,6 +65,9 @@ pub enum Outcome {
     /// Went off on `surface` (what it hit directly, else the ground under it).
     Exploded { at: Vec3, hit_enemy: bool, kill: bool, surface: Surface },
     Hit { at: Vec3, kill: bool },
+    /// Struck `surface` before arming (`WeaponDef::activate_dist`): no blast, only the direct hit's
+    /// impact damage (BO2's `iDamage`).
+    Dud { at: Vec3, hit_enemy: bool, kill: bool, surface: Surface },
     /// Came to rest (or stuck to `stuck_to`) as equipment; its object stays.
     Landed { at: Vec3, stuck_to: Option<u32> },
 }
@@ -72,13 +80,14 @@ impl Projectile {
         let object = if def.projectile_object.is_empty() { 0 } else { host.spawn(&def.projectile_object, owner, from, yaw) };
         let lands = crate::equipment::Kind::of(def) != crate::equipment::Kind::Other;
         let fuse = if lands || def.impact_explode || def.effect == Effect::Impact || def.fuse_time <= 0.0 { f32::INFINITY } else { fuse_left };
-        Projectile { def, owner, pos: from, vel, fuse, age: 0.0, object, stuck_to: None, resting: false, self_blast_scale: 1.0, self_stun_scale: 1.0, lands }
+        Projectile { def, owner, pos: from, vel, fuse, age: 0.0, object, stuck_to: None, resting: false, self_blast_scale: 1.0, self_stun_scale: 1.0, lands, travelled: 0.0, bounced: None }
     }
 
     /// Advance one logic frame. Returns `Some` when it is finished (went off or hit).
     pub fn step(&mut self, host: &dyn LogicHost) -> Option<Outcome> {
         let dt = LOGIC_DT;
         self.age += dt;
+        self.bounced = None;
         self.fuse -= dt;
         if self.fuse <= 0.0 {
             return Some(self.go_off(host, None));
@@ -96,12 +105,18 @@ impl Projectile {
                 self.vel.z -= GRAVITY * dt;
             }
             let next = self.pos + self.vel * dt;
+            // Not armed yet when this move ends short of the activation distance (BO2 compares the
+            // path summed so far, this move included, `FUN_00604280`).
+            self.travelled += (next - self.pos).length();
+            let dud = self.def.activate_dist > 0.0 && self.travelled < self.def.activate_dist;
             // Objects along the way.
             if self.age > ARM_TIME {
                 if let Some(o) = self.hit_object(host, self.pos, next) {
                     self.pos = next;
                     if self.def.sticky {
                         self.stuck_to = Some(o.id);
+                    } else if self.def.impact_explode && dud {
+                        return Some(self.dud(host, Some(o)));
                     } else if self.def.impact_explode {
                         return Some(self.go_off(host, Some(o)));
                     } else if self.def.effect == Effect::Impact {
@@ -109,12 +124,16 @@ impl Projectile {
                     } else {
                         // Grenades bounce off.
                         self.vel = Vec3::new(-self.vel.x * BOUNCE_ALONG, -self.vel.y * BOUNCE_ALONG, self.vel.z * BOUNCE_UP);
+                        self.bounce(host, Surface::of_object(Some(&o)));
                     }
                 }
             }
             let ground = host.ground_height(next.x, next.y);
             if next.z <= ground {
                 self.pos = Vec3::new(next.x, next.y, ground);
+                if self.def.impact_explode && dud {
+                    return Some(self.dud(host, None));
+                }
                 if self.def.impact_explode {
                     return Some(self.go_off(host, None));
                 }
@@ -126,6 +145,7 @@ impl Projectile {
                     }
                 } else {
                     self.vel = Vec3::new(self.vel.x * BOUNCE_ALONG, self.vel.y * BOUNCE_ALONG, -self.vel.z * BOUNCE_UP);
+                    self.bounce(host, host.surface_at(self.pos.x, self.pos.y));
                     if self.vel.length() < REST_SPEED {
                         self.resting = true;
                         self.vel = Vec3::ZERO;
@@ -170,6 +190,35 @@ impl Projectile {
         let amount = self.def.damage[0] * BO2_TO_ZH_DAMAGE;
         let kill = host.damage(self.owner, o.id, amount, damage_kind::SMALL_ARMS);
         Outcome::Hit { at: self.pos, kill }
+    }
+
+    /// A bounce off `surface`: the impact table's `grenade_bounce` cell for it, when BO2 has one
+    /// (t6mp `FUN_004c1590` event 0x47), here; the def's sound by the client ([`Self::bounced`]).
+    fn bounce(&mut self, host: &dyn LogicHost, surface: Surface) {
+        if let Some(fx) = crate::impacts::fx_cell(crate::impacts::GRENADE_BOUNCE, surface) {
+            host.fx(&fx, self.pos);
+        }
+        self.bounced = Some((self.pos, surface));
+    }
+
+    /// Struck before arming (BO2's `G_RunMissile` turns the explosion into `dud`, `FUN_00608c10`):
+    /// the direct hit takes the impact damage (`iDamage`), nothing goes off, and the event plays
+    /// the `projectile_dud` row's cell for the surface and the def's `projDudEffect` (event 0x51).
+    fn dud(&mut self, host: &dyn LogicHost, direct: Option<ObjInfo>) -> Outcome {
+        self.remove_object(host);
+        let surface = blast_surface(host, self.pos, direct.as_ref());
+        for fx in dud_fx(self.def, surface).iter().flatten() {
+            host.fx(fx, self.pos);
+        }
+        let (mut hit_enemy, mut kill) = (false, false);
+        if let Some(o) = direct {
+            let amount = self.def.damage[0] * BO2_TO_ZH_DAMAGE;
+            if amount > 0.0 {
+                kill = host.damage(self.owner, o.id, amount, damage_kind::SMALL_ARMS);
+                hit_enemy = true;
+            }
+        }
+        Outcome::Dud { at: self.pos, hit_enemy, kill, surface }
     }
 
     /// The blast (or stun, EMP, smoke).
@@ -220,6 +269,13 @@ pub fn blast_fx(def: &WeaponDef, surface: Surface) -> (Option<String>, Option<&s
         return (None, Some(DEFAULT_EXPLOSION_FX));
     }
     (table, own)
+}
+
+/// The effects BO2 plays for `def` striking `surface` as a dud (event 0x51): the impact table's
+/// `projectile_dud` cell for the surface (exact, when set), then the def's own `projDudEffect`.
+pub fn dud_fx(def: &WeaponDef, surface: Surface) -> [Option<String>; 2] {
+    let table = crate::impacts::fx_cell(crate::impacts::PROJECTILE_DUD, surface);
+    [table, (!def.dud_fx.is_empty()).then(|| def.dud_fx.clone())]
 }
 
 /// `def` going off at `at` for `owner` (a General's id): explosion damage, stun, EMP or smoke over

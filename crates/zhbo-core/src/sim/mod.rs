@@ -140,6 +140,13 @@ pub enum EventKind {
     /// when it has none) and `impact_type` its `impactType`: the client plays the impact table's
     /// sound for the type and surface, then the def's own (`sounds::explosion_cues`).
     Exploded { at: Vec3, sound: &'static str, impact_type: i32, surface: crate::impacts::Surface },
+    /// A grenade bounced off something: `sound` is its def's `bounceSound` cell for the surface
+    /// (empty or `NONE`: silent), BO2's event 0x47.
+    Bounced { at: Vec3, sound: &'static str },
+    /// A projectile struck `surface` before arming and did not go off (BO2's event 0x51): the
+    /// client plays the large bullet's hit sound for the surface, then `sound`, its def's own
+    /// `projDudSound` (`sounds::dud_cues`).
+    Dud { at: Vec3, sound: &'static str, surface: crate::impacts::Surface },
     /// Equipment set down (planted, or a thrown piece came to rest).
     Planted { kind: EquipKind },
     /// The player's C4 went off.
@@ -516,10 +523,18 @@ impl Sim {
 
     fn step_projectiles(&mut self, host: &dyn LogicHost) {
         let mut done = Vec::new();
+        let mut bounces = Vec::new();
         for (i, (owner, proj)) in self.projectiles.iter_mut().enumerate() {
-            if let Some(outcome) = proj.step(host) {
+            let outcome = proj.step(host);
+            if let Some((at, surface)) = proj.bounced {
+                bounces.push((*owner, at, proj.def.bounce_sound(surface)));
+            }
+            if let Some(outcome) = outcome {
                 done.push((i, *owner, outcome));
             }
+        }
+        for (owner, at, sound) in bounces {
+            self.emit(owner, EventKind::Bounced { at, sound });
         }
         for (i, owner, outcome) in done.iter().rev() {
             let (_, proj) = self.projectiles.remove(*i);
@@ -536,6 +551,15 @@ impl Sim {
                     self.equipment_events(ev);
                     if hit_enemy {
                         self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
+                    }
+                }
+                Outcome::Dud { at, hit_enemy, kill, surface } => {
+                    self.emit(*owner, EventKind::Dud { at, sound: proj.def.dud_sound.as_str(), surface });
+                    if hit_enemy {
+                        self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
+                    }
+                    if kill {
+                        self.scavenge(*owner);
                     }
                 }
                 Outcome::Hit { kill, .. } => {
@@ -783,6 +807,7 @@ pub fn describe_event(e: &Event) -> Option<String> {
         MeleeHit => format!("player {}'s melee landed", e.player),
         Thrown { lethal } => format!("player {} threw a {}", e.player, if lethal { "lethal" } else { "tactical" }),
         Exploded { at, .. } => format!("player {}'s grenade went off at ({:.0}, {:.0})", e.player, at.x, at.y),
+        Dud { at, .. } => format!("player {}'s projectile struck unarmed (a dud) at ({:.0}, {:.0})", e.player, at.x, at.y),
         Planted { kind } => format!("player {} put down equipment ({kind:?})", e.player),
         Detonated => format!("player {} set off their C4", e.player),
         Intercepted { .. } => format!("player {}'s Trophy System shot down a projectile", e.player),
@@ -1570,8 +1595,8 @@ pub(crate) mod tests {
         assert_eq!((cue(&concrete), cue(&dirt)), (Some("HIT_CONCRETE"), Some("HIT_DIRT")));
         assert_eq!(cue(&water), None, "no alias for the surface: silent, as BO2's hash miss");
         // A type with no converted sounds keeps the fixed cues (an unconverted archive).
-        assert_eq!(crate::sounds::impact_cue(2, Surface::Concrete), Some(crate::sounds::IMPACT));
-        assert_eq!(crate::sounds::impact_cue(2, Surface::Flesh), Some(crate::sounds::IMPACT_FLESH));
+        assert_eq!(crate::sounds::impact_cue(79, Surface::Concrete), Some(crate::sounds::IMPACT));
+        assert_eq!(crate::sounds::impact_cue(79, Surface::Flesh), Some(crate::sounds::IMPACT_FLESH));
     }
 
     #[test]
@@ -1916,6 +1941,111 @@ pub(crate) mod tests {
         // and not the generic blast either: the type's sounds are converted.
         assert_eq!(crate::sounds::explosion_cues(sound, t, Surface::Water), [None, Some("OWN")]);
         assert_eq!(crate::sounds::explosion_cues("", t, Surface::Water), [None, None]);
+    }
+
+    /// BO2's event 0x47 (`G_RunMissile` at each bounce): the def's `bounceSound[surface]` and the
+    /// `grenade_bounce` row's cell for the surface, exact (none on dirt here, and no fallback).
+    #[test]
+    fn a_bounce_plays_the_defs_sound_and_the_bounce_cell_for_the_surface() {
+        crate::impacts::install(crate::impacts::TEST_TABLE);
+        let frag: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef {
+            id: "test_bouncer_mp".into(),
+            effect: crate::weapons::Effect::Explode,
+            impact_type: 77,
+            fuse_time: 5.0,
+            projectile_gravity: true,
+            bounce_sounds: vec![("concrete".into(), "BOUNCE_C".into()), ("water".into(), crate::sounds::NO_SOUND.into())],
+            ..Default::default()
+        }));
+        let bounce_on = |ground: Surface| {
+            let host = FakeHost::default();
+            host.ground.set(Some(ground));
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            let mut p = Projectile::launch(frag, 1, Vec3::new(0.0, 0.0, 2.0), Vec3::new(1.0, 0.0, 0.0), 5.0, &host, 0.0);
+            p.vel = Vec3::new(4.0, 0.0, -10.0);
+            sim.projectiles.push((0, p));
+            run(&mut sim, &host, 0, 1, FpsInput::default(), frames(1.0));
+            let sounds: Vec<&str> = events(&sim)
+                .into_iter()
+                .filter_map(|k| match k {
+                    EventKind::Bounced { sound, .. } => Some(sound),
+                    _ => None,
+                })
+                .collect();
+            let fx = host.played_fx.borrow().clone();
+            (sounds, fx)
+        };
+        let (concrete, fx_concrete) = bounce_on(Surface::Concrete);
+        assert!(!concrete.is_empty() && concrete.iter().all(|s| *s == "BOUNCE_C"), "{concrete:?}");
+        assert_eq!(fx_concrete.len(), concrete.len());
+        assert!(fx_concrete.iter().all(|f| f == "FX_BOUNCE_C"), "{fx_concrete:?}");
+        let (dirt, fx_dirt) = bounce_on(Surface::Dirt);
+        assert!(!dirt.is_empty() && dirt.iter().all(|s| s.is_empty()), "no cell for dirt: silent {dirt:?}");
+        assert!(fx_dirt.is_empty(), "the bounce row's default cell is not a fallback: {fx_dirt:?}");
+        assert_eq!(crate::sounds::some(concrete[0]), Some("BOUNCE_C"));
+        assert_eq!(crate::sounds::some(crate::sounds::NO_SOUND), None);
+    }
+
+    /// BO2's dud (`FUN_00604280`: struck before `iProjectileActivateDist` of path): no blast, the
+    /// direct hit's impact damage only, and event 0x51's effects and sounds for the surface.
+    #[test]
+    fn a_launcher_grenade_inside_its_arming_distance_is_a_dud() {
+        crate::impacts::install(crate::impacts::TEST_TABLE);
+        let gl = |activate_dist: f32| -> &'static crate::weapons::WeaponDef {
+            let mut damage = [0.0; 6];
+            damage[0] = 75.0;
+            Box::leak(Box::new(crate::weapons::WeaponDef {
+                id: "test_gl_mp".into(),
+                effect: crate::weapons::Effect::Explode,
+                impact_type: 77,
+                impact_explode: true,
+                projectile_speed: 20.0,
+                explosion_radius: 10.0,
+                explosion_inner_damage: 200.0,
+                explosion_outer_damage: 50.0,
+                damage,
+                activate_dist,
+                dud_fx: "OWN_DUD_FX".into(),
+                dud_sound: "OWN_DUD".into(),
+                ..Default::default()
+            }))
+        };
+        let shoot = |def: &'static crate::weapons::WeaponDef, target: bool| {
+            let host = FakeHost::default();
+            host.ground.set(Some(Surface::Concrete));
+            host.add(general(1, 0));
+            if target {
+                host.add(soldier(5, 1, 3.0));
+            }
+            let mut sim = Sim::new();
+            let dir = if target { Vec3::new(1.0, 0.0, 0.0) } else { Vec3::new(1.0, 0.0, -1.0).normalized_or_zero() };
+            sim.projectiles.push((0, Projectile::launch(def, 1, Vec3::new(0.0, 0.0, 1.0), dir, f32::INFINITY, &host, 0.0)));
+            run(&mut sim, &host, 0, 1, FpsInput::default(), frames(1.0));
+            let damage = host.damage_log.borrow().clone();
+            let fx = host.played_fx.borrow().clone();
+            (events(&sim), damage, fx)
+        };
+        // Into the ground a step away, well inside 100 units of path: a dud on concrete.
+        let (ev, damage, fx) = shoot(gl(100.0), false);
+        assert!(!ev.iter().any(|k| matches!(k, EventKind::Exploded { .. })), "a dud does not go off");
+        let dud = ev.iter().find_map(|k| match *k {
+            EventKind::Dud { sound, surface, .. } => Some((sound, surface)),
+            _ => None,
+        });
+        assert_eq!(dud, Some(("OWN_DUD", Surface::Concrete)));
+        assert!(damage.is_empty(), "nothing hit directly, no blast");
+        assert_eq!(fx, vec!["FX_DUD_C".to_string(), "OWN_DUD_FX".to_string()], "the dud row's cell, then the def's own");
+        assert_eq!(crate::sounds::dud_cues("OWN_DUD", Surface::Concrete), [Some("DUD_HIT_C"), Some("OWN_DUD")]);
+        assert_eq!(crate::sounds::dud_cues("OWN_DUD", Surface::Dirt), [None, Some("OWN_DUD")], "no large-bullet alias on dirt: silent");
+        // A direct hit before arming: the impact damage (`iDamage`) only, no splash.
+        let (ev, damage, _) = shoot(gl(100.0), true);
+        assert!(ev.iter().any(|k| matches!(k, EventKind::Dud { surface: Surface::Flesh, .. })), "{ev:?}");
+        assert_eq!(damage.len(), 1, "{damage:?}");
+        assert_eq!((damage[0].1, damage[0].2), (5, 75.0 * crate::units::BO2_TO_ZH_DAMAGE));
+        // Armed (no activation distance): the same shot goes off.
+        let (ev, _, _) = shoot(gl(0.0), false);
+        assert!(ev.iter().any(|k| matches!(k, EventKind::Exploded { .. })) && !ev.iter().any(|k| matches!(k, EventKind::Dud { .. })));
     }
 
     #[test]

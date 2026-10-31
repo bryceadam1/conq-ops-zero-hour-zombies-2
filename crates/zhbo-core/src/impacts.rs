@@ -27,6 +27,20 @@
 use crate::host::{objflags, ObjInfo};
 use std::sync::{OnceLock, RwLock};
 
+/// The impact type whose row a grenade's bounce plays (row 11 of `zhbo_formats::fx::IMPACT_KINDS`, `grenade_bounce`): t6mp
+/// `FUN_004c1590` event 0x47 (sent by `G_RunMissile`, `FUN_00608c10`, at each bounce with the
+/// surface struck) plays the def's `bounceSound[surface]`, then `table[11].nonflesh[surface]` when
+/// that cell is set (no default-surface fallback).
+pub const GRENADE_BOUNCE: i32 = 6;
+/// The impact type whose row a dud plays (row 15, `projectile_dud`): event 0x51 (sent when a
+/// projectile strikes before its `iProjectileActivateDist`, `FUN_00604280`) plays the large
+/// bullet's hit alias for the surface ([`DUD_HIT_SOUND_TYPE`]), `table[15].nonflesh[surface]`
+/// when set, then the def's `projDudEffect` and `projDudSound`.
+pub const PROJECTILE_DUD: i32 = 11;
+/// The impact type whose sound family a dud's hit plays: event 0x51 loads its alias from the table
+/// at `0x1061f88` — `prj_bullet_impact_large_<surface>`, `bullet_large`'s family (`FUN_004d4440`).
+pub const DUD_HIT_SOUND_TYPE: i32 = 2;
+
 /// What a shot hit. The discriminants are the ABI's `ZHBO_SURF_*` (`host/zhbo/zhbo_core.h`).
 #[repr(i32)]
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -169,6 +183,13 @@ pub fn find(rows: &[Row], impact_type: i32, surface: Surface, head: bool, fatal:
     cell(surface).or_else(|| cell(Surface::Default))
 }
 
+/// The exact non-flesh cell for `impact_type` on `surface` (any slot, flesh included, and no
+/// default-surface fallback): the grenade-bounce and dud rows, which BO2 reads cell by cell
+/// (`zhbo_formats::fx::GRENADE_BOUNCE`, `PROJECTILE_DUD`).
+pub fn find_cell(rows: &[Row], impact_type: i32, surface: Surface) -> Option<&str> {
+    rows.iter().find(|r| r.impact_type == impact_type && r.variant.is_none() && r.surface == surface).map(|r| r.fx.as_str())
+}
+
 /// One converted impact sound: the event a blast of `impact_type` on `surface` plays.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SoundRow {
@@ -249,6 +270,12 @@ pub fn type_has_sounds(impact_type: i32) -> bool {
     has_sounds(&sounds().read().unwrap_or_else(|e| e.into_inner()), impact_type)
 }
 
+/// The installed table's exact cell ([`find_cell`]).
+pub fn fx_cell(impact_type: i32, surface: Surface) -> Option<String> {
+    let rows = table().read().unwrap_or_else(|e| e.into_inner());
+    find_cell(&rows, impact_type, surface).map(str::to_string)
+}
+
 /// The converted FXList for a hit through the installed table (the ABI's lookup).
 pub fn fx_name(impact_type: i32, surface: Surface, head: bool, fatal: bool) -> Option<String> {
     let rows = table().read().unwrap_or_else(|e| e.into_inner());
@@ -257,7 +284,8 @@ pub fn fx_name(impact_type: i32, surface: Surface, head: bool, fatal: bool) -> O
 
 /// The one table the in-process tests install (the table is global, so every test that installs
 /// one installs this same text): blast type 77 and bullet type 78, on dirt and concrete, with water
-/// absent (`NONE`, BO2's hash miss).
+/// absent (`NONE`, BO2's hash miss); the bounce (6) and dud (11) rows on concrete, and the large
+/// bullet's (2) hit sound a dud plays.
 #[cfg(test)]
 pub const TEST_TABLE: &str = "\
 impact 77 default FX_D
@@ -269,6 +297,11 @@ sound 78 dirt HIT_DIRT
 sound 78 concrete HIT_CONCRETE
 sound 78 flesh HIT_FLESH
 sound 78 water NONE
+impact 6 concrete FX_BOUNCE_C
+impact 6 default FX_BOUNCE_DEFAULT
+impact 11 concrete FX_DUD_C
+sound 2 concrete DUD_HIT_C
+sound 2 dirt NONE
 ";
 
 #[cfg(test)]
@@ -325,6 +358,17 @@ garbage line
         assert!(has_sounds(&rows, 7));
         assert_eq!(find_sound(&rows, 9, Surface::Concrete), None);
         assert!(!has_sounds(&rows, 9));
+    }
+
+    #[test]
+    fn the_bounce_and_dud_rows_are_exact_cells() {
+        // BO2's events 0x47/0x51 read `nonflesh[surface]` and play it only when set.
+        let rows = parse("impact 6 concrete B_C\nimpact 6 default B_D\nimpact 11 flesh D_F\n");
+        assert_eq!(find_cell(&rows, 6, Surface::Concrete), Some("B_C"));
+        assert_eq!(find_cell(&rows, 6, Surface::Dirt), None, "no default-surface fallback");
+        assert_eq!(find(&rows, 6, Surface::Dirt, false, false), Some("B_D"), "(the hit/blast lookup does fall back)");
+        // A non-flesh row on the flesh slot: the dud row's dust on a soldier.
+        assert_eq!(find_cell(&rows, 11, Surface::Flesh), Some("D_F"));
     }
 
     #[test]

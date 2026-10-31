@@ -488,6 +488,18 @@ pub struct Weapon {
     /// explosives leave it empty.
     pub explosion_effect: Option<crate::fx::Effect>,
     pub impact_type: u32,
+    /// `bounceSound`: one alias per BO2 surface (32, indexed by `materialSurfType_t`; empty where
+    /// the def has none). A grenade's bounce event plays the cell for the surface it struck
+    /// (t6mp `FUN_004c1590` event 0x47: `bounceSound[surface]`, then the impact table's
+    /// `grenade_bounce` row cell).
+    pub bounce_sounds: Vec<Option<String>>,
+    /// `iProjectileActivateDist` (inches): a projectile that strikes something before travelling
+    /// this far is a dud (t6mp `FUN_00604280`), 0 = always armed.
+    pub projectile_activate_dist: i32,
+    /// `projDudEffect` / `projDudSound`: what a dud plays on top of the impact table's
+    /// `projectile_dud` row (t6mp `FUN_004c1590` event 0x51).
+    pub projectile_dud_effect: Option<crate::fx::Effect>,
+    pub projectile_dud_sound: Option<String>,
     /// The muzzle flash others see (`worldFlashEffect`).
     pub world_flash_effect: Option<crate::fx::Effect>,
     /// The first-person muzzle flash (`viewFlashEffect`).
@@ -827,6 +839,12 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.ads_zoom_sound = opt_str(z, d + WD::adsZoomSound);
     w.fire_start_sound_player = opt_str(z, d + WD::fireStartSoundPlayer);
     w.impact_type = z.u32(d + WD::impactType);
+    let bounce = z.u32(d + WD::bounceSound);
+    w.bounce_sounds = if bounce == 0 { Vec::new() } else { (0..32).map(|i| opt_str(z, bounce + 4 * i)).collect() };
+    w.projectile_activate_dist = int(z, d + WD::iProjectileActivateDist);
+    w.projectile_dud_sound = opt_str(z, d + WD::projDudSound);
+    let dud = z.try_u32(d + WD::projDudEffect)?;
+    w.projectile_dud_effect = crate::fx::bind(crate::fx::read_or_stub(z, dud), &[z]);
     let flash = z.try_u32(d + WD::worldFlashEffect)?;
     w.world_flash_effect = crate::fx::read_or_stub(z, flash);
     let view_flash = z.try_u32(d + WD::viewFlashEffect)?;
@@ -860,7 +878,7 @@ pub fn all_in(z: &Zone, later: &[&Zone]) -> Result<Vec<Weapon>, FormatError> {
     pool.push(z);
     let mut out: Vec<Weapon> = z.assets.iter().filter(|a| a.kind == kind).map(|a| read(z, a.addr)).collect::<Result<_, _>>()?;
     for w in &mut out {
-        for e in [&mut w.world_flash_effect, &mut w.view_flash_effect, &mut w.view_shell_eject_effect, &mut w.view_last_shot_eject_effect] {
+        for e in [&mut w.world_flash_effect, &mut w.view_flash_effect, &mut w.view_shell_eject_effect, &mut w.view_last_shot_eject_effect, &mut w.projectile_dud_effect] {
             *e = crate::fx::bind(e.take(), &pool);
         }
     }

@@ -861,6 +861,15 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         silenced_fx_weapon: String::new(),
         silenced_view_flash_fx: String::new(),
         explode_sound: def_sound(&w.projectile_explosion_sound),
+        // BO2's `bounceSound[surface]` for each of the mod's slots (event 0x47); the converter
+        // makes the cells the install has no alias for `NONE` (`generals`).
+        bounce_sounds: zhbo_core::impacts::Surface::ALL
+            .into_iter()
+            .filter_map(|s| w.bounce_sounds.get(crate::impacts::bo2_surface(s)).cloned().flatten().map(|a| (s.name().to_string(), zhbo_core::names::def_sound_event(&a))))
+            .collect(),
+        activate_dist: inches(w.projectile_activate_dist.max(0) as f32),
+        dud_fx: String::new(),
+        dud_sound: def_sound(&w.projectile_dud_sound),
         raise_sound: def_sound(&w.raise_sound_player),
         first_raise_sound: def_sound(&w.first_raise_sound_player),
         putaway_sound: def_sound(&w.putaway_sound_player),
@@ -1162,6 +1171,38 @@ mod tests {
         let d = to_def(&w, &HashMap::new());
         assert_eq!((d.clip, d.start_reserve, d.max_reserve), (30, 90, 210));
         assert_eq!(d.display_name, "AN94");
+    }
+
+    /// `bounceSound` is per BO2 surface; the def carries the mod's slots' cells by name, and the dud
+    /// fields with the activation distance in ZH units.
+    #[test]
+    fn bounce_cells_map_by_surface_and_the_dud_fields_carry() {
+        let mut bounce = vec![None; 32];
+        bounce[zhbo_formats::fx::surface::CONCRETE] = Some("wpn_grenade_bounce_concrete".to_string());
+        bounce[zhbo_formats::fx::surface::FLESH] = Some("wpn_grenade_bounce_flesh".to_string());
+        bounce[zhbo_formats::fx::surface::BRICK] = Some("wpn_grenade_bounce_brick".to_string());
+        let w = Weapon {
+            name: "gl_test_mp".into(),
+            clip_size: 1,
+            fire_time: 0.1,
+            bounce_sounds: bounce,
+            projectile_activate_dist: 300,
+            projectile_dud_sound: Some("wpn_grenade_bounce_flesh".into()),
+            ..Default::default()
+        };
+        let d = to_def(&w, &HashMap::new());
+        use zhbo_core::impacts::Surface;
+        assert_eq!(d.bounce_sound(Surface::Concrete), "ZHBO_BO2_Snd_wpn_grenade_bounce_concrete");
+        assert_eq!(d.bounce_sound(Surface::Flesh), "ZHBO_BO2_Snd_wpn_grenade_bounce_flesh");
+        assert_eq!(d.bounce_sound(Surface::Dirt), "");
+        assert_eq!(d.bounce_sounds.len(), 2, "brick is no mod slot");
+        assert_eq!(d.activate_dist, zhbo_core::units::inches(300.0));
+        assert_eq!(d.dud_sound, "ZHBO_BO2_Snd_wpn_grenade_bounce_flesh");
+        assert!(d.def_sound_events().any(|(e, world)| e == d.dud_sound && world));
+        // A combination takes them from its base like every converted asset.
+        let mut combo = zhbo_core::weapons::WeaponDef::default();
+        combo.take_converted_assets(&d);
+        assert_eq!((combo.bounce_sounds.clone(), combo.dud_sound.clone()), (d.bounce_sounds.clone(), d.dud_sound.clone()));
     }
 
     /// The regression pin: a replacement optic's unique supplies the combo's overlay, and an empty

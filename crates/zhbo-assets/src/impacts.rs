@@ -52,6 +52,17 @@ pub fn table_text(zone: &Zone, impact_types: &[u32], effects: &mut Converted, pa
             unmapped.push(t);
             continue;
         };
+        // The bounce and dud rows are read cell by cell, flesh included, with no default fallback
+        // (`FUN_004c1590` events 0x47/0x51): every slot's own cell, nothing else.
+        if EXACT_TYPES.contains(&(t as i32)) {
+            for s in Surface::ALL {
+                if let Some(e) = fx::impact_cell(zone, entry, bo2_surface(s)) {
+                    let name = effects.add(&e, paks);
+                    text.push_str(&format!("impact {t} {} {name}\n", s.name()));
+                }
+            }
+            continue;
+        }
         // Every slot except flesh (its own four cells) and default (written once, as the fallback).
         for s in Surface::ALL.into_iter().filter(|s| !matches!(s, Surface::Flesh | Surface::Default)) {
             if let Some(e) = fx::impact(zone, entry, bo2_surface(s)) {
@@ -101,6 +112,34 @@ pub fn sound_rows(impact_types: &[u32], has_alias: &dyn Fn(&str) -> bool) -> (St
         }
     }
     (text, aliases)
+}
+
+/// The impact types whose rows are exact cells ([`zhbo_core::impacts::find_cell`]).
+const EXACT_TYPES: [i32; 2] = [zhbo_core::impacts::GRENADE_BOUNCE, zhbo_core::impacts::PROJECTILE_DUD];
+
+/// The impact types the bounce and dud events read, when some def bounces with a sound or can be a
+/// dud: `grenade_bounce` (FX) and `projectile_dud` (FX) plus the large bullet's (the dud's hit
+/// sound, `zhbo_core::impacts::DUD_HIT_SOUND_TYPE`).
+pub fn bounce_dud_types(defs: &[zhbo_core::weapons::WeaponDef]) -> Vec<u32> {
+    use zhbo_core::impacts as i;
+    let mut t = Vec::new();
+    if defs.iter().any(|d| !d.bounce_sounds.is_empty()) {
+        t.push(i::GRENADE_BOUNCE as u32);
+    }
+    if defs.iter().any(|d| d.activate_dist > 0.0) {
+        t.extend([i::PROJECTILE_DUD as u32, i::DUD_HIT_SOUND_TYPE as u32]);
+    }
+    t
+}
+
+/// Turn the bounce cells whose alias `has_alias` does not know into `NONE` (BO2's hash miss is
+/// silent, and a row the table names must ship an event).
+pub fn silence_missing(cells: &mut [(String, String)], has_alias: &dyn Fn(&str) -> bool) {
+    for (_, event) in cells.iter_mut() {
+        if zhbo_core::names::def_sound_alias(event).is_some_and(|a| !has_alias(a)) {
+            *event = zhbo_core::sounds::NO_SOUND.to_string();
+        }
+    }
 }
 
 /// The projectile impact types of the defs that go off (explode, stun, EMP, smoke), sorted, each once.
@@ -155,6 +194,23 @@ mod tests {
         assert_eq!(cell(1, Surface::Dirt), Some(zhbo_core::sounds::NO_SOUND));
         assert!(rows.iter().filter(|r| r.0 == 5).all(|r| r.2 == zhbo_core::sounds::NO_SOUND), "the shotgun's entry family is empty");
         assert_eq!(aliases, ["prj_bullet_impact_small_concrete", "wpn_grenade_explode_default", "wpn_grenade_explode_concrete", "wpn_grenade_explode_dirt"]);
+    }
+
+    #[test]
+    fn a_bounce_cell_with_no_alias_is_silent_and_bounce_or_dud_defs_bring_their_rows() {
+        use zhbo_core::weapons::WeaponDef;
+        let ev = zhbo_core::names::def_sound_event;
+        let mut cells = vec![("concrete".to_string(), ev("wpn_grenade_bounce_concrete")), ("snow".to_string(), ev("wpn_grenade_bounce_snow"))];
+        silence_missing(&mut cells, &|a| a.eq_ignore_ascii_case("WPN_GRENADE_BOUNCE_CONCRETE"));
+        assert_eq!(cells[0].1, ev("wpn_grenade_bounce_concrete"));
+        assert_eq!(cells[1].1, zhbo_core::sounds::NO_SOUND, "BO2's hash miss");
+        let plain = WeaponDef::default();
+        assert!(bounce_dud_types(std::slice::from_ref(&plain)).is_empty());
+        let frag = WeaponDef { bounce_sounds: cells, ..Default::default() };
+        assert_eq!(bounce_dud_types(&[plain.clone(), frag.clone()]), [6]);
+        let gl = WeaponDef { activate_dist: 10.0, ..Default::default() };
+        // The dud row and the large bullet's hit family (event 0x51's sound table).
+        assert_eq!(bounce_dud_types(&[frag, gl]), [6, 11, 2]);
     }
 
     #[test]
