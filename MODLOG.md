@@ -4599,3 +4599,34 @@ gap clusters 202 → 200, zero regressions: `fire_sound_player` 100 → 0, `fire
 B23R's silenced `null_sound` and the DW's `_fire_npc_burst`) and `fire_last_sound` (1: the Strela)
 need a per-shooter third-person cue. No ABI change; the table schema and archive content changed
 (VERSION bump is the integrator's).
+
+## An alt toggle plays the def's alt-switch sound, not a raise (2026-10-30, branch `v1/alt-raise-sound`)
+
+Parity decision (user ruling: match BO2), stacked on `v1/lfe-layer`. 5b made the alt toggle
+silent; BO2 is not silent, and it is not the raise sound either.
+
+* **BO2's events** (t6mp, event names from the `EV_*` table at `0x00f6b390`): the weapon-change
+  begin `FUN_008db500` adds `EV_PUTAWAY_WEAPON` (0x1b) for an ordinary change but
+  `EV_WEAPON_ALT` (0x1c) when the two weapons are an alt pair (`FUN_008db3f0`); the finish
+  `FUN_008df320` adds `EV_RAISE_WEAPON`/`EV_FIRST_RAISE_WEAPON` (0x18/0x19) for an ordinary raise
+  but `EV_RAISE_PICKUP_WEAPON` (0x1a) for an alt pair. The client (`CG_EntityEvent`,
+  `FUN_004c1590`, jump table `0x4c4b2c` via byte map `0x4c4d38`) plays `raiseSoundPlayer`
+  (+0x184), `firstRaiseSoundPlayer` (+0x18c), `putawaySoundPlayer` (+0x19c) and, for
+  `EV_WEAPON_ALT`, **`altSwitchSoundPlayer`** (+0x17c; `altSwitchSound` +0x178 for another
+  player); `EV_RAISE_PICKUP_WEAPON` plays nothing (`FUN_00534f20`).
+* **Whose sound:** the handler looks up the def of the weapon held when the event is read (the
+  predicted `ps->weapon`). The alt drop (`iAltDropTime`, `FUN_008ed1e0`) is 0 for every
+  launcher pair, and `FUN_008e4da0` finishes a zero-time change in the same pmove, so it is the
+  **incoming** mode. Data: only the nine `gl_*_mp` launcher modes carry one
+  (`wpn_weap_raise_plr`); no base weapon, `sf_`/`dualoptic_` mode does. So switching to the
+  launcher clicks, switching back is silent.
+* `altSwitchSoundPlayer` is parsed (`Weapon.alt_switch_sound_player`), carried as
+  `WeaponDef.alt_switch_sound` (`AltSwitchSound`, `WEAPON_FIELDS` 90 → 91), registered with the
+  other def-level events and inherited by the combinations' alt modes; `Cues::weapon_moments`
+  plays the held def's on the frame an alt raise is armed. `zhbo-assets weapons <f> --more` prints
+  the raise/putaway/alt-switch aliases.
+* Not changed here: the mod's alt raise still lasts `max(quickRaiseTime, raiseTime / 2)`; G16
+  says BO2 uses the new mode's `iAltRaiseTime` (a separate timing item).
+
+No conformance column covers `altSwitchSoundPlayer` (no movement). No ABI change; the table schema
+and archive content changed (VERSION bump is the integrator's).

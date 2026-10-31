@@ -474,6 +474,8 @@ pub struct Weapon {
     pub melee_hit_sound: Option<String>,
     pub raise_sound_player: Option<String>,
     pub first_raise_sound_player: Option<String>,
+    /// Played as the weapon toggles into or out of its alt mode (EV_WEAPON_ALT, `FUN_004c1590`).
+    pub alt_switch_sound_player: Option<String>,
     pub putaway_sound_player: Option<String>,
     pub ads_zoom_sound: Option<String>,
     /// The start of a fire string (a burst's opening): overridable by attachment (`soundOverrides`).
@@ -822,6 +824,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.melee_hit_sound = opt_str(z, d + WD::meleeHitSound);
     w.raise_sound_player = opt_str(z, d + WD::raiseSoundPlayer);
     w.first_raise_sound_player = opt_str(z, d + WD::firstRaiseSoundPlayer);
+    w.alt_switch_sound_player = opt_str(z, d + WD::altSwitchSoundPlayer);
     w.putaway_sound_player = opt_str(z, d + WD::putawaySoundPlayer);
     w.ads_zoom_sound = opt_str(z, d + WD::adsZoomSound);
     w.fire_start_sound_player = opt_str(z, d + WD::fireStartSoundPlayer);

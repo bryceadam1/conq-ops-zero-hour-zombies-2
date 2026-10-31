@@ -522,6 +522,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("FirstRaiseSound", "The first raise's event (`firstRaiseSoundPlayer`).", FieldKind::Str,
         |d: &WeaponDef| d.first_raise_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.first_raise_sound = v.text.into(); Ok(()) }),
+    field!("AltSwitchSound", "The alt toggle's event (`altSwitchSoundPlayer`), played by the mode coming up (EV_WEAPON_ALT).", FieldKind::Str,
+        |d: &WeaponDef| d.alt_switch_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.alt_switch_sound = v.text.into(); Ok(()) }),
     field!("PutawaySound", "The putaway's event (`putawaySoundPlayer`), played as the drop begins.", FieldKind::Str,
         |d: &WeaponDef| d.putaway_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.putaway_sound = v.text.into(); Ok(()) }),
@@ -743,7 +746,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 90);
+        assert_eq!(WEAPON_FIELDS.len(), 91);
         assert_eq!(ATTACHMENT_FIELDS.len(), 17);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }
@@ -773,6 +776,7 @@ mod tests {
         let ev = |a: &str| format!("ZHBO_BO2_Snd_{a}");
         d.raise_sound = ev("fly_generic_raise_plr");
         d.first_raise_sound = ev("fly_generic_first_raise_plr");
+        d.alt_switch_sound = ev("wpn_weap_raise_plr");
         d.putaway_sound = ev("fly_generic_down_plr");
         d.ads_zoom_sound = ev("fly_scope_zoom");
         d.melee_swipe_sound = ev("wpn_melee_whoosh_plr");

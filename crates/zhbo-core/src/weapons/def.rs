@@ -220,6 +220,9 @@ pub struct WeaponDef {
     pub raise_sound: String,
     /// The first raise's event (`firstRaiseSoundPlayer`).
     pub first_raise_sound: String,
+    /// The alt toggle's event (`altSwitchSoundPlayer`), played by the mode coming up as the toggle
+    /// begins (BO2's EV_WEAPON_ALT; the alt raise itself is silent).
+    pub alt_switch_sound: String,
     /// The putaway's event (`putawaySoundPlayer`), played as the drop begins.
     pub putaway_sound: String,
     /// The zoom-in event as aiming starts (`adsZoomSound`; scoped weapons).
@@ -465,6 +468,7 @@ impl Default for WeaponDef {
             silenced_view_flash_fx: String::new(),
             raise_sound: String::new(),
             first_raise_sound: String::new(),
+            alt_switch_sound: String::new(),
             putaway_sound: String::new(),
             ads_zoom_sound: String::new(),
             melee_swipe_sound: String::new(),
@@ -538,6 +542,7 @@ impl WeaponDef {
         self.explode_sound.clone_from(&from.explode_sound);
         self.raise_sound.clone_from(&from.raise_sound);
         self.first_raise_sound.clone_from(&from.first_raise_sound);
+        self.alt_switch_sound.clone_from(&from.alt_switch_sound);
         self.putaway_sound.clone_from(&from.putaway_sound);
         self.ads_zoom_sound.clone_from(&from.ads_zoom_sound);
         self.melee_swipe_sound.clone_from(&from.melee_swipe_sound);
@@ -557,6 +562,7 @@ impl WeaponDef {
             (&self.fire_sound, false),
             (&self.raise_sound, false),
             (&self.first_raise_sound, false),
+            (&self.alt_switch_sound, false),
             (&self.putaway_sound, false),
             (&self.ads_zoom_sound, false),
             (&self.melee_swipe_sound, false),

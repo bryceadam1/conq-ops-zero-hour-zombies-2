@@ -866,6 +866,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         explode_sound: def_sound(&w.projectile_explosion_sound),
         raise_sound: def_sound(&w.raise_sound_player),
         first_raise_sound: def_sound(&w.first_raise_sound_player),
+        alt_switch_sound: def_sound(&w.alt_switch_sound_player),
         putaway_sound: def_sound(&w.putaway_sound_player),
         ads_zoom_sound: def_sound(&w.ads_zoom_sound),
         melee_swipe_sound: def_sound(&w.melee_swipe_sound_player),
@@ -1341,6 +1342,17 @@ mod tests {
         assert_eq!(defs[0].melee_swipe_sound, zhbo_core::names::def_sound_event("wpn_melee_whoosh_plr"));
         assert_eq!(defs[0].melee_hit_sound, zhbo_core::names::def_sound_event("wpn_melee_knife_hit_body"));
         assert_eq!(defs[1].melee_swipe_sound, zhbo_core::names::def_sound_event("wpn_com_knife_whoosh_plr"), "a melee weapon swings itself");
+    }
+
+    /// The launcher alt mode carries its `altSwitchSoundPlayer` (EV_WEAPON_ALT); a rifle has none.
+    #[test]
+    fn an_alt_mode_carries_its_alt_switch_sound() {
+        let gl = Weapon { name: "gl_an94_mp".into(), alt_switch_sound_player: Some("wpn_weap_raise_plr".into()), ..Default::default() };
+        let rifle = Weapon { name: "an94_mp".into(), class: bo2::class::RIFLE, ..Default::default() };
+        let defs: Vec<WeaponDef> = [&gl, &rifle].iter().map(|w| to_def(w, &HashMap::new())).collect();
+        assert_eq!(defs[0].alt_switch_sound, zhbo_core::names::def_sound_event("wpn_weap_raise_plr"));
+        assert!(defs[1].alt_switch_sound.is_empty());
+        assert!(defs[0].def_sound_events().any(|(e, _)| e == defs[0].alt_switch_sound), "its event is registered with the others");
     }
 
     #[test]

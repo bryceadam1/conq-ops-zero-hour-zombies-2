@@ -297,8 +297,14 @@ impl Cues {
 
     /// BO2's def-level weapon sounds at their moments, read off the arsenal's state changes: the
     /// putaway as a drop begins (the weapon going away), the raise — or the first raise — once
-    /// the drop is done and the raise runs, and the zoom as aiming starts. An alt toggle's raise
-    /// plays nothing (BO2's alt switch is not a weapon raise).
+    /// the drop is done and the raise runs, and the zoom as aiming starts. An alt toggle plays
+    /// `altSwitchSoundPlayer` as it begins and its raise plays nothing: BO2's weapon change sends
+    /// EV_WEAPON_ALT instead of EV_PUTAWAY_WEAPON for an alt pair (`FUN_008db500`) and
+    /// EV_RAISE_PICKUP_WEAPON instead of EV_RAISE_WEAPON (`FUN_008df320`); the client plays the
+    /// held def's `altSwitchSound(Player)` for the first and nothing for the second
+    /// (`FUN_004c1590`). The held def is the one up after the toggle's command: with no alt drop
+    /// (`iAltDropTime` 0, every launcher pair) the change finishes in that same pmove
+    /// (`FUN_008e4da0`), so it is the incoming mode — the mod's toggle has no drop phase either.
     fn weapon_moments(&mut self, p: &PlayerSim) {
         use crate::weapons::arsenal::RaiseKind;
         let a = &p.arsenal;
@@ -312,6 +318,11 @@ impl Cues {
         // A new raise (the timer jumped up, or the first frame seen with one running) re-arms it.
         if !prev.seen || a.raise_left > prev.raise_left + 1e-6 {
             now.raise_played = false;
+            if a.raise_kind == RaiseKind::Alt {
+                if let Some(e) = some(a.current().def.alt_switch_sound.as_str()) {
+                    self.play(e);
+                }
+            }
         }
         if a.raise_left > 0.0 && a.drop_left <= 0.0 && !now.raise_played {
             now.raise_played = true;
@@ -382,11 +393,30 @@ mod tests {
         p.arsenal.drop_left = 0.0;
         c.update(0.016, &p, false);
         assert_eq!(weapon(&mut c), vec!["ZHBO_BO2_Snd_fly_generic_raise_plr"]);
-        // An alt toggle's raise is silent.
+        // An alt toggle plays the incoming mode's alt-switch sound once; its raise is silent.
+        let alt: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef {
+            raise_sound: "ZHBO_BO2_Snd_alt_raise".into(),
+            alt_switch_sound: "ZHBO_BO2_Snd_alt_mode_switch".into(),
+            ..def.clone()
+        }));
+        let def_switch: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef { alt_switch_sound: "ZHBO_BO2_Snd_main_mode_switch".into(), ..def.clone() }));
+        p.arsenal.weapons[p.arsenal.active].def = def_switch;
+        c.update(0.016, &p, false);
         let a = &mut p.arsenal;
+        let active = a.active;
+        a.weapons[active].def = alt;
         (a.raise_left, a.raise_kind) = (0.7, RaiseKind::Alt);
         c.update(0.016, &p, false);
-        assert!(weapon(&mut c).is_empty());
+        assert_eq!(weapon(&mut c), vec!["ZHBO_BO2_Snd_alt_mode_switch"], "the incoming mode's alt switch, no raise");
+        p.arsenal.raise_left = 0.5;
+        c.update(0.016, &p, false);
+        assert!(weapon(&mut c).is_empty(), "once per toggle");
+        // And back: the main mode's own alt-switch sound.
+        let a = &mut p.arsenal;
+        a.weapons[active].def = def_switch;
+        a.raise_left = 0.7;
+        c.update(0.016, &p, false);
+        assert_eq!(weapon(&mut c), vec!["ZHBO_BO2_Snd_main_mode_switch"]);
         p.arsenal.raise_left = 0.0;
         p.arsenal.ads = 0.2;
         c.update(0.016, &p, false);

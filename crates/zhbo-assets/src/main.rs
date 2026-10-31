@@ -365,6 +365,7 @@ fn run(args: &[String]) -> Result<(), String> {
                         println!("      unique {} kind {} vm {:?} tag {:?}", u.name, u.kind, u.view_model, u.view_model_tag);
                     }
                     println!("    sounds fire {:?} plr {:?} icon {:?} dpad {:?} world {:?} projectile {:?} impact {} icon hash {:?}", w.fire_sound, w.fire_sound_player, w.hud_icon, w.dpad_icon, w.world_model, w.projectile_model, w.projectile_impact_explode, w.hud_icon_hash);
+                    println!("    raise {:?} first {:?} putaway {:?} alt switch {:?}", w.raise_sound_player, w.first_raise_sound_player, w.putaway_sound_player, w.alt_switch_sound_player);
                     println!("    kick ads {:?} hip {:?} mult {:?}", w.ads_view_kick, w.hip_view_kick, w.location_multipliers.iter().take(7).collect::<Vec<_>>());
                     for (i, a) in w.anims.iter().enumerate() {
                         if let Some(a) = a {
