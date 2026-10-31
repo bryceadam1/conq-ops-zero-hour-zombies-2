@@ -4616,3 +4616,19 @@ the mod lacks for every row, plus `fire_time`/`shot_count`/`ads_in_time`/`damage
 describe a gun-shaped knife def the mod never fires); one-sided rows 8/0 → 7/0; gap clusters 207 →
 204. `knife_mp`'s `anim_melee`/`anim_melee_charge` now hold the right clip but still differ by
 case (`viewmodel_M4m203…` vs the asset's `viewmodel_m4m203…`): the differ compares names as text.
+
+## Create-a-Class categories are BO2's statstable groups (2026-10-31, `v1/cac-leftovers`)
+
+The editor grouped its weapon lists by the weapon's class, so the Ballistic Knife (BO2 weapClass
+`pistol`) sat under PISTOLS; BO2's statstable lists it in group `weapon_special` (column 2), so
+its CaC shows it among the SPECIALS. The class stays what it is — it is BO2's `weapClass`
+(the conformance `weap_class`, the pistol shot fallback, the RTS range) — and the group is carried
+beside it: `WeaponDef::cac_group` (table field `CacGroup`), set by `set_cac_slots` from the same
+`combos::items` parse; `WeaponDef::cac_class()` maps it back to the category (`Class::cac_group`,
+the one class↔group table, which the conformance emitter now uses too). `classui::weapon_categories`
+and the conformance cac `group`/`order` follow `cac_class`. A stand-in `knife_ballistic_mp` (a
+pistol in `weapon_special`) pins it headless. The table gains a field: the archive VERSION must
+bump (integrator).
+
+Measured: weapons 781,252 → 781,251 (`cac_group` 1 → 0), cac 556 → 555 (`group` 1 → 0), gap
+clusters 204 → 202; nothing else moved.

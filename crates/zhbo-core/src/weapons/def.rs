@@ -54,6 +54,21 @@ impl Class {
             Class::Equipment => "equipment",
         }
     }
+    /// BO2's Create-a-Class group for a class (`mp/statstable.csv` column 2); empty for melee.
+    pub fn cac_group(self) -> &'static str {
+        match self {
+            Class::Rifle => "weapon_assault",
+            Class::Smg => "weapon_smg",
+            Class::Lmg => "weapon_lmg",
+            Class::Sniper => "weapon_sniper",
+            Class::Shotgun => "weapon_cqb",
+            Class::Pistol => "weapon_pistol",
+            Class::Launcher => "weapon_launcher",
+            Class::Special => "weapon_special",
+            Class::Lethal | Class::Tactical | Class::Equipment => "weapon_grenade",
+            Class::Melee => "",
+        }
+    }
     pub(crate) fn parse(s: &str) -> Option<Self> {
         [
             Class::Rifle,
@@ -245,6 +260,11 @@ pub struct WeaponDef {
     /// Create-a-Class item (a negative allocation cost: the `_dw` pistols, the War Machine, the
     /// held knife). A combination inherits its base's.
     pub cac_slot: String,
+    /// The Create-a-Class group BO2 lists this item under (`mp/statstable.csv` column 2:
+    /// `weapon_assault`, `weapon_special`, ...); empty when it is not a Create-a-Class item. The
+    /// editor's categories follow it ([`WeaponDef::cac_class`]); `class` stays the weapon's own
+    /// (the Ballistic Knife is a pistol that BO2 lists under SPECIALS).
+    pub cac_group: String,
     /// The left gun of a dual-wield weapon (BO2's `szDualWieldWeaponName`, `fnp45_lh_mp`); empty
     /// for a single gun.
     pub dual_wield_weapon: String,
@@ -458,6 +478,7 @@ impl Default for WeaponDef {
             alt: String::new(),
             alt_own_ammo: false,
             cac_slot: String::new(),
+            cac_group: String::new(),
             dual_wield_weapon: String::new(),
             silenced: false,
             laser: false,
@@ -493,6 +514,14 @@ pub const MELEE_RANGE: f32 = inches(64.0);
 pub const MELEE_FX_WEAPON: &str = "ZHBO_Knife_FX";
 
 impl WeaponDef {
+    /// The category Create-a-Class lists this weapon under: the gun class whose BO2 group is its
+    /// statstable group ([`WeaponDef::cac_group`]), else its own class (not a CaC item, or a
+    /// grenade-group item, which keeps its lethal/tactical/equipment class).
+    pub fn cac_class(&self) -> Class {
+        const GUNS: [Class; 8] = [Class::Rifle, Class::Smg, Class::Lmg, Class::Sniper, Class::Shotgun, Class::Pistol, Class::Launcher, Class::Special];
+        GUNS.into_iter().find(|c| !self.cac_group.is_empty() && c.cac_group() == self.cac_group).unwrap_or(self.class)
+    }
+
     /// Damage at `distance` (ZH units). BO2's curve has six slots: unused middle slots have no
     /// range, and the last is the minimum damage at the end of the curve. Damage interpolates
     /// linearly between the used points and stays at the last one beyond it.

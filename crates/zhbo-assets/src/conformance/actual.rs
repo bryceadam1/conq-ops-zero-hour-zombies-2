@@ -221,7 +221,7 @@ fn jobs() -> Vec<Job> {
                     continue;
                 }
                 let requires = if set.len() > base_cap { vec![card] } else { Vec::new() };
-                out.push(Job { weapon, combo: combo.clone(), def, vm_def: def, group: group_of(def.class).to_string(), slot: slot.clone(), requires: requires.clone(), alt: false });
+                out.push(Job { weapon, combo: combo.clone(), def, vm_def: def, group: group_of(def.cac_class()).to_string(), slot: slot.clone(), requires: requires.clone(), alt: false });
                 if def.alt.is_empty() {
                     continue;
                 }

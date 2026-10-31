@@ -411,6 +411,14 @@ Weapon fiveseven_mp
   Allowed = dw=dw
 End
 
+; A pistol by class that BO2 lists under SPECIALS (its statstable group, `CacGroup`).
+Weapon knife_ballistic_mp
+  DisplayName = Ballistic Knife
+  Class = pistol
+  CacSlot = secondary
+  CacGroup = weapon_special
+End
+
 ; What a class with the Five-seven and Dual Wield gets: no CaC item of its own.
 Weapon fiveseven_dw_mp
   DisplayName = Five-Seven Dual Wield
