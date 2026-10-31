@@ -1096,3 +1096,16 @@ fn the_weapon_picker_shows_the_items_description() {
     let joined = texts(&prims).join(" ");
     assert!(joined.contains("Fully automatic personal defense weapon.") && joined.contains("Versatile and strong overall."), "{joined}");
 }
+
+/// An offhand's picture is its statstable image's `_256` (`cacgrenadesbutton.lua:199-205`), the
+/// converter's `ZHBO_CaC_Weapon_<id>`: the button's box and the list's rows draw it.
+#[test]
+fn the_offhands_draw_their_cac_picture() {
+    let mut e = Editor::new(Draft::default());
+    let l = editor_layout(1280.0, 720.0);
+    let cell = *editor_cells(&l, &e).iter().find(|c| c.slot == Slot::Lethal).unwrap();
+    assert_eq!(cell_icon(&e, &cell), Some(crate::names::cac_weapon_image("frag_grenade_mp")));
+    e.slot = Slot::Tactical;
+    let i = e.options().iter().position(|o| o == &weapons::weapon("concussion_grenade_mp").display_name).unwrap();
+    assert_eq!(option_icon(&e, i), Some(crate::names::cac_weapon_image("concussion_grenade_mp")));
+}

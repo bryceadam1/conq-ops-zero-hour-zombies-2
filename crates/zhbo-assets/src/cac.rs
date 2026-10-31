@@ -70,13 +70,19 @@ const ATTACHMENTS: &[(&str, &str, &str)] = &[
 /// player's `mp/statstable.csv` in `patch_mp.ff` (column 4 the reference, 6 the image). Empty when
 /// the zone or table can't be read: the screens then keep their drawn fallbacks.
 pub fn item_images(bo2_dir: &std::path::Path) -> std::collections::HashMap<String, String> {
+    item_rows(bo2_dir).into_iter().map(|(reference, (image, _))| (reference, image)).collect()
+}
+
+/// [`item_images`] with each item's loadout slot (column 13: `primarygrenade`, `specialgrenade`,
+/// …), which decides the picture's size suffix (`_big` for guns, `_256` for offhands).
+pub fn item_rows(bo2_dir: &std::path::Path) -> std::collections::HashMap<String, (String, String)> {
     let Ok(zone) = crate::generals::load_zone(bo2_dir, "patch_mp") else { return Default::default() };
     let Ok(Some(table)) = zhbo_formats::stringtable::find(&zone, "mp/statstable.csv") else { return Default::default() };
     table
         .rows
         .iter()
-        .filter_map(|r| Some((r.get(4)?.clone(), r.get(6)?.clone())))
-        .filter(|(reference, image)| !reference.is_empty() && !image.is_empty())
+        .filter_map(|r| Some((r.get(4)?.clone(), (r.get(6)?.clone(), r.get(13).cloned().unwrap_or_default()))))
+        .filter(|(reference, (image, _))| !reference.is_empty() && !image.is_empty())
         .collect()
 }
 

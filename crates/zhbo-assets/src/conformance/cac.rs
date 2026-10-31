@@ -56,8 +56,20 @@ pub fn rows(shipped: &Shipped, bo2_dir: &std::path::Path, schema: &Schema) -> Re
     let lists: [(&str, &Vec<&'static str>); 4] = [("primary", &o.primary), ("secondary", &o.secondary), ("primarygrenade", &o.lethal), ("specialgrenade", &o.tactical)];
     // Every slot list an item appears in (the editor offers the launchers in both weapon slots).
     let slots_of = |id: &str| -> String { lists.iter().filter(|(_, l)| l.contains(&id)).map(|(s, _)| *s).collect::<Vec<_>>().join("+") };
+    // Every listed item of a group, once.
+    let group_items = |g: &str| -> Vec<&zhbo_core::weapons::WeaponDef> {
+        let mut out: Vec<&zhbo_core::weapons::WeaponDef> = Vec::new();
+        for (_, l) in &lists {
+            for id in l.iter() {
+                if let Some(e) = cat.get(id).filter(|e| group_of(e.cac_class()) == g && !out.iter().any(|o| o.id == e.id)) {
+                    out.push(e);
+                }
+            }
+        }
+        out
+    };
     for (slot, ids) in lists {
-        for (i, &id) in ids.iter().enumerate() {
+        for &id in ids.iter() {
             let Some(d) = cat.get(id) else { continue };
             let reference = id.trim_end_matches("_mp").to_string();
             if !seen.insert(reference.clone()) {
@@ -66,7 +78,11 @@ pub fn rows(shipped: &Shipped, bo2_dir: &std::path::Path, schema: &Schema) -> Re
             let slots = slots_of(id);
             // The editor's category (`WeaponDef::cac_class`: BO2's statstable group).
             let group = group_of(d.cac_class());
-            let order = ids[..i].iter().filter(|x| cat.get(x).is_some_and(|e| group_of(e.cac_class()) == group)).count() as i64;
+            // Its place among the group's items in the editor's list order (`items::list_key`, BO2's
+            // sort key then index): a group's items may span slot lists (the grenades are one
+            // `weapon_grenade` group across the lethal and tactical lists).
+            let key = classmenu::items::list_key(d);
+            let order = group_items(group).iter().filter(|e| classmenu::items::list_key(e) < key).count() as i64;
             let image = shipped.has_sprite(&zhbo_core::names::cac_weapon_image(id)).then(|| images.get(&reference).cloned()).flatten();
             let cost = cost_of(|dr| if slot == "secondary" { dr.secondary = id.to_string() } else if slot == "primary" { dr.primary = id.to_string() } else if slot == "primarygrenade" { dr.lethal = id.to_string() } else { dr.tactical = id.to_string() });
             out.push(row(schema, "weapon", &reference, |b| {

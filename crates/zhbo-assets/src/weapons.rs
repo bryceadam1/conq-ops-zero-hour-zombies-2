@@ -405,6 +405,8 @@ pub fn set_cac_slots(table: &mut Table, patch: &zhbo_formats::t6zone::Zone, name
             // Column 7's localized description, exactly as BO2's string table has it.
             let row = statstable.iter().find(|r| r.get(4).is_some_and(|c| *c == item.reference));
             d.description = row.and_then(|r| r.get(7)).and_then(|k| names.get(k.trim())).cloned().unwrap_or_default();
+            d.cac_sort = row.and_then(|r| r.get(9)).and_then(|c| c.trim().parse().ok()).unwrap_or(0);
+            d.cac_index = item.index;
         }
     }
 }
@@ -822,6 +824,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         cac_slot: String::new(),
         cac_group: String::new(),
         description: String::new(),
+        cac_sort: 0,
+        cac_index: 0,
         dual_wield_weapon: w.dual_wield_weapon.clone().unwrap_or_default(),
         silenced: w.silenced,
         laser: false,

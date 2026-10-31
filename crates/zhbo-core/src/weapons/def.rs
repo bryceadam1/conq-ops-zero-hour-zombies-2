@@ -269,6 +269,11 @@ pub struct WeaponDef {
     /// `GetItemDesc`), the hint the weapon picker shows under the card (`cacweaponsp.lua:540-590`);
     /// empty when it is not an item. A combination inherits its base's.
     pub description: String,
+    /// The item's place in its Create-a-Class list: the statstable's sort key (column 9) and item
+    /// index (column 0). BO2 sorts a list by the sort key, then the index (G17, `FUN_008cdde0`);
+    /// both 0 for a non-item, which keeps the table's order.
+    pub cac_sort: i32,
+    pub cac_index: i32,
     /// The left gun of a dual-wield weapon (BO2's `szDualWieldWeaponName`, `fnp45_lh_mp`); empty
     /// for a single gun.
     pub dual_wield_weapon: String,
@@ -518,6 +523,8 @@ impl Default for WeaponDef {
             cac_slot: String::new(),
             cac_group: String::new(),
             description: String::new(),
+            cac_sort: 0,
+            cac_index: 0,
             dual_wield_weapon: String::new(),
             silenced: false,
             laser: false,

@@ -313,8 +313,9 @@ fn offhand_names(d: &Draft, lethal: bool) -> Vec<String> {
 pub(super) fn cell_icon(editor: &Editor, cell: &EditorCell) -> Option<String> {
     let d = &editor.draft;
     match cell.slot {
-        Slot::Lethal => (!d.lethal.is_empty()).then(|| format!("ZHBO_BO2_Icon_{}", base_id(&d.lethal))),
-        Slot::Tactical => (!d.tactical.is_empty()).then(|| format!("ZHBO_BO2_Icon_{}", base_id(&d.tactical))),
+        // An offhand's picture is its statstable image's `_256` (`cacgrenadesbutton.lua:199-205`).
+        Slot::Lethal => (!d.lethal.is_empty()).then(|| crate::names::cac_weapon_image(base_id(&d.lethal))),
+        Slot::Tactical => (!d.tactical.is_empty()).then(|| crate::names::cac_weapon_image(base_id(&d.tactical))),
         Slot::Perk1 | Slot::Perk2 | Slot::Perk3 => {
             let tier = (cell.slot.perk_tier().unwrap_or(1) as usize) - 1;
             d.perks[tier].map(|p| sprites::perk_icon(p).to_string())
@@ -493,6 +494,10 @@ fn draw_option_grid(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor) {
             // `cacperksp.lua:280-360`: `perkTitle` / `perkDescription`, set from the highlighted
             // perk's `GetItemName` / `GetItemDesc` (`:505-545`, `e-perks/002`).
             draw_item_panel(prims, f, &p.name(), p.description(), y);
+        } else if let Some(def) = editor.option_weapon(editor.option).filter(|_| matches!(editor.slot, Slot::Lethal | Slot::Tactical)) {
+            // `cacgrenades.lua:262-360`: `grenadeTitle` (Big) / `grenadeDescription` (Default,
+            // 0.4, two cells and two gaps wide), set from `GetItemName` / `GetItemDesc` (`:488-567`).
+            draw_item_panel(prims, f, &def.display_name, &def.description, y);
         } else {
             // The other content pickers carry only the highlighted entry's name under the grid.
             let r = f.in_menu(crate::lui::Place::new((true, false, 0.0, bo2::MENU_W * 0.5), (true, false, y, y + bo2::TEXT_CONDENSED)));
@@ -607,6 +612,10 @@ fn attachment_weapon(editor: &Editor) -> (&'static crate::weapons::WeaponDef, Op
 /// The icon of an option row in the editor's list.
 pub(super) fn option_icon(editor: &Editor, i: usize) -> Option<String> {
     if let Some(def) = editor.option_weapon(i) {
+        // An offhand item's grid picture is its `_256` image (`cacgrenadesbutton.lua:199-205`).
+        if def.class.is_offhand() {
+            return Some(crate::names::cac_weapon_image(base_id(&def.id)));
+        }
         return Some(format!("ZHBO_BO2_Icon_{}", base_id(&def.id)));
     }
     if let Some(short) = editor.option_attachment(i) {

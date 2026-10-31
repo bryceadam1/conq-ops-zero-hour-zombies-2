@@ -567,6 +567,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("Description", "The Create-a-Class item's localized description (statstable column 7).", FieldKind::Str,
         |d: &WeaponDef| d.description.clone(),
         |d: &mut WeaponDef, v: Values| { d.description = v.text.into(); Ok(()) }),
+    field!("CacOrder", "The Create-a-Class list order: statstable sort key (column 9), item index (column 0).", FieldKind::Nums(2),
+        |d: &WeaponDef| format!("{} {}", d.cac_sort, d.cac_index),
+        |d: &mut WeaponDef, v: Values| { v.need(2)?; d.cac_sort = v.nums[0] as i32; d.cac_index = v.nums[1] as i32; Ok(()) }),
     field!("DualWieldWeapon", "A dual-wield weapon's left gun (BO2's `szDualWieldWeaponName`).", FieldKind::Str,
         |d: &WeaponDef| d.dual_wield_weapon.clone(),
         |d: &mut WeaponDef, v: Values| { d.dual_wield_weapon = v.text.into(); Ok(()) }),
@@ -775,7 +778,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 83);
+        assert_eq!(WEAPON_FIELDS.len(), 84);
         assert_eq!(ATTACHMENT_FIELDS.len(), 18);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

@@ -46,7 +46,8 @@ pub fn offhand_slot(lethal: bool) -> &'static str {
 pub(super) fn cac_entries() -> Vec<&'static WeaponDef> {
     let all = weapons::catalog().all();
     let mut seen: Vec<&str> = Vec::new();
-    all.iter()
+    let mut out: Vec<&'static WeaponDef> = all
+        .iter()
         .copied()
         .filter(|d| !d.cac_slot.is_empty() && d.attachments.is_empty() && d.alt.is_empty())
         .filter(|d| !all.iter().any(|base| base.alt_modes.iter().any(|(_, alt)| alt == &d.id)))
@@ -60,7 +61,17 @@ pub(super) fn cac_entries() -> Vec<&'static WeaponDef> {
                 true
             }
         })
-        .collect()
+        .collect();
+    // BO2's list order (G17, `FUN_008cdde0`): sort key, then item index; stable, so a table without
+    // the order (all 0) keeps its own.
+    out.sort_by_key(|d| list_key(d));
+    out
+}
+
+/// A Create-a-Class item's place in its list: the statstable sort key (column 9), then the item
+/// index (column 0), [`WeaponDef::cac_sort`]/[`WeaponDef::cac_index`].
+pub fn list_key(d: &WeaponDef) -> (i32, i32) {
+    (d.cac_sort, d.cac_index)
 }
 
 /// The slots whose items a weapon slot lists: the primary its own; the secondary its own, plus the

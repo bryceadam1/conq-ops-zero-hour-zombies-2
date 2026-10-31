@@ -156,7 +156,8 @@ pub fn draw(prims: &mut Vec<Prim>, f: &Frame, p: Rect, draft: Option<&Draft>) {
         let def = weapons::weapon(id);
         let s = SMALL_H * 0.75;
         let x = r.right() - SMALL_H * 2.0 + SMALL_H / 2.0 - s / 2.0;
-        bo2::sprite(prims, f, &format!("ZHBO_BO2_Icon_{}", def.id), Rect { x, y: r.y + SMALL_H / 2.0 - s / 2.0, w: s, h: s }, argb(OFF_WHITE, 1.0), Vec::new());
+        // The item's `_256` picture (`classpreview.lua:3981-3985`).
+        bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&def.id)), Rect { x, y: r.y + SMALL_H / 2.0 - s / 2.0, w: s, h: s }, argb(OFF_WHITE, 1.0), Vec::new());
         let name_r = Rect { x: r.x + 3.0, y: r.y + bo2::TEXT_EXTRA_SMALL, w: c.right_w - 2.0 * SMALL_H - 8.0, h: bo2::TEXT_EXTRA_SMALL };
         bo2::text(prims, f, Family::ExtraSmall, &def.display_name, name_r, Align::Left, argb(OFF_WHITE, 1.0));
     }

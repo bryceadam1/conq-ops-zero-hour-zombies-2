@@ -4834,3 +4834,27 @@ Measured (vs perks-cards' 517 + the cherry-picked equipment rows): cac `descript
 (every weapon row filled; left: 3 trailing-space weapons, Dexterity, 20 attachments); `image`
 9 → 15 and `order` 434 → 439 are the six equipment rows the cherry-pick adds; weapons 781,587
 unchanged (equipment-melee's number); cac 517 → 485.
+
+## Create-a-Class lists in BO2's order; the offhands' `_256` pictures and panel (2026-10-31, `v1/cac-text`)
+
+* **Order (G17).** `buildItemListForGroup` sorts a list by the statstable sort key (column 9),
+  then the item index (column 0). The weapon table now carries both (`CacOrder = <sort> <index>`,
+  `WeaponDef::cac_sort`/`cac_index`, set by `set_cac_slots`); `items::cac_entries` sorts by
+  `items::list_key` (stable, so a table without it keeps its order). Every editor list follows:
+  guns, the lethal and tactical lists (frag, Semtex, Combat Axe, Betty, C4, Claymore).
+  The conformance `order` cell is an item's rank in its statstable group, and the grenades are one
+  `weapon_grenade` group across two slot lists, so the actual side now ranks a row among its
+  group's listed items by the editor's own key (it counted within one slot list).
+* **Pictures.** BO2 draws an offhand as `GetItemImage(item) .. "_256"` (`cacgrenadesbutton.lua:
+  199-205`, `classpreview.lua:3981-3985`). The converter makes `ZHBO_CaC_Weapon_<id>` from it for
+  the statstable's `primarygrenade`/`specialgrenade` items (`cac::item_rows` gives the slot); the
+  editor's offhand boxes, list rows and the class preview draw it (they drew the HUD icon).
+* **Panel.** The grenade grid's lower panel is `grenadeTitle` (Big) over `grenadeDescription`
+  (Default, 0.4, two cells and two gaps wide), `cacgrenades.lua:262-360`/`:488-567` — the perk
+  grid's panel, now drawn for the offhand lists with the item's statstable description.
+* Remaining `order` cells: the attachments (their own queue item) and the crossbow/Ballistic
+  Knife, ranked behind BO2's Assault Shield, an item the mod does not have.
+
+Measured: cac 485 → 427: `image` 15 → 0 (cluster gone), `order` 439 → 396 (every weapon row but
+the two above); weapons 781,587 unchanged; gap clusters 203 → 202. Screenshots:
+`cac-editor-lethal.png`, `cac-editor-tactician.png`, `cac-editor-weapons.png` (plan dir).

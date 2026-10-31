@@ -1085,3 +1085,20 @@ fn a_second_tactical_costs_a_point_and_round_trips() {
     let _ = crate::classrepair::repair(&mut c);
     assert_eq!(c.tactical_count, items::offhand_cap(&c.tactical));
 }
+
+/// BO2 orders a CaC list by the statstable sort key, then the item index (G17, `FUN_008cdde0`):
+/// the editor's entries follow the table's `CacOrder`, and a table carries it through its text.
+#[test]
+fn the_cac_lists_follow_the_sort_key_then_the_index() {
+    let entries = cac_entries();
+    assert!(entries.windows(2).all(|w| items::list_key(w[0]) <= items::list_key(w[1])));
+    let mut defs = vec![
+        weapons::WeaponDef { id: "b_mp".into(), display_name: "B".into(), cac_slot: "primary".into(), cac_sort: 1, cac_index: 9, ..Default::default() },
+        weapons::WeaponDef { id: "a_mp".into(), display_name: "A".into(), cac_slot: "primary".into(), cac_sort: 1, cac_index: 3, ..Default::default() },
+        weapons::WeaponDef { id: "c_mp".into(), display_name: "C".into(), cac_slot: "primary".into(), cac_sort: 0, cac_index: 20, ..Default::default() },
+    ];
+    let back = weapons::table::parse_table(&weapons::table::format_table(&defs)).unwrap();
+    assert_eq!(back.iter().map(items::list_key).collect::<Vec<_>>(), defs.iter().map(items::list_key).collect::<Vec<_>>());
+    defs.sort_by_key(items::list_key);
+    assert_eq!(defs.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), ["c_mp", "a_mp", "b_mp"]);
+}
