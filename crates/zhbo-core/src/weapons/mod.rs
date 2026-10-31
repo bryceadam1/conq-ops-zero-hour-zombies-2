@@ -286,10 +286,51 @@ mod tests {
         assert_eq!(rifle.bullet_range(500.0), 500.0);
     }
 
+    /// BO2's `shotCount` only counts for a spread class: a rifle authored with 8 fires one.
+    #[test]
+    fn only_a_spread_class_fires_its_shot_count() {
+        let d = def(|d| {
+            d.fire = FireMode::Semi;
+            d.pellets = 8;
+        });
+        let mut a = arsenal_with(d);
+        let mut out = Vec::new();
+        a.step(buttons::FIRE, buttons::FIRE, false, 0, 0.0, &mut Rng::new(4), &mut out);
+        assert_eq!(out.iter().filter(|x| matches!(x, WeaponAction::Fire { .. })).count(), 1);
+    }
+
+    /// The tri-bolt (`stacked`): one pull launches the whole three-bolt magazine, and a partly
+    /// loaded stack does not fire (`FUN_008dc030`).
+    #[test]
+    fn a_stack_fires_its_full_magazine_at_once() {
+        let d = def(|d| {
+            d.class = Class::Special;
+            d.fire = FireMode::Stacked;
+            d.projectile_speed = 100.0;
+            d.effect = Effect::Explode;
+            d.pellets = 0;
+            d.clip = 3;
+            d.start_reserve = 3;
+        });
+        let mut a = arsenal_with(d);
+        let mut rng = Rng::new(4);
+        let mut out = Vec::new();
+        a.step(buttons::FIRE, buttons::FIRE, false, 0, 0.0, &mut rng, &mut out);
+        assert_eq!(out.iter().filter(|x| matches!(x, WeaponAction::Launch { .. })).count(), 3, "{out:?}");
+        assert_eq!(a.current().ammo, 0);
+        let mut b = arsenal_with(d);
+        b.weapons[0].ammo = 2;
+        b.weapons[0].reserve = 0;
+        let mut out = Vec::new();
+        b.step(buttons::FIRE, buttons::FIRE, false, 0, 0.0, &mut rng, &mut out);
+        assert!(!out.iter().any(|x| matches!(x, WeaponAction::Launch { .. })), "a partial stack does not fire");
+    }
+
     #[test]
     fn shotguns_fire_pellets_and_reload_shell_by_shell() {
         let d = def(|d| {
             d.class = Class::Shotgun;
+            d.weap_class = WeapClass::Spread;
             d.fire = FireMode::Semi;
             d.pellets = 8;
             d.clip = 8;

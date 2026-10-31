@@ -145,6 +145,7 @@ pub fn attachment_def(a: &bo2::Attachment, default: &bo2::Attachment, names: &Ha
     let m = meta.get(&short).cloned().unwrap_or_default();
     let fire = a.fire_type.map(|f| match f {
         bo2::fire::FULLAUTO => FireMode::Auto,
+        bo2::fire::STACKED => FireMode::Stacked,
         bo2::fire::BURST2 | bo2::fire::BURST3 | bo2::fire::BURST4 | bo2::fire::BURST5 => FireMode::Burst((f - bo2::fire::BURST2 + 2) as u8),
         _ => FireMode::Semi,
     });
@@ -601,7 +602,8 @@ fn effect_of(w: &Weapon) -> Effect {
 
 fn fire_mode(w: &Weapon) -> FireMode {
     match w.fire_type {
-        bo2::fire::FULLAUTO | bo2::fire::STACKED => FireMode::Auto,
+        bo2::fire::FULLAUTO => FireMode::Auto,
+        bo2::fire::STACKED => FireMode::Stacked,
         bo2::fire::MINIGUN => FireMode::Minigun,
         bo2::fire::BURST2 | bo2::fire::BURST3 | bo2::fire::BURST4 | bo2::fire::BURST5 => FireMode::Burst(w.burst_count() as u8),
         _ => FireMode::Semi,
@@ -718,7 +720,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         fire_time: w.fire_time.max(0.01),
         burst_delay: w.burst_delay,
         spin_up_time: w.spin_up_time,
-        pellets: w.shot_count.max(1) as u16,
+        pellets: w.shot_count.max(0) as u16,
         clip,
         start_reserve,
         max_reserve: max_reserve.max(start_reserve),
@@ -906,7 +908,7 @@ fn rts_damage(d: &WeaponDef) -> f32 {
     if d.class == Class::Launcher && d.explosion_inner_damage > 0.0 {
         return d.explosion_inner_damage * RTS_DAMAGE;
     }
-    d.damage[0] * RTS_DAMAGE * d.pellets.max(1) as f32
+    d.damage[0] * RTS_DAMAGE * d.rounds_per_shot() as f32
 }
 
 /// The General's Zero Hour weapons under RTS control (`ZHBO_GeneralRifle`, `_Pistol`, `_Grenade`)

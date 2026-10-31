@@ -834,6 +834,9 @@ impl Arsenal {
             FireMode::Auto => held & buttons::FIRE != 0,
             FireMode::Minigun => held & buttons::FIRE != 0 && w.spin >= def.spin_up_time,
             FireMode::Semi => pressed & buttons::FIRE != 0,
+            // A stack fires only full (`FUN_008dc030`: clip size <= rounds loaded); an empty one
+            // still answers the press with a reload.
+            FireMode::Stacked => pressed & buttons::FIRE != 0 && (w.ammo == 0 || w.ammo >= def.clip),
             FireMode::Burst(n) => {
                 if pressed & buttons::FIRE != 0 && w.burst_left == 0 && w.cooldown <= 0.0 {
                     w.burst_left = n;
@@ -872,11 +875,11 @@ impl Arsenal {
         }
         let mut fired_semi = false;
         while w.cooldown <= 0.0 && w.ammo > 0 {
-            if def.fire == FireMode::Semi && fired_semi {
+            if matches!(def.fire, FireMode::Semi | FireMode::Stacked) && fired_semi {
                 break;
             }
             if def.class == Class::Launcher || (def.projectile_speed > 0.0 && def.class != Class::Shotgun && def.effect != Effect::None) {
-                for pellet in 0..def.pellets.max(1) {
+                for pellet in 0..def.rounds_per_shot() {
                     out.push(WeaponAction::Launch { def, pellet });
                 }
             } else {
@@ -885,7 +888,7 @@ impl Arsenal {
                 // (G5 leaves its consumer unresolved).
                 let k = super::recoil::shot_kick(def, ads, w.string, &mut w.recoil_acc, w.since_shot, rng);
                 w.since_shot = 0.0;
-                for pellet in 0..def.pellets.max(1) {
+                for pellet in 0..def.rounds_per_shot() {
                     let jitter = (rng.signed(), rng.signed());
                     let (recoil, gun_kick) = if pellet == 0 {
                         ((k.view.0 * KICK_TO_DEGREES, k.view.1 * KICK_TO_DEGREES, k.view.2 * KICK_TO_DEGREES), k.gun)
@@ -902,7 +905,8 @@ impl Arsenal {
             let last = w.ammo < 2 && !matches!(def.fire, FireMode::Burst(_));
             let t = &def.timing;
             w.cooldown += if last && t.last_fire_time > 0.0 { t.last_fire_time } else { def.fire_time };
-            w.ammo -= 1;
+            // A stack spends every loaded round in one pull.
+            w.ammo -= if def.fire == FireMode::Stacked { def.rounds_per_shot().min(w.ammo) } else { 1 };
             w.string = w.string.saturating_add(1);
             w.bloom += def.spread_fire_add;
             // A bolt or pump action owes a rechamber after every shot, or after every

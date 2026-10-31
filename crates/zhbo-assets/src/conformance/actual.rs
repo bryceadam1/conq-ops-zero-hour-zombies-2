@@ -346,6 +346,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         FireMode::Semi => "singleshot".to_string(),
         FireMode::Burst(n) => format!("burstfire{n}"),
         FireMode::Minigun => "minigun".to_string(),
+        FireMode::Stacked => "stacked".to_string(),
     };
     b.text("fire_type", fire)
         .int("shot_count", d.pellets as i64)

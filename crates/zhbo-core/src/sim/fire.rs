@@ -93,8 +93,10 @@ impl Sim {
             }
             WeaponAction::Launch { def, pellet } => {
                 let eye = p.body.eye();
-                // The tri-bolt's bolts fan out a little.
-                let spread = (pellet as f32 - (def.pellets.max(1) - 1) as f32 * 0.5) * 0.04;
+                // A stack's bolts fan across `stackFireSpread` degrees of yaw, bolt i of n at
+                // spread × (i / (n - 1) - 0.5) (`FUN_0066e320`).
+                let n = def.rounds_per_shot();
+                let spread = if n > 1 { def.traits.stack_fire.0.to_radians() * (pellet as f32 / (n - 1) as f32 - 0.5) } else { 0.0 };
                 let dir = dir_from_angles(p.yaw + spread, p.pitch);
                 if !def.fx_weapon.is_empty() {
                     host.fire_fx(p.general, &def.fx_weapon, 0, eye + dir * 10.0);

@@ -44,6 +44,7 @@ pub(crate) fn fire_name(f: FireMode) -> String {
         FireMode::Semi => "semi".to_string(),
         FireMode::Burst(n) => format!("burst {n}"),
         FireMode::Minigun => "minigun".to_string(),
+        FireMode::Stacked => "stacked".to_string(),
     }
 }
 
@@ -53,6 +54,7 @@ pub(crate) fn parse_fire(value: &str) -> Option<FireMode> {
         "auto" => FireMode::Auto,
         "semi" => FireMode::Semi,
         "minigun" => FireMode::Minigun,
+        "stacked" => FireMode::Stacked,
         "burst" => FireMode::Burst(words.next().and_then(|n| n.parse().ok()).unwrap_or(3)),
         _ => return None,
     })
@@ -392,7 +394,7 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("WeapClass", "BO2's weapClass_t: rifle, mg, smg, spread, pistol, grenade, rocketlauncher, …, pistol_spread.", FieldKind::Enum,
         |d: &WeaponDef| d.weap_class.name().into(),
         |d: &mut WeaponDef, v: Values| { d.weap_class = WeapClass::parse(v.text).ok_or("unknown weapClass")?; Ok(()) }),
-    field!("Fire", "auto, semi, minigun, or `burst n`.", FieldKind::Enum,
+    field!("Fire", "auto, semi, minigun, stacked, or `burst n`.", FieldKind::Enum,
         |d: &WeaponDef| fire_name(d.fire),
         |d: &mut WeaponDef, v: Values| { d.fire = parse_fire(v.text).ok_or("unknown fire mode")?; Ok(()) }),
     field!("FireTime", "Seconds between shots.", FieldKind::Num,
@@ -404,7 +406,7 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("SpinUpTime", "Minigun spin-up.", FieldKind::Num,
         |d: &WeaponDef| d.spin_up_time.to_string(),
         |d: &mut WeaponDef, v: Values| { d.spin_up_time = v.text_num()?; Ok(()) }),
-    field!("Pellets", "Projectiles per shot (shotguns).", FieldKind::Num,
+    field!("Pellets", "BO2's shotCount: pellets per shot for a spread weapClass (0 on projectile weapons).", FieldKind::Num,
         |d: &WeaponDef| d.pellets.to_string(),
         |d: &mut WeaponDef, v: Values| { d.pellets = v.text.parse().map_err(|_| "number")?; Ok(()) }),
     field!("Clip", "Rounds in the magazine.", FieldKind::Num,

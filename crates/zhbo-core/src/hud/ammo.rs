@@ -66,7 +66,7 @@ pub fn area(l: &Lui) -> Rect {
 pub fn fire_rate_material(fire: FireMode) -> &'static str {
     match fire {
         FireMode::Auto | FireMode::Minigun => "hud_mp_firerate_auto",
-        FireMode::Semi => "hud_mp_firerate_single",
+        FireMode::Semi | FireMode::Stacked => "hud_mp_firerate_single",
         FireMode::Burst(_) => "hud_mp_firerate_burst",
     }
 }

@@ -4595,3 +4595,26 @@ An archive VERSION bump is needed (the table gained lines; old tables still pars
 Measured vs `v1/uncarried-fields`: weapons cells 397,145 → 386,617; gap clusters 185 → 183.
 `max_range` 9,341 → 0, `weap_class` 605 → 0, `damage_range` 1,016 → 434 (the rest are the
 select-fire/dual-optic alt rows that `v1/alt-attachments` clears).
+
+## `shotCount` is BO2's; the tri-bolt is BO2's `stacked` fire type (2026-10-31, branch `v1/damage-identity`)
+
+* `WeaponDef::pellets` now carries BO2's `shotCount` raw (0 on every projectile weapon; the
+  converter used to floor it to 1). `Bullet_Fire` (`FUN_005d0c20`) only reads it for a spread
+  `weapClass` — everything else fires one round — so the sim asks `WeaponDef::rounds_per_shot()`:
+  a stacked weapon's magazine, a spread class's `shotCount`, else 1. RTS damage and the client-hit
+  bound use the same accessor.
+* **The tri-bolt was a hack** (`pellets = attachment clip`, magazine and spares divided by three).
+  BO2: the stackfire attachment replaces the fire type with `stacked` (`FUN_008ecd90`) and the clip
+  with its own `iClipSize` (3, the crossbow's own; `FUN_008e5e50`, G14 §4); a stacked weapon fires
+  only with a full magazine (`FUN_008dc030`) and spends it in one pull; the client fans bolt i of n
+  across `stackFireSpread` degrees of yaw at spread × (i/(n−1) − 0.5) (`FUN_0066e320`; 1.5° for
+  the tri-bolt, the old fan was a fixed 0.04 rad). New `FireMode::Stacked` (table `stacked`, HUD
+  single-shot icon). Feel: the crossbow+tri-bolt holds 3 and carries BO2's spare bolts again, and a
+  partly reloaded stack will not fire until full. Not carried: `stackFireAccuracyDecay`'s spread
+  power (`FUN_008e41a0`) and the drum rotation (`FUN_0052f9b0`).
+
+Measured (this entry and the previous one, vs `v1/uncarried-fields`): weapons cells 397,145 →
+386,015, column clusters 174 → 169, gap clusters 185 → 183 → 180; `shot_count` 582 → 0,
+`fire_type` 5 → 0, `start_ammo_rounds` 5 → 0, `clip_size` 243 → 238, `max_ammo_rounds` 7,343 →
+7,338; no column regressed. Gotcha from the first push: compare a curve point in inches
+(`damage_at_inches`) — a ZH round trip turned the MK48's 45 into 44.996 at its own range point.

@@ -156,6 +156,9 @@ pub enum FireMode {
     Burst(u8),
     /// Full auto after a spin-up while the trigger is held.
     Minigun,
+    /// BO2's `stacked` (the tri-bolt): a pull fires the whole loaded stack at once, and only
+    /// when the magazine is full (`FUN_008dc030`).
+    Stacked,
 }
 
 /// What a projectile does when it goes off.
@@ -573,6 +576,18 @@ pub const MELEE_RANGE: f32 = inches(64.0);
 pub const MELEE_FX_WEAPON: &str = "ZHBO_Knife_FX";
 
 impl WeaponDef {
+    /// Rounds one pull puts out: a stacked weapon's whole magazine; a spread class's `shotCount`
+    /// pellets (`Bullet_Fire`); one for everything else (BO2's `shotCount` is 0 there).
+    pub fn rounds_per_shot(&self) -> u16 {
+        if self.fire == FireMode::Stacked {
+            self.clip.max(1)
+        } else if self.weap_class.is_spread() {
+            self.pellets.max(1)
+        } else {
+            1
+        }
+    }
+
     /// How far a round is traced (ZH units), BO2's `Bullet_Fire` rule (`FUN_005d0c20`): a spread
     /// class's pellets fly to the damage curve's last range (`damageRange[5]` × the attachments'
     /// range scale, already in `damage_range`); every other weapon's round flies `bulletrange`
@@ -589,7 +604,11 @@ impl WeaponDef {
     /// range, and the last is the minimum damage at the end of the curve. Damage interpolates
     /// linearly between the used points and stays at the last one beyond it.
     pub fn damage_at(&self, distance: f32) -> f32 {
-        let distance = distance / inches(1.0);
+        self.damage_at_inches(distance / inches(1.0))
+    }
+
+    /// [`WeaponDef::damage_at`] for a distance in BO2's inches (the curve's own unit).
+    pub fn damage_at_inches(&self, distance: f32) -> f32 {
         let points: Vec<(f32, f32)> = (0..6).filter(|&i| i == 0 || self.damage_range[i] > 0.0).map(|i| (self.damage_range[i], self.damage[i])).collect();
         if distance <= points[0].0 || points.len() == 1 {
             return points[0].1;
@@ -631,7 +650,7 @@ impl WeaponDef {
     pub fn fire_mode_name(&self) -> &'static str {
         match self.fire {
             FireMode::Auto | FireMode::Minigun => "FULL-AUTO",
-            FireMode::Semi => "SEMI-AUTO",
+            FireMode::Semi | FireMode::Stacked => "SEMI-AUTO",
             FireMode::Burst(_) => "BURST",
         }
     }

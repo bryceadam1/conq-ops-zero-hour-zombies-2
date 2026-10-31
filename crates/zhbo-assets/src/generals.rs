@@ -788,7 +788,7 @@ mod tests {
         let mut buckets = std::collections::BTreeSet::new();
         for d in table.weapons.iter().filter(|d| d.class.is_gun()) {
             assert!(d.impact_type > 0, "{} has no impact type", d.id);
-            assert!(d.pellets as usize <= zhbo_core::client::CLIENT_HITS, "{} fires {} pellets", d.id, d.pellets);
+            assert!(d.rounds_per_shot() as usize <= zhbo_core::client::CLIENT_HITS, "{} fires {} rounds a shot", d.id, d.rounds_per_shot());
             // Launchers use the explosion table and the crossbow/knife's 14 is BO2's own "missing
             // impact" row; only the bullet buckets get cells here.
             if zhbo_formats::fx::bullet_entry(d.impact_type as u32).is_some() {
