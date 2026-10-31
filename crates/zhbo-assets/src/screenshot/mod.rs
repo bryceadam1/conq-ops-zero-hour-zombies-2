@@ -16,6 +16,7 @@
 //! * `cac-editor-weapons.png` — the primary weapon screen with the category column and the
 //!   segmented stat bars (`c-primary/001`);
 //! * `cac-editor-attachments.png` — the attachment picker;
+//! * `cac-editor-tactician.png` — the lethal slot's list under Tactician: the tactical items;
 //! * `cac-editor-lethal.png` — the lethal slot's list, BO2's `primarygrenade` items with the placed
 //!   equipment among the grenades (`g-nades/`);
 //! * `cac-dialog-set.png` / `cac-dialog-class.png` — the shell's `S`/`O` dialogs
@@ -101,6 +102,7 @@ fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> 
         ("cac-editor-wildcards", wildcard_picker_prims()),
         ("cac-editor-perks", perk_picker_prims()),
         ("cac-editor-lethal", lethal_picker_prims()),
+        ("cac-editor-tactician", tactician_picker_prims()),
         ("cac-personalize", personalize_prims()),
         ("cac-reticles", reticle_personalize_prims()),
         ("cac-reticle-color", reticle_color_personalize_prims()),
@@ -277,6 +279,19 @@ fn lethal_picker_prims() -> Vec<Prim> {
     if let Some(i) = editor.options().iter().position(|o| o == "Claymore") {
         editor.option = i;
     }
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// The lethal slot's list under Tactician: the statstable's `specialgrenade` items
+/// (`cacgrenades.lua:183-195`), open on the concussion.
+fn tactician_picker_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.draft.wildcards = vec![Wildcard::Tactician];
+    editor.draft.extra_perks = [None; 3];
+    editor.draft.lethal = "concussion_grenade_mp".into();
+    editor.slot = Slot::Lethal;
+    editor.picking = true;
+    editor.option = (0..editor.options().len()).find(|&i| editor.option_chosen(i)).unwrap_or(0);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 

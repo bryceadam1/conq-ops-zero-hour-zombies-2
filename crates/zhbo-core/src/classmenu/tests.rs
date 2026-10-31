@@ -1011,3 +1011,39 @@ fn the_offhand_slots_list_their_statstable_items_placed_equipment_included() {
     assert_eq!(e.draft.lethal, "claymore_mp");
     assert_eq!(e.current_option_index(), i);
 }
+
+/// Under Tactician the lethal slot lists the tactical items (`cacgrenades.lua:183-195`), so the
+/// card works end to end: pick it, put a tactical in the lethal slot, save, and the reopened class
+/// has the card back (re-derived from the slot, `checkclasses.lua:677-686`) and the same list.
+/// Turning the card off clears the tactical from the lethal slot, as BO2's `ClearSlot` does.
+#[test]
+fn tactician_lists_the_tactical_items_in_the_lethal_slot() {
+    let at = |w: Wildcard| wildcard_list().iter().position(|x| *x == w).unwrap();
+    let mut e = Editor::new(Draft { perks: [None; 3], ..Draft::default() });
+    e.slot = Slot::Lethal;
+    assert_eq!(e.options(), equipment_ids(true).iter().map(|id| weapons::weapon(id).display_name.clone()).collect::<Vec<_>>());
+    e.slot = Slot::Wildcards;
+    assert!(e.apply_option(at(Wildcard::Tactician)));
+    e.slot = Slot::Lethal;
+    let tactical = equipment_ids(false);
+    assert_eq!(e.options(), equipment_options(&tactical), "the lethal slot lists the tactical slot's items");
+    assert!(!e.options().contains(&weapons::weapon("frag_grenade_mp").display_name));
+    let i = tactical.iter().position(|id| *id == "concussion_grenade_mp").unwrap();
+    assert_eq!(e.option_weapon(i).map(|d| d.id.as_str()), Some("concussion_grenade_mp"));
+    assert_eq!(e.apply(i), ApplyResult::Changed);
+    assert_eq!(e.draft.lethal, "concussion_grenade_mp");
+    assert!(e.option_chosen(i));
+    // Saved and reopened (through the profile repair): the card and the listing come back.
+    let back = Draft::from_stored(&e.draft.to_custom());
+    assert_eq!(back.lethal, "concussion_grenade_mp");
+    assert!(back.wildcards.contains(&Wildcard::Tactician), "{:?}", back.wildcards);
+    let mut again = Editor::new(back);
+    again.slot = Slot::Lethal;
+    assert_eq!(again.current_option_index(), i);
+    // Without the card the tactical cannot stay in the lethal slot.
+    again.slot = Slot::Wildcards;
+    assert!(again.apply_option(at(Wildcard::Tactician)));
+    assert!(again.draft.lethal.is_empty());
+    again.slot = Slot::Lethal;
+    assert_eq!(again.options(), equipment_options(&equipment_ids(true)));
+}

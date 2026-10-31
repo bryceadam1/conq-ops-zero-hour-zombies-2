@@ -4771,3 +4771,21 @@ Shield); 781,251 → 781,587 cells — every added cell is on the six new rows (
 on any other row): they join the columns every row already differs in, plus two new clusters,
 `inventory` 0 → 6 and `weap_type` 0 → 5 (above). cac 555 → 572: the six new weapon rows join the
 offhands' existing `description` (+6), `image` (+6) and `order` (+5) gaps. Gap clusters 202 → 204.
+
+## Tactician lists the tactical items in the lethal slot (2026-10-31, `v1/cac-text`)
+
+`cacgrenades.lua:183-195`: the grenade menu for `primaryGrenade` with `bonuscard_two_tacticals`
+equipped reads `CoD.GetUnlockablesBySlotName(specialGrenade)` — only the tactical items, the lethals
+are not offered. The editor now does the same (`items::listed_slot`/`offhand_ids`, composing with
+the cherry-picked `v1/equipment-melee` rule: the statstable slot decides, `SPECIAL_GRENADE`), so the
+perks-cards Tactician card works end to end: the tactical is given from the lethal slot, the saved
+class re-derives the card on reopen (`wildcards_of`), and the reopened list is again the tactical
+one. Turning the card off clears a tactical from the lethal slot (`checkclasses.lua:677-686`'s
+`ClearSlot`).
+
+* Composition with `v1/equipment-melee`: its commit is cherry-picked (`d68e74f`). One semantic
+  merge point: its swapped-slot repair test expected a Trophy System in the lethal slot to clear;
+  with perks-cards' Tactician rule it is Tactician's and stays (only the tactical slot clears).
+* Not done: BO2 retitles the lethal button `MPUI_SECOND_SPECIAL_GRENADE_CAPS` under Tactician; the
+  mod's slot labels are fixed English and that string's text is not in the reference dumps.
+* Screenshot harness: `cac-editor-tactician.png`.

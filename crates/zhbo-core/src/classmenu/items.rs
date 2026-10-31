@@ -83,7 +83,23 @@ pub(super) fn gun_ids(slots: &[&str]) -> Vec<&'static str> {
 /// The offhand ids the lethal (`true`) or the tactical slot lists: the items of its statstable
 /// slot ([`offhand_slot`]), in catalog order.
 pub(super) fn equipment_ids(lethal: bool) -> Vec<&'static str> {
-    let slot = offhand_slot(lethal);
+    offhand_ids(lethal, &[])
+}
+
+/// The statstable slot whose items an offhand slot lists with these cards: its own, except that
+/// under Tactician the lethal slot lists the tactical slot's items (`cacgrenades.lua:183-195`:
+/// `primaryGrenade` with `bonuscard_two_tacticals` reads `GetUnlockablesBySlotName(specialGrenade)`).
+pub fn listed_slot(lethal: bool, wildcards: &[Wildcard]) -> &'static str {
+    if lethal && wildcards.contains(&Wildcard::Tactician) {
+        SPECIAL_GRENADE
+    } else {
+        offhand_slot(lethal)
+    }
+}
+
+/// The offhand ids an offhand slot lists with these cards ([`listed_slot`]), in catalog order.
+pub(super) fn offhand_ids(lethal: bool, wildcards: &[Wildcard]) -> Vec<&'static str> {
+    let slot = listed_slot(lethal, wildcards);
     cac_entries().into_iter().filter(|d| d.class.is_offhand() && d.cac_slot == slot).map(|d| d.id.as_str()).collect()
 }
 
@@ -106,7 +122,7 @@ pub fn is_primary_item(base: &str) -> bool {
 /// Whether the item `id` is a tactical-slot item (statstable column 13 `specialgrenade`): in the
 /// lethal slot it needs Tactician (`checkclasses.lua:677-686`).
 pub fn is_tactical_item(id: &str) -> bool {
-    !id.is_empty() && weapons::catalog().get(id).is_some_and(|d| d.cac_slot == "specialgrenade")
+    !id.is_empty() && weapons::catalog().get(id).is_some_and(|d| d.cac_slot == SPECIAL_GRENADE)
 }
 
 /// The weapon a class with item `base` and attachments `shorts` gets (`GetLoadoutWeapon`): the
