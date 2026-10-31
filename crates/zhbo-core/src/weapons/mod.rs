@@ -19,6 +19,7 @@ pub mod rng;
 pub mod specialty;
 pub mod table;
 pub mod view_kick;
+pub mod zoom;
 
 pub use arsenal::*;
 pub use catalog::*;
@@ -455,3 +456,56 @@ mod swap_tests {
     }
 }
 
+
+#[cfg(test)]
+mod zoom_tests {
+    use super::*;
+    use crate::input::buttons;
+
+    fn sniper() -> &'static WeaponDef {
+        let mut d = WeaponDef { id: "test_sniper_mp".into(), class: Class::Sniper, ads_fov: 15.0, ads_in_time: 0.1, ads_out_time: 0.1, overlay_reticle: 1, ..Default::default() };
+        (d.zoom.fov2, d.zoom.fov3) = (15.0, 15.0);
+        Box::leak(Box::new(d))
+    }
+
+    fn aimed(def: &'static WeaponDef) -> (Arsenal, Rng) {
+        let mut a = Arsenal::new();
+        a.weapons[0] = WeaponState::new(def);
+        a.raise_left = 0.0;
+        let mut rng = Rng::new(3);
+        let mut out = Vec::new();
+        for _ in 0..20 {
+            a.step(buttons::ADS, 0, false, 0, 0.0, &mut rng, &mut out);
+        }
+        assert_eq!(a.ads, 1.0);
+        (a, rng)
+    }
+
+    #[test]
+    fn melee_is_refused_while_a_scope_is_aimed_and_works_from_the_hip() {
+        let (mut a, mut rng) = aimed(sniper());
+        let mut out = Vec::new();
+        a.step(buttons::ADS | buttons::MELEE, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
+        assert!(!out.iter().any(|x| matches!(x, WeaponAction::Melee { .. })), "{out:?}");
+        assert_eq!(a.ads, 1.0, "the aim holds");
+        for _ in 0..20 {
+            a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+        }
+        out.clear();
+        a.step(buttons::MELEE, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
+        assert!(out.iter().any(|x| matches!(x, WeaponAction::Melee { .. })), "{out:?}");
+    }
+
+    #[test]
+    fn the_zoom_level_toggles_between_two_and_its_blend_clock_runs_in_the_sim() {
+        let (mut a, mut rng) = aimed(sniper());
+        assert_eq!(a.current().zoom.level, 0);
+        a.weapons[0].step_zoom_level();
+        assert_eq!((a.current().zoom.level, a.current().zoom.from, a.current().zoom.since), (1, 0, 0.0));
+        let mut out = Vec::new();
+        a.step(buttons::ADS, 0, false, 0, 0.0, &mut rng, &mut out);
+        assert!((a.current().zoom.since - crate::units::LOGIC_DT).abs() < 1e-6);
+        a.weapons[0].step_zoom_level();
+        assert_eq!((a.current().zoom.level, a.current().zoom.from), (0, 1), "(level + 1) % 2");
+    }
+}

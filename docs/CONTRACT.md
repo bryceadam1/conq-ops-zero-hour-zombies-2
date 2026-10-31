@@ -227,7 +227,9 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   manifest has no ADS clip (equipment, a partial conversion) or the clip has not loaded yet, and
   it is the W3D path's rule. Applying both would double-correct mid-transition and keep the hip's
   depth forever. The clip owns the whole hip→aimed transform, eye relief and the launchers'
-  rotation included; the def's ADS time still owns FOV, the offset fade (`max(0, 1 − 2·ads)`),
+  rotation included; the def's ADS time still owns FOV (through `weapons::zoom`: the camera
+  FOV is `cg_fov` moved toward the zoom level's FOV over the last `fAdsZoomInFrac`/`OutFrac` of the
+  ADS lerp, computed client-side from the sim's ADS fraction and zoom level), the offset fade (`max(0, 1 − 2·ads)`),
   `fAdsAimPitch`, bob, sway and kick. Placement never derives an eye or axis of its own, so the
   shot's ray and the sight picture share one axis. (The view kick is the sim's,
   `PlayerSim::view_kick`: BO2 adds it to every user command's angles, so the sim's aim — the

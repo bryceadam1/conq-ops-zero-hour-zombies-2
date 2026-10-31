@@ -12,6 +12,7 @@ use super::loadout::Loadout;
 use super::perks::Perk;
 use super::rng::Rng;
 use super::specialty::{Specialties, Specialty};
+use super::zoom;
 use crate::input::buttons;
 use crate::tuning::Tuning;
 use crate::units::LOGIC_DT;
@@ -70,6 +71,9 @@ pub struct WeaponState {
     pub rechamber: Option<f32>,
     /// The magazine ran dry: the reload starts once the last shot's fire state ends.
     pub reload_owed: bool,
+    /// The variable zoom's level (BO2's inventory slot `+0x10`), the level it changed from and
+    /// the seconds since (`ps+0x5d0`/`ps+0x5d4`; `weapons::zoom`).
+    pub zoom: zoom::Level,
 }
 
 impl WeaponState {
@@ -98,6 +102,7 @@ impl WeaponState {
             rechamber_shots: 0,
             rechamber: None,
             reload_owed: false,
+            zoom: zoom::Level { since: zoom::LEVEL_BLEND_TIME, ..Default::default() },
         }
         .with_alt_ammo()
     }
@@ -113,6 +118,17 @@ impl WeaponState {
 
     pub fn is_reloading(&self) -> bool {
         self.reload.is_some()
+    }
+
+    /// The alt mode is up (BO2's held weapon is the `altmode` inventory entry).
+    pub fn alt_up(&self) -> bool {
+        self.def.id != self.main.id
+    }
+
+    /// The Variable Zoom's melee press at full ADS (`FUN_008de340` → `FUN_008da3c0`, weapon-based
+    /// levels): step to the next of [`zoom::LEVELS`] and start the change's blend.
+    pub fn step_zoom_level(&mut self) {
+        self.zoom = zoom::Level { level: (self.zoom.level + 1) % zoom::LEVELS, from: self.zoom.level, since: 0.0 };
     }
 
     /// Seconds left on a magazine reload (0 when none; shell reloads report their current phase).
@@ -605,16 +621,6 @@ impl Arsenal {
         d * if self.has_specialty(Specialty::LongerSprint) { self.tuning.perk_sprint_multiplier } else { 1.0 }
     }
 
-    /// Field of view multiplier when fully aimed (relative to BO2's 65 degrees).
-    pub fn ads_fov_scale(&self) -> f32 {
-        let fov = self.current().def.ads_fov;
-        if fov > 0.0 {
-            (fov / 65.0).clamp(0.1, 1.0)
-        } else {
-            1.0
-        }
-    }
-
     /// The weapon is back up from a sprint: `sprintOutTime` of weapon time has passed (which
     /// `sprintrecovery` makes 0.3 of the wall time; G2 `FUN_008e4ad0`).
     fn sprint_ready(&self) -> bool {
@@ -757,8 +763,18 @@ impl Arsenal {
             out.push(WeaponAction::Swapped);
         }
 
+        // The zoom level's change blend runs in real time (the client reads `since`).
+        self.current_mut().zoom.since += dt;
+        // Aimed, the melee button is the Variable Zoom's level toggle at full ADS (`FUN_008de340`),
+        // and BO2's melee start (`FUN_008e2070`) is refused while aimed at all with an overlay
+        // reticle or distinct zoom levels.
+        let def = self.current().def;
+        if pressed & buttons::MELEE != 0 && self.ads >= 1.0 && has_attachment_kind(def, zoom::VZOOM_KIND) {
+            self.current_mut().step_zoom_level();
+        }
+        let melee_refused = zoom::melee_blocked(def, self.ads);
         // Melee interrupts a reload and firing, not a raise.
-        if pressed & buttons::MELEE != 0 && self.melee_left <= 0.0 && self.raise_left <= 0.0 && self.drop_left <= 0.0 {
+        if pressed & buttons::MELEE != 0 && !melee_refused && self.melee_left <= 0.0 && self.raise_left <= 0.0 && self.drop_left <= 0.0 {
             self.melee_left = self.melee.melee_time.max(0.3);
             let w = self.current_mut();
             w.burst_left = 0;
@@ -1032,4 +1048,17 @@ impl Default for Arsenal {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The combination holds an attachment of BO2's `eAttachment` `kind` (`FUN_008eb270`), resolved
+/// through its base weapon's allowed list (a combination's own is cleared) and the catalog's
+/// attachment table.
+fn has_attachment_kind(def: &WeaponDef, kind: u8) -> bool {
+    if def.attachments.is_empty() {
+        return false;
+    }
+    let cat = catalog();
+    let Some(base) = cat.get(crate::attachments::split_id(&def.id).0) else { return false };
+    let shorts: Vec<&str> = def.attachments.iter().map(String::as_str).collect();
+    crate::attachments::resolve(base, &shorts, |id| cat.attachment(id)).iter().any(|a| a.kind == kind)
 }

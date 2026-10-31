@@ -10,6 +10,7 @@ use crate::sim::{EventKind, Mode, Sim};
 use crate::sounds::{self, Cues};
 use crate::units::LOGIC_DT;
 use crate::viewmodel::{self, Viewmodel};
+use crate::weapons::zoom::{self, ZoomView};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Bindings {
@@ -436,6 +437,8 @@ pub struct Client {
     vm: Viewmodel,
     vm_motion: viewmodel::Motion,
     vm_events: viewmodel::Events,
+    /// BO2's render-only zoom state: the hybrid's alt-scope fraction and the zoom direction.
+    zoom_view: ZoomView,
     /// The last shot's gun kick impulse (`EventKind::Recoil`'s `gun_kick`), taken by the viewmodel
     /// motion next frame: G5's spring, in degrees/s of gun angle.
     vm_kick: Option<(f32, f32)>,
@@ -498,6 +501,7 @@ impl Client {
             view_eye: Vec3::ZERO,
             view_dir: Vec3::new(1.0, 0.0, 0.0),
             vm: Viewmodel::default(),
+            zoom_view: ZoomView::default(),
             vm_motion: viewmodel::Motion::default(),
             vm_events: viewmodel::Events::default(),
             vm_kick: None,
@@ -853,9 +857,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
 
         let aspect = if inp.screen_h > 0.0 { inp.screen_w / inp.screen_h } else { 16.0 / 9.0 };
         let base_fov = horizontal_fov(self.cfg.cg_fov, aspect);
-        let ads = player.as_ref().map_or(0.0, |p| p.arsenal.ads);
-        let ads_scale = player.as_ref().map_or(1.0, |p| p.arsenal.ads_fov_scale());
-        let hfov = base_fov * (1.0 + (ads_scale - 1.0) * ads);
+        let hfov = horizontal_fov(self.view_fov(dt, player.as_ref()), aspect);
         self.last_hfov = hfov;
 
         let first_person = player.as_ref().is_some_and(|p| p.is_first_person());
@@ -992,6 +994,19 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         // The fresh-press/hover detectors compare against this frame's keys and cursor.
         self.menu_prev.update(&menu_pointer(inp));
         out
+    }
+
+    /// The view FOV this frame (degrees at 4:3): `cg_fov` through BO2's ADS zoom (`weapons::zoom`,
+    /// `FUN_004a0380`) on the held weapon's sim ADS fraction and zoom level, then `cg_fovScale` and
+    /// `cg_fovMin` (`FUN_004a0920`).
+    fn view_fov(&mut self, dt: f32, player: Option<&crate::sim::PlayerSim>) -> f32 {
+        let hip = self.cfg.cg_fov;
+        let Some(p) = player else { return hip };
+        let a = &p.arsenal;
+        let w = a.current();
+        self.zoom_view.step(dt, w.def, w.alt_up(), a.ads);
+        let fov = self.zoom_view.fov(hip, w.def, a.ads, w.zoom);
+        zoom::view_fov(fov, a.tuning.cg_fov_scale, a.tuning.cg_fov_min)
     }
 
     fn start_entering(&mut self, inp: &ClientIn, general: u32, yaw: f32, eye: Vec3) {

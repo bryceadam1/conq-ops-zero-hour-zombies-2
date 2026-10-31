@@ -4702,3 +4702,59 @@ at merge, `step_hand` passes `Hands::Dual` to `shot_kick_hands` with the left ha
 def there) and "firing" = that hand's fire cycle still running, and the sim's recentre call does
 the same. The two branches also both edit `WeaponAction::Fire` (`left` there, `view_kick` here) —
 a one-line merge.
+
+## ADS zoom: BO2's FOV moves over the last fraction of the ADS lerp (2026-10-31, branch `v1/ads-zoom`)
+
+The camera used to scale the *horizontal* FOV linearly by `ads × ads_fov/65`. BO2's zoom function
+`FUN_004a0380` (read from the disassembly — dumps in the item's plan dir, `ghidra/zoom.asm`; the
+decompile loses the result because the function returns the FOV in `XMM0` with the player state in
+`ESI`) works on the 4:3 `cg_fov` before the Hor+ conversion (`FUN_004a0b90`: `tan(fov/2)·0.75` is
+the vertical half-angle), and its caller `FUN_004a0920` finishes with `max(cg_fovMin, fov ×
+cg_fovScale)` (10 and 1, now tuning keys `cg_fovMin`/`cg_fovScale`). Ported as `weapons::zoom`:
+
+- **The lerp.** At `posFrac` 1 the FOV is the target, at 0 the hip. Between, the direction flag
+  `cg+0x4ae38` (set at the hip, cleared at full ADS, held between — the same flag the scope
+  overlay reads) picks `fAdsZoomInFrac` or `OutFrac`, and `z = (posFrac − (1 − frac)) / frac`; the
+  FOV is `hip − (hip − target)·z` for `z > 0`, else the hip. Linear, no threshold (the overlay's
+  `FUN_004b4760` is the same window plus a 0.01 threshold, so the two compose: an ACOG's 0.5 in-frac
+  holds the hip FOV for the first half of the aim and zooms over the second; a base sniper's 0 snaps
+  on the full-ADS frame, the frame the overlay takes over; its 0.05 out-frac widens the view over the
+  first 5 % of aiming out while the overlay fades).
+- **Levels.** `FUN_008ec3f0` resolves fov1..3 (variant, then each attachment differing from
+  `defaultattachment` overrides — the table already stacks them). Gotcha: **level 0 reads fov3**,
+  1 → fov2, 2 → fov1, anything else fov3; the target is `min(level fov, hip)`. With
+  `cg_useWeaponBasedVariableZoom` (default 1) the level is the weapon's inventory slot's (`+0x10`),
+  stepped `(level + 1) % 2` (`FUN_008da3c0`) by `FUN_008de340`: a combo with `ATTACHMENT_VZOOM`
+  (0x1d, `FUN_008eb270`), the **melee** button (`0x20000000`, the bit `FUN_008e2070`'s melee start
+  reads), `posFrac >= 1`. So Variable Zoom starts on fov3 (30°) and the melee key toggles 12.5°. The
+  melee start itself is refused while `posFrac > 0` on a weapon with an overlay reticle or distinct
+  levels (`FUN_008e2070`: `posFrac <= 0 || (overlayReticle == 0 && !FUN_008dae00)`) — so a scoped
+  sniper (and the Hybrid, whose fov1 30 ≠ fov2 50) cannot knife while aimed. Sim:
+  `WeaponState::zoom` (`zoom::Level`: level, from, seconds since), `step_zoom_level`, the melee gate
+  in `Arsenal::step`; the kind is resolved through the base's allowed list and the catalog
+  (`has_attachment_kind`).
+- **Level change.** At full ADS on an overlay scope with distinct levels (`FUN_008dae80`), for
+  125 ms (`DAT_00b11258`, rate `DAT_00b11254` 0.008/ms) after a change the target blends linearly
+  from the old level's FOV.
+- **Hybrid alt scope.** `cg+0x84440` rises at `1/altScopeADSTransInTime` while the held weapon is
+  an ADS-only alt mode (`inventoryType == 3` altmode at def+0x2c and `bAltWeaponAdsOnly` +0x65c or an
+  attachment's, `FUN_008ecb00`) and falls at `1/altScopeADSTransOutTime` otherwise (both first
+  differing, `FUN_008ecbc0`/`FUN_008ecc30`); its step is capped at 0.1 s (`DAT_00b12968`). The target
+  blends toward the held weapon's fov1 by it. So the Hybrid's main mode aims at fov3 (50°, the
+  variant's — the attachment's fov3 is the 1.0 sentinel) and the `dualoptic_` alt blends to fov1 30°
+  over 0.15 s, back over 0.08 s.
+- **Not ported:** the weapon-state 0x2c branch (a lerp to 55° by `ps+0x4c / def+0x528`; no such
+  state in the mod); the third argument (forces level 0, a vehicle/turret path); the toggle's 40 ms
+  debounce and latch (the sim's press edge stands in).
+- **Viewmodel:** BO2 has no viewmodel FOV (G4) — the gun is drawn with the scene's, so it magnifies
+  with the zoom, as the renderer already does.
+
+The FOV is render-only: `Client::view_fov` steps `ZoomView` (alt fraction, direction) on the
+frame's `dt` and reads the sim's ADS fraction and zoom level. `Arsenal::ads_fov_scale` is gone.
+
+Integration risk (another queue item): the Hybrid's 30° only reaches the alt because this base
+applies the parent combo's attachments to alt rows. BO2's alt rows resolve no attachments in the
+conformance oracle (`allows 0x0`), which would give `dualoptic_*` fov1 = 50 and in/out 0 — if
+`v1/alt-attachments` lands that, the Hybrid loses its magnification. `FUN_008eb300` takes the
+attachments from the packed weapon's bits indexed into the variant's own table (`+0x18`), so how
+the alt's packed weapon carries them decides it; worth a Ghidra look before that merge.

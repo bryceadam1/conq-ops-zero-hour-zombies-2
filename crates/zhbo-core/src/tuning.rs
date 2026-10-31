@@ -100,6 +100,8 @@ tuning! {
     view_height_crouch: "ViewHeightCrouch" = 40.0, "Crouched eye height, inches (the engine's 40; G6).";
     view_height_prone: "ViewHeightProne" = 11.0, "Prone eye height, inches (the engine's 11; G6).";
     cg_fov: "cg_fov" = 65.0, "Field of view, degrees (G4).";
+    cg_fov_min: "cg_fovMin" = 10.0, "The narrowest view FOV, degrees (`FUN_004a0920`).";
+    cg_fov_scale: "cg_fovScale" = 1.0, "Scale on the view FOV after the ADS zoom (`FUN_004a0920`).";
     bg_weapon_bob_max: "bg_weaponBobMax" = 8.0, "Weapon bob amplitude cap (G4).";
     bg_weapon_bob_lag: "bg_weaponBobLag" = 0.25, "Weapon bob phase lag behind the view, x pi (G4).";
     bob_standing_h: "bg_weaponBobAmplitudeStanding.x" = 0.055, "Standing bob, horizontal (G4).";

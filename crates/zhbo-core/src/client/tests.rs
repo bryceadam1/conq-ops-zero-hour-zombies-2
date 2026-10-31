@@ -42,6 +42,42 @@
         assert_eq!((a.send_input, b.send_input), (1, 0));
     }
 
+    /// The camera FOV follows BO2's ADS zoom (`weapons::zoom`) on the sim's ADS fraction: the
+    /// stand-in AN-94 carries no zoom fractions (0), so it stays at the hip FOV until the lerp
+    /// ends, then snaps to its 50° (at 4:3, made Hor+), and back the moment the aim leaves 1.
+    #[test]
+    fn the_view_fov_follows_the_ads_zoom() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        assert_eq!(client.view, ViewMode::Fps);
+        let aspect = 16.0 / 9.0;
+        let hip = horizontal_fov(65.0, aspect);
+        let zoomed = horizontal_fov(sim.player(0).unwrap().arsenal.current().def.ads_fov, aspect);
+        assert!(zoomed < hip);
+        inp.keys.set_down(Key::MouseRight, true);
+        let mut seen_full = false;
+        for _ in 0..60 {
+            let out = frame_with(&mut client, &mut sim, &host, &mut inp, 1);
+            let ads = sim.player(0).unwrap().arsenal.ads;
+            // `frame` reads the sim before this step, so the FOV is the previous step's aim.
+            if out.hfov < hip - 1e-4 {
+                assert!((out.hfov - zoomed).abs() < 1e-4, "a zero fraction snaps: {} at aim {ads}", out.hfov);
+                seen_full = true;
+            }
+        }
+        assert!(seen_full, "the zoom reached the camera");
+        inp.keys.set_down(Key::MouseRight, false);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 3);
+        let out = frame_with(&mut client, &mut sim, &host, &mut inp, 1);
+        assert!((out.hfov - hip).abs() < 1e-4, "aiming out leaves the zoom at once: {}", out.hfov);
+    }
+
     #[test]
     fn a_shot_event_for_the_local_player_sets_viewmodel_fired() {
         let host = FakeHost::default();
