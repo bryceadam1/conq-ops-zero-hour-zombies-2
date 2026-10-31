@@ -322,6 +322,26 @@ pub struct CamoOption {
     pub sort: u32,
 }
 
+/// One BO2 bonus card (a Create-a-Class wildcard): a `bonuscard` row of `mp/statstable.csv`. The
+/// reference (column 4, `bonuscard_overkill`) is the card's stable identity — what the editor's
+/// rules key on ([`crate::classmenu::Wildcard::reference`]); the rest is what the grid shows and
+/// charges: the localized name (column 3) and description (column 7), the card image (column 6),
+/// the loadout slot `Engine.GetLoadoutSlotForItem` answers (column 13, `bonuscard1..7`), the
+/// allocation cost (column 12), the sort key (column 9), the item index (column 0) and the unlock
+/// level (column 10). The grid lists the group's cards by sort key, then index (G17).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BonusCard {
+    pub reference: String,
+    pub name: String,
+    pub description: String,
+    pub image: String,
+    pub slot: String,
+    pub cost: i32,
+    pub sort: i32,
+    pub index: i32,
+    pub unlock_level: i32,
+}
+
 /// One BO2 reticle option (`reticle_0..10` from `mp/attachmenttable.csv`): the same id/name/image/
 /// sort shape as a camo row; the art depends on the optic (`cacreticles.lua`).
 pub type ReticleOption = CamoOption;

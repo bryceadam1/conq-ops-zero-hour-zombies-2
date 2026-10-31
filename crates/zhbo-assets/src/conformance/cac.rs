@@ -7,7 +7,7 @@ use super::actual::Shipped;
 use crate::hud::Source;
 use zhbo_conformance::bo2::cac::row;
 use zhbo_conformance::schema::{Row, Schema};
-use zhbo_core::classmenu::{self, draft_weapon_id, offer, offered_attachments, Draft, Wildcard};
+use zhbo_core::classmenu::{self, draft_weapon_id, offer, offered_attachments, Draft};
 use zhbo_core::weapons::{self, Class, Perk, PERKS};
 
 /// `eAttachmentPoint`'s names (the attachment table's column 1).
@@ -113,13 +113,17 @@ pub fn rows(shipped: &Shipped, bo2_dir: &std::path::Path, schema: &Schema) -> Re
         })?);
     }
 
-    // Wildcards: keyed by the bonus card their art is converted from.
-    for (i, w) in Wildcard::ALL.iter().enumerate() {
-        let image = sprite_material(zhbo_core::hud::sprites::WILDCARD_ICONS[*w as usize]);
-        let key = image.as_deref().and_then(|m| m.strip_prefix("menu_mp_bonuscard_")).map_or_else(|| w.id().to_string(), str::to_string);
-        let cost = cost_of(|dr| dr.wildcards.push(*w));
-        out.push(row(schema, "wildcard", &key, |b| {
-            b.text("name", w.name()).opt_text("image", image).int("cost", cost).int("order", i as i64);
+    // Wildcards: the editor's grid ([`classmenu::wildcard_list`]), keyed by the card's reference;
+    // what each shows (name, description, slot) is its weapon-table row, the art the sprite the
+    // converter makes for it, the cost what the allocation charges, and the order its place among
+    // the grid's cards.
+    for (i, w) in classmenu::wildcard_list().into_iter().enumerate() {
+        let image = sprite_material(zhbo_core::hud::sprites::WILDCARD_ICONS[w as usize]);
+        let key = w.reference().trim_start_matches("bonuscard_");
+        let cost = cost_of(|dr| dr.wildcards.push(w));
+        let slot = w.card().map(|c| c.slot.clone());
+        out.push(row(schema, "wildcard", key, |b| {
+            b.text("name", w.name()).text("description", w.description()).opt_text("image", image).opt_text("slot", slot).int("cost", cost).int("order", i as i64);
         })?);
     }
 

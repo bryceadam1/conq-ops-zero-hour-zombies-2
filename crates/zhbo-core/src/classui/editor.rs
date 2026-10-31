@@ -464,15 +464,31 @@ fn draw_option_grid(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor) {
         // (`cacattachmentsmenu.lua:238-536`, `d-attach/002`).
         draw_attachment_panel(prims, l, editor);
     } else if let Some(name) = opts.get(editor.option) {
-        // The other content pickers carry only the highlighted entry's name under the grid
-        // (`e-perks/001`, `f-wildcards/001`).
         let cols = grid_columns(editor.slot);
         let h = if cols == 6 { ATTACH_GRID_H } else { 96.0 + bo2::TEXT_EXTRA_SMALL + 10.0 };
         let rows = opts.len().div_ceil(cols);
         let y = GRID_TOP + rows as f32 * (h + GRID_ITEM_GAP) + 10.0;
-        let r = f.in_menu(crate::lui::Place::new((true, false, 0.0, bo2::MENU_W * 0.5), (true, false, y, y + bo2::TEXT_CONDENSED)));
-        bo2::text(prims, f, Family::Condensed, name, r, Align::Left, argb(OFF_WHITE, 1.0));
+        if let Some(w) = editor.option_wildcard(editor.option) {
+            draw_wildcard_panel(prims, f, w, y);
+        } else {
+            // The other content pickers carry only the highlighted entry's name under the grid
+            // (`e-perks/001`).
+            let r = f.in_menu(crate::lui::Place::new((true, false, 0.0, bo2::MENU_W * 0.5), (true, false, y, y + bo2::TEXT_CONDENSED)));
+            bo2::text(prims, f, Family::Condensed, name, r, Align::Left, argb(OFF_WHITE, 1.0));
+        }
     }
+}
+
+/// The wildcard grid's lower panel: the highlighted card's name in Big and its description in
+/// Default at 0.4 alpha under it, two cards and two gaps wide (`cacbonuscards.lua:285-350`'s
+/// `bonusCardName` / `bonusCardDescription`, set from the card's row by
+/// `ContentButtonHighlighted`). Both come from the card's weapon-table row.
+fn draw_wildcard_panel(prims: &mut Vec<Prim>, f: &Frame, w: Wildcard, y: f32) {
+    let place = |top: f32, h: f32, wide: f32| f.in_menu(crate::lui::Place::new((true, false, 0.0, wide), (true, false, top, top + h)));
+    bo2::text(prims, f, Family::Big, w.name(), place(y, bo2::TEXT_BIG, bo2::MENU_W), Align::Left, argb(OFF_WHITE, 1.0));
+    let card_w = (bo2::MENU_W - GRID_ITEM_GAP * 2.0) / 3.0;
+    let desc = place(y + bo2::TEXT_BIG, bo2::TEXT_DEFAULT, card_w * 2.0 + GRID_ITEM_GAP * 2.0);
+    bo2::text(prims, f, Family::Default, w.description(), desc, Align::Left, argb(OFF_WHITE, 0.4));
 }
 
 /// The highlighted attachment's definition, from the current weapon's allowed list.

@@ -91,12 +91,17 @@ pub fn rows(install: &Install, schema: &Schema) -> Result<Vec<Row>, String> {
         }
     }
 
-    // Perks and wildcards: the statstable's specialty and bonus-card rows.
-    for (group, kind, prefix) in [("specialty", "perk", "PERKS_"), ("bonuscard", "wildcard", "")] {
+    // Perks and wildcards: the statstable's specialty and bonus-card rows. A perk's place is within
+    // its slot's list (column 13, a tier); the wildcard grid is ONE list, the whole `bonuscard`
+    // group (`cacbonuscards.lua:197-199` and `bonuscardgridbutton.lua:102` call
+    // `CoD.GetUnlockablesByGroupName("bonuscard")`, which sorts `Engine.GetUnlockablesByGroupName`
+    // by `UnlockablesComparisonFunction`, `codbase.lua:6466-6500`: the group list of G17's
+    // `FUN_008d1a10`), so its order is ranked over the group (column 2), not per loadout slot.
+    for (group, kind, prefix, list_column) in [("specialty", "perk", "PERKS_", 13), ("bonuscard", "wildcard", "", 2)] {
         let rows: Vec<&Vec<String>> = stats.iter().filter(|r| cell(r, 2) == group && cell(r, 12).trim().parse::<i32>().is_ok_and(|c| c >= 0)).collect();
         let mut by_slot: BTreeMap<String, Vec<&Vec<String>>> = BTreeMap::new();
         for r in &rows {
-            by_slot.entry(cell(r, 13)).or_default().push(r);
+            by_slot.entry(cell(r, list_column)).or_default().push(r);
         }
         let rank: BTreeMap<String, i64> = by_slot.values().flat_map(|g| ranks(g)).collect();
         for r in rows {

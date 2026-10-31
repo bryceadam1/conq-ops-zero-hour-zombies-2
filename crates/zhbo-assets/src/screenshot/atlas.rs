@@ -57,9 +57,12 @@ impl Atlas {
         for (name, image) in parse_mapped_images(&text) {
             if !atlas.pages.contains_key(&image.texture) {
                 let texture = format!("Art\\Textures\\{}", image.texture);
-                let entry = big
-                    .find(&texture)
-                    .ok_or_else(|| format!("{}: {texture} is missing from the archive", path.display()))?;
+                // The scope overlays name their page without the `.tga` the archive stores it
+                // under; a page found neither way draws its names' fallbacks, as a bad rect does.
+                let Some(entry) = big.find(&texture).or_else(|| big.find(&format!("{texture}.tga"))) else {
+                    atlas.invalid.push(name);
+                    continue;
+                };
                 let bytes = big.read(entry).map_err(|e| format!("{texture}: {e}"))?;
                 let page = decode_tga(&bytes).map_err(|e| format!("{texture}: {e}"))?;
                 atlas.pages.insert(image.texture.clone(), page);

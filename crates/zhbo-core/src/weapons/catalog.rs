@@ -6,7 +6,7 @@
 ** License, or (at your option) any later version.
 */
 
-use super::def::{CamoOption, WeaponDef};
+use super::def::{BonusCard, CamoOption, WeaponDef};
 use super::table::{parse_full_table, Table};
 use crate::attachments::{self, AttachmentDef};
 use std::collections::HashMap;
@@ -24,6 +24,7 @@ pub struct Catalog {
     reticle_order: Vec<&'static CamoOption>,
     reticle_colors: HashMap<String, &'static CamoOption>,
     reticle_color_order: Vec<&'static CamoOption>,
+    bonus_cards: Vec<&'static BonusCard>,
     built: Mutex<HashMap<String, &'static WeaponDef>>,
     pub tablet_meshes: u8,
 }
@@ -42,6 +43,10 @@ impl Catalog {
         let reticles = reticle_order.iter().map(|r| (r.id.clone(), *r)).collect();
         let reticle_color_order: Vec<&'static CamoOption> = t.reticle_colors.into_iter().map(|c| &*Box::leak(Box::new(c))).collect();
         let reticle_colors = reticle_color_order.iter().map(|c| (c.id.clone(), *c)).collect();
+        // The wildcard grid's order: `CoD.GetUnlockablesByGroupName("bonuscard")` sorted by
+        // `UnlockablesComparisonFunction` — the sort key, then the item index (codbase.lua; G17).
+        let mut bonus_cards: Vec<&'static BonusCard> = t.bonus_cards.into_iter().map(|b| &*Box::leak(Box::new(b))).collect();
+        bonus_cards.sort_by_key(|b| (b.sort, b.index));
         Catalog {
             by_id,
             order,
@@ -51,6 +56,7 @@ impl Catalog {
             reticle_order,
             reticle_colors,
             reticle_color_order,
+            bonus_cards,
             built: Mutex::new(HashMap::new()),
             tablet_meshes: t.tablet_meshes,
         }
@@ -118,6 +124,16 @@ impl Catalog {
         &self.reticle_color_order
     }
 
+    /// BO2's bonus cards (the wildcards), in the grid's order.
+    pub fn bonus_cards(&self) -> &[&'static BonusCard] {
+        &self.bonus_cards
+    }
+
+    /// A bonus card by its statstable reference (`bonuscard_overkill`).
+    pub fn bonus_card(&self, reference: &str) -> Option<&'static BonusCard> {
+        self.bonus_cards.iter().copied().find(|b| b.reference == reference)
+    }
+
     pub fn all(&self) -> &[&'static WeaponDef] {
         &self.order
     }
@@ -127,8 +143,13 @@ static CATALOG: OnceLock<Catalog> = OnceLock::new();
 
 /// Install the converted BO2 table (once, before play). Returns the number of weapons, or why not.
 pub fn install_catalog(text: &str) -> Result<usize, String> {
-    let table = parse_full_table(text)?;
+    let mut table = parse_full_table(text)?;
     let n = table.weapons.len();
+    if table.bonus_cards.is_empty() {
+        // A table converted before the bonus cards were: the stand-in rows (BO2's own), as the
+        // perk table keeps its built-in sets.
+        table.bonus_cards = parse_full_table(BUILTIN)?.bonus_cards;
+    }
     if !table.perks.is_empty() {
         super::perks::install_converted(&table.perks);
     }
@@ -190,8 +211,97 @@ pub fn weapon(id: &str) -> &'static WeaponDef {
 }
 
 /// Stand-in table when BO2 is not converted: the default loadout's weapons with BO2's published
-/// multiplayer values (rounded), in the same format as the converted table.
+/// multiplayer values (rounded), in the same format as the converted table, and BO2's eight bonus
+/// cards (`mp/statstable.csv:178-185`) so the wildcard grid has its rows.
 pub const BUILTIN: &str = "
+BonusCard bonuscard_primary_gunfighter
+  Name = Primary Gunfighter
+  Description = Take a 3rd attachment for your primary weapon.
+  Image = menu_mp_bonuscard_primary_gunfighter
+  Slot = bonuscard1
+  Cost = 1
+  Sort = 6
+  Index = 178
+  UnlockLevel = 21
+End
+
+BonusCard bonuscard_secondary_gunfighter
+  Name = Secondary Gunfighter
+  Description = Take a 2nd attachment for your second weapon.
+  Image = menu_mp_bonuscard_secondary_gunfighter
+  Slot = bonuscard2
+  Cost = 1
+  Sort = 5
+  Index = 179
+  UnlockLevel = 18
+End
+
+BonusCard bonuscard_overkill
+  Name = Overkill
+  Description = Take a primary weapon as your second weapon.
+  Image = menu_mp_bonuscard_overkill
+  Slot = bonuscard3
+  Cost = 1
+  Sort = 4
+  Index = 180
+  UnlockLevel = 15
+End
+
+BonusCard bonuscard_perk_1_greed
+  Name = Perk 1 Greed
+  Description = Take a second Perk 1.
+  Image = menu_mp_bonuscard_perk_1_greed
+  Slot = bonuscard5
+  Cost = 1
+  Sort = 1
+  Index = 181
+  UnlockLevel = 3
+End
+
+BonusCard bonuscard_perk_2_greed
+  Name = Perk 2 Greed
+  Description = Take a second Perk 2.
+  Image = menu_mp_bonuscard_perk_2_greed
+  Slot = bonuscard6
+  Cost = 1
+  Sort = 2
+  Index = 182
+  UnlockLevel = 9
+End
+
+BonusCard bonuscard_perk_3_greed
+  Name = Perk 3 Greed
+  Description = Take a second Perk 3.
+  Image = menu_mp_bonuscard_perk_3_greed
+  Slot = bonuscard7
+  Cost = 1
+  Sort = 3
+  Index = 183
+  UnlockLevel = 12
+End
+
+BonusCard bonuscard_danger_close
+  Name = Danger Close
+  Description = Take a second Lethal.
+  Image = menu_mp_bonuscard_danger_close
+  Slot = bonuscard4
+  Cost = 1
+  Sort = 8
+  Index = 184
+  UnlockLevel = 27
+End
+
+BonusCard bonuscard_two_tacticals
+  Name = Tactician
+  Description = Take a tactical grenade in place of your lethal grenade.
+  Image = menu_mp_bonuscard_two_tacticals
+  Slot = bonuscard1
+  Cost = 1
+  Sort = 7
+  Index = 185
+  UnlockLevel = 24
+End
+
 Attachment reflex
   Short = reflex
   DisplayName = Reflex

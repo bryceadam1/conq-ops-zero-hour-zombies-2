@@ -133,11 +133,19 @@ use super::items::cac_entries;
     }
 
     #[test]
-    fn every_wildcard_costs_a_point_and_round_trips_through_its_id() {
+    fn every_wildcard_is_its_tables_card_and_round_trips_through_its_reference() {
         for w in Wildcard::ALL {
-            assert_eq!(Wildcard::by_id(w.id()), Some(w));
-            assert!(!w.name().is_empty());
+            assert_eq!(Wildcard::by_reference(w.reference()), Some(w));
+            let card = w.card().expect("the table holds every card the editor has a rule for");
+            assert_eq!(w.name(), card.name);
+            assert_eq!(w.description(), card.description);
+            assert!(!w.description().is_empty() && card.slot.starts_with("bonuscard"), "{card:?}");
+            assert_eq!(w.cost(), card.cost);
         }
+        // BO2's rows (`mp/statstable.csv:178-185`): Tactician shares Primary Gunfighter's slot.
+        assert_eq!(Wildcard::Tactician.card().map(|c| c.slot.as_str()), Some("bonuscard1"));
+        assert_eq!(Wildcard::PrimaryGunfighter.card().map(|c| c.slot.as_str()), Some("bonuscard1"));
+        assert_eq!(Wildcard::DangerClose.card().map(|c| c.slot.as_str()), Some("bonuscard4"));
         assert_eq!(Wildcard::Perk1Greed.greed_tier(), Some(1));
         assert_eq!(Wildcard::Overkill.greed_tier(), None);
     }
@@ -627,7 +635,7 @@ fn the_budget_denies_an_eleventh_point_and_leaves_the_draft() {
     let mut e = Editor::new(d);
     e.slot = Slot::Wildcards;
     e.picking = true;
-    e.option = Wildcard::ALL.iter().position(|w| *w == Wildcard::Tactician).unwrap();
+    e.option = wildcard_list().iter().position(|w| *w == Wildcard::Tactician).unwrap();
     let before = e.draft.clone();
     assert_eq!(e.step(Edges { confirm: true, ..Default::default() }), Outcome::Continue);
     assert!(e.denied, "the refused choice is surfaced");
@@ -698,8 +706,8 @@ fn a_fourth_bonus_card_is_denied() {
     let cards = crate::classes::MAX_BONUS_CARDS as i32;
     assert!(e.draft.spent() + cards < PICK_10, "room for every card: {}", e.draft.spent());
     e.slot = Slot::Wildcards;
-    for (n, w) in [Wildcard::Perk1Greed, Wildcard::Tactician, Wildcard::DangerClose].into_iter().enumerate() {
-        let i = Wildcard::ALL.iter().position(|x| *x == w).expect("in the list");
+    for (n, w) in [Wildcard::Perk1Greed, Wildcard::Perk2Greed, Wildcard::Tactician].into_iter().enumerate() {
+        let i = wildcard_list().iter().position(|x| *x == w).expect("in the list");
         e.picking = true;
         e.option = i;
         assert_eq!(e.step(Edges { confirm: true, ..Default::default() }), Outcome::Continue);
@@ -709,8 +717,8 @@ fn a_fourth_bonus_card_is_denied() {
     assert_eq!(e.draft.wildcards.len(), crate::classes::MAX_BONUS_CARDS);
     // The fourth: refused with the deny flag, the draft untouched.
     let before = e.draft.clone();
-    let overkill = Wildcard::ALL.iter().position(|x| *x == Wildcard::Overkill).expect("in the list");
-    let tactician = Wildcard::ALL.iter().position(|x| *x == Wildcard::Tactician).expect("in the list");
+    let overkill = wildcard_list().iter().position(|x| *x == Wildcard::Overkill).expect("in the list");
+    let tactician = wildcard_list().iter().position(|x| *x == Wildcard::Tactician).expect("in the list");
     e.picking = true;
     e.option = overkill;
     e.step(Edges { confirm: true, ..Default::default() });
@@ -874,4 +882,92 @@ fn picking_dual_wield_saves_the_dw_weapon() {
     assert_eq!(back.spent(), e.draft.spent(), "Dual Wield costs its attachment point");
     // The `_dw` weapon is no item of its own: the secondary list never shows it.
     assert!(!gun_ids(&[items::SECONDARY]).contains(&"fiveseven_dw_mp"));
+}
+
+// --- The wildcard grid from the table ---
+
+/// The grid lists the table's bonus cards by sort key, then index (`GetUnlockablesByGroupName`
+/// with `UnlockablesComparisonFunction`, G17): `f-wildcards/001`'s order.
+#[test]
+fn the_wildcard_grid_is_the_tables_cards_in_sort_order() {
+    assert_eq!(
+        wildcard_list(),
+        vec![
+            Wildcard::Perk1Greed,
+            Wildcard::Perk2Greed,
+            Wildcard::Perk3Greed,
+            Wildcard::Overkill,
+            Wildcard::SecondaryGunfighter,
+            Wildcard::PrimaryGunfighter,
+            Wildcard::Tactician,
+            Wildcard::DangerClose,
+        ]
+    );
+    let sorts: Vec<(i32, i32)> = weapons::catalog().bonus_cards().iter().map(|c| (c.sort, c.index)).collect();
+    assert!(sorts.windows(2).all(|w| w[0] <= w[1]), "{sorts:?}");
+    let mut e = Editor::new(Draft::default());
+    e.slot = Slot::Wildcards;
+    assert_eq!(e.options(), wildcard_list().iter().map(|w| w.name().to_string()).collect::<Vec<_>>());
+    for (i, w) in wildcard_list().into_iter().enumerate() {
+        assert_eq!(e.option_wildcard(i), Some(w));
+    }
+}
+
+/// A card is charged its row's cost (BO2's column 12).
+#[test]
+fn a_wildcard_costs_its_cards_cost() {
+    let mut d = Draft::default();
+    let before = d.spent();
+    d.wildcards.push(Wildcard::Overkill);
+    assert_eq!(d.spent() - before, Wildcard::Overkill.card().map(|c| c.cost).unwrap());
+}
+
+/// BO2's grid marks Tactician and Danger Close mutually exclusive (`bonuscardgridbutton.lua`):
+/// with one equipped, the other is denied untouched; turning the first off frees it.
+#[test]
+fn tactician_and_danger_close_exclude_each_other() {
+    let mut e = Editor::new(Draft { perks: [None; 3], ..Draft::default() });
+    e.slot = Slot::Wildcards;
+    let at = |w: Wildcard| wildcard_list().iter().position(|x| *x == w).unwrap();
+    let pick = |e: &mut Editor, w: Wildcard| {
+        e.picking = true;
+        e.option = at(w);
+        e.denied = false;
+        e.step(Edges { confirm: true, ..Default::default() });
+    };
+    pick(&mut e, Wildcard::Tactician);
+    assert_eq!(e.draft.wildcards, vec![Wildcard::Tactician]);
+    let before = e.draft.clone();
+    pick(&mut e, Wildcard::DangerClose);
+    assert!(e.denied, "Danger Close is refused beside Tactician");
+    assert_eq!(e.draft, before);
+    pick(&mut e, Wildcard::Tactician);
+    assert!(e.draft.wildcards.is_empty());
+    pick(&mut e, Wildcard::DangerClose);
+    assert_eq!(e.draft.wildcards, vec![Wildcard::DangerClose]);
+    pick(&mut e, Wildcard::Tactician);
+    assert!(e.denied, "and the other way round");
+    assert_eq!(Wildcard::Overkill.excludes(), None);
+}
+
+/// The profile stores no wildcard list (a class's cards are re-derived from what it holds), so a
+/// profile written before the cards came from the table loads with the same cards: a v2 record
+/// with two Tier 1 perks re-opens with Perk 1 Greed, charged its card's cost.
+#[test]
+fn an_old_profiles_class_reloads_with_its_cards() {
+    let _g = crate::profile::lock();
+    let tier1 = perk_list(1);
+    let (a, b) = (tier1[0].def().id, tier1[1].def().id);
+    let text = format!("v2\nactive 1\nset 1 CLASS SET 1\nclass\nGreedy\nprimary=an94_mp;perks={a},{b}\nend\n");
+    let p = crate::profile::Profile::from_text(&text);
+    let c = p.customs().first().expect("the class loads").clone();
+    let d = Draft::from_stored(&c);
+    assert_eq!(d.wildcards, vec![Wildcard::Perk1Greed]);
+    assert_eq!(d.extra_perks[0].map(|p| p.def().id), Some(b));
+    // Saved back, the class is the same record.
+    assert_eq!(d.to_custom().perks, c.perks);
+    let mut again = crate::profile::Profile::new();
+    assert!(again.save(d.to_custom()));
+    let back = crate::profile::Profile::from_text(&again.to_text());
+    assert_eq!(Draft::from_stored(&back.customs()[0]).wildcards, vec![Wildcard::Perk1Greed]);
 }

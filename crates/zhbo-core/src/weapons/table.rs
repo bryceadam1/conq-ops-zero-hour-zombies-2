@@ -6,7 +6,7 @@
 ** License, or (at your option) any later version.
 */
 
-use super::def::{CamoOption, Class, Effect, FireMode, Kind, Kick, Place, WeaponDef};
+use super::def::{BonusCard, CamoOption, Class, Effect, FireMode, Kind, Kick, Place, WeaponDef};
 use super::feel::{nums, v3, GunKick, Sway};
 use super::specialty::Specialties;
 use crate::attachments::AttachmentDef;
@@ -27,6 +27,9 @@ pub struct Table {
     /// BO2's perk rows (`mp/statstable.csv`): the reference without `PERKS_` (`LIGHTWEIGHT`,
     /// `NINJA`) and the specialties it grants (`Perk <ref>` blocks).
     pub perks: Vec<(String, Specialties)>,
+    /// BO2's bonus cards (`mp/statstable.csv`'s `bonuscard` rows, `BonusCard <ref>` blocks), in the
+    /// table's row order.
+    pub bonus_cards: Vec<BonusCard>,
 }
 
 pub(crate) fn pairs(v: &[(String, String)]) -> String {
@@ -69,6 +72,9 @@ pub fn format_full_table(t: &Table) -> String {
     for (stats, specialties) in &t.perks {
         s.push_str(&format!("Perk {stats}\n  Specialties = {}\nEnd\n\n", specialties.format()));
     }
+    for b in &t.bonus_cards {
+        write_block(&mut s, "BonusCard ", &b.reference, BONUS_CARD_FIELDS, b);
+    }
     for a in &t.attachments {
         write_block(&mut s, "Attachment ", &a.id, ATTACHMENT_FIELDS, a);
     }
@@ -102,6 +108,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
         Reticle(Box<CamoOption>),
         ReticleColor(Box<CamoOption>),
         Perk(String, Specialties),
+        BonusCard(Box<BonusCard>),
     }
     let mut table = Table::default();
     let mut cur: Option<Block> = None;
@@ -131,6 +138,10 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
             cur = Some(Block::ReticleColor(Box::new(CamoOption { id: id.trim().to_string(), ..Default::default() })));
             continue;
         }
+        if let Some(id) = line.strip_prefix("BonusCard ") {
+            cur = Some(Block::BonusCard(Box::new(BonusCard { reference: id.trim().to_string(), ..Default::default() })));
+            continue;
+        }
         if let Some(id) = line.strip_prefix("Perk ") {
             cur = Some(Block::Perk(id.trim().to_string(), Specialties::NONE));
             continue;
@@ -143,6 +154,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
                 Block::Reticle(r) => table.reticles.push(*r),
                 Block::ReticleColor(c) => table.reticle_colors.push(*c),
                 Block::Perk(stats, specialties) => table.perks.push((stats, specialties)),
+                Block::BonusCard(b) => table.bonus_cards.push(*b),
             }
             continue;
         }
@@ -164,6 +176,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
                     *specialties = Specialties::parse(value).map_err(|e| err(&e))?;
                 }
             }
+            Some(Block::BonusCard(b)) => set_field(BONUS_CARD_FIELDS, b, key, values).map_err(|e| err(&e))?,
             Some(Block::Weapon(d)) => set_field(WEAPON_FIELDS, d, key, values).map_err(|e| err(&e))?,
         }
     }
@@ -677,6 +690,34 @@ pub const CAMO_FIELDS: &[Field<CamoOption>] = &[
         |c: &mut CamoOption, v: Values| { c.sort = v.text.parse().map_err(|_| "number")?; Ok(()) }),
 ];
 
+/// Every `BonusCard` block line: one `bonuscard` row of `mp/statstable.csv` ([`BonusCard`]).
+pub const BONUS_CARD_FIELDS: &[Field<BonusCard>] = &[
+    field!("Name", "The localized name (column 3, `BONUSCARD_*`).", FieldKind::Str,
+        |b: &BonusCard| b.name.clone(),
+        |b: &mut BonusCard, v: Values| { b.name = v.text.into(); Ok(()) }),
+    field!("Description", "The localized description (column 7, `MENU_BONUSCARD_*_DESC`).", FieldKind::Str,
+        |b: &BonusCard| b.description.clone(),
+        |b: &mut BonusCard, v: Values| { b.description = v.text.into(); Ok(()) }),
+    field!("Image", "The card image (column 6, `menu_mp_bonuscard_*`).", FieldKind::Str,
+        |b: &BonusCard| b.image.clone(),
+        |b: &mut BonusCard, v: Values| { b.image = v.text.into(); Ok(()) }),
+    field!("Slot", "The loadout slot (column 13, `bonuscard1..7`; `Engine.GetLoadoutSlotForItem`).", FieldKind::Str,
+        |b: &BonusCard| b.slot.clone(),
+        |b: &mut BonusCard, v: Values| { b.slot = v.text.into(); Ok(()) }),
+    field!("Cost", "The allocation cost (column 12).", FieldKind::Num,
+        |b: &BonusCard| b.cost.to_string(),
+        |b: &mut BonusCard, v: Values| { b.cost = v.text_num()? as i32; Ok(()) }),
+    field!("Sort", "The sort key the grid orders by (column 9, `Engine.GetItemSortKey`).", FieldKind::Num,
+        |b: &BonusCard| b.sort.to_string(),
+        |b: &mut BonusCard, v: Values| { b.sort = v.text_num()? as i32; Ok(()) }),
+    field!("Index", "The item index (column 0), the grid's tie-break.", FieldKind::Num,
+        |b: &BonusCard| b.index.to_string(),
+        |b: &mut BonusCard, v: Values| { b.index = v.text_num()? as i32; Ok(()) }),
+    field!("UnlockLevel", "The level that unlocks it (column 10).", FieldKind::Num,
+        |b: &BonusCard| b.unlock_level.to_string(),
+        |b: &mut BonusCard, v: Values| { b.unlock_level = v.text_num()? as i32; Ok(()) }),
+];
+
 /// Apply one schema line to `t`. Unknown keys are tolerated (the parser skips them).
 pub fn set_field<T>(fields: &[Field<T>], t: &mut T, key: &str, values: Values) -> Result<(), String> {
     for f in fields {
@@ -807,6 +848,26 @@ mod tests {
         };
         let text = format_full_table(&t);
         assert!(text.contains("Perk LIGHTWEIGHT\n  Specialties = fallheight movefaster\nEnd"), "{text}");
+        assert_eq!(parse_full_table(&text).unwrap(), t);
+    }
+
+    #[test]
+    fn bonus_cards_round_trip() {
+        let b = BonusCard {
+            reference: "bonuscard_overkill".into(),
+            name: "Overkill".into(),
+            description: "Take a primary weapon as your second weapon.".into(),
+            image: "menu_mp_bonuscard_overkill".into(),
+            slot: "bonuscard3".into(),
+            cost: 1,
+            sort: 4,
+            index: 180,
+            unlock_level: 15,
+        };
+        let t = Table { bonus_cards: vec![b], ..Default::default() };
+        let text = format_full_table(&t);
+        assert!(text.contains("BonusCard bonuscard_overkill\n  Name = Overkill\n"), "{text}");
+        assert!(text.contains("  Slot = bonuscard3\n  Cost = 1\n  Sort = 4\n  Index = 180\n  UnlockLevel = 15\nEnd"), "{text}");
         assert_eq!(parse_full_table(&text).unwrap(), t);
     }
 

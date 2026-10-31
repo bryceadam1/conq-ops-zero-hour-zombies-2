@@ -1002,3 +1002,25 @@ fn primary_gunfighter_shows_a_third_attachment_plate() {
     let grip_drawn = prims.iter().any(|p| matches!(p, Prim::Image { name, .. } if name == "ZHBO_BO2_Attach_Grip"));
     assert!(grip_drawn, "the third plate draws its attachment");
 }
+
+/// The wildcard grid's lower panel shows the highlighted card's name (Big) and its description
+/// (Default, 0.4 alpha) from the card's table row (`cacbonuscards.lua`'s `bonusCardName` /
+/// `bonusCardDescription`).
+#[test]
+fn the_wildcard_grid_shows_the_highlighted_cards_description() {
+    let mut e = Editor::new(Draft::default());
+    e.slot = Slot::Wildcards;
+    e.picking = true;
+    let list = crate::classmenu::wildcard_list();
+    e.option = list.iter().position(|w| *w == Wildcard::DangerClose).unwrap();
+    let mut prims = Vec::new();
+    draw_editor(&mut prims, 1280.0, 720.0, &e, 0.0, 0.0);
+    let desc = Wildcard::DangerClose.description();
+    assert_eq!(desc, "Take a second Lethal.");
+    let alpha = prims.iter().find_map(|p| match p {
+        Prim::Text { text, argb, .. } if text == desc => Some(*argb >> 24),
+        _ => None,
+    });
+    assert_eq!(alpha, Some(bo2::argb(bo2::OFF_WHITE, 0.4) >> 24), "{:?}", texts(&prims));
+    assert!(texts(&prims).iter().filter(|t| *t == "Danger Close").count() >= 2, "the cell and the panel title");
+}

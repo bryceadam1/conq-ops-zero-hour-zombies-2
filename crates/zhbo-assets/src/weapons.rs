@@ -173,6 +173,35 @@ pub fn perk_rows(patch: &zhbo_formats::t6zone::Zone) -> Vec<(String, Specialties
         .collect()
 }
 
+/// BO2's bonus cards from the player's `mp/statstable.csv` (`patch_mp`): every `bonuscard` row the
+/// class editor can charge (column 12 a cost, as the CaC lists filter), with its localized name
+/// and description (`names`), image, loadout slot, sort key, index and unlock level
+/// ([`zhbo_core::weapons::BonusCard`]).
+pub fn bonus_card_rows(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<String, String>) -> Vec<zhbo_core::weapons::BonusCard> {
+    let Ok(Some(rows)) = zhbo_formats::stringtable::rows(patch, "mp/statstable.csv") else { return Vec::new() };
+    let cell = |r: &Vec<String>, i: usize| r.get(i).map(|c| c.trim().to_string()).unwrap_or_default();
+    let num = |r: &Vec<String>, i: usize| cell(r, i).parse::<i32>().ok();
+    let loc = |k: String| names.get(&k).map(|s| s.trim().to_string()).unwrap_or(k);
+    rows.iter()
+        .filter(|r| r.get(2).is_some_and(|c| c == "bonuscard"))
+        .filter_map(|r| {
+            let cost = num(r, 12).filter(|c| *c >= 0)?;
+            Some(zhbo_core::weapons::BonusCard {
+                reference: cell(r, 4),
+                name: loc(cell(r, 3)),
+                description: loc(cell(r, 7)),
+                image: cell(r, 6),
+                slot: cell(r, 13),
+                cost,
+                sort: num(r, 9).unwrap_or(0),
+                index: num(r, 0).unwrap_or(0),
+                unlock_level: num(r, 10).unwrap_or(0),
+            })
+        })
+        .filter(|b| !b.reference.is_empty())
+        .collect()
+}
+
 /// BO2's base camo cells: `camo_none` plus 18 (`lua-dump/patch_mp/mp/attachmenttable.csv:32-50`).
 /// The DLC/MTX rows (`:51-129`) are separate tabs the class screen does not have yet.
 pub const BASE_CAMO_OPTIONS: usize = 19;
@@ -307,6 +336,7 @@ pub fn table_with_metadata(
         reticle_colors: opts.reticle_colors.to_vec(),
         tablet_meshes: 0,
         perks: Vec::new(),
+        bonus_cards: Vec::new(),
     }
 }
 
@@ -1456,6 +1486,21 @@ mod tests {
         assert_eq!(sets.len(), 48, "common_patch_mp's camo_<weapon> assets");
         assert_eq!(camo_material_for("an94_mp", &sets).as_deref(), Some("camo_an94"));
         assert_eq!(camo_material_for("saiga12_mp", &sets).as_deref(), Some("camo_saiga"));
+    }
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_installs_bonus_cards_are_the_built_in_stand_ins() {
+        // The stand-in table's eight cards are the install's rows, field for field (so a test
+        // build's wildcard grid is BO2's), and every card is one the editor implements.
+        let bo2_dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let patch = crate::generals::load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
+        let cards = bonus_card_rows(&patch, &names(&bo2_dir));
+        let built_in = zhbo_core::weapons::parse_full_table(zhbo_core::weapons::BUILTIN).unwrap().bonus_cards;
+        assert_eq!(cards, built_in);
+        for c in &cards {
+            assert!(zhbo_core::classmenu::Wildcard::by_reference(&c.reference).is_some(), "{} has no editor rule", c.reference);
+        }
     }
 
     #[test]

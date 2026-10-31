@@ -12,10 +12,11 @@
 //!   Tactical, the three perk tiers, and the wildcards. The weapon slots list the catalog's guns
 //!   of the matching category; the perk slots list the three tiers from `weapons::perks`; the
 //!   attachment slots list what the chosen weapon offers (`WeaponDef::allowed`).
-//! * **Wildcards** (BO2's eight) unlock a second perk of a tier, a third primary attachment, a
+//! * **Wildcards** (BO2's bonus cards, the weapon table's `BonusCard` rows from the player's
+//!   statstable: name, description, slot, cost and grid order are data) unlock a second perk of a tier, a third primary attachment, a
 //!   second secondary attachment, a second primary (Overkill), a tactical in the lethal slot
-//!   (Tactician), or a second lethal (Danger Close). Each costs a point, and the extra element it
-//!   enables costs another.
+//!   (Tactician), or a second lethal (Danger Close). Each costs its card's cost (BO2: one), the
+//!   extra element it enables another; Tactician and Danger Close exclude each other.
 //!
 //! Everything here is pure: the module owns the editing session's state, `step` folds one frame of
 //! key edges into it, and `draw` renders it. The caller persists the result through the profile
@@ -44,7 +45,11 @@ pub const PICK_10: i32 = 10;
 /// The longest class name the editor's name field accepts (BO2's field is a short one line).
 pub const NAME_MAX: usize = 24;
 
-/// The eight BO2 wildcards. Each costs a point and unlocks one extra element (another point).
+/// BO2's bonus cards, as the editor's rules know them: each variant is the behaviour a card's
+/// reference (`bonuscard_overkill`, the statstable's column 4) unlocks. What the grid shows and
+/// charges — the name, description, slot, cost and the list order — is the card's row in the
+/// weapon table ([`crate::weapons::BonusCard`], converted from the player's `mp/statstable.csv`),
+/// reached through [`Wildcard::card`]; the grid lists [`wildcard_list`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Wildcard {
     /// A second Tier 1 (Perk 1) perk.
@@ -66,9 +71,8 @@ pub enum Wildcard {
 }
 
 impl Wildcard {
-    /// All eight, in BO2's display order (`f-wildcards/001`: the three Greed cards, Overkill,
-    /// Secondary Gunfighter, Primary Gunfighter, Tactician, Danger Close). This order is the
-    /// bonus-card picker's presentation order; the profile stores the ids, not the index.
+    /// Every card the editor has a rule for (no particular order: the grid's order is the
+    /// table's, [`wildcard_list`]).
     pub const ALL: [Wildcard; 8] = [
         Wildcard::Perk1Greed,
         Wildcard::Perk2Greed,
@@ -80,37 +84,55 @@ impl Wildcard {
         Wildcard::DangerClose,
     ];
 
-    /// BO2's in-game name.
+    /// The card's statstable reference (column 4): its stable identity.
+    pub fn reference(self) -> &'static str {
+        match self {
+            Wildcard::Perk1Greed => "bonuscard_perk_1_greed",
+            Wildcard::Perk2Greed => "bonuscard_perk_2_greed",
+            Wildcard::Perk3Greed => "bonuscard_perk_3_greed",
+            Wildcard::Overkill => "bonuscard_overkill",
+            Wildcard::PrimaryGunfighter => "bonuscard_primary_gunfighter",
+            Wildcard::SecondaryGunfighter => "bonuscard_secondary_gunfighter",
+            Wildcard::Tactician => "bonuscard_two_tacticals",
+            Wildcard::DangerClose => "bonuscard_danger_close",
+        }
+    }
+
+    /// The card with this statstable reference.
+    pub fn by_reference(reference: &str) -> Option<Wildcard> {
+        Wildcard::ALL.into_iter().find(|w| w.reference() == reference)
+    }
+
+    /// The card's row in the installed weapon table.
+    pub fn card(self) -> Option<&'static weapons::BonusCard> {
+        weapons::catalog().bonus_card(self.reference())
+    }
+
+    /// BO2's localized name (the row's column 3); the reference when the table lacks the row.
     pub fn name(self) -> &'static str {
-        match self {
-            Wildcard::Perk1Greed => "Perk 1 Greed",
-            Wildcard::Perk2Greed => "Perk 2 Greed",
-            Wildcard::Perk3Greed => "Perk 3 Greed",
-            Wildcard::Overkill => "Overkill",
-            Wildcard::PrimaryGunfighter => "Primary Gunfighter",
-            Wildcard::SecondaryGunfighter => "Secondary Gunfighter",
-            Wildcard::Tactician => "Tactician",
-            Wildcard::DangerClose => "Danger Close",
-        }
+        self.card().map_or(self.reference(), |c| c.name.as_str())
     }
 
-    /// The spec id the profile file stores (`perk1greed`).
-    pub fn id(self) -> &'static str {
-        match self {
-            Wildcard::Perk1Greed => "perk1greed",
-            Wildcard::Perk2Greed => "perk2greed",
-            Wildcard::Perk3Greed => "perk3greed",
-            Wildcard::Overkill => "overkill",
-            Wildcard::PrimaryGunfighter => "primarygunfighter",
-            Wildcard::SecondaryGunfighter => "secondarygunfighter",
-            Wildcard::Tactician => "tactician",
-            Wildcard::DangerClose => "dangerclose",
-        }
+    /// BO2's localized description (column 7), empty when the table lacks the row.
+    pub fn description(self) -> &'static str {
+        self.card().map_or("", |c| c.description.as_str())
     }
 
-    /// The wildcard with this id (the profile's spelling).
-    pub fn by_id(id: &str) -> Option<Wildcard> {
-        Wildcard::ALL.into_iter().find(|w| w.id().eq_ignore_ascii_case(id))
+    /// What the card costs of the ten (column 12). A card the table lacks is charged one point,
+    /// the unit every Pick-10 element costs.
+    pub fn cost(self) -> i32 {
+        self.card().map_or(1, |c| c.cost)
+    }
+
+    /// The card this one cannot share a class with: BO2's wildcard grid marks Tactician and Danger
+    /// Close mutually exclusive by name (`bonuscardgridbutton.lua:239-275`, the
+    /// `MENU_BONUSCARD_TWO_TACTICALS_NA` / `_DANGER_CLOSE_NA` hints).
+    pub fn excludes(self) -> Option<Wildcard> {
+        match self {
+            Wildcard::Tactician => Some(Wildcard::DangerClose),
+            Wildcard::DangerClose => Some(Wildcard::Tactician),
+            _ => None,
+        }
     }
 
     /// The perk tier this greed wildcard opens a second slot for, if it is one.
@@ -484,8 +506,8 @@ impl Draft {
         Draft::weapon_with_atts(&self.secondary, &self.secondary_atts)
     }
 
-    /// How many Pick-10 points the draft has spent. Every element is one point: the two weapons,
-    /// every attachment, the lethal, the tactical, each perk, each wildcard.
+    /// How many Pick-10 points the draft has spent. Every element is one point — the two weapons,
+    /// every attachment, the lethal, the tactical, each perk — and each wildcard its card's cost.
     pub fn spent(&self) -> i32 {
         let mut n = 0;
         if !self.primary.is_empty() {
@@ -504,7 +526,7 @@ impl Draft {
         }
         n += self.perks.iter().filter(|p| p.is_some()).count() as i32;
         n += self.extra_perks.iter().filter(|p| p.is_some()).count() as i32;
-        n += self.wildcards.len() as i32;
+        n += self.wildcards.iter().map(|w| w.cost()).sum::<i32>();
         n
     }
 
@@ -804,7 +826,7 @@ impl Editor {
             Slot::Perk1 | Slot::Perk1b => perk_options(1),
             Slot::Perk2 | Slot::Perk2b => perk_options(2),
             Slot::Perk3 | Slot::Perk3b => perk_options(3),
-            Slot::Wildcards => Wildcard::ALL.iter().map(|w| w.name().to_string()).collect(),
+            Slot::Wildcards => wildcard_list().iter().map(|w| w.name().to_string()).collect(),
             Slot::Save => Vec::new(),
         }
     }
@@ -838,7 +860,7 @@ impl Editor {
                 let idx = (tier as usize).clamp(1, 3) - 1;
                 list.get(i).is_some_and(|p| self.draft.perks[idx] == Some(*p) || self.draft.extra_perks[idx] == Some(*p))
             }
-            Slot::Wildcards => Wildcard::ALL.get(i).is_some_and(|w| self.draft.wildcards.contains(w)),
+            Slot::Wildcards => wildcard_list().get(i).is_some_and(|w| self.draft.wildcards.contains(w)),
             Slot::Save => false,
         }
     }
@@ -877,8 +899,15 @@ impl Editor {
 
     /// The wildcard option `i` of the wildcard slot, for its icon.
     pub fn option_wildcard(&self, i: usize) -> Option<Wildcard> {
-        (self.slot == Slot::Wildcards).then(|| Wildcard::ALL.get(i).copied()).flatten()
+        (self.slot == Slot::Wildcards).then(|| wildcard_list().get(i).copied()).flatten()
     }
+}
+
+/// The wildcard grid's cards, in BO2's order: the weapon table's bonus cards (the grid lists the
+/// `bonuscard` group by sort key, then index — `Catalog::bonus_cards`), each one the editor has a
+/// rule for.
+pub fn wildcard_list() -> Vec<Wildcard> {
+    weapons::catalog().bonus_cards().iter().filter_map(|c| Wildcard::by_reference(&c.reference)).collect()
 }
 
 /// The Greed wildcard that opens a tier's second perk row.
@@ -1412,9 +1441,9 @@ impl Editor {
                 }
             }
             Slot::Wildcards => {
-                if let Some(w) = Wildcard::ALL.get(i).copied() {
-                    // A fourth bonus card is refused (BO2's `maxBonusCards`), so the editor turns it
-                    // into the deny cue and leaves the draft alone.
+                if let Some(w) = wildcard_list().get(i).copied() {
+                    // A fourth bonus card (BO2's `maxBonusCards`) or a mutually exclusive one is
+                    // refused, so the editor turns it into the deny cue and leaves the draft alone.
                     if !self.toggle_wildcard(w) {
                         return false;
                     }
@@ -1438,7 +1467,8 @@ impl Editor {
 
     /// Toggle a wildcard on or off; turning one off drops the element it enabled (the third primary
     /// attachment, the second secondary attachment, a tier's Greed perk). False when a fourth card
-    /// is refused: BO2 allows `maxBonusCards` (3) per class, so the option is denied untouched.
+    /// is refused (BO2 allows `maxBonusCards`, 3, per class), or a card [`Wildcard::excludes`] an
+    /// equipped one: the option is denied untouched.
     fn toggle_wildcard(&mut self, w: Wildcard) -> bool {
         if let Some(pos) = self.draft.wildcards.iter().position(|x| *x == w) {
             self.draft.wildcards.remove(pos);
@@ -1461,7 +1491,8 @@ impl Editor {
                 }
             }
             true
-        } else if self.draft.wildcards_full() {
+        } else if self.draft.wildcards_full() || w.excludes().is_some_and(|x| self.draft.wildcards.contains(&x)) {
+            // A fourth card, or one the grid marks mutually exclusive with an equipped card.
             false
         } else {
             self.draft.wildcards.push(w);

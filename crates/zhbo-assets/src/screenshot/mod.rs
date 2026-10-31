@@ -96,6 +96,7 @@ fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> 
         ("cac-editor-empty", empty_editor_prims()),
         ("cac-editor-weapons", weapon_picker_prims()),
         ("cac-editor-attachments", attachment_picker_prims()),
+        ("cac-editor-wildcards", wildcard_picker_prims()),
         ("cac-personalize", personalize_prims()),
         ("cac-reticles", reticle_personalize_prims()),
         ("cac-reticle-color", reticle_color_personalize_prims()),
@@ -233,6 +234,16 @@ fn attachment_picker_prims() -> Vec<Prim> {
     if let Some(i) = editor.options().iter().position(|o| o == "Reflex") {
         editor.option = i;
     }
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// The wildcard grid (`f-wildcards/001`): the table's bonus cards in BO2's order, the highlighted
+/// card's name and description under the grid.
+fn wildcard_picker_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.slot = Slot::Wildcards;
+    editor.picking = true;
+    editor.option = zhbo_core::classmenu::wildcard_list().iter().position(|w| *w == Wildcard::Overkill).unwrap_or(0);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
