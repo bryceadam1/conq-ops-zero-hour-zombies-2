@@ -97,6 +97,7 @@ fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> 
         ("cac-editor-weapons", weapon_picker_prims()),
         ("cac-editor-attachments", attachment_picker_prims()),
         ("cac-editor-wildcards", wildcard_picker_prims()),
+        ("cac-editor-perks", perk_picker_prims()),
         ("cac-personalize", personalize_prims()),
         ("cac-reticles", reticle_personalize_prims()),
         ("cac-reticle-color", reticle_color_personalize_prims()),
@@ -234,6 +235,16 @@ fn attachment_picker_prims() -> Vec<Prim> {
     if let Some(i) = editor.options().iter().position(|o| o == "Reflex") {
         editor.option = i;
     }
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// The Perk 1 grid (`e-perks/002`): BO2's names in the cells, Hardline highlighted, its name and
+/// description under the grid.
+fn perk_picker_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.slot = Slot::Perk1;
+    editor.picking = true;
+    editor.option = (0..8).position(|i| editor.option_perk(i) == Some(zhbo_core::weapons::Perk::HARDLINE)).unwrap_or(0);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 

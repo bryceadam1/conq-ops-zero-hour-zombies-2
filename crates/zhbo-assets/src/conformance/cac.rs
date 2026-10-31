@@ -119,7 +119,9 @@ pub fn rows(shipped: &Shipped, bo2_dir: &std::path::Path, schema: &Schema) -> Re
     // converter makes for it, the cost what the allocation charges, and the order its place among
     // the grid's cards.
     for (i, w) in classmenu::wildcard_list().into_iter().enumerate() {
-        let image = sprite_material(zhbo_core::hud::sprites::WILDCARD_ICONS[w as usize]);
+        // The card's art: its own image, which the converter makes the card's sprite from
+        // (`cac::wildcard_sprites`), when this archive has that sprite.
+        let image = shipped.has_sprite(zhbo_core::hud::sprites::wildcard_icon(w)).then(|| w.card().map(|c| c.image.clone())).flatten();
         let key = w.reference().trim_start_matches("bonuscard_");
         let cost = cost_of(|dr| dr.wildcards.push(w));
         let slot = w.card().map(|c| c.slot.clone());

@@ -4722,3 +4722,16 @@ needs Tactician, a `primarygrenadecount` of 2 needs Danger Close.
   tactical there, so an equipped Tactician card has nothing to act on and is not re-derived when
   the class is reopened. The tactical's own count (BO2's `specialgrenadecount`, a second tactical
   costing a point) is still the item's start count.
+
+## Wildcard art from the card's image column (2026-10-31, `v1/perks-cards`)
+
+The converter named the eight bonus-card materials in `cac::SPRITES`. It now makes each wildcard
+sprite from its card's own image (`mp/statstable.csv` column 6, `menu_mp_bonuscard_*`, the column
+the weapon table's `BonusCard` blocks carry; `bonuscardbutton.lua` draws `GetItemImage`):
+`cac::wildcard_sprites` maps each card with an editor rule to the core's sprite name for it
+(`hud::sprites::wildcard_icon`). `hud::Source::Material` takes a `Cow` so a material read from
+BO2's tables uses the same lookup as a fixed one (`common_mp`, 96 px). The conformance `image`
+column for wildcards reads the card's image when the archive has its sprite. Verified unchanged:
+the headless `cac-editor-wildcards.png` from a freshly built archive is pixel-identical to the one
+the `v1/wildcards` archive drew (as are the other shots), and the harness gains
+`cac-editor-perks.png` (the Perk 1 grid with Hardline's panel, cf. `e-perks/002`).

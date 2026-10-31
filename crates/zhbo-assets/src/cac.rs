@@ -10,7 +10,25 @@ use crate::hud::{Source, Sprite};
 use zhbo_core::hud::sprites as names;
 
 const fn mat(name: &'static str, zone: &'static str, material: &'static str, max: u32) -> Sprite {
-    Sprite { name, source: Source::Material(zone, material), max }
+    Sprite { name, source: Source::Material(zone, std::borrow::Cow::Borrowed(material)), max }
+}
+
+/// The largest side of a wildcard card's art in the atlas.
+const WILDCARD_MAX: u32 = 96;
+
+/// The wildcard grid's art: each bonus card's image (`mp/statstable.csv` column 6,
+/// `menu_mp_bonuscard_*`, a `common_mp` material — `bonuscardbutton.lua` draws
+/// `GetItemImage`) under the core's sprite name for the card's rule
+/// ([`zhbo_core::hud::sprites::wildcard_icon`]). A card the editor has no rule for has no sprite.
+pub fn wildcard_sprites(cards: &[zhbo_core::weapons::BonusCard]) -> Vec<(String, Source, u32)> {
+    cards
+        .iter()
+        .filter(|c| !c.image.is_empty())
+        .filter_map(|c| {
+            let w = zhbo_core::classmenu::Wildcard::by_reference(&c.reference)?;
+            Some((names::wildcard_icon(w).to_string(), Source::Material("common_mp", c.image.clone().into()), WILDCARD_MAX))
+        })
+        .collect()
 }
 
 /// BO2's attachment icon material for each catalog attachment short name.
@@ -67,8 +85,8 @@ pub fn attachment_material(short: &str) -> Option<(&'static str, &'static str)> 
     ATTACHMENTS.iter().find(|(s, _, _)| *s == short).map(|(_, zone, material)| (*zone, *material))
 }
 
-/// Fixed CaC art: the perk and wildcard icon sets plus the menu chrome. The perks are in
-/// `weapons::PERKS` order and the wildcards in `Wildcard::ALL` order (the core names enforce it).
+/// Fixed CaC art: the perk icon set plus the menu chrome. The perks are in `weapons::PERKS` order
+/// (the core names enforce it); the wildcards' art comes from their cards ([`wildcard_sprites`]).
 pub const SPRITES: &[Sprite] = &[
     // Perk icons, one per table entry. BO2's internal asset names differ for three perks: Toughness
     // is `perk_warrior`, Extreme Conditioning `perk_marathon`, Dead Silence `perk_ninja`.
@@ -88,15 +106,6 @@ pub const SPRITES: &[Sprite] = &[
     mat(names::PERK_ICONS[13], "code_post_gfx_mp", "perk_tactical_mask", 64),
     mat(names::PERK_ICONS[14], "code_post_gfx_mp", "perk_ninja", 64),
     mat(names::PERK_ICONS[15], "code_post_gfx_mp", "perk_awareness", 64),
-    // The eight wildcards: BO2's bonus-card art. `two_tacticals` is its internal name for Tactician.
-    mat(names::WILDCARD_ICONS[0], "common_mp", "menu_mp_bonuscard_perk_1_greed", 96),
-    mat(names::WILDCARD_ICONS[1], "common_mp", "menu_mp_bonuscard_perk_2_greed", 96),
-    mat(names::WILDCARD_ICONS[2], "common_mp", "menu_mp_bonuscard_perk_3_greed", 96),
-    mat(names::WILDCARD_ICONS[3], "common_mp", "menu_mp_bonuscard_overkill", 96),
-    mat(names::WILDCARD_ICONS[4], "common_mp", "menu_mp_bonuscard_primary_gunfighter", 96),
-    mat(names::WILDCARD_ICONS[5], "common_mp", "menu_mp_bonuscard_secondary_gunfighter", 96),
-    mat(names::WILDCARD_ICONS[6], "common_mp", "menu_mp_bonuscard_two_tacticals", 96),
-    mat(names::WILDCARD_ICONS[7], "common_mp", "menu_mp_bonuscard_danger_close", 96),
     // Menu chrome: BO2's create-a-class backing strip (a vertical gradient stretched across the
     // screen), the lobby backdrop, its grid/glow, and the row/panel/tile frames the screen draws.
     mat(names::MENU_BACKGROUND, "code_post_gfx_mp", "menu_mp_cac_backing", 128),
@@ -134,15 +143,33 @@ mod tests {
     #[test]
     fn fixed_sprites_cover_the_core_name_list() {
         let mut spec: Vec<&str> = SPRITES.iter().map(|s| s.name).collect();
-        // Attachment icons are made from the catalog at conversion time, and the HUD art belongs to
-        // `zhbo_assets::hud::SPRITES`; only the CaC fixed names live in this list.
+        // Attachment icons are made from the catalog and the wildcards from their cards at
+        // conversion time, and the HUD art belongs to `zhbo_assets::hud::SPRITES`; only the CaC
+        // fixed names live in this list.
         let mut fixed: Vec<&str> = names::ALL
             .iter()
             .copied()
-            .filter(|n| !n.contains("_Attach_") && !crate::hud::SPRITES.iter().any(|s| s.name == *n))
+            .filter(|n| !n.contains("_Attach_") && !n.contains("_Wildcard_") && !crate::hud::SPRITES.iter().any(|s| s.name == *n))
             .collect();
         spec.sort_unstable();
         fixed.sort_unstable();
-        assert_eq!(spec, fixed, "every fixed perk/wildcard/chrome name has a BO2 material");
+        assert_eq!(spec, fixed, "every fixed perk/chrome name has a BO2 material");
+    }
+
+    /// The wildcard art is each card's own image (statstable column 6), one sprite per card under
+    /// the core's name for its rule — every name the class screen draws. For BO2's eight cards
+    /// (the built-in rows) these are the materials the fixed table used to name.
+    #[test]
+    fn every_wildcard_draws_its_cards_image() {
+        let cards = zhbo_core::weapons::parse_full_table(zhbo_core::weapons::BUILTIN).unwrap().bonus_cards;
+        let sprites = wildcard_sprites(&cards);
+        let mut got: Vec<&str> = sprites.iter().map(|(n, _, _)| n.as_str()).collect();
+        let mut want: Vec<&str> = names::WILDCARD_ICONS.to_vec();
+        got.sort_unstable();
+        want.sort_unstable();
+        assert_eq!(got, want);
+        let tactician = sprites.iter().find(|(n, _, _)| n == "ZHBO_BO2_Wildcard_Tactician").unwrap();
+        assert!(matches!(&tactician.1, Source::Material("common_mp", m) if m == "menu_mp_bonuscard_two_tacticals"));
+        assert!(sprites.iter().all(|(_, _, max)| *max == 96));
     }
 }

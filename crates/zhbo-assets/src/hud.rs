@@ -28,8 +28,9 @@ const ATLAS: u32 = 1024;
 pub enum Source {
     /// The image with this name hash in the packs.
     Hash(u32),
-    /// The first image of a BO2 material in a zone.
-    Material(&'static str, &'static str),
+    /// The first image of a BO2 material in a zone (the material named in code, or read from BO2's
+    /// tables at conversion time, as the wildcards' card images are).
+    Material(&'static str, std::borrow::Cow<'static, str>),
     /// A material named at conversion time (weapon HUD icons, the LUI ports' materials), searched
     /// in the MP zones in order.
     Dynamic(String),
@@ -44,7 +45,7 @@ pub struct Sprite {
 }
 
 const fn mat(name: &'static str, material: &'static str, max: u32) -> Sprite {
-    Sprite { name, source: Source::Material("common_mp", material), max }
+    Sprite { name, source: Source::Material("common_mp", std::borrow::Cow::Borrowed(material)), max }
 }
 
 const fn hash(name: &'static str, hash: u32, max: u32) -> Sprite {
@@ -93,7 +94,7 @@ pub const SPRITES: &[Sprite] = &[
     mat("ZHBO_BO2_StreakBox", "hud_mp_vis_ks_dpad_box", 64),
     mat("ZHBO_BO2_StreakBoxLit", "hud_mp_vis_ks_dpad_box_back_lit", 64),
     mat("ZHBO_BO2_StreakGlow", "hud_ks_lit_glow", 128),
-    Sprite { name: "ZHBO_BO2_StreakVsat", source: Source::Material("code_post_gfx_mp", "hud_ks_spy_sat_big"), max: 128 },
+    Sprite { name: "ZHBO_BO2_StreakVsat", source: Source::Material("code_post_gfx_mp", std::borrow::Cow::Borrowed("hud_ks_spy_sat_big")), max: 128 },
 ];
 
 #[derive(Debug, Default)]
@@ -178,7 +179,7 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
         .chain(crate::cac::SPRITES.iter())
         .map(|s| (s.name.to_string(), match &s.source {
             Source::Hash(h) => Source::Hash(*h),
-            Source::Material(z, m) => Source::Material(z, m),
+            Source::Material(z, m) => Source::Material(z, m.clone()),
             Source::Dynamic(m) => Source::Dynamic(m.clone()),
         }, s.max))
         .collect();
@@ -225,6 +226,9 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             wanted.push((image.clone(), Source::Dynamic(image), 128));
         }
     }
+    // The wildcard grid's art: each bonus card's own image (`mp/statstable.csv` column 6), the
+    // same rows the weapon table's `BonusCard` blocks carry.
+    wanted.extend(crate::cac::wildcard_sprites(&crate::weapons::bonus_card_rows(&patch, &names)));
     // The reticle grid's stock art: 11 images per optic (`code_post_gfx_mp.tsv:1073-1104`; their
     // materials at `:2023-2054` are named `mc/mtl_t6_attach_optic_*_reticle_*`).
     for optic in ["reflex", "holo", "acog"] {
@@ -248,7 +252,7 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
         }
         seen_atts.push(short.clone());
         match (zhbo_core::hud::sprites::attachment_icon(&short), crate::cac::attachment_material(&short)) {
-            (Some(name), Some((zone, material))) => wanted.push((name.to_string(), Source::Material(zone, material), 64)),
+            (Some(name), Some((zone, material))) => wanted.push((name.to_string(), Source::Material(zone, material.into()), 64)),
             _ => report.missing.push((format!("ZHBO_BO2_Attach_{short}"), "no BO2 icon material".into())),
         }
     }
@@ -265,7 +269,7 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                     }
                 }
                 zones.get(zone)
-                    .and_then(|z| zhbo_formats::xmodel::find_material(z, material))
+                    .and_then(|z| zhbo_formats::xmodel::find_material(z, material.as_ref()))
                     .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash)))
             }
             Source::Dynamic(material) => {
@@ -642,10 +646,11 @@ mod tests {
     #[test]
     fn spec_matches_the_names_the_hud_draws() {
         let mut spec: Vec<&str> = SPRITES.iter().chain(crate::cac::SPRITES.iter()).map(|s| s.name).collect();
-        // Attachment icons are made from the catalog at build time, so their names are not in
-        // either fixed sprite list (the core lists them for the class screen).
+        // Attachment icons are made from the catalog at build time and the wildcard cards from the
+        // statstable's bonus-card rows, so their names are not in either fixed sprite list (the
+        // core lists them for the class screen).
         let mut hud: Vec<&str> =
-            zhbo_core::hud::sprites::ALL.iter().copied().filter(|n| !n.contains("_Attach_")).collect();
+            zhbo_core::hud::sprites::ALL.iter().copied().filter(|n| !n.contains("_Attach_") && !n.contains("_Wildcard_")).collect();
         spec.sort_unstable();
         hud.sort_unstable();
         assert_eq!(spec, hud);

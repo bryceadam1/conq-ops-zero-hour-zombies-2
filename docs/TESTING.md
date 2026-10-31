@@ -111,7 +111,7 @@ in-match list: the slots, then the default classes), `cac-editor.png` (a populat
 with the primary option list open), `cac-editor-empty.png` (BO2's pristine empty class),
 `cac-editor-weapons.png` (the category column and stat bars), `cac-editor-attachments.png` (the
 attachment strip), `cac-editor-wildcards.png` (the wildcard grid: the table's bonus cards and the
-highlighted card's name and description) and `cac-dialog-set.png`/`cac-dialog-class.png` (the S/O dialogs). Default size
+highlighted card's name and description), `cac-editor-perks.png` (the Perk 1 grid: BO2's perk names and the highlighted perk's name and description) and `cac-dialog-set.png`/`cac-dialog-class.png` (the S/O dialogs). Default size
 is 1280x720 (BO2's 720p; the captures are 3024x1890). The default output is `target/cac-shots/`,
 which is inside the ignored build directory.
 
