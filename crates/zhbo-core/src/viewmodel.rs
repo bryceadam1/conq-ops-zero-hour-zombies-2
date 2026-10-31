@@ -124,12 +124,14 @@ pub struct Viewmodel {
     /// Seconds the hammer has been out, and into building (one swing after another).
     hammer_t: f32,
     swing_t: f32,
+    /// The last frame picked, which an offhand's wait (state 0x16) plays on.
+    last: Frame,
 }
 
 impl Default for Viewmodel {
     fn default() -> Self {
         // First person starts from the field computer: the tablet goes down first.
-        Viewmodel { tablet_putaway: Some(0.0), since_shot: 10.0, shot_was_last: false, shot_aimed: false, since_sprint_start: 0.0, hammer_t: 0.0, swing_t: 0.0 }
+        Viewmodel { tablet_putaway: Some(0.0), since_shot: 10.0, shot_was_last: false, shot_aimed: false, since_sprint_start: 0.0, hammer_t: 0.0, swing_t: 0.0, last: Frame { model: NONE, clip: slot::IDLE, t: 0.0 } }
     }
 }
 
@@ -141,6 +143,20 @@ fn or(def: &WeaponDef, clip: i32, fallback: i32) -> i32 {
 impl Viewmodel {
     /// Advance by `dt` and pick this frame's model, clip and time.
     pub fn update(&mut self, dt: f32, p: &PlayerSim, ev: Events) -> Frame {
+        // An offhand waiting out the interrupted state (0x16): BO2 leaves `weapAnim` alone there
+        // (`FUN_008dcb70` sets the state, events 0x1d and 0x11, no animation), so the clip that was
+        // playing — the raise, the shot — plays on, at the state's rate (`FUN_0052b1d0`: 0x16 is
+        // an offhand state).
+        let f = if matches!(p.arsenal.offhand, Some(OffhandUse::Starting { .. })) {
+            Frame { t: self.last.t + dt * p.arsenal.anim_rate(), ..self.last }
+        } else {
+            self.pick(dt, p, ev)
+        };
+        self.last = f;
+        f
+    }
+
+    fn pick(&mut self, dt: f32, p: &PlayerSim, ev: Events) -> Frame {
         let a = &p.arsenal;
         let w = a.current();
         let def = w.def;
@@ -190,8 +206,8 @@ impl Viewmodel {
         if let Some(use_) = a.offhand {
             let off = a.offhand_def(use_.lethal());
             return match use_ {
-                // Waiting out the interrupted state (0x16): the held weapon at rest.
-                OffhandUse::Starting { .. } => wf(slot::IDLE, self.since_shot),
+                // `update` plays the interrupted clip on instead.
+                OffhandUse::Starting { .. } => self.last,
                 OffhandUse::Holding { held_for, .. } => frame(off.viewmodel, slot::HOLD_FIRE, held_for),
                 OffhandUse::Throwing { t, .. } => frame(off.viewmodel, slot::FIRE, t),
                 OffhandUse::Detonating { t, .. } => frame(off.viewmodel, or(off, slot::DETONATE, slot::IDLE), t),
@@ -416,6 +432,16 @@ mod tests {
         p.arsenal.weapons[w].reload = Some(Reload::Magazine { t: 0.5, length: 2.0, add_at: 1.0, added: false, empty: true });
         assert_eq!(clip(&mut vm, &p, 0.05, Events::default()), slot::RELOAD_EMPTY);
         p.arsenal.weapons[w].reload = None;
+        // An offhand pressed mid-raise (0x16): the raise plays on, not the idle.
+        p.arsenal.raise_left = 0.4;
+        p.arsenal.raise_total = 1.0;
+        let raising = vm.update(0.05, &p, Events::default());
+        p.arsenal.raise_left = 0.0;
+        p.arsenal.offhand = Some(OffhandUse::Starting { lethal: true, left: 0.4 });
+        let waiting = vm.update(0.05, &p, Events::default());
+        assert_eq!((waiting.model, waiting.clip), (raising.model, raising.clip), "the raise plays on");
+        assert!((waiting.t - (raising.t + 0.05 * p.arsenal.anim_rate())).abs() < 1e-5);
+        p.arsenal.offhand = None;
         // A grenade: the grenade's viewmodel pulls the pin, then throws.
         p.arsenal.offhand = Some(OffhandUse::Holding { lethal: true, held_for: 0.2 });
         let f = vm.update(0.05, &p, Events::default());

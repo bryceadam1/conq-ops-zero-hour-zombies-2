@@ -4912,3 +4912,15 @@ state (`FUN_008e28e0`: 0xd5, then `FUN_008dcbe0`, the gun's quick raise) and at 
 
 Measured: no conformance movement (no column reads `plantable`; weapons/cac diffs identical; 201 gap
 clusters).
+
+## While an offhand waits out the interrupted state, that state's clip plays on (2026-10-31, `v1/offhand-rules`)
+
+The previous entry's 0x16 wait showed the gun's idle, so a press mid-raise snapped the raise to idle.
+BO2's `FUN_008dcb70` (disassembled) sets state 0x16, zeroes `weaponDelay`, sets weapon flag `0x40000`
+when a weapon is held, fires events 0x1d (with the offhand) and 0x11 — and never writes `weapAnim`
+(`ps+0x580`), the only thing the viewmodel's clip follows. So the interrupted clip (the raise, the
+shot, the reload) keeps playing; the client rate for 0x16 is the offhand's (`FUN_0052b1d0`).
+
+* `Viewmodel::update` plays its last frame on during `OffhandUse::Starting`, at `anim_rate()`; the
+  clip picking moved to `pick`. Test: in `viewmodel` tests, a press mid-raise keeps the raise clip and
+  advances it.
