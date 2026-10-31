@@ -105,7 +105,8 @@ impl Projectile {
             if self.age > ARM_TIME && !self.def.sticky && !self.lands {
                 let seg = next - self.pos;
                 let len = seg.length();
-                let enemy = |b: &crate::shield::Bearer| b.general != self.owner && host.object(b.general, self.owner).is_some_and(|o| !o.has(objflags::ALLY) && !o.has(objflags::DEAD));
+                // A deployed shield (`general` 0) stops everyone's; a carried one an enemy's.
+                let enemy = |b: &crate::shield::Bearer| b.general == 0 || b.general != self.owner && host.object(b.general, self.owner).is_some_and(|o| !o.has(objflags::ALLY) && !o.has(objflags::DEAD));
                 if let Some((_, t)) = crate::shield::blocking(shields, &enemy, self.pos, seg.normalized_or_zero(), len, len, None) {
                     self.pos += seg.normalized_or_zero() * t;
                     if self.def.effect == Effect::Explode {

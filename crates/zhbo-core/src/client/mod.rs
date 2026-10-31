@@ -1140,6 +1140,11 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     }
                 }
                 EventKind::Detonated => self.cues.play(sounds::DETONATE),
+                // The shield going down plays the plant (BO2's own `wpn_riotshield_plant` is a
+                // notetrack sound the mod does not convert yet).
+                EventKind::ShieldDeployed { .. } => self.cues.play(sounds::PLANT),
+                EventKind::ShieldPickedUp => self.vm_events.swapped = true,
+                EventKind::ShieldDestroyed { .. } => {}
                 EventKind::DestroyedEquipment => {}
                 // BO2's weapon hint ("Cannot Plant Here"): set afresh, drawn by the HUD.
                 EventKind::CantPlant { .. } => self.hud.hint = crate::sim::event_hint(&kind).map(|k| (k, 0.0)),

@@ -233,6 +233,9 @@ pub enum WeaponAction {
     Plant { def: &'static WeaponDef },
     /// Set off the player's C4 (double-tap reload, or the lethal button with none left in hand).
     Detonate,
+    /// The Assault Shield's trigger: plant it as cover (`deploy_riotshield`); its one round is
+    /// spent, the sim refills it if the placement is refused.
+    DeployShield { def: &'static WeaponDef },
     /// Switched to or from the weapon's alt mode.
     AltToggled,
     /// The melee swing starts (BO2's `EV_MELEE_SWIPE`, event 0x27 in `FUN_008dc770`): the swipe sound.
@@ -695,6 +698,22 @@ impl Arsenal {
         self.ads = 0.0;
     }
 
+    /// After a shield is deployed: up comes the other slot weapon (BO2's `lastnonshieldweapon`,
+    /// else the first primary), if there is one.
+    pub fn switch_from_shield(&mut self) {
+        let other = (0..self.weapons.len()).find(|&i| i != self.active && self.weapons[i].def.class.is_gun());
+        if let Some(i) = other.filter(|_| self.current().def.is_shield()) {
+            self.switch_to(i);
+        }
+    }
+
+    /// The use key picked a deployed shield up: the shield comes up (if it is not already).
+    pub fn switch_to_shield(&mut self) {
+        if let Some(i) = self.weapons.iter().position(|w| w.def.is_shield()).filter(|&i| i != self.active) {
+            self.switch_to(i);
+        }
+    }
+
     /// Switch the held weapon to its alt mode or back. An alt mode with its own ammo (a launcher)
     /// trades magazines with the weapon; the others share it.
     pub fn toggle_alt(&mut self) {
@@ -909,8 +928,25 @@ impl Arsenal {
             (self.ads - dt / (def.ads_out_time.max(1e-3) * quickdraw)).max(0.0)
         };
 
-        // The Assault Shield fires no round: its trigger deploys it (the sim's shield placement).
-        if def.class == Class::Melee || def.class == Class::Shield || def.class.is_offhand() {
+        // The Assault Shield fires no round: its trigger deploys it (the sim's shield placement),
+        // once per press, after the weapon is up and its last deploy's time has run.
+        if def.class == Class::Shield {
+            let blocked = sprinting || !sprint_ready || self.raise_left > 0.0 || self.drop_left > 0.0 || self.melee_left > 0.0 || self.melee_recover_left > 0.0;
+            let fire_tick = self.tick(Timing::Fire);
+            let w = self.current_mut();
+            w.cooldown = (w.cooldown - fire_tick).max(0.0);
+            if pressed & buttons::FIRE != 0 && !blocked && w.cooldown <= 0.0 {
+                if w.ammo > 0 {
+                    w.ammo -= 1;
+                    w.cooldown = def.fire_time;
+                    out.push(WeaponAction::DeployShield { def });
+                } else {
+                    out.push(WeaponAction::DryFire);
+                }
+            }
+            return;
+        }
+        if def.class == Class::Melee || def.class.is_offhand() {
             return;
         }
 

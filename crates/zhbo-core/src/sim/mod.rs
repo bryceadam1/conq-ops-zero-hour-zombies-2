@@ -12,6 +12,7 @@
 */
 
 mod build;
+pub mod deploy;
 mod fire;
 mod hack;
 mod plant;
@@ -162,6 +163,12 @@ pub enum EventKind {
     /// Working at a site (`building::work`), each frame while the use key is held (percent 0..100).
     Working { kind: i32, percent: f32 },
     WorkDone { kind: i32 },
+    /// The Assault Shield went down as cover (`deploy_riotshield`).
+    ShieldDeployed { at: Vec3 },
+    /// The player took their deployed shield back.
+    ShieldPickedUp,
+    /// This player's deployed shield was destroyed (by the player `by`, if one).
+    ShieldDestroyed { by: Option<i32> },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -271,6 +278,8 @@ pub struct Sim {
     /// The Generals carrying an Assault Shield, as the frame began (held or stowed; see
     /// [`crate::shield`]): the shots, melee strikes and blasts of this frame test them.
     pub shields: Vec<crate::shield::Bearer>,
+    /// Deployed Assault Shields (`sim/deploy.rs`).
+    pub deployed: Vec<deploy::Deployed>,
 }
 
 impl Default for Sim {
@@ -290,20 +299,25 @@ impl Sim {
             frame: 0,
             events: Vec::new(),
             shields: Vec::new(),
+            deployed: Vec::new(),
         }
     }
 
     /// Every General's shield this frame: held while it is the weapon up, stowed on the back while
     /// it is carried otherwise (`_riotshield.gsc` `refreshshieldattachment`).
+    /// A shield standing deployed is on neither (the deployed ones follow, `general` 0).
     fn shield_bearers(&self) -> Vec<crate::shield::Bearer> {
         let mut out = Vec::new();
-        for p in self.players.iter().flatten() {
+        for (idx, p) in self.players.iter().enumerate() {
+            let Some(p) = p else { continue };
             let up = p.arsenal.current().def;
-            let carried = if up.is_shield() { Some((up, true)) } else { p.arsenal.weapons.iter().map(|w| w.def).find(|d| d.is_shield()).map(|d| (d, false)) };
+            let stowed = || p.arsenal.weapons.iter().map(|w| w.def).find(|d| d.is_shield()).filter(|_| !self.has_deployed(idx)).map(|d| (d, false));
+            let carried = if up.is_shield() { Some((up, true)) } else { stowed() };
             if let Some(b) = carried.and_then(|(d, held)| crate::shield::Bearer::of(p.general, p.body.pos, p.yaw, d, held)) {
                 out.push(b);
             }
         }
+        out.extend(self.deployed_bearers());
         out
     }
 
@@ -526,6 +540,7 @@ impl Sim {
         }
         self.step_projectiles(host);
         self.step_equipment(host);
+        self.step_deployed(host);
         for s in &mut self.smokes {
             host.smoke(s.0, s.1);
             s.2 -= LOGIC_DT;
@@ -545,13 +560,14 @@ impl Sim {
             match *outcome {
                 Outcome::Exploded { at, hit_enemy, kill } => {
                     self.emit(*owner, EventKind::Exploded { at });
+                    self.deployed_caught_in_blast(host, *owner, proj.def, at);
                     if proj.def.effect == crate::weapons::Effect::Smoke {
                         let radius = proj.def.explosion_radius.max(crate::projectiles::SMOKE_RADIUS);
                         self.smokes.push((at, radius, crate::projectiles::SMOKE_TIME));
                     }
                     let mut ev = Vec::new();
                     self.equipment.caught_in_blast(host, *owner, proj.owner, at, proj.def.explosion_radius, &mut ev);
-                    self.equipment_events(ev);
+                    self.equipment_events(host, ev);
                     if hit_enemy {
                         self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
                     }
@@ -577,14 +593,15 @@ impl Sim {
         let engineer = |id: u32| players.iter().flatten().any(|p| p.general == id && p.arsenal.class_specialties().has(Specialty::ShowEnemyEquipment));
         let mut ev = Vec::new();
         self.equipment.step(host, &mut self.projectiles, &engineer, &mut ev);
-        self.equipment_events(ev);
+        self.equipment_events(host, ev);
     }
 
-    fn equipment_events(&mut self, events: Vec<EquipEvent>) {
+    fn equipment_events(&mut self, host: &dyn LogicHost, events: Vec<EquipEvent>) {
         for e in events {
             match e {
-                EquipEvent::Exploded { owner, at, hit_enemy, kill } => {
+                EquipEvent::Exploded { owner, at, hit_enemy, kill, def } => {
                     self.emit(owner, EventKind::Exploded { at });
+                    self.deployed_caught_in_blast(host, owner, def, at);
                     if hit_enemy {
                         self.emit(owner, EventKind::HitMarker { headshot: false, kill });
                     }
@@ -644,6 +661,11 @@ impl Sim {
                 // opening the field computer.
                 p.site = host.work_site(p.general, p.body.pos, building::REACH);
                 p.building = p.site.is_some() && (input.held | input.pressed) & buttons::FIELD_COMPUTER != 0;
+                // The use key next to the player's own deployed shield takes it back.
+                let picked_up = p.site.is_none() && input.pressed & buttons::FIELD_COMPUTER != 0 && self.use_picks_up_shield(host, idx, p);
+                if picked_up {
+                    input.pressed &= !buttons::FIELD_COMPUTER;
+                }
                 if p.site.is_none() && input.pressed & buttons::FIELD_COMPUTER != 0 {
                     p.mode = Mode::FieldComputer { t: 0.0 };
                     p.arsenal.ads = 0.0;
@@ -823,6 +845,9 @@ pub fn describe_event(e: &Event) -> Option<String> {
         DestroyedEquipment => format!("player {} destroyed enemy equipment", e.player),
         Hacked => format!("player {} hacked with the Black Hat", e.player),
         AltToggled => format!("player {} toggled the weapon's alt mode", e.player),
+        ShieldDeployed { at } => format!("player {} deployed the Assault Shield at ({:.0}, {:.0})", e.player, at.x, at.y),
+        ShieldPickedUp => format!("player {} picked the Assault Shield back up", e.player),
+        ShieldDestroyed { .. } => format!("player {}'s deployed Assault Shield was destroyed", e.player),
         _ => return None,
     };
     Some(msg)

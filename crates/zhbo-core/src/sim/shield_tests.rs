@@ -18,6 +18,7 @@ fn duel(held: bool, yaw: f32) -> (FakeHost, Sim) {
     sim.choose_class(0, 1, 0, &[]);
     let p = sim.players[1].as_mut().unwrap();
     p.arsenal = Arsenal::with_loadout(Loadout { primary: "riotshield_mp".into(), secondary: "mp7_mp".into(), ..Loadout::default() });
+    p.arsenal.raise_left = 0.0;
     if !held {
         p.arsenal.active = 1;
     }
@@ -26,9 +27,13 @@ fn duel(held: bool, yaw: f32) -> (FakeHost, Sim) {
 }
 
 fn step(sim: &mut Sim, host: &FakeHost, shooter: FpsInput, victim_yaw: f32, n: u32) {
+    step2(sim, host, shooter, FpsInput { yaw: victim_yaw, ..Default::default() }, n);
+}
+
+fn step2(sim: &mut Sim, host: &FakeHost, shooter: FpsInput, victim: FpsInput, n: u32) {
     for _ in 0..n {
         sim.input(0, 1, shooter);
-        sim.input(1, 2, FpsInput { yaw: victim_yaw, ..Default::default() });
+        sim.input(1, 2, victim);
         let f = sim.frame + 1;
         sim.step(host, f);
     }
@@ -40,10 +45,11 @@ fn ready(sim: &mut Sim, host: &FakeHost, victim_yaw: f32) {
     step(sim, host, FpsInput::default(), victim_yaw, n);
 }
 
-/// Raise the shooter's gun, then fire for a second at the victim's chest.
+/// Raise the shooter's gun, then fire for a second at the victim's chest (42 in up).
 fn shoot(sim: &mut Sim, host: &FakeHost, victim_yaw: f32) -> f32 {
-    let pitch = -(2.0f32 / 60.0).atan();
     ready(sim, host, victim_yaw);
+    let eye = sim.players[0].as_ref().unwrap().body.eye().z;
+    let pitch = -((eye - crate::units::inches(42.0)) / 60.0).atan();
     step(sim, host, FpsInput { held: buttons::ADS, pitch, ..Default::default() }, victim_yaw, 20);
     step(sim, host, FpsInput { held: buttons::ADS | buttons::FIRE, pitch, ..Default::default() }, victim_yaw, 30);
     host.damage_log.borrow().iter().filter(|d| d.1 == 2).map(|d| d.2).sum()
@@ -99,3 +105,89 @@ fn a_blast_in_front_of_a_held_shield_is_cut_by_its_protection() {
     assert!((front - back * (1.0 - t.shield_blast_protection_30)).abs() < 1e-3, "front {front} back {back}");
 }
 
+
+/// Player 1 plants the shield facing the shooter.
+fn deploy(sim: &mut Sim, host: &FakeHost) {
+    let fire = FpsInput { yaw: FACING_SHOOTER, held: buttons::FIRE, pressed: buttons::FIRE, ..Default::default() };
+    step2(sim, host, FpsInput::default(), fire, 1);
+}
+
+fn shield_ammo(sim: &Sim) -> u16 {
+    sim.players[1].as_ref().unwrap().arsenal.weapons.iter().find(|w| w.def.is_shield()).unwrap().ammo
+}
+
+#[test]
+fn the_trigger_plants_the_shield_where_it_was_held_and_brings_the_gun_up() {
+    let (host, mut sim) = duel(true, FACING_SHOOTER);
+    deploy(&mut sim, &host);
+    assert!(sim.events.iter().any(|e| e.player == 1 && matches!(e.kind, EventKind::ShieldDeployed { .. })));
+    assert_eq!(sim.deployed.len(), 1);
+    let d = &sim.deployed[0];
+    assert!(d.bearer.pos.x < 60.0 && d.bearer.pos.x > 55.0, "in front of the bearer, toward the shooter: {:?}", d.bearer.pos);
+    assert_eq!(shield_ammo(&sim), 0);
+    let p = sim.players[1].as_ref().unwrap();
+    assert!(!p.arsenal.current().def.is_shield(), "the other gun comes up");
+    // Not on the back while it stands: the next frame's bearers are the deployed one only.
+    step(&mut sim, &host, FpsInput::default(), FACING_SHOOTER, 1);
+    assert!(sim.shields.iter().all(|b| b.general == 0), "{:?}", sim.shields);
+}
+
+#[test]
+fn a_deployed_shield_stops_rounds_and_wears_down_at_the_bullet_scale() {
+    let (host, mut sim) = duel(true, FACING_SHOOTER);
+    deploy(&mut sim, &host);
+    // The bearer stays behind it, facing away (its back open, the shield not on it), so only the
+    // deployed shield is between.
+    let p = sim.players[1].as_mut().unwrap();
+    p.yaw = 0.0;
+    assert_eq!(shoot(&mut sim, &host, 0.0), 0.0, "every round stops in the deployed shield");
+    let taken = sim.deployed[0].damage_taken;
+    assert!(taken > 0.0 && taken < crate::tuning::Tuning::default().riotshield_deployed_health, "{taken}");
+}
+
+#[test]
+fn switching_back_to_the_shield_or_using_it_picks_it_up() {
+    let (host, mut sim) = duel(true, FACING_SHOOTER);
+    deploy(&mut sim, &host);
+    step2(&mut sim, &host, FpsInput::default(), FpsInput { yaw: FACING_SHOOTER, ..Default::default() }, 40);
+    let swap = FpsInput { yaw: FACING_SHOOTER, pressed: buttons::SWAP_WEAPON, ..Default::default() };
+    step2(&mut sim, &host, FpsInput::default(), swap, 1);
+    step2(&mut sim, &host, FpsInput::default(), FpsInput { yaw: FACING_SHOOTER, ..Default::default() }, 40);
+    assert!(sim.deployed.is_empty(), "picked up by the switch");
+    assert_eq!(shield_ammo(&sim), 1);
+    // Deploy again, then the use key beside it.
+    step2(&mut sim, &host, FpsInput::default(), FpsInput { yaw: FACING_SHOOTER, ..Default::default() }, 30);
+    deploy(&mut sim, &host);
+    assert_eq!(sim.deployed.len(), 1);
+    let take = FpsInput { yaw: FACING_SHOOTER, pressed: buttons::FIELD_COMPUTER, ..Default::default() };
+    step2(&mut sim, &host, FpsInput::default(), take, 1);
+    assert!(sim.deployed.is_empty(), "picked up with the use key");
+    assert!(sim.events.iter().filter(|e| matches!(e.kind, EventKind::ShieldPickedUp)).count() == 2);
+    assert!(!matches!(sim.players[1].as_ref().unwrap().mode, Mode::FieldComputer { .. }), "the use key did not open the field computer");
+}
+
+#[test]
+fn a_refused_placement_gives_the_round_back() {
+    let (host, mut sim) = duel(true, FACING_SHOOTER);
+    host.deep_water.set(true);
+    deploy(&mut sim, &host);
+    assert!(sim.deployed.is_empty());
+    assert_eq!(shield_ammo(&sim), 1);
+    assert!(sim.events.iter().any(|e| e.player == 1 && matches!(e.kind, EventKind::CantPlant { .. })));
+}
+
+#[test]
+fn a_deployed_shield_is_destroyed_at_its_health_and_its_model_times_out() {
+    let (host, mut sim) = duel(true, FACING_SHOOTER);
+    deploy(&mut sim, &host);
+    let t = crate::tuning::Tuning::default();
+    sim.damage_deployed(&host, 0, Some(0), 1, t.riotshield_deployed_health - 1.0, deploy::ShieldDamage::Melee);
+    assert!(sim.deployed[0].standing());
+    sim.damage_deployed(&host, 0, Some(0), 1, 1.0, deploy::ShieldDamage::Explosive);
+    assert!(!sim.deployed[0].standing());
+    assert!(sim.events.iter().any(|e| e.player == 1 && matches!(e.kind, EventKind::ShieldDestroyed { by: Some(0) })));
+    step(&mut sim, &host, FpsInput::default(), FACING_SHOOTER, 1);
+    assert!(sim.shields.iter().all(|b| b.general != 0), "a destroyed shield blocks nothing");
+    step(&mut sim, &host, FpsInput::default(), FACING_SHOOTER, (t.riotshield_destroyed_cleanup_time / LOGIC_DT) as u32 + 2);
+    assert!(sim.deployed.is_empty());
+}

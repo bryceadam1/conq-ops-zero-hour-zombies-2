@@ -87,7 +87,7 @@ pub struct Placed {
 /// What happened to equipment this frame, for hit markers and sounds.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum EquipEvent {
-    Exploded { owner: usize, at: Vec3, hit_enemy: bool, kill: bool },
+    Exploded { owner: usize, at: Vec3, hit_enemy: bool, kill: bool, def: &'static WeaponDef },
     /// Shot or blown up by an enemy.
     Destroyed { owner: usize, by: Option<usize>, at: Vec3 },
     /// A Trophy System shot a projectile down.
@@ -146,7 +146,7 @@ impl Placed {
     fn explode(&mut self, host: &dyn LogicHost, shields: &[crate::shield::Bearer]) -> EquipEvent {
         self.remove(host);
         let (hit_enemy, kill) = blast(host, self.def, self.general, self.pos, None, 1.0, 1.0, shields);
-        EquipEvent::Exploded { owner: self.owner, at: self.pos, hit_enemy, kill }
+        EquipEvent::Exploded { owner: self.owner, at: self.pos, hit_enemy, kill, def: self.def }
     }
 }
 

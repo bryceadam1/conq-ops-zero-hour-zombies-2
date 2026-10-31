@@ -116,6 +116,17 @@ tuning! {
     shield_blast_protection_60: "shieldBlastDamageProtection_60" = 0.2, "As above, within a 60-degree arc.";
     shield_blast_protection_120: "shieldBlastDamageProtection_120" = 0.1, "As above, within a 120-degree arc.";
     shield_blast_protection_180: "shieldBlastDamageProtection_180" = 0.0, "As above, within a 180-degree arc.";
+    riotshield_deployed_health: "riotshield_deployed_health" = 300.0, "A deployed Assault Shield's health: the scaled damage it takes before it is destroyed (`FUN_00966680` dvar; `_riotshield.gsc` `watchdeployedriotshielddamage`).";
+    riotshield_bullet_damage_scale: "riotshield_bullet_damage_scale" = 0.025, "Bullet damage scale on a deployed shield (dvar default).";
+    riotshield_melee_damage_scale: "riotshield_melee_damage_scale" = 1.0, "Melee damage scale on a deployed shield (dvar default).";
+    riotshield_explosive_damage_scale: "riotshield_explosive_damage_scale" = 1.0, "Explosive damage scale on a deployed shield (dvar default).";
+    riotshield_projectile_damage_scale: "riotshield_projectile_damage_scale" = 0.01, "Impact (thrown/launched) damage scale on a deployed shield (dvar default).";
+    riotshield_deploy_zdiff_max: "riotshield_deploy_zdiff_max" = 30.0, "Deploy: the most the ground may differ from the player's feet, inches (dvar default).";
+    riotshield_deploy_pitch_max: "riotshield_deploy_pitch_max" = 20.0, "Deploy: the steepest ground pitch, degrees (dvar default).";
+    riotshield_deploy_roll_max: "riotshield_deploy_roll_max" = 25.0, "Deploy: the steepest ground roll, degrees (dvar default).";
+    riotshield_deploy_limit_radius: "riotshield_deploy_limit_radius" = 100.0, "Deploy: the least distance to any other deployed shield, inches (dvar default).";
+    riotshield_destroyed_cleanup_time: "riotshield_destroyed_cleanup_time" = 10.0, "Seconds a destroyed shield's model stays (dvar default; it stops blocking at once).";
+    riotshield_placement_zoffset: "riotshield_placement_zoffset" = 26.0, "Height of the deployed shield's origin over the ground, inches (`_riotshield.gsc` init).";
     regen_delay: "RegenDelay" = 5.0, "Seconds after the last hit before health regenerates (the mod's value).";
     regen_full_time: "RegenFullTime" = 3.0, "Seconds to regenerate from empty (the mod's value).";
     building_rate: "BuildingRate" = 1.0, "Build/repair rate multiplier (the mod's value).";

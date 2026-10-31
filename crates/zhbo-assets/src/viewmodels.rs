@@ -692,10 +692,14 @@ pub(crate) fn projectiles(
         let Some(w) = bo2.iter().find(|w| w.name == base_id(id)) else { continue };
         let Some(d) = defs.iter_mut().find(|d| &d.id == id) else { continue };
         let throws = d.class.is_offhand() || d.class == Class::Launcher || d.projectile_speed > 0.0;
-        if !throws || d.class == Class::Melee {
+        // The Assault Shield is set down as cover in the script's deployed model
+        // (`_riotshield.gsc` `level.deployedshieldmodel`), not its pickup world model.
+        let shield = d.class == Class::Shield;
+        if !(throws || shield) || d.class == Class::Melee {
             continue;
         }
-        let Some(model_name) = w.projectile_model.clone().or_else(|| w.world_model.clone()) else { continue };
+        let model_name = if shield { Some(crate::shield::CARRY_MODEL.to_string()) } else { w.projectile_model.clone().or_else(|| w.world_model.clone()) };
+        let Some(model_name) = model_name else { continue };
         let Ok(model) = find_model(patch, common, &model_name) else { continue };
         let rig = Rig::new(&model, &[]);
         let tex = textures(&model, paks, out, &mut looks);
