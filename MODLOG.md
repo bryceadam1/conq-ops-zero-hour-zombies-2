@@ -4653,3 +4653,23 @@ tag_clip1 tag_flash1`, `zhbo-assets model common_mp.ff t6_wpn_pistol_fnp45_view_
 right shot ejected at both `tag_brass` and `tag_brass1`. **Needs `ZHBO_ABI_VERSION` 26 → 27** at
 merge (the integrator's); the C++ (`ZhboBridge.cpp/.h`, `ZhboViewmodel.cpp`) was not built here.
 Test: `client::tests::a_shot_event_for_the_local_player_sets_viewmodel_fired` covers both flags.
+
+## FINALSHOT is never played, by BO2 or the mod (2026-10-31, `v1/dual-wield-sim`)
+
+The `anim_finalshot`/`anim_finalshot_left` rows are what the slot is *registered* to, not proof
+anything plays it. BO2's viewmodel driver `WeaponRunXModelAnims` (`FUN_0052bb10`, the
+"Unknown weapon animation %i" string) maps the playerState's weapon anim (`ps+0x580` right,
+`+0x584` left) to the slot it plays through `FUN_0052b1d0`. Right: fire → slot 4 (or 3, fire
+intro), last shot → 6, rechamber → 8, ADS fire → 0x3D (or 0x3F), ADS last shot → 0x3E, ADS
+rechamber → 0x40, melee 9–0xF, reloads, raises, drops, sprint. Left: fire → 0x4E, last shot →
+0x4F, reload 0x54, reload empty 0x53, idle 0x51. The shot's anim is set by `FUN_008dc680`: hip
+fire or last shot (`FUN_008e6770`, the hand's clip ran dry), ADS fire or ADS last shot — never a
+final shot. No caller of `FUN_0052b1d0` (`FUN_0052bb10`, `FUN_0052b670`, `FUN_0052b6e0`,
+`FUN_0052d340`, `FUN_0052ba60`) passes 7 or 0x50. Dumps: `~/.opencode/plan/dual-wield-sim/fin.c`,
+`bb10.c`, `b1d0_callers.c`.
+
+So neither hand's FINALSHOT is a gap: BO2 never plays it and the mod's viewmodel never requests
+it. The five `anim_finalshot_left` cells stay: they are the registration fallback differing —
+BO2 binds an empty `_LEFT` slot to the `_lh` variant's own slot 1, which is empty, while the mod's
+`clip_for` falls back to its left idle (`IDLE_LEFT` keyed at `IDLE | INSTANCE_LEFT`). The actual
+side reports the mod's fallback as it is; nothing was changed to match.
