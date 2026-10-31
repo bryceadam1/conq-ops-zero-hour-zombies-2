@@ -1109,3 +1109,16 @@ fn the_offhands_draw_their_cac_picture() {
     let i = e.options().iter().position(|o| o == &weapons::weapon("concussion_grenade_mp").display_name).unwrap();
     assert_eq!(option_icon(&e, i), Some(crate::names::cac_weapon_image("concussion_grenade_mp")));
 }
+
+/// The offhand titles are the install's strings: the lethal slot reads BO2's `SECOND TACTICAL`
+/// under Tactician (`cacgrenadesbutton.lua:104-126`, `cacgrenades.lua:85-104`), on the button and
+/// the picker alike.
+#[test]
+fn the_lethal_slot_is_titled_second_tactical_under_tactician() {
+    let mut e = Editor::new(Draft::default());
+    assert_eq!((super::editor::offhand_title(&e.draft, true), super::editor::offhand_title(&e.draft, false)), ("LETHAL", "TACTICAL"));
+    e.draft.wildcards.push(crate::classmenu::Wildcard::Tactician);
+    assert_eq!(super::editor::offhand_title(&e.draft, true), "SECOND TACTICAL");
+    e.slot = Slot::Lethal;
+    assert_eq!(super::editor::picker_title(&e), "SECOND TACTICAL");
+}

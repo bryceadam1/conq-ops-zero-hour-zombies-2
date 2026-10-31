@@ -340,7 +340,17 @@ pub fn table_with_metadata(
         tablet_meshes: 0,
         perks: Vec::new(),
         bonus_cards: Vec::new(),
+        ui_text: ui_text(names),
     }
+}
+
+/// The localized UI strings the core draws ([`zhbo_core::weapons::UI_TEXT_KEYS`]), exactly as the
+/// install's english zones have them; a key the install lacks is left out (the core falls back).
+pub fn ui_text(names: &HashMap<String, String>) -> Vec<zhbo_core::weapons::UiText> {
+    zhbo_core::weapons::UI_TEXT_KEYS
+        .iter()
+        .filter_map(|k| names.get(*k).map(|text| zhbo_core::weapons::UiText { key: k.to_string(), text: text.clone() }))
+        .collect()
 }
 
 /// Weapons with attachments, and their alt modes, that [`converted`] asks for: built from their base
@@ -1088,6 +1098,13 @@ mod tests {
     use super::*;
 
     #[test]
+    fn the_ui_text_carries_the_installs_strings_for_the_cores_keys() {
+        let names: HashMap<String, String> = [("MPUI_SECOND_SPECIAL_GRENADE_CAPS", "SECOND TACTICAL"), ("MPUI_UNUSED", "X")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let rows = ui_text(&names);
+        assert_eq!(rows, vec![zhbo_core::weapons::UiText { key: "MPUI_SECOND_SPECIAL_GRENADE_CAPS".into(), text: "SECOND TACTICAL".into() }]);
+    }
+
+    #[test]
     fn the_attachment_grid_follows_the_items_column_8() {
         // Column 8's tokens are cut at their first `_` (`silencer_smg` is `silencer`); the grid
         // walks them in that order, not by name.
@@ -1527,6 +1544,18 @@ mod tests {
         assert_eq!(sets.len(), 48, "common_patch_mp's camo_<weapon> assets");
         assert_eq!(camo_material_for("an94_mp", &sets).as_deref(), Some("camo_an94"));
         assert_eq!(camo_material_for("saiga12_mp", &sets).as_deref(), Some("camo_saiga"));
+    }
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_installs_ui_text_is_the_built_in_stand_ins() {
+        // Every key the core draws is in the install's english zones, and the stand-ins are its
+        // strings exactly (`MPUI_SECOND_SPECIAL_GRENADE_CAPS` is `SECOND TACTICAL`).
+        let bo2_dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let rows = ui_text(&names(&bo2_dir));
+        assert_eq!(rows.len(), zhbo_core::weapons::UI_TEXT_KEYS.len(), "{rows:?}");
+        let built_in = zhbo_core::weapons::parse_full_table(zhbo_core::weapons::BUILTIN).unwrap().ui_text;
+        assert_eq!(rows, built_in);
     }
 
     #[test]

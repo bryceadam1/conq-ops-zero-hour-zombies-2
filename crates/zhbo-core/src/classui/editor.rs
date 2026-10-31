@@ -142,8 +142,23 @@ pub(super) fn picker_title(editor: &Editor) -> String {
             let id = if editor.slot == Slot::PrimaryAtts { editor.draft.primary.as_str() } else { editor.draft.secondary.as_str() };
             format!("{} ATTACHMENTS", weapons::weapon(id).display_name.to_uppercase())
         }
+        Slot::Lethal => offhand_title(&editor.draft, true).to_string(),
+        Slot::Tactical => offhand_title(&editor.draft, false).to_string(),
         other => other.label().to_string(),
     }
+}
+
+/// An offhand slot's title, the install's own string: `MPUI_PRIMARY_GRENADE_CAPS` and
+/// `MPUI_SPECIAL_GRENADE_CAPS`, the lethal slot's `MPUI_SECOND_SPECIAL_GRENADE_CAPS` under
+/// Tactician (`cacgrenadesbutton.lua:104-126`, `cacgrenades.lua:85-104`,
+/// `classpreview.lua:3640-3660`). The slot's own label when the weapon table lacks the string.
+pub(super) fn offhand_title(d: &Draft, lethal: bool) -> &'static str {
+    let key = match (lethal, d.wildcards.contains(&Wildcard::Tactician)) {
+        (true, true) => "MPUI_SECOND_SPECIAL_GRENADE_CAPS",
+        (true, false) => "MPUI_PRIMARY_GRENADE_CAPS",
+        (false, _) => "MPUI_SPECIAL_GRENADE_CAPS",
+    };
+    weapons::catalog().ui_text(key).unwrap_or(if lethal { Slot::Lethal.label() } else { Slot::Tactical.label() })
 }
 
 /// The editor's boxed grid (`b-editor/001`, `/028`).
@@ -277,8 +292,8 @@ fn button_of(l: &EditorLayout, slot: Slot) -> Rect {
 fn button_text(editor: &Editor, slot: Slot) -> (&'static str, Vec<String>) {
     let d = &editor.draft;
     match slot {
-        Slot::Lethal => ("LETHAL", offhand_names(d, true)),
-        Slot::Tactical => ("TACTICAL", offhand_names(d, false)),
+        Slot::Lethal => (offhand_title(d, true), offhand_names(d, true)),
+        Slot::Tactical => (offhand_title(d, false), offhand_names(d, false)),
         _ => {
             let tier = slot.perk_tier().unwrap_or(1) as usize - 1;
             let label = match tier {

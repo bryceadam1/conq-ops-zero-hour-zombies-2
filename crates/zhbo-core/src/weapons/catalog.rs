@@ -26,6 +26,7 @@ pub struct Catalog {
     reticle_color_order: Vec<&'static CamoOption>,
     bonus_cards: Vec<&'static BonusCard>,
     perks: HashMap<String, &'static PerkRow>,
+    ui_text: HashMap<String, &'static str>,
     built: Mutex<HashMap<String, &'static WeaponDef>>,
     pub tablet_meshes: u8,
 }
@@ -49,6 +50,7 @@ impl Catalog {
         let mut bonus_cards: Vec<&'static BonusCard> = t.bonus_cards.into_iter().map(|b| &*Box::leak(Box::new(b))).collect();
         bonus_cards.sort_by_key(|b| (b.sort, b.index));
         let perks = t.perks.into_iter().map(|p| (p.stats.to_ascii_uppercase(), &*Box::leak(Box::new(p)))).collect();
+        let ui_text = t.ui_text.into_iter().map(|u| (u.key, &*Box::leak(u.text.into_boxed_str()))).collect();
         Catalog {
             by_id,
             order,
@@ -60,6 +62,7 @@ impl Catalog {
             reticle_color_order,
             bonus_cards,
             perks,
+            ui_text,
             built: Mutex::new(HashMap::new()),
             tablet_meshes: t.tablet_meshes,
         }
@@ -127,6 +130,12 @@ impl Catalog {
         &self.reticle_color_order
     }
 
+    /// A localized UI string by its key (`MPUI_SECOND_SPECIAL_GRENADE_CAPS`); `None` when the table
+    /// lacks it (a table from before the strings, or an install without the key).
+    pub fn ui_text(&self, key: &str) -> Option<&'static str> {
+        self.ui_text.get(key).copied()
+    }
+
     /// BO2's bonus cards (the wildcards), in the grid's order.
     pub fn bonus_cards(&self) -> &[&'static BonusCard] {
         &self.bonus_cards
@@ -154,6 +163,12 @@ pub fn install_catalog(text: &str) -> Result<usize, String> {
     let mut table = parse_full_table(text)?;
     let n = table.weapons.len();
     let built_in = parse_full_table(BUILTIN)?;
+    // The UI strings a table converted before them lacks: the stand-ins (BO2's own).
+    for u in built_in.ui_text {
+        if !table.ui_text.iter().any(|t| t.key == u.key) {
+            table.ui_text.push(u);
+        }
+    }
     if table.bonus_cards.is_empty() {
         // A table converted before the bonus cards were: the stand-in rows (BO2's own).
         table.bonus_cards = built_in.bonus_cards;
@@ -233,9 +248,23 @@ pub fn weapon(id: &str) -> &'static WeaponDef {
 /// Stand-in table when BO2 is not converted: the default loadout's weapons with BO2's published
 /// multiplayer values (rounded), in the same format as the converted table, BO2's sixteen perk rows
 /// (`mp/statstable.csv:151-166`: name, description, specialties) so the perk grid and every perk's
-/// effect have their rows, and BO2's eight bonus cards (`mp/statstable.csv:178-185`) so the
-/// wildcard grid has its rows.
+/// effect have their rows, BO2's eight bonus cards (`mp/statstable.csv:178-185`) so the
+/// wildcard grid has its rows, and the english UI strings of [`super::UI_TEXT_KEYS`]
+/// (`en_code_post_gfx_mp.ff`). An ignored install test checks the rows and strings against the
+/// player's install.
 pub const BUILTIN: &str = "
+UiText MPUI_PRIMARY_GRENADE_CAPS
+  Text = LETHAL
+End
+
+UiText MPUI_SPECIAL_GRENADE_CAPS
+  Text = TACTICAL
+End
+
+UiText MPUI_SECOND_SPECIAL_GRENADE_CAPS
+  Text = SECOND TACTICAL
+End
+
 Perk LIGHTWEIGHT
   Name = Lightweight
   Description = Move faster.  Take no damage when falling.

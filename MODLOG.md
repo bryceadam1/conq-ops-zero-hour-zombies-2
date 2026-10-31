@@ -4961,3 +4961,26 @@ the card, the card alone is one point, the box another, re-pick toggles it, the 
 it, the round trip), `danger_close_gives_a_second_lethal` (fake host, the filled box gives two).
 Measured: cac 9, weapons 781,587, gap clusters 201 — unchanged (the Danger Close card already
 cost 1 in the table; the count is not a conformance column).
+
+## The lethal slot reads `SECOND TACTICAL` under Tactician: UI strings from the install (2026-10-31, `v1/cac-rules`)
+
+BO2 titles the lethal slot with `MPUI_SECOND_SPECIAL_GRENADE_CAPS` while Tactician is equipped —
+on the editor's grenade button (`cacgrenadesbutton.lua:104-126`), the grenade picker
+(`cacgrenades.lua:85-104`) and the class preview (`classpreview.lua:3640-3660`); otherwise
+`MPUI_PRIMARY_GRENADE_CAPS`/`MPUI_SPECIAL_GRENADE_CAPS`. The string is in the install's
+`en_code_post_gfx_mp.ff` (and `en_patch.ff`): `SECOND TACTICAL` (`zhbo-assets strings
+en_code_post_gfx_mp.ff GRENADE_CAPS`), the zone `weapons::names` already reads.
+
+* The weapon table gains `UiText <key>` blocks (`Text = …`, `UI_TEXT_FIELDS`); the converter
+  writes each key of `weapons::UI_TEXT_KEYS` the install has (`weapons::ui_text`), and
+  `Catalog::ui_text` serves them. Older tables load unchanged and take the built-in stand-ins
+  (the three strings in `BUILTIN`, compared to the install by the ignored
+  `the_installs_ui_text_is_the_built_in_stand_ins`), like the perk and bonus-card rows.
+* `classui::editor::offhand_title` picks the key; the button, the picker title and the class
+  preview use it.
+
+Tests: `ui_text_round_trips` (table), `the_ui_text_carries_the_installs_strings_for_the_cores_keys`
+(converter), `the_lethal_slot_is_titled_second_tactical_under_tactician` (classui). Screenshot:
+`cac-editor-tactician.png` (plan dir) — the title reads SECOND TACTICAL; the list is empty there
+because the installed archive predates the statstable slots (rebuild needed). Conformance
+unchanged (cac 9, weapons 781,587, 201 clusters).

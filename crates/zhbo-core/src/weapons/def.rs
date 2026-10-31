@@ -339,6 +339,21 @@ pub struct CamoOption {
 /// the loadout slot `Engine.GetLoadoutSlotForItem` answers (column 13, `bonuscard1..7`), the
 /// allocation cost (column 12), the sort key (column 9), the item index (column 0) and the unlock
 /// level (column 10). The grid lists the group's cards by sort key, then index (G17).
+/// One of BO2's localized UI strings the core draws, from the player's own english zones
+/// (`UiText <key>` blocks): the converter writes each of [`UI_TEXT_KEYS`] the install has.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UiText {
+    /// The localize key (`MPUI_SECOND_SPECIAL_GRENADE_CAPS`).
+    pub key: String,
+    /// Its english text (`SECOND TACTICAL`).
+    pub text: String,
+}
+
+/// The localize keys the class editor draws from the install: the offhand slots' titles
+/// (`cacgrenadesbutton.lua:104-126`, `cacgrenades.lua:85-104`, `classpreview.lua:3640-3660`:
+/// `MPUI_<slot>_CAPS`, and the lethal slot's under Tactician).
+pub const UI_TEXT_KEYS: &[&str] = &["MPUI_PRIMARY_GRENADE_CAPS", "MPUI_SPECIAL_GRENADE_CAPS", "MPUI_SECOND_SPECIAL_GRENADE_CAPS"];
+
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct BonusCard {
     pub reference: String,

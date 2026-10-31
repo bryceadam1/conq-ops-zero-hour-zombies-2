@@ -6,7 +6,7 @@
 ** License, or (at your option) any later version.
 */
 
-use super::def::{BonusCard, CamoOption, PerkRow, Class, Effect, FireMode, Kind, Kick, Place, WeaponDef};
+use super::def::{BonusCard, CamoOption, PerkRow, Class, Effect, FireMode, Kind, Kick, Place, UiText, WeaponDef};
 use super::feel::{nums, v3, GunKick, Sway};
 use super::specialty::Specialties;
 use crate::attachments::AttachmentDef;
@@ -31,6 +31,8 @@ pub struct Table {
     /// BO2's bonus cards (`mp/statstable.csv`'s `bonuscard` rows, `BonusCard <ref>` blocks), in the
     /// table's row order.
     pub bonus_cards: Vec<BonusCard>,
+    /// BO2's localized UI strings the core draws (`UiText <key>` blocks, [`UiText`]).
+    pub ui_text: Vec<UiText>,
 }
 
 pub(crate) fn pairs(v: &[(String, String)]) -> String {
@@ -76,6 +78,9 @@ pub fn format_full_table(t: &Table) -> String {
     for b in &t.bonus_cards {
         write_block(&mut s, "BonusCard ", &b.reference, BONUS_CARD_FIELDS, b);
     }
+    for u in &t.ui_text {
+        write_block(&mut s, "UiText ", &u.key, UI_TEXT_FIELDS, u);
+    }
     for a in &t.attachments {
         write_block(&mut s, "Attachment ", &a.id, ATTACHMENT_FIELDS, a);
     }
@@ -110,6 +115,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
         ReticleColor(Box<CamoOption>),
         Perk(Box<PerkRow>),
         BonusCard(Box<BonusCard>),
+        UiText(Box<UiText>),
     }
     let mut table = Table::default();
     let mut cur: Option<Block> = None;
@@ -143,6 +149,10 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
             cur = Some(Block::BonusCard(Box::new(BonusCard { reference: id.trim().to_string(), ..Default::default() })));
             continue;
         }
+        if let Some(key) = line.strip_prefix("UiText ") {
+            cur = Some(Block::UiText(Box::new(UiText { key: key.trim().to_string(), ..Default::default() })));
+            continue;
+        }
         if let Some(id) = line.strip_prefix("Perk ") {
             cur = Some(Block::Perk(Box::new(PerkRow { stats: id.trim().to_string(), ..Default::default() })));
             continue;
@@ -156,6 +166,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
                 Block::ReticleColor(c) => table.reticle_colors.push(*c),
                 Block::Perk(p) => table.perks.push(*p),
                 Block::BonusCard(b) => table.bonus_cards.push(*b),
+                Block::UiText(u) => table.ui_text.push(*u),
             }
             continue;
         }
@@ -174,6 +185,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
             Some(Block::ReticleColor(c)) => set_field(CAMO_FIELDS, c, key, values).map_err(|e| err(&e))?,
             Some(Block::Perk(p)) => set_field(PERK_FIELDS, p, key, values).map_err(|e| err(&e))?,
             Some(Block::BonusCard(b)) => set_field(BONUS_CARD_FIELDS, b, key, values).map_err(|e| err(&e))?,
+            Some(Block::UiText(u)) => set_field(UI_TEXT_FIELDS, u, key, values).map_err(|e| err(&e))?,
             Some(Block::Weapon(d)) => set_field(WEAPON_FIELDS, d, key, values).map_err(|e| err(&e))?,
         }
     }
@@ -734,6 +746,13 @@ pub const BONUS_CARD_FIELDS: &[Field<BonusCard>] = &[
         |b: &mut BonusCard, v: Values| { b.unlock_level = v.text_num()? as i32; Ok(()) }),
 ];
 
+/// Every `UiText` block line: one localized UI string ([`UiText`]).
+pub const UI_TEXT_FIELDS: &[Field<UiText>] = &[
+    field!("Text", "The english text of the block's localize key.", FieldKind::Str,
+        |u: &UiText| u.text.clone(),
+        |u: &mut UiText, v: Values| { u.text = v.text.into(); Ok(()) }),
+];
+
 /// Apply one schema line to `t`. Unknown keys are tolerated (the parser skips them).
 pub fn set_field<T>(fields: &[Field<T>], t: &mut T, key: &str, values: Values) -> Result<(), String> {
     for f in fields {
@@ -929,6 +948,14 @@ mod tests {
             text.contains("Perk LIGHTWEIGHT\n  Name = Lightweight\n  Description = Move faster.  Take no damage when falling.\n  Specialties = fallheight movefaster\nEnd"),
             "{text}"
         );
+        assert_eq!(parse_full_table(&text).unwrap(), t);
+    }
+
+    #[test]
+    fn ui_text_round_trips() {
+        let t = Table { ui_text: vec![UiText { key: "MPUI_SECOND_SPECIAL_GRENADE_CAPS".into(), text: "SECOND TACTICAL".into() }], ..Default::default() };
+        let text = format_full_table(&t);
+        assert!(text.contains("UiText MPUI_SECOND_SPECIAL_GRENADE_CAPS\n  Text = SECOND TACTICAL\nEnd"), "{text}");
         assert_eq!(parse_full_table(&text).unwrap(), t);
     }
 

@@ -85,7 +85,8 @@ pub fn draw(prims: &mut Vec<Prim>, f: &Frame, p: Rect, draft: Option<&Draft>) {
     // LETHAL and TACTICAL under the perks.
     let lethal = at(c.right_x, TOP + 3.0 * (c.perk_h + GAP), c.right_w, SMALL_H);
     let tactical = at(c.right_x, lethal.y - p.y + SMALL_H + GAP, c.right_w, SMALL_H);
-    for (r, label) in [(lethal, "LETHAL"), (tactical, "TACTICAL")] {
+    let title = |is_lethal: bool| draft.map_or(if is_lethal { Slot::Lethal.label() } else { Slot::Tactical.label() }, |d| super::editor::offhand_title(d, is_lethal));
+    for (r, label) in [(lethal, title(true)), (tactical, title(false))] {
         plate(prims, f, r);
         slot_label(prims, f, r.x, r.y, c.right_w, label);
     }

@@ -523,6 +523,13 @@ both are capped by the item's `MaxReserve` (`classmenu::items::offhand_cap`). Th
 writes both counts; repair makes a held item's 0 (a class saved before the counts) one. A spec
 without a count (the shipped presets) gives the item's start count.
 
+**The class editor's UI strings come from the install.** The weapon table's `UiText <key>` blocks
+carry the english text of the localize keys the core draws (`weapons::UI_TEXT_KEYS`: the offhand
+titles, `MPUI_PRIMARY_GRENADE_CAPS`, `MPUI_SPECIAL_GRENADE_CAPS` and Tactician's
+`MPUI_SECOND_SPECIAL_GRENADE_CAPS`), read by the converter from the same english zones as the
+display names; `Catalog::ui_text` looks them up and a table without them takes the built-in
+stand-ins (BO2's strings, checked against the install by an ignored test).
+
 ## Versioning
 
 `ZHBO_ABI_VERSION` (`host/zhbo/zhbo_core.h`) must equal `zhbo_abi_version()`; struct sizes are asserted
