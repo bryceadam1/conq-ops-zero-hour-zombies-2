@@ -193,6 +193,14 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
     Zero Hour's FXList has no model nugget.
   - `zhbo_viewmodel_fx` is a free function on the append-only ABI surface (like
     `zhbo_loadout_viewmodels`); it needs the `ZHBO_ABI_VERSION` bump with its merge.
+* **The dual-wield left gun's clip stays in Rust.** A `_dw_mp` weapon fires two guns (one per
+  trigger, each with its own magazine), so its left gun plays its own `_LEFT` slot while the hands
+  fire, reload or idle apart. The client hands that clip and time to the native pass with
+  `nativevm::ffi::set_left_clip` beside `ZhboClientOut.viewmodel`; `ZhboNativeIn` carries only the
+  base clip and its size is unchanged. The left clip id is the matching right slot with
+  `INSTANCE_LEFT` (`viewmodel::slot::left_as_right`). `viewmodel_fired` is still the right gun's
+  shot only: the left gun's muzzle flash and `tag_brass1` shell need a per-hand fired flag on the
+  ABI (an append, the integrator's bump).
 * **The core cannot open the archive; it asks.** After each call the bridge answers every
   `zhbo_native_wanted(i)` path with `zhbo_native_provide(path, bytes, len)` (`len < 0`: not in the
   archive, after which that viewmodel is given up and logged once) and prints every
@@ -339,6 +347,14 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
   hide every frame and restores the body to the drawable's own effective-hidden state as soon as
   the native pass stops returning `DRAWN`, so a refused draw never leaves an invisible,
   uncommandable General.
+* **The dual-wield left gun's clip stays in Rust.** A `_dw_mp` weapon fires two guns (one per
+  trigger, each with its own magazine), so its left gun plays its own `_LEFT` slot while the hands
+  fire, reload or idle apart. The client hands that clip and time to the native pass with
+  `nativevm::ffi::set_left_clip` beside `ZhboClientOut.viewmodel`; `ZhboNativeIn` carries only the
+  base clip and its size is unchanged. The left clip id is the matching right slot with
+  `INSTANCE_LEFT` (`viewmodel::slot::left_as_right`). `viewmodel_fired` is still the right gun's
+  shot only: the left gun's muzzle flash and `tag_brass1` shell need a per-hand fired flag on the
+  ABI (an append, the integrator's bump).
 * **The core cannot open the archive; it asks.** After each `zhbo_native_body` call the bridge
   answers every `zhbo_native_body_wanted(i)` path with `zhbo_native_body_provide(path, bytes, len)`
   (`len < 0`: not in the archive, after which that rig is given up and logged once) and prints every

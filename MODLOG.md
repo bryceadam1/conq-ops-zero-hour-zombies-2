@@ -4577,3 +4577,56 @@ common rows); one-sided rows 8/7 → 8/0; cac 565 → 556 (`slot` 12 → 8, `val
 62/6 → 62/0; gap clusters 212 → 207. The 8 BO2-only weapon rows are content the mod has no item
 for: the placed equipment (claymore, bouncing betty, C4, tactical insertion, trophy system, black
 hat), the assault shield, and `knife_mp`.
+
+## Dual wield fires two guns (2026-10-31, `v1/dual-wield-sim`)
+
+The sim ran a `_dw_mp` weapon as one gun. BO2 runs `PM_Weapon` (`FUN_008e4da0`) **once per hand**:
+`FUN_008c8420` calls it, sets `ps+0x71` (the hand) to 1, calls it again and clears it. The left hand
+keeps its own weapon state (`ps+0x1d4`, the right's is `+0x1d0`), times (`+0x54`/`+0x58` vs
+`+0x4c`/`+0x50`) and anim (`+0x584` vs `+0x580`), and uses the def's `szDualWieldWeaponName`
+(`FUN_008eca70`) for its clip use (`FUN_008e1b80` → `FUN_008e6690`) and reload (`FUN_008dfd50`,
+`FUN_008df000`, `FUN_008dfa60`). Decompiles: `~/.opencode/plan/dual-wield-sim/dw_callers.c`,
+`dw2.c`, `dw3.c` (read-only `XrefDecomp` runs).
+
+* **Which button fires which gun** — `FUN_008dbb20(weapon, pm, hand)` returns the usercmd bit the
+  hand's trigger reads: bit 0 (attack) for a single gun and for the pair's right gun, bit `0x18`
+  for the left gun (the button a held C4 detonates with — `+speed_throw`, ADS), swapped only by a
+  usercmd flag at `pm+0x3e`. So on PC the ADS button fires the left gun, as LT does on a pad.
+  Every `_dw` def has `aimDownSight` 0 (probe), so a dual-wield weapon never aims.
+* **Ammo** — the `_dw` and `_lh` variants share `szAmmoName` (stock shared) and their clip is per
+  hand; the `_lh` def's `iClipSize` and reload times equal the pair's for all five pistols (probe:
+  `fnp45` 10/1900/2400/1300, `judge` 5, `kard` 15, `beretta93r` 15, `fiveseven` 20), so the left
+  hand's magazine is the weapon's own clip size — the `_lh` defs are not converted weapons.
+* **Reload** — each hand checks the reload button (usercmd bit 27) in its own pass, so one press
+  reloads both guns that can; an empty hand reloads by itself while the other keeps firing.
+
+**The mod.** `WeaponState::left: Option<Hand>` holds the left gun's magazine, cooldown, reload,
+burst and recoil string; `Arsenal::step` runs the reload and trigger rules per hand
+(`step_hand`), the left with its state swapped in (`WeaponState::swap_hand`) and the ADS button
+as its trigger; `reserve` is shared. Swaps, melee and offhands interrupt both hands.
+`WeaponAction::Fire` and `EventKind::Shot` carry `left`. The viewmodel gives the left gun its own
+`_LEFT` clip (`Frame::left`: fire, last shot, reload/reload-empty, idle/empty idle) while the hands
+act apart, and both hands play the base clip during raise, drop, sprint, melee and offhands; the
+client hands it to the native pass in Rust (`nativevm::ffi::set_left_clip`), so `ZhboNativeIn` is
+unchanged. The HUD draws BO2's `dw | clip / stock` (`ammoarea.lua:1144-1255`): after the right
+clip a big line, then the left clip with its own low-clip pulse.
+
+**The converter keys the `_LEFT` slots by what they play.** It matched each left clip to the right
+slot whose clip had the same name with `_right_`; Kard's and Judge's `LASTSHOT_LEFT` names their
+`left_fire` clip and Judge's `RELOAD_LEFT` and `RELOAD_EMPTY_LEFT` both name `left_reload_empty`, so
+those landed on the fire/reload slots and the left last shot played the left idle. The mapping is
+now `viewmodel::slot::left_as_right` (`FIRE_LEFT` → `FIRE`, `LASTSHOT_LEFT` → `LASTSHOT`, …), shared
+with the conformance actual side's `clip_id`.
+
+**Not done (open):** the left gun's own fire sound (`wpn_<x>_fire_plr_lh`, the `_lh` def's
+`fireSoundPlayer`) is not in the table, so both guns play the pair's `_rh` shot; the left muzzle
+flash and `tag_brass1` shell wait on a per-hand fired flag on the ABI (`viewmodel_fired` is the
+right gun's); `FINALSHOT_LEFT` is empty in BO2 (the `_lh` tables have no slot 1 to fall back to)
+while the mod's fallback reports the left idle — the mod never plays a final-shot slot.
+
+Measured (conformance CLI vs `v1/cac-structure`): weapons 804,392 → 804,389 cells (−3:
+`anim_lastshot_left` 2 → 0, `anim_reload_empty_left` 1 → 0; no other column moved), 199 → 197
+weapon clusters, one-sided rows unchanged (8/0); cac unchanged (556 cells, 6 clusters); gap
+clusters 207 → 205. `anim_finalshot_left` (5) stays, see above. Verified: `cargo test --workspace`
+green; clippy adds no warning (39 before and after); the real-install suite (`--ignored --skip
+conformance`) green. No VERSION/ABI bump (the left clip is Rust-side; `ZhboNativeIn` unchanged).

@@ -186,7 +186,12 @@ left gun stays at the base clip's bind pose. The left gun is the one the weapon'
 (`szDualWieldWeaponName`, `fnp45_dw_mp` → `fnp45_lh_mp`; `viewmodels::left_gun`). A class never
 carries a pistol with a `dw` attachment: Dual Wield gives the separate `_dw_mp` weapon (G16,
 `classmenu::items::given_weapon`), which the fake-host test `a_dual_wield_class_spawns_with_the_dw_weapon`
-pins. The
+pins; the same test then fires it through the event stream (the ADS button fires the left gun,
+the attack button the right, each from its own magazine). The arsenal's two-gun rules (each hand
+fires its own magazine, no ADS, reload refills both, an empty hand reloads alone) are the
+`weapons::tests` dual-wield tests; the left gun's `_LEFT` clips are
+`viewmodel::tests::the_left_gun_plays_its_own_slots`; the HUD's `dw | clip / stock` counter is
+`hud::ammo::tests::a_dual_wield_weapon_shows_both_clips`. The
 install-gated test `the_dual_wield_composite_loads_both_guns` in `zhbo-assets` composes each of the
 five DW pistols and asserts the composite adds the left gun's bones, vertices, surfaces and part
 over the base composite. Run it with

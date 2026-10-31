@@ -714,6 +714,29 @@
         let a = &sim.player(0).expect("the General is in first person").arsenal;
         assert_eq!(a.weapons[1].main.id, "fiveseven_dw_mp", "the secondary is the dual-wield weapon");
         assert_eq!(a.weapons[1].main.dual_wield_weapon, "fiveseven_lh_mp", "its def names the left gun");
+
+        // Through the event stream: swap to the pair, then the ADS button fires the left gun from
+        // its own magazine (BO2's left trigger) and the attack button the right gun.
+        let mut send = |sim: &mut Sim, held: u32, pressed: u32| {
+            sim.events.clear();
+            sim.input(0, 1, crate::input::FpsInput { held, pressed, ..Default::default() });
+            let f = sim.frame + 1;
+            sim.step(&host, f);
+            sim.events.iter().filter_map(|e| if let crate::sim::EventKind::Shot { left, .. } = e.kind { Some(left) } else { None }).collect::<Vec<bool>>()
+        };
+        send(&mut sim, 0, buttons::SWAP_WEAPON);
+        for _ in 0..120 {
+            send(&mut sim, 0, 0);
+        }
+        let full = sim.player(0).unwrap().arsenal.current().ammo;
+        assert_eq!(sim.player(0).unwrap().arsenal.current().left_ammo(), Some(full));
+        assert_eq!(send(&mut sim, buttons::ADS, buttons::ADS), vec![true], "the ADS button fires the left gun");
+        for _ in 0..30 {
+            send(&mut sim, 0, 0);
+        }
+        assert_eq!(send(&mut sim, buttons::FIRE, buttons::FIRE), vec![false], "the attack button fires the right gun");
+        let w = sim.player(0).unwrap().arsenal.current();
+        assert_eq!((w.ammo, w.left_ammo()), (full - 1, Some(full - 1)), "one round from each gun's own magazine");
         // (Other tests share the unresolved list; only this class's ids matter here.)
         let missing = crate::weapons::catalog::unresolved();
         assert!(!missing.iter().any(|id| id.contains("fiveseven")), "{missing:?}");
