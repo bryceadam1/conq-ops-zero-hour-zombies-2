@@ -220,6 +220,8 @@ pub struct Attachment {
     pub recoil_reduction: (f32, f32),
     /// `WeaponAttachment.perks`: the specialty bits the attachment grants (G1).
     pub perks: (u32, u32),
+    /// `PenetrateType` (the first non-zero wins, `FUN_008ecec0`).
+    pub penetrate_type: u32,
     /// `firstRaisePriority`: the first-raise slot's tie-break priority (G14 §5).
     pub first_raise_priority: i32,
     /// `bAltWeaponAdsOnly`: the alt-mode's ADS-only flag (G14 §5).
@@ -261,6 +263,7 @@ pub fn attachments(z: &Zone) -> Result<Vec<Attachment>, FormatError> {
                 clip_size: int(z, at + WA::iClipSize),
                 recoil_reduction: (z.f32(at + WA::fAdsRecoilReductionRate), z.f32(at + WA::fAdsRecoilReductionLimit)),
                 perks: (z.u32(at + WA::perks), z.u32(at + WA::perks + 4)),
+                penetrate_type: z.u32(at + WA::penetrateType),
                 first_raise_priority: z.u32(at + WA::firstRaisePriority) as i32,
                 alt_weapon_ads_only: z.u8(at + WA::bAltWeaponAdsOnly) != 0,
             })
@@ -488,6 +491,8 @@ pub struct Weapon {
     /// explosives leave it empty.
     pub explosion_effect: Option<crate::fx::Effect>,
     pub impact_type: u32,
+    /// `PenetrateType` (+0x24): 0 none, 1 small, 2 medium, 3 large.
+    pub penetrate_type: u32,
     /// `bounceSound`: one alias per BO2 surface (32, indexed by `materialSurfType_t`; empty where
     /// the def has none). A grenade's bounce event plays the cell for the surface it struck
     /// (t6mp `FUN_004c1590` event 0x47: `bounceSound[surface]`, then the impact table's
@@ -839,6 +844,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.ads_zoom_sound = opt_str(z, d + WD::adsZoomSound);
     w.fire_start_sound_player = opt_str(z, d + WD::fireStartSoundPlayer);
     w.impact_type = z.u32(d + WD::impactType);
+    w.penetrate_type = z.u32(d + WD::penetrateTWeaponAttachmentype);
     let bounce = z.u32(d + WD::bounceSound);
     w.bounce_sounds = if bounce == 0 { Vec::new() } else { (0..32).map(|i| opt_str(z, bounce + 4 * i)).collect() };
     w.projectile_activate_dist = int(z, d + WD::iProjectileActivateDist);

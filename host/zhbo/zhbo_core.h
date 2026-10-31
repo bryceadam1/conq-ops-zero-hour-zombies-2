@@ -230,6 +230,7 @@ typedef struct ZhboClientHit
 	int32_t  head;        /* the hit is in the head band */
 	int32_t  fatal;       /* the hit killed */
 	int32_t  impact_type; /* BO2's WeaponDef.impactType: the impact-table bucket */
+	int32_t  exit;        /* a penetrating round left a solid here: zhbo_impact_exit_fx's row */
 } ZhboClientHit;
 
 typedef struct ZhboClientOut
@@ -462,6 +463,10 @@ int32_t zhbo_viewmodel_fx(int32_t vm, char *flash, int32_t flash_cap, char *shel
 int32_t zhbo_impact_fx(int32_t impact_type, int32_t surface, int32_t head, int32_t fatal, char *out, int32_t cap);
 float zhbo_general_build_rate(void); /* a General's building speed, share of a dozer's */
 int32_t zhbo_check_requirements(char *msg, uint32_t cap);
+/* The exit cell for a penetrating round of `impact_type` leaving `surface` (BO2's impact flag 4:
+   the type's exit row), with the same fallbacks and return as zhbo_impact_fx. Needs the
+   ZHBO_ABI_VERSION bump with ZhboClientHit.exit. */
+int32_t zhbo_impact_exit_fx(int32_t impact_type, int32_t surface, int32_t head, int32_t fatal, char *out, int32_t cap);
 
 /* The native first-person viewmodel (Track R; nativevm/ffi.rs, CONTRACT.md "Native viewmodel").
    On by default; ZHBO_NATIVE_VIEWMODEL=0/false/no/off falls back to the W3D conversion. Each
@@ -555,8 +560,8 @@ void zhbo_native_body_reset(void);
 static_assert(sizeof(ZhboObjInfo) == 56, "ZhboObjInfo layout must match host.rs");
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
 static_assert(sizeof(ZhboClientIn) == 136, "ZhboClientIn layout must match client.rs");
-static_assert(sizeof(ZhboClientOut) == 4832, "ZhboClientOut layout must match client.rs");
-static_assert(sizeof(ZhboClientHit) == 40, "ZhboClientHit layout must match client.rs");
+static_assert(sizeof(ZhboClientOut) == 4864, "ZhboClientOut layout must match client.rs");
+static_assert(sizeof(ZhboClientHit) == 44, "ZhboClientHit layout must match client.rs");
 static_assert(sizeof(ZhboMenuIn) == 56, "ZhboMenuIn layout must match menu.rs");
 static_assert(sizeof(ZhboMenuOut) == 4108, "ZhboMenuOut layout must match menu.rs");
 static_assert(sizeof(ZhboLogicApi) == ZHBO_LOGIC_API_FIELDS * sizeof(void *), "ZhboLogicApi layout must match host.rs");

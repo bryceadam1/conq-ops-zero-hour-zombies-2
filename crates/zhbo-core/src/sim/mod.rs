@@ -17,7 +17,7 @@ mod hack;
 mod rts;
 
 pub use build::{placement, HostWorld, PLANT_DISTANCE};
-pub use fire::{gather_targets, throw_velocity, PENETRATION_DAMAGE};
+pub use fire::{gather_targets, throw_velocity};
 pub use rts::{RtsIcons, RtsState, RtsWeapons, Third};
 
 use crate::host::{damage_kind, geom, objflags, LogicHost, ObjInfo};
@@ -113,8 +113,9 @@ pub enum EventKind {
     Shot { origin: Vec3, end: Vec3 },
     /// One pellet landed on something (a miss emits nothing): where, the direction it was going,
     /// what it hit, and the shooting weapon's BO2 impact bucket. The client turns it into BO2's
-    /// impact FX (through `ZhboClientOut.hits`) and the surface's impact sound.
-    Impact { at: Vec3, dir: Vec3, surface: Surface, head: bool, fatal: bool, impact_type: i32 },
+    /// impact FX (through `ZhboClientOut.hits`) and the surface's impact sound. `exit`: the round
+    /// left a solid it penetrated here (BO2's impact flag 4: the type's exit row and family).
+    Impact { at: Vec3, dir: Vec3, surface: Surface, head: bool, fatal: bool, impact_type: i32, exit: bool },
     HitMarker { headshot: bool, kill: bool },
     /// A shot's view kick (G5: pitch up, yaw, roll -0.5 x yaw) and the gun kick spring's impulse
     /// (`weapons::recoil::GunKickSpring`).
@@ -274,6 +275,8 @@ pub struct Sim {
     /// Smoke screens: where, how wide, seconds left.
     pub smokes: Vec<(Vec3, f32, f32)>,
     pub tuning: MoveTuning,
+    /// BO2's bullet penetration table and dvars (`crate::penetration`, from the tuning pack).
+    pub penetration: crate::penetration::Penetration,
     pub frame: u32,
     pub events: Vec<Event>,
 }
@@ -292,6 +295,7 @@ impl Sim {
             equipment: Equipment::default(),
             smokes: Vec::new(),
             tuning: MoveTuning::default(),
+            penetration: crate::penetration::Penetration::default(),
             frame: 0,
             events: Vec::new(),
         }
@@ -302,6 +306,7 @@ impl Sim {
     pub fn with_tuning(t: &crate::tuning::Tuning) -> Self {
         let mut sim = Self::new();
         sim.tuning = MoveTuning::from_tuning(t);
+        sim.penetration = crate::penetration::Penetration::from_tuning(t);
         sim
     }
 
@@ -1597,6 +1602,84 @@ pub(crate) mod tests {
         // A type with no converted sounds keeps the fixed cues (an unconverted archive).
         assert_eq!(crate::sounds::impact_cue(79, Surface::Concrete), Some(crate::sounds::IMPACT));
         assert_eq!(crate::sounds::impact_cue(79, Surface::Flesh), Some(crate::sounds::IMPACT_FLESH));
+    }
+
+    /// A wall `thick` inches deep (enemy concrete) 40 units out and an enemy soldier 60 out behind
+    /// it; the General fires one aimed round of a flat-damage gun of `pen`, with FMJ's
+    /// `bulletpenetration` when `fmj`. Returns (wall damage, soldier damage, the round's events).
+    fn shoot_through_wall(pen: crate::penetration::Penetrate, fmj: bool, thick: f32) -> (f32, f32, Vec<EventKind>) {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.add(ObjInfo {
+            id: 2,
+            owner_player: 1,
+            flags: objflags::STRUCTURE,
+            geom_type: geom::BOX,
+            major_radius: crate::units::inches(thick) * 0.5,
+            minor_radius: 30.0,
+            height: 40.0,
+            health: 5000.0,
+            max_health: 5000.0,
+            pos: Vec3::new(40.0, 0.0, 0.0),
+            ..Default::default()
+        });
+        host.add(ObjInfo { health: 5000.0, max_health: 5000.0, ..soldier(3, 1, 60.0) });
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        wait_until_ready(&mut sim, &host);
+        let w = sim.players[0].as_mut().unwrap().arsenal.current_mut();
+        let mut def = w.def.clone();
+        def.penetrate = pen;
+        def.damage = [40.0; 6];
+        def.damage_range = [0.0; 6];
+        def.pellets = 1;
+        def.specialties = if fmj { crate::weapons::Specialties::of(&[Specialty::BulletPenetration]) } else { crate::weapons::Specialties::default() };
+        let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(def));
+        (w.def, w.main) = (def, def);
+        let pitch = -(4.0f32 / 60.0).atan();
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, pitch, ..Default::default() }, 20);
+        sim.events.clear();
+        host.damage_log.borrow_mut().clear();
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::FIRE, pitch, ..Default::default() }, 1);
+        let log = host.damage_log.borrow().clone();
+        let to = |id: u32| log.iter().filter(|d| d.1 == id).map(|d| d.2).sum::<f32>();
+        assert_eq!(log.iter().filter(|d| d.1 == 2).count(), 1, "one round on the wall: {log:?}");
+        (to(2), to(3), events(&sim))
+    }
+
+    /// BO2's penetration (`FUN_005d0350`): 4.5 in of concrete costs a medium round half its damage
+    /// (9 in deep), and the soldier behind takes the rest; the wall's far face plays the exit row.
+    #[test]
+    fn a_round_through_a_thin_wall_hits_the_soldier_behind_for_less() {
+        use crate::penetration::Penetrate;
+        let (wall, behind, ev) = shoot_through_wall(Penetrate::Medium, false, 4.5);
+        assert!(wall > 0.0 && (behind / wall - 0.5).abs() < 0.01, "wall {wall}, behind {behind}");
+        let exits: Vec<_> = ev.iter().filter_map(|k| match *k {
+            EventKind::Impact { at, surface, exit: true, .. } => Some((at, surface)),
+            _ => None,
+        }).collect();
+        // The soldier's 32 in through the middle spends the other half (64 in deep): no exit there.
+        assert_eq!(exits.len(), 1, "the wall's far face: {ev:?}");
+        assert_eq!(exits[0].1, Surface::Concrete);
+        assert!((exits[0].0.x - (40.0 + crate::units::inches(2.25))).abs() < 0.05, "{exits:?}");
+        let entries = ev.iter().filter(|k| matches!(k, EventKind::Impact { exit: false, .. })).count();
+        assert_eq!(entries, 2, "the wall and the soldier: {ev:?}");
+        // No penetration type: the wall takes it all.
+        let (_, behind, ev) = shoot_through_wall(Penetrate::None, false, 4.5);
+        assert_eq!(behind, 0.0);
+        assert!(!ev.iter().any(|k| matches!(k, EventKind::Impact { exit: true, .. })));
+    }
+
+    /// FMJ grants `bulletpenetration`: `perk_bulletPenetrationMultiplier` (2) doubles every depth,
+    /// so 7 in of concrete stops a small round (6 in) but not a small FMJ round (12 in).
+    #[test]
+    fn fmj_carries_a_round_through_a_wall_that_stops_it_without() {
+        use crate::penetration::Penetrate;
+        let (_, behind, _) = shoot_through_wall(Penetrate::Small, false, 7.0);
+        assert_eq!(behind, 0.0, "7 in is past a small round's 6 in");
+        let (wall, behind, _) = shoot_through_wall(Penetrate::Small, true, 7.0);
+        assert!((behind / wall - (1.0 - 7.0 / 12.0)).abs() < 0.01, "wall {wall}, behind {behind}");
     }
 
     #[test]

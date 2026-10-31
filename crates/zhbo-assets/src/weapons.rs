@@ -841,6 +841,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         impact_explode: w.projectile_impact_explode,
         // BO2's impact bucket: which `FxImpactTable` entry this weapon's hits use (R8d).
         impact_type: w.impact_type as i32,
+        penetrate: zhbo_core::penetration::Penetrate::from_bo2(w.penetrate_type),
         sticky,
         fx_weapon: String::new(),
         view_flash_fx: String::new(),

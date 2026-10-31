@@ -485,6 +485,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("ImpactType", "BO2's `impactType` (+40): the impact-table bucket (0: none).", FieldKind::Num,
         |d: &WeaponDef| d.impact_type.to_string(),
         |d: &mut WeaponDef, v: Values| { d.impact_type = v.text_num()? as i32; Ok(()) }),
+    field!("Penetrate", "BO2's penetration type: none, small, medium, large.", FieldKind::Enum,
+        |d: &WeaponDef| d.penetrate.name().into(),
+        |d: &mut WeaponDef, v: Values| { d.penetrate = crate::penetration::Penetrate::parse(v.text).ok_or("unknown penetration")?; Ok(()) }),
     field!("ViewFlashFx", "Zero Hour FXList for the first-person muzzle flash (`viewFlashEffect`).", FieldKind::Str,
         |d: &WeaponDef| d.view_flash_fx.clone(),
         |d: &mut WeaponDef, v: Values| { d.view_flash_fx = v.text.into(); Ok(()) }),
@@ -755,7 +758,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 94);
+        assert_eq!(WEAPON_FIELDS.len(), 95);
         assert_eq!(ATTACHMENT_FIELDS.len(), 17);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

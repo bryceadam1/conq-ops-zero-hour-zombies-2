@@ -73,6 +73,7 @@
                 head,
                 fatal,
                 impact_type: 2,
+                exit: false,
             },
         }
     }

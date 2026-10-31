@@ -185,6 +185,20 @@ pub fn trace_terrain(origin: Vec3, dir: Vec3, max_t: f32, ground: &dyn Fn(f32, f
     None
 }
 
+/// Whether `point` is inside the target's solid (on its surface counts).
+pub fn contains(target: &Target, point: Vec3) -> bool {
+    let o = point - target.pos;
+    match target.shape {
+        Shape::Sphere { radius } => (o - Vec3::new(0.0, 0.0, radius)).length() <= radius,
+        Shape::Cylinder { radius, height } => o.x * o.x + o.y * o.y <= radius * radius && (0.0..=height).contains(&o.z),
+        Shape::Box { half_x, half_y, height, yaw } => {
+            let (s, c) = yaw.sin_cos();
+            let (x, y) = (o.x * c + o.y * s, -o.x * s + o.y * c);
+            x.abs() <= half_x && y.abs() <= half_y && (0.0..=height).contains(&o.z)
+        }
+    }
+}
+
 /// Full trace: nearest of terrain and targets (skipping `ignore`).
 pub fn trace(
     origin: Vec3,
@@ -194,10 +208,24 @@ pub fn trace(
     ignore: u32,
     ground: &dyn Fn(f32, f32) -> f32,
 ) -> HitResult {
+    trace_where(origin, dir, range, targets, ignore, ground, &|_| true)
+}
+
+/// [`trace`] against the targets `keep` accepts: a penetrating round's trace onward from inside
+/// the solid it entered skips the solids it starts in, as a world trace leaving a brush does.
+pub fn trace_where(
+    origin: Vec3,
+    dir: Vec3,
+    range: f32,
+    targets: &[Target],
+    ignore: u32,
+    ground: &dyn Fn(f32, f32) -> f32,
+    keep: &dyn Fn(&Target) -> bool,
+) -> HitResult {
     let terrain_t = trace_terrain(origin, dir, range, ground);
     let limit = terrain_t.unwrap_or(range);
     let mut best: Option<(f32, &Target)> = None;
-    for t in targets.iter().filter(|t| t.id != ignore) {
+    for t in targets.iter().filter(|t| t.id != ignore && keep(t)) {
         if let Some(d) = ray_vs_target(origin, dir, limit, t) {
             if best.is_none_or(|(bd, _)| d < bd) {
                 best = Some((d, t));

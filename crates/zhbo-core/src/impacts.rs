@@ -140,25 +140,37 @@ pub struct Row {
     pub variant: Option<usize>,
     /// The converted Zero Hour FXList.
     pub fx: String,
+    /// An exit cell (`exit impact …`/`exit flesh …`): the type's exit row, which a penetrating
+    /// round plays where it leaves a solid (BO2's impact flag 4, `FUN_00533210`).
+    pub exit: bool,
+}
+
+/// A line's `exit` prefix: the rest of the line and whether it was there.
+fn exit_prefix(line: &str) -> (&str, bool) {
+    match line.strip_prefix("exit ") {
+        Some(rest) => (rest.trim_start(), true),
+        None => (line, false),
+    }
 }
 
 /// Read the converted table text: `impact <impactType> <surface> <fxlist>`,
-/// `flesh <impactType> <variant> <fxlist>`; `;` starts a comment. Malformed lines are skipped (the
-/// converter writes this file, and a bad row must not take the game down).
+/// `flesh <impactType> <variant> <fxlist>`, each optionally prefixed `exit` for the type's exit
+/// row; `;` starts a comment. Malformed lines are skipped (the converter writes this file, and a
+/// bad row must not take the game down).
 pub fn parse(text: &str) -> Vec<Row> {
     let mut rows = Vec::new();
     for line in text.lines() {
-        let line = line.split(';').next().unwrap_or("").trim();
+        let (line, exit) = exit_prefix(line.split(';').next().unwrap_or("").trim());
         let mut w = line.split_whitespace();
         match (w.next(), w.next(), w.next(), w.next(), w.next()) {
             (Some("impact"), Some(t), Some(s), Some(fx), None) => {
                 let (Ok(t), Some(surface)) = (t.parse(), Surface::parse(s)) else { continue };
-                rows.push(Row { impact_type: t, surface, variant: None, fx: fx.to_string() });
+                rows.push(Row { impact_type: t, surface, variant: None, fx: fx.to_string(), exit });
             }
             (Some("flesh"), Some(t), Some(v), Some(fx), None) => {
                 let (Ok(t), Ok(v)) = (t.parse(), v.parse::<usize>()) else { continue };
                 if v < 4 {
-                    rows.push(Row { impact_type: t, surface: Surface::Flesh, variant: Some(v), fx: fx.to_string() });
+                    rows.push(Row { impact_type: t, surface: Surface::Flesh, variant: Some(v), fx: fx.to_string(), exit });
                 }
             }
             _ => {}
@@ -171,15 +183,21 @@ pub fn parse(text: &str) -> Vec<Row> {
 /// default cell (BO2's `SURF_TYPE_DEFAULT` rule, `fx::impact`); for [`Surface::Flesh`] the blood
 /// variant `head << 1 | fatal`, falling back to body-nonfatal. `None` = nothing converted.
 pub fn find(rows: &[Row], impact_type: i32, surface: Surface, head: bool, fatal: bool) -> Option<&str> {
+    find_row(rows, impact_type, surface, head, fatal, false)
+}
+
+/// [`find`] in the type's exit cells (the same fallbacks).
+pub fn find_exit(rows: &[Row], impact_type: i32, surface: Surface, head: bool, fatal: bool) -> Option<&str> {
+    find_row(rows, impact_type, surface, head, fatal, true)
+}
+
+fn find_row(rows: &[Row], impact_type: i32, surface: Surface, head: bool, fatal: bool, exit: bool) -> Option<&str> {
+    let rows = || rows.iter().filter(move |r| r.impact_type == impact_type && r.exit == exit);
     if surface == Surface::Flesh {
         let variant = flesh_variant(head, fatal);
-        return [Some(variant), Some(0)].into_iter().flatten().find_map(|v| {
-            rows.iter()
-                .find(|r| r.impact_type == impact_type && r.variant == Some(v))
-                .map(|r| r.fx.as_str())
-        });
+        return [Some(variant), Some(0)].into_iter().flatten().find_map(|v| rows().find(|r| r.variant == Some(v)).map(|r| r.fx.as_str()));
     }
-    let cell = |s: Surface| rows.iter().find(|r| r.impact_type == impact_type && r.variant.is_none() && r.surface == s).map(|r| r.fx.as_str());
+    let cell = |s: Surface| rows().find(|r| r.variant.is_none() && r.surface == s).map(|r| r.fx.as_str());
     cell(surface).or_else(|| cell(Surface::Default))
 }
 
@@ -187,7 +205,7 @@ pub fn find(rows: &[Row], impact_type: i32, surface: Surface, head: bool, fatal:
 /// default-surface fallback): the grenade-bounce and dud rows, which BO2 reads cell by cell
 /// (`zhbo_formats::fx::GRENADE_BOUNCE`, `PROJECTILE_DUD`).
 pub fn find_cell(rows: &[Row], impact_type: i32, surface: Surface) -> Option<&str> {
-    rows.iter().find(|r| r.impact_type == impact_type && r.variant.is_none() && r.surface == surface).map(|r| r.fx.as_str())
+    rows.iter().find(|r| r.impact_type == impact_type && !r.exit && r.variant.is_none() && r.surface == surface).map(|r| r.fx.as_str())
 }
 
 /// One converted impact sound: the event a blast of `impact_type` on `surface` plays.
@@ -197,17 +215,20 @@ pub struct SoundRow {
     pub surface: Surface,
     /// The converted AudioEvent (`ZHBO_BO2_Snd_<family>_<surface>`).
     pub event: String,
+    /// An exit cell (`exit sound …`): the type's exit family.
+    pub exit: bool,
 }
 
-/// The `sound <impactType> <surface> <event>` rows of the converted table (malformed ones skipped).
+/// The `sound <impactType> <surface> <event>` rows of the converted table, `exit`-prefixed ones
+/// for the exit family (malformed ones skipped).
 pub fn parse_sounds(text: &str) -> Vec<SoundRow> {
     let mut rows = Vec::new();
     for line in text.lines() {
-        let line = line.split(';').next().unwrap_or("").trim();
+        let (line, exit) = exit_prefix(line.split(';').next().unwrap_or("").trim());
         let mut w = line.split_whitespace();
         if let (Some("sound"), Some(t), Some(s), Some(event), None) = (w.next(), w.next(), w.next(), w.next(), w.next()) {
             if let (Ok(t), Some(surface)) = (t.parse(), Surface::parse(s)) {
-                rows.push(SoundRow { impact_type: t, surface, event: event.to_string() });
+                rows.push(SoundRow { impact_type: t, surface, event: event.to_string(), exit });
             }
         }
     }
@@ -242,21 +263,41 @@ fn table() -> &'static RwLock<Vec<Row>> {
 /// table is installed once per archive load) so a cue can name them like every other sound.
 type SoundCell = (i32, Surface, &'static str);
 static SOUNDS: OnceLock<RwLock<Vec<SoundCell>>> = OnceLock::new();
+static EXIT_SOUNDS: OnceLock<RwLock<Vec<SoundCell>>> = OnceLock::new();
 
 fn sounds() -> &'static RwLock<Vec<SoundCell>> {
     SOUNDS.get_or_init(|| RwLock::new(Vec::new()))
+}
+
+fn exit_sounds() -> &'static RwLock<Vec<SoundCell>> {
+    EXIT_SOUNDS.get_or_init(|| RwLock::new(Vec::new()))
 }
 
 /// Install the converted table (`Data\ConquerOps\impacts.txt`); returns the row count (FX and
 /// sound cells).
 pub fn install(text: &str) -> usize {
     let rows = parse(text);
-    let cells: Vec<SoundCell> =
-        parse_sounds(text).into_iter().map(|r| (r.impact_type, r.surface, &*Box::leak(r.event.into_boxed_str()))).collect();
-    let n = rows.len() + cells.len();
+    let (exits, entries): (Vec<SoundRow>, Vec<SoundRow>) = parse_sounds(text).into_iter().partition(|r| r.exit);
+    let leak = |v: Vec<SoundRow>| -> Vec<SoundCell> { v.into_iter().map(|r| (r.impact_type, r.surface, &*Box::leak(r.event.into_boxed_str()))).collect() };
+    let (cells, exit_cells) = (leak(entries), leak(exits));
+    let n = rows.len() + cells.len() + exit_cells.len();
     *table().write().unwrap_or_else(|e| e.into_inner()) = rows;
     *sounds().write().unwrap_or_else(|e| e.into_inner()) = cells;
+    *exit_sounds().write().unwrap_or_else(|e| e.into_inner()) = exit_cells;
     n
+}
+
+/// The converted exit sound of `impact_type` on `surface` (`None`: no cell; BO2's exit family,
+/// `<family>_exit_<surface>`, played where a penetrating round leaves a solid).
+pub fn exit_sound_name(impact_type: i32, surface: Surface) -> Option<&'static str> {
+    let cells = exit_sounds().read().unwrap_or_else(|e| e.into_inner());
+    find_sound(&cells, impact_type, surface).copied()
+}
+
+/// The converted exit FXList for a penetrating round leaving a solid ([`find_exit`]).
+pub fn exit_fx_name(impact_type: i32, surface: Surface, head: bool, fatal: bool) -> Option<String> {
+    let rows = table().read().unwrap_or_else(|e| e.into_inner());
+    find_exit(&rows, impact_type, surface, head, fatal).map(str::to_string)
 }
 
 /// The converted sound event for a blast of `impact_type` on `surface` (`None`: no cell).
@@ -302,6 +343,10 @@ impact 6 default FX_BOUNCE_DEFAULT
 impact 11 concrete FX_DUD_C
 sound 2 concrete DUD_HIT_C
 sound 2 dirt NONE
+exit impact 78 concrete FX_EXIT_C
+exit flesh 78 0 FX_EXIT_BLOOD
+exit sound 78 concrete EXIT_CONCRETE
+exit sound 78 flesh NONE
 ";
 
 #[cfg(test)]
@@ -346,6 +391,20 @@ garbage line
         assert_eq!(find(&rows, 2, Surface::Flesh, false, false), Some("ZHBO_BO2FX_b2_flesh_body"));
         assert_eq!(find(&rows, 2, Surface::Flesh, true, true), Some("ZHBO_BO2FX_b2_flesh_head_fatal"));
         assert_eq!(find(&rows, 2, Surface::Flesh, true, false), Some("ZHBO_BO2FX_b2_flesh_body"));
+    }
+
+    #[test]
+    fn exit_cells_are_their_own_row() {
+        let text = "impact 2 concrete ENTRY_C\nexit impact 2 concrete EXIT_C\nexit impact 2 default EXIT_D\nexit flesh 2 1 EXIT_FATAL\nexit sound 2 concrete SND_EXIT\nsound 2 concrete SND_ENTRY\n";
+        let rows = parse(text);
+        assert_eq!(find(&rows, 2, Surface::Concrete, false, false), Some("ENTRY_C"));
+        assert_eq!(find_exit(&rows, 2, Surface::Concrete, false, false), Some("EXIT_C"));
+        // The exit row's own default cell, never the entry row's.
+        assert_eq!(find_exit(&rows, 2, Surface::Metal, false, false), Some("EXIT_D"));
+        assert_eq!(find(&rows, 2, Surface::Metal, false, false), None);
+        assert_eq!(find_exit(&rows, 2, Surface::Flesh, false, true), Some("EXIT_FATAL"));
+        let sounds = parse_sounds(text);
+        assert_eq!(sounds.iter().map(|r| (r.event.as_str(), r.exit)).collect::<Vec<_>>(), [("SND_EXIT", true), ("SND_ENTRY", false)]);
     }
 
     #[test]

@@ -201,6 +201,8 @@ pub struct ClientHit {
     pub fatal: i32,
     /// BO2's `WeaponDef.impactType`: the impact-table bucket.
     pub impact_type: i32,
+    /// The round left a solid it penetrated here: the type's exit row (`zhbo_impact_exit_fx`).
+    pub exit: i32,
 }
 
 #[repr(C)]
@@ -1108,13 +1110,21 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 }
                 // A pellet landed: BO2's impact FX (the bridge plays it from `ClientOut.hits`) and
                 // the impact table's sound for the gun's type and the surface here (`sounds::impact_cue`).
-                EventKind::Impact { at, dir, surface, head, fatal, impact_type } => {
-                    if let Some(cue) = sounds::impact_cue(impact_type, surface) {
+                EventKind::Impact { at, dir, surface, head, fatal, impact_type, exit } => {
+                    let cue = if exit { sounds::exit_cue(impact_type, surface) } else { sounds::impact_cue(impact_type, surface) };
+                    if let Some(cue) = cue {
                         self.cues.play_at(cue, at);
                     }
                     if self.hits_len < CLIENT_HITS {
-                        self.hits[self.hits_len] =
-                            ClientHit { point: at, dir, surface: surface as i32, head: head as i32, fatal: fatal as i32, impact_type };
+                        self.hits[self.hits_len] = ClientHit {
+                            point: at,
+                            dir,
+                            surface: surface as i32,
+                            head: head as i32,
+                            fatal: fatal as i32,
+                            impact_type,
+                            exit: exit as i32,
+                        };
                         self.hits_len += 1;
                     }
                 }

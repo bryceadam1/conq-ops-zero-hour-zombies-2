@@ -28,6 +28,7 @@ pub mod menu;
 pub mod names;
 pub mod nativebody;
 pub mod nativevm;
+pub mod penetration;
 pub mod movement;
 pub mod profile;
 pub mod projectiles;

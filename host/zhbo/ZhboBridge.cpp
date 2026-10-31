@@ -719,7 +719,9 @@ static void applyClientOutput(Bool focused, Bool menuUp)
 	{
 		const ZhboClientHit &hit = s_out.hits[i];
 		char name[128] = "";
-		if (!zhbo_impact_fx(hit.impact_type, hit.surface, hit.head, hit.fatal, name, (int32_t)sizeof(name)) || !name[0])
+		const int32_t found = hit.exit ? zhbo_impact_exit_fx(hit.impact_type, hit.surface, hit.head, hit.fatal, name, (int32_t)sizeof(name))
+		                               : zhbo_impact_fx(hit.impact_type, hit.surface, hit.head, hit.fatal, name, (int32_t)sizeof(name));
+		if (!found || !name[0])
 		{
 			++s_impactMissing;
 			continue;

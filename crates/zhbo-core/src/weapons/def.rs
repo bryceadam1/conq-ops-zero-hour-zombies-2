@@ -193,6 +193,10 @@ pub struct WeaponDef {
     /// BO2's `WeaponDef.impactType` (+40): the impact-table bucket an impact-table lookup uses
     /// (`crates/zhbo-core/src/impacts.rs`); 0 when BO2 has none.
     pub impact_type: i32,
+    /// BO2's `PenetrateType` (+0x24): how far the round goes through surfaces
+    /// ([`crate::penetration`]). No MP attachment sets one (`FUN_008ecec0`'s first-non-none walk
+    /// finds none), so a combination keeps its base's.
+    pub penetrate: crate::penetration::Penetrate,
     pub sticky: bool,
     /// Zero Hour assets made for this weapon by the converter (empty when absent).
     pub fx_weapon: String,
@@ -462,6 +466,7 @@ impl Default for WeaponDef {
             projectile_gravity: true,
             impact_explode: false,
             impact_type: 0,
+            penetrate: crate::penetration::Penetrate::None,
             sticky: false,
             fx_weapon: String::new(),
             explosion_fx: String::new(),
