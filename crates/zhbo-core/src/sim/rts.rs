@@ -544,7 +544,7 @@ mod tests {
         let r = sim.rts_ammo(1);
         assert_eq!((r.orders, r.lethal), (0b111, arsenal(&mut sim).lethal.count as i32));
         arsenal(&mut sim).lethal.count = 0;
-        let black_hat: &'static WeaponDef = Box::leak(Box::new(WeaponDef { id: "pda_hack_mp".into(), class: Class::Tactical, place: Place::Hack, ..Default::default() }));
+        let black_hat: &'static WeaponDef = Box::leak(Box::new(WeaponDef { id: "pda_hack_mp".into(), class: Class::Tactical, place: Place::Hack, hold_use: true, ..Default::default() }));
         arsenal(&mut sim).tactical = Offhand { def: black_hat, count: 1 };
         assert_eq!(sim.rts_ammo(1).orders, 1 << Third::Melee.wire(), "no lethals left, and the Black Hat needs first person");
     }

@@ -4728,3 +4728,58 @@ instead; the mod has no lunge.)
 * The table gains a field: the archive VERSION must bump (integrator).
 
 Measured: weapons 781,587 → 769,983 (`melee_delay` 11,604 → 0); cac 572; gap clusters 204 → 203.
+
+## Offhands run BO2's offhand states; equipment is not a weapon you switch to (2026-10-31, `v1/equipment-use`)
+
+The conformance's `inventory` item / `weap_type` grenade rows on the six placed items read like
+"switch to the item and fire it". BO2's engine says otherwise (read-only Ghidra, t6mp; raw in
+`~/.opencode/plan/equipment-use/`): the frag and special-grenade buttons (`FUN_008e2bb0`) take the
+first/second offhand-slot 1..3 weapon in the inventory (`FUN_008de050`) — grenade or equipment alike;
+"Only grenades and mines are currently supported for off hand use" — and run the offhand states;
+`inventoryType` item (2) is read by no bg code (only a client HUD path, `FUN_005efeb0`). The states:
+
+* 0x16 start (`FUN_008dcb70`) → `FUN_008e2710`: a `hasDetonator` item with no ammo enters the
+  detonator, 0x19 (weaponTime `iDetonateTime`, weaponDelay `iDetonateDelay`; the delay fires the
+  detonate, the end is simply ready, `FUN_008dcd20` → `FUN_008dc9d0`, no raise); otherwise the
+  pull-back, 0x17, for `iHoldFireTime`.
+* 0x17 ends → 0x1a held (`FUN_008e28a0`), which also sets the fuse (`ps+0x60 = fuseTime`); the fuse
+  burns in plain ms (`FUN_008e2e40`, cook-off at 0).
+* 0x1a (`FUN_008e28e0`): held while the button is; on the release an `isHoldUseGrenade` item (the
+  Black Hat) is put away in its `quickDropTime` (`FUN_008dcb00`), anything else enters 0x18 with
+  weaponTime `iFireTime` and weaponDelay `iFireDelay`; the delay's end throws it (`FUN_008e2ac0`,
+  ammo −1).
+* 0x1b (`FUN_008dcbe0`) → 0x1d: the HELD weapon's `quickRaiseTime`, then ready. 0x16–0x1d all tick
+  at `fasttoss`/`fastequipmentuse` (G3); a new offhand may start during 0x1d.
+
+The mod had a hand-written 0.35 s pull-back and 0.45 s throw, the item leaving on the release, then
+the gun's full raise at the switch rate, and C4's detonator keyed on a sticky/thrown/equipment proxy.
+
+* Core: `WeaponDef::hold_fire_time`, `fire_delay`, `detonate_time`, `detonate_delay`,
+  `has_detonator`, `hold_use` (table field `Offhand`, from `iHoldFireTime`, `iFireDelay`,
+  `iDetonateTime`, `iDetonateDelay`, `hasDetonator`, `isHoldUseGrenade`; zhbo-formats now reads those
+  plus `offhandSlot`, `holdButtonToThrow`, `offhandHoldIsCancelable`, `plantable`, and
+  `zhbo-assets weapons <id> --more` prints them). `OffhandUse` is the state machine: `Holding`
+  (0x17/0x1a), `Throwing` (0x18, `fired` at `fire_delay`), `Dropping` (hold-use put-away),
+  `Detonating` (0x19), `Raising` (0x1d). `OFFHAND_PULLBACK`/`OFFHAND_THROW` are gone. The cooking
+  fuse burns from the end of the pull-back until the grenade leaves the hand.
+* Viewmodel: the item's own `HOLD_FIRE` then `FIRE`, the detonator's `DETONATE` (slot 0x3a, the C4's
+  `viewmodel_c4_t6_detonator_fire`), a hold-use item's `QUICK_DROP`, then the held gun's own
+  `QUICK_RAISE`.
+* Conformance actual: `weap_type` is `grenade` for every offhand (they all run the one offhand state
+  machine, BO2's grenade path — the old `mine` for planted items was the mod's own label);
+  `hold_fire_time`/`fire_delay` for offhands, `detonate_time` for detonator items. `inventory` stays
+  `offhand`: BO2's `item` changes nothing the mod could do differently.
+* `conformance::check` now times the pull-back + delay to the item leaving the hand, the fuse, the
+  gun back after `fire_time` + its quick raise, the hold-use put-away, and the detonator.
+  Fake-host tests: `a_claymore_pulls_back_is_set_down_on_the_release_and_the_gun_comes_back`
+  (deterministic replay), `the_c4_button_with_none_left_is_the_detonator`; stand-in C4
+  (`satchel_charge_mp`, generic times).
+* Not done: 0x16 keeps the current state's leftover weaponTime (an offhand pressed mid-raise or
+  mid-shot waits it out in BO2; the mod starts at once); `offhandHoldIsCancelable`'s cancel
+  button; `plantable`'s placement trace (`FUN_008e1780`, event 0xd5 "can't plant here"). BO2's
+  `sensor_grenade_mp` is offhand slot 3 (fastequipmentuse) while the mod's class makes it tactical.
+* The table gains a field: the archive VERSION must bump (integrator).
+
+Measured (conformance CLI vs `v1/equipment-melee` conf3): weapons 769,983 → 769,947
+(`weap_type` 5 → 0, `hold_fire_time` 11,604 → 11,589, `fire_delay` 620 → 605, `detonate_time`
+11,604 → 11,603); cac 572; gap clusters 203 → 202. `inventory` stays 6 (above).

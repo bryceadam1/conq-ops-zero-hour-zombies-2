@@ -304,6 +304,8 @@ Weapon frag_grenade_mp
   Effect = explode
   ExplosionFx = FX_BoobyTrapExplosion
   Fuse = 3.5 1
+  ; Generic offhand states: pull-back, release-to-throw delay (no detonator).
+  Offhand = 0.5 0.1 0 0 0 0
   Explosion = 42 0 150 50
   Projectile = 225 50 1 0 0
   Viewmodel = 2
@@ -322,10 +324,31 @@ Weapon claymore_mp
   Effect = explode
   Fuse = 3.5 0
   Explosion = 42 0 150 50
+  Offhand = 0.2 0.15 0 0 0 0
   Projectile = 0 0 0 1 0
   Viewmodel = 2
   Place = plant
   Equipment = claymore
+End
+
+; C4 (BO2's `satchel_charge_mp`): thrown and stuck; with none left in hand its button is the
+; detonator (`hasDetonator`). Generic offhand times.
+Weapon satchel_charge_mp
+  DisplayName = C4
+  Class = equipment
+  CacSlot = primarygrenade
+  Fire = semi
+  FireTime = 0.6
+  Clip = 2
+  StartReserve = 2
+  MaxReserve = 2
+  Effect = explode
+  Fuse = 3.5 0
+  Offhand = 0.1 0.15 0.5 0.2 1 0
+  Explosion = 42 0 150 50
+  Projectile = 100 0 1 0 1
+  Viewmodel = 2
+  Equipment = c4
 End
 
 Weapon concussion_grenade_mp
@@ -340,6 +363,7 @@ Weapon concussion_grenade_mp
   Effect = stun
   ExplosionFx = WeaponFX_RangerFlashBangGrenadeDetonation
   Fuse = 1.5 0
+  Offhand = 0.5 0.1 0 0 0 0
   Explosion = 67 0 4 2
   Projectile = 225 50 1 0 0
   Viewmodel = 3
@@ -356,6 +380,7 @@ Weapon trophy_system_mp
   Clip = 1
   StartReserve = 1
   MaxReserve = 1
+  Offhand = 0.5 0.1 0 0 0 0
   Projectile = 0 0 0 1 0
   Viewmodel = 3
   Place = plant

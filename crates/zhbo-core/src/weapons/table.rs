@@ -463,6 +463,14 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             (d.fuse_time, d.cook) = (v.num(0), v.flag(1));
             Ok(())
         }),
+    field!("Offhand", "Offhand states: pull-back, release-to-throw delay, detonate time, detonate delay, has detonator, hold use.", FieldKind::Nums(6),
+        |d: &WeaponDef| format!("{} {} {} {} {} {}", d.hold_fire_time, d.fire_delay, d.detonate_time, d.detonate_delay, d.has_detonator as u8, d.hold_use as u8),
+        |d: &mut WeaponDef, v: Values| {
+            v.need(6)?;
+            (d.hold_fire_time, d.fire_delay, d.detonate_time, d.detonate_delay) = (v.num(0), v.num(1), v.num(2), v.num(3));
+            (d.has_detonator, d.hold_use) = (v.flag(4), v.flag(5));
+            Ok(())
+        }),
     field!("Explosion", "Blast radius, inner radius, inner damage, outer damage.", FieldKind::Nums(4),
         |d: &WeaponDef| format!("{} {} {} {}", d.explosion_radius, d.explosion_radius_min, d.explosion_inner_damage, d.explosion_outer_damage),
         |d: &mut WeaponDef, v: Values| {
@@ -724,7 +732,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 83);
+        assert_eq!(WEAPON_FIELDS.len(), 84);
         assert_eq!(ATTACHMENT_FIELDS.len(), 18);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

@@ -233,21 +233,43 @@ pub enum RaiseKind {
     Alt,
 }
 
-/// Offhand use in progress.
+/// Offhand use in progress: BO2's offhand states 0x16-0x1d (Ghidra `FUN_008e2bb0` starts them for
+/// any offhand-slot weapon, grenade or equipment alike; MODLOG "Offhands run BO2's offhand states").
+/// Every `t` is weapon time, which runs at `fasttoss`/`fastequipmentuse`'s rate (G3).
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum OffhandUse {
-    /// Pin pulled / wound up and held (`cooked` seconds of fuse used for cooking grenades).
+    /// The pull-back (state 0x17, the item's `hold_fire_time`), then held (0x1a) for as long as
+    /// the button is (`FUN_008e28e0`). A cooking grenade's fuse burns from the end of the pull-back.
     Holding { lethal: bool, held_for: f32 },
-    /// Released: the throw plays out before the weapon comes back.
-    Throwing { lethal: bool, t: f32 },
+    /// Released (0x18, `FUN_008e2ac0`): the item leaves the hand at its `fire_delay` (`fired`),
+    /// the state lasts its `fire_time`.
+    Throwing { lethal: bool, t: f32, fired: bool },
+    /// A `hold_use` item (the Black Hat) put away in its `quick_drop_time` (`FUN_008dcb00`).
+    Dropping { lethal: bool, t: f32 },
+    /// The detonator (0x19, `FUN_008e2710`/`FUN_008dcd20`): a `has_detonator` item's button with
+    /// none left in hand; the charges go off at `detonate_delay`, the state lasts `detonate_time`
+    /// and the held weapon is simply back (no raise).
+    Detonating { lethal: bool, t: f32, fired: bool },
+    /// The held weapon back up in its `quick_raise_time` (0x1d, `FUN_008dcbe0`), still at the
+    /// offhand's rate; another offhand may start now (`FUN_008e2bb0` allows 0x1d).
+    Raising { lethal: bool, t: f32 },
+}
+
+impl OffhandUse {
+    /// Whether the lethal slot's item (else the tactical's) is the one in use.
+    pub fn lethal(self) -> bool {
+        match self {
+            OffhandUse::Holding { lethal, .. }
+            | OffhandUse::Throwing { lethal, .. }
+            | OffhandUse::Dropping { lethal, .. }
+            | OffhandUse::Detonating { lethal, .. }
+            | OffhandUse::Raising { lethal, .. } => lethal,
+        }
+    }
 }
 
 /// A second reload press within this many seconds sets off C4.
 pub const DETONATE_DOUBLE_TAP: f32 = 0.35;
-
-/// Seconds of BO2's offhand pull-back before a throw can leave the hand, and the throw itself.
-pub const OFFHAND_PULLBACK: f32 = 0.35;
-pub const OFFHAND_THROW: f32 = 0.45;
 
 /// BO2 melee: a lunge up to this range (inches 64 plus the lunge), one hit on infantry.
 
@@ -446,13 +468,7 @@ impl Arsenal {
     /// use, the melee weapon while meleeing, else the weapon up.
     pub fn current_weapon(&self) -> &'static WeaponDef {
         match self.offhand {
-            Some(OffhandUse::Holding { lethal, .. }) | Some(OffhandUse::Throwing { lethal, .. }) => {
-                if lethal {
-                    self.lethal.def
-                } else {
-                    self.tactical.def
-                }
-            }
+            Some(u) => self.offhand_def(u.lethal()),
             None if self.melee_left > 0.0 => self.melee_weapon(),
             None => self.current().def,
         }
@@ -494,8 +510,8 @@ impl Arsenal {
     /// `rate / mult`); 1 at rest. The clip times the viewmodel reads are already in weapon time,
     /// so this is for anything timed against the wall clock.
     pub fn anim_rate(&self) -> f32 {
-        let family = if let Some(OffhandUse::Holding { lethal, .. } | OffhandUse::Throwing { lethal, .. }) = self.offhand {
-            Some(self.offhand_timing(lethal))
+        let family = if let Some(u) = self.offhand {
+            Some(self.offhand_timing(u.lethal()))
         } else if self.melee_left > 0.0 {
             Some(Timing::Melee)
         } else if self.drop_left > 0.0 || self.raise_left > 0.0 {
@@ -510,8 +526,17 @@ impl Arsenal {
         family.map_or(1.0, |f| 1.0 / self.multiplier(f))
     }
 
+    /// The item in the lethal or the tactical slot.
+    pub fn offhand_def(&self, lethal: bool) -> &'static WeaponDef {
+        if lethal {
+            self.lethal.def
+        } else {
+            self.tactical.def
+        }
+    }
+
     fn offhand_timing(&self, lethal: bool) -> Timing {
-        let def = if lethal { self.lethal.def } else { self.tactical.def };
+        let def = self.offhand_def(lethal);
         if def.class == Class::Equipment {
             Timing::Equipment
         } else {
@@ -895,97 +920,142 @@ impl Arsenal {
         }
     }
 
-    /// Lethal (G) and tactical (Q) use. Returns whether it owns this frame.
+    /// Lethal (G) and tactical (Q) use: BO2's offhand states (see [`OffhandUse`]). Returns whether
+    /// it owns this frame.
     fn step_offhand(&mut self, held: u32, pressed: u32, released: u32, out: &mut Vec<WeaponAction>) -> bool {
-        match self.offhand {
-            None => {
-                let lethal = pressed & buttons::LETHAL != 0;
-                let tactical = pressed & buttons::TACTICAL != 0;
-                // BO2 lets an offhand interrupt a raise, not a swap's put-away or a melee.
-                if !(lethal || tactical) || self.drop_left > 0.0 || self.melee_left > 0.0 {
-                    return false;
+        // A new offhand may start from rest or while the gun comes back up after one (0x1d).
+        if matches!(self.offhand, None | Some(OffhandUse::Raising { .. })) && self.start_offhand(pressed, out) {
+            return true;
+        }
+        let Some(use_) = self.offhand else { return false };
+        let lethal = use_.lethal();
+        let def = self.offhand_def(lethal);
+        let tick = self.tick(self.offhand_timing(lethal));
+        match use_ {
+            OffhandUse::Holding { held_for, .. } => {
+                let held_for = held_for + tick;
+                let pulled_back = held_for >= def.hold_fire_time - 1e-6;
+                // The fuse is set when the pull-back ends (`FUN_008e28a0`) and burns in plain time
+                // (`FUN_008e2e40`).
+                if pulled_back {
+                    self.cooked += LOGIC_DT;
                 }
-                let slot = if lethal { &self.lethal } else { &self.tactical };
-                if slot.count == 0 {
-                    // Out of C4 in hand: the button is the detonator.
-                    if slot.def.sticky && slot.def.place == Place::Throw && slot.def.class == Class::Equipment {
-                        out.push(WeaponAction::Detonate);
-                    }
-                    return false;
-                }
-                let w = self.current_mut();
-                w.reload = None;
-                w.burst_left = 0;
-                self.ads = 0.0;
-                self.offhand = Some(OffhandUse::Holding { lethal, held_for: 0.0 });
-                self.cooked = 0.0;
-                out.push(WeaponAction::OffhandReady { lethal });
-                true
-            }
-            Some(OffhandUse::Holding { lethal, held_for }) => {
-                let held_for = held_for + self.tick(self.offhand_timing(lethal));
-                self.cooked += LOGIC_DT;
-                let button = if lethal { buttons::LETHAL } else { buttons::TACTICAL };
-                let def = if lethal { self.lethal.def } else { self.tactical.def };
-                let fuse_left = if def.cook { def.fuse_time - self.cooked } else { def.fuse_time };
-                if def.cook && fuse_left <= 0.0 {
+                if def.cook && def.fuse_time - self.cooked <= 0.0 {
                     // Cooked too long.
                     self.use_offhand(lethal);
-                    self.offhand = Some(OffhandUse::Throwing { lethal, t: 0.0 });
+                    self.offhand = Some(OffhandUse::Throwing { lethal, t: def.fire_delay, fired: true });
                     out.push(WeaponAction::CookedOff { def });
                     return true;
                 }
+                let button = if lethal { buttons::LETHAL } else { buttons::TACTICAL };
                 let let_go = released & button != 0 || held & button == 0;
-                if def.place == Place::Hack {
-                    // The Black Hat stays up while held; the logic works out what it is aimed at.
-                    if let_go {
-                        self.offhand = Some(OffhandUse::Throwing { lethal, t: 0.0 });
-                    } else {
-                        self.offhand = Some(OffhandUse::Holding { lethal, held_for });
-                    }
-                } else if let_go && held_for >= OFFHAND_PULLBACK {
-                    self.use_offhand(lethal);
-                    self.offhand = Some(OffhandUse::Throwing { lethal, t: 0.0 });
-                    out.push(match def.place {
-                        Place::Plant => WeaponAction::Plant { def },
-                        _ => WeaponAction::Throw { def, fuse_left },
-                    });
+                self.offhand = Some(if !pulled_back || !let_go {
+                    OffhandUse::Holding { lethal, held_for }
+                } else if def.hold_use {
+                    OffhandUse::Dropping { lethal, t: 0.0 }
                 } else {
-                    self.offhand = Some(OffhandUse::Holding { lethal, held_for });
+                    OffhandUse::Throwing { lethal, t: 0.0, fired: false }
+                });
+                // An item with no delay leaves the hand on the release.
+                if let Some(OffhandUse::Throwing { t, fired: false, .. }) = self.offhand {
+                    self.step_throw(lethal, t, out);
                 }
-                true
             }
-            Some(OffhandUse::Throwing { lethal, t }) => {
-                let t = t + self.tick(self.offhand_timing(lethal));
-                if t >= OFFHAND_THROW {
+            OffhandUse::Throwing { t, .. } => self.step_throw(lethal, t + tick, out),
+            OffhandUse::Dropping { t, .. } => {
+                let t = t + tick;
+                self.offhand = Some(if t >= def.quick_drop_time { OffhandUse::Raising { lethal, t: 0.0 } } else { OffhandUse::Dropping { lethal, t } });
+            }
+            OffhandUse::Detonating { t, fired, .. } => {
+                let t = t + tick;
+                let fired = fired || {
+                    let due = t >= def.detonate_delay - 1e-6;
+                    if due {
+                        out.push(WeaponAction::Detonate);
+                    }
+                    due
+                };
+                // The detonate state ends with the held weapon simply ready (`FUN_008dc9d0`).
+                self.offhand = if t >= def.detonate_time.max(def.detonate_delay) { None } else { Some(OffhandUse::Detonating { lethal, t, fired }) };
+            }
+            OffhandUse::Raising { t, .. } => {
+                let t = t + tick;
+                if t >= self.current().def.quick_raise_time {
                     self.offhand = None;
-                    let d = self.current().def;
-                    (self.raise_left, self.raise_kind) = (d.raise_time, RaiseKind::Normal);
-                    self.raise_total = self.raise_left;
                 } else {
-                    self.offhand = Some(OffhandUse::Throwing { lethal, t });
+                    self.offhand = Some(OffhandUse::Raising { lethal, t });
                 }
-                true
             }
         }
+        true
+    }
+
+    /// The release state at `t`: the item leaves the hand at its `fire_delay` (its count goes down
+    /// then, `FUN_008e2ac0`), and the held weapon starts back up after its `fire_time`.
+    fn step_throw(&mut self, lethal: bool, t: f32, out: &mut Vec<WeaponAction>) {
+        let def = self.offhand_def(lethal);
+        let fired = matches!(self.offhand, Some(OffhandUse::Throwing { fired: true, .. }));
+        if !fired && t >= def.fire_delay - 1e-6 {
+            self.use_offhand(lethal);
+            let fuse_left = if def.cook { def.fuse_time - self.cooked } else { def.fuse_time };
+            out.push(match def.place {
+                Place::Plant => WeaponAction::Plant { def },
+                _ => WeaponAction::Throw { def, fuse_left },
+            });
+        } else if !fired && def.cook {
+            // Still in the hand: the fuse burns on.
+            self.cooked += LOGIC_DT;
+        }
+        let fired = fired || t >= def.fire_delay - 1e-6;
+        self.offhand = Some(if t >= def.fire_time.max(def.fire_delay) - 1e-6 {
+            self.raise_left = 0.0;
+            OffhandUse::Raising { lethal, t: 0.0 }
+        } else {
+            OffhandUse::Throwing { lethal, t, fired }
+        });
+    }
+
+    /// The offhand buttons (`FUN_008e2bb0`): the slot's item starts its pull-back, or, a
+    /// `has_detonator` item with none left in hand, its detonator. Returns whether one started.
+    fn start_offhand(&mut self, pressed: u32, out: &mut Vec<WeaponAction>) -> bool {
+        let lethal = pressed & buttons::LETHAL != 0;
+        let tactical = pressed & buttons::TACTICAL != 0;
+        // BO2 lets an offhand interrupt a raise, not a swap's put-away or a melee.
+        if !(lethal || tactical) || self.drop_left > 0.0 || self.melee_left > 0.0 {
+            return false;
+        }
+        let slot = if lethal { &self.lethal } else { &self.tactical };
+        let detonate = slot.count == 0 && slot.def.has_detonator;
+        if slot.count == 0 && !detonate {
+            return false;
+        }
+        let w = self.current_mut();
+        w.reload = None;
+        w.burst_left = 0;
+        self.ads = 0.0;
+        self.cooked = 0.0;
+        if detonate {
+            self.offhand = Some(OffhandUse::Detonating { lethal, t: 0.0, fired: false });
+        } else {
+            self.offhand = Some(OffhandUse::Holding { lethal, held_for: 0.0 });
+            out.push(WeaponAction::OffhandReady { lethal });
+        }
+        true
     }
 
     /// The Black Hat is up and aimed (seconds held), if it is.
     pub fn hacking(&self) -> Option<f32> {
         match self.offhand {
-            Some(OffhandUse::Holding { lethal, held_for }) => {
-                let def = if lethal { self.lethal.def } else { self.tactical.def };
-                (def.place == Place::Hack).then_some(held_for)
-            }
+            Some(OffhandUse::Holding { lethal, held_for }) => (self.offhand_def(lethal).place == Place::Hack).then_some(held_for),
             _ => None,
         }
     }
 
-    /// The Black Hat finished a hack: it uses one charge and goes down.
+    /// The Black Hat finished a hack: it uses one charge and is put away.
     pub fn hack_done(&mut self) {
         if let Some(OffhandUse::Holding { lethal, .. }) = self.offhand {
             self.use_offhand(lethal);
-            self.offhand = Some(OffhandUse::Throwing { lethal, t: 0.0 });
+            self.offhand = Some(OffhandUse::Dropping { lethal, t: 0.0 });
         }
     }
 

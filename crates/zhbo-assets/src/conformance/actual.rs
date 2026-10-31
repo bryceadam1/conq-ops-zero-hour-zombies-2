@@ -321,13 +321,12 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     // `arsenal.rs` "WeaponAction::Launch"; an offhand's `Place`), `weap_class` the class the
     // converter derived from BO2's (`class_of`), `inventory` the row's role.
     let launches = d.class == Class::Launcher || (d.projectile_speed > 0.0 && d.class != Class::Shotgun && d.effect != Effect::None);
+    // Every offhand, thrown, set down or held up, runs the arsenal's one offhand state machine
+    // (`Arsenal::step_offhand`), which is BO2's grenade offhand path (`FUN_008e2bb0` takes only
+    // weapType grenade or mine there, and the arsenal has nothing mine-specific): a grenade.
     let weap_type = match d.class {
         Class::Melee => Some("melee"),
-        c if c.is_offhand() => match d.place {
-            Place::Throw => Some("grenade"),
-            Place::Plant => Some("mine"),
-            Place::Hack => None,
-        },
+        c if c.is_offhand() => Some("grenade"),
         _ if launches => Some("projectile"),
         _ => Some("bullet"),
     };
@@ -377,11 +376,13 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     for (c, v) in [
         ("fire_time", Some(d.fire_time)),
         ("last_fire_time", None),
-        ("fire_delay", d.class.is_gun().then_some(0.0)),
+        // A gun fires on the press; an offhand leaves the hand `fire_delay` after the release, the
+        // pull-back before it is its `hold_fire_time` (`Arsenal::step_offhand`).
+        ("fire_delay", if d.class.is_gun() { Some(0.0) } else if d.class.is_offhand() { Some(d.fire_delay) } else { None }),
         ("burst_delay", Some(d.burst_delay)),
         ("rechamber_time", None),
         ("rechamber_bolt_time", None),
-        ("hold_fire_time", None),
+        ("hold_fire_time", d.class.is_offhand().then_some(d.hold_fire_time)),
         ("reload_time", Some(d.reload_time)),
         ("reload_empty_time", Some(d.reload_empty_time)),
         ("reload_add_time", Some(d.reload_add_time)),
@@ -413,7 +414,8 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         // The barrels spin down at the rate they spin up (`w.spin - dt`).
         ("spin_down_time", (d.fire == FireMode::Minigun).then_some(d.spin_up_time)),
         ("fuse_time", Some(d.fuse_time)),
-        ("detonate_time", None),
+        // Only a detonator item has the detonate state (`OffhandUse::Detonating`).
+        ("detonate_time", d.has_detonator.then_some(d.detonate_time)),
     ] {
         match v {
             Some(s) => b.float(c, ms(s)),

@@ -51,6 +51,7 @@ pub mod slot {
     pub const SPRINT_EMPTY_IN: i32 = 0x23;
     pub const SPRINT_EMPTY_LOOP: i32 = 0x24;
     pub const SPRINT_EMPTY_OUT: i32 = 0x25;
+    pub const DETONATE: i32 = 0x3A;
     pub const ADS_FIRE: i32 = 0x3D;
     pub const ADS_LASTSHOT: i32 = 0x3E;
     pub const ADS_RECHAMBER: i32 = 0x40;
@@ -183,14 +184,18 @@ impl Viewmodel {
         self.since_sprint_start = if p.body.sprinting { self.since_sprint_start + dt } else { 0.0 };
         let empty = w.ammo == 0;
 
-        // Offhands: the grenade's own viewmodel pulls the pin (hold) and throws (fire).
+        // Offhands: the item's own viewmodel pulls back (hold) and throws or sets it down (fire), a
+        // detonator fires (detonate) and a held-up item is put away (quick drop); then the held
+        // weapon's quick raise (BO2's offhand states 0x17-0x1d, `OffhandUse`).
         if let Some(use_) = a.offhand {
-            let (lethal, clip, t) = match use_ {
-                OffhandUse::Holding { lethal, held_for } => (lethal, slot::HOLD_FIRE, held_for),
-                OffhandUse::Throwing { lethal, t } => (lethal, slot::FIRE, t),
+            let off = a.offhand_def(use_.lethal());
+            return match use_ {
+                OffhandUse::Holding { held_for, .. } => frame(off.viewmodel, slot::HOLD_FIRE, held_for),
+                OffhandUse::Throwing { t, .. } => frame(off.viewmodel, slot::FIRE, t),
+                OffhandUse::Detonating { t, .. } => frame(off.viewmodel, or(off, slot::DETONATE, slot::IDLE), t),
+                OffhandUse::Dropping { t, .. } => frame(off.viewmodel, or(off, slot::QUICK_DROP, slot::IDLE), t),
+                OffhandUse::Raising { t, .. } => wf(or(def, slot::QUICK_RAISE, slot::RAISE), t),
             };
-            let off = if lethal { a.lethal.def } else { a.tactical.def };
-            return frame(off.viewmodel, clip, t);
         }
         // Melee: the weapon's own (pistol whip) or the class melee weapon's knife.
         if a.melee_left > 0.0 {
@@ -409,8 +414,12 @@ mod tests {
         p.arsenal.offhand = Some(OffhandUse::Holding { lethal: true, held_for: 0.2 });
         let f = vm.update(0.05, &p, Events::default());
         assert_eq!((f.model, f.clip), (p.arsenal.lethal.def.viewmodel, slot::HOLD_FIRE));
-        p.arsenal.offhand = Some(OffhandUse::Throwing { lethal: true, t: 0.1 });
+        p.arsenal.offhand = Some(OffhandUse::Throwing { lethal: true, t: 0.1, fired: true });
         assert_eq!(clip(&mut vm, &p, 0.05, Events::default()), slot::FIRE);
+        // Then the held gun's own quick raise.
+        p.arsenal.offhand = Some(OffhandUse::Raising { lethal: true, t: 0.1 });
+        let f = vm.update(0.05, &p, Events::default());
+        assert_eq!((f.model, f.clip), (p.arsenal.current().def.viewmodel, slot::QUICK_RAISE + p.arsenal.current().def.clip_base));
         p.arsenal.offhand = None;
         // Melee with a rifle: BO2's knife.
         p.arsenal.melee_left = 0.3;

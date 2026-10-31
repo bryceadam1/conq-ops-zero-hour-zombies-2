@@ -251,15 +251,28 @@ mod tests {
         let mut out = Vec::new();
         a.step(buttons::LETHAL, buttons::LETHAL, false, 0, 0.0, &mut rng, &mut out);
         assert!(out.contains(&WeaponAction::OffhandReady { lethal: true }));
-        // Hold (cook) for one second, then let go.
+        // Hold (cook) for one second, then let go: the grenade leaves the hand `fire_delay` later.
         for _ in 0..30 {
             a.step(buttons::LETHAL, 0, false, 0, 0.0, &mut rng, &mut out);
         }
-        a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
-        let throw = out.iter().find_map(|x| if let WeaponAction::Throw { fuse_left, .. } = x { Some(*fuse_left) } else { None });
-        let fuse = a.lethal.def.fuse_time;
-        let left = throw.expect("thrown");
-        assert!((left - (fuse - 1.0)).abs() < 0.1, "cooked: {left} of {fuse}");
+        let def = a.lethal.def;
+        let mut frames_held = 31;
+        let throw = loop {
+            a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+            frames_held += 1;
+            if let Some(left) = out.iter().find_map(|x| if let WeaponAction::Throw { fuse_left, .. } = x { Some(*fuse_left) } else { None }) {
+                break left;
+            }
+            assert!(frames_held < 60, "never thrown");
+        };
+        // The release is seen on the first frame the button is up; the offhand states run at the
+        // class's Dexterity rate (`fasttoss`, G3).
+        let m = a.multiplier(Timing::Toss);
+        let thrown_at = frames_held as f32 * LOGIC_DT;
+        assert!((thrown_at - (32.0 * LOGIC_DT + def.fire_delay * m)).abs() <= LOGIC_DT * 1.01, "left at {thrown_at}");
+        // The fuse burned from the end of the pull-back (BO2's `FUN_008e28a0` sets it there).
+        let want = def.fuse_time - (thrown_at - def.hold_fire_time * m);
+        assert!((throw - want).abs() <= LOGIC_DT * 1.5, "cooked: {throw} left, want {want}");
         assert_eq!(a.lethal.count, 0);
         // The weapon comes back after the throw.
         frames(&mut a, 0, 60, &mut rng);

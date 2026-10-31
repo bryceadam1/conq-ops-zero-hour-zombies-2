@@ -198,8 +198,21 @@ pub struct WeaponDef {
     /// Grenades and launchers.
     pub effect: Effect,
     pub fuse_time: f32,
-    /// Hold to cook (the fuse runs from the pin pull).
+    /// Hold to cook (the fuse runs from the end of the pull-back, `FUN_008e28a0`).
     pub cook: bool,
+    /// BO2's offhand state machine (Ghidra `FUN_008e2710`..`FUN_008dcbe0`, MODLOG "Offhands run
+    /// BO2's offhand states"): the pull-back (`iHoldFireTime`, state 0x17), the wait from the
+    /// release to the item leaving the hand (`iFireDelay`, inside the `fire_time` of state 0x18),
+    /// the detonate state (`iDetonateTime`, its charge going off at `iDetonateDelay`, 0x19) a
+    /// `hasDetonator` item enters when the button is pressed with none left in hand, and
+    /// `isHoldUseGrenade` (`hold_use`: held up while the button is, then put away in its quick drop,
+    /// never thrown).
+    pub hold_fire_time: f32,
+    pub fire_delay: f32,
+    pub detonate_time: f32,
+    pub detonate_delay: f32,
+    pub has_detonator: bool,
+    pub hold_use: bool,
     pub explosion_radius: f32,
     pub explosion_radius_min: f32,
     pub explosion_inner_damage: f32,
@@ -448,6 +461,12 @@ impl Default for WeaponDef {
             equipment_kind: Kind::Other,
             fuse_time: 0.0,
             cook: false,
+            hold_fire_time: 0.0,
+            fire_delay: 0.0,
+            detonate_time: 0.0,
+            detonate_delay: 0.0,
+            has_detonator: false,
+            hold_use: false,
             explosion_radius: 0.0,
             explosion_radius_min: 0.0,
             explosion_inner_damage: 0.0,
