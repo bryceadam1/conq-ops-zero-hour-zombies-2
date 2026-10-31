@@ -510,14 +510,7 @@ fn draw_attachment_panel(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Edito
 
     let (base, _modified) = attachment_weapon(editor);
     let stats = weapon_stats(base);
-    let modified_stats = att.map(|a| {
-        let mut m = stats;
-        m.damage = (m.damage + a.attribute_deltas[0] / 100.0).clamp(0.0, 1.0);
-        m.range = (m.range + a.attribute_deltas[1] / 100.0).clamp(0.0, 1.0);
-        m.accuracy = (m.accuracy + a.attribute_deltas[2] / 100.0).clamp(0.0, 1.0);
-        m.fire_rate = (m.fire_rate + a.attribute_deltas[4] / 100.0).clamp(0.0, 1.0);
-        m
-    });
+    let modified_stats = editor.option_attachment(editor.option).map(|short| weapon_stats_with(base, short));
     stat_bars_delta(prims, f, attachment_stats(l), &stats, modified_stats.as_ref(), 70.0, bo2::TEXT_EXTRA_SMALL);
 
     let pic = attachment_weapon_image(l);

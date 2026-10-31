@@ -96,23 +96,17 @@ fn apply_unique_fields(d: &mut WeaponDef, w: &Weapon) {
     }
 }
 
-/// The attachment's metadata from BO2's tables: the full name and description keys' localized text,
-/// and its attribute-table deltas.
+/// The attachment's metadata from BO2's attachment table: the full name and description keys'
+/// localized text.
 #[derive(Clone, Debug, Default)]
 pub struct AttachmentMeta {
     pub full_name: String,
     pub description: String,
-    pub attribute_deltas: [f32; 5],
 }
 
-/// BO2's attachment metadata from the player's `mp/attachmenttable.csv` (`patch_mp`) and
-/// `mp/attributestable.csv` (`patch_ui_mp`). The attachment table gives each short name's display
-/// and description keys; the attribute table gives its stat-bar deltas. Missing rows are omitted.
-pub fn attachment_metadata(
-    patch: &zhbo_formats::t6zone::Zone,
-    patch_ui: &zhbo_formats::t6zone::Zone,
-    names: &HashMap<String, String>,
-) -> HashMap<String, AttachmentMeta> {
+/// BO2's attachment metadata from the player's `mp/attachmenttable.csv` (`patch_mp`): each short
+/// name's display and description keys. Missing rows are omitted.
+pub fn attachment_metadata(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<String, String>) -> HashMap<String, AttachmentMeta> {
     let mut meta = HashMap::new();
     let Ok(Some(rows)) = zhbo_formats::stringtable::rows(patch, "mp/attachmenttable.csv") else { return meta };
     for row in rows {
@@ -120,19 +114,54 @@ pub fn attachment_metadata(
         let (Some(short), Some(display_key), Some(desc_key)) = (row.get(4), row.get(3), row.get(7)) else { continue };
         let full_name = names.get(display_key).map(|s| s.trim().to_string()).unwrap_or_default();
         let description = names.get(desc_key).map(|s| s.trim().to_string()).unwrap_or_default();
-        meta.insert(short.clone(), AttachmentMeta { full_name, description, attribute_deltas: [0.0; 5] });
-    }
-    // The attribute table's Lua constants are 0-based: damage = col 3, range = col 4,
-    // accuracy = col 2, mobility = col 6, fire rate = col 5.
-    let Ok(Some(rows)) = zhbo_formats::stringtable::rows(patch_ui, "mp/attributestable.csv") else { return meta };
-    for row in rows {
-        if row.first().map(String::as_str) != Some("weapon_attachment") { continue; }
-        let Some(short) = row.get(1) else { continue };
-        let num = |i: usize| row.get(i).and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(0.0);
-        let deltas = [num(3), num(4), num(2), num(6), num(5)];
-        meta.entry(short.clone()).or_default().attribute_deltas = deltas;
+        meta.insert(short.clone(), AttachmentMeta { full_name, description });
     }
     meta
+}
+
+/// Each attachment's bar deltas on a weapon, keyed `(attachment short, weapon id)`.
+pub type AttachmentBars = HashMap<(String, String), [f32; 4]>;
+
+/// BO2's create-a-class bars from the player's `mp/attributestable.csv` (`patch_ui_mp`), as
+/// `weaponattributelist.lua` reads them: `TableLookup(table, 1, ref, col)` for a weapon and
+/// `TableLookup(table, 1, attachment, 9, weapon, col)` for an attachment's deltas on it. The
+/// columns (0-based) are accuracy 2, damage 3, range 4 and 6 for the bar MP labels FIRE RATE (its
+/// "mobility" bar); returned in the core's order (fire rate, damage, range, accuracy). Keys are
+/// `<ref>_mp` (`an94_mp`), and `(<attachment>, <ref>_mp)` for the deltas.
+pub fn attributes(patch_ui: &zhbo_formats::t6zone::Zone) -> (HashMap<String, [f32; 4]>, AttachmentBars) {
+    let mut weapons = HashMap::new();
+    let mut attachments = HashMap::new();
+    let Ok(Some(rows)) = zhbo_formats::stringtable::rows(patch_ui, "mp/attributestable.csv") else { return (weapons, attachments) };
+    for row in rows {
+        let (Some(group), Some(name)) = (row.first(), row.get(1)) else { continue };
+        if !group.starts_with("weapon_") {
+            continue;
+        }
+        let num = |i: usize| row.get(i).and_then(|s| s.trim().parse::<f32>().ok()).unwrap_or(0.0);
+        let bars = [num(6), num(3), num(4), num(2)];
+        match row.get(9).map(|s| s.trim()).filter(|s| !s.is_empty()) {
+            // A row keyed by a weapon too is an attachment's deltas on it (the Skorpion's
+            // silencer sits under `weapon_smg`, so the second key decides, not the group).
+            Some(weapon) => {
+                attachments.entry((name.clone(), format!("{weapon}_mp"))).or_insert(bars);
+            }
+            None => {
+                weapons.entry(format!("{name}_mp")).or_insert(bars);
+            }
+        }
+    }
+    (weapons, attachments)
+}
+
+/// Fill every base weapon's bars and its offered attachments' deltas from [`attributes`].
+pub fn apply_attributes(table: &mut Table, weapons: &HashMap<String, [f32; 4]>, attachments: &AttachmentBars) {
+    for d in table.weapons.iter_mut() {
+        if let Some(a) = weapons.get(&d.id) {
+            d.attributes = *a;
+        }
+        d.attachment_attributes =
+            d.allowed.iter().filter_map(|(short, _)| attachments.get(&(short.clone(), d.id.clone())).map(|a| (short.clone(), *a))).collect();
+    }
 }
 
 /// The core's definition of a BO2 attachment. `names` maps localize keys to text.
@@ -155,7 +184,6 @@ pub fn attachment_def(a: &bo2::Attachment, default: &bo2::Attachment, names: &Ha
         display_name: names.get(&a.display_name).map(|s| s.trim().to_string()).unwrap_or_else(|| short.clone()),
         full_name: m.full_name,
         description: m.description,
-        attribute_deltas: m.attribute_deltas,
         point: a.point as u8,
         silenced: a.silenced,
         laser: a.laser_sight,
@@ -798,6 +826,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         world_meshes: 0,
         attachments: Vec::new(),
         allowed: w.attachment_variants.iter().map(|(_, id)| (short_name(id), id.clone())).collect(),
+        // Filled from the attribute table by `apply_attributes`.
+        attributes: [0.0; 4],
+        attachment_attributes: Vec::new(),
         alt_modes: w
             .attachment_uniques
             .iter()
@@ -1341,6 +1372,29 @@ mod tests {
     /// loadout's melee `knife_held_mp`, a table row rather than a CaC item) is excluded by the same
     /// `items` filter the enumerator uses. The plan's §7.2 direction: every legal combo is in the
     /// full `converted()` set.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn every_cac_weapon_has_bo2s_attribute_bars() {
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let patch = crate::generals::load_zone(&dir, crate::fx::ZONE).unwrap();
+        let patch_ui = crate::generals::load_zone(&dir, "patch_ui_mp").unwrap();
+        let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
+        let all = zhbo_formats::weapon::all(&common).unwrap();
+        let (bars, att_bars) = attributes(&patch_ui);
+        // The AN-94's row and the reflex's row keyed by it (`mp/attributestable.csv`).
+        assert_eq!(bars["an94_mp"], [60.0, 60.0, 55.0, 50.0]);
+        assert_eq!(att_bars[&("reflex".to_string(), "an94_mp".to_string())], [0.0, 0.0, 5.0, 15.0]);
+        // Every create-a-class gun (the statstable's items) resolves to a row.
+        let statstable = zhbo_formats::stringtable::rows(&patch, "mp/statstable.csv").unwrap().unwrap();
+        let guns: std::collections::BTreeSet<String> = zhbo_conformance::bo2::combos::items(&statstable)
+            .into_iter()
+            .map(|i| i.variant)
+            .filter(|v| all.iter().any(|w| &w.name == v && !w.attachment_variants.is_empty()))
+            .collect();
+        let missing: Vec<&String> = guns.iter().filter(|g| !bars.contains_key(*g)).collect();
+        assert!(missing.is_empty(), "no attribute row for {missing:?}");
+    }
+
     #[test]
     #[ignore = "reads this machine's Black Ops II install"]
     fn the_legal_combo_set_covers_every_base_weapon() {

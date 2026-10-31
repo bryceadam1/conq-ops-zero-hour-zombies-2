@@ -156,8 +156,8 @@ pub enum FireMode {
     Burst(u8),
     /// Full auto after a spin-up while the trigger is held.
     Minigun,
-    /// BO2's `stacked` (the tri-bolt): a pull fires the whole loaded stack at once, and only
-    /// when the magazine is full (`FUN_008dc030`).
+    /// BO2's `stacked` (the tri-bolt): a pull fires the whole loaded stack (`FUN_008e1320`
+    /// keeps firing while `FUN_008dc0c0` says the stack is part-spent, the fire delay zeroed).
     Stacked,
 }
 
@@ -317,6 +317,13 @@ pub struct WeaponDef {
     /// Base weapons: each attachment BO2's create-a-class offers, and which `Attachment` it uses
     /// on this weapon (`silencer` is `silencer_smg` on an SMG).
     pub allowed: Vec<(String, String)>,
+    /// BO2's create-a-class bars for this weapon, 0..100, in [`crate::classui`]'s order: fire
+    /// rate, damage, range, accuracy (`mp/attributestable.csv` columns 6, 3, 4, 2, read by
+    /// `weaponattributelist.lua`; MP labels its "mobility" bar FIRE RATE).
+    pub attributes: [f32; 4],
+    /// Base weapons: each attachment's deltas to those bars on this weapon (the table's
+    /// `weapon_attachment` rows, keyed by attachment and weapon), same order.
+    pub attachment_attributes: Vec<(String, [f32; 4])>,
     /// Base weapons: the alt-mode weapon an attachment adds (`gl` → `gl_an94_mp`).
     pub alt_modes: Vec<(String, String)>,
     /// The weapon this toggles to (its alt mode, or back from it); empty when there is none.
@@ -535,6 +542,8 @@ impl Default for WeaponDef {
             world_meshes: 0,
             attachments: Vec::new(),
             allowed: Vec::new(),
+            attributes: [0.0; 4],
+            attachment_attributes: Vec::new(),
             alt_modes: Vec::new(),
             alt: String::new(),
             alt_own_ammo: false,
@@ -576,7 +585,7 @@ pub const MELEE_RANGE: f32 = inches(64.0);
 pub const MELEE_FX_WEAPON: &str = "ZHBO_Knife_FX";
 
 impl WeaponDef {
-    /// Rounds one pull puts out: a stacked weapon's whole magazine; a spread class's `shotCount`
+    /// Rounds one full pull puts out: a stacked weapon's whole magazine; a spread class's `shotCount`
     /// pellets (`Bullet_Fire`); one for everything else (BO2's `shotCount` is 0 there).
     pub fn rounds_per_shot(&self) -> u16 {
         if self.fire == FireMode::Stacked {

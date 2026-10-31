@@ -197,7 +197,6 @@ Attachment reflex
   DisplayName = Reflex
   FullName = Reflex Sight
   Description = Precision red dot sight.
-  AttributeDeltas = 0 5 15 0 0
   Point = 1
   Ads = 50 1 1 1
 End
@@ -253,6 +252,8 @@ Weapon an94_mp
   Viewmodel = 0
   Anims = 60000ee003f007ff85005e
   Allowed = reflex=reflex gl=gl
+  Attributes = 60 60 55 50
+  AttachmentAttributes = reflex=0,0,5,15
   AltModes = gl=gl_an94_mp
 End
 
@@ -260,6 +261,7 @@ Weapon fnp45_mp
   DisplayName = Tac-45
   Class = pistol
   WeapClass = pistol
+  Attributes = 30 75 30 65
   Fire = semi
   FireTime = 0.096
   Clip = 10

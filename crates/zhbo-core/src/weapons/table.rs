@@ -333,13 +333,6 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
     field!("Description", "The attachment's description line.", FieldKind::Str,
         |a: &AttachmentDef| a.description.clone(),
         |a: &mut AttachmentDef, v: Values| { a.description = v.text.into(); Ok(()) }),
-    field!("AttributeDeltas", "BO2's attribute-table deltas for the stat bars.", FieldKind::Nums(5),
-        |a: &AttachmentDef| a.attribute_deltas.iter().map(|x| x.to_string()).collect::<Vec<_>>().join(" "),
-        |a: &mut AttachmentDef, v: Values| {
-            v.need(5)?;
-            for i in 0..5 { a.attribute_deltas[i] = v.num(i); }
-            Ok(())
-        }),
     field!("Kind", "BO2's `eAttachment`: the order a combination's attachments are walked in.", FieldKind::Num,
         |a: &AttachmentDef| a.kind.to_string(),
         |a: &mut AttachmentDef, v: Values| { a.kind = v.text_num()? as u8; Ok(()) }),
@@ -601,6 +594,24 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("Allowed", "Base weapons: each attachment BO2 offers (`short=attachment`).", FieldKind::Pairs,
         |d: &WeaponDef| pairs(&d.allowed),
         |d: &mut WeaponDef, v: Values| { d.allowed = parse_pairs(v.text); Ok(()) }),
+    field!("Attributes", "BO2's stat bars (mp/attributestable.csv, 0..100): fire rate, damage, range, accuracy.", FieldKind::Nums(4),
+        |d: &WeaponDef| nums(&d.attributes),
+        |d: &mut WeaponDef, v: Values| { v.need(4)?; for i in 0..4 { d.attributes[i] = v.num(i); } Ok(()) }),
+    field!("AttachmentAttributes", "Base weapons: each attachment's stat-bar deltas on this weapon (`short=fire,damage,range,accuracy`).", FieldKind::Pairs,
+        |d: &WeaponDef| d.attachment_attributes.iter().map(|(s, a)| format!("{s}={}", a.map(|x| x.to_string()).join(","))).collect::<Vec<_>>().join(" "),
+        |d: &mut WeaponDef, v: Values| {
+            d.attachment_attributes = parse_pairs(v.text)
+                .into_iter()
+                .map(|(s, a)| {
+                    let mut out = [0.0; 4];
+                    for (o, x) in out.iter_mut().zip(a.split(',')) {
+                        *o = x.parse().map_err(|_| "number")?;
+                    }
+                    Ok((s, out))
+                })
+                .collect::<Result<_, &'static str>>()?;
+            Ok(())
+        }),
     field!("AltModes", "Base weapons: the alt-mode weapon an attachment adds (`short=alt`).", FieldKind::Pairs,
         |d: &WeaponDef| pairs(&d.alt_modes),
         |d: &mut WeaponDef, v: Values| { d.alt_modes = parse_pairs(v.text); Ok(()) }),
@@ -837,8 +848,8 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 95);
-        assert_eq!(ATTACHMENT_FIELDS.len(), 25);
+        assert_eq!(WEAPON_FIELDS.len(), 97);
+        assert_eq!(ATTACHMENT_FIELDS.len(), 24);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }
 
