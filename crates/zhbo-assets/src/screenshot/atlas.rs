@@ -57,8 +57,9 @@ impl Atlas {
         for (name, image) in parse_mapped_images(&text) {
             if !atlas.pages.contains_key(&image.texture) {
                 let texture = format!("Art\\Textures\\{}", image.texture);
-                // The scope overlays name their page without the `.tga` the archive stores it
-                // under; a page found neither way draws its names' fallbacks, as a bad rect does.
+                // Archives built before the converter named the scope overlays' pages with their
+                // `.tga` name them without it; a page found neither way draws its names'
+                // fallbacks, as a bad rect does.
                 let Some(entry) = big.find(&texture).or_else(|| big.find(&format!("{texture}.tga"))) else {
                     atlas.invalid.push(name);
                     continue;

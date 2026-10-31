@@ -164,6 +164,12 @@ fn texture_name(page: usize) -> String {
     format!("{TEXTURE}_{page}.tga")
 }
 
+/// A standalone overlay page's texture: the file the archive stores (`Art\Textures\<this>`) and
+/// the name its MappedImage gives, one spelling for both.
+fn standalone_texture(name: &str) -> String {
+    format!("{name}.tga")
+}
+
 /// Read the sprites from the BO2 install at `bo2_dir` and return the archive bytes.
 pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     let mut report = Report::default();
@@ -354,15 +360,17 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             at.1 + img.height - 1
         ));
     }
-    // The standalone overlay pages: one texture each, named after the material.
+    // The standalone overlay pages: one texture each, named after the material. The MappedImage
+    // names its page as the archive stores it (`<name>.tga`), like the atlas pages.
     let mut standalone_files: Vec<(String, Vec<u8>)> = Vec::new();
     for (name, img) in standalone {
-        standalone_files.push((format!("Art\\Textures\\{name}.tga"), images::tga_bytes(&img)));
+        let texture = standalone_texture(&name);
+        standalone_files.push((format!("Art\\Textures\\{texture}"), images::tga_bytes(&img)));
         ini.push_str(&format!(
             "MappedImage {}\n  Texture = {}\n  TextureWidth = {}\n  TextureHeight = {}\n  \
              Coords = Left:0 Top:0 Right:{} Bottom:{}\n  Status = NONE\nEnd\n\n",
             name,
-            name,
+            texture,
             img.width,
             img.height,
             img.width - 1,
@@ -564,6 +572,7 @@ mod tests {
         assert_eq!(at[1].0, 1);
         assert_eq!(texture_name(at[0].0), "zhbo_bo2_hud_0.tga");
         assert_eq!(texture_name(at[1].0), "zhbo_bo2_hud_1.tga");
+        assert_eq!(standalone_texture("ZHBO_Mat_scope_overlay"), "ZHBO_Mat_scope_overlay.tga", "named as the archive stores it");
         assert_packed(&sizes, &at);
     }
 

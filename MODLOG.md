@@ -4735,3 +4735,10 @@ column for wildcards reads the card's image when the archive has its sprite. Ver
 the headless `cac-editor-wildcards.png` from a freshly built archive is pixel-identical to the one
 the `v1/wildcards` archive drew (as are the other shots), and the harness gains
 `cac-editor-perks.png` (the Perk 1 grid with Hardline's panel, cf. `e-perks/002`).
+
+## The scope overlays' MappedImages name their page as the archive stores it (2026-10-31, `v1/perks-cards`)
+
+The standalone overlay pages were stored as `Art\Textures\<name>.tga` but their MappedImage said
+`Texture = <name>`, unlike the atlas pages (`zhbo_bo2_hud_0.tga`); the screenshot harness aborted
+on it twice and grew a fallback. `hud::standalone_texture` is now the one spelling for the file and
+the INI. The harness keeps its extension fallback (harmless) for archives built before this.
