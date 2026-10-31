@@ -4589,3 +4589,10 @@ Overlap / merge notes:
 * `movement::change_stance` stands a crouched player up on any sprint press, aimed or not, so the
   Hybrid swap while crouched also stands up — whether BO2 does is unverified (follow-up).
 
+Measured (conformance vs `v1/alt-timing`'s 685,684 / 193 / 204, which itself is vs the 2026-10-25
+baseline 706,586 / 203 / 214): `alt_weapon_ads_only` 9,341 → 0; weapons differing cells 685,684 →
+676,343, column clusters 193 → 192, gap clusters 204 → 203; cac unchanged. No column regressed.
+In-game checks (integrator): AN-94 + Hybrid — aim, Shift swaps the sight with the flip animation
+and the gun never leaves the aim; Shift half-aimed or unaimed does nothing; the alt-mode key does
+nothing; let go of the aim and re-aim — the red dot stays; Shift again goes back to the 30° sight.
+
