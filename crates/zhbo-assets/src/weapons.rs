@@ -515,6 +515,12 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
                 events.push(event);
             }
         }
+        // The Assault Shield's own cues (`sounds::SHIELD_SOUNDS`): heard where they happen.
+        if d.class == Class::Shield {
+            for &(event, alias) in zhbo_core::sounds::SHIELD_SOUNDS {
+                events.push(DynSfx { event: event.into(), layers: vec![alias.into()], kind: Kind::World, limit: 2 });
+            }
+        }
         if id == zhbo_core::weapons::CLASS_MELEE {
             events.extend(general(zhbo_core::sounds::MELEE_SWING, &w.melee_swipe_sound_player, Kind::Player));
         }

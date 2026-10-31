@@ -61,7 +61,7 @@ const FACING_SHOOTER: f32 = std::f32::consts::PI;
 fn a_held_shield_stops_bullets_from_the_front() {
     let (host, mut sim) = duel(true, FACING_SHOOTER);
     assert_eq!(shoot(&mut sim, &host, FACING_SHOOTER), 0.0, "every round hits the shield");
-    assert!(sim.events.iter().any(|e| matches!(e.kind, EventKind::Impact { surface: crate::impacts::Surface::Metal, .. })), "the rounds spark on it");
+    assert!(sim.events.iter().any(|e| matches!(e.kind, EventKind::ShieldHit { knife: false, .. })), "the rounds spark on it");
 }
 
 #[test]
@@ -112,8 +112,9 @@ fn deploy(sim: &mut Sim, host: &FakeHost) {
     step2(sim, host, FpsInput::default(), fire, 1);
 }
 
-fn shield_ammo(sim: &Sim) -> u16 {
-    sim.players[1].as_ref().unwrap().arsenal.weapons.iter().find(|w| w.def.is_shield()).unwrap().ammo
+/// The bearer's shield weapon's round, `None` while the weapon is out of the arsenal.
+fn shield_ammo(sim: &Sim) -> Option<u16> {
+    sim.players[1].as_ref().unwrap().arsenal.weapons.iter().find(|w| w.def.is_shield()).map(|w| w.ammo)
 }
 
 #[test]
@@ -124,9 +125,9 @@ fn the_trigger_plants_the_shield_where_it_was_held_and_brings_the_gun_up() {
     assert_eq!(sim.deployed.len(), 1);
     let d = &sim.deployed[0];
     assert!(d.bearer.pos.x < 60.0 && d.bearer.pos.x > 55.0, "in front of the bearer, toward the shooter: {:?}", d.bearer.pos);
-    assert_eq!(shield_ammo(&sim), 0);
+    assert_eq!(shield_ammo(&sim), None, "deployriotshield takes the weapon");
     let p = sim.players[1].as_ref().unwrap();
-    assert!(!p.arsenal.current().def.is_shield(), "the other gun comes up");
+    assert_eq!(p.arsenal.current().def.id, "mp7_mp", "the other gun comes up");
     // Not on the back while it stands: the next frame's bearers are the deployed one only.
     step(&mut sim, &host, FpsInput::default(), FACING_SHOOTER, 1);
     assert!(sim.shields.iter().all(|b| b.general == 0), "{:?}", sim.shields);
@@ -146,24 +147,39 @@ fn a_deployed_shield_stops_rounds_and_wears_down_at_the_bullet_scale() {
 }
 
 #[test]
-fn switching_back_to_the_shield_or_using_it_picks_it_up() {
+fn the_use_key_beside_it_gives_the_shield_back_and_brings_it_up() {
     let (host, mut sim) = duel(true, FACING_SHOOTER);
     deploy(&mut sim, &host);
     step2(&mut sim, &host, FpsInput::default(), FpsInput { yaw: FACING_SHOOTER, ..Default::default() }, 40);
-    let swap = FpsInput { yaw: FACING_SHOOTER, pressed: buttons::SWAP_WEAPON, ..Default::default() };
-    step2(&mut sim, &host, FpsInput::default(), swap, 1);
-    step2(&mut sim, &host, FpsInput::default(), FpsInput { yaw: FACING_SHOOTER, ..Default::default() }, 40);
-    assert!(sim.deployed.is_empty(), "picked up by the switch");
-    assert_eq!(shield_ammo(&sim), 1);
-    // Deploy again, then the use key beside it.
-    step2(&mut sim, &host, FpsInput::default(), FpsInput { yaw: FACING_SHOOTER, ..Default::default() }, 30);
-    deploy(&mut sim, &host);
-    assert_eq!(sim.deployed.len(), 1);
     let take = FpsInput { yaw: FACING_SHOOTER, pressed: buttons::FIELD_COMPUTER, ..Default::default() };
     step2(&mut sim, &host, FpsInput::default(), take, 1);
     assert!(sim.deployed.is_empty(), "picked up with the use key");
-    assert!(sim.events.iter().filter(|e| matches!(e.kind, EventKind::ShieldPickedUp)).count() == 2);
-    assert!(!matches!(sim.players[1].as_ref().unwrap().mode, Mode::FieldComputer { .. }), "the use key did not open the field computer");
+    assert_eq!(shield_ammo(&sim), Some(1));
+    let p = sim.players[1].as_ref().unwrap();
+    assert!(p.arsenal.current().def.is_shield(), "the shield comes up");
+    assert_eq!(p.arsenal.weapons.len(), 2);
+    assert!(!matches!(p.mode, Mode::FieldComputer { .. }), "the use key did not open the field computer");
+    assert!(sim.events.iter().any(|e| matches!(e.kind, EventKind::ShieldPickedUp)));
+}
+
+#[test]
+fn a_shield_only_kit_gets_the_held_knife_while_it_is_deployed() {
+    let (host, mut sim) = duel(true, FACING_SHOOTER);
+    let p = sim.players[1].as_mut().unwrap();
+    p.arsenal = Arsenal::with_loadout(Loadout { primary: "riotshield_mp".into(), secondary: String::new(), ..Loadout::default() });
+    p.arsenal.raise_left = 0.0;
+    // Whatever the kit carries besides the shield stays; the knife is given only when nothing does.
+    p.arsenal.weapons.retain(|w| w.def.is_shield());
+    p.arsenal.active = 0;
+    deploy(&mut sim, &host);
+    let p = sim.players[1].as_ref().unwrap();
+    assert_eq!(p.arsenal.weapons.len(), 1);
+    assert_eq!(p.arsenal.current().def.id, p.arsenal.melee.id, "`knife_held_mp` given (riotshieldtakeweapon)");
+    let take = FpsInput { yaw: FACING_SHOOTER, pressed: buttons::FIELD_COMPUTER, ..Default::default() };
+    step2(&mut sim, &host, FpsInput::default(), take, 1);
+    let p = sim.players[1].as_ref().unwrap();
+    assert_eq!(p.arsenal.weapons.len(), 1, "the knife goes again");
+    assert!(p.arsenal.current().def.is_shield());
 }
 
 #[test]
@@ -172,7 +188,7 @@ fn a_refused_placement_gives_the_round_back() {
     host.deep_water.set(true);
     deploy(&mut sim, &host);
     assert!(sim.deployed.is_empty());
-    assert_eq!(shield_ammo(&sim), 1);
+    assert_eq!(shield_ammo(&sim), Some(1));
     assert!(sim.events.iter().any(|e| e.player == 1 && matches!(e.kind, EventKind::CantPlant { .. })));
 }
 
@@ -185,9 +201,10 @@ fn a_deployed_shield_is_destroyed_at_its_health_and_its_model_times_out() {
     assert!(sim.deployed[0].standing());
     sim.damage_deployed(&host, 0, Some(0), 1, 1.0, deploy::ShieldDamage::Explosive);
     assert!(!sim.deployed[0].standing());
-    assert!(sim.events.iter().any(|e| e.player == 1 && matches!(e.kind, EventKind::ShieldDestroyed { by: Some(0) })));
+    assert!(sim.events.iter().any(|e| e.player == 1 && matches!(e.kind, EventKind::ShieldDestroyed { by: Some(0), .. })));
     step(&mut sim, &host, FpsInput::default(), FACING_SHOOTER, 1);
     assert!(sim.shields.iter().all(|b| b.general != 0), "a destroyed shield blocks nothing");
     step(&mut sim, &host, FpsInput::default(), FACING_SHOOTER, (t.riotshield_destroyed_cleanup_time / LOGIC_DT) as u32 + 2);
     assert!(sim.deployed.is_empty());
+    assert_eq!(shield_ammo(&sim), None, "the weapon went with it");
 }

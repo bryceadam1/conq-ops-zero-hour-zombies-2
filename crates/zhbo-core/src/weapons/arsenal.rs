@@ -698,20 +698,52 @@ impl Arsenal {
         self.ads = 0.0;
     }
 
-    /// After a shield is deployed: up comes the other slot weapon (BO2's `lastnonshieldweapon`,
-    /// else the first primary), if there is one.
-    pub fn switch_from_shield(&mut self) {
-        let other = (0..self.weapons.len()).find(|&i| i != self.active && self.weapons[i].def.class.is_gun());
-        if let Some(i) = other.filter(|_| self.current().def.is_shield()) {
-            self.switch_to(i);
+    /// A shield was deployed: the engine's `deployriotshield` takes the weapon (it lies on the
+    /// ground as the shield's retrieve item) and the script brings up the last other weapon, giving
+    /// `knife_held_mp` when there is none (`_riotshield.gsc` `watchriotshielddeploy`). Returns the
+    /// slot it held, its state, and whether the held knife was given.
+    pub fn take_shield(&mut self) -> Option<(usize, WeaponState, bool)> {
+        let slot = self.weapons.iter().position(|w| w.def.is_shield())?;
+        let state = self.weapons.remove(slot);
+        let gave_knife = self.weapons.is_empty();
+        if gave_knife {
+            self.weapons.push(WeaponState::new(self.melee));
         }
+        let fix = |i: usize| if i > slot { i - 1 } else { i };
+        let back = fix(self.previous).min(self.weapons.len() - 1);
+        // The shield's own deploy animation put it down: the next weapon only raises.
+        self.active = if self.weapons[back].def.class.is_slot_weapon() || gave_knife { back } else { 0 };
+        self.previous = self.active;
+        self.drop_left = 0.0;
+        let to = self.current().def;
+        let first = !self.current().raised_once;
+        self.current_mut().raised_once = true;
+        (self.raise_left, self.raise_kind) = if first { (to.first_raise_time, RaiseKind::First) } else { (to.raise_time, RaiseKind::Normal) };
+        self.raise_total = self.raise_left;
+        self.ads = 0.0;
+        Some((slot, state, gave_knife))
     }
 
-    /// The use key picked a deployed shield up: the shield comes up (if it is not already).
-    pub fn switch_to_shield(&mut self) {
-        if let Some(i) = self.weapons.iter().position(|w| w.def.is_shield()).filter(|&i| i != self.active) {
-            self.switch_to(i);
+    /// The deployed shield was picked up (its retrieve item): the weapon returns to its slot, the
+    /// held knife given for it goes (`riotshieldtakeweapon`), and the shield comes up.
+    pub fn return_shield(&mut self, slot: usize, mut state: WeaponState, gave_knife: bool) {
+        if gave_knife {
+            if let Some(k) = self.weapons.iter().position(|w| w.def.id == self.melee.id) {
+                self.weapons.remove(k);
+            }
         }
+        state.ammo = state.def.clip;
+        let slot = slot.min(self.weapons.len());
+        self.weapons.insert(slot, state);
+        if self.weapons.len() == 1 {
+            (self.active, self.previous) = (0, 0);
+            self.raise_left = self.current().def.raise_time;
+            self.raise_total = self.raise_left;
+            return;
+        }
+        let shift = |i: usize| if i >= slot { i + 1 } else { i };
+        (self.active, self.previous) = (shift(self.active).min(self.weapons.len() - 1), shift(self.previous).min(self.weapons.len() - 1));
+        self.switch_to(slot);
     }
 
     /// Switch the held weapon to its alt mode or back. An alt mode with its own ammo (a launcher)

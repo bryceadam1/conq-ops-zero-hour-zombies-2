@@ -11,13 +11,15 @@
 //! BO2's deployed model (`t6_wpn_shield_carry_world`, the converter's `ZHBO_Proj_riotshield_mp`);
 //! it blocks every shot, melee and projectile that meets it, takes damage scaled by how it came
 //! (`watchdeployedriotshielddamage`: bullets x0.025, melee x1, explosives x1) until
-//! `riotshield_deployed_health` is used up, and is taken back by switching to the shield or by the
-//! use key next to it. Its owner's death destroys it. Every number is the tuning pack's.
+//! `riotshield_deployed_health` is used up. The engine's `deployriotshield` (`FUN_009672e0`)
+//! takes the weapon from the player and leaves it as the shield's retrieve item: the use key next
+//! to it gives it back; destroyed (or its owner dead) the weapon is gone with it. Every number is
+//! the tuning pack's.
 
 use super::*;
 use crate::shield::Bearer;
 use crate::units::inches;
-use crate::weapons::{ShieldBox, WeaponDef};
+use crate::weapons::{ShieldBox, WeaponDef, WeaponState};
 
 /// How damage reached a deployed shield (the script's means-of-death buckets).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -42,6 +44,9 @@ pub struct Deployed {
     pub damage_taken: f32,
     /// Seconds the destroyed model has left; `None` while it stands.
     pub destroyed: Option<f32>,
+    /// The weapon taken from the owner (its slot and state), and whether `knife_held_mp` was given
+    /// for it: what the retrieve item gives back.
+    pub weapon: (usize, WeaponState, bool),
 }
 
 impl Deployed {
@@ -56,22 +61,17 @@ impl Sim {
         self.deployed.iter().filter(|d| d.standing()).map(|d| d.bearer)
     }
 
-    /// Whether player `idx` has a deployed shield standing.
-    pub(super) fn has_deployed(&self, idx: usize) -> bool {
-        self.deployed.iter().any(|d| d.owner == idx && d.standing())
-    }
-
     /// The trigger: plant `def` where it is held (its held box's tag over the ground), if the
     /// ground there passes BO2's checks; else the round comes back and the hint shows.
     pub(super) fn deploy_shield(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, def: &'static WeaponDef) {
         let t = crate::tuning::get();
         match self.shield_placement(host, p, def, &t) {
             Some(bearer) => {
+                let Some(weapon) = p.arsenal.take_shield() else { return };
                 let origin = bearer.pos + Vec3::new(0.0, 0.0, inches(t.riotshield_placement_zoffset));
                 let object = if def.projectile_object.is_empty() { 0 } else { host.spawn(&def.projectile_object, p.general, origin, p.yaw) };
-                self.deployed.push(Deployed { owner: idx, general: p.general, def, object, bearer, damage_taken: 0.0, destroyed: None });
+                self.deployed.push(Deployed { owner: idx, general: p.general, def, object, bearer, damage_taken: 0.0, destroyed: None, weapon });
                 self.emit(idx, EventKind::ShieldDeployed { at: bearer.pos });
-                p.arsenal.switch_from_shield();
             }
             None => {
                 if let Some(w) = p.arsenal.weapons.iter_mut().find(|w| w.def.id == def.id) {
@@ -111,28 +111,18 @@ impl Sim {
         Some(Bearer { general: 0, pos, yaw: p.yaw, held: true, b })
     }
 
-    /// Player `idx` takes their standing shield back: it is removed and the round returns.
-    pub(super) fn pick_up_shield(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim) -> bool {
-        let Some(i) = self.deployed.iter().position(|d| d.owner == idx && d.standing()) else { return false };
+    /// The use key next to the player's own standing shield (its retrieve item, in the building
+    /// reach): it is removed, the weapon comes back with its round and up.
+    pub(super) fn use_picks_up_shield(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim) -> bool {
+        let reach = crate::building::REACH;
+        let Some(i) = self.deployed.iter().position(|d| d.owner == idx && d.standing() && (d.bearer.pos - p.body.pos).length_xy() <= reach) else { return false };
         let d = self.deployed.remove(i);
         if d.object != 0 {
             host.destroy(d.object);
         }
-        if let Some(w) = p.arsenal.weapons.iter_mut().find(|w| w.def.id == d.def.id) {
-            w.ammo = d.def.clip;
-        }
+        let (slot, state, gave_knife) = d.weapon;
+        p.arsenal.return_shield(slot, state, gave_knife);
         self.emit(idx, EventKind::ShieldPickedUp);
-        true
-    }
-
-    /// The use key next to the player's own standing shield (the script's retrieve trigger, in the
-    /// building reach): pick it up and bring the shield up.
-    pub(super) fn use_picks_up_shield(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim) -> bool {
-        let near = self.deployed.iter().any(|d| d.owner == idx && d.standing() && (d.bearer.pos - p.body.pos).length_xy() <= crate::building::REACH);
-        if !near || !self.pick_up_shield(host, idx, p) {
-            return false;
-        }
-        p.arsenal.switch_to_shield();
         true
     }
 
@@ -157,7 +147,8 @@ impl Sim {
         if d.damage_taken >= t.riotshield_deployed_health {
             d.destroyed = Some(t.riotshield_destroyed_cleanup_time);
             let owner = d.owner;
-            self.emit(owner, EventKind::ShieldDestroyed { by: by.map(|b| b as i32) });
+            let at = d.bearer.pos;
+            self.emit(owner, EventKind::ShieldDestroyed { by: by.map(|b| b as i32), at });
             if let Some(b) = by.filter(|&b| b != owner) {
                 self.emit(b, EventKind::DestroyedEquipment);
             }

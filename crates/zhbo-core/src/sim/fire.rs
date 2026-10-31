@@ -51,7 +51,7 @@ impl Sim {
                         host.fire_fx(p.general, fx, 0, at);
                     }
                     self.damage_deployed(host, i, Some(idx), p.general, def.damage_at(t), deploy::ShieldDamage::Bullet);
-                    self.emit(idx, EventKind::Impact { at, dir, surface: Surface::Metal, head: false, fatal: false, impact_type: def.impact_type });
+                    self.emit(idx, EventKind::ShieldHit { at, dir, knife: false, impact_type: def.impact_type });
                     if pellet == 0 {
                         self.emit(idx, EventKind::Shot { origin: eye, end: at });
                         self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1, roll_deg: recoil.2, gun_kick });
@@ -67,7 +67,7 @@ impl Sim {
                     if let Some(fx) = fx {
                         host.fire_fx(p.general, fx, 0, at);
                     }
-                    self.emit(idx, EventKind::Impact { at, dir, surface: Surface::Metal, head: false, fatal: false, impact_type: def.impact_type });
+                    self.emit(idx, EventKind::ShieldHit { at, dir, knife: false, impact_type: def.impact_type });
                     if pellet == 0 {
                         self.emit(idx, EventKind::Shot { origin: eye, end: at });
                         self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1, roll_deg: recoil.2, gun_kick });
@@ -188,13 +188,7 @@ impl Sim {
             }
             WeaponAction::AltToggled => self.emit(idx, EventKind::AltToggled),
             WeaponAction::ReloadStarted => self.emit(idx, EventKind::ReloadStarted),
-            WeaponAction::Swapped => {
-                // Switching to the shield takes a deployed one back (`trackriotshield`).
-                if p.arsenal.current().def.is_shield() {
-                    self.pick_up_shield(host, idx, p);
-                }
-                self.emit(idx, EventKind::Swapped)
-            }
+            WeaponAction::Swapped => self.emit(idx, EventKind::Swapped),
             WeaponAction::DeployShield { def } => self.deploy_shield(host, idx, p, def),
             WeaponAction::DryFire | WeaponAction::ReloadFinished => {}
         }
@@ -255,7 +249,7 @@ impl Sim {
         let victim_at = victim.map_or(MELEE_RANGE + extra, |v| (v.pos - p.body.pos).length_xy());
         if let Some((i, t)) = self.deployed_on_ray(eye, fwd, (MELEE_RANGE + extra).min(victim_at)) {
             self.damage_deployed(host, i, Some(idx), p.general, damage, deploy::ShieldDamage::Melee);
-            self.emit(idx, EventKind::Impact { at: eye + fwd * t, dir: fwd, surface: Surface::Metal, head: false, fatal: false, impact_type: 0 });
+            self.emit(idx, EventKind::ShieldHit { at: eye + fwd * t, dir: fwd, knife: true, impact_type: 0 });
             return;
         }
         if let Some(v) = victim {
@@ -266,7 +260,7 @@ impl Sim {
             let mine = |b: &crate::shield::Bearer| b.general == v.id;
             if let Some((_, t)) = crate::shield::blocking(&self.shields, &mine, eye, to.normalized_or_zero(), to.length(), to.length(), Some(v.id)) {
                 let at = eye + to.normalized_or_zero() * t;
-                self.emit(idx, EventKind::Impact { at, dir: to.normalized_or_zero(), surface: Surface::Metal, head: false, fatal: false, impact_type: 0 });
+                self.emit(idx, EventKind::ShieldHit { at, dir: to.normalized_or_zero(), knife: true, impact_type: 0 });
                 return;
             }
             host.fire_fx(p.general, MELEE_FX_WEAPON, v.id, v.pos);

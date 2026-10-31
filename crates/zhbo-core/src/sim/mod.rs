@@ -168,7 +168,10 @@ pub enum EventKind {
     /// The player took their deployed shield back.
     ShieldPickedUp,
     /// This player's deployed shield was destroyed (by the player `by`, if one).
-    ShieldDestroyed { by: Option<i32> },
+    ShieldDestroyed { by: Option<i32>, at: Vec3 },
+    /// This player's round or strike met an Assault Shield (held, stowed or deployed) at `at`:
+    /// no damage to its bearer; drawn as a metal impact, heard as the shield's.
+    ShieldHit { at: Vec3, dir: Vec3, knife: bool, impact_type: i32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -308,10 +311,10 @@ impl Sim {
     /// A shield standing deployed is on neither (the deployed ones follow, `general` 0).
     fn shield_bearers(&self) -> Vec<crate::shield::Bearer> {
         let mut out = Vec::new();
-        for (idx, p) in self.players.iter().enumerate() {
-            let Some(p) = p else { continue };
+        for p in self.players.iter().flatten() {
             let up = p.arsenal.current().def;
-            let stowed = || p.arsenal.weapons.iter().map(|w| w.def).find(|d| d.is_shield()).filter(|_| !self.has_deployed(idx)).map(|d| (d, false));
+            // A deployed shield's weapon is out of the arsenal (`Arsenal::take_shield`).
+            let stowed = || p.arsenal.weapons.iter().map(|w| w.def).find(|d| d.is_shield()).map(|d| (d, false));
             let carried = if up.is_shield() { Some((up, true)) } else { stowed() };
             if let Some(b) = carried.and_then(|(d, held)| crate::shield::Bearer::of(p.general, p.body.pos, p.yaw, d, held)) {
                 out.push(b);
