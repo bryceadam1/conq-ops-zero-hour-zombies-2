@@ -4499,3 +4499,45 @@ ads_move_speed_scale, ads_in/out_time (234 each), specialties (223), reload/relo
 reload_add_time (210 each), fire_time (94); damage_range 992 → 558 (the rest are `gl_*`, another
 cause), ads_recoil_reduction 308 → 32 (`dualoptic_hamr_mp`'s own 0.03|0.15 is not carried by the
 base def — not attachments), reload_empty_add_time 1806 → 1790.
+
+## Alt toggles drop and raise on BO2's alt timing fields (2026-10-31, branch `v1/alt-timing`)
+
+Stacked on `v1/alt-attachments`. The sim raised an alt toggle in `max(quickRaiseTime, raiseTime / 2)`
+with no drop, and the conformance actual side reported that rule (only for weapons with an alt).
+BO2's weapon-change state machine for an alt pair (`FUN_008db3f0`), read from t6mp
+(`~/.opencode/plan/alt-timing/dec_*.c`):
+
+* **Begin** (`FUN_008db500`): state 5 with `weaponTime = FUN_008ed1e0(` the **outgoing** weapon `)`.
+  `FUN_008ed1e0`: unless the weapon is itself an alt mode (inventory ALTMODE), the first single
+  attachment unique (`FUN_008eb360`, kinds ascending, each kind's unique at its own index of
+  `attachmentUniques`) whose `iAltDropTime` (+0xd8) differs from the base unique's; else
+  `WeaponDef.iAltDropTime` (+0x4c0). Data: select fire's unique carries 500 ms (`an94_mp+sf` drops
+  500 ms into `sf_an94_mp`), qcw05's 400; the HK416 family authors 16 ms everywhere; launchers 0.
+* **Finish** (`FUN_008df320`): the **incoming** variant's `iAltRaiseTime` (+0x1f8), raw — no
+  attachment scale — set through `FUN_008db9f0` as state 2, so both halves are in the raise/drop
+  family `fastweaponswitch` speeds (G3). A zero drop finishes in the same pmove (`FUN_008e4da0`).
+  So `an94 → gl_an94` is 0 + 700 ms, back 0 + 700; `an94+sf → sf_an94` is 500 + 0, back 0 + 700.
+
+Fix: the parser reads the variant's `iAltRaiseTime`, the def's `iAltDropTime`, each unique's
+`iAltDropTime` and its `attachmentUniques` slot; `WeaponDef.alt_raise_time`/`alt_drop_time` ride the
+table as `AltSwitch = raise drop` (`WEAPON_FIELDS` 78 → 79; the built-in AN-94 pair carries 0.7 0);
+the converter resolves each combination's drop (`weapons::alt_drop_for`, in `add_variants`; alt modes
+keep their own). `Arsenal::toggle_alt` now starts the drop (`alt_pending`, the viewmodel plays the
+outgoing def's `ALT_DROP`, firing blocked, no swap may start — `FUN_008db500` returns in states
+3–5), and `finish_alt` changes the mode as it ends and raises over the incoming alt raise.
+
+Gotchas / follow-ups:
+* **ADS-only alts skip the raise.** `FUN_008df320` calls `FUN_008da850`: when both modes are
+  ADS-only (`FUN_008ecb00`: the def's `bAltWeaponAdsOnly` +0x65c or an attachment's +0x20 — the
+  dual optic), no raise state is set at all. `bAltWeaponAdsOnly` is carried by
+  `v1/uncarried-fields`, not this base; once both are in, `finish_alt` should skip the raise for that
+  pair. Until then the dual optic raises over its 16 ms (HK416) / 350–700 ms.
+* A combination the runtime `Catalog::get` builds (not converted) keeps its base's alt drop: the
+  unique data lives only in the converter. Every legal combination is converted, so none should hit it.
+* `FUN_008df320` also raises `ps+0x588` to at least a constant on an alt raise (not ported; not a
+  timing field).
+
+Measured (conformance vs the 2026-10-25 baseline; this branch includes `v1/alt-attachments`, whose
+numbers were 701,608 / 195 / 206): `alt_raise_time` 9,341 → 0, `alt_drop_time` 6,583 → 0; weapons
+differing cells 706,586 → 685,684 (−15,924 from this item), column clusters 203 → 193 (−2), gap
+clusters 214 → 204 (−2). No column regressed.
