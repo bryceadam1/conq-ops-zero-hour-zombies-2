@@ -4628,3 +4628,8 @@ the knife picture.
 - Tests: `nativevm::tests::each_held_weapon_draws_its_own_class_camo`; the sim test now checks the
   knife camo lands on the player; the real-install `the_camo_assets_convert_with_their_art` checks
   the knife row names `camo_knife`, the blob converts, and its atacs/gold/diamond options resolve.
+- Measured (conformance CLI vs the `v1/cac-camo-followups` base): unchanged, as expected for a
+  draw-time transport — weapons 706,586 cells / 203 clusters, 2264/747 one-sided rows; cac 881
+  cells / 7 clusters, 42/6; 214 gap clusters. Verified: `cargo test --workspace` green; clippy 39
+  warnings before and after; the real-install suite (`--ignored --skip conformance`) green. The
+  in-game check (equip a knife camo, switch to the knife, see it painted) is the integrator's.
