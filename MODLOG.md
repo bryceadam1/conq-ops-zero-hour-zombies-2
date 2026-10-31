@@ -4855,3 +4855,29 @@ G3's 0x16-0x1d states: Fast Toss / Fast Equipment Use, not the switch or ROF rat
 
 Measured: no conformance movement (weapons diff byte-identical to the previous commit's; cac 572; 201
 gap clusters) — behaviour only, no table field.
+
+## The weapon-switch button cancels a held `offhandHoldIsCancelable` offhand (2026-10-31, `v1/offhand-rules`)
+
+BO2 (read-only Ghidra, t6mp): in the held state 0x1a, `FUN_008e28e0` keeps holding while the offhand
+button is down (old and new command, and not `holdButtonToThrow`); then, if the item is
+`offhandHoldIsCancelable` and the command carries button word 1 bit `0x4000`, it goes to
+`FUN_008dcbe0` — 0x1d, the held gun's `quickRaiseTime` — with nothing thrown. That bit is set only by
+the client's weapnext (`FUN_00537c20`, run on the weapnext *release*, case 0x2e of the command
+dispatcher `FUN_0053f380`): while the predicted weapon state is 0x16-0x1b and the offhand is
+cancelable, it sets the bit **instead of** cycling weapons. The server's switch check
+(`FUN_008e0e60`) also reads the bit. So on PC the cancel is the weapon-switch key. The ammo goes
+down only in `FUN_008e2ac0` (the throw), so the count stays; the fuse (`ps+0x60`) is left to be set
+afresh at the next pull-back (`FUN_008e28a0`). BO2's data: every MP offhand is cancelable **except the
+frag grenade** (the sticky, hatchet, tacticals and all equipment are).
+
+* `WeaponDef::hold_cancelable` (table field `HoldCancelable`, from `offhandHoldIsCancelable`). In
+  `OffhandUse::Holding`, after the pull-back with the offhand button still held, the
+  `SWAP_WEAPON` release puts the item away: `Raising` (the gun's quick raise), cook reset, count
+  untouched. During the pull-back (0x17) it does nothing, as in BO2. `holdButtonToThrow` (false for
+  every MP offhand) is still not modelled.
+* Test: fake-host `the_switch_button_cancels_a_held_cancelable_offhand` (cancelled: unused and
+  raising; not cancelable or still pulling back: thrown on the release; deterministic).
+* The table gains a field: the archive VERSION must bump (integrator).
+
+Measured: no conformance movement (no column reads it; weapons/cac diffs identical to the previous
+commit's; 201 gap clusters).

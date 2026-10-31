@@ -1008,6 +1008,16 @@ impl Arsenal {
                     return true;
                 }
                 let button = if lethal { buttons::LETHAL } else { buttons::TACTICAL };
+                // Held after the pull-back with the button still down (0x1a, `FUN_008e28e0`), an
+                // `offhandHoldIsCancelable` item is put away unused when the weapon-switch button
+                // comes up (the client sends the cancel from weapnext's release, `FUN_00537c20`,
+                // instead of cycling): the gun's quick raise (`FUN_008dcbe0`), the count untouched
+                // and the fuse dropped (it is set afresh at the next pull-back).
+                if pulled_back && def.hold_cancelable && held & button != 0 && released & buttons::SWAP_WEAPON != 0 {
+                    self.cooked = 0.0;
+                    self.offhand = Some(OffhandUse::Raising { lethal, t: 0.0 });
+                    return true;
+                }
                 let let_go = released & button != 0 || held & button == 0;
                 self.offhand = Some(if !pulled_back || !let_go {
                     OffhandUse::Holding { lethal, held_for }

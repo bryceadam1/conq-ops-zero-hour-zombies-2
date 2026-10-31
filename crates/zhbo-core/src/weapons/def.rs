@@ -213,6 +213,10 @@ pub struct WeaponDef {
     pub detonate_delay: f32,
     pub has_detonator: bool,
     pub hold_use: bool,
+    /// `offhandHoldIsCancelable`: held up after the pull-back (0x1a), the weapon-switch button
+    /// puts it away unused (`FUN_008e28e0` → `FUN_008dcbe0`; the client's weapnext sends the
+    /// cancel instead of cycling, `FUN_00537c20`).
+    pub hold_cancelable: bool,
     pub explosion_radius: f32,
     pub explosion_radius_min: f32,
     pub explosion_inner_damage: f32,
@@ -467,6 +471,7 @@ impl Default for WeaponDef {
             detonate_delay: 0.0,
             has_detonator: false,
             hold_use: false,
+            hold_cancelable: false,
             explosion_radius: 0.0,
             explosion_radius_min: 0.0,
             explosion_inner_damage: 0.0,

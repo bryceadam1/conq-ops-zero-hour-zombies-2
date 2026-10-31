@@ -747,6 +747,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         detonate_delay: w.detonate_delay.max(0.0),
         has_detonator: w.has_detonator,
         hold_use: w.is_hold_use_grenade,
+        hold_cancelable: w.offhand_hold_is_cancelable,
         explosion_radius: inches(w.explosion_radius as f32),
         explosion_radius_min: inches(w.explosion_radius_min as f32),
         explosion_inner_damage: w.explosion_inner_damage as f32,

@@ -1374,6 +1374,44 @@ pub(crate) mod tests {
         }
     }
 
+    /// `offhandHoldIsCancelable`: held up after the pull-back, the weapon-switch button's release
+    /// puts the item away unused (the gun's quick raise; the count and nothing thrown); an item
+    /// without it, or during the pull-back, ignores the button and throws on the release.
+    #[test]
+    fn the_switch_button_cancels_a_held_cancelable_offhand() {
+        use crate::weapons::{Offhand, OffhandUse, WeaponDef};
+        // (count left, thrown, the offhand after the switch button came up)
+        let try_cancel = |cancelable: bool, pull_back: f32, hold_frames: u32| {
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            sim.take_control(&host, 0, 1);
+            sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default());
+            wait_until_ready(&mut sim, &host);
+            let base = sim.player(0).unwrap().arsenal.lethal.def;
+            let def: &'static WeaponDef = Box::leak(Box::new(WeaponDef { hold_cancelable: cancelable, hold_fire_time: pull_back, ..base.clone() }));
+            sim.players[0].as_mut().unwrap().arsenal.lethal = Offhand { def, count: 2 };
+            sim.events.clear();
+            let hold = |extra: u32| FpsInput { held: buttons::LETHAL | extra, ..Default::default() };
+            run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, pressed: buttons::LETHAL, ..Default::default() }, 1);
+            run(&mut sim, &host, 0, 1, hold(0), hold_frames);
+            run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL | buttons::SWAP_WEAPON, pressed: buttons::SWAP_WEAPON, ..Default::default() }, 1);
+            run(&mut sim, &host, 0, 1, hold(0), 1);
+            let after = sim.player(0).unwrap().arsenal.offhand;
+            run(&mut sim, &host, 0, 1, FpsInput::default(), 90);
+            let thrown = events(&sim).iter().any(|k| matches!(k, EventKind::Thrown { .. }));
+            (sim.player(0).unwrap().arsenal.lethal.count, thrown, after)
+        };
+        let (count, thrown, after) = try_cancel(true, 0.2, 30);
+        assert!(matches!(after, Some(OffhandUse::Raising { .. })), "put away: {after:?}");
+        assert_eq!((count, thrown), (2, false), "unused");
+        assert_eq!(try_cancel(true, 0.2, 30), (count, thrown, after), "deterministic");
+        let (count, thrown, _) = try_cancel(false, 0.2, 30);
+        assert_eq!((count, thrown), (1, true), "not cancelable: thrown on the release");
+        let (count, thrown, _) = try_cancel(true, 2.0, 0);
+        assert_eq!((count, thrown), (1, true), "during the pull-back the button does nothing");
+    }
+
     #[test]
     fn the_hammer_and_field_computer_work_unarmed() {
         let host = FakeHost::default();

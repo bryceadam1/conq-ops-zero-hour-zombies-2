@@ -471,6 +471,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             (d.has_detonator, d.hold_use) = (v.flag(4), v.flag(5));
             Ok(())
         }),
+    field!("HoldCancelable", "1 if the weapon-switch button cancels the held offhand (BO2's offhandHoldIsCancelable).", FieldKind::Num,
+        |d: &WeaponDef| (d.hold_cancelable as u8).to_string(),
+        |d: &mut WeaponDef, v: Values| { d.hold_cancelable = v.text_num()? != 0.0; Ok(()) }),
     field!("Explosion", "Blast radius, inner radius, inner damage, outer damage.", FieldKind::Nums(4),
         |d: &WeaponDef| format!("{} {} {} {}", d.explosion_radius, d.explosion_radius_min, d.explosion_inner_damage, d.explosion_outer_damage),
         |d: &mut WeaponDef, v: Values| {
@@ -732,7 +735,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 84);
+        assert_eq!(WEAPON_FIELDS.len(), 85);
         assert_eq!(ATTACHMENT_FIELDS.len(), 18);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }
