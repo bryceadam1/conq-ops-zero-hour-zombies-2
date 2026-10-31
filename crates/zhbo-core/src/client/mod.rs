@@ -263,6 +263,9 @@ pub struct ClientOut {
     pub hits: [ClientHit; CLIENT_HITS],
     /// How many `hits` are valid.
     pub hits_len: i32,
+    /// The dual-wield left gun fired this frame: its muzzle flash and brass at the `_lh` model's
+    /// `tag_flash1`/`tag_brass1` (`viewmodel_fired` is the right gun's, at `tag_flash`/`tag_brass`).
+    pub viewmodel_fired_left: i32,
 }
 
 // Manual Default: `[u32; 64]` has none (arrays above 32 don't), and the rest are plain.
@@ -298,6 +301,7 @@ impl Default for ClientOut {
             menu_open: 0,
             hits: [ClientHit::default(); CLIENT_HITS],
             hits_len: 0,
+            viewmodel_fired_left: 0,
         }
     }
 }
@@ -921,6 +925,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                         out.viewmodel_time = time;
                     } else {
                         out.viewmodel_fired = events.shot as i32;
+                        out.viewmodel_fired_left = events.left_shot as i32;
                         let f = self.vm.update(dt, p, events);
                         out.viewmodel = f.clip;
                         out.viewmodel_weapon = f.model;

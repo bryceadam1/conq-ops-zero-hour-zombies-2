@@ -60,7 +60,11 @@
         // The sim's own `Shot` event is what the bridge's `fired` flag comes from.
         sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left: false } });
         let out = client.frame(&mut sim, &inp);
-        assert_eq!(out.viewmodel_fired, 1);
+        assert_eq!((out.viewmodel_fired, out.viewmodel_fired_left), (1, 0));
+        // A dual-wield pair's left shot sets the left flag only (its flash at `tag_flash1`).
+        sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left: true } });
+        let out = client.frame(&mut sim, &inp);
+        assert_eq!((out.viewmodel_fired, out.viewmodel_fired_left), (0, 1));
     }
 
     /// A dual-wield pair's left gun plays its own `_lh` shot; the right gun the weapon's.
@@ -747,7 +751,7 @@
 
         // Through the event stream: swap to the pair, then the ADS button fires the left gun from
         // its own magazine (BO2's left trigger) and the attack button the right gun.
-        let mut send = |sim: &mut Sim, held: u32, pressed: u32| {
+        let send = |sim: &mut Sim, held: u32, pressed: u32| {
             sim.events.clear();
             sim.input(0, 1, crate::input::FpsInput { held, pressed, ..Default::default() });
             let f = sim.frame + 1;

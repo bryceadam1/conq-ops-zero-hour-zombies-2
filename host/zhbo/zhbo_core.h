@@ -248,7 +248,7 @@ typedef struct ZhboClientOut
 	ZhboVec3 rts_look_at;
 	int32_t viewmodel;      /* BO2 animation slot (weapAnimFiles_t), a ZHBO_VM_TABLET_* clip, or ZHBO_VM_NONE */
 	int32_t viewmodel_weapon; /* converted weapon viewmodel (ZVnn models), ZHBO_VM_NONE for the tablet */
-	int32_t viewmodel_fired;  /* the gun fired this frame: muzzle flash and brass */
+	int32_t viewmodel_fired;  /* the (right) gun fired this frame: muzzle flash and brass */
 	float viewmodel_time;   /* seconds into the clip */
 	float viewmodel_ads;    /* 0..1 aim-down-sights */
 	ZhboVec3 viewmodel_offset; /* sway/bob/recoil: forward, left, up (world units) */
@@ -272,6 +272,9 @@ typedef struct ZhboClientOut
 	/* The local player's shot impacts this frame, in shot order (at most ZHBO_CLIENT_HITS). */
 	ZhboClientHit hits[ZHBO_CLIENT_HITS];
 	int32_t hits_len;
+	/* The dual-wield left gun fired this frame: its flash and brass at tag_flash1/tag_brass1
+	   (viewmodel_fired is the right gun's, at tag_flash/tag_brass). */
+	int32_t viewmodel_fired_left;
 } ZhboClientOut;
 
 /* The shell create-a-class screen (the lobby's class menu; docs/CONTRACT.md's menu ABI): the
@@ -555,7 +558,7 @@ void zhbo_native_body_reset(void);
 static_assert(sizeof(ZhboObjInfo) == 56, "ZhboObjInfo layout must match host.rs");
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
 static_assert(sizeof(ZhboClientIn) == 136, "ZhboClientIn layout must match client.rs");
-static_assert(sizeof(ZhboClientOut) == 4832, "ZhboClientOut layout must match client.rs");
+static_assert(sizeof(ZhboClientOut) == 4836, "ZhboClientOut layout must match client.rs");
 static_assert(sizeof(ZhboClientHit) == 40, "ZhboClientHit layout must match client.rs");
 static_assert(sizeof(ZhboMenuIn) == 56, "ZhboMenuIn layout must match menu.rs");
 static_assert(sizeof(ZhboMenuOut) == 4108, "ZhboMenuOut layout must match menu.rs");

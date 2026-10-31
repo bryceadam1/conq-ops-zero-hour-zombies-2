@@ -179,9 +179,10 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   `ZHBO_ViewmodelMuzzle` FXList is the fallback when a weapon's **flash** was not convertible;
   brass has none, because BO2's rule is the def alone — a weapon without `viewShellEjectEffect`
   ejects nothing (131 of 172 MP defs, the AN-94 among them; no eject notetrack and no default), so
-  the bridge skips the shell call when `ViewShellFx` is empty. The port is `tag_brass` plus
-  `tag_brass1` (the `_lh` model's left port, present only on a dual-wield pair, whose guns the mod
-  draws firing each trigger); a missing bone makes the second call a no-op. A shell's X is the
+  the bridge skips the shell call when `ViewShellFx` is empty. The ports are per hand:
+  `viewmodel_fired` (the right gun, or a single gun) flashes at `tag_flash` and ejects at
+  `tag_brass`; `viewmodel_fired_left` (a dual-wield pair's left gun, appended to `ZhboClientOut`)
+  at the `_lh` model's own `tag_flash1` and `tag_brass1`. A shell's X is the
   eject direction, so its converted FXList sets `OrientToObject = Yes` and keeps BO2's axes, unlike
   the world/impact effects' normal-up swap; `vViewShellEjectOffset`/`Rotation` are not applied.
   `LOADING` (2) and `NOT_NATIVE` (0): the W3D path draws this frame. Viewmodel sound notetracks
@@ -198,9 +199,8 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   fire, reload or idle apart. The client hands that clip and time to the native pass with
   `nativevm::ffi::set_left_clip` beside `ZhboClientOut.viewmodel`; `ZhboNativeIn` carries only the
   base clip and its size is unchanged. The left clip id is the matching right slot with
-  `INSTANCE_LEFT` (`viewmodel::slot::left_as_right`). `viewmodel_fired` is still the right gun's
-  shot only: the left gun's muzzle flash and `tag_brass1` shell need a per-hand fired flag on the
-  ABI (an append, the integrator's bump).
+  `INSTANCE_LEFT` (`viewmodel::slot::left_as_right`). Each hand's shot has its own fired flag
+  (`viewmodel_fired`, `viewmodel_fired_left`; see the effects above).
 * **The core cannot open the archive; it asks.** After each call the bridge answers every
   `zhbo_native_wanted(i)` path with `zhbo_native_provide(path, bytes, len)` (`len < 0`: not in the
   archive, after which that viewmodel is given up and logged once) and prints every

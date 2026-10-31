@@ -803,7 +803,7 @@ Bool Zhbo_GetCameraOverride(Coord3D *eye, Coord3D *dir, Real *horizontalFov, Rea
 	return TRUE;
 }
 
-Bool Zhbo_GetViewmodel(Int *clip, Int *weapon, Bool *fired, Real *time, Real *ads, AsciiString *model, Coord3D *offset, Coord3D *angles)
+Bool Zhbo_GetViewmodel(Int *clip, Int *weapon, Bool *fired, Bool *firedLeft, Real *time, Real *ads, AsciiString *model, Coord3D *offset, Coord3D *angles)
 {
 	if (!s_ready || !s_out.camera_override || s_out.viewmodel < 0 || !s_out.hide_object)
 		return FALSE;
@@ -831,6 +831,7 @@ Bool Zhbo_GetViewmodel(Int *clip, Int *weapon, Bool *fired, Real *time, Real *ad
 	*clip = s_out.viewmodel;
 	*weapon = tablet || hammer ? ZHBO_VM_NONE : s_out.viewmodel_weapon;
 	*fired = s_out.viewmodel_fired != 0;
+	*firedLeft = s_out.viewmodel_fired_left != 0;
 	*time = s_out.viewmodel_time;
 	*ads = s_out.viewmodel_ads;
 	offset->set(s_out.viewmodel_offset.x, s_out.viewmodel_offset.y, s_out.viewmodel_offset.z);

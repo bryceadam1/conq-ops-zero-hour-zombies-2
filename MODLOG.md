@@ -4641,3 +4641,15 @@ which `sounds_and_fx` fills for a dual-wield weapon from the def its `szDualWiel
 table has no left sound). Tests: `weapons::tests::the_left_gun_gets_its_own_shot` (zhbo-assets),
 `client::tests::the_left_guns_shot_plays_its_own_sound`. No conformance column covers the `_lh`
 def's sound (the left def is not a row), so no cell moves.
+
+## The left gun flashes and ejects at its own tags (2026-10-31, `v1/dual-wield-sim`)
+
+`ZhboClientOut` gains `viewmodel_fired_left` (appended after `hits_len`; 4832 → 4836 bytes, the
+size asserts in `ffi.rs` and `zhbo_core.h` updated). The client sets it from `Shot { left: true }`;
+`viewmodel_fired` is now the right gun's (or a single gun's) alone. The bridge's `viewmodelFx`
+takes the hand: the right gun flashes at `tag_flash` and ejects at `tag_brass`, the left at the
+`_lh` model's `tag_flash1`/`tag_brass1` (its bones: `j_gun1 j_bolt1 j_press_rear1 tag_brass1
+tag_clip1 tag_flash1`, `zhbo-assets model common_mp.ff t6_wpn_pistol_fnp45_view_lh`). Before, every
+right shot ejected at both `tag_brass` and `tag_brass1`. **Needs `ZHBO_ABI_VERSION` 26 → 27** at
+merge (the integrator's); the C++ (`ZhboBridge.cpp/.h`, `ZhboViewmodel.cpp`) was not built here.
+Test: `client::tests::a_shot_event_for_the_local_player_sets_viewmodel_fired` covers both flags.
