@@ -509,3 +509,81 @@ mod zoom_tests {
         assert_eq!((a.current().zoom.level, a.current().zoom.from), (0, 1), "(level + 1) % 2");
     }
 }
+
+#[cfg(test)]
+mod quick_reload_tests {
+    use super::*;
+    use crate::input::buttons;
+
+    /// The AN-94 with Fast Mag, as converted: reload 1.67/2.095 (add 0.877), quick 1.67/2.095
+    /// (add 0.9).
+    fn fast_mag(dual_mag: bool) -> &'static WeaponDef {
+        let mut d = WeaponDef { id: "test_fastmag_mp".into(), class: Class::Rifle, clip: 30, start_reserve: 300, max_reserve: 300, ..Default::default() };
+        (d.reload_time, d.reload_empty_time, d.reload_add_time, d.reload_empty_add_time) = (1.67, 2.095, 0.877, 0.0);
+        (d.timing.reload_quick_time, d.timing.reload_quick_empty_time, d.timing.reload_quick_add_time) = (1.2, 1.5, 0.9);
+        d.traits.dual_mag = dual_mag;
+        Box::leak(Box::new(d))
+    }
+
+    fn reload(a: &mut Arsenal, rng: &mut Rng) -> Reload {
+        let mut out = Vec::new();
+        a.step(0, buttons::RELOAD, false, 0, 0.0, rng, &mut out);
+        let r = a.current().reload.expect("reloading");
+        while a.current().is_reloading() {
+            a.step(0, 0, false, 0, 0.0, rng, &mut out);
+        }
+        r
+    }
+
+    fn kit(def: &'static WeaponDef) -> (Arsenal, Rng) {
+        let mut a = Arsenal::new();
+        a.loadout.perks.clear();
+        a.weapons[0] = WeaponState::new(def);
+        a.raise_left = 0.0;
+        (a, Rng::new(5))
+    }
+
+    #[test]
+    fn fast_mag_alternates_the_quick_swap_with_a_full_reload() {
+        let (mut a, mut rng) = kit(fast_mag(true));
+        let mut kinds = Vec::new();
+        for _ in 0..4 {
+            a.weapons[0].ammo = 10;
+            let Reload::Magazine { quick, length, add_at, .. } = reload(&mut a, &mut rng) else { panic!() };
+            kinds.push((quick, length, add_at));
+            assert_eq!(a.current().ammo, 30);
+        }
+        assert_eq!(kinds, vec![(true, 1.2, 0.9), (false, 1.67, 0.877), (true, 1.2, 0.9), (false, 1.67, 0.877)], "the first reload is the quick one (FUN_008ddce0)");
+        // From empty: the quick empty length; no empty add time, so the add time (capped at the
+        // normal empty reload).
+        a.weapons[0].ammo = 0;
+        let Reload::Magazine { quick, length, add_at, empty, .. } = reload(&mut a, &mut rng) else { panic!() };
+        assert!(quick && empty);
+        assert_eq!((length, add_at), (1.5, 0.9));
+    }
+
+    #[test]
+    fn an_interrupted_reload_before_the_add_keeps_the_flag() {
+        let (mut a, mut rng) = kit(fast_mag(true));
+        a.weapons[0].ammo = 10;
+        let mut out = Vec::new();
+        a.step(0, buttons::RELOAD, false, 0, 0.0, &mut rng, &mut out);
+        a.weapons[0].reload = None; // swapped away / meleed before the rounds went in
+        assert!(a.current().quick_reload);
+        let Reload::Magazine { quick, .. } = reload(&mut a, &mut rng) else { panic!() };
+        assert!(quick);
+        assert!(!a.current().quick_reload);
+    }
+
+    #[test]
+    fn without_a_dual_mag_every_reload_is_normal_and_an_empty_one_adds_at_the_add_time() {
+        let (mut a, mut rng) = kit(fast_mag(false));
+        for _ in 0..2 {
+            a.weapons[0].ammo = 0;
+            let Reload::Magazine { quick, length, add_at, .. } = reload(&mut a, &mut rng) else { panic!() };
+            assert!(!quick);
+            // BO2 (`FUN_008dec90`): no `iReloadEmptyAddTime` → the rounds go in at `iReloadAddTime`.
+            assert_eq!((length, add_at), (2.095, 0.877));
+        }
+    }
+}

@@ -196,8 +196,17 @@ pub fn check(def: &'static WeaponDef) -> Vec<String> {
                         fail(format!("shell reload took {done} frames, BO2 says {:.1}", want / LOGIC_DT));
                     }
                 } else {
-                    let (length, add) = if empty { (def.reload_empty_time, def.reload_empty_add_time) } else { (def.reload_time, def.reload_add_time) };
-                    let add = if add > 0.0 { add.min(length) } else { length };
+                    // BO2 (`FUN_008dee50`/`FUN_008dec90`): a fresh dual-mag weapon's first reload is
+                    // the quick one; the rounds go in at the (quick) add time — an empty reload's own
+                    // add time when it has one — capped at the normal reload, never past the end.
+                    let t = &def.timing;
+                    let quick = def.traits.dual_mag;
+                    let normal = if empty { def.reload_empty_time } else { def.reload_time };
+                    let quick_length = if empty { t.reload_quick_empty_time } else { t.reload_quick_time };
+                    let length = if quick && quick_length > 0.0 { quick_length } else { normal };
+                    let add = if quick { t.reload_quick_add_time } else { def.reload_add_time };
+                    let add = if empty && def.reload_empty_add_time > 0.0 { def.reload_empty_add_time } else { add };
+                    let add = if add > 0.0 && add < normal { add } else { normal }.min(length);
                     if !near(done, length, 0) {
                         fail(format!("{} reload took {done} frames, BO2 says {:.1}", if empty { "empty" } else { "partial" }, length / LOGIC_DT));
                     }

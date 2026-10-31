@@ -22,8 +22,9 @@ use crate::units::LOGIC_DT;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Reload {
-    /// Magazine swap: seconds in, total length, when the rounds go in, whether they have.
-    Magazine { t: f32, length: f32, add_at: f32, added: bool, empty: bool },
+    /// Magazine swap: seconds in, total length, when the rounds go in, whether they have, from
+    /// empty, and whether it is Fast Mag's quick reload (the taped second magazine).
+    Magazine { t: f32, length: f32, add_at: f32, added: bool, empty: bool, quick: bool },
     /// Tube shotgun: start, then one cycle per batch of shells, then end.
     Shells { phase: ShellPhase, t: f32, stop: bool },
 }
@@ -74,6 +75,10 @@ pub struct WeaponState {
     /// The variable zoom's level (BO2's inventory slot `+0x10`), the level it changed from and
     /// the seconds since (`ps+0x5d0`/`ps+0x5d4`; `weapons::zoom`).
     pub zoom: zoom::Level,
+    /// BO2's per-weapon quick-reload flag (inventory slot `+0x17`): set when a dual-mag weapon is
+    /// given (`FUN_008ddce0`), flipped by each of its reloads' ammo transfer (`FUN_008dbc00`), so
+    /// Fast Mag alternates the quick swap to the taped magazine with a full reload.
+    pub quick_reload: bool,
 }
 
 impl WeaponState {
@@ -103,6 +108,7 @@ impl WeaponState {
             rechamber: None,
             reload_owed: false,
             zoom: zoom::Level { since: zoom::LEVEL_BLEND_TIME, ..Default::default() },
+            quick_reload: def.traits.dual_mag,
         }
         .with_alt_ammo()
     }
@@ -157,9 +163,9 @@ impl WeaponState {
             Reload::Shells { phase: ShellPhase::Start, t: 0.0, stop: false }
         } else {
             let empty = self.ammo == 0;
-            let (length, add_at) = if empty { (d.reload_empty_time, d.reload_empty_add_time) } else { (d.reload_time, d.reload_add_time) };
-            let add_at = if add_at > 0.0 { add_at } else { length };
-            Reload::Magazine { t: 0.0, length, add_at: add_at.min(length), added: false, empty }
+            let quick = self.quick_reload && d.traits.dual_mag;
+            let (length, add_at) = magazine_times(d, empty, quick);
+            Reload::Magazine { t: 0.0, length, add_at, added: false, empty, quick }
         });
     }
 
@@ -202,18 +208,22 @@ impl WeaponState {
         let d = self.def;
         let Some(r) = self.reload else { return false };
         match r {
-            Reload::Magazine { t, length, add_at, added, empty } => {
+            Reload::Magazine { t, length, add_at, added, empty, quick } => {
                 let t = t + dt;
                 let mut added = added;
                 if !added && t >= add_at {
                     self.take(d.clip);
                     added = true;
+                    // The ammo transfer flips a dual-mag weapon's quick flag (`FUN_008dbc00`).
+                    if d.traits.dual_mag {
+                        self.quick_reload = !quick;
+                    }
                 }
                 if t >= length {
                     self.reload = None;
                     return true;
                 }
-                self.reload = Some(Reload::Magazine { t, length, add_at, added, empty });
+                self.reload = Some(Reload::Magazine { t, length, add_at, added, empty, quick });
             }
             Reload::Shells { phase, t, stop } => {
                 let t = t + dt;
@@ -1048,6 +1058,23 @@ impl Default for Arsenal {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// A magazine reload's length and the moment its rounds go in (seconds of weapon time). The
+/// length (`FUN_008dee50`): the quick reload's `iReloadQuick{,Empty}Time` when `quick`, else the
+/// normal or empty reload. The add (`FUN_008dec90`): `iReloadQuickAddTime` or `iReloadAddTime`; an
+/// empty reload takes `iReloadEmptyAddTime` when it has one, else that same add time; capped at
+/// the *normal* (or normal empty) reload time, and never past the end.
+fn magazine_times(d: &WeaponDef, empty: bool, quick: bool) -> (f32, f32) {
+    let t = &d.timing;
+    let normal = if empty { d.reload_empty_time } else { d.reload_time };
+    let quick_length = if empty { t.reload_quick_empty_time } else { t.reload_quick_time };
+    // A table without the quick times (0) keeps the normal reload.
+    let length = if quick && quick_length > 0.0 { quick_length } else { normal };
+    let add = if quick { t.reload_quick_add_time } else { d.reload_add_time };
+    let add = if empty && d.reload_empty_add_time > 0.0 { d.reload_empty_add_time } else { add };
+    let add_at = if add > 0.0 && add < normal { add } else { normal };
+    (length, add_at.min(length))
 }
 
 /// The combination holds an attachment of BO2's `eAttachment` `kind` (`FUN_008eb270`), resolved

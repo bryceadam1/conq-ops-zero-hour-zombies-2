@@ -4758,3 +4758,30 @@ conformance oracle (`allows 0x0`), which would give `dualoptic_*` fov1 = 50 and 
 `v1/alt-attachments` lands that, the Hybrid loses its magnification. `FUN_008eb300` takes the
 attachments from the packed weapon's bits indexed into the variant's own table (`+0x18`), so how
 the alt's packed weapon carries them decides it; worth a Ghidra look before that merge.
+
+### Quick reload: Fast Mag alternates the taped magazine with a full reload (branch `v1/ads-zoom`)
+
+What selects `iReloadQuick*` (5a's open question), read-only t6mp (`ghidra/quick*.c` in the plan
+dir): the reload start `FUN_008dee50` takes `FUN_008ec8c0`/`FUN_008ec920` (`iReloadQuickTime`/
+`iReloadQuickEmptyTime` × the attachments' scale products, truncated) instead of the normal times
+when the weapon's inventory slot flag `+0x17` is set **and** `FUN_008eba90` says dual mag (variant
+`bDualMag` +0x245, or — unless `bIgnoreAttachments` — an attachment's `bDualMag` +0x2d: the
+`dualclip` attachment, Fast Mag). Giving the weapon sets the flag to dual-mag (`FUN_008ddce0`); the
+non-segmented reload's ammo transfer (`FUN_008dbc00`, right after `FUN_008e64e0`) flips it. So Fast
+Mag's first reload is the quick swap to the taped magazine, the next a full reload, and so on; a
+reload abandoned before its rounds go in leaves the flag. Not a perk — `specialty_fastreload` is the
+`Timing::Reload` rate, unchanged.
+
+The add point (`FUN_008dec90`, `ps+0x50`): `iReloadQuickAddTime` (`FUN_008ec980`) or
+`iReloadAddTime`; an empty reload takes `iReloadEmptyAddTime` when non-zero (the quick one's
+`iReloadQuickEmptyAddTime` first — def+0x4a8, not carried, follow-up), **else the same add time**;
+the result is capped at the *normal* (empty) reload time. Gotcha fixed on the way: the mod's empty
+reload put the rounds in at the very end when `iReloadEmptyAddTime` was 0 (most weapons: the AN-94's
+empty reload now adds at 1.3 s of 3.105 s, as BO2 does).
+
+Port: `WeaponState::quick_reload`, `Reload::Magazine { quick }`, `magazine_times` in `arsenal.rs`;
+the viewmodel plays `anim_reload_quick` / `anim_reload_quick_empty` (`weapAnimFiles_t` 0x15/0x16,
+`slot::RELOAD_QUICK{,_EMPTY}`; the converter already carries every slot) with the normal clip as the
+fallback. `conformance::check` now expects the quick first reload and BO2's add rule. In this install
+the Fast Mag times equal the normal ones (both × 0.675); the quick reload differs by its add time
+(an AN-94 Fast Mag puts the rounds in at 0.9 s instead of 0.877 s) and by its `fastmag_quick` clip.

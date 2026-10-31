@@ -36,6 +36,8 @@ pub mod slot {
     pub const RELOAD_EMPTY: i32 = 0x12;
     pub const RELOAD_START: i32 = 0x13;
     pub const RELOAD_END: i32 = 0x14;
+    pub const RELOAD_QUICK: i32 = 0x15;
+    pub const RELOAD_QUICK_EMPTY: i32 = 0x16;
     pub const RAISE: i32 = 0x17;
     pub const FIRST_RAISE: i32 = 0x18;
     pub const DROP: i32 = 0x19;
@@ -218,7 +220,16 @@ impl Viewmodel {
             return wf(or(def, clip, slot::RAISE), a.raise_total - a.raise_left);
         }
         match w.reload {
-            Some(Reload::Magazine { t, empty, .. }) => return wf(if empty { or(def, slot::RELOAD_EMPTY, slot::RELOAD) } else { slot::RELOAD }, t),
+            Some(Reload::Magazine { t, empty, quick, .. }) => {
+                let normal = if empty { or(def, slot::RELOAD_EMPTY, slot::RELOAD) } else { slot::RELOAD };
+                // Fast Mag's quick swap plays `anim_reload_quick{,_empty}` (`weapAnimFiles_t` 0x15/0x16).
+                let clip = match (quick, empty) {
+                    (true, false) => or(def, slot::RELOAD_QUICK, normal),
+                    (true, true) => or(def, slot::RELOAD_QUICK_EMPTY, normal),
+                    _ => normal,
+                };
+                return wf(clip, t);
+            }
             Some(Reload::Shells { phase, t, .. }) => {
                 let clip = match phase {
                     ShellPhase::Start => slot::RELOAD_START,
@@ -405,10 +416,21 @@ mod tests {
         p.arsenal.since_sprint = 10.0;
         // Reloads: magazine, then empty.
         let w = p.arsenal.active;
-        p.arsenal.weapons[w].reload = Some(Reload::Magazine { t: 0.5, length: 2.0, add_at: 1.0, added: false, empty: false });
+        p.arsenal.weapons[w].reload = Some(Reload::Magazine { t: 0.5, length: 2.0, add_at: 1.0, added: false, empty: false, quick: false });
         assert_eq!(clip(&mut vm, &p, 0.05, Events::default()), slot::RELOAD);
-        p.arsenal.weapons[w].reload = Some(Reload::Magazine { t: 0.5, length: 2.0, add_at: 1.0, added: false, empty: true });
+        p.arsenal.weapons[w].reload = Some(Reload::Magazine { t: 0.5, length: 2.0, add_at: 1.0, added: false, empty: true, quick: false });
         assert_eq!(clip(&mut vm, &p, 0.05, Events::default()), slot::RELOAD_EMPTY);
+        // Fast Mag's quick swap: its own clips where the weapon has them, else the normal ones.
+        let def = p.arsenal.weapons[w].def;
+        p.arsenal.weapons[w].reload = Some(Reload::Magazine { t: 0.5, length: 2.0, add_at: 1.0, added: false, empty: false, quick: true });
+        let want = if def.has_anim(slot::RELOAD_QUICK as usize) { slot::RELOAD_QUICK } else { slot::RELOAD };
+        assert_eq!(clip(&mut vm, &p, 0.05, Events::default()), want);
+        let mut quick_def = def.clone();
+        quick_def.anims |= 1 << slot::RELOAD_QUICK_EMPTY;
+        p.arsenal.weapons[w].def = Box::leak(Box::new(quick_def));
+        p.arsenal.weapons[w].reload = Some(Reload::Magazine { t: 0.5, length: 2.0, add_at: 1.0, added: false, empty: true, quick: true });
+        assert_eq!(clip(&mut vm, &p, 0.05, Events::default()), slot::RELOAD_QUICK_EMPTY);
+        p.arsenal.weapons[w].def = def;
         p.arsenal.weapons[w].reload = None;
         // A grenade: the grenade's viewmodel pulls the pin, then throws.
         p.arsenal.offhand = Some(OffhandUse::Holding { lethal: true, held_for: 0.2 });
