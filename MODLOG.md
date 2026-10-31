@@ -4874,3 +4874,15 @@ test: `a_string_value_round_trips_exactly`. The built-in Dexterity stand-in carr
 
 Measured: cac `description` 24 → 0 (the cluster is gone); cac 427 → 403; weapons 781,587
 unchanged; gap clusters 202 → 201.
+
+## `classmenu.rs` split along its seams (2026-10-31, `v1/cac-rules`)
+
+`classmenu.rs` had grown to ~1,780 lines. It is now the module root (the doc, the Pick-10 and
+name constants, the submodule list and the re-exports) over one file per concern in
+`classmenu/`: `wildcard` (the card rules and the grid order), `slot` (the rows and the weapon
+categories), `personalize`, `grid` (the content-grid links), `draft` (the class being edited and
+its `CustomClass` round trip), `editor` (the session state and its queries), `keys` (the edges),
+`step` (the key/pointer fold), `apply` (an option applied to the draft), `options` (the lists and
+row values) and `offer` (what the conformance emitter reads), beside the existing `items` and
+`legal`. Everything public is re-exported from `classmenu`, so no caller changed. A pure move:
+the workspace tests pass unchanged and clippy's count is the same.
