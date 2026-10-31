@@ -4632,3 +4632,20 @@ bump (integrator).
 
 Measured: weapons 781,252 → 781,251 (`cac_group` 1 → 0), cac 556 → 555 (`group` 1 → 0), gap
 clusters 204 → 202; nothing else moved.
+
+## The last BO2-only weapon rows and the wildcard slot: findings (2026-10-31, `v1/cac-leftovers`)
+
+* With `knife_mp` converted, `conformance_the_enumerator_matches_the_expected_rows` passes.
+* Six of the seven remaining BO2-only rows — claymore, Bouncing Betty, C4, Tactical Insertion,
+  Trophy System, Black Hat — are converted and played by `equipment.rs` already; the editor never
+  lists them because `classmenu::offer` filters offhands by `Class::Lethal`/`Tactical` and these are
+  `Class::Equipment` (`classrepair::repair_offhand` even clears a stored claymore). BO2 lists them
+  by statstable slot (`primarygrenade`/`specialgrenade`), which their defs already carry in
+  `cac_slot`. The Assault Shield is a BO2 *primary* (`weapon_special`) the converter excludes
+  (`EXCLUDED_WEAPONS`) and the sim has no blocking or deploy for — real new content.
+* The wildcard `slot` (statstable column 13, `bonuscard1..7`, `Engine.GetLoadoutSlotForItem`) has
+  no consumer for bonus cards: the editor equips into the class's three slots
+  (`cacutility.lua:50-52`), mutual exclusion is by name (`bonuscardgridbutton.lua:239-275`), and
+  GSC's `isbonuscardactive` indices do not follow it (`_challenges.gsc:341,730`). The mod's
+  wildcards are a core enum, so emitting it needs the statstable's bonus-card rows carried as data
+  (beside `perk_rows`) — queued as "wildcards from the statstable", not done here.
