@@ -4592,3 +4592,43 @@ diamond warms the same way (its `_alt` spec map is gold-tinted 134,120,84); carb
 by new code fails or misparses — the bump is required), and the archive `hud::VERSION` (new
 `_spec.tga` files in every model's textures; the archive grew 0.90 → 1.01 GB). No C ABI change:
 `NativeSurface` is Rust-only.
+
+## The alt-fire slot draws BO2's `dpadIcon`; the smoke grenade's icon (2026-10-31, branch `v1/art-columns`)
+
+Stacked on `v1/spec-colour`. The ammo area's alt-fire slot drew `ZHBO_BO2_Icon_<alt id>`, a sprite
+that never existed (the alt id is `gl_an94_mp~an94_mp+gl`), so only the key prompt showed — and it
+showed for a second optic too. BO2's slot (action slot 3, `ammoarea.lua` `altFireImage`, 64×64 at
+`Right - 118`) is built by `t6mp` `FUN_0094f7a0` (`actionSlotData`): slot type 2 appears only when
+the held weapon is an alt mode (inventory 3) or has an alt weapon (`FUN_008ec9e0`), and only with a
+material, `FUN_008ed6e0`: the variant's own `dpadIcon` (`+0x25c`, layouts `WV::dpadIcon` = 604),
+else the first attachment's alt weapon's. So a launcher shows `hud_gl_select` (a little launcher)
+in both modes, select fire `hud_select_fire_bullet_stack` (the selector switch), and a hybrid optic
+has no `dpadIcon` — no slot, no key.
+
+* **Data.** `WeaponDef.dpad_icon` (table key `DpadIcon`, appended; unknown keys are skipped, so old
+  tables still parse) = the variant's `dpadIcon`. `zhbo_formats::weapon::Weapon.dpad_icon_hash`: the
+  inline material's streamed image, like `hud_icon_hash` — `hud_gl_select` has no standalone asset
+  in any MP zone, so the name search cannot find it.
+* **Converter.** One `ZHBO_Mat_<dpadIcon>` sprite per distinct `dpadIcon` of the player weapons and
+  the `ALTMODE` variants (`hud::dpad_icons`, 128 px; 8 on the stock install). The name search
+  (`Source::Dynamic`) also reads `code_post_gfx` last: the smoke grenade's `hud_willy_pete` loads
+  only there (common_mp's inline copy has no image), so `ZHBO_BO2_Icon_willy_pete_mp` — the
+  tactical counter's icon — converts now; it was the last missing weapon icon.
+* **HUD.** `hud::ammo::alt_slot_icon` is BO2's rule; `draw_alt_fire` draws `ZHBO_Mat_<icon>`.
+* **Conformance.** `dpad_icon` is emitted from the def when its sprite shipped: 1573 → 0 rows.
+  `hud_icon` 1422 → 1421 (willy_pete). The remaining 1421 are the alt modes (`dualoptic_*`, `sf_*`):
+  BO2's LUI reads `hudIcon` only for the lethal/tactical counters (`FUN_0094f520`,
+  `hud_update_offhand`), and no mod screen draws an alt mode's icon, so the mod ships none — left
+  open rather than shipping an undrawn sprite.
+
+`view_part_materials` (9,331 rows) has no material-assignment cause on this base. Every row with a
+manifest lacks `mc/mtl_clan_tag` + `mc/mtl_player_icon` (and the optic's `*_reticle*`): the
+surfaces `textures::textures` leaves out on purpose (BO2 fills the tag/emblem from the player's own
+at run time; the reticle is projected to infinity and the HUD draws it on the line of sight).
+Removing those, no row differs by order, camo variant or `_glo`; the rest are part counts (the
+duplicate magazine part on an94/hamr, the `_dw` guns' extra `_lh` part, the `ir`+`vzoom` dualband
+parts) and the 651 combos without a manifest. Closing the column needs a reticle surface pass and
+a clan tag/emblem — renderer features, not a converter fix.
+
+**Versions (integrator-owned, NOT bumped):** the archive's `hud::VERSION` (new sprites, a new
+weapon-table key). No C ABI change.

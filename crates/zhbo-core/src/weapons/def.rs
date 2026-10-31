@@ -278,6 +278,10 @@ pub struct WeaponDef {
     pub overlay_material_low_res: String,
     /// `weapOverlayReticle_t`: which reticle the overlay draws (0: none).
     pub overlay_reticle: u32,
+    /// BO2's `WeaponVariantDef.dpadIcon`: the action-slot material (`hud_gl_select` on a grenade
+    /// launcher's alt mode, `hud_select_fire_bullet_stack` on select fire), empty when none. The HUD's
+    /// alt-fire slot draws it (`hud::ammo::alt_slot_icon`).
+    pub dpad_icon: String,
 }
 
 /// One BO2 camouflage option (`mp/attachmenttable.csv`'s rows with `camo` in column 1): the id
@@ -467,6 +471,7 @@ impl Default for WeaponDef {
             overlay_material: String::new(),
             overlay_material_low_res: String::new(),
             overlay_reticle: 0,
+            dpad_icon: String::new(),
         }
     }
 }

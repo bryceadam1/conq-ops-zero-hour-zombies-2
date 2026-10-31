@@ -475,6 +475,9 @@ pub struct Weapon {
     /// The HUD icon's image in the `.ipak` packs (its material is inline in the weapon).
     pub hud_icon_hash: Option<u32>,
     pub dpad_icon: Option<String>,
+    /// The d-pad icon's image in the `.ipak` packs (its material is inline in the variant, like
+    /// the HUD icon's: `hud_gl_select` has no standalone asset in any MP zone).
+    pub dpad_icon_hash: Option<u32>,
     /// What a projectile does when it goes off (`projExplosionEffect`), or the impact table's
     /// effect for its `impactType` on dirt.
     pub explosion_effect: Option<crate::fx::Effect>,
@@ -642,6 +645,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         hide_tags: hide_tags(z, z.try_u32(v + WV::hideTags)?),
         alt_weapon: opt_str(z, v + WV::szAltWeaponName),
         dpad_icon: named(z, v + WV::dpadIcon),
+        dpad_icon_hash: icon_hash(z, z.u32(v + WV::dpadIcon)),
         perks: (z.u32(v + WV::perks), z.u32(v + WV::perks + 4)),
         view_kick_center: (z.f32(v + WV::fAdsViewKickCenterSpeed), z.f32(v + WV::fHipViewKickCenterSpeed)),
         overlay_material,
@@ -823,12 +827,16 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.explosion_effect = (fx != 0).then(|| crate::fx::read(z, fx)).filter(|e| !e.elems.is_empty()).or_else(|| crate::fx::explosion_entry(w.impact_type).and_then(|e| crate::fx::impact(z, e, crate::fx::surface::DIRT)));
     w.hud_icon = named(z, d + WD::hudIcon);
     w.weapon_camo = named(z, d + WD::weaponCamo);
-    let icon = z.try_u32(d + WD::hudIcon)?;
-    w.hud_icon_hash = (icon != 0)
-        .then(|| crate::xmodel::read_material(z, icon))
-        .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash)))
-        .filter(|h| *h != 0);
+    w.hud_icon_hash = icon_hash(z, z.try_u32(d + WD::hudIcon)?);
     Ok(w)
+}
+
+/// The streamed image of the inline material at `material` (a weapon's icon), if it has one.
+fn icon_hash(z: &Zone, material: u32) -> Option<u32> {
+    (material != 0)
+        .then(|| crate::xmodel::read_material(z, material))
+        .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash)))
+        .filter(|h| *h != 0)
 }
 
 /// Every weapon in a loaded zone.

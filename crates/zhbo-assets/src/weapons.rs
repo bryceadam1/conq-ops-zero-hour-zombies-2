@@ -741,6 +741,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         overlay_material: w.overlay_material.clone(),
         overlay_material_low_res: w.overlay_material_low_res.clone(),
         overlay_reticle: w.overlay_reticle,
+        // The variant's own action-slot material (`WeaponVariantDef.dpadIcon`): an alt mode carries
+        // it (`gl_an94_mp`: `hud_gl_select`), the weapon it toggles from does not.
+        dpad_icon: w.dpad_icon.clone().unwrap_or_default(),
     };
     #[cfg(debug_assertions)]
     {

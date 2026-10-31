@@ -16,8 +16,9 @@
 //!   wide) with the name in `SmallItalic`, black at alpha 0.5, centred; its width is the text's
 //!   less 18 plus 128 (ammoarea.lua:669-842, 1648-1708). Attachment labels follow it for
 //!   `WeaponSelectionDelay` 2000 ms; with two or more, `CUSTOMIZED` replaces them.
-//! * The alt fire (a grenade launcher's icon and its key, `Condensed` in `CoD.yellowGlow`, right
-//!   aligned), 118 left of `Right` (ammoarea.lua:140-279, 847-925).
+//! * The alt fire (action slot 3: the alt mode's `dpadIcon` and its key, `Condensed` in
+//!   `CoD.yellowGlow`, right aligned), 118 left of `Right` (ammoarea.lua:140-279, 847-925); which
+//!   icon, and whether the slot shows at all, is [`alt_slot_icon`].
 
 use super::digit;
 use super::frame::{Lui, HUD_ALPHA_FULL, HUD_BASE, YELLOW_GLOW};
@@ -199,12 +200,24 @@ pub fn draw_weapon_label(l: &Lui, prims: &mut Vec<Prim>, name: &str, attachments
     }
 }
 
-/// The alt fire: the alt mode's icon and its key on PC.
+/// The alt-fire slot's material (BO2's action slot 3, `t6mp` `FUN_0094f7a0`): shown only while the
+/// held weapon toggles to or from an alt mode, and only with a material, which is the variant's own
+/// `dpadIcon` or, failing that, its alt mode's (`FUN_008ed6e0`: the first attachment's alt weapon).
+/// A grenade launcher shows `hud_gl_select` in both modes; a second optic has no `dpadIcon`, so
+/// BO2 shows no slot (and no key) for it. `toggle` is the weapon `def` toggles to.
+pub fn alt_slot_icon<'a>(def: &'a weapons::WeaponDef, toggle: Option<&'a weapons::WeaponDef>) -> Option<&'a str> {
+    if def.alt.is_empty() {
+        return None;
+    }
+    [Some(def), toggle].into_iter().flatten().map(|d| d.dpad_icon.as_str()).find(|i| !i.is_empty())
+}
+
+/// The alt fire: the slot's material (`icon`, a BO2 material name) and its key on PC.
 pub fn draw_alt_fire(l: &Lui, prims: &mut Vec<Prim>, icon: &str, key: &str) {
     let a = area(l);
     let r = corner(a, RIGHT - 118.0 - 64.0, RIGHT - 118.0, BOTTOM + 22.0 - 64.0, BOTTOM + 22.0);
     let p = l.px(r);
-    prims.push(Prim::Image { name: icon.to_string(), x: p.x, y: p.y, w: p.w, h: p.h, argb: 0xFFFF_FFFF, fallback: Vec::new() });
+    prims.push(Prim::Image { name: crate::lui::materials::image(icon), x: p.x, y: p.y, w: p.w, h: p.h, argb: 0xFFFF_FFFF, fallback: Vec::new() });
     let k = corner(a, RIGHT - 118.0 - 64.0 - 160.0, RIGHT - 118.0 - 64.0, BOTTOM + 6.0 - 3.0 - 25.0 + 4.0, BOTTOM + 6.0 - 3.0);
     l.text(prims, k, Family::Condensed, key, Some(Align::Right), (false, true), YELLOW_GLOW, 1.0);
 }
@@ -223,8 +236,8 @@ pub fn draw(l: &Lui, prims: &mut Vec<Prim>, p: &PlayerSim, since_ms: f32, clock:
     let red = if low_clip(w.ammo, w.def.clip) { digit::pulse(clock) } else { 0.0 };
     draw_digits(l, prims, w.ammo, w.reserve, red);
     draw_weapon_label(l, prims, &w.def.display_name, &w.main.attachments, fire_rate_material(w.def.fire), since_ms);
-    if !w.main.alt.is_empty() {
-        draw_alt_fire(l, prims, &format!("ZHBO_BO2_Icon_{}", w.main.alt), alt_key);
+    if let Some(icon) = alt_slot_icon(w.def, weapons::catalog().get(&w.def.alt)) {
+        draw_alt_fire(l, prims, icon, alt_key);
     }
 }
 
@@ -291,6 +304,29 @@ mod tests {
         assert_eq!(rects(&after, "ZHBO_Mat_hud_mp_vis_gun_title_left").len(), 2, "the gun and CUSTOMIZED");
         let icon = rects(&after, "ZHBO_Mat_hud_mp_firerate_auto")[0];
         assert_eq!(icon, (1280.0 - 28.0 - 64.0, 720.0 - 7.0 - 47.0 - 64.0, 64.0, 64.0));
+    }
+
+    #[test]
+    fn the_alt_slot_follows_bo2s_dpad_icon_rule() {
+        use crate::weapons::WeaponDef;
+        let gl = WeaponDef { id: "gl_an94_mp~an94_mp+gl".into(), alt: "an94_mp+gl".into(), dpad_icon: "hud_gl_select".into(), ..Default::default() };
+        let gun = WeaponDef { id: "an94_mp+gl".into(), alt: gl.id.clone(), ..Default::default() };
+        // The launcher's icon in both modes: the gun has none of its own, so its alt mode's.
+        assert_eq!(alt_slot_icon(&gun, Some(&gl)), Some("hud_gl_select"));
+        assert_eq!(alt_slot_icon(&gl, Some(&gun)), Some("hud_gl_select"));
+        // A second optic has no dpadIcon: no slot at all.
+        let optic = WeaponDef { id: "dualoptic_an94_mp~an94_mp+dualoptic".into(), alt: "an94_mp+dualoptic".into(), ..Default::default() };
+        let scoped = WeaponDef { id: "an94_mp+dualoptic".into(), alt: optic.id.clone(), ..Default::default() };
+        assert_eq!(alt_slot_icon(&scoped, Some(&optic)), None);
+        // A weapon with its own dpadIcon but no alt mode (the FHJ-18) shows no slot either.
+        let fhj = WeaponDef { id: "fhj18_mp".into(), dpad_icon: "menu_mp_weapons_fhj".into(), ..Default::default() };
+        assert_eq!(alt_slot_icon(&fhj, None), None);
+
+        // Drawn 64 x 64 at Right - 118, its bottom 22 below Bottom (ammoarea.lua:136-165).
+        let l = Lui::new(1280.0, 720.0);
+        let mut prims = Vec::new();
+        draw_alt_fire(&l, &mut prims, "hud_gl_select", "[G]");
+        assert_eq!(rects(&prims, "ZHBO_Mat_hud_gl_select"), vec![(1280.0 - 28.0 - 118.0 - 64.0, 720.0 - 7.0 + 22.0 - 64.0, 64.0, 64.0)]);
     }
 
     #[test]

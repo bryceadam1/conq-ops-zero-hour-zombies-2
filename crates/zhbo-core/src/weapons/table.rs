@@ -647,6 +647,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("OverlayReticle", "The overlay reticle enum (`weapOverlayReticle_t`).", FieldKind::Num,
         |d: &WeaponDef| d.overlay_reticle.to_string(),
         |d: &mut WeaponDef, v: Values| { d.overlay_reticle = v.text_num()? as u32; Ok(()) }),
+    field!("DpadIcon", "BO2's `dpadIcon`: the action-slot material the alt-fire slot draws (`hud_gl_select`), empty when none.", FieldKind::Str,
+        |d: &WeaponDef| d.dpad_icon.clone(),
+        |d: &mut WeaponDef, v: Values| { d.dpad_icon = v.text.into(); Ok(()) }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -706,7 +709,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 78);
+        assert_eq!(WEAPON_FIELDS.len(), 79);
         assert_eq!(ATTACHMENT_FIELDS.len(), 17);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }
@@ -830,5 +833,13 @@ mod tests {
         assert!(text.contains("OverlayReticle = 1"), "{text}");
         let back = parse_table(&text).unwrap();
         assert_eq!(back[0], d);
+    }
+
+    #[test]
+    fn dpad_icon_round_trips() {
+        let d = WeaponDef { id: "gl_an94_mp".into(), dpad_icon: "hud_gl_select".into(), ..Default::default() };
+        let text = format_table(std::slice::from_ref(&d));
+        assert!(text.contains("DpadIcon = hud_gl_select"), "{text}");
+        assert_eq!(parse_table(&text).unwrap()[0], d);
     }
 }
