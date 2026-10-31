@@ -4541,3 +4541,51 @@ Measured (conformance vs the 2026-10-25 baseline; this branch includes `v1/alt-a
 numbers were 701,608 / 195 / 206): `alt_raise_time` 9,341 → 0, `alt_drop_time` 6,583 → 0; weapons
 differing cells 706,586 → 685,684 (−15,924 from this item), column clusters 203 → 193 (−2), gap
 clusters 214 → 204 (−2). No column regressed.
+
+## The Hybrid optic toggles aimed, on the sprint key, with no raise (2026-10-31, branch `v1/alt-ads`)
+
+Stacked on `v1/alt-timing`. The sim toggled every alt on the alt-mode key and dropped the aim
+(`ads = 0`); the Hybrid optic (`dualoptic`, alt `dualoptic_*`) does neither in BO2. Read from t6mp
+(dumps in the item's plan dir, `ghidra/`):
+
+* **ADS-only** is `FUN_008ecb00`: the def's `bAltWeaponAdsOnly` (+0x65c) or a combination
+  attachment's (+0x20). The expected CSV: every `dualoptic_*` row has it (the def's flag) and every
+  `<weapon>+dualoptic` row (the attachment's); nothing else.
+* **Which key.** The alt-mode action slot (`FUN_00537ff0`, slot type 2 → `FUN_00537ca0(.., 0)`)
+  refuses an ADS-only target. The client's action 9 (`FUN_0053f380`; the `+name` table's order gives
+  action `2i+1` = press of entry `i`, entry 4 = `+breath_sprint`) presses sprint and hold breath
+  and, when the aim kbutton (usercmd bit 0x80) is down, calls `FUN_00537dd0`: the held weapon
+  ADS-only and `posFrac >= 1` (`DAT_00b0c268` = 1.0) → `FUN_00537ca0(.., 1)`, which toggles only an
+  ADS-only target; `FUN_005313a0` also refuses while an ADS-only weapon's `posFrac != 1`. So the
+  Hybrid swaps on the sprint/hold-breath key, only fully aimed.
+* **Aim kept.** `FUN_008daa10` (can-ADS) lets an ADS-only weapon aim in weapon states 5 and 2 (the
+  alt drop and alt raise) and refuses every other raise/drop state. The drop itself is alt-timing's
+  (`FUN_008db500`, the outgoing weapon's `iAltDropTime`); firing stays blocked.
+* **No raise.** `FUN_008df320` → `FUN_008da850`: both modes ADS-only → no raise state is set.
+* **Un-aiming does not revert.** No select-weapon caller (`FUN_005347c0`'s 11 callers, the alt picks
+  `FUN_005312f0`/`FUN_005313a0`) keys on letting go of the aim; the chosen sight stays up for the
+  next aim. Hip fire in the alt is the alt.
+
+Port: `WeaponDef.alt_ads_only` / `AttachmentDef.alt_ads_only` (`AltAdsOnly` rows; WEAPON_FIELDS
+79 → 80, ATTACHMENT_FIELDS 17 → 18; `attachments::apply` ORs the attachment's; an alt mode keeps its
+own via `alt_mode`), zhbo-formats reads the def's flag. `Arsenal::alt_toggle_requested` picks the
+key, `toggle_alt`/`finish_alt` keep `ads` and skip the raise for an ADS-only pair, `wants_ads` follows
+`FUN_008daa10`. `WeaponState::alt_mode` caches the resolved alt (it was looked up per toggle; tests
+can now hand a weapon an alt outside the catalog). The viewmodel needed nothing: the outgoing def's
+`ALT_DROP` plays over the drop while the ADS pose follows `ads`, and the alt's own ADS slots are
+already taken from its variant by the converter (`viewmodels.rs`, `FUN_008eddb0`).
+
+Overlap / merge notes:
+* `v1/uncarried-fields` carries the same flag as `traits.alt_ads_only` (weapon `Traits` row) and
+  `AttachmentDef.alt_ads_only` (attachment `Traits` row), with the same OR in `apply`. On merging
+  both: keep 5a's rows and struct, drop this branch's two `AltAdsOnly` rows and
+  `WeaponDef.alt_ads_only`, and point the reads (`arsenal.rs` `ads_only_pair`,
+  `alt_toggle_requested`, `wants_ads`; `actual.rs`) at `def.traits.alt_ads_only`. The formats field
+  is the same line as 5a's.
+* `v1/ads-zoom`'s alt-scope blend (`altScopeADSTransInTime`) keys on the held weapon being an
+  ADS-only alt mode; with this sim the weapon now stays aimed across the swap, so that blend is what
+  the player sees (here, without it, the FOV steps from the parent's to the alt's).
+* The HUD's alt-fire hint still shows the alt-mode key for the Hybrid.
+* `movement::change_stance` stands a crouched player up on any sprint press, aimed or not, so the
+  Hybrid swap while crouched also stands up — whether BO2 does is unverified (follow-up).
+

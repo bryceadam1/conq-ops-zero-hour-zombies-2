@@ -408,6 +408,8 @@ pub struct Weapon {
     pub alt_raise_time: f32,
     /// The alt toggle's drop out of this weapon (`WeaponDef.iAltDropTime`, `FUN_008ed1e0`).
     pub alt_drop_time: f32,
+    /// `bAltWeaponAdsOnly` (def +0x65c): the alt pair is aimed-only (the Hybrid optic's `dualoptic_*`).
+    pub alt_weapon_ads_only: bool,
     pub sprint_in_time: f32,
     pub sprint_out_time: f32,
     pub ads_in_time: f32,
@@ -694,6 +696,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.quick_drop_time = ms(z, d + WD::quickDropTime);
     w.alt_raise_time = ms(z, v + WV::iAltRaiseTime);
     w.alt_drop_time = ms(z, d + WD::iAltDropTime);
+    w.alt_weapon_ads_only = z.u8(d + WD::bAltWeaponAdsOnly) != 0;
     w.sprint_in_time = ms(z, d + WD::sprintInTime);
     w.sprint_out_time = ms(z, d + WD::sprintOutTime);
     w.melee_time = ms(z, d + WD::iMeleeTime);

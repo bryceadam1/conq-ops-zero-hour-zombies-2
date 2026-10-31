@@ -40,6 +40,8 @@ pub struct WeaponState {
     pub def: &'static WeaponDef,
     /// The weapon itself (with its attachments), whichever mode is up.
     pub main: &'static WeaponDef,
+    /// The weapon's alt mode (`main.alt`, resolved once), if it has one.
+    pub alt_mode: Option<&'static WeaponDef>,
     pub ammo: u16,
     pub reserve: u16,
     /// Seconds until the next round may fire (can go negative within a frame for high RPM).
@@ -71,6 +73,7 @@ impl WeaponState {
         Self {
             def,
             main: def,
+            alt_mode: catalog().get(&def.alt),
             ammo: if gun { def.clip } else { 0 },
             reserve: if gun { def.start_reserve } else { 0 },
             cooldown: 0.0,
@@ -90,7 +93,7 @@ impl WeaponState {
 
     /// Load the alt mode's own magazine (an under-barrel launcher's grenades).
     fn with_alt_ammo(mut self) -> Self {
-        if let Some(alt) = catalog().get(&self.def.alt).filter(|a| a.alt_own_ammo) {
+        if let Some(alt) = self.alt_mode.filter(|a| a.alt_own_ammo) {
             self.alt_ammo = alt.clip;
             self.alt_reserve = alt.start_reserve;
         }
@@ -602,8 +605,28 @@ impl Arsenal {
     /// its alt; `None` when it has none.
     fn alt_target(&self) -> Option<&'static WeaponDef> {
         let w = self.current();
-        let to = if w.def.id == w.main.id { catalog().get(&w.main.alt)? } else { w.main };
+        let to = if w.def.id == w.main.id { w.alt_mode? } else { w.main };
         (to.id != w.def.id).then_some(to)
+    }
+
+    /// The held mode and the one its toggle goes to are both ADS-only (`FUN_008da850`, each side
+    /// `FUN_008ecb00`: the Hybrid optic's weapon and its `dualoptic_*` alt).
+    fn ads_only_pair(&self) -> bool {
+        self.current().def.alt_ads_only && self.alt_target().is_some_and(|to| to.alt_ads_only)
+    }
+
+    /// Which toggle input may switch the held weapon's mode (BO2's client side). The alt-mode
+    /// action slot (`FUN_00537ff0` -> `FUN_00537ca0(.., 0)`) refuses an ADS-only target; the
+    /// sprint/hold-breath key (`+breath_sprint`, `FUN_0053f380` action 9) while the aim button is
+    /// held toggles only an ADS-only target (`FUN_00537dd0` -> `FUN_00537ca0(.., 1)`), and only
+    /// once the held ADS-only mode is fully aimed (`FUN_005313a0`: `posFrac == 1`).
+    fn alt_toggle_requested(&self, held: u32, pressed: u32) -> bool {
+        let Some(to) = self.alt_target() else { return false };
+        if to.alt_ads_only {
+            pressed & buttons::SPRINT != 0 && held & buttons::ADS != 0 && self.current().def.alt_ads_only && self.ads >= 1.0
+        } else {
+            pressed & buttons::ALT_MODE != 0
+        }
     }
 
     /// Start toggling the held weapon to its alt mode or back (BO2's weapon-change begin,
@@ -621,7 +644,11 @@ impl Arsenal {
         w.burst_left = 0;
         w.string = 0;
         let drop = w.def.alt_drop_time;
-        self.ads = 0.0;
+        // An ADS-only pair stays aimed through the toggle (`FUN_008daa10` lets an ADS-only weapon
+        // aim in the alt drop and raise states, 5 and 2).
+        if !self.ads_only_pair() {
+            self.ads = 0.0;
+        }
         self.previous = self.active;
         self.alt_pending = true;
         self.drop_left = drop;
@@ -632,10 +659,12 @@ impl Arsenal {
     }
 
     /// The alt toggle's drop is done: swap to the other mode and raise it over the **incoming**
-    /// variant's `iAltRaiseTime` (`FUN_008df320`). An alt mode with its own ammo (a launcher)
-    /// trades magazines with the weapon; the others share it.
+    /// variant's `iAltRaiseTime` (`FUN_008df320`) — except between two ADS-only modes, where
+    /// `FUN_008da850` sets no raise at all and the weapon is ready, still aimed. An alt mode with
+    /// its own ammo (a launcher) trades magazines with the weapon; the others share it.
     fn finish_alt(&mut self) {
         self.alt_pending = false;
+        let ads_only = self.ads_only_pair();
         let Some(to) = self.alt_target() else { return };
         let w = self.current_mut();
         if to.alt_own_ammo || w.def.alt_own_ammo {
@@ -647,9 +676,12 @@ impl Arsenal {
         w.burst_left = 0;
         w.cooldown = w.cooldown.max(0.0);
         w.string = 0;
-        self.ads = 0.0;
-        self.raise_left = to.alt_raise_time;
-        self.raise_total = to.alt_raise_time;
+        let raise = if ads_only { 0.0 } else { to.alt_raise_time };
+        if !ads_only {
+            self.ads = 0.0;
+        }
+        self.raise_left = raise;
+        self.raise_total = raise;
         self.raise_kind = RaiseKind::Alt;
     }
 
@@ -728,7 +760,7 @@ impl Arsenal {
         }
 
         // Alt mode (select fire, grenade launcher, second optic).
-        if pressed & buttons::ALT_MODE != 0 && !self.current().main.alt.is_empty() && self.melee_left <= 0.0 && self.drop_left <= 0.0 {
+        if self.alt_toggle_requested(held, pressed) && self.melee_left <= 0.0 && self.drop_left <= 0.0 {
             self.toggle_alt();
             out.push(WeaponAction::AltToggled);
         }
@@ -768,7 +800,12 @@ impl Arsenal {
         let def = self.current().def;
         let sprint_ready = self.sprint_ready();
         // Only a gun aims; a knife or a held offhand has no sights (and no ADS zoom).
-        let wants_ads = def.class.is_gun() && held & buttons::ADS != 0 && !sprinting && sprint_ready && self.raise_left <= 0.0 && self.drop_left <= 0.0 && !self.current().is_reloading();
+        // `FUN_008daa10`: an alt toggle's drop and raise (states 5 and 2) let only an ADS-only
+        // weapon aim; every other raise or drop refuses it.
+        let switching = self.raise_left > 0.0 || self.drop_left > 0.0;
+        let alt_switching = self.alt_pending || (self.raise_left > 0.0 && self.raise_kind == RaiseKind::Alt);
+        let switch_ok = !switching || (alt_switching && def.alt_ads_only);
+        let wants_ads = def.class.is_gun() && held & buttons::ADS != 0 && !sprinting && sprint_ready && switch_ok && !self.current().is_reloading();
         let quickdraw = if self.has_specialty(Specialty::FastAds) && self.tuning.perk_weap_ads_multiplier > 0.0 { self.tuning.perk_weap_ads_multiplier } else { 1.0 };
         self.ads = if wants_ads {
             (self.ads + dt / (def.ads_in_time.max(1e-3) * quickdraw)).min(1.0)

@@ -161,6 +161,10 @@ pub struct WeaponDef {
     /// attachment uniques whose `iAltDropTime` differs from the base unique's, else the def's own;
     /// an alt mode always takes its own).
     pub alt_drop_time: f32,
+    /// BO2's ADS-only alt (`FUN_008ecb00`: the def's `bAltWeaponAdsOnly` or a combination attachment's,
+    /// the Hybrid optic's): the toggle is the sprint/hold-breath key while fully aimed, it keeps the
+    /// aim, and a pair of ADS-only modes switches with no raise (`FUN_008da850`).
+    pub alt_ads_only: bool,
     pub sprint_out_time: f32,
     pub ads_in_time: f32,
     pub ads_out_time: f32,
@@ -398,6 +402,7 @@ impl Default for WeaponDef {
             quick_drop_time: 0.25,
             alt_raise_time: 0.0,
             alt_drop_time: 0.0,
+            alt_ads_only: false,
             sprint_out_time: 0.2,
             ads_in_time: 0.25,
             ads_out_time: 0.2,

@@ -553,7 +553,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
 
     // Alt mode, dual wield, flags, specialties.
     b.opt_text("alt_weapon", (!d.alt.is_empty()).then(|| crate::generals::base_id(&d.alt).to_string()))
-        .absent("alt_weapon_ads_only")
+        .bool("alt_weapon_ads_only", d.alt_ads_only)
         .absent("alt_weapon_disable_switching")
         .bool("dual_wield", dual)
         .absent("dual_wield_weapon")

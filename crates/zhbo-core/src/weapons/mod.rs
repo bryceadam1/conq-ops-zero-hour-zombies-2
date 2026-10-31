@@ -350,6 +350,110 @@ mod tests {
         assert!(fast.abs_diff(expect / 2 + 1) <= 1, "fast hands {fast} frames vs {}", expect / 2);
     }
 
+    /// The Hybrid optic's pair as BO2's data has it: `an94_mp+dualoptic` (the attachment's
+    /// `bAltWeaponAdsOnly`) and its `dualoptic_*` alt (the def's own flag), both ADS-only, each with
+    /// its own alt drop and raise times (the raise must go unused).
+    fn hybrid() -> Arsenal {
+        let mut main = weapon("an94_mp").clone();
+        main.id = "an94_mp+dualoptic".into();
+        main.alt = "dualoptic_an94_mp".into();
+        main.alt_ads_only = true;
+        main.alt_drop_time = 0.2;
+        main.alt_raise_time = 0.4;
+        main.ads_fov = 30.0;
+        let main: &'static WeaponDef = Box::leak(Box::new(main));
+        let mut alt = main.clone();
+        alt.id = "dualoptic_an94_mp".into();
+        alt.alt = main.id.clone();
+        alt.alt_drop_time = 0.3;
+        alt.alt_raise_time = 0.5;
+        alt.ads_fov = 50.0;
+        let alt: &'static WeaponDef = Box::leak(Box::new(alt));
+        let mut a = arsenal_with(main);
+        a.weapons[0].alt_mode = Some(alt);
+        a.loadout.perks.clear();
+        a
+    }
+
+    /// Step until the arsenal is fully aimed with nothing in progress.
+    fn aim(a: &mut Arsenal, rng: &mut Rng) {
+        let mut out = Vec::new();
+        for _ in 0..200 {
+            a.step(buttons::ADS, 0, false, 0, 0.0, rng, &mut out);
+            if a.ads >= 1.0 && a.drop_left <= 0.0 && a.raise_left <= 0.0 {
+                return;
+            }
+        }
+        panic!("never fully aimed");
+    }
+
+    /// Hold the aim and press the sprint/hold-breath key, then step until the toggle is done;
+    /// returns the frames it took and the lowest ADS fraction seen.
+    fn hybrid_toggle(a: &mut Arsenal, rng: &mut Rng) -> (usize, f32) {
+        let mut out = Vec::new();
+        a.step(buttons::ADS | buttons::SPRINT, buttons::SPRINT, false, 0, 0.0, rng, &mut out);
+        assert!(out.contains(&WeaponAction::AltToggled), "the toggle starts");
+        let (mut n, mut low) = (1, a.ads);
+        while a.alt_pending || a.drop_left > 0.0 || a.raise_left > 0.0 {
+            a.step(buttons::ADS, 0, false, 0, 0.0, rng, &mut out);
+            low = low.min(a.ads);
+            n += 1;
+            assert!(n < 200);
+        }
+        (n, low)
+    }
+
+    #[test]
+    fn the_hybrid_optic_toggles_aimed_with_no_raise() {
+        // BO2: the sprint/hold-breath key while aimed toggles an ADS-only alt (FUN_0053f380
+        // action 9 -> FUN_00537dd0, posFrac >= 1); the drop is the outgoing weapon's alt drop
+        // (FUN_008db500) and the weapon stays aimed through it (FUN_008daa10, states 5/2); two
+        // ADS-only modes set no raise (FUN_008df320 -> FUN_008da850).
+        let mut a = hybrid();
+        let mut rng = Rng::new(5);
+        aim(&mut a, &mut rng);
+        let (n, low) = hybrid_toggle(&mut a, &mut rng);
+        assert_eq!(a.current().def.id, "dualoptic_an94_mp");
+        assert_eq!(low, 1.0, "the aim holds through the toggle");
+        assert_eq!((a.raise_left, a.raise_total), (0.0, 0.0), "no raise between ADS-only modes");
+        let expect = (0.2 / LOGIC_DT).ceil() as usize;
+        assert!(n.abs_diff(expect + 1) <= 1, "{n} frames vs the 0.2 s drop");
+        // And back over the alt's own drop, still with no raise.
+        let (n, low) = hybrid_toggle(&mut a, &mut rng);
+        assert_eq!(a.current().def.id, "an94_mp+dualoptic");
+        assert_eq!((low, a.raise_total), (1.0, 0.0));
+        let expect = (0.3 / LOGIC_DT).ceil() as usize;
+        assert!(n.abs_diff(expect + 1) <= 1, "{n} frames vs the 0.3 s drop");
+    }
+
+    #[test]
+    fn the_hybrid_optic_keeps_its_mode_when_unaimed_and_refuses_the_alt_key() {
+        let mut a = hybrid();
+        let mut rng = Rng::new(6);
+        let mut out = Vec::new();
+        // The alt-mode key refuses an ADS-only target (FUN_00537ca0(.., 0)), aimed or not.
+        a.step(0, buttons::ALT_MODE, false, 0, 0.0, &mut rng, &mut out);
+        aim(&mut a, &mut rng);
+        a.step(buttons::ADS, buttons::ALT_MODE, false, 0, 0.0, &mut rng, &mut out);
+        assert!(!a.alt_pending && a.current().def.id == "an94_mp+dualoptic" && !out.contains(&WeaponAction::AltToggled));
+        // Sprint without the aim, or before the aim is full (FUN_005313a0: posFrac == 1), does nothing.
+        let mut b = hybrid();
+        b.step(0, buttons::SPRINT, false, 0, 0.0, &mut rng, &mut out);
+        b.step(buttons::ADS, 0, false, 0, 0.0, &mut rng, &mut out);
+        assert!(b.ads > 0.0 && b.ads < 1.0);
+        b.step(buttons::ADS | buttons::SPRINT, buttons::SPRINT, false, 0, 0.0, &mut rng, &mut out);
+        assert!(!b.alt_pending && !out.contains(&WeaponAction::AltToggled));
+        // Toggle, then let go of the aim: BO2 has no revert, the red dot stays up for the next aim.
+        hybrid_toggle(&mut a, &mut rng);
+        for _ in 0..60 {
+            a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+        }
+        assert_eq!((a.ads, a.current().def.id.as_str()), (0.0, "dualoptic_an94_mp"));
+        aim(&mut a, &mut rng);
+        assert_eq!(a.current().def.id, "dualoptic_an94_mp");
+        assert!(a.ads_fov_scale() < 1.0 && (a.ads_fov_scale() - 50.0 / 65.0).abs() < 1e-6, "aims through the alt's own optic");
+    }
+
     #[test]
     fn damage_curve_and_explosion_falloff() {
         let d = weapon("an94_mp");

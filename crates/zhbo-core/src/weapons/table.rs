@@ -319,6 +319,9 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
             for i in 0..5 { a.attribute_deltas[i] = v.num(i); }
             Ok(())
         }),
+    field!("AltAdsOnly", "1: the weapon's alt pair becomes aimed-only (`bAltWeaponAdsOnly`, the Hybrid optic).", FieldKind::Num,
+        |a: &AttachmentDef| (a.alt_ads_only as u8).to_string(),
+        |a: &mut AttachmentDef, v: Values| { a.alt_ads_only = v.flag(0); Ok(()) }),
 ];
 
 /// Every `Weapon` block line, in table order.
@@ -382,6 +385,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             (d.alt_raise_time, d.alt_drop_time) = (v.num(0), v.num(1));
             Ok(())
         }),
+    field!("AltAdsOnly", "1: the alt pair is aimed-only (`bAltWeaponAdsOnly` or an attachment's; the Hybrid optic).", FieldKind::Num,
+        |d: &WeaponDef| (d.alt_ads_only as u8).to_string(),
+        |d: &mut WeaponDef, v: Values| { d.alt_ads_only = v.flag(0); Ok(()) }),
     field!("SprintOutTime", "Raising from a sprint.", FieldKind::Num,
         |d: &WeaponDef| d.sprint_out_time.to_string(),
         |d: &mut WeaponDef, v: Values| { d.sprint_out_time = v.text_num()?; Ok(()) }),
@@ -713,8 +719,8 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 79);
-        assert_eq!(ATTACHMENT_FIELDS.len(), 17);
+        assert_eq!(WEAPON_FIELDS.len(), 80);
+        assert_eq!(ATTACHMENT_FIELDS.len(), 18);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }
 

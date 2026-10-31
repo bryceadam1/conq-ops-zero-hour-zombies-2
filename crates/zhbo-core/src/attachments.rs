@@ -37,6 +37,9 @@ pub struct AttachmentDef {
     pub point: u8,
     pub silenced: bool,
     pub laser: bool,
+    /// `bAltWeaponAdsOnly` (attachment +0x20): the weapon's alt pair becomes aimed-only (the Hybrid
+    /// optic; `FUN_008ecb00`).
+    pub alt_ads_only: bool,
     /// Select fire, stacked fire: the weapon fires this way instead.
     pub fire: Option<FireMode>,
     /// A fixed magazine (the crossbow's tri-bolt), 0 for none.
@@ -73,6 +76,7 @@ impl Default for AttachmentDef {
             point: 0,
             silenced: false,
             laser: false,
+            alt_ads_only: false,
             fire: None,
             clip: 0,
             damage_range_scale: 1.0,
@@ -207,6 +211,7 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
             }
         }
         d.laser |= a.laser;
+        d.alt_ads_only |= a.alt_ads_only;
         d.specialties = d.specialties.union(a.specialties);
         if a.recoil_reduction.1 > 0.0 {
             d.recoil_reduction = a.recoil_reduction;
