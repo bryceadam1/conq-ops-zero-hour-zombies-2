@@ -4886,3 +4886,27 @@ its `CustomClass` round trip), `editor` (the session state and its queries), `ke
 row values) and `offer` (what the conformance emitter reads), beside the existing `items` and
 `legal`. Everything public is re-exported from `classmenu`, so no caller changed. A pure move:
 the workspace tests pass unchanged and clippy's count is the same.
+
+## The attachment grid in BO2's order: the item's column 8 (2026-10-31, `v1/cac-rules`)
+
+BO2's attachment grid adds one button per attachment number of the item, `1 ..
+GetNumAttachments - 1` (`cacattachmentsmenu.lua:858-879`), whatever is equipped, and focuses the
+button of the attachment the chosen slot holds (`attachmentIndexToReplace`, `:855-857`) or the
+first. An item's attachment numbers follow its statstable column 8, each token cut at its first
+`_` (G17, `FUN_008cdfb0`) — per weapon, not a global order: the AN-94's grid starts Reflex, Quickdraw,
+Fast Mag, ACOG. The mod listed `WeaponDef::allowed` in the attachment variants' name order and the
+editor moved the equipped ones to the front.
+
+* The converter (`weapons::set_cac_slots` → `order_attachments`) sorts a base weapon's `allowed`
+  by the item's column-8 order (`combos::listed`); an offered attachment the column does not list
+  stays after the listed ones. The table schema is unchanged — the field's order now means BO2's.
+* The editor (`classmenu::options::attachment_shorts`/`attachment_options`) lists `allowed` as is,
+  the equipped ones in place, and opens on the first equipped attachment.
+
+Tests: `the_attachment_grid_follows_the_items_column_8` (zhbo-assets) and
+`the_attachment_grid_keeps_the_weapons_order_whatever_is_equipped` (classmenu). Measured: cac
+403 → 9: `order` 396 → 2 (every attachment row; the two left are the crossbow and Ballistic Knife
+behind BO2's Assault Shield); weapons 781,587 unchanged; gap clusters 201 (the `order` cluster
+stays for those two). The installed `ConquerOps_BO2.big` carries the old order until it is
+rebuilt (the integrator's `hud::VERSION` bump), so the screenshot harness shows the new grid only
+on a fresh archive.

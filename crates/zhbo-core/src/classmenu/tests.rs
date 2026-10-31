@@ -346,7 +346,7 @@ use super::items::cac_entries;
         assert!(!e.option_chosen(held + 1));
         // Attachments: the AN-94's gl and reflex are on the draft, so their list entries are chosen.
         e.slot = Slot::PrimaryAtts;
-        let shorts = attachment_shorts(&e.draft.primary, &e.draft.primary_atts);
+        let shorts = attachment_shorts(&e.draft.primary);
         for (i, short) in shorts.iter().enumerate() {
             let on = e.draft.primary_atts.iter().any(|a| a == short);
             assert_eq!(e.option_chosen(i), on, "attachment {short}");
@@ -872,7 +872,7 @@ fn dual_wield_gives_the_dw_weapon_and_reads_back() {
 fn picking_dual_wield_saves_the_dw_weapon() {
     let mut e = Editor::new(Draft { secondary: "fiveseven_mp".into(), ..Draft::default() });
     e.slot = Slot::SecondaryAtts;
-    let i = attachment_shorts(&e.draft.secondary, &e.draft.secondary_atts).iter().position(|s| *s == "dw").expect("Dual Wield is offered");
+    let i = attachment_shorts(&e.draft.secondary).iter().position(|s| *s == "dw").expect("Dual Wield is offered");
     assert!(e.apply_option(i));
     assert_eq!(e.draft.secondary_id(), "fiveseven_dw_mp");
     let c = e.draft.to_custom();
@@ -1102,4 +1102,19 @@ fn the_cac_lists_follow_the_sort_key_then_the_index() {
     assert_eq!(back.iter().map(items::list_key).collect::<Vec<_>>(), defs.iter().map(items::list_key).collect::<Vec<_>>());
     defs.sort_by_key(items::list_key);
     assert_eq!(defs.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), ["c_mp", "a_mp", "b_mp"]);
+}
+
+#[test]
+fn the_attachment_grid_keeps_the_weapons_order_whatever_is_equipped() {
+    // BO2's grid adds one button per attachment number (`cacattachmentsmenu.lua:858-879`): an
+    // equipped attachment stays in its place, and the grid opens on the first one equipped.
+    let mut e = Editor::new(Draft::default());
+    let offered = offered_attachments(&e.draft.primary);
+    e.slot = Slot::PrimaryAtts;
+    for (i, short) in offered.iter().enumerate() {
+        assert_eq!(e.option_attachment(i), Some(*short));
+    }
+    assert_eq!(e.options().len(), offered.len());
+    let first = offered.iter().position(|s| *s == e.draft.primary_atts[0]).expect("the draft's attachment is offered");
+    assert_eq!(e.current_option_index(), first);
 }

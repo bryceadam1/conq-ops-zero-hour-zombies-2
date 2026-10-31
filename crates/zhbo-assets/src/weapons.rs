@@ -408,8 +408,18 @@ pub fn set_cac_slots(table: &mut Table, patch: &zhbo_formats::t6zone::Zone, name
             d.description = row.and_then(|r| r.get(7)).and_then(|k| names.get(k.trim())).cloned().unwrap_or_default();
             d.cac_sort = row.and_then(|r| r.get(9)).and_then(|c| c.trim().parse().ok()).unwrap_or(0);
             d.cac_index = item.index;
+            order_attachments(d, item);
         }
     }
+}
+
+/// Put a base weapon's offered attachments in BO2's attachment-grid order: the item's attachment
+/// numbers, which follow its statstable column 8 (G17's `FUN_008cdfb0`;
+/// `cacattachmentsmenu.lua:858-879` adds one button per number, `1 .. GetNumAttachments - 1`).
+/// An offered attachment the column does not list keeps its place after the listed ones.
+fn order_attachments(d: &mut WeaponDef, item: &zhbo_conformance::bo2::combos::Item) {
+    let listed: Vec<&str> = zhbo_conformance::bo2::combos::listed(item).into_iter().map(|k| zhbo_conformance::weapons::ATTACHMENTS[k]).collect();
+    d.allowed.sort_by_key(|(short, _)| listed.iter().position(|l| l == short).unwrap_or(listed.len()));
 }
 
 /// The alt mode entry of a converted weapon, if it has one.
@@ -1076,6 +1086,26 @@ pub fn converted(patch: &zhbo_formats::t6zone::Zone, all: &[Weapon]) -> Vec<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_attachment_grid_follows_the_items_column_8() {
+        // Column 8's tokens are cut at their first `_` (`silencer_smg` is `silencer`); the grid
+        // walks them in that order, not by name.
+        let item = zhbo_conformance::bo2::combos::Item {
+            reference: "an94".into(),
+            variant: "an94_mp".into(),
+            group: "weapon_assault".into(),
+            slot: "primary".into(),
+            cost: 1,
+            attachments: vec!["reflex".into(), "fastads".into(), "silencer_smg".into(), "acog".into()],
+            index: 1,
+        };
+        let mut d = WeaponDef { id: "an94_mp".into(), ..Default::default() };
+        d.allowed = ["acog", "extra", "fastads", "reflex", "silencer"].iter().map(|s| (s.to_string(), format!("{s}_x"))).collect();
+        order_attachments(&mut d, &item);
+        let shorts: Vec<&str> = d.allowed.iter().map(|(s, _)| s.as_str()).collect();
+        assert_eq!(shorts, ["reflex", "fastads", "silencer", "acog", "extra"]);
+    }
 
     #[test]
     fn maps_bo2_types_to_classes() {

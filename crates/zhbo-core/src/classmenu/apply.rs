@@ -43,7 +43,7 @@ impl Editor {
                 }
             }
             Slot::PrimaryAtts => {
-                let shorts = attachment_shorts(&self.draft.primary, &self.draft.primary_atts);
+                let shorts = attachment_shorts(&self.draft.primary);
                 let max = self.draft.primary_att_max();
                 if let Some(short) = shorts.get(i).copied() {
                     let base = self.draft.primary.clone();
@@ -53,7 +53,7 @@ impl Editor {
                 }
             }
             Slot::SecondaryAtts => {
-                let shorts = attachment_shorts(&self.draft.secondary, &self.draft.secondary_atts);
+                let shorts = attachment_shorts(&self.draft.secondary);
                 let max = self.draft.secondary_att_max();
                 if let Some(short) = shorts.get(i).copied() {
                     let base = self.draft.secondary.clone();

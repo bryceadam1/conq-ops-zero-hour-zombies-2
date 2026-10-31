@@ -92,9 +92,9 @@ impl Editor {
         match self.slot {
             Slot::Name => Vec::new(),
             Slot::Primary => weapon_options(&items::slots_of(true, &self.draft.wildcards)),
-            Slot::PrimaryAtts => attachment_options(&self.draft.primary, &self.draft.primary_atts),
+            Slot::PrimaryAtts => attachment_options(&self.draft.primary),
             Slot::Secondary => weapon_options(&self.secondary_slots()),
-            Slot::SecondaryAtts => attachment_options(&self.draft.secondary, &self.draft.secondary_atts),
+            Slot::SecondaryAtts => attachment_options(&self.draft.secondary),
             Slot::Lethal => equipment_options(&self.offhand_list(true)),
             Slot::Tactical => equipment_options(&self.offhand_list(false)),
             Slot::Perk1 | Slot::Perk1b => perk_options(1),
@@ -126,10 +126,10 @@ impl Editor {
             Slot::Primary => gun_ids(&items::slots_of(true, &self.draft.wildcards)).get(i).is_some_and(|id| *id == self.draft.primary),
             Slot::Secondary => gun_ids(&self.secondary_slots()).get(i).is_some_and(|id| *id == self.draft.secondary),
             Slot::PrimaryAtts => {
-                attachment_shorts(&self.draft.primary, &self.draft.primary_atts).get(i).is_some_and(|s| self.draft.primary_atts.iter().any(|a| a == s))
+                attachment_shorts(&self.draft.primary).get(i).is_some_and(|s| self.draft.primary_atts.iter().any(|a| a == s))
             }
             Slot::SecondaryAtts => {
-                attachment_shorts(&self.draft.secondary, &self.draft.secondary_atts).get(i).is_some_and(|s| self.draft.secondary_atts.iter().any(|a| a == s))
+                attachment_shorts(&self.draft.secondary).get(i).is_some_and(|s| self.draft.secondary_atts.iter().any(|a| a == s))
             }
             Slot::Lethal => self.offhand_list(true).get(i).is_some_and(|id| *id == self.draft.lethal),
             Slot::Tactical => self.offhand_list(false).get(i).is_some_and(|id| *id == self.draft.tactical),
@@ -161,8 +161,8 @@ impl Editor {
     /// The attachment short option `i` of an attachment slot, for its icon.
     pub fn option_attachment(&self, i: usize) -> Option<&'static str> {
         match self.slot {
-            Slot::PrimaryAtts => attachment_shorts(&self.draft.primary, &self.draft.primary_atts).get(i).copied(),
-            Slot::SecondaryAtts => attachment_shorts(&self.draft.secondary, &self.draft.secondary_atts).get(i).copied(),
+            Slot::PrimaryAtts => attachment_shorts(&self.draft.primary).get(i).copied(),
+            Slot::SecondaryAtts => attachment_shorts(&self.draft.secondary).get(i).copied(),
             _ => None,
         }
     }

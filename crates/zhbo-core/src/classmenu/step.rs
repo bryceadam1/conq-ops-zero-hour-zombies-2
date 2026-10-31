@@ -226,7 +226,10 @@ impl Editor {
             Slot::Name => 0,
             Slot::Primary => weapon_index(&items::slots_of(true, &self.draft.wildcards), &self.draft.primary),
             Slot::Secondary => weapon_index(&self.secondary_slots(), &self.draft.secondary),
-            Slot::PrimaryAtts | Slot::SecondaryAtts => 0,
+            // BO2 focuses the button of the attachment the chosen slot holds, else the first
+            // (`cacattachmentsmenu.lua:855-879`, `attachmentIndexToReplace`): the row's first.
+            Slot::PrimaryAtts => attachment_index(&self.draft.primary, &self.draft.primary_atts),
+            Slot::SecondaryAtts => attachment_index(&self.draft.secondary, &self.draft.secondary_atts),
             Slot::Lethal => equipment_index(&self.offhand_list(true), &self.draft.lethal),
             Slot::Tactical => equipment_index(&self.offhand_list(false), &self.draft.tactical),
             Slot::Perk1 | Slot::Perk1b => perk_index(1, self.perk_held(1)),

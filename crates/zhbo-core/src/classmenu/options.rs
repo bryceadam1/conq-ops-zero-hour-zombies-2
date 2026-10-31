@@ -57,25 +57,11 @@ pub(super) fn weapon_options(slots: &[&str]) -> Vec<String> {
     gun_ids(slots).iter().map(|id| weapons::weapon(id).display_name.clone()).collect()
 }
 
-/// The attachment display names the weapon offers (`WeaponDef::allowed`); the ones already on it
-/// are included so they can be removed. The chosen attachments come first so the slot opens on them.
-pub(super) fn attachment_options(base: &str, current: &[String]) -> Vec<String> {
+/// The attachment display names the weapon offers, in its list order ([`attachment_shorts`]); the
+/// ones already on it are listed in place so they can be removed.
+pub(super) fn attachment_options(base: &str) -> Vec<String> {
     let d = weapons::weapon(base);
-    let name_of = |short: &str| -> String {
-        d.allowed
-            .iter()
-            .find(|(s, _)| s == short)
-            .map(|(_, asset)| weapons::catalog().attachment(asset).map(|a| a.display_name.clone()).unwrap_or_else(|| asset.clone()))
-            .unwrap_or_else(|| short.to_string())
-    };
-    let mut out: Vec<String> = current.iter().map(|s| name_of(s)).collect();
-    for (short, asset) in &d.allowed {
-        if current.iter().any(|s| s == short) {
-            continue;
-        }
-        out.push(weapons::catalog().attachment(asset).map(|a| a.display_name.clone()).unwrap_or_else(|| asset.clone()));
-    }
-    out
+    d.allowed.iter().map(|(_, asset)| weapons::catalog().attachment(asset).map(|a| a.display_name.clone()).unwrap_or_else(|| asset.clone())).collect()
 }
 
 /// The display names of an offhand slot's listed items, in catalog order. The editor opens on the
@@ -94,17 +80,13 @@ pub(super) fn allowed_shorts(base: &str) -> Vec<&'static str> {
     weapons::weapon(base).allowed.iter().map(|(s, _)| s.as_str()).collect()
 }
 
-/// The attachment shorts in the same order as [`attachment_options`]: the chosen ones first, then
-/// the rest of what the weapon offers. `apply` maps an option index to a short through this.
-pub(super) fn attachment_shorts(base: &str, current: &[String]) -> Vec<&'static str> {
-    let allowed = allowed_shorts(base);
-    let mut out: Vec<&'static str> = current.iter().filter_map(|s| allowed.iter().copied().find(|a| a == s)).collect();
-    for s in allowed {
-        if !current.iter().any(|c| c == s) {
-            out.push(s);
-        }
-    }
-    out
+/// The attachment grid's shorts: the weapon's offer in BO2's list order. BO2's attachment grid
+/// adds one button per attachment number of the item, `1 .. GetNumAttachments - 1`
+/// (`cacattachmentsmenu.lua:858-879`), whatever is equipped; the item's attachment numbers follow
+/// its statstable column 8 (G17), the order the converter gives `WeaponDef::allowed`. `apply` maps
+/// an option index to a short through this.
+pub(super) fn attachment_shorts(base: &str) -> Vec<&'static str> {
+    allowed_shorts(base)
 }
 
 /// The perks of a tier, in table order.
@@ -115,6 +97,11 @@ pub(super) fn perk_list(tier: u8) -> Vec<Perk> {
 /// The index of the held weapon in the category list.
 pub(super) fn weapon_index(slots: &[&str], current: &str) -> usize {
     gun_ids(slots).iter().position(|id| *id == current).unwrap_or(0)
+}
+
+/// The grid index of a weapon's first equipped attachment (the first cell when it has none).
+pub(super) fn attachment_index(base: &str, current: &[String]) -> usize {
+    current.first().and_then(|c| attachment_shorts(base).iter().position(|s| s == c)).unwrap_or(0)
 }
 
 /// The index of the held offhand in its slot's list.

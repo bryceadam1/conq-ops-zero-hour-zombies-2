@@ -247,7 +247,8 @@ pub struct WeaponDef {
     /// Attachments on this weapon (BO2's names: `grip`, `reflex`), sorted.
     pub attachments: Vec<String>,
     /// Base weapons: each attachment BO2's create-a-class offers, and which `Attachment` it uses
-    /// on this weapon (`silencer` is `silencer_smg` on an SMG).
+    /// on this weapon (`silencer` is `silencer_smg` on an SMG), in the attachment grid's order (the
+    /// statstable item's column 8, set by the converter).
     pub allowed: Vec<(String, String)>,
     /// Base weapons: the alt-mode weapon an attachment adds (`gl` → `gl_an94_mp`).
     pub alt_modes: Vec<(String, String)>,
