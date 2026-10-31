@@ -217,6 +217,9 @@ pub struct WeaponDef {
     /// puts it away unused (`FUN_008e28e0` → `FUN_008dcbe0`; the client's weapnext sends the
     /// cancel instead of cycling, `FUN_00537c20`).
     pub hold_cancelable: bool,
+    /// `plantable`: set down where it lands, so BO2's plant check (`FUN_008e1780`,
+    /// [`crate::sim::can_plant`]) can refuse it ("Cannot Plant Here").
+    pub plantable: bool,
     pub explosion_radius: f32,
     pub explosion_radius_min: f32,
     pub explosion_inner_damage: f32,
@@ -472,6 +475,7 @@ impl Default for WeaponDef {
             has_detonator: false,
             hold_use: false,
             hold_cancelable: false,
+            plantable: false,
             explosion_radius: 0.0,
             explosion_radius_min: 0.0,
             explosion_inner_damage: 0.0,

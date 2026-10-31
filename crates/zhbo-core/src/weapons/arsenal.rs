@@ -224,6 +224,9 @@ pub enum WeaponAction {
     CookedOff { def: &'static WeaponDef },
     /// Pin pulled (the throw animation's wind-up starts).
     OffhandReady { lethal: bool },
+    /// BO2's plant check refused a `plantable` item (event 0xd5, "Cannot Plant Here"); nothing is
+    /// used.
+    CantPlant { lethal: bool },
     /// Set equipment down in front of the player (Claymore, Bouncing Betty, Trophy System,
     /// Tactical Insertion).
     Plant { def: &'static WeaponDef },
@@ -331,6 +334,10 @@ pub struct Arsenal {
     /// Seconds until the swing's strike lands (`ps->weaponDelay` in state 0x13); 0 when none is due.
     pub melee_delay_left: f32,
     pub offhand: Option<OffhandUse>,
+    /// Whether BO2's plant check (`FUN_008e1780`) passes for the lethal and the tactical slot's
+    /// item this frame; the sim sets it from the world before [`Arsenal::step`]
+    /// ([`crate::sim::can_plant`]). Only `plantable` items read it.
+    pub plant_ok: [bool; 2],
     held_last: u32,
     /// Seconds since reload was last pressed (a second press soon after detonates C4).
     since_reload_press: f32,
@@ -397,6 +404,7 @@ impl Arsenal {
             melee_recover_left: 0.0,
             melee_delay_left: 0.0,
             offhand: None,
+            plant_ok: [true, true],
             held_last: 0,
             since_reload_press: 10.0,
             cooked: 0.0,
@@ -475,6 +483,7 @@ impl Arsenal {
             melee_recover_left: 0.0,
             melee_delay_left: 0.0,
             offhand: None,
+            plant_ok: [true, true],
             held_last: 0,
             since_reload_press: 10.0,
             cooked: 0.0,
@@ -1013,6 +1022,14 @@ impl Arsenal {
                 // comes up (the client sends the cancel from weapnext's release, `FUN_00537c20`,
                 // instead of cycling): the gun's quick raise (`FUN_008dcbe0`), the count untouched
                 // and the fuse dropped (it is set afresh at the next pull-back).
+                // In the held state the plant check runs first (`FUN_008e28e0`): refused, the item
+                // is put away unused (`FUN_008dcbe0`).
+                if pulled_back && !self.plant_allowed(lethal) {
+                    self.cooked = 0.0;
+                    self.offhand = Some(OffhandUse::Raising { lethal, t: 0.0 });
+                    out.push(WeaponAction::CantPlant { lethal });
+                    return true;
+                }
                 if pulled_back && def.hold_cancelable && held & button != 0 && released & buttons::SWAP_WEAPON != 0 {
                     self.cooked = 0.0;
                     self.offhand = Some(OffhandUse::Raising { lethal, t: 0.0 });
@@ -1065,6 +1082,12 @@ impl Arsenal {
     fn step_throw(&mut self, lethal: bool, t: f32, out: &mut Vec<WeaponAction>) {
         let def = self.offhand_def(lethal);
         let fired = matches!(self.offhand, Some(OffhandUse::Throwing { fired: true, .. }));
+        if !fired && t >= def.fire_delay - 1e-6 && !self.plant_allowed(lethal) {
+            // Refused at the release's delay too (`FUN_008e2ac0`): put away, not used.
+            self.offhand = Some(OffhandUse::Raising { lethal, t: 0.0 });
+            out.push(WeaponAction::CantPlant { lethal });
+            return;
+        }
         if !fired && t >= def.fire_delay - 1e-6 {
             self.use_offhand(lethal);
             let fuse_left = if def.cook { def.fuse_time - self.cooked } else { def.fuse_time };
@@ -1100,6 +1123,11 @@ impl Arsenal {
         if slot.count == 0 && !slot.def.has_detonator {
             return false;
         }
+        // The press itself is refused, nothing starting (`FUN_008e2bb0`: event 0xd5, return).
+        if slot.count > 0 && !self.plant_allowed(lethal) {
+            out.push(WeaponAction::CantPlant { lethal });
+            return false;
+        }
         // `FUN_008e2bb0` goes straight to `FUN_008e2710` only from 0x1d; any other state is
         // replaced by 0x16 with its `weaponTime` kept.
         let left = if matches!(self.offhand, Some(OffhandUse::Raising { .. })) { 0.0 } else { self.state_time_left() };
@@ -1119,6 +1147,11 @@ impl Arsenal {
             self.begin_offhand(lethal, out);
         }
         true
+    }
+
+    /// BO2's plant check for the slot's item: always passes unless the item is `plantable`.
+    fn plant_allowed(&self, lethal: bool) -> bool {
+        !self.offhand_def(lethal).plantable || self.plant_ok[if lethal { 0 } else { 1 }]
     }
 
     /// The weapon time BO2's current state still holds (`ps->weaponTime`), which an offhand press

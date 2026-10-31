@@ -1138,6 +1138,9 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 }
                 EventKind::Detonated => self.cues.play(sounds::DETONATE),
                 EventKind::DestroyedEquipment => {}
+                // BO2 shows the "Cannot Plant Here" hint (`WEAPON_CANT_PLANT_EQUIPMENT`); the mod's
+                // HUD has no hint line yet, so only the log (`describe_event`) reports it.
+                EventKind::CantPlant { .. } => {}
                 EventKind::Hammer { .. } => self.vm_events.swapped = true,
                 EventKind::BuildPlaced { .. } => {
                     self.cues.play(sounds::PLANT);

@@ -14,9 +14,11 @@
 mod build;
 mod fire;
 mod hack;
+mod plant;
 mod rts;
 
 pub use build::{placement, HostWorld, PLANT_DISTANCE};
+pub use plant::{can_plant, PLANT_TRACE_INCHES};
 pub use fire::{gather_targets, throw_velocity, PENETRATION_DAMAGE};
 pub use rts::{RtsIcons, RtsState, RtsWeapons, Third};
 
@@ -131,6 +133,8 @@ pub enum EventKind {
     /// Offhand pulled back (pin out); then thrown.
     OffhandReady { lethal: bool },
     Thrown { lethal: bool },
+    /// BO2's plant check refused the item (`WEAPON_CANT_PLANT_EQUIPMENT`, "Cannot Plant Here").
+    CantPlant { lethal: bool },
     /// A launcher fired.
     Launched,
     /// A grenade, rocket or other projectile went off.
@@ -642,6 +646,8 @@ impl Sim {
                     // The hammer, or building, takes the hands: the gun gets no input meanwhile.
                     let busy = self.step_building(host, idx, p, &input);
                     let (held, pressed) = if busy { (0, 0) } else { (input.held, input.pressed) };
+                    // BO2's plant check, from the world, for the arsenal's plantable items.
+                    p.arsenal.plant_ok = [true, false].map(|lethal| can_plant(p.arsenal.offhand_def(lethal), &p.body, p.yaw, p.pitch, host));
                     p.arsenal.step(held, pressed, p.body.sprinting, stance, speed, &mut p.rng, &mut actions);
                     for a in actions {
                         self.apply_weapon_action(host, idx, p, a);
@@ -776,6 +782,7 @@ pub fn describe_event(e: &Event) -> Option<String> {
         Melee => format!("player {} meleed", e.player),
         Thrown { lethal } => format!("player {} threw a {}", e.player, if lethal { "lethal" } else { "tactical" }),
         Exploded { at } => format!("player {}'s grenade went off at ({:.0}, {:.0})", e.player, at.x, at.y),
+        CantPlant { .. } => format!("player {} cannot plant here", e.player),
         Planted { kind } => format!("player {} put down equipment ({kind:?})", e.player),
         Detonated => format!("player {} set off their C4", e.player),
         Intercepted { .. } => format!("player {}'s Trophy System shot down a projectile", e.player),
@@ -821,6 +828,8 @@ pub(crate) mod tests {
         /// Building: the build menu, and the structures to work on (laid out, or damaged).
         pub options: RefCell<Vec<crate::building::BuildOption>>,
         pub sites: RefCell<Vec<FakeSite>>,
+        /// Everywhere is water too deep to stand in (BO2's plant check refuses it).
+        pub deep_water: std::cell::Cell<bool>,
     }
 
     impl FakeHost {
@@ -848,10 +857,14 @@ pub(crate) mod tests {
             0.0
         }
         fn is_walkable(&self, _x: f32, _y: f32) -> bool {
-            true
+            !self.deep_water.get()
         }
         fn surface_at(&self, _x: f32, _y: f32) -> Surface {
-            Surface::Dirt
+            if self.deep_water.get() {
+                Surface::Water
+            } else {
+                Surface::Dirt
+            }
         }
         fn extent(&self) -> (Vec3, Vec3) {
             (Vec3::new(-5000.0, -5000.0, -100.0), Vec3::new(5000.0, 5000.0, 1000.0))
@@ -1410,6 +1423,66 @@ pub(crate) mod tests {
         assert_eq!((count, thrown), (1, true), "not cancelable: thrown on the release");
         let (count, thrown, _) = try_cancel(true, 2.0, 0);
         assert_eq!((count, thrown), (1, true), "during the pull-back the button does nothing");
+    }
+
+    /// BO2's plant check (`FUN_008e1780`) on a `plantable` item: refused in the air at the press
+    /// (nothing starts) and over deep water while held (put away); either way nothing is used and
+    /// "Cannot Plant Here" is reported. On dry ground it is set down as before.
+    #[test]
+    fn a_plantable_item_is_refused_in_the_air_and_over_deep_water() {
+        use crate::weapons::{Offhand, OffhandUse, WeaponDef};
+        let setup = || {
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            sim.take_control(&host, 0, 1);
+            sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default());
+            wait_until_ready(&mut sim, &host);
+            let base = crate::weapons::weapon("claymore_mp");
+            // BO2's claymore throw: 100 forward, -10000 up (straight down).
+            let def: &'static WeaponDef = Box::leak(Box::new(WeaponDef {
+                plantable: true,
+                projectile_speed: crate::units::inches(100.0),
+                projectile_speed_up: crate::units::inches(-10000.0),
+                ..base.clone()
+            }));
+            sim.players[0].as_mut().unwrap().arsenal.lethal = Offhand { def, count: 1 };
+            sim.events.clear();
+            (host, sim)
+        };
+        let press = FpsInput { held: buttons::LETHAL, pressed: buttons::LETHAL, ..Default::default() };
+        let refused = |sim: &Sim| events(sim).iter().any(|k| matches!(k, EventKind::CantPlant { lethal: true }));
+        let planted = |sim: &Sim| events(sim).iter().any(|k| matches!(k, EventKind::Planted { .. }));
+
+        // In the air: the press does nothing.
+        let (host, mut sim) = setup();
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::JUMP, pressed: buttons::JUMP, ..Default::default() }, 2);
+        assert!(!sim.player(0).unwrap().body.on_ground, "airborne");
+        run(&mut sim, &host, 0, 1, press, 1);
+        assert!(refused(&sim));
+        assert!(sim.player(0).unwrap().arsenal.offhand.is_none(), "nothing started");
+        assert_eq!(sim.player(0).unwrap().arsenal.lethal.count, 1);
+
+        // Held, then over deep water: put away unused.
+        let (host, mut sim) = setup();
+        run(&mut sim, &host, 0, 1, press, 1);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, ..Default::default() }, 30);
+        assert!(matches!(sim.player(0).unwrap().arsenal.offhand, Some(OffhandUse::Holding { .. })) && !refused(&sim));
+        host.deep_water.set(true);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, ..Default::default() }, 1);
+        assert!(refused(&sim));
+        assert!(matches!(sim.player(0).unwrap().arsenal.offhand, Some(OffhandUse::Raising { .. })));
+        run(&mut sim, &host, 0, 1, FpsInput::default(), 60);
+        assert!(!planted(&sim));
+        assert_eq!(sim.player(0).unwrap().arsenal.lethal.count, 1);
+
+        // Dry ground: set down.
+        let (host, mut sim) = setup();
+        run(&mut sim, &host, 0, 1, press, 1);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, ..Default::default() }, 30);
+        run(&mut sim, &host, 0, 1, FpsInput::default(), 60);
+        assert!(planted(&sim) && !refused(&sim));
+        assert_eq!(sim.player(0).unwrap().arsenal.lethal.count, 0);
     }
 
     #[test]

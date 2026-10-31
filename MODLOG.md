@@ -4881,3 +4881,34 @@ frag grenade** (the sticky, hatchet, tacticals and all equipment are).
 
 Measured: no conformance movement (no column reads it; weapons/cac diffs identical to the previous
 commit's; 201 gap clusters).
+
+## The plant check: "Cannot Plant Here" in the air and over deep water (2026-10-31, `v1/offhand-rules`)
+
+BO2's `FUN_008e1780` (read-only Ghidra, t6mp) is the placement test for a `plantable` item (BO2's
+data: the claymore and the Tactical Insertion only) whose throw does not go up
+(`iProjectileSpeedUp <= 0`). It refuses when the player is off the ground (`groundEntityNum` none);
+silently on a vehicle; for the Tactical Insertion when `FUN_008e16d0` fails (on world ground, a clear
+box at the origin); and when a trace from the eye along the throw (`forward * iProjectileSpeed + up *
+iProjectileSpeedUp`, normalised, 1000 units — `DAT_00f6dbf0`; the claymore's 100/-10000 points it
+straight down) either hits a non-world entity with contents `0x200` (silent) or ends in water
+(surface type 20) deeper than `bg_plantInWaterDepth` (5) while `bg_disableWeaponPlantingInWater`
+(1) is on. It runs at the press (`FUN_008e2bb0`: event 0xd5, nothing starts), every frame of the held
+state (`FUN_008e28e0`: 0xd5, then `FUN_008dcbe0`, the gun's quick raise) and at the release's delay
+(`FUN_008e2ac0`: 0xd5, `FUN_008dcbe0`, no ammo spent). The client's hint 0xe is
+`WEAPON_CANT_PLANT_EQUIPMENT` = "Cannot Plant Here" (`FUN_004ddc80`, `en_common_mp`).
+
+* `WeaponDef::plantable` (table field `Plantable`, from `plantable`). `sim::can_plant` is the check in
+  the mod's world: off the ground, or the trace (`hitscan::trace_terrain`) ending on `Surface::Water`
+  the General cannot stand in (`is_walkable` false — the mod's water has no depth, so standable
+  water counts as shallow). The sim sets `Arsenal::plant_ok` per slot each frame; the arsenal
+  refuses at the three BO2 points and emits `WeaponAction::CantPlant` → `EventKind::CantPlant`
+  ("player N cannot plant here" via `describe_event`).
+* Not modelled: the vehicle and entity-contents refusals, and the Tactical Insertion's box test
+  beyond being on the ground. The HUD has no hint line, so "Cannot Plant Here" is not drawn yet (a
+  HUD item). Where the item lands is still the mod's `PLANT_DISTANCE` in front, not BO2's throw.
+* Test: fake-host `a_plantable_item_is_refused_in_the_air_and_over_deep_water` (the `FakeHost`
+  gains `deep_water`).
+* The table gains a field: the archive VERSION must bump (integrator).
+
+Measured: no conformance movement (no column reads `plantable`; weapons/cac diffs identical; 201 gap
+clusters).

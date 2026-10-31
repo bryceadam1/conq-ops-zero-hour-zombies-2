@@ -122,6 +122,7 @@ impl Sim {
                 self.projectiles.push((idx, proj));
             }
             WeaponAction::OffhandReady { lethal } => self.emit(idx, EventKind::OffhandReady { lethal }),
+            WeaponAction::CantPlant { lethal } => self.emit(idx, EventKind::CantPlant { lethal }),
             WeaponAction::MeleeSwing => self.emit(idx, EventKind::Melee),
             WeaponAction::Melee { damage } => self.melee_strike(host, idx, p, damage, MeleeReach::Body),
             WeaponAction::Plant { def } => {
