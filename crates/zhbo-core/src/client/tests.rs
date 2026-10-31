@@ -63,6 +63,36 @@
         assert_eq!(out.viewmodel_fired, 1);
     }
 
+    /// A dual-wield pair's left gun plays its own `_lh` shot; the right gun the weapon's.
+    #[test]
+    fn the_left_guns_shot_plays_its_own_sound() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef {
+            class: crate::weapons::Class::Pistol,
+            fire_sound: "ZHBO_BO2_Fire_test_dw_mp".into(),
+            left_fire_sound: "ZHBO_BO2_FireLeft_test_dw_mp".into(),
+            dual_wield_weapon: "test_lh_mp".into(),
+            ..Default::default()
+        }));
+        let p = sim.players[0].as_mut().unwrap();
+        let active = p.arsenal.active;
+        p.arsenal.weapons[active] = crate::weapons::WeaponState::new(def);
+        for (left, want) in [(true, "ZHBO_BO2_FireLeft_test_dw_mp"), (false, "ZHBO_BO2_Fire_test_dw_mp")] {
+            client.cues.queue.clear();
+            sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left } });
+            client.frame(&mut sim, &inp);
+            let cues: Vec<&str> = client.cues.queue.iter().map(|c| c.event).collect();
+            assert!(cues.contains(&want), "left {left}: {cues:?}");
+        }
+    }
+
     fn impact(player: i32, surface: crate::impacts::Surface, head: bool, fatal: bool) -> crate::sim::Event {
         crate::sim::Event {
             player,

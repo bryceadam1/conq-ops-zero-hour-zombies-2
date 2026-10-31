@@ -4630,3 +4630,14 @@ weapon clusters, one-sided rows unchanged (8/0); cac unchanged (556 cells, 6 clu
 clusters 207 → 205. `anim_finalshot_left` (5) stays, see above. Verified: `cargo test --workspace`
 green; clippy adds no warning (39 before and after); the real-install suite (`--ignored --skip
 conformance`) green. No VERSION/ABI bump (the left clip is Rust-side; `ZhboNativeIn` unchanged).
+
+## The left gun's own shot (2026-10-31, `v1/dual-wield-sim`)
+
+Each `_lh` def has its own `fireSoundPlayer` (`wpn_fnp45_fire_plr_lh`, the pair's is `_rh`; the
+Beretta's both are `wpn_beretta93r_LFE`). The table gains `LeftFireSound` (`WeaponDef::left_fire_sound`),
+which `sounds_and_fx` fills for a dual-wield weapon from the def its `szDualWieldWeaponName` names
+(event `ZHBO_BO2_FireLeft_<id>`, the same layer set as the right shot). The client plays
+`sounds::left_fire_for` for a `Shot { left: true }` (falling back to the weapon's shot when the
+table has no left sound). Tests: `weapons::tests::the_left_gun_gets_its_own_shot` (zhbo-assets),
+`client::tests::the_left_guns_shot_plays_its_own_sound`. No conformance column covers the `_lh`
+def's sound (the left def is not a row), so no cell moves.

@@ -208,6 +208,9 @@ pub struct WeaponDef {
     pub fire_sound: String,
     /// The empty magazine's click in BO2's vocabulary (`emptyFireSoundPlayer`), as a converted event.
     pub empty_fire_sound: String,
+    /// A dual-wield weapon's left gun's shot (its own def's `fireSoundPlayer`, `wpn_<x>_fire_plr_lh`),
+    /// as a converted event; empty for a single gun (and the left gun then plays `fire_sound`).
+    pub left_fire_sound: String,
     /// The suppressed shot's player event (`AttachmentUnique.fire_sound_player`).
     pub silenced_fire_sound: String,
     /// The suppressed shot's third-person event (`AttachmentUnique.fire_sound`).
@@ -439,6 +442,7 @@ impl Default for WeaponDef {
             projectile_object: String::new(),
             fire_sound: String::new(),
             empty_fire_sound: String::new(),
+            left_fire_sound: String::new(),
             silenced_fire_sound: String::new(),
             silenced_fire_sound_npc: String::new(),
             silenced_fx_weapon: String::new(),

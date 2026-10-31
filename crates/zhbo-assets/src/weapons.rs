@@ -452,6 +452,12 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
                 events.push(DynSfx { event: event.clone(), layers: layers(plr), kind: Kind::Player, limit: 3 });
                 d.fire_sound = event;
             }
+            // A dual-wield pair's left gun shoots with its own def's player sound (`_plr_lh`).
+            if let Some(plr) = bo2.iter().find(|l| Some(l.name.as_str()) == w.dual_wield_weapon.as_deref()).and_then(|l| l.fire_sound_player.as_ref()) {
+                let event = format!("ZHBO_BO2_FireLeft_{key}");
+                events.push(DynSfx { event: event.clone(), layers: layers(plr), kind: Kind::Player, limit: 3 });
+                d.left_fire_sound = event;
+            }
             let npc_event = format!("ZHBO_BO2_FireNpc_{key}");
             if let Some(npc) = &c.fire_sound {
                 events.push(DynSfx { event: npc_event.clone(), layers: vec![npc.clone(), format!("{npc}_decay")], kind: Kind::Others, limit: 3 });
@@ -744,6 +750,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         projectile_object: String::new(),
         fire_sound: String::new(),
         empty_fire_sound: String::new(),
+        left_fire_sound: String::new(),
         silenced_fire_sound: String::new(),
         silenced_fire_sound_npc: String::new(),
         silenced_fx_weapon: String::new(),
@@ -1017,6 +1024,27 @@ pub fn converted(patch: &zhbo_formats::t6zone::Zone, all: &[Weapon]) -> Vec<Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A dual-wield pair's left gun shoots with its own def's player sound (`fireSoundPlayer` of the
+    /// `szDualWieldWeaponName` def, `wpn_<x>_fire_plr_lh`); a single gun has none.
+    #[test]
+    fn the_left_gun_gets_its_own_shot() {
+        let dw = Weapon {
+            name: "fnp45_dw_mp".into(),
+            class: bo2::class::PISTOL,
+            fire_sound_player: Some("wpn_fnp45_fire_plr_rh".into()),
+            dual_wield_weapon: Some("fnp45_lh_mp".into()),
+            ..Default::default()
+        };
+        let lh = Weapon { name: "fnp45_lh_mp".into(), class: bo2::class::PISTOL, fire_sound_player: Some("wpn_fnp45_fire_plr_lh".into()), ..Default::default() };
+        let single = Weapon { name: "fnp45_mp".into(), class: bo2::class::PISTOL, fire_sound_player: Some("wpn_fnp45_fire_plr".into()), ..Default::default() };
+        let mk = |id: &str| WeaponDef { id: id.into(), class: Class::Pistol, ..Default::default() };
+        let mut defs = vec![mk("fnp45_dw_mp"), mk("fnp45_mp")];
+        let (events, _) = sounds_and_fx(&[dw, lh, single], &[], &mut defs, &["fnp45_dw_mp".into(), "fnp45_mp".into()]);
+        assert_eq!(defs[0].left_fire_sound, "ZHBO_BO2_FireLeft_fnp45_dw_mp");
+        assert!(events.iter().any(|e| e.event == "ZHBO_BO2_FireLeft_fnp45_dw_mp" && e.layers[0] == "wpn_fnp45_fire_plr_lh"));
+        assert_eq!(defs[1].left_fire_sound, "");
+    }
 
     #[test]
     fn maps_bo2_types_to_classes() {

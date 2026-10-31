@@ -1043,11 +1043,13 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         sim.events.clear();
         self.hits_len = 0;
         let fire = sim.player(me).map_or(sounds::FIRE, |p| sounds::fire_for(p.arsenal.current().def));
+        let left_fire = sim.player(me).map_or(sounds::FIRE, |p| sounds::left_fire_for(p.arsenal.current().def));
         for kind in &mine {
             // The gunshot is per shot; the impact is per pellet and comes from its own event (a
-            // shot into the air no longer plays a hard-surface sound).
-            if let EventKind::Shot { .. } = kind {
-                self.cues.play(fire);
+            // shot into the air no longer plays a hard-surface sound). A dual-wield pair's left gun
+            // plays its own `_lh` shot.
+            if let EventKind::Shot { left, .. } = kind {
+                self.cues.play(if *left { left_fire } else { fire });
             }
         }
         for kind in mine {
