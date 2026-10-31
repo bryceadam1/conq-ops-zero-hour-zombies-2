@@ -5132,3 +5132,36 @@ differs on; no new column cluster, clusters 193 → 193); cac actual rows 552 �
 56 → 55, cells 572 → 573 (its description); gap clusters **200 → 199**. Tests: fake-host shield
 tests (front/back/stowed blocks, knife, blast arc, deploy, pick-up, refusal, destruction),
 `cargo test --workspace`, clippy (no new warnings), real-install suite (33 passed) green.
+
+## Assault Shield follow-ups: Zero Hour fire, third person, the weapon on deploy, sounds (2026-10-31, `v1/assault-shield`)
+
+* **The weapon goes with the deployed shield.** The engine's `deployriotshield` (`FUN_009672e0`)
+  takes the weapon and leaves it as the shield's retrieve item; the script brings up
+  `lastnonshieldweapon` and gives `knife_held_mp` when nothing is left. `Arsenal::take_shield` /
+  `return_shield`; the use key beside it returns it; destroyed (or owner dead) it is gone. The
+  earlier "switching back picks it up" was wrong and is removed.
+* **Stowed blast protection stays literal.** `FUN_0066f680` takes the tag matrix of the tag the
+  shield model is attached to (the client's stored tag, `+0x57ec`; `tag_weapon` only for a script
+  mover, `FUN_00967430`), so a stowed shield measures from `tag_stowed_back`'s axis 0 (back and
+  down): it rarely protects, as in BO2.
+* **Zero Hour fire.** Host patch 0017 hooks `Object::attemptDamage` (`Zhbo_ShieldDamage`) and asks
+  the new, lock-free `zhbo_logic_shield_damage` (an atomic mirror of `Sim::shields`; a lock-free ring
+  for damage to a deployed shield's object, drained before the next step). **Gotcha: the hook can
+  run inside `zhbo_logic_step`** (the sim's own `damage` call reaches `attemptDamage`), so it must
+  never take the state lock; damage whose source is a controlled General passes untouched. The
+  deployed shield's object is now attackable (`ActiveBody`, a box of its bounds) and the sim
+  skips it as a target. Integrator: ABI append (version bump), build patch 0017, in-game checks.
+* **Third person.** The native body holds the shield on `tag_weapon_left` (a world manifest's
+  tagged base part) and wears the stow model on `tag_stowed_back` (`ZS<vm>.zbw`) while another
+  weapon is up, from a lock-free per-General mirror (no ABI field).
+* **Sounds.** `wpn_riotshield_plant`, `wpn_riotshield_destroy`, `fly_riotshield_impact_bullet` /
+  `_knife` (converted as the shield's World events; shield hits are a `ShieldHit` event).
+* **Description.** The shield's CaC description (statstable column 7) comes with `v1/cac-rules`'
+  `set_cac_slots` description pass (`bd5bb9c`), which covers every statstable weapon item; not
+  duplicated here.
+
+Measured (previous `v1/assault-shield` conf → conf2): weapons cells 769,990 → 769,991; the one
+cell is the shield's `world_model` (the column already differs on 11,543 of 11,605 rows: no new
+cluster) — BO2's def names the pickup model, the mod's in-hand model is the script's carry model.
+cac 573 → 573; gap clusters 199 → 199. The real-install conversion test now composes a tagged base
+part on its body bone (and on the model's origin without a body), as `nativebody::load` does.
