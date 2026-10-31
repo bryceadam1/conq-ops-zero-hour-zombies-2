@@ -256,8 +256,15 @@ pub struct WeaponDef {
     pub specialties: Specialties,
     /// `f{Ads,Hip}ViewKickMinMagnitude`: the shortest view kick a shot gives, aimed and hip (G5).
     pub view_kick_min: (f32, f32),
-    /// `f{Ads,Hip}ViewKickCenterSpeed`: how fast the view kick recentres (G5).
+    /// The variant's `f{Ads,Hip}ViewKickCenterSpeed`: the view kick's recentre acceleration
+    /// (deg/s², `view_kick::centre_speed`), unscaled.
     pub view_kick_center: (f32, f32),
+    /// Π `fAdsViewKickCenterSpeedScale` over the attachments (`FUN_008ecf70`; 1 bare), multiplied
+    /// in when the attachments are applied. Only the aimed recentre takes it.
+    pub ads_kick_center_scale: f32,
+    /// `fAdsViewKickCenter{Ducked,Prone}Scale`: the aimed recentre speed's crouched and prone
+    /// scales (`FUN_0051f150`).
+    pub kick_center_stance: (f32, f32),
     pub ads_gun_kick: GunKick,
     pub hip_gun_kick: GunKick,
     /// `fGunMaxPitch`, `fGunMaxYaw`: the gun kick spring's limits (G5).
@@ -461,6 +468,8 @@ impl Default for WeaponDef {
             specialties: Specialties::NONE,
             view_kick_min: (0.0, 0.0),
             view_kick_center: (0.0, 0.0),
+            ads_kick_center_scale: 1.0,
+            kick_center_stance: (1.0, 1.0),
             ads_gun_kick: GunKick::default(),
             hip_gun_kick: GunKick::default(),
             gun_max: (0.0, 0.0),
@@ -481,9 +490,6 @@ impl Default for WeaponDef {
         }
     }
 }
-
-/// BO2 view kick values are kick-physics inputs; this turns one into degrees of view per shot.
-pub const KICK_TO_DEGREES: f32 = 1.0 / 80.0;
 
 pub const MELEE_DAMAGE: f32 = 135.0;
 pub const MELEE_RANGE: f32 = inches(64.0);

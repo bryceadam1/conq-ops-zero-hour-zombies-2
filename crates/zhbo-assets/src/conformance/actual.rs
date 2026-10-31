@@ -487,7 +487,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     b.floats("ads_view_kick", &fls(&[d.ads_kick.pitch.0, d.ads_kick.pitch.1, d.ads_kick.yaw.0, d.ads_kick.yaw.1]))
         .floats("hip_view_kick", &fls(&[d.hip_kick.pitch.0, d.hip_kick.pitch.1, d.hip_kick.yaw.0, d.hip_kick.yaw.1]))
         .floats("view_kick_min", &fls(&[d.view_kick_min.0, d.view_kick_min.1]))
-        .floats("view_kick_center", &fls(&[d.view_kick_center.0, d.view_kick_center.1]))
+        .floats("view_kick_center", &fls(&[d.view_kick_center.0 * d.ads_kick_center_scale, d.view_kick_center.1]))
         .floats("ads_gun_kick", &gk(&d.ads_gun_kick))
         .int("ads_gun_kick_reduced_bullets", d.ads_gun_kick.reduced_bullets as i64)
         .floats("hip_gun_kick", &gk(&d.hip_gun_kick))

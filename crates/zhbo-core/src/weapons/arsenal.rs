@@ -7,7 +7,7 @@
 */
 
 use super::catalog::{catalog, weapon, weapon_or_none};
-use super::def::{Class, Effect, FireMode, Place, WeaponDef, KICK_TO_DEGREES};
+use super::def::{Class, Effect, FireMode, Place, WeaponDef};
 use super::loadout::Loadout;
 use super::perks::Perk;
 use super::rng::Rng;
@@ -240,7 +240,7 @@ pub struct Offhand {
 pub enum WeaponAction {
     /// Fire one round (one pellet for shotguns) with the given cone (degrees), random offsets in
     /// [-1, 1), view kick (degrees pitch up, yaw, roll) and the gun kick spring's impulse.
-    Fire { spread_deg: f32, jitter: (f32, f32), recoil: (f32, f32, f32), gun_kick: (f32, f32), pellet: u16 },
+    Fire { spread_deg: f32, jitter: (f32, f32), view_kick: (f32, f32, f32), gun_kick: (f32, f32), pellet: u16 },
     /// Launch a projectile (launchers, crossbow, ballistic knife); `pellet` numbers the bolts of
     /// one shot (the tri-bolt's three).
     Launch { def: &'static WeaponDef, pellet: u16 },
@@ -881,18 +881,13 @@ impl Arsenal {
                 }
             } else {
                 let spread = spread_now + if ads < 0.5 { def.spread_move_add * (speed / 30.0).min(1.0) } else { 0.0 };
-                // BO2's per-shot kick (G5); the view kick's degrees scale is still the mod's
-                // (G5 leaves its consumer unresolved).
+                // BO2's per-shot kick (G5): the view kick's velocity and the gun spring's impulse.
                 let k = super::recoil::shot_kick(def, ads, w.string, &mut w.recoil_acc, w.since_shot, rng);
                 w.since_shot = 0.0;
                 for pellet in 0..def.pellets.max(1) {
                     let jitter = (rng.signed(), rng.signed());
-                    let (recoil, gun_kick) = if pellet == 0 {
-                        ((k.view.0 * KICK_TO_DEGREES, k.view.1 * KICK_TO_DEGREES, k.view.2 * KICK_TO_DEGREES), k.gun)
-                    } else {
-                        ((0.0, 0.0, 0.0), (0.0, 0.0))
-                    };
-                    out.push(WeaponAction::Fire { spread_deg: spread, jitter, recoil, gun_kick, pellet });
+                    let (view_kick, gun_kick) = if pellet == 0 { (k.view, k.gun) } else { ((0.0, 0.0, 0.0), (0.0, 0.0)) };
+                    out.push(WeaponAction::Fire { spread_deg: spread, jitter, view_kick, gun_kick, pellet });
                 }
             }
             // The magazine's last round fires over `iLastFireTime` when the weapon has one

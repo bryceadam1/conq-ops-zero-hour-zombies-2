@@ -18,6 +18,7 @@ pub mod recoil;
 pub mod rng;
 pub mod specialty;
 pub mod table;
+pub mod view_kick;
 
 pub use arsenal::*;
 pub use catalog::*;

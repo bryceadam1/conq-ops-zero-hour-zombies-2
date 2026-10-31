@@ -12,18 +12,18 @@
 //! set at any aim). The spring (`FUN_008f0700`) integrates in 5 ms steps. Damage flinch is G7
 //! (`FUN_004e8ab0`) and the hip spread cone G6 (`FUN_008e41a0`).
 //!
-//! What the answers leave open stays as it was and is marked: how the engine turns a view kick
-//! into degrees and recentres it (G5 "Unresolved"; the client still scales by
-//! [`super::KICK_TO_DEGREES`] and settles it), and the reduced-kick window's exact meaning
-//! (G5, medium: here, the first `reduced_bullets` shots of a string).
+//! The view kick is an angular velocity the shot hands to [`super::view_kick::ViewKick`], whose
+//! integrator recentres it. What G5 leaves open stays marked: the reduced-kick window's exact
+//! meaning (G5, medium: here, the first `reduced_bullets` shots of a string).
 
 use super::def::WeaponDef;
 use super::feel::GunKick;
 use super::rng::Rng;
 use crate::tuning::Tuning;
 
-/// One shot's kick: the view (pitch up, yaw, roll, in the weapon's kick units) and the gun
-/// spring's velocity impulse (pitch, yaw).
+/// One shot's kick: the view kick's angular velocity (deg/s, BO2's axes: pitch `-|p|` is up, yaw,
+/// roll `-0.5 yaw`; `FUN_008e3a00` writes it to cg+0x697bc) and the gun spring's velocity
+/// impulse (pitch, yaw).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ShotKick {
     pub view: (f32, f32, f32),
@@ -63,7 +63,7 @@ pub fn shot_kick(def: &WeaponDef, ads: f32, string: u16, reduction: &mut f32, si
         pitch *= m / len;
         yaw *= m / len;
     }
-    let pitch = pitch.abs() * scale;
+    let pitch = -pitch.abs() * scale;
     let yaw = yaw * scale;
 
     // ---- gun kick
@@ -173,10 +173,10 @@ mod tests {
         let mut rng = Rng::new(3);
         let mut acc = 0.0;
         let hip = shot_kick(&d, 0.99, 0, &mut acc, 1.0, &mut rng);
-        assert!((50.0..=60.0).contains(&hip.view.0), "hip set until ADS is 1: {hip:?}");
+        assert!((-60.0..=-50.0).contains(&hip.view.0), "hip set until ADS is 1, kicking up: {hip:?}");
         assert!((5.0..=6.0).contains(&hip.gun.0), "the gun kick takes the aimed set at any aim: {hip:?}");
         let aimed = shot_kick(&d, 1.0, 0, &mut acc, 1.0, &mut rng);
-        assert!((30.0..=40.0).contains(&aimed.view.0));
+        assert!((-40.0..=-30.0).contains(&aimed.view.0));
         assert!((aimed.view.2 + 0.5 * aimed.view.1).abs() < 1e-6, "roll = -0.5 yaw");
     }
 

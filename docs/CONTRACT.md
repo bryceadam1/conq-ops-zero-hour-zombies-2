@@ -229,10 +229,12 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   depth forever. The clip owns the whole hip→aimed transform, eye relief and the launchers'
   rotation included; the def's ADS time still owns FOV, the offset fade (`max(0, 1 − 2·ads)`),
   `fAdsAimPitch`, bob, sway and kick. Placement never derives an eye or axis of its own, so the
-  shot's ray and the sight picture share one axis. (The camera axis carries the client's cosmetic
-  view kick, `hud.view_kick_*`, which the sim's ray does not; the crosshair is drawn on the same
-  camera axis, so the sight picture matches the crosshair while the sim stays authoritative for
-  where the round goes.)
+  shot's ray and the sight picture share one axis. (The view kick is the sim's,
+  `PlayerSim::view_kick`: BO2 adds it to every user command's angles, so the sim's aim — the
+  ray — is the input's view angles plus the kick the previous logic frame left, and the camera
+  axis is the client's mouse aim plus the same kick, interpolated across the logic frame like the
+  eye. Only the damage flinch, `hud.flinch_pitch`, is camera-only; the crosshair is drawn on the
+  camera axis.)
   - **The engine cross-fades 0x55/0x56 by the fraction (Ghidra G12, answered).** `FUN_0052b750`
     weights slot 0x55 by `fWeaponPosFrac` and 0x56 by its complement — no time-scale into the
     def's ADS times (those live in the fraction integrator, G3), and a direction flip passes no

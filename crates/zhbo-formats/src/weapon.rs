@@ -523,6 +523,9 @@ pub struct Weapon {
     pub view_kick_min: (f32, f32),
     /// The variant's `f{Ads,Hip}ViewKickCenterSpeed`.
     pub view_kick_center: (f32, f32),
+    /// `fAdsViewKickCenterDuckedScale`, `fAdsViewKickCenterProneScale`: the aimed recentre speed's
+    /// crouched and prone scales (the kick integrator `FUN_0051f150`).
+    pub view_kick_center_stance: (f32, f32),
     pub ads_gun_kick: GunKick,
     pub hip_gun_kick: GunKick,
     /// `fGunMaxPitch`, `fGunMaxYaw`.
@@ -876,6 +879,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         reduced_percent: z.f32(d + WD::hipGunKickReducedKickPercent),
     };
     w.gun_max = (z.f32(d + WD::fGunMaxPitch), z.f32(d + WD::fGunMaxYaw));
+    w.view_kick_center_stance = (z.f32(d + WD::fAdsViewKickCenterDuckedScale), z.f32(d + WD::fAdsViewKickCenterProneScale));
     w.recoil = (z.f32(d + WD::fAdsRecoilReductionRate), z.f32(d + WD::fAdsRecoilReductionLimit), z.f32(d + WD::fAdsRecoilReturnRate));
     w.hip_sway = Sway {
         max_angle: z.f32(d + WD::swayMaxAngle),

@@ -33,6 +33,7 @@ use crate::equipment::{EquipEvent, Equipment, Kind as EquipKind, Placed, HACK_CO
 use crate::projectiles::{Outcome, Projectile};
 use crate::units::inches;
 use crate::building::{self, Hammer, Site};
+use crate::weapons::view_kick::{self, ViewKick};
 use crate::weapons::{Arsenal, Class, Rng, Specialty, WeaponAction, MELEE_FX_WEAPON, MELEE_RANGE};
 
 pub const MAX_PLAYERS: usize = 16;
@@ -116,9 +117,9 @@ pub enum EventKind {
     /// impact FX (through `ZhboClientOut.hits`) and the surface's impact sound.
     Impact { at: Vec3, dir: Vec3, surface: Surface, head: bool, fatal: bool, impact_type: i32 },
     HitMarker { headshot: bool, kill: bool },
-    /// A shot's view kick (G5: pitch up, yaw, roll -0.5 x yaw) and the gun kick spring's impulse
-    /// (`weapons::recoil::GunKickSpring`).
-    Recoil { pitch_deg: f32, yaw_deg: f32, roll_deg: f32, gun_kick: (f32, f32) },
+    /// A shot's gun kick spring impulse (`weapons::recoil::GunKickSpring`). The view kick is the
+    /// sim's own (`PlayerSim::view_kick`): it moves the aim.
+    Recoil { gun_kick: (f32, f32) },
     /// Damage flinch (G7): the view kicks this far, the engine's no-direction branch (the sim
     /// carries no damage direction), and settles over `FlinchTime`.
     Flinch { pitch_deg: f32 },
@@ -180,8 +181,12 @@ pub struct PlayerSim {
     pub camo: String,
     pub mode: Mode,
     pub body: Body,
+    /// The aim this frame: the input's view angles plus the view kick (BO2 adds the kick to every
+    /// user command's angles, `FUN_00549fb0`), radians.
     pub yaw: f32,
     pub pitch: f32,
+    /// BO2's view kick (`weapons::view_kick`): shots set it, it recentres each frame.
+    pub view_kick: ViewKick,
     pub arsenal: Arsenal,
     pub rng: Rng,
     pub input: FpsInput,
@@ -219,6 +224,7 @@ impl PlayerSim {
             body: Body::new(Vec3::ZERO, &MoveTuning::default()),
             yaw: 0.0,
             pitch: 0.0,
+            view_kick: ViewKick::default(),
             arsenal: Arsenal::new(),
             rng: Rng::new(1),
             input: FpsInput::default(),
@@ -337,6 +343,7 @@ impl Sim {
                 p.mode = Mode::Fps;
                 p.yaw = info.yaw;
                 p.pitch = 0.0;
+                p.view_kick = ViewKick::default();
                 p.input = FpsInput { yaw: info.yaw, ..Default::default() };
                 p
             }
@@ -359,6 +366,7 @@ impl Sim {
                     body: Body::new(pos, &tuning),
                     yaw,
                     pitch: 0.0,
+                    view_kick: ViewKick::default(),
                     // A General spawns unarmed: knife only until a class is picked. (The class
                     // pick replaces this arsenal; Escape on the spawn offer leaves it.)
                     arsenal: Arsenal::unarmed(),
@@ -422,6 +430,7 @@ impl Sim {
                     body: Body::new(Vec3::ZERO, &tuning),
                     yaw: 0.0,
                     pitch: 0.0,
+                    view_kick: ViewKick::default(),
                     arsenal: Arsenal::unarmed(),
                     rng: Rng::new(general.wrapping_mul(2_654_435_761) ^ frame),
                     input: FpsInput::default(),
@@ -610,8 +619,10 @@ impl Sim {
         let mut input = p.input;
         input.pressed = p.pressed_accum;
         p.pressed_accum = 0;
-        p.yaw = input.yaw;
-        p.pitch = input.pitch;
+        // The aim is the view plus the kick the last frame left (`FUN_00549fb0`).
+        let (kick_yaw, kick_pitch) = p.view_kick.aim_offset();
+        p.yaw = crate::math::wrap_angle(input.yaw + kick_yaw);
+        p.pitch = (input.pitch + kick_pitch).clamp(-crate::input::MAX_PITCH, crate::input::MAX_PITCH);
 
         let world = HostWorld { host, viewer: p.general };
         match p.mode {
@@ -623,6 +634,8 @@ impl Sim {
                 if p.site.is_none() && input.pressed & buttons::FIELD_COMPUTER != 0 {
                     p.mode = Mode::FieldComputer { t: 0.0 };
                     p.arsenal.ads = 0.0;
+                    // Out of first person BO2 zeroes the kick (`FUN_00523070`).
+                    p.view_kick = ViewKick::default();
                     self.emit(idx, EventKind::FieldComputerOpened);
                 } else {
                     let mods = MoveModifiers {
@@ -646,6 +659,9 @@ impl Sim {
                     for a in actions {
                         self.apply_weapon_action(host, idx, p, a);
                     }
+                    // The kick recentres at the weapon in hand's speed (`FUN_0051f150`).
+                    let centre = view_kick::centre_speed(p.arsenal.current().def, p.arsenal.ads, stance);
+                    p.view_kick.step(LOGIC_DT, centre);
                     self.step_hack(host, idx, p);
                 }
             }
@@ -1404,6 +1420,66 @@ pub(crate) mod tests {
         sim.choose_class(0, 1, 1, &[]);
         let second = sim.player(0).and_then(|p| p.class.clone());
         assert_ne!(first, second, "the second pick replaced the first");
+    }
+
+    /// One player firing `burst` frames then idling `rest`, from a raised gun: the view kick after
+    /// every frame, and whether the frame fired.
+    fn kick_trace(input: FpsInput, burst: u32, rest: u32) -> Vec<(ViewKick, bool, f32, f32)> {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        // The stand-in AN-94 carries BO2's kick and recentre numbers.
+        let rifle = crate::classes::CustomClass { name: "Rifle".into(), primary: "an94_mp".into(), secondary: "fnp45_mp".into(), ..Default::default() };
+        sim.choose_class(0, 1, usize::MAX, &rifle.to_wire_words());
+        wait_until_ready(&mut sim, &host);
+        let idle = FpsInput { held: input.held & buttons::ADS, ..input };
+        let mut trace = Vec::new();
+        for f in 0..burst + rest {
+            let before = sim.player(0).unwrap().view_kick;
+            let now = if f < burst { input } else { idle };
+            sim.events.clear();
+            sim.input(0, 1, now);
+            let n = sim.frame + 1;
+            sim.step(&host, n);
+            let p = sim.player(0).unwrap();
+            // The frame aimed along the view plus the kick the last frame left (`FUN_00549fb0`).
+            let (ky, kp) = before.aim_offset();
+            assert!((p.pitch - (now.pitch + kp)).abs() < 1e-6 && (p.yaw - crate::math::wrap_angle(now.yaw + ky)).abs() < 1e-6, "frame {f}");
+            let shot = sim.events.iter().any(|e| matches!(e.kind, EventKind::Shot { .. }));
+            let centre = view_kick::centre_speed(p.arsenal.current().def, p.arsenal.ads, 0);
+            if shot {
+                assert!(p.view_kick.angle[0] < before.angle[0], "a shot kicks up: frame {f} {before:?} -> {:?}", p.view_kick);
+            } else {
+                let mut want = before;
+                want.step(LOGIC_DT, centre);
+                assert_eq!(p.view_kick, want, "frame {f}: the integrator alone");
+            }
+            trace.push((p.view_kick, shot, p.arsenal.ads, centre));
+        }
+        trace
+    }
+
+    #[test]
+    fn a_burst_kicks_the_aim_up_and_recentres_on_the_integrator() {
+        let trace = kick_trace(FpsInput { held: buttons::FIRE, ..Default::default() }, 30, 45);
+        let shots = trace.iter().filter(|t| t.1).count();
+        assert!(shots >= 3, "the burst fired: {shots}");
+        let peak = trace.iter().map(|t| -t.0.angle[0]).fold(0.0f32, f32::max);
+        assert!(peak > 1.0 && peak <= view_kick::ANGLE_MAX, "the kick climbs over the burst: {peak}");
+        assert!(trace.last().unwrap().0.is_rest(), "then recentres all the way, exactly");
+        for (f, (k, shot, ads, centre)) in trace.iter().enumerate() {
+            println!("KICK {f} {} {} {} {} {ads} {centre}", -k.angle[0], k.angle[1], k.angle[2], *shot as u8);
+        }
+    }
+
+    #[test]
+    fn the_kick_replays_identically_and_aims_the_bullets() {
+        let fire = FpsInput { held: buttons::FIRE | buttons::ADS, pitch: 0.1, yaw: 0.3, ..Default::default() };
+        let a = kick_trace(fire, 20, 30);
+        let b = kick_trace(fire, 20, 30);
+        assert_eq!(a, b, "same inputs, same kick");
+        assert!(a.iter().any(|t| t.0.angle[1] != 0.0), "the yaw kicks too");
     }
 
     #[test]

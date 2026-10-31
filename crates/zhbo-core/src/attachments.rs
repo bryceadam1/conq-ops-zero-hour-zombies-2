@@ -343,9 +343,9 @@ fn apply_handling(d: &mut WeaponDef, atts: &[&AttachmentDef]) {
     z.out_frac = first(|a| a.zoom_out_frac).unwrap_or(z.out_frac);
     z.alt_scope_in_time = first(|a| a.alt_scope_in_time).unwrap_or(z.alt_scope_in_time);
     z.alt_scope_out_time = first(|a| a.alt_scope_out_time).unwrap_or(z.alt_scope_out_time);
-    // The aimed view-kick recentre speed: the variant's × Π scale (`FUN_008ecf70`); the hip one
-    // has no attachment scale.
-    d.view_kick_center.0 *= product(|a| a.ads_kick_center_scale);
+    // The aimed view-kick recentre speed: the variant's × Π scale (`FUN_008ecf70`), kept apart
+    // because the hip recentre reads the unscaled speed (`view_kick::centre_speed`).
+    d.ads_kick_center_scale *= product(|a| a.ads_kick_center_scale);
     // The sway override blocks: the first attachment with one supplies all six values.
     d.hip_sway = walk.iter().find_map(|a| a.sway).unwrap_or(d.hip_sway);
     d.ads_sway = walk.iter().find_map(|a| a.ads_sway).unwrap_or(d.ads_sway);
@@ -573,7 +573,7 @@ mod tests {
         let acog = AttachmentDef { id: "acog".into(), short: "acog".into(), kind: 1, ads_kick_center_scale: 1.01, strafe_rot_roll: Some(3.0), ..Default::default() };
         let d = apply(&base, &[&steady, &silencer, &acog]);
         // The aimed recentre speed is a product; the hip one has no scale.
-        assert_eq!(d.view_kick_center, (1500.0 * (1.01f32 * 0.975), 1500.0));
+        assert_eq!((d.view_kick_center, d.ads_kick_center_scale), ((1500.0, 1500.0), 1.01f32 * 0.975));
         // The override block: the first in eAttachment order (silencer 23 before steadyaim 26)
         // supplies all six; the aimed set is untouched without an aimed override.
         assert_eq!(d.hip_sway, other_sway);

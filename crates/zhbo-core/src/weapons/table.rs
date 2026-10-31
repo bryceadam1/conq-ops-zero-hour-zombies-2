@@ -802,6 +802,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("OffhandClass", "BO2's offhand class: none, frag_grenade, smoke_grenade, flash_grenade, gear, supplydrop_marker.", FieldKind::Enum,
         |d: &WeaponDef| d.traits.offhand.name().into(),
         |d: &mut WeaponDef, v: Values| { d.traits.offhand = OffhandClass::parse(v.text).ok_or("unknown offhand class")?; Ok(()) }),
+    field!("ViewKickCenterStance", "The aimed recentre speed's crouched and prone scales (`fAdsViewKickCenter{Ducked,Prone}Scale`).", FieldKind::Nums(2),
+        |d: &WeaponDef| nums(&[d.kick_center_stance.0, d.kick_center_stance.1]),
+        |d: &mut WeaponDef, v: Values| { v.need(2)?; d.kick_center_stance = (v.num(0), v.num(1)); Ok(()) }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -861,7 +864,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 94);
+        assert_eq!(WEAPON_FIELDS.len(), 95);
         assert_eq!(ATTACHMENT_FIELDS.len(), 29);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

@@ -822,6 +822,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         specialties: Specialties::from_words(w.perks.0, w.perks.1),
         view_kick_min: w.view_kick_min,
         view_kick_center: w.view_kick_center,
+        ads_kick_center_scale: 1.0,
+        kick_center_stance: w.view_kick_center_stance,
         ads_gun_kick: gun_kick(w.ads_gun_kick),
         hip_gun_kick: gun_kick(w.hip_gun_kick),
         gun_max: w.gun_max,
