@@ -345,12 +345,6 @@ pub(crate) fn left_gun<'a>(w: &zhbo_formats::weapon::Weapon, bo2: &'a [zhbo_form
     bo2.iter().find(|x| x.name == name && x.name != w.name)
 }
 
-/// The right-hand twin of a dual-wield left clip: `viewmodel_<w>_left_idle` -> `..._right_idle`.
-/// Shared clips (`pullout`, `sprint_*`, ...) have no `_left_` and keep their name.
-fn dual_clip_name(left: &str) -> String {
-    left.split_once("_left_").map_or_else(|| left.to_string(), |(prefix, suffix)| format!("{prefix}_right_{suffix}"))
-}
-
 /// The first-person viewmodels of `converted` weapons: each faction's arms holding the weapon, its
 /// base parts (magazine, scope/optic) and its attachments (placed where BO2 puts them, iron sights
 /// hidden under an optic), with a W3D clip for every BO2 animation slot it has, and its alt mode's
@@ -542,14 +536,13 @@ pub(crate) fn weapon_viewmodels(
         }
         // The left gun's clip table: its `_left_*` animations, keyed by the matching right slot
         // with the instance bit (`INSTANCE_LEFT`), so the native core samples both guns per request.
-        // A shared clip (`pullout`, `sprint_*`) keeps its name and its slot; a clip with no name
-        // twin falls back to its own slot index in the base's table.
+        // BO2's `_LEFT` slots (0x4E-0x54, the left variant's table, G14 §5) map by what each plays
+        // (`slot::left_as_right`: `LASTSHOT_LEFT` is the left gun's last shot even when it names
+        // the fire clip); a shared clip (`pullout`, `sprint_*`) keeps its own slot.
         if let Some(lh_w) = dual {
             for (left_slot, name) in lh_w.anims.iter().enumerate() {
                 let Some(name) = name else { continue };
-                let right_name = dual_clip_name(name);
-                let right_slot = w.anims.iter().position(|a| a.as_deref() == Some(right_name.as_str())).or_else(|| (left_slot < w.anims.len()).then_some(left_slot));
-                let Some(right_slot) = right_slot else { continue };
+                let right_slot = zhbo_core::viewmodel::slot::left_as_right(left_slot).map_or(left_slot, |r| r as usize);
                 let anim = anim_cache.entry(name.clone()).or_insert_with(|| xanim::find(common, name).ok());
                 let Some(anim) = anim else { continue };
                 native_clips.push(((right_slot as u16) | zhbo_native::viewmodel::INSTANCE_LEFT, native::put_anim(out, anim)));

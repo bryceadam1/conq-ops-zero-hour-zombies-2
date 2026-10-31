@@ -109,8 +109,11 @@ pub fn draw_offhand(l: &Lui, prims: &mut Vec<Prim>, right_offset: f32, icon: &st
     }
 }
 
-/// The reserve / clip digits, right to left (ammoarea.lua:930-1267). `red` pulses the clip.
-pub fn draw_digits(l: &Lui, prims: &mut Vec<Prim>, clip: u16, stock: u16, red: f32) {
+/// The reserve / clip digits, right to left (ammoarea.lua:930-1267). `red` pulses the clip. A
+/// dual-wield weapon's left gun (`ammoInDWClip`, with its own `lowDWClip` pulse) follows: a big
+/// line, then its clip in big digits (ammoarea.lua:1144-1255; `ammocounter.lua` reads the same
+/// fields as `dw | clip / stock`).
+pub fn draw_digits(l: &Lui, prims: &mut Vec<Prim>, clip: u16, stock: u16, red: f32, left: Option<(u16, f32)>) {
     let a = area(l);
     let small_w = digit::WIDTH * digit::SMALL_SCALE;
     let small_step = digit::SPACING * digit::SMALL_SCALE;
@@ -128,15 +131,24 @@ pub fn draw_digits(l: &Lui, prims: &mut Vec<Prim>, clip: u16, stock: u16, red: f
     }
     digit::draw(l, prims, corner(a, pen - small_w, pen, small_top, small_top + small_h), digit::SLASH, 0.0, 1.0);
     pen -= small_step;
-    let c = digit::digits(clip.min(999) as u32, 3);
-    for (k, &d) in c.iter().rev().enumerate() {
-        let shown = k == 0 || (k == 1 && (c[0] > 0 || c[1] > 0)) || (k == 2 && c[0] > 0);
-        if !shown {
-            continue;
+    let top = digit::BIG_BOTTOM_Y;
+    let mut big = |pen: &mut f32, g: usize, red: f32| {
+        digit::draw(l, prims, corner(a, *pen - digit::WIDTH, *pen, top, top + digit::BIG_HEIGHT), g, red, 1.0);
+        *pen -= digit::SPACING;
+    };
+    let number = |pen: &mut f32, n: u16, red: f32, big: &mut dyn FnMut(&mut f32, usize, f32)| {
+        let c = digit::digits(n.min(999) as u32, 3);
+        for (k, &d) in c.iter().rev().enumerate() {
+            let shown = k == 0 || (k == 1 && (c[0] > 0 || c[1] > 0)) || (k == 2 && c[0] > 0);
+            if shown {
+                big(pen, d, red);
+            }
         }
-        let top = digit::BIG_BOTTOM_Y;
-        digit::draw(l, prims, corner(a, pen - digit::WIDTH, pen, top, top + digit::BIG_HEIGHT), d, red, 1.0);
-        pen -= digit::SPACING;
+    };
+    number(&mut pen, clip, red, &mut big);
+    if let Some((dw, dw_red)) = left {
+        big(&mut pen, digit::LINE, 0.0);
+        number(&mut pen, dw, dw_red, &mut big);
     }
 }
 
@@ -221,7 +233,8 @@ pub fn draw(l: &Lui, prims: &mut Vec<Prim>, p: &PlayerSim, since_ms: f32, clock:
     }
     let w = p.arsenal.current();
     let red = if low_clip(w.ammo, w.def.clip) { digit::pulse(clock) } else { 0.0 };
-    draw_digits(l, prims, w.ammo, w.reserve, red);
+    let left = w.left_ammo().map(|n| (n, if low_clip(n, w.def.clip) { digit::pulse(clock) } else { 0.0 }));
+    draw_digits(l, prims, w.ammo, w.reserve, red, left);
     draw_weapon_label(l, prims, &w.def.display_name, &w.main.attachments, fire_rate_material(w.def.fire), since_ms);
     if !w.main.alt.is_empty() {
         draw_alt_fire(l, prims, &format!("ZHBO_BO2_Icon_{}", w.main.alt), alt_key);
@@ -245,7 +258,7 @@ mod tests {
         // the slash; the clip 30: '0' then '3' 22 apart (ammoarea.lua:948-1143).
         let l = Lui::new(1280.0, 720.0);
         let mut prims = Vec::new();
-        draw_digits(&l, &mut prims, 30, 90, 0.0);
+        draw_digits(&l, &mut prims, 30, 90, 0.0, None);
         let zeros = rects(&prims, "ZHBO_Mat_hud_mp_num_big_0");
         assert_eq!(zeros[0], (1280.0 - 48.0 - 24.0, 720.0 - 75.0, 24.0, 48.0), "reserve units digit, small");
         let nine = rects(&prims, "ZHBO_Mat_hud_mp_num_big_9")[0];
@@ -258,12 +271,30 @@ mod tests {
         assert_eq!(three.0, 1280.0 - 97.5 - 22.0 - 32.0);
     }
 
+    /// Dual wield: after the right clip, a big line and the left gun's clip (ammoarea.lua:1144-1255).
+    #[test]
+    fn a_dual_wield_weapon_shows_both_clips() {
+        let l = Lui::new(1280.0, 720.0);
+        let mut prims = Vec::new();
+        draw_digits(&l, &mut prims, 7, 80, 0.0, Some((4, 0.0)));
+        // Reserve 80 (two small digits) and the slash end at -48 - 49.5; the clip 7 one big digit.
+        let seven = rects(&prims, "ZHBO_Mat_hud_mp_num_big_7")[0];
+        assert_eq!(seven.0, 1280.0 - 97.5 - 32.0);
+        let line = rects(&prims, "ZHBO_Mat_hud_mp_num_big_line")[0];
+        assert_eq!(line.0, 1280.0 - 97.5 - 22.0 - 32.0, "the line one big step left of the clip");
+        let four = rects(&prims, "ZHBO_Mat_hud_mp_num_big_4")[0];
+        assert_eq!(four.0, 1280.0 - 97.5 - 44.0 - 32.0, "the left gun's clip after the line");
+        let mut single = Vec::new();
+        draw_digits(&l, &mut single, 7, 80, 0.0, None);
+        assert!(rects(&single, "ZHBO_Mat_hud_mp_num_big_line").is_empty());
+    }
+
     #[test]
     fn scales_with_the_screen_height() {
         // 2560 x 1080 (21:9): 1.5 px a unit, anchored to the right edge.
         let l = Lui::new(2560.0, 1080.0);
         let mut prims = Vec::new();
-        draw_digits(&l, &mut prims, 5, 0, 0.0);
+        draw_digits(&l, &mut prims, 5, 0, 0.0, None);
         let five = rects(&prims, "ZHBO_Mat_hud_mp_num_big_5")[0];
         assert_eq!(five, (2560.0 + (-81.0 - 32.0) * 1.5, 1080.0 - 87.0 * 1.5, 48.0, 96.0), "one reserve digit and the slash: the clip ends at -81");
     }

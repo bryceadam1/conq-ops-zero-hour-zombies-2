@@ -29,6 +29,7 @@ pub mod slot {
     pub const FIRE: i32 = 0x04;
     pub const HOLD_FIRE: i32 = 0x05;
     pub const LASTSHOT: i32 = 0x06;
+    pub const FINALSHOT: i32 = 0x07;
     pub const RECHAMBER: i32 = 0x08;
     pub const MELEE: i32 = 0x09;
     pub const MELEE_EMPTY: i32 = 0x0D;
@@ -59,6 +60,22 @@ pub mod slot {
     pub const ADS_UP: i32 = 0x55;
     pub const ADS_DOWN: i32 = 0x56;
     pub const COUNT: i32 = 0x58;
+
+    /// BO2's dual-wield left-gun slots (`FIRE_LEFT` 0x4E .. `RELOAD_LEFT` 0x54) as the right slot
+    /// the mod keys the left gun's clip under (with `INSTANCE_LEFT`): what each one plays for the
+    /// left hand. `None` for any other slot.
+    pub fn left_as_right(bo2_slot: usize) -> Option<i32> {
+        Some(match bo2_slot {
+            0x4e => FIRE,
+            0x4f => LASTSHOT,
+            0x50 => FINALSHOT,
+            0x51 => IDLE,
+            0x52 => EMPTY_IDLE,
+            0x53 => RELOAD_EMPTY,
+            0x54 => RELOAD,
+            _ => return None,
+        })
+    }
 
     /// Clips that loop (an alt mode's clips too, which sit [`crate::weapons::ALT_CLIPS`] later).
     pub fn loops(clip: i32) -> bool {

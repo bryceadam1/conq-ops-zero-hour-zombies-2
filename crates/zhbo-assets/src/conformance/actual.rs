@@ -284,16 +284,7 @@ fn stem(path: &str) -> String {
 /// right gun's slot on the left instance; an alt mode's clips follow its weapon's.
 fn clip_id(s: usize, base: i32) -> i32 {
     let left = |right: i32| right | INSTANCE_LEFT as i32;
-    let id = match s {
-        0x4e => left(0x04),
-        0x4f => left(0x06),
-        0x50 => left(0x07),
-        0x51 => left(0x01),
-        0x52 => left(0x02),
-        0x53 => left(0x12),
-        0x54 => left(0x10),
-        _ => s as i32,
-    };
+    let id = zhbo_core::viewmodel::slot::left_as_right(s).map_or(s as i32, left);
     // The alt offset applies to the slot, the instance bit stays in the high byte.
     ((id & !(INSTANCE_LEFT as i32)) + base) | (id & INSTANCE_LEFT as i32)
 }
