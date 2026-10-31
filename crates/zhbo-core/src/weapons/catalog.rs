@@ -28,6 +28,7 @@ pub struct Catalog {
     perks: HashMap<String, &'static PerkRow>,
     ui_text: HashMap<String, &'static str>,
     weapon_groups: Vec<String>,
+    class_caps: HashMap<String, i32>,
     built: Mutex<HashMap<String, &'static WeaponDef>>,
     pub tablet_meshes: u8,
 }
@@ -65,6 +66,7 @@ impl Catalog {
             perks,
             ui_text,
             weapon_groups: t.weapon_groups,
+            class_caps: t.class_caps.into_iter().collect(),
             built: Mutex::new(HashMap::new()),
             tablet_meshes: t.tablet_meshes,
         }
@@ -144,6 +146,11 @@ impl Catalog {
         &self.weapon_groups
     }
 
+    /// A `CoD.CACUtility` class cap by name (`maxPerksInEachCategory`), when the table has it.
+    pub fn class_cap(&self, name: &str) -> Option<i32> {
+        self.class_caps.get(name).copied()
+    }
+
     /// BO2's bonus cards (the wildcards), in the grid's order.
     pub fn bonus_cards(&self) -> &[&'static BonusCard] {
         &self.bonus_cards
@@ -174,6 +181,12 @@ pub fn install_catalog(text: &str) -> Result<usize, String> {
     // The weapon groups a table converted before them lacks: the stand-ins (BO2's own).
     if table.weapon_groups.is_empty() {
         table.weapon_groups = built_in.weapon_groups;
+    }
+    // The class caps it lacks, likewise.
+    for (name, value) in built_in.class_caps {
+        if !table.class_caps.iter().any(|(n, _)| *n == name) {
+            table.class_caps.push((name, value));
+        }
     }
     // The UI strings a table converted before them lacks: the stand-ins (BO2's own).
     for u in built_in.ui_text {
@@ -263,9 +276,13 @@ pub fn weapon(id: &str) -> &'static WeaponDef {
 /// effect have their rows, BO2's eight bonus cards (`mp/statstable.csv:178-185`) so the
 /// wildcard grid has its rows, and the english UI strings of [`super::UI_TEXT_KEYS`]
 /// (`en_code_post_gfx_mp.ff`). An ignored install test checks the rows and strings against the
-/// player's install. `WeaponGroups` is the order `cacweaponslot.lua` adds the weapon groups in.
+/// player's install. `WeaponGroups` is the order `cacweaponslot.lua` adds the weapon groups in;
+/// the `ClassCap.*` lines are `cacutility.lua`'s ([`crate::classes::DATA_CAPS`]).
 pub const BUILTIN: &str = "
 WeaponGroups = weapon_smg weapon_assault weapon_cqb weapon_lmg weapon_sniper weapon_pistol weapon_launcher weapon_special
+ClassCap.maxDefaultClass = 5
+ClassCap.maxPerks = 12
+ClassCap.maxPerksInEachCategory = 2
 
 UiText MPUI_PRIMARY_GRENADE_CAPS
   Text = LETHAL

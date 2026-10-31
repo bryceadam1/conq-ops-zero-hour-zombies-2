@@ -267,6 +267,13 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         Ok(groups) => table.weapon_groups = groups,
         Err(e) => summary.push(format!("weapon groups: {e} (the built-in order stands in)")),
     }
+    // The class caps the core reads from data, from the same Lua.
+    match zhbo_conformance::bo2::cac::class_caps(&patch, &patch_ui) {
+        Ok(caps) => {
+            table.class_caps = zhbo_core::classes::DATA_CAPS.iter().filter_map(|k| caps.get(*k).and_then(|v| v.parse().ok()).map(|v| (k.to_string(), v))).collect();
+        }
+        Err(e) => summary.push(format!("class caps: {e} (the built-in caps stand in)")),
+    }
     let converted = crate::weapons::converted(&patch, &bo2);
     let converted_base = crate::weapons::converted_base(&bo2);
     crate::weapons::add_variants(&mut table, &converted, &bo2);

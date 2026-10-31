@@ -342,6 +342,7 @@ pub fn table_with_metadata(
         bonus_cards: Vec::new(),
         ui_text: ui_text(names),
         weapon_groups: Vec::new(),
+        class_caps: Vec::new(),
     }
 }
 
@@ -1558,6 +1559,21 @@ mod tests {
         let groups = zhbo_conformance::bo2::cac::weapon_groups(&patch, &patch_ui).unwrap();
         let built_in = zhbo_core::weapons::parse_full_table(zhbo_core::weapons::BUILTIN).unwrap().weapon_groups;
         assert_eq!(groups, built_in);
+    }
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_installs_class_caps_are_the_built_in_caps() {
+        // The caps the core reads from data, as `cacutility.lua` declares them, are the stand-ins.
+        let bo2_dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let patch = crate::generals::load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
+        let patch_ui = crate::generals::load_zone(&bo2_dir, "patch_ui_mp").unwrap();
+        let caps = zhbo_conformance::bo2::cac::class_caps(&patch, &patch_ui).unwrap();
+        let built_in = zhbo_core::weapons::parse_full_table(zhbo_core::weapons::BUILTIN).unwrap().class_caps;
+        for k in zhbo_core::classes::DATA_CAPS {
+            let stand_in = built_in.iter().find(|(n, _)| n == k).map(|(_, v)| v.to_string());
+            assert_eq!(caps.get(k).cloned(), stand_in, "{k}");
+        }
     }
 
     #[test]

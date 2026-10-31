@@ -153,8 +153,9 @@ fn repair_perks(c: &mut CustomClass, cleared: &mut Cleared) {
         };
         let tier = (p.def().tier as usize).clamp(1, 3) - 1;
         tiers[tier] += 1;
-        if kept.contains(&p) || tiers[tier] > 2 || kept.len() >= MAX_SPECIALTY_SLOTS {
-            cleared.push(if tiers[tier] > 2 { EXTRA_PERK_SLOTS[tier] } else { "specialty" });
+        let per_tier = crate::classes::max_perks_in_each_category();
+        if kept.contains(&p) || tiers[tier] > per_tier || kept.len() >= MAX_SPECIALTY_SLOTS {
+            cleared.push(if tiers[tier] > per_tier { EXTRA_PERK_SLOTS[tier] } else { "specialty" });
             continue;
         }
         kept.push(p);

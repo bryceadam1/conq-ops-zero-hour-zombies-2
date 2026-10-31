@@ -167,12 +167,12 @@ pub fn rows(shipped: &Shipped, bo2_dir: &std::path::Path, schema: &Schema) -> Re
         ("maxCustomClass", Some(zhbo_core::classes::MAX_CUSTOM_CLASSES.to_string())),
         ("maxGrenades", Some(zhbo_core::classes::MAX_GRENADES.to_string())),
         ("maxSpecialtySlots", Some(zhbo_core::classes::MAX_SPECIALTY_SLOTS.to_string())),
-        ("maxPerks", None),
+        ("maxPerks", Some(zhbo_core::classes::max_perks().to_string())),
         ("maxAttachments", Some(zhbo_core::classes::MAX_ATTACHMENTS.to_string())),
         ("maxPerkCategories", Some(perk_tiers.to_string())),
-        ("maxPerksInEachCategory", None),
+        ("maxPerksInEachCategory", Some(zhbo_core::classes::max_perks_in_each_category().to_string())),
         ("maxBonusCards", Some(zhbo_core::classes::MAX_BONUS_CARDS.to_string())),
-        ("maxDefaultClass", None),
+        ("maxDefaultClass", Some(zhbo_core::classes::max_default_class().to_string())),
         ("maxAllocation", Some(classmenu::PICK_10.to_string())),
     ];
     for (cap, value) in caps {

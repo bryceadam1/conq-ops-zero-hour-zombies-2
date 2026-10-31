@@ -37,6 +37,9 @@ pub struct Table {
     /// (`WeaponGroups = weapon_smg weapon_assault …`, `cacweaponslot.lua`); empty in a table from
     /// before them.
     pub weapon_groups: Vec<String>,
+    /// `CoD.CACUtility` class caps the core reads from data (`ClassCap.maxPerks = 12`,
+    /// [`crate::classes::DATA_CAPS`]), in the order written.
+    pub class_caps: Vec<(String, i32)>,
 }
 
 pub(crate) fn pairs(v: &[(String, String)]) -> String {
@@ -78,6 +81,9 @@ pub fn format_full_table(t: &Table) -> String {
     s.push_str(&format!("TabletMeshes = {}\n", t.tablet_meshes));
     if !t.weapon_groups.is_empty() {
         s.push_str(&format!("WeaponGroups = {}\n", t.weapon_groups.join(" ")));
+    }
+    for (name, value) in &t.class_caps {
+        s.push_str(&format!("ClassCap.{name} = {value}\n"));
     }
     s.push('\n');
     for p in &t.perks {
@@ -186,6 +192,10 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
             None => match key {
                 "TabletMeshes" => table.tablet_meshes = values.text_num().map_err(|e| err(&e))? as u8,
                 "WeaponGroups" => table.weapon_groups = value.split_whitespace().map(str::to_string).collect(),
+                k if k.starts_with("ClassCap.") => {
+                    let n = values.text_num().map_err(|e| err(&e))? as i32;
+                    table.class_caps.push((k["ClassCap.".len()..].to_string(), n));
+                }
                 _ => return Err(err("value outside a block")),
             },
             Some(Block::Attachment(a)) => set_field(ATTACHMENT_FIELDS, a, key, values).map_err(|e| err(&e))?,
@@ -962,9 +972,9 @@ mod tests {
 
     #[test]
     fn weapon_groups_round_trip() {
-        let t = Table { weapon_groups: vec!["weapon_smg".into(), "weapon_assault".into()], ..Default::default() };
+        let t = Table { weapon_groups: vec!["weapon_smg".into(), "weapon_assault".into()], class_caps: vec![("maxPerks".into(), 12)], ..Default::default() };
         let text = format_full_table(&t);
-        assert!(text.contains("WeaponGroups = weapon_smg weapon_assault\n"), "{text}");
+        assert!(text.contains("WeaponGroups = weapon_smg weapon_assault\nClassCap.maxPerks = 12\n"), "{text}");
         assert_eq!(parse_full_table(&text).unwrap(), t);
     }
 

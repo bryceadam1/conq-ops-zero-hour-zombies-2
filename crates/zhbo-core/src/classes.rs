@@ -48,6 +48,40 @@ pub const MAX_SPECIALTY_SLOTS: usize = 6;
 /// Grenades of one kind a class can carry: `CoD.CACUtility.maxGrenades`.
 pub const MAX_GRENADES: usize = 2;
 
+/// The `CoD.CACUtility` caps the core reads from the weapon table (`ClassCap.<name>`), converted
+/// from the install's `cacutility.lua` — the same Lua the conformance's expected side reads.
+pub const DATA_CAPS: [&str; 3] = ["maxDefaultClass", "maxPerks", "maxPerksInEachCategory"];
+
+/// A [`DATA_CAPS`] cap: the installed table's, else the built-in table's (a table converted before
+/// the caps); 0 for a name neither has.
+pub fn class_cap(name: &str) -> usize {
+    static BUILT_IN: std::sync::OnceLock<crate::weapons::Table> = std::sync::OnceLock::new();
+    let built_in = BUILT_IN.get_or_init(|| crate::weapons::parse_full_table(crate::weapons::BUILTIN).expect("built-in weapon table"));
+    crate::weapons::catalog()
+        .class_cap(name)
+        .or_else(|| built_in.class_caps.iter().find(|(n, _)| n == name).map(|(_, v)| *v))
+        .map_or(0, |v| v.max(0) as usize)
+}
+
+/// How many default classes BO2 offers (`maxDefaultClass`; `GetDefaultLoadoutNameFromIndex`
+/// refuses an index past it, `cacutility.lua:862-880`).
+pub fn max_default_class() -> usize {
+    class_cap("maxDefaultClass")
+}
+
+/// The most perks one tier holds (`maxPerksInEachCategory`: the tier's row and its Greed row,
+/// `cacperksp.lua:639-650`, `:742-760`).
+pub fn max_perks_in_each_category() -> usize {
+    class_cap("maxPerksInEachCategory")
+}
+
+/// `maxPerks`: the selection cap of BO2's multi-select perk grid (`cacperks.lua:44`,
+/// `cacperksselection.lua:27`), a screen the Pick-10 editor does not use; carried so the class
+/// rules hold every cap BO2 declares.
+pub fn max_perks() -> usize {
+    class_cap("maxPerks")
+}
+
 /// The five default BO2 classes as `(id, name, spec)` triples: the defaults when no file is loaded
 /// (tests, the fallback). Complete specs, so an INI file must set every slot it wants different
 /// from the base kit.
@@ -146,7 +180,10 @@ pub fn parse(text: &str) -> Vec<ClassDef> {
 
 /// The class list in force: the five basics before init (tests, the shell).
 pub fn get() -> Vec<ClassDef> {
-    CLASSES.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_else(basic)
+    let mut list = CLASSES.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_else(basic);
+    // BO2 has `maxDefaultClass` default classes; a longer file is cut to them.
+    list.truncate(max_default_class());
+    list
 }
 
 /// The class with this id (`assault`), from the list in force.
@@ -492,6 +529,17 @@ mod tests {
         let list = parse("Class last\nName = Last\nSpec = primary=an94_mp\n");
         assert_eq!(list.len(), 1);
         assert_eq!(list[0].id, "last");
+    }
+
+    #[test]
+    fn the_default_classes_stop_at_bos_cap() {
+        // `maxDefaultClass` (5, `cacutility.lua`) bounds the default list: a longer file is cut.
+        let _g = lock();
+        assert_eq!((max_default_class(), max_perks_in_each_category(), max_perks()), (5, 2, 12));
+        let text: String = (0..7).map(|i| format!("Class c{i}\n  Name = C{i}\n  Spec = primary=an94_mp\nEnd\n")).collect();
+        load(&text);
+        assert_eq!(get().len(), max_default_class());
+        reset();
     }
 
     #[test]

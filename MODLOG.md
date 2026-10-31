@@ -5035,3 +5035,24 @@ first) that only the conformance emitter read.
 Measured: cac 9 → 5 (the four `category` rows); weapons 781,587; gap clusters 201 (the
 `rules/value` cluster still holds the three caps). Test:
 `the_category_order_follows_the_catalogs_weapon_groups`.
+
+## Three class caps from `cacutility.lua`: `maxDefaultClass`, `maxPerks`, `maxPerksInEachCategory` (2026-10-31, `v1/cac-rules`)
+
+The conformance's expected side read nine `CoD.CACUtility` caps from `cacutility.lua`; the mod
+had no value for three. They now come from the same Lua: the converter calls
+`zhbo_conformance::bo2::cac::class_caps` and writes `ClassCap.<name> = n` lines for
+`classes::DATA_CAPS` into the weapon table; `Catalog::class_cap` serves them, with built-in
+stand-ins for older tables (checked by the ignored `the_installs_class_caps_are_the_built_in_caps`).
+
+* `maxDefaultClass` (5): `GetDefaultLoadoutNameFromIndex` refuses an index past it
+  (`cacutility.lua:862-880`); `classes::get()` cuts a longer default-class file to it.
+* `maxPerksInEachCategory` (2): the perk menu walks a tier's rows up to it (`cacperksp.lua:639-650`,
+  `:742-760`); `classrepair::repair_perks` keeps that many per tier (it said 2 by hand).
+* `maxPerks` (12): only the multi-select perk grid of `cacperks.lua:44` /
+  `cacperksselection.lua:27` uses it, a screen the Pick-10 editor (and BO2's own) does not show;
+  it is carried and reported, not applied.
+
+The other six caps are still core constants (`MAX_GRENADES`, …) asserted equal to BO2's by tests;
+moving them to data is the same plumbing. Test: `the_default_classes_stop_at_bos_cap`.
+Measured: cac 5 → 2 (the `rules/value` cluster is gone; the two weapon `order` cells remain);
+weapons 781,587; gap clusters 201 → 200.
