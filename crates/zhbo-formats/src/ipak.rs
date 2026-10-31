@@ -109,14 +109,14 @@ impl Ipak {
         f.seek(SeekFrom::Start(index.1 as u64))?;
         let mut raw = vec![0u8; index_len as usize];
         f.read_exact(&mut raw).map_err(|_| FormatError::Truncated("ipak index"))?;
-        let entries = raw
+        let mut entries: Vec<IpakEntry> = raw
             .chunks_exact(16)
             .map(|e| {
                 let v = |i: usize| u32::from_le_bytes(e[i * 4..i * 4 + 4].try_into().unwrap());
                 IpakEntry { data_hash: v(0), name_hash: v(1), offset: v(2), size: v(3) }
             })
-            .collect::<Vec<_>>();
-        let mut entries = entries;
+            .collect();
+        // `entry` binary-searches the key; keep that order whatever the file's is.
         entries.sort_by_key(IpakEntry::key);
         Ok(Self { source, data_offset: data.1 as u64, entries })
     }

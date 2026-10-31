@@ -4588,3 +4588,35 @@ lists BO2's model parts, not the overlay-time hide). cac unchanged. Verified: ca
 green (except `zhbo-requirements` prefix-library test, which fails only with `ZHBO_BO2_DIR` set and
 passes without it), no new clippy warnings, install-gated `builds_from_real_install` and
 `common_mp_registers_its_nested_assets` green.
+
+## Image packs: an entry is `{data hash, name hash}`, one image per entry (2026-10-31, branch `v1/ipak-fields`)
+
+* **The ipak index fields are named right now.** `IpakEntry` is `{data_hash, name_hash, offset,
+  size}` (OpenAssetTools `IPakIndexEntryKey`); the reader had the first two swapped (see the
+  overlay-linked entry above). Images are looked up by `ipak::ImageKey` — the pair a `GfxImage`
+  carries (`Image::key()`: `streamedParts[0].hash` at +40 = data hash, `hash` at +76 = name hash) —
+  through `Ipak::entry` (binary search over the index, sorted by key at load). Every `Paks::image`
+  caller (textures, camo, viewmodels, FX/impacts, HUD, fonts, the CLI) passes the key;
+  `Weapon::hud_icon_hash` became `hud_icon_key`. The two contact-sheet-picked HUD sprites
+  (`ZHBO_BO2_Blood`, `ZHBO_BO2_RedDot`) carry both fields of their `mp.ipak` entries.
+* **`ipak::r_hash_string`** (const fn): BO2's `R_HashString`, `h = 33h ^ (c|0x20)`, seed 0, over the
+  bare image name — the name hash. Unit-tested on seven install pairs; no converter path needs it
+  yet (every image is reached through a `GfxImage` that carries both hashes).
+* **There are no multi-part streamed images.** PC `GfxImage::streamedParts` is a one-element array
+  (`layouts.rs`), so one image is exactly one ipak entry. The old `images::group_by_name` grouped by
+  the first (data) field and concatenated the "parts"; those groups were different images sharing
+  a data hash (187 groups across the packs, 157 in base.ipak). **Gotcha — the data hash is a
+  content hash of the pixels:** 126 of the 187 groups are byte-identical entries and the other 61
+  decode to identical pixels (different compression), e.g. base.ipak `127cdcd6` = `09113ee4` and
+  `e1997f7a`. So the old decode-the-first-IWi path was harmless: of the 972 keys the conversion
+  looks up, 31 share their data hash with another image, and the archive the converter builds is
+  **byte-identical** before and after this change (`build-archive`, 355 images, nothing missing).
+  A revision of an image in another pack has the same name hash and a different data hash
+  (`scope_overlay_xpr50_1024`: base.ipak `03e75800`, patch_mp.ipak `1c99c1b0`).
+* `zhbo-assets images`/`sheets` list both fields per entry; `image <pak> <hash>` accepts either
+  field and refuses an ambiguous one.
+
+Tests: `ipak::tests` (synthetic pack: field order, two images sharing a data hash, pair lookup,
+`r_hash_string`); install-gated `paks::tests::an_images_pack_entry_is_its_stream_hash_and_name_hash`
+(the XPR-50 overlay's GfxImage key is its patch_mp.ipak entry; base.ipak holds the older revision
+under the same name hash). No `hud::VERSION` bump needed (archive bytes unchanged).

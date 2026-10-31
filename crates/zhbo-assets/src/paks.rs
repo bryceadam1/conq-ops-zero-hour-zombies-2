@@ -69,3 +69,33 @@ pub(crate) fn shrink(mut img: Rgba, max: u32) -> Rgba {
     }
     img
 }
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zhbo_formats::ipak::r_hash_string;
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn an_images_pack_entry_is_its_stream_hash_and_name_hash() {
+        let bo2 = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
+        let pak = |name: &str| Ipak::open(bo2.join("zone").join("all").join(name)).unwrap();
+        // The XPR-50 scope overlay: the GfxImage's stream hash (+40) is the entry's first field,
+        // R_HashString of its name (= GfxImage::hash, +76) the second.
+        let zone = load_zone(&bo2, "patch_mp").unwrap();
+        let image = zhbo_formats::xmodel::find_material(&zone, "scope_overlay_xpr50")
+            .and_then(|m| m.textures.into_iter().find_map(|t| t.image))
+            .expect("the XPR-50 overlay material in patch_mp");
+        assert_eq!(image.name, "scope_overlay_xpr50_1024");
+        assert_eq!(image.hash, r_hash_string(&image.name));
+        assert_eq!(image.key(), ImageKey { data_hash: 0x1c99_c1b0, name_hash: 0x9c47_55f7 });
+        assert!(pak("patch_mp.ipak").entry(image.key()).is_some());
+        // base.ipak holds an older revision under the same name hash and another data hash; only
+        // the pair names the patched one.
+        let base = pak("base.ipak");
+        assert!(base.entry(image.key()).is_none());
+        assert!(base.entries().iter().any(|e| e.name_hash == image.hash && e.data_hash == 0x03e7_5800));
+        let paks = Paks::open(&bo2).unwrap();
+        let rgba = paks.image(image.key()).expect("the overlay decodes");
+        assert_eq!((rgba.width, rgba.height), (1024, 1024));
+    }
+}
