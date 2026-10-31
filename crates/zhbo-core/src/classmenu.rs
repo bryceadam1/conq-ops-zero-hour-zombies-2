@@ -521,6 +521,10 @@ impl Draft {
         if !self.lethal.is_empty() {
             n += 1;
         }
+        // Danger Close's second lethal is its own element (BO2 charges each grenade of a count).
+        if self.lethal_count() > 1 {
+            n += 1;
+        }
         if !self.tactical.is_empty() {
             n += 1;
         }
@@ -543,6 +547,18 @@ impl Draft {
     /// Whether every bonus-card slot is taken (`maxBonusCards`), so another card is denied.
     pub fn wildcards_full(&self) -> bool {
         self.wildcards.len() >= classes::MAX_BONUS_CARDS
+    }
+
+    /// How many lethals the class carries: BO2's `primarygrenadecount`, which may be two only with
+    /// Danger Close (`cacgrenadesbutton.lua:130-160`, `checkclasses.lua:688-700`); 0 for the item's
+    /// own count (one lethal, or a tactical's under Tactician). The card's second lethal is taken
+    /// with it.
+    pub fn lethal_count(&self) -> u8 {
+        if !self.lethal.is_empty() && self.wildcards.contains(&Wildcard::DangerClose) {
+            classes::MAX_GRENADES as u8
+        } else {
+            0
+        }
     }
 
     /// The most attachments the primary may carry: BO2's two (`maxAttachments`), or three with
@@ -595,6 +611,9 @@ impl Draft {
         push("secondary", &self.secondary_id());
         push("lethal", &self.lethal);
         push("tactical", &self.tactical);
+        if self.lethal_count() > 0 {
+            push("lethal_count", &self.lethal_count().to_string());
+        }
         push("melee", "knife_held_mp");
         let perks: Vec<&str> = self.perks_in_order().iter().map(|p| p.def().id).collect();
         push("perks", &perks.join(","));
@@ -619,6 +638,7 @@ impl Draft {
             secondary: self.secondary_id(),
             lethal: self.lethal.clone(),
             tactical: self.tactical.clone(),
+            lethal_count: self.lethal_count(),
             melee: "knife_held_mp".into(),
             perks: self.perks_in_order().iter().map(|p| p.def().id.to_string()).collect(),
             reserve: self.reserve,
@@ -724,6 +744,13 @@ fn wildcards_of(c: &CustomClass) -> Vec<Wildcard> {
     // The secondary holding a primary item is Overkill.
     if items::is_primary_item(&split_atts(&c.secondary).0) {
         out.push(Wildcard::Overkill);
+    }
+    // The lethal slot holding a tactical item is Tactician; carrying two lethals is Danger Close
+    // (`checkclasses.lua:677-700`: each needs its card).
+    if items::is_tactical_item(&c.lethal) {
+        out.push(Wildcard::Tactician);
+    } else if !c.lethal.is_empty() && c.lethal_count > 1 {
+        out.push(Wildcard::DangerClose);
     }
     out
 }

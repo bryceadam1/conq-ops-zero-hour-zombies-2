@@ -971,3 +971,22 @@ fn an_old_profiles_class_reloads_with_its_cards() {
     let back = crate::profile::Profile::from_text(&again.to_text());
     assert_eq!(Draft::from_stored(&back.customs()[0]).wildcards, vec![Wildcard::Perk1Greed]);
 }
+
+/// Danger Close takes a second lethal with it (`primarygrenadecount` 2, `cacgrenadesbutton.lua:
+/// 130-160`): the card and the extra grenade are each an element, the class carries the count,
+/// and re-opening the stored class gives the card back (`checkclasses.lua:688-700`).
+#[test]
+fn danger_close_carries_and_charges_a_second_lethal() {
+    let plain = Draft::default();
+    let d = Draft { wildcards: vec![Wildcard::DangerClose], ..Draft::default() };
+    assert_eq!(d.spent(), plain.spent() + 2, "the card and the second lethal");
+    let c = d.to_custom();
+    assert_eq!(c.lethal_count, crate::classes::MAX_GRENADES as u8);
+    assert_eq!(c.loadout().lethal_count, Some(2));
+    assert!(c.to_spec().contains("lethal_count=2"), "{}", c.to_spec());
+    assert_eq!(Draft::from_custom(&c).wildcards, vec![Wildcard::DangerClose]);
+    // No lethal, no second one: the card alone.
+    let bare = Draft { lethal: String::new(), ..d.clone() };
+    assert_eq!(bare.to_custom().lethal_count, 0);
+    assert_eq!(plain.to_custom().lethal_count, 0);
+}

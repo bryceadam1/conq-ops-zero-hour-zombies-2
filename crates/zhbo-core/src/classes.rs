@@ -184,6 +184,9 @@ pub struct CustomClass {
     pub lethal: String,
     /// Tactical offhand (`concussion_grenade_mp`).
     pub tactical: String,
+    /// How many lethals the class carries (BO2's `primarygrenadecount`): 2 with Danger Close's
+    /// second lethal, 0 = the item's own count. Serialises only when set, so older specs load.
+    pub lethal_count: u8,
     /// Melee slot (`knife_held_mp`).
     pub melee: String,
     /// The perk spec ids in pick order (`Lightweight`, `FastHands`, `Dexterity`).
@@ -225,6 +228,9 @@ impl CustomClass {
         push("secondary", &self.secondary);
         push("lethal", &self.lethal);
         push("tactical", &self.tactical);
+        if self.lethal_count > 0 {
+            push("lethal_count", &self.lethal_count.to_string());
+        }
         push("melee", &self.melee);
         push("perks", &self.perks.join(","));
         push("camo", &self.camo);
@@ -252,6 +258,7 @@ impl CustomClass {
                 "secondary" => c.secondary = value.into(),
                 "lethal" => c.lethal = value.into(),
                 "tactical" => c.tactical = value.into(),
+                "lethal_count" => c.lethal_count = value.parse().unwrap_or(0),
                 "melee" => c.melee = value.into(),
                 "perks" => c.perks = value.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect(),
                 "camo" => c.camo = value.into(),
@@ -495,6 +502,7 @@ mod tests {
             secondary: "fnp45_mp".into(),
             lethal: "claymore_mp".into(),
             tactical: String::new(),
+            lethal_count: 0,
             melee: "knife_held_mp".into(),
             perks: vec!["Lightweight".into(), "Dexterity".into()],
             reserve: [60, 0],

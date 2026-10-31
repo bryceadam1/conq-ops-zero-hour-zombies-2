@@ -21,9 +21,12 @@
 //!   below drops one element at a time in the **reverse** of `CheckItems`' visit order
 //!   (`specialty6` first, the primary weapon last), so the elements BO2 checks last are the first
 //!   to go and the weapon is the last thing standing. The same order trims a fourth bonus card.
-//! * **Grenade counts.** `CheckItems` clamps a grenade count to `maxGrenades` (2) and clears the
-//!   item at 0. A class here carries one lethal and one tactical id, and the carried count is the
-//!   weapon table's `Clip` (the concussion's is 2), so there is no count to repair.
+//! * **Grenade counts and the grenade cards.** `CheckItems` clamps a grenade count to `maxGrenades`
+//!   (2) and clears the item at 0. A class here carries one lethal and one tactical id; the only
+//!   count it stores is the lethal's (`lethal_count`: Danger Close's two), clamped the same way and
+//!   dropped when the slot is empty. A tactical item in the lethal slot is Tactician's
+//!   (`checkclasses.lua:677-686`) and stays; its count is the tactical's own, so a stored lethal
+//!   count goes with it. Otherwise the slot carries its item's start count (the concussion's is 2).
 //!
 //! Unknown ids are cleared, not substituted: `catalog::weapon_or_none` drops them loudly (the same
 //! rule the arsenal uses), so a corrupt profile shows up in the log instead of quietly turning into
@@ -47,8 +50,12 @@ pub fn repair(c: &mut CustomClass) -> Cleared {
     let mut cleared: Cleared = Vec::new();
     repair_weapon(c, true, &mut cleared);
     repair_weapon(c, false, &mut cleared);
-    repair_offhand(c, WeaponClass::Lethal, true, &mut cleared);
+    // A tactical in the lethal slot is Tactician's (re-derived from it, `classmenu::wildcards_of`).
+    if !crate::classmenu::items::is_tactical_item(&c.lethal) {
+        repair_offhand(c, WeaponClass::Lethal, true, &mut cleared);
+    }
     repair_offhand(c, WeaponClass::Tactical, false, &mut cleared);
+    repair_lethal_count(c);
     if !c.melee.is_empty() && !resolves_as(&c.melee, WeaponClass::Melee) {
         c.melee.clear();
         cleared.push("melee");
@@ -109,6 +116,13 @@ fn repair_offhand(c: &mut CustomClass, class: WeaponClass, lethal: bool, cleared
     }
     id.clear();
     cleared.push(slot);
+}
+
+/// The stored lethal count: at most `maxGrenades`, and only for a lethal item (a count of one, an
+/// empty slot or Tactician's tactical carry none: the item's own count).
+fn repair_lethal_count(c: &mut CustomClass) {
+    let lethal_item = !c.lethal.is_empty() && !crate::classmenu::items::is_tactical_item(&c.lethal);
+    c.lethal_count = if lethal_item && c.lethal_count > 1 { c.lethal_count.min(crate::classes::MAX_GRENADES as u8) } else { 0 };
 }
 
 /// Whether the id resolves to a weapon of `class`.
@@ -191,6 +205,12 @@ fn drop_one(c: &mut CustomClass, cleared: &mut Cleared) -> bool {
         cleared.push("specialgrenade");
         return true;
     }
+    // Danger Close's second lethal goes before the first (`primarygrenadecount` back to one).
+    if c.lethal_count > 1 {
+        c.lethal_count = 0;
+        cleared.push("primarygrenadecount");
+        return true;
+    }
     if !c.lethal.is_empty() {
         c.lethal.clear();
         cleared.push("primarygrenade");
@@ -239,6 +259,7 @@ mod tests {
             secondary: "fnp45_mp".into(),
             lethal: "frag_grenade_mp".into(),
             tactical: "concussion_grenade_mp".into(),
+            lethal_count: 0,
             melee: "knife_held_mp".into(),
             perks: perks.iter().map(|p| (*p).to_string()).collect(),
             reserve: [0, 0],
@@ -319,8 +340,9 @@ mod tests {
     /// then the perk slots — a repair report reads in that order.
     #[test]
     fn an_offhand_in_the_wrong_slot_is_cleared() {
+        // (A tactical in the lethal slot is Tactician's, not a wrong slot: see below.)
         let mut c = class("an94_mp", &[]);
-        c.lethal = "concussion_grenade_mp".into();
+        c.lethal = "fnp45_mp".into();
         c.tactical = "frag_grenade_mp".into();
         let cleared = repair(&mut c);
         assert_eq!(cleared, vec!["primarygrenade", "specialgrenade"], "CheckItems' slot order");
@@ -329,6 +351,30 @@ mod tests {
         let mut c = class("an94_mp", &[]);
         c.lethal = "nope_mp".into();
         assert_eq!(repair(&mut c), vec!["primarygrenade"]);
+    }
+
+    /// `checkclasses.lua:677-700`: a tactical in the lethal slot needs Tactician and a lethal count
+    /// of two Danger Close; the cards are re-derived from them, so both stay (and are charged). A
+    /// count is clamped to `maxGrenades`, means nothing without a lethal item, and its second
+    /// lethal is the first thing over-budget trimming takes from the slot.
+    #[test]
+    fn tactician_and_danger_close_classes_keep_their_grenades() {
+        let mut c = class("an94_mp", &[]);
+        c.lethal = "concussion_grenade_mp".into();
+        c.lethal_count = 2;
+        assert_eq!(repair(&mut c), Cleared::new());
+        assert_eq!((c.lethal.as_str(), c.lethal_count), ("concussion_grenade_mp", 0), "Tactician's count is the tactical's own");
+        assert!(Draft::from_custom(&c).wildcards.contains(&crate::classmenu::Wildcard::Tactician));
+        let mut c = class("an94_mp", &[]);
+        c.lethal_count = 5;
+        assert_eq!(repair(&mut c), Cleared::new());
+        assert_eq!(c.lethal_count, crate::classes::MAX_GRENADES as u8);
+        let d = Draft::from_custom(&c);
+        assert!(d.wildcards.contains(&crate::classmenu::Wildcard::DangerClose));
+        // Trimming walks the slots backwards: the tactical, then the second lethal, then the lethal.
+        let mut cleared = Cleared::new();
+        while drop_one(&mut c, &mut cleared) && cleared.len() < 3 {}
+        assert_eq!(cleared, vec!["specialgrenade", "primarygrenadecount", "primarygrenade"]);
     }
 
     #[test]

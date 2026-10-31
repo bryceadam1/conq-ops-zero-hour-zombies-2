@@ -81,6 +81,12 @@ pub fn is_primary_item(base: &str) -> bool {
     weapons::catalog().get(base).is_some_and(|d| d.cac_slot == PRIMARY)
 }
 
+/// Whether the item `id` is a tactical-slot item (statstable column 13 `specialgrenade`): in the
+/// lethal slot it needs Tactician (`checkclasses.lua:677-686`).
+pub fn is_tactical_item(id: &str) -> bool {
+    !id.is_empty() && weapons::catalog().get(id).is_some_and(|d| d.cac_slot == "specialgrenade")
+}
+
 /// The weapon a class with item `base` and attachments `shorts` gets (`GetLoadoutWeapon`): the
 /// `+` form (`an94_mp+gl+reflex`, sorted) or, with `dw`, the underscore form (`fnp45_dw_mp`).
 pub fn given_weapon(base: &str, shorts: &[&str]) -> String {

@@ -341,6 +341,7 @@ fn seed_profile() {
             reticle: String::new(),
             reticle_color: String::new(),
             knife: String::new(),
+            ..CustomClass::default()
         });
     }
 }

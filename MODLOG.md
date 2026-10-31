@@ -4695,3 +4695,30 @@ the `perks::install_converted` mutex). The editor's panel is one `draw_item_pane
   description; the archive VERSION must bump (integrator) so players get the converted text.
 * Dexterity's BO2 description ends in a space (`... climb faster. `); the table format trims values,
   so that one cell keeps differing like the attachments' trailing-space descriptions.
+
+## Tactician and Danger Close give what BO2 gives (2026-10-31, `v1/perks-cards`)
+
+Both cards were grid entries with no effect on the class. BO2 has no script for either:
+`_class.gsc:704-757` gives the lethal slot's item with the loadout's `primarygrenadecount` and the
+tactical slot's with `specialgrenadecount`; the cards only widen what the slot may hold.
+`cacgrenadesbutton.lua:130-160`: the lethal slot takes one, or two with `bonuscard_danger_close`;
+with `bonuscard_two_tacticals` it lists the tactical items instead (count up to two, like the
+tactical slot). `checkclasses.lua:677-700` enforces it: a `specialgrenade` item in `primarygrenade`
+needs Tactician, a `primarygrenadecount` of 2 needs Danger Close.
+
+* The loadout and the custom class carry the lethal count (`lethal_count`, spec key
+  `lethal_count`, serialised only when set); `Arsenal::with_loadout` starts the lethal with it, else
+  the item's own start count as before. A Draft with Danger Close and a lethal carries
+  `MAX_GRENADES` (`CoD.CACUtility.maxGrenades`) and charges the second lethal as its own element.
+* Tactician: the class gives whatever the lethal slot holds, a tactical too (it already did, but
+  `classrepair` cleared a tactical there). Repair now keeps it, clamps the count to `maxGrenades`
+  and drops it for an empty slot or Tactician's tactical; trimming takes the second lethal before
+  the lethal. `wildcards_of` re-derives Tactician (the lethal slot holds a statstable
+  `specialgrenade` item) and Danger Close (`lethal_count` > 1).
+* Scavenger refills each offhand by one up to what the class carries (`_weapons.gsc:1804-1850`);
+  it used to set the lethal to at least one and never touched the tactical.
+* Not done here (editor listing, `v1/equipment-melee`'s area): the lethal slot listing the
+  tactical items under Tactician (`cacgrenades.lua:96-200`). Until it does, the editor cannot put a
+  tactical there, so an equipped Tactician card has nothing to act on and is not re-derived when
+  the class is reopened. The tactical's own count (BO2's `specialgrenadecount`, a second tactical
+  costing a point) is still the item's start count.

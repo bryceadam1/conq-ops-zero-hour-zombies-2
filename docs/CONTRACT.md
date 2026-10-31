@@ -511,7 +511,9 @@ blocks are BO2's `bonuscard` rows (name, description, image, column-13 loadout s
 key, index, unlock level); the catalog lists them in the grid's order (sort key, then index) and
 falls back to the built-in stand-ins when a table predates them. The editor's rules key on the
 card's statstable reference (`classmenu::Wildcard::reference`), never on a list position; a
-class's cards are not stored in the profile but re-derived from what it holds.
+class's cards are not stored in the profile but re-derived from what it holds (Tactician from a
+tactical-slot item in the lethal slot, Danger Close from the class spec's `lethal_count=2`, the
+loadout's `primarygrenadecount` that the arsenal starts the lethal with).
 
 ## Versioning
 
