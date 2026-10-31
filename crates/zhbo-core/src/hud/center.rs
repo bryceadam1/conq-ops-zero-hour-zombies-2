@@ -15,7 +15,7 @@
 use super::frame::{argb, Lui};
 use super::*;
 use crate::lui::font::Family;
-use crate::lui::Place;
+use crate::lui::{Place, Rect};
 
 /// G6: `cg_crosshairAlphaMin`.
 pub const CROSSHAIR_ALPHA_MIN: f32 = 0.5;
@@ -28,8 +28,10 @@ pub const HINT_TIME: f32 = 1.8;
 /// The hint's fade-in cycle (`FUN_004ddc80`: alpha `((now - start) % 600) / 600`).
 pub const HINT_CYCLE: f32 = 0.6;
 /// `invalidcmdhint.menu` (`common_mp.ff`'s `ui_mp/hud_*.txt`): `rect 0 40` (480-line space) with
-/// align 9/9, taken as the screen centre, and the item's `textscale 0.275` in `normalFont`
-/// (`textfont 1`), which IW menus draw `48 * scale` lines tall.
+/// align 9/9 and the item's `textscale 0.275` in `normalFont` (`textfont 1`), which IW menus draw
+/// `48 * scale` lines tall. Align 9 is the middle of the user safe area on both axes
+/// (`FUN_0057d900`, the menus' screen placement: case 9 is `(safeLeft + safeRight) / 2`, 8 the safe
+/// left/top, 10 the safe right/bottom) — the screen centre for a centred safe area.
 const HINT_BELOW_CENTRE_480: f32 = 40.0;
 const HINT_HEIGHT_480: f32 = 48.0 * 0.275;
 
@@ -142,15 +144,22 @@ pub(super) fn draw_score_popup(l: &Lui, prims: &mut Vec<Prim>, client: &Client) 
 
 /// BO2's weapon hint (ownerdraw 113, `FUN_004ddc80`): the localized text centred on the screen's
 /// middle, its pen line 40 lines below the centre, white, fading in over each 600 ms for 1.8 s.
-/// (`textstyle 3`'s shadow is not drawn.)
+/// `textstyle 3` is IW's shadowed style: the text in black one virtual unit down and right, under
+/// the text, at the same alpha.
 pub(super) fn draw_hint(l: &Lui, prims: &mut Vec<Prim>, client: &Client) {
     let Some((key, t)) = client.hud.hint else { return };
     let alpha = (t % HINT_CYCLE) / HINT_CYCLE;
     // LUI's 720-line space is 1.5 x the menus' 480.
     let (pen, height) = (HINT_BELOW_CENTRE_480 * 1.5, HINT_HEIGHT_480 * 1.5);
     let r = Place::new((true, true, 0.0, 0.0), (false, false, pen - height, pen)).resolve(l.screen());
-    l.text(prims, r, Family::Condensed, crate::sim::hint_text(key), None, (true, true), (1.0, 1.0, 1.0), alpha);
+    let text = crate::sim::hint_text(key);
+    let shadow = Rect { x: r.x + HINT_SHADOW_480 * 1.5, y: r.y + HINT_SHADOW_480 * 1.5, ..r };
+    l.text(prims, shadow, Family::Condensed, text, None, (true, true), (0.0, 0.0, 0.0), alpha);
+    l.text(prims, r, Family::Condensed, text, None, (true, true), (1.0, 1.0, 1.0), alpha);
 }
+
+/// The shadowed style's offset, in 480-line units.
+const HINT_SHADOW_480: f32 = 1.0;
 
 #[cfg(test)]
 mod tests {
@@ -167,10 +176,14 @@ mod tests {
         assert!(prims.is_empty(), "no hint, nothing drawn");
         client.hud.hint = Some(("WEAPON_CANT_PLANT_EQUIPMENT", 0.3));
         draw_hint(&l, &mut prims, &client);
-        // Centred; pen line 60 below the centre (40 of 480).
-        assert!(matches!(&prims[0], Prim::Text { x, text, .. } if *x == 640.0 && !text.is_empty()), "{:?}", prims[0]);
+        // The black shadow first, one 480-line unit (1.5 LUI) down-right; then the text, centred.
+        let (shadow, text) = (&prims[0], &prims[1]);
+        assert!(matches!(text, Prim::Text { x, text, .. } if *x == 640.0 && !text.is_empty()), "{text:?}");
+        let (Prim::Text { x: sx, y: sy, argb: sa, .. }, Prim::Text { y: ty, argb: ta, .. }) = (shadow, text) else { panic!() };
+        assert_eq!((*sx, *sy - *ty), (641.5, 1.5));
         // Half way through the first cycle: half alpha.
-        assert_eq!(super::super::frame::argb((1.0, 1.0, 1.0), 0.5), match &prims[0] { Prim::Text { argb, .. } => *argb, _ => 0 });
+        assert_eq!(super::super::frame::argb((1.0, 1.0, 1.0), 0.5), *ta);
+        assert_eq!(super::super::frame::argb((0.0, 0.0, 0.0), 0.5), *sa);
     }
 
     #[test]

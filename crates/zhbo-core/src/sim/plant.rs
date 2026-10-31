@@ -153,7 +153,6 @@ pub fn plant_launch(def: &'static WeaponDef, body: &Body, yaw: f32, pitch: f32, 
 mod tests {
     use super::*;
     use crate::sim::tests::FakeHost;
-    use crate::units::LOGIC_DT;
 
     fn body() -> Body {
         Body::new(Vec3::ZERO, &crate::movement::MoveTuning::default())

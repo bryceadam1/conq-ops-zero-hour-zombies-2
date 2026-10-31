@@ -5057,3 +5057,17 @@ sim already has that: `projectiles::Projectile` bounces (`BOUNCE_ALONG`/`BOUNCE_
 * Test: `a_lobbed_betty_bounces_and_settles_as_equipment` (it bounces and rests beyond the first
   contact). This branch is not on `v1/projectile-sounds`, so no bounce event/sound is emitted here;
   that base's bounce events apply to these projectiles once merged.
+
+## The weapon hint's shadow, and menu align 9 checked in the engine (2026-10-31, `v1/offhand-rules`)
+
+* Align 9 is not an assumption any more: `FUN_0057d900` (the menus' screen placement; the hint's text
+  draw `FUN_00709010` calls it with the item's aligns) maps horizontal/vertical align 8 to the user
+  safe area's left/top, 10 to its right/bottom and 9 to `(safeLeft + safeRight) / 2` /
+  `(safeTop + safeBottom) / 2` — the centre of the safe area, the screen centre when it is centred.
+  It agrees with the dumped HUD menus: `stance.menu` (`rect 145 -81 ... 8 10`, bottom-left) and
+  `cursorhints`/`mantlehint`/`invalidcmdhint` (9 9, below the crosshair). No in-match BO2 capture
+  exists in the reference (the captures are front-end and Create-a-Class), so the engine is the
+  check.
+* `textstyle 3` (IW's shadowed style): `draw_hint` draws the text in black one 480-line unit down and
+  right under the white text, at the same alpha (the exact T6 pixel offset is not decoded).
+* Test: `the_hint_sits_below_the_centre_and_fades_in_each_600_ms` checks the shadow.
