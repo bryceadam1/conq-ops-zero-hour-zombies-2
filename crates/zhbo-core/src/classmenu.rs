@@ -542,15 +542,18 @@ impl Draft {
 
     /// A weapon slot took a different weapon (or was emptied): BO2's `SetClassItem` on `primary` /
     /// `secondary` with a new value (`FUN_004943e0` → `FUN_008d0650`) zeroes that slot's
-    /// `<slot>camo`, `<slot>reticle` and `<slot>reticlecolor` (and its lens, tag, emblem and
-    /// attachments). The camo is option 0 (the stock finish, empty here); the reticle and its
-    /// colour are the primary's, the only optic the mod personalizes.
+    /// `<slot>attachment1..3`, `<slot>camo`, `<slot>reticle` and `<slot>reticlecolor` (and its
+    /// lens, tag and emblem, which the mod's class does not carry). The camo is option 0 (the
+    /// stock finish, empty here); the reticle and its colour are the primary's, the only optic the
+    /// mod personalizes.
     pub fn reset_weapon_options(&mut self, primary: bool) {
         if primary {
+            self.primary_atts.clear();
             self.camo.clear();
             self.reticle.clear();
             self.reticle_color.clear();
         } else {
+            self.secondary_atts.clear();
             self.secondary_camo.clear();
         }
     }
@@ -1514,7 +1517,7 @@ impl Editor {
     }
 
     /// Apply option `i` without the budget check; false means the option itself was refused (an
-    /// attachment at its cap). Weapon picks drop attachments the new weapon does not offer;
+    /// attachment at its cap). A changed weapon pick starts the slot bare (`Draft::reset_weapon_options`);
     /// attachment picks toggle; perk picks set the tier row; wildcard picks toggle.
     fn apply_option(&mut self, i: usize) -> bool {
         match self.slot {
@@ -1526,7 +1529,6 @@ impl Editor {
                         self.draft.primary = id.to_string();
                         self.draft.reset_weapon_options(true);
                     }
-                    self.keep_offered_atts(true);
                 }
             }
             Slot::Secondary => {
@@ -1536,7 +1538,6 @@ impl Editor {
                         self.draft.secondary = id.to_string();
                         self.draft.reset_weapon_options(false);
                     }
-                    self.keep_offered_atts(false);
                 }
             }
             Slot::PrimaryAtts => {
@@ -1630,16 +1631,6 @@ impl Editor {
             self.draft.wildcards.push(w);
             true
         }
-    }
-
-    /// Drop attachments the (new) weapon does not offer, keeping the offered ones in order.
-    fn keep_offered_atts(&mut self, primary: bool) {
-        let base = if primary { self.draft.primary.clone() } else { self.draft.secondary.clone() };
-        let allowed = allowed_shorts(&base);
-        let max = if primary { self.draft.primary_att_max() } else { self.draft.secondary_att_max() };
-        let atts = if primary { &mut self.draft.primary_atts } else { &mut self.draft.secondary_atts };
-        atts.retain(|s| allowed.iter().any(|a| a == s));
-        atts.truncate(max);
     }
 }
 

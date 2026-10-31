@@ -4721,3 +4721,18 @@ the knife picture.
   this branch, and this commit does not change it.
 - Test: `classmenu::tests::a_new_weapon_in_a_slot_resets_that_slots_camo`. Verified:
   `cargo test --workspace` is green; clippy has 38 warnings, unchanged.
+
+## A new weapon starts its slot bare: attachments too (2026-10-31, branch `v1/secondary-camo`)
+
+- The same `FUN_008d0650` that resets the camo also zeroes `<slot>attachment1..3` when
+  `primary`/`secondary` really changes value. `Draft::reset_weapon_options` now clears that
+  slot's attachments as well, and `Editor::keep_offered_atts` is gone. It had kept the
+  attachments the new gun offered, and the editor pick was its only caller; repair and the
+  in-match pick never used it. A changed weapon pick and `R Remove` now leave the slot bare.
+  Re-picking the same gun keeps everything, matching BO2's changed-value guard. The mod's class
+  has no lens, tag or emblem to clear. `classrepair`'s attachment check
+  (`repair_weapon` against the weapon's own list) is the profile-load path and is unchanged.
+- Test: `a_new_weapon_in_a_slot_starts_without_attachments` replaces
+  `weapon_picks_drop_attachments_the_new_weapon_does_not_offer`. Another reflex-capable gun
+  still starts bare. Verified: `cargo test --workspace` is green; clippy has 38 warnings,
+  unchanged.

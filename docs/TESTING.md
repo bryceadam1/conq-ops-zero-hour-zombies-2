@@ -98,8 +98,9 @@ verify it by hand after touching the menu ABI, the shell window, or the shared c
      `PERSONALIZE <PISTOL>`, the sidearm's own converted camos, its picture; a pick sets the
      class's secondary camo (the SECONDARY button and the preview's secondary block show its
      swatch), not the primary's. In a match, switch to the sidearm: it wears that camo.
-   - Pick a different gun in a personalised slot: that slot's camo (and the primary's reticle and
-     reticle colour) go back to stock, as BO2's `SetClassItem` does; re-picking the same gun keeps them.
+   - Pick a different gun in a personalised slot: that slot's attachments are removed and its camo
+     (and the primary's reticle and reticle colour) go back to stock, as BO2's `SetClassItem`
+     does, even when the new gun offers the same attachments; re-picking the same gun keeps them.
 4. Edit something, walk to **SAVE CLASS**, confirm: `ConquerOps.profile` (in the game's user-data
    directory) is rewritten with the new class, and the list shows it highlighted.
 5. On a custom row: **C** copies it (`NAME COPY` appears), **Backspace** deletes it — both rewrite

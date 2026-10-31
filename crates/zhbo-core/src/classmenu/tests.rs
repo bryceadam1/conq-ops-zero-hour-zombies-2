@@ -220,18 +220,30 @@ use super::*;
         assert_eq!(Wildcard::Overkill.greed_tier(), None);
     }
 
+    /// BO2's `SetClassItem` on a weapon slot with a new value zeroes `<slot>attachment1..3`
+    /// (`FUN_008d0650`): a different gun starts bare, even when it offers the same attachments;
+    /// re-picking the same gun keeps them.
     #[test]
-    fn weapon_picks_drop_attachments_the_new_weapon_does_not_offer() {
-        // The secondary moves from a primary-class gun carrying its attachments to the Tac-45,
-        // which offers neither; the pick keeps only what the new weapon can take.
-        let mut e = Editor::new(Draft {
-            secondary: "an94_mp".into(),
-            secondary_atts: vec!["gl".into(), "reflex".into()],
-            wildcards: vec![Wildcard::Overkill],
-            ..Draft::default()
-        });
-        e.draft.secondary = "fnp45_mp".into();
-        e.keep_offered_atts(false);
+    fn a_new_weapon_in_a_slot_starts_without_attachments() {
+        let mut e = Editor::new(Draft::default());
+        e.slot = Slot::Primary;
+        let ids = gun_ids(&PRIMARY_CLASSES);
+        let same = ids.iter().position(|id| *id == e.draft.primary).expect("the AN-94 is listed");
+        e.apply_option(same);
+        assert_eq!(e.draft.primary_atts, ["gl", "reflex"], "re-picking the same gun keeps its attachments");
+        // Another assault rifle offers the reflex too; BO2 still clears it with the weapon change.
+        let other = ids
+            .iter()
+            .position(|id| *id != e.draft.primary && allowed_shorts(id).iter().any(|a| *a == "reflex"))
+            .expect("another gun offering the reflex");
+        e.apply_option(other);
+        assert!(e.draft.primary_atts.is_empty(), "{:?}", e.draft.primary_atts);
+        // The secondary slot follows the same rule.
+        let mut e = Editor::new(Draft { secondary_atts: vec!["reflex".into()], ..Draft::default() });
+        e.slot = Slot::Secondary;
+        let ids = gun_ids(&e.secondary_classes());
+        let other = ids.iter().position(|id| *id != e.draft.secondary).expect("another sidearm");
+        e.apply_option(other);
         assert!(e.draft.secondary_atts.is_empty(), "{:?}", e.draft.secondary_atts);
     }
 
