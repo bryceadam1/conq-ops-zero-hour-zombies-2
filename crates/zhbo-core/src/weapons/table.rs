@@ -782,6 +782,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("SegmentedReload", "The reload runs round by round (`bSegmentedReload`; see `ReloadShells`).", FieldKind::Num,
         |d: &WeaponDef| (d.traits.segmented_reload as u8).to_string(),
         |d: &mut WeaponDef, v: Values| { d.traits.segmented_reload = v.text_num()? != 0.0; Ok(()) }),
+    field!("UnlimitedAmmo", "The clip never reads as empty for the empty raise and drop (`unlimitedAmmo`).", FieldKind::Num,
+        |d: &WeaponDef| (d.traits.unlimited_ammo as u8).to_string(),
+        |d: &mut WeaponDef, v: Values| { d.traits.unlimited_ammo = v.text_num()? != 0.0; Ok(()) }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -841,7 +844,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 97);
+        assert_eq!(WEAPON_FIELDS.len(), 98);
         assert_eq!(ATTACHMENT_FIELDS.len(), 25);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

@@ -212,4 +212,6 @@ pub struct Traits {
     /// variant ignores attachments, `FUN_008ebc70`): the reload runs start, a cycle per
     /// `reload_ammo_add` rounds, end.
     pub segmented_reload: bool,
+    /// `unlimitedAmmo`: the clip never reads as empty for the empty raise/drop (`FUN_008e6770`).
+    pub unlimited_ammo: bool,
 }

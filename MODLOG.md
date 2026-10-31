@@ -4641,3 +4641,11 @@ line `SegmentedReload`) carries it, `apply_unique_fields` ORs the combination's 
 `WeaponDef::shell_by_shell` reads it. Start/end times are now carried raw. In the install only the
 870 MCS, KSG and Executioner set it; every launcher (SMAW, RPG, FHJ, the `gl_*` alts) is a
 magazine reload in BO2 too, so their reload is unchanged.
+
+### Follow-up: `unlimitedAmmo` suppresses the empty raise and drop
+
+`FUN_008e6770` (the empty-clip test both `FUN_008df320` and `FUN_008db500` use) returns "not
+empty" when the def's `unlimitedAmmo` (+0x3e0) is set. `Traits.unlimited_ammo` (table line
+`UnlimitedAmmo`) carries it; `WeaponState::clip_empty` is the one test (`switch_to`, the
+viewmodel's drop clip). Only the swap timing reads it; BO2's other `unlimitedAmmo` effects
+(ammo use) are not ported.

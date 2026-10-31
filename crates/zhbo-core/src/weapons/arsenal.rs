@@ -124,6 +124,12 @@ impl WeaponState {
         }
     }
 
+    /// BO2's empty-clip test for the empty raise and drop (`FUN_008e6770`): clip 0 on a weapon
+    /// without `unlimitedAmmo`.
+    pub fn clip_empty(&self) -> bool {
+        self.ammo == 0 && !self.def.traits.unlimited_ammo
+    }
+
     pub fn can_reload(&self) -> bool {
         !self.is_reloading() && self.ammo < self.def.clip && self.reserve > 0
     }
@@ -627,12 +633,12 @@ impl Arsenal {
 
     /// Raise and drop take the weapon's own times; `fastweaponswitch` runs them at its rate
     /// ([`Timing::Switch`]) rather than switching to the quick animations (G3). A weapon with an
-    /// empty clip drops over its `iEmptyDropTime` (`FUN_008db500`) and raises over its
+    /// empty clip (`WeaponState::clip_empty`) drops over its `iEmptyDropTime` (`FUN_008db500`) and raises over its
     /// `iEmptyRaiseTime`, which beats the first raise (`FUN_008df320`; the first raise is spent
     /// either way).
     fn switch_to(&mut self, index: usize) {
         let from = self.current().def;
-        let from_empty = self.current().ammo == 0;
+        let from_empty = self.current().clip_empty();
         self.current_mut().reload = None; // swapping cancels a reload, like BO2
         self.current_mut().burst_left = 0;
         self.drop_left = if from_empty { from.empty_drop_time } else { from.drop_time };
@@ -641,7 +647,7 @@ impl Arsenal {
         self.active = index;
         let to = self.current().def;
         let first = !self.current().raised_once;
-        let empty = self.current().ammo == 0;
+        let empty = self.current().clip_empty();
         self.current_mut().raised_once = true;
         (self.raise_left, self.raise_kind) = if empty {
             (to.empty_raise_time, RaiseKind::Empty)

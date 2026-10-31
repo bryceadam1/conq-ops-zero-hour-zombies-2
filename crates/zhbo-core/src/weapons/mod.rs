@@ -366,6 +366,27 @@ mod tests {
         assert_eq!((b.drop_total, b.raise_total, b.raise_kind), (0.4, 0.7, RaiseKind::First));
     }
 
+    /// `unlimitedAmmo` keeps an empty clip from reading as empty: the plain drop and raise play.
+    #[test]
+    fn unlimited_ammo_never_takes_the_empty_raise_or_drop() {
+        let unlimited = |d: &mut WeaponDef| {
+            d.drop_time = 0.4;
+            d.empty_drop_time = 0.9;
+            d.first_raise_time = 0.7;
+            d.empty_raise_time = 1.3;
+            d.traits.unlimited_ammo = true;
+        };
+        let (p, s) = (def(unlimited), def(unlimited));
+        let mut a = arsenal_with(p);
+        a.loadout.perks.clear();
+        a.weapons[1] = WeaponState::new(s);
+        a.weapons[0].ammo = 0;
+        a.weapons[1].ammo = 0;
+        let mut out = Vec::new();
+        a.step(0, buttons::SWAP_WEAPON, false, 0, 0.0, &mut Rng::new(8), &mut out);
+        assert_eq!((a.drop_total, a.raise_total, a.raise_kind), (0.4, 0.7, RaiseKind::First));
+    }
+
     #[test]
     fn bursts_fire_n_per_press() {
         let d = def(|d| {

@@ -455,6 +455,8 @@ pub struct Weapon {
     pub reload_ammo_add: i32,
     /// `bSegmentedReload`: start, a cycle per `reload_ammo_add` rounds, end (tube shotguns).
     pub segmented_reload: bool,
+    /// `unlimitedAmmo`: the clip never counts as empty for the empty raise/drop (`FUN_008e6770`).
+    pub unlimited_ammo: bool,
     pub raise_time: f32,
     pub first_raise_time: f32,
     pub drop_time: f32,
@@ -800,6 +802,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.reload_start_add_time = ms(z, d + WD::iReloadStartAddTime);
     w.reload_ammo_add = int(z, d + WD::iReloadAmmoAdd);
     w.segmented_reload = z.u8(d + WD::bSegmentedReload) != 0;
+    w.unlimited_ammo = z.u8(d + WD::unlimitedAmmo) != 0;
     w.raise_time = ms(z, d + WD::iRaiseTime);
     w.first_raise_time = ms(z, d + WD::iFirstRaiseTime);
     w.drop_time = ms(z, d + WD::iDropTime);

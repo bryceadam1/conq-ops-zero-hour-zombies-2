@@ -891,6 +891,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
             offhand: OffhandClass::from_bo2(w.offhand_class),
             weap_type: WeapType::from_bo2(w.weap_type),
             segmented_reload: w.segmented_reload,
+            unlimited_ammo: w.unlimited_ammo,
         },
     };
     #[cfg(debug_assertions)]

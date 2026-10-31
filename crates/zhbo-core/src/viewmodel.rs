@@ -206,7 +206,7 @@ impl Viewmodel {
             let prev = &a.weapons[a.previous];
             // An empty clip drops over the empty drop time (`switch_to`), which may be shorter
             // than the quick drop: test it first.
-            let clip = if prev.ammo == 0 { slot::EMPTY_DROP } else if a.drop_total <= prev.def.quick_drop_time + 1e-4 { slot::QUICK_DROP } else { slot::DROP };
+            let clip = if prev.clip_empty() { slot::EMPTY_DROP } else if a.drop_total <= prev.def.quick_drop_time + 1e-4 { slot::QUICK_DROP } else { slot::DROP };
             return frame(prev.def.viewmodel, or(prev.def, clip, slot::DROP) + prev.def.clip_base, a.drop_total - a.drop_left);
         }
         if a.raise_left > 0.0 {
