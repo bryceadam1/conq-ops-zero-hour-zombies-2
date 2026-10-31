@@ -4577,3 +4577,42 @@ common rows); one-sided rows 8/7 → 8/0; cac 565 → 556 (`slot` 12 → 8, `val
 62/6 → 62/0; gap clusters 212 → 207. The 8 BO2-only weapon rows are content the mod has no item
 for: the placed equipment (claymore, bouncing betty, C4, tactical insertion, trophy system, black
 hat), the assault shield, and `knife_mp`.
+
+## The class melee weapon: every class gets `knife_mp`, and a gun melees with it (2026-10-31, `v1/cac-leftovers`)
+
+BO2 gives every class two knives (`_class.gsc:586`, `:680-686`): `knife_mp`, inventory type
+*melee*, always — the weapon the melee button strikes with whatever gun is up — and
+`knife_held_mp`, inventory type *primary*, a knife in the hand (given when the class has fewer than
+two weapons). A melee weapon strikes with itself; anything else with `knife_mp`
+(`_scoreevents.gsc:375`; the oracle's rule in `bo2/rows.rs`). The mod had one knife,
+`knife_held_mp`, for both, so every gun meleed in the held knife's 450 ms with its
+`wpn_com_knife_whoosh_plr`, where BO2 takes 800 ms and plays `wpn_melee_whoosh_plr`.
+
+* Core: `weapons::CLASS_MELEE` (`knife_mp`, the script's own literal), `class_melee` (the held
+  knife when an old archive has none) and the rule `melee_weapon(held, class_melee)`.
+  `Arsenal::class_melee` / `Arsenal::melee_weapon` drive the melee's time, damage, the current
+  weapon while meleeing (the specialty test), the viewmodel (the class melee weapon's own `MELEE`
+  clip) and the swing. `Loadout::viewmodels` includes it. A built-in stand-in `knife_mp` (generic
+  values, slower than the held one) keeps the headless tests real.
+* Sounds: `WeaponDef::melee_sound` (table field `MeleeSound`): each melee weapon's own swing event
+  (`ZHBO_BO2_MeleeSwing_<id>`); the global `MELEE_SWING` is now the class melee weapon's
+  (it was the held knife's). `sounds::melee_for(def)`; the client plays it for the local
+  player's melee weapon, the overhead General's ZH melee weapon fires its own.
+* Converter: `knife_mp` is a player weapon (it was excluded) and in the base set.
+* Gotcha: `knife_mp`'s def names `viewmodel_M4m203_knife_melee_1`; `common_mp` stores it as
+  `viewmodel_m4m203_knife_melee_1`. BO2's asset lookup folds case (its own data needs it), ours
+  did not, so the clip fell back to the idle loop. `t6zone::Zone::find` now tries the exact
+  spelling, then ASCII-case-insensitively.
+* Not done here: the held knife as a second weapon when a class has fewer than two (`_class.gsc:680`
+  — the mod gives it only to a gunless kit); the 125 ms `melee_delay` (the mod strikes on the
+  press); the third-person RTS melee still shows the held knife's template.
+* The archive's weapon table gains a field (`MeleeSound`), and its weapon list a weapon: the
+  archive VERSION must bump (integrator).
+
+Measured (conformance CLI vs `v1/cac-structure`): weapons 804,392 → 781,252 cells
+(`melee_time` 11,596 → 0, `melee_swipe_sound_player` 11,596 → 0, `inventory` 1 → 0: the held knife
+is now a primary-inventory weapon; the new `knife_mp` row brings its own cells — +1 in each column
+the mod lacks for every row, plus `fire_time`/`shot_count`/`ads_in_time`/`damage_range`, which
+describe a gun-shaped knife def the mod never fires); one-sided rows 8/0 → 7/0; gap clusters 207 →
+204. `knife_mp`'s `anim_melee`/`anim_melee_charge` now hold the right clip but still differ by
+case (`viewmodel_M4m203…` vs the asset's `viewmodel_m4m203…`): the differ compares names as text.

@@ -7,7 +7,30 @@
 */
 
 use super::catalog::{weapon, weapon_or_none};
+use super::def::{Class, WeaponDef};
 use super::perks::Perk;
+
+/// The class melee weapon: BO2 gives every class `knife_mp` (`_class.gsc:586`, inventory type
+/// melee), the weapon the melee button strikes with whatever gun is up. The held knife
+/// (`knife_held_mp`, the loadout's `melee`) is a weapon in the hand, BO2's primary-inventory knife.
+pub const CLASS_MELEE: &str = "knife_mp";
+
+/// The class melee weapon's definition; the held knife when the table has none (an archive from
+/// before it was converted).
+pub fn class_melee(held_knife: &'static WeaponDef) -> &'static WeaponDef {
+    weapon_or_none(CLASS_MELEE).unwrap_or(held_knife)
+}
+
+/// The weapon a melee uses with `held` up: a melee weapon strikes with itself, anything else with
+/// the class melee weapon (`_scoreevents.gsc:375`: every `MOD_MELEE` kill but the riot shield's is
+/// a knife stab; the conformance oracle's rule, `bo2/rows.rs`).
+pub fn melee_weapon<'a>(held: &'a WeaponDef, class_melee: &'a WeaponDef) -> &'a WeaponDef {
+    if held.class == Class::Melee {
+        held
+    } else {
+        class_melee
+    }
+}
 
 
 /// What the General carries. Weapons are catalog ids, so they can later be picked up, swapped or
@@ -26,11 +49,12 @@ pub struct Loadout {
 }
 
 impl Loadout {
-    /// The converted viewmodels this kit can show: its guns and their alt modes, its offhands and
-    /// its melee weapon, each once.
+    /// The converted viewmodels this kit can show: its guns and their alt modes, its offhands, its
+    /// held knife and the class melee weapon, each once.
     pub fn viewmodels(&self) -> Vec<i32> {
         let mut out = Vec::new();
-        for id in [&self.primary, &self.secondary, &self.lethal, &self.tactical, &self.melee] {
+        let class_melee = CLASS_MELEE.to_string();
+        for id in [&self.primary, &self.secondary, &self.lethal, &self.tactical, &self.melee, &class_melee] {
             // An empty slot is legitimate (the unarmed kit); an unknown one resolves to nothing
             // rather than borrowing the catalog's first weapon's viewmodel.
             if id.is_empty() {

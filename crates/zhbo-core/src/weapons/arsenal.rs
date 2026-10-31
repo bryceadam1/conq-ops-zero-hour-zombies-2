@@ -8,7 +8,7 @@
 
 use super::catalog::{catalog, weapon, weapon_or_none};
 use super::def::{Class, Effect, FireMode, Place, WeaponDef, KICK_TO_DEGREES};
-use super::loadout::Loadout;
+use super::loadout::{class_melee, melee_weapon, Loadout};
 use super::perks::Perk;
 use super::rng::Rng;
 use super::specialty::{Specialties, Specialty};
@@ -254,7 +254,11 @@ pub struct Arsenal {
     pub active: usize,
     pub lethal: Offhand,
     pub tactical: Offhand,
+    /// The held knife: the one weapon of a kit with no gun.
     pub melee: &'static WeaponDef,
+    /// The class melee weapon ([`super::loadout::CLASS_MELEE`]): what the melee button strikes with while a gun is
+    /// up ([`Arsenal::melee_weapon`]).
+    pub class_melee: &'static WeaponDef,
     /// Raising the active weapon (first raise, swap, after an offhand), out of `raise_total`.
     pub raise_left: f32,
     pub raise_total: f32,
@@ -318,6 +322,7 @@ impl Arsenal {
             lethal: Offhand { def: melee, count: 0 },
             tactical: Offhand { def: melee, count: 0 },
             melee,
+            class_melee: class_melee(melee),
             loadout,
             weapons: vec![knife],
             active: 0,
@@ -389,6 +394,7 @@ impl Arsenal {
             lethal: offhand(&loadout.lethal),
             tactical: offhand(&loadout.tactical),
             melee,
+            class_melee: class_melee(melee),
             loadout,
             weapons,
             active: 0,
@@ -407,6 +413,12 @@ impl Arsenal {
             cooked: 0.0,
             tuning: crate::tuning::get(),
         }
+    }
+
+    /// The weapon a melee uses now: the held weapon when it is a knife, else the class melee
+    /// weapon ([`melee_weapon`]). The held weapon cannot change mid-melee (a swap waits for it).
+    pub fn melee_weapon(&self) -> &'static WeaponDef {
+        melee_weapon(self.current().def, self.class_melee)
     }
 
     pub fn has(&self, perk: Perk) -> bool {
@@ -429,7 +441,7 @@ impl Arsenal {
                     self.tactical.def
                 }
             }
-            None if self.melee_left > 0.0 => self.melee,
+            None if self.melee_left > 0.0 => self.melee_weapon(),
             None => self.current().def,
         }
     }
@@ -714,12 +726,13 @@ impl Arsenal {
 
         // Melee interrupts a reload and firing, not a raise.
         if pressed & buttons::MELEE != 0 && self.melee_left <= 0.0 && self.raise_left <= 0.0 && self.drop_left <= 0.0 {
-            self.melee_left = self.melee.melee_time.max(0.3);
+            let m = self.melee_weapon();
+            self.melee_left = m.melee_time.max(0.3);
             let w = self.current_mut();
             w.burst_left = 0;
             w.reload = None;
             self.ads = 0.0;
-            out.push(WeaponAction::Melee { damage: self.melee.melee_damage });
+            out.push(WeaponAction::Melee { damage: m.melee_damage });
             return;
         }
 

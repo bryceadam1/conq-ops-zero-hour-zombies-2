@@ -506,6 +506,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("EmptyFireSound", "The empty magazine's BO2 sound event.", FieldKind::Str,
         |d: &WeaponDef| d.empty_fire_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.empty_fire_sound = v.text.into(); Ok(()) }),
+    field!("MeleeSound", "A melee weapon's own swing BO2 sound event.", FieldKind::Str,
+        |d: &WeaponDef| d.melee_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.melee_sound = v.text.into(); Ok(()) }),
     field!("SilencedFireSound", "The suppressed shot's player BO2 sound event.", FieldKind::Str,
         |d: &WeaponDef| d.silenced_fire_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.silenced_fire_sound = v.text.into(); Ok(()) }),
@@ -715,7 +718,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 80);
+        assert_eq!(WEAPON_FIELDS.len(), 81);
         assert_eq!(ATTACHMENT_FIELDS.len(), 18);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

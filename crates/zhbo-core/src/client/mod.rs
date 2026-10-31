@@ -1042,6 +1042,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         sim.events.clear();
         self.hits_len = 0;
         let fire = sim.player(me).map_or(sounds::FIRE, |p| sounds::fire_for(p.arsenal.current().def));
+        let swing = sim.player(me).map_or(sounds::MELEE_SWING, |p| sounds::melee_for(p.arsenal.melee_weapon()));
         for kind in &mine {
             // The gunshot is per shot; the impact is per pellet and comes from its own event (a
             // shot into the air no longer plays a hard-surface sound).
@@ -1117,7 +1118,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     // A pick landed: the forced screen closes, and the next spawn's pick returns.
                     self.class_pick_forced = false;
                 }
-                EventKind::Melee => self.cues.play(sounds::MELEE_SWING),
+                EventKind::Melee => self.cues.play(swing),
                 EventKind::OffhandReady { .. } => self.cues.play(sounds::PULL_PIN),
                 EventKind::Thrown { .. } => self.cues.play(sounds::THROW),
                 EventKind::Launched => self.cues.play(sounds::FIRE_LAUNCHER),

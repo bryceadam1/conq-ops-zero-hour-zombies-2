@@ -3,7 +3,7 @@
 //! The rows are the mod's own create-a-class space — [`zhbo_core::classmenu::offer`]'s weapons with
 //! every attachment set the editor accepts (offered shorts up to the slot's cap, Gunfighter
 //! included, no two mutually exclusive: `classmenu::legal`), resolved by the runtime catalog
-//! exactly as a class is (`Catalog::get`), each one's alt mode, and the loadout's knife. Every
+//! exactly as a class is (`Catalog::get`), each one's alt mode, the loadout's held knife and the class melee weapon. Every
 //! fact comes from what ships: the converted weapon table (`weapons.ini`), the native viewmodel
 //! and world-weapon manifests the def's `viewmodel` names (a combination the archive has no art
 //! for draws its base's, as the game does), the model blobs, the converter's sound events and
@@ -235,8 +235,9 @@ fn jobs() -> Vec<Job> {
             }
         }
     }
-    let melee = weapons::Loadout::default().melee;
-    if let Some(def) = cat.get(&melee) {
+    // The melee weapons every class has: the held knife and the class melee weapon (`knife_mp`).
+    for melee in [weapons::Loadout::default().melee, weapons::CLASS_MELEE.to_string()] {
+        let Some(def) = cat.get(&melee) else { continue };
         if seen.insert((melee.clone(), Vec::new())) {
             out.push(Job { weapon: melee, combo: Vec::new(), def, vm_def: def, group: String::new(), slot: String::new(), requires: Vec::new(), alt: false });
         }
@@ -342,7 +343,8 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     };
     let inventory = if j.alt {
         "altmode"
-    } else if d.class == Class::Melee {
+    } else if d.id == weapons::CLASS_MELEE {
+        // The class melee weapon is the melee inventory; the held knife is a weapon in the hand.
         "melee"
     } else if d.class.is_offhand() {
         "offhand"
@@ -364,9 +366,11 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     };
     b.text("fire_type", fire).int("shot_count", d.pellets as i64).absent("shots_before_rechamber").absent("bolt_action");
 
-    // The arsenal melees with the loadout's knife, whatever is held (`arsenal.rs` "Melee interrupts":
-    // `self.melee.melee_time`, `self.melee.melee_damage`), striking on the press.
-    let knife = cat.get(&weapons::Loadout::default().melee).unwrap_or(d);
+    // The arsenal melees with `Arsenal::melee_weapon` (`arsenal.rs` "Melee interrupts": its
+    // `melee_time` and `melee_damage`): a knife with itself, anything else with the class melee
+    // weapon (the held knife when the table has none), striking on the press.
+    let held_knife = cat.get(&weapons::Loadout::default().melee).unwrap_or(d);
+    let knife = weapons::melee_weapon(d, cat.get(weapons::CLASS_MELEE).unwrap_or(held_knife));
     let alt_toggles = !d.alt.is_empty();
     // Timing.
     for (c, v) in [
@@ -647,11 +651,9 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         b.opt_text(&col, clip);
     }
 
-    // Sounds: the player's gunshot event and the FX weapon's third-person event; the loadout's
-    // offhand and knife share the global throw/pin/blast/swing events.
     // Sounds: the client's cues (`client/mod.rs`): a hitscan shot plays `sounds::fire_for` (the
     // def's event, else the global rifle/pistol shot), a launch `FIRE_LAUNCHER`, an offhand
-    // `PULL_PIN` then `THROW`, any melee `MELEE_SWING`, any blast `EXPLOSION`; the FX weapon's
+    // `PULL_PIN` then `THROW`, a melee `sounds::melee_for` its melee weapon, any blast `EXPLOSION`; the FX weapon's
     // event is the shot others hear. A cue the conversion never made plays nothing.
     let key = d.fx_weapon.strip_prefix("ZHBO_FX_").unwrap_or("");
     let npc = (!key.is_empty()).then(|| sh.sound(&format!("ZHBO_BO2_FireNpc_{key}"))).flatten();
@@ -682,7 +684,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
             }
             "pullback_sound_player" if thrown => sh.sound(zhbo_core::sounds::PULL_PIN),
             "projectile_explosion_sound" if explodes => sh.sound(zhbo_core::sounds::EXPLOSION),
-            "melee_swipe_sound_player" => sh.sound(zhbo_core::sounds::MELEE_SWING),
+            "melee_swipe_sound_player" => sh.sound(zhbo_core::sounds::melee_for(knife)),
             _ => None,
         };
         b.opt_text(c, v);

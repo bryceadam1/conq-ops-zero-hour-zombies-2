@@ -192,9 +192,10 @@ impl Viewmodel {
             let off = if lethal { a.lethal.def } else { a.tactical.def };
             return frame(off.viewmodel, clip, t);
         }
-        // Melee: the weapon's own (pistol whip) or BO2's knife.
+        // Melee: the weapon's own (pistol whip) or the class melee weapon's knife.
         if a.melee_left > 0.0 {
-            let t = a.melee.melee_time.max(0.3) - a.melee_left;
+            let m = a.melee_weapon();
+            let t = m.melee_time.max(0.3) - a.melee_left;
             let own = if empty { slot::MELEE_EMPTY } else { slot::MELEE };
             if def.has_anim(own as usize) {
                 return wf(own, t);
@@ -202,7 +203,7 @@ impl Viewmodel {
             if def.has_anim(slot::MELEE as usize) {
                 return wf(slot::MELEE, t);
             }
-            return frame(a.melee.viewmodel, slot::MELEE, t);
+            return frame(m.viewmodel, slot::MELEE, t);
         }
         if a.drop_left > 0.0 {
             let prev = &a.weapons[a.previous];

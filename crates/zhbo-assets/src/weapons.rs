@@ -408,9 +408,10 @@ pub fn names(bo2_dir: &std::path::Path) -> HashMap<String, String> {
 
 /// Sound events and Zero Hour FX weapons for the converted weapons. Each gun gets its own player
 /// gunshot (BO2's `_plr` alias with its tail and low end) and third-person gunshot, played by its
-/// own FX weapon (`ZHBO_FX_<id>`); the loadout's offhands and knife supply the throw, pin, blast and
-/// swing sounds. Sets each definition's `fire_sound` and `fx_weapon`; returns the events and the
-/// FX weapon INI.
+/// own FX weapon (`ZHBO_FX_<id>`); the loadout's offhands supply the throw, pin and blast sounds and
+/// the class melee weapon the global swing. Each melee weapon gets its own swing. Sets each
+/// definition's `fire_sound`, `melee_sound` and `fx_weapon`; returns the events and the FX weapon
+/// INI.
 pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [WeaponDef], converted: &[String]) -> (Vec<crate::sfx::DynSfx>, String) {
     use crate::sfx::{DynSfx, Kind};
     let mut events = Vec::new();
@@ -501,7 +502,15 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
             events.extend(general(zhbo_core::sounds::PULL_PIN, &w.pullback_sound_player, Kind::Player));
             events.extend(general(zhbo_core::sounds::EXPLOSION, &w.projectile_explosion_sound, Kind::World));
         }
-        if *id == l.melee {
+        // A melee weapon swings with its own sound; the class melee weapon's is also the global
+        // swing (a gun's melee, `sounds::melee_for`).
+        if d.class == Class::Melee {
+            if let Some(event) = general(&format!("ZHBO_BO2_MeleeSwing_{key}"), &w.melee_swipe_sound_player, Kind::Player) {
+                d.melee_sound = event.event.clone();
+                events.push(event);
+            }
+        }
+        if id == zhbo_core::weapons::CLASS_MELEE {
             events.extend(general(zhbo_core::sounds::MELEE_SWING, &w.melee_swipe_sound_player, Kind::Player));
         }
     }
@@ -514,7 +523,10 @@ pub fn is_player_weapon(w: &Weapon) -> bool {
     if w.name == "knife_held_mp" {
         return true;
     }
-    if w.name.starts_with("remote_") || w.name.contains("killstreak") || w.name == "knife_mp" {
+    if w.name == zhbo_core::weapons::CLASS_MELEE {
+        return true;
+    }
+    if w.name.starts_with("remote_") || w.name.contains("killstreak") {
         return false;
     }
     if LETHALS.contains(&w.name.as_str()) || TACTICALS.contains(&w.name.as_str()) {
@@ -744,6 +756,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         projectile_object: String::new(),
         fire_sound: String::new(),
         empty_fire_sound: String::new(),
+        // Set by `sounds_and_fx` (a converted event).
+        melee_sound: String::new(),
         silenced_fire_sound: String::new(),
         silenced_fire_sound_npc: String::new(),
         silenced_fx_weapon: String::new(),
@@ -923,7 +937,8 @@ pub fn rts_weapons_ini(defs: &[WeaponDef], flashes: &BTreeMap<String, String>, h
                  DelayBetweenShots       = 0\n  ClipSize                = 1\n  ClipReloadTime          = 1500\n  AutoReloadsClip         = Yes\n"
             )
         } else {
-            let sound = if has_event(zhbo_core::sounds::MELEE_SWING) { zhbo_core::sounds::MELEE_SWING } else { "NONE" };
+            let swing = if d.melee_sound.is_empty() { zhbo_core::sounds::MELEE_SWING } else { d.melee_sound.as_str() };
+            let sound = if has_event(swing) { swing } else { "NONE" };
             format!(
                 "  PrimaryDamage           = 0.01\n  PrimaryDamageRadius     = 0.0\n  AttackRange             = {:.1}\n  \
                  DamageType              = MELEE\n  DeathType               = NORMAL\n  WeaponSpeed             = 999999.0\n  \
@@ -943,7 +958,7 @@ pub fn rts_weapons_ini(defs: &[WeaponDef], flashes: &BTreeMap<String, String>, h
 /// FX and sound tables, where a combo's entry is its base weapon's.
 pub fn converted_base(all: &[Weapon]) -> Vec<String> {
     let l = Loadout::default();
-    let mut ids = vec![l.primary, l.secondary, l.lethal, l.tactical, l.melee];
+    let mut ids = vec![l.primary, l.secondary, l.lethal, l.tactical, l.melee, zhbo_core::weapons::CLASS_MELEE.to_string()];
     // Every weapon's art, so any of them can be picked up, bought or swapped to; `=0` converts only
     // the loadout's (quicker while developing).
     if !std::env::var("ZHBO_CONVERT_ALL_WEAPONS").is_ok_and(|v| v == "0") {
@@ -1189,11 +1204,11 @@ mod tests {
     /// separate `_dw_mp` weapon), per such row's alt mode (`gl_an94_mp` under `an94_mp+gl`, its
     /// key the combination's), and per always-given melee weapon. So "ours" is the same three
     /// things as the converter builds them: [`all_legal_combos`], the alt defs [`add_variants`]
-    /// adds for them (`<alt>~<combo>`), and the loadout's melee. The variant's `_mp` suffix is
+    /// adds for them (`<alt>~<combo>`), and the melee weapons every class has (the held knife and the
+    /// class melee weapon `knife_mp`). The variant's `_mp` suffix is
     /// stripped so `an94_mp+reflex` compares to the conformance `an94+reflex`.
     /// This is a parity-gap detector, not a unit test: it lives in the conformance family's
-    /// red-by-design set (the blocking suite runs `--skip conformance`). Its known gap: BO2 gives
-    /// every class `knife_mp` beside `knife_held_mp`; the mod's melee is the held knife only.
+    /// red-by-design set (the blocking suite runs `--skip conformance`).
     #[test]
     #[ignore = "reads this machine's Black Ops II install"]
     fn conformance_the_enumerator_matches_the_expected_rows() {
@@ -1229,6 +1244,7 @@ mod tests {
             }
         }
         ours.insert(strip(&Loadout::default().melee));
+        ours.insert(strip(zhbo_core::weapons::CLASS_MELEE));
         let expected = zhbo_conformance::bo2::expected(&dir).unwrap().0;
         let theirs: std::collections::BTreeSet<String> = expected
             .iter()
@@ -1308,6 +1324,22 @@ mod tests {
         for id in &full {
             assert!(converted.contains(id), "the full set must include the legal combo {id}");
         }
+    }
+
+    /// Each melee weapon swings with its own BO2 sound; the class melee weapon's (`knife_mp`) is the
+    /// global swing a gun's melee plays (`sounds::melee_for`).
+    #[test]
+    fn each_melee_weapon_gets_its_own_swing_and_the_class_melee_the_global_one() {
+        let knife = |name: &str, alias: &str| Weapon { name: name.into(), weap_type: bo2::kind::MELEE, melee_swipe_sound_player: Some(alias.into()), ..Default::default() };
+        let bo2 = [knife("knife_held_mp", "wpn_com_knife_whoosh_plr"), knife(zhbo_core::weapons::CLASS_MELEE, "wpn_melee_whoosh_plr")];
+        let mut defs: Vec<WeaponDef> = bo2.iter().map(|w| WeaponDef { id: w.name.clone(), class: class_of(w), ..Default::default() }).collect();
+        let ids: Vec<String> = defs.iter().map(|d| d.id.clone()).collect();
+        let (events, _) = sounds_and_fx(&bo2, &[], &mut defs, &ids);
+        let layers = |e: &str| events.iter().find(|x| x.event == e).map(|x| x.layers.clone());
+        assert_eq!(layers(&defs[0].melee_sound), Some(vec!["wpn_com_knife_whoosh_plr".to_string()]), "the held knife's own");
+        assert_eq!(layers(&defs[1].melee_sound), Some(vec!["wpn_melee_whoosh_plr".to_string()]), "the class melee weapon's own");
+        assert_eq!(layers(zhbo_core::sounds::MELEE_SWING), Some(vec!["wpn_melee_whoosh_plr".to_string()]), "the global swing");
+        assert!(bo2.iter().all(is_player_weapon), "both knives are converted");
     }
 
     #[test]
