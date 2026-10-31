@@ -420,7 +420,7 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             (d.reload_time, d.reload_empty_time, d.reload_add_time, d.reload_empty_add_time) = (v.num(0), v.num(1), v.num(2), v.num(3));
             Ok(())
         }),
-    field!("ReloadShells", "Shell-by-shell reload (tube shotguns): start, end, rounds per cycle.", FieldKind::Nums(3),
+    field!("ReloadShells", "Segmented reload (with `SegmentedReload`): start, end, rounds per cycle.", FieldKind::Nums(3),
         |d: &WeaponDef| format!("{} {} {}", d.reload_start_time, d.reload_end_time, d.reload_ammo_add),
         |d: &mut WeaponDef, v: Values| {
             v.need(3)?;
@@ -779,6 +779,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("WeapType", "BO2's weapon type: bullet, grenade, projectile, binoculars, gas, bomb, mine, melee, riotshield.", FieldKind::Enum,
         |d: &WeaponDef| d.traits.weap_type.name().into(),
         |d: &mut WeaponDef, v: Values| { d.traits.weap_type = WeapType::parse(v.text).ok_or("unknown weapon type")?; Ok(()) }),
+    field!("SegmentedReload", "The reload runs round by round (`bSegmentedReload`; see `ReloadShells`).", FieldKind::Num,
+        |d: &WeaponDef| (d.traits.segmented_reload as u8).to_string(),
+        |d: &mut WeaponDef, v: Values| { d.traits.segmented_reload = v.text_num()? != 0.0; Ok(()) }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -838,7 +841,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 96);
+        assert_eq!(WEAPON_FIELDS.len(), 97);
         assert_eq!(ATTACHMENT_FIELDS.len(), 25);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

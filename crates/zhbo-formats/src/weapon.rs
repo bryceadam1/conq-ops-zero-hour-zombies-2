@@ -187,6 +187,9 @@ pub struct AttachmentUnique {
     pub first_raise_time: f32,
     /// `iReloadAmmoAdd`: rounds per segmented-reload cycle (first differing wins, `FUN_008ed250`).
     pub reload_ammo_add: i32,
+    /// `bSegmentedReload`: the combination reloads round by round (any single unique's, OR the
+    /// def's, `FUN_008ebc70`).
+    pub segmented_reload: bool,
 }
 
 /// A BO2 attachment (`WeaponAttachment`): how it changes any weapon it goes on. Scales multiply the
@@ -450,6 +453,8 @@ pub struct Weapon {
     pub reload_end_time: f32,
     pub reload_start_add_time: f32,
     pub reload_ammo_add: i32,
+    /// `bSegmentedReload`: start, a cycle per `reload_ammo_add` rounds, end (tube shotguns).
+    pub segmented_reload: bool,
     pub raise_time: f32,
     pub first_raise_time: f32,
     pub drop_time: f32,
@@ -693,6 +698,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 ads_dof: (z.f32(u + WU::adsDofStart), z.f32(u + WU::adsDofEnd)),
                 first_raise_time: ms(z, u + WU::iFirstRaiseTime),
                 reload_ammo_add: int(z, u + WU::iReloadAmmoAdd),
+                segmented_reload: z.u8(u + WU::bSegmentedReload) != 0,
             });
         }
     }
@@ -793,6 +799,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.reload_end_time = ms(z, d + WD::iReloadEndTime);
     w.reload_start_add_time = ms(z, d + WD::iReloadStartAddTime);
     w.reload_ammo_add = int(z, d + WD::iReloadAmmoAdd);
+    w.segmented_reload = z.u8(d + WD::bSegmentedReload) != 0;
     w.raise_time = ms(z, d + WD::iRaiseTime);
     w.first_raise_time = ms(z, d + WD::iFirstRaiseTime);
     w.drop_time = ms(z, d + WD::iDropTime);

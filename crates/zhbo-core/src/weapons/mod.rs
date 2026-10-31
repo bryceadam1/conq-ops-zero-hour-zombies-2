@@ -304,6 +304,30 @@ mod tests {
         assert_eq!(length(WeapType::Projectile), (1.0, false));
     }
 
+    /// The reload is segmented by BO2's flag, not by its times: without `bSegmentedReload` a
+    /// weapon that authors start/end times and rounds per cycle reloads its whole magazine.
+    #[test]
+    fn segmented_reloads_follow_the_flag() {
+        let reload = |segmented: bool| {
+            let d = def(|d| {
+                d.clip = 4;
+                d.start_reserve = 8;
+                d.reload_start_time = 0.3;
+                d.reload_end_time = 0.3;
+                d.reload_ammo_add = 1;
+                d.traits.segmented_reload = segmented;
+            });
+            let mut a = arsenal_with(d);
+            a.weapons[0].ammo = 2;
+            let mut rng = Rng::new(2);
+            let mut out = Vec::new();
+            a.step(0, buttons::RELOAD, false, 0, 0.0, &mut rng, &mut out);
+            a.current().reload
+        };
+        assert!(matches!(reload(true), Some(Reload::Shells { .. })));
+        assert!(matches!(reload(false), Some(Reload::Magazine { .. })));
+    }
+
     /// A swap puts an empty-clipped weapon away over its `iEmptyDropTime` and raises an empty one
     /// over its `iEmptyRaiseTime`, even on its first raise (`FUN_008db500`, `FUN_008df320`).
     #[test]
@@ -371,6 +395,7 @@ mod tests {
             d.reload_start_time = 0.3;
             d.reload_end_time = 0.3;
             d.reload_ammo_add = 1;
+            d.traits.segmented_reload = true;
         });
         let mut a = arsenal_with(d);
         let mut rng = Rng::new(4);

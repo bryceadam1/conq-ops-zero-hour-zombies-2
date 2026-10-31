@@ -148,7 +148,8 @@ pub struct WeaponDef {
     /// BO2's `iReloadEmptyAddTime`, raw: when an empty reload's rounds go in; 0 means at
     /// `reload_add_time` (`FUN_008dbc00`/`FUN_008dec90`). No attachment scales it.
     pub reload_empty_add_time: f32,
-    /// Shell-by-shell reloads (tube shotguns): start, rounds per `reload_time` cycle, end.
+    /// Segmented reloads (tube shotguns, `Traits::segmented_reload`): start, rounds per
+    /// `reload_time` cycle, end.
     pub reload_start_time: f32,
     pub reload_end_time: f32,
     pub reload_ammo_add: u16,
@@ -545,8 +546,9 @@ impl WeaponDef {
         if self.reload_empty_add_time > 0.0 { self.reload_empty_add_time } else { self.reload_add_time }
     }
 
+    /// BO2's segmented reload (`bSegmentedReload`): start, rounds per cycle, end.
     pub fn shell_by_shell(&self) -> bool {
-        self.reload_start_time > 0.0 && self.reload_ammo_add > 0
+        self.traits.segmented_reload
     }
 
     pub fn has_anim(&self, slot: usize) -> bool {

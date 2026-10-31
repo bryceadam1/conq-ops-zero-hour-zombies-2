@@ -4630,3 +4630,14 @@ weapon table gained `EmptySwitch`; old tables still parse, taking the default 0.
 (bullet). `Traits.weap_type` (`WeapType`, table line `WeapType = bullet`; default bullet) carries
 it and `WeaponDef::empty_reload(ammo)` is the one test (sim and the sim conformance harness). A
 launcher at clip 0 now reloads over its plain reload time and add point.
+
+### Follow-up: segmented reloads run on `bSegmentedReload`
+
+The sim decided "shell by shell" from `reload_start_time > 0 && reload_ammo_add > 0`, and the
+converter zeroed the start/end times of every other weapon to keep that heuristic true. BO2's
+gate is the flag (`FUN_008ebc70`: `WeaponDef.bSegmentedReload`, or any single unique's unless the
+variant has `bIgnoreAttachments`). The parser reads both flags; `Traits.segmented_reload` (table
+line `SegmentedReload`) carries it, `apply_unique_fields` ORs the combination's uniques, and
+`WeaponDef::shell_by_shell` reads it. Start/end times are now carried raw. In the install only the
+870 MCS, KSG and Executioner set it; every launcher (SMAW, RPG, FHJ, the `gl_*` alts) is a
+magazine reload in BO2 too, so their reload is unchanged.

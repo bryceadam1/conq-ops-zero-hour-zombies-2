@@ -412,9 +412,8 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
             None => b.absent(c),
         };
     }
-    // The mod's shell-by-shell reload is BO2's segmented reload: rounds per cycle with a start
-    // and an end (the converter's `shells`).
-    b.int("reload_ammo_add", d.reload_ammo_add as i64).int("reload_start_add", t.reload_start_add as i64).bool("segmented_reload", d.reload_ammo_add > 0 && d.reload_start_time > 0.0);
+    // The sim's shell-by-shell reload runs on the carried `bSegmentedReload`.
+    b.int("reload_ammo_add", d.reload_ammo_add as i64).int("reload_start_add", t.reload_start_add as i64).bool("segmented_reload", d.traits.segmented_reload);
 
     // Ammo. Start: what a spawn gives, the loaded magazine included (a gun's magazine plus its
     // spare rounds; an offhand's reserve is its count, the converter's `to_def`). Max: the spare

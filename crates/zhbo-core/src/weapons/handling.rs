@@ -208,4 +208,8 @@ pub struct Traits {
     pub offhand: OffhandClass,
     /// `weapType`: only a bullet weapon plays the empty reload (`FUN_008dec90`).
     pub weap_type: WeapType,
+    /// `bSegmentedReload` (the def's, or any of the combination's single uniques' unless the
+    /// variant ignores attachments, `FUN_008ebc70`): the reload runs start, a cycle per
+    /// `reload_ammo_add` rounds, end.
+    pub segmented_reload: bool,
 }
