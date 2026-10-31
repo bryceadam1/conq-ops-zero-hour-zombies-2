@@ -7,10 +7,12 @@
 //! (`classui::pick_frame`/`editor_frame`) and draws through `classui::draw_screen`.
 //!
 //! The behavior is BO2's lobby create-a-class: Enter/click on a row opens the editor on that slot
-//! (an existing custom, a preset as a template, or a fresh draft); the editor's Save writes back
-//! into THAT slot of THAT class set, and the list's `S Class Set Options` / `O Class Options`
+//! (an existing custom, a preset as a template, or a fresh draft); backing out of the editor saves
+//! it into THAT slot of THAT class set (BO2 has no save step), and the list's `S Class Set Options`
+//! / `O Class Options`
 //! dialogs (`classui::Dialog`) rename/reset the set and rename/copy/reset/clear the class through
-//! the `save_profile` one-shot. `A`/`D` (BO2's shoulders) walk the ten class sets, making the
+//! the `save_profile` one-shot. A class is renamed only there, as in BO2
+//! (`cacclassoptions.lua:183-192`): the editor has no name field. `A`/`D` (BO2's shoulders) walk the ten class sets, making the
 //! shown one the active set a match will load (`cacchooseclass.lua`'s `SetActiveClassSet`), and
 //! every edit lands in the set being browsed. There is no *pick* in the shell — no match is
 //! running — and Escape/Back closes the screen (Escape backs out of a dialog or the editor first).
@@ -91,6 +93,9 @@ pub struct MenuState {
     /// CREATE A CLASS: the class goes into the set's first free slot).
     editor_set: usize,
     editor_slot: Option<usize>,
+    /// The draft the editor opened on: backing out of an untouched editor writes nothing (so an
+    /// empty slot opened and left stays empty).
+    editor_start: Draft,
     /// The open `S`/`O` dialog, its target class slot (the class dialog's), and the set it acts on.
     dialog: Option<Dialog>,
     dialog_slot: Option<usize>,
@@ -132,6 +137,7 @@ impl MenuState {
             personalize: None,
             editor_set: 0,
             editor_slot: None,
+            editor_start: Draft::default(),
             dialog: None,
             dialog_slot: None,
             dialog_set: 0,
@@ -220,6 +226,7 @@ impl MenuState {
 
     /// Open the editor on `draft`, saving back into the set's `slot` (`None`: a new class).
     fn open_editor(&mut self, draft: Draft, slot: Option<usize>) {
+        self.editor_start = draft.clone();
         self.editor = Some(Editor::new(draft));
         self.editor_set = crate::profile::active_set();
         self.editor_slot = slot;
@@ -497,9 +504,10 @@ impl MenuState {
         }
     }
 
-    /// The editor's frame: Save persists into the slot (and set) the editor was opened on and
-    /// returns to the list (no pick — no match is running); a full set refuses the save and keeps
-    /// the editor open; Cancel returns without saving.
+    /// The editor's frame. Backing out (`Outcome::Save`) persists the draft into the slot (and set)
+    /// the editor was opened on and returns to the list (no pick — no match is running); an
+    /// untouched draft writes nothing. `Cancel` (an over-budget draft) returns without saving.
+    /// Either way the player leaves: a refused write plays the deny cue but never traps him.
     fn editor_frame(&mut self, mut editor: Editor, pointer: &MenuPointer, out: &mut MenuOut) {
         let was_picking = editor.picking;
         let frame = classui::editor_frame(&mut editor, pointer, &self.prev);
@@ -517,6 +525,11 @@ impl MenuState {
             self.menu_open = Some(self.clock);
         }
         match frame.outcome {
+            Outcome::Save if editor.draft == self.editor_start => {
+                // Nothing changed: a plain back-out (an empty slot opened and left stays empty).
+                self.cues.push(cues::BACKOUT);
+                self.menu_open = Some(self.clock);
+            }
             Outcome::Save => {
                 let class = editor.draft.to_custom();
                 let set = self.editor_set;
@@ -526,7 +539,9 @@ impl MenuState {
                 match crate::profile::save_in_set(set, slot, class) {
                     Some(text) => {
                         write_profile(out, classui::SAVE_PROFILE_CLASS, &text);
-                        self.cues.push(cues::SAVE);
+                        // BO2's back-out plays the editor's `setBackOutSFX("cac_cmn_backout")`
+                        // (`caceditclass.lua:37-38`); the save itself is silent.
+                        self.cues.push(cues::BACKOUT);
                         // Back to the list with the saved slot highlighted. The choose-class menu
                         // opens afresh here (BO2 closed it when the editor opened), so its
                         // entrance fade runs again.
@@ -537,10 +552,12 @@ impl MenuState {
                         self.menu_open = Some(self.clock);
                     }
                     None => {
-                        // No free slot: BO2 cannot create a sixth class in a set. Surface it and
-                        // keep the editor up rather than losing the draft.
+                        // No free slot (BO2 cannot create a sixth class in a set; the lobby list
+                        // offers no empty row then, so this is defensive). Back-out is the only
+                        // way out of the editor, so it still leaves, with the deny cue.
                         self.deny();
-                        self.editor = Some(editor);
+                        self.cues.push(cues::BACKOUT);
+                        self.menu_open = Some(self.clock);
                     }
                 }
             }
@@ -609,18 +626,11 @@ mod tests {
         out
     }
 
-    /// Walk to the Save row and confirm it (the editor must be open). SAVE sits in the right
-    /// column's Up/Down cycle (`classmenu::nav`), so a walk that has lapped the left column once
-    /// crosses over with Right.
-    fn save_open_editor(menu: &mut MenuState, inp: &mut MenuIn) -> MenuOut {
-        for i in 0..32 {
-            if menu.editor.as_ref().expect("editor open").slot == crate::classmenu::Slot::Save {
-                break;
-            }
-            press(menu, inp, if i == 12 { Key::Right } else { Key::Down });
-        }
-        assert_eq!(menu.editor.as_ref().expect("editor open").slot, crate::classmenu::Slot::Save, "the walk reaches SAVE");
-        press(menu, inp, Key::Enter)
+    /// Back out of the open editor's grid: BO2's back-out keeps the class, so this is the save.
+    fn back_out_of_editor(menu: &mut MenuState, inp: &mut MenuIn) -> MenuOut {
+        let editor = menu.editor.as_ref().expect("editor open");
+        assert!(!editor.picking, "back out from the grid, not from a picker");
+        press(menu, inp, Key::Escape)
     }
 
     #[test]
@@ -771,8 +781,8 @@ mod tests {
         assert!(menu.view().personalize.is_none(), "the personalize screen closed");
         let editor = menu.editor.as_ref().expect("the editor is still open");
         assert_eq!(editor.draft.knife, "None");
-        // The editor's Save writes the class, choice and all, to the profile.
-        let out = save_open_editor(&mut menu, &mut inp);
+        // Backing out of the editor writes the class, choice and all, to the profile.
+        let out = back_out_of_editor(&mut menu, &mut inp);
         assert_eq!(out.save_profile, classui::SAVE_PROFILE_CLASS, "the class was written");
         assert_eq!(crate::profile::classes()[0].knife, "None");
         crate::profile::reset();
@@ -804,7 +814,7 @@ mod tests {
         // along it (Down only leaves a row that has another one below).
         press(&mut menu, &mut inp, Key::Right);
         press(&mut menu, &mut inp, Key::Enter); // choose it
-        let out = save_open_editor(&mut menu, &mut inp);
+        let out = back_out_of_editor(&mut menu, &mut inp);
         assert!(menu.editor.is_none(), "saving closes the editor");
 
         // The one-shot carries the whole profile file's text; the profile kept the class.
@@ -1017,7 +1027,7 @@ mod tests {
         // another is below).
         press(&mut menu, &mut inp, Key::Right);
         press(&mut menu, &mut inp, Key::Enter);
-        let out = save_open_editor(&mut menu, &mut inp);
+        let out = back_out_of_editor(&mut menu, &mut inp);
         assert_eq!(out.save_profile, classui::SAVE_PROFILE_CLASS);
         let classes = crate::profile::classes();
         assert_eq!(classes.len(), 2, "the edit replaced B, it did not append");
@@ -1029,7 +1039,26 @@ mod tests {
     }
 
     #[test]
-    fn a_sixth_class_is_refused_and_the_editor_stays_open() {
+    fn backing_out_of_an_untouched_editor_writes_nothing() {
+        let _g = lock();
+        crate::profile::reset();
+        let mut menu = MenuState::new();
+        let mut inp = MenuIn::default();
+        menu.frame(&inp);
+        // An untouched slot opened and left stays untouched: no class appears, nothing is written.
+        assert_eq!(classui::pick_rows(true)[menu.highlight], PickRow::Empty(0));
+        press(&mut menu, &mut inp, Key::Enter);
+        assert!(menu.editor.is_some());
+        let out = back_out_of_editor(&mut menu, &mut inp);
+        assert!(menu.editor.is_none(), "Escape leaves the editor");
+        assert_eq!(out.save_profile, 0, "nothing was written");
+        assert!(crate::profile::classes().is_empty());
+        assert!(menu.cues.contains(&cues::BACKOUT), "BO2's cac_cmn_backout");
+        crate::profile::reset();
+    }
+
+    #[test]
+    fn a_sixth_class_is_refused_and_the_back_out_still_leaves() {
         let _g = lock();
         crate::profile::reset();
         for i in 0..crate::profile::MAX_CLASSES - 1 {
@@ -1043,11 +1072,13 @@ mod tests {
         assert_eq!(classui::pick_rows(true)[menu.highlight], PickRow::Empty(crate::profile::MAX_CLASSES - 1));
         press(&mut menu, &mut inp, Key::Enter);
         assert!(menu.editor.is_some());
+        // An edit (R clears the highlighted PRIMARY), so the back-out has something to save.
+        press(&mut menu, &mut inp, Key::R);
         // The set fills while the draft is open (the bridge writes the profile from elsewhere).
         crate::profile::save(custom("Filler last", "mp7_mp"));
-        let out = save_open_editor(&mut menu, &mut inp);
+        let out = back_out_of_editor(&mut menu, &mut inp);
         assert_eq!(out.save_profile, 0, "nothing was written");
-        assert!(menu.editor.is_some(), "the draft survives: the editor stays up");
+        assert!(menu.editor.is_none(), "back-out is the editor's only exit: it still leaves");
         assert_eq!(crate::profile::classes().len(), crate::profile::MAX_CLASSES);
         assert!(menu.cues.contains(&cues::DENY), "the denied save is surfaced");
         crate::profile::reset();

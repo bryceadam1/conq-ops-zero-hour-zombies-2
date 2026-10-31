@@ -72,11 +72,12 @@ verify it by hand after touching the menu ABI, the shell window, or the shared c
 3. Browse with the mouse (hover highlights, the wheel scrolls) and the arrows: the list is the
    active set's five custom slots (`cacchooseclass.lua`) — **Enter/click on a filled row** opens
    the editor on that class; on an untouched **`Custom n`** row opens a fresh draft. **Escape** in
-   the editor returns to the list. **`A`/`D`** page the class sets (BO2's shoulder buttons), as do
+   the editor returns to the list and keeps the edits (BO2 has no save step); the editor has no
+   name field or SAVE row. **`A`/`D`** page the class sets (BO2's shoulder buttons), as do
    clicks on the `‹`/`›` arrows and on a pip; **Left/Right do nothing** on the list.
    Navigation parity (BO2's LUI links, `classmenu/nav.rs`), check by hand:
    - Editor grid: Up/Down walk a column and wrap through the bonus-card row (left column via
-     cards 1-2 and the name heading, right column via card 3 and SAVE CLASS); Left/Right jump
+     cards 1-2, right column via card 3); Left/Right jump
      between PRIMARY↔PERK 1/2, PRIMARY ATTS↔PERK 3, SECONDARY↔LETHAL, SECONDARY ATTS↔TACTICAL; going
      PERK 2 → Left → Right returns to PERK 2; the three cards are separate highlights walked with
      Left/Right (no wrap); the wheel moves like Up/Down; hovering a box highlights it.
@@ -91,8 +92,10 @@ verify it by hand after touching the menu ABI, the shell window, or the shared c
      by clicking a tab; the panel under the grid shows the focused camo's name, the gun's picture
      and the `Equipped` box. Equip a camo: the editor's PRIMARY button and the class list's preview
      show its swatch in the corner; the reticle page has the same RETICLES/DLC tabs.
-4. Edit something, walk to **SAVE CLASS**, confirm: `ConquerOps.profile` (in the game's user-data
-   directory) is rewritten with the new class, and the list shows it highlighted.
+4. Edit something and press **Escape**: `ConquerOps.profile` (in the game's user-data directory) is
+   rewritten with the new class, and the list shows it highlighted. Opening an untouched slot and
+   backing out writes nothing (the slot stays `Custom n`). Rename a class with **O** → RENAME (the
+   only rename): type, Enter, and the list and profile show the new name.
 5. On a custom row: **C** copies it (`NAME COPY` appears), **Backspace** deletes it — both rewrite
    the profile file.
 6. **Escape** on the list closes back to the skirmish lobby (and the lobby's Escape works again).

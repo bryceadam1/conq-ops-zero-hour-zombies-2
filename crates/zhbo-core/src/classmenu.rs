@@ -35,7 +35,8 @@ pub use nav::{Dir, Focus};
 /// The Pick-10 budget: ten points per class, exactly BO2's.
 pub const PICK_10: i32 = 10;
 
-/// The longest class name the editor's name field accepts (BO2's field is a short one line).
+/// The longest class name the class-options rename field accepts (BO2's keyboard field is a short
+/// one line).
 pub const NAME_MAX: usize = 24;
 
 /// The eight BO2 wildcards. Each costs a point and unlocks one extra element (another point).
@@ -135,8 +136,6 @@ pub const SECONDARY_CLASSES: [WeaponClass; 2] = [WeaponClass::Pistol, WeaponClas
 /// One editable slot of the class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slot {
-    /// BO2's "Class Name" row at the top: Enter starts text entry on it.
-    Name,
     Primary,
     PrimaryAtts,
     Secondary,
@@ -153,18 +152,16 @@ pub enum Slot {
     Perk2b,
     Perk3b,
     Wildcards,
-    /// BO2's final row: confirming it saves the class and leaves the editor. It has no option list.
-    Save,
 }
 
 impl Slot {
     /// Every slot, in BO2's create-a-class order (the draw and hit-test order; the arrows follow the
-    /// grid's links, `nav.rs`, not this order). `Save` is the mod's row below the elements. The
-    /// second perk rows
+    /// grid's links, `nav.rs`, not this order). The editor has no name or save row: BO2 renames a
+    /// class from its options dialog (`cacclassoptions.lua:183-192`) and backing out keeps the
+    /// edits (`caceditclass.lua:642-653`). The second perk rows
     /// ([`Slot::Perk1b`] and its siblings) are *not* here: they only exist while their Greed wildcard
     /// is on, so the editor's [`Editor::slots`] inserts them into a copy of this list.
-    pub const ALL: [Slot; 12] = [
-        Slot::Name,
+    pub const ALL: [Slot; 10] = [
         Slot::Primary,
         Slot::PrimaryAtts,
         Slot::Secondary,
@@ -175,13 +172,11 @@ impl Slot {
         Slot::Perk2,
         Slot::Perk3,
         Slot::Wildcards,
-        Slot::Save,
     ];
 
     /// BO2's header for the slot. The second perk rows read as their tier's header.
     pub fn label(self) -> &'static str {
         match self {
-            Slot::Name => "CLASS NAME",
             Slot::Primary => "PRIMARY",
             Slot::PrimaryAtts => "ATTACHMENTS",
             Slot::Secondary => "SECONDARY",
@@ -194,7 +189,6 @@ impl Slot {
             // BO2 calls the items `bonuscard_*` internally but the screen is `MENU_WILDCARDS_CAPS`
             // (`menus/cacbonuscards.lua`), so the picker titles itself WILDCARDS.
             Slot::Wildcards => "WILDCARDS",
-            Slot::Save => "SAVE CLASS",
         }
     }
 
@@ -229,7 +223,7 @@ impl Slot {
             | Slot::Perk2b
             | Slot::Perk3b
             | Slot::Wildcards => Some(3),
-            Slot::Name | Slot::Primary | Slot::Secondary | Slot::Save => None,
+            Slot::Primary | Slot::Secondary => None,
         }
     }
 }
@@ -785,9 +779,6 @@ pub struct Editor {
     pub option: usize,
     /// Whether the slot's option list is open (picking) or the slot row is just highlighted.
     pub picking: bool,
-    /// Whether the class-name row has text entry (BO2's name field): printable keys edit the name
-    /// instead of moving the highlight, and Enter/Escape leave it.
-    pub naming: bool,
     /// One-shot: the last confirm was refused (over budget, or an attachment at its cap). The
     /// caller plays BO2's deny cue and clears this; the state itself stays pure.
     pub denied: bool,
@@ -845,7 +836,6 @@ impl Editor {
             carousel: Vec::new(),
             option: 0,
             picking: false,
-            naming: false,
             denied: false,
             personalize: None,
         }
@@ -911,7 +901,6 @@ impl Editor {
     /// The lists are rebuilt on demand so a weapon change re-derives the attachment list.
     pub fn options(&self) -> Vec<String> {
         match self.slot {
-            Slot::Name => Vec::new(),
             Slot::Primary => weapon_options(&PRIMARY_CLASSES),
             Slot::PrimaryAtts => attachment_options(&self.draft.primary, &self.draft.primary_atts),
             Slot::Secondary => weapon_options(&self.secondary_classes()),
@@ -922,7 +911,6 @@ impl Editor {
             Slot::Perk2 | Slot::Perk2b => perk_options(2),
             Slot::Perk3 | Slot::Perk3b => perk_options(3),
             Slot::Wildcards => Wildcard::ALL.iter().map(|w| w.name().to_string()).collect(),
-            Slot::Save => Vec::new(),
         }
     }
 
@@ -945,7 +933,6 @@ impl Editor {
     /// attachment option is chosen when the weapon carries its short.
     pub fn option_chosen(&self, i: usize) -> bool {
         match self.slot {
-            Slot::Name => false,
             Slot::Primary => gun_ids(&PRIMARY_CLASSES).get(i).is_some_and(|id| *id == self.draft.primary),
             Slot::Secondary => gun_ids(&self.secondary_classes()).get(i).is_some_and(|id| *id == self.draft.secondary),
             Slot::PrimaryAtts => {
@@ -964,7 +951,6 @@ impl Editor {
                 list.get(i).is_some_and(|p| self.draft.perks[idx] == Some(*p) || self.draft.extra_perks[idx] == Some(*p))
             }
             Slot::Wildcards => Wildcard::ALL.get(i).is_some_and(|w| self.draft.wildcards.contains(w)),
-            Slot::Save => false,
         }
     }
 
@@ -1028,7 +1014,6 @@ fn extra_perk_slot(tier: u8) -> Slot {
 /// screen reads exactly like the resulting class. Display names, not ids; `—` when a slot is empty.
 pub fn slot_value(d: &Draft, slot: Slot) -> String {
     match slot {
-        Slot::Name => if d.name.is_empty() { "—".into() } else { d.name.clone() },
         Slot::Primary => weapons::weapon(&d.primary).display_name.clone(),
         Slot::Secondary => weapons::weapon(&d.secondary).display_name.clone(),
         Slot::PrimaryAtts => att_names(&d.primary_atts),
@@ -1050,7 +1035,6 @@ pub fn slot_value(d: &Draft, slot: Slot) -> String {
                 d.wildcards.iter().map(|w| w.name()).collect::<Vec<_>>().join(", ")
             }
         }
-        Slot::Save => String::new(),
     }
 }
 
@@ -1111,9 +1095,7 @@ fn perk_options(tier: u8) -> Vec<String> {
 }
 
 /// A key edge this frame (fresh press): the editor's input is edge-driven like the pick screen.
-/// `typed` is the fresh presses of the printable keys (A-Z, 0-9 and Space), in `Key::ALL` order, so
-/// the name row can append them; it is empty outside text entry.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Edges {
     pub up: bool,
     pub down: bool,
@@ -1121,21 +1103,18 @@ pub struct Edges {
     pub right: bool,
     pub confirm: bool,
     pub cancel: bool,
-    pub backspace: bool,
     /// Tab on the class row: BO2's `knifePersonalization` prompt (`caceditclass.lua:52-63`).
     pub personalize: bool,
     /// `C` on the primary weapon row: BO2's `AddCamoButton` (`caceditclass.lua:748`).
     pub camo: bool,
     /// `V` on the primary optic row: BO2's `AddReticleButton` (`caceditclass.lua:825`).
     pub reticle: bool,
-    pub typed: Vec<Key>,
 }
 
 impl Edges {
     /// The edges in `now` that were not in `prev`.
     pub fn between(prev: &crate::input::KeySet, now: &crate::input::KeySet) -> Edges {
         let edge = |k: Key| now.is_down(k) && !prev.is_down(k);
-        let typed = Key::ALL.iter().copied().filter(|k| is_typable(*k) && edge(*k)).collect();
         Edges {
             up: edge(Key::Up),
             down: edge(Key::Down),
@@ -1143,62 +1122,10 @@ impl Edges {
             right: edge(Key::Right),
             confirm: edge(Key::Enter),
             cancel: edge(Key::Escape),
-            backspace: edge(Key::Backspace),
             personalize: edge(Key::Tab),
             camo: edge(Key::C),
             reticle: edge(Key::V),
-            typed,
         }
-    }
-}
-
-/// Whether a key types a character into the class-name field: A-Z, 0-9 and Space. `char_of` gives it.
-fn is_typable(k: Key) -> bool {
-    char_of(k).is_some()
-}
-
-/// The character a key types into the name field. BO2's class names are uppercase letters, digits
-/// and the space: A-Z as uppercase letters, 0-9, and Space.
-fn char_of(k: Key) -> Option<char> {
-    match k {
-        Key::Key0 => Some('0'),
-        Key::Key1 => Some('1'),
-        Key::Key2 => Some('2'),
-        Key::Key3 => Some('3'),
-        Key::Key4 => Some('4'),
-        Key::Key5 => Some('5'),
-        Key::Key6 => Some('6'),
-        Key::Key7 => Some('7'),
-        Key::Key8 => Some('8'),
-        Key::Key9 => Some('9'),
-        Key::A => Some('A'),
-        Key::B => Some('B'),
-        Key::C => Some('C'),
-        Key::D => Some('D'),
-        Key::E => Some('E'),
-        Key::F => Some('F'),
-        Key::G => Some('G'),
-        Key::H => Some('H'),
-        Key::I => Some('I'),
-        Key::J => Some('J'),
-        Key::K => Some('K'),
-        Key::L => Some('L'),
-        Key::M => Some('M'),
-        Key::N => Some('N'),
-        Key::O => Some('O'),
-        Key::P => Some('P'),
-        Key::Q => Some('Q'),
-        Key::R => Some('R'),
-        Key::S => Some('S'),
-        Key::T => Some('T'),
-        Key::U => Some('U'),
-        Key::V => Some('V'),
-        Key::W => Some('W'),
-        Key::X => Some('X'),
-        Key::Y => Some('Y'),
-        Key::Z => Some('Z'),
-        Key::Space => Some(' '),
-        _ => None,
     }
 }
 
@@ -1207,9 +1134,14 @@ fn char_of(k: Key) -> Option<char> {
 pub enum Outcome {
     /// The editor stays open; the caller keeps drawing it.
     Continue,
-    /// The player confirmed a valid class: the caller saves it to the profile and closes.
+    /// The player backed out of the grid with a valid class: the caller saves it to the profile
+    /// and closes. BO2 has no save step: every pick is written into the class as it is made
+    /// (`Engine.SetClassItem`, `caceditclass.lua:472-548`) and `CACEditClass.Back` only closes
+    /// (`:642-653`), so backing out keeps the edits.
     Save,
-    /// The player cancelled: the caller closes without saving.
+    /// The editor closes without saving: a draft over the budget (one loaded that way, since every
+    /// pick that would break it is refused) backs out with the deny cue and the stored class
+    /// untouched.
     Cancel,
 }
 
@@ -1219,9 +1151,6 @@ impl Editor {
     pub fn step(&mut self, edges: Edges) -> Outcome {
         self.denied = false;
         self.personalize = None;
-        if self.naming {
-            return self.step_naming(edges);
-        }
         if self.picking {
             return self.step_picking(edges);
         }
@@ -1251,27 +1180,26 @@ impl Editor {
             return self.confirm();
         }
         if edges.cancel {
-            return Outcome::Cancel;
+            return self.back_out();
         }
         Outcome::Continue
     }
 
-    /// Confirm the highlighted row, the shared body of Enter and a click on a row: Save leaves the
-    /// editor (only when the draft fits the budget), the name row starts text entry, everything else
-    /// opens its option list on the current choice.
-    fn confirm(&mut self) -> Outcome {
-        if self.slot == Slot::Save {
-            // BO2 refuses an over-budget save; surface it rather than closing silently.
-            if self.draft.valid() {
-                return Outcome::Save;
-            }
+    /// Escape on the grid: BO2's back-out keeps the class (see [`Outcome::Save`]). Only a draft
+    /// that breaks the budget cannot be kept; it closes unsaved with the deny cue rather than
+    /// trapping the player in the editor.
+    fn back_out(&mut self) -> Outcome {
+        if self.draft.valid() {
+            Outcome::Save
+        } else {
             self.denied = true;
-            return Outcome::Continue;
+            Outcome::Cancel
         }
-        if self.slot == Slot::Name {
-            self.naming = true;
-            return Outcome::Continue;
-        }
+    }
+
+    /// Confirm the highlighted box, the shared body of Enter and a click on it: open its option list
+    /// on the current choice.
+    fn confirm(&mut self) -> Outcome {
         self.picking = true;
         self.option = self.current_option_index();
         self.carousel.clear();
@@ -1284,13 +1212,6 @@ impl Editor {
     /// resting somewhere; a click always acts on the row under the cursor.
     pub fn step_pointer(&mut self, pointer: PointerEvent) -> Outcome {
         self.denied = false;
-        if self.naming {
-            // Clicking away leaves the name field; it never cancels the editor.
-            if pointer.click {
-                self.naming = false;
-            }
-            return Outcome::Continue;
-        }
         if self.picking {
             let n = self.options().len();
             // The wheel is LUI's Up/Down (t6mp `FUN_009376a0`): a grid row per notch.
@@ -1352,25 +1273,6 @@ impl Editor {
         }
     }
 
-    /// The name row has text entry: printable keys append, Backspace deletes, Enter/Escape leave
-    /// the field (the text stays either way; Escape does not cancel the whole editor while naming).
-    fn step_naming(&mut self, edges: Edges) -> Outcome {
-        for key in &edges.typed {
-            if let Some(c) = char_of(*key) {
-                if self.draft.name.chars().count() < NAME_MAX {
-                    self.draft.name.push(c);
-                }
-            }
-        }
-        if edges.backspace {
-            self.draft.name.pop();
-        }
-        if edges.confirm || edges.cancel {
-            self.naming = false;
-        }
-        Outcome::Continue
-    }
-
     /// The option list is open: the arrows move, Enter picks, Escape closes the list (one step
     /// back). A content grid is two-dimensional (`Slot::option_columns`, `contentgrid.lua`): Left/
     /// Right walk the row and wrap at its ends, Up/Down walk the column and wrap at the first/last
@@ -1428,7 +1330,6 @@ impl Editor {
     /// The index in the option list of the slot's current value (so the list opens on it).
     fn current_option_index(&self) -> usize {
         match self.slot {
-            Slot::Name => 0,
             Slot::Primary => weapon_index(&PRIMARY_CLASSES, &self.draft.primary),
             Slot::Secondary => weapon_index(&self.secondary_classes(), &self.draft.secondary),
             Slot::PrimaryAtts | Slot::SecondaryAtts => 0,
@@ -1438,7 +1339,6 @@ impl Editor {
             Slot::Perk2 | Slot::Perk2b => perk_index(2, self.perk_held(2)),
             Slot::Perk3 | Slot::Perk3b => perk_index(3, self.perk_held(3)),
             Slot::Wildcards => 0,
-            Slot::Save => 0,
         }
     }
 
@@ -1477,7 +1377,6 @@ impl Editor {
     /// attachment picks toggle; perk picks set the tier row; wildcard picks toggle.
     fn apply_option(&mut self, i: usize) -> bool {
         match self.slot {
-            Slot::Name => {}
             Slot::Primary => {
                 let ids = gun_ids(&PRIMARY_CLASSES);
                 if let Some(id) = ids.get(i).copied() {
@@ -1536,7 +1435,6 @@ impl Editor {
                     }
                 }
             }
-            Slot::Save => {}
         }
         true
     }

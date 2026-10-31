@@ -6,13 +6,6 @@ use super::*;
 /// single-value slot. False when the box was already empty.
 pub fn clear_cell(d: &mut Draft, slot: Slot, index: usize) -> bool {
     match slot {
-        Slot::Name => {
-            if d.name.is_empty() {
-                return false;
-            }
-            d.name.clear();
-            true
-        }
         Slot::Primary => {
             if d.primary.is_empty() {
                 return false;
@@ -83,7 +76,6 @@ pub fn clear_cell(d: &mut Draft, slot: Slot, index: usize) -> bool {
             }
             true
         }
-        Slot::Save => false,
     }
 }
 

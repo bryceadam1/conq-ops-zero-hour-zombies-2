@@ -272,8 +272,9 @@ fn a_menu_fades_in_over_the_luas_250ms() {
     assert_eq!(draw(Some(MENU_OPEN_MS / 1000.0), None), landed, "the landed fade is the static draw");
     // The editor is a menu too, and its picker is a submenu: both fade in the same way.
     let e = Editor::new(Draft::default());
-    assert_eq!(alpha(&draw(Some(0.0), Some(&e)), "SAVE CLASS"), Some(0));
-    assert_eq!(alpha(&draw(None, Some(&e)), "SAVE CLASS"), Some(255));
+    // The PRIMARY label is a dimmed slot label: it lands at its own alpha, not full.
+    assert_eq!(alpha(&draw(Some(0.0), Some(&e)), "PRIMARY"), Some(0));
+    assert!(alpha(&draw(None, Some(&e)), "PRIMARY").is_some_and(|a| a > 0), "the editor lands visible");
     let mut picker = Editor::new(Draft::default());
     picker.slot = Slot::Perk2;
     picker.picking = true;
@@ -712,9 +713,9 @@ fn the_editor_plays_the_luas_cue_at_each_call_site() {
     // second cue plays, as BO2's handlers pick denySFX *instead of* the action sound.
     let mut e = Editor::new(Draft { wildcards: vec![Wildcard::Tactician, Wildcard::Overkill], ..Draft::default() });
     let mut prev = MenuPrev::default();
-    e.slot = Slot::Save;
-    let frame = press(&mut e, &mut prev, &[Key::Enter]);
+    let frame = press(&mut e, &mut prev, &[Key::Escape]);
     assert!(frame.denied, "eleven points will not save");
+    assert_eq!(frame.outcome, crate::classmenu::Outcome::Cancel, "the back-out leaves unsaved");
     assert_eq!(frame.cue, None, "the deny is the only sound");
 }
 

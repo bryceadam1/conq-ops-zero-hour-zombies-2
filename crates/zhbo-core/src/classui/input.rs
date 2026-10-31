@@ -13,7 +13,8 @@ pub(super) const PICK_KEYS: [Key; 10] = [
 pub(super) const MOUSE_MOVED: f32 = 0.5;
 
 /// `save_profile`'s reasons on both hosts' one-shots (`client::ClientOut`, `menu::MenuOut`): the
-/// editor's Save (the autotest's "saved to the profile" case) and the shell's set/class options.
+/// editor's back-out save (the autotest's "saved to the profile" case) and the shell's set/class
+/// options.
 /// Both carry the whole profile file's text (`profile::pack_text`).
 pub const SAVE_PROFILE_CLASS: i32 = 1;
 pub const SAVE_PROFILE_EDIT: i32 = 2;
@@ -271,7 +272,7 @@ pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> 
     // bounce), Up/Down — and so the wheel, LUI's Up/Down — step the category and wrap
     // (`ScrollList`, `:723-772`). The fold consumes those edges here, before the pure editor sees
     // them, so the highlighted option always stays inside the drawn category.
-    let cats = if editor.picking && !editor.naming { weapon_categories(editor) } else { Vec::new() };
+    let cats = if editor.picking { weapon_categories(editor) } else { Vec::new() };
     // The carousel's moves carry its own cue (`cardcarousellist.lua`): sideways is the LR slide,
     // up and down their own (`cac_slide_nav_*`), while the grids all share `cac_grid_nav`.
     let mut slide: Option<&'static str> = None;
@@ -301,7 +302,7 @@ pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> 
     // The box's circled X (mouse) and `R` (keyboard) clear the highlighted box, BO2's `R Remove`:
     // on the card row that is the highlighted card alone (each card is its own button).
     let mut removed = false;
-    if !editor.picking && !editor.naming {
+    if !editor.picking {
         if let Some((slot, index)) = editor_remove_at(&layout, &cells, editor, inp.mouse_x, inp.mouse_y).filter(|_| clicked) {
             removed = clear_cell(&mut editor.draft, slot, index);
         } else if prev.edge(inp, Key::R) {
@@ -359,11 +360,9 @@ pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> 
     let before_card = editor.card;
     let before_option = editor.option;
     let before_picking = editor.picking;
-    let before_naming = editor.naming;
     let before_draft = editor.draft.clone();
-    // Hover moves the highlight only on a real move; a click/wheel is always an action. While the
-    // name field has text entry, keys win unless the frame also clicked (to leave the field).
-    let hover = moved && !editor.naming && (pointer.slot.is_some() || pointer.option.is_some());
+    // Hover moves the highlight only on a real move; a click/wheel is always an action.
+    let hover = moved && (pointer.slot.is_some() || pointer.option.is_some());
     let has_pointer = pointer.is_action() || hover;
     let outcome = if has_pointer { editor.step_pointer(pointer) } else { editor.step(edges) };
     let denied = editor.denied;
@@ -393,10 +392,6 @@ pub fn editor_frame(editor: &mut Editor, inp: &MenuPointer, prev: &MenuPrev) -> 
                     } else {
                         Some(cues::BACKOUT)
                     }
-                } else if editor.naming != before_naming {
-                    // BO2's text field is a grid button too: opening or committing it is its action,
-                    // backing out of it the menu's back-out.
-                    Some(if editor.naming || chose { cues::GRID_EQUIP } else { cues::BACKOUT })
                 } else if slide.is_some() || editor.option != before_option {
                     // The carousel's moves are folded before the snapshot, so `slide` (not the option
                     // delta) is what tells this frame apart.

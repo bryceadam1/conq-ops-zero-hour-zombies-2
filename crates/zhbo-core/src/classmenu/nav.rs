@@ -203,14 +203,6 @@ impl Nav {
                 }
             }
         }
-        // The class-name heading above PRIMARY; SAVE CLASS under the third card (above PERK 1 in
-        // the right column's cycle).
-        if has(&Focus::slot(Slot::Name)) && has(&PRIMARY) {
-            insert_above(&mut g, PRIMARY, Focus::slot(Slot::Name));
-        }
-        if has(&Focus::slot(Slot::Save)) && has(&PERK1) {
-            insert_above(&mut g, PERK1, Focus::slot(Slot::Save));
-        }
         for (f, d, t) in &self.back {
             if has(f) && has(t) {
                 set(&mut g, *f, *d, *t);

@@ -4563,3 +4563,38 @@ position in the trimmed list vs BO2's group index (BO2's grid also skips undispl
 expected side's raw index is not the on-screen slot); weapons unchanged (706,586 cells); gap
 clusters 214 → 214. Verified: cargo test --workspace green; clippy unchanged (39 warnings before
 and after); the real-install suite green (31); headless screenshots render with a fresh archive.
+
+## Create-a-Class saves on back-out; rename only from Class Options (2026-10-30, branch `v1/cac-save-rename`)
+
+Integrator decision, checked against the Lua before changing anything:
+
+* **BO2 has no save step.** Each pick is written into the class as it is made
+  (`Engine.SetClassItem`, `patch_ui_mp/.../caceditclass.lua:472`, `:530`, `:548`) and
+  `CACEditClass.Back` (`:642-653`) only clears the equip queue and closes; the profile is committed
+  when the chooser closes (`patch_mp/.../cacchooseclass.lua:1352-1365`: `uploadstats` +
+  `CommitProfileChanges`). The editor's back-out sound is `setBackOutSFX("cac_cmn_backout")`
+  (`caceditclass.lua:37-38`).
+* **BO2's editor has no name field.** It only shows the name (`caceditclass.lua:177`,
+  `GetLoadoutNameFromIndex`); RENAME is a Class Options entry that opens the keyboard
+  (`cacclassoptions.lua:183-192`, `:259-262` `ui_keyboard_new`).
+
+What changed:
+
+* `classmenu::Slot` loses `Name` and `Save` (`Slot::ALL` is BO2's ten boxes); `Editor::naming`,
+  `step_naming`, `Edges::{typed, backspace}` and `char_of` are gone (the dialog keeps its own
+  `typed_char`; `NAME_MAX` stays for it). The grid's links are `customclass.lua`'s verbatim again:
+  nothing is spliced above PRIMARY or under card 3.
+* Escape on the grid is `Outcome::Save` (`Editor::back_out`); Escape in a picker still only closes
+  the picker. A draft over the budget (only reachable by loading one, since every over-spend pick
+  is refused) backs out as `Cancel` with the deny, the stored class untouched — back-out is the
+  editor's only exit, so it never traps the player.
+* `menu.rs` remembers the draft the editor opened on: an untouched back-out writes nothing (an
+  empty slot opened and left stays empty). A real save plays `cac_cmn_backout`, not the old SAVE
+  row's grid-equip cue; a save refused for a full set (defensive: the lobby list offers no empty row
+  then) still leaves with the deny instead of keeping the editor up.
+* No ABI change: the `save_profile` one-shot and its reasons are the same.
+
+Tests: `backing_out_of_the_grid_saves_the_class`, `an_over_budget_draft_backs_out_unsaved_with_the_deny`,
+`the_editor_has_no_name_field` (classmenu); `backing_out_of_an_untouched_editor_writes_nothing`,
+`a_sixth_class_is_refused_and_the_back_out_still_leaves` (menu); the grid-link table and the
+shell save tests now go through Escape.

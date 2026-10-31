@@ -64,8 +64,7 @@ pub fn draw_editor(prims: &mut Vec<Prim>, w: f32, h: f32, editor: &Editor, deny:
     let title = if editor.picking {
         picker_title(editor)
     } else {
-        let name = editor_title(editor);
-        if editor.naming { format!("{name}_") } else { name }
+        editor_title(editor)
     };
     bo2::title(prims, f, &title);
     // The allocation readout, BO2's bar across the menu with the n/10 counter above its right end.
@@ -93,10 +92,7 @@ pub fn draw_editor(prims: &mut Vec<Prim>, w: f32, h: f32, editor: &Editor, deny:
     let cells = editor_cells(&l, editor);
     let removable = cells.iter().any(|c| c.slot == editor.slot && cell_filled(editor, c));
     let mut left: Vec<(&str, &str)> = vec![("ESC", "Back")];
-    let right: Vec<(&str, &str)> = if editor.naming {
-        left = vec![("ENTER", "Done"), ("BKSP", "Delete")];
-        Vec::new()
-    } else if editor.picking {
+    let right: Vec<(&str, &str)> = if editor.picking {
         if editor.slot == Slot::PrimaryAtts && editor.option_attachment(editor.option).is_some_and(|s| crate::hud::OPTICS.contains(&s)) {
             left.push(("V", "Reticle"));
         }
@@ -173,14 +169,6 @@ fn draw_cell(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor, cell: &Ed
     let on = cell_focused(editor, cell);
     let filled = cell_filled(editor, cell);
     match cell.slot {
-        Slot::Name => {} // the title draws it
-        Slot::Save => {
-            button_bg(prims, f, r);
-            if on {
-                focus_frame(prims, f, r);
-            }
-            bo2::text(prims, f, Family::Condensed, "SAVE CLASS", r, Align::Center, argb(if on { BOII_ORANGE } else { OFF_WHITE }, 1.0));
-        }
         Slot::Primary | Slot::Secondary => {
             button_bg(prims, f, r);
             slot_label(prims, f, r, if cell.slot == Slot::Primary { "PRIMARY" } else { "SECONDARY" });
