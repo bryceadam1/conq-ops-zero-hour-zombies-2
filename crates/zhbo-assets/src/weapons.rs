@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use zhbo_core::attachments::{self, AttachmentDef};
 use zhbo_core::units::inches;
-use zhbo_core::weapons::{CamoOption, Class, Effect, FireMode, GunKick, Kick, Loadout, OffhandClass, Penetrate, Place, Reticle, Specialties, Sway, Table, CycleTimes, Traits, ViewPos, WeaponDef, Zoom, ALT_CLIPS, MELEE_DAMAGE};
+use zhbo_core::weapons::{CamoOption, Class, Effect, FireMode, GunKick, Kick, Loadout, OffhandClass, Penetrate, Place, Reticle, Specialties, Sway, Table, CycleTimes, Traits, ViewPos, WeapType, WeaponDef, Zoom, ALT_CLIPS, MELEE_DAMAGE};
 #[cfg(debug_assertions)]
 use zhbo_core::weapons::{format_table, parse_table};
 use zhbo_formats::weapon::{self as bo2, Weapon};
@@ -881,6 +881,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
             min_player_damage: w.min_player_damage as f32,
             penetrate: Penetrate::from_bo2(w.penetrate_type),
             offhand: OffhandClass::from_bo2(w.offhand_class),
+            weap_type: WeapType::from_bo2(w.weap_type),
         },
     };
     #[cfg(debug_assertions)]

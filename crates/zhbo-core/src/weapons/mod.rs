@@ -22,7 +22,7 @@ pub mod table;
 pub use arsenal::*;
 pub use catalog::*;
 pub use def::*;
-pub use handling::{CycleTimes, OffhandClass, Penetrate, Traits, Zoom};
+pub use handling::{CycleTimes, OffhandClass, Penetrate, Traits, WeapType, Zoom};
 pub use feel::{optic_of, reticle_art, GunKick, Reticle, Sway, ViewPos};
 pub use loadout::*;
 pub use perks::*;
@@ -276,6 +276,32 @@ mod tests {
         };
         assert!((add_frames(0.0) - 0.8).abs() <= 2.0 * LOGIC_DT, "0: the reload add time");
         assert!((add_frames(1.5) - 1.5).abs() <= 2.0 * LOGIC_DT, "its own add time");
+    }
+
+    /// Only a bullet weapon plays the empty reload; a launcher at clip 0 reloads over its plain
+    /// reload time (`FUN_008dec90`: clip 0 and `weapType` bullet).
+    #[test]
+    fn only_bullet_weapons_play_the_empty_reload() {
+        let length = |weap_type: WeapType| {
+            let d = def(|d| {
+                d.clip = 1;
+                d.start_reserve = 3;
+                d.reload_time = 1.0;
+                d.reload_empty_time = 2.0;
+                d.traits.weap_type = weap_type;
+            });
+            let mut a = arsenal_with(d);
+            a.weapons[0].ammo = 0;
+            let mut rng = Rng::new(2);
+            let mut out = Vec::new();
+            a.step(0, buttons::RELOAD, false, 0, 0.0, &mut rng, &mut out);
+            match a.current().reload {
+                Some(Reload::Magazine { length, empty, .. }) => (length, empty),
+                r => panic!("{r:?}"),
+            }
+        };
+        assert_eq!(length(WeapType::Bullet), (2.0, true));
+        assert_eq!(length(WeapType::Projectile), (1.0, false));
     }
 
     /// A swap puts an empty-clipped weapon away over its `iEmptyDropTime` and raises an empty one

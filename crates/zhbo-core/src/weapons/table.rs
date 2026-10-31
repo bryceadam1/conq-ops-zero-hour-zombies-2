@@ -8,7 +8,7 @@
 
 use super::def::{CamoOption, Class, Effect, FireMode, Kind, Kick, Place, WeaponDef};
 use super::feel::{nums, v3, GunKick, Sway};
-use super::handling::{OffhandClass, Penetrate};
+use super::handling::{OffhandClass, Penetrate, WeapType};
 use super::specialty::Specialties;
 use crate::attachments::AttachmentDef;
 
@@ -776,6 +776,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("OffhandClass", "BO2's offhand class: none, frag_grenade, smoke_grenade, flash_grenade, gear, supplydrop_marker.", FieldKind::Enum,
         |d: &WeaponDef| d.traits.offhand.name().into(),
         |d: &mut WeaponDef, v: Values| { d.traits.offhand = OffhandClass::parse(v.text).ok_or("unknown offhand class")?; Ok(()) }),
+    field!("WeapType", "BO2's weapon type: bullet, grenade, projectile, binoculars, gas, bomb, mine, melee, riotshield.", FieldKind::Enum,
+        |d: &WeaponDef| d.traits.weap_type.name().into(),
+        |d: &mut WeaponDef, v: Values| { d.traits.weap_type = WeapType::parse(v.text).ok_or("unknown weapon type")?; Ok(()) }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -835,7 +838,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 95);
+        assert_eq!(WEAPON_FIELDS.len(), 96);
         assert_eq!(ATTACHMENT_FIELDS.len(), 25);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

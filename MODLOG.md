@@ -4623,3 +4623,10 @@ the alt def's own raw fields, which `v1/alt-attachments`/`v1/alt-timing` do not 
 Verified: cargo test --workspace green; clippy --all-targets adds no warning; the real-install
 suite (`--skip conformance`) green. No game launched. An archive VERSION bump is needed (the
 weapon table gained `EmptySwitch`; old tables still parse, taking the default 0.5/0.4).
+
+### Follow-up: only bullet weapons play the empty reload
+
+`FUN_008dbc00`/`FUN_008dec90` pick the empty reload only for clip 0 **and** `weapType == 0`
+(bullet). `Traits.weap_type` (`WeapType`, table line `WeapType = bullet`; default bullet) carries
+it and `WeaponDef::empty_reload(ammo)` is the one test (sim and the sim conformance harness). A
+launcher at clip 0 now reloads over its plain reload time and add point.

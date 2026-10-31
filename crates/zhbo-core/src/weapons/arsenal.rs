@@ -140,7 +140,7 @@ impl WeaponState {
         self.reload = Some(if d.shell_by_shell() {
             Reload::Shells { phase: ShellPhase::Start, t: 0.0, stop: false }
         } else {
-            let empty = self.ammo == 0;
+            let empty = d.empty_reload(self.ammo);
             // An empty reload's rounds go in at `iReloadEmptyAddTime` when it is set, else at the
             // (scaled) reload add time; no add time means at the end (`FUN_008dec90`).
             let (length, add_at) = if empty { (d.reload_empty_time, d.reload_empty_add_at()) } else { (d.reload_time, d.reload_add_time) };

@@ -7,7 +7,7 @@
 */
 
 use super::feel::{GunKick, Reticle, Sway, ViewPos};
-use super::handling::{CycleTimes, Traits, Zoom};
+use super::handling::{CycleTimes, Traits, WeapType, Zoom};
 use super::specialty::Specialties;
 use crate::units::inches;
 
@@ -531,6 +531,12 @@ impl WeaponDef {
 
     pub fn rounds_per_minute(&self) -> f32 {
         60.0 / self.fire_time.max(1e-3)
+    }
+
+    /// Whether a reload from `ammo` rounds is BO2's empty reload: a bullet weapon with an empty
+    /// clip (`FUN_008dec90`); any other weapon plays its plain reload.
+    pub fn empty_reload(&self, ammo: u16) -> bool {
+        ammo == 0 && self.traits.weap_type == WeapType::Bullet
     }
 
     /// When an empty reload's rounds go in: `iReloadEmptyAddTime` when set, else the reload add
