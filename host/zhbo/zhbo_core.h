@@ -548,6 +548,11 @@ void zhbo_native_body_provide(const char *path, const uint8_t *data, int32_t len
 int32_t zhbo_native_body_take_log(char *buf, int32_t cap);
 int32_t zhbo_native_body_bone(const char *name, float *out12); /* world 3x4 rows of the last pose */
 void zhbo_native_body_reset(void);
+/* The Assault Shield in Zero Hour's damage path (host patch 0017, Object::attemptDamage): the share
+   of `amount` the engine applies to `victim` (0..1). `kind` is ZHBO_DAMAGE_* or -1; `from_*` is the
+   source's feet and height when `source_known`. Lock-free (safe inside any core callback).
+   Appended after ABI 26: the integrator bumps ZHBO_ABI_VERSION. */
+float zhbo_logic_shield_damage(uint32_t victim, uint32_t source, float from_x, float from_y, float from_z, float from_height, int32_t source_known, int32_t kind, float amount);
 
 #ifdef __cplusplus
 }

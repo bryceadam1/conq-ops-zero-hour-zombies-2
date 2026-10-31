@@ -233,6 +233,11 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
         if ally {
             continue; // no friendly fire, as in BO2's core modes
         }
+        // A deployed shield's object: the sim wears the shield down itself
+        // (`Sim::deployed_caught_in_blast`).
+        if shields.iter().any(|b| b.object != 0 && b.object == o.id) {
+            continue;
+        }
         let centre = Vec3::new(o.pos.x, o.pos.y, o.pos.z + o.height * 0.5);
         let dist = ((centre - at).length() - if o.has(objflags::INFANTRY) { 0.0 } else { o.major_radius }).max(0.0);
         let direct_hit = direct.is_some_and(|x| x.id == o.id);

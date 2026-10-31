@@ -21,6 +21,8 @@ impl Sim {
                 let dir = dir_from_angles(p.yaw + radius * angle.cos(), p.pitch + radius * angle.sin());
 
                 let mut targets = gather_targets(host, eye, def.max_range, p.general);
+                // A deployed shield's object is the sim's to hit (its box, below), not a target.
+                targets.retain(|t| !self.deployed.iter().any(|d| d.object != 0 && d.object == t.id));
                 let ground = |x: f32, y: f32| host.ground_height(x, y);
                 let hit = hitscan::trace(eye, dir, def.max_range, &targets, p.general, &ground);
                 // One tracer and sound per shot, not per pellet.
@@ -234,6 +236,7 @@ impl Sim {
         let victim = near
             .iter()
             .filter(|o| o.id != p.general && !o.has(objflags::DEAD) && !o.has(objflags::ALLY))
+            .filter(|o| !self.deployed.iter().any(|d| d.object != 0 && d.object == o.id))
             .filter(|o| !o.has(objflags::NO_COLLIDE) && !o.has(objflags::STRUCTURE))
             .filter(|o| {
                 let to = o.pos - p.body.pos;

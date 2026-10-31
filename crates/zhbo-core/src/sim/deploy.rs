@@ -70,6 +70,7 @@ impl Sim {
                 let Some(weapon) = p.arsenal.take_shield() else { return };
                 let origin = bearer.pos + Vec3::new(0.0, 0.0, inches(t.riotshield_placement_zoffset));
                 let object = if def.projectile_object.is_empty() { 0 } else { host.spawn(&def.projectile_object, p.general, origin, p.yaw) };
+                let bearer = Bearer { object, ..bearer };
                 self.deployed.push(Deployed { owner: idx, general: p.general, def, object, bearer, damage_taken: 0.0, destroyed: None, weapon });
                 self.emit(idx, EventKind::ShieldDeployed { at: bearer.pos });
             }
@@ -108,7 +109,7 @@ impl Sim {
             return None;
         }
         let b = ShieldBox { rot: [0.0, 0.0, 0.0, 1.0], pos: [0.0, 0.0, t.riotshield_placement_zoffset], mins: g.held.mins, maxs: g.held.maxs };
-        Some(Bearer { general: 0, pos, yaw: p.yaw, held: true, b })
+        Some(Bearer { general: 0, object: 0, pos, yaw: p.yaw, held: true, b })
     }
 
     /// The use key next to the player's own standing shield (its retrieve item, in the building
@@ -200,5 +201,20 @@ impl Sim {
             }
             !gone
         });
+    }
+
+    /// Zero Hour damage to a deployed shield's object (the bridge's hook gives the engine none of
+    /// it, `zhbo_logic_shield_damage`): the wear-down at the script's scale for its means, from
+    /// `source` (its owner's player, when a General). `amount` is Zero Hour damage.
+    pub fn engine_damage_to_deployed(&mut self, host: &dyn LogicHost, object: u32, source: u32, kind: i32, amount: f32) {
+        use crate::host::damage_kind;
+        let Some(i) = self.deployed.iter().position(|d| d.object == object && d.object != 0) else { return };
+        let how = match kind {
+            damage_kind::MELEE => ShieldDamage::Melee,
+            damage_kind::EXPLOSION => ShieldDamage::Explosive,
+            _ => ShieldDamage::Bullet,
+        };
+        let by = self.players.iter().position(|p| p.as_ref().is_some_and(|p| p.general == source && source != 0));
+        self.damage_deployed(host, i, by, source, amount / BO2_TO_ZH_DAMAGE, how);
     }
 }

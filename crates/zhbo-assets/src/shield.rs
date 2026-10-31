@@ -23,6 +23,12 @@ pub const HELD_POSE: &str = "pt_riotshield_stand_raise";
 /// The standing pose the stowed shield is measured in.
 pub const STOWED_POSE: &str = "pb_stand_alert";
 
+/// The deployed shield's health in Zero Hour damage (the tuning pack's `riotshield_deployed_health`,
+/// BO2's 100-HP scale times `BO2_TO_ZH_DAMAGE`): what its object tells Zero Hour's AI.
+pub fn deployed_health_zh() -> f32 {
+    zhbo_core::tuning::Tuning::default().riotshield_deployed_health * zhbo_core::units::BO2_TO_ZH_DAMAGE
+}
+
 /// The world transform of every bone of `body` posed by `anim` at `frame` (the preview's walk:
 /// animated rotations replace, animated translations offset the bone's local position).
 fn posed(body: &Model, anim: &Anim, frame: f32) -> Vec<(String, Xf)> {

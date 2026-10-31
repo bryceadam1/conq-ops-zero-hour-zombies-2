@@ -717,10 +717,26 @@ pub(crate) fn projectiles(
         } else {
             String::new()
         };
+        // The deployed Assault Shield is cover Zero Hour's units can shoot: solid, attackable, a box
+        // of its model's bounds (x is its facing). The engine never applies the damage — the
+        // bridge's hook hands it to the core's wear-down (`zhbo_logic_shield_damage`) — so its
+        // health only tells the AI what it is up against: the script's deployed health.
+        let body = if shield {
+            let k = character::SCALE;
+            let half = |a: usize| (model.maxs[a] - model.mins[a]) * 0.5 * k;
+            let health = crate::shield::deployed_health_zh();
+            format!(
+                "  KindOf = IMMOBILE\n  Body = ActiveBody ModuleTag_02\n    MaxHealth = {health:.1}\n    InitialHealth = {health:.1}\n  End\n{sight}  \
+                 Geometry = Box\n  GeometryMajorRadius = {:.2}\n  GeometryMinorRadius = {:.2}\n  GeometryHeight = {:.2}\n  GeometryIsSmall = No\n",
+                half(0),
+                half(1),
+                (model.maxs[2] - model.mins[2]) * k
+            )
+        } else {
+            format!("  KindOf = NO_COLLIDE INERT IMMOBILE UNATTACKABLE CLICK_THROUGH\n  Body = InactiveBody ModuleTag_02\n  End\n{sight}  Geometry = Sphere\n  GeometryMajorRadius = 1.0\n  GeometryIsSmall = Yes\n")
+        };
         ini.push_str(&format!(
-            "Object {object}\n  Draw = W3DModelDraw ModuleTag_01\n    OkToChangeModelColor = Yes\n    DefaultConditionState\n      Model = {name}\n    End\n  End\n  \
-             KindOf = NO_COLLIDE INERT IMMOBILE UNATTACKABLE CLICK_THROUGH\n  Body = InactiveBody ModuleTag_02\n  End\n{sight}  \
-             Geometry = Sphere\n  GeometryMajorRadius = 1.0\n  GeometryIsSmall = Yes\nEnd\n\n"
+            "Object {object}\n  Draw = W3DModelDraw ModuleTag_01\n    OkToChangeModelColor = Yes\n    DefaultConditionState\n      Model = {name}\n    End\n  End\n{body}End\n\n"
         ));
         d.projectile_object = object;
         models.insert(id.clone(), name.clone());

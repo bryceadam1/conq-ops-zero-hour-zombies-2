@@ -28,6 +28,8 @@ use crate::weapons::{ShieldBox, WeaponDef};
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Bearer {
     pub general: u32,
+    /// A deployed shield's host object (0 for a carried shield).
+    pub object: u32,
     /// The General's feet.
     pub pos: Vec3,
     pub yaw: f32,
@@ -60,7 +62,26 @@ impl Bearer {
     /// that is no shield.
     pub fn of(general: u32, pos: Vec3, yaw: f32, def: &WeaponDef, held: bool) -> Option<Bearer> {
         let g = def.shield?;
-        Some(Bearer { general, pos, yaw, held, b: if held { g.held } else { g.stowed } })
+        Some(Bearer { general, object: 0, pos, yaw, held, b: if held { g.held } else { g.stowed } })
+    }
+
+    /// The mirror's words ([`MIRROR_WORDS`] of them): ids, floats as bits.
+    pub fn to_words(&self) -> [u32; MIRROR_WORDS] {
+        let f = |x: f32| x.to_bits();
+        let mut w = [0u32; MIRROR_WORDS];
+        w[0] = self.general;
+        w[1] = self.object;
+        (w[2], w[3], w[4], w[5], w[6]) = (f(self.pos.x), f(self.pos.y), f(self.pos.z), f(self.yaw), self.held as u32);
+        for (k, v) in self.b.to_nums().into_iter().enumerate() {
+            w[7 + k] = f(v);
+        }
+        w
+    }
+
+    pub fn from_words(w: &[u32; MIRROR_WORDS]) -> Bearer {
+        let f = |i: usize| f32::from_bits(w[i]);
+        let nums: Vec<f32> = (7..MIRROR_WORDS).map(f).collect();
+        Bearer { general: w[0], object: w[1], pos: Vec3::new(f(2), f(3), f(4)), yaw: f(5), held: w[6] != 0, b: ShieldBox::from_nums(&nums) }
     }
 
     /// World → body inches.
@@ -146,6 +167,41 @@ pub fn blocking(bearers: &[Bearer], counts: &dyn Fn(&Bearer) -> bool, origin: Ve
         .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
 }
 
+/// Words per bearer in the engine's lock-free mirror (`ffi.rs`).
+pub const MIRROR_WORDS: usize = 7 + ShieldBox::NUMS;
+
+/// Where a Zero Hour unit's shot at a General is aimed: the middle of the sim's 72-inch body.
+pub const BODY_MIDDLE: f32 = crate::units::inches(36.0);
+
+/// The core's vocabulary for engine damage reaching a General ([`crate::host::damage_kind`];
+/// the bridge maps Zero Hour's `DamageType` onto it): what a shield does to it.
+///
+/// What share of a Zero Hour unit's damage reaches General `victim` through his shield:
+/// a round or blow whose line from the source (`from`, the source's feet and height) to the
+/// body's middle crosses the shield is stopped (0); an explosion keeps `1 − protection` with the
+/// source standing in for the blast; anything else, or no shield, passes whole (1).
+pub fn engine_scale(bearers: &[Bearer], victim: u32, from: Option<(Vec3, f32)>, kind: i32, t: &Tuning) -> f32 {
+    use crate::host::damage_kind;
+    let Some(b) = bearers.iter().find(|b| b.general == victim && b.object == 0) else { return 1.0 };
+    let Some((src, height)) = from else { return 1.0 };
+    match kind {
+        damage_kind::SMALL_ARMS | damage_kind::MELEE => {
+            let origin = src + Vec3::new(0.0, 0.0, height * 0.8);
+            let aim = b.pos + Vec3::new(0.0, 0.0, BODY_MIDDLE);
+            let to = aim - origin;
+            let len = to.length();
+            let all = |_: &Bearer| true;
+            if blocking(std::slice::from_ref(b), &all, origin, to.normalized_or_zero(), len, len, Some(victim)).is_some() {
+                0.0
+            } else {
+                1.0
+            }
+        }
+        damage_kind::EXPLOSION => 1.0 - b.blast_protection(src + Vec3::new(0.0, 0.0, height * 0.5), t),
+        _ => 1.0,
+    }
+}
+
 /// Distance along the ray to its closest approach to the vertical axis through `foot`.
 fn axis_passing(foot: Vec3, origin: Vec3, dir: Vec3) -> f32 {
     let flat = Vec3::new(dir.x, dir.y, 0.0);
@@ -202,5 +258,27 @@ mod tests {
         assert_eq!(b.blast_protection(origin - fwd * 100.0, &t), 0.0);
         let at_45 = origin + (fwd + side) * 100.0;
         assert_eq!(b.blast_protection(at_45, &t), t.shield_blast_protection_120);
+    }
+
+    #[test]
+    fn the_engine_mirror_round_trips_a_bearer() {
+        let b = Bearer { object: 9, ..bearer(true, 1.0) };
+        assert_eq!(Bearer::from_words(&b.to_words()), b);
+    }
+
+    #[test]
+    fn a_zero_hour_units_fire_is_stopped_from_the_shields_side_only() {
+        use crate::host::damage_kind;
+        let t = Tuning::default();
+        let b = bearer(true, std::f32::consts::PI); // at x 100, facing -X
+        let rifleman = |x: f32| Some((Vec3::new(x, 50.0, 0.0), 12.0));
+        assert_eq!(engine_scale(&[b], 7, rifleman(40.0), damage_kind::SMALL_ARMS, &t), 0.0, "in front");
+        assert_eq!(engine_scale(&[b], 7, rifleman(160.0), damage_kind::SMALL_ARMS, &t), 1.0, "behind");
+        assert_eq!(engine_scale(&[b], 7, rifleman(40.0), damage_kind::MELEE, &t), 0.0, "a blow in front");
+        assert_eq!(engine_scale(&[b], 8, rifleman(40.0), damage_kind::SMALL_ARMS, &t), 1.0, "another General");
+        assert_eq!(engine_scale(&[b], 7, None, damage_kind::SMALL_ARMS, &t), 1.0, "no source, no side");
+        assert_eq!(engine_scale(&[b], 7, rifleman(40.0), -1, &t), 1.0, "fire, poison: through");
+        let blast = engine_scale(&[b], 7, rifleman(40.0), damage_kind::EXPLOSION, &t);
+        assert!((blast - (1.0 - t.shield_blast_protection_30)).abs() < 1e-6, "{blast}");
     }
 }

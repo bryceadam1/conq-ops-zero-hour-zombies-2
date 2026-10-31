@@ -534,6 +534,46 @@ Bool Zhbo_IsControlled(ObjectID id)
 	return s_ready && zhbo_logic_is_controlled((uint32_t)id) != 0;
 }
 
+// Zero Hour's damage types in the core's vocabulary: rounds and blows a shield stops, blasts it
+// cuts; -1 for everything else (fire, poison, radiation, ...), which a shield lets through.
+static int32_t shieldDamageKind(DamageType type)
+{
+	switch (type)
+	{
+		case DAMAGE_SMALL_ARMS:
+		case DAMAGE_GATTLING:
+		case DAMAGE_SNIPER:
+		case DAMAGE_COMANCHE_VULCAN:
+			return ZHBO_DAMAGE_SMALL_ARMS;
+		case DAMAGE_MELEE:
+			return ZHBO_DAMAGE_MELEE;
+		case DAMAGE_EXPLOSION:
+		case DAMAGE_ARMOR_PIERCING:
+		case DAMAGE_INFANTRY_MISSILE:
+		case DAMAGE_JET_MISSILES:
+		case DAMAGE_STEALTHJET_MISSILES:
+		case DAMAGE_LAND_MINE:
+		case DAMAGE_AURORA_BOMB:
+			return ZHBO_DAMAGE_EXPLOSION;
+		default:
+			return -1;
+	}
+}
+
+void Zhbo_ShieldDamage(Object *obj, DamageInfo *info)
+{
+	if (!s_ready || obj == nullptr || info == nullptr || info->in.m_kill || info->in.m_amount <= 0.0f)
+		return;
+	const Object *src = TheGameLogic->findObjectByID(info->in.m_sourceID);
+	const Coord3D *from = src ? src->getPosition() : nullptr;
+	const float height = src ? src->getGeometryInfo().getMaxHeightAbovePosition() : 0.0f;
+	const float scale = zhbo_logic_shield_damage((uint32_t)obj->getID(), (uint32_t)info->in.m_sourceID,
+		from ? from->x : 0.0f, from ? from->y : 0.0f, from ? from->z : 0.0f, height, from ? 1 : 0,
+		shieldDamageKind(info->in.m_damageType), info->in.m_amount);
+	if (scale < 1.0f)
+		info->in.m_amount *= scale < 0.0f ? 0.0f : scale;
+}
+
 // Gather this frame's input for zhbo_client_frame: timing, keys, mouse, camera.
 static void gatherClientInput(ZhboClientIn &in, Bool focused, Bool menuUp)
 {

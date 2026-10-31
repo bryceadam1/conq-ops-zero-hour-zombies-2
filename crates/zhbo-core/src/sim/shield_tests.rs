@@ -208,3 +208,19 @@ fn a_deployed_shield_is_destroyed_at_its_health_and_its_model_times_out() {
     assert!(sim.deployed.is_empty());
     assert_eq!(shield_ammo(&sim), None, "the weapon went with it");
 }
+
+#[test]
+fn zero_hour_damage_to_the_deployed_shields_object_wears_it_down_at_the_scripts_scales() {
+    let (host, mut sim) = duel(true, FACING_SHOOTER);
+    deploy(&mut sim, &host);
+    sim.deployed[0].object = 42;
+    let t = crate::tuning::Tuning::default();
+    // A Zero Hour rifleman (no General): bullets at the bullet scale, in BO2 damage.
+    sim.engine_damage_to_deployed(&host, 42, 0, crate::host::damage_kind::SMALL_ARMS, 40.0 * BO2_TO_ZH_DAMAGE);
+    assert!((sim.deployed[0].damage_taken - 40.0 * t.riotshield_bullet_damage_scale).abs() < 1e-4);
+    // A tank shell: explosive, full.
+    sim.engine_damage_to_deployed(&host, 42, 0, crate::host::damage_kind::EXPLOSION, t.riotshield_deployed_health * BO2_TO_ZH_DAMAGE);
+    assert!(!sim.deployed[0].standing(), "destroyed");
+    // Another object id is not a shield.
+    sim.engine_damage_to_deployed(&host, 43, 0, crate::host::damage_kind::EXPLOSION, 1.0);
+}
