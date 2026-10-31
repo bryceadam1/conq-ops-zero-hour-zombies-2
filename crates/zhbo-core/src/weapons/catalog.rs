@@ -298,7 +298,7 @@ End
 
 Perk DEXTERITY
   Name = Dexterity
-  Description = Aim faster after sprinting.  Mantle and climb faster.
+  Description = \"Aim faster after sprinting.  Mantle and climb faster. \"
   Specialties = fastladderclimb fastmantle fastmeleerecovery sprintrecovery
 End
 

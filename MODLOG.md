@@ -4858,3 +4858,19 @@ unchanged (equipment-melee's number); cac 517 → 485.
 Measured: cac 485 → 427: `image` 15 → 0 (cluster gone), `order` 439 → 396 (every weapon row but
 the two above); weapons 781,587 unchanged; gap clusters 203 → 202. Screenshots:
 `cac-editor-lethal.png`, `cac-editor-tactician.png`, `cac-editor-weapons.png` (plan dir).
+
+## The weapon table keeps a value exactly: quoted strings (2026-10-31, `v1/cac-text`)
+
+Some of BO2's localized descriptions end in spaces (Dexterity's, the AN-94's, the SIG 556's, the
+S12's — `srm1216` — the MMS's and the crossbow's tri-bolt's). Two places lost them: the converter
+trimmed the localized strings (`attachment_meta`, `perk_rows`, `bonus_card_rows`), and the table
+reader trims every value (and cuts a line at its first `;`, the comment marker). The converter now
+keeps BO2's text as is, and `weapons::table::quote` writes a value that would not read back —
+surrounding whitespace, a `;`, a leading `"` — in double quotes with `\"`/`\\` escapes;
+`unquote` reverses it and the comment strip ignores a `;` inside quotes. Every other value is
+written exactly as before, so the format stays readable and old tables load unchanged. Round-trip
+test: `a_string_value_round_trips_exactly`. The built-in Dexterity stand-in carries the space
+(quoted), matching the installed row (the ignored install test compares them).
+
+Measured: cac `description` 24 → 0 (the cluster is gone); cac 427 → 403; weapons 781,587
+unchanged; gap clusters 202 → 201.

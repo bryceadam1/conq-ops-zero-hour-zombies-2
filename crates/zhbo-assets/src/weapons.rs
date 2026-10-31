@@ -97,8 +97,9 @@ pub fn attachment_metadata(
     for row in rows {
         // Column 4 is the display name key, column 5 the short name, column 8 the description key.
         let (Some(short), Some(display_key), Some(desc_key)) = (row.get(4), row.get(3), row.get(7)) else { continue };
-        let full_name = names.get(display_key).map(|s| s.trim().to_string()).unwrap_or_default();
-        let description = names.get(desc_key).map(|s| s.trim().to_string()).unwrap_or_default();
+        // Exactly as BO2's strings have them (some descriptions end in spaces; the table quotes them).
+        let full_name = names.get(display_key).cloned().unwrap_or_default();
+        let description = names.get(desc_key).cloned().unwrap_or_default();
         let compatible = zhbo_conformance::bo2::combos::kind_of(short)
             .and_then(|k| compat.rows.get(&k))
             .map(|(_, mask)| (0..64).filter(|b| mask & (1u64 << b) != 0).filter_map(|b| zhbo_conformance::weapons::ATTACHMENTS.get(b)).map(|s| s.to_string()).collect())
@@ -164,7 +165,7 @@ pub fn attachment_def(a: &bo2::Attachment, names: &HashMap<String, String>, meta
 /// names all 62).
 pub fn perk_rows(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<String, String>) -> Vec<zhbo_core::weapons::PerkRow> {
     let Ok(Some(rows)) = zhbo_formats::stringtable::rows(patch, "mp/statstable.csv") else { return Vec::new() };
-    let loc = |k: Option<&String>| k.and_then(|k| names.get(k.trim())).map(|s| s.trim().to_string()).unwrap_or_default();
+    let loc = |k: Option<&String>| k.and_then(|k| names.get(k.trim())).cloned().unwrap_or_default();
     rows.iter()
         .filter(|r| r.get(2).is_some_and(|c| c == "specialty"))
         .filter_map(|r| {
@@ -183,7 +184,7 @@ pub fn bonus_card_rows(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<Strin
     let Ok(Some(rows)) = zhbo_formats::stringtable::rows(patch, "mp/statstable.csv") else { return Vec::new() };
     let cell = |r: &Vec<String>, i: usize| r.get(i).map(|c| c.trim().to_string()).unwrap_or_default();
     let num = |r: &Vec<String>, i: usize| cell(r, i).parse::<i32>().ok();
-    let loc = |k: String| names.get(&k).map(|s| s.trim().to_string()).unwrap_or(k);
+    let loc = |k: String| names.get(&k).cloned().unwrap_or(k);
     rows.iter()
         .filter(|r| r.get(2).is_some_and(|c| c == "bonuscard"))
         .filter_map(|r| {

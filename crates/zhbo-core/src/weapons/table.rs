@@ -114,7 +114,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
     let mut table = Table::default();
     let mut cur: Option<Block> = None;
     for (n, raw) in text.lines().enumerate() {
-        let line = raw.split(';').next().unwrap_or("").trim();
+        let line = strip_comment(raw).trim();
         if line.is_empty() {
             continue;
         }
@@ -160,9 +160,9 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
             continue;
         }
         let (key, value) = line.split_once('=').ok_or_else(|| err("expected key = value"))?;
-        let (key, value) = (key.trim(), value.trim());
+        let (key, value) = (key.trim(), unquote(value.trim()));
         let nums: Vec<f32> = value.split_whitespace().filter_map(|x| x.parse().ok()).collect();
-        let values = Values { text: value, nums: &nums };
+        let values = Values { text: &value, nums: &nums };
         match cur.as_mut() {
             None => match key {
                 "TabletMeshes" => table.tablet_meshes = values.text_num().map_err(|e| err(&e))? as u8,
@@ -194,7 +194,7 @@ pub enum FieldKind {
     Num,
     /// `n` space-separated numbers, all required (bools are `0`/`1`).
     Nums(usize),
-    /// A string, verbatim (trimmed).
+    /// A string, verbatim (quoted when it has surrounding whitespace or a `;`, [`quote`]).
     Str,
     /// Space-separated words (a weapon's attachment shorts).
     Words,
@@ -744,13 +744,51 @@ pub fn set_field<T>(fields: &[Field<T>], t: &mut T, key: &str, values: Values) -
     Ok(())
 }
 
+/// A value as the table writes it: verbatim, or in double quotes (with `\"` and `\\` escaped)
+/// when the plain form would not read back exactly — surrounding whitespace (the reader trims
+/// it; BO2's localized descriptions can end in spaces), a `;` (the comment marker) or a leading
+/// quote. [`unquote`] is its inverse.
+pub fn quote(value: &str) -> std::borrow::Cow<'_, str> {
+    if value.trim() != value || value.contains(';') || value.starts_with('"') {
+        format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\"")).into()
+    } else {
+        value.into()
+    }
+}
+
+/// A read value: a [`quote`]d one unescaped, any other as it is.
+pub fn unquote(value: &str) -> std::borrow::Cow<'_, str> {
+    let Some(inner) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')).filter(|_| value.len() >= 2) else { return value.into() };
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        out.push(if c == '\\' { chars.next().unwrap_or('\\') } else { c });
+    }
+    out.into()
+}
+
+/// A line without its `;` comment; a `;` inside a quoted value is the value's.
+fn strip_comment(raw: &str) -> &str {
+    let (mut quoted, mut escaped) = (false, false);
+    for (i, c) in raw.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            ';' if !quoted => return &raw[..i],
+            _ => {}
+        }
+    }
+    raw
+}
+
 /// Append one block's lines.
 pub fn write_block<T>(out: &mut String, header: &str, id: &str, fields: &[Field<T>], t: &T) {
     out.push_str(header);
     out.push_str(id);
     out.push('\n');
     for f in fields {
-        out.push_str(&format!("  {} = {}\n", f.key, (f.get)(t)));
+        out.push_str(&format!("  {} = {}\n", f.key, quote(&(f.get)(t))));
     }
     out.push_str("End\n\n");
 }
@@ -781,6 +819,25 @@ mod tests {
         assert_eq!(WEAPON_FIELDS.len(), 84);
         assert_eq!(ATTACHMENT_FIELDS.len(), 18);
         assert_eq!(CAMO_FIELDS.len(), 3);
+    }
+
+    /// A value the plain form would change — BO2's descriptions that end in spaces, a `;` (the
+    /// comment marker), quotes and backslashes — is written quoted and reads back exactly; plain
+    /// values stay unquoted, and a commented line still loses its comment.
+    #[test]
+    fn a_string_value_round_trips_exactly() {
+        let texts = ["Aim faster after sprinting.  Mantle and climb faster. ", "  lead", "a; b", "\"q\" and \\ back\\", "plain text", ""];
+        for t in texts {
+            let p = PerkRow { stats: "X".into(), name: "N".into(), description: t.into(), ..Default::default() };
+            let tab = Table { perks: vec![p], ..Default::default() };
+            let text = format_full_table(&tab);
+            let back = parse_full_table(&text).expect("re-parses");
+            assert_eq!(back.perks[0].description, t, "{text}");
+        }
+        assert_eq!(quote("plain text"), "plain text");
+        assert_eq!(quote("ends "), "\"ends \"");
+        let commented = parse_full_table("Perk X ; a perk\n  Name = N ; the name\n  Description = \"x; y \" ; trailing\nEnd\n").unwrap();
+        assert_eq!((commented.perks[0].name.as_str(), commented.perks[0].description.as_str()), ("N", "x; y "));
     }
 
     #[test]
