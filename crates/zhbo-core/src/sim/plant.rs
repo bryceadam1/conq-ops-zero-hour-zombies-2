@@ -91,7 +91,7 @@ pub fn plant_point(def: &WeaponDef, body: &Body, yaw: f32, pitch: f32, host: &dy
                 return landed(p + step * (t / len));
             }
         }
-        p = p + step;
+        p += step;
         flown += crate::units::LOGIC_DT;
     }
     feet

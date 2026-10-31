@@ -329,6 +329,9 @@ pub struct HudTimers {
     pub muzzle: f32,
     pub score_popup: f32,
     pub score_points: u32,
+    /// The weapon hint on screen (`invalidcmdhint.menu`'s ownerdraw 113): its localize key and
+    /// seconds since it was set.
+    pub hint: Option<(&'static str, f32)>,
     /// The map key is held: Zero Hour's radar over the view.
     pub map_open: bool,
     /// The scoreboard key is held.
@@ -1138,9 +1141,8 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 }
                 EventKind::Detonated => self.cues.play(sounds::DETONATE),
                 EventKind::DestroyedEquipment => {}
-                // BO2 shows the "Cannot Plant Here" hint (`WEAPON_CANT_PLANT_EQUIPMENT`); the mod's
-                // HUD has no hint line yet, so only the log (`describe_event`) reports it.
-                EventKind::CantPlant { .. } => {}
+                // BO2's weapon hint ("Cannot Plant Here"): set afresh, drawn by the HUD.
+                EventKind::CantPlant { .. } => self.hud.hint = crate::sim::event_hint(&kind).map(|k| (k, 0.0)),
                 EventKind::Hammer { .. } => self.vm_events.swapped = true,
                 EventKind::BuildPlaced { .. } => {
                     self.cues.play(sounds::PLANT);
@@ -1210,6 +1212,8 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         h.death_banner = (h.death_banner - dt).max(0.0);
         h.muzzle = (h.muzzle - dt).max(0.0);
         h.score_popup = (h.score_popup - dt).max(0.0);
+        // The hint is cleared once its 1.8 s are up (`FUN_004ddc80`: start + 0x708 ms < now).
+        h.hint = h.hint.map(|(k, t)| (k, t + dt)).filter(|&(_, t)| t <= crate::hud::HINT_TIME);
         h.hack_shown = (h.hack_shown - dt).max(0.0);
         let decay = (1.0 - dt * 12.0).max(0.0);
         h.view_kick_pitch *= decay;

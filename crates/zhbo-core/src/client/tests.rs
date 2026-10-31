@@ -63,6 +63,31 @@
         assert_eq!(out.viewmodel_fired, 1);
     }
 
+    /// `CantPlant` shows BO2's weapon hint for 1.8 s; the log line carries its text.
+    #[test]
+    fn cant_plant_shows_the_hint_for_its_time() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        let e = crate::sim::Event { player: 0, kind: crate::sim::EventKind::CantPlant { lethal: true } };
+        let line = crate::sim::describe_event(&e).unwrap();
+        assert!(line.contains(crate::sim::hint_text("WEAPON_CANT_PLANT_EQUIPMENT")), "{line}");
+        sim.events.push(e);
+        inp.dt = LOGIC_DT;
+        client.frame(&mut sim, &inp);
+        assert!(matches!(client.hud.hint, Some(("WEAPON_CANT_PLANT_EQUIPMENT", _))));
+        let frames = (crate::hud::HINT_TIME / LOGIC_DT).ceil() as usize + 2;
+        for _ in 0..frames {
+            client.frame(&mut sim, &inp);
+        }
+        assert!(client.hud.hint.is_none(), "gone after 1.8 s");
+    }
+
     fn impact(player: i32, surface: crate::impacts::Surface, head: bool, fatal: bool) -> crate::sim::Event {
         crate::sim::Event {
             player,

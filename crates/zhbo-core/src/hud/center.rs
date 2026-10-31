@@ -23,6 +23,15 @@ pub const CROSSHAIR_ALPHA_MIN: f32 = 0.5;
 pub const HITMARKER_FADE: f32 = 1.0;
 /// The score popup's `DisplayTime`.
 pub const SCORE_DISPLAY: f32 = 1.0;
+/// How long the weapon hint stays (`FUN_004ddc80`: cleared at its start + 0x708 ms).
+pub const HINT_TIME: f32 = 1.8;
+/// The hint's fade-in cycle (`FUN_004ddc80`: alpha `((now - start) % 600) / 600`).
+pub const HINT_CYCLE: f32 = 0.6;
+/// `invalidcmdhint.menu` (`common_mp.ff`'s `ui_mp/hud_*.txt`): `rect 0 40` (480-line space) with
+/// align 9/9, taken as the screen centre, and the item's `textscale 0.275` in `normalFont`
+/// (`textfont 1`), which IW menus draw `48 * scale` lines tall.
+const HINT_BELOW_CENTRE_480: f32 = 40.0;
+const HINT_HEIGHT_480: f32 = 48.0 * 0.275;
 
 /// The crosshair's push from the centre in pixels: G6's 480-line value scaled to the screen.
 pub fn crosshair_offset(spread_deg: f32, hfov: f32, w: f32, h: f32) -> f32 {
@@ -131,9 +140,38 @@ pub(super) fn draw_score_popup(l: &Lui, prims: &mut Vec<Prim>, client: &Client) 
     l.text(prims, r, Family::Condensed, &format!("+{}", client.hud.score_points), None, (true, true), (1.0, 1.0, 1.0), 1.0);
 }
 
+/// BO2's weapon hint (ownerdraw 113, `FUN_004ddc80`): the localized text centred on the screen's
+/// middle, its pen line 40 lines below the centre, white, fading in over each 600 ms for 1.8 s.
+/// (`textstyle 3`'s shadow is not drawn.)
+pub(super) fn draw_hint(l: &Lui, prims: &mut Vec<Prim>, client: &Client) {
+    let Some((key, t)) = client.hud.hint else { return };
+    let alpha = (t % HINT_CYCLE) / HINT_CYCLE;
+    // LUI's 720-line space is 1.5 x the menus' 480.
+    let (pen, height) = (HINT_BELOW_CENTRE_480 * 1.5, HINT_HEIGHT_480 * 1.5);
+    let r = Place::new((true, true, 0.0, 0.0), (false, false, pen - height, pen)).resolve(l.screen());
+    l.text(prims, r, Family::Condensed, crate::sim::hint_text(key), None, (true, true), (1.0, 1.0, 1.0), alpha);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_hint_sits_below_the_centre_and_fades_in_each_600_ms() {
+        let _f = crate::lui::font::lock();
+        crate::lui::font::load("");
+        let l = Lui::new(1280.0, 720.0);
+        let mut client = Client::default();
+        let mut prims = Vec::new();
+        draw_hint(&l, &mut prims, &client);
+        assert!(prims.is_empty(), "no hint, nothing drawn");
+        client.hud.hint = Some(("WEAPON_CANT_PLANT_EQUIPMENT", 0.3));
+        draw_hint(&l, &mut prims, &client);
+        // Centred; pen line 60 below the centre (40 of 480).
+        assert!(matches!(&prims[0], Prim::Text { x, text, .. } if *x == 640.0 && !text.is_empty()), "{:?}", prims[0]);
+        // Half way through the first cycle: half alpha.
+        assert_eq!(super::super::frame::argb((1.0, 1.0, 1.0), 0.5), match &prims[0] { Prim::Text { argb, .. } => *argb, _ => 0 });
+    }
 
     #[test]
     fn crosshair_offset_is_g6s_480_line_value() {

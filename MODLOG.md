@@ -4972,3 +4972,26 @@ traces — and the item's script settles it where it lands. BO2's data: the clay
 * Tests: `the_plant_point_follows_bo2s_launch` (feet; the claymore just ahead; the Betty's arc
   distance `v·sqrt(2h/g)`; deterministic); the RTS plant test now expects the claymore at his feet.
 * Not done: BO2's bounce and settle (the grenade physics and `_claymore.gsc`'s orientation).
+
+## The HUD draws BO2's weapon hint: "Cannot Plant Here" (2026-10-31, `v1/offhand-rules`)
+
+`CantPlant` only reached the log. BO2's MP HUD draws the weapon hints from code, not LUI: the hint id
+(`cg+0x6961c`, 0xe for the plant refusal) is painted by ownerdraw 113 (`FUN_004e41d0` → `FUN_004ddc80`),
+which `invalidcmdhint.menu` hosts (dumped from `common_mp.ff` with the reference's patched OAT
+Unlinker; the menu lists `ui_mp/hud_*.txt` load it): menu `rect 0 40` align 9/9, item `textfont 1`
+(`normalFont`), `textscale 0.275`, `textstyle 3`. `FUN_004ddc80` clears the hint once start +
+0x708 ms (1.8 s) has passed, sets the colour's alpha to `((now - start) % 600) / 600` (a fade-in each
+600 ms), and centres the localized text on the rect's x (`x - width * 0.5`), pen line at its y.
+
+* The text is the install's: the weapon table gains `HudString <key> = <text>` lines
+  (`Table::hud_strings`, keys in `weapons::HUD_STRINGS`, filled by the converter from the english
+  `code_post_gfx_mp`/`patch_mp` zones it already reads for display names); `Catalog::hud_string`
+  serves them. `sim::event_hint` maps the event to its key and `sim::hint_text` to the text (the key
+  itself without a converted table); `describe_event` logs it.
+* Client: `hud.hint` (key, seconds) is set on the local `CantPlant`, ticks and clears after
+  `HINT_TIME`. HUD `draw_hint`: centred, pen line 60 LUI units (40 of 480) below the centre,
+  `48 * 0.275` lines tall in `Condensed` (normalFont), white, the 600 ms fade. Align 9/9 is read as the
+  screen centre (unverified); the `textstyle 3` shadow is not drawn.
+* Tests: `the_hint_sits_below_the_centre_and_fades_in_each_600_ms`,
+  `cant_plant_shows_the_hint_for_its_time`, `the_hud_strings_round_trip`.
+* The table format gains a line kind: the archive VERSION must bump (integrator).

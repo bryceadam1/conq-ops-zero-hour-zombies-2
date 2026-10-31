@@ -25,6 +25,7 @@ pub struct Catalog {
     reticle_colors: HashMap<String, &'static CamoOption>,
     reticle_color_order: Vec<&'static CamoOption>,
     built: Mutex<HashMap<String, &'static WeaponDef>>,
+    hud_strings: HashMap<String, &'static str>,
     pub tablet_meshes: u8,
 }
 
@@ -53,6 +54,7 @@ impl Catalog {
             reticle_color_order,
             built: Mutex::new(HashMap::new()),
             tablet_meshes: t.tablet_meshes,
+            hud_strings: t.hud_strings.into_iter().map(|(k, v)| (k, &*Box::leak(v.into_boxed_str()))).collect(),
         }
     }
 
@@ -94,6 +96,12 @@ impl Catalog {
     }
 
     /// A camo option by id (`camo_multicam`), with its name and thumbnail image.
+    /// BO2's localized HUD string for a localize key ([`super::table::HUD_STRINGS`]), if the
+    /// converted table carries it.
+    pub fn hud_string(&self, key: &str) -> Option<&'static str> {
+        self.hud_strings.get(key).copied()
+    }
+
     pub fn camo(&self, id: &str) -> Option<&'static CamoOption> {
         self.camo.get(id).copied()
     }

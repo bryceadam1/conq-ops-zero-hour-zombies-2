@@ -764,6 +764,20 @@ impl Sim {
 
 }
 
+/// The BO2 hint an event shows (its localize key), if it shows one: the client draws it and the
+/// log reports it.
+pub fn event_hint(kind: &EventKind) -> Option<&'static str> {
+    match kind {
+        EventKind::CantPlant { .. } => Some("WEAPON_CANT_PLANT_EQUIPMENT"),
+        _ => None,
+    }
+}
+
+/// A hint's text: BO2's localized string from the converted table, else the key itself.
+pub fn hint_text(key: &str) -> &str {
+    crate::weapons::catalog().hud_string(key).unwrap_or(key)
+}
+
 /// The log line for an event, or `None` for the quiet ones (the ffi log and the tests share this
 /// vocabulary, so the event enum has one wording).
 pub fn describe_event(e: &Event) -> Option<String> {
@@ -782,7 +796,7 @@ pub fn describe_event(e: &Event) -> Option<String> {
         Melee => format!("player {} meleed", e.player),
         Thrown { lethal } => format!("player {} threw a {}", e.player, if lethal { "lethal" } else { "tactical" }),
         Exploded { at } => format!("player {}'s grenade went off at ({:.0}, {:.0})", e.player, at.x, at.y),
-        CantPlant { .. } => format!("player {} cannot plant here", e.player),
+        CantPlant { .. } => format!("player {} was told \"{}\"", e.player, event_hint(&e.kind).map_or("", hint_text)),
         Planted { kind } => format!("player {} put down equipment ({kind:?})", e.player),
         Detonated => format!("player {} set off their C4", e.player),
         Intercepted { .. } => format!("player {}'s Trophy System shot down a projectile", e.player),

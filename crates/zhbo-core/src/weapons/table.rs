@@ -27,7 +27,14 @@ pub struct Table {
     /// BO2's perk rows (`mp/statstable.csv`): the reference without `PERKS_` (`LIGHTWEIGHT`,
     /// `NINJA`) and the specialties it grants (`Perk <ref>` blocks).
     pub perks: Vec<(String, Specialties)>,
+    /// BO2's localized HUD strings the core draws ([`HUD_STRINGS`]), from the install's english
+    /// zones (`HudString <key> = <text>` lines).
+    pub hud_strings: Vec<(String, String)>,
 }
+
+/// The localize keys of BO2's HUD text the core draws itself; the converter copies their English
+/// text into the table.
+pub const HUD_STRINGS: &[&str] = &["WEAPON_CANT_PLANT_EQUIPMENT"];
 
 pub(crate) fn pairs(v: &[(String, String)]) -> String {
     v.iter().map(|(a, b)| format!("{a}={b}")).collect::<Vec<_>>().join(" ")
@@ -66,6 +73,12 @@ pub fn format_table(defs: &[WeaponDef]) -> String {
 pub fn format_full_table(t: &Table) -> String {
     let mut s = String::from("; Black Ops II multiplayer weapons, converted from the player's own install by zhbo-assets.\n; Private data: do not redistribute.\n\n");
     s.push_str(&format!("TabletMeshes = {}\n\n", t.tablet_meshes));
+    for (key, text) in &t.hud_strings {
+        s.push_str(&format!("HudString {key} = {text}\n"));
+    }
+    if !t.hud_strings.is_empty() {
+        s.push('\n');
+    }
     for (stats, specialties) in &t.perks {
         s.push_str(&format!("Perk {stats}\n  Specialties = {}\nEnd\n\n", specialties.format()));
     }
@@ -129,6 +142,11 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
         }
         if let Some(id) = line.strip_prefix("ReticleColorOption ") {
             cur = Some(Block::ReticleColor(Box::new(CamoOption { id: id.trim().to_string(), ..Default::default() })));
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("HudString ") {
+            let (key, text) = rest.split_once('=').ok_or_else(|| err("expected HudString key = text"))?;
+            table.hud_strings.push((key.trim().to_string(), text.trim().to_string()));
             continue;
         }
         if let Some(id) = line.strip_prefix("Perk ") {
@@ -741,6 +759,14 @@ mod tests {
         assert_eq!(WEAPON_FIELDS.len(), 86);
         assert_eq!(ATTACHMENT_FIELDS.len(), 18);
         assert_eq!(CAMO_FIELDS.len(), 3);
+    }
+
+    #[test]
+    fn the_hud_strings_round_trip() {
+        let t = Table { hud_strings: vec![("WEAPON_CANT_PLANT_EQUIPMENT".into(), "Cannot Plant Here".into())], ..Default::default() };
+        let back = parse_full_table(&format_full_table(&t)).expect("the table re-parses");
+        assert_eq!(back.hud_strings, t.hud_strings);
+        assert_eq!(crate::weapons::Catalog::from_table(back).hud_string("WEAPON_CANT_PLANT_EQUIPMENT"), Some("Cannot Plant Here"));
     }
 
     #[test]

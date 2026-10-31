@@ -307,6 +307,8 @@ pub fn table_with_metadata(
         reticle_colors: opts.reticle_colors.to_vec(),
         tablet_meshes: 0,
         perks: Vec::new(),
+        // The HUD text the core draws, in the install's own English.
+        hud_strings: zhbo_core::weapons::HUD_STRINGS.iter().filter_map(|k| names.get(*k).map(|t| (k.to_string(), t.clone()))).collect(),
     }
 }
 
