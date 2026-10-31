@@ -457,8 +457,9 @@ pub struct Client {
     /// fold's prev state; the shell menu keeps its own).
     menu_prev: crate::classui::MenuPrev,
     /// Who views this machine's tracers (the last rendered frame's local player, his General and
-    /// the first-person one), for the host layer's per-viewer choice after each logic step.
-    pub viewer: tracers::Viewer,
+    /// the first-person one), for the host layer's per-viewer choice after each logic step, and
+    /// the own gun's tracers for the viewmodel pass.
+    pub tracers: tracers::ViewTracers,
 }
 
 impl Default for Client {
@@ -505,7 +506,7 @@ impl Client {
             class_pick_since: None,
             ui_clock: 0.0,
             menu_prev: crate::classui::MenuPrev::default(),
-            viewer: tracers::Viewer::default(),
+            tracers: tracers::ViewTracers::default(),
         }
     }
 
@@ -976,7 +977,10 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         }
         // The fresh-press/hover detectors compare against this frame's keys and cursor.
         self.menu_prev.update(&menu_pointer(inp));
-        self.viewer = tracers::Viewer { player: inp.local_player, general: self.general, first_person: out.hide_object };
+        // The own gun's tracers queued by the logic steps since the last frame are this frame's,
+        // drawn from the viewmodel's flash tag (`zhbo_viewmodel_tracer`) while it shows.
+        self.tracers.begin_frame(out.camera_override != 0 && out.hide_object != 0 && out.viewmodel >= 0);
+        self.tracers.viewer = tracers::Viewer { player: inp.local_player, general: self.general, first_person: out.hide_object };
         out
     }
 

@@ -8,13 +8,19 @@
 //! his own shots and his allies' are friendly, everyone else's (enemies and neutrals, as BO2's
 //! team-less shooters) enemy.
 //!
-//! Each tracer flies from the shooter's flash bone (the FX weapon's `FireFX`, `fire_fx`); the
-//! viewer's own first-person General is skipped by the bridge (`cbFireFx`).
+//! Others' tracers fly from their soldier's flash bone (the FX weapon's `FireFX`, `fire_fx`). The
+//! viewer's own first-person shots draw too: the same countdown (`FUN_00539800` hands
+//! `FUN_00538e40` its draw flag set for every shooter), from the viewmodel's flash tag
+//! (`FUN_00535f80`'s tracer start for the predicted local player), so they are queued for the
+//! bridge's viewmodel pass ([`ViewTracers::frame`], `zhbo_viewmodel_tracer`) instead.
+//! `cg_firstPersonTracerChance` is registered (`FUN_004d2350`, default 0) but never read in t6mp,
+//! so no chance roll is ported (no client random stream is needed).
 //!
 //! Presentation only, outside the lockstep: the FX weapons deal no damage, and which one plays
 //! differs per machine by design (docs/CONTRACT.md).
 
 use crate::host::{objflags, LogicHost};
+use crate::math::Vec3;
 use crate::sim::ShotTracer;
 
 /// Who is looking: the local player, the General he commands (0: none yet) and the General
@@ -26,12 +32,49 @@ pub struct Viewer {
     pub first_person: u32,
 }
 
-/// Draw one logic step's tracer bullets as `viewer` sees them, through `fire_fx`. Empties `shots`.
-pub fn play(host: &dyn LogicHost, viewer: &Viewer, shots: &mut Vec<ShotTracer>) {
-    for s in shots.drain(..) {
-        let fx_weapon = choose(s.def, enemy_of(host, viewer, s.shooter));
-        if !fx_weapon.is_empty() {
-            host.fire_fx(s.shooter, fx_weapon, s.target, s.end);
+/// One tracer of the viewer's own gun: the FX weapon whose `FireFX` draws it, to the bullet's end.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct OwnTracer {
+    pub fx_weapon: &'static str,
+    pub end: Vec3,
+}
+
+/// The client's side of the tracers: who views, and the own gun's tracers waiting for the
+/// viewmodel pass.
+#[derive(Clone, Debug, Default)]
+pub struct ViewTracers {
+    pub viewer: Viewer,
+    /// Queued by the logic steps since the last rendered frame.
+    pub pending: Vec<OwnTracer>,
+    /// This rendered frame's, for the bridge to draw from the viewmodel's flash tag.
+    pub frame: Vec<OwnTracer>,
+}
+
+impl ViewTracers {
+    /// Draw this step's tracer bullets for the viewer: others' through `fire_fx`, the viewer's own
+    /// first-person ones queued for the viewmodel pass. Empties `shots`.
+    pub fn play(&mut self, host: &dyn LogicHost, shots: &mut Vec<ShotTracer>) {
+        for s in shots.drain(..) {
+            let fx_weapon = choose(s.def, enemy_of(host, &self.viewer, s.shooter));
+            if fx_weapon.is_empty() {
+                continue;
+            }
+            if self.viewer.first_person != 0 && s.shooter == self.viewer.first_person {
+                self.pending.push(OwnTracer { fx_weapon, end: s.end });
+            } else {
+                host.fire_fx(s.shooter, fx_weapon, s.target, s.end);
+            }
+        }
+    }
+
+    /// A rendered frame starts: the own tracers queued since the last one become this frame's
+    /// (none outside first person: there is no viewmodel to draw them from).
+    pub fn begin_frame(&mut self, first_person: bool) {
+        self.frame.clear();
+        if first_person {
+            std::mem::swap(&mut self.frame, &mut self.pending);
+        } else {
+            self.pending.clear();
         }
     }
 }

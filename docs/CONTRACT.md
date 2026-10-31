@@ -393,7 +393,7 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
   `zhbo_load_impacts` at init) and the bridge calls `FXList::doFXPos` with a frame whose X is
   `-dir` (the surface's outward normal). A missing/stale archive plays nothing and is counted, never
   a bogus name — the same degrade-don't-panic rule as the renderer's draws.
-* **What is out**: first-person tracers (BO2's `cg_firstPersonTracerChance` defaults to 0), other
+* **What is out**: other
   players' impacts (they keep the converted `FireFX`), exit/through-and-through impacts, and
   per-surface impact *sounds* (flesh vs hard only).
 * ABI: `surface_at` is appended to `ZhboLogicApi` (fields 23 → 24), `ZhboClientOut` grows by 324
@@ -456,8 +456,18 @@ Not yet covered: save/load keeps no first-person state (a loaded game starts in 
   tracer is a Zero Hour `Tracer` nugget flying from the flash bone to the bullet's end. The
   overhead General fires Zero Hour's own weapon (no sim shot), so his `FireFX` is one composed
   FXList (`ZHBO_BO2FX_Rts_<id>`: flash, placed brass, and the tracer with `Probability =
-  1/drawInterval`). The shooter's own first-person view draws neither (`cbFireFx` skips him; BO2's
-  own view uses the view shells, and own-tracer chance `cg_firstPersonTracerChance` is not ported).
+  1/drawInterval`). `cbFireFx` skips the shooter's own first-person General (BO2's own view uses the
+  view shells). **His own tracers** are BO2's too: the same countdown (`FUN_00539800` sets the draw
+  flag for every shooter; `cg_firstPersonTracerChance` is registered with default 0 but never read
+  in t6mp, so no chance roll and no client random stream), started at the viewmodel's flash tag
+  (`FUN_00535f80`). `client::tracers::ViewTracers::play` queues a tracer whose shooter is the
+  viewer's first-person General instead of firing it; the next client frame makes them that frame's
+  (`begin_frame`, dropped outside first person), and the bridge's viewmodel pass pulls them with
+  `zhbo_viewmodel_tracer(i, fx_weapon, cap, end)` (a free function appended to the ABI surface; the
+  `ZHBO_ABI_VERSION` bump is the integrator's) and plays the FX weapon's `FireFX` from `tag_flash`
+  (native pose or W3D model) to the end with `FXList::doFXPos`. BO2 caps an own tracer's width at
+  4 (`FUN_007c6420`, the local entity's `+0x7c` flag); every player gun's tracer is at most 4, so
+  the cap is not modelled.
 - After the camera override, reset pitch/zoom/pivot (`resetPivotToGround`) or the RTS camera stays
   low; leaving first person flies back to the overhead camera as first person found it, not what
   the view reports then.

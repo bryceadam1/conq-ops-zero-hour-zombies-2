@@ -4653,3 +4653,25 @@ out. Read-only Ghidra (t6mp; decompiles and disassembly kept in the plan dir):
   `assaultrifle_enemy` and that its beam colour differs.
 * The overhead General (Zero Hour's own weapon, one composed `FireFX`) still draws the friendly
   tracer for every viewer: a weapon's `FireFX` cannot depend on who looks.
+* **Your own gun's tracers** — `cg_firstPersonTracerChance` is a dead dvar in t6mp: registered in
+  `FUN_004d2350` (default 0, range 0–1) and never read (the only instruction touching its global
+  `0x01062f50` is the registration's store). BO2 instead runs own shots down the same path:
+  `FUN_00539800` calls `FUN_00538e40` with its draw-tracer argument pushed as constant 1 (disassembly
+  at `0x00539afb`), so the countdown and `Tracer_Spawn` apply to the local player too, and the
+  tracer's start is `FUN_00535f80`'s out-param 9, which for the predicted local player is the flash
+  tag on the view model (`cg+0x700`; a third-person camera uses eye + forward × 30). The tracer
+  local entity's `+0x7c` marks the local client's own, and `FUN_007c6420` caps its width at 4.0 —
+  no player gun exceeds 4 (the DSR-50's trail is exactly 4), so it is not modelled. The mod: the
+  client queues a tracer whose shooter is its first-person General, makes them the next rendered
+  frame's, and the bridge's viewmodel pass pulls them (`zhbo_viewmodel_tracer`, new; ABI bump is
+  the integrator's) and plays the FX weapon's `FireFX` from `tag_flash` to the bullet's end. No
+  client RNG exists to keep out of the sim: the cadence is the sim's countdown. Not ported: the
+  left gun's `tag_flash` of a dual-wield pair (BO2 passes its tag by caller; the right gun's is used).
+* **Texture**: Zero Hour's FXList `Tracer` is `W3DTracerDraw`'s untextured `Line3DClass`; the only
+  textured beam (`W3DLaserDraw`'s `SegmentedLineClass`) is an object draw module spawned through
+  object creation, i.e. lockstep objects — not a client-only path. The tracer stays a tinted line.
+
+Measured: see the commit messages (conformance unchanged: the `tracer` column still reads the
+friendly tracer, no column moved). In-game check (the integrator's): an enemy soldier's tracers in
+`gfx_tracer_enemy`'s hue vs a teammate's; your own LMG drawing a tracer every bullet, an AR every
+third, from the viewmodel's muzzle.
