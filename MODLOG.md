@@ -4620,3 +4620,36 @@ clusters); the rest is `v1/third-person`'s `world_model`/`world_part_*` (−42,6
 regressed. Archive output and the table schema changed: `hud::VERSION` bump is the integrator's.
 In-game check (the integrator's): another soldier and the overhead General firing — brass from the
 ejection port, tracers every 3rd AR round / every LMG round, none from your own first-person gun.
+
+## Tracers per viewer, and from your own gun (2026-10-31, branch `v1/tracers-view`)
+
+Follow-up to the brass-and-tracers entry above, which left the enemy tracer and own-view tracers
+out. Read-only Ghidra (t6mp; decompiles and disassembly kept in the plan dir):
+
+* **Which tracer** — `Tracer_Spawn` (`FUN_007c6150`) and the countdown (`FUN_007c65c0`) both ask
+  `FUN_004bbf10(cg, cent)` for the shooter's team (the client's for a player, `+0x238` for eType
+  0x10, else the entity's low flag bits) and call it friendly only when it is **non-zero and equal
+  to the local client's**; `FUN_008eb420` then walks, for a non-friend, each single unique's
+  `enemyTracerType` before its `tracerType`, and the def's enemy before its own. BO2's six enemy
+  twins (`smg`, `assaultrifle`, `lmg`, `pistol`, `shotgun`, `smg_akimbo` + `_enemy`) equal their
+  friendly ones in every field but the material (`gfx_tracer` vs `gfx_tracer_enemy`); the
+  install-gated `the_enemy_tracers_differ_only_in_material` pins it, which is what lets the sim keep
+  one countdown per shooter (BO2's runs on the viewer's tracer, whose interval is the same).
+* **The mod's side of it** — Zero Hour has players, not BO2 teams: the viewer is the local player;
+  his own soldiers and those Zero Hour calls `ALLY` to his General are friendly, everyone else
+  (enemies, neutrals: BO2's team-less shooters) enemy. The sim no longer fires the tracer FX
+  weapon: it queues a `ShotTracer` (shooter, def, target, end) per tracer bullet, and
+  `zhbo_logic_step` hands the queue to `client::tracers::play` right after the step, which picks
+  `TracerFxWeapon`/`EnemyTracerFxWeapon` for the last rendered frame's `Client::viewer` and fires
+  it through the same `fire_fx`. Deterministic: the sim state and the countdown are viewer-free;
+  only which client-only FX weapon plays differs per machine (as `cbFireFx`'s own-view skip already
+  did). BO2's free-for-all corner (team 0 is nobody's friend, so even your own tracer is the enemy
+  one) has no Zero Hour equivalent and is not mapped.
+* Table: `EnemyTracerFxWeapon` (`WEAPON_FIELDS` 82 → 83), set by `shotfx::convert` for every def
+  with a tracer (the enemy walk's result, its own FX weapon and tinted FXList; a def with no enemy
+  tracer names its friendly one). Tests: client `each_viewer_sees_the_enemy_tracer_of_shooters_not_on_his_side`,
+  `a_def_without_an_enemy_tracer_draws_its_own_for_everyone`, `the_client_frame_records_the_viewer`;
+  shotfx's walk test gains the enemy side; the real-install converter test checks the AN-94's
+  `assaultrifle_enemy` and that its beam colour differs.
+* The overhead General (Zero Hour's own weapon, one composed `FireFX`) still draws the friendly
+  tracer for every viewer: a weapon's `FireFX` cannot depend on who looks.

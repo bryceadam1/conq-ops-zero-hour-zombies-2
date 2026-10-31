@@ -352,6 +352,8 @@ pub extern "C" fn zhbo_logic_step(frame: u32) {
     with_state(|s| {
         let before = s.sim.events.len();
         s.sim.step(&s.logic, frame);
+        // The step's tracer bullets, as this machine's viewer sees them (client-only FX).
+        crate::client::tracers::play(&s.logic, &s.client.viewer, &mut s.sim.tracers);
         publish_controlled(&s.sim);
         log_step(s, before, frame);
     });

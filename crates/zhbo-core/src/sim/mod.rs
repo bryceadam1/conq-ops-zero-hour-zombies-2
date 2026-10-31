@@ -166,6 +166,20 @@ pub struct Event {
     pub kind: EventKind,
 }
 
+/// A bullet that draws a tracer (BO2's countdown said so, `fire::tracer_due`). The sim names the
+/// shooter and the weapon; which tracer is drawn is the viewer's (`FUN_004bbf10`: friendly or
+/// enemy), so the host layer drains these after each logic step and the client chooses
+/// (`client::tracers`). Presentation only: nothing in the sim reads them back.
+#[derive(Clone, Copy, Debug)]
+pub struct ShotTracer {
+    /// The shooting General.
+    pub shooter: u32,
+    pub def: &'static crate::weapons::WeaponDef,
+    /// What the bullet hit (0: the ground, the air or equipment) and where it ended.
+    pub target: u32,
+    pub end: Vec3,
+}
+
 #[derive(Clone, Debug)]
 pub struct PlayerSim {
     pub general: u32,
@@ -267,6 +281,8 @@ pub struct Sim {
     pub tuning: MoveTuning,
     pub frame: u32,
     pub events: Vec<Event>,
+    /// This step's tracer bullets, for the host layer to draw per viewer and clear.
+    pub tracers: Vec<ShotTracer>,
 }
 
 impl Default for Sim {
@@ -285,6 +301,7 @@ impl Sim {
             tuning: MoveTuning::default(),
             frame: 0,
             events: Vec::new(),
+            tracers: Vec::new(),
         }
     }
 
@@ -1467,12 +1484,22 @@ pub(crate) mod tests {
         let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(def));
         (w.def, w.main, w.ammo, w.reserve) = (def, def, 7, 0);
         host.fx.borrow_mut().clear();
-        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, ..Default::default() }, frames(5.0));
-        let fx: Vec<String> = host.fx.borrow().iter().map(|(_, w, _)| w.clone()).filter(|w| w.starts_with("BRASS") || w == "TRACER").collect();
+        // The tracer bullets are queued for the host layer (the viewer picks the asset): note how
+        // many shots' brass had played when each was queued.
+        let mut after = Vec::new();
+        for _ in 0..frames(5.0) {
+            run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, ..Default::default() }, 1);
+            let shots = host.fx.borrow().iter().filter(|(_, w, _)| w.starts_with("BRASS")).count();
+            for t in std::mem::take(&mut sim.tracers) {
+                assert_eq!((t.shooter, t.def.tracer_fx_weapon.as_str()), (1, "TRACER"));
+                after.push(shots);
+            }
+        }
+        let fx: Vec<String> = host.fx.borrow().iter().map(|(_, w, _)| w.clone()).collect();
         let brass: Vec<&str> = fx.iter().map(String::as_str).filter(|w| w.starts_with("BRASS")).collect();
         assert_eq!(brass, ["BRASS", "BRASS", "BRASS", "BRASS", "BRASS", "BRASS", "BRASS_LAST"], "{fx:?}");
+        assert!(!fx.iter().any(|w| w == "TRACER"), "the sim fires no tracer itself: {fx:?}");
         // The tracer follows its shot's brass: shots 3 and 6 of 7.
-        let after: Vec<usize> = fx.iter().enumerate().filter(|(_, w)| *w == "TRACER").map(|(i, _)| fx[..i].iter().filter(|w| w.starts_with("BRASS")).count()).collect();
         assert_eq!(after, [3, 6], "{fx:?}");
     }
 

@@ -44,7 +44,7 @@ impl Sim {
                         host.fire_fx(p.general, fx, 0, eye + dir * t);
                     }
                     if tracer {
-                        host.fire_fx(p.general, &def.tracer_fx_weapon, 0, eye + dir * t);
+                        self.tracers.push(ShotTracer { shooter: p.general, def, target: 0, end: eye + dir * t });
                     }
                     let e = self.equipment.destroy(host, i, Some(idx));
                     self.equipment_events(vec![e]);
@@ -62,7 +62,7 @@ impl Sim {
                             host.fire_fx(p.general, fx, id, point);
                         }
                         if tracer {
-                            host.fire_fx(p.general, &def.tracer_fx_weapon, id, point);
+                            self.tracers.push(ShotTracer { shooter: p.general, def, target: id, end: point });
                         }
                         let mult = if headshot { def.head_multiplier } else { 1.0 };
                         let victim = host.object(id, p.general);
@@ -92,7 +92,7 @@ impl Sim {
                             host.fire_fx(p.general, fx, 0, other.point());
                         }
                         if tracer {
-                            host.fire_fx(p.general, &def.tracer_fx_weapon, 0, other.point());
+                            self.tracers.push(ShotTracer { shooter: p.general, def, target: 0, end: other.point() });
                         }
                         // The ground: Zero Hour's terrain class at the point (the host's query).
                         // A shot that flew out to its full range hit nothing, so it raises nothing.

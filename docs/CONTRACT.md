@@ -438,10 +438,19 @@ Not yet covered: save/load keeps no first-person state (a loaded game starts in 
 - **What others see of a shot besides the flash** rides the same `fire_fx` callback (no ABI
   change). Per hitscan shot the sim also fires the def's `WorldShellFxWeapon` (its
   `WorldLastShotShellFxWeapon` on the round that empties the magazine, `WeaponAction::Fire.last`)
-  — BO2's `worldShellEjectEffect` (`FUN_00531630`) — and, per bullet (each pellet), the
-  `TracerFxWeapon` when the shooter's tracer countdown says so (`sim::fire::tracer_due`, BO2's
-  per-entity byte countdown `FUN_007c65c0`: every `TracerInterval`-th bullet, kept in
-  `PlayerSim::tracer_count`, so it is deterministic and replayable). Both are client-only FX
+  — BO2's `worldShellEjectEffect` (`FUN_00531630`) — and, per bullet (each pellet), queues a
+  `sim::ShotTracer` (shooter, def, target, end) when the shooter's tracer countdown says so
+  (`sim::fire::tracer_due`, BO2's per-entity byte countdown `FUN_007c65c0`: every
+  `TracerInterval`-th bullet, kept in `PlayerSim::tracer_count`, so it is deterministic and
+  replayable). **The tracer's asset is the viewer's**: right after `Sim::step`,
+  `zhbo_logic_step` hands `Sim::tracers` to `client::tracers::play`, which fires the def's
+  `TracerFxWeapon` for a shooter on the local viewer's side (his own player's, or one Zero Hour
+  calls `ALLY` relative to his General: BO2's `FUN_004bbf10`, same non-zero team as the local
+  client) and its `EnemyTracerFxWeapon` (`enemyTracerType`'s walk, `FUN_008eb420`) for anyone
+  else. The viewer is the last rendered frame's (`Client::viewer`). Which FX weapon plays differs
+  per machine by design; it is as lockstep-safe as `cbFireFx`'s own-view skip (no damage, no
+  scatter), and the countdown stays one per shooter because BO2's friendly and enemy tracers
+  differ only in material (`the_enemy_tracers_differ_only_in_material`). Both are client-only FX
   weapons (`shotfx.rs`): the brass FXList is placed from the flash bone (`ZF<vm>`, the world
   model's `tag_flash`) to `tag_brass` with the particle nuggets' `Offset`/`RotateX/Y/Z`; the
   tracer is a Zero Hour `Tracer` nugget flying from the flash bone to the bullet's end. The

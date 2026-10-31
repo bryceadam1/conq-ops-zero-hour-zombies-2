@@ -8,7 +8,9 @@
 //!   from there: offset and turned by `tag_brass` relative to `tag_flash` on the world model.
 //! * **Tracer** (`FUN_008eb420`, `FUN_007c65c0`, `Tracer_Spawn` `FUN_007c6150`): the first single
 //!   unique's `tracerType`, else the def's, drawn every `drawInterval`-th bullet by the sim's
-//!   countdown, as a Zero Hour `Tracer` nugget flying from the flash bone to the bullet's end.
+//!   countdown, as a Zero Hour `Tracer` nugget flying from the flash bone to the bullet's end. A
+//!   viewer the shooter is not friendly to sees the `enemyTracerType` walk's instead
+//!   (`zhbo_core::client::tracers` chooses per viewer).
 
 use std::collections::BTreeMap;
 
@@ -49,19 +51,21 @@ fn fx_weapon_block(name: &str, fire_fx: &str) -> String {
     )
 }
 
-/// The tracer a weapon `w` with the attachments `shorts` draws for a friendly shooter
-/// (`FUN_008eb420`): the first single unique (in the combination's order) with one, the base
-/// unique standing in for an attachment without its own single, else the def's.
-pub fn resolved_tracer<'a>(w: &'a Weapon, shorts: &[&str]) -> Option<&'a Tracer> {
+/// The tracer a weapon `w` with the attachments `shorts` draws (`FUN_008eb420`): the first single
+/// unique (in the combination's order, the base unique standing in for an attachment without its
+/// own single) with one, else the def's. For a viewer the shooter is not `friendly` to
+/// (`FUN_004bbf10`) each step takes its `enemyTracerType` first, then its `tracerType`.
+pub fn resolved_tracer<'a>(w: &'a Weapon, shorts: &[&str], friendly: bool) -> Option<&'a Tracer> {
+    let pick = |own: &'a Option<Tracer>, enemy: &'a Option<Tracer>| if friendly { own.as_ref() } else { enemy.as_ref().or(own.as_ref()) };
     let base = w.attachment_uniques.iter().find(|u| u.kind == 0 && u.combined == 0);
     for short in shorts {
         let Some((kind, _)) = w.attachment_variants.iter().find(|(_, id)| crate::weapons::short_name(id) == *short) else { continue };
         let single = w.attachment_uniques.iter().find(|u| u.kind == *kind && u.combined == 0).or(base);
-        if let Some(t) = single.and_then(|u| u.tracer.as_ref()) {
+        if let Some(t) = single.and_then(|u| pick(&u.tracer, &u.enemy_tracer)) {
             return Some(t);
         }
     }
-    w.tracer.as_ref()
+    pick(&w.tracer, &w.enemy_tracer)
 }
 
 /// `tag_brass` relative to `tag_flash` on a world model, in Zero Hour units (the soldier rig's
@@ -163,15 +167,23 @@ pub fn convert(
         });
         (d.world_shell_fx_weapon, d.world_last_shot_shell_fx_weapon) = fx.clone();
         let (_, shorts) = zhbo_core::attachments::split_id(d.id.split('~').next().unwrap_or(&d.id));
-        let Some(t) = resolved_tracer(w, &shorts).filter(|t| t.draw_interval > 0) else { continue };
-        let name = tracers.entry(t.name.clone()).or_insert_with(|| {
-            let tint = material_tint(zones, t.material.as_deref(), paks);
-            let list = effects.tracer(t, tint, 1.0);
-            let name = tracer_fx_weapon(&t.name);
-            ini.push_str(&fx_weapon_block(&name, &list));
-            name
-        });
-        d.tracer_fx_weapon = name.clone();
+        let Some(t) = resolved_tracer(w, &shorts, true).filter(|t| t.draw_interval > 0) else { continue };
+        // The countdown runs on the viewer's tracer (`FUN_007c65c0`), but BO2's friendly and enemy
+        // tracers differ only in material (pinned by `the_enemy_tracers_differ_only_in_material`),
+        // so the sim's one per-shooter countdown takes the friendly interval for every viewer.
+        let enemy = resolved_tracer(w, &shorts, false).unwrap_or(t);
+        for (out, t) in [(&mut d.tracer_fx_weapon, t), (&mut d.enemy_tracer_fx_weapon, enemy)] {
+            *out = tracers
+                .entry(t.name.clone())
+                .or_insert_with(|| {
+                    let tint = material_tint(zones, t.material.as_deref(), paks);
+                    let list = effects.tracer(t, tint, 1.0);
+                    let name = tracer_fx_weapon(&t.name);
+                    ini.push_str(&fx_weapon_block(&name, &list));
+                    name
+                })
+                .clone();
+        }
         d.tracer_interval = t.draw_interval;
     }
     (ini, placed)
@@ -235,6 +247,7 @@ mod tests {
         let w = Weapon {
             name: "mk48_mp".into(),
             tracer: Some(t("lmg")),
+            enemy_tracer: Some(t("lmg_enemy")),
             attachment_variants: vec![(5, "ir_lmg".into()), (9, "grip_lmg".into())],
             attachment_uniques: vec![
                 AttachmentUnique { name: "au_mk48_ir".into(), kind: 5, tracer: Some(t("lmg_scope")), ..Default::default() },
@@ -244,8 +257,14 @@ mod tests {
         };
         let short = |id: &str| crate::weapons::short_name(id);
         let (ir, grip) = (short("ir_lmg"), short("grip_lmg"));
-        assert_eq!(resolved_tracer(&w, &[]).map(|t| t.name.as_str()), Some("lmg"));
-        assert_eq!(resolved_tracer(&w, &[grip.as_str()]).map(|t| t.name.as_str()), Some("lmg"));
-        assert_eq!(resolved_tracer(&w, &[grip.as_str(), ir.as_str()]).map(|t| t.name.as_str()), Some("lmg_scope"));
+        let name = |shorts: &[&str], friendly| resolved_tracer(&w, shorts, friendly).map(|t| t.name.as_str());
+        assert_eq!(name(&[], true), Some("lmg"));
+        assert_eq!(name(&[grip.as_str()], true), Some("lmg"));
+        assert_eq!(name(&[grip.as_str(), ir.as_str()], true), Some("lmg_scope"));
+        // An enemy shooter: the def's enemy tracer, but the IR single's own (it has no enemy one)
+        // comes first in the walk.
+        assert_eq!(name(&[], false), Some("lmg_enemy"));
+        assert_eq!(name(&[grip.as_str()], false), Some("lmg_enemy"));
+        assert_eq!(name(&[grip.as_str(), ir.as_str()], false), Some("lmg_scope"));
     }
 }

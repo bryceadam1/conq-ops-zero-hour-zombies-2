@@ -924,6 +924,7 @@ mod tests {
             let rest = &ini[at..];
             rest[..rest.find("\nEnd\n").unwrap()].to_string()
         };
+        let weapons_ini = text("Data\\INI\\Weapon\\ZHBO_BO2_Weapons.ini");
         let an94 = by_id("an94_mp");
         assert_eq!(an94.world_shell_fx_weapon, crate::shotfx::brass_fx_weapon("an94_mp"));
         assert_eq!(an94.world_last_shot_shell_fx_weapon, an94.world_shell_fx_weapon, "BO2's last-round effect is the same fx_rifle");
@@ -932,8 +933,17 @@ mod tests {
         assert_eq!(an94.tracer_interval, 3);
         let mk48_ir = table.weapons.iter().find(|d| d.id.starts_with("mk48_mp+") && d.id.contains("+ir")).expect("an mk48 ir combination");
         assert_eq!(mk48_ir.tracer_fx_weapon, crate::shotfx::tracer_fx_weapon("lmg_scope"), "{}", mk48_ir.id);
+        // An enemy viewer's: `assaultrifle_enemy` (gfx_tracer_enemy's hue); the IR unique carries
+        // no enemy tracer, so its own `lmg_scope` comes first in the enemy walk too.
+        assert_eq!(an94.enemy_tracer_fx_weapon, crate::shotfx::tracer_fx_weapon("assaultrifle_enemy"));
+        assert_eq!(mk48_ir.enemy_tracer_fx_weapon, mk48_ir.tracer_fx_weapon, "{}", mk48_ir.id);
+        let colour = |fx: &str| {
+            let list = block(&weapons_ini, &format!("Weapon {fx}\n"));
+            let fire = list.lines().find_map(|l| l.trim().strip_prefix("FireFX")).map(|v| v.trim_start_matches([' ', '=']).to_string()).unwrap();
+            block(&fxs, &format!("FXList {fire}\n")).lines().find(|l| l.trim().starts_with("Color")).map(str::to_string).unwrap()
+        };
+        assert_ne!(colour(&an94.tracer_fx_weapon), colour(&an94.enemy_tracer_fx_weapon), "the enemy material tints the beam");
         assert!(by_id("judge_mp").world_shell_fx_weapon.is_empty(), "the Executioner ejects nothing in BO2");
-        let weapons_ini = text("Data\\INI\\Weapon\\ZHBO_BO2_Weapons.ini");
         let brass = block(&weapons_ini, &format!("Weapon {}\n", an94.world_shell_fx_weapon));
         assert!(brass.contains(&format!("FireFX                  = {}", crate::shotfx::brass_fxlist("an94_mp", false))), "{brass}");
         let placed = block(&fxs, &format!("FXList {}\n", crate::shotfx::brass_fxlist("an94_mp", false)));

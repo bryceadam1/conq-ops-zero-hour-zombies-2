@@ -287,6 +287,9 @@ pub struct WeaponDef {
     /// The FX weapon drawing the gun's bullet tracer (`tracerType`, the first single unique's
     /// before the def's, `FUN_008eb420`); empty: no tracer.
     pub tracer_fx_weapon: String,
+    /// The same for a viewer the shooter is not friendly to (`enemyTracerType`, `FUN_008eb420`'s
+    /// enemy walk; `FUN_004bbf10` decides per viewer). Empty: the friendly one.
+    pub enemy_tracer_fx_weapon: String,
     /// Every how-many bullets a tracer is drawn (`TracerDef.drawInterval`; `FUN_007c65c0`).
     pub tracer_interval: u32,
 }
@@ -481,6 +484,7 @@ impl Default for WeaponDef {
             world_shell_fx_weapon: String::new(),
             world_last_shot_shell_fx_weapon: String::new(),
             tracer_fx_weapon: String::new(),
+            enemy_tracer_fx_weapon: String::new(),
             tracer_interval: 0,
         }
     }

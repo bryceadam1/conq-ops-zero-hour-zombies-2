@@ -769,6 +769,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         world_shell_fx_weapon: String::new(),
         world_last_shot_shell_fx_weapon: String::new(),
         tracer_fx_weapon: String::new(),
+        enemy_tracer_fx_weapon: String::new(),
         tracer_interval: 0,
     };
     #[cfg(debug_assertions)]

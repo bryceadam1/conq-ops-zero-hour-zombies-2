@@ -314,6 +314,7 @@ pub enum ViewMode {
 /// The in-game test harness's scripted input; release builds can strip it.
 #[cfg(feature = "autopilot")]
 pub mod autopilot;
+pub mod tracers;
 #[cfg(feature = "autopilot")]
 pub use autopilot::{Autopilot, Scripted};
 
@@ -455,6 +456,9 @@ pub struct Client {
     /// The previous frame's keys/pointer: hover and click edges for the class screens (the shared
     /// fold's prev state; the shell menu keeps its own).
     menu_prev: crate::classui::MenuPrev,
+    /// Who views this machine's tracers (the last rendered frame's local player, his General and
+    /// the first-person one), for the host layer's per-viewer choice after each logic step.
+    pub viewer: tracers::Viewer,
 }
 
 impl Default for Client {
@@ -501,6 +505,7 @@ impl Client {
             class_pick_since: None,
             ui_clock: 0.0,
             menu_prev: crate::classui::MenuPrev::default(),
+            viewer: tracers::Viewer::default(),
         }
     }
 
@@ -971,6 +976,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         }
         // The fresh-press/hover detectors compare against this frame's keys and cursor.
         self.menu_prev.update(&menu_pointer(inp));
+        self.viewer = tracers::Viewer { player: inp.local_player, general: self.general, first_person: out.hide_object };
         out
     }
 

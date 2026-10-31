@@ -657,6 +657,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("TracerFxWeapon", "The FX weapon drawing the bullet tracer (`tracerType`, `FUN_008eb420`).", FieldKind::Str,
         |d: &WeaponDef| d.tracer_fx_weapon.clone(),
         |d: &mut WeaponDef, v: Values| { d.tracer_fx_weapon = v.text.into(); Ok(()) }),
+    field!("EnemyTracerFxWeapon", "The tracer a viewer the shooter is not friendly to sees (`enemyTracerType`, `FUN_004bbf10`).", FieldKind::Str,
+        |d: &WeaponDef| d.enemy_tracer_fx_weapon.clone(),
+        |d: &mut WeaponDef, v: Values| { d.enemy_tracer_fx_weapon = v.text.into(); Ok(()) }),
     field!("TracerInterval", "A tracer every this many bullets (`TracerDef.drawInterval`; 0: none).", FieldKind::Num,
         |d: &WeaponDef| d.tracer_interval.to_string(),
         |d: &mut WeaponDef, v: Values| { d.tracer_interval = v.text_num()? as u32; Ok(()) }),
@@ -719,7 +722,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 82);
+        assert_eq!(WEAPON_FIELDS.len(), 83);
         assert_eq!(ATTACHMENT_FIELDS.len(), 17);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

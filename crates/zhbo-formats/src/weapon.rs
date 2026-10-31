@@ -1228,6 +1228,34 @@ mod tests {
 
     #[test]
     #[ignore]
+    fn the_enemy_tracers_differ_only_in_material() {
+        // `FUN_007c65c0` runs its countdown on the viewer's tracer (`FUN_004bbf10`), the mod's sim
+        // on the friendly one for every viewer: sound only while each enemy tracer is its friendly
+        // twin with another material (so the same drawInterval, size and colours).
+        let common = zone("common_mp");
+        let patch = zone("patch_mp");
+        let all = all_in(&common, &[&patch]).unwrap();
+        let strip = |t: &Tracer| Tracer { name: String::new(), material: None, ..t.clone() };
+        let mut pairs = 0;
+        for w in &all {
+            let uniques = w.attachment_uniques.iter().map(|u| (&u.tracer, &u.enemy_tracer));
+            for (own, enemy) in std::iter::once((&w.tracer, &w.enemy_tracer)).chain(uniques) {
+                // The snipers name one trail tracer for both.
+                if let (Some(own), Some(enemy)) = (own, enemy) {
+                    if own.name == enemy.name {
+                        continue;
+                    }
+                    assert_eq!(strip(own), strip(enemy), "{}: {} vs {}", w.name, own.name, enemy.name);
+                    assert_ne!(own.material, enemy.material, "{}", w.name);
+                    pairs += 1;
+                }
+            }
+        }
+        assert!(pairs > 50, "{pairs} friendly/enemy pairs");
+    }
+
+    #[test]
+    #[ignore]
     fn reads_the_an94() {
         let z = zone("common_mp");
         let w = all(&z).unwrap().into_iter().find(|w| w.name == "an94_mp").expect("an94_mp");
