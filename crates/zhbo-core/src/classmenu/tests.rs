@@ -234,7 +234,7 @@ use super::*;
         // Another assault rifle offers the reflex too; BO2 still clears it with the weapon change.
         let other = ids
             .iter()
-            .position(|id| *id != e.draft.primary && allowed_shorts(id).iter().any(|a| *a == "reflex"))
+            .position(|id| *id != e.draft.primary && allowed_shorts(id).contains(&"reflex"))
             .expect("another gun offering the reflex");
         e.apply_option(other);
         assert!(e.draft.primary_atts.is_empty(), "{:?}", e.draft.primary_atts);
