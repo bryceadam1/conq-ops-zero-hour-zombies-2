@@ -224,8 +224,8 @@ impl Editor {
     pub(super) fn current_option_index(&self) -> usize {
         match self.slot {
             Slot::Name => 0,
-            Slot::Primary => weapon_index(&items::slots_of(true, &self.draft.wildcards), &self.draft.primary),
-            Slot::Secondary => weapon_index(&self.secondary_slots(), &self.draft.secondary),
+            Slot::Primary => weapon_index(&self.gun_list(true), &self.draft.primary),
+            Slot::Secondary => weapon_index(&self.gun_list(false), &self.draft.secondary),
             // BO2 focuses the button of the attachment the chosen slot holds, else the first
             // (`cacattachmentsmenu.lua:855-879`, `attachmentIndexToReplace`): the row's first.
             Slot::PrimaryAtts => attachment_index(&self.draft.primary, &self.draft.primary_atts),

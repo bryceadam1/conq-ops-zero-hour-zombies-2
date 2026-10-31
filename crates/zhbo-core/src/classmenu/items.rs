@@ -74,13 +74,12 @@ pub fn list_key(d: &WeaponDef) -> (i32, i32) {
     (d.cac_sort, d.cac_index)
 }
 
-/// The slots whose items a weapon slot lists: the primary its own; the secondary its own, plus the
-/// primary items under Overkill.
+/// The slots whose items a weapon slot lists: the primary its own; the secondary its own, or the
+/// primary items only under Overkill (`cacweaponsp.lua:638-720`: with the card the secondary's
+/// carousels are the primary groups).
 pub(super) fn slots_of(primary: bool, wildcards: &[Wildcard]) -> Vec<&'static str> {
-    if primary {
+    if primary || wildcards.contains(&Wildcard::Overkill) {
         vec![PRIMARY]
-    } else if wildcards.contains(&Wildcard::Overkill) {
-        vec![SECONDARY, PRIMARY]
     } else {
         vec![SECONDARY]
     }
@@ -134,7 +133,8 @@ pub fn offhand_cap(id: &str) -> u8 {
 /// Whether the item `base` is one the slot may hold: a gun item of the slot's own, or a primary
 /// item in the secondary slot (which Overkill allows, see [`super::wildcards_of`]).
 pub fn fits_slot(base: &str, primary: bool) -> bool {
-    weapons::catalog().get(base).is_some_and(|d| d.class.is_gun() && slots_of(primary, &[Wildcard::Overkill]).contains(&d.cac_slot.as_str()))
+    let slots = if primary { vec![PRIMARY] } else { vec![SECONDARY, PRIMARY] };
+    weapons::catalog().get(base).is_some_and(|d| d.class.is_gun() && slots.contains(&d.cac_slot.as_str()))
 }
 
 /// Whether the item `base` is a primary item (in the secondary slot it needs Overkill).

@@ -51,10 +51,10 @@ pub(super) fn att_names(atts: &[String]) -> String {
         .join(", ")
 }
 
-/// The display names of the catalog's guns in the given categories, in catalog order. The editor
+/// The display names of a slot's listed guns ([`Editor::gun_list`]), in catalog order. The editor
 /// opens on the held weapon through [`Editor::current_option_index`], not by reordering the list.
-pub(super) fn weapon_options(slots: &[&str]) -> Vec<String> {
-    gun_ids(slots).iter().map(|id| weapons::weapon(id).display_name.clone()).collect()
+pub(super) fn weapon_options(ids: &[&str]) -> Vec<String> {
+    ids.iter().map(|id| weapons::weapon(id).display_name.clone()).collect()
 }
 
 /// The attachment display names the weapon offers, in its list order ([`attachment_shorts`]); the
@@ -95,8 +95,8 @@ pub(super) fn perk_list(tier: u8) -> Vec<Perk> {
 }
 
 /// The index of the held weapon in the category list.
-pub(super) fn weapon_index(slots: &[&str], current: &str) -> usize {
-    gun_ids(slots).iter().position(|id| *id == current).unwrap_or(0)
+pub(super) fn weapon_index(ids: &[&str], current: &str) -> usize {
+    ids.iter().position(|id| *id == current).unwrap_or(0)
 }
 
 /// The grid index of a weapon's first equipped attachment (the first cell when it has none).

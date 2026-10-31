@@ -29,14 +29,14 @@ impl Editor {
         match self.slot {
             Slot::Name => {}
             Slot::Primary => {
-                let ids = gun_ids(&items::slots_of(true, &self.draft.wildcards));
+                let ids = self.gun_list(true);
                 if let Some(id) = ids.get(i).copied() {
                     self.draft.primary = id.to_string();
                     self.keep_offered_atts(true);
                 }
             }
             Slot::Secondary => {
-                let ids = gun_ids(&self.secondary_slots());
+                let ids = self.gun_list(false);
                 if let Some(id) = ids.get(i).copied() {
                     self.draft.secondary = id.to_string();
                     self.keep_offered_atts(false);

@@ -303,7 +303,7 @@ use super::items::cac_entries;
         let mut e = Editor::new(Draft { secondary: "fnp45_mp".into(), ..Draft::default() });
         e.slot = Slot::Secondary;
         let idx = e.current_option_index();
-        assert_eq!(gun_ids(&e.secondary_slots())[idx], "fnp45_mp");
+        assert_eq!(e.gun_list(false)[idx], "fnp45_mp");
         e.picking = true;
         e.option = idx;
         // Confirming the held weapon leaves the draft unchanged.
@@ -540,19 +540,23 @@ use super::items::cac_entries;
     fn overkill_offers_primary_guns_in_the_secondary_list() {
         let mut e = Editor::new(Draft::default());
         // The secondary lists BO2's `secondary` items: the pistols and the launchers.
-        let base = gun_ids(&e.secondary_slots());
+        let base = e.gun_list(false);
         assert!(base.contains(&"fnp45_mp") && base.contains(&"smaw_mp"), "{base:?}");
         assert!(!base.contains(&"an94_mp"), "a primary item needs Overkill");
         e.draft.wildcards.push(Wildcard::Overkill);
-        let with_overkill = gun_ids(&e.secondary_slots());
-        // Every primary item is offered in the secondary slot too.
+        let with_overkill = e.gun_list(false);
+        // Under Overkill both slots list the primary items only, less the gun the other slot holds
+        // (`cacweaponsp.lua:638-720`, `AddWeaponGroupCarousel`): no pistols, no second AN-94.
         for id in gun_ids(&items::slots_of(true, &[])) {
-            assert!(with_overkill.contains(&id), "Overkill offers {id}");
+            assert_eq!(with_overkill.contains(&id), id != e.draft.primary, "{id}");
         }
+        assert!(!with_overkill.contains(&"fnp45_mp") && !with_overkill.contains(&"smaw_mp"), "{with_overkill:?}");
+        // The primary list leaves out a primary item the secondary holds.
+        e.draft.secondary = with_overkill[0].to_string();
+        assert!(!e.gun_list(true).contains(&with_overkill[0]));
         // The option list walks the same items.
         e.slot = Slot::Secondary;
-        let options = e.options();
-        assert!(options.contains(&weapons::weapon("an94_mp").display_name.to_string()));
+        assert_eq!(e.options().len(), e.gun_list(false).len());
     }
 
     #[test]
@@ -572,10 +576,12 @@ use super::items::cac_entries;
         let mut e = Editor::new(Draft::default());
         e.draft.wildcards.push(Wildcard::Overkill);
         e.slot = Slot::Secondary;
-        let ids = gun_ids(&e.secondary_slots());
-        // Pick the first primary-class gun offered in the secondary list.
-        let target = "an94_mp";
-        let i = ids.iter().position(|id| *id == target).expect("AN-94 is offered");
+        let ids = e.gun_list(false);
+        // Pick the first primary-class gun offered in the secondary list (not the AN-94 the
+        // primary holds).
+        let target = ids[0];
+        assert_ne!(target, e.draft.primary);
+        let i = 0;
         e.picking = true;
         e.option = i;
         e.step(Edges { confirm: true, ..Default::default() });

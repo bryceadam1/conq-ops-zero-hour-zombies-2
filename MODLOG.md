@@ -5064,3 +5064,15 @@ button at 0.7 of the slot height, 1.1 times that wide, top-aligned, starting a s
 spacing right of the first box. The mod drew both boxes full size. `classui::small_offhand_plate`
 places them so; the icon, plus sign and preview plate follow the smaller box. Test:
 `the_extra_offhand_box_is_the_small_one`.
+
+## Overkill: both weapon lists show the primary items, less the other slot's gun (2026-10-31, `v1/cac-rules`)
+
+`cacweaponsp.lua:616-720` builds the primary carousels (smg … sniper, special) for the primary
+slot *or* whenever Overkill is equipped, and `AddWeaponGroupCarousel` (`:788-835`) lists a group's
+items of the primary slot, leaving out the gun the other slot holds. So under Overkill the
+secondary lists no pistols or launchers, and neither list offers the gun already in the other slot.
+The mod's secondary listed its own items plus the primary ones. `items::slots_of(false,
+[Overkill])` is now the primary slot alone and `Editor::gun_list` drops the other slot's gun;
+`items::fits_slot` (the repair's "may this slot hold it") still takes either kind in the
+secondary, since a pistol held before the card went on stays valid. Tests updated:
+`overkill_offers_primary_guns_in_the_secondary_list`, `overkill_puts_a_second_primary_into_the_secondary_slot`.

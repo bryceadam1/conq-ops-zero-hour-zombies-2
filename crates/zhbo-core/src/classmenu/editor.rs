@@ -91,9 +91,9 @@ impl Editor {
     pub fn options(&self) -> Vec<String> {
         match self.slot {
             Slot::Name => Vec::new(),
-            Slot::Primary => weapon_options(&items::slots_of(true, &self.draft.wildcards)),
+            Slot::Primary => weapon_options(&self.gun_list(true)),
             Slot::PrimaryAtts => attachment_options(&self.draft.primary),
-            Slot::Secondary => weapon_options(&self.secondary_slots()),
+            Slot::Secondary => weapon_options(&self.gun_list(false)),
             Slot::SecondaryAtts => attachment_options(&self.draft.secondary),
             Slot::Lethal => equipment_options(&self.offhand_list(true)),
             Slot::Tactical => equipment_options(&self.offhand_list(false)),
@@ -111,10 +111,16 @@ impl Editor {
         items::offhand_ids(lethal, &self.draft.wildcards)
     }
 
-    /// The item slots the secondary lists: its own, plus the primary items when Overkill puts a
-    /// second primary there.
-    pub(super) fn secondary_slots(&self) -> Vec<&'static str> {
-        items::slots_of(false, &self.draft.wildcards)
+    /// The guns a weapon slot lists (`cacweaponsp.lua:616-720`, `AddWeaponGroupCarousel` at
+    /// `:788-835`): its own statstable slot's; under Overkill both slots list the primary items
+    /// only, less the gun the other slot holds.
+    pub(super) fn gun_list(&self, primary: bool) -> Vec<&'static str> {
+        let mut ids = gun_ids(&items::slots_of(primary, &self.draft.wildcards));
+        if self.draft.wildcards.contains(&Wildcard::Overkill) {
+            let other = if primary { &self.draft.secondary } else { &self.draft.primary };
+            ids.retain(|id| id != other);
+        }
+        ids
     }
 
     /// Whether option `i` of the highlighted slot is already in the draft (so the list can mark it).
@@ -123,8 +129,8 @@ impl Editor {
     pub fn option_chosen(&self, i: usize) -> bool {
         match self.slot {
             Slot::Name => false,
-            Slot::Primary => gun_ids(&items::slots_of(true, &self.draft.wildcards)).get(i).is_some_and(|id| *id == self.draft.primary),
-            Slot::Secondary => gun_ids(&self.secondary_slots()).get(i).is_some_and(|id| *id == self.draft.secondary),
+            Slot::Primary => self.gun_list(true).get(i).is_some_and(|id| *id == self.draft.primary),
+            Slot::Secondary => self.gun_list(false).get(i).is_some_and(|id| *id == self.draft.secondary),
             Slot::PrimaryAtts => {
                 attachment_shorts(&self.draft.primary).get(i).is_some_and(|s| self.draft.primary_atts.iter().any(|a| a == s))
             }
@@ -149,8 +155,8 @@ impl Editor {
     /// `None` when the slot does not list guns (perks, attachments, wildcards).
     pub fn option_weapon(&self, i: usize) -> Option<&'static crate::weapons::WeaponDef> {
         let id = match self.slot {
-            Slot::Primary => gun_ids(&items::slots_of(true, &self.draft.wildcards)).get(i).copied(),
-            Slot::Secondary => gun_ids(&self.secondary_slots()).get(i).copied(),
+            Slot::Primary => self.gun_list(true).get(i).copied(),
+            Slot::Secondary => self.gun_list(false).get(i).copied(),
             Slot::Lethal => self.offhand_list(true).get(i).copied(),
             Slot::Tactical => self.offhand_list(false).get(i).copied(),
             _ => None,
