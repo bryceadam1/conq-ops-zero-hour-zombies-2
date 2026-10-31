@@ -5056,3 +5056,11 @@ The other six caps are still core constants (`MAX_GRENADES`, …) asserted equal
 moving them to data is the same plumbing. Test: `the_default_classes_stop_at_bos_cap`.
 Measured: cac 5 → 2 (the `rules/value` cluster is gone; the two weapon `order` cells remain);
 weapons 781,587; gap clusters 201 → 200.
+
+## An offhand's extra box is BO2's small one (2026-10-31, `v1/cac-rules`)
+
+`SetupSmallGrenadeButton` (`cacgrenadesbutton.lua:347-420`) lays out boxes 2.. of a grenade
+button at 0.7 of the slot height, 1.1 times that wide, top-aligned, starting a slot width and a
+spacing right of the first box. The mod drew both boxes full size. `classui::small_offhand_plate`
+places them so; the icon, plus sign and preview plate follow the smaller box. Test:
+`the_extra_offhand_box_is_the_small_one`.

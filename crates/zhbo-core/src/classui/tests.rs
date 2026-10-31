@@ -1177,3 +1177,17 @@ fn the_category_order_follows_the_catalogs_weapon_groups() {
     assert_eq!(category_order(Slot::Secondary)[0], WeaponClass::Pistol);
     assert_eq!(primary.len(), groups.len(), "every group has a place");
 }
+
+/// An offhand button's extra box is BO2's small one (`SetupSmallGrenadeButton`): 0.7 of the first
+/// box's height, 1.1 times as wide as tall, top-aligned with it, to its right.
+#[test]
+fn the_extra_offhand_box_is_the_small_one() {
+    let l = editor_layout(1280.0, 720.0);
+    let e = Editor::new(Draft::default());
+    let cells = editor_cells(&l, &e);
+    let first = cells.iter().find(|c| c.slot == Slot::Tactical && c.index == 0).unwrap().rect;
+    let second = cells.iter().find(|c| c.slot == Slot::Tactical && c.index == 1).unwrap().rect;
+    assert!((second.h - first.h * 0.7).abs() < 1e-3 && (second.w - second.h * 1.1).abs() < 1e-3, "{second:?}");
+    assert_eq!(second.y, first.y);
+    assert!(second.x > first.right());
+}
