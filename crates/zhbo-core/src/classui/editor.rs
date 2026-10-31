@@ -239,6 +239,9 @@ fn draw_cell(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor, cell: &Ed
                 let icon = r.h;
                 bo2::sprite(prims, f, &art, Rect { x: r.x + (r.w - icon) * 0.5, y: r.y, w: icon, h: icon }, argb(OFF_WHITE, 1.0), Vec::new());
             }
+            if offhand_plus(editor, cell) {
+                plus_sign(prims, f, r);
+            }
             if on {
                 focus_frame(prims, f, r);
                 if filled {
@@ -324,13 +327,43 @@ fn offhand_names(d: &Draft, lethal: bool) -> Vec<String> {
     }
 }
 
+/// Whether an offhand box shows BO2's plus sign: an empty extra box while exactly one of the item
+/// is equipped (`cacgrenadesbutton.lua:270-345`: boxes `2 .. count`, only when one is filled).
+pub(super) fn offhand_plus(editor: &Editor, cell: &EditorCell) -> bool {
+    let lethal = match cell.slot {
+        Slot::Lethal => true,
+        Slot::Tactical => false,
+        _ => return false,
+    };
+    let d = &editor.draft;
+    cell.index >= 1 && cell.index < d.offhand_boxes(lethal) as usize && d.offhand_count(lethal) == 1
+}
+
+/// The plus sign: `kd_chart_plus`, 40 units square, centred in the box (`cacgrenadesbutton.lua:
+/// 311-340`). Without the converted material a white `+` stands in.
+fn plus_sign(prims: &mut Vec<Prim>, f: &Frame, r: Rect) {
+    const SIZE: f32 = 40.0;
+    let b = Rect { x: r.x + (r.w - SIZE) * 0.5, y: r.y + (r.h - SIZE) * 0.5, w: SIZE, h: SIZE };
+    let p = f.px(b);
+    let (cx, cy, k) = (p.x + p.w * 0.5, p.y + p.h * 0.5, p.w * 0.3);
+    let fallback = vec![
+        Prim::Line { x0: cx - k, y0: cy, x1: cx + k, y1: cy, width: 2.0, argb: WHITE },
+        Prim::Line { x0: cx, y0: cy - k, x1: cx, y1: cy + k, width: 2.0, argb: WHITE },
+    ];
+    bo2::image(prims, f, "kd_chart_plus", b, WHITE, fallback);
+}
+
 /// The icon of a box's current value.
 pub(super) fn cell_icon(editor: &Editor, cell: &EditorCell) -> Option<String> {
     let d = &editor.draft;
     match cell.slot {
-        // An offhand's picture is its statstable image's `_256` (`cacgrenadesbutton.lua:199-205`).
-        Slot::Lethal => (!d.lethal.is_empty()).then(|| crate::names::cac_weapon_image(base_id(&d.lethal))),
-        Slot::Tactical => (!d.tactical.is_empty()).then(|| crate::names::cac_weapon_image(base_id(&d.tactical))),
+        // An offhand's picture is its statstable image's `_256` (`cacgrenadesbutton.lua:199-205`),
+        // on the filled boxes only: an empty box's icon is at alpha 0 (`:296-311`).
+        Slot::Lethal | Slot::Tactical => {
+            let lethal = cell.slot == Slot::Lethal;
+            let id = if lethal { &d.lethal } else { &d.tactical };
+            ((d.offhand_count(lethal) as usize) > cell.index).then(|| crate::names::cac_weapon_image(base_id(id)))
+        }
         Slot::Perk1 | Slot::Perk2 | Slot::Perk3 => {
             let tier = (cell.slot.perk_tier().unwrap_or(1) as usize) - 1;
             d.perks[tier].map(|p| sprites::perk_icon(p).to_string())

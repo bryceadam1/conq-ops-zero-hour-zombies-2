@@ -4984,3 +4984,14 @@ Tests: `ui_text_round_trips` (table), `the_ui_text_carries_the_installs_strings_
 `cac-editor-tactician.png` (plan dir) — the title reads SECOND TACTICAL; the list is empty there
 because the installed archive predates the statstable slots (rebuild needed). Conformance
 unchanged (cac 9, weapons 781,587, 201 clusters).
+
+## The plus sign on an empty extra offhand box (2026-10-31, `v1/cac-rules`)
+
+`cacgrenadesbutton.lua:270-345` walks the button's boxes `2 .. count`: an empty box's item icon is
+at alpha 0, and while exactly one of the item is equipped it gets a `kd_chart_plus` image, 40
+units square, centred. The mod drew the item's picture in every box of a held offhand (filled or
+not) and no plus. Now `classui::editor::cell_icon` draws the picture on filled boxes only and
+`offhand_plus` adds the plus to an empty extra box — the tactical's second, Tactician's, Danger
+Close's. `kd_chart_plus` (in `code_post_gfx_mp`) joins `lui::materials::MATERIALS`, so the
+archive must be rebuilt (`hud::VERSION`, the integrator's); without it a white `+` stands in.
+Test: `an_empty_extra_offhand_box_shows_the_plus_sign`.

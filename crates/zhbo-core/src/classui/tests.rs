@@ -1122,3 +1122,26 @@ fn the_lethal_slot_is_titled_second_tactical_under_tactician() {
     e.slot = Slot::Lethal;
     assert_eq!(super::editor::picker_title(&e), "SECOND TACTICAL");
 }
+
+/// An offhand button's empty extra box shows BO2's plus sign while one of the item is equipped,
+/// and never the item's picture (`cacgrenadesbutton.lua:270-345`); a filled box shows the item.
+#[test]
+fn an_empty_extra_offhand_box_shows_the_plus_sign() {
+    let l = editor_layout(1280.0, 720.0);
+    let mut e = Editor::new(Draft::default());
+    let find = |e: &Editor, slot: Slot| editor_cells(&l, e).into_iter().find(|c| c.slot == slot && c.index == 1);
+    let second = find(&e, Slot::Tactical).expect("the concussion takes two");
+    assert!(super::editor::offhand_plus(&e, &second));
+    assert_eq!(super::editor::cell_icon(&e, &second), None, "the empty box draws no picture");
+    e.draft.second_offhand[1] = true;
+    assert!(!super::editor::offhand_plus(&e, &second));
+    assert!(super::editor::cell_icon(&e, &second).is_some());
+    // The lethal slot: one box, then Danger Close's second.
+    assert!(find(&e, Slot::Lethal).is_none());
+    e.draft.wildcards.push(crate::classmenu::Wildcard::DangerClose);
+    let lethal2 = find(&e, Slot::Lethal).expect("Danger Close's box");
+    assert!(super::editor::offhand_plus(&e, &lethal2));
+    // An empty slot: no plus (BO2 draws it only with exactly one equipped).
+    e.draft.tactical.clear();
+    assert!(!super::editor::offhand_plus(&e, &second));
+}
