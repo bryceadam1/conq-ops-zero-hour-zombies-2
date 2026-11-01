@@ -9283,3 +9283,11 @@ A general sweep for bugs outside the playtest items; one commit per fix.
   reads the mesh that draws (`Loaded::drawn_mesh`), not always the hip one. Full sweep before/after
   (`~/.opencode/plan/bug-sweep/vm`, `vm-after`): exactly the 20 `+rangefinder` aimed halves
   change; every other image is identical. Test: `the_aimed_meshs_own_textures_are_uploaded_too`.
+- **The class editor named perks by id: "FlakJacket", "FastHands".** The editor's perk buttons
+  (`classui::editor::button_text`) and `classmenu::slot_value` pushed `p.def().id`; BO2's button
+  subtitles are `Engine.Localize(item.name)` (`cacmultiperksbutton.lua:221-240`). Every perk whose
+  id is not its name was affected (Flak Jacket, Fast Hands, Blind Eye, Hard Wired, Extreme
+  Conditioning, …; Lightweight and Ghost happened to match, which is why the old test passed). Both
+  now use the perk's localized name (`Perk::name`), as the perk grid and the pick preview already
+  did. Screenshot: `~/.opencode/plan/bug-sweep/cac-editor-perks-after.png` (was `cac/cac-editor.png`).
+  Tests: `the_editors_perk_buttons_show_the_perks_names`, `slot_values_read_as_the_resulting_class`.
