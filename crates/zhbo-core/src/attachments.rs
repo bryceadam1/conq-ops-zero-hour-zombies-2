@@ -18,6 +18,10 @@ pub mod point {
     pub const OPTIC: u8 = 1;
 }
 
+/// The `eAttachment` BO2's code tests for the target finder (`t6mp` `FUN_008eb270(weapon, 0x13)`
+/// in `FUN_00528ec0` and `FUN_00526780`).
+pub const TARGET_FINDER_KIND: u8 = 0x13;
+
 /// One BO2 attachment. A scale of 1 leaves the value alone.
 #[derive(Clone, Debug, PartialEq)]
 pub struct AttachmentDef {
@@ -35,6 +39,8 @@ pub struct AttachmentDef {
     /// damage, range, accuracy, mobility, fire rate (`mp/attributestable.csv`).
     pub attribute_deltas: [f32; 5],
     pub point: u8,
+    /// BO2's `eAttachment` (`WeaponAttachment::attachmentType`): what code tests the weapon for.
+    pub kind: u8,
     pub silenced: bool,
     pub laser: bool,
     /// BO2's `mmsWeapon` and `mmsMaxDist` (inches): the millimetre scanner (MMS).
@@ -74,6 +80,7 @@ impl Default for AttachmentDef {
             description: String::new(),
             attribute_deltas: [0.0; 5],
             point: 0,
+            kind: 0,
             silenced: false,
             laser: false,
             mms: false,
@@ -212,6 +219,9 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
             }
         }
         d.laser |= a.laser;
+        // BO2's target finder is the weapon testing for attachment kind 0x13
+        // (`FUN_008eb270(weapon, 0x13)` in `FUN_00528ec0`/`FUN_00526780`: the combo's packed kinds).
+        d.target_finder |= a.kind == TARGET_FINDER_KIND;
         // BO2's weapon is a scanner when its variant or any attachment is (`FUN_008ebce0`).
         if a.mms {
             d.mms = true;
@@ -224,7 +234,6 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
         match a.short.as_str() {
             "fmj" => d.fmj = true,
             "tacknife" => d.melee_time *= TACTICAL_KNIFE_MELEE,
-            "rangefinder" => d.target_finder = true,
             _ => {}
         }
     }
@@ -380,5 +389,14 @@ mod tests {
         let ext = AttachmentDef { id: "extclip".into(), short: "extclip".into(), clip_scale: 1.5, point: 3, ..Default::default() };
         let d = apply(&base, &[&ext]);
         assert_eq!(d.clip, 46, "31 × 1.5 = 46.5 rounds to even 46");
+    }
+
+    /// The target finder is BO2's attachment kind 0x13, whatever the attachment is called.
+    #[test]
+    fn the_target_finder_is_attachment_kind_0x13() {
+        let finder = AttachmentDef { short: "anything".into(), kind: TARGET_FINDER_KIND, ..Default::default() };
+        assert!(apply(&base(), &[&finder]).target_finder);
+        let named = AttachmentDef { short: "rangefinder".into(), kind: 0x12, ..Default::default() };
+        assert!(!apply(&base(), &[&named]).target_finder, "a name is not the kind");
     }
 }

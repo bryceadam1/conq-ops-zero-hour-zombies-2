@@ -260,6 +260,9 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
             (a.silenced, a.laser) = (v.flag(0), v.flag(1));
             Ok(())
         }),
+    field!("Kind", "BO2's eAttachment (what code tests the weapon for).", FieldKind::Num,
+        |a: &AttachmentDef| a.kind.to_string(),
+        |a: &mut AttachmentDef, v: Values| { a.kind = v.text_num()? as u8; Ok(()) }),
     field!("Mms", "Millimetre scanner: on, and its max distance (BO2 inches).", FieldKind::Nums(2),
         |a: &AttachmentDef| format!("{} {}", a.mms as u8, a.mms_max_dist),
         |a: &mut AttachmentDef, v: Values| {
@@ -724,7 +727,7 @@ mod tests {
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
         assert_eq!(WEAPON_FIELDS.len(), 80);
-        assert_eq!(ATTACHMENT_FIELDS.len(), 18);
+        assert_eq!(ATTACHMENT_FIELDS.len(), 19);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }
 

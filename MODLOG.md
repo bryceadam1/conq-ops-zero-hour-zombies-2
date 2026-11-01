@@ -4806,3 +4806,14 @@ the centre, the label, the brackets and four inward arrows — and the diamond i
 red), with glows in alpha. The renderer draws the atlas's diamond (`0x00b26e2c`..`38`,
 `cg_rangeFinderDiamondSize` 50 × `0x00c735e0`) per mark; the analytic outline is gone.
 `Art\Native\rangefinder.zrd` is new at v1.
+
+**Follow-up: the target finder is attachment kind 0x13, not a name.** `FUN_008eb270(weapon, k)`
+(what `FUN_00528ec0`/`FUN_00526780` call with `0x13`) is true when the weapon index's packed
+combo kinds (bits 8–13, 14–19, 20–25) hold `k`, or a variant whose attachment table's first slot is
+empty allows `k` in `iAttachments`. `AttachmentDef.kind` (table field `Kind`) now carries BO2's
+`attachmentType` and `attachments::apply` sets `target_finder` for kind `TARGET_FINDER_KIND`
+(0x13) — the short-name match is gone. The variant-mask path is not ported (no shipped variant
+was found to need it). Pinned on the install (`the_installs_target_finder_is_kind_0x13`: only
+`rangefinder` has the kind). Sweep (`ZHBO_SWEEP_MARKS=1`, an94+rangefinder aimed): the spotted
+frame's brackets, arrows and label and two diamonds, red, on the lens. Conformance unchanged by
+both follow-ups (weapons 681,882 cells, gap clusters 213).

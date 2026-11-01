@@ -126,6 +126,7 @@ pub fn attachment_def(a: &bo2::Attachment, names: &HashMap<String, String>, meta
         description: m.description,
         attribute_deltas: m.attribute_deltas,
         point: a.point as u8,
+        kind: a.kind as u8,
         silenced: a.silenced,
         laser: a.laser_sight,
         mms: a.mms_weapon,
@@ -1424,5 +1425,20 @@ mod tests {
         let frag = WeaponDef { projectile_speed: inches(800.0), ..Default::default() };
         // v² / g with BO2's gravity (800 in/s²): 800 inches.
         assert!((throw_range(&frag) - inches(800.0)).abs() < 1e-3);
+    }
+}
+
+#[cfg(test)]
+mod target_finder_tests {
+    /// The player's install: BO2's target finder is the `rangefinder` attachment, and its
+    /// `attachmentType` is the kind the code tests (`TARGET_FINDER_KIND`, 0x13), the only one.
+    #[test]
+    #[ignore]
+    fn the_installs_target_finder_is_kind_0x13() {
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR"));
+        let common = crate::paks::load_zone(&dir, "common_mp").unwrap();
+        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        let finders: Vec<&str> = atts.iter().filter(|a| a.kind == zhbo_core::attachments::TARGET_FINDER_KIND as u32).map(|a| a.name.as_str()).collect();
+        assert!(!finders.is_empty() && finders.iter().all(|n| n.starts_with("rangefinder")), "{finders:?}");
     }
 }
