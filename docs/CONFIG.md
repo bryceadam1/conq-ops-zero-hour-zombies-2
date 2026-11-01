@@ -48,8 +48,8 @@ environment mid-game.
 
 `ConquerOps_BO2.big` carries the class camo art (the set images `Art\Textures\zhbo_t6_camo_*`,
 the style materials' colour maps such as `zhbo_camo_gold_col` and their `_nsg` maps, …) and one `Art\Native\<camo_<weapon>>.zcm` recipe per converted weapon. The
-archive's version is bumped with a conversion that changes its contents (the integrator owns the
-camo bump, 64→65), so after a mod update the launcher regenerates the archive. With a stale
+archive's version (`hud::VERSION`) is bumped with a conversion that changes its contents, so after a
+mod update the launcher regenerates the archive. With a stale
 archive the native viewmodel logs `the camo art is not in the archive (reconvert the BO2 art)` and
 draws the stock finish; the class camo never reaches the W3D fallback or the third-person body
 (CONTRACT.md, "The native viewmodel").

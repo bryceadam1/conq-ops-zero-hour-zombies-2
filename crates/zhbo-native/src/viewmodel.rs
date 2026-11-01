@@ -12,7 +12,7 @@ use crate::io::{FormatError, Reader, Writer};
 use crate::math::Xf;
 
 pub const MAGIC: [u8; 4] = *b"ZBV\0";
-pub const VERSION: u32 = 2;
+pub const VERSION: u32 = 3;
 
 /// The left instance's bit in a clip id's high byte, for a dual-wield pair's split clips. The base
 /// (right) instance keeps the plain id; the core's request for a left-gun clip sets this bit

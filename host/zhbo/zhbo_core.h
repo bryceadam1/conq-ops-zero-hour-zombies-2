@@ -10,7 +10,7 @@
 
 #include <stdint.h>
 
-#define ZHBO_ABI_VERSION 26u
+#define ZHBO_ABI_VERSION 27u
 
 /* Field counts of the API tables below. The Rust side derives its layout asserts and
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
@@ -571,7 +571,7 @@ void zhbo_native_body_reset(void);
 /* The Assault Shield in Zero Hour's damage path (host patch 0017, Object::attemptDamage): the share
    of `amount` the engine applies to `victim` (0..1). `kind` is ZHBO_DAMAGE_* or -1; `from_*` is the
    source's feet and height when `source_known`. Lock-free (safe inside any core callback).
-   Appended after ABI 26: the integrator bumps ZHBO_ABI_VERSION. */
+   ABI 27. */
 float zhbo_logic_shield_damage(uint32_t victim, uint32_t source, float from_x, float from_y, float from_z, float from_height, int32_t source_known, int32_t kind, float amount);
 
 #ifdef __cplusplus

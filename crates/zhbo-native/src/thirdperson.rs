@@ -57,7 +57,7 @@ pub mod state {
 pub const BODY_MAGIC: [u8; 4] = *b"ZBC\0";
 pub const BODY_VERSION: u32 = 1;
 pub const WEAPON_MAGIC: [u8; 4] = *b"ZBW\0";
-pub const WEAPON_VERSION: u32 = 2;
+pub const WEAPON_VERSION: u32 = 3;
 
 /// A faction's third-person body: its model blob and one clip per [`state`].
 #[derive(Clone, Debug, Default, PartialEq)]

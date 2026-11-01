@@ -201,7 +201,7 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
     Shell model elements are drawn as small sprites from the model's own colour map, because
     Zero Hour's FXList has no model nugget.
   - `zhbo_viewmodel_fx` is a free function on the append-only ABI surface (like
-    `zhbo_loadout_viewmodels`); it needs the `ZHBO_ABI_VERSION` bump with its merge.
+    `zhbo_loadout_viewmodels`).
 * **The dual-wield left gun's clip stays in Rust.** A `_dw_mp` weapon fires two guns (one per
   trigger, each with its own magazine), so its left gun plays its own `_LEFT` slot while the hands
   fire, reload or idle apart. The client hands that clip and time to the native pass with
@@ -324,12 +324,11 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   writes a blob for every asset a BO2 def or unique points at (47 on the stock install: the guns'
   and the seven optic assets plus `camo_specter`); only `camo_peacekeeper` is unreferenced. A def's
   `CamoMaterial` is its `weaponCamo` (the INSAS's `camo_msmc`, the AS50's `camo_xpr50`) — no
-  name-derived alias. The `.zcm` version is new
-  (`camo::VERSION = 1`); the model blob's material record gains the camo layer, and its version
-  bump (2→3) and the archive bump (64→65) are integrator-owned.
+  name-derived alias. The `.zcm` format is `camo::VERSION`; the model blob's material record
+  carries the camo layer (see the version list below).
   The material record (model and camo blobs alike, `Material::write`) then appends `specular`, the
-  converted spec colour map (`*_spec.tga`, RENDERER.md "The specular colour"); its bumps — model
-  `VERSION` 3→4, camo `VERSION` 1→2 and the archive's `hud::VERSION` — are integrator-owned. A
+  converted spec colour map (`*_spec.tga`, RENDERER.md "The specular colour"); model `VERSION`
+  is 4, camo `VERSION` 2 (the parity burn-down's integration, see "Versioning"). A
   style camo replaces the surface's specular colour with the style's (gold's hue lives there).
   - **Third person.** The native third person (`ZHBO_NATIVE_BODY` ≥ 1) wears the class camo too:
     each `.zbw` part carries its `WeaponCamo` (`Part::camo`: the def's on the world model and its
@@ -388,8 +387,8 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   reticle colour option has no rendering effect found in BO2: `weaponoptions.csv` has no colour
   column and the reticle shader reads no code-set colour. The third-person body draws its world
   model's reticle with `ads = 0`, i.e. dark, as BO2 sets the fade for the local viewmodel only.
-  Version bumps (integrator-owned, not made): model `VERSION` and camo `VERSION` (the shared
-  material record appends `reticle` and `emblem`) and the archive's `hud::VERSION`.
+  The shared material record appends `reticle` and `emblem` (model `VERSION` 4, camo `VERSION` 2,
+  bumped once at the integration, see "Versioning").
 
 ## The native third person (Track R7)
 
@@ -431,7 +430,7 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
   draw. The body manifest never names a weapon: the core composes the two at run time, so a weapon
   switch reloads only the weapon.
 * **Archive.** These are more files in `ConquerOps_BO2.big`; `zhbo_assets::hud::VERSION` must be
-  bumped whenever converter output changes (left to the integrator on this branch).
+  bumped whenever converter output changes.
 * **The bridge asks each frame, the core decides (M2, the weapon).** `applyWorldPoses`
   (`ZhboRtsWeapons.cpp`) calls `zhbo_client_native_poses` for the overhead Generals' poses (the sim's
   `Sim::native_poses`: the held weapon's converted index, stance, body clip, clip time and rate, the
@@ -469,9 +468,9 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
   fire, reload or idle apart. The client hands that clip and time to the native pass with
   `nativevm::ffi::set_left_clip` beside `ZhboClientOut.viewmodel`; `ZhboNativeIn` carries only the
   base clip and its size is unchanged. The left clip id is the matching right slot with
-  `INSTANCE_LEFT` (`viewmodel::slot::left_as_right`). `viewmodel_fired` is still the right gun's
-  shot only: the left gun's muzzle flash and `tag_brass1` shell need a per-hand fired flag on the
-  ABI (an append, the integrator's bump).
+  `INSTANCE_LEFT` (`viewmodel::slot::left_as_right`). `viewmodel_fired` is the right gun's shot;
+  `viewmodel_fired_left` (ABI 27) is the left gun's, flashed and ejected at `tag_flash1`/
+  `tag_brass1`.
 * **The core cannot open the archive; it asks.** After each `zhbo_native_body` call the bridge
   answers every `zhbo_native_body_wanted(i)` path with `zhbo_native_body_provide(path, bytes, len)`
   (`len < 0`: not in the archive, after which that rig is given up and logged once) and prints every
@@ -583,17 +582,17 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
   bytes (4508 → 4832) and `ZHBO_ABI_VERSION` goes to 26; `zhbo_load_impacts` and `zhbo_impact_fx`
   are new free functions on the append-only surface.
 * ABI (penetration): `ZhboClientHit` gains `exit` at its end (40 → 44 bytes; `ZhboClientOut`
-  4832 → 4864, only `hits_len` moves) and `zhbo_impact_exit_fx` is a new free function. **Needs the
-  `ZHBO_ABI_VERSION` bump with its merge** (not done on the branch).
+  only `hits_len` moves) and `zhbo_impact_exit_fx` is a new free function (ABI 27, see
+  "Versioning").
 
 ## The view kick's roll
 
-* `ZhboClientOut.view_roll` (appended; 4832 → 4836 bytes, both size asserts) is the sim's view
+* `ZhboClientOut.view_roll` (appended; ABI 27, see "Versioning") is the sim's view
   kick roll (`PlayerSim::view_kick`, BO2's `-0.5 × yaw` axis), interpolated across the logic frame
   like the eye. The bridge returns it from `Zhbo_GetCameraOverride` and the `W3DView::update` hook
   passes it as `Look_At_Dir`'s roll. The viewmodel is placed in the unrolled eye frame, so the core
   adds the same roll to `viewmodel_angles.z` and the gun stays square to the screen, as BO2 draws
-  it in the view's axes. `ZHBO_ABI_VERSION` is not bumped on the branch (the integrator's).
+  it in the view's axes.
 
 ## The Assault Shield in Zero Hour's damage path
 
@@ -618,8 +617,7 @@ from xyz, from height, source known, kind, amount)` for the share to apply (it s
   engine damage (0): the hook queues `(object, source, kind, amount)` in a fixed lock-free ring
   (64), drained into `Sim::engine_damage_to_deployed` before the next step — the script's
   wear-down scales on Zero Hour damage ÷ `BO2_TO_ZH_DAMAGE`.
-* `zhbo_logic_shield_damage` is appended after ABI 26 (`zhbo_core.h`); the version bump is the
-  integrator's.
+* `zhbo_logic_shield_damage` is part of ABI 27 (`zhbo_core.h`, see "Versioning").
 
 ## Lifecycle
 
@@ -684,8 +682,8 @@ Not yet covered: save/load keeps no first-person state (a loaded game starts in 
   (`FUN_00535f80`). `client::tracers::ViewTracers::play` queues a tracer whose shooter is the
   viewer's first-person General instead of firing it; the next client frame makes them that frame's
   (`begin_frame`, dropped outside first person), and the bridge's viewmodel pass pulls them with
-  `zhbo_viewmodel_tracer(i, fx_weapon, cap, end)` (a free function appended to the ABI surface; the
-  `ZHBO_ABI_VERSION` bump is the integrator's) and plays the FX weapon's `FireFX` from `tag_flash`
+  `zhbo_viewmodel_tracer(i, fx_weapon, cap, end, left)` (ABI 27; `left` 1 for a dual-wield pair's
+  left gun, drawn from its `tag_flash1`) and plays the FX weapon's `FireFX` from `tag_flash`
   (native pose or W3D model) to the end with `FXList::doFXPos`. BO2 caps an own tracer's width at
   4 (`FUN_007c6420`, the local entity's `+0x7c` flag); every player gun's tracer is at most 4, so
   the cap is not modelled.
@@ -818,6 +816,17 @@ are shared constants (`ZHBO_LOGIC_API_FIELDS`/`ZHBO_CLIENT_API_FIELDS` in the he
 `CLIENT_API_FIELDS` in `ffi.rs`), and `zhbo_abi_fields()` reports them at init: `Zhbo_Init` refuses to run
 when either the version or the counts disagree, with a message naming the mismatch.
 
+**ABI 27** (the parity burn-down's integration, one bump for every append since 26):
+`ZhboClientOut` gains `view_roll` (view kick) and `viewmodel_fired_left` (dual wield) at its end and
+`ZhboClientHit` gains `exit` (penetration): `ZhboClientOut` 4832 → 4872 bytes, `ZhboClientHit`
+40 → 44; `Zhbo_GetCameraOverride` returns the roll; `ZhboClientApi.sound_gain` is appended after
+`ghost` (`ZHBO_CLIENT_API_FIELDS` 13 → 14); new free functions `zhbo_viewmodel_tracer` (tracers,
+with the left-gun flag), `zhbo_impact_exit_fx` (penetration), `zhbo_logic_shield_damage` (Assault
+Shield, host patch 0017) and `zhbo_load_sound_layers` (sound mixer). Blob versions at the same
+point: archive `hud::VERSION` 78, `.zbv` `viewmodel::VERSION` 3 (part `camo` and `ads_swap`, in that
+order after `ads_only`), `.zbw` `thirdperson::WEAPON_VERSION` 3 (part `camo`), `.zbm`
+`model::VERSION` 4 (the camo layer, `specular`, `reticle`, `emblem`), `.zcm` `camo::VERSION` 2.
+
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 
 * **Converted.** For every converted gun's third-person chain (`ZHBO_BO2_FireNpc_<key>`) the
@@ -836,7 +845,7 @@ when either the version or the counts disagree, with a message naming the mismat
   (overhead), the chain's mixed event through `sound`. Presentation only (client side, no sim input).
 * **ABI.** `ZhboClientApi.sound_gain` is appended after `ghost` (`ZHBO_CLIENT_API_FIELDS` 13 → 14 on
   both sides); the glue's `cbSoundGain` sets the AudioEventRTS volume to the event's INI volume ×
-  gain (`setVolume` overrides). The `ZHBO_ABI_VERSION` bump is the integrator's (still 26 here).
+  gain (`setVolume` overrides). ABI 27.
   A host without the field plays the layer at its own volume (`ClientHost::sound_gain`'s default).
 
 ### Adding an engine service (a new field in `ZhboLogicApi` or `ZhboClientApi`)
