@@ -8804,3 +8804,19 @@ install, `FUN_004b4c70`), and `hud::scope_overlay` logs it once to the process l
 `a_table_without_the_size_falls_back_to_bo2s_square`, `a_stale_table_without_overlay_size_still_draws_the_scope`.
 (`ffi::tests::the_shield_hook_queues_a_deployed_shields_damage_and_passes_the_sims_own` failed once
 in four workspace runs, untouched by this branch: a shared-state flake.)
+
+## Integration, polish round 1 (2026-11-01)
+
+`v1/code-polish`, `v1/ads-sightline`, `v1/missing-models` and `v1/ui-scaling` merged in that order
+onto main 17b7216 (`v1/integration2`); no code conflicts, only MODLOG appends. The archive moved
+(`OverlaySize`, the CaC backing, the tuning-pack equipment numbers), so `hud::VERSION` 78 → 79; no
+other version constant and no ABI changed (missing-models' faction letter is a parameter of the
+C++ bridge's `Zhbo_GetViewmodel`, and `zhgfx_clear_vertex_buffer` is only newly declared in
+`zhbo_gfx.h`). `lui::font::text` took the remaining clippy warning's allow.
+
+Verified: `cargo test --workspace` 953 passed; `cargo clippy --workspace --all-targets` clean;
+real-install `-p zhbo-assets -- --ignored --skip conformance` 55 passed, `-p zhbo-formats --
+--ignored` 17 passed; conformance unchanged (weapons 2,327 cells / 23 clusters, cac 3 / 1, 25 gap
+clusters); `cargo xtask build` OK; autotests run one at a time: default 16/16, `--classpick` 8/8
+(the new "combination viewmodel drawn" and "no viewmodel load failure" checks pass), `--rts`
+15/15, `--scope` pass, `--w3d-ads` 2/2.
