@@ -896,7 +896,11 @@ mod tests {
         let names = crate::weapons::names(&bo2_dir);
         let bo2 = zhbo_formats::weapon::all(&common).unwrap();
         let atts = zhbo_formats::weapon::attachments(&common).unwrap();
-        let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
+        // The attachments carry BO2's compatibility lists (the metadata), as `files` builds them:
+        // without them the loadout's `an94_mp+gl+reflex` sanitizes to a different combination.
+        let meta = crate::weapons::attachment_metadata(&patch, &names);
+        let opts = crate::weapons::OptionTables { camo: &[], reticles: &[], reticle_colors: &[] };
+        let mut table = crate::weapons::table_with_metadata(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names, &meta, &opts);
         let ids = crate::weapons::converted_base(&bo2);
         crate::weapons::add_variants(&mut table, &ids, &bo2);
         let weapon = xmodel::find(&common, WEAPON).unwrap();

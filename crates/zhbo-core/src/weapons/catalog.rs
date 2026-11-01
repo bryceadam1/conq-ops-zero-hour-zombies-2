@@ -341,6 +341,10 @@ UiText MPUI_SECOND_SPECIAL_GRENADE_CAPS
   Text = SECOND TACTICAL
 End
 
+UiText WEAPON_CANT_PLANT_EQUIPMENT
+  Text = Cannot Plant Here
+End
+
 Perk LIGHTWEIGHT
   Name = Lightweight
   Description = Move faster.  Take no damage when falling.
