@@ -4895,3 +4895,69 @@ idle. Notes and the dumped script in `~/.opencode/plan/stance-hitboxes/`.
   sprint).
 * The table's `HitBox` line format changed (state prefix, 16 tokens) and the table now holds
   12 × 20 boxes: the archive/table VERSION bump is the integrator's. No ABI change.
+
+## BO2's mixer levels every converted sound (2026-10-31, branch `v1/sound-mixer`)
+
+Stacked on `v1/stance-hitboxes`. The converter levelled each event by its alias volume over the
+AN-94 shot's 0.45 and mixed a secondary chain's layers from time zero at full alias volume (the
+open risk of the LFE-layer entry: `_npc_dist` played point-blank). BO2's audibility is its mixer.
+Transcribed from t6mp (decompiles and the scope: `~/.opencode/plan/sound-mixer/`):
+
+* **Per voice.** `volMin/volMax` are linear u16/65535 (OAT prints dBSPL = 100 + 20·log10). The gain
+  takes `attenuationMp/65535` of the volume group and of every parent (`FUN_0082b9f0`, walking
+  `parentIndex` until -1): `grp_weapon` → `grp_master` = 0.562² = 0.316, `grp_voice` → master 0.562,
+  `grp_wpn_lfe` → `grp_reference` 0.794. The dry distance gain is `FUN_0083d060`: inside `distMin`
+  the alias's min curve at `d/distMin`, beyond it the falloff curve over `distMin..distMax`
+  (8-point `SndCurve`s). **Gotcha: BO2 stores every alias distance halved** — the sound thread
+  multiplies the u16 by 2.0 (`DAT_00c6f6ac`) at each use; `sndalias::Variant.distance` now holds
+  real inches (the AN-94's distant layer is 1,800–12,000", not 900–6,000).
+* **Chains.** `FUN_0082c470` starts the `secondaryName` alias first, through the same call: every
+  layer is its own voice with its own volume, group, bus, pan, curves and `startDelay` (ms, kept
+  with the voice). The AN-94's third person crossfades: `fire_npc` (`cosdelay` → `alloff`, gone by
+  1,800") into `fire_npc_dist` (`sindelay` from 0 at the source, then `default` to 12,000"); the
+  `LFE`/`LFE_npc` layers pan to the LFE channel only. Grenade blasts' distant and flux layers start
+  150–175 ms late.
+* **Buses and master** (`FUN_006f5310`, the snapshot's gains copied by `FUN_0082fc60`). Every MP
+  snapshot: fx 0.152, voice 5.616, hdrfx 2.889, ui 2.735, music 2.259, reverb 0.202. Order:
+  `fx = COMP(fx + reverb)`; then `+ hdrfx` (before the compressor only if `hdrfxCompE`, 0 in all 18
+  snapshots); EQ; `+ voice` (bypasses compressor and EQ: `voiceCompE` = `voiceEqE` = 0); `+ ui`;
+  `LIMIT`; `+ music, movie, reference`. **The "HDR stage" decoded: `bus_hdrfx` is a +9.2 dB bus that
+  skips the compressor** — explosions and HDR layers punch over a squashed fx bus.
+* **The dynamics kernel** (`FUN_00834623`, one routine for comp and limiter, every channel but the
+  LFE): sidechain `PG·x` highpassed (`y = x − x₋₁ + 0.995·y₋₁`), peak envelope
+  `e += a·max(|y|−e, 0) − r·e` with `a, r = (√(4N²+1) − 1)/(2N²)`, N = seconds × 48,000
+  (`FUN_008345d8`), gain `max(e, T)^(1/R−1)` (computed as `(e·T)^(1/R−1)·T^(1−1/R)`), output
+  `y·gain·MG·0.5`. The compressor (PG 3.43, T 0.0133, R 22.4, MG 0.263) is a squash with ×28
+  make-up below threshold; the limiter (PG 1.10, T 0.066, R 1.29) is gentle.
+
+What the converter does with it (`zhbo_assets::mixer`, tables from `zhbo_formats::sndglobals`, the
+`SndDriverGlobals` of `code_post_gfx_mp`; alias fields in `sndalias::Mix`):
+
+* Each variant is rendered through that chain for the sound alone: per layer volume × group chain ×
+  bus gain × stereo fold, delayed by its start delay, per bus, the compressor on fx and the limiter
+  on the sum — evaluated **statically** (the kernel's gain at the envelope's peak over the sound; in
+  game the envelope is shared with everything playing, so a lone sound's pumping is not BO2's).
+* Stereo fold (the mod is stereo, BO2 mixes 5.1): `front + 0.707·(back + centre)`, sides averaged,
+  **the LFE channel not folded** (the standard 5.1→2.0 matrix, as XAudio2's default) — so the
+  `wpn_*_lfe` layers the LFE-layer item mixed in are silent in stereo. The one judgment call of this
+  item; flip `mixer::stereo_fold` if the listening check wants the thump folded.
+* 3D layers are weighted by their BO2 curve at the source (BO2's close-up mix: no `_npc_dist`
+  there). Zero Hour plays one falloff per event (OpenAL inverse-distance clamped: `MinRange/d`, cut
+  at `MaxRange`), so `MaxRange` is the chain's farthest `distMax` and `MinRange` half the distance
+  where the chain's summed curves fall to half — they meet at −6 dB. AN-94 third person: 192 / 2000
+  units (was 40 / 600).
+* One normalization: the loudest converted event is Volume 100 (today the player's bullet-hit
+  `prj_bullet_impact_large_player`), every other keeps its BO2 ratio — the rounded-up percentage
+  carries the level, the WAV the remainder. In the fixed set: shot 59, pistol 59, AN-94 dry fire 69,
+  hit marker 60, step 16, sprint step 33, land 10, third-person shot 54, menu cues 4–32.
+* Probe: `zhbo-assets mix <ff> <alias> [inches...]` prints each chain layer's bus, group, pan, 3D,
+  delay, distances, curves and gain at each distance.
+
+Not modelled (left): the runtime per-layer crossfade for third-person shots (far away the mod plays
+the close mix attenuated, not `_npc_dist`; doing it needs the 3P shot as several cues with a
+per-cue gain — a core cue path plus an ABI volume, the integrator's call), the cross-sound
+compressor interaction (a burst ducking foley), the master EQ (+5 dB low shelf at 132 Hz, −8 dB at
+2.8 kHz…), reverb/radverb, futz, the voice side-chain duck, occlusion, volume randomization. The
+hold-breath lines are on the unmerged `v1/idle-sway`: once it adds their events, `bus_voice`
+(×5.6, after the compressor) makes them come out ~17 dB over the shot at the bus input, as in BO2.
+No ABI change; the archive's sound content changed (VERSION bump is the integrator's).
