@@ -81,12 +81,13 @@ pub fn draw_name(l: &Lui, prims: &mut Vec<Prim>, name: &str, since_ms: f32) {
 /// The column: reward 3 (the bottom slot) is the field computer, always usable; reward 2 is the
 /// build menu, usable while the General can build. Reward 1 and the inventory slot stay empty.
 pub(super) fn draw(l: &Lui, prims: &mut Vec<Prim>, tablet_up: bool, hammer_up: bool, can_build: bool, since_ms: f32) {
-    draw_slot(l, prims, 2, sprites::BUILD_ICON, "BUILD", can_build, hammer_up);
-    draw_slot(l, prims, 3, sprites::STREAK_VSAT, "FC", true, tablet_up);
+    let build = crate::strings::text("HUD:ZHBO_Build");
+    draw_slot(l, prims, 2, sprites::BUILD_ICON, &build, can_build, hammer_up);
+    draw_slot(l, prims, 3, sprites::STREAK_VSAT, &crate::strings::text("HUD:ZHBO_FieldComputerShort"), true, tablet_up);
     if tablet_up {
-        draw_name(l, prims, "FIELD COMPUTER", since_ms);
+        draw_name(l, prims, &crate::strings::text("HUD:ZHBO_FieldComputer"), since_ms);
     } else if hammer_up {
-        draw_name(l, prims, "BUILD", since_ms);
+        draw_name(l, prims, &build, since_ms);
     }
 }
 

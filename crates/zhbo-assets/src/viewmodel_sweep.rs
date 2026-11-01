@@ -52,16 +52,15 @@ impl Source {
     /// Open the game's zones (`common_mp`, the patch, the three factions' art) and build the weapon
     /// table the conversion places attachment clips from.
     pub fn open(bo2_dir: &Path) -> Result<Source, String> {
-        let common = load_zone(bo2_dir, "common_mp")?;
-        let patch = load_zone(bo2_dir, crate::fx::ZONE)?;
+        let mp = crate::paks::MpPool::load(bo2_dir)?;
+        let (bo2, atts) = mp.weapons()?;
+        let crate::paks::MpPool { patch, common_patch, common } = mp;
         let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(bo2_dir, f.zone)).collect::<Result<_, _>>()?;
         let mut paks = Paks::open(bo2_dir)?;
         let reticle_zone = load_zone(bo2_dir, crate::textures::RETICLE_ZONE).ok();
         if let Some(z) = &reticle_zone {
             paks.learn(z);
         }
-        let common_patch = load_zone(bo2_dir, "common_patch_mp")?;
-        let (bo2, atts) = crate::paks::mp_weapons(&patch, &common_patch, &common)?;
         let names = crate::weapons::names(bo2_dir);
         let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
         crate::weapons::add_variants(&mut table, &crate::weapons::converted(&patch, &bo2), &bo2);

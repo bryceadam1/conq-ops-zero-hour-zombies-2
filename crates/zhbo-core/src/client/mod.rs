@@ -759,8 +759,48 @@ fn pick_custom_class(out: &mut ClientOut, general: u32, class: &crate::classes::
 }
 
 impl Client {
-/// Run one rendered frame.
-pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
+    /// The autopilot's scripted input for this frame (`None`: the player's own). Its time base is
+    /// the logic frame while it drives first person, and it re-bases outside it.
+    #[cfg(feature = "autopilot")]
+    fn autopilot_input(&mut self, inp: &ClientIn, unclassed: bool) -> Option<ClientIn> {
+        let pick_wanted = self.class_pick_wanted(unclassed);
+        let fps = matches!(self.view, ViewMode::Fps);
+        let ap = self.autopilot.as_mut()?;
+        if !fps {
+            ap.t = 0.0;
+            ap.base_frame = inp.logic_frame;
+            return None;
+        }
+        // The scripts' time windows are tuned in logic ticks (the sim's), so read the clock from
+        // the logic frame, not the render dt: hitches and frame-rate differences would drift every
+        // window relative to the state it aims at.
+        ap.t = (inp.logic_frame - ap.base_frame) as f32 * LOGIC_DT;
+        let script = ap.input_at(&self.cfg.bindings);
+        let mut scripted = *inp;
+        scripted.keys = script.keys;
+        // A script's class-pick key is only pressed while the spawn pick is really up (a re-entry
+        // on an already classed General must not turn it into a weapon swap).
+        if let Some(key) = script.class_pick {
+            if pick_wanted {
+                scripted.keys.set_down(key, true);
+            }
+        }
+        scripted.mouse_dx = script.dx;
+        scripted.mouse_dy = script.dy;
+        scripted.wheel = script.wheel;
+        scripted.class_pick_force = script.pick_force;
+        scripted.input_allowed = 1;
+        Some(scripted)
+    }
+
+    /// Without the autopilot feature the player's input is always the input.
+    #[cfg(not(feature = "autopilot"))]
+    fn autopilot_input(&mut self, _inp: &ClientIn, _unclassed: bool) -> Option<ClientIn> {
+        None
+    }
+
+    /// Run one rendered frame.
+    pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         let dt = inp.dt.clamp(0.0, 0.25);
         self.ui_clock += dt;
         // The sim's record names the General the local player is commanding, in first person or
@@ -773,44 +813,8 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
             self.general = p.general;
         }
         let unclassed = player.as_ref().is_none_or(|p| p.class.is_none());
-        #[cfg(feature = "autopilot")]
-        let pick_wanted = self.class_pick_wanted(unclassed);
-        #[allow(unused_mut, unused_assignments)]
-        let mut scripted = ClientIn::default();
-        let inp = match self.autopilot.as_mut() {
-            #[cfg(feature = "autopilot")]
-            Some(ap) if matches!(self.view, ViewMode::Fps) => {
-                // The scripts' time windows are tuned in logic ticks (the sim's), so read the
-                // clock from the logic frame, not the render dt: hitches and frame-rate
-                // differences would drift every window relative to the state it aims at.
-                ap.t = (inp.logic_frame - ap.base_frame) as f32 * LOGIC_DT;
-                let script = ap.input_at(&self.cfg.bindings);
-                scripted = *inp;
-                scripted.keys = script.keys;
-                // A script's class-pick key is only pressed while the spawn pick is really up (a
-                // re-entry on an already classed General must not turn it into a weapon swap).
-                if let Some(key) = script.class_pick {
-                    if pick_wanted {
-                        scripted.keys.set_down(key, true);
-                    }
-                }
-                scripted.mouse_dx = script.dx;
-                scripted.mouse_dy = script.dy;
-                scripted.wheel = script.wheel;
-                scripted.class_pick_force = script.pick_force;
-                scripted.input_allowed = 1;
-                &scripted
-            }
-            #[cfg(feature = "autopilot")]
-            Some(ap) => {
-                ap.t = 0.0;
-                ap.base_frame = inp.logic_frame;
-                inp
-            }
-            #[cfg(not(feature = "autopilot"))]
-            Some(_) => inp,
-            None => inp,
-        };
+        let scripted = self.autopilot_input(inp, unclassed);
+        let inp = scripted.as_ref().unwrap_or(inp);
         let mut out = ClientOut { hfov: self.last_hfov, viewmodel: viewmodel::NONE, ..Default::default() };
         self.hud.map_open = false;
         self.hud.scoreboard_open = false;

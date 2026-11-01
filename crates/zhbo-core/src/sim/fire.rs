@@ -15,166 +15,7 @@ impl Sim {
     pub(super) fn apply_weapon_action(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, action: WeaponAction) {
         match action {
             WeaponAction::Fire { spread_deg, jitter, view_kick, gun_kick, pellet, last, left } => {
-                let def = p.arsenal.current().def;
-                // The shot sets the view kick's velocity (`FUN_008e3a00`); this frame's pellets fly
-                // along the aim the kick had already moved.
-                if pellet == 0 {
-                    p.view_kick.kick(view_kick);
-                    // The fire start lets a held breath go (`FUN_008dea30`).
-                    let extra = p.arsenal.has_specialty(Specialty::HoldBreath);
-                    p.idle.breath.fired(def, p.arsenal.ads, &p.arsenal.tuning, extra);
-                }
-                let eye = p.body.eye();
-                // Random point in the spread cone (polar mapping of two uniform samples).
-                let angle = jitter.0 * std::f32::consts::PI;
-                let radius = spread_deg.to_radians() * jitter.1.abs().sqrt();
-                let dir = dir_from_angles(p.fire_yaw + radius * angle.cos(), p.fire_pitch + radius * angle.sin());
-
-                let range = def.bullet_range(self.bullet_range);
-                let bodies = HitBodies { poses: self.hit_body(), states: &self.hit_states() };
-                let mut targets = gather_targets(host, eye, range, p.general, &bodies, def.traits.rifle_bullet);
-                // A deployed shield's object is the sim's to hit (its box, below), not a target.
-                targets.retain(|t| !self.deployed.iter().any(|d| d.object != 0 && d.object == t.id));
-                let ground = |x: f32, y: f32| host.ground_height(x, y);
-                let hit = hitscan::trace(eye, dir, range, &targets, p.general, &ground);
-                // One flash and sound per shot, not per pellet.
-                let fx = if pellet == 0 { Some(def.fx_weapon.as_str()).filter(|f| !f.is_empty()) } else { None };
-                // What others see of the shot besides the flash: the brass once per shot, a tracer
-                // on every `tracer_interval`-th bullet (each pellet is a bullet).
-                if pellet == 0 {
-                    let brass = if last { &def.world_last_shot_shell_fx_weapon } else { &def.world_shell_fx_weapon };
-                    if !brass.is_empty() {
-                        host.fire_fx(p.general, brass, 0, eye + dir * 10.0);
-                    }
-                }
-                let tracer = !def.tracer_fx_weapon.is_empty() && tracer_due(&mut p.tracer_count, def.tracer_interval);
-                // Enemy equipment in the way takes the shot.
-                let reach = match hit {
-                    HitResult::Object { distance, .. } => distance,
-                    other => (other.point() - eye).length(),
-                };
-                if let Some((i, t)) = self.equipment.shot(host, p.general, eye, dir, reach) {
-                    if let Some(fx) = fx {
-                        host.fire_fx(p.general, fx, 0, eye + dir * t);
-                    }
-                    if tracer {
-                        self.tracers.push(ShotTracer { shooter: p.general, def, target: 0, end: eye + dir * t, left });
-                    }
-                    let e = self.equipment.destroy(host, i, Some(idx));
-                    self.equipment_events(host, vec![e]);
-                    // BO2's equipment is metal: a spark at the round, never blood.
-                    self.emit(idx, EventKind::Impact { at: eye + dir * t, dir, surface: Surface::Metal, head: false, fatal: false, impact_type: def.impact_type, exit: false });
-                    if pellet == 0 {
-                        self.emit(idx, EventKind::Shot { origin: eye, end: eye + dir * t, left });
-                        self.emit(idx, EventKind::Recoil { gun_kick });
-                    }
-                    return;
-                }
-                // A deployed shield on the ray takes the round (bullet-scaled damage).
-                if let Some((i, t)) = self.deployed_on_ray(eye, dir, reach) {
-                    let at = eye + dir * t;
-                    if let Some(fx) = fx {
-                        host.fire_fx(p.general, fx, 0, at);
-                    }
-                    self.damage_deployed(host, i, Some(idx), p.general, def.damage_at(t), deploy::ShieldDamage::Bullet);
-                    self.emit(idx, EventKind::ShieldHit { at, dir, knife: false, impact_type: def.impact_type });
-                    if tracer {
-                        self.tracers.push(ShotTracer { shooter: p.general, def, target: 0, end: at, left });
-                    }
-                    if pellet == 0 {
-                        self.emit(idx, EventKind::Shot { origin: eye, end: at, left });
-                        self.emit(idx, EventKind::Recoil { gun_kick });
-                    }
-                    return;
-                }
-                // An enemy's Assault Shield on the ray: location `riotshield`, which outranks every
-                // body box (rank 101) and takes no damage (`_globallogic_player.gsc:840-888`); the
-                // body it is tested against is the hit-location box the trace struck.
-                let hit_id = if let HitResult::Object { id, .. } = hit { Some(id) } else { None };
-                let enemy = |b: &crate::shield::Bearer| b.general != p.general && targets.iter().any(|t| t.id == b.general);
-                if let Some((_, t)) = crate::shield::blocking(&self.shields, &enemy, eye, dir, reach, range, hit_id) {
-                    let at = eye + dir * t;
-                    if let Some(fx) = fx {
-                        host.fire_fx(p.general, fx, 0, at);
-                    }
-                    self.emit(idx, EventKind::ShieldHit { at, dir, knife: false, impact_type: def.impact_type });
-                    if tracer {
-                        self.tracers.push(ShotTracer { shooter: p.general, def, target: 0, end: at, left });
-                    }
-                    if pellet == 0 {
-                        self.emit(idx, EventKind::Shot { origin: eye, end: at, left });
-                        self.emit(idx, EventKind::Recoil { gun_kick });
-                    }
-                    return;
-                }
-                match hit {
-                    HitResult::Object { id, point, distance, location } => {
-                        if let Some(fx) = fx {
-                            host.fire_fx(p.general, fx, id, point);
-                        }
-                        if tracer {
-                            self.tracers.push(ShotTracer { shooter: p.general, def, target: id, end: point, left });
-                        }
-                        let general = p.general;
-                        let mut last = self.bullet_hit(host, idx, p, dir, Strike { id, point, distance, location, mult: 1.0, fx: true });
-                        // BO2's penetration loop (`FUN_005d0350`): on through what it hit, the
-                        // multiplier falling with each solid's thickness over its depth.
-                        let surface_of = |id: u32| Surface::of_object(host.object(id, general).as_ref());
-                        let shot = penetration::Shot {
-                            pen: def.traits.penetrate,
-                            perk: p.arsenal.has_specialty(Specialty::BulletPenetration),
-                            origin: eye,
-                            dir,
-                            range,
-                            targets: &targets,
-                            ignore: general,
-                            ground: &ground,
-                            surface_of: &surface_of,
-                        };
-                        let mut steps = Vec::new();
-                        penetration::walk(&self.penetration, &shot, (id, distance, last.surface), &mut steps);
-                        for step in steps {
-                            match step {
-                                // The exit plays the type's exit row and family (BO2's flag 4), with
-                                // the hit's own head/fatal bits for blood.
-                                penetration::Step::Exit { id, at, surface, fx: true } => {
-                                    let (head, fatal) = if id == last.id { (last.head, last.kill) } else { (false, false) };
-                                    self.emit(idx, EventKind::Impact { at, dir, surface, head, fatal, impact_type: def.impact_type, exit: true });
-                                }
-                                penetration::Step::Exit { .. } => {}
-                                penetration::Step::Enter { hit: HitResult::Object { id, point, distance, location }, mult, fx } => {
-                                    last = self.bullet_hit(host, idx, p, dir, Strike { id, point, distance, location, mult, fx });
-                                }
-                                penetration::Step::Enter { hit, fx, .. } => {
-                                    if fx && matches!(hit, HitResult::Terrain { .. }) {
-                                        let at = hit.point();
-                                        let surface = host.surface_at(at.x, at.y);
-                                        self.emit(idx, EventKind::Impact { at, dir, surface, head: false, fatal: false, impact_type: def.impact_type, exit: false });
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    other => {
-                        if let Some(fx) = fx {
-                            host.fire_fx(p.general, fx, 0, other.point());
-                        }
-                        if tracer {
-                            self.tracers.push(ShotTracer { shooter: p.general, def, target: 0, end: other.point(), left });
-                        }
-                        // The ground: Zero Hour's terrain class at the point (the host's query).
-                        // A shot that flew out to its full range hit nothing, so it raises nothing.
-                        if matches!(other, HitResult::Terrain { .. }) {
-                            let at = other.point();
-                            let surface = host.surface_at(at.x, at.y);
-                            self.emit(idx, EventKind::Impact { at, dir, surface, head: false, fatal: false, impact_type: def.impact_type, exit: false });
-                        }
-                    }
-                }
-                if pellet == 0 {
-                    self.emit(idx, EventKind::Shot { origin: eye, end: hit.point(), left });
-                    self.emit(idx, EventKind::Recoil { gun_kick });
-                }
+                self.fire_round(host, idx, p, FireArgs { spread_deg, jitter, view_kick, gun_kick, pellet, last, left });
             }
             WeaponAction::Launch { def, pellet } => {
                 let eye = p.body.eye();
@@ -319,6 +160,13 @@ pub enum MeleeReach {
     Footprint(f32),
 }
 
+/// How much wider than the reach the melee's object query is (the reach test then decides);
+/// Zero Hour units.
+const MELEE_QUERY_SLACK: f32 = 12.0;
+/// The knife's facing cone (cosine, about 53 degrees): the mod's stand-in for BO2's melee trace
+/// box (`player_meleeWidth`/`player_meleeHeight` 10 in) plus its lunge's aim assist.
+const MELEE_FACING_COS: f32 = 0.6;
+
 impl MeleeReach {
     fn reaches(self, from: Vec3, o: &ObjInfo) -> bool {
         let d = (o.pos - from).length_xy();
@@ -337,8 +185,8 @@ impl Sim {
         let eye = p.body.eye();
         let (fwd, _) = basis_xy(p.yaw);
         let extra = match reach {
-            MeleeReach::Body => 12.0,
-            MeleeReach::Footprint(own) => own + 12.0,
+            MeleeReach::Body => MELEE_QUERY_SLACK,
+            MeleeReach::Footprint(own) => own + MELEE_QUERY_SLACK,
         };
         let mut near = Vec::new();
         host.query(eye, MELEE_RANGE + extra, p.general, &mut near);
@@ -350,7 +198,7 @@ impl Sim {
             .filter(|o| {
                 let to = o.pos - p.body.pos;
                 let d = to.length_xy();
-                reach.reaches(p.body.pos, o) && (d < 1e-3 || (to.x * fwd.x + to.y * fwd.y) / d > 0.6)
+                reach.reaches(p.body.pos, o) && (d < 1e-3 || (to.x * fwd.x + to.y * fwd.y) / d > MELEE_FACING_COS)
             })
             .min_by(|a, b| {
                 let da = (a.pos - p.body.pos).length_xy();
@@ -481,6 +329,189 @@ pub(crate) fn tracer_due(count: &mut u8, interval: u32) -> bool {
         return true;
     }
     false
+}
+
+
+/// One bullet of a [`WeaponAction::Fire`] (its fields, minus the weapon's own state).
+pub(super) struct FireArgs {
+    pub spread_deg: f32,
+    pub jitter: (f32, f32),
+    pub view_kick: (f32, f32, f32),
+    pub gun_kick: (f32, f32),
+    pub pellet: u16,
+    pub last: bool,
+    pub left: bool,
+}
+
+/// What every way a round can end shares: its flash and tracer, and the shot/recoil cues the
+/// first pellet of a shot carries.
+struct Round<'a> {
+    shooter: u32,
+    def: &'static crate::weapons::WeaponDef,
+    fx: Option<&'a str>,
+    tracer: bool,
+    pellet: u16,
+    left: bool,
+    gun_kick: (f32, f32),
+    eye: Vec3,
+}
+
+impl Sim {
+    /// A bullet: aim it in the spread cone, trace it, and land it on equipment, a deployed or held
+    /// Assault Shield, a body (then on through BO2's penetration walk) or the ground.
+    fn fire_round(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, a: FireArgs) {
+        let FireArgs { spread_deg, jitter, view_kick, gun_kick, pellet, last, left } = a;
+        let def = p.arsenal.current().def;
+        // The shot sets the view kick's velocity (`FUN_008e3a00`); this frame's pellets fly
+        // along the aim the kick had already moved.
+        if pellet == 0 {
+            p.view_kick.kick(view_kick);
+            // The fire start lets a held breath go (`FUN_008dea30`).
+            let extra = p.arsenal.has_specialty(Specialty::HoldBreath);
+            p.idle.breath.fired(def, p.arsenal.ads, &p.arsenal.tuning, extra);
+        }
+        let eye = p.body.eye();
+        // Random point in the spread cone (polar mapping of two uniform samples).
+        let angle = jitter.0 * std::f32::consts::PI;
+        let radius = spread_deg.to_radians() * jitter.1.abs().sqrt();
+        let dir = dir_from_angles(p.fire_yaw + radius * angle.cos(), p.fire_pitch + radius * angle.sin());
+
+        let range = def.bullet_range(self.bullet_range);
+        let bodies = HitBodies { poses: self.hit_body(), states: &self.hit_states() };
+        let mut targets = gather_targets(host, eye, range, p.general, &bodies, def.traits.rifle_bullet);
+        // A deployed shield's object is the sim's to hit (its box, below), not a target.
+        targets.retain(|t| !self.deployed.iter().any(|d| d.object != 0 && d.object == t.id));
+        let ground = |x: f32, y: f32| host.ground_height(x, y);
+        let hit = hitscan::trace(eye, dir, range, &targets, p.general, &ground);
+        // One flash and sound per shot, not per pellet.
+        let fx = if pellet == 0 { Some(def.fx_weapon.as_str()).filter(|f| !f.is_empty()) } else { None };
+        // What others see of the shot besides the flash: the brass once per shot, a tracer
+        // on every `tracer_interval`-th bullet (each pellet is a bullet).
+        if pellet == 0 {
+            let brass = if last { &def.world_last_shot_shell_fx_weapon } else { &def.world_shell_fx_weapon };
+            if !brass.is_empty() {
+                host.fire_fx(p.general, brass, 0, eye + dir * 10.0);
+            }
+        }
+        let tracer = !def.tracer_fx_weapon.is_empty() && tracer_due(&mut p.tracer_count, def.tracer_interval);
+        let round = Round { shooter: p.general, def, fx, tracer, pellet, left, gun_kick, eye };
+        // Enemy equipment in the way takes the shot.
+        let reach = match hit {
+            HitResult::Object { distance, .. } => distance,
+            other => (other.point() - eye).length(),
+        };
+        if let Some((i, t)) = self.equipment.shot(host, p.general, eye, dir, reach) {
+            let at = eye + dir * t;
+            self.round_effects(host, &round, 0, at);
+            let e = self.equipment.destroy(host, i, Some(idx));
+            self.equipment_events(host, vec![e]);
+            // BO2's equipment is metal: a spark at the round, never blood.
+            self.emit(idx, EventKind::Impact { at, dir, surface: Surface::Metal, head: false, fatal: false, impact_type: def.impact_type, exit: false });
+            self.round_done(idx, &round, at);
+            return;
+        }
+        // A deployed shield on the ray takes the round (bullet-scaled damage).
+        if let Some((i, t)) = self.deployed_on_ray(eye, dir, reach) {
+            let at = eye + dir * t;
+            self.round_effects(host, &round, 0, at);
+            self.damage_deployed(host, i, Some(idx), p.general, def.damage_at(t), deploy::ShieldDamage::Bullet);
+            self.emit(idx, EventKind::ShieldHit { at, dir, knife: false, impact_type: def.impact_type });
+            self.round_done(idx, &round, at);
+            return;
+        }
+        // An enemy's Assault Shield on the ray: location `riotshield`, which outranks every
+        // body box (rank 101) and takes no damage (`_globallogic_player.gsc:840-888`); the
+        // body it is tested against is the hit-location box the trace struck.
+        let hit_id = if let HitResult::Object { id, .. } = hit { Some(id) } else { None };
+        let enemy = |b: &crate::shield::Bearer| b.general != p.general && targets.iter().any(|t| t.id == b.general);
+        if let Some((_, t)) = crate::shield::blocking(&self.shields, &enemy, eye, dir, reach, range, hit_id) {
+            let at = eye + dir * t;
+            self.round_effects(host, &round, 0, at);
+            self.emit(idx, EventKind::ShieldHit { at, dir, knife: false, impact_type: def.impact_type });
+            self.round_done(idx, &round, at);
+            return;
+        }
+        match hit {
+            HitResult::Object { id, point, distance, location } => {
+                self.round_effects(host, &round, id, point);
+                let general = p.general;
+                let last = self.bullet_hit(host, idx, p, dir, Strike { id, point, distance, location, mult: 1.0, fx: true });
+                // BO2's penetration loop (`FUN_005d0350`): on through what it hit, the
+                // multiplier falling with each solid's thickness over its depth.
+                let surface_of = |id: u32| Surface::of_object(host.object(id, general).as_ref());
+                let shot = penetration::Shot {
+                    pen: def.traits.penetrate,
+                    perk: p.arsenal.has_specialty(Specialty::BulletPenetration),
+                    origin: eye,
+                    dir,
+                    range,
+                    targets: &targets,
+                    ignore: general,
+                    ground: &ground,
+                    surface_of: &surface_of,
+                };
+                let mut steps = Vec::new();
+                penetration::walk(&self.penetration, &shot, (id, distance, last.surface), &mut steps);
+                self.penetrated(host, idx, p, dir, steps, last);
+            }
+            other => {
+                self.round_effects(host, &round, 0, other.point());
+                // The ground: Zero Hour's terrain class at the point (the host's query).
+                // A shot that flew out to its full range hit nothing, so it raises nothing.
+                if matches!(other, HitResult::Terrain { .. }) {
+                    let at = other.point();
+                    let surface = host.surface_at(at.x, at.y);
+                    self.emit(idx, EventKind::Impact { at, dir, surface, head: false, fatal: false, impact_type: def.impact_type, exit: false });
+                }
+            }
+        }
+        self.round_done(idx, &round, hit.point());
+    }
+
+    /// Land the steps of BO2's penetration walk past the first hit (`last`): each solid entered
+    /// takes the round at its falling multiplier, and each exit plays its effect.
+    fn penetrated(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, dir: Vec3, steps: Vec<penetration::Step>, mut last: BulletHit) {
+        let def = p.arsenal.current().def;
+        for step in steps {
+            match step {
+                // The exit plays the type's exit row and family (BO2's flag 4), with the hit's own
+                // head/fatal bits for blood.
+                penetration::Step::Exit { id, at, surface, fx: true } => {
+                    let (head, fatal) = if id == last.id { (last.head, last.kill) } else { (false, false) };
+                    self.emit(idx, EventKind::Impact { at, dir, surface, head, fatal, impact_type: def.impact_type, exit: true });
+                }
+                penetration::Step::Exit { .. } => {}
+                penetration::Step::Enter { hit: HitResult::Object { id, point, distance, location }, mult, fx } => {
+                    last = self.bullet_hit(host, idx, p, dir, Strike { id, point, distance, location, mult, fx });
+                }
+                penetration::Step::Enter { hit, fx, .. } => {
+                    if fx && matches!(hit, HitResult::Terrain { .. }) {
+                        let at = hit.point();
+                        let surface = host.surface_at(at.x, at.y);
+                        self.emit(idx, EventKind::Impact { at, dir, surface, head: false, fatal: false, impact_type: def.impact_type, exit: false });
+                    }
+                }
+            }
+        }
+    }
+
+    /// The round's flash at `at` (on `target`, 0 for none) and its tracer, when it has them.
+    fn round_effects(&mut self, host: &dyn LogicHost, r: &Round, target: u32, at: Vec3) {
+        if let Some(fx) = r.fx {
+            host.fire_fx(r.shooter, fx, target, at);
+        }
+        if r.tracer {
+            self.tracers.push(ShotTracer { shooter: r.shooter, def: r.def, target, end: at, left: r.left });
+        }
+    }
+
+    /// The shot and recoil cues, once per shot (the first pellet), ending at `end`.
+    fn round_done(&mut self, idx: usize, r: &Round, end: Vec3) {
+        if r.pellet == 0 {
+            self.emit(idx, EventKind::Shot { origin: r.eye, end, left: r.left });
+            self.emit(idx, EventKind::Recoil { gun_kick: r.gun_kick });
+        }
+    }
 }
 
 #[cfg(test)]

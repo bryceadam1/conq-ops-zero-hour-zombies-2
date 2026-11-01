@@ -217,10 +217,10 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
         let base = material.strip_suffix(zhbo_core::lui::materials::FLIP_V).unwrap_or(material);
         wanted.push((zhbo_core::lui::materials::image(material), Source::Dynamic(base.to_string()), *max));
     }
-    zones.insert("common_mp", crate::generals::load_zone(bo2_dir, "common_mp")?);
-    let patch = crate::generals::load_zone(bo2_dir, crate::fx::ZONE)?;
-    let common_patch = crate::generals::load_zone(bo2_dir, "common_patch_mp")?;
-    let (weapons, attachments) = crate::paks::mp_weapons(&patch, &common_patch, &zones["common_mp"])?;
+    let mp = crate::paks::MpPool::load(bo2_dir)?;
+    let (weapons, attachments) = mp.weapons()?;
+    let crate::paks::MpPool { patch, common, .. } = mp;
+    zones.insert("common_mp", common);
     // The create-a-class weapon pictures: each item's image in BO2's `mp/statstable.csv` plus
     // `_big` (`classpreview.lua`'s `GetItemImage(...) .. "_big"`). The knife's personalize page
     // shows `knife_held`'s column 6 as it is (`caccamomenu.lua`'s `knifePersonalization` branch:

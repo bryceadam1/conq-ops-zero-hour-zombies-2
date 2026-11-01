@@ -30,10 +30,13 @@ fn strings(dir: &Path) -> HashMap<String, String> {
 
 impl Install {
     pub fn open(dir: &Path) -> Result<Install, String> {
+        // The weapon pool by BO2's own zone list (`zhbo_formats::weapon::MP_POOL`, highest priority
+        // first), loaded through the one zone loader the converter uses.
+        let [patch, common_patch, common] = zhbo_formats::weapon::MP_POOL.map(|name| load(dir, name));
         Ok(Install {
-            common: load(dir, "common_mp")?,
-            common_patch: load(dir, "common_patch_mp")?,
-            patch: load(dir, "patch_mp")?,
+            common: common?,
+            common_patch: common_patch?,
+            patch: patch?,
             patch_ui: load(dir, "patch_ui_mp")?,
             strings: strings(dir),
         })

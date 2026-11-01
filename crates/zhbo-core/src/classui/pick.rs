@@ -171,7 +171,7 @@ pub fn draw_pick(prims: &mut Vec<Prim>, w: f32, h: f32, view: &ScreenView<'_>) {
     let l = pick_layout(w, h, manage);
     let f = &l.frame;
     bo2::backdrop(prims, f, w, h);
-    bo2::title(prims, f, "CHOOSE CLASS");
+    bo2::title(prims, f, crate::weapons::catalog().label("MPUI_CHOOSE_CLASS_CAPS"));
 
     let presets = classes::get();
     let prof = profile::get();

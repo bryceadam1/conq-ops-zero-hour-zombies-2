@@ -44,10 +44,10 @@ impl Slot {
     /// BO2's header for the slot. The second perk rows read as their tier's header.
     pub fn label(self) -> &'static str {
         match self {
-            Slot::Primary => "PRIMARY",
-            Slot::PrimaryAtts => "ATTACHMENTS",
-            Slot::Secondary => "SECONDARY",
-            Slot::SecondaryAtts => "ATTACHMENTS",
+            Slot::Primary => crate::weapons::catalog().label("MPUI_PRIMARY_CAPS"),
+            Slot::PrimaryAtts => crate::weapons::catalog().label("MPUI_ATTACHMENTS_CAPS"),
+            Slot::Secondary => crate::weapons::catalog().label("MPUI_SECONDARY_CAPS"),
+            Slot::SecondaryAtts => crate::weapons::catalog().label("MPUI_ATTACHMENTS_CAPS"),
             Slot::Lethal => "LETHAL",
             Slot::Tactical => "TACTICAL",
             Slot::Perk1 | Slot::Perk1b => "PERK 1",
@@ -55,7 +55,7 @@ impl Slot {
             Slot::Perk3 | Slot::Perk3b => "PERK 3",
             // BO2 calls the items `bonuscard_*` internally but the screen is `MENU_WILDCARDS_CAPS`
             // (`menus/cacbonuscards.lua`), so the picker titles itself WILDCARDS.
-            Slot::Wildcards => "WILDCARDS",
+            Slot::Wildcards => crate::weapons::catalog().label("MENU_WILDCARDS_CAPS"),
         }
     }
 

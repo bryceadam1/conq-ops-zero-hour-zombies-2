@@ -8998,3 +8998,81 @@ menu_mp_lobby_locked_big)` with the picture and bars hidden (`cacweaponsp.lua:50
 the pick is refused, and `classrepair` drops a stored Peacekeeper. Screenshot
 `cac-editor-weapons-locked` matches `c-primary/007`. Conformance unchanged (weapons 1,994 cells,
 cac 0, gaps 12). The table gains `CacLocked`/`CacLockHint` (archive version bump, integrator).
+
+## Code polish 2: leftovers in the merged branches' files (2026-11-01)
+
+- `hud/numerals.rs` was an orphan: no `mod numerals` anywhere, so it never compiled (the ammo
+  counter's digits moved to `hud/digit.rs`). Deleted, with the dead `Frame::unit_point` and
+  `cues::row_activate`. A scan for `.rs` files outside the module tree finds no other.
+- The converter's `ZHBO_DW_MOUNT` override (a leftover from the dual-wield A/B sweep) is gone; the
+  left gun mounts on `viewmodels::DW_MOUNT` (`tag_weapon1`).
+- `native_encode` no longer allocates every frame: the due draws leave the queue with
+  `extract_if` into a reused scratch `Vec`, and the target list and pipeline plan (now indices into
+  the scratch) are reused too.
+
+## Code polish 2: the Black Hat's hack time is BO2's (2026-11-01)
+
+The hack took the mod's 1.5 s (equipment) / 3 s (drones). BO2's `_hacker_tool.gsc` makes it a
+chain: the `grenade_pullback` notify, `wait 0.05` (`:166-170`), the target loop's first `wait 0.05`
+before it picks the target (`:245`, `:330-335`), then `locklengthms` of continuous sight added
+0.05 s per server frame (`:293-301`; `equipmenthackertooltimems` 50, `vehiclehackertooltimems`
+4000, `:20`/`:30`). Locked, the tool fires; the target is hacked on the code's
+`hacker_tool_fired` (`watchhackertoolfired`), i.e. once the offhand is pulled back (the def's
+`iHoldFireTime`, 250 ms for the install's `pda_hack_mp`) and its `iFireDelay` (130 ms) has run.
+`sim::hack` now completes the hack when both hold: equipment lands at ~0.38 s (the pull-back
+outlasts the 0.15 s lock), a Zero Hour drone (a vehicle) at ~4.23 s. The times are the def's own
+fields plus three cited tuning keys (`equipmenthackertooltimems`, `vehiclehackertooltimems`,
+`hackertoollockstart`); `HackEquipmentTime`/`HackDroneTime` are gone. A new target restarts the
+lock (`clearhackertarget`), not the pull-back.
+
+**Gotcha:** `equipmenthackertooltimems = 50` alone reads as "instant"; the pull-back and fire delay
+are what make the hack take its ~0.4 s, and they live in the weapon def, not the script.
+
+## Code polish 2: oversized files split along their seams (2026-11-01)
+
+Mechanical moves, no behaviour change (test counts identical before and after):
+- `sim/mod.rs` 3,046 → 1,103 lines: its 1,944 lines of inline tests are `sim/tests.rs` (still
+  `crate::sim::tests`, so `FakeHost`'s path is unchanged).
+- `weapons/mod.rs` 1,322 → 249: the main test module is `weapons/tests.rs`.
+- `zhbo-gfx/src/runtime/mod.rs` 1,866 → 1,019: the `Resources` seam (`resources.rs`: shaders,
+  programs, uniforms, layouts, buffers, textures, frame buffers) and the per-draw seam
+  (`encode.rs`: views, draw state, `submit`, `discard`, `blit`) are their own `impl Renderer` files.
+- `zhbo-assets`' 767-line `run` is a dispatch table over one `cmd_<subcommand>` function each.
+Not split (yet): `zhbo-formats/src/weapon.rs`'s 416-line `read`, and `weapons/arsenal.rs` (with
+batch 9's fire-cycle work).
+
+## Code polish 2: the arsenal and the client frame (2026-11-01)
+
+- `weapons/arsenal.rs` 1,705 → 1,342 lines: one weapon's state (`WeaponState`, `Reload`,
+  `ShellPhase`, the dual-wield `Hand`, `magazine_times`) is `weapons/weapon_state.rs`; the
+  `Arsenal` (offhands, raise/drop, the fire cycle across hands) stays.
+- `Client::frame`'s autopilot block, which needed `#[allow(unused_mut, unused_assignments)]` to
+  compile with and without the `autopilot` feature, is `Client::autopilot_input` (one cfg'd
+  function each way). The frame's signature had lost its indentation in a merge; fixed.
+- The melee numbers are named and cited (`sim/fire.rs` `MELEE_QUERY_SLACK`, `MELEE_FACING_COS`;
+  `weapons::MELEE_RANGE`). **Decision:** the reach stays 64 in. BO2's base `player_meleeRange` is
+  55 in, but its knife lunges (`meleeChargeRange`, a weapon-def field the table does not carry
+  yet); shortening the reach to 55 without the lunge would make the knife worse than BO2's, so the
+  change waits for the field to reach the weapon table (with the schema work of batches 4/6).
+
+## Code polish 2: the class screens' and HUD's words come from the install (2026-11-01)
+
+The create-a-class screens and the HUD typed BO2's strings by hand (PRIMARY, ATTACHMENTS,
+WILDCARDS, the weapon categories, the dialog entries, the stat labels, the prompts, the
+scoreboard columns, CUSTOMIZED, No Ammo). Each is now its localize key — the one BO2's Lua uses
+(`cacutility.lua`'s `MPUI_WEAPON_*_CAPS`, `cacclassoptions.lua`'s `MENU_CLASS_OPTIONS`/
+`MENU_RENAME`/`MENU_COPY_CAPS`/`MENU_RESET_TO_DEFAULT`/`MENU_CLEAR_LOADOUT_CAPS`, `classpreview.lua`'s
+`MPUI_PRIMARY_CAPS`/`MENU_WILDCARDS_CAPS`, `weaponlabel.lua`'s `MENU_CUSTOMIZED_CAPS`, …) — added to
+`weapons::UI_TEXT_KEYS`, so the converter copies the install's text into the weapon table
+(`UiText` blocks; every key is in `code_post_gfx_mp`/`patch_mp`'s english zones, which the
+real-install `ui_text` test checks), with the install's text as the built-in stand-in.
+`Catalog::label(key)` is `Engine.Localize`; `Catalog::label_upper(key)` is BO2's
+`UIExpression.ToUpper(Engine.Localize(key))`, which the class dialogs use (the install's
+`MENU_CLASS_OPTIONS` is "Class Options"; the dialog shows CLASS OPTIONS).
+
+The mod's own HUD words (BUILD, FIELD COMPUTER, FC, HACKING, "[B] put away", GENERAL DOWN and its
+hint) are `HUD:ZHBO_*` labels in `strings.rs`/`strings_en.ini`, read through `strings::text`, so a
+translation edits one file. Still literal, with no BO2 key: RESET SET (the mod's own set-dialog
+entry), NOTHING TO CHOOSE, KNIFE, the personalize fallback name lists.
+
+The weapon table grows rows: the archive needs a reconvert (a `hud::VERSION` bump at integration).

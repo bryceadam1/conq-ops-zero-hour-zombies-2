@@ -91,14 +91,14 @@ pub fn draw_editor(prims: &mut Vec<Prim>, w: f32, h: f32, editor: &Editor, deny:
     // `d-attach/002`); the mod's category pager and gun row are mouse/wheel targets, not prompts.
     let cells = editor_cells(&l, editor);
     let removable = cells.iter().any(|c| c.slot == editor.slot && cell_filled(editor, c));
-    let mut left: Vec<(&str, &str)> = vec![("ESC", "Back")];
+    let mut left: Vec<(&str, &str)> = vec![("ESC", crate::weapons::catalog().label("MENU_BACK"))];
     let right: Vec<(&str, &str)> = if editor.picking {
         if editor.slot == Slot::PrimaryAtts && editor.option_attachment(editor.option).is_some_and(|s| crate::hud::OPTICS.contains(&s)) {
             left.push(("V", "Reticle"));
         }
         Vec::new()
     } else {
-        left = vec![("ESC", "Back"), ("TAB", "Personalize Knife")];
+        left = vec![("ESC", crate::weapons::catalog().label("MENU_BACK")), ("TAB", crate::weapons::catalog().label("MPUI_PERSONALIZE_KNIFE"))];
         // BO2's `AddCamoButton` on a weapon box that holds a gun (`caceditclass.lua:748`) and
         // `AddReticleButton` on the primary optic row (`:825`).
         if editor.camo_page().is_some() {
@@ -132,8 +132,8 @@ fn editor_title(editor: &Editor) -> String {
 /// `<WEAPON> ATTACHMENTS`; `e-perks/001`'s `PERK 1`, `f-wildcards/001`'s `WILDCARDS`).
 pub(super) fn picker_title(editor: &Editor) -> String {
     match editor.slot {
-        Slot::Primary => "PRIMARY".to_string(),
-        Slot::Secondary => "SECONDARY".to_string(),
+        Slot::Primary => crate::weapons::catalog().label("MPUI_PRIMARY_CAPS").to_string(),
+        Slot::Secondary => crate::weapons::catalog().label("MPUI_SECONDARY_CAPS").to_string(),
         Slot::PrimaryAtts | Slot::SecondaryAtts => {
             let id = if editor.slot == Slot::PrimaryAtts { editor.draft.primary.as_str() } else { editor.draft.secondary.as_str() };
             format!("{} ATTACHMENTS", weapons::weapon(id).menu_name().to_uppercase())
@@ -168,13 +168,13 @@ fn draw_editor_grid(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor, no
     // The attachment rows' label; a weapon that offers none says so in its place (b-editor/002).
     for (button, id) in [(l.primary_atts, editor.draft.primary.as_str()), (l.secondary_atts, editor.draft.secondary.as_str())] {
         if offers_attachments(id) {
-            slot_label(prims, f, button, "ATTACHMENTS");
+            slot_label(prims, f, button, crate::weapons::catalog().label("MPUI_ATTACHMENTS_CAPS"));
         } else {
-            bo2::text(prims, f, Family::ExtraSmall, "Attachments not available", Rect { x: button.x + 3.0, y: button.y + 2.0, w: button.w, h: bo2::TEXT_EXTRA_SMALL }, Align::Left, argb(OFF_WHITE, 0.5));
+            bo2::text(prims, f, Family::ExtraSmall, crate::weapons::catalog().label("MPUI_ATTACHMENTS_NOT_AVAILABLE"), Rect { x: button.x + 3.0, y: button.y + 2.0, w: button.w, h: bo2::TEXT_EXTRA_SMALL }, Align::Left, argb(OFF_WHITE, 0.5));
         }
     }
     // The WILDCARDS label over the strip (`MENU_WILDCARDS_CAPS`).
-    slot_label(prims, f, l.wildcards_label, "WILDCARDS");
+    slot_label(prims, f, l.wildcards_label, crate::weapons::catalog().label("MENU_WILDCARDS_CAPS"));
 }
 
 /// One boxed cell of the grid.
@@ -186,7 +186,7 @@ fn draw_cell(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor, cell: &Ed
     match cell.slot {
         Slot::Primary | Slot::Secondary => {
             button_bg(prims, f, r);
-            slot_label(prims, f, r, if cell.slot == Slot::Primary { "PRIMARY" } else { "SECONDARY" });
+            slot_label(prims, f, r, crate::weapons::catalog().label(if cell.slot == Slot::Primary { "MPUI_PRIMARY_CAPS" } else { "MPUI_SECONDARY_CAPS" }));
             let id = if cell.slot == Slot::Primary { editor.draft.primary.as_str() } else { editor.draft.secondary.as_str() };
             if filled {
                 // `CACWeaponButton`: the image `AspectRatio` 2, `ImageBorder` 10, 80 from the right.
@@ -517,7 +517,7 @@ fn stat_bars_delta(prims: &mut Vec<Prim>, f: &Frame, r: Rect, base: &WeaponStats
     let dash_w = 7.0;
     for (i, label) in STAT_LABELS.iter().enumerate() {
         let top = r.y + i as f32 * row_h;
-        bo2::text(prims, f, Family::ExtraSmall, label, Rect { x: r.x, y: top, w: label_w, h: bo2::TEXT_EXTRA_SMALL }, Align::Left, argb(OFF_WHITE, 0.4));
+        bo2::text(prims, f, Family::ExtraSmall, crate::weapons::catalog().label(label), Rect { x: r.x, y: top, w: label_w, h: bo2::TEXT_EXTRA_SMALL }, Align::Left, argb(OFF_WHITE, 0.4));
         let base_lit = stat_lit(stat_value(base, i));
         let mod_lit = modified.map_or(base_lit, |m| stat_lit(stat_value(m, i)));
         for k in 0..STAT_SEGMENTS {

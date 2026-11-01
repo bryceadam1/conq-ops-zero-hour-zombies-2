@@ -67,7 +67,7 @@ pub fn draw(prims: &mut Vec<Prim>, f: &Frame, p: Rect, draft: Option<&Draft>) {
     // The primary block.
     let pr = at(0.0, TOP, c.left_w, c.primary_h);
     plate(prims, f, pr);
-    slot_label(prims, f, pr.x, pr.y, c.left_w, "PRIMARY");
+    slot_label(prims, f, pr.x, pr.y, c.left_w, crate::weapons::catalog().label("MPUI_PRIMARY_CAPS"));
     // The primary's attachment row, the secondary block and its attachment row.
     let pa = at(0.0, TOP + c.primary_h + GAP, c.left_w, SMALL_H);
     let sr = at(0.0, pa.y - p.y + SMALL_H + GAP, c.left_w, SMALL_H);
@@ -75,7 +75,7 @@ pub fn draw(prims: &mut Vec<Prim>, f: &Frame, p: Rect, draft: Option<&Draft>) {
     plate(prims, f, pa);
     plate(prims, f, sr);
     plate(prims, f, sa);
-    slot_label(prims, f, sr.x, sr.y, c.left_w, "SECONDARY");
+    slot_label(prims, f, sr.x, sr.y, c.left_w, crate::weapons::catalog().label("MPUI_SECONDARY_CAPS"));
     // The three perk rows.
     let perk_rows: Vec<Rect> = (0..3).map(|k| at(c.right_x, TOP + k as f32 * (c.perk_h + GAP), c.right_w, c.perk_h)).collect();
     for (k, r) in perk_rows.iter().enumerate() {
@@ -92,7 +92,7 @@ pub fn draw(prims: &mut Vec<Prim>, f: &Frame, p: Rect, draft: Option<&Draft>) {
     }
     // WILDCARDS: the label then three plates across the preview.
     let wild_label_y = tactical.bottom() + GAP;
-    slot_label(prims, f, p.x, wild_label_y, p.w, "WILDCARDS");
+    slot_label(prims, f, p.x, wild_label_y, p.w, crate::weapons::catalog().label("MENU_WILDCARDS_CAPS"));
     let card_w = (p.w - GAP * 2.0) / 3.0;
     let cards: Vec<Rect> = (0..3).map(|i| Rect { x: p.x + i as f32 * (card_w + GAP), y: wild_label_y + bo2::TEXT_EXTRA_SMALL, w: card_w, h: SMALL_H }).collect();
     for r in &cards {

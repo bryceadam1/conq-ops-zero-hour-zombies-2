@@ -17,8 +17,8 @@ impl DialogKind {
     /// The dialog's title, BO2's heading.
     pub fn title(self) -> &'static str {
         match self {
-            DialogKind::SetOptions => "CLASS SET OPTIONS",
-            DialogKind::ClassOptions => "CLASS OPTIONS",
+            DialogKind::SetOptions => crate::weapons::catalog().label_upper("MENU_CLASS_SET_OPTIONS"),
+            DialogKind::ClassOptions => crate::weapons::catalog().label_upper("MENU_CLASS_OPTIONS"),
         }
     }
 }
@@ -44,11 +44,12 @@ impl DialogItem {
     /// The entry's label, as the dialog draws it.
     pub fn label(self) -> &'static str {
         match self {
-            DialogItem::Rename => "RENAME",
-            DialogItem::Copy => "COPY",
+            DialogItem::Rename => crate::weapons::catalog().label_upper("MENU_RENAME"),
+            DialogItem::Copy => crate::weapons::catalog().label("MENU_COPY_CAPS"),
+            // The mod's own entry: BO2's set dialog has no reset.
             DialogItem::ResetSet => "RESET SET",
-            DialogItem::ResetDefault => "RESET TO DEFAULT",
-            DialogItem::ClearLoadout => "CLEAR LOADOUT",
+            DialogItem::ResetDefault => crate::weapons::catalog().label_upper("MENU_RESET_TO_DEFAULT"),
+            DialogItem::ClearLoadout => crate::weapons::catalog().label("MENU_CLEAR_LOADOUT_CAPS"),
         }
     }
 }
@@ -300,6 +301,6 @@ fn draw_dialog_body(prims: &mut Vec<Prim>, w: f32, h: f32, d: &Dialog) {
         bo2::text(prims, &f, Family::Condensed, item.label(), row, Align::Left, argb(colour, 1.0));
     }
     // The popup is its own menu, so its one prompt is the normal footer (`codmenu.lua:185-226`).
-    let boxes = bo2::prompt_boxes(&f, &[("ESC", "Back")], &[]);
+    let boxes = bo2::prompt_boxes(&f, &[("ESC", crate::weapons::catalog().label("MENU_BACK"))], &[]);
     bo2::draw_prompts(prims, &f, &boxes);
 }

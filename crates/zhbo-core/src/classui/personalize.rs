@@ -97,11 +97,11 @@ pub fn personalize_layout(w: f32, h: f32, kind: PersonalizeKind) -> PersonalizeL
 /// own wording, `MPUI_PERSONALIZE_KNIFE` at `caceditclass.lua:50-56`).
 pub fn personalize_title(kind: PersonalizeKind) -> &'static str {
     match kind {
-        PersonalizeKind::Camo => "CAMO",
-        PersonalizeKind::Reticle => "RETICLES",
-        PersonalizeKind::ReticleColor => "RETICLE COLOR",
+        PersonalizeKind::Camo => crate::weapons::catalog().label("MPUI_CAMO_CAPS"),
+        PersonalizeKind::Reticle => crate::weapons::catalog().label("MPUI_RETICLES_CAPS"),
+        PersonalizeKind::ReticleColor => crate::weapons::catalog().label("MPUI_RETICLE_COLOR_CAPS"),
         PersonalizeKind::Knife => "KNIFE",
-        PersonalizeKind::SecondaryCamo => "CAMO",
+        PersonalizeKind::SecondaryCamo => crate::weapons::catalog().label("MPUI_CAMO_CAPS"),
     }
 }
 
@@ -155,10 +155,10 @@ pub fn personalize_choices_for(kind: PersonalizeKind, weapon: Option<&str>) -> V
 /// `MPUI_CAMO_CAPS` / `MPUI_RETICLES_CAPS`, `MPUI_MAP_CATEGORY_DLC_CAPS`, `MPUI_DLC2_CAPS`.
 fn tab_label(kind: PersonalizeKind, tab: OptionTab) -> &'static str {
     match (kind, tab) {
-        (PersonalizeKind::Reticle, OptionTab::Base) => "RETICLES",
-        (_, OptionTab::Base) => "CAMO",
-        (_, OptionTab::Dlc) => "DLC",
-        (_, OptionTab::Dlc2) => "DLC2",
+        (PersonalizeKind::Reticle, OptionTab::Base) => crate::weapons::catalog().label("MPUI_RETICLES_CAPS"),
+        (_, OptionTab::Base) => crate::weapons::catalog().label("MPUI_CAMO_CAPS"),
+        (_, OptionTab::Dlc) => crate::weapons::catalog().label("MPUI_MAP_CATEGORY_DLC_CAPS"),
+        (_, OptionTab::Dlc2) => crate::weapons::catalog().label("MPUI_DLC2_CAPS"),
     }
 }
 
@@ -491,7 +491,7 @@ pub fn draw_personalize_in(cat: &Catalog, prims: &mut Vec<Prim>, w: f32, h: f32,
     }
     // The screen is a submenu of the editor: BO2's personalize screens carry `ESC Back` and the
     // select prompt, matching the other content grids (`c-primary/001`, `d-attach/002`).
-    let boxes = bo2::prompt_boxes(f, &[("ESC", "Back"), ("ENTER", "Select")], &[]);
+    let boxes = bo2::prompt_boxes(f, &[("ESC", crate::weapons::catalog().label("MENU_BACK")), ("ENTER", crate::weapons::catalog().label("MENU_SELECT"))], &[]);
     bo2::draw_prompts(prims, f, &boxes);
     deny_flash(prims, w, h, f.s(), deny);
 }

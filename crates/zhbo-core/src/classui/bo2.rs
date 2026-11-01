@@ -78,11 +78,6 @@ impl Frame {
     pub fn in_menu(&self, p: Place) -> Rect {
         p.resolve(self.menu)
     }
-
-    /// A point in screen pixels, in root units.
-    pub fn unit_point(&self, x: f32, y: f32) -> (f32, f32) {
-        (x / self.s(), y / self.s())
-    }
 }
 
 /// An empty-or-not test for a root-unit box against a screen point.
@@ -378,7 +373,7 @@ mod tests {
         let _l = crate::lui::font::lock();
         crate::lui::font::load("");
         let f = Frame::new(1280.0, 720.0);
-        let b = prompt_boxes(&f, &[("ESC", "Back")], &[("O", "Class Options"), ("S", "Class Set Options")]);
+        let b = prompt_boxes(&f, &[("ESC", crate::weapons::catalog().label("MENU_BACK"))], &[("O", crate::weapons::catalog().label("MENU_CLASS_OPTIONS")), ("S", crate::weapons::catalog().label("MENU_CLASS_SET_OPTIONS"))]);
         assert_eq!(b[0].rect.x, f.menu.x, "Back starts at the menu's left edge");
         assert_eq!(b[0].rect.bottom(), f.menu.bottom());
         assert_eq!(b[1].rect.right(), f.menu.right(), "the first right prompt is rightmost");

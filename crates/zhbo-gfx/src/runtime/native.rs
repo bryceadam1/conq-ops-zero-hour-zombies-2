@@ -359,6 +359,11 @@ pub(crate) struct NativeState {
     textures: Pool<NativeTexture>,
     meshes: Pool<Arc<Mesh>>,
     queue: Vec<Queued>,
+    /// Scratch reused by every `native_encode` (no per-frame allocation once warm): the draws
+    /// encoded now, their target views, and one view's pipeline plan (pipeline, draw, surface).
+    encoding: Vec<Queued>,
+    targets: Vec<u16>,
+    plans: Vec<(wgpu::RenderPipeline, usize, usize)>,
     /// This frame's uniforms: per draw, a frame block and a palette block, each aligned.
     ring: Vec<u8>,
     gpu_ring: Option<(wgpu::Buffer, wgpu::BindGroup, u64)>,
@@ -471,6 +476,9 @@ impl NativeState {
             textures: Pool::default(),
             meshes: Pool::default(),
             queue: Vec::new(),
+            encoding: Vec::new(),
+            targets: Vec::new(),
+            plans: Vec::new(),
             ring: Vec::new(),
             gpu_ring: None,
             pipelines: HashMap::new(),
@@ -1062,12 +1070,17 @@ impl Renderer {
         if self.native.queue.is_empty() {
             return;
         }
-        let (now, later): (Vec<Queued>, Vec<Queued>) = std::mem::take(&mut self.native.queue).into_iter().partition(|q| before.is_none_or(|b| q.before_view == b));
-        self.native.queue = later;
-        let mut targets: Vec<u16> = now.iter().map(|q| q.target_view).collect();
+        // The draws due now leave the queue in order; the rest wait for their view.
+        let mut now = std::mem::take(&mut self.native.encoding);
+        now.clear();
+        now.extend(self.native.queue.extract_if(.., |q| before.is_none_or(|b| q.before_view == b)));
+        let mut targets = std::mem::take(&mut self.native.targets);
+        targets.clear();
+        targets.extend(now.iter().map(|q| q.target_view));
         targets.sort_unstable();
         targets.dedup();
-        for tv in targets {
+        let mut plans = std::mem::take(&mut self.native.plans);
+        for &tv in &targets {
             let view = self.views[tv as usize].clone();
             let Some(target) = self.target_for(view.frame_buffer) else {
                 self.report(format!("zhbo-gfx: native pass: view {tv} has no target"));
@@ -1082,22 +1095,21 @@ impl Renderer {
                 continue;
             }
             let depth = self.native_depth(target.width, target.height, target.samples);
-            let Some((_, frame_group, _)) = self.native.gpu_ring.clone() else { return };
-            let draws: Vec<&Queued> = now.iter().filter(|q| q.target_view == tv).collect();
+            let Some((_, frame_group, _)) = self.native.gpu_ring.clone() else { break };
             // Pipelines first (building needs &mut self, the pass borrows the encoder).
-            let mut plans = Vec::new();
+            plans.clear();
             for blended in [false, true] {
-                for q in &draws {
-                    for s in q.mesh.surfaces.iter().filter(|s| s.blend.blended() == blended) {
+                for (qi, q) in now.iter().enumerate().filter(|(_, q)| q.target_view == tv) {
+                    for (si, s) in q.mesh.surfaces.iter().enumerate().filter(|(_, s)| s.blend.blended() == blended) {
                         let key = PipelineKey { blend: s.blend, cull: s.cull, stage: s.stage, color: color_format, samples: target.samples };
                         if let Some(p) = self.native_pipeline(key) {
-                            plans.push((p, *q, s));
+                            plans.push((p, qi, si));
                         }
                     }
                 }
             }
             // The MMS screen reads the scene's depth: resolve it first (the sky without one).
-            let scene_z = if plans.iter().any(|(_, _, s)| s.stage == Stage::Sonar) { self.native_scene_z(encoder, view.frame_buffer, target.width, target.height) } else { None };
+            let scene_z = if plans.iter().any(|&(_, qi, si)| now[qi].mesh.surfaces[si].stage == Stage::Sonar) { self.native_scene_z(encoder, view.frame_buffer, target.width, target.height) } else { None };
             let scene_group = scene_z.unwrap_or_else(|| self.native.sky_z.clone());
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("native"),
@@ -1119,8 +1131,9 @@ impl Renderer {
             pass.set_viewport(x as f32, y as f32, w as f32, h as f32, 0.0, 1.0);
             pass.set_scissor_rect(x, y, w, h);
             pass.set_bind_group(2, &scene_group, &[]);
-            for (pipeline, q, s) in plans {
-                pass.set_pipeline(&pipeline);
+            for (pipeline, qi, si) in &plans {
+                let (q, s) = (&now[*qi], &now[*qi].mesh.surfaces[*si]);
+                pass.set_pipeline(pipeline);
                 pass.set_bind_group(0, &frame_group, &[q.frame_offset, q.palette_offset]);
                 pass.set_bind_group(1, &s.bind_group, &[]);
                 pass.set_vertex_buffer(0, q.mesh.vertices.slice(..));
@@ -1128,6 +1141,12 @@ impl Renderer {
                 pass.draw_indexed(s.first_index..s.first_index + s.index_count, 0, 0..1);
             }
         }
+        // Back to the scratch: the meshes are released with the draws, the capacity is kept.
+        plans.clear();
+        now.clear();
+        self.native.plans = plans;
+        self.native.targets = targets;
+        self.native.encoding = now;
     }
 
     /// Forget this frame's draws (called at the end of `frame()`).

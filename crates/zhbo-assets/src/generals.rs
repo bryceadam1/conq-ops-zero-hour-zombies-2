@@ -235,24 +235,23 @@ pub type Files = Vec<(String, Vec<u8>)>;
 
 /// Convert everything; returns the archive files and a one-line summary.
 pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
-    let common = load_zone(bo2_dir, "common_mp")?;
+    // BO2's weapon asset pool, highest priority first (`zhbo_formats::weapon::MP_POOL`).
+    let mp = crate::paks::MpPool::load(bo2_dir)?;
+    let (bo2, atts) = mp.weapons()?;
+    let crate::paks::MpPool { patch, common_patch, common } = mp;
     let weapon = xmodel::find(&common, WEAPON).map_err(|e| e.to_string())?;
     let mut paks = Paks::open(bo2_dir)?;
     let reticle_zone = load_zone(bo2_dir, crate::textures::RETICLE_ZONE).ok();
     if let Some(z) = &reticle_zone {
         paks.learn(z);
     }
-    let patch = load_zone(bo2_dir, crate::fx::ZONE)?;
     let patch_ui = load_zone(bo2_dir, "patch_ui_mp")?;
     let mut out: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut summary = Vec::new();
 
     // Every BO2 multiplayer weapon a player can carry, with its attachments and alt modes, as the
     // core's weapon table; art for the converted ones (the loadout first, then the rest).
-    let common_patch = load_zone(bo2_dir, "common_patch_mp")?;
-    // BO2's weapon asset pool, highest priority first (`zhbo_formats::weapon::MP_POOL`).
     let pool = [&patch, &common_patch, &common];
-    let (bo2, atts) = crate::paks::mp_weapons(&patch, &common_patch, &common)?;
     let names = crate::weapons::names(bo2_dir);
     let meta = crate::weapons::attachment_metadata(&patch, &names);
     // BO2's camo choices (`mp/attachmenttable.csv`) and the 48 `camo_<weapon>` sets in
@@ -649,14 +648,13 @@ mod tests {
     #[ignore = "reads this machine's Black Ops II install"]
     fn every_mp_weapon_converts_and_plays_like_bo2() {
         let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
-        let common = load_zone(&bo2_dir, "common_mp").unwrap();
-        let patch = load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
-        let common_patch = load_zone(&bo2_dir, "common_patch_mp").unwrap();
+        let mp = crate::paks::MpPool::load(&bo2_dir).unwrap();
+        let (bo2, atts) = mp.weapons().unwrap();
+        let crate::paks::MpPool { patch, common_patch, common } = mp;
         let pool = [&patch, &common_patch, &common];
         let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(&bo2_dir, f.zone).unwrap()).collect();
         let paks = Paks::open(&bo2_dir).unwrap();
         let names = crate::weapons::names(&bo2_dir);
-        let (bo2, atts) = crate::paks::mp_weapons(&patch, &common_patch, &common).unwrap();
         // The weapon's own first-person effects are parsed (R8) and bound as BO2's asset pool binds
         // them: `common_mp` holds `weapon/shellejects/fx_rifle` only as a reference stub, the full
         // asset is `patch_mp`'s — so the AN-94, the other ARs and the snipers DO eject brass.
@@ -730,11 +728,10 @@ mod tests {
     #[ignore = "reads this machine's Black Ops II install"]
     fn the_balance_patches_convert_and_play() {
         let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
-        let common = load_zone(&bo2_dir, "common_mp").unwrap();
-        let patch = load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
-        let common_patch = load_zone(&bo2_dir, "common_patch_mp").unwrap();
+        let mp = crate::paks::MpPool::load(&bo2_dir).unwrap();
+        let (pooled, atts) = mp.weapons().unwrap();
+        let crate::paks::MpPool { patch, common_patch, common } = mp;
         let names = crate::weapons::names(&bo2_dir);
-        let (pooled, atts) = crate::paks::mp_weapons(&patch, &common_patch, &common).unwrap();
         let launch = zhbo_formats::weapon::all(&common).unwrap();
         let patched = zhbo_formats::weapon::all_in(&common_patch, &[&patch, &common]).unwrap();
         assert!(patched.len() > 70, "{} patched weapons", patched.len());
@@ -774,14 +771,13 @@ mod tests {
     #[ignore = "reads this machine's Black Ops II install"]
     fn every_attachment_converts_and_plays() {
         let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
-        let common = load_zone(&bo2_dir, "common_mp").unwrap();
-        let patch = load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
-        let common_patch = load_zone(&bo2_dir, "common_patch_mp").unwrap();
+        let mp = crate::paks::MpPool::load(&bo2_dir).unwrap();
+        let (bo2, atts) = mp.weapons().unwrap();
+        let crate::paks::MpPool { patch, common_patch, common } = mp;
         let pool = [&patch, &common_patch, &common];
         let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(&bo2_dir, f.zone).unwrap()).collect();
         let paks = Paks::open(&bo2_dir).unwrap();
         let names = crate::weapons::names(&bo2_dir);
-        let (bo2, atts) = crate::paks::mp_weapons(&patch, &common_patch, &common).unwrap();
         let table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
         let mut fails = Vec::new();
         let mut combos = 0;
@@ -902,11 +898,10 @@ mod tests {
     #[ignore = "reads this machine's Black Ops II install"]
     fn weapon_table_is_a_fixed_point() {
         let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
-        let common = load_zone(&bo2_dir, "common_mp").unwrap();
-        let patch = load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
-        let common_patch = load_zone(&bo2_dir, "common_patch_mp").unwrap();
+        let mp = crate::paks::MpPool::load(&bo2_dir).unwrap();
+        let (bo2, atts) = mp.weapons().unwrap();
+        let crate::paks::MpPool { patch, .. } = mp;
         let names = crate::weapons::names(&bo2_dir);
-        let (bo2, atts) = crate::paks::mp_weapons(&patch, &common_patch, &common).unwrap();
         let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
         let converted = crate::weapons::converted(&patch, &bo2);
         crate::weapons::add_variants(&mut table, &converted, &bo2);
@@ -923,11 +918,10 @@ mod tests {
     #[ignore = "reads this machine's Black Ops II install"]
     fn the_installs_synthesized_combos_overlay_follows_the_mounted_optic() {
         let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
-        let common = load_zone(&bo2_dir, "common_mp").unwrap();
-        let patch = load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
-        let common_patch = load_zone(&bo2_dir, "common_patch_mp").unwrap();
+        let mp = crate::paks::MpPool::load(&bo2_dir).unwrap();
+        let (bo2, atts) = mp.weapons().unwrap();
+        let crate::paks::MpPool { patch, .. } = mp;
         let names = crate::weapons::names(&bo2_dir);
-        let (bo2, atts) = crate::paks::mp_weapons(&patch, &common_patch, &common).unwrap();
         let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
         crate::weapons::add_variants(&mut table, &["as50_mp+acog".to_string(), "as50_mp+fmj".to_string()], &bo2);
         let def = |id: &str| table.weapons.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("no {id}"));
@@ -944,13 +938,12 @@ mod tests {
     #[ignore = "reads this machine's Black Ops II install"]
     fn every_world_weapon_shows_all_its_meshes() {
         let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
-        let common = load_zone(&bo2_dir, "common_mp").unwrap();
-        let patch = load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
-        let common_patch = load_zone(&bo2_dir, "common_patch_mp").unwrap();
+        let mp = crate::paks::MpPool::load(&bo2_dir).unwrap();
+        let (bo2, atts) = mp.weapons().unwrap();
+        let crate::paks::MpPool { patch, common_patch, common } = mp;
         let pool = [&patch, &common_patch, &common];
         let paks = Paks::open(&bo2_dir).unwrap();
         let names = crate::weapons::names(&bo2_dir);
-        let (bo2, atts) = crate::paks::mp_weapons(&patch, &common_patch, &common).unwrap();
         // The attachments carry BO2's compatibility lists (the metadata), as `files` builds them:
         // without them the loadout's `an94_mp+gl+reflex` sanitizes to a different combination.
         let meta = crate::weapons::attachment_metadata(&patch, &names);

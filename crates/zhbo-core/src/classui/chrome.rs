@@ -59,9 +59,9 @@ pub struct WeaponStats {
     pub accuracy: f32,
 }
 
-/// BO2's bar labels, in the order the weapon screens list them (`c-primary/001`: FIRE RATE, DAMAGE,
-/// RANGE, ACCURACY).
-pub const STAT_LABELS: [&str; 4] = ["FIRE RATE", "DAMAGE", "RANGE", "ACCURACY"];
+/// BO2's bar labels' localize keys, in the order the weapon screens list them (`c-primary/001`:
+/// FIRE RATE, DAMAGE, RANGE, ACCURACY).
+pub const STAT_LABELS: [&str; 4] = ["MPUI_FIRE_RATE_CAPS", "MPUI_DAMAGE_CAPS", "MPUI_RANGE_CAPS", "MPUI_ACCURACY_CAPS"];
 
 /// The bars' segments per row, as BO2's are (`c-primary/001`).
 pub const STAT_SEGMENTS: usize = 18;

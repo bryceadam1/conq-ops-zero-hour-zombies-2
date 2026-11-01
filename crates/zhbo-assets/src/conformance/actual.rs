@@ -62,10 +62,9 @@ impl Shipped {
         }
         // The converter's sound events for the shipped defs (`weapons::sounds_and_fx`, the step
         // `generals::files` ran; deterministic over the same inputs).
-        let common = crate::generals::load_zone(bo2_dir, "common_mp")?;
-        let patch = crate::generals::load_zone(bo2_dir, crate::fx::ZONE)?;
-        let common_patch = crate::generals::load_zone(bo2_dir, "common_patch_mp")?;
-        let (bo2, atts) = crate::paks::mp_weapons(&patch, &common_patch, &common)?;
+        let mp = crate::paks::MpPool::load(bo2_dir)?;
+        let (bo2, atts) = mp.weapons()?;
+        let crate::paks::MpPool { patch, common, .. } = mp;
         let mut defs = zhbo_core::weapons::parse_full_table(&text)?.weapons;
         let (events, _) = crate::weapons::sounds_and_fx(&bo2, &atts, &mut defs, &crate::weapons::converted(&patch, &bo2));
         let fire_fx = |ini: &str| {

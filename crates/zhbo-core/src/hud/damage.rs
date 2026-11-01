@@ -58,8 +58,8 @@ pub(super) fn draw_indicators(prims: &mut Vec<Prim>, w: f32, h: f32, view_yaw_de
 pub(super) fn draw_death_banner(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, t: f32) {
     let a = (t.min(1.0) * 230.0) as u32;
     prims.push(Prim::Rect { x: 0.0, y: h * 0.4, w, h: 64.0 * s, argb: (a / 2) << 24 });
-    prims.push(Prim::Text { x: w * 0.5, y: h * 0.4 + 10.0 * s, text: "GENERAL DOWN".to_string(), argb: (a << 24) | (RED & 0x00FF_FFFF), size: (24.0 * s) as i32, align: 1 });
-    prims.push(Prim::Text { x: w * 0.5, y: h * 0.4 + 42.0 * s, text: "Build a new General at your Command Center".to_string(), argb: (a << 24) | 0x00FF_FFFF, size: (12.0 * s) as i32, align: 1 });
+    prims.push(Prim::Text { x: w * 0.5, y: h * 0.4 + 10.0 * s, text: crate::strings::text("HUD:ZHBO_GeneralDown"), argb: (a << 24) | (RED & 0x00FF_FFFF), size: (24.0 * s) as i32, align: 1 });
+    prims.push(Prim::Text { x: w * 0.5, y: h * 0.4 + 42.0 * s, text: crate::strings::text("HUD:ZHBO_GeneralDownHint"), argb: (a << 24) | 0x00FF_FFFF, size: (12.0 * s) as i32, align: 1 });
 }
 
 #[cfg(test)]

@@ -796,7 +796,7 @@ The gameplay tuning pack (`crates/zhbo-core/src/tuning.rs`, filled from
 across ~10 files (movement, regeneration, building rates, projectile physics, the field
 computer's raise time) and for BO2's engine numbers: movement, the `perk_*` multipliers, damage
 flinch, the view and bob dvars (v1.0 Track PW), the hold-breath `player_breath_*` dvars, `bulletrange` (how far a non-spread round is traced), the optic displays'
-`cg_sonarAttachment*` and `cg_rangeFinder*` dvars (`[Optics]`, `sim::optics`), and the MP scripts' equipment, concussion and EMP numbers (`[Equipment]`, `[Concussion]`: the `scr_weaponobject_*`, `betty*`, `scr_proximityGrenade*` defaults and literals from `gsc-dump/mp/`, each key citing its `.gsc` line; `equipment::EquipTuning`, `projectiles::Flight`). Script values (not engine dvars) are keyed by their GSC `level.*`/`scr_*` name. BO2's numbers stay in BO2's units (inches,
+`cg_sonarAttachment*` and `cg_rangeFinder*` dvars (`[Optics]`, `sim::optics`), and the MP scripts' equipment, concussion and EMP numbers (`[Equipment]`, `[Concussion]`: the `scr_weaponobject_*`, `betty*`, `scr_proximityGrenade*`, `*hackertooltimems` defaults and literals from `gsc-dump/mp/`, each key citing its `.gsc` line; `equipment::EquipTuning`, `projectiles::Flight`). Script values (not engine dvars) are keyed by their GSC `level.*`/`scr_*` name. BO2's numbers stay in BO2's units (inches,
 inches/s, seconds) under the engine's dvar names as ini keys (`g_speed`, `perk_weapSwitchMultiplier`),
 each field's doc citing the Ghidra answer it came from (`~/Documents/BO2-reference/ghidra/
 answers/G1-G7.md`); code converts at the point of use. The pack is part of the mod like
@@ -823,9 +823,10 @@ zone fills): the weapon table's `CacLocked`/`CacLockHint` (the hint is the local
 from whether the view model's colour maps resolve; the picker draws BO2's lock
 (`menu_mp_lobby_locked_big`, 64 square, the picture and bars hidden, `c-primary/007`), refuses the
 pick, and `classrepair` drops a stored one. The
-converter picks them in one place (`zhbo_assets::paks::mp_weapons`; models and clips through
-`viewmodels::find_model`/`find_anim` over the same pool), and the conformance expected side reads
-the same pool (`zhbo_conformance::bo2::install::Install::pool`). The stringtables
+converter opens the pool and picks them in one place (`zhbo_assets::paks::MpPool`, which loads the
+`MP_POOL` zones through the shared `t6zone` loader; models and clips through
+`viewmodels::find_model`/`find_anim` over the same pool), and the conformance expected side loads
+the same `MP_POOL` zones through the same loader (`zhbo_conformance::bo2::install::Install::pool`). The stringtables
 (`mp/statstable.csv`, `mp/attachmenttable.csv`, ...) are all `patch_mp`'s. The class menus name an
 item by its statstable column 3 (`GetItemName`, the table's `CacName`, `WeaponDef::menu_name`); the
 HUD by the variant's `displayName` (`DisplayName`) — the patched R870 is "R870 MCS" in the menus
@@ -857,10 +858,13 @@ both are capped by the item's `MaxReserve` (`classmenu::items::offhand_cap`). Th
 writes both counts; repair makes a held item's 0 (a class saved before the counts) one. A spec
 without a count (the shipped presets) gives the item's start count.
 
-**The class editor's UI strings come from the install.** The weapon table's `UiText <key>` blocks
+**The class editor's and HUD's UI strings come from the install.** The weapon table's `UiText <key>` blocks
 carry the english text of the localize keys the core draws (`weapons::UI_TEXT_KEYS`: the offhand
-titles, `MPUI_PRIMARY_GRENADE_CAPS`, `MPUI_SPECIAL_GRENADE_CAPS` and Tactician's
-`MPUI_SECOND_SPECIAL_GRENADE_CAPS`), read by the converter from the same english zones as the
+titles `MPUI_PRIMARY_GRENADE_CAPS`, `MPUI_SPECIAL_GRENADE_CAPS` and Tactician's
+`MPUI_SECOND_SPECIAL_GRENADE_CAPS`, the slot and category headings, the dialog entries, the stat
+labels, the prompts, the scoreboard columns; drawn through `Catalog::label`/`label_upper`, BO2's
+`Engine.Localize` and `UIExpression.ToUpper`; the mod's own HUD words are `HUD:ZHBO_*` labels in
+`strings_en.ini`, read by `strings::text`), read by the converter from the same english zones as the
 display names; `Catalog::ui_text` looks them up and a table without them takes the built-in
 stand-ins (BO2's strings, checked against the install by an ignored test).
 
