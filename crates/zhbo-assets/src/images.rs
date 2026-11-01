@@ -1,35 +1,18 @@
-//! Black Ops II textures from the player's `.ipak` packs: lookup by name hash, decode, PNG/TGA output,
-//! and contact sheets for identifying images by eye.
+//! Black Ops II textures from the player's `.ipak` packs: decode an entry (one entry is one whole
+//! image, looked up by its [`zhbo_formats::ipak::ImageKey`]), PNG/TGA output, and contact sheets for
+//! identifying images by eye.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 use zhbo_formats::ipak::{Ipak, IpakEntry};
 use zhbo_formats::iwi::{self, Rgba};
 
-/// All entries of one image: large images are split over consecutive index entries with the same
-/// name hash.
-pub fn group_by_name(pak: &Ipak) -> BTreeMap<u32, Vec<IpakEntry>> {
-    let mut map: BTreeMap<u32, Vec<IpakEntry>> = BTreeMap::new();
-    for e in pak.entries() {
-        map.entry(e.name_hash).or_default().push(*e);
-    }
-    for parts in map.values_mut() {
-        parts.sort_by_key(|e| e.data_hash);
-    }
-    map
-}
-
-pub fn load(pak: &Ipak, parts: &[IpakEntry]) -> Result<Rgba, String> {
-    let mut data = Vec::new();
-    for p in parts {
-        data.extend(pak.read(p, None).map_err(|e| e.to_string())?);
-    }
+pub fn load(pak: &Ipak, entry: &IpakEntry) -> Result<Rgba, String> {
+    let data = pak.read(entry, None).map_err(|e| e.to_string())?;
     iwi::decode(&data).map_err(|e| e.to_string())
 }
 
-pub fn header(pak: &Ipak, parts: &[IpakEntry]) -> Option<iwi::Header> {
-    let first = parts.first()?;
-    let head = pak.read(first, Some(iwi::HEADER_LEN)).ok()?;
+pub fn header(pak: &Ipak, entry: &IpakEntry) -> Option<iwi::Header> {
+    let head = pak.read(entry, Some(iwi::HEADER_LEN)).ok()?;
     iwi::parse_header(&head).ok()
 }
 

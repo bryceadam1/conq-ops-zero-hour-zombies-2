@@ -174,10 +174,10 @@ fn run(args: &[String]) -> Result<(), String> {
                         for t in &m.textures {
                             match &t.image {
                                 Some(img) => {
-                                    let find = |h: u32| paks.iter().find(|(_, _, g)| g.contains_key(&h)).map(|(n, _, _)| n.as_str()).unwrap_or("-");
+                                    let pak = paks.iter().find(|(_, p)| p.entry(img.key()).is_some()).map_or("-", |(n, _)| n.as_str());
                                     println!(
-                                        "      semantic {:>2}: {} {}x{} hash {:#010x} in {}, stream hash {:#010x} ({} parts) in {}",
-                                        t.semantic, img.name, img.width, img.height, img.hash, find(img.hash), img.stream_hash, img.streamed_parts, find(img.stream_hash)
+                                        "      semantic {:>2}: {} {}x{} name hash {:#010x}, stream hash {:#010x} ({} parts) in {}",
+                                        t.semantic, img.name, img.width, img.height, img.hash, img.stream_hash, img.streamed_parts, pak
                                     );
                                 }
                                 None => println!("      semantic {:>2}: (shared image)", t.semantic),
@@ -295,7 +295,7 @@ fn run(args: &[String]) -> Result<(), String> {
                 };
                 for (i, t) in m.textures.iter().enumerate() {
                     let Some(img) = &t.image else { continue };
-                    let found = paks.iter().find_map(|(n, pak, g)| g.get(&img.stream_hash).map(|parts| (n, images::load(pak, parts))));
+                    let found = paks.iter().find_map(|(n, pak)| pak.entry(img.key()).map(|e| (n, images::load(pak, e))));
                     match found {
                         Some((pak, Ok(rgba))) => {
                             let file = out.join(format!("{name}_{i}.png"));
@@ -364,7 +364,7 @@ fn run(args: &[String]) -> Result<(), String> {
                     for u in w.attachment_uniques.iter().take(6) {
                         println!("      unique {} kind {} vm {:?} tag {:?}", u.name, u.kind, u.view_model, u.view_model_tag);
                     }
-                    println!("    sounds fire {:?} plr {:?} icon {:?} dpad {:?} world {:?} projectile {:?} impact {} icon hash {:?}", w.fire_sound, w.fire_sound_player, w.hud_icon, w.dpad_icon, w.world_model, w.projectile_model, w.projectile_impact_explode, w.hud_icon_hash);
+                    println!("    sounds fire {:?} plr {:?} icon {:?} dpad {:?} world {:?} projectile {:?} impact {} icon key {:?}", w.fire_sound, w.fire_sound_player, w.hud_icon, w.dpad_icon, w.world_model, w.projectile_model, w.projectile_impact_explode, w.hud_icon_key);
                     println!("    kick ads {:?} hip {:?} mult {:?}", w.ads_view_kick, w.hip_view_kick, w.location_multipliers.iter().take(7).collect::<Vec<_>>());
                     for (i, a) in w.anims.iter().enumerate() {
                         if let Some(a) = a {
@@ -499,7 +499,7 @@ fn run(args: &[String]) -> Result<(), String> {
                     continue;
                 }
                 let im = zhbo_formats::xmodel::read_image(&zone, img);
-                let head = paks.iter().find_map(|(n, pak, g)| g.get(&im.stream_hash).and_then(|parts| images::header(pak, parts)).map(|h| (n.clone(), h)));
+                let head = paks.iter().find_map(|(n, pak)| pak.entry(im.key()).and_then(|e| images::header(pak, e)).map(|h| (n.clone(), h)));
                 println!("{i:3} {origin:?} {} {}x{} stream {:#x} parts {} -> {head:?}", im.name, im.width, im.height, im.stream_hash, im.streamed_parts);
                 let def = zone.u32(img);
                 if def != 0 {
@@ -762,9 +762,9 @@ fn run(args: &[String]) -> Result<(), String> {
         "images" => {
             let pak = open_pak(args.get(1).ok_or("images <pak>")?)?;
             let filter = Filter::from_args(args);
-            for (hash, parts) in images::group_by_name(&pak) {
-                if let Some(h) = images::header(&pak, &parts).filter(|h| filter.accepts(h)) {
-                    println!("{hash:08x}  {:?}  {}x{}  parts {}", h.format, h.width, h.height, parts.len());
+            for e in pak.entries() {
+                if let Some(h) = images::header(&pak, e).filter(|h| filter.accepts(h)) {
+                    println!("{:08x} {:08x}  {:?}  {}x{}", e.data_hash, e.name_hash, h.format, h.width, h.height);
                 }
             }
             Ok(())
@@ -779,7 +779,6 @@ fn run(args: &[String]) -> Result<(), String> {
             let mut batch = Vec::new();
             let mut index = String::new();
             let mut sheet_no = 0;
-            let groups = images::group_by_name(&pak);
             let flush = |batch: &mut Vec<_>, index: &mut String, sheet_no: &mut usize| -> Result<(), String> {
                 if batch.is_empty() {
                     return Ok(());
@@ -792,13 +791,13 @@ fn run(args: &[String]) -> Result<(), String> {
                 *sheet_no += 1;
                 Ok(())
             };
-            for (hash, parts) in &groups {
-                if !filter.wants_hash(*hash) {
+            for e in pak.entries() {
+                if !filter.wants_hash(e.data_hash) {
                     continue;
                 }
-                let Some(h) = images::header(&pak, parts).filter(|h| filter.accepts(h)) else { continue };
-                let Ok(img) = images::load(&pak, parts) else { continue };
-                index.push_str(&format!("{:3} {hash:08x} {:?} {}x{}\n", batch.len(), h.format, h.width, h.height));
+                let Some(h) = images::header(&pak, e).filter(|h| filter.accepts(h)) else { continue };
+                let Ok(img) = images::load(&pak, e) else { continue };
+                index.push_str(&format!("{:3} {:08x} {:08x} {:?} {}x{}\n", batch.len(), e.data_hash, e.name_hash, h.format, h.width, h.height));
                 batch.push(img);
                 if batch.len() == per {
                     flush(&mut batch, &mut index, &mut sheet_no)?;
@@ -813,9 +812,13 @@ fn run(args: &[String]) -> Result<(), String> {
             let hash = u32::from_str_radix(args.get(2).ok_or("image <pak> <hash> <out.png>")?.trim_start_matches("0x"), 16)
                 .map_err(|e| e.to_string())?;
             let out = PathBuf::from(args.get(3).ok_or("image <pak> <hash> <out.png>")?);
-            let groups = images::group_by_name(&pak);
-            let parts = groups.get(&hash).ok_or("no image with that hash")?;
-            images::write_png(&out, &images::load(&pak, parts)?)
+            // The hash is either field (the material dump prints both); it must name one entry.
+            let found: Vec<_> = pak.entries().iter().filter(|e| e.data_hash == hash || e.name_hash == hash).collect();
+            match found[..] {
+                [e] => images::write_png(&out, &images::load(&pak, e)?),
+                [] => Err("no image with that hash".into()),
+                _ => Err(format!("{} images match that hash (data, name): {:x?}", found.len(), found.iter().map(|e| (e.data_hash, e.name_hash)).collect::<Vec<_>>())),
+            }
         }
         _ => Err("usage: zhbo-assets <banks|list|export|paks|images|sheets|image|conformance> ...".into()),
     }
@@ -826,7 +829,7 @@ fn open_bank(name: &str) -> Result<SoundBank, String> {
     SoundBank::open(&path).map_err(|e| format!("{}: {e}", path.display()))
 }
 
-type Paks = Vec<(String, Ipak, std::collections::BTreeMap<u32, Vec<zhbo_formats::ipak::IpakEntry>>)>;
+type Paks = Vec<(String, Ipak)>;
 
 /// The colour map of each surface's material, decoded from the image packs.
 fn color_maps(model: &zhbo_formats::xmodel::Model, paks: &Paks) -> preview::Textures {
@@ -835,13 +838,12 @@ fn color_maps(model: &zhbo_formats::xmodel::Model, paks: &Paks) -> preview::Text
         .iter()
         .map(|m| {
             let img = m.as_ref()?.color_map()?;
-            let (_, pak, groups) = paks.iter().find(|(_, _, g)| g.contains_key(&img.stream_hash))?;
-            images::load(pak, &groups[&img.stream_hash]).ok().map(std::rc::Rc::new)
+            paks.iter().find_map(|(_, pak)| pak.entry(img.key()).and_then(|e| images::load(pak, e).ok())).map(std::rc::Rc::new)
         })
         .collect()
 }
 
-/// Every image pack with its entries grouped by name hash.
+/// Every image pack, with its file name.
 fn image_paks() -> Result<Paks, String> {
     let dir = bo2_dir()?.join("zone").join("all");
     let mut names: Vec<String> = fs::read_dir(&dir)
@@ -854,8 +856,7 @@ fn image_paks() -> Result<Paks, String> {
     let mut out = Vec::new();
     for n in names {
         let pak = open_pak(&n)?;
-        let groups = images::group_by_name(&pak);
-        out.push((n, pak, groups));
+        out.push((n, pak));
     }
     Ok(out)
 }

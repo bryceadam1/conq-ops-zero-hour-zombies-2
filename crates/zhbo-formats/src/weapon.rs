@@ -206,6 +206,9 @@ pub struct AttachmentUnique {
     /// Seconds to put the weapon away when toggling to its alt mode with this attachment
     /// (`iAltDropTime`; `FUN_008ed1e0` takes the first single unique that differs from the base's).
     pub alt_drop_time: f32,
+    /// The `WeaponCamo` asset the class camo uses on this attachment's own models (`weaponCamo`,
+    /// `camo_reflex`, …); read from the single-attachment unique (`FUN_00529600`, G16).
+    pub weapon_camo: Option<String>,
 }
 
 /// A BO2 attachment (`WeaponAttachment`): how it changes any weapon it goes on. Scales multiply the
@@ -601,10 +604,13 @@ pub struct Weapon {
     pub projectile_explosion_sound: Option<String>,
     pub pullback_sound_player: Option<String>,
     pub melee_swipe_sound_player: Option<String>,
+    /// The `WeaponCamo` asset the class camo uses on the gun and its base `attachViewModel` parts
+    /// (`WeaponDef.weaponCamo`: `camo_an94`, the INSAS's `camo_msmc`), or `None`.
+    pub weapon_camo: Option<String>,
     /// HUD art (material names).
     pub hud_icon: Option<String>,
     /// The HUD icon's image in the `.ipak` packs (its material is inline in the weapon).
-    pub hud_icon_hash: Option<u32>,
+    pub hud_icon_key: Option<crate::ipak::ImageKey>,
     pub dpad_icon: Option<String>,
     /// What a projectile does when it goes off (`projExplosionEffect`), or the impact table's
     /// effect for its `impactType` on dirt.
@@ -799,6 +805,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 reload_ammo_add: int(z, u + WU::iReloadAmmoAdd),
                 segmented_reload: z.u8(u + WU::bSegmentedReload) != 0,
                 alt_drop_time: ms(z, u + WU::iAltDropTime),
+                weapon_camo: named(z, u + WU::weaponCamo),
             });
         }
     }
@@ -1079,11 +1086,12 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     let fx = z.try_u32(d + WD::projExplosionEffect)?;
     w.explosion_effect = (fx != 0).then(|| crate::fx::read(z, fx)).filter(|e| !e.elems.is_empty()).or_else(|| crate::fx::explosion_entry(w.impact_type).and_then(|e| crate::fx::impact(z, e, crate::fx::surface::DIRT)));
     w.hud_icon = named(z, d + WD::hudIcon);
+    w.weapon_camo = named(z, d + WD::weaponCamo);
     let icon = z.try_u32(d + WD::hudIcon)?;
-    w.hud_icon_hash = (icon != 0)
+    w.hud_icon_key = (icon != 0)
         .then(|| crate::xmodel::read_material(z, icon))
-        .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash)))
-        .filter(|h| *h != 0);
+        .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.key())))
+        .filter(|k| k.data_hash != 0);
     Ok(w)
 }
 

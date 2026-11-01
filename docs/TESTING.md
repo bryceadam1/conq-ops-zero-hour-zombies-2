@@ -24,7 +24,7 @@ How each layer of the mod is verified, and what to run before declaring a change
 | Class-screen screenshots | the shell list, the in-match pick list and the Pick-10 editor rendered through `classui::draw_screen` | `cargo run -p zhbo-assets -- screenshot` (uses the locally built `ConquerOps_BO2.big`; PNGs in `target/cac-shots/`) |
 | Viewmodel sweep | every player weapon and every attachment it offers drawn through the game's native first-person path (composition, `nativevm::place`, the native BO2 pass), hip and aimed side by side, for a human review of the catalog | `cargo run --release -p zhbo-core --example render_viewmodels --features renderer -- <outdir>` |
 | Combo conversion coverage | the converter's legal-combination set equals BO2's own Create-a-Class rows and covers every statstable-backed base weapon; the archive carries a native viewmodel manifest per legal combination (the base set only when `ZHBO_CONVERT_ALL_COMBOS=0`), and only the base set carries the composed first-person W3D meshes and the third-person body's world meshes (the legal combinations fall back to the base mesh) | the real-install tests `ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets the_enumerator_matches_the_conformance_expected_rows the_legal_combo_set_covers_every_base_weapon -- --ignored`; the build-time measurement: time `env ZHBO_CONVERT_ALL_COMBOS=0 cargo run --release -p zhbo-assets -- build-archive <base.big>` against `env ZHBO_BO2_DIR=… cargo run --release -p zhbo-assets -- build-archive <full.big>` and compare the two `.big` sizes (the full build must stay under 2^32 bytes; both the first-person split and the third-person base set keep it there) |
-| Camo swap | the parser's synthetic/real camo reads; the `.zcm` round-trip and refusals; the converter's 38 weapon blobs (including the view-model join for `camo_xpr50`) and 7 excluded optic sets; the class camo's transport and the draw-swap; the renderer's second texture and tint | `cargo test -p zhbo-formats`; `cargo test -p zhbo-native`; `cargo test -p zhbo-core`; `ZHBO_BO2_DIR=… cargo test -q --release -p zhbo-assets the_camo_assets_convert_with_their_art -- --ignored`; the sweep's `--camo` (below) |
+| Camo swap | the parser's synthetic/real camo reads; the `.zcm` round-trip and refusals; the converter's 47 blobs (every asset a def or unique points at, the seven optic sets included); each manifest part's camo asset (`each_part_carries_its_own_camo_asset`) and the per-part paint (`each_part_wears_its_own_camo_asset`); the class camo's transport and the draw-swap; the renderer's second texture and tint | `cargo test -p zhbo-formats`; `cargo test -p zhbo-native`; `cargo test -p zhbo-core`; `ZHBO_BO2_DIR=… cargo test -q --release -p zhbo-assets the_camo_assets_convert_with_their_art -- --ignored`; the sweep's `--camo` (below) |
 
 ## BO2 conformance
 
@@ -201,9 +201,13 @@ the left palm.
 `base.png` and the BO2 captures (`~/Documents/BO2-reference/cac/sweep/i-personalize/`). C0's
 evidence: the atacs solid is 32×32 with alpha 41–47, the pattern 256×256 with alpha 0–110 and
 edge-tiling (edge mean difference 4.2/3.2); `CAMO_GAIN` is 2.0 (1.0 is the fallback if the
-comparison rejects it). The style camos' colour maps are largely the shared
-`zhbo_camo_code_spc` and their differences live in `shaderConsts`, which the swap carries but does
-not interpret (D8), so a style pair can look alike until the technique is ported.
+comparison rejects it). A style camo's colour is its material's `colorMap` sampler (the layered
+toxic's `layer1Map`) and its specular the `SpecularAndGloss` spec-rgb map; `shaderConsts` are
+carried but not interpreted (D8). Metals keep their hue in the coloured specular (gold's colour map
+is a flat 21/20/13, its spec-rgb gold), which the native pass reads as a level only, so gold draws as
+polished dark metal until the renderer carries a specular colour. The real-install test
+`the_camo_assets_convert_with_their_art` pins the converter's unresolved list to the 20 provably
+unreachable names (DLC-only stubs and diamond's colour-less technique).
 
 ## Autopilot and the input path
 

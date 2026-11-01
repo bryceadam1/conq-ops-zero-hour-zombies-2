@@ -246,10 +246,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let reticle_colors = crate::weapons::reticle_color_options(&patch, &names);
     let common_patch = load_zone(bo2_dir, "common_patch_mp")?;
     let camo_assets = zhbo_formats::weapon::camo_all(&common_patch).map_err(|e| e.to_string())?;
-    let camo_sets: std::collections::HashSet<String> = camo_assets.iter().map(|c| c.name.clone()).collect();
     let options = crate::weapons::OptionTables {
         camo: &camo,
-        camo_sets: &camo_sets,
         reticles: &reticles,
         reticle_colors: &reticle_colors,
     };

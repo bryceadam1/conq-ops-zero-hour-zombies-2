@@ -1,7 +1,9 @@
 //! BO2's weapon camo art: the solid/pattern layer images and the style materials, converted into
-//! the archive beside the models. Pixels come from `common_mp` (the patch zone's copies are
-//! name-only stubs); the style materials come from the patch's registered assets or are inline in
-//! the camo asset itself. The recipe phase (C3) writes the blobs; this phase only writes textures.
+//! the archive beside the models. Every name is looked up in BO2's asset pool order (`patch_mp`,
+//! `common_patch_mp`, `common_mp`) among each zone's registered assets, nested ones included — the
+//! patch zones mostly hold `,name` reference stubs, and `common_mp` loads the style materials and
+//! most set images nested inside other assets. Pixels come from the image packs. The recipe phase
+//! writes the blobs; this phase only writes textures.
 
 use crate::character;
 use crate::generals::MAX_TEXTURE;
@@ -23,11 +25,36 @@ pub(crate) struct Art {
     pub unresolved: Vec<String>,
 }
 
-/// The variant suffixes a style material's base name may be stored under (the blob names the base,
-/// the zones carry the `_1` variant; research §3(d) bug D2).
-fn suffix_candidates(name: &str) -> Vec<String> {
-    vec![format!("{name}_1")]
+/// The zones BO2's asset pool holds the camo art from, newest first: a later zone's full asset
+/// replaces an earlier one's, and a `,name` reference stub defers to whichever zone defines it.
+fn pool<'a>(common: &'a Zone, patch: &'a Zone, inline: &'a Zone) -> [&'a Zone; 3] {
+    [patch, inline, common]
 }
+
+/// The full `GfxImage` named `name` from the pool, with pixels in the packs.
+fn pool_image(zones: &[&Zone], paks: &Paks, name: &str) -> Option<Rgba> {
+    zones.iter().find_map(|z| xmodel::find_image(z, name).and_then(|i| paks.image(i.key())))
+}
+
+/// The full `Material` named `name` from the pool: a top-level asset, or one a zone loads nested
+/// inside another asset (`common_mp` holds every style camo material that way).
+fn pool_material(zones: &[&Zone], name: &str) -> Option<xmodel::Material> {
+    zones.iter().find_map(|z| {
+        xmodel::find_asset_material(z, name)
+            .filter(|m| !m.textures.is_empty())
+            .or_else(|| xmodel::find_linked_material(z, name))
+    })
+}
+
+/// The sampler names BO2's style-camo techniques read their colour from, by technique: the lit
+/// one's `colorMap`, the layered one's base `layer1Map` (toxic: `layer1Map`/`layer2Map`, no
+/// `colorMap`). Matched by `MaterialTextureDef::nameHash`.
+const COLOR_SAMPLERS: [&str; 2] = ["colorMap", "layer1Map"];
+
+/// The style techniques' specular sampler: `SpecularAndGloss` (the metals' coloured spec-rgb map,
+/// e.g. gold's), bound with the colour semantic, so [`xmodel::TS_SPECULAR_MAP`] misses it. The
+/// sampler names are the strings in the zone's compiled shaders (`common_mp`), matched by hash.
+const SPECULAR_SAMPLERS: [&str; 2] = ["specularMap", "SpecularAndGloss"];
 
 /// Convert every image and style material the camo assets name, once each. Missing art is skipped
 /// and reported by the recipe phase; it is never fatal.
@@ -39,11 +66,8 @@ pub(crate) fn art(
     sets: &[weapon::WeaponCamo],
     out: &mut BTreeMap<String, Vec<u8>>,
 ) -> Art {
-    let pixel = |img: &xmodel::Image| -> Option<Rgba> {
-        paks.image(img.stream_hash).or_else(|| {
-            xmodel::find_image(common, &img.name).and_then(|i| paks.image(i.stream_hash))
-        })
-    };
+    let zones = pool(common, patch, inline);
+    let pixel = |img: &xmodel::Image| -> Option<Rgba> { paks.image(img.key()).or_else(|| pool_image(&zones, paks, &img.name)) };
     let mut wanted_images: BTreeMap<String, &xmodel::Image> = BTreeMap::new();
     for c in sets {
         for s in &c.sets {
@@ -55,10 +79,7 @@ pub(crate) fn art(
     let mut images = BTreeMap::new();
     let mut unresolved: Vec<String> = Vec::new();
     for (name, image) in wanted_images {
-        let found = paks.image(image.stream_hash)
-            .or_else(|| xmodel::find_image(common, &name).and_then(|i| paks.image(i.stream_hash)))
-            .or_else(|| xmodel::find_image(patch, &name).and_then(|i| paks.image(i.stream_hash)));
-        let Some(rgba) = found else {
+        let Some(rgba) = pixel(image) else {
             unresolved.push(name);
             continue;
         };
@@ -77,35 +98,19 @@ pub(crate) fn art(
     }
     let mut materials = BTreeMap::new();
     for name in wanted {
-        let bare = name.trim_start_matches("mc/");
-        let found = xmodel::find_asset_material(patch, &name)
-            .or_else(|| xmodel::find_asset_material(patch, bare))
-            .or_else(|| xmodel::find_asset_material(common, &name))
-            .or_else(|| xmodel::find_asset_material(common, bare))
-            .or_else(|| xmodel::find_inline_material(inline, &name))
-            .or_else(|| xmodel::find_inline_material(inline, bare))
-            .or_else(|| xmodel::find_inline_material(common, &name))
-            .or_else(|| suffix_candidates(&name).into_iter().find_map(|n| {
-                let bare = n.trim_start_matches("mc/");
-                xmodel::find_asset_material(patch, &n)
-                    .or_else(|| xmodel::find_asset_material(common, &n))
-                    .or_else(|| xmodel::find_inline_material(inline, &n))
-                    .or_else(|| xmodel::find_inline_material(common, &n))
-                    .or_else(|| xmodel::find_asset_material(patch, bare))
-                    .or_else(|| xmodel::find_asset_material(common, bare))
-            }));
-        let Some(mat) = found else {
+        let Some(mat) = pool_material(&zones, &name) else {
             unresolved.push(name);
             continue;
         };
-        let color = mat.color_map();
+        // The style's colour is the image on its colour sampler. The style shaders also bind
+        // colour-semantic helpers (the shared black `camo_code_spc`, a spec-rgb map, toxic's
+        // emissive), so the semantic alone does not say which image is the colour; a style with
+        // no colour sampler (diamond: sparkle + spec-rgb only) keeps the surface's stock colour.
+        let color = COLOR_SAMPLERS.iter().find_map(|s| mat.sampler(s));
         let rgba = color.and_then(pixel);
-        // The shared style map is a 32x32 black specular-named texture; using it as the base colour
-        // turns the surface black. Keep the surface's stock map instead (research §3(d) bug D2).
-        let black = color.is_some_and(|c| c.name.contains("_spc"));
         let mut texture = None;
         let mut maps_texture = None;
-        if let (Some(color), Some(rgba), false) = (color, rgba, black) {
+        if let (Some(color), Some(rgba)) = (color, rgba) {
             let file = character::texture_file(&color.name);
             let path = format!("Art\\Textures\\{file}");
             let maps_path = format!("Art\\Textures\\{}", maps_file(&file));
@@ -116,7 +121,7 @@ pub(crate) fn art(
                     rgba.width,
                     rgba.height,
                     mat.image(xmodel::TS_NORMAL_MAP).and_then(pixel).as_ref(),
-                    mat.image(xmodel::TS_SPECULAR_MAP).and_then(pixel).as_ref(),
+                    SPECULAR_SAMPLERS.iter().find_map(|s| mat.sampler(s)).or(mat.image(xmodel::TS_SPECULAR_MAP)).and_then(pixel).as_ref(),
                 );
                 out.insert(maps_path.clone(), tga_bytes(&maps));
                 out.insert(path.clone(), tga_bytes(&rgba));
@@ -125,7 +130,7 @@ pub(crate) fn art(
             maps_texture = Some(maps_path);
         }
         if texture.is_none() {
-            unresolved.push(name.clone());
+            unresolved.push(format!("{name}: no colour sampler"));
         }
         let blend = crate::native::blend(mat.blend());
         let opaque = mat.blend() == zhbo_formats::w3d::Blend::Opaque;
@@ -146,40 +151,15 @@ pub(crate) fn art(
     Art { images, materials, unresolved }
 }
 
-/// Camo assets that belong to attachments (the optic's own camo), not to a weapon's recipe: the
-/// class screen's camo applies to the weapon, and optic-camo handling is a follow-up (PLAN D5).
-const ATTACHMENT_CAMO: &[&str] = &[
-    "camo_reflex", "camo_holo", "camo_ir", "camo_acog", "camo_hybrid", "camo_mms", "camo_targetfinder",
-];
-
-/// Normalize a name for the view-model join: lowercase, split on non-alphanumerics.
-fn tokens(s: &str) -> Vec<String> {
-    s.to_ascii_lowercase()
-        .split(|c: char| !c.is_ascii_alphanumeric())
-        .filter(|t| !t.is_empty())
-        .map(str::to_string)
+/// Every `WeaponCamo` asset a BO2 def or attachment unique points at (`weaponCamo`): the gun's
+/// own (`camo_an94`, the INSAS's `camo_msmc`) and the attachments' (`camo_reflex`, `camo_ir`). BO2
+/// paints each viewmodel part with its own entry's asset (`FUN_00529600`, G16), so every one of
+/// them needs a recipe.
+fn referenced(bo2w: &[weapon::Weapon]) -> BTreeSet<&str> {
+    bo2w.iter()
+        .flat_map(|w| w.weapon_camo.iter().chain(w.attachment_uniques.iter().flat_map(|u| u.weapon_camo.iter())))
+        .map(String::as_str)
         .collect()
-}
-
-/// The weapon whose view model carries `stem`: BO2 names camo assets after the view model
-/// (`camo_xpr50` belongs to `as50_mp`, whose view model is `t6_wpn_sniper_xpr50_view`). A token
-/// subset (or the joined form) so `camo_ballistic_knife` matches `..._knife_ballistic_view`.
-fn weapon_by_view_model<'a>(bo2w: &'a [weapon::Weapon], stem: &str) -> Option<&'a str> {
-    let want = tokens(stem);
-    let joined: String = want.concat();
-    let mut best: Option<(usize, &str)> = None;
-    for w in bo2w {
-        let Some(vm) = w.view_model.as_deref() else { continue };
-        let have = tokens(vm);
-        let mut score = want.iter().filter(|t| have.iter().any(|h| h == *t)).count();
-        if !want.is_empty() && have.concat().contains(&joined) {
-            score += want.len();
-        }
-        if score > 0 && best.is_none_or(|(s, _)| score > s) {
-            best = Some((score, w.name.as_str()));
-        }
-    }
-    best.map(|(_, id)| id)
 }
 
 /// BO2's camo option id → (pattern image stem, style family). `None` = the 48 assets carry no art
@@ -268,12 +248,14 @@ pub struct Summary {
     pub images: usize,
     pub styles: usize,
     pub unresolved: Vec<String>,
-    /// Attachment camo assets skipped by design (they are not per-weapon recipes).
-    pub excluded: Vec<String>,
+    /// Camo assets no def or unique points at (no part wears them): no blob.
+    pub unreferenced: Vec<String>,
 }
 
-/// Build every camo blob and write it beside the art. `table` supplies each asset's option ids
-/// (`WeaponDef.camo`, already the base-tab list).
+/// Build every camo blob and write it beside the art: one per asset a def or unique points at.
+/// `table` supplies the option ids (`WeaponDef.camo`, the base-tab list, from the weapon wearing the
+/// asset; an attachment's asset — and a weapon the player table filters, the riot shield — takes
+/// the base camo rows, since the class's one camo choice indexes every part's asset alike).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn files(
     common: &Zone,
@@ -286,23 +268,16 @@ pub(crate) fn files(
     out: &mut BTreeMap<String, Vec<u8>>,
 ) -> Result<Summary, String> {
     let art = art(common, patch, inline, paks, sets, out);
-    let mut summary = Summary { assets: 0, images: art.images.len(), styles: art.materials.len(), unresolved: art.unresolved.clone(), excluded: Vec::new() };
+    let mut summary = Summary { assets: 0, images: art.images.len(), styles: art.materials.len(), unresolved: art.unresolved.clone(), unreferenced: Vec::new() };
+    let wanted = referenced(bo2w);
     for c in sets {
-        // Optic camo assets are attachment recipes, not per-weapon ones (PLAN D5's follow-up).
-        if ATTACHMENT_CAMO.contains(&c.name.as_str()) {
-            summary.excluded.push(c.name.clone());
+        if !wanted.contains(c.name.as_str()) {
+            summary.unreferenced.push(c.name.clone());
             continue;
         }
-        let stem = c.name.strip_prefix("camo_").unwrap_or(&c.name);
-        let by_view = weapon_by_view_model(bo2w, stem);
-        let matched = table.weapons.iter().find(|w| w.camo_material == c.name)
-            .or_else(|| by_view.and_then(|id| table.weapons.iter().find(|w| w.id == id)));
-        // A view-model-resolved weapon that the player table filters (the riot shield) still gets a
-        // blob with the base camo rows, so every weapon camo asset has a recipe.
-        let camo_ids: Vec<String> = match matched {
+        let camo_ids: Vec<String> = match table.weapons.iter().find(|w| w.camo_material == c.name) {
             Some(w) => w.camo.clone(),
-            None if by_view.is_some() => table.camo.iter().take(crate::weapons::BASE_CAMO_OPTIONS).map(|c| c.id.clone()).collect(),
-            None => continue,
+            None => table.camo.iter().take(crate::weapons::BASE_CAMO_OPTIONS).map(|c| c.id.clone()).collect(),
         };
         let mut blob = zhbo_native::camo::Camo {
             name: c.name.clone(),
@@ -368,9 +343,6 @@ mod tests {
         let bo2w = zhbo_formats::weapon::all(&common).unwrap();
         let atts = zhbo_formats::weapon::attachments(&common).unwrap();
         let mut table = crate::weapons::table(&bo2w, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
-        // The plain table leaves the option lists empty; fill what this test needs from the
-        // converted set names (the real path uses table_with_metadata).
-        let set_names: std::collections::HashSet<String> = sets.iter().map(|c| c.name.clone()).collect();
         // The plain table's option list is empty; take the base tab from the patch's own table
         // (the production path does this in `table_with_metadata` with `camo_options`).
         let base: Vec<String> = crate::weapons::camo_options(&patch, &names)
@@ -380,22 +352,26 @@ mod tests {
             .collect();
         for w in &mut table.weapons {
             w.camo = base.clone();
-            w.camo_material = crate::weapons::camo_material_for(&w.id, &set_names).unwrap_or_default();
         }
+        table.camo = crate::weapons::camo_options(&patch, &names);
         let mut out = std::collections::BTreeMap::new();
         let s = files(&common, &patch, &inline, &paks, &sets, &bo2w, &table, &mut out).unwrap();
         let resolved: Vec<&str> = sets.iter().map(|c| c.name.as_str()).filter(|n| out.contains_key(&zhbo_native::camo_path(n))).collect();
         println!("resolved camo assets ({}): {resolved:?}", resolved.len());
-        println!("excluded attachment camo assets ({}): {:?}", s.excluded.len(), s.excluded);
+        println!("unreferenced camo assets ({}): {:?}", s.unreferenced.len(), s.unreferenced);
         println!("unresolved ({}): {:?}", s.unresolved.len(), s.unresolved);
-        // The seven optic camo assets are attachment recipes: they must produce no blob.
+        // The optic camo assets are the attachments' own recipes (G16): each converts, and its
+        // pattern options resolve like a weapon's.
         for name in ["camo_reflex", "camo_holo", "camo_ir", "camo_acog", "camo_hybrid", "camo_mms", "camo_targetfinder"] {
-            assert!(!out.contains_key(&zhbo_native::camo_path(name)), "{name} must not convert");
-            assert!(s.excluded.iter().any(|e| e == name), "{name} is not excluded");
+            let blob = out.get(&zhbo_native::camo_path(name)).unwrap_or_else(|| panic!("{name} must convert"));
+            let blob = zhbo_native::camo::Camo::from_bytes(blob).unwrap();
+            let atacs = blob.options.iter().find(|o| o.id == "camo_atacs").unwrap_or_else(|| panic!("{name}: no atacs row"));
+            assert!(atacs.pattern.is_some(), "{name}: atacs has no pattern set");
         }
-        // 32 id-matched weapons plus the view-model join: the AS50's `camo_xpr50`, x95l/chicom/msmc,
-        // `camo_ballistic_knife` and the riot shield (which the player table filters).
-        assert!(s.assets >= 38, "{} blobs written", s.assets);
+        // Every weapon asset the defs point at, the AS50's `camo_xpr50`, x95l/chicom/msmc,
+        // `camo_ballistic_knife` and the riot shield (which the player table filters), plus the
+        // seven optic assets.
+        assert!(s.assets >= 45, "{} blobs written", s.assets);
         assert!(resolved.contains(&"camo_xpr50"), "the AS50's camo must convert: {resolved:?}");
         assert!(resolved.contains(&"camo_riot_shield"), "the riot shield's camo must convert: {resolved:?}");
         assert_eq!(s.assets, resolved.len(), "assets count matches the written blobs");
@@ -418,10 +394,46 @@ mod tests {
         assert!(an94.sets[matuka].pattern.as_deref().is_some_and(|p| p.contains("bloodshot")), "{:?}", an94.sets[matuka].pattern);
         assert!(an94.sets[1].pattern.as_deref().is_some_and(|p| p.contains("atacs")));
         assert!(out.keys().any(|k| k.contains("camo_atacs_pattern")), "the pattern art");
-        // The gold style's real colour map is `~-gcamo_code_spc`; the converter now skips the
-        // shared black `_spc` map (the surface keeps its stock map), so the archive must not
-        // carry it as a colour map (Change 2c / plan 5c).
+        // The shared black `camo_code_spc` helper is never a colour map: the colour is the
+        // `colorMap` sampler's image.
         assert!(!out.keys().any(|k| k.contains("camo_code_spc")), "the black _spc map must not be a colour map");
+
+        // Every name resolves except the provably unreachable remainder. Reasons, checked against
+        // every zone of the install and the reference catalog (`lua-dump/assets/*.tsv`):
+        // * the Day of the Dead set images and the `3layer`/`zmb_dlc2` style materials exist only
+        //   as `,name` reference stubs (no pixels, no stream hash) in `common_patch_mp` and the
+        //   ZM `zm_transit_patch`; no zone of the base game defines them (DLC/MTX content);
+        // * diamond binds no colour sampler (its technique reads `sparkleMap`, a noise map and a
+        //   spec-rgb map), so it keeps the surface's stock colour.
+        let stub = |n: &str| n.starts_with("t6_camo_dayofdead_") || n.starts_with("mc/mtl_weapon_camo_3layer") || n.starts_with("mc/mtl_weapon_camo_zmb_dlc2");
+        let colourless = |n: &str| n.starts_with("mc/mtl_weapon_camo_diamond") && !n.contains("_alt") && n.ends_with(": no colour sampler");
+        let rest: Vec<&String> = s.unresolved.iter().filter(|n| !stub(n) && !colourless(n)).collect();
+        assert!(rest.is_empty(), "unresolved camo art beyond the unreachable remainder: {rest:?}");
+        assert_eq!(s.unresolved.len(), 20, "{:?}", s.unresolved);
+
+        // The art is real: the formerly missing solids and the gold style's colour map decode to
+        // sized, non-black pixels, and gold reads gold (red over blue).
+        let tga = |key: &str| -> (u16, u16, [f64; 3]) {
+            let b = out.iter().find(|(k, _)| k.ends_with(key)).unwrap_or_else(|| panic!("{key} not converted")).1;
+            let (w, h) = (u16::from_le_bytes([b[12], b[13]]), u16::from_le_bytes([b[14], b[15]]));
+            let px = &b[18..];
+            let n = (px.len() / 4) as f64;
+            let mean = |c: usize| px.as_chunks::<4>().0.iter().map(|p| p[c] as f64).sum::<f64>() / n;
+            (w, h, [mean(2), mean(1), mean(0)])
+        };
+        for key in ["t6_camo_devgru_solid.tga", "t6_camo_urban_russia_solid.tga", "dark_grey_swatch.tga", "camo_gold_col.tga"] {
+            let (w, h, rgb) = tga(key);
+            println!("{key}: {w}x{h} mean rgb {rgb:?}");
+            assert!(w > 0 && h > 0 && rgb.iter().sum::<f64>() > 15.0, "{key}: {w}x{h} {rgb:?}");
+        }
+        // Gold is a metal: its colour map is a flat dark (21,20,13) and the gold hue lives in its
+        // `SpecularAndGloss` spec-rgb map, which feeds the surface maps' specular level.
+        let maps = out.iter().find(|(k, _)| k.ends_with("camo_gold_col_nsg.tga")).map(|(_, b)| b).expect("gold's surface maps");
+        let level = maps[18..].as_chunks::<4>().0.iter().map(|p| p[3] as f64).sum::<f64>() / ((maps.len() - 18) / 4) as f64;
+        println!("gold spec level {level}");
+        assert!(level > 100.0, "gold's spec-rgb must reach its surface maps: {level}");
+        let gold_mat = &an94.materials.iter().find(|m| m.name == "mc/mtl_weapon_camo_gold").expect("gold's base material is in the blob");
+        assert!(gold_mat.color.as_deref().is_some_and(|c| c.ends_with("camo_gold_col.tga")), "{:?}", gold_mat.color);
     }
 
     /// The base 19 camo options (`attachmenttable.csv:32-50`) all name art in `OPTION_ART`,
@@ -446,13 +458,5 @@ mod tests {
         }
         assert_eq!(entry("camo_multicam").and_then(|(_, s, _)| s), Some("t6_camo_devgru"));
         assert_eq!(entry("camo_matuka").and_then(|(_, s, _)| s), Some("t6_camo_bloodshot"));
-    }
-
-    use super::suffix_candidates;
-
-    #[test]
-    fn suffix_candidates_try_the_variant() {
-        assert_eq!(suffix_candidates("mc/mtl_weapon_camo_gold"), vec!["mc/mtl_weapon_camo_gold_1".to_string()]);
-        assert_eq!(suffix_candidates("mc/mtl_weapon_camo_gold_alt"), vec!["mc/mtl_weapon_camo_gold_alt_1".to_string()]);
     }
 }

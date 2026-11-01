@@ -12,6 +12,7 @@ use crate::images;
 use std::collections::HashMap;
 use std::path::Path;
 use zhbo_formats::big::write_archive;
+use zhbo_formats::ipak::ImageKey;
 use zhbo_formats::iwi::Rgba;
 use zhbo_formats::t6zone::Zone;
 
@@ -26,8 +27,8 @@ const ATLAS: u32 = 1024;
 
 /// Where a sprite's image comes from.
 pub enum Source {
-    /// The image with this name hash in the packs.
-    Hash(u32),
+    /// The pack image with this key (picked by eye from a contact sheet).
+    Hash(ImageKey),
     /// The first image of a BO2 material in a zone.
     Material(&'static str, &'static str),
     /// A material named at conversion time (weapon HUD icons, the LUI ports' materials), searched
@@ -47,8 +48,8 @@ const fn mat(name: &'static str, material: &'static str, max: u32) -> Sprite {
     Sprite { name, source: Source::Material("common_mp", material), max }
 }
 
-const fn hash(name: &'static str, hash: u32, max: u32) -> Sprite {
-    Sprite { name, source: Source::Hash(hash), max }
+const fn hash(name: &'static str, data_hash: u32, name_hash: u32, max: u32) -> Sprite {
+    Sprite { name, source: Source::Hash(ImageKey { data_hash, name_hash }), max }
 }
 
 /// The BO2 HUD art Conquer Ops uses.
@@ -66,9 +67,9 @@ pub const SPRITES: &[Sprite] = &[
     mat("ZHBO_BO2_Digit9", "hud_mp_num_big_9", 64),
     mat("ZHBO_BO2_Slash", "hud_mp_num_big_slash", 64),
     // Blood splatter, used for the damage overlay.
-    hash("ZHBO_BO2_Blood", 0x0594_8908, 256),
+    hash("ZHBO_BO2_Blood", 0x0594_8908, 0xdf3a_5741, 256),
     // Red-dot sight glow.
-    hash("ZHBO_BO2_RedDot", 0x023f_fb05, 128),
+    hash("ZHBO_BO2_RedDot", 0x023f_fb05, 0xfeba_df16, 128),
     // Hit marker.
     mat("ZHBO_BO2_HitMarker", "damage_feedback", 128),
     // Minimap: your arrow, the dot for everyone else (tinted with their team colour), the compass.
@@ -208,7 +209,7 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             }
         }
         let name = format!("ZHBO_BO2_Icon_{id}");
-        match (w.hud_icon_hash, &w.hud_icon) {
+        match (w.hud_icon_key, &w.hud_icon) {
             (Some(hash), _) => wanted.push((name, Source::Hash(hash), 64)),
             // Equipment icons are stubs in common_mp; the menus' zones hold the real material.
             (None, Some(icon)) => wanted.push((name, Source::Dynamic(icon.clone()), 64)),
@@ -266,7 +267,7 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                 }
                 zones.get(zone)
                     .and_then(|z| zhbo_formats::xmodel::find_material(z, material))
-                    .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash)))
+                    .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.key())))
             }
             Source::Dynamic(material) => {
                 // Weapon menu art lives in the MP patches; a few DLC guns only in `frontend`.
@@ -277,10 +278,20 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                         }
                     }
                 }
-                // Each zone's own assets first; only then the slow scan for a material loaded inline
-                // inside another asset (`hud_mp_firerate_*` lives inside `common_mp`'s weapons).
+                // Each zone's own assets first, then the materials nested inside other assets (also
+                // pool members); only then the slow scan for a material loaded inline inside another
+                // asset (`hud_mp_firerate_*` lives inside `common_mp`'s weapons).
                 let order = ["common_mp", "code_post_gfx_mp", "ui_mp", "patch_mp", "patch_ui_mp", "frontend"];
-                let image = |m: zhbo_formats::xmodel::Material| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.stream_hash)).filter(|h| *h != 0);
+                // The material's first image; a `,name` reference stub (no stream hash) is resolved
+                // by name in the image pool, as BO2 does: `hud_willy_pete` in `common_mp` points at
+                // `,hud_us_smokegrenade`, whose full image is `patch_mp`'s.
+                let image = |m: zhbo_formats::xmodel::Material| {
+                    let i = m.textures.iter().find_map(|t| t.image.clone())?;
+                    if i.stream_hash != 0 {
+                        return Some(i.key());
+                    }
+                    order.iter().filter_map(|z| zones.get(z)).find_map(|z| zhbo_formats::xmodel::find_image(z, &i.name)).map(|i| i.key())
+                };
                 let mc = format!("mc/{material}");
                 order
                     .iter()
@@ -289,6 +300,16 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                         zhbo_formats::xmodel::find_asset_material(z, material)
                             .or_else(|| zhbo_formats::xmodel::find_asset_material(z, &mc))
                             .and_then(image)
+                    })
+                    .or_else(|| {
+                        // A material nested inside another asset is in BO2's pool too
+                        // (`Zone::linked`): the map-only ADS overlays (`envg_ir`, `specter`,
+                        // `vzoom`) are nested in `common_mp`'s attachment uniques.
+                        order.iter().filter_map(|z| zones.get(z)).find_map(|z| {
+                            zhbo_formats::xmodel::find_linked_material(z, material)
+                                .or_else(|| zhbo_formats::xmodel::find_linked_material(z, &mc))
+                                .and_then(image)
+                        })
                     })
                     .or_else(|| {
                         order
@@ -658,25 +679,22 @@ mod tests {
         let (bytes, report) = build_archive(&bo2.path).unwrap();
         println!("{report:?}");
         // A few weapons have no HUD icon image in BO2 (the HUD then shows their short name).
-        // The map-zone-only overlay materials (`envg_ir`, `specter`, `vzoom`) are not in the
-        // `Source::Dynamic` search's zones; they are reported and allowed. The four that convert
-        // from `common_mp` must still be present.
+        // Every ADS overlay converts: the four sniper ones are `patch_mp` assets, `envg_ir`,
+        // `specter` and `vzoom` are nested in `common_mp` (`Zone::linked`), as is the Willy
+        // Pete's HUD icon.
         for name in [
             "ZHBO_Mat_scope_overlay_ballista",
             "ZHBO_Mat_scope_overlay_dsr50",
+            "ZHBO_Mat_scope_overlay_envg_ir",
+            "ZHBO_Mat_scope_overlay_specter",
             "ZHBO_Mat_scope_overlay_svu",
+            "ZHBO_Mat_scope_overlay_vzoom",
             "ZHBO_Mat_scope_overlay_xpr50",
+            "ZHBO_BO2_Icon_willy_pete_mp",
         ] {
             assert!(report.found.iter().any(|f| f == name), "{name} did not convert: {:?}", report.missing);
         }
-        assert!(
-            report
-                .missing
-                .iter()
-                .all(|(name, _)| name.starts_with("ZHBO_BO2_Icon_") || name.starts_with("ZHBO_Mat_scope_overlay_")),
-            "{:?}",
-            report.missing
-        );
+        assert!(report.missing.iter().all(|(name, _)| name.starts_with("ZHBO_BO2_Icon_")), "{:?}", report.missing);
         let dir = std::env::temp_dir().join("zhbo-hud-test");
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join(ARCHIVE_NAME);

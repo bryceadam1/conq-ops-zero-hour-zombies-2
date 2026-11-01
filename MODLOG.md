@@ -5650,3 +5650,159 @@ Verified: `cargo test --workspace` green; clippy adds no warning; the real-insta
   pose). BO2 registers the idle in the empty slot (`FUN_0052d3e0`), but the mod never reaches it
   (whether BO2 ever aims an offhand was not checked); reporting the idle would shape the emitter beyond what ships, and changing the
   player would play an unreachable clip. Left as an honest floor.
+
+## Per-attachment camo: each part wears its own `WeaponCamo` (2026-10-25, branch `v1/attach-camo`)
+
+BO2's camo pass walks the viewmodel DObj's entries and paints each with the asset of the entry it
+came from (`FUN_00529600`, G16): the gun and its base `attachViewModel` parts take
+`WeaponDef.weaponCamo`, an attachment's models its **single** unique's `weaponCamo` (+0xa4) — a
+reflex wears `camo_reflex`, not the gun's. The mod painted the def's one recipe over the whole
+composed mesh, excluded the seven optic assets by a hand list, and named each def's asset with a
+weapon-name alias table plus a view-model token join, so every gun whose asset is not
+`camo_<id>` — the INSAS/QCW-05/TAR-21/AS50… (`camo_msmc`, `camo_chicom`, `camo_x95l`, `camo_xpr50`)
+— had no camo in game at all.
+
+* **Data, not names.** `zhbo-formats` now reads `weaponCamo` on the def and on every unique. The
+  def's `CamoMaterial` is that pointer (`camo_material_for` and its alias table are gone); the
+  converter writes a `.zcm` for every asset a def or unique points at — 47 on the stock install
+  (the seven optic assets, `camo_specter` and `camo_b23r` are new), `camo_peacekeeper` the one
+  unreferenced — and every base option resolves art on the optic assets too (the same 95-name
+  style/set tail as before, nothing new).
+* **The manifest carries it.** `viewmodel::Part` gains `camo` (`.zbv`; the `.zbw` third-person
+  blob does not carry it — third person still draws no camo). `nativevm::load` reads each distinct
+  part asset and paints only that part's surfaces (`SurfaceSpec::part`) with the class's one option.
+* **Versions (integrator-owned, NOT bumped here):** `zhbo_native::viewmodel::VERSION` 2 → 3 (the
+  part record gained an `opt_str`) and the archive `hud::VERSION` bump. No C ABI change.
+* **For the composition items:** the camo is the single unique's even when a combined unique
+  supplies the model (`lsat_mp+ir+rf+vzoom`: BO2 draws `specter_view` with `camo_ir`), so a switch
+  to resolved uniques' models must keep `u.weapon_camo` from the single.
+
+Measured (conformance CLI vs the 2026-10-25 baseline): `view_part_camos` 7,301 → 1,363 cells, no
+other column moved; weapons 706,586 → 700,648 differing cells; gap clusters 214 → 214 (the column
+keeps cells). Every remaining cell is a part-list difference, not a camo one: 651 rows with no mod
+manifest (steadyaim/fmj/sf… combos — combo coverage), 682 where the mod composes the extra rigid
+`tag_clip1` magazine BO2 doesn't list, and 30 dual-wield `_lh` / `ir+vzoom` part-count rows.
+
+## The camo art tail: nested assets and sampler names, 95 → 20 unresolved (2026-10-27, branch `v1/camo-art-tail`)
+
+Stacked on `v1/attach-camo`. The 95 names the camo converter could not resolve were, almost all,
+**in `common_mp` the whole time** — loaded nested inside other assets, not on the zone's top-level
+asset list. The T6 zone loader already walked every nested asset (`link_asset`) but discarded the
+list, and the converter's fallback (a string-then-pointer scan) missed them. `t6zone::Zone::linked`
+now keeps every asset the load registers; `common_mp` loads 9,285 (6,082 top-level), among them
+1,472 materials and 1,541 images — exactly the reference catalog's counts
+(`lua-dump/assets/common_mp.tsv`, OAT `Unlinker --list`, which lists nested assets too).
+`xmodel::find_image` consults it and `find_linked_material` is new; the camo art phase looks each
+exact name up in pool order (`patch_mp`, `common_patch_mp`, `common_mp`), and the `_1` suffix
+guesses (converter and `nativevm::camo::apply`) are gone — `gold` and `gold_1` are separate BO2
+materials and both resolve now.
+
+* **The colour is a sampler, not a semantic.** The style materials bind several colour-semantic
+  images: gold = `camo_gold_nml` (5), `~-gcamo_code_spc` (14), `camo_code_nml` (13), the spec-rgb
+  map (2) and `~-gcamo_gold_col` (2). `color_map()` picked the first (the shared black `_spc` the
+  look-parity cycle had to skip by name). `MaterialTextureDef::nameHash` is BO2's `R_HashString`
+  of the sampler name (`h = 33h ^ lower(c)`; `colorMap` = `0xa0ab1041` on the AN-94's own colour
+  and the styles' `_col` alike). `xmodel::Texture` now carries it and `Material::sampler(name)`
+  matches it; the camo colour is `colorMap` (toxic's layered technique: `layer1Map`), the specular
+  `specularMap`/`SpecularAndGloss` — names found by hashing every string in `common_mp`'s compiled
+  shaders against the unknown hashes (`SparkleMap`, `WarpMap` and `radiantDiffuseMap` are diamond's
+  others). The `_spc` name skip is gone.
+* **The remainder (20), pinned by the install test with reasons:** `t6_camo_dayofdead_{solid,pattern}`
+  and the `3layer`/`zmb_dlc2` style families are `,name` reference stubs (no pixels, no stream hash)
+  in `common_patch_mp` and in the ZM `zm_transit_patch` (checked in the VM-staged copy) and are
+  defined in no zone of the install nor of the 126-zone catalog — DLC content the base game does not
+  ship. This is **not** the ipak name-hash wall: there is no full `GfxImage` anywhere to hash. The
+  six diamond (non-alt) materials bind no colour sampler (sparkle/warp/spec-rgb only), so they keep
+  the stock colour.
+* **Gold's look.** Verified art: gold's `colorMap` is a 128×128 **flat (21,20,13)** and its
+  `SpecularAndGloss` map 128×128 mean (158,135,83) — BO2's gold is a metal whose hue lives entirely
+  in the coloured specular. `shaderConsts [10,10,0.46,0.53,…]` carry no gold-hued triple, so they are
+  not the tint (the earlier guess). The native pass reads specular as a luminance level
+  (`surface_maps`), so gold now draws as polished dark metal (spec level 136), not gold — before this
+  branch it was byte-identical to stock. The faithful fix is a specular colour in the native maps/
+  shader (model blob format + renderer, integrator-owned): queued, not done here. Sweep A/B
+  (`--no-attachments`, `~/.opencode/plan/camo-art-tail/sweep-{before,after}`): gold/carbon/diamond
+  on an94/mp7/scar go from 0 changed pixels to 4–10 % (max Δ 125–244); multicam on the an94 5.1 % →
+  10.6 % (the devgru solid now converts).
+* **Found for item 17 (not acted on here):** the three "map-zone" overlay materials
+  `scope_overlay_envg_ir`/`specter`/`vzoom` are nested in `common_mp` too, with real images
+  (`scope_overlay_envg_1024` etc., 1024², stream hashes `0x1d0782e5`/`0x154691c9`/`0x1239abaf`);
+  the ipak name-hash wall was this same discarded nested-asset list. `find_material` does not consult
+  `linked` yet, so the HUD/overlay conversion still reports them missing — a one-line change for the
+  overlay item, with its `--scope` autotest.
+
+Measured: conformance unchanged against the `v1/attach-camo` base (weapons 700,648 cells, cac 881,
+214 gap clusters; no column moved — the schema has no camo-art column). No VERSION/ABI change here;
+the archive contents change (new textures, gold's real colour), so the integrator's archive
+`hud::VERSION` bump applies. Verified: cargo test --workspace green; clippy adds no warning; real-
+install suites green (zhbo-assets `--ignored --skip conformance`, zhbo-formats `--ignored`).
+
+## The last three ADS overlays come from nested materials; the ipak "name-hash wall" was a mislabel
+
+* **The overlays.** `scope_overlay_envg_ir`/`_specter`/`_vzoom` (IR/dual-band and VZOOM/Specter
+  combos of AS50, DSR50, SVU, HAMR, LSAT, MK48, QBB95) are nested in `common_mp` (inside the
+  attachment uniques), not top-level assets. `xmodel::find_material` and the HUD converter's
+  `Source::Dynamic` search now consult `Zone::linked` (BO2 registers nested assets in the same pool)
+  after each zone's own assets and before the slow inline scan. The images are
+  `scope_overlay_{envg,specter,vzoom}_1024`, 1024², streamed from `base.ipak` (stream hashes
+  `0x1d0782e5`/`0x154691c9`/`0x1239abaf`). Pinned by `common_mp_registers_its_nested_assets`
+  (zhbo-formats, install-gated); `builds_from_real_install` now requires all seven overlays.
+* **Reference-stub images resolve by name.** `hud_willy_pete` (common_mp) binds `,hud_us_smokegrenade`,
+  a `,` stub with no stream hash; the converter now looks the image up by name in the zones' image
+  pools (`find_image`: assets, linked, inline), as BO2 resolves references — `patch_mp` holds the
+  full image. The real-install HUD build now reports **nothing** missing.
+* **Gotcha — the ipak index fields are swapped in `ipak.rs`.** The 16-byte entry is
+  `{dataHash, nameHash, offset, size}` (OpenAssetTools `IPakIndexEntryKey`); the reader calls the
+  first `name_hash`. The value every lookup uses is `GfxImage.streamedParts[0].hash` (+40) = the
+  first field; the second is `GfxImage.hash` (+76) = `R_HashString(image name)` (`33h ^ (c|0x20)`,
+  seed 0). The "uncracked name hash" (G13, ~700 variants) was the right function compared against
+  the wrong field: `R_HashString("scope_overlay_xpr50_1024") = 0x9c4755f7` is the second field of
+  the `0x1c99c1b0` entry; 17,152 of the reference catalog's 18,151 image names hit a second field,
+  none a first. Not renamed here (behaviour-neutral, separate cleanup); `images::group_by_name`
+  groups by the first field, so its "multi-part" groups are distinct images that share it (157 in
+  base.ipak) — a latent follow-up. Research: `~/.opencode/plan/ipak-hash/RESEARCH.md`.
+* **Runtime effect / integrator:** IR/VZOOM/Specter combos now get `overlay_art_present` at full
+  ADS, so the 2D overlay draws and `visible_parts` hides the base scope part, as for the four base
+  sniper overlays. Run `scripts/autotest-mac.sh --scope` (and an IR/VZOOM look check). The archive
+  contents change, so the integrator's `hud::VERSION` bump applies (left at 77 on this branch).
+
+Measured (conformance vs the `v1/camo-art-tail` base): weapons 700,648 → 700,811 cells, 203 clusters,
+214 gap clusters unchanged; `overlay/hud_icon` 1422 → 1421 (willy_pete fixed);
+`parts/view_ads_part_models` 3399 → 3563 (+164, all IR/VZOOM combos joining the existing
+"mod lacks `t6_wpn_sniper_*_scope_view`" signature the base overlays already have — the expected side
+lists BO2's model parts, not the overlay-time hide). cac unchanged. Verified: cargo test --workspace
+green (except `zhbo-requirements` prefix-library test, which fails only with `ZHBO_BO2_DIR` set and
+passes without it), no new clippy warnings, install-gated `builds_from_real_install` and
+`common_mp_registers_its_nested_assets` green.
+
+## Image packs: an entry is `{data hash, name hash}`, one image per entry (2026-10-31, branch `v1/ipak-fields`)
+
+* **The ipak index fields are named right now.** `IpakEntry` is `{data_hash, name_hash, offset,
+  size}` (OpenAssetTools `IPakIndexEntryKey`); the reader had the first two swapped (see the
+  overlay-linked entry above). Images are looked up by `ipak::ImageKey` — the pair a `GfxImage`
+  carries (`Image::key()`: `streamedParts[0].hash` at +40 = data hash, `hash` at +76 = name hash) —
+  through `Ipak::entry` (binary search over the index, sorted by key at load). Every `Paks::image`
+  caller (textures, camo, viewmodels, FX/impacts, HUD, fonts, the CLI) passes the key;
+  `Weapon::hud_icon_hash` became `hud_icon_key`. The two contact-sheet-picked HUD sprites
+  (`ZHBO_BO2_Blood`, `ZHBO_BO2_RedDot`) carry both fields of their `mp.ipak` entries.
+* **`ipak::r_hash_string`** (const fn): BO2's `R_HashString`, `h = 33h ^ (c|0x20)`, seed 0, over the
+  bare image name — the name hash. Unit-tested on seven install pairs; no converter path needs it
+  yet (every image is reached through a `GfxImage` that carries both hashes).
+* **There are no multi-part streamed images.** PC `GfxImage::streamedParts` is a one-element array
+  (`layouts.rs`), so one image is exactly one ipak entry. The old `images::group_by_name` grouped by
+  the first (data) field and concatenated the "parts"; those groups were different images sharing
+  a data hash (187 groups across the packs, 157 in base.ipak). **Gotcha — the data hash is a
+  content hash of the pixels:** 126 of the 187 groups are byte-identical entries and the other 61
+  decode to identical pixels (different compression), e.g. base.ipak `127cdcd6` = `09113ee4` and
+  `e1997f7a`. So the old decode-the-first-IWi path was harmless: of the 972 keys the conversion
+  looks up, 31 share their data hash with another image, and the archive the converter builds is
+  **byte-identical** before and after this change (`build-archive`, 355 images, nothing missing).
+  A revision of an image in another pack has the same name hash and a different data hash
+  (`scope_overlay_xpr50_1024`: base.ipak `03e75800`, patch_mp.ipak `1c99c1b0`).
+* `zhbo-assets images`/`sheets` list both fields per entry; `image <pak> <hash>` accepts either
+  field and refuses an ambiguous one.
+
+Tests: `ipak::tests` (synthetic pack: field order, two images sharing a data hash, pair lookup,
+`r_hash_string`); install-gated `paks::tests::an_images_pack_entry_is_its_stream_hash_and_name_hash`
+(the XPR-50 overlay's GfxImage key is its patch_mp.ipak entry; base.ipak holds the older revision
+under the same name hash). No `hud::VERSION` bump needed (archive bytes unchanged).

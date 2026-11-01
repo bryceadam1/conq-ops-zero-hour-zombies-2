@@ -193,11 +193,13 @@ pub(crate) struct Viewmodel<'a> {
     /// The bone the gun hangs from: `tag_weapon` for primaries, `tag_knife_attach` for off-hand
     /// equipment (the left palm).
     pub gun_tag: &'a str,
+    /// The def's `weaponCamo`: the class camo's asset on the gun and its base parts (G16).
+    pub gun_camo: Option<String>,
     /// The base parts (the magazine and the base attachment art), pushed after the gun and before
     /// the attachments.
     pub base_parts: Vec<BasePart<'a>>,
     /// The attachment models found, in order, with their tag, offset (inches), whether each is an
-    /// optic and its ADS role.
+    /// optic, its ADS role and its single unique's `weaponCamo` (G16).
     pub extra_models: Vec<&'a xmodel::Model>,
     pub attachments: Vec<AttachmentPart>,
     pub hide: &'a [String],
@@ -239,6 +241,8 @@ pub(crate) struct AttachmentPart {
     /// The attachment model (an index into the same list) this ADS-only model replaces while
     /// aiming: the unique's own `viewModel`.
     pub ads_of: Option<usize>,
+    /// The single unique's `WeaponCamo` the class camo paints on this model (`FUN_00529600`, G16).
+    pub camo: Option<String>,
 }
 
 /// The left-hand companion of a dual-wield pair: its own model (bones suffixed `1`) and mount.
@@ -248,6 +252,8 @@ pub(crate) struct DualGun<'a> {
     pub tag: &'a str,
     /// The `_lh` weapon's hide tags (its bones carry the `1` suffix).
     pub hide: &'a [String],
+    /// The `_lh` def's `weaponCamo`.
+    pub camo: Option<String>,
 }
 
 /// One manifest per faction for weapon `v`: the faction's arms, the gun on its mount tag
@@ -275,12 +281,16 @@ pub(crate) fn viewmodels(
     let dual_path = v.dual.as_ref().map(|d| put_model(out, d.gun));
     for (letter, arms) in factions {
         let arms_path = put_model(out, arms);
-        // (model, tag, offset, rigid, ads_only, path) in composition order.
-        type PartRow<'a> = (&'a nm::Model, Option<String>, zhbo_native::math::Xf, bool, bool, String);
+        // (model, tag, offset, rigid, ads_only, path, camo) in composition order. The camo is the
+        // `WeaponCamo` BO2 resolves per DObj entry (`FUN_00529600`, G16): none on the arms, the
+        // def's on the gun and its base parts, the single unique's on an attachment's models.
+        type PartRow<'a> = (&'a nm::Model, Option<String>, zhbo_native::math::Xf, bool, bool, String, Option<String>);
         // (ADS part, the hip part it replaces) as composition indices: `Part::ads_swap`.
         let mut swaps: Vec<(usize, usize)> = Vec::new();
-        let mut parts: Vec<PartRow> =
-            vec![(arms, None, IDENTITY, false, false, arms_path), (gun, Some(v.gun_tag.into()), IDENTITY, false, false, gun_path.clone())];
+        let mut parts: Vec<PartRow> = vec![
+            (arms, None, IDENTITY, false, false, arms_path, None),
+            (gun, Some(v.gun_tag.into()), IDENTITY, false, false, gun_path.clone(), v.gun_camo.clone()),
+        ];
         let has = |name: &str, parts: &[PartRow]| parts.iter().any(|p| p.0.bone(name).is_some());
         // The base parts after the gun and before the attachments: `aim_marker` reads `parts[1]`
         // as the gun, and an attachment optic later overrides a base optic in `optic`.
@@ -297,7 +307,7 @@ pub(crate) fn viewmodels(
                 swaps.push((parts.len(), hip));
             }
             base_at.push(parts.len());
-            parts.push((bp.model, Some(tag), bp.offset, false, bp.ads_only, path.clone()));
+            parts.push((bp.model, Some(tag), bp.offset, false, bp.ads_only, path.clone(), v.gun_camo.clone()));
         }
         let mut extra_at = Vec::with_capacity(v.attachments.len());
         for (k, (a, (model, path))) in v.attachments.iter().zip(extra.iter().zip(&extra_paths)).enumerate() {
@@ -313,12 +323,12 @@ pub(crate) fn viewmodels(
                 swaps.push((parts.len(), hip));
             }
             extra_at.push(parts.len());
-            parts.push((model, tag, a.offset, false, a.ads_only, path.clone()));
+            parts.push((model, tag, a.offset, false, a.ads_only, path.clone(), a.camo.clone()));
         }
         // The left gun is a second rig on the left palm, not a merge into the base hierarchy: its
         // `1`-suffixed bones append after every base part and hang from the mount tag.
         if let (Some(dual), Some(path)) = (&v.dual, &dual_path) {
-            parts.push((dual.gun, Some(dual.tag.to_string()), IDENTITY, false, false, path.clone()));
+            parts.push((dual.gun, Some(dual.tag.to_string()), IDENTITY, false, false, path.clone(), dual.camo.clone()));
         }
         let skel = skeleton(&parts.iter().map(|p| (p.0, p.1.as_deref(), p.2, p.3)).collect::<Vec<_>>());
         let markers = aim_marker(&skel, v.gun, optic).into_iter().collect();
@@ -340,6 +350,7 @@ pub(crate) fn viewmodels(
                     offset: p.2,
                     rigid: p.3,
                     ads_only: p.4,
+                    camo: p.6.clone(),
                     ads_swap: swaps.iter().find(|s| s.1 == i).map(|s| s.0 as u16),
                 })
                 .collect(),
@@ -396,7 +407,7 @@ mod tests {
         };
         let mat = |name: &str| xmodel::Material {
             name: "mtl".into(),
-            textures: vec![xmodel::Texture { semantic: xmodel::TS_CAMO_MAP, image: Some(image(name)) }],
+            textures: vec![xmodel::Texture { name_hash: 0, semantic: xmodel::TS_CAMO_MAP, image: Some(image(name)) }],
             state_bits: Vec::new(),
             sort_key: 0,
         };
@@ -526,9 +537,10 @@ mod tests {
             id: "test_mp",
             gun: &g,
             gun_tag: "tag_weapon",
+            gun_camo: None,
             base_parts: Vec::new(),
             extra_models: vec![&g],
-            attachments: vec![AttachmentPart { tag: None, offset: authored, optic: false, ads_only: false, ads_of: None }],
+            attachments: vec![AttachmentPart { tag: None, offset: authored, optic: false, ads_only: false, ads_of: None, camo: None }],
             hide: &[],
             clips: &[],
             dual: None,
@@ -562,6 +574,7 @@ mod tests {
             id: "test_mp",
             gun: &g,
             gun_tag: "tag_weapon",
+            gun_camo: None,
             base_parts: vec![BasePart { model: &nm_mag, tag: None, offset: authored, optic: false, ads_only: false, ads_of: None }],
             extra_models: Vec::new(),
             attachments: Vec::new(),
@@ -577,6 +590,40 @@ mod tests {
         assert_eq!(mags[0].tag.as_deref(), Some("j_gun"));
         assert_eq!(mags[0].offset, authored, "the authored rotation and offset reach the manifest");
         assert!(manifest.parts.iter().all(|p| p.tag.as_deref() != Some("tag_clip1") && !p.rigid), "nothing hangs on tag_clip1");
+    }
+
+    /// Each manifest part carries the `WeaponCamo` BO2 paints it with (`FUN_00529600`, G16): none
+    /// on the arms, the def's on the gun and its base parts (the magazine), the single unique's on an attachment's model.
+    #[test]
+    fn each_part_carries_its_own_camo_asset() {
+        let arms = nm::Model { name: "arms".into(), bones: vec![nm::Bone { name: "tag_weapon".into(), parent: None, local_rotation: QUAT_IDENTITY, local_position: [0.0; 3], rotation: QUAT_IDENTITY, position: [5.0, 0.0, 0.0] }], ..Default::default() };
+        let g = gun();
+        let nm_g = model(&g, &[None], &Looks::default());
+        let mut nm_mag = model(&g, &[None], &Looks::default());
+        nm_mag.name = "t6_attach_mag_test_view".into();
+        let mut nm_reflex = model(&g, &[None], &Looks::default());
+        nm_reflex.name = "t6_attach_optic_reflex_view".into();
+        let v = Viewmodel {
+            vm: 0,
+            id: "test_mp+reflex",
+            gun: &g,
+            gun_tag: "tag_weapon",
+            gun_camo: Some("camo_test".into()),
+            base_parts: vec![BasePart { model: &nm_mag, tag: None, offset: zhbo_native::math::IDENTITY, optic: false, ads_only: false, ads_of: None }],
+            extra_models: vec![&g],
+            attachments: vec![AttachmentPart { tag: None, offset: crate::xf::IDENTITY, optic: true, ads_only: false, ads_of: None, camo: Some("camo_reflex".into()) }],
+            hide: &[],
+            clips: &[],
+            dual: None,
+        };
+        let mut out = BTreeMap::new();
+        viewmodels(&mut out, &v, &nm_g, std::slice::from_ref(&nm_mag), &[nm_reflex], &[('A', arms)]);
+        let manifest = zhbo_native::viewmodel::Viewmodel::from_bytes(out.get(&zhbo_native::viewmodel_path(0, 'A')).unwrap()).unwrap();
+        let camos: Vec<Option<&str>> = manifest.parts.iter().map(|p| p.camo.as_deref()).collect();
+        let last = camos.len() - 1;
+        assert_eq!(camos[0], None, "the arms: {camos:?}");
+        assert!(camos[1..last].iter().all(|c| *c == Some("camo_test")), "the gun and its base parts: {camos:?}");
+        assert_eq!(camos[last], Some("camo_reflex"), "the optic wears its unique's camo: {camos:?}");
     }
 
     /// A `_scope_view` optic's marker reads the part's `tag_scope` bone, not the computed window.

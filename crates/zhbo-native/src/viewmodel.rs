@@ -36,6 +36,11 @@ pub struct Part {
     /// only while aiming, in place of the hip part that names it in [`Self::ads_swap`]. The W3D
     /// path draws only the hip models.
     pub ads_only: bool,
+    /// The `WeaponCamo` asset (`camo_an94`, `camo_reflex`) the class camo paints on this part, or
+    /// `None` (the arms). BO2 resolves it per part (`FUN_00529600`, G16): the gun and its base
+    /// `attachViewModel` parts take the def's `weaponCamo`, an attachment's models its single
+    /// unique's. Viewmodel (`.zbv`) only: the third-person `.zbw` does not carry it.
+    pub camo: Option<String>,
     /// The index of the [`Self::ads_only`] part BO2 draws instead of this one while aiming (the
     /// holo's `t6_attach_optic_holo_ads` for its `_view`, the M32's slot 7 for its slot 0), or
     /// `None` when this part keeps its model at ADS. Per part: only the paired parts swap (G14 §3,
@@ -85,6 +90,7 @@ impl Viewmodel {
             w.f32s(&p.offset.1);
             w.u8(p.rigid as u8);
             w.u8(p.ads_only as u8);
+            w.opt_str(p.camo.as_deref());
             w.u16(p.ads_swap.unwrap_or(NO_SWAP));
         }
         w.count(self.markers.len());
@@ -118,9 +124,9 @@ impl Viewmodel {
             if (i == 0) != tag.is_none() {
                 return Err(FormatError::Corrupt(format!("part {i}: only the base part has no tag")));
             }
-            let (offset, rigid, ads_only) = ((r.f32n()?, r.f32n()?), r.u8()? != 0, r.u8()? != 0);
+            let (offset, rigid, ads_only, camo) = ((r.f32n()?, r.f32n()?), r.u8()? != 0, r.u8()? != 0, r.opt_str()?);
             let ads_swap = Some(r.u16()?).filter(|&s| s != NO_SWAP);
-            parts.push(Part { model, tag, offset, rigid, ads_only, ads_swap });
+            parts.push(Part { model, tag, offset, rigid, ads_only, camo, ads_swap });
         }
         // A swap names an ADS-only part; an ADS-only part never swaps itself.
         for (i, p) in parts.iter().enumerate() {
@@ -161,10 +167,10 @@ mod tests {
             id: "an94_mp+reflex".into(),
             faction: b'U',
             parts: vec![
-                Part { model: "Art\\Native\\arms.zbm".into(), tag: None, offset: IDENTITY, rigid: false, ads_only: false, ads_swap: None },
-                Part { model: "Art\\Native\\gun.zbm".into(), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false, ads_swap: None },
-                Part { model: "Art\\Native\\holo_view.zbm".into(), tag: Some("tag_weapon".into()), offset: ([0.0, 0.0, 0.0, 1.0], [3.0, 0.0, 4.5]), rigid: true, ads_only: false, ads_swap: Some(3) },
-                Part { model: "Art\\Native\\holo_ads.zbm".into(), tag: Some("tag_weapon".into()), offset: ([0.0, 0.0, 0.0, 1.0], [3.0, 0.0, 4.5]), rigid: true, ads_only: true, ads_swap: None },
+                Part { model: "Art\\Native\\arms.zbm".into(), tag: None, offset: IDENTITY, rigid: false, ads_only: false, camo: None, ads_swap: None },
+                Part { model: "Art\\Native\\gun.zbm".into(), tag: Some("tag_weapon".into()), offset: IDENTITY, rigid: false, ads_only: false, camo: Some("camo_an94".into()), ads_swap: None },
+                Part { model: "Art\\Native\\holo_view.zbm".into(), tag: Some("tag_weapon".into()), offset: ([0.0, 0.0, 0.0, 1.0], [3.0, 0.0, 4.5]), rigid: true, ads_only: false, camo: Some("camo_holo".into()), ads_swap: Some(3) },
+                Part { model: "Art\\Native\\holo_ads.zbm".into(), tag: Some("tag_weapon".into()), offset: ([0.0, 0.0, 0.0, 1.0], [3.0, 0.0, 4.5]), rigid: true, ads_only: true, camo: Some("camo_holo".into()), ads_swap: None },
             ],
             markers: vec![Marker { name: "tag_sights".into(), parent: "tag_weapon".into(), local: ([0.0, 0.0, 0.0, 1.0], [2.0, 0.0, 5.0]) }],
             hide: vec!["tag_sight_on".into()],

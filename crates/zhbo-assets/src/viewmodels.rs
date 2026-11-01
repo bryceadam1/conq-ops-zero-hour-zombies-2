@@ -177,6 +177,10 @@ fn attachment_parts(u: &zhbo_formats::weapon::AttachmentUnique, pt: u32) -> Vec<
     out
 }
 
+/// One attachment model of a viewmodel: the model, its unique's tag, its placement, its attachment
+/// point, and its single unique's `weaponCamo`.
+type ExtraPart = (xmodel::Model, Option<String>, crate::xf::Xf, u32, Option<String>);
+
 /// A notetrack source: viewmodel, clip (BO2 slot or tablet clip) and the BO2 animation.
 pub type Clip = (i32, i32, xanim::Anim);
 
@@ -190,6 +194,8 @@ struct Extra {
     ads_only: bool,
     /// The `extra` index of the model this ADS model replaces while aiming.
     ads_of: Option<usize>,
+    /// The single unique's `weaponCamo` (G16).
+    camo: Option<String>,
 }
 
 /// What a weapon's attachments change about its art: BO2's `WeaponAttachmentUnique` for each, the
@@ -456,7 +462,9 @@ pub(crate) fn weapon_viewmodels(
         let base = base_parts(patch, common, w, &c, view);
         let parts: Vec<(&xmodel::Model, &str)> = vec![(&gun, mount_tag(w))];
         // The attachments' models, each with where it goes: an attachment's additional mount (the
-        // IR rail) before its own model, both on the unique's tag.
+        // IR rail) before its own model, both on the unique's tag. Each carries its single
+        // unique's `weaponCamo`: BO2's camo pass reads the unique each DObj entry came from
+        // (`FUN_00529600`, G16), so an optic wears its own camo asset, not the gun's.
         let mut extra: Vec<Extra> = Vec::new();
         for (u, pt) in &c.parts {
             // The list index of each of this unique's models in `extra`, for the ADS pairing.
@@ -468,7 +476,7 @@ pub(crate) fn weapon_viewmodels(
                 };
                 at.push(Some(extra.len()));
                 let ads_of = a.ads_of.and_then(|k| at.get(k).copied().flatten());
-                extra.push(Extra { model, tag: u.view_model_tag.clone(), xf: a.xf, point: a.point, ads_only: a.ads_only, ads_of });
+                extra.push(Extra { model, tag: u.view_model_tag.clone(), xf: a.xf, point: a.point, ads_only: a.ads_only, ads_of, camo: u.weapon_camo.clone() });
             }
         }
         let gun_tex = textures(&gun, paks, out, &mut looks);
@@ -630,6 +638,7 @@ pub(crate) fn weapon_viewmodels(
                 optic: e.point == point::OPTIC as u32,
                 ads_only: e.ads_only,
                 ads_of: e.ads_of,
+                camo: e.camo.clone(),
             })
             .collect();
         let base_native_parts: Vec<native::BasePart> = base
@@ -638,8 +647,8 @@ pub(crate) fn weapon_viewmodels(
             .map(|(p, m)| native::BasePart { model: m, tag: p.tag.clone(), offset: p.offset, optic: p.optic, ads_only: p.ads_only, ads_of: p.ads_of })
             .collect();
         let dual_tag = dual_mount();
-        let dual_native = dual.zip(native_lh.as_ref()).map(|(w, m)| native::DualGun { gun: m, tag: dual_tag.as_str(), hide: &w.hide_tags });
-        let vm_native = native::Viewmodel { vm, id, gun: &gun, gun_tag: mount_tag(w), base_parts: base_native_parts, extra_models: extra.iter().map(|e| &e.model).collect(), attachments, hide: &c.hide, clips: &native_clips, dual: dual_native };
+        let dual_native = dual.zip(native_lh.as_ref()).map(|(w, m)| native::DualGun { gun: m, tag: dual_tag.as_str(), hide: &w.hide_tags, camo: w.weapon_camo.clone() });
+        let vm_native = native::Viewmodel { vm, id, gun: &gun, gun_tag: mount_tag(w), gun_camo: w.weapon_camo.clone(), base_parts: base_native_parts, extra_models: extra.iter().map(|e| &e.model).collect(), attachments, hide: &c.hide, clips: &native_clips, dual: dual_native };
         native::viewmodels(out, &vm_native, &native_gun, &native_base, &native_extra, &native_factions);
         let mask = |a: &[Option<String>]| a.iter().enumerate().take(128).filter(|(_, x)| x.is_some()).fold(0u128, |m, (i, _)| m | (1u128 << i));
         if let Some(d) = defs.iter_mut().find(|d| &d.id == id) {
@@ -700,6 +709,7 @@ pub(crate) fn world_weapons(
             offset: crate::xf::IDENTITY,
             rigid: true,
             ads_only: false,
+            camo: None,
             ads_swap: None,
         }];
         for (u, _) in &c.parts {
@@ -720,6 +730,7 @@ pub(crate) fn world_weapons(
                 offset: crate::xf::compose(native_base, (crate::xf::from_angles(u.world_rotation), u.world_offset)),
                 rigid: true,
                 ads_only: false,
+                camo: None,
                 ads_swap: None,
             });
         }
@@ -920,7 +931,7 @@ pub(crate) fn tablet_screen(m: &xmodel::Material, paks: &Paks) -> Option<Rgba> {
             .iter()
             .filter_map(|t| t.image.as_ref())
             .find(|i| i.name.contains(part))
-            .and_then(|i| paks.image(i.stream_hash))
+            .and_then(|i| paks.image(i.key()))
     };
     let mut screen = layer("background")?;
     if let Some(top) = layer("killstreaks_top") {

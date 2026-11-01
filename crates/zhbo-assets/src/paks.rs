@@ -7,10 +7,9 @@
 */
 use crate::images;
 use zhbo_formats::fastfile;
-use zhbo_formats::ipak::{Ipak, IpakEntry};
+use zhbo_formats::ipak::{ImageKey, Ipak};
 use zhbo_formats::t6zone::{self, Zone};
 use zhbo_formats::iwi::Rgba;
-use std::collections::BTreeMap;
 use std::path::Path;
 
 pub(crate) fn load_zone(bo2_dir: &Path, name: &str) -> Result<Zone, String> {
@@ -20,9 +19,9 @@ pub(crate) fn load_zone(bo2_dir: &Path, name: &str) -> Result<Zone, String> {
     t6zone::load(&zone).map_err(|e| format!("{name}: {e}"))
 }
 
-/// Image packs, opened on demand, with their entries grouped by name hash.
+/// The image packs, in file-name order.
 pub(crate) struct Paks {
-    paks: Vec<(Ipak, BTreeMap<u32, Vec<IpakEntry>>)>,
+    paks: Vec<Ipak>,
 }
 
 impl Paks {
@@ -37,15 +36,14 @@ impl Paks {
         names.sort();
         let mut paks = Vec::new();
         for p in names {
-            let pak = Ipak::open(&p).map_err(|e| format!("{}: {e}", p.display()))?;
-            let groups = images::group_by_name(&pak);
-            paks.push((pak, groups));
+            paks.push(Ipak::open(&p).map_err(|e| format!("{}: {e}", p.display()))?);
         }
         Ok(Paks { paks })
     }
 
-    pub(crate) fn image(&self, hash: u32) -> Option<Rgba> {
-        self.paks.iter().find_map(|(pak, groups)| groups.get(&hash).and_then(|parts| images::load(pak, parts).ok()))
+    /// The pixels of the image with this key (`xmodel::Image::key`).
+    pub(crate) fn image(&self, key: ImageKey) -> Option<Rgba> {
+        self.paks.iter().find_map(|pak| pak.entry(key).and_then(|e| images::load(pak, e).ok()))
     }
 }
 
@@ -70,4 +68,34 @@ pub(crate) fn shrink(mut img: Rgba, max: u32) -> Rgba {
         img = Rgba { width: w, height: h, pixels: out };
     }
     img
+}
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use zhbo_formats::ipak::r_hash_string;
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn an_images_pack_entry_is_its_stream_hash_and_name_hash() {
+        let bo2 = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
+        let pak = |name: &str| Ipak::open(bo2.join("zone").join("all").join(name)).unwrap();
+        // The XPR-50 scope overlay: the GfxImage's stream hash (+40) is the entry's first field,
+        // R_HashString of its name (= GfxImage::hash, +76) the second.
+        let zone = load_zone(&bo2, "patch_mp").unwrap();
+        let image = zhbo_formats::xmodel::find_material(&zone, "scope_overlay_xpr50")
+            .and_then(|m| m.textures.into_iter().find_map(|t| t.image))
+            .expect("the XPR-50 overlay material in patch_mp");
+        assert_eq!(image.name, "scope_overlay_xpr50_1024");
+        assert_eq!(image.hash, r_hash_string(&image.name));
+        assert_eq!(image.key(), ImageKey { data_hash: 0x1c99_c1b0, name_hash: 0x9c47_55f7 });
+        assert!(pak("patch_mp.ipak").entry(image.key()).is_some());
+        // base.ipak holds an older revision under the same name hash and another data hash; only
+        // the pair names the patched one.
+        let base = pak("base.ipak");
+        assert!(base.entry(image.key()).is_none());
+        assert!(base.entries().iter().any(|e| e.name_hash == image.hash && e.data_hash == 0x03e7_5800));
+        let paks = Paks::open(&bo2).unwrap();
+        let rgba = paks.image(image.key()).expect("the overlay decodes");
+        assert_eq!((rgba.width, rgba.height), (1024, 1024));
+    }
 }
