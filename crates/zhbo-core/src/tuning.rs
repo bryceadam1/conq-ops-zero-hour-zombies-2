@@ -122,6 +122,8 @@ tuning! {
     player_breath_fire_delay: "player_breath_fire_delay" = 0.0, "Seconds of breath a shot costs (the shot also lets the breath go).";
     player_breath_snd_delay: "player_breath_snd_delay" = 1.0, "Seconds between the breath-in and breath-out sounds.";
     perk_extra_breath: "perk_extraBreath" = 5.0, "`holdbreath`: extra seconds of breath (G1).";
+    bg_aqs: "bg_aqs" = 1.0, "Anti-quickscope on (1) or off (0) (`FUN_008dac10`, `FUN_008f0f00`).";
+    bg_aqs_style: "bg_aqsStyle" = 2.0, "Anti-quickscope style: 1 scales the scope sway, 2 offsets it by the sway factor.";
     // ---- The mod's own ------------------------------------------------------------------------
     regen_delay: "RegenDelay" = 5.0, "Seconds after the last hit before health regenerates (the mod's value).";
     regen_full_time: "RegenFullTime" = 3.0, "Seconds to regenerate from empty (the mod's value).";

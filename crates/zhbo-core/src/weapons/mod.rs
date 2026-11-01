@@ -25,7 +25,7 @@ pub mod zoom;
 pub use arsenal::*;
 pub use catalog::*;
 pub use def::*;
-pub use handling::{CycleTimes, OffhandClass, Penetrate, Traits, Zoom};
+pub use handling::{AntiQuickScope, CycleTimes, OffhandClass, Penetrate, Traits, Zoom};
 pub use feel::{optic_of, reticle_art, GunKick, Reticle, Sway, ViewPos};
 pub use loadout::*;
 pub use perks::*;

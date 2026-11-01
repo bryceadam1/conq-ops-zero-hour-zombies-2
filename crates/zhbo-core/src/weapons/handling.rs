@@ -67,6 +67,21 @@ pub struct Zoom {
     pub idle_stance: (f32, f32),
     /// `bHoldBreathToSteady`: the breath key steadies the aimed scope (`FUN_008e4860`).
     pub hold_breath: bool,
+    /// BO2's anti-quickscope (`FUN_008dac10`; `weapons::idle_sway::AntiQuickScope`).
+    pub anti_quickscope: AntiQuickScope,
+}
+
+/// The variant's `bAntiQuickScope` and the def's `fAntiQuickScope*` fields: for `time` seconds after
+/// the scope comes fully up, its sway is pushed by up to `scale` (`bg_aqsStyle` 2: a `sway_factor`
+/// offset; 1: a multiplier). The spread pair is carried for the aimed spread's consumer.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct AntiQuickScope {
+    pub enabled: bool,
+    pub time: f32,
+    pub scale: f32,
+    pub spread_multiplier: f32,
+    pub spread_max: f32,
+    pub sway_factor: f32,
 }
 
 /// BO2's `PenetrateType`: how far a bullet goes through surfaces.

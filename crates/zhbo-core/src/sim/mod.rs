@@ -709,12 +709,13 @@ impl Sim {
                     // The hammer, or building, takes the hands: the gun gets no input meanwhile.
                     let busy = self.step_building(host, idx, p, &input);
                     let (held, pressed) = if busy { (0, 0) } else { (input.held, input.pressed) };
+                    let prev_ads = p.arsenal.ads;
                     p.arsenal.step(held, pressed, p.body.sprinting, stance, speed, &mut p.rng, &mut actions);
                     // Hold breath and the idle clock run after the ADS update, before the shot
                     // (`FUN_008e4da0`: `FUN_008e4470`, …, `FUN_008e4860`, `FUN_008e3940`); the
                     // breath key is `+breath_sprint`, the sprint key.
-                    let breath = BreathIn { key: held & buttons::SPRINT != 0, extra: p.arsenal.has_specialty(Specialty::HoldBreath) };
-                    p.idle.step(p.arsenal.current().def, p.arsenal.ads, stance, breath, &p.arsenal.tuning, LOGIC_DT);
+                    let breath = BreathIn { key: held & buttons::SPRINT != 0, extra: p.arsenal.has_specialty(Specialty::HoldBreath), aqs_block: false };
+                    p.idle.step(p.arsenal.current().def, p.arsenal.ads, prev_ads, stance, breath, &p.arsenal.tuning, LOGIC_DT);
                     let shot = actions.iter().find_map(|a| match a {
                         WeaponAction::Fire { gun_kick, pellet: 0, .. } => Some(*gun_kick),
                         _ => None,

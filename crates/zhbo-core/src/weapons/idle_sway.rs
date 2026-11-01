@@ -119,6 +119,9 @@ pub struct BreathIn {
     pub key: bool,
     /// The player has `specialty_holdbreath` (class perk or the weapon's).
     pub extra: bool,
+    /// The anti-quickscope timer is running with `bg_aqs` on: no breath (set by
+    /// [`IdleSway::step`]).
+    pub aqs_block: bool,
 }
 
 impl Breath {
@@ -136,7 +139,7 @@ impl Breath {
             return;
         }
         let can = ads >= 1.0 && def.class.is_gun() && def.zoom.hold_breath;
-        if can && i.key {
+        if can && i.key && !i.aqs_block {
             if self.used == 0.0 {
                 self.holding = true;
             }
@@ -178,6 +181,9 @@ pub struct IdleSway {
     /// The eased stance factor (`cg+0x4ae48` / the server's copy).
     pub stance: f32,
     pub breath: Breath,
+    /// The anti-quickscope timer (`ps+0x4f8`, seconds left) and its sway factor (`ps+0x4f4`).
+    pub aqs_left: f32,
+    pub aqs: f32,
     /// BO2's view idle angles this frame (degrees: pitch down, yaw left).
     pub angles: [f32; 2],
 }
@@ -185,13 +191,15 @@ pub struct IdleSway {
 impl Default for IdleSway {
     fn default() -> Self {
         // The stance factor starts settled on standing.
-        IdleSway { time: 0.0, stance: 1.0, breath: Breath::default(), angles: [0.0; 2] }
+        IdleSway { time: 0.0, stance: 1.0, breath: Breath::default(), aqs_left: 0.0, aqs: 1.0, angles: [0.0; 2] }
     }
 }
 
 impl IdleSway {
     /// One logic frame, after the weapon's ADS update. `stance` 0 stand, 1 crouch, 2 prone.
-    pub fn step(&mut self, def: &WeaponDef, ads: f32, stance: usize, breath: BreathIn, t: &Tuning, dt: f32) {
+    pub fn step(&mut self, def: &WeaponDef, ads: f32, prev_ads: f32, stance: usize, breath: BreathIn, t: &Tuning, dt: f32) {
+        let aqs_on = t.bg_aqs != 0.0;
+        let breath = BreathIn { aqs_block: aqs_on && self.aqs_left > 0.0, ..breath };
         self.breath.step(def, ads, breath, t, dt);
         let view = sways_view(def);
         // The clock (`FUN_008e3940`; the hip run is the client's `FUN_00530e70`, the same rule).
@@ -209,12 +217,47 @@ impl IdleSway {
         };
         let step = dt * HALF;
         self.stance = if self.stance < target { (self.stance + step).min(target) } else { (self.stance - step).max(target) };
-        // The view's idle angles (`FUN_008f0f00`).
+        self.step_aqs(def, ads, prev_ads, t, dt);
+        // The view's idle angles (`FUN_008f0f00`), with the anti-quickscope's push: style 1
+        // scales the amount, style 2 adds `(aqs − 1)·factor·0.01` to the pitch and takes
+        // `(aqs − 1)·factor·sin(t·0.0007)·0.01` off the yaw.
         self.angles = [0.0; 2];
         if ads != 0.0 && view {
-            let a = self.stance * amount(def, ads, true) * ads * s * AMOUNT_TO_DEG;
-            self.angles = [(self.time * PITCH_FREQ).sin() * a, (self.time * YAW_FREQ).sin() * a];
+            let style = t.bg_aqs_style as i32;
+            let mut a = self.stance * amount(def, ads, true) * ads * s;
+            if aqs_on && style == 1 {
+                a *= self.aqs;
+            }
+            let (sp, sy) = ((self.time * PITCH_FREQ).sin(), (self.time * YAW_FREQ).sin());
+            self.angles = [sp * a * AMOUNT_TO_DEG, sy * a * AMOUNT_TO_DEG];
+            if aqs_on && style == 2 {
+                let push = (self.aqs - 1.0) * def.zoom.anti_quickscope.sway_factor * AMOUNT_TO_DEG;
+                self.angles[0] += push;
+                self.angles[1] -= push * sy;
+            }
         }
+    }
+
+    /// BO2's anti-quickscope (`FUN_008dac10`, after the idle clock): on a variant with
+    /// `bAntiQuickScope` and `fAntiQuickScopeTime` of a millisecond or more, the timer sits at the
+    /// full time while the scope comes up, counts down once fully up and drops to 0 when the aim
+    /// falls or is under 0.001. The factor eases (at `player_breath_gasp_lerp`) toward
+    /// `((left/time)·(scale − 1))·posFrac + 1`, never below 1.
+    fn step_aqs(&mut self, def: &WeaponDef, ads: f32, prev_ads: f32, t: &Tuning, dt: f32) {
+        let q = &def.zoom.anti_quickscope;
+        if q.time < 0.001 || !q.enabled {
+            self.aqs_left = 0.0;
+            self.aqs = 1.0;
+            return;
+        }
+        self.aqs_left = if prev_ads <= ads && ads >= SNAP {
+            if ads >= 1.0 { self.aqs_left - dt } else { q.time }
+        } else {
+            0.0
+        }
+        .max(0.0);
+        let target = (self.aqs_left / q.time) * (q.scale - 1.0) * ads + 1.0;
+        self.aqs = approach(target, self.aqs, t.player_breath_gasp_lerp, dt).max(1.0);
     }
 
     /// The aim offset in the mod's convention, radians: (yaw left, pitch up).
@@ -251,7 +294,7 @@ mod tests {
     }
 
     fn held(key: bool) -> BreathIn {
-        BreathIn { key, extra: false }
+        BreathIn { key, extra: false, aqs_block: false }
     }
 
     #[test]
@@ -271,7 +314,7 @@ mod tests {
         let mut last = 0.0;
         let frames = (20.0 / DT) as usize;
         for _ in 0..frames {
-            s.step(&d, 1.0, 0, held(false), &t, DT);
+            s.step(&d, 1.0, 1.0, 0, held(false), &t, DT);
             max_p = max_p.max(s.angles[0].abs());
             max_y = max_y.max(s.angles[1].abs());
             if last < 0.0 && s.angles[0] >= 0.0 {
@@ -292,14 +335,14 @@ mod tests {
         let d = sniper();
         let t = Tuning::default();
         let mut s = IdleSway::default();
-        s.step(&d, 0.0, 0, held(false), &t, DT);
+        s.step(&d, 0.0, 0.0, 0, held(false), &t, DT);
         assert_eq!(s.angles, [0.0, 0.0], "no view sway from the hip");
         for _ in 0..(3.0 / DT) as usize {
-            s.step(&d, 1.0, 2, held(false), &t, DT);
+            s.step(&d, 1.0, 1.0, 2, held(false), &t, DT);
         }
         assert_eq!(s.stance, 0.25, "prone factor, reached at 0.5/s");
         let mut half = IdleSway::default();
-        half.step(&d, 1.0, 1, held(false), &t, 1.0);
+        half.step(&d, 1.0, 1.0, 1, held(false), &t, 1.0);
         assert_eq!(half.stance, 0.5);
     }
 
@@ -311,7 +354,7 @@ mod tests {
         let mut frames_held = 0;
         let mut gasped = false;
         for f in 0..(8.0 / DT) as usize {
-            s.step(&d, 1.0, 0, held(true), &t, DT);
+            s.step(&d, 1.0, 1.0, 0, held(true), &t, DT);
             if s.breath.holding {
                 frames_held += 1;
                 if f > 60 && !gasped {
@@ -330,13 +373,13 @@ mod tests {
         assert!(!s.breath.holding && s.breath.used > 0.0);
         // The gasp sways harder than at rest.
         let mut g = IdleSway { breath: Breath { holding: false, used: 4.5, scale: 1.0 }, ..Default::default() };
-        g.step(&d, 1.0, 0, held(false), &t, DT);
+        g.step(&d, 1.0, 1.0, 0, held(false), &t, DT);
         for _ in 0..30 {
-            g.step(&d, 1.0, 0, held(false), &t, DT);
+            g.step(&d, 1.0, 1.0, 0, held(false), &t, DT);
         }
         assert!(g.breath.scale > 1.8, "gasp scale toward 2.5: {}", g.breath.scale);
         for _ in 0..(6.0 / DT) as usize {
-            g.step(&d, 1.0, 0, held(false), &t, DT);
+            g.step(&d, 1.0, 1.0, 0, held(false), &t, DT);
         }
         assert_eq!(g.breath, Breath::default(), "recovered");
     }
@@ -353,7 +396,7 @@ mod tests {
         let mut b = Breath::default();
         let mut n = 0;
         while {
-            b.step(&sniper(), 1.0, BreathIn { key: true, extra: true }, &t, DT);
+            b.step(&sniper(), 1.0, BreathIn { key: true, extra: true, aqs_block: false }, &t, DT);
             b.holding
         } {
             n += 1;
@@ -374,6 +417,32 @@ mod tests {
         assert!(!b.holding);
         b.step(&d, 1.0, held(true), &t, DT);
         assert!(!b.holding, "the key cannot take a new breath until it recovers");
+    }
+
+    #[test]
+    fn the_anti_quickscope_pushes_the_fresh_scope_and_blocks_the_breath() {
+        // The XPR-50's numbers: 0.1 s at scale 4, sway factor 20.
+        let mut d = sniper();
+        d.zoom.anti_quickscope = crate::weapons::AntiQuickScope { enabled: true, time: 0.1, scale: 4.0, spread_multiplier: 1.0, spread_max: 25.0, sway_factor: 20.0 };
+        let t = Tuning::default();
+        let mut s = IdleSway::default();
+        // Coming up: the timer holds full.
+        s.step(&d, 0.5, 0.0, 0, held(false), &t, DT);
+        assert_eq!(s.aqs_left, 0.1);
+        assert!(s.aqs > 1.0);
+        // Fully up: counts down; the breath key is refused while it runs.
+        s.step(&d, 1.0, 0.5, 0, held(true), &t, DT);
+        assert!(s.aqs_left > 0.0 && !s.breath.holding);
+        let pushed = s.angles[0] - (s.time * PITCH_FREQ).sin() * 0.6 * s.breath.scale;
+        assert!(pushed > 0.0, "style 2 pushes the pitch: {pushed}");
+        for _ in 0..60 {
+            s.step(&d, 1.0, 1.0, 0, held(false), &t, DT);
+        }
+        assert_eq!((s.aqs_left, s.aqs), (0.0, 1.0), "settled");
+        // Off without the variant flag.
+        let mut off = IdleSway::default();
+        off.step(&sniper(), 0.5, 0.0, 0, held(false), &t, DT);
+        assert_eq!((off.aqs_left, off.aqs), (0.0, 1.0));
     }
 
     #[test]

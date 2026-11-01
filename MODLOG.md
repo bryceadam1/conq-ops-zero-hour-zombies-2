@@ -4847,10 +4847,7 @@ from t6mp (read-only; dumps in the item's plan dir, `ghidra/`), ported as `weapo
   fIdleProneFactor bHoldBreathToSteady`; WEAPON_FIELDS 96 → 97), `Zoom::idle_speed/idle_stance/
   hold_breath`, read by `zhbo_formats::weapon` from the WeaponDef. No attachment stacks them.
 
-Not ported (follow-ups): anti-quickscope (`bg_aqs` 1 / `bg_aqsStyle` 2, `FUN_008dac10`: variant
-`bAntiQuickScope` + `fAntiQuickScopeTime/Scale/SwayFactor` drive `ps+0x4f4/0x4f8`, which scale or
-offset the view sway and block hold breath — needs four uncarried fields; whether any MP variant sets
-it is unchecked); the `hold_breath_mp` shellshock 1 s into a breath and the `cod_hold_breath` sound
+Not ported (follow-ups): the `hold_breath_mp` shellshock 1 s into a breath and the `cod_hold_breath` sound
 context (no shellshock or snd contexts in the mod); the variable-zoom hint
 `PLATFORM_HOLD_BREATH_ZOOM` (`FUN_004dc940`); the airburst/`weapClass item` exclusions (no such
 weapons in the mod); the prone test's `ps+0xc & 0x200000` exception. The clock is not truncated per
@@ -4906,3 +4903,23 @@ pose twice (cg and server). Not in the fire angles: the gun's damage flinch (`FU
 mod's flinch is camera-only) and the lean roll. Test: `an_aimed_iron_sight_shot_follows_the_gun_pose`
 (an aimed burst while turning leaves off the view centre by the pose, replays identically; a
 scoped shot is the view's).
+
+### Follow-up: the XPR-50's anti-quickscope (branch `v1/idle-sway`)
+
+One MP weapon sets the variant's `bAntiQuickScope`: **`as50_mp` (XPR-50)**, with `fAntiQuickScopeTime`
+0.1, `…Scale` 4, `…SwayFactor` 20 (spread multiplier 1, spread max 25). Checked over every
+`common_mp`/`patch_mp` weapon (the OAT Unlinker's `weapon` dump in the item's plan dir, `wpn/`, and
+the real-install test `only_the_xpr_carries_the_anti_quickscope_and_snipers_hold_breath`). The DSR
+and Ballista author the times but leave the flag off. `bg_aqs` is on (1) and `bg_aqsStyle` is 2 by default.
+
+`FUN_008dac10` (pmove, after the idle clock; its second argument is the posFrac before this frame's
+ADS update): with the flag and a time of at least 1 ms, the timer `ps+0x4f8` holds the full time while the
+scope rises and counts down once fully up. It drops to 0 when the aim falls or is under 0.001. The factor
+`ps+0x4f4` eases at `player_breath_gasp_lerp` toward `(left/time)·(scale − 1)·posFrac + 1` and
+never goes below 1. In the view idle (`FUN_008f0f00`), style 1 multiplies the amount by it. Style 2 adds
+`(aqs − 1)·factor·0.01` to the pitch (the reticle starts below the target and settles up) and takes
+`(aqs − 1)·factor·sin(t·0.0007)·0.01` off the yaw: up to 0.6° on a fresh XPR scope. Hold breath is
+refused while the timer runs (`FUN_008e4860`). Carried as the weapon block's `AntiQuickScope` line
+(WEAPON_FIELDS 97 → 98, `Zoom::anti_quickscope`); `bg_aqs`/`bg_aqsStyle` are tuning keys. Not ported:
+the aimed spread's anti-quickscope term (`FUN_008e0080` → `FUN_008dbfb0`, whose result lives on the
+x87 stack and needs a disassembly read; the multiplier/max are carried for it).

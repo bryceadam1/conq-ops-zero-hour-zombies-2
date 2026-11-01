@@ -628,6 +628,14 @@ pub struct Weapon {
     pub idle_prone_factor: f32,
     /// `bHoldBreathToSteady`: holding breath steadies the scope.
     pub hold_breath_to_steady: bool,
+    /// The variant's `bAntiQuickScope` and the def's `fAntiQuickScopeTime`, `…Scale`,
+    /// `…SpreadMultiplier`, `…SpreadMax`, `…SwayFactor`.
+    pub anti_quickscope: bool,
+    pub anti_quickscope_time: f32,
+    pub anti_quickscope_scale: f32,
+    pub anti_quickscope_spread_multiplier: f32,
+    pub anti_quickscope_spread_max: f32,
+    pub anti_quickscope_sway_factor: f32,
 }
 
 fn ms(z: &Zone, at: u32) -> f32 {
@@ -970,6 +978,12 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.idle_crouch_factor = z.f32(d + WD::fIdleCrouchFactor);
     w.idle_prone_factor = z.f32(d + WD::fIdleProneFactor);
     w.hold_breath_to_steady = z.u8(d + WD::bHoldBreathToSteady) != 0;
+    w.anti_quickscope = z.u8(v + WV::bAntiQuickScope) != 0;
+    w.anti_quickscope_time = z.f32(d + WD::fAntiQuickScopeTime);
+    w.anti_quickscope_scale = z.f32(d + WD::fAntiQuickScopeScale);
+    w.anti_quickscope_spread_multiplier = z.f32(d + WD::fAntiQuickScopeSpreadMultiplier);
+    w.anti_quickscope_spread_max = z.f32(d + WD::fAntiQuickScopeSpreadMax);
+    w.anti_quickscope_sway_factor = z.f32(d + WD::fAntiQuickScopeSwayFactor);
     w.fire_sound = opt_str(z, d + WD::fireSound);
     w.fire_sound_player = opt_str(z, d + WD::fireSoundPlayer);
     w.fire_last_sound_player = opt_str(z, d + WD::fireLastSoundPlayer);

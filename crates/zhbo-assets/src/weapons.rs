@@ -866,6 +866,14 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
             idle_speed: (w.ads_idle_speed, w.hip_idle_speed),
             idle_stance: (w.idle_crouch_factor, w.idle_prone_factor),
             hold_breath: w.hold_breath_to_steady,
+            anti_quickscope: zhbo_core::weapons::AntiQuickScope {
+                enabled: w.anti_quickscope,
+                time: w.anti_quickscope_time,
+                scale: w.anti_quickscope_scale,
+                spread_multiplier: w.anti_quickscope_spread_multiplier,
+                spread_max: w.anti_quickscope_spread_max,
+                sway_factor: w.anti_quickscope_sway_factor,
+            },
         },
         traits: Traits {
             clip_only: w.clip_only,
@@ -1470,6 +1478,22 @@ mod tests {
             assert_eq!(camo_material_for(weapon, &sets).as_deref(), Some(want), "{weapon}");
         }
         assert_eq!(camo_material_for("mtar_mp", &sets), None);
+    }
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn only_the_xpr_carries_the_anti_quickscope_and_snipers_hold_breath() {
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
+        let all = zhbo_formats::weapon::all(&common).unwrap();
+        let aqs: Vec<&str> = all.iter().filter(|w| w.anti_quickscope).map(|w| w.name.as_str()).collect();
+        assert_eq!(aqs, ["as50_mp"], "bAntiQuickScope");
+        let xpr = all.iter().find(|w| w.name == "as50_mp").unwrap();
+        assert_eq!((xpr.anti_quickscope_time, xpr.anti_quickscope_scale, xpr.anti_quickscope_sway_factor), (0.1, 4.0, 20.0));
+        for sniper in ["dsr50_mp", "ballista_mp", "svu_mp", "as50_mp"] {
+            let w = all.iter().find(|w| w.name == sniper).unwrap();
+            assert!(w.hold_breath_to_steady && w.ads_idle_amount > 0.0 && w.ads_idle_speed > 0.0, "{sniper}");
+        }
     }
 
     #[test]
