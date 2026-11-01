@@ -7574,3 +7574,137 @@ option list's index 0 (the catalog's first gun, e.g. the MTAR under ASSAULT RIFL
 `Editor::weapon_open_index` falls back to the first gun of the first category in
 `category_order` (SUBMACHINE GUNS → the PDW-57). Test:
 `a_list_without_the_held_gun_opens_on_its_first_category`; screenshot `cac-editor-overkill.png`.
+
+## Create-a-Class navigation follows BO2's LUI links (2026-10-27, branch `v1/cac-navigation`)
+
+Playtest: "up/down and left/right are swapped, and the mouse is wrong" in the CaC screens. The full
+BO2 map, with citations, is the plan dir's `NAV.md`; the decisions:
+
+- **How input reaches LUI.** t6mp's `gamepad_button` dispatcher (`FUN_009376a0`, read-only Ghidra)
+  sends the arrows as `up/down/left/right`, **each mouse-wheel notch as `up`/`down`** (qualifier
+  `mwheel`, which no CaC Lua checks), and **`A`/`D` as `shoulderl`/`shoulderr`**. Focus moves only
+  along explicit `navigation` links (`luielement.lua:714-785`); a moving cursor over a focusable
+  button gives it focus (`:316-348`) and a release inside is its action (`luibutton.lua:106-128`).
+  `classui::LuiNav` is that translation; every class screen reads its moves through it, so the
+  wheel always moves what Up/Down move on that screen.
+- **Weapon carousel** (`cardcarousellist.lua`): Left/Right = the guns of the category, stopping at
+  the ends (`PerformEdgeBounce`, `cardcarousel.lua:254-381`); Up/Down and the wheel = the category,
+  wrapping (`ScrollList`, `:723-772`); each category keeps its card while the picker is open
+  (`Editor::carousel`). The mod had the axes swapped. Mouse: hover does nothing
+  (`setHandleMouseMove(false)`), a click on another card focuses it, a click on the focused card
+  equips (`CardMouseClick`). Gotcha fixed on the way: the fold sized the drawn window from the
+  *global* option index, not the position in the category, and added the window start twice, so
+  carousel clicks hit the wrong gun or none.
+- **Editor grid** (`customclass.lua:863-991`): an explicit link table, now data in
+  `classmenu/nav.rs` (`LINKS`), plus the two `gain_focus` hooks as data (`Perk12Button_GainFocus`:
+  PRIMARY's Right returns to the perk last on; `BonusCardButton_GainFocus`: the column above and
+  below a card return to it). The mod used to walk a flat slot list with Up/Down and ignore
+  Left/Right. Each bonus card is its own focus now (`Editor::card`): `R`/the X clear that card.
+  The mod's own rows join the column cycles where they are drawn: the class-name heading above
+  PRIMARY, SAVE CLASS under card 3, a Greed plate under its tier (sharing the tier's Left/Right
+  and hook). While a picker is open the grid's boxes are no longer hit-tested (a click beside a
+  picker used to open whatever invisible box was under it).
+- **Grids / personalize / dialogs**: the wheel is a grid *row* (it was ±1 cell); the options
+  dialogs now take hover focus and the wheel (`CoD.ButtonList`).
+- **Class-set pager**: `A`/`D` (BO2's shoulder prompts, `cacchooseclass.lua:299-318`) plus clicks on
+  the `‹`/`›` prompts and on a pip (`ClassSetPip_LeftMouseUp`, `:1418-1432`). Left/Right no longer
+  page: the class list is a vertical list with no left/right links, and the capture notes confirm
+  the arrows do not page (`cac/sweep/PROGRESS.md:127`).
+- Not ported: carousel mouse drag (`MouseDrag`, 80 units per card), the pip hover glow, the
+  personalize screens' `A`/`D` tabs (the mod has one page per kind — item 11's area).
+
+**Verified.** `cargo test --workspace` green (new: the full link table from every box, the
+back-links, Greed splice, wheel on grid/carousel/editor/dialog/personalize, carousel click
+semantics, per-card focus/remove, pager keys and clicks); clippy adds no warning. The headless
+screenshot run could not render on this workstation (the installed `ConquerOps_BO2.big` is missing
+`ZHBO_Mat_scope_overlay_ballista`, unrelated); the screen drawing is covered by the screenshot
+module's prims test. No game launched; the shell CaC screen still has no scripted in-game test —
+see TESTING.md's manual list.
+
+## Camo in Create-a-Class: the tiles draw, the pick shows, the tabs page (2026-10-27, branch `v1/cac-camo`)
+
+Playtest: "the camo page's tiles are blank, and picking a camo doesn't update the weapon preview."
+
+- **Blank tiles were a name-space mismatch.** The converter writes the camo thumbnails under their
+  own names (`menu_camo_*_pattern`, `hud.rs`), but `personalize.rs` drew them through
+  `bo2::image`, which looks up `ZHBO_Mat_<material>` — an image that never existed. The reticle
+  tiles had the same bug (the HUD's reticle uses the raw name and worked). Both now draw the
+  converter's sprite, in `CamoGridButton`'s picture box (8 in, `None` a centred square). **Gotcha:**
+  `bo2::image` is for `lui::materials::MATERIALS` entries only; converter-named art is
+  `bo2::sprite`.
+- **BO2 never re-renders the gun with the camo on these screens.** `caccamomenu.lua`'s
+  `weaponImage` is the static `_big` picture; what changes on a pick is (1) the `Equipped` box
+  (`UpdateCamoPreview`: the equipped option's thumbnail, `None`'s `menu_theater_nodata` a 70-unit
+  square) and (2) the class camo **swatch** on the editor's weapon button
+  (`CACWeaponButton.GetCamoSwatch`: a 32-unit stencilled box showing the bottom-right corner of the
+  140×70 thumbnail) and on the choose-class preview (`ClassPreview`, 31 units); a store option
+  shows its whole `<image>_32` (`SetupMTXCamoSwatch`, the converter now packs those). The mod had
+  only the gun's name as text. The camo page now has BO2's lower panel (focused name in Big, the
+  gun's `_big` picture, the `Equipped` box) and title (`MPUI_PERSONALIZE_N`: `PERSONALIZE MP7`);
+  the equipped tile gets `selectedFill` (BOIIOrange 0.2) instead of the mod's `*`.
+- **Tabs.** `TabManager` (`tabmanagerlite.lua`): CAMO / DLC / DLC2 (DLC2 only with a row,
+  `ShouldDisplayDlc2Tab`), RETICLES / DLC / DLC2 on the reticle page; `A`/`D` (shoulders) page and
+  wrap, a click on a tab or a `‹`/`›` selects. EMBLEM AND TAG is not ported (no emblems/clan tags).
+  Each option row carries its tab, computed by the converter with `AddCamos`' rule: a
+  `digital_unlock` milestone (`mp/statsmilestones*.csv` col 4, option in col 9: `camo_elite1`,
+  `camo_collectors`, `camo_ghost`, `camo_roxann`) or a store row (col 16 `mtx_weapon*`) without a
+  DLC2 key → DLC; a store row with col 5 > 0 → DLC2 by that key; everything else base. Option 0 is
+  the first cell of every tab. (So `camo_elite1`/`camo_collectors`, which the old "first 19 rows"
+  base list put on the CAMO page, are on DLC as in BO2.) Weapon table: `Camo` blocks gain `Tab` and
+  `Mtx` (the reticle blocks share the schema).
+- **"What the install has".** A weapon's `CamoList` is now every row in table order;
+  `camo::offer_what_converted` keeps the base rows and only the DLC rows whose art this install
+  converted for the weapon's own asset (`zhbo_native::camo::Camo::has_art`: a pattern set with
+  images, or a style pair naming a material with a colour map). On the stock Steam install the MP7
+  offers 14 DLC rows (`cac-personalize-dlc`) and a DLC2 tab. The "has no art" summary now only reports base-tab rows.
+- **Screenshot harness:** it failed on every archive (`ZHBO_Mat_scope_overlay_ballista is
+  missing`): the standalone overlay pages are named without `.tga` in their MappedImage; the atlas
+  loader now tries `<texture>.tga`, as the engine does.
+
+Composability: `v1/attach-camo` gives attachment parts their own asset with the first 19 rows
+(`take(BASE_CAMO_OPTIONS)`); after both merge, a DLC camo will paint the gun but not an optic part
+unless that fallback also takes every row. No ABI change; the weapon table text gained two keys per
+option (archive `hud::VERSION` bump is the integrator's).
+
+Measured (conformance CLI vs the 2026-10-25 baseline): cac BO2-only rows 62 → 42 (20 DLC camo rows
+now offered; the 7 left — `camo_mtp`, `snake`, `bacon`, `dayofdead`, `ghost`, `paladin`, `pap` —
+have no art on this install); cac differing cells 881 → 901: +20 `camo.order` cells, the new rows'
+position in the trimmed list vs BO2's group index (BO2's grid also skips undisplayed rows, so the
+expected side's raw index is not the on-screen slot); weapons unchanged (706,586 cells); gap
+clusters 214 → 214. Verified: cargo test --workspace green; clippy unchanged (39 warnings before
+and after); the real-install suite green (31); headless screenshots render with a fresh archive.
+
+## Create-a-Class saves on back-out; rename only from Class Options (2026-10-30, branch `v1/cac-save-rename`)
+
+Integrator decision, checked against the Lua before changing anything:
+
+* **BO2 has no save step.** Each pick is written into the class as it is made
+  (`Engine.SetClassItem`, `patch_ui_mp/.../caceditclass.lua:472`, `:530`, `:548`) and
+  `CACEditClass.Back` (`:642-653`) only clears the equip queue and closes; the profile is committed
+  when the chooser closes (`patch_mp/.../cacchooseclass.lua:1352-1365`: `uploadstats` +
+  `CommitProfileChanges`). The editor's back-out sound is `setBackOutSFX("cac_cmn_backout")`
+  (`caceditclass.lua:37-38`).
+* **BO2's editor has no name field.** It only shows the name (`caceditclass.lua:177`,
+  `GetLoadoutNameFromIndex`); RENAME is a Class Options entry that opens the keyboard
+  (`cacclassoptions.lua:183-192`, `:259-262` `ui_keyboard_new`).
+
+What changed:
+
+* `classmenu::Slot` loses `Name` and `Save` (`Slot::ALL` is BO2's ten boxes); `Editor::naming`,
+  `step_naming`, `Edges::{typed, backspace}` and `char_of` are gone (the dialog keeps its own
+  `typed_char`; `NAME_MAX` stays for it). The grid's links are `customclass.lua`'s verbatim again:
+  nothing is spliced above PRIMARY or under card 3.
+* Escape on the grid is `Outcome::Save` (`Editor::back_out`); Escape in a picker still only closes
+  the picker. A draft over the budget (only reachable by loading one, since every over-spend pick
+  is refused) backs out as `Cancel` with the deny, the stored class untouched — back-out is the
+  editor's only exit, so it never traps the player.
+* `menu.rs` remembers the draft the editor opened on: an untouched back-out writes nothing (an
+  empty slot opened and left stays empty). A real save plays `cac_cmn_backout`, not the old SAVE
+  row's grid-equip cue; a save refused for a full set (defensive: the lobby list offers no empty row
+  then) still leaves with the deny instead of keeping the editor up.
+* No ABI change: the `save_profile` one-shot and its reasons are the same.
+
+Tests: `backing_out_of_the_grid_saves_the_class`, `an_over_budget_draft_backs_out_unsaved_with_the_deny`,
+`the_editor_has_no_name_field` (classmenu); `backing_out_of_an_untouched_editor_writes_nothing`,
+`a_sixth_class_is_refused_and_the_back_out_still_leaves` (menu); the grid-link table and the
+shell save tests now go through Escape.

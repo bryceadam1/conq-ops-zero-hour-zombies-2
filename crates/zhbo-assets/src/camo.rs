@@ -255,6 +255,24 @@ pub struct Summary {
     pub unresolved: Vec<String>,
     /// Camo assets no def or unique points at (no part wears them): no blob.
     pub unreferenced: Vec<String>,
+    /// Per asset, the options whose art this install converted ([`zhbo_native::camo::Camo::has_art`]):
+    /// what [`offer_what_converted`] keeps of a weapon's DLC rows (keyed by the def's own
+    /// `weaponCamo`, `WeaponDef::camo_material`).
+    pub with_art: BTreeMap<String, BTreeSet<String>>,
+}
+
+/// Trim each weapon's camo list to what the install can draw: the base tab's rows stay (BO2 lists
+/// them on every gun and they all resolve), a DLC/DLC2 row stays only when the weapon's own camo
+/// asset converted art for it. BO2 lists the store rows the player owns or can buy
+/// (`ShouldDisplayWeaponOptionMTX`); the mod's equivalent of "owned" is "its art is in this install".
+pub fn offer_what_converted(table: &mut zhbo_core::weapons::Table, with_art: &BTreeMap<String, BTreeSet<String>>) {
+    let tab: std::collections::HashMap<&str, zhbo_core::weapons::OptionTab> = table.camo.iter().map(|c| (c.id.as_str(), c.tab)).collect();
+    for w in &mut table.weapons {
+        let art = with_art.get(&w.camo_material);
+        w.camo.retain(|id| {
+            tab.get(id.as_str()).is_none_or(|t| *t == zhbo_core::weapons::OptionTab::Base) || art.is_some_and(|a| a.contains(id))
+        });
+    }
 }
 
 /// Build every camo blob and write it beside the art: one per asset a def or unique points at.
@@ -273,8 +291,9 @@ pub(crate) fn files(
     out: &mut BTreeMap<String, Vec<u8>>,
 ) -> Result<Summary, String> {
     let art = art(common, patch, inline, paks, sets, out);
-    let mut summary = Summary { assets: 0, images: art.images.len(), styles: art.materials.len(), unresolved: art.unresolved.clone(), unreferenced: Vec::new() };
+    let mut summary = Summary { assets: 0, images: art.images.len(), styles: art.materials.len(), unresolved: art.unresolved.clone(), unreferenced: Vec::new(), with_art: BTreeMap::new() };
     let wanted = referenced(bo2w);
+    let base_tab = |id: &str| table.camo.iter().find(|c| c.id == id).is_none_or(|c| c.tab == zhbo_core::weapons::OptionTab::Base);
     for c in sets {
         if !wanted.contains(c.name.as_str()) {
             summary.unreferenced.push(c.name.clone());
@@ -282,7 +301,9 @@ pub(crate) fn files(
         }
         let camo_ids: Vec<String> = match table.weapons.iter().find(|w| w.camo_material == c.name) {
             Some(w) => w.camo.clone(),
-            None => table.camo.iter().take(crate::weapons::BASE_CAMO_OPTIONS).map(|c| c.id.clone()).collect(),
+            // An attachment's asset (or a weapon the player table filters) indexes the same one
+            // class choice as the gun: every row, so a DLC camo paints the optic too.
+            None => table.camo.iter().map(|c| c.id.clone()).collect(),
         };
         let mut blob = zhbo_native::camo::Camo {
             name: c.name.clone(),
@@ -320,11 +341,15 @@ pub(crate) fn files(
             let (stem, family) = OPTION_ART.iter().find(|(o, _, _)| o == id).map(|(_, s, f)| (*s, *f)).unwrap_or((None, None));
             let pattern = stem.and_then(|s| pattern_slot(c, s));
             let style = family.and_then(|f| style_slot(c, f));
-            if id != "camo_none" && pattern.is_none() && style.is_none() {
+            // A DLC row without art is expected (the install lacks that pack); the class screen
+            // simply does not offer it ([`offer_what_converted`]).
+            if id != "camo_none" && pattern.is_none() && style.is_none() && base_tab(id) {
                 summary.unresolved.push(format!("{}: {id} has no art", c.name));
             }
             blob.options.push(zhbo_native::camo::CamoOption { id: id.clone(), pattern, style });
         }
+        let painted: BTreeSet<String> = blob.options.iter().filter(|o| blob.has_art(&o.id)).map(|o| o.id.clone()).collect();
+        summary.with_art.insert(c.name.clone(), painted);
         out.insert(zhbo_native::camo_path(&c.name), blob.to_bytes());
         summary.assets += 1;
     }

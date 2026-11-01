@@ -6,7 +6,6 @@ use super::*;
 /// screen reads exactly like the resulting class. Display names, not ids; `—` when a slot is empty.
 pub fn slot_value(d: &Draft, slot: Slot) -> String {
     match slot {
-        Slot::Name => if d.name.is_empty() { "—".into() } else { d.name.clone() },
         Slot::Primary => weapons::weapon(&d.primary).display_name.clone(),
         Slot::Secondary => weapons::weapon(&d.secondary).display_name.clone(),
         Slot::PrimaryAtts => att_names(&d.primary_atts),
@@ -28,7 +27,6 @@ pub fn slot_value(d: &Draft, slot: Slot) -> String {
                 d.wildcards.iter().map(|w| w.name()).collect::<Vec<_>>().join(", ")
             }
         }
-        Slot::Save => String::new(),
     }
 }
 

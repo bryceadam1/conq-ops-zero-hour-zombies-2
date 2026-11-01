@@ -9,13 +9,20 @@ pub struct Editor {
     pub draft: Draft,
     /// The highlighted slot.
     pub slot: Slot,
+    /// Which bonus card is highlighted while `slot` is [`Slot::Wildcards`] (BO2's three
+    /// `bonusCardButtons` are separate focuses); 0 otherwise.
+    pub card: usize,
+    /// The grid's focus links and the back-links this session's moves wrote (`nav.rs`).
+    pub nav: nav::Nav,
+    /// The weapon carousel's per-category card (BO2 keeps one `CardCarousel` per category for the
+    /// menu's life, so a category is re-entered on the card it was left on,
+    /// `cardcarousellist.lua:723-772`): option indices, by category position. Cleared when a
+    /// picker opens.
+    pub carousel: Vec<Option<usize>>,
     /// The highlighted option within the slot's list.
     pub option: usize,
     /// Whether the slot's option list is open (picking) or the slot row is just highlighted.
     pub picking: bool,
-    /// Whether the class-name row has text entry (BO2's name field): printable keys edit the name
-    /// instead of moving the highlight, and Enter/Escape leave it.
-    pub naming: bool,
     /// One-shot: the last confirm was refused (over budget, or an attachment at its cap). The
     /// caller plays BO2's deny cue and clears this; the state itself stays pure.
     pub denied: bool,
@@ -32,6 +39,8 @@ pub struct Editor {
 pub struct PointerEvent {
     /// Hovered slot row (an index into [`Editor::slots`]).
     pub slot: Option<usize>,
+    /// Which bonus card of the card row the pointer is on (0 for any other row).
+    pub card: usize,
     /// Hovered option row (an index into [`Editor::options`]) while a list is open.
     pub option: Option<usize>,
     /// The left button went down this frame.
@@ -63,7 +72,53 @@ pub enum ApplyResult {
 
 impl Editor {
     pub fn new(draft: Draft) -> Editor {
-        Editor { draft, slot: Slot::Primary, option: 0, picking: false, naming: false, denied: false, personalize: None }
+        Editor {
+            draft,
+            slot: Slot::Primary,
+            card: 0,
+            nav: nav::Nav::default(),
+            carousel: Vec::new(),
+            option: 0,
+            picking: false,
+            denied: false,
+            personalize: None,
+        }
+    }
+
+    /// The highlighted box of the grid.
+    pub fn focus(&self) -> Focus {
+        Focus { slot: self.slot, card: if self.slot == Slot::Wildcards { self.card } else { 0 } }
+    }
+
+    /// The grid's focusable boxes this frame ([`Editor::slots`] with the three cards).
+    pub fn boxes(&self) -> Vec<Focus> {
+        nav::boxes(&self.slots())
+    }
+
+    /// Move the highlight onto box `f` (a key move or a hover) and run its `gain_focus` hook.
+    pub fn focus_on(&mut self, f: Focus) {
+        let boxes = self.boxes();
+        if !boxes.contains(&f) {
+            return;
+        }
+        if f != self.focus() {
+            self.option = 0;
+        }
+        self.slot = f.slot;
+        self.card = f.card;
+        self.nav.focused(&boxes, f);
+    }
+
+    /// Follow the grid link `dir` from the highlighted box (no link: nothing moves).
+    pub fn navigate(&mut self, dir: Dir) -> bool {
+        let boxes = self.boxes();
+        match self.nav.target(&boxes, self.focus(), dir) {
+            Some(t) => {
+                self.focus_on(t);
+                true
+            }
+            None => false,
+        }
     }
 
     /// The rows to draw and walk, in order: [`Slot::ALL`] with a second perk row spliced in after a
@@ -90,7 +145,6 @@ impl Editor {
     /// The lists are rebuilt on demand so a weapon change re-derives the attachment list.
     pub fn options(&self) -> Vec<String> {
         match self.slot {
-            Slot::Name => Vec::new(),
             Slot::Primary => weapon_options(&self.gun_list(true)),
             Slot::PrimaryAtts => attachment_options(&self.draft.primary),
             Slot::Secondary => weapon_options(&self.gun_list(false)),
@@ -101,7 +155,6 @@ impl Editor {
             Slot::Perk2 | Slot::Perk2b => perk_options(2),
             Slot::Perk3 | Slot::Perk3b => perk_options(3),
             Slot::Wildcards => wildcard_list().iter().map(|w| w.name().to_string()).collect(),
-            Slot::Save => Vec::new(),
         }
     }
 
@@ -128,7 +181,6 @@ impl Editor {
     /// attachment option is chosen when the weapon carries its short.
     pub fn option_chosen(&self, i: usize) -> bool {
         match self.slot {
-            Slot::Name => false,
             Slot::Primary => self.gun_list(true).get(i).is_some_and(|id| *id == self.draft.primary),
             Slot::Secondary => self.gun_list(false).get(i).is_some_and(|id| *id == self.draft.secondary),
             Slot::PrimaryAtts => {
@@ -147,7 +199,6 @@ impl Editor {
                 list.get(i).is_some_and(|p| self.draft.perks[idx] == Some(*p) || self.draft.extra_perks[idx] == Some(*p))
             }
             Slot::Wildcards => wildcard_list().get(i).is_some_and(|w| self.draft.wildcards.contains(w)),
-            Slot::Save => false,
         }
     }
 
@@ -194,8 +245,13 @@ impl Editor {
 pub enum Outcome {
     /// The editor stays open; the caller keeps drawing it.
     Continue,
-    /// The player confirmed a valid class: the caller saves it to the profile and closes.
+    /// The player backed out of the grid with a valid class: the caller saves it to the profile
+    /// and closes. BO2 has no save step: every pick is written into the class as it is made
+    /// (`Engine.SetClassItem`, `caceditclass.lua:472-548`) and `CACEditClass.Back` only closes
+    /// (`:642-653`), so backing out keeps the edits.
     Save,
-    /// The player cancelled: the caller closes without saving.
+    /// The editor closes without saving: a draft over the budget (one loaded that way, since every
+    /// pick that would break it is refused) backs out with the deny cue and the stored class
+    /// untouched.
     Cancel,
 }

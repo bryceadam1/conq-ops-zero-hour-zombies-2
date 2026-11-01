@@ -74,9 +74,30 @@ verify it by hand after touching the menu ABI, the shell window, or the shared c
 3. Browse with the mouse (hover highlights, the wheel scrolls) and the arrows: the list is the
    active set's five custom slots (`cacchooseclass.lua`) — **Enter/click on a filled row** opens
    the editor on that class; on an untouched **`Custom n`** row opens a fresh draft. **Escape** in
-   the editor returns to the list.
-4. Edit something, walk to **SAVE CLASS**, confirm: `ConquerOps.profile` (in the game's user-data
-   directory) is rewritten with the new class, and the list shows it highlighted.
+   the editor returns to the list and keeps the edits (BO2 has no save step); the editor has no
+   name field or SAVE row. **`A`/`D`** page the class sets (BO2's shoulder buttons), as do
+   clicks on the `‹`/`›` arrows and on a pip; **Left/Right do nothing** on the list.
+   Navigation parity (BO2's LUI links, `classmenu/nav.rs`), check by hand:
+   - Editor grid: Up/Down walk a column and wrap through the bonus-card row (left column via
+     cards 1-2, right column via card 3); Left/Right jump
+     between PRIMARY↔PERK 1/2, PRIMARY ATTS↔PERK 3, SECONDARY↔LETHAL, SECONDARY ATTS↔TACTICAL; going
+     PERK 2 → Left → Right returns to PERK 2; the three cards are separate highlights walked with
+     Left/Right (no wrap); the wheel moves like Up/Down; hovering a box highlights it.
+   - Weapon picker: Left/Right walk the guns and stop at the category's ends; Up/Down and the
+     wheel change category (wrapping) and come back to the gun last shown there; hovering a tile
+     does nothing, clicking a tile makes it the big card, clicking the big card equips it.
+   - Option grids (attachments, perks, grenades, wildcards, camo/reticle): one wheel notch moves
+     one row; Left/Right wrap within a row.
+   - The S/O dialogs: hover highlights an entry, the wheel walks them.
+   - Camo (`C` on PRIMARY): every tile shows its thumbnail; the title reads `PERSONALIZE <GUN>`;
+     the tabs (CAMO, DLC, DLC2 when the install has a DLC2 camo) page with `A`/`D` (wrapping) and
+     by clicking a tab; the panel under the grid shows the focused camo's name, the gun's picture
+     and the `Equipped` box. Equip a camo: the editor's PRIMARY button and the class list's preview
+     show its swatch in the corner; the reticle page has the same RETICLES/DLC tabs.
+4. Edit something and press **Escape**: `ConquerOps.profile` (in the game's user-data directory) is
+   rewritten with the new class, and the list shows it highlighted. Opening an untouched slot and
+   backing out writes nothing (the slot stays `Custom n`). Rename a class with **O** → RENAME (the
+   only rename): type, Enter, and the list and profile show the new name.
 5. On a custom row: **C** copies it (`NAME COPY` appears), **Backspace** deletes it — both rewrite
    the profile file.
 6. **Escape** on the list closes back to the skirmish lobby (and the lobby's Escape works again).
@@ -88,7 +109,9 @@ verify it by hand after touching the menu ABI, the shell window, or the shared c
    take-control. `scripts/autotest-mac.sh --classpick` covers that flow.
 
 Unit tests drive the same screen headlessly through `MenuState` (`crates/zhbo-core/src/menu.rs`:
-browse → edit → save → file text out; delete; copy; close), and the FFI layer
+browse → edit → save → file text out; delete; copy; close; the set pager's keys and clicks), the
+navigation through `classmenu/tests.rs` (every BO2 grid link, the back-links) and
+`classui/tests.rs` (carousel axes and mouse, wheel per screen, card focus), and the FFI layer
 (`crates/zhbo-core/src/ffi.rs`: open/frame/close, and `zhbo_reset` dropping the screen). The
 command-bar class buttons are covered headlessly the same way: `client::tests` drives a
 `ZhboClientIn.class_button` one-shot through `Client::frame` into `Sim::choose_class` and asserts

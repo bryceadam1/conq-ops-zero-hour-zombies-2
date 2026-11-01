@@ -111,6 +111,7 @@ fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> 
         ("cac-editor-overkill", overkill_secondary_prims()),
         ("cac-editor-danger-close-x2", danger_close_prims(true)),
         ("cac-personalize", personalize_prims()),
+        ("cac-personalize-dlc", personalize_tab_prims(1)),
         ("cac-reticles", reticle_personalize_prims()),
         ("cac-reticle-color", reticle_color_personalize_prims()),
         ("cac-dialog-set", set_dialog_prims()),
@@ -176,8 +177,18 @@ fn editor_prims() -> Vec<Prim> {
 fn personalize_prims() -> Vec<Prim> {
     let mut editor = editor_state();
     editor.picking = false;
-    let choices = classui::personalize_choices_for(PersonalizeKind::Camo, Some(editor.draft.primary.as_str()));
-    let p = Personalize::new(PersonalizeKind::Camo, choices, &editor.draft);
+    let tabs = classui::personalize_tabs_for(PersonalizeKind::Camo, Some(editor.draft.primary.as_str()));
+    let p = Personalize::with_tabs(PersonalizeKind::Camo, tabs, &editor.draft);
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// The camo screen on tab `tab` (`D` pages right, as BO2's `shoulderr`).
+fn personalize_tab_prims(tab: i32) -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.picking = false;
+    let tabs = classui::personalize_tabs_for(PersonalizeKind::Camo, Some(editor.draft.primary.as_str()));
+    let mut p = Personalize::with_tabs(PersonalizeKind::Camo, tabs, &editor.draft);
+    p.step_tab(tab);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
@@ -186,8 +197,8 @@ fn personalize_prims() -> Vec<Prim> {
 fn reticle_personalize_prims() -> Vec<Prim> {
     let mut editor = editor_state();
     editor.picking = false;
-    let choices = classui::personalize_choices_for(PersonalizeKind::Reticle, Some(editor.draft.primary.as_str()));
-    let p = Personalize::new(PersonalizeKind::Reticle, choices, &editor.draft);
+    let tabs = classui::personalize_tabs_for(PersonalizeKind::Reticle, Some(editor.draft.primary.as_str()));
+    let p = Personalize::with_tabs(PersonalizeKind::Reticle, tabs, &editor.draft);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
@@ -195,8 +206,8 @@ fn reticle_personalize_prims() -> Vec<Prim> {
 fn reticle_color_personalize_prims() -> Vec<Prim> {
     let mut editor = editor_state();
     editor.picking = false;
-    let choices = classui::personalize_choices_for(PersonalizeKind::ReticleColor, Some(editor.draft.primary.as_str()));
-    let p = Personalize::new(PersonalizeKind::ReticleColor, choices, &editor.draft);
+    let tabs = classui::personalize_tabs_for(PersonalizeKind::ReticleColor, Some(editor.draft.primary.as_str()));
+    let p = Personalize::with_tabs(PersonalizeKind::ReticleColor, tabs, &editor.draft);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
@@ -377,7 +388,8 @@ fn editor_state() -> Editor {
         extra_perks: [Some(Perk::FLAK_JACKET), None, None],
         wildcards: vec![Wildcard::Perk1Greed],
         reserve: [0, 0],
-        camo: String::new(),
+        // A-TACS AU: the PRIMARY button's swatch and the camo page's Equipped box show it.
+        camo: "camo_atacs".into(),
         reticle: String::new(),
         reticle_color: String::new(),
         knife: String::new(),
@@ -385,9 +397,10 @@ fn editor_state() -> Editor {
     let mut editor = Editor::new(draft);
     let mut prev = MenuPrev::default();
     let mut pointer = MenuPointer { screen_w: size().0, screen_h: size().1, ..Default::default() };
-    // Enter opens the Primary list; the two Downs walk it to a different gun, whose stat bars the
-    // view then shows.
-    for key in [Key::Enter, Key::Down, Key::Down] {
+    // Enter opens the Primary list; the two Rights walk the carousel to a different gun of the
+    // category (BO2's Left/Right are the guns, Up/Down the categories), whose stat bars the view
+    // then shows.
+    for key in [Key::Enter, Key::Right, Key::Right] {
         pointer.keys = KeySet::default();
         pointer.keys.set_down(key, true);
         classui::editor_frame(&mut editor, &pointer, &prev);
@@ -604,10 +617,11 @@ mod tests {
         // The personalize screen carries BO2's title and the six-column grid, `None` first.
         let personalize = personalize_prims();
         let personalize_text = texts(&personalize);
-        assert!(personalize_text.contains(&"CAMO"), "the personalize title draws: {personalize_text:?}");
+        assert!(personalize_text.contains(&"PERSONALIZE MP7"), "the personalize title draws (`MPUI_PERSONALIZE_N`): {personalize_text:?}");
         assert!(personalize_text.contains(&"None"), "the first camo cell draws: {personalize_text:?}");
-        assert!(personalize_text.contains(&"EQUIPPED"), "the Equipped label draws: {personalize_text:?}");
-        assert!(personalize_text.contains(&"MP7"), "the weapon preview draws: {personalize_text:?}");
+        assert!(personalize_text.contains(&"Equipped"), "the Equipped box draws: {personalize_text:?}");
+        let personalize_images: Vec<&str> = personalize.iter().filter_map(|p| if let Prim::Image { name, .. } = p { Some(name.as_str()) } else { None }).collect();
+        assert!(personalize_images.contains(&zhbo_core::names::cac_weapon_image("mp7_mp").as_str()), "the weapon's `_big` picture draws: {personalize_images:?}");
         assert!(personalize_text.contains(&"Back"), "the ESC Back prompt draws: {personalize_text:?}");
 
         // The reticle/colour screens carry BO2's titles and prompts; each reticle cell is the

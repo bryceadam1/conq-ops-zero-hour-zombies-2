@@ -27,7 +27,6 @@ impl Editor {
     /// attachment picks toggle; perk picks set the tier row; wildcard picks toggle.
     pub(super) fn apply_option(&mut self, i: usize) -> bool {
         match self.slot {
-            Slot::Name => {}
             Slot::Primary => {
                 let ids = self.gun_list(true);
                 if let Some(id) = ids.get(i).copied() {
@@ -88,7 +87,6 @@ impl Editor {
                     }
                 }
             }
-            Slot::Save => {}
         }
         true
     }

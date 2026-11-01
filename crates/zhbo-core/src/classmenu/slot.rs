@@ -3,8 +3,6 @@
 /// One editable slot of the class.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Slot {
-    /// BO2's "Class Name" row at the top: Enter starts text entry on it.
-    Name,
     Primary,
     PrimaryAtts,
     Secondary,
@@ -21,17 +19,16 @@ pub enum Slot {
     Perk2b,
     Perk3b,
     Wildcards,
-    /// BO2's final row: confirming it saves the class and leaves the editor. It has no option list.
-    Save,
 }
 
 impl Slot {
-    /// Every slot, in BO2's create-a-class order. `Save` is the row below the elements, so it is
-    /// last in the walk and the arrows wrap from it back to the name. The second perk rows
+    /// Every slot, in BO2's create-a-class order (the draw and hit-test order; the arrows follow the
+    /// grid's links, `nav.rs`, not this order). The editor has no name or save row: BO2 renames a
+    /// class from its options dialog (`cacclassoptions.lua:183-192`) and backing out keeps the
+    /// edits (`caceditclass.lua:642-653`). The second perk rows
     /// ([`Slot::Perk1b`] and its siblings) are *not* here: they only exist while their Greed wildcard
     /// is on, so the editor's [`Editor::slots`] inserts them into a copy of this list.
-    pub const ALL: [Slot; 12] = [
-        Slot::Name,
+    pub const ALL: [Slot; 10] = [
         Slot::Primary,
         Slot::PrimaryAtts,
         Slot::Secondary,
@@ -42,13 +39,11 @@ impl Slot {
         Slot::Perk2,
         Slot::Perk3,
         Slot::Wildcards,
-        Slot::Save,
     ];
 
     /// BO2's header for the slot. The second perk rows read as their tier's header.
     pub fn label(self) -> &'static str {
         match self {
-            Slot::Name => "CLASS NAME",
             Slot::Primary => "PRIMARY",
             Slot::PrimaryAtts => "ATTACHMENTS",
             Slot::Secondary => "SECONDARY",
@@ -61,7 +56,6 @@ impl Slot {
             // BO2 calls the items `bonuscard_*` internally but the screen is `MENU_WILDCARDS_CAPS`
             // (`menus/cacbonuscards.lua`), so the picker titles itself WILDCARDS.
             Slot::Wildcards => "WILDCARDS",
-            Slot::Save => "SAVE CLASS",
         }
     }
 
@@ -96,7 +90,7 @@ impl Slot {
             | Slot::Perk2b
             | Slot::Perk3b
             | Slot::Wildcards => Some(3),
-            Slot::Name | Slot::Primary | Slot::Secondary | Slot::Save => None,
+            Slot::Primary | Slot::Secondary => None,
         }
     }
 }

@@ -8,9 +8,6 @@ impl Editor {
     pub fn step(&mut self, edges: Edges) -> Outcome {
         self.denied = false;
         self.personalize = None;
-        if self.naming {
-            return self.step_naming(edges);
-        }
         if self.picking {
             return self.step_picking(edges);
         }
@@ -30,42 +27,39 @@ impl Editor {
             self.personalize = Some(PersonalizeKind::Reticle);
             return Outcome::Continue;
         }
-        // The slot row is highlighted: up/down move the highlight, Enter opens the list.
-        if edges.up {
-            self.slot = self.prev_slot(self.slot);
-            self.option = 0;
-        }
-        if edges.down {
-            self.slot = self.next_slot(self.slot);
-            self.option = 0;
+        // A box is highlighted: the arrows follow BO2's grid links (`nav.rs`), Enter opens the list.
+        for (pressed, dir) in [(edges.up, Dir::Up), (edges.down, Dir::Down), (edges.left, Dir::Left), (edges.right, Dir::Right)] {
+            if pressed {
+                self.navigate(dir);
+            }
         }
         if edges.confirm {
             return self.confirm();
         }
         if edges.cancel {
-            return Outcome::Cancel;
+            return self.back_out();
         }
         Outcome::Continue
     }
 
-    /// Confirm the highlighted row, the shared body of Enter and a click on a row: Save leaves the
-    /// editor (only when the draft fits the budget), the name row starts text entry, everything else
-    /// opens its option list on the current choice.
-    pub(super) fn confirm(&mut self) -> Outcome {
-        if self.slot == Slot::Save {
-            // BO2 refuses an over-budget save; surface it rather than closing silently.
-            if self.draft.valid() {
-                return Outcome::Save;
-            }
+    /// Escape on the grid: BO2's back-out keeps the class (see [`Outcome::Save`]). Only a draft
+    /// that breaks the budget cannot be kept; it closes unsaved with the deny cue rather than
+    /// trapping the player in the editor.
+    pub(super) fn back_out(&mut self) -> Outcome {
+        if self.draft.valid() {
+            Outcome::Save
+        } else {
             self.denied = true;
-            return Outcome::Continue;
+            Outcome::Cancel
         }
-        if self.slot == Slot::Name {
-            self.naming = true;
-            return Outcome::Continue;
-        }
+    }
+
+    /// Confirm the highlighted box, the shared body of Enter and a click on it: open its option list
+    /// on the current choice.
+    pub(super) fn confirm(&mut self) -> Outcome {
         self.picking = true;
         self.option = self.current_option_index();
+        self.carousel.clear();
         Outcome::Continue
     }
 
@@ -75,17 +69,11 @@ impl Editor {
     /// resting somewhere; a click always acts on the row under the cursor.
     pub fn step_pointer(&mut self, pointer: PointerEvent) -> Outcome {
         self.denied = false;
-        if self.naming {
-            // Clicking away leaves the name field; it never cancels the editor.
-            if pointer.click {
-                self.naming = false;
-            }
-            return Outcome::Continue;
-        }
         if self.picking {
             let n = self.options().len();
+            // The wheel is LUI's Up/Down (t6mp `FUN_009376a0`): a grid row per notch.
             if pointer.wheel != 0 && n > 0 {
-                self.option = (self.option as i32 + pointer.wheel).rem_euclid(n as i32) as usize;
+                self.step_rows(pointer.wheel, n);
             }
             if pointer.moved {
                 if let Some(i) = pointer.option {
@@ -102,30 +90,20 @@ impl Editor {
                         }
                         self.picking = false;
                     }
-                } else if let Some(i) = pointer.slot {
-                    // A click outside the open list returns to the row walk and confirms that row.
-                    if let Some(slot) = self.slots().get(i).copied() {
-                        self.slot = slot;
-                        self.option = 0;
-                        self.picking = false;
-                        return self.confirm();
-                    }
                 }
+                // A click beside the open list does nothing: the picker owns the screen.
             }
             return Outcome::Continue;
         }
-        if pointer.wheel != 0 {
-            let list = self.slots();
-            let i = list.iter().position(|s| *s == self.slot).unwrap_or(0) as i32;
-            self.slot = list[(i + pointer.wheel).rem_euclid(list.len() as i32) as usize];
-            self.option = 0;
+        // The wheel is LUI's Up/Down (t6mp `FUN_009376a0`): one grid link per notch.
+        for _ in 0..pointer.wheel.unsigned_abs() {
+            self.navigate(if pointer.wheel > 0 { Dir::Down } else { Dir::Up });
         }
+        // Hover focuses the box (`luielement.lua:316-348`, running its `gain_focus` hook); a click
+        // activates it (`luibutton.lua:106-128`).
         if pointer.moved || pointer.click {
-            if let Some(i) = pointer.slot {
-                if let Some(slot) = self.slots().get(i).copied() {
-                    self.slot = slot;
-                    self.option = 0;
-                }
+            if let Some(f) = self.pointer_box(&pointer) {
+                self.focus_on(f);
             }
         }
         if pointer.click && pointer.slot.is_some() {
@@ -134,36 +112,22 @@ impl Editor {
         Outcome::Continue
     }
 
-    /// The name row has text entry: printable keys append, Backspace deletes, Enter/Escape leave
-    /// the field (the text stays either way; Escape does not cancel the whole editor while naming).
-    pub(super) fn step_naming(&mut self, edges: Edges) -> Outcome {
-        for key in &edges.typed {
-            if let Some(c) = char_of(*key) {
-                if self.draft.name.chars().count() < NAME_MAX {
-                    self.draft.name.push(c);
-                }
-            }
-        }
-        if edges.backspace {
-            self.draft.name.pop();
-        }
-        if edges.confirm || edges.cancel {
-            self.naming = false;
-        }
-        Outcome::Continue
+    /// The box a pointer frame hit: its row in [`Editor::slots`], and the card on the card row.
+    pub(super) fn pointer_box(&self, pointer: &PointerEvent) -> Option<Focus> {
+        let slot = self.slots().get(pointer.slot?).copied()?;
+        Some(Focus { slot, card: if slot == Slot::Wildcards { pointer.card } else { 0 } })
     }
 
-    /// The rows to walk, in order: [`Editor::slots`].
-    pub(super) fn next_slot(&self, s: Slot) -> Slot {
-        let list = self.slots();
-        let i = list.iter().position(|x| *x == s).unwrap_or(0);
-        list[(i + 1) % list.len()]
-    }
-
-    pub(super) fn prev_slot(&self, s: Slot) -> Slot {
-        let list = self.slots();
-        let i = list.iter().position(|x| *x == s).unwrap_or(0);
-        list[(i + list.len() - 1) % list.len()]
+    /// Walk the open list `rows` rows (positive down) by the grid's column links, or by one
+    /// option per step in a list without a grid.
+    pub(super) fn step_rows(&mut self, rows: i32, n: usize) {
+        for _ in 0..rows.unsigned_abs() {
+            self.option = match self.slot.option_columns() {
+                Some(cols) if rows > 0 => grid_down(self.option, n, cols),
+                Some(cols) => grid_up(self.option, n, cols),
+                None => (self.option as i32 + rows.signum()).rem_euclid(n as i32) as usize,
+            };
+        }
     }
 
     /// The option list is open: the arrows move, Enter picks, Escape closes the list (one step
@@ -239,7 +203,6 @@ impl Editor {
     /// The index in the option list of the slot's current value (so the list opens on it).
     pub(super) fn current_option_index(&self) -> usize {
         match self.slot {
-            Slot::Name => 0,
             Slot::Primary | Slot::Secondary => self.weapon_open_index(),
             // BO2 focuses the button of the attachment the chosen slot holds, else the first
             // (`cacattachmentsmenu.lua:855-879`, `attachmentIndexToReplace`): the row's first.
@@ -251,7 +214,6 @@ impl Editor {
             Slot::Perk2 | Slot::Perk2b => perk_index(2, self.perk_held(2)),
             Slot::Perk3 | Slot::Perk3b => perk_index(3, self.perk_held(3)),
             Slot::Wildcards => 0,
-            Slot::Save => 0,
         }
     }
 

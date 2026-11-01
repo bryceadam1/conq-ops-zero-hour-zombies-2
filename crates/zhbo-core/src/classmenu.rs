@@ -35,6 +35,9 @@ use items::{equipment_ids, gun_ids};
 pub mod legal;
 /// Which weapons the editor offers in which slot (BO2's statstable items).
 pub mod items;
+/// BO2's LUI focus links between the editor's boxes ([`Dir`], [`Focus`]).
+pub mod nav;
+pub use nav::{Dir, Focus};
 
 // The editor, one concern per file; everything public is re-exported here, so callers keep
 // naming `classmenu::Draft`, `classmenu::Editor` and the rest.
@@ -74,7 +77,8 @@ pub use wildcard::*;
 /// The Pick-10 budget: ten points per class, exactly BO2's.
 pub const PICK_10: i32 = 10;
 
-/// The longest class name the editor's name field accepts (BO2's field is a short one line).
+/// The longest class name the class-options rename field accepts (BO2's keyboard field is a short
+/// one line).
 pub const NAME_MAX: usize = 24;
 
 /// The editor's tests live in their own file.

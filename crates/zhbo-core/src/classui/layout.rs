@@ -45,7 +45,8 @@ pub const ATTACH_PANEL_TOP: f32 = 414.0;
 /// The editor's geometry: the class name as the heading (Big), the allocation bar under it
 /// (element top 3, 10 tall across the menu's width), then the left column (PRIMARY, ATTACHMENTS,
 /// SECONDARY, ATTACHMENTS, WILDCARDS) and the right one (PERK 1-3, LETHAL, TACTICAL) of
-/// `customclass.lua`, the mod's SAVE CLASS under them, the prompts at the menu's bottom.
+/// `customclass.lua`, the prompts at the menu's bottom. The heading is not a box: BO2 renames a
+/// class from its options dialog, and backing out saves (there is no SAVE row).
 #[derive(Clone, Copy, Debug)]
 pub struct EditorLayout {
     pub frame: Frame,
@@ -63,8 +64,6 @@ pub struct EditorLayout {
     /// The WILDCARDS label (ExtraSmall) and its three cards across the menu.
     pub wildcards_label: Rect,
     pub wildcards: [Rect; 3],
-    /// The mod's own SAVE CLASS row (BO2 saves on back-out): below the grid, right column.
-    pub save: Rect,
 }
 
 pub fn editor_layout(w: f32, h: f32) -> EditorLayout {
@@ -90,7 +89,6 @@ pub fn editor_layout(w: f32, h: f32) -> EditorLayout {
         tactical: at(RIGHT_X, 25.0 + row4, RIGHT_W, BUTTON_H),
         wildcards_label: at(2.0, 25.0 + wild_label_y, bo2::MENU_W, bo2::TEXT_EXTRA_SMALL),
         wildcards: [0, 1, 2].map(|i| at(i as f32 * (card_w + GRID_GAP), 25.0 + wild_y, card_w, BUTTON_H)),
-        save: at(RIGHT_X, 25.0 + wild_y + BUTTON_H + GRID_GAP, RIGHT_W, 36.0),
     }
 }
 
@@ -134,8 +132,6 @@ pub fn editor_cells(l: &EditorLayout, editor: &Editor) -> Vec<EditorCell> {
     let d = &editor.draft;
     let mut out: Vec<EditorCell> = Vec::with_capacity(22);
     let mut cell = |slot, index, rect| out.push(EditorCell { slot, index, rect });
-    // The heading is the class-name row (BO2's editor titles the screen with the class name).
-    cell(Slot::Name, 0, l.title);
     cell(Slot::Primary, 0, l.primary);
     // The attachment plates sit right of their label in the row's slot list, BO2's grid. A weapon
     // that offers no attachments has no plates at all ("Attachments not available", b-editor/002).
@@ -169,7 +165,6 @@ pub fn editor_cells(l: &EditorLayout, editor: &Editor) -> Vec<EditorCell> {
     for (i, r) in l.wildcards.iter().enumerate() {
         cell(Slot::Wildcards, i, *r);
     }
-    cell(Slot::Save, 0, l.save);
     out
 }
 
@@ -185,22 +180,27 @@ pub fn remove_rect(cell: &EditorCell) -> Rect {
     Rect { x: cell.rect.right() - d * 0.5, y: cell.rect.y - d * 0.5, w: d, h: d }
 }
 
-/// The `(slot, box)` a click clears at this point: only the selected slot's filled boxes carry the
-/// `X` (BO2 shows it on the highlighted slot alone).
+/// The `(slot, box)` a click clears at this point: only the highlighted box's filled plates carry
+/// the `X` (BO2 shows it on the highlighted button alone).
 pub fn editor_remove_at(l: &EditorLayout, cells: &[EditorCell], editor: &Editor, x: f32, y: f32) -> Option<(Slot, usize)> {
     cells.iter().find_map(|c| {
-        if c.slot != editor.slot || !cell_filled(editor, c) {
+        if !cell_focused(editor, c) || !cell_filled(editor, c) {
             return None;
         }
         bo2::hit(&l.frame, remove_rect(c), x, y).then_some((c.slot, c.index))
     })
 }
 
+/// Whether a box is the highlighted one: its slot is, and on the card row it is the highlighted
+/// card (each bonus card is its own button, `customclass.lua:772-802`).
+pub fn cell_focused(editor: &Editor, cell: &EditorCell) -> bool {
+    cell.slot == editor.slot && (cell.slot != Slot::Wildcards || cell.index == editor.card)
+}
+
 /// Whether a box holds something (so it draws a value and can be removed).
 pub fn cell_filled(editor: &Editor, cell: &EditorCell) -> bool {
     let d = &editor.draft;
     match cell.slot {
-        Slot::Name => !d.name.trim().is_empty(),
         Slot::Primary => !d.primary.is_empty(),
         Slot::PrimaryAtts => d.primary_atts.get(cell.index).is_some(),
         Slot::Secondary => !d.secondary.is_empty(),
@@ -214,7 +214,6 @@ pub fn cell_filled(editor: &Editor, cell: &EditorCell) -> bool {
             d.extra_perks[(cell.slot.perk_tier().unwrap_or(1) as usize) - 1].is_some()
         }
         Slot::Wildcards => d.wildcards.get(cell.index).is_some(),
-        Slot::Save => false,
     }
 }
 

@@ -263,38 +263,136 @@ use super::items::cac_entries;
         assert_eq!(l.perks, vec![Perk::FLAK_JACKET]);
     }
 
-    #[test]
-    fn slot_navigation_wraps_around_bo2s_order() {
-        let e = Editor::new(Draft::default());
-        assert_eq!(e.next_slot(Slot::Name), Slot::Primary);
-        assert_eq!(e.next_slot(Slot::Primary), Slot::PrimaryAtts);
-        // The first row wraps up to the Save row, and Save wraps down to the first row.
-        assert_eq!(e.prev_slot(Slot::Name), Slot::Save);
-        assert_eq!(e.next_slot(Slot::Wildcards), Slot::Save);
-        assert_eq!(e.next_slot(Slot::Save), Slot::Name);
-        assert_eq!(e.prev_slot(Slot::Save), Slot::Wildcards);
-        // Walk the whole list and come back.
-        let mut s = Slot::Name;
-        for _ in 0..Slot::ALL.len() {
-            s = e.next_slot(s);
+    /// Walk `e` along `dirs` and return where it lands.
+    fn walk(e: &mut Editor, dirs: &[Dir]) -> Focus {
+        for d in dirs {
+            e.navigate(*d);
         }
-        assert_eq!(s, Slot::Name);
+        e.focus()
     }
 
     #[test]
-    fn the_save_row_confirms_into_a_save_and_has_no_list() {
+    fn the_editor_grid_follows_bo2s_links() {
+        // `customclass.lua:863-991`, through the pure editor's key fold, from every box. The grid is
+        // BO2's alone: no name or save row is spliced in, so the column cycles close on the cards.
+        use Dir::*;
+        let s = Focus::slot;
+        let cases: &[(Focus, Dir, Focus)] = &[
+            (s(Slot::Primary), Up, Focus::card(0)),
+            (s(Slot::Primary), Down, s(Slot::PrimaryAtts)),
+            (s(Slot::Primary), Right, s(Slot::Perk1)),
+            (s(Slot::PrimaryAtts), Down, s(Slot::Secondary)),
+            (s(Slot::PrimaryAtts), Left, s(Slot::Perk3)),
+            (s(Slot::PrimaryAtts), Right, s(Slot::Perk3)),
+            (s(Slot::Secondary), Down, s(Slot::SecondaryAtts)),
+            (s(Slot::Secondary), Right, s(Slot::Lethal)),
+            (s(Slot::SecondaryAtts), Down, Focus::card(0)),
+            (s(Slot::SecondaryAtts), Right, s(Slot::Tactical)),
+            (s(Slot::Perk1), Up, Focus::card(2)),
+            (s(Slot::Perk1), Down, s(Slot::Perk2)),
+            (s(Slot::Perk1), Left, s(Slot::Primary)),
+            (s(Slot::Perk2), Right, s(Slot::Primary)),
+            (s(Slot::Perk3), Down, s(Slot::Lethal)),
+            (s(Slot::Perk3), Left, s(Slot::PrimaryAtts)),
+            (s(Slot::Lethal), Left, s(Slot::Secondary)),
+            (s(Slot::Tactical), Down, Focus::card(2)),
+            (s(Slot::Tactical), Right, s(Slot::SecondaryAtts)),
+            (Focus::card(0), Up, s(Slot::SecondaryAtts)),
+            (Focus::card(0), Down, s(Slot::Primary)),
+            (Focus::card(0), Right, Focus::card(1)),
+            (Focus::card(1), Left, Focus::card(0)),
+            (Focus::card(1), Up, s(Slot::SecondaryAtts)),
+            (Focus::card(2), Up, s(Slot::Tactical)),
+            (Focus::card(2), Down, s(Slot::Perk1)),
+        ];
+        for (from, dir, to) in cases {
+            let mut e = Editor::new(Draft::default());
+            e.focus_on(*from);
+            assert_eq!(e.focus(), *from);
+            assert_eq!(walk(&mut e, &[*dir]), *to, "{from:?} {dir:?}");
+        }
+        // No link, no move: the card row's ends and the left column's Left.
+        for (from, dir) in [(Focus::card(0), Left), (Focus::card(2), Right), (s(Slot::Primary), Left)] {
+            let mut e = Editor::new(Draft::default());
+            e.focus_on(from);
+            assert!(!e.navigate(dir), "{from:?} {dir:?} has no link");
+            assert_eq!(e.focus(), from);
+        }
+    }
+
+    #[test]
+    fn the_column_jumps_return_to_the_box_they_came_from() {
+        use Dir::*;
+        // `Perk12Button_GainFocus`: PRIMARY's Right goes back to the perk last focused.
         let mut e = Editor::new(Draft::default());
-        e.slot = Slot::Save;
-        // The Save row carries no options, so it can never open a list.
-        assert!(e.options().is_empty());
-        // Confirming it leaves the editor with a save; a down edge walks off it to the first row.
-        assert_eq!(e.step(Edges { confirm: true, ..Default::default() }), Outcome::Save);
-        assert!(!e.picking, "the save row does not enter the list state");
-        assert_eq!(e.step(Edges { down: true, ..Default::default() }), Outcome::Continue);
-        assert_eq!(e.slot, Slot::Name);
-        // Escape still cancels (without saving).
-        e.slot = Slot::Save;
+        assert_eq!(walk(&mut e, &[Right, Down, Left]), Focus::slot(Slot::Primary), "perk 2's Left is PRIMARY");
+        assert_eq!(walk(&mut e, &[Right]), Focus::slot(Slot::Perk2), "and PRIMARY's Right now returns to perk 2");
+        // `BonusCardButton_GainFocus`: the column above and below a card return to it.
+        let mut e = Editor::new(Draft::default());
+        e.focus_on(Focus::card(1));
+        assert_eq!(walk(&mut e, &[Up, Down]), Focus::card(1), "SECONDARY ATTS' Down returns to card 2");
+        assert_eq!(walk(&mut e, &[Down, Up]), Focus::card(1), "the name row's Up returns to card 2");
+        // Card 3 belongs to the right column only: TACTICAL never leads to card 2.
+        e.focus_on(Focus::slot(Slot::Tactical));
+        assert_eq!(walk(&mut e, &[Down]), Focus::card(2));
+        // A hover runs the same hook (hover is `gain_focus`).
+        let mut e = Editor::new(Draft::default());
+        e.step_pointer(PointerEvent { slot: e.slots().iter().position(|s| *s == Slot::Perk2), moved: true, ..Default::default() });
+        assert_eq!(e.focus(), Focus::slot(Slot::Perk2));
+        e.focus_on(Focus::slot(Slot::Primary));
+        assert_eq!(walk(&mut e, &[Right]), Focus::slot(Slot::Perk2));
+    }
+
+    #[test]
+    fn a_greed_plate_joins_its_tiers_column_and_links() {
+        use Dir::*;
+        let mut e = Editor::new(Draft { wildcards: vec![Wildcard::Perk1Greed], ..Draft::default() });
+        e.focus_on(Focus::slot(Slot::Perk1));
+        assert_eq!(walk(&mut e, &[Down]), Focus::slot(Slot::Perk1b));
+        assert_eq!(walk(&mut e, &[Down]), Focus::slot(Slot::Perk2));
+        assert_eq!(walk(&mut e, &[Up, Up]), Focus::slot(Slot::Perk1));
+        e.focus_on(Focus::slot(Slot::Perk1b));
+        assert_eq!(walk(&mut e, &[Left]), Focus::slot(Slot::Primary), "the plate shares perk 1's Left");
+        assert_eq!(walk(&mut e, &[Right]), Focus::slot(Slot::Perk1b), "and its back-link");
+    }
+
+    #[test]
+    fn the_wheel_walks_the_grid_links() {
+        // LUI's wheel is Up/Down (t6mp `FUN_009376a0`): PRIMARY -> PRIMARY ATTS -> SECONDARY.
+        let mut e = Editor::new(Draft::default());
+        e.step_pointer(PointerEvent { wheel: 2, ..Default::default() });
+        assert_eq!(e.slot, Slot::Secondary);
+        e.step_pointer(PointerEvent { wheel: -1, ..Default::default() });
+        assert_eq!(e.slot, Slot::PrimaryAtts);
+    }
+
+    #[test]
+    fn backing_out_of_the_grid_saves_the_class() {
+        // BO2 writes each pick into the class as it is made and `CACEditClass.Back` only closes
+        // (`caceditclass.lua:472-548`, `:642-653`): Escape on the grid keeps the edits.
+        let mut e = Editor::new(Draft::default());
+        assert_eq!(e.step(Edges { cancel: true, ..Default::default() }), Outcome::Save);
+        assert!(!e.denied);
+        // Escape inside an open list closes the list only (one step back), never the editor.
+        let mut e = Editor::new(Draft::default());
+        assert_eq!(e.step(Edges { confirm: true, ..Default::default() }), Outcome::Continue);
+        assert!(e.picking);
+        assert_eq!(e.step(Edges { cancel: true, ..Default::default() }), Outcome::Continue);
+        assert!(!e.picking);
+        assert_eq!(e.step(Edges { cancel: true, ..Default::default() }), Outcome::Save);
+    }
+
+    #[test]
+    fn an_over_budget_draft_backs_out_unsaved_with_the_deny() {
+        // Every pick that would break the budget is refused, so only a class loaded that way can
+        // be over it. It cannot be kept, and the player is not trapped: Escape leaves unsaved.
+        let mut d = Draft::default();
+        d.wildcards.push(Wildcard::Overkill);
+        d.wildcards.push(Wildcard::Tactician);
+        let mut e = Editor::new(d);
+        assert!(!e.draft.valid());
         assert_eq!(e.step(Edges { cancel: true, ..Default::default() }), Outcome::Cancel);
+        assert!(e.denied, "the refused save plays BO2's deny");
     }
 
     #[test]
@@ -310,15 +408,6 @@ use super::items::cac_entries;
         let before = e.draft.clone();
         e.step(Edges { confirm: true, ..Default::default() });
         assert_eq!(e.draft, before);
-    }
-
-    #[test]
-    fn cancel_closes_the_list_then_the_editor() {
-        let mut e = Editor::new(Draft::default());
-        e.picking = true;
-        assert_eq!(e.step(Edges { cancel: true, ..Default::default() }), Outcome::Continue);
-        assert!(!e.picking);
-        assert_eq!(e.step(Edges { cancel: true, ..Default::default() }), Outcome::Cancel);
     }
 
     #[test]
@@ -374,84 +463,21 @@ use super::items::cac_entries;
         assert_eq!(slot_value(&d, Slot::Wildcards), "—");
     }
 
-    // --- Option 2: the class-name row types text ---
+    // --- Renaming is the class-options dialog's, not the editor's ---
 
     #[test]
-    fn the_name_row_starts_text_entry_and_letters_append() {
-        let mut e = Editor::new(Draft { name: String::new(), ..Draft::default() });
-        e.slot = Slot::Name;
-        // The name row has no option list: Enter starts text entry instead of opening one.
-        assert!(e.options().is_empty());
-        assert_eq!(e.step(Edges { confirm: true, ..Default::default() }), Outcome::Continue);
-        assert!(e.naming, "Enter on the name row starts text entry");
-        assert!(!e.picking, "the name row never opens an option list");
-        // Letters append in the order they were pressed.
-        e.step(Edges { typed: vec![Key::M, Key::P], ..Default::default() });
-        assert_eq!(e.draft.name, "MP");
-        // Space types a space; Backspace deletes the last character.
-        e.step(Edges { typed: vec![Key::Space, Key::A], ..Default::default() });
-        assert_eq!(e.draft.name, "MP A");
-        e.step(Edges { backspace: true, ..Default::default() });
-        assert_eq!(e.draft.name, "MP ");
-        // Enter leaves the field (the text stays); the row stays highlighted and not in the list.
-        assert_eq!(e.step(Edges { confirm: true, ..Default::default() }), Outcome::Continue);
-        assert!(!e.naming);
-        assert_eq!(e.draft.name, "MP ");
-        assert_eq!(e.slot, Slot::Name);
-    }
-
-    #[test]
-    fn the_name_field_caps_at_bo2s_length() {
-        let mut e = Editor::new(Draft { name: String::new(), ..Draft::default() });
-        e.slot = Slot::Name;
-        e.naming = true;
-        // Type far past the cap; the field refuses characters once it is full.
-        let keys: Vec<Key> = std::iter::repeat_n(Key::A, NAME_MAX + 5).collect();
-        e.step(Edges { typed: keys, ..Default::default() });
-        assert_eq!(e.draft.name.chars().count(), NAME_MAX);
-        assert_eq!(e.draft.name, "A".repeat(NAME_MAX));
-    }
-
-    #[test]
-    fn digits_type_into_the_name_field() {
-        // BO2's name charset is uppercase letters, digits and the space. The digit row past 1-6
-        // was appended to the Key enum in Phase 2; every digit types here.
-        for (key, ch) in [
-            (Key::Key0, '0'),
-            (Key::Key1, '1'),
-            (Key::Key2, '2'),
-            (Key::Key3, '3'),
-            (Key::Key4, '4'),
-            (Key::Key5, '5'),
-            (Key::Key6, '6'),
-            (Key::Key7, '7'),
-            (Key::Key8, '8'),
-            (Key::Key9, '9'),
-        ] {
-            assert_eq!(char_of(key), Some(ch));
-            assert!(is_typable(key));
+    fn the_editor_has_no_name_field() {
+        // BO2's editor only shows the class name (`caceditclass.lua:177`); the rename is the class
+        // options' RENAME (`cacclassoptions.lua:183-192`). Letters are not text entry here: they
+        // are the grid's own keys or nothing, and the name never changes.
+        let mut e = Editor::new(Draft { name: "RIFLE".into(), ..Draft::default() });
+        for k in [Key::M, Key::P, Key::Key1, Key::Space, Key::Backspace] {
+            let mut now = crate::input::KeySet::default();
+            now.set_down(k, true);
+            assert_eq!(e.step(Edges::between(&crate::input::KeySet::default(), &now)), Outcome::Continue);
         }
-        let mut e = Editor::new(Draft { name: String::new(), ..Draft::default() });
-        e.slot = Slot::Name;
-        e.naming = true;
-        e.step(Edges { typed: vec![Key::Key1, Key::Key2, Key::Key7, Key::Key0], ..Default::default() });
-        assert_eq!(e.draft.name, "1270");
-        // Numbers are part of the spec grammar too: a saved class keeps the typed name.
-        let c = e.draft.to_custom();
-        assert_eq!(Draft::from_custom(&c).name, "1270");
-    }
-
-    #[test]
-    fn escape_leaves_the_name_field_without_cancelling_the_editor() {
-        let mut e = Editor::new(Draft { name: "Rifle".into(), ..Draft::default() });
-        e.slot = Slot::Name;
-        e.naming = true;
-        // Escape leaves the field, it does not cancel the whole editor while naming.
-        assert_eq!(e.step(Edges { cancel: true, ..Default::default() }), Outcome::Continue);
-        assert!(!e.naming);
-        assert_eq!(e.draft.name, "Rifle");
-        // A second Escape (now out of the field) cancels the editor as usual.
-        assert_eq!(e.step(Edges { cancel: true, ..Default::default() }), Outcome::Cancel);
+        assert_eq!(e.draft.name, "RIFLE");
+        assert!(!Slot::ALL.iter().any(|s| s.label() == "CLASS NAME"), "no name row");
     }
 
     #[test]
@@ -600,14 +626,14 @@ use super::items::cac_entries;
 fn pointer_hover_click_and_wheel_drive_the_editor() {
     let mut e = Editor::new(Draft::default());
     // Hovering a row moves the highlight without changing state.
-    assert_eq!(e.step_pointer(PointerEvent { slot: Some(0), moved: true, ..Default::default() }), Outcome::Continue);
-    assert_eq!(e.slot, Slot::Name);
+    assert_eq!(e.step_pointer(PointerEvent { slot: Some(2), moved: true, ..Default::default() }), Outcome::Continue);
+    assert_eq!(e.slot, Slot::Secondary);
     // A *resting* cursor is not a hover: the keyboard highlight stays put.
     e.slot = Slot::Primary;
     e.step_pointer(PointerEvent { slot: Some(3), ..Default::default() });
     assert_eq!(e.slot, Slot::Primary, "no movement, no hover");
     // Clicking the Primary row confirms it (opens its list on the held gun).
-    assert_eq!(e.step_pointer(PointerEvent { slot: Some(1), click: true, ..Default::default() }), Outcome::Continue);
+    assert_eq!(e.step_pointer(PointerEvent { slot: Some(0), click: true, ..Default::default() }), Outcome::Continue);
     assert_eq!(e.slot, Slot::Primary);
     assert!(e.picking);
     // A click with a resting cursor still picks the option under it (the common hover-then-
@@ -648,18 +674,6 @@ fn the_budget_denies_an_eleventh_point_and_leaves_the_draft() {
     assert!(e.denied, "the refused choice is surfaced");
     assert_eq!(e.draft, before, "the draft is untouched");
     assert!(!e.picking);
-}
-
-#[test]
-fn an_over_budget_save_is_denied_instead_of_closing() {
-    let mut d = Draft::default();
-    d.wildcards.push(Wildcard::Overkill);
-    d.wildcards.push(Wildcard::Tactician);
-    assert!(!d.valid());
-    let mut e = Editor::new(d);
-    e.slot = Slot::Save;
-    assert_eq!(e.step(Edges { confirm: true, ..Default::default() }), Outcome::Continue);
-    assert!(e.denied);
 }
 
 #[test]
@@ -823,7 +837,6 @@ fn a_grid_picker_walks_two_dimensions_and_a_wide_slot_says_so() {
     assert_eq!(Slot::PrimaryAtts.option_columns(), Some(6), "`cacattachmentsmenu.lua:9`");
     assert_eq!(Slot::Wildcards.option_columns(), Some(3), "`cacbonuscards.lua:7`");
     assert_eq!(Slot::Primary.option_columns(), None, "the carousel walks categories, not a grid");
-    assert_eq!(Slot::Name.option_columns(), None);
 
     let mut e = Editor::new(Draft::default());
     e.slot = Slot::Perk2;

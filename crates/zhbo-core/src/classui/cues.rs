@@ -30,8 +30,8 @@ pub const ENTER_CAC: &str = UiCue::CacEnterCac.event();
 pub const SET_STEP: &str = UiCue::CacSafearea.event();
 /// Opening a class-set/class dialog (`popup.lua`'s `OpenPopup`: `Engine.PlaySound`).
 pub const DIALOG_OPEN: &str = UiCue::CacLoadoutEditSel.event();
-/// The shell's mod-only SAVE row committing a class: BO2 saves on back-out with no cue of its
-/// own, so the SAVE row plays a grid button's action (`luibutton.lua`'s `actionSFX`).
+/// A class-set dialog entry rewriting the profile (RESET SET, RESET TO DEFAULT): a grid button's
+/// action (`luibutton.lua`'s `actionSFX`). The editor's back-out save plays [`BACKOUT`] instead.
 pub const SAVE: &str = UiCue::CacGridEquipItem.event();
 
 /// The in-match class panel's entrance (`hud/class.lua` opens the class menu with

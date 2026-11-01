@@ -25,13 +25,15 @@
 //! * **Editor.** The class name as the heading, the allocation bar under it, and BO2's boxed grid:
 //!   the primary and its attachment boxes, the secondary and its, the bonus-card strip down the left
 //!   (`b-editor/001`); PERK 1-3, LETHAL and TACTICAL down the right (`b-editor/028`). The selected
-//!   box is outlined in orange and carries BO2's circled `X`; `R` removes it.
+//!   box is outlined in orange and carries BO2's circled `X`; `R` removes it. There is no name or
+//!   save box: the class is renamed from its `O` options dialog (`cacclassoptions.lua:183-192`)
+//!   and Escape on the grid saves (`caceditclass.lua:642-653`, see `classmenu::Outcome::Save`).
 //! * **Weapon picker.** BO2's `PRIMARY`/`SECONDARY` screen (`c-primary/001`, `s10-snipercat`): the
 //!   category column in BO2's names, rotated so the active category is on top, the guns of that
 //!   category as tiles, and the highlighted gun's four segmented bars in BO2's order (FIRE RATE,
 //!   DAMAGE, RANGE, ACCURACY).
 //!
-//! The *shell* walks the ten sets with Left/Right and carries the set/class options (`S`/`O`,
+//! The *shell* walks the ten sets with `A`/`D` (BO2's shoulders) and carries the set/class options (`S`/`O`,
 //! `menu::Dialog`); in a match the screen is pick-only (BO2 only creates classes in the lobby) and
 //! an untouched slot is not pickable. Missing art falls back to drawn shapes (`Prim::Image`'s
 //! fallback), so the screens work without the converted archive.

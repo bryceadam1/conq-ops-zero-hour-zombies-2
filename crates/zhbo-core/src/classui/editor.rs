@@ -64,8 +64,7 @@ pub fn draw_editor(prims: &mut Vec<Prim>, w: f32, h: f32, editor: &Editor, deny:
     let title = if editor.picking {
         picker_title(editor)
     } else {
-        let name = editor_title(editor);
-        if editor.naming { format!("{name}_") } else { name }
+        editor_title(editor)
     };
     bo2::title(prims, f, &title);
     // The allocation readout, BO2's bar across the menu with the n/10 counter above its right end.
@@ -93,10 +92,7 @@ pub fn draw_editor(prims: &mut Vec<Prim>, w: f32, h: f32, editor: &Editor, deny:
     let cells = editor_cells(&l, editor);
     let removable = cells.iter().any(|c| c.slot == editor.slot && cell_filled(editor, c));
     let mut left: Vec<(&str, &str)> = vec![("ESC", "Back")];
-    let right: Vec<(&str, &str)> = if editor.naming {
-        left = vec![("ENTER", "Done"), ("BKSP", "Delete")];
-        Vec::new()
-    } else if editor.picking {
+    let right: Vec<(&str, &str)> = if editor.picking {
         if editor.slot == Slot::PrimaryAtts && editor.option_attachment(editor.option).is_some_and(|s| crate::hud::OPTICS.contains(&s)) {
             left.push(("V", "Reticle"));
         }
@@ -185,17 +181,9 @@ fn draw_editor_grid(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor, no
 fn draw_cell(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor, cell: &EditorCell) {
     let f = &l.frame;
     let r = cell.rect;
-    let on = cell.slot == editor.slot;
+    let on = cell_focused(editor, cell);
     let filled = cell_filled(editor, cell);
     match cell.slot {
-        Slot::Name => {} // the title draws it
-        Slot::Save => {
-            button_bg(prims, f, r);
-            if on {
-                focus_frame(prims, f, r);
-            }
-            bo2::text(prims, f, Family::Condensed, "SAVE CLASS", r, Align::Center, argb(if on { BOII_ORANGE } else { OFF_WHITE }, 1.0));
-        }
         Slot::Primary | Slot::Secondary => {
             button_bg(prims, f, r);
             slot_label(prims, f, r, if cell.slot == Slot::Primary { "PRIMARY" } else { "SECONDARY" });
@@ -208,6 +196,12 @@ fn draw_cell(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor, cell: &Ed
                 let pic = Rect { x: r.right() - 90.0 - iw, y: r.y + 10.0, w: iw, h: ih };
                 bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&def.id)), pic, argb(OFF_WHITE, 1.0), Vec::new());
                 bo2::text(prims, f, Family::Condensed, &def.display_name, Rect { x: r.x + 3.0, y: r.bottom() - bo2::TEXT_CONDENSED - 2.0, w: r.w, h: bo2::TEXT_CONDENSED }, Align::Left, argb(OFF_WHITE, 1.0));
+                // The class camo's swatch (`CACWeaponButton.GetCamoSwatch`: 32 square, its right
+                // edge `ImageBorder + 39` in, 5 up). The class holds one camo, the primary's.
+                if cell.slot == Slot::Primary {
+                    let swatch = Rect { x: r.right() - 10.0 - 39.0 - 32.0, y: r.bottom() - 5.0 - 32.0, w: 32.0, h: 32.0 };
+                    super::personalize::camo_swatch(prims, f, swatch, id, &editor.draft.camo);
+                }
             }
             if on {
                 focus_frame(prims, f, r);

@@ -7,10 +7,12 @@
 //! (`classui::pick_frame`/`editor_frame`) and draws through `classui::draw_screen`.
 //!
 //! The behavior is BO2's lobby create-a-class: Enter/click on a row opens the editor on that slot
-//! (an existing custom, a preset as a template, or a fresh draft); the editor's Save writes back
-//! into THAT slot of THAT class set, and the list's `S Class Set Options` / `O Class Options`
+//! (an existing custom, a preset as a template, or a fresh draft); backing out of the editor saves
+//! it into THAT slot of THAT class set (BO2 has no save step), and the list's `S Class Set Options`
+//! / `O Class Options`
 //! dialogs (`classui::Dialog`) rename/reset the set and rename/copy/reset/clear the class through
-//! the `save_profile` one-shot. Left/Right (BO2's shoulders) walk the ten class sets, making the
+//! the `save_profile` one-shot. A class is renamed only there, as in BO2
+//! (`cacclassoptions.lua:183-192`): the editor has no name field. `A`/`D` (BO2's shoulders) walk the ten class sets, making the
 //! shown one the active set a match will load (`cacchooseclass.lua`'s `SetActiveClassSet`), and
 //! every edit lands in the set being browsed. There is no *pick* in the shell — no match is
 //! running — and Escape/Back closes the screen (Escape backs out of a dialog or the editor first).
@@ -91,6 +93,9 @@ pub struct MenuState {
     /// CREATE A CLASS: the class goes into the set's first free slot).
     editor_set: usize,
     editor_slot: Option<usize>,
+    /// The draft the editor opened on: backing out of an untouched editor writes nothing (so an
+    /// empty slot opened and left stays empty).
+    editor_start: Draft,
     /// The open `S`/`O` dialog, its target class slot (the class dialog's), and the set it acts on.
     dialog: Option<Dialog>,
     dialog_slot: Option<usize>,
@@ -132,6 +137,7 @@ impl MenuState {
             personalize: None,
             editor_set: 0,
             editor_slot: None,
+            editor_start: Draft::default(),
             dialog: None,
             dialog_slot: None,
             dialog_set: 0,
@@ -220,6 +226,7 @@ impl MenuState {
 
     /// Open the editor on `draft`, saving back into the set's `slot` (`None`: a new class).
     fn open_editor(&mut self, draft: Draft, slot: Option<usize>) {
+        self.editor_start = draft.clone();
         self.editor = Some(Editor::new(draft));
         self.editor_set = crate::profile::active_set();
         self.editor_slot = slot;
@@ -364,7 +371,8 @@ impl MenuState {
         }
     }
 
-    /// The pick list's frame: browse the active set's slots; Left/Right walk the ten sets (making
+    /// The pick list's frame: browse the active set's slots; `A`/`D` (BO2's shoulders) or a click
+    /// on the header's arrows/pips walk the ten sets (making
     /// the shown one the active set, BO2's "you will load into the game with this class set"); an
     /// activated row opens the editor on it (an existing custom, a preset as a template, or a fresh
     /// draft); `S` opens the class-set options, `O` the highlighted class's; Escape closes the
@@ -393,7 +401,14 @@ impl MenuState {
         // The set pager: switching sets is a profile change (the active set persists), so it rides
         // the same one-shot as the edits. The switch owns the frame: the stale row indices the
         // fold computed against the old set are not acted on.
-        let switched = frame.set_step != 0 && match crate::profile::cycle_active(frame.set_step) {
+        let change = match frame.set_select {
+            // A pip names its set; picking the active one is no change.
+            Some(set) if set != crate::profile::active_set() => crate::profile::set_active(set),
+            Some(_) => None,
+            None if frame.set_step != 0 => crate::profile::cycle_active(frame.set_step),
+            None => None,
+        };
+        let switched = match change {
             Some(text) => {
                 write_profile(out, classui::SAVE_PROFILE_EDIT, &text);
                 self.highlight = 0;
@@ -489,9 +504,10 @@ impl MenuState {
         }
     }
 
-    /// The editor's frame: Save persists into the slot (and set) the editor was opened on and
-    /// returns to the list (no pick — no match is running); a full set refuses the save and keeps
-    /// the editor open; Cancel returns without saving.
+    /// The editor's frame. Backing out (`Outcome::Save`) persists the draft into the slot (and set)
+    /// the editor was opened on and returns to the list (no pick — no match is running); an
+    /// untouched draft writes nothing. `Cancel` (an over-budget draft) returns without saving.
+    /// Either way the player leaves: a refused write plays the deny cue but never traps him.
     fn editor_frame(&mut self, mut editor: Editor, pointer: &MenuPointer, out: &mut MenuOut) {
         let was_picking = editor.picking;
         let frame = classui::editor_frame(&mut editor, pointer, &self.prev);
@@ -509,6 +525,11 @@ impl MenuState {
             self.menu_open = Some(self.clock);
         }
         match frame.outcome {
+            Outcome::Save if editor.draft == self.editor_start => {
+                // Nothing changed: a plain back-out (an empty slot opened and left stays empty).
+                self.cues.push(cues::BACKOUT);
+                self.menu_open = Some(self.clock);
+            }
             Outcome::Save => {
                 let class = editor.draft.to_custom();
                 let set = self.editor_set;
@@ -518,7 +539,9 @@ impl MenuState {
                 match crate::profile::save_in_set(set, slot, class) {
                     Some(text) => {
                         write_profile(out, classui::SAVE_PROFILE_CLASS, &text);
-                        self.cues.push(cues::SAVE);
+                        // BO2's back-out plays the editor's `setBackOutSFX("cac_cmn_backout")`
+                        // (`caceditclass.lua:37-38`); the save itself is silent.
+                        self.cues.push(cues::BACKOUT);
                         // Back to the list with the saved slot highlighted. The choose-class menu
                         // opens afresh here (BO2 closed it when the editor opened), so its
                         // entrance fade runs again.
@@ -529,10 +552,12 @@ impl MenuState {
                         self.menu_open = Some(self.clock);
                     }
                     None => {
-                        // No free slot: BO2 cannot create a sixth class in a set. Surface it and
-                        // keep the editor up rather than losing the draft.
+                        // No free slot (BO2 cannot create a sixth class in a set; the lobby list
+                        // offers no empty row then, so this is defensive). Back-out is the only
+                        // way out of the editor, so it still leaves, with the deny cue.
                         self.deny();
-                        self.editor = Some(editor);
+                        self.cues.push(cues::BACKOUT);
+                        self.menu_open = Some(self.clock);
                     }
                 }
             }
@@ -544,7 +569,7 @@ impl MenuState {
             Outcome::Continue => {
                 if let Some(kind) = frame.personalize {
                     let weapon = (!editor.draft.primary.is_empty()).then_some(editor.draft.primary.as_str());
-                    self.personalize = Some(Personalize::new(kind, classui::personalize_choices_for(kind, weapon), &editor.draft));
+                    self.personalize = Some(Personalize::with_tabs(kind, classui::personalize_tabs_for(kind, weapon), &editor.draft));
                 }
                 self.editor = Some(editor);
             }
@@ -601,12 +626,11 @@ mod tests {
         out
     }
 
-    /// Walk to the Save row and confirm it (the editor must be open).
-    fn save_open_editor(menu: &mut MenuState, inp: &mut MenuIn) -> MenuOut {
-        while menu.editor.as_ref().expect("editor open").slot != crate::classmenu::Slot::Save {
-            press(menu, inp, Key::Down);
-        }
-        press(menu, inp, Key::Enter)
+    /// Back out of the open editor's grid: BO2's back-out keeps the class, so this is the save.
+    fn back_out_of_editor(menu: &mut MenuState, inp: &mut MenuIn) -> MenuOut {
+        let editor = menu.editor.as_ref().expect("editor open");
+        assert!(!editor.picking, "back out from the grid, not from a picker");
+        press(menu, inp, Key::Escape)
     }
 
     #[test]
@@ -620,8 +644,11 @@ mod tests {
         // A row move is not a set switch.
         press(&mut menu, &mut inp, Key::Down);
         assert!(menu.view().set_change.is_none(), "a row move has no slide");
-        // Right/Left walk the sets: `SetActiveClassSet` slides the new list in over 250 ms.
+        // The arrows never page (the list has no left/right links); `D` (BO2's shoulderr) walks
+        // the sets: `SetActiveClassSet` slides the new list in over 250 ms.
         press(&mut menu, &mut inp, Key::Right);
+        assert!(menu.view().set_change.is_none(), "Right is not a set switch");
+        press(&mut menu, &mut inp, classui::SHOULDER_R);
         let since = menu.view().set_change.expect("the switch started the transition");
         assert!((0.0..classui::SET_SWITCH_MS / 1000.0).contains(&since), "just started: {since}");
         // The hosts draw it in the transition until the duration elapses.
@@ -754,8 +781,8 @@ mod tests {
         assert!(menu.view().personalize.is_none(), "the personalize screen closed");
         let editor = menu.editor.as_ref().expect("the editor is still open");
         assert_eq!(editor.draft.knife, "None");
-        // The editor's Save writes the class, choice and all, to the profile.
-        let out = save_open_editor(&mut menu, &mut inp);
+        // Backing out of the editor writes the class, choice and all, to the profile.
+        let out = back_out_of_editor(&mut menu, &mut inp);
         assert_eq!(out.save_profile, classui::SAVE_PROFILE_CLASS, "the class was written");
         assert_eq!(crate::profile::classes()[0].knife, "None");
         crate::profile::reset();
@@ -776,10 +803,10 @@ mod tests {
         assert_eq!(classui::pick_rows(true)[menu.highlight], PickRow::Empty(crate::profile::max_classes() - 1));
         press(&mut menu, &mut inp, Key::Enter);
         assert!(menu.editor.is_some());
-        // The editor opens on Primary; walk down to the Lethal row (Primary -> PrimaryAtts ->
-        // Secondary -> SecondaryAtts -> Lethal).
-        for _ in 0..4 {
-            press(&mut menu, &mut inp, Key::Down);
+        // The editor opens on Primary; walk to LETHAL along BO2's grid links (Primary -> PrimaryAtts
+        // -> Secondary, then Right across to Lethal, `customclass.lua:863-991`).
+        for k in [Key::Down, Key::Down, Key::Right] {
+            press(&mut menu, &mut inp, k);
         }
         assert_eq!(menu.editor.as_ref().expect("editor open").slot, crate::classmenu::Slot::Lethal);
         press(&mut menu, &mut inp, Key::Enter); // open the Lethal slot's list
@@ -787,7 +814,7 @@ mod tests {
         // along it (Down only leaves a row that has another one below).
         press(&mut menu, &mut inp, Key::Right);
         press(&mut menu, &mut inp, Key::Enter); // choose it
-        let out = save_open_editor(&mut menu, &mut inp);
+        let out = back_out_of_editor(&mut menu, &mut inp);
         assert!(menu.editor.is_none(), "saving closes the editor");
 
         // The one-shot carries the whole profile file's text; the profile kept the class.
@@ -909,7 +936,7 @@ mod tests {
     }
 
     #[test]
-    fn left_and_right_walk_the_class_sets_and_persist_the_active_one() {
+    fn the_shoulder_keys_walk_the_class_sets_and_persist_the_active_one() {
         let _g = lock();
         crate::profile::reset();
         crate::profile::save(custom("Set One", "an94_mp"));
@@ -917,9 +944,15 @@ mod tests {
         let mut inp = MenuIn::default();
         menu.frame(&inp);
 
-        // Right: the next set becomes the active one (BO2: the set a match loads into) and the
-        // profile write one-shot carries it.
-        let out = press(&mut menu, &mut inp, Key::Right);
+        // The arrows have no link on the vertical class list: Left/Right change nothing.
+        for k in [Key::Left, Key::Right] {
+            let out = press(&mut menu, &mut inp, k);
+            assert_eq!(out.save_profile, 0, "{k:?} is not a set switch");
+            assert_eq!(crate::profile::active_set(), 0);
+        }
+        // `D` (BO2's shoulderr, t6mp `FUN_009376a0`): the next set becomes the active one (BO2:
+        // the set a match loads into) and the profile write one-shot carries it.
+        let out = press(&mut menu, &mut inp, classui::SHOULDER_R);
         assert_eq!(out.save_profile, classui::SAVE_PROFILE_EDIT);
         assert_eq!(crate::profile::active_set(), 1);
         let text = crate::profile::unpack_text(&out.save_profile_payload[..out.save_profile_payload_len as usize]).expect("the payload");
@@ -927,11 +960,42 @@ mod tests {
         assert_eq!(menu.highlight, 0, "the highlight restarts on the new set's list");
         // The new set is empty: the list is the five defaults and CREATE.
         assert_eq!(classui::pick_rows(true).iter().filter(|r| matches!(r, PickRow::Custom(_))).count(), 0);
-        // Left twice wraps through the first set to the last.
-        press(&mut menu, &mut inp, Key::Left);
+        // `A` twice wraps through the first set to the last.
+        press(&mut menu, &mut inp, classui::SHOULDER_L);
         assert_eq!(crate::profile::active_set(), 0);
-        press(&mut menu, &mut inp, Key::Left);
+        press(&mut menu, &mut inp, classui::SHOULDER_L);
         assert_eq!(crate::profile::active_set(), 9, "BO2's shoulders wrap");
+        crate::profile::reset();
+    }
+
+    #[test]
+    fn clicking_the_set_arrows_and_pips_switches_the_set() {
+        let _g = lock();
+        crate::profile::reset();
+        let mut menu = MenuState::new();
+        let mut inp = MenuIn { screen_w: 1280.0, screen_h: 720.0, ..MenuIn::default() };
+        menu.frame(&inp);
+        let l = classui::pick_layout(1280.0, 720.0, true);
+        let header = l.header.expect("the lobby has the set header");
+        let click = |menu: &mut MenuState, inp: &mut MenuIn, r: crate::lui::Rect| {
+            let p = l.frame.px(r);
+            inp.mouse_x = p.x + p.w * 0.5;
+            inp.mouse_y = p.y + p.h * 0.5;
+            menu.frame(inp);
+            inp.mouse_buttons = crate::input::mouse_buttons::LEFT;
+            let out = menu.frame(inp);
+            inp.mouse_buttons = 0;
+            menu.frame(inp);
+            out
+        };
+        let [prev, next] = classui::set_arrows(header);
+        assert_eq!(click(&mut menu, &mut inp, next).save_profile, classui::SAVE_PROFILE_EDIT, "`›` is next_class_set");
+        assert_eq!(crate::profile::active_set(), 1);
+        click(&mut menu, &mut inp, prev);
+        assert_eq!(crate::profile::active_set(), 0, "`‹` is prev_class_set");
+        click(&mut menu, &mut inp, classui::set_pip(header, 6, crate::profile::MAX_SETS));
+        assert_eq!(crate::profile::active_set(), 6, "a pip selects its set");
+        assert_eq!(click(&mut menu, &mut inp, classui::set_pip(header, 6, crate::profile::MAX_SETS)).save_profile, 0, "the active pip is no change");
         crate::profile::reset();
     }
 
@@ -953,16 +1017,17 @@ mod tests {
         let editor = menu.editor.as_ref().expect("the B row opens the editor");
         assert_eq!(editor.draft.name, "B");
         assert_eq!(editor.draft.primary, "tar21_mp");
-        // Edit the lethal and save: the class stays in slot 2, A untouched in slot 1.
-        for _ in 0..4 {
-            press(&mut menu, &mut inp, Key::Down);
+        // Edit the lethal and save: the class stays in slot 2, A untouched in slot 1. LETHAL is
+        // Right of SECONDARY (`customclass.lua:863-991`).
+        for k in [Key::Down, Key::Down, Key::Right] {
+            press(&mut menu, &mut inp, k);
         }
         press(&mut menu, &mut inp, Key::Enter);
         // The lethal list is a content grid: Right walks its row (Down leaves a row only when
         // another is below).
         press(&mut menu, &mut inp, Key::Right);
         press(&mut menu, &mut inp, Key::Enter);
-        let out = save_open_editor(&mut menu, &mut inp);
+        let out = back_out_of_editor(&mut menu, &mut inp);
         assert_eq!(out.save_profile, classui::SAVE_PROFILE_CLASS);
         let classes = crate::profile::classes();
         assert_eq!(classes.len(), 2, "the edit replaced B, it did not append");
@@ -974,7 +1039,26 @@ mod tests {
     }
 
     #[test]
-    fn a_sixth_class_is_refused_and_the_editor_stays_open() {
+    fn backing_out_of_an_untouched_editor_writes_nothing() {
+        let _g = lock();
+        crate::profile::reset();
+        let mut menu = MenuState::new();
+        let mut inp = MenuIn::default();
+        menu.frame(&inp);
+        // An untouched slot opened and left stays untouched: no class appears, nothing is written.
+        assert_eq!(classui::pick_rows(true)[menu.highlight], PickRow::Empty(0));
+        press(&mut menu, &mut inp, Key::Enter);
+        assert!(menu.editor.is_some());
+        let out = back_out_of_editor(&mut menu, &mut inp);
+        assert!(menu.editor.is_none(), "Escape leaves the editor");
+        assert_eq!(out.save_profile, 0, "nothing was written");
+        assert!(crate::profile::classes().is_empty());
+        assert!(menu.cues.contains(&cues::BACKOUT), "BO2's cac_cmn_backout");
+        crate::profile::reset();
+    }
+
+    #[test]
+    fn a_sixth_class_is_refused_and_the_back_out_still_leaves() {
         let _g = lock();
         crate::profile::reset();
         for i in 0..crate::profile::max_classes() - 1 {
@@ -988,11 +1072,13 @@ mod tests {
         assert_eq!(classui::pick_rows(true)[menu.highlight], PickRow::Empty(crate::profile::max_classes() - 1));
         press(&mut menu, &mut inp, Key::Enter);
         assert!(menu.editor.is_some());
+        // An edit (R clears the highlighted PRIMARY), so the back-out has something to save.
+        press(&mut menu, &mut inp, Key::R);
         // The set fills while the draft is open (the bridge writes the profile from elsewhere).
         crate::profile::save(custom("Filler last", "mp7_mp"));
-        let out = save_open_editor(&mut menu, &mut inp);
+        let out = back_out_of_editor(&mut menu, &mut inp);
         assert_eq!(out.save_profile, 0, "nothing was written");
-        assert!(menu.editor.is_some(), "the draft survives: the editor stays up");
+        assert!(menu.editor.is_none(), "back-out is the editor's only exit: it still leaves");
         assert_eq!(crate::profile::classes().len(), crate::profile::max_classes());
         assert!(menu.cues.contains(&cues::DENY), "the denied save is surfaced");
         crate::profile::reset();
