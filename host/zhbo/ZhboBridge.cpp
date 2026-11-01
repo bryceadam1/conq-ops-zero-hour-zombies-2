@@ -852,7 +852,7 @@ Bool Zhbo_GetCameraOverride(Coord3D *eye, Coord3D *dir, Real *horizontalFov, Rea
 	return TRUE;
 }
 
-Bool Zhbo_GetViewmodel(Int *clip, Int *weapon, Bool *fired, Bool *firedLeft, Real *time, Real *ads, AsciiString *model, Coord3D *offset, Coord3D *angles)
+Bool Zhbo_GetViewmodel(Int *clip, Int *weapon, Bool *fired, Bool *firedLeft, Real *time, Real *ads, AsciiString *model, Char *faction, Coord3D *offset, Coord3D *angles)
 {
 	if (!s_ready || !s_out.camera_override || s_out.viewmodel < 0 || !s_out.hide_object)
 		return FALSE;
@@ -861,7 +861,7 @@ Bool Zhbo_GetViewmodel(Int *clip, Int *weapon, Bool *fired, Bool *firedLeft, Rea
 		return FALSE;
 	// One set of viewmodels per faction (zhbo_assets::generals::FACTIONS).
 	const AsciiString &name = general->getTemplate()->getName();
-	const ZhboFaction *faction = zhboFactionOfGeneralName(name);
+	const ZhboFaction *side = zhboFactionOfGeneralName(name);
 	// The tablet clips play on the arms-and-tablet model (generals::tablet_model); everything else on
 	// the converted weapon's viewmodel (generals::vm_model).
 	// (An alt mode's clips come after the tablet's numbers, on the weapon's own viewmodel.)
@@ -869,12 +869,12 @@ Bool Zhbo_GetViewmodel(Int *clip, Int *weapon, Bool *fired, Bool *firedLeft, Rea
 	const Bool tablet = s_out.viewmodel >= ZHBO_VM_TABLET_PULLOUT && s_out.viewmodel <= ZHBO_VM_TABLET_PUTAWAY;
 	const Bool hammer = s_out.viewmodel >= ZHBO_VM_HAMMER_PULLOUT && s_out.viewmodel <= ZHBO_VM_HAMMER_PUTAWAY;
 	AsciiString vm;
-	if (!faction)
+	if (!side)
 		return FALSE;
 	if (tablet || hammer)
-		vm.format("ZHBO_VM%s_%s", faction->code, tablet ? "TAB" : "HAM");
+		vm.format("ZHBO_VM%s_%s", side->code, tablet ? "TAB" : "HAM");
 	else if (s_out.viewmodel_weapon >= 0)
-		vm.format("ZV%02d%c_SKN", s_out.viewmodel_weapon, faction->letter);
+		vm.format("ZV%02d%c_SKN", s_out.viewmodel_weapon, side->letter);
 	else
 		return FALSE;
 	*clip = s_out.viewmodel;
@@ -886,6 +886,7 @@ Bool Zhbo_GetViewmodel(Int *clip, Int *weapon, Bool *fired, Bool *firedLeft, Rea
 	offset->set(s_out.viewmodel_offset.x, s_out.viewmodel_offset.y, s_out.viewmodel_offset.z);
 	angles->set(s_out.viewmodel_angles.x, s_out.viewmodel_angles.y, s_out.viewmodel_angles.z);
 	model->set(vm);
+	*faction = side->letter;
 	return TRUE;
 }
 

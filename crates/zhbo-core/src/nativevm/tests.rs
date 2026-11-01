@@ -1041,6 +1041,32 @@ fn a_missing_manifest_gives_up_once() {
     });
 }
 
+/// A combination's viewmodel number has any width: its manifest is `ZV<vm><F>.zbv` with the
+/// faction letter right after the number (the user's silenced DSR-50 is viewmodel 8664).
+#[test]
+fn a_combination_viewmodel_is_named_by_its_full_number_and_the_faction() {
+    assert_eq!(zhbo_native::viewmodel_path(8664, 'U'), format!("{}ZV8664U.zbv", zhbo_native::DIR));
+    assert_eq!(zhbo_native::viewmodel_path(6, 'G'), format!("{}ZV06G.zbv", zhbo_native::DIR));
+}
+
+/// A faction that is not a letter is refused before any file is asked for, and said once: the
+/// bridge once read it out of `ZV8664U_SKN`'s fifth character (`6`) and every combination drew
+/// nothing behind a "not in the archive" line that blamed the conversion.
+#[test]
+fn a_faction_that_is_not_a_letter_is_refused_and_named() {
+    with_state(|s| {
+        *s = ffi::State::default();
+        let mut inp = input(1, 0.0);
+        inp.vm = 8664;
+        inp.faction = b'6' as i32;
+        assert_eq!(s.frame(&inp, true), NOT_NATIVE);
+        assert_eq!(s.files.wanted().count(), 0, "no manifest is asked for");
+        assert_eq!(s.frame(&inp, true), NOT_NATIVE, "not retried");
+        assert_eq!(s.log.len(), 1, "logged once: {:?}", s.log);
+        assert!(s.log[0].contains("faction 0x36"), "{:?}", s.log);
+    });
+}
+
 #[test]
 fn gun_pose_matches_the_w3d_rotation_order() {
     // A yaw of 90° turns the gun's forward (X) to the left (Y); a pitch raises the muzzle.

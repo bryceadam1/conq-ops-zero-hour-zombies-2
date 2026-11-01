@@ -119,6 +119,15 @@ impl State {
         if inp.vm < 0 || self.failed.contains(&vmkey) {
             return NOT_NATIVE;
         }
+        // The faction is the arms' letter (`U`, `C`, `G`), passed by the bridge from the General's
+        // side. Anything else is a bridge bug (it once read the letter out of the W3D model's name,
+        // which is only right for a two-digit viewmodel: a combination's `ZV8664U_SKN` gave `6`):
+        // say so instead of asking the archive for a manifest no converter writes.
+        if !(inp.faction as u8).is_ascii_uppercase() || inp.faction > 0x7f {
+            self.failed.insert(vmkey);
+            self.log_once(format!("ZV{:02}: faction {:#x} is not a faction letter (the bridge passes the General's side)", inp.vm, inp.faction));
+            return NOT_NATIVE;
+        }
         if self.loaded.as_ref().is_none_or(|l| l.key != key) {
             #[cfg(feature = "renderer")]
             self.gpu.release();
