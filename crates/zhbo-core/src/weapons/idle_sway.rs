@@ -197,6 +197,7 @@ impl Default for IdleSway {
 
 impl IdleSway {
     /// One logic frame, after the weapon's ADS update. `stance` 0 stand, 1 crouch, 2 prone.
+    #[allow(clippy::too_many_arguments)]
     pub fn step(&mut self, def: &WeaponDef, ads: f32, prev_ads: f32, stance: usize, breath: BreathIn, t: &Tuning, dt: f32) {
         let aqs_on = t.bg_aqs != 0.0;
         let breath = BreathIn { aqs_block: aqs_on && self.aqs_left > 0.0, ..breath };

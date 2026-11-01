@@ -4839,7 +4839,7 @@ from t6mp (read-only; dumps in the item's plan dir, `ghidra/`), ported as `weapo
   after the last. `clientscripts/mp/_audio.csc` plays `vox_gen_sinper_hold`/`_exhale`/`_gasp` (sic).
   Gotcha: those aliases are in the **language** zone's voice bank (`zone/english/en_common_mp.ff`,
   `mpl_common.english`), not `common_mp`; `sfx::From::Voice` loads it (optional, like the menu banks).
-  Their authored volume is 0.01, so the converted events land on the 5 floor — faithful, quiet.
+  Their authored volume is 0.01 (see the volume follow-up below).
 - **The hint** (`FUN_004dc750`, `cg_drawBreathHint`): fully aimed on an overlay scope with
   `bHoldBreathToSteady`, not holding: `PLATFORM_HOLD_BREATH` "Press ^3&&1^7 and hold to steady" with
   the breath key. Placed from `common_mp`'s `holdbreathhint.menu` (see the follow-up below).
@@ -4847,8 +4847,7 @@ from t6mp (read-only; dumps in the item's plan dir, `ghidra/`), ported as `weapo
   fIdleProneFactor bHoldBreathToSteady`; WEAPON_FIELDS 96 → 97), `Zoom::idle_speed/idle_stance/
   hold_breath`, read by `zhbo_formats::weapon` from the WeaponDef. No attachment stacks them.
 
-Not ported (follow-ups): the `hold_breath_mp` shellshock 1 s into a breath and the `cod_hold_breath` sound
-context (no shellshock or snd contexts in the mod); the variable-zoom hint
+Not ported (follow-ups): the `cod_hold_breath` sound context (no snd contexts in the mod); the variable-zoom hint
 `PLATFORM_HOLD_BREATH_ZOOM` (`FUN_004dc940`); the airburst/`weapClass item` exclusions (no such
 weapons in the mod); the prone test's `ps+0xc & 0x200000` exception. The clock is not truncated per
 frame as BO2's `(int)` is (a frame-rate artifact; the sim's 30 Hz frame is not BO2's). The stance
@@ -4923,3 +4922,42 @@ refused while the timer runs (`FUN_008e4860`). Carried as the weapon block's `An
 (WEAPON_FIELDS 97 → 98, `Zoom::anti_quickscope`); `bg_aqs`/`bg_aqsStyle` are tuning keys. Not ported:
 the aimed spread's anti-quickscope term (`FUN_008e0080` → `FUN_008dbfb0`, whose result lives on the
 x87 stack and needs a disassembly read; the multiplier/max are carried for it).
+
+### Follow-up: the breath volume is read right; BO2's mixer is what the converter lacks (branch `v1/idle-sway`)
+
+The 0.01 is not a misread. `SndAlias.volMin/volMax` (+60/+62) are u16 linear gain over 65535. OAT's
+T6 dumper prints them as dBSPL (`100 + 20·log10(v)`), and its CSV of `en_common_mp`'s
+`mpl_common.english` gives `vox_gen_sinper_*` 58–60 (0.008–0.010 linear). Another well-known alias
+reads sanely the same way: `wpn_an94_fire_plr` is 93 dB = the 0.447 the converter reads, the
+Beretta's 90, `mpl_hit_alert` 83, `mpl_player_heartbeat` 75 (dumps in the item's plan dir, `snd/`).
+
+What makes BO2's breathing audible is the mix, not the alias. The aliases sit on `bus_voice` /
+`grp_voice` (attenuation 1.0 under `grp_master` 0.562), and the gunshot on `bus_fx` / `grp_weapon`
+(0.562 × 0.562). Every master snapshot in `code_post_gfx_mp`'s `snddriverglobals` has `busVoiceG`
+5.62 against `busFxG` 0.152 and `busHdrfxG` 2.89. Multiplied through naively, the breath (0.0316)
+would come out louder than the gunshot (0.0216). That cannot be right, because `bus_fx` also runs
+through BO2's HDR/compression stage, whose gain the dumps do not decode. The converter maps every
+alias as `vol × 100/0.45` and ignores bus and group gains for **all** events, so the fix is a
+converter-wide mixer port (bus gain × group chain × the HDR stage) with every event re-levelled.
+That is out of this item's scope, so the conversion is unchanged and the breath events stay on the
+volume floor of 5. Queue item: "the sound converter models BO2's mixer".
+
+### Follow-up: `hold_breath_mp` is a no-op shock (branch `v1/idle-sway`)
+
+`FUN_0052e3d0` starts the client shellshock `hold_breath_mp` (`FUN_004d2130` → `FUN_005152b0`, cg
+side only) 1 s into a breath that began with the breath-in sound. Its rawfile
+(`common_mp/shock/hold_breath_mp.shock`, OAT dump in `raw/`) asks for nothing perceivable:
+- `screenType blurred` with both blur blend times at 0.001 s;
+- no flash fade, and `viewKickRadius 0`;
+- `bg_shock_sound 0` (the sound block is off, so the `shock_flashbang` room type is unused);
+- `lookControl 0`, and no vision set.
+
+Its `bg_shock_movement 0.4` cannot touch movement, because the shock is client-only and pmove never
+sees it. Recorded and skipped: nothing to port.
+
+Measured after all follow-ups (conformance vs `v1/ads-zoom`): unchanged. Weapons 381,867 cells /
+174 clusters, cac 881, 185 gap clusters, both diff CSVs byte-identical: no column covers the
+hint, the fire angles, the AQS fields or the breath data. Verified: cargo test --workspace green;
+clippy --all-targets adds no warning; the real-install zhbo-assets suite (33, with the
+breath-sound and XPR tests) green. A `hud::VERSION` bump is needed (the weapon table gained
+`IdleSway` and `AntiQuickScope`) — the integrator's. No ABI change.
