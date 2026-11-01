@@ -651,7 +651,7 @@ impl Arsenal {
         let ads_only = self.ads_only_pair();
         let Some(to) = self.alt_target() else { return };
         let w = self.current_mut();
-        if to.alt_own_ammo || w.def.alt_own_ammo {
+        if w.alt_owns_ammo() {
             std::mem::swap(&mut w.ammo, &mut w.alt_ammo);
             std::mem::swap(&mut w.reserve, &mut w.alt_reserve);
         }
@@ -671,7 +671,8 @@ impl Arsenal {
 
     /// A shot from the Zero Hour weapon in `slot` (0 primary, 1 secondary, 2 lethal) while the
     /// General is under RTS control: it comes out of the magazine, which Zero Hour's own clip
-    /// reload refills from the spare rounds.
+    /// reload refills from the spare rounds. The Zero Hour weapon is the gun's own (its main mode),
+    /// so the rounds are too, even when the General left first person with the alt mode up.
     pub fn rts_shot(&mut self, slot: usize) {
         if slot == 2 {
             self.lethal.count = self.lethal.count.saturating_sub(1);
@@ -679,28 +680,36 @@ impl Arsenal {
         }
         let Some(w) = self.weapons.get_mut(slot) else { return };
         w.reload = None;
-        if w.ammo == 0 {
-            let take = w.def.clip.min(w.reserve);
-            w.ammo += take;
-            w.reserve -= take;
+        let clip = w.main.clip;
+        let (ammo, reserve) = w.main_rounds_mut();
+        if *ammo == 0 {
+            let take = clip.min(*reserve);
+            *ammo += take;
+            *reserve -= take;
         }
-        w.ammo = w.ammo.saturating_sub(1);
+        *ammo = ammo.saturating_sub(1);
     }
 
-    /// Rounds in the magazine and spare for RTS slot `slot` (grenades for the lethal).
+    /// Rounds in the magazine and spare for RTS slot `slot` (grenades for the lethal): the gun's
+    /// own, as [`Arsenal::rts_shot`] spends them.
     pub fn rts_ammo(&self, slot: usize) -> (u16, u16) {
         match slot {
             2 => (self.lethal.count, 0),
-            s => self.weapons.get(s).map_or((0, 0), |w| (w.ammo, w.reserve)),
+            s => self.weapons.get(s).map_or((0, 0), WeaponState::main_rounds),
         }
     }
 
     /// Give a magazine (Scavenger) to every gun, and one of each offhand up to what the class
     /// carries (`_weapons.gsc:1804-1850`: stock + 1, capped at the loadout's
     /// `primarygrenadecount`/`specialgrenadecount` — Danger Close's two lethals refill to two).
+    /// The guns are `getweaponslistprimaries()` (`_weapons.gsc:1795`): the weapon's own clip into
+    /// its own stock, never an alt mode's (an under-barrel launcher is in the alts list, which
+    /// only refills the named offhands), whichever mode is up.
     pub fn scavenge(&mut self) {
         for w in &mut self.weapons {
-            w.reserve = (w.reserve + w.def.clip).min(w.def.max_reserve);
+            let (clip, max) = (w.main.clip, w.main.max_reserve);
+            let (_, reserve) = w.main_rounds_mut();
+            *reserve = reserve.saturating_add(clip).min(max);
         }
         let (lethal, tactical) = (self.class_count(true), self.class_count(false));
         self.lethal.count = (self.lethal.count + 1).min(lethal.max(self.lethal.count));

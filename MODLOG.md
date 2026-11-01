@@ -9246,3 +9246,17 @@ A general sweep for bugs outside the playtest items; one commit per fix.
   not its `Key::COUNT` (49) — so the log could only ever say `[A]` or `[]`, and
   `autotest-mac.sh --input`'s "W reached the game" check could never pass. The loop now runs to
   `Key::COUNT`, the bound the `keyNames` static_assert already pins.
+- **Scavenger and the overhead General used the alt mode's magazine when the launcher was up.**
+  An own-ammo alt (an under-barrel launcher) trades magazines with its weapon on the toggle
+  (`finish_alt`), so with it up `ammo`/`reserve` are the launcher's and the rifle's sit in
+  `alt_ammo`/`alt_reserve`. `Arsenal::scavenge` read `w.def`/`w.reserve`, so a Scavenger kill with
+  the GL up gave the launcher a "magazine" (capped at its max) and the rifle nothing; BO2's
+  `scavenger_think` refills `getweaponslistprimaries()` only (`_weapons.gsc:1795`, `:1866-1891` —
+  the launcher is in the alts list, which refills only the named offhands). The same cause reached
+  the overhead General after leaving first person with the GL up: `rts_shot`, `rts_ammo`,
+  `rts_reload` spent and showed the launcher's rounds, and the slot's Zero Hour weapon and icon
+  were the alt's (`ZHBO_GeneralWeapon_gl_an94_mp`, which `rts_weapons_ini` never writes — alt modes
+  share their base's). `WeaponState::main_rounds{,_mut}` return the weapon's own magazine
+  whichever mode is up (`alt_owns_ammo` is the one predicate, `finish_alt` uses it too); the RTS
+  templates and icons take `w.main`. Tests: `scavenger_refills_the_gun_not_its_launcher_whichever_mode_is_up`,
+  `the_overhead_general_holds_the_gun_even_with_its_launcher_up` (both fail without the fix).

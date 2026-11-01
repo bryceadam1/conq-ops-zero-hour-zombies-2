@@ -804,6 +804,29 @@ fn a_launcher_toggle_raises_the_incoming_mode_over_its_alt_raise_time() {
     assert!(n.abs_diff(expect + 1) <= 1, "{n} frames vs {expect}");
 }
 
+/// Scavenger refills the guns (`getweaponslistprimaries`, `_weapons.gsc:1795`): with the
+/// under-barrel launcher up, the rifle's spare rounds get a magazine and the launcher's grenades
+/// none — as with the rifle up.
+#[test]
+fn scavenger_refills_the_gun_not_its_launcher_whichever_mode_is_up() {
+    let mut a = Arsenal::with_loadout(Loadout::test_kit());
+    a.raise_left = 0.0;
+    let gun = a.current().main;
+    a.current_mut().reserve = 0;
+    let gl_reserve = a.current().alt_reserve;
+    a.toggle_alt();
+    assert!(a.current().alt_up(), "the launcher is up");
+    a.scavenge();
+    let w = a.current();
+    assert_eq!(w.main_rounds().1, gun.clip.min(gun.max_reserve), "the rifle's stock got a magazine");
+    assert_eq!(w.reserve, gl_reserve, "the launcher's grenades are not refilled");
+    // And the same with the rifle up.
+    let mut b = Arsenal::with_loadout(Loadout::test_kit());
+    b.current_mut().reserve = 0;
+    b.scavenge();
+    assert_eq!((b.current().reserve, b.current().alt_reserve), (w.main_rounds().1, gl_reserve));
+}
+
 #[test]
 fn an_alt_toggle_drops_the_outgoing_weapon_first_and_fast_hands_speeds_both() {
     // FUN_008db500: an alt pair's change starts with the OUTGOING weapon's alt drop
