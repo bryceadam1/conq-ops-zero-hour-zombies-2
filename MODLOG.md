@@ -6073,3 +6073,214 @@ was found to need it). Pinned on the install (`the_installs_target_finder_is_kin
 `rangefinder` has the kind). Sweep (`ZHBO_SWEEP_MARKS=1`, an94+rangefinder aimed): the spotted
 frame's brackets, arrows and label and two diamonds, red, on the lens. Conformance unchanged by
 both follow-ups (weapons 681,882 cells, gap clusters 213).
+
+## The third-person tear: a gap in the world meshes' numbering (2026-10-27, branch `v1/third-person`)
+
+The playtest's "the MP7 tears in third person" is not skinning, bone budgets or index limits: the
+W3D world weapon is rigid on `tag_weapon_right` and its vertices are intact. **The bridge shows a
+held weapon by count** — `W<vm><k>` for `k < WorldMeshes` (`ZhboRtsWeapons.cpp`) — while
+`world_weapons` named the meshes *before* `textures::finish` dropped the unconvertible surfaces
+(the clan tag and the emblem decals, `mtl_clan_tag_world`/`mtl_player_icon_world`, which sit in
+the middle of nearly every BO2 world model). The MP7's surfaces became `W0500 W0501 W0504 W0505`
+with a count of 4, so the bridge showed `W0500..W0503`: two of the four surfaces, the rest never
+shown — see-through holes in the receiver and the grip. **40 of the 60 base weapons** were missing
+surfaces this way (and on the primary's `W00` set the stray meshes stayed visible from the INI's
+initial show list, whatever was in hand). The tablet's `TB<k>` meshes had the same shape.
+`viewmodels::number` renames the kept meshes `0..n` after `finish`, for the weapons and the
+tablet; nothing on the C++ side changes.
+
+Found headlessly: a probe posing the converted W3D data through `preview::pose_w3d` (the probe
+patch is kept outside the repo) rendered exactly the meshes the bridge's loop would show. The
+regression test `every_world_weapon_shows_all_its_meshes` (install-gated) asserts the numbering
+against `WorldMeshes` for every base weapon, plus every vertex on the hand and every index valid;
+it failed with 40 problems before the fix. `world_meshes_are_numbered_without_gaps_after_the_dropped_surfaces`
+pins the rule without the install. Archive output changes (mesh names): `hud::VERSION` bump is
+the integrator's.
+
+## Third-person parts: BO2's world rule, every combination, and the `tag_weapon` default (2026-10-27, branch `v1/third-person`)
+
+Three gaps behind "the third-person weapon looks wrong", measured by the conformance `worldparts`
+area (45,959 → 3,326 cells):
+
+* **The base parts were never mounted.** BO2's third person draws the variant's
+  `attachWorldModel[8]` slots after the world model (`FUN_008ace30`, G14 §3): the magazine on
+  24 base weapons, the snipers' scopes, the ballistic knife's blade. The parser now reads them
+  (`Weapon::attach_world_models`, with the slot) and the unique's `worldModelAdditional`,
+  add offsets and `worldModelOffsetBaseAttachment`; `viewmodels::world_parts` ports the rule
+  (slot 0 dropped/moved by the single uniques' flags, slot 6 dropped by `disableBaseWeaponClip`,
+  then each attachment's **resolved** unique — the child/sibling chain, `resolved_unique`, which
+  the old `combined == mask` lookup missed: `an94+acog+grip` drew the ACOG twice and no grip).
+  Both the W3D meshes and the `.zbw` use it.
+* **Combinations drew nothing in third person.** Since full combo coverage, a class weapon's def
+  has its own viewmodel index (≥ the base set) but neither W3D meshes nor a `.zbw` — the claim
+  that it "shows its base weapon" was false: the bridge's `vm == p.weapon` loop matched nothing.
+  Every legal combination now gets its `.zbw` (models parsed and converted once; a combination
+  costs only its manifest), and `Catalog::world_viewmodel` makes the W3D body show the base
+  weapon's meshes for a def without its own (`Sim::world_poses`).
+* **The world default tag is `tag_weapon`, not `j_gun`.** Read-only Ghidra: both callers pass
+  `FUN_008ace30` `DAT_0240749c`, which `FUN_00678440` registers as `FUN_00621d80("tag_weapon")` —
+  the world models' root bone (no world model has `j_gun`). **The expected side's
+  `resolve::world_parts` used the viewmodel default `j_gun`: a transcription bug against BO2's
+  engine, corrected (`WORLD_DEFAULT_TAG`), pinned by the fixture test
+  `world_parts_default_to_tag_weapon`.** The mod mounts there too (`viewmodels::WORLD_DEFAULT_TAG`);
+  body mode hangs a tagless part from the weapon's root instead of the body's origin.
+
+Residual `worldparts` (3,326): 645–651 rows per column with no mod manifest at all (the
+`steadyaim`/`sf_*` combos the enumerator does not produce — the combo-coverage/alt-weapon work),
+60 `gl_sa58` rows whose BO2 `world_model` is the `_view` model (BO2's data), and 35
+`world_part_rotations` rows where a 180° roll's quaternion is `(1,0,0,~0)`: the mod's f32
+`from_angles` leaves w at −4e-8, so `canonical_quat` flips the sign before rounding — the same
+rotation, a canonicalisation tie (the quat-canonical item).
+
+## Third-person camo: the native weapon wears the class camo per part (2026-10-27, branch `v1/third-person`)
+
+The W3D third person can never show a per-player camo (its textures are baked into one shared
+body W3D), so the camo lives on the native third person (`ZHBO_NATIVE_BODY=1`/`2`):
+
+* `.zbw` parts carry their `WeaponCamo` (`Part::camo`, serialized after `ads_only`): the def's
+  `weaponCamo` on the world model and its `attachWorldModel` slots, the attachment's single
+  unique's on its models — the rule `v1/attach-camo` established for first person (G16,
+  `FUN_00529600`). `zhbo_native::thirdperson::WEAPON_VERSION` must go 2 → 3 (integrator-owned, not
+  bumped here) with the archive `hud::VERSION`.
+* `nativebody::load` takes the option and paints each part's surfaces from its own blob
+  (`camo::apply` with the per-part predicate; the body, part 0 in body mode, wears none). The
+  option comes from the sim by General id (`Sim::third_person_camo` → `nativebody::camo_for`: the
+  class camo when the weapon in hand is the class primary) — no ABI change. The rig's cache
+  identity includes the option.
+* **Composes with `v1/attach-camo`:** this branch carries that branch's `zhbo-formats` `weapon_camo`
+  fields, `viewmodel::Part::camo` (+ the `.zbv` serialization), `nativevm::camo::apply`'s `wears`
+  predicate and `SurfaceSpec::part` as **identical hunks** (they merge clean). Expected conflicts,
+  each trivially "take attach-camo's": `nativevm::load`'s camo block (here it still paints the whole
+  first-person mesh, `|_| true`) and `native.rs`'s `.zbv` part builder (here `camo: None`). Until
+  attach-camo lands, the optic `.zcm` blobs are not converted, so attachments draw stock in third
+  person; the guns' blobs are.
+* **Not the default view.** The default third person is still the W3D body (`ZHBO_NATIVE_BODY=0`),
+  which draws no camo. Making the native weapon (`=1`) the default — verified 14/14 `--rts` when
+  it landed, and now also the only path that draws combinations' attachments — is the
+  integrator's call after the in-game check.
+
+## Third-person brass and tracers: what others see of a shot (2026-10-30, branch `v1/brass-tracers`)
+
+Item 5b family C. The mod drew neither BO2's world shell eject nor its tracers. Read-only Ghidra
+(t6mp; decompiles kept in the plan dir) settled the rules:
+
+* **Brass** — `FUN_00531630(cg, ent, weapon, tag, left, lastShot)`, from `EV_EJECT_BRASS` (event
+  0x26) with `tag_brass` (`tag_brass1` for the left gun): the shooter's own first-person view plays
+  `viewShellEjectEffect`/`viewLastShotEjectEffect` on the view model; **everyone else**
+  `worldShellEjectEffect` (+0x1d4) at the entity's `tag_brass`, or `worldLastShotEjectEffect`
+  (+0x1dc) when the shot is the last and both last fields are set. Like the view shells, several
+  defs point at `common_mp`'s comma stubs (`,weapon/shellejects/fx_rifle`): `weapon::all_in`
+  binds the world shells through `patch_mp`. In BO2's data every last-round effect equals its
+  every-shot one.
+* **Tracer cadence** — `FUN_007c65c0`: a per-entity **byte** countdown (`centity+0x35c`): if the
+  tracer's `drawInterval` is below it or it is 0, it restarts at the interval; it is decremented;
+  at 0 it restarts and the bullet draws a tracer. So interval `n` draws bullets `n, 2n, …`; 1
+  every bullet; 0 none. It runs per bullet (`FUN_00539800` loops a shotgun's pellets into
+  `FUN_00538e40`) and only for weapons that have a tracer.
+* **Which tracer** — `FUN_008eb420`: the first single unique (combination order, the base unique
+  standing in) with `enemyTracerType` when the shooter is not on the local client's team
+  (`FUN_004bbf10`) or `tracerType`, else the def's. The friendly and `_enemy` tracers differ only in
+  material (`gfx_tracer` vs `gfx_tracer_enemy`); the scoped LMGs' IR/VZOOM uniques carry
+  `lmg_scope`. `Tracer_Spawn` (`FUN_007c6150`) draws kind 0 as a beam flying at `speed` and kind 1
+  (the snipers' smoke, `speed` 1) spanning the shot and fading over `fadeTime`.
+
+What changed:
+
+* `zhbo-formats`: `Tracer` (the whole `TracerDef`: kind, material, drawInterval, speed, beam
+  length/width, screw, fade, colours), on the def and each unique (friendly and enemy), stubs bound
+  by name (`bind_tracer`); the def's world shell effects. The install-gated
+  `reads_the_tracers_and_world_shells` pins the AN-94's.
+* Table: `WorldShellFxWeapon`, `WorldLastShotShellFxWeapon`, `TracerFxWeapon`, `TracerInterval`
+  (`WEAPON_FIELDS` 78 → 82), set for **every** def including the combinations (brass is the def's;
+  the tracer is resolved per combination) by `zhbo-assets::shotfx::convert` — no inheritance pass
+  needed.
+* Converter (`shotfx.rs`): Zero Hour plays an FX weapon's `FireFX` at the soldier's flash bone
+  (`ZF<vm>` = the world model's `tag_flash`), so the brass FXList re-uses the shell's particle
+  systems with `Offset` and `RotateX/Y/Z` = `tag_brass` relative to `tag_flash` (`M·Rx·Ry·Rz`, WW3D
+  post-multiplies; `rotate_xyz` is unit-tested against that order). A tracer is a Zero Hour
+  `Tracer` nugget (length, width, speed in ZH units; colour = BO2's most opaque stop × the
+  material's mean hue). Each is a silent client-only FX weapon (`ZHBO_FX_Brass_<base>`,
+  `ZHBO_FX_Tracer_<name>`).
+* Sim: `WeaponAction::Fire` carries `last` (the round empties the magazine); per shot the sim fires
+  the brass FX weapon (the last-round one on `last`), per bullet `fire::tracer_due` (BO2's
+  countdown on `PlayerSim::tracer_count`) and the tracer FX weapon to that bullet's end. Fake-host
+  tests: `others_see_brass_every_shot_and_a_tracer_every_nth_bullet` (7 shots, interval 3 → brass
+  ×6 + last, tracers after shots 3 and 6) and `the_tracer_countdown_is_bo2s`.
+* The overhead General fires Zero Hour's own weapon, so his `FireFX` becomes one composed FXList
+  (`ZHBO_BO2FX_Rts_<id>`: flash + placed brass + the tracer at `Probability = 1/drawInterval`).
+* No ABI change (the existing `fire_fx` callback); no renderer change — the engine's FXList path
+  already owns particles and Zero Hour's `W3DTracerDraw` line, so no native-pass beam was added.
+
+**Gaps left, on purpose:** the enemy tracer (its material only) is not chosen per viewer — the sim
+fires one viewer-agnostic FX weapon, so everyone sees the friendly one; the tracer's texture is not
+drawn (Zero Hour's tracer is an untextured `Line3D`, tinted instead); the sniper trail (kind 1) is a
+beam of its length crossing itself in `fadeTime`, not a stationary fading trail;
+`worldShellEjectOffset`/`Rotation` (+0x1ec/+0x204) are not applied (as on the view side); the left
+gun's `tag_brass1` and own-view tracers (`cg_firstPersonTracerChance`) are not ported. **Overlap
+with `v1/sounds-effects`**: both add `fx::read_or_stub`/`fx::bind` (identical hunk) and
+`weapon::all_in` (this branch binds the world shells and tracers, that one the flashes and view
+shells — merge as the union of both lists); generals' `all_in(&common, &[&patch])` line is
+identical; the conformance `Shipped::convert` both switch to `all_in`.
+
+Measured (baseline main → this branch, which carries `v1/third-person`): weapons cells 706,586 →
+637,899; clusters 203 → 200; gap clusters 214 → 211. This item: `tracer` 8,758 → 0,
+`world_shell_eject_effect` 8,648 → 0, `world_last_shot_eject_effect` 8,648 → 0 (−26,054, the three
+clusters); the rest is `v1/third-person`'s `world_model`/`world_part_*` (−42,633). No column
+regressed. Archive output and the table schema changed: `hud::VERSION` bump is the integrator's.
+In-game check (the integrator's): another soldier and the overhead General firing — brass from the
+ejection port, tracers every 3rd AR round / every LMG round, none from your own first-person gun.
+
+## Tracers per viewer, and from your own gun (2026-10-31, branch `v1/tracers-view`)
+
+Follow-up to the brass-and-tracers entry above, which left the enemy tracer and own-view tracers
+out. Read-only Ghidra (t6mp; decompiles and disassembly kept in the plan dir):
+
+* **Which tracer** — `Tracer_Spawn` (`FUN_007c6150`) and the countdown (`FUN_007c65c0`) both ask
+  `FUN_004bbf10(cg, cent)` for the shooter's team (the client's for a player, `+0x238` for eType
+  0x10, else the entity's low flag bits) and call it friendly only when it is **non-zero and equal
+  to the local client's**; `FUN_008eb420` then walks, for a non-friend, each single unique's
+  `enemyTracerType` before its `tracerType`, and the def's enemy before its own. BO2's six enemy
+  twins (`smg`, `assaultrifle`, `lmg`, `pistol`, `shotgun`, `smg_akimbo` + `_enemy`) equal their
+  friendly ones in every field but the material (`gfx_tracer` vs `gfx_tracer_enemy`); the
+  install-gated `the_enemy_tracers_differ_only_in_material` pins it, which is what lets the sim keep
+  one countdown per shooter (BO2's runs on the viewer's tracer, whose interval is the same).
+* **The mod's side of it** — Zero Hour has players, not BO2 teams: the viewer is the local player;
+  his own soldiers and those Zero Hour calls `ALLY` to his General are friendly, everyone else
+  (enemies, neutrals: BO2's team-less shooters) enemy. The sim no longer fires the tracer FX
+  weapon: it queues a `ShotTracer` (shooter, def, target, end) per tracer bullet, and
+  `zhbo_logic_step` hands the queue to `client::tracers::play` right after the step, which picks
+  `TracerFxWeapon`/`EnemyTracerFxWeapon` for the last rendered frame's `Client::viewer` and fires
+  it through the same `fire_fx`. Deterministic: the sim state and the countdown are viewer-free;
+  only which client-only FX weapon plays differs per machine (as `cbFireFx`'s own-view skip already
+  did). BO2's free-for-all corner (team 0 is nobody's friend, so even your own tracer is the enemy
+  one) has no Zero Hour equivalent and is not mapped.
+* Table: `EnemyTracerFxWeapon` (`WEAPON_FIELDS` 82 → 83), set by `shotfx::convert` for every def
+  with a tracer (the enemy walk's result, its own FX weapon and tinted FXList; a def with no enemy
+  tracer names its friendly one). Tests: client `each_viewer_sees_the_enemy_tracer_of_shooters_not_on_his_side`,
+  `a_def_without_an_enemy_tracer_draws_its_own_for_everyone`, `the_client_frame_records_the_viewer`;
+  shotfx's walk test gains the enemy side; the real-install converter test checks the AN-94's
+  `assaultrifle_enemy` and that its beam colour differs.
+* The overhead General (Zero Hour's own weapon, one composed `FireFX`) still draws the friendly
+  tracer for every viewer: a weapon's `FireFX` cannot depend on who looks.
+* **Your own gun's tracers** — `cg_firstPersonTracerChance` is a dead dvar in t6mp: registered in
+  `FUN_004d2350` (default 0, range 0–1) and never read (the only instruction touching its global
+  `0x01062f50` is the registration's store). BO2 instead runs own shots down the same path:
+  `FUN_00539800` calls `FUN_00538e40` with its draw-tracer argument pushed as constant 1 (disassembly
+  at `0x00539afb`), so the countdown and `Tracer_Spawn` apply to the local player too, and the
+  tracer's start is `FUN_00535f80`'s out-param 9, which for the predicted local player is the flash
+  tag on the view model (`cg+0x700`; a third-person camera uses eye + forward × 30). The tracer
+  local entity's `+0x7c` marks the local client's own, and `FUN_007c6420` caps its width at 4.0 —
+  no player gun exceeds 4 (the DSR-50's trail is exactly 4), so it is not modelled. The mod: the
+  client queues a tracer whose shooter is its first-person General, makes them the next rendered
+  frame's, and the bridge's viewmodel pass pulls them (`zhbo_viewmodel_tracer`, new; ABI bump is
+  the integrator's) and plays the FX weapon's `FireFX` from `tag_flash` to the bullet's end. No
+  client RNG exists to keep out of the sim: the cadence is the sim's countdown. Not ported: the
+  left gun's `tag_flash` of a dual-wield pair (BO2 passes its tag by caller; the right gun's is used).
+* **Texture**: Zero Hour's FXList `Tracer` is `W3DTracerDraw`'s untextured `Line3DClass`; the only
+  textured beam (`W3DLaserDraw`'s `SegmentedLineClass`) is an object draw module spawned through
+  object creation, i.e. lockstep objects — not a client-only path. The tracer stays a tinted line.
+
+Measured: see the commit messages (conformance unchanged: the `tracer` column still reads the
+friendly tracer, no column moved). In-game check (the integrator's): an enemy soldier's tracers in
+`gfx_tracer_enemy`'s hue vs a teammate's; your own LMG drawing a tracer every bullet, an AR every
+third, from the viewmodel's muzzle.

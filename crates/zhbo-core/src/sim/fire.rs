@@ -13,7 +13,7 @@ use crate::weapons::FireMode;
 impl Sim {
     pub(super) fn apply_weapon_action(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, action: WeaponAction) {
         match action {
-            WeaponAction::Fire { spread_deg, jitter, view_kick, gun_kick, pellet } => {
+            WeaponAction::Fire { spread_deg, jitter, view_kick, gun_kick, pellet, last } => {
                 let def = p.arsenal.current().def;
                 // The shot sets the view kick's velocity (`FUN_008e3a00`); this frame's pellets fly
                 // along the aim the kick had already moved.
@@ -33,8 +33,17 @@ impl Sim {
                 let mut targets = gather_targets(host, eye, range, p.general);
                 let ground = |x: f32, y: f32| host.ground_height(x, y);
                 let hit = hitscan::trace(eye, dir, range, &targets, p.general, &ground);
-                // One tracer and sound per shot, not per pellet.
+                // One flash and sound per shot, not per pellet.
                 let fx = if pellet == 0 { Some(def.fx_weapon.as_str()).filter(|f| !f.is_empty()) } else { None };
+                // What others see of the shot besides the flash: the brass once per shot, a tracer
+                // on every `tracer_interval`-th bullet (each pellet is a bullet).
+                if pellet == 0 {
+                    let brass = if last { &def.world_last_shot_shell_fx_weapon } else { &def.world_shell_fx_weapon };
+                    if !brass.is_empty() {
+                        host.fire_fx(p.general, brass, 0, eye + dir * 10.0);
+                    }
+                }
+                let tracer = !def.tracer_fx_weapon.is_empty() && tracer_due(&mut p.tracer_count, def.tracer_interval);
                 // Enemy equipment in the way takes the shot.
                 let reach = match hit {
                     HitResult::Object { distance, .. } => distance,
@@ -43,6 +52,9 @@ impl Sim {
                 if let Some((i, t)) = self.equipment.shot(host, p.general, eye, dir, reach) {
                     if let Some(fx) = fx {
                         host.fire_fx(p.general, fx, 0, eye + dir * t);
+                    }
+                    if tracer {
+                        self.tracers.push(ShotTracer { shooter: p.general, def, target: 0, end: eye + dir * t });
                     }
                     let e = self.equipment.destroy(host, i, Some(idx));
                     self.equipment_events(vec![e]);
@@ -58,6 +70,9 @@ impl Sim {
                     HitResult::Object { id, point, distance, headshot } => {
                         if let Some(fx) = fx {
                             host.fire_fx(p.general, fx, id, point);
+                        }
+                        if tracer {
+                            self.tracers.push(ShotTracer { shooter: p.general, def, target: id, end: point });
                         }
                         let mult = if headshot { def.head_multiplier } else { 1.0 };
                         let victim = host.object(id, p.general);
@@ -85,6 +100,9 @@ impl Sim {
                     other => {
                         if let Some(fx) = fx {
                             host.fire_fx(p.general, fx, 0, other.point());
+                        }
+                        if tracer {
+                            self.tracers.push(ShotTracer { shooter: p.general, def, target: 0, end: other.point() });
                         }
                         // The ground: Zero Hour's terrain class at the point (the host's query).
                         // A shot that flew out to its full range hit nothing, so it raises nothing.
@@ -285,4 +303,21 @@ pub fn throw_velocity(from: Vec3, to: Vec3, speed: f32) -> Vec3 {
     let angle = tan.atan();
     let along = flat.normalized_or_zero();
     along * (speed * angle.cos()) + Vec3::new(0.0, 0.0, speed * angle.sin())
+}
+
+/// BO2's tracer cadence (`FUN_007c65c0`): a per-shooter byte countdown, clamped down to the
+/// current tracer's interval (or started from it), decremented per bullet; the bullet that brings
+/// it to zero draws a tracer and restarts it. Interval `n` draws the `n`-th, `2n`-th, … bullet;
+/// 1 draws every bullet; 0 draws none. The game reads `drawInterval` as a byte.
+pub(crate) fn tracer_due(count: &mut u8, interval: u32) -> bool {
+    let n = interval as u8;
+    if n < *count || *count == 0 {
+        *count = n;
+    }
+    *count = count.wrapping_sub(1);
+    if *count == 0 {
+        *count = n;
+        return true;
+    }
+    false
 }

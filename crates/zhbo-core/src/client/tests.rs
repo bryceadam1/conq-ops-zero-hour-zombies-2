@@ -1105,3 +1105,138 @@
         assert!(client.class_pick_open, "the screen stays up: the pick was denied");
         crate::profile::reset();
     }
+
+fn tracer_def() -> &'static crate::weapons::WeaponDef {
+    let def = crate::weapons::WeaponDef { tracer_fx_weapon: "TRACER".into(), enemy_tracer_fx_weapon: "TRACER_ENEMY".into(), ..Default::default() };
+    Box::leak(Box::new(def))
+}
+
+#[test]
+fn each_viewer_sees_the_enemy_tracer_of_shooters_not_on_his_side() {
+    // BO2's Tracer_Spawn: FUN_004bbf10 (same team as the local client) picks the friendly
+    // tracer, any other shooter the enemyTracerType walk's (FUN_008eb420). The viewer here is
+    // player 0 commanding General 1; General 2 is his own second soldier, 4 an enemy's, 6 gone.
+    use crate::client::tracers::{ViewTracers, Viewer};
+    let play = |host: &FakeHost, viewer: &Viewer, shots: &mut Vec<crate::sim::ShotTracer>| ViewTracers { viewer: *viewer, ..Default::default() }.play(host, shots);
+    use crate::sim::ShotTracer;
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    host.add(general(2, 0));
+    host.add(general(4, 1));
+    let def = tracer_def();
+    let shot = |shooter| ShotTracer { shooter, def, target: 0, end: Vec3::new(100.0, 0.0, 0.0) };
+    let viewer = Viewer { player: 0, general: 1, first_person: 0 };
+    let mut shots = vec![shot(1), shot(2), shot(4), shot(6)];
+    play(&host, &viewer, &mut shots);
+    assert!(shots.is_empty(), "the queue is drained");
+    let seen: Vec<(u32, String)> = host.fx.borrow().iter().map(|(s, w, _)| (*s, w.clone())).collect();
+    assert_eq!(seen, [(1, "TRACER".into()), (2, "TRACER".into()), (4, "TRACER_ENEMY".into()), (6, "TRACER_ENEMY".into())]);
+
+    // Another machine's viewer (player 1, General 4) sees the same bullets the other way round:
+    // the sim queued one viewer-agnostic record, the asset is each machine's.
+    host.fx.borrow_mut().clear();
+    let mut shots = vec![shot(1), shot(4)];
+    play(&host, &Viewer { player: 1, general: 4, first_person: 0 }, &mut shots);
+    let seen: Vec<String> = host.fx.borrow().iter().map(|(_, w, _)| w.clone()).collect();
+    assert_eq!(seen, ["TRACER_ENEMY", "TRACER"]);
+
+    // Zero Hour's alliance makes a friend of another player's soldier: the fake host's relationship
+    // is by owner, so a viewer whose player index differs but whose General shares the owner sees
+    // General 2 as an ally (the ALLY flag, not ownership, decides).
+    host.fx.borrow_mut().clear();
+    let mut shots = vec![shot(2)];
+    play(&host, &Viewer { player: 7, general: 1, first_person: 0 }, &mut shots);
+    assert_eq!(host.fx.borrow()[0].1, "TRACER");
+    // Before he commands a General, only his own player's soldiers are friends.
+    host.fx.borrow_mut().clear();
+    let mut shots = vec![shot(2), shot(4)];
+    play(&host, &Viewer { player: 0, general: 0, first_person: 0 }, &mut shots);
+    let seen: Vec<String> = host.fx.borrow().iter().map(|(_, w, _)| w.clone()).collect();
+    assert_eq!(seen, ["TRACER", "TRACER_ENEMY"]);
+}
+
+#[test]
+fn a_def_without_an_enemy_tracer_draws_its_own_for_everyone() {
+    use crate::client::tracers::choose;
+    let def = crate::weapons::WeaponDef { tracer_fx_weapon: "TRACER".into(), ..Default::default() };
+    let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(def));
+    assert_eq!(choose(def, true), "TRACER");
+    assert_eq!(choose(tracer_def(), true), "TRACER_ENEMY");
+    assert_eq!(choose(tracer_def(), false), "TRACER");
+}
+
+#[test]
+fn the_client_frame_records_the_viewer() {
+    let mut client = Client::default();
+    let mut sim = Sim::new();
+    let host = FakeHost::default();
+    host.add(general(1, 2));
+    sim.take_control(&host, 2, 1);
+    let mut inp = ClientIn { local_player: 2, ..Default::default() };
+    frame_with(&mut client, &mut sim, &host, &mut inp, 1);
+    assert_eq!((client.tracers.viewer.player, client.tracers.viewer.general), (2, 1));
+}
+
+#[test]
+fn the_own_first_person_tracer_is_drawn_from_the_viewmodel_on_the_same_countdown() {
+    // BO2 draws your own bullets' tracers too (FUN_00539800 sets FUN_00538e40's draw flag for
+    // every shooter; cg_firstPersonTracerChance is never read), starting at the viewmodel's flash
+    // tag (FUN_00535f80): the own General's tracer is not fired from his hidden body but handed to
+    // the viewmodel pass for the next rendered frame, others' still go through fire_fx.
+    use crate::client::tracers::{OwnTracer, ViewTracers, Viewer};
+    use crate::sim::ShotTracer;
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    host.add(general(4, 1));
+    let def = tracer_def();
+    let end = Vec3::new(50.0, 0.0, 0.0);
+    let mut view = ViewTracers { viewer: Viewer { player: 0, general: 1, first_person: 1 }, ..Default::default() };
+    let mut shots = vec![ShotTracer { shooter: 1, def, target: 0, end }, ShotTracer { shooter: 4, def, target: 0, end }];
+    view.play(&host, &mut shots);
+    let fired: Vec<(u32, String)> = host.fx.borrow().iter().map(|(s, w, _)| (*s, w.clone())).collect();
+    assert_eq!(fired, [(4, "TRACER_ENEMY".into())], "only the other soldier's through fire_fx");
+    assert!(view.frame.is_empty(), "not before the next rendered frame");
+    view.begin_frame(true);
+    assert_eq!(view.frame, [OwnTracer { fx_weapon: "TRACER", end }], "his own side's tracer");
+    view.begin_frame(true);
+    assert!(view.frame.is_empty(), "drawn once");
+    // Out of first person there is no viewmodel to draw from: the queue is dropped.
+    view.play(&host, &mut vec![ShotTracer { shooter: 1, def, target: 0, end }]);
+    view.begin_frame(false);
+    view.begin_frame(true);
+    assert!(view.frame.is_empty());
+}
+
+#[test]
+fn the_own_tracers_follow_the_sims_countdown_deterministically() {
+    // The own-gun tracers come from the sim's countdown, not a client random roll: two runs of
+    // the same input queue the same bullets.
+    let run = || {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        for f in 1..=120 {
+            sim.step(&host, f);
+        }
+        let w = sim.players[0].as_mut().unwrap().arsenal.current_mut();
+        let def = crate::weapons::WeaponDef { tracer_fx_weapon: "TRACER".into(), tracer_interval: 2, pellets: 1, fire: crate::weapons::FireMode::Auto, ..w.def.clone() };
+        let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(def));
+        (w.def, w.main, w.ammo, w.reserve) = (def, def, 9, 0);
+        let mut view = ViewTracers { viewer: Viewer { player: 0, general: 1, first_person: 1 }, ..Default::default() };
+        let mut drawn = Vec::new();
+        for f in 121..=300 {
+            sim.input(0, 1, crate::input::FpsInput { held: buttons::FIRE, ..Default::default() });
+            sim.step(&host, f);
+            view.play(&host, &mut sim.tracers);
+            view.begin_frame(true);
+            drawn.extend(view.frame.iter().map(|t| (f, t.end)));
+        }
+        drawn
+    };
+    use crate::client::tracers::{ViewTracers, Viewer};
+    let a = run();
+    assert_eq!(a.len(), 4, "every 2nd of 9 rounds: {a:?}");
+    assert_eq!(a, run());
+}

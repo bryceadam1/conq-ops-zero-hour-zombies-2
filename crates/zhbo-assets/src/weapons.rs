@@ -964,6 +964,12 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         // The variant's own action-slot material (`WeaponVariantDef.dpadIcon`): an alt mode carries
         // it (`gl_an94_mp`: `hud_gl_select`), the weapon it toggles from does not.
         dpad_icon: w.dpad_icon.clone().unwrap_or_default(),
+        // Set by `generals::files` once the effects are converted (`world_shot_fx`).
+        world_shell_fx_weapon: String::new(),
+        world_last_shot_shell_fx_weapon: String::new(),
+        tracer_fx_weapon: String::new(),
+        enemy_tracer_fx_weapon: String::new(),
+        tracer_interval: 0,
     };
     #[cfg(debug_assertions)]
     {

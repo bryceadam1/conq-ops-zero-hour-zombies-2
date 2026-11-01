@@ -169,6 +169,20 @@ pub struct Event {
     pub kind: EventKind,
 }
 
+/// A bullet that draws a tracer (BO2's countdown said so, `fire::tracer_due`). The sim names the
+/// shooter and the weapon; which tracer is drawn is the viewer's (`FUN_004bbf10`: friendly or
+/// enemy), so the host layer drains these after each logic step and the client chooses
+/// (`client::tracers`). Presentation only: nothing in the sim reads them back.
+#[derive(Clone, Copy, Debug)]
+pub struct ShotTracer {
+    /// The shooting General.
+    pub shooter: u32,
+    pub def: &'static crate::weapons::WeaponDef,
+    /// What the bullet hit (0: the ground, the air or equipment) and where it ended.
+    pub target: u32,
+    pub end: Vec3,
+}
+
 #[derive(Clone, Debug)]
 pub struct PlayerSim {
     pub general: u32,
@@ -220,6 +234,8 @@ pub struct PlayerSim {
     pub building: bool,
     /// The optic displays' state (the MMS's characters, the target finder's spotting).
     pub optics: optics::Optics,
+    /// BO2's per-shooter tracer countdown (`centity` byte `+0x35c`, `fire::tracer_due`).
+    pub tracer_count: u8,
 }
 
 impl PlayerSim {
@@ -282,6 +298,7 @@ impl PlayerSim {
             site: None,
             building: false,
             optics: Default::default(),
+            tracer_count: 0,
         }
     }
 }
@@ -317,6 +334,8 @@ pub struct Sim {
     pub bullet_range: f32,
     pub frame: u32,
     pub events: Vec<Event>,
+    /// This step's tracer bullets, for the host layer to draw per viewer and clear.
+    pub tracers: Vec<ShotTracer>,
 }
 
 impl Default for Sim {
@@ -336,6 +355,7 @@ impl Sim {
             bullet_range: crate::units::inches(crate::tuning::Tuning::default().bulletrange),
             frame: 0,
             events: Vec::new(),
+            tracers: Vec::new(),
         }
     }
 
@@ -437,6 +457,7 @@ impl Sim {
             site: None,
             building: false,
             optics: Default::default(),
+            tracer_count: 0,
                 }
             }
         };
@@ -505,6 +526,7 @@ impl Sim {
                     site: None,
                     building: false,
                     optics: Default::default(),
+                    tracer_count: 0,
                 }
             }
         };
@@ -774,7 +796,8 @@ impl Sim {
 
 
     /// How each controlled General looks in third person: its General, the viewmodel index of the
-    /// weapon in hand (its world model is shown), the tablet (0 none, 1 coming up for the field
+    /// weapon in hand whose W3D world meshes are shown (`Catalog::world_viewmodel`: a combination
+    /// shows its base weapon's), the tablet (0 none, 1 coming up for the field
     /// computer, 2 going down as first person starts), and whether the sidearm is in hand.
     pub fn world_poses(&self) -> Vec<(u32, i32, i32, bool)> {
         self.players
@@ -787,9 +810,17 @@ impl Sim {
                     Mode::Fps if a.raise_left > a.raise_total + 1e-4 => 2,
                     _ => 0,
                 };
-                (p.general, a.current().def.viewmodel.max(0), tablet, a.active == 1)
+                (p.general, crate::weapons::catalog().world_viewmodel(a.current().def).max(0), tablet, a.active == 1)
             })
             .collect()
+    }
+
+    /// The class camo option General `general`'s weapon `vm` wears in third person
+    /// ([`crate::nativebody::camo_for`]).
+    pub fn third_person_camo(&self, general: u32, vm: i32) -> Option<String> {
+        let p = self.players.iter().flatten().find(|p| p.general == general)?;
+        let primary = crate::weapons::catalog().get(&p.arsenal.loadout.primary)?;
+        crate::nativebody::camo_for(primary, &p.camo, vm)
     }
 
     /// What each General's native third person needs this frame (Track R7): the weapon in hand
@@ -1784,6 +1815,63 @@ pub(crate) mod tests {
             let damaged = host.damage_log.borrow().iter().any(|(_, v, _)| *v == 2);
             assert_eq!(damaged, hit, "enemy at {inch} in");
         }
+    }
+
+    #[test]
+    fn others_see_brass_every_shot_and_a_tracer_every_nth_bullet() {
+        // BO2's third-person shot (`FUN_00531630`, `FUN_007c65c0`): the world brass once per shot
+        // (the last-round twin on the round that empties the magazine) and a tracer on the 3rd,
+        // 6th, … bullet of an interval-3 gun. Deterministic: the countdown lives in the sim.
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        wait_until_ready(&mut sim, &host);
+        let w = sim.players[0].as_mut().unwrap().arsenal.current_mut();
+        let mut def = w.def.clone();
+        def.world_shell_fx_weapon = "BRASS".into();
+        def.world_last_shot_shell_fx_weapon = "BRASS_LAST".into();
+        def.tracer_fx_weapon = "TRACER".into();
+        def.tracer_interval = 3;
+        def.pellets = 1;
+        def.fire = crate::weapons::FireMode::Auto;
+        let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(def));
+        (w.def, w.main, w.ammo, w.reserve) = (def, def, 7, 0);
+        host.fx.borrow_mut().clear();
+        // The tracer bullets are queued for the host layer (the viewer picks the asset): note how
+        // many shots' brass had played when each was queued.
+        let mut after = Vec::new();
+        for _ in 0..frames(5.0) {
+            run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, ..Default::default() }, 1);
+            let shots = host.fx.borrow().iter().filter(|(_, w, _)| w.starts_with("BRASS")).count();
+            for t in std::mem::take(&mut sim.tracers) {
+                assert_eq!((t.shooter, t.def.tracer_fx_weapon.as_str()), (1, "TRACER"));
+                after.push(shots);
+            }
+        }
+        let fx: Vec<String> = host.fx.borrow().iter().map(|(_, w, _)| w.clone()).collect();
+        let brass: Vec<&str> = fx.iter().map(String::as_str).filter(|w| w.starts_with("BRASS")).collect();
+        assert_eq!(brass, ["BRASS", "BRASS", "BRASS", "BRASS", "BRASS", "BRASS", "BRASS_LAST"], "{fx:?}");
+        assert!(!fx.iter().any(|w| w == "TRACER"), "the sim fires no tracer itself: {fx:?}");
+        // The tracer follows its shot's brass: shots 3 and 6 of 7.
+        assert_eq!(after, [3, 6], "{fx:?}");
+    }
+
+    #[test]
+    fn the_tracer_countdown_is_bo2s() {
+        let draws = |interval: u32, bullets: usize, start: u8| {
+            let mut c = start;
+            (1..=bullets).filter(|_| fire::tracer_due(&mut c, interval)).collect::<Vec<_>>()
+        };
+        assert_eq!(draws(1, 4, 0), [1, 2, 3, 4], "every bullet");
+        assert_eq!(draws(2, 6, 0), [2, 4, 6]);
+        assert_eq!(draws(3, 7, 0), [3, 6]);
+        assert!(draws(0, 50, 0).is_empty(), "no interval, no tracer");
+        // A countdown left above a new gun's interval is clamped to it (switching from an AR to an LMG).
+        assert_eq!(draws(1, 2, 2), [1, 2]);
+        // One below the interval carries over: the next draw comes sooner.
+        assert_eq!(draws(3, 3, 1), [1]);
     }
 
     #[test]

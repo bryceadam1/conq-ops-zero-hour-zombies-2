@@ -275,7 +275,8 @@ pub struct Offhand {
 pub enum WeaponAction {
     /// Fire one round (one pellet for shotguns) with the given cone (degrees), random offsets in
     /// [-1, 1), view kick (degrees pitch up, yaw, roll) and the gun kick spring's impulse.
-    Fire { spread_deg: f32, jitter: (f32, f32), view_kick: (f32, f32, f32), gun_kick: (f32, f32), pellet: u16 },
+    /// `last`: this round empties the magazine (BO2's last-shot shell eject).
+    Fire { spread_deg: f32, jitter: (f32, f32), view_kick: (f32, f32, f32), gun_kick: (f32, f32), pellet: u16, last: bool },
     /// Launch a projectile (launchers, crossbow, ballistic knife); `pellet` numbers the bolts of
     /// a stacked pull by the rounds loaded before each, minus one (the tri-bolt's 2, 1, 0).
     Launch { def: &'static WeaponDef, pellet: u16 },
@@ -1009,7 +1010,7 @@ impl Arsenal {
                 for pellet in 0..def.rounds_per_shot() {
                     let jitter = (rng.signed(), rng.signed());
                     let (view_kick, gun_kick) = if pellet == 0 { (k.view, k.gun) } else { ((0.0, 0.0, 0.0), (0.0, 0.0)) };
-                    out.push(WeaponAction::Fire { spread_deg: spread, jitter, view_kick, gun_kick, pellet });
+                    out.push(WeaponAction::Fire { spread_deg: spread, jitter, view_kick, gun_kick, pellet, last: w.ammo == 1 });
                 }
             }
             // The magazine's last round fires over `iLastFireTime` when the weapon has one

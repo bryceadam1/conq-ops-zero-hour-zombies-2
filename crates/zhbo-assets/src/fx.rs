@@ -124,6 +124,11 @@ pub struct Converted {
     pub textures: BTreeMap<String, Vec<u8>>,
     /// Effects already converted, by FXList name.
     done: std::collections::BTreeSet<String>,
+    /// Each converted FXList's particle systems and whether they take the spawner's matrix, for
+    /// the lists built from them ([`Converted::placed`], [`Converted::compose`]).
+    lists: BTreeMap<String, (Vec<String>, bool)>,
+    /// The nugget text of every FXList written, by name.
+    bodies: BTreeMap<String, String>,
 }
 
 impl Converted {
@@ -158,14 +163,70 @@ impl Converted {
         let mut systems = Vec::new();
         let mut bright = false;
         self.add_elems(effect, 0.0, looping_secs, &name, paks, zones, orient, &mut systems, &mut bright);
-        let mut fx = format!("FXList {name}\n");
+        let mut body = String::new();
         if bright {
-            fx.push_str("  LightPulse\n    Color = R:255 G:190 B:110\n    Radius = 40\n    IncreaseTime = 0\n    DecreaseTime = 400\n  End\n");
+            body.push_str("  LightPulse\n    Color = R:255 G:190 B:110\n    Radius = 40\n    IncreaseTime = 0\n    DecreaseTime = 400\n  End\n");
         }
-        fx.push_str(&fxlist_particles(&systems, orient));
-        fx.push_str("End\n\n");
-        self.fxlists.push_str(&fx);
+        body.push_str(&fxlist_particles(&systems, orient));
+        self.lists.insert(name.clone(), (systems, orient));
+        self.write(&name, body);
         name
+    }
+
+    fn write(&mut self, name: &str, body: String) {
+        self.fxlists.push_str(&format!("FXList {name}\n{body}End\n\n"));
+        self.bodies.insert(name.to_string(), body);
+    }
+
+    /// A copy of the converted FXList `src`'s particle systems spawned `offset` (Zero Hour units)
+    /// from the spawner and turned by `rotate_deg` about its X, then Y, then Z (Zero Hour's
+    /// `RotateX/Y/Z`, post-multiplied onto the spawner's matrix): BO2's third-person shell, which
+    /// plays at the world model's `tag_brass`, spawned from the flash bone the shot comes from.
+    /// `None` when `src` was not converted or has nothing to draw.
+    pub fn placed(&mut self, src: &str, name: &str, offset: [f32; 3], rotate_deg: [f32; 3]) -> Option<String> {
+        if self.bodies.contains_key(name) {
+            return Some(name.to_string());
+        }
+        let (systems, orient) = self.lists.get(src).cloned().filter(|(s, _)| !s.is_empty())?;
+        let place = format!(
+            "    Offset = X:{:.3} Y:{:.3} Z:{:.3}\n    RotateX = {:.2}\n    RotateY = {:.2}\n    RotateZ = {:.2}\n",
+            offset[0], offset[1], offset[2], rotate_deg[0], rotate_deg[1], rotate_deg[2]
+        );
+        let orient = if orient { "    OrientToObject = Yes\n" } else { "" };
+        let body = systems.iter().map(|s| format!("  ParticleSystem\n    Name = {s}\n{orient}{place}  End\n")).collect();
+        self.write(name, body);
+        Some(name.to_string())
+    }
+
+    /// One FXList playing the written FXLists `parts` together (the ones not written are skipped),
+    /// then `extra` nugget text; `None` when nothing is left.
+    pub fn compose(&mut self, name: &str, parts: &[&str], extra: &str) -> Option<String> {
+        if self.bodies.contains_key(name) {
+            return Some(name.to_string());
+        }
+        let mut body: String = parts.iter().filter_map(|p| self.bodies.get(*p)).map(String::as_str).collect();
+        body.push_str(extra);
+        if body.is_empty() {
+            return None;
+        }
+        self.write(name, body);
+        Some(name.to_string())
+    }
+
+    /// A BO2 tracer (`TracerDef`) as an FXList of one Zero Hour `Tracer` nugget, which flies a
+    /// beam from the flash bone towards the shot's end (`TracerFXNugget`). `tint` is the tracer
+    /// material's mean colour; `probability` < 1 only where no sim decides the cadence.
+    pub fn tracer(&mut self, t: &zhbo_formats::weapon::Tracer, tint: [f32; 3], probability: f32) -> String {
+        let name = tracer_fxlist(&t.name, probability);
+        if !self.bodies.contains_key(&name) {
+            self.write(&name, tracer_nugget(t, tint, probability));
+        }
+        name
+    }
+
+    /// The nugget text of a written FXList.
+    pub fn body(&self, name: &str) -> Option<&str> {
+        self.bodies.get(name).map(String::as_str)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -242,6 +303,36 @@ impl Converted {
         self.textures.entry(format!("Art\\Textures\\{file}")).or_insert_with(|| images::tga_bytes(&rgba));
         Some((file, additive))
     }
+}
+
+/// The FXList name of a converted tracer (`probability` 1: the sim's every-Nth cadence).
+pub fn tracer_fxlist(tracer: &str, probability: f32) -> String {
+    if probability >= 1.0 {
+        format!("ZHBO_BO2Tracer_{tracer}")
+    } else {
+        format!("ZHBO_BO2Tracer_{tracer}_P{:03}", (probability * 100.0).round() as u32)
+    }
+}
+
+/// BO2's tracer as Zero Hour's `Tracer` nugget. A beam (`kind` 0) flies at its `speed` with its
+/// `beamLength` and `beamWidth`; BO2's head-to-tail colours become the beam's colour at its most
+/// opaque stop, tinted by the material. A trail (`kind` 1, the snipers' smoke) spans its length at
+/// once and fades over `fadeTime` in BO2 (`Tracer_Spawn`, `FUN_007c6150`); Zero Hour's beam must
+/// move, so it crosses its own length in that time.
+fn tracer_nugget(t: &zhbo_formats::weapon::Tracer, tint: [f32; 3], probability: f32) -> String {
+    let stop = t.colors.iter().copied().fold([0.0f32; 4], |best, c| if c[3] > best[3] { c } else { best });
+    let c = |i: usize| ((stop[i] * tint[i]).clamp(0.0, 1.0) * 255.0).round() as u32;
+    let speed = if t.kind == 0 { t.speed } else { t.beam_length / t.fade_time.max(0.1) };
+    format!(
+        "  Tracer\n    DecayAt = 1.0\n    Length = {:.2}\n    Width = {:.3}\n    Color = R:{} G:{} B:{}\n    Speed = {:.2}\n    Probability = {:.2}\n  End\n",
+        units(t.beam_length),
+        units(t.beam_width),
+        c(0),
+        c(1),
+        c(2),
+        units(speed),
+        probability.clamp(0.0, 1.0),
+    )
 }
 
 /// The `ParticleSystem` nuggets of an FXList; `orient` makes each take its spawner's matrix

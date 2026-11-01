@@ -303,6 +303,45 @@ namespace
 		}
 	}
 
+	// The local player's own tracers this frame (zhbo_viewmodel_tracer): BO2 starts them at the
+	// viewmodel's flash tag (FUN_00535f80) and draws them on the same countdown as everyone's. Each
+	// is its FX weapon's FireFX (a Zero Hour Tracer nugget, which needs both ends) played from
+	// `tag_flash` of the native pose or the W3D model to the bullet's end.
+	void viewmodelTracers(Bool native)
+	{
+		char name[128];
+		ZhboVec3 end;
+		for (int32_t i = 0; zhbo_viewmodel_tracer(i, name, static_cast<int32_t>(sizeof(name)), &end); ++i)
+		{
+			const WeaponTemplate *tmpl = TheWeaponStore ? TheWeaponStore->findWeaponTemplate(name) : nullptr;
+			const FXList *fx = tmpl ? tmpl->getFireFX(LEVEL_REGULAR) : nullptr;
+			if (!fx)
+				continue;
+			Matrix3D mtx(true);
+			if (native)
+			{
+				float m[12];
+				if (!zhbo_native_bone("tag_flash", m))
+					continue;
+				mtx[0].Set(m[0], m[1], m[2], m[3]);
+				mtx[1].Set(m[4], m[5], m[6], m[7]);
+				mtx[2].Set(m[8], m[9], m[10], m[11]);
+			}
+			else
+			{
+				const int index = s_model ? s_model->Get_Bone_Index("tag_flash") : 0;
+				if (index <= 0)
+					continue;
+				mtx = s_model->Get_Bone_Transform(index);
+			}
+			const Vector3 t = mtx.Get_Translation();
+			Coord3D from, to;
+			from.set(t.X, t.Y, t.Z);
+			to.set(end.x, end.y, end.z);
+			FXList::doFXPos(fx, &from, &mtx, 0.0f, &to, 0.0f);
+		}
+	}
+
 	// The scene's lights as the native pass takes them: Zero Hour's global lights for the time of
 	// day (`lightPos` is the direction the light travels, so the light is the other way).
 	void sceneLights(ZhboNativeIn &in)
@@ -356,6 +395,7 @@ namespace
 			s_model->Set_Hidden(true);
 		if (fired)
 			viewmodelFx(weapon, TRUE);
+		viewmodelTracers(TRUE);
 		return TRUE;
 	}
 
@@ -627,4 +667,5 @@ void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)
 	s_model->Set_Hidden(false);
 	if (fired)
 		viewmodelFx(weapon, FALSE);
+	viewmodelTracers(FALSE);
 }

@@ -245,7 +245,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
 
     // Every BO2 multiplayer weapon a player can carry, with its attachments and alt modes, as the
     // core's weapon table; art for the converted ones (the loadout first, then the rest).
-    let bo2 = zhbo_formats::weapon::all(&common).map_err(|e| e.to_string())?;
+    let bo2 = zhbo_formats::weapon::all_in(&common, &[&patch]).map_err(|e| e.to_string())?;
     let atts = zhbo_formats::weapon::attachments(&common).map_err(|e| e.to_string())?;
     let names = crate::weapons::names(bo2_dir);
     let meta = crate::weapons::attachment_metadata(&patch, &names);
@@ -325,8 +325,10 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     // tablet.
     let mut rig = Rig::new(&xmodel::find(&zones[0], FACTIONS[0].body).map_err(|e| e.to_string())?, &[(&weapon, character::WEAPON_TAG)]);
     let mut looks = textures::Looks::default();
-    // The base set is what the third-person body carries; combos beyond it show the base weapon, same as today.
-    let (held, flashes) = viewmodels::world_weapons(&patch, &common, &paks, &mut out, &rig, &bo2, &atts, &mut table.weapons, &converted_base, &mut looks);
+    // Every legal combination gets its native world-weapon manifest (the shared models deduped by
+    // name); only the base set's meshes ride the W3D body, and a combination shows its base weapon
+    // there (`Catalog::world_viewmodel`).
+    let (held, flashes) = viewmodels::world_weapons(&patch, &common, &paks, &mut out, &rig, &bo2, &atts, &mut table.weapons, &converted, base_count, &mut looks);
     let tablet = viewmodels::tablet_world(&patch, &common, &paks, &mut out, &rig, &mut looks);
     // Each weapon's muzzle on the hand, so shots and flashes leave the gun in hand.
     let hand = rig.pivot(character::WEAPON_TAG).unwrap_or(0);
@@ -474,9 +476,20 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
             fx_ini = ini_set(&fx_ini, "Weapon", &d.fx_weapon, "FireFX", flash)?;
         }
     }
+    // What others see of a shot besides the flash: the world brass and the tracer, as FX weapons
+    // the sim fires (every def, combinations included).
+    let (shot_ini, placed) = crate::shotfx::convert(&mut table.weapons, &bo2, &[&patch, &common], &mut effects, &|h| paks.image(h));
+    fx_ini.push_str(&shot_ini);
+    // The overhead General fires Zero Hour's own weapon: his flash, brass and tracer are one FXList.
+    let mut rts_flashes = flashes.clone();
+    for (id, flash) in &flashes {
+        if let Some(fx) = crate::shotfx::rts_fire_fx(id, flash, &bo2, &placed, &[&patch, &common], &mut effects, &|h| paks.image(h)) {
+            rts_flashes.insert(id.clone(), fx);
+        }
+    }
     // The overhead General's weapon for every player weapon (swapped in by class and order).
     let has_event = |name: &str| extra.iter().any(|e| e.event == name);
-    fx_ini.push_str(&crate::weapons::rts_weapons_ini(&table.weapons, &flashes, &has_event));
+    fx_ini.push_str(&crate::weapons::rts_weapons_ini(&table.weapons, &rts_flashes, &has_event));
     out.insert("Data\\INI\\Weapon\\ZHBO_BO2_Weapons.ini".into(), fx_ini.into_bytes());
     // Under RTS control: the rifle's and pistol's BO2 hits on what they shoot, by what it is
     // (ZhboBridge plays them as the shots land).
@@ -791,6 +804,56 @@ mod tests {
         assert_eq!(def("as50_mp+fmj").overlay_material, "scope_overlay_xpr50", "FMJ leaves the base scope");
     }
 
+    /// The third-person tear, across every base weapon: each weapon's world meshes on the soldier
+    /// are exactly `W<vm>00 .. W<vm><n-1>` with `n` its `WorldMeshes` (the bridge shows `k < n`, so a
+    /// gap hides every surface after it — the MP7 drew two of four), every vertex rides the hand,
+    /// and every triangle indexes a finite vertex.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn every_world_weapon_shows_all_its_meshes() {
+        let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
+        let common = load_zone(&bo2_dir, "common_mp").unwrap();
+        let patch = load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
+        let paks = Paks::open(&bo2_dir).unwrap();
+        let names = crate::weapons::names(&bo2_dir);
+        let bo2 = zhbo_formats::weapon::all(&common).unwrap();
+        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
+        let ids = crate::weapons::converted_base(&bo2);
+        crate::weapons::add_variants(&mut table, &ids, &bo2);
+        let weapon = xmodel::find(&common, WEAPON).unwrap();
+        let body = xmodel::find(&load_zone(&bo2_dir, FACTIONS[0].zone).unwrap(), FACTIONS[0].body).unwrap();
+        let rig = Rig::new(&body, &[(&weapon, character::WEAPON_TAG)]);
+        let hand = rig.pivot(character::WEAPON_TAG).unwrap() as u16;
+        let mut out = BTreeMap::new();
+        let mut looks = textures::Looks::default();
+        let (held, _) = viewmodels::world_weapons(&patch, &common, &paks, &mut out, &rig, &bo2, &atts, &mut table.weapons, &ids, ids.len(), &mut looks);
+        let mut fails = Vec::new();
+        let mut shown = 0;
+        for (vm, id) in ids.iter().enumerate() {
+            let Some(d) = table.weapons.iter().find(|d| &d.id == id) else { continue };
+            let prefix = format!("W{vm:02}");
+            let mut mine: Vec<&str> = held.iter().map(|m| m.name.as_str()).filter(|n| n.starts_with(&prefix) && n.len() == prefix.len() + 2).collect();
+            mine.sort_unstable();
+            let want: Vec<String> = (0..d.world_meshes as usize).map(|k| world_mesh(vm as i32, k)).collect();
+            if mine != want {
+                fails.push(format!("{id}: meshes {mine:?}, the bridge shows {want:?}"));
+            }
+            shown += mine.len();
+        }
+        for m in &held {
+            if m.bones.iter().any(|&b| b != hand) {
+                fails.push(format!("{}: a vertex off the hand", m.name));
+            }
+            if m.positions.iter().flatten().any(|c| !c.is_finite()) || m.triangles.iter().flatten().any(|&i| i as usize >= m.positions.len()) {
+                fails.push(format!("{}: a bad vertex or index", m.name));
+            }
+        }
+        println!("{} base weapons, {shown} world meshes", ids.len());
+        assert_eq!(shown, held.len(), "every world mesh belongs to its weapon's shown range");
+        assert!(fails.is_empty(), "{} problems:\n{}", fails.len(), fails.join("\n"));
+    }
+
     #[test]
     #[ignore = "reads this machine's Black Ops II install"]
     fn converts_from_real_install() {
@@ -883,6 +946,44 @@ mod tests {
         let vel = |a: &str| defs.iter().flat_map(|d| d.lines().filter(|l| l.trim_start().starts_with(a))).map(str::trim).collect::<Vec<_>>();
         assert!(vel("VelOrthoZ =").iter().all(|l| l.ends_with("0.000 0.000")), "{defs:?}");
         assert!(vel("VelOrthoX =").iter().any(|l| !l.ends_with("0.000 0.000")), "{defs:?}");
+        // 5b family C: what others see. The AN-94's world brass (`fx_rifle`, a stub bound from
+        // patch_mp) plays from its own FX weapon, placed from the flash bone to `tag_brass`; its
+        // combinations eject the same; its tracer is BO2's `assaultrifle`, every 3rd bullet. A
+        // scoped LMG combination takes its optic unique's `lmg_scope` (FUN_008eb420).
+        let block = |ini: &str, head: &str| {
+            let at = ini.find(head).unwrap_or_else(|| panic!("no {head}"));
+            let rest = &ini[at..];
+            rest[..rest.find("\nEnd\n").unwrap()].to_string()
+        };
+        let weapons_ini = text("Data\\INI\\Weapon\\ZHBO_BO2_Weapons.ini");
+        let an94 = by_id("an94_mp");
+        assert_eq!(an94.world_shell_fx_weapon, crate::shotfx::brass_fx_weapon("an94_mp"));
+        assert_eq!(an94.world_last_shot_shell_fx_weapon, an94.world_shell_fx_weapon, "BO2's last-round effect is the same fx_rifle");
+        assert_eq!(by_id("an94_mp+grip").world_shell_fx_weapon, an94.world_shell_fx_weapon);
+        assert_eq!(an94.tracer_fx_weapon, crate::shotfx::tracer_fx_weapon("assaultrifle"));
+        assert_eq!(an94.tracer_interval, 3);
+        let mk48_ir = table.weapons.iter().find(|d| d.id.starts_with("mk48_mp+") && d.id.contains("+ir")).expect("an mk48 ir combination");
+        assert_eq!(mk48_ir.tracer_fx_weapon, crate::shotfx::tracer_fx_weapon("lmg_scope"), "{}", mk48_ir.id);
+        // An enemy viewer's: `assaultrifle_enemy` (gfx_tracer_enemy's hue); the IR unique carries
+        // no enemy tracer, so its own `lmg_scope` comes first in the enemy walk too.
+        assert_eq!(an94.enemy_tracer_fx_weapon, crate::shotfx::tracer_fx_weapon("assaultrifle_enemy"));
+        assert_eq!(mk48_ir.enemy_tracer_fx_weapon, mk48_ir.tracer_fx_weapon, "{}", mk48_ir.id);
+        let colour = |fx: &str| {
+            let list = block(&weapons_ini, &format!("Weapon {fx}\n"));
+            let fire = list.lines().find_map(|l| l.trim().strip_prefix("FireFX")).map(|v| v.trim_start_matches([' ', '=']).to_string()).unwrap();
+            block(&fxs, &format!("FXList {fire}\n")).lines().find(|l| l.trim().starts_with("Color")).map(str::to_string).unwrap()
+        };
+        assert_ne!(colour(&an94.tracer_fx_weapon), colour(&an94.enemy_tracer_fx_weapon), "the enemy material tints the beam");
+        assert!(by_id("judge_mp").world_shell_fx_weapon.is_empty(), "the Executioner ejects nothing in BO2");
+        let brass = block(&weapons_ini, &format!("Weapon {}\n", an94.world_shell_fx_weapon));
+        assert!(brass.contains(&format!("FireFX                  = {}", crate::shotfx::brass_fxlist("an94_mp", false))), "{brass}");
+        let placed = block(&fxs, &format!("FXList {}\n", crate::shotfx::brass_fxlist("an94_mp", false)));
+        assert!(placed.contains("OrientToObject = Yes") && placed.contains("Offset = X:") && placed.contains("RotateZ = "), "{placed}");
+        let tracer = block(&fxs, &format!("FXList {}\n", crate::fx::tracer_fxlist("assaultrifle", 1.0)));
+        assert!(tracer.contains("  Tracer\n") && tracer.contains("Probability = 1.00"), "{tracer}");
+        // The overhead General: flash, brass and a 1-in-3 tracer in one FireFX.
+        let rts_fx = block(&fxs, "FXList ZHBO_BO2FX_Rts_an94_mp\n");
+        assert!(rts_fx.contains("RotateZ = ") && rts_fx.contains("Probability = 0.33"), "{rts_fx}");
         native_blobs_are_whole(&files);
         wrist_datapads_are_off(&files);
     }

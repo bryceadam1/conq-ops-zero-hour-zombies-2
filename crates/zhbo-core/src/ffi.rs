@@ -352,6 +352,8 @@ pub extern "C" fn zhbo_logic_step(frame: u32) {
     with_state(|s| {
         let before = s.sim.events.len();
         s.sim.step(&s.logic, frame);
+        // The step's tracer bullets, as this machine's viewer sees them (client-only FX).
+        s.client.tracers.play(&s.logic, &mut s.sim.tracers);
         publish_controlled(&s.sim);
         log_step(s, before, frame);
     });
@@ -641,6 +643,12 @@ pub unsafe extern "C" fn zhbo_client_native_poses(out: *mut crate::nativebody::f
     n as i32
 }
 
+/// The class camo option General `general`'s weapon `vm` wears in third person (the sim's
+/// [`crate::sim::Sim::third_person_camo`]); `None` before a game or for any other weapon.
+pub(crate) fn third_person_camo(general: u32, vm: i32) -> Option<String> {
+    with_state(|s| s.sim.third_person_camo(general, vm)).flatten()
+}
+
 /// Third-person meshes of viewmodel `vm`'s weapon on the soldier model, or of the tablet for -2.
 #[no_mangle]
 pub extern "C" fn zhbo_world_mesh_count(vm: i32) -> i32 {
@@ -691,6 +699,24 @@ pub unsafe extern "C" fn zhbo_viewmodel_fx(vm: i32, flash: *mut c_char, flash_ca
     unsafe {
         write_c_str(flash, flash_cap, &d.view_flash_fx);
         write_c_str(shell, shell_cap, &d.view_shell_fx);
+    }
+    1
+}
+
+/// The `i`-th tracer of the local player's own gun this rendered frame (BO2 draws them on the same
+/// countdown as everyone's, from the viewmodel's flash tag: `FUN_00535f80`): the FX weapon whose
+/// `FireFX` draws it, and the bullet's end. Returns 0 past the last one.
+///
+/// # Safety
+/// `fx_weapon` must point to `cap` writable bytes (or be null); `end` must be writable or null.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_viewmodel_tracer(i: i32, fx_weapon: *mut c_char, cap: i32, end: *mut crate::math::Vec3) -> i32 {
+    let Some(t) = with_state(|s| usize::try_from(i).ok().and_then(|i| s.client.tracers.frame.get(i).copied())).flatten() else { return 0 };
+    unsafe {
+        write_c_str(fx_weapon, cap, t.fx_weapon);
+        if !end.is_null() {
+            *end = t.end;
+        }
     }
     1
 }

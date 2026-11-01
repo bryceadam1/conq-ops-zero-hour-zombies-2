@@ -412,6 +412,20 @@ pub struct WeaponDef {
     /// launcher's alt mode, `hud_select_fire_bullet_stack` on select fire), empty when none. The HUD's
     /// alt-fire slot draws it (`hud::ammo::alt_slot_icon`).
     pub dpad_icon: String,
+    /// The third-person shell eject (BO2's `worldShellEjectEffect` at the world model's
+    /// `tag_brass`, `FUN_00531630`): the Zero Hour FX weapon whose `FireFX` plays it, fired once
+    /// per shot at the shooter. Empty: the gun ejects nothing others see.
+    pub world_shell_fx_weapon: String,
+    /// The same for the round that empties the clip (`worldLastShotEjectEffect`).
+    pub world_last_shot_shell_fx_weapon: String,
+    /// The FX weapon drawing the gun's bullet tracer (`tracerType`, the first single unique's
+    /// before the def's, `FUN_008eb420`); empty: no tracer.
+    pub tracer_fx_weapon: String,
+    /// The same for a viewer the shooter is not friendly to (`enemyTracerType`, `FUN_008eb420`'s
+    /// enemy walk; `FUN_004bbf10` decides per viewer). Empty: the friendly one.
+    pub enemy_tracer_fx_weapon: String,
+    /// Every how-many bullets a tracer is drawn (`TracerDef.drawInterval`; `FUN_007c65c0`).
+    pub tracer_interval: u32,
 }
 
 /// One BO2 camouflage option (`mp/attachmenttable.csv`'s rows with `camo` in column 1): the id
@@ -617,6 +631,11 @@ impl Default for WeaponDef {
             traits: Traits::default(),
             guided_missile_type: 0,
             dpad_icon: String::new(),
+            world_shell_fx_weapon: String::new(),
+            world_last_shot_shell_fx_weapon: String::new(),
+            tracer_fx_weapon: String::new(),
+            enemy_tracer_fx_weapon: String::new(),
+            tracer_interval: 0,
         }
     }
 }

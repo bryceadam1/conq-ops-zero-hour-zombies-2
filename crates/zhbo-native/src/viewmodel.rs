@@ -39,7 +39,7 @@ pub struct Part {
     /// The `WeaponCamo` asset (`camo_an94`, `camo_reflex`) the class camo paints on this part, or
     /// `None` (the arms). BO2 resolves it per part (`FUN_00529600`, G16): the gun and its base
     /// `attachViewModel` parts take the def's `weaponCamo`, an attachment's models its single
-    /// unique's. Viewmodel (`.zbv`) only: the third-person `.zbw` does not carry it.
+    /// unique's. Both the viewmodel (`.zbv`) and the third-person `.zbw` carry it.
     pub camo: Option<String>,
     /// The index of the [`Self::ads_only`] part BO2 draws instead of this one while aiming (the
     /// holo's `t6_attach_optic_holo_ads` for its `_view`, the M32's slot 7 for its slot 0), or

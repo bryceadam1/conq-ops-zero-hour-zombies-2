@@ -309,10 +309,15 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   converted spec colour map (`*_spec.tga`, RENDERER.md "The specular colour"); its bumps — model
   `VERSION` 3→4, camo `VERSION` 1→2 and the archive's `hud::VERSION` — are integrator-owned. A
   style camo replaces the surface's specular colour with the style's (gold's hue lives there).
-  - **Divergences.** The camo applies to the first-person native viewmodel only: the W3D fallback
-    bakes textures and has no texture override, and the third-person native body pins `camo` to
-    `INVALID` (no third-person camo). Only the primary's viewmodel inherits the class camo, as the
-    class stores one camo.
+  - **Third person.** The native third person (`ZHBO_NATIVE_BODY` ≥ 1) wears the class camo too:
+    each `.zbw` part carries its `WeaponCamo` (`Part::camo`: the def's on the world model and its
+    base slots, the attachment's single unique's on its models) and `nativebody::load` paints each
+    part's surfaces (`SurfaceSpec::part`) from its own blob with the General's one option, read from
+    the sim by General id (`Sim::third_person_camo`, no ABI change) when the weapon in hand is his
+    class primary. The rig's cache identity includes the option.
+  - **Divergences.** The W3D fallback (the first-person W3D viewmodel and the default W3D
+    third-person body, `ZHBO_NATIVE_BODY=0`) bakes textures and has no texture override, so it
+    draws no camo. Only the primary inherits the class camo, as the class stores one camo.
 
 * **The engine-filled surfaces: the lens reticle, the clan tag, the emblem.** BO2 fills three
   kinds of viewmodel surface at draw time; the converter now keeps them in the native models (the
@@ -379,10 +384,18 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
   exact spelling of the stances the W3D path never needed (walk, crouch, prone) can differ between
   installs; a state the body has no clip for falls back to the nearest stance and gait at run time
   (`state::fallbacks`).
-* **The weapon.** Each converted weapon's `world_model` and its attachments' world models are
-  written as `.zbm` blobs and a `ZW<vm>.zbw` manifest: the world model first, each attachment on
-  its `worldModelTag` (or the model's origin when BO2 names no tag) at BO2's world offset, and the
-  combination's `hideTags`. Offsets stay in BO2 inches; the renderer's scale is applied once, at
+* **The weapon.** Every legal combination's world weapon is a `ZW<vm>.zbw` manifest (the models
+  are shared `.zbm` blobs, converted once): the world model first, then BO2's third-person parts
+  (`FUN_008ace30`, `viewmodels::world_parts`) — the variant's `attachWorldModel` slots (the
+  magazine, a sniper's scope; slot 0 dropped by `disableBaseWeaponAttachment` and moved by
+  `worldModelOffsetBaseAttachment`, slot 6 dropped by `disableBaseWeaponClip`), then each
+  attachment's resolved unique (the child/sibling chain, `FUN_008eb690`) with its additional model
+  — each on its tag, **`tag_weapon` (the world model's root) when BO2 names none** (the default
+  `FUN_008ace30` is passed: `DAT_0240749c`, registered by `FUN_00678440`), at BO2's world offset,
+  and the combination's `hideTags`. Only the base set (`converted_base`) also rides the W3D body as
+  `W<vm><k>` meshes, numbered `0..WorldMeshes` with no gap after the dropped decal surfaces (the
+  bridge shows `k < WorldMeshes`); the W3D body shows a combination's base weapon
+  (`Catalog::world_viewmodel`). Offsets stay in BO2 inches; the renderer's scale is applied once, at
   draw. The body manifest never names a weapon: the core composes the two at run time, so a weapon
   switch reloads only the weapon.
 * **Archive.** These are more files in `ConquerOps_BO2.big`; `zhbo_assets::hud::VERSION` must be
@@ -457,7 +470,7 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
   `zhbo_load_impacts` at init) and the bridge calls `FXList::doFXPos` with a frame whose X is
   `-dir` (the surface's outward normal). A missing/stale archive plays nothing and is counted, never
   a bogus name — the same degrade-don't-panic rule as the renderer's draws.
-* **What is out**: first-person tracers (BO2's `cg_firstPersonTracerChance` defaults to 0), other
+* **What is out**: other
   players' impacts (they keep the converted `FireFX`), exit/through-and-through impacts, and
   per-surface impact *sounds* (flesh vs hard only).
 * ABI: `surface_at` is appended to `ZhboLogicApi` (fields 23 → 24), `ZhboClientOut` grows by 324
@@ -508,6 +521,39 @@ Not yet covered: save/load keeps no first-person state (a loaded game starts in 
   at the camera. `cbFireFx` skips the local first-person General; this is lockstep-safe because
   the `*_FX` weapons deal no damage and have no scatter, so `fireWeaponTemplate` only plays
   client-side FX and sound for them.
+- **What others see of a shot besides the flash** rides the same `fire_fx` callback (no ABI
+  change). Per hitscan shot the sim also fires the def's `WorldShellFxWeapon` (its
+  `WorldLastShotShellFxWeapon` on the round that empties the magazine, `WeaponAction::Fire.last`)
+  — BO2's `worldShellEjectEffect` (`FUN_00531630`) — and, per bullet (each pellet), queues a
+  `sim::ShotTracer` (shooter, def, target, end) when the shooter's tracer countdown says so
+  (`sim::fire::tracer_due`, BO2's per-entity byte countdown `FUN_007c65c0`: every
+  `TracerInterval`-th bullet, kept in `PlayerSim::tracer_count`, so it is deterministic and
+  replayable). **The tracer's asset is the viewer's**: right after `Sim::step`,
+  `zhbo_logic_step` hands `Sim::tracers` to `client::tracers::play`, which fires the def's
+  `TracerFxWeapon` for a shooter on the local viewer's side (his own player's, or one Zero Hour
+  calls `ALLY` relative to his General: BO2's `FUN_004bbf10`, same non-zero team as the local
+  client) and its `EnemyTracerFxWeapon` (`enemyTracerType`'s walk, `FUN_008eb420`) for anyone
+  else. The viewer is the last rendered frame's (`Client::viewer`). Which FX weapon plays differs
+  per machine by design; it is as lockstep-safe as `cbFireFx`'s own-view skip (no damage, no
+  scatter), and the countdown stays one per shooter because BO2's friendly and enemy tracers
+  differ only in material (`the_enemy_tracers_differ_only_in_material`). Both are client-only FX
+  weapons (`shotfx.rs`): the brass FXList is placed from the flash bone (`ZF<vm>`, the world
+  model's `tag_flash`) to `tag_brass` with the particle nuggets' `Offset`/`RotateX/Y/Z`; the
+  tracer is a Zero Hour `Tracer` nugget flying from the flash bone to the bullet's end. The
+  overhead General fires Zero Hour's own weapon (no sim shot), so his `FireFX` is one composed
+  FXList (`ZHBO_BO2FX_Rts_<id>`: flash, placed brass, and the tracer with `Probability =
+  1/drawInterval`). `cbFireFx` skips the shooter's own first-person General (BO2's own view uses the
+  view shells). **His own tracers** are BO2's too: the same countdown (`FUN_00539800` sets the draw
+  flag for every shooter; `cg_firstPersonTracerChance` is registered with default 0 but never read
+  in t6mp, so no chance roll and no client random stream), started at the viewmodel's flash tag
+  (`FUN_00535f80`). `client::tracers::ViewTracers::play` queues a tracer whose shooter is the
+  viewer's first-person General instead of firing it; the next client frame makes them that frame's
+  (`begin_frame`, dropped outside first person), and the bridge's viewmodel pass pulls them with
+  `zhbo_viewmodel_tracer(i, fx_weapon, cap, end)` (a free function appended to the ABI surface; the
+  `ZHBO_ABI_VERSION` bump is the integrator's) and plays the FX weapon's `FireFX` from `tag_flash`
+  (native pose or W3D model) to the end with `FXList::doFXPos`. BO2 caps an own tracer's width at
+  4 (`FUN_007c6420`, the local entity's `+0x7c` flag); every player gun's tracer is at most 4, so
+  the cap is not modelled.
 - After the camera override, reset pitch/zoom/pivot (`resetPivotToGround`) or the RTS camera stays
   low; leaving first person flies back to the overhead camera as first person found it, not what
   the view reports then.

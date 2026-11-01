@@ -102,7 +102,7 @@ impl State {
 
     /// One general's frame. `enabled` is `ZHBO_NATIVE_BODY != 0`; without the renderer it loads and
     /// poses, then answers "not native".
-    pub(crate) fn frame(&mut self, inp: &ZhboNativeBodyIn, enabled: i32) -> i32 {
+    pub(crate) fn frame(&mut self, inp: &ZhboNativeBodyIn, enabled: i32, camo: Option<&str>) -> i32 {
         if enabled <= 0 || inp.vm < 0 || inp.faction <= 0 {
             return NOT_NATIVE;
         }
@@ -120,12 +120,12 @@ impl State {
         if self.failed.contains(&key) {
             return NOT_NATIVE;
         }
-        if self.loaded.as_ref().is_none_or(|l| l.key != key) {
+        if self.loaded.as_ref().is_none_or(|l| l.key != key || l.camo.as_deref() != camo) {
             #[cfg(feature = "renderer")]
             self.gpu.release();
             self.loaded = None;
             let req = request(inp, mode);
-            match load(&mut self.files, &req) {
+            match load(&mut self.files, &req, camo) {
                 Err(e) => {
                     self.failed.insert(key);
                     self.log_once(e);
@@ -184,7 +184,11 @@ fn with<R>(f: impl FnOnce(&mut State) -> R) -> R {
 #[no_mangle]
 pub unsafe extern "C" fn zhbo_native_body(inp: *const ZhboNativeBodyIn) -> i32 {
     match unsafe { inp.as_ref() } {
-        Some(inp) => with(|s| s.frame(inp, crate::config::get().native_body as i32)),
+        Some(inp) => {
+            // Read before taking the third person's lock: the sim's state has its own.
+            let camo = crate::ffi::third_person_camo(inp.general, inp.vm);
+            with(|s| s.frame(inp, crate::config::get().native_body as i32, camo.as_deref()))
+        }
         None => NOT_NATIVE,
     }
 }

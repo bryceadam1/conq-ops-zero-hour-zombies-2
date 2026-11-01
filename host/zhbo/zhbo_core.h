@@ -458,6 +458,10 @@ int32_t zhbo_loadout_viewmodels(int32_t *out, int32_t cap); /* the General's kit
    in the table; an empty string means the def has none (BO2 ejects no brass for it — only the
    muzzle flash has a fallback). */
 int32_t zhbo_viewmodel_fx(int32_t vm, char *flash, int32_t flash_cap, char *shell, int32_t shell_cap);
+/* The `i`-th tracer of the local player's own gun this rendered frame (BO2 starts it at the
+   viewmodel's flash tag): the FX weapon whose FireFX draws it and the bullet's end. 0 past the last.
+   (New: the integrator bumps ZHBO_ABI_VERSION.) */
+int32_t zhbo_viewmodel_tracer(int32_t i, char *fx_weapon, int32_t cap, ZhboVec3 *end);
 /* ABI 26: the FXList BO2 plays for `impact_type` on `surface` (a ZHBO_SURF_*); `head`/`fatal` pick
    the flesh variant. Non-zero when the table has the cell (an empty name means nothing converted);
    the core owns the table, so the bridge names no FXList. */
