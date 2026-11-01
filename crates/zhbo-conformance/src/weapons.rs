@@ -257,6 +257,7 @@ pub fn schema() -> Schema {
         .col("overlay_material", "overlay", Kind::Text, "first unique differing from the base unique, else the variant's (FUN_008ed570)").asset()
         .col("overlay_material_low_res", "overlay", Kind::Text, "same rule (FUN_008ed5f0)").asset()
         .col("overlay_reticle", "overlay", Kind::Text, "weapOverlayReticle_t, same rule over the def's (FUN_008ed670)")
+        .col("overlay_size", "overlay", Kind::Floats(F32_EPS), "the def's overlayWidth, overlayHeight (FUN_004b4c70 reads them off the WeaponDef)")
         .col("hud_icon", "overlay", Kind::Text, "hudIcon material").asset()
         .col("dpad_icon", "overlay", Kind::Text, "the variant's dpadIcon material").asset();
 

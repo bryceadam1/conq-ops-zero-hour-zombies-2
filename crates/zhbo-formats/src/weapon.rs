@@ -809,6 +809,9 @@ pub struct Weapon {
     pub overlay_material_low_res: String,
     /// `weapOverlayReticle_t`: which reticle the overlay draws (0: none).
     pub overlay_reticle: u32,
+    /// The def's `overlayWidth`, `overlayHeight`: the overlay's size in BO2's 640×480 virtual
+    /// screen, drawn centred and uniformly scaled (`FUN_004b4c70`).
+    pub overlay_size: (f32, f32),
     // The variant's own fields.
     /// `bIgnoreAttachments`: the variant's flags ignore its attachments' (G14 §4).
     pub ignore_attachments: bool,
@@ -1095,6 +1098,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     let worlds = z.try_u32(d + WD::worldModel)?;
     w.world_model = if worlds != 0 { named(z, worlds) } else { None };
     w.projectile_model = named(z, d + WD::projectileModel);
+    w.overlay_size = (z.f32(d + WD::overlayWidth), z.f32(d + WD::overlayHeight));
     w.weap_type = z.u32(d + WD::weapType);
     w.class = z.u32(d + WD::weapClass);
     w.inventory = z.u32(d + WD::inventoryType);

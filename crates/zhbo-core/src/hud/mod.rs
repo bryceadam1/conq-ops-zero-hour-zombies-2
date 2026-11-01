@@ -139,8 +139,11 @@ fn team_color(host: &dyn ClientHost, p: &PlayerSim) -> u32 {
 /// The scope's 2D screen-space ADS overlay (`FUN_004b51e0`). It draws while BO2's reticle zoom is
 /// up ([`crate::weapons::scope::reticle_zoom`], in the zoom direction as updated this frame), white
 /// at alpha `zoom / max(fOverlayAlphaScale, 1)`; over the same window the viewmodel is not drawn
-/// (`HudLui::gun_under_overlay`, the native viewmodel). The material's own art carries the black
-/// surround and the clear lens centre; a full-screen image needs no scissor of its own.
+/// (`HudLui::gun_under_overlay`, the native viewmodel). The art keeps its own aspect, centred
+/// ([`crate::weapons::scope::overlay_placement`]: a sniper's 480 × 480 scope is a square as tall
+/// as the screen), and `FUN_004b4840` fills the rest of the screen with the art's edge, which is
+/// opaque black in every overlay BO2 ships (the converter's install-gated test checks it), so the
+/// fills are black at the overlay's alpha.
 fn draw_scope_overlay(prims: &mut Vec<Prim>, w: f32, h: f32, p: &PlayerSim, zooming_in: bool) {
     let def = p.arsenal.current_weapon();
     let Some(zoom) = crate::weapons::scope::reticle_zoom(def, p.arsenal.ads, zooming_in) else { return };
@@ -148,18 +151,38 @@ fn draw_scope_overlay(prims: &mut Vec<Prim>, w: f32, h: f32, p: &PlayerSim, zoom
         return;
     }
     let a = (crate::weapons::scope::overlay_alpha(def, zoom).clamp(0.0, 1.0) * 255.0).round() as u32;
+    scope_overlay(prims, def, a, w, h);
+}
+
+/// Set once the missing-`OverlaySize` fallback has been logged (once per run).
+pub(crate) static SCOPE_SIZE_WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The overlay's prims for `def` at alpha `a` (0–255) on a `w` × `h` screen (`FUN_004b4c70`);
+/// the screenshot harness renders the converted overlays through it.
+pub fn scope_overlay(prims: &mut Vec<Prim>, def: &crate::weapons::WeaponDef, a: u32, w: f32, h: f32) {
+    use crate::weapons::scope::{overlay_fills, overlay_placement};
     // The converted MappedImage name. If the install lacks the art, the empty fallback draws
     // nothing (log-or-skip); the converter reports the missing material and the install-gated
     // test catches a sniper whose overlay did not convert.
-    prims.push(Prim::Image {
-        name: crate::lui::materials::image(&def.overlay_material),
-        x: 0.0,
-        y: 0.0,
-        w,
-        h,
-        argb: (a << 24) | (WHITE & 0x00FF_FFFF),
-        fallback: Vec::new(),
-    });
+    let name = crate::lui::materials::image(&def.overlay_material);
+    let argb = (a << 24) | (WHITE & 0x00FF_FFFF);
+    let (size, fell_back) = crate::weapons::scope::overlay_size(def);
+    // To the process log, like an unknown weapon id (`weapons::catalog`): the autotest captures it.
+    if fell_back && !SCOPE_SIZE_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        eprintln!("zhbo: scope overlay of {:?} has no OverlaySize (a stale weapon table?); drawing the tuning pack's ScopeOverlayWidth/Height", def.id);
+    }
+    let place = overlay_placement(size, w, h);
+    for q in &place.quads {
+        let axis_aligned = q[0].0 < q[1].0 && q[0].1 < q[3].1 && q[0].1 == q[1].1 && q[0].0 == q[3].0;
+        if axis_aligned {
+            prims.push(Prim::Image { name: name.clone(), x: q[0].0, y: q[0].1, w: q[1].0 - q[0].0, h: q[3].1 - q[0].1, argb, fallback: Vec::new() });
+        } else {
+            prims.push(Prim::Quad { name: name.clone(), corners: *q, argb, fallback: Vec::new() });
+        }
+    }
+    for (x, y, fw, fh) in overlay_fills(place.bounds, w, h) {
+        prims.push(Prim::Rect { x, y, w: fw, h: fh, argb: a << 24 });
+    }
 }
 
 pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: &Sim, local_player: i32) {

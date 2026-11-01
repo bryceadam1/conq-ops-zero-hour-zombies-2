@@ -526,6 +526,9 @@ pub struct WeaponDef {
     pub overlay_material_low_res: String,
     /// `weapOverlayReticle_t`: which reticle the overlay draws (0: none).
     pub overlay_reticle: u32,
+    /// The overlay's width and height in BO2's 640×480 virtual screen (`overlayWidth`,
+    /// `overlayHeight`), placed by [`crate::weapons::scope::overlay_rect`].
+    pub overlay_size: (f32, f32),
     /// The fire cycle's and reload's extra times (`handling::CycleTimes`).
     pub timing: CycleTimes,
     /// The zoom levels and fractions, depth of field and idle sway (`handling::Zoom`).
@@ -946,6 +949,7 @@ impl Default for WeaponDef {
             overlay_material: String::new(),
             overlay_material_low_res: String::new(),
             overlay_reticle: 0,
+            overlay_size: (0.0, 0.0),
             // The stand-in sprint-in, as `sprint_out_time` above (BO2 rifles author 200-300 ms).
             timing: CycleTimes { sprint_in_time: 0.25, ..CycleTimes::default() },
             zoom: Zoom::default(),

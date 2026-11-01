@@ -8733,3 +8733,74 @@ every create-a-class combination, alt modes — through `nativevm::load` for eac
 `nativebody::load` for each world manifest, and fails on anything that does not compose or has no
 surface at hip or at full ADS. Gotcha: `BigArchive::find` is a linear scan with an allocation per
 entry; over ~60k entries tens of thousands of lookups take many minutes — index the entries first.
+
+## The CaC backing tiles every 8 units, not 8 times (2026-11-01, `v1/ui-scaling`)
+
+The create-a-class screens (`classui::bo2::backdrop`: the class list, editor, pickers and
+personalize) showed eight broad vertical bands behind the menu. BO2's
+`addLargePopupBackground` (`codmenu.lua`) gives `menu_mp_cac_backing` `setupTiles(8)` and
+`setTileVertically(false)`, and the mod read the 8 as a repeat count. It is a tile *width*: the
+LUI method (`FUN_00952e20`, found through its name string at `00be2db8` and the method table at
+`0xbe3790`) stores the 8, and the image's layout hook (`FUN_00952d60`) sets `s1 = (right − left) / 8`
+(and `t1` the same way when tiling vertically). So the strip's dot column repeats every 8 units —
+160 times across the 1280-unit backing — and with its 6-texel dot rows makes BO2's fine dot grid.
+The capture `a-chooseclass/001` agrees: horizontal periodicity 21 px at 2.625 px/unit = 8 units,
+vertical ~15 px = 6 texels. Drawing 8 repeats stretched the 8-texel column 20× into bands.
+
+`bo2::tiled_h` is `setupTiles(n)` without vertical tiling: one image per repeat (the art is in the
+atlas, so the UVs cannot wrap), a partial last repeat clipped to the box. The other
+`setupTiles(8)` user, the medium popup's `menu_mp_toomany_backing`, is not ported.
+
+**Atlas padding repeats the sprite edge.** A strip repeated 160 times with linear filtering would
+fade into the atlas page's empty padding at every repeat (a seam every 8 units). The HUD atlas's
+one-texel ring round each sprite now repeats the sprite's edge texels (`hud::blit`), so an edge
+sample sees the sprite's own texture, as a standalone BO2 image would. Sprites whose border is
+transparent are unchanged.
+
+**Verified:** `bo2::tests` (160 repeats, 8 units each, contiguous, centred, at 16:9/16:10/4:3/21:9;
+a partial repeat clips), `hud::tests::the_atlas_padding_repeats_the_sprite_edge`; the CaC
+screenshot harness before/after against a fresh archive (the bands are gone; the dot pitch matches
+the capture at 3024 × 1890). The converted `menu_mp_cac_backing` is 4 × 512 (the install's largest
+mip), so its dots are softer than the capture's — the pitch and layout are BO2's.
+
+## The scope overlay keeps its aspect: a round scope at every resolution (2026-11-01, `v1/ui-scaling`)
+
+The HUD drew the scope overlay over the whole screen, so on anything but a square screen the
+scope's circle was an ellipse (every overlay: the four snipers' scopes, IR `envg_ir`, VZoom,
+Specter). BO2's `FUN_004b51e0` hands the overlay to `FUN_004b4c70`, which reads the WeaponDef's
+`overlayWidth`/`overlayHeight` (`+0x59c`/`+0x5a0`, `layouts::WeaponDef`) — a size in the 640 × 480
+virtual screen — and draws it centred (alignments 2, 2) through `ScrPlace` (`FUN_0057d900`), whose
+virtual-to-real scale is one factor for both axes. Every overlay weapon in the install (all 681
+combos) has 480 × 480: a square as tall as the screen. Two details from the same function:
+
+- A size within 320 × 240 (`DAT_00b12d84`, `_DAT_00b0c434`) is a quarter of the art, drawn four
+  times mirrored about the centre (UVs `0,0,1,1` / `1,0,0,1` / `0,1,1,0` / `1,1,0,0`). No overlay
+  weapon uses it; `weapons::scope::overlay_placement` implements it (as `Prim::Quad`s) for the data.
+- `FUN_004b4840` fills the screen outside the art with the same material and colour, stretching its
+  edge (sides: texel column `s = 0`; top/bottom: row `t = 0`; color and material ride in
+  EDI/ESI, which the decompile hides — read from the disassembly). Every overlay's border is
+  opaque black, so the HUD fills with black at the overlay's alpha; the real-install test
+  `builds_from_real_install` asserts that border so a new overlay with another edge is caught.
+  (`DAT_034c7494` doubles the width for a half-width stereo viewport; not a mod case.)
+
+The size flows through the pipeline: `zhbo_formats::weapon::Weapon::overlay_size` (the def's
+fields), the weapon table's `OverlaySize` key (`WeaponDef::overlay_size`), and a new conformance
+column `overlay_size` read from BO2's own WeaponDef on the expected side. `hud::scope_overlay`
+builds the prims; the screenshot harness renders every converted overlay at 1280 × 720, 1280 × 800,
+1024 × 768 and 1720 × 720 (`hud-<material>-<w>x<h>.png`).
+
+**Gotcha:** a stale archive's weapon table has no `OverlaySize` (0 × 0), which BO2's rule draws as
+nothing but fill — a black screen while scoped. The archive must be rebuilt (`hud::VERSION` bump).
+
+**Verified:** `weapons::scope` tests (round, centred and height-fit at 16:9, 1920 × 1080, 16:10,
+4:3, 5:4, 21:9, 32:9; fills cover exactly the rest of the screen; the quarter mirror), the HUD test
+`the_scope_overlay_draws_a_round_scope_at_every_aspect`, the table round trip; screenshot harness
+images against a fresh archive.
+
+**Follow-up — a missing `OverlaySize` no longer blacks out the screen.** A zero size counts as
+"not carried": `weapons::scope::overlay_size` falls back to the tuning pack's `ScopeOverlayWidth`/
+`ScopeOverlayHeight` (480 × 480, the `overlayWidth`/`overlayHeight` of every overlay weapon in the
+install, `FUN_004b4c70`), and `hud::scope_overlay` logs it once to the process log. Tests:
+`a_table_without_the_size_falls_back_to_bo2s_square`, `a_stale_table_without_overlay_size_still_draws_the_scope`.
+(`ffi::tests::the_shield_hook_queues_a_deployed_shields_damage_and_passes_the_sims_own` failed once
+in four workspace runs, untouched by this branch: a shared-state flake.)

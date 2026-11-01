@@ -924,6 +924,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("OverlayMaterialLowRes", "The low-resolution ADS overlay material.", FieldKind::Str,
         |d: &WeaponDef| d.overlay_material_low_res.clone(),
         |d: &mut WeaponDef, v: Values| { d.overlay_material_low_res = v.text.into(); Ok(()) }),
+    field!("OverlaySize", "The overlay's width and height in BO2's 640x480 virtual screen (`overlayWidth`, `overlayHeight`), drawn centred at one scale for both axes.", FieldKind::Nums(2),
+        |d: &WeaponDef| format!("{} {}", d.overlay_size.0, d.overlay_size.1),
+        |d: &mut WeaponDef, v: Values| { v.need(2)?; d.overlay_size = (v.num(0), v.num(1)); Ok(()) }),
     field!("OverlayReticle", "The overlay reticle enum (`weapOverlayReticle_t`).", FieldKind::Num,
         |d: &WeaponDef| d.overlay_reticle.to_string(),
         |d: &mut WeaponDef, v: Values| { d.overlay_reticle = v.text_num()? as u32; Ok(()) }),
@@ -1203,7 +1206,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 144);
+        assert_eq!(WEAPON_FIELDS.len(), 145);
         assert_eq!(ATTACHMENT_FIELDS.len(), 30);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }
@@ -1416,6 +1419,7 @@ mod tests {
             overlay_material: "scope_overlay_xpr50".into(),
             overlay_material_low_res: "scope_overlay_xpr50_low_res".into(),
             overlay_reticle: 1,
+            overlay_size: (480.0, 240.0),
             zoom: crate::weapons::Zoom { in_frac: 0.016, out_frac: 0.05, overlay_alpha_scale: 1.0, ..Default::default() },
             guided_missile_type: 6,
             ..Default::default()
@@ -1425,6 +1429,7 @@ mod tests {
         assert!(text.contains("OverlayMaterial = scope_overlay_xpr50"), "{text}");
         assert!(text.contains("OverlayMaterialLowRes = scope_overlay_xpr50_low_res"), "{text}");
         assert!(text.contains("OverlayReticle = 1"), "{text}");
+        assert!(text.contains("OverlaySize = 480 240"), "{text}");
         assert!(text.contains("GuidedMissileType = 6"), "{text}");
         let back = parse_table(&text).unwrap();
         assert_eq!(back[0], d);

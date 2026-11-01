@@ -371,6 +371,7 @@ fn run(args: &[String]) -> Result<(), String> {
                     }
                     println!("    sounds fire {:?} plr {:?} icon {:?} dpad {:?} world {:?} projectile {:?} impact {} icon key {:?} dpad key {:?}", w.fire_sound, w.fire_sound_player, w.hud_icon, w.dpad_icon, w.world_model, w.projectile_model, w.projectile_impact_explode, w.hud_icon_key, w.dpad_icon_key);
                     println!("    raise {:?} first {:?} putaway {:?} alt switch {:?}", w.raise_sound_player, w.first_raise_sound_player, w.putaway_sound_player, w.alt_switch_sound_player);
+                    println!("    overlay {:?} low {:?} reticle {} size {:?}", w.overlay_material, w.overlay_material_low_res, w.overlay_reticle, w.overlay_size);
                     println!("    kick ads {:?} hip {:?} mult {:?}", w.ads_view_kick, w.hip_view_kick, w.location_multipliers.iter().take(7).collect::<Vec<_>>());
                     println!(
                         "    offhand slot {} class {} hold {:.3} delay {:.3} fire {:.3} detonate {:.3}/{:.3} quick {:.3}/{:.3} detonator {} hold_to_throw {} cancelable {} hold_use {} plantable {} cook {}",

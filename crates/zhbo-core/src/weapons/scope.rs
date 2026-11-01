@@ -62,6 +62,83 @@ pub fn overlay_alpha(def: &WeaponDef, z: f32) -> f32 {
     z / def.zoom.overlay_alpha_scale.max(1.0)
 }
 
+/// BO2's virtual screen, the space `overlayWidth`/`overlayHeight` are given in.
+pub const VIRTUAL_W: f32 = 640.0;
+pub const VIRTUAL_H: f32 = 480.0;
+
+/// `FUN_004b4c70`'s quarter-art threshold (`DAT_00b12d84`, `_DAT_00b0c434`): an overlay no larger
+/// than 320 × 240 is the top-left quarter of the scope, drawn four times mirrored about the centre.
+pub const QUARTER_MAX: (f32, f32) = (320.0, 240.0);
+
+/// The overlay size to draw `def` at, and whether it fell back: a weapon table without
+/// `OverlaySize` (one written before the key existed) reads 0 × 0, which BO2's rule would draw as
+/// nothing but fill — a black screen while scoped. A zero size counts as "not carried" and takes
+/// the tuning pack's `ScopeOverlayWidth`/`ScopeOverlayHeight` (BO2's 480 × 480).
+pub fn overlay_size(def: &WeaponDef) -> ((f32, f32), bool) {
+    let (w, h) = def.overlay_size;
+    if w > 0.0 && h > 0.0 {
+        return ((w, h), false);
+    }
+    let t = crate::tuning::get();
+    ((t.scope_overlay_width, t.scope_overlay_height), true)
+}
+
+/// Where the scope overlay goes on a `screen_w` × `screen_h` screen (`FUN_004b4c70`).
+#[derive(Clone, Debug, PartialEq)]
+pub struct OverlayPlacement {
+    /// Each draw of the art: the screen points of the image's top-left, top-right, bottom-right
+    /// and bottom-left corners (`ClientHost::image_quad`'s order).
+    pub quads: Vec<[(f32, f32); 4]>,
+    /// The art's bounds `(x0, y0, x1, y1)`; `FUN_004b4840` fills the screen outside it.
+    pub bounds: (f32, f32, f32, f32),
+}
+
+/// `FUN_004b4c70`'s placement of a `size` overlay (the def's `overlayWidth`, `overlayHeight`):
+/// centred on the screen, both alignments `2` (centre), through `ScrPlace` (`FUN_0057d900`), whose
+/// virtual-to-real scale is one factor for both axes, the 640 × 480 screen fitted inside the real
+/// one. So the art keeps its aspect at every resolution: a 480 × 480 sniper scope is a square as
+/// tall as the screen, never stretched to its width. A size within [`QUARTER_MAX`] draws its
+/// quarter four times, the texture's (0, 0) corner outermost and (1, 1) at the centre
+/// (`s0,t0,s1,t1` = `0,0,1,1` / `1,0,0,1` / `0,1,1,0` / `1,1,0,0`), spanning twice the size.
+pub fn overlay_placement(size: (f32, f32), screen_w: f32, screen_h: f32) -> OverlayPlacement {
+    let k = (screen_w / VIRTUAL_W).min(screen_h / VIRTUAL_H);
+    let (w, h) = (size.0 * k, size.1 * k);
+    let (cx, cy) = (screen_w * 0.5, screen_h * 0.5);
+    let corners = |at: &dyn Fn(f32, f32) -> (f32, f32)| [at(0.0, 0.0), at(1.0, 0.0), at(1.0, 1.0), at(0.0, 1.0)];
+    if size.0 <= QUARTER_MAX.0 && size.1 <= QUARTER_MAX.1 {
+        let quads = [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)]
+            .iter()
+            .map(|&(sx, sy): &(f32, f32)| corners(&|s, t| (cx + sx * w * (1.0 - s), cy + sy * h * (1.0 - t))))
+            .collect();
+        OverlayPlacement { quads, bounds: (cx - w, cy - h, cx + w, cy + h) }
+    } else {
+        let (x0, y0) = (cx - w * 0.5, cy - h * 0.5);
+        OverlayPlacement { quads: vec![corners(&|s, t| (x0 + s * w, y0 + t * h))], bounds: (x0, y0, x0 + w, y0 + h) }
+    }
+}
+
+/// `FUN_004b4840`: the screen outside the overlay's bounds, as `(x, y, w, h)` strips — left and
+/// right full height, then top and bottom between them — each skipped when empty. BO2 draws them
+/// with the overlay's own material and colour, sampling its edge (the sides stretch texel column
+/// `s = 0`, top and bottom texel row `t = 0`).
+pub fn overlay_fills(bounds: (f32, f32, f32, f32), screen_w: f32, screen_h: f32) -> Vec<(f32, f32, f32, f32)> {
+    let (x0, y0, x1, y1) = bounds;
+    let mut out = Vec::new();
+    if x0 > 0.0 {
+        out.push((0.0, 0.0, x0, screen_h));
+    }
+    if x1 < screen_w {
+        out.push((x1, 0.0, screen_w - x1, screen_h));
+    }
+    if y0 > 0.0 {
+        out.push((x0, 0.0, x1 - x0, y0));
+    }
+    if y1 < screen_h {
+        out.push((x0, y1, x1 - x0, screen_h - y1));
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -120,5 +197,67 @@ mod tests {
         d.guided_missile_type = MISSILE_GUIDANCE_TVGUIDED;
         assert!(!scoped(&d, 1.0, false), "TV-guided: the overlay is up but the bit stays clear");
         assert!(reticle_zoom(&d, 1.0, false).is_some());
+    }
+
+    /// 16:9, 16:10, 4:3, 5:4, 21:9 and 32:9.
+    const SCREENS: [(f32, f32); 7] = [(1280.0, 720.0), (1920.0, 1080.0), (3024.0, 1890.0), (1024.0, 768.0), (1280.0, 1024.0), (3440.0, 1440.0), (5120.0, 1440.0)];
+
+    #[test]
+    fn a_sniper_scope_is_round_at_every_aspect() {
+        // The snipers' overlayWidth/Height are 480 x 480: one quad, square in pixels, centred, as
+        // tall as the screen where the screen is at least 4:3. It once filled the whole screen,
+        // stretching the scope's circle into an ellipse on anything but a square screen.
+        for (w, h) in SCREENS {
+            let p = overlay_placement((480.0, 480.0), w, h);
+            assert_eq!(p.quads.len(), 1);
+            let q = p.quads[0];
+            let (qw, qh) = (q[1].0 - q[0].0, q[3].1 - q[0].1);
+            assert!((qw - qh).abs() < 1e-3, "{w}x{h}: the circle's box is {qw} x {qh}");
+            assert!(((q[0].0 + q[1].0) * 0.5 - w * 0.5).abs() < 1e-3 && ((q[0].1 + q[3].1) * 0.5 - h * 0.5).abs() < 1e-3, "centred");
+            assert!((qh - h.min(w * 0.75)).abs() < 1e-3, "{w}x{h}: the 480-unit square fits the 640 x 480 screen");
+            assert_eq!(p.bounds, (q[0].0, q[0].1, q[1].0, q[3].1));
+        }
+    }
+
+    #[test]
+    fn a_table_without_the_size_falls_back_to_bo2s_square() {
+        // A stale weapon table reads 0 x 0: not carried, so the tuning pack's 480 x 480, never an
+        // all-fill black screen.
+        let mut d = sniper(0.0, 0.05);
+        assert_eq!(overlay_size(&d), ((480.0, 480.0), true));
+        let p = overlay_placement(overlay_size(&d).0, 1280.0, 720.0);
+        assert_eq!(p.bounds, (280.0, 0.0, 1000.0, 720.0), "a height-fit square, not nothing");
+        d.overlay_size = (320.0, 240.0);
+        assert_eq!(overlay_size(&d), ((320.0, 240.0), false), "a carried size is used as is");
+    }
+
+    #[test]
+    fn the_fills_cover_exactly_the_screen_outside_the_art() {
+        for (w, h) in SCREENS {
+            for size in [(480.0, 480.0), (640.0, 480.0), (320.0, 240.0), (200.0, 150.0)] {
+                let p = overlay_placement(size, w, h);
+                let (x0, y0, x1, y1) = p.bounds;
+                let fills: f32 = overlay_fills(p.bounds, w, h).iter().map(|f| f.2 * f.3).sum();
+                assert!((fills + (x1 - x0) * (y1 - y0) - w * h).abs() < 1.0, "{w}x{h} {size:?}");
+            }
+        }
+        let full = overlay_placement((640.0, 480.0), 1024.0, 768.0);
+        assert!(overlay_fills(full.bounds, 1024.0, 768.0).is_empty(), "a 640 x 480 overlay at 4:3 leaves nothing to fill");
+    }
+
+    #[test]
+    fn a_quarter_overlay_mirrors_about_the_centre() {
+        // `FUN_004b4c70`: 320 x 240 or less draws four times, the texture's (0, 0) corner at the
+        // screen's outer corner and (1, 1) at the centre, uniformly scaled.
+        let p = overlay_placement((200.0, 200.0), 1920.0, 1080.0);
+        let k = 1080.0 / 480.0;
+        let (cx, cy, r) = (960.0, 540.0, 200.0 * k);
+        assert_eq!(p.quads.len(), 4);
+        let origins: Vec<(f32, f32)> = p.quads.iter().map(|q| q[0]).collect();
+        assert_eq!(origins, vec![(cx - r, cy - r), (cx + r, cy - r), (cx - r, cy + r), (cx + r, cy + r)]);
+        for q in &p.quads {
+            assert_eq!(q[2], (cx, cy), "every quarter's (1, 1) corner meets at the centre");
+        }
+        assert_eq!(p.bounds, (cx - r, cy - r, cx + r, cy + r));
     }
 }

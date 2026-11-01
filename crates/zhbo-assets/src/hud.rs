@@ -396,7 +396,10 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
         report.found.push(name.clone());
         found.push((name, img));
     }
-    // A pixel of padding around each sprite keeps filtering from bleeding between them.
+    // A pixel of padding around each sprite keeps filtering from bleeding between them; the
+    // padding repeats the sprite's edge texels, so a linear sample at the sprite's edge sees its
+    // own texture as BO2's standalone image would (no fade into the neighbour or the empty page —
+    // a tiled strip like `menu_mp_cac_backing` would otherwise seam at every repeat).
     let sizes: Vec<(u32, u32)> = found.iter().map(|(_, i)| (i.width + 2, i.height + 2)).collect();
     let places = pack(&sizes).ok_or("a HUD sprite is larger than the 1024px atlas page")?;
     let pages = places.iter().map(|(page, _)| *page).max().unwrap_or(0) + 1;
@@ -578,6 +581,24 @@ fn blit(dst: &mut Rgba, src: &Rgba, at: (u32, u32)) {
         let d = (((at.1 + y) * dst.width + at.0) * 4) as usize;
         dst.pixels[d..d + (w * 4) as usize].copy_from_slice(&src.pixels[s..s + (w * 4) as usize]);
     }
+    // The one-texel ring round the sprite repeats its nearest edge texel (corners included).
+    if src.width == 0 || src.height == 0 {
+        return;
+    }
+    let (x0, y0) = (at.0 as i64, at.1 as i64);
+    let (sw, sh) = (src.width as i64, src.height as i64);
+    for y in y0 - 1..=y0 + sh {
+        for x in x0 - 1..=x0 + sw {
+            let inside = (x0..x0 + sw).contains(&x) && (y0..y0 + sh).contains(&y);
+            if inside || x < 0 || y < 0 || x >= dst.width as i64 || y >= dst.height as i64 {
+                continue;
+            }
+            let (sx, sy) = ((x - x0).clamp(0, sw - 1), (y - y0).clamp(0, sh - 1));
+            let s = ((sy * sw + sx) * 4) as usize;
+            let d = ((y * dst.width as i64 + x) * 4) as usize;
+            dst.pixels[d..d + 4].copy_from_slice(&src.pixels[s..s + 4]);
+        }
+    }
 }
 
 /// What the archive was built from: the converter version, and the loadout overrides that pick which
@@ -603,6 +624,25 @@ pub fn archive_version(path: &Path) -> Option<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_atlas_padding_repeats_the_sprite_edge() {
+        // Linear filtering at a sprite's edge samples its padding: an opaque strip tiled across
+        // the screen must not fade into the empty page at every repeat.
+        let mut page = Rgba { width: 6, height: 5, pixels: vec![0; 6 * 5 * 4] };
+        let px = |v: u8| [v, v, v, 255];
+        let src = Rgba { width: 2, height: 2, pixels: [px(10), px(20), px(30), px(40)].concat() };
+        blit(&mut page, &src, (1, 1));
+        let at = |x: u32, y: u32| page.pixels[((y * 6 + x) * 4) as usize];
+        let rows: Vec<Vec<u8>> = (0..5).map(|y| (0..6).map(|x| at(x, y)).collect()).collect();
+        assert_eq!(rows, vec![
+            vec![10, 10, 20, 20, 0, 0],
+            vec![10, 10, 20, 20, 0, 0],
+            vec![30, 30, 40, 40, 0, 0],
+            vec![30, 30, 40, 40, 0, 0],
+            vec![0, 0, 0, 0, 0, 0],
+        ]);
+    }
 
     #[test]
     fn dpad_icons_are_the_alt_modes_distinct_materials() {
@@ -769,6 +809,20 @@ mod tests {
             assert!(report.found.iter().any(|f| f == name), "{name} did not convert: {:?}", report.missing);
         }
         assert!(report.missing.iter().all(|(name, _)| name.starts_with("ZHBO_BO2_Icon_")), "{:?}", report.missing);
+        // The HUD fills the screen round a scope overlay with black (`zhbo_core::hud`'s
+        // `draw_scope_overlay`), standing in for BO2's stretch of the art's own edge texels
+        // (`FUN_004b4840`): every overlay's border must be opaque black for that to be BO2's look.
+        let files = zhbo_formats::big::members(&bytes).unwrap();
+        for (material, _) in zhbo_core::hud::OVERLAY_MATERIALS {
+            let path = format!("Art\\Textures\\{}", standalone_texture(&zhbo_core::lui::materials::image(material)));
+            let tga = &files.iter().find(|(p, _)| *p == path).unwrap_or_else(|| panic!("{path} is in the archive")).1;
+            let (w, h) = (u16::from_le_bytes([tga[12], tga[13]]) as usize, u16::from_le_bytes([tga[14], tga[15]]) as usize);
+            let px = |x: usize, y: usize| &tga[18 + (y * w + x) * 4..][..4];
+            let edge = (0..h).flat_map(|y| [(0, y), (w - 1, y)]).chain((0..w).flat_map(|x| [(x, 0), (x, h - 1)]));
+            for (x, y) in edge {
+                assert_eq!(px(x, y), [0, 0, 0, 255], "{material}: border texel ({x}, {y}) is not opaque black");
+            }
+        }
         let dir = std::env::temp_dir().join("zhbo-hud-test");
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join(ARCHIVE_NAME);
