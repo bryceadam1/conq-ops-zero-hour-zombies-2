@@ -266,7 +266,8 @@ impl Arsenal {
         }
         if loadout.perks.contains(&Perk::SCAVENGER) {
             for w in &mut weapons {
-                w.reserve = (w.reserve + w.def.clip).min(w.def.max_reserve.max(w.reserve));
+                // Saturating: a class's own reserve (a hand-edited profile) can sit at the type's top.
+                w.reserve = w.reserve.saturating_add(w.def.clip).min(w.def.max_reserve.max(w.reserve));
             }
         }
         // Offhands start with BO2's start count (`start_reserve` for them); an empty or unknown

@@ -84,7 +84,8 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   or concern. `classmenu/` is the Pick-10 editor's state machine behind them (draft, legality,
   offers, wildcards, navigation); `classes.rs` the shared class list, `classicons.rs` the command
   bar's class buttons, `classrepair.rs` BO2's loadout repair for classes read back from the
-  profile (`profile.rs`), `menu.rs` the shell menu.
+  profile (`profile.rs`), `classwire.rs` a custom class's pick payload (catalog tokens),
+  `menu.rs` the shell menu.
 - `client/`: the per-render-frame client (mouse look, key bindings, one `FpsInput` per logic
   frame, the camera and its RTS ↔ first-person transitions, tracers, the autopilot harness).
   Nothing in it reaches the sim except through the input messages it emits.

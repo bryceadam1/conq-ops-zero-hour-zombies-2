@@ -1070,3 +1070,12 @@ fn a_single_gun_has_no_left_hand() {
     let out = tap(&mut a, buttons::ADS, 5, &mut rng);
     assert_eq!(shots(&out), 0);
 }
+
+/// Scavenger's extra magazine never overflows a class's own spare rounds: a stored class (a
+/// hand-edited profile) can carry the type's largest reserve, and the kit still spawns.
+#[test]
+fn scavenger_on_the_largest_reserve_saturates() {
+    let kit = Loadout { reserve: [Some(u16::MAX), Some(u16::MAX)], perks: vec![Perk::SCAVENGER], ..Loadout::test_kit() };
+    let a = Arsenal::with_loadout(kit);
+    assert_eq!(a.weapons[0].reserve, u16::MAX);
+}

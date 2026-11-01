@@ -12,6 +12,7 @@ pub mod classicons;
 pub mod classmenu;
 pub mod classrepair;
 pub mod classui;
+pub mod classwire;
 pub mod client;
 pub mod config;
 pub mod conformance;

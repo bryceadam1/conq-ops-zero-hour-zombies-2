@@ -292,12 +292,16 @@ pub unsafe extern "C" fn zhbo_profile_save(words: *const u32, len: i32) -> *cons
 /// Write the profile from the client's `save_profile` one-shot: the words are the profile file's
 /// full text (`profile::pack_text`), which the core already applied (the editor's Save, or a
 /// delete/copy). Loads it back (idempotent) and returns a NUL-terminated copy for the bridge to
-/// write, or null when the words don't decode.
+/// write, or null when the words don't decode. `len` [`crate::profile::PROFILE_LIVE`] means the
+/// text did not fit the payload: the core's own (already applied) profile is the text.
 ///
 /// # Safety
-/// `words` must point to `len` `u32`s (or be null when `len` is 0).
+/// `words` must point to `len` `u32`s (or be null when `len` is 0 or `PROFILE_LIVE`).
 #[no_mangle]
 pub unsafe extern "C" fn zhbo_profile_write(words: *const u32, len: i32) -> *const c_char {
+    if len == crate::profile::PROFILE_LIVE {
+        return store_profile_text(&crate::profile::get().to_text());
+    }
     // An empty profile (the last class deleted) is a legitimate write of zero words.
     let words: &[u32] = unsafe {
         if len > 0 && !words.is_null() {
@@ -618,7 +622,7 @@ pub struct ClassButton {
     pub perk_count: i32,
     /// A custom class's wire words (`classes.rs`); zero for a shipped preset (picked by index).
     pub payload_len: i32,
-    pub payload: [u32; 64],
+    pub payload: [u32; crate::classwire::PAYLOAD_WORDS],
 }
 
 impl Default for ClassButton {
@@ -635,7 +639,7 @@ impl Default for ClassButton {
             perks: [[0; 40]; 6],
             perk_count: 0,
             payload_len: 0,
-            payload: [0; 64],
+            payload: [0; crate::classwire::PAYLOAD_WORDS],
         }
     }
 }
@@ -684,10 +688,13 @@ pub unsafe extern "C" fn zhbo_class_buttons(out: *mut ClassButton, cap: i32) -> 
             }
             b.perk_count = perks as i32;
             if i >= crate::classicons::preset_rows() {
+                // Never a truncated payload: it would not decode. Every class built from the
+                // catalog fits (`classwire`); one that does not carries none.
                 let words = crate::classicons::custom_payload(i);
-                let len = words.len().min(64);
-                b.payload[..len].copy_from_slice(&words[..len]);
-                b.payload_len = len as i32;
+                if words.len() <= b.payload.len() {
+                    b.payload[..words.len()].copy_from_slice(&words);
+                    b.payload_len = words.len() as i32;
+                }
             }
         }
         *out.add(i) = b;

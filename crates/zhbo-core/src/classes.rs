@@ -359,35 +359,24 @@ impl CustomClass {
         Some(CustomClass { name: name.to_string(), ..CustomClass::from_spec(spec) })
     }
 
-    /// The pick message's payload: the wire format's UTF-8 bytes packed little-endian, four per
-    /// `u32`. The engine's `GameMessage` stream carries only integers, so the bytes ride as words;
-    /// the bridge appends them in order and the sim reassembles them ([`CustomClass::from_wire_words`]).
+    /// The pick message's payload: the class as catalog tokens ([`crate::classwire`]), packed
+    /// four bytes per `u32` — the engine's `GameMessage` stream carries only integers, so the
+    /// bytes ride as words; the bridge appends them in order and the sim reassembles them
+    /// ([`CustomClass::from_wire_words`]). Every class built from the catalog's items fits the
+    /// ABI payload ([`crate::classwire::PAYLOAD_WORDS`]); the text form ([`CustomClass::to_wire`])
+    /// is the profile file's, not the pick's.
     pub fn to_wire_words(&self) -> Vec<u32> {
-        let wire = self.to_wire();
-        let bytes = wire.as_bytes();
-        let mut words = Vec::with_capacity(bytes.len().div_ceil(4));
-        for chunk in bytes.chunks(4) {
-            let mut w = 0u32;
-            for (i, b) in chunk.iter().enumerate() {
-                w |= (*b as u32) << (8 * i);
-            }
-            words.push(w);
-        }
-        words
+        crate::classwire::encode(self).unwrap_or_else(|| {
+            // A literal longer than a field holds (never a class the editor built): the text form,
+            // which is too long for the payload too, so the client refuses the pick.
+            crate::classwire::pack(self.to_wire().as_bytes())
+        })
     }
 
-    /// Undo [`CustomClass::to_wire_words`]; `None` if the words don't reassemble into valid UTF-8
-    /// with a spec half (a malformed or truncated payload).
+    /// Undo [`CustomClass::to_wire_words`] (also reads the older text payload); `None` if the
+    /// words are malformed or truncated.
     pub fn from_wire_words(words: &[u32]) -> Option<CustomClass> {
-        let mut bytes = Vec::with_capacity(words.len() * 4);
-        for w in words {
-            bytes.extend_from_slice(&w.to_le_bytes());
-        }
-        // A trailing NUL is possible if the payload was padded; stop at the first NUL inside the
-        // last word, since the words themselves carry no length.
-        let len = bytes.iter().position(|b| *b == 0).unwrap_or(bytes.len());
-        let wire = String::from_utf8(bytes[..len].to_vec()).ok()?;
-        CustomClass::from_wire(&wire)
+        crate::classwire::decode(words)
     }
 }
 

@@ -528,6 +528,18 @@ fn seed_profile() {
             ..CustomClass::default()
         });
     }
+    // A personalised class with an attachment on each gun, as the playtest built one (its text
+    // outgrew the pick payload; the shots show it listed and pickable like the others).
+    let mut personalised = CustomClass::from_spec(
+        "primary=tar21_mp+rangefinder;secondary=crossbow_mp+ir;lethal=frag_grenade_mp;tactical=willy_pete_mp;\
+         lethal_count=1;tactical_count=1;melee=knife_held_mp;perks=Lightweight,Toughness,Dexterity;camo=camo_gold;\
+         knife=camo_gold;secondary_camo=camo_artofwar",
+    );
+    personalised.name = "GOLD RUSH".into();
+    profile::save(personalised);
+    for c in profile::classes() {
+        println!("class {}: pick payload {} words (text {} bytes)", c.name, c.to_wire_words().len(), c.to_wire().len());
+    }
 }
 
 fn clear_profile() {
@@ -641,7 +653,8 @@ mod tests {
         let browse_text = texts(&browse);
         assert!(browse_text.contains(&"CHOOSE CLASS"), "the heading draws: {browse_text:?}");
         assert!(browse_text.contains(&"BLACKOUT"), "the profile's custom row draws: {browse_text:?}");
-        assert!(browse_text.contains(&"Custom 4") && browse_text.contains(&"Custom 5"), "the set's untouched slots draw: {browse_text:?}");
+        assert!(browse_text.contains(&"GOLD RUSH"), "the personalised custom row draws: {browse_text:?}");
+        assert!(browse_text.contains(&"Custom 5"), "the set's untouched slot draws: {browse_text:?}");
         // BO2's hint wraps to the list's width (`hinttext.lua`).
         assert!(browse_text.iter().any(|t| classui::SET_HINT.starts_with(*t) && !t.is_empty()), "BO2's hint draws: {browse_text:?}");
         assert!(browse_text.contains(&"Class Set Options") && browse_text.contains(&"Class Options"), "the S/O prompts draw");

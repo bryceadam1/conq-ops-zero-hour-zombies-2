@@ -246,7 +246,7 @@ pub struct ClientOut {
     pub choose_class: i32,
     pub choose_class_general: u32,
     /// The custom class's wire words when `choose_class` is the custom marker; unused otherwise.
-    pub choose_class_payload: [u32; 64],
+    pub choose_class_payload: [u32; crate::classwire::PAYLOAD_WORDS],
     /// How many `choose_class_payload` words are valid (0 for a shipped class pick).
     pub choose_class_payload_len: i32,
     /// One-shot: write the profile file now. The in-match client is pick-only, so it never sets
@@ -299,7 +299,7 @@ impl Default for ClientOut {
             viewmodel_angles: Vec3::default(),
             choose_class: 0,
             choose_class_general: 0,
-            choose_class_payload: [0; 64],
+            choose_class_payload: [0; crate::classwire::PAYLOAD_WORDS],
             choose_class_payload_len: 0,
             save_profile: 0,
             save_profile_payload: [0; 1024],

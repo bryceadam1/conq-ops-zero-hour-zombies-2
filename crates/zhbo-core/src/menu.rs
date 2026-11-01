@@ -69,17 +69,21 @@ impl Default for MenuOut {
 }
 
 /// Fill the profile-write one-shot with the profile's new text (mirror of the client's
-/// `write_profile`, against the menu ABI's payload). The bridge writes the file only for this; a
-/// file too large for the ABI payload is left unwritten rather than truncated.
+/// `write_profile`, against the menu ABI's payload). The bridge writes the file only for this.
+/// The text is the profile the core already applied, so a file too large for the payload (ten
+/// sets of five personalised classes run past its 4 KiB) is sent as [`PROFILE_LIVE`]: the bridge
+/// passes the length through and `zhbo_profile_write` serves the core's own profile instead —
+/// never truncated, never left unwritten.
 fn write_profile(out: &mut MenuOut, reason: i32, text: &str) {
     let words = crate::profile::pack_text(text);
+    out.save_profile = reason;
     if words.len() > out.save_profile_payload.len() {
+        out.save_profile_payload_len = crate::profile::PROFILE_LIVE;
         return;
     }
     let n = words.len();
     out.save_profile_payload[..n].copy_from_slice(&words);
     out.save_profile_payload_len = n as i32;
-    out.save_profile = reason;
 }
 
 /// The shell screen's state. `Some` in the core while the window is up (`zhbo_menu_open` /
@@ -888,6 +892,51 @@ mod tests {
         let out = press(&mut menu, &mut inp, Key::Backspace);
         assert_eq!(out.save_profile, 0);
         assert_eq!(crate::profile::classes().len(), 1);
+        crate::profile::reset();
+    }
+
+    /// A profile past the save payload's 4 KiB (ten sets of personalised classes) is still written:
+    /// the one-shot says "the live profile" and `zhbo_profile_write` serves the core's own text.
+    /// Before, the write was silently skipped once the file outgrew the payload.
+    #[test]
+    fn a_profile_larger_than_the_payload_is_still_written() {
+        let _g = lock();
+        let big = CustomClass {
+            primary: "an94_mp+gl+reflex".into(),
+            secondary: "fiveseven_dw_mp".into(),
+            lethal: "satchel_charge_mp".into(),
+            tactical: "concussion_grenade_mp".into(),
+            lethal_count: 1,
+            tactical_count: 1,
+            melee: crate::weapons::KNIFE_HELD.into(),
+            perks: vec!["Lightweight".into(), "Toughness".into(), "Dexterity".into()],
+            camo: "camo_gold".into(),
+            knife: "camo_gold".into(),
+            secondary_camo: "camo_artofwar".into(),
+            ..CustomClass::default()
+        };
+        let mut p = crate::profile::Profile::new();
+        for set in 0..crate::profile::MAX_SETS {
+            // The active set keeps one slot free for the copy below.
+            let n = if set == 0 { crate::profile::max_classes() - 1 } else { crate::profile::max_classes() };
+            for slot in 0..n {
+                assert!(p.save_in_slot(set, slot, CustomClass { name: format!("SET {} CLASS {}", set + 1, slot + 1), ..big.clone() }));
+            }
+        }
+        crate::profile::load(&p.to_text());
+        assert!(crate::profile::pack_text(&crate::profile::get().to_text()).len() > MenuOut::default().save_profile_payload.len());
+
+        let mut menu = MenuState::new();
+        let mut inp = MenuIn::default();
+        menu.frame(&inp);
+        let out = press(&mut menu, &mut inp, Key::C);
+        assert_eq!(out.save_profile, classui::SAVE_PROFILE_EDIT, "the copy asks for a write");
+        assert_eq!(out.save_profile_payload_len, crate::profile::PROFILE_LIVE);
+        let text = unsafe { std::ffi::CStr::from_ptr(crate::ffi::zhbo_profile_write(std::ptr::null(), out.save_profile_payload_len)) };
+        let text = text.to_str().unwrap().to_string();
+        assert_eq!(text, crate::profile::get().to_text(), "the file is the whole live profile");
+        let back = crate::profile::Profile::from_text(&text);
+        assert_eq!(back.sets.iter().map(|s| s.customs.len()).sum::<usize>(), crate::profile::MAX_SETS * crate::profile::max_classes());
         crate::profile::reset();
     }
 
