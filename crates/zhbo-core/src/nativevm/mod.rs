@@ -407,19 +407,48 @@ pub struct Loaded {
     pub anims: HashMap<String, Anim>,
 }
 
-/// The local player's reticle choice from the last client frame: the primary's viewmodel and the
-/// `weaponoptions.csv` row its lens takes (0: the optic's stock reticle). Set by
-/// `ffi::zhbo_client_frame`; read by the viewmodel draw.
-static LOCAL_RETICLE: Mutex<Option<(i32, u32)>> = Mutex::new(None);
+/// The local player's reticle choices from the last client frame: each slot weapon's viewmodel
+/// (and its alt modes') with the `weaponoptions.csv` row its lens takes (0: the optic's stock
+/// reticle). Set by `ffi::zhbo_client_frame`; read by the viewmodel draw.
+static LOCAL_RETICLE: Mutex<Vec<(i32, u32)>> = Mutex::new(Vec::new());
 
-/// Record (or clear) the local player's reticle choice: `(viewmodel, row)`.
-pub fn set_local_reticle(choice: Option<(i32, u32)>) {
-    *LOCAL_RETICLE.lock().unwrap_or_else(|e| e.into_inner()) = choice;
+/// Record the local player's reticle choices: `(viewmodel, row)` per held optic.
+pub fn set_local_reticle(choices: Vec<(i32, u32)>) {
+    *LOCAL_RETICLE.lock().unwrap_or_else(|e| e.into_inner()) = choices;
 }
 
-/// The reticle row for viewmodel `vm` (0, the stock reticle, when the choice is another gun's).
+/// The reticle row for viewmodel `vm` (0, the stock reticle, when no slot's choice is its).
 pub(crate) fn local_reticle(vm: i32) -> u32 {
-    LOCAL_RETICLE.lock().unwrap_or_else(|e| e.into_inner()).filter(|c| c.0 == vm).map_or(0, |c| c.1)
+    LOCAL_RETICLE.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|c| c.0 == vm).map_or(0, |c| c.1)
+}
+
+/// The class's reticle rows by viewmodel: each `(weapon, reticle)` slot (`PlayerSim::held_reticles`)
+/// gives its weapon's viewmodel and every alt mode's (the Hybrid Optic's second sight is its alt;
+/// an alt draws through its own or its parent's viewmodel) the slot's row. The first slot to reach
+/// a viewmodel keeps it; a weapon without a viewmodel or an unknown id adds nothing.
+pub fn class_reticles(slots: &[(&str, &str)]) -> Vec<(i32, u32)> {
+    class_reticles_in(|id| crate::weapons::catalog().get(id), slots)
+}
+
+/// [`class_reticles`] over any definition lookup (the tests' own defs).
+pub(crate) fn class_reticles_in<'a>(def: impl Fn(&str) -> Option<&'a crate::weapons::WeaponDef>, slots: &[(&str, &str)]) -> Vec<(i32, u32)> {
+    let mut out: Vec<(i32, u32)> = Vec::new();
+    for (weapon, reticle) in slots {
+        let row = reticle_row(reticle);
+        let mut seen: Vec<&str> = Vec::new();
+        let mut next = def(weapon);
+        while let Some(d) = next {
+            if seen.contains(&d.id.as_str()) {
+                break;
+            }
+            seen.push(&d.id);
+            if d.viewmodel >= 0 && !out.iter().any(|(vm, _)| *vm == d.viewmodel) {
+                out.push((d.viewmodel, row));
+            }
+            next = (!d.alt.is_empty()).then(|| def(&d.alt)).flatten();
+        }
+    }
+    out
 }
 
 /// The `weaponoptions.csv` reticle row for a class's reticle option: `reticle_N` is row `N`, its
@@ -428,7 +457,7 @@ pub(crate) fn local_reticle(vm: i32) -> u32 {
 /// optic's stock row 0; the table's 38 rows per optic (0..37) are the group's 38 options. No
 /// choice is row 0 too.
 pub fn reticle_row(id: &str) -> u32 {
-    id.strip_prefix("reticle_").and_then(|n| n.parse::<u32>().ok()).unwrap_or(0)
+    crate::weapons::reticle_index(id).unwrap_or(0)
 }
 
 /// Swap each lens surface's material for reticle row `row` of its optic's set (the converter's

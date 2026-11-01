@@ -271,6 +271,10 @@ pub struct CustomClass {
     /// SECONDARY box's Personalize Weapon page and worn by the sidearm (`_class.gsc` gives it
     /// `calcweaponoptions(class, 1)`). Empty means "not personalised" and serialises as no key.
     pub secondary_camo: String,
+    /// The secondary optic's reticle id (`reticle_N`): BO2's `secondaryreticle`, set from the
+    /// sidearm's Reflex (`CACReticles` with `weaponSlot = "secondary"`) and worn by its lens. Empty
+    /// means "not personalised" and serialises as no key.
+    pub secondary_reticle: String,
 }
 
 impl CustomClass {
@@ -307,6 +311,7 @@ impl CustomClass {
         push("reticle_color", &self.reticle_color);
         push("knife", &self.knife);
         push("secondary_camo", &self.secondary_camo);
+        push("secondary_reticle", &self.secondary_reticle);
         if self.reserve[0] > 0 {
             push("primary_reserve", &self.reserve[0].to_string());
         }
@@ -337,6 +342,7 @@ impl CustomClass {
                 "reticle_color" => c.reticle_color = value.into(),
                 "knife" => c.knife = value.into(),
                 "secondary_camo" => c.secondary_camo = value.into(),
+                "secondary_reticle" => c.secondary_reticle = value.into(),
                 "primary_reserve" => c.reserve[0] = value.parse().unwrap_or(0),
                 "secondary_reserve" => c.reserve[1] = value.parse().unwrap_or(0),
                 _ => {}
@@ -601,16 +607,17 @@ mod tests {
             reticle_color: "none".into(),
             knife: "camo_gold".into(),
             secondary_camo: "camo_atacs".into(),
+            secondary_reticle: "reticle_12".into(),
         };
         let spec = c.to_spec();
         // The empty tactical is skipped (it inherits the base kit's slot).
-        assert_eq!(spec, "primary=dsr50_mp+acog;secondary=fnp45_mp;lethal=claymore_mp;melee=knife_held_mp;perks=Lightweight,Dexterity;camo=none;reticle=none;reticle_color=none;knife=camo_gold;secondary_camo=camo_atacs;primary_reserve=60");
+        assert_eq!(spec, "primary=dsr50_mp+acog;secondary=fnp45_mp;lethal=claymore_mp;melee=knife_held_mp;perks=Lightweight,Dexterity;camo=none;reticle=none;reticle_color=none;knife=camo_gold;secondary_camo=camo_atacs;secondary_reticle=reticle_12;primary_reserve=60");
         // Round-tripping through the spec grammar preserves every set field (the name is not
         // part of a spec, so the parsed entry is nameless).
         assert_eq!(CustomClass::from_spec(&spec), CustomClass { name: String::new(), ..c.clone() });
         // The wire format is name + spec, and round-trips too.
         let wire = c.to_wire();
-        assert_eq!(wire, "My Sniper\nprimary=dsr50_mp+acog;secondary=fnp45_mp;lethal=claymore_mp;melee=knife_held_mp;perks=Lightweight,Dexterity;camo=none;reticle=none;reticle_color=none;knife=camo_gold;secondary_camo=camo_atacs;primary_reserve=60");
+        assert_eq!(wire, "My Sniper\nprimary=dsr50_mp+acog;secondary=fnp45_mp;lethal=claymore_mp;melee=knife_held_mp;perks=Lightweight,Dexterity;camo=none;reticle=none;reticle_color=none;knife=camo_gold;secondary_camo=camo_atacs;secondary_reticle=reticle_12;primary_reserve=60");
         assert_eq!(CustomClass::from_wire(&wire), Some(c));
         // A newline in the name would break the wire framing; `to_wire` replaces it.
         let named = CustomClass { name: "bad\nname".into(), ..CustomClass::default() };

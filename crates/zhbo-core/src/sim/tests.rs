@@ -885,10 +885,20 @@ fn a_custom_class_carries_its_camo_choice() {
         camo: "camo_gold".into(),
         knife: "camo_diamond".into(),
         secondary_camo: "camo_atacs".into(),
+        reticle: "reticle_4".into(),
+        secondary_reticle: "reticle_12".into(),
         ..Default::default()
     };
     sim.choose_class(0, 1, usize::MAX, &custom.to_wire_words());
     assert_eq!(sim.player(0).unwrap().camo, "camo_gold");
+    // Each slot's optic carries its own reticle (`primaryreticle` / `secondaryreticle`), and the
+    // one in hand is the slot's: the primary's until the sidearm comes up.
+    let p = sim.player(0).unwrap();
+    assert_eq!(p.held_reticles(), [("an94_mp", "reticle_4"), ("fiveseven_mp", "reticle_12")]);
+    assert_eq!(p.held_reticle(), "reticle_4");
+    let mut p = p.clone();
+    p.arsenal.active = p.arsenal.weapons.iter().position(|w| w.def.id == "fiveseven_mp").expect("the sidearm is carried");
+    assert_eq!(p.held_reticle(), "reticle_12");
     assert_eq!(sim.player(0).unwrap().knife_camo, "camo_diamond", "the knife carries its own camo");
     assert_eq!(sim.player(0).unwrap().secondary_camo, "camo_atacs", "the sidearm carries its own camo");
     // What the client hands the viewmodel draw: each held weapon with its own camo, the

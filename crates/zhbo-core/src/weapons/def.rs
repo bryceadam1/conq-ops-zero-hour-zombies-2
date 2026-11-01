@@ -689,7 +689,9 @@ pub struct UiText {
 /// The localize keys the core draws from the install: the class editor's offhand slot titles
 /// (`cacgrenadesbutton.lua:104-126`, `cacgrenades.lua:85-104`, `classpreview.lua:3640-3660`:
 /// `MPUI_<slot>_CAPS`, and the lethal slot's under Tactician) and the HUD's weapon hints
-/// (`WEAPON_CANT_PLANT_EQUIPMENT`, `sim::hint_text`).
+/// (`WEAPON_CANT_PLANT_EQUIPMENT`, `sim::hint_text`). The reticle grid's per-optic cell names
+/// (`MPUI_RETICLE_<OPTIC>_<N>`, [`super::reticle_name_key`]) are written beside these, every one
+/// the install has.
 pub const UI_TEXT_KEYS: &[&str] = &[
     "MPUI_PRIMARY_GRENADE_CAPS", "MPUI_SPECIAL_GRENADE_CAPS", "MPUI_SECOND_SPECIAL_GRENADE_CAPS",
     "WEAPON_CANT_PLANT_EQUIPMENT", "MPUI_PRIMARY_CAPS", "MPUI_SECONDARY_CAPS",
@@ -703,6 +705,7 @@ pub const UI_TEXT_KEYS: &[&str] = &[
     "MPUI_CAMO_CAPS", "MPUI_RETICLES_CAPS", "MPUI_RETICLE_COLOR_CAPS", "MPUI_MAP_CATEGORY_DLC_CAPS",
     "MPUI_DLC2_CAPS", "MENU_CUSTOMIZED_CAPS", "MENU_SCOREBOARD_CAPS", "MPUI_SCORE_CAPS",
     "MPUI_KILLS_CAPS", "MPUI_DEATHS_CAPS", "MPUI_ASSISTS_CAPS", "WEAPON_NO_AMMO",
+    "MENU_SELECT_RETICLE", "MENU_X_OPTICS",
 ];
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]

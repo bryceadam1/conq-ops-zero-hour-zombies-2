@@ -52,6 +52,70 @@ use super::items::cac_entries;
         assert_eq!(e.personalize, Some(PersonalizeKind::Reticle));
     }
 
+    /// BO2 offers `Select Reticle` only on an attachment slot holding one of
+    /// `attachmentsWithCustReticle` (reflex, holo, acog, dualoptic), for either weapon: never on the
+    /// other sights (Target Finder, MMS, Dual Band, Variable Zoom) nor on an optic still unequipped.
+    #[test]
+    fn v_opens_a_reticle_page_only_on_a_slot_holding_a_custom_reticle_optic() {
+        let shorts = ["reflex", "holo", "acog", "dualoptic", "rangefinder", "mms", "ir", "vzoom", "fmj", "gl"];
+        for (primary, slot, kind) in [(true, Slot::PrimaryAtts, PersonalizeKind::Reticle), (false, Slot::SecondaryAtts, PersonalizeKind::SecondaryReticle)] {
+            for short in shorts {
+                let mut d = Draft::test_kit();
+                if primary {
+                    d.primary_atts = vec!["fmj".into(), short.into()];
+                } else {
+                    d.secondary_atts = vec![short.into()];
+                }
+                let mut e = Editor::new(d);
+                e.slot = slot;
+                let want = crate::weapons::RETICLE_OPTICS.contains(&short).then_some(kind);
+                assert_eq!(e.reticle_page(), want, "{slot:?} {short}");
+                e.step(Edges { reticle: true, ..Default::default() });
+                assert_eq!(e.personalize, want, "{slot:?} {short}");
+            }
+        }
+        // In the open attachment grid the highlighted option must be the equipped optic.
+        let mut e = Editor::new(Draft { primary_atts: Vec::new(), ..Draft::test_kit() });
+        e.slot = Slot::PrimaryAtts;
+        e.picking = true;
+        e.option = (0..e.options().len()).find(|i| e.option_attachment(*i) == Some("reflex")).expect("the AN-94 offers the Reflex");
+        assert_eq!(e.reticle_page(), None, "an unequipped Reflex has no reticle to pick");
+        e.draft.primary_atts = vec!["reflex".into()];
+        assert_eq!(e.reticle_page(), Some(PersonalizeKind::Reticle));
+        e.option = (0..e.options().len()).find(|i| e.option_attachment(*i) != Some("reflex")).unwrap();
+        assert_eq!(e.reticle_page(), None, "another option highlighted");
+    }
+
+    /// `cacattachmentsmenu.lua` `Equip`: equipping a custom-reticle optic sets the slot's reticle
+    /// back to option 0; other attachments, and removing one, leave it.
+    #[test]
+    fn equipping_a_reticle_optic_resets_that_slots_reticle() {
+        let mut d = Draft { reticle: "reticle_5".into(), secondary_reticle: "reticle_9".into(), ..Draft::test_kit() };
+        d.equipped_attachment(true, "fmj");
+        assert_eq!(d.reticle, "reticle_5");
+        for optic in crate::weapons::RETICLE_OPTICS {
+            d.reticle = "reticle_5".into();
+            d.equipped_attachment(true, optic);
+            assert_eq!((d.reticle.as_str(), d.secondary_reticle.as_str()), ("", "reticle_9"), "{optic}");
+        }
+        d.equipped_attachment(false, "reflex");
+        assert!(d.secondary_reticle.is_empty());
+        // Through the editor: toggling the Reflex off keeps the choice, on again resets it.
+        let mut e = Editor::new(Draft { reticle: "reticle_3".into(), ..Draft::test_kit() });
+        e.slot = Slot::PrimaryAtts;
+        let reflex = (0..e.options().len()).find(|i| e.option_attachment(*i) == Some("reflex")).unwrap();
+        e.apply_option(reflex);
+        assert!(!e.draft.primary_atts.contains(&"reflex".to_string()));
+        assert_eq!(e.draft.reticle, "reticle_3", "unequipping leaves it");
+        e.apply_option(reflex);
+        assert!(e.draft.primary_atts.contains(&"reflex".to_string()));
+        assert_eq!(e.draft.reticle, "", "equipping resets it to option 0");
+        // A new sidearm takes its reticle with it.
+        let mut d = Draft { secondary_reticle: "reticle_9".into(), ..Draft::test_kit() };
+        d.reset_weapon_options(false);
+        assert!(d.secondary_reticle.is_empty());
+    }
+
     /// `customclass.lua`: `PrimaryWeapon_Button_Over` / `SecondaryWeapon_Button_Over` add the `C`
     /// prompt only when the slot holds a weapon, each with its own `weaponSlot`.
     #[test]
@@ -86,6 +150,7 @@ use super::items::cac_entries;
             reticle: "reticle_2".into(),
             reticle_color: "red".into(),
             secondary_camo: "camo_atacs".into(),
+            secondary_reticle: String::new(),
             knife: "camo_diamond".into(),
             ..Draft::test_kit()
         };

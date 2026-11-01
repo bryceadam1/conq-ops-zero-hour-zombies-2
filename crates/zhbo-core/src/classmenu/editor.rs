@@ -231,8 +231,20 @@ impl Editor {
     }
 
     /// Whether the highlighted primary attachment is one BO2 personalizes the reticle of.
-    pub(super) fn option_is_optic(&self) -> bool {
-        self.option_attachment(self.option).is_some_and(|s| crate::hud::OPTICS.contains(&s))
+    /// The reticle page `V` opens on the highlighted box: BO2 adds `MENU_SELECT_RETICLE` when an
+    /// attachment slot that *holds* one of the custom-reticle optics gains focus
+    /// (`CACAttachmentsButton.SlotGainFocus` → `add_reticle_button`, gated by
+    /// `CACUtility.attachmentsWithCustReticle`), for either weapon. The mod's attachment box is one
+    /// grid: with it closed the box's equipped optic counts; with it open the highlighted option
+    /// must be that equipped optic (an optic not on the gun has no reticle to pick yet).
+    pub fn reticle_page(&self) -> Option<PersonalizeKind> {
+        let (primary, kind) = match self.slot {
+            Slot::PrimaryAtts => (true, PersonalizeKind::Reticle),
+            Slot::SecondaryAtts => (false, PersonalizeKind::SecondaryReticle),
+            _ => return None,
+        };
+        let optic = self.draft.reticle_optic(primary)?;
+        (!self.picking || self.option_attachment(self.option) == Some(optic)).then_some(kind)
     }
 
     /// The perk option `i` of a perk row, for its icon.

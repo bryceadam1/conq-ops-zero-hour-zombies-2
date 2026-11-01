@@ -69,6 +69,11 @@ impl Source {
         if let Ok(d) = crate::rangefinder::display(bo2_dir, &reticle_zone.iter().collect::<Vec<_>>(), &paks, &mut emblems) {
             emblems.insert(zhbo_native::display::display_path(), d.to_bytes());
         }
+        // The class reticle options' lens materials, as the archive has them (`generals.rs`), so a
+        // sweep's `--reticle` draws the chosen lens on a converted combination too.
+        let reticle_zones: Vec<&Zone> = reticle_zone.iter().chain([&patch, &common]).collect();
+        let reticles = crate::reticles::reticles(&patch, &reticle_zones, &paks, &mut emblems);
+        emblems.insert(zhbo_native::reticles::reticles_path(), reticles.to_bytes());
         Ok(Source { common, common_patch, patch, zones, paks, bo2, atts, defs: table.weapons, emblems })
     }
 

@@ -98,7 +98,7 @@ pub fn personalize_layout(w: f32, h: f32, kind: PersonalizeKind) -> PersonalizeL
 pub fn personalize_title(kind: PersonalizeKind) -> &'static str {
     match kind {
         PersonalizeKind::Camo => crate::weapons::catalog().label("MPUI_CAMO_CAPS"),
-        PersonalizeKind::Reticle => crate::weapons::catalog().label("MPUI_RETICLES_CAPS"),
+        PersonalizeKind::Reticle | PersonalizeKind::SecondaryReticle => crate::weapons::catalog().label("MPUI_RETICLES_CAPS"),
         PersonalizeKind::ReticleColor => crate::weapons::catalog().label("MPUI_RETICLE_COLOR_CAPS"),
         PersonalizeKind::Knife => "KNIFE",
         PersonalizeKind::SecondaryCamo => crate::weapons::catalog().label("MPUI_CAMO_CAPS"),
@@ -112,7 +112,7 @@ pub fn personalize_title(kind: PersonalizeKind) -> &'static str {
 pub fn personalize_weapon(kind: PersonalizeKind, draft: &Draft) -> Option<&str> {
     match kind {
         PersonalizeKind::Knife => Some(crate::weapons::KNIFE_HELD),
-        PersonalizeKind::SecondaryCamo => (!draft.secondary.is_empty()).then_some(draft.secondary.as_str()),
+        PersonalizeKind::SecondaryCamo | PersonalizeKind::SecondaryReticle => (!draft.secondary.is_empty()).then_some(draft.secondary.as_str()),
         _ => (!draft.primary.is_empty()).then_some(draft.primary.as_str()),
     }
 }
@@ -139,7 +139,7 @@ pub fn personalize_choices(kind: PersonalizeKind) -> Vec<String> {
             "Ronin",
             "Skulls",
         ],
-        PersonalizeKind::Reticle => &["None", "Reflex", "ACOG", "EOTech", "MARS"],
+        PersonalizeKind::Reticle | PersonalizeKind::SecondaryReticle => &["None", "Reflex", "ACOG", "EOTech", "MARS"],
         PersonalizeKind::ReticleColor => &["Red", "Green", "Blue", "Yellow", "Purple"],
     };
     names.iter().map(|s| (*s).to_string()).collect()
@@ -155,7 +155,7 @@ pub fn personalize_choices_for(kind: PersonalizeKind, weapon: Option<&str>) -> V
 /// `MPUI_CAMO_CAPS` / `MPUI_RETICLES_CAPS`, `MPUI_MAP_CATEGORY_DLC_CAPS`, `MPUI_DLC2_CAPS`.
 fn tab_label(kind: PersonalizeKind, tab: OptionTab) -> &'static str {
     match (kind, tab) {
-        (PersonalizeKind::Reticle, OptionTab::Base) => crate::weapons::catalog().label("MPUI_RETICLES_CAPS"),
+        (PersonalizeKind::Reticle | PersonalizeKind::SecondaryReticle, OptionTab::Base) => crate::weapons::catalog().label("MPUI_RETICLES_CAPS"),
         (_, OptionTab::Base) => crate::weapons::catalog().label("MPUI_CAMO_CAPS"),
         (_, OptionTab::Dlc) => crate::weapons::catalog().label("MPUI_MAP_CATEGORY_DLC_CAPS"),
         (_, OptionTab::Dlc2) => crate::weapons::catalog().label("MPUI_DLC2_CAPS"),
@@ -179,7 +179,7 @@ pub fn personalize_tabs_for(kind: PersonalizeKind, weapon: Option<&str>) -> Vec<
 pub fn personalize_tabs_in(cat: &Catalog, kind: PersonalizeKind, weapon: Option<&str>) -> Vec<PersonalizeTab> {
     let ids: Vec<String> = match kind {
         PersonalizeKind::Camo | PersonalizeKind::Knife | PersonalizeKind::SecondaryCamo => weapon.and_then(|w| cat.get(w)).map(|d| d.camo.clone()).unwrap_or_default(),
-        PersonalizeKind::Reticle => cat.reticles().iter().map(|r| r.id.clone()).collect(),
+        PersonalizeKind::Reticle | PersonalizeKind::SecondaryReticle => cat.reticles().iter().map(|r| r.id.clone()).collect(),
         PersonalizeKind::ReticleColor => {
             let ids: Vec<String> = cat.reticle_colors().iter().map(|c| c.id.clone()).collect();
             let choices = if ids.is_empty() { personalize_choices(kind) } else { ids };
@@ -226,15 +226,42 @@ fn button_bg(prims: &mut Vec<Prim>, f: &Frame, r: Rect) {
 fn option_of(cat: &Catalog, kind: PersonalizeKind, choice: &str) -> Option<&'static crate::weapons::CamoOption> {
     match kind {
         PersonalizeKind::Camo | PersonalizeKind::Knife | PersonalizeKind::SecondaryCamo => cat.camo(choice),
-        PersonalizeKind::Reticle => cat.reticle(choice),
+        PersonalizeKind::Reticle | PersonalizeKind::SecondaryReticle => cat.reticle(choice),
         PersonalizeKind::ReticleColor => cat.reticle_color(choice),
     }
 }
 
-/// The label a cell shows: the camo/reticle/colour option's localized name, or the choice itself
-/// for the fallback lists.
-fn choice_label(cat: &Catalog, kind: PersonalizeKind, choice: &str) -> String {
-    option_of(cat, kind, choice).map(|c| c.name.clone()).unwrap_or_else(|| choice.to_string())
+/// The label a cell shows: the camo/colour option's localized name, a reticle's name through the
+/// screen's optic ([`reticle_label`]), or the choice itself for the fallback lists.
+fn choice_label(cat: &Catalog, p: &Personalize, choice: &str) -> String {
+    if p.kind.is_reticle() {
+        if let Some(name) = p.optic.and_then(|o| reticle_label(cat, o, choice)) {
+            return name.to_string();
+        }
+    }
+    option_of(cat, p.kind, choice).map(|c| c.name.clone()).unwrap_or_else(|| choice.to_string())
+}
+
+/// A reticle option's name through `optic`: BO2's `MPUI_RETICLE_<OPTIC>_<N>` (`ReticlesGridButton.new`;
+/// `reticle_3` on a Reflex is "Target Drop", on an EOTech "Hit Mark"). `None` when the table lacks it.
+pub fn reticle_label(cat: &Catalog, optic: &str, choice: &str) -> Option<&'static str> {
+    cat.ui_text(&crate::weapons::reticle_name_key(optic, choice)?)
+}
+
+/// The reticle cell's pictures (`ReticlesGridButton.SetupButtonImages`): 32 units square, centred
+/// on the cell at `(CamoGridItemHeight - (TitleHeight + 4)) / 2 + 4` down; the Hybrid Optic's two
+/// sights side by side, 20 units apart about the centre.
+pub fn reticle_image_rects(cell: Rect, count: usize) -> Vec<Rect> {
+    const SIZE: f32 = 32.0;
+    const GAP: f32 = 20.0;
+    let cy = cell.y + (GRID_ITEM_H - (bo2::TEXT_EXTRA_SMALL + 4.0)) / 2.0 + 4.0;
+    let cx = cell.x + cell.w / 2.0;
+    let y = cy - SIZE / 2.0;
+    match count {
+        0 => Vec::new(),
+        1 => vec![Rect { x: cx - SIZE / 2.0, y, w: SIZE, h: SIZE }],
+        _ => vec![Rect { x: cx - GAP / 2.0 - SIZE, y, w: SIZE, h: SIZE }, Rect { x: cx + GAP / 2.0, y, w: SIZE, h: SIZE }],
+    }
 }
 
 /// A camo option's thumbnail (`UIExpression.GetWeaponOptionImage`: column 6, `menu_camo_*_pattern`).
@@ -411,9 +438,17 @@ fn equipped_choice(p: &Personalize) -> &str {
 
 /// The title: `MPUI_PERSONALIZE_N` with the weapon's name for camo (`caccamomenu.lua:158-215`),
 /// the screen's own heading otherwise.
-fn screen_title(cat: &Catalog, kind: PersonalizeKind, weapon: Option<&str>) -> String {
+fn screen_title(cat: &Catalog, p: &Personalize, weapon: Option<&str>) -> String {
+    let kind = p.kind;
     match (kind, weapon.and_then(|w| cat.get(w))) {
         (PersonalizeKind::Camo | PersonalizeKind::Knife | PersonalizeKind::SecondaryCamo, Some(d)) => format!("PERSONALIZE {}", d.menu_name().to_uppercase()),
+        // `cacreticles.lua:169-190`: `addTitle(Localize("MENU_X_OPTICS", GetAttachmentName(...)))`,
+        // "&&1 Reticles" with the slot's optic ("Reflex Reticles"), upper-cased like the other
+        // personalize titles.
+        (PersonalizeKind::Reticle | PersonalizeKind::SecondaryReticle, _) if p.optic.is_some() => {
+            let name = super::chrome::att_display(p.optic.unwrap_or_default());
+            cat.label("MENU_X_OPTICS").replace("&&1", &name).to_uppercase()
+        }
         _ => personalize_title(kind).to_string(),
     }
 }
@@ -431,7 +466,7 @@ pub fn draw_personalize_in(cat: &Catalog, prims: &mut Vec<Prim>, w: f32, h: f32,
     let l = personalize_layout(w, h, p.kind);
     let f = &l.frame;
     bo2::backdrop(prims, f, w, h);
-    bo2::title(prims, f, &screen_title(cat, p.kind, weapon));
+    bo2::title(prims, f, &screen_title(cat, p, weapon));
     draw_tabs(prims, &l, p);
     for (i, choice) in p.choices.iter().enumerate() {
         let r = l.cell_rect(i);
@@ -450,12 +485,12 @@ pub fn draw_personalize_in(cat: &Catalog, prims: &mut Vec<Prim>, w: f32, h: f32,
                     bo2::sprite(prims, f, image, pic, argb(OFF_WHITE, 1.0), Vec::new());
                 }
             }
-            PersonalizeKind::Reticle => {
-                // The cell's art through the class's optic (the screen's `attachmentRef`); the
-                // draft's base primary id carries no attachments of its own.
-                if let Some(image) = p.optic.and_then(|o| crate::weapons::reticle_art(o, choice)) {
-                    // The reticle art is a converter-named sprite too (`hud.rs`'s reticle grid).
-                    bo2::sprite(prims, f, &image, pic, argb(OFF_WHITE, 1.0), Vec::new());
+            PersonalizeKind::Reticle | PersonalizeKind::SecondaryReticle => {
+                // The cell's art through the slot's optic (the screen's `attachmentRef`), a
+                // converter-named sprite (`hud.rs`'s reticle grid); the Hybrid Optic's two.
+                let art = p.optic.map(|o| crate::weapons::reticle_art(o, choice)).unwrap_or_default();
+                for (image, rect) in art.iter().zip(reticle_image_rects(r, art.len())) {
+                    bo2::sprite(prims, f, image, rect, argb(OFF_WHITE, 1.0), Vec::new());
                 }
             }
             PersonalizeKind::ReticleColor => {
@@ -469,7 +504,7 @@ pub fn draw_personalize_in(cat: &Catalog, prims: &mut Vec<Prim>, w: f32, h: f32,
             prims,
             f,
             Family::Condensed,
-            &choice_label(cat, p.kind, choice),
+            &choice_label(cat, p, choice),
             Rect { x: r.x + 3.0, y: r.bottom() - bo2::TEXT_CONDENSED - 2.0, w: r.w, h: bo2::TEXT_CONDENSED },
             Align::Left,
             argb(if i == p.highlight { BOII_ORANGE } else { OFF_WHITE }, 1.0),
@@ -504,7 +539,7 @@ fn draw_camo_panel(cat: &Catalog, prims: &mut Vec<Prim>, l: &PersonalizeLayout, 
     let f = &l.frame;
     let panel = camo_panel(l);
     if let Some(choice) = p.choices.get(p.highlight) {
-        bo2::text(prims, f, Family::Big, &choice_label(cat, p.kind, choice), panel.title, Align::Left, argb(OFF_WHITE, 1.0));
+        bo2::text(prims, f, Family::Big, &choice_label(cat, p, choice), panel.title, Align::Left, argb(OFF_WHITE, 1.0));
     }
     if let Some(d) = weapon.and_then(|w| cat.get(w)) {
         bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&d.id)), panel.weapon, argb(OFF_WHITE, 1.0), Vec::new());
@@ -813,5 +848,63 @@ mod tests {
         for want in ["holo_0", "holo_3", "holo_24"] {
             assert!(images.contains(&want), "{want}: {images:?}");
         }
+    }
+
+    /// Every custom-reticle optic, every reticle row: the cell draws that optic's own art (the
+    /// Hybrid Optic its two sights), labelled with the optic's own `MPUI_RETICLE_<OPTIC>_<N>` name
+    /// (never the table's `MPUI_RETICLE_DEFAULT` "Dot" every row carries), under the
+    /// `MENU_X_OPTICS` title; the sidearm's page the same through its own optic.
+    #[test]
+    fn every_optic_and_reticle_draws_its_own_art_and_name() {
+        use crate::weapons::UiText;
+        let ids: Vec<String> = (0..38).map(|n| format!("reticle_{n}")).collect();
+        let reticles = ids.iter().map(|id| CamoOption { name: "Dot".into(), ..opt(id, "", OptionTab::Base, 0, false) }).collect();
+        let mut ui_text: Vec<UiText> = crate::weapons::RETICLE_OPTICS
+            .iter()
+            .flat_map(|o| ids.iter().map(move |id| UiText { key: crate::weapons::reticle_name_key(o, id).unwrap(), text: format!("{o} name {id}") }))
+            .collect();
+        ui_text.push(UiText { key: "MENU_X_OPTICS".into(), text: "&&1 Reticles".into() });
+        let cat = Catalog::from_table(Table { reticles, ui_text, ..Default::default() });
+        let _f = crate::lui::font::lock();
+        crate::lui::font::load("");
+        for (kind, secondary) in [(PersonalizeKind::Reticle, false), (PersonalizeKind::SecondaryReticle, true)] {
+            for optic in crate::weapons::RETICLE_OPTICS {
+                let mut draft = Draft { primary: "an94_mp".into(), secondary: "fnp45_mp".into(), ..Default::default() };
+                if secondary {
+                    draft.secondary_atts = vec![optic.to_string()];
+                    draft.primary_atts = vec!["fmj".into()];
+                } else {
+                    draft.primary_atts = vec!["fmj".into(), optic.to_string()];
+                }
+                let tabs = personalize_tabs_in(&cat, kind, personalize_weapon(kind, &draft));
+                let mut p = Personalize::with_tabs(kind, tabs, &draft);
+                assert_eq!(p.optic, Some(*optic), "{kind:?}");
+                assert_eq!(p.choices.len(), 38);
+                let mut prims = Vec::new();
+                draw_personalize_in(&cat, &mut prims, 1280.0, 720.0, &p, personalize_weapon(kind, &draft), 0.0, 0.0);
+                let images: Vec<(&str, f32)> = prims.iter().filter_map(|x| if let Prim::Image { name, w, .. } = x { Some((name.as_str(), *w)) } else { None }).collect();
+                let texts: Vec<&str> = prims.iter().filter_map(|x| if let Prim::Text { text, .. } = x { Some(text.as_str()) } else { None }).collect();
+                assert!(texts.iter().any(|t| t.ends_with(" RETICLES") && t.len() > " RETICLES".len()), "{optic}: the MENU_X_OPTICS title: {texts:?}");
+                for id in &ids {
+                    let art = crate::weapons::reticle_art(optic, id);
+                    assert_eq!(art.len(), if *optic == "dualoptic" { 2 } else { 1 }, "{optic} {id}");
+                    for a in &art {
+                        let (_, w) = images.iter().find(|(n, _)| n == a).unwrap_or_else(|| panic!("{optic} {id}: {a} not drawn: {images:?}"));
+                        assert!(*w > 0.0, "{optic} {id}: {a}");
+                    }
+                    let name = format!("{optic} name {id}");
+                    assert!(texts.contains(&name.as_str()), "{optic} {id}: the cell names it {name:?}: {texts:?}");
+                }
+                assert!(!texts.contains(&"Dot"), "{optic}: no cell falls back to the table's MPUI_RETICLE_DEFAULT");
+                // Picking a cell lands in the slot's own reticle.
+                p.highlight = 7;
+                p.step(Edges { confirm: true, ..Default::default() }, &mut draft);
+                let (mine, other) = if secondary { (&draft.secondary_reticle, &draft.reticle) } else { (&draft.reticle, &draft.secondary_reticle) };
+                assert_eq!((mine.as_str(), other.as_str()), ("reticle_7", ""), "{kind:?} {optic}");
+            }
+        }
+        // The Hybrid Optic's two pictures sit side by side, 32 units each, 20 apart.
+        let rects = reticle_image_rects(Rect { x: 0.0, y: 0.0, w: 200.0, h: GRID_ITEM_H }, 2);
+        assert_eq!((rects[0].w, rects[1].x - rects[0].right()), (32.0, 20.0));
     }
 }

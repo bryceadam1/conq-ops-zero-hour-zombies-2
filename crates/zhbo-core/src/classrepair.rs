@@ -324,6 +324,7 @@ mod tests {
             reticle_color: String::new(),
             knife: String::new(),
             secondary_camo: String::new(),
+            secondary_reticle: String::new(),
         }
     }
 

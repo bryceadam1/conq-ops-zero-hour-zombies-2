@@ -161,18 +161,43 @@ pub(crate) fn v3(n: &[f32]) -> [f32; 3] {
     [n[0], n[1], n[2]]
 }
 
-/// BO2 optics with a reticle grid: their CaC art is the `<optic>_<N>` set (`patch_ui_mp`).
-pub const RETICLE_OPTICS: &[&str] = &["reflex", "holo", "acog"];
+/// The attachments whose reticle the class picks: BO2's `CoD.CACUtility.attachmentsWithCustReticle`
+/// (`cacutility.lua:168-177`: reflex, holo, acog, dualoptic). Only these get the editor's `Select
+/// Reticle` prompt (`cacattachmentsbutton.lua`'s `SlotGainFocus`) and reset the slot's reticle when
+/// equipped (`cacattachmentsmenu.lua`'s `Equip`).
+pub const RETICLE_OPTICS: &[&str] = &["reflex", "holo", "acog", "dualoptic"];
 
-/// The weapon's first reflex/holo/acog optic.
+/// The weapon's reticle optic (the first of [`RETICLE_OPTICS`] among `attachments`; BO2's optics
+/// are mutually exclusive, so a weapon holds at most one).
 pub fn optic_of(attachments: &[String]) -> Option<&'static str> {
     RETICLE_OPTICS.iter().copied().find(|o| attachments.iter().any(|a| a.as_str() == *o))
 }
 
-/// The CaC art of reticle option `reticle_N` through `optic`: BO2's `<attachmentRef>_<N>` material
-/// (`reticlesgridbutton.lua:61-66`, `reticleImageName = attachmentRef .. "_" .. index`; `reflex_0`
-/// .. `reflex_37` in `patch_ui_mp`), for the base and the store rows alike.
-pub fn reticle_art(optic: &str, id: &str) -> Option<String> {
-    let n: u32 = id.strip_prefix("reticle_")?.parse().ok()?;
-    RETICLE_OPTICS.contains(&optic).then(|| format!("{optic}_{n}"))
+/// The option index of a reticle id (`reticle_3` -> 3).
+pub fn reticle_index(id: &str) -> Option<u32> {
+    id.strip_prefix("reticle_")?.parse().ok()
+}
+
+/// The CaC art of reticle option `reticle_N` through `optic`, BO2's `reticlesgridbutton.lua`
+/// `SetupButtonImages`: the `<attachmentRef>_<N>` material (`reflex_0` .. `reflex_37` in
+/// `patch_ui_mp`); the Hybrid Optic shows its two sights side by side, `reflex_N` and `acog_N`,
+/// except options 0 and 9, which have their own `dualoptic_up_N` / `dualoptic_down_N` pair. Empty
+/// for an optic without a reticle grid or an id that is not a reticle option.
+pub fn reticle_art(optic: &str, id: &str) -> Vec<String> {
+    let Some(n) = reticle_index(id) else { return Vec::new() };
+    match optic {
+        "dualoptic" if n == 0 || n == 9 => vec![format!("dualoptic_up_{n}"), format!("dualoptic_down_{n}")],
+        "dualoptic" => vec![format!("reflex_{n}"), format!("acog_{n}")],
+        o if RETICLE_OPTICS.contains(&o) => vec![format!("{o}_{n}")],
+        _ => Vec::new(),
+    }
+}
+
+/// The localize key of reticle option `reticle_N` through `optic`: BO2's cell label
+/// `Engine.Localize("MPUI_RETICLE_" .. attachmentRef .. "_" .. index)` (`reticlesgridbutton.lua`
+/// `new`), e.g. `MPUI_RETICLE_REFLEX_3` ("Target Drop"). The table's own name column is
+/// `MPUI_RETICLE_DEFAULT` ("Dot") on every row, which BO2's grid never shows.
+pub fn reticle_name_key(optic: &str, id: &str) -> Option<String> {
+    let n = reticle_index(id)?;
+    RETICLE_OPTICS.contains(&optic).then(|| format!("MPUI_RETICLE_{}_{n}", optic.to_ascii_uppercase()))
 }

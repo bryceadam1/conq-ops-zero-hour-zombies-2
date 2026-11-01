@@ -483,7 +483,7 @@ pub fn table_with_metadata(
         tablet_meshes: 0,
         perks: Vec::new(),
         bonus_cards: Vec::new(),
-        ui_text: ui_text(names),
+        ui_text: [ui_text(names), reticle_names(names)].concat(),
         weapon_groups: Vec::new(),
         class_caps: Vec::new(),
         hit_boxes: Vec::new(),
@@ -497,6 +497,20 @@ pub fn ui_text(names: &HashMap<String, String>) -> Vec<zhbo_core::weapons::UiTex
         .iter()
         .filter_map(|k| names.get(*k).map(|text| zhbo_core::weapons::UiText { key: k.to_string(), text: text.clone() }))
         .collect()
+}
+
+/// The reticle grid's cell names: every `MPUI_RETICLE_<OPTIC>_<N>` string the install has for the
+/// custom-reticle optics ([`zhbo_core::weapons::reticle_name_key`]; BO2's `ReticlesGridButton.new`
+/// localizes `"MPUI_RETICLE_" .. attachmentRef .. "_" .. index`), in key order.
+pub fn reticle_names(names: &HashMap<String, String>) -> Vec<zhbo_core::weapons::UiText> {
+    let prefixes: Vec<String> = zhbo_core::weapons::RETICLE_OPTICS.iter().map(|o| format!("MPUI_RETICLE_{}_", o.to_ascii_uppercase())).collect();
+    let mut rows: Vec<zhbo_core::weapons::UiText> = names
+        .iter()
+        .filter(|(k, _)| prefixes.iter().any(|p| k.strip_prefix(p.as_str()).is_some_and(|n| n.parse::<u32>().is_ok())))
+        .map(|(k, v)| zhbo_core::weapons::UiText { key: k.clone(), text: v.clone() })
+        .collect();
+    rows.sort_by(|a, b| a.key.cmp(&b.key));
+    rows
 }
 
 /// Weapons with attachments, and their alt modes, that [`converted`] asks for: built from their base
@@ -2610,6 +2624,29 @@ mod tests {
         assert_eq!(rows.len(), zhbo_core::weapons::UI_TEXT_KEYS.len(), "{rows:?}");
         let built_in = zhbo_core::weapons::parse_full_table(zhbo_core::weapons::BUILTIN).unwrap().ui_text;
         assert_eq!(rows, built_in);
+    }
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn every_optic_names_every_reticle() {
+        // BO2's reticle cells are named `MPUI_RETICLE_<OPTIC>_<N>` (`ReticlesGridButton.new`), the
+        // table's own name column being `MPUI_RETICLE_DEFAULT` ("Dot") on every row: the
+        // converter carries each optic's name for each row, so no cell falls back to "Dot".
+        let bo2_dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let names = names(&bo2_dir);
+        let patch = crate::generals::load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
+        let rows = reticle_options(&patch, &names);
+        assert!(rows.iter().all(|r| r.name == "Dot"), "the table's column 3 is MPUI_RETICLE_DEFAULT throughout");
+        let text = reticle_names(&names);
+        for optic in zhbo_core::weapons::RETICLE_OPTICS {
+            for r in &rows {
+                let key = zhbo_core::weapons::reticle_name_key(optic, &r.id).unwrap();
+                let name = text.iter().find(|t| t.key == key).unwrap_or_else(|| panic!("{key} is not in the install"));
+                assert!(!name.text.trim().is_empty(), "{key}");
+            }
+        }
+        assert_eq!(text.iter().find(|t| t.key == "MPUI_RETICLE_REFLEX_3").map(|t| t.text.as_str()), Some("Target Drop"));
+        assert_eq!(text.iter().find(|t| t.key == "MPUI_RETICLE_DUALOPTIC_1").map(|t| t.text.as_str()), Some("Plus, Precision"));
     }
 
     #[test]

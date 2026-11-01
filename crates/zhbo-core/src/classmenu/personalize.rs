@@ -19,14 +19,23 @@ pub enum PersonalizeKind {
     /// (`customclass.lua`'s `SecondaryWeapon_Button_Over` sets it; the pick lands in
     /// `secondarycamo`, `caccamomenu.lua`'s `SetClassItem(weaponSlot .. "camo")`).
     SecondaryCamo,
+    /// The sidearm optic's reticle page: the same `CACReticles` with `weaponSlot = "secondary"`
+    /// (`CACAttachmentsButton.SlotGainFocus` sets the slot for either weapon's attachment slots;
+    /// the pick lands in `secondaryreticle`, `cacreticles.lua`'s `Equip`).
+    SecondaryReticle,
 }
 
 impl PersonalizeKind {
+    /// A reticle page, either weapon slot's.
+    pub fn is_reticle(self) -> bool {
+        matches!(self, PersonalizeKind::Reticle | PersonalizeKind::SecondaryReticle)
+    }
+
     /// The grid's column count, BO2's own for each screen.
     pub fn columns(self) -> usize {
         match self {
             PersonalizeKind::Camo | PersonalizeKind::Knife | PersonalizeKind::SecondaryCamo => 6,
-            PersonalizeKind::Reticle | PersonalizeKind::ReticleColor => 5,
+            PersonalizeKind::Reticle | PersonalizeKind::SecondaryReticle | PersonalizeKind::ReticleColor => 5,
         }
     }
 }
@@ -48,9 +57,9 @@ pub struct Personalize {
     /// The draft's value when the screen opened: the cell BO2 focuses first in each tab
     /// (`AddCamos`: the equipped cell, else the first) and the `Equipped` preview's option.
     pub equipped: String,
-    /// The optic whose reticles the screen lists (`cacreticles.lua`'s `attachmentRef`: the
-    /// primary's reflex/holo/acog), which names each cell's `<optic>_<N>` art; `None` on the other
-    /// screens.
+    /// The optic whose reticles the screen lists (`cacreticles.lua`'s `attachmentRef`: the slot's
+    /// equipped reflex/holo/acog/dualoptic), which names each cell's art and label; `None` on the
+    /// other screens.
     pub optic: Option<&'static str>,
 }
 
@@ -77,10 +86,15 @@ impl Personalize {
             PersonalizeKind::ReticleColor => &draft.reticle_color,
             PersonalizeKind::Knife => &draft.knife,
             PersonalizeKind::SecondaryCamo => &draft.secondary_camo,
+            PersonalizeKind::SecondaryReticle => &draft.secondary_reticle,
         }
         .clone();
         let tabs = if tabs.is_empty() { vec![PersonalizeTab { label: String::new(), choices: Vec::new() }] } else { tabs };
-        let optic = (kind == PersonalizeKind::Reticle).then(|| crate::weapons::optic_of(&draft.primary_atts)).flatten();
+        let optic = match kind {
+            PersonalizeKind::Reticle => draft.reticle_optic(true),
+            PersonalizeKind::SecondaryReticle => draft.reticle_optic(false),
+            _ => None,
+        };
         let mut p = Personalize { kind, choices: Vec::new(), highlight: 0, tabs, tab: 0, equipped, optic };
         p.open_tab(0);
         p
@@ -144,6 +158,7 @@ impl Personalize {
                     PersonalizeKind::ReticleColor => draft.reticle_color = v.clone(),
                     PersonalizeKind::Knife => draft.knife = v.clone(),
                     PersonalizeKind::SecondaryCamo => draft.secondary_camo = v.clone(),
+                    PersonalizeKind::SecondaryReticle => draft.secondary_reticle = v.clone(),
                 }
             }
             return Outcome::Save;

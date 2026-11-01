@@ -232,6 +232,9 @@ pub struct PlayerSim {
     /// The class's secondary camo (BO2's `secondarycamo`), carried when a `CustomClass` lands:
     /// what the sidearm wears (`_class.gsc` gives it `calcweaponoptions(class, 1)`).
     pub secondary_camo: String,
+    /// The class's secondary reticle (BO2's `secondaryreticle`), carried when a `CustomClass`
+    /// lands: the sidearm's optic lens (a pistol's Reflex) wears it.
+    pub secondary_reticle: String,
     pub mode: Mode,
     pub body: Body,
     /// The aim this frame: the input's view angles plus the view kick (BO2 adds the kick to every
@@ -316,6 +319,29 @@ impl PlayerSim {
         ]
     }
 
+    /// Each weapon slot paired with the class reticle its optic wears: the primary's
+    /// `primaryreticle`, the sidearm's `secondaryreticle` (`calcweaponoptions(class, 0/1)`, the
+    /// same per-slot options as the camos). The client hands these to the viewmodel draw
+    /// (`nativevm::class_reticles`).
+    pub fn held_reticles(&self) -> [(&str, &str); 2] {
+        let kit = &self.arsenal.loadout;
+        [(kit.primary.as_str(), self.reticle.as_str()), (kit.secondary.as_str(), self.secondary_reticle.as_str())]
+    }
+
+    /// The class reticle of the weapon in hand: the sidearm's (or its alt mode's) when the
+    /// sidearm is up, the primary's otherwise.
+    pub fn held_reticle(&self) -> &str {
+        let current = &self.arsenal.current().def;
+        let kit = &self.arsenal.loadout;
+        let secondary = !kit.secondary.is_empty()
+            && (current.id == kit.secondary || crate::weapons::catalog().get(&kit.secondary).is_some_and(|d| !d.alt.is_empty() && d.alt == current.id));
+        if secondary {
+            &self.secondary_reticle
+        } else {
+            &self.reticle
+        }
+    }
+
     pub fn is_first_person(&self) -> bool {
         matches!(self.mode, Mode::Fps | Mode::FieldComputer { .. })
     }
@@ -346,6 +372,7 @@ impl PlayerSim {
             camo: String::new(),
             knife_camo: String::new(),
             secondary_camo: String::new(),
+            secondary_reticle: String::new(),
             mode: Mode::Fps,
             body: Body::new(Vec3::ZERO, &MoveTuning::default()),
             yaw: 0.0,
@@ -540,6 +567,7 @@ impl Sim {
                     camo: String::new(),
                     knife_camo: String::new(),
                     secondary_camo: String::new(),
+                    secondary_reticle: String::new(),
                     mode: Mode::Fps,
                     body: Body::new(pos, &tuning),
                     yaw,
@@ -614,6 +642,7 @@ impl Sim {
                     camo: String::new(),
                     knife_camo: String::new(),
                     secondary_camo: String::new(),
+                    secondary_reticle: String::new(),
                     mode: Mode::Rts,
                     body: Body::new(Vec3::ZERO, &tuning),
                     yaw: 0.0,
@@ -645,16 +674,16 @@ impl Sim {
             self.players[idx] = Some(p);
             return;
         }
-        let (class_id, class_name, loadout, reticle, reticle_color, camo, knife_camo, secondary_camo) = if payload.is_empty() {
+        let (class_id, class_name, loadout, reticle, reticle_color, camo, knife_camo, secondary_camo, secondary_reticle) = if payload.is_empty() {
             let Some(c) = crate::classes::at(index) else { self.players[idx] = Some(p); return };
-            (c.id.clone(), ClassName::new(&c.name), crate::classes::loadout_of(&c), String::new(), String::new(), String::new(), String::new(), String::new())
+            (c.id.clone(), ClassName::new(&c.name), crate::classes::loadout_of(&c), String::new(), String::new(), String::new(), String::new(), String::new(), String::new())
         } else {
             let Some(c) = crate::classes::CustomClass::from_wire_words(payload) else {
                 self.players[idx] = Some(p);
                 return;
             };
             let name = if c.name.is_empty() { "Custom Class".to_string() } else { c.name.clone() };
-            (format!("custom:{}", c.name), ClassName::new(&name), c.loadout(), c.reticle.clone(), c.reticle_color.clone(), c.camo.clone(), c.knife.clone(), c.secondary_camo.clone())
+            (format!("custom:{}", c.name), ClassName::new(&name), c.loadout(), c.reticle.clone(), c.reticle_color.clone(), c.camo.clone(), c.knife.clone(), c.secondary_camo.clone(), c.secondary_reticle.clone())
         };
         p.class = Some(class_id);
         p.reticle = reticle;
@@ -662,6 +691,7 @@ impl Sim {
         p.camo = camo;
         p.knife_camo = knife_camo;
         p.secondary_camo = secondary_camo;
+        p.secondary_reticle = secondary_reticle;
         p.arsenal = Arsenal::with_loadout(loadout);
         // The kit is ready as soon as the class lands, whichever view the player is in. In first
         // person the weapon still has to come up (BO2: the pick happens between spawns, not
