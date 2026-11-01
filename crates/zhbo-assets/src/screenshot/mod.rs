@@ -116,6 +116,8 @@ fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> 
         ("cac-editor-secondary", secondary_editor_prims()),
         ("cac-personalize-secondary", secondary_personalize_prims()),
         ("cac-reticles", reticle_personalize_prims()),
+        ("cac-reticles-dlc", reticle_tab_prims(1)),
+        ("cac-reticles-dlc2", reticle_tab_prims(2)),
         ("cac-reticle-color", reticle_color_personalize_prims()),
         ("cac-dialog-set", set_dialog_prims()),
         ("cac-dialog-class", class_dialog_prims()),
@@ -229,10 +231,16 @@ fn secondary_personalize_prims() -> Vec<Prim> {
 /// BO2's reticle grid on the primary's optic (`cacreticles.lua:9-24`); each cell is the optic's
 /// reticle art (`reflex_<N>`, `zhbo_core::weapons::reticle_art`).
 fn reticle_personalize_prims() -> Vec<Prim> {
+    reticle_tab_prims(0)
+}
+
+/// The reticle grid on tab `tab` (0 base, 1 DLC, 2 DLC2: the store rows `reticle_11..37`).
+fn reticle_tab_prims(tab: i32) -> Vec<Prim> {
     let mut editor = editor_state();
     editor.picking = false;
     let tabs = classui::personalize_tabs_for(PersonalizeKind::Reticle, Some(editor.draft.primary.as_str()));
-    let p = Personalize::with_tabs(PersonalizeKind::Reticle, tabs, &editor.draft);
+    let mut p = Personalize::with_tabs(PersonalizeKind::Reticle, tabs, &editor.draft);
+    p.step_tab(tab);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
@@ -673,7 +681,7 @@ mod tests {
         assert!(knife_images.contains(&zhbo_core::names::cac_weapon_image(zhbo_core::weapons::KNIFE_HELD).as_str()), "the knife's picture: {knife_images:?}");
 
         // The reticle/colour screens carry BO2's titles and prompts; each reticle cell is the
-        // primary optic's stock art (`cacreticles.lua:1150-1240,1390-1470`).
+        // primary optic's art (`reticlesgridbutton.lua:61-66`).
         let reticles = reticle_personalize_prims();
         let reticle_text = texts(&reticles);
         assert!(reticle_text.contains(&"RETICLES"), "the reticle title draws: {reticle_text:?}");

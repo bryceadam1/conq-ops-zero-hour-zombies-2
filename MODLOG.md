@@ -8635,3 +8635,10 @@ No C ABI change.
   events), and the client's remote-event pass — beside `third_person_shot` for others' gunshots —
   plays it at the thrower's eye on another player's `Thrown`, and on their `Planted` for a set-down
   item (`sounds::remote_offhand`). RTS-controlled Generals' grenades (`sim/rts.rs`) are heard too.
+* **The reticle grid drew no art in game.** The cells took their optic from the draft's *base*
+  primary def (`cat.get("mp7_mp").attachments`, always empty), so no cell ever had a picture. The
+  screen now carries the class optic (`Personalize::optic`, from `Draft::primary_atts`; BO2's
+  `attachmentRef`). Verified headless against a fresh archive: `cac-reticles`, `cac-reticles-dlc`
+  and `cac-reticles-dlc2` (new screenshot shots) draw BO2's `reflex_N` art on all three tabs, and a
+  grid-vs-lens sheet (grid `reflex_0/1/11/24` beside lens rows 0/1/11/24: stock dot, `_01` cross,
+  `_12` ring, `_38` thought bubble) confirms `reticle_N` = lens row `N` shape for shape.

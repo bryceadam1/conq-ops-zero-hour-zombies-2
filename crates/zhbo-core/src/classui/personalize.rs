@@ -451,10 +451,9 @@ pub fn draw_personalize_in(cat: &Catalog, prims: &mut Vec<Prim>, w: f32, h: f32,
                 }
             }
             PersonalizeKind::Reticle => {
-                if let Some(image) = weapon
-                    .and_then(|w| cat.get(w))
-                    .and_then(|d| crate::weapons::optic_of(&d.attachments).and_then(|o| crate::weapons::reticle_art(o, choice)))
-                {
+                // The cell's art through the class's optic (the screen's `attachmentRef`); the
+                // draft's base primary id carries no attachments of its own.
+                if let Some(image) = p.optic.and_then(|o| crate::weapons::reticle_art(o, choice)) {
                     // The reticle art is a converter-named sprite too (`hud.rs`'s reticle grid).
                     bo2::sprite(prims, f, &image, pic, argb(OFF_WHITE, 1.0), Vec::new());
                 }
@@ -793,5 +792,26 @@ mod tests {
         assert_eq!(personalize_choices_for(PersonalizeKind::Camo, Some("an94_mp")), personalize_choices(PersonalizeKind::Camo));
         assert_eq!(personalize_choices_for(PersonalizeKind::Camo, None), personalize_choices(PersonalizeKind::Camo));
         assert_eq!(personalize_choices_for(PersonalizeKind::Reticle, Some("an94_mp")), personalize_choices(PersonalizeKind::Reticle));
+    }
+
+    /// The reticle grid draws each cell through the class's optic (`reticlesgridbutton.lua:61-66`:
+    /// `<attachmentRef>_<N>`), the draft's base primary id carrying no attachments of its own; the
+    /// store rows too.
+    #[test]
+    fn the_reticle_cells_draw_the_class_optics_art() {
+        let r = |id: &str| opt(id, "", OptionTab::Base, 0, false);
+        let cat = Catalog::from_table(Table { reticles: vec![r("reticle_0"), r("reticle_3"), r("reticle_24")], ..Default::default() });
+        let draft = Draft { primary: "an94_mp".into(), primary_atts: vec!["holo".into()], ..Default::default() };
+        let tabs = personalize_tabs_in(&cat, PersonalizeKind::Reticle, Some("an94_mp"));
+        let p = Personalize::with_tabs(PersonalizeKind::Reticle, tabs, &draft);
+        assert_eq!(p.optic, Some("holo"));
+        let _f = crate::lui::font::lock();
+        crate::lui::font::load("");
+        let mut prims = Vec::new();
+        draw_personalize_in(&cat, &mut prims, 1280.0, 720.0, &p, Some("an94_mp"), 0.0, 0.0);
+        let images: Vec<&str> = prims.iter().filter_map(|x| if let Prim::Image { name, .. } = x { Some(name.as_str()) } else { None }).collect();
+        for want in ["holo_0", "holo_3", "holo_24"] {
+            assert!(images.contains(&want), "{want}: {images:?}");
+        }
     }
 }
