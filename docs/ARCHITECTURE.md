@@ -76,7 +76,9 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   `rts_update`, the third slot's orders `rts_offhand`/`Third`, `rts_reload`, `RtsWeapons`
   with each slot's Zero Hour weapon, `RtsIcons`), `fire.rs` (`apply_weapon_action`, `fire_round` (one bullet, to its end and through penetration),
   `melee_strike`, `gather_targets`, `throw_velocity`), `optics.rs` (the optic displays' rules:
-  the MMS's characters, the target finder's spotting and marks).
+  the MMS's characters, the target finder's spotting and marks), `guard.rs` (the victim's class
+  perks against another General's blasts — Flak Jacket, Tactical Mask — applied where the damage
+  reaches the host, as BO2's damage callback does).
 - `lui/`: BO2's LUI layout model shared by the HUD and the class screens: the anchor/edge
   resolution against a 720-unit root (`mod.rs`), BO2's converted UI fonts (`font.rs`), the
   BO2 materials the ports draw by name (`materials.rs`) and LUI's animation states (`anim.rs`).

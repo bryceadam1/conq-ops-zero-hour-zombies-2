@@ -13,6 +13,7 @@
 
 mod build;
 pub mod deploy;
+pub mod guard;
 mod fire;
 mod hack;
 pub mod optics;
@@ -702,6 +703,9 @@ impl Sim {
         self.frame = frame;
         self.shields = self.shield_bearers();
         self.equipment.shields.clone_from(&self.shields);
+        // The Generals' perks against others' blasts (`sim::guard`), for this frame's blasts.
+        self.equipment.guards.clear();
+        self.equipment.guards.extend(self.players.iter().flatten().map(|p| guard::Guard::of(p.general, &p.arsenal)));
         for idx in 0..self.players.len() {
             let Some(mut p) = self.players[idx].take() else { continue };
             let keep = self.step_player(host, idx, &mut p);
@@ -723,7 +727,9 @@ impl Sim {
         let mut done = Vec::new();
         let mut bounces = Vec::new();
         for (i, (owner, proj)) in self.projectiles.iter_mut().enumerate() {
-            let outcome = proj.step_shielded(host, &self.shields);
+            // Its blast reaches each General through his guard (`sim::guard`).
+            let guarded = guard::Guarded { host, guards: &self.equipment.guards, def: proj.def, stuck_to: proj.stuck_to, thrown: true };
+            let outcome = proj.step_shielded(&guarded, &self.shields);
             if let Some((at, surface)) = proj.bounced {
                 bounces.push((*owner, at, proj.def.bounce_sound(surface)));
             }

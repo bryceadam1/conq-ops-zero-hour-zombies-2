@@ -9321,3 +9321,26 @@ A general sweep for bugs outside the playtest items; one commit per fix.
   offhands use the same projectile. Tests: `an_explode_on_ground_grenade_waits_until_it_rests`; the
   real-install `the_smoke_concussion_and_emp_grenades_explode_on_the_ground`. The weapon table gains
   a field: `hud::VERSION` needs the integrator's bump.
+- **Flak Jacket covered only the wearer's own blasts — the one case BO2 leaves alone.** The mod
+  scaled a General's *own* grenade damage by `perk_flakJacket` (`Arsenal::self_harm_scales`, citing
+  `_class.gsc:1023-1032`) and nothing else. BO2's only Flak Jacket rule is `cac_modified_damage`
+  (called from the player damage callback, `_globallogic_player.gsc:776`): it returns the damage
+  unchanged when the victim is the attacker (`_class.gsc:957-958`) or the attacker is not a player,
+  and otherwise keeps `perk_flakJacket` (35) percent of explosive damage — `isexplosivedamage`
+  (`:1058-1084`: the grenade/splash/explosive means of death minus the tactical grenades) — unless
+  the grenade is stuck to the victim (`grenadestuck`, `:1132-1135`). The engine never reads the
+  dvar (its one reference is the registration, `FUN_008bec80`). The same root cause reached the
+  Tactical Mask: `specialty_stunprotection` cuts a concussion's stun x0.1 on whoever it hits
+  (`_weapons.gsc:1375-1376`), but the mod applied it only to the thrower's own (never-applied)
+  self-stun. Fix, structured like BO2 (victim-side, at delivery): `sim::guard` — each frame the sim
+  snapshots every General's `Guard` (flak share, stun share; refreshed with the shield bearers into
+  `Equipment::guards`), and every blast reaches the host through `Guarded`, which knows the weapon
+  (explosive = `Effect::Explode`), the thrower and what the grenade is stuck to, and scales
+  `damage(EXPLOSION)` and a thrown stun's `disable(PARALYZED)` for the victim. Projectiles and placed
+  equipment (claymore, Betty, C4) both go through it; `self_harm_scales` no longer reduces the own
+  blast. `projectiles.rs` is untouched apart from one doc line (v1/crossbow-damage rewrites it).
+  **Not changed:** BO2 also concusses the thrower (half radius, `_weapons.gsc:1364-1365`) where the
+  mod never stuns its own thrower, and the Shock Charge answers to `specialty_proximityprotection`,
+  which the mod does not model; both noted for a follow-up. Tests:
+  `flak_jacket_cuts_anothers_explosives_only`, `the_tactical_mask_cuts_anothers_concussion`,
+  `a_flak_jacket_general_takes_less_from_anothers_frag`.

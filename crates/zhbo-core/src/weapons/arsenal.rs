@@ -477,15 +477,16 @@ impl Arsenal {
         }
     }
 
-    /// What the player's own blasts and stuns do to them: `flakjacket` takes `perk_flakJacket`
-    /// percent of explosive damage (`_class.gsc:1023-1032`), `stunprotection` cuts a stun to
-    /// x0.1 (`_weapons.gsc:1375-1376`). Checked against the class: by the time the grenade goes
-    /// off the hand holds the gun again.
+    /// What the player's own blasts and stuns do to them. Flak Jacket does not cover his own
+    /// blasts: `cac_modified_damage` returns the damage unchanged when the victim is the attacker
+    /// (`_class.gsc:957-958`; another General's blasts go through [`crate::sim::guard`]), so the
+    /// blast share is 1. `stunprotection` cuts a stun to x0.1 whoever threw it
+    /// (`_weapons.gsc:1375-1376`). Checked against the class: by the time the grenade goes off the
+    /// hand holds the gun again.
     pub fn self_harm_scales(&self) -> (f32, f32) {
         let class = self.class_specialties();
-        let blast = if class.has(Specialty::FlakJacket) { self.tuning.perk_flak_jacket * 0.01 } else { 1.0 };
         let stun = if class.has(Specialty::StunProtection) { self.tuning.stun_protection_scale } else { 1.0 };
-        (blast, stun)
+        (1.0, stun)
     }
 
     /// The hip spread cone's min and max at an eye height (inches; Ghidra G6): the weapon's

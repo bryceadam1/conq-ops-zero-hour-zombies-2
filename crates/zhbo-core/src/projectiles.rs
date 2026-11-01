@@ -59,8 +59,8 @@ pub struct Projectile {
     /// Stuck to the ground or to an object (sticky grenades, bolts).
     pub stuck_to: Option<u32>,
     pub resting: bool,
-    /// The thrower's own share of this blast's damage (`flakjacket`: `perk_flakJacket` percent,
-    /// `_class.gsc:1023-1032`), 1 without it.
+    /// The thrower's own share of this blast's damage (1: BO2's perks leave a player's own blast
+    /// alone, `Arsenal::self_harm_scales`; others' Flak Jacket is `sim::guard`).
     pub self_blast_scale: f32,
     /// The thrower's own share of this stun (`stunprotection`: x0.1, `_weapons.gsc:1375-1376`).
     pub self_stun_scale: f32,

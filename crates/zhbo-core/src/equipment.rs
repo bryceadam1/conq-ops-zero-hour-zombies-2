@@ -201,10 +201,11 @@ impl Placed {
         }
     }
 
-    /// Blow it up where it is.
-    fn explode(&mut self, host: &dyn LogicHost, shields: &[crate::shield::Bearer]) -> EquipEvent {
+    /// Blow it up where it is; its damage reaches each General through his guard.
+    fn explode(&mut self, host: &dyn LogicHost, shields: &[crate::shield::Bearer], guards: &[crate::sim::guard::Guard]) -> EquipEvent {
         self.remove(host);
-        let b = blast(host, self.def, self.general, self.pos, None, 1.0, 1.0, shields);
+        let guarded = crate::sim::guard::Guarded { host, guards, def: self.def, stuck_to: self.stuck_to, thrown: false };
+        let b = blast(&guarded, self.def, self.general, self.pos, None, 1.0, 1.0, shields);
         let d = self.def;
         EquipEvent::Exploded { owner: self.owner, at: self.pos, hit_enemy: b.hit_enemy, kill: b.kill, def: d, sound: d.explode_sound.as_str(), impact_type: d.impact_type, surface: b.surface }
     }
@@ -216,6 +217,10 @@ pub struct Equipment {
     pub placed: Vec<Placed>,
     /// The frame's shield bearers (the sim's [`crate::sim::Sim::shields`]): blasts test them.
     pub shields: Vec<crate::shield::Bearer>,
+    /// The frame's Generals' perks against others' blasts (the sim's, refreshed with the shields):
+    /// every blast — equipment's and projectiles' — reaches the host through them
+    /// ([`crate::sim::guard`]).
+    pub guards: Vec<crate::sim::guard::Guard>,
     /// The tuning pack's equipment numbers.
     pub tuning: EquipTuning,
 }
@@ -238,6 +243,7 @@ impl Equipment {
     ) {
         let mut gone = Vec::new();
         let shields = &self.shields;
+        let guards = &self.guards;
         let tn = self.tuning;
         for (i, p) in self.placed.iter_mut().enumerate() {
             p.age += LOGIC_DT;
@@ -268,7 +274,7 @@ impl Equipment {
                     if p.kind == Kind::Betty {
                         p.pos.z = host.ground_height(p.pos.x, p.pos.y) + tn.betty_hop;
                     }
-                    events.push(p.explode(host, shields));
+                    events.push(p.explode(host, shields, guards));
                     gone.push(i);
                 }
                 continue;
@@ -350,7 +356,7 @@ impl Equipment {
         while k < self.placed.len() {
             if self.placed[k].owner == owner && self.placed[k].kind == Kind::C4 {
                 let mut p = self.placed.remove(k);
-                events.push(p.explode(host, &self.shields));
+                events.push(p.explode(host, &self.shields, &self.guards));
             } else {
                 k += 1;
             }
