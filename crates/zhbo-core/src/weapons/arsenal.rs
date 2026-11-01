@@ -446,6 +446,20 @@ impl Arsenal {
         &mut self.weapons[self.active]
     }
 
+    /// A weapon change asked for now waits (`FUN_008e0e60` holds the request back): an offhand's
+    /// states (0x16-0x1d), the melee states (0x13-0x15, the strike's delay included) and an alt
+    /// toggle under way (`FUN_008db500` returns in states 3-5). The field computer is held to it.
+    pub fn holds_switch_back(&self) -> bool {
+        self.offhand.is_some() || self.melee_left > 0.0 || self.melee_recover_left > 0.0 || self.melee_delay_left > 0.0 || self.alt_pending
+    }
+
+    /// The General leaves first person (the field computer): the sights come down and a reload in
+    /// progress is cut short (both hands), as a swap cuts it (`switch_to`).
+    pub fn put_away(&mut self) {
+        self.current_mut().interrupt();
+        self.ads = 0.0;
+    }
+
     /// The weapon can't shoot right now (raising, putting away, reloading, meleeing, throwing).
     pub fn is_busy(&self) -> bool {
         self.raise_left > 0.0 || self.drop_left > 0.0 || self.current().is_reloading() || self.melee_left > 0.0 || self.melee_recover_left > 0.0 || self.offhand.is_some()

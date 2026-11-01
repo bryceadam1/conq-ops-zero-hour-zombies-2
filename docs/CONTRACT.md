@@ -640,7 +640,9 @@ from xyz, from height, source known, kind, amount)` for the share to apply (it s
    drawable, control bar), FX weapons freed, sim cleared.
 3. Take Control → `MSG_ZHBO_TAKE_CONTROL` → `Sim::take_control` → `set_controlled(true)` → client
    enters the 0.9 s camera fly-in, then first person.
-4. F (field computer) → `pressed & FIELD_COMPUTER` → 0.7 s laptop raise (General stands still) →
+4. F (field computer) → `pressed & FIELD_COMPUTER` (held back, the press carried frame to frame,
+   while `Arsenal::holds_switch_back` — an offhand, a melee or an alt toggle under way, as BO2
+   holds a weapon change; opening cuts a reload short) → 0.7 s laptop raise (General stands still) →
    `set_controlled(false)` → `ReturnedToRts` → client flies out for 1.1 s and centres the RTS camera on
    the General.
 5. General dies → `GeneralDied` event → control released, "GENERAL DOWN" banner, camera returns to RTS.

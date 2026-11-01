@@ -9260,3 +9260,14 @@ A general sweep for bugs outside the playtest items; one commit per fix.
   whichever mode is up (`alt_owns_ammo` is the one predicate, `finish_alt` uses it too); the RTS
   templates and icons take `w.main`. Tests: `scavenger_refills_the_gun_not_its_launcher_whichever_mode_is_up`,
   `the_overhead_general_holds_the_gun_even_with_its_launcher_up` (both fail without the fix).
+- **The field computer opened mid-throw, mid-melee and mid-reload, freezing that state for the
+  next first-person spell.** The use key switched to `Mode::FieldComputer` whatever the arsenal was
+  doing, and nothing in it runs out of first person, so a cooked grenade stayed in hand (fuse
+  stopped) through the RTS and was thrown on the frame control came back (the button bit was gone
+  from `held`), a pending melee strike landed then, a reload resumed, and a lunge's locked target
+  (`p.charge`) stayed set — which `melee_strike` also reads for an overhead knife order. The laptop
+  is a weapon change (BO2's killstreak remotes are), so it now obeys BO2's hold-backs
+  (`FUN_008e0e60`: the offhand states, the melee states, `FUN_008db500`'s alt-toggle states;
+  `Arsenal::holds_switch_back`): the press is carried to the next frame until they end, and opening
+  cuts a reload short as a swap does (`Arsenal::put_away`) and drops the lunge lock. Test:
+  `the_field_computer_waits_for_an_offhand_and_cuts_a_reload` (fails without the fix).

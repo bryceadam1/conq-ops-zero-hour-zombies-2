@@ -1644,6 +1644,46 @@ fn field_computer_returns_control_to_rts_and_back() {
     assert_eq!(sim.player(0).unwrap().mode, Mode::Fps);
 }
 
+/// The field computer is a weapon change: with a grenade in hand it waits (the press is carried)
+/// until the throw is done — no cooked grenade frozen in hand through the RTS and thrown on the
+/// way back — and opening it cuts a reload short, as a swap does.
+#[test]
+fn the_field_computer_waits_for_an_offhand_and_cuts_a_reload() {
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    let mut sim = Sim::new();
+    sim.take_control(&host, 0, 1);
+    sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
+    run(&mut sim, &host, 0, 1, FpsInput::default(), frames(3.0));
+    let lethal = FpsInput { held: buttons::LETHAL, ..Default::default() };
+    run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::LETHAL, ..lethal }, 1);
+    run(&mut sim, &host, 0, 1, lethal, frames(0.5));
+    assert!(sim.player(0).unwrap().arsenal.offhand.is_some(), "the grenade is in hand");
+    run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::FIELD_COMPUTER, ..lethal }, 1);
+    assert_eq!(sim.player(0).unwrap().mode, Mode::Fps, "held back while the grenade is in hand");
+    let mut opened_after_throw = false;
+    for _ in 0..frames(3.0) {
+        run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+        let p = sim.player(0).unwrap();
+        if !matches!(p.mode, Mode::Fps) {
+            opened_after_throw = !sim.projectiles.is_empty() && p.arsenal.offhand.is_none();
+            break;
+        }
+    }
+    assert!(opened_after_throw, "the carried press opens the laptop once the throw is done");
+    // Back in first person: a reload in progress is cut short by the laptop.
+    run(&mut sim, &host, 0, 1, FpsInput::default(), frames(FIELD_COMPUTER_RAISE));
+    sim.take_control(&host, 0, 1);
+    run(&mut sim, &host, 0, 1, FpsInput::default(), frames(3.0));
+    sim.players[0].as_mut().unwrap().arsenal.current_mut().ammo = 1;
+    run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::RELOAD, held: buttons::RELOAD, ..Default::default() }, 2);
+    assert!(sim.player(0).unwrap().arsenal.current().is_reloading());
+    run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::FIELD_COMPUTER, ..Default::default() }, 1);
+    let p = sim.player(0).unwrap();
+    assert!(matches!(p.mode, Mode::FieldComputer { .. }));
+    assert!(!p.arsenal.current().is_reloading(), "the laptop cut the reload");
+}
+
 #[test]
 fn health_regenerates_after_delay_and_death_releases() {
     let host = FakeHost::default();
