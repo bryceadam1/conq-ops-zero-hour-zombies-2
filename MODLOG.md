@@ -4989,3 +4989,26 @@ which is what the mod does; extending the bank search to the SP zone would add s
 never plays, so the search is unchanged. They were missing before this branch as well: the bank
 search (`UI_ZONES` + `mpl_common`) is the same, and none of those banks holds them. Real-install
 test: `the_missing_menu_cues_are_in_no_mp_zone`.
+
+## The master EQ is baked in; third-person shots play layer by layer (2026-10-31, `v1/sound-mixer`)
+
+Two of the sound-mixer entry's "not modelled" items, done on the coordinator's call:
+
+* **Master EQ.** `FUN_006f5040` scales by `eqG` then runs four RBJ-cookbook biquads designed from the
+  snapshot each block: low shelf `FUN_00833e50`, peak `FUN_00833fc2` (twice), high shelf
+  `FUN_00833ce8` (`A = 10^(G/40)`, `ω = 2πf/fs`, `α = sin ω / 2Q`; every MP snapshot: +5 dB shelf at
+  132 Hz, +5 dB wide peak at 358 Hz, −8 dB Q 9.8 peak at 2.77 kHz, +3 dB shelf at 4.6 kHz). It sits
+  after the compressor and the HDR join and before the voice join. `sndglobals::Master.eq/eq_gain`
+  carry the bands, `mixer::equalize` applies them at the sound's own rate. Levels moved a few
+  percent (shot 59 → 61, step 16 → 23).
+* **Third-person shots as BO2's layers.** The converter ships each audible layer of a gun's
+  third-person chain as `<chain>_L<k>` (no Zero Hour falloff inside its reach) plus
+  `Data\ConquerOps\sound_layers.txt` rows keyed by the FX weapon; the FX weapons' `FireSound` is
+  `NONE`. The client plays each other player's `Shot` as the layers whose BO2 curve is non-zero at
+  the listener's distance, each at that gain (`soundlayers`, `Cues::third_person_shot`, the new
+  `ClientApi.sound_gain`), so the AN-94 point-blank is `fire_npc` + tail, across the map
+  `fire_npc_dist` alone. Overhead (no first-person body) and the RTS General's own weapons keep the
+  mixed close event with Zero Hour's falloff. **Gotcha: the curve rule now lives once, in
+  `zhbo_core::soundlayers` (the converter's mixer calls it); `sndglobals::Curve` is data only.**
+  ABI: `ClientApi` 13 → 14 fields, `zhbo_load_sound_layers`; the `ZHBO_ABI_VERSION` bump and the
+  C++ build (`cbSoundGain`, the bridge's load) are the integrator's.
