@@ -189,15 +189,13 @@ pub fn rows(shipped: &Shipped, bo2_dir: &std::path::Path, schema: &Schema) -> Re
         })?);
     }
 
-    // The weapon categories in the editor's order: the primary picker's columns, then the
-    // secondary's (`classui::category_order`).
-    let mut groups: Vec<&str> = Vec::new();
-    for c in zhbo_core::classui::category_order(classmenu::Slot::Primary).into_iter().chain(zhbo_core::classui::category_order(classmenu::Slot::Secondary)) {
-        let g = group_of(c);
-        if !groups.contains(&g) {
-            groups.push(g);
-        }
-    }
+    // The weapon categories: every group either picker lists (`classui::category_order`), in the
+    // weapon-type list's order the pickers are cut from (`Catalog::weapon_groups`,
+    // `cacweaponslot.lua`). Each picker shows its own slice — the primary's SMG..Sniper then the
+    // Special (the Assault Shield), the secondary's Pistol, Launcher, Special — so chaining the two
+    // slices would put the shared Special between them, an order no BO2 list has.
+    let listed: Vec<&str> = [classmenu::Slot::Primary, classmenu::Slot::Secondary].into_iter().flat_map(zhbo_core::classui::category_order).map(group_of).collect();
+    let groups: Vec<&str> = weapons::catalog().weapon_groups().iter().map(String::as_str).filter(|g| listed.contains(g)).collect();
     for (i, g) in groups.iter().enumerate() {
         out.push(row(schema, "category", &i.to_string(), |b| {
             b.text("value", *g);

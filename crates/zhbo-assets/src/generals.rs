@@ -328,7 +328,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         Err(e) => summary.push(format!("faction emblems skipped: {e}")),
     }
     // The CaC reticle options as lens materials, one blob for every optic.
-    let reticle_zones: Vec<&Zone> = reticle_zone.iter().chain(std::iter::once(&common)).collect();
+    // The store rows' materials (`reticle_11..37`) live only in `patch_mp`.
+    let reticle_zones: Vec<&Zone> = reticle_zone.iter().chain([&patch, &common]).collect();
     let reticles = crate::reticles::reticles(&patch, &reticle_zones, &paks, &mut out);
     summary.push(format!("{} reticle option sets", reticles.sets.len()));
     out.insert(zhbo_native::reticles::reticles_path(), reticles.to_bytes());

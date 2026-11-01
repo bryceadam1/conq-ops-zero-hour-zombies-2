@@ -1055,6 +1055,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             };
             Ok(())
         }),
+    field!("FireSoundNpc", "An offhand's third-person throw/plant BO2 sound event (`fireSound`): what other players hear; empty for a gun.", FieldKind::Str,
+        |d: &WeaponDef| d.npc_fire_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.npc_fire_sound = v.text.into(); Ok(()) }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -1206,7 +1209,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 145);
+        assert_eq!(WEAPON_FIELDS.len(), 146);
         assert_eq!(ATTACHMENT_FIELDS.len(), 30);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }
@@ -1228,6 +1231,14 @@ mod tests {
         assert_eq!(quote("ends "), "\"ends \"");
         let commented = parse_full_table("Perk X ; a perk\n  Name = N ; the name\n  Description = \"x; y \" ; trailing\nEnd\n").unwrap();
         assert_eq!((commented.perks[0].name.as_str(), commented.perks[0].description.as_str()), ("N", "x; y "));
+    }
+
+    /// BO2's display names keep their exact text (the Tac-45 Dual Wield's ends in a space).
+    #[test]
+    fn a_display_name_with_a_trailing_space_round_trips() {
+        let d = WeaponDef { id: "fnp45_dw_mp".into(), display_name: "Tac-45 Dual Wield ".into(), ..Default::default() };
+        let back = parse_full_table(&format_full_table(&Table { weapons: vec![d], ..Default::default() })).expect("re-parses");
+        assert_eq!(back.weapons[0].display_name, "Tac-45 Dual Wield ");
     }
 
     #[test]

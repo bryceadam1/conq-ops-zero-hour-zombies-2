@@ -346,10 +346,6 @@ pub fn bonus_card_rows(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<Strin
 /// row's [`zhbo_core::weapons::OptionTab`].
 pub const BASE_CAMO_OPTIONS: usize = 19;
 
-/// BO2's base reticle cells (`mp/attachmenttable.csv:57-67`: `reticle_0..10`); the DLC/MTX rows
-/// (`:87-119`) are separate tabs.
-pub const BASE_RETICLE_OPTIONS: usize = 11;
-
 /// BO2's reticle colours (`mp/attachmenttable.csv:68-74`: `reticle_color_1..7`).
 pub const BASE_RETICLE_COLORS: usize = 7;
 
@@ -395,10 +391,12 @@ pub fn camo_options(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<String, 
     weapon_options(patch, names, "camo", usize::MAX)
 }
 
-/// BO2's base reticle options (`reticle_0..10`), in the table's order. The art is the optic's
-/// `mtl_t6_attach_optic_{reflex,holo,acog}_reticle_XX` image (`cacreticles.lua`).
+/// BO2's reticle options, every `reticle` row in the table's order: the base `reticle_0..10` and the
+/// store rows `reticle_11..37` (`mtx_weapon*`, the DLC/DLC2 tabs). Each row's lens is its
+/// `weaponoptions.csv` row and its grid art the optic's `<optic>_<N>` material, both in the base
+/// game's zones (`patch_mp`, `patch_ui_mp`), so every row converts.
 pub fn reticle_options(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<String, String>) -> Vec<CamoOption> {
-    weapon_options(patch, names, "reticle", BASE_RETICLE_OPTIONS)
+    weapon_options(patch, names, "reticle", usize::MAX)
 }
 
 /// BO2's reticle colours (`reticle_color_1..7`): the names are Red, Green, Blue, Purple, Teal,
@@ -1042,8 +1040,10 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
     let display_name = names
         .get(key)
         .or_else(|| names.get(&format!("WEAPON_{key}")))
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+        // BO2's text exactly (the Tac-45 Dual Wield's ends in a space; the table quotes such a
+        // value, `table::quote`); a blank one is none.
+        .filter(|s| !s.trim().is_empty())
+        .cloned()
         .unwrap_or_else(|| w.name.trim_end_matches("_mp").to_uppercase());
     let effect = effect_of(w);
     let sticky = manifest::STICKY.contains(&w.name.as_str());
@@ -1062,7 +1062,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         class,
         weap_class: WeapClass::from_bo2(w.class),
         fire: fire_mode(w),
-        fire_time: w.fire_time.max(0.01),
+        // BO2's own times, unclamped: the knife's `iFireTime` and the offhands' ADS times are 0 (they
+        // never fire a cycle or aim; the sim's divisions guard their zero).
+        fire_time: w.fire_time,
         burst_delay: w.burst_delay,
         spin_up_time: w.spin_up_time,
         pellets: w.shot_count.max(0) as u16,
@@ -1070,7 +1072,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         start_reserve,
         max_reserve: max_reserve.max(start_reserve),
         reload_time: w.reload_time,
-        reload_empty_time: if w.reload_empty_time > 0.0 { w.reload_empty_time } else { w.reload_time },
+        // Raw: 0 (the offhands, the shield) reloads over the normal time (`arsenal::magazine_times`).
+        reload_empty_time: w.reload_empty_time,
         reload_add_time: w.reload_add_time,
         // Raw: 0 means the rounds go in at the reload add time (the sim's fallback, `FUN_008dec90`).
         reload_empty_add_time: w.reload_empty_add_time,
@@ -1087,8 +1090,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         alt_raise_time: w.alt_raise_time,
         alt_drop_time: w.alt_drop_time,
         sprint_out_time: w.sprint_out_time,
-        ads_in_time: w.ads_in_time.max(0.05),
-        ads_out_time: w.ads_out_time.max(0.05),
+        ads_in_time: w.ads_in_time,
+        ads_out_time: w.ads_out_time,
         ads_fov: w.ads_zoom_fov,
         damage,
         damage_range,
@@ -1148,6 +1151,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         left_fire_sound: String::new(),
         // Set by `sounds_and_fx` (a converted event).
         silenced_fire_sound: String::new(),
+        // What others hear when it is thrown or set down (`fireSound`; `client` plays it at the
+        // thrower for every other player).
+        npc_fire_sound: if class.is_offhand() { def_sound(&w.fire_sound) } else { String::new() },
         silenced_fire_sound_npc: String::new(),
         silenced_fx_weapon: String::new(),
         silenced_view_flash_fx: String::new(),
@@ -1207,7 +1213,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         fmj: false,
         target_finder: false,
         mms_max_dist: w.mms_max_dist,
-        recoil_reduction: (0.0, 0.0),
+        // The weapon's own ADS recoil reduction (`fAdsRecoilReductionRate`/`Limit`: the HAMR and its
+        // dual-optic alt carry 0.03/0.15); a grip-type attachment replaces it (`attachments::apply`).
+        recoil_reduction: (w.recoil.0, w.recoil.1),
         place: manifest::place_of(&w.name),
         specialties: Specialties::from_words(w.perks.0, w.perks.1),
         view_kick_min: w.view_kick_min,
@@ -2530,13 +2538,16 @@ mod tests {
 
     #[test]
     #[ignore = "reads this machine's Black Ops II install"]
-    fn the_installs_reticle_options_are_bo2s_base_tabs() {
+    fn the_installs_reticle_options_are_bo2s_rows() {
         let bo2_dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
         let patch = crate::generals::load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
         let names = names(&bo2_dir);
         let reticles = reticle_options(&patch, &names);
-        assert_eq!(reticles.len(), BASE_RETICLE_OPTIONS);
+        assert_eq!(reticles.len(), 38, "reticle_0..37");
         assert_eq!(reticles.first().map(|r| r.id.as_str()), Some("reticle_0"));
+        // The store rows sit on the DLC tabs, the base eleven on the base tab.
+        assert!(reticles[..11].iter().all(|r| r.tab == zhbo_core::weapons::OptionTab::Base), "{reticles:?}");
+        assert!(reticles[11..].iter().all(|r| r.tab != zhbo_core::weapons::OptionTab::Base), "{reticles:?}");
         assert!(reticles.iter().all(|r| r.name == "Dot"), "{reticles:?}");
         let colors = reticle_color_options(&patch, &names);
         assert_eq!(

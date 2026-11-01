@@ -48,6 +48,10 @@ pub struct Personalize {
     /// The draft's value when the screen opened: the cell BO2 focuses first in each tab
     /// (`AddCamos`: the equipped cell, else the first) and the `Equipped` preview's option.
     pub equipped: String,
+    /// The optic whose reticles the screen lists (`cacreticles.lua`'s `attachmentRef`: the
+    /// primary's reflex/holo/acog), which names each cell's `<optic>_<N>` art; `None` on the other
+    /// screens.
+    pub optic: Option<&'static str>,
 }
 
 /// One personalize tab: its label (`MPUI_CAMO_CAPS`, `MPUI_MAP_CATEGORY_DLC_CAPS`,
@@ -76,7 +80,8 @@ impl Personalize {
         }
         .clone();
         let tabs = if tabs.is_empty() { vec![PersonalizeTab { label: String::new(), choices: Vec::new() }] } else { tabs };
-        let mut p = Personalize { kind, choices: Vec::new(), highlight: 0, tabs, tab: 0, equipped };
+        let optic = (kind == PersonalizeKind::Reticle).then(|| crate::weapons::optic_of(&draft.primary_atts)).flatten();
+        let mut p = Personalize { kind, choices: Vec::new(), highlight: 0, tabs, tab: 0, equipped, optic };
         p.open_tab(0);
         p
     }

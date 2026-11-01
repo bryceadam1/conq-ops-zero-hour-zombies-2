@@ -133,6 +133,51 @@
         }
     }
 
+    /// Another player's throw and set-down are heard at them: the offhand's third-person
+    /// `fireSound`; the local player's own throw plays its player sound, not that one.
+    #[test]
+    fn another_players_offhand_is_heard_at_them() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.add(general(2, 1));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        sim.take_control(&host, 1, 2);
+        sim.choose_class(1, 2, 0, &[]);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        let leak = |d: crate::weapons::WeaponDef| -> &'static crate::weapons::WeaponDef { Box::leak(Box::new(d)) };
+        let frag = leak(crate::weapons::WeaponDef { class: crate::weapons::Class::Lethal, npc_fire_sound: "ZHBO_BO2_Snd_wpn_grenade_throw".into(), ..Default::default() });
+        let claymore = leak(crate::weapons::WeaponDef {
+            class: crate::weapons::Class::Tactical,
+            place: crate::weapons::Place::Plant,
+            equipment_kind: crate::equipment::Kind::Claymore,
+            npc_fire_sound: "ZHBO_BO2_Snd_fly_claymore_plant_npc".into(),
+            ..Default::default()
+        });
+        for p in [0, 1] {
+            let a = &mut sim.players[p].as_mut().unwrap().arsenal;
+            a.lethal.def = frag;
+            a.tactical.def = claymore;
+        }
+        let at = sim.players[1].as_ref().unwrap().body.eye();
+        for (kind, want) in [
+            (crate::sim::EventKind::Thrown { lethal: true }, "ZHBO_BO2_Snd_wpn_grenade_throw"),
+            (crate::sim::EventKind::Planted { kind: crate::equipment::Kind::Claymore }, "ZHBO_BO2_Snd_fly_claymore_plant_npc"),
+        ] {
+            client.cues.queue.clear();
+            sim.events.push(crate::sim::Event { player: 1, kind });
+            client.frame(&mut sim, &inp);
+            assert!(client.cues.queue.iter().any(|c| c.event == want && c.at == Some(at)), "{kind:?}: {:?}", client.cues.queue.iter().map(|c| c.event).collect::<Vec<_>>());
+            client.cues.queue.clear();
+            sim.events.push(crate::sim::Event { player: 0, kind });
+            client.frame(&mut sim, &inp);
+            assert!(!client.cues.queue.iter().any(|c| c.event == want), "the thrower hears its own sound, not the third-person one");
+        }
+    }
+
     #[test]
     fn the_camera_carries_the_sims_view_kick_and_its_roll_without_moving_the_mouse_aim() {
         let host = FakeHost::default();

@@ -1100,10 +1100,24 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         let mine: Vec<EventKind> = sim.events.iter().filter(|e| e.player == me).map(|e| e.kind).collect();
         // Other players' shots: BO2's third-person chain, layer by layer at the listener's distance.
         for e in sim.events.iter().filter(|e| e.player != me) {
-            if let EventKind::Shot { origin, .. } = e.kind {
-                if let Some(p) = sim.player(e.player) {
-                    self.cues.third_person_shot(&p.arsenal.current().def.fx_weapon, origin, body_pos);
+            let Some(p) = sim.player(e.player) else { continue };
+            match e.kind {
+                EventKind::Shot { origin, .. } => self.cues.third_person_shot(&p.arsenal.current().def.fx_weapon, origin, body_pos),
+                // An offhand leaving another player's hand: its third-person `fireSound` at them
+                // (`sounds::remote_offhand`), as BO2 plays it for everyone but the thrower.
+                EventKind::Thrown { lethal } => {
+                    let def = if lethal { p.arsenal.lethal.def } else { p.arsenal.tactical.def };
+                    if let Some(cue) = sounds::remote_offhand(def) {
+                        self.cues.play_at(cue, p.body.eye());
+                    }
                 }
+                EventKind::Planted { kind } => {
+                    let set_down = [p.arsenal.lethal.def, p.arsenal.tactical.def].into_iter().find(|d| d.equipment_kind == kind && d.place == crate::weapons::Place::Plant);
+                    if let Some(cue) = set_down.and_then(sounds::remote_offhand) {
+                        self.cues.play_at(cue, p.body.eye());
+                    }
+                }
+                _ => {}
             }
         }
         sim.events.clear();
@@ -1241,7 +1255,9 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 EventKind::Planted { kind } => {
                     use crate::equipment::Kind;
                     if matches!(kind, Kind::Claymore | Kind::Betty | Kind::Trophy | Kind::Insertion) {
-                        self.cues.play(sounds::PLANT);
+                        // The planted item's own sound: the player's lethal or tactical of that kind.
+                        let def = held.and_then(|(_, _, _, l, t)| [l, t].into_iter().find(|d| d.equipment_kind == kind));
+                        self.cues.play(def.map_or(sounds::PLANT, sounds::plant_for));
                     }
                 }
                 EventKind::Detonated => self.cues.play(sounds::DETONATE),

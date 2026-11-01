@@ -8820,3 +8820,119 @@ real-install `-p zhbo-assets -- --ignored --skip conformance` 55 passed, `-p zhb
 clusters); `cargo xtask build` OK; autotests run one at a time: default 16/16, `--classpick` 8/8
 (the new "combination viewmodel drawn" and "no viewmodel load failure" checks pass), `--rts`
 15/15, `--scope` pass, `--w3d-ads` 2/2.
+
+## Conformance gap clean-up: the residue after the burn-down (2026-11-01, branch `v1/gap-cleanup`)
+
+Every cluster left on integrated main (weapons 2,327 cells / 23 clusters, cac 3 cells + 32 BO2-only
+rows, 25 gap clusters) classified with evidence; the real ones fixed from data.
+
+**Fixed.**
+* **`ads_recoil_reduction` (312 → 0).** The weapon's own `fAdsRecoilReductionRate`/`Limit` was never
+  carried: `to_def` hard-wired `(0, 0)` and only a grip-type attachment set it. The HAMR and its
+  dual-optic alt author 0.03/0.15 on the def; `recoil_reduction` is now `w.recoil.0/.1` and the
+  attachment still replaces it (`attachments::apply`, BO2's `last_differing`). The HAMR's aimed
+  kick now shrinks per shot as BO2's does.
+* **`view_part_camos` `ir`+`vzoom` (37 → 0).** The dual-band optic's `ir` part draws its model through
+  the combined `ir+vzoom` child but BO2's camo pass reads the attachment's *single* unique
+  (`FUN_00529600`, G16; the expected side's `resolve::view_parts` and the mod's own `world_parts`
+  already did): `Combo::parts` carries the single beside the resolved unique and the viewmodel
+  part wears its `weaponCamo` (`camo_ir`, not `camo_specter`).
+* **The dual-wield left gun in the part columns (parts 25, materials 5, camo 5 → 0).** The `_lh`
+  gun rides the manifest as a part on the left palm (`native::DualGun`); BO2 draws it as the def's
+  dual-wield viewmodel, which the actual side already reports in `dual_wield_view_model`. The
+  actual side now keeps it out of the `view_part_*` columns instead of counting it twice.
+* **Clamped timings (42 → 0).** `to_def` clamped `iFireTime` to ≥10 ms and the ADS times to ≥50 ms,
+  and filled a 0 `iReloadEmptyTime` with the normal reload. Raw BO2 values now: the knife's fire
+  time and every offhand's ADS times are 0 (the arsenal's divisions already guard 0 with
+  `max(1e-3)`); a 0 empty-reload time falls back to the normal one in `arsenal::magazine_times`,
+  the one place that reads it (only the offhands and the shield have 0; neither reloads a clip).
+* **Set-down equipment's own sound (`fire_sound_player` 5 → 1).** BO2 plays an offhand's
+  `fireSoundPlayer` when it fires; the planted items played the hand-picked
+  `ZHBO_BO2_Plant` (= `fly_claymore_plant_plr`) for every kind. `sounds::plant_for(def)` is the
+  item's own (`fly_betty_plant_npc` for the Betty — BO2's own swapped authoring —,
+  `wpn_grenade_throw` for the Trophy System), the global plant when it has none.
+* **The CaC category list (cac 3 → 0).** The actual side chained the primary picker's slice and the
+  secondary's, which puts the shared Special between them (an order no BO2 list has); it now
+  emits the groups either picker lists in the carried weapon-type list's order
+  (`Catalog::weapon_groups`, `cacweaponslot.lua`). The pickers themselves are unchanged and match
+  the captures (`cac/sweep/c-primary/033`: Special last on the primary).
+* **The store reticles (BO2-only cac rows 32 → 5).** The 27 `reticle_11..37` rows are *not* absent
+  art: their lens materials (`mc/mtl_t6_attach_optic_*_reticle_12..40`) are in `patch_mp` and their
+  grid art (`reflex_N`/`holo_N`/`acog_N`, N = 0..37) in `patch_ui_mp`. The converter now takes every
+  `reticle` row (they land on the DLC/DLC2 tabs by `OptionTab::of`, `mtx_weapon*`), searches
+  `patch_mp` for the lens materials, and converts each row's grid art.
+  **Two earlier inferences were wrong and are corrected:** the grid art is BO2's
+  `<attachmentRef>_<N>` material (`reticlesgridbutton.lua:61-66`, `reticleImageName =
+  attachmentRef .. "_" .. index`), not `mtl_t6_attach_optic_<optic>_reticle_{N+1}` (that matched the
+  base rows by coincidence: `weaponoptions.csv` row 23 is material `_24`, whose colour is image
+  `_25`, and row 24 is `_38`); and `reticle_N` is lens row `N`, not `N + 1` — `FUN_0052a010` swaps
+  the lens for row `(options >> 7) & 0x3f` only when it is non-zero (`FUN_005299a0`), the table has
+  38 rows per optic for the 38 options, and `reticle_0` is the default (`MPUI_RETICLE_DEFAULT`) =
+  the stock row 0. Under `N + 1` the last option had no row and every choice showed its neighbour's
+  lens. **In-game check:** pick reticle 3 on a reflex: the lens and the W3D fallback's 2D sprite
+  must be the grid cell's picture.
+
+**Irreducible, with the reason.**
+* **`hud_icon` (1,774, the `sf_`/`dualoptic_` alt modes).** Re-examined. BO2's Lua reads no
+  `hudIcon` (no hit in 1,144 scripts). The engine's readers of `WeaponDef+0x3ac` (t6mp InsnGrep)
+  are the offhand/inventory counters (`FUN_004d9200`, `FUN_004d95a0`, `FUN_0053dad0`) and
+  `CG_RegisterWeapon`'s cache (`FUN_0052d930` → `DAT_01061748`), read only by the cursor hint's
+  weapon-pickup branch (`FUN_004dbbe0`, hint type 7, with `hudIconRatio` at `+0x3b0`) — the icon of
+  a weapon lying on the ground. An alt mode is never on the ground: `maydropweapon` refuses any
+  inventory type but `"primary"` (`_weapons.gsc:342-362`), and an alt's is `altmode`. So no BO2
+  surface draws an alt's `hudIcon` (it equals its base's, which ships), and the mod has no
+  weapon pickups at all. Shipping a sprite for it would be shaping.
+* **`world_model` `gl_sa58` (67).** BO2's data: the SMR's launcher alt names the `_view` model as its
+  world model. Matching needs a per-mode third-person weapon (an alt with its own `.zbw`, swapped
+  on the toggle) — real but cosmetic (the same mesh at view LOD); left for a third-person item.
+  **`riotshield_mp` (1):** the def's `worldModel` is the pickup model; the hands carry the script's
+  `t6_wpn_shield_carry_world` (`_riotshield.gsc:21-24`), which the mod draws.
+* **Sounds.** `fire_sound` (15, offhands) is what *others* hear on a throw; the client cues only the
+  local player's events and Zero Hour's FX weapon covers others' gunshots only — a remote-player
+  cue path, not a data gap. `fire_start_sound`/`fire_last_sound` (NPC burst opening, 8; the FHJ's
+  last shot, 1): the FX weapon has one fire sound; the silenced B23R's are `null_sound` (silence,
+  as the mod plays). `pda_hack_mp` `fire_sound_player` (1): the Black Hat never fires.
+* **Anims (20):** the offhands' and the class knife's ADS up/down clips — they never aim.
+* **Names (6):** five offhands whose `displayName` key has no text in BO2's strings; the mod shows
+  the menu names the CaC needs (`manifest::display_name_key`). The Tac-45 Dual Wield's trailing
+  space cannot survive the weapon table's line format (lines are trimmed).
+* **Effects (4):** the knife's world flash (a knife never fires a shot); the sensor grenade's and the
+  Trophy System's `projExplosionEffect` and the smoke grenade's cloud are script-played in BO2
+  (`_trophy_system.gsc:256`, `_sensor_grenade.gsc:118`, the smoke script), so the def field is
+  not what plays; the mod carries the smoke cloud on the def.
+* **cac BO2-only (5):** `camo_dayofdead`/`camo_mtp`/`camo_pap`/`camo_snake` — MTX camos whose set
+  images/style materials exist only as reference stubs (the `dlc0_load_mp` zone holds none); the
+  Peacekeeper is the Revolution DLC weapon, locked in BO2 itself without the pack
+  (`cac/sweep/c-primary/007`). **Finding for later:** `common_patch_mp` holds 81 weapon defs
+  (Peacekeeper included) that patch `common_mp`'s; neither side reads them.
+
+**Measured** (vs ~/.opencode/plan/integration/conf/): weapons 2,327 → 1,897 cells, 23 → 11
+clusters (`ads_recoil_reduction` 312 → 0, `view_part_camos` 42 → 0, `fire_time` 1 → 0,
+`reload_empty_time` 9 → 0, `ads_in_time`/`ads_out_time` 16/16 → 0, the five `view_part_*` part
+columns 25 → 0, `view_part_materials` 5 → 0, `fire_sound_player` 5 → 1; nothing else moved, no
+new cell); cac 3 → 0 cells, BO2-only rows 32 → 5; **gap clusters 25 → 12**.
+
+**Versions (integrator-owned, NOT bumped):** the archive's `hud::VERSION` (the reticle sprites are
+renamed and 38 per optic) and the weapon table content (recoil, raw timings, 38 reticle rows).
+No C ABI change.
+
+### Gap clean-up follow-ups (2026-11-01, same branch)
+
+* **The Tac-45 Dual Wield's trailing space** survives after all: the table already quotes a value
+  trimming would change (`table::quote`); the converter stopped trimming display names.
+* **Other players' offhands are heard.** BO2 plays an offhand's third-person `fireSound` for
+  everyone but the thrower. The def carries it (`WeaponDef::npc_fire_sound`, table key
+  `FireSoundNpc`, appended; empty for a gun, converted as a world sound with the other def-level
+  events), and the client's remote-event pass — beside `third_person_shot` for others' gunshots —
+  plays it at the thrower's eye on another player's `Thrown`, and on their `Planted` for a set-down
+  item (`sounds::remote_offhand`). RTS-controlled Generals' grenades (`sim/rts.rs`) are heard too.
+* **The reticle grid drew no art in game.** The cells took their optic from the draft's *base*
+  primary def (`cat.get("mp7_mp").attachments`, always empty), so no cell ever had a picture. The
+  screen now carries the class optic (`Personalize::optic`, from `Draft::primary_atts`; BO2's
+  `attachmentRef`). Verified headless against a fresh archive: `cac-reticles`, `cac-reticles-dlc`
+  and `cac-reticles-dlc2` (new screenshot shots) draw BO2's `reflex_N` art on all three tabs, and a
+  grid-vs-lens sheet (grid `reflex_0/1/11/24` beside lens rows 0/1/11/24: stock dot, `_01` cross,
+  `_12` ring, `_38` thought bubble) confirms `reticle_N` = lens row `N` shape for shape.
+* **Measured** after the follow-ups: weapons 1,897 → 1,882 cells (`fire_sound` 15 → 1, the Black
+  Hat that never fires; `display_name` 6 → 5), still 11 clusters; cac 0 cells, 5 BO2-only rows;
+  12 gap clusters. The weapon table gains `FireSoundNpc` (integrator: weapon-table/archive bump).

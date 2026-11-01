@@ -360,8 +360,9 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   names, and the noise map) and `emblem`
   (`sw4_3d_player_icon`); RENDERER.md "The lens reticle" has the technique. The local primary's
   reticle choice rides a core-global like the camo (`nativevm::set_local_reticle`, set by
-  `zhbo_client_frame` from `PlayerSim.reticle`: `reticle_N` is `weaponoptions.csv` row `N + 1`,
-  no choice row 0) — **no `ZhboNativeIn` field and no ABI bump**; the composed viewmodel is keyed
+  `zhbo_client_frame` from `PlayerSim.reticle`: `reticle_N` is `weaponoptions.csv` row `N`,
+  its group index — `FUN_0052a010` swaps only for a non-zero row, so `reticle_0` and no choice are
+  the stock row 0) — **no `ZhboNativeIn` field and no ABI bump**; the composed viewmodel is keyed
   by it. The converter writes `Art\Native\reticles.zbr` (`ZBR\0`, v1, new): BO2's
   `mp/weaponoptions.csv` `reticle` rows (`t6mp` `FUN_00529360`: column 3 per optic, column 5 the
   reflex's RMR) as one material set per optic column in row order, row 0 the stock material the

@@ -422,11 +422,13 @@ pub(crate) fn local_reticle(vm: i32) -> u32 {
     LOCAL_RETICLE.lock().unwrap_or_else(|e| e.into_inner()).filter(|c| c.0 == vm).map_or(0, |c| c.1)
 }
 
-/// The `weaponoptions.csv` reticle row for a class's reticle option: `reticle_N` is row `N + 1`
-/// (the CaC grid shows `reticle_0` as the optic's `_reticle_01` art, `cacreticles.lua:1150-1240`;
-/// row `n` of the table is the `_reticle_0n` material); no choice is row 0, the optic's stock.
+/// The `weaponoptions.csv` reticle row for a class's reticle option: `reticle_N` is row `N`, its
+/// index in the reticle group. `FUN_0052a010` swaps the lens for row `(options >> 7) & 0x3f` and only
+/// when it is not 0 (`FUN_005299a0`), so `reticle_0` (the default, `MPUI_RETICLE_DEFAULT`) is the
+/// optic's stock row 0; the table's 38 rows per optic (0..37) are the group's 38 options. No
+/// choice is row 0 too.
 pub fn reticle_row(id: &str) -> u32 {
-    id.strip_prefix("reticle_").and_then(|n| n.parse::<u32>().ok()).map_or(0, |n| n + 1)
+    id.strip_prefix("reticle_").and_then(|n| n.parse::<u32>().ok()).unwrap_or(0)
 }
 
 /// Swap each lens surface's material for reticle row `row` of its optic's set (the converter's

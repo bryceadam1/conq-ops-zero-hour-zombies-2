@@ -157,7 +157,7 @@ fn the_crosshair_uses_the_classs_reticle_and_colour() {
     let argb = prims
         .iter()
         .find_map(|prim| match prim {
-            Prim::Image { name, argb, .. } if name == "mtl_t6_attach_optic_reflex_reticle_04" => Some(*argb),
+            Prim::Image { name, argb, .. } if name == "reflex_3" => Some(*argb),
             _ => None,
         })
         .unwrap_or_else(|| panic!("the class's reticle art draws: {prims:?}"));
