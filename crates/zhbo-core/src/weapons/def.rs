@@ -347,6 +347,9 @@ pub struct WeaponDef {
     /// `plantable`: set down where it lands, so BO2's plant check (`FUN_008e1780`,
     /// [`crate::sim::can_plant`]) can refuse it ("Cannot Plant Here").
     pub plantable: bool,
+    /// `bExplodeOnGround`: a fuse that runs out in the air waits until the grenade comes to rest
+    /// (t6mp `FUN_0060a480`; the smoke, concussion and EMP grenades) — [`crate::projectiles`].
+    pub explode_on_ground: bool,
     /// BO2's `inventoryType` ([`Inventory`]).
     pub inventory: Inventory,
     pub explosion_radius: f32,
@@ -905,6 +908,7 @@ impl Default for WeaponDef {
             hold_use: false,
             hold_cancelable: false,
             plantable: false,
+            explode_on_ground: false,
             inventory: Inventory::Primary,
             explosion_radius: 0.0,
             explosion_radius_min: 0.0,

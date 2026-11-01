@@ -9304,3 +9304,20 @@ A general sweep for bugs outside the playtest items; one commit per fix.
   panic), the HUD contact sheet (11 empty rects: the `hud_mp_num_big_*_white` numerals, which are
   one fully transparent DXT1 image in BO2's own `mp.ipak` — not a conversion bug), the CaC
   screenshot harness (every sprite resolved) and the real-install suite (58 passed).
+- **The smoke grenade went off in the hand (and the concussion and EMP grenades in the air).** The
+  Willy Pete's BO2 `fuseTime` is 10 ms and the mod went off when the fuse ran out. BO2's grenade
+  data has no "explode when stationary" here (`bProjExplodeWhenStationary` is clear on every MP
+  weapon); the rule is `bExplodeOnGround`. t6mp `FUN_0060a480` (the missile's explode think):
+  with the flag set and `groundEntityNum == ENTITYNUM_NONE` it sets `nextthink` to re-think next
+  frame and returns, for up to 60 s from launch; the ground entity is set once the grenade settles
+  (`FUN_00607fa0`'s landing branch). The fuse itself is armed at launch from the def's `fuseTime`
+  (`FUN_00607cb0` → `FUN_00607c00`; the throw `FUN_0066cf00`/`FUN_0066d360` passes `fuseTime`, or
+  `aiFuseTime` for AI). On the install the flag is set on `willy_pete_mp`, `concussion_grenade_mp`,
+  `emp_grenade_mp` (and the planted `pda_hack_mp`/`tactical_insertion_mp`, which land as equipment
+  first); the frag, flashbang, Semtex and sensor go off on their fuse wherever they are. The flag is
+  now carried (`zhbo_formats::weapon::Weapon::explode_on_ground`, table field `ExplodeOnGround`,
+  `WeaponDef::explode_on_ground`) and `Projectile::step` lets a run-out fuse fire only at rest
+  (`resting`/stuck) or after `EXPLODE_ON_GROUND_WAIT` (60 s). The overhead General's thrown
+  offhands use the same projectile. Tests: `an_explode_on_ground_grenade_waits_until_it_rests`; the
+  real-install `the_smoke_concussion_and_emp_grenades_explode_on_the_ground`. The weapon table gains
+  a field: `hud::VERSION` needs the integrator's bump.
