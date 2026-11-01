@@ -1463,3 +1463,25 @@ fn the_hip_layer_keeps_an_xpr_shaped_rig_out_of_the_eye() {
     let c = [0, 1, 2].map(|k| (h.mins[k] + h.maxs[k]) * 0.5);
     near3(c, hip, "the gun box rides the layer's hip key");
 }
+
+#[test]
+fn a_far_part_counts_only_when_the_camera_would_draw_it() {
+    use super::hold::FAR_RADIUS;
+    let tan = (1.0, 0.5);
+    // A small box 100″ straight ahead: far and in view.
+    let ahead = with_box_gun(fixture(), [80.0, 0.0, 1.0], [1.0; 3], 0b11_1111);
+    let h = hold_at(&ahead, 0.0);
+    assert!(h.farthest > FAR_RADIUS && h.far == h.vertices && h.far_ahead.len() == h.vertices);
+    let (n, extent) = h.far_in_view(tan.0, tan.1);
+    assert_eq!(n, h.vertices, "a part floating in front of the camera");
+    assert!((extent - 2.0 / 99.0).abs() < 1e-4, "a 2″ box whose near face is 99″ ahead spans 2/99 of the height (tan_y 0.5): {extent}");
+    // BO2's parking: 100″ behind and below — far, never drawn.
+    let parked = with_box_gun(fixture(), [-120.0, 0.0, -70.0], [1.0; 3], 0b11_1111);
+    let h = hold_at(&parked, 0.0);
+    assert!(h.far == h.vertices && h.far_ahead.is_empty() && h.far_in_view(tan.0, tan.1).0 == 0);
+    // Ahead of the eye but 60° below the axis: outside the frustum, not drawn.
+    let below = with_box_gun(fixture(), [20.0, 0.0, -70.0], [1.0; 3], 0b11_1111);
+    let h = hold_at(&below, 0.0);
+    assert!(h.far == h.vertices && h.far_ahead.len() == h.vertices);
+    assert_eq!(h.far_in_view(tan.0, tan.1).0, 0, "out of the frustum");
+}

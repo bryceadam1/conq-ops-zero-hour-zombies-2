@@ -60,7 +60,23 @@ pub struct Hold {
     /// How many gun vertices were measured, and how many lie behind the eye (x < 0).
     pub vertices: usize,
     pub behind: usize,
+    /// The gun vertices farther than [`FAR_RADIUS`] from the eye, the eye-frame points of those
+    /// ahead of it (x > 0, for [`Hold::far_in_view`]), and the farthest distance (inches).
+    pub far: usize,
+    pub far_ahead: Vec<[f32; 3]>,
+    pub farthest: f32,
 }
+
+/// Beyond this distance (inches) a gun vertex is not in the hands: a standing soldier's height
+/// (72″, the mod's scale unit), past the longest held reach — the AS50 with a suppressor swung
+/// forward in its quick raise reaches 62.9″. BO2 itself poses vertices out there on purpose: its
+/// clips *park* a spare or dropped magazine 45–350″ from the eye (`tag_clip_full` in
+/// `viewmodel_fn57_idle` at `[-116, 0, -73]`, the HAMR's `tag_clip1` at `[-104, 0, -43]`, the
+/// Five-seven's spent `tag_clip` 60″ under the gun after its first raise), and the crossbow's
+/// reload flies the new bolt in from 25,940″ below, keyed every frame. Those stay out of the
+/// camera's view, or shrink below a pixel, so only a far vertex the camera would visibly draw
+/// ([`Hold::far_in_view`]) is a defect.
+pub const FAR_RADIUS: f32 = 72.0;
 
 impl Hold {
     /// The first gun part that encloses the eye ([`PartBox::encloses_eye`]) — the camera inside the
@@ -69,6 +85,29 @@ impl Hold {
     /// gun hangs in front, to the right and below, so no part surrounds the eye.
     pub fn eye_inside(&self, margin: f32) -> Option<&PartBox> {
         self.parts.iter().find(|p| p.encloses_eye(margin))
+    }
+
+    /// The far vertices ([`FAR_RADIUS`]) inside the view frustum whose half-angle tangents are
+    /// `tan_x` (horizontal) and `tan_y` (vertical): how many, and the screen extent they span as a
+    /// fraction of the screen's height (their projected box's larger side, in NDC / 2). A far part
+    /// that spans less than a pixel is not drawn visibly.
+    pub fn far_in_view(&self, tan_x: f32, tan_y: f32) -> (usize, f32) {
+        let mut n = 0;
+        let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
+        for p in self.far_ahead.iter().filter(|p| p[1].abs() <= p[0] * tan_x && p[2].abs() <= p[0] * tan_y) {
+            n += 1;
+            let ndc = [-p[1] / (p[0] * tan_x), p[2] / (p[0] * tan_y)];
+            for k in 0..2 {
+                lo[k] = lo[k].min(ndc[k]);
+                hi[k] = hi[k].max(ndc[k]);
+            }
+        }
+        if n == 0 {
+            return (0, 0.0);
+        }
+        // NDC spans 2 across each axis; express both in screen heights.
+        let aspect = tan_x / tan_y;
+        (n, ((hi[0] - lo[0]) * 0.5 * aspect).max((hi[1] - lo[1]) * 0.5))
     }
 }
 
@@ -95,7 +134,14 @@ pub fn measure(loaded: &Loaded, posed: &Posed, ads: f32, eye: [f32; 3], dir: [f3
             let p = axes.map(|a| (a[0] * rel[0] + a[1] * rel[1] + a[2] * rel[2]) * inch);
             eye_space[i] = Some(p);
             let d = (p[0] * p[0] + p[1] * p[1] + p[2] * p[2]).sqrt();
-            let h = hold.get_or_insert(Hold { parts: Vec::new(), mins: p, maxs: p, nearest: p, nearest_distance: d, vertices: 0, behind: 0 });
+            let h = hold.get_or_insert(Hold { parts: Vec::new(), mins: p, maxs: p, nearest: p, nearest_distance: d, vertices: 0, behind: 0, far: 0, far_ahead: Vec::new(), farthest: 0.0 });
+            if d > FAR_RADIUS {
+                h.far += 1;
+                if p[0] > 0.0 {
+                    h.far_ahead.push(p);
+                }
+            }
+            h.farthest = h.farthest.max(d);
             let part = match h.parts.iter().position(|b| b.part == s.part) {
                 Some(k) => k,
                 None => {
@@ -184,30 +230,41 @@ pub fn last(ads: f32, eye: [f32; 3], dir: [f32; 3]) -> Option<Hold> {
 /// `files` (`None`: the archive lacks it), then measure that frame. The process-wide native state
 /// is untouched, so an install test can walk the catalog. `Err` names why nothing was posed.
 pub fn hold_of(inp: &super::ffi::ZhboNativeIn, files: impl Fn(&str) -> Option<Vec<u8>>) -> Result<Hold, String> {
+    holds_of(std::slice::from_ref(inp), files).map(|mut v| v.remove(0))
+}
+
+/// [`hold_of`] for several poses of one viewmodel (`inps` share its `vm`/`faction`): composed once,
+/// then each request posed and measured in order — a clip it needs is loaded on the way. `None`
+/// for a pose whose composite drew no gun vertex.
+pub fn holds_of(inps: &[super::ffi::ZhboNativeIn], files: impl Fn(&str) -> Option<Vec<u8>>) -> Result<Vec<Hold>, String> {
     let mut s = super::ffi::State::default();
-    // Each round answers every outstanding request; the clips arrive a round after the models.
-    // Two quiet rounds in a row (nothing asked) means the frame posed with everything loaded.
-    let mut quiet = 0;
-    for _ in 0..64 {
-        s.frame(inp, true);
-        let wanted: Vec<String> = s.files.wanted().map(str::to_string).collect();
-        if wanted.is_empty() {
-            quiet += 1;
-            if quiet == 2 {
-                break;
+    let mut out = Vec::with_capacity(inps.len());
+    for inp in inps {
+        // Each round answers every outstanding request; the clips arrive a round after the models.
+        // Two quiet rounds in a row (nothing asked) means the frame posed with everything loaded.
+        let mut quiet = 0;
+        for _ in 0..64 {
+            s.frame(inp, true);
+            let wanted: Vec<String> = s.files.wanted().map(str::to_string).collect();
+            if wanted.is_empty() {
+                quiet += 1;
+                if quiet == 2 {
+                    break;
+                }
+                continue;
             }
-            continue;
+            quiet = 0;
+            for w in &wanted {
+                let bytes = files(w);
+                s.files.provide(w, bytes.as_deref());
+            }
         }
-        quiet = 0;
-        for w in &wanted {
-            let bytes = files(w);
-            s.files.provide(w, bytes.as_deref());
-        }
+        let Some(loaded) = s.loaded.as_ref() else {
+            return Err(s.log.iter().cloned().collect::<Vec<_>>().join("; "));
+        };
+        out.push(measure(loaded, &s.posed, inp.ads, inp.eye, inp.dir).ok_or_else(|| "no gun part drew a vertex".to_string())?);
     }
-    let Some(loaded) = s.loaded.as_ref() else {
-        return Err(s.log.iter().cloned().collect::<Vec<_>>().join("; "));
-    };
-    measure(loaded, &s.posed, inp.ads, inp.eye, inp.dir).ok_or_else(|| "no gun part drew a vertex".to_string())
+    Ok(out)
 }
 
 /// One vertex skinned by the palette, as the pass's vertex shader does (weights renormalized by
