@@ -11,17 +11,18 @@ pub struct Category {
     pub options: Vec<usize>,
 }
 
-/// BO2's display name for a weapon category.
+/// BO2's display name for a weapon category (`cacutility.lua`'s `MPUI_WEAPON_*_CAPS`, localized
+/// from the install).
 pub fn category_name(class: WeaponClass) -> &'static str {
     match class {
-        WeaponClass::Smg => "SUBMACHINE GUNS",
-        WeaponClass::Rifle => "ASSAULT RIFLES",
-        WeaponClass::Shotgun => "SHOTGUNS",
-        WeaponClass::Lmg => "LIGHT MACHINE GUNS",
-        WeaponClass::Sniper => "SNIPER RIFLES",
-        WeaponClass::Special => "SPECIALS",
-        WeaponClass::Launcher => "LAUNCHERS",
-        WeaponClass::Pistol => "PISTOLS",
+        WeaponClass::Smg => crate::weapons::catalog().label("MPUI_WEAPON_SMG_CAPS"),
+        WeaponClass::Rifle => crate::weapons::catalog().label("MPUI_WEAPON_ASSAULT_CAPS"),
+        WeaponClass::Shotgun => crate::weapons::catalog().label("MPUI_WEAPON_CQB_CAPS"),
+        WeaponClass::Lmg => crate::weapons::catalog().label("MPUI_WEAPON_LMG_CAPS"),
+        WeaponClass::Sniper => crate::weapons::catalog().label("MPUI_WEAPON_SNIPER_CAPS"),
+        WeaponClass::Special => crate::weapons::catalog().label("MPUI_WEAPON_SPECIAL_CAPS"),
+        WeaponClass::Launcher => crate::weapons::catalog().label("MPUI_WEAPON_LAUNCHER_CAPS"),
+        WeaponClass::Pistol => crate::weapons::catalog().label("MPUI_WEAPON_PISTOL_CAPS"),
         _ => "OTHER",
     }
 }

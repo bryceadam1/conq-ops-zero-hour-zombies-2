@@ -121,7 +121,15 @@ const ENGLISH: &[(&str, &str)] = &[
     (
         "CONTROLBAR:ToolTipZHBO_ClassButton",
         "Pick this class for your General. The kit replaces his base one and is ready the next time he takes the field.",
-    ),
+    ),    // The first-person HUD's own words (BO2 has no strings for the mod's build menu, field
+    // computer or General): drawn through [`text`].
+    ("HUD:ZHBO_Hacking", "HACKING"),
+    ("HUD:ZHBO_Build", "BUILD"),
+    ("HUD:ZHBO_PutAway", "[B] put away"),
+    ("HUD:ZHBO_FieldComputer", "FIELD COMPUTER"),
+    ("HUD:ZHBO_FieldComputerShort", "FC"),
+    ("HUD:ZHBO_GeneralDown", "GENERAL DOWN"),
+    ("HUD:ZHBO_GeneralDownHint", "Build a new General at your Command Center"),
 ];
 
 fn table() -> &'static HashMap<String, Vec<u16>> {
@@ -167,6 +175,16 @@ fn class_label(key: &str) -> Option<&'static [u16]> {
     guard.as_ref().and_then(|c| c.labels.get(&wanted).copied())
 }
 
+/// A label's text for the core's own drawing (the HUD): the shipped file's, else the built-in
+/// English, else the label itself.
+pub fn text(label: &str) -> String {
+    let key = label.to_ascii_lowercase();
+    if let Some(text) = shipped(&key) {
+        return text;
+    }
+    ENGLISH.iter().find(|(k, _)| k.eq_ignore_ascii_case(label)).map_or_else(|| label.to_string(), |(_, v)| (*v).to_string())
+}
+
 /// NUL-terminated UTF-16 text for a label (case-insensitive, like the CSF lookup), valid for the
 /// lifetime of the process.
 pub fn lookup(label: &str) -> Option<&'static [u16]> {
@@ -184,6 +202,20 @@ pub fn lookup(label: &str) -> Option<&'static [u16]> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_shipped_file_carries_the_huds_words_as_built_in() {
+        // The HUD draws through `text`: the shipped file must say what the fallback says.
+        let shipped: HashMap<String, String> = include_str!("../../../data/ConquerOps/strings_en.ini")
+            .lines()
+            .filter_map(|l| l.split(';').next()?.split_once('='))
+            .map(|(k, v)| (k.trim().to_ascii_lowercase(), v.trim().to_string()))
+            .collect();
+        for (k, v) in ENGLISH.iter().filter(|(k, _)| k.starts_with("HUD:")) {
+            assert_eq!(shipped.get(&k.to_ascii_lowercase()).map(String::as_str), Some(*v), "{k}");
+        }
+        assert_eq!(super::text("HUD:ZHBO_NotAKey"), "HUD:ZHBO_NotAKey", "an unknown label shows itself");
+    }
 
     #[test]
     fn parses_the_shipped_strings_file() {

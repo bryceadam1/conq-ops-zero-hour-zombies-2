@@ -997,7 +997,7 @@ fn the_small_popup_uses_bo2s_448_wide_body_and_its_entries_start_at_93() {
 
 #[test]
 fn the_stat_bars_are_in_bo2s_order_and_segmented() {
-    assert_eq!(STAT_LABELS, ["FIRE RATE", "DAMAGE", "RANGE", "ACCURACY"]);
+    assert_eq!(STAT_LABELS.map(|k| crate::weapons::catalog().label(k)), ["FIRE RATE", "DAMAGE", "RANGE", "ACCURACY"]);
     let an94 = weapons::weapon("an94_mp");
     let stats = weapon_stats(an94);
     assert_eq!(stat_value(&stats, 0), stats.fire_rate);

@@ -27,7 +27,8 @@ pub const NAME_W: f32 = 232.0;
 pub const COL_W: f32 = 82.0;
 pub const RANK_W: f32 = 66.0;
 pub const HEADER_H: f32 = 100.0;
-pub const COLUMNS: [&str; 4] = ["SCORE", "KILLS", "DEATHS", "ASSISTS"];
+/// The columns' localize keys (the install's `MPUI_*_CAPS`: SCORE, KILLS, DEATHS, ASSISTS).
+pub const COLUMNS: [&str; 4] = ["MPUI_SCORE_CAPS", "MPUI_KILLS_CAPS", "MPUI_DEATHS_CAPS", "MPUI_ASSISTS_CAPS"];
 
 /// One scoreboard row.
 #[derive(Clone, Debug, PartialEq)]
@@ -46,7 +47,7 @@ pub fn board(l: &Lui) -> Rect {
 pub fn draw(l: &Lui, prims: &mut Vec<Prim>, team_color: u32, rows: &[Row]) {
     let b = board(l);
     let title = Rect { x: b.x, y: b.y, w: b.w, h: 25.0 };
-    l.text(prims, title, Family::Default, "SCOREBOARD", Some(Align::Left), (true, false), (1.0, 1.0, 1.0), 1.0);
+    l.text(prims, title, Family::Default, crate::weapons::catalog().label("MENU_SCOREBOARD_CAPS"), Some(Align::Left), (true, false), (1.0, 1.0, 1.0), 1.0);
     // The team header: the icon, the team's score, the army's colour as the plate.
     let header = Rect { x: b.x, y: b.y + 30.0, w: b.w, h: HEADER_H };
     let hp = l.px(header);
@@ -59,7 +60,7 @@ pub fn draw(l: &Lui, prims: &mut Vec<Prim>, team_color: u32, rows: &[Row]) {
     let heads = header.y + HEADER_H + 4.0;
     let mut x = b.x + RANK_W + NAME_W;
     for c in COLUMNS {
-        l.text(prims, Rect { x, y: heads, w: COL_W, h: 20.0 }, Family::ExtraSmall, c, Some(Align::Center), (true, false), (1.0, 1.0, 1.0), 0.7);
+        l.text(prims, Rect { x, y: heads, w: COL_W, h: 20.0 }, Family::ExtraSmall, crate::weapons::catalog().label(c), Some(Align::Center), (true, false), (1.0, 1.0, 1.0), 0.7);
         x += COL_W;
     }
     // The rows.

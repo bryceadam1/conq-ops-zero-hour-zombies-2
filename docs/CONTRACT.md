@@ -832,10 +832,13 @@ both are capped by the item's `MaxReserve` (`classmenu::items::offhand_cap`). Th
 writes both counts; repair makes a held item's 0 (a class saved before the counts) one. A spec
 without a count (the shipped presets) gives the item's start count.
 
-**The class editor's UI strings come from the install.** The weapon table's `UiText <key>` blocks
+**The class editor's and HUD's UI strings come from the install.** The weapon table's `UiText <key>` blocks
 carry the english text of the localize keys the core draws (`weapons::UI_TEXT_KEYS`: the offhand
-titles, `MPUI_PRIMARY_GRENADE_CAPS`, `MPUI_SPECIAL_GRENADE_CAPS` and Tactician's
-`MPUI_SECOND_SPECIAL_GRENADE_CAPS`), read by the converter from the same english zones as the
+titles `MPUI_PRIMARY_GRENADE_CAPS`, `MPUI_SPECIAL_GRENADE_CAPS` and Tactician's
+`MPUI_SECOND_SPECIAL_GRENADE_CAPS`, the slot and category headings, the dialog entries, the stat
+labels, the prompts, the scoreboard columns; drawn through `Catalog::label`/`label_upper`, BO2's
+`Engine.Localize` and `UIExpression.ToUpper`; the mod's own HUD words are `HUD:ZHBO_*` labels in
+`strings_en.ini`, read by `strings::text`), read by the converter from the same english zones as the
 display names; `Catalog::ui_text` looks them up and a table without them takes the built-in
 stand-ins (BO2's strings, checked against the install by an ignored test).
 

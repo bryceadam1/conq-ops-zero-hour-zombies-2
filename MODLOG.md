@@ -8876,3 +8876,25 @@ batch 9's fire-cycle work).
   55 in, but its knife lunges (`meleeChargeRange`, a weapon-def field the table does not carry
   yet); shortening the reach to 55 without the lunge would make the knife worse than BO2's, so the
   change waits for the field to reach the weapon table (with the schema work of batches 4/6).
+
+## Code polish 2: the class screens' and HUD's words come from the install (2026-11-01)
+
+The create-a-class screens and the HUD typed BO2's strings by hand (PRIMARY, ATTACHMENTS,
+WILDCARDS, the weapon categories, the dialog entries, the stat labels, the prompts, the
+scoreboard columns, CUSTOMIZED, No Ammo). Each is now its localize key — the one BO2's Lua uses
+(`cacutility.lua`'s `MPUI_WEAPON_*_CAPS`, `cacclassoptions.lua`'s `MENU_CLASS_OPTIONS`/
+`MENU_RENAME`/`MENU_COPY_CAPS`/`MENU_RESET_TO_DEFAULT`/`MENU_CLEAR_LOADOUT_CAPS`, `classpreview.lua`'s
+`MPUI_PRIMARY_CAPS`/`MENU_WILDCARDS_CAPS`, `weaponlabel.lua`'s `MENU_CUSTOMIZED_CAPS`, …) — added to
+`weapons::UI_TEXT_KEYS`, so the converter copies the install's text into the weapon table
+(`UiText` blocks; every key is in `code_post_gfx_mp`/`patch_mp`'s english zones, which the
+real-install `ui_text` test checks), with the install's text as the built-in stand-in.
+`Catalog::label(key)` is `Engine.Localize`; `Catalog::label_upper(key)` is BO2's
+`UIExpression.ToUpper(Engine.Localize(key))`, which the class dialogs use (the install's
+`MENU_CLASS_OPTIONS` is "Class Options"; the dialog shows CLASS OPTIONS).
+
+The mod's own HUD words (BUILD, FIELD COMPUTER, FC, HACKING, "[B] put away", GENERAL DOWN and its
+hint) are `HUD:ZHBO_*` labels in `strings.rs`/`strings_en.ini`, read through `strings::text`, so a
+translation edits one file. Still literal, with no BO2 key: RESET SET (the mod's own set-dialog
+entry), NOTHING TO CHOOSE, KNIFE, the personalize fallback name lists.
+
+The weapon table grows rows: the archive needs a reconvert (a `hud::VERSION` bump at integration).

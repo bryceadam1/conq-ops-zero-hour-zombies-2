@@ -12,7 +12,7 @@ pub(super) fn draw_hack(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, client: &
     prims.push(Prim::Rect { x, y, w: bw, h: bh, argb: PANEL });
     prims.push(Prim::Rect { x, y, w: bw * client.hud.hack_progress.clamp(0.0, 1.0), h: bh, argb: 0xF020_D040 });
     outline_rect(prims, x, y, bw, bh, 1.0 * s, OUTLINE);
-    prims.push(Prim::Text { x: w * 0.5, y: y - 18.0 * s, text: "HACKING".to_string(), argb: WHITE, size: (12.0 * s) as i32, align: 1 });
+    prims.push(Prim::Text { x: w * 0.5, y: y - 18.0 * s, text: crate::strings::text("HUD:ZHBO_Hacking"), argb: WHITE, size: (12.0 * s) as i32, align: 1 });
 }
 
 /// Building: with the hammer up, the build menu (right of centre) and the placement ghost; at a
@@ -32,8 +32,8 @@ pub(super) fn draw_build(host: &dyn ClientHost, prims: &mut Vec<Prim>, w: f32, h
                 let (pw, x) = (230.0 * s, w - 250.0 * s);
                 let top = h * 0.5 - row * (options.len() as f32 * 0.5 + 1.0);
                 prims.push(Prim::Rect { x, y: top, w: pw, h: row * (options.len() as f32 + 2.6), argb: PANEL });
-                prims.push(Prim::Text { x: x + 10.0 * s, y: top + 3.0 * s, text: "BUILD".to_string(), argb: GOLD, size, align: 0 });
-                prims.push(Prim::Text { x: x + pw - 10.0 * s, y: top + 3.0 * s, text: "[B] put away".to_string(), argb: DIM, size: (11.0 * s) as i32, align: 2 });
+                prims.push(Prim::Text { x: x + 10.0 * s, y: top + 3.0 * s, text: crate::strings::text("HUD:ZHBO_Build"), argb: GOLD, size, align: 0 });
+                prims.push(Prim::Text { x: x + pw - 10.0 * s, y: top + 3.0 * s, text: crate::strings::text("HUD:ZHBO_PutAway"), argb: DIM, size: (11.0 * s) as i32, align: 2 });
                 for (i, o) in options.iter().enumerate() {
                     let y = top + row * (i as f32 + 1.2);
                     if i == choice {
@@ -134,7 +134,7 @@ pub(super) fn draw_reload_prompt(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, 
     let prompt = if wpn.is_reloading() {
         Some(("Reloading...", DIM))
     } else if wpn.ammo == 0 && wpn.reserve == 0 {
-        Some(("No ammo", RED))
+        Some((crate::weapons::catalog().label("WEAPON_NO_AMMO"), RED))
     } else if low {
         Some(("Press  R  to reload", WHITE))
     } else {

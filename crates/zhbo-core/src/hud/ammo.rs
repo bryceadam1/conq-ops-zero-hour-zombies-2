@@ -190,7 +190,7 @@ pub fn draw_weapon_label(l: &Lui, prims: &mut Vec<Prim>, name: &str, attachments
     let names: Vec<String> = attachments.iter().take(3).map(|s| attachment_name(s).to_uppercase()).collect();
     let customized = settled && names.len() >= 2;
     let shown: Vec<String> = if customized {
-        vec!["CUSTOMIZED".to_string()]
+        vec![crate::weapons::catalog().label("MENU_CUSTOMIZED_CAPS").to_string()]
     } else {
         names
     };

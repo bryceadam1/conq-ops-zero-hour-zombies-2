@@ -28,6 +28,8 @@ pub struct Catalog {
     bonus_cards: Vec<&'static BonusCard>,
     perks: HashMap<String, &'static PerkRow>,
     ui_text: HashMap<String, &'static str>,
+    /// The same strings upper-cased, for the screens BO2 draws through `UIExpression.ToUpper`.
+    ui_upper: HashMap<String, &'static str>,
     weapon_groups: Vec<String>,
     class_caps: HashMap<String, i32>,
     built: Mutex<HashMap<String, &'static WeaponDef>>,
@@ -56,6 +58,7 @@ impl Catalog {
         let mut bonus_cards: Vec<&'static BonusCard> = t.bonus_cards.into_iter().map(|b| &*Box::leak(Box::new(b))).collect();
         bonus_cards.sort_by_key(|b| (b.sort, b.index));
         let perks = t.perks.into_iter().map(|p| (p.stats.to_ascii_uppercase(), &*Box::leak(Box::new(p)))).collect();
+        let ui_upper = t.ui_text.iter().map(|u| (u.key.clone(), &*Box::leak(u.text.to_uppercase().into_boxed_str()))).collect();
         let ui_text = t.ui_text.into_iter().map(|u| (u.key, &*Box::leak(u.text.into_boxed_str()))).collect();
         Catalog {
             by_id,
@@ -70,6 +73,7 @@ impl Catalog {
             bonus_cards,
             perks,
             ui_text,
+            ui_upper,
             weapon_groups: t.weapon_groups,
             class_caps: t.class_caps.into_iter().collect(),
             built: Mutex::new(HashMap::new()),
@@ -157,6 +161,18 @@ impl Catalog {
     /// lacks it (a table from before the strings, or an install without the key).
     pub fn ui_text(&self, key: &str) -> Option<&'static str> {
         self.ui_text.get(key).copied()
+    }
+
+    /// BO2's `Engine.Localize(key)`: the install's text, the built-in stand-in without one, the
+    /// key itself (loudly visible) when neither table has it.
+    pub fn label(&self, key: &'static str) -> &'static str {
+        self.ui_text(key).unwrap_or(key)
+    }
+
+    /// `UIExpression.ToUpper(Engine.Localize(key))`, for the headings and dialog entries BO2's Lua
+    /// upper-cases (`cacclassoptions.lua:113-118`, `:181-187`).
+    pub fn label_upper(&self, key: &'static str) -> &'static str {
+        self.ui_upper.get(key).copied().unwrap_or(key)
     }
 
     /// BO2's Create-a-Class weapon groups (`weapon_smg`, `weapon_assault`, …) in the order its
@@ -343,6 +359,162 @@ End
 
 UiText WEAPON_CANT_PLANT_EQUIPMENT
   Text = Cannot Plant Here
+End
+
+UiText MPUI_PRIMARY_CAPS
+  Text = PRIMARY
+End
+
+UiText MPUI_SECONDARY_CAPS
+  Text = SECONDARY
+End
+
+UiText MPUI_ATTACHMENTS_CAPS
+  Text = ATTACHMENTS
+End
+
+UiText MENU_WILDCARDS_CAPS
+  Text = WILDCARDS
+End
+
+UiText MPUI_ATTACHMENTS_NOT_AVAILABLE
+  Text = Attachments not available
+End
+
+UiText MPUI_CHOOSE_CLASS_CAPS
+  Text = CHOOSE CLASS
+End
+
+UiText MPUI_FIRE_RATE_CAPS
+  Text = FIRE RATE
+End
+
+UiText MPUI_DAMAGE_CAPS
+  Text = DAMAGE
+End
+
+UiText MPUI_RANGE_CAPS
+  Text = RANGE
+End
+
+UiText MPUI_ACCURACY_CAPS
+  Text = ACCURACY
+End
+
+UiText MENU_CLASS_OPTIONS
+  Text = Class Options
+End
+
+UiText MENU_CLASS_SET_OPTIONS
+  Text = Class Set Options
+End
+
+UiText MENU_RENAME
+  Text = Rename
+End
+
+UiText MENU_COPY_CAPS
+  Text = COPY
+End
+
+UiText MENU_RESET_TO_DEFAULT
+  Text = Reset to Default
+End
+
+UiText MENU_CLEAR_LOADOUT_CAPS
+  Text = CLEAR LOADOUT
+End
+
+UiText MENU_BACK
+  Text = Back
+End
+
+UiText MENU_SELECT
+  Text = Select
+End
+
+UiText MPUI_PERSONALIZE_KNIFE
+  Text = Personalize Knife
+End
+
+UiText MPUI_WEAPON_SMG_CAPS
+  Text = SUBMACHINE GUNS
+End
+
+UiText MPUI_WEAPON_ASSAULT_CAPS
+  Text = ASSAULT RIFLES
+End
+
+UiText MPUI_WEAPON_CQB_CAPS
+  Text = SHOTGUNS
+End
+
+UiText MPUI_WEAPON_LMG_CAPS
+  Text = LIGHT MACHINE GUNS
+End
+
+UiText MPUI_WEAPON_SNIPER_CAPS
+  Text = SNIPER RIFLES
+End
+
+UiText MPUI_WEAPON_SPECIAL_CAPS
+  Text = SPECIALS
+End
+
+UiText MPUI_WEAPON_LAUNCHER_CAPS
+  Text = LAUNCHERS
+End
+
+UiText MPUI_WEAPON_PISTOL_CAPS
+  Text = PISTOLS
+End
+
+UiText MPUI_CAMO_CAPS
+  Text = CAMO
+End
+
+UiText MPUI_RETICLES_CAPS
+  Text = RETICLES
+End
+
+UiText MPUI_RETICLE_COLOR_CAPS
+  Text = RETICLE COLOR
+End
+
+UiText MPUI_MAP_CATEGORY_DLC_CAPS
+  Text = DLC
+End
+
+UiText MPUI_DLC2_CAPS
+  Text = DLC2
+End
+
+UiText MENU_CUSTOMIZED_CAPS
+  Text = CUSTOMIZED
+End
+
+UiText MENU_SCOREBOARD_CAPS
+  Text = SCOREBOARD
+End
+
+UiText MPUI_SCORE_CAPS
+  Text = SCORE
+End
+
+UiText MPUI_KILLS_CAPS
+  Text = KILLS
+End
+
+UiText MPUI_DEATHS_CAPS
+  Text = DEATHS
+End
+
+UiText MPUI_ASSISTS_CAPS
+  Text = ASSISTS
+End
+
+UiText WEAPON_NO_AMMO
+  Text = No Ammo
 End
 
 Perk LIGHTWEIGHT
