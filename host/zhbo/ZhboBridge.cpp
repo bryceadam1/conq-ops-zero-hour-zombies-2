@@ -762,6 +762,24 @@ static void applyClientOutput(Bool focused, Bool menuUp)
 		s_out.rts_look_at_valid = 0;
 	}
 
+	// The General back overhead alive (the field computer, or Escape declining a spawn without a
+	// class): select him again, as a click would, so his command bar is up (taking control
+	// deselected him). The core sets it once, on the frame the camera lands.
+	if (s_out.select_object)
+	{
+		Object *obj = TheGameLogic->findObjectByID((ObjectID)s_out.select_object);
+		if (obj && !obj->isEffectivelyDead() && obj->getDrawable())
+		{
+			TheInGameUI->deselectAllDrawables();
+			TheInGameUI->selectDrawable(obj->getDrawable());
+			GameMessage *group = TheMessageStream->appendMessage(GameMessage::MSG_CREATE_SELECTED_GROUP);
+			group->appendBooleanArgument(TRUE);
+			group->appendObjectIDArgument(obj->getID());
+			logf("selected General %u back overhead", (unsigned)obj->getID());
+		}
+		s_out.select_object = 0;
+	}
+
 	// The local player's shot impacts (R8d): BO2's impact-table cell at the hit point, oriented by
 	// the surface frame. Each pellet has its own hit, so a shotgun raises up to eight.
 	for (int32_t i = 0; i < s_out.hits_len && i < ZHBO_CLIENT_HITS; ++i)

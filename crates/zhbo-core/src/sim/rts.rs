@@ -98,44 +98,10 @@ impl Sim {
         }
         if self.players[idx].as_ref().is_none_or(|p| p.general != general && !p.is_first_person()) {
             let Some(info) = host.object(general, general) else { return RtsWeapons::default() };
-            let frame = self.frame;
-            self.players[idx] = Some(PlayerSim {
-                general,
-                class: None,
-                reticle: String::new(),
-                reticle_color: String::new(),
-                camo: String::new(),
-                knife_camo: String::new(),
-                secondary_camo: String::new(),
-                secondary_reticle: String::new(),
-                mode: Mode::Rts,
-                body: Body::new(info.pos, &self.tuning),
-                yaw: info.yaw,
-                pitch: 0.0,
-                view_kick: crate::weapons::view_kick::ViewKick::default(),
-                idle: crate::weapons::idle_sway::IdleSway::default(),
-                gun: Default::default(),
-                fire_yaw: 0.0,
-                fire_pitch: 0.0,
-                // A classless General has no guns to fire: report nothing usable until a class
-                // lands (the bridge's empty-weapon veto stops Zero Hour's own firing).
-                arsenal: Arsenal::unarmed(),
-                rng: Rng::new(general.wrapping_mul(2_654_435_761) ^ frame),
-                input: FpsInput { yaw: info.yaw, ..Default::default() },
-                pressed_accum: 0,
-                health: info.health,
-                max_health: info.max_health,
-                regen_wait: 0.0,
-                hack: None,
-                rts: RtsState::default(),
-                hammer: None,
-                site: None,
-                building: false,
-                optics: Default::default(),
-                tracer_count: 0,
-                charge: None,
-                shock: Default::default(),
-            });
+            // A new General wears the player's chosen class (BO2's `pers["class"]`, `spawn.rs`);
+            // without one he has no guns to fire: the report marks nothing usable until a class
+            // lands (the bridge's empty-weapon veto stops Zero Hour's own firing).
+            self.players[idx] = Some(self.new_record(idx, general, Mode::Rts, Some(&info)));
         }
         let Some(mut p) = self.players[idx].take() else { return RtsWeapons::default() };
         if p.general != general {
@@ -146,6 +112,10 @@ impl Sim {
             let out = rts_weapons(&p.arsenal, -1, &p.rts);
             self.players[idx] = Some(p);
             return out;
+        }
+        // A shot overhead is combat too (BO2's `weapon_fired` sets `hasdonecombat`).
+        if shots.iter().any(|&n| n > 0) {
+            p.combat = true;
         }
         for (slot, &n) in shots.iter().enumerate().take(2) {
             for _ in 0..n {

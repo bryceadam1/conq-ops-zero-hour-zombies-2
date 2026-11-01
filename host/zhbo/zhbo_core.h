@@ -284,6 +284,9 @@ typedef struct ZhboClientOut
 	/* The dual-wield left gun fired this frame: its flash and brass at tag_flash1/tag_brass1
 	   (viewmodel_fired is the right gun's, at tag_flash/tag_brass). */
 	int32_t viewmodel_fired_left;
+	/* One-shot: select this object overhead (the local General as he comes back alive from first
+	   person), 0 = none. */
+	uint32_t select_object;
 } ZhboClientOut;
 
 /* The shell create-a-class screen (the lobby's class menu; docs/CONTRACT.md's menu ABI): the
@@ -583,7 +586,7 @@ float zhbo_logic_shield_damage(uint32_t victim, uint32_t source, float from_x, f
 static_assert(sizeof(ZhboObjInfo) == 56, "ZhboObjInfo layout must match host.rs");
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
 static_assert(sizeof(ZhboClientIn) == 136, "ZhboClientIn layout must match client.rs");
-static_assert(sizeof(ZhboClientOut) == 4872, "ZhboClientOut layout must match client.rs");
+static_assert(sizeof(ZhboClientOut) == 4876, "ZhboClientOut layout must match client.rs");
 static_assert(sizeof(ZhboClientHit) == 44, "ZhboClientHit layout must match client.rs");
 static_assert(sizeof(ZhboMenuIn) == 56, "ZhboMenuIn layout must match menu.rs");
 static_assert(sizeof(ZhboMenuOut) == 4108, "ZhboMenuOut layout must match menu.rs");

@@ -205,6 +205,27 @@
         assert!((out.viewmodel_angles.z - rest.viewmodel_angles.z - k.roll()).abs() < 0.02, "and the gun rolls with it");
     }
 
+    /// A mid-life pick after he has fought keeps the kit and shows BO2's
+    /// `MP_CHANGE_CLASS_NEXT_SPAWN` hint (`menuclass`'s `iprintlnbold`), its install text in the log.
+    #[test]
+    fn a_pick_after_combat_shows_the_next_spawn_hint() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        sim.players[0].as_mut().unwrap().combat = true;
+        sim.choose_class(0, 1, 1, &[]);
+        let e = *sim.events.iter().find(|e| matches!(e.kind, crate::sim::EventKind::ClassAtNextSpawn { .. })).expect("the event");
+        assert!(crate::sim::describe_event(&e).unwrap().contains(crate::sim::hint_text("MP_CHANGE_CLASS_NEXT_SPAWN")));
+        assert_eq!(crate::sim::hint_text("MP_CHANGE_CLASS_NEXT_SPAWN"), "Your class will change the next time you spawn");
+        client.frame(&mut sim, &inp);
+        assert!(matches!(client.hud.hint, Some(("MP_CHANGE_CLASS_NEXT_SPAWN", _))));
+    }
+
     /// `CantPlant` shows BO2's weapon hint for 1.8 s; the log line carries its text.
     #[test]
     fn cant_plant_shows_the_hint_for_its_time() {
@@ -638,12 +659,13 @@
         crate::profile::reset();
     }
 
-    /// Every way into first person with no class meets the screen, and only a class lets him play:
-    /// Take Control on a fresh General, the next General after a death, and a General whose class
-    /// came from the command bar overhead (which spawns him straight into play). Escape on a
-    /// classed General's re-open keeps playing (BO2's mid-life Back).
+    /// Every way into first person: Take Control on a fresh General meets the screen (Escape sends
+    /// him back overhead, selected again); a class from the command bar overhead spawns him
+    /// straight into play; Escape on a classed General's re-open keeps playing (BO2's mid-life
+    /// Back); and after his death the next General comes in with the player's class and no screen
+    /// (BO2's `pers["class"]`), the dead one never selected.
     #[test]
-    fn every_unclassed_entry_meets_the_screen_and_a_class_plays() {
+    fn every_entry_meets_the_screen_only_without_a_class() {
         let _g = crate::profile::lock();
         crate::profile::reset();
         let host = FakeHost::default();
@@ -651,21 +673,31 @@
         let mut sim = Sim::new();
         let mut client = Client::default();
         let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        // Run until overhead; the General selected on the way, if one was.
+        let until_overhead = |client: &mut Client, sim: &mut Sim, inp: &mut ClientIn| {
+            let mut selected = Vec::new();
+            let mut n = 0;
+            while client.view != ViewMode::Rts && n < 200 {
+                let out = frame_with(client, sim, &host, inp, 1);
+                if out.select_object != 0 {
+                    selected.push(out.select_object);
+                }
+                n += 1;
+            }
+            selected
+        };
         let escape = |client: &mut Client, sim: &mut Sim, inp: &mut ClientIn| {
             inp.keys.set_down(Key::Escape, true);
             frame_with(client, sim, &host, inp, 1);
             inp.keys.set_down(Key::Escape, false);
-            let mut n = 0;
-            while client.view != ViewMode::Rts && n < 200 {
-                frame_with(client, sim, &host, inp, 1);
-                n += 1;
-            }
+            until_overhead(client, sim, inp)
         };
         // A fresh General.
         sim.take_control(&host, 0, 1);
         assert_eq!(frame_with(&mut client, &mut sim, &host, &mut inp, 60).menu_open, 1);
-        escape(&mut client, &mut sim, &mut inp);
+        let selected = escape(&mut client, &mut sim, &mut inp);
         assert_eq!(client.view, ViewMode::Rts);
+        assert_eq!(selected, [1], "back overhead, selected once, so his class bar is up");
         assert!(sim.player(0).unwrap().class.is_none());
         // His class from the command bar overhead (button 1: the first preset), then Take Control.
         inp.class_button = 1;
@@ -687,21 +719,23 @@
         let out = frame_with(&mut client, &mut sim, &host, &mut inp, 30);
         assert_eq!(client.view, ViewMode::Fps, "a classed Back stays in first person");
         assert_eq!((out.menu_open, out.capture_mouse), (0, 1));
-        // He dies; the next General is unclassed and meets the screen.
+        // He dies: back overhead, nobody selected.
         host.objects.borrow_mut()[0].flags |= crate::host::objflags::DEAD;
-        let mut n = 0;
-        while client.view != ViewMode::Rts && n < 200 {
-            frame_with(&mut client, &mut sim, &host, &mut inp, 1);
-            n += 1;
-        }
+        let selected = until_overhead(&mut client, &mut sim, &mut inp);
         assert!(sim.player(0).is_none());
+        assert!(selected.is_empty(), "a dead General is not selected: {selected:?}");
+        // The next General comes in with the class: no screen, his gun up, playing.
         host.add(general(2, 0));
         sim.take_control(&host, 0, 2);
         let out = frame_with(&mut client, &mut sim, &host, &mut inp, 60);
-        assert_eq!((client.view, out.menu_open), (ViewMode::Fps, 1), "the next General meets the screen");
-        escape(&mut client, &mut sim, &mut inp);
-        assert_eq!(client.view, ViewMode::Rts, "and can decline it");
-        assert!(!sim.player(0).unwrap().is_first_person());
+        assert_eq!((client.view, out.menu_open, out.capture_mouse), (ViewMode::Fps, 0, 1), "no screen after a death");
+        assert_ne!(out.viewmodel, viewmodel::NONE, "his gun is up");
+        assert_eq!(sim.player(0).unwrap().class.as_deref(), Some(crate::classes::at(0).unwrap().id.as_str()));
+        // The field computer hands him back selected.
+        inp.keys.set_down(Key::F, true);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 2);
+        inp.keys.set_down(Key::F, false);
+        assert_eq!(until_overhead(&mut client, &mut sim, &mut inp), [2]);
         crate::profile::reset();
     }
 

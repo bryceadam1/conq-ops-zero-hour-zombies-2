@@ -501,21 +501,9 @@ void autopilotFrame()
 	{
 		// The manual scene starts overhead with the General selected, so his command bar (Take
 		// Control, hotkey T) is up: the real-input test takes control by key, as a player would.
-		// Taking control deselects him, so each time he comes back overhead (the test's Escape on
-		// the class screen declines the spawn) he is selected again for the next T.
+		// (Coming back overhead alive selects him again: the core's `select_object`.)
 		Object *general = TheGameLogic->findObjectByID(s_autopilot.general);
-		if (!general)
-			return;
-		if (s_autopilot.manualFrame == 0)
-			s_autopilot.manualFrame = s_autopilot.spawnFrame + 15;
-		const Bool controlled = zhbo_logic_is_controlled((uint32_t)s_autopilot.general);
-		if (s_autopilot.manualControlled && !controlled)
-		{
-			s_autopilot.manualSelected = FALSE;
-			s_autopilot.manualFrame = frame + 30;
-		}
-		s_autopilot.manualControlled = controlled;
-		if (!controlled && !s_autopilot.manualSelected && frame >= s_autopilot.manualFrame)
+		if (general && !s_autopilot.manualSelected && frame - s_autopilot.spawnFrame >= 15)
 		{
 			s_autopilot.manualSelected = TRUE;
 			TheInGameUI->deselectAllDrawables();
@@ -528,15 +516,38 @@ void autopilotFrame()
 		return;
 	}
 	// After the General is handed back overhead, take control again (tests re-entry): once, or
-	// twice for the classpick run, whose first session declines the spawn (Escape on the class
-	// screen sends the unclassed General back overhead) before the pick and the forced re-open.
+	// three times for the classpick run. Its first session declines the spawn (Escape on the class
+	// screen sends the unclassed General back overhead), the second picks, the third forces the
+	// screen open and Escapes it; then the General is killed and a new one stands in his place,
+	// and the fourth session takes him: he must come in with the chosen class and no screen
+	// (BO2's `pers["class"]` survives the death).
 	Object *general = TheGameLogic->findObjectByID(s_autopilot.general);
-	const Int retakes = s_config.autopilot_classpick ? 2 : 1;
+	const Int retakes = s_config.autopilot_classpick ? 3 : 1;
 	if (!general || s_autopilot.retakes >= retakes)
 		return;
 	if (zhbo_logic_is_controlled((uint32_t)s_autopilot.general))
 	{
 		s_autopilot.releasedFrame = 0;
+		if (s_config.autopilot_classpick && s_autopilot.retakes == 2 && !s_autopilot.respawned)
+		{
+			if (s_autopilot.controlledFrame == 0)
+				s_autopilot.controlledFrame = frame;
+			else if (frame - s_autopilot.controlledFrame > 180 && !general->isEffectivelyDead())
+			{
+				const Coord3D pos = *general->getPosition();
+				const Real yaw = general->getOrientation();
+				Team *team = general->getTeam();
+				logf("autopilot: killing General %u", (unsigned)general->getID());
+				general->kill();
+				Object *next = spawnAt("ZHBO_General_USA", team, pos, yaw);
+				if (next)
+				{
+					s_autopilot.general = next->getID();
+					logf("autopilot: respawned General %u", (unsigned)next->getID());
+				}
+				s_autopilot.respawned = TRUE;
+			}
+		}
 		return;
 	}
 	if (s_autopilot.releasedFrame == 0)

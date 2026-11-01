@@ -593,6 +593,10 @@ UiText MENU_X_OPTICS
   Text = &&1 Reticles
 End
 
+UiText MP_CHANGE_CLASS_NEXT_SPAWN
+  Text = Your class will change the next time you spawn
+End
+
 Perk LIGHTWEIGHT
   Name = Lightweight
   Description = Move faster.  Take no damage when falling.

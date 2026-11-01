@@ -272,6 +272,10 @@ pub struct ClientOut {
     /// The dual-wield left gun fired this frame: its muzzle flash and brass at the `_lh` model's
     /// `tag_flash1`/`tag_brass1` (`viewmodel_fired` is the right gun's, at `tag_flash`/`tag_brass`).
     pub viewmodel_fired_left: i32,
+    /// One-shot: select this object in the RTS view (the local General as he comes back overhead
+    /// alive, so his command bar — the class set while he has no class — is up again), 0 = none.
+    /// Appended at the end of the struct (ABI rule).
+    pub select_object: u32,
 }
 
 // Manual Default: `[u32; 64]` has none (arrays above 32 don't), and the rest are plain.
@@ -309,6 +313,7 @@ impl Default for ClientOut {
             hits_len: 0,
             view_roll: 0.0,
             viewmodel_fired_left: 0,
+            select_object: 0,
         }
     }
 }
@@ -1027,6 +1032,12 @@ impl Client {
                     out.camera_override = 0;
                     out.rts_look_at_valid = 1;
                     out.rts_look_at = target;
+                    // Back overhead alive (the field computer, or a declined spawn): he is selected
+                    // again, as he was when Take Control was pressed (entering deselects him). A
+                    // dead General has no record and is not.
+                    if player.as_ref().is_some_and(|p| p.general == self.general && !p.is_first_person()) {
+                        out.select_object = self.general;
+                    }
                 } else {
                     self.view = ViewMode::Leaving { t, from_pos, from_dir, from_hfov, target, to_pos, to_dir, to_hfov };
                 }
@@ -1320,7 +1331,9 @@ impl Client {
                 }
                 EventKind::DestroyedEquipment => {}
                 // BO2's weapon hint ("Cannot Plant Here"): set afresh, drawn by the HUD.
-                EventKind::CantPlant { .. } => self.hud.hint = crate::sim::event_hint(&kind).map(|k| (k, 0.0)),
+                // BO2's `iprintlnbold` hints: the plant refusal, and a mid-life class pick that
+                // waits for the next spawn (`MP_CHANGE_CLASS_NEXT_SPAWN`).
+                EventKind::CantPlant { .. } | EventKind::ClassAtNextSpawn { .. } => self.hud.hint = crate::sim::event_hint(&kind).map(|k| (k, 0.0)),
                 EventKind::Hammer { .. } => self.vm_events.swapped = true,
                 EventKind::BuildPlaced { .. } => {
                     self.cues.play(sounds::PLANT);

@@ -24,7 +24,8 @@
 #                                      class ("Custom 2") in the profile; Escape on the first spawn
 #                                      screen sends the classless General back overhead, the next
 #                                      take-control picks the class by its row key, then the script
-#                                      forces the screen open after re-taking control and Escape-closes it
+#                                      forces the screen open after re-taking control and Escape-closes it;
+#                                      then the General dies and the next one comes in with the class
 #   scripts/autotest-mac.sh --showcase [object]
 #                                      close-up captures of a General (idle, walk, death), no checks
 #
@@ -212,7 +213,9 @@ if [[ $mode == classpick ]]; then
     # write the profile. Before that, the first take-control Escapes the spawn screen: BO2 never
     # spawns a classless player, so the General goes back overhead and the host takes control
     # again. After the pick the script leaves first person, takes control again, forces the
-    # screen open and Escapes it, proving first-person play continues. The profile file's v2
+    # screen open and Escapes it, proving first-person play continues. Then the General is killed,
+    # a new one takes his place, and the host takes control of him: he must come in with the class
+    # and no screen. The profile file's v2
     # format: `v2`, the active set, then each set's `class`/name/spec/`end` records (profile.rs).
     profile="$userdata/ConquerOps.profile"
     rm -f "$profile"
@@ -233,10 +236,10 @@ Custom 2
 primary=tar21_mp+rangefinder;secondary=crossbow_mp+ir;lethal=frag_grenade_mp;tactical=willy_pete_mp;lethal_count=1;tactical_count=1;melee=knife_held_mp;perks=Lightweight,Toughness,Dexterity;camo=camo_gold;knife=camo_gold;secondary_camo=camo_artofwar
 end
 EOF
-    export ZHBO_AUTOPILOT=classpick GGC_AUTO_EXIT_SECONDS=60
+    export ZHBO_AUTOPILOT=classpick GGC_AUTO_EXIT_SECONDS=75
     "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
     wait_for_log "entered first-person" 90 || { echo "the General never entered first person; see $log" >&2; exit 1; }
-    for _ in $(seq 70); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
+    for _ in $(seq 85); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
     finish
     trap - EXIT
     ok=0
@@ -281,17 +284,27 @@ EOF
     # The third session: force the screen open, Escape it, then hold W. The local General's pose
     # must change after the third entry, which only happens if the screen really closed and the
     # game got the input again.
-    if awk '/entered first-person control/ { n++; next } n >= 3 && / pos \(/ { if (first == "") first = $0; last = $0 } END { exit !(first != "" && last != "" && first != last) }' "$out/ConquerOps.log"; then
+    if awk '/entered first-person control/ { n++; next } /autopilot: killing General/ { stop = 1 } n == 3 && !stop && / pos \(/ { if (first == "") first = $0; last = $0 } END { exit !(first != "" && last != "" && first != last) }' "$out/ConquerOps.log"; then
         printf '%-28s PASS\n' "  ...Escape kept playing"
     else
         printf '%-28s FAIL\n' "  ...Escape kept playing"; ok=1
+    fi
+    # The fourth session: the General is killed and a new one takes his place. The chosen class
+    # belongs to the player (BO2's pers["class"]), so the new General comes in wearing it, with no
+    # class screen: after the respawn no pose line waits for a class, one names the MTAR, and the
+    # pose changes (the script walks, which a screen would block).
+    check "  ...respawned a General" "autopilot: respawned General"
+    if awk '/autopilot: respawned General/ { r = 1; next } r && /entered first-person control/ { e = 1; next } e && / pos \(/ { if ($0 ~ /awaiting a class/) bad = 1; if ($0 ~ /MTAR [0-9]+\|/) mtar = 1; if (first == "") first = $0; last = $0 } END { exit !(e && mtar && !bad && first != last) }' "$out/ConquerOps.log"; then
+        printf '%-28s PASS\n' "  ...came back with the class"
+    else
+        printf '%-28s FAIL\n' "  ...came back with the class"; ok=1
     fi
     if grep -q "assumed the ??? class" "$out/ConquerOps.log"; then
         printf '%-28s FAIL\n' "  ...not as ???"; ok=1
     else
         printf '%-28s PASS\n' "  ...not as ???"
     fi
-    grep -E "create-a-class|assumed the|taking control again|first-person control|to RTS control" "$out/ConquerOps.log" | head -20
+    grep -E "create-a-class|assumed the|taking control again|first-person control|to RTS control|respawned|killing|next spawn" "$out/ConquerOps.log" | head -30
     echo "screenshots and log: $out"
     exit $ok
 fi
@@ -486,12 +499,12 @@ fi
 wait_for_log "entered first-person" 30 || { echo "T did not take control of the General; see $log" >&2; exit 1; }
 # First person opens on the class screen (pick-only in a match). Escape on it declines the spawn
 # (BO2 never spawns a classless player): the General goes back overhead, and Escape must not also
-# open Zero Hour's game menu, or the second T could not take control. The manual scene selects him
-# again once he is back; T, then 6 picks the first default class (rows 1-5 are the custom slots;
+# open Zero Hour's game menu, or the second T could not take control. Coming back overhead selects
+# him again (the core's select_object), so his command bar's T is up; T, then 6 picks the first default class (rows 1-5 are the custom slots;
 # macOS virtual keys: Escape 53, 6 is 22).
 "$drive" sleep:1500 tap:53 sleep:500
 wait_for_log "returned General [0-9]* to RTS control" 30 || { echo "Escape did not send the classless General back overhead; see $log" >&2; exit 1; }
-for _ in $(seq 30); do [[ "$(grep -c "autopilot: selected the General" "$log")" -ge 2 ]] && break; sleep 1; done
+wait_for_log "selected General [0-9]* back overhead" 30 || { echo "the General was not selected again back overhead; see $log" >&2; exit 1; }
 "$drive" sleep:1500 tap:17 sleep:500
 for _ in $(seq 30); do [[ "$(grep -c "entered first-person" "$log")" -ge 2 ]] && break; sleep 1; done
 [[ "$(grep -c "entered first-person" "$log")" -ge 2 ]] || { echo "the second T did not take control (did Escape open the game menu?); see $log" >&2; exit 1; }

@@ -236,6 +236,7 @@ tuning! {
     riotshield_deploy_limit_radius: "riotshield_deploy_limit_radius" = 100.0, "Deploy: the least distance to any other deployed shield, inches (dvar default).";
     riotshield_destroyed_cleanup_time: "riotshield_destroyed_cleanup_time" = 10.0, "Seconds a destroyed shield's model stays (dvar default; it stops blocking at once).";
     riotshield_placement_zoffset: "riotshield_placement_zoffset" = 26.0, "Height of the deployed shield's origin over the ground, inches (`_riotshield.gsc` init).";
+    class_change_grace_period: "ClassChangeGracePeriod" = 15.0, "Seconds from the match start during which a class picked mid-life replaces the kit at once if the General has not fought yet (BO2's `level.ingraceperiod && !self.hasdonecombat` in `_globallogic_ui.gsc` `menuclass`); after it the pick waits for the next spawn. BO2 sets `level.graceperiod` in the base `_globallogic.gsc`, which the dump lacks; 15 is the CoD MP default (unverified for BO2).";
     regen_delay: "RegenDelay" = 5.0, "Seconds after the last hit before health regenerates (the mod's value).";
     regen_full_time: "RegenFullTime" = 3.0, "Seconds to regenerate from empty (the mod's value).";
     building_rate: "BuildingRate" = 1.0, "Build/repair rate multiplier (the mod's value).";

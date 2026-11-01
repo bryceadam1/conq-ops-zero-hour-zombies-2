@@ -10032,3 +10032,93 @@ respawn, but the mod's record belongs to the General object. Carrying the class 
 General would be a separate change (the command bar's class set and `zhbo_general_has_class` key
 off the record). A Tactical Insertion is still used at the take-control that a declined spawn
 then backs out of.
+
+## The class is the player's: it survives death; mid-life picks follow `menuclass`; the General reselected; the insertion used at the spawn (2026-11-01, branch `v1/no-classless-spawn`)
+
+Three follow-ups from the integrator on the same branch.
+
+**1. The chosen class belongs to the player.**
+
+BO2 keeps two classes:
+* `pers["class"]` is the class the player chose. It survives his deaths.
+* `curclass` is what this life's `giveloadout` gave him.
+
+The mod had only the second, on the General's record, so a death threw the choice away. The next
+General was classless and met the screen again.
+
+Now `Sim::chosen` (per player seat, a `ChosenClass`: id, name, kit, custom options) is
+`pers["class"]`. `PlayerSim::class` stays the life's class. The new `sim/spawn.rs` owns both:
+* `ChosenClass::decode`, `PlayerSim::wear` and `Sim::new_record` replace three hand-copied
+  `PlayerSim` literals (take_control, choose_class, rts_update). Every new record wears the chosen
+  class.
+* So the next General comes in armed, overhead (`rts_update` makes his record first in the game's
+  own order) and in first person, with no screen.
+* `zhbo_general_has_class` and the command bar's class set read the record unchanged. The record
+  now has the class from its first frame.
+
+**BO2's mid-life rule** (`_globallogic_ui.gsc` `menuclass`):
+* The pick always becomes `pers["class"]`. The same class again returns early.
+* While playing, the kit changes at once only if `level.ingraceperiod && !self.hasdonecombat` (or
+  at a supply station). Otherwise `iprintlnbold(game["strings"]["change_class"])` runs and the kit
+  follows at the next spawn.
+* `hasdonecombat` is reset on `spawned_player` (`_weapons.gsc:117`). It is set by `weapon_fired`,
+  `grenade_pullback` and `missile_fire` (`_weapons.gsc:656,779,805`) and by damage taken
+  (`_globallogic_player.gsc:1076`).
+* The string is `MP_CHANGE_CLASS_NEXT_SPAWN`, "Your class will change the next time you spawn",
+  found in the install's `en_code_post_gfx_mp.ff`. It is now in `UI_TEXT_KEYS` and the built-in
+  table.
+
+**The mod's version of the rule:**
+* `PlayerSim::combat` is set by these events in first person: a shot, a throw, a plant, a launch,
+  damage. Overhead, an RTS shot or a health drop sets it too (`step_player` now keeps the RTS
+  health current, which also stops a re-entry reporting overhead hits as fresh damage).
+* The grace period is the tuning pack's new `ClassChangeGracePeriod`: 15 s of sim frames from the
+  match start.
+* A pick that waits emits `ClassAtNextSpawn`. Its hint shows in first person, and its log line
+  names the class and the text.
+
+**Gotcha: the grace value is unverified.** BO2 sets `level.graceperiod` in the base
+`maps/mp/gametypes/_globallogic.gsc`, which is in no dumped zone (GSC-INDEX §"Gap"). t6mp's dvars
+have no grace dvar, and `gamesettings_default.cfg` has only `flagCaptureGracePeriod`. 15 is the CoD
+MP family's default and is unverified for BO2. A Ghidra or VM read of the live value would settle
+it.
+
+**2. The General is selected again when he comes back overhead alive.**
+
+Taking control deselects him (`setRtsUiHidden`), so after a declined spawn the player had to click
+him to get the class set back. `ClientOut.select_object` (appended, 4872 → 4876, ABI bump left to
+the integrator) is set on the frame the leaving camera lands, for a General still alive. That
+covers both the field computer and a declined spawn; a death selects nothing. The bridge selects
+him as a click would (`MSG_CREATE_SELECTED_GROUP`) and logs `selected General <n> back overhead`.
+The manual autotest scene's own re-select (the first commit) is gone; `--input` waits for this line
+instead.
+
+**3. The Tactical Insertion is used at the spawn.**
+
+`take_control` only used it when it made a new record. In game `rts_update` makes the record first,
+so the insertion was never used. A take-control declined without a class would have used it anyway.
+
+Now `Sim::spawn_in` (from `take_control` and at the top of each `step`) is the spawn: the first time
+the record is in first person with a class (`PlayerSim::spawned`). It moves him onto the insertion,
+uses it up, and resets his combat. So the pick that ends his wait behind the screen spawns him on
+the next step, at the insertion. A declined take-control leaves the insertion down. Later
+take-controls of the same General are the same life.
+
+**Tests.**
+* sim:
+  * `a_first_person_pick_spawns_him_and_the_next_general_comes_in_with_it`: by take_control and by
+    rts_update;
+  * `a_mid_life_pick_applies_in_the_grace_period_before_combat_else_at_the_next_spawn`: grace and
+    no combat, the same class again, after a shot, past the grace period, a hit overhead;
+  * `the_tactical_insertion_is_used_at_the_spawn_not_a_declined_take_control`.
+* client:
+  * `every_entry_meets_the_screen_only_without_a_class`: the decline selects once, a death
+    selects nothing, the next General comes in with the class and no screen, and the field
+    computer selects;
+  * `a_pick_after_combat_shows_the_next_spawn_hint`.
+
+**Autotest.** `--classpick` now has a fourth session. The bridge kills the General 6 s into the
+third session and stands a new `ZHBO_General_USA` in his place (`autopilot: respawned General`),
+then takes control of him. The new checks are "respawned a General" and "came back with the
+class": that session has no `awaiting a class` pose line, an `MTAR` one, and a changing pose. The
+auto-exit went 60 → 75 s. The "Escape kept playing" check now counts only the third session.

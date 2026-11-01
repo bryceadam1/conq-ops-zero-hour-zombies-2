@@ -129,11 +129,31 @@ Ownership and rules:
   viewmodel, and the sim ignores all of his first-person input except `buttons::FIELD_COMPUTER`,
   which hands him straight back to RTS control (`ReturnedToRts`, no field-computer tablet). Escape
   on that screen is how the client sends it (`Client::class_pick_declined`: the screen shuts, the
-  view holds still and only the press goes out until the sim answers). Overhead, the command bar's
-  class set is his way back in; the next Take Control puts the screen up again. Every entry —
-  Take Control on a fresh General, the next General after a death (the record dies with the
-  General), a re-entry after a declined spawn — goes through this; a class picked overhead first
+  view holds still and only the press goes out until the sim answers). Back overhead (from here, or after the field computer) he is
+  selected again (`ClientOut.select_object`: the core sets it on the frame the leaving camera lands, for a General still alive, and the bridge selects him as a click would and logs `selected General <n> back overhead`), so the command bar's class set is up as his way
+  back in; the next Take Control puts the screen up again. Take Control on a General with no class,
+  and a re-entry after a declined spawn, both go through this. A class picked overhead first
   spawns him straight into play. Escape on a classed General's forced re-open keeps playing.
+* **The class is the player's, the kit is the General's** (`sim/spawn.rs`). BO2 keeps
+  `pers["class"]`, the class the player chose, which survives his deaths, apart from `curclass`,
+  what this life was given. Here `Sim::chosen` (one per player seat, `ChosenClass`: id, name, kit,
+  the custom's per-slot options) is the first and `PlayerSim::class` (the record, which dies with
+  the General) the second. Every record is made by `Sim::new_record` wearing the chosen class, in
+  `take_control`, `rts_update` and `choose_class` alike, so after a death the next General comes
+  in armed, overhead and in first person, with no class screen. `zhbo_general_has_class` and the
+  command bar's class set still read the record, which now carries the class from its first frame.
+* **Mid-life picks follow `menuclass`.** A pick always becomes the chosen class (the same class
+  again does nothing). A General with no class wears it at once. A classed General wears it at once
+  only inside the grace period (the tuning pack's `ClassChangeGracePeriod`, seconds of sim frames
+  from the match start) and before his first combat (`PlayerSim::combat`, BO2's `hasdonecombat`:
+  a shot, a throw or plant, a launch, or damage taken, in first person or overhead, reset at each
+  spawn). Otherwise the kit stays, `ClassAtNextSpawn` shows BO2's `MP_CHANGE_CLASS_NEXT_SPAWN` hint
+  (a `UI_TEXT_KEYS` string), and his next General comes in with it.
+* **The spawn is the first time in first person with a class** (`Sim::spawn_in`, run by
+  `take_control` and at the top of each `step`): a Take Control on a classed General, or the pick
+  that ends his wait behind the screen. That is when the player's Tactical Insertion is used (he is
+  moved onto it) and his combat starts over. A take-control he declines without a class leaves the
+  insertion down. Later take-controls of the same General are the same life.
 
 ## The General under RTS control: his weapons and orders
 
@@ -989,6 +1009,11 @@ Polish round 3 again moved only the archive: `hud::VERSION` 81 (the weapon table
 `Bounce` keys, the attachment table's `Image` key, the four-number `Flags` without FMJ, the
 statstable-derived roster, the order-independent texture conversion, the Assault premade base kit); the ABI and the
 blob formats are unchanged.
+
+**Pending for the next bump** (no-classless-spawn): `ZhboClientOut.select_object` (`uint32_t`, one-shot
+object to select overhead: the local General as he comes back alive from first person) is appended
+after `viewmodel_fired_left`: `ZhboClientOut` 4872 → 4876 bytes, asserted on both sides.
+`ZHBO_ABI_VERSION` is left for the integrator to bump.
 
 **ABI 28** (playtest round 2's integration, one bump for the round): `ZhboClientApi.sound_loop` is
 appended after `sound_gain` (`ZHBO_CLIENT_API_FIELDS` 14 → 15, the shellshock's ringing; see "The

@@ -139,7 +139,7 @@ const _: () = {
     assert!(size_of::<crate::host::ObjInfo>() == 56);
     assert!(size_of::<FpsInput>() == 20);
     assert!(size_of::<ClientIn>() == 136);
-    assert!(size_of::<ClientOut>() == 4872);
+    assert!(size_of::<ClientOut>() == 4876);
     assert!(size_of::<ClientHit>() == 44);
     assert!(size_of::<crate::sim::RtsWeapons>() == 192);
     assert!(size_of::<crate::sim::RtsIcons>() == 240);

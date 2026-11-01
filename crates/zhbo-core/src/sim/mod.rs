@@ -20,6 +20,7 @@ mod shock;
 pub mod optics;
 mod plant;
 mod rts;
+mod spawn;
 #[cfg(test)]
 mod hit_tests;
 
@@ -27,6 +28,7 @@ pub use build::{placement, HostWorld, PLANT_DISTANCE};
 pub use plant::{can_plant, plant_launch, plant_point, plant_velocity, PLANT_TRACE_INCHES};
 pub use fire::{gather_targets, throw_velocity, HitBodies};
 pub use rts::{RtsIcons, RtsState, RtsWeapons, Third};
+pub use spawn::ChosenClass;
 
 use crate::host::{damage_kind, geom, objflags, LogicHost, ObjInfo};
 use crate::hitscan::{self, HitResult, Shape, Target, INFANTRY_HEAD_FRACTION, INFANTRY_HIT_RADIUS};
@@ -117,6 +119,9 @@ pub enum EventKind {
     /// here (not the pick index) so the log names a class the player built in the editor as well as
     /// a shipped one — a custom class has no registry index to look up.
     ClassChosen { general: u32, class: ClassName },
+    /// A class picked mid-life after the grace period or his first combat: it is the player's
+    /// chosen class now, and his next General spawns with it (BO2's `MP_CHANGE_CLASS_NEXT_SPAWN`).
+    ClassAtNextSpawn { general: u32, class: ClassName },
     FieldComputerOpened,
     ReturnedToRts { general: u32 },
     /// `left`: the dual-wield left gun's shot (BO2's `EV_FIRE_WEAPON_LEFT`).
@@ -282,6 +287,12 @@ pub struct PlayerSim {
     pub charge: Option<fire::MeleeCharge>,
     /// The shellshock running on him in first person ([`crate::shellshock`]).
     pub shock: crate::shellshock::Shellshock,
+    /// BO2's `hasdonecombat` for this life: he has fired, thrown, launched or been hurt since he
+    /// spawned (`spawn::is_combat`). A class change then waits for the next spawn.
+    pub combat: bool,
+    /// He has spawned: been in first person with a class (`Sim::spawn_in`; the Tactical Insertion
+    /// is used then).
+    pub spawned: bool,
 }
 
 impl PlayerSim {
@@ -412,6 +423,8 @@ impl PlayerSim {
             tracer_count: 0,
             charge: None,
             shock: Default::default(),
+            combat: false,
+            spawned: true,
         }
     }
 }
@@ -451,6 +464,9 @@ pub struct Sim {
     /// their own).
     pub hit_body: Option<&'static crate::hitloc::Poses>,
     pub frame: u32,
+    /// Each player seat's chosen class (BO2's `pers["class"]`, `spawn.rs`): it outlives his
+    /// Generals, and the next one spawns with it.
+    pub chosen: Vec<Option<ChosenClass>>,
     pub events: Vec<Event>,
     /// This step's tracer bullets, for the host layer to draw per viewer and clear.
     pub tracers: Vec<ShotTracer>,
@@ -479,6 +495,7 @@ impl Sim {
             penetration: crate::penetration::Penetration::default(),
             hit_body: None,
             frame: 0,
+            chosen: vec![None; MAX_PLAYERS],
             events: Vec::new(),
             tracers: Vec::new(),
             shields: Vec::new(),
@@ -535,204 +552,6 @@ impl Sim {
         self.players.iter().flatten().filter(|p| p.is_first_person()).map(|p| p.general)
     }
 
-    /// `MSG_ZHBO_TAKE_CONTROL`: the player clicked "Take Control" on their General.
-    pub fn take_control(&mut self, host: &dyn LogicHost, player: i32, general: u32) {
-        let Ok(idx) = usize::try_from(player) else { return };
-        if idx >= MAX_PLAYERS {
-            return;
-        }
-        let Some(info) = host.object(general, general) else { return };
-        if info.has(objflags::DEAD) || info.owner_player != player {
-            return;
-        }
-        // One General per player in first person; release a previous one.
-        if let Some(prev) = self.players[idx].as_ref() {
-            if prev.general != general && prev.is_first_person() {
-                host.set_controlled(prev.general, false);
-            }
-        }
-        let tuning = self.tuning;
-        let frame = self.frame;
-        let mut state = match self.players[idx].take() {
-            Some(mut p) if p.general == general => {
-                p.body = Body::new(info.pos, &tuning);
-                p.mode = Mode::Fps;
-                p.yaw = info.yaw;
-                p.pitch = 0.0;
-                p.view_kick = ViewKick::default();
-                p.idle = IdleSway::default();
-                p.gun = Default::default();
-                p.input = FpsInput { yaw: info.yaw, ..Default::default() };
-                p
-            }
-            _ => {
-                // A new General comes in at the player's Tactical Insertion, if one is down.
-                let (pos, yaw) = match self.equipment.take_insertion(host, idx) {
-                    Some((pos, yaw)) => {
-                        host.set_pose(general, pos, yaw, false);
-                        (pos, yaw)
-                    }
-                    None => (info.pos, info.yaw),
-                };
-                PlayerSim {
-                    general,
-                    class: None,
-                    reticle: String::new(),
-                    reticle_color: String::new(),
-                    camo: String::new(),
-                    knife_camo: String::new(),
-                    secondary_camo: String::new(),
-                    secondary_reticle: String::new(),
-                    mode: Mode::Fps,
-                    body: Body::new(pos, &tuning),
-                    yaw,
-                    pitch: 0.0,
-                    view_kick: ViewKick::default(),
-                    idle: IdleSway::default(),
-                    gun: Default::default(),
-                    fire_yaw: 0.0,
-                    fire_pitch: 0.0,
-                    // A General comes in unarmed and unclassed: the class screen is up and he is
-                    // not spawned until a pick replaces this arsenal ([`PlayerSim::awaiting_class`];
-                    // Escape on the screen sends him back overhead).
-                    arsenal: Arsenal::unarmed(),
-                    rng: Rng::new(general.wrapping_mul(2_654_435_761) ^ frame),
-                    input: FpsInput { yaw, ..Default::default() },
-                    pressed_accum: 0,
-                    health: info.health,
-                    max_health: info.max_health,
-                    regen_wait: 0.0,
-                    hack: None,
-                    rts: RtsState::default(),
-            hammer: None,
-            site: None,
-            building: false,
-            optics: Default::default(),
-            tracer_count: 0,
-            charge: None,
-            shock: Default::default(),
-                }
-            }
-        };
-        // The weapon can't fire or aim until the tablet is down and it is up again.
-        // BO2's first raise, once the tablet is down.
-        let first = state.arsenal.current().def.first_raise_time;
-        state.arsenal.raise_left = TAKE_CONTROL_READY + first;
-        state.arsenal.raise_total = first;
-        state.arsenal.raise_kind = crate::weapons::RaiseKind::First;
-        state.arsenal.drop_left = 0.0;
-        state.arsenal.alt_pending = false;
-        state.arsenal.offhand = None;
-        state.arsenal.ads = 0.0;
-        self.players[idx] = Some(state);
-        host.set_controlled(general, true);
-        self.emit(idx, EventKind::EnteredFps { general });
-    }
-
-    /// `MSG_ZHBO_CHOOSE_CLASS`: the player picked a class for their General from the pick menu.
-    /// An empty `payload` means a shipped class (`classes.rs`' list, by index — identical on every
-    /// client, so the index is deterministic); a non-empty payload carries a custom class's wire
-    /// words (see `classes.rs`' `CustomClass::to_wire_words`), which the sim decodes and applies
-    /// as-is (the spec travels with the pick, so no shared list is needed).
-    /// The first pick after a spawn applies: the kit replaces the base kit, and the weapon raises
-    /// like after take_control (BO2: the pick happens between spawns, not mid-fight).
-    pub fn choose_class(&mut self, player: i32, general: u32, index: usize, payload: &[u32]) {
-        let Ok(idx) = usize::try_from(player) else { return };
-        if idx >= MAX_PLAYERS {
-            return;
-        }
-        // The class can be picked before the General is ever taken into first person: the command
-        // bar's Create a Class button opens the pick while he is still under RTS control. Make a
-        // fresh record for him so the kit is in place when he takes the field; its position is
-        // filled in from the object when he does. He is under RTS control here (a first-person
-        // pick always has the record `take_control` made), so the class is ready immediately.
-        let mut p = match self.players[idx].take() {
-            Some(p) => p,
-            None => {
-                let tuning = self.tuning;
-                let frame = self.frame;
-                PlayerSim {
-                    general,
-                    class: None,
-                    reticle: String::new(),
-                    reticle_color: String::new(),
-                    camo: String::new(),
-                    knife_camo: String::new(),
-                    secondary_camo: String::new(),
-                    secondary_reticle: String::new(),
-                    mode: Mode::Rts,
-                    body: Body::new(Vec3::ZERO, &tuning),
-                    yaw: 0.0,
-                    pitch: 0.0,
-                    view_kick: ViewKick::default(),
-                    idle: IdleSway::default(),
-                    gun: Default::default(),
-                    fire_yaw: 0.0,
-                    fire_pitch: 0.0,
-                    arsenal: Arsenal::unarmed(),
-                    rng: Rng::new(general.wrapping_mul(2_654_435_761) ^ frame),
-                    input: FpsInput::default(),
-                    pressed_accum: 0,
-                    health: 0.0,
-                    max_health: 0.0,
-                    regen_wait: 0.0,
-                    hack: None,
-                    rts: RtsState::default(),
-                    hammer: None,
-                    site: None,
-                    building: false,
-                    optics: Default::default(),
-                    tracer_count: 0,
-                    charge: None,
-                    shock: Default::default(),
-                }
-            }
-        };
-        if p.general != general {
-            self.players[idx] = Some(p);
-            return;
-        }
-        let (class_id, class_name, loadout, reticle, reticle_color, camo, knife_camo, secondary_camo, secondary_reticle) = if payload.is_empty() {
-            let Some(c) = crate::classes::at(index) else { self.players[idx] = Some(p); return };
-            (c.id.clone(), ClassName::new(&c.name), crate::classes::loadout_of(&c), String::new(), String::new(), String::new(), String::new(), String::new(), String::new())
-        } else {
-            let Some(c) = crate::classes::CustomClass::from_wire_words(payload) else {
-                self.players[idx] = Some(p);
-                return;
-            };
-            let name = if c.name.is_empty() { "Custom Class".to_string() } else { c.name.clone() };
-            (format!("custom:{}", c.name), ClassName::new(&name), c.loadout(), c.reticle.clone(), c.reticle_color.clone(), c.camo.clone(), c.knife.clone(), c.secondary_camo.clone(), c.secondary_reticle.clone())
-        };
-        p.class = Some(class_id);
-        p.reticle = reticle;
-        p.reticle_color = reticle_color;
-        p.camo = camo;
-        p.knife_camo = knife_camo;
-        p.secondary_camo = secondary_camo;
-        p.secondary_reticle = secondary_reticle;
-        p.arsenal = Arsenal::with_loadout(loadout);
-        // The kit is ready as soon as the class lands, whichever view the player is in. In first
-        // person the weapon still has to come up (BO2: the pick happens between spawns, not
-        // mid-fight); in overhead it is ready for the next time the General takes the field.
-        if matches!(p.mode, Mode::Fps) {
-            let first = p.arsenal.current().def.first_raise_time;
-            p.arsenal.raise_left = TAKE_CONTROL_READY + first;
-            p.arsenal.raise_total = first;
-            p.arsenal.raise_kind = crate::weapons::RaiseKind::First;
-            p.arsenal.drop_left = 0.0;
-            p.arsenal.alt_pending = false;
-            p.arsenal.offhand = None;
-            p.arsenal.ads = 0.0;
-        } else {
-            // A class picked while commanding: mark it so the next Take Control readies the kit
-            // without re-raising a weapon the General already has out.
-            p.arsenal.raise_left = 0.0;
-            p.arsenal.raise_total = 0.0;
-        }
-        self.players[idx] = Some(p);
-        self.emit(idx, EventKind::ClassChosen { general, class: class_name });
-    }
-
     /// `MSG_ZHBO_FPS_INPUT`: latest input for a player's General.
     pub fn input(&mut self, player: i32, general: u32, input: FpsInput) {
         let Ok(idx) = usize::try_from(player) else { return };
@@ -754,8 +573,14 @@ impl Sim {
         self.equipment.guards.clear();
         self.equipment.guards.extend(self.players.iter().flatten().map(|p| guard::Guard::of(p.general, &p.arsenal, p.is_first_person())));
         for idx in 0..self.players.len() {
+            // A pick that ended his wait behind the class screen spawns him now.
+            self.spawn_in(host, idx);
             let Some(mut p) = self.players[idx].take() else { continue };
+            let before = self.events.len();
             let keep = self.step_player(host, idx, &mut p);
+            if self.events[before..].iter().any(|e| e.player == idx as i32 && spawn::is_combat(&e.kind)) {
+                p.combat = true;
+            }
             if keep {
                 self.players[idx] = Some(p);
             }
@@ -925,6 +750,13 @@ impl Sim {
         }
         p.shock.step();
         if !p.is_first_person() {
+            // Overhead: hits still count as combat (BO2's damage callback sets `hasdonecombat`),
+            // and the health stays current for the next take-control.
+            if info.health < p.health - 1e-3 {
+                p.combat = true;
+            }
+            p.health = info.health;
+            p.max_health = info.max_health;
             return true;
         }
 
@@ -1172,6 +1004,7 @@ impl Sim {
 pub fn event_hint(kind: &EventKind) -> Option<&'static str> {
     match kind {
         EventKind::CantPlant { .. } => Some("WEAPON_CANT_PLANT_EQUIPMENT"),
+        EventKind::ClassAtNextSpawn { .. } => Some("MP_CHANGE_CLASS_NEXT_SPAWN"),
         _ => None,
     }
 }
@@ -1189,6 +1022,9 @@ pub fn describe_event(e: &Event) -> Option<String> {
         EnteredFps { general } => format!("player {} took control of General {general}", e.player),
         ClassChosen { general, class } => {
             format!("player {}'s General {general} assumed the {class} class", e.player)
+        }
+        ClassAtNextSpawn { general, class } => {
+            format!("player {}'s General {general} keeps his kit; the {class} class comes in at the next spawn (\"{}\")", e.player, event_hint(&e.kind).map_or("", hint_text))
         }
         FieldComputerOpened => format!("player {} opened the field computer", e.player),
         ReturnedToRts { general } => format!("player {} returned General {general} to RTS control", e.player),

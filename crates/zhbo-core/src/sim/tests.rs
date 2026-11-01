@@ -845,29 +845,139 @@ fn declining_the_spawn_returns_the_unclassed_general_overhead_at_once() {
 }
 
 /// The spawn's pick in first person ends the wait: the class kit comes up and the General plays.
-/// After his death the record goes, so the next General he takes into first person waits for a
-/// class of his own (and can decline it the same way).
+/// The class is the player's (BO2's `pers["class"]`): after his death the next General comes in
+/// wearing it, with no wait behind the class screen, whether he is taken into first person
+/// first or made by the overhead update.
 #[test]
-fn a_first_person_pick_spawns_him_and_the_next_general_waits_again() {
+fn a_first_person_pick_spawns_him_and_the_next_general_comes_in_with_it() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
     sim.take_control(&host, 0, 1);
     run(&mut sim, &host, 0, 1, FpsInput::default(), 5);
-    sim.choose_class(0, 1, 0, &[]);
+    sim.choose_class(0, 1, 2, &[]);
     assert!(!sim.player(0).unwrap().awaiting_class());
+    let class = sim.player(0).unwrap().class.clone();
+    let kit = sim.player(0).unwrap().arsenal.loadout.clone();
     wait_until_ready(&mut sim, &host);
     sim.events.clear();
     run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, pressed: buttons::FIRE, ..Default::default() }, 1);
     assert!(events(&sim).iter().any(|k| matches!(k, EventKind::Shot { .. })), "the class gun fires: {:?}", events(&sim));
     host.objects.borrow_mut()[0].flags |= objflags::DEAD;
     run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
-    assert!(sim.player(0).is_none());
+    assert!(sim.player(0).is_none(), "the record died with him");
+    assert_eq!(sim.chosen_class(0).map(|c| Some(c.id.clone())), Some(class.clone()), "the choice did not");
+    // The next General, taken straight into first person.
     host.add(ObjInfo { pos: Vec3::new(100.0, 0.0, 0.0), ..general(2, 0) });
     sim.take_control(&host, 0, 2);
-    assert!(sim.player(0).unwrap().awaiting_class(), "the next General has no class yet");
-    run(&mut sim, &host, 0, 2, FpsInput { pressed: buttons::FIELD_COMPUTER, ..Default::default() }, 1);
-    assert!(events(&sim).contains(&EventKind::ReturnedToRts { general: 2 }));
+    let p = sim.player(0).unwrap();
+    assert!(!p.awaiting_class(), "no class screen after a death");
+    assert_eq!((&p.class, &p.arsenal.loadout), (&class, &kit), "he wears the chosen class");
+    // And one the overhead update makes first (the game's own order): armed at once.
+    host.objects.borrow_mut()[1].flags |= objflags::DEAD;
+    run(&mut sim, &host, 0, 2, FpsInput::default(), 1);
+    host.add(general(3, 0));
+    let r = sim.rts_update(&host, 0, 3, 0, [0, 0, 0], None);
+    assert!(r.ammo[0] > 0, "his class guns overhead: {r:?}");
+    assert_eq!(sim.player(0).unwrap().class, class);
+    sim.take_control(&host, 0, 3);
+    assert!(!sim.player(0).unwrap().awaiting_class());
+}
+
+/// BO2's `menuclass` mid-life: in the grace period, before he has fought, a new pick replaces the
+/// kit at once; once he has fired (or been hurt, or the grace period is over) it becomes the
+/// player's class but the kit stays, he is told `MP_CHANGE_CLASS_NEXT_SPAWN`, and his next
+/// General comes in with it. The same class again does nothing.
+#[test]
+fn a_mid_life_pick_applies_in_the_grace_period_before_combat_else_at_the_next_spawn() {
+    let id = |sim: &Sim| sim.player(0).unwrap().class.clone().unwrap();
+    let preset = |i: usize| crate::classes::at(i).unwrap().id;
+    // In the grace period, no combat: at once.
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    let mut sim = Sim::new();
+    sim.take_control(&host, 0, 1);
+    sim.choose_class(0, 1, 0, &[]);
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 5);
+    assert!(sim.in_grace_period());
+    sim.events.clear();
+    sim.choose_class(0, 1, 1, &[]);
+    assert_eq!(id(&sim), preset(1), "replaced at once");
+    assert!(events(&sim).iter().any(|k| matches!(k, EventKind::ClassChosen { .. })));
+    // The same class again: nothing.
+    sim.events.clear();
+    sim.choose_class(0, 1, 1, &[]);
+    assert!(events(&sim).is_empty(), "{:?}", events(&sim));
+    // After a shot: the kit stays, the choice moves, the hint says so.
+    wait_until_ready(&mut sim, &host);
+    run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, pressed: buttons::FIRE, ..Default::default() }, 1);
+    assert!(sim.player(0).unwrap().combat);
+    sim.events.clear();
+    sim.choose_class(0, 1, 2, &[]);
+    assert_eq!(id(&sim), preset(1), "the kit stays for this life");
+    assert_eq!(sim.chosen_class(0).unwrap().id, preset(2));
+    let e = sim.events.iter().find(|e| matches!(e.kind, EventKind::ClassAtNextSpawn { .. })).expect("told it waits");
+    assert_eq!(event_hint(&e.kind), Some("MP_CHANGE_CLASS_NEXT_SPAWN"));
+    assert!(describe_event(e).unwrap().contains("next spawn"));
+    // His next General comes in with it.
+    host.objects.borrow_mut()[0].flags |= objflags::DEAD;
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+    host.add(general(2, 0));
+    sim.take_control(&host, 0, 2);
+    assert_eq!(id(&sim), preset(2), "the next spawn wears the new class");
+    assert!(!sim.player(0).unwrap().combat, "a new life has not fought");
+
+    // Past the grace period, no combat: the next spawn too.
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    let mut sim = Sim::new();
+    sim.take_control(&host, 0, 1);
+    sim.choose_class(0, 1, 0, &[]);
+    sim.frame = frames(crate::tuning::get().class_change_grace_period + 1.0);
+    assert!(!sim.in_grace_period());
+    sim.choose_class(0, 1, 1, &[]);
+    assert_eq!(id(&sim), preset(0));
+    assert_eq!(sim.chosen_class(0).unwrap().id, preset(1));
+
+    // Hurt overhead counts as combat.
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    let mut sim = Sim::new();
+    sim.rts_update(&host, 0, 1, 0, [0, 0, 0], None);
+    sim.choose_class(0, 1, 0, &[]);
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+    host.objects.borrow_mut()[0].health = 200.0;
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+    assert!(sim.player(0).unwrap().combat, "a hit overhead is combat");
+    sim.choose_class(0, 1, 1, &[]);
+    assert_eq!(id(&sim), preset(0));
+}
+
+/// The Tactical Insertion is used at the spawn: a take-control declined without a class leaves it
+/// down and the General where he was; the pick that spawns him brings him in at it.
+#[test]
+fn the_tactical_insertion_is_used_at_the_spawn_not_a_declined_take_control() {
+    let ti: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef { equipment_kind: EquipKind::Insertion, ..Default::default() }));
+    let at = Vec3::new(300.0, 40.0, 0.0);
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    let mut sim = Sim::new();
+    sim.equipment.placed.push(Placed::new(ti, 0, 9, 0, at, 1.0, None));
+    sim.take_control(&host, 0, 1);
+    run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::FIELD_COMPUTER, ..Default::default() }, 1);
+    assert!(!sim.player(0).unwrap().is_first_person(), "declined");
+    assert_eq!(sim.equipment.placed.len(), 1, "the insertion is still down");
+    assert!(host.get(1).pos.length_xy() < 1e-3, "he did not move");
+    sim.take_control(&host, 0, 1);
+    sim.choose_class(0, 1, 0, &[]);
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+    assert!(sim.equipment.placed.is_empty(), "used at the spawn");
+    assert!((host.get(1).pos - at).length_xy() < 1.0, "he came in at it: {:?}", host.get(1).pos);
+    // A classed General's later take-controls are the same life: nothing more to use.
+    sim.equipment.placed.push(Placed::new(ti, 0, 9, 0, Vec3::ZERO, 0.0, None));
+    sim.take_control(&host, 0, 1);
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+    assert_eq!(sim.equipment.placed.len(), 1, "the same life does not spawn again");
 }
 
 /// Bug 1, overhead half: a classless General reports no usable slot/ammo, so the bridge's
