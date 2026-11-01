@@ -1371,7 +1371,7 @@ pub fn rts_weapon_edits(defs: &[WeaponDef]) -> Vec<(String, String, String)> {
 /// farthest throw, at 45 degrees.
 pub fn throw_range(d: &WeaponDef) -> f32 {
     let speed = if d.projectile_speed > 0.0 { d.projectile_speed } else { inches(800.0) };
-    speed * speed / zhbo_core::projectiles::GRAVITY
+    speed * speed / zhbo_core::projectiles::gravity()
 }
 
 /// The Zero Hour weapon of every player weapon the overhead General can hold

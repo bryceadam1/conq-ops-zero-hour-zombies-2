@@ -35,7 +35,7 @@ use crate::movement::{self, Blocker, Body, MoveModifiers, MoveTuning, World};
 use crate::units::{BO2_TO_ZH_DAMAGE, LOGIC_DT};
 use crate::movement::Stance;
 use crate::attachments::FMJ_VEHICLE_DAMAGE;
-use crate::equipment::{EquipEvent, Equipment, Kind as EquipKind, Placed, HACK_COS, HACK_DRONE_TIME, HACK_RANGE, HACK_TIME};
+use crate::equipment::{EquipEvent, Equipment, Kind as EquipKind, Placed, HACK_COS};
 use crate::projectiles::{Outcome, Projectile};
 use crate::units::inches;
 use crate::building::{self, Hammer, Site};
@@ -467,6 +467,7 @@ impl Sim {
         sim.tuning = MoveTuning::from_tuning(t);
         sim.bullet_range = crate::units::inches(t.bulletrange);
         sim.penetration = crate::penetration::Penetration::from_tuning(t);
+        sim.equipment.tuning = crate::equipment::EquipTuning::from_tuning(t);
         sim
     }
 
@@ -774,7 +775,7 @@ impl Sim {
 
     fn step_equipment(&mut self, host: &dyn LogicHost) {
         let players = &self.players;
-        let engineer = |id: u32| players.iter().flatten().any(|p| p.general == id && p.arsenal.class_specialties().has(Specialty::ShowEnemyEquipment));
+        let engineer = |id: u32| players.iter().flatten().any(|p| p.general == id && p.arsenal.class_specialties().has(Specialty::DelayExplosive));
         let mut ev = Vec::new();
         self.equipment.step(host, &mut self.projectiles, &engineer, &mut ev);
         self.equipment_events(host, ev);
@@ -2828,7 +2829,7 @@ pub(crate) mod tests {
         let mut p = proj.pos;
         let mut v = proj.vel;
         while v.z > 0.0 || p.z > 0.0 {
-            v.z -= crate::projectiles::GRAVITY * LOGIC_DT;
+            v.z -= crate::projectiles::gravity() * LOGIC_DT;
             p += v * LOGIC_DT;
         }
         assert!((Vec3::new(p.x, p.y, 0.0) - Vec3::new(150.0, 40.0, 0.0)).length() < 8.0, "lands at {p:?}");

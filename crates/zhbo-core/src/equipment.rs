@@ -8,7 +8,9 @@
 //! Each piece shows as a Zero Hour object (the converted BO2 model, on the owner's team), which is
 //! also how the logic asks who is an enemy of whom.
 //!
-//! BO2 sets these ranges and delays in script; the values here are the commonly documented ones.
+//! BO2 sets the ranges and delays in its MP scripts (`_weaponobjects.gsc`, `_bouncingbetty.gsc`,
+//! `_proximity_grenade.gsc`, `_trophy_system.gsc`, `_hacker_tool.gsc`); they come from the tuning
+//! pack ([`EquipTuning`], each key citing its script line).
 
 use crate::hitscan::{ray_vs_target, Shape, Target};
 use crate::host::{objflags, LogicHost, ObjInfo};
@@ -19,31 +21,82 @@ use crate::units::{inches, LOGIC_DT};
 use crate::weapons::WeaponDef;
 
 
-/// Seconds after it is down before a piece of equipment does anything.
-pub const ARM_TIME: f32 = 1.0;
-/// Claymore: an enemy inside this range and within 70 degrees of its front sets it off.
-pub const CLAYMORE_RANGE: f32 = inches(144.0);
-pub const CLAYMORE_COS: f32 = 0.342;
-/// Bouncing Betty: an enemy inside this range sets it off; it hops up and goes off after the delay.
-pub const BETTY_RANGE: f32 = inches(160.0);
-pub const BETTY_DELAY: f32 = 0.6;
-pub const BETTY_HOP: f32 = inches(40.0);
-/// Shock Charge: an enemy inside this range sets it off.
-pub const SHOCK_RANGE: f32 = inches(100.0);
-/// Trophy System: shoots down enemy projectiles inside this range, this many times.
-pub const TROPHY_RANGE: f32 = inches(384.0);
-pub const TROPHY_CHARGES: u8 = 2;
-/// Sensor Grenade: enemies inside this range show on its owner's minimap.
-pub const SENSOR_RANGE: f32 = inches(800.0);
-/// Engineer: triggered explosives wait this much longer for an Engineer.
-pub const ENGINEER_DELAY: f32 = 0.5;
+/// Sensor Grenade: enemies inside this range show on its owner's minimap: BO2's tracking radius
+/// (`_sensor_grenade.gsc:79`, `distancesquared < 562500` = 750 in). A constant, not a tuning key:
+/// the converter bakes it into the sensor's Zero Hour object (its vision and stealth detection).
+pub const SENSOR_RANGE: f32 = inches(750.0);
 /// How big equipment is to bullets.
 pub const HIT_RADIUS: f32 = inches(8.0);
-/// Black Hat: range, aim cone and hack time for equipment and for Zero Hour drones.
-pub const HACK_RANGE: f32 = inches(1200.0);
+/// Black Hat: the aim cone (cosine) for equipment and Zero Hour drones. BO2 tests the target's
+/// lock circle on screen (`target_isincircle`, `_hacker_tool.gsc:416`, FOV 65); a cone of about
+/// 16 degrees stands in for it.
 pub const HACK_COS: f32 = 0.96;
-pub const HACK_TIME: f32 = 1.5;
-pub const HACK_DRONE_TIME: f32 = 3.0;
+
+/// The equipment numbers from the tuning pack (`crate::tuning`), in Zero Hour units and seconds.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EquipTuning {
+    /// Seconds after it is down before a piece does anything.
+    pub arm_time: f32,
+    /// Claymore: trigger radius, front cone (cosine), least distance in front, trip-to-blast delay.
+    pub claymore_range: f32,
+    pub claymore_cos: f32,
+    pub claymore_min_dist: f32,
+    pub claymore_grace: f32,
+    /// Bouncing Betty: trigger radius, trip-to-jump delay, jump height and time.
+    pub betty_range: f32,
+    pub betty_grace: f32,
+    pub betty_hop: f32,
+    pub betty_jump_time: f32,
+    /// Shock Charge: trigger radius and trip-to-shock delay.
+    pub shock_range: f32,
+    pub shock_grace: f32,
+    /// Trophy System: interception range and charges.
+    pub trophy_range: f32,
+    pub trophy_charges: u8,
+    /// `delayexplosive` (Engineer): extra seconds a tripped explosive waits.
+    pub delay_explosive: f32,
+    /// Black Hat: range and hack times.
+    pub hack_range: f32,
+    pub hack_time: f32,
+    pub hack_drone_time: f32,
+}
+
+impl EquipTuning {
+    pub fn from_tuning(t: &crate::tuning::Tuning) -> Self {
+        EquipTuning {
+            arm_time: t.equipment_arm_time,
+            claymore_range: inches(t.scr_weaponobject_radius),
+            claymore_cos: t.scr_weaponobject_coneangle.to_radians().cos(),
+            claymore_min_dist: inches(t.scr_weaponobject_mindist),
+            claymore_grace: t.scr_weaponobject_graceperiod,
+            betty_range: inches(t.betty_radius),
+            betty_grace: t.betty_grace_period,
+            betty_hop: inches(t.betty_jump_height),
+            betty_jump_time: t.betty_jump_time.max(LOGIC_DT),
+            shock_range: inches(t.proximity_grenade_detection_radius),
+            shock_grace: t.proximity_grenade_grace_period,
+            trophy_range: inches(t.trophy_system_range),
+            trophy_charges: t.trophy_system_ammo.clamp(0.0, 255.0) as u8,
+            delay_explosive: t.perk_delay_explosive_time,
+            hack_range: inches(t.hacker_tool_max_equipment_distance),
+            hack_time: t.hack_equipment_time,
+            hack_drone_time: t.hack_drone_time,
+        }
+    }
+
+    /// The trigger radius of a piece: its script radius, capped by the weapon's own explosion
+    /// radius (`shouldaffectweaponobject`, `_weaponobjects.gsc:1564-1569`).
+    fn trigger_range(range: f32, def: &WeaponDef) -> f32 {
+        if def.explosion_radius > 0.0 { range.min(def.explosion_radius) } else { range }
+    }
+}
+
+impl Default for EquipTuning {
+    fn default() -> Self {
+        EquipTuning::from_tuning(&crate::tuning::Tuning::default())
+    }
+}
+
 /// BO2's effects for a piece of equipment that is shot, and for a Trophy System kill, as the
 /// converter names them (`zhbo_assets::fx::fxlist_name`); the converter converts [`BO2_EFFECTS`].
 pub const BREAK_FX: &str = "ZHBO_BO2FX_explosions_fx_exp_equipment";
@@ -99,7 +152,8 @@ pub enum EquipEvent {
 impl Placed {
     pub fn new(def: &'static WeaponDef, owner: usize, general: u32, object: u32, pos: Vec3, yaw: f32, stuck_to: Option<u32>) -> Placed {
         let kind = Kind::of(def);
-        Placed { kind, def, owner, general, object, pos, yaw, age: 0.0, triggered: None, charges: TROPHY_CHARGES, stuck_to }
+        let charges = EquipTuning::default().trophy_charges;
+        Placed { kind, def, owner, general, object, pos, yaw, age: 0.0, triggered: None, charges, stuck_to }
     }
 
     /// The object relationships are asked through: its own, or its owner General's.
@@ -111,8 +165,8 @@ impl Placed {
         }
     }
 
-    pub fn is_armed(&self) -> bool {
-        self.age >= ARM_TIME
+    pub fn is_armed(&self, t: &EquipTuning) -> bool {
+        self.age >= t.arm_time
     }
 
     /// Whether `o` (as seen from this equipment) is an enemy that sets it off.
@@ -159,10 +213,13 @@ pub struct Equipment {
     pub placed: Vec<Placed>,
     /// The frame's shield bearers (the sim's [`crate::sim::Sim::shields`]): blasts test them.
     pub shields: Vec<crate::shield::Bearer>,
+    /// The tuning pack's equipment numbers.
+    pub tuning: EquipTuning,
 }
 
 impl Equipment {
-    pub fn add(&mut self, p: Placed) {
+    pub fn add(&mut self, mut p: Placed) {
+        p.charges = self.tuning.trophy_charges;
         self.placed.push(p);
     }
 
@@ -178,6 +235,7 @@ impl Equipment {
     ) {
         let mut gone = Vec::new();
         let shields = &self.shields;
+        let tn = self.tuning;
         for (i, p) in self.placed.iter_mut().enumerate() {
             p.age += LOGIC_DT;
             // Riding on what it stuck to; gone with it.
@@ -195,46 +253,50 @@ impl Equipment {
             if let Some(t) = p.triggered.as_mut() {
                 *t -= LOGIC_DT;
                 if p.kind == Kind::Betty {
-                    // The hop.
+                    // The jump: the last `bettyjumptime` seconds, up to `bettyjumpheight`, where it
+                    // goes off (`bouncingbettyjumpandexplode`).
                     let ground = host.ground_height(p.pos.x, p.pos.y);
-                    let up = ((BETTY_DELAY - *t) / BETTY_DELAY).clamp(0.0, 1.0);
+                    let up = (1.0 - *t / tn.betty_jump_time).clamp(0.0, 1.0);
                     if p.object != 0 {
-                        host.set_pose(p.object, Vec3::new(p.pos.x, p.pos.y, ground + BETTY_HOP * up), p.yaw, false);
+                        host.set_pose(p.object, Vec3::new(p.pos.x, p.pos.y, ground + tn.betty_hop * up), p.yaw, false);
                     }
                 }
                 if *t <= 0.0 {
                     if p.kind == Kind::Betty {
-                        p.pos.z = host.ground_height(p.pos.x, p.pos.y) + BETTY_HOP;
+                        p.pos.z = host.ground_height(p.pos.x, p.pos.y) + tn.betty_hop;
                     }
                     events.push(p.explode(host, shields));
                     gone.push(i);
                 }
                 continue;
             }
-            if !p.is_armed() {
+            if !p.is_armed(&tn) {
                 continue;
             }
-            let delay = |o: &ObjInfo| if engineer(o.id) { ENGINEER_DELAY } else { 0.0 };
+            // The trip, then the grace period, then Engineer's extra wait (`_weaponobjects.gsc`
+            // `proximityweaponobjectdetonation`, `:1547-1551`).
+            let delay = |o: &ObjInfo| if engineer(o.id) { tn.delay_explosive } else { 0.0 };
             match p.kind {
                 Kind::Claymore => {
                     let (fwd, _) = basis_xy(p.yaw);
-                    let tripped = p.enemies_near(host, CLAYMORE_RANGE).into_iter().find(|o| {
+                    let range = EquipTuning::trigger_range(tn.claymore_range, p.def);
+                    let tripped = p.enemies_near(host, range).into_iter().find(|o| {
                         let to = o.pos - p.pos;
-                        let d = to.length_xy().max(1e-3);
-                        (to.x * fwd.x + to.y * fwd.y) / d >= CLAYMORE_COS
+                        let ahead = to.x * fwd.x + to.y * fwd.y;
+                        ahead >= tn.claymore_min_dist && ahead / to.length_xy().max(1e-3) > tn.claymore_cos
                     });
                     if let Some(o) = tripped {
-                        p.triggered = Some(delay(&o));
+                        p.triggered = Some(tn.claymore_grace + delay(&o));
                     }
                 }
                 Kind::Betty => {
-                    if let Some(o) = p.enemies_near(host, BETTY_RANGE).first() {
-                        p.triggered = Some(BETTY_DELAY + delay(o));
+                    if let Some(o) = p.enemies_near(host, EquipTuning::trigger_range(tn.betty_range, p.def)).first() {
+                        p.triggered = Some(tn.betty_grace + delay(o) + tn.betty_jump_time);
                     }
                 }
                 Kind::Shock => {
-                    if let Some(o) = p.enemies_near(host, SHOCK_RANGE).first() {
-                        p.triggered = Some(delay(o));
+                    if let Some(o) = p.enemies_near(host, EquipTuning::trigger_range(tn.shock_range, p.def)).first() {
+                        p.triggered = Some(tn.shock_grace + delay(o));
                     }
                 }
                 Kind::Trophy => {
@@ -243,7 +305,7 @@ impl Equipment {
                     while k < projectiles.len() && p.charges > 0 {
                         let (_, proj) = &projectiles[k];
                         let hostile = host.object(proj.owner, p.viewer()).is_some_and(|o| o.has(objflags::ENEMY));
-                        if hostile && (proj.pos - p.pos).length() <= TROPHY_RANGE && !proj.resting {
+                        if hostile && (proj.pos - p.pos).length() <= tn.trophy_range && !proj.resting {
                             let (_, mut proj) = projectiles.remove(k);
                             proj.intercept(host);
                             host.fx(TROPHY_FX, proj.pos);
@@ -255,7 +317,7 @@ impl Equipment {
                     }
                     // Zero Hour's missiles and shells.
                     let mut objs = Vec::new();
-                    host.query(p.pos, TROPHY_RANGE, p.viewer(), &mut objs);
+                    host.query(p.pos, tn.trophy_range, p.viewer(), &mut objs);
                     objs.sort_by_key(|o| o.id);
                     for o in objs.iter().filter(|o| o.has(objflags::PROJECTILE) && o.has(objflags::ENEMY)) {
                         if p.charges == 0 {
@@ -332,7 +394,7 @@ impl Equipment {
             .filter_map(|(i, p)| {
                 let to = p.pos - eye;
                 let d = to.length();
-                (d <= HACK_RANGE && d > 1e-3 && to.dot(dir) / d >= HACK_COS).then_some((i, d))
+                (d <= self.tuning.hack_range && d > 1e-3 && to.dot(dir) / d >= HACK_COS).then_some((i, d))
             })
             .min_by(|a, b| a.1.total_cmp(&b.1))
             .map(|(i, _)| i)
@@ -361,7 +423,7 @@ impl Equipment {
 
     /// Whether one of `owner`'s Sensor Grenades sees `pos`.
     pub fn sensed(&self, owner: usize, pos: Vec3) -> bool {
-        self.placed.iter().any(|p| p.owner == owner && p.kind == Kind::Sensor && p.is_armed() && (p.pos - pos).length_xy() <= SENSOR_RANGE)
+        self.placed.iter().any(|p| p.owner == owner && p.kind == Kind::Sensor && p.is_armed(&self.tuning) && (p.pos - pos).length_xy() <= SENSOR_RANGE)
     }
 
     /// Remove everything a player put down (their General left the game).
@@ -427,12 +489,77 @@ mod tests {
         let mut events = Vec::new();
         step_n(&mut eq, &host, 60, &mut events);
         assert!(events.is_empty(), "{events:?}");
-        // One walks in front.
+        // One closer in front than `scr_weaponobject_mindist` does nothing either.
+        let t = EquipTuning::default();
+        host.objects.borrow_mut().iter_mut().find(|o| o.id == 7).unwrap().pos = Vec3::new(t.claymore_min_dist * 0.5, 0.0, 0.0);
+        step_n(&mut eq, &host, 10, &mut events);
+        assert!(events.is_empty() && eq.placed[0].triggered.is_none(), "{events:?}");
+        // One walks in front: the trip, then BO2's grace period, then the blast.
         host.objects.borrow_mut().iter_mut().find(|o| o.id == 7).unwrap().pos = Vec3::new(15.0, 0.0, 0.0);
-        step_n(&mut eq, &host, 2, &mut events);
+        let grace = (t.claymore_grace / LOGIC_DT).round() as usize;
+        step_n(&mut eq, &host, grace - 1, &mut events);
+        assert!(events.is_empty() && eq.placed[0].triggered.is_some(), "tripped, still in its grace period: {events:?}");
+        step_n(&mut eq, &host, 3, &mut events);
         assert!(matches!(events[0], EquipEvent::Exploded { hit_enemy: true, .. }), "{events:?}");
         assert!(eq.placed.is_empty());
         assert!(host.destroyed.borrow().contains(&50));
+    }
+
+    #[test]
+    fn a_betty_waits_its_grace_then_jumps_and_goes_off_at_the_top() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut betty = general(50, 0);
+        betty.flags = objflags::NO_COLLIDE;
+        host.add(betty);
+        let mut eq = Equipment::default();
+        eq.add(Placed::new(def("bouncingbetty_mp", Effect::Explode), 0, 1, 50, Vec3::ZERO, 0.0, None));
+        let mut events = Vec::new();
+        step_n(&mut eq, &host, 40, &mut events);
+        // An enemy behind it trips it too (`ignoredirection`), inside the weapon's blast radius.
+        host.add(soldier(7, 1, -15.0));
+        let t = EquipTuning::default();
+        let frames = |s: f32| (s / LOGIC_DT).round() as usize;
+        step_n(&mut eq, &host, frames(t.betty_grace) - 1, &mut events);
+        assert!(events.is_empty() && eq.placed[0].triggered.is_some(), "{events:?}");
+        step_n(&mut eq, &host, frames(t.betty_jump_time) - 1, &mut events);
+        assert!(events.is_empty(), "still jumping: {events:?}");
+        step_n(&mut eq, &host, 4, &mut events);
+        match events.first() {
+            Some(EquipEvent::Exploded { at, .. }) => assert!((at.z - t.betty_hop).abs() < 1e-3, "at the top of the jump: {at:?}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_delayexplosive_victim_waits_out_the_perk_time_too() {
+        // `_weaponobjects.gsc:1548-1551`: the grace period, then `perk_delayExplosiveTime` for a
+        // victim with `specialty_delayexplosive` (Engineer).
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut eq = Equipment::default();
+        eq.add(Placed::new(def("proximity_grenade_mp", Effect::Stun), 0, 1, 0, Vec3::ZERO, 0.0, None));
+        let mut projectiles = Vec::new();
+        let mut events = Vec::new();
+        for _ in 0..40 {
+            eq.step(&host, &mut projectiles, &|_| true, &mut events);
+        }
+        host.add(soldier(7, 1, 5.0));
+        eq.step(&host, &mut projectiles, &|id| id == 7, &mut events);
+        let t = EquipTuning::default();
+        let left = eq.placed[0].triggered.expect("tripped");
+        assert!((left - (t.shock_grace + t.delay_explosive)).abs() < 1e-4, "{left}");
+        assert_eq!(t.delay_explosive, 0.9);
+    }
+
+    #[test]
+    fn the_trigger_radius_is_the_scripts_capped_by_the_blast() {
+        let mut d = WeaponDef::default();
+        let t = EquipTuning::default();
+        assert_eq!(EquipTuning::trigger_range(t.betty_range, &d), t.betty_range, "no blast radius: the script's");
+        d.explosion_radius = t.betty_range * 0.5;
+        assert_eq!(EquipTuning::trigger_range(t.betty_range, &d), t.betty_range * 0.5);
+        assert_eq!((t.betty_range, t.shock_range), (inches(192.0), inches(150.0)));
     }
 
     #[test]
@@ -522,7 +649,7 @@ mod sim_tests {
         // Aim at it (eye height 10, it sits on the ground) and hold the Black Hat up.
         let pitch = -(10.0f32 / 40.0).atan();
         run(&mut sim, &host, FpsInput { held: buttons::TACTICAL, pressed: buttons::TACTICAL, pitch, ..Default::default() }, 1);
-        let frames = (HACK_TIME / crate::units::LOGIC_DT) as u32 + 2;
+        let frames = (EquipTuning::default().hack_time / crate::units::LOGIC_DT) as u32 + 2;
         let mut hacked = false;
         for _ in 0..frames {
             run(&mut sim, &host, FpsInput { held: buttons::TACTICAL, pitch, ..Default::default() }, 1);
@@ -553,7 +680,7 @@ mod sim_tests {
         }
         assert!(projectiles.is_empty(), "grenade shot down");
         assert!(events.iter().any(|e| matches!(e, EquipEvent::Intercepted { owner: 0, .. })));
-        assert_eq!(eq.placed[0].charges, TROPHY_CHARGES - 1);
+        assert_eq!(eq.placed[0].charges, EquipTuning::default().trophy_charges - 1);
     }
 
     #[test]

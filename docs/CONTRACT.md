@@ -784,13 +784,13 @@ The gameplay tuning pack (`crates/zhbo-core/src/tuning.rs`, filled from
 across ~10 files (movement, regeneration, building rates, projectile physics, the field
 computer's raise time) and for BO2's engine numbers: movement, the `perk_*` multipliers, damage
 flinch, the view and bob dvars (v1.0 Track PW), the hold-breath `player_breath_*` dvars, `bulletrange` (how far a non-spread round is traced), the optic displays'
-`cg_sonarAttachment*` and `cg_rangeFinder*` dvars (`[Optics]`, `sim::optics`). BO2's numbers stay in BO2's units (inches,
+`cg_sonarAttachment*` and `cg_rangeFinder*` dvars (`[Optics]`, `sim::optics`), and the MP scripts' equipment, concussion and EMP numbers (`[Equipment]`, `[Concussion]`: the `scr_weaponobject_*`, `betty*`, `scr_proximityGrenade*` defaults and literals from `gsc-dump/mp/`, each key citing its `.gsc` line; `equipment::EquipTuning`, `projectiles::Flight`). Script values (not engine dvars) are keyed by their GSC `level.*`/`scr_*` name. BO2's numbers stay in BO2's units (inches,
 inches/s, seconds) under the engine's dvar names as ini keys (`g_speed`, `perk_weapSwitchMultiplier`),
 each field's doc citing the Ghidra answer it came from (`~/Documents/BO2-reference/ghidra/
 answers/G1-G7.md`); code converts at the point of use. The pack is part of the mod like
 `weapons.ini`: the bridge loads it once at init (`zhbo_load_tuning`, path from the names
 registry), every player must have the identical file, and the sim must never read a tuning value
-from anywhere else — modules take `&Tuning` (`MoveTuning::from_tuning`, `Arsenal::tuning`)
+from anywhere else — modules take `&Tuning` (`MoveTuning::from_tuning`, `Arsenal::tuning`, `EquipTuning::from_tuning`)
 instead of their own constants. When the file is absent the built-in defaults keep tests and the
 fallback working; a test asserts the shipped file sets every key to its default. Adding a knob:
 one line in `tuning.rs`'s field table (field, ini key, default, cited doc) and the same key in

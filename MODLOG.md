@@ -8574,3 +8574,34 @@ warnings" (35 by now) and "retire the W3D code" after the W3D path had become a 
 - The headless renderer tests share one `headless()` constructor and `assert_no_errors` (three
   tests had inlined copies of both); the impact log sums its counts instead of re-parsing the
   strings it had just formatted.
+
+## Code polish: equipment, concussion and grenade physics from the tuning pack (2026-11-01)
+
+`equipment.rs` said of its ranges "the values here are the commonly documented ones"; the MP
+scripts in the reference (`gsc-dump/mp/decompiled/t6/maps/mp/`) disagree with several. They are now
+tuning keys under the scripts' own names, each citing its `.gsc` line (`[Equipment]`,
+`[Concussion]` in `tuning.ini`; `equipment::EquipTuning`, `projectiles::Flight`):
+
+| | before | BO2's script |
+|---|---|---|
+| Claymore radius | 144 in | `scr_weaponobject_radius` 192, capped by the weapon's explosion radius (`shouldaffectweaponobject`) |
+| Claymore | went off on the trip | `scr_weaponobject_graceperiod` 0.6 s after it, and only for an enemy ≥ `scr_weaponobject_mindist` 20 in in front |
+| Betty radius / jump | 160 in / 40 in over 0.6 s | `bettyradius` 192; 0.6 s grace, then a 0.65 s jump to 65 in where it goes off |
+| Shock Charge | 100 in, instant | `scr_proximityGrenadeDetectionRadius` 150, 0.1 s grace |
+| Trophy System | 384 in | 512 in (`distancesquared < 262144`) |
+| Engineer's wait | 0.5 s, tested on `showenemyequipment` | `perk_delayExplosiveTime` 0.9 s on `delayexplosive` (the script's `hasperk` test) |
+| Black Hat range | 1200 in | `hackertoolmaxequipmentdistance` 2000 |
+| Concussion | 5 s centre → 2 s edge | `time = 2 + 4 * scale` (6 → 2) |
+| EMP | 10 s | `empduration = 12` |
+| Sensor | 800 in | 750 in (`_sensor_grenade.gsc:79`; a constant, the converter bakes it into the sensor object) |
+
+Projectile gravity was a hand copy of `bg_gravity` (`projectiles::GRAVITY`); it reads the pack now
+(`projectiles::gravity()`, `Flight::gravity`). The pack's `ProjectileBounce` key existed but nothing
+read it (the bounce used its own `BOUNCE_UP` const); it drives the bounce now, with
+`ProjectileBounceAlong`/`ProjectileRestSpeed` beside it. BO2's own per-surface
+`parallelBounce`/`perpendicularBounce` are in the weapon def; converting them is a follow-up.
+
+**Kept as the mod's values, on purpose:** the arm time (BO2 waits until the piece stops moving,
+then `activationdelay`), and the Black Hat's hack times. BO2's equipment lock is 50 ms
+(`equipmenthackertooltimems`), but the hack only completes when the tool then fires, so the
+script's number is not the whole hack; 1.5 s / 3 s stay until an in-game comparison says otherwise.

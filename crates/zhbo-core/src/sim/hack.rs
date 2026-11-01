@@ -18,10 +18,10 @@ impl Sim {
         let dir = dir_from_angles(p.yaw, p.pitch);
         // Equipment first, then the nearest drone in the aim cone.
         let target = match self.equipment.aimed_at(host, p.general, eye, dir) {
-            Some(i) => Some((self.equipment.placed[i].object, HACK_TIME)),
+            Some(i) => Some((self.equipment.placed[i].object, self.equipment.tuning.hack_time)),
             None => {
                 let mut objs = Vec::new();
-                host.query(eye, HACK_RANGE, p.general, &mut objs);
+                host.query(eye, self.equipment.tuning.hack_range, p.general, &mut objs);
                 objs.into_iter()
                     .filter(|o| o.has(objflags::DRONE) && o.has(objflags::ENEMY) && !o.has(objflags::DEAD))
                     .filter_map(|o| {
@@ -30,7 +30,7 @@ impl Sim {
                         (d > 1e-3 && to.dot(dir) / d >= HACK_COS).then_some((o.id, d))
                     })
                     .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.cmp(&b.0)))
-                    .map(|(id, _)| (id, HACK_DRONE_TIME))
+                    .map(|(id, _)| (id, self.equipment.tuning.hack_drone_time))
             }
         };
         let Some((target, needed)) = target else {

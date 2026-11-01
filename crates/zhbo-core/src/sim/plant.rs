@@ -241,7 +241,7 @@ mod tests {
         });
         match landed {
             Some(crate::projectiles::Outcome::Landed { at, .. }) => {
-                let fall = (2.0 * b.eye_height / crate::projectiles::GRAVITY).sqrt();
+                let fall = (2.0 * b.eye_height / crate::projectiles::gravity()).sqrt();
                 assert!(at.x > inches(650.0) * fall, "rolled on past the first contact: {at:?}");
                 assert_eq!(at.z, 0.0);
             }
