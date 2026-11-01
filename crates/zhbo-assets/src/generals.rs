@@ -718,6 +718,53 @@ mod tests {
         assert!(fails.is_empty(), "{} problems:\n{}", fails.len(), fails.join("\n"));
     }
 
+    /// BO2's balance patches (`common_patch_mp` over `common_mp`, `zhbo_formats::weapon::MP_POOL`):
+    /// every patched weapon converts from the patch's definition, not the launch one, and plays it
+    /// in the simulation — a weapon whose magazine the patch changed (the M8A1's 36 → 32) empties
+    /// the patched magazine under held fire. Each patched attachment converts from the patch too,
+    /// and the Peacekeeper (only in the patch zone) is a player weapon with a converted viewmodel.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_balance_patches_convert_and_play() {
+        let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
+        let common = load_zone(&bo2_dir, "common_mp").unwrap();
+        let patch = load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
+        let common_patch = load_zone(&bo2_dir, "common_patch_mp").unwrap();
+        let names = crate::weapons::names(&bo2_dir);
+        let (pooled, atts) = crate::paks::mp_weapons(&patch, &common_patch, &common).unwrap();
+        let launch = zhbo_formats::weapon::all(&common).unwrap();
+        let patched = zhbo_formats::weapon::all_in(&common_patch, &[&patch, &common]).unwrap();
+        assert!(patched.len() > 70, "{} patched weapons", patched.len());
+        let mut clip_changes = 0;
+        for p in patched.iter().filter(|w| crate::weapons::is_player_weapon(w)) {
+            let got = pooled.iter().find(|w| w.name == p.name).unwrap_or_else(|| panic!("{} pooled", p.name));
+            let def = crate::weapons::to_def(got, &names);
+            assert_eq!(def, crate::weapons::to_def(p, &names), "{}: the patch's definition", p.name);
+            let Some(old) = launch.iter().find(|w| w.name == p.name) else { continue };
+            if old.clip_size != p.clip_size {
+                clip_changes += 1;
+                assert_eq!(def.clip as i32, p.clip_size, "{}", p.name);
+                let fails = zhbo_core::conformance::check(Box::leak(Box::new(def)));
+                assert!(fails.is_empty(), "{}: {fails:?}", p.name);
+            }
+        }
+        assert!(clip_changes > 0, "the patch changes a magazine");
+        for a in zhbo_formats::weapon::attachments(&common_patch).unwrap().iter().filter(|a| !a.name.starts_with(',')) {
+            assert_eq!(atts.iter().find(|x| x.name == a.name), Some(a), "{}: the patch's attachment", a.name);
+        }
+        // The Peacekeeper: only the patch zone defines it, its models and its clips.
+        let pk = pooled.iter().find(|w| w.name == "peacekeeper_mp").expect("peacekeeper_mp in the pool");
+        assert!(crate::weapons::is_player_weapon(pk));
+        assert!(launch.iter().all(|w| w.name != pk.name));
+        let pool = [&patch, &common_patch, &common];
+        let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(&bo2_dir, f.zone).unwrap()).collect();
+        let paks = Paks::open(&bo2_dir).unwrap();
+        let mut defs = vec![crate::weapons::to_def(pk, &names)];
+        let mut out = BTreeMap::new();
+        let (_, clips) = weapon_viewmodels(&pool, &zones, &paks, &mut out, &pooled, &atts, &mut defs, std::slice::from_ref(&pk.name), 1).unwrap();
+        assert!(!clips.is_empty(), "the Peacekeeper's clips convert from common_patch_mp");
+    }
+
     /// Every attachment BO2 offers on every weapon: the weapon with it (and its alt mode) plays by
     /// the attachment's numbers, and its viewmodel with the attachment's model converts.
     #[test]
@@ -1081,10 +1128,14 @@ mod tests {
                 &rest[..rest.find("\nEnd\n").unwrap()]
             })
             .collect();
-        // fx_pistol's velocity is all +X (a little Y) in the tag's frame: identity axes leave every
-        // VelOrthoZ at zero, where the old up-is-X swap put BO2's X.
+        // The pistols' fx_pistol is the asset pool's: `patch_mp`'s, over `common_mp`'s own copy
+        // (`zhbo_formats::fx::bind`). Its velocities are mostly +X in the tag's frame: identity axes
+        // put BO2's Z in VelOrthoZ (zero for exactly the elements whose Z is zero), where the old
+        // up-is-X swap put BO2's X.
+        let live = zhbo_formats::fx::find(&load_zone(Path::new(&bo2), crate::fx::ZONE).unwrap(), "weapon/shellejects/fx_pistol").unwrap();
+        let moving_z = live.elems.iter().filter(|e| e.velocity.0[2] != 0.0 || e.velocity.1[2] != 0.0).count();
         let vel = |a: &str| defs.iter().flat_map(|d| d.lines().filter(|l| l.trim_start().starts_with(a))).map(str::trim).collect::<Vec<_>>();
-        assert!(vel("VelOrthoZ =").iter().all(|l| l.ends_with("0.000 0.000")), "{defs:?}");
+        assert_eq!(vel("VelOrthoZ =").iter().filter(|l| !l.ends_with("0.000 0.000")).count(), moving_z, "{defs:?}");
         assert!(vel("VelOrthoX =").iter().any(|l| !l.ends_with("0.000 0.000")), "{defs:?}");
         // 5b family C: what others see. The AN-94's world brass (`fx_rifle`, a stub bound from
         // patch_mp) plays from its own FX weapon, placed from the flash bone to `tag_brass`; its

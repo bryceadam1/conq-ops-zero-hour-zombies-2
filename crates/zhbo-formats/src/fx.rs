@@ -223,15 +223,15 @@ pub fn read_or_stub(z: &Zone, addr: u32) -> Option<Effect> {
     (addr != 0).then(|| read(z, addr))
 }
 
-/// A parsed effect as BO2's asset pool binds it: kept when it has elements, else the first zone in
-/// `pool` (latest-loaded first) holding the full asset of that name; `None` when no zone does.
+/// A parsed effect as BO2's asset pool binds it: the full asset of that name from the first zone in
+/// `pool` (highest priority first) that holds one — every reference to a name resolves to the
+/// pool's live asset (`DB_LinkXAssetEntry`, `FUN_00597000`: `patch_mp`'s `fx_pistol` over
+/// `common_mp`'s own copy) — else the parse itself when it has elements; `None` for a stub no
+/// zone defines.
 pub fn bind(e: Option<Effect>, pool: &[&Zone]) -> Option<Effect> {
     let e = e?;
-    if !e.elems.is_empty() {
-        return Some(e);
-    }
     let name = e.name.trim_start_matches(',');
-    pool.iter().find_map(|z| find(z, name))
+    pool.iter().find_map(|z| find(z, name)).filter(|f| !f.elems.is_empty()).or_else(|| (!e.elems.is_empty()).then_some(e))
 }
 
 pub fn find(z: &Zone, name: &str) -> Option<Effect> {

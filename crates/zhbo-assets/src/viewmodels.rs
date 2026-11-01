@@ -41,9 +41,11 @@ pub(crate) fn find_model(pool: &[&Zone], name: &str) -> Result<xmodel::Model, St
 }
 
 /// An animation as the asset pool holds it over `pool` (highest priority first): the first zone
-/// that has it (a patched weapon's clips can be `common_patch_mp`'s alone).
+/// that defines it (a patched weapon's clips can be `common_patch_mp`'s alone). A `,name`
+/// reference stub (`common_patch_mp` holds 2,826) never stands in for the real clip.
 pub(crate) fn find_anim(pool: &[&Zone], name: &str) -> Option<xanim::Anim> {
-    pool.iter().find_map(|z| xanim::find(z, name).ok())
+    let defines = |z: &Zone| z.find(zhbo_formats::fastfile::ASSET_XANIM, name).and_then(|a| z.asset_name(a)).is_some_and(|n| !n.starts_with(','));
+    pool.iter().filter(|z| defines(z)).find_map(|z| xanim::find(z, name).ok())
 }
 
 /// One of a weapon's base `attachViewModel` parts: the magazine, or the base attachment art (the

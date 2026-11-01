@@ -191,11 +191,12 @@ pub fn tracers(z: &Zone) -> Vec<Tracer> {
     out
 }
 
-/// A parsed tracer as BO2's asset pool binds it: kept when it is the full asset, else (a
-/// comma-prefixed reference stub) the first zone in `pool` holding the full asset of that name.
+/// A parsed tracer as BO2's asset pool binds it: the full asset of that name from the first zone in
+/// `pool` (highest priority first) that holds one, as every reference resolves to the pool's live
+/// asset; else the parse, by name (a stub no zone defines keeps its name).
 pub fn bind_tracer(t: Option<Tracer>, pool: &[&Zone]) -> Option<Tracer> {
     let t = t?;
-    let Some(name) = t.name.strip_prefix(',') else { return Some(t) };
+    let name = t.name.trim_start_matches(',');
     pool.iter().find_map(|z| tracers(z).into_iter().find(|f| f.name == name)).or(Some(Tracer { name: name.to_string(), ..t }))
 }
 
@@ -1624,6 +1625,38 @@ impl Weapon {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A zone of `WeaponAttachment`s, each `(name, fDamageRangeScale)`.
+    fn attachment_zone(name: &str, atts: &[(&str, f32)]) -> Zone {
+        let kind = crate::fastfile::asset_type_id("attachment").unwrap();
+        let mut mem = vec![0u8; 0x10000];
+        let mut assets = Vec::new();
+        for (i, (n, scale)) in atts.iter().enumerate() {
+            let at = 0x100 + i as u32 * 0x800;
+            let text = at + 0x700;
+            mem[text as usize..text as usize + n.len()].copy_from_slice(n.as_bytes());
+            mem[(at + WA::szInternalName) as usize..][..4].copy_from_slice(&text.to_le_bytes());
+            mem[(at + WA::fDamageRangeScale) as usize..][..4].copy_from_slice(&scale.to_le_bytes());
+            assets.push(crate::t6zone::Asset { kind, structure: "WeaponAttachment", addr: at });
+        }
+        crate::t6zone::synthetic_zone(name, mem, Vec::new(), assets)
+    }
+
+    /// BO2's asset pool (`DB_LinkXAssetEntry`, `FUN_00597000`): the higher-priority zone's asset of
+    /// a name wins, a `,name` reference stub never overrides, and a name only the patch zone has
+    /// (the Peacekeeper's) joins after the base zone's own, in the base zone's order.
+    #[test]
+    fn the_pool_keeps_the_highest_priority_zones_asset() {
+        let common = attachment_zone("common_mp", &[("fmj", 1.0), ("silencer_smg", 0.75), ("acog", 1.0)]);
+        let common_patch = attachment_zone("common_patch_mp", &[("silencer_smg", 0.7), ("grip_smg", 1.0), (",acog", 0.0)]);
+        let patch = attachment_zone("patch_mp", &[("fmj", 1.5)]);
+        let got = pooled_attachments(&[&patch, &common_patch, &common]).unwrap();
+        let seen: Vec<(&str, f32)> = got.iter().map(|a| (a.name.as_str(), a.damage_range_scale)).collect();
+        assert_eq!(seen, [("fmj", 1.5), ("silencer_smg", 0.7), ("acog", 1.0), ("grip_smg", 1.0)]);
+        // One zone alone is that zone's assets, stubs dropped.
+        let alone: Vec<String> = pooled_attachments(&[&common_patch]).unwrap().into_iter().map(|a| a.name).collect();
+        assert_eq!(alone, ["silencer_smg", "grip_smg"]);
+    }
 
     #[test]
     fn damage_curve_interpolates_like_bo2() {
