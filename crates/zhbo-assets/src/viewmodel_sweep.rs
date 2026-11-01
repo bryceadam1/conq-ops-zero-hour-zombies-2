@@ -270,14 +270,12 @@ mod tests {
         let scope = |vm: &zhbo_native::viewmodel::Viewmodel| vm.parts.iter().find(|p| p.model.contains("xpr50_scope_view")).expect("the base scope").offset.1;
         assert_eq!(scope(&manifest("as50_mp+vzoom")), [4.456, 0.0, 4.253], "no override flag, no move");
         let combined = manifest("as50_mp+swayreduc+ir");
-        assert_eq!(scope(&combined), [9.889, 0.0, 4.253], "the combined IR unique moves the base scope too");
-        // The exact combined unique authors no mount of its own (`viewModelAdditional` is 0), but
-        // the composition is per single attachment: `combo()` keeps the single `au_<w>_ir` entry
-        // for the `ir` short regardless of the exact combined unique, so its mount loads here too —
-        // the same single-entry rule that already drew the dual-band optic on combined combos
-        // before this change (a pre-existing over-draw, neither introduced nor fixed here).
-        assert!(combined.parts.iter().any(|p| p.model.contains("dualband_mount_view")), "the mount follows the single IR entry, like the optic: {:?}", combined.parts.iter().map(|p| &p.model).collect::<Vec<_>>());
-        assert!(combined.parts.iter().any(|p| p.model.contains("t6_attach_optic_dualband_view")), "the dual-band optic is the pre-existing single-entry over-draw: {:?}", combined.parts.iter().map(|p| &p.model).collect::<Vec<_>>());
+        assert_eq!(scope(&combined), [9.889, 0.0, 4.253], "the single IR unique moves the base scope in the combination too");
+        // BO2's resolution (G14 §2/§3): the swayreduc resolves to its `au_as50_swayreduc+ir` child
+        // (the same BCPU art), the IR has no children and draws its single unique — the dual-band
+        // optic with its rail mount. Both are what BO2 draws for this combination.
+        assert!(combined.parts.iter().any(|p| p.model.contains("dualband_mount_view")), "the IR draws its single unique: the mount: {:?}", combined.parts.iter().map(|p| &p.model).collect::<Vec<_>>());
+        assert!(combined.parts.iter().any(|p| p.model.contains("t6_attach_optic_dualband_view")), "and the dual-band optic: {:?}", combined.parts.iter().map(|p| &p.model).collect::<Vec<_>>());
     }
 
     /// An attachment with `disableBaseWeaponAttachment` replaces the base art: the ACOG swaps its
@@ -312,7 +310,31 @@ mod tests {
         assert_eq!(vm.parts.len(), 4, "the arms, the gun and both sights");
         let sights = vm.parts.iter().filter(|p| p.model.contains("optic_m32")).count();
         assert_eq!(sights, 2, "both the hip `_view` and the ADS `_ads` pair: {vm:?}");
-        assert!(vm.parts.iter().any(|p| p.model.contains("_ads") && p.ads_only), "the ADS variant is marked ads_only: {vm:?}");
+        // The pairing is by slot (`attachViewModel[0]`/`[7]`), not by name: the `_ads` is slot 7.
+        let ads = vm.parts.iter().position(|p| p.model.contains("optic_m32_ads")).expect("the slot-7 sight");
+        assert!(vm.parts[ads].ads_only, "slot 7 draws only while aiming: {vm:?}");
+        let view = vm.parts.iter().position(|p| p.model.contains("optic_m32_view")).expect("the slot-0 sight");
+        assert_eq!(vm.parts[view].ads_swap, Some(ads as u16), "slot 0 gives way to slot 7 while aiming: {vm:?}");
+    }
+
+    /// The holo's unique carries a `viewModelADS` (`t6_attach_optic_holo_ads`): it converts, rides
+    /// the holo's tag and offset, draws only while aiming, and the holo's `_view` names it as its
+    /// ADS swap. The magazine keeps its model at ADS.
+    #[test]
+    #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
+    fn the_holo_swaps_to_its_ads_model() {
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        let blobs = src.composition("an94_mp+holo").expect("the AN-94 with its holo");
+        let vm = zhbo_native::viewmodel::Viewmodel::from_bytes(blobs.get(&zhbo_native::viewmodel_path(0, 'U')).expect("a manifest")).expect("the manifest parses");
+        let ads = vm.parts.iter().position(|p| p.model.contains("optic_holo_ads")).unwrap_or_else(|| panic!("the ADS model converts: {vm:?}"));
+        let view = vm.parts.iter().position(|p| p.model.contains("optic_holo_view")).expect("the hip model");
+        assert!(vm.parts[ads].ads_only && !vm.parts[view].ads_only, "{vm:?}");
+        assert_eq!(vm.parts[view].ads_swap, Some(ads as u16), "the holo gives way to its ADS model: {vm:?}");
+        assert_eq!((&vm.parts[ads].tag, vm.parts[ads].offset), (&vm.parts[view].tag, vm.parts[view].offset), "same tag and placement");
+        assert!(blobs.contains_key(&vm.parts[ads].model), "the ADS model's blob is written");
+        let swapping: Vec<&str> = vm.parts.iter().filter(|p| p.ads_swap.is_some()).map(|p| p.model.as_str()).collect();
+        assert_eq!(swapping.len(), 1, "only the holo swaps: {swapping:?}");
     }
 
     /// The five pistol dualclips set neither replacement flag: their fast-mag sleeve is additive

@@ -12,8 +12,7 @@ use super::{native_blend, native_cull, Mesh};
 pub(crate) struct Gpu {
     key: Option<(i32, u8, u64)>,
     mesh: Option<u16>,
-    /// The same mesh without the base optic, submitted at full ADS. `None` when the weapon has no
-    /// optic part.
+    /// The ADS part list's mesh, submitted at full ADS. `None` when no part swaps.
     mesh_aimed: Option<u16>,
     textures: Vec<u16>,
 }
@@ -114,11 +113,12 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeIn) -> i32 {
             None => return NOT_NATIVE,
         }
     }
-    // At full ADS the base optic is hidden and the screen-space overlay takes over; the aimed
-    // mesh carries the gun and magazine only. The draw swaps handles, not the blob.
-    let mesh = if inp.ads >= 1.0 { s.gpu.mesh_aimed.or(s.gpu.mesh) } else { s.gpu.mesh };
-    if inp.ads >= 1.0 && s.gpu.mesh_aimed.is_some() {
-        s.log_once("native viewmodel: base optic hidden at full ADS; the screen overlay takes over".into());
+    // From BO2's optic switch (full ADS) the aimed mesh draws: each paired part shows its ADS
+    // model. The draw swaps handles, not the blob.
+    let aimed = inp.ads >= super::OPTIC_VIEWMODEL_SWITCH;
+    let mesh = if aimed { s.gpu.mesh_aimed.or(s.gpu.mesh) } else { s.gpu.mesh };
+    if aimed && s.gpu.mesh_aimed.is_some() {
+        s.log_once("native viewmodel: the ADS part list draws at full ADS (ADS models)".into());
     }
     let Some(mesh) = mesh else { return NOT_NATIVE };
     let mut lights = [NativeLight::default(); 3];

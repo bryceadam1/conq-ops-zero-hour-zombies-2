@@ -14,7 +14,7 @@ use crate::paks::{load_zone, Paks};
 use crate::textures::{finish, textures, Looks};
 use zhbo_formats::iwi::Rgba;
 use zhbo_formats::{t6zone::Zone, w3d, xanim, xmodel};
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 
 /// The magazine model of a gun's viewmodel: BO2 names them `t6_attach_mag_<weapon>_view` after a
@@ -55,9 +55,12 @@ pub(crate) struct BasePart {
     pub magazine: bool,
     /// The model carries the weapon's sight (`tag_scope`/`tag_sights`): it drives `tag_sights`.
     pub optic: bool,
-    /// The M32's `_ads` sight variant: drawn only at full ADS. The hip `_view` variant carries the
-    /// same sight; the pair swaps at the ADS handoff. The W3D path draws only the hip sight.
+    /// `attachViewModel[7]`, slot 0's ADS model (the M32's `_ads` sight): drawn only while aiming
+    /// (G14 §3). The W3D path draws only the hip parts.
     pub ads_only: bool,
+    /// The base part (an index into the same list) this ADS-only part replaces while aiming: slot
+    /// 0's, when the weapon has one.
+    pub ads_of: Option<usize>,
 }
 
 /// The base parts of `w` for the combination `c`: the magazine (the `attach_mag` array entry, the
@@ -74,78 +77,54 @@ pub(crate) fn base_parts(patch: &Zone, common: &Zone, w: &zhbo_formats::weapon::
     if w.is_gun() && !c.no_clip {
         let authored = authored_parts(w)
             .find(|(m, ..)| m.contains("attach_mag"))
-            .and_then(|(m, _, offset)| find_model(patch, common, m).ok().map(|model| (model, offset)));
+            .and_then(|(m, _, offset, _)| find_model(patch, common, m).ok().map(|model| (model, offset)));
         if let Some((model, offset)) = authored {
-            out.push(BasePart { model, tag: None, offset, magazine: true, optic: false, ads_only: false });
+            out.push(BasePart { model, tag: None, offset, magazine: true, optic: false, ads_only: false, ads_of: None });
         } else if let Some(model) = magazine(common, view) {
-            out.push(BasePart { model, tag: None, offset: crate::xf::IDENTITY, magazine: true, optic: false, ads_only: false });
+            out.push(BasePart { model, tag: None, offset: crate::xf::IDENTITY, magazine: true, optic: false, ads_only: false, ads_of: None });
         }
     }
     if !c.no_base_attachment {
-        for (name, tag, (rotation, offset)) in authored_parts(w) {
+        // Slot 0's part, for slot 7 (its ADS model) to replace.
+        let mut slot0 = None;
+        for (name, tag, (rotation, offset), slot) in authored_parts(w) {
             if name.is_empty() || name.contains("attach_mag") {
                 continue;
             }
             let Ok(model) = find_model(patch, common, name) else { continue };
-            if duplicate_sight(&out, &model) {
-                continue;
-            }
             let optic = model.bones.iter().any(|b| b.name == "tag_scope" || b.name == "tag_sights");
             // `viewModelOffsetBaseAttachment` replaces this part's authored offset when the
             // combination sets `overrideBaseWeaponAttachmentOffsets` (the IR optics); the part
             // stays. It is in the same frame (the AS50's Y/Z match), so it replaces, never adds.
             // The authored rotation stays (BO2 overrides only the offset).
             let offset = (rotation, c.base_attachment_offset.unwrap_or(offset));
-            let ads_only = model.name.ends_with("_ads");
-            out.push(BasePart { model, tag: (!tag.is_empty()).then(|| tag.to_string()), offset, magazine: false, optic, ads_only });
+            let ads_only = slot == ADS_SLOT;
+            if slot == 0 {
+                slot0 = Some(out.len());
+            }
+            let ads_of = if ads_only { slot0 } else { None };
+            out.push(BasePart { model, tag: (!tag.is_empty()).then(|| tag.to_string()), offset, magazine: false, optic, ads_only, ads_of });
         }
     }
     out
 }
 
-/// The raw parallel `attachViewModel` arrays as (model, tag, authored placement): the rotation
-/// (BO2 degrees as a quaternion) and the offset (inches).
-fn authored_parts(w: &zhbo_formats::weapon::Weapon) -> impl Iterator<Item = (&str, &str, crate::xf::Xf)> {
+/// The raw parallel `attachViewModel` arrays as (model, tag, authored placement, slot): the
+/// rotation (BO2 degrees as a quaternion), the offset (inches) and the `attachViewModel` slot BO2
+/// reads the entry's role by (G14 §3).
+fn authored_parts(w: &zhbo_formats::weapon::Weapon) -> impl Iterator<Item = (&str, &str, crate::xf::Xf, u8)> {
     let rotation = |i: usize| w.attach_view_rotations.get(i).copied().unwrap_or_default();
     w.attach_view_models
         .iter()
         .zip(&w.attach_view_offsets)
+        .zip(&w.attach_view_slots)
         .enumerate()
-        .map(move |(i, ((m, t), off))| (m.as_str(), t.as_str(), (crate::xf::from_angles(rotation(i)), *off)))
+        .map(move |(i, (((m, t), off), &slot))| (m.as_str(), t.as_str(), (crate::xf::from_angles(rotation(i)), *off), slot))
 }
 
-/// Whether `b` is the same sight as `a`: the same non-empty set of surface-material names and a
-/// bounding box overlapping at IoU ≥ 0.9. The M32 lists its sight twice — `_view` (hip) and `_ads`
-/// (aim) — as complete alternatives with the same lens and reticle, differing only in the housing
-/// mesh; drawing both would double-draw the glass. The first entry (the hip sight) is kept.
-fn same_sight(a: &xmodel::Model, b: &xmodel::Model) -> bool {
-    let (ma, mb) = (material_names(a), material_names(b));
-    if ma.is_empty() || ma != mb {
-        return false;
-    }
-    let (mut intersection, mut union) = (1.0f32, 1.0f32);
-    for k in 0..3 {
-        let overlap = (a.maxs[k].min(b.maxs[k]) - a.mins[k].max(b.mins[k])).max(0.0);
-        let span = (a.maxs[k].max(b.maxs[k]) - a.mins[k].min(b.mins[k])).max(0.0);
-        intersection *= overlap;
-        union *= span;
-    }
-    union > 0.0 && intersection / union >= 0.9
-}
-
-/// Whether `model` is a duplicate sight of an existing base part: the same material set and a
-/// bounding box overlapping at IoU ≥ 0.9. The M32's `_view`/`_ads` pair is not a duplicate: the
-/// two are the same sight at the same mount, but the ADS variant replaces the hip housing at full
-/// ADS, so both must load.
-fn duplicate_sight(out: &[BasePart], model: &xmodel::Model) -> bool {
-    !model.name.ends_with("_ads")
-        && !out.iter().any(|p| p.ads_only)
-        && out.iter().any(|p| !p.magazine && same_sight(&p.model, model))
-}
-
-fn material_names(m: &xmodel::Model) -> BTreeSet<&str> {
-    m.materials.iter().flatten().map(|m| m.name.as_str()).filter(|n| !n.is_empty()).collect()
-}
+/// `attachViewModel[7]`: slot 0's ADS model. BO2 draws it only while aiming, and slot 0 then only
+/// when it is empty (`FUN_00535170`, G14 §3).
+const ADS_SLOT: u8 = 7;
 
 /// The base-part clause of the conversion report: the count and every model's name, so a part that
 /// silently stops loading is visible in the launcher log (the report used to be silent exactly
@@ -158,18 +137,42 @@ fn base_part_note(base: &[BasePart]) -> String {
     format!(", {} base parts ({})", base.len(), names.join(", "))
 }
 
+/// One model an attachment adds, as [`attachment_parts`] lists it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct AttachmentModel<'a> {
+    name: &'a str,
+    /// The unique's offset and rotation for this model (scaled).
+    xf: crate::xf::Xf,
+    /// The attachment's point, or 0 for a model that is not its optic (the IR rail mount).
+    point: u32,
+    /// The unique's `viewModelADS`: drawn only while aiming.
+    ads_only: bool,
+    /// The model (an index into the same list) the ADS model replaces while aiming.
+    ads_of: Option<usize>,
+}
+
 /// The models one attachment adds, in draw order, with their placement and whether each is the
 /// attachment's optic. An IR optic's `viewModelAdditional` (the dual-band rail mount) comes first,
 /// at the unique's own `viewModelAddOffsets`/`viewModelAddRotations` (as50: `[1, 0, 4.711]` under
 /// the optic's `[1.045, 0, 5.568]`); only the single-attachment IR uniques carry one.
-fn attachment_parts(u: &zhbo_formats::weapon::AttachmentUnique, pt: u32) -> Vec<(&str, crate::xf::Xf, u32)> {
+///
+/// A unique's `viewModelADS` (the holo's and the rangefinder's `_ads`) follows its `viewModel`: BO2
+/// draws it instead, on the same tag at the same offset and rotation, while aiming; the additional
+/// model draws in both lists (`FUN_00535170`, G14 §3). It keeps the attachment's point: at full ADS
+/// it is the sight the eye lines up with.
+fn attachment_parts(u: &zhbo_formats::weapon::AttachmentUnique, pt: u32) -> Vec<AttachmentModel<'_>> {
     let xf = |rotation: [f32; 3], offset: [f32; 3]| character::scaled_xf((crate::xf::from_angles(rotation), offset));
+    let part = |name, xf, point| AttachmentModel { name, xf, point, ads_only: false, ads_of: None };
     let mut out = Vec::new();
     if let Some(name) = u.view_model_additional.as_deref() {
-        out.push((name, xf(u.view_add_rotation, u.view_add_offset), 0));
+        out.push(part(name, xf(u.view_add_rotation, u.view_add_offset), 0));
     }
-    if let Some(name) = u.view_model.as_deref() {
-        out.push((name, xf(u.view_rotation, u.view_offset), pt));
+    let hip = u.view_model.as_deref().map(|name| {
+        out.push(part(name, xf(u.view_rotation, u.view_offset), pt));
+        out.len() - 1
+    });
+    if let Some(name) = u.view_model_ads.as_deref() {
+        out.push(AttachmentModel { ads_only: true, ads_of: hip, ..part(name, xf(u.view_rotation, u.view_offset), pt) });
     }
     out
 }
@@ -177,10 +180,24 @@ fn attachment_parts(u: &zhbo_formats::weapon::AttachmentUnique, pt: u32) -> Vec<
 /// A notetrack source: viewmodel, clip (BO2 slot or tablet clip) and the BO2 animation.
 pub type Clip = (i32, i32, xanim::Anim);
 
+/// One loaded attachment model of a combination, with where it goes and its ADS role
+/// ([`AttachmentModel`] with the model found).
+struct Extra {
+    model: xmodel::Model,
+    tag: Option<String>,
+    xf: crate::xf::Xf,
+    point: u32,
+    ads_only: bool,
+    /// The `extra` index of the model this ADS model replaces while aiming.
+    ads_of: Option<usize>,
+}
+
 /// What a weapon's attachments change about its art: BO2's `WeaponAttachmentUnique` for each, the
 /// animation set to use, the weapon's bones to hide, and the gunshot.
 pub struct Combo<'a> {
-    /// One per attachment (the single-attachment entry), with the attachment's point.
+    /// One per attachment: the unique BO2 draws for it in this combination — the single unique, or
+    /// the combined child it resolves to (`Weapon::resolved_unique`, G14 §2/§3) — with the
+    /// attachment's point.
     pub parts: Vec<(&'a zhbo_formats::weapon::AttachmentUnique, u32)>,
     pub anims: Vec<Option<String>>,
     pub hide: Vec<String>,
@@ -198,126 +215,146 @@ pub struct Combo<'a> {
 }
 
 /// The art of `w` with the attachments `shorts` (BO2 create-a-class names).
+///
+/// BO2 reads two different uniques per attachment (G14 §2): the drawn parts (§3) and the animation
+/// table (§5) read the *resolved* unique — a combined child (`au_xm8_acog+grip`) when the
+/// combination holds one of its partner kinds — while the flags, hide tags, base-art offset and
+/// sounds (§4) read the *single* uniques only. A combined child's own flags and hide tags are
+/// therefore never consulted, by BO2 or here.
 pub fn combo<'a>(w: &'a zhbo_formats::weapon::Weapon, atts: &[zhbo_formats::weapon::Attachment], shorts: &[&str]) -> Combo<'a> {
     use crate::weapons::short_name;
-    let mut parts = Vec::new();
-    let mut mask = 0u32;
     let mut combo_kinds = Vec::new();
     for short in shorts {
         let Some((kind, id)) = w.attachment_variants.iter().find(|(_, id)| short_name(id) == *short) else { continue };
-        mask |= 1 << kind;
         let point = atts.iter().find(|a| &a.name == id).map_or(0, |a| a.point);
         combo_kinds.push((*kind, point));
-        if let Some(u) = w.attachment_uniques.iter().find(|u| u.kind == *kind && u.combined == 0) {
-            parts.push((u, point));
-        }
     }
-    // The animations: per-slot, five tiers (G14 §5). The base table is the variant's; each slot is
-    // resolved independently. A unique's `None` is "no override", never an erase.
-    let exact = (shorts.len() > 1).then(|| w.attachment_uniques.iter().find(|u| u.combined == mask)).flatten();
-    let base = w.attachment_uniques.iter().find(|u| u.kind == 0 && u.combined == mask)
-        .or_else(|| w.attachment_uniques.iter().find(|u| u.kind == 0 && u.combined == 0));
+    let kinds: Vec<u32> = combo_kinds.iter().map(|(k, _)| *k).collect();
+    let singles: Vec<&zhbo_formats::weapon::AttachmentUnique> = kinds.iter().filter_map(|k| w.single_unique(*k)).collect();
+    let resolved = |kind: u32| w.resolved_unique(kind, &kinds);
+    let parts: Vec<(&zhbo_formats::weapon::AttachmentUnique, u32)> =
+        combo_kinds.iter().filter_map(|(k, point)| resolved(*k).map(|u| (u, *point))).collect();
+    // The animations (G14 §5, `FUN_0052d540`/`FUN_008eddb0`): start from the variant's table; a
+    // slot is a candidate only when one of the combination's SINGLE uniques sets its
+    // `animationOverrides` bit (`FUN_008eb540`), and each candidate is resolved through five tiers
+    // over the RESOLVED uniques' override bits. A set bit with an empty name overrides to empty
+    // (BO2 then plays the idle); a unique's name without its bit is never read.
+    let base = w.single_unique(0);
     let optic_kind = combo_kinds.iter().find(|(_, p)| *p == 1).map(|(k, _)| *k);
-    let alt_ads_only = combo_kinds.iter().any(|(kind, _)| {
-        atts.iter().find(|a| a.kind == *kind).map_or(false, |a| a.alt_weapon_ads_only)
-    });
-    let resolved = |kind: u32| -> Option<&'a zhbo_formats::weapon::AttachmentUnique> {
-        w.attachment_uniques.iter().find(|u| u.kind == kind && u.combined == mask)
-            .or_else(|| w.attachment_uniques.iter().find(|u| u.kind == kind && u.combined == 0))
-    };
+    // Tier 2 is an ALT-MODE rule (`FUN_008eddb0` tests the def's `inventoryType == ALTMODE` before
+    // `FUN_008ecb00`): the parent of an ADS-only alt (`an94_mp+dualoptic`) is not an alt mode, so
+    // its alt raise/drop and ADS slots resolve through the tiers like any other slot (the dual
+    // optic's `rmr_alt_raise_up`/`rmr_top_ads_up`).
+    let alt_mode = w.inventory == zhbo_formats::weapon::inventory::ALTMODE;
+    let alt_ads_only = alt_mode
+        && (w.alt_weapon_ads_only
+            || combo_kinds.iter().any(|(kind, _)| atts.iter().find(|a| a.kind == *kind).is_some_and(|a| a.alt_weapon_ads_only)));
     let priority = |kind: u32| -> i32 {
         atts.iter().find(|a| a.kind == kind).map_or(0, |a| a.first_raise_priority)
     };
+    let mut sorted = kinds.clone();
+    sorted.sort_unstable();
+    sorted.dedup();
+    sorted.truncate(3);
+    let overriding = |k: u32, s: usize| resolved(k).filter(|u| u.overrides_anim(s));
     let mut anims = w.anims.clone();
-    for s in 0..anims.len() {
-        // 1. First-raise slot 0x18: the resolved unique with the highest firstRaisePriority.
-        if s == 0x18 {
-            let best = combo_kinds.iter()
-                .filter_map(|(k, _)| resolved(*k).map(|u| (u, priority(*k))))
-                .filter(|(u, _)| u.anims.get(s).map_or(false, |a| a.is_some()))
-                .fold(None, |acc: Option<(&zhbo_formats::weapon::AttachmentUnique, i32)>, (u, p)| {
-                    match acc {
-                        Some((_, ap)) if ap >= p => acc,
-                        _ => Some((u, p)),
-                    }
-                });
-            if let Some(a) = best.and_then(|(u, _)| u.anims.get(s).cloned()).flatten() {
-                anims[s] = Some(a);
-            }
+    for (s, slot) in anims.iter_mut().enumerate() {
+        if !singles.iter().any(|u| u.overrides_anim(s)) {
             continue;
         }
-        // 2. Alt-mode ADS-only: slots 0x1A, 0x1B, 0x55-0x57 stay the variant's.
-        if alt_ads_only && [0x1A, 0x1B, 0x55, 0x56, 0x57].contains(&s) {
+        *slot = if s == 0x18 {
+            // 1. First raise (`FUN_008eb720`): the first field's resolved unique takes it if it
+            // overrides the slot; a later field needs a strictly higher `firstRaisePriority`.
+            let mut best = None;
+            let mut prio = 0;
+            for (i, k) in sorted.iter().enumerate() {
+                if let Some(u) = overriding(*k, s) {
+                    let p = priority(*k);
+                    if i == 0 || p > prio {
+                        best = u.anims.get(s).cloned().flatten();
+                        prio = p;
+                    }
+                }
+            }
+            best
+        } else if alt_ads_only && [0x1A, 0x1B, 0x55, 0x56, 0x57].contains(&s) {
+            // 2. Alt-mode ADS-only: these slots stay the variant's.
             continue;
-        }
-        // 3. Aim slots 0x3D-0x40 and 0x55-0x57: the optic's resolved unique.
-        if [0x3D, 0x3E, 0x3F, 0x40, 0x55, 0x56, 0x57].contains(&s) {
-            if let Some(k) = optic_kind {
-                if let Some(u) = resolved(k) {
-                    if let Some(a) = u.anims.get(s) {
-                        anims[s] = a.clone();
-                        continue;
-                    }
-                }
-            }
-        }
-        // 4. Otherwise: the first field kind's resolved unique, ascending eAttachment order.
-        let mut sorted: Vec<u32> = combo_kinds.iter().map(|(k, _)| *k).collect();
-        sorted.sort();
-        let mut found = false;
-        for k in sorted {
-            if let Some(u) = resolved(k) {
-                if let Some(a) = u.anims.get(s) {
-                    if a.is_some() {
-                        anims[s] = a.clone();
-                        found = true;
-                        break;
-                    }
-                }
-            }
-        }
-        if found { continue; }
-        // 5. Base unique fallback: fills only a slot the variant left EMPTY (BO2 keeps the
-        // variant's own clip for every populated slot — the bare an94's putaway_quick stands;
-        // measured on the conformance rows).
-        if anims[s].is_none() {
-            if let Some(u) = base {
-                if let Some(a) = u.anims.get(s) {
-                    if a.is_some() {
-                        anims[s] = a.clone();
-                    }
-                }
+        } else if let Some(u) = optic_kind.filter(|_| (0x3D..=0x40).contains(&s) || (0x55..=0x57).contains(&s)).and_then(|k| overriding(k, s)) {
+            // 3. The aim slots: the mounted optic's resolved unique, if it overrides the slot.
+            u.anims.get(s).cloned().flatten()
+        } else if let Some(u) = sorted.iter().find_map(|k| overriding(*k, s)) {
+            // 4. The first field kind's resolved unique that overrides it, ascending eAttachment.
+            u.anims.get(s).cloned().flatten()
+        } else {
+            // 5. The base unique's own clip (not the variant's).
+            base.and_then(|u| u.anims.get(s).cloned().flatten())
+        };
+    }
+    // `FUN_0052d540`: after the merge an alt mode puts back its own alt raise, alt drop and ADS
+    // down (slots 0x1A, 0x1B, 0x56), whatever the attachments override.
+    if alt_mode && !singles.is_empty() {
+        for s in [0x1A, 0x1B, 0x56] {
+            if let (Some(slot), Some(own)) = (anims.get_mut(s), w.anims.get(s)) {
+                *slot = own.clone();
             }
         }
     }
-    let mut hide = w.hide_tags.clone();
-    for (u, _) in &parts {
-        hide.extend(u.hide_tags.iter().cloned());
-    }
-    if let Some(u) = exact {
-        hide.extend(u.hide_tags.iter().cloned());
-    }
-    hide.sort();
-    hide.dedup();
-    let sounds = parts.iter().map(|(u, _)| *u).find(|u| u.fire_sound_player.is_some() && u.fire_sound_player != w.fire_sound_player);
+    // The hidden bones (`FUN_008ec1a0`, G14 §4), over the single uniques as `FUN_008eb360` lists
+    // them (ascending kinds; a kind without a unique stands in as the base unique, except in the
+    // third field, which ends the list): every tag a single hides is hidden, and a tag the variant
+    // hides stays hidden only if every single lists it too.
+    let hide = match base.filter(|_| w.has_default_attachment && !sorted.is_empty()) {
+        None => w.hide_tags.clone(),
+        Some(u0) => {
+            let lists: Vec<&[String]> = sorted
+                .iter()
+                .enumerate()
+                .map(|(i, k)| w.single_unique(*k).or(if i < 2 { Some(u0) } else { None }))
+                .map_while(|u| u.map(|u| u.hide_tags.as_slice()))
+                .collect();
+            let mut out: Vec<String> = w.hide_tags.iter().filter(|t| lists.iter().all(|l| l.contains(t))).cloned().collect();
+            for t in lists.iter().flat_map(|l| l.iter()) {
+                if !w.hide_tags.contains(t) && !out.contains(t) {
+                    out.push(t.clone());
+                }
+            }
+            out
+        }
+    };
+    let sounds = singles.iter().find(|u| u.fire_sound_player.is_some() && u.fire_sound_player != w.fire_sound_player);
     Combo {
-        no_clip: parts.iter().any(|(u, _)| u.disable_base_clip),
-        // Read over both selection paths, as `hide` does: the single-attachment uniques and the
-        // exact multi-attachment unique. Data-driven, never a name match or a hide tag.
-        no_base_attachment: parts.iter().any(|(u, _)| u.disable_base_attachment)
-            || exact.is_some_and(|u| u.disable_base_attachment),
-        // Read over both selection paths like the flag above: the exact combination's unique is
-        // the more specific entry and wins.
-        base_attachment_offset: exact
-            .filter(|u| u.override_base_attachment_offsets)
-            .or_else(|| parts.iter().map(|(u, _)| *u).find(|u| u.override_base_attachment_offsets))
-            .map(|u| u.base_attachment_offset),
+        no_clip: singles.iter().any(|u| u.disable_base_clip),
+        no_base_attachment: singles.iter().any(|u| u.disable_base_attachment),
+        base_attachment_offset: singles.iter().find(|u| u.override_base_attachment_offsets).map(|u| u.base_attachment_offset),
         fire_sound_player: sounds.and_then(|u| u.fire_sound_player.clone()).or_else(|| w.fire_sound_player.clone()),
         fire_sound: sounds.and_then(|u| u.fire_sound.clone()).or_else(|| w.fire_sound.clone()),
         parts,
         anims,
         hide,
     }
+}
+
+/// The animation table of an alt mode (`alt`, e.g. `gl_an94_mp`) toggled from a weapon carrying
+/// `shorts`: BO2's alt weapon keeps its parent's attachment fields, so it merges them over its OWN
+/// variant's uniques (`FUN_0052d540`), first dropping the attachment whose unique produced it
+/// (`FUN_0052d470`, matched on the unique's `altWeaponIndex`) unless the alt is ADS-only
+/// (`FUN_008ecb00`: the def's flag or any attachment's).
+pub fn alt_anims(alt: &zhbo_formats::weapon::Weapon, atts: &[zhbo_formats::weapon::Attachment], shorts: &[&str]) -> Vec<Option<String>> {
+    use crate::weapons::short_name;
+    let kind_of = |short: &str| alt.attachment_variants.iter().find(|(_, id)| short_name(id) == short).map(|(k, _)| *k);
+    let ads_only = alt.alt_weapon_ads_only
+        || shorts.iter().filter_map(|s| kind_of(s)).any(|k| atts.iter().find(|a| a.kind == k).is_some_and(|a| a.alt_weapon_ads_only));
+    let mut kept: Vec<&str> = shorts.to_vec();
+    if !ads_only {
+        let producer = kept.iter().position(|s| {
+            kind_of(s).and_then(|k| alt.single_unique(k)).and_then(|u| u.alt_weapon.as_deref()) == Some(alt.name.as_str())
+        });
+        if let Some(i) = producer {
+            kept.remove(i);
+        }
+    }
+    combo(alt, atts, &kept).anims
 }
 
 /// The BO2 weapon a converted id stands for: `an94_mp+gl+reflex` and `gl_an94_mp~...` are
@@ -420,23 +457,30 @@ pub(crate) fn weapon_viewmodels(
         let parts: Vec<(&xmodel::Model, &str)> = vec![(&gun, mount_tag(w))];
         // The attachments' models, each with where it goes: an attachment's additional mount (the
         // IR rail) before its own model, both on the unique's tag.
-        let mut extra: Vec<(xmodel::Model, Option<String>, crate::xf::Xf, u32)> = Vec::new();
+        let mut extra: Vec<Extra> = Vec::new();
         for (u, pt) in &c.parts {
-            for (name, offset, point) in attachment_parts(u, *pt) {
-                let Ok(model) = find_model(patch, common, name) else { continue };
-                extra.push((model, u.view_model_tag.clone(), offset, point));
+            // The list index of each of this unique's models in `extra`, for the ADS pairing.
+            let mut at: Vec<Option<usize>> = Vec::new();
+            for a in attachment_parts(u, *pt) {
+                let Ok(model) = find_model(patch, common, a.name) else {
+                    at.push(None);
+                    continue;
+                };
+                at.push(Some(extra.len()));
+                let ads_of = a.ads_of.and_then(|k| at.get(k).copied().flatten());
+                extra.push(Extra { model, tag: u.view_model_tag.clone(), xf: a.xf, point: a.point, ads_only: a.ads_only, ads_of });
             }
         }
         let gun_tex = textures(&gun, paks, out, &mut looks);
         let base_tex: Vec<Vec<Option<String>>> = base.iter().map(|p| textures(&p.model, paks, out, &mut looks)).collect();
-        let extra_tex: Vec<Vec<Option<String>>> = extra.iter().map(|(m, ..)| textures(m, paks, out, &mut looks)).collect();
+        let extra_tex: Vec<Vec<Option<String>>> = extra.iter().map(|e| textures(&e.model, paks, out, &mut looks)).collect();
         // The left gun of a dual-wield pair: its own textures and native blob, written once.
         let lh_tex = lh_gun.as_ref().map(|m| textures(m, paks, out, &mut looks));
         let native_lh = lh_gun.as_ref().zip(lh_tex.as_ref()).map(|(m, t)| native::model(m, t, &looks));
         // The native blobs (Track R): the same parts, unconverted, for the renderer's own BO2 pass.
         let native_gun = native::model(&gun, &gun_tex, &looks);
         let native_base: Vec<zhbo_native::model::Model> = base.iter().zip(&base_tex).map(|(p, t)| native::model(&p.model, t, &looks)).collect();
-        let native_extra: Vec<zhbo_native::model::Model> = extra.iter().zip(&extra_tex).map(|((m, ..), t)| native::model(m, t, &looks)).collect();
+        let native_extra: Vec<zhbo_native::model::Model> = extra.iter().zip(&extra_tex).map(|(e, t)| native::model(&e.model, t, &looks)).collect();
         let mut native_factions: Vec<(char, zhbo_native::model::Model)> = Vec::new();
         let mut rig: Option<Rig> = None;
         for (f, zone) in FACTIONS.iter().zip(zones) {
@@ -485,9 +529,9 @@ pub(crate) fn weapon_viewmodels(
                             rig.add_marker("tag_sights", root, local);
                         }
                     }
-                    for (model, tag, offset, pt) in &extra {
+                    for Extra { model, tag, xf, point: pt, .. } in extra.iter().filter(|e| !e.ads_only) {
                         let at = tag.as_deref().and_then(|t| rig.pivot(t)).unwrap_or(root);
-                        rig.attach(model, at, *offset);
+                        rig.attach(model, at, *xf);
                         // Aim through the optic: the line of sight goes up to the middle of its glass
                         // (the window sits in the upper part of the sight, above its mount).
                         if *pt == point::OPTIC as u32 {
@@ -515,8 +559,11 @@ pub(crate) fn weapon_viewmodels(
                         meshes.extend(character::skin(rig, &part.model, &format!("B{k}"), tex));
                     }
                 }
-                for (k, ((model, ..), tex)) in extra.iter().zip(&extra_tex).enumerate() {
-                    meshes.extend(character::skin(rig, model, &format!("A{k}"), tex));
+                for (k, (e, tex)) in extra.iter().zip(&extra_tex).enumerate() {
+                    if e.ads_only {
+                        continue;
+                    }
+                    meshes.extend(character::skin(rig, &e.model, &format!("A{k}"), tex));
                 }
                 finish(&mut meshes, &looks);
                 let name = vm_model(vm, f.letter);
@@ -533,7 +580,7 @@ pub(crate) fn weapon_viewmodels(
         }
         // The weapon's clips, then its alt mode's after them on the same viewmodel.
         let alt_id = defs.iter().find(|d| &d.id == id).map(|d| d.alt.clone()).unwrap_or_default();
-        let alt_anims = (!alt_id.is_empty()).then(|| bo2.iter().find(|a| a.name == base_id(&alt_id))).flatten().map(|a| a.anims.clone());
+        let alt_anims = (!alt_id.is_empty()).then(|| bo2.iter().find(|a| a.name == base_id(&alt_id))).flatten().map(|a| alt_anims(a, atts, &shorts));
         let mut sets = vec![(0usize, c.anims.clone())];
         if let Some(a) = alt_anims.clone() {
             sets.push((zhbo_core::weapons::ALT_CLIPS as usize, a));
@@ -575,16 +622,24 @@ pub(crate) fn weapon_viewmodels(
                 n += 1;
             }
         }
-        let attachments: Vec<(Option<String>, crate::xf::Xf, bool)> =
-            extra.iter().map(|(_, tag, offset, pt)| (tag.clone(), (offset.0, offset.1.map(|c| c / character::SCALE)), *pt == point::OPTIC as u32)).collect();
+        let attachments: Vec<native::AttachmentPart> = extra
+            .iter()
+            .map(|e| native::AttachmentPart {
+                tag: e.tag.clone(),
+                offset: (e.xf.0, e.xf.1.map(|c| c / character::SCALE)),
+                optic: e.point == point::OPTIC as u32,
+                ads_only: e.ads_only,
+                ads_of: e.ads_of,
+            })
+            .collect();
         let base_native_parts: Vec<native::BasePart> = base
             .iter()
             .zip(&native_base)
-            .map(|(p, m)| native::BasePart { model: m, tag: p.tag.clone(), offset: p.offset, optic: p.optic, ads_only: p.ads_only })
+            .map(|(p, m)| native::BasePart { model: m, tag: p.tag.clone(), offset: p.offset, optic: p.optic, ads_only: p.ads_only, ads_of: p.ads_of })
             .collect();
         let dual_tag = dual_mount();
         let dual_native = dual.zip(native_lh.as_ref()).map(|(w, m)| native::DualGun { gun: m, tag: dual_tag.as_str(), hide: &w.hide_tags });
-        let vm_native = native::Viewmodel { vm, id, gun: &gun, gun_tag: mount_tag(w), base_parts: base_native_parts, extra_models: extra.iter().map(|e| &e.0).collect(), attachments, hide: &c.hide, clips: &native_clips, dual: dual_native };
+        let vm_native = native::Viewmodel { vm, id, gun: &gun, gun_tag: mount_tag(w), base_parts: base_native_parts, extra_models: extra.iter().map(|e| &e.model).collect(), attachments, hide: &c.hide, clips: &native_clips, dual: dual_native };
         native::viewmodels(out, &vm_native, &native_gun, &native_base, &native_extra, &native_factions);
         let mask = |a: &[Option<String>]| a.iter().enumerate().take(128).filter(|(_, x)| x.is_some()).fold(0u128, |m, (i, _)| m | (1u128 << i));
         if let Some(d) = defs.iter_mut().find(|d| &d.id == id) {
@@ -645,6 +700,7 @@ pub(crate) fn world_weapons(
             offset: crate::xf::IDENTITY,
             rigid: true,
             ads_only: false,
+            ads_swap: None,
         }];
         for (u, _) in &c.parts {
             let Some(model) = u.world_model.as_deref().and_then(|m| find_model(patch, common, m).ok()) else { continue };
@@ -664,6 +720,7 @@ pub(crate) fn world_weapons(
                 offset: crate::xf::compose(native_base, (crate::xf::from_angles(u.world_rotation), u.world_offset)),
                 rigid: true,
                 ads_only: false,
+                ads_swap: None,
             });
         }
         out.insert(
@@ -924,7 +981,7 @@ mod tests {
         assert_eq!(defs[4].projectile_object, "", "the rifle itself fires bullets");
     }
 
-    use super::{attachment_parts, base_part_note, duplicate_sight, is_dual_wield, mount_tag, same_sight, BasePart};
+    use super::{attachment_parts, base_part_note, is_dual_wield, mount_tag, BasePart};
     use zhbo_formats::weapon::{inventory, Attachment, AttachmentUnique, Weapon};
 
     fn sight(name: &str, mins: [f32; 3], maxs: [f32; 3]) -> zhbo_formats::xmodel::Model {
@@ -941,9 +998,9 @@ mod tests {
     }
 
     /// BO2's two replacement channels are separate fields: `disableBaseWeaponClip` suppresses the
-    /// magazine, `disableBaseWeaponAttachment` the base attachment art (the AS50's ACOG). The flag
-    /// is read over both selection paths — the single-attachment uniques and the exact
-    /// multi-attachment unique — and never inferred from a name or a hide tag.
+    /// magazine, `disableBaseWeaponAttachment` the base attachment art (the AS50's ACOG). The flags
+    /// are read from the single uniques only (`FUN_008ed820`/`FUN_008ed860`, G14 §3) — a combined
+    /// child's own flags are never consulted — and never inferred from a name or a hide tag.
     #[test]
     fn the_replacement_flags_are_read_from_the_selection() {
         let unique = |kind: u32, clip: bool, attachment: bool| AttachmentUnique {
@@ -962,19 +1019,22 @@ mod tests {
         assert!(c.no_clip, "the dualclip replaces the magazine");
         assert!(!c.no_base_attachment, "the flags select disjoint sets: it keeps the base art");
 
-        // The multi-attachment path: the flag lives on the exact `combined` unique, not on the
-        // single-attachment entries (the mask is `1 << 2 | 1 << 11`).
-        let combined = AttachmentUnique { kind: 0, combined: 0x804, disable_base_attachment: true, ..Default::default() };
-        let pair = Weapon { attachment_variants: vec![(2, "a".into()), (11, "b".into())], attachment_uniques: vec![combined], ..Default::default() };
+        // A combined child (`a`'s, sharing `b`) carrying the flag does not set it: BO2 reads the
+        // single uniques for both channels. Its drawn part is still the child's.
+        let a = AttachmentUnique { kind: 2, index: 2, child: 63, ..Default::default() };
+        let b = AttachmentUnique { kind: 11, index: 11, ..Default::default() };
+        let combined = AttachmentUnique { kind: 11, index: 63, combined: 0x804, disable_base_attachment: true, disable_base_clip: true, ..Default::default() };
+        let pair = Weapon { attachment_variants: vec![(2, "a".into()), (11, "b".into())], attachment_uniques: vec![a, b, combined], ..Default::default() };
         let c = super::combo(&pair, &[], &["a", "b"]);
-        assert!(c.no_base_attachment, "the exact combination's unique suppresses the base art");
-        assert!(!c.no_clip);
+        assert!(!c.no_base_attachment, "the combined child's flag is not read");
+        assert!(!c.no_clip, "the combined child's flag is not read");
+        assert_eq!(c.parts.iter().map(|(u, _)| u.index).collect::<Vec<_>>(), [63, 11], "the drawn parts are the resolved uniques");
     }
 
     /// `viewModelOffsetBaseAttachment` applies only when the unique sets
     /// `overrideBaseWeaponAttachmentOffsets` (12 uniques in the catalog, all the four snipers' IR
-    /// combinations) and is read over both selection paths as `disableBaseWeaponAttachment` is:
-    /// the exact multi-attachment unique is the more specific entry.
+    /// combinations) and is read from the first SINGLE unique that sets it (`FUN_008ed8f0`, G14 §3):
+    /// a combined child's own offset is never consulted.
     #[test]
     fn the_base_attachment_override_is_read_from_the_selection() {
         let ir = AttachmentUnique { kind: 14, override_base_attachment_offsets: true, base_attachment_offset: [9.889, 0.0, 4.253], ..Default::default() };
@@ -985,10 +1045,13 @@ mod tests {
         assert_eq!(super::combo(&acog, &[], &["acog"]).base_attachment_offset, None, "the ACOG replaces the base art, it does not move it");
         let vzoom = weapon(vec![AttachmentUnique { kind: 29, ..Default::default() }], vec![(29, "vzoom".into())]);
         assert_eq!(super::combo(&vzoom, &[], &["vzoom"]).base_attachment_offset, None, "the VZOOM leaves the base scope where it is");
-        // The `+ir` combined unique is read too, and its offset wins over the single entry's.
-        let combined = AttachmentUnique { kind: 14, combined: 0x8004000, override_base_attachment_offsets: true, base_attachment_offset: [1.5, 0.0, 2.5], ..Default::default() };
-        let pair = weapon(vec![ir, AttachmentUnique { kind: 27, ..Default::default() }, combined], vec![(14, "ir".into()), (27, "swayreduc".into())]);
-        assert_eq!(super::combo(&pair, &[], &["swayreduc", "ir"]).base_attachment_offset, Some([1.5, 0.0, 2.5]), "the exact combination's unique wins");
+        // The swayreduc's `+ir` combined child carries its own offset; BO2 reads the single IR's.
+        let combined = AttachmentUnique { kind: 14, index: 63, combined: 0x8004000, override_base_attachment_offsets: true, base_attachment_offset: [1.5, 0.0, 2.5], ..Default::default() };
+        let sway = AttachmentUnique { kind: 27, index: 27, child: 63, ..Default::default() };
+        let pair = weapon(vec![ir, sway, combined], vec![(14, "ir".into()), (27, "swayreduc".into())]);
+        let c = super::combo(&pair, &[], &["swayreduc", "ir"]);
+        assert_eq!(c.base_attachment_offset, Some([9.889, 0.0, 4.253]), "the single IR unique's offset");
+        assert!(c.parts.iter().any(|(u, _)| u.index == 63), "the swayreduc draws its combined child");
     }
 
     /// The IR optic's `viewModelAdditional` is a second model of the same attachment: the dual-band
@@ -1006,42 +1069,39 @@ mod tests {
         };
         let parts = attachment_parts(&ir, 10);
         assert_eq!(parts.len(), 2, "{parts:?}");
-        let (mount, at, point) = parts[0];
+        let (mount, at, point) = (parts[0].name, parts[0].xf, parts[0].point);
         assert_eq!((mount, point), ("t6_attach_optic_dualband_mount_view", 0), "the mount draws first and must not drive the aim marker");
         assert_eq!(at.1, crate::character::scaled([1.0, 0.0, 4.711]), "the mount rides its own add offset");
-        let (optic, at, point) = parts[1];
+        let (optic, at, point) = (parts[1].name, parts[1].xf, parts[1].point);
         assert_eq!((optic, point), ("t6_attach_optic_dualband_view", 10), "the optic keeps the attachment's point");
         assert_eq!(at.1, crate::character::scaled([1.045, 0.0, 5.568]));
         assert_eq!(attachment_parts(&AttachmentUnique { view_model: Some("t6_attach_bcpu_view".into()), ..Default::default() }, 10).len(), 1, "no mount without viewModelAdditional");
     }
 
-    /// The M32 lists `_view` and `_ads` as two complete sights: the same non-empty material set and
-    /// a near-identical bounding box. A genuinely different model (another material, or a distant
-    /// box) is not the same sight.
+    /// A unique's `viewModelADS` is a second model of the same attachment: drawn only while
+    /// aiming, instead of its `viewModel`, on the same tag at the same offset and rotation, and
+    /// still the attachment's optic (G14 §3). The additional model is not paired: it draws in both
+    /// lists.
     #[test]
-    fn the_sight_variant_dedupe_collapses_the_m32_pair() {
-        let view = sight("mc/mtl_t6_attach_optic_m32", [4.80, -0.80, 4.80], [8.54, 0.70, 6.84]);
-        let ads = sight("mc/mtl_t6_attach_optic_m32", [4.79, -0.80, 4.78], [8.55, 0.70, 6.85]);
-        assert!(same_sight(&view, &ads), "the same sight's hip and ADS variants collapse");
-        let other_material = sight("mc/mtl_t6_attach_optic_other", [4.80, -0.80, 4.80], [8.54, 0.70, 6.84]);
-        assert!(!same_sight(&view, &other_material), "a different material set is a different part");
-        let elsewhere = sight("mc/mtl_t6_attach_optic_m32", [20.0, 0.0, 0.0], [24.0, 1.0, 2.0]);
-        assert!(!same_sight(&view, &elsewhere), "a disjoint box is a different part");
-    }
-
-    /// The M32's `_view` and `_ads` sights are the same sight at the same mount. The ADS variant is
-    /// not a duplicate: both load for the native manifest's ADS handoff. A true duplicate still
-    /// dedupes, and the hip sight is not a duplicate when the ADS variant is present.
-    #[test]
-    fn the_m32_ads_sight_is_not_deduped() {
-        let view = sight("t6_attach_optic_m32_view", [4.80, -0.80, 4.80], [8.54, 0.70, 6.84]);
-        let ads = sight("t6_attach_optic_m32_ads", [4.79, -0.80, 4.78], [8.55, 0.70, 6.85]);
-        let base = |model: zhbo_formats::xmodel::Model, ads_only: bool| BasePart { model, tag: None, offset: crate::xf::IDENTITY, magazine: false, optic: true, ads_only };
-        let mut out = vec![base(view.clone(), false)];
-        assert!(!duplicate_sight(&out, &ads), "the ADS variant is not a duplicate of the hip sight");
-        assert!(duplicate_sight(&out, &view), "a true duplicate still dedupes");
-        out.push(base(ads, true));
-        assert!(!duplicate_sight(&out, &view), "the hip sight is not a duplicate when the ADS variant is present");
+    fn the_ads_model_pairs_with_its_view_model() {
+        let holo = AttachmentUnique {
+            view_model: Some("t6_attach_optic_holo_view".into()),
+            view_model_ads: Some("t6_attach_optic_holo_ads".into()),
+            view_offset: [2.0, 0.0, 4.5],
+            view_rotation: [0.0, 1.0, 0.0],
+            ..Default::default()
+        };
+        let parts = attachment_parts(&holo, 1);
+        assert_eq!(parts.len(), 2, "{parts:?}");
+        assert_eq!((parts[0].name, parts[0].ads_only, parts[0].ads_of), ("t6_attach_optic_holo_view", false, None));
+        assert_eq!((parts[1].name, parts[1].ads_only, parts[1].ads_of), ("t6_attach_optic_holo_ads", true, Some(0)), "the ADS model replaces the view model");
+        assert_eq!((parts[1].xf, parts[1].point), (parts[0].xf, 1), "the same placement and the optic's point");
+        let mounted = AttachmentUnique { view_model_additional: Some("mount".into()), ..holo.clone() };
+        let parts = attachment_parts(&mounted, 1);
+        assert_eq!(parts.iter().map(|p| (p.name, p.ads_of)).collect::<Vec<_>>(), [("mount", None), ("t6_attach_optic_holo_view", None), ("t6_attach_optic_holo_ads", Some(1))]);
+        let ads_alone = AttachmentUnique { view_model_ads: Some("x_ads".into()), ..Default::default() };
+        let parts = attachment_parts(&ads_alone, 1);
+        assert_eq!((parts.len(), parts[0].ads_only, parts[0].ads_of), (1, true, None), "an ADS model with no view model draws only while aiming");
     }
 
     /// The conversion report names every base part, so a part that silently stops loading (the
@@ -1055,6 +1115,7 @@ mod tests {
             magazine,
             optic: !magazine,
             ads_only: false,
+            ads_of: None,
         };
         let note = base_part_note(&[part("t6_attach_mag_xpr50_view", true), part("t6_wpn_sniper_xpr50_scope_view", false)]);
         assert!(note.contains("2 base parts"), "{note}");
@@ -1091,6 +1152,19 @@ mod tests {
         assert!(!is_dual_wield(&base, &[]), "the bare base pistol is not a pair");
     }
 
+    /// The tests below author a unique's override bits from its named slots (BO2 sets the bit for
+    /// every slot the unique overrides).
+    fn with_bits(mut w: Weapon) -> Weapon {
+        for u in &mut w.attachment_uniques {
+            for (s, a) in u.anims.iter().enumerate() {
+                if a.is_some() {
+                    u.anim_overrides[s / 32] |= 1 << (s % 32);
+                }
+            }
+        }
+        w
+    }
+
     /// G14 §5 priority 1: slot 0x18 takes the resolved unique whose attachment's
     /// `firstRaisePriority` is highest; first wins ties.
     #[test]
@@ -1110,6 +1184,7 @@ mod tests {
             ..Default::default()
         };
         w.anims = vec![None; 0x58];
+        let w = with_bits(w);
         let c = super::combo(&w, &[att1, att2, att3], &["a", "b", "c"]);
         assert_eq!(c.anims[0x18].as_deref(), Some("u2_first_raise"), "the higher firstRaisePriority wins; the first of the ties wins");
     }
@@ -1121,10 +1196,125 @@ mod tests {
         let att = Attachment { kind: 1, alt_weapon_ads_only: true, ..Default::default() };
         let mut u = AttachmentUnique { kind: 1, ..Default::default() };
         u.anims = vec![None; 0x58]; u.anims[0x1A] = Some("unique_alt_raise".into());
-        let mut w = Weapon { attachment_variants: vec![(1, "gl".into())], attachment_uniques: vec![u], ..Default::default() };
+        let mut w = Weapon {
+            inventory: zhbo_formats::weapon::inventory::ALTMODE,
+            attachment_variants: vec![(1, "gl".into())],
+            attachment_uniques: vec![u],
+            ..Default::default()
+        };
         w.anims = vec![None; 0x58]; w.anims[0x1A] = Some("variant_alt_raise".into());
+        let w = with_bits(w);
         let c = super::combo(&w, &[att], &["gl"]);
         assert_eq!(c.anims[0x1A].as_deref(), Some("variant_alt_raise"), "the alt-mode slot keeps the variant's clip");
+    }
+
+    /// An alt mode merges its parent's attachments over its own uniques, minus the one that produced
+    /// it (`FUN_0052d470`); an ADS-only alt keeps the producer, and tier 2 keeps its own alt slots.
+    #[test]
+    fn the_alt_mode_merges_the_parents_attachments_minus_its_producer() {
+        use zhbo_formats::weapon::inventory::ALTMODE;
+        let gl = Attachment { name: "gl".into(), kind: 11, point: 2, ..Default::default() };
+        let reflex = Attachment { name: "reflex".into(), kind: 20, point: 1, ..Default::default() };
+        let mut gl_u = AttachmentUnique { kind: 11, alt_weapon: Some("gl_an94_mp".into()), ..Default::default() };
+        gl_u.anims = vec![None; 0x58];
+        gl_u.anims[0x01] = Some("gl_idle".into());
+        let mut reflex_u = AttachmentUnique { kind: 20, ..Default::default() };
+        reflex_u.anims = vec![None; 0x58];
+        reflex_u.anims[0x55] = Some("reflex_ads_up".into());
+        let mut alt = Weapon {
+            name: "gl_an94_mp".into(),
+            inventory: ALTMODE,
+            attachment_variants: vec![(11, "gl".into()), (20, "reflex".into())],
+            attachment_uniques: vec![gl_u, reflex_u],
+            ..Default::default()
+        };
+        alt.anims = vec![None; 0x58];
+        alt.anims[0x01] = Some("own_idle".into());
+        let alt = with_bits(alt);
+        let t = super::alt_anims(&alt, &[gl, reflex], &["gl", "reflex"]);
+        assert_eq!(t[0x01].as_deref(), Some("own_idle"), "the producer's unique is dropped");
+        assert_eq!(t[0x55].as_deref(), Some("reflex_ads_up"), "the parent's other attachment merges");
+
+        // The dual optic: ADS-only, so its unique stays and the alt slots stay the variant's.
+        let dualoptic = Attachment { name: "dualoptic".into(), kind: 3, point: 1, alt_weapon_ads_only: true, ..Default::default() };
+        let mut u = AttachmentUnique { kind: 3, alt_weapon: Some("dualoptic_an94_mp".into()), ..Default::default() };
+        u.anims = vec![None; 0x58];
+        u.anims[0x1A] = Some("rmr_alt_raise_up".into());
+        u.anims[0x3D] = Some("rmr_ads_fire".into());
+        let mut alt = Weapon {
+            name: "dualoptic_an94_mp".into(),
+            inventory: ALTMODE,
+            attachment_variants: vec![(3, "dualoptic".into())],
+            attachment_uniques: vec![u],
+            ..Default::default()
+        };
+        alt.anims = vec![None; 0x58];
+        alt.anims[0x1A] = Some("rmr_alt_raise_down".into());
+        let alt = with_bits(alt);
+        let t = super::alt_anims(&alt, &[dualoptic], &["dualoptic"]);
+        assert_eq!(t[0x1A].as_deref(), Some("rmr_alt_raise_down"));
+        assert_eq!(t[0x3D].as_deref(), Some("rmr_ads_fire"), "the ADS-only producer is kept");
+    }
+
+    /// The dual optic's parent (`an94_mp+dualoptic`): its attachment is alt-ADS-only, but tier 2 is
+    /// an alt-mode rule (`FUN_008eddb0` checks `inventoryType == ALTMODE` first), so the parent's
+    /// alt raise and its ADS up/down/other-scope take the dual optic's clips, and the unique's
+    /// empty alt drop overrides to empty (BO2 then plays the idle).
+    #[test]
+    fn the_dual_optic_parent_takes_the_hybrids_alt_and_ads_clips() {
+        let att = Attachment { name: "dualoptic".into(), kind: 3, point: 1, alt_weapon_ads_only: true, ..Default::default() };
+        let mut u = AttachmentUnique { kind: 3, ..Default::default() };
+        u.anims = vec![None; 0x58];
+        u.anims[0x1A] = Some("rmr_alt_raise_up".into());
+        u.anims[0x55] = Some("rmr_top_ads_up".into());
+        u.anims[0x56] = Some("rmr_top_ads_down".into());
+        u.anims[0x57] = Some("rmr_bottom_ads_up".into());
+        let mut w = Weapon {
+            inventory: zhbo_formats::weapon::inventory::PRIMARY,
+            attachment_variants: vec![(3, "dualoptic".into())],
+            attachment_uniques: vec![u],
+            ..Default::default()
+        };
+        w.anims = vec![None; 0x58];
+        w.anims[0x1A] = Some("pullout".into());
+        w.anims[0x1B] = Some("putaway".into());
+        w.anims[0x55] = Some("ads_up".into());
+        let mut w = with_bits(w);
+        w.attachment_uniques[0].anim_overrides[0] |= 1 << 0x1B; // a set bit with an empty name
+        let c = super::combo(&w, &[att], &["dualoptic"]);
+        assert_eq!(c.anims[0x1A].as_deref(), Some("rmr_alt_raise_up"));
+        assert_eq!(c.anims[0x1B], None, "the empty override wins over the variant's putaway");
+        assert_eq!(c.anims[0x55].as_deref(), Some("rmr_top_ads_up"));
+        assert_eq!(c.anims[0x56].as_deref(), Some("rmr_top_ads_down"));
+        assert_eq!(c.anims[0x57].as_deref(), Some("rmr_bottom_ads_up"));
+    }
+
+    /// A launcher's parent (`an94_mp+gl`) takes the launcher unique's alt raise/drop; its alt mode
+    /// (`gl_an94_mp`) puts its own 0x1A/0x1B/0x56 back after the merge (`FUN_0052d540`), even for
+    /// an attachment that is not ADS-only.
+    #[test]
+    fn the_launcher_parent_takes_its_clips_and_the_alt_mode_restores_its_own() {
+        let att = Attachment { name: "gl".into(), kind: 11, point: 2, ..Default::default() };
+        let mut u = AttachmentUnique { kind: 11, ..Default::default() };
+        u.anims = vec![None; 0x58];
+        u.anims[0x1A] = Some("gl_alt_raise".into());
+        u.anims[0x1B] = Some("gl_alt_drop".into());
+        u.anims[0x56] = Some("gl_ads_down".into());
+        u.anims[0x01] = Some("gl_idle".into());
+        let mut w = Weapon { attachment_variants: vec![(11, "gl".into())], attachment_uniques: vec![u], ..Default::default() };
+        w.anims = vec![None; 0x58];
+        w.anims[0x1A] = Some("own_alt_raise".into());
+        w.anims[0x1B] = Some("own_alt_drop".into());
+        let parent = with_bits(w.clone());
+        let c = super::combo(&parent, std::slice::from_ref(&att), &["gl"]);
+        assert_eq!(c.anims[0x1A].as_deref(), Some("gl_alt_raise"));
+        assert_eq!(c.anims[0x1B].as_deref(), Some("gl_alt_drop"));
+        let alt = with_bits(Weapon { inventory: zhbo_formats::weapon::inventory::ALTMODE, ..w });
+        let c = super::combo(&alt, &[att], &["gl"]);
+        assert_eq!(c.anims[0x1A].as_deref(), Some("own_alt_raise"));
+        assert_eq!(c.anims[0x1B].as_deref(), Some("own_alt_drop"));
+        assert_eq!(c.anims[0x56], None, "the variant's own (empty) ADS down");
+        assert_eq!(c.anims[0x01].as_deref(), Some("gl_idle"), "other slots still merge");
     }
 
     /// G14 §5 priority 3: the aim slots take the mounted optic's resolved unique, not the grip's.
@@ -1144,6 +1334,7 @@ mod tests {
             ..Default::default()
         };
         w.anims = vec![None; 0x58];
+        let w = with_bits(w);
         let c = super::combo(&w, &[optic_att, grip_att], &["reflex", "grip"]);
         assert_eq!(c.anims[0x3D].as_deref(), Some("optic_ads_fire"), "the optic's unique wins the aim slot");
         assert_eq!(c.anims[0x01].as_deref(), Some("grip_idle"), "the hand-pose slot takes the grip's clip");
@@ -1164,21 +1355,47 @@ mod tests {
             ..Default::default()
         };
         w.anims = vec![None; 0x58];
+        let w = with_bits(w);
         let c = super::combo(&w, &[att2, att1], &["b", "a"]);
         assert_eq!(c.anims[0x01].as_deref(), Some("u1_idle"), "ascending kind 1 wins over kind 2");
     }
 
-    /// G14 §5 priority 5: the base unique's table fills a slot the variant left EMPTY.
+    /// G14 §5 priority 5: a candidate slot (a single unique overrides it) that no RESOLVED unique
+    /// overrides takes the base unique's clip — here the single's combined child replaces it in
+    /// the pair and does not override the slot.
     #[test]
     fn the_base_unique_is_the_final_fallback() {
-        let att = Attachment { kind: 1, ..Default::default() };
+        let (att1, att2) = (Attachment { kind: 1, ..Default::default() }, Attachment { kind: 2, ..Default::default() });
         let mut base = AttachmentUnique { kind: 0, ..Default::default() };
         base.anims = vec![None; 0x58]; base.anims[0x01] = Some("base_idle".into());
-        let u = AttachmentUnique { kind: 1, ..Default::default() };
-        let mut w = Weapon { attachment_variants: vec![(1, "a".into())], attachment_uniques: vec![base, u], ..Default::default() };
-        w.anims = vec![None; 0x58]; // the variant leaves 0x01 EMPTY: the base unique fills it.
-        let c = super::combo(&w, &[att], &["a"]);
-        assert_eq!(c.anims[0x01].as_deref(), Some("base_idle"), "the base unique fills the variant's empty slot");
+        let mut u = AttachmentUnique { kind: 1, index: 1, child: 63, ..Default::default() };
+        u.anims = vec![None; 0x58]; u.anims[0x01] = Some("u_idle".into());
+        u.anim_overrides[0] = 1 << 1;
+        let child = AttachmentUnique { kind: 2, index: 63, combined: 6, anims: vec![None; 0x58], ..Default::default() };
+        let mut w = Weapon { attachment_variants: vec![(1, "a".into()), (2, "b".into())], attachment_uniques: vec![base, u, child], ..Default::default() };
+        w.anims = vec![None; 0x58]; w.anims[0x01] = Some("variant_idle".into());
+        let c = super::combo(&w, &[att1.clone(), att2.clone()], &["a", "b"]);
+        assert_eq!(c.anims[0x01].as_deref(), Some("base_idle"), "the base unique's clip, not the variant's");
+        let c = super::combo(&w, &[att1], &["a"]);
+        assert_eq!(c.anims[0x01].as_deref(), Some("u_idle"), "alone, the single overrides it");
+    }
+
+    /// Only the `animationOverrides` bits select: BO2 fills every slot of a unique's table (the
+    /// an94's acog unique names the plain idle), and a name without its bit is never read; a bit
+    /// with an empty name overrides to empty.
+    #[test]
+    fn only_the_override_bits_select_a_uniques_clip() {
+        let (att1, att11) = (Attachment { kind: 1, ..Default::default() }, Attachment { kind: 11, ..Default::default() });
+        let mut acog = AttachmentUnique { kind: 1, ..Default::default() };
+        acog.anims = vec![None; 0x58]; acog.anims[0x01] = Some("an94_idle".into());
+        let mut gl = AttachmentUnique { kind: 11, ..Default::default() };
+        gl.anims = vec![None; 0x58]; gl.anims[0x01] = Some("an94_gl_idle".into());
+        gl.anim_overrides[0] = 1 << 1 | 1 << 2;
+        let mut w = Weapon { attachment_variants: vec![(1, "acog".into()), (11, "gl".into())], attachment_uniques: vec![acog, gl], ..Default::default() };
+        w.anims = vec![None; 0x58]; w.anims[0x01] = Some("an94_idle".into()); w.anims[0x02] = Some("an94_fire".into());
+        let c = super::combo(&w, &[att1, att11], &["acog", "gl"]);
+        assert_eq!(c.anims[0x01].as_deref(), Some("an94_gl_idle"), "the acog's name without its bit is skipped");
+        assert_eq!(c.anims[0x02], None, "the gl's bit with no name overrides to empty");
     }
 
     /// G14 §5 priority 5 is a FALLBACK, not an override: the variant's populated slot survives
@@ -1191,29 +1408,39 @@ mod tests {
         let u = AttachmentUnique { kind: 1, ..Default::default() };
         let mut w = Weapon { attachment_variants: vec![(1, "a".into())], attachment_uniques: vec![base, u], ..Default::default() };
         w.anims = vec![None; 0x58]; w.anims[0x19] = Some("variant_putaway_quick".into());
+        let w = with_bits(w);
         let c = super::combo(&w, &[att], &["a"]);
         assert_eq!(c.anims[0x19].as_deref(), Some("variant_putaway_quick"), "the variant's own clip stands");
     }
 
-    /// G14 §5: the exact-combined unique participates as the mask-matched resolved child.
+    /// G14 §2/§5: a combined child is reached through its parent's `childLink`, and is picked when
+    /// its mask shares another combo kind — not by its own `attachmentType` or an exact mask.
     #[test]
-    fn the_exact_combined_unique_participates_as_the_resolved_child() {
+    fn the_linked_combined_child_participates_as_the_resolved_unique() {
         let att1 = Attachment { kind: 1, ..Default::default() };
         let att2 = Attachment { kind: 2, ..Default::default() };
-        let mut u1 = AttachmentUnique { kind: 1, ..Default::default() };
+        let att3 = Attachment { kind: 3, ..Default::default() };
+        let mut u1 = AttachmentUnique { kind: 1, index: 1, child: 63, ..Default::default() };
         u1.anims = vec![None; 0x58]; u1.anims[0x01] = Some("u1_idle".into());
-        let mut u2 = AttachmentUnique { kind: 2, ..Default::default() };
+        let mut u2 = AttachmentUnique { kind: 2, index: 2, ..Default::default() };
         u2.anims = vec![None; 0x58]; u2.anims[0x01] = Some("u2_idle".into());
-        let mut exact = AttachmentUnique { kind: 1, combined: 6, ..Default::default() };
-        exact.anims = vec![None; 0x58]; exact.anims[0x01] = Some("exact_idle".into());
+        let u3 = AttachmentUnique { kind: 3, index: 3, ..Default::default() };
+        // The child's own attachmentType names the partner (2), as BO2 authors it.
+        let mut child = AttachmentUnique { kind: 2, index: 63, combined: 6, ..Default::default() };
+        child.anims = vec![None; 0x58]; child.anims[0x01] = Some("child_idle".into());
         let mut w = Weapon {
-            attachment_variants: vec![(1, "a".into()), (2, "b".into())],
-            attachment_uniques: vec![u1, u2, exact],
+            attachment_variants: vec![(1, "a".into()), (2, "b".into()), (3, "c".into())],
+            attachment_uniques: vec![u1, u2, u3, child],
             ..Default::default()
         };
         w.anims = vec![None; 0x58];
-        let c = super::combo(&w, &[att1, att2], &["a", "b"]);
-        assert_eq!(c.anims[0x01].as_deref(), Some("exact_idle"), "the exact combined child participates");
+        let w = with_bits(w);
+        let c = super::combo(&w, &[att1.clone(), att2.clone()], &["a", "b"]);
+        assert_eq!(c.anims[0x01].as_deref(), Some("child_idle"), "kind 1 resolves to its linked child");
+        let c = super::combo(&w, &[att1.clone(), att2, att3.clone()], &["a", "b", "c"]);
+        assert_eq!(c.anims[0x01].as_deref(), Some("child_idle"), "a third kind does not block the overlap");
+        let c = super::combo(&w, &[att1, att3], &["a", "c"]);
+        assert_eq!(c.anims[0x01].as_deref(), Some("u1_idle"), "no partner: the single unique");
     }
 
     /// A unique's `None` is "no override", never an erase: the base value survives.
@@ -1226,6 +1453,7 @@ mod tests {
         u.anims = vec![None; 0x58]; u.anims[0x01] = None;
         let mut w = Weapon { attachment_variants: vec![(1, "a".into())], attachment_uniques: vec![base, u], ..Default::default() };
         w.anims = vec![None; 0x58]; w.anims[0x01] = Some("variant_idle".into());
+        let w = with_bits(w);
         let c = super::combo(&w, &[att], &["a"]);
         assert_eq!(c.anims[0x01].as_deref(), Some("variant_idle"), "the unique's None does not erase the base");
     }
@@ -1238,6 +1466,7 @@ mod tests {
         u.anims = vec![None; 0x58]; u.anims[0x01] = Some("viewmodel_mp7_grip_idle".into());
         let mut w = Weapon { name: "mp7_mp".into(), attachment_variants: vec![(12, "grip".into())], attachment_uniques: vec![u], ..Default::default() };
         w.anims = vec![None; 0x58]; w.anims[0x01] = Some("viewmodel_mp7_idle".into());
+        let w = with_bits(w);
         let c = super::combo(&w, &[att], &["grip"]);
         assert_eq!(c.anims[0x01].as_deref(), Some("viewmodel_mp7_grip_idle"), "the grip's idle wins");
     }
@@ -1251,6 +1480,7 @@ mod tests {
         u.anims = vec![None; 0x58]; u.anims[0x18] = None;
         let mut w = Weapon { attachment_variants: vec![(1, "a".into())], attachment_uniques: vec![u], ..Default::default() };
         w.anims = vec![None; 0x58]; w.anims[0x18] = Some("variant_first_raise".into());
+        let w = with_bits(w);
         let c = super::combo(&w, &[att], &["a"]);
         assert_eq!(c.anims[0x18].as_deref(), Some("variant_first_raise"), "no first-raise offer keeps the variant's clip");
     }

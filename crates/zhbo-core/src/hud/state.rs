@@ -111,6 +111,12 @@ pub struct HudLui {
     /// The local player's kills and deaths this match (the scoreboard row).
     pub kills: u32,
     pub deaths: u32,
+    /// BO2's zoom direction (`cg+0x4ae38`, [`crate::weapons::scope::zooming_in`]): picks the
+    /// weapon's in- or out-window for the reticle zoom.
+    pub ads_zoom_in: bool,
+    /// This frame's viewmodel is not drawn: the reticle zoom is up, tested with the direction as it
+    /// stood *before* this frame's update (`FUN_005374c0` tests, then `FUN_0052e170` updates).
+    pub gun_under_overlay: bool,
 }
 
 fn hash(s: &str) -> u64 {
@@ -128,6 +134,11 @@ impl HudLui {
             }
             let frac = if p.max_health > 0.0 { p.health / p.max_health } else { 1.0 };
             self.low_health.tick(frac, self.clock);
+            let ads = p.arsenal.ads;
+            self.gun_under_overlay = crate::weapons::scope::reticle_zoom(p.arsenal.current_weapon(), ads, self.ads_zoom_in).is_some();
+            self.ads_zoom_in = crate::weapons::scope::zooming_in(self.ads_zoom_in, ads);
+        } else {
+            self.gun_under_overlay = false;
         }
     }
 

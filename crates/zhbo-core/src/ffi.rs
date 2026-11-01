@@ -746,6 +746,9 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
                 .and_then(|d| crate::nativevm::choice_for(d, &p.camo))
         });
         crate::nativevm::set_local_camo(choice);
+        // The viewmodel BO2 does not draw this frame: its scope overlay's reticle zoom is up.
+        let hidden = s.client.hud.lui.gun_under_overlay.then(|| s.sim.player(inp.local_player).map(|p| p.arsenal.current_weapon().viewmodel)).flatten();
+        crate::nativevm::set_gun_under_overlay(hidden);
         out
     })
     .unwrap_or_default();

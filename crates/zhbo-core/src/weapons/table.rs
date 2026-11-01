@@ -761,7 +761,8 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
         |d: &mut WeaponDef, v: Values| { d.overlay_material_low_res = v.text.into(); Ok(()) }),
     field!("OverlayReticle", "The overlay reticle enum (`weapOverlayReticle_t`).", FieldKind::Num,
         |d: &WeaponDef| d.overlay_reticle.to_string(),
-        |d: &mut WeaponDef, v: Values| { d.overlay_reticle = v.text_num()? as u32; Ok(()) }),    field!("FireCycle", "Last-round fire time, fire delay, rechamber, rechamber bolt, hold fire (seconds); shots before a rechamber; bolt action.", FieldKind::Nums(7),
+        |d: &mut WeaponDef, v: Values| { d.overlay_reticle = v.text_num()? as u32; Ok(()) }),
+    field!("FireCycle", "Last-round fire time, fire delay, rechamber, rechamber bolt, hold fire (seconds); shots before a rechamber; bolt action.", FieldKind::Nums(7),
         |d: &WeaponDef| { let t = &d.timing; format!("{} {} {} {} {} {} {}", t.last_fire_time, t.fire_delay, t.rechamber_time, t.rechamber_bolt_time, t.hold_fire_time, t.shots_before_rechamber, t.bolt_action as u8) },
         |d: &mut WeaponDef, v: Values| {
             v.need(7)?;
@@ -853,6 +854,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("UnlimitedAmmo", "The clip never reads as empty for the empty raise and drop (`unlimitedAmmo`).", FieldKind::Num,
         |d: &WeaponDef| (d.traits.unlimited_ammo as u8).to_string(),
         |d: &mut WeaponDef, v: Values| { d.traits.unlimited_ammo = v.text_num()? != 0.0; Ok(()) }),
+    field!("GuidedMissileType", "The missile guidance enum (`guidedMissileType_t`; 6 is TV-guided).", FieldKind::Num,
+        |d: &WeaponDef| d.guided_missile_type.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.guided_missile_type = v.text_num()? as u32; Ok(()) }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -912,7 +916,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 106);
+        assert_eq!(WEAPON_FIELDS.len(), 107);
         assert_eq!(ATTACHMENT_FIELDS.len(), 28);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }
@@ -1028,12 +1032,16 @@ mod tests {
             overlay_material: "scope_overlay_xpr50".into(),
             overlay_material_low_res: "scope_overlay_xpr50_low_res".into(),
             overlay_reticle: 1,
+            zoom: crate::weapons::Zoom { in_frac: 0.016, out_frac: 0.05, overlay_alpha_scale: 1.0, ..Default::default() },
+            guided_missile_type: 6,
             ..Default::default()
         };
         let text = format_table(std::slice::from_ref(&d));
+        assert!(text.contains("OverlayAlphaScale = 1"), "{text}");
         assert!(text.contains("OverlayMaterial = scope_overlay_xpr50"), "{text}");
         assert!(text.contains("OverlayMaterialLowRes = scope_overlay_xpr50_low_res"), "{text}");
         assert!(text.contains("OverlayReticle = 1"), "{text}");
+        assert!(text.contains("GuidedMissileType = 6"), "{text}");
         let back = parse_table(&text).unwrap();
         assert_eq!(back[0], d);
     }

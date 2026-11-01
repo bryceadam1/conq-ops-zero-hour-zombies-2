@@ -195,8 +195,18 @@ impl State {
         };
         let ads = layer_path.and_then(|p| loaded.anims.get(p)).map(|a| (a, ads_frame(req.ads, layer_down, a.num_frames)));
         loaded.pose(&req, anim, left, ads, &mut self.posed);
+        // BO2 poses and plays the viewmodel but does not add it to the scene while its scope
+        // overlay's reticle zoom is up (`FUN_005374c0`, drawGun = 0): arms, gun and scope all go.
+        // Only when the overlay art exists — otherwise neither sight would show.
+        let under_overlay = loaded.overlay_art_present && super::gun_under_overlay(inp.vm);
+        if under_overlay {
+            self.log_once("the viewmodel is not drawn under the scope overlay (reticle zoom up)".into());
+        }
         #[cfg(feature = "renderer")]
         {
+            if under_overlay {
+                return DRAWN;
+            }
             super::gpu::draw(self, inp)
         }
         #[cfg(not(feature = "renderer"))]

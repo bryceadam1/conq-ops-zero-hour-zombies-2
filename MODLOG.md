@@ -5424,3 +5424,229 @@ it holds breath (ps+0x10 bit 4) for the breath-hold dvar time (+ `perk_extraBrea
 `holdbreath`), then gasps; ps+0x4e0 lerps the sway scale by two dvars. Not ported: the mod has no
 aimed idle sway to steady in this base (5a carries `IdleAmount` but nothing draws it). Follow-up for
 whoever ports the ADS idle sway.
+
+## Combined uniques: BO2's two unique lookups, the override bits and the hide merge (2026-10-25, `v1/combined-uniques`)
+
+BO2 keeps 153 *combined* `WeaponAttachmentUnique`s (`au_xm8_acog+grip`, slots ≥ 63 of
+`attachmentUniques`), reached from a single unique's `childLink` and then each child's
+`siblingLink`; `FUN_008eb690` (G14 §2) picks the first child whose `combinedAttachmentTypeMask`
+shares one of the combination's *other* kinds. 151 of them are selected by some legal combo
+(1,242 expected rows); the converter selected none of them correctly. The fix ports BO2's two
+lookups and the rules that read them, field by field:
+
+* **The parser keeps the links**: each unique's slot (`index`), `childLink`, `siblingLink`,
+  `viewModelADS` and the `animationOverrides` bitset. `Weapon::single_unique` /
+  `Weapon::resolved_unique` (the `FUN_008eb690` walk) are the one source; the conformance
+  oracle keeps its own transcription (it must not call the converter).
+* **Gotcha: a child's `attachmentType` names the PARTNER, not the parent** —
+  `au_xm8_acog+grip` (a child of the acog) has kind 12. The old `kind == k && combined == mask`
+  match therefore gave the grip the acog's child, and an exact mask never matched a
+  three-attachment combo (the children's masks have two bits).
+* **Resolved unique → parts and anims only** (G14 §3/§5): the drawn parts (first and third
+  person) and the animation table read the resolved unique. **Single uniques → everything else**
+  (§4): the clip/base-art flags, the base-art offset, the hide tags, the overlay and the sounds.
+  The converter used to read the exact-mask combined unique for hide/flags/offset/overlay; BO2
+  never does.
+* **The animation table is gated by `animationOverrides`**, not by a non-empty name: BO2 fills
+  every slot of every unique's table (the an94's acog unique names the plain idle), so a name
+  without its bit must never be read; a slot is a candidate only when a single unique sets the
+  bit, then the five tiers run over the resolved uniques' bits, and tier 5 is the base unique's
+  clip. The "fill only an empty variant slot" heuristic is gone — the bits are the rule.
+* **The overlay is per field** (`FUN_008ed570/5f0/670`): each of material / low-res / reticle is
+  the first single unique differing from the base unique's. In `ir+vzoom` the IR supplies the
+  material and the VZOOM the reticle; the hard-coded replacement-optic kind list is gone.
+* **The hide merge** (`FUN_008ec1a0`): a variant tag stays hidden only if every single unique
+  (a kind without one standing in as the base unique) lists it too; every single's own tags are
+  added. The old union kept e.g. the AS50's `tag_rail` under every attachment.
+
+Measured (conformance CLI vs the 2026-10-25 baseline): weapons **706,586 → 677,855 cells
+(−28,731)**, clusters 203 → 201, **gap clusters 214 → 212** (both overlay clusters closed);
+`view_hide_tags` 4,228 → 490 (the rest is mod-side-empty rows), every anim column down to its
+mod-side-empty floor except the dual-optic alt raise and the DW left slots (e.g. `anim_ads_fire`
+3,217 → 651, `anim_alt_drop` 2,517 → 1,007), parts −25…−73 per column, `overlay_reticle`
+28 → 0, `overlay_material` 5 → 0. **No cell newly differs** (row-level check against the
+baseline). Left for their own items: the attachment optics' `viewModelADS` swap
+(`view_ads_part_models`, ~2,100 holo/rangefinder rows — a runtime per-part hip/ADS pairing),
+the magazine's rigid `tag_clip1` copy and authored roll (item 1).
+
+Verified: cargo test --workspace green; clippy adds no warning; the real-install suite
+(`--skip conformance`) green, incl. the new `reads_the_combined_children_and_their_links`. No
+game launched. Archive VERSION bump needed at integration (manifests and defs change).
+
+## The optics' ADS models: BO2's ADS part list, per part, at full ADS (2026-10-27, `v1/ads-models`)
+
+BO2 draws a different part list while aiming (G14 §3, `FUN_00535170`'s ADS flag): each resolved
+attachment unique contributes `viewModelADS` instead of `viewModel` when it has one (the holo's
+`t6_attach_optic_holo_ads`, the rangefinder's `_ads`), on the same tag at the same offset and
+rotation; the base `attachViewModel[7]` replaces slot 0 (the M32's `_ads` sight); every other part
+keeps its model. The converter never loaded a unique's `viewModelADS` (~2,100 conformance rows),
+paired the M32 by the `_ads` **name**, and `visible_parts` hid **every** optic at full ADS when any
+ADS part existed.
+
+**When BO2 swaps** (read-only Ghidra, t6mp): `FUN_0053a340` (per frame) computes the ADS flag as
+`cg+0x48288` (the weapon position fraction) `>=` dvar `cg_opticAttachmentViewmodelSwitch`
+(`DAT_00fca374`, registered in `FUN_004cc260`: default 1.0, range 0..1, "Zoom factor to switch
+Optic 1 ADS viewmodel"; the default read from `.rdata` 0x00b0c268), and rebuilds the viewmodel DObj
+(`FUN_00535540`, flag stored at `cg+0x696c8`) whenever the flag changes. So the swap is
+instantaneous at full ADS, with no cross-fade, and reverts the moment the fraction drops below 1.
+The mod already chose its aimed mesh at `ads >= 1.0`; the threshold is now the named
+`nativevm::OPTIC_VIEWMODEL_SWITCH`.
+
+* **Format**: `zhbo_native::viewmodel::Part` gains `ads_swap: Option<u16>` (the `ads_only` part
+  that replaces this one while aiming; `u16::MAX` = none), written after `ads_only`, validated on
+  read (it must name an `ads_only` part). The record changed: `viewmodel::VERSION` needs a bump at
+  integration — 2→3 alone, or 3→4 on top of `v1/attach-camo` (whose per-part `camo` goes before
+  `ads_swap` in the record). The `.zbw` third-person record is unchanged (`ads_swap: None`).
+* **Converter**: `Weapon::attach_view_slots` keeps each `attachViewModel` entry's slot; slot 7 is
+  `ads_only` and pairs with slot 0. The M32's name test and the material/bbox `same_sight` dedupe are
+  gone (BO2 has neither). `attachment_parts` appends the unique's `viewModelADS` after its
+  `viewModel`, ADS-only and paired; it keeps the attachment's point, so (like the M32's slot 7
+  already did) the ADS model is the last optic and places the aim marker — the eye lines up with the
+  sight drawn at full ADS. The W3D path skips the ADS-only models.
+* **Gotcha — the autotest log string moved**: the draw's once-log is now "native viewmodel: the ADS
+  part list draws at full ADS (...)"; `autotest-mac.sh --scope` waits for that text.
+
+Measured (conformance CLI vs `v1/combined-uniques`' `conf-hide`): weapons **677,855 → 675,893
+cells (−1,962)**, all in `view_ads_part_models` (3,374 → 1,412); both "mod lacks
+`t6_attach_optic_holo_ads` / `rangefinder_ads`" clusters (1,063 each) are gone. 164 of those rows
+still differ only by the magazine's rigid `tag_clip1` copy (item 1's "BO2 n entries, mod n+1"
+clusters); no cell newly differs. Gap clusters 212 → 212 (the column keeps other kinds: mod-side
+empty, the magazine copy, the four snipers' overlay-hidden scopes, the DW `_lh`).
+
+Verified: `cargo test --workspace` green; clippy adds no warning; the real-install suite
+(`--skip conformance`, 32) green incl. `the_holo_swaps_to_its_ads_model` and the slot-based
+`the_m32_sight_loads_both`. No game launched. In-game (integrator): `autotest-mac.sh --scope` and a
+holo/rangefinder ADS look. Archive VERSION bump needed (manifests change).
+
+## Under a 2D scope overlay BO2 skips the whole viewmodel, not the scope part (2026-10-30, `v1/scope-overlay-parts`)
+
+The mod hid the base scope part at full ADS when overlay art existed (the "Scope overlay" entry).
+BO2 does not drop a part: its ADS part list keeps `*_scope_view`, and while the overlay is up the
+**whole viewmodel** — arms, gun, scope — is not added to the scene. Read-only Ghidra, t6mp:
+
+* `FUN_005374c0` (per frame): `drawGun = !thirdPerson(cg+0xc) && cg_drawGun (DAT_00fce6e8) &&
+  !FUN_004b4760(cg, &zoom)`, passed to `FUN_00536f30`, which with `drawGun == 0` skips the DObj's
+  scene add (`FUN_004106e0`); the animation update (`FUN_0053a340`) and its notetracks still run.
+* `FUN_004b4760` (the reticle zoom): only a weapon with an overlay reticle (`FUN_008ed670`) or
+  overlay material (`FUN_008ed570`); `posFrac (cg+0x48288) != 0`; `frac = cg+0x4ae38 ?
+  fAdsZoomInFrac (FUN_008ec4b0) : fAdsZoomOutFrac (FUN_008ec520)`; `z = posFrac − (1 − frac)`,
+  `z /= frac` when positive; up when `z > 0.01` (`DAT_00c73410`), clamped to 1.
+* The window's two fields: the first of the combo's `WeaponAttachment`s (`FUN_008eb300`, kind order)
+  whose value differs from `defaultattachment`'s (`DAT_0316fc84`), else the variant's (+0x230/+0x234).
+* `cg+0x4ae38` (`FUN_0052e170`): 0 when `posFrac == 1`, 1 when `posFrac == 0`, held between. It is
+  updated **after** the gun test and before the 2D pass, so a base sniper (in-window 0) still draws
+  its gun on the first full-ADS frame, then the overlay takes over.
+* The overlay (`FUN_004b51e0`) draws on the same test, colour `(1,1,1, z / max(fOverlayAlphaScale, 1))`.
+* Data: base snipers in 0 / out 0.05 (no overlay while aiming in until full ADS; it fades over the
+  last 5 % aiming out); `ir`/`vzoom` 0.016 / 0.05 (fades in over the last 1.6 %); alpha scale 1.
+
+What changed: `weapons::scope` holds the rule; `WeaponDef` gains `ads_zoom_in_frac`,
+`ads_zoom_out_frac`, `overlay_alpha_scale` (table field `OverlayZoom`), read from the variant and
+resolved per combo by the converter (`zoom_fracs_for`). `HudLui::tick` tracks the direction and
+`gun_under_overlay` (tested before the update); the HUD overlay draws with BO2's alpha; the client
+frame publishes the hidden viewmodel (`nativevm::set_gun_under_overlay`, the `LOCAL_CAMO` pattern)
+and the native draw poses but answers `DRAWN` without submitting (the art-present guard stays).
+`visible_parts` no longer takes the overlay flag: the ADS list keeps the scope.
+
+* **Gotcha — `defaultattachment` is not in `common_mp`'s attachment list by that name.** Comparing
+  against `common_mp` alone finds no default, so every combo's first attachment "differs" (all zoom
+  cells came out 0). The production conversion now appends `patch_mp`'s attachments and takes the
+  last `defaultattachment` (the expected side's name map, later zone wins).
+* **Autotest log moved**: `autotest-mac.sh --scope` now waits for "the viewmodel is not drawn under
+  the scope overlay" (the AS50 has no ADS-swap part, so the "ADS part list" line never fires for it).
+* The W3D fallback path does not apply the hide (no ABI field for it); only the native draw does.
+
+Measured (conformance vs `~/.opencode/plan/ads-models/conf`): weapons **675,893 → 647,790 cells
+(−28,103)**, 201 → 198 clusters; `ads_zoom_in_frac` 9,341 → 0, `ads_zoom_out_frac` 9,341 → 0,
+`overlay_alpha_scale` 9,341 → 0, `view_ads_part_models` 1,412 → 1,332 (the 80 "mod lacks
+`*_scope_view`" rows gone; the 164 IR/VZOOM rows `v1/overlay-linked` adds will match too, since the
+list no longer depends on overlay art). cac unchanged (881). Gap clusters 212 → 209. No column
+regressed. Verified: `cargo test --workspace` green, clippy adds no warning, real-install suite
+(`--skip conformance`) green. The shipped weapon table changes (new field), so the integrator's
+archive `hud::VERSION` bump applies. In-game (integrator): `autotest-mac.sh --scope` and an AS50
+look (gun visible while scoping in, gone under the overlay, back in the last 5 % out).
+
+## Under the scope overlay BO2 hides the minimap, compass and damage indicators (2026-10-30, `v1/hud-zoom-hide`)
+
+Read-only Ghidra (t6mp) plus the MP HUD Lua, on what the HUD drops while the 2D overlay is up:
+
+* **`CoD.BIT_IS_SCOPED` (bit 28)** is set by `FUN_0055a420` when `FUN_005388d0` holds and the
+  weapon's `WeaponDef+0x770` is not 6. `FUN_005388d0` is the reticle zoom (`FUN_004b4760`), or a
+  turret/vehicle weapon with an overlay past a client-state gate (no counterpart in the mod).
+* **Gotcha: `+0x770` is `guidedMissileType`, not `weapClass`.** The layout (`layouts.rs`
+  `WeaponDef::guidedMissileType = 1904`) and OAT's `guidedMissileType_t` make 6
+  `MISSILE_GUIDANCE_TVGUIDED`. (`weapClass` 6 would be `rocketlauncher`, a tempting misread.) The field
+  is now carried: formats `Weapon::guided_missile_type` → `WeaponDef` → table `GuidedMissileType`.
+* Only two MP Lua widgets read the bit: the minimap container (`compass.lua` `UpdateMinimapVisibility`,
+  `setAlpha(0/1)`, no fade; it holds both the map square and the compass strip) and the voice dock
+  (not in the mod). The ammo area, score panel, scorestreaks and popups do not read it.
+* **Damage indicators** (`FUN_004ade10`): their gate `FUN_004adda0` is false whenever the reticle zoom
+  is up (no TV-guided exception).
+* **Side crosshair** (`FUN_004b5ea0` → `FUN_004b5e40`): `max(fade · cg_crosshairAlpha ·
+  (1 − aimSpreadScale), cg_crosshairAlphaMin)`, with `fade = 1 − z / max(fOverlayAlphaScale, 1)`
+  under the overlay. `DAT_01062db4` is confirmed `cg_crosshairAlphaMin` (0.5,
+  `answers/dvars-t6mp.tsv`), so the floor keeps it at half alpha rather than fading out.
+* **Mod bug fixed**: `draw_crosshair` drew the optic's 2D reticle (or the red dot) at ADS > 0.6 for
+  any optic, and `OPTICS` lists `ir` and `vzoom`, so IR/VZoom snipers drew it on top of the overlay.
+  It is now suppressed while the reticle zoom is up (the sight is on the viewmodel, which is not drawn).
+* The hit marker (GSC hudelem) and the score popup (LUI, no bit) stay.
+
+Measured: conformance diff CSVs byte-identical to the `v1/scope-overlay-parts` baseline (weapons
+647,790 cells / 198 clusters, cac 881 / 7); the gate and the enumerator check fail on that same
+backlog. `cargo test --workspace` green; clippy adds no warning. The weapon table gains a field, so
+the integrator's archive `hud::VERSION` bump applies. In-game (integrator): AS50 scope in and out; the
+minimap, compass and damage indicators vanish under the overlay and return in the last 5 % out; the
+ammo area, score panel and hit marker stay throughout.
+
+## The alt-ADS-only rule is an alt-mode rule: the dual optic's parent plays the hybrid's clips (2026-10-31, `v1/alt-anims`)
+
+The dual optic's leftover anim rows (385 per column in `anim_alt_raise`, `anim_alt_drop`,
+`anim_ads_up`, `anim_ads_down`, `anim_ads_up_other_scope`, every `dualoptic` combo of the 13 rifles
+and LMGs) were one bug in the converter's G14 §5 tier 2, not missing clips:
+
+* **`FUN_008eddb0` tests `inventoryType == ALTMODE` before `FUN_008ecb00`** (alt ADS-only). The
+  converter's `combo()` applied "0x1A/0x1B/0x55–0x57 stay the variant's" to any weapon whose
+  attachment is alt-ADS-only, so `an94_mp+dualoptic` — a PRIMARY — kept the bare an94's
+  `pullout`/`putaway`/`ads_up`/`ads_down`/idle. BO2 resolves them through the tiers like any slot:
+  alt raise `viewmodel_<w>_rmr_alt_raise_*` (the flip back to the top sight), alt drop empty (the
+  hybrid unique's set bit with no name → the idle), ADS up/down `rmr_top_ads_*`, ADS up other scope
+  `rmr_bottom_ads_up`. The old unit fixture was the wrong shape (a non-alt weapon); it is now an
+  alt mode, with new fixtures for the dual-optic parent and the launcher parent / its alt mode.
+* `FUN_008ecb00` also ORs the def's own `bAltWeaponAdsOnly` (`WeaponDef+1628`), now parsed
+  (`Weapon::alt_weapon_ads_only`), and `FUN_0052d540` puts an alt mode's own 0x1A/0x1B/0x56 back
+  after the merge — both ported into `combo()`. The converter still writes an alt mode's raw table
+  (`viewmodels()` `alt_anims`, no merge and no `FUN_0052d470` producer drop); the alt-combo rows
+  are BO2-only today (`dualoptic_*`/`gl_*` combo bases), so that path is unmeasured.
+* The toggle path: the incoming raise plays `ALT_RAISE` from the incoming def (`viewmodel.rs`), so
+  returning from the hybrid's bottom sight now plays `rmr_alt_raise_*`. `v1/alt-timing`'s outgoing
+  `ALT_DROP` uses `or(def, ALT_DROP, DROP)`; with the hybrid's empty alt drop that falls back to
+  the putaway, while BO2 registers an empty slot as the IDLE (`FUN_0052d3e0`) — the integrator
+  should make that fallback the idle when merging alt-timing.
+
+Measured vs this branch's base (`v1/hud-zoom-hide`): weapons **647,790 → 645,894 cells (−1,896)**;
+the five columns each fall to their mod-side-empty floor (`anim_alt_raise` 1,036 → 651,
+`anim_alt_drop` 1,007 → 651, `anim_ads_up`/`anim_ads_down` 1,044 → 659, `anim_ads_up_other_scope`
+1,036 → 651); clusters 198 and gap clusters 209 unchanged (the floor rows keep the clusters); no
+cell newly differs. The 8 extra `ads_up`/`ads_down` floor rows are the offhand items (their ADS
+slots have no clip; the emitter reads 0x55/0x56 without the idle fallback) — another item.
+
+Verified: `cargo test --workspace` green; clippy adds no warning; the real-install suite
+(`--skip conformance`) green. No game launched. Manifests change: archive VERSION bump at integration.
+
+### Follow-up: alt modes get BO2's merged table; the offhand ADS slots are unreachable (2026-10-31, `v1/alt-anims`)
+
+* **Alt modes now merge** (`viewmodels::alt_anims`): an alt weapon keeps its parent's attachment
+  fields, so its table is `combo()` over its OWN variant's uniques with the parent's shorts, minus
+  the producer (`FUN_0052d470`: the short whose single unique's `altWeaponIndex` names the alt),
+  kept when the alt is ADS-only (`FUN_008ecb00`); `combo()` then applies tier 2 and the
+  0x1A/0x1B/0x56 restore. Measured: **no cell moves** — the converted alt rows (`gl_*`, `sf_*`,
+  `dualoptic_*` combos) already matched, because in BO2's data the merge reproduces the raw
+  variant table for every one of them; their only anim diffs are 9,280 mod-side-empty cells
+  (combos without a manifest). The merge is correct by construction for the cases data adds later.
+* **The 8 offhand `anim_ads_up`/`anim_ads_down` rows stay**: the mod never plays an ADS layer on an
+  offhand — the arsenal zeroes `ads` when an offhand is readied and only a gun may aim
+  (`arsenal.rs`, `wants_ads` requires `class.is_gun()`), and `Loaded::ads_clip` reads the manifest
+  without the idle fallback by design (an idle on the `sample_over` layer would replace the action
+  pose). BO2 registers the idle in the empty slot (`FUN_0052d3e0`), but the mod never reaches it
+  (whether BO2 ever aims an offhand was not checked); reporting the idle would shape the emitter beyond what ships, and changing the
+  player would play an unreachable clip. Left as an honest floor.

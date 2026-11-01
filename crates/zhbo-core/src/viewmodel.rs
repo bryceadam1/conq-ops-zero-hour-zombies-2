@@ -206,10 +206,13 @@ impl Viewmodel {
         }
         if a.drop_left > 0.0 {
             let prev = &a.weapons[a.previous];
-            // An alt toggle drops over its alt drop; an empty clip drops over the empty drop time (`switch_to`), which may be shorter
-            // than the quick drop: test it first.
+            // An alt toggle drops over its alt drop; an empty clip drops over the empty drop time
+            // (`switch_to`), which may be shorter than the quick drop: test it first.
             let clip = if a.alt_pending { slot::ALT_DROP } else if prev.clip_empty() { slot::EMPTY_DROP } else if a.drop_total <= prev.def.quick_drop_time + 1e-4 { slot::QUICK_DROP } else { slot::DROP };
-            return frame(prev.def.viewmodel, or(prev.def, clip, slot::DROP) + prev.def.clip_base, a.drop_total - a.drop_left);
+            // A missing alt drop plays the idle, not the putaway (BO2: the slot's bit set with no
+            // name plays IDLE, `FUN_0052d3e0`; the Hybrid parent's alt drop is empty).
+            let fallback = if clip == slot::ALT_DROP { slot::IDLE } else { slot::DROP };
+            return frame(prev.def.viewmodel, or(prev.def, clip, fallback) + prev.def.clip_base, a.drop_total - a.drop_left);
         }
         if a.raise_left > 0.0 {
             let clip = match a.raise_kind {
@@ -469,6 +472,29 @@ mod tests {
         p.arsenal.drop_left = 0.0;
         let f = vm.update(0.05, &p, Events::default());
         assert_eq!((f.model, f.clip), (p.arsenal.weapons[1].def.viewmodel, slot::RAISE));
+    }
+
+    /// An alt toggle drops over the alt drop clip; a weapon without one plays its idle, not the
+    /// putaway (`FUN_0052d3e0`: the Hybrid parent's empty alt-drop slot plays IDLE).
+    #[test]
+    fn an_alt_toggle_without_an_alt_drop_plays_the_idle() {
+        let mut p = player();
+        p.mode = Mode::Fps;
+        let mut vm = Viewmodel::default();
+        vm.update(TABLET_PUTAWAY_TIME + 0.2, &p, Events::default());
+        let w = p.arsenal.active;
+        let mut def = p.arsenal.weapons[w].def.clone();
+        def.anims = (1u128 << slot::IDLE) | (1u128 << slot::DROP);
+        p.arsenal.weapons[w].def = Box::leak(Box::new(def.clone()));
+        p.arsenal.previous = w;
+        p.arsenal.alt_pending = true;
+        p.arsenal.drop_left = 0.2;
+        p.arsenal.drop_total = 0.4;
+        p.arsenal.raise_left = 0.0;
+        assert_eq!(vm.update(0.05, &p, Events::default()).clip, slot::IDLE + def.clip_base);
+        def.anims |= 1u128 << slot::ALT_DROP;
+        p.arsenal.weapons[w].def = Box::leak(Box::new(def.clone()));
+        assert_eq!(vm.update(0.05, &p, Events::default()).clip, slot::ALT_DROP + def.clip_base);
     }
 
     #[test]
