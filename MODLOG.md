@@ -9210,3 +9210,29 @@ does not convert" stopped locking it. BO2 locks it for a different reason: `Engi
 (`codbase.lua:3744`) on its statstable column 15 (`dlc1`, Revolution). `lock_items_without_art`
 now also locks an item whose DLC is not installed (no `zone/all/<dlc>_load_mp.ff`; this install has
 only `dlc0`), so without Revolution the Peacekeeper is listed locked as before.
+
+## Integration, polish round 3 (2026-11-01)
+
+`v1/integration4` is `v1/code-polish3` (7774b40) as-is, stacked on main 51b25f2, so there were no
+merges. The archive moved, so `hud::VERSION` 80 → 81:
+* weapon table: new `MeleeCharge` and `Bounce` keys, and `Flags` drops to four numbers because FMJ
+  now comes from the attachment;
+* attachment table: new `Image` key;
+* the roster comes from the statstable;
+* texture conversion no longer depends on order;
+* the base kit is BO2's Assault premade.
+
+ABI 27 and the blob formats are unchanged (CONTRACT Versioning). Nothing broke when the default kit
+moved from the AN-94 to the MTAR/SMAW, because the autotest classes name their own weapons
+(`scripts/autotest-mac.sh`), and the RTS leg passed.
+
+Verified:
+* `cargo test --workspace`: 961 passed.
+* `cargo clippy --workspace --all-targets`: clean.
+* Real-install suites: `-p zhbo-assets -- --ignored --skip conformance` 58 passed; `-p zhbo-formats
+  -- --ignored` 17 passed.
+* Conformance, unchanged: weapons 12,163 rows, 1,979 cells / 11 clusters; cac 0 cells with 4
+  BO2-only camo rows; 12 gap clusters.
+* `cargo xtask build`: OK.
+* Autotests, run one at a time: default 16/16, `--classpick` 8/8, `--rts` 15/15, `--scope` pass,
+  `--w3d-ads` 2/2.
