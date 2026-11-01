@@ -1109,6 +1109,95 @@
         crate::profile::reset();
     }
 
+    /// Every class the editor can build is pickable (`classmenu::kit_coverage`: every legal value
+    /// of every field with the largest of the others), from the command bar's button: the client
+    /// sends it whole and the sim applies exactly that class. The playtest bug was a personalised
+    /// class with an attachment on each gun whose payload outgrew the ABI's 64 words, so the pick
+    /// was refused with a dry-fire click.
+    #[test]
+    fn every_legal_custom_class_is_picked_and_applied() {
+        let _g = crate::profile::lock();
+        let custom_button = (crate::classicons::preset_rows() + 1) as i32;
+        let mut n = 0;
+        crate::classmenu::kit_coverage(|class| {
+            n += 1;
+            crate::profile::reset();
+            crate::profile::save(class.clone());
+            // The profile names an unnamed class (`Custom 1`); that is the class sent.
+            let class = &crate::profile::classes()[0];
+            let host = FakeHost::default();
+            host.add(general(7, 0));
+            let mut sim = Sim::new();
+            sim.rts_update(&host, 0, 7, 0, [0, 0, 0], None);
+            let mut client = Client::default();
+            let out = client.frame(&mut sim, &ClientIn { class_button: custom_button, ..Default::default() });
+            assert_eq!(out.choose_class, CHOOSE_CLASS_CUSTOM, "{class:?} was not sent");
+            let words = &out.choose_class_payload[..out.choose_class_payload_len as usize];
+            sim.choose_class(0, out.choose_class_general, usize::MAX, words);
+            let p = sim.player(0).expect("the record");
+            assert_eq!(p.class.as_deref(), Some(format!("custom:{}", class.name).as_str()), "{class:?}");
+            assert_eq!(p.camo, class.camo);
+            assert_eq!(p.secondary_camo, class.secondary_camo);
+            assert_eq!(p.knife_camo, class.knife);
+            assert_eq!(p.reticle, class.reticle);
+            assert_eq!(p.reticle_color, class.reticle_color);
+            let kit = class.loadout();
+            assert_eq!(p.arsenal.weapons[0].main.id, crate::weapons::weapon(&kit.primary).id, "{class:?}");
+            assert_eq!(p.arsenal.weapons[1].main.id, crate::weapons::weapon(&kit.secondary).id, "{class:?}");
+        });
+        assert!(n > 50);
+        crate::profile::reset();
+    }
+
+    /// The playtest report, as played: the second custom class of the set — an attachment on each
+    /// gun, gold camo, a gold knife and an Art of War secondary — picked from the class screen's
+    /// row. The player's class (`tar21_mp+rangefinder`, `crossbow_mp+ir`) needs the installed
+    /// table (zhbo-assets' `every_legal_class_fits_the_pick_payload` replays it); this one is
+    /// the same shape over the stand-in table, and its text is as far past the payload. It lands;
+    /// before the token payload it was refused with a dry-fire click.
+    #[test]
+    fn the_playtest_second_custom_class_is_picked_from_the_class_screen() {
+        let _g = crate::profile::lock();
+        crate::profile::reset();
+        crate::profile::load(
+            "v2\nactive 1\nset 1 CLASS SET 1\nclass\nSC\n\
+             primary=svu_mp;secondary=fnp45_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;lethal_count=1;\
+             tactical_count=1;melee=knife_held_mp;perks=Toughness,FastHands,Dexterity\nend\nclass\nCustom 2\n\
+             primary=tar21_mp+reflex;secondary=fiveseven_dw_mp;lethal=satchel_charge_mp;tactical=concussion_grenade_mp;\
+             lethal_count=1;tactical_count=1;melee=knife_held_mp;perks=Lightweight,Toughness,Dexterity;camo=camo_gold;\
+             knife=camo_gold;secondary_camo=camo_artofwar\nend\n",
+        );
+        let second = crate::profile::classes()[1].clone();
+        assert_eq!(second.name, "Custom 2");
+        assert_eq!(second.secondary_camo, "camo_artofwar", "the class loads whole");
+        assert!(second.to_wire().len() > 64 * 4, "its text is past the payload: {} bytes", second.to_wire().len());
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        sim.take_control(&host, 0, 1);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        assert!(client.class_pick_open);
+        let row = crate::classui::pick_rows(false)
+            .iter()
+            .position(|r| matches!(r, crate::classui::PickRow::Custom(1)))
+            .expect("the second custom is listed");
+        let key = crate::classui::pick_key(row).expect("a digit key");
+        inp.keys.set_down(key, true);
+        let out = client.frame(&mut sim, &inp);
+        inp.keys.set_down(key, false);
+        assert_eq!(out.choose_class, CHOOSE_CLASS_CUSTOM, "the pick was sent");
+        let words = &out.choose_class_payload[..out.choose_class_payload_len as usize];
+        assert_eq!(crate::classes::CustomClass::from_wire_words(words), Some(second.clone()));
+        sim.choose_class(0, out.choose_class_general, usize::MAX, words);
+        let p = sim.player(0).unwrap();
+        assert_eq!(p.class.as_deref(), Some("custom:Custom 2"));
+        assert_eq!(p.camo, "camo_gold");
+        assert_eq!(p.secondary_camo, "camo_artofwar");
+        crate::profile::reset();
+    }
+
     /// The standard scripted run starts on an unarmed General, and the autotest seeds the profile
     /// with one custom class first (`scripts/autotest-mac.sh`): the AN-94 with its under-barrel
     /// grenade launcher. BO2's premades carry no attachments, so without that seed the script's

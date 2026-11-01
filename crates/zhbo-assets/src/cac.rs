@@ -128,4 +128,63 @@ mod tests {
         assert!(matches!(&tactician.1, Source::Material("common_mp", m) if m == "menu_mp_bonuscard_two_tacticals"));
         assert!(sprites.iter().all(|(_, _, max)| *max == 96));
     }
+    /// Every legal class over the player's own install fits the pick payload and round-trips
+    /// (`zhbo_core::classmenu::kit_coverage`: every offered item with every legal attachment set,
+    /// both slots and Overkill, every offhand and count, perk, camo, reticle and colour, each with
+    /// the largest value of every other field). The playtest's own class — an attachment on each
+    /// gun and three camos, 258 bytes of text, refused by the 64-word payload — is replayed
+    /// verbatim. `--nocapture` prints the sweep's size and the largest payload against the text.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn every_legal_class_fits_the_pick_payload() {
+        use zhbo_core::classes::CustomClass;
+        use zhbo_core::classwire::{max_legal_bytes, PAYLOAD_WORDS};
+        let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
+        let mp = crate::paks::MpPool::load(&bo2_dir).unwrap();
+        let (bo2, atts) = mp.weapons().unwrap();
+        let patch_ui = crate::paks::load_zone(&bo2_dir, "patch_ui_mp").unwrap();
+        let (table, _) = crate::generals::class_table(&bo2_dir, &bo2, &atts, &mp.patch, &patch_ui, &mut Vec::new());
+        match zhbo_core::weapons::install_catalog(&zhbo_core::weapons::format_full_table(&table)) {
+            Ok(_) => {}
+            // Another real-install test in this process installed the same conversion first.
+            Err(e) if e.contains("already installed") => {}
+            Err(e) => panic!("{e}"),
+        }
+        let offer = zhbo_core::classmenu::offer();
+        assert!(offer.primary.len() > 20 && offer.secondary.len() > 5, "the install's items are offered");
+
+        let mut n = 0;
+        let (mut words_max, mut text_max) = (0, 0);
+        let mut over_text = 0;
+        zhbo_core::classmenu::kit_coverage(|c| {
+            n += 1;
+            let words = c.to_wire_words();
+            assert!(words.len() <= PAYLOAD_WORDS, "{} words: {c:?}", words.len());
+            // A class of the catalog's own items is all tokens, inside the constructive bound.
+            assert!(words.len() * 4 <= max_legal_bytes().next_multiple_of(4), "{} words, a literal rode: {c:?}", words.len());
+            assert_eq!(CustomClass::from_wire_words(&words).as_ref(), Some(c));
+            words_max = words_max.max(words.len());
+            let text = c.to_wire().len();
+            text_max = text_max.max(text);
+            if text > PAYLOAD_WORDS * 4 {
+                over_text += 1;
+            }
+        });
+        println!("{n} classes; largest payload {words_max} words (bound {} bytes); text form up to {text_max} bytes, {over_text} of them past the payload", max_legal_bytes());
+        assert!(n > 1000, "the sweep visited {n} classes");
+
+        // The playtest's class, as the profile stored it.
+        let mut c = CustomClass::from_spec(
+            "primary=tar21_mp+rangefinder;secondary=crossbow_mp+ir;lethal=frag_grenade_mp;tactical=willy_pete_mp;\
+             lethal_count=1;tactical_count=1;melee=knife_held_mp;perks=Lightweight,Toughness,Dexterity;camo=camo_gold;\
+             knife=camo_gold;secondary_camo=camo_artofwar",
+        );
+        c.name = "Custom 2".into();
+        let mut repaired = c.clone();
+        assert!(zhbo_core::classrepair::repair(&mut repaired).is_empty(), "the playtest class is legal");
+        assert!(c.to_wire().len() > PAYLOAD_WORDS * 4);
+        let words = c.to_wire_words();
+        assert!(words.len() <= PAYLOAD_WORDS, "{} words", words.len());
+        assert_eq!(CustomClass::from_wire_words(&words), Some(c));
+    }
 }

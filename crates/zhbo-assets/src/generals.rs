@@ -233,6 +233,61 @@ const SOLDIER_BOX_EXTENT: [f32; 3] = [18.0, 18.0, 38.0];
 /// The archive's files: `(path, bytes)`.
 pub type Files = Vec<(String, Vec<u8>)>;
 
+/// The weapon table's create-a-class side, before any art: every carryable BO2 weapon with its
+/// attachments and alt modes, the camo/reticle/colour options, the attribute bars, the perks, the
+/// wildcards, the class items' slots, the weapon groups and the class caps — everything the editor
+/// offers and a class names. [`files`] then locks the items whose art does not convert and adds
+/// the converted combinations; the real-install sweep of every legal class reads this directly.
+/// Returns the table and the statstable roster it was built over.
+pub fn class_table(
+    bo2_dir: &Path,
+    bo2: &[zhbo_formats::weapon::Weapon],
+    atts: &[zhbo_formats::weapon::Attachment],
+    patch: &Zone,
+    patch_ui: &Zone,
+    summary: &mut Vec<String>,
+) -> (zhbo_core::weapons::Table, crate::weapons::Roster) {
+    let names = crate::weapons::names(bo2_dir);
+    let meta = crate::weapons::attachment_metadata(patch, &names);
+    // BO2's camo choices (`mp/attachmenttable.csv`) and the 48 `camo_<weapon>` sets in
+    // `common_patch_mp` (the per-weapon material swap, `WeaponCamo`).
+    let camo = crate::weapons::camo_options(patch, &names);
+    let reticles = crate::weapons::reticle_options(patch, &names);
+    let reticle_colors = crate::weapons::reticle_color_options(patch, &names);
+    let roster = crate::weapons::Roster::read(patch);
+    let options = crate::weapons::OptionTables {
+        roster: &roster,
+        camo: &camo,
+        reticles: &reticles,
+        reticle_colors: &reticle_colors,
+    };
+    let mut table = crate::weapons::table_with_metadata(bo2, atts, crate::weapons::default_attachment(patch).as_ref(), &names, &meta, &options);
+    // The create-a-class bars (`mp/attributestable.csv`), before the combinations copy their base.
+    let (bars, att_bars) = crate::weapons::attributes(patch_ui);
+    crate::weapons::apply_attributes(&mut table, &bars, &att_bars);
+    // The perks: their name, description and what each does (its specialty set, Ghidra G1), from
+    // the player's own statstable.
+    table.perks = crate::weapons::perk_rows(patch, &names);
+    // The wildcards: the same statstable's bonus-card rows (name, description, slot, cost, order).
+    table.bonus_cards = crate::weapons::bonus_card_rows(patch, &names);
+    // Which weapons Create-a-Class offers, in which slot: the same statstable's weapon items.
+    crate::weapons::set_cac_slots(&mut table, patch, &names);
+    // The weapon groups' order (the editor's category order), from the UI Lua the conformance's
+    // expected side reads.
+    match zhbo_conformance::bo2::cac::weapon_groups(patch, patch_ui) {
+        Ok(groups) => table.weapon_groups = groups,
+        Err(e) => summary.push(format!("weapon groups: {e} (the built-in order stands in)")),
+    }
+    // The class caps the core reads from data, from the same Lua.
+    match zhbo_conformance::bo2::cac::class_caps(patch, patch_ui) {
+        Ok(caps) => {
+            table.class_caps = zhbo_core::classes::DATA_CAPS.iter().filter_map(|k| caps.get(*k).and_then(|v| v.parse().ok()).map(|v| (k.to_string(), v))).collect();
+        }
+        Err(e) => summary.push(format!("class caps: {e} (the built-in caps stand in)")),
+    }
+    (table, roster)
+}
+
 /// Convert everything; returns the archive files and a one-line summary.
 pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     // BO2's weapon asset pool, highest priority first (`zhbo_formats::weapon::MP_POOL`).
@@ -249,32 +304,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     // Every BO2 multiplayer weapon a player can carry, with its attachments and alt modes, as the
     // core's weapon table; art for the converted ones (the loadout first, then the rest).
     let pool = [&patch, &common_patch, &common];
-    let names = crate::weapons::names(bo2_dir);
-    let meta = crate::weapons::attachment_metadata(&patch, &names);
-    // BO2's camo choices (`mp/attachmenttable.csv`) and the 48 `camo_<weapon>` sets in
-    // `common_patch_mp` (the per-weapon material swap, `WeaponCamo`).
-    let camo = crate::weapons::camo_options(&patch, &names);
-    let reticles = crate::weapons::reticle_options(&patch, &names);
-    let reticle_colors = crate::weapons::reticle_color_options(&patch, &names);
     let camo_assets = zhbo_formats::weapon::camo_all(&common_patch).map_err(|e| e.to_string())?;
-    let roster = crate::weapons::Roster::read(&patch);
-    let options = crate::weapons::OptionTables {
-        roster: &roster,
-        camo: &camo,
-        reticles: &reticles,
-        reticle_colors: &reticle_colors,
-    };
-    let mut table = crate::weapons::table_with_metadata(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names, &meta, &options);
-    // The create-a-class bars (`mp/attributestable.csv`), before the combinations copy their base.
-    let (bars, att_bars) = crate::weapons::attributes(&patch_ui);
-    crate::weapons::apply_attributes(&mut table, &bars, &att_bars);
-    // The perks: their name, description and what each does (its specialty set, Ghidra G1), from
-    // the player's own statstable.
-    table.perks = crate::weapons::perk_rows(&patch, &names);
-    // The wildcards: the same statstable's bonus-card rows (name, description, slot, cost, order).
-    table.bonus_cards = crate::weapons::bonus_card_rows(&patch, &names);
-    // Which weapons Create-a-Class offers, in which slot: the same statstable's weapon items.
-    crate::weapons::set_cac_slots(&mut table, &patch, &names);
+    let (mut table, roster) = class_table(bo2_dir, &bo2, &atts, &patch, &patch_ui, &mut summary);
     let statstable = zhbo_formats::stringtable::rows(&patch, "mp/statstable.csv").ok().flatten().unwrap_or_default();
     crate::weapons::lock_items_without_art(
         &mut table,
@@ -283,19 +314,6 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         |w| w.view_model.as_deref().and_then(|m| viewmodels::find_model(&pool, m).ok()).is_none_or(|m| crate::weapons::model_art_converts(&m, |i| paks.resolve(i).is_some())),
         |dlc| zhbo_formats::t6zone::install_path(bo2_dir, &format!("{dlc}_load_mp")).is_file(),
     );
-    // The weapon groups' order (the editor's category order), from the UI Lua the conformance's
-    // expected side reads.
-    match zhbo_conformance::bo2::cac::weapon_groups(&patch, &patch_ui) {
-        Ok(groups) => table.weapon_groups = groups,
-        Err(e) => summary.push(format!("weapon groups: {e} (the built-in order stands in)")),
-    }
-    // The class caps the core reads from data, from the same Lua.
-    match zhbo_conformance::bo2::cac::class_caps(&patch, &patch_ui) {
-        Ok(caps) => {
-            table.class_caps = zhbo_core::classes::DATA_CAPS.iter().filter_map(|k| caps.get(*k).and_then(|v| v.parse().ok()).map(|v| (k.to_string(), v))).collect();
-        }
-        Err(e) => summary.push(format!("class caps: {e} (the built-in caps stand in)")),
-    }
     let converted = crate::weapons::converted(&patch, &bo2);
     let converted_base = crate::weapons::converted_base(&bo2, &roster);
     crate::weapons::add_variants(&mut table, &converted, &bo2);

@@ -9236,3 +9236,48 @@ Verified:
 * `cargo xtask build`: OK.
 * Autotests, run one at a time: default 16/16, `--classpick` 8/8, `--rts` 15/15, `--scope` pass,
   `--w3d-ads` 2/2.
+
+## Custom-class picks ride as catalog tokens, not the profile text (2026-11-01)
+
+Playtest 2: "I couldn't select my second custom class — maybe because I put an attachment on it?"
+The player's profile had `Custom 2` = `tar21_mp+rangefinder` / `crossbow_mp+ir` with gold camo, a
+gold knife and an Art of War secondary. The log shows the cause. In the first session the pick
+went through at "gets a custom class (64 words)": exactly full, before the secondary camo existed.
+After the secondary camo was added, there were eleven "picks Custom 2 (button 7)" lines, each with
+a dry-fire click and none followed by "gets a custom class".
+
+**Root cause.** The pick payload was the profile's human-readable `name\nspec` text, packed into
+the fixed 64-word (256-byte) `choose_class_payload`. That text grows with every key a class sets
+(each attachment, the three camos, reticle and colour, the counts) and with the 24-character name,
+and nothing bounded it. The playtest class was 258 bytes, so `pick_custom_class` refused it.
+Attachments were only part of the cause. Over the real install, the base kit with all three camos
+set overflowed for every one of the 2,579 primary combinations, even with no attachments. The
+largest legal class was 387 bytes.
+
+**Fix.** `classwire.rs` packs the pick as catalog tokens, the way BO2's `cacloadouts` stats store
+a class as numbers:
+* each weapon slot is the item's index in the installed catalog plus its attachment numbers (the
+  item's `allowed` order). A dual-wield pistol is its item plus `dw`.
+* perks, camos, reticles and colours are indices into their tables.
+* the name is stored as its bytes.
+
+Anything outside a vocabulary is sent as a literal string, so every class round-trips exactly.
+Legal classes are bounded by construction (159 bytes), and over the install the largest is
+19 words. The profile file keeps its text form, and the decoder still reads old text payloads.
+No ABI layout change: the payload stays 64 words.
+
+**Same cause, second site.** The menu's `save_profile` one-shot carries the whole profile text in
+1,024 words. Past about 20 personalised classes it overflowed, and `write_profile` silently skipped
+the file write. It now sends length `-1` (`profile::PROFILE_LIVE`), and `zhbo_profile_write` serves
+the core's live profile. The C++ is unchanged because it passes the length through. The command
+bar's `ClassButton.payload` used to truncate at 64 words, and it no longer does.
+
+**Found on the way.** A class reserve near `u16::MAX` (a hand-edited profile) combined with
+Scavenger overflowed the arsenal's reserve add, which panics in debug and wraps in release. It is
+now a saturating add.
+
+**Gotcha.** The sweep (`classmenu::kit_coverage`) relies on the codec's fields having independent
+sizes. Every legal value of every field is visited with the largest value of every other field,
+which bounds every legal kit without enumerating the full product. If a future field's encoding
+depends on another field, the sweep must enumerate the pair. `generals::class_table` is now the
+art-free table builder that `files` and the real-install sweep share.

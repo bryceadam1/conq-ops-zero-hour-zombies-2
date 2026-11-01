@@ -61,7 +61,10 @@ Ownership and rules:
 * **Pure local UI.** The menu never touches the sim: no determinism or lockstep requirements, no
   `GameMessage`s. Selecting a row *opens the editor* (in-game it would pick — there is no match);
   the profile file (`ConquerOps.profile`, written by the bridge on the `save_profile` one-shot,
-  exactly as in-game) is its only output.
+  exactly as in-game) is its only output. The one-shot carries the file's text when it fits the
+  1,024-word payload; a larger profile (ten sets of personalised classes pass 4 KiB) sends
+  `save_profile_payload_len = -1` (`profile::PROFILE_LIVE`), and `zhbo_profile_write` then serves
+  the core's own, already-applied profile — a write is never truncated or dropped.
 * **Free functions, not table fields.** `zhbo_menu_open` / `zhbo_menu_frame` / `zhbo_menu_close`
   and the `ZhboMenuIn`/`ZhboMenuOut` structs are an append-only surface like the rest of the ABI
   (bump `ZHBO_ABI_VERSION`, size asserts on both sides) but they do not extend `ZhboLogicApi`/
@@ -660,8 +663,8 @@ The functions the sections above do not cover, by when the bridge calls them (th
 | | `zhbo_load_strings`, `zhbo_load_classes`, `zhbo_load_profile` | The mod's shipped strings (`strings.rs`), the class presets (`classes.rs`), the player's create-a-class profile (`profile.rs`); each module's defaults hold until its call. |
 | Lockstep (game messages) | `zhbo_logic_take_control(player, general)` | `MSG_ZHBO_TAKE_CONTROL`: the General enters first person (Lifecycle step 3). |
 | | `zhbo_logic_input(player, general, input)` | One frame's `ZhboFpsInput` for a controlled General (the event stream the sim replays). |
-| | `zhbo_logic_choose_class(player, general, index, payload, len)` | The pick menu's choice: the shared list's index, a custom class's wire words appended as `[len, word…]`. |
-| Profile writes (client) | `zhbo_profile_save(words, len)`, `zhbo_profile_write(words, len)` | Decode a saved custom class / a `save_profile` one-shot into the profile's full text for the bridge to write; null when the words do not decode. |
+| | `zhbo_logic_choose_class(player, general, index, payload, len)` | The pick menu's choice: the shared list's index, a custom class's wire words appended as `[len, word…]` (at most 64). The words are the class as catalog tokens (`classwire`: item and attachment numbers, perk/camo/reticle/colour indices, the name's bytes; literals only for values outside the catalog), so every legal class fits — 19 words at most over the real install; the profile file's text form outgrew the 64 words (up to 387 bytes) and such picks were refused. Decoding indexes the installed catalog, which every client holds identically; the old text payload still decodes. |
+| Profile writes (client) | `zhbo_profile_save(words, len)`, `zhbo_profile_write(words, len)` | Decode a saved custom class / a `save_profile` one-shot into the profile's full text for the bridge to write; null when the words do not decode. `zhbo_profile_write` with `len = -1` (`PROFILE_LIVE`) returns the core's live profile (the text did not fit the payload). |
 | Every client frame | `zhbo_client_draw_hud(local_player)` | Draws the first-person HUD through the `ClientApi` draw callbacks. |
 | | `zhbo_client_rts_ammo(general, out)` | A General's weapon-slot ammo for the control bar (`ZhboRtsWeapons`). |
 | | `zhbo_client_world_poses(out, cap)` | The Generals' third-person weapon/tablet poses (`ZhboWorldPose`); returns how many. |

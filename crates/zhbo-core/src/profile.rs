@@ -47,6 +47,10 @@ pub const MAX_SETS: usize = classes::MAX_CLASS_SETS;
 /// The file's version marker: v2 adds the class sets.
 const VERSION: &str = "v2";
 
+/// A profile-write one-shot's payload length meaning "the text did not fit the payload; the
+/// core's live profile is the text" (`menu::write_profile`, `zhbo_profile_write`).
+pub const PROFILE_LIVE: i32 = -1;
+
 /// The profile loaded at init; empty until `load` runs.
 static PROFILE: Mutex<Option<Profile>> = Mutex::new(None);
 
