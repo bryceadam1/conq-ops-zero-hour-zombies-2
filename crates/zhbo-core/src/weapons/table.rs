@@ -778,6 +778,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("IdleAmount", "Idle sway amount, aimed and hip.", FieldKind::Nums(2),
         |d: &WeaponDef| nums(&[d.zoom.idle_amount.0, d.zoom.idle_amount.1]),
         |d: &mut WeaponDef, v: Values| { v.need(2)?; d.zoom.idle_amount = (v.num(0), v.num(1)); Ok(()) }),
+    field!("IdleSway", "Idle sway clock speed aimed and hip, crouched and prone factors, hold breath to steady.", FieldKind::Nums(5),
+        |d: &WeaponDef| { let z = &d.zoom; format!("{} {}", nums(&[z.idle_speed.0, z.idle_speed.1, z.idle_stance.0, z.idle_stance.1]), z.hold_breath as u8) },
+        |d: &mut WeaponDef, v: Values| { v.need(5)?; let z = &mut d.zoom; (z.idle_speed, z.idle_stance, z.hold_breath) = ((v.num(0), v.num(1)), (v.num(2), v.num(3)), v.flag(4)); Ok(()) }),
     field!("StackFire", "Stack-fire spread and accuracy decay.", FieldKind::Nums(2),
         |d: &WeaponDef| nums(&[d.traits.stack_fire.0, d.traits.stack_fire.1]),
         |d: &mut WeaponDef, v: Values| { v.need(2)?; d.traits.stack_fire = (v.num(0), v.num(1)); Ok(()) }),
@@ -867,7 +870,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 96);
+        assert_eq!(WEAPON_FIELDS.len(), 97);
         assert_eq!(ATTACHMENT_FIELDS.len(), 29);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

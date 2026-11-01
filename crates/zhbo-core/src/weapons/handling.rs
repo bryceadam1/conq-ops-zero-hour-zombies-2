@@ -60,6 +60,13 @@ pub struct Zoom {
     /// `fAdsIdleAmount` (× the attachments' `fAdsIdleAmountScale`) and `fHipIdleAmount`: the idle
     /// sway, aimed and from the hip.
     pub idle_amount: (f32, f32),
+    /// `adsIdleSpeed`, `hipIdleSpeed`: the idle sway clock's rate, aimed and from the hip
+    /// (`weapons::idle_sway`).
+    pub idle_speed: (f32, f32),
+    /// `fIdleCrouchFactor`, `fIdleProneFactor`: the idle amount's stance scale.
+    pub idle_stance: (f32, f32),
+    /// `bHoldBreathToSteady`: the breath key steadies the aimed scope (`FUN_008e4860`).
+    pub hold_breath: bool,
 }
 
 /// BO2's `PenetrateType`: how far a bullet goes through surfaces.

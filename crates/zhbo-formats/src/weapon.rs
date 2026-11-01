@@ -620,6 +620,14 @@ pub struct Weapon {
     /// `fAdsIdleAmount`, `fHipIdleAmount`.
     pub ads_idle_amount: f32,
     pub hip_idle_amount: f32,
+    /// `adsIdleSpeed`, `hipIdleSpeed`: how fast the idle sway's clock runs, aimed and from the hip.
+    pub ads_idle_speed: f32,
+    pub hip_idle_speed: f32,
+    /// `fIdleCrouchFactor`, `fIdleProneFactor`: the idle sway's amount crouched and prone.
+    pub idle_crouch_factor: f32,
+    pub idle_prone_factor: f32,
+    /// `bHoldBreathToSteady`: holding breath steadies the scope.
+    pub hold_breath_to_steady: bool,
 }
 
 fn ms(z: &Zone, at: u32) -> f32 {
@@ -957,6 +965,11 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.has_bayonet = z.u8(d + WD::bHasBayonet) != 0;
     w.ads_idle_amount = z.f32(d + WD::fAdsIdleAmount);
     w.hip_idle_amount = z.f32(d + WD::fHipIdleAmount);
+    w.ads_idle_speed = z.f32(d + WD::adsIdleSpeed);
+    w.hip_idle_speed = z.f32(d + WD::hipIdleSpeed);
+    w.idle_crouch_factor = z.f32(d + WD::fIdleCrouchFactor);
+    w.idle_prone_factor = z.f32(d + WD::fIdleProneFactor);
+    w.hold_breath_to_steady = z.u8(d + WD::bHoldBreathToSteady) != 0;
     w.fire_sound = opt_str(z, d + WD::fireSound);
     w.fire_sound_player = opt_str(z, d + WD::fireSoundPlayer);
     w.fire_last_sound_player = opt_str(z, d + WD::fireLastSoundPlayer);

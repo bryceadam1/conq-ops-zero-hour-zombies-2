@@ -863,6 +863,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
             dof: w.ads_dof,
             overlay_alpha_scale: w.overlay_alpha_scale,
             idle_amount: (w.ads_idle_amount, w.hip_idle_amount),
+            idle_speed: (w.ads_idle_speed, w.hip_idle_speed),
+            idle_stance: (w.idle_crouch_factor, w.idle_prone_factor),
+            hold_breath: w.hold_breath_to_steady,
         },
         traits: Traits {
             clip_only: w.clip_only,

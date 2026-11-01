@@ -18,6 +18,9 @@ impl Sim {
                 // along the aim the kick had already moved.
                 if pellet == 0 {
                     p.view_kick.kick(view_kick);
+                    // The fire start lets a held breath go (`FUN_008dea30`).
+                    let extra = p.arsenal.has_specialty(Specialty::HoldBreath);
+                    p.idle.breath.fired(def, p.arsenal.ads, &p.arsenal.tuning, extra);
                 }
                 let eye = p.body.eye();
                 // Random point in the spread cone (polar mapping of two uniform samples).

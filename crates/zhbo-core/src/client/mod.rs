@@ -808,7 +808,8 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 self.eye_prev = self.eye_curr;
                 self.eye_curr = p.body.eye();
                 self.kick_prev = self.kick_curr;
-                let (yaw, pitch) = p.view_kick.aim_offset();
+                // The sim's aim offset: the view kick and the scope's idle sway.
+                let (yaw, pitch) = p.aim_offset();
                 self.kick_curr = (yaw, pitch, p.view_kick.roll());
             } else {
                 self.since_logic += dt;

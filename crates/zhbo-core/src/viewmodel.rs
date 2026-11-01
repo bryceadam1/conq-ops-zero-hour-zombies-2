@@ -368,6 +368,8 @@ impl Motion {
             // in the sim's state (no `landChange`), so gunpos's dip contributes nothing.
             land_change: 0.0,
             since_land: 0.0,
+            idle_time: p.idle.time,
+            idle_stance: p.idle.stance,
         };
         let pose = self.gun.step(def, &input, &p.arsenal.tuning, dt);
         // BO2's offset is (forward, right, up) and its angles (pitch, yaw, roll); the renderer's

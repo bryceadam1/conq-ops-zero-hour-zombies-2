@@ -47,6 +47,12 @@ pub const SPRINT_STEP: &str = "ZHBO_BO2_SprintStep";
 pub const LAND: &str = "ZHBO_BO2_Land";
 pub const IMPACT: &str = "ZHBO_BO2_Impact";
 pub const IMPACT_FLESH: &str = "ZHBO_BO2_ImpactFlesh";
+/// Hold breath (`FUN_0052e3d0` notifies `playerbreathinsound` / `playerbreathoutsound` /
+/// `playerbreathgaspsound`; `clientscripts/mp/_audio.csc` plays `vox_gen_sinper_hold` /
+/// `_exhale` / `_gasp`).
+pub const BREATH_IN: &str = "ZHBO_BO2_BreathIn";
+pub const BREATH_OUT: &str = "ZHBO_BO2_BreathOut";
+pub const BREATH_GASP: &str = "ZHBO_BO2_BreathGasp";
 
 macro_rules! ui_cues {
     ($($cue:ident = $alias:literal,)*) => {
@@ -168,7 +174,51 @@ pub struct Cues {
     fall_speed: f32,
     heartbeat_in: f32,
     fire_was_held: bool,
+    breath: BreathSounds,
     pub queue: Vec<Request>,
+}
+
+/// The hold-breath sounds' state (`FUN_0052e3d0`, the client frame): how long the current breath
+/// has been held (`cg+0x698bc`, `None` = not holding) and the gap left before another breath sound
+/// (`cg+0x698c4`).
+#[derive(Clone, Copy, Debug, Default)]
+struct BreathSounds {
+    held: Option<f32>,
+    delay: f32,
+}
+
+impl BreathSounds {
+    /// Starting a breath breathes in; letting it go past `player_breath_hold_time` gasps, earlier
+    /// breathes out. In and out wait `player_breath_snd_delay` after the last one; the gasp never
+    /// waits. The engine compares with the dvar alone, so a `holdbreath` perk's longer breath
+    /// still gasps past 4.5 s.
+    fn update(&mut self, dt: f32, holding: bool, t: &crate::tuning::Tuning) -> Option<&'static str> {
+        if self.delay > 0.0 {
+            self.delay -= dt;
+        }
+        let mut out = None;
+        match (holding, self.held) {
+            (false, Some(held)) => {
+                if held + dt > t.player_breath_hold_time {
+                    out = Some(BREATH_GASP);
+                } else if self.delay <= 0.0 {
+                    out = Some(BREATH_OUT);
+                    self.delay = t.player_breath_snd_delay;
+                }
+                self.held = None;
+            }
+            (false, None) => {}
+            (true, None) => {
+                if self.delay <= 0.0 {
+                    out = Some(BREATH_IN);
+                    self.delay = t.player_breath_snd_delay;
+                }
+                self.held = Some(dt);
+            }
+            (true, Some(held)) => self.held = Some(held + dt),
+        }
+        out
+    }
 }
 
 impl Cues {
@@ -232,6 +282,10 @@ impl Cues {
             self.play(dry_fire_for(w.def));
         }
         self.fire_was_held = fire_held;
+
+        if let Some(e) = self.breath.update(dt, p.idle.breath.holding, &p.arsenal.tuning) {
+            self.play(e);
+        }
     }
 }
 
@@ -273,6 +327,33 @@ mod tests {
             sprint_steps += events(&mut c).iter().filter(|e| **e == SPRINT_STEP).count();
         }
         assert!(sprint_steps < steps, "{sprint_steps} sprint steps");
+    }
+
+    #[test]
+    fn breath_sounds_in_out_and_gasp() {
+        let t = crate::tuning::Tuning::default();
+        let mut b = BreathSounds::default();
+        assert_eq!(b.update(0.1, true, &t), Some(BREATH_IN));
+        assert_eq!(b.update(0.1, true, &t), None);
+        assert_eq!(b.update(0.1, false, &t), None, "out waits player_breath_snd_delay after the in");
+        // Hold again after the gap, then let go early: out.
+        for _ in 0..10 {
+            b.update(0.1, false, &t);
+        }
+        assert_eq!(b.update(0.1, true, &t), Some(BREATH_IN));
+        for _ in 0..15 {
+            b.update(0.1, true, &t);
+        }
+        assert_eq!(b.update(0.1, false, &t), Some(BREATH_OUT));
+        // Held past the hold time: the gasp, without waiting.
+        for _ in 0..12 {
+            b.update(0.1, false, &t);
+        }
+        b.update(0.1, true, &t);
+        for _ in 0..50 {
+            b.update(0.1, true, &t);
+        }
+        assert_eq!(b.update(0.1, false, &t), Some(BREATH_GASP));
     }
 
     #[test]

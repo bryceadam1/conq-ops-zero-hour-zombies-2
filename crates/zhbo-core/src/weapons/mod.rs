@@ -12,6 +12,7 @@ pub mod def;
 pub mod feel;
 pub mod gunpos;
 pub mod handling;
+pub mod idle_sway;
 pub mod loadout;
 pub mod perks;
 pub mod recoil;
