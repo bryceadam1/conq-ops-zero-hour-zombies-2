@@ -1227,6 +1227,14 @@ mod tests {
         assert_eq!((commented.perks[0].name.as_str(), commented.perks[0].description.as_str()), ("N", "x; y "));
     }
 
+    /// BO2's display names keep their exact text (the Tac-45 Dual Wield's ends in a space).
+    #[test]
+    fn a_display_name_with_a_trailing_space_round_trips() {
+        let d = WeaponDef { id: "fnp45_dw_mp".into(), display_name: "Tac-45 Dual Wield ".into(), ..Default::default() };
+        let back = parse_full_table(&format_full_table(&Table { weapons: vec![d], ..Default::default() })).expect("re-parses");
+        assert_eq!(back.weapons[0].display_name, "Tac-45 Dual Wield ");
+    }
+
     #[test]
     fn the_hud_hint_text_round_trips_as_ui_text() {
         let t = Table { ui_text: vec![UiText { key: "WEAPON_CANT_PLANT_EQUIPMENT".into(), text: "Cannot Plant Here".into() }], ..Default::default() };

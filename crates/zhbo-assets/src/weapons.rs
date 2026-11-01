@@ -1061,8 +1061,10 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
     let display_name = names
         .get(key)
         .or_else(|| names.get(&format!("WEAPON_{key}")))
-        .map(|s| s.trim().to_string())
-        .filter(|s| !s.is_empty())
+        // BO2's text exactly (the Tac-45 Dual Wield's ends in a space; the table quotes such a
+        // value, `table::quote`); a blank one is none.
+        .filter(|s| !s.trim().is_empty())
+        .cloned()
         .unwrap_or_else(|| w.name.trim_end_matches("_mp").to_uppercase());
     let effect = effect_of(w);
     let sticky = manifest::STICKY.contains(&w.name.as_str());
