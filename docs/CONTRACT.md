@@ -243,8 +243,16 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   `zhbo_native::pose::sample_over` and scrubbed by the fraction: frame `ads · num_frames` on up,
   `(1 − ads) · num_frames` on down, where `num_frames` is BO2's last frame index, so `ads = 1`
   lands the authored aimed key. Rising plays up, falling plays down, held keeps the last direction
-  (an aimed burst stays on the up clip's last frame); both clips are requested on the first aiming
-  frame so a reversal never waits for its clip. The eye-frame slide (`place::aligned`, which moves
+  (an aimed burst stays on the up clip's last frame); both clips are requested as soon as the
+  viewmodel composes, so a reversal never waits for its clip. **The layer is on at every fraction,
+  the hip included** (`ads = 0` samples the up clip's first key, which is the down clip's last):
+  BO2 weights 0x56 by `1 − fWeaponPosFrac` and holds it at full weight on a switch (G12,
+  `FUN_0052dcb0`), so the hip rig root is the layer's hip key, not the hands' bind `tag_torso`.
+  For almost every gun the two agree (`[-4.63, 0, -1.38]`), but the XPR-50 (`as50_mp`) authors its
+  hip root 13″ forward in the layer alone (its action clips are relative to it; LSAT 0.8″, the
+  minigun 0.3″), so a hip without the layer put the eye inside its receiver. The install-gated
+  `every_viewmodel_is_held_in_front_of_the_eye` (`nativevm::hold`) checks every weapon and
+  attachment at the hip. The eye-frame slide (`place::aligned`, which moves
   the aim marker — `zhbo_native::AIM_TAG`: BO2's `tag_sights`, an optic's window when one is
   mounted (a sniper scope's own authored `tag_scope` for the `_scope_view` family), or the front
   sight the converter found — onto the axis by `ZhboNativeIn.ads`, BO2's

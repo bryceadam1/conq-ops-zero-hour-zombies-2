@@ -559,8 +559,11 @@ namespace
 		// zero and the ADS clip's other bones to zero — the W3D twin of the native `sample_over`
 		// (`nativevm/place.rs:7-13`). The slide below is the fallback when there is no clip:
 		// equipment, a partial conversion, a clip still loading. Applying both would double-correct.
+		// The layer is on at every fraction, the hip included: BO2 weights ads_down by
+		// 1 - fWeaponPosFrac (FUN_0052b750), so the hip rig root is the layer's hip key, not the
+		// hands' bind tag_torso — the XPR-50 authors its hip 13" forward in the layer alone.
 		HAnimClass *adsAnim = nullptr;
-		if (ads > 0.0f && anim)
+		if (anim)
 		{
 			const int mode = clip >= ZHBO_VM_ALT_CLIPS ? ZHBO_VM_ALT_CLIPS : 0;
 			const int up = mode + ZHBO_VM_ADS_UP;

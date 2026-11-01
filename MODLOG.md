@@ -9486,3 +9486,119 @@ the real-install suites green (`zhbo-assets` 59 with `ZHBO_ZH_DIR` set, `zhbo-fo
 `audit-native` on a fresh archive lists only the MMS screen before its exemption, nothing after;
 conformance identical to the baseline (1,979 cells / 11 clusters, cac 0, 12 gap clusters). The
 converter's output changed, so `hud::VERSION` needs a bump at integration.
+
+## The XPR-50's hip rig root lives in the ADS layer: the layer is on at the hip (2026-11-01, `v1/xpr-viewmodel`)
+
+Playtest report: "The XPR-50 is not being held correctly in first-person; the view is inside the
+weapon." The headless sweep reproduced it: at the hip the XPR's receiver surrounded the eye and the
+arms were behind the camera. Its aimed half looked right.
+
+* **Root cause.** BO2's `viewmodel_xpr50_*` action clips are authored against a different rig root
+  than every other gun. The hip `tag_torso` is not the hands' bind `[-4.63, 0, -1.38]`; it is
+  `[8.68, -3.97, -4.64]`, 13.3″ further forward. That value exists only in the 0x55/0x56 ADS clips
+  (`ads_up` frame 0 = `ads_down` last frame). The XPR idle's `tag_weapon` is `[1.35, -0.37, -1.23]`
+  and its shoulders sit at −17″, both relative to that root. BO2 keeps the layer on at every
+  fraction: G12 weights 0x56 by `1 − fWeaponPosFrac`, and `FUN_0052dcb0` holds it at weight 1 on a
+  switch. The native path only asked for the ADS clips when `ads > 0`, and the W3D path did the same
+  (`if (ads > 0.0f && anim)`). So at the hip both paths used the bind torso, and the XPR's rig sat
+  13″ back with the gun on the eye.
+* **Why the earlier `as50-placement` cycle missed it.** That cycle (2026-10-23, "BO2-parity, proven
+  with numbers") compared the weapon file's `view_pos` and the model bounds. Both are innocent. It
+  never looked at the clips' root, and the 42″ "aim marker at the muzzle" it recorded was a symptom
+  of the same mis-rooted pose. The install tests that came later (`the_ads_clip_reproduces_…`,
+  `the_aimed_sight_lies_on_the_shot_…`) pose only `ads = 1`, so the hip never had a check.
+* **Fix.** `nativevm/ffi.rs` requests and samples the layer at every fraction. With `ads = 0` the
+  up clip's first key is used, which equals the down clip's last key. The W3D combo drops its
+  `ads > 0` gate the same way. No converter, archive or format change. The whole-catalog probe
+  (every MP weapon's 0x55/0x56 `tag_torso` hip key against the bind) shows who moves: `as50_mp`
+  13.3″, `lsat_mp`/`dualoptic_lsat_mp` 0.8″, the minigun family 0.3″, `type95` 0.01″. Every other
+  gun's hip key is the bind, so they are byte-for-byte the same pose. No action clip of a weapon
+  with an ADS layer keys `tag_torso` itself (the equipment/grenade clips that do have no layer), so
+  the overlay at the hip replaces nothing.
+* **The metric: `nativevm::hold`.** It skins every drawn vertex of the gun parts (manifest part ≠ 0)
+  by the last pose into the eye frame and records a box per part. It also records which of the six
+  axis rays from the eye cross that part's triangles. A part *encloses* the eye when its box holds
+  the eye and at least five of the six rays are blocked (`ENCLOSED_RAYS`). The XPR-50 blocked 5,
+  because its receiver is open at one end and the nearest vertex was 0.17″ from the eye. The box alone gives false positives: the HAMR's gun part has
+  vertices 125″ behind the eye, so its box swallows the eye with 0 rays blocked, and the SMAW/FHJ-18
+  shoulder tubes pass beside the head with 1 ray blocked. `hold_of` drives the game's own frame on a
+  private state. The install-gated `every_viewmodel_is_held_in_front_of_the_eye` runs it over every
+  weapon and every attachment it offers (about 450 hip poses plus the guns' ADS poses).
+  * Before the fix it flags exactly the 10 XPR-50 rows (base and all 9 attachments). After the fix
+    it flags none.
+  * Unit tests on box fixtures cover a closed box, a held box and an open tube, plus an XPR-shaped
+    hip layer. The sweep example's manifest also notes `HIP EYE INSIDE part N`.
+* **The pistol RMR is a different issue.** Reported: the Five-seven+reflex's aimed lens "sits below
+  the eye line". It is not this root cause, and it is not a pose problem.
+  * The pistols' rows are byte-identical before and after this fix, because the layer was already
+    on at `ads > 0`.
+  * At full ADS the converter's window marker lands +0.024 NDC from the shot
+    (`the_aimed_sight_lies_on_the_shot_for_every_gun`). That is the same as fnp45/kard/beretta/judge
+    with a reflex (+0.015–0.021) and the rifle reflexes (+0.003–0.040).
+  * In the sweep image the RMR's window covers the eye line (y 168–196 of 360) but draws as a flat
+    opaque (105, 100, 97) with no dot. Every pistol with an RMR does the same; the rifle reflex lens
+    shows its dot. So it is a lens/reticle-material problem on `t6_attach_optic_rmr_view`, for the
+    reticle work.
+* **Found, not fixed:** the HAMR's (`t6_wpn_lmg_hamr_view`) gun part has vertices posed at about
+  (−125, −5, −55)″, far behind and below the eye. They are off screen, so nothing is visible, but
+  some bone of it is probably left at a bad bind/parking. The optic combinations hide it. The same
+  kind of far-off vertices show up at the hip on `fiveseven_mp` (−124″, 12 % of its vertices),
+  `fiveseven_dw_mp` (−350″), `judge_mp+dualclip` (−174″), `xm8_mp`'s GL combo (−148″) and
+  `sig556_mp` (−45″). All are off screen. The `hold-after.tsv` table lists them.
+
+## The far-off viewmodel vertices are BO2's authored parking; the hold sweep now probes every action clip (2026-11-01, `v1/xpr-viewmodel`)
+
+The first hold sweep found gun vertices posed far from the eye at the hip:
+* HAMR: −125″
+* Five-seven: −124″ (12 % of its vertices)
+* Five-seven dual wield: −350″
+* Judge with the speedloader: −174″
+* XM8 with the grenade launcher: −148″
+* SIG556: −45″
+
+The bone-level probe (`~/.opencode/plan/xpr-viewmodel/probe`, `stray`) shows that every one is
+BO2's own clip data, played back by the right rule. None is a fallback default.
+
+* **The tracks.** In each case the bone is a spare or spent part, and the idle clip keys it into a
+  parking spot out of view:
+  * the HAMR's `tag_clip1` track `[-104, 0, -43]`;
+  * `viewmodel_fn57_idle`'s `tag_clip_full` `[-116.09, 0.08, -72.70]`;
+  * the speedloader `tag_speedloader` (the judge's dualclip);
+  * the M320's spare round `j_ammo`.
+
+  The reload clips bring those parts into the hand. For example, `fn57_reload`'s `tag_clip_full`
+  starts at `[18.58, 8.87, -7.85]`.
+* **The additive rule is confirmed.** `viewmodel_fn57_first_raise` keys `tag_clip_full` at
+  `[18.53, 0, 0]`. Added to its model local `[-20, 0, -1.36]`, that lands exactly on `tag_clip`'s
+  bind `[-1.47, 0, -1.36]`: the fresh magazine sits in the gun after the first raise. The same
+  clip parks the spent `tag_clip` at `[-33.19, 9.54, -59.94]`. So the "stored local + track"
+  playback (`zhbo_native::pose`) is right here, as it was for the equipment
+  (`equipment_subbone_tracks_are_bo2s_authored_parking`). BO2 draws these vertices too; the
+  frustum leaves them unseen. Nothing to fix.
+* **The crossbow's reload is the extreme case.** It flies the new bolt (`tag_bullet`) in from
+  25,940″ below, keyed every frame of `viewmodel_crossbow_t6_reload_empty`. One second in, that
+  bolt is in the frustum 17,206″ away, spanning 0.82 px of a 1080-line screen. This is parity,
+  and it is sub-pixel at 1080 lines.
+* **The metric now covers every action clip.**
+  * `hold::holds_of` composes the viewmodel once and poses a list of requests.
+  * `Hold` counts far vertices beyond `FAR_RADIUS` = 72″ (a soldier's height). The AS50 with a
+    suppressor reaches 62.9″ in its quick raise.
+  * `Hold::far_in_view` returns how many far vertices are inside a frustum and the screen extent
+    they span.
+  * The install test now poses every weapon and attachment in its held slot at the hip and aimed.
+    It then poses each action clip the weapon has (fire, last shot, rechamber, melee, reload,
+    reload empty, raise, first raise, drop, quick raise/drop, sprint in/loop/out) at
+    0, 0.25, 0.5, 1, 1.5, 2.5 and 4 s. That is 41,579 poses.
+  * The test fails if a part encloses the eye at the hip, or if any far vertex lands in the 16:9
+    frustum spanning at least a pixel of 1080.
+* **Results.**
+  * Far vertices: 2,636 poses across 20 weapons.
+  * Ahead of the eye: 123 of those poses (a gun swinging through a raise carries a parked part
+    in front, but 60° below the axis).
+  * In view: 6 poses, all the crossbow reload above at 0.82 px.
+  * Failures: 0.
+
+A 60″ radius with "ahead of the eye" was tried first. It flagged the Five-seven's first raise,
+which is out of the frustum, and the suppressed AS50, which is real geometry. Unit tests cover a
+far box in view (its extent 2/99), a parked box behind and below, and one ahead but out of the
+frustum.

@@ -26,7 +26,7 @@
 //! plus the `zhbo_native_wanted`/`zhbo_native_provide` file protocol), composes the parts (the
 //! faction's arms, the gun, its magazine and the attachment on the attachment's own view-model tag,
 //! the manifest's `hide` tags, the combination's clip set), poses the clip and places the gun with
-//! `nativevm::place` (hip: `ads = 0`; aimed: `ads = 1` — the authored 0x55/0x56 `tag_torso` ADS
+//! `nativevm::place` (hip: `ads = 0`, the ADS layer's hip key; aimed: `ads = 1` — the authored 0x55/0x56 `tag_torso` ADS
 //! layer's last key over the action clip, which is BO2's whole hip→aimed move; a weapon without
 //! that clip keeps the eye-frame slide, `place::aligned`). `nativevm::gpu` uploads the mesh and textures and submits the draw to a headless
 //! `zhbo-gfx` renderer, which runs the real native BO2 pass. The pixels are therefore whatever the
@@ -74,7 +74,8 @@
 //! note leads with `ads half: harness artifact` and then names its sampled slot (`HOLD_FIRE` frame
 //! 0, or `IDLE` with the fallback reason), so the lifted aimed rig is never read as the hold pose.
 //! The background is flat light grey (0.72) so dark gunmetal silhouettes and see-through holes read
-//! at a glance.
+//! at a glance. A note carrying `HIP EYE INSIDE part N` is the hold metric (`nativevm::hold`)
+//! finding the camera inside a gun part at the hip.
 //!
 //! Development tool only, on no shipped path; the rendered images are output, not source.
 
@@ -664,6 +665,9 @@ fn render_job(job: &Job, archive: &BigArchive, source: &mut Option<zhbo_assets::
         (zhbo_core::viewmodel::slot::IDLE, IDLE_TIME)
     };
     let (hip, mut logs) = render_pose(&art, vm, pose(job.weapon, 0.0), clip, time)?;
+    // The hold metric on the frame just drawn (`nativevm::hold`): a part enclosing the eye at the
+    // hip is the XPR-50's old failure, flagged in the note so a sweep's manifest lists every one.
+    let hip_hold = zhbo_core::nativevm::hold::last(0.0, [0.0; 3], [1.0, 0.0, 0.0]);
     let (ads, more) = render_pose(&art, vm, pose(job.weapon, 1.0), clip, time)?;
     logs.extend(more);
     let path = out.join(match look { Some(c) => job.relative_look(c), None => job.relative() });
@@ -672,6 +676,11 @@ fn render_job(job: &Job, archive: &BigArchive, source: &mut Option<zhbo_assets::
     }
     hip.beside(&ads).write_png(&path)?;
     let mut note = format!("{from}, {count} parts");
+    match hip_hold.as_ref().map(|h| h.eye_inside(0.25)) {
+        Some(Some(b)) => note.push_str(&format!(", HIP EYE INSIDE part {} ({:.1?}..{:.1?} in)", b.part, b.mins, b.maxs)),
+        Some(None) => {}
+        None => note.push_str(", hip hold not measured"),
+    }
     // The converter's base-part count (the magazine and the base scope/optic art): a part that
     // stops loading changes it, so a shifted total is attributable without reading the launcher log.
     if from == "converted" {

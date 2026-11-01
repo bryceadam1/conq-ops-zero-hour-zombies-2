@@ -665,23 +665,53 @@ fn a_constant_ads_clip_leaves_the_rig_where_it_was() {
 }
 
 #[test]
-fn the_ads_layer_is_absent_at_the_hip_and_until_it_loads() {
-    let f = fixture_with(true);
+fn the_ads_layer_poses_the_hip_and_the_slide_covers_only_its_load() {
+    // The XPR-50's shape: the layer's hip key is NOT the hands' bind `tag_torso` (BO2's as50 holds
+    // its rig root 13″ forward of every other gun's, in `ads_up`'s first / `ads_down`'s last key
+    // alone). BO2 weights `ads_down` by `1 − fWeaponPosFrac` (G12), so the hip IS that key.
+    let up = vec![(0, [8.0, -4.0, -3.0]), (10, [2.0, 0.0, -4.0])];
+    let down = vec![(0, [2.0, 0.0, -4.0]), (10, [8.0, -4.0, -3.0])];
+    let f = fixture_torso(Some((up, down)));
     with_state(|s| {
         *s = ffi::State::default();
-        settle(s, &f);
+        // Load the manifest and the models only: the clips are asked for but not answered yet.
+        while s.loaded.is_none() {
+            s.frame(&input(1, 0.0), true);
+            answer_except(s, &f, |p| p.contains("ads_"));
+        }
+        s.frame(&input(1, 0.0), true);
         let i = s.loaded.as_ref().unwrap().skeleton.bone("tag_torso").unwrap();
-        assert_eq!(s.posed.local[i], s.loaded.as_ref().unwrap().skeleton.bones[i].bind_local, "at the hip the base pose is untouched");
-        // The first aimed frame, before the clips arrive: the clip-less fallback still lands the
-        // sight, exactly as the W3D path does — the layer only takes over once it is sampled.
+        assert_eq!(s.posed.local[i], s.loaded.as_ref().unwrap().skeleton.bones[i].bind_local, "the hip before the layer loads");
+        // An aimed frame before the clips arrive: the clip-less fallback still lands the sight,
+        // exactly as the W3D path does — the layer only takes over once it is sampled.
         s.frame(&input(1, 1.0), true);
         let early = aim_in_eye(s);
         assert!(early[1].abs() < 1e-4 && early[2].abs() < 1e-4, "the slide while the layer loads: {early:?}");
+        // Back at the hip with the clips loaded: the rig root is the layer's hip key, not the bind.
         answer(s, &f);
-        s.frame(&input(1, 1.0), true);
-        let late = aim_in_eye(s);
-        assert!((late[1] - 5.0 * ART_SCALE).abs() < 1e-4 && (late[2] - 1.0 * ART_SCALE).abs() < 1e-4, "the layer, once loaded: {late:?}");
+        s.frame(&input(1, 0.0), true);
+        near3(torso_local(s), [8.0, -4.0, -3.0], "the hip is the layer's hip key (down clip, last frame)");
+        let hip = aim_in_eye(s);
+        assert!((hip[0] - (20.0 + 8.0) * ART_SCALE).abs() < 1e-4, "the gun rides the layer's 8″ forward: {hip:?}");
+        // A fresh state that settles at the hip and never aims: the layer is still on.
+        *s = ffi::State::default();
+        settle(s, &f);
+        near3(torso_local(s), [8.0, -4.0, -3.0], "a gun that has never aimed holds the layer's hip key");
+        // And fully aimed: the authored aimed key, no slide.
+        aim(s, &f, 1.0);
+        near3(torso_local(s), [2.0, 0.0, -4.0], "the authored aimed key");
+        let aimed = aim_in_eye(s);
+        assert!((aimed[1] - 2.0 * ART_SCALE).abs() < 1e-4 && (aimed[2] - (-4.0 - 4.0 + 4.0) * ART_SCALE).abs() < 1e-4, "no slide (torso −4, idle tag_weapon −4, marker +4): {aimed:?}");
     });
+}
+
+/// As [`answer`], leaving the paths `skip` matches outstanding (asked for, not answered).
+fn answer_except(s: &mut ffi::State, f: &Fixture, skip: impl Fn(&str) -> bool) {
+    let wanted: Vec<String> = s.files.wanted().filter(|p| !skip(p)).map(str::to_string).collect();
+    for w in &wanted {
+        let bytes = f.files.iter().find(|(p, _)| p == w).map(|(_, b)| b.as_slice());
+        s.files.provide(w, bytes);
+    }
 }
 
 #[test]
@@ -1383,4 +1413,116 @@ fn each_slots_optic_wears_its_own_class_reticle() {
     assert_eq!(rows, vec![(3, 9), (4, 9), (5, 24)]);
     let stock = class_reticles_in(lookup, &[("an94_mp+dualoptic", ""), ("nope_mp", "reticle_2")]);
     assert_eq!(stock, vec![(3, 0), (4, 0)]);
+}
+
+/// A box model (`sides`: which of its six faces to build, as `hold::RAYS` order: +X, −X, +Y, −Y,
+/// +Z, −Z) centred at `centre` with half-extent `half`, every vertex on its last bone. An open
+/// tube is a box without its ±X caps.
+fn box_model(name: &str, bones: Vec<Bone>, centre: [f32; 3], half: [f32; 3], sides: u8) -> Model {
+    let last = bones.len() as u16 - 1;
+    let mut m = model(name, bones);
+    let v = |p: [f32; 3]| Vertex { position: p, normal: [0.0, 0.0, 1.0], uv: [0.0; 2], bones: [last, 0, 0, 0], weights: [1.0, 0.0, 0.0, 0.0] };
+    let corner = |sx: f32, sy: f32, sz: f32| [centre[0] + sx * half[0], centre[1] + sy * half[1], centre[2] + sz * half[2]];
+    let mut vertices = Vec::new();
+    let mut indices = Vec::new();
+    for (bit, axis, sign) in [(0, 0, 1.0), (1, 0, -1.0), (2, 1, 1.0), (3, 1, -1.0), (4, 2, 1.0), (5, 2, -1.0)] {
+        if sides & (1 << bit) == 0 {
+            continue;
+        }
+        let quad: Vec<[f32; 3]> = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+            .iter()
+            .map(|&(a, b)| match axis {
+                0 => corner(sign, a, b),
+                1 => corner(a, sign, b),
+                _ => corner(a, b, sign),
+            })
+            .collect();
+        let base = vertices.len() as u16;
+        vertices.extend(quad.into_iter().map(v));
+        indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+    m.surfaces = vec![Surface { material: 0, vertices, indices }];
+    m
+}
+
+/// The fixture's composite with its gun swapped for a box (gun-local `centre`, `half`, `sides`).
+fn with_box_gun(mut f: Fixture, centre: [f32; 3], half: [f32; 3], sides: u8) -> Fixture {
+    let gun = box_model("gun", vec![bone("tag_weapon", None, [0.0; 3]), bone("j_gun", Some(0), [3.0, 0.0, 0.0])], centre, half, sides);
+    let path = zhbo_native::model_path("gun");
+    for (p, bytes) in &mut f.files {
+        if *p == path {
+            *bytes = gun.to_bytes();
+        }
+    }
+    f
+}
+
+fn hold_at(f: &Fixture, ads: f32) -> super::hold::Hold {
+    super::hold::hold_of(&input(1, ads), |p| f.files.iter().find(|(q, _)| q == p).map(|(_, b)| b.clone())).expect("posed")
+}
+
+#[test]
+fn the_hold_metric_finds_the_eye_inside_a_part_and_only_then() {
+    // The fixture's posed `tag_weapon` sits at (20, 0, −1) in the eye frame (measured through the
+    // game's own frame): gun-local (−20, 0, 1) is the eye.
+    let closed = 0b11_1111;
+    let around_eye = with_box_gun(fixture(), [-20.0, 0.0, 1.0], [3.0, 2.0, 2.0], closed);
+    let h = hold_at(&around_eye, 0.0);
+    let part = h.eye_inside(0.25).unwrap_or_else(|| panic!("a closed box around the eye encloses it: {h:?}"));
+    assert_eq!((part.part, part.hits), (1, closed), "the gun part, every ray blocked");
+    assert!((h.nearest_distance - 17f32.sqrt()).abs() < 1e-3, "the nearest vertex is a box corner, √(3²+2²+2²): {}", h.nearest_distance);
+    // In front of the eye: held.
+    let held = with_box_gun(fixture(), [0.0, -4.0, 0.0], [3.0, 2.0, 2.0], closed);
+    let h = hold_at(&held, 0.0);
+    assert!(h.eye_inside(0.25).is_none(), "{:?}", h.parts);
+    assert!(h.mins[0] > 0.0 && h.maxs[1] < 0.0, "in front and to the right: {:?}..{:?}", h.mins, h.maxs);
+    // A box open at the back only — a receiver the eye looks out of: still enclosed (five rays).
+    let open_back = with_box_gun(fixture(), [-20.0, 0.0, 1.0], [3.0, 2.0, 2.0], closed & !0b10);
+    let h = hold_at(&open_back, 0.0);
+    assert_eq!(h.parts[0].hits, closed & !0b10);
+    assert!(h.eye_inside(0.25).is_some(), "a receiver open at one end still surrounds the eye");
+    // An open tube along the view axis around the eye: its box holds the eye, but the eye sees
+    // out both ends — a long part beside the head, not an enclosure.
+    let tube = with_box_gun(fixture(), [-20.0, 0.0, 1.0], [30.0, 2.0, 2.0], closed & !0b11);
+    let h = hold_at(&tube, 0.0);
+    assert!(h.parts[0].contains_eye(0.25), "the tube's box holds the eye");
+    assert_eq!(h.parts[0].hits, 0b11_1100, "the sides block, the open ends do not");
+    assert!(h.eye_inside(0.25).is_none(), "an open tube does not enclose");
+}
+
+#[test]
+fn the_hip_layer_keeps_an_xpr_shaped_rig_out_of_the_eye() {
+    // The XPR-50's shape: the gun's box sits on the eye at the hands' bind `tag_torso`, and the
+    // ADS layer's hip key carries the rig 20″ forward and down-right, where it is held. The hip
+    // must pose the layer (BO2 weights `ads_down` by `1 − fWeaponPosFrac`), so the eye is clear.
+    let hip = [20.0, -6.0, -6.0];
+    let up = vec![(0, hip), (10, [8.0, 0.0, -4.0])];
+    let down = vec![(0, [8.0, 0.0, -4.0]), (10, hip)];
+    let f = with_box_gun(fixture_torso(Some((up, down))), [-20.0, 0.0, 1.0], [3.0, 2.0, 2.0], 0b11_1111);
+    let h = hold_at(&f, 0.0);
+    assert!(h.eye_inside(0.25).is_none(), "the hip skipped the layer: the eye is inside {:?}", h.parts);
+    let c = [0, 1, 2].map(|k| (h.mins[k] + h.maxs[k]) * 0.5);
+    near3(c, hip, "the gun box rides the layer's hip key");
+}
+
+#[test]
+fn a_far_part_counts_only_when_the_camera_would_draw_it() {
+    use super::hold::FAR_RADIUS;
+    let tan = (1.0, 0.5);
+    // A small box 100″ straight ahead: far and in view.
+    let ahead = with_box_gun(fixture(), [80.0, 0.0, 1.0], [1.0; 3], 0b11_1111);
+    let h = hold_at(&ahead, 0.0);
+    assert!(h.farthest > FAR_RADIUS && h.far == h.vertices && h.far_ahead.len() == h.vertices);
+    let (n, extent) = h.far_in_view(tan.0, tan.1);
+    assert_eq!(n, h.vertices, "a part floating in front of the camera");
+    assert!((extent - 2.0 / 99.0).abs() < 1e-4, "a 2″ box whose near face is 99″ ahead spans 2/99 of the height (tan_y 0.5): {extent}");
+    // BO2's parking: 100″ behind and below — far, never drawn.
+    let parked = with_box_gun(fixture(), [-120.0, 0.0, -70.0], [1.0; 3], 0b11_1111);
+    let h = hold_at(&parked, 0.0);
+    assert!(h.far == h.vertices && h.far_ahead.is_empty() && h.far_in_view(tan.0, tan.1).0 == 0);
+    // Ahead of the eye but 60° below the axis: outside the frustum, not drawn.
+    let below = with_box_gun(fixture(), [20.0, 0.0, -70.0], [1.0; 3], 0b11_1111);
+    let h = hold_at(&below, 0.0);
+    assert!(h.far == h.vertices && h.far_ahead.len() == h.vertices);
+    assert_eq!(h.far_in_view(tan.0, tan.1).0, 0, "out of the frustum");
 }

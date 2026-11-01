@@ -36,6 +36,7 @@ use zhbo_native::viewmodel::{Part, Viewmodel};
 mod gpu;
 pub mod camo;
 pub mod ffi;
+pub mod hold;
 pub mod place;
 
 use camo::LocalCamo;
