@@ -1343,3 +1343,41 @@ fn the_emblem_surface_wears_the_factions_logo() {
     assert_eq!(emblem(&run(true)), Some(zhbo_native::emblem_path('G')), "the GLA logo");
     assert_eq!(emblem(&run(false)).as_deref(), Some("Art\\Textures\\zhbo_emblem_clear_a.tga"), "no logo in the archive: the stand-in");
 }
+
+/// The ADS part list's optic models carry materials of their own (the target finder's `_ads`
+/// model has its centre reticle, `mtl_t6_attach_rfo_reticle2`, which the `_view` model lacks): the
+/// draw uploads every texture of both meshes, else such a surface binds no texture and draws the
+/// white fallback (a white square over the target finder's lens at full ADS). And the lens test
+/// for the HUD's 2D reticle reads the mesh that draws.
+#[test]
+fn the_aimed_meshs_own_textures_are_uploaded_too() {
+    use zhbo_native::model::Reticle;
+    let surface = |material: &str, reticle: bool| SurfaceSpec {
+        first_index: 0,
+        index_count: 3,
+        blend: zhbo_native::model::Blend::Premultiplied,
+        emissive: false,
+        color: Some(format!("{material}.tga")),
+        maps: None,
+        specular: None,
+        sort_key: 62,
+        cull: zhbo_native::model::Cull::None,
+        material: material.into(),
+        camo_layer: zhbo_native::model::CamoLayer::None,
+        camo: None,
+        camo_uv: [0.0, 0.0, 1.0, 1.0],
+        part: 0,
+        reticle: reticle.then(|| Reticle { scale: 11.31, noise: Some("noise.tga".into()), ..Default::default() }),
+        emblem: false,
+        sonar: None,
+        display: None,
+    };
+    let hip = Mesh { surfaces: vec![surface("gun", false), surface("optic_view", false)], ..Default::default() };
+    let aimed = Mesh { surfaces: vec![surface("gun", false), surface("optic_ads", false), surface("rfo_reticle2", true)], ..Default::default() };
+    let l = Loaded { key: (7, b'U', 0, 0), camo: None, manifest: Viewmodel { id: "test_mp".into(), faction: b'U', parts: vec![], markers: vec![], hide: vec![], clips: vec![] }, skeleton: Skeleton::default(), mesh: hip, mesh_aimed: Some(aimed), overlay_art_present: false, aim: None, anims: HashMap::new() };
+    assert_eq!(l.texture_paths(), ["gun.tga", "optic_view.tga", "optic_ads.tga", "rfo_reticle2.tga", "noise.tga"]);
+    assert!(!l.drawn_mesh(false).surfaces.iter().any(|s| s.reticle.is_some()), "the hip mesh has no lens");
+    assert!(l.drawn_mesh(true).surfaces.iter().any(|s| s.reticle.is_some()), "the aimed one does");
+    let single = Loaded { mesh_aimed: None, ..l };
+    assert_eq!(single.drawn_mesh(true), &single.mesh, "no part swaps: the hip mesh draws aimed too");
+}

@@ -9271,3 +9271,15 @@ A general sweep for bugs outside the playtest items; one commit per fix.
   `Arsenal::holds_switch_back`): the press is carried to the next frame until they end, and opening
   cuts a reload short as a swap does (`Arsenal::put_away`) and drops the lunge lock. Test:
   `the_field_computer_waits_for_an_offhand_and_cuts_a_reload` (fails without the fix).
+- **The target finder drew a white square over its lens at full ADS (all 20 guns that take it).**
+  At BO2's optic switch the native draw submits the ADS part list's mesh (`mesh_aimed`), but
+  `nativevm::gpu::submit` collected the textures to upload from the hip mesh's surfaces only; a
+  material only the aimed mesh draws bound no texture and took the white fallback. The target
+  finder's `_ads` model draws its centre reticle (`mc/mtl_t6_attach_optic_rangefinder_reticle2`,
+  `mtl_t6_attach_rfo_reticle2_a`, a two-colour projected reticle at emissive 11.5), which the hip
+  mesh does not, so its whole quad drew saturated white instead of BO2's blue cross. It surfaced
+  with the order-independent texture conversion (polish 3), which made that image convert at all.
+  `Loaded::texture_paths` now walks both meshes, and the HUD's "a lens reticle is drawing" test
+  reads the mesh that draws (`Loaded::drawn_mesh`), not always the hip one. Full sweep before/after
+  (`~/.opencode/plan/bug-sweep/vm`, `vm-after`): exactly the 20 `+rangefinder` aimed halves
+  change; every other image is identical. Test: `the_aimed_meshs_own_textures_are_uploaded_too`.

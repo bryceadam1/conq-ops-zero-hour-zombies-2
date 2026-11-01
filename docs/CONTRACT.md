@@ -296,7 +296,8 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   M32). `nativevm::visible_parts` switches at `OPTIC_VIEWMODEL_SWITCH` (1.0, BO2's
   `cg_opticAttachmentViewmodelSwitch`): from it up the paired parts swap and every other part keeps
   its model; below it the `ads_only` parts are hidden. Presentation only; the hip and aimed meshes
-  are built once at load and the draw swaps handles. The W3D path draws the hip models. The list
+  are built once at load (with every texture either names, `Loaded::texture_paths`) and the draw
+  swaps handles. The W3D path draws the hip models. The list
   keeps a scope under a 2D overlay: instead, `zhbo_client_frame` records the viewmodel whose
   reticle zoom is up (`nativevm::set_gun_under_overlay`, from `HudLui::gun_under_overlay`) and
   `zhbo_native_viewmodel` poses it but answers `DRAWN` without submitting (so the W3D model stays

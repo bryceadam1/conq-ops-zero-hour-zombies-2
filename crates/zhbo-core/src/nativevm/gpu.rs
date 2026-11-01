@@ -5,7 +5,7 @@ use zhbo_gfx::ffi::with_renderer;
 use zhbo_gfx::runtime::{NativeBlip, NativeDraw, NativeFrame, NativeLight, NativeOptics, NativeSurface, NativeVertex, INVALID, NATIVE_MAX_BLIPS};
 
 use super::ffi::{State, ZhboNativeIn, DRAWN, LOADING, NOT_NATIVE};
-use super::{local_optics, native_blend, native_cull, native_reticle, native_sonar, set_lens_reticle_drawn, technique_files, Mesh, ART_SCALE};
+use super::{local_optics, native_blend, native_cull, native_reticle, native_sonar, set_lens_reticle_drawn, Mesh, ART_SCALE};
 
 /// The handles of the viewmodel on the GPU.
 #[derive(Default)]
@@ -39,7 +39,8 @@ impl Gpu {
 pub(crate) fn draw(s: &mut State, inp: &ZhboNativeIn) -> i32 {
     let drawn = submit(s, inp);
     // The HUD's 2D optic reticle gives way only to a lens reticle that is actually drawing.
-    let lens = drawn == DRAWN && s.loaded.as_ref().is_some_and(|l| l.mesh.surfaces.iter().any(|s| s.reticle.is_some()));
+    let aimed = inp.ads >= super::OPTIC_VIEWMODEL_SWITCH;
+    let lens = drawn == DRAWN && s.loaded.as_ref().is_some_and(|l| l.drawn_mesh(aimed).surfaces.iter().any(|s| s.reticle.is_some()));
     set_lens_reticle_drawn(lens);
     drawn
 }
@@ -47,16 +48,9 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeIn) -> i32 {
 fn submit(s: &mut State, inp: &ZhboNativeIn) -> i32 {
     let Some(loaded) = s.loaded.as_ref() else { return NOT_NATIVE };
     if s.gpu.key != Some(loaded.key) {
-        // Every texture the surfaces name: decoded once in, absent ones draw white/flat.
-        let mut paths: Vec<(String, bool)> = Vec::new();
-        for surf in &loaded.mesh.surfaces {
-            // Display-space shading (native.wgsl): every map uploads raw.
-            for p in [&surf.color, &surf.maps, &surf.specular, &surf.camo].into_iter().flatten().chain(technique_files(surf)) {
-                if !paths.iter().any(|(q, _)| q == p) {
-                    paths.push((p.clone(), false));
-                }
-            }
-        }
+        // Every texture the surfaces of both meshes name (display-space shading, native.wgsl:
+        // every map uploads raw): decoded once in, absent ones draw white/flat.
+        let paths: Vec<(String, bool)> = loaded.texture_paths().into_iter().map(|p| (p, false)).collect();
         let mut images = Vec::with_capacity(paths.len());
         let mut waiting = false;
         let mut problems = Vec::new();
@@ -98,7 +92,7 @@ fn submit(s: &mut State, inp: &ZhboNativeIn) -> i32 {
                 r.native_create_mesh(&vertices, &m.indices, &surfaces)
             };
             let m = upload(mesh);
-            let aimed = loaded.mesh_aimed.as_ref().map(|m| upload(m));
+            let aimed = loaded.mesh_aimed.as_ref().map(&mut upload);
             Some((m, aimed, handles.into_iter().map(|(_, h)| h).filter(|&h| h != INVALID).collect::<Vec<_>>()))
         });
         for (p, _) in &paths {
