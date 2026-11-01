@@ -532,5 +532,11 @@ fn a_flashed_shellshock_whites_the_view_out() {
     sim.players[0].as_mut().unwrap().shock.play(crate::shellshock::names::FLASHBANG, 6.0);
     assert_eq!(white(&draw_hud(&rec, &client, &sim)), Some(255), "a full whiteout");
     sim.players[0].as_mut().unwrap().shock.active.as_mut().unwrap().left = 1.75;
-    assert_eq!(white(&draw_hud(&rec, &client, &sim)), Some(128), "half way down its 3.5 s fade");
+    assert_eq!(white(&draw_hud(&rec, &client, &sim)), Some(128), "half way down its 3.5 s fade (ease(0.5) = 0.5)");
+    // When the renderer's shock layer takes the frame it adds the white itself (with the grab).
+    crate::nativevm::set_shock_layer_drawn(true);
+    assert_eq!(white(&draw_hud(&rec, &client, &sim)), None, "the renderer's layer, not the HUD's");
+    // The next client frame resets it until the scene's draw queues the layer again.
+    crate::nativevm::set_local_shock(None);
+    assert_eq!(white(&draw_hud(&rec, &client, &sim)), Some(128));
 }

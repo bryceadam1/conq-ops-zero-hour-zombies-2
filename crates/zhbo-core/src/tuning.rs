@@ -218,6 +218,7 @@ tuning! {
     proximity_dot_instances: "scr_proximityGrenadeDOTDamageInstances" = 4.0, "Shock Charge: damage ticks (`_proximity_grenade.gsc:25`).";
     proximity_exit_wait: "proximity_exit_wait" = 0.85, "Shock Charge: seconds after its last tick before the exit shock (`_proximity_grenade.gsc:204`).";
     proximity_exit_duration: "proximity_exit_duration" = 0.6, "Shock Charge: seconds of the exit shock (`_proximity_grenade.gsc:206`).";
+    shock_view_kick_fade: "shock_view_kick_fade" = 3.0, "Seconds over which a shellshock's view kick fades out at its end: t6mp's loader stores a constant 3000 ms for it (`FUN_008bca80`, `param_1[5] = 3000`), never the file's `viewKickFadeTime`.";
     emp_grenade_duration: "empgrenade_duration" = 12.0, "EMP Grenade: seconds a vehicle stays disabled (`_empgrenade.gsc:102`, `empduration = 12`).";
     // ---- The mod's own ------------------------------------------------------------------------
     shield_blast_protection_30: "shieldBlastDamageProtection_30" = 0.4, "Assault Shield: share of a blast it takes away within a 30-degree arc of its forward axis (`FUN_00670940`; dvar default).";

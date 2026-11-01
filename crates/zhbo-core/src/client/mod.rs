@@ -454,6 +454,8 @@ pub struct Client {
     vm_kick: Option<(f32, f32)>,
     /// BO2 sound cues queued this frame (drained by the FFI layer into the host).
     pub cues: Cues,
+    /// The local player's shellshock as presented: its view kick and ringing loop.
+    pub shock: crate::shellshock::Presented,
     /// This frame's shot impacts (the local player's), copied into `ClientOut`.
     pub hits: [ClientHit; CLIENT_HITS],
     pub hits_len: usize,
@@ -520,6 +522,7 @@ impl Client {
             vm_events: viewmodel::Events::default(),
             vm_kick: None,
             cues: Cues::default(),
+            shock: Default::default(),
             hits: [ClientHit::default(); CLIENT_HITS],
             hits_len: 0,
             class_pick_forced: false,
@@ -882,6 +885,11 @@ impl Client {
 
         let first_person = player.as_ref().is_some_and(|p| p.is_first_person());
         let allowed = inp.input_allowed != 0;
+        // Out of first person nothing presents a shock: its ringing stops with the view.
+        if !matches!(self.view, ViewMode::Fps) || !first_person {
+            let loops = &mut self.cues.loops;
+            self.shock.stop(&mut |e, g| loops.push((e, g)));
+        }
 
         match self.view {
             ViewMode::Rts => {
@@ -940,7 +948,12 @@ impl Client {
                     let kick_yaw = self.kick_prev.0 + (self.kick_curr.0 - self.kick_prev.0) * alpha;
                     let kick_pitch = self.kick_prev.1 + (self.kick_curr.1 - self.kick_prev.1) * alpha + self.hud.flinch_pitch.to_radians();
                     let kick_roll = self.kick_prev.2 + (self.kick_curr.2 - self.kick_prev.2) * alpha;
-                    out.dir = dir_from_angles(self.yaw + kick_yaw, (self.pitch + kick_pitch).clamp(-MAX_PITCH, MAX_PITCH));
+                    // A shellshock's view kick turns the view only (t6mp `FUN_00510270` turns the
+                    // refdef's axes; the aim, which the input carries, is untouched).
+                    let loops = &mut self.cues.loops;
+                    self.shock.update(&p.shock, self.since_logic, dt, &mut |e, g| loops.push((e, g)));
+                    let (shock_yaw, shock_pitch) = self.shock.kick(p.arsenal.tuning.shock_view_kick_fade);
+                    out.dir = dir_from_angles(self.yaw + kick_yaw + shock_yaw, (self.pitch + kick_pitch + shock_pitch).clamp(-MAX_PITCH, MAX_PITCH));
                     out.view_roll = kick_roll;
                     out.hfov = hfov;
                     out.hide_rts_ui = 1;

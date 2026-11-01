@@ -56,12 +56,15 @@ pub enum Kind {
     World,
     /// Positional, heard by everyone except its owner (the owner hears the `Player` version).
     Others,
+    /// The player's own 2D loop, played until the core stops it (`ClientHost::sound_loop`: a
+    /// shellshock's ringing).
+    PlayerLoop,
 }
 
 impl Kind {
     fn ini(self) -> &'static str {
         match self {
-            Kind::Player => "ui player",
+            Kind::Player | Kind::PlayerLoop => "ui player",
             Kind::World => "world shrouded everyone",
             Kind::Others => "world shrouded allies enemies",
         }
@@ -358,13 +361,16 @@ fn falloff(mixer: &Mixer, chain: &[&sndalias::Variant]) -> Option<(f32, f32)> {
 }
 
 fn audio_event(name: &str, sounds: &[String], volume: u32, kind: Kind, limit: u8, range: Option<(f32, f32)>) -> String {
+    // A loop plays until removed (Zero Hour's permanent sound: `LOOP` with `LoopCount = 0`);
+    // everything else is a one-shot that may cut its oldest instance.
+    let control = if kind == Kind::PlayerLoop { "loop\n  LoopCount   = 0" } else { "interrupt random" };
     let kind = match (kind, range) {
-        (Kind::Player, _) => kind.ini().to_string(),
+        (Kind::Player | Kind::PlayerLoop, _) => kind.ini().to_string(),
         (_, Some((min, max))) => format!("{}\n  MinRange    = {min:.0}\n  MaxRange    = {max:.0}", kind.ini()),
         (_, None) => format!("{}\n  MinRange    = 40\n  MaxRange    = 600", kind.ini()),
     };
     format!(
-        "AudioEvent {name}\n  Sounds      = {}\n  Control     = interrupt random\n  Priority    = high\n  \
+        "AudioEvent {name}\n  Sounds      = {}\n  Control     = {control}\n  Priority    = high\n  \
          Volume      = {volume}\n  Limit       = {limit}\n  Type        = {kind}\nEnd\n\n",
         sounds.join(" ")
     )
@@ -466,7 +472,7 @@ pub fn files(
             return false;
         }
         let chain: Vec<&sndalias::Variant> = aliases.iter().filter_map(|a| a.variants.first()).collect();
-        let range = if kind == Kind::Player { None } else { falloff(&mixer, &chain) };
+        let range = if matches!(kind, Kind::Player | Kind::PlayerLoop) { None } else { falloff(&mixer, &chain) };
         pending.push(Pending { event: event.to_string(), kind, limit, range, variants });
         // A converted gun's third-person shot also ships layer by layer for the client to level by
         // BO2's distance curves (`zhbo_core::soundlayers`), keyed by the gun's FX weapon.
@@ -773,6 +779,10 @@ mod tests {
         let w = audio_event("ZHBO_BO2_Impact", &["x".into()], 40, Kind::World, 4, Some((120.0, 900.0)));
         assert!(w.contains("world shrouded everyone") && w.contains("MinRange    = 120") && w.contains("MaxRange    = 900"));
         let o = audio_event("ZHBO_BO2_FireNpc", &["x".into()], 40, Kind::Others, 4, None);
+        // A shellshock's ringing loops until the core stops it, as a 2D player sound.
+        let l = audio_event("ZHBO_BO2_Shock_chr_flashbang_tinnitus_loop", &["x".into()], 30, Kind::PlayerLoop, 1, None);
+        assert!(l.contains("Control     = loop\n  LoopCount   = 0\n") && l.contains("Type        = ui player\n") && !l.contains("MinRange"), "{l}");
+        assert!(!e.contains("loop"), "{e}");
         assert!(o.contains("allies enemies") && !o.contains("player"));
     }
 

@@ -164,6 +164,7 @@ int32_t cbClientQuery(const ZhboVec3 *center, float radius, uint32_t viewerId, Z
 int32_t cbCash(int32_t player);
 void cbSound(const char *event, const ZhboVec3 *at);
 void cbSoundGain(const char *event, const ZhboVec3 *at, float gain);
+void cbSoundLoop(const char *event, float gain);
 void cbClip(float x, float y, float w, float h);
 int32_t cbRadar(float x, float y, float w, float h, const ZhboVec3 *you, ZhboVec3 *youPx);
 int32_t cbClientCanPlace(uint32_t generalId, uint32_t tmpl, const ZhboVec3 *pos, float angle);

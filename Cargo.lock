@@ -1467,6 +1467,7 @@ name = "zhbo-gfx"
 version = "0.1.0"
 dependencies = [
  "naga",
+ "png",
  "raw-window-handle",
  "wgpu",
 ]

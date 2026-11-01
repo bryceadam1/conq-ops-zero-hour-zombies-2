@@ -199,6 +199,30 @@ allows it (`msaa_depth_sampleable`); a target with no sampleable depth, or a dev
 resolve cannot be built (logged once), shows the screen without the world. A screen with a
 non-finite constant is skipped at upload.
 
+### The shellshock layer (`src/runtime/shock.rs`)
+
+BO2's two shellshock screen effects, from the materials' own state bits and DXBC
+(`code_post_gfx_mp`'s `shellshock` / `shellshock_flashed`, technique `trivial`): one layer per
+frame, `Renderer::shock_submit(&ShockDraw { target_view, before_view, layer })`, run like a native
+draw — after the native pass before `before_view` (the scene composite), into the target view's
+colour, so the UI view draws over it.
+
+* `Blurred { alpha }` — `shellshock` (`SRC_ALPHA, INV_SRC_ALPHA`, the texture at the vertex
+  alpha): the screen saved last frame drawn over the view at `alpha`, then the result saved. A
+  trail: the image decays by `alpha` a frame. A saved screen that is not the previous frame's (the
+  shock just started, or another one did) is not drawn: that frame only saves.
+* `Grab` — a flashed shock's first frame: the view is saved, nothing drawn.
+* `Flashed { white, shot }` — `shellshock_flashed` (`ONE, ONE`; `o.rgb = t.rgb · v.a + v.rgb`):
+  the grab at `shot` plus `white`, added. Writes colour only (the target's alpha is kept).
+
+The saved screen is a copy of the target's resolved colour (the backbuffer's texture, or the frame
+buffer's first colour; MSAA targets resolve into it at the end of each pass), the same format,
+viewed with the target view's format (sRGB-ness matches; a view format where supported), read with
+`textureLoad` at the fragment's pixel. It is rebuilt (and invalid) when the target's size or format
+changes. Refused and counted in `stats().native_skipped`, logged once each, never sent to wgpu: a
+view out of range, a value that is not a finite 0..1, a view without a copyable single colour
+target, a target whose format is not its texture's. `shock_drawn()` counts layers run.
+
 ### Robustness
 
 One invalid draw in a wgpu render pass invalidates the whole frame. The runtime therefore:

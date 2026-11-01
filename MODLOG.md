@@ -9402,3 +9402,66 @@ A general sweep for bugs outside the playtest items; one commit per fix.
     the shock's view kick, its vision set, and its sound (the tinnitus loop, the mix snapshot and
     room) — the shock's `soundLoop` is carried but not played. No ABI change; the weapon table
     gains `Shock` blocks (covered by this round's `hud::VERSION` 82).
+- **The rest of the shellshock presentation: the blur and grab layers, the view kick, the ringing.**
+  The previous entry left these without a seam. From t6mp (read-only Ghidra; decompiles in the
+  plan dir `shellshock-fx/ghidra/`) and the shock files:
+  * **The screen.** The cgame (`FUN_00520eb0` → `FUN_00510460` blurred / `FUN_005105c0` flashed)
+    hands the backend two commands; their materials are `code_post_gfx_mp`'s `shellshock`
+    (state bits `0x19288165`: `SRC_ALPHA, INV_SRC_ALPHA`; PS = texture × vertex colour) and
+    `shellshock_flashed` (`0x19218922`: `ONE, ONE`; PS `o.rgb = t.rgb · v.a + v.rgb`, `o.a = 1`).
+    A flashed shock's first frame only saves the screen (`FUN_00510400` while `cg+0x698a8` is 0);
+    later frames add the grab at `shot` and `white`, each `ease(min(left / fade, 1))` with
+    `FUN_00510560`'s `ease(x) = (sin((x − 0.5)π) + 1) / 2` — the previous entry's linear white
+    was missing the ease (`ease(0.5) = 0.5`, so its test still holds) and a fade time of 0 keeps
+    the layer at full (the engine's share starts at 1). A blurred shock calls the save every frame
+    and draws the saved screen over the live one with its blend time (`screenBlurBlendTime`, ms,
+    lowered over the last `screenBlurBlendFadeTime`): a feedback trail. The backend's draw that
+    turns the time into an alpha was not located (the command block is copied into render data
+    by a path the xref scans did not reach), so the alpha is the frame-rate independent decay
+    `exp(−dt / blend time)` (`shellshock::blur_alpha`). `zhbo-gfx`'s new shock layer
+    (`runtime/shock.rs`, RENDERER.md) draws both; the HUD's white rectangle is now only the
+    fallback when the renderer did not take the frame (DX8, no viewmodel draw).
+  * **The seam.** `ffi::zhbo_client_frame` → `nativevm::set_local_shock` → the native viewmodel's
+    draw queues the layer into its scene view before the composite (the same per-frame seam as
+    the optics). The grab is keyed by a new `Shellshock::serial` (each `play` bumps it): a new
+    shock grabs anew; the renderer restarts a trail whose saved frame is not the previous frame's.
+  * **The view kick** (`FUN_00510b00`, applied by `FUN_00510270` to the refdef's axes only): a
+    128-point (x, y) noise table read at `elapsed / viewKickPeriod` from index
+    `duration_ms · 61 + ⌊t⌋`, cubic-interpolated, × `viewKickRadius · (3 − 2f)f²` with `f` the
+    remaining time over a fade the loader fixes at 3000 ms (`FUN_008bca80` writes `param_1[5] =
+    3000`; the file's `viewKickFadeTime` is never read): forward `(1, kx, ky)`. The table is
+    engine code at `0x00b25278` (values −1..1), not install data, so the mod draws its own from a
+    fixed seed with the same layout — same shape, not the same numbers. The 3 s is the tuning
+    pack's `shock_view_kick_fade`. Added to the camera's direction only; the aim the input carries
+    is untouched, as BO2. The weapon table's `Shock` blocks gain `Kick = period radius`.
+  * **The ringing** (`FUN_005107c0`): the `soundLoop` alias starts with a `soundFadeInTime` fade,
+    holds until `soundModEndDelay` past the shock's end, then fades over `soundFadeOutTime`; a new
+    shock while it rings keeps it. `Shock … Sound = fadeIn fadeOut modEndDelay`. BO2 MP's banks
+    hold only `chr_flashbang_tinnitus_loop` (bus fx, `grp_hdrfx`): the concussion's and frag's
+    `chr_tinitus_loop` is in no MP bank (probed: `common_mp`, `patch_mp`, `common_patch_mp`,
+    `code_post_gfx_mp`, `mp_raid`), so BO2 MP finds no alias and plays nothing for them; the
+    converter now drops a `SoundLoop` none of the weapon pool's banks holds (and a shock with
+    `bg_shock_sound 0`). The loop is
+    converted through the existing mixer path as `ZHBO_BO2_Shock_<alias>` (`Control = loop`,
+    `LoopCount = 0` — Zero Hour's permanent sound), and the client drives it with the new
+    `ClientApi::sound_loop(event, gain)` (appended; `ZHBO_CLIENT_API_FIELDS` 14 → 15; the ABI
+    version is the integrator's bump). Leaving first person stops it at once.
+  * **Not ported, and why.** *Vision set*: only the concussion names one, `concussion_grenade`
+    (`common_mp`'s `vision/concussion_grenade.vision`): `r_filmEnable 1` with identity
+    shadow/mid/highlight matrices, levels 0..32 in and out, `vc_FSM` = the Rec.709 luma weights
+    with saturation 1. Through `postfx_color`'s shader (`pimp_shader_postfx_72358181`, decoded:
+    zone weights from luma, per-zone 3×3 rows, `pow` by control B, saturation by control C, blend
+    by control D) every one of those is the identity, so the grade does not change the picture
+    whatever the backend's vc_* → `postFxControl*` packing (not located) is; the mod has no
+    colour-grade pass and needs none for it. *The sound snapshot* is a duck (`FUN_008381e0`:
+    "Could not find duck"), in `code_post_gfx_mp`'s `mpl_code_post_gfx` bank:
+    `cmn_shock_tinitus` (the concussion, flashbang) attenuates **no** duck group (1.0 for all 32)
+    and only low-passes (`filter` 0.5 on foley, impacts, weapons 1p/3p, vehicles, whizbys; 0.75 on
+    explosions, destructibles, hdrfx; 0.9 ambience, voice), fade in 0.1 s, out 1 s;
+    `cmn_pain_plr` (the frag) takes 0.9 (−0.9 dB) off ten groups for 0.2 s plus filters. The
+    volume part is negligible and the filter needs a per-voice low-pass that Zero Hour's OpenAL
+    manager (no EFX) does not have — an engine patch (an `AL_FILTER_LOWPASS` per source) is the
+    seam if it is ever wanted. *The room* (`soundRoomType shock_flashbang`, dry/wet levels) is a
+    reverb Zero Hour's audio cannot apply either. `soundLoopSilent`, `soundLoopFadeTime` and
+    `soundLoopEndDelay` are not used by `FUN_005107c0`; `soundEnd`/`soundEndAbort` are empty in
+    all five MP shocks (parsed, not carried).

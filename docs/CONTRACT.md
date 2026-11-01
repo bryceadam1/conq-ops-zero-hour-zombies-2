@@ -14,7 +14,7 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
 | The General `Object` (health, armor, death, veterancy, selection) | Zero Hour | It is a normal `INFANTRY HERO` object; enemies target and damage it like any unit. |
 | The General's position and facing while first-person | zhbo-core | `AIUpdateInterface::update` and `PhysicsBehavior::update` return early while `zhbo_logic_is_controlled(id)`. |
 | The General's position while under RTS control (field computer up) | Zero Hour AI | Control returns through `set_controlled(id, false)`, which issues `aiIdle`. |
-| A stun (concussion, flashbang, Shock Charge, EMP) on a General | zhbo-core: a shellshock on the first-person General (`crate::shellshock`: slower run and look, the HUD's whiteout); Zero Hour: `disable(PARALYZED)` on everything else (its units, a General under RTS control) | The first-person General never receives `disable(PARALYZED)`: Zero Hour's paralysis froze the player outright. `sim::guard` intercepts it and the sim plays BO2's shock instead. |
+| A stun (concussion, flashbang, Shock Charge, EMP) on a General | zhbo-core: a shellshock on the first-person General (`crate::shellshock`: slower run and look; presented as the renderer's blur/grab/white layer, the camera's view kick and the ringing loop — see "The shellshock's presentation"); Zero Hour: `disable(PARALYZED)` on everything else (its units, a General under RTS control) | The first-person General never receives `disable(PARALYZED)`: Zero Hour's paralysis froze the player outright. `sim::guard` intercepts it and the sim plays BO2's shock instead. |
 | Shots: when, where, what is hit, how much damage | zhbo-core | Damage is applied with `Object::attemptDamage` (`DAMAGE_SMALL_ARMS` / `DAMAGE_MELEE`), so ZH armor, retaliation and kill credit work natively. |
 | Muzzle flash, tracer, fire sound | Zero Hour | `WeaponTemplate::fireWeaponTemplate(..., inflictDamage = FALSE)` with the `ZHBO_*_FX` weapons. |
 | Camera | zhbo-core while `camera_override`, otherwise `W3DView` | Override sets view plane (FOV), the camera's roll (`ZhboClientOut.view_roll`, the view kick's roll axis, passed to `Matrix3D::Look_At_Dir` unchanged — both are a right-handed turn about the forward axis) and the first-person view's near plane: 0.1 units, returned by the bridge (`Zhbo_GetCameraOverride`); `setWidth()` restores the RTS FOV. The RTS view keeps its own `NearZ = MAP_XY_FACTOR = 10`. |
@@ -607,6 +607,30 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
   passes it as `Look_At_Dir`'s roll. The viewmodel is placed in the unrolled eye frame, so the core
   adds the same roll to `viewmodel_angles.z` and the gun stays square to the screen, as BO2 draws
   it in the view's axes.
+
+## The shellshock's presentation
+
+Presentation only: nothing here feeds the sim (the shock's state is the sim's, read by the client).
+
+* **Screen layers.** `ffi::zhbo_client_frame` hands the local first-person player's shock screen
+  (`shellshock::screen`: white, shot, the blurred shock's `blur_alpha` for this frame's `dt`, the
+  shock's serial) to `nativevm::set_local_shock`. The native viewmodel's draw (`zhbo_native_viewmodel`,
+  whose `target_view`/`before_view` are the scene and its composite) queues it as the renderer's
+  shock layer (`Renderer::shock_submit`, `zhbo_gfx::runtime::ShockDraw`) before anything else it
+  does: a flashed shock's first frame (a new serial) is a `Grab`, later frames `Flashed { white,
+  shot }`; a blurred shock is `Blurred { alpha }`. It runs after the native draws, before the
+  composite, so the HUD stays on top (RENDERER.md "The shellshock layer"). When the draw queued a
+  layer (`nativevm::shock_layer_drawn`), the HUD does not draw its whiteout; otherwise (no renderer,
+  the DX8 build) the HUD's white rectangle is the fallback. Rust-internal: no zhgfx C ABI change.
+* **View kick.** `Client` adds the shock's kick (`shellshock::kick`, yaw/pitch radians) to
+  `ZhboClientOut.dir` only; `ClientOut.input` carries the unkicked aim.
+* **Ringing.** `shellshock::Presented` keeps the shock's `soundLoop` voice (fade in, hold until
+  `soundModEndDelay` past the end, fade out) and queues `(event, gain)` in `Cues::loops`, which the
+  FFI layer sends through `ClientApi::sound_loop(event, gain)`: the glue starts the looping 2D
+  event (`Control = loop`, `LoopCount = 0`, converted as `ZHBO_BO2_Shock_<alias>`), adjusts its
+  volume (`adjustVolumeOfPlayingAudio`, the INI volume × gain) and removes it at gain 0; leaving
+  first person stops it. `ZhboClientApi.sound_loop` is appended after `sound_gain`
+  (`ZHBO_CLIENT_API_FIELDS` 14 → 15 on both sides). A host without the field plays no loop.
 
 ## The Assault Shield in Zero Hour's damage path
 

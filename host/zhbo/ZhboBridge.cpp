@@ -339,6 +339,7 @@ void Zhbo_Init()
 		.can_place = cbClientCanPlace,
 		.ghost = cbGhost,
 		.sound_gain = cbSoundGain,
+		.sound_loop = cbSoundLoop,
 	};
 	zhbo_init(&logicApi, &clientApi);
 

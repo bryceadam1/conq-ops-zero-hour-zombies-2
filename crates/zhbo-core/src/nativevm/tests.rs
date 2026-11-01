@@ -1128,6 +1128,28 @@ fn draws_into_a_headless_renderer() {
     // Cleared blue (BGRA 255,0,0); the unlit (no lights, no ambient) viewmodel is dark on it.
     let covered = px.as_chunks::<4>().0.iter().filter(|p| p[0] < 128).count();
     assert!(covered > 0, "the viewmodel's triangles reached the screen");
+    // The shellshock's layer rides the same draw: a new flashed shock grabs its first frame, then
+    // adds the grab and the white; the HUD then leaves the whiteout to it.
+    let base = with_renderer(0, |r| r.shock_drawn());
+    let mut inp = input(1, 1.0);
+    inp.target_view = 1;
+    inp.before_view = 2;
+    for (k, white) in [(1, 1.0), (2, 0.5)] {
+        super::set_local_shock(Some(super::LocalShock { serial: 9, flashed: true, white, shot: 0.5, blur_alpha: 0.0 }));
+        assert!(!super::shock_layer_drawn(), "reset with each client frame");
+        with_state(|s| s.frame(&inp, true));
+        assert!(super::shock_layer_drawn(), "frame {k}: the renderer took the layer");
+        with_renderer((), |r| {
+            r.touch(1);
+            r.frame();
+            assert_eq!((r.stats().errors, r.stats().native_skipped), (0, 0));
+        });
+        assert_eq!(with_renderer(0, |r| r.shock_drawn()), base + k);
+    }
+    // No shock: nothing is queued.
+    super::set_local_shock(None);
+    with_state(|s| s.frame(&inp, true));
+    assert!(!super::shock_layer_drawn());
     with_state(|s| s.gpu.release());
     zhgfx_shutdown();
 }

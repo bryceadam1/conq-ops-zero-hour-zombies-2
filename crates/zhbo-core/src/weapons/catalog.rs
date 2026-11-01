@@ -359,7 +359,9 @@ Shock concussion_grenade_mp
   Flash = 7.5 15
   Look = 1 22 22 0.1 2
   Movement = 0.32
-  SoundLoop = chr_tinitus_loop
+  Kick = 0.75 0.1
+  Sound = 1 2.5 0.1
+  SoundLoop = 
 End
 Shock flashbang
   Flashed = 1
@@ -367,6 +369,8 @@ Shock flashbang
   Flash = 3.5 1
   Look = 0 90 90 0.5 2
   Movement = 0.8
+  Kick = 0.75 0.05
+  Sound = 0.25 1 0.1
   SoundLoop = chr_flashbang_tinnitus_loop
 End
 Shock frag_grenade_mp
@@ -375,7 +379,9 @@ Shock frag_grenade_mp
   Flash = 0 0
   Look = 0 90 90 0.5 2
   Movement = 0.4
-  SoundLoop = chr_tinitus_loop
+  Kick = 0.75 0.05
+  Sound = 0.1 2 0
+  SoundLoop = 
 End
 Shock proximity_grenade
   Flashed = 0
@@ -383,6 +389,8 @@ Shock proximity_grenade
   Flash = 0 0
   Look = 1 1 1 0.05 4
   Movement = 0.1
+  Kick = 2 0.75
+  Sound = 0.25 0 0
   SoundLoop = 
 End
 Shock proximity_grenade_exit
@@ -391,6 +399,8 @@ Shock proximity_grenade_exit
   Flash = 0 0
   Look = 1 30 30 0.2 2
   Movement = 0.525
+  Kick = 2 0.05
+  Sound = 0.25 0 0
   SoundLoop = 
 End
 WeaponGroups = weapon_smg weapon_assault weapon_cqb weapon_lmg weapon_sniper weapon_pistol weapon_launcher weapon_special

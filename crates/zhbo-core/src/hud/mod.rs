@@ -186,9 +186,14 @@ pub fn scope_overlay(prims: &mut Vec<Prim>, def: &crate::weapons::WeaponDef, a: 
 }
 
 /// A flashed shellshock's whiteout over the view (`crate::shellshock::Screen::white`, t6mp
-/// `FUN_005105c0`), under the HUD's own elements. BO2's other layers — the frozen screengrab and a
-/// blurred shock's blur — need a renderer pass the mod does not have yet.
+/// `FUN_005105c0`), under the HUD's own elements — only when the renderer's shock layer did not
+/// take this frame (`nativevm::shock_layer_drawn`): that layer adds the white and the frozen
+/// screengrab (and a blurred shock's trail) as BO2 does. This is the fallback without it (the DX8
+/// build, a scene the viewmodel draw did not reach).
 fn draw_shellshock(prims: &mut Vec<Prim>, w: f32, h: f32, screen: crate::shellshock::Screen) {
+    if crate::nativevm::shock_layer_drawn() {
+        return;
+    }
     let a = (screen.white.clamp(0.0, 1.0) * 255.0).round() as u32;
     if a > 0 {
         prims.push(Prim::Rect { x: 0.0, y: 0.0, w, h, argb: (a << 24) | 0x00ff_ffff });
