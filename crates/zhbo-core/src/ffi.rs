@@ -1043,15 +1043,19 @@ pub unsafe extern "C" fn zhbo_string(label: *const c_char) -> *const u16 {
     text.map_or(std::ptr::null(), |s| s.as_ptr())
 }
 
+/// The global State and the per-frame mirrors it publishes (the shield mirror, the native
+/// viewmodel's local camo/reticle/overlay transport, the third person's stowed weapons) are process-global: tests that drive the State
+/// through the ABI, or read those mirrors, run one at a time under this lock. The native viewmodel
+/// and third-person tests take it through their `with_state` (lock order: this, then that module's State).
+#[cfg(test)]
+pub(crate) fn state_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The global State is shared: the ffi tests that init it run one at a time.
-    fn state_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
-    }
 
     #[test]
     fn calls_before_init_are_harmless() {
@@ -1121,27 +1125,25 @@ mod tests {
 
     #[test]
     fn impact_fx_resolves_through_the_converted_table() {
-        // One install for the whole test binary: no other test reads the impact table.
-        let text = "impact 2 default ZHBO_BO2FX_b2_default\n\
-                    impact 2 concrete ZHBO_BO2FX_b2_concrete\n\
-                    flesh 2 3 ZHBO_BO2FX_b2_head_fatal\n";
-        let c = std::ffi::CString::new(text).unwrap();
+        // The impact table is process-global and the sim tests read it in parallel, so this test
+        // installs the same text they do (`impacts::TEST_TABLE`), through the ABI.
+        let c = std::ffi::CString::new(crate::impacts::TEST_TABLE).unwrap();
         unsafe { zhbo_load_impacts(c.as_ptr()) };
 
         let mut buf = [0u8; 64];
-        let n = unsafe { zhbo_impact_fx(2, crate::impacts::Surface::Concrete as i32, 0, 0, buf.as_mut_ptr().cast(), 64) };
+        let n = unsafe { zhbo_impact_fx(77, crate::impacts::Surface::Concrete as i32, 0, 0, buf.as_mut_ptr().cast(), 64) };
         assert_eq!(n, 1);
-        assert_eq!(ctext(&buf), "ZHBO_BO2FX_b2_concrete");
+        assert_eq!(ctext(&buf), "FX_C");
 
         // No cell for the surface: the bucket's default cell (BO2's SURF_TYPE_DEFAULT).
         let mut buf = [0u8; 64];
-        unsafe { zhbo_impact_fx(2, crate::impacts::Surface::Metal as i32, 0, 0, buf.as_mut_ptr().cast(), 64) };
-        assert_eq!(ctext(&buf), "ZHBO_BO2FX_b2_default");
+        unsafe { zhbo_impact_fx(77, crate::impacts::Surface::Metal as i32, 0, 0, buf.as_mut_ptr().cast(), 64) };
+        assert_eq!(ctext(&buf), "FX_D");
 
-        // Blood: head + fatal is BO2's FxFleshType 3.
+        // Blood where a round leaves a body: the exit table's flesh row.
         let mut buf = [0u8; 64];
-        unsafe { zhbo_impact_fx(2, crate::impacts::Surface::Flesh as i32, 1, 1, buf.as_mut_ptr().cast(), 64) };
-        assert_eq!(ctext(&buf), "ZHBO_BO2FX_b2_head_fatal");
+        let n = unsafe { zhbo_impact_exit_fx(78, crate::impacts::Surface::Flesh as i32, 0, 0, buf.as_mut_ptr().cast(), 64) };
+        assert_eq!((n, ctext(&buf)), (1, "FX_EXIT_BLOOD"));
 
         // A bucket with no rows: 0, and nothing written.
         let mut buf = [1u8; 8];
@@ -1222,6 +1224,9 @@ mod tests {
 
     #[test]
     fn the_shield_hook_queues_a_deployed_shields_damage_and_passes_the_sims_own() {
+        // The shield mirror is process-global and `zhbo_init`/`zhbo_logic_step`/`zhbo_reset`
+        // republish it from the global State: run with the other State tests, not beside them.
+        let _g = state_lock();
         let mut sim = Sim::new();
         let def = crate::weapons::catalog().get("riotshield_mp").unwrap();
         let carried = crate::shield::Bearer::of(5, crate::math::Vec3::new(0.0, 0.0, 0.0), 0.0, def, true).unwrap();

@@ -8619,3 +8619,28 @@ zhbo-formats keeps the oracle's "depends on zhbo-formats only" rule.
 The zone *lists* stay where they are: each is a deliberate search or load order with its own reason
 (the oracle's six string zones in load order, the converter's display names from two, the HUD
 art's material search) — one shared list would hide which order a caller relies on.
+
+## Code polish: tests that shared process globals without a lock (2026-11-01)
+
+`ffi::tests::the_shield_hook_queues_a_deployed_shields_damage_and_passes_the_sims_own` failed about
+one run in four. **Root cause:** the Assault Shield's engine mirror (`ffi::SHIELDS`/`SHIELD_COUNT`)
+is process-global, and `zhbo_init`, `zhbo_logic_step` and `zhbo_reset` republish it from the global
+State; the shield test wrote the mirror without the State tests' lock, so a parallel State test
+could zero it between the test's publish and its asserts. A scan for the same pattern found
+three more:
+
+- The native viewmodel's local camo/reticle/overlay transport (`nativevm::set_gun_under_overlay`
+  and friends) and the third person's stowed-weapon mirror are written by the client frame and
+  logic step the ffi tests drive, and read by the `nativevm`/`nativebody` tests, which serialized
+  on those modules' own State mutexes only. Both modules' test `with_state` now also take
+  `ffi::state_lock` (now `pub(crate)`, test-only; lock order: it, then the module's State).
+- The impact table is global and "every test installs the same `impacts::TEST_TABLE`" was the
+  rule, but `ffi::tests::impact_fx_resolves_through_the_converted_table` loaded its own table;
+  it now loads `TEST_TABLE` through `zhbo_load_impacts`.
+- `classes::tests::every_shipped_premade_id_resolves` asserted the global unresolved-id list was
+  empty while other tests record deliberately bad ids into it; it now checks only its own ids.
+
+Verified with 20 repeated `cargo test -p zhbo-core --lib` runs (650 tests) and 20 of `ffi::`, all
+green. The other globals (profile, strings, classes, fonts, tuning) already have their test locks or
+are only written by production code; the sound-layer table is installed by one test with an FX name
+no other test uses.

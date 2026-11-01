@@ -359,8 +359,10 @@ pub extern "C" fn zhbo_native_body_reset() {
     *g = None;
 }
 
-/// A mutable look at the state for the tests.
+/// A mutable look at the state for the tests. It also holds [`crate::ffi::state_lock`]: the
+/// logic step the ffi tests drive republishes the stowed-weapon mirror this state reads.
 #[cfg(test)]
 pub(crate) fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> R {
+    let _g = crate::ffi::state_lock();
     with(f)
 }
