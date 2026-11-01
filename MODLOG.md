@@ -8529,3 +8529,31 @@ shows "sound layers: 293 BO2 third-person layers installed"), `--classpick` 6/6,
 `--scope` pass, `--w3d-ads` 2/2. Two legs launched back-to-back first bailed with "Generals is
 already running" (the previous game still exiting); rerun serially they passed — wait for the
 previous `generalszh` to exit between legs.
+
+## The aimed sights sit on the shot: the gun's rotation fades by half-way into ADS (2026-11-01, `v1/ads-sightline`)
+
+The user's report: the MP7's sights sat slightly above where the hits landed. **Root cause:** the
+drawn gun kept its rotation at full ADS, so the MP7's `fAdsAimPitch` (2°, the only non-zero value
+besides the 870/KSG/Saiga's −0.1°) turned the whole viewmodel about the eye and the sight picture
+pointed 2° above the axis the shot leaves along. BO2 draws and fires from one set of angles:
+the client's view weapon (`FUN_005374c0`) calls `FUN_008f0700(weaponState, &ofs, &angles)`, whose
+`FUN_008f0340` writes `curRot × max(0, 1 − 2·posFrac)` + spring + sway + idle + flinch, and
+`FUN_00530cd0` builds the drawn axis as `AnglesToAxis(angles) × AnglesToAxis(view)`; the server's
+think (`FUN_005dc820`) composes the same angles into the fire direction. The idle-sway follow-up
+ported the fade for the fire angles only and noted "the drawn pose keeps `fAdsAimPitch`" — that
+note was wrong: `fAdsAimPitch` is a mid-transition dip (peak `θ·ads·(1−2ads)` before half-way),
+not an aimed pose. `GunPos::step` now fades all three rotation axes for the drawn angles and the
+fire angles are the drawn pitch/yaw (the sim's shot is unchanged — it already faded).
+
+Checked and ruled out with evidence: the eye (the viewmodel's eye and the shot's origin are both
+`Body::eye()`), the projection (the native pass uses the scene's own; an on-axis point projects
+to the centre at any FOV), the fire direction (`fire_angles` at a still full ADS is the view
+axis), kick/sway (both shared by the camera/aim and the gun; zero for a still single shot).
+
+Measured (`the_aimed_sight_lies_on_the_shot_for_every_gun`, 162 gun/optic rows): before, 14 rows
+off the shot beyond the authored clip — every MP7 row by +2.000° (0.073 NDC: the sight above the
+hits) and every 870/KSG/Saiga row by −0.10°; after, 0.000 on all 162. The sweep's aimed halves
+change on exactly those families (hip halves and every other weapon pixel-identical). The
+authored marker residuals (the KSG's `tag_sights` 2.2″ low, the AN-94's bare marker 3″ from the
+eye, the DW pairs) are untouched and remain the clip's business. No sim, ABI, table or VERSION
+change.
