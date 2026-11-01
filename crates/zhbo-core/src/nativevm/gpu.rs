@@ -137,7 +137,10 @@ fn submit(s: &mut State, inp: &ZhboNativeIn) -> i32 {
     let frame = NativeFrame { view_proj: None, eye: inp.eye, ambient: inp.ambient, lights, light_count: inp.light_count.clamp(0, 3) as u32, debug: inp.debug,
         // BO2's fWeaponPosFrac drives the lens reticle's fade (`weaponParam0.w`); the mod has no
         // effect that knocks optics out (BO2's EMP, `weaponParam0.y`).
-        ads: inp.ads, optics_off: 0.0 };
+        ads: inp.ads, optics_off: 0.0,
+        // The mod has no rangefinder detection: the two-colour reticle keeps its primary colours
+        // (BO2's `weaponParam0.z` = 0, nobody spotted).
+        reticle_alt: 0.0 };
     let palette = &s.posed.palette;
     let draw = NativeDraw { target_view: inp.target_view, before_view: inp.before_view, mesh, palette, frame };
     if with_renderer(false, |r| r.native_submit(&draw)) {

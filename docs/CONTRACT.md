@@ -298,8 +298,9 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
 * **The engine-filled surfaces: the lens reticle, the clan tag, the emblem.** BO2 fills three
   kinds of viewmodel surface at draw time; the converter now keeps them in the native models (the
   W3D path still leaves them out: it has no shader for them) and flags them by the material's
-  technique set, never by name. The material record appends `reticle` (the
-  `sw4_3d_reticle_dynamic` constants by the shader's names, and the noise map) and `emblem`
+  technique set, never by name. The material record appends `reticle` (the reticle
+  technique — `dynamic`, `dynamic_2colors`, `static`, `ui3d` — its constants by the shader's
+  names, and the noise map) and `emblem`
   (`sw4_3d_player_icon`); RENDERER.md "The lens reticle" has the technique. The local primary's
   reticle choice rides a core-global like the camo (`nativevm::set_local_reticle`, set by
   `zhbo_client_frame` from `PlayerSim.reticle`: `reticle_N` is `weaponoptions.csv` row `N + 1`,

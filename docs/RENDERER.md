@@ -156,8 +156,18 @@ colour is scaled by `sqrt(fade)`. `Emissive_Amount` (8–22) saturates the shape
 core with its colour at the falloff, as BO2's look. The material uniform is 96 bytes (`params`,
 `camo`, `spec`, then three reticle blocks); `NativeFrame` writes `ads`/`optics_off` into the
 frame block's `params.zw`. A reticle with a non-finite constant is skipped at upload (logged), the
-rest of the mesh draws. The MMS's `reticle_static` and the dual band's `reticle_ui3d` and
-`reticle_dynamic_2colors` (code-driven displays) are not ported; the converter leaves them out.
+rest of the mesh draws. The material uniform is 128 bytes: two more blocks carry the alt colours
+and the technique, `NativeReticle.kind`, one per BO2 reticle technique:
+`Dynamic` (above); `TwoColors` (`reticle_dynamic_2colors`, the dual band's second reticle:
+projected, **no** aim fade, its colours lerped to `Reticle_Alt_Color`/`Glow_Alt_Color` by
+`NativeFrame.reticle_alt`, BO2's `weaponParam0.z` — the "enemy spotted" colour, 0 in the mod);
+`Static` (`reticle_static`, the MMS: the image at the lens's own UVs, the noise in screen space —
+pixel ÷ the target's size, BO2's `renderTargetSize`, which the frame block's `screen.xy` carries,
+filled at upload — no aim fade); `Ui3d` (`reticle_ui3d`, the dual band's display: the code's UI
+render target at the lens UVs, red and blue two shapes, green and alpha two glows, alpha 1 into an
+additive blend, no fade; the mod has no rangefinder display, so `color` is `INVALID`, which binds
+black for this technique, and it adds nothing — BO2's look with an empty display). Every
+technique but `Ui3d` fades out with `optics_off`.
 
 ### Robustness
 

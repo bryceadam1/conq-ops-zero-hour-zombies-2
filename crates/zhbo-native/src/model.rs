@@ -148,8 +148,47 @@ impl CamoLayer {
     }
 }
 
+/// Which of BO2's reticle techniques draws a lens reticle (by the material's technique set).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReticleKind {
+    /// `sw4_3d_reticle_dynamic`: projected to infinity, faded in by the aim (reflex, holo, ACOG,
+    /// the dual optic).
+    #[default]
+    Dynamic,
+    /// `sw4_3d_reticle_dynamic_2colors`: projected, no aim fade, its colours lerped to the `alt`
+    /// pair by `weaponParam0.z` (the dual band's second reticle).
+    TwoColors,
+    /// `sw4_3d_reticle_static`: the image at the lens's own UVs, screen-space noise, no aim fade
+    /// (the MMS).
+    Static,
+    /// `sw4_3d_reticle_ui3d`: a code-drawn UI texture (`ui3dSampler`) at the lens UVs, two shapes
+    /// and two glows in its four channels, added (the dual band's display). There is no image of
+    /// its own; without the code's texture it adds nothing.
+    Ui3d,
+}
+
+impl ReticleKind {
+    fn code(self) -> u8 {
+        match self {
+            ReticleKind::Dynamic => 0,
+            ReticleKind::TwoColors => 1,
+            ReticleKind::Static => 2,
+            ReticleKind::Ui3d => 3,
+        }
+    }
+    fn from_code(c: u8) -> Result<ReticleKind, FormatError> {
+        Ok(match c {
+            0 => ReticleKind::Dynamic,
+            1 => ReticleKind::TwoColors,
+            2 => ReticleKind::Static,
+            3 => ReticleKind::Ui3d,
+            _ => return Err(FormatError::Corrupt(format!("reticle kind {c}"))),
+        })
+    }
+}
+
 /// BO2's lens reticle (the `sw4_3d_reticle_dynamic` techset: reflex, holo, ACOG, the dual optic's
-/// halves). The surface's colour map is the reticle image — red its shape, green its glow, blue
+/// halves; the other reticle techniques by [`ReticleKind`]). The surface's colour map is the reticle image — red its shape, green its glow, blue
 /// the background's coverage — and it is not mapped by the lens's UVs: the vertex shader projects
 /// it to infinity, `0.5 + scale · (T·v, −B·v)` for the eye→surface direction `v` in the surface's
 /// tangent frame, so it sits on the optic's axis wherever the eye is (parallax-free). The numbers
@@ -174,6 +213,10 @@ pub struct Reticle {
     pub background: f32,
     /// The noise map (`Detail_Map`), raw; `None` draws without noise (white).
     pub noise: Option<String>,
+    pub kind: ReticleKind,
+    /// `Reticle_Alt_Color` and `Glow_Alt_Color` (two-colour and ui3d techniques; 0 otherwise).
+    pub color_alt: [f32; 3],
+    pub glow_alt: [f32; 3],
 }
 
 impl Reticle {
@@ -185,6 +228,9 @@ impl Reticle {
             w.f32(v);
         }
         w.opt_str(self.noise.as_deref());
+        w.u8(self.kind.code());
+        w.f32s(&self.color_alt);
+        w.f32s(&self.glow_alt);
     }
     fn read(r: &mut Reader) -> Result<Reticle, FormatError> {
         Ok(Reticle {
@@ -197,6 +243,9 @@ impl Reticle {
             noise_amount: r.f32()?,
             background: r.f32()?,
             noise: r.opt_str()?,
+            kind: ReticleKind::from_code(r.u8()?)?,
+            color_alt: r.f32n()?,
+            glow_alt: r.f32n()?,
         })
     }
 }
@@ -505,7 +554,7 @@ pub(crate) mod tests {
     #[test]
     fn the_reticle_and_emblem_round_trip() {
         let mut m = strip();
-        m.materials[0].reticle = Some(Reticle { scale: 14.6, color: [0.25, 1.0, 0.0], glow: [0.0, 1.0, 0.2], glow_falloff: 3.0, emissive: 8.3, noise_scale: 4.75, noise_amount: 0.1, background: 0.0, noise: Some("Art\\Textures\\n.tga".into()) });
+        m.materials[0].reticle = Some(Reticle { scale: 14.6, color: [0.25, 1.0, 0.0], glow: [0.0, 1.0, 0.2], glow_falloff: 3.0, emissive: 8.3, noise_scale: 4.75, noise_amount: 0.1, background: 0.0, noise: Some("Art\\Textures\\n.tga".into()), kind: ReticleKind::TwoColors, color_alt: [1.0, 0.4, 0.4], glow_alt: [1.0, 0.0, 0.0] });
         m.materials[0].emblem = true;
         let bytes = m.to_bytes();
         assert_eq!(Model::from_bytes(&bytes).unwrap(), m);

@@ -29,6 +29,9 @@ pub const NATIVE_MAX_BONES: usize = 256;
 pub const NATIVE_MAX_LIGHTS: usize = 3;
 
 const FRAME_BYTES: u64 = 256;
+/// Where the frame block's `screen` vector sits (after view_proj, eye, ambient, 3 + 3 light
+/// vectors and params).
+const SCREEN_OFFSET: usize = 64 + 16 * 2 + 16 * 6 + 16;
 const PALETTE_BYTES: u64 = (NATIVE_MAX_BONES * 64) as u64;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
@@ -91,6 +94,32 @@ pub enum NativeCull {
 /// technique). The surface's `color` is the reticle image (R shape, G glow, B background), sampled
 /// not at the mesh's UVs but at `0.5 + scale · (T·v, −B·v)`: the eye→surface direction in the
 /// surface's tangent frame, so the reticle sits at infinity on the optic's axis.
+/// Which of BO2's reticle techniques (`zhbo_native::model::ReticleKind`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum NativeReticleKind {
+    /// Projected to infinity, faded in by the aim.
+    #[default]
+    Dynamic,
+    /// Projected, no aim fade, colours lerped to the alt pair by `NativeFrame::reticle_alt`.
+    TwoColors,
+    /// The image at the mesh UVs, screen-space noise, no aim fade.
+    Static,
+    /// The code's UI texture at the mesh UVs (`color`; `INVALID` binds black: nothing is added),
+    /// two shapes and two glows, opaque output added.
+    Ui3d,
+}
+
+impl NativeReticleKind {
+    fn code(self) -> f32 {
+        match self {
+            NativeReticleKind::Dynamic => 0.0,
+            NativeReticleKind::TwoColors => 1.0,
+            NativeReticleKind::Static => 2.0,
+            NativeReticleKind::Ui3d => 3.0,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NativeReticle {
     /// The noise map (`Detail_Map`) handle, or `INVALID` for none (white).
@@ -103,11 +132,15 @@ pub struct NativeReticle {
     pub noise_scale: f32,
     pub noise_amount: f32,
     pub background: f32,
+    pub kind: NativeReticleKind,
+    /// `Reticle_Alt_Color` / `Glow_Alt_Color` (two-colour and ui3d).
+    pub color_alt: [f32; 3],
+    pub glow_alt: [f32; 3],
 }
 
 impl NativeReticle {
     fn finite(&self) -> bool {
-        finite(&[self.scale, self.glow_falloff, self.emissive, self.noise_scale, self.noise_amount, self.background]) && finite(&self.color) && finite(&self.glow)
+        finite(&[self.scale, self.glow_falloff, self.emissive, self.noise_scale, self.noise_amount, self.background]) && finite(&self.color) && finite(&self.glow) && finite(&self.color_alt) && finite(&self.glow_alt)
     }
 }
 
@@ -163,6 +196,9 @@ pub struct NativeFrame {
     /// 1 while the player's optics are knocked out (`weaponParam0.y`: BO2's EMP), which hides the
     /// reticle; 0 otherwise.
     pub optics_off: f32,
+    /// `weaponParam0.z`: how far a two-colour reticle has turned to its alt colours (the dual
+    /// band's "enemy spotted" colour); 0 the primary.
+    pub reticle_alt: f32,
 }
 
 /// One queued draw: a mesh, its palette (world-space skinning matrices, column-major), and where.
@@ -174,9 +210,9 @@ pub struct NativeDraw<'a> {
     pub frame: NativeFrame,
 }
 
-/// The shader's `Material` uniform: params, camo UV, specular flags and the reticle's three
-/// constant blocks (six `vec4<f32>`).
-const MATERIAL_BYTES: u64 = 96;
+/// The shader's `Material` uniform: params, camo UV, specular flags and the reticle's five
+/// constant blocks (eight `vec4<f32>`).
+const MATERIAL_BYTES: u64 = 128;
 
 struct NativeTexture {
     view: wgpu::TextureView,
@@ -235,6 +271,8 @@ pub(crate) struct NativeState {
     bgl1: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     white: wgpu::TextureView,
+    /// The ui3d reticle's absent code texture: nothing added.
+    black: wgpu::TextureView,
     flat: wgpu::TextureView,
     align: u64,
     /// Draws refused this frame (validation), for the stats.
@@ -314,6 +352,7 @@ impl NativeState {
             bgl1,
             sampler,
             white: one_pixel(device, queue, [255; 4], wgpu::TextureFormat::Rgba8Unorm),
+            black: one_pixel(device, queue, [0; 4], wgpu::TextureFormat::Rgba8Unorm),
             flat: one_pixel(device, queue, [128, 128, 0, 0], wgpu::TextureFormat::Rgba8Unorm),
             align: align.max(16) as u64,
             skipped: 0,
@@ -463,8 +502,9 @@ impl Renderer {
                 Some(r) => (r.noise, &self.native.white),
                 None => (s.maps, &self.native.flat),
             };
+            let color_fallback = if s.reticle.is_some_and(|r| r.kind == NativeReticleKind::Ui3d) { &self.native.black } else { &self.native.white };
             let (Some(color), Some(maps), Some(camo), Some(specular)) = (
-                view(self, s.color, &self.native.white),
+                view(self, s.color, color_fallback),
                 view(self, maps_handle, maps_fallback),
                 view(self, s.camo, &self.native.white),
                 view(self, s.specular, &self.native.white),
@@ -486,7 +526,7 @@ impl Renderer {
                 0.0,
                 0.0,
             ];
-            let r = s.reticle.unwrap_or(NativeReticle { noise: INVALID, scale: 0.0, color: [0.0; 3], glow: [0.0; 3], glow_falloff: 1.0, emissive: 0.0, noise_scale: 1.0, noise_amount: 0.0, background: 0.0 });
+            let r = s.reticle.unwrap_or(NativeReticle { noise: INVALID, scale: 0.0, color: [0.0; 3], glow: [0.0; 3], glow_falloff: 1.0, emissive: 0.0, noise_scale: 1.0, noise_amount: 0.0, background: 0.0, kind: NativeReticleKind::Dynamic, color_alt: [0.0; 3], glow_alt: [0.0; 3] });
             let reticle = [
                 r.scale,
                 r.glow_falloff,
@@ -500,6 +540,14 @@ impl Renderer {
                 r.glow[1],
                 r.glow[2],
                 r.background,
+                r.color_alt[0],
+                r.color_alt[1],
+                r.color_alt[2],
+                r.kind.code(),
+                r.glow_alt[0],
+                r.glow_alt[1],
+                r.glow_alt[2],
+                0.0,
             ];
             let params: Vec<f32> = params.iter().chain(&reticle).copied().collect();
             let material = self.device.create_buffer(&wgpu::BufferDescriptor {
@@ -566,7 +614,7 @@ impl Renderer {
     pub fn native_submit(&mut self, d: &NativeDraw) -> bool {
         let why = if d.target_view as usize >= MAX_VIEWS || d.before_view as usize >= MAX_VIEWS {
             Some(format!("view {} / {} out of range", d.target_view, d.before_view))
-        } else if !d.frame.view_proj.is_none_or(|m| finite(&m)) || !finite(&d.frame.eye) || !finite(&[d.frame.ads, d.frame.optics_off]) || d.palette.iter().any(|m| !finite(m)) {
+        } else if !d.frame.view_proj.is_none_or(|m| finite(&m)) || !finite(&d.frame.eye) || !finite(&[d.frame.ads, d.frame.optics_off, d.frame.reticle_alt]) || d.palette.iter().any(|m| !finite(m)) {
             Some("non-finite matrices".into())
         } else if d.palette.len() > NATIVE_MAX_BONES {
             Some(format!("{} bones past {NATIVE_MAX_BONES}", d.palette.len()))
@@ -600,6 +648,8 @@ impl Renderer {
             block.extend([l.color[0], l.color[1], l.color[2], 0.0].iter().flat_map(|c| c.to_le_bytes()));
         }
         block.extend([f.light_count.min(NATIVE_MAX_LIGHTS as u32) as f32, f.debug, f.ads, f.optics_off].iter().flat_map(|c| c.to_le_bytes()));
+        // `screen`: the target's size (filled at upload, when the target is known), the alt lerp.
+        block.extend([1.0f32, 1.0, f.reticle_alt, 0.0].iter().flat_map(|c| c.to_le_bytes()));
         block.resize(FRAME_BYTES as usize, 0);
         ring.extend_from_slice(&block);
         ring.resize(ring.len().next_multiple_of(align), 0);
@@ -620,6 +670,23 @@ impl Renderer {
         }
         // The engine's transforms are final now: `view * proj` in bx's row-vector order is the
         // column-major `proj * view` the shader multiplies by.
+        // The screen-space noise of the static and ui3d reticles divides the pixel position by the
+        // target's size (BO2's `renderTargetSize`).
+        let sizes: Vec<(usize, [f32; 2])> = self
+            .native
+            .queue
+            .iter()
+            .map(|q| {
+                let fb = self.views[q.target_view as usize].frame_buffer;
+                let size = self.target_for(fb).map_or([1.0, 1.0], |t| [t.width.max(1) as f32, t.height.max(1) as f32]);
+                (q.frame_offset as usize + SCREEN_OFFSET, size)
+            })
+            .collect();
+        for (at, size) in sizes {
+            for (k, c) in size.iter().enumerate() {
+                self.native.ring[at + 4 * k..at + 4 * k + 4].copy_from_slice(&c.to_le_bytes());
+            }
+        }
         for q in &self.native.queue {
             if q.view_proj_from_view {
                 let v = &self.views[q.target_view as usize];

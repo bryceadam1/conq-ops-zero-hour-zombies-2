@@ -8,7 +8,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use zhbo_gfx::runtime::{InitDesc, NativeBlend, NativeCull, NativeDraw, NativeFrame, NativeLight, NativeReticle, NativeSurface, NativeVertex, Renderer, WindowKind, INVALID};
+use zhbo_gfx::runtime::{InitDesc, NativeBlend, NativeCull, NativeDraw, NativeFrame, NativeLight, NativeReticle, NativeReticleKind, NativeSurface, NativeVertex, Renderer, WindowKind, INVALID};
 use zhbo_gfx::state;
 
 const W: u32 = 64;
@@ -85,6 +85,7 @@ fn frame(lights: u32) -> NativeFrame {
         debug: 0.0,
         ads: 0.0,
         optics_off: 0.0,
+        reticle_alt: 0.0,
     }
 }
 
@@ -428,7 +429,7 @@ fn dot_reticle(r: &mut Renderer) -> u16 {
 }
 
 fn reticle(scale: f32) -> NativeReticle {
-    NativeReticle { noise: INVALID, scale, color: [1.0, 1.0, 1.0], glow: [0.0; 3], glow_falloff: 1.0, emissive: 1.0, noise_scale: 1.0, noise_amount: 0.0, background: 0.0 }
+    NativeReticle { noise: INVALID, scale, color: [1.0, 1.0, 1.0], glow: [0.0; 3], glow_falloff: 1.0, emissive: 1.0, noise_scale: 1.0, noise_amount: 0.0, background: 0.0, kind: NativeReticleKind::Dynamic, color_alt: [0.0; 3], glow_alt: [0.0; 3] }
 }
 
 fn translate3(x: f32, y: f32, z: f32) -> [f32; 16] {
@@ -552,4 +553,71 @@ fn a_non_finite_reticle_is_skipped_not_fatal() {
     let only_bad = r.native_create_mesh(&verts, &[0, 2, 1, 0, 3, 2], &surfaces[..1]);
     assert_eq!(only_bad, INVALID, "nothing drawable: refused so the caller falls back");
     assert_eq!(r.stats().errors, 0);
+}
+
+/// The centroid and count of the pixels whose BGR channel `ch` is bright (> 128) and the others
+/// dark: a colour-specific `red_centroid`.
+fn colour_count(shot: &Shot, ch: usize) -> usize {
+    let px = shot.lock().unwrap().clone().expect("a screenshot");
+    px.chunks(4).filter(|p| p[ch] > 128 && (0..3).filter(|&k| k != ch).all(|k| p[k] < 64)).count()
+}
+
+fn draw_frame(r: &mut Renderer, shot: &Shot, mesh: u16, palette: [f32; 16], f: NativeFrame) -> (f32, f32, usize) {
+    r.touch(1);
+    assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh, palette: &[palette], frame: f }));
+    r.request_screenshot(INVALID, "reticle.png");
+    r.frame();
+    red_centroid(shot)
+}
+
+/// The MMS's static reticle is the image at the lens's own UVs (it moves with the lens) and does
+/// not wait for the aim.
+#[test]
+fn the_static_reticle_rides_the_lens_and_draws_at_the_hip() {
+    let Some((mut r, log, shot)) = renderer() else { return };
+    let tex = dot_reticle(&mut r);
+    let rt = NativeReticle { kind: NativeReticleKind::Static, ..reticle(1.0) };
+    let mesh = r.native_create_mesh(&lens(), &[0, 2, 1, 0, 3, 2], &[NativeSurface { blend: NativeBlend::Premultiplied, reticle: Some(rt), ..surface(tex, false, 6) }]);
+    let hip = NativeFrame { view_proj: Some(perspective()), eye: [0.0; 3], ads: 0.0, ..frame(0) };
+    let (x0, _, n) = draw_frame(&mut r, &shot, mesh, IDENTITY, hip);
+    assert!(n > 0, "drawn at the hip");
+    let (x1, _, _) = draw_frame(&mut r, &shot, mesh, translate3(1.5, 0.0, 0.0), hip);
+    assert!((x1 - x0 - 4.8).abs() <= 1.0, "it moves with the lens: {x0} -> {x1}");
+    let off = NativeFrame { optics_off: 1.0, ..hip };
+    assert_eq!(draw_frame(&mut r, &shot, mesh, IDENTITY, off).2, 0, "optics knocked out");
+    assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
+}
+
+/// The dual band's two-colour reticle is projected (on the axis), does not wait for the aim, and
+/// turns to its alt colours by weaponParam0.z.
+#[test]
+fn the_two_colour_reticle_is_projected_and_turns_to_its_alt_colour() {
+    let Some((mut r, log, shot)) = renderer() else { return };
+    let tex = dot_reticle(&mut r);
+    let rt = NativeReticle { kind: NativeReticleKind::TwoColors, color: [0.0, 0.0, 1.0], color_alt: [1.0, 0.0, 0.0], ..reticle(1.0) };
+    let mesh = r.native_create_mesh(&lens(), &[0, 2, 1, 0, 3, 2], &[NativeSurface { blend: NativeBlend::Premultiplied, reticle: Some(rt), ..surface(tex, false, 6) }]);
+    let hip = NativeFrame { view_proj: Some(perspective()), eye: [0.0; 3], ads: 0.0, ..frame(0) };
+    draw_frame(&mut r, &shot, mesh, translate3(1.5, -1.0, 0.0), hip);
+    assert!(colour_count(&shot, 0) > 0 && colour_count(&shot, 2) == 0, "the primary (blue) at the hip");
+    let (x, y, n) = draw_frame(&mut r, &shot, mesh, translate3(1.5, -1.0, 0.0), NativeFrame { reticle_alt: 1.0, ..hip });
+    assert!(n > 0 && (x - 32.0).abs() <= 0.75 && (y - 32.0).abs() <= 0.75, "the alt (red), on the axis: ({x}, {y}) x{n}");
+    assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
+}
+
+/// The ui3d reticle draws the code's UI texture: without one (the mod has no rangefinder display)
+/// it adds nothing; with one, its red channel in Reticle_Color at the lens UVs, at the hip too.
+#[test]
+fn the_ui3d_reticle_adds_nothing_without_its_code_texture() {
+    let Some((mut r, log, shot)) = renderer() else { return };
+    let rt = NativeReticle { kind: NativeReticleKind::Ui3d, color: [1.0, 0.0, 0.0], ..reticle(0.0) };
+    let ui = |color| NativeSurface { blend: NativeBlend::Additive, reticle: Some(rt), ..surface(color, false, 6) };
+    let empty = r.native_create_mesh(&lens(), &[0, 2, 1, 0, 3, 2], &[ui(INVALID)]);
+    let hip = NativeFrame { view_proj: Some(perspective()), eye: [0.0; 3], ads: 0.0, ..frame(0) };
+    draw_frame(&mut r, &shot, empty, IDENTITY, hip);
+    let px = shot.lock().unwrap().clone().unwrap();
+    assert!(px.chunks(4).all(|p| p[0] == 0 && p[1] == 0 && p[2] == 0), "nothing added");
+    let tex = dot_reticle(&mut r);
+    let shown = r.native_create_mesh(&lens(), &[0, 2, 1, 0, 3, 2], &[ui(tex)]);
+    assert!(draw_frame(&mut r, &shot, shown, IDENTITY, hip).2 > 0, "the code texture's shape");
+    assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
 }

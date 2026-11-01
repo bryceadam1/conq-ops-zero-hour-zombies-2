@@ -112,7 +112,10 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeBodyIn) -> i32 {
     let frame = NativeFrame { view_proj: None, eye: inp.eye, ambient: inp.ambient, lights, light_count: inp.light_count.clamp(0, 3) as u32, debug: inp.debug,
         // Nobody aims through a third-person optic: BO2 sets the reticle's fade (`weaponParam0`)
         // for the local viewmodel only, so a world model's lens reticle stays dark.
-        ads: 0.0, optics_off: 0.0 };
+        ads: 0.0, optics_off: 0.0,
+        // The mod has no rangefinder detection: the two-colour reticle keeps its primary colours
+        // (BO2's `weaponParam0.z` = 0, nobody spotted).
+        reticle_alt: 0.0 };
     let palette = &s.posed.palette;
     let draw = NativeDraw { target_view: inp.target_view, before_view: inp.before_view, mesh, palette, frame };
     if with_renderer(false, |r| r.native_submit(&draw)) {

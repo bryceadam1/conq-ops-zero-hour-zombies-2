@@ -82,7 +82,7 @@ pub(crate) fn material_record(mat: Option<&xmodel::Material>, texture: Option<&s
         name: mat.map_or_else(String::new, |m| m.name.clone()),
         blend: b,
         emissive: matches!(b, Blend::Additive { .. }),
-        color: texture.map(|t| format!("Art\\Textures\\{t}")),
+        color: texture.filter(|t| !looks.no_file.contains(*t)).map(|t| format!("Art\\Textures\\{t}")),
         maps: texture.and_then(|t| looks.maps.get(t)).map(|t| format!("Art\\Textures\\{t}")),
         specular: texture.and_then(|t| looks.specular.get(t)).map(|t| format!("Art\\Textures\\{t}")),
         sort_key: mat.map_or(0, |m| m.sort_key),

@@ -27,6 +27,9 @@ struct Frame {
     // 4 specular, 5 reflection), z: BO2's fWeaponPosFrac (weaponParam0.w), w: optics knocked out
     // (weaponParam0.y)
     params: vec4<f32>,
+    // xy: the target's size in pixels (BO2's renderTargetSize), z: the two-colour reticle's alt
+    // lerp (weaponParam0.z)
+    screen: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -42,6 +45,8 @@ struct Frame {
 //   ret0: Color_Map_Scale, Glow_Falloff, Emissive_Amount, Noise_Scale
 //   ret1: Reticle_Color.rgb, Color_Map_Noise
 //   ret2: Glow_Color.rgb, Background
+//   ret3: Reticle_Alt_Color.rgb, technique (0 dynamic, 1 two-colour, 2 static, 3 ui3d)
+//   ret4: Glow_Alt_Color.rgb
 struct Material {
     params: vec4<f32>,
     camo: vec4<f32>,
@@ -49,6 +54,8 @@ struct Material {
     ret0: vec4<f32>,
     ret1: vec4<f32>,
     ret2: vec4<f32>,
+    ret3: vec4<f32>,
+    ret4: vec4<f32>,
 }
 @group(1) @binding(3) var<uniform> material: Material;
 @group(1) @binding(4) var camo_map: texture_2d<f32>;
@@ -218,18 +225,28 @@ fn fs(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
     return finish(color, alpha);
 }
 
-// BO2's lens reticle (`pimp_shader_sw4_3d_reticle_dynamic_*`, read from its DXBC). The vertex
-// shader there turns the eye->vertex direction v into the reticle's UV through the surface's
-// tangent frame, `0.5 + Color_Map_Scale * (dot(T, v), -dot(B, v))`: a function of direction only,
-// so the reticle is at infinity and stays on the optic's axis however the gun sways (no
-// parallax). Here the frame comes from the position/UV derivatives (exact on a flat lens) and the
-// projection runs per pixel. The pixel shader is BO2's: red is the shape in Reticle_Color, green
-// the glow (`green^Glow_Falloff * Glow_Color`, modulated by the lens-UV noise), blue the
-// background's coverage; the sum times Emissive_Amount, faded in by `saturate(2 * ads)` and out
-// while the optics are knocked out. BO2 squares the colour, scales by the fade and takes the root
-// (its HDR encode); the result is the colour times `sqrt(fade)`, drawn premultiplied.
+// BO2's lens reticles, read from the DXBC of their techniques (`pimp_shader_sw4_3d_reticle_*`).
+//
+// * dynamic (0) and two-colour (1): the vertex shader turns the eye->vertex direction v into the
+//   reticle's UV through the surface's tangent frame, `0.5 + Color_Map_Scale * (dot(T, v),
+//   -dot(B, v))`: a function of direction only, so the reticle is at infinity and stays on the
+//   optic's axis however the gun sways (no parallax). Here the frame comes from the position/UV
+//   derivatives (exact on a flat lens) and the projection runs per pixel. Noise at the lens UVs.
+// * static (2) and ui3d (3): the image at the lens's own UVs; the noise in screen space (pixel /
+//   renderTargetSize * Noise_Scale).
+// The pixel shaders: red is the shape (Reticle_Color), green the glow (`green^Glow_Falloff *
+// Glow_Color`, times the noise), blue the background's coverage (`* Background`), the shape dimmed
+// by `1 - Color_Map_Noise * noise`, the sum times Emissive_Amount. The two-colour technique lerps
+// its colours to the alt pair by weaponParam0.z. The ui3d technique reads the code's UI texture:
+// red and blue are two shapes (Reticle_Color, Reticle_Alt_Color), green and alpha two glows
+// (Glow_Color, Glow_Alt_Color), and it writes alpha 1 into an additive blend with no fade. BO2
+// squares the colour, scales by the fade and takes the root (its HDR encode): the colour times
+// `sqrt(fade)`. Only the dynamic technique fades in with the aim (`saturate(2 * ads)`); all but
+// ui3d fade out while the optics are knocked out (weaponParam0.y).
 @fragment
 fn fs_reticle(i: VOut) -> @location(0) vec4<f32> {
+    let kind = material.ret3.w;
+    let projected = kind < 1.5;
     let dp1 = dpdx(i.world);
     let dp2 = dpdy(i.world);
     let duv1 = dpdx(i.uv);
@@ -243,14 +260,35 @@ fn fs_reticle(i: VOut) -> @location(0) vec4<f32> {
     let tn = t * inverseSqrt(max(dot(t, t), 1e-30));
     let bn = b * inverseSqrt(max(dot(b, b), 1e-30));
     let v = normalize(i.world - frame.eye.xyz);
-    // The reticle image is clamped (its sampler state's clampU/V), so off the axis it ends.
+    // The projected image is clamped (its sampler state's clampU/V), so off the axis it ends.
     let ruv = clamp(vec2<f32>(0.5 + dot(tn, v) * material.ret0.x, 0.5 - dot(bn, v) * material.ret0.x), vec2<f32>(0.0), vec2<f32>(1.0));
-    let c = textureSampleGrad(color_map, samp, ruv, vec2<f32>(0.0), vec2<f32>(0.0));
-    let noise = textureSample(maps_map, samp, i.uv * material.ret0.w).r;
-    let glow = pow(max(c.g, 1e-6), material.ret0.y) * material.ret2.rgb * noise;
-    let shape = c.r * material.ret1.rgb * (1.0 - material.ret1.w * noise);
-    let rgb = (shape + glow) * material.ret0.z;
-    let alpha = c.b * material.ret2.w;
-    let fade = (1.0 - frame.params.w) * clamp(2.0 * frame.params.z, 0.0, 1.0);
-    return finish(min(rgb * sqrt(fade), vec3<f32>(1.0)), alpha * fade);
+    // Every sample in uniform control flow (implicit derivatives); the technique picks one. The
+    // projected image takes its top level (the clamp's edge would blow up its derivatives), the
+    // lens-UV image and the noise their mips, as BO2 samples them.
+    let c = select(textureSample(color_map, samp, i.uv), textureSampleLevel(color_map, samp, ruv, 0.0), projected);
+    let screen_uv = i.clip.xy / max(frame.screen.xy, vec2<f32>(1.0));
+    let noise = select(textureSample(maps_map, samp, screen_uv * material.ret0.w), textureSample(maps_map, samp, i.uv * material.ret0.w), projected).r;
+    let falloff = material.ret0.y;
+    let dim = 1.0 - material.ret1.w * noise;
+    var rgb: vec3<f32>;
+    var alpha: f32;
+    var fade = 1.0 - frame.params.w;
+    if (kind > 2.5) {
+        let shape = c.r * material.ret1.rgb + c.b * material.ret3.rgb;
+        let glow = pow(max(c.g, 1e-6), falloff) * material.ret2.rgb + pow(max(c.a, 1e-6), falloff) * material.ret4.rgb;
+        rgb = (shape * dim + glow * noise) * material.ret0.z;
+        alpha = 1.0;
+        fade = 1.0;
+    } else {
+        let alt = select(0.0, frame.screen.z, kind > 0.5 && kind < 1.5);
+        let reticle_color = mix(material.ret1.rgb, material.ret3.rgb, alt);
+        let glow_color = mix(material.ret2.rgb, material.ret4.rgb, alt);
+        let glow = pow(max(c.g, 1e-6), falloff) * glow_color * noise;
+        rgb = (c.r * reticle_color * dim + glow) * material.ret0.z;
+        alpha = c.b * material.ret2.w;
+        if (kind < 0.5) {
+            fade = fade * clamp(2.0 * frame.params.z, 0.0, 1.0);
+        }
+    }
+    return finish(min(rgb * sqrt(fade), vec3<f32>(1.0)), select(alpha * fade, 1.0, kind > 2.5));
 }

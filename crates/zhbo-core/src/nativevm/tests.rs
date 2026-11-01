@@ -1012,7 +1012,7 @@ fn diag_real_maps() {
             let mut lights = [NativeLight::default(); 3];
             lights[0] = NativeLight { direction: [0.81, -0.38, 0.45], color: [1.0, 1.0, 1.0] };
             lights[1] = NativeLight { direction: [-0.79, -0.62, 0.0], color: [0.24, 0.24, 0.31] };
-            let f = NativeFrame { view_proj: Some(ortho), eye: [32.0, 32.0, -100.0], ambient: [0.22, 0.2, 0.17], lights, light_count: 2, debug: 0.0, ads: 0.0, optics_off: 0.0 };
+            let f = NativeFrame { view_proj: Some(ortho), eye: [32.0, 32.0, -100.0], ambient: [0.22, 0.2, 0.17], lights, light_count: 2, debug: 0.0, ads: 0.0, optics_off: 0.0, reticle_alt: 0.0 };
             r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh, palette: &[zhbo_native::math::MAT4_IDENTITY], frame: f });
             r.request_screenshot(INVALID, "x");
             r.frame();

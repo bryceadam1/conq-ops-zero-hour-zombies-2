@@ -4698,3 +4698,24 @@ gap clusters 213 → 213.
 `zhbo_native::camo::VERSION` (the shared material record appends `reticle` and `emblem`), the
 archive's `hud::VERSION` (new textures and `reticles.zbr`). `reticles.zbr` is new at v1. No C ABI
 change (`NativeSurface`/`NativeFrame` are Rust-only; `ZhboNativeIn` is unchanged).
+
+**Follow-up (same branch): the other reticle techniques.** Ported from their DXBC as
+`NativeReticleKind`s of `fs_reticle` (RENDERER.md "The lens reticle"): `reticle_dynamic_2colors`
+(the dual band's `rangefinder_reticle2`; the dynamic VS, a PS that lerps its colours to
+`Reticle_Alt_Color`/`Glow_Alt_Color` by `weaponParam0.z` and has **no** aim fade — the `t6mp`
+dvars registered beside it, `FUN_004cc260`, describe the alt colour as the range finder's
+"enemy spotted" colour), `reticle_static` (the MMS: VS `reticle_ui3d_b51cfb3a` passes the mesh
+UV; PS samples the image there, the noise at `SV_Position / renderTargetSize · Noise_Scale`, no
+aim fade) and `reticle_ui3d` (the dual band's `rangefinder_reticle`: no image of its own — it
+samples `ui3dSampler`, the code's UI render target, at `uv · ui3dUVSetup5.xy + .zw`, R/B two shapes,
+G/A two glows, alpha 1, blend `ONE, ONE`). The mod draws no rangefinder display and detects no
+one, so the ui3d reticle binds black and adds nothing and the two-colour one keeps its primary
+colours — BO2's empty / nobody-spotted states. Gotcha: `reticle_dynamic_2colors_…` also starts
+`reticle_dynamic_`; the technique match takes the most specific prefix. Not this item: the MMS's
+screen (`mc/mtl_t6_attach_optic_mms_display`, the `sw4_3d_sonar_attachment_lens2` technique: a
+depth-pulse scanner) draws as a plain additive noise texture and washes the MMS lens white in the
+sweep; it needs its own port.
+
+**Follow-up: the faction emblem** is converted from the player's Zero Hour install (CONTRACT.md):
+`MappedImage <Side>_Logo` in `Data\INI\MappedImages\TextureSize_512\SCShellUserInterface512.INI`,
+48 × 48 on `Data\English\Art\Textures\SCShellUserInterface512_006.tga` (`EnglishZH.big`).

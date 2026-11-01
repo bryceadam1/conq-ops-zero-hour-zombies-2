@@ -13,6 +13,7 @@ use std::collections::BTreeSet;
 use zhbo_formats::iwi::Rgba;
 use zhbo_formats::{w3d, xmodel};
 use std::collections::BTreeMap;
+use zhbo_native::model::ReticleKind;
 
 
 /// How the converted surfaces are drawn, by texture file: how each blends over what is behind it
@@ -33,6 +34,9 @@ pub(crate) struct Looks {
     pub(crate) reticle: BTreeMap<String, zhbo_native::model::Reticle>,
     /// The emblem surfaces, by colour map: the core paints the player's faction emblem there.
     pub(crate) emblem: BTreeSet<String>,
+    /// Keys of surfaces with no texture file of their own (the ui3d reticle draws a code texture):
+    /// their native material names no colour map.
+    pub(crate) no_file: BTreeSet<String>,
 }
 
 /// The zone that loads the optics' reticle art in full (the CaC reticle options' materials;
@@ -40,9 +44,17 @@ pub(crate) struct Looks {
 pub(crate) const RETICLE_ZONE: &str = "code_post_gfx_mp";
 
 /// BO2's technique sets for the surfaces the engine fills at draw time (`Material::techset`).
-const RETICLE_TECHSETS: &str = "sw4_3d_reticle";
-/// The projected (parallax-free) lens reticle: reflex, holo, ACOG, the dual optic's halves.
-const RETICLE_DYNAMIC: &str = "sw4_3d_reticle_dynamic_";
+const RETICLE_TECHSETS: &str = "sw4_3d_reticle_";
+
+/// Which reticle technique a material's technique set names, if any (the most specific prefix
+/// first: `reticle_dynamic_2colors` also starts `reticle_dynamic_`).
+pub(crate) fn reticle_kind(techset: &str) -> Option<ReticleKind> {
+    let (_, rest) = techset.split_once(RETICLE_TECHSETS)?;
+    [("dynamic_2colors_", ReticleKind::TwoColors), ("dynamic_", ReticleKind::Dynamic), ("static_", ReticleKind::Static), ("ui3d_", ReticleKind::Ui3d)]
+        .into_iter()
+        .find(|(p, _)| rest.starts_with(p))
+        .map(|(_, k)| k)
+}
 const CLAN_TAG: &str = "sw4_3d_clan_tag";
 const PLAYER_ICON: &str = "sw4_3d_player_icon";
 
@@ -75,7 +87,7 @@ pub(crate) fn textures(model: &xmodel::Model, paks: &Paks, files: &mut BTreeMap<
             let m = m.as_ref()?;
             // The surfaces BO2's engine fills at draw time. The W3D path has no shader for any of them
             // and leaves them out (the HUD draws the reticle there); the native pass draws them.
-            let engine_filled = if m.techset.contains(RETICLE_DYNAMIC) {
+            let engine_filled = if reticle_kind(&m.techset).is_some() {
                 Some(reticle(m, paks, files, looks))
             } else if m.techset.contains(CLAN_TAG) {
                 Some(clan_tag(m, paks, files, looks))
@@ -83,10 +95,6 @@ pub(crate) fn textures(model: &xmodel::Model, paks: &Paks, files: &mut BTreeMap<
                 Some(m.sampler("colorMap").and_then(|img| coverage_texture(m, img, paks, files, looks)).inspect(|name| {
                     looks.emblem.insert(name.clone());
                 }))
-            } else if m.techset.contains(RETICLE_TECHSETS) {
-                // The other reticle techsets (the MMS's static, the dual band's code-drawn ui3d and
-                // two-colour) need inputs the mod does not model: left out of both paths.
-                Some(None)
             } else {
                 None
             };
@@ -163,13 +171,22 @@ fn native_only(m: &xmodel::Material, name: &str, looks: &mut Looks) {
 /// A lens reticle material on its own (a CaC reticle option's), converted as [`textures`] converts
 /// one on a model: the reticle image's file name, its constants in `looks`.
 pub(crate) fn lens_reticle(m: &xmodel::Material, paks: &Paks, files: &mut BTreeMap<String, Vec<u8>>, looks: &mut Looks) -> Option<String> {
-    m.techset.contains(RETICLE_DYNAMIC).then(|| reticle(m, paks, files, looks)).flatten()
+    reticle_kind(&m.techset).and_then(|_| reticle(m, paks, files, looks))
 }
 
 /// The lens reticle: its image (`Color_Map`, raw: the channels are shape/glow/background, not
 /// colour), its noise (`Detail_Map`) and the shader's constants (see `zhbo_native::model::Reticle`).
 fn reticle(m: &xmodel::Material, paks: &Paks, files: &mut BTreeMap<String, Vec<u8>>, looks: &mut Looks) -> Option<String> {
-    let name = coverage_texture(m, m.sampler("Color_Map")?, paks, files, looks)?;
+    let kind = reticle_kind(&m.techset)?;
+    let name = if kind == ReticleKind::Ui3d {
+        // Its colour is the code's UI texture (`ui3dSampler`): no image of its own.
+        let name = character::texture_file(&m.name);
+        native_only(m, &name, looks);
+        looks.no_file.insert(name.clone());
+        name
+    } else {
+        coverage_texture(m, m.sampler("Color_Map")?, paks, files, looks)?
+    };
     let noise = m.sampler("Detail_Map").and_then(|img| {
         let file = character::texture_file(&img.name);
         let path = format!("Art\\Textures\\{file}");
@@ -178,14 +195,20 @@ fn reticle(m: &xmodel::Material, paks: &Paks, files: &mut BTreeMap<String, Vec<u
         }
         Some(path)
     });
-    looks.reticle.insert(name.clone(), reticle_constants(m, noise)?);
+    looks.reticle.insert(name.clone(), reticle_constants(m, noise, kind)?);
     Some(name)
 }
 
-/// The reticle shader's constants from the material (`None` when one is missing: nothing to draw
-/// it by).
-pub(crate) fn reticle_constants(m: &xmodel::Material, noise: Option<String>) -> Option<zhbo_native::model::Reticle> {
-    let c = |n: &str| m.constant(n);
+/// The reticle shader's constants from the material, the ones `kind`'s shaders read (`None` when
+/// one is missing: nothing to draw it by). Constants a technique does not read stay 0.
+pub(crate) fn reticle_constants(m: &xmodel::Material, noise: Option<String>, kind: ReticleKind) -> Option<zhbo_native::model::Reticle> {
+    let reads = |n: &str| match kind {
+        ReticleKind::Dynamic => !n.contains("_Alt_"),
+        ReticleKind::TwoColors => true,
+        ReticleKind::Static => !n.contains("_Alt_") && n != "Color_Map_Scale",
+        ReticleKind::Ui3d => n != "Color_Map_Scale" && n != "Background",
+    };
+    let c = |n: &str| if reads(n) { m.constant(n) } else { Some([0.0; 4]) };
     let rgb = |v: [f32; 4]| [v[0], v[1], v[2]];
     Some(zhbo_native::model::Reticle {
         scale: c("Color_Map_Scale")?[0],
@@ -197,8 +220,11 @@ pub(crate) fn reticle_constants(m: &xmodel::Material, noise: Option<String>) -> 
         noise_amount: c("Color_Map_Noise")?[0],
         background: c("Background")?[0],
         noise,
+        kind,
+        color_alt: rgb(c("Reticle_Alt_Color")?),
+        glow_alt: rgb(c("Glow_Alt_Color")?),
     })
-    .filter(|r| [r.scale, r.glow_falloff, r.emissive, r.noise_scale, r.noise_amount, r.background].iter().chain(&r.color).chain(&r.glow).all(|v| v.is_finite()))
+    .filter(|r| [r.scale, r.glow_falloff, r.emissive, r.noise_scale, r.noise_amount, r.background].iter().chain(&r.color).chain(&r.glow).chain(&r.color_alt).chain(&r.glow_alt).all(|v| v.is_finite()))
 }
 
 /// The clan tag as BO2 draws it for a player without one. Its shader picks four glyphs out of the
@@ -371,10 +397,22 @@ mod tests {
             ],
             ..Default::default()
         };
-        let r = reticle_constants(&m, Some("n".into())).expect("all constants present");
+        let r = reticle_constants(&m, Some("n".into()), ReticleKind::Dynamic).expect("all constants present");
         assert_eq!((r.scale, r.color, r.glow, r.glow_falloff, r.emissive), (14.6, [0.254546, 1.0, 0.0], [0.0, 1.0, 0.209091], 3.01, 8.3));
         assert_eq!((r.noise_scale, r.noise_amount, r.background, r.noise.as_deref()), (4.75, 0.1, 0.0, Some("n")));
+        assert!(reticle_constants(&m, None, ReticleKind::TwoColors).is_none(), "the two-colour technique needs its alt colours");
         m.constants.pop();
-        assert!(reticle_constants(&m, None).is_none(), "no Color_Map_Scale, no projection");
+        assert!(reticle_constants(&m, None, ReticleKind::Dynamic).is_none(), "no Color_Map_Scale, no projection");
+        assert!(reticle_constants(&m, None, ReticleKind::Static).is_some(), "the static technique does not project");
+    }
+
+    /// The technique set names the technique, the most specific prefix first.
+    #[test]
+    fn the_techset_names_the_reticle_technique() {
+        assert_eq!(reticle_kind("mc_sw4_3d_reticle_dynamic_9820jqfj"), Some(ReticleKind::Dynamic));
+        assert_eq!(reticle_kind("mc_sw4_3d_reticle_dynamic_2colors_5f888f0w"), Some(ReticleKind::TwoColors));
+        assert_eq!(reticle_kind("mc_sw4_3d_reticle_static_35866wj0"), Some(ReticleKind::Static));
+        assert_eq!(reticle_kind("mc_sw4_3d_reticle_ui3d_q49ew30e"), Some(ReticleKind::Ui3d));
+        assert_eq!(reticle_kind("mc_sw4_3d_clan_tag_fq631zzu"), None);
     }
 }

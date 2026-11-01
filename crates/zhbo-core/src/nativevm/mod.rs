@@ -87,6 +87,14 @@ pub(crate) fn native_reticle(r: &zhbo_native::model::Reticle, handle: impl Fn(&O
         noise_scale: r.noise_scale,
         noise_amount: r.noise_amount,
         background: r.background,
+        kind: match r.kind {
+            zhbo_native::model::ReticleKind::Dynamic => zhbo_gfx::runtime::NativeReticleKind::Dynamic,
+            zhbo_native::model::ReticleKind::TwoColors => zhbo_gfx::runtime::NativeReticleKind::TwoColors,
+            zhbo_native::model::ReticleKind::Static => zhbo_gfx::runtime::NativeReticleKind::Static,
+            zhbo_native::model::ReticleKind::Ui3d => zhbo_gfx::runtime::NativeReticleKind::Ui3d,
+        },
+        color_alt: r.color_alt,
+        glow_alt: r.glow_alt,
     }
 }
 
