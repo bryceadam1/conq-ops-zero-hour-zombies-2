@@ -135,6 +135,8 @@ pub enum EventKind {
     GeneralDied { general: u32 },
     /// Melee swing (hit or miss).
     Melee,
+    /// The melee landed on someone (BO2's `meleeHitSound` moment).
+    MeleeHit,
     /// Offhand pulled back (pin out); then thrown.
     OffhandReady { lethal: bool },
     Thrown { lethal: bool },
@@ -142,8 +144,9 @@ pub enum EventKind {
     CantPlant { lethal: bool },
     /// A launcher fired.
     Launched,
-    /// A grenade, rocket or other projectile went off.
-    Exploded { at: Vec3 },
+    /// A grenade, rocket or other projectile went off; `sound` is its def's blast event
+    /// (`projExplosionSound`), empty when it has none (equipment, or a def BO2 gives none).
+    Exploded { at: Vec3, sound: &'static str },
     /// Equipment set down (planted, or a thrown piece came to rest).
     Planted { kind: EquipKind },
     /// The player's C4 went off.
@@ -686,7 +689,7 @@ impl Sim {
             let (_, proj) = self.projectiles.remove(*i);
             match *outcome {
                 Outcome::Exploded { at, hit_enemy, kill } => {
-                    self.emit(*owner, EventKind::Exploded { at });
+                    self.emit(*owner, EventKind::Exploded { at, sound: proj.def.explode_sound.as_str() });
                     self.deployed_caught_in_blast(host, *owner, proj.def, at);
                     if proj.def.effect == crate::weapons::Effect::Smoke {
                         let radius = proj.def.explosion_radius.max(crate::projectiles::SMOKE_RADIUS);
@@ -727,7 +730,7 @@ impl Sim {
         for e in events {
             match e {
                 EquipEvent::Exploded { owner, at, hit_enemy, kill, def } => {
-                    self.emit(owner, EventKind::Exploded { at });
+                    self.emit(owner, EventKind::Exploded { at, sound: "" });
                     self.deployed_caught_in_blast(host, owner, def, at);
                     if hit_enemy {
                         self.emit(owner, EventKind::HitMarker { headshot: false, kill });
@@ -1016,8 +1019,9 @@ pub fn describe_event(e: &Event) -> Option<String> {
         Damaged { amount } => format!("player {}'s General took {amount:.0} damage", e.player),
         Swapped => format!("player {} swapped weapons", e.player),
         Melee => format!("player {} meleed", e.player),
+        MeleeHit => format!("player {}'s melee landed", e.player),
         Thrown { lethal } => format!("player {} threw a {}", e.player, if lethal { "lethal" } else { "tactical" }),
-        Exploded { at } => format!("player {}'s grenade went off at ({:.0}, {:.0})", e.player, at.x, at.y),
+        Exploded { at, .. } => format!("player {}'s grenade went off at ({:.0}, {:.0})", e.player, at.x, at.y),
         CantPlant { .. } => format!("player {} was told \"{}\"", e.player, event_hint(&e.kind).map_or("", hint_text)),
         Planted { kind } => format!("player {} put down equipment ({kind:?})", e.player),
         Detonated => format!("player {} set off their C4", e.player),
@@ -2272,6 +2276,31 @@ pub(crate) mod tests {
         assert_eq!(draws(1, 2, 2), [1, 2]);
         // One below the interval carries over: the next draw comes sooner.
         assert_eq!(draws(3, 3, 1), [1]);
+    }
+
+    #[test]
+    fn a_landed_melee_reports_its_hit_and_a_miss_does_not() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        wait_until_ready(&mut sim, &host);
+        sim.events.clear();
+        // The strike lands after the melee weapon's delay (`iMeleeDelay`, assault-shield's melee
+        // states): run the swing out.
+        run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::MELEE, ..Default::default() }, 1);
+        run(&mut sim, &host, 0, 1, FpsInput::default(), 20);
+        let ev = events(&sim);
+        assert!(ev.contains(&EventKind::Melee) && !ev.contains(&EventKind::MeleeHit), "a swing at the air: {ev:?}");
+        run(&mut sim, &host, 0, 1, FpsInput::default(), 60);
+        // An enemy at arm's length straight ahead (yaw 0 faces +x).
+        host.add(soldier(2, 1, 8.0));
+        sim.events.clear();
+        run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::MELEE, ..Default::default() }, 1);
+        run(&mut sim, &host, 0, 1, FpsInput::default(), 20);
+        let ev = events(&sim);
+        assert!(ev.contains(&EventKind::Melee) && ev.contains(&EventKind::MeleeHit), "{ev:?}");
     }
 
     #[test]

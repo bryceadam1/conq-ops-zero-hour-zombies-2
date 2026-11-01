@@ -39,12 +39,10 @@ pub struct Shipped {
     /// The BO2 weapons as the converter parsed them (for the icon sprites' sources).
     bo2: Vec<zhbo_formats::weapon::Weapon>,
     sprites: String,
-    /// The converter's third-person FX weapons: `ZHBO_FX_<key>` → its `FireFX` (the flash others
-    /// see), from `weapons::sounds_and_fx`'s INI.
+    /// The shipped FX weapons INI's `FireFX` by weapon: the third-person flashes (`ZHBO_FX_<key>`,
+    /// the flash others see, set to BO2's own world flash after `sounds_and_fx`) and the brass and
+    /// tracer FX weapons (`shotfx::convert`).
     fx_weapons: HashMap<String, String>,
-    /// The shipped FX weapons INI's `FireFX` by weapon (the brass and tracer FX weapons,
-    /// `shotfx::convert`, live only there).
-    shipped_fx_weapons: HashMap<String, String>,
 }
 
 impl Shipped {
@@ -69,7 +67,7 @@ impl Shipped {
         let bo2 = zhbo_formats::weapon::all_in(&common, &[&patch]).map_err(|e| e.to_string())?;
         let atts = zhbo_formats::weapon::attachments(&common).map_err(|e| e.to_string())?;
         let mut defs = zhbo_core::weapons::parse_full_table(&text)?.weapons;
-        let (events, fx_ini) = crate::weapons::sounds_and_fx(&bo2, &atts, &mut defs, &crate::weapons::converted(&patch, &bo2));
+        let (events, _) = crate::weapons::sounds_and_fx(&bo2, &atts, &mut defs, &crate::weapons::converted(&patch, &bo2));
         let fire_fx = |ini: &str| {
             let mut out = HashMap::new();
             let mut current = None;
@@ -82,8 +80,9 @@ impl Shipped {
             }
             out
         };
-        let fx_weapons = fire_fx(&fx_ini);
-        let shipped_fx_weapons = files.get("Data\\INI\\Weapon\\ZHBO_BO2_Weapons.ini").map(|b| fire_fx(&String::from_utf8_lossy(b))).unwrap_or_default();
+        // The FX weapons as shipped: the converter sets each one's `FireFX` to BO2's own world
+        // flash after `sounds_and_fx` wrote the block, so the regenerated INI is not what plays.
+        let fx_weapons = files.get(crate::generals::FX_WEAPONS_INI_PATH).map(|b| fire_fx(&String::from_utf8_lossy(b))).ok_or("the conversion shipped no FX weapons")?;
         let mut ev = HashMap::new();
         for e in events {
             ev.insert(e.event, e.layers);
@@ -117,7 +116,7 @@ impl Shipped {
             }
         }
         let sprites = files.get(MAPPED_IMAGES).map(|b| String::from_utf8_lossy(b).to_string()).unwrap_or_default();
-        Ok(Shipped { files, events: ev, fx, bo2, sprites, fx_weapons, shipped_fx_weapons })
+        Ok(Shipped { files, events: ev, fx, bo2, sprites, fx_weapons })
     }
 
     fn viewmodel(&self, vm: i32) -> Option<Viewmodel> {
@@ -144,19 +143,20 @@ impl Shipped {
         Some(self.fx.get(fxlist).map_or_else(|| fxlist.to_string(), |n| n.join("|")))
     }
 
-    /// The third-person flash of a def's FX weapon (a Zero Hour FXList; `NONE` is no flash).
+    /// The third-person flash of a def's FX weapon, as the BO2 effect its FXList was made from
+    /// (`NONE` is no flash).
     fn world_flash(&self, fx_weapon: &str) -> Option<String> {
-        self.fx_weapons.get(fx_weapon).filter(|f| *f != "NONE").cloned()
+        self.fx_weapons.get(fx_weapon).filter(|f| *f != "NONE").and_then(|f| self.effect(f))
     }
 
     /// The BO2 effect a shipped FX weapon's `FireFX` plays (the world brass).
     fn fx_weapon_effect(&self, fx_weapon: &str) -> Option<String> {
-        self.shipped_fx_weapons.get(fx_weapon).filter(|f| *f != "NONE").and_then(|f| self.effect(f))
+        self.fx_weapons.get(fx_weapon).filter(|f| *f != "NONE").and_then(|f| self.effect(f))
     }
 
     /// The BO2 tracer a shipped tracer FX weapon draws (its `FireFX` is `ZHBO_BO2Tracer_<name>`).
     fn tracer(&self, fx_weapon: &str) -> Option<String> {
-        let list = self.shipped_fx_weapons.get(fx_weapon)?;
+        let list = self.fx_weapons.get(fx_weapon)?;
         let probe = crate::fx::tracer_fxlist("", 1.0);
         list.strip_prefix(probe.as_str()).map(str::to_string)
     }
@@ -656,27 +656,34 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     }
 
     // Sounds: the client's cues (`client/mod.rs`): a hitscan shot plays `sounds::fire_for` (the
-    // def's event, else the global rifle/pistol shot), a launch `FIRE_LAUNCHER`, an offhand
-    // `PULL_PIN` then `THROW`, a melee `sounds::melee_for` its melee weapon, any blast `EXPLOSION`; the FX weapon's
-    // event is the shot others hear. A cue the conversion never made plays nothing.
+    // def's event, else the global rifle/pistol shot), a launch `launch_for`, an offhand
+    // `pullback_for` then `throw_for`, a melee `melee_swing_for` its melee weapon, a blast
+    // `explosion_for` — each the def's own event, else the global one; the FX weapon's event is
+    // the shot others hear. A cue the conversion never made plays nothing.
     let key = d.fx_weapon.strip_prefix("ZHBO_FX_").unwrap_or("");
     let npc = (!key.is_empty()).then(|| sh.sound(&format!("ZHBO_BO2_FireNpc_{key}"))).flatten();
     let thrown = d.class.is_offhand() && d.place == Place::Throw;
     let plr = if d.class.is_offhand() {
-        thrown.then(|| sh.sound(zhbo_core::sounds::THROW)).flatten()
+        thrown.then(|| sh.sound(zhbo_core::sounds::throw_for(d))).flatten()
     } else if d.class == Class::Melee || d.class == Class::Shield {
         // A knife or the Assault Shield fires no shot (the shield's trigger deploys it).
         None
     } else if launches {
-        sh.sound(zhbo_core::sounds::FIRE_LAUNCHER)
+        sh.sound(zhbo_core::sounds::launch_for(d))
     } else {
         sh.sound(zhbo_core::sounds::fire_for(d))
     };
     let explodes = launches || d.class.is_offhand();
+    // A def-level event the client plays at its moment (`sounds::Cues`), as the alias it mixes.
+    // The field's alias as the table names it (`null_sound` included: BO2's own value for a
+    // silenced burst opening); blank or `NONE` is no sound.
+    let own = |event: &str| (!event.is_empty() && event != zhbo_core::sounds::NO_SOUND).then(|| sh.sound(event)).flatten();
     for c in cols::OVERRIDE_SOUNDS {
         match c {
             "fire_sound" => b.opt_text(c, npc.clone()),
             "fire_sound_player" => b.opt_text(c, plr.clone()),
+            "fire_start_sound_player" => b.opt_text(c, own(&d.fire_start_sound)),
+            "fire_last_sound_player" => b.opt_text(c, own(&d.fire_last_sound)),
             _ => b.absent(c),
         };
     }
@@ -687,9 +694,14 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
                 let event = if d.empty_fire_sound.is_empty() { "ZHBO_BO2_DryFire" } else { d.empty_fire_sound.as_str() };
                 sh.sound(event)
             }
-            "pullback_sound_player" if thrown => sh.sound(zhbo_core::sounds::PULL_PIN),
-            "projectile_explosion_sound" if explodes => sh.sound(zhbo_core::sounds::EXPLOSION),
-            "melee_swipe_sound_player" => sh.sound(zhbo_core::sounds::melee_for(knife)),
+            "pullback_sound_player" if thrown => sh.sound(zhbo_core::sounds::pullback_for(d)),
+            "projectile_explosion_sound" if explodes => sh.sound(zhbo_core::sounds::explosion_for(d.explode_sound.as_str())),
+            "melee_swipe_sound_player" => sh.sound(zhbo_core::sounds::melee_swing_for(knife)),
+            "melee_hit_sound" => own(&d.melee_hit_sound),
+            "raise_sound_player" => own(&d.raise_sound),
+            "first_raise_sound_player" => own(&d.first_raise_sound),
+            "putaway_sound_player" => own(&d.putaway_sound),
+            "ads_zoom_sound" => own(&d.ads_zoom_sound),
             _ => None,
         };
         b.opt_text(c, v);

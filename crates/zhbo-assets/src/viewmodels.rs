@@ -381,13 +381,17 @@ pub fn combo<'a>(w: &'a zhbo_formats::weapon::Weapon, atts: &[zhbo_formats::weap
             out
         }
     };
-    let sounds = singles.iter().find(|u| u.fire_sound_player.is_some() && u.fire_sound_player != w.fire_sound_player);
+    // The shot follows BO2's override gate (`FUN_008ebe80`): only the uniques the base unique lets
+    // override it, the silencer's first.
+    let gated = |bit, field: fn(&zhbo_formats::weapon::AttachmentUnique) -> &Option<String>, own: &Option<String>| {
+        crate::weapons::gated_sound(w, atts, &kinds, bit, field).unwrap_or_else(|| own.clone())
+    };
     Combo {
         no_clip: singles.iter().any(|u| u.disable_base_clip),
         no_base_attachment: singles.iter().any(|u| u.disable_base_attachment),
         base_attachment_offset: singles.iter().find(|u| u.override_base_attachment_offsets).map(|u| u.base_attachment_offset),
-        fire_sound_player: sounds.and_then(|u| u.fire_sound_player.clone()).or_else(|| w.fire_sound_player.clone()),
-        fire_sound: sounds.and_then(|u| u.fire_sound.clone()).or_else(|| w.fire_sound.clone()),
+        fire_sound_player: gated(crate::weapons::FIRE_SOUND_PLAYER_BIT, |u| &u.fire_sound_player, &w.fire_sound_player),
+        fire_sound: gated(crate::weapons::FIRE_SOUND_BIT, |u| &u.fire_sound, &w.fire_sound),
         parts,
         anims,
         hide,

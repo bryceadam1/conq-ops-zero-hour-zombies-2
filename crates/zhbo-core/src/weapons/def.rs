@@ -365,9 +365,6 @@ pub struct WeaponDef {
     /// A dual-wield weapon's left gun's shot (its own def's `fireSoundPlayer`, `wpn_<x>_fire_plr_lh`),
     /// as a converted event; empty for a single gun (and the left gun then plays `fire_sound`).
     pub left_fire_sound: String,
-    /// A melee weapon's own swing (BO2's `meleeSwipeSoundPlayer`) as a converted event; empty for
-    /// the rest, which melee with the class melee weapon ([`super::melee_weapon`]).
-    pub melee_sound: String,
     /// The suppressed shot's player event (`AttachmentUnique.fire_sound_player`).
     pub silenced_fire_sound: String,
     /// The suppressed shot's third-person event (`AttachmentUnique.fire_sound`).
@@ -376,6 +373,37 @@ pub struct WeaponDef {
     pub silenced_fx_weapon: String,
     /// The shared suppressed first-person FXList (`weapon/muzzleflashes/fx_muz_silencer_md`).
     pub silenced_view_flash_fx: String,
+    /// The raise's BO2 sound event (`raiseSoundPlayer`), played as a raise begins.
+    pub raise_sound: String,
+    /// The first raise's event (`firstRaiseSoundPlayer`).
+    pub first_raise_sound: String,
+    /// The alt toggle's event (`altSwitchSoundPlayer`), played by the mode coming up as the toggle
+    /// begins (BO2's EV_WEAPON_ALT; the alt raise itself is silent).
+    pub alt_switch_sound: String,
+    /// The putaway's event (`putawaySoundPlayer`), played as the drop begins.
+    pub putaway_sound: String,
+    /// The zoom-in event as aiming starts (`adsZoomSound`; scoped weapons).
+    pub ads_zoom_sound: String,
+    /// The melee swing with this weapon in hand (`meleeSwipeSoundPlayer`).
+    pub melee_swipe_sound: String,
+    /// The melee landing on someone (`meleeHitSound`).
+    pub melee_hit_sound: String,
+    /// The fire string's opening (`fireStartSoundPlayer`: a burst's recording).
+    pub fire_start_sound: String,
+    /// The last round's shot in place of the shot (`fireLastSoundPlayer`).
+    pub fire_last_sound: String,
+    /// The offhand's pull-back (`pullbackSoundPlayer`).
+    pub pullback_sound: String,
+    /// The fire string's opening with the silencer (its unique's override, `FUN_008ebe80`).
+    pub silenced_fire_start_sound: String,
+    /// Base weapons: the player's shot another attachment's unique overrides (`short=event`, in
+    /// `eAttachment` order), when the base unique's `soundOverrides` lets it (`FUN_008ebe80`): the
+    /// SIG556/XM8 select fire's full shot in place of the burst gun's low-end-only one. The
+    /// silencer's override is [`Self::silenced_fire_sound`], which wins (G14 §4).
+    pub attachment_fire_sounds: Vec<(String, String)>,
+    /// Base weapons: the fire string's opening another attachment overrides (`short=event`, same
+    /// rule; Zero Hour's `NONE` when overridden to nothing): the select fire's `null_sound`.
+    pub attachment_fire_start_sounds: Vec<(String, String)>,
     pub explode_sound: String,
     /// Viewmodel index in the converted art, or -1.
     pub viewmodel: i32,
@@ -833,11 +861,23 @@ impl Default for WeaponDef {
             fire_sound: String::new(),
             empty_fire_sound: String::new(),
             left_fire_sound: String::new(),
-            melee_sound: String::new(),
             silenced_fire_sound: String::new(),
             silenced_fire_sound_npc: String::new(),
             silenced_fx_weapon: String::new(),
             silenced_view_flash_fx: String::new(),
+            raise_sound: String::new(),
+            first_raise_sound: String::new(),
+            alt_switch_sound: String::new(),
+            putaway_sound: String::new(),
+            ads_zoom_sound: String::new(),
+            melee_swipe_sound: String::new(),
+            melee_hit_sound: String::new(),
+            fire_start_sound: String::new(),
+            fire_last_sound: String::new(),
+            pullback_sound: String::new(),
+            silenced_fire_start_sound: String::new(),
+            attachment_fire_sounds: Vec::new(),
+            attachment_fire_start_sounds: Vec::new(),
             explode_sound: String::new(),
             viewmodel: -1,
             anims: 0,
@@ -936,6 +976,61 @@ impl WeaponDef {
     /// grenade-group item, which keeps its lethal/tactical/equipment class).
     pub fn cac_class(&self) -> Class {
         Class::ALL_GUNS.into_iter().find(|c| !self.cac_group.is_empty() && c.cac_group() == self.cac_group).unwrap_or(self.class)
+    }
+
+    /// Take the converter's sound and FX assets from `from` (the same combination derived from its
+    /// fully converted base): the events and FXLists the converter fills on the base defs after the
+    /// table's combinations were built. One list, so a new converted asset field is inherited by
+    /// every combination the moment it is added here.
+    pub fn take_converted_assets(&mut self, from: &WeaponDef) {
+        self.fx_weapon.clone_from(&from.fx_weapon);
+        self.explosion_fx.clone_from(&from.explosion_fx);
+        self.view_flash_fx.clone_from(&from.view_flash_fx);
+        self.view_shell_fx.clone_from(&from.view_shell_fx);
+        self.view_last_shot_shell_fx.clone_from(&from.view_last_shot_shell_fx);
+        self.fire_sound.clone_from(&from.fire_sound);
+        self.empty_fire_sound.clone_from(&from.empty_fire_sound);
+        self.silenced_fire_sound.clone_from(&from.silenced_fire_sound);
+        self.silenced_fire_sound_npc.clone_from(&from.silenced_fire_sound_npc);
+        self.silenced_fx_weapon.clone_from(&from.silenced_fx_weapon);
+        self.silenced_view_flash_fx.clone_from(&from.silenced_view_flash_fx);
+        self.explode_sound.clone_from(&from.explode_sound);
+        self.raise_sound.clone_from(&from.raise_sound);
+        self.first_raise_sound.clone_from(&from.first_raise_sound);
+        self.alt_switch_sound.clone_from(&from.alt_switch_sound);
+        self.putaway_sound.clone_from(&from.putaway_sound);
+        self.ads_zoom_sound.clone_from(&from.ads_zoom_sound);
+        self.melee_swipe_sound.clone_from(&from.melee_swipe_sound);
+        self.melee_hit_sound.clone_from(&from.melee_hit_sound);
+        self.fire_start_sound.clone_from(&from.fire_start_sound);
+        self.fire_last_sound.clone_from(&from.fire_last_sound);
+        self.pullback_sound.clone_from(&from.pullback_sound);
+        self.silenced_fire_start_sound.clone_from(&from.silenced_fire_start_sound);
+        self.attachment_fire_sounds.clone_from(&from.attachment_fire_sounds);
+        self.attachment_fire_start_sounds.clone_from(&from.attachment_fire_start_sounds);
+    }
+
+    /// Every def-level sound event this def plays (`names::def_sound_event`), with whether it is
+    /// positional (the blast) rather than the player's own; empty ones included.
+    pub fn def_sound_events(&self) -> impl Iterator<Item = (&str, bool)> + '_ {
+        [
+            (&self.fire_sound, false),
+            (&self.raise_sound, false),
+            (&self.first_raise_sound, false),
+            (&self.alt_switch_sound, false),
+            (&self.putaway_sound, false),
+            (&self.ads_zoom_sound, false),
+            (&self.melee_swipe_sound, false),
+            (&self.melee_hit_sound, false),
+            (&self.fire_start_sound, false),
+            (&self.fire_last_sound, false),
+            (&self.pullback_sound, false),
+            (&self.silenced_fire_start_sound, false),
+            (&self.explode_sound, true),
+        ]
+        .into_iter()
+        .map(|(e, world)| (e.as_str(), world))
+        .chain(self.attachment_fire_start_sounds.iter().map(|(_, e)| (e.as_str(), false)))
     }
 
     /// Damage at `distance` (ZH units). BO2's curve has six slots: unused middle slots have no

@@ -365,6 +365,7 @@ fn run(args: &[String]) -> Result<(), String> {
                         println!("      unique {} kind {} vm {:?} tag {:?}", u.name, u.kind, u.view_model, u.view_model_tag);
                     }
                     println!("    sounds fire {:?} plr {:?} icon {:?} dpad {:?} world {:?} projectile {:?} impact {} icon key {:?} dpad key {:?}", w.fire_sound, w.fire_sound_player, w.hud_icon, w.dpad_icon, w.world_model, w.projectile_model, w.projectile_impact_explode, w.hud_icon_key, w.dpad_icon_key);
+                    println!("    raise {:?} first {:?} putaway {:?} alt switch {:?}", w.raise_sound_player, w.first_raise_sound_player, w.putaway_sound_player, w.alt_switch_sound_player);
                     println!("    kick ads {:?} hip {:?} mult {:?}", w.ads_view_kick, w.hip_view_kick, w.location_multipliers.iter().take(7).collect::<Vec<_>>());
                     println!(
                         "    offhand slot {} class {} hold {:.3} delay {:.3} fire {:.3} detonate {:.3}/{:.3} quick {:.3}/{:.3} detonator {} hold_to_throw {} cancelable {} hold_use {} plantable {} cook {}",
@@ -531,13 +532,15 @@ fn run(args: &[String]) -> Result<(), String> {
                     let v = &a.variants;
                     let first = v.first();
                     println!(
-                        "  {:<48} {} variant(s), asset {:#010x} vol {:.2}..{:.2} {}",
+                        "  {:<48} {} variant(s), asset {:#010x} vol {:.2}..{:.2} dist {:?} {}{}",
                         a.name,
                         v.len(),
                         first.map_or(0, |v| v.asset_id),
                         first.map_or(0.0, |v| v.volume.0),
                         first.map_or(0.0, |v| v.volume.1),
-                        first.map_or("", |v| v.file.as_str())
+                        first.map(|v| v.distance),
+                        first.map_or("", |v| v.file.as_str()),
+                        first.and_then(|v| v.secondary.as_deref()).map_or(String::new(), |s| format!(" then {s}"))
                     );
                 }
             }

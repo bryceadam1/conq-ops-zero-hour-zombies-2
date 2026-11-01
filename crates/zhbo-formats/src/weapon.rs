@@ -287,6 +287,11 @@ pub struct AttachmentUnique {
     /// The player's gunshot with this combination (suppressors), if it changes.
     pub fire_sound_player: Option<String>,
     pub fire_sound: Option<String>,
+    /// `soundOverrides`: bit `i` lets this unique replace the def's `i`-th overridable sound
+    /// (fireSound, fireSoundPlayer, …, fireStartSoundPlayer = bit 8; `FUN_008ebe80`, G14 §4).
+    pub sound_overrides: u32,
+    /// The overriding fire-string start (bit 8); `None` with the bit set overrides to nothing.
+    pub fire_start_sound_player: Option<String>,
     /// The weapon the attachment toggles to (select fire, grenade launcher, dual optic).
     pub alt_weapon: Option<String>,
     pub dual_wield_weapon: Option<String>,
@@ -744,6 +749,17 @@ pub struct Weapon {
     /// The `WeaponCamo` asset the class camo uses on the gun and its base `attachViewModel` parts
     /// (`WeaponDef.weaponCamo`: `camo_an94`, the INSAS's `camo_msmc`), or `None`.
     pub weapon_camo: Option<String>,
+    /// The weapon's def-level sounds the mod plays at their moments (G14: none is
+    /// attachment-overridable): the melee hit, the raises, the putaway, the ADS zoom.
+    pub melee_hit_sound: Option<String>,
+    pub raise_sound_player: Option<String>,
+    pub first_raise_sound_player: Option<String>,
+    /// Played as the weapon toggles into or out of its alt mode (EV_WEAPON_ALT, `FUN_004c1590`).
+    pub alt_switch_sound_player: Option<String>,
+    pub putaway_sound_player: Option<String>,
+    pub ads_zoom_sound: Option<String>,
+    /// The start of a fire string (a burst's opening): overridable by attachment (`soundOverrides`).
+    pub fire_start_sound_player: Option<String>,
     /// HUD art (material names).
     pub hud_icon: Option<String>,
     /// The HUD icon's image in the `.ipak` packs (its material is inline in the weapon).
@@ -958,6 +974,8 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 hide_tags: hide_tags(z, z.u32(u + WU::hideTags)),
                 fire_sound_player: opt_str(z, u + WU::fireSoundPlayer),
                 fire_sound: opt_str(z, u + WU::fireSound),
+                sound_overrides: z.u32(u + WU::soundOverrides),
+                fire_start_sound_player: opt_str(z, u + WU::fireStartSoundPlayer),
                 alt_weapon: opt_str(z, u + WU::szAltWeaponName),
                 dual_wield_weapon: opt_str(z, u + WU::szDualWieldWeaponName),
                 overlay_material: named(z, u + WU::overlayMaterial).unwrap_or_default(),
@@ -1251,22 +1269,29 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.projectile_explosion_sound = opt_str(z, d + WD::projExplosionSound);
     w.pullback_sound_player = opt_str(z, d + WD::pullbackSoundPlayer);
     w.melee_swipe_sound_player = opt_str(z, d + WD::meleeSwipeSoundPlayer);
+    w.melee_hit_sound = opt_str(z, d + WD::meleeHitSound);
+    w.raise_sound_player = opt_str(z, d + WD::raiseSoundPlayer);
+    w.first_raise_sound_player = opt_str(z, d + WD::firstRaiseSoundPlayer);
+    w.alt_switch_sound_player = opt_str(z, d + WD::altSwitchSoundPlayer);
+    w.putaway_sound_player = opt_str(z, d + WD::putawaySoundPlayer);
+    w.ads_zoom_sound = opt_str(z, d + WD::adsZoomSound);
+    w.fire_start_sound_player = opt_str(z, d + WD::fireStartSoundPlayer);
     w.impact_type = z.u32(d + WD::impactType);
     let flash = z.try_u32(d + WD::worldFlashEffect)?;
-    w.world_flash_effect = (flash != 0).then(|| crate::fx::read(z, flash)).filter(|e| !e.elems.is_empty());
+    w.world_flash_effect = crate::fx::read_or_stub(z, flash);
     let view_flash = z.try_u32(d + WD::viewFlashEffect)?;
-    w.view_flash_effect = (view_flash != 0).then(|| crate::fx::read(z, view_flash)).filter(|e| !e.elems.is_empty());
+    w.view_flash_effect = crate::fx::read_or_stub(z, view_flash);
     let shell = z.try_u32(d + WD::viewShellEjectEffect)?;
-    w.view_shell_eject_effect = (shell != 0).then(|| crate::fx::read(z, shell)).filter(|e| !e.elems.is_empty());
+    w.view_shell_eject_effect = crate::fx::read_or_stub(z, shell);
     let last_shell = z.try_u32(d + WD::viewLastShotEjectEffect)?;
-    w.view_last_shot_eject_effect = (last_shell != 0).then(|| crate::fx::read(z, last_shell)).filter(|e| !e.elems.is_empty());
+    w.view_last_shot_eject_effect = crate::fx::read_or_stub(z, last_shell);
     // The world shells are bound against the pool by `all_in` (several are reference stubs here).
     w.world_shell_eject_effect = crate::fx::read_or_stub(z, z.try_u32(d + WD::worldShellEjectEffect)?);
     w.world_last_shot_eject_effect = crate::fx::read_or_stub(z, z.try_u32(d + WD::worldLastShotEjectEffect)?);
     w.tracer = read_tracer(z, d + WD::tracerType);
     w.enemy_tracer = read_tracer(z, d + WD::enemyTracerType);
     let fx = z.try_u32(d + WD::projExplosionEffect)?;
-    w.explosion_effect = (fx != 0).then(|| crate::fx::read(z, fx)).filter(|e| !e.elems.is_empty()).or_else(|| crate::fx::explosion_entry(w.impact_type).and_then(|e| crate::fx::impact(z, e, crate::fx::surface::DIRT)));
+    w.explosion_effect = crate::fx::bind(crate::fx::read_or_stub(z, fx), &[z]).or_else(|| crate::fx::explosion_entry(w.impact_type).and_then(|e| crate::fx::impact(z, e, crate::fx::surface::DIRT)));
     w.hud_icon = named(z, d + WD::hudIcon);
     w.weapon_camo = named(z, d + WD::weaponCamo);
     w.hud_icon_key = icon_key(z, z.try_u32(d + WD::hudIcon)?);
@@ -1286,17 +1311,24 @@ pub fn all(z: &Zone) -> Result<Vec<Weapon>, FormatError> {
     all_in(z, &[])
 }
 
-/// The weapons of `z` with their world shell effects and tracers bound as BO2's asset pool binds
-/// them: a def pointing at a reference stub (`common_mp`'s `,weapon/shellejects/fx_rifle`) uses
-/// the full asset of that name from a later zone (`later`, latest-loaded first — `patch_mp`),
-/// then from `z` itself; a stub nothing defines is dropped (effects) or kept by name (tracers).
+/// The weapons of `z` with their effects and tracers bound as BO2's asset pool binds them: a def
+/// pointing at a reference stub (`common_mp`'s `,weapon/shellejects/fx_rifle`) plays the full asset
+/// of that name from a later zone (`later`, latest-loaded first — `patch_mp`), then from `z`
+/// itself; a stub nothing defines is dropped (effects) or kept by name (tracers).
 pub fn all_in(z: &Zone, later: &[&Zone]) -> Result<Vec<Weapon>, FormatError> {
     let Some(kind) = crate::fastfile::asset_type_id("weapon") else { return Ok(Vec::new()) };
     let mut pool: Vec<&Zone> = later.to_vec();
     pool.push(z);
     let mut out: Vec<Weapon> = z.assets.iter().filter(|a| a.kind == kind).map(|a| read(z, a.addr)).collect::<Result<_, _>>()?;
     for w in &mut out {
-        for e in [&mut w.world_shell_eject_effect, &mut w.world_last_shot_eject_effect] {
+        for e in [
+            &mut w.world_flash_effect,
+            &mut w.view_flash_effect,
+            &mut w.view_shell_eject_effect,
+            &mut w.view_last_shot_eject_effect,
+            &mut w.world_shell_eject_effect,
+            &mut w.world_last_shot_eject_effect,
+        ] {
             *e = crate::fx::bind(e.take(), &pool);
         }
         for t in [&mut w.tracer, &mut w.enemy_tracer] {
