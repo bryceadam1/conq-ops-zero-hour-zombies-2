@@ -249,8 +249,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
 
     // Every BO2 multiplayer weapon a player can carry, with its attachments and alt modes, as the
     // core's weapon table; art for the converted ones (the loadout first, then the rest).
-    let bo2 = zhbo_formats::weapon::all_in(&common, &[&patch]).map_err(|e| e.to_string())?;
-    let atts = zhbo_formats::weapon::attachments(&common).map_err(|e| e.to_string())?;
+    let common_patch = load_zone(bo2_dir, "common_patch_mp")?;
+    let (bo2, atts) = crate::paks::mp_weapons(&patch, &common_patch, &common)?;
     let names = crate::weapons::names(bo2_dir);
     let meta = crate::weapons::attachment_metadata(&patch, &names);
     // BO2's camo choices (`mp/attachmenttable.csv`) and the 48 `camo_<weapon>` sets in
@@ -258,7 +258,6 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let camo = crate::weapons::camo_options(&patch, &names);
     let reticles = crate::weapons::reticle_options(&patch, &names);
     let reticle_colors = crate::weapons::reticle_color_options(&patch, &names);
-    let common_patch = load_zone(bo2_dir, "common_patch_mp")?;
     let camo_assets = zhbo_formats::weapon::camo_all(&common_patch).map_err(|e| e.to_string())?;
     let options = crate::weapons::OptionTables {
         camo: &camo,

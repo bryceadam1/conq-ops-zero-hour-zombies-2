@@ -12,6 +12,7 @@ use crate::t6zone::layouts::{
 };
 use crate::t6zone::layouts::TracerDef as TD;
 use crate::t6zone::Zone;
+use std::collections::HashMap;
 use crate::FormatError;
 
 /// `weapAnimFiles_t`: the viewmodel animation slots (`szXAnims` index).
@@ -420,82 +421,113 @@ pub struct Attachment {
 /// Every attachment in a loaded zone.
 pub fn attachments(z: &Zone) -> Result<Vec<Attachment>, FormatError> {
     let Some(kind) = crate::fastfile::asset_type_id("attachment") else { return Ok(Vec::new()) };
-    z.assets
-        .iter()
-        .filter(|a| a.kind == kind)
-        .map(|a| -> Result<Attachment, FormatError> {
-            let at = a.addr;
-            let fire = z.try_u32(at + WA::fireType)?;
-            Ok(Attachment {
-                name: z.try_str_ptr(at + WA::szInternalName)?,
-                display_name: opt_str(z, at + WA::szDisplayName).unwrap_or_default(),
-                kind: z.u32(at + WA::attachmentType),
-                point: z.u32(at + WA::attachmentPoint),
-                // `weapFireType_t` has no "unchanged" value: BO2 marks it with the type count.
-                fire_type: (fire < 9 && fire != 0).then_some(fire),
-                silenced: z.u8(at + WA::bSilenced) != 0,
-                dual_mag: z.u8(at + WA::bDualMag) != 0,
-                laser_sight: z.u8(at + WA::laserSight) != 0,
-                dual_wield: z.u8(at + WA::bDualWield) != 0,
-                damage_range_scale: z.f32(at + WA::fDamageRangeScale),
-                ads_zoom_fov: z.f32(at + WA::fAdsZoomFov1),
-                ads_in_scale: z.f32(at + WA::fAdsTransInTimeScale),
-                ads_out_scale: z.f32(at + WA::fAdsTransOutTimeScale),
-                ads_move_scale: z.f32(at + WA::adsMoveSpeedScale),
-                hip_spread_min_scale: z.f32(at + WA::fHipSpreadMinScale),
-                hip_spread_max_scale: z.f32(at + WA::fHipSpreadMaxScale),
-                fire_time_scale: z.f32(at + WA::fFireTimeScale),
-                reload_scale: z.f32(at + WA::fReloadTimeScale),
-                reload_empty_scale: z.f32(at + WA::fReloadEmptyTimeScale),
-                reload_add_scale: z.f32(at + WA::fReloadAddTimeScale),
-                clip_size_scale: z.f32(at + WA::clipSizeScale),
-                clip_size: int(z, at + WA::iClipSize),
-                recoil_reduction: (z.f32(at + WA::fAdsRecoilReductionRate), z.f32(at + WA::fAdsRecoilReductionLimit)),
-                perks: (z.u32(at + WA::perks), z.u32(at + WA::perks + 4)),
-                first_raise_priority: z.u32(at + WA::firstRaisePriority) as i32,
-                alt_weapon_ads_only: z.u8(at + WA::bAltWeaponAdsOnly) != 0,
-                alt_weapon_disable_switching: z.u8(at + WA::bAltWeaponDisableSwitching) != 0,
-                ads_zoom_fov2: z.f32(at + WA::fAdsZoomFov2),
-                ads_zoom_fov3: z.f32(at + WA::fAdsZoomFov3),
-                ads_zoom_in_frac: z.f32(at + WA::fAdsZoomInFrac),
-                ads_zoom_out_frac: z.f32(at + WA::fAdsZoomOutFrac),
-                alt_scope_ads_in_time: z.f32(at + WA::altScopeADSTransInTime),
-                alt_scope_ads_out_time: z.f32(at + WA::altScopeADSTransOutTime),
-                hip_idle_amount: z.f32(at + WA::fHipIdleAmount),
-                ads_idle_amount_scale: z.f32(at + WA::fAdsIdleAmountScale),
-                reload_quick_scale: z.f32(at + WA::fReloadQuickTimeScale),
-                reload_quick_empty_scale: z.f32(at + WA::fReloadQuickEmptyTimeScale),
-                reload_quick_add_scale: z.f32(at + WA::fReloadQuickAddTimeScale),
-                stack_fire_spread: z.f32(at + WA::stackFireSpread),
-                stack_fire_accuracy_decay: z.f32(at + WA::stackFireAccuracyDecay),
-                penetrate_type: z.u32(at + WA::penetrateType),
-                infrared: z.u8(at + WA::bInfraRed) != 0,
-                mms_weapon: z.u8(at + WA::mmsWeapon) != 0,
-                use_as_melee: z.u8(at + WA::bUseAsMelee) != 0,
-                ads_view_kick_center_scale: z.f32(at + WA::fAdsViewKickCenterSpeedScale),
-                sway_override: (z.u8(at + WA::swayOverride) != 0).then(|| Sway {
-                    max_angle: z.f32(at + WA::swayMaxAngle),
-                    lerp_speed: z.f32(at + WA::swayLerpSpeed),
-                    pitch_scale: z.f32(at + WA::swayPitchScale),
-                    yaw_scale: z.f32(at + WA::swayYawScale),
-                    horiz_scale: z.f32(at + WA::swayHorizScale),
-                    vert_scale: z.f32(at + WA::swayVertScale),
-                }),
-                ads_sway_override: (z.u8(at + WA::adsSwayOverride) != 0).then(|| Sway {
-                    max_angle: z.f32(at + WA::adsSwayMaxAngle),
-                    lerp_speed: z.f32(at + WA::adsSwayLerpSpeed),
-                    pitch_scale: z.f32(at + WA::adsSwayPitchScale),
-                    yaw_scale: z.f32(at + WA::adsSwayYawScale),
-                    horiz_scale: z.f32(at + WA::fAdsSwayHorizScale),
-                    vert_scale: z.f32(at + WA::fAdsSwayVertScale),
-                }),
-                strafe_rot_r: z.f32(at + WA::strafeRotR),
-                stand_move_f: z.f32(at + WA::standMoveF),
-                stand_rot: vec3(z, at + WA::vStandRot),
-                mms_max_dist: z.f32(at + WA::mmsMaxDist),
-            })
-        })
-        .collect()
+    z.assets.iter().filter(|a| a.kind == kind).map(|a| read_attachment(z, a.addr)).collect()
+}
+
+/// The attachments BO2's asset pool holds over `pool` (highest priority first, `MP_POOL`): per name
+/// the highest-priority zone's asset (`live`).
+pub fn pooled_attachments(pool: &[&Zone]) -> Result<Vec<Attachment>, FormatError> {
+    let Some(kind) = crate::fastfile::asset_type_id("attachment") else { return Ok(Vec::new()) };
+    live(pool, kind).into_iter().map(|(z, at)| read_attachment(z, at)).collect()
+}
+
+/// BO2's multiplayer weapon zones in asset-pool priority, highest first. `DB_LoadXAssets`
+/// (`FUN_0059a550`) loads `common_mp` (zone flag 0x80) together with its patch zone
+/// `common_patch_mp` (`"%s_patch%s"`, flag 0x100); `patch_mp` loads with flag 2. When an asset name
+/// is already in the pool, `DB_LinkXAssetEntry` (`FUN_00597000`) keeps whichever zone's flag ranks
+/// higher in `FUN_00596e60` (2 → 0x41, 0x100 → 0x37, 0x80 → 0x36), so `common_patch_mp`'s 79
+/// patched weapons and 49 patched attachments replace `common_mp`'s, and `patch_mp`'s replace both.
+pub const MP_POOL: [&str; 3] = ["patch_mp", "common_patch_mp", "common_mp"];
+
+/// The live `(zone, address)` of every asset of `kind` across `pool` (highest priority first): per
+/// name the highest-priority zone's asset. A `,name` reference stub never overrides a real asset
+/// (`FUN_00597000` returns the existing entry) and is dropped. Ordered as the lowest-priority zone
+/// lists them, with names only later zones add appended in their order.
+fn live<'z>(pool: &[&'z Zone], kind: u32) -> Vec<(&'z Zone, u32)> {
+    let mut order: Vec<String> = Vec::new();
+    let mut best: HashMap<String, (&'z Zone, u32)> = HashMap::new();
+    for z in pool.iter().rev() {
+        for a in z.assets.iter().filter(|a| a.kind == kind) {
+            let Some(name) = z.asset_name(a).filter(|n| !n.starts_with(',')) else { continue };
+            if best.insert(name.clone(), (z, a.addr)).is_none() {
+                order.push(name);
+            }
+        }
+    }
+    order.into_iter().map(|n| best[&n]).collect()
+}
+
+/// Read the `WeaponAttachment` at `at`.
+fn read_attachment(z: &Zone, at: u32) -> Result<Attachment, FormatError> {
+    let fire = z.try_u32(at + WA::fireType)?;
+    Ok(Attachment {
+        name: z.try_str_ptr(at + WA::szInternalName)?,
+        display_name: opt_str(z, at + WA::szDisplayName).unwrap_or_default(),
+        kind: z.u32(at + WA::attachmentType),
+        point: z.u32(at + WA::attachmentPoint),
+        // `weapFireType_t` has no "unchanged" value: BO2 marks it with the type count.
+        fire_type: (fire < 9 && fire != 0).then_some(fire),
+        silenced: z.u8(at + WA::bSilenced) != 0,
+        dual_mag: z.u8(at + WA::bDualMag) != 0,
+        laser_sight: z.u8(at + WA::laserSight) != 0,
+        dual_wield: z.u8(at + WA::bDualWield) != 0,
+        damage_range_scale: z.f32(at + WA::fDamageRangeScale),
+        ads_zoom_fov: z.f32(at + WA::fAdsZoomFov1),
+        ads_in_scale: z.f32(at + WA::fAdsTransInTimeScale),
+        ads_out_scale: z.f32(at + WA::fAdsTransOutTimeScale),
+        ads_move_scale: z.f32(at + WA::adsMoveSpeedScale),
+        hip_spread_min_scale: z.f32(at + WA::fHipSpreadMinScale),
+        hip_spread_max_scale: z.f32(at + WA::fHipSpreadMaxScale),
+        fire_time_scale: z.f32(at + WA::fFireTimeScale),
+        reload_scale: z.f32(at + WA::fReloadTimeScale),
+        reload_empty_scale: z.f32(at + WA::fReloadEmptyTimeScale),
+        reload_add_scale: z.f32(at + WA::fReloadAddTimeScale),
+        clip_size_scale: z.f32(at + WA::clipSizeScale),
+        clip_size: int(z, at + WA::iClipSize),
+        recoil_reduction: (z.f32(at + WA::fAdsRecoilReductionRate), z.f32(at + WA::fAdsRecoilReductionLimit)),
+        perks: (z.u32(at + WA::perks), z.u32(at + WA::perks + 4)),
+        first_raise_priority: z.u32(at + WA::firstRaisePriority) as i32,
+        alt_weapon_ads_only: z.u8(at + WA::bAltWeaponAdsOnly) != 0,
+        alt_weapon_disable_switching: z.u8(at + WA::bAltWeaponDisableSwitching) != 0,
+        ads_zoom_fov2: z.f32(at + WA::fAdsZoomFov2),
+        ads_zoom_fov3: z.f32(at + WA::fAdsZoomFov3),
+        ads_zoom_in_frac: z.f32(at + WA::fAdsZoomInFrac),
+        ads_zoom_out_frac: z.f32(at + WA::fAdsZoomOutFrac),
+        alt_scope_ads_in_time: z.f32(at + WA::altScopeADSTransInTime),
+        alt_scope_ads_out_time: z.f32(at + WA::altScopeADSTransOutTime),
+        hip_idle_amount: z.f32(at + WA::fHipIdleAmount),
+        ads_idle_amount_scale: z.f32(at + WA::fAdsIdleAmountScale),
+        reload_quick_scale: z.f32(at + WA::fReloadQuickTimeScale),
+        reload_quick_empty_scale: z.f32(at + WA::fReloadQuickEmptyTimeScale),
+        reload_quick_add_scale: z.f32(at + WA::fReloadQuickAddTimeScale),
+        stack_fire_spread: z.f32(at + WA::stackFireSpread),
+        stack_fire_accuracy_decay: z.f32(at + WA::stackFireAccuracyDecay),
+        penetrate_type: z.u32(at + WA::penetrateType),
+        infrared: z.u8(at + WA::bInfraRed) != 0,
+        mms_weapon: z.u8(at + WA::mmsWeapon) != 0,
+        use_as_melee: z.u8(at + WA::bUseAsMelee) != 0,
+        ads_view_kick_center_scale: z.f32(at + WA::fAdsViewKickCenterSpeedScale),
+        sway_override: (z.u8(at + WA::swayOverride) != 0).then(|| Sway {
+            max_angle: z.f32(at + WA::swayMaxAngle),
+            lerp_speed: z.f32(at + WA::swayLerpSpeed),
+            pitch_scale: z.f32(at + WA::swayPitchScale),
+            yaw_scale: z.f32(at + WA::swayYawScale),
+            horiz_scale: z.f32(at + WA::swayHorizScale),
+            vert_scale: z.f32(at + WA::swayVertScale),
+        }),
+        ads_sway_override: (z.u8(at + WA::adsSwayOverride) != 0).then(|| Sway {
+            max_angle: z.f32(at + WA::adsSwayMaxAngle),
+            lerp_speed: z.f32(at + WA::adsSwayLerpSpeed),
+            pitch_scale: z.f32(at + WA::adsSwayPitchScale),
+            yaw_scale: z.f32(at + WA::adsSwayYawScale),
+            horiz_scale: z.f32(at + WA::fAdsSwayHorizScale),
+            vert_scale: z.f32(at + WA::fAdsSwayVertScale),
+        }),
+        strafe_rot_r: z.f32(at + WA::strafeRotR),
+        stand_move_f: z.f32(at + WA::standMoveF),
+        stand_rot: vec3(z, at + WA::vStandRot),
+        mms_max_dist: z.f32(at + WA::mmsMaxDist),
+    })
 }
 
 /// Min/max pitch and yaw of a kick, degrees.
@@ -905,7 +937,8 @@ fn kick(z: &Zone, pitch_min: u32, pitch_max: u32, yaw_min: u32, yaw_max: u32) ->
     Kick { pitch: (z.f32(pitch_min), z.f32(pitch_max)), yaw: (z.f32(yaw_min), z.f32(yaw_max)) }
 }
 
-/// Read the `WeaponVariantDef` at `v`.
+/// Read the `WeaponVariantDef` at `v`. Its effects and tracers are as `z` holds them (reference stubs
+/// included); `all_in`/`pooled` bind them against the asset pool.
 pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     let d = z.try_u32(v + WV::weapDef)?;
     let anims_at = z.try_u32(v + WV::szXAnims)?;
@@ -1301,7 +1334,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.projectile_activate_dist = int(z, d + WD::iProjectileActivateDist);
     w.projectile_dud_sound = opt_str(z, d + WD::projDudSound);
     let dud = z.try_u32(d + WD::projDudEffect)?;
-    w.projectile_dud_effect = crate::fx::bind(crate::fx::read_or_stub(z, dud), &[z]);
+    w.projectile_dud_effect = crate::fx::read_or_stub(z, dud);
     let flash = z.try_u32(d + WD::worldFlashEffect)?;
     w.world_flash_effect = crate::fx::read_or_stub(z, flash);
     let view_flash = z.try_u32(d + WD::viewFlashEffect)?;
@@ -1316,7 +1349,8 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.tracer = read_tracer(z, d + WD::tracerType);
     w.enemy_tracer = read_tracer(z, d + WD::enemyTracerType);
     let fx = z.try_u32(d + WD::projExplosionEffect)?;
-    w.explosion_effect = crate::fx::bind(crate::fx::read_or_stub(z, fx), &[z]);
+    // Bound against the pool by `all_in`/`pooled` (a patched def's may be a stub of `common_mp`'s).
+    w.explosion_effect = crate::fx::read_or_stub(z, fx);
     w.hud_icon = named(z, d + WD::hudIcon);
     w.weapon_camo = named(z, d + WD::weaponCamo);
     w.hud_icon_key = icon_key(z, z.try_u32(d + WD::hudIcon)?);
@@ -1344,7 +1378,21 @@ pub fn all_in(z: &Zone, later: &[&Zone]) -> Result<Vec<Weapon>, FormatError> {
     let Some(kind) = crate::fastfile::asset_type_id("weapon") else { return Ok(Vec::new()) };
     let mut pool: Vec<&Zone> = later.to_vec();
     pool.push(z);
-    let mut out: Vec<Weapon> = z.assets.iter().filter(|a| a.kind == kind).map(|a| read(z, a.addr)).collect::<Result<_, _>>()?;
+    let out: Vec<Weapon> = z.assets.iter().filter(|a| a.kind == kind).map(|a| read(z, a.addr)).collect::<Result<_, _>>()?;
+    Ok(bind_all(out, &pool))
+}
+
+/// The weapons BO2's asset pool holds over `pool` (highest priority first, `MP_POOL`): per name the
+/// highest-priority zone's `WeaponVariantDef` (`live`; `common_patch_mp`'s balance patches over
+/// `common_mp`'s launch values), each with its effects and tracers bound against the whole pool.
+pub fn pooled(pool: &[&Zone]) -> Result<Vec<Weapon>, FormatError> {
+    let Some(kind) = crate::fastfile::asset_type_id("weapon") else { return Ok(Vec::new()) };
+    let out: Vec<Weapon> = live(pool, kind).into_iter().map(|(z, at)| read(z, at)).collect::<Result<_, _>>()?;
+    Ok(bind_all(out, pool))
+}
+
+/// Bind every stubbable effect and tracer of `out` against `pool` (latest-loaded first).
+fn bind_all(mut out: Vec<Weapon>, pool: &[&Zone]) -> Vec<Weapon> {
     for w in &mut out {
         for e in [
             &mut w.world_flash_effect,
@@ -1354,19 +1402,20 @@ pub fn all_in(z: &Zone, later: &[&Zone]) -> Result<Vec<Weapon>, FormatError> {
             &mut w.world_shell_eject_effect,
             &mut w.world_last_shot_eject_effect,
             &mut w.projectile_dud_effect,
+            &mut w.explosion_effect,
         ] {
-            *e = crate::fx::bind(e.take(), &pool);
+            *e = crate::fx::bind(e.take(), pool);
         }
         for t in [&mut w.tracer, &mut w.enemy_tracer] {
-            *t = bind_tracer(t.take(), &pool);
+            *t = bind_tracer(t.take(), pool);
         }
         for u in &mut w.attachment_uniques {
             for t in [&mut u.tracer, &mut u.enemy_tracer] {
-                *t = bind_tracer(t.take(), &pool);
+                *t = bind_tracer(t.take(), pool);
             }
         }
     }
-    Ok(out)
+    out
 }
 
 /// One `WeaponCamo` asset (`camo_<weapon>` in `common_patch_mp`, the `camo` type in the asset

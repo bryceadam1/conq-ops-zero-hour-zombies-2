@@ -54,8 +54,8 @@ impl Source {
         if let Some(z) = &reticle_zone {
             paks.learn(z);
         }
-        let bo2 = zhbo_formats::weapon::all(&common).map_err(|e| e.to_string())?;
-        let atts = zhbo_formats::weapon::attachments(&common).map_err(|e| e.to_string())?;
+        let common_patch = load_zone(bo2_dir, "common_patch_mp")?;
+        let (bo2, atts) = crate::paks::mp_weapons(&patch, &common_patch, &common)?;
         let names = crate::weapons::names(bo2_dir);
         let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
         crate::weapons::add_variants(&mut table, &crate::weapons::converted(&patch, &bo2), &bo2);
