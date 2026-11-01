@@ -102,15 +102,6 @@ pub fn row_nav(manage: bool) -> &'static str {
     }
 }
 
-/// A pick row being activated: the lobby opens the editor on it, a match equips the class.
-pub fn row_activate(manage: bool) -> &'static str {
-    if manage {
-        EDIT_LOADOUT
-    } else {
-        GRID_EQUIP
-    }
-}
-
 /// Leaving the pick screen: the lobby's choose-class screen has its own back-out, the in-match
 /// pick is a plain menu backing out.
 pub fn screen_back(manage: bool) -> &'static str {

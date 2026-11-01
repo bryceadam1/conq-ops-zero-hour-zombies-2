@@ -8820,3 +8820,14 @@ real-install `-p zhbo-assets -- --ignored --skip conformance` 55 passed, `-p zhb
 clusters); `cargo xtask build` OK; autotests run one at a time: default 16/16, `--classpick` 8/8
 (the new "combination viewmodel drawn" and "no viewmodel load failure" checks pass), `--rts`
 15/15, `--scope` pass, `--w3d-ads` 2/2.
+
+## Code polish 2: leftovers in the merged branches' files (2026-11-01)
+
+- `hud/numerals.rs` was an orphan: no `mod numerals` anywhere, so it never compiled (the ammo
+  counter's digits moved to `hud/digit.rs`). Deleted, with the dead `Frame::unit_point` and
+  `cues::row_activate`. A scan for `.rs` files outside the module tree finds no other.
+- The converter's `ZHBO_DW_MOUNT` override (a leftover from the dual-wield A/B sweep) is gone; the
+  left gun mounts on `viewmodels::DW_MOUNT` (`tag_weapon1`).
+- `native_encode` no longer allocates every frame: the due draws leave the queue with
+  `extract_if` into a reused scratch `Vec`, and the target list and pipeline plan (now indices into
+  the scratch) are reused too.

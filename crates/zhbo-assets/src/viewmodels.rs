@@ -442,12 +442,7 @@ pub(crate) fn mount_tag(w: &zhbo_formats::weapon::Weapon) -> &'static str {
 /// that the dual-wield left clip animates to the left gun's authored pose. The A/B sweep showed the
 /// equipment mount (`tag_knife_attach`) rotated the gun off the view and the wrist (`j_wrist_le`)
 /// left it behind the hand; `tag_weapon1` is the clip's own mount and keeps the barrel on the view.
-/// The sweep can override it with `ZHBO_DW_MOUNT` (a dev-only knob, like `ZHBO_SWEEP_*`).
 pub(crate) const DW_MOUNT: &str = "tag_weapon1";
-
-pub(crate) fn dual_mount() -> String {
-    std::env::var("ZHBO_DW_MOUNT").ok().filter(|m| !m.is_empty()).unwrap_or_else(|| DW_MOUNT.to_string())
-}
 
 /// The left gun of a dual-wield weapon, which the converter loads as a second rig: the def's own
 /// `szDualWieldWeaponName` (`fnp45_dw_mp` names `fnp45_lh_mp`, G16). BO2's class never gives a
@@ -695,8 +690,7 @@ pub(crate) fn weapon_viewmodels(
             .zip(&native_base)
             .map(|(p, m)| native::BasePart { model: m, tag: p.tag.clone(), offset: p.offset, optic: p.optic, ads_only: p.ads_only, ads_of: p.ads_of })
             .collect();
-        let dual_tag = dual_mount();
-        let dual_native = dual.zip(native_lh.as_ref()).map(|(w, m)| native::DualGun { gun: m, tag: dual_tag.as_str(), hide: &w.hide_tags, camo: w.weapon_camo.clone() });
+        let dual_native = dual.zip(native_lh.as_ref()).map(|(w, m)| native::DualGun { gun: m, tag: DW_MOUNT, hide: &w.hide_tags, camo: w.weapon_camo.clone() });
         let vm_native = native::Viewmodel { vm, id, gun: &gun, gun_tag: mount_tag(w), gun_camo: w.weapon_camo.clone(), base_parts: base_native_parts, extra_models: extra.iter().map(|e| &e.model).collect(), attachments, hide: &c.hide, clips: &native_clips, dual: dual_native };
         native::viewmodels(out, &vm_native, &native_gun, &native_base, &native_extra, &native_factions);
         let mask = |a: &[Option<String>]| a.iter().enumerate().take(128).filter(|(_, x)| x.is_some()).fold(0u128, |m, (i, _)| m | (1u128 << i));

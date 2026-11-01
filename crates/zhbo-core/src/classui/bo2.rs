@@ -78,11 +78,6 @@ impl Frame {
     pub fn in_menu(&self, p: Place) -> Rect {
         p.resolve(self.menu)
     }
-
-    /// A point in screen pixels, in root units.
-    pub fn unit_point(&self, x: f32, y: f32) -> (f32, f32) {
-        (x / self.s(), y / self.s())
-    }
 }
 
 /// An empty-or-not test for a root-unit box against a screen point.
