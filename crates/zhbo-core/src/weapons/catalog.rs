@@ -904,6 +904,7 @@ Weapon concussion_grenade_mp
   Effect = stun
   ExplosionFx = WeaponFX_RangerFlashBangGrenadeDetonation
   Fuse = 1.5 0
+  ExplodeOnGround = 1
   FireCycle = 0 0.1 0 0 0.5 0 0
   Offhand = 0 0 0
   Explosion = 67 0 4 2

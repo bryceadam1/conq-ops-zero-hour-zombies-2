@@ -656,6 +656,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("Plantable", "1 if BO2's plant check applies (its plantable flag).", FieldKind::Num,
         |d: &WeaponDef| (d.plantable as u8).to_string(),
         |d: &mut WeaponDef, v: Values| { d.plantable = v.text_num()? != 0.0; Ok(()) }),
+    field!("ExplodeOnGround", "1 if a fuse that runs out in the air waits until the grenade is at rest (BO2's bExplodeOnGround).", FieldKind::Num,
+        |d: &WeaponDef| (d.explode_on_ground as u8).to_string(),
+        |d: &mut WeaponDef, v: Values| { d.explode_on_ground = v.text_num()? != 0.0; Ok(()) }),
     field!("Inventory", "BO2's inventory type: primary, offhand, item, altmode, melee, dwlefthand.", FieldKind::Enum,
         |d: &WeaponDef| d.inventory.name().into(),
         |d: &mut WeaponDef, v: Values| { d.inventory = Inventory::parse(v.text).ok_or("unknown inventory type")?; Ok(()) }),
@@ -1245,7 +1248,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 153);
+        assert_eq!(WEAPON_FIELDS.len(), 154);
         assert_eq!(ATTACHMENT_FIELDS.len(), 31);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }

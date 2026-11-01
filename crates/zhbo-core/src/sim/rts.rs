@@ -253,13 +253,16 @@ impl Sim {
             return -1;
         }
         let slot = if (0..2).contains(&current_slot) { current_slot } else { p.rts.gun };
-        let Some(w) = p.arsenal.weapons.get_mut(slot as usize).filter(|w| w.def.class.is_gun()) else { return -1 };
-        let take = w.def.clip.saturating_sub(w.ammo).min(w.reserve);
+        let Some(w) = p.arsenal.weapons.get_mut(slot as usize).filter(|w| w.main.class.is_gun()) else { return -1 };
+        // The gun's own magazine (`Arsenal::rts_shot`), whichever mode was up.
+        let clip = w.main.clip;
+        let (ammo, reserve) = w.main_rounds_mut();
+        let take = clip.saturating_sub(*ammo).min(*reserve);
         if take == 0 {
             return -1;
         }
-        w.ammo += take;
-        w.reserve -= take;
+        *ammo += take;
+        *reserve -= take;
         w.reload = None;
         slot
     }
@@ -313,7 +316,8 @@ impl Sim {
         let Some(a) = self.players.iter().flatten().find(|p| p.general == general).map(|p| &p.arsenal).filter(|a| !a.is_unarmed()) else {
             return out;
         };
-        let gun = |s: usize| a.weapons.get(s).map(|w| w.def).filter(|d| d.class.is_gun());
+        // The gun itself (its main mode), as `rts_weapons`.
+        let gun = |s: usize| a.weapons.get(s).map(|w| w.main).filter(|d| d.class.is_gun());
         let defs = [gun(0), gun(1), Some(a.lethal.def), Some(a.tactical.def), Some(a.melee)];
         for (slot, def) in defs.into_iter().enumerate() {
             let Some(def) = def else { continue };
@@ -409,7 +413,9 @@ fn rts_weapons(a: &Arsenal, lock: i32, rts: &RtsState) -> RtsWeapons {
         Third::Tactical => a.tactical.def,
         Third::Lethal => a.lethal.def,
     };
-    let guns = (0..2).map(|s| a.weapons.get(s).map(|w| w.def).filter(|d| d.class.is_gun()));
+    // The gun's own Zero Hour weapon (its main mode: alt modes have none, `rts_weapons_ini`), even
+    // when the General left first person with the alt mode up.
+    let guns = (0..2).map(|s| a.weapons.get(s).map(|w| w.main).filter(|d| d.class.is_gun()));
     for (slot, def) in guns.chain(std::iter::once(Some(third))).enumerate() {
         let Some(def) = def else { continue };
         let name = crate::names::rts_weapon(&def.id);
@@ -548,6 +554,31 @@ mod tests {
         // The third slot is not a gun: the order reloads the gun he goes back to.
         sim.rts_update(&host, 0, 1, 1, [0, 3, 0], None);
         assert_eq!(sim.rts_reload(0, 1, 2), 1);
+    }
+
+    /// The General left first person with the under-barrel launcher up: the overhead General still
+    /// holds the gun — its Zero Hour weapon and icon, and its own magazine for his shots and
+    /// reloads — and the launcher's grenades are untouched.
+    #[test]
+    fn the_overhead_general_holds_the_gun_even_with_its_launcher_up() {
+        let host = FakeHost::default();
+        let mut sim = classed(&host);
+        *arsenal(&mut sim) = Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
+        let a = arsenal(&mut sim);
+        let gun = a.weapons[0].main;
+        a.toggle_alt();
+        assert!(a.weapons[0].alt_up() && a.weapons[0].alt_owns_ammo(), "the test kit's launcher is up");
+        let (gun_ammo, gun_reserve) = a.weapons[0].main_rounds();
+        let (gl_ammo, gl_reserve) = (a.weapons[0].ammo, a.weapons[0].reserve);
+        let r = sim.rts_update(&host, 0, 1, 0, [3, 0, 0], None);
+        assert_eq!(r.template(0), Some(crate::names::rts_weapon(&gun.id).as_str()), "the gun's Zero Hour weapon");
+        assert_eq!(sim.rts_icons(1).icon(RtsIcons::PRIMARY), Some(crate::classicons::weapon_icon(&gun.id).as_str()));
+        assert_eq!((r.ammo[0], r.reserve[0]), (gun_ammo as i32 - 3, gun_reserve as i32), "the gun's rounds, spent");
+        assert_eq!(sim.rts_reload(0, 1, 0), 0);
+        let r = sim.rts_ammo(1);
+        assert_eq!((r.ammo[0], r.reserve[0]), (gun_ammo as i32, gun_reserve as i32 - 3), "topped up from the gun's spares");
+        let w = &arsenal(&mut sim).weapons[0];
+        assert_eq!((w.ammo, w.reserve), (gl_ammo, gl_reserve), "the launcher's grenades are untouched");
     }
 
     #[test]

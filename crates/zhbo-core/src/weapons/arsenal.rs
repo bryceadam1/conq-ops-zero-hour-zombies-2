@@ -447,6 +447,20 @@ impl Arsenal {
         &mut self.weapons[self.active]
     }
 
+    /// A weapon change asked for now waits (`FUN_008e0e60` holds the request back): an offhand's
+    /// states (0x16-0x1d), the melee states (0x13-0x15, the strike's delay included) and an alt
+    /// toggle under way (`FUN_008db500` returns in states 3-5). The field computer is held to it.
+    pub fn holds_switch_back(&self) -> bool {
+        self.offhand.is_some() || self.melee_left > 0.0 || self.melee_recover_left > 0.0 || self.melee_delay_left > 0.0 || self.alt_pending
+    }
+
+    /// The General leaves first person (the field computer): the sights come down and a reload in
+    /// progress is cut short (both hands), as a swap cuts it (`switch_to`).
+    pub fn put_away(&mut self) {
+        self.current_mut().interrupt();
+        self.ads = 0.0;
+    }
+
     /// The weapon can't shoot right now (raising, putting away, reloading, meleeing, throwing).
     pub fn is_busy(&self) -> bool {
         self.raise_left > 0.0 || self.drop_left > 0.0 || self.current().is_reloading() || self.melee_left > 0.0 || self.melee_recover_left > 0.0 || self.offhand.is_some()
@@ -464,15 +478,16 @@ impl Arsenal {
         }
     }
 
-    /// What the player's own blasts and stuns do to them: `flakjacket` takes `perk_flakJacket`
-    /// percent of explosive damage (`_class.gsc:1023-1032`), `stunprotection` cuts a stun to
-    /// x0.1 (`_weapons.gsc:1375-1376`). Checked against the class: by the time the grenade goes
-    /// off the hand holds the gun again.
+    /// What the player's own blasts and stuns do to them. Flak Jacket does not cover his own
+    /// blasts: `cac_modified_damage` returns the damage unchanged when the victim is the attacker
+    /// (`_class.gsc:957-958`; another General's blasts go through [`crate::sim::guard`]), so the
+    /// blast share is 1. `stunprotection` cuts a stun to x0.1 whoever threw it
+    /// (`_weapons.gsc:1375-1376`). Checked against the class: by the time the grenade goes off the
+    /// hand holds the gun again.
     pub fn self_harm_scales(&self) -> (f32, f32) {
         let class = self.class_specialties();
-        let blast = if class.has(Specialty::FlakJacket) { self.tuning.perk_flak_jacket * 0.01 } else { 1.0 };
         let stun = if class.has(Specialty::StunProtection) { self.tuning.stun_protection_scale } else { 1.0 };
-        (blast, stun)
+        (1.0, stun)
     }
 
     /// The hip spread cone's min and max at an eye height (inches; Ghidra G6): the weapon's
@@ -652,7 +667,7 @@ impl Arsenal {
         let ads_only = self.ads_only_pair();
         let Some(to) = self.alt_target() else { return };
         let w = self.current_mut();
-        if to.alt_own_ammo || w.def.alt_own_ammo {
+        if w.alt_owns_ammo() {
             std::mem::swap(&mut w.ammo, &mut w.alt_ammo);
             std::mem::swap(&mut w.reserve, &mut w.alt_reserve);
         }
@@ -672,7 +687,8 @@ impl Arsenal {
 
     /// A shot from the Zero Hour weapon in `slot` (0 primary, 1 secondary, 2 lethal) while the
     /// General is under RTS control: it comes out of the magazine, which Zero Hour's own clip
-    /// reload refills from the spare rounds.
+    /// reload refills from the spare rounds. The Zero Hour weapon is the gun's own (its main mode),
+    /// so the rounds are too, even when the General left first person with the alt mode up.
     pub fn rts_shot(&mut self, slot: usize) {
         if slot == 2 {
             self.lethal.count = self.lethal.count.saturating_sub(1);
@@ -680,28 +696,36 @@ impl Arsenal {
         }
         let Some(w) = self.weapons.get_mut(slot) else { return };
         w.reload = None;
-        if w.ammo == 0 {
-            let take = w.def.clip.min(w.reserve);
-            w.ammo += take;
-            w.reserve -= take;
+        let clip = w.main.clip;
+        let (ammo, reserve) = w.main_rounds_mut();
+        if *ammo == 0 {
+            let take = clip.min(*reserve);
+            *ammo += take;
+            *reserve -= take;
         }
-        w.ammo = w.ammo.saturating_sub(1);
+        *ammo = ammo.saturating_sub(1);
     }
 
-    /// Rounds in the magazine and spare for RTS slot `slot` (grenades for the lethal).
+    /// Rounds in the magazine and spare for RTS slot `slot` (grenades for the lethal): the gun's
+    /// own, as [`Arsenal::rts_shot`] spends them.
     pub fn rts_ammo(&self, slot: usize) -> (u16, u16) {
         match slot {
             2 => (self.lethal.count, 0),
-            s => self.weapons.get(s).map_or((0, 0), |w| (w.ammo, w.reserve)),
+            s => self.weapons.get(s).map_or((0, 0), WeaponState::main_rounds),
         }
     }
 
     /// Give a magazine (Scavenger) to every gun, and one of each offhand up to what the class
     /// carries (`_weapons.gsc:1804-1850`: stock + 1, capped at the loadout's
     /// `primarygrenadecount`/`specialgrenadecount` — Danger Close's two lethals refill to two).
+    /// The guns are `getweaponslistprimaries()` (`_weapons.gsc:1795`): the weapon's own clip into
+    /// its own stock, never an alt mode's (an under-barrel launcher is in the alts list, which
+    /// only refills the named offhands), whichever mode is up.
     pub fn scavenge(&mut self) {
         for w in &mut self.weapons {
-            w.reserve = (w.reserve + w.def.clip).min(w.def.max_reserve);
+            let (clip, max) = (w.main.clip, w.main.max_reserve);
+            let (_, reserve) = w.main_rounds_mut();
+            *reserve = reserve.saturating_add(clip).min(max);
         }
         let (lethal, tactical) = (self.class_count(true), self.class_count(false));
         self.lethal.count = (self.lethal.count + 1).min(lethal.max(self.lethal.count));

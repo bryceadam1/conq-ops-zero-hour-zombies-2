@@ -109,7 +109,6 @@ pub(crate) fn native_sonar(s: &zhbo_native::model::Sonar, handle: impl Fn(&Optio
 
 /// The texture files a surface's own technique reads besides its colour and packed maps (the
 /// reticle's noise, the MMS screen's lookup and noise).
-#[cfg(feature = "renderer")]
 pub(crate) fn technique_files(s: &SurfaceSpec) -> impl Iterator<Item = &String> {
     let reticle = s.reticle.as_ref().and_then(|r| r.noise.as_ref());
     let sonar = s.sonar.as_ref().into_iter().flat_map(|so| [so.lookup.as_ref(), so.noise.as_ref()]).flatten();
@@ -119,7 +118,6 @@ pub(crate) fn technique_files(s: &SurfaceSpec) -> impl Iterator<Item = &String> 
 
 /// Every texture file a surface draws with: its colour, packed maps, specular colour, camo layer
 /// and its technique's own ([`technique_files`]). Shared with the third person.
-#[cfg(feature = "renderer")]
 pub(crate) fn surface_files(s: &SurfaceSpec) -> impl Iterator<Item = &String> {
     [&s.color, &s.maps, &s.specular, &s.camo].into_iter().flatten().chain(technique_files(s))
 }
@@ -435,6 +433,33 @@ pub struct Loaded {
     pub overlay_art_present: bool,
     pub aim: Option<usize>,
     pub anims: HashMap<String, Anim>,
+}
+
+impl Loaded {
+    /// Every texture file the surfaces name — the hip mesh's and the ADS part list's, whose
+    /// optic models carry materials of their own (the target finder's `_ads` model has its centre
+    /// reticle `mtl_t6_attach_rfo_reticle2`, which the `_view` model lacks) — each once, in
+    /// surface order. The draw uploads exactly these; a surface naming any other file draws white.
+    pub fn texture_paths(&self) -> Vec<String> {
+        let mut paths: Vec<String> = Vec::new();
+        for surf in self.mesh.surfaces.iter().chain(self.mesh_aimed.iter().flat_map(|m| m.surfaces.iter())) {
+            for p in surface_files(surf) {
+                if !paths.contains(p) {
+                    paths.push(p.clone());
+                }
+            }
+        }
+        paths
+    }
+
+    /// The mesh the draw submits: the ADS part list's from BO2's optic switch (`aimed`), when a
+    /// part swaps; the hip mesh otherwise.
+    pub fn drawn_mesh(&self, aimed: bool) -> &Mesh {
+        match &self.mesh_aimed {
+            Some(m) if aimed => m,
+            _ => &self.mesh,
+        }
+    }
 }
 
 /// The local player's reticle choices from the last client frame: each slot weapon's viewmodel

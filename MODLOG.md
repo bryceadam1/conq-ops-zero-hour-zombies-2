@@ -9647,3 +9647,111 @@ renders and the full sweep in `~/.opencode/plan/tp-secondary-anim/`.
   (weapons 1,979 cells / 11 clusters, cac 0 + 4 BO2-only rows, 12 gap clusters).
   Bumps owed: `hud::VERSION` (table field, body manifest clip ids, INI, new W3D clips) and
   `ZHBO_ABI_VERSION` (`ZhboWorldPose.sidearm` → `anim_set` meaning).
+
+## Bug sweep (2026-11-01, `v1/bug-sweep`)
+
+A general sweep for bugs outside the playtest items; one commit per fix.
+
+- **The autopilot's "keys held" log only ever looked at the A key.** `ZhboBridge.cpp` walked the key
+  bits with `k < sizeof(zhbo_platform::keys::Key)` — the size of the enum's `uint8_t` storage (1),
+  not its `Key::COUNT` (49) — so the log could only ever say `[A]` or `[]`, and
+  `autotest-mac.sh --input`'s "W reached the game" check could never pass. The loop now runs to
+  `Key::COUNT`, the bound the `keyNames` static_assert already pins.
+- **Scavenger and the overhead General used the alt mode's magazine when the launcher was up.**
+  An own-ammo alt (an under-barrel launcher) trades magazines with its weapon on the toggle
+  (`finish_alt`), so with it up `ammo`/`reserve` are the launcher's and the rifle's sit in
+  `alt_ammo`/`alt_reserve`. `Arsenal::scavenge` read `w.def`/`w.reserve`, so a Scavenger kill with
+  the GL up gave the launcher a "magazine" (capped at its max) and the rifle nothing; BO2's
+  `scavenger_think` refills `getweaponslistprimaries()` only (`_weapons.gsc:1795`, `:1866-1891` —
+  the launcher is in the alts list, which refills only the named offhands). The same cause reached
+  the overhead General after leaving first person with the GL up: `rts_shot`, `rts_ammo`,
+  `rts_reload` spent and showed the launcher's rounds, and the slot's Zero Hour weapon and icon
+  were the alt's (`ZHBO_GeneralWeapon_gl_an94_mp`, which `rts_weapons_ini` never writes — alt modes
+  share their base's). `WeaponState::main_rounds{,_mut}` return the weapon's own magazine
+  whichever mode is up (`alt_owns_ammo` is the one predicate, `finish_alt` uses it too); the RTS
+  templates and icons take `w.main`. Tests: `scavenger_refills_the_gun_not_its_launcher_whichever_mode_is_up`,
+  `the_overhead_general_holds_the_gun_even_with_its_launcher_up` (both fail without the fix).
+- **The field computer opened mid-throw, mid-melee and mid-reload, freezing that state for the
+  next first-person spell.** The use key switched to `Mode::FieldComputer` whatever the arsenal was
+  doing, and nothing in it runs out of first person, so a cooked grenade stayed in hand (fuse
+  stopped) through the RTS and was thrown on the frame control came back (the button bit was gone
+  from `held`), a pending melee strike landed then, a reload resumed, and a lunge's locked target
+  (`p.charge`) stayed set — which `melee_strike` also reads for an overhead knife order. The laptop
+  is a weapon change (BO2's killstreak remotes are), so it now obeys BO2's hold-backs
+  (`FUN_008e0e60`: the offhand states, the melee states, `FUN_008db500`'s alt-toggle states;
+  `Arsenal::holds_switch_back`): the press is carried to the next frame until they end, and opening
+  cuts a reload short as a swap does (`Arsenal::put_away`) and drops the lunge lock. Test:
+  `the_field_computer_waits_for_an_offhand_and_cuts_a_reload` (fails without the fix).
+- **The target finder drew a white square over its lens at full ADS (all 20 guns that take it).**
+  At BO2's optic switch the native draw submits the ADS part list's mesh (`mesh_aimed`), but
+  `nativevm::gpu::submit` collected the textures to upload from the hip mesh's surfaces only; a
+  material only the aimed mesh draws bound no texture and took the white fallback. The target
+  finder's `_ads` model draws its centre reticle (`mc/mtl_t6_attach_optic_rangefinder_reticle2`,
+  `mtl_t6_attach_rfo_reticle2_a`, a two-colour projected reticle at emissive 11.5), which the hip
+  mesh does not, so its whole quad drew saturated white instead of BO2's blue cross. It surfaced
+  with the order-independent texture conversion (polish 3), which made that image convert at all.
+  `Loaded::texture_paths` now walks both meshes, and the HUD's "a lens reticle is drawing" test
+  reads the mesh that draws (`Loaded::drawn_mesh`), not always the hip one. Full sweep before/after
+  (`~/.opencode/plan/bug-sweep/vm`, `vm-after`): exactly the 20 `+rangefinder` aimed halves
+  change; every other image is identical. Test: `the_aimed_meshs_own_textures_are_uploaded_too`.
+- **The class editor named perks by id: "FlakJacket", "FastHands".** The editor's perk buttons
+  (`classui::editor::button_text`) and `classmenu::slot_value` pushed `p.def().id`; BO2's button
+  subtitles are `Engine.Localize(item.name)` (`cacmultiperksbutton.lua:221-240`). Every perk whose
+  id is not its name was affected (Flak Jacket, Fast Hands, Blind Eye, Hard Wired, Extreme
+  Conditioning, …; Lightweight and Ghost happened to match, which is why the old test passed). Both
+  now use the perk's localized name (`Perk::name`), as the perk grid and the pick preview already
+  did. Screenshot: `~/.opencode/plan/bug-sweep/cac-editor-perks-after.png` (was `cac/cac-editor.png`).
+  Tests: `the_editors_perk_buttons_show_the_perks_names`, `slot_values_read_as_the_resulting_class`.
+- **Method.** An arsenal fuzz (every slot weapon of the converted table — 9,672 — paired with
+  another, 4 seeds x 3,000 frames of random buttons, the plant check flickering) and an
+  end-to-end fuzz (client + sim + HUD draw with a random custom class from the converted table,
+  random keys including the field computer, re-taking control from the RTS; 1,381 classes in
+  release, 241 in debug for overflow checks) ran clean after the fixes above. Their only finding
+  was BO2-consistent: a select-fire alt's clip is the base variant's (no Extended Clip on
+  `sf_*`, conformance `clip_size`), so the shared magazine may hold more than the alt's clip. The
+  arsenal fuzz stays as `random_input_never_breaks_the_arsenal` over the stand-in table. Also
+  checked clean: the converted table's cross-references (every `Alt` resolves, no gun with a zero
+  clip or fire time), the table parser against every value line truncated at every length (no
+  panic), the HUD contact sheet (11 empty rects: the `hud_mp_num_big_*_white` numerals, which are
+  one fully transparent DXT1 image in BO2's own `mp.ipak` — not a conversion bug), the CaC
+  screenshot harness (every sprite resolved) and the real-install suite (58 passed).
+- **The smoke grenade went off in the hand (and the concussion and EMP grenades in the air).** The
+  Willy Pete's BO2 `fuseTime` is 10 ms and the mod went off when the fuse ran out. BO2's grenade
+  data has no "explode when stationary" here (`bProjExplodeWhenStationary` is clear on every MP
+  weapon); the rule is `bExplodeOnGround`. t6mp `FUN_0060a480` (the missile's explode think):
+  with the flag set and `groundEntityNum == ENTITYNUM_NONE` it sets `nextthink` to re-think next
+  frame and returns, for up to 60 s from launch; the ground entity is set once the grenade settles
+  (`FUN_00607fa0`'s landing branch). The fuse itself is armed at launch from the def's `fuseTime`
+  (`FUN_00607cb0` → `FUN_00607c00`; the throw `FUN_0066cf00`/`FUN_0066d360` passes `fuseTime`, or
+  `aiFuseTime` for AI). On the install the flag is set on `willy_pete_mp`, `concussion_grenade_mp`,
+  `emp_grenade_mp` (and the planted `pda_hack_mp`/`tactical_insertion_mp`, which land as equipment
+  first); the frag, flashbang, Semtex and sensor go off on their fuse wherever they are. The flag is
+  now carried (`zhbo_formats::weapon::Weapon::explode_on_ground`, table field `ExplodeOnGround`,
+  `WeaponDef::explode_on_ground`) and `Projectile::step` lets a run-out fuse fire only at rest
+  (`resting`/stuck) or after `EXPLODE_ON_GROUND_WAIT` (60 s). The overhead General's thrown
+  offhands use the same projectile. Tests: `an_explode_on_ground_grenade_waits_until_it_rests`; the
+  real-install `the_smoke_concussion_and_emp_grenades_explode_on_the_ground`. The weapon table gains
+  a field: `hud::VERSION` needs the integrator's bump.
+- **Flak Jacket covered only the wearer's own blasts — the one case BO2 leaves alone.** The mod
+  scaled a General's *own* grenade damage by `perk_flakJacket` (`Arsenal::self_harm_scales`, citing
+  `_class.gsc:1023-1032`) and nothing else. BO2's only Flak Jacket rule is `cac_modified_damage`
+  (called from the player damage callback, `_globallogic_player.gsc:776`): it returns the damage
+  unchanged when the victim is the attacker (`_class.gsc:957-958`) or the attacker is not a player,
+  and otherwise keeps `perk_flakJacket` (35) percent of explosive damage — `isexplosivedamage`
+  (`:1058-1084`: the grenade/splash/explosive means of death minus the tactical grenades) — unless
+  the grenade is stuck to the victim (`grenadestuck`, `:1132-1135`). The engine never reads the
+  dvar (its one reference is the registration, `FUN_008bec80`). The same root cause reached the
+  Tactical Mask: `specialty_stunprotection` cuts a concussion's stun x0.1 on whoever it hits
+  (`_weapons.gsc:1375-1376`), but the mod applied it only to the thrower's own (never-applied)
+  self-stun. Fix, structured like BO2 (victim-side, at delivery): `sim::guard` — each frame the sim
+  snapshots every General's `Guard` (flak share, stun share; refreshed with the shield bearers into
+  `Equipment::guards`), and every blast reaches the host through `Guarded`, which knows the weapon
+  (explosive = `Effect::Explode`), the thrower and what the grenade is stuck to, and scales
+  `damage(EXPLOSION)` and a thrown stun's `disable(PARALYZED)` for the victim. Projectiles and placed
+  equipment (claymore, Betty, C4) both go through it; `self_harm_scales` no longer reduces the own
+  blast. `projectiles.rs` is untouched apart from one doc line (v1/crossbow-damage rewrites it).
+  **Not changed:** BO2 also concusses the thrower (half radius, `_weapons.gsc:1364-1365`) where the
+  mod never stuns its own thrower, and the Shock Charge answers to `specialty_proximityprotection`,
+  which the mod does not model; both noted for a follow-up. Tests:
+  `flak_jacket_cuts_anothers_explosives_only`, `the_tactical_mask_cuts_anothers_concussion`,
+  `a_flak_jacket_general_takes_less_from_anothers_frag`.

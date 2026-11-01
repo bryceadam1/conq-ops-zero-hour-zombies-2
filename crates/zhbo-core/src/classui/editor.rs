@@ -288,7 +288,7 @@ fn button_of(l: &EditorLayout, slot: Slot) -> Rect {
 }
 
 /// A perk/grenade button's label and its item names (the Greed row's name shares the button).
-fn button_text(editor: &Editor, slot: Slot) -> (&'static str, Vec<String>) {
+pub(super) fn button_text(editor: &Editor, slot: Slot) -> (&'static str, Vec<String>) {
     let d = &editor.draft;
     match slot {
         Slot::Lethal => (offhand_title(d, true), offhand_names(d, true)),
@@ -300,13 +300,9 @@ fn button_text(editor: &Editor, slot: Slot) -> (&'static str, Vec<String>) {
                 1 => "PERK 2",
                 _ => "PERK 3",
             };
-            let mut names: Vec<String> = Vec::new();
-            if let Some(p) = d.perks[tier] {
-                names.push(p.def().id.to_string());
-            }
-            if let Some(p) = d.extra_perks[tier] {
-                names.push(p.def().id.to_string());
-            }
+            // Each perk's localized name (`cacmultiperksbutton.lua:221-240`: `setSubtitle`..3 with
+            // `Engine.Localize(item.name)`), not its id: "Flak Jacket", not `FlakJacket`.
+            let names: Vec<String> = [d.perks[tier], d.extra_perks[tier]].into_iter().flatten().map(super::preview::perk_name).collect();
             (label, names)
         }
     }

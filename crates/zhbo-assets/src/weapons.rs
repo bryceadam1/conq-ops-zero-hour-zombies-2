@@ -1216,6 +1216,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         hold_use: w.is_hold_use_grenade,
         hold_cancelable: w.offhand_hold_is_cancelable,
         plantable: w.plantable,
+        explode_on_ground: w.explode_on_ground,
         inventory: zhbo_core::weapons::Inventory::from_bo2(w.inventory),
         explosion_radius: inches(w.explosion_radius as f32),
         explosion_radius_min: inches(w.explosion_radius_min as f32),
@@ -2583,6 +2584,23 @@ mod tests {
         assert_eq!(to_def(&w, &HashMap::new()).camo_material, "camo_msmc");
         let none = Weapon { name: "mtar_mp".into(), class: bo2::class::RIFLE, ..Default::default() };
         assert_eq!(to_def(&none, &HashMap::new()).camo_material, "");
+    }
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_smoke_concussion_and_emp_grenades_explode_on_the_ground() {
+        // `bExplodeOnGround` (t6mp `FUN_0060a480`): these wait for the ground; the frag and the
+        // flashbang go off in the air on their fuse. The Willy Pete's fuse is 10 ms.
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let (all, _) = crate::paks::MpPool::load(&dir).unwrap().weapons().unwrap();
+        let def = |name: &str| to_def(all.iter().find(|w| w.name == name).expect(name), &HashMap::new());
+        for name in ["willy_pete_mp", "concussion_grenade_mp", "emp_grenade_mp"] {
+            assert!(def(name).explode_on_ground, "{name}");
+        }
+        for name in ["frag_grenade_mp", "flash_grenade_mp", "sticky_grenade_mp", "sensor_grenade_mp"] {
+            assert!(!def(name).explode_on_ground, "{name}");
+        }
+        assert!(def("willy_pete_mp").fuse_time < 0.05);
     }
 
     #[test]

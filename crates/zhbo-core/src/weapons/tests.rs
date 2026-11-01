@@ -804,6 +804,29 @@ fn a_launcher_toggle_raises_the_incoming_mode_over_its_alt_raise_time() {
     assert!(n.abs_diff(expect + 1) <= 1, "{n} frames vs {expect}");
 }
 
+/// Scavenger refills the guns (`getweaponslistprimaries`, `_weapons.gsc:1795`): with the
+/// under-barrel launcher up, the rifle's spare rounds get a magazine and the launcher's grenades
+/// none — as with the rifle up.
+#[test]
+fn scavenger_refills_the_gun_not_its_launcher_whichever_mode_is_up() {
+    let mut a = Arsenal::with_loadout(Loadout::test_kit());
+    a.raise_left = 0.0;
+    let gun = a.current().main;
+    a.current_mut().reserve = 0;
+    let gl_reserve = a.current().alt_reserve;
+    a.toggle_alt();
+    assert!(a.current().alt_up(), "the launcher is up");
+    a.scavenge();
+    let w = a.current();
+    assert_eq!(w.main_rounds().1, gun.clip.min(gun.max_reserve), "the rifle's stock got a magazine");
+    assert_eq!(w.reserve, gl_reserve, "the launcher's grenades are not refilled");
+    // And the same with the rifle up.
+    let mut b = Arsenal::with_loadout(Loadout::test_kit());
+    b.current_mut().reserve = 0;
+    b.scavenge();
+    assert_eq!((b.current().reserve, b.current().alt_reserve), (w.main_rounds().1, gl_reserve));
+}
+
 #[test]
 fn an_alt_toggle_drops_the_outgoing_weapon_first_and_fast_hands_speeds_both() {
     // FUN_008db500: an alt pair's change starts with the OUTGOING weapon's alt drop
@@ -1078,4 +1101,60 @@ fn scavenger_on_the_largest_reserve_saturates() {
     let kit = Loadout { reserve: [Some(u16::MAX), Some(u16::MAX)], perks: vec![Perk::SCAVENGER], ..Loadout::test_kit() };
     let a = Arsenal::with_loadout(kit);
     assert_eq!(a.weapons[0].reserve, u16::MAX);
+}
+
+/// Every gun of the table, paired with another, through 3,000 frames of seeded random buttons —
+/// fire, aim, reload, swap, melee, both offhands, the alt mode, sprint — with the plant check
+/// flickering: the state machine never panics (overflow included, in debug builds) and its
+/// invariants hold every frame. A magazine may exceed the mode's clip only up to the weapon's own
+/// (a shared-ammo alt keeps the weapon's rounds: BO2's select-fire alt has no Extended Clip,
+/// conformance `clip_size`). Run over the converted table this found no break (bug sweep,
+/// MODLOG); here it guards the stand-in table and every rule change.
+#[test]
+fn random_input_never_breaks_the_arsenal() {
+    let guns: Vec<&'static WeaponDef> =
+        catalog().all().iter().copied().filter(|d| d.class.is_slot_weapon() && d.inventory != super::def::Inventory::AltMode).collect();
+    assert!(guns.len() > 3);
+    let presses = [buttons::FIRE, buttons::ADS, buttons::RELOAD, buttons::SWAP_WEAPON, buttons::MELEE, buttons::LETHAL, buttons::TACTICAL, buttons::ALT_MODE, buttons::SPRINT];
+    for (gi, g) in guns.iter().enumerate() {
+        for seed in 0..3u32 {
+            let other = guns[(gi * 7 + seed as usize + 1) % guns.len()];
+            let mut l = Loadout::test_kit();
+            l.primary = g.id.clone();
+            l.secondary = other.id.clone();
+            let mut a = Arsenal::with_loadout(l);
+            let mut rng = Rng::new(seed * 977 + gi as u32);
+            let mut x: u32 = seed.wrapping_mul(2_654_435_761) ^ (gi as u32) ^ 0x9e37_79b9;
+            let mut held = 0u32;
+            let mut out = Vec::new();
+            for f in 0..3000 {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                let mut pressed = 0;
+                if x.is_multiple_of(7) {
+                    let b = presses[(x >> 8) as usize % presses.len()];
+                    held ^= b;
+                    if held & b != 0 {
+                        pressed = b;
+                    }
+                }
+                let sprinting = held & buttons::SPRINT != 0 && x.is_multiple_of(3);
+                a.plant_ok = [!x.is_multiple_of(5), !x.is_multiple_of(11)];
+                out.clear();
+                a.step(held, pressed, sprinting, (x as usize >> 20) % 3, ((x >> 4) % 300) as f32, &mut rng, &mut out);
+                let at = || format!("{} / {} seed {seed} frame {f}", g.id, other.id);
+                assert!(a.active < a.weapons.len(), "{}", at());
+                assert!((0.0..=1.0).contains(&a.ads), "{}: ads {}", at(), a.ads);
+                assert!(a.raise_left >= 0.0 && a.drop_left >= 0.0 && a.raise_left.is_finite() && a.drop_left.is_finite(), "{}", at());
+                for w in &a.weapons {
+                    if w.def.class.is_slot_weapon() {
+                        assert!(w.ammo <= w.def.clip.max(w.main.clip), "{}: {} has {} rounds", at(), w.def.id, w.ammo);
+                    }
+                    assert!(w.left.as_ref().is_none_or(|h| h.ammo <= w.def.clip), "{}: the left gun", at());
+                    assert!(w.cooldown.is_finite() && w.bloom.is_finite(), "{}: timers", at());
+                }
+            }
+        }
+    }
 }

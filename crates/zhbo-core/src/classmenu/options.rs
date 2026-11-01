@@ -14,11 +14,11 @@ pub fn slot_value(d: &Draft, slot: Slot) -> String {
         Slot::Tactical => weapons::weapon(&d.tactical).menu_name().to_string(),
         Slot::Perk1 | Slot::Perk2 | Slot::Perk3 => {
             let tier = slot.perk_tier().unwrap_or(1) as usize;
-            d.perks[tier - 1].map(|p| p.def().id.to_string()).unwrap_or_else(|| "—".into())
+            d.perks[tier - 1].map(|p| p.name()).unwrap_or_else(|| "—".into())
         }
         Slot::Perk1b | Slot::Perk2b | Slot::Perk3b => {
             let tier = slot.perk_tier().unwrap_or(1) as usize;
-            d.extra_perks[tier - 1].map(|p| p.def().id.to_string()).unwrap_or_else(|| "—".into())
+            d.extra_perks[tier - 1].map(|p| p.name()).unwrap_or_else(|| "—".into())
         }
         Slot::Wildcards => {
             if d.wildcards.is_empty() {

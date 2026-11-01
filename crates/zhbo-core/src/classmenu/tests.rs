@@ -617,6 +617,10 @@ use super::items::cac_entries;
         // The perk rows read the tier's held perk.
         assert_eq!(slot_value(&d, Slot::Perk1), "Lightweight");
         assert_eq!(slot_value(&d, Slot::Wildcards), "—");
+        // A perk whose id is not its name reads as the name.
+        let mut d = d;
+        d.perks[1] = Some(crate::weapons::Perk::FAST_HANDS);
+        assert_eq!(slot_value(&d, Slot::Perk2), "Fast Hands");
     }
 
     // --- Renaming is the class-options dialog's, not the editor's ---

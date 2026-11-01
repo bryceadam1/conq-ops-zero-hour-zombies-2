@@ -13,6 +13,7 @@
 
 mod build;
 pub mod deploy;
+pub mod guard;
 mod fire;
 mod hack;
 pub mod optics;
@@ -732,6 +733,9 @@ impl Sim {
         self.frame = frame;
         self.shields = self.shield_bearers();
         self.equipment.shields.clone_from(&self.shields);
+        // The Generals' perks against others' blasts (`sim::guard`), for this frame's blasts.
+        self.equipment.guards.clear();
+        self.equipment.guards.extend(self.players.iter().flatten().map(|p| guard::Guard::of(p.general, &p.arsenal)));
         for idx in 0..self.players.len() {
             let Some(mut p) = self.players[idx].take() else { continue };
             let keep = self.step_player(host, idx, &mut p);
@@ -754,7 +758,9 @@ impl Sim {
         let mut bounces = Vec::new();
         let mut struck = Vec::new();
         for (i, (owner, proj)) in self.projectiles.iter_mut().enumerate() {
-            let outcome = proj.step_shielded(host, &self.shields);
+            // Its blast reaches each General through his guard (`sim::guard`).
+            let guarded = guard::Guarded { host, guards: &self.equipment.guards, def: proj.def, stuck_to: proj.stuck_to, thrown: true };
+            let outcome = proj.step_shielded(&guarded, &self.shields);
             if let Some((at, surface)) = proj.bounced {
                 bounces.push((*owner, at, proj.def.bounce_sound(surface)));
             }
@@ -912,9 +918,19 @@ impl Sim {
                 if picked_up {
                     input.pressed &= !buttons::FIELD_COMPUTER;
                 }
+                // The laptop is a weapon change (BO2's killstreak remotes are): an offhand, a melee
+                // or an alt toggle under way holds it back, and the press is carried to the next
+                // frame until they end (`FUN_008e0e60`, as the weapon-switch key is).
+                if p.site.is_none() && input.pressed & buttons::FIELD_COMPUTER != 0 && p.arsenal.holds_switch_back() {
+                    input.pressed &= !buttons::FIELD_COMPUTER;
+                    p.pressed_accum |= buttons::FIELD_COMPUTER;
+                }
                 if p.site.is_none() && input.pressed & buttons::FIELD_COMPUTER != 0 {
                     p.mode = Mode::FieldComputer { t: 0.0 };
-                    p.arsenal.ads = 0.0;
+                    // The gun goes away: a reload in progress is cut short, like a swap, and a
+                    // lunge's target lock goes with the melee (it would carry into an RTS order).
+                    p.arsenal.put_away();
+                    p.charge = None;
                     // Out of first person BO2 zeroes the kick (`FUN_00523070`).
                     p.view_kick = ViewKick::default();
                     p.idle = IdleSway::default();

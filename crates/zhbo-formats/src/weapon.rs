@@ -814,6 +814,10 @@ pub struct Weapon {
     pub offhand_hold_is_cancelable: bool,
     pub is_hold_use_grenade: bool,
     pub plantable: bool,
+    /// `bExplodeOnGround`: a fuse that runs out while the grenade is off the ground waits until
+    /// it is on it (t6mp `FUN_0060a480`: `groundEntityNum == ENTITYNUM_NONE` re-thinks every
+    /// frame, for up to 60 s from launch) — the smoke, concussion and EMP grenades.
+    pub explode_on_ground: bool,
     pub dual_wield: bool,
     pub clip_only: bool,
     pub rifle_bullet: bool,
@@ -1350,6 +1354,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.offhand_hold_is_cancelable = z.u8(d + WD::offhandHoldIsCancelable) != 0;
     w.is_hold_use_grenade = z.u8(d + WD::isHoldUseGrenade) != 0;
     w.plantable = z.u8(d + WD::plantable) != 0;
+    w.explode_on_ground = z.u8(d + WD::bExplodeOnGround) != 0;
     w.dual_wield = z.u8(d + WD::bDualWield) != 0;
     w.dual_wield_weapon = opt_str(z, d + WD::szDualWieldWeaponName);
     w.clip_only = z.u8(d + WD::bClipOnly) != 0;

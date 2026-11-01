@@ -307,7 +307,8 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   M32). `nativevm::visible_parts` switches at `OPTIC_VIEWMODEL_SWITCH` (1.0, BO2's
   `cg_opticAttachmentViewmodelSwitch`): from it up the paired parts swap and every other part keeps
   its model; below it the `ads_only` parts are hidden. Presentation only; the hip and aimed meshes
-  are built once at load and the draw swaps handles. The W3D path draws the hip models. The list
+  are built once at load (with every texture either names, `Loaded::texture_paths`) and the draw
+  swaps handles. The W3D path draws the hip models. The list
   keeps a scope under a 2D overlay: instead, `zhbo_client_frame` records the viewmodel whose
   reticle zoom is up (`nativevm::set_gun_under_overlay`, from `HudLui::gun_under_overlay`) and
   `zhbo_native_viewmodel` poses it but answers `DRAWN` without submitting (so the W3D model stays
@@ -690,7 +691,9 @@ from xyz, from height, source known, kind, amount)` for the share to apply (it s
    drawable, control bar), FX weapons freed, sim cleared.
 3. Take Control → `MSG_ZHBO_TAKE_CONTROL` → `Sim::take_control` → `set_controlled(true)` → client
    enters the 0.9 s camera fly-in, then first person.
-4. F (field computer) → `pressed & FIELD_COMPUTER` → 0.7 s laptop raise (General stands still) →
+4. F (field computer) → `pressed & FIELD_COMPUTER` (held back, the press carried frame to frame,
+   while `Arsenal::holds_switch_back` — an offhand, a melee or an alt toggle under way, as BO2
+   holds a weapon change; opening cuts a reload short) → 0.7 s laptop raise (General stands still) →
    `set_controlled(false)` → `ReturnedToRts` → client flies out for 1.1 s and centres the RTS camera on
    the General.
 5. General dies → `GeneralDied` event → control released, "GENERAL DOWN" banner, camera returns to RTS.

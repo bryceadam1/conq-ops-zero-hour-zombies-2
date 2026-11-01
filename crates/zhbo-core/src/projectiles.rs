@@ -57,8 +57,8 @@ pub struct Projectile {
     /// Stuck to the ground or to an object (sticky grenades, bolts).
     pub stuck_to: Option<u32>,
     pub resting: bool,
-    /// The thrower's own share of this blast's damage (`flakjacket`: `perk_flakJacket` percent,
-    /// `_class.gsc:1023-1032`), 1 without it.
+    /// The thrower's own share of this blast's damage (1: BO2's perks leave a player's own blast
+    /// alone, `Arsenal::self_harm_scales`; others' Flak Jacket is `sim::guard`).
     pub self_blast_scale: f32,
     /// The thrower's own share of this stun (`stunprotection`: x0.1, `_weapons.gsc:1375-1376`).
     pub self_stun_scale: f32,
@@ -124,7 +124,7 @@ impl Projectile {
         self.bounced = None;
         self.struck = None;
         self.fuse -= dt;
-        if self.fuse <= 0.0 {
+        if self.fuse <= 0.0 && self.fuse_may_fire() {
             return Some(self.go_off(host, None, shields));
         }
         if self.lands && (self.resting || self.stuck_to.is_some()) {
@@ -492,6 +492,21 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
     Blast { hit_enemy, kill, surface }
 }
 
+/// BO2's grenade-on-ground rule (t6mp `FUN_0060a480`, the missile's explode think): a def with
+/// `bExplodeOnGround` whose fuse runs out while the grenade is off the ground
+/// (`groundEntityNum == ENTITYNUM_NONE`) thinks again next frame instead of going off, for up to
+/// [`EXPLODE_ON_GROUND_WAIT`] from launch. The ground entity is set once the grenade settles
+/// (`FUN_00607fa0`), so it goes off where it comes to rest: the Willy Pete (fuse 10 ms) smokes
+/// where it lands, not in the hand; the concussion and EMP grenades likewise.
+pub const EXPLODE_ON_GROUND_WAIT: f32 = 60.0;
+
+impl Projectile {
+    /// Whether a fuse that has run out may go off this frame ([`EXPLODE_ON_GROUND_WAIT`]).
+    fn fuse_may_fire(&self) -> bool {
+        !self.def.explode_on_ground || self.resting || self.stuck_to.is_some() || self.age >= EXPLODE_ON_GROUND_WAIT
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -516,6 +531,38 @@ mod tests {
         assert!((t - frag.fuse_time).abs() < 0.1, "went off at {t}");
         assert!(matches!(outcome, Outcome::Exploded { .. }));
         assert!(p.pos.x > 5.0, "it was thrown forward: {:?}", p.pos);
+    }
+
+    /// A smoke grenade (`bExplodeOnGround`, fuse 10 ms) goes off where it comes to rest, not as it
+    /// leaves the hand; a frag (no flag) still goes off in the air on its fuse.
+    #[test]
+    fn an_explode_on_ground_grenade_waits_until_it_rests() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut smoke = weapon("frag_grenade_mp").clone();
+        (smoke.fuse_time, smoke.explode_on_ground, smoke.effect) = (0.01, true, crate::weapons::Effect::Smoke);
+        let smoke: &'static WeaponDef = Box::leak(Box::new(smoke));
+        let from = Vec3::new(0.0, 0.0, 40.0);
+        let mut p = Projectile::launch(smoke, 1, from, Vec3::new(1.0, 0.0, 0.5).normalized_or_zero(), smoke.fuse_time, &host, 0.0);
+        let mut steps = 0;
+        let outcome = loop {
+            let was_resting = p.resting;
+            if let Some(o) = p.step(&host) {
+                assert!(was_resting, "went off only once at rest");
+                break o;
+            }
+            steps += 1;
+            assert!(steps < 2000);
+        };
+        assert!(steps > 5, "not as it left the hand ({steps} steps)");
+        let Outcome::Exploded { at, .. } = outcome else { panic!("{outcome:?}") };
+        assert!((at - from).length_xy() > 20.0 && at.z <= host.ground_height(at.x, at.y) + 1e-3, "on the ground, away from the hand: {at:?}");
+        // Without the flag the same fuse runs out in the air.
+        let mut air = smoke.clone();
+        air.explode_on_ground = false;
+        let air: &'static WeaponDef = Box::leak(Box::new(air));
+        let mut q = Projectile::launch(air, 1, from, Vec3::new(1.0, 0.0, 0.5).normalized_or_zero(), air.fuse_time, &host, 0.0);
+        assert!(q.step(&host).is_some(), "a plain fuse goes off on time");
     }
 
     /// A bounce keeps the def's BO2 `parallelBounce`/`perpendicularBounce` for the surface struck
@@ -562,6 +609,8 @@ mod tests {
         let mut p = Projectile::launch(conc, 1, Vec3::new(0.0, 0.0, 1.0), Vec3::new(1.0, 0.0, 0.0), 0.01, &host, 0.0);
         p.vel = Vec3::ZERO;
         p.fuse = 0.0;
+        // At rest: a concussion grenade goes off on the ground (`bExplodeOnGround`).
+        p.resting = true;
         p.step(&host);
         assert!(host.disabled.borrow().iter().any(|(id, _, secs)| *id == 5 && *secs > 1.0));
     }

@@ -210,6 +210,34 @@ impl WeaponState {
         self.def.id != self.main.id
     }
 
+    /// One side of the alt pair keeps a magazine of its own (an under-barrel launcher): the alt
+    /// toggle trades it with the other's ([`super::Arsenal`]'s `finish_alt`); every other alt shares
+    /// the weapon's.
+    pub fn alt_owns_ammo(&self) -> bool {
+        self.main.alt_own_ammo || self.alt_mode.is_some_and(|a| a.alt_own_ammo)
+    }
+
+    /// The weapon's own magazine and spare rounds (its main mode's: BO2's inventory entry for the
+    /// weapon, apart from its `altmode` entry), whichever mode is up — Scavenger's refill and the
+    /// overhead General's gun use these. With an own-ammo alt up they sit in `alt_ammo` and
+    /// `alt_reserve`.
+    pub fn main_rounds_mut(&mut self) -> (&mut u16, &mut u16) {
+        if self.alt_up() && self.alt_owns_ammo() {
+            (&mut self.alt_ammo, &mut self.alt_reserve)
+        } else {
+            (&mut self.ammo, &mut self.reserve)
+        }
+    }
+
+    /// [`Self::main_rounds_mut`]'s magazine and spare rounds, read.
+    pub fn main_rounds(&self) -> (u16, u16) {
+        if self.alt_up() && self.alt_owns_ammo() {
+            (self.alt_ammo, self.alt_reserve)
+        } else {
+            (self.ammo, self.reserve)
+        }
+    }
+
     /// The Variable Zoom's melee press at full ADS (`FUN_008de340` → `FUN_008da3c0`, weapon-based
     /// levels): step to the next of [`zoom::LEVELS`] and start the change's blend.
     pub fn step_zoom_level(&mut self) {

@@ -1359,3 +1359,19 @@ fn the_personalize_wheel_moves_a_row() {
     personalize_frame(&mut p, &mut draft, &w, &prev);
     assert_eq!(p.highlight, 0);
 }
+
+/// The editor's perk buttons name each perk as BO2 does (`cacmultiperksbutton.lua:221-240`,
+/// `Engine.Localize(item.name)`): "Flak Jacket" and "Fast Hands", never the ids `FlakJacket` and
+/// `FastHands`; a Greed tier lists both of its perks.
+#[test]
+fn the_editors_perk_buttons_show_the_perks_names() {
+    use crate::weapons::Perk;
+    let mut d = Draft::test_kit();
+    d.perks[0] = Some(Perk::by_id("FlakJacket").unwrap());
+    d.perks[1] = Some(Perk::FAST_HANDS);
+    d.extra_perks[1] = Some(Perk::by_id("Toughness").unwrap());
+    let e = Editor::new(d);
+    assert_eq!(super::editor::button_text(&e, Slot::Perk1).1, ["Flak Jacket"]);
+    let (label, names) = super::editor::button_text(&e, Slot::Perk2);
+    assert_eq!((label, names.as_slice()), ("PERK 2", ["Fast Hands".to_string(), "Toughness".to_string()].as_slice()));
+}
