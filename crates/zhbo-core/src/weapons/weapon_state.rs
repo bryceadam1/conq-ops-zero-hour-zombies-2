@@ -210,10 +210,11 @@ impl WeaponState {
         self.def.id != self.main.id
     }
 
-    /// The alt mode keeps a magazine of its own (an under-barrel launcher): the alt toggle trades
-    /// it with the weapon's ([`super::Arsenal`]'s `finish_alt`); every other alt shares the weapon's.
+    /// One side of the alt pair keeps a magazine of its own (an under-barrel launcher): the alt
+    /// toggle trades it with the other's ([`super::Arsenal`]'s `finish_alt`); every other alt shares
+    /// the weapon's.
     pub fn alt_owns_ammo(&self) -> bool {
-        self.alt_mode.is_some_and(|a| a.alt_own_ammo)
+        self.main.alt_own_ammo || self.alt_mode.is_some_and(|a| a.alt_own_ammo)
     }
 
     /// The weapon's own magazine and spare rounds (its main mode's: BO2's inventory entry for the
