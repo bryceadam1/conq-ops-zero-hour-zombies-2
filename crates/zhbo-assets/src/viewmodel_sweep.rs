@@ -56,11 +56,8 @@ impl Source {
         let (bo2, atts) = mp.weapons()?;
         let crate::paks::MpPool { patch, common_patch, common } = mp;
         let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(bo2_dir, f.zone)).collect::<Result<_, _>>()?;
-        let mut paks = Paks::open(bo2_dir)?;
+        let paks = Paks::open_for(bo2_dir, &[&patch, &common_patch, &common])?;
         let reticle_zone = load_zone(bo2_dir, crate::textures::RETICLE_ZONE).ok();
-        if let Some(z) = &reticle_zone {
-            paks.learn(z);
-        }
         let names = crate::weapons::names(bo2_dir);
         let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names, &crate::weapons::Roster::read(&patch));
         crate::weapons::add_variants(&mut table, &crate::weapons::converted(&patch, &bo2), &bo2);

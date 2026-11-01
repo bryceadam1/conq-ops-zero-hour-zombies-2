@@ -489,4 +489,36 @@ mod tests {
         assert_eq!(reticle_kind("mc_sw4_3d_reticle_ui3d_q49ew30e"), Some(ReticleKind::Ui3d));
         assert_eq!(reticle_kind("mc_sw4_3d_clan_tag_fq631zzu"), None);
     }
+
+    /// A conversion's result does not depend on the order the models convert in: the optics
+    /// (the RMR sight's lens reticle references the Reflex's reticle image as a stub) converted
+    /// first-to-last and last-to-first give the same textures, the same surfaces left out and the
+    /// same files — and the RMR reticle is drawn either way.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn conversion_does_not_depend_on_the_order() {
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let mp = crate::paks::MpPool::load(&dir).unwrap();
+        let pool = [&mp.patch, &mp.common_patch, &mp.common];
+        let paks = Paks::open_for(&dir, &pool).unwrap();
+        let names = ["t6_attach_optic_rmr_view", "t6_attach_optic_reflex_view", "t6_attach_optic_eotech_view", "t6_attach_optic_acog_view", "t6_attach_optic_hybrid_view"];
+        let models: Vec<xmodel::Model> = names.iter().filter_map(|n| crate::viewmodels::find_model(&pool, n).ok()).collect();
+        assert!(models.len() >= 2, "the optics are in the pool");
+        let run = |order: &mut dyn Iterator<Item = &xmodel::Model>| {
+            let mut files = BTreeMap::new();
+            let mut looks = Looks::default();
+            let mut tex: BTreeMap<String, Vec<Option<String>>> = BTreeMap::new();
+            for m in order {
+                tex.insert(m.name.clone(), textures(m, &paks, &mut files, &mut looks));
+            }
+            let kept: BTreeMap<String, usize> = models.iter().map(|m| (m.name.clone(), crate::native::model(m, &tex[&m.name], &looks).surfaces.len())).collect();
+            (tex, looks.dropped, looks.native_only, looks.reticle.keys().cloned().collect::<Vec<_>>(), files.keys().cloned().collect::<Vec<_>>(), kept)
+        };
+        let forward = run(&mut models.iter());
+        let backward = run(&mut models.iter().rev());
+        assert_eq!(forward, backward, "the same output whatever the order");
+        let rmr = models.iter().find(|m| m.name == "t6_attach_optic_rmr_view").expect("the RMR sight");
+        let reticle = forward.0[&rmr.name][0].clone().expect("its reticle surface");
+        assert!(forward.3.contains(&reticle), "the RMR lens reticle converts: {reticle}");
+    }
 }

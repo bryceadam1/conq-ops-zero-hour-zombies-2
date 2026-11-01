@@ -240,11 +240,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let (bo2, atts) = mp.weapons()?;
     let crate::paks::MpPool { patch, common_patch, common } = mp;
     let weapon = xmodel::find(&common, WEAPON).map_err(|e| e.to_string())?;
-    let mut paks = Paks::open(bo2_dir)?;
+    let paks = Paks::open_for(bo2_dir, &[&patch, &common_patch, &common])?;
     let reticle_zone = load_zone(bo2_dir, crate::textures::RETICLE_ZONE).ok();
-    if let Some(z) = &reticle_zone {
-        paks.learn(z);
-    }
     let patch_ui = load_zone(bo2_dir, "patch_ui_mp")?;
     let mut out: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut summary = Vec::new();

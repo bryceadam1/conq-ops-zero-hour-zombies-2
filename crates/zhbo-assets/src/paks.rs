@@ -96,6 +96,23 @@ impl Paks {
 
     /// `img`'s pixels: its own streamed data, or for a reference stub (no stream hash) the data of
     /// the image of that name a learned zone loads (by its {data hash, name hash} key).
+    /// The packs, knowing every streamed image the weapon conversions can meet by name: the
+    /// optics' reticle zone ([`crate::textures::RETICLE_ZONE`]) and BO2's weapon pool (`pool`,
+    /// highest priority first). A material may reference an image as a `,name` stub that another
+    /// zone — or another model in the same zone — loads in full (the RMR sight's reticle is the
+    /// Reflex's image); resolving it by name from all of them makes a conversion's result
+    /// independent of which weapon happened to convert that image first.
+    pub(crate) fn open_for(bo2_dir: &Path, pool: &[&Zone]) -> Result<Paks, String> {
+        let mut paks = Paks::open(bo2_dir)?;
+        if let Ok(z) = load_zone(bo2_dir, crate::textures::RETICLE_ZONE) {
+            paks.learn(&z);
+        }
+        for z in pool {
+            paks.learn(z);
+        }
+        Ok(paks)
+    }
+
     pub(crate) fn resolve(&self, img: &zhbo_formats::xmodel::Image) -> Option<Rgba> {
         let key = if img.stream_hash != 0 { img.key() } else { *self.names.get(&img.name)? };
         self.image(key)

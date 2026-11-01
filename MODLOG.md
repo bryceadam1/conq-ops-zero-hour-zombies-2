@@ -9171,3 +9171,20 @@ Verified:
 - **Grenade bounce** is the weapon def's `parallelBounce`/`perpendicularBounce` per surface (the
   frag keeps 0.7 along, 0.2 into, every surface); the tuning pack's `ProjectileBounce*` keys are the
   fallback for a def without the arrays.
+
+## Code polish 3: texture conversion no longer depends on the order (2026-11-01)
+
+**Gotcha — a stub image resolved only if someone else had converted it first.** The RMR sight's
+lens reticle (`mc/mtl_t6_attach_optic_rmr_reticle`) samples the Reflex's reticle image
+(`mtl_t6_attach_optic_reflex_reticle`) as a `,name` stub (no stream hash). `Paks::resolve` finds a
+stub's pixels by name only among the zones it learned — just the optics' reticle zone
+(`code_post_gfx_mp`), which does not load that image; the full image is in the weapon pool, inline
+in the Reflex model. So the RMR reticle converted only when a Reflex weapon happened to convert
+before the first pistol (its `Art\Textures` file already existed and the stub's lookup was skipped);
+otherwise it failed and the surface was dropped. With the AN-94 + Reflex as the base kit's primary
+that was always true; with BO2's own default class (the MTAR, no optic) it was not, and every
+pistol `+reflex` lost its reticle. `Paks::open_for(dir, pool)` now learns the reticle zone and the
+whole weapon pool (`patch_mp`, `common_patch_mp`, `common_mp`), so a stub resolves the same way
+whatever converts first. `textures::tests::conversion_does_not_depend_on_the_order` converts the
+optics forwards and backwards and requires identical textures, left-out surfaces, reticles, files
+and kept surfaces (it fails without the pool learned).
