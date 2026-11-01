@@ -693,7 +693,7 @@ fn pack(dist: &Path) -> Result<PathBuf> {
     let data = repo_root().join("data");
     let mut files = Vec::new();
     collect(&data, &data, &mut files)?;
-    files.sort_by(|a, b| a.0.to_ascii_lowercase().cmp(&b.0.to_ascii_lowercase()));
+    files.sort_by_key(|a| a.0.to_ascii_lowercase());
     let bytes = zhbo_formats::big::write_archive(&files);
     fs::create_dir_all(dist).map_err(|e| e.to_string())?;
     let out = dist.join("ConquerOps.big");

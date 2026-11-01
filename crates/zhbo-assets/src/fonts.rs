@@ -26,7 +26,7 @@ const TEXTURE: &str = "zhbo_bo2_fonts.tga";
 const LANGUAGES: &[(&str, &str)] = &[("english", "en")];
 
 /// The converted fonts: the archive files (atlas, MappedImages, metrics) and a summary.
-pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String> {
+pub fn files(bo2_dir: &Path) -> Result<(crate::generals::Files, String), String> {
     let (dir, prefix) = LANGUAGES
         .iter()
         .find(|(dir, prefix)| bo2_dir.join("zone").join(dir).join(format!("{prefix}_code_post_gfx_mp.ff")).is_file())

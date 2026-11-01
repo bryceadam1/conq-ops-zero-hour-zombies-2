@@ -104,7 +104,7 @@ pub fn read(file: &[u8]) -> Result<Zone, FormatError> {
     let ring_len = HASH_RING * STREAM_COUNT * HASH_SIZE;
     let key_name = &name.as_bytes()[..name.len().min(31)];
     let mut ring = vec![0u8; ring_len];
-    for (i, word) in ring.chunks_exact_mut(4).enumerate() {
+    for (i, word) in ring.as_chunks_mut::<4>().0.iter_mut().enumerate() {
         word.fill(key_name[i % key_name.len()]);
     }
     let mut ring_index = [0usize; STREAM_COUNT];

@@ -184,6 +184,9 @@ pub unsafe extern "C" fn zhbo_load_strings(text: *const c_char) {
 
 /// Load the BO2 font metrics (`names::FONTS_PATH` in the converted archive, read by the bridge's
 /// `readTextFile`; empty without the archive, and text then uses the engine font).
+///
+/// # Safety
+/// `text` is null or a NUL-terminated string valid for the call.
 #[no_mangle]
 pub unsafe extern "C" fn zhbo_load_fonts(text: *const c_char) {
     if text.is_null() {
@@ -490,17 +493,16 @@ fn log_step(s: &State, first_new_event: usize, frame: u32) {
                     p.health, p.max_health, w.def.display_name, w.ammo, w.reserve
                 ));
                 let counts = &IMPACT_ACCUM[i % IMPACT_ACCUM.len()];
-                let by: Vec<String> = Surface::ALL
+                let by: Vec<(&str, u32)> = Surface::ALL
                     .iter()
                     .enumerate()
-                    .filter_map(|(k, s)| {
-                        let n = counts[k].swap(0, Ordering::Relaxed);
-                        (n > 0).then(|| format!("{} {n}", s.name()))
-                    })
+                    .map(|(k, s)| (s.name(), counts[k].swap(0, Ordering::Relaxed)))
+                    .filter(|&(_, n)| n > 0)
                     .collect();
                 if !by.is_empty() {
-                    let landed: u32 = by.iter().map(|t| t.rsplit(' ').next().unwrap().parse::<u32>().unwrap_or(0)).sum();
-                    s.logic.log(&format!("player {i} impacts: {landed} ({})", by.join(", ")));
+                    let landed: u32 = by.iter().map(|&(_, n)| n).sum();
+                    let list: Vec<String> = by.iter().map(|(name, n)| format!("{name} {n}")).collect();
+                    s.logic.log(&format!("player {i} impacts: {landed} ({})", list.join(", ")));
                 }
             }
         }
@@ -1233,5 +1235,46 @@ mod tests {
         assert_eq!(zhbo_logic_shield_damage(5, 3, -60.0, 0.0, 0.0, 12.0, 1, crate::host::damage_kind::SMALL_ARMS, 30.0), 1.0);
         SHIELD_HIT_COUNT.store(0, Ordering::Relaxed);
         SHIELD_COUNT.store(0, Ordering::Relaxed);
+    }
+
+    /// Every `zhbo_*` function the core exports is declared in `host/zhbo/zhbo_core.h`, and every
+    /// one the header declares is exported: a function on one side only is a broken ABI the
+    /// compiler cannot see (the bridge links against the header).
+    #[test]
+    fn the_c_header_declares_exactly_the_exported_functions() {
+        fn exported(dir: &std::path::Path, out: &mut std::collections::BTreeSet<String>) {
+            for e in std::fs::read_dir(dir).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    exported(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    let text = std::fs::read_to_string(&p).unwrap();
+                    for rest in text.split("extern \"C\" fn ").skip(1) {
+                        let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+                        if name.starts_with("zhbo_") {
+                            out.insert(name);
+                        }
+                    }
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut rust = std::collections::BTreeSet::new();
+        exported(&root.join("src"), &mut rust);
+        let header = std::fs::read_to_string(root.join("../../host/zhbo/zhbo_core.h")).expect("host/zhbo/zhbo_core.h is checked in");
+        // A declaration is a top-level line naming `zhbo_<name>(` (not a comment, macro or typedef).
+        let declared: std::collections::BTreeSet<String> = header
+            .lines()
+            .filter(|l| !l.starts_with([' ', '\t', '#', '/', '*']) && !l.starts_with("typedef"))
+            .flat_map(|l| l.match_indices("zhbo_").map(move |(i, _)| &l[i..]))
+            .filter_map(|r| {
+                let name: String = r.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+                r[name.len()..].starts_with('(').then_some(name)
+            })
+            .collect();
+        let missing: Vec<_> = rust.difference(&declared).collect();
+        let unexported: Vec<_> = declared.difference(&rust).collect();
+        assert!(missing.is_empty() && unexported.is_empty(), "exported but not in zhbo_core.h: {missing:?}; declared but not exported: {unexported:?}");
+        assert!(rust.len() > 50, "the scan found the exports ({})", rust.len());
     }
 }

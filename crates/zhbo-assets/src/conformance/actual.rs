@@ -12,7 +12,7 @@
 //! Each column carries the mod's value of the same fact in BO2's vocabulary and unit; a fact the
 //! mod does not carry is left empty (it fails, owner decision 1) — never synthesized.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use zhbo_conformance::schema::{f32_value, Row, RowBuilder, Schema};
 use zhbo_conformance::weapons::{self as cols, enum_name, ATTACHMENTS};
 use super::cac::group_of;
@@ -725,11 +725,6 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     });
     b.list("view_part_camos", &camos).text("cac_group", &j.group).text("cac_slot", &j.slot).set("cac_requires", &j.requires);
     b.finish()
-}
-
-/// The actual rows as a sorted map, for tests.
-pub fn by_key(rows: &[Row]) -> BTreeMap<(String, String), &Row> {
-    rows.iter().map(|r| (r.key.clone(), r)).collect()
 }
 
 #[cfg(test)]

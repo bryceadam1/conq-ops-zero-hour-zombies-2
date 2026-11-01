@@ -227,7 +227,7 @@ pub fn load(files: &mut Files, req: &Request, camo: Option<&str>) -> Result<Opti
     if !problems.is_empty() {
         return Err(format!("{path}: {}", problems.join("; ")));
     }
-    let mut mesh = build_mesh(&skeleton, all_models.into_iter())?;
+    let mut mesh = build_mesh(&skeleton, all_models)?;
     // The camo, per part: a surface's `part` indexes the composition, whose first part is the body
     // in body mode.
     if let Some(option) = camo {

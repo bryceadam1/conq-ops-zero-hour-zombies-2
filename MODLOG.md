@@ -8553,3 +8553,24 @@ fixed in one pass:
 
 **Gotcha:** a planning doc that outlives its work rots fast — this one still said "130 clippy
 warnings" (35 by now) and "retire the W3D code" after the W3D path had become a tested fallback.
+
+## Code polish: clippy, dead code, and a header test that would have caught a stray export (2026-11-01)
+
+- clippy is down from 35 unique warnings to one (`lui/font.rs:147` `text`'s eight arguments, left for
+  after the ui-scaling branch, which owns that drawing code). The toolchain is 1.99 with no MSRV
+  pin, so the `chunks_exact(N)` sites use `as_chunks::<N>()`.
+- Dead functions removed: `weapons::alt_of`/`alt_clip` (converter), `conformance::actual::by_key`,
+  `Editor::slot_index`, `Profile::class_in_slot`, `Vec3::with_z`, `Blend::writes_depth`,
+  `WeaponDef::fire_mode_name` (hand-typed "FULL-AUTO" strings nobody drew) and
+  `WeaponDef::reload_empty_add_at` (a third, unused spelling of `arsenal::magazine_times`' add-time
+  rule). `conformance.rs` keeps its own transcription of that rule on purpose: it is the oracle
+  the arsenal's frame counts are checked against.
+- **Gotcha — an export the header never declared.** `zhgfx_clear_vertex_buffer` was exported by
+  `zhbo-gfx` but missing from `host/zhbo/zhbo_gfx.h`; nothing noticed because nothing calls it.
+  Two new unit tests (`ffi::tests::the_c_header_declares_exactly_the_exported_functions` in
+  zhbo-core and zhbo-gfx) now hold the `zhbo_*`/`zhgfx_*` exports and the headers' declarations
+  equal in both directions. The declaration is appended at the header's end; it declares an
+  existing export, so no ABI version moves.
+- The headless renderer tests share one `headless()` constructor and `assert_no_errors` (three
+  tests had inlined copies of both); the impact log sums its counts instead of re-parsing the
+  strings it had just formatted.

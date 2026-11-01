@@ -165,7 +165,7 @@ struct Pcm {
 fn pcm_from(format: u8, data: &[u8], channels: u8, rate_index: u8) -> Option<Pcm> {
     match format {
         FORMAT_PCM16 => Some(Pcm {
-            samples: data.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])).collect(),
+            samples: data.as_chunks::<2>().0.iter().map(|b| i16::from_le_bytes([b[0], b[1]])).collect(),
             channels: channels.max(1) as u16,
             rate: *FRAME_RATES.get(rate_index as usize)?,
         }),
@@ -408,7 +408,7 @@ pub fn files(
     bo2_dir: &Path,
     viewmodel_clips: &[(i32, i32, xanim::Anim)],
     extra: &[DynSfx],
-) -> Result<(Vec<(String, Vec<u8>)>, String), String> {
+) -> Result<(crate::generals::Files, String), String> {
     let lib = Library::open(bo2_dir)?;
     let pick = |zone: &Zone, prefix: &str| -> Option<Source> {
         let mut banks = sndalias::banks(zone).ok()?;

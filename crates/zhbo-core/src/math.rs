@@ -49,10 +49,6 @@ impl Vec3 {
         }
     }
 
-    pub fn with_z(self, z: f32) -> Vec3 {
-        Vec3::new(self.x, self.y, z)
-    }
-
     pub fn lerp(self, o: Vec3, t: f32) -> Vec3 {
         self + (o - self) * t
     }

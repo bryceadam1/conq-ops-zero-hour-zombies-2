@@ -11,7 +11,6 @@ use crate::generals::flash_bone;
 
 /// Set `key = value` in the `kind name` block of an INI text: the first line with that key in the
 /// block (at any depth, such as a Draw module's `Model`), or a new line before the block's `End`.
-
 pub fn ini_set(ini: &str, kind: &str, name: &str, key: &str, value: &str) -> Result<String, String> {
     let header = format!("{kind} {name}");
     let mut out = String::new();

@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use zhbo_core::attachments::{self, AttachmentDef};
 use zhbo_core::units::inches;
-use zhbo_core::weapons::{CamoOption, Class, Effect, FireMode, GunKick, Kick, Loadout, OffhandClass, Penetrate, Place, Reticle, Specialties, Sway, Table, CycleTimes, Traits, ViewPos, WeapClass, WeapType, WeaponDef, Zoom, ALT_CLIPS, MELEE_DAMAGE};
+use zhbo_core::weapons::{CamoOption, Class, Effect, FireMode, GunKick, Kick, Loadout, OffhandClass, Penetrate, Place, Reticle, Specialties, Sway, Table, CycleTimes, Traits, ViewPos, WeapClass, WeapType, WeaponDef, Zoom, MELEE_DAMAGE};
 #[cfg(debug_assertions)]
 use zhbo_core::weapons::{format_table, parse_table};
 use zhbo_formats::weapon::{self as bo2, Weapon};
@@ -605,17 +605,6 @@ pub fn set_cac_slots(table: &mut Table, patch: &zhbo_formats::t6zone::Zone, name
 fn order_attachments(d: &mut WeaponDef, item: &zhbo_conformance::bo2::combos::Item) {
     let listed: Vec<&str> = zhbo_conformance::bo2::combos::listed(item).into_iter().map(|k| zhbo_conformance::weapons::ATTACHMENTS[k]).collect();
     d.allowed.sort_by_key(|(short, _)| listed.iter().position(|l| l == short).unwrap_or(listed.len()));
-}
-
-/// The alt mode entry of a converted weapon, if it has one.
-pub fn alt_of<'a>(table: &'a Table, id: &str) -> Option<&'a WeaponDef> {
-    let d = table.weapons.iter().find(|d| d.id == id)?;
-    table.weapons.iter().find(|a| !d.alt.is_empty() && a.id == d.alt)
-}
-
-/// Mark alt-mode clips on a viewmodel: an alt mode's clips sit after its weapon's.
-pub fn alt_clip(slot: usize) -> usize {
-    slot + ALT_CLIPS as usize
 }
 
 /// BO2's base aim-down-sights walking speed, as a share of the normal walk: one definition in the

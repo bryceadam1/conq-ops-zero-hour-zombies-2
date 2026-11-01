@@ -552,7 +552,7 @@ impl Zone {
     /// Every 4-byte-aligned field whose value is `target` (the structs pointing at it).
     pub fn pointers_to(&self, target: u32) -> Vec<u32> {
         let want = target.to_le_bytes();
-        self.mem.chunks_exact(4).enumerate().filter(|(_, c)| *c == want).map(|(i, _)| 4 * i as u32).collect()
+        self.mem.as_chunks::<4>().0.iter().enumerate().filter(|(_, c)| **c == want).map(|(i, _)| 4 * i as u32).collect()
     }
 }
 
