@@ -27,7 +27,7 @@ pub struct Editor {
     /// caller plays BO2's deny cue and clears this; the state itself stays pure.
     pub denied: bool,
     /// One-shot: the player pressed Tab on the class row (`caceditclass.lua:52-63`'s
-    /// `knifePersonalization` prompt) or `C`/`V` on the primary weapon/optic row. The caller opens
+    /// `knifePersonalization` prompt), `C` on a weapon box or `V` on the primary optic row. The caller opens
     /// the personalize screen and clears this; the pure editor only records the action.
     pub personalize: Option<PersonalizeKind>,
 }
@@ -220,6 +220,17 @@ impl Editor {
         match self.slot {
             Slot::PrimaryAtts => attachment_shorts(&self.draft.primary).get(i).copied(),
             Slot::SecondaryAtts => attachment_shorts(&self.draft.secondary).get(i).copied(),
+            _ => None,
+        }
+    }
+
+    /// The camo page `C` opens on the highlighted box: BO2's `PrimaryWeapon_Button_Over` /
+    /// `SecondaryWeapon_Button_Over` (`customclass.lua`) set `weaponSlot` and add the
+    /// `MPUI_PERSONALIZE_WEAPON` prompt only when the class holds a weapon in that slot.
+    pub fn camo_page(&self) -> Option<PersonalizeKind> {
+        match self.slot {
+            Slot::Primary if !self.draft.primary.is_empty() => Some(PersonalizeKind::Camo),
+            Slot::Secondary if !self.draft.secondary.is_empty() => Some(PersonalizeKind::SecondaryCamo),
             _ => None,
         }
     }

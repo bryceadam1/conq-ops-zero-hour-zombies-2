@@ -23,22 +23,26 @@ impl Editor {
     }
 
     /// Apply option `i` without the budget check; false means the option itself was refused (an
-    /// attachment at its cap). Weapon picks drop attachments the new weapon does not offer;
+    /// attachment at its cap). A changed weapon pick starts the slot bare (`Draft::reset_weapon_options`);
     /// attachment picks toggle; perk picks set the tier row; wildcard picks toggle.
     pub(super) fn apply_option(&mut self, i: usize) -> bool {
         match self.slot {
             Slot::Primary => {
                 let ids = self.gun_list(true);
                 if let Some(id) = ids.get(i).copied() {
-                    self.draft.primary = id.to_string();
-                    self.keep_offered_atts(true);
+                    if self.draft.primary != id {
+                        self.draft.primary = id.to_string();
+                        self.draft.reset_weapon_options(true);
+                    }
                 }
             }
             Slot::Secondary => {
                 let ids = self.gun_list(false);
                 if let Some(id) = ids.get(i).copied() {
-                    self.draft.secondary = id.to_string();
-                    self.keep_offered_atts(false);
+                    if self.draft.secondary != id {
+                        self.draft.secondary = id.to_string();
+                        self.draft.reset_weapon_options(false);
+                    }
                 }
             }
             Slot::PrimaryAtts => {
@@ -197,20 +201,6 @@ impl Editor {
             self.draft.wildcards.push(w);
             true
         }
-    }
-
-    /// Drop attachments the (new) weapon does not offer, keeping the offered ones in order.
-    pub(super) fn keep_offered_atts(&mut self, primary: bool) {
-        let base = if primary { self.draft.primary.clone() } else { self.draft.secondary.clone() };
-        let allowed = allowed_shorts(&base);
-        let max = if primary { self.draft.primary_att_max() } else { self.draft.secondary_att_max() };
-        let atts = if primary { &mut self.draft.primary_atts } else { &mut self.draft.secondary_atts };
-        atts.retain(|s| allowed.iter().any(|a| a == s));
-        // BO2's compatibility is per attachment kind, so a kept set stays legal; the check is the
-        // same one a stored class gets.
-        let kept: Vec<String> = legal::sanitize(&base, &atts.iter().map(String::as_str).collect::<Vec<_>>()).into_iter().map(str::to_string).collect();
-        atts.retain(|s| kept.contains(s));
-        atts.truncate(max);
     }
 }
 

@@ -32,6 +32,11 @@ pub fn melee_weapon<'a>(held: &'a WeaponDef, class_melee: &'a WeaponDef) -> &'a 
     }
 }
 
+/// The held knife: BO2's `knife_held` (`mp/statstable.csv`, the loadout's `melee`), the knife every
+/// class carries in the hand and the one its knife personalize page dresses (`caceditclass.lua`'s
+/// `OpenKnifePersonalization`; `caccamomenu.lua` reads `knife_held`'s row). The melee button
+/// strikes with [`CLASS_MELEE`].
+pub const KNIFE_HELD: &str = "knife_held_mp";
 
 /// What the General carries. Weapons are catalog ids, so they can later be picked up, swapped or
 /// bought by changing the loadout.
@@ -89,7 +94,7 @@ impl Loadout {
             secondary: String::new(),
             lethal: String::new(),
             tactical: String::new(),
-            melee: "knife_held_mp".into(),
+            melee: KNIFE_HELD.into(),
             perks: Vec::new(),
             reserve: [None, None],
             lethal_count: None,
@@ -107,7 +112,7 @@ impl Default for Loadout {
             secondary: "fnp45_mp".into(),
             lethal: "frag_grenade_mp".into(),
             tactical: "concussion_grenade_mp".into(),
-            melee: "knife_held_mp".into(),
+            melee: KNIFE_HELD.into(),
             perks: vec![Perk::LIGHTWEIGHT, Perk::FAST_HANDS, Perk::DEXTERITY],
             reserve: [None, None],
             lethal_count: None,

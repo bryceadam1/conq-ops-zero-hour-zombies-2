@@ -10,9 +10,11 @@ pub fn clear_cell(d: &mut Draft, slot: Slot, index: usize) -> bool {
             if d.primary.is_empty() {
                 return false;
             }
-            // BO2's `ClearWeapon` takes the attachments with the gun.
+            // BO2's `ClearWeapon` takes the attachments with the gun, and the slot's camo and
+            // reticle go with the weapon (`FUN_008d0650`).
             d.primary.clear();
             d.primary_atts.clear();
+            d.reset_weapon_options(true);
             true
         }
         Slot::Secondary => {
@@ -21,6 +23,7 @@ pub fn clear_cell(d: &mut Draft, slot: Slot, index: usize) -> bool {
             }
             d.secondary.clear();
             d.secondary_atts.clear();
+            d.reset_weapon_options(false);
             true
         }
         Slot::PrimaryAtts => {

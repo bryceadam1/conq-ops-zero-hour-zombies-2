@@ -29,6 +29,13 @@
 //!   (`checkclasses.lua:677-686`) and stays. A held item counts at least one (BO2's count is the
 //!   slot's filled boxes), so a 0 (a class saved before the counts) becomes one.
 //!
+//! * **Camos.** `ClearWeapon` clears a weapon's camo with it, and BO2 stores each camo
+//!   (`primarycamo`, `secondarycamo`, `knifecamo`, `checkclasses.lua:875-907`) as an index into the
+//!   weapon's own option group, so a class can never hold a camo its weapon does not offer. The mod
+//!   stores ids, so the pass checks each against its own weapon's `CamoList`: the primary's, the
+//!   secondary's, `knife_held`'s. A camo whose weapon slot is empty (or was cleared above) or that
+//!   is not in the list is cleared; a weapon without a converted list (no BO2 data) keeps it.
+//!
 //! Unknown ids are cleared, not substituted: `catalog::weapon_or_none` drops them loudly (the same
 //! rule the arsenal uses), so a corrupt profile shows up in the log instead of quietly turning into
 //! some default kit.
@@ -63,7 +70,28 @@ pub fn repair(c: &mut CustomClass) -> Cleared {
     }
     repair_perks(c, &mut cleared);
     trim(c, &mut cleared);
+    repair_camos(c, |id| weapons::catalog::weapon_or_none(id).map(|d| d.camo.clone()), &mut cleared);
     cleared
+}
+
+/// Each weapon's camo against that weapon's own list (see the module docs): `list` is a weapon's
+/// `CamoList`, `None` for an unknown id. Runs after the trim, which can clear a weapon.
+fn repair_camos(c: &mut CustomClass, list: impl Fn(&str) -> Option<Vec<String>>, cleared: &mut Cleared) {
+    let knife = weapons::KNIFE_HELD.to_string();
+    for (slot, weapon, camo) in [
+        ("primarycamo", &c.primary, &mut c.camo),
+        ("secondarycamo", &c.secondary, &mut c.secondary_camo),
+        ("knifecamo", &knife, &mut c.knife),
+    ] {
+        if camo.is_empty() {
+            continue;
+        }
+        let keep = !weapon.is_empty() && list(crate::attachments::split_id(weapon).0).is_some_and(|l| l.is_empty() || l.contains(camo));
+        if !keep {
+            camo.clear();
+            cleared.push(slot);
+        }
+    }
 }
 
 /// A weapon slot: an unknown id, a non-gun or an item of another slot clears the weapon and its attachments together
@@ -288,6 +316,7 @@ mod tests {
             reticle: String::new(),
             reticle_color: String::new(),
             knife: String::new(),
+            secondary_camo: String::new(),
         }
     }
 
@@ -477,6 +506,55 @@ mod tests {
         assert!(after.wildcards.len() <= max_bonus_cards(), "{:?} after {cleared:?}", after.wildcards);
         assert!(Draft::from_custom(&c).spent() <= PICK_10);
         assert!(!cleared.is_empty());
+    }
+
+    /// Each weapon's camo is checked against its own weapon's list: the secondary's
+    /// `secondarycamo` against the sidearm's `CamoList`, not the primary's; a camo whose weapon
+    /// went (`ClearWeapon`) goes with it.
+    #[test]
+    fn each_camo_is_checked_against_its_own_weapons_list() {
+        let lists = |id: &str| -> Option<Vec<String>> {
+            let l: &[&str] = match id {
+                "an94_mp" => &["camo_none", "camo_gold", "camo_dragon"],
+                "fnp45_mp" => &["camo_none", "camo_gold"],
+                "knife_held_mp" => &["camo_none", "camo_diamond"],
+                "svu_mp" => &[],
+                _ => return None,
+            };
+            Some(l.iter().map(|s| (*s).to_string()).collect())
+        };
+        let mut c = class("an94_mp+reflex", &[]);
+        c.camo = "camo_dragon".into();
+        c.secondary_camo = "camo_gold".into();
+        c.knife = "camo_diamond".into();
+        let before = c.clone();
+        let mut cleared = Vec::new();
+        repair_camos(&mut c, lists, &mut cleared);
+        assert!(cleared.is_empty(), "{cleared:?}");
+        assert_eq!(c, before);
+        // The primary's DLC camo is not in the sidearm's list: the secondary loses it, the primary
+        // keeps its own.
+        c.secondary_camo = "camo_dragon".into();
+        c.knife = "camo_gold".into();
+        repair_camos(&mut c, lists, &mut cleared);
+        assert_eq!(cleared, vec!["secondarycamo", "knifecamo"]);
+        assert_eq!((c.camo.as_str(), c.secondary_camo.as_str(), c.knife.as_str()), ("camo_dragon", "", ""));
+        // No secondary: its camo goes with it. A weapon without a converted list keeps its camo.
+        let mut c = class("svu_mp", &[]);
+        c.camo = "camo_anything".into();
+        c.secondary.clear();
+        c.secondary_camo = "camo_gold".into();
+        let mut cleared = Vec::new();
+        repair_camos(&mut c, lists, &mut cleared);
+        assert_eq!(cleared, vec!["secondarycamo"]);
+        assert_eq!(c.camo, "camo_anything");
+        // The full pass: an unknown secondary is cleared, and so is its camo.
+        let mut c = class("an94_mp", &[]);
+        c.secondary = "nope_mp".into();
+        c.secondary_camo = "camo_gold".into();
+        let cleared = repair(&mut c);
+        assert_eq!(cleared, vec!["secondary", "secondarycamo"]);
+        assert!(c.secondary_camo.is_empty());
     }
 
     #[test]

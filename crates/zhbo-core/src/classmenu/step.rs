@@ -17,10 +17,12 @@ impl Editor {
             self.personalize = Some(PersonalizeKind::Knife);
             return Outcome::Continue;
         }
-        // BO2's `AddCamoButton` on the primary weapon row (`caceditclass.lua:748`).
-        if edges.camo && self.slot == Slot::Primary {
-            self.personalize = Some(PersonalizeKind::Camo);
-            return Outcome::Continue;
+        // BO2's `AddCamoButton` on a weapon box that holds a gun (`caceditclass.lua:748`).
+        if edges.camo {
+            if let Some(kind) = self.camo_page() {
+                self.personalize = Some(kind);
+                return Outcome::Continue;
+            }
         }
         // BO2's `AddReticleButton` on the primary optic row (`caceditclass.lua:825`).
         if edges.reticle && self.slot == Slot::PrimaryAtts && self.option_is_optic() {

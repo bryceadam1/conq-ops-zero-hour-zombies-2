@@ -38,9 +38,12 @@ pub struct Draft {
     /// The reticle's colour id (`none` = the reticle's stock colour), BO2's Personalize → Reticle
     /// colour. Empty means "not personalised" and serialises as no key.
     pub reticle_color: String,
-    /// The melee viewmodel id (`knife_held_mp` = the standard combat knife), BO2's Personalize →
-    /// Knife. Empty means "not personalised" and serialises as no key.
+    /// The knife's camo id (`camo_none` = its stock finish), BO2's Personalize Knife (the class's
+    /// `knifecamo`). Empty means "not personalised" and serialises as no key.
     pub knife: String,
+    /// The secondary's camo id (`camo_none` = its stock finish), BO2's `secondarycamo`: the
+    /// SECONDARY box's Personalize Weapon page. Empty means "not personalised" (no key).
+    pub secondary_camo: String,
 }
 
 impl Default for Draft {
@@ -64,6 +67,7 @@ impl Default for Draft {
             reticle: String::new(),
             reticle_color: String::new(),
             knife: String::new(),
+            secondary_camo: String::new(),
         }
     }
 }
@@ -74,6 +78,24 @@ impl Draft {
     pub(super) fn weapon_with_atts(base: &str, atts: &[String]) -> String {
         let shorts: Vec<&str> = atts.iter().map(|s| s.as_str()).collect();
         items::given_weapon(base, &shorts)
+    }
+
+    /// A weapon slot took a different weapon (or was emptied): BO2's `SetClassItem` on `primary` /
+    /// `secondary` with a new value (`FUN_004943e0` → `FUN_008d0650`) zeroes that slot's
+    /// `<slot>attachment1..3`, `<slot>camo`, `<slot>reticle` and `<slot>reticlecolor` (and its
+    /// lens, tag and emblem, which the mod's class does not carry). The camo is option 0 (the
+    /// stock finish, empty here); the reticle and its colour are the primary's, the only optic the
+    /// mod personalizes.
+    pub fn reset_weapon_options(&mut self, primary: bool) {
+        if primary {
+            self.primary_atts.clear();
+            self.camo.clear();
+            self.reticle.clear();
+            self.reticle_color.clear();
+        } else {
+            self.secondary_atts.clear();
+            self.secondary_camo.clear();
+        }
     }
 
     /// The primary weapon id plus its attachments.
@@ -245,13 +267,14 @@ impl Draft {
         if self.tactical_count() > 0 {
             push("tactical_count", &self.tactical_count().to_string());
         }
-        push("melee", "knife_held_mp");
+        push("melee", crate::weapons::KNIFE_HELD);
         let perks: Vec<&str> = self.perks_in_order().iter().map(|p| p.def().id).collect();
         push("perks", &perks.join(","));
         push("camo", &self.camo);
         push("reticle", &self.reticle);
         push("reticle_color", &self.reticle_color);
         push("knife", &self.knife);
+        push("secondary_camo", &self.secondary_camo);
         if self.reserve[0] > 0 {
             push("primary_reserve", &self.reserve[0].to_string());
         }
@@ -271,13 +294,14 @@ impl Draft {
             tactical: self.tactical.clone(),
             lethal_count: self.lethal_count(),
             tactical_count: self.tactical_count(),
-            melee: "knife_held_mp".into(),
+            melee: crate::weapons::KNIFE_HELD.into(),
             perks: self.perks_in_order().iter().map(|p| p.def().id.to_string()).collect(),
             reserve: self.reserve,
             camo: self.camo.clone(),
             reticle: self.reticle.clone(),
             reticle_color: self.reticle_color.clone(),
             knife: self.knife.clone(),
+            secondary_camo: self.secondary_camo.clone(),
         }
     }
 
@@ -313,6 +337,7 @@ impl Draft {
             reticle: c.reticle.clone(),
             reticle_color: c.reticle_color.clone(),
             knife: c.knife.clone(),
+            secondary_camo: c.secondary_camo.clone(),
         }
     }
 }

@@ -475,18 +475,76 @@ pub(crate) fn local_optics() -> LocalOptics {
     LOCAL_OPTICS.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default()
 }
 
-/// The local player's camo choice from the last client frame: the primary's viewmodel, its camo
-/// asset and the chosen option id. Set by `ffi::zhbo_client_frame`; read by the viewmodel draw.
-static LOCAL_CAMO: Mutex<Option<LocalCamo>> = Mutex::new(None);
+/// The local player's camo choices from the last client frame: one per held weapon's viewmodel
+/// (the primary's, the secondary's, the knife's), each with its own asset and option. Set by
+/// `ffi::zhbo_client_frame`; read by the viewmodel draw for the viewmodel it is drawing.
+static LOCAL_CAMO: Mutex<Vec<LocalCamo>> = Mutex::new(Vec::new());
 
-/// Record (or clear) the local player's camo choice. Called once per client frame.
-pub fn set_local_camo(choice: Option<LocalCamo>) {
-    *LOCAL_CAMO.lock().unwrap_or_else(|e| e.into_inner()) = choice;
+/// Record the local player's camo choices (empty clears them). Called once per client frame.
+pub fn set_local_camos(choices: Vec<LocalCamo>) {
+    *LOCAL_CAMO.lock().unwrap_or_else(|e| e.into_inner()) = choices;
 }
 
-/// The choice when it belongs to viewmodel `vm`.
+/// The choice that belongs to viewmodel `vm`, if any held weapon draws through it.
 pub(crate) fn local_camo(vm: i32) -> Option<LocalCamo> {
-    LOCAL_CAMO.lock().unwrap_or_else(|e| e.into_inner()).clone().filter(|c| c.vm == vm)
+    camo_for_vm(&LOCAL_CAMO.lock().unwrap_or_else(|e| e.into_inner()), vm)
+}
+
+/// The choice among `choices` that belongs to viewmodel `vm`.
+pub(crate) fn camo_for_vm(choices: &[LocalCamo], vm: i32) -> Option<LocalCamo> {
+    choices.iter().find(|c| c.vm == vm).cloned()
+}
+
+/// Each held weapon's own camo choice: `slots` pairs a weapon id with the class camo id it wears
+/// (BO2's `_class.gsc` gives the primary `calcweaponoptions(class, 0)`, the sidearm `(class, 1)`
+/// and the knife `(class, 2)`; the engine paints each from its own def's `weaponCamo`,
+/// `FUN_00529600`).
+///
+/// * **Alt modes wear the parent's camo.** BO2's give (`FUN_00670460`, the `giveweapon` builtin's
+///   engine half) walks the weapon's alt chain (`FUN_008ec9e0`, `gl_`/`sf_`/`dualoptic_`) and
+///   stores the *same* weapon options on each alt's held-weapon entry; the viewmodel's camo pass
+///   then reads the current weapon's options (`centity+0x268`, `FUN_00536f30`) and paints with
+///   the alt's **own** def's `weaponCamo`. So each slot's alt chain joins with the slot's camo,
+///   resolved through each alt's own def (an alt whose def names no camo asset draws stock).
+/// * **The current weapon owns its viewmodel.** An alt mode draws through its parent's viewmodel
+///   (a combination's alt shares it, `ClipBase` past the parent's clips), so `current` — the
+///   weapon being held — decides the shared viewmodel first: the alt's own asset, or stock when
+///   its def has none. Otherwise a viewmodel goes to the first slot that reaches it.
+///
+/// A weapon without a viewmodel, an unknown id and a stock choice contribute nothing.
+pub fn class_camos(slots: &[(&str, &str)], current: &str) -> Vec<LocalCamo> {
+    class_camos_in(|id| crate::weapons::catalog().get(id), slots, current)
+}
+
+/// [`class_camos`] over any definition lookup (the tests' own defs).
+pub(crate) fn class_camos_in<'a>(
+    def: impl Fn(&str) -> Option<&'a crate::weapons::WeaponDef>,
+    slots: &[(&str, &str)],
+    current: &str,
+) -> Vec<LocalCamo> {
+    // Every slot weapon, then its alt chain (stopping where it loops back), each with the slot's camo.
+    let mut held: Vec<(&crate::weapons::WeaponDef, &str)> = Vec::new();
+    for (weapon, camo) in slots {
+        let mut next = def(weapon);
+        while let Some(d) = next {
+            if held.iter().any(|(h, _)| h.id == d.id) {
+                break;
+            }
+            held.push((d, camo));
+            next = (!d.alt.is_empty()).then(|| def(&d.alt)).flatten();
+        }
+    }
+    held.sort_by_key(|(d, _)| d.id != current);
+    let mut claimed: Vec<i32> = Vec::new();
+    let mut out: Vec<LocalCamo> = Vec::new();
+    for (d, camo) in held {
+        if d.viewmodel < 0 || claimed.contains(&d.viewmodel) {
+            continue;
+        }
+        claimed.push(d.viewmodel);
+        out.extend(choice_for(d, camo));
+    }
+    out
 }
 
 /// The camo choice for a weapon definition, or `None` for the stock finish. `none`, `camo_none`

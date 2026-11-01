@@ -13,7 +13,7 @@ pub struct Edges {
     pub cancel: bool,
     /// Tab on the class row: BO2's `knifePersonalization` prompt (`caceditclass.lua:52-63`).
     pub personalize: bool,
-    /// `C` on the primary weapon row: BO2's `AddCamoButton` (`caceditclass.lua:748`).
+    /// `C` on a weapon box: BO2's `AddCamoButton` (`caceditclass.lua:748`).
     pub camo: bool,
     /// `V` on the primary optic row: BO2's `AddReticleButton` (`caceditclass.lua:825`).
     pub reticle: bool,

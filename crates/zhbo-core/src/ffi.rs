@@ -860,14 +860,11 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
         for r in std::mem::take(&mut s.client.cues.queue) {
             s.client_host.sound(r.event, r.at);
         }
-        // The local player's class camo, for the native viewmodel's next draw (PLAN D4). The
-        // primary's definition names the camo asset; a secondary or melee weapon gets none.
-        let choice = s.sim.player(inp.local_player).and_then(|p| {
-            crate::weapons::catalog()
-                .get(&p.arsenal.loadout.primary)
-                .and_then(|d| crate::nativevm::choice_for(d, &p.camo))
-        });
-        crate::nativevm::set_local_camo(choice);
+        // The local player's class camos, for the native viewmodel's next draw: each held weapon
+        // wears its own (`_class.gsc`: the primary `primarycamo`, the sidearm `secondarycamo`, the
+        // melee weapon `knifecamo`).
+        let choices = s.sim.player(inp.local_player).map_or_else(Vec::new, |p| crate::nativevm::class_camos(&p.held_camos(), &p.arsenal.current().def.id));
+        crate::nativevm::set_local_camos(choices);
         // The viewmodel BO2 does not draw this frame: its scope overlay's reticle zoom is up.
         let hidden = s.client.hud.lui.gun_under_overlay.then(|| s.sim.player(inp.local_player).map(|p| p.arsenal.current_weapon().viewmodel)).flatten();
         crate::nativevm::set_gun_under_overlay(hidden);

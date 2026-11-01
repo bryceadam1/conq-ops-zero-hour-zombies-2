@@ -52,6 +52,85 @@ use super::items::cac_entries;
         assert_eq!(e.personalize, Some(PersonalizeKind::Reticle));
     }
 
+    /// `customclass.lua`: `PrimaryWeapon_Button_Over` / `SecondaryWeapon_Button_Over` add the `C`
+    /// prompt only when the slot holds a weapon, each with its own `weaponSlot`.
+    #[test]
+    fn c_on_each_weapon_box_opens_that_weapons_camo_page() {
+        let mut e = Editor::new(Draft::default());
+        e.slot = Slot::Secondary;
+        assert_eq!(e.camo_page(), Some(PersonalizeKind::SecondaryCamo));
+        assert_eq!(e.step(Edges { camo: true, ..Default::default() }), Outcome::Continue);
+        assert_eq!(e.personalize, Some(PersonalizeKind::SecondaryCamo));
+        assert_eq!(e.slot, Slot::Secondary, "the focus stays");
+        // An empty slot has no prompt and `C` does nothing.
+        e.draft.secondary.clear();
+        assert_eq!(e.camo_page(), None);
+        e.step(Edges { camo: true, ..Default::default() });
+        assert_eq!(e.personalize, None);
+        e.slot = Slot::Primary;
+        e.draft.primary.clear();
+        assert_eq!(e.camo_page(), None);
+        // Nor anywhere but a weapon box.
+        let mut e = Editor::new(Draft::default());
+        e.slot = Slot::Lethal;
+        assert_eq!(e.camo_page(), None);
+        assert_eq!(PersonalizeKind::SecondaryCamo.columns(), 6, "the same `CACCamo` grid");
+    }
+
+    /// BO2's `SetClassItem` on a weapon slot with a new value zeroes that slot's camo and reticle
+    /// (`FUN_008d0650`); re-picking the same weapon changes nothing, and Remove clears them too.
+    #[test]
+    fn a_new_weapon_in_a_slot_resets_that_slots_camo() {
+        let personalised = Draft {
+            camo: "camo_gold".into(),
+            reticle: "reticle_2".into(),
+            reticle_color: "red".into(),
+            secondary_camo: "camo_atacs".into(),
+            knife: "camo_diamond".into(),
+            ..Draft::default()
+        };
+        // A different secondary: its camo goes, the primary's options and the knife's stay.
+        let mut e = Editor::new(personalised.clone());
+        e.slot = Slot::Secondary;
+        let ids = e.gun_list(false);
+        let other = ids.iter().position(|id| *id != e.draft.secondary).expect("another sidearm");
+        let same = ids.iter().position(|id| *id == e.draft.secondary).expect("the current sidearm");
+        e.apply_option(same);
+        assert_eq!(e.draft.secondary_camo, "camo_atacs", "re-picking the same weapon keeps its camo");
+        e.apply_option(other);
+        assert!(e.draft.secondary_camo.is_empty());
+        assert_eq!((e.draft.camo.as_str(), e.draft.reticle.as_str(), e.draft.knife.as_str()), ("camo_gold", "reticle_2", "camo_diamond"));
+        // A different primary: its camo, reticle and reticle colour go; the secondary's stays.
+        let mut e = Editor::new(personalised.clone());
+        e.slot = Slot::Primary;
+        let ids = e.gun_list(true);
+        let other = ids.iter().position(|id| *id != e.draft.primary).expect("another primary");
+        e.apply_option(other);
+        assert!(e.draft.camo.is_empty() && e.draft.reticle.is_empty() && e.draft.reticle_color.is_empty());
+        assert_eq!(e.draft.secondary_camo, "camo_atacs");
+        // Remove takes the slot's camo with the gun.
+        let mut d = personalised.clone();
+        assert!(crate::classui::clear_cell(&mut d, Slot::Secondary, 0));
+        assert!(d.secondary_camo.is_empty());
+        assert_eq!(d.camo, "camo_gold");
+    }
+
+    #[test]
+    fn the_secondary_camo_page_sets_secondarycamo_only() {
+        let mut d = Draft { camo: "camo_gold".into(), secondary_camo: "camo_atacs".into(), ..Draft::default() };
+        let choices: Vec<String> = ["camo_none", "camo_atacs", "camo_gold"].iter().map(|s| (*s).to_string()).collect();
+        let mut p = Personalize::new(PersonalizeKind::SecondaryCamo, choices, &d);
+        assert_eq!((p.equipped.as_str(), p.highlight), ("camo_atacs", 1), "opens on the class's secondarycamo");
+        p.highlight = 2;
+        assert_eq!(p.step(Edges { confirm: true, ..Default::default() }, &mut d), Outcome::Save);
+        assert_eq!((d.camo.as_str(), d.secondary_camo.as_str(), d.knife.as_str()), ("camo_gold", "camo_gold", ""));
+        // The draft carries it into the class and back.
+        let c = d.to_custom();
+        assert_eq!(c.secondary_camo, "camo_gold");
+        assert_eq!(Draft::from_custom(&c).secondary_camo, "camo_gold");
+        assert!(d.to_spec().contains("secondary_camo=camo_gold"), "{}", d.to_spec());
+    }
+
     #[test]
     fn personalize_grids_use_bo2s_column_counts() {
         // `caccamomenu.lua:9`: `CamoGridColumns = 6`; `cacreticles.lua:9`: `GridColumns = 5`.
@@ -151,18 +230,30 @@ use super::items::cac_entries;
         assert_eq!(Wildcard::Overkill.greed_tier(), None);
     }
 
+    /// BO2's `SetClassItem` on a weapon slot with a new value zeroes `<slot>attachment1..3`
+    /// (`FUN_008d0650`): a different gun starts bare, even when it offers the same attachments;
+    /// re-picking the same gun keeps them.
     #[test]
-    fn weapon_picks_drop_attachments_the_new_weapon_does_not_offer() {
-        // The secondary moves from a primary-class gun carrying its attachments to the Tac-45,
-        // which offers neither; the pick keeps only what the new weapon can take.
-        let mut e = Editor::new(Draft {
-            secondary: "an94_mp".into(),
-            secondary_atts: vec!["gl".into(), "reflex".into()],
-            wildcards: vec![Wildcard::Overkill],
-            ..Draft::default()
-        });
-        e.draft.secondary = "fnp45_mp".into();
-        e.keep_offered_atts(false);
+    fn a_new_weapon_in_a_slot_starts_without_attachments() {
+        let mut e = Editor::new(Draft::default());
+        e.slot = Slot::Primary;
+        let ids = e.gun_list(true);
+        let same = ids.iter().position(|id| *id == e.draft.primary).expect("the AN-94 is listed");
+        e.apply_option(same);
+        assert_eq!(e.draft.primary_atts, ["gl", "reflex"], "re-picking the same gun keeps its attachments");
+        // Another assault rifle offers the reflex too; BO2 still clears it with the weapon change.
+        let other = ids
+            .iter()
+            .position(|id| *id != e.draft.primary && allowed_shorts(id).contains(&"reflex"))
+            .expect("another gun offering the reflex");
+        e.apply_option(other);
+        assert!(e.draft.primary_atts.is_empty(), "{:?}", e.draft.primary_atts);
+        // The secondary slot follows the same rule.
+        let mut e = Editor::new(Draft { secondary_atts: vec!["reflex".into()], ..Draft::default() });
+        e.slot = Slot::Secondary;
+        let ids = e.gun_list(false);
+        let other = ids.iter().position(|id| *id != e.draft.secondary).expect("another sidearm");
+        e.apply_option(other);
         assert!(e.draft.secondary_atts.is_empty(), "{:?}", e.draft.secondary_atts);
     }
 

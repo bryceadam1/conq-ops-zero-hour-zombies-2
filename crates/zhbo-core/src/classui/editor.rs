@@ -99,9 +99,9 @@ pub fn draw_editor(prims: &mut Vec<Prim>, w: f32, h: f32, editor: &Editor, deny:
         Vec::new()
     } else {
         left = vec![("ESC", "Back"), ("TAB", "Personalize Knife")];
-        // BO2's `AddCamoButton` on the primary weapon row (`caceditclass.lua:748`) and
+        // BO2's `AddCamoButton` on a weapon box that holds a gun (`caceditclass.lua:748`) and
         // `AddReticleButton` on the primary optic row (`:825`).
-        if editor.slot == Slot::Primary {
+        if editor.camo_page().is_some() {
             left.push(("C", "Camo"));
         }
         if editor.slot == Slot::PrimaryAtts && editor.option_attachment(editor.option).is_some_and(|s| crate::hud::OPTICS.contains(&s)) {
@@ -196,12 +196,12 @@ fn draw_cell(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor, cell: &Ed
                 let pic = Rect { x: r.right() - 90.0 - iw, y: r.y + 10.0, w: iw, h: ih };
                 bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&def.id)), pic, argb(OFF_WHITE, 1.0), Vec::new());
                 bo2::text(prims, f, Family::Condensed, &def.display_name, Rect { x: r.x + 3.0, y: r.bottom() - bo2::TEXT_CONDENSED - 2.0, w: r.w, h: bo2::TEXT_CONDENSED }, Align::Left, argb(OFF_WHITE, 1.0));
-                // The class camo's swatch (`CACWeaponButton.GetCamoSwatch`: 32 square, its right
-                // edge `ImageBorder + 39` in, 5 up). The class holds one camo, the primary's.
-                if cell.slot == Slot::Primary {
-                    let swatch = Rect { x: r.right() - 10.0 - 39.0 - 32.0, y: r.bottom() - 5.0 - 32.0, w: 32.0, h: 32.0 };
-                    super::personalize::camo_swatch(prims, f, swatch, id, &editor.draft.camo);
-                }
+                // The slot's camo swatch (`CACWeaponButton.GetCamoSwatch`: 32 square, its right
+                // edge `ImageBorder + 39` in, 5 up), reading `class[weaponStatName .. "camo"]`: the
+                // primary's `primarycamo`, the secondary's `secondarycamo`.
+                let camo = if cell.slot == Slot::Primary { &editor.draft.camo } else { &editor.draft.secondary_camo };
+                let swatch = Rect { x: r.right() - 10.0 - 39.0 - 32.0, y: r.bottom() - 5.0 - 32.0, w: 32.0, h: 32.0 };
+                super::personalize::camo_swatch(prims, f, swatch, id, camo);
             }
             if on {
                 focus_frame(prims, f, r);

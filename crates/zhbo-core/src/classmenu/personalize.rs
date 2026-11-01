@@ -10,17 +10,22 @@ use super::*;
 /// rows and columns; the class UI draws them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PersonalizeKind {
+    /// The primary's camo page (BO2's `CACCamo` with `weaponSlot = "primary"`).
     Camo,
     Reticle,
     ReticleColor,
     Knife,
+    /// The secondary's camo page: the same `CACCamo` with `weaponSlot = "secondary"`
+    /// (`customclass.lua`'s `SecondaryWeapon_Button_Over` sets it; the pick lands in
+    /// `secondarycamo`, `caccamomenu.lua`'s `SetClassItem(weaponSlot .. "camo")`).
+    SecondaryCamo,
 }
 
 impl PersonalizeKind {
     /// The grid's column count, BO2's own for each screen.
     pub fn columns(self) -> usize {
         match self {
-            PersonalizeKind::Camo | PersonalizeKind::Knife => 6,
+            PersonalizeKind::Camo | PersonalizeKind::Knife | PersonalizeKind::SecondaryCamo => 6,
             PersonalizeKind::Reticle | PersonalizeKind::ReticleColor => 5,
         }
     }
@@ -67,6 +72,7 @@ impl Personalize {
             PersonalizeKind::Reticle => &draft.reticle,
             PersonalizeKind::ReticleColor => &draft.reticle_color,
             PersonalizeKind::Knife => &draft.knife,
+            PersonalizeKind::SecondaryCamo => &draft.secondary_camo,
         }
         .clone();
         let tabs = if tabs.is_empty() { vec![PersonalizeTab { label: String::new(), choices: Vec::new() }] } else { tabs };
@@ -132,6 +138,7 @@ impl Personalize {
                     PersonalizeKind::Reticle => draft.reticle = v.clone(),
                     PersonalizeKind::ReticleColor => draft.reticle_color = v.clone(),
                     PersonalizeKind::Knife => draft.knife = v.clone(),
+                    PersonalizeKind::SecondaryCamo => draft.secondary_camo = v.clone(),
                 }
             }
             return Outcome::Save;

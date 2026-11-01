@@ -112,6 +112,9 @@ fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> 
         ("cac-editor-danger-close-x2", danger_close_prims(true)),
         ("cac-personalize", personalize_prims()),
         ("cac-personalize-dlc", personalize_tab_prims(1)),
+        ("cac-personalize-knife", knife_personalize_prims()),
+        ("cac-editor-secondary", secondary_editor_prims()),
+        ("cac-personalize-secondary", secondary_personalize_prims()),
         ("cac-reticles", reticle_personalize_prims()),
         ("cac-reticle-color", reticle_color_personalize_prims()),
         ("cac-dialog-set", set_dialog_prims()),
@@ -192,6 +195,37 @@ fn personalize_tab_prims(tab: i32) -> Vec<Prim> {
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
+/// BO2's knife page (`TAB Personalize Knife`): the camo screen over `knife_held`'s own list.
+fn knife_personalize_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.picking = false;
+    let kind = PersonalizeKind::Knife;
+    let tabs = classui::personalize_tabs_for(kind, classui::personalize_weapon(kind, &editor.draft));
+    let p = Personalize::with_tabs(kind, tabs, &editor.draft);
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// The editor grid with the SECONDARY box focused: its `secondarycamo` swatch and the `C` prompt
+/// (`SecondaryWeapon_Button_Over`).
+fn secondary_editor_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.picking = false;
+    editor.slot = Slot::Secondary;
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// The SECONDARY box's `C Personalize Weapon` page: the camo screen over the sidearm's own list
+/// (`CACCamo` with `weaponSlot = "secondary"`), its `secondarycamo` equipped.
+fn secondary_personalize_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.picking = false;
+    editor.slot = Slot::Secondary;
+    let kind = editor.camo_page().expect("the SECONDARY box holds a gun");
+    let tabs = classui::personalize_tabs_for(kind, classui::personalize_weapon(kind, &editor.draft));
+    let p = Personalize::with_tabs(kind, tabs, &editor.draft);
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: Some(&p), deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
 /// BO2's reticle grid on the primary's optic (`cacreticles.lua:9-24`); each cell is the optic's
 /// stock reticle art (`mtl_t6_attach_optic_reflex_reticle_XX`).
 fn reticle_personalize_prims() -> Vec<Prim> {
@@ -231,6 +265,7 @@ fn empty_editor_prims() -> Vec<Prim> {
         reticle: String::new(),
         reticle_color: String::new(),
         knife: String::new(),
+        secondary_camo: String::new(),
     };
     let editor = Editor::new(draft);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
@@ -393,6 +428,8 @@ fn editor_state() -> Editor {
         reticle: String::new(),
         reticle_color: String::new(),
         knife: String::new(),
+        // Gold on the sidearm: the SECONDARY button's swatch and its own camo page show it.
+        secondary_camo: "camo_gold".into(),
     };
     let mut editor = Editor::new(draft);
     let mut prev = MenuPrev::default();
@@ -440,6 +477,7 @@ fn seed_profile() {
             reticle: String::new(),
             reticle_color: String::new(),
             knife: String::new(),
+            secondary_camo: String::new(),
             ..CustomClass::default()
         });
     }
@@ -623,6 +661,16 @@ mod tests {
         let personalize_images: Vec<&str> = personalize.iter().filter_map(|p| if let Prim::Image { name, .. } = p { Some(name.as_str()) } else { None }).collect();
         assert!(personalize_images.contains(&zhbo_core::names::cac_weapon_image("mp7_mp").as_str()), "the weapon's `_big` picture draws: {personalize_images:?}");
         assert!(personalize_text.contains(&"Back"), "the ESC Back prompt draws: {personalize_text:?}");
+
+        // The knife page is the camo page over `knife_held` (`caccamomenu.lua`'s
+        // `knifePersonalization`): its title, its picture, the Equipped box. (The stand-in table has
+        // no camo rows; the tabs over a real list are `classui::personalize`'s unit test.)
+        let knife = knife_personalize_prims();
+        let knife_text = texts(&knife);
+        assert!(knife_text.contains(&"PERSONALIZE KNIFE"), "the knife's title: {knife_text:?}");
+        assert!(knife_text.contains(&"Equipped"), "the knife page's Equipped box: {knife_text:?}");
+        let knife_images: Vec<&str> = knife.iter().filter_map(|p| if let Prim::Image { name, .. } = p { Some(name.as_str()) } else { None }).collect();
+        assert!(knife_images.contains(&zhbo_core::names::cac_weapon_image(zhbo_core::weapons::KNIFE_HELD).as_str()), "the knife's picture: {knife_images:?}");
 
         // The reticle/colour screens carry BO2's titles and prompts; each reticle cell is the
         // primary optic's stock art (`cacreticles.lua:1150-1240,1390-1470`).

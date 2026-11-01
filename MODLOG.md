@@ -7708,3 +7708,176 @@ Tests: `backing_out_of_the_grid_saves_the_class`, `an_over_budget_draft_backs_ou
 `the_editor_has_no_name_field` (classmenu); `backing_out_of_an_untouched_editor_writes_nothing`,
 `a_sixth_class_is_refused_and_the_back_out_still_leaves` (menu); the grid-link table and the
 shell save tests now go through Escape.
+
+## Camo follow-ups: the cac camo order is BO2's group index; the knife page is the camo page (2026-10-30, branch `v1/cac-camo-followups`)
+
+- **`camo.order` measured the wrong quantity, not a wrong order.** The cac schema's `order` for a
+  camo is the row's group index: `AddCamos` walks `GetWeaponOptionGroupIndex(i, camo)` for `i` in
+  `0..GetNumWeaponOptions` (the DLC2 tab then sorts by column 5). The mod's grid already followed
+  that (each tab is the table order filtered, DLC2 by `Sort`, and a weapon's art-trimmed
+  `CamoList` is a subsequence of the table), but the actual emitter wrote each offered camo's
+  position in the trimmed list, so the 20 DLC rows item 11 started offering read 19..38 against
+  BO2's 20..45. The catalog now keeps the `Camo` blocks in table order (`Catalog::camos`,
+  `Catalog::camo_index`) and the emitter writes that index. Expected side unchanged.
+- **The knife page.** BO2's `TAB Personalize Knife` (`caceditclass.lua`'s
+  `OpenKnifePersonalization`) does not open `cacknifemenu.lua` (`CACKnife`, a CAMO-only page
+  nothing opens): it sets `knifePersonalization` and opens `CACCamo`. Every `knifePersonalization`
+  branch there swaps in `knife_held`'s statstable row: the title (`MPUI_PERSONALIZE_N` over column
+  3), the picture (column 6 **as is**, `combat_tab_knife`, no `_big`), `AddCamos`' item, and the
+  class's `knifecamo` as the equipped cell; there's no EMBLEM AND TAG tab. The mod's knife page was
+  the captured placeholder name list; it is now `personalize_tabs_in` over `knife_held_mp`'s own
+  `CamoList` (trimmed by `camo_knife`'s converted art, like any gun), with the tiles and the lower
+  panel, and the converter packs `ZHBO_CaC_Weapon_knife_held_mp` from `combat_tab_knife`.
+  `personalize_weapon(kind, draft)` names the weapon a page dresses; `weapons::KNIFE_HELD` is the
+  knife id's one source (loadout, class editor). `Draft::knife`/`CustomClass::knife` hold the
+  knife's camo id (BO2's `knifecamo`), not a weapon id.
+- **Base rows on the knife.** `AddCamos` lists a non-store row only when
+  `GetChallengeForItemOption(item, option)` finds a challenge. For `knife_held` every base row
+  has one in the data: multicam … kryptek and carbon … skulls by name
+  (`statsmilestones1.csv:174-187`), gold through the special mastery row that lists `knife_held`
+  (`:145`), diamond through the `weapon_special` group row (`:195`), and elite/collectors through
+  the global `digital_unlock` rows. So the guns' rule (every base row) holds for the knife too.
+  This was checked against the data, not the engine function.
+- **Not done:** the in-match knife viewmodel doesn't wear the class's knife camo yet. `ffi.rs`
+  applies the class camo only to the primary.
+
+Measured (conformance CLI vs item 11's `v1/cac-camo` head): cac differing cells 901 → 881, all from
+`order` 461 → 441 (the 20 `camo.order` cells are gone, and no camo row differs). cac one-sided rows
+are unchanged at 42/6, and weapons are unchanged at 706,586 cells. There are still 214 gap clusters:
+the `order` cluster stays because of the attachment rows. Verified: `cargo test --workspace` is
+green; clippy has the same 39 warnings; the real-install suite is green. The headless shots render
+from a fresh archive (379 images, one more than before: the knife picture), and
+`cac-personalize-knife` shows `PERSONALIZE COMBAT KNIFE` with CAMO/DLC/DLC2, the 17 base rows and
+the knife picture.
+
+## The in-match knife wears the class's knife camo (2026-10-30, branch `v1/knife-camo`)
+
+- **BO2's rule.** `_class.gsc:585-682` gives `knife_mp` (and `knife_held_mp` when the class has
+  fewer than two guns) `calcweaponoptions(class_num, 2)` — the class's `knifecamo`
+  (`checkclasses.lua:907`) — the sidearm `calcweaponoptions(class_num, 1)` (`secondarycamo`,
+  `:891`) and the primary `(class_num, 0)` (`primarycamo`, `:875`). The engine's camo pass
+  (`FUN_00529600`, G16) paints each viewmodel from its own def's `weaponCamo`; for the knife
+  that is `camo_knife` (the knife row's `CamoMaterial`).
+- **The transport.** `nativevm`'s core-global camo is now one `LocalCamo` per held weapon
+  (`set_local_camos`); `nativevm::class_camos` pairs each weapon id with the camo id it wears and
+  resolves it through that weapon's own def (`choice_for`), and the viewmodel draw takes the
+  choice whose `vm` it is drawing. `zhbo_client_frame` passes the primary with `PlayerSim.camo` and
+  the loadout's melee weapon with the new `PlayerSim.knife_camo` (from `CustomClass.knife`). No C
+  ABI change; it composes with `v1/attach-camo` (whose `load` paints per part from the manifest and
+  only uses the choice's option and key).
+- **Not done (belongs elsewhere).** The sidearm still draws stock: the mod's class has no secondary
+  camo field or personalize page (an editor item); `class_camos` takes it as a third slot when it
+  exists. An alt-mode weapon (the GL alt's own viewmodel) inherits nothing — whether BO2 gives the
+  alt the parent's options is unverified. Third person still draws no camo for any weapon
+  (`nativebody` pins `camo` to `INVALID`).
+- Tests: `nativevm::tests::each_held_weapon_draws_its_own_class_camo`; the sim test now checks the
+  knife camo lands on the player; the real-install `the_camo_assets_convert_with_their_art` checks
+  the knife row names `camo_knife`, the blob converts, and its atacs/gold/diamond options resolve.
+- Measured (conformance CLI vs the `v1/cac-camo-followups` base): unchanged, as expected for a
+  draw-time transport — weapons 706,586 cells / 203 clusters, 2264/747 one-sided rows; cac 881
+  cells / 7 clusters, 42/6; 214 gap clusters. Verified: `cargo test --workspace` green; clippy 39
+  warnings before and after; the real-install suite (`--ignored --skip conformance`) green. The
+  in-game check (equip a knife camo, switch to the knife, see it painted) is the integrator's.
+
+## The sidearm wears its own camo: secondarycamo, its personalize page and swatch (2026-10-31, branch `v1/secondary-camo`)
+
+- **BO2's path.** `customclass.lua`'s `SecondaryWeapon_Button_Over` sets `weaponSlot = "secondary"`
+  and adds the `C` (`MPUI_PERSONALIZE_WEAPON`) prompt, but only when the class holds a secondary.
+  `ButtonPromptCamo` opens the same `CACCamo` it opens for the primary (`knifePersonalization =
+  false`). That page reads `class[weaponSlot]` for the title, picture and `AddCamos`' item, and it
+  saves `SetClassItem(weaponSlot .. "camo")`, which is the class's `secondarycamo`
+  (`checkclasses.lua:891`). In the match, `_class.gsc:585-682` gives the sidearm
+  `calcweaponoptions(class, 1)`. `CACWeaponButton` draws each box's swatch from
+  `class[weaponStatName .. "camo"]`, and `ClassPreview` has a `secondaryCamoImageContainer` with
+  the same 45/5/31 geometry as the primary's.
+- **The mod.** `CustomClass`/`Draft` gain `secondary_camo`, with the spec key `secondary_camo`
+  written after `knife`. A missing key means "not personalised", so older profiles still load.
+  `PersonalizeKind::SecondaryCamo` is the camo page over the sidearm's own art-trimmed `CamoList`
+  (`personalize_weapon` returns `draft.secondary`). `Editor::camo_page` is the one gate for `C` and
+  its prompt: PRIMARY or SECONDARY, and only while the box holds a gun. The SECONDARY box and the
+  preview's secondary block draw the swatch. `PlayerSim.secondary_camo` and
+  `PlayerSim::held_camos()` give `nativevm::class_camos` its three slots in `zhbo_client_frame`.
+  No ABI change.
+- **classrepair checks each camo against its own weapon.** BO2 stores a camo as an index into
+  the weapon's own option group, and `ClearWeapon` clears it along with the weapon. The mod stores
+  ids, so `repair` now clears `primarycamo`/`secondarycamo`/`knifecamo` when the weapon slot is
+  empty or was cleared, or when that weapon's `CamoList` does not offer the id. A weapon without a
+  converted list (the built-in table) keeps the id. This applies to the primary and knife camos
+  as well as the new one.
+- **Composability with `v1/cac-save-rename`.** The new menu test saves through
+  `save_open_editor` (the SAVE row). That branch replaces the helper with `back_out_of_editor`, so
+  the merge needs to swap that one call. The editor change only touches the `C` branch and the
+  prompt list.
+- **Not done.** Third person still draws no camo for any weapon (`nativebody` pins `INVALID`).
+  Changing the secondary weapon in the editor keeps `secondary_camo`, as the primary keeps
+  `camo`. The repair pass drops the camo on the next load if the new gun does not offer it.
+- Measured (conformance CLI vs the `v1/knife-camo` base): no change, as expected, because the cac
+  table has no per-class camo column. Weapons: 706,586 cells / 203 clusters, 2264/747 one-sided
+  rows. Cac: 881 cells / 7 clusters, 42/6. 214 gap clusters. Verified: `cargo test --workspace`
+  is green (new: `c_on_each_weapon_box_opens_that_weapons_camo_page`,
+  `the_secondary_camo_page_sets_secondarycamo_only`,
+  `the_secondary_page_is_the_camo_page_over_the_sidearms_own_list`,
+  `c_on_the_secondary_opens_its_own_camo_page_and_saves_secondarycamo`,
+  `each_camo_is_checked_against_its_own_weapons_list`; extended: spec/profile round-trips,
+  `each_held_weapon_draws_its_own_class_camo`, and the sim landing test with `held_camos`).
+  Clippy warnings went from 39 to 38: `Draft::to_custom`'s struct update had no effect and is
+  removed. The real-install suite is green (31). Headless shots `cac-editor-secondary` and
+  `cac-personalize-secondary` render with every sprite resolved. The in-game check (equip a
+  sidearm camo, switch to the pistol, see it painted) is the integrator's.
+
+## Alt modes wear the parent's class camo (2026-10-31, branch `v1/secondary-camo`)
+
+- **BO2 (read-only Ghidra, t6mp; dumps in the plan dir's `ghidra/`).** The `giveweapon` builtin
+  (`FUN_005ec770`, method table at `0x00b45250`) hands its weapon options to `FUN_00670460`. That
+  function stores the options on the weapon's held entry (`+4`), then walks the alt chain
+  (`FUN_008ec9e0`, until it loops back to an owned weapon) and stores the **same** options on
+  each alt's entry. It does the same for the `FUN_008eca70` companion. The viewmodel draw
+  (`FUN_00536f30`) passes the local centity's current-weapon options (`cent+0x268`) to the camo
+  pass (`FUN_0052a3e0` → `FUN_0052a010` → `FUN_00529600`). That pass paints each model entry
+  through its own def's `weaponCamo` (G16). So the launcher, the select-fire and the dual-optic
+  alts all wear the class camo option, each through its own def's asset.
+- **The mod.** `nativevm::class_camos(slots, current)` now joins each slot's alt chain (`def.alt`)
+  with the slot's camo. A combination's alt shares the parent's viewmodel (`ClipBase` past the
+  parent's clips). The held weapon (`arsenal.current()`) therefore claims a viewmodel first,
+  through its own def's asset, and draws stock when that def names none. The converted table
+  leaves `CamoMaterial` empty for the 13 `dualoptic_*` base rows, 3 `sf_*` rows and 1 `gl_*` row,
+  so those alts draw stock while held. That is data-driven: it is what their BO2 defs carry.
+  `LocalCamo` still carries only `(vm, asset, option)`, so the per-part painting on
+  `v1/attach-camo` composes: its manifest gives the alt's own part list.
+- Test: `nativevm::tests::an_alt_mode_wears_its_parents_class_camo_through_its_own_def`.
+  Verified: `cargo test --workspace` is green; clippy has 38 warnings, unchanged.
+
+## A new weapon resets its slot's camo (2026-10-31, branch `v1/secondary-camo`)
+
+- **BO2 (read-only Ghidra, t6mp).** LUI `Engine.SetClassItem` (`FUN_0093c800`) calls
+  `FUN_004943e0`. When the value really changes, that calls `FUN_008d0650`, which does this for
+  `primary` and `secondary`: it zeroes `<slot>attachment1..3`, `<slot>camo`, `<slot>reticle`,
+  `<slot>reticlecolor`, `<slot>lens`, `<slot>tag` and `<slot>emblem`. A camo is a global option
+  index (`calcweaponoptions`, `FUN_005e0cd0`, reads loadout item 4 / 0xe / 0x14 for
+  primary/secondary/knife camo with no weapon involved), so nothing reinterprets it later. The
+  reset on the weapon change is the whole rule.
+- **The mod.** `Draft::reset_weapon_options(primary)` clears that slot's camo, plus the
+  primary's reticle and reticle colour, the only optic the mod personalizes. The editor calls it
+  when a weapon pick changes the slot's weapon (re-picking the same gun keeps everything, as
+  BO2's changed-value guard does) and when `R Remove` empties the slot. `classrepair` already
+  clears a camo whose weapon is gone.
+- **Divergence left for another item:** BO2's same function also zeroes the slot's attachments.
+  The mod's editor keeps the attachments the new gun offers (`keep_offered_atts`). That predates
+  this branch, and this commit does not change it.
+- Test: `classmenu::tests::a_new_weapon_in_a_slot_resets_that_slots_camo`. Verified:
+  `cargo test --workspace` is green; clippy has 38 warnings, unchanged.
+
+## A new weapon starts its slot bare: attachments too (2026-10-31, branch `v1/secondary-camo`)
+
+- The same `FUN_008d0650` that resets the camo also zeroes `<slot>attachment1..3` when
+  `primary`/`secondary` really changes value. `Draft::reset_weapon_options` now clears that
+  slot's attachments as well, and `Editor::keep_offered_atts` is gone. It had kept the
+  attachments the new gun offered, and the editor pick was its only caller; repair and the
+  in-match pick never used it. A changed weapon pick and `R Remove` now leave the slot bare.
+  Re-picking the same gun keeps everything, matching BO2's changed-value guard. The mod's class
+  has no lens, tag or emblem to clear. `classrepair`'s attachment check
+  (`repair_weapon` against the weapon's own list) is the profile-load path and is unchanged.
+- Test: `a_new_weapon_in_a_slot_starts_without_attachments` replaces
+  `weapon_picks_drop_attachments_the_new_weapon_does_not_offer`. Another reflex-capable gun
+  still starts bare. Verified: `cargo test --workspace` is green; clippy has 38 warnings,
+  unchanged.

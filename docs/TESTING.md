@@ -94,6 +94,16 @@ verify it by hand after touching the menu ABI, the shell window, or the shared c
      by clicking a tab; the panel under the grid shows the focused camo's name, the gun's picture
      and the `Equipped` box. Equip a camo: the editor's PRIMARY button and the class list's preview
      show its swatch in the corner; the reticle page has the same RETICLES/DLC tabs.
+   - Knife (`TAB` in the editor): the same page over the knife — `PERSONALIZE KNIFE`, the
+     CAMO/DLC(/DLC2) tabs with the knife's own converted camos, the knife's picture and the
+     `Equipped` box; a pick sets the class's knife camo, not the gun's.
+   - Secondary (`C` on SECONDARY, only while it holds a gun): the same page over the sidearm —
+     `PERSONALIZE <PISTOL>`, the sidearm's own converted camos, its picture; a pick sets the
+     class's secondary camo (the SECONDARY button and the preview's secondary block show its
+     swatch), not the primary's. In a match, switch to the sidearm: it wears that camo.
+   - Pick a different gun in a personalised slot: that slot's attachments are removed and its camo
+     (and the primary's reticle and reticle colour) go back to stock, as BO2's `SetClassItem`
+     does, even when the new gun offers the same attachments; re-picking the same gun keeps them.
 4. Edit something and press **Escape**: `ConquerOps.profile` (in the game's user-data directory) is
    rewritten with the new class, and the list shows it highlighted. Opening an untouched slot and
    backing out writes nothing (the slot stays `Custom n`). Rename a class with **O** → RENAME (the
@@ -130,12 +140,16 @@ says which. It reads the already-converted archive (no BO2 install needed, never
 
 `cargo run -p zhbo-assets -- screenshot [out-dir] [--archive <ConquerOps_BO2.big>] [--size WxH]`
 renders the class screens through the same drawing code the game runs (`classui::draw_screen`) and
-writes the shots: `cac-browse.png` (the lobby list: the active set's five custom slots, the set
+writes these shots: `cac-browse.png` (the lobby list: the active set's five custom slots, the set
 header and the S/O footer), `cac-set-pager.png` (a browsed mid-row set), `cac-pick.png` (the
 in-match list: the slots, then the default classes), `cac-editor.png` (a populated Pick-10 draft
 with the primary option list open), `cac-editor-empty.png` (BO2's pristine empty class),
 `cac-editor-weapons.png` (the category column and stat bars), `cac-editor-attachments.png` (the
-attachment strip), `cac-editor-lethal.png` (the lethal list: grenades and placed equipment), `cac-editor-overkill.png` (the secondary list under Overkill: primary groups only), `cac-editor-danger-close.png`/`cac-editor-danger-close-x2.png` (the lethal button's Danger Close box, empty then filled), `cac-editor-wildcards.png` (the wildcard grid: the table's bonus cards and the
+attachment strip), the personalize pages `cac-personalize.png` (camo, CAMO tab),
+`cac-personalize-dlc.png` (its DLC tab), `cac-personalize-knife.png` (the knife page),
+`cac-editor-secondary.png` (the grid with SECONDARY focused: its camo swatch and the `C` prompt),
+`cac-personalize-secondary.png` (the sidearm's own camo page),
+`cac-reticles.png` and `cac-reticle-color.png`, `cac-editor-lethal.png` (the lethal list: grenades and placed equipment), `cac-editor-overkill.png` (the secondary list under Overkill: primary groups only), `cac-editor-danger-close.png`/`cac-editor-danger-close-x2.png` (the lethal button's Danger Close box, empty then filled), `cac-editor-wildcards.png` (the wildcard grid: the table's bonus cards and the
 highlighted card's name and description), `cac-editor-perks.png` (the Perk 1 grid: BO2's perk names and the highlighted perk's name and description) and `cac-dialog-set.png`/`cac-dialog-class.png` (the S/O dialogs). Default size
 is 1280x720 (BO2's 720p; the captures are 3024x1890). The default output is `target/cac-shots/`,
 which is inside the ignored build directory.

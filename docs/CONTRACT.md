@@ -288,9 +288,17 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   hidden too) — only when the overlay's art is in the archive, else the gun keeps drawing.
 
 * **The class camo (`camo_<weapon>.zcm`, PLAN D1–D8).** A class's camo (`CustomClass.camo`) rides
-  `PlayerSim.camo`; `zhbo_client_frame` records the local primary's `(viewmodel, camo asset,
-  option)` in a core-global (`nativevm::set_local_camo`) and `zhbo_native_viewmodel` reads it when
-  the `vm` matches — **no `ZhboNativeIn` field and no ABI bump**. The converter writes
+  `PlayerSim.camo`, its secondary camo (`CustomClass.secondary_camo`, BO2's `secondarycamo`) rides
+  `PlayerSim.secondary_camo` and its knife camo (`CustomClass.knife`, BO2's `knifecamo`) rides
+  `PlayerSim.knife_camo`; `zhbo_client_frame` records one `(viewmodel, camo asset, option)` per held
+  weapon (`PlayerSim::held_camos`) — the primary with the class camo, the sidearm with the secondary
+  camo, the melee weapon with the knife camo, each through its own def's asset
+  (`nativevm::class_camos`, `_class.gsc`'s `calcweaponoptions(class, 0|1|2)`). Each weapon's alt
+  chain (`gl_`/`sf_`/`dualoptic_`) joins with the same option, as BO2's give (`FUN_00670460`)
+  copies the weapon options onto every alt; the weapon currently held decides a viewmodel its alt
+  shares, through its own def's asset (none = stock) — in a
+  core-global (`nativevm::set_local_camos`), and `zhbo_native_viewmodel` reads the one whose `vm`
+  matches the viewmodel it draws — **no `ZhboNativeIn` field and no ABI bump**. The converter writes
   `Art\Native\<camo_asset>.zcm` (`ZCM\0`, v1): the asset's 40 pattern sets (solid/pattern image,
   UV offset/scale, gain), its 15 style recipes (base→camo material pairs; `replaceFlags` and
   `shaderConsts` carried verbatim, not interpreted), the converted style materials, and each option
@@ -327,7 +335,9 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
     class primary. The rig's cache identity includes the option.
   - **Divergences.** The W3D fallback (the first-person W3D viewmodel and the W3D third-person
     weapon, `ZHBO_NATIVE_BODY=0`) bakes textures and has no texture override, so it
-    draws no camo. Only the primary inherits the class camo, as the class stores one camo.
+    draws no camo. In first person each held weapon wears its own class camo (the primary
+    `primarycamo`, the sidearm `secondarycamo`, the knife `knifecamo`; `nativevm::class_camos`);
+    the third person dresses the General's class primary only.
 
 * **The engine-filled surfaces: the lens reticle, the clan tag, the emblem.** BO2 fills three
   kinds of viewmodel surface at draw time; the converter now keeps them in the native models (the
