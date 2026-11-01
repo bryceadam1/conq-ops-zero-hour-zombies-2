@@ -278,6 +278,8 @@ getters!(Def, WD {
     i32 projectile_speed_up = iProjectileSpeedUp;
     bool projectile_impact_explode = bProjImpactExplode;
     named projectile_model = projectileModel;
+    f32 overlay_width = overlayWidth;
+    f32 overlay_height = overlayHeight;
     f32 hip_spread_stand_min = fHipSpreadStandMin;
     f32 hip_spread_stand_max = hipSpreadStandMax;
     f32 hip_spread_ducked_min = fHipSpreadDuckedMin;

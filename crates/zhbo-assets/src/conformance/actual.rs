@@ -546,6 +546,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .opt_text("overlay_material", opt(&d.overlay_material))
         .opt_text("overlay_material_low_res", opt(&d.overlay_material_low_res))
         .text("overlay_reticle", enum_name(cols::OVERLAY_RETICLE, d.overlay_reticle))
+        .floats("overlay_size", &fls(&[d.overlay_size.0, d.overlay_size.1]))
         .opt_text("hud_icon", hud_icon)
         // The def's action-slot material, when its sprite shipped (`hud::ammo::alt_slot_icon`
         // draws it in the alt-fire slot).

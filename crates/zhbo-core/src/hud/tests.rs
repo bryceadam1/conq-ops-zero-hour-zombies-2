@@ -203,6 +203,7 @@ fn the_scope_overlay_follows_bo2s_reticle_zoom() {
     let def = {
         let mut d = sim.players[0].as_ref().expect("the player").arsenal.current_weapon().clone();
         d.overlay_material = "scope_overlay_xpr50".into();
+        d.overlay_size = (480.0, 480.0);
         (d.zoom.in_frac, d.zoom.out_frac, d.zoom.overlay_alpha_scale) = (0.0, 0.05, 1.0);
         Box::leak(Box::new(d))
     };
@@ -234,6 +235,45 @@ fn the_scope_overlay_follows_bo2s_reticle_zoom() {
     set(&mut sim, &mut client, 0.94);
     assert_eq!(overlay_alpha(&client, &sim), None);
     assert!(!client.hud.lui.gun_under_overlay);
+}
+
+#[test]
+fn the_scope_overlay_draws_a_round_scope_at_every_aspect() {
+    // `FUN_004b4c70`: the 480 x 480 sniper art is drawn square in pixels, centred, and the screen
+    // around it is filled black at the overlay's alpha (`FUN_004b4840`) — never the art stretched
+    // over the whole screen (the ellipse the HUD once drew).
+    let (mut sim, _client) = fps_state();
+    let def = {
+        let mut d = sim.players[0].as_ref().expect("the player").arsenal.current_weapon().clone();
+        d.overlay_material = "scope_overlay_xpr50".into();
+        d.overlay_size = (480.0, 480.0);
+        (d.zoom.in_frac, d.zoom.out_frac, d.zoom.overlay_alpha_scale) = (0.0, 0.05, 1.0);
+        Box::leak(Box::new(d))
+    };
+    let p = sim.players[0].as_mut().expect("the player");
+    p.arsenal.current_mut().def = def;
+    p.arsenal.ads = 1.0;
+    let name = crate::lui::materials::image("scope_overlay_xpr50");
+    for (w, h) in [(1280.0, 720.0), (1920.0, 1200.0), (1024.0, 768.0), (3440.0, 1440.0), (720.0, 1280.0)] {
+        let mut prims = Vec::new();
+        draw_scope_overlay(&mut prims, w, h, sim.players[0].as_ref().unwrap(), false);
+        let art: Vec<_> = prims.iter().filter_map(|q| match q {
+            Prim::Image { name: n, x, y, w, h, argb, .. } if *n == name => Some((*x, *y, *w, *h, *argb)),
+            _ => None,
+        }).collect();
+        assert_eq!(art.len(), 1, "{w}x{h}");
+        let (x, y, aw, ah, argb) = art[0];
+        assert!((aw - ah).abs() < 1e-3, "{w}x{h}: the scope is {aw} x {ah} px, not round");
+        assert!((x + aw * 0.5 - w * 0.5).abs() < 1e-3 && (y + ah * 0.5 - h * 0.5).abs() < 1e-3);
+        let fill: f32 = prims.iter().map(|q| match q {
+            Prim::Rect { w, h, argb: a, .. } => {
+                assert_eq!(*a, argb & 0xFF00_0000, "black at the overlay's alpha");
+                w * h
+            }
+            _ => 0.0,
+        }).sum();
+        assert!((fill + aw * ah - w * h).abs() < 1.0, "{w}x{h}: the fills cover the rest of the screen");
+    }
 }
 
 #[test]

@@ -809,6 +809,20 @@ mod tests {
             assert!(report.found.iter().any(|f| f == name), "{name} did not convert: {:?}", report.missing);
         }
         assert!(report.missing.iter().all(|(name, _)| name.starts_with("ZHBO_BO2_Icon_")), "{:?}", report.missing);
+        // The HUD fills the screen round a scope overlay with black (`zhbo_core::hud`'s
+        // `draw_scope_overlay`), standing in for BO2's stretch of the art's own edge texels
+        // (`FUN_004b4840`): every overlay's border must be opaque black for that to be BO2's look.
+        let files = zhbo_formats::big::members(&bytes).unwrap();
+        for (material, _) in zhbo_core::hud::OVERLAY_MATERIALS {
+            let path = format!("Art\\Textures\\{}", standalone_texture(&zhbo_core::lui::materials::image(material)));
+            let tga = &files.iter().find(|(p, _)| *p == path).unwrap_or_else(|| panic!("{path} is in the archive")).1;
+            let (w, h) = (u16::from_le_bytes([tga[12], tga[13]]) as usize, u16::from_le_bytes([tga[14], tga[15]]) as usize);
+            let px = |x: usize, y: usize| &tga[18 + (y * w + x) * 4..][..4];
+            let edge = (0..h).flat_map(|y| [(0, y), (w - 1, y)]).chain((0..w).flat_map(|x| [(x, 0), (x, h - 1)]));
+            for (x, y) in edge {
+                assert_eq!(px(x, y), [0, 0, 0, 255], "{material}: border texel ({x}, {y}) is not opaque black");
+            }
+        }
         let dir = std::env::temp_dir().join("zhbo-hud-test");
         std::fs::create_dir_all(&dir).unwrap();
         let p = dir.join(ARCHIVE_NAME);

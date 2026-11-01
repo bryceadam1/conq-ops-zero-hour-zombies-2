@@ -1250,6 +1250,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         overlay_material: w.overlay_material.clone(),
         overlay_material_low_res: w.overlay_material_low_res.clone(),
         overlay_reticle: w.overlay_reticle,
+        // The def's own, shared by every combo (`FUN_004b4c70` reads it off the WeaponDef).
+        overlay_size: w.overlay_size,
         timing: CycleTimes {
             last_fire_time: w.last_fire_time,
             fire_delay: w.fire_delay,

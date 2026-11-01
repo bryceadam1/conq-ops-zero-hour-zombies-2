@@ -153,7 +153,9 @@ attachment strip), the personalize pages `cac-personalize.png` (camo, CAMO tab),
 `cac-editor-secondary.png` (the grid with SECONDARY focused: its camo swatch and the `C` prompt),
 `cac-personalize-secondary.png` (the sidearm's own camo page),
 `cac-reticles.png` and `cac-reticle-color.png`, `cac-editor-lethal.png` (the lethal list: grenades and placed equipment), `cac-editor-overkill.png` (the secondary list under Overkill: primary groups only), `cac-editor-danger-close.png`/`cac-editor-danger-close-x2.png` (the lethal button's Danger Close box, empty then filled), `cac-editor-wildcards.png` (the wildcard grid: the table's bonus cards and the
-highlighted card's name and description), `cac-editor-perks.png` (the Perk 1 grid: BO2's perk names and the highlighted perk's name and description) and `cac-dialog-set.png`/`cac-dialog-class.png` (the S/O dialogs). Default size
+highlighted card's name and description), `cac-editor-perks.png` (the Perk 1 grid: BO2's perk names and the highlighted perk's name and description) and `cac-dialog-set.png`/`cac-dialog-class.png` (the S/O dialogs), and the HUD's scope overlays
+(`hud::scope_overlay`) as `hud-<material>-<w>x<h>.png` for every converted overlay at 1280x720,
+1280x800, 1024x768 and 1720x720 (the scope must stay round at every aspect). Default size
 is 1280x720 (BO2's 720p; the captures are 3024x1890). The default output is `target/cac-shots/`,
 which is inside the ignored build directory.
 

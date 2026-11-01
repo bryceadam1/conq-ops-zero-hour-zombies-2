@@ -127,6 +127,23 @@ fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> 
         images::write_png(&file, &Rgba { width, height, pixels: canvas.pixels().to_vec() })?;
         println!("wrote {}", file.display());
     }
+    // The scope overlays (`zhbo_core::hud::scope_overlay`), each from the first converted weapon
+    // that wears it, at 16:9, 16:10, 4:3 and 21:9: the scope must stay round at every aspect.
+    for (material, _) in zhbo_core::hud::OVERLAY_MATERIALS {
+        let Some(def) = zhbo_core::weapons::catalog().all().iter().find(|d| d.overlay_material == *material) else {
+            println!("scope: no weapon wears {material}");
+            continue;
+        };
+        for (sw, sh) in [(1280, 720), (1280, 800), (1024, 768), (1720, 720)] {
+            let mut prims = Vec::new();
+            zhbo_core::hud::scope_overlay(&mut prims, def, 255, sw as f32, sh as f32);
+            let canvas = raster::render(&prims, atlas, sw, sh, &mut missing);
+            let file = out.join(format!("hud-{material}-{sw}x{sh}.png"));
+            let (width, height) = (canvas.width(), canvas.height());
+            images::write_png(&file, &Rgba { width, height, pixels: canvas.pixels().to_vec() })?;
+            println!("wrote {} ({})", file.display(), def.id);
+        }
+    }
     if missing.is_empty() {
         println!("art: every sprite the screens asked for resolved");
     } else {

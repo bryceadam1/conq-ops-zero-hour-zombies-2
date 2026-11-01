@@ -405,6 +405,7 @@ impl<'a> Expected<'a> {
             .opt_text("overlay_material", overlay.0)
             .opt_text("overlay_material_low_res", overlay.1)
             .text("overlay_reticle", enum_name(cols::OVERLAY_RETICLE, overlay.2))
+            .floats("overlay_size", &fls(&[d.overlay_width(), d.overlay_height()]))
             .opt_text("hud_icon", d.hud_icon())
             .opt_text("dpad_icon", v.dpad_icon());
 
