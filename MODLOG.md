@@ -9876,3 +9876,79 @@ A general sweep for bugs outside the playtest items; one commit per fix.
     reverb Zero Hour's audio cannot apply either. `soundLoopSilent`, `soundLoopFadeTime` and
     `soundLoopEndDelay` are not used by `FUN_005107c0`; `soundEnd`/`soundEndAbort` are empty in
     all five MP shocks (parsed, not carried).
+
+## Integration, playtest round 2 (2026-11-01, `v1/integration5`)
+
+Merged onto main 092f284, in this order: `cac-class-select`, `crossbow-damage`, `reticle-picker`,
+`smaw-overhead`, `xpr-viewmodel`, `tp-secondary-anim`, `bug-sweep` (merged at 54f8824, then again
+at its final 0d20980), and `shellshock-fx` (40986fc, on bug-sweep).
+
+**Conflicts and semantic merges.**
+* MODLOG: every branch appended an entry. All of them are kept, in merge order.
+* `classwire` × `reticle-picker`. reticle-picker added `CustomClass.secondary_reticle`, but
+  cac-class-select's token codec encodes each field by hand, so the pick silently dropped the
+  field and `a_custom_class_carries_its_camo_choice` failed. The codec now carries it as a reticle
+  index after the colour. `max_legal_bytes` counts six option fields (bound 161 bytes), and
+  `kit_coverage` sweeps every secondary reticle. Over the install: 12,524 classes, largest 20
+  words. **Gotcha:** a new `CustomClass` field must be added to `classwire::encode`/`decode` too;
+  only the round-trip sweep catches it.
+* `generals.rs`: cac-class-select moved the weapon-group and class-cap loading into
+  `class_table`, while tp-secondary-anim added `assign_sets` next to the old copy. Only the
+  body-set assignment stays in `files`.
+* `nativevm`: reticle-picker's per-slot `LOCAL_RETICLE` and bug-sweep's `Loaded::texture_paths`
+  and `drawn_mesh` are both kept. `texture_paths` walks smaw-overhead's shared `surface_files`,
+  which is no longer gated on the renderer feature, so the first and third person upload the same
+  list. `gpu.rs` uses bug-sweep's upload list with smaw-overhead's `native_surface`.
+* `WEAPON_FIELDS`: main's 151, plus `SpawnedGrenade` (crossbow), `BodyAnims` (tp) and
+  `ExplodeOnGround` (bug-sweep), gives **154**, counted by the schema test. The brief expected 153
+  because it missed tp's field.
+* TESTING.md renderer rows: the hold-sweep viewmodel row, the animation-set third-person row and
+  the shellshock headless row are all kept.
+
+**Bumps.**
+* `ZHBO_ABI_VERSION` 27 → 28, one bump for the round:
+  * `ZhboWorldPose.sidearm` becomes `anim_set` at the same offset. The Rust side now asserts its
+    16 bytes as the header already did.
+  * The `classwire` pick payload and the profile write's length −1.
+  * `ZhboClientApi.sound_loop` (`CLIENT_API_FIELDS` 14 → 15).
+* `hud::VERSION` 81 → 82. CONTRACT "Versioning" lists both.
+
+**Found by the in-game legs.**
+* **Escape on a class screen also opened Zero Hour's game menu.** The client frame that closes the
+  screen runs before Zero Hour translates the same key press, so `s_out.menu_open` was already 0
+  when the translator kept Escape. `s_classScreenSeenAt` now records when a screen was last up on
+  either side of a client frame. While a screen is up, or was up in the last 0.25 s, the
+  translator destroys Escape, from either view.
+* **`--input` could not have passed since 12a381d.** The manual scene never takes control, but the
+  leg waited for first person. Now the scene selects the General, and the script taps T (Take
+  Control's hotkey), Escapes the class screen, then holds W. The keys-held check accepts the
+  log's `[W ]`.
+* **The legs collided: "Generals is already running".** The game takes about 10 s to exit after
+  SIGTERM and holds the single-instance lock meanwhile. `stop_game` now waits for it to exit, and
+  sends SIGKILL after 30 s.
+
+**Coverage added.**
+* `--classpick` seeds the playtest's own "Custom 2": the MTAR with the Target Finder, the crossbow
+  with Dual Band, gold camos and Art of War. Its text form is 258 bytes, two over the payload. The
+  leg checks the MTAR in the pose line.
+* `--rts` checks `third-person animation set <k> (RIDER<k>)` once the SMAW is in hand. It reads a
+  new `applyWorldPoses` log line, which names the condition only if Zero Hour resolves it.
+
+**Observed, not changed.** A General who Escapes the first class screen without picking holds the
+classless kit: the knife (`Combat Knife 0|0`, animation set 2).
+
+**Verified, all on the final tree.**
+* `cargo test --workspace`: 1,025 passed.
+* `cargo clippy --workspace --all-targets`: clean.
+* Real-install suite (`-p zhbo-assets -- --ignored --skip conformance`): 66 passed.
+* Conformance is byte-identical to integration4: weapons 12,163 rows, 1,979 cells / 11 clusters;
+  cac 0 cells and 4 BO2-only rows; 12 gap clusters.
+* `cargo xtask build`: OK. It compiled shellshock-fx's `cbSoundLoop` for the first time.
+* Autotests, one at a time: default 16/16, `--classpick` 8/8, `--rts` 16/16, `--scope` pass,
+  `--w3d-ads` 2/2, `--input` 3/3.
+* `zhbo-gfx.log` has no wgpu errors on the default, `--scope` and `--w3d-ads` legs.
+* Tools against the final archive:
+  * `audit-native`: 29,067 first-person loads and 9,689 world manifests, 0 problems.
+  * `render_world_weapons`: the SMAW is no longer white.
+  * `render_viewmodels --reticle reticle_3 --reticle reticle_12` over the MTAR and the Five-seven:
+    54 images. The DW pistol needs `ZHBO_BO2_DIR` because its combination is not in the archive.
