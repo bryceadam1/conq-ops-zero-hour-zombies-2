@@ -879,6 +879,10 @@ pub(crate) fn projectiles(
             // A base weapon's alt modes (the under-barrel launcher `gl_an94_mp`) launch their own
             // projectile; every combo carrying one shares it (`share_projectiles`).
             ids.extend(d.alt_modes.iter().map(|(_, alt)| alt.clone()).filter(|a| !ids_contains(converted, a)));
+            // The grenade its projectile becomes (the crossbow's `explosive_bolt_mp`) shows its own.
+            if !d.spawns.is_empty() && !ids_contains(&ids, &d.spawns) {
+                ids.push(d.spawns.clone());
+            }
         }
     }
     ids.dedup();

@@ -9281,3 +9281,70 @@ sizes. Every legal value of every field is visited with the largest value of eve
 which bounds every legal kit without enumerating the full product. If a future field's encoding
 depends on another field, the sweep must enumerate the pair. `generals::class_table` is now the
 art-free table builder that `files` and the real-install sweep share.
+
+## The crossbow does damage: a bolt becomes its spawned grenade (2026-11-01)
+
+Playtest report: "The crossbow seems useless ... I was having a hard time doing any damage with
+it." It really did nothing. BO2's `crossbow_mp` is `weapType` projectile with `iDamage` 40, an
+explosion of radius 1 / 1 / 1, no fuse, `stickiness` all, and `projExplosion` **bolt** (9) with
+`szSpawnedGrenadeWeaponName` = `explosive_bolt_mp`. t6mp `FUN_00608c10` (the missile impact; the
+`projExplosion` switch reads `WeaponDef+0x6ec`, the name `+0x674`, the spawned def's fuse `+0x54c`)
+first deals `iDamage` to whatever the bolt struck, then in the bolt branch spawns the named grenade
+there (`FUN_00607cb0`) and links it to the struck entity (`FUN_00604340`). `explosive_bolt_mp` is a
+sticky lethal with a 1 s fuse and a 100 in blast, 150 → 25 (so a bolt in a player kills a second
+later; `_globallogic_player.gsc:2292` ragdolls the player it was stuck to).
+
+The mod read none of `projExplosion`, `stickiness` or `szSpawnedGrenadeWeaponName`. The crossbow
+flew with its own def: sticky (a hand list, `manifest::STICKY`), no fuse, so a bolt stuck to him or
+the ground and waited forever; sticking dealt no impact damage either. And every projectile was
+blind for its first 0.08 s (`ARM_TIME`, a mod number): at 4500 in/s that is 360 inches, so a
+crossbow (or ballistic knife, 2180 in/s, 175 in) could not touch anyone at close range at all.
+
+The fix, by the data:
+* `zhbo_formats::weapon` reads `projExplosion`, `stickiness`, `bProjSentientImpactExplode` and
+  `szSpawnedGrenadeWeaponName` (`proj_explosion`, `stickiness` enums beside `kind`/`class`; the
+  `weapons` CLI prints them with `--more`).
+* The def gains `spawns` (table key `SpawnedGrenade`), set from the name only for a `bolt`
+  explosion, as the engine reads it only there. The converter brings the spawned grenade into the
+  table beside its weapon, as it does an alt mode (`with_alt_modes`, the projectile models), so
+  `explosive_bolt_mp` gets its def, model, blast effects and sound. `sticky` is BO2's `stickiness`
+  all/all_orient (the name list is gone); an impact weapon (the ballistic knife) is never sticky,
+  because its strike is its damage.
+* `Projectile`: a strike by a def with `spawns` deals the impact damage and returns
+  `Outcome::Spawned`; the sim resolves the grenade (`weapon_or_none`) and starts it stuck to what
+  was hit (`Projectile::spawned`) on its own fuse, with the bolt's owner and Flak Jacket share.
+  A bolt strikes an enemy's shield like a rocket does.
+* Every strike now deals `iDamage` before it sticks or bounces (`FUN_00608c10` damages the struck
+  entity before it looks at the explosion type): a Semtex or C4 stuck on a player, a frag or
+  flashbang off his head. A bounce no longer re-strikes the object it just left
+  (`Projectile::last_struck`; it used to oscillate inside his cylinder until the fuse).
+* An impact-fuse direct hit takes only `iDamage`: BO2 passes the struck entity to the radius damage
+  (`FUN_005f2130`) as the one to skip. It was `max(iDamage, blast)`; every BO2 launcher's `iDamage`
+  kills on its own (SMAW/FHJ 1000, RPG 150, GL 135, M32 100), so only vehicles notice.
+* `ARM_TIME` is gone (BO2's missile skips only its owner, which `hit_object` already excludes), and a
+  strike is placed where the move met the object or the ground instead of at the move's end (a
+  bolt flies 25 units a logic step); a move into the ground is cut there before objects are tested,
+  so nothing under the ground is struck. The nearest object along the move is struck, not the
+  lowest id.
+* Launched projectiles carry the Flak Jacket share as thrown ones do (`fire.rs`).
+
+Verified: `cargo test --workspace` 968 passed; clippy clean; real-install `-p zhbo-assets -- --ignored --skip conformance` 59 passed (the faction-logo test needs `ZHBO_ZH_DIR`); conformance unchanged from integration4 (weapons 1,979 cells / 11 clusters, cac 0 cells, 12 gap clusters).
+
+The sweep: `zhbo_core::conformance::projectile::check` fires the real `Projectile` at a BO2
+soldier at 150/600/1200 in, straight at him and into the ground half a blast radius short, and
+checks the strike's `iDamage`, the fuse and arming distance, a spawned grenade's fuse and blast,
+a sticky grenade's fuse, the falloff and BO2's kill verdict on 100 health. The install test
+`every_projectile_hurts_by_bo2s_data` runs it over all 36 converted projectile defs (SMAW, RPG,
+FHJ-18, the nine under-barrel grenades and their nine combination alt modes, the crossbow and its
+five combinations, the ballistic knife, the hatchet, frag, Semtex, smoke, flash, EMP, concussion,
+`explosive_bolt_mp`) and checks every roster def's `spawns`/`sticky` against BO2's fields. Before
+the fix it would have failed on the crossbow (no spawned grenade, "sticks and has no fuse: it never
+goes off") and at 150 in on the crossbow and ballistic knife (the arm time). The M32 is not a
+player weapon (statstable cost -1, the War Machine scorestreak), so it is not in the table.
+
+**Gotcha:** the smoke grenade's BO2 `fuseTime` is 10 ms, so it pops long before it can strike
+anyone; the sweep skips a strike its own fuse beats. Whether BO2 holds it until it stops
+(`bProjExplodeWhenStationary`) is unchecked.
+
+The archive changes (new table key and the `explosive_bolt_mp` def, model and effects), so
+`hud::VERSION` needs a bump at integration.

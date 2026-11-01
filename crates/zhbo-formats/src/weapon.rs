@@ -69,6 +69,32 @@ pub mod kind {
     pub const RIOTSHIELD: u32 = 8;
 }
 
+/// `weapProjExposion_t` (`WeaponDef.projExplosion`), the branches of t6mp `FUN_00608c10`.
+pub mod proj_explosion {
+    pub const GRENADE: u32 = 0;
+    pub const ROCKET: u32 = 1;
+    pub const FLASHBANG: u32 = 2;
+    pub const NONE: u32 = 3;
+    pub const DUD: u32 = 4;
+    pub const SMOKE: u32 = 5;
+    pub const HEAVY: u32 = 6;
+    pub const FIRE: u32 = 7;
+    pub const NAPALM_BLOB: u32 = 8;
+    /// Spawns `szSpawnedGrenadeWeaponName` where it strikes, stuck to what it hit (the crossbow).
+    pub const BOLT: u32 = 9;
+}
+
+/// `WeapStickinessType` (`WeaponDef.stickiness`). t6mp `FUN_00608c10` sticks `ALL` and `KNIFE`
+/// on any strike and `ALL_ORIENT` on the surfaces it checks; the ground kinds are set down.
+pub mod stickiness {
+    pub const NONE: u32 = 0;
+    pub const ALL: u32 = 1;
+    pub const ALL_ORIENT: u32 = 2;
+    pub const GROUND: u32 = 3;
+    pub const GROUND_WITH_YAW: u32 = 4;
+    pub const KNIFE: u32 = 5;
+}
+
 /// `weapClass_t`.
 pub mod class {
     pub const RIFLE: u32 = 0;
@@ -728,6 +754,18 @@ pub struct Weapon {
     pub projectile_speed: i32,
     pub projectile_speed_up: i32,
     pub projectile_impact_explode: bool,
+    /// `bProjSentientImpactExplode`: goes off on striking a player or AI, even when
+    /// `projectile_impact_explode` is clear.
+    pub projectile_sentient_impact_explode: bool,
+    /// `projExplosion` (`weapProjExposion_t`, [`proj_explosion`]): what the projectile does where
+    /// it strikes or its fuse runs out (t6mp `FUN_00608c10`).
+    pub proj_explosion: u32,
+    /// `stickiness` (`WeapStickinessType`, [`stickiness`]): what a projectile sticks to where it
+    /// strikes.
+    pub stickiness: u32,
+    /// `szSpawnedGrenadeWeaponName`: the grenade weapon a projectile spawns where it strikes (the
+    /// crossbow's bolt becomes `explosive_bolt_mp`, which sticks and goes off on its own fuse).
+    pub spawned_grenade_weapon: Option<String>,
     /// Degrees.
     pub hip_spread_stand: (f32, f32),
     pub hip_spread_ducked: (f32, f32),
@@ -1207,6 +1245,10 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.projectile_speed = int(z, d + WD::iProjectileSpeed);
     w.projectile_speed_up = int(z, d + WD::iProjectileSpeedUp);
     w.projectile_impact_explode = z.u8(d + WD::bProjImpactExplode) != 0;
+    w.projectile_sentient_impact_explode = z.u8(d + WD::bProjSentientImpactExplode) != 0;
+    w.stickiness = z.u32(d + WD::stickiness);
+    w.proj_explosion = z.u32(d + WD::projExplosion);
+    w.spawned_grenade_weapon = opt_str(z, d + WD::szSpawnedGrenadeWeaponName);
     w.hip_spread_stand = (z.f32(d + WD::fHipSpreadStandMin), z.f32(d + WD::hipSpreadStandMax));
     w.hip_spread_ducked = (z.f32(d + WD::fHipSpreadDuckedMin), z.f32(d + WD::hipSpreadDuckedMax));
     w.hip_spread_prone = (z.f32(d + WD::fHipSpreadProneMin), z.f32(d + WD::hipSpreadProneMax));

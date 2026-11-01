@@ -42,8 +42,6 @@ pub fn named_effect(name: &str) -> Option<Effect> {
     }
 }
 
-/// Thrown weapons that stick to what they hit.
-pub const STICKY: &[&str] = &["sticky_grenade_mp", "crossbow_mp", "satchel_charge_mp", "proximity_grenade_mp"];
 
 
 /// A few weapons' own display keys have no text; BO2's menus use these instead.

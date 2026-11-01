@@ -36,8 +36,6 @@ impl Flight {
 }
 /// How close a flying projectile must pass an object to hit it.
 const HIT_RADIUS: f32 = 2.5;
-/// Seconds before an impact-fuse projectile arms (it can't hit its thrower).
-const ARM_TIME: f32 = 0.08;
 /// A smoke grenade's screen: how long it stays up and how wide it is (BO2's Willy Pete).
 pub const SMOKE_TIME: f32 = 15.0;
 pub const SMOKE_RADIUS: f32 = inches(220.0);
@@ -72,6 +70,12 @@ pub struct Projectile {
     pub travelled: f32,
     /// Bounced this step: where, and off what (the client's bounce sound). Cleared every step.
     pub bounced: Option<(Vec3, Surface)>,
+    /// Struck an enemy for its impact damage this step and flew on (stuck or bounced): whether
+    /// that killed (the client's hit marker). Cleared every step.
+    pub struck: Option<bool>,
+    /// The object it last struck and bounced off: not struck again until it strikes something
+    /// else (a bounce leaves it inside the object's cylinder for a step).
+    pub last_struck: Option<u32>,
     /// Gravity and bounce, from the tuning pack at launch.
     pub flight: Flight,
 }
@@ -87,6 +91,10 @@ pub enum Outcome {
     Dud { at: Vec3, hit_enemy: bool, kill: bool, surface: Surface },
     /// Came to rest (or stuck to `stuck_to`) as equipment; its object stays.
     Landed { at: Vec3, stuck_to: Option<u32> },
+    /// Struck something and becomes the def's spawned grenade ([`WeaponDef::spawns`]) there,
+    /// stuck to `stuck_to` (none: the ground or a shield); the direct hit already took the impact
+    /// damage.
+    Spawned { at: Vec3, stuck_to: Option<u32>, hit_enemy: bool, kill: bool },
 }
 
 impl Projectile {
@@ -98,7 +106,7 @@ impl Projectile {
         let lands = crate::equipment::Kind::of(def) != crate::equipment::Kind::Other;
         let fuse = if lands || def.impact_explode || def.effect == Effect::Impact || def.fuse_time <= 0.0 { f32::INFINITY } else { fuse_left };
         let flight = Flight::from_tuning(&crate::tuning::get());
-        Projectile { def, owner, pos: from, vel, fuse, age: 0.0, object, stuck_to: None, resting: false, self_blast_scale: 1.0, self_stun_scale: 1.0, lands, travelled: 0.0, bounced: None, flight }
+        Projectile { def, owner, pos: from, vel, fuse, age: 0.0, object, stuck_to: None, resting: false, self_blast_scale: 1.0, self_stun_scale: 1.0, lands, travelled: 0.0, bounced: None, struck: None, last_struck: None, flight }
     }
 
     /// Advance one logic frame with no shields about (see [`Projectile::step_shielded`]).
@@ -114,6 +122,7 @@ impl Projectile {
         let dt = LOGIC_DT;
         self.age += dt;
         self.bounced = None;
+        self.struck = None;
         self.fuse -= dt;
         if self.fuse <= 0.0 {
             return Some(self.go_off(host, None, shields));
@@ -130,19 +139,32 @@ impl Projectile {
             if self.def.projectile_gravity {
                 self.vel.z -= self.flight.gravity * dt;
             }
-            let next = self.pos + self.vel * dt;
+            let mut next = self.pos + self.vel * dt;
+            // A move into the ground ends where it meets it: nothing beyond (or under) is struck.
+            let ground = host.ground_height(next.x, next.y);
+            if next.z <= ground && self.pos.z > next.z {
+                let t = ((self.pos.z - ground) / (self.pos.z - next.z)).clamp(0.0, 1.0);
+                next = self.pos + (next - self.pos) * t;
+                next.z = next.z.max(ground);
+            }
             // Not armed yet when this move ends short of the activation distance (BO2 compares the
             // path summed so far, this move included, `FUN_00604280`).
             self.travelled += (next - self.pos).length();
             let dud = self.def.activate_dist > 0.0 && self.travelled < self.def.activate_dist;
-            // An enemy's shield along the way (what sticks or lands keeps its own path).
-            if self.age > ARM_TIME && !self.def.sticky && !self.lands {
+            // An enemy's shield along the way (what sticks or lands keeps its own path; a bolt that
+            // spawns its grenade strikes the shield like anything else).
+            let spawns = !self.def.spawns.is_empty();
+            if (spawns || !self.def.sticky) && !self.lands {
                 let seg = next - self.pos;
                 let len = seg.length();
                 // A deployed shield (`general` 0) stops everyone's; a carried one an enemy's.
                 let enemy = |b: &crate::shield::Bearer| b.general == 0 || b.general != self.owner && host.object(b.general, self.owner).is_some_and(|o| !o.has(objflags::ALLY) && !o.has(objflags::DEAD));
                 if let Some((_, t)) = crate::shield::blocking(shields, &enemy, self.pos, seg.normalized_or_zero(), len, len, None) {
                     self.pos += seg.normalized_or_zero() * t;
+                    if spawns {
+                        self.remove_object(host);
+                        return Some(Outcome::Spawned { at: self.pos, stuck_to: None, hit_enemy: false, kill: false });
+                    }
                     if self.def.effect == Effect::Explode {
                         return Some(self.go_off(host, None, shields));
                     }
@@ -150,30 +172,46 @@ impl Projectile {
                     return Some(Outcome::Hit { at: self.pos, kill: false });
                 }
             }
-            // Objects along the way.
-            if self.age > ARM_TIME {
-                if let Some(o) = self.hit_object(host, self.pos, next) {
-                    self.pos = next;
-                    if self.def.sticky {
-                        self.stuck_to = Some(o.id);
-                    } else if self.def.impact_explode && dud {
-                        return Some(self.dud(host, Some(o)));
-                    } else if self.def.impact_explode {
-                        return Some(self.go_off(host, Some(o), shields));
-                    } else if self.def.effect == Effect::Impact {
-                        return Some(self.impact(host, o));
-                    } else {
-                        // Grenades bounce off.
-                        let surface = Surface::of_object(Some(&o));
-                        let (along, up) = self.bounce_scales(surface);
-                        self.vel = Vec3::new(-self.vel.x * along, -self.vel.y * along, self.vel.z * up);
-                        self.bounce(host, surface);
-                    }
+            // Objects along the way (never its thrower, as BO2's missile skips its owner).
+            if let Some((o, t)) = self.hit_object(host, self.pos, next) {
+                // Where along this move it met him, not the move's end (a bolt covers 25 units
+                // a step).
+                let at = self.pos + (next - self.pos) * t;
+                self.travelled -= (next - at).length();
+                let dud = self.def.activate_dist > 0.0 && self.travelled < self.def.activate_dist;
+                next = at;
+                self.pos = at;
+                if spawns {
+                    return Some(self.spawn(host, Some(o)));
+                } else if self.def.impact_explode && dud {
+                    return Some(self.dud(host, Some(o)));
+                } else if self.def.impact_explode {
+                    return Some(self.go_off(host, Some(o), shields));
+                } else if self.def.effect == Effect::Impact {
+                    return Some(self.impact(host, o));
+                }
+                // BO2 strikes every entity a missile hits for its `iDamage` before it sticks or
+                // bounces (t6mp `FUN_00608c10`): a Semtex stuck to a player, a frag or
+                // flashbang off his head.
+                self.strike(host, &o);
+                if self.def.sticky {
+                    self.stuck_to = Some(o.id);
+                } else {
+                    // Grenades bounce off.
+                    self.last_struck = Some(o.id);
+                    let surface = Surface::of_object(Some(&o));
+                    let (along, up) = self.bounce_scales(surface);
+                    self.vel = Vec3::new(-self.vel.x * along, -self.vel.y * along, self.vel.z * up);
+                    self.bounce(host, surface);
                 }
             }
             let ground = host.ground_height(next.x, next.y);
             if next.z <= ground {
                 self.pos = Vec3::new(next.x, next.y, ground);
+                self.last_struck = None;
+                if spawns {
+                    return Some(self.spawn(host, None));
+                }
                 if self.def.impact_explode && dud {
                     return Some(self.dud(host, None));
                 }
@@ -210,14 +248,15 @@ impl Projectile {
         None
     }
 
-    fn hit_object(&self, host: &dyn LogicHost, from: Vec3, to: Vec3) -> Option<ObjInfo> {
+    /// The first object the move `from`→`to` meets, and how far along the move (0..1) it does.
+    fn hit_object(&self, host: &dyn LogicHost, from: Vec3, to: Vec3) -> Option<(ObjInfo, f32)> {
         let mid = (from + to) * 0.5;
         let reach = (to - from).length() * 0.5 + HIT_RADIUS + 12.0;
         let mut objs = Vec::new();
         host.query(mid, reach, self.owner, &mut objs);
         objs.into_iter()
-            .filter(|o| o.id != self.owner && o.id != self.object && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::ALLY))
-            .filter(|o| {
+            .filter(|o| o.id != self.owner && o.id != self.object && Some(o.id) != self.last_struck && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::ALLY))
+            .filter_map(|o| {
                 // Closest approach of the segment to the object's axis, within its radius and height.
                 let r = if o.has(objflags::INFANTRY) { 1.5 } else { o.major_radius } + HIT_RADIUS * 0.5;
                 let seg = to - from;
@@ -225,9 +264,49 @@ impl Projectile {
                 let t = (((o.pos.x - from.x) * seg.x + (o.pos.y - from.y) * seg.y) / len2).clamp(0.0, 1.0);
                 let p = from + seg * t;
                 let (dx, dy) = (p.x - o.pos.x, p.y - o.pos.y);
-                dx * dx + dy * dy <= r * r && p.z >= o.pos.z - 1.0 && p.z <= o.pos.z + o.height.max(2.0) + 1.0
+                (dx * dx + dy * dy <= r * r && p.z >= o.pos.z - 1.0 && p.z <= o.pos.z + o.height.max(2.0) + 1.0).then_some((o, t))
             })
-            .min_by_key(|o| o.id)
+            // The nearest along the move (ties by id, deterministic).
+            .min_by(|a, b| a.1.total_cmp(&b.1).then(a.0.id.cmp(&b.0.id)))
+    }
+
+    /// The impact damage (`iDamage`) of a strike on `o` that does not end the flight; notes the
+    /// hit for the client ([`Self::struck`]).
+    fn strike(&mut self, host: &dyn LogicHost, o: &ObjInfo) {
+        let amount = self.def.damage[0] * BO2_TO_ZH_DAMAGE;
+        if amount > 0.0 {
+            self.struck = Some(host.damage(self.owner, o.id, amount, damage_kind::SMALL_ARMS));
+        }
+    }
+
+    /// Struck `direct` (none: the ground) as a bolt (BO2's `projExplosion` `bolt`, t6mp
+    /// `FUN_00608c10`): what it hit takes the def's impact damage (`iDamage`, before the explosion
+    /// type is looked at) and the bolt becomes its spawned grenade, stuck to it.
+    fn spawn(&mut self, host: &dyn LogicHost, direct: Option<ObjInfo>) -> Outcome {
+        self.remove_object(host);
+        let (mut hit_enemy, mut kill) = (false, false);
+        if let Some(o) = &direct {
+            let amount = self.def.damage[0] * BO2_TO_ZH_DAMAGE;
+            if amount > 0.0 {
+                kill = host.damage(self.owner, o.id, amount, damage_kind::SMALL_ARMS);
+                hit_enemy = true;
+            }
+        }
+        Outcome::Spawned { at: self.pos, stuck_to: direct.map(|o| o.id), hit_enemy, kill }
+    }
+
+    /// The grenade a bolt becomes where it struck ([`Outcome::Spawned`]): `def` at `at`, stuck to
+    /// `stuck_to` (else resting there), on `def`'s own fuse, with the bolt's owner and self-harm
+    /// scales.
+    pub fn spawned(&self, def: &'static WeaponDef, at: Vec3, stuck_to: Option<u32>, host: &dyn LogicHost) -> Projectile {
+        let yaw = self.vel.y.atan2(self.vel.x);
+        let mut p = Projectile::launch(def, self.owner, at, Vec3::ZERO, def.fuse_time, host, yaw);
+        p.vel = Vec3::ZERO;
+        p.stuck_to = stuck_to;
+        p.resting = stuck_to.is_none();
+        p.self_blast_scale = self.self_blast_scale;
+        p.self_stun_scale = self.self_stun_scale;
+        p
     }
 
     fn impact(&mut self, host: &dyn LogicHost, o: ObjInfo) -> Outcome {
@@ -366,10 +445,10 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
         let own = o.id == owner;
         match d.effect {
             Effect::Explode => {
-                let mut amount = d.explosion_damage_at(dist) * BO2_TO_ZH_DAMAGE;
-                if direct_hit {
-                    amount = amount.max(d.damage[0] * BO2_TO_ZH_DAMAGE);
-                }
+                // What it struck takes the impact damage (`iDamage`) and is spared the radius: t6mp
+                // `FUN_00608c10` damages the struck entity first, then passes it to the radius
+                // damage (`FUN_005f2130`) as the one to skip.
+                let mut amount = if direct_hit { d.damage[0] } else { d.explosion_damage_at(dist) } * BO2_TO_ZH_DAMAGE;
                 if own {
                     amount *= self_blast_scale;
                 }

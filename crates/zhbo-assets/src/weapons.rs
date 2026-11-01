@@ -443,9 +443,12 @@ pub fn table_with_metadata(
             d.class = Class::Sniper;
         }
     }
+    // The weapons the roster's reach without being items: the alt modes their attachments add
+    // and the grenades their projectiles become (`explosive_bolt_mp`).
     let mut extra: Vec<String> = Vec::new();
     for d in &weapons {
         extra.extend(d.alt_modes.iter().map(|(_, alt)| alt.clone()));
+        extra.extend((!d.spawns.is_empty()).then(|| d.spawns.clone()));
     }
     for id in extra {
         if weapons.iter().any(|d| d.id == id) {
@@ -862,13 +865,14 @@ pub(crate) fn gated_sound(
     silencer.into_iter().chain(kinds).filter_map(single).find(|u| u.sound_overrides & bit != 0).map(|u| field(u).clone())
 }
 
-/// `ids` and the alt modes they reach: each one's current alt (`d.alt`) and every alt weapon its
-/// attachments add (`alt_modes`), each once, in first-seen order.
+/// `ids` and the alt modes they reach: each one's current alt (`d.alt`), every alt weapon its
+/// attachments add (`alt_modes`) and the grenade its projectile becomes (`spawns`), each once, in
+/// first-seen order.
 pub fn with_alt_modes(defs: &[WeaponDef], ids: &[String]) -> Vec<String> {
     let mut out: Vec<String> = ids.to_vec();
     for id in ids {
         let Some(d) = defs.iter().find(|d| &d.id == id) else { continue };
-        let alts = std::iter::once(&d.alt).chain(d.alt_modes.iter().map(|(_, alt)| alt));
+        let alts = std::iter::once(&d.alt).chain(d.alt_modes.iter().map(|(_, alt)| alt)).chain(std::iter::once(&d.spawns));
         for alt in alts.filter(|a| !a.is_empty()) {
             if !out.contains(alt) {
                 out.push(alt.clone());
@@ -1114,7 +1118,10 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         .cloned()
         .unwrap_or_else(|| w.name.trim_end_matches("_mp").to_uppercase());
     let effect = effect_of(w);
-    let sticky = manifest::STICKY.contains(&w.name.as_str());
+    // What sticks and then waits (a fuse, or landing as equipment): BO2's `stickiness` `all` or
+    // `all_orient`. An impact weapon's strike is its damage (the ballistic knife lies where it
+    // struck, spent), so it never waits.
+    let sticky = matches!(w.stickiness, bo2::stickiness::ALL | bo2::stickiness::ALL_ORIENT) && effect != Effect::Impact;
     let mut damage = [0.0; 6];
     let mut damage_range = [0.0; 6];
     for i in 0..6 {
@@ -1205,6 +1212,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         // BO2's impact bucket: which `FxImpactTable` entry this weapon's hits use (R8d).
         impact_type: w.impact_type as i32,
         sticky,
+        // Only the `bolt` explosion type reads the name (t6mp `FUN_00608c10`).
+        spawns: if w.proj_explosion == bo2::proj_explosion::BOLT { w.spawned_grenade_weapon.clone().unwrap_or_default() } else { String::new() },
         fx_weapon: String::new(),
         view_flash_fx: String::new(),
         view_shell_fx: String::new(),
@@ -1773,6 +1782,40 @@ mod tests {
         }
         let flash = Weapon { name: "flash_grenade_mp".into(), weap_type: bo2::kind::GRENADE, offhand_slot: bo2::offhand_slot::TACTICAL, ..Default::default() };
         assert_eq!(class_of(&flash), Class::Tactical);
+    }
+
+    /// A `bolt` explosion spawns its `szSpawnedGrenadeWeaponName` (the crossbow's
+    /// `explosive_bolt_mp`), which joins the table beside its weapon; no other explosion type reads
+    /// the name. `stickiness` all/all_orient sticks, unless the strike is the damage.
+    #[test]
+    fn a_bolt_spawns_its_grenade_and_stickiness_is_bo2s() {
+        use bo2::{proj_explosion, stickiness};
+        let crossbow = Weapon {
+            name: "crossbow_mp".into(),
+            weap_type: bo2::kind::PROJECTILE,
+            view_model: Some("v".into()),
+            proj_explosion: proj_explosion::BOLT,
+            stickiness: stickiness::ALL,
+            spawned_grenade_weapon: Some("explosive_bolt_mp".into()),
+            ..Default::default()
+        };
+        let bolt = Weapon { name: "explosive_bolt_mp".into(), weap_type: bo2::kind::GRENADE, offhand_slot: bo2::offhand_slot::LETHAL, stickiness: stickiness::ALL, fuse_time: 1.0, ..Default::default() };
+        let d = to_def(&crossbow, &HashMap::new());
+        assert_eq!(d.spawns, "explosive_bolt_mp");
+        let text = zhbo_core::weapons::format_table(std::slice::from_ref(&d));
+        assert_eq!(zhbo_core::weapons::parse_table(&text).unwrap()[0].spawns, "explosive_bolt_mp", "round trip");
+        let rocket = Weapon { proj_explosion: proj_explosion::ROCKET, ..crossbow.clone() };
+        assert_eq!(to_def(&rocket, &HashMap::new()).spawns, "", "only a bolt reads the name");
+        let table = table(&[crossbow.clone(), bolt.clone()], &[], None, &HashMap::new(), &Roster::any());
+        let spawned = table.weapons.iter().find(|w| w.id == "explosive_bolt_mp").expect("the spawned grenade is in the table");
+        assert!(spawned.sticky && spawned.fuse_time == 1.0 && spawned.effect == Effect::Explode);
+        // The ballistic knife sticks in BO2 too, but its strike is the damage: it never waits.
+        let knife = Weapon { name: "knife_ballistic_mp".into(), weap_type: bo2::kind::PROJECTILE, stickiness: stickiness::ALL, ..Default::default() };
+        assert!(!to_def(&knife, &HashMap::new()).sticky);
+        let c4 = Weapon { name: "satchel_charge_mp".into(), weap_type: bo2::kind::GRENADE, stickiness: stickiness::ALL_ORIENT, ..Default::default() };
+        assert!(to_def(&c4, &HashMap::new()).sticky);
+        let claymore = Weapon { name: "claymore_mp".into(), weap_type: bo2::kind::GRENADE, stickiness: stickiness::GROUND_WITH_YAW, ..Default::default() };
+        assert!(!to_def(&claymore, &HashMap::new()).sticky);
     }
 
     #[test]

@@ -1911,6 +1911,46 @@ fn a_launcher_grenade_inside_its_arming_distance_is_a_dud() {
     assert!(ev.iter().any(|k| matches!(k, EventKind::Exploded { .. })) && !ev.iter().any(|k| matches!(k, EventKind::Dud { .. })));
 }
 
+/// BO2's crossbow (`projExplosion` bolt, t6mp `FUN_00608c10`): the bolt strikes for its impact
+/// damage, becomes its spawned grenade stuck in what it hit, and that goes off on its own fuse with
+/// its own blast. Here the bolt spawns the built-in frag (the converted table carries
+/// `explosive_bolt_mp`); before the fix a bolt only stuck, with no fuse, and never hurt anyone.
+#[test]
+fn a_crossbow_bolt_strikes_then_its_spawned_grenade_goes_off_in_him() {
+    let frag = crate::weapons::weapon("frag_grenade_mp");
+    let mut damage = [0.0; 6];
+    damage[0] = 40.0;
+    let bolt: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef {
+        id: "test_crossbow_mp".into(),
+        class: Class::Special,
+        effect: crate::weapons::Effect::Explode,
+        sticky: true,
+        spawns: frag.id.clone(),
+        projectile_speed: crate::units::inches(4500.0),
+        damage,
+        ..Default::default()
+    }));
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    // 150 inches off: inside the reach the old 0.08 s arm time left untouchable at this speed.
+    host.add(ObjInfo { health: 1000.0, max_health: 1000.0, ..soldier(5, 1, crate::units::inches(150.0)) });
+    let mut sim = Sim::new();
+    sim.projectiles.push((0, Projectile::launch(bolt, 1, Vec3::new(0.0, 0.0, 6.0), Vec3::new(1.0, 0.0, 0.0), 0.0, &host, 0.0)));
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 3);
+    assert_eq!(host.damage_log.borrow().clone(), vec![(1, 5, 40.0 * crate::units::BO2_TO_ZH_DAMAGE)], "the strike's impact damage");
+    assert!(events(&sim).iter().any(|k| matches!(k, EventKind::HitMarker { kill: false, .. })));
+    assert_eq!(sim.projectiles.len(), 1, "the bolt became its grenade");
+    assert_eq!(sim.projectiles[0].1.def.id, frag.id);
+    assert_eq!(sim.projectiles[0].1.stuck_to, Some(5), "stuck in him");
+    run(&mut sim, &host, 0, 1, FpsInput::default(), frames(frag.fuse_time) - 2);
+    // (The shooter, inside the frag's radius, takes his share too.)
+    let log: Vec<_> = host.damage_log.borrow().iter().copied().filter(|h| h.1 == 5).collect();
+    assert_eq!(log.len(), 2, "{log:?}");
+    let blast = frag.explosion_damage_at(0.0) * crate::units::BO2_TO_ZH_DAMAGE;
+    assert!((log[1].2 - blast).abs() < 1e-3, "the grenade's blast at its centre: {log:?}");
+    assert!(events(&sim).iter().any(|k| matches!(k, EventKind::Exploded { .. })));
+}
+
 #[test]
 fn a_smoke_grenade_screens_for_its_time_then_clears() {
     let host = FakeHost::default();

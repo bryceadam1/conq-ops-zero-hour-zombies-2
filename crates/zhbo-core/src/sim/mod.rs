@@ -722,10 +722,14 @@ impl Sim {
     fn step_projectiles(&mut self, host: &dyn LogicHost) {
         let mut done = Vec::new();
         let mut bounces = Vec::new();
+        let mut struck = Vec::new();
         for (i, (owner, proj)) in self.projectiles.iter_mut().enumerate() {
             let outcome = proj.step_shielded(host, &self.shields);
             if let Some((at, surface)) = proj.bounced {
                 bounces.push((*owner, at, proj.def.bounce_sound(surface)));
+            }
+            if let Some(kill) = proj.struck {
+                struck.push((*owner, kill));
             }
             if let Some(outcome) = outcome {
                 done.push((i, *owner, outcome));
@@ -733,6 +737,12 @@ impl Sim {
         }
         for (owner, at, sound) in bounces {
             self.emit(owner, EventKind::Bounced { at, sound });
+        }
+        for (owner, kill) in struck {
+            self.emit(owner, EventKind::HitMarker { headshot: false, kill });
+            if kill {
+                self.scavenge(owner);
+            }
         }
         for (i, owner, outcome) in done.iter().rev() {
             let (_, proj) = self.projectiles.remove(*i);
@@ -765,6 +775,20 @@ impl Sim {
                     if kill {
                         self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
                         self.scavenge(*owner);
+                    }
+                }
+                Outcome::Spawned { at, stuck_to, hit_enemy, kill } => {
+                    if hit_enemy {
+                        self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
+                    }
+                    if kill {
+                        self.scavenge(*owner);
+                    }
+                    // A table without the spawned grenade has nothing to leave (noted once by
+                    // `weapon_or_none`).
+                    if let Some(def) = crate::weapons::weapon_or_none(&proj.def.spawns) {
+                        let grenade = proj.spawned(def, at, stuck_to, host);
+                        self.projectiles.push((*owner, grenade));
                     }
                 }
                 Outcome::Landed { at, stuck_to } => {

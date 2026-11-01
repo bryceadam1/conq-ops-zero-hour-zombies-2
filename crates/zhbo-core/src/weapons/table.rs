@@ -675,6 +675,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             d.sticky = v.flag(4);
             Ok(())
         }),
+    field!("SpawnedGrenade", "The grenade weapon the projectile becomes where it strikes, stuck to what it hit (BO2's `projExplosion` bolt: `szSpawnedGrenadeWeaponName`); empty for none.", FieldKind::Str,
+        |d: &WeaponDef| d.spawns.clone(),
+        |d: &mut WeaponDef, v: Values| { d.spawns = v.text.into(); Ok(()) }),
     field!("FxWeapon", "Zero Hour assets made for this weapon by the converter (empty when absent).", FieldKind::Str,
         |d: &WeaponDef| d.fx_weapon.clone(),
         |d: &mut WeaponDef, v: Values| { d.fx_weapon = v.text.into(); Ok(()) }),
@@ -1239,7 +1242,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 151);
+        assert_eq!(WEAPON_FIELDS.len(), 152);
         assert_eq!(ATTACHMENT_FIELDS.len(), 31);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }
