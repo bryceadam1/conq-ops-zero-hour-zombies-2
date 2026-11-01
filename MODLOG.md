@@ -10122,3 +10122,45 @@ third session and stands a new `ZHBO_General_USA` in his place (`autopilot: resp
 then takes control of him. The new checks are "respawned a General" and "came back with the
 class": that session has no `awaiting a class` pose line, an `MTAR` one, and a changing pose. The
 auto-exit went 60 → 75 s. The "Escape kept playing" check now counts only the third session.
+
+## Integration: no classless spawn (2026-11-01, `v1/integration6`)
+
+Merged `v1/no-classless-spawn` (15aabb3, 83ea69f) onto main b7cb068. It is a fast-forward, so
+there were no conflicts.
+
+**Bumps.**
+* `ZHBO_ABI_VERSION` 28 → 29 (`ffi.rs` and `zhbo_core.h`). The only change is the appended
+  `ZhboClientOut.select_object`: 4872 → 4876 bytes, asserted on both sides. CONTRACT's "pending
+  for the next bump" note is now the ABI 29 paragraph in "Versioning", after ABI 28.
+* `hud::VERSION` 82 → 83, for the weapon table's new `UiText MP_CHANGE_CLASS_NEXT_SPAWN`.
+
+**First compile of the host C++.** The bridge's `select_object` handling (`ZhboBridge.cpp`) and
+the classpick autopilot's kill-and-respawn (`ZhboAutopilot.cpp`) compiled cleanly on the first
+`cargo xtask build`, with no new warnings.
+
+**Grace period: still unverified.** `ClassChangeGracePeriod` stays at 15. I searched the
+`--list` output of every fastfile in `zone/all` with the OAT Unlinker for
+`maps/mp/gametypes/_globallogic.gsc`, and BO2 does not ship it in any of them. The
+`t6mp.exe` strings have no grace-period dvar for the class change either. The tuning key's
+description already says the value is unverified.
+
+**Observed.** On the classpick leg, after the autopilot kills General 226 and spawns 230, the
+camera that leaves 226's first person selects 230 (`selected General 230 back overhead`), the
+player's live General. The dead General cannot be selected, so this is the intended path.
+
+**Verified, all on the final tree.**
+* `cargo test --workspace`: 1,032 passed, 0 failed.
+* `cargo clippy --workspace --all-targets`: clean.
+* Real-install suite (`-p zhbo-assets -- --ignored --skip conformance`): 66 passed.
+* Conformance: byte-identical to integration5 (all 10 CSVs and reports). Weapons: 12,163 rows,
+  1,979 cells / 11 clusters. CaC: 0 cells and 4 BO2-only rows. 12 gap clusters.
+* `cargo xtask build`: OK.
+* Autotests, one at a time:
+  * default 16/16
+  * `--classpick` 12/12: Escape-first decline, the pick, re-entry, then the respawned General
+    comes in with the class and no screen
+  * `--rts` 16/16
+  * `--scope`: pass
+  * `--w3d-ads` 2/2
+  * `--input` 3/3: Escape → back overhead → General reselected → T → 6 → SMG class → W
+* `zhbo-gfx.log` has no errors on the default, `--scope` and `--w3d-ads` legs.

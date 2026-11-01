@@ -1010,11 +1010,6 @@ Polish round 3 again moved only the archive: `hud::VERSION` 81 (the weapon table
 statstable-derived roster, the order-independent texture conversion, the Assault premade base kit); the ABI and the
 blob formats are unchanged.
 
-**Pending for the next bump** (no-classless-spawn): `ZhboClientOut.select_object` (`uint32_t`, one-shot
-object to select overhead: the local General as he comes back alive from first person) is appended
-after `viewmodel_fired_left`: `ZhboClientOut` 4872 → 4876 bytes, asserted on both sides.
-`ZHBO_ABI_VERSION` is left for the integrator to bump.
-
 **ABI 28** (playtest round 2's integration, one bump for the round): `ZhboClientApi.sound_loop` is
 appended after `sound_gain` (`ZHBO_CLIENT_API_FIELDS` 14 → 15, the shellshock's ringing; see "The
 shellshock's presentation"); no struct moves otherwise, only meanings. `ZhboWorldPose`'s
@@ -1029,6 +1024,12 @@ profile). Archive `hud::VERSION` 82 at the same point (the weapon table's `Spawn
 converted beside the crossbow, the
 per-optic reticle names and art, the patch-zone reference materials, the body's per-set W3D clips
 and INI); the native blob formats are unchanged.
+
+**ABI 29** (no-classless-spawn's integration): `ZhboClientOut.select_object` (`uint32_t`, one-shot
+object to select overhead: the local General as he comes back alive from first person) is appended
+after `viewmodel_fired_left`: `ZhboClientOut` 4872 → 4876 bytes, asserted on both sides; nothing else
+moves. Archive `hud::VERSION` 83 at the same point (the weapon table's `UiText
+MP_CHANGE_CLASS_NEXT_SPAWN`, the mid-life class change's hint); the native blob formats are unchanged.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 
