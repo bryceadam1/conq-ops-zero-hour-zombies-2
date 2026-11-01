@@ -1123,15 +1123,15 @@ fn random_input_never_breaks_the_arsenal() {
                 x ^= x >> 17;
                 x ^= x << 5;
                 let mut pressed = 0;
-                if x % 7 == 0 {
+                if x.is_multiple_of(7) {
                     let b = presses[(x >> 8) as usize % presses.len()];
                     held ^= b;
                     if held & b != 0 {
                         pressed = b;
                     }
                 }
-                let sprinting = held & buttons::SPRINT != 0 && x % 3 == 0;
-                a.plant_ok = [x % 5 != 0, x % 11 != 0];
+                let sprinting = held & buttons::SPRINT != 0 && x.is_multiple_of(3);
+                a.plant_ok = [!x.is_multiple_of(5), !x.is_multiple_of(11)];
                 out.clear();
                 a.step(held, pressed, sprinting, (x as usize >> 20) % 3, ((x >> 4) % 300) as f32, &mut rng, &mut out);
                 let at = || format!("{} / {} seed {seed} frame {f}", g.id, other.id);
