@@ -144,6 +144,7 @@ pub fn width(family: Family, text: &str, height: f32) -> f32 {
 /// Draw `text` in a LUI text box: `x` is the box's left, centre or right edge per `align`, `top`
 /// its top, `height` its height (the text size). The pen line is the box's bottom edge: a glyph's
 /// `y0` is measured up from it.
+#[allow(clippy::too_many_arguments)]
 pub fn text(prims: &mut Vec<Prim>, family: Family, text: &str, x: f32, top: f32, height: f32, align: Align, argb: u32) {
     with_font(family, |font| {
         let Some(font) = font else {

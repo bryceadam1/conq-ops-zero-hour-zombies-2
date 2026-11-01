@@ -857,6 +857,8 @@ Shield, host patch 0017) and `zhbo_load_sound_layers` (sound mixer). Blob versio
 point: archive `hud::VERSION` 78, `.zbv` `viewmodel::VERSION` 3 (part `camo` and `ads_swap`, in that
 order after `ads_only`), `.zbw` `thirdperson::WEAPON_VERSION` 3 (part `camo`), `.zbm`
 `model::VERSION` 4 (the camo layer, `specular`, `reticle`, `emblem`), `.zcm` `camo::VERSION` 2.
+Polish round 1 moved only the archive: `hud::VERSION` 79 (the weapon table's `OverlaySize` key and
+the atlas/backing changes); the ABI and the blob formats are unchanged.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 
