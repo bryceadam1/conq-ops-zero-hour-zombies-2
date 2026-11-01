@@ -7122,3 +7122,455 @@ cell is the shield's `world_model` (the column already differs on 11,543 of 11,6
 cluster) — BO2's def names the pickup model, the mod's in-hand model is the script's carry model.
 cac 573 → 573; gap clusters 199 → 199. The real-install conversion test now composes a tagged base
 part on its body bone (and on the model's origin without a body), as `nativebody::load` does.
+
+## Wildcards from the statstable (2026-10-31, `v1/wildcards`)
+
+The wildcards were a core enum with names, order and cost in code. The converter now carries
+BO2's `bonuscard` rows of the player's `mp/statstable.csv` beside the perk rows
+(`weapons::bonus_card_rows` → `BonusCard <reference>` blocks: localized name and description,
+image, column-13 loadout slot, cost, sort key, index, unlock level). `Catalog::bonus_cards` lists
+them in the grid's order: `CoD.GetUnlockablesByGroupName("bonuscard")` sorted by
+`UnlockablesComparisonFunction` (sort key, then index; `codbase.lua:6466-6500`, G17). The
+`Wildcard` enum survives as the behaviour identity (Gunfighter caps, Overkill's list, Greed rows,
+equip aliases), tied to its card by the statstable reference; name, description and cost are the
+card's. `classmenu::wildcard_list()` drives the grid; `Draft::spent` charges the card's cost.
+Tactician and Danger Close now exclude each other (`bonuscardgridbutton.lua:239-275`). The grid's
+lower panel draws the card's name (Big) and description (Default, 0.4), per `cacbonuscards.lua`.
+
+Gotchas:
+* **Expected-side fix.** `bo2/cac.rs` ranked bonus cards per column-13 slot (all 0 except
+  two_tacticals = 1). The grid is ONE list of the group (`cacbonuscards.lua:197-199` →
+  `Engine.GetUnlockablesByGroupName`, G17 `FUN_008d1a10`), so wildcards rank over the group now;
+  perks keep the per-slot ranking.
+* A table converted before this (no `BonusCard` blocks) installs the built-in stand-ins, which an
+  ignored install test pins equal to the converted rows. The archive VERSION must still bump
+  (integrator) so players get the converted rows.
+* Profiles store no cards (re-derived from the class), so old profiles load unchanged.
+* The screenshot harness aborted on the scope overlays' MappedImage pages (named without the
+  `.tga` the archive stores); it now tries the extension, and a missing page only falls back.
+
+Measured: cac 555 → 532 (`slot` 8 → 0, cluster gone; `description` 90 → 82; `order` 441 → 434),
+weapons 781,251 unchanged, gap clusters 202 → 201.
+
+## Perk names and descriptions from the statstable (2026-10-31, `v1/perks-cards`)
+
+The perk grid showed the spec ids (`FastHands`) in its cells and only the name under the grid;
+BO2's (`cacperksp.lua:280-360`, `e-perks/002`) shows the localized name in each cell and, under the
+grid, the highlighted perk's name in Big over its description in Default at 0.4 alpha — the same
+panel as the wildcard grid's (`perkTitle`/`perkDescription`, set from `GetItemName`/`GetItemDesc`
+at `:505-545`). The `Perk <reference>` blocks of the weapon table now carry the `specialty` row's
+localized name (column 3) and description (column 7) beside the specialty set (column 4); the
+built-in table holds the same sixteen rows, so `PerkDef` lost its specialty copy and
+`Perk::specialties/name/description` read the installed catalog's row (`Catalog::perk`, replacing
+the `perks::install_converted` mutex). The editor's panel is one `draw_item_panel` for both grids.
+
+* A table converted before this keeps its specialty sets and takes the stand-ins' name and
+  description; the archive VERSION must bump (integrator) so players get the converted text.
+* Dexterity's BO2 description ends in a space (`... climb faster. `); the table format trims values,
+  so that one cell keeps differing like the attachments' trailing-space descriptions.
+
+## Tactician and Danger Close give what BO2 gives (2026-10-31, `v1/perks-cards`)
+
+Both cards were grid entries with no effect on the class. BO2 has no script for either:
+`_class.gsc:704-757` gives the lethal slot's item with the loadout's `primarygrenadecount` and the
+tactical slot's with `specialgrenadecount`; the cards only widen what the slot may hold.
+`cacgrenadesbutton.lua:130-160`: the lethal slot takes one, or two with `bonuscard_danger_close`;
+with `bonuscard_two_tacticals` it lists the tactical items instead (count up to two, like the
+tactical slot). `checkclasses.lua:677-700` enforces it: a `specialgrenade` item in `primarygrenade`
+needs Tactician, a `primarygrenadecount` of 2 needs Danger Close.
+
+* The loadout and the custom class carry the lethal count (`lethal_count`, spec key
+  `lethal_count`, serialised only when set); `Arsenal::with_loadout` starts the lethal with it, else
+  the item's own start count as before. A Draft with Danger Close and a lethal carries
+  `MAX_GRENADES` (`CoD.CACUtility.maxGrenades`) and charges the second lethal as its own element.
+* Tactician: the class gives whatever the lethal slot holds, a tactical too (it already did, but
+  `classrepair` cleared a tactical there). Repair now keeps it, clamps the count to `maxGrenades`
+  and drops it for an empty slot or Tactician's tactical; trimming takes the second lethal before
+  the lethal. `wildcards_of` re-derives Tactician (the lethal slot holds a statstable
+  `specialgrenade` item) and Danger Close (`lethal_count` > 1).
+* Scavenger refills each offhand by one up to what the class carries (`_weapons.gsc:1804-1850`);
+  it used to set the lethal to at least one and never touched the tactical.
+* Not done here (editor listing, `v1/equipment-melee`'s area): the lethal slot listing the
+  tactical items under Tactician (`cacgrenades.lua:96-200`). Until it does, the editor cannot put a
+  tactical there, so an equipped Tactician card has nothing to act on and is not re-derived when
+  the class is reopened. The tactical's own count (BO2's `specialgrenadecount`, a second tactical
+  costing a point) is still the item's start count.
+
+## Wildcard art from the card's image column (2026-10-31, `v1/perks-cards`)
+
+The converter named the eight bonus-card materials in `cac::SPRITES`. It now makes each wildcard
+sprite from its card's own image (`mp/statstable.csv` column 6, `menu_mp_bonuscard_*`, the column
+the weapon table's `BonusCard` blocks carry; `bonuscardbutton.lua` draws `GetItemImage`):
+`cac::wildcard_sprites` maps each card with an editor rule to the core's sprite name for it
+(`hud::sprites::wildcard_icon`). `hud::Source::Material` takes a `Cow` so a material read from
+BO2's tables uses the same lookup as a fixed one (`common_mp`, 96 px). The conformance `image`
+column for wildcards reads the card's image when the archive has its sprite. Verified unchanged:
+the headless `cac-editor-wildcards.png` from a freshly built archive is pixel-identical to the one
+the `v1/wildcards` archive drew (as are the other shots), and the harness gains
+`cac-editor-perks.png` (the Perk 1 grid with Hardline's panel, cf. `e-perks/002`).
+
+## The scope overlays' MappedImages name their page as the archive stores it (2026-10-31, `v1/perks-cards`)
+
+The standalone overlay pages were stored as `Art\Textures\<name>.tga` but their MappedImage said
+`Texture = <name>`, unlike the atlas pages (`zhbo_bo2_hud_0.tga`); the screenshot harness aborted
+on it twice and grew a fallback. `hud::standalone_texture` is now the one spelling for the file and
+the INI. The harness keeps its extension fallback (harmless) for archives built before this.
+## Create-a-Class lists the placed equipment: offhands by statstable slot (2026-10-31, `v1/equipment-melee`)
+
+The claymore, Bouncing Betty, C4, Tactical Insertion, Trophy System and Black Hat were converted and
+played (`equipment.rs`) but never offered: `classmenu::items::equipment_ids` filtered the lethal and
+tactical lists by the mod's class (`Lethal`/`Tactical`), and these six are `Class::Equipment`;
+`classrepair::repair_offhand` even cleared a stored `lethal=claymore_mp`. BO2 lists offhands by
+`mp/statstable.csv` column 13 — betty, claymore, C4 are `primarygrenade` items; Black Hat, Tactical
+Insertion, Trophy System `specialgrenade` — the rule `v1/cac-structure` already applied to the guns.
+
+* `items::PRIMARY_GRENADE`/`SPECIAL_GRENADE`, `offhand_slot(lethal)`, `equipment_ids(lethal)` and
+  `fits_offhand(id, lethal)` read `WeaponDef::cac_slot`; the editor, `offer()` and the repair use
+  them (a claymore in the tactical slot still clears, as `CheckItems` does).
+* The in-match flow needed nothing: `Arsenal::with_loadout` takes whatever id the slot holds and
+  `equipment.rs` plants it. Fake-host test: an editor-built class with claymore + Trophy System
+  survives the repair, spawns with both and plants both.
+* Built-in stand-ins: the claymore is `Class = equipment` (as the converter makes it) with its
+  `Equipment = claymore`; a `trophy_system_mp` stand-in (`specialgrenade`).
+* Screenshot harness: `cac-editor-lethal.png` (the lethal list open on the claymore). The atlas
+  loader now finds the `ZHBO_Mat_*` material pages, whose MappedImage `Texture` has no `.tga`
+  (it failed on the current archive with "`ZHBO_Mat_scope_overlay_ballista` is missing").
+* Not done: BO2 makes these `item`-inventory weapons you switch to and fire to place (weapType
+  `grenade`); the mod plants them instantly from the offhand button. The conformance now shows it
+  (`inventory` item → offhand, `weap_type` grenade → mine on the planted five) — a behaviour item.
+
+Measured (conformance CLI vs `v1/cac-leftovers`): weapons BO2-only rows 7 → 1 (the Assault
+Shield); 781,251 → 781,587 cells — every added cell is on the six new rows (336; zero changed cells
+on any other row): they join the columns every row already differs in, plus two new clusters,
+`inventory` 0 → 6 and `weap_type` 0 → 5 (above). cac 555 → 572: the six new weapon rows join the
+offhands' existing `description` (+6), `image` (+6) and `order` (+5) gaps. Gap clusters 202 → 204.
+
+## Tactician lists the tactical items in the lethal slot (2026-10-31, `v1/cac-text`)
+
+`cacgrenades.lua:183-195`: the grenade menu for `primaryGrenade` with `bonuscard_two_tacticals`
+equipped reads `CoD.GetUnlockablesBySlotName(specialGrenade)` — only the tactical items, the lethals
+are not offered. The editor now does the same (`items::listed_slot`/`offhand_ids`, composing with
+the cherry-picked `v1/equipment-melee` rule: the statstable slot decides, `SPECIAL_GRENADE`), so the
+perks-cards Tactician card works end to end: the tactical is given from the lethal slot, the saved
+class re-derives the card on reopen (`wildcards_of`), and the reopened list is again the tactical
+one. Turning the card off clears a tactical from the lethal slot (`checkclasses.lua:677-686`'s
+`ClearSlot`).
+
+* Composition with `v1/equipment-melee`: its commit is cherry-picked (`d68e74f`). One semantic
+  merge point: its swapped-slot repair test expected a Trophy System in the lethal slot to clear;
+  with perks-cards' Tactician rule it is Tactician's and stays (only the tactical slot clears).
+* Not done: BO2 retitles the lethal button `MPUI_SECOND_SPECIAL_GRENADE_CAPS` under Tactician; the
+  mod's slot labels are fixed English and that string's text is not in the reference dumps.
+* Screenshot harness: `cac-editor-tactician.png`.
+
+## The tactical count: a second tactical costs a point (2026-10-31, `v1/cac-text`)
+
+BO2's tactical button has two boxes (`cacgrenadesbutton.lua:150-180`: `math.min(2,
+GetMaxAmmoForItem(item))`, the same for Tactician's lethal slot); the first opens the list
+(`CACGrenades.Equip` sets `count` 1), an empty second one equips another of the held item
+(`caceditclass.lua:400-566`, `GrenadesChosen` → `EquipGrenade`: `count + 1`), a filled one
+unequips one. Each grenade is an allocation element. `_class.gsc:724` gives the tactical with the
+loadout's `specialgrenadecount` (`setweaponammoclip`), so a single concussion is one concussion.
+
+* `Draft::second_offhand` ([lethal, tactical]) holds the second box; `tactical_count()` (and
+  Tactician's `lethal_count()`) is 1 or 2, `spent` charges it, `CustomClass`/`Loadout` carry
+  `tactical_count` (spec key, written when set), the arsenal starts the tactical with it and
+  Scavenger refills to it. The cap is `items::offhand_cap` (`maxGrenades` and the weapon's
+  `MaxReserve`, BO2's `iMaxAmmo`: the smoke and Tactical Insertion take one).
+* Editor: re-picking the held item in the list takes/returns the second (keyboard path); a click on
+  the button's empty second box takes it (pointer path, denied over budget); the circled X or `R`
+  on the second box returns one; the button reads `Concussion x2` (`cacgrenadesbutton.lua:215-228`).
+* Repair: counts clamp to the cap, the second tactical is trimmed before the tactical
+  (`specialgrenadecount`), and Tactician's second tactical now stays (perks-cards dropped it).
+* Behaviour change: an editor class with one tactical now gives one (it gave the item's start
+  count, the concussion's 2). Old profile entries without the key still give the start count until
+  re-saved. A single *lethal* still stores no count (perks-cards' choice): the C4's and Trophy's
+  start count 2 is still what one box gives — a follow-up for BO2's `primarygrenadecount` 1.
+
+## Weapon descriptions from the statstable (2026-10-31, `v1/cac-text`)
+
+BO2's weapon picker shows the highlighted item's description as the carousel's hint
+(`cacweaponsp.lua:540-590`: `Engine.Localize(GetItemDesc(...))` into the `CoD.HintText` the list
+was built with, `hintTextLeft 0`, `hintTextWidth 350`; `c-primary/001` puts it level with the stat
+bars). The mod had no description for weapons. `weapons::set_cac_slots` (the one statstable pass
+that already sets `CacSlot`/`CacGroup`) now also sets `WeaponDef::description` from column 7's
+localized string, exactly as the string table has it; the weapon table gains a `Description` line
+(combinations inherit the base's). The picker draws it with `bo2::hint`. This also covers the
+offhands' `description` cells (the grenades and the placed equipment are statstable items too).
+
+* The archive VERSION must bump (integrator) so players get the converted text; an old table has
+  empty descriptions and the picker draws none.
+* The trailing-space descriptions (AN-94, SIG 556, S12... `srm1216`) still differ: the table format
+  trims values (next entry).
+
+Measured (vs perks-cards' 517 + the cherry-picked equipment rows): cac `description` 67 → 24
+(every weapon row filled; left: 3 trailing-space weapons, Dexterity, 20 attachments); `image`
+9 → 15 and `order` 434 → 439 are the six equipment rows the cherry-pick adds; weapons 781,587
+unchanged (equipment-melee's number); cac 517 → 485.
+
+## Create-a-Class lists in BO2's order; the offhands' `_256` pictures and panel (2026-10-31, `v1/cac-text`)
+
+* **Order (G17).** `buildItemListForGroup` sorts a list by the statstable sort key (column 9),
+  then the item index (column 0). The weapon table now carries both (`CacOrder = <sort> <index>`,
+  `WeaponDef::cac_sort`/`cac_index`, set by `set_cac_slots`); `items::cac_entries` sorts by
+  `items::list_key` (stable, so a table without it keeps its order). Every editor list follows:
+  guns, the lethal and tactical lists (frag, Semtex, Combat Axe, Betty, C4, Claymore).
+  The conformance `order` cell is an item's rank in its statstable group, and the grenades are one
+  `weapon_grenade` group across two slot lists, so the actual side now ranks a row among its
+  group's listed items by the editor's own key (it counted within one slot list).
+* **Pictures.** BO2 draws an offhand as `GetItemImage(item) .. "_256"` (`cacgrenadesbutton.lua:
+  199-205`, `classpreview.lua:3981-3985`). The converter makes `ZHBO_CaC_Weapon_<id>` from it for
+  the statstable's `primarygrenade`/`specialgrenade` items (`cac::item_rows` gives the slot); the
+  editor's offhand boxes, list rows and the class preview draw it (they drew the HUD icon).
+* **Panel.** The grenade grid's lower panel is `grenadeTitle` (Big) over `grenadeDescription`
+  (Default, 0.4, two cells and two gaps wide), `cacgrenades.lua:262-360`/`:488-567` — the perk
+  grid's panel, now drawn for the offhand lists with the item's statstable description.
+* Remaining `order` cells: the attachments (their own queue item) and the crossbow/Ballistic
+  Knife, ranked behind BO2's Assault Shield, an item the mod does not have.
+
+Measured: cac 485 → 427: `image` 15 → 0 (cluster gone), `order` 439 → 396 (every weapon row but
+the two above); weapons 781,587 unchanged; gap clusters 203 → 202. Screenshots:
+`cac-editor-lethal.png`, `cac-editor-tactician.png`, `cac-editor-weapons.png` (plan dir).
+
+## The weapon table keeps a value exactly: quoted strings (2026-10-31, `v1/cac-text`)
+
+Some of BO2's localized descriptions end in spaces (Dexterity's, the AN-94's, the SIG 556's, the
+S12's — `srm1216` — the MMS's and the crossbow's tri-bolt's). Two places lost them: the converter
+trimmed the localized strings (`attachment_meta`, `perk_rows`, `bonus_card_rows`), and the table
+reader trims every value (and cuts a line at its first `;`, the comment marker). The converter now
+keeps BO2's text as is, and `weapons::table::quote` writes a value that would not read back —
+surrounding whitespace, a `;`, a leading `"` — in double quotes with `\"`/`\\` escapes;
+`unquote` reverses it and the comment strip ignores a `;` inside quotes. Every other value is
+written exactly as before, so the format stays readable and old tables load unchanged. Round-trip
+test: `a_string_value_round_trips_exactly`. The built-in Dexterity stand-in carries the space
+(quoted), matching the installed row (the ignored install test compares them).
+
+Measured: cac `description` 24 → 0 (the cluster is gone); cac 427 → 403; weapons 781,587
+unchanged; gap clusters 202 → 201.
+
+## `classmenu.rs` split along its seams (2026-10-31, `v1/cac-rules`)
+
+`classmenu.rs` had grown to ~1,780 lines. It is now the module root (the doc, the Pick-10 and
+name constants, the submodule list and the re-exports) over one file per concern in
+`classmenu/`: `wildcard` (the card rules and the grid order), `slot` (the rows and the weapon
+categories), `personalize`, `grid` (the content-grid links), `draft` (the class being edited and
+its `CustomClass` round trip), `editor` (the session state and its queries), `keys` (the edges),
+`step` (the key/pointer fold), `apply` (an option applied to the draft), `options` (the lists and
+row values) and `offer` (what the conformance emitter reads), beside the existing `items` and
+`legal`. Everything public is re-exported from `classmenu`, so no caller changed. A pure move:
+the workspace tests pass unchanged and clippy's count is the same.
+
+## The attachment grid in BO2's order: the item's column 8 (2026-10-31, `v1/cac-rules`)
+
+BO2's attachment grid adds one button per attachment number of the item, `1 ..
+GetNumAttachments - 1` (`cacattachmentsmenu.lua:858-879`), whatever is equipped, and focuses the
+button of the attachment the chosen slot holds (`attachmentIndexToReplace`, `:855-857`) or the
+first. An item's attachment numbers follow its statstable column 8, each token cut at its first
+`_` (G17, `FUN_008cdfb0`) — per weapon, not a global order: the AN-94's grid starts Reflex, Quickdraw,
+Fast Mag, ACOG. The mod listed `WeaponDef::allowed` in the attachment variants' name order and the
+editor moved the equipped ones to the front.
+
+* The converter (`weapons::set_cac_slots` → `order_attachments`) sorts a base weapon's `allowed`
+  by the item's column-8 order (`combos::listed`); an offered attachment the column does not list
+  stays after the listed ones. The table schema is unchanged — the field's order now means BO2's.
+* The editor (`classmenu::options::attachment_shorts`/`attachment_options`) lists `allowed` as is,
+  the equipped ones in place, and opens on the first equipped attachment.
+
+Tests: `the_attachment_grid_follows_the_items_column_8` (zhbo-assets) and
+`the_attachment_grid_keeps_the_weapons_order_whatever_is_equipped` (classmenu). Measured: cac
+403 → 9: `order` 396 → 2 (every attachment row; the two left are the crossbow and Ballistic Knife
+behind BO2's Assault Shield); weapons 781,587 unchanged; gap clusters 201 (the `order` cluster
+stays for those two). The installed `ConquerOps_BO2.big` carries the old order until it is
+rebuilt (the integrator's `hud::VERSION` bump), so the screenshot harness shows the new grid only
+on a fresh archive.
+
+## One lethal is one: the class carries `primarygrenadecount` (2026-10-31, `v1/cac-rules`)
+
+BO2's grenade count is the slot's filled boxes: `cacgrenadesbutton.lua:130-230` counts the
+`statusN` boxes that are equipped, and `_class.gsc:718-739` gives `getloadoutitem(class,
+"primarygrenadecount")` as the item's clip (`setweaponammoclip`). An equipped item fills the first
+box, so one lethal point is one lethal — one C4, one claymore — whatever the weapon's own start
+count; the second box (Danger Close's) is the second. The mod stored 0 for a single lethal and the
+arsenal fell back to the item's `StartReserve` (two for a C4 or Trophy System on the real table).
+
+* `Draft::lethal_count` is 1 for a single lethal (2 with Danger Close, Tactician's chosen 1 or 2),
+  so the spec, `CustomClass` and `Loadout` always carry it, like `tactical_count`;
+  `offhand_count` is the count itself.
+* `classrepair::repair_counts` makes a held item's count at least one (a class saved before the
+  counts carried 0) and a trimmed lethal's 0; the trim takes a second lethal back to one.
+* A spec without the key (the shipped presets) still gives the item's start count (`None`).
+
+Tests: `a_single_lethal_is_one_whatever_its_start_count` (classmenu),
+`a_held_offhand_counts_at_least_one` (classrepair); the fixtures that stored 0 now store 1.
+Measured: cac 9, weapons 781,587, gap clusters 201 — unchanged (the conformance tables carry no
+grenade count; the movement is the class's, covered by the tests).
+
+## Danger Close opens a second lethal box; filling it costs a point (2026-10-31, `v1/cac-rules`)
+
+`cacgrenadesbutton.lua:130-180` gives the lethal button one box, plus a second under Danger Close
+(the tactical slot and Tactician's lethal have two), capped at the item's max ammo; the count is
+the filled boxes. So Danger Close does not hand over a second lethal: it opens a box the player
+fills, which is an element of its own (a point), exactly like the tactical's second box. Taking
+the card off lowers `primarygrenadecount` 2 → 1 and clears `status2`
+(`bonuscardbutton.lua:490-545`, `BonusCardUnequipped.bonuscard_danger_close`); taking Tactician
+off clears the lethal slot (`:546-597`), which the editor already did. perks-cards had made the
+second lethal automatic with the card.
+
+* `Draft::offhand_boxes(true)` is the item's cap under Danger Close (one box otherwise, for a
+  lethal item); `lethal_count`/`tactical_count` both count the filled boxes (`second_offhand`), so
+  the pointer's second-box click (`apply_second_offhand`), re-picking the held item and the
+  circled X work for the lethal exactly as for the tactical. `from_custom` restores the box from
+  `lethal_count > 1` (Danger Close re-derived from it, as before).
+* `toggle_wildcard`: the card off drops the second lethal.
+* `classrepair`: a lethal item's count is capped at the item's own cap too (BO2's
+  `math.min(boxes, GetMaxAmmoForItem)`).
+* Screenshot harness: `cac-editor-danger-close.png` / `-x2.png` (plan dir). The installed
+  archive predates the offhand `_256` pictures, so the boxes draw empty; BO2's `kd_chart_plus`
+  plus sign on an empty second box (`cacgrenadesbutton.lua:270-300`) is not drawn yet for either
+  offhand slot.
+
+Tests: `danger_close_opens_a_second_lethal_box_that_costs_a_point` (classmenu: one box without
+the card, the card alone is one point, the box another, re-pick toggles it, the card off drops
+it, the round trip), `danger_close_gives_a_second_lethal` (fake host, the filled box gives two).
+Measured: cac 9, weapons 781,587, gap clusters 201 — unchanged (the Danger Close card already
+cost 1 in the table; the count is not a conformance column).
+
+## The lethal slot reads `SECOND TACTICAL` under Tactician: UI strings from the install (2026-10-31, `v1/cac-rules`)
+
+BO2 titles the lethal slot with `MPUI_SECOND_SPECIAL_GRENADE_CAPS` while Tactician is equipped —
+on the editor's grenade button (`cacgrenadesbutton.lua:104-126`), the grenade picker
+(`cacgrenades.lua:85-104`) and the class preview (`classpreview.lua:3640-3660`); otherwise
+`MPUI_PRIMARY_GRENADE_CAPS`/`MPUI_SPECIAL_GRENADE_CAPS`. The string is in the install's
+`en_code_post_gfx_mp.ff` (and `en_patch.ff`): `SECOND TACTICAL` (`zhbo-assets strings
+en_code_post_gfx_mp.ff GRENADE_CAPS`), the zone `weapons::names` already reads.
+
+* The weapon table gains `UiText <key>` blocks (`Text = …`, `UI_TEXT_FIELDS`); the converter
+  writes each key of `weapons::UI_TEXT_KEYS` the install has (`weapons::ui_text`), and
+  `Catalog::ui_text` serves them. Older tables load unchanged and take the built-in stand-ins
+  (the three strings in `BUILTIN`, compared to the install by the ignored
+  `the_installs_ui_text_is_the_built_in_stand_ins`), like the perk and bonus-card rows.
+* `classui::editor::offhand_title` picks the key; the button, the picker title and the class
+  preview use it.
+
+Tests: `ui_text_round_trips` (table), `the_ui_text_carries_the_installs_strings_for_the_cores_keys`
+(converter), `the_lethal_slot_is_titled_second_tactical_under_tactician` (classui). Screenshot:
+`cac-editor-tactician.png` (plan dir) — the title reads SECOND TACTICAL; the list is empty there
+because the installed archive predates the statstable slots (rebuild needed). Conformance
+unchanged (cac 9, weapons 781,587, 201 clusters).
+
+## The plus sign on an empty extra offhand box (2026-10-31, `v1/cac-rules`)
+
+`cacgrenadesbutton.lua:270-345` walks the button's boxes `2 .. count`: an empty box's item icon is
+at alpha 0, and while exactly one of the item is equipped it gets a `kd_chart_plus` image, 40
+units square, centred. The mod drew the item's picture in every box of a held offhand (filled or
+not) and no plus. Now `classui::editor::cell_icon` draws the picture on filled boxes only and
+`offhand_plus` adds the plus to an empty extra box — the tactical's second, Tactician's, Danger
+Close's. `kd_chart_plus` (in `code_post_gfx_mp`) joins `lui::materials::MATERIALS`, so the
+archive must be rebuilt (`hud::VERSION`, the integrator's); without it a white `+` stands in.
+Test: `an_empty_extra_offhand_box_shows_the_plus_sign`.
+
+## A bonus card's box sits on BO2's preview plate (2026-10-31, `v1/cac-rules`)
+
+The box an equipped bonus card adds is built as a *preview* slot of its slot list:
+`slotlist.lua:880-930` (a Gunfighter's extra attachment), `:1003-1040` (a Greed's second perk) and
+`cacgrenadesbutton.lua:130-250` (Danger Close's second lethal; Tactician's two boxes are the
+tactical item's own, not a preview). `AddBonusCardPreviewElements` (`slotlist.lua:596-690`) gives
+it a `CoD.trueOrange` background inset 2 units, added over the button's own art and under its
+icon, which `UpdateSlotImages` (`:412-428`) shows at alpha 1 while the card is equipped, and a
+pulsing plate (alpha 0.05 ↔ 0.2, `PulseSpeed` 1000 ms) for a previewed card that is *not*
+equipped. The class editor's `BonusCardGainFocusFunctions` (`customclass.lua:1425-1620`) only fire
+for the wildcard row's buttons, which always hold an equipped card, so highlighting Danger Close
+there changes nothing visible: the plate is already shown. The pulse never shows in BO2's
+editor flow, and the mod does not draw it.
+
+`classui::editor::bonus_card_box` names those boxes and `bonus_card_plate` draws the plate.
+Not checked against a capture (the sweep has no editor shot with a card equipped), so this rests
+on the Lua alone. Test: `a_bonus_cards_box_is_marked_as_its_preview_slot`.
+
+## The weapon pickers' categories follow BO2's group order, from the UI Lua (2026-10-31, `v1/cac-rules`)
+
+`cacweaponslot.lua` adds the weapon groups in one order — `weapon_smg`, `weapon_assault`,
+`weapon_cqb`, `weapon_lmg`, `weapon_sniper`, `weapon_pistol`, `weapon_launcher`, `weapon_special`
+— and `cacweaponsp.lua:640-720` builds the primary carousel smg … sniper, special and the
+secondary pistol, launcher, special. The mod hand-coded the picker order in
+`classui::categories` and kept a second, different list (`classmenu::PRIMARY_CLASSES`, rifle
+first) that only the conformance emitter read.
+
+* `zhbo_conformance::bo2::cac::weapon_groups` (and `class_caps`) now take the two zones and are
+  public: the expected side and the converter read the same function. The converter writes
+  `WeaponGroups = …` at the top of the weapon table; `Catalog::weapon_groups` serves it, and a
+  table without it takes the built-in stand-in (checked against the install by the ignored
+  `the_installs_weapon_groups_are_the_built_in_order`).
+* `classui::category_order(slot)` is that order, the slot's own groups first (a group is the
+  slot's when one of its items is, statstable column 13). `PRIMARY_CLASSES`/`SECONDARY_CLASSES`
+  and the picker constants are gone; the conformance emitter reads `category_order`.
+
+Measured: cac 9 → 5 (the four `category` rows); weapons 781,587; gap clusters 201 (the
+`rules/value` cluster still holds the three caps). Test:
+`the_category_order_follows_the_catalogs_weapon_groups`.
+
+## Three class caps from `cacutility.lua`: `maxDefaultClass`, `maxPerks`, `maxPerksInEachCategory` (2026-10-31, `v1/cac-rules`)
+
+The conformance's expected side read nine `CoD.CACUtility` caps from `cacutility.lua`; the mod
+had no value for three. They now come from the same Lua: the converter calls
+`zhbo_conformance::bo2::cac::class_caps` and writes `ClassCap.<name> = n` lines for
+`classes::DATA_CAPS` into the weapon table; `Catalog::class_cap` serves them, with built-in
+stand-ins for older tables (checked by the ignored `the_installs_class_caps_are_the_built_in_caps`).
+
+* `maxDefaultClass` (5): `GetDefaultLoadoutNameFromIndex` refuses an index past it
+  (`cacutility.lua:862-880`); `classes::get()` cuts a longer default-class file to it.
+* `maxPerksInEachCategory` (2): the perk menu walks a tier's rows up to it (`cacperksp.lua:639-650`,
+  `:742-760`); `classrepair::repair_perks` keeps that many per tier (it said 2 by hand).
+* `maxPerks` (12): only the multi-select perk grid of `cacperks.lua:44` /
+  `cacperksselection.lua:27` uses it, a screen the Pick-10 editor (and BO2's own) does not show;
+  it is carried and reported, not applied.
+
+The other six caps are still core constants (`MAX_GRENADES`, …) asserted equal to BO2's by tests;
+moving them to data is the same plumbing. Test: `the_default_classes_stop_at_bos_cap`.
+Measured: cac 5 → 2 (the `rules/value` cluster is gone; the two weapon `order` cells remain);
+weapons 781,587; gap clusters 201 → 200.
+
+## An offhand's extra box is BO2's small one (2026-10-31, `v1/cac-rules`)
+
+`SetupSmallGrenadeButton` (`cacgrenadesbutton.lua:347-420`) lays out boxes 2.. of a grenade
+button at 0.7 of the slot height, 1.1 times that wide, top-aligned, starting a slot width and a
+spacing right of the first box. The mod drew both boxes full size. `classui::small_offhand_plate`
+places them so; the icon, plus sign and preview plate follow the smaller box. Test:
+`the_extra_offhand_box_is_the_small_one`.
+
+## Overkill: both weapon lists show the primary items, less the other slot's gun (2026-10-31, `v1/cac-rules`)
+
+`cacweaponsp.lua:616-720` builds the primary carousels (smg … sniper, special) for the primary
+slot *or* whenever Overkill is equipped, and `AddWeaponGroupCarousel` (`:788-835`) lists a group's
+items of the primary slot, leaving out the gun the other slot holds. So under Overkill the
+secondary lists no pistols or launchers, and neither list offers the gun already in the other slot.
+The mod's secondary listed its own items plus the primary ones. `items::slots_of(false,
+[Overkill])` is now the primary slot alone and `Editor::gun_list` drops the other slot's gun;
+`items::fits_slot` (the repair's "may this slot hold it") still takes either kind in the
+secondary, since a pistol held before the card went on stays valid. Tests updated:
+`overkill_offers_primary_guns_in_the_secondary_list`, `overkill_puts_a_second_primary_into_the_secondary_slot`.
+
+## The six remaining class caps come from `cacutility.lua` too (2026-10-31, `v1/cac-rules`)
+
+`maxCustomClass`, `maxGrenades`, `maxSpecialtySlots`, `maxAttachments` and `maxBonusCards` were
+Rust constants (`classes::MAX_*`) copied by hand from `cacutility.lua`. They are now
+`classes::max_custom_class()` … `max_bonus_cards()`, reading `ClassCap.*` like the three before
+them (`DATA_CAPS` lists all eight; the converter writes them, the built-in table carries BO2's
+values, the ignored install test compares every one). The value tests stay, now on the functions.
+`profile::max_classes()` and the class bar's `classicons::preset_rows()`/`custom_rows()`/
+`class_rows()` follow; the bar's default-class rows are now `maxDefaultClass` (they were sized by
+`maxCustomClass`, the same five), and both are kept within page one's twelve class slots, since
+the command bar's fifteen `ZhboClassButton`s are fixed by the ABI. `maxPerkCategories` was never a
+constant: the conformance emitter counts the perk table's tiers, and still does.
+Measured: cac 2, weapons 781,587, gap clusters 200 — unchanged (the values are BO2's either way;
+the source is now the install).
+
+## A weapon list without the held gun opens on its first category's first gun (2026-10-31, `v1/cac-rules`)
+
+`cacweaponsp.lua:1020-1029` records the held gun's card as `initialCarousel`/`initialCard`; when
+no carousel holds it (a pistol secondary under Overkill) neither is set, and the carousel list
+keeps its default, carousel 1's first card (`cardcarousellist.lua:893`). The mod fell back to the
+option list's index 0 (the catalog's first gun, e.g. the MTAR under ASSAULT RIFLES). Now
+`Editor::weapon_open_index` falls back to the first gun of the first category in
+`category_order` (SUBMACHINE GUNS → the PDW-57). Test:
+`a_list_without_the_held_gun_opens_on_its_first_category`; screenshot `cac-editor-overkill.png`.

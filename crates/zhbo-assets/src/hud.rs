@@ -29,8 +29,9 @@ const ATLAS: u32 = 1024;
 pub enum Source {
     /// The pack image with this key (picked by eye from a contact sheet).
     Hash(ImageKey),
-    /// The first image of a BO2 material in a zone.
-    Material(&'static str, &'static str),
+    /// The first image of a BO2 material in a zone (the material named in code, or read from BO2's
+    /// tables at conversion time, as the wildcards' card images are).
+    Material(&'static str, std::borrow::Cow<'static, str>),
     /// A material named at conversion time (weapon HUD icons, the LUI ports' materials), searched
     /// in the MP zones in order.
     Dynamic(String),
@@ -45,7 +46,7 @@ pub struct Sprite {
 }
 
 const fn mat(name: &'static str, material: &'static str, max: u32) -> Sprite {
-    Sprite { name, source: Source::Material("common_mp", material), max }
+    Sprite { name, source: Source::Material("common_mp", std::borrow::Cow::Borrowed(material)), max }
 }
 
 const fn hash(name: &'static str, data_hash: u32, name_hash: u32, max: u32) -> Sprite {
@@ -94,7 +95,7 @@ pub const SPRITES: &[Sprite] = &[
     mat("ZHBO_BO2_StreakBox", "hud_mp_vis_ks_dpad_box", 64),
     mat("ZHBO_BO2_StreakBoxLit", "hud_mp_vis_ks_dpad_box_back_lit", 64),
     mat("ZHBO_BO2_StreakGlow", "hud_ks_lit_glow", 128),
-    Sprite { name: "ZHBO_BO2_StreakVsat", source: Source::Material("code_post_gfx_mp", "hud_ks_spy_sat_big"), max: 128 },
+    Sprite { name: "ZHBO_BO2_StreakVsat", source: Source::Material("code_post_gfx_mp", std::borrow::Cow::Borrowed("hud_ks_spy_sat_big")), max: 128 },
 ];
 
 #[derive(Debug, Default)]
@@ -179,6 +180,12 @@ fn dpad_icons(weapons: &[zhbo_formats::weapon::Weapon]) -> Vec<(String, Option<z
     icons
 }
 
+/// A standalone overlay page's texture: the file the archive stores (`Art\Textures\<this>`) and
+/// the name its MappedImage gives, one spelling for both.
+fn standalone_texture(name: &str) -> String {
+    format!("{name}.tga")
+}
+
 /// Read the sprites from the BO2 install at `bo2_dir` and return the archive bytes.
 pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     let mut report = Report::default();
@@ -194,7 +201,7 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
         .chain(crate::cac::SPRITES.iter())
         .map(|s| (s.name.to_string(), match &s.source {
             Source::Hash(h) => Source::Hash(*h),
-            Source::Material(z, m) => Source::Material(z, m),
+            Source::Material(z, m) => Source::Material(z, m.clone()),
             Source::Dynamic(m) => Source::Dynamic(m.clone()),
         }, s.max))
         .collect();
@@ -214,13 +221,19 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     let weapons = zhbo_formats::weapon::all(&zones["common_mp"]).map_err(|e| e.to_string())?;
     // The create-a-class weapon pictures: each item's image in BO2's `mp/statstable.csv` plus
     // `_big` (`classpreview.lua`'s `GetItemImage(...) .. "_big"`).
-    let item_images = crate::cac::item_images(bo2_dir);
+    let item_images = crate::cac::item_rows(bo2_dir);
     for id in crate::weapons::converted_base(&weapons) {
         let Some(w) = weapons.iter().find(|w| w.name == crate::generals::base_id(&id)) else { continue };
         let base = crate::generals::base_id(&id);
-        if let Some(image) = item_images.get(base.trim_end_matches("_mp")) {
+        if let Some((image, slot)) = item_images.get(base.trim_end_matches("_mp")) {
+            let offhand = [zhbo_core::classmenu::items::PRIMARY_GRENADE, zhbo_core::classmenu::items::SPECIAL_GRENADE].contains(&slot.as_str());
             if image.starts_with("menu_mp_weapons_") {
                 wanted.push((zhbo_core::names::cac_weapon_image(base), Source::Dynamic(format!("{image}_big")), 512));
+            } else if offhand {
+                // The offhand items' pictures (their images are HUD icons, `hud_grenadeicon`) are
+                // the image plus `_256` (`cacgrenadesbutton.lua:199-205`: the grenade button's
+                // `GetItemImage(...) .. "_256"`).
+                wanted.push((zhbo_core::names::cac_weapon_image(base), Source::Dynamic(format!("{image}_256")), 256));
             }
         }
         let name = format!("ZHBO_BO2_Icon_{id}");
@@ -247,6 +260,9 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             wanted.push((image.clone(), Source::Dynamic(image), 128));
         }
     }
+    // The wildcard grid's art: each bonus card's own image (`mp/statstable.csv` column 6), the
+    // same rows the weapon table's `BonusCard` blocks carry.
+    wanted.extend(crate::cac::wildcard_sprites(&crate::weapons::bonus_card_rows(&patch, &names)));
     // The reticle grid's stock art: 11 images per optic (`code_post_gfx_mp.tsv:1073-1104`; their
     // materials at `:2023-2054` are named `mc/mtl_t6_attach_optic_*_reticle_*`).
     for optic in ["reflex", "holo", "acog"] {
@@ -270,7 +286,7 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
         }
         seen_atts.push(short.clone());
         match (zhbo_core::hud::sprites::attachment_icon(&short), crate::cac::attachment_material(&short)) {
-            (Some(name), Some((zone, material))) => wanted.push((name.to_string(), Source::Material(zone, material), 64)),
+            (Some(name), Some((zone, material))) => wanted.push((name.to_string(), Source::Material(zone, material.into()), 64)),
             _ => report.missing.push((format!("ZHBO_BO2_Attach_{short}"), "no BO2 icon material".into())),
         }
     }
@@ -287,7 +303,7 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
                     }
                 }
                 zones.get(zone)
-                    .and_then(|z| zhbo_formats::xmodel::find_material(z, material))
+                    .and_then(|z| zhbo_formats::xmodel::find_material(z, material.as_ref()))
                     .and_then(|m| m.textures.iter().find_map(|t| t.image.as_ref().map(|i| i.key())))
             }
             Source::Dynamic(material) => {
@@ -395,15 +411,17 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             at.1 + img.height - 1
         ));
     }
-    // The standalone overlay pages: one texture each, named after the material.
+    // The standalone overlay pages: one texture each, named after the material. The MappedImage
+    // names its page as the archive stores it (`<name>.tga`), like the atlas pages.
     let mut standalone_files: Vec<(String, Vec<u8>)> = Vec::new();
     for (name, img) in standalone {
-        standalone_files.push((format!("Art\\Textures\\{name}.tga"), images::tga_bytes(&img)));
+        let texture = standalone_texture(&name);
+        standalone_files.push((format!("Art\\Textures\\{texture}"), images::tga_bytes(&img)));
         ini.push_str(&format!(
             "MappedImage {}\n  Texture = {}\n  TextureWidth = {}\n  TextureHeight = {}\n  \
              Coords = Left:0 Top:0 Right:{} Bottom:{}\n  Status = NONE\nEnd\n\n",
             name,
-            name,
+            texture,
             img.width,
             img.height,
             img.width - 1,
@@ -622,6 +640,7 @@ mod tests {
         assert_eq!(at[1].0, 1);
         assert_eq!(texture_name(at[0].0), "zhbo_bo2_hud_0.tga");
         assert_eq!(texture_name(at[1].0), "zhbo_bo2_hud_1.tga");
+        assert_eq!(standalone_texture("ZHBO_Mat_scope_overlay"), "ZHBO_Mat_scope_overlay.tga", "named as the archive stores it");
         assert_packed(&sizes, &at);
     }
 
@@ -704,10 +723,11 @@ mod tests {
     #[test]
     fn spec_matches_the_names_the_hud_draws() {
         let mut spec: Vec<&str> = SPRITES.iter().chain(crate::cac::SPRITES.iter()).map(|s| s.name).collect();
-        // Attachment icons are made from the catalog at build time, so their names are not in
-        // either fixed sprite list (the core lists them for the class screen).
+        // Attachment icons are made from the catalog at build time and the wildcard cards from the
+        // statstable's bonus-card rows, so their names are not in either fixed sprite list (the
+        // core lists them for the class screen).
         let mut hud: Vec<&str> =
-            zhbo_core::hud::sprites::ALL.iter().copied().filter(|n| !n.contains("_Attach_")).collect();
+            zhbo_core::hud::sprites::ALL.iter().copied().filter(|n| !n.contains("_Attach_") && !n.contains("_Wildcard_")).collect();
         spec.sort_unstable();
         hud.sort_unstable();
         assert_eq!(spec, hud);

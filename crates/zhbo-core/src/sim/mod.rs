@@ -970,7 +970,7 @@ pub fn event_hint(kind: &EventKind) -> Option<&'static str> {
 
 /// A hint's text: BO2's localized string from the converted table, else the key itself.
 pub fn hint_text(key: &str) -> &str {
-    crate::weapons::catalog().hud_string(key).unwrap_or(key)
+    crate::weapons::catalog().ui_text(key).unwrap_or(key)
 }
 
 /// The log line for an event, or `None` for the quiet ones (the ffi log and the tests share this

@@ -9,6 +9,7 @@ use crate::schema::{Row, RowBuilder, Schema};
 use crate::weapons::ATTACHMENTS;
 use std::collections::BTreeMap;
 use zhbo_formats::havok_lua;
+use zhbo_formats::t6zone::Zone;
 
 /// The class caps of `CoD.CACUtility` that are facts in both worlds (the scorestreak caps,
 /// `maxRewards`/`maxRewardSlots`, are the V1 plan's deliberate divergence).
@@ -25,9 +26,23 @@ fn cell(r: &[String], i: usize) -> String {
     r.get(i).cloned().unwrap_or_default()
 }
 
-fn lua(install: &Install, name: &str) -> Result<havok_lua::Function, String> {
-    let bytes = havok_lua::rawfile(&install.patch, name).or_else(|| havok_lua::rawfile(&install.patch_ui, name)).ok_or_else(|| format!("{name}: not in patch_mp or patch_ui_mp"))?;
+fn lua(patch: &Zone, patch_ui: &Zone, name: &str) -> Result<havok_lua::Function, String> {
+    let bytes = havok_lua::rawfile(patch, name).or_else(|| havok_lua::rawfile(patch_ui, name)).ok_or_else(|| format!("{name}: not in patch_mp or patch_ui_mp"))?;
     havok_lua::parse(&bytes).map_err(|e| format!("{name}: {e}"))
+}
+
+/// `CoD.CACUtility`'s class caps as `cacutility.lua`'s main chunk stores them (`maxGrenades` →
+/// `2`), from `patch_mp`/`patch_ui_mp`. The converter carries these to the core, so the expected
+/// side and the mod read one source.
+pub fn class_caps(patch: &Zone, patch_ui: &Zone) -> Result<BTreeMap<String, String>, String> {
+    Ok(lua(patch, patch_ui, CAC_UTILITY)?.stores().into_iter().filter(|s| s.path == "CoD.CACUtility").map(|s| (s.field, s.value.text())).collect())
+}
+
+/// The weapon groups in the order `cacweaponslot.lua`'s weapon-type list adds them
+/// (`weapon_smg`, `weapon_assault`, …): the order the class editor's categories follow.
+pub fn weapon_groups(patch: &Zone, patch_ui: &Zone) -> Result<Vec<String>, String> {
+    let slot = lua(patch, patch_ui, WEAPON_SLOT)?;
+    Ok(slot.all().iter().flat_map(|f| f.stores()).filter(|s| s.field == "weaponGroup").map(|s| s.value.text()).collect())
 }
 
 /// A row of `kind`/`item` with the columns `fill` sets (the rest empty).
@@ -91,12 +106,17 @@ pub fn rows(install: &Install, schema: &Schema) -> Result<Vec<Row>, String> {
         }
     }
 
-    // Perks and wildcards: the statstable's specialty and bonus-card rows.
-    for (group, kind, prefix) in [("specialty", "perk", "PERKS_"), ("bonuscard", "wildcard", "")] {
+    // Perks and wildcards: the statstable's specialty and bonus-card rows. A perk's place is within
+    // its slot's list (column 13, a tier); the wildcard grid is ONE list, the whole `bonuscard`
+    // group (`cacbonuscards.lua:197-199` and `bonuscardgridbutton.lua:102` call
+    // `CoD.GetUnlockablesByGroupName("bonuscard")`, which sorts `Engine.GetUnlockablesByGroupName`
+    // by `UnlockablesComparisonFunction`, `codbase.lua:6466-6500`: the group list of G17's
+    // `FUN_008d1a10`), so its order is ranked over the group (column 2), not per loadout slot.
+    for (group, kind, prefix, list_column) in [("specialty", "perk", "PERKS_", 13), ("bonuscard", "wildcard", "", 2)] {
         let rows: Vec<&Vec<String>> = stats.iter().filter(|r| cell(r, 2) == group && cell(r, 12).trim().parse::<i32>().is_ok_and(|c| c >= 0)).collect();
         let mut by_slot: BTreeMap<String, Vec<&Vec<String>>> = BTreeMap::new();
         for r in &rows {
-            by_slot.entry(cell(r, 13)).or_default().push(r);
+            by_slot.entry(cell(r, list_column)).or_default().push(r);
         }
         let rank: BTreeMap<String, i64> = by_slot.values().flat_map(|g| ranks(g)).collect();
         for r in rows {
@@ -123,7 +143,7 @@ pub fn rows(install: &Install, schema: &Schema) -> Result<Vec<Row>, String> {
     }
 
     // The class caps (`cacutility.lua`'s main chunk) and the stock allocation.
-    let caps: BTreeMap<String, String> = lua(install, CAC_UTILITY)?.stores().into_iter().filter(|s| s.path == "CoD.CACUtility").map(|s| (s.field, s.value.text())).collect();
+    let caps = class_caps(&install.patch, &install.patch_ui)?;
     for cap in CAPS {
         out.push(row(schema, "constant", cap, |b| {
             b.opt_text("value", caps.get(cap).cloned());
@@ -139,8 +159,7 @@ pub fn rows(install: &Install, schema: &Schema) -> Result<Vec<Row>, String> {
     })?);
 
     // The weapon categories in the order the weapon-type list adds them (`cacweaponslot.lua`).
-    let slot = lua(install, WEAPON_SLOT)?;
-    let groups: Vec<String> = slot.all().iter().flat_map(|f| f.stores()).filter(|s| s.field == "weaponGroup").map(|s| s.value.text()).collect();
+    let groups = weapon_groups(&install.patch, &install.patch_ui)?;
     for (i, g) in groups.iter().enumerate() {
         out.push(row(schema, "category", &i.to_string(), |b| {
             b.text("value", g);

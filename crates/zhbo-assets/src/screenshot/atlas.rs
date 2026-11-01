@@ -57,12 +57,13 @@ impl Atlas {
         for (name, image) in parse_mapped_images(&text) {
             if !atlas.pages.contains_key(&image.texture) {
                 let texture = format!("Art\\Textures\\{}", image.texture);
-                // The standalone scope-overlay pages and the generated material pages (`ZHBO_Mat_*`)
-                // name their texture without the `.tga` the file carries (`hud::build_archive`).
-                let entry = big
-                    .find(&texture)
-                    .or_else(|| big.find(&format!("{texture}.tga")))
-                    .ok_or_else(|| format!("{}: {texture} is missing from the archive", path.display()))?;
+                // Archives built before the converter named the scope overlays' pages with their
+                // `.tga` name them without it; a page found neither way draws its names'
+                // fallbacks, as a bad rect does.
+                let Some(entry) = big.find(&texture).or_else(|| big.find(&format!("{texture}.tga"))) else {
+                    atlas.invalid.push(name);
+                    continue;
+                };
                 let bytes = big.read(entry).map_err(|e| format!("{texture}: {e}"))?;
                 let page = decode_tga(&bytes).map_err(|e| format!("{texture}: {e}"))?;
                 atlas.pages.insert(image.texture.clone(), page);

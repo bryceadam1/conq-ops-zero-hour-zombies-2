@@ -739,6 +739,8 @@
             secondary: "an94_mp".into(),
             lethal: "claymore_mp".into(),
             tactical: "concussion_grenade_mp".into(),
+            lethal_count: 1,
+            tactical_count: 1,
             melee: "knife_held_mp".into(),
             perks: vec!["Toughness".into(), "FlakJacket".into()],
             reserve: [40, 20],
@@ -1034,8 +1036,8 @@
         let mut sim = Sim::new();
         sim.rts_update(&host, 0, 7, 0, [0, 0, 0], None);
         let mut client = Client::default();
-        // 1-based: the presets come first, so the first custom is button PRESETS + 1.
-        let custom_button = (crate::classicons::PRESETS + 1) as i32;
+        // 1-based: the presets come first, so the first custom is button preset_rows() + 1.
+        let custom_button = (crate::classicons::preset_rows() + 1) as i32;
         let mut inp = ClientIn { class_button: custom_button, ..Default::default() };
 
         let out = client.frame(&mut sim, &inp);

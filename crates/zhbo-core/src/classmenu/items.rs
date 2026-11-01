@@ -46,7 +46,8 @@ pub fn offhand_slot(lethal: bool) -> &'static str {
 pub(super) fn cac_entries() -> Vec<&'static WeaponDef> {
     let all = weapons::catalog().all();
     let mut seen: Vec<&str> = Vec::new();
-    all.iter()
+    let mut out: Vec<&'static WeaponDef> = all
+        .iter()
         .copied()
         .filter(|d| !d.cac_slot.is_empty() && d.attachments.is_empty() && d.alt.is_empty())
         .filter(|d| !all.iter().any(|base| base.alt_modes.iter().any(|(_, alt)| alt == &d.id)))
@@ -60,16 +61,25 @@ pub(super) fn cac_entries() -> Vec<&'static WeaponDef> {
                 true
             }
         })
-        .collect()
+        .collect();
+    // BO2's list order (G17, `FUN_008cdde0`): sort key, then item index; stable, so a table without
+    // the order (all 0) keeps its own.
+    out.sort_by_key(|d| list_key(d));
+    out
 }
 
-/// The slots whose items a weapon slot lists: the primary its own; the secondary its own, plus the
-/// primary items under Overkill.
+/// A Create-a-Class item's place in its list: the statstable sort key (column 9), then the item
+/// index (column 0), [`WeaponDef::cac_sort`]/[`WeaponDef::cac_index`].
+pub fn list_key(d: &WeaponDef) -> (i32, i32) {
+    (d.cac_sort, d.cac_index)
+}
+
+/// The slots whose items a weapon slot lists: the primary its own; the secondary its own, or the
+/// primary items only under Overkill (`cacweaponsp.lua:638-720`: with the card the secondary's
+/// carousels are the primary groups).
 pub(super) fn slots_of(primary: bool, wildcards: &[Wildcard]) -> Vec<&'static str> {
-    if primary {
+    if primary || wildcards.contains(&Wildcard::Overkill) {
         vec![PRIMARY]
-    } else if wildcards.contains(&Wildcard::Overkill) {
-        vec![SECONDARY, PRIMARY]
     } else {
         vec![SECONDARY]
     }
@@ -84,7 +94,23 @@ pub(super) fn gun_ids(slots: &[&str]) -> Vec<&'static str> {
 /// The offhand ids the lethal (`true`) or the tactical slot lists: the items of its statstable
 /// slot ([`offhand_slot`]), in catalog order.
 pub(super) fn equipment_ids(lethal: bool) -> Vec<&'static str> {
-    let slot = offhand_slot(lethal);
+    offhand_ids(lethal, &[])
+}
+
+/// The statstable slot whose items an offhand slot lists with these cards: its own, except that
+/// under Tactician the lethal slot lists the tactical slot's items (`cacgrenades.lua:183-195`:
+/// `primaryGrenade` with `bonuscard_two_tacticals` reads `GetUnlockablesBySlotName(specialGrenade)`).
+pub fn listed_slot(lethal: bool, wildcards: &[Wildcard]) -> &'static str {
+    if lethal && wildcards.contains(&Wildcard::Tactician) {
+        SPECIAL_GRENADE
+    } else {
+        offhand_slot(lethal)
+    }
+}
+
+/// The offhand ids an offhand slot lists with these cards ([`listed_slot`]), in catalog order.
+pub(super) fn offhand_ids(lethal: bool, wildcards: &[Wildcard]) -> Vec<&'static str> {
+    let slot = listed_slot(lethal, wildcards);
     cac_entries().into_iter().filter(|d| d.class.is_offhand() && d.cac_slot == slot).map(|d| d.id.as_str()).collect()
 }
 
@@ -93,15 +119,34 @@ pub fn fits_offhand(id: &str, lethal: bool) -> bool {
     weapons::catalog().get(id).is_some_and(|d| d.class.is_offhand() && d.cac_slot == offhand_slot(lethal))
 }
 
+/// How many of an offhand item one slot may carry: BO2's slot list shows two boxes for a tactical
+/// (`cacgrenadesbutton.lua:150-180`: `math.min(2, Engine.GetMaxAmmoForItem(item))`), so an item
+/// whose weapon caps its ammo at one (the smoke, the Tactical Insertion) takes one; 0 for none.
+/// The two is `maxGrenades` ([`crate::classes::max_grenades()`]), the cap `WeaponDef::max_reserve`
+/// (BO2's `iMaxAmmo`).
+pub fn offhand_cap(id: &str) -> u8 {
+    if id.is_empty() {
+        return 0;
+    }
+    weapons::catalog().get(id).map_or(0, |d| (d.max_reserve.max(1) as usize).min(crate::classes::max_grenades()) as u8)
+}
+
 /// Whether the item `base` is one the slot may hold: a gun (or shield) item of the slot's own, or a primary
 /// item in the secondary slot (which Overkill allows, see [`super::wildcards_of`]).
 pub fn fits_slot(base: &str, primary: bool) -> bool {
-    weapons::catalog().get(base).is_some_and(|d| d.class.is_slot_weapon() && slots_of(primary, &[Wildcard::Overkill]).contains(&d.cac_slot.as_str()))
+    let slots = if primary { vec![PRIMARY] } else { vec![SECONDARY, PRIMARY] };
+    weapons::catalog().get(base).is_some_and(|d| d.class.is_slot_weapon() && slots.contains(&d.cac_slot.as_str()))
 }
 
 /// Whether the item `base` is a primary item (in the secondary slot it needs Overkill).
 pub fn is_primary_item(base: &str) -> bool {
     weapons::catalog().get(base).is_some_and(|d| d.cac_slot == PRIMARY)
+}
+
+/// Whether the item `id` is a tactical-slot item (statstable column 13 `specialgrenade`): in the
+/// lethal slot it needs Tactician (`checkclasses.lua:677-686`).
+pub fn is_tactical_item(id: &str) -> bool {
+    !id.is_empty() && weapons::catalog().get(id).is_some_and(|d| d.cac_slot == SPECIAL_GRENADE)
 }
 
 /// The weapon a class with item `base` and attachments `shorts` gets (`GetLoadoutWeapon`): the

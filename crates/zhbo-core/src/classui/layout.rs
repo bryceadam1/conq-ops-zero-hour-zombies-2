@@ -118,6 +118,16 @@ pub fn slot_plate(button: Rect, n: usize, i: usize) -> Rect {
     Rect { x, y: button.y + INNER_BORDER, w: SLOT_W, h: button.h - 2.0 * INNER_BORDER }
 }
 
+/// An offhand button's extra box `i` (1-based past the first): BO2's `SetupSmallGrenadeButton`
+/// (`cacgrenadesbutton.lua:347-420`) makes it 0.7 of the slot height tall and 1.1 times that wide,
+/// top-aligned, the first one a slot width and a spacing right of the first box's left edge.
+pub fn small_offhand_plate(first: Rect, i: usize) -> Rect {
+    let h = first.h * 0.7;
+    let w = h * 1.1;
+    let x = first.x + SLOT_W + (SLOT_PITCH - SLOT_W) + w * (i as f32 - 1.0);
+    Rect { x, y: first.y, w, h }
+}
+
 /// The editor's boxes, in the walk order of [`Slot::ALL`] (the second perk rows beside their tier,
 /// the attachment and bonus-card boxes in slot order).
 pub fn editor_cells(l: &EditorLayout, editor: &Editor) -> Vec<EditorCell> {
@@ -140,8 +150,15 @@ pub fn editor_cells(l: &EditorLayout, editor: &Editor) -> Vec<EditorCell> {
             cell(Slot::SecondaryAtts, i, slot_plate(l.secondary_atts, 3, i));
         }
     }
-    cell(Slot::Lethal, 0, slot_plate(l.lethal, 2, 0));
-    cell(Slot::Tactical, 0, slot_plate(l.tactical, 2, 0));
+    // An offhand button's second box, when its item takes two (the tactical slot's, Tactician's
+    // lethal, a lethal under Danger Close: `cacgrenadesbutton.lua:130-180`).
+    for (slot, button, lethal) in [(Slot::Lethal, l.lethal, true), (Slot::Tactical, l.tactical, false)] {
+        let first = slot_plate(button, 2, 0);
+        cell(slot, 0, first);
+        for i in 1..d.offhand_boxes(lethal) as usize {
+            cell(slot, i, small_offhand_plate(first, i));
+        }
+    }
     for tier in 1..=3u8 {
         let button = l.perks[(tier - 1) as usize];
         cell(perk_slot(tier), 0, slot_plate(button, 2, 0));
@@ -188,8 +205,8 @@ pub fn cell_filled(editor: &Editor, cell: &EditorCell) -> bool {
         Slot::PrimaryAtts => d.primary_atts.get(cell.index).is_some(),
         Slot::Secondary => !d.secondary.is_empty(),
         Slot::SecondaryAtts => d.secondary_atts.get(cell.index).is_some(),
-        Slot::Lethal => !d.lethal.is_empty(),
-        Slot::Tactical => !d.tactical.is_empty(),
+        Slot::Lethal => d.offhand_count(true) as usize > cell.index,
+        Slot::Tactical => d.offhand_count(false) as usize > cell.index,
         Slot::Perk1 | Slot::Perk2 | Slot::Perk3 => {
             d.perks[(cell.slot.perk_tier().unwrap_or(1) as usize) - 1].is_some()
         }

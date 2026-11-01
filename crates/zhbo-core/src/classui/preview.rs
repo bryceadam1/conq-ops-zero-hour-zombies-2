@@ -85,7 +85,8 @@ pub fn draw(prims: &mut Vec<Prim>, f: &Frame, p: Rect, draft: Option<&Draft>) {
     // LETHAL and TACTICAL under the perks.
     let lethal = at(c.right_x, TOP + 3.0 * (c.perk_h + GAP), c.right_w, SMALL_H);
     let tactical = at(c.right_x, lethal.y - p.y + SMALL_H + GAP, c.right_w, SMALL_H);
-    for (r, label) in [(lethal, "LETHAL"), (tactical, "TACTICAL")] {
+    let title = |is_lethal: bool| draft.map_or(if is_lethal { Slot::Lethal.label() } else { Slot::Tactical.label() }, |d| super::editor::offhand_title(d, is_lethal));
+    for (r, label) in [(lethal, title(true)), (tactical, title(false))] {
         plate(prims, f, r);
         slot_label(prims, f, r.x, r.y, c.right_w, label);
     }
@@ -156,7 +157,8 @@ pub fn draw(prims: &mut Vec<Prim>, f: &Frame, p: Rect, draft: Option<&Draft>) {
         let def = weapons::weapon(id);
         let s = SMALL_H * 0.75;
         let x = r.right() - SMALL_H * 2.0 + SMALL_H / 2.0 - s / 2.0;
-        bo2::sprite(prims, f, &format!("ZHBO_BO2_Icon_{}", def.id), Rect { x, y: r.y + SMALL_H / 2.0 - s / 2.0, w: s, h: s }, argb(OFF_WHITE, 1.0), Vec::new());
+        // The item's `_256` picture (`classpreview.lua:3981-3985`).
+        bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&def.id)), Rect { x, y: r.y + SMALL_H / 2.0 - s / 2.0, w: s, h: s }, argb(OFF_WHITE, 1.0), Vec::new());
         let name_r = Rect { x: r.x + 3.0, y: r.y + bo2::TEXT_EXTRA_SMALL, w: c.right_w - 2.0 * SMALL_H - 8.0, h: bo2::TEXT_EXTRA_SMALL };
         bo2::text(prims, f, Family::ExtraSmall, &def.display_name, name_r, Align::Left, argb(OFF_WHITE, 1.0));
     }
@@ -188,18 +190,9 @@ pub fn allocation_bar(prims: &mut Vec<Prim>, f: &Frame, r: Rect, spent: i32, max
     }
 }
 
-/// A perk's display name: the perk table's ids are BO2's English names run together
-/// (`FastHands` -> `Fast Hands`).
+/// A perk's display name: BO2's localized name from the perk's statstable row ([`Perk::name`]).
 pub fn perk_name(p: crate::weapons::Perk) -> String {
-    let id = p.def().id;
-    let mut out = String::with_capacity(id.len() + 2);
-    for (i, ch) in id.chars().enumerate() {
-        if i > 0 && ch.is_ascii_uppercase() {
-            out.push(' ');
-        }
-        out.push(ch);
-    }
-    out
+    p.name()
 }
 
 #[cfg(test)]

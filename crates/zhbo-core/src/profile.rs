@@ -37,7 +37,9 @@ use crate::classes::{self, CustomClass};
 use std::sync::Mutex;
 
 /// Custom class slots one set holds, BO2's `maxCustomClass`.
-pub const MAX_CLASSES: usize = classes::MAX_CUSTOM_CLASSES;
+pub fn max_classes() -> usize {
+    classes::max_custom_class()
+}
 
 /// The class sets a profile carries, BO2's ten.
 pub const MAX_SETS: usize = classes::MAX_CLASS_SETS;
@@ -202,7 +204,7 @@ pub fn unpack_text(words: &[u32]) -> Option<String> {
 pub struct ClassSet {
     /// What the set is called; a blank name falls back to `CLASS SET n`.
     pub name: String,
-    /// The custom classes, at most [`MAX_CLASSES`].
+    /// The custom classes, at most [`max_classes()`].
     pub customs: Vec<CustomClass>,
 }
 
@@ -334,7 +336,7 @@ impl Profile {
             return false;
         }
         let customs = &mut self.sets[set].customs;
-        if slot > customs.len() || (slot == customs.len() && customs.len() >= MAX_CLASSES) {
+        if slot > customs.len() || (slot == customs.len() && customs.len() >= max_classes()) {
             return false;
         }
         class.name = class.name.trim().to_string();
@@ -380,7 +382,7 @@ impl Profile {
     /// Duplicate a set's class by slot into the set's first free slot.
     pub fn copy_in_slot(&mut self, slot: usize) -> Option<String> {
         let set = self.active_set();
-        if self.sets[set].customs.len() >= MAX_CLASSES {
+        if self.sets[set].customs.len() >= max_classes() {
             return None;
         }
         let source = self.sets[set].customs.get(slot)?.clone();
@@ -398,7 +400,7 @@ impl Profile {
         if !taken(&first) {
             return first;
         }
-        for n in 2..=MAX_CLASSES * 2 {
+        for n in 2..=max_classes() * 2 {
             let name = format!("{stem} COPY {n}");
             if !taken(&name) {
                 return name;
@@ -475,13 +477,13 @@ impl Profile {
                 continue;
             }
             if let Some(c) = CustomClass::from_wire(record) {
-                if parsed.len() < MAX_SETS * MAX_CLASSES {
+                if parsed.len() < MAX_SETS * max_classes() {
                     parsed.push(c);
                 }
             }
         }
         for (i, c) in parsed.into_iter().enumerate() {
-            p.save_in_slot(i / MAX_CLASSES, i % MAX_CLASSES, c);
+            p.save_in_slot(i / max_classes(), i % max_classes(), c);
         }
         p.active_set = 0;
         p
@@ -535,7 +537,7 @@ impl Profile {
                 let mut c = CustomClass::from_spec(&spec);
                 c.name = name;
                 let slot = p.sets[set].customs.len();
-                if slot < MAX_CLASSES {
+                if slot < max_classes() {
                     p.save_in_slot(set, slot, c);
                 }
             }
@@ -578,7 +580,7 @@ mod tests {
     fn save_fills_five_slots_then_refuses() {
         let _g = lock();
         let mut p = Profile::new();
-        for i in 0..MAX_CLASSES {
+        for i in 0..max_classes() {
             assert!(p.save(class(&format!("Class {i}"), "an94_mp")), "slot {i} is free");
         }
         assert_eq!(p.customs().len(), 5);

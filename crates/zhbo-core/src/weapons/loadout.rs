@@ -46,6 +46,15 @@ pub struct Loadout {
     pub perks: Vec<Perk>,
     /// Spare rounds the primary and secondary start with, instead of BO2's (tests run a gun dry).
     pub reserve: [Option<u16>; 2],
+    /// How many of the lethal the class carries: BO2's loadout `primarygrenadecount`
+    /// (`_class.gsc:718`, the clip `setweaponammoclip` gives at `:739`): one per filled box, so one
+    /// lethal is one (a C4 too), two with Danger Close (`cacgrenadesbutton.lua:130-230`). `None` (a
+    /// spec without the key: the shipped presets) gives the item's own start count.
+    pub lethal_count: Option<u16>,
+    /// How many of the tactical the class carries: BO2's loadout `specialgrenadecount`
+    /// (`_class.gsc:724`, the clip `setweaponammoclip` gives), one or two (a second tactical costs
+    /// a point, `caceditclass.lua:506-566`). `None` gives the item's own start count.
+    pub tactical_count: Option<u16>,
 }
 
 impl Loadout {
@@ -83,6 +92,8 @@ impl Loadout {
             melee: "knife_held_mp".into(),
             perks: Vec::new(),
             reserve: [None, None],
+            lethal_count: None,
+            tactical_count: None,
         }
     }
 }
@@ -99,6 +110,8 @@ impl Default for Loadout {
             melee: "knife_held_mp".into(),
             perks: vec![Perk::LIGHTWEIGHT, Perk::FAST_HANDS, Perk::DEXTERITY],
             reserve: [None, None],
+            lethal_count: None,
+            tactical_count: None,
         };
         // The loadout spec from the config registry (ZHBO_LOADOUT, read once at init).
         match crate::config::get().loadout.as_deref() {
@@ -110,7 +123,7 @@ impl Default for Loadout {
 
 impl Loadout {
     /// Change slots from a spec like `lethal=claymore_mp;tactical=trophy_system_mp;primary=
-    /// dsr50_mp+acog;perks=Hardline,Engineer`. For trying other kits (and
+    /// dsr50_mp+acog;perks=Hardline,Engineer` (`lethal_count=2`: Danger Close's second lethal; `tactical_count=2`: a second tactical). For trying other kits (and
     /// test runs): the converter reads the same variable so their art is converted, and every
     /// player in a game must use the same one.
     pub fn with_spec(mut self, spec: &str) -> Loadout {
@@ -126,6 +139,8 @@ impl Loadout {
                 "perks" => self.perks = value.split(',').filter_map(|p| Perk::by_id(p.trim())).collect(),
                 "primary_reserve" => self.reserve[0] = value.parse().ok(),
                 "secondary_reserve" => self.reserve[1] = value.parse().ok(),
+                "lethal_count" => self.lethal_count = value.parse().ok(),
+                "tactical_count" => self.tactical_count = value.parse().ok(),
                 _ => {}
             }
         }

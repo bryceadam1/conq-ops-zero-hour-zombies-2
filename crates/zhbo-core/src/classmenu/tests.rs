@@ -1,4 +1,5 @@
 use super::*;
+use super::apply::toggle_att;
 use super::items::cac_entries;
 
     #[test]
@@ -133,11 +134,19 @@ use super::items::cac_entries;
     }
 
     #[test]
-    fn every_wildcard_costs_a_point_and_round_trips_through_its_id() {
+    fn every_wildcard_is_its_tables_card_and_round_trips_through_its_reference() {
         for w in Wildcard::ALL {
-            assert_eq!(Wildcard::by_id(w.id()), Some(w));
-            assert!(!w.name().is_empty());
+            assert_eq!(Wildcard::by_reference(w.reference()), Some(w));
+            let card = w.card().expect("the table holds every card the editor has a rule for");
+            assert_eq!(w.name(), card.name);
+            assert_eq!(w.description(), card.description);
+            assert!(!w.description().is_empty() && card.slot.starts_with("bonuscard"), "{card:?}");
+            assert_eq!(w.cost(), card.cost);
         }
+        // BO2's rows (`mp/statstable.csv:178-185`): Tactician shares Primary Gunfighter's slot.
+        assert_eq!(Wildcard::Tactician.card().map(|c| c.slot.as_str()), Some("bonuscard1"));
+        assert_eq!(Wildcard::PrimaryGunfighter.card().map(|c| c.slot.as_str()), Some("bonuscard1"));
+        assert_eq!(Wildcard::DangerClose.card().map(|c| c.slot.as_str()), Some("bonuscard4"));
         assert_eq!(Wildcard::Perk1Greed.greed_tier(), Some(1));
         assert_eq!(Wildcard::Overkill.greed_tier(), None);
     }
@@ -294,7 +303,7 @@ use super::items::cac_entries;
         let mut e = Editor::new(Draft { secondary: "fnp45_mp".into(), ..Draft::default() });
         e.slot = Slot::Secondary;
         let idx = e.current_option_index();
-        assert_eq!(gun_ids(&e.secondary_slots())[idx], "fnp45_mp");
+        assert_eq!(e.gun_list(false)[idx], "fnp45_mp");
         e.picking = true;
         e.option = idx;
         // Confirming the held weapon leaves the draft unchanged.
@@ -337,7 +346,7 @@ use super::items::cac_entries;
         assert!(!e.option_chosen(held + 1));
         // Attachments: the AN-94's gl and reflex are on the draft, so their list entries are chosen.
         e.slot = Slot::PrimaryAtts;
-        let shorts = attachment_shorts(&e.draft.primary, &e.draft.primary_atts);
+        let shorts = attachment_shorts(&e.draft.primary);
         for (i, short) in shorts.iter().enumerate() {
             let on = e.draft.primary_atts.iter().any(|a| a == short);
             assert_eq!(e.option_chosen(i), on, "attachment {short}");
@@ -531,19 +540,23 @@ use super::items::cac_entries;
     fn overkill_offers_primary_guns_in_the_secondary_list() {
         let mut e = Editor::new(Draft::default());
         // The secondary lists BO2's `secondary` items: the pistols and the launchers.
-        let base = gun_ids(&e.secondary_slots());
+        let base = e.gun_list(false);
         assert!(base.contains(&"fnp45_mp") && base.contains(&"smaw_mp"), "{base:?}");
         assert!(!base.contains(&"an94_mp"), "a primary item needs Overkill");
         e.draft.wildcards.push(Wildcard::Overkill);
-        let with_overkill = gun_ids(&e.secondary_slots());
-        // Every primary item is offered in the secondary slot too.
+        let with_overkill = e.gun_list(false);
+        // Under Overkill both slots list the primary items only, less the gun the other slot holds
+        // (`cacweaponsp.lua:638-720`, `AddWeaponGroupCarousel`): no pistols, no second AN-94.
         for id in gun_ids(&items::slots_of(true, &[])) {
-            assert!(with_overkill.contains(&id), "Overkill offers {id}");
+            assert_eq!(with_overkill.contains(&id), id != e.draft.primary, "{id}");
         }
+        assert!(!with_overkill.contains(&"fnp45_mp") && !with_overkill.contains(&"smaw_mp"), "{with_overkill:?}");
+        // The primary list leaves out a primary item the secondary holds.
+        e.draft.secondary = with_overkill[0].to_string();
+        assert!(!e.gun_list(true).contains(&with_overkill[0]));
         // The option list walks the same items.
         e.slot = Slot::Secondary;
-        let options = e.options();
-        assert!(options.contains(&weapons::weapon("an94_mp").display_name.to_string()));
+        assert_eq!(e.options().len(), e.gun_list(false).len());
     }
 
     #[test]
@@ -563,10 +576,12 @@ use super::items::cac_entries;
         let mut e = Editor::new(Draft::default());
         e.draft.wildcards.push(Wildcard::Overkill);
         e.slot = Slot::Secondary;
-        let ids = gun_ids(&e.secondary_slots());
-        // Pick the first primary-class gun offered in the secondary list.
-        let target = "an94_mp";
-        let i = ids.iter().position(|id| *id == target).expect("AN-94 is offered");
+        let ids = e.gun_list(false);
+        // Pick the first primary-class gun offered in the secondary list (not the AN-94 the
+        // primary holds).
+        let target = ids[0];
+        assert_ne!(target, e.draft.primary);
+        let i = 0;
         e.picking = true;
         e.option = i;
         e.step(Edges { confirm: true, ..Default::default() });
@@ -627,7 +642,7 @@ fn the_budget_denies_an_eleventh_point_and_leaves_the_draft() {
     let mut e = Editor::new(d);
     e.slot = Slot::Wildcards;
     e.picking = true;
-    e.option = Wildcard::ALL.iter().position(|w| *w == Wildcard::Tactician).unwrap();
+    e.option = wildcard_list().iter().position(|w| *w == Wildcard::Tactician).unwrap();
     let before = e.draft.clone();
     assert_eq!(e.step(Edges { confirm: true, ..Default::default() }), Outcome::Continue);
     assert!(e.denied, "the refused choice is surfaced");
@@ -695,22 +710,22 @@ fn a_fourth_bonus_card_is_denied() {
         perks: [Some(Perk::LIGHTWEIGHT), None, None],
         ..Draft::default()
     });
-    let cards = crate::classes::MAX_BONUS_CARDS as i32;
+    let cards = crate::classes::max_bonus_cards() as i32;
     assert!(e.draft.spent() + cards < PICK_10, "room for every card: {}", e.draft.spent());
     e.slot = Slot::Wildcards;
-    for (n, w) in [Wildcard::Perk1Greed, Wildcard::Tactician, Wildcard::DangerClose].into_iter().enumerate() {
-        let i = Wildcard::ALL.iter().position(|x| *x == w).expect("in the list");
+    for (n, w) in [Wildcard::Perk1Greed, Wildcard::Perk2Greed, Wildcard::Tactician].into_iter().enumerate() {
+        let i = wildcard_list().iter().position(|x| *x == w).expect("in the list");
         e.picking = true;
         e.option = i;
         assert_eq!(e.step(Edges { confirm: true, ..Default::default() }), Outcome::Continue);
         assert!(!e.denied, "card {} is within the cap", n + 1);
         assert_eq!(e.draft.wildcards.len(), n + 1);
     }
-    assert_eq!(e.draft.wildcards.len(), crate::classes::MAX_BONUS_CARDS);
+    assert_eq!(e.draft.wildcards.len(), crate::classes::max_bonus_cards());
     // The fourth: refused with the deny flag, the draft untouched.
     let before = e.draft.clone();
-    let overkill = Wildcard::ALL.iter().position(|x| *x == Wildcard::Overkill).expect("in the list");
-    let tactician = Wildcard::ALL.iter().position(|x| *x == Wildcard::Tactician).expect("in the list");
+    let overkill = wildcard_list().iter().position(|x| *x == Wildcard::Overkill).expect("in the list");
+    let tactician = wildcard_list().iter().position(|x| *x == Wildcard::Tactician).expect("in the list");
     e.picking = true;
     e.option = overkill;
     e.step(Edges { confirm: true, ..Default::default() });
@@ -721,11 +736,11 @@ fn a_fourth_bonus_card_is_denied() {
     e.picking = true;
     e.option = tactician;
     e.step(Edges { confirm: true, ..Default::default() });
-    assert_eq!(e.draft.wildcards.len(), crate::classes::MAX_BONUS_CARDS - 1);
+    assert_eq!(e.draft.wildcards.len(), crate::classes::max_bonus_cards() - 1);
     e.picking = true;
     e.option = overkill;
     e.step(Edges { confirm: true, ..Default::default() });
-    assert_eq!(e.draft.wildcards.len(), crate::classes::MAX_BONUS_CARDS);
+    assert_eq!(e.draft.wildcards.len(), crate::classes::max_bonus_cards());
     assert!(e.draft.valid());
 }
 
@@ -733,7 +748,7 @@ fn a_fourth_bonus_card_is_denied() {
 fn an_over_capped_draft_is_not_valid() {
     // A hand-built draft (or one derived from a stored class) past the cap never saves.
     let d = Draft { wildcards: vec![Wildcard::Perk1Greed, Wildcard::Perk2Greed, Wildcard::Perk3Greed, Wildcard::Overkill], ..Draft::default() };
-    assert_eq!(d.wildcards.len(), crate::classes::MAX_BONUS_CARDS + 1);
+    assert_eq!(d.wildcards.len(), crate::classes::max_bonus_cards() + 1);
     assert!(!d.valid(), "over the card cap");
 }
 
@@ -863,7 +878,7 @@ fn dual_wield_gives_the_dw_weapon_and_reads_back() {
 fn picking_dual_wield_saves_the_dw_weapon() {
     let mut e = Editor::new(Draft { secondary: "fiveseven_mp".into(), ..Draft::default() });
     e.slot = Slot::SecondaryAtts;
-    let i = attachment_shorts(&e.draft.secondary, &e.draft.secondary_atts).iter().position(|s| *s == "dw").expect("Dual Wield is offered");
+    let i = attachment_shorts(&e.draft.secondary).iter().position(|s| *s == "dw").expect("Dual Wield is offered");
     assert!(e.apply_option(i));
     assert_eq!(e.draft.secondary_id(), "fiveseven_dw_mp");
     let c = e.draft.to_custom();
@@ -876,14 +891,143 @@ fn picking_dual_wield_saves_the_dw_weapon() {
     assert!(!gun_ids(&[items::SECONDARY]).contains(&"fiveseven_dw_mp"));
 }
 
+// --- The wildcard grid from the table ---
+
+/// The grid lists the table's bonus cards by sort key, then index (`GetUnlockablesByGroupName`
+/// with `UnlockablesComparisonFunction`, G17): `f-wildcards/001`'s order.
+#[test]
+fn the_wildcard_grid_is_the_tables_cards_in_sort_order() {
+    assert_eq!(
+        wildcard_list(),
+        vec![
+            Wildcard::Perk1Greed,
+            Wildcard::Perk2Greed,
+            Wildcard::Perk3Greed,
+            Wildcard::Overkill,
+            Wildcard::SecondaryGunfighter,
+            Wildcard::PrimaryGunfighter,
+            Wildcard::Tactician,
+            Wildcard::DangerClose,
+        ]
+    );
+    let sorts: Vec<(i32, i32)> = weapons::catalog().bonus_cards().iter().map(|c| (c.sort, c.index)).collect();
+    assert!(sorts.windows(2).all(|w| w[0] <= w[1]), "{sorts:?}");
+    let mut e = Editor::new(Draft::default());
+    e.slot = Slot::Wildcards;
+    assert_eq!(e.options(), wildcard_list().iter().map(|w| w.name().to_string()).collect::<Vec<_>>());
+    for (i, w) in wildcard_list().into_iter().enumerate() {
+        assert_eq!(e.option_wildcard(i), Some(w));
+    }
+}
+
+/// A card is charged its row's cost (BO2's column 12).
+#[test]
+fn a_wildcard_costs_its_cards_cost() {
+    let mut d = Draft::default();
+    let before = d.spent();
+    d.wildcards.push(Wildcard::Overkill);
+    assert_eq!(d.spent() - before, Wildcard::Overkill.card().map(|c| c.cost).unwrap());
+}
+
+/// BO2's grid marks Tactician and Danger Close mutually exclusive (`bonuscardgridbutton.lua`):
+/// with one equipped, the other is denied untouched; turning the first off frees it.
+#[test]
+fn tactician_and_danger_close_exclude_each_other() {
+    let mut e = Editor::new(Draft { perks: [None; 3], ..Draft::default() });
+    e.slot = Slot::Wildcards;
+    let at = |w: Wildcard| wildcard_list().iter().position(|x| *x == w).unwrap();
+    let pick = |e: &mut Editor, w: Wildcard| {
+        e.picking = true;
+        e.option = at(w);
+        e.denied = false;
+        e.step(Edges { confirm: true, ..Default::default() });
+    };
+    pick(&mut e, Wildcard::Tactician);
+    assert_eq!(e.draft.wildcards, vec![Wildcard::Tactician]);
+    let before = e.draft.clone();
+    pick(&mut e, Wildcard::DangerClose);
+    assert!(e.denied, "Danger Close is refused beside Tactician");
+    assert_eq!(e.draft, before);
+    pick(&mut e, Wildcard::Tactician);
+    assert!(e.draft.wildcards.is_empty());
+    pick(&mut e, Wildcard::DangerClose);
+    assert_eq!(e.draft.wildcards, vec![Wildcard::DangerClose]);
+    pick(&mut e, Wildcard::Tactician);
+    assert!(e.denied, "and the other way round");
+    assert_eq!(Wildcard::Overkill.excludes(), None);
+}
+
+/// The profile stores no wildcard list (a class's cards are re-derived from what it holds), so a
+/// profile written before the cards came from the table loads with the same cards: a v2 record
+/// with two Tier 1 perks re-opens with Perk 1 Greed, charged its card's cost.
+#[test]
+fn an_old_profiles_class_reloads_with_its_cards() {
+    let _g = crate::profile::lock();
+    let tier1 = perk_list(1);
+    let (a, b) = (tier1[0].def().id, tier1[1].def().id);
+    let text = format!("v2\nactive 1\nset 1 CLASS SET 1\nclass\nGreedy\nprimary=an94_mp;perks={a},{b}\nend\n");
+    let p = crate::profile::Profile::from_text(&text);
+    let c = p.customs().first().expect("the class loads").clone();
+    let d = Draft::from_stored(&c);
+    assert_eq!(d.wildcards, vec![Wildcard::Perk1Greed]);
+    assert_eq!(d.extra_perks[0].map(|p| p.def().id), Some(b));
+    // Saved back, the class is the same record.
+    assert_eq!(d.to_custom().perks, c.perks);
+    let mut again = crate::profile::Profile::new();
+    assert!(again.save(d.to_custom()));
+    let back = crate::profile::Profile::from_text(&again.to_text());
+    assert_eq!(Draft::from_stored(&back.customs()[0]).wildcards, vec![Wildcard::Perk1Greed]);
+}
+
+/// Danger Close gives the lethal button a second box (`cacgrenadesbutton.lua:130-180`): the card
+/// costs its own point, the second lethal is filled like the tactical's second box and costs
+/// another, the class carries the count (`primarygrenadecount` 2) and re-opening the stored class
+/// gives the card back (`checkclasses.lua:688-700`). Taking the card off drops the second lethal
+/// (`bonuscardbutton.lua:490-545`).
+#[test]
+fn danger_close_opens_a_second_lethal_box_that_costs_a_point() {
+    let plain = Draft::default();
+    let mut e = Editor::new(Draft { perks: [None, None, None], ..Draft::default() });
+    let base = e.draft.spent();
+    assert_eq!(e.draft.offhand_boxes(true), 1, "one box without the card");
+    assert_eq!(e.apply_second_offhand(true), ApplyResult::NoChange, "no second box to fill");
+    e.slot = Slot::Wildcards;
+    let dc = wildcard_list().iter().position(|w| *w == Wildcard::DangerClose).expect("the card is listed");
+    assert_eq!(e.apply(dc), ApplyResult::Changed);
+    assert_eq!((e.draft.offhand_boxes(true), e.draft.lethal_count(), e.draft.spent()), (2, 1, base + 1), "the card alone");
+    assert_eq!(e.apply_second_offhand(true), ApplyResult::Changed);
+    assert_eq!((e.draft.lethal_count(), e.draft.offhand_count(true), e.draft.spent()), (2, 2, base + 2), "the second lethal");
+    let c = e.draft.to_custom();
+    assert_eq!(c.lethal_count, crate::classes::max_grenades() as u8);
+    assert_eq!(c.loadout().lethal_count, Some(2));
+    assert!(c.to_spec().contains("lethal_count=2"), "{}", c.to_spec());
+    let back = Draft::from_custom(&c);
+    assert_eq!((back.wildcards.clone(), back.lethal_count()), (vec![Wildcard::DangerClose], 2));
+    // Re-picking the held lethal toggles the second box, as the tactical slot does.
+    e.slot = Slot::Lethal;
+    let frag = e.offhand_list(true).iter().position(|id| *id == e.draft.lethal).expect("the frag is listed");
+    assert_eq!(e.apply(frag), ApplyResult::Changed);
+    assert_eq!(e.draft.lethal_count(), 1);
+    assert_eq!(e.apply(frag), ApplyResult::Changed);
+    assert_eq!(e.draft.lethal_count(), 2);
+    // The card off: one box, one lethal.
+    e.slot = Slot::Wildcards;
+    assert_eq!(e.apply(dc), ApplyResult::Changed);
+    assert_eq!((e.draft.offhand_boxes(true), e.draft.lethal_count(), e.draft.spent()), (1, 1, base));
+    // No lethal, no second one: the card alone.
+    let bare = Draft { lethal: String::new(), wildcards: vec![Wildcard::DangerClose], ..Draft::default() };
+    assert_eq!(bare.to_custom().lethal_count, 0);
+    assert_eq!(plain.to_custom().lethal_count, 1);
+}
+
 #[test]
 fn the_offhand_slots_list_their_statstable_items_placed_equipment_included() {
     // BO2 lists the offhands by statstable slot (column 13): the claymore is a `primarygrenade`
     // item and the Trophy System a `specialgrenade` one, though both are placed equipment
     // (`Class::Equipment`), not grenades.
     let (lethal, tactical) = (equipment_ids(true), equipment_ids(false));
-    assert_eq!(weapons::weapon("claymore_mp").class, WeaponClass::Equipment);
-    assert_eq!(weapons::weapon("trophy_system_mp").class, WeaponClass::Equipment);
+    assert_eq!(weapons::weapon("claymore_mp").class, crate::weapons::Class::Equipment);
+    assert_eq!(weapons::weapon("trophy_system_mp").class, crate::weapons::Class::Equipment);
     assert!(lethal.contains(&"frag_grenade_mp") && lethal.contains(&"claymore_mp"), "{lethal:?}");
     assert!(tactical.contains(&"concussion_grenade_mp") && tactical.contains(&"trophy_system_mp"), "{tactical:?}");
     assert!(!lethal.contains(&"trophy_system_mp") && !tactical.contains(&"claymore_mp"));
@@ -903,4 +1047,129 @@ fn the_primary_slot_offers_the_assault_shield_and_repair_keeps_it() {
     assert!(ids.contains(&"riotshield_mp"), "{ids:?}");
     assert!(!gun_ids(&items::slots_of(false, &[])).contains(&"riotshield_mp"), "a primary item only");
     assert!(items::fits_slot("riotshield_mp", true));
+}
+
+/// Under Tactician the lethal slot lists the tactical items (`cacgrenades.lua:183-195`), so the
+/// card works end to end: pick it, put a tactical in the lethal slot, save, and the reopened class
+/// has the card back (re-derived from the slot, `checkclasses.lua:677-686`) and the same list.
+/// Turning the card off clears the tactical from the lethal slot, as BO2's `ClearSlot` does.
+#[test]
+fn tactician_lists_the_tactical_items_in_the_lethal_slot() {
+    let at = |w: Wildcard| wildcard_list().iter().position(|x| *x == w).unwrap();
+    let mut e = Editor::new(Draft { perks: [None; 3], ..Draft::default() });
+    e.slot = Slot::Lethal;
+    assert_eq!(e.options(), equipment_ids(true).iter().map(|id| weapons::weapon(id).display_name.clone()).collect::<Vec<_>>());
+    e.slot = Slot::Wildcards;
+    assert!(e.apply_option(at(Wildcard::Tactician)));
+    e.slot = Slot::Lethal;
+    let tactical = equipment_ids(false);
+    assert_eq!(e.options(), equipment_options(&tactical), "the lethal slot lists the tactical slot's items");
+    assert!(!e.options().contains(&weapons::weapon("frag_grenade_mp").display_name));
+    let i = tactical.iter().position(|id| *id == "concussion_grenade_mp").unwrap();
+    assert_eq!(e.option_weapon(i).map(|d| d.id.as_str()), Some("concussion_grenade_mp"));
+    assert_eq!(e.apply(i), ApplyResult::Changed);
+    assert_eq!(e.draft.lethal, "concussion_grenade_mp");
+    assert!(e.option_chosen(i));
+    // Saved and reopened (through the profile repair): the card and the listing come back.
+    let back = Draft::from_stored(&e.draft.to_custom());
+    assert_eq!(back.lethal, "concussion_grenade_mp");
+    assert!(back.wildcards.contains(&Wildcard::Tactician), "{:?}", back.wildcards);
+    let mut again = Editor::new(back);
+    again.slot = Slot::Lethal;
+    assert_eq!(again.current_option_index(), i);
+    // Without the card the tactical cannot stay in the lethal slot.
+    again.slot = Slot::Wildcards;
+    assert!(again.apply_option(at(Wildcard::Tactician)));
+    assert!(again.draft.lethal.is_empty());
+    again.slot = Slot::Lethal;
+    assert_eq!(again.options(), equipment_options(&equipment_ids(true)));
+}
+
+/// BO2's `specialgrenadecount`: the tactical slot carries one or two of its item (each a point;
+/// `math.min(2, GetMaxAmmoForItem)` boxes), picking the held item again takes or returns the
+/// second, another item starts at one, and the saved class gives and re-opens with the count.
+#[test]
+fn a_second_tactical_costs_a_point_and_round_trips() {
+    let mut e = Editor::new(Draft::default());
+    let base = e.draft.spent();
+    assert_eq!(e.draft.tactical_count(), 1);
+    assert_eq!(e.draft.to_custom().tactical_count, 1, "the class's own count, not the item's start count");
+    e.slot = Slot::Tactical;
+    let i = e.offhand_list(false).iter().position(|id| *id == "concussion_grenade_mp").unwrap();
+    assert_eq!(items::offhand_cap("concussion_grenade_mp"), crate::classes::max_grenades() as u8);
+    assert_eq!(e.apply(i), ApplyResult::Changed, "re-picking the held item takes its second box");
+    assert_eq!((e.draft.tactical_count(), e.draft.spent()), (2, base + 1));
+    let c = e.draft.to_custom();
+    assert_eq!((c.tactical_count, c.loadout().tactical_count), (2, Some(2)));
+    assert!(c.to_spec().contains("tactical_count=2"), "{}", c.to_spec());
+    let back = Draft::from_stored(&c);
+    assert_eq!((back.tactical_count(), back.spent()), (2, base + 1));
+    assert_eq!(e.apply(i), ApplyResult::Changed, "and again returns it");
+    assert_eq!(e.draft.tactical_count(), 1);
+    // Over budget, the second is denied and the draft untouched.
+    let mut full = Editor::new(Draft { wildcards: vec![Wildcard::Perk1Greed], extra_perks: [Some(Perk::HARDLINE), None, None], ..Draft::default() });
+    full.draft.secondary_atts = vec![];
+    while full.draft.remaining() > 0 {
+        full.draft.primary_atts.push("x".into());
+    }
+    full.slot = Slot::Tactical;
+    let before = full.draft.clone();
+    assert_eq!(full.apply(i), ApplyResult::Denied);
+    assert_eq!(full.draft, before);
+    // A stored count is clamped to the item's cap by the repair.
+    let mut c = Draft::default().to_custom();
+    c.tactical_count = 7;
+    let _ = crate::classrepair::repair(&mut c);
+    assert_eq!(c.tactical_count, items::offhand_cap(&c.tactical));
+}
+
+/// BO2 orders a CaC list by the statstable sort key, then the item index (G17, `FUN_008cdde0`):
+/// the editor's entries follow the table's `CacOrder`, and a table carries it through its text.
+#[test]
+fn the_cac_lists_follow_the_sort_key_then_the_index() {
+    let entries = cac_entries();
+    assert!(entries.windows(2).all(|w| items::list_key(w[0]) <= items::list_key(w[1])));
+    let mut defs = vec![
+        weapons::WeaponDef { id: "b_mp".into(), display_name: "B".into(), cac_slot: "primary".into(), cac_sort: 1, cac_index: 9, ..Default::default() },
+        weapons::WeaponDef { id: "a_mp".into(), display_name: "A".into(), cac_slot: "primary".into(), cac_sort: 1, cac_index: 3, ..Default::default() },
+        weapons::WeaponDef { id: "c_mp".into(), display_name: "C".into(), cac_slot: "primary".into(), cac_sort: 0, cac_index: 20, ..Default::default() },
+    ];
+    let back = weapons::table::parse_table(&weapons::table::format_table(&defs)).unwrap();
+    assert_eq!(back.iter().map(items::list_key).collect::<Vec<_>>(), defs.iter().map(items::list_key).collect::<Vec<_>>());
+    defs.sort_by_key(items::list_key);
+    assert_eq!(defs.iter().map(|d| d.id.as_str()).collect::<Vec<_>>(), ["c_mp", "a_mp", "b_mp"]);
+}
+
+#[test]
+fn the_attachment_grid_keeps_the_weapons_order_whatever_is_equipped() {
+    // BO2's grid adds one button per attachment number (`cacattachmentsmenu.lua:858-879`): an
+    // equipped attachment stays in its place, and the grid opens on the first one equipped.
+    let mut e = Editor::new(Draft::default());
+    let offered = offered_attachments(&e.draft.primary);
+    e.slot = Slot::PrimaryAtts;
+    for (i, short) in offered.iter().enumerate() {
+        assert_eq!(e.option_attachment(i), Some(*short));
+    }
+    assert_eq!(e.options().len(), offered.len());
+    let first = offered.iter().position(|s| *s == e.draft.primary_atts[0]).expect("the draft's attachment is offered");
+    assert_eq!(e.current_option_index(), first);
+}
+
+/// A weapon list that does not offer the held gun opens on the first gun of its first category
+/// (BO2's carousel list keeps its first carousel's first card, `cardcarousellist.lua:893`): a
+/// pistol secondary under Overkill opens on a submachine gun, not the catalog's first gun.
+#[test]
+fn a_list_without_the_held_gun_opens_on_its_first_category() {
+    let mut e = Editor::new(Draft::default());
+    e.draft.wildcards.push(Wildcard::Overkill);
+    e.slot = Slot::Secondary;
+    assert!(!e.gun_list(false).contains(&e.draft.secondary.as_str()), "the pistol is not offered");
+    let i = e.current_option_index();
+    let first = crate::classui::category_order(Slot::Secondary).into_iter().find(|c| e.gun_list(false).iter().any(|id| weapons::weapon(id).cac_class() == *c)).unwrap();
+    assert_eq!(e.option_weapon(i).unwrap().cac_class(), first);
+    let ids = e.gun_list(false);
+    assert_eq!(ids.iter().position(|id| weapons::weapon(id).cac_class() == first), Some(i), "its first gun");
+    // The held gun, when offered, is still where the list opens.
+    e.slot = Slot::Primary;
+    assert_eq!(e.option_weapon(e.current_option_index()).unwrap().id, e.draft.primary);
 }

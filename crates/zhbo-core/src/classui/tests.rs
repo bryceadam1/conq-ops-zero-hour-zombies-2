@@ -466,7 +466,7 @@ fn the_editor_screens_draw_their_boxes_and_prompts() {
     draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
     let t = texts(&prims);
     assert!(t.iter().any(|x| x == "Scavenger"), "tier 2 perks are listed: {t:?}");
-    assert!(t.iter().any(|x| x == "FastHands"), "tier 2 perks are listed");
+    assert!(t.iter().any(|x| x == "Fast Hands"), "tier 2 perks are listed by BO2's name");
     assert!(t.iter().any(|x| x == "Back"), "the picker's only prompt from d-attach/002: {t:?}");
     assert!(!t.iter().any(|x| x == "Choose"), "no invented Enter Choose prompt: {t:?}");
 }
@@ -763,11 +763,12 @@ fn the_circled_x_clears_only_the_selected_filled_box() {
 
 #[test]
 fn the_perk_lists_follow_bo2s_grid_order() {
-    // e-perks/001, /006, /011: the grids read left to right, top to bottom.
+    // e-perks/001, /006, /011: the grids read left to right, top to bottom, each cell the perk's
+    // localized name.
     let expected = [
-        vec!["Lightweight", "Hardline", "BlindEye", "FlakJacket", "Ghost"],
-        vec!["Toughness", "ColdBlooded", "FastHands", "HardWired", "Scavenger"],
-        vec!["Dexterity", "ExtremeConditioning", "Engineer", "TacticalMask", "DeadSilence", "Awareness"],
+        vec!["Lightweight", "Hardline", "Blind Eye", "Flak Jacket", "Ghost"],
+        vec!["Toughness", "Cold Blooded", "Fast Hands", "Hard Wired", "Scavenger"],
+        vec!["Dexterity", "Extreme Conditioning", "Engineer", "Tactical Mask", "Dead Silence", "Awareness"],
     ];
     let mut e = Editor::new(Draft::default());
     for (tier, want) in expected.iter().enumerate() {
@@ -996,4 +997,192 @@ fn primary_gunfighter_shows_a_third_attachment_plate() {
     draw_editor(&mut prims, 1280.0, 720.0, &with, 0.0, 0.0);
     let grip_drawn = prims.iter().any(|p| matches!(p, Prim::Image { name, .. } if name == "ZHBO_BO2_Attach_Grip"));
     assert!(grip_drawn, "the third plate draws its attachment");
+}
+
+/// The wildcard grid's lower panel shows the highlighted card's name (Big) and its description
+/// (Default, 0.4 alpha) from the card's table row (`cacbonuscards.lua`'s `bonusCardName` /
+/// `bonusCardDescription`).
+#[test]
+fn the_wildcard_grid_shows_the_highlighted_cards_description() {
+    let mut e = Editor::new(Draft::default());
+    e.slot = Slot::Wildcards;
+    e.picking = true;
+    let list = crate::classmenu::wildcard_list();
+    e.option = list.iter().position(|w| *w == Wildcard::DangerClose).unwrap();
+    let mut prims = Vec::new();
+    draw_editor(&mut prims, 1280.0, 720.0, &e, 0.0, 0.0);
+    let desc = Wildcard::DangerClose.description();
+    assert_eq!(desc, "Take a second Lethal.");
+    let alpha = prims.iter().find_map(|p| match p {
+        Prim::Text { text, argb, .. } if text == desc => Some(*argb >> 24),
+        _ => None,
+    });
+    assert_eq!(alpha, Some(bo2::argb(bo2::OFF_WHITE, 0.4) >> 24), "{:?}", texts(&prims));
+    assert!(texts(&prims).iter().filter(|t| *t == "Danger Close").count() >= 2, "the cell and the panel title");
+}
+
+/// The perk grid's lower panel shows the highlighted perk's name (Big) and its description
+/// (Default, 0.4 alpha) from the perk's statstable row (`cacperksp.lua`'s `perkTitle` /
+/// `perkDescription`, `e-perks/002`: "Hardline" / "Earn Scorestreaks faster.").
+#[test]
+fn the_perk_grid_shows_the_highlighted_perks_description() {
+    let mut e = Editor::new(Draft::default());
+    e.slot = Slot::Perk1;
+    e.picking = true;
+    e.option = (0..8).position(|i| e.option_perk(i) == Some(crate::weapons::Perk::HARDLINE)).expect("Hardline is a Perk 1");
+    let mut prims = Vec::new();
+    draw_editor(&mut prims, 1280.0, 720.0, &e, 0.0, 0.0);
+    let desc = crate::weapons::Perk::HARDLINE.description();
+    assert_eq!(desc, "Earn Scorestreaks faster.");
+    let alpha = prims.iter().find_map(|p| match p {
+        Prim::Text { text, argb, .. } if text == desc => Some(*argb >> 24),
+        _ => None,
+    });
+    assert_eq!(alpha, Some(bo2::argb(bo2::OFF_WHITE, 0.4) >> 24), "{:?}", texts(&prims));
+    assert!(texts(&prims).iter().filter(|t| *t == "Hardline").count() >= 2, "the cell and the panel title");
+    assert!(texts(&prims).iter().any(|t| t == "Blind Eye"), "cells carry BO2's names: {:?}", texts(&prims));
+}
+
+/// The tactical button's second box (`cacgrenadesbutton.lua:150-180`): clicking it while empty
+/// equips a second of the held tactical for a point (`EquipGrenade`, `specialgrenadecount` 2), the
+/// button reads `x2`, and its circled X takes that one back. An item capped at one has no box.
+#[test]
+fn the_tactical_buttons_second_box_takes_a_second_tactical() {
+    let l = editor_layout(1280.0, 720.0);
+    let mut e = Editor::new(Draft::default());
+    let spent = e.draft.spent();
+    let cells = editor_cells(&l, &e);
+    let second = *cells.iter().find(|c| c.slot == Slot::Tactical && c.index == 1).expect("the concussion takes two");
+    assert!(!cell_filled(&e, &second));
+    let r = l.frame.px(second.rect);
+    let mut prev = MenuPrev::default();
+    let mut pointer = MenuPointer { screen_w: 1280.0, screen_h: 720.0, mouse_x: r.x + r.w * 0.5, mouse_y: r.y + r.h * 0.5, ..Default::default() };
+    let _ = editor_frame(&mut e, &pointer, &prev);
+    prev.update(&pointer);
+    pointer.mouse_buttons = crate::input::mouse_buttons::LEFT;
+    let frame = editor_frame(&mut e, &pointer, &prev);
+    assert!(!frame.denied && !e.picking, "the box equips directly, no list");
+    assert_eq!((e.draft.tactical_count(), e.draft.spent()), (2, spent + 1));
+    assert!(cell_filled(&e, &second));
+    assert_eq!(e.draft.to_custom().tactical_count, 2);
+    // The circled X on the second box returns it.
+    e.slot = Slot::Tactical;
+    assert_eq!(editor_remove_at(&l, &editor_cells(&l, &e), &e, l.frame.px(remove_rect(&second)).x + 10.0, l.frame.px(remove_rect(&second)).y + 10.0), Some((Slot::Tactical, 1)));
+    assert!(clear_cell(&mut e.draft, Slot::Tactical, 1));
+    assert_eq!((e.draft.tactical.as_str(), e.draft.tactical_count()), ("concussion_grenade_mp", 1));
+    // An item whose weapon caps its ammo at one has a single box.
+    let cap = crate::classmenu::items::offhand_cap("trophy_system_mp");
+    e.draft.tactical = "trophy_system_mp".into();
+    assert_eq!(editor_cells(&l, &e).iter().any(|c| c.slot == Slot::Tactical && c.index == 1), cap > 1);
+}
+
+/// The weapon picker shows the highlighted item's description as the carousel's hint
+/// (`cacweaponsp.lua:540-590`, `c-primary/001`): the table's statstable text, wrapped.
+#[test]
+fn the_weapon_picker_shows_the_items_description() {
+    let mut e = Editor::new(Draft::default());
+    e.slot = Slot::Primary;
+    e.picking = true;
+    e.option = e.options().iter().position(|o| o == "MP7").expect("the MP7 stand-in");
+    let desc = &weapons::weapon("mp7_mp").description;
+    assert!(!desc.is_empty());
+    let mut prims = Vec::new();
+    draw_screen(&mut prims, 1280.0, 720.0, &ScreenView { highlight: 0, editor: Some(&e), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None });
+    let joined = texts(&prims).join(" ");
+    assert!(joined.contains("Fully automatic personal defense weapon.") && joined.contains("Versatile and strong overall."), "{joined}");
+}
+
+/// An offhand's picture is its statstable image's `_256` (`cacgrenadesbutton.lua:199-205`), the
+/// converter's `ZHBO_CaC_Weapon_<id>`: the button's box and the list's rows draw it.
+#[test]
+fn the_offhands_draw_their_cac_picture() {
+    let mut e = Editor::new(Draft::default());
+    let l = editor_layout(1280.0, 720.0);
+    let cell = *editor_cells(&l, &e).iter().find(|c| c.slot == Slot::Lethal).unwrap();
+    assert_eq!(cell_icon(&e, &cell), Some(crate::names::cac_weapon_image("frag_grenade_mp")));
+    e.slot = Slot::Tactical;
+    let i = e.options().iter().position(|o| o == &weapons::weapon("concussion_grenade_mp").display_name).unwrap();
+    assert_eq!(option_icon(&e, i), Some(crate::names::cac_weapon_image("concussion_grenade_mp")));
+}
+
+/// The offhand titles are the install's strings: the lethal slot reads BO2's `SECOND TACTICAL`
+/// under Tactician (`cacgrenadesbutton.lua:104-126`, `cacgrenades.lua:85-104`), on the button and
+/// the picker alike.
+#[test]
+fn the_lethal_slot_is_titled_second_tactical_under_tactician() {
+    let mut e = Editor::new(Draft::default());
+    assert_eq!((super::editor::offhand_title(&e.draft, true), super::editor::offhand_title(&e.draft, false)), ("LETHAL", "TACTICAL"));
+    e.draft.wildcards.push(crate::classmenu::Wildcard::Tactician);
+    assert_eq!(super::editor::offhand_title(&e.draft, true), "SECOND TACTICAL");
+    e.slot = Slot::Lethal;
+    assert_eq!(super::editor::picker_title(&e), "SECOND TACTICAL");
+}
+
+/// An offhand button's empty extra box shows BO2's plus sign while one of the item is equipped,
+/// and never the item's picture (`cacgrenadesbutton.lua:270-345`); a filled box shows the item.
+#[test]
+fn an_empty_extra_offhand_box_shows_the_plus_sign() {
+    let l = editor_layout(1280.0, 720.0);
+    let mut e = Editor::new(Draft::default());
+    let find = |e: &Editor, slot: Slot| editor_cells(&l, e).into_iter().find(|c| c.slot == slot && c.index == 1);
+    let second = find(&e, Slot::Tactical).expect("the concussion takes two");
+    assert!(super::editor::offhand_plus(&e, &second));
+    assert_eq!(super::editor::cell_icon(&e, &second), None, "the empty box draws no picture");
+    e.draft.second_offhand[1] = true;
+    assert!(!super::editor::offhand_plus(&e, &second));
+    assert!(super::editor::cell_icon(&e, &second).is_some());
+    // The lethal slot: one box, then Danger Close's second.
+    assert!(find(&e, Slot::Lethal).is_none());
+    e.draft.wildcards.push(crate::classmenu::Wildcard::DangerClose);
+    let lethal2 = find(&e, Slot::Lethal).expect("Danger Close's box");
+    assert!(super::editor::offhand_plus(&e, &lethal2));
+    // An empty slot: no plus (BO2 draws it only with exactly one equipped).
+    e.draft.tactical.clear();
+    assert!(!super::editor::offhand_plus(&e, &second));
+}
+
+/// The boxes an equipped bonus card adds sit on BO2's orange preview plate (`slotlist.lua`):
+/// Danger Close's second lethal, a Greed's second perk, a Gunfighter's extra attachment — not
+/// Tactician's lethal boxes, nor a slot's own.
+#[test]
+fn a_bonus_cards_box_is_marked_as_its_preview_slot() {
+    use crate::classmenu::Wildcard;
+    let l = editor_layout(1280.0, 720.0);
+    let marked = |e: &Editor| -> Vec<(Slot, usize)> {
+        editor_cells(&l, e).into_iter().filter(|c| super::editor::bonus_card_box(e, c)).map(|c| (c.slot, c.index)).collect()
+    };
+    let mut e = Editor::new(Draft::default());
+    assert!(marked(&e).is_empty(), "the tactical's second box is the slot's own");
+    e.draft.wildcards = vec![Wildcard::DangerClose, Wildcard::Perk1Greed, Wildcard::PrimaryGunfighter];
+    let m = marked(&e);
+    assert!(m.contains(&(Slot::Lethal, 1)) && m.contains(&(Slot::PrimaryAtts, 2)) && m.iter().any(|(s, _)| *s == Slot::Perk1b), "{m:?}");
+    assert!(!m.contains(&(Slot::Lethal, 0)) && !m.contains(&(Slot::Tactical, 1)));
+    e.draft.wildcards = vec![Wildcard::Tactician];
+    e.draft.lethal = "concussion_grenade_mp".into();
+    assert!(marked(&e).is_empty(), "Tactician's two boxes are the tactical item's own");
+}
+
+/// The weapon pickers' category order is the catalog's weapon groups (`cacweaponslot.lua`), the
+/// slot's own groups first: the primary opens on SUBMACHINE GUNS, the secondary on PISTOLS.
+#[test]
+fn the_category_order_follows_the_catalogs_weapon_groups() {
+    let groups = crate::weapons::catalog().weapon_groups();
+    let primary: Vec<&str> = category_order(Slot::Primary).into_iter().map(|c| c.cac_group()).collect();
+    assert_eq!(primary[0], "weapon_smg");
+    assert_eq!(category_order(Slot::Secondary)[0], WeaponClass::Pistol);
+    assert_eq!(primary.len(), groups.len(), "every group has a place");
+}
+
+/// An offhand button's extra box is BO2's small one (`SetupSmallGrenadeButton`): 0.7 of the first
+/// box's height, 1.1 times as wide as tall, top-aligned with it, to its right.
+#[test]
+fn the_extra_offhand_box_is_the_small_one() {
+    let l = editor_layout(1280.0, 720.0);
+    let e = Editor::new(Draft::default());
+    let cells = editor_cells(&l, &e);
+    let first = cells.iter().find(|c| c.slot == Slot::Tactical && c.index == 0).unwrap().rect;
+    let second = cells.iter().find(|c| c.slot == Slot::Tactical && c.index == 1).unwrap().rect;
+    assert!((second.h - first.h * 0.7).abs() < 1e-3 && (second.w - second.h * 1.1).abs() < 1e-3, "{second:?}");
+    assert_eq!(second.y, first.y);
+    assert!(second.x > first.right());
 }

@@ -45,6 +45,8 @@ pub const MATERIALS: &[(&str, u32)] = &[
     ("cac_restricted", 32),
     ("menu_mp_lobby_locked", 32),
     ("menu_mp_lobby_locked_big", 128),
+    // The plus sign on an offhand button's empty extra box (`cacgrenadesbutton.lua:270-345`).
+    ("kd_chart_plus", 64),
 ];
 
 /// A [`MATERIALS`] name ending in this is its base material mirrored top to bottom (LUI draws an

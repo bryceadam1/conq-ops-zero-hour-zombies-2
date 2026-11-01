@@ -21,16 +21,20 @@
 //!   below drops one element at a time in the **reverse** of `CheckItems`' visit order
 //!   (`specialty6` first, the primary weapon last), so the elements BO2 checks last are the first
 //!   to go and the weapon is the last thing standing. The same order trims a fourth bonus card.
-//! * **Grenade counts.** `CheckItems` clamps a grenade count to `maxGrenades` (2) and clears the
-//!   item at 0. A class here carries one lethal and one tactical id, and the carried count is the
-//!   weapon table's `Clip` (the concussion's is 2), so there is no count to repair.
+//! * **Grenade counts and the grenade cards.** `CheckItems` clamps a grenade count to `maxGrenades`
+//!   (2) and clears the item at 0. A class here carries one lethal and one tactical id and their
+//!   counts (`lethal_count`: Danger Close's two, or Tactician's chosen one or two; `tactical_count`:
+//!   one or two), clamped the same way and to the item's own cap (`items::offhand_cap`), dropped
+//!   when the slot is empty. A tactical item in the lethal slot is Tactician's
+//!   (`checkclasses.lua:677-686`) and stays. A held item counts at least one (BO2's count is the
+//!   slot's filled boxes), so a 0 (a class saved before the counts) becomes one.
 //!
 //! Unknown ids are cleared, not substituted: `catalog::weapon_or_none` drops them loudly (the same
 //! rule the arsenal uses), so a corrupt profile shows up in the log instead of quietly turning into
 //! some default kit.
 
 use crate::classmenu::items::{given_parts, given_weapon};
-use crate::classes::{CustomClass, MAX_ATTACHMENTS, MAX_BONUS_CARDS, MAX_SPECIALTY_SLOTS};
+use crate::classes::{max_attachments, max_bonus_cards, max_specialty_slots, CustomClass};
 use crate::classmenu::{Draft, PICK_10};
 use crate::weapons::{self, Class as WeaponClass, Perk};
 
@@ -47,8 +51,12 @@ pub fn repair(c: &mut CustomClass) -> Cleared {
     let mut cleared: Cleared = Vec::new();
     repair_weapon(c, true, &mut cleared);
     repair_weapon(c, false, &mut cleared);
-    repair_offhand(c, true, &mut cleared);
+    // A tactical in the lethal slot is Tactician's (re-derived from it, `classmenu::wildcards_of`).
+    if !crate::classmenu::items::is_tactical_item(&c.lethal) {
+        repair_offhand(c, true, &mut cleared);
+    }
     repair_offhand(c, false, &mut cleared);
+    repair_counts(c);
     if !c.melee.is_empty() && !resolves_as(&c.melee, WeaponClass::Melee) {
         c.melee.clear();
         cleared.push("melee");
@@ -84,7 +92,7 @@ fn repair_weapon(c: &mut CustomClass, primary: bool, cleared: &mut Cleared) {
         cleared.push(slot);
         return;
     }
-    let max = if primary { MAX_ATTACHMENTS + 1 } else { MAX_ATTACHMENTS };
+    let max = if primary { max_attachments() + 1 } else { max_attachments() };
     let offered: Vec<&str> = shorts.iter().copied().filter(|s| def.allowed.iter().any(|(a, _)| a == s)).take(max).collect();
     // A pair BO2's compatibility lists forbid is cut down by its conflicting-attachment check
     // (`FUN_008eb870`, `classmenu::legal::sanitize`).
@@ -113,6 +121,20 @@ fn repair_offhand(c: &mut CustomClass, lethal: bool, cleared: &mut Cleared) {
     cleared.push(slot);
 }
 
+/// The stored grenade counts (`CheckItems` clamps a count to `maxGrenades`, and the slot list caps
+/// it at the item's own max ammo, [`crate::classmenu::items::offhand_cap`]). A held item counts at
+/// least one: BO2's count is the slot's filled boxes and an equipped item fills the first
+/// (`cacgrenadesbutton.lua:130-230`), so a 0 (a class saved before the counts) is one. A lethal
+/// item's second box is Danger Close's (the card is re-derived from that count); Tactician's
+/// tactical and the tactical slot store their chosen one or two; each is capped at the item's own
+/// max ammo, as the button's boxes are; an empty slot stores none.
+fn repair_counts(c: &mut CustomClass) {
+    use crate::classmenu::items;
+    let clamp = |n: u8, id: &str| n.clamp(1, items::offhand_cap(id).max(1));
+    c.lethal_count = if c.lethal.is_empty() { 0 } else { clamp(c.lethal_count, &c.lethal) };
+    c.tactical_count = if c.tactical.is_empty() { 0 } else { clamp(c.tactical_count, &c.tactical) };
+}
+
 /// Whether the id resolves to a weapon of `class`.
 fn resolves_as(id: &str, class: WeaponClass) -> bool {
     weapons::catalog::weapon_or_none(id).is_some_and(|d| d.class == class)
@@ -122,7 +144,7 @@ fn resolves_as(id: &str, class: WeaponClass) -> bool {
 /// goes, and a tier keeps at most two picks (`maxPerksInEachCategory`: BO2's two rows per tier).
 /// Six slots in all (`maxSpecialtySlots`), which three tiers of two reach exactly.
 fn repair_perks(c: &mut CustomClass, cleared: &mut Cleared) {
-    let mut kept: Vec<Perk> = Vec::with_capacity(MAX_SPECIALTY_SLOTS);
+    let mut kept: Vec<Perk> = Vec::with_capacity(max_specialty_slots());
     let mut tiers = [0usize; 3];
     for id in &c.perks {
         let Some(p) = Perk::by_id(id) else {
@@ -131,8 +153,9 @@ fn repair_perks(c: &mut CustomClass, cleared: &mut Cleared) {
         };
         let tier = (p.def().tier as usize).clamp(1, 3) - 1;
         tiers[tier] += 1;
-        if kept.contains(&p) || tiers[tier] > 2 || kept.len() >= MAX_SPECIALTY_SLOTS {
-            cleared.push(if tiers[tier] > 2 { EXTRA_PERK_SLOTS[tier] } else { "specialty" });
+        let per_tier = crate::classes::max_perks_in_each_category();
+        if kept.contains(&p) || tiers[tier] > per_tier || kept.len() >= max_specialty_slots() {
+            cleared.push(if tiers[tier] > per_tier { EXTRA_PERK_SLOTS[tier] } else { "specialty" });
             continue;
         }
         kept.push(p);
@@ -147,7 +170,7 @@ fn repair_perks(c: &mut CustomClass, cleared: &mut Cleared) {
 fn trim(c: &mut CustomClass, cleared: &mut Cleared) {
     loop {
         let d = Draft::from_custom(c);
-        if d.spent() <= PICK_10 && d.wildcards.len() <= MAX_BONUS_CARDS {
+        if d.spent() <= PICK_10 && d.wildcards.len() <= max_bonus_cards() {
             return;
         }
         if !drop_one(c, cleared) {
@@ -188,13 +211,28 @@ fn drop_one(c: &mut CustomClass, cleared: &mut Cleared) -> bool {
             }
         }
     }
+    // A second tactical goes before the first (`specialgrenadecount` back to one).
+    if c.tactical_count > 1 {
+        c.tactical_count = 1;
+        cleared.push("specialgrenadecount");
+        return true;
+    }
     if !c.tactical.is_empty() {
         c.tactical.clear();
+        c.tactical_count = 0;
         cleared.push("specialgrenade");
+        return true;
+    }
+    // A second lethal (Danger Close's, Tactician's second tactical) goes before the first
+    // (`primarygrenadecount` back to one).
+    if c.lethal_count > 1 {
+        c.lethal_count = 1;
+        cleared.push("primarygrenadecount");
         return true;
     }
     if !c.lethal.is_empty() {
         c.lethal.clear();
+        c.lethal_count = 0;
         cleared.push("primarygrenade");
         return true;
     }
@@ -241,6 +279,8 @@ mod tests {
             secondary: "fnp45_mp".into(),
             lethal: "frag_grenade_mp".into(),
             tactical: "concussion_grenade_mp".into(),
+            lethal_count: 1,
+            tactical_count: 1,
             melee: "knife_held_mp".into(),
             perks: perks.iter().map(|p| (*p).to_string()).collect(),
             reserve: [0, 0],
@@ -249,6 +289,17 @@ mod tests {
             reticle_color: String::new(),
             knife: String::new(),
         }
+    }
+
+    #[test]
+    fn a_held_offhand_counts_at_least_one() {
+        // BO2's count is the slot's filled boxes (`cacgrenadesbutton.lua:130-230`): a class saved
+        // before the counts (0) carries one of each, never the item's own start count.
+        let mut c = class("an94_mp", &["Lightweight"]);
+        (c.lethal_count, c.tactical_count) = (0, 0);
+        let _ = repair(&mut c);
+        assert_eq!((c.lethal_count, c.tactical_count), (1, 1));
+        assert_eq!((c.loadout().lethal_count, c.loadout().tactical_count), (Some(1), Some(1)));
     }
 
     #[test]
@@ -321,8 +372,9 @@ mod tests {
     /// then the perk slots — a repair report reads in that order.
     #[test]
     fn an_offhand_in_the_wrong_slot_is_cleared() {
+        // (A tactical in the lethal slot is Tactician's, not a wrong slot: see below.)
         let mut c = class("an94_mp", &[]);
-        c.lethal = "concussion_grenade_mp".into();
+        c.lethal = "fnp45_mp".into();
         c.tactical = "frag_grenade_mp".into();
         let cleared = repair(&mut c);
         assert_eq!(cleared, vec!["primarygrenade", "specialgrenade"], "CheckItems' slot order");
@@ -333,8 +385,35 @@ mod tests {
         assert_eq!(repair(&mut c), vec!["primarygrenade"]);
     }
 
+    /// `checkclasses.lua:677-700`: a tactical in the lethal slot needs Tactician and a lethal count
+    /// of two Danger Close; the cards are re-derived from them, so both stay (and are charged). A
+    /// count is clamped to `maxGrenades`, means nothing without a lethal item, and its second
+    /// lethal is the first thing over-budget trimming takes from the slot.
+    #[test]
+    fn tactician_and_danger_close_classes_keep_their_grenades() {
+        let mut c = class("an94_mp", &[]);
+        c.lethal = "concussion_grenade_mp".into();
+        c.lethal_count = 2;
+        assert_eq!(repair(&mut c), Cleared::new());
+        assert_eq!((c.lethal.as_str(), c.lethal_count), ("concussion_grenade_mp", 2), "Tactician's second tactical stays");
+        assert!(Draft::from_custom(&c).wildcards.contains(&crate::classmenu::Wildcard::Tactician));
+        let mut c = class("an94_mp", &[]);
+        c.lethal_count = 5;
+        assert_eq!(repair(&mut c), Cleared::new());
+        assert_eq!(c.lethal_count, crate::classes::max_grenades() as u8);
+        let d = Draft::from_custom(&c);
+        assert!(d.wildcards.contains(&crate::classmenu::Wildcard::DangerClose));
+        // Trimming walks the slots backwards: the tactical, then the second lethal, then the lethal.
+        let mut cleared = Cleared::new();
+        while drop_one(&mut c, &mut cleared) && cleared.len() < 3 {}
+        assert_eq!(cleared, vec!["specialgrenade", "primarygrenadecount", "primarygrenade"]);
+    }
+
     /// The placed equipment is the slot's own item (statstable column 13), not a stray class: a
-    /// stored claymore and Trophy System stay; swapped, they clear like any other wrong-slot item.
+    /// stored claymore and Trophy System stay. Swapped, the claymore leaves the tactical slot like
+    /// any other wrong-slot item, while the Trophy System in the lethal slot is Tactician's
+    /// (`checkclasses.lua:677-686`: a `specialgrenade` item there needs the card, which the class
+    /// re-derives) and stays.
     #[test]
     fn placed_equipment_stays_in_its_statstable_slot() {
         let mut c = class("an94_mp", &[]);
@@ -344,7 +423,8 @@ mod tests {
         assert_eq!((c.lethal.as_str(), c.tactical.as_str()), ("claymore_mp", "trophy_system_mp"));
         c.lethal = "trophy_system_mp".into();
         c.tactical = "claymore_mp".into();
-        assert_eq!(repair(&mut c), vec!["primarygrenade", "specialgrenade"]);
+        assert_eq!(repair(&mut c), vec!["specialgrenade"]);
+        assert_eq!(c.lethal, "trophy_system_mp");
     }
 
     #[test]
@@ -369,7 +449,7 @@ mod tests {
         );
         let d = Draft::from_custom(&c);
         assert!(d.spent() > PICK_10, "the seed is over budget: {}", d.spent());
-        assert_eq!(d.wildcards.len(), MAX_BONUS_CARDS, "and at the card cap: {:?}", d.wildcards);
+        assert_eq!(d.wildcards.len(), max_bonus_cards(), "and at the card cap: {:?}", d.wildcards);
         let cleared = repair(&mut c);
         assert!(Draft::from_custom(&c).spent() <= PICK_10);
         assert_eq!(&cleared[..2], ["specialty6", "specialty5"], "{cleared:?}");
@@ -391,10 +471,10 @@ mod tests {
         // A rifle in the secondary slot is Overkill's second primary.
         c.secondary = "an94_mp+gl".into();
         let d = Draft::from_custom(&c);
-        assert!(d.wildcards.len() > MAX_BONUS_CARDS, "{:?}", d.wildcards);
+        assert!(d.wildcards.len() > max_bonus_cards(), "{:?}", d.wildcards);
         let cleared = repair(&mut c);
         let after = Draft::from_custom(&c);
-        assert!(after.wildcards.len() <= MAX_BONUS_CARDS, "{:?} after {cleared:?}", after.wildcards);
+        assert!(after.wildcards.len() <= max_bonus_cards(), "{:?} after {cleared:?}", after.wildcards);
         assert!(Draft::from_custom(&c).spent() <= PICK_10);
         assert!(!cleared.is_empty());
     }

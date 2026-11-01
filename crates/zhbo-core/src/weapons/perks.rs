@@ -11,17 +11,15 @@
 // Loadout and perks
 // ------------------------------------------------------------------------------------------------
 
-use super::specialty::{Specialties, Specialty};
-use std::collections::HashMap;
-use std::sync::Mutex;
+use super::specialty::Specialties;
 
-/// One BO2 perk's definition: spec id, tier, localize key, and the specialties it grants.
+/// One BO2 perk's identity: spec id, tier, localize key and statstable reference.
 ///
-/// This table is the single source for every perk fact the UI needs (refactor plan 3.3). What a
-/// perk *does* is its specialty set (Ghidra G1): the converted weapon table carries BO2's own sets
-/// from the player's `mp/statstable.csv` (`Perk` blocks, see [`install_converted`]); the built-in
-/// sets below are those same rows (`lua-dump/patch_mp/mp/statstable.csv:151-166`) so tests and the
-/// no-install fallback behave identically.
+/// What the perk *is* in BO2 — its localized name and description and the specialties it grants
+/// (Ghidra G1) — is its `mp/statstable.csv` row, which the weapon table carries as a `Perk` block
+/// ([`super::def::PerkRow`], converted from the player's own statstable; the built-in table carries
+/// the same sixteen rows so tests and the no-install fallback behave identically). This table only
+/// ties the mod's perk ids and tiers to those rows.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PerkDef {
     /// The name `ZHBO_LOADOUT` specs use (`perks=Lightweight,...`). Matches the names the
@@ -31,54 +29,34 @@ pub struct PerkDef {
     pub tier: u8,
     /// BO2's localize key for the perk's name (`PERKS_<key>`).
     pub key: &'static str,
-    /// The perk's `statstable.csv` reference without `PERKS_` (Dead Silence's row is `NINJA`).
+    /// The perk's `statstable.csv` reference without `PERKS_` (Dead Silence's row is `NINJA`): the
+    /// key of its weapon-table row.
     pub stats: &'static str,
-    /// The specialties BO2 grants (`statstable.csv` column e), the built-in copy.
-    pub specialties: &'static [Specialty],
 }
 
-const fn perk(id: &'static str, tier: u8, key: &'static str, stats: &'static str, specialties: &'static [Specialty]) -> PerkDef {
-    PerkDef { id, tier, key, stats, specialties }
+const fn perk(id: &'static str, tier: u8, key: &'static str, stats: &'static str) -> PerkDef {
+    PerkDef { id, tier, key, stats }
 }
-
-use Specialty as S;
 
 /// BO2's multiplayer perks (Pick 10), in tier order.
 pub const PERKS: [PerkDef; 16] = [
-    perk("Lightweight", 1, "LIGHTWEIGHT", "LIGHTWEIGHT", &[S::MoveFaster, S::FallHeight]),
-    perk("Hardline", 1, "HARDLINE", "HARDLINE", &[S::EarnMoreMomentum]),
-    perk("BlindEye", 1, "BLIND_EYE", "BLIND_EYE", &[S::NotTargetedByAirSupport]),
-    perk("FlakJacket", 1, "FLAK_JACKET", "FLAK_JACKET", &[S::FlakJacket]),
-    perk("Ghost", 1, "GHOST", "GHOST", &[S::GpsJammer]),
-    perk("Toughness", 2, "TOUGHNESS", "TOUGHNESS", &[S::BulletFlinch]),
-    perk(
-        "ColdBlooded",
-        2,
-        "COLD_BLOODED",
-        "COLD_BLOODED",
-        &[S::ImmuneNvThermal, S::NoName, S::ImmuneRangefinder, S::NoKillstreakReticle, S::ImmuneMms, S::NoMotionSensor],
-    ),
-    perk("FastHands", 2, "FAST_HANDS", "FAST_HANDS", &[S::FastWeaponSwitch, S::PinBack, S::FastToss, S::FastEquipmentUse]),
-    perk("HardWired", 2, "HARD_WIRED", "HARD_WIRED", &[S::ImmuneCounterUav, S::ImmuneEmp]),
-    perk("Scavenger", 2, "SCAVENGER", "SCAVENGER", &[S::Scavenger]),
-    perk("Dexterity", 3, "DEXTERITY", "DEXTERITY", &[S::FastMantle, S::FastLadderClimb, S::SprintRecovery, S::FastMeleeRecovery]),
-    perk("ExtremeConditioning", 3, "EXTREME_CONDITIONING", "EXTREME_CONDITIONING", &[S::LongerSprint]),
-    perk("Engineer", 3, "HACKER", "HACKER", &[S::ShowEnemyEquipment, S::DelayExplosive]),
-    perk("TacticalMask", 3, "TACTICAL_MASK", "TACTICAL_MASK", &[S::StunProtection, S::FlashProtection, S::ProximityProtection]),
-    perk("DeadSilence", 3, "DEAD_SILENCE", "NINJA", &[S::Quieter]),
-    perk("Awareness", 3, "AWARENESS", "AWARENESS", &[S::LoudEnemies]),
+    perk("Lightweight", 1, "LIGHTWEIGHT", "LIGHTWEIGHT"),
+    perk("Hardline", 1, "HARDLINE", "HARDLINE"),
+    perk("BlindEye", 1, "BLIND_EYE", "BLIND_EYE"),
+    perk("FlakJacket", 1, "FLAK_JACKET", "FLAK_JACKET"),
+    perk("Ghost", 1, "GHOST", "GHOST"),
+    perk("Toughness", 2, "TOUGHNESS", "TOUGHNESS"),
+    perk("ColdBlooded", 2, "COLD_BLOODED", "COLD_BLOODED"),
+    perk("FastHands", 2, "FAST_HANDS", "FAST_HANDS"),
+    perk("HardWired", 2, "HARD_WIRED", "HARD_WIRED"),
+    perk("Scavenger", 2, "SCAVENGER", "SCAVENGER"),
+    perk("Dexterity", 3, "DEXTERITY", "DEXTERITY"),
+    perk("ExtremeConditioning", 3, "EXTREME_CONDITIONING", "EXTREME_CONDITIONING"),
+    perk("Engineer", 3, "HACKER", "HACKER"),
+    perk("TacticalMask", 3, "TACTICAL_MASK", "TACTICAL_MASK"),
+    perk("DeadSilence", 3, "DEAD_SILENCE", "NINJA"),
+    perk("Awareness", 3, "AWARENESS", "AWARENESS"),
 ];
-
-/// The converted sets (`statstable.csv` reference -> specialties), when the converted weapon table
-/// is installed.
-static CONVERTED: Mutex<Option<HashMap<String, Specialties>>> = Mutex::new(None);
-
-/// Install the converted perk rows (the weapon table's `Perk` blocks). Rows for perks the mod
-/// does not offer are kept but unused.
-pub fn install_converted(rows: &[(String, Specialties)]) {
-    let map = rows.iter().map(|(k, v)| (k.to_ascii_uppercase(), *v)).collect();
-    *CONVERTED.lock().unwrap_or_else(|e| e.into_inner()) = Some(map);
-}
 
 /// A perk: an index into [`PERKS`]. Loadout specs reference the table ids.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -132,16 +110,40 @@ impl Perk {
         self.def().key
     }
 
-    /// The specialties the perk grants: the converted `statstable.csv` row when installed, else
-    /// the built-in copy of it.
+    /// The perk's `statstable.csv` row in the installed weapon table (the converted one, or the
+    /// built-in stand-in rows).
+    pub fn row(self) -> Option<&'static super::def::PerkRow> {
+        super::catalog::catalog().perk(self.def().stats)
+    }
+
+    /// The specialties the perk grants (its row's column 4).
     pub fn specialties(self) -> Specialties {
-        let d = self.def();
-        CONVERTED
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .as_ref()
-            .and_then(|m| m.get(d.stats).copied())
-            .unwrap_or_else(|| Specialties::of(d.specialties))
+        self.row().map(|r| r.specialties).unwrap_or(Specialties::NONE)
+    }
+
+    /// BO2's localized name (`UIExpression.GetItemName`): the row's, or the spec id spelled out
+    /// (`FastHands` -> `Fast Hands`) when a row has none.
+    pub fn name(self) -> String {
+        match self.row().filter(|r| !r.name.is_empty()) {
+            Some(r) => r.name.clone(),
+            None => {
+                let id = self.def().id;
+                let mut out = String::with_capacity(id.len() + 2);
+                for (i, ch) in id.chars().enumerate() {
+                    if i > 0 && ch.is_ascii_uppercase() {
+                        out.push(' ');
+                    }
+                    out.push(ch);
+                }
+                out
+            }
+        }
+    }
+
+    /// BO2's localized description (`UIExpression.GetItemDesc`, statstable column 7): what the
+    /// perk grid's lower panel shows under the name (`cacperksp.lua`'s `perkDescription`).
+    pub fn description(self) -> &'static str {
+        self.row().map_or("", |r| r.description.as_str())
     }
 
     /// The perk whose spec id matches, if any.
@@ -153,6 +155,7 @@ impl Perk {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::weapons::Specialty;
 
     #[test]
     fn every_spec_id_round_trips_to_a_distinct_perk() {
@@ -162,7 +165,8 @@ mod tests {
             assert_eq!(Perk::by_id(d.id), Some(perk), "spec id {} must round-trip", d.id);
             assert!((1..=3).contains(&d.tier), "tier {} out of range", d.id);
             assert!(!d.key.is_empty(), "{} has a localize key", d.id);
-            assert!(!d.specialties.is_empty(), "{} grants something", d.id);
+            assert!(!perk.specialties().is_empty(), "{} grants something", d.id);
+            assert!(!perk.description().is_empty(), "{} has a description", d.id);
             assert!(seen.insert(d.id), "{} appears twice", d.id);
         }
         assert_eq!(seen.len(), PERKS.len(), "the table covers every perk");
@@ -180,5 +184,14 @@ mod tests {
         assert!(!d.has(Specialty::FastAds), "Dexterity is not quicker aiming");
         assert!(Perk::EXTREME_CONDITIONING.specialties().has(Specialty::LongerSprint));
         assert_eq!(Perk::DEAD_SILENCE.def().stats, "NINJA");
+    }
+
+    #[test]
+    fn perks_carry_bo2s_names_and_descriptions() {
+        // statstable.csv:151-166 column 3 and 7, localized (the built-in rows).
+        assert_eq!(Perk::ENGINEER.name(), "Engineer");
+        assert_eq!(Perk::DEAD_SILENCE.name(), "Dead Silence");
+        assert_eq!(Perk::HARDLINE.description(), "Earn Scorestreaks faster.");
+        assert_eq!(Perk::LIGHTWEIGHT.description(), "Move faster.  Take no damage when falling.");
     }
 }

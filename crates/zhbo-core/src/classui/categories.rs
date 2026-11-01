@@ -11,21 +11,6 @@ pub struct Category {
     pub options: Vec<usize>,
 }
 
-/// The primary slot's category order, BO2's (`c-primary/001`: SUBMACHINE GUNS, ASSAULT RIFLES,
-/// SHOTGUNS, LIGHT MACHINE GUNS, SNIPER RIFLES, SPECIALS).
-pub(super) const PRIMARY_CATEGORY_ORDER: [WeaponClass; 7] = [
-    WeaponClass::Smg,
-    WeaponClass::Rifle,
-    WeaponClass::Shotgun,
-    WeaponClass::Lmg,
-    WeaponClass::Sniper,
-    WeaponClass::Special,
-    WeaponClass::Launcher,
-];
-
-/// The secondary slot's category order, BO2's (`d-attach/037`: PISTOLS, LAUNCHERS, SPECIALS).
-pub(super) const SECONDARY_CATEGORY_ORDER: [WeaponClass; 3] = [WeaponClass::Pistol, WeaponClass::Launcher, WeaponClass::Special];
-
 /// BO2's display name for a weapon category.
 pub fn category_name(class: WeaponClass) -> &'static str {
     match class {
@@ -41,19 +26,19 @@ pub fn category_name(class: WeaponClass) -> &'static str {
     }
 }
 
-/// The category order of a weapon slot: its own table first, then the other slot's (the secondary
-/// gains the primary classes under Overkill).
-pub(super) fn category_order(slot: Slot) -> Vec<WeaponClass> {
-    let mut out: Vec<WeaponClass> = match slot {
-        Slot::Secondary => SECONDARY_CATEGORY_ORDER.to_vec(),
-        _ => PRIMARY_CATEGORY_ORDER.to_vec(),
-    };
-    for c in PRIMARY_CATEGORY_ORDER.into_iter().chain(SECONDARY_CATEGORY_ORDER) {
-        if !out.contains(&c) {
-            out.push(c);
-        }
-    }
-    out
+/// The category order of a weapon slot: BO2's weapon groups in the order its weapon-type list adds
+/// them (`cacweaponslot.lua`, the catalog's [`crate::weapons::Catalog::weapon_groups`]:
+/// SUBMACHINE GUNS, ASSAULT RIFLES, SHOTGUNS, LIGHT MACHINE GUNS, SNIPER RIFLES, PISTOLS,
+/// LAUNCHERS, SPECIALS), the slot's own groups first — a group is the slot's when one of its items
+/// is (statstable column 13) — so the secondary opens on its pistols and gains the primary groups
+/// after its own under Overkill (`cacweaponsp.lua:640-720`).
+pub fn category_order(slot: Slot) -> Vec<WeaponClass> {
+    let cat = weapons::catalog();
+    let own_slot = if slot == Slot::Secondary { crate::classmenu::items::SECONDARY } else { crate::classmenu::items::PRIMARY };
+    let own = |g: &str| cat.all().iter().any(|d| d.cac_class().cac_group() == g && d.cac_slot == own_slot);
+    let class_of = |g: &str| WeaponClass::ALL_GUNS.into_iter().find(|c| c.cac_group() == g);
+    let groups = cat.weapon_groups();
+    groups.iter().filter(|g| own(g)).chain(groups.iter().filter(|g| !own(g))).filter_map(|g| class_of(g)).collect()
 }
 
 /// The weapon slot's categories, in BO2's column order. Empty for a slot that does not list guns.

@@ -34,19 +34,72 @@ pub struct ClassDef {
 pub const MAX_CLASS_SETS: usize = 10;
 
 /// Custom class slots per class set: `CoD.CACUtility.maxCustomClass`.
-pub const MAX_CUSTOM_CLASSES: usize = 5;
+pub fn max_custom_class() -> usize {
+    class_cap("maxCustomClass")
+}
 
 /// Bonus cards (wildcards) per class: `CoD.CACUtility.maxBonusCards`.
-pub const MAX_BONUS_CARDS: usize = 3;
+pub fn max_bonus_cards() -> usize {
+    class_cap("maxBonusCards")
+}
 
 /// Attachment slots on a weapon before a Gunfighter card: `CoD.CACUtility.maxAttachments`.
-pub const MAX_ATTACHMENTS: usize = 2;
+pub fn max_attachments() -> usize {
+    class_cap("maxAttachments")
+}
 
 /// Perk slots a class can hold: `CoD.CACUtility.maxSpecialtySlots` (three tiers, two each).
-pub const MAX_SPECIALTY_SLOTS: usize = 6;
+pub fn max_specialty_slots() -> usize {
+    class_cap("maxSpecialtySlots")
+}
 
 /// Grenades of one kind a class can carry: `CoD.CACUtility.maxGrenades`.
-pub const MAX_GRENADES: usize = 2;
+pub fn max_grenades() -> usize {
+    class_cap("maxGrenades")
+}
+
+/// The `CoD.CACUtility` caps the core reads from the weapon table (`ClassCap.<name>`), converted
+/// from the install's `cacutility.lua` — the same Lua the conformance's expected side reads.
+pub const DATA_CAPS: [&str; 8] = [
+    "maxCustomClass",
+    "maxGrenades",
+    "maxSpecialtySlots",
+    "maxPerks",
+    "maxAttachments",
+    "maxPerksInEachCategory",
+    "maxBonusCards",
+    "maxDefaultClass",
+];
+
+/// A [`DATA_CAPS`] cap: the installed table's, else the built-in table's (a table converted before
+/// the caps); 0 for a name neither has.
+pub fn class_cap(name: &str) -> usize {
+    static BUILT_IN: std::sync::OnceLock<crate::weapons::Table> = std::sync::OnceLock::new();
+    let built_in = BUILT_IN.get_or_init(|| crate::weapons::parse_full_table(crate::weapons::BUILTIN).expect("built-in weapon table"));
+    crate::weapons::catalog()
+        .class_cap(name)
+        .or_else(|| built_in.class_caps.iter().find(|(n, _)| n == name).map(|(_, v)| *v))
+        .map_or(0, |v| v.max(0) as usize)
+}
+
+/// How many default classes BO2 offers (`maxDefaultClass`; `GetDefaultLoadoutNameFromIndex`
+/// refuses an index past it, `cacutility.lua:862-880`).
+pub fn max_default_class() -> usize {
+    class_cap("maxDefaultClass")
+}
+
+/// The most perks one tier holds (`maxPerksInEachCategory`: the tier's row and its Greed row,
+/// `cacperksp.lua:639-650`, `:742-760`).
+pub fn max_perks_in_each_category() -> usize {
+    class_cap("maxPerksInEachCategory")
+}
+
+/// `maxPerks`: the selection cap of BO2's multi-select perk grid (`cacperks.lua:44`,
+/// `cacperksselection.lua:27`), a screen the Pick-10 editor does not use; carried so the class
+/// rules hold every cap BO2 declares.
+pub fn max_perks() -> usize {
+    class_cap("maxPerks")
+}
 
 /// The five default BO2 classes as `(id, name, spec)` triples: the defaults when no file is loaded
 /// (tests, the fallback). Complete specs, so an INI file must set every slot it wants different
@@ -146,7 +199,10 @@ pub fn parse(text: &str) -> Vec<ClassDef> {
 
 /// The class list in force: the five basics before init (tests, the shell).
 pub fn get() -> Vec<ClassDef> {
-    CLASSES.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_else(basic)
+    let mut list = CLASSES.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_else(basic);
+    // BO2 has `maxDefaultClass` default classes; a longer file is cut to them.
+    list.truncate(max_default_class());
+    list
 }
 
 /// The class with this id (`assault`), from the list in force.
@@ -184,6 +240,15 @@ pub struct CustomClass {
     pub lethal: String,
     /// Tactical offhand (`concussion_grenade_mp`).
     pub tactical: String,
+    /// How many lethals the class carries (BO2's `primarygrenadecount`, the slot's filled boxes):
+    /// 1, or 2 with Danger Close's second lethal or Tactician's second tactical; 0 for an empty
+    /// slot or a class saved before the count (repair makes a held item's 0 one). Serialises only
+    /// when set, so older specs load.
+    pub lethal_count: u8,
+    /// How many tacticals the class carries (BO2's `specialgrenadecount`): 1 or 2; 0 for an empty
+    /// slot or a class saved before the count (repair makes a held item's 0 one). Serialises only
+    /// when set.
+    pub tactical_count: u8,
     /// Melee slot (`knife_held_mp`).
     pub melee: String,
     /// The perk spec ids in pick order (`Lightweight`, `FastHands`, `Dexterity`).
@@ -225,6 +290,12 @@ impl CustomClass {
         push("secondary", &self.secondary);
         push("lethal", &self.lethal);
         push("tactical", &self.tactical);
+        if self.lethal_count > 0 {
+            push("lethal_count", &self.lethal_count.to_string());
+        }
+        if self.tactical_count > 0 {
+            push("tactical_count", &self.tactical_count.to_string());
+        }
         push("melee", &self.melee);
         push("perks", &self.perks.join(","));
         push("camo", &self.camo);
@@ -252,6 +323,8 @@ impl CustomClass {
                 "secondary" => c.secondary = value.into(),
                 "lethal" => c.lethal = value.into(),
                 "tactical" => c.tactical = value.into(),
+                "lethal_count" => c.lethal_count = value.parse().unwrap_or(0),
+                "tactical_count" => c.tactical_count = value.parse().unwrap_or(0),
                 "melee" => c.melee = value.into(),
                 "perks" => c.perks = value.split(',').map(|p| p.trim().to_string()).filter(|p| !p.is_empty()).collect(),
                 "camo" => c.camo = value.into(),
@@ -375,13 +448,13 @@ mod tests {
     fn the_caps_hold_in_the_shipped_data() {
         let _g = lock();
         assert_eq!(MAX_CLASS_SETS, 10, "cacchooseclass.lua: ten class sets");
-        assert_eq!(MAX_CUSTOM_CLASSES, 5, "maxCustomClass");
-        assert_eq!(MAX_BONUS_CARDS, 3, "maxBonusCards");
-        assert_eq!(MAX_ATTACHMENTS, 2, "maxAttachments (a Gunfighter card adds the third)");
-        assert_eq!(MAX_SPECIALTY_SLOTS, 6, "maxSpecialtySlots: three tiers, two picks each");
+        assert_eq!(max_custom_class(), 5, "maxCustomClass");
+        assert_eq!(max_bonus_cards(), 3, "maxBonusCards");
+        assert_eq!(max_attachments(), 2, "maxAttachments (a Gunfighter card adds the third)");
+        assert_eq!(max_specialty_slots(), 6, "maxSpecialtySlots: three tiers, two picks each");
         // maxGrenades is the carried count, which is the weapon table's magazine: the standard
         // tactical carries exactly two.
-        assert_eq!(crate::weapons::weapon("concussion_grenade_mp").clip as usize, MAX_GRENADES);
+        assert_eq!(crate::weapons::weapon("concussion_grenade_mp").clip as usize, max_grenades());
         // Every premade fits the allocation: ten points per class.
         for c in basic() {
             let spent = crate::classmenu::Draft::from_custom(&CustomClass::from_spec(&c.spec)).spent();
@@ -478,6 +551,17 @@ mod tests {
     }
 
     #[test]
+    fn the_default_classes_stop_at_bos_cap() {
+        // `maxDefaultClass` (5, `cacutility.lua`) bounds the default list: a longer file is cut.
+        let _g = lock();
+        assert_eq!((max_default_class(), max_perks_in_each_category(), max_perks()), (5, 2, 12));
+        let text: String = (0..7).map(|i| format!("Class c{i}\n  Name = C{i}\n  Spec = primary=an94_mp\nEnd\n")).collect();
+        load(&text);
+        assert_eq!(get().len(), max_default_class());
+        reset();
+    }
+
+    #[test]
     fn list_index_round_trips() {
         let _g = lock();
         let list = get();
@@ -495,6 +579,8 @@ mod tests {
             secondary: "fnp45_mp".into(),
             lethal: "claymore_mp".into(),
             tactical: String::new(),
+            lethal_count: 0,
+            tactical_count: 0,
             melee: "knife_held_mp".into(),
             perks: vec!["Lightweight".into(), "Dexterity".into()],
             reserve: [60, 0],

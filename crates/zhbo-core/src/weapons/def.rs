@@ -63,6 +63,9 @@ impl Class {
             Class::Equipment => "equipment",
         }
     }
+    /// The gun classes, each one Create-a-Class weapon group ([`Class::cac_group`]).
+    pub const ALL_GUNS: [Class; 8] = [Class::Rifle, Class::Smg, Class::Lmg, Class::Sniper, Class::Shotgun, Class::Pistol, Class::Launcher, Class::Special];
+
     /// BO2's Create-a-Class group for a class (`mp/statstable.csv` column 2); empty for melee.
     pub fn cac_group(self) -> &'static str {
         match self {
@@ -386,7 +389,8 @@ pub struct WeaponDef {
     /// Attachments on this weapon (BO2's names: `grip`, `reflex`), sorted.
     pub attachments: Vec<String>,
     /// Base weapons: each attachment BO2's create-a-class offers, and which `Attachment` it uses
-    /// on this weapon (`silencer` is `silencer_smg` on an SMG).
+    /// on this weapon (`silencer` is `silencer_smg` on an SMG), in the attachment grid's order (the
+    /// statstable item's column 8, set by the converter).
     pub allowed: Vec<(String, String)>,
     /// BO2's create-a-class bars for this weapon, 0..100, in [`crate::classui`]'s order: fire
     /// rate, damage, range, accuracy (`mp/attributestable.csv` columns 6, 3, 4, 2, read by
@@ -411,6 +415,15 @@ pub struct WeaponDef {
     /// editor's categories follow it ([`WeaponDef::cac_class`]); `class` stays the weapon's own
     /// (the Ballistic Knife is a pistol that BO2 lists under SPECIALS).
     pub cac_group: String,
+    /// The Create-a-Class item's localized description (`mp/statstable.csv` column 7,
+    /// `GetItemDesc`), the hint the weapon picker shows under the card (`cacweaponsp.lua:540-590`);
+    /// empty when it is not an item. A combination inherits its base's.
+    pub description: String,
+    /// The item's place in its Create-a-Class list: the statstable's sort key (column 9) and item
+    /// index (column 0). BO2 sorts a list by the sort key, then the index (G17, `FUN_008cdde0`);
+    /// both 0 for a non-item, which keeps the table's order.
+    pub cac_sort: i32,
+    pub cac_index: i32,
     /// The left gun of a dual-wield weapon (BO2's `szDualWieldWeaponName`, `fnp45_lh_mp`); empty
     /// for a single gun.
     pub dual_wield_weapon: String,
@@ -538,6 +551,56 @@ pub struct CamoOption {
     pub name: String,
     pub image: String,
     pub sort: u32,
+}
+
+/// One BO2 bonus card (a Create-a-Class wildcard): a `bonuscard` row of `mp/statstable.csv`. The
+/// reference (column 4, `bonuscard_overkill`) is the card's stable identity — what the editor's
+/// rules key on ([`crate::classmenu::Wildcard::reference`]); the rest is what the grid shows and
+/// charges: the localized name (column 3) and description (column 7), the card image (column 6),
+/// the loadout slot `Engine.GetLoadoutSlotForItem` answers (column 13, `bonuscard1..7`), the
+/// allocation cost (column 12), the sort key (column 9), the item index (column 0) and the unlock
+/// level (column 10). The grid lists the group's cards by sort key, then index (G17).
+/// One of BO2's localized UI strings the core draws, from the player's own english zones
+/// (`UiText <key>` blocks): the converter writes each of [`UI_TEXT_KEYS`] the install has.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UiText {
+    /// The localize key (`MPUI_SECOND_SPECIAL_GRENADE_CAPS`).
+    pub key: String,
+    /// Its english text (`SECOND TACTICAL`).
+    pub text: String,
+}
+
+/// The localize keys the core draws from the install: the class editor's offhand slot titles
+/// (`cacgrenadesbutton.lua:104-126`, `cacgrenades.lua:85-104`, `classpreview.lua:3640-3660`:
+/// `MPUI_<slot>_CAPS`, and the lethal slot's under Tactician) and the HUD's weapon hints
+/// (`WEAPON_CANT_PLANT_EQUIPMENT`, `sim::hint_text`).
+pub const UI_TEXT_KEYS: &[&str] = &["MPUI_PRIMARY_GRENADE_CAPS", "MPUI_SPECIAL_GRENADE_CAPS", "MPUI_SECOND_SPECIAL_GRENADE_CAPS", "WEAPON_CANT_PLANT_EQUIPMENT"];
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct BonusCard {
+    pub reference: String,
+    pub name: String,
+    pub description: String,
+    pub image: String,
+    pub slot: String,
+    pub cost: i32,
+    pub sort: i32,
+    pub index: i32,
+    pub unlock_level: i32,
+}
+
+/// One BO2 perk: a `specialty` row of `mp/statstable.csv`. Column 3 is both the reference and the
+/// name key (`PERKS_LIGHTWEIGHT`); without `PERKS_` (`LIGHTWEIGHT`, Dead Silence's `NINJA`) it is
+/// the row's identity ([`super::perks::PerkDef::stats`]). The localized name (column 3) and
+/// description (column 7, `PERKS_*_DESC`) are what the perk grid's lower panel shows
+/// (`cacperksp.lua`'s `perkTitle` / `perkDescription`); the specialties (column 4, `|`-separated)
+/// are what the perk does (Ghidra G1).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PerkRow {
+    pub stats: String,
+    pub name: String,
+    pub description: String,
+    pub specialties: super::specialty::Specialties,
 }
 
 /// One BO2 reticle option (`reticle_0..10` from `mp/attachmenttable.csv`): the same id/name/image/
@@ -748,6 +811,9 @@ impl Default for WeaponDef {
             alt_own_ammo: false,
             cac_slot: String::new(),
             cac_group: String::new(),
+            description: String::new(),
+            cac_sort: 0,
+            cac_index: 0,
             dual_wield_weapon: String::new(),
             silenced: false,
             laser: false,
@@ -828,8 +894,7 @@ impl WeaponDef {
     /// statstable group ([`WeaponDef::cac_group`]), else its own class (not a CaC item, or a
     /// grenade-group item, which keeps its lethal/tactical/equipment class).
     pub fn cac_class(&self) -> Class {
-        const GUNS: [Class; 8] = [Class::Rifle, Class::Smg, Class::Lmg, Class::Sniper, Class::Shotgun, Class::Pistol, Class::Launcher, Class::Special];
-        GUNS.into_iter().find(|c| !self.cac_group.is_empty() && c.cac_group() == self.cac_group).unwrap_or(self.class)
+        Class::ALL_GUNS.into_iter().find(|c| !self.cac_group.is_empty() && c.cac_group() == self.cac_group).unwrap_or(self.class)
     }
 
     /// Damage at `distance` (ZH units). BO2's curve has six slots: unused middle slots have no

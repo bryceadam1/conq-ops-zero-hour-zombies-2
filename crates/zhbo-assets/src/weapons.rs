@@ -154,8 +154,9 @@ pub fn attachment_metadata(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<S
     for row in rows {
         // Column 4 is the display name key, column 5 the short name, column 8 the description key.
         let (Some(short), Some(display_key), Some(desc_key)) = (row.get(4), row.get(3), row.get(7)) else { continue };
-        let full_name = names.get(display_key).map(|s| s.trim().to_string()).unwrap_or_default();
-        let description = names.get(desc_key).map(|s| s.trim().to_string()).unwrap_or_default();
+        // Exactly as BO2's strings have them (some descriptions end in spaces; the table quotes them).
+        let full_name = names.get(display_key).cloned().unwrap_or_default();
+        let description = names.get(desc_key).cloned().unwrap_or_default();
         let compatible = zhbo_conformance::bo2::combos::kind_of(short)
             .and_then(|k| compat.rows.get(&k))
             .map(|(_, mask)| (0..64).filter(|b| mask & (1u64 << b) != 0).filter_map(|b| zhbo_conformance::weapons::ATTACHMENTS.get(b)).map(|s| s.to_string()).collect())
@@ -294,18 +295,49 @@ pub fn attachment_def(a: &bo2::Attachment, default: &bo2::Attachment, names: &Ha
 pub const DEFAULT_ATTACHMENT: &str = "defaultattachment";
 
 /// BO2's perk rows from the player's `mp/statstable.csv` (`patch_mp`): each `specialty` row's
-/// reference (column d, `PERKS_LIGHTWEIGHT` -> `LIGHTWEIGHT`) and the specialties it grants
-/// (column e, `|`-separated). Rows with a specialty the core does not know are skipped (Ghidra
-/// G1's index table names all 62).
-pub fn perk_rows(patch: &zhbo_formats::t6zone::Zone) -> Vec<(String, Specialties)> {
+/// reference (column 3, `PERKS_LIGHTWEIGHT` -> `LIGHTWEIGHT`), its localized name (column 3's key)
+/// and description (column 7's key) from `names`, and the specialties it grants (column 4,
+/// `|`-separated). Rows with a specialty the core does not know are skipped (Ghidra G1's index table
+/// names all 62).
+pub fn perk_rows(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<String, String>) -> Vec<zhbo_core::weapons::PerkRow> {
     let Ok(Some(rows)) = zhbo_formats::stringtable::rows(patch, "mp/statstable.csv") else { return Vec::new() };
+    let loc = |k: Option<&String>| k.and_then(|k| names.get(k.trim())).cloned().unwrap_or_default();
     rows.iter()
         .filter(|r| r.get(2).is_some_and(|c| c == "specialty"))
         .filter_map(|r| {
             let stats = r.get(3)?.strip_prefix("PERKS_")?.to_string();
-            let set = Specialties::parse(r.get(4)?).ok()?;
-            (!set.is_empty()).then_some((stats, set))
+            let specialties = Specialties::parse(r.get(4)?).ok()?;
+            (!specialties.is_empty()).then(|| zhbo_core::weapons::PerkRow { stats, name: loc(r.get(3)), description: loc(r.get(7)), specialties })
         })
+        .collect()
+}
+
+/// BO2's bonus cards from the player's `mp/statstable.csv` (`patch_mp`): every `bonuscard` row the
+/// class editor can charge (column 12 a cost, as the CaC lists filter), with its localized name
+/// and description (`names`), image, loadout slot, sort key, index and unlock level
+/// ([`zhbo_core::weapons::BonusCard`]).
+pub fn bonus_card_rows(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<String, String>) -> Vec<zhbo_core::weapons::BonusCard> {
+    let Ok(Some(rows)) = zhbo_formats::stringtable::rows(patch, "mp/statstable.csv") else { return Vec::new() };
+    let cell = |r: &Vec<String>, i: usize| r.get(i).map(|c| c.trim().to_string()).unwrap_or_default();
+    let num = |r: &Vec<String>, i: usize| cell(r, i).parse::<i32>().ok();
+    let loc = |k: String| names.get(&k).cloned().unwrap_or(k);
+    rows.iter()
+        .filter(|r| r.get(2).is_some_and(|c| c == "bonuscard"))
+        .filter_map(|r| {
+            let cost = num(r, 12).filter(|c| *c >= 0)?;
+            Some(zhbo_core::weapons::BonusCard {
+                reference: cell(r, 4),
+                name: loc(cell(r, 3)),
+                description: loc(cell(r, 7)),
+                image: cell(r, 6),
+                slot: cell(r, 13),
+                cost,
+                sort: num(r, 9).unwrap_or(0),
+                index: num(r, 0).unwrap_or(0),
+                unlock_level: num(r, 10).unwrap_or(0),
+            })
+        })
+        .filter(|b| !b.reference.is_empty())
         .collect()
 }
 
@@ -420,9 +452,20 @@ pub fn table_with_metadata(
         reticle_colors: opts.reticle_colors.to_vec(),
         tablet_meshes: 0,
         perks: Vec::new(),
-        // The HUD text the core draws, in the install's own English.
-        hud_strings: zhbo_core::weapons::HUD_STRINGS.iter().filter_map(|k| names.get(*k).map(|t| (k.to_string(), t.clone()))).collect(),
+        bonus_cards: Vec::new(),
+        ui_text: ui_text(names),
+        weapon_groups: Vec::new(),
+        class_caps: Vec::new(),
     }
+}
+
+/// The localized UI strings the core draws ([`zhbo_core::weapons::UI_TEXT_KEYS`]), exactly as the
+/// install's english zones have them; a key the install lacks is left out (the core falls back).
+pub fn ui_text(names: &HashMap<String, String>) -> Vec<zhbo_core::weapons::UiText> {
+    zhbo_core::weapons::UI_TEXT_KEYS
+        .iter()
+        .filter_map(|k| names.get(*k).map(|text| zhbo_core::weapons::UiText { key: k.to_string(), text: text.clone() }))
+        .collect()
 }
 
 /// Weapons with attachments, and their alt modes, that [`converted`] asks for: built from their base
@@ -485,15 +528,30 @@ pub fn add_variants(table: &mut Table, converted: &[String], bo2: &[Weapon]) {
 /// (column 2, the editor's category: [`WeaponDef::cac_class`]). A weapon no item names stays off
 /// the class editor's lists (the `_dw` pistols, whose rows cost -1, are what a pistol with the
 /// `dw` attachment gives; the War Machine is a pickup only).
-pub fn set_cac_slots(table: &mut Table, patch: &zhbo_formats::t6zone::Zone) {
+pub fn set_cac_slots(table: &mut Table, patch: &zhbo_formats::t6zone::Zone, names: &HashMap<String, String>) {
     let Ok(Some(statstable)) = zhbo_formats::stringtable::rows(patch, "mp/statstable.csv") else { return };
     let items = zhbo_conformance::bo2::combos::items(&statstable);
     for d in &mut table.weapons {
         if let Some(item) = items.iter().find(|i| i.variant == d.id) {
             d.cac_slot = item.slot.clone();
             d.cac_group = item.group.clone();
+            // Column 7's localized description, exactly as BO2's string table has it.
+            let row = statstable.iter().find(|r| r.get(4).is_some_and(|c| *c == item.reference));
+            d.description = row.and_then(|r| r.get(7)).and_then(|k| names.get(k.trim())).cloned().unwrap_or_default();
+            d.cac_sort = row.and_then(|r| r.get(9)).and_then(|c| c.trim().parse().ok()).unwrap_or(0);
+            d.cac_index = item.index;
+            order_attachments(d, item);
         }
     }
+}
+
+/// Put a base weapon's offered attachments in BO2's attachment-grid order: the item's attachment
+/// numbers, which follow its statstable column 8 (G17's `FUN_008cdfb0`;
+/// `cacattachmentsmenu.lua:858-879` adds one button per number, `1 .. GetNumAttachments - 1`).
+/// An offered attachment the column does not list keeps its place after the listed ones.
+fn order_attachments(d: &mut WeaponDef, item: &zhbo_conformance::bo2::combos::Item) {
+    let listed: Vec<&str> = zhbo_conformance::bo2::combos::listed(item).into_iter().map(|k| zhbo_conformance::weapons::ATTACHMENTS[k]).collect();
+    d.allowed.sort_by_key(|(short, _)| listed.iter().position(|l| l == short).unwrap_or(listed.len()));
 }
 
 /// The alt mode entry of a converted weapon, if it has one.
@@ -968,6 +1026,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         // Set from the statstable by `set_cac_slots` (the table is not this weapon's data).
         cac_slot: String::new(),
         cac_group: String::new(),
+        description: String::new(),
+        cac_sort: 0,
+        cac_index: 0,
         dual_wield_weapon: w.dual_wield_weapon.clone().unwrap_or_default(),
         silenced: w.silenced,
         laser: false,
@@ -1388,6 +1449,33 @@ mod tests {
         assert_eq!(defs[0].left_fire_sound, "ZHBO_BO2_FireLeft_fnp45_dw_mp");
         assert!(events.iter().any(|e| e.event == "ZHBO_BO2_FireLeft_fnp45_dw_mp" && e.layers[0] == "wpn_fnp45_fire_plr_lh"));
         assert_eq!(defs[1].left_fire_sound, "");
+    }
+
+    #[test]
+    fn the_ui_text_carries_the_installs_strings_for_the_cores_keys() {
+        let names: HashMap<String, String> = [("MPUI_SECOND_SPECIAL_GRENADE_CAPS", "SECOND TACTICAL"), ("MPUI_UNUSED", "X")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let rows = ui_text(&names);
+        assert_eq!(rows, vec![zhbo_core::weapons::UiText { key: "MPUI_SECOND_SPECIAL_GRENADE_CAPS".into(), text: "SECOND TACTICAL".into() }]);
+    }
+
+    #[test]
+    fn the_attachment_grid_follows_the_items_column_8() {
+        // Column 8's tokens are cut at their first `_` (`silencer_smg` is `silencer`); the grid
+        // walks them in that order, not by name.
+        let item = zhbo_conformance::bo2::combos::Item {
+            reference: "an94".into(),
+            variant: "an94_mp".into(),
+            group: "weapon_assault".into(),
+            slot: "primary".into(),
+            cost: 1,
+            attachments: vec!["reflex".into(), "fastads".into(), "silencer_smg".into(), "acog".into()],
+            index: 1,
+        };
+        let mut d = WeaponDef { id: "an94_mp".into(), ..Default::default() };
+        d.allowed = ["acog", "extra", "fastads", "reflex", "silencer"].iter().map(|s| (s.to_string(), format!("{s}_x"))).collect();
+        order_attachments(&mut d, &item);
+        let shorts: Vec<&str> = d.allowed.iter().map(|(s, _)| s.as_str()).collect();
+        assert_eq!(shorts, ["reflex", "fastads", "silencer", "acog", "extra"]);
     }
 
     #[test]
@@ -2024,6 +2112,61 @@ mod tests {
 
     #[test]
     #[ignore = "reads this machine's Black Ops II install"]
+    fn the_installs_weapon_groups_are_the_built_in_order() {
+        // `cacweaponslot.lua`'s weapon-group order, read as the converter reads it, is the
+        // stand-in table's, and the editor's primary categories follow it.
+        let bo2_dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let patch = crate::generals::load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
+        let patch_ui = crate::generals::load_zone(&bo2_dir, "patch_ui_mp").unwrap();
+        let groups = zhbo_conformance::bo2::cac::weapon_groups(&patch, &patch_ui).unwrap();
+        let built_in = zhbo_core::weapons::parse_full_table(zhbo_core::weapons::BUILTIN).unwrap().weapon_groups;
+        assert_eq!(groups, built_in);
+    }
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_installs_class_caps_are_the_built_in_caps() {
+        // The caps the core reads from data, as `cacutility.lua` declares them, are the stand-ins.
+        let bo2_dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let patch = crate::generals::load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
+        let patch_ui = crate::generals::load_zone(&bo2_dir, "patch_ui_mp").unwrap();
+        let caps = zhbo_conformance::bo2::cac::class_caps(&patch, &patch_ui).unwrap();
+        let built_in = zhbo_core::weapons::parse_full_table(zhbo_core::weapons::BUILTIN).unwrap().class_caps;
+        for k in zhbo_core::classes::DATA_CAPS {
+            let stand_in = built_in.iter().find(|(n, _)| n == k).map(|(_, v)| v.to_string());
+            assert_eq!(caps.get(k).cloned(), stand_in, "{k}");
+        }
+    }
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_installs_ui_text_is_the_built_in_stand_ins() {
+        // Every key the core draws is in the install's english zones, and the stand-ins are its
+        // strings exactly (`MPUI_SECOND_SPECIAL_GRENADE_CAPS` is `SECOND TACTICAL`).
+        let bo2_dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let rows = ui_text(&names(&bo2_dir));
+        assert_eq!(rows.len(), zhbo_core::weapons::UI_TEXT_KEYS.len(), "{rows:?}");
+        let built_in = zhbo_core::weapons::parse_full_table(zhbo_core::weapons::BUILTIN).unwrap().ui_text;
+        assert_eq!(rows, built_in);
+    }
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_installs_bonus_cards_are_the_built_in_stand_ins() {
+        // The stand-in table's eight cards are the install's rows, field for field (so a test
+        // build's wildcard grid is BO2's), and every card is one the editor implements.
+        let bo2_dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let patch = crate::generals::load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
+        let cards = bonus_card_rows(&patch, &names(&bo2_dir));
+        let built_in = zhbo_core::weapons::parse_full_table(zhbo_core::weapons::BUILTIN).unwrap().bonus_cards;
+        assert_eq!(cards, built_in);
+        for c in &cards {
+            assert!(zhbo_core::classmenu::Wildcard::by_reference(&c.reference).is_some(), "{} has no editor rule", c.reference);
+        }
+    }
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
     fn the_installs_reticle_options_are_bo2s_base_tabs() {
         let bo2_dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
         let patch = crate::generals::load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
@@ -2059,15 +2202,17 @@ mod tests {
 
     #[test]
     #[ignore = "reads this machine's Black Ops II install"]
-    fn the_installs_perk_rows_are_the_built_in_sets_and_weapons_carry_their_bits() {
+    fn the_installs_perk_rows_are_the_built_in_rows_and_weapons_carry_their_bits() {
         use zhbo_core::weapons::{Perk, Specialty};
         let bo2 = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
         let patch = crate::generals::load_zone(&bo2, crate::fx::ZONE).unwrap();
-        let rows = perk_rows(&patch);
+        let rows = perk_rows(&patch, &names(&bo2));
+        let built_in = zhbo_core::weapons::parse_full_table(zhbo_core::weapons::BUILTIN).unwrap().perks;
         for perk in Perk::ALL {
             let d = perk.def();
-            let (_, set) = rows.iter().find(|(k, _)| k == d.stats).unwrap_or_else(|| panic!("statstable has {}", d.stats));
-            assert_eq!(*set, Specialties::of(d.specialties), "{}: the built-in set is the install's row", d.id);
+            let row = rows.iter().find(|r| r.stats == d.stats).unwrap_or_else(|| panic!("statstable has {}", d.stats));
+            let stand_in = built_in.iter().find(|r| r.stats == d.stats).unwrap_or_else(|| panic!("the built-in table has {}", d.stats));
+            assert_eq!(row, stand_in, "{}: the built-in row (name, description, set) is the install's", d.id);
         }
         // In this install only FMJ grants specialties through the data (`armorpiercing`,
         // `bulletpenetration`); fast mag and quickdraw work through their reload/ADS time scales.

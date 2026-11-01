@@ -59,8 +59,8 @@ and the deterministic lockstep simulation. This is the mod's brain; everything r
 from `zhbo_logic_*` must stay deterministic. Depends on `zhbo-requirements` and optionally
 `zhbo-gfx`. After Phase 2.3:
 - `weapons/`: `def.rs` (WeaponDef, enums), `table.rs` (the weapon table's schema,
-  parse and format), `catalog.rs` (the converted table or built-in stand-ins),
-  `perks.rs` (the perk table: each perk's specialty set), `specialty.rs` (BO2's 62
+  parse and format), `catalog.rs` (the converted table or built-in stand-ins, with BO2's perk rows and bonus cards),
+  `perks.rs` (the perk ids and tiers, each tied to its statstable row: name, description, specialty set), `specialty.rs` (BO2's 62
   specialty bits), `feel.rs` (gun kick, sway, viewmodel offsets, reticle data), `handling.rs`
   (the fire cycle's extra times, the zoom levels/fractions/DOF, BO2's per-weapon traits),
   `recoil.rs` (per-shot kick, the gun kick spring, flinch, the spread cone), `view_kick.rs`

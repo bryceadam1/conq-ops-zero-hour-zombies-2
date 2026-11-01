@@ -265,10 +265,26 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     // The create-a-class bars (`mp/attributestable.csv`), before the combinations copy their base.
     let (bars, att_bars) = crate::weapons::attributes(&patch_ui);
     crate::weapons::apply_attributes(&mut table, &bars, &att_bars);
-    // What each perk does: its specialty set, from the player's own statstable (Ghidra G1).
-    table.perks = crate::weapons::perk_rows(&patch);
+    // The perks: their name, description and what each does (its specialty set, Ghidra G1), from
+    // the player's own statstable.
+    table.perks = crate::weapons::perk_rows(&patch, &names);
+    // The wildcards: the same statstable's bonus-card rows (name, description, slot, cost, order).
+    table.bonus_cards = crate::weapons::bonus_card_rows(&patch, &names);
     // Which weapons Create-a-Class offers, in which slot: the same statstable's weapon items.
-    crate::weapons::set_cac_slots(&mut table, &patch);
+    crate::weapons::set_cac_slots(&mut table, &patch, &names);
+    // The weapon groups' order (the editor's category order), from the UI Lua the conformance's
+    // expected side reads.
+    match zhbo_conformance::bo2::cac::weapon_groups(&patch, &patch_ui) {
+        Ok(groups) => table.weapon_groups = groups,
+        Err(e) => summary.push(format!("weapon groups: {e} (the built-in order stands in)")),
+    }
+    // The class caps the core reads from data, from the same Lua.
+    match zhbo_conformance::bo2::cac::class_caps(&patch, &patch_ui) {
+        Ok(caps) => {
+            table.class_caps = zhbo_core::classes::DATA_CAPS.iter().filter_map(|k| caps.get(*k).and_then(|v| v.parse().ok()).map(|v| (k.to_string(), v))).collect();
+        }
+        Err(e) => summary.push(format!("class caps: {e} (the built-in caps stand in)")),
+    }
     let converted = crate::weapons::converted(&patch, &bo2);
     let converted_base = crate::weapons::converted_base(&bo2);
     crate::weapons::add_variants(&mut table, &converted, &bo2);

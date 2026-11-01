@@ -6,7 +6,7 @@
 ** License, or (at your option) any later version.
 */
 
-use super::def::{CamoOption, Class, Effect, FireMode, Inventory, Kind, Kick, Place, ShieldBox, ShieldGeometry, WeapClass, WeaponDef};
+use super::def::{BonusCard, CamoOption, Class, Effect, FireMode, Inventory, Kind, Kick, PerkRow, Place, ShieldBox, ShieldGeometry, UiText, WeapClass, WeaponDef};
 use super::feel::{nums, v3, GunKick, Sway};
 use super::handling::{OffhandClass, Penetrate, WeapType};
 use super::specialty::Specialties;
@@ -25,17 +25,23 @@ pub struct Table {
     pub reticle_colors: Vec<CamoOption>,
     /// Third-person meshes of the scorestreak tablet on the soldier model (`TB{k:02}`).
     pub tablet_meshes: u8,
-    /// BO2's perk rows (`mp/statstable.csv`): the reference without `PERKS_` (`LIGHTWEIGHT`,
-    /// `NINJA`) and the specialties it grants (`Perk <ref>` blocks).
-    pub perks: Vec<(String, Specialties)>,
-    /// BO2's localized HUD strings the core draws ([`HUD_STRINGS`]), from the install's english
-    /// zones (`HudString <key> = <text>` lines).
-    pub hud_strings: Vec<(String, String)>,
+    /// BO2's perk rows (`mp/statstable.csv`'s `specialty` rows, `Perk <ref>` blocks): keyed by the
+    /// reference without `PERKS_` (`LIGHTWEIGHT`, `NINJA`), with the localized name and description
+    /// and the specialties the perk grants.
+    pub perks: Vec<PerkRow>,
+    /// BO2's bonus cards (`mp/statstable.csv`'s `bonuscard` rows, `BonusCard <ref>` blocks), in the
+    /// table's row order.
+    pub bonus_cards: Vec<BonusCard>,
+    /// BO2's localized UI strings the core draws (`UiText <key>` blocks, [`UiText`]).
+    pub ui_text: Vec<UiText>,
+    /// BO2's Create-a-Class weapon groups in the order its weapon-type list adds them
+    /// (`WeaponGroups = weapon_smg weapon_assault …`, `cacweaponslot.lua`); empty in a table from
+    /// before them.
+    pub weapon_groups: Vec<String>,
+    /// `CoD.CACUtility` class caps the core reads from data (`ClassCap.maxPerks = 12`,
+    /// [`crate::classes::DATA_CAPS`]), in the order written.
+    pub class_caps: Vec<(String, i32)>,
 }
-
-/// The localize keys of BO2's HUD text the core draws itself; the converter copies their English
-/// text into the table.
-pub const HUD_STRINGS: &[&str] = &["WEAPON_CANT_PLANT_EQUIPMENT"];
 
 pub(crate) fn pairs(v: &[(String, String)]) -> String {
     v.iter().map(|(a, b)| format!("{a}={b}")).collect::<Vec<_>>().join(" ")
@@ -93,15 +99,22 @@ pub fn format_table(defs: &[WeaponDef]) -> String {
 
 pub fn format_full_table(t: &Table) -> String {
     let mut s = String::from("; Black Ops II multiplayer weapons, converted from the player's own install by zhbo-assets.\n; Private data: do not redistribute.\n\n");
-    s.push_str(&format!("TabletMeshes = {}\n\n", t.tablet_meshes));
-    for (key, text) in &t.hud_strings {
-        s.push_str(&format!("HudString {key} = {text}\n"));
+    s.push_str(&format!("TabletMeshes = {}\n", t.tablet_meshes));
+    if !t.weapon_groups.is_empty() {
+        s.push_str(&format!("WeaponGroups = {}\n", t.weapon_groups.join(" ")));
     }
-    if !t.hud_strings.is_empty() {
-        s.push('\n');
+    for (name, value) in &t.class_caps {
+        s.push_str(&format!("ClassCap.{name} = {value}\n"));
     }
-    for (stats, specialties) in &t.perks {
-        s.push_str(&format!("Perk {stats}\n  Specialties = {}\nEnd\n\n", specialties.format()));
+    s.push('\n');
+    for p in &t.perks {
+        write_block(&mut s, "Perk ", &p.stats, PERK_FIELDS, p);
+    }
+    for b in &t.bonus_cards {
+        write_block(&mut s, "BonusCard ", &b.reference, BONUS_CARD_FIELDS, b);
+    }
+    for u in &t.ui_text {
+        write_block(&mut s, "UiText ", &u.key, UI_TEXT_FIELDS, u);
     }
     for a in &t.attachments {
         write_block(&mut s, "Attachment ", &a.id, ATTACHMENT_FIELDS, a);
@@ -135,12 +148,14 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
         Camo(Box<CamoOption>),
         Reticle(Box<CamoOption>),
         ReticleColor(Box<CamoOption>),
-        Perk(String, Specialties),
+        Perk(Box<PerkRow>),
+        BonusCard(Box<BonusCard>),
+        UiText(Box<UiText>),
     }
     let mut table = Table::default();
     let mut cur: Option<Block> = None;
     for (n, raw) in text.lines().enumerate() {
-        let line = raw.split(';').next().unwrap_or("").trim();
+        let line = strip_comment(raw).trim();
         if line.is_empty() {
             continue;
         }
@@ -165,13 +180,16 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
             cur = Some(Block::ReticleColor(Box::new(CamoOption { id: id.trim().to_string(), ..Default::default() })));
             continue;
         }
-        if let Some(rest) = line.strip_prefix("HudString ") {
-            let (key, text) = rest.split_once('=').ok_or_else(|| err("expected HudString key = text"))?;
-            table.hud_strings.push((key.trim().to_string(), text.trim().to_string()));
+        if let Some(id) = line.strip_prefix("BonusCard ") {
+            cur = Some(Block::BonusCard(Box::new(BonusCard { reference: id.trim().to_string(), ..Default::default() })));
+            continue;
+        }
+        if let Some(key) = line.strip_prefix("UiText ") {
+            cur = Some(Block::UiText(Box::new(UiText { key: key.trim().to_string(), ..Default::default() })));
             continue;
         }
         if let Some(id) = line.strip_prefix("Perk ") {
-            cur = Some(Block::Perk(id.trim().to_string(), Specialties::NONE));
+            cur = Some(Block::Perk(Box::new(PerkRow { stats: id.trim().to_string(), ..Default::default() })));
             continue;
         }
         if line == "End" {
@@ -181,28 +199,33 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
                 Block::Camo(c) => table.camo.push(*c),
                 Block::Reticle(r) => table.reticles.push(*r),
                 Block::ReticleColor(c) => table.reticle_colors.push(*c),
-                Block::Perk(stats, specialties) => table.perks.push((stats, specialties)),
+                Block::Perk(p) => table.perks.push(*p),
+                Block::BonusCard(b) => table.bonus_cards.push(*b),
+                Block::UiText(u) => table.ui_text.push(*u),
             }
             continue;
         }
         let (key, value) = line.split_once('=').ok_or_else(|| err("expected key = value"))?;
-        let (key, value) = (key.trim(), value.trim());
+        let (key, value) = (key.trim(), unquote(value.trim()));
         let nums: Vec<f32> = value.split_whitespace().filter_map(|x| x.parse().ok()).collect();
-        let values = Values { text: value, nums: &nums };
+        let values = Values { text: &value, nums: &nums };
         match cur.as_mut() {
             None => match key {
                 "TabletMeshes" => table.tablet_meshes = values.text_num().map_err(|e| err(&e))? as u8,
+                "WeaponGroups" => table.weapon_groups = value.split_whitespace().map(str::to_string).collect(),
+                k if k.starts_with("ClassCap.") => {
+                    let n = values.text_num().map_err(|e| err(&e))? as i32;
+                    table.class_caps.push((k["ClassCap.".len()..].to_string(), n));
+                }
                 _ => return Err(err("value outside a block")),
             },
             Some(Block::Attachment(a)) => set_field(ATTACHMENT_FIELDS, a, key, values).map_err(|e| err(&e))?,
             Some(Block::Camo(c)) => set_field(CAMO_FIELDS, c, key, values).map_err(|e| err(&e))?,
             Some(Block::Reticle(r)) => set_field(CAMO_FIELDS, r, key, values).map_err(|e| err(&e))?,
             Some(Block::ReticleColor(c)) => set_field(CAMO_FIELDS, c, key, values).map_err(|e| err(&e))?,
-            Some(Block::Perk(_, specialties)) => {
-                if key == "Specialties" {
-                    *specialties = Specialties::parse(value).map_err(|e| err(&e))?;
-                }
-            }
+            Some(Block::Perk(p)) => set_field(PERK_FIELDS, p, key, values).map_err(|e| err(&e))?,
+            Some(Block::BonusCard(b)) => set_field(BONUS_CARD_FIELDS, b, key, values).map_err(|e| err(&e))?,
+            Some(Block::UiText(u)) => set_field(UI_TEXT_FIELDS, u, key, values).map_err(|e| err(&e))?,
             Some(Block::Weapon(d)) => set_field(WEAPON_FIELDS, d, key, values).map_err(|e| err(&e))?,
         }
     }
@@ -223,7 +246,7 @@ pub enum FieldKind {
     Num,
     /// `n` space-separated numbers, all required (bools are `0`/`1`).
     Nums(usize),
-    /// A string, verbatim (trimmed).
+    /// A string, verbatim (quoted when it has surrounding whitespace or a `;`, [`quote`]).
     Str,
     /// Space-separated words (a weapon's attachment shorts).
     Words,
@@ -710,6 +733,12 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("CacGroup", "The Create-a-Class group BO2 lists it under (statstable column 2).", FieldKind::Str,
         |d: &WeaponDef| d.cac_group.clone(),
         |d: &mut WeaponDef, v: Values| { d.cac_group = v.text.into(); Ok(()) }),
+    field!("Description", "The Create-a-Class item's localized description (statstable column 7).", FieldKind::Str,
+        |d: &WeaponDef| d.description.clone(),
+        |d: &mut WeaponDef, v: Values| { d.description = v.text.into(); Ok(()) }),
+    field!("CacOrder", "The Create-a-Class list order: statstable sort key (column 9), item index (column 0).", FieldKind::Nums(2),
+        |d: &WeaponDef| format!("{} {}", d.cac_sort, d.cac_index),
+        |d: &mut WeaponDef, v: Values| { v.need(2)?; d.cac_sort = v.nums[0] as i32; d.cac_index = v.nums[1] as i32; Ok(()) }),
     field!("DualWieldWeapon", "A dual-wield weapon's left gun (BO2's `szDualWieldWeaponName`).", FieldKind::Str,
         |d: &WeaponDef| d.dual_wield_weapon.clone(),
         |d: &mut WeaponDef, v: Values| { d.dual_wield_weapon = v.text.into(); Ok(()) }),
@@ -964,6 +993,54 @@ pub const CAMO_FIELDS: &[Field<CamoOption>] = &[
         |c: &mut CamoOption, v: Values| { c.sort = v.text.parse().map_err(|_| "number")?; Ok(()) }),
 ];
 
+/// Every `Perk` block line: one `specialty` row of `mp/statstable.csv` ([`PerkRow`]).
+pub const PERK_FIELDS: &[Field<PerkRow>] = &[
+    field!("Name", "The localized name (column 3, `PERKS_*`).", FieldKind::Str,
+        |p: &PerkRow| p.name.clone(),
+        |p: &mut PerkRow, v: Values| { p.name = v.text.into(); Ok(()) }),
+    field!("Description", "The localized description (column 7, `PERKS_*_DESC`).", FieldKind::Str,
+        |p: &PerkRow| p.description.clone(),
+        |p: &mut PerkRow, v: Values| { p.description = v.text.into(); Ok(()) }),
+    field!("Specialties", "The specialties it grants (column 4), by name.", FieldKind::Words,
+        |p: &PerkRow| p.specialties.format(),
+        |p: &mut PerkRow, v: Values| { p.specialties = Specialties::parse(v.text)?; Ok(()) }),
+];
+
+/// Every `BonusCard` block line: one `bonuscard` row of `mp/statstable.csv` ([`BonusCard`]).
+pub const BONUS_CARD_FIELDS: &[Field<BonusCard>] = &[
+    field!("Name", "The localized name (column 3, `BONUSCARD_*`).", FieldKind::Str,
+        |b: &BonusCard| b.name.clone(),
+        |b: &mut BonusCard, v: Values| { b.name = v.text.into(); Ok(()) }),
+    field!("Description", "The localized description (column 7, `MENU_BONUSCARD_*_DESC`).", FieldKind::Str,
+        |b: &BonusCard| b.description.clone(),
+        |b: &mut BonusCard, v: Values| { b.description = v.text.into(); Ok(()) }),
+    field!("Image", "The card image (column 6, `menu_mp_bonuscard_*`).", FieldKind::Str,
+        |b: &BonusCard| b.image.clone(),
+        |b: &mut BonusCard, v: Values| { b.image = v.text.into(); Ok(()) }),
+    field!("Slot", "The loadout slot (column 13, `bonuscard1..7`; `Engine.GetLoadoutSlotForItem`).", FieldKind::Str,
+        |b: &BonusCard| b.slot.clone(),
+        |b: &mut BonusCard, v: Values| { b.slot = v.text.into(); Ok(()) }),
+    field!("Cost", "The allocation cost (column 12).", FieldKind::Num,
+        |b: &BonusCard| b.cost.to_string(),
+        |b: &mut BonusCard, v: Values| { b.cost = v.text_num()? as i32; Ok(()) }),
+    field!("Sort", "The sort key the grid orders by (column 9, `Engine.GetItemSortKey`).", FieldKind::Num,
+        |b: &BonusCard| b.sort.to_string(),
+        |b: &mut BonusCard, v: Values| { b.sort = v.text_num()? as i32; Ok(()) }),
+    field!("Index", "The item index (column 0), the grid's tie-break.", FieldKind::Num,
+        |b: &BonusCard| b.index.to_string(),
+        |b: &mut BonusCard, v: Values| { b.index = v.text_num()? as i32; Ok(()) }),
+    field!("UnlockLevel", "The level that unlocks it (column 10).", FieldKind::Num,
+        |b: &BonusCard| b.unlock_level.to_string(),
+        |b: &mut BonusCard, v: Values| { b.unlock_level = v.text_num()? as i32; Ok(()) }),
+];
+
+/// Every `UiText` block line: one localized UI string ([`UiText`]).
+pub const UI_TEXT_FIELDS: &[Field<UiText>] = &[
+    field!("Text", "The english text of the block's localize key.", FieldKind::Str,
+        |u: &UiText| u.text.clone(),
+        |u: &mut UiText, v: Values| { u.text = v.text.into(); Ok(()) }),
+];
+
 /// Apply one schema line to `t`. Unknown keys are tolerated (the parser skips them).
 pub fn set_field<T>(fields: &[Field<T>], t: &mut T, key: &str, values: Values) -> Result<(), String> {
     for f in fields {
@@ -974,13 +1051,51 @@ pub fn set_field<T>(fields: &[Field<T>], t: &mut T, key: &str, values: Values) -
     Ok(())
 }
 
+/// A value as the table writes it: verbatim, or in double quotes (with `\"` and `\\` escaped)
+/// when the plain form would not read back exactly — surrounding whitespace (the reader trims
+/// it; BO2's localized descriptions can end in spaces), a `;` (the comment marker) or a leading
+/// quote. [`unquote`] is its inverse.
+pub fn quote(value: &str) -> std::borrow::Cow<'_, str> {
+    if value.trim() != value || value.contains(';') || value.starts_with('"') {
+        format!("\"{}\"", value.replace('\\', "\\\\").replace('"', "\\\"")).into()
+    } else {
+        value.into()
+    }
+}
+
+/// A read value: a [`quote`]d one unescaped, any other as it is.
+pub fn unquote(value: &str) -> std::borrow::Cow<'_, str> {
+    let Some(inner) = value.strip_prefix('"').and_then(|v| v.strip_suffix('"')).filter(|_| value.len() >= 2) else { return value.into() };
+    let mut out = String::with_capacity(inner.len());
+    let mut chars = inner.chars();
+    while let Some(c) = chars.next() {
+        out.push(if c == '\\' { chars.next().unwrap_or('\\') } else { c });
+    }
+    out.into()
+}
+
+/// A line without its `;` comment; a `;` inside a quoted value is the value's.
+fn strip_comment(raw: &str) -> &str {
+    let (mut quoted, mut escaped) = (false, false);
+    for (i, c) in raw.char_indices() {
+        match c {
+            _ if escaped => escaped = false,
+            '\\' if quoted => escaped = true,
+            '"' => quoted = !quoted,
+            ';' if !quoted => return &raw[..i],
+            _ => {}
+        }
+    }
+    raw
+}
+
 /// Append one block's lines.
 pub fn write_block<T>(out: &mut String, header: &str, id: &str, fields: &[Field<T>], t: &T) {
     out.push_str(header);
     out.push_str(id);
     out.push('\n');
     for f in fields {
-        out.push_str(&format!("  {} = {}\n", f.key, (f.get)(t)));
+        out.push_str(&format!("  {} = {}\n", f.key, quote(&(f.get)(t))));
     }
     out.push_str("End\n\n");
 }
@@ -1008,17 +1123,36 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 125);
+        assert_eq!(WEAPON_FIELDS.len(), 127);
         assert_eq!(ATTACHMENT_FIELDS.len(), 30);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }
 
+    /// A value the plain form would change — BO2's descriptions that end in spaces, a `;` (the
+    /// comment marker), quotes and backslashes — is written quoted and reads back exactly; plain
+    /// values stay unquoted, and a commented line still loses its comment.
     #[test]
-    fn the_hud_strings_round_trip() {
-        let t = Table { hud_strings: vec![("WEAPON_CANT_PLANT_EQUIPMENT".into(), "Cannot Plant Here".into())], ..Default::default() };
+    fn a_string_value_round_trips_exactly() {
+        let texts = ["Aim faster after sprinting.  Mantle and climb faster. ", "  lead", "a; b", "\"q\" and \\ back\\", "plain text", ""];
+        for t in texts {
+            let p = PerkRow { stats: "X".into(), name: "N".into(), description: t.into(), ..Default::default() };
+            let tab = Table { perks: vec![p], ..Default::default() };
+            let text = format_full_table(&tab);
+            let back = parse_full_table(&text).expect("re-parses");
+            assert_eq!(back.perks[0].description, t, "{text}");
+        }
+        assert_eq!(quote("plain text"), "plain text");
+        assert_eq!(quote("ends "), "\"ends \"");
+        let commented = parse_full_table("Perk X ; a perk\n  Name = N ; the name\n  Description = \"x; y \" ; trailing\nEnd\n").unwrap();
+        assert_eq!((commented.perks[0].name.as_str(), commented.perks[0].description.as_str()), ("N", "x; y "));
+    }
+
+    #[test]
+    fn the_hud_hint_text_round_trips_as_ui_text() {
+        let t = Table { ui_text: vec![UiText { key: "WEAPON_CANT_PLANT_EQUIPMENT".into(), text: "Cannot Plant Here".into() }], ..Default::default() };
         let back = parse_full_table(&format_full_table(&t)).expect("the table re-parses");
-        assert_eq!(back.hud_strings, t.hud_strings);
-        assert_eq!(crate::weapons::Catalog::from_table(back).hud_string("WEAPON_CANT_PLANT_EQUIPMENT"), Some("Cannot Plant Here"));
+        assert_eq!(back.ui_text, t.ui_text);
+        assert_eq!(crate::weapons::Catalog::from_table(back).ui_text("WEAPON_CANT_PLANT_EQUIPMENT"), Some("Cannot Plant Here"));
     }
 
     #[test]
@@ -1097,11 +1231,55 @@ mod tests {
         let t = Table {
             weapons: vec![d],
             attachments: vec![a],
-            perks: vec![("LIGHTWEIGHT".into(), Specialties::of(&[Specialty::MoveFaster, Specialty::FallHeight]))],
+            perks: vec![PerkRow {
+                stats: "LIGHTWEIGHT".into(),
+                name: "Lightweight".into(),
+                description: "Move faster.  Take no damage when falling.".into(),
+                specialties: Specialties::of(&[Specialty::MoveFaster, Specialty::FallHeight]),
+            }],
             ..Default::default()
         };
         let text = format_full_table(&t);
-        assert!(text.contains("Perk LIGHTWEIGHT\n  Specialties = fallheight movefaster\nEnd"), "{text}");
+        assert!(
+            text.contains("Perk LIGHTWEIGHT\n  Name = Lightweight\n  Description = Move faster.  Take no damage when falling.\n  Specialties = fallheight movefaster\nEnd"),
+            "{text}"
+        );
+        assert_eq!(parse_full_table(&text).unwrap(), t);
+    }
+
+    #[test]
+    fn weapon_groups_round_trip() {
+        let t = Table { weapon_groups: vec!["weapon_smg".into(), "weapon_assault".into()], class_caps: vec![("maxPerks".into(), 12)], ..Default::default() };
+        let text = format_full_table(&t);
+        assert!(text.contains("WeaponGroups = weapon_smg weapon_assault\nClassCap.maxPerks = 12\n"), "{text}");
+        assert_eq!(parse_full_table(&text).unwrap(), t);
+    }
+
+    #[test]
+    fn ui_text_round_trips() {
+        let t = Table { ui_text: vec![UiText { key: "MPUI_SECOND_SPECIAL_GRENADE_CAPS".into(), text: "SECOND TACTICAL".into() }], ..Default::default() };
+        let text = format_full_table(&t);
+        assert!(text.contains("UiText MPUI_SECOND_SPECIAL_GRENADE_CAPS\n  Text = SECOND TACTICAL\nEnd"), "{text}");
+        assert_eq!(parse_full_table(&text).unwrap(), t);
+    }
+
+    #[test]
+    fn bonus_cards_round_trip() {
+        let b = BonusCard {
+            reference: "bonuscard_overkill".into(),
+            name: "Overkill".into(),
+            description: "Take a primary weapon as your second weapon.".into(),
+            image: "menu_mp_bonuscard_overkill".into(),
+            slot: "bonuscard3".into(),
+            cost: 1,
+            sort: 4,
+            index: 180,
+            unlock_level: 15,
+        };
+        let t = Table { bonus_cards: vec![b], ..Default::default() };
+        let text = format_full_table(&t);
+        assert!(text.contains("BonusCard bonuscard_overkill\n  Name = Overkill\n"), "{text}");
+        assert!(text.contains("  Slot = bonuscard3\n  Cost = 1\n  Sort = 4\n  Index = 180\n  UnlockLevel = 15\nEnd"), "{text}");
         assert_eq!(parse_full_table(&text).unwrap(), t);
     }
 

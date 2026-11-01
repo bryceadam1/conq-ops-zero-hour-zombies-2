@@ -6,7 +6,7 @@
 ** License, or (at your option) any later version.
 */
 
-use super::def::{CamoOption, WeaponDef};
+use super::def::{BonusCard, CamoOption, PerkRow, WeaponDef};
 use super::table::{parse_full_table, Table};
 use crate::attachments::{self, AttachmentDef};
 use std::collections::HashMap;
@@ -24,8 +24,12 @@ pub struct Catalog {
     reticle_order: Vec<&'static CamoOption>,
     reticle_colors: HashMap<String, &'static CamoOption>,
     reticle_color_order: Vec<&'static CamoOption>,
+    bonus_cards: Vec<&'static BonusCard>,
+    perks: HashMap<String, &'static PerkRow>,
+    ui_text: HashMap<String, &'static str>,
+    weapon_groups: Vec<String>,
+    class_caps: HashMap<String, i32>,
     built: Mutex<HashMap<String, &'static WeaponDef>>,
-    hud_strings: HashMap<String, &'static str>,
     pub tablet_meshes: u8,
 }
 
@@ -43,6 +47,12 @@ impl Catalog {
         let reticles = reticle_order.iter().map(|r| (r.id.clone(), *r)).collect();
         let reticle_color_order: Vec<&'static CamoOption> = t.reticle_colors.into_iter().map(|c| &*Box::leak(Box::new(c))).collect();
         let reticle_colors = reticle_color_order.iter().map(|c| (c.id.clone(), *c)).collect();
+        // The wildcard grid's order: `CoD.GetUnlockablesByGroupName("bonuscard")` sorted by
+        // `UnlockablesComparisonFunction` — the sort key, then the item index (codbase.lua; G17).
+        let mut bonus_cards: Vec<&'static BonusCard> = t.bonus_cards.into_iter().map(|b| &*Box::leak(Box::new(b))).collect();
+        bonus_cards.sort_by_key(|b| (b.sort, b.index));
+        let perks = t.perks.into_iter().map(|p| (p.stats.to_ascii_uppercase(), &*Box::leak(Box::new(p)))).collect();
+        let ui_text = t.ui_text.into_iter().map(|u| (u.key, &*Box::leak(u.text.into_boxed_str()))).collect();
         Catalog {
             by_id,
             order,
@@ -52,9 +62,13 @@ impl Catalog {
             reticle_order,
             reticle_colors,
             reticle_color_order,
+            bonus_cards,
+            perks,
+            ui_text,
+            weapon_groups: t.weapon_groups,
+            class_caps: t.class_caps.into_iter().collect(),
             built: Mutex::new(HashMap::new()),
             tablet_meshes: t.tablet_meshes,
-            hud_strings: t.hud_strings.into_iter().map(|(k, v)| (k, &*Box::leak(v.into_boxed_str()))).collect(),
         }
     }
 
@@ -96,12 +110,6 @@ impl Catalog {
     }
 
     /// A camo option by id (`camo_multicam`), with its name and thumbnail image.
-    /// BO2's localized HUD string for a localize key ([`super::table::HUD_STRINGS`]), if the
-    /// converted table carries it.
-    pub fn hud_string(&self, key: &str) -> Option<&'static str> {
-        self.hud_strings.get(key).copied()
-    }
-
     pub fn camo(&self, id: &str) -> Option<&'static CamoOption> {
         self.camo.get(id).copied()
     }
@@ -124,6 +132,38 @@ impl Catalog {
     /// The base reticle colours, in BO2's table order.
     pub fn reticle_colors(&self) -> &[&'static CamoOption] {
         &self.reticle_color_order
+    }
+
+    /// A localized UI string by its key (`MPUI_SECOND_SPECIAL_GRENADE_CAPS`); `None` when the table
+    /// lacks it (a table from before the strings, or an install without the key).
+    pub fn ui_text(&self, key: &str) -> Option<&'static str> {
+        self.ui_text.get(key).copied()
+    }
+
+    /// BO2's Create-a-Class weapon groups (`weapon_smg`, `weapon_assault`, …) in the order its
+    /// weapon-type list adds them (`cacweaponslot.lua`).
+    pub fn weapon_groups(&self) -> &[String] {
+        &self.weapon_groups
+    }
+
+    /// A `CoD.CACUtility` class cap by name (`maxPerksInEachCategory`), when the table has it.
+    pub fn class_cap(&self, name: &str) -> Option<i32> {
+        self.class_caps.get(name).copied()
+    }
+
+    /// BO2's bonus cards (the wildcards), in the grid's order.
+    pub fn bonus_cards(&self) -> &[&'static BonusCard] {
+        &self.bonus_cards
+    }
+
+    /// A bonus card by its statstable reference (`bonuscard_overkill`).
+    pub fn bonus_card(&self, reference: &str) -> Option<&'static BonusCard> {
+        self.bonus_cards.iter().copied().find(|b| b.reference == reference)
+    }
+
+    /// A perk's statstable row by its reference without `PERKS_` (`LIGHTWEIGHT`, `NINJA`).
+    pub fn perk(&self, stats: &str) -> Option<&'static PerkRow> {
+        self.perks.get(stats).copied()
     }
 
     pub fn all(&self) -> &[&'static WeaponDef] {
@@ -151,10 +191,43 @@ static CATALOG: OnceLock<Catalog> = OnceLock::new();
 
 /// Install the converted BO2 table (once, before play). Returns the number of weapons, or why not.
 pub fn install_catalog(text: &str) -> Result<usize, String> {
-    let table = parse_full_table(text)?;
+    let mut table = parse_full_table(text)?;
     let n = table.weapons.len();
-    if !table.perks.is_empty() {
-        super::perks::install_converted(&table.perks);
+    let built_in = parse_full_table(BUILTIN)?;
+    // The weapon groups a table converted before them lacks: the stand-ins (BO2's own).
+    if table.weapon_groups.is_empty() {
+        table.weapon_groups = built_in.weapon_groups;
+    }
+    // The class caps it lacks, likewise.
+    for (name, value) in built_in.class_caps {
+        if !table.class_caps.iter().any(|(n, _)| *n == name) {
+            table.class_caps.push((name, value));
+        }
+    }
+    // The UI strings a table converted before them lacks: the stand-ins (BO2's own).
+    for u in built_in.ui_text {
+        if !table.ui_text.iter().any(|t| t.key == u.key) {
+            table.ui_text.push(u);
+        }
+    }
+    if table.bonus_cards.is_empty() {
+        // A table converted before the bonus cards were: the stand-in rows (BO2's own).
+        table.bonus_cards = built_in.bonus_cards;
+    }
+    // The perk rows: a table converted before they carried their name and description (or before
+    // it carried perks at all) keeps its specialty sets and takes the stand-ins' text (BO2's own).
+    for b in built_in.perks {
+        match table.perks.iter_mut().find(|p| p.stats.eq_ignore_ascii_case(&b.stats)) {
+            Some(p) => {
+                if p.name.is_empty() {
+                    p.name = b.name;
+                }
+                if p.description.is_empty() {
+                    p.description = b.description;
+                }
+            }
+            None => table.perks.push(b),
+        }
     }
     CATALOG.set(Catalog::from_table(table)).map_err(|_| "weapon catalog already installed".to_string())?;
     Ok(n)
@@ -214,8 +287,220 @@ pub fn weapon(id: &str) -> &'static WeaponDef {
 }
 
 /// Stand-in table when BO2 is not converted: the default loadout's weapons with BO2's published
-/// multiplayer values (rounded), in the same format as the converted table.
+/// multiplayer values (rounded), in the same format as the converted table, BO2's sixteen perk rows
+/// (`mp/statstable.csv:151-166`: name, description, specialties) so the perk grid and every perk's
+/// effect have their rows, BO2's eight bonus cards (`mp/statstable.csv:178-185`) so the
+/// wildcard grid has its rows, and the english UI strings of [`super::UI_TEXT_KEYS`]
+/// (`en_code_post_gfx_mp.ff`). An ignored install test checks the rows and strings against the
+/// player's install. `WeaponGroups` is the order `cacweaponslot.lua` adds the weapon groups in;
+/// the `ClassCap.*` lines are `cacutility.lua`'s ([`crate::classes::DATA_CAPS`]).
 pub const BUILTIN: &str = "
+WeaponGroups = weapon_smg weapon_assault weapon_cqb weapon_lmg weapon_sniper weapon_pistol weapon_launcher weapon_special
+ClassCap.maxCustomClass = 5
+ClassCap.maxGrenades = 2
+ClassCap.maxSpecialtySlots = 6
+ClassCap.maxPerks = 12
+ClassCap.maxAttachments = 2
+ClassCap.maxPerksInEachCategory = 2
+ClassCap.maxBonusCards = 3
+ClassCap.maxDefaultClass = 5
+
+UiText MPUI_PRIMARY_GRENADE_CAPS
+  Text = LETHAL
+End
+
+UiText MPUI_SPECIAL_GRENADE_CAPS
+  Text = TACTICAL
+End
+
+UiText MPUI_SECOND_SPECIAL_GRENADE_CAPS
+  Text = SECOND TACTICAL
+End
+
+Perk LIGHTWEIGHT
+  Name = Lightweight
+  Description = Move faster.  Take no damage when falling.
+  Specialties = fallheight movefaster
+End
+
+Perk HARDLINE
+  Name = Hardline
+  Description = Earn Scorestreaks faster.
+  Specialties = earnmoremomentum
+End
+
+Perk BLIND_EYE
+  Name = Blind Eye
+  Description = Undetectable by AI controlled air support.
+  Specialties = nottargetedbyairsupport
+End
+
+Perk FLAK_JACKET
+  Name = Flak Jacket
+  Description = Take less explosive damage.
+  Specialties = flakjacket
+End
+
+Perk GHOST
+  Name = Ghost
+  Description = Cannot be detected by enemy UAVs while moving, planting or defusing bombs, or while controlling Scorestreaks.
+  Specialties = gpsjammer
+End
+
+Perk TOUGHNESS
+  Name = Toughness
+  Description = Flinch less when shot.
+  Specialties = bulletflinch
+End
+
+Perk COLD_BLOODED
+  Name = Cold Blooded
+  Description = Resistant to targeting systems including: Dual Band, Target Finder, Sensor Grenade, MMS, and player controlled aircraft.  No name or red crosshair when targeted.
+  Specialties = immunemms immunenvthermal immunerangefinder nokillstreakreticle nomotionsensor noname
+End
+
+Perk FAST_HANDS
+  Name = Fast Hands
+  Description = Swap weapons faster and use equipment faster.  Reset the fuse when throwing back frag grenades.
+  Specialties = fastequipmentuse fasttoss fastweaponswitch pin_back
+End
+
+Perk HARD_WIRED
+  Name = Hard Wired
+  Description = Immune to Counter-UAV and EMP.
+  Specialties = immunecounteruav immuneemp
+End
+
+Perk SCAVENGER
+  Name = Scavenger
+  Description = Replenish ammo and equipment from enemies killed by non-explosive weapons.
+  Specialties = scavenger
+End
+
+Perk DEXTERITY
+  Name = Dexterity
+  Description = \"Aim faster after sprinting.  Mantle and climb faster. \"
+  Specialties = fastladderclimb fastmantle fastmeleerecovery sprintrecovery
+End
+
+Perk EXTREME_CONDITIONING
+  Name = Extreme Conditioning
+  Description = Sprint for a longer duration.
+  Specialties = longersprint
+End
+
+Perk HACKER
+  Name = Engineer
+  Description = Show enemy equipment in the world.  Delay triggered explosives. Reroll and booby trap Care Packages.
+  Specialties = delayexplosive showenemyequipment
+End
+
+Perk TACTICAL_MASK
+  Name = Tactical Mask
+  Description = Reduce the effects of Flashbangs, Concussion Grenades, and Shock Charges.
+  Specialties = flashprotection proximityprotection stunprotection
+End
+
+Perk NINJA
+  Name = Dead Silence
+  Description = Move silently.
+  Specialties = quieter
+End
+
+Perk AWARENESS
+  Name = Awareness
+  Description = Enemy movements are easier to hear.
+  Specialties = loudenemies
+End
+
+BonusCard bonuscard_primary_gunfighter
+  Name = Primary Gunfighter
+  Description = Take a 3rd attachment for your primary weapon.
+  Image = menu_mp_bonuscard_primary_gunfighter
+  Slot = bonuscard1
+  Cost = 1
+  Sort = 6
+  Index = 178
+  UnlockLevel = 21
+End
+
+BonusCard bonuscard_secondary_gunfighter
+  Name = Secondary Gunfighter
+  Description = Take a 2nd attachment for your second weapon.
+  Image = menu_mp_bonuscard_secondary_gunfighter
+  Slot = bonuscard2
+  Cost = 1
+  Sort = 5
+  Index = 179
+  UnlockLevel = 18
+End
+
+BonusCard bonuscard_overkill
+  Name = Overkill
+  Description = Take a primary weapon as your second weapon.
+  Image = menu_mp_bonuscard_overkill
+  Slot = bonuscard3
+  Cost = 1
+  Sort = 4
+  Index = 180
+  UnlockLevel = 15
+End
+
+BonusCard bonuscard_perk_1_greed
+  Name = Perk 1 Greed
+  Description = Take a second Perk 1.
+  Image = menu_mp_bonuscard_perk_1_greed
+  Slot = bonuscard5
+  Cost = 1
+  Sort = 1
+  Index = 181
+  UnlockLevel = 3
+End
+
+BonusCard bonuscard_perk_2_greed
+  Name = Perk 2 Greed
+  Description = Take a second Perk 2.
+  Image = menu_mp_bonuscard_perk_2_greed
+  Slot = bonuscard6
+  Cost = 1
+  Sort = 2
+  Index = 182
+  UnlockLevel = 9
+End
+
+BonusCard bonuscard_perk_3_greed
+  Name = Perk 3 Greed
+  Description = Take a second Perk 3.
+  Image = menu_mp_bonuscard_perk_3_greed
+  Slot = bonuscard7
+  Cost = 1
+  Sort = 3
+  Index = 183
+  UnlockLevel = 12
+End
+
+BonusCard bonuscard_danger_close
+  Name = Danger Close
+  Description = Take a second Lethal.
+  Image = menu_mp_bonuscard_danger_close
+  Slot = bonuscard4
+  Cost = 1
+  Sort = 8
+  Index = 184
+  UnlockLevel = 27
+End
+
+BonusCard bonuscard_two_tacticals
+  Name = Tactician
+  Description = Take a tactical grenade in place of your lethal grenade.
+  Image = menu_mp_bonuscard_two_tacticals
+  Slot = bonuscard1
+  Cost = 1
+  Sort = 7
+  Index = 185
+  UnlockLevel = 24
+End
+
 Attachment reflex
   Short = reflex
   DisplayName = Reflex
@@ -480,6 +765,7 @@ Weapon mp7_mp
   DisplayName = MP7
   Class = smg
   CacSlot = primary
+  Description = Fully automatic personal defense weapon.  Versatile and strong overall.
   Allowed = reflex=reflex
 End
 

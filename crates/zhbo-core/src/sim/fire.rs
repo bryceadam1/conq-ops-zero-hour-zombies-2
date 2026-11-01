@@ -385,3 +385,97 @@ pub(crate) fn tracer_due(count: &mut u8, interval: u32) -> bool {
     }
     false
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::classmenu::{Draft, Wildcard};
+    use crate::sim::tests::{general, FakeHost};
+
+    /// A General (id 1, player 0) in first person with the custom class `draft` builds, ready.
+    fn with_class(host: &FakeHost, draft: &Draft) -> Sim {
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(host, 0, 1);
+        sim.choose_class(0, 1, 0, &draft.to_custom().to_wire_words());
+        let ready = sim.player(0).unwrap().arsenal.raise_left;
+        step(&mut sim, host, FpsInput::default(), frames(ready));
+        sim
+    }
+
+    fn step(sim: &mut Sim, host: &FakeHost, input: FpsInput, n: u32) {
+        for _ in 0..n {
+            sim.input(0, 1, input);
+            let f = sim.frame + 1;
+            sim.step(host, f);
+        }
+    }
+
+    fn frames(seconds: f32) -> u32 {
+        (seconds / LOGIC_DT).ceil() as u32 + 1
+    }
+
+    /// Tap the lethal button and let the throw finish; the ids of what left the hand.
+    fn throw_lethal(sim: &mut Sim, host: &FakeHost) -> Vec<String> {
+        let mut thrown = Vec::new();
+        for i in 0..frames(2.0) {
+            let input = if i == 0 { FpsInput { held: buttons::LETHAL, pressed: buttons::LETHAL, ..Default::default() } } else { FpsInput::default() };
+            let before = sim.projectiles.len();
+            step(sim, host, input, 1);
+            thrown.extend(sim.projectiles.iter().skip(before).map(|(_, p)| p.def.id.clone()));
+        }
+        thrown
+    }
+
+    /// Danger Close with its second box filled: the class carries two lethals (`primarygrenadecount`
+    /// 2, `_class.gsc:718-739`),
+    /// both thrown with the lethal button, and Scavenger refills to two (`_weapons.gsc:1840-1850`).
+    #[test]
+    fn danger_close_gives_a_second_lethal() {
+        let host = FakeHost::default();
+        let draft = Draft { wildcards: vec![Wildcard::DangerClose], second_offhand: [true, false], ..Draft::default() };
+        let mut sim = with_class(&host, &draft);
+        let a = &sim.player(0).unwrap().arsenal;
+        assert_eq!((a.lethal.def.id.as_str(), a.lethal.count), ("frag_grenade_mp", 2));
+        assert_eq!(throw_lethal(&mut sim, &host), vec!["frag_grenade_mp".to_string()]);
+        assert_eq!(throw_lethal(&mut sim, &host), vec!["frag_grenade_mp".to_string()], "the second lethal");
+        assert_eq!(sim.player(0).unwrap().arsenal.lethal.count, 0);
+        let a = &mut sim.players[0].as_mut().unwrap().arsenal;
+        a.scavenge();
+        a.scavenge();
+        a.scavenge();
+        assert_eq!(a.lethal.count, 2, "scavenged back to the class's two, not past it");
+        // Without the card: one.
+        let plain = with_class(&FakeHost::default(), &Draft::default());
+        assert_eq!(plain.player(0).unwrap().arsenal.lethal.count, 1);
+    }
+
+    /// Tactician: the lethal slot holds a tactical (`_class.gsc:704-739` gives whatever the slot
+    /// holds), thrown with the lethal button beside the tactical slot's own.
+    #[test]
+    fn tactician_throws_a_tactical_from_the_lethal_slot() {
+        let host = FakeHost::default();
+        let draft = Draft { wildcards: vec![Wildcard::Tactician], lethal: "concussion_grenade_mp".into(), ..Draft::default() };
+        let mut sim = with_class(&host, &draft);
+        let a = &sim.player(0).unwrap().arsenal;
+        assert_eq!(a.lethal.def.id, "concussion_grenade_mp");
+        // The class's counts (`primarygrenadecount`/`specialgrenadecount`): one box each.
+        assert_eq!((a.lethal.count, a.tactical.count), (1, 1), "the class's counts, not the item's start count");
+        assert_eq!(a.tactical.def.id, "concussion_grenade_mp");
+        assert_eq!(throw_lethal(&mut sim, &host), vec!["concussion_grenade_mp".to_string()]);
+    }
+
+    /// A second tactical (BO2's second box, `specialgrenadecount` 2) is given and thrown: the
+    /// tactical slot's and, under Tactician, the lethal slot's; each costs a point in the draft.
+    #[test]
+    fn a_second_tactical_is_given_with_the_class() {
+        let host = FakeHost::default();
+        let draft = Draft { wildcards: vec![Wildcard::Tactician], lethal: "concussion_grenade_mp".into(), second_offhand: [true, true], ..Draft::default() };
+        assert_eq!(draft.spent(), Draft { second_offhand: [false; 2], ..draft.clone() }.spent() + 2);
+        let mut sim = with_class(&host, &draft);
+        let a = &sim.player(0).unwrap().arsenal;
+        assert_eq!((a.lethal.count, a.tactical.count), (2, 2));
+        assert_eq!(throw_lethal(&mut sim, &host).len(), 1);
+        assert_eq!(sim.player(0).unwrap().arsenal.lethal.count, 1);
+    }
+}

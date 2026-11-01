@@ -619,12 +619,15 @@ impl Arsenal {
         // Offhands start with BO2's start count (`start_reserve` for them); an empty or unknown
         // slot has none.
         let knife = || weapon("knife_held_mp");
-        let offhand = |id: &str| {
+        // Each offhand slot carries the class's count when it sets one (BO2's `primarygrenadecount`
+        // — Danger Close's two — and `specialgrenadecount`); whatever item the lethal slot holds, a
+        // tactical under Tactician too.
+        let offhand = |id: &str, count: Option<u16>| {
             if id.is_empty() {
                 return Offhand { def: knife(), count: 0 };
             }
             let Some(def) = weapon_or_none(id) else { return Offhand { def: knife(), count: 0 } };
-            Offhand { def, count: def.start_reserve.max(1) }
+            Offhand { def, count: count.unwrap_or(def.start_reserve.max(1)) }
         };
         let melee = if loadout.melee.is_empty() { knife() } else { weapon_or_none(&loadout.melee).unwrap_or_else(knife) };
         // BO2 gives the held knife as a weapon when the class has fewer than two
@@ -641,8 +644,8 @@ impl Arsenal {
         let raise = weapons[0].def.first_raise_time;
         weapons[0].raised_once = true;
         Self {
-            lethal: offhand(&loadout.lethal),
-            tactical: offhand(&loadout.tactical),
+            lethal: offhand(&loadout.lethal, loadout.lethal_count),
+            tactical: offhand(&loadout.tactical, loadout.tactical_count),
             melee,
             class_melee: class_melee(melee),
             loadout,
@@ -1027,12 +1030,26 @@ impl Arsenal {
         }
     }
 
-    /// Give a magazine (Scavenger) to every gun.
+    /// Give a magazine (Scavenger) to every gun, and one of each offhand up to what the class
+    /// carries (`_weapons.gsc:1804-1850`: stock + 1, capped at the loadout's
+    /// `primarygrenadecount`/`specialgrenadecount` — Danger Close's two lethals refill to two).
     pub fn scavenge(&mut self) {
         for w in &mut self.weapons {
             w.reserve = (w.reserve + w.def.clip).min(w.def.max_reserve);
         }
-        self.lethal.count = self.lethal.count.max(1);
+        let (lethal, tactical) = (self.class_count(true), self.class_count(false));
+        self.lethal.count = (self.lethal.count + 1).min(lethal.max(self.lethal.count));
+        self.tactical.count = (self.tactical.count + 1).min(tactical.max(self.tactical.count));
+    }
+
+    /// How many of an offhand the class gives (the count [`Arsenal::with_loadout`] starts it with):
+    /// the loadout's lethal or tactical count, else the item's start count; none for an empty slot.
+    pub fn class_count(&self, lethal: bool) -> u16 {
+        let (id, count) = if lethal { (&self.loadout.lethal, self.loadout.lethal_count) } else { (&self.loadout.tactical, self.loadout.tactical_count) };
+        if id.is_empty() {
+            return 0;
+        }
+        weapon_or_none(id).map_or(0, |d| count.unwrap_or(d.start_reserve.max(1)))
     }
 
     /// Advance one logic frame. `stance` is 0 stand, 1 crouch, 2 prone; `speed` the ground speed.

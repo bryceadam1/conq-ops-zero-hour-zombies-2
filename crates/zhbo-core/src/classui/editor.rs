@@ -129,7 +129,7 @@ fn editor_title(editor: &Editor) -> String {
     if !name.is_empty() {
         return name.to_string();
     }
-    empty_slot_name(profile::get().customs().len().min(profile::MAX_CLASSES - 1))
+    empty_slot_name(profile::get().customs().len().min(profile::max_classes() - 1))
 }
 
 /// A picker's title (`cacweaponsp.lua`: `MPUI_<slot>_CAPS`; `cacattachmentsmenu.lua`:
@@ -142,8 +142,23 @@ pub(super) fn picker_title(editor: &Editor) -> String {
             let id = if editor.slot == Slot::PrimaryAtts { editor.draft.primary.as_str() } else { editor.draft.secondary.as_str() };
             format!("{} ATTACHMENTS", weapons::weapon(id).display_name.to_uppercase())
         }
+        Slot::Lethal => offhand_title(&editor.draft, true).to_string(),
+        Slot::Tactical => offhand_title(&editor.draft, false).to_string(),
         other => other.label().to_string(),
     }
+}
+
+/// An offhand slot's title, the install's own string: `MPUI_PRIMARY_GRENADE_CAPS` and
+/// `MPUI_SPECIAL_GRENADE_CAPS`, the lethal slot's `MPUI_SECOND_SPECIAL_GRENADE_CAPS` under
+/// Tactician (`cacgrenadesbutton.lua:104-126`, `cacgrenades.lua:85-104`,
+/// `classpreview.lua:3640-3660`). The slot's own label when the weapon table lacks the string.
+pub(super) fn offhand_title(d: &Draft, lethal: bool) -> &'static str {
+    let key = match (lethal, d.wildcards.contains(&Wildcard::Tactician)) {
+        (true, true) => "MPUI_SECOND_SPECIAL_GRENADE_CAPS",
+        (true, false) => "MPUI_PRIMARY_GRENADE_CAPS",
+        (false, _) => "MPUI_SPECIAL_GRENADE_CAPS",
+    };
+    weapons::catalog().ui_text(key).unwrap_or(if lethal { Slot::Lethal.label() } else { Slot::Tactical.label() })
 }
 
 /// The editor's boxed grid (`b-editor/001`, `/028`).
@@ -203,6 +218,7 @@ fn draw_cell(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor, cell: &Ed
         }
         Slot::PrimaryAtts | Slot::SecondaryAtts => {
             button_bg(prims, f, r);
+            bonus_card_plate(prims, f, editor, cell);
             let atts = if cell.slot == Slot::PrimaryAtts { &editor.draft.primary_atts } else { &editor.draft.secondary_atts };
             if let Some(short) = atts.get(cell.index) {
                 let icon = r.h - 8.0;
@@ -220,9 +236,13 @@ fn draw_cell(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor, cell: &Ed
         Slot::Lethal | Slot::Tactical | Slot::Perk1 | Slot::Perk2 | Slot::Perk3 | Slot::Perk1b | Slot::Perk2b | Slot::Perk3b => {
             // The slot's plate carries its icon; the button's label and name(s) draw once, left.
             button_bg(prims, f, r);
+            bonus_card_plate(prims, f, editor, cell);
             if let Some(art) = cell_icon(editor, cell) {
                 let icon = r.h;
                 bo2::sprite(prims, f, &art, Rect { x: r.x + (r.w - icon) * 0.5, y: r.y, w: icon, h: icon }, argb(OFF_WHITE, 1.0), Vec::new());
+            }
+            if offhand_plus(editor, cell) {
+                plus_sign(prims, f, r);
             }
             if on {
                 focus_frame(prims, f, r);
@@ -277,8 +297,8 @@ fn button_of(l: &EditorLayout, slot: Slot) -> Rect {
 fn button_text(editor: &Editor, slot: Slot) -> (&'static str, Vec<String>) {
     let d = &editor.draft;
     match slot {
-        Slot::Lethal => ("LETHAL", if d.lethal.is_empty() { Vec::new() } else { vec![weapons::weapon(&d.lethal).display_name.clone()] }),
-        Slot::Tactical => ("TACTICAL", if d.tactical.is_empty() { Vec::new() } else { vec![weapons::weapon(&d.tactical).display_name.clone()] }),
+        Slot::Lethal => (offhand_title(d, true), offhand_names(d, true)),
+        Slot::Tactical => (offhand_title(d, false), offhand_names(d, false)),
         _ => {
             let tier = slot.perk_tier().unwrap_or(1) as usize - 1;
             let label = match tier {
@@ -298,12 +318,82 @@ fn button_text(editor: &Editor, slot: Slot) -> (&'static str, Vec<String>) {
     }
 }
 
+/// An offhand button's item name, `x2` past one (`cacgrenadesbutton.lua:215-228`'s subtitle:
+/// the localized name, then `" x" .. count` when more than one box is filled).
+fn offhand_names(d: &Draft, lethal: bool) -> Vec<String> {
+    let id = if lethal { &d.lethal } else { &d.tactical };
+    match d.offhand_count(lethal) {
+        0 => Vec::new(),
+        1 => vec![weapons::weapon(id).display_name.clone()],
+        n => vec![format!("{} x{n}", weapons::weapon(id).display_name)],
+    }
+}
+
+/// Whether a box is one an equipped bonus card adds: BO2's slot lists build it as a *preview* slot
+/// (`slotlist.lua:880-930` the Gunfighters' extra attachment, `:1003-1040` a Greed's second perk,
+/// `cacgrenadesbutton.lua:130-250` Danger Close's second lethal — not Tactician's, whose two boxes
+/// are the tactical slot's own).
+pub(super) fn bonus_card_box(editor: &Editor, cell: &EditorCell) -> bool {
+    use crate::classmenu::{items, Wildcard};
+    let d = &editor.draft;
+    match cell.slot {
+        Slot::PrimaryAtts => cell.index == crate::classes::max_attachments() && d.wildcards.contains(&Wildcard::PrimaryGunfighter),
+        Slot::SecondaryAtts => cell.index == crate::classes::max_attachments() - 1 && d.wildcards.contains(&Wildcard::SecondaryGunfighter),
+        Slot::Lethal => cell.index == 1 && d.wildcards.contains(&Wildcard::DangerClose) && !items::is_tactical_item(&d.lethal),
+        Slot::Perk1b | Slot::Perk2b | Slot::Perk3b => true,
+        _ => false,
+    }
+}
+
+/// A bonus card's box sits on BO2's preview plate: `AddBonusCardPreviewElements`' background, a
+/// `CoD.trueOrange` image inset 2 units, shown at alpha 1 while the card is equipped
+/// (`slotlist.lua:596-690`, `UpdateSlotImages` at `:412-428`), under the box's icon. Its pulse
+/// (alpha 0.05 to 0.2) is for a previewed card that is not equipped, which the editor's
+/// wildcard row never holds.
+fn bonus_card_plate(prims: &mut Vec<Prim>, f: &Frame, editor: &Editor, cell: &EditorCell) {
+    if bonus_card_box(editor, cell) {
+        let r = cell.rect;
+        bo2::fill(prims, f, Rect { x: r.x + 2.0, y: r.y + 2.0, w: r.w - 4.0, h: r.h - 4.0 }, argb(bo2::TRUE_ORANGE, 1.0));
+    }
+}
+
+/// Whether an offhand box shows BO2's plus sign: an empty extra box while exactly one of the item
+/// is equipped (`cacgrenadesbutton.lua:270-345`: boxes `2 .. count`, only when one is filled).
+pub(super) fn offhand_plus(editor: &Editor, cell: &EditorCell) -> bool {
+    let lethal = match cell.slot {
+        Slot::Lethal => true,
+        Slot::Tactical => false,
+        _ => return false,
+    };
+    let d = &editor.draft;
+    cell.index >= 1 && cell.index < d.offhand_boxes(lethal) as usize && d.offhand_count(lethal) == 1
+}
+
+/// The plus sign: `kd_chart_plus`, 40 units square, centred in the box (`cacgrenadesbutton.lua:
+/// 311-340`). Without the converted material a white `+` stands in.
+fn plus_sign(prims: &mut Vec<Prim>, f: &Frame, r: Rect) {
+    const SIZE: f32 = 40.0;
+    let b = Rect { x: r.x + (r.w - SIZE) * 0.5, y: r.y + (r.h - SIZE) * 0.5, w: SIZE, h: SIZE };
+    let p = f.px(b);
+    let (cx, cy, k) = (p.x + p.w * 0.5, p.y + p.h * 0.5, p.w * 0.3);
+    let fallback = vec![
+        Prim::Line { x0: cx - k, y0: cy, x1: cx + k, y1: cy, width: 2.0, argb: WHITE },
+        Prim::Line { x0: cx, y0: cy - k, x1: cx, y1: cy + k, width: 2.0, argb: WHITE },
+    ];
+    bo2::image(prims, f, "kd_chart_plus", b, WHITE, fallback);
+}
+
 /// The icon of a box's current value.
 pub(super) fn cell_icon(editor: &Editor, cell: &EditorCell) -> Option<String> {
     let d = &editor.draft;
     match cell.slot {
-        Slot::Lethal => (!d.lethal.is_empty()).then(|| format!("ZHBO_BO2_Icon_{}", base_id(&d.lethal))),
-        Slot::Tactical => (!d.tactical.is_empty()).then(|| format!("ZHBO_BO2_Icon_{}", base_id(&d.tactical))),
+        // An offhand's picture is its statstable image's `_256` (`cacgrenadesbutton.lua:199-205`),
+        // on the filled boxes only: an empty box's icon is at alpha 0 (`:296-311`).
+        Slot::Lethal | Slot::Tactical => {
+            let lethal = cell.slot == Slot::Lethal;
+            let id = if lethal { &d.lethal } else { &d.tactical };
+            ((d.offhand_count(lethal) as usize) > cell.index).then(|| crate::names::cac_weapon_image(base_id(id)))
+        }
         Slot::Perk1 | Slot::Perk2 | Slot::Perk3 => {
             let tier = (cell.slot.perk_tier().unwrap_or(1) as usize) - 1;
             d.perks[tier].map(|p| sprites::perk_icon(p).to_string())
@@ -354,6 +444,13 @@ fn draw_weapon_picker(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor) 
             let x = CAROUSEL_CARD_W + 80.0;
             let r = f.in_menu(crate::lui::Place::new((true, false, x, x + bo2::MENU_W / 2.0), (true, false, 330.0, 430.0)));
             stat_bars(prims, f, r, &weapon_stats(def));
+        }
+        // The highlighted item's description: the carousel's hint (`CoD.HintText`, 350 wide at
+        // the menu's left, `cacweaponsp.lua:206-209` and `:540-590`), level with the bars
+        // (`c-primary/001`).
+        if !def.description.is_empty() {
+            let r = f.in_menu(crate::lui::Place::new((true, false, 0.0, 350.0), (true, false, 330.0, 330.0 + bo2::TEXT_DEFAULT)));
+            bo2::hint(prims, f, r, &def.description);
         }
     }
     // The tiles clip at the menu's edge, as BO2's carousel's partial cards do (`b-editor/016`).
@@ -464,15 +561,40 @@ fn draw_option_grid(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor) {
         // (`cacattachmentsmenu.lua:238-536`, `d-attach/002`).
         draw_attachment_panel(prims, l, editor);
     } else if let Some(name) = opts.get(editor.option) {
-        // The other content pickers carry only the highlighted entry's name under the grid
-        // (`e-perks/001`, `f-wildcards/001`).
         let cols = grid_columns(editor.slot);
         let h = if cols == 6 { ATTACH_GRID_H } else { 96.0 + bo2::TEXT_EXTRA_SMALL + 10.0 };
         let rows = opts.len().div_ceil(cols);
         let y = GRID_TOP + rows as f32 * (h + GRID_ITEM_GAP) + 10.0;
-        let r = f.in_menu(crate::lui::Place::new((true, false, 0.0, bo2::MENU_W * 0.5), (true, false, y, y + bo2::TEXT_CONDENSED)));
-        bo2::text(prims, f, Family::Condensed, name, r, Align::Left, argb(OFF_WHITE, 1.0));
+        if let Some(w) = editor.option_wildcard(editor.option) {
+            // `cacbonuscards.lua:285-350`: `bonusCardName` / `bonusCardDescription`.
+            draw_item_panel(prims, f, w.name(), w.description(), y);
+        } else if let Some(p) = editor.option_perk(editor.option) {
+            // `cacperksp.lua:280-360`: `perkTitle` / `perkDescription`, set from the highlighted
+            // perk's `GetItemName` / `GetItemDesc` (`:505-545`, `e-perks/002`).
+            draw_item_panel(prims, f, &p.name(), p.description(), y);
+        } else if let Some(def) = editor.option_weapon(editor.option).filter(|_| matches!(editor.slot, Slot::Lethal | Slot::Tactical)) {
+            // `cacgrenades.lua:262-360`: `grenadeTitle` (Big) / `grenadeDescription` (Default,
+            // 0.4, two cells and two gaps wide), set from `GetItemName` / `GetItemDesc` (`:488-567`).
+            draw_item_panel(prims, f, &def.display_name, &def.description, y);
+        } else {
+            // The other content pickers carry only the highlighted entry's name under the grid.
+            let r = f.in_menu(crate::lui::Place::new((true, false, 0.0, bo2::MENU_W * 0.5), (true, false, y, y + bo2::TEXT_CONDENSED)));
+            bo2::text(prims, f, Family::Condensed, name, r, Align::Left, argb(OFF_WHITE, 1.0));
+        }
     }
+}
+
+/// The wildcard and perk grids' lower panel: the highlighted item's name in Big and its
+/// description in Default at 0.4 alpha under it, two cells and two gaps wide — the same panel in
+/// both Lua screens (`cacbonuscards.lua:285-350`'s `bonusCardName` / `bonusCardDescription`,
+/// `cacperksp.lua:280-360`'s `perkTitle` / `perkDescription`). Both strings come from the item's
+/// weapon-table row (the statstable's localized columns 3 and 7).
+fn draw_item_panel(prims: &mut Vec<Prim>, f: &Frame, name: &str, description: &str, y: f32) {
+    let place = |top: f32, h: f32, wide: f32| f.in_menu(crate::lui::Place::new((true, false, 0.0, wide), (true, false, top, top + h)));
+    bo2::text(prims, f, Family::Big, name, place(y, bo2::TEXT_BIG, bo2::MENU_W), Align::Left, argb(OFF_WHITE, 1.0));
+    let card_w = (bo2::MENU_W - GRID_ITEM_GAP * 2.0) / 3.0;
+    let desc = place(y + bo2::TEXT_BIG, bo2::TEXT_DEFAULT, card_w * 2.0 + GRID_ITEM_GAP * 2.0);
+    bo2::text(prims, f, Family::Default, description, desc, Align::Left, argb(OFF_WHITE, 0.4));
 }
 
 /// The highlighted attachment's definition, from the current weapon's allowed list.
@@ -561,6 +683,10 @@ fn attachment_weapon(editor: &Editor) -> (&'static crate::weapons::WeaponDef, Op
 /// The icon of an option row in the editor's list.
 pub(super) fn option_icon(editor: &Editor, i: usize) -> Option<String> {
     if let Some(def) = editor.option_weapon(i) {
+        // An offhand item's grid picture is its `_256` image (`cacgrenadesbutton.lua:199-205`).
+        if def.class.is_offhand() {
+            return Some(crate::names::cac_weapon_image(base_id(&def.id)));
+        }
         return Some(format!("ZHBO_BO2_Icon_{}", base_id(&def.id)));
     }
     if let Some(short) = editor.option_attachment(i) {

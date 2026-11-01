@@ -44,18 +44,20 @@ pub fn clear_cell(d: &mut Draft, slot: Slot, index: usize) -> bool {
             d.secondary_atts.remove(index);
             true
         }
-        Slot::Lethal => {
-            if d.lethal.is_empty() {
+        // An offhand box: one of the slot's count goes (BO2's `GrenadesChosen` on a filled box
+        // lowers `count` by one); the item goes with its last one.
+        Slot::Lethal | Slot::Tactical => {
+            let lethal = slot == Slot::Lethal;
+            let k = usize::from(!lethal);
+            let held = if lethal { &mut d.lethal } else { &mut d.tactical };
+            if held.is_empty() {
                 return false;
             }
-            d.lethal.clear();
-            true
-        }
-        Slot::Tactical => {
-            if d.tactical.is_empty() {
-                return false;
+            if std::mem::take(&mut d.second_offhand[k]) && d.offhand_boxes(lethal) > 1 {
+                return true;
             }
-            d.tactical.clear();
+            let held = if lethal { &mut d.lethal } else { &mut d.tactical };
+            held.clear();
             true
         }
         Slot::Perk1 | Slot::Perk2 | Slot::Perk3 => {
@@ -75,6 +77,12 @@ pub fn clear_cell(d: &mut Draft, slot: Slot, index: usize) -> bool {
             match w {
                 Wildcard::PrimaryGunfighter => d.primary_atts.truncate(2),
                 Wildcard::SecondaryGunfighter => d.secondary_atts.truncate(1),
+                // A tactical in the lethal slot needs Tactician (`checkclasses.lua:677-686`).
+                Wildcard::Tactician => {
+                    if crate::classmenu::items::is_tactical_item(&d.lethal) {
+                        d.lethal.clear();
+                    }
+                }
                 _ => {
                     if let Some(tier) = w.greed_tier() {
                         d.extra_perks[(tier as usize) - 1] = None;
@@ -97,6 +105,11 @@ pub fn clear_slot(d: &mut Draft, slot: Slot) -> bool {
             while !d.wildcards.is_empty() {
                 clear_cell(d, Slot::Wildcards, 0);
             }
+            had
+        }
+        Slot::Lethal | Slot::Tactical => {
+            let had = clear_cell(d, slot, 0);
+            while clear_cell(d, slot, 0) {}
             had
         }
         other => clear_cell(d, other, 0),

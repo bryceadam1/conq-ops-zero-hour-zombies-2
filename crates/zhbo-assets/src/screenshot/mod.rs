@@ -16,8 +16,13 @@
 //! * `cac-editor-weapons.png` — the primary weapon screen with the category column and the
 //!   segmented stat bars (`c-primary/001`);
 //! * `cac-editor-attachments.png` — the attachment picker;
+//! * `cac-editor-tactician.png` — the lethal slot's list under Tactician: the tactical items;
 //! * `cac-editor-lethal.png` — the lethal slot's list, BO2's `primarygrenade` items with the placed
 //!   equipment among the grenades (`g-nades/`);
+//! * `cac-editor-overkill.png` — the secondary weapon list under Overkill: the primary groups only,
+//!   less the primary's gun (`cacweaponsp.lua:638-720`);
+//! * `cac-editor-danger-close.png` / `cac-editor-danger-close-x2.png` — the lethal button under
+//!   Danger Close: its second box empty, then filled (`Frag x2`, a point of its own);
 //! * `cac-dialog-set.png` / `cac-dialog-class.png` — the shell's `S`/`O` dialogs
 //!   (`a-chooseclass/021`, `/023`).
 //!
@@ -98,7 +103,13 @@ fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> 
         ("cac-editor-empty", empty_editor_prims()),
         ("cac-editor-weapons", weapon_picker_prims()),
         ("cac-editor-attachments", attachment_picker_prims()),
+        ("cac-editor-wildcards", wildcard_picker_prims()),
+        ("cac-editor-perks", perk_picker_prims()),
         ("cac-editor-lethal", lethal_picker_prims()),
+        ("cac-editor-tactician", tactician_picker_prims()),
+        ("cac-editor-danger-close", danger_close_prims(false)),
+        ("cac-editor-overkill", overkill_secondary_prims()),
+        ("cac-editor-danger-close-x2", danger_close_prims(true)),
         ("cac-personalize", personalize_prims()),
         ("cac-reticles", reticle_personalize_prims()),
         ("cac-reticle-color", reticle_color_personalize_prims()),
@@ -200,6 +211,7 @@ fn empty_editor_prims() -> Vec<Prim> {
         secondary_atts: Vec::new(),
         lethal: String::new(),
         tactical: String::new(),
+        second_offhand: [false; 2],
         perks: [None, None, None],
         extra_perks: [None, None, None],
         wildcards: Vec::new(),
@@ -217,6 +229,23 @@ fn empty_editor_prims() -> Vec<Prim> {
 /// (`c-primary/001`).
 fn weapon_picker_prims() -> Vec<Prim> {
     let editor = editor_state();
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// The secondary weapon list under Overkill, opened through the real edge fold.
+fn overkill_secondary_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.draft.wildcards = vec![Wildcard::Overkill];
+    editor.draft.extra_perks = [None; 3];
+    editor.picking = false;
+    editor.slot = Slot::Secondary;
+    let mut prev = MenuPrev::default();
+    let mut pointer = MenuPointer { screen_w: size().0, screen_h: size().1, ..Default::default() };
+    pointer.keys.set_down(Key::Enter, true);
+    classui::editor_frame(&mut editor, &pointer, &prev);
+    prev.update(&pointer);
+    pointer.keys.set_down(Key::Enter, false);
+    classui::editor_frame(&mut editor, &pointer, &prev);
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
@@ -239,6 +268,26 @@ fn attachment_picker_prims() -> Vec<Prim> {
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
+/// The Perk 1 grid (`e-perks/002`): BO2's names in the cells, Hardline highlighted, its name and
+/// description under the grid.
+fn perk_picker_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.slot = Slot::Perk1;
+    editor.picking = true;
+    editor.option = (0..8).position(|i| editor.option_perk(i) == Some(zhbo_core::weapons::Perk::HARDLINE)).unwrap_or(0);
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// The wildcard grid (`f-wildcards/001`): the table's bonus cards in BO2's order, the highlighted
+/// card's name and description under the grid.
+fn wildcard_picker_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.slot = Slot::Wildcards;
+    editor.picking = true;
+    editor.option = zhbo_core::classmenu::wildcard_list().iter().position(|w| *w == Wildcard::Overkill).unwrap_or(0);
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
 /// The lethal slot's list open on the claymore: the statstable's `primarygrenade` items, placed
 /// equipment included (`g-nades/`).
 fn lethal_picker_prims() -> Vec<Prim> {
@@ -255,6 +304,31 @@ fn lethal_picker_prims() -> Vec<Prim> {
     if let Some(i) = editor.options().iter().position(|o| o == "Claymore") {
         editor.option = i;
     }
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// The lethal slot's list under Tactician: the statstable's `specialgrenade` items
+/// (`cacgrenades.lua:183-195`), open on the concussion.
+fn tactician_picker_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.draft.wildcards = vec![Wildcard::Tactician];
+    editor.draft.extra_perks = [None; 3];
+    editor.draft.lethal = "concussion_grenade_mp".into();
+    editor.slot = Slot::Lethal;
+    editor.picking = true;
+    editor.option = (0..editor.options().len()).find(|&i| editor.option_chosen(i)).unwrap_or(0);
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// The class under Danger Close, the lethal row highlighted: the lethal button's second box
+/// (`cacgrenadesbutton.lua:130-180`), empty or filled with a second frag.
+fn danger_close_prims(second: bool) -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.draft.wildcards = vec![Wildcard::DangerClose];
+    editor.draft.extra_perks = [None; 3];
+    editor.draft.second_offhand = [second, false];
+    editor.slot = Slot::Lethal;
+    editor.picking = false;
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
@@ -298,6 +372,7 @@ fn editor_state() -> Editor {
         secondary_atts: Vec::new(),
         lethal: "frag_grenade_mp".into(),
         tactical: "concussion_grenade_mp".into(),
+        second_offhand: [false; 2],
         perks: [Some(Perk::LIGHTWEIGHT), Some(Perk::FAST_HANDS), Some(Perk::DEXTERITY)],
         extra_perks: [Some(Perk::FLAK_JACKET), None, None],
         wildcards: vec![Wildcard::Perk1Greed],
@@ -352,6 +427,7 @@ fn seed_profile() {
             reticle: String::new(),
             reticle_color: String::new(),
             knife: String::new(),
+            ..CustomClass::default()
         });
     }
 }

@@ -696,10 +696,37 @@ one line in `tuning.rs`'s field table (field, ini key, default, cited doc) and t
 `data/ConquerOps/tuning.ini`.
 
 **Perks are specialty sets.** What a perk does is the `specialty_*` bits it grants (the
-converted weapon table's `Perk` blocks, read from the player's `mp/statstable.csv`; built-in
-copies in `weapons/perks.rs`). Gameplay tests specialties, never perk names:
+converted weapon table's `Perk <reference>` blocks, BO2's `specialty` rows of the player's
+`mp/statstable.csv`, which also carry the localized name and description the perk grid shows; the
+built-in table carries the same sixteen rows, and a table predating the text takes the stand-ins'
+text). `weapons/perks.rs` only ties the perk ids and tiers to those rows (`Perk::row`). Gameplay
+tests specialties, never perk names:
 `Arsenal::has_specialty` is BO2's rule (the class's perks, or the weapon in hand's own bits and
 its attachments'; G1).
+
+**Wildcards are the statstable's bonus cards.** The converted weapon table's `BonusCard <reference>`
+blocks are BO2's `bonuscard` rows (name, description, image, column-13 loadout slot, cost, sort
+key, index, unlock level); the catalog lists them in the grid's order (sort key, then index) and
+falls back to the built-in stand-ins when a table predates them. The editor's rules key on the
+card's statstable reference (`classmenu::Wildcard::reference`), never on a list position; a
+class's cards are not stored in the profile but re-derived from what it holds (Tactician from a
+tactical-slot item in the lethal slot, Danger Close from the class spec's `lethal_count=2`, the
+loadout's `primarygrenadecount` that the arsenal starts the lethal with). The spec's
+`tactical_count` (1 or 2, BO2's `specialgrenadecount`; a second tactical is a point of its own) is
+what the arsenal starts the tactical with, and the `lethal_count` (BO2's `primarygrenadecount`)
+the lethal's: one per filled box of the slot (`cacgrenadesbutton.lua:130-230`), so one lethal is
+one whatever the item's start count (a C4 too), two with Danger Close's second box filled (a
+point of its own, like the tactical's), Tactician's chosen 1 or 2;
+both are capped by the item's `MaxReserve` (`classmenu::items::offhand_cap`). The editor always
+writes both counts; repair makes a held item's 0 (a class saved before the counts) one. A spec
+without a count (the shipped presets) gives the item's start count.
+
+**The class editor's UI strings come from the install.** The weapon table's `UiText <key>` blocks
+carry the english text of the localize keys the core draws (`weapons::UI_TEXT_KEYS`: the offhand
+titles, `MPUI_PRIMARY_GRENADE_CAPS`, `MPUI_SPECIAL_GRENADE_CAPS` and Tactician's
+`MPUI_SECOND_SPECIAL_GRENADE_CAPS`), read by the converter from the same english zones as the
+display names; `Catalog::ui_text` looks them up and a table without them takes the built-in
+stand-ins (BO2's strings, checked against the install by an ignored test).
 
 ## Versioning
 
