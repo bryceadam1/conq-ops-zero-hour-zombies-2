@@ -559,6 +559,42 @@ fn run(args: &[String]) -> Result<(), String> {
             }
             Ok(())
         }
+        "mix" => {
+            // mix <ff> <alias> [inches...]: BO2's mixer on an alias and its secondary chain — each
+            // layer's bus, group, pan, start delay, curves and gain at each distance (default 0).
+            let zone = load_full_zone(args.get(1).ok_or("mix <ff> <alias> [inches...]")?)?;
+            let name = args.get(2).ok_or("mix <ff> <alias> [inches...]")?;
+            let gfx = load_full_zone(&format!("{}.ff", zhbo_assets::sfx::MIXER_ZONE))?;
+            let globals = zhbo_formats::sndglobals::read(&gfx).map_err(|e| e.to_string())?.ok_or("no SndDriverGlobals")?;
+            let mixer = zhbo_assets::mixer::Mixer::new(&globals).ok_or("no master snapshot")?;
+            let banks = zhbo_formats::sndalias::banks(&zone).map_err(|e| e.to_string())?;
+            let find = |n: &str| banks.iter().find_map(|b| b.alias(n));
+            let mut at: Vec<f32> = args[3..].iter().filter_map(|a| a.parse().ok()).collect();
+            if at.is_empty() {
+                at.push(0.0);
+            }
+            println!("master {}: bus gains {:?}", mixer.master.name, mixer.master.bus_gain);
+            let chain = zhbo_assets::sfx::secondary_chain(&[name.as_str()], find);
+            for a in &chain {
+                let Some(v) = a.variants.first() else { continue };
+                let curve = |c: u8| globals.curve(c).map_or("?".to_string(), |c| c.name.clone());
+                println!(
+                    "  {:<40} vol {:.3} {:?} {} pan {} {} delay {}ms dist {:?} curves {}/{} gains {}",
+                    a.name,
+                    v.volume.1,
+                    mixer.bus(v),
+                    globals.groups.get(v.mix.group as usize).map_or("?", |g| g.name.as_str()),
+                    globals.pan(v.mix.pan).map_or("?", |p| p.name.as_str()),
+                    if v.mix.positional { "3d" } else { "2d" },
+                    v.start_delay_ms,
+                    v.distance,
+                    curve(v.mix.min_falloff_curve),
+                    curve(v.mix.falloff_curve),
+                    at.iter().map(|d| format!("{d}:{:.4}", mixer.gain(v, *d))).collect::<Vec<_>>().join(" ")
+                );
+            }
+            Ok(())
+        }
         "anim" => {
             // anim <ff> <name>: tracks per bone.
             let zone = load_full_zone(args.get(1).ok_or("anim <ff> <name>")?)?;
