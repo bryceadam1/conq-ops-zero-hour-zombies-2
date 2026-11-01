@@ -198,9 +198,11 @@ pub fn check(def: &'static WeaponDef) -> Vec<String> {
                 } else {
                     // BO2 (`FUN_008dee50`/`FUN_008dec90`): a fresh dual-mag weapon's first reload is
                     // the quick one; the rounds go in at the (quick) add time — an empty reload's own
-                    // add time when it has one — capped at the normal reload, never past the end.
+                    // add time when it has one — capped at the normal reload, never past the end. Only a bullet
+                    // weapon plays the empty reload (`empty_reload`).
                     let t = &def.timing;
                     let quick = def.traits.dual_mag;
+                    let empty = def.empty_reload(start);
                     let normal = if empty { def.reload_empty_time } else { def.reload_time };
                     let quick_length = if empty { t.reload_quick_empty_time } else { t.reload_quick_time };
                     let length = if quick && quick_length > 0.0 { quick_length } else { normal };

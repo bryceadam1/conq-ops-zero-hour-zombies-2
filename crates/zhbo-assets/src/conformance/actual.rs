@@ -393,9 +393,9 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         ("alt_drop_time", alt_toggles.then_some(0.0)),
         ("quick_raise_time", Some(d.quick_raise_time)),
         ("quick_drop_time", Some(d.quick_drop_time)),
-        // A swap raises and drops in the same times loaded or empty (`switch_to`).
-        ("empty_raise_time", d.class.is_gun().then_some(d.raise_time)),
-        ("empty_drop_time", d.class.is_gun().then_some(d.drop_time)),
+        // A swap with an empty clip raises and drops over these (`switch_to`).
+        ("empty_raise_time", Some(d.empty_raise_time)),
+        ("empty_drop_time", Some(d.empty_drop_time)),
         ("sprint_in_time", Some(t.sprint_in_time)),
         ("sprint_out_time", Some(d.sprint_out_time)),
         ("ads_in_time", Some(d.ads_in_time)),
@@ -412,9 +412,8 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
             None => b.absent(c),
         };
     }
-    // The mod's shell-by-shell reload is BO2's segmented reload: rounds per cycle with a start
-    // and an end (the converter's `shells`).
-    b.int("reload_ammo_add", d.reload_ammo_add as i64).int("reload_start_add", t.reload_start_add as i64).bool("segmented_reload", d.reload_ammo_add > 0 && d.reload_start_time > 0.0);
+    // The sim's shell-by-shell reload runs on the carried `bSegmentedReload`.
+    b.int("reload_ammo_add", d.reload_ammo_add as i64).int("reload_start_add", t.reload_start_add as i64).bool("segmented_reload", d.traits.segmented_reload);
 
     // Ammo. Start: what a spawn gives, the loaded magazine included (a gun's magazine plus its
     // spare rounds; an offhand's reserve is its count, the converter's `to_def`). Max: the spare

@@ -182,6 +182,14 @@ pub struct AttachmentUnique {
     /// `adsDofStart`, `adsDofEnd` (each from the first single unique differing from the base
     /// unique, `FUN_008ebdb0`).
     pub ads_dof: (f32, f32),
+    /// `iFirstRaiseTime` in seconds (first single unique differing from the base unique wins,
+    /// `FUN_008ed100`).
+    pub first_raise_time: f32,
+    /// `iReloadAmmoAdd`: rounds per segmented-reload cycle (first differing wins, `FUN_008ed250`).
+    pub reload_ammo_add: i32,
+    /// `bSegmentedReload`: the combination reloads round by round (any single unique's, OR the
+    /// def's, `FUN_008ebc70`).
+    pub segmented_reload: bool,
 }
 
 /// A BO2 attachment (`WeaponAttachment`): how it changes any weapon it goes on. Scales multiply the
@@ -484,9 +492,17 @@ pub struct Weapon {
     pub reload_end_time: f32,
     pub reload_start_add_time: f32,
     pub reload_ammo_add: i32,
+    /// `bSegmentedReload`: start, a cycle per `reload_ammo_add` rounds, end (tube shotguns).
+    pub segmented_reload: bool,
+    /// `unlimitedAmmo`: the clip never counts as empty for the empty raise/drop (`FUN_008e6770`).
+    pub unlimited_ammo: bool,
     pub raise_time: f32,
     pub first_raise_time: f32,
     pub drop_time: f32,
+    /// `iEmptyRaiseTime`, `iEmptyDropTime`: raising / putting away a weapon whose clip is empty
+    /// (`FUN_008df320`, `FUN_008db500`; raw, no attachment scale).
+    pub empty_raise_time: f32,
+    pub empty_drop_time: f32,
     pub quick_raise_time: f32,
     pub quick_drop_time: f32,
     pub sprint_in_time: f32,
@@ -744,6 +760,9 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 overlay_reticle: z.u32(u + WU::overlayReticle),
                 reload_start_add: int(z, u + WU::iReloadStartAdd),
                 ads_dof: (z.f32(u + WU::adsDofStart), z.f32(u + WU::adsDofEnd)),
+                first_raise_time: ms(z, u + WU::iFirstRaiseTime),
+                reload_ammo_add: int(z, u + WU::iReloadAmmoAdd),
+                segmented_reload: z.u8(u + WU::bSegmentedReload) != 0,
             });
         }
     }
@@ -845,9 +864,13 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.reload_end_time = ms(z, d + WD::iReloadEndTime);
     w.reload_start_add_time = ms(z, d + WD::iReloadStartAddTime);
     w.reload_ammo_add = int(z, d + WD::iReloadAmmoAdd);
+    w.segmented_reload = z.u8(d + WD::bSegmentedReload) != 0;
+    w.unlimited_ammo = z.u8(d + WD::unlimitedAmmo) != 0;
     w.raise_time = ms(z, d + WD::iRaiseTime);
     w.first_raise_time = ms(z, d + WD::iFirstRaiseTime);
     w.drop_time = ms(z, d + WD::iDropTime);
+    w.empty_raise_time = ms(z, d + WD::iEmptyRaiseTime);
+    w.empty_drop_time = ms(z, d + WD::iEmptyDropTime);
     w.quick_raise_time = ms(z, d + WD::quickRaiseTime);
     w.quick_drop_time = ms(z, d + WD::quickDropTime);
     w.sprint_in_time = ms(z, d + WD::sprintInTime);

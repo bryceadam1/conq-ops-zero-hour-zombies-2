@@ -25,7 +25,7 @@ pub mod zoom;
 pub use arsenal::*;
 pub use catalog::*;
 pub use def::*;
-pub use handling::{AntiQuickScope, CycleTimes, OffhandClass, Penetrate, Traits, Zoom};
+pub use handling::{AntiQuickScope, CycleTimes, OffhandClass, Penetrate, Traits, WeapType, Zoom};
 pub use feel::{optic_of, reticle_art, GunKick, Reticle, Sway, ViewPos};
 pub use loadout::*;
 pub use perks::*;
@@ -253,6 +253,143 @@ mod tests {
         assert!(t < 40);
     }
 
+    /// BO2 adds an empty reload's rounds at `iReloadEmptyAddTime`, or at the reload add time when
+    /// that is 0 (most rifles; `FUN_008dec90`).
+    #[test]
+    fn an_empty_reload_adds_at_its_own_add_time_else_the_reload_add_time() {
+        let add_frames = |empty_add: f32| {
+            let d = def(|d| {
+                d.reload_empty_time = 2.0;
+                d.reload_add_time = 0.8;
+                d.reload_empty_add_time = empty_add;
+            });
+            let mut a = arsenal_with(d);
+            a.weapons[0].ammo = 0;
+            let mut rng = Rng::new(2);
+            let mut out = Vec::new();
+            a.step(0, buttons::RELOAD, false, 0, 0.0, &mut rng, &mut out);
+            assert!(a.current().is_reloading());
+            let mut n = 0;
+            while a.current().ammo == 0 {
+                frames(&mut a, 0, 1, &mut rng);
+                n += 1;
+            }
+            assert!(a.current().is_reloading(), "the empty reload is still playing");
+            n as f32 * LOGIC_DT
+        };
+        assert!((add_frames(0.0) - 0.8).abs() <= 2.0 * LOGIC_DT, "0: the reload add time");
+        assert!((add_frames(1.5) - 1.5).abs() <= 2.0 * LOGIC_DT, "its own add time");
+    }
+
+    /// Only a bullet weapon plays the empty reload; a launcher at clip 0 reloads over its plain
+    /// reload time (`FUN_008dec90`: clip 0 and `weapType` bullet).
+    #[test]
+    fn only_bullet_weapons_play_the_empty_reload() {
+        let length = |weap_type: WeapType| {
+            let d = def(|d| {
+                d.clip = 1;
+                d.start_reserve = 3;
+                d.reload_time = 1.0;
+                d.reload_empty_time = 2.0;
+                d.traits.weap_type = weap_type;
+            });
+            let mut a = arsenal_with(d);
+            a.weapons[0].ammo = 0;
+            let mut rng = Rng::new(2);
+            let mut out = Vec::new();
+            a.step(0, buttons::RELOAD, false, 0, 0.0, &mut rng, &mut out);
+            match a.current().reload {
+                Some(Reload::Magazine { length, empty, .. }) => (length, empty),
+                r => panic!("{r:?}"),
+            }
+        };
+        assert_eq!(length(WeapType::Bullet), (2.0, true));
+        assert_eq!(length(WeapType::Projectile), (1.0, false));
+    }
+
+    /// The reload is segmented by BO2's flag, not by its times: without `bSegmentedReload` a
+    /// weapon that authors start/end times and rounds per cycle reloads its whole magazine.
+    #[test]
+    fn segmented_reloads_follow_the_flag() {
+        let reload = |segmented: bool| {
+            let d = def(|d| {
+                d.clip = 4;
+                d.start_reserve = 8;
+                d.reload_start_time = 0.3;
+                d.reload_end_time = 0.3;
+                d.reload_ammo_add = 1;
+                d.traits.segmented_reload = segmented;
+            });
+            let mut a = arsenal_with(d);
+            a.weapons[0].ammo = 2;
+            let mut rng = Rng::new(2);
+            let mut out = Vec::new();
+            a.step(0, buttons::RELOAD, false, 0, 0.0, &mut rng, &mut out);
+            a.current().reload
+        };
+        assert!(matches!(reload(true), Some(Reload::Shells { .. })));
+        assert!(matches!(reload(false), Some(Reload::Magazine { .. })));
+    }
+
+    /// A swap puts an empty-clipped weapon away over its `iEmptyDropTime` and raises an empty one
+    /// over its `iEmptyRaiseTime`, even on its first raise (`FUN_008db500`, `FUN_008df320`).
+    #[test]
+    fn an_empty_gun_drops_and_raises_over_its_empty_times() {
+        let p = def(|d| {
+            d.drop_time = 0.4;
+            d.empty_drop_time = 0.9;
+        });
+        let s = def(|d| {
+            d.first_raise_time = 0.7;
+            d.raise_time = 0.5;
+            d.empty_raise_time = 1.3;
+        });
+        let mut a = arsenal_with(p);
+        a.loadout.perks.clear();
+        a.weapons[1] = WeaponState::new(s);
+        a.weapons[0].ammo = 0;
+        a.weapons[1].ammo = 0;
+        let mut rng = Rng::new(8);
+        let mut out = Vec::new();
+        a.step(0, buttons::SWAP_WEAPON, false, 0, 0.0, &mut rng, &mut out);
+        assert_eq!(a.active, 1);
+        assert_eq!((a.drop_total, a.raise_total, a.raise_kind), (0.9, 1.3, RaiseKind::Empty));
+        let mut n = 1;
+        while a.drop_left > 0.0 || a.raise_left > 0.0 {
+            a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+            n += 1;
+        }
+        let expect = ((0.9 + 1.3) / LOGIC_DT).ceil();
+        assert!((n as f32 - 2.0 - expect).abs() <= 1.0, "{n} frames vs {expect}");
+        // Loaded, the same pair swaps over the plain times (the first raise is spent).
+        let mut b = arsenal_with(p);
+        b.loadout.perks.clear();
+        b.weapons[1] = WeaponState::new(s);
+        b.step(0, buttons::SWAP_WEAPON, false, 0, 0.0, &mut rng, &mut out);
+        assert_eq!((b.drop_total, b.raise_total, b.raise_kind), (0.4, 0.7, RaiseKind::First));
+    }
+
+    /// `unlimitedAmmo` keeps an empty clip from reading as empty: the plain drop and raise play.
+    #[test]
+    fn unlimited_ammo_never_takes_the_empty_raise_or_drop() {
+        let unlimited = |d: &mut WeaponDef| {
+            d.drop_time = 0.4;
+            d.empty_drop_time = 0.9;
+            d.first_raise_time = 0.7;
+            d.empty_raise_time = 1.3;
+            d.traits.unlimited_ammo = true;
+        };
+        let (p, s) = (def(unlimited), def(unlimited));
+        let mut a = arsenal_with(p);
+        a.loadout.perks.clear();
+        a.weapons[1] = WeaponState::new(s);
+        a.weapons[0].ammo = 0;
+        a.weapons[1].ammo = 0;
+        let mut out = Vec::new();
+        a.step(0, buttons::SWAP_WEAPON, false, 0, 0.0, &mut Rng::new(8), &mut out);
+        assert_eq!((a.drop_total, a.raise_total, a.raise_kind), (0.4, 0.7, RaiseKind::First));
+    }
+
     #[test]
     fn bursts_fire_n_per_press() {
         let d = def(|d| {
@@ -282,6 +419,7 @@ mod tests {
             d.reload_start_time = 0.3;
             d.reload_end_time = 0.3;
             d.reload_ammo_add = 1;
+            d.traits.segmented_reload = true;
         });
         let mut a = arsenal_with(d);
         let mut rng = Rng::new(4);

@@ -8,7 +8,7 @@
 
 use super::def::{CamoOption, Class, Effect, FireMode, Kind, Kick, Place, WeaponDef};
 use super::feel::{nums, v3, GunKick, Sway};
-use super::handling::{OffhandClass, Penetrate};
+use super::handling::{OffhandClass, Penetrate, WeapType};
 use super::specialty::Specialties;
 use crate::attachments::AttachmentDef;
 
@@ -442,14 +442,14 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("MaxReserve", "Spare rounds at most, beside the magazine (BO2's iMaxAmmo).", FieldKind::Num,
         |d: &WeaponDef| d.max_reserve.to_string(),
         |d: &mut WeaponDef, v: Values| { d.max_reserve = v.text.parse().map_err(|_| "number")?; Ok(()) }),
-    field!("Reload", "Reload, empty reload, rounds-in time, empty rounds-in time.", FieldKind::Nums(4),
+    field!("Reload", "Reload, empty reload, rounds-in time, empty rounds-in time (0: the rounds-in time).", FieldKind::Nums(4),
         |d: &WeaponDef| format!("{} {} {} {}", d.reload_time, d.reload_empty_time, d.reload_add_time, d.reload_empty_add_time),
         |d: &mut WeaponDef, v: Values| {
             v.need(4)?;
             (d.reload_time, d.reload_empty_time, d.reload_add_time, d.reload_empty_add_time) = (v.num(0), v.num(1), v.num(2), v.num(3));
             Ok(())
         }),
-    field!("ReloadShells", "Shell-by-shell reload (tube shotguns): start, end, rounds per cycle.", FieldKind::Nums(3),
+    field!("ReloadShells", "Segmented reload (with `SegmentedReload`): start, end, rounds per cycle.", FieldKind::Nums(3),
         |d: &WeaponDef| format!("{} {} {}", d.reload_start_time, d.reload_end_time, d.reload_ammo_add),
         |d: &mut WeaponDef, v: Values| {
             v.need(3)?;
@@ -464,6 +464,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
                 (v.num(0), v.num(1), v.num(2), v.num(3), v.num(4));
             Ok(())
         }),
+    field!("EmptySwitch", "Raise and drop with an empty clip (seconds).", FieldKind::Nums(2),
+        |d: &WeaponDef| nums(&[d.empty_raise_time, d.empty_drop_time]),
+        |d: &mut WeaponDef, v: Values| { v.need(2)?; (d.empty_raise_time, d.empty_drop_time) = (v.num(0), v.num(1)); Ok(()) }),
     field!("SprintOutTime", "Raising from a sprint.", FieldKind::Num,
         |d: &WeaponDef| d.sprint_out_time.to_string(),
         |d: &mut WeaponDef, v: Values| { d.sprint_out_time = v.text_num()?; Ok(()) }),
@@ -818,6 +821,15 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("ViewKickCenterScale", "The attachments' product of `fAdsViewKickCenterSpeedScale` on the aimed recentre speed (1 bare; a combination's stacked value).", FieldKind::Num,
         |d: &WeaponDef| d.ads_kick_center_scale.to_string(),
         |d: &mut WeaponDef, v: Values| { d.ads_kick_center_scale = v.text_num()?; Ok(()) }),
+    field!("WeapType", "BO2's weapon type: bullet, grenade, projectile, binoculars, gas, bomb, mine, melee, riotshield.", FieldKind::Enum,
+        |d: &WeaponDef| d.traits.weap_type.name().into(),
+        |d: &mut WeaponDef, v: Values| { d.traits.weap_type = WeapType::parse(v.text).ok_or("unknown weapon type")?; Ok(()) }),
+    field!("SegmentedReload", "The reload runs round by round (`bSegmentedReload`; see `ReloadShells`).", FieldKind::Num,
+        |d: &WeaponDef| (d.traits.segmented_reload as u8).to_string(),
+        |d: &mut WeaponDef, v: Values| { d.traits.segmented_reload = v.text_num()? != 0.0; Ok(()) }),
+    field!("UnlimitedAmmo", "The clip never reads as empty for the empty raise and drop (`unlimitedAmmo`).", FieldKind::Num,
+        |d: &WeaponDef| (d.traits.unlimited_ammo as u8).to_string(),
+        |d: &mut WeaponDef, v: Values| { d.traits.unlimited_ammo = v.text_num()? != 0.0; Ok(()) }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -877,7 +889,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 98);
+        assert_eq!(WEAPON_FIELDS.len(), 102);
         assert_eq!(ATTACHMENT_FIELDS.len(), 29);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

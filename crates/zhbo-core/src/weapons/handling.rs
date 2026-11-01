@@ -114,6 +114,56 @@ impl Penetrate {
     }
 }
 
+/// BO2's `weapType_t`: how the weapon delivers its shot.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WeapType {
+    #[default]
+    Bullet,
+    Grenade,
+    Projectile,
+    Binoculars,
+    Gas,
+    Bomb,
+    Mine,
+    Melee,
+    RiotShield,
+}
+
+impl WeapType {
+    pub const ALL: [WeapType; 9] = [
+        WeapType::Bullet,
+        WeapType::Grenade,
+        WeapType::Projectile,
+        WeapType::Binoculars,
+        WeapType::Gas,
+        WeapType::Bomb,
+        WeapType::Mine,
+        WeapType::Melee,
+        WeapType::RiotShield,
+    ];
+
+    /// BO2's enum value, out of range → `Bullet`.
+    pub fn from_bo2(v: u32) -> WeapType {
+        Self::ALL.get(v as usize).copied().unwrap_or_default()
+    }
+    pub fn name(self) -> &'static str {
+        match self {
+            WeapType::Bullet => "bullet",
+            WeapType::Grenade => "grenade",
+            WeapType::Projectile => "projectile",
+            WeapType::Binoculars => "binoculars",
+            WeapType::Gas => "gas",
+            WeapType::Bomb => "bomb",
+            WeapType::Mine => "mine",
+            WeapType::Melee => "melee",
+            WeapType::RiotShield => "riotshield",
+        }
+    }
+    pub fn parse(s: &str) -> Option<WeapType> {
+        Self::ALL.into_iter().find(|p| p.name() == s)
+    }
+}
+
 /// BO2's `OffhandClass`: which kind of offhand a weapon is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum OffhandClass {
@@ -178,4 +228,12 @@ pub struct Traits {
     pub min_player_damage: f32,
     pub penetrate: Penetrate,
     pub offhand: OffhandClass,
+    /// `weapType`: only a bullet weapon plays the empty reload (`FUN_008dec90`).
+    pub weap_type: WeapType,
+    /// `bSegmentedReload` (the def's, or any of the combination's single uniques' unless the
+    /// variant ignores attachments, `FUN_008ebc70`): the reload runs start, a cycle per
+    /// `reload_ammo_add` rounds, end.
+    pub segmented_reload: bool,
+    /// `unlimitedAmmo`: the clip never reads as empty for the empty raise/drop (`FUN_008e6770`).
+    pub unlimited_ammo: bool,
 }

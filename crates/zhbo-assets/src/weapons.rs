@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use zhbo_core::attachments::{self, AttachmentDef};
 use zhbo_core::units::inches;
-use zhbo_core::weapons::{CamoOption, Class, Effect, FireMode, GunKick, Kick, Loadout, OffhandClass, Penetrate, Place, Reticle, Specialties, Sway, Table, CycleTimes, Traits, ViewPos, WeaponDef, Zoom, ALT_CLIPS, MELEE_DAMAGE};
+use zhbo_core::weapons::{CamoOption, Class, Effect, FireMode, GunKick, Kick, Loadout, OffhandClass, Penetrate, Place, Reticle, Specialties, Sway, Table, CycleTimes, Traits, ViewPos, WeapType, WeaponDef, Zoom, ALT_CLIPS, MELEE_DAMAGE};
 #[cfg(debug_assertions)]
 use zhbo_core::weapons::{format_table, parse_table};
 use zhbo_formats::weapon::{self as bo2, Weapon};
@@ -75,16 +75,32 @@ fn overlay_for(w: &Weapon, shorts: &[&str]) -> Option<(String, String, u32)> {
 /// `FUN_008ebdb0` (ADS depth of field) pattern (G14 §4). No base unique: `None` (the def's stands).
 fn first_differing_unique<T: PartialEq>(w: &Weapon, shorts: &[&str], get: impl Fn(&bo2::AttachmentUnique) -> T) -> Option<T> {
     let base = get(w.attachment_uniques.iter().find(|u| u.kind == 0 && u.combined == 0)?);
+    single_uniques(w, shorts).into_iter().map(get).find(|x| *x != base)
+}
+
+/// A combo's single uniques: each attachment kind's own unique, kinds ascending (`FUN_008eb360`).
+fn single_uniques<'w>(w: &'w Weapon, shorts: &[&str]) -> Vec<&'w bo2::AttachmentUnique> {
     let mut kinds: Vec<u32> =
         shorts.iter().filter_map(|s| w.attachment_variants.iter().find(|(_, id)| short_name(id) == *s).map(|(k, _)| *k)).collect();
     kinds.sort_unstable();
-    kinds.iter().filter_map(|k| w.attachment_uniques.iter().find(|u| u.kind == *k && u.combined == 0)).map(get).find(|x| *x != base)
+    kinds.iter().filter_map(|k| w.attachment_uniques.iter().find(|u| u.kind == *k && u.combined == 0)).collect()
 }
 
-/// The unique-carried handling fields of a combo: the segmented reload's start add and the aimed
-/// depth of field (each component on its own), over the def's own values.
+/// The unique-carried handling fields of a combo: the first raise (`FUN_008ed100`), the
+/// segmented reload's rounds per cycle (`FUN_008ed250`) and start add, and the aimed depth of
+/// field (each component on its own), over the def's own values.
 fn apply_unique_fields(d: &mut WeaponDef, w: &Weapon) {
     let shorts: Vec<&str> = d.attachments.iter().map(String::as_str).collect();
+    if let Some(t) = first_differing_unique(w, &shorts, |u| u.first_raise_time) {
+        d.first_raise_time = t;
+    }
+    if let Some(n) = first_differing_unique(w, &shorts, |u| u.reload_ammo_add) {
+        d.reload_ammo_add = n.max(0) as u16;
+    }
+    // `FUN_008ebc70`: the def's flag, or any single unique's unless the variant ignores them.
+    if !d.traits.ignore_attachments && single_uniques(w, &shorts).iter().any(|u| u.segmented_reload) {
+        d.traits.segmented_reload = true;
+    }
     if let Some(n) = first_differing_unique(w, &shorts, |u| u.reload_start_add) {
         d.timing.reload_start_add = n.max(0) as u16;
     }
@@ -723,7 +739,6 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         damage_range[i] = if w.damage_range[i] > 0.0 { range(w.damage_range[i]) } else { 0.0 };
     }
     let mult = |i: usize| w.location_multipliers.get(i).copied().filter(|m| *m > 0.0).unwrap_or(1.0);
-    let shells = w.reload_start_time > 0.0 && w.reload_ammo_add > 0;
     let d = WeaponDef {
         id: w.name.clone(),
         equipment_kind: manifest::equipment_kind_of(&w.name),
@@ -740,13 +755,16 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         reload_time: w.reload_time,
         reload_empty_time: if w.reload_empty_time > 0.0 { w.reload_empty_time } else { w.reload_time },
         reload_add_time: w.reload_add_time,
-        reload_empty_add_time: if w.reload_empty_add_time > 0.0 { w.reload_empty_add_time } else { w.reload_add_time },
-        reload_start_time: if shells { w.reload_start_time } else { 0.0 },
-        reload_end_time: if shells { w.reload_end_time } else { 0.0 },
-        reload_ammo_add: if shells { w.reload_ammo_add.max(1) as u16 } else { 0 },
+        // Raw: 0 means the rounds go in at the reload add time (the sim's fallback, `FUN_008dec90`).
+        reload_empty_add_time: w.reload_empty_add_time,
+        reload_start_time: w.reload_start_time,
+        reload_end_time: w.reload_end_time,
+        reload_ammo_add: w.reload_ammo_add.max(0) as u16,
         raise_time: w.raise_time,
-        first_raise_time: if w.first_raise_time > 0.0 { w.first_raise_time } else { w.raise_time },
+        first_raise_time: w.first_raise_time,
         drop_time: w.drop_time,
+        empty_raise_time: w.empty_raise_time,
+        empty_drop_time: w.empty_drop_time,
         quick_raise_time: if w.quick_raise_time > 0.0 { w.quick_raise_time } else { w.raise_time * 0.6 },
         quick_drop_time: if w.quick_drop_time > 0.0 { w.quick_drop_time } else { w.drop_time * 0.6 },
         sprint_out_time: w.sprint_out_time,
@@ -901,6 +919,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
             min_player_damage: w.min_player_damage as f32,
             penetrate: Penetrate::from_bo2(w.penetrate_type),
             offhand: OffhandClass::from_bo2(w.offhand_class),
+            weap_type: WeapType::from_bo2(w.weap_type),
+            segmented_reload: w.segmented_reload,
+            unlimited_ammo: w.unlimited_ammo,
         },
     };
     #[cfg(debug_assertions)]
@@ -1155,6 +1176,48 @@ mod tests {
         let mut d = WeaponDef { attachments: vec!["acog".into(), "dualclip".into()], ..Default::default() };
         apply_unique_fields(&mut d, &w);
         assert_eq!(d.zoom.dof, (3.4, 3.9), "kind 1 is walked first");
+    }
+
+    /// The first raise and the segmented reload's rounds per cycle come from the first single
+    /// unique differing from the base unique (`FUN_008ed100`, `FUN_008ed250`): the 870's dual
+    /// magazine loads two shells, the INSAS grip raises first in its own time.
+    #[test]
+    fn first_raise_and_reload_ammo_add_take_the_first_differing_unique() {
+        let u = |kind: u32, first: f32, add: i32| bo2::AttachmentUnique { kind, first_raise_time: first, reload_ammo_add: add, ..Default::default() };
+        let w = Weapon {
+            name: "870mcs_mp".into(),
+            attachment_variants: vec![(4, "extbarrel".into()), (6, "dualclip".into()), (10, "grip".into())],
+            attachment_uniques: vec![u(0, 1.0, 1), u(4, 1.0, 1), u(6, 1.0, 2), u(10, 1.2, 1)],
+            ..Default::default()
+        };
+        let mut d = WeaponDef { attachments: vec!["extbarrel".into(), "dualclip".into(), "grip".into()], first_raise_time: 1.0, reload_ammo_add: 1, ..Default::default() };
+        apply_unique_fields(&mut d, &w);
+        assert_eq!((d.first_raise_time, d.reload_ammo_add), (1.2, 2));
+        let mut d = WeaponDef { attachments: vec!["extbarrel".into()], first_raise_time: 0.9, reload_ammo_add: 1, ..Default::default() };
+        apply_unique_fields(&mut d, &w);
+        assert_eq!((d.first_raise_time, d.reload_ammo_add), (0.9, 1), "no unique differs: the def's own");
+    }
+
+    /// A combination reloads segmented when the def or any of its single uniques says so, unless
+    /// the variant ignores its attachments (`FUN_008ebc70`).
+    #[test]
+    fn segmented_reload_is_the_def_or_any_single_unique() {
+        let u = |kind: u32, seg: bool| bo2::AttachmentUnique { kind, segmented_reload: seg, ..Default::default() };
+        let w = Weapon {
+            name: "x_mp".into(),
+            attachment_variants: vec![(4, "extbarrel".into()), (6, "dualclip".into())],
+            attachment_uniques: vec![u(0, false), u(4, false), u(6, true)],
+            ..Default::default()
+        };
+        let combo = |shorts: &[&str], ignore: bool| {
+            let mut d = WeaponDef { attachments: shorts.iter().map(|s| s.to_string()).collect(), ..Default::default() };
+            d.traits.ignore_attachments = ignore;
+            apply_unique_fields(&mut d, &w);
+            d.traits.segmented_reload
+        };
+        assert!(combo(&["extbarrel", "dualclip"], false));
+        assert!(!combo(&["extbarrel"], false));
+        assert!(!combo(&["dualclip"], true), "the variant ignores its attachments");
     }
 
     #[test]

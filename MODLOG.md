@@ -5111,3 +5111,84 @@ hint, the fire angles, the AQS fields or the breath data. Verified: cargo test -
 clippy --all-targets adds no warning; the real-install zhbo-assets suite (33, with the
 breath-sound and XPR tests) green. A `hud::VERSION` bump is needed (the weapon table gained
 `IdleSway` and `AntiQuickScope`) — the integrator's. No ABI change.
+
+## Empty raise/drop, the empty reload's add point, first raise and shells per cycle (2026-10-31, branch `v1/switch-timing`)
+
+Stacked on `v1/uncarried-fields`. Four timing columns the converter substituted or never carried.
+BO2's weapon-change and reload code, read from t6mp (`~/.opencode/plan/switch-timing/dec1.c`):
+
+* **Raise** (`FUN_008df320`): when the *incoming* weapon's clip is empty (`FUN_008e6770`: not
+  `unlimitedAmmo` and clip 0) it raises over `WeaponDef.iEmptyRaiseTime` (+0x4d0, raw, state
+  0x1c). That test comes **before** the first raise (`FUN_008ed100`) and the quick raise, and the
+  first-raised flag is set either way — an empty gun never plays its first raise.
+* **Drop** (`FUN_008db500`): the *outgoing* weapon with an empty clip drops over
+  `iEmptyDropTime` (+0x4d4, raw); a quick drop would beat it (the mod has none).
+* **Empty reload add point** (`FUN_008dbc00`, `FUN_008dec90`): the empty reload (clip 0 and a
+  bullet weapon) runs Π-scaled `iReloadEmptyTime`; its rounds go in at `iReloadEmptyAddTime`
+  (+0x4a0) **raw, unscaled** when it is non-zero, else at the Π-scaled `iReloadAddTime`, clamped to
+  the length (0 → the end). Most BO2 rifles author 0 here, so the converter's old "0 → reload add"
+  substitution gave the same moment for them but reported the wrong field. Weapons that do author it
+  (`mod = BO2 × 0.6743 / 1.150` rows) were wrongly scaled by `fReloadAddTimeScale`.
+* **First raise / reload ammo add** (`FUN_008ed100`, `FUN_008ed250`): the first single unique
+  differing from the base unique (+0xd0 / +0xdc), else the def's own, raw. The INSAS grip's,
+  the 870/KSG dual mag's 2 shells, the Executioner's 5.
+
+Fix: the parser reads the def's `iEmptyRaiseTime`/`iEmptyDropTime` and each unique's
+`iFirstRaiseTime`/`iReloadAmmoAdd`. `WeaponDef` gains `empty_raise_time`/`empty_drop_time`
+(table line `EmptySwitch = raise drop`, `WEAPON_FIELDS` 94 → 95; the built-in catalog's three
+guns carry their plain times). `reload_empty_add_time`, `first_raise_time` and `reload_ammo_add`
+are now BO2's raw values; `attachments::apply` no longer scales the empty add time;
+`apply_unique_fields` resolves the first raise and shells per cycle. The sim: `switch_to` drops an
+empty gun over its empty drop and raises an empty one over its empty raise (`RaiseKind::Empty`,
+viewmodel `EMPTY_RAISE`; the drop picks `EMPTY_DROP` before the quick-drop duration test, which
+an empty drop shorter than the quick drop would otherwise trip); the reload's add point comes from
+`WeaponDef::reload_empty_add_at` (also used by the sim conformance harness).
+
+Gotchas / follow-ups:
+* `reload_ammo_add` is raw now (launchers carry BO2's 1). Segmented reloads are still detected as
+  `reload_start_time > 0 && reload_ammo_add > 0` (start time zeroed unless both are set), so
+  launchers stay magazine reloads; BO2's own gate is `bSegmentedReload`.
+* BO2's empty reload also requires a bullet weapon (`WeaponDef.weapType == 0`); the mod still
+  plays the empty reload for any weapon at clip 0. Launchers' empty/plain times mostly match.
+* The quick-empty add (`iReloadQuickEmptyAddTime`, +0x4a8) wins over the empty add on a quick
+  reload; not carried (quick reloads have no consumer yet).
+* `unlimitedAmmo` (+0x3e0) suppresses the empty raise/drop; not carried — the mod's clip-0 test
+  stands in.
+* The post-offhand raise still uses the plain raise (BO2's offhand return path not read).
+
+Measured (conformance vs the `v1/uncarried-fields` measurement, 397,145 cells / 174 column
+clusters / 185 gap clusters): `empty_raise_time` 7,430 → 0, `empty_drop_time` 8,240 → 0,
+`first_raise_time` 2,046 → 0, `reload_empty_add_time` 7,865 → 0, `reload_ammo_add` 615 → 0;
+weapons differing cells 397,145 → 370,949, column clusters 174 → 169, gap clusters 185 → 180. No
+other column moved. The `dualoptic_*`/`sf_*` rows of these columns cleared here too (they compare
+the alt def's own raw fields, which `v1/alt-attachments`/`v1/alt-timing` do not touch).
+
+Verified: cargo test --workspace green; clippy --all-targets adds no warning; the real-install
+suite (`--skip conformance`) green. No game launched. An archive VERSION bump is needed (the
+weapon table gained `EmptySwitch`; old tables still parse, taking the default 0.5/0.4).
+
+### Follow-up: only bullet weapons play the empty reload
+
+`FUN_008dbc00`/`FUN_008dec90` pick the empty reload only for clip 0 **and** `weapType == 0`
+(bullet). `Traits.weap_type` (`WeapType`, table line `WeapType = bullet`; default bullet) carries
+it and `WeaponDef::empty_reload(ammo)` is the one test (sim and the sim conformance harness). A
+launcher at clip 0 now reloads over its plain reload time and add point.
+
+### Follow-up: segmented reloads run on `bSegmentedReload`
+
+The sim decided "shell by shell" from `reload_start_time > 0 && reload_ammo_add > 0`, and the
+converter zeroed the start/end times of every other weapon to keep that heuristic true. BO2's
+gate is the flag (`FUN_008ebc70`: `WeaponDef.bSegmentedReload`, or any single unique's unless the
+variant has `bIgnoreAttachments`). The parser reads both flags; `Traits.segmented_reload` (table
+line `SegmentedReload`) carries it, `apply_unique_fields` ORs the combination's uniques, and
+`WeaponDef::shell_by_shell` reads it. Start/end times are now carried raw. In the install only the
+870 MCS, KSG and Executioner set it; every launcher (SMAW, RPG, FHJ, the `gl_*` alts) is a
+magazine reload in BO2 too, so their reload is unchanged.
+
+### Follow-up: `unlimitedAmmo` suppresses the empty raise and drop
+
+`FUN_008e6770` (the empty-clip test both `FUN_008df320` and `FUN_008db500` use) returns "not
+empty" when the def's `unlimitedAmmo` (+0x3e0) is set. `Traits.unlimited_ammo` (table line
+`UnlimitedAmmo`) carries it; `WeaponState::clip_empty` is the one test (`switch_to`, the
+viewmodel's drop clip). Only the swap timing reads it; BO2's other `unlimitedAmmo` effects
+(ammo use) are not ported.

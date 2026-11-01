@@ -218,6 +218,7 @@ Weapon gl_an94_mp
   MaxReserve = 1
   Reload = 2.75 2.75 1.4 1.4
   Raise = 0.55 0.55 0.6 0.55 0.6
+  EmptySwitch = 0.55 0.6
   Ads = 0.5 0.5 50
   Effect = explode
   ; explodes on impact; the fuse is the safety timeout (0 would go off in the barrel)
@@ -238,6 +239,7 @@ Weapon an94_mp
   MaxReserve = 240
   Reload = 2.47 3.11 1.3 1.9
   Raise = 0.6 1.1 0.4 0.35 0.3
+  EmptySwitch = 0.6 0.4
   SprintOutTime = 0.25
   Ads = 0.25 0.2 50
   Damage = 40 33 33 0 0 0
@@ -266,6 +268,7 @@ Weapon fnp45_mp
   MaxReserve = 80
   Reload = 1.48 1.8 1.1 1.4
   Raise = 0.25 0.6 0.25 0.2 0.2
+  EmptySwitch = 0.25 0.25
   SprintOutTime = 0.15
   Ads = 0.12 0.1 60
   Damage = 55 45 45 0 0 0

@@ -7,7 +7,7 @@
 */
 
 use super::feel::{GunKick, Reticle, Sway, ViewPos};
-use super::handling::{CycleTimes, Traits, Zoom};
+use super::handling::{CycleTimes, Traits, WeapType, Zoom};
 use super::specialty::Specialties;
 use crate::units::inches;
 
@@ -148,14 +148,22 @@ pub struct WeaponDef {
     pub reload_empty_time: f32,
     /// When the rounds go in (a reload cancelled after this keeps them).
     pub reload_add_time: f32,
+    /// BO2's `iReloadEmptyAddTime`, raw: when an empty reload's rounds go in; 0 means at
+    /// `reload_add_time` (`FUN_008dbc00`/`FUN_008dec90`). No attachment scales it.
     pub reload_empty_add_time: f32,
-    /// Shell-by-shell reloads (tube shotguns): start, rounds per `reload_time` cycle, end.
+    /// Segmented reloads (tube shotguns, `Traits::segmented_reload`): start, rounds per
+    /// `reload_time` cycle, end.
     pub reload_start_time: f32,
     pub reload_end_time: f32,
     pub reload_ammo_add: u16,
     pub raise_time: f32,
     pub first_raise_time: f32,
     pub drop_time: f32,
+    /// `iEmptyRaiseTime`, `iEmptyDropTime`: a swap raises / puts away a weapon with an empty clip
+    /// over these instead (`FUN_008df320` — the empty raise beats the first raise — and
+    /// `FUN_008db500`).
+    pub empty_raise_time: f32,
+    pub empty_drop_time: f32,
     pub quick_raise_time: f32,
     pub quick_drop_time: f32,
     pub sprint_out_time: f32,
@@ -404,6 +412,8 @@ impl Default for WeaponDef {
             raise_time: 0.5,
             first_raise_time: 1.0,
             drop_time: 0.4,
+            empty_raise_time: 0.5,
+            empty_drop_time: 0.4,
             quick_raise_time: 0.3,
             quick_drop_time: 0.25,
             sprint_out_time: 0.2,
@@ -533,8 +543,21 @@ impl WeaponDef {
         60.0 / self.fire_time.max(1e-3)
     }
 
+    /// Whether a reload from `ammo` rounds is BO2's empty reload: a bullet weapon with an empty
+    /// clip (`FUN_008dec90`); any other weapon plays its plain reload.
+    pub fn empty_reload(&self, ammo: u16) -> bool {
+        ammo == 0 && self.traits.weap_type == WeapType::Bullet
+    }
+
+    /// When an empty reload's rounds go in: `iReloadEmptyAddTime` when set, else the reload add
+    /// time (`FUN_008dbc00`/`FUN_008dec90`).
+    pub fn reload_empty_add_at(&self) -> f32 {
+        if self.reload_empty_add_time > 0.0 { self.reload_empty_add_time } else { self.reload_add_time }
+    }
+
+    /// BO2's segmented reload (`bSegmentedReload`): start, rounds per cycle, end.
     pub fn shell_by_shell(&self) -> bool {
-        self.reload_start_time > 0.0 && self.reload_ammo_add > 0
+        self.traits.segmented_reload
     }
 
     pub fn has_anim(&self, slot: usize) -> bool {
