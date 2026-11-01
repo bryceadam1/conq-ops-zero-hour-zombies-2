@@ -15,7 +15,7 @@
 use super::frame::{argb, Lui};
 use super::*;
 use crate::lui::font::Family;
-use crate::lui::Place;
+use crate::lui::{Place, Rect};
 
 /// G6: `cg_crosshairAlphaMin`.
 pub const CROSSHAIR_ALPHA_MIN: f32 = 0.5;
@@ -131,9 +131,69 @@ pub(super) fn draw_score_popup(l: &Lui, prims: &mut Vec<Prim>, client: &Client) 
     l.text(prims, r, Family::Condensed, &format!("+{}", client.hud.score_points), None, (true, true), (1.0, 1.0, 1.0), 1.0);
 }
 
+/// BO2's hold-breath hint (ownerdraw 71 in `common_mp`'s `holdbreathhint.menu`: rect `0 80`, align
+/// 9/8 = the safe area's horizontal centre and top, `textfont 1`, `textscale 0.315`, `textstyle 3`),
+/// drawn by `FUN_004dc750` centred on the rect's x (`x - width * 0.5`) with its pen line 80 lines
+/// below the top. The text is `PLATFORM_HOLD_BREATH`, "Press ^3&&1^7 and hold to steady": the
+/// breath key's name in yellow (`^3`), the rest white, all over the shadowed style's black copy.
+pub(super) fn draw_breath_hint(l: &Lui, prims: &mut Vec<Prim>, p: &PlayerSim, key: &str) {
+    if !super::panels::breath_hint_shown(p) {
+        return;
+    }
+    let (pen, height) = (BREATH_HINT_BELOW_TOP_480 * 1.5, BREATH_HINT_HEIGHT_480 * 1.5);
+    let parts = [("Press ", (1.0, 1.0, 1.0)), (key, (1.0, 1.0, 0.0)), (" and hold to steady", (1.0, 1.0, 1.0))];
+    let widths: Vec<f32> = parts.iter().map(|(t, _)| l.text_width(Family::Condensed, t, height)).collect();
+    let total: f32 = widths.iter().sum();
+    let row = Place::new((true, true, 0.0, 0.0), (true, false, pen - height, pen)).resolve(l.screen());
+    let mut x = row.x + row.w * 0.5 - total * 0.5;
+    let shadow = HINT_SHADOW_480 * 1.5;
+    for ((text, rgb), w) in parts.iter().zip(&widths) {
+        let r = Rect { x, w: *w, ..row };
+        l.text(prims, Rect { x: x + shadow, y: r.y + shadow, ..r }, Family::Condensed, text, Some(crate::lui::font::Align::Left), (true, false), (0.0, 0.0, 0.0), 1.0);
+        l.text(prims, r, Family::Condensed, text, Some(crate::lui::font::Align::Left), (true, false), *rgb, 1.0);
+        x += w;
+    }
+}
+
+/// `holdbreathhint.menu`'s rect y (480 lines below the safe area's top) and its text height
+/// (`textscale 0.315` of the 48-line font).
+const BREATH_HINT_BELOW_TOP_480: f32 = 80.0;
+const BREATH_HINT_HEIGHT_480: f32 = 48.0 * 0.315;
+/// The shadowed style's offset, in 480-line units.
+const HINT_SHADOW_480: f32 = 1.0;
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_breath_hint_sits_80_lines_below_the_top_with_the_key_in_yellow() {
+        let _f = crate::lui::font::lock();
+        crate::lui::font::load("");
+        let l = Lui::new(1280.0, 720.0);
+        let mut p = PlayerSim::spawn_for_tests();
+        let mut d = crate::weapons::WeaponDef { class: crate::weapons::Class::Sniper, overlay_reticle: 1, ..Default::default() };
+        d.zoom.hold_breath = true;
+        let w = p.arsenal.active;
+        p.arsenal.weapons[w].def = Box::leak(Box::new(d));
+        let mut prims = Vec::new();
+        draw_breath_hint(&l, &mut prims, &p, "SHIFT");
+        assert!(prims.is_empty(), "not aimed: no hint");
+        p.arsenal.ads = 1.0;
+        draw_breath_hint(&l, &mut prims, &p, "SHIFT");
+        assert_eq!(prims.len(), 6, "three runs, each over its shadow");
+        let texts: Vec<_> = prims.iter().filter_map(|q| if let Prim::Text { text, argb, y, size, .. } = q { Some((text.clone(), *argb, *y, *size)) } else { None }).collect();
+        assert_eq!(texts[3].0, "SHIFT");
+        assert_eq!(texts[3].1, super::super::frame::argb((1.0, 1.0, 0.0), 1.0), "^3 yellow");
+        assert_eq!(texts[1].1, super::super::frame::argb((1.0, 1.0, 1.0), 1.0));
+        // The pen line at 80 of 480 lines (120 of 720), the text 0.315 x 48 lines tall above it.
+        let top = texts[1].2;
+        assert!((top - (120.0 - 48.0 * 0.315 * 1.5)).abs() < 1.0, "{top}");
+        p.idle.breath.holding = true;
+        prims.clear();
+        draw_breath_hint(&l, &mut prims, &p, "SHIFT");
+        assert!(prims.is_empty(), "holding: no hint");
+    }
 
     #[test]
     fn crosshair_offset_is_g6s_480_line_value() {

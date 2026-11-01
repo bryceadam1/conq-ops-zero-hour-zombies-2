@@ -143,22 +143,8 @@ pub(super) fn draw_reload_prompt(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, 
     }
 }
 
-/// BO2's hold-breath hint (`FUN_004dc750`, `cg_drawBreathHint`): fully aimed through an overlay
-/// scope whose def has `bHoldBreathToSteady`, while the breath is not held. The text is BO2's
-/// `PLATFORM_HOLD_BREATH` ("Press ^3&&1^7 and hold to steady") with the breath key's name (the
-/// sprint key; BO2 binds `+breath_sprint`). The `holdbreathhint` menu's rect is not in the
-/// reference dump; the hint sits centred low on the screen.
-pub(super) fn draw_breath_hint(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, p: &PlayerSim, key: &str) {
-    if !breath_hint_shown(p) {
-        return;
-    }
-    let text = format!("Press  {key}  and hold to steady");
-    prims.push(Prim::Text { x: w * 0.5, y: h * (1.0 - BREATH_HINT_FROM_BOTTOM), text, argb: WHITE, size: (13.0 * s) as i32, align: 1 });
-}
-
-/// The hint's height above the bottom edge, as a share of the screen (130 of 480).
-const BREATH_HINT_FROM_BOTTOM: f32 = 130.0 / 480.0;
-
+/// Whether BO2 draws the hold-breath hint (`FUN_004dc750`, `cg_drawBreathHint`): fully aimed
+/// through an overlay scope whose def has `bHoldBreathToSteady`, while the breath is not held.
 pub(super) fn breath_hint_shown(p: &PlayerSim) -> bool {
     let def = p.arsenal.current().def;
     !p.idle.breath.holding

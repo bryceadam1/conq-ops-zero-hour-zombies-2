@@ -4842,8 +4842,7 @@ from t6mp (read-only; dumps in the item's plan dir, `ghidra/`), ported as `weapo
   Their authored volume is 0.01, so the converted events land on the 5 floor — faithful, quiet.
 - **The hint** (`FUN_004dc750`, `cg_drawBreathHint`): fully aimed on an overlay scope with
   `bHoldBreathToSteady`, not holding: `PLATFORM_HOLD_BREATH` "Press ^3&&1^7 and hold to steady" with
-  the breath key. The `holdbreathhint` menuDef lives in `common_mp` (not in the reference's `ui_mp`
-  dump), so its rect is unknown: the HUD centres it 130/480 above the bottom (medium confidence).
+  the breath key. Placed from `common_mp`'s `holdbreathhint.menu` (see the follow-up below).
 - Table: the weapon block's `IdleSway` line (`adsIdleSpeed hipIdleSpeed fIdleCrouchFactor
   fIdleProneFactor bHoldBreathToSteady`; WEAPON_FIELDS 96 → 97), `Zoom::idle_speed/idle_stance/
   hold_breath`, read by `zhbo_formats::weapon` from the WeaponDef. No attachment stacks them.
@@ -4875,3 +4874,14 @@ shot landing on the reticle; Shift (aimed) breathing in, the drift dying over ~1
 running out at 4.5 s (9.5 s with Ballistics CPU) with a gasp and a harder sway that settles over
 ~4.5 s; a shot letting the breath go; the hint "Press SHIFT and hold to steady" while aimed and not
 holding; crouch/prone steadier; iron-sight guns showing only the small gun idle.
+
+### Follow-up: the hint's place is the menu's (branch `v1/idle-sway`)
+
+`holdbreathhint.menu`, dumped from `common_mp.ff` with the reference's patched OAT Unlinker (the
+dump `v1/offhand-rules` made, `~/.opencode/plan/offhand-rules/menus/common_mp/ui_mp/`): menu `rect 0
+80 0 0 9 8` (align 9 = the safe area's horizontal centre, 8 = its top, `FUN_0057d900`), one item,
+ownerdraw 71, `textfont 1`, `textscale 0.315`, `textstyle 3`. So the hint is *high* on the screen:
+its pen line 80 lines below the top, centred (`FUN_004dc750`'s `x - width * 0.5`), 0.315 × 48 lines
+tall, shadowed. `hud::center::draw_breath_hint` draws it in LUI space with the key run in `^3`
+yellow; the earlier "130 above the bottom" guess is gone. Test:
+`the_breath_hint_sits_80_lines_below_the_top_with_the_key_in_yellow`.
