@@ -17,6 +17,21 @@ pub(crate) fn load_zone(bo2_dir: &Path, name: &str) -> Result<Zone, String> {
     t6zone::load_file(&t6zone::install_path(bo2_dir, name))
 }
 
+/// BO2's multiplayer weapons and attachments as its asset pool resolves them over the weapon zones
+/// (`zhbo_formats::weapon::MP_POOL`: `patch_mp` over `common_patch_mp` over `common_mp`): the
+/// balance patches in `common_patch_mp` replace the launch definitions, as `DB_LinkXAssetEntry`
+/// (`FUN_00597000`) does. The one place the converter picks its weapon definitions.
+pub(crate) fn mp_weapons(
+    patch: &Zone,
+    common_patch: &Zone,
+    common: &Zone,
+) -> Result<(Vec<zhbo_formats::weapon::Weapon>, Vec<zhbo_formats::weapon::Attachment>), String> {
+    let pool = [patch, common_patch, common];
+    let weapons = zhbo_formats::weapon::pooled(&pool).map_err(|e| e.to_string())?;
+    let attachments = zhbo_formats::weapon::pooled_attachments(&pool).map_err(|e| e.to_string())?;
+    Ok((weapons, attachments))
+}
+
 /// The image packs, in file-name order.
 pub(crate) struct Paks {
     paks: Vec<Ipak>,

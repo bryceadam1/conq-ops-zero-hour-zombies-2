@@ -19,21 +19,33 @@ use std::collections::BTreeMap;
 
 /// The magazine model of a gun's viewmodel: BO2 names them `t6_attach_mag_<weapon>_view` after a
 /// part of the gun's own view model name (the zones don't link them for base weapons).
-pub(crate) fn magazine(common: &Zone, view_model: &str) -> Option<xmodel::Model> {
+pub(crate) fn magazine(pool: &[&Zone], view_model: &str) -> Option<xmodel::Model> {
     const SKIP: &[&str] = &["t6", "wpn", "ar", "smg", "lmg", "mg", "pistol", "sniper", "shotty", "launch", "view", "base"];
     view_model
         .trim_end_matches("_view")
         .split('_')
         .rev()
         .filter(|t| t.len() >= 3 && !SKIP.contains(t))
-        .find_map(|t| xmodel::find(common, &format!("t6_attach_mag_{t}_view")).ok())
+        .find_map(|t| find_model(pool, &format!("t6_attach_mag_{t}_view")).ok())
 }
 
-/// A model as BO2 loads it: `patch_mp` over `common_mp` (some `common_mp` models are empty stubs
-/// that the patch replaces, such as the frag grenade's view model).
-pub(crate) fn find_model(patch: &Zone, common: &Zone, name: &str) -> Result<xmodel::Model, String> {
-    let patched = xmodel::find(patch, name).ok().filter(|m| !m.lods.is_empty());
-    patched.map_or_else(|| xmodel::find(common, name).map_err(|e| format!("{name}: {e}")), Ok)
+/// A model as BO2's asset pool holds it over `pool` (highest priority first,
+/// `zhbo_formats::weapon::MP_POOL`: `patch_mp`, `common_patch_mp`, `common_mp`): the first zone with
+/// the model's geometry (some `common_mp` models are empty stubs that the patch replaces, such as
+/// the frag grenade's view model; the Peacekeeper's are only in `common_patch_mp`), else the last
+/// zone's.
+pub(crate) fn find_model(pool: &[&Zone], name: &str) -> Result<xmodel::Model, String> {
+    let (last, higher) = pool.split_last().ok_or("no zones")?;
+    let patched = higher.iter().find_map(|z| xmodel::find(z, name).ok().filter(|m| !m.lods.is_empty()));
+    patched.map_or_else(|| xmodel::find(last, name).map_err(|e| format!("{name}: {e}")), Ok)
+}
+
+/// An animation as the asset pool holds it over `pool` (highest priority first): the first zone
+/// that defines it (a patched weapon's clips can be `common_patch_mp`'s alone). A `,name`
+/// reference stub (`common_patch_mp` holds 2,826) never stands in for the real clip.
+pub(crate) fn find_anim(pool: &[&Zone], name: &str) -> Option<xanim::Anim> {
+    let defines = |z: &Zone| z.find(zhbo_formats::fastfile::ASSET_XANIM, name).and_then(|a| z.asset_name(a)).is_some_and(|n| !n.starts_with(','));
+    pool.iter().filter(|z| defines(z)).find_map(|z| xanim::find(z, name).ok())
 }
 
 /// One of a weapon's base `attachViewModel` parts: the magazine, or the base attachment art (the
@@ -72,15 +84,15 @@ pub(crate) struct BasePart {
 ///
 /// Only the seven weapons with a non-magazine entry have more than the magazine today (the four
 /// snipers and the M32's three ids); everything else is unchanged.
-pub(crate) fn base_parts(patch: &Zone, common: &Zone, w: &zhbo_formats::weapon::Weapon, c: &Combo, view: &str) -> Vec<BasePart> {
+pub(crate) fn base_parts(pool: &[&Zone], w: &zhbo_formats::weapon::Weapon, c: &Combo, view: &str) -> Vec<BasePart> {
     let mut out = Vec::new();
     if w.is_gun() && !c.no_clip {
         let authored = authored_parts(w)
             .find(|(m, ..)| m.contains("attach_mag"))
-            .and_then(|(m, _, offset, _)| find_model(patch, common, m).ok().map(|model| (model, offset)));
+            .and_then(|(m, _, offset, _)| find_model(pool, m).ok().map(|model| (model, offset)));
         if let Some((model, offset)) = authored {
             out.push(BasePart { model, tag: None, offset, magazine: true, optic: false, ads_only: false, ads_of: None });
-        } else if let Some(model) = magazine(common, view) {
+        } else if let Some(model) = magazine(pool, view) {
             out.push(BasePart { model, tag: None, offset: crate::xf::IDENTITY, magazine: true, optic: false, ads_only: false, ads_of: None });
         }
     }
@@ -91,7 +103,7 @@ pub(crate) fn base_parts(patch: &Zone, common: &Zone, w: &zhbo_formats::weapon::
             if name.is_empty() || name.contains("attach_mag") {
                 continue;
             }
-            let Ok(model) = find_model(patch, common, name) else { continue };
+            let Ok(model) = find_model(pool, name) else { continue };
             let optic = model.bones.iter().any(|b| b.name == "tag_scope" || b.name == "tag_sights");
             // `viewModelOffsetBaseAttachment` replaces this part's authored offset when the
             // combination sets `overrideBaseWeaponAttachmentOffsets` (the IR optics); the part
@@ -478,8 +490,7 @@ pub(crate) fn left_gun<'a>(w: &zhbo_formats::weapon::Weapon, bo2: &'a [zhbo_form
 /// manifests.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn weapon_viewmodels(
-    patch: &Zone,
-    common: &Zone,
+    pool: &[&Zone],
     zones: &[Zone],
     paks: &Paks,
     out: &mut BTreeMap<String, Vec<u8>>,
@@ -503,14 +514,14 @@ pub(crate) fn weapon_viewmodels(
         // The dual-wield pair: the gun plus the left gun its def names, as a second rig on the left
         // palm.
         let lh_w = left_gun(w, bo2);
-        let lh_gun = lh_w.and_then(|l| l.view_model.as_deref()).and_then(|name| find_model(patch, common, name).ok());
+        let lh_gun = lh_w.and_then(|l| l.view_model.as_deref()).and_then(|name| find_model(pool, name).ok());
         let dual = lh_w.filter(|_| lh_gun.is_some());
         let c = combo(w, atts, &shorts);
-        let gun = find_model(patch, common, view).map_err(|e| format!("{id}: {e}"))?;
+        let gun = find_model(pool, view).map_err(|e| format!("{id}: {e}"))?;
         // The base `attachViewModel` parts: the magazine (its authored offset; the name search is
         // the fallback) and the base attachment art (the snipers' scope), unless the combination
         // replaces that art (the ACOG) or the magazine (the dualclip).
-        let base = base_parts(patch, common, w, &c, view);
+        let base = base_parts(pool, w, &c, view);
         let parts: Vec<(&xmodel::Model, &str)> = vec![(&gun, mount_tag(w))];
         // The attachments' models, each with where it goes: an attachment's additional mount (the
         // IR rail) before its own model, both on the unique's tag. Each carries its single
@@ -521,7 +532,7 @@ pub(crate) fn weapon_viewmodels(
             // The list index of each of this unique's models in `extra`, for the ADS pairing.
             let mut at: Vec<Option<usize>> = Vec::new();
             for a in attachment_parts(u, *pt) {
-                let Ok(model) = find_model(patch, common, a.name) else {
+                let Ok(model) = find_model(pool, a.name) else {
                     at.push(None);
                     continue;
                 };
@@ -649,7 +660,7 @@ pub(crate) fn weapon_viewmodels(
         for (base_slot, anims) in &sets {
             for (slot, anim_name) in anims.iter().enumerate() {
                 let Some(anim_name) = anim_name else { continue };
-                let anim = anim_cache.entry(anim_name.clone()).or_insert_with(|| xanim::find(common, anim_name).ok());
+                let anim = anim_cache.entry(anim_name.clone()).or_insert_with(|| find_anim(pool, anim_name));
                 let Some(anim) = anim else { continue };
                 if let (Some(rig), Some(hierarchy)) = (&rig, &hierarchy) {
                     let (frames, channels) = character::animate(rig, anim);
@@ -675,7 +686,7 @@ pub(crate) fn weapon_viewmodels(
                 let Some(name) = registered(left_slot) else { continue };
                 let name = &name;
                 let right_slot = zhbo_core::viewmodel::slot::left_as_right(left_slot).map_or(left_slot, |r| r as usize);
-                let anim = anim_cache.entry(name.clone()).or_insert_with(|| xanim::find(common, name).ok());
+                let anim = anim_cache.entry(name.clone()).or_insert_with(|| find_anim(pool, name));
                 let Some(anim) = anim else { continue };
                 native_clips.push(((right_slot as u16) | zhbo_native::viewmodel::INSTANCE_LEFT, native::put_anim(out, anim)));
                 // The left gun's clips feed the native path and the sound events; the base W3D render
@@ -735,8 +746,7 @@ type WorldModel = (std::rc::Rc<xmodel::Model>, Vec<Option<String>>, String);
 /// none, and the W3D body shows its base weapon's meshes (`Catalog::world_viewmodel`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn world_weapons(
-    patch: &Zone,
-    common: &Zone,
+    pool: &[&Zone],
     paks: &Paks,
     out: &mut BTreeMap<String, Vec<u8>>,
     rig: &Rig,
@@ -757,7 +767,7 @@ pub(crate) fn world_weapons(
         cache
             .entry(name.to_string())
             .or_insert_with(|| {
-                let model = find_model(patch, common, name).ok()?;
+                let model = find_model(pool, name).ok()?;
                 let tex = textures(&model, paks, out, looks);
                 let path = crate::native::put_model(out, &crate::native::model(&model, &tex, looks));
                 Some((std::rc::Rc::new(model), tex, path))
@@ -817,7 +827,7 @@ pub(crate) fn world_weapons(
             });
         }
         // Carried but not up, the shield hangs on the back (`tag_stowed_back`, the stow model).
-        if let Some(stow) = shield.then(|| find_model(patch, common, crate::shield::STOW_MODEL).ok()).flatten() {
+        if let Some(stow) = shield.then(|| find_model(pool, crate::shield::STOW_MODEL).ok()).flatten() {
             let t = textures(&stow, paks, out, looks);
             let part = zhbo_native::viewmodel::Part {
                 model: crate::native::put_model(out, &crate::native::model(&stow, &t, looks)),
@@ -853,8 +863,7 @@ pub(crate) fn world_weapons(
 /// W3D model, and a Zero Hour object that shows it (`ZHBO_Proj_<id>`). Sets `projectile_object`.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn projectiles(
-    patch: &Zone,
-    common: &Zone,
+    pool: &[&Zone],
     paks: &Paks,
     out: &mut BTreeMap<String, Vec<u8>>,
     bo2: &[zhbo_formats::weapon::Weapon],
@@ -891,7 +900,7 @@ pub(crate) fn projectiles(
         }
         let model_name = if shield { Some(crate::shield::CARRY_MODEL.to_string()) } else { w.projectile_model.clone().or_else(|| w.world_model.clone()) };
         let Some(model_name) = model_name else { continue };
-        let Ok(model) = find_model(patch, common, &model_name) else { continue };
+        let Ok(model) = find_model(pool, &model_name) else { continue };
         let rig = Rig::new(&model, &[]);
         let tex = textures(&model, paks, out, &mut looks);
         let mut meshes = character::skin(&rig, &model, "P", &tex);
@@ -1085,8 +1094,8 @@ pub(crate) fn over(dst: &mut Rgba, src: &Rgba, at: (u32, u32), size: (u32, u32))
 
 /// The tablet in the soldier's hand, as `TB<k>` meshes on BO2's `tag_inhand` (the bone its tablet
 /// animations carry).
-pub(crate) fn tablet_world(patch: &Zone, common: &Zone, paks: &Paks, out: &mut BTreeMap<String, Vec<u8>>, rig: &Rig, looks: &mut Looks) -> Vec<w3d::SkinMesh> {
-    let Ok(model) = find_model(patch, common, TABLET_WORLD) else { return Vec::new() };
+pub(crate) fn tablet_world(pool: &[&Zone], paks: &Paks, out: &mut BTreeMap<String, Vec<u8>>, rig: &Rig, looks: &mut Looks) -> Vec<w3d::SkinMesh> {
+    let Ok(model) = find_model(pool, TABLET_WORLD) else { return Vec::new() };
     let Some(tag) = rig.pivot(TABLET_TAG).or_else(|| rig.pivot("tag_weapon_left")) else { return Vec::new() };
     let tex = textures(&model, paks, out, looks);
     let mut meshes = character::skin_rigid(&model, tag, crate::xf::IDENTITY, "TB", 0, &tex, &[]);

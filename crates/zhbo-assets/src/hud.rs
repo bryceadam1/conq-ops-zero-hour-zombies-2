@@ -218,7 +218,9 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
         wanted.push((zhbo_core::lui::materials::image(material), Source::Dynamic(base.to_string()), *max));
     }
     zones.insert("common_mp", crate::generals::load_zone(bo2_dir, "common_mp")?);
-    let weapons = zhbo_formats::weapon::all(&zones["common_mp"]).map_err(|e| e.to_string())?;
+    let patch = crate::generals::load_zone(bo2_dir, crate::fx::ZONE)?;
+    let common_patch = crate::generals::load_zone(bo2_dir, "common_patch_mp")?;
+    let (weapons, attachments) = crate::paks::mp_weapons(&patch, &common_patch, &zones["common_mp"])?;
     // The create-a-class weapon pictures: each item's image in BO2's `mp/statstable.csv` plus
     // `_big` (`classpreview.lua`'s `GetItemImage(...) .. "_big"`). The knife's personalize page
     // shows `knife_held`'s column 6 as it is (`caccamomenu.lua`'s `knifePersonalization` branch:
@@ -257,7 +259,6 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     // The personalize camo grid's thumbnails (`menu_camo_*_pattern`, `menu_theater_nodata` for
     // `None`): the same `mp/attachmenttable.csv` rows the weapon table carries.
     let names = crate::weapons::names(bo2_dir);
-    let patch = crate::generals::load_zone(bo2_dir, crate::fx::ZONE)?;
     for c in crate::weapons::camo_options(&patch, &names) {
         let image = c.image.clone();
         if !image.is_empty() {
@@ -284,7 +285,6 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     // One icon per attachment in the converted table, named by the core's short-name map. BO2's
     // variants share an art set (`silencer_smg`/`silencer` are both the suppressor); an attachment
     // the map has no art for is reported, never fatal.
-    let attachments = zhbo_formats::weapon::attachments(&zones["common_mp"]).map_err(|e| e.to_string())?;
     let mut seen_atts: Vec<String> = Vec::new();
     for att in attachments {
         if att.kind == 0 || att.name.starts_with(',') {

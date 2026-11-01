@@ -665,6 +665,9 @@ fn run(args: &[String]) -> Result<(), String> {
             let (bytes, report) = zhbo_assets::hud::build_archive(&bo2_dir()?)?;
             fs::write(&out, bytes).map_err(|e| format!("{}: {e}", out.display()))?;
             println!("built {} ({} images, missing: {:?})", out.display(), report.found.len(), report.missing);
+            if let Some(Err(e)) = &report.generals {
+                println!("generals: {e}");
+            }
             Ok(())
         }
         "hud-sheet" => {

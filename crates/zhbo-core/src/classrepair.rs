@@ -115,7 +115,7 @@ fn repair_weapon(c: &mut CustomClass, primary: bool, cleared: &mut Cleared) {
     };
     // A non-gun (the shield counts as one of the slot's weapons), or a gun BO2 does not offer in this slot (a `secondary` item in the primary, a
     // weapon that is no class item at all), is not a valid item for it (`CheckItems`).
-    if !def.class.is_slot_weapon() || !crate::classmenu::items::fits_slot(base, primary) {
+    if !holds(def, crate::classmenu::items::fits_slot(base, primary)) {
         id.clear();
         cleared.push(slot);
         return;
@@ -134,6 +134,13 @@ fn repair_weapon(c: &mut CustomClass, primary: bool, cleared: &mut Cleared) {
     if *id != given {
         *id = given;
     }
+}
+
+/// Whether a weapon slot may hold `def` (`fits`: it is an item of that slot): a gun of the slot,
+/// and not locked — an item whose art the install lacks (a DLC weapon without its pack,
+/// [`crate::weapons::WeaponDef::cac_locked`]) is listed but never held.
+fn holds(def: &crate::weapons::WeaponDef, fits: bool) -> bool {
+    def.class.is_slot_weapon() && fits && !def.cac_locked
 }
 
 /// An offhand slot holding an item that is not its own is cleared (`ClearSlot`): the lethal slot
@@ -329,6 +336,15 @@ mod tests {
         let _ = repair(&mut c);
         assert_eq!((c.lethal_count, c.tactical_count), (1, 1));
         assert_eq!((c.loadout().lethal_count, c.loadout().tactical_count), (Some(1), Some(1)));
+    }
+
+    #[test]
+    fn a_locked_item_is_not_held() {
+        // The Peacekeeper without Revolution: listed locked, so a stored class drops it.
+        let mut d = weapons::weapon("mp7_mp").clone();
+        assert!(holds(&d, true));
+        d.cac_locked = true;
+        assert!(!holds(&d, true));
     }
 
     #[test]

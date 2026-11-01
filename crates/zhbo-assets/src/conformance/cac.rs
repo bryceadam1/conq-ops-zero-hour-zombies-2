@@ -86,7 +86,7 @@ pub fn rows(shipped: &Shipped, bo2_dir: &std::path::Path, schema: &Schema) -> Re
             let image = shipped.has_sprite(&zhbo_core::names::cac_weapon_image(id)).then(|| images.get(&reference).cloned()).flatten();
             let cost = cost_of(|dr| if slot == "secondary" { dr.secondary = id.to_string() } else if slot == "primary" { dr.primary = id.to_string() } else if slot == "primarygrenade" { dr.lethal = id.to_string() } else { dr.tactical = id.to_string() });
             out.push(row(schema, "weapon", &reference, |b| {
-                b.text("name", &d.display_name).text("description", &d.description).opt_text("image", image).text("group", group).text("slot", &slots).int("cost", cost).int("order", order);
+                b.text("name", d.menu_name()).text("description", &d.description).opt_text("image", image).text("group", group).text("slot", &slots).int("cost", cost).int("order", order);
             })?);
             // Its attachments, in the editor's order; what each can be combined with is what the
             // editor lets it share the weapon with (`classmenu::legal::compatible`).

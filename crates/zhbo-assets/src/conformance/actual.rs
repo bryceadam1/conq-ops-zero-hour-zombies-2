@@ -64,8 +64,8 @@ impl Shipped {
         // `generals::files` ran; deterministic over the same inputs).
         let common = crate::generals::load_zone(bo2_dir, "common_mp")?;
         let patch = crate::generals::load_zone(bo2_dir, crate::fx::ZONE)?;
-        let bo2 = zhbo_formats::weapon::all_in(&common, &[&patch]).map_err(|e| e.to_string())?;
-        let atts = zhbo_formats::weapon::attachments(&common).map_err(|e| e.to_string())?;
+        let common_patch = crate::generals::load_zone(bo2_dir, "common_patch_mp")?;
+        let (bo2, atts) = crate::paks::mp_weapons(&patch, &common_patch, &common)?;
         let mut defs = zhbo_core::weapons::parse_full_table(&text)?.weapons;
         let (events, _) = crate::weapons::sounds_and_fx(&bo2, &atts, &mut defs, &crate::weapons::converted(&patch, &bo2));
         let fire_fx = |ini: &str| {

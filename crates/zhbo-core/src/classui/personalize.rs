@@ -413,7 +413,7 @@ fn equipped_choice(p: &Personalize) -> &str {
 /// the screen's own heading otherwise.
 fn screen_title(cat: &Catalog, kind: PersonalizeKind, weapon: Option<&str>) -> String {
     match (kind, weapon.and_then(|w| cat.get(w))) {
-        (PersonalizeKind::Camo | PersonalizeKind::Knife | PersonalizeKind::SecondaryCamo, Some(d)) => format!("PERSONALIZE {}", d.display_name.to_uppercase()),
+        (PersonalizeKind::Camo | PersonalizeKind::Knife | PersonalizeKind::SecondaryCamo, Some(d)) => format!("PERSONALIZE {}", d.menu_name().to_uppercase()),
         _ => personalize_title(kind).to_string(),
     }
 }

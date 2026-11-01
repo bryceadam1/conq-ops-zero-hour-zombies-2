@@ -10,9 +10,11 @@ fn load(dir: &Path, name: &str) -> Result<Zone, String> {
 }
 
 /// The zones the expected side reads: `common_mp` (the weapons, attachments and models),
+/// `common_patch_mp` (the balance patches of 79 weapons and 49 attachments, the Peacekeeper),
 /// `patch_mp` (the stringtables and the patched models) and `patch_ui_mp` (the rest of the UI Lua).
 pub struct Install {
     pub common: Zone,
+    pub common_patch: Zone,
     pub patch: Zone,
     pub patch_ui: Zone,
     /// The english localized strings of the multiplayer zones, later zones over earlier ones.
@@ -28,15 +30,29 @@ fn strings(dir: &Path) -> HashMap<String, String> {
 
 impl Install {
     pub fn open(dir: &Path) -> Result<Install, String> {
-        Ok(Install { common: load(dir, "common_mp")?, patch: load(dir, "patch_mp")?, patch_ui: load(dir, "patch_ui_mp")?, strings: strings(dir) })
+        Ok(Install {
+            common: load(dir, "common_mp")?,
+            common_patch: load(dir, "common_patch_mp")?,
+            patch: load(dir, "patch_mp")?,
+            patch_ui: load(dir, "patch_ui_mp")?,
+            strings: strings(dir),
+        })
     }
 
-    /// Every `WeaponVariantDef` by name. A later zone's asset of the same name replaces an earlier
-    /// one, as BO2's asset pool does when `patch_mp` loads after `common_mp`.
+    /// The weapon zones in rising asset-pool priority: `common_mp` (zone flag 0x80), its patch zone
+    /// `common_patch_mp` (0x100, which `DB_LoadXAssets`, `FUN_0059a550`, loads with it as
+    /// `"%s_patch%s"`), then `patch_mp` (flag 2). `DB_LinkXAssetEntry` (`FUN_00597000`) keeps the
+    /// asset of the zone whose flag ranks higher in `FUN_00596e60` (0x36 < 0x37 < 0x41), so a later
+    /// zone here replaces an earlier one; a `,name` reference stub never replaces a real asset.
+    fn pool(&self) -> [&Zone; 3] {
+        [&self.common, &self.common_patch, &self.patch]
+    }
+
+    /// Every `WeaponVariantDef` by name, as the asset pool holds it (`pool`).
     pub fn variants(&self) -> BTreeMap<String, Variant<'_>> {
         let mut out = BTreeMap::new();
         let Some(kind) = zhbo_formats::fastfile::asset_type_id("weapon") else { return out };
-        for z in [&self.common, &self.patch] {
+        for z in self.pool() {
             for a in z.assets.iter().filter(|a| a.kind == kind) {
                 let v = Variant { z, at: a.addr };
                 out.insert(v.name(), v);
@@ -49,7 +65,7 @@ impl Install {
     pub fn attachments(&self) -> BTreeMap<String, Attachment<'_>> {
         let mut out = BTreeMap::new();
         let Some(kind) = zhbo_formats::fastfile::asset_type_id("attachment") else { return out };
-        for z in [&self.common, &self.patch] {
+        for z in self.pool() {
             for a in z.assets.iter().filter(|a| a.kind == kind) {
                 let at = Attachment { z, at: a.addr };
                 out.insert(at.name(), at);
@@ -64,9 +80,12 @@ impl Install {
         self.strings.get(key).cloned().unwrap_or_else(|| key.to_string())
     }
 
-    /// An XModel as the asset pool holds it: `patch_mp`'s asset replaces `common_mp`'s.
+    /// An XModel as the asset pool holds it (`pool`, highest priority first); a model a zone
+    /// carries without geometry (a stub the next zone's real asset replaces) is skipped.
     pub fn model(&self, name: &str) -> Option<zhbo_formats::xmodel::Model> {
-        zhbo_formats::xmodel::find(&self.patch, name).or_else(|_| zhbo_formats::xmodel::find(&self.common, name)).ok()
+        let found: Vec<_> = self.pool().into_iter().rev().filter_map(|z| zhbo_formats::xmodel::find(z, name).ok()).collect();
+        let real = found.iter().position(|m| !m.lods.is_empty()).unwrap_or(0);
+        found.into_iter().nth(real)
     }
 
     /// A stringtable's rows (`mp/statstable.csv`), from the patch zone first.

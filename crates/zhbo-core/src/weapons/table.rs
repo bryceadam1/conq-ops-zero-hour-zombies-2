@@ -807,6 +807,15 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("CacGroup", "The Create-a-Class group BO2 lists it under (statstable column 2).", FieldKind::Str,
         |d: &WeaponDef| d.cac_group.clone(),
         |d: &mut WeaponDef, v: Values| { d.cac_group = v.text.into(); Ok(()) }),
+    field!("CacName", "The Create-a-Class item's localized name (statstable column 3).", FieldKind::Str,
+        |d: &WeaponDef| d.cac_name.clone(),
+        |d: &mut WeaponDef, v: Values| { d.cac_name = v.text.into(); Ok(()) }),
+    field!("CacLocked", "1 if Create-a-Class lists the item locked (its art did not convert: a DLC item without the pack).", FieldKind::Num,
+        |d: &WeaponDef| (d.cac_locked as u8).to_string(),
+        |d: &mut WeaponDef, v: Values| { d.cac_locked = v.text_num()? != 0.0; Ok(()) }),
+    field!("CacLockHint", "The locked item's hint (`MENU_<statstable column 15>_REQUIRED_HINT`).", FieldKind::Str,
+        |d: &WeaponDef| d.cac_lock_hint.clone(),
+        |d: &mut WeaponDef, v: Values| { d.cac_lock_hint = v.text.into(); Ok(()) }),
     field!("Description", "The Create-a-Class item's localized description (statstable column 7).", FieldKind::Str,
         |d: &WeaponDef| d.description.clone(),
         |d: &mut WeaponDef, v: Values| { d.description = v.text.into(); Ok(()) }),
@@ -1209,7 +1218,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 146);
+        assert_eq!(WEAPON_FIELDS.len(), 149);
         assert_eq!(ATTACHMENT_FIELDS.len(), 30);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }

@@ -118,7 +118,7 @@ pub fn draw(prims: &mut Vec<Prim>, f: &Frame, p: Rect, draft: Option<&Draft>) {
         let pic_w = pic_h * if r == pr { 1.8 } else { 2.0 };
         let pic = Rect { x: r.right() - right_pad - pic_w, y: pic_top, w: pic_w, h: pic_h };
         bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&def.id)), pic, argb(OFF_WHITE, 1.0), Vec::new());
-        prims.extend(name(r, &def.display_name, Family::Condensed, bo2::TEXT_CONDENSED, r.bottom() - bo2::TEXT_CONDENSED));
+        prims.extend(name(r, def.menu_name(), Family::Condensed, bo2::TEXT_CONDENSED, r.bottom() - bo2::TEXT_CONDENSED));
         // `primaryCamoImageContainer` / `secondaryCamoImageContainer`: the slot's camo swatch, 31
         // square, 45 in from the block's right and 5 up (`UpdateClass`'s `primarycamo` and
         // `secondarycamo`).
@@ -165,7 +165,7 @@ pub fn draw(prims: &mut Vec<Prim>, f: &Frame, p: Rect, draft: Option<&Draft>) {
         // The item's `_256` picture (`classpreview.lua:3981-3985`).
         bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&def.id)), Rect { x, y: r.y + SMALL_H / 2.0 - s / 2.0, w: s, h: s }, argb(OFF_WHITE, 1.0), Vec::new());
         let name_r = Rect { x: r.x + 3.0, y: r.y + bo2::TEXT_EXTRA_SMALL, w: c.right_w - 2.0 * SMALL_H - 8.0, h: bo2::TEXT_EXTRA_SMALL };
-        bo2::text(prims, f, Family::ExtraSmall, &def.display_name, name_r, Align::Left, argb(OFF_WHITE, 1.0));
+        bo2::text(prims, f, Family::ExtraSmall, def.menu_name(), name_r, Align::Left, argb(OFF_WHITE, 1.0));
     }
     // Wildcards: each card's art and name in its plate.
     for (r, wildcard) in cards.iter().zip(d.wildcards.iter()) {

@@ -8936,3 +8936,65 @@ No C ABI change.
 * **Measured** after the follow-ups: weapons 1,897 → 1,882 cells (`fire_sound` 15 → 1, the Black
   Hat that never fires; `display_name` 6 → 5), still 11 clusters; cac 0 cells, 5 BO2-only rows;
   12 gap clusters. The weapon table gains `FireSoundNpc` (integrator: weapon-table/archive bump).
+
+## Weapons: BO2's balance patches (`common_patch_mp`) through the asset pool
+
+**Root cause.** BO2 MP loads `common_mp` together with its patch zone `common_patch_mp`, which
+redefines 79 of `common_mp`'s weapons and 49 of its attachments (the post-launch balance passes)
+and adds the Peacekeeper, `grip_smg` and the two `dualclip_*add` attachments. The converter read
+weapons and attachments from `common_mp` alone and the conformance expected side from
+`common_mp` + `patch_mp`, so both carried launch stats and agreed with each other — the oracle
+could not see it.
+
+**How BO2 resolves a name in several zones** (t6mp, read-only Ghidra; probes in the plan dir):
+`DB_LoadXAssets` (`FUN_0059a550`) appends `"%s_patch%s"` for `common_mp` (flag 0x80 → its patch
+zone at flag 0x100); `patch_mp` loads with flag 2 (`FUN_0059b2f0`). `DB_LinkXAssetEntry`
+(`FUN_00597000`): a `,name` stub returns the existing entry (never overrides); otherwise the
+entry whose zone flag ranks higher in `FUN_00596e60` (2 → 0x41, 0x100 → 0x37, 0x80 → 0x36) stays
+live — the loser is chained behind, and every pointer to the name sees the live asset. So the pool
+is `patch_mp` > `common_patch_mp` > `common_mp` (`zhbo_formats::weapon::MP_POOL`). All 38
+stringtables (statstable, attachmenttable, weaponoptions) are `patch_mp`'s; `common_patch_mp`
+has none, so no CSV changes.
+
+**Fix (both sides, one rule).** `zhbo_formats::weapon::pooled`/`pooled_attachments` resolve per
+name over the pool (base-zone order, patch-only names appended); effects and tracers bind by name
+to the pool's live asset (`fx::bind`, `bind_tracer` — the pistols' `fx_pistol` is now `patch_mp`'s,
+not `common_mp`'s own copy; the explosion and dud effects are bound there too instead of in
+`read`). The converter takes them from `zhbo_assets::paks::mp_weapons` (generals, hud, the
+conformance actual side, the viewmodel sweep); models and clips from `viewmodels::find_model`/
+`find_anim` over the same pool (`find_anim` skips the 2,826 `,name` xanim stubs in
+`common_patch_mp` — taking one gave "frame rate 0"). The expected side's `Install` reads
+`common_patch_mp` and resolves variants, attachments and models over the same pool — an
+expected-side change justified by `FUN_0059a550`/`FUN_00597000`/`FUN_00596e60`.
+
+**A rise it exposed, fixed.** The patch renames the R870's `displayName` to `WEAPON_REM870MCS`
+("Remington 870 MCS"), but BO2's class menus name items by statstable column 3 (`GetItemName`,
+`cacweaponsp.lua:893`: "R870 MCS"). The weapon table gains `CacName`; the class UI shows
+`WeaponDef::menu_name` (the item name, else the HUD name); the HUD keeps `DisplayName`.
+
+**Gotcha.** A Debug-tree diff of `Option<Sway>` None → Some mislabels the following leaves: the
+patched `mms` only turns on its ADS sway override (1, 4.5, 0.125 ×4); `mmsMaxDist` (100) and the
+view-position fields are byte-identical (raw-word probe).
+
+**Measured** (vs ~/.opencode/plan/gap-cleanup/conf/): weapons 11,605 → 12,163 rows (+558, the
+Peacekeeper's combinations), 1,897 → 1,994 cells — the +97 are all Peacekeeper rows of the existing
+`hud_icon` combination cluster; no other cell appeared or left. On the common rows 90,630 cells
+moved on the expected side and the same 90,630 on the actual side (48 columns, 69 base weapons:
+`reload_add_time` 9,310, `damage_range` 8,843, `sprint_out_time` 8,462, `hip_spread` 6,215, …).
+cac 0 → 0 cells, BO2-only rows 5 → 4 (the Peacekeeper converts). Gap clusters 12 → 12.
+
+**Versions (integrator-owned, NOT bumped):** the archive's `hud::VERSION` (the weapon table's
+values and its new `CacName` line; the Peacekeeper's viewmodel). No C ABI change.
+
+### The Peacekeeper without Revolution: listed locked, as BO2 does
+
+Manager decision: match BO2 rather than offer a grey gun. Its gun images are `,name` stubs whose
+pixels only the Revolution DLC zone carries, so the converter locks every Create-a-Class item whose
+view model's colour maps mostly fail to resolve (`weapons::lock_items_without_art`,
+`model_art_converts`) — data, no DLC list. The hint is the localized
+`MENU_<statstable column 15>_REQUIRED_HINT` (`codbase.lua:3741-3770`; column 15 is `dlc1`):
+"Revolution DLC Pack required.". The picker draws `CoD.CAC.SetLockIcon(card, 64,
+menu_mp_lobby_locked_big)` with the picture and bars hidden (`cacweaponsp.lua:505-535`, `:928-945`),
+the pick is refused, and `classrepair` drops a stored Peacekeeper. Screenshot
+`cac-editor-weapons-locked` matches `c-primary/007`. Conformance unchanged (weapons 1,994 cells,
+cac 0, gaps 12). The table gains `CacLocked`/`CacLockHint` (archive version bump, integrator).

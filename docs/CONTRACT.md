@@ -186,9 +186,10 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   brass has none, because BO2's rule is the def alone — a weapon without `viewShellEjectEffect`
   ejects nothing (the launchers, the crossbow, the M32; no eject notetrack and no default), so the
   bridge skips the shell call when `ViewShellFx` is empty. The def's effect is bound as BO2's asset
-  pool binds it (`zhbo_formats::weapon::all_in`): `common_mp` carries `weapon/shellejects/fx_rifle`
-  only as a reference stub and `patch_mp` the full asset, so the AN-94, the other ARs and the
-  snipers do eject. Every attachment combination in the table carries its base's converted
+  pool binds it (`zhbo_formats::weapon::pooled`, every name resolved to the pool's live asset):
+  `common_mp` carries `weapon/shellejects/fx_rifle` only as a reference stub and `patch_mp` the
+  full asset, so the AN-94, the other ARs and the snipers do eject; the pistols' `fx_pistol` is
+  `patch_mp`'s, over `common_mp`'s own copy. Every attachment combination in the table carries its base's converted
   flash/brass/shot (`zhbo_assets::weapons::inherit_converted_assets`, the silencer swap applied). The ports are per hand:
   `viewmodel_fired` (the right gun, or a single gun) flashes at `tag_flash` and ejects at
   `tag_brass`; `viewmodel_fired_left` (a dual-wield pair's left gun, appended to `ZhboClientOut`)
@@ -806,6 +807,29 @@ instead of their own constants. When the file is absent the built-in defaults ke
 fallback working; a test asserts the shipped file sets every key to its default. Adding a knob:
 one line in `tuning.rs`'s field table (field, ini key, default, cited doc) and the same key in
 `data/ConquerOps/tuning.ini`.
+
+**Weapons are BO2's patched definitions.** The weapon table converts every `WeaponVariantDef`,
+`WeaponAttachment`, model, clip and effect as BO2's asset pool resolves them over the multiplayer
+weapon zones (`zhbo_formats::weapon::MP_POOL`, highest priority first: `patch_mp`,
+`common_patch_mp`, `common_mp`). `DB_LoadXAssets` (`FUN_0059a550`) loads `common_mp` (zone flag
+0x80) with its patch zone `common_patch_mp` (`"%s_patch%s"`, flag 0x100); `DB_LinkXAssetEntry`
+(`FUN_00597000`) keeps the asset whose zone flag ranks higher in `FUN_00596e60` (`patch_mp`'s 2 →
+0x41, 0x100 → 0x37, 0x80 → 0x36), and a `,name` reference stub never overrides. So the 79 weapons
+and 49 attachments `common_patch_mp` redefines carry BO2's post-launch balance (the M8A1's 32-round
+magazine, the SMGs' hip kick), and the Peacekeeper, defined only there, is a class item — listed
+**locked** when its art did not convert (its gun images are reference stubs only the Revolution DLC
+zone fills): the weapon table's `CacLocked`/`CacLockHint` (the hint is the localized
+`MENU_<statstable column 15>_REQUIRED_HINT`), set by `zhbo_assets::weapons::lock_items_without_art`
+from whether the view model's colour maps resolve; the picker draws BO2's lock
+(`menu_mp_lobby_locked_big`, 64 square, the picture and bars hidden, `c-primary/007`), refuses the
+pick, and `classrepair` drops a stored one. The
+converter picks them in one place (`zhbo_assets::paks::mp_weapons`; models and clips through
+`viewmodels::find_model`/`find_anim` over the same pool), and the conformance expected side reads
+the same pool (`zhbo_conformance::bo2::install::Install::pool`). The stringtables
+(`mp/statstable.csv`, `mp/attachmenttable.csv`, ...) are all `patch_mp`'s. The class menus name an
+item by its statstable column 3 (`GetItemName`, the table's `CacName`, `WeaponDef::menu_name`); the
+HUD by the variant's `displayName` (`DisplayName`) — the patched R870 is "R870 MCS" in the menus
+and "Remington 870 MCS" on the HUD.
 
 **Perks are specialty sets.** What a perk does is the `specialty_*` bits it grants (the
 converted weapon table's `Perk <reference>` blocks, BO2's `specialty` rows of the player's

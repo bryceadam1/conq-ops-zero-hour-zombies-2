@@ -53,7 +53,7 @@ pub(super) fn cac_entries() -> Vec<&'static WeaponDef> {
         .filter(|d| !all.iter().any(|base| base.alt_modes.iter().any(|(_, alt)| alt == &d.id)))
         .filter(|d| {
             // Safety net: no weapon may appear twice under one display name.
-            let name = d.display_name.as_str();
+            let name = d.menu_name();
             if seen.contains(&name) {
                 false
             } else {

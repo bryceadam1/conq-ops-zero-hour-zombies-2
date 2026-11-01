@@ -136,7 +136,7 @@ pub(super) fn picker_title(editor: &Editor) -> String {
         Slot::Secondary => "SECONDARY".to_string(),
         Slot::PrimaryAtts | Slot::SecondaryAtts => {
             let id = if editor.slot == Slot::PrimaryAtts { editor.draft.primary.as_str() } else { editor.draft.secondary.as_str() };
-            format!("{} ATTACHMENTS", weapons::weapon(id).display_name.to_uppercase())
+            format!("{} ATTACHMENTS", weapons::weapon(id).menu_name().to_uppercase())
         }
         Slot::Lethal => offhand_title(&editor.draft, true).to_string(),
         Slot::Tactical => offhand_title(&editor.draft, false).to_string(),
@@ -195,7 +195,7 @@ fn draw_cell(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor, cell: &Ed
                 let iw = ih * 2.0;
                 let pic = Rect { x: r.right() - 90.0 - iw, y: r.y + 10.0, w: iw, h: ih };
                 bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&def.id)), pic, argb(OFF_WHITE, 1.0), Vec::new());
-                bo2::text(prims, f, Family::Condensed, &def.display_name, Rect { x: r.x + 3.0, y: r.bottom() - bo2::TEXT_CONDENSED - 2.0, w: r.w, h: bo2::TEXT_CONDENSED }, Align::Left, argb(OFF_WHITE, 1.0));
+                bo2::text(prims, f, Family::Condensed, def.menu_name(), Rect { x: r.x + 3.0, y: r.bottom() - bo2::TEXT_CONDENSED - 2.0, w: r.w, h: bo2::TEXT_CONDENSED }, Align::Left, argb(OFF_WHITE, 1.0));
                 // The slot's camo swatch (`CACWeaponButton.GetCamoSwatch`: 32 square, its right
                 // edge `ImageBorder + 39` in, 5 up), reading `class[weaponStatName .. "camo"]`: the
                 // primary's `primarycamo`, the secondary's `secondarycamo`.
@@ -318,8 +318,8 @@ fn offhand_names(d: &Draft, lethal: bool) -> Vec<String> {
     let id = if lethal { &d.lethal } else { &d.tactical };
     match d.offhand_count(lethal) {
         0 => Vec::new(),
-        1 => vec![weapons::weapon(id).display_name.clone()],
-        n => vec![format!("{} x{n}", weapons::weapon(id).display_name)],
+        1 => vec![weapons::weapon(id).menu_name().to_string()],
+        n => vec![format!("{} x{n}", weapons::weapon(id).menu_name())],
     }
 }
 
@@ -400,6 +400,15 @@ pub(super) fn cell_icon(editor: &Editor, cell: &EditorCell) -> Option<String> {
     }
 }
 
+/// BO2's lock on a locked carousel card: `menu_mp_lobby_locked_big`, 64 square at the card's
+/// centre, the weapon picture hidden (`CoD.CAC.SetLockIcon(card, 64, …)`, `cac.lua:1007-1038`;
+/// `cacweaponsp.lua:928-945`, `c-primary/007`).
+fn lock_icon(prims: &mut Vec<Prim>, f: &Frame, card: Rect) {
+    const SIZE: f32 = 64.0;
+    let r = Rect { x: card.x + (card.w - SIZE) * 0.5, y: card.y + (card.h - SIZE) * 0.5, w: SIZE, h: SIZE };
+    bo2::image(prims, f, "menu_mp_lobby_locked_big", r, argb(OFF_WHITE, 1.0), Vec::new());
+}
+
 /// Whether a weapon offers any attachments at all (BO2's "Attachments not available", `b-editor/002`).
 pub(super) fn offers_attachments(id: &str) -> bool {
     !id.is_empty() && !weapons::weapon(id).allowed.is_empty()
@@ -430,11 +439,16 @@ fn draw_weapon_picker(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor) 
         let iw = card.w - 60.0;
         let ih = iw / 2.0;
         let pic = Rect { x: card.x + (card.w - iw) * 0.5, y: card.y + 12.0, w: iw, h: ih };
-        bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&def.id)), pic, argb(OFF_WHITE, 1.0), Vec::new());
-        bo2::text(prims, f, Family::Condensed, &def.display_name, Rect { x: card.x + 3.0, y: card.bottom() - bo2::TEXT_CONDENSED - 2.0, w: card.w, h: bo2::TEXT_CONDENSED }, Align::Left, argb(BOII_ORANGE, 1.0));
+        if def.cac_locked {
+            lock_icon(prims, f, card);
+        } else {
+            bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&def.id)), pic, argb(OFF_WHITE, 1.0), Vec::new());
+        }
+        let name_color = if def.cac_locked { OFF_WHITE } else { BOII_ORANGE };
+        bo2::text(prims, f, Family::Condensed, def.menu_name(), Rect { x: card.x + 3.0, y: card.bottom() - bo2::TEXT_CONDENSED - 2.0, w: card.w, h: bo2::TEXT_CONDENSED }, Align::Left, argb(name_color, 1.0));
         // The four segmented bars, right of the card and under the tiles (`cacweaponsp.lua`'s
-        // WeaponAttributeList, `b-editor/016`).
-        if def.class.is_gun() {
+        // WeaponAttributeList, `b-editor/016`); a locked item hides them (`cacweaponsp.lua:505-511`).
+        if def.class.is_gun() && !def.cac_locked {
             let x = CAROUSEL_CARD_W + 80.0;
             let r = f.in_menu(crate::lui::Place::new((true, false, x, x + bo2::MENU_W / 2.0), (true, false, 330.0, 430.0)));
             stat_bars(prims, f, r, &weapon_stats(def));
@@ -442,9 +456,11 @@ fn draw_weapon_picker(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor) 
         // The highlighted item's description: the carousel's hint (`CoD.HintText`, 350 wide at
         // the menu's left, `cacweaponsp.lua:206-209` and `:540-590`), level with the bars
         // (`c-primary/001`).
-        if !def.description.is_empty() {
+        // A locked item's hint is its unlock string instead (`cacweaponsp.lua:512-516`).
+        let hint = if def.cac_locked { &def.cac_lock_hint } else { &def.description };
+        if !hint.is_empty() {
             let r = f.in_menu(crate::lui::Place::new((true, false, 0.0, 350.0), (true, false, 330.0, 330.0 + bo2::TEXT_DEFAULT)));
-            bo2::hint(prims, f, r, &def.description);
+            bo2::hint(prims, f, r, hint);
         }
     }
     // The tiles clip at the menu's edge, as BO2's carousel's partial cards do (`b-editor/016`).
@@ -457,8 +473,12 @@ fn draw_weapon_picker(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor) 
         let iw = r.w - 40.0;
         let ih = iw / 2.0;
         let pic = Rect { x: r.x + (r.w - iw) * 0.5, y: r.y + 12.0, w: iw, h: ih };
-        bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&def.id)), pic, argb(OFF_WHITE, 1.0), Vec::new());
-        bo2::text(prims, f, Family::Condensed, &def.display_name, Rect { x: r.x + 3.0, y: r.bottom() - bo2::TEXT_CONDENSED - 2.0, w: r.w, h: bo2::TEXT_CONDENSED }, Align::Left, argb(OFF_WHITE, 1.0));
+        if def.cac_locked {
+            lock_icon(prims, f, r);
+        } else {
+            bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&def.id)), pic, argb(OFF_WHITE, 1.0), Vec::new());
+        }
+        bo2::text(prims, f, Family::Condensed, def.menu_name(), Rect { x: r.x + 3.0, y: r.bottom() - bo2::TEXT_CONDENSED - 2.0, w: r.w, h: bo2::TEXT_CONDENSED }, Align::Left, argb(OFF_WHITE, 1.0));
         if editor.option_chosen(*opt) {
             bo2::text(prims, f, Family::Condensed, "*", Rect { x: r.right() - 20.0, y: r.y + 2.0, w: 20.0, h: bo2::TEXT_CONDENSED }, Align::Center, argb(bo2::YELLOW_GLOW, 1.0));
         }
@@ -569,7 +589,7 @@ fn draw_option_grid(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor) {
         } else if let Some(def) = editor.option_weapon(editor.option).filter(|_| matches!(editor.slot, Slot::Lethal | Slot::Tactical)) {
             // `cacgrenades.lua:262-360`: `grenadeTitle` (Big) / `grenadeDescription` (Default,
             // 0.4, two cells and two gaps wide), set from `GetItemName` / `GetItemDesc` (`:488-567`).
-            draw_item_panel(prims, f, &def.display_name, &def.description, y);
+            draw_item_panel(prims, f, def.menu_name(), &def.description, y);
         } else {
             // The other content pickers carry only the highlighted entry's name under the grid.
             let r = f.in_menu(crate::lui::Place::new((true, false, 0.0, bo2::MENU_W * 0.5), (true, false, y, y + bo2::TEXT_CONDENSED)));

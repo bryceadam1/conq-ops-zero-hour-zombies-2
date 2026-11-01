@@ -6,12 +6,12 @@ use super::*;
 /// screen reads exactly like the resulting class. Display names, not ids; `—` when a slot is empty.
 pub fn slot_value(d: &Draft, slot: Slot) -> String {
     match slot {
-        Slot::Primary => weapons::weapon(&d.primary).display_name.clone(),
-        Slot::Secondary => weapons::weapon(&d.secondary).display_name.clone(),
+        Slot::Primary => weapons::weapon(&d.primary).menu_name().to_string(),
+        Slot::Secondary => weapons::weapon(&d.secondary).menu_name().to_string(),
         Slot::PrimaryAtts => att_names(&d.primary_atts),
         Slot::SecondaryAtts => att_names(&d.secondary_atts),
-        Slot::Lethal => weapons::weapon(&d.lethal).display_name.clone(),
-        Slot::Tactical => weapons::weapon(&d.tactical).display_name.clone(),
+        Slot::Lethal => weapons::weapon(&d.lethal).menu_name().to_string(),
+        Slot::Tactical => weapons::weapon(&d.tactical).menu_name().to_string(),
         Slot::Perk1 | Slot::Perk2 | Slot::Perk3 => {
             let tier = slot.perk_tier().unwrap_or(1) as usize;
             d.perks[tier - 1].map(|p| p.def().id.to_string()).unwrap_or_else(|| "—".into())
@@ -52,7 +52,7 @@ pub(super) fn att_names(atts: &[String]) -> String {
 /// The display names of a slot's listed guns ([`Editor::gun_list`]), in catalog order. The editor
 /// opens on the held weapon through [`Editor::current_option_index`], not by reordering the list.
 pub(super) fn weapon_options(ids: &[&str]) -> Vec<String> {
-    ids.iter().map(|id| weapons::weapon(id).display_name.clone()).collect()
+    ids.iter().map(|id| weapons::weapon(id).menu_name().to_string()).collect()
 }
 
 /// The attachment display names the weapon offers, in its list order ([`attachment_shorts`]); the
@@ -65,7 +65,7 @@ pub(super) fn attachment_options(base: &str) -> Vec<String> {
 /// The display names of an offhand slot's listed items, in catalog order. The editor opens on the
 /// held one through [`Editor::current_option_index`].
 pub(super) fn equipment_options(ids: &[&str]) -> Vec<String> {
-    ids.iter().map(|id| weapons::weapon(id).display_name.clone()).collect()
+    ids.iter().map(|id| weapons::weapon(id).menu_name().to_string()).collect()
 }
 
 /// The display names of the perks in a tier.
