@@ -261,6 +261,21 @@ colour map and the native pass uses as the reflectance colour (RENDERER.md; pinn
 `the_camo_assets_convert_with_their_art` pins the converter's unresolved list to the 20 provably
 unreachable names (DLC-only stubs and diamond's colour-less technique).
 
+## The native-art audit
+
+`cargo run --release -p zhbo-assets -- audit-native <ConquerOps_BO2.big>` loads every converted
+weapon of the archive's own table — the base set, every attachment combination create-a-class can
+build (the archive holds a `ZV<vm><F>.zbv` for each), alt modes — the way the game does:
+`nativevm::load` for each viewmodel and each faction's arms over the bridge's file protocol, and
+`nativebody::load` for each world manifest and each faction's body. It lists every one that fails to
+compose or composes no surface at hip or at full ADS (the ADS part list), and exits non-zero if any
+does. The same audit runs as the real-install test `native_audit::every_converted_weapon_draws`
+(over the converter's output in memory, so it needs only `ZHBO_BO2_DIR`). It checks the art and the
+core's loading, not the bridge: the bridge's half is the `ZV<vm><F>` name and the faction letter it
+passes (`Zhbo_GetViewmodel`), which the core validates (`nativevm` refuses a non-letter faction
+with a log line). The sweep above passes its faction directly, so it cannot catch a bridge naming
+bug; the game log's `native viewmodel:` lines can.
+
 ## Autopilot and the input path
 
 The autopilot replaces all input inside the Rust core, so `autotest.ps1` never exercises the OS

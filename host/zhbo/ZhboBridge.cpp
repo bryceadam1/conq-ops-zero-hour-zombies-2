@@ -852,7 +852,7 @@ Bool Zhbo_GetCameraOverride(Coord3D *eye, Coord3D *dir, Real *horizontalFov, Rea
 	return TRUE;
 }
 
-Bool Zhbo_GetViewmodel(Int *clip, Int *weapon, Bool *fired, Bool *firedLeft, Real *time, Real *ads, AsciiString *model, Char *faction, Coord3D *offset, Coord3D *angles)
+Bool Zhbo_GetViewmodel(Int *clip, Int *weapon, Bool *fired, Bool *firedLeft, Real *time, Real *ads, AsciiString *model, char *faction, Coord3D *offset, Coord3D *angles)
 {
 	if (!s_ready || !s_out.camera_override || s_out.viewmodel < 0 || !s_out.hide_object)
 		return FALSE;

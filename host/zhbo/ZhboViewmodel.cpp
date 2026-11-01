@@ -365,7 +365,7 @@ namespace
 	}
 
 	// Draw the weapon through the native pass; TRUE when it did (the W3D model stays hidden).
-	Bool nativeViewmodel(const Coord3D &eye, const Coord3D &dir, Int clip, Int weapon, const AsciiString &name, Char faction, Real time, Real ads,
+	Bool nativeViewmodel(const Coord3D &eye, const Coord3D &dir, Int clip, Int weapon, const AsciiString &name, char faction, Real time, Real ads,
 		const Coord3D &offset, const Coord3D &angles, Bool fired, Bool firedLeft)
 	{
 		if (weapon < 0 || name.getLength() < 5 || !name.startsWith("ZV"))
@@ -646,7 +646,7 @@ void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)
 	Bool fired = FALSE, firedLeft = FALSE;
 	Real time = 0.0f, ads = 0.0f;
 	AsciiString name;
-	Char faction = 0;
+	char faction = 0;
 	Coord3D offset, angles;
 	if (!active || !Zhbo_GetViewmodel(&clip, &weapon, &fired, &firedLeft, &time, &ads, &name, &faction, &offset, &angles) || clip < 0)
 	{

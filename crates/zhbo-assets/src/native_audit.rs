@@ -71,6 +71,9 @@ pub fn audit(weapons: &[WeaponDef], read: &dyn Fn(&str) -> Option<Vec<u8>>) -> R
         if !seen_vm.insert(d.viewmodel) {
             continue;
         }
+        if seen_vm.len() % 1000 == 0 {
+            eprintln!("native audit: {} viewmodels", seen_vm.len());
+        }
         let mut fail = |what: String| report.problems.push(Problem { weapon: d.id.clone(), what });
         for f in factions() {
             report.first_person += 1;
@@ -115,7 +118,9 @@ pub fn audit_archive(path: &std::path::Path) -> Result<Report, String> {
     let entry = archive.find(table_path).ok_or_else(|| format!("the archive has no {table_path}"))?;
     let text = String::from_utf8(archive.read(entry).map_err(|e| format!("{table_path}: {e}"))?).map_err(|e| format!("{table_path}: {e}"))?;
     let table = zhbo_core::weapons::parse_full_table(&text)?;
-    let read = |p: &str| archive.find(p).and_then(|e| archive.read(e).ok());
+    // `BigArchive::find` is a linear scan; the audit asks for tens of thousands of paths.
+    let index: std::collections::HashMap<String, usize> = archive.entries().iter().enumerate().map(|(i, e)| (zhbo_formats::big::normalize(&e.path), i)).collect();
+    let read = |p: &str| index.get(&zhbo_formats::big::normalize(p)).and_then(|&i| archive.read(&archive.entries()[i]).ok());
     Ok(audit(&table.weapons, &read))
 }
 

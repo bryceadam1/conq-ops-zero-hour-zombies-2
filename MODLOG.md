@@ -8529,3 +8529,33 @@ shows "sound layers: 293 BO2 third-person layers installed"), `--classpick` 6/6,
 `--scope` pass, `--w3d-ads` 2/2. Two legs launched back-to-back first bailed with "Generals is
 already running" (the previous game still exiting); rerun serially they passed — wait for the
 previous `generalszh` to exit between legs.
+
+## Missing models: every combination's first-person viewmodel drew nothing (the faction letter)
+
+**Report.** "For the DSR 50, I do not see a model for it. I can use it like normal" — first person;
+the third person showed the gun. The user's own log had the whole story: the class's DSR-50 was
+silenced, a combination, so its viewmodel is a four-digit id (8664), and
+
+    native body: ZW8664U composed ...                       (third person fine)
+    viewmodel: no model ZV8664U_SKN                          (W3D: combinations have no W3D mesh)
+    native viewmodel: Art\Native\ZV86646.zbv is not in the archive
+
+The archive holds `ZV8664U.zbv`. **Root cause:** `ZhboViewmodel.cpp` read the faction letter out of
+the W3D model name `ZV%02d%c_SKN` as its fifth character, which is only the letter for a two-digit
+viewmodel. Every combination — every class weapon with any attachment (the converter numbers them
+after the base set) — asked for `ZV<vm><digit>.zbv`, failed once, and drew neither path. The base
+weapons (two digits) were fine, which is why the headless sweep (it passes `U` directly) and the
+default-loadout autotests never saw it. The log line blamed the conversion, which pointed away.
+
+**Fix.** `Zhbo_GetViewmodel` hands the faction letter out (`side->letter`) and the bridge passes it
+straight into `ZhboNativeIn.faction`; no name parsing. The core now refuses a faction that is not
+an uppercase letter before asking for any file, with a log line that names the byte (a test pins
+it), so a bridge naming bug can no longer masquerade as missing art. Internal C++ signature only:
+no ABI change.
+
+**Audit.** `zhbo-assets audit-native <archive>` (and the real-install test
+`native_audit::every_converted_weapon_draws`) loads every converted weapon of the table — base,
+every create-a-class combination, alt modes — through `nativevm::load` for each faction and
+`nativebody::load` for each world manifest, and fails on anything that does not compose or has no
+surface at hip or at full ADS. Gotcha: `BigArchive::find` is a linear scan with an allocation per
+entry; over ~60k entries tens of thousands of lookups take many minutes — index the entries first.

@@ -86,7 +86,7 @@ Bool Zhbo_GetCameraOverride(Coord3D *eye, Coord3D *dir, Real *horizontalFov, Rea
 /// the W3D model for the local General's faction, and that faction's letter (`U`, `C`, `G`: the
 /// native manifest's suffix — never read it back out of `model`, whose weapon number has any
 /// width). False when none should show.
-Bool Zhbo_GetViewmodel(Int *clip, Int *weapon, Bool *fired, Bool *firedLeft, Real *time, Real *ads, AsciiString *model, Char *faction, Coord3D *offset, Coord3D *angles);
+Bool Zhbo_GetViewmodel(Int *clip, Int *weapon, Bool *fired, Bool *firedLeft, Real *time, Real *ads, AsciiString *model, char *faction, Coord3D *offset, Coord3D *angles);
 /// Device side (ZhboViewmodel.cpp): place, pose or hide the viewmodel. W3DView::update calls it
 /// every frame with the first-person camera, or with `active` false.
 void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir);
