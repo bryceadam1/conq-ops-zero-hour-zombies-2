@@ -4672,3 +4672,21 @@ slots have no clip; the emitter reads 0x55/0x56 without the idle fallback) — a
 
 Verified: `cargo test --workspace` green; clippy adds no warning; the real-install suite
 (`--skip conformance`) green. No game launched. Manifests change: archive VERSION bump at integration.
+
+### Follow-up: alt modes get BO2's merged table; the offhand ADS slots are unreachable (2026-10-31, `v1/alt-anims`)
+
+* **Alt modes now merge** (`viewmodels::alt_anims`): an alt weapon keeps its parent's attachment
+  fields, so its table is `combo()` over its OWN variant's uniques with the parent's shorts, minus
+  the producer (`FUN_0052d470`: the short whose single unique's `altWeaponIndex` names the alt),
+  kept when the alt is ADS-only (`FUN_008ecb00`); `combo()` then applies tier 2 and the
+  0x1A/0x1B/0x56 restore. Measured: **no cell moves** — the converted alt rows (`gl_*`, `sf_*`,
+  `dualoptic_*` combos) already matched, because in BO2's data the merge reproduces the raw
+  variant table for every one of them; their only anim diffs are 9,280 mod-side-empty cells
+  (combos without a manifest). The merge is correct by construction for the cases data adds later.
+* **The 8 offhand `anim_ads_up`/`anim_ads_down` rows stay**: the mod never plays an ADS layer on an
+  offhand — the arsenal zeroes `ads` when an offhand is readied and only a gun may aim
+  (`arsenal.rs`, `wants_ads` requires `class.is_gun()`), and `Loaded::ads_clip` reads the manifest
+  without the idle fallback by design (an idle on the `sample_over` layer would replace the action
+  pose). BO2 registers the idle in the empty slot (`FUN_0052d3e0`), but the mod never reaches it
+  (whether BO2 ever aims an offhand was not checked); reporting the idle would shape the emitter beyond what ships, and changing the
+  player would play an unreachable clip. Left as an honest floor.

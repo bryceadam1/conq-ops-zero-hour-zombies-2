@@ -321,6 +321,28 @@ pub fn combo<'a>(w: &'a zhbo_formats::weapon::Weapon, atts: &[zhbo_formats::weap
     }
 }
 
+/// The animation table of an alt mode (`alt`, e.g. `gl_an94_mp`) toggled from a weapon carrying
+/// `shorts`: BO2's alt weapon keeps its parent's attachment fields, so it merges them over its OWN
+/// variant's uniques (`FUN_0052d540`), first dropping the attachment whose unique produced it
+/// (`FUN_0052d470`, matched on the unique's `altWeaponIndex`) unless the alt is ADS-only
+/// (`FUN_008ecb00`: the def's flag or any attachment's).
+pub fn alt_anims(alt: &zhbo_formats::weapon::Weapon, atts: &[zhbo_formats::weapon::Attachment], shorts: &[&str]) -> Vec<Option<String>> {
+    use crate::weapons::short_name;
+    let kind_of = |short: &str| alt.attachment_variants.iter().find(|(_, id)| short_name(id) == short).map(|(k, _)| *k);
+    let ads_only = alt.alt_weapon_ads_only
+        || shorts.iter().filter_map(|s| kind_of(s)).any(|k| atts.iter().find(|a| a.kind == k).is_some_and(|a| a.alt_weapon_ads_only));
+    let mut kept: Vec<&str> = shorts.to_vec();
+    if !ads_only {
+        let producer = kept.iter().position(|s| {
+            kind_of(s).and_then(|k| alt.single_unique(k)).and_then(|u| u.alt_weapon.as_deref()) == Some(alt.name.as_str())
+        });
+        if let Some(i) = producer {
+            kept.remove(i);
+        }
+    }
+    combo(alt, atts, &kept).anims
+}
+
 /// The BO2 weapon a converted id stands for: `an94_mp+gl+reflex` and `gl_an94_mp~...` are
 /// `an94_mp` and `gl_an94_mp`.
 pub fn base_id(id: &str) -> &str {
@@ -547,7 +569,7 @@ pub(crate) fn weapon_viewmodels(
         }
         // The weapon's clips, then its alt mode's after them on the same viewmodel.
         let alt_id = defs.iter().find(|d| &d.id == id).map(|d| d.alt.clone()).unwrap_or_default();
-        let alt_anims = (!alt_id.is_empty()).then(|| bo2.iter().find(|a| a.name == base_id(&alt_id))).flatten().map(|a| a.anims.clone());
+        let alt_anims = (!alt_id.is_empty()).then(|| bo2.iter().find(|a| a.name == base_id(&alt_id))).flatten().map(|a| alt_anims(a, atts, &shorts));
         let mut sets = vec![(0usize, c.anims.clone())];
         if let Some(a) = alt_anims.clone() {
             sets.push((zhbo_core::weapons::ALT_CLIPS as usize, a));
@@ -1135,6 +1157,54 @@ mod tests {
         assert_eq!(c.anims[0x1A].as_deref(), Some("variant_alt_raise"), "the alt-mode slot keeps the variant's clip");
     }
 
+    /// An alt mode merges its parent's attachments over its own uniques, minus the one that produced
+    /// it (`FUN_0052d470`); an ADS-only alt keeps the producer, and tier 2 keeps its own alt slots.
+    #[test]
+    fn the_alt_mode_merges_the_parents_attachments_minus_its_producer() {
+        use zhbo_formats::weapon::inventory::ALTMODE;
+        let gl = Attachment { name: "gl".into(), kind: 11, point: 2, ..Default::default() };
+        let reflex = Attachment { name: "reflex".into(), kind: 20, point: 1, ..Default::default() };
+        let mut gl_u = AttachmentUnique { kind: 11, alt_weapon: Some("gl_an94_mp".into()), ..Default::default() };
+        gl_u.anims = vec![None; 0x58];
+        gl_u.anims[0x01] = Some("gl_idle".into());
+        let mut reflex_u = AttachmentUnique { kind: 20, ..Default::default() };
+        reflex_u.anims = vec![None; 0x58];
+        reflex_u.anims[0x55] = Some("reflex_ads_up".into());
+        let mut alt = Weapon {
+            name: "gl_an94_mp".into(),
+            inventory: ALTMODE,
+            attachment_variants: vec![(11, "gl".into()), (20, "reflex".into())],
+            attachment_uniques: vec![gl_u, reflex_u],
+            ..Default::default()
+        };
+        alt.anims = vec![None; 0x58];
+        alt.anims[0x01] = Some("own_idle".into());
+        let alt = with_bits(alt);
+        let t = super::alt_anims(&alt, &[gl, reflex], &["gl", "reflex"]);
+        assert_eq!(t[0x01].as_deref(), Some("own_idle"), "the producer's unique is dropped");
+        assert_eq!(t[0x55].as_deref(), Some("reflex_ads_up"), "the parent's other attachment merges");
+
+        // The dual optic: ADS-only, so its unique stays and the alt slots stay the variant's.
+        let dualoptic = Attachment { name: "dualoptic".into(), kind: 3, point: 1, alt_weapon_ads_only: true, ..Default::default() };
+        let mut u = AttachmentUnique { kind: 3, alt_weapon: Some("dualoptic_an94_mp".into()), ..Default::default() };
+        u.anims = vec![None; 0x58];
+        u.anims[0x1A] = Some("rmr_alt_raise_up".into());
+        u.anims[0x3D] = Some("rmr_ads_fire".into());
+        let mut alt = Weapon {
+            name: "dualoptic_an94_mp".into(),
+            inventory: ALTMODE,
+            attachment_variants: vec![(3, "dualoptic".into())],
+            attachment_uniques: vec![u],
+            ..Default::default()
+        };
+        alt.anims = vec![None; 0x58];
+        alt.anims[0x1A] = Some("rmr_alt_raise_down".into());
+        let alt = with_bits(alt);
+        let t = super::alt_anims(&alt, &[dualoptic], &["dualoptic"]);
+        assert_eq!(t[0x1A].as_deref(), Some("rmr_alt_raise_down"));
+        assert_eq!(t[0x3D].as_deref(), Some("rmr_ads_fire"), "the ADS-only producer is kept");
+    }
+
     /// The dual optic's parent (`an94_mp+dualoptic`): its attachment is alt-ADS-only, but tier 2 is
     /// an alt-mode rule (`FUN_008eddb0` checks `inventoryType == ALTMODE` first), so the parent's
     /// alt raise and its ADS up/down/other-scope take the dual optic's clips, and the unique's
@@ -1185,7 +1255,7 @@ mod tests {
         w.anims[0x1A] = Some("own_alt_raise".into());
         w.anims[0x1B] = Some("own_alt_drop".into());
         let parent = with_bits(w.clone());
-        let c = super::combo(&parent, &[att.clone()], &["gl"]);
+        let c = super::combo(&parent, std::slice::from_ref(&att), &["gl"]);
         assert_eq!(c.anims[0x1A].as_deref(), Some("gl_alt_raise"));
         assert_eq!(c.anims[0x1B].as_deref(), Some("gl_alt_drop"));
         let alt = with_bits(Weapon { inventory: zhbo_formats::weapon::inventory::ALTMODE, ..w });
