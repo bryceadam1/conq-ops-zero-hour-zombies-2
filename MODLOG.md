@@ -4961,3 +4961,15 @@ compressor interaction (a burst ducking foley), the master EQ (+5 dB low shelf a
 hold-breath lines are on the unmerged `v1/idle-sway`: once it adds their events, `bus_voice`
 (×5.6, after the compressor) makes them come out ~17 dB over the shot at the bus input, as in BO2.
 No ABI change; the archive's sound content changed (VERSION bump is the integrator's).
+
+## The stereo fold leaves BO2's LFE layers out — kept, with the citation (2026-10-31, `v1/sound-mixer`)
+
+Decision confirmed by the coordinator: the converted stereo mix keeps BO2's LFE channel out.
+Evidence for "BO2 PC drops LFE in stereo": t6mp's sound init (`FUN_00830bc0`) sets the speaker
+layout "5.1 No Center 3D" and its DSP (`FUN_006f5310`) mixes six channels and hands six-channel
+buffers to the output (`FUN_00834553(6, 0x100, …)`); it never downmixes itself. On a stereo
+device the downmix is XAudio2's default output matrix, which for 5.1 → stereo maps FL/FR to L/R,
+centre and surrounds at −3 dB, and does not mix the LFE channel (Microsoft's XAudio2
+`IXAudio2Voice::SetOutputMatrix` / default channel-mapping documentation). `mixer::stereo_fold`
+is that matrix: `front + 0.707·(back + centre)`, LFE-only pans (`wpn_*_lfe`, `*_LFE_npc`) silent.
+The thump of the LFE-layer item survives only on 5.1 output in BO2, which the mod does not have.
