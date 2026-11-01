@@ -892,6 +892,10 @@ Polish round 2 again moved only the archive: `hud::VERSION` 80 (the weapon table
 `CacName`, `CacLocked` and `CacLockHint` keys, the weapons resolved over the `MP_POOL` zones with
 the Peacekeeper, the store reticles and the localized labels); the ABI and the blob formats are
 unchanged.
+Polish round 3 again moved only the archive: `hud::VERSION` 81 (the weapon table's `MeleeCharge` and
+`Bounce` keys, the attachment table's `Image` key, the four-number `Flags` without FMJ, the
+statstable-derived roster, the order-independent texture conversion, the Assault premade base kit); the ABI and the
+blob formats are unchanged.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 
