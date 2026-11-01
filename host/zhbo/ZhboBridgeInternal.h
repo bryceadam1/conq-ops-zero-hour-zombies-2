@@ -210,6 +210,9 @@ void setBo2Look(Bool on);
 // --- ZhboControlBar.cpp -----------------------------------------------------------------------
 AsciiString zhboBuildSetFor(const Object *general);
 void zhboInjectConstructButtons();
+// Whether a command-bar button window is on screen: it and every ancestor unhidden (the overlays'
+// test; the window's own hidden bit misses the bar's context parent being hidden).
+Bool zhboCommandWindowShown(GameWindow *win);
 // The command bar's class set (zhbo_core::classicons): one page of presets and the active set's
 // customs.
 Object *zhboSelectedGeneral();

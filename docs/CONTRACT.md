@@ -95,8 +95,12 @@ Ownership and rules:
   `zhbo_class_buttons(ZhboClassButton *out, cap)`; the bridge (`ZhboControlBar.cpp`) builds the
   `CommandSet` at game start, places the present rows' `ZHBO_CHOOSE_CLASS` CommandButtons at the
   returned slots, swaps sets on selection, and draws each kit over its button every frame (the
-  ammo-overlay pattern; the buttons' own `ButtonImage` is a plain tile). `zhbo_general_has_class`
-  drives the auto-swap. Both are free functions on the append-only ABI surface (same rules as the
+  ammo-overlay pattern; the buttons' own `ButtonImage` is a plain tile). Both overlays draw only
+  while the selection is the one General and only over a button window that is on screen — it
+  and every ancestor unhidden (`zhboCommandWindowShown`): an empty selection hides just the bar's
+  `CommandWindow` parent and leaves the `ButtonCommandNN` children unhidden and still carrying the
+  last set's buttons, so a test of the child's own bit paints kits over an empty bar.
+  `zhbo_general_has_class` drives the auto-swap. Both are free functions on the append-only ABI surface (same rules as the
   menu ABI: bump + size asserts, no API-table fields).
 * **The pick rides the same channel as the overlay, and only the core emits it.** The bridge
   learns *which* button fired by pointer-comparing the command window carrying
