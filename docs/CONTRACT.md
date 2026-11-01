@@ -222,7 +222,10 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   (`nativevm::GunPose::from_offset_angles`, offset in art units forward/left/up and yaw/pitch/roll
   radians). The core's `viewmodel::Motion` builds it from the weapon def's own gun-position numbers
   (`weapons::gunpos`, G4: stance/movement offsets, sway, bob, the gun kick spring, `fAdsAimPitch`
-  and `fAdsBobFactor`), and hands the same offset and angles to the W3D path, so both rigs stay in
+  and `fAdsBobFactor`) — computed in **BO2's own frame and signs** (X forward, Y left, Z up;
+  `AnglesToAxis` pitch positive = muzzle down, yaw left, roll right side down; every term the
+  decompile's literal sign) and converted once by `gunpos::GunPose::view`/`view_angles` (only the
+  pitch flips) — and hands the same offset and angles to the W3D path, so both rigs stay in
   agreement under `ZHBO_NATIVE_COMPARE=1`. The clip playback rate (`ZhboNativeIn.rate`) is the hook
   for G3's state-duration multipliers.
 * **Placement and the aim axis (R6).** `nativevm::place` composes the model's root from the eye's
@@ -246,8 +249,13 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   rotation included; the def's ADS time still owns FOV (through `weapons::zoom`: the camera
   FOV is `cg_fov` moved toward the zoom level's FOV over the last `fAdsZoomInFrac`/`OutFrac` of the
   ADS lerp, computed client-side from the sim's ADS fraction and zoom level), the offset fade (`max(0, 1 − 2·ads)`),
-  `fAdsAimPitch`, bob, sway and kick. Placement never derives an eye or axis of its own, so the
-  shot's ray and the sight picture share one axis. (The view kick is the sim's,
+  `fAdsAimPitch`, bob, sway and kick. **The gun's rotation (`fAdsAimPitch` and the move pose) fades
+  by the same `max(0, 1 − 2·ads)`** (`FUN_008f0340`, whose angles both BO2's view weapon and its
+  fire direction read), so it dips the gun mid-transition only: at full ADS the drawn gun is not
+  turned and the aimed fire angles (`GunPos::fire_angles`) are the drawn pose's own pitch/yaw.
+  Placement never derives an eye or axis of its own, so the shot's ray and the sight picture share
+  one axis (the install-gated `the_aimed_sight_lies_on_the_shot_for_every_gun` measures it per gun
+  and optic). (The view kick is the sim's,
   `PlayerSim::view_kick`: BO2 adds it to every user command's angles, so the sim's aim — the
   ray — is the input's view angles plus the kick the previous logic frame left, and the camera
   axis is the client's mouse aim plus the same kick, interpolated across the logic frame like the

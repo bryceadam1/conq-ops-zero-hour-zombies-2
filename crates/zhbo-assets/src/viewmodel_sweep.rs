@@ -842,6 +842,106 @@ mod tests {
         }
     }
 
+    /// The aimed sight picture: at full ADS, standing still, the sight the player looks through
+    /// and the shot land on the same screen point, up to the authored clip's own residual. BO2
+    /// draws the gun and aims the shot from one set of angles (`FUN_008f0340`, read by the client's
+    /// view weapon `FUN_005374c0`/`FUN_00530cd0` and the server's think `FUN_005dc820`), and those
+    /// fade the rotation — `fAdsAimPitch` and the move pose — out by half-way into the aim. So the
+    /// gun pose must add *nothing* to the sight's screen position at full ADS: the drawn sight's
+    /// NDC minus the bullet's NDC is the authored clip's NDC alone. The MP7's 2° `fAdsAimPitch`
+    /// drawn at full ADS put its sights 2° above the shot (the user's report, `v1/ads-sightline`).
+    ///
+    /// Every player gun with an ADS clip, bare and with each optic it offers; the sight is the
+    /// converter's aim marker (`AIM_TAG`: `tag_sights`, the mounted optic's window, or the front
+    /// sight), projected the way the game projects it (`client::horizontal_fov` at 16:9, the
+    /// scene's own projection: BO2 has no viewmodel FOV, G4). Overlay scopes are skipped at full
+    /// ADS (BO2 draws no viewmodel under the 2D scope). Prints the table (`--nocapture`).
+    #[test]
+    #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
+    fn the_aimed_sight_lies_on_the_shot_for_every_gun() {
+        use zhbo_core::nativevm::{place, GunPose};
+        use zhbo_core::tuning::Tuning;
+        use zhbo_core::viewmodel::slot;
+        use zhbo_core::weapons::gunpos::{GunInput, GunPos};
+        use zhbo_native::anim::Anim;
+
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        let table = crate::weapons::table(&src.bo2, &src.atts, crate::weapons::default_attachment(&src.patch).as_ref(), &Default::default());
+        let tuning = Tuning::default();
+        let aspect = 16.0 / 9.0;
+        let tx = 1.0 / (zhbo_core::client::horizontal_fov(tuning.cg_fov, aspect) * 0.5).tan();
+        let ty = tx * aspect;
+        // Eye frame (forward, left, up) → NDC (right, up).
+        let ndc = |p: [f32; 3]| [-p[1] / p[0] * tx, p[2] / p[0] * ty];
+
+        let mut ids = Vec::new();
+        for def in &src.defs {
+            if def.id.contains('+') || def.id.contains('~') || !def.alt.is_empty() || !def.class.is_gun() || zhbo_core::weapons::idle_sway::sways_view(def) {
+                continue;
+            }
+            ids.push((def, def.id.clone()));
+            for (short, _) in &def.allowed {
+                if table.attachments.iter().any(|a| &a.short == short && a.point == zhbo_core::attachments::point::OPTIC) {
+                    ids.push((def, format!("{}+{short}", def.id)));
+                }
+            }
+        }
+        let mut rows = vec!["id\tads_aim_pitch\tsight_fwd_in\tauthored_ndc_x\tauthored_ndc_y\tdrawn_ndc_x\tdrawn_ndc_y\tbullet_ndc_x\tbullet_ndc_y\tgun_pose_err_ndc".to_string()];
+        let mut failures = Vec::new();
+        for (def, id) in ids {
+            let Ok(blobs) = src.composition(&id) else { continue };
+            let Some(vm) = blobs.get(&zhbo_native::viewmodel_path(0, 'U')).and_then(|b| zhbo_native::viewmodel::Viewmodel::from_bytes(b).ok()) else { continue };
+            let (Some(up_path), Some(idle_path)) = (vm.clip(slot::ADS_UP as u16), vm.clip(slot::IDLE as u16)) else { continue };
+            let (Some(up), Some(idle)) = (blobs.get(up_path).and_then(|b| Anim::from_bytes(b).ok()), blobs.get(idle_path).and_then(|b| Anim::from_bytes(b).ok())) else { continue };
+            let skel = skeleton(&vm, &blobs);
+            let Some(aim) = skel.bone(zhbo_native::AIM_TAG) else { continue };
+            // The game's order: the action clip, then the ADS layer at its last key (ads = 1).
+            let (mut local, mut ms) = (Vec::new(), Vec::new());
+            skel.sample(&idle, 0.0, &mut local);
+            skel.sample_over(&up, up.num_frames as f32, &mut local);
+            skel.model_space(&local, &mut ms);
+            // The gun pose at full ADS, standing still, settled — `viewmodel::Motion`'s conversion.
+            let input = GunInput { stance: 0, ads: 1.0, fov: tuning.cg_fov, since_land: f32::MAX, ..Default::default() };
+            let mut state = GunPos::default();
+            let mut g = zhbo_core::weapons::gunpos::GunPose::default();
+            for _ in 0..600 {
+                g = state.step(def, &input, &tuning, 1.0 / 60.0);
+            }
+            let inch = zhbo_native::ART_SCALE;
+            let (o, a) = g.view();
+            let gun = GunPose::from_offset_angles(o.map(|c| c * inch), a);
+            let authored = place::sight((zhbo_native::math::QUAT_IDENTITY, [0.0; 3]), ms[aim]);
+            let drawn = place::sight(gun.0, ms[aim]);
+            // The shot: the view axis turned by the gun's fire angles (`PlayerSim::fire_angles` at a
+            // level view: yaw left, pitch up — through the same `view_angles` conversion).
+            let f = state.fire_angles();
+            let v = zhbo_core::weapons::gunpos::view_angles([f[0], f[1], 0.0]);
+            let (yaw, pitch) = (v[0], v[1]);
+            let shot = [pitch.cos() * yaw.cos(), pitch.cos() * yaw.sin(), pitch.sin()];
+            let (a, d, b) = (ndc(authored), ndc(drawn), ndc(shot));
+            let err = ((d[0] - b[0] - a[0]).powi(2) + (d[1] - b[1] - a[1]).powi(2)).sqrt();
+            rows.push(format!(
+                "{id}\t{}\t{:.2}\t{:+.4}\t{:+.4}\t{:+.4}\t{:+.4}\t{:+.4}\t{:+.4}\t{:.4}",
+                def.view_pos.ads_aim_pitch,
+                authored[0] / inch,
+                a[0],
+                a[1],
+                d[0],
+                d[1],
+                b[0],
+                b[1],
+                err
+            ));
+            if err > 2e-3 {
+                failures.push(format!("{id}: the drawn sight is {err:.4} NDC off the shot beyond the authored clip (drawn {d:?}, shot {b:?}, authored {a:?})"));
+            }
+        }
+        println!("{}", rows.join("\n"));
+        assert!(rows.len() > 40, "only {} guns measured", rows.len() - 1);
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+    }
+
     #[test]
     #[ignore = "probe: the flagged defects"]
     fn probe_defects() {

@@ -217,7 +217,11 @@ lift), and `place::aligned` lifts the whole rig by the item's palm-as-aim-marker
 centre: `the_ads_clip_reproduces_bo2s_authored_pose` pins each family's measured value, and the
 authored residuals must *show* — the KSG's `tag_sights` 2.2″ below the axis, the AS50's 1.3″ (its
 clip is authored to a different reference), the launchers' 1.7–2.9″ marker offset, the dual-wield
-pair's zero move (its hip and aimed halves are the same picture). Eye relief and the launchers'
+pair's zero move (its hip and aimed halves are the same picture). The gun pose adds nothing at
+full ADS: `the_aimed_sight_lies_on_the_shot_for_every_gun` (install-gated, `zhbo-assets`) projects
+every gun's and optic's aim marker at `ads = 1` through the game's projection with the settled
+`gunpos` pose, and asserts the sight's NDC minus the shot's NDC is the authored clip's NDC alone
+(within 0.002); `--nocapture` prints the per-weapon table. Eye relief and the launchers'
 rotation do the rest: the rifles/SMGs come closer to the eye, the SMAW/FHJ-18 tubes straighten.
 
 **Verifying the equipment pose.** The hip half's pixels are descriptive, not a pass/fail: the

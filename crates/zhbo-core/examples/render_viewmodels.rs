@@ -441,8 +441,8 @@ fn pose(def: &WeaponDef, ads: f32) -> Pose {
     let inch = zhbo_native::ART_SCALE;
     Pose {
         ads,
-        offset: [step.offset[0] * inch, -step.offset[1] * inch, step.offset[2] * inch],
-        angles: [step.angles[1].to_radians(), step.angles[0].to_radians(), step.angles[2].to_radians()],
+        offset: step.view().0.map(|c| c * inch),
+        angles: step.view().1,
     }
 }
 
