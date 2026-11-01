@@ -202,14 +202,17 @@ if [[ $mode == classpick ]]; then
     profile="$userdata/ConquerOps.profile"
     rm -f "$profile"
     # Deliberately NOT the stock Assault kit: the kit check below greps for the MP7 and the
-    # claymore, so a pick that logs the name but never applies the kit cannot pass.
+    # claymore, so a pick that logs the name but never applies the kit cannot pass. The MP7 carries
+    # a reflex sight: an attachment combination's viewmodel has a number of three or more digits,
+    # which the base-weapon legs never exercise (the bridge once misread its faction letter and
+    # every combination drew nothing in first person).
     cat >"$profile" <<'EOF'
 v2
 active 1
 set 1 CLASS SET 1
 class
 AB
-primary=mp7_mp;secondary=fnp45_mp;lethal=claymore_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Toughness,FastHands,Dexterity
+primary=mp7_mp+reflex;secondary=fnp45_mp;lethal=claymore_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Toughness,FastHands,Dexterity
 end
 EOF
     export ZHBO_AUTOPILOT=classpick GGC_AUTO_EXIT_SECONDS=60
@@ -227,6 +230,14 @@ EOF
     # pose line names the weapon in hand ("... MP7 40|80"). The old seed was the Assault kit, so a
     # pick that never applied the kit still passed the name-only check.
     check "  ...kit applied (MP7)" "MP7 [0-9]+\|"
+    # The combination's own native viewmodel composed (`ZV<vm><faction letter>`, vm >= 100), and no
+    # viewmodel failed to load or got a non-letter faction.
+    check "  ...combination viewmodel drawn" "native viewmodel: ZV[0-9]{3,}[UCG] composed"
+    if grep -qE "native viewmodel: .*(\.zb[a-z] is not in the archive|faction 0x)" "$out/ConquerOps.log"; then
+        printf '%-28s FAIL\n' "  ...no viewmodel load failure"; ok=1
+    else
+        printf '%-28s PASS\n' "  ...no viewmodel load failure"
+    fi
     # A pick never writes the profile (the Phase-2 save-vs-pick split).
     if grep -q "create-a-class: saved a custom class" "$out/ConquerOps.log"; then
         printf '%-28s FAIL\n' "  ...pick did not re-save"; ok=1

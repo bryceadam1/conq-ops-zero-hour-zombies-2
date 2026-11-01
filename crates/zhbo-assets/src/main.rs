@@ -646,6 +646,17 @@ fn run(args: &[String]) -> Result<(), String> {
             let size = flag(args, "--size").and_then(|v| v.split_once('x')).and_then(|(w, h)| Some((w.parse().ok()?, h.parse().ok()?)));
             zhbo_assets::screenshot::run(&out, archive.as_deref(), size)
         }
+        "audit-native" => {
+            // audit-native [archive]: load every converted weapon's first- and third-person art the
+            // way the game does and list each one that would draw nothing.
+            let path = args.get(1).map(PathBuf::from).ok_or("audit-native <ConquerOps_BO2.big>")?;
+            let report = zhbo_assets::native_audit::audit_archive(&path)?;
+            for p in &report.problems {
+                println!("{}: {}", p.weapon, p.what);
+            }
+            println!("{} first-person loads, {} world manifests, {} problems", report.first_person, report.third_person, report.problems.len());
+            if report.problems.is_empty() { Ok(()) } else { Err(format!("{} weapons do not draw", report.problems.len())) }
+        }
         "build-archive" => {
             // build-archive <out.big>: the launcher's BO2 conversion into a file of your choice
             // (development: refresh the archive the screenshot harness reads without launching).

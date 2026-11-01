@@ -173,8 +173,10 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
 
 * **The bridge asks each frame, the core decides.** `ZhboViewmodel_Update` builds a
   `ZhboNativeIn` from what it already has for the W3D model (clip, time, ADS fraction, eye and
-  direction, the gun's view-space offset and angles, the faction letter from the `ZV<vm><F>`
-  name) plus Zero Hour's global lights for the time of day (towards-the-light = `-lightPos`) and
+  direction, the gun's view-space offset and angles, and the faction letter `Zhbo_GetViewmodel`
+  takes from the General's side — never parsed back out of the `ZV<vm><F>_SKN` name, whose `<vm>`
+  is any width: a combination's is four digits, and the core refuses a non-letter faction with a
+  log line) plus Zero Hour's global lights for the time of day (towards-the-light = `-lightPos`) and
   calls `zhbo_native_viewmodel`. `DRAWN` (1): the W3D model stays hidden and the weapon's own
   muzzle-flash/shell-eject FXLists play at `zhbo_native_bone("tag_flash"/"tag_brass")` when the
   sim's shot event reaches the client. The names come from `zhbo_viewmodel_fx(vm, ...)` — the

@@ -466,8 +466,9 @@ pub(crate) fn left_gun<'a>(w: &zhbo_formats::weapon::Weapon, bo2: &'a [zhbo_form
 ///
 /// The first `base_count` ids are the base set (`converted_base`, a prefix of `converted`): only
 /// those emit the composed W3D viewmodel meshes and hierarchies. The remaining legal combinations
-/// emit native manifests only; their W3D path falls back to the base weapon's mesh (the fallback's
-/// deprecation direction), while the native path gets its own manifest per combination. The shared
+/// emit native manifests only: the native path is the only one that draws a combination (the W3D
+/// path finds no `ZV<vm><F>_SKN` for it and logs "no model"), so the bridge's `ZV<vm><F>.zbv`
+/// request must name the full viewmodel number and the faction letter (`Zhbo_GetViewmodel`). The shared
 /// `.zbm`/`.zba` blobs and textures are deduplicated by name, so a combination adds only its
 /// manifests.
 #[allow(clippy::too_many_arguments)]

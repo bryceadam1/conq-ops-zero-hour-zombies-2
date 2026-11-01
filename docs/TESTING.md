@@ -23,7 +23,7 @@ How each layer of the mod is verified, and what to run before declaring a change
 | W3D ADS-layer test | the W3D fallback (`ZHBO_NATIVE_VIEWMODEL=0`) composes the authored 0x55/0x56 clip over the action clip (`HAnimComboClass` pivot maps) and the slide is skipped; the bridge logs "viewmodel: ADS layer" + "viewmodel: ADS slide skipped" | `scripts/autotest-mac.sh --w3d-ads` (Windows: `scripts/autotest.ps1 -Mode w3d-ads`) |
 | Real input test | OS keyboard/mouse path the autopilot does not cover | `scripts/inputtest.ps1` / `autotest-mac.sh --input` |
 | Overhead General | his class guns swapped in (`armed slot 0 with ZHBO_GeneralWeapon_`), rounds counted, the command bar's orders given the way the buttons give them — the lethal at a rebel (thrown as first person throws), a reload, the pistol, the knife at a rebel spawned close (`meleed`) — then first person keeps the pistol; the overhead General's weapon is drawn natively by default (`native body: ZW<vm><faction> composed`; `ZHBO_NATIVE_BODY=0` opts out). `--rts-dry` runs it with no spare rifle, then no spare pistol, rounds: the dry gun hands over | `autotest-mac.sh --rts` / `--rts-dry` (`ZHBO_AUTOPILOT=rts`; macOS only, `autotest.ps1` has no RTS mode) |
-| Create-a-class run | the in-match screen is pick-only and shows the profile's ACTIVE class set: the script seeds a v2 profile with one custom (MP7 primary, claymore — deliberately unlike any premade kit) in set 1, picks it from the spawn screen by its row key (the custom leads the match list, `changeclass.lua`) and the sim logs `assumed the AB class`, with no profile write; the once-a-second pose line then names the MP7, proving the *kit* landed; it then leaves first person, takes control again, forces the screen open and Escapes it, and first-person play continues | `ZHBO_AUTOPILOT=classpick` with either autotest script (the macOS script seeds `ConquerOps.profile` first, then checks `assumed the AB class`, `MP7 <n>\|` in a pose line, no `create-a-class: saved` line, a second `entered first-person control`, and `taking control again`) |
+| Create-a-class run | the in-match screen is pick-only and shows the profile's ACTIVE class set: the script seeds a v2 profile with one custom (an MP7 with a reflex sight — an attachment combination, whose viewmodel number has three or more digits — and a claymore, deliberately unlike any premade kit) in set 1, picks it from the spawn screen by its row key (the custom leads the match list, `changeclass.lua`) and the sim logs `assumed the AB class`, with no profile write; the once-a-second pose line then names the MP7, proving the *kit* landed; it then leaves first person, takes control again, forces the screen open and Escapes it, and first-person play continues | `ZHBO_AUTOPILOT=classpick` with either autotest script (the macOS script seeds `ConquerOps.profile` first, then checks `assumed the AB class`, `MP7 <n>\|` in a pose line, `native viewmodel: ZV<3+ digits><U/C/G> composed` with no `native viewmodel:` line naming a `.zb*` file `not in the archive` or a `faction 0x..`, no `create-a-class: saved` line, a second `entered first-person control`, and `taking control again`) |
 | Shell create-a-class | the lobby's class screen (the menu ABI): browse, edit, save, delete, copy, close — in the shell, no match | manual only: the in-game autotest does not cover the shell (see below) |
 | Class-screen screenshots | the shell list, the in-match pick list and the Pick-10 editor rendered through `classui::draw_screen` | `cargo run -p zhbo-assets -- screenshot` (uses the locally built `ConquerOps_BO2.big`; PNGs in `target/cac-shots/`) |
 | Viewmodel sweep | every player weapon and every attachment it offers drawn through the game's native first-person path (composition, `nativevm::place`, the native BO2 pass), hip and aimed side by side, for a human review of the catalog | `cargo run --release -p zhbo-core --example render_viewmodels --features renderer -- <outdir>` |
@@ -261,7 +261,7 @@ over the base composite. Run it with
 For a visual check, run the headless sweep with `--weapon fnp45_dw_mp` and inspect the hip pose's
 left-palm region (x ≈ 180–360 px, y ≈ 220–340 px in the 640×360 slot): the left gun's geometry
 should sit there, not at the torso center or floating near the base gun. The autotest's
-`--classpick` leg keeps its MP7 seed — changing the primary would break the `MP7 <n>\|` kit
+`--classpick` leg keeps its MP7 seed (`mp7_mp+reflex`) — changing the primary would break the `MP7 <n>\|` kit
 assertion — so to exercise the DW path in-game, edit the seeded profile's `secondary=` to a DW
 pistol (e.g., `secondary=fnp45_dw_mp`) in a local capture run and confirm the left gun renders in
 the left palm.
@@ -279,6 +279,21 @@ colour map and the native pass uses as the reflectance colour (RENDERER.md; pinn
 `a_coloured_spec_map_tints_the_metal`). The real-install test
 `the_camo_assets_convert_with_their_art` pins the converter's unresolved list to the 20 provably
 unreachable names (DLC-only stubs and diamond's colour-less technique).
+
+## The native-art audit
+
+`cargo run --release -p zhbo-assets -- audit-native <ConquerOps_BO2.big>` loads every converted
+weapon of the archive's own table — the base set, every attachment combination create-a-class can
+build (the archive holds a `ZV<vm><F>.zbv` for each), alt modes — the way the game does:
+`nativevm::load` for each viewmodel and each faction's arms over the bridge's file protocol, and
+`nativebody::load` for each world manifest and each faction's body. It lists every one that fails to
+compose or composes no surface at hip or at full ADS (the ADS part list), and exits non-zero if any
+does. The same audit runs as the real-install test `native_audit::every_converted_weapon_draws`
+(over the converter's output in memory, so it needs only `ZHBO_BO2_DIR`). It checks the art and the
+core's loading, not the bridge: the bridge's half is the `ZV<vm><F>` name and the faction letter it
+passes (`Zhbo_GetViewmodel`), which the core validates (`nativevm` refuses a non-letter faction
+with a log line). The sweep above passes its faction directly, so it cannot catch a bridge naming
+bug; the game log's `native viewmodel:` lines can.
 
 ## Autopilot and the input path
 

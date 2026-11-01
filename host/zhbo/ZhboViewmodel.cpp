@@ -365,7 +365,7 @@ namespace
 	}
 
 	// Draw the weapon through the native pass; TRUE when it did (the W3D model stays hidden).
-	Bool nativeViewmodel(const Coord3D &eye, const Coord3D &dir, Int clip, Int weapon, const AsciiString &name, Real time, Real ads,
+	Bool nativeViewmodel(const Coord3D &eye, const Coord3D &dir, Int clip, Int weapon, const AsciiString &name, char faction, Real time, Real ads,
 		const Coord3D &offset, const Coord3D &angles, Bool fired, Bool firedLeft)
 	{
 		if (weapon < 0 || name.getLength() < 5 || !name.startsWith("ZV"))
@@ -378,7 +378,10 @@ namespace
 		in.angles[0] = angles.x; in.angles[1] = angles.y; in.angles[2] = angles.z;
 		in.clip = clip;
 		in.vm = weapon;
-		in.faction = name.getCharAt(4);
+		// The faction letter as the bridge gives it. Never `name`'s fifth character: that is only
+		// the letter for a two-digit weapon number, and a combination's viewmodel (any class weapon
+		// with an attachment, `ZV8664U_SKN`) would ask for `ZV86646.zbv` and draw nothing.
+		in.faction = faction;
 		in.time = time;
 		in.ads = ads;
 		in.rate = 1.0f;
@@ -643,8 +646,9 @@ void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)
 	Bool fired = FALSE, firedLeft = FALSE;
 	Real time = 0.0f, ads = 0.0f;
 	AsciiString name;
+	char faction = 0;
 	Coord3D offset, angles;
-	if (!active || !Zhbo_GetViewmodel(&clip, &weapon, &fired, &firedLeft, &time, &ads, &name, &offset, &angles) || clip < 0)
+	if (!active || !Zhbo_GetViewmodel(&clip, &weapon, &fired, &firedLeft, &time, &ads, &name, &faction, &offset, &angles) || clip < 0)
 	{
 		if (s_model)
 			s_model->Set_Hidden(true);
@@ -654,7 +658,7 @@ void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)
 	if (!s_notesLoaded)
 		loadNotes();
 	playNotes(weapon, clip, time);
-	const Bool native = nativeViewmodel(eye, dir, clip, weapon, name, time, ads, offset, angles, fired, firedLeft);
+	const Bool native = nativeViewmodel(eye, dir, clip, weapon, name, faction, time, ads, offset, angles, fired, firedLeft);
 	if (native && !compareMode())
 		return;
 	if (!poseW3d(eye, dir, clip, weapon, name, time, ads, offset, angles))

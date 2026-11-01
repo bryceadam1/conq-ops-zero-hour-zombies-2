@@ -23,6 +23,7 @@ pub mod textures;
 pub mod viewmodels;
 pub mod fonts;
 pub mod native;
+pub mod native_audit;
 pub mod thirdperson;
 pub mod playeranim;
 pub mod viewmodel_sweep;
