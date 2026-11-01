@@ -4851,9 +4851,7 @@ Not ported (follow-ups): anti-quickscope (`bg_aqs` 1 / `bg_aqsStyle` 2, `FUN_008
 `bAntiQuickScope` + `fAntiQuickScopeTime/Scale/SwayFactor` drive `ps+0x4f4/0x4f8`, which scale or
 offset the view sway and block hold breath — needs four uncarried fields; whether any MP variant sets
 it is unchecked); the `hold_breath_mp` shellshock 1 s into a breath and the `cod_hold_breath` sound
-context (no shellshock or snd contexts in the mod); the iron-sight aim following the whole gun pose
-(`FUN_005dc820` rotates the fire angles by `FUN_008f0700`'s gun angles for an aiming non-overlay
-weapon — bob, sway and idle together; the mod fires along the view); the variable-zoom hint
+context (no shellshock or snd contexts in the mod); the variable-zoom hint
 `PLATFORM_HOLD_BREATH_ZOOM` (`FUN_004dc940`); the airburst/`weapClass item` exclusions (no such
 weapons in the mod); the prone test's `ps+0xc & 0x200000` exception. The clock is not truncated per
 frame as BO2's `(int)` is (a frame-rate artifact; the sim's 30 Hz frame is not BO2's). The stance
@@ -4885,3 +4883,26 @@ its pen line 80 lines below the top, centred (`FUN_004dc750`'s `x - width * 0.5`
 tall, shadowed. `hud::center::draw_breath_hint` draws it in LUI space with the key run in `^3`
 yellow; the earlier "130 above the bottom" guess is gone. Test:
 `the_breath_hint_sits_80_lines_below_the_top_with_the_key_in_yellow`.
+
+### Follow-up: an aimed iron-sight shot follows the gun (branch `v1/idle-sway`)
+
+The server's think (`FUN_005dc820`), after the idle angles, runs the weapon pose `FUN_008f0700`
+(rates `FUN_008efba0`, view sway `FUN_008efce0`, the gun kick spring, bob `FUN_008f0160`) and its
+angles `FUN_008f0340`: the stance/move rotation × `max(0, 1 − 2·posFrac)` (`DAT_00c6f6ac` = 2), the
+kick spring, the sway (× (1 − posFrac) for an overlay scope), the bob, the gun idle `FUN_008eefc0`
+and the gun's damage flinch `FUN_008ef150`. When the def aims (`aimDownSight`), `posFrac != 0` and
+there is no overlay scope (`FUN_008ed670 == 0`), the fire angles become `AxisToAngles(axis(gun) ×
+axis(view))` (`FUN_0074d870` ×2, `FUN_00748a60`, `FUN_0074ab00`), so the bullets leave along the
+sights, not the screen centre.
+
+Port: `PlayerSim::gun` is a `viewmodel::Motion` (the same `weapons::gunpos` math the viewmodel draws,
+single source) stepped on the logic frame from sim state after the weapon actions, with the frame's
+gun-kick impulse; `GunPos::fire_angles` is `FUN_008f0340`'s sum (the rotation faded as BO2 fades it
+— the drawn pose keeps `fAdsAimPitch` and the move rotation, which the authored aimed clips rest
+on). Each frame `PlayerSim::fire_angles` composes the previous frame's gun angles onto the aim
+(exact rotation, not a sum) into `fire_yaw/fire_pitch`; hitscan pellets and launches use them, the
+camera does not. The client keeps its own `Motion` for drawing at the render rate — BO2 also runs the
+pose twice (cg and server). Not in the fire angles: the gun's damage flinch (`FUN_008ef150`; the
+mod's flinch is camera-only) and the lean roll. Test: `an_aimed_iron_sight_shot_follows_the_gun_pose`
+(an aimed burst while turning leaves off the view centre by the pose, replays identically; a
+scoped shot is the view's).

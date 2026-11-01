@@ -312,6 +312,13 @@ pub struct Motion {
 }
 
 impl Motion {
+    /// The gun's angles an aimed iron-sight shot follows, radians in the [`Pose`] convention (yaw
+    /// left, pitch muzzle up): `GunPos::fire_angles`.
+    pub fn fire_angles(&self) -> (f32, f32) {
+        let a = self.gun.fire_angles();
+        (a[1].to_radians(), a[0].to_radians())
+    }
+
     /// One frame of `dt` seconds. `yaw`/`pitch` are the view angles this frame (radians), `fov`
     /// the field of view `cg_fov` (degrees; G4's wide-FOV pullback), and `shot` the gun kick's
     /// impulse when a shot went off.

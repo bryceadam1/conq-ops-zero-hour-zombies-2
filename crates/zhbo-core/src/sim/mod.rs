@@ -191,6 +191,14 @@ pub struct PlayerSim {
     pub view_kick: ViewKick,
     /// BO2's idle sway and hold breath (`weapons::idle_sway`): the scope drifts, the aim with it.
     pub idle: IdleSway,
+    /// The gun's pose as the server keeps it (`FUN_005dc820` runs `FUN_008f0700`): an aimed shot
+    /// from a gun without an overlay scope flies along it (`weapons::gunpos`, the viewmodel's own
+    /// math, stepped on the logic frame).
+    pub gun: crate::viewmodel::Motion,
+    /// The direction this frame's shots fly (radians): the aim, turned by the gun's pose while
+    /// aimed through iron sights.
+    pub fire_yaw: f32,
+    pub fire_pitch: f32,
     pub arsenal: Arsenal,
     pub rng: Rng,
     pub input: FpsInput,
@@ -220,6 +228,23 @@ impl PlayerSim {
         (ky + iy, kp + ip)
     }
 
+    /// The fire direction (`FUN_005dc820`): the aim, and while aimed (`posFrac != 0`) with a gun
+    /// that has no overlay scope, the aim's axis turned by the gun pose's angles (the axes
+    /// multiplied, so the shot leaves along the sights the player sees).
+    pub fn fire_angles(&self) -> (f32, f32) {
+        let def = self.arsenal.current().def;
+        if !(def.class.is_gun() && self.arsenal.ads != 0.0 && !crate::weapons::idle_sway::sways_view(def)) {
+            return (self.yaw, self.pitch);
+        }
+        let (gy, gp) = self.gun.fire_angles();
+        let local = dir_from_angles(gy, gp);
+        let f = dir_from_angles(self.yaw, self.pitch);
+        let left = dir_from_angles(self.yaw + std::f32::consts::FRAC_PI_2, 0.0);
+        let up = dir_from_angles(self.yaw, self.pitch + std::f32::consts::FRAC_PI_2);
+        let w = f * local.x + left * local.y + up * local.z;
+        (w.y.atan2(w.x), w.z.clamp(-1.0, 1.0).asin())
+    }
+
     pub fn is_first_person(&self) -> bool {
         matches!(self.mode, Mode::Fps | Mode::FieldComputer { .. })
     }
@@ -238,6 +263,9 @@ impl PlayerSim {
             pitch: 0.0,
             view_kick: ViewKick::default(),
             idle: IdleSway::default(),
+            gun: Default::default(),
+            fire_yaw: 0.0,
+            fire_pitch: 0.0,
             arsenal: Arsenal::new(),
             rng: Rng::new(1),
             input: FpsInput::default(),
@@ -358,6 +386,7 @@ impl Sim {
                 p.pitch = 0.0;
                 p.view_kick = ViewKick::default();
                 p.idle = IdleSway::default();
+                p.gun = Default::default();
                 p.input = FpsInput { yaw: info.yaw, ..Default::default() };
                 p
             }
@@ -382,6 +411,9 @@ impl Sim {
                     pitch: 0.0,
                     view_kick: ViewKick::default(),
                     idle: IdleSway::default(),
+                    gun: Default::default(),
+                    fire_yaw: 0.0,
+                    fire_pitch: 0.0,
                     // A General spawns unarmed: knife only until a class is picked. (The class
                     // pick replaces this arsenal; Escape on the spawn offer leaves it.)
                     arsenal: Arsenal::unarmed(),
@@ -447,6 +479,9 @@ impl Sim {
                     pitch: 0.0,
                     view_kick: ViewKick::default(),
                     idle: IdleSway::default(),
+                    gun: Default::default(),
+                    fire_yaw: 0.0,
+                    fire_pitch: 0.0,
                     arsenal: Arsenal::unarmed(),
                     rng: Rng::new(general.wrapping_mul(2_654_435_761) ^ frame),
                     input: FpsInput::default(),
@@ -639,6 +674,7 @@ impl Sim {
         let (off_yaw, off_pitch) = p.aim_offset();
         p.yaw = crate::math::wrap_angle(input.yaw + off_yaw);
         p.pitch = (input.pitch + off_pitch).clamp(-crate::input::MAX_PITCH, crate::input::MAX_PITCH);
+        (p.fire_yaw, p.fire_pitch) = p.fire_angles();
 
         let world = HostWorld { host, viewer: p.general };
         match p.mode {
@@ -653,6 +689,7 @@ impl Sim {
                     // Out of first person BO2 zeroes the kick (`FUN_00523070`).
                     p.view_kick = ViewKick::default();
                     p.idle = IdleSway::default();
+                    p.gun = Default::default();
                     self.emit(idx, EventKind::FieldComputerOpened);
                 } else {
                     let mods = MoveModifiers {
@@ -678,6 +715,10 @@ impl Sim {
                     // breath key is `+breath_sprint`, the sprint key.
                     let breath = BreathIn { key: held & buttons::SPRINT != 0, extra: p.arsenal.has_specialty(Specialty::HoldBreath) };
                     p.idle.step(p.arsenal.current().def, p.arsenal.ads, stance, breath, &p.arsenal.tuning, LOGIC_DT);
+                    let shot = actions.iter().find_map(|a| match a {
+                        WeaponAction::Fire { gun_kick, pellet: 0, .. } => Some(*gun_kick),
+                        _ => None,
+                    });
                     for a in actions {
                         self.apply_weapon_action(host, idx, p, a);
                     }
@@ -685,6 +726,10 @@ impl Sim {
                     // pair goes through `centre_speed_hands` with its hands' firing states).
                     let centre = view_kick::centre_speed(p.arsenal.current().def, p.arsenal.ads, stance);
                     p.view_kick.step(LOGIC_DT, centre);
+                    // The gun's pose after the frame (the next frame's shots follow it).
+                    let mut gun = std::mem::take(&mut p.gun);
+                    gun.update(LOGIC_DT, p.yaw, p.pitch, p.arsenal.tuning.cg_fov, p, shot);
+                    p.gun = gun;
                     self.step_hack(host, idx, p);
                 }
             }
@@ -1560,6 +1605,50 @@ pub(crate) mod tests {
         // 4.5 s later the breath runs out and the gasp sways harder than at rest.
         let long = sway_trace(buttons::SPRINT, 260);
         assert!(!long[200].2.breath.holding && long[200].2.breath.scale > 1.5, "{:?}", long[200].2.breath);
+    }
+
+    /// An aimed iron-sight burst while turning: (aim, fire direction) per frame.
+    fn iron_trace() -> Vec<(f32, f32, f32, f32)> {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        scoped(&mut sim, &host);
+        // Iron sights: no overlay; BO2-shaped aimed sway and idle numbers.
+        let p = sim.players[0].as_mut().unwrap();
+        let w = p.arsenal.active;
+        let mut d = p.arsenal.weapons[w].def.clone();
+        (d.class, d.overlay_reticle, d.fire_time) = (Class::Rifle, 0, 0.1);
+        d.ads_sway = crate::weapons::Sway { max_angle: 5.0, lerp_speed: 8.0, pitch_scale: 0.3, yaw_scale: 0.3, horiz_scale: 0.1, vert_scale: 0.1 };
+        d.zoom.idle_amount = (10.0, 15.0);
+        p.arsenal.weapons[w].def = Box::leak(Box::new(d));
+        p.arsenal.weapons[w].ammo = 30;
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, ..Default::default() }, 20);
+        let mut out = Vec::new();
+        for f in 0..30 {
+            let yaw = f as f32 * 0.01;
+            run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::FIRE, yaw, ..Default::default() }, 1);
+            let p = sim.player(0).unwrap();
+            out.push((p.yaw, p.pitch, p.fire_yaw, p.fire_pitch));
+        }
+        out
+    }
+
+    #[test]
+    fn an_aimed_iron_sight_shot_follows_the_gun_pose() {
+        let a = iron_trace();
+        assert_eq!(a, iron_trace(), "replays identically");
+        let off = a.iter().map(|t| (t.2 - t.0).abs() + (t.3 - t.1).abs()).fold(0.0f32, f32::max);
+        // The gun kick spring and the turn's sway move the sights off the view centre a little.
+        assert!(off > 1e-4 && off < 5f32.to_radians(), "{off}");
+        // The scoped sniper's shot is the view's (its sway is the view's own).
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        scoped(&mut sim, &host);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, yaw: 0.3, ..Default::default() }, 20);
+        let p = sim.player(0).unwrap();
+        assert_eq!((p.fire_yaw, p.fire_pitch), (p.yaw, p.pitch));
     }
 
     #[test]

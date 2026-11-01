@@ -26,7 +26,7 @@ impl Sim {
                 // Random point in the spread cone (polar mapping of two uniform samples).
                 let angle = jitter.0 * std::f32::consts::PI;
                 let radius = spread_deg.to_radians() * jitter.1.abs().sqrt();
-                let dir = dir_from_angles(p.yaw + radius * angle.cos(), p.pitch + radius * angle.sin());
+                let dir = dir_from_angles(p.fire_yaw + radius * angle.cos(), p.fire_pitch + radius * angle.sin());
 
                 let mut targets = gather_targets(host, eye, def.max_range, p.general);
                 let ground = |x: f32, y: f32| host.ground_height(x, y);
@@ -102,7 +102,7 @@ impl Sim {
                 let eye = p.body.eye();
                 // The tri-bolt's bolts fan out a little.
                 let spread = (pellet as f32 - (def.pellets.max(1) - 1) as f32 * 0.5) * 0.04;
-                let dir = dir_from_angles(p.yaw + spread, p.pitch);
+                let dir = dir_from_angles(p.fire_yaw + spread, p.fire_pitch);
                 if !def.fx_weapon.is_empty() {
                     host.fire_fx(p.general, &def.fx_weapon, 0, eye + dir * 10.0);
                 }

@@ -76,6 +76,8 @@ pub struct GunPos {
     sway_angle: (f32, f32),
     sway_ofs: (f32, f32),
     last_view: Option<(f32, f32)>,
+    /// The gun's angles the shot follows (degrees, pitch and yaw): see [`GunPos::fire_angles`].
+    fire: [f32; 2],
 }
 
 fn add(a: &mut [f32; 3], b: [f32; 3], k: f32) {
@@ -140,12 +142,28 @@ impl GunPos {
         self.spring.step(dt, &def.hip_gun_kick, &def.ads_gun_kick, ads, def.gun_max);
         offset[1] += self.sway_ofs.0;
         offset[2] += self.sway_ofs.1;
+        // The fire angles (`FUN_008f0340`, the server's copy in `FUN_005dc820`): the rotation
+        // faded out by half-way into ADS (`1 − 2·posFrac`, `DAT_00c6f6ac`), plus the kick spring,
+        // the sway, the bob and the idle. The drawn pose keeps its rotation (`fAdsAimPitch`, the
+        // move pose), which the aimed clips' authored pose rests on.
+        let rot_fade = (1.0 - 2.0 * ads).max(0.0);
+        for a in 0..2 {
+            let sway = if a == 0 { self.sway_angle.0 } else { self.sway_angle.1 };
+            let spring = if a == 0 { self.spring.angle.0 } else { self.spring.angle.1 };
+            self.fire[a] = self.cur_rot[a] * rot_fade + bob[a] + sway + spring + idle[a];
+        }
         let angles = [
             self.cur_rot[0] + bob[0] + self.sway_angle.0 + self.spring.angle.0 + idle[0],
             self.cur_rot[1] + bob[1] + self.sway_angle.1 + self.spring.angle.1 + idle[1],
             self.cur_rot[2] + bob[2] + idle[2],
         ];
         GunPose { offset, angles }
+    }
+
+    /// The gun's pitch and yaw (degrees, the drawn pose's signs) an aimed shot from a gun without an
+    /// overlay scope follows (`FUN_005dc820` composes them onto the view's fire angles).
+    pub fn fire_angles(&self) -> [f32; 2] {
+        self.fire
     }
 
     /// View sway: the view's turn rate (per 60 Hz frame), clamped to the max angle and scaled,
