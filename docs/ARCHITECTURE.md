@@ -28,7 +28,7 @@ Wine/CrossOver/Proton prefixes. Depends on nothing. Used by the launcher and by 
 ### `crates/zhbo-formats`
 Parsers for game data: Zero Hour `.big` (from a file or, `big::members`, from memory), Black Ops II
 `.sabs`/`.sabl` sound banks, `.ipak` image packs, `IWi` images, LZO1X, the BO2 fastfile decryption,
-and the compiled UI Lua (`havok_lua`: Havok Script chunks and their constant stores). Depends on nothing. All
+and the compiled UI Lua (`havok_lua`: Havok Script chunks and their constant stores). `t6zone::load_file`/`install_path`/`language_path` and `localize::install_strings` are the one way to open a zone of the player's install. Depends on nothing. All
 readers are hardened against corrupt input (refactor plan Phase 0.3) and used by the
 converter (`zhbo-assets`), the conformance oracle (`zhbo-conformance`) and `xtask`. The runtime
 (`zhbo-core`) never parses BO2 files: it reads only what the converter wrote.
@@ -111,7 +111,7 @@ to list/export BO2 sounds, images and fonts. `fonts.rs` converts BO2's UI fonts.
 `ini.rs` (the INI rewriters), `viewmodels.rs` (the viewmodel conversion), `generals.rs`
 (the Zero Hour names, factions and the `files()` orchestrator), `camo.rs` (the camo art and the
 `.zcm` recipes for every `WeaponCamo` a def or attachment unique points at) and `paks.rs` (pack-file access, the shrinker
-and the zone loader). `thirdperson.rs` resolves the body clip of each movement state (asking
+and `load_zone`, over the shared `zhbo_formats::t6zone::load_file`). `thirdperson.rs` resolves the body clip of each movement state (asking
 `playeranim.rs`, BO2's `mp/playeranim.script` first-match picker) and poses the soldier's hit
 boxes in each.
 

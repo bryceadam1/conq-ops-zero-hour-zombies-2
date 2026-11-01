@@ -617,17 +617,7 @@ pub use zhbo_core::names::WEAPON_TABLE_PATH as TABLE_PATH;
 /// BO2's localized strings for the display names: `zone/<language>/<lang>_code_post_gfx_mp.ff`
 /// with `<lang>_patch_mp.ff` over it. Empty if the language zones can't be read.
 pub fn names(bo2_dir: &std::path::Path) -> HashMap<String, String> {
-    let mut out = HashMap::new();
-    for (dir, prefix) in [("english", "en")] {
-        for zone in ["code_post_gfx_mp", "patch_mp"] {
-            let path = bo2_dir.join("zone").join(dir).join(format!("{prefix}_{zone}.ff"));
-            let Ok(file) = std::fs::read(&path) else { continue };
-            let Ok(ff) = zhbo_formats::fastfile::read(&file) else { continue };
-            let Ok(z) = zhbo_formats::t6zone::load(&ff) else { continue };
-            out.extend(zhbo_formats::localize::entries(&z).unwrap_or_default());
-        }
-    }
-    out
+    zhbo_formats::localize::install_strings(bo2_dir, &["code_post_gfx_mp", "patch_mp"])
 }
 
 /// Sound events and Zero Hour FX weapons for the converted weapons. Each gun gets its own player

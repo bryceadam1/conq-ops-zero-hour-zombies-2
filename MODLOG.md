@@ -8605,3 +8605,17 @@ read it (the bounce used its own `BOUNCE_UP` const); it drives the bounce now, w
 then `activationdelay`), and the Black Hat's hack times. BO2's equipment lock is 50 ms
 (`equipmenthackertooltimems`), but the hack only completes when the tool then fires, so the
 script's number is not the whole hack; 1.5 s / 3 s stay until an in-game comparison says otherwise.
+
+## Code polish: one fastfile loader (2026-11-01)
+
+Read + decrypt + load of a `.ff` was written out seven times (the converter's `paks::load_zone`,
+`sfx::load_language_zone`, `fonts::files`, `weapons::names`, the CLI's `load_full_zone`, and the
+conformance oracle's `install::load` and `install::strings`), and the english language folder
+three more. They now share `zhbo_formats::t6zone::load_file(path)`, `install_path(dir, name)`
+(`zone/all/<name>.ff`), `language_path(dir, name)` (`zone/english/en_<name>.ff`, from
+`t6zone::LANGUAGE`) and `zhbo_formats::localize::install_strings(dir, zones)`. Living in
+zhbo-formats keeps the oracle's "depends on zhbo-formats only" rule.
+
+The zone *lists* stay where they are: each is a deliberate search or load order with its own reason
+(the oracle's six string zones in load order, the converter's display names from two, the HUD
+art's material search) — one shared list would hide which order a caller relies on.

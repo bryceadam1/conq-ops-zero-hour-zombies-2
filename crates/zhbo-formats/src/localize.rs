@@ -19,3 +19,14 @@ pub fn entries(z: &Zone) -> Result<HashMap<String, String>, crate::FormatError> 
         .filter(|(k, _)| !k.is_empty())
         .collect())
 }
+
+/// The english localized strings of `zones` in the player's install (`zone/english/en_<zone>.ff`),
+/// later zones over earlier ones. A zone that is missing or unreadable is skipped.
+pub fn install_strings(bo2_dir: &std::path::Path, zones: &[&str]) -> HashMap<String, String> {
+    let mut out = HashMap::new();
+    for zone in zones {
+        let Ok(z) = crate::t6zone::load_file(&crate::t6zone::language_path(bo2_dir, zone)) else { continue };
+        out.extend(entries(&z).unwrap_or_default());
+    }
+    out
+}

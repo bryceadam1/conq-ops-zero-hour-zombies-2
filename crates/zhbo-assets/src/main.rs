@@ -936,8 +936,7 @@ fn load_zone(zones: &mut ZoneCache, name: &str) -> Result<(), String> {
 
 /// Decrypt a fastfile and load every asset in it.
 fn load_full_zone(name: &str) -> Result<zhbo_formats::t6zone::Zone, String> {
-    let zone = open_zone(name)?;
-    zhbo_formats::t6zone::load(&zone).map_err(|e| format!("{name}: {e}"))
+    zhbo_formats::t6zone::load_file(&resolve(name, &["zone", "all"])?)
 }
 
 fn open_zone(name: &str) -> Result<fastfile::Zone, String> {

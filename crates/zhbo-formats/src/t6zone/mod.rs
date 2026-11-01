@@ -358,6 +358,28 @@ pub(crate) fn synthetic_zone(name: &str, mem: Vec<u8>, script_strings: Vec<Strin
     synthetic(name, mem, script_strings, assets)
 }
 
+/// The language folder and file prefix the localized zones are read from (`zone/english/en_*.ff`).
+pub const LANGUAGE: (&str, &str) = ("english", "en");
+
+/// `<bo2_dir>/zone/all/<name>.ff`: a zone of the player's install.
+pub fn install_path(bo2_dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    bo2_dir.join("zone").join("all").join(format!("{name}.ff"))
+}
+
+/// `<bo2_dir>/zone/english/en_<name>.ff`: a zone's localized half ([`LANGUAGE`]).
+pub fn language_path(bo2_dir: &std::path::Path, name: &str) -> std::path::PathBuf {
+    bo2_dir.join("zone").join(LANGUAGE.0).join(format!("{}_{name}.ff", LANGUAGE.1))
+}
+
+/// Read, decrypt and load every asset of the fastfile at `path`. The error names the file (read)
+/// or its stem (decrypt or load), as the converter and the conformance oracle report it.
+pub fn load_file(path: &std::path::Path) -> Result<Zone, String> {
+    let name = path.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_default();
+    let file = std::fs::read(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let ff = fastfile::read(&file).map_err(|e| format!("{name}: {e}"))?;
+    load(&ff).map_err(|e| format!("{name}: {e}"))
+}
+
 /// Load every asset of a decrypted zone. On failure the error says which asset broke.
 pub fn load(zone: &fastfile::Zone) -> Result<Zone, LoadError> {
     let d = &zone.data;

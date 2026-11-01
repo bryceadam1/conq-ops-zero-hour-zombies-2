@@ -137,10 +137,7 @@ pub const VOICE_ZONE: &str = "common_mp";
 
 /// A language zone (`zone/english/en_<name>.ff`).
 fn load_language_zone(bo2_dir: &Path, name: &str) -> Result<Zone, String> {
-    let path = bo2_dir.join("zone").join("english").join(format!("en_{name}.ff"));
-    let file = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let ff = zhbo_formats::fastfile::read(&file).map_err(|e| format!("{name}: {e}"))?;
-    zhbo_formats::t6zone::load(&ff).map_err(|e| format!("{name}: {e}"))
+    zhbo_formats::t6zone::load_file(&zhbo_formats::t6zone::language_path(bo2_dir, name))
 }
 
 /// The map whose bank supplies footsteps and impacts.
