@@ -9291,3 +9291,16 @@ A general sweep for bugs outside the playtest items; one commit per fix.
   now use the perk's localized name (`Perk::name`), as the perk grid and the pick preview already
   did. Screenshot: `~/.opencode/plan/bug-sweep/cac-editor-perks-after.png` (was `cac/cac-editor.png`).
   Tests: `the_editors_perk_buttons_show_the_perks_names`, `slot_values_read_as_the_resulting_class`.
+- **Method.** An arsenal fuzz (every slot weapon of the converted table — 9,672 — paired with
+  another, 4 seeds x 3,000 frames of random buttons, the plant check flickering) and an
+  end-to-end fuzz (client + sim + HUD draw with a random custom class from the converted table,
+  random keys including the field computer, re-taking control from the RTS; 1,381 classes in
+  release, 241 in debug for overflow checks) ran clean after the fixes above. Their only finding
+  was BO2-consistent: a select-fire alt's clip is the base variant's (no Extended Clip on
+  `sf_*`, conformance `clip_size`), so the shared magazine may hold more than the alt's clip. The
+  arsenal fuzz stays as `random_input_never_breaks_the_arsenal` over the stand-in table. Also
+  checked clean: the converted table's cross-references (every `Alt` resolves, no gun with a zero
+  clip or fire time), the table parser against every value line truncated at every length (no
+  panic), the HUD contact sheet (11 empty rects: the `hud_mp_num_big_*_white` numerals, which are
+  one fully transparent DXT1 image in BO2's own `mp.ipak` — not a conversion bug), the CaC
+  screenshot harness (every sprite resolved) and the real-install suite (58 passed).

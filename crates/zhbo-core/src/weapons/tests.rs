@@ -1093,3 +1093,59 @@ fn a_single_gun_has_no_left_hand() {
     let out = tap(&mut a, buttons::ADS, 5, &mut rng);
     assert_eq!(shots(&out), 0);
 }
+
+/// Every gun of the table, paired with another, through 3,000 frames of seeded random buttons —
+/// fire, aim, reload, swap, melee, both offhands, the alt mode, sprint — with the plant check
+/// flickering: the state machine never panics (overflow included, in debug builds) and its
+/// invariants hold every frame. A magazine may exceed the mode's clip only up to the weapon's own
+/// (a shared-ammo alt keeps the weapon's rounds: BO2's select-fire alt has no Extended Clip,
+/// conformance `clip_size`). Run over the converted table this found no break (bug sweep,
+/// MODLOG); here it guards the stand-in table and every rule change.
+#[test]
+fn random_input_never_breaks_the_arsenal() {
+    let guns: Vec<&'static WeaponDef> =
+        catalog().all().iter().copied().filter(|d| d.class.is_slot_weapon() && d.inventory != super::def::Inventory::AltMode).collect();
+    assert!(guns.len() > 3);
+    let presses = [buttons::FIRE, buttons::ADS, buttons::RELOAD, buttons::SWAP_WEAPON, buttons::MELEE, buttons::LETHAL, buttons::TACTICAL, buttons::ALT_MODE, buttons::SPRINT];
+    for (gi, g) in guns.iter().enumerate() {
+        for seed in 0..3u32 {
+            let other = guns[(gi * 7 + seed as usize + 1) % guns.len()];
+            let mut l = Loadout::test_kit();
+            l.primary = g.id.clone();
+            l.secondary = other.id.clone();
+            let mut a = Arsenal::with_loadout(l);
+            let mut rng = Rng::new(seed * 977 + gi as u32);
+            let mut x: u32 = seed.wrapping_mul(2_654_435_761) ^ (gi as u32) ^ 0x9e37_79b9;
+            let mut held = 0u32;
+            let mut out = Vec::new();
+            for f in 0..3000 {
+                x ^= x << 13;
+                x ^= x >> 17;
+                x ^= x << 5;
+                let mut pressed = 0;
+                if x % 7 == 0 {
+                    let b = presses[(x >> 8) as usize % presses.len()];
+                    held ^= b;
+                    if held & b != 0 {
+                        pressed = b;
+                    }
+                }
+                let sprinting = held & buttons::SPRINT != 0 && x % 3 == 0;
+                a.plant_ok = [x % 5 != 0, x % 11 != 0];
+                out.clear();
+                a.step(held, pressed, sprinting, (x as usize >> 20) % 3, ((x >> 4) % 300) as f32, &mut rng, &mut out);
+                let at = || format!("{} / {} seed {seed} frame {f}", g.id, other.id);
+                assert!(a.active < a.weapons.len(), "{}", at());
+                assert!((0.0..=1.0).contains(&a.ads), "{}: ads {}", at(), a.ads);
+                assert!(a.raise_left >= 0.0 && a.drop_left >= 0.0 && a.raise_left.is_finite() && a.drop_left.is_finite(), "{}", at());
+                for w in &a.weapons {
+                    if w.def.class.is_slot_weapon() {
+                        assert!(w.ammo <= w.def.clip.max(w.main.clip), "{}: {} has {} rounds", at(), w.def.id, w.ammo);
+                    }
+                    assert!(w.left.as_ref().is_none_or(|h| h.ammo <= w.def.clip), "{}: the left gun", at());
+                    assert!(w.cooldown.is_finite() && w.bloom.is_finite(), "{}: timers", at());
+                }
+            }
+        }
+    }
+}
