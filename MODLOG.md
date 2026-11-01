@@ -9353,3 +9353,17 @@ A general sweep for bugs outside the playtest items; one commit per fix.
   with one weapon nothing is requested. `Arsenal::can_cycle` gates the queue, and a queue is
   dropped whenever there is no other weapon. Test: `a_switch_press_with_one_weapon_is_not_carried`
   (fails without the fix).
+- **The thrower is concussed by his own concussion grenade, over half the radius** (the follow-up
+  the Flak Jacket entry left open). BO2 runs `onweapondamage` for every damage a player takes,
+  his own included (`finishplayerdamagewrapper` → `damageshellshockandrumble`,
+  `_globallogic_player.gsc:1222,2237-2239`); for the concussion it takes `radius * 0.5` when
+  `self == eattacker` (`_weapons.gsc:1364-1365`; the script's 512 is the def's
+  `iExplosionRadius`), then `time = 2 + 4 * scale` and Tactical Mask's x0.1. The mod's stun branch
+  skipped the thrower entirely. Now a thrown stun grenade (not placed equipment: the Shock Charge is
+  not the script's concussion) stuns its thrower with `scale` over
+  `concussion_self_radius_scale` (tuning pack, 0.5) of the radius, so past half the radius he gets
+  the edge time (2 s), as BO2. His own Tactical Mask now comes from the guard like anyone's, so
+  `self_harm_scales` returns 1 for both shares. **Note:** like every General's stun, it reaches the
+  host as `disable(PARALYZED)`; the first-person sim has no concussion screen or movement effect of
+  its own (unchanged, a separate item). Test: `the_thrower_is_concussed_over_half_the_radius`
+  (fails without the fix).

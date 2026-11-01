@@ -194,6 +194,33 @@ mod tests {
         assert!((secs[0] - 0.4).abs() < 1e-6 && secs[1] == 4.0, "{secs:?}");
     }
 
+    /// BO2 concusses the thrower too, his scale over half the radius (`_weapons.gsc:1364-1365`),
+    /// and his Tactical Mask cuts his own stun as it does anyone's (`:1375-1376`).
+    #[test]
+    fn the_thrower_is_concussed_over_half_the_radius() {
+        let conc = weapon("concussion_grenade_mp");
+        let t = crate::tuning::get();
+        let own_stun = |dist: f32, mask: bool| {
+            let host = FakeHost::default();
+            host.add(crate::host::ObjInfo { pos: crate::math::Vec3::new(dist, 0.0, -6.0), ..general(1, 0) });
+            let guards = [Guard { general: 1, blast: 1.0, stun: if mask { t.stun_protection_scale } else { 1.0 } }];
+            let g = Guarded { host: &host, guards: &guards, def: conc, stuck_to: None, thrown: true };
+            crate::projectiles::blast(&g, conc, 1, crate::math::Vec3::ZERO, None, 1.0, 1.0, &[]);
+            let secs: Vec<f32> = host.disabled.borrow().iter().filter(|d| d.0 == 1).map(|d| d.2).collect();
+            secs
+        };
+        let r = conc.explosion_radius;
+        let expect = |dist: f32| t.concussion_time_min + t.concussion_time_scale * (1.0 - dist / (r * t.concussion_self_radius_scale)).clamp(0.0, 1.0);
+        let quarter = own_stun(r * 0.25, false);
+        assert_eq!(quarter.len(), 1, "the thrower is stunned");
+        assert!((quarter[0] - expect(r * 0.25)).abs() < 1e-3, "{quarter:?} vs {}", expect(r * 0.25));
+        assert!((expect(r * 0.25) - (t.concussion_time_min + t.concussion_time_scale * 0.5)).abs() < 1e-3, "half the scale at a quarter radius");
+        let far = own_stun(r * 0.75, false);
+        assert!((far[0] - t.concussion_time_min).abs() < 1e-3, "past half the radius: the edge time");
+        let masked = own_stun(r * 0.25, true);
+        assert!((masked[0] - expect(r * 0.25) * t.stun_protection_scale).abs() < 1e-3, "{masked:?}");
+    }
+
     /// End to end: another General's frag going off beside a General whose class has Flak Jacket
     /// does `perk_flakJacket` percent of what it does to one without.
     #[test]

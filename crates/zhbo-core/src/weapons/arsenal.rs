@@ -489,12 +489,10 @@ impl Arsenal {
     /// blasts: `cac_modified_damage` returns the damage unchanged when the victim is the attacker
     /// (`_class.gsc:957-958`; another General's blasts go through [`crate::sim::guard`]), so the
     /// blast share is 1. `stunprotection` cuts a stun to x0.1 whoever threw it
-    /// (`_weapons.gsc:1375-1376`). Checked against the class: by the time the grenade goes off the
-    /// hand holds the gun again.
+    /// (`_weapons.gsc:1375-1376`), the thrower's own included: the guard applies it to every
+    /// victim, so the own share is 1 here too.
     pub fn self_harm_scales(&self) -> (f32, f32) {
-        let class = self.class_specialties();
-        let stun = if class.has(Specialty::StunProtection) { self.tuning.stun_protection_scale } else { 1.0 };
-        (1.0, stun)
+        (1.0, 1.0)
     }
 
     /// The hip spread cone's min and max at an eye height (inches; Ghidra G6): the weapon's
