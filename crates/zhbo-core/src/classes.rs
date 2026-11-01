@@ -474,9 +474,14 @@ mod tests {
     fn every_shipped_premade_id_resolves() {
         let _g = lock();
         let file = parse(include_str!("../../../data/ConquerOps/classes.ini"));
-        crate::weapons::catalog::clear_unresolved();
+        // The unresolved list is process-global and other tests record ids into it in parallel:
+        // only this file's ids are checked against it below, never the list's emptiness.
+        let mut ids: Vec<String> = Vec::new();
         for c in &file {
             let l = loadout_of(c);
+            for id in [&l.primary, &l.secondary, &l.lethal, &l.tactical, &l.melee] {
+                ids.push(id.split('+').next().unwrap_or(id).to_string());
+            }
             for slot in ["primary", "secondary"] {
                 let id = if slot == "primary" { &l.primary } else { &l.secondary };
                 let base = id.split('+').next().unwrap_or(id);
@@ -503,7 +508,8 @@ mod tests {
             let want: Vec<&str> = c.spec.split("perks=").nth(1).unwrap_or("").split(',').map(|p| p.trim()).filter(|p| !p.is_empty()).collect();
             assert_eq!(l.perks.len(), want.len(), "{}: every perk id resolves ({want:?})", c.id);
         }
-        assert!(crate::weapons::catalog::unresolved().is_empty(), "{:?}", crate::weapons::catalog::unresolved());
+        let missing: Vec<String> = crate::weapons::catalog::unresolved().into_iter().filter(|u| ids.contains(u)).collect();
+        assert!(missing.is_empty(), "{missing:?}");
     }
 
     #[test]

@@ -82,7 +82,7 @@ impl BigArchive {
 fn parse_table(table: &[u8], count: usize) -> Result<Vec<BigEntry>> {
     // The count is file-controlled: refuse one that cannot fit in the table (8 header bytes per
     // entry minimum) before pre-allocating for it, so a hostile header cannot ask for gigabytes.
-    if count.checked_mul(8).map_or(true, |need| need > table.len()) {
+    if count.checked_mul(8).is_none_or(|need| need > table.len()) {
         return Err(FormatError::Corrupt(format!(
             "entry count {count} does not fit in the {}-byte file table",
             table.len()

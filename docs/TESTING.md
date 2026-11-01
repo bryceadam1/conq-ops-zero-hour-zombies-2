@@ -31,6 +31,21 @@ How each layer of the mod is verified, and what to run before declaring a change
 | Third-person world meshes | every legal combination's `.zbw` carries BO2's third-person parts (base `attachWorldModel` slots, then the resolved attachments, default tag `tag_weapon`); every base weapon's world meshes on the soldier are numbered `W<vm>00..W<vm><n-1>` with `n` its `WorldMeshes` (the bridge shows `k < n`), every vertex rides the hand and every index is valid; `number` closes the gap `finish` leaves after the dropped clan-tag/emblem surfaces | `cargo test -p zhbo-assets world_meshes_are_numbered`; `ZHBO_BO2_DIR=… cargo test --release -p zhbo-assets every_world_weapon_shows_all_its_meshes -- --ignored`; the world parts (`the_world_parts_are_the_base_slots_then_the_attachments`, `the_resolved_unique_walks_the_childs_chain`, the conformance fixture `world_parts_default_to_tag_weapon`), a combination's W3D fallback (`a_combination_shows_its_base_weapons_world_meshes`) the body-mode mount (`a_tagless_world_part_rides_the_weapon_in_body_mode`) and the third-person camo (`each_world_part_wears_its_own_camo_asset`, `the_class_camo_follows_the_primary_into_third_person`, the `.zbw` round trip) |
 | Camo swap | the parser's synthetic/real camo reads; the `.zcm` round-trip and refusals; the converter's 47 blobs (every asset a def or unique points at, the seven optic sets included); each manifest part's camo asset (`each_part_carries_its_own_camo_asset`) and the per-part paint (`each_part_wears_its_own_camo_asset`); the class camo's transport and the draw-swap; the renderer's second texture and tint | `cargo test -p zhbo-formats`; `cargo test -p zhbo-native`; `cargo test -p zhbo-core`; `ZHBO_BO2_DIR=… cargo test -q --release -p zhbo-assets the_camo_assets_convert_with_their_art -- --ignored`; the sweep's `--camo` (below) |
 
+## The BO2 reference (ground truth)
+
+Parity work is checked against the existing reference dumps only (`~/Documents/BO2-reference/`,
+the `bo2-reference` skill): the decompiled UI Lua (`lua-dump/`) and GSC (`gsc-dump/`), the
+menuDefs, the create-a-class captures (`cac/`), the asset catalog, and read-only static Ghidra on
+`t6mp`. No new in-game captures are taken (decision 2026-10-21), so HUD and viewmodel feel are
+verified against the code that produces them (Lua layout math, weapon-def numbers, engine
+functions), not against video. Ghidra answers live in `ghidra/answers/G<n>.md` (index in its
+`README.md`; `dvars-t6mp.tsv` lists the engine's dvar defaults): G1 perk dvars and specialty tests,
+G2 player movement, G3 weapon switch/raise/drop/ADS timing, G4 viewmodel placement, G5 kick and
+recoil, G6 crosshair and hit markers, G7 damage feedback, G8 LUI easing, G9 the LUI root and safe
+area, G14–G17 below. A value only the engine knows lands as a cited default in the tuning pack
+(`tuning.rs` + `tuning.ini`); every parity decision cites its dump `file:line`, capture or Ghidra
+function in the commit and MODLOG.md.
+
 ## BO2 conformance
 
 Parity is proved or disproved by data, not by eye. `zhbo-conformance` holds one schema per table

@@ -119,6 +119,9 @@ void zhgfx_set_texture(uint8_t stage, uint16_t h, uint32_t flags);
 void zhgfx_submit(uint16_t v, uint16_t program, uint32_t depth, uint8_t discard);
 void zhgfx_discard(uint8_t flags);
 void zhgfx_blit(uint16_t v, uint16_t dst, uint8_t dst_mip, uint16_t dx, uint16_t dy, uint16_t dz, uint16_t src, uint8_t src_mip, uint16_t sx, uint16_t sy, uint16_t sz, uint16_t w, uint16_t h, uint16_t d);
+// Unbind vertex stream `stream` (the Rust side has always exported it; declared here so the
+// header matches the exports — appended, no behaviour change).
+void zhgfx_clear_vertex_buffer(uint8_t stream);
 
 #ifdef __cplusplus
 }

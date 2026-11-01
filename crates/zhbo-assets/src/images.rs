@@ -35,7 +35,7 @@ pub fn tga_bytes(img: &Rgba) -> Vec<u8> {
     out.push(0x08); // 8 alpha bits, bottom-left origin
     let row = img.width as usize * 4;
     for y in (0..img.height as usize).rev() {
-        for p in img.pixels[y * row..(y + 1) * row].chunks_exact(4) {
+        for p in img.pixels[y * row..(y + 1) * row].as_chunks::<4>().0 {
             out.extend_from_slice(&[p[2], p[1], p[0], p[3]]);
         }
     }

@@ -494,3 +494,24 @@ pub extern "C" fn zhgfx_discard(flags: u8) {
 pub extern "C" fn zhgfx_blit(v: u16, dst: u16, dst_mip: u8, dx: u16, dy: u16, dz: u16, src: u16, src_mip: u8, sx: u16, sy: u16, sz: u16, w: u16, h: u16, d: u16) {
     with((), |r| r.blit(v, dst, dst_mip, dx, dy, dz, src, src_mip, sx, sy, sz, w, h, d));
 }
+
+#[cfg(test)]
+mod tests {
+    /// Every `zhgfx_*` function this file exports is declared in `host/zhbo/zhbo_gfx.h` and the
+    /// other way round: the engine's backend links against the header, so a function on one side
+    /// only is an ABI break no compiler sees.
+    #[test]
+    fn the_c_header_declares_exactly_the_exported_functions() {
+        let names = |text: &str, prefix: &str| -> std::collections::BTreeSet<String> {
+            text.split(prefix).skip(1).map(|r| r.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect::<String>()).collect()
+        };
+        let rust = names(include_str!("ffi.rs"), "extern \"C\" fn zhgfx_");
+        let header = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../host/zhbo/zhbo_gfx.h")).expect("host/zhbo/zhbo_gfx.h is checked in");
+        let decls: String = header.lines().filter(|l| !l.trim_start().starts_with("//") && !l.starts_with('#') && l.contains('(')).collect::<Vec<_>>().join("\n");
+        let declared: std::collections::BTreeSet<String> = names(&decls, " zhgfx_").into_iter().chain(names(&decls, "*zhgfx_")).filter(|n| decls.contains(&format!("zhgfx_{n}("))).collect();
+        let missing: Vec<_> = rust.difference(&declared).collect();
+        let unexported: Vec<_> = declared.difference(&rust).collect();
+        assert!(missing.is_empty() && unexported.is_empty(), "exported but not in zhbo_gfx.h: {missing:?}; declared but not exported: {unexported:?}");
+        assert!(rust.len() > 30, "the scan found the exports ({})", rust.len());
+    }
+}

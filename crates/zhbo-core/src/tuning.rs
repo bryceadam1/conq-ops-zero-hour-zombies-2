@@ -176,6 +176,24 @@ tuning! {
     pen_large_rock: "large_rock" = 12.0, "Penetration depth, inches: a `large` round through rock (`info/bullet_penetration_mp`).";
     pen_large_wood: "large_wood" = 16.0, "Penetration depth, inches: a `large` round through wood (`info/bullet_penetration_mp`).";
     pen_large_water: "large_water" = 72.0, "Penetration depth, inches: a `large` round through water (`info/bullet_penetration_mp`).";
+    // ---- Equipment, concussion and EMP (BO2's MP scripts, `gsc-dump/mp/decompiled/t6/maps/mp/`) ----
+    scr_weaponobject_radius: "scr_weaponobject_radius" = 192.0, "Claymore: the trigger radius, inches (`gametypes/_weaponobjects.gsc:34` default; the trigger at `:1502`). The weapon's own explosion radius also caps it (`shouldaffectweaponobject`, `:1562-1569`).";
+    scr_weaponobject_coneangle: "scr_weaponobject_coneangle" = 70.0, "Claymore: half-angle of its front cone, degrees (`gametypes/_weaponobjects.gsc:31`; `detectiondot = cos(angle)`, `:282`).";
+    scr_weaponobject_mindist: "scr_weaponobject_mindist" = 20.0, "Claymore: how far in front of it, along its facing, an enemy must be, inches (`gametypes/_weaponobjects.gsc:32`; `shouldaffectweaponobject`, `:1579`).";
+    scr_weaponobject_graceperiod: "scr_weaponobject_graceperiod" = 0.6, "Claymore: seconds from the trip to the blast (`gametypes/_weaponobjects.gsc:33`; `wait( detectiongraceperiod )`, `:1548`).";
+    betty_radius: "bettyradius" = 192.0, "Bouncing Betty: trigger radius, inches, any direction (`_bouncingbetty.gsc:19`, `ignoredirection`).";
+    betty_grace_period: "bettygraceperiod" = 0.6, "Bouncing Betty: seconds from the trip to the jump (`_bouncingbetty.gsc:18`).";
+    betty_jump_height: "bettyjumpheight" = 65.0, "Bouncing Betty: how high it jumps before it goes off, inches (`_bouncingbetty.gsc:24`, `bouncingbettyjumpandexplode`).";
+    betty_jump_time: "bettyjumptime" = 0.65, "Bouncing Betty: seconds the jump takes; it goes off at the top (`_bouncingbetty.gsc:25`, `:140-145`).";
+    proximity_grenade_detection_radius: "scr_proximityGrenadeDetectionRadius" = 150.0, "Shock Charge: trigger radius, inches (`_proximity_grenade.gsc:19`).";
+    proximity_grenade_grace_period: "scr_proximityGrenadeGracePeriod" = 0.1, "Shock Charge: seconds from the trip to the shock (`_proximity_grenade.gsc:20`).";
+    trophy_system_range: "trophy_system_range" = 512.0, "Trophy System: how near a projectile it shoots down, inches (`_trophy_system.gsc:171`, `distancesquared < 262144`).";
+    trophy_system_ammo: "trophy_system_ammo" = 2.0, "Trophy System: projectiles it shoots down before it is spent (`_trophy_system.gsc:62`, `self.ammo = 2`).";
+    perk_delay_explosive_time: "perk_delayExplosiveTime" = 0.9, "`delayexplosive` (Engineer): extra seconds a tripped explosive waits (dvar default, `dvars-t6mp.tsv`; `gametypes/_weaponobjects.gsc:1550-1551`).";
+    hacker_tool_max_equipment_distance: "hackertoolmaxequipmentdistance" = 2000.0, "Black Hat: the farthest equipment it locks on to, inches (`_hacker_tool.gsc:12`); the mod uses it for Zero Hour drones too.";
+    concussion_time_min: "concussion_time_min" = 2.0, "Stun at the blast's edge, seconds: BO2's `time = 2 + 4 * scale` (`gametypes/_weapons.gsc:1372`).";
+    concussion_time_scale: "concussion_time_scale" = 4.0, "Extra stun at the blast's centre, seconds (the `4` in `gametypes/_weapons.gsc:1372`; `scale` is 1 at the centre, 0 at the edge).";
+    emp_grenade_duration: "empgrenade_duration" = 12.0, "EMP Grenade: seconds a vehicle stays disabled (`_empgrenade.gsc:102`, `empduration = 12`).";
     // ---- The mod's own ------------------------------------------------------------------------
     shield_blast_protection_30: "shieldBlastDamageProtection_30" = 0.4, "Assault Shield: share of a blast it takes away within a 30-degree arc of its forward axis (`FUN_00670940`; dvar default).";
     shield_blast_protection_60: "shieldBlastDamageProtection_60" = 0.2, "As above, within a 60-degree arc.";
@@ -195,7 +213,12 @@ tuning! {
     regen_delay: "RegenDelay" = 5.0, "Seconds after the last hit before health regenerates (the mod's value).";
     regen_full_time: "RegenFullTime" = 3.0, "Seconds to regenerate from empty (the mod's value).";
     building_rate: "BuildingRate" = 1.0, "Build/repair rate multiplier (the mod's value).";
-    projectile_bounce: "ProjectileBounce" = 0.3, "Grenade bounce restitution (the mod's value).";
+    projectile_bounce: "ProjectileBounce" = 0.3, "Grenade bounce: share of the speed into the surface kept (the mod's value; BO2's per-surface `perpendicularBounce` is not converted yet).";
+    projectile_bounce_along: "ProjectileBounceAlong" = 0.6, "Grenade bounce: share of the speed along the surface kept (the mod's value; BO2's `parallelBounce`).";
+    projectile_rest_speed: "ProjectileRestSpeed" = 3.0, "A bouncing grenade below this speed comes to rest, Zero Hour units/s (the mod's value).";
+    equipment_arm_time: "EquipmentArmTime" = 1.0, "Seconds after it is down before equipment does anything (the mod's stand-in for BO2's `waittillnotmoving` plus `activationdelay`).";
+    hack_equipment_time: "HackEquipmentTime" = 1.5, "Black Hat: seconds aimed at equipment to hack it (the mod's value: BO2's 50 ms lock, `_hacker_tool.gsc:20`, is followed by the tool's own fire).";
+    hack_drone_time: "HackDroneTime" = 3.0, "Black Hat: seconds aimed at a Zero Hour drone to hack it (the mod's value).";
 }
 
 /// Keys match case-insensitively, ignoring `_` and `.` (`perk_weapSwitchMultiplier`).
@@ -270,5 +293,16 @@ mod tests {
         assert_eq!((t.g_speed, t.jump_height, t.bg_gravity, t.friction), (190.0, 39.0, 800.0, 5.5));
         assert_eq!((t.perk_speed_multiplier, t.perk_sprint_multiplier, t.perk_sprint_recovery_multiplier), (1.07, 2.0, 0.3));
         assert_eq!((t.bg_view_kick_scale, t.bg_view_kick_min, t.bg_view_kick_max), (0.175, 0.5, 90.0));
+    }
+
+    #[test]
+    fn bo2s_equipment_script_values() {
+        // The MP scripts' `level.*` and `scr_*` defaults (gsc-dump, cited on each key).
+        let t = Tuning::default();
+        assert_eq!((t.scr_weaponobject_radius, t.scr_weaponobject_coneangle, t.scr_weaponobject_mindist, t.scr_weaponobject_graceperiod), (192.0, 70.0, 20.0, 0.6));
+        assert_eq!((t.betty_radius, t.betty_grace_period, t.betty_jump_height, t.betty_jump_time), (192.0, 0.6, 65.0, 0.65));
+        assert_eq!((t.proximity_grenade_detection_radius, t.proximity_grenade_grace_period), (150.0, 0.1));
+        assert_eq!((t.trophy_system_range, t.trophy_system_ammo, t.perk_delay_explosive_time), (512.0, 2.0, 0.9));
+        assert_eq!((t.hacker_tool_max_equipment_distance, t.concussion_time_min, t.concussion_time_scale, t.emp_grenade_duration), (2000.0, 2.0, 4.0, 12.0));
     }
 }

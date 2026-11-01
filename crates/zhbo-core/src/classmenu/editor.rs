@@ -136,11 +136,6 @@ impl Editor {
         out
     }
 
-    /// The highlighted slot's index in [`Editor::slots`], for the view's scrolling.
-    pub fn slot_index(&self) -> usize {
-        self.slots().iter().position(|s| *s == self.slot).unwrap_or(0)
-    }
-
     /// The option list for the highlighted slot: display strings, in the order the arrows walk.
     /// The lists are rebuilt on demand so a weapon change re-derives the attachment list.
     pub fn options(&self) -> Vec<String> {

@@ -12,7 +12,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use zhbo_core::attachments::{self, AttachmentDef};
 use zhbo_core::units::inches;
-use zhbo_core::weapons::{CamoOption, Class, Effect, FireMode, GunKick, Kick, Loadout, OffhandClass, Penetrate, Place, Reticle, Specialties, Sway, Table, CycleTimes, Traits, ViewPos, WeapClass, WeapType, WeaponDef, Zoom, ALT_CLIPS, MELEE_DAMAGE};
+use zhbo_core::weapons::{CamoOption, Class, Effect, FireMode, GunKick, Kick, Loadout, OffhandClass, Penetrate, Place, Reticle, Specialties, Sway, Table, CycleTimes, Traits, ViewPos, WeapClass, WeapType, WeaponDef, Zoom, MELEE_DAMAGE};
 #[cfg(debug_assertions)]
 use zhbo_core::weapons::{format_table, parse_table};
 use zhbo_formats::weapon::{self as bo2, Weapon};
@@ -607,17 +607,6 @@ fn order_attachments(d: &mut WeaponDef, item: &zhbo_conformance::bo2::combos::It
     d.allowed.sort_by_key(|(short, _)| listed.iter().position(|l| l == short).unwrap_or(listed.len()));
 }
 
-/// The alt mode entry of a converted weapon, if it has one.
-pub fn alt_of<'a>(table: &'a Table, id: &str) -> Option<&'a WeaponDef> {
-    let d = table.weapons.iter().find(|d| d.id == id)?;
-    table.weapons.iter().find(|a| !d.alt.is_empty() && a.id == d.alt)
-}
-
-/// Mark alt-mode clips on a viewmodel: an alt mode's clips sit after its weapon's.
-pub fn alt_clip(slot: usize) -> usize {
-    slot + ALT_CLIPS as usize
-}
-
 /// BO2's base aim-down-sights walking speed, as a share of the normal walk: one definition in the
 /// core, so the converter's base build and the core's attachment replacement walk agree.
 pub(crate) use zhbo_core::weapons::ADS_MOVE_BASE;
@@ -628,17 +617,7 @@ pub use zhbo_core::names::WEAPON_TABLE_PATH as TABLE_PATH;
 /// BO2's localized strings for the display names: `zone/<language>/<lang>_code_post_gfx_mp.ff`
 /// with `<lang>_patch_mp.ff` over it. Empty if the language zones can't be read.
 pub fn names(bo2_dir: &std::path::Path) -> HashMap<String, String> {
-    let mut out = HashMap::new();
-    for (dir, prefix) in [("english", "en")] {
-        for zone in ["code_post_gfx_mp", "patch_mp"] {
-            let path = bo2_dir.join("zone").join(dir).join(format!("{prefix}_{zone}.ff"));
-            let Ok(file) = std::fs::read(&path) else { continue };
-            let Ok(ff) = zhbo_formats::fastfile::read(&file) else { continue };
-            let Ok(z) = zhbo_formats::t6zone::load(&ff) else { continue };
-            out.extend(zhbo_formats::localize::entries(&z).unwrap_or_default());
-        }
-    }
-    out
+    zhbo_formats::localize::install_strings(bo2_dir, &["code_post_gfx_mp", "patch_mp"])
 }
 
 /// Sound events and Zero Hour FX weapons for the converted weapons. Each gun gets its own player
@@ -1382,7 +1361,7 @@ pub fn rts_weapon_edits(defs: &[WeaponDef]) -> Vec<(String, String, String)> {
 /// farthest throw, at 45 degrees.
 pub fn throw_range(d: &WeaponDef) -> f32 {
     let speed = if d.projectile_speed > 0.0 { d.projectile_speed } else { inches(800.0) };
-    speed * speed / zhbo_core::projectiles::GRAVITY
+    speed * speed / zhbo_core::projectiles::gravity()
 }
 
 /// The Zero Hour weapon of every player weapon the overhead General can hold

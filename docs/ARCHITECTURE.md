@@ -5,17 +5,15 @@ Rust ownership split and [CONFIG.md](CONFIG.md) for every `ZHBO_*` variable.
 
 ## Crate graph
 
+`A → B` means A depends on B (from the crates' `Cargo.toml`; leaves have no in-repo dependency):
+
 ```
-zhbo-requirements   zhbo-formats   zhbo-gfx   zhbo-native
-        │               │   │         │            │
-        └── zhbo-core ──┘   │         │            │
-        │       │  └────────┼─────────┼────────────┤
-        │       └──(optional, feature "renderer")  │
-        │               │   └ zhbo-conformance     │
-        │               │          │               │
-        └─ zhbo-assets ─┘──────────┴───────────────┘
-                │
-        └─ zhbo-launcher
+zhbo-requirements, zhbo-formats, zhbo-native, zhbo-gfx      (leaves)
+zhbo-conformance → zhbo-formats
+zhbo-core        → zhbo-requirements, zhbo-native, (feature "renderer") zhbo-gfx
+zhbo-assets      → zhbo-core, zhbo-formats, zhbo-native, zhbo-conformance, zhbo-requirements
+zhbo-launcher    → zhbo-requirements, zhbo-assets
+xtask            → zhbo-core, zhbo-formats
 
 host/zhbo (C++) ←─ ABI ─→ zhbo-core
 ```
@@ -30,10 +28,10 @@ Wine/CrossOver/Proton prefixes. Depends on nothing. Used by the launcher and by 
 ### `crates/zhbo-formats`
 Parsers for game data: Zero Hour `.big` (from a file or, `big::members`, from memory), Black Ops II
 `.sabs`/`.sabl` sound banks, `.ipak` image packs, `IWi` images, LZO1X, the BO2 fastfile decryption,
-and the compiled UI Lua (`havok_lua`: Havok Script chunks and their constant stores). Depends on nothing. All
+and the compiled UI Lua (`havok_lua`: Havok Script chunks and their constant stores). `t6zone::load_file`/`install_path`/`language_path` and `localize::install_strings` are the one way to open a zone of the player's install. Depends on nothing. All
 readers are hardened against corrupt input (refactor plan Phase 0.3) and used by the
-converter (`zhbo-assets`) and the runtime (`zhbo-core` reads the BO2 zone through the host's
-own data).
+converter (`zhbo-assets`), the conformance oracle (`zhbo-conformance`) and `xtask`. The runtime
+(`zhbo-core`) never parses BO2 files: it reads only what the converter wrote.
 
 ### `crates/zhbo-gfx`
 The renderer: the engine's bgfx API subset implemented on wgpu, plus the build-time shader
@@ -56,8 +54,8 @@ converter writes it, the core reads it.
 ### `crates/zhbo-core`
 The Rust gameplay core: BO2-style movement, weapons, hitscan, field computer, camera, HUD,
 and the deterministic lockstep simulation. This is the mod's brain; everything reachable
-from `zhbo_logic_*` must stay deterministic. Depends on `zhbo-requirements` and optionally
-`zhbo-gfx`. After Phase 2.3:
+from `zhbo_logic_*` must stay deterministic. Depends on `zhbo-requirements`, `zhbo-native` and
+optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
 - `weapons/`: `def.rs` (WeaponDef, enums), `table.rs` (the weapon table's schema,
   parse and format), `catalog.rs` (the converted table or built-in stand-ins, with BO2's perk rows and bonus cards),
   `perks.rs` (the perk ids and tiers, each tied to its statstable row: name, description, specialty set), `specialty.rs` (BO2's 62
@@ -65,12 +63,14 @@ from `zhbo_logic_*` must stay deterministic. Depends on `zhbo-requirements` and 
   (the fire cycle's extra times, the zoom levels/fractions/DOF, BO2's per-weapon traits),
   `recoil.rs` (per-shot kick, the gun kick spring, flinch, the spread cone), `view_kick.rs`
   (BO2's view kick integrator: the camera recoil that moves the sim's aim), `zoom.rs` (BO2's
-  ADS zoom: the view FOV over the ADS lerp, the zoom levels, the hybrid's alt scope), `gunpos.rs`
-  (the client-side gun position: offsets, bob, sway), `loadout.rs`, `rng.rs` (xorshift),
+  ADS zoom: the view FOV over the ADS lerp, the zoom levels, the hybrid's alt scope), `scope.rs`
+  (the reticle zoom: when a 2D-overlay scope is looked through), `idle_sway.rs` (BO2's idle sway
+  and hold breath), `gunpos.rs` (the client-side gun position: offsets, bob, sway), `loadout.rs`, `rng.rs` (xorshift),
   `arsenal.rs` (WeaponState, Reload, Offhand, Arsenal with HasSpecialty and the perk-timed
   weapon states, WeaponAction).
 - `sim/`: `mod.rs` (Sim, PlayerSim, Event, the top-level `step` orchestration),
-  `hack.rs` (Black Hat), `build.rs` (hammer/site), `rts.rs` (the overhead General:
+  `hack.rs` (Black Hat), `build.rs` (hammer/site), `plant.rs` (BO2's plant check for planted
+  equipment), `deploy.rs` (the deployed Assault Shield), `rts.rs` (the overhead General:
   `rts_update`, the third slot's orders `rts_offhand`/`Third`, `rts_reload`, `RtsWeapons`
   with each slot's Zero Hour weapon, `RtsIcons`), `fire.rs` (`apply_weapon_action`,
   `melee_strike`, `gather_targets`, `throw_velocity`), `optics.rs` (the optic displays' rules:
@@ -79,7 +79,15 @@ from `zhbo_logic_*` must stay deterministic. Depends on `zhbo-requirements` and 
   resolution against a 720-unit root (`mod.rs`), BO2's converted UI fonts (`font.rs`), the
   BO2 materials the ports draw by name (`materials.rs`) and LUI's animation states (`anim.rs`).
 - `hud/` and `classui/`: the first-person HUD and the create-a-class screens, one file per element
-  or concern.
+  or concern. `classmenu/` is the Pick-10 editor's state machine behind them (draft, legality,
+  offers, wildcards, navigation); `classes.rs` the shared class list, `classicons.rs` the command
+  bar's class buttons, `classrepair.rs` BO2's loadout repair for classes read back from the
+  profile (`profile.rs`), `menu.rs` the shell menu.
+- `client/`: the per-render-frame client (mouse look, key bindings, one `FpsInput` per logic
+  frame, the camera and its RTS ↔ first-person transitions, tracers, the autopilot harness).
+  Nothing in it reaches the sim except through the input messages it emits.
+- `building.rs` (the General as a builder), `impacts.rs` (the surface a shot hit and its BO2
+  impact effect), `soundlayers.rs` (third-person shots' per-layer distance curves).
 - `config.rs` (env vars parsed once at init), `names.rs` (the naming registry),
   `tuning.rs` (the gameplay tuning pack, BO2 units), `strings.rs` (the localised strings),
   `equipment.rs` (BO2 equipment behavior, driven by the weapon table's `Equipment` block),
@@ -92,6 +100,8 @@ from `zhbo_logic_*` must stay deterministic. Depends on `zhbo-requirements` and 
   of the bridge, composition and posing (pure, tested without a GPU), the renderer upload/submit
   (`gpu.rs`, feature `renderer`), the class camo swap (`camo.rs`: the `.zcm` recipe applied to the
   composed mesh, plus the core-global transport) and its C ABI (`ffi.rs`).
+- `nativebody/`: the native third person (Track R7): the General's body and the weapon in his
+  hand through the native pass (`ZHBO_NATIVE_BODY`), with the same pure / `gpu.rs` / `ffi.rs` split.
 
 ### `crates/zhbo-assets`
 The BO2 → mod converter: reads your BO2 install (through `zhbo-formats`), converts HUD art,
@@ -101,7 +111,7 @@ to list/export BO2 sounds, images and fonts. `fonts.rs` converts BO2's UI fonts.
 `ini.rs` (the INI rewriters), `viewmodels.rs` (the viewmodel conversion), `generals.rs`
 (the Zero Hour names, factions and the `files()` orchestrator), `camo.rs` (the camo art and the
 `.zcm` recipes for every `WeaponCamo` a def or attachment unique points at) and `paks.rs` (pack-file access, the shrinker
-and the zone loader). `thirdperson.rs` resolves the body clip of each movement state (asking
+and `load_zone`, over the shared `zhbo_formats::t6zone::load_file`). `thirdperson.rs` resolves the body clip of each movement state (asking
 `playeranim.rs`, BO2's `mp/playeranim.script` first-match picker) and poses the soldier's hit
 boxes in each.
 
@@ -166,7 +176,8 @@ calls into Rust internals. Name literals shared across the boundary are generate
 2. `zhbo-core` may depend on `zhbo-requirements`, `zhbo-native` and, behind the `renderer`
    feature, `zhbo-gfx`. It must never depend on `zhbo-assets` (the converter depends on the core,
    not the other way round).
-3. `zhbo-assets` may depend on `zhbo-core`, `zhbo-formats`, `zhbo-native` and `zhbo-conformance`.
+3. `zhbo-assets` may depend on `zhbo-core`, `zhbo-formats`, `zhbo-native`, `zhbo-conformance` and
+   `zhbo-requirements`.
    `zhbo-conformance` depends on `zhbo-formats` only — never on the core or the converter (the
    expected side must not share the mod's rules).
 4. `zhbo-launcher` may depend on `zhbo-requirements` and `zhbo-assets`.

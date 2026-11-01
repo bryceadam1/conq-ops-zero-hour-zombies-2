@@ -1245,8 +1245,7 @@ mod tests {
 
     #[test]
     fn the_silencer_fields_round_trip() {
-        let mut d = WeaponDef::default();
-        d.id = "an94_mp".into();
+        let mut d = WeaponDef { id: "an94_mp".into(), ..Default::default() };
         d.empty_fire_sound = "ZHBO_BO2_DryFireGeneric".into();
         d.silenced_fire_sound = "ZHBO_BO2_Fire_an94_mp_silenced".into();
         d.silenced_fire_sound_npc = "ZHBO_BO2_FireNpc_an94_mp_silenced".into();

@@ -1113,12 +1113,6 @@ impl WeaponDef {
         ammo == 0 && self.traits.weap_type == WeapType::Bullet
     }
 
-    /// When an empty reload's rounds go in: `iReloadEmptyAddTime` when set, else the reload add
-    /// time (`FUN_008dbc00`/`FUN_008dec90`).
-    pub fn reload_empty_add_at(&self) -> f32 {
-        if self.reload_empty_add_time > 0.0 { self.reload_empty_add_time } else { self.reload_add_time }
-    }
-
     /// BO2's segmented reload (`bSegmentedReload`): start, rounds per cycle, end.
     /// A dual-wield weapon: it names its left gun (BO2's `bDualWield` with `szDualWieldWeaponName`).
     /// It fires two guns, one per trigger, and has no sights (`aimDownSight` 0 on every BO2 `_dw`).
@@ -1132,13 +1126,5 @@ impl WeaponDef {
 
     pub fn has_anim(&self, slot: usize) -> bool {
         slot < 128 && self.anims & (1u128 << slot) != 0
-    }
-
-    pub fn fire_mode_name(&self) -> &'static str {
-        match self.fire {
-            FireMode::Auto | FireMode::Minigun => "FULL-AUTO",
-            FireMode::Semi | FireMode::Stacked => "SEMI-AUTO",
-            FireMode::Burst(_) => "BURST",
-        }
     }
 }

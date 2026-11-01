@@ -8529,3 +8529,118 @@ shows "sound layers: 293 BO2 third-person layers installed"), `--classpick` 6/6,
 `--scope` pass, `--w3d-ads` 2/2. Two legs launched back-to-back first bailed with "Generals is
 already running" (the previous game still exiting); rerun serially they passed — wait for the
 previous `generalszh` to exit between legs.
+
+## Code polish: the docs describe the code again (2026-11-01)
+
+The post-integration audit (58 merged branches) found the permanent docs contradicting the code;
+fixed in one pass:
+
+- AGENTS.md named a `crates/zhbo-core/tests/` harness that never existed; the fake host is
+  `FakeHost` in `sim/mod.rs`'s tests (CONTRACT's "adding a service" checklist now says which fake
+  implements which trait: `FakeHost` the `LogicHost`, `hud/tests.rs`'s `Recorder` the `ClientHost`).
+- ARCHITECTURE's crate graph drew a core → formats edge that does not exist and left out
+  core → native; it is now a dependency list read off the `Cargo.toml`s. The core's module list gained
+  `nativebody/`, `client/`, `classmenu/`, `sim/plant.rs`/`deploy.rs`, `weapons/scope.rs`/`idle_sway.rs`
+  and the loose modules.
+- CONTRACT gained a table of the free functions no section covered (`zhbo_logic_input`,
+  `zhbo_logic_choose_class`, the profile writers, `zhbo_client_world_poses`, …).
+- CONFIG gained the test-only `ZHBO_*` knobs.
+- `docs/V1-PARITY-PLAN.md` is deleted: every track is merged. Its durable parts moved to README
+  (the deliberate differences from BO2: no scorestreaks, Zero Hour factions on the HUD, the command
+  view's orders), TESTING ("The BO2 reference": dumps-only ground truth, the G1–G17 index) and
+  RENDERER ("The W3D fallback (kept on purpose)" — the plan's "retire W3D" was overtaken: the base
+  set's W3D stays as the fallback). The plan's 0.1.0 → 1.0.0 bump is left to the integrator.
+
+**Gotcha:** a planning doc that outlives its work rots fast — this one still said "130 clippy
+warnings" (35 by now) and "retire the W3D code" after the W3D path had become a tested fallback.
+
+## Code polish: clippy, dead code, and a header test that would have caught a stray export (2026-11-01)
+
+- clippy is down from 35 unique warnings to one (`lui/font.rs:147` `text`'s eight arguments, left for
+  after the ui-scaling branch, which owns that drawing code). The toolchain is 1.99 with no MSRV
+  pin, so the `chunks_exact(N)` sites use `as_chunks::<N>()`.
+- Dead functions removed: `weapons::alt_of`/`alt_clip` (converter), `conformance::actual::by_key`,
+  `Editor::slot_index`, `Profile::class_in_slot`, `Vec3::with_z`, `Blend::writes_depth`,
+  `WeaponDef::fire_mode_name` (hand-typed "FULL-AUTO" strings nobody drew) and
+  `WeaponDef::reload_empty_add_at` (a third, unused spelling of `arsenal::magazine_times`' add-time
+  rule). `conformance.rs` keeps its own transcription of that rule on purpose: it is the oracle
+  the arsenal's frame counts are checked against.
+- **Gotcha — an export the header never declared.** `zhgfx_clear_vertex_buffer` was exported by
+  `zhbo-gfx` but missing from `host/zhbo/zhbo_gfx.h`; nothing noticed because nothing calls it.
+  Two new unit tests (`ffi::tests::the_c_header_declares_exactly_the_exported_functions` in
+  zhbo-core and zhbo-gfx) now hold the `zhbo_*`/`zhgfx_*` exports and the headers' declarations
+  equal in both directions. The declaration is appended at the header's end; it declares an
+  existing export, so no ABI version moves.
+- The headless renderer tests share one `headless()` constructor and `assert_no_errors` (three
+  tests had inlined copies of both); the impact log sums its counts instead of re-parsing the
+  strings it had just formatted.
+
+## Code polish: equipment, concussion and grenade physics from the tuning pack (2026-11-01)
+
+`equipment.rs` said of its ranges "the values here are the commonly documented ones"; the MP
+scripts in the reference (`gsc-dump/mp/decompiled/t6/maps/mp/`) disagree with several. They are now
+tuning keys under the scripts' own names, each citing its `.gsc` line (`[Equipment]`,
+`[Concussion]` in `tuning.ini`; `equipment::EquipTuning`, `projectiles::Flight`):
+
+| | before | BO2's script |
+|---|---|---|
+| Claymore radius | 144 in | `scr_weaponobject_radius` 192, capped by the weapon's explosion radius (`shouldaffectweaponobject`) |
+| Claymore | went off on the trip | `scr_weaponobject_graceperiod` 0.6 s after it, and only for an enemy ≥ `scr_weaponobject_mindist` 20 in in front |
+| Betty radius / jump | 160 in / 40 in over 0.6 s | `bettyradius` 192; 0.6 s grace, then a 0.65 s jump to 65 in where it goes off |
+| Shock Charge | 100 in, instant | `scr_proximityGrenadeDetectionRadius` 150, 0.1 s grace |
+| Trophy System | 384 in | 512 in (`distancesquared < 262144`) |
+| Engineer's wait | 0.5 s, tested on `showenemyequipment` | `perk_delayExplosiveTime` 0.9 s on `delayexplosive` (the script's `hasperk` test) |
+| Black Hat range | 1200 in | `hackertoolmaxequipmentdistance` 2000 |
+| Concussion | 5 s centre → 2 s edge | `time = 2 + 4 * scale` (6 → 2) |
+| EMP | 10 s | `empduration = 12` |
+| Sensor | 800 in | 750 in (`_sensor_grenade.gsc:79`; a constant, the converter bakes it into the sensor object) |
+
+Projectile gravity was a hand copy of `bg_gravity` (`projectiles::GRAVITY`); it reads the pack now
+(`projectiles::gravity()`, `Flight::gravity`). The pack's `ProjectileBounce` key existed but nothing
+read it (the bounce used its own `BOUNCE_UP` const); it drives the bounce now, with
+`ProjectileBounceAlong`/`ProjectileRestSpeed` beside it. BO2's own per-surface
+`parallelBounce`/`perpendicularBounce` are in the weapon def; converting them is a follow-up.
+
+**Kept as the mod's values, on purpose:** the arm time (BO2 waits until the piece stops moving,
+then `activationdelay`), and the Black Hat's hack times. BO2's equipment lock is 50 ms
+(`equipmenthackertooltimems`), but the hack only completes when the tool then fires, so the
+script's number is not the whole hack; 1.5 s / 3 s stay until an in-game comparison says otherwise.
+
+## Code polish: one fastfile loader (2026-11-01)
+
+Read + decrypt + load of a `.ff` was written out seven times (the converter's `paks::load_zone`,
+`sfx::load_language_zone`, `fonts::files`, `weapons::names`, the CLI's `load_full_zone`, and the
+conformance oracle's `install::load` and `install::strings`), and the english language folder
+three more. They now share `zhbo_formats::t6zone::load_file(path)`, `install_path(dir, name)`
+(`zone/all/<name>.ff`), `language_path(dir, name)` (`zone/english/en_<name>.ff`, from
+`t6zone::LANGUAGE`) and `zhbo_formats::localize::install_strings(dir, zones)`. Living in
+zhbo-formats keeps the oracle's "depends on zhbo-formats only" rule.
+
+The zone *lists* stay where they are: each is a deliberate search or load order with its own reason
+(the oracle's six string zones in load order, the converter's display names from two, the HUD
+art's material search) — one shared list would hide which order a caller relies on.
+
+## Code polish: tests that shared process globals without a lock (2026-11-01)
+
+`ffi::tests::the_shield_hook_queues_a_deployed_shields_damage_and_passes_the_sims_own` failed about
+one run in four. **Root cause:** the Assault Shield's engine mirror (`ffi::SHIELDS`/`SHIELD_COUNT`)
+is process-global, and `zhbo_init`, `zhbo_logic_step` and `zhbo_reset` republish it from the global
+State; the shield test wrote the mirror without the State tests' lock, so a parallel State test
+could zero it between the test's publish and its asserts. A scan for the same pattern found
+three more:
+
+- The native viewmodel's local camo/reticle/overlay transport (`nativevm::set_gun_under_overlay`
+  and friends) and the third person's stowed-weapon mirror are written by the client frame and
+  logic step the ffi tests drive, and read by the `nativevm`/`nativebody` tests, which serialized
+  on those modules' own State mutexes only. Both modules' test `with_state` now also take
+  `ffi::state_lock` (now `pub(crate)`, test-only; lock order: it, then the module's State).
+- The impact table is global and "every test installs the same `impacts::TEST_TABLE`" was the
+  rule, but `ffi::tests::impact_fx_resolves_through_the_converted_table` loaded its own table;
+  it now loads `TEST_TABLE` through `zhbo_load_impacts`.
+- `classes::tests::every_shipped_premade_id_resolves` asserted the global unresolved-id list was
+  empty while other tests record deliberately bad ids into it; it now checks only its own ids.
+
+Verified with 20 repeated `cargo test -p zhbo-core --lib` runs (650 tests) and 20 of `ffi::`, all
+green. The other globals (profile, strings, classes, fonts, tuning) already have their test locks or
+are only written by production code; the sound-layer table is installed by one test with an FX name
+no other test uses.

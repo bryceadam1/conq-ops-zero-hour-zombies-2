@@ -454,7 +454,7 @@ pub fn target_from(o: &ObjInfo, bodies: &HitBodies, rifle: bool) -> Target {
 /// Launch velocity for a grenade of throw speed `speed` from `from` to land at `to`: the low arc
 /// out of reach, the farthest throw, at 45 degrees).
 pub fn throw_velocity(from: Vec3, to: Vec3, speed: f32) -> Vec3 {
-    let g = crate::projectiles::GRAVITY;
+    let g = crate::projectiles::gravity();
     let flat = Vec3::new(to.x - from.x, to.y - from.y, 0.0);
     let range = flat.length_xy().max(1.0);
     let rise = to.z - from.z;

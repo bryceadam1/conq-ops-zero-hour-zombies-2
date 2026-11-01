@@ -299,7 +299,7 @@ impl Converted {
             rgba = zhbo_formats::iwi::Rgba { width: cw, height: ch, pixels: cell };
         }
         let rgba = crate::generals::shrink(rgba, FX_TEXTURE_MAX);
-        let additive = rgba.pixels.chunks_exact(4).all(|p| p[3] >= 250);
+        let additive = rgba.pixels.as_chunks::<4>().0.iter().all(|p| p[3] >= 250);
         self.textures.entry(format!("Art\\Textures\\{file}")).or_insert_with(|| images::tga_bytes(&rgba));
         Some((file, additive))
     }

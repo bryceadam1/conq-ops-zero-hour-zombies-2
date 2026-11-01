@@ -14,10 +14,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 pub(crate) fn load_zone(bo2_dir: &Path, name: &str) -> Result<Zone, String> {
-    let path = bo2_dir.join("zone").join("all").join(format!("{name}.ff"));
-    let file = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let zone = fastfile::read(&file).map_err(|e| format!("{name}: {e}"))?;
-    t6zone::load(&zone).map_err(|e| format!("{name}: {e}"))
+    t6zone::load_file(&t6zone::install_path(bo2_dir, name))
 }
 
 /// The image packs, in file-name order.

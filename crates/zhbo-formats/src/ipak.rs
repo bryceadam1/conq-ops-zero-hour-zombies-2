@@ -83,13 +83,13 @@ impl Ipak {
         }
         let count = u32::from_le_bytes(head[12..16].try_into().unwrap()) as usize;
         // The section count is file-controlled; keep its table within the file.
-        if count.checked_mul(16).map_or(true, |need| need as u64 > file_len.saturating_sub(16)) {
+        if count.checked_mul(16).is_none_or(|need| need as u64 > file_len.saturating_sub(16)) {
             return Err(FormatError::Corrupt(format!("ipak section count {count} does not fit in the file")));
         }
         let mut secs = vec![0u8; 16 * count];
         f.read_exact(&mut secs).map_err(|_| FormatError::Truncated("ipak sections"))?;
         let section = |kind: u32| {
-            secs.chunks_exact(16).map(|s| {
+            secs.as_chunks::<16>().0.iter().map(|s| {
                 let v = |i: usize| u32::from_le_bytes(s[i * 4..i * 4 + 4].try_into().unwrap());
                 (v(0), v(1), v(2), v(3))
             })
@@ -110,7 +110,9 @@ impl Ipak {
         let mut raw = vec![0u8; index_len as usize];
         f.read_exact(&mut raw).map_err(|_| FormatError::Truncated("ipak index"))?;
         let mut entries: Vec<IpakEntry> = raw
-            .chunks_exact(16)
+            .as_chunks::<16>()
+            .0
+            .iter()
             .map(|e| {
                 let v = |i: usize| u32::from_le_bytes(e[i * 4..i * 4 + 4].try_into().unwrap());
                 IpakEntry { data_hash: v(0), name_hash: v(1), offset: v(2), size: v(3) }

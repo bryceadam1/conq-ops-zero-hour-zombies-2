@@ -78,10 +78,6 @@ impl Blend {
             _ => return Err(FormatError::Corrupt(format!("blend {c}"))),
         })
     }
-    /// Whether it writes depth (blended surfaces don't, so what is behind them still shows).
-    pub fn writes_depth(self) -> bool {
-        matches!(self, Blend::Opaque | Blend::AlphaTest)
-    }
 }
 
 /// Which of a surface's faces draw: the material's `cullFace` (`zhbo_formats::xmodel::Cull`).

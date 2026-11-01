@@ -6,10 +6,7 @@ use std::path::Path;
 use zhbo_formats::t6zone::{self, Zone};
 
 fn load(dir: &Path, name: &str) -> Result<Zone, String> {
-    let path = dir.join("zone").join("all").join(format!("{name}.ff"));
-    let file = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let ff = zhbo_formats::fastfile::read(&file).map_err(|e| format!("{name}: {e}"))?;
-    t6zone::load(&ff).map_err(|e| format!("{name}: {e}"))
+    t6zone::load_file(&t6zone::install_path(dir, name))
 }
 
 /// The zones the expected side reads: `common_mp` (the weapons, attachments and models),
@@ -26,15 +23,7 @@ pub struct Install {
 const STRING_ZONES: &[&str] = &["code_pre_gfx_mp", "code_post_gfx_mp", "ui_mp", "common_mp", "patch_mp", "patch_ui_mp"];
 
 fn strings(dir: &Path) -> HashMap<String, String> {
-    let mut out = HashMap::new();
-    for zone in STRING_ZONES {
-        let path = dir.join("zone").join("english").join(format!("en_{zone}.ff"));
-        let Ok(file) = std::fs::read(&path) else { continue };
-        let Ok(ff) = zhbo_formats::fastfile::read(&file) else { continue };
-        let Ok(z) = t6zone::load(&ff) else { continue };
-        out.extend(zhbo_formats::localize::entries(&z).unwrap_or_default());
-    }
-    out
+    zhbo_formats::localize::install_strings(dir, STRING_ZONES)
 }
 
 impl Install {

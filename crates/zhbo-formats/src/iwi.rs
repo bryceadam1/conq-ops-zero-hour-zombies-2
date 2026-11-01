@@ -99,8 +99,8 @@ pub fn decode(data: &[u8]) -> Result<Rgba> {
     let start = end.checked_sub(size).filter(|&s| s >= HEADER_LEN).ok_or(FormatError::Truncated("IWi mip 0"))?;
     let src = &data[start..end];
     let pixels = match h.format {
-        Format::Argb32 => src.chunks_exact(4).flat_map(|p| [p[2], p[1], p[0], p[3]]).collect(),
-        Format::Rgb24 => src.chunks_exact(3).flat_map(|p| [p[2], p[1], p[0], 255]).collect(),
+        Format::Argb32 => src.as_chunks::<4>().0.iter().flat_map(|p| [p[2], p[1], p[0], p[3]]).collect(),
+        Format::Rgb24 => src.as_chunks::<3>().0.iter().flat_map(|p| [p[2], p[1], p[0], 255]).collect(),
         // White coverage: a tint colours it, as BO2's font shader does.
         Format::A8 => src.iter().flat_map(|&a| [255, 255, 255, a]).collect(),
         f => decode_blocks(src, w, hh, f),

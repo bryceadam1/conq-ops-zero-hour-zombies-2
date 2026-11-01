@@ -184,6 +184,9 @@ pub unsafe extern "C" fn zhbo_load_strings(text: *const c_char) {
 
 /// Load the BO2 font metrics (`names::FONTS_PATH` in the converted archive, read by the bridge's
 /// `readTextFile`; empty without the archive, and text then uses the engine font).
+///
+/// # Safety
+/// `text` is null or a NUL-terminated string valid for the call.
 #[no_mangle]
 pub unsafe extern "C" fn zhbo_load_fonts(text: *const c_char) {
     if text.is_null() {
@@ -490,17 +493,16 @@ fn log_step(s: &State, first_new_event: usize, frame: u32) {
                     p.health, p.max_health, w.def.display_name, w.ammo, w.reserve
                 ));
                 let counts = &IMPACT_ACCUM[i % IMPACT_ACCUM.len()];
-                let by: Vec<String> = Surface::ALL
+                let by: Vec<(&str, u32)> = Surface::ALL
                     .iter()
                     .enumerate()
-                    .filter_map(|(k, s)| {
-                        let n = counts[k].swap(0, Ordering::Relaxed);
-                        (n > 0).then(|| format!("{} {n}", s.name()))
-                    })
+                    .map(|(k, s)| (s.name(), counts[k].swap(0, Ordering::Relaxed)))
+                    .filter(|&(_, n)| n > 0)
                     .collect();
                 if !by.is_empty() {
-                    let landed: u32 = by.iter().map(|t| t.rsplit(' ').next().unwrap().parse::<u32>().unwrap_or(0)).sum();
-                    s.logic.log(&format!("player {i} impacts: {landed} ({})", by.join(", ")));
+                    let landed: u32 = by.iter().map(|&(_, n)| n).sum();
+                    let list: Vec<String> = by.iter().map(|(name, n)| format!("{name} {n}")).collect();
+                    s.logic.log(&format!("player {i} impacts: {landed} ({})", list.join(", ")));
                 }
             }
         }
@@ -1041,15 +1043,19 @@ pub unsafe extern "C" fn zhbo_string(label: *const c_char) -> *const u16 {
     text.map_or(std::ptr::null(), |s| s.as_ptr())
 }
 
+/// The global State and the per-frame mirrors it publishes (the shield mirror, the native
+/// viewmodel's local camo/reticle/overlay transport, the third person's stowed weapons) are process-global: tests that drive the State
+/// through the ABI, or read those mirrors, run one at a time under this lock. The native viewmodel
+/// and third-person tests take it through their `with_state` (lock order: this, then that module's State).
+#[cfg(test)]
+pub(crate) fn state_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+    LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    /// The global State is shared: the ffi tests that init it run one at a time.
-    fn state_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(())).lock().unwrap_or_else(|e| e.into_inner())
-    }
 
     #[test]
     fn calls_before_init_are_harmless() {
@@ -1119,27 +1125,25 @@ mod tests {
 
     #[test]
     fn impact_fx_resolves_through_the_converted_table() {
-        // One install for the whole test binary: no other test reads the impact table.
-        let text = "impact 2 default ZHBO_BO2FX_b2_default\n\
-                    impact 2 concrete ZHBO_BO2FX_b2_concrete\n\
-                    flesh 2 3 ZHBO_BO2FX_b2_head_fatal\n";
-        let c = std::ffi::CString::new(text).unwrap();
+        // The impact table is process-global and the sim tests read it in parallel, so this test
+        // installs the same text they do (`impacts::TEST_TABLE`), through the ABI.
+        let c = std::ffi::CString::new(crate::impacts::TEST_TABLE).unwrap();
         unsafe { zhbo_load_impacts(c.as_ptr()) };
 
         let mut buf = [0u8; 64];
-        let n = unsafe { zhbo_impact_fx(2, crate::impacts::Surface::Concrete as i32, 0, 0, buf.as_mut_ptr().cast(), 64) };
+        let n = unsafe { zhbo_impact_fx(77, crate::impacts::Surface::Concrete as i32, 0, 0, buf.as_mut_ptr().cast(), 64) };
         assert_eq!(n, 1);
-        assert_eq!(ctext(&buf), "ZHBO_BO2FX_b2_concrete");
+        assert_eq!(ctext(&buf), "FX_C");
 
         // No cell for the surface: the bucket's default cell (BO2's SURF_TYPE_DEFAULT).
         let mut buf = [0u8; 64];
-        unsafe { zhbo_impact_fx(2, crate::impacts::Surface::Metal as i32, 0, 0, buf.as_mut_ptr().cast(), 64) };
-        assert_eq!(ctext(&buf), "ZHBO_BO2FX_b2_default");
+        unsafe { zhbo_impact_fx(77, crate::impacts::Surface::Metal as i32, 0, 0, buf.as_mut_ptr().cast(), 64) };
+        assert_eq!(ctext(&buf), "FX_D");
 
-        // Blood: head + fatal is BO2's FxFleshType 3.
+        // Blood where a round leaves a body: the exit table's flesh row.
         let mut buf = [0u8; 64];
-        unsafe { zhbo_impact_fx(2, crate::impacts::Surface::Flesh as i32, 1, 1, buf.as_mut_ptr().cast(), 64) };
-        assert_eq!(ctext(&buf), "ZHBO_BO2FX_b2_head_fatal");
+        let n = unsafe { zhbo_impact_exit_fx(78, crate::impacts::Surface::Flesh as i32, 0, 0, buf.as_mut_ptr().cast(), 64) };
+        assert_eq!((n, ctext(&buf)), (1, "FX_EXIT_BLOOD"));
 
         // A bucket with no rows: 0, and nothing written.
         let mut buf = [1u8; 8];
@@ -1220,6 +1224,9 @@ mod tests {
 
     #[test]
     fn the_shield_hook_queues_a_deployed_shields_damage_and_passes_the_sims_own() {
+        // The shield mirror is process-global and `zhbo_init`/`zhbo_logic_step`/`zhbo_reset`
+        // republish it from the global State: run with the other State tests, not beside them.
+        let _g = state_lock();
         let mut sim = Sim::new();
         let def = crate::weapons::catalog().get("riotshield_mp").unwrap();
         let carried = crate::shield::Bearer::of(5, crate::math::Vec3::new(0.0, 0.0, 0.0), 0.0, def, true).unwrap();
@@ -1233,5 +1240,46 @@ mod tests {
         assert_eq!(zhbo_logic_shield_damage(5, 3, -60.0, 0.0, 0.0, 12.0, 1, crate::host::damage_kind::SMALL_ARMS, 30.0), 1.0);
         SHIELD_HIT_COUNT.store(0, Ordering::Relaxed);
         SHIELD_COUNT.store(0, Ordering::Relaxed);
+    }
+
+    /// Every `zhbo_*` function the core exports is declared in `host/zhbo/zhbo_core.h`, and every
+    /// one the header declares is exported: a function on one side only is a broken ABI the
+    /// compiler cannot see (the bridge links against the header).
+    #[test]
+    fn the_c_header_declares_exactly_the_exported_functions() {
+        fn exported(dir: &std::path::Path, out: &mut std::collections::BTreeSet<String>) {
+            for e in std::fs::read_dir(dir).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    exported(&p, out);
+                } else if p.extension().is_some_and(|x| x == "rs") {
+                    let text = std::fs::read_to_string(&p).unwrap();
+                    for rest in text.split("extern \"C\" fn ").skip(1) {
+                        let name: String = rest.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+                        if name.starts_with("zhbo_") {
+                            out.insert(name);
+                        }
+                    }
+                }
+            }
+        }
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+        let mut rust = std::collections::BTreeSet::new();
+        exported(&root.join("src"), &mut rust);
+        let header = std::fs::read_to_string(root.join("../../host/zhbo/zhbo_core.h")).expect("host/zhbo/zhbo_core.h is checked in");
+        // A declaration is a top-level line naming `zhbo_<name>(` (not a comment, macro or typedef).
+        let declared: std::collections::BTreeSet<String> = header
+            .lines()
+            .filter(|l| !l.starts_with([' ', '\t', '#', '/', '*']) && !l.starts_with("typedef"))
+            .flat_map(|l| l.match_indices("zhbo_").map(move |(i, _)| &l[i..]))
+            .filter_map(|r| {
+                let name: String = r.chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '_').collect();
+                r[name.len()..].starts_with('(').then_some(name)
+            })
+            .collect();
+        let missing: Vec<_> = rust.difference(&declared).collect();
+        let unexported: Vec<_> = declared.difference(&rust).collect();
+        assert!(missing.is_empty() && unexported.is_empty(), "exported but not in zhbo_core.h: {missing:?}; declared but not exported: {unexported:?}");
+        assert!(rust.len() > 50, "the scan found the exports ({})", rust.len());
     }
 }

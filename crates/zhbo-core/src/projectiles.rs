@@ -10,19 +10,34 @@ use crate::math::Vec3;
 use crate::units::{inches, BO2_TO_ZH_DAMAGE, LOGIC_DT};
 use crate::weapons::{Effect, WeaponDef};
 
-/// BO2's `g_gravity` (800 in/s^2).
-pub const GRAVITY: f32 = inches(800.0);
-/// Bounce: vertical speed kept, horizontal speed kept, below which a grenade comes to rest.
-const BOUNCE_UP: f32 = 0.3;
-const BOUNCE_ALONG: f32 = 0.6;
-const REST_SPEED: f32 = 3.0;
+/// Gravity on thrown and launched things: the tuning pack's `bg_gravity` (G2; the same value the
+/// player's movement falls by), Zero Hour units/s^2.
+pub fn gravity() -> f32 {
+    inches(crate::tuning::get().bg_gravity)
+}
+
+/// What a projectile flies by, from the tuning pack, fixed at launch (the sim is lockstep: the
+/// pack is the same on every client).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Flight {
+    /// `bg_gravity`, Zero Hour units/s^2.
+    pub gravity: f32,
+    /// On a bounce: share of the speed into the surface and along it kept; below `rest_speed` it
+    /// comes to rest.
+    pub bounce_up: f32,
+    pub bounce_along: f32,
+    pub rest_speed: f32,
+}
+
+impl Flight {
+    pub fn from_tuning(t: &crate::tuning::Tuning) -> Self {
+        Flight { gravity: inches(t.bg_gravity), bounce_up: t.projectile_bounce, bounce_along: t.projectile_bounce_along, rest_speed: t.projectile_rest_speed }
+    }
+}
 /// How close a flying projectile must pass an object to hit it.
 const HIT_RADIUS: f32 = 2.5;
 /// Seconds before an impact-fuse projectile arms (it can't hit its thrower).
 const ARM_TIME: f32 = 0.08;
-/// Stun and EMP lengths (seconds) at the blast centre and at the edge.
-const STUN_SECONDS: (f32, f32) = (5.0, 2.0);
-const EMP_SECONDS: f32 = 10.0;
 /// A smoke grenade's screen: how long it stays up and how wide it is (BO2's Willy Pete).
 pub const SMOKE_TIME: f32 = 15.0;
 pub const SMOKE_RADIUS: f32 = inches(220.0);
@@ -57,6 +72,8 @@ pub struct Projectile {
     pub travelled: f32,
     /// Bounced this step: where, and off what (the client's bounce sound). Cleared every step.
     pub bounced: Option<(Vec3, Surface)>,
+    /// Gravity and bounce, from the tuning pack at launch.
+    pub flight: Flight,
 }
 
 /// What happened this step, for the client (sounds, hit markers).
@@ -80,7 +97,8 @@ impl Projectile {
         let object = if def.projectile_object.is_empty() { 0 } else { host.spawn(&def.projectile_object, owner, from, yaw) };
         let lands = crate::equipment::Kind::of(def) != crate::equipment::Kind::Other;
         let fuse = if lands || def.impact_explode || def.effect == Effect::Impact || def.fuse_time <= 0.0 { f32::INFINITY } else { fuse_left };
-        Projectile { def, owner, pos: from, vel, fuse, age: 0.0, object, stuck_to: None, resting: false, self_blast_scale: 1.0, self_stun_scale: 1.0, lands, travelled: 0.0, bounced: None }
+        let flight = Flight::from_tuning(&crate::tuning::get());
+        Projectile { def, owner, pos: from, vel, fuse, age: 0.0, object, stuck_to: None, resting: false, self_blast_scale: 1.0, self_stun_scale: 1.0, lands, travelled: 0.0, bounced: None, flight }
     }
 
     /// Advance one logic frame with no shields about (see [`Projectile::step_shielded`]).
@@ -110,7 +128,7 @@ impl Projectile {
             }
         } else if !self.resting {
             if self.def.projectile_gravity {
-                self.vel.z -= GRAVITY * dt;
+                self.vel.z -= self.flight.gravity * dt;
             }
             let next = self.pos + self.vel * dt;
             // Not armed yet when this move ends short of the activation distance (BO2 compares the
@@ -146,7 +164,8 @@ impl Projectile {
                         return Some(self.impact(host, o));
                     } else {
                         // Grenades bounce off.
-                        self.vel = Vec3::new(-self.vel.x * BOUNCE_ALONG, -self.vel.y * BOUNCE_ALONG, self.vel.z * BOUNCE_UP);
+                        let f = self.flight;
+                        self.vel = Vec3::new(-self.vel.x * f.bounce_along, -self.vel.y * f.bounce_along, self.vel.z * f.bounce_up);
                         self.bounce(host, Surface::of_object(Some(&o)));
                     }
                 }
@@ -167,9 +186,10 @@ impl Projectile {
                         return Some(Outcome::Hit { at: self.pos, kill: false });
                     }
                 } else {
-                    self.vel = Vec3::new(self.vel.x * BOUNCE_ALONG, self.vel.y * BOUNCE_ALONG, -self.vel.z * BOUNCE_UP);
+                    let f = self.flight;
+                    self.vel = Vec3::new(self.vel.x * f.bounce_along, self.vel.y * f.bounce_along, -self.vel.z * f.bounce_up);
                     self.bounce(host, host.surface_at(self.pos.x, self.pos.y));
-                    if self.vel.length() < REST_SPEED {
+                    if self.vel.length() < f.rest_speed {
                         self.resting = true;
                         self.vel = Vec3::ZERO;
                     }
@@ -357,8 +377,9 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
                 }
             }
             Effect::Stun => {
-                let f = (dist / d.explosion_radius.max(1.0)).clamp(0.0, 1.0);
-                let mut secs = STUN_SECONDS.0 + (STUN_SECONDS.1 - STUN_SECONDS.0) * f;
+                // `time = 2 + 4 * scale`, scale 1 at the centre, 0 at the edge (`_weapons.gsc:1372`).
+                let scale = 1.0 - (dist / d.explosion_radius.max(1.0)).clamp(0.0, 1.0);
+                let mut secs = tuning.concussion_time_min + tuning.concussion_time_scale * scale;
                 if own {
                     secs *= self_stun_scale;
                 }
@@ -374,7 +395,7 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
             }
             Effect::Emp => {
                 if !own && !o.has(objflags::INFANTRY) {
-                    host.disable(o.id, disable_kind::EMP, EMP_SECONDS);
+                    host.disable(o.id, disable_kind::EMP, tuning.emp_grenade_duration);
                     hit_enemy = true;
                 }
             }

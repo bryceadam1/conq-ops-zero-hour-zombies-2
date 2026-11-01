@@ -262,7 +262,7 @@ impl LogicHost for CLogicHost {
     }
 
     fn is_walkable(&self, x: f32, y: f32) -> bool {
-        self.0.is_walkable.map_or(true, |f| f(x, y) != 0)
+        self.0.is_walkable.is_none_or(|f| f(x, y) != 0)
     }
 
     fn surface_at(&self, x: f32, y: f32) -> crate::impacts::Surface {
@@ -308,7 +308,7 @@ impl LogicHost for CLogicHost {
     }
 
     fn damage(&self, shooter: u32, victim: u32, amount: f32, kind: i32) -> bool {
-        self.0.damage.map_or(false, |f| f(shooter, victim, amount, kind) != 0)
+        self.0.damage.is_some_and(|f| f(shooter, victim, amount, kind) != 0)
     }
 
     fn heal(&self, id: u32, amount: f32) {
@@ -367,7 +367,7 @@ impl LogicHost for CLogicHost {
         let f = self.0.work_site?;
         let mut site = crate::building::Site::default();
         let id = f(general, &pos, reach, &mut site);
-        (id != 0).then(|| crate::building::Site { id, ..site })
+        (id != 0).then_some(crate::building::Site { id, ..site })
     }
 
     fn work(&self, general: u32, site: u32, rate: f32) -> f32 {
@@ -405,7 +405,7 @@ impl ClientHost for CClientHost {
     }
 
     fn image(&self, name: &str, x: f32, y: f32, w: f32, h: f32, argb: u32) -> bool {
-        self.0.image.map_or(false, |f| f(cstring(name).as_ptr(), x, y, w, h, argb) != 0)
+        self.0.image.is_some_and(|f| f(cstring(name).as_ptr(), x, y, w, h, argb) != 0)
     }
 
     fn query(&self, center: Vec3, radius: f32, viewer: u32, out: &mut Vec<ObjInfo>) {

@@ -22,19 +22,13 @@ use zhbo_formats::iwi::Rgba;
 /// The atlas texture's name in the archive.
 const TEXTURE: &str = "zhbo_bo2_fonts.tga";
 
-/// The language folders tried, with their zone prefixes.
-const LANGUAGES: &[(&str, &str)] = &[("english", "en")];
-
 /// The converted fonts: the archive files (atlas, MappedImages, metrics) and a summary.
-pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String> {
-    let (dir, prefix) = LANGUAGES
-        .iter()
-        .find(|(dir, prefix)| bo2_dir.join("zone").join(dir).join(format!("{prefix}_code_post_gfx_mp.ff")).is_file())
-        .ok_or("no language zone with the UI fonts")?;
-    let zone_path = bo2_dir.join("zone").join(dir).join(format!("{prefix}_code_post_gfx_mp.ff"));
-    let file = std::fs::read(&zone_path).map_err(|e| format!("{}: {e}", zone_path.display()))?;
-    let ff = zhbo_formats::fastfile::read(&file).map_err(|e| e.to_string())?;
-    let zone = zhbo_formats::t6zone::load(&ff).map_err(|e| e.to_string())?;
+pub fn files(bo2_dir: &Path) -> Result<(crate::generals::Files, String), String> {
+    let zone_path = zhbo_formats::t6zone::language_path(bo2_dir, "code_post_gfx_mp");
+    if !zone_path.is_file() {
+        return Err("no language zone with the UI fonts".into());
+    }
+    let zone = zhbo_formats::t6zone::load_file(&zone_path)?;
     let fonts: Vec<Font> = zhbo_formats::font::all(&zone)
         .map_err(|e| e.to_string())?
         .into_iter()
@@ -53,6 +47,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Vec<(String, Vec<u8>)>, String), String>
     if hash.data_hash == 0 || hashes.iter().any(|h| *h != hash) {
         return Err(format!("the UI fonts do not share one streamed atlas ({hashes:x?})"));
     }
+    let (dir, prefix) = zhbo_formats::t6zone::LANGUAGE;
     let pak_path = bo2_dir.join("zone").join(dir).join(format!("{prefix}_base.ipak"));
     let pak = Ipak::open(&pak_path).map_err(|e| format!("{}: {e}", pak_path.display()))?;
     let atlas = pak.entry(hash).ok_or("the font atlas is not in the language pack").and_then(|e| images::load(&pak, e).map_err(|_| "the font atlas does not decode"))?;

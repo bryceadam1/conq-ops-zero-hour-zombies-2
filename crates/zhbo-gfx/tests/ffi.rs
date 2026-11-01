@@ -15,9 +15,7 @@ extern "C" fn ffi_trace(msg: *const std::os::raw::c_char) {
 #[test]
 fn ffi_init_layout_transient_shutdown() {
     LOG.lock().unwrap().clear();
-    unsafe {
-        zhgfx_set_callbacks(Some(ffi_trace), None);
-    }
+    zhgfx_set_callbacks(Some(ffi_trace), None);
 
     let init = ZhgfxInit {
         kind: 0, // headless
@@ -64,8 +62,8 @@ fn ffi_init_layout_transient_shutdown() {
     let bad = unsafe { zhgfx_transient_alloc(false, u32::MAX, u32::MAX, std::ptr::addr_of_mut!(vstart)) };
     assert!(bad.is_null(), "the 0.1b overflow alloc is null");
 
-    unsafe { zhgfx_reset(128, 128, 0) };
-    unsafe { zhgfx_shutdown() };
+    zhgfx_reset(128, 128, 0);
+    zhgfx_shutdown();
 
     // The trace callback saw the renderer's startup line (the log path works).
     let lines = LOG.lock().unwrap();

@@ -83,7 +83,7 @@ fn index_bytes(i: &[u16]) -> Vec<u8> {
 }
 
 
-/// A headless renderer for the negative-path tests, or the test returns early on machines
+/// A headless renderer for the tests, or the test returns early on machines
 /// without a usable adapter (the tests that need pixels assert on the screenshot instead).
 fn headless() -> (Option<Renderer>, Arc<Mutex<Vec<String>>>) {
     let desc = InitDesc {
@@ -110,6 +110,9 @@ fn headless() -> (Option<Renderer>, Arc<Mutex<Vec<String>>>) {
     }
 }
 
+/// The screenshot callback's capture: width, height, BGRA pixels.
+type Shot = Arc<Mutex<Option<(u32, u32, Vec<u8>)>>>;
+
 fn assert_no_errors(r: &Renderer, log: &Arc<Mutex<Vec<String>>>) {
     assert_eq!(r.stats().errors, 0, "wgpu reported errors:\n{}", log.lock().unwrap().join("\n"));
 }
@@ -135,7 +138,7 @@ fn setup_views(r: &mut Renderer) {
 #[test]
 fn negative_paths_are_counted_not_fatal() {
     let (Some(mut r), log) = headless() else { return };
-    let (program, layout_id) = test_program(&mut r);
+    let (program, _layout_id) = test_program(&mut r);
     assert_ne!(program, INVALID);
 
     setup_views(&mut r);
@@ -169,7 +172,7 @@ fn negative_paths_are_counted_not_fatal() {
     assert_eq!(bad_program, INVALID);
 
     r.frame();
-    assert_eq!(r.stats().errors, 0, "wgpu reported errors:\n{}", log.lock().unwrap().join("\n"));
+    assert_no_errors(&r, &log);
     assert!(r.stats().num_draw <= 1, "invalid draws dropped ({} drew)", r.stats().num_draw);
 }
 
@@ -197,29 +200,8 @@ fn blob_decoder_never_panics_on_garbage() {
 
 #[test]
 fn draws_a_frame_and_reads_it_back() {
-    let desc = InitDesc {
-        kind: WindowKind::Headless,
-        window: std::ptr::null_mut(),
-        display: std::ptr::null_mut(),
-        width: W,
-        height: H,
-        reset: 0,
-        transient_vb_size: 0,
-        transient_ib_size: 0,
-    };
-    let log = Arc::new(Mutex::new(Vec::<String>::new()));
-    let log2 = log.clone();
-    let mut r = match Renderer::new(&desc, Box::new(move |m| {
-        eprintln!("{m}");
-        log2.lock().unwrap().push(m.to_string());
-    })) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("no usable adapter, skipping: {e}");
-            return;
-        }
-    };
-    let shot: Arc<Mutex<Option<(u32, u32, Vec<u8>)>>> = Arc::default();
+    let (Some(mut r), log) = headless() else { return };
+    let shot: Shot = Arc::default();
     let shot2 = shot.clone();
     r.set_screenshot_fn(Box::new(move |_, w, h, _, data| *shot2.lock().unwrap() = Some((w, h, data.to_vec()))));
 
@@ -315,7 +297,7 @@ fn draws_a_frame_and_reads_it_back() {
         }
     }
     assert!(failed.is_empty(), "{}\nlog:\n{}", failed.join("\n"), log.lock().unwrap().join("\n"));
-    assert_eq!(r.stats().errors, 0, "wgpu reported errors:\n{}", log.lock().unwrap().join("\n"));
+    assert_no_errors(&r, &log);
     assert_eq!(r.stats().num_draw, 3);
 }
 
@@ -323,28 +305,7 @@ fn draws_a_frame_and_reads_it_back() {
 /// what the engine allocated, not a garbage count (0.1a).
 #[test]
 fn transient_all_remaining_draws() {
-    let desc = InitDesc {
-        kind: WindowKind::Headless,
-        window: std::ptr::null_mut(),
-        display: std::ptr::null_mut(),
-        width: W,
-        height: H,
-        reset: 0,
-        transient_vb_size: 0,
-        transient_ib_size: 0,
-    };
-    let log = Arc::new(Mutex::new(Vec::<String>::new()));
-    let log2 = log.clone();
-    let mut r = match Renderer::new(&desc, Box::new(move |m| {
-        eprintln!("{m}");
-        log2.lock().unwrap().push(m.to_string());
-    })) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("no usable adapter, skipping: {e}");
-            return;
-        }
-    };
+    let (Some(mut r), log) = headless() else { return };
 
     let varyings = parse_varying_def(VARYINGS);
     let vs = r.create_shader(&blob::build(VS, &varyings, Stage::Vertex, &[]).unwrap().encode());
@@ -381,7 +342,7 @@ fn transient_all_remaining_draws() {
 
     r.frame();
     assert_eq!(r.stats().num_draw, 1, "only the in-range draw survives");
-    assert_eq!(r.stats().errors, 0, "wgpu reported errors:\n{}", log.lock().unwrap().join("\n"));
+    assert_no_errors(&r, &log);
 }
 
 /// Dynamic buffers: an in-place update, an update that grows the buffer past its created size
@@ -389,7 +350,7 @@ fn transient_all_remaining_draws() {
 #[test]
 fn dynamic_buffers_update_grow_and_draw() {
     let (Some(mut r), log) = headless() else { return };
-    let (program, layout_id) = test_program(&mut r);
+    let (program, _layout_id) = test_program(&mut r);
     setup_views(&mut r);
     let tint = r.create_uniform("u_tint", 2, 1);
     r.set_uniform(tint, &[1.0, 1.0, 1.0, 1.0]);
@@ -413,16 +374,16 @@ fn dynamic_buffers_update_grow_and_draw() {
     r.submit(0, program, 0, 0xFF);
 
     // The grown vertex buffer drew the triangle (red, inside it at (12, 48)).
-    let shot: Arc<Mutex<Option<(u32, u32, Vec<u8>)>>> = Arc::default();
+    let shot: Shot = Arc::default();
     let shot2 = shot.clone();
     r.set_screenshot_fn(Box::new(move |_, w, h, _, data| *shot2.lock().unwrap() = Some((w, h, data.to_vec()))));
     r.request_screenshot(INVALID, "grow.png");
     r.frame();
 
-    let (w, h, px) = shot.lock().unwrap().take().expect("screenshot callback ran");
+    let (w, _h, px) = shot.lock().unwrap().take().expect("screenshot callback ran");
     let i = ((48 * w + 12) * 4) as usize;
     assert!(px[i + 2] > 200, "the grown buffer drew the triangle: BGR {},{}", px[i], px[i + 1]);
-    assert_eq!(r.stats().errors, 0, "wgpu reported errors:\n{}", log.lock().unwrap().join("\n"));
+    assert_no_errors(&r, &log);
 }
 
 /// View order, offscreen frame buffers (plain and MSAA), an sRGB-sampled texture and instance
@@ -430,7 +391,7 @@ fn dynamic_buffers_update_grow_and_draw() {
 #[test]
 fn views_framebuffers_msaa_srgb_and_instance_data() {
     let (Some(mut r), log) = headless() else { return };
-    let (program, layout_id) = test_program(&mut r);
+    let (program, _layout_id) = test_program(&mut r);
     setup_views(&mut r);
     let tint = r.create_uniform("u_tint", 2, 1);
     r.set_uniform(tint, &[1.0, 1.0, 1.0, 1.0]);
@@ -473,35 +434,14 @@ fn views_framebuffers_msaa_srgb_and_instance_data() {
 
     r.frame();
     assert_eq!(r.stats().num_draw, 3, "all three views drew");
-    assert_eq!(r.stats().errors, 0, "wgpu reported errors:\n{}", log.lock().unwrap().join("\n"));
+    assert_no_errors(&r, &log);
 }
 
 /// A blit whose clamped region or layer range is empty is skipped with a report, never sent to
 /// wgpu as a zero-size or out-of-range copy (0.1e).
 #[test]
 fn empty_blits_are_skipped() {
-    let desc = InitDesc {
-        kind: WindowKind::Headless,
-        window: std::ptr::null_mut(),
-        display: std::ptr::null_mut(),
-        width: W,
-        height: H,
-        reset: 0,
-        transient_vb_size: 0,
-        transient_ib_size: 0,
-    };
-    let log = Arc::new(Mutex::new(Vec::<String>::new()));
-    let log2 = log.clone();
-    let mut r = match Renderer::new(&desc, Box::new(move |m| {
-        eprintln!("{m}");
-        log2.lock().unwrap().push(m.to_string());
-    })) {
-        Ok(r) => r,
-        Err(e) => {
-            eprintln!("no usable adapter, skipping: {e}");
-            return;
-        }
-    };
+    let (Some(mut r), log) = headless() else { return };
     let a = r.create_texture_2d(8, 8, false, 2, state::bgfx_format::RGBA8, 0, None);
     let b = r.create_texture_2d(8, 8, false, 2, state::bgfx_format::RGBA8, 0, None);
     assert!(a != INVALID && b != INVALID);
@@ -514,5 +454,5 @@ fn empty_blits_are_skipped() {
     r.blit(0, b, 0, 0, 0, 0, a, 0, 8, 0, 0, 4, 4, 1); // source x past the mip
     r.frame();
     assert_eq!(r.stats().num_blit, 1, "only the valid blit is recorded");
-    assert_eq!(r.stats().errors, 0, "wgpu reported errors:\n{}", log.lock().unwrap().join("\n"));
+    assert_no_errors(&r, &log);
 }

@@ -414,11 +414,6 @@ impl Profile {
         self.active().customs.iter().find(|c| c.name.eq_ignore_ascii_case(name.trim()))
     }
 
-    /// A set's class in one slot.
-    pub fn class_in_slot(&self, slot: usize) -> Option<&CustomClass> {
-        self.active().customs.get(slot)
-    }
-
     /// Whether the active set has no custom classes.
     pub fn is_empty(&self) -> bool {
         self.active().is_empty()

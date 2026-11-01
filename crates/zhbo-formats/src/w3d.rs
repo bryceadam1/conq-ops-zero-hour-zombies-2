@@ -517,7 +517,7 @@ mod tests {
             bo2_maps: None,
             emissive: false,
         };
-        let d = skin_model("TEST_SKN", "TEST_SKL", &[m.clone()]);
+        let d = skin_model("TEST_SKN", "TEST_SKL", std::slice::from_ref(&m));
         let top = chunks(&d);
         assert_eq!(top.iter().map(|c| c.0).collect::<Vec<_>>(), vec![CHUNK_MESH, CHUNK_HLOD]);
         let mesh = chunks(&d[8..8 + top[0].2]);
@@ -530,7 +530,7 @@ mod tests {
         assert_eq!(inf.2, 3 * 8, "W3dVertInfStruct is 8 bytes");
 
         // A box to click: a 68-byte W3dBoxStruct, and one more sub-object.
-        let d = skin_model_with_box("TEST_SKN", "TEST_SKL", &[m.clone()], Some(([0.0, 0.0, 6.0], [4.0, 4.0, 6.0])));
+        let d = skin_model_with_box("TEST_SKN", "TEST_SKL", std::slice::from_ref(&m), Some(([0.0, 0.0, 6.0], [4.0, 4.0, 6.0])));
         let top = chunks(&d);
         assert_eq!(top.iter().map(|c| c.0).collect::<Vec<_>>(), vec![CHUNK_MESH, CHUNK_BOX, CHUNK_HLOD]);
         assert_eq!(top[1].2, 68);
