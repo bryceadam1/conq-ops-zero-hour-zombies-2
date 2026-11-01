@@ -222,7 +222,10 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   (`nativevm::GunPose::from_offset_angles`, offset in art units forward/left/up and yaw/pitch/roll
   radians). The core's `viewmodel::Motion` builds it from the weapon def's own gun-position numbers
   (`weapons::gunpos`, G4: stance/movement offsets, sway, bob, the gun kick spring, `fAdsAimPitch`
-  and `fAdsBobFactor`), and hands the same offset and angles to the W3D path, so both rigs stay in
+  and `fAdsBobFactor`) — computed in **BO2's own frame and signs** (X forward, Y left, Z up;
+  `AnglesToAxis` pitch positive = muzzle down, yaw left, roll right side down; every term the
+  decompile's literal sign) and converted once by `gunpos::GunPose::view`/`view_angles` (only the
+  pitch flips) — and hands the same offset and angles to the W3D path, so both rigs stay in
   agreement under `ZHBO_NATIVE_COMPARE=1`. The clip playback rate (`ZhboNativeIn.rate`) is the hook
   for G3's state-duration multipliers.
 * **Placement and the aim axis (R6).** `nativevm::place` composes the model's root from the eye's

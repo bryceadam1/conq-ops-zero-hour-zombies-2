@@ -8557,3 +8557,34 @@ change on exactly those families (hip halves and every other weapon pixel-identi
 authored marker residuals (the KSG's `tag_sights` 2.2″ low, the AN-94's bare marker 3″ from the
 eye, the DW pairs) are untouched and remain the clip's business. No sim, ABI, table or VERSION
 change.
+
+### Follow-up: the gun pose is computed in BO2's frame and converted once (`v1/ads-sightline`)
+
+Checking every gun-pose component's sign against the decompile (dumps in the item's plan dir,
+`ghidra/`) found the mod mixing conventions. BO2's frame: `AnglesToAxis` (`FUN_0074d870`) gives
+forward `(cp·cy, cp·sy, −sp)` — **pitch positive is muzzle down** — and axis 1 is the **left**
+vector; `AngleVectors`' right (`FUN_0074d6c0`) is its negative. The gun offset is in that frame:
+the lean (`FUN_008ef360`) adds the right vector to it, and the sway (`FUN_008f0700`) subtracts its
+horizontal term from Y, so **BO2's offset Y is left** even though the weapon files name the fields
+`…R`. The mod read Y as right and the pitch as muzzle up, then hand-flipped some terms back
+(R6's sway "lag" fix), so the result was a mix:
+
+| component | decompile | before | now |
+|---|---|---|---|
+| transition/move/sprint rotation (`fAdsAimPitch`, `vStandRot`, `vStrafeRot` pitch) | data, pitch down | muzzle **up** | down (the MP7 dips mid-ADS) |
+| gun kick spring (G5) | `+= f*GunKickPitch`, pitch down | inverted | BO2's (MP7 hip −25 up, KSG 50..60 down) |
+| idle pitch (`FUN_008eefc0`) | `+sin(t)`, pitch down | inverted phase | BO2's |
+| stance/move offset Y (`vDuckedOfs`, `vStrafeMove`) | left | **right** (strafing right swung the gun right) | left (lags the strafe) |
+| sway offset (`FUN_008efce0`) | `left −= dyaw·horiz`, `up += dpitch·vert` | horizontal right, vertical **inverted** (looking up raised the gun) | literal: both lag |
+| sway angles | `rot − (dpitch·pitchScale, dyaw·yawScale)` | right by two compensating flips | literal, BO2-convention view input |
+| bob pitch/yaw (`FUN_008f0160`) | `−VertBob`, `−HorizBob` | pitch inverted | BO2's |
+| bob roll | **`min(0, HorizBob(c − 0.4712))`** (0x008f02b0: `FCHS`, `FCOMIP` with 0, `JC` stores 0 when `−f < 0`) | `max(0, …)` (G4's misread) | `min(0, …)` |
+| roll in general | right side down, the mod's `Rotate_X(roll)` too | right | right |
+
+`GunPose` now documents the frame, `GunInput.view` takes BO2's view angles (pitch down — the
+client negates the sim's), and `GunPose::view`/`view_angles` is the single conversion used by the
+viewmodel `Motion`, the sim's fire angles, the sweep and the sightline test, so fire = drawn still
+holds. The sim's fire direction changes only where the fade leaves rotation: mid-transition and
+while the spring/sway/bob/idle move the gun. Test: `every_component_keeps_bo2s_sign_and_one_conversion_maps_it`
+plus the updated sway, kick and hip-pose tests. The still-standing sweep (hip and aimed) is
+pixel-identical before/after, as expected: every changed term is motion- or stance-driven.
