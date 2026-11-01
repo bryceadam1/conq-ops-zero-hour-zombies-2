@@ -14,6 +14,7 @@
 mod build;
 mod fire;
 mod hack;
+pub mod optics;
 mod rts;
 
 pub use build::{placement, HostWorld, PLANT_DISTANCE};
@@ -200,6 +201,8 @@ pub struct PlayerSim {
     /// field computer), and whether he is building it now.
     pub site: Option<Site>,
     pub building: bool,
+    /// The optic displays' state (the MMS's characters, the target finder's spotting).
+    pub optics: optics::Optics,
 }
 
 impl PlayerSim {
@@ -231,6 +234,7 @@ impl PlayerSim {
             hammer: None,
             site: None,
             building: false,
+            optics: Default::default(),
         }
     }
 }
@@ -373,6 +377,7 @@ impl Sim {
             hammer: None,
             site: None,
             building: false,
+            optics: Default::default(),
                 }
             }
         };
@@ -434,6 +439,7 @@ impl Sim {
                     hammer: None,
                     site: None,
                     building: false,
+                    optics: Default::default(),
                 }
             }
         };
@@ -647,6 +653,8 @@ impl Sim {
                         self.apply_weapon_action(host, idx, p, a);
                     }
                     self.step_hack(host, idx, p);
+                    let dir = dir_from_angles(p.yaw, p.pitch);
+                    p.optics.step(host, p.general, p.body.eye(), dir, p.arsenal.ads, p.arsenal.current().def, self.frame);
                 }
             }
             Mode::FieldComputer { t } => {

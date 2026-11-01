@@ -752,6 +752,9 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
             (def.viewmodel >= 0).then(|| (def.viewmodel, crate::nativevm::reticle_row(&p.reticle)))
         });
         crate::nativevm::set_local_reticle(reticle);
+        // And what the optic displays show (the MMS's characters, the target finder's colour).
+        let optics = s.sim.player(inp.local_player).map(|p| (p.optics.alt, p.optics.blips.clone()));
+        crate::nativevm::update_local_optics(inp.dt, optics);
         out
     })
     .unwrap_or_default();

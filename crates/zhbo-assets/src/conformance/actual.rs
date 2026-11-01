@@ -563,7 +563,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .bool("silenced", d.silenced)
         .bool("laser_sight", d.laser)
         .absent("infrared")
-        .absent("mms_weapon")
+        .bool("mms_weapon", d.mms)
         .absent("use_as_melee")
         .bool("cook_off_hold", d.cook)
         .absent("rifle_bullet");

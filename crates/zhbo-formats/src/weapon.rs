@@ -222,6 +222,9 @@ pub struct Attachment {
     pub first_raise_priority: i32,
     /// `bAltWeaponAdsOnly`: the alt-mode's ADS-only flag (G14 §5).
     pub alt_weapon_ads_only: bool,
+    /// `mmsWeapon` and `mmsMaxDist` (inches): the millimetre scanner.
+    pub mms_weapon: bool,
+    pub mms_max_dist: f32,
 }
 
 /// Every attachment in a loaded zone.
@@ -261,6 +264,8 @@ pub fn attachments(z: &Zone) -> Result<Vec<Attachment>, FormatError> {
                 perks: (z.u32(at + WA::perks), z.u32(at + WA::perks + 4)),
                 first_raise_priority: z.u32(at + WA::firstRaisePriority) as i32,
                 alt_weapon_ads_only: z.u8(at + WA::bAltWeaponAdsOnly) != 0,
+                mms_weapon: z.u8(at + WA::mmsWeapon) != 0,
+                mms_max_dist: z.f32(at + WA::mmsMaxDist),
             })
         })
         .collect()
@@ -460,6 +465,9 @@ pub struct Weapon {
     pub clip_only: bool,
     pub rifle_bullet: bool,
     pub silenced: bool,
+    /// The variant's `mmsWeapon` and `mmsMaxDist` (inches): the millimetre scanner.
+    pub mms_weapon: bool,
+    pub mms_max_dist: f32,
     pub fire_sound: Option<String>,
     pub fire_sound_player: Option<String>,
     pub fire_last_sound_player: Option<String>,
@@ -628,6 +636,8 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         ads_out_time: ms(z, v + WV::iAdsTransOutTime),
         ads_zoom_fov: z.f32(v + WV::fAdsZoomFov1),
         silenced: z.u8(v + WV::bSilenced) != 0,
+        mms_weapon: z.u8(v + WV::mmsWeapon) != 0,
+        mms_max_dist: z.f32(v + WV::mmsMaxDist),
         allowed_attachments: z.u32(v + WV::iAttachments) as u64,
         attachment_variants: {
             let at = z.try_u32(v + WV::attachments)?;

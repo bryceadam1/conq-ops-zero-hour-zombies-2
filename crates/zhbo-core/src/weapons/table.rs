@@ -260,6 +260,13 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
             (a.silenced, a.laser) = (v.flag(0), v.flag(1));
             Ok(())
         }),
+    field!("Mms", "Millimetre scanner: on, and its max distance (BO2 inches).", FieldKind::Nums(2),
+        |a: &AttachmentDef| format!("{} {}", a.mms as u8, a.mms_max_dist),
+        |a: &mut AttachmentDef, v: Values| {
+            v.need(2)?;
+            (a.mms, a.mms_max_dist) = (v.flag(0), v.num(1));
+            Ok(())
+        }),
     field!("Fire", "The fire mode it forces (`none` keeps the weapon's).", FieldKind::Enum,
         |a: &AttachmentDef| a.fire.map_or("none".into(), fire_name),
         |a: &mut AttachmentDef, v: Values| { a.fire = parse_fire(v.text); Ok(()) }),
@@ -553,6 +560,13 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             d.target_finder = v.flag(4);
             Ok(())
         }),
+    field!("Mms", "Millimetre scanner: on, and its max distance (BO2 inches).", FieldKind::Nums(2),
+        |d: &WeaponDef| format!("{} {}", d.mms as u8, d.mms_max_dist),
+        |d: &mut WeaponDef, v: Values| {
+            v.need(2)?;
+            (d.mms, d.mms_max_dist) = (v.flag(0), v.num(1));
+            Ok(())
+        }),
     field!("RecoilReduction", "Per-shot recoil reduction and its limit (the grip).", FieldKind::Nums(2),
         |d: &WeaponDef| format!("{} {}", d.recoil_reduction.0, d.recoil_reduction.1),
         |d: &mut WeaponDef, v: Values| {
@@ -709,8 +723,8 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 79);
-        assert_eq!(ATTACHMENT_FIELDS.len(), 17);
+        assert_eq!(WEAPON_FIELDS.len(), 80);
+        assert_eq!(ATTACHMENT_FIELDS.len(), 18);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }
 

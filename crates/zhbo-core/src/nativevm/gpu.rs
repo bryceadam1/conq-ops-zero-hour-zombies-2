@@ -2,10 +2,10 @@
 //! once per viewmodel, submit the posed palette each frame.
 
 use zhbo_gfx::ffi::with_renderer;
-use zhbo_gfx::runtime::{NativeDraw, NativeFrame, NativeLight, NativeSurface, NativeVertex, INVALID};
+use zhbo_gfx::runtime::{NativeBlip, NativeDraw, NativeFrame, NativeLight, NativeOptics, NativeSurface, NativeVertex, INVALID, NATIVE_MAX_BLIPS};
 
 use super::ffi::{State, ZhboNativeIn, DRAWN, LOADING, NOT_NATIVE};
-use super::{native_blend, native_cull, native_reticle, native_sonar, set_lens_reticle_drawn, technique_files, Mesh};
+use super::{local_optics, native_blend, native_cull, native_reticle, native_sonar, set_lens_reticle_drawn, technique_files, Mesh, ART_SCALE};
 
 /// The handles of the viewmodel on the GPU.
 #[derive(Default)]
@@ -127,6 +127,7 @@ fn submit(s: &mut State, inp: &ZhboNativeIn) -> i32 {
         s.log_once("native viewmodel: base optic hidden at full ADS; the screen overlay takes over".into());
     }
     let Some(mesh) = mesh else { return NOT_NATIVE };
+    let optics = local_optics();
     let mut lights = [NativeLight::default(); 3];
     for (l, i) in lights.iter_mut().zip(&inp.lights) {
         *l = NativeLight { direction: i.dir, color: i.color };
@@ -135,9 +136,10 @@ fn submit(s: &mut State, inp: &ZhboNativeIn) -> i32 {
         // BO2's fWeaponPosFrac drives the lens reticle's fade (`weaponParam0.w`); the mod has no
         // effect that knocks optics out (BO2's EMP, `weaponParam0.y`).
         ads: inp.ads, optics_off: 0.0,
-        // The mod has no rangefinder detection: the two-colour reticle keeps its primary colours
-        // (BO2's `weaponParam0.z` = 0, nobody spotted).
-        reticle_alt: 0.0 };
+        // The target finder's "enemy spotted" (`weaponParam0.z`, the sim's `optics::Optics::alt`)
+        // and the MMS screen's characters.
+        reticle_alt: optics.alt,
+        optics: native_optics(&optics, inp.dir) };
     let palette = &s.posed.palette;
     let draw = NativeDraw { target_view: inp.target_view, before_view: inp.before_view, mesh, palette, frame };
     if with_renderer(false, |r| r.native_submit(&draw)) {
@@ -145,4 +147,15 @@ fn submit(s: &mut State, inp: &ZhboNativeIn) -> i32 {
     } else {
         NOT_NATIVE
     }
+}
+
+/// The MMS screen's inputs: the clock, the view's forward, BO2 inches per world unit (the art's
+/// scale) and the sim's characters.
+fn native_optics(o: &super::LocalOptics, dir: [f32; 3]) -> NativeOptics {
+    let len = (dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]).sqrt().max(1e-6);
+    let mut out = NativeOptics { time: o.time, forward: dir.map(|c| c / len), inches_per_unit: 1.0 / ART_SCALE, blip_count: o.blips.len().min(NATIVE_MAX_BLIPS) as u32, ..Default::default() };
+    for (slot, b) in out.blips.iter_mut().zip(&o.blips) {
+        *slot = NativeBlip { pos: [b.pos.x, b.pos.y, b.pos.z], radius: b.radius, height: b.height, intensity: b.intensity };
+    }
+    out
 }

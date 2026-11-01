@@ -243,6 +243,10 @@ pub struct WeaponDef {
     pub fmj: bool,
     /// Target finder: enemies are marked while aiming.
     pub target_finder: bool,
+    /// BO2's `mmsWeapon` and `mmsMaxDist` (inches): the millimetre scanner's screen shows
+    /// characters behind walls (`sim::optics`).
+    pub mms: bool,
+    pub mms_max_dist: f32,
     /// ADS recoil reduction per shot fired, and its limit (the grip).
     pub recoil_reduction: (f32, f32),
     /// How a piece of equipment is used.
@@ -453,6 +457,8 @@ impl Default for WeaponDef {
             laser: false,
             fmj: false,
             target_finder: false,
+            mms: false,
+            mms_max_dist: 0.0,
             recoil_reduction: (0.0, 0.0),
             place: Place::Throw,
             specialties: Specialties::NONE,

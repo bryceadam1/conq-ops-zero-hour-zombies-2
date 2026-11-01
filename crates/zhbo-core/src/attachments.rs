@@ -37,6 +37,9 @@ pub struct AttachmentDef {
     pub point: u8,
     pub silenced: bool,
     pub laser: bool,
+    /// BO2's `mmsWeapon` and `mmsMaxDist` (inches): the millimetre scanner (MMS).
+    pub mms: bool,
+    pub mms_max_dist: f32,
     /// Select fire, stacked fire: the weapon fires this way instead.
     pub fire: Option<FireMode>,
     /// A fixed magazine (the crossbow's tri-bolt), 0 for none.
@@ -73,6 +76,8 @@ impl Default for AttachmentDef {
             point: 0,
             silenced: false,
             laser: false,
+            mms: false,
+            mms_max_dist: 0.0,
             fire: None,
             clip: 0,
             damage_range_scale: 1.0,
@@ -207,6 +212,11 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
             }
         }
         d.laser |= a.laser;
+        // BO2's weapon is a scanner when its variant or any attachment is (`FUN_008ebce0`).
+        if a.mms {
+            d.mms = true;
+            d.mms_max_dist = a.mms_max_dist;
+        }
         d.specialties = d.specialties.union(a.specialties);
         if a.recoil_reduction.1 > 0.0 {
             d.recoil_reduction = a.recoil_reduction;

@@ -107,6 +107,7 @@ pub(crate) fn native_sonar(s: &zhbo_native::model::Sonar, handle: impl Fn(&Optio
 
 /// The texture files a surface's own technique reads besides its colour and packed maps (the
 /// reticle's noise, the MMS screen's lookup and noise).
+#[cfg(feature = "renderer")]
 pub(crate) fn technique_files(s: &SurfaceSpec) -> impl Iterator<Item = &String> {
     let reticle = s.reticle.as_ref().and_then(|r| r.noise.as_ref());
     let sonar = s.sonar.as_ref().into_iter().flat_map(|so| [so.lookup.as_ref(), so.noise.as_ref()]).flatten();
@@ -426,6 +427,34 @@ pub(crate) fn apply_reticle(mesh: &mut Mesh, set: &zhbo_native::reticles::Reticl
         s.sort_key = m.sort_key;
         s.cull = m.cull;
     }
+}
+
+/// What the local player's optic displays show (the sim's `sim::optics`), with the presentation
+/// clock their pulse runs on. Set by `ffi::zhbo_client_frame`; read by the viewmodel draw.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct LocalOptics {
+    /// Seconds of client frames (presentation only: the MMS pulse's phase).
+    pub time: f32,
+    /// The target finder's `weaponParam0.z`.
+    pub alt: f32,
+    /// The MMS's characters.
+    pub blips: Vec<crate::sim::optics::Blip>,
+}
+
+static LOCAL_OPTICS: Mutex<Option<LocalOptics>> = Mutex::new(None);
+
+/// Advance the displays' clock by `dt` and take the local player's optics (`None`: nothing to
+/// show). The clock wraps at an hour to keep its precision.
+pub fn update_local_optics(dt: f32, optics: Option<(f32, Vec<crate::sim::optics::Blip>)>) {
+    let mut slot = LOCAL_OPTICS.lock().unwrap_or_else(|e| e.into_inner());
+    let time = (slot.as_ref().map_or(0.0, |o| o.time) + dt.max(0.0)) % 3600.0;
+    let (alt, blips) = optics.unwrap_or_default();
+    *slot = Some(LocalOptics { time, alt, blips });
+}
+
+#[cfg_attr(not(feature = "renderer"), allow(dead_code))]
+pub(crate) fn local_optics() -> LocalOptics {
+    LOCAL_OPTICS.lock().unwrap_or_else(|e| e.into_inner()).clone().unwrap_or_default()
 }
 
 /// The local player's camo choice from the last client frame: the primary's viewmodel, its camo

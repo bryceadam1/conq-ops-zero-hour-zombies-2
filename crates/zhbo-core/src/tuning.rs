@@ -111,6 +111,15 @@ tuning! {
     bob_sprinting_h: "bg_weaponBobAmplitudeSprinting.x" = 0.02, "Sprinting bob, horizontal, x the weapon's `vSprintBob` (G4).";
     bob_sprinting_v: "bg_weaponBobAmplitudeSprinting.y" = 0.014, "Sprinting bob, vertical (G4).";
     bob_roll: "bg_weaponBobAmplitudeRoll" = 1.5, "Bob roll multiplier (G4).";
+    // ---- Optic displays (`t6mp` `FUN_004cc260` dvars; `sim::optics`) ---------------------------
+    sonar_max_speed: "cg_sonarAttachmentMaxSpeed" = 2.2, "MMS: inches per BO2 frame at which a far character is gone from the scanner (`FUN_004e7b40`).";
+    sonar_distance_factor: "cg_sonarAttachmentDistanceFactor" = 3.0, "MMS: added to the max speed as a character comes closer, at zero range (`FUN_004e7b40`).";
+    sonar_speed_delay: "cg_sonarAttachmentSpeedDelay" = 0.8, "MMS: seconds of speed averaged (`FUN_004e7b40`).";
+    sonar_speed_time_ratio: "cg_sonarAttachmentSpeedTimeRatio" = 0.0, "MMS: the lowest visibility a moving character keeps (`FUN_004e7b40`).";
+    sonar_hide_friendlies: "cg_sonarAttachmentHideFriendlies" = 1.0, "MMS: teammates are left off the scanner (1) (`FUN_004e7b40`).";
+    sonar_frames_per_second: "SonarFramesPerSecond" = 60.0, "MMS: BO2's frame for its per-frame speeds; the speed ring holds `SpeedDelay x 60` samples (`0x00b128e4`).";
+    range_finder_min_enemy_spotting_dist: "cg_rangeFinderMinEnemySpottingDist" = -1.0, "Target finder: feet beyond which a spotted enemy does not turn the reticle; -1 no limit (`FUN_00528ec0`).";
+    range_finder_trace_dist: "RangeFinderTraceDist" = 8192.0, "Target finder: inches the spotting trace reaches (`_DAT_00b12d08`, `FUN_00528ec0`).";
     // ---- The mod's own ------------------------------------------------------------------------
     regen_delay: "RegenDelay" = 5.0, "Seconds after the last hit before health regenerates (the mod's value).";
     regen_full_time: "RegenFullTime" = 3.0, "Seconds to regenerate from empty (the mod's value).";
