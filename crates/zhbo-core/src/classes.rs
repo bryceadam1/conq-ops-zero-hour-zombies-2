@@ -647,8 +647,8 @@ mod tests {
     #[test]
     fn custom_class_loadout_applies_over_the_base_kit() {
         // The entry sets the primary and the perks; the other slots stay the base kit's
-        // (`Loadout::default()`'s an94+gl, the Tac-45, the frag, the concussion, the knife,
-        // and the reserve from `Loadout::default()`).
+        // (`Loadout::default()`'s, BO2's default class: the SMAW, the frag, the concussion, the
+        // knife, and its reserve).
         let c = CustomClass {
             name: "Shotgun".into(),
             primary: "m1216_mp".into(),

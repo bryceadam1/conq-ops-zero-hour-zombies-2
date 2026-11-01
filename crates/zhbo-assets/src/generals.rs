@@ -275,9 +275,14 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     table.bonus_cards = crate::weapons::bonus_card_rows(&patch, &names);
     // Which weapons Create-a-Class offers, in which slot: the same statstable's weapon items.
     crate::weapons::set_cac_slots(&mut table, &patch, &names);
-    crate::weapons::lock_items_without_art(&mut table, &bo2, |w| {
-        w.view_model.as_deref().and_then(|m| viewmodels::find_model(&pool, m).ok()).is_none_or(|m| crate::weapons::model_art_converts(&m, |i| paks.resolve(i).is_some()))
-    });
+    let statstable = zhbo_formats::stringtable::rows(&patch, "mp/statstable.csv").ok().flatten().unwrap_or_default();
+    crate::weapons::lock_items_without_art(
+        &mut table,
+        &bo2,
+        &statstable,
+        |w| w.view_model.as_deref().and_then(|m| viewmodels::find_model(&pool, m).ok()).is_none_or(|m| crate::weapons::model_art_converts(&m, |i| paks.resolve(i).is_some())),
+        |dlc| zhbo_formats::t6zone::install_path(bo2_dir, &format!("{dlc}_load_mp")).is_file(),
+    );
     // The weapon groups' order (the editor's category order), from the UI Lua the conformance's
     // expected side reads.
     match zhbo_conformance::bo2::cac::weapon_groups(&patch, &patch_ui) {

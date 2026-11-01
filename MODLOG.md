@@ -9188,3 +9188,25 @@ whole weapon pool (`patch_mp`, `common_patch_mp`, `common_mp`), so a stub resolv
 whatever converts first. `textures::tests::conversion_does_not_depend_on_the_order` converts the
 optics forwards and backwards and requires identical textures, left-out surfaces, reticles, files
 and kept surfaces (it fails without the pool learned).
+
+## Code polish 3: the base kit is BO2's default class (2026-11-01)
+
+`weapons::loadout::BASE_KIT` is `classes::BASIC[0]`: the Assault premade BO2 gives a fresh class
+(`level.defaultclass = "CLASS_ASSAULT"`, `_class.gsc:36`; `reset_classes.cfg`'s `equipdefaultclass 0
+class_custom_assault`) — the MTAR, the SMAW, a frag, a concussion, the knife; Lightweight,
+Toughness, Dexterity. It replaces the mod's AN-94 + GL + Reflex / Tac-45 kit as the General's kit
+before a class lands, the RTS stand-in guns (`ZHBO_GeneralRifle`/`ZHBO_GeneralPistol` take the MTAR's
+and the SMAW's numbers) and a new custom class's starting draft. Consumers checked: the macOS
+autotest legs seed their own classes (the default leg's AN-94 + GL custom class drives the
+alt-mode step; the RTS legs already expected the Assault premade's SMAW), `autotest.ps1` seeds
+nothing and never relied on the kit's launcher (a General spawns unarmed and picks a class), and
+the core tests that need attachments use `Loadout::test_kit()`/`Draft::test_kit()` (`TEST_KIT`).
+The overhead General's impact list now has the MTAR's row only (the SMAW, a launcher, has no
+bullet impacts; `converts_from_real_install` checks the kit's bullet guns).
+
+**Gotcha — the Peacekeeper's lock was the same stub bug.** Its gun images are `,name` stubs too;
+learned from the whole pool they now resolve (the pixels are in the installed packs), so "its art
+does not convert" stopped locking it. BO2 locks it for a different reason: `Engine.HasDLCForItem`
+(`codbase.lua:3744`) on its statstable column 15 (`dlc1`, Revolution). `lock_items_without_art`
+now also locks an item whose DLC is not installed (no `zone/all/<dlc>_load_mp.ff`; this install has
+only `dlc0`), so without Revolution the Peacekeeper is listed locked as before.

@@ -54,7 +54,7 @@ that still has ammo.
 | Jump | Space |
 | Reload | R |
 | Set off C4 | R twice quickly (or G with no C4 left in hand) |
-| Switch weapon (AN-94 ⇄ Tac-45) | 1 or mouse wheel |
+| Switch weapon (primary ⇄ secondary) | 1 or mouse wheel |
 | Attachment mode (grenade launcher, select fire, second optic) | 3 |
 | Knife | V |
 | Lethal (frag: hold to cook; Claymore, Betty: plant; C4: throw) | G |
@@ -130,8 +130,8 @@ The two scripts take `-Dist` to test a given build.
 * Weapons are BO2's own: every multiplayer weapon's definition (fire mode and rate, damage curve,
   spread, kick, reload/raise/ADS timings, grenade fuses and blasts), every attachment's numbers, the
   and alt modes they add are converted into `Data\ConquerOps\weapons.ini`.
-  The General carries an AN-94 with a Reflex sight and Grenade Launcher, the Tac-45, a frag, a
-  concussion and the knife; Lightweight, Fast Hands, Dexterity.
+  Until he picks a class the General carries BO2's default class, the Assault premade: the MTAR,
+  the SMAW, a frag, a concussion and the knife; Lightweight, Toughness, Dexterity.
   Every weapon's art is converted (about 420 MB; `ZHBO_CONVERT_ALL_WEAPONS=0` converts only the
   loadout's). `ZHBO_LOADOUT` tries another kit, e.g.
   `lethal=claymore_mp;tactical=trophy_system_mp;primary=dsr50_mp+acog` (every

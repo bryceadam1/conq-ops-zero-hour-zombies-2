@@ -109,17 +109,21 @@ impl Loadout {
     /// knife; Lightweight, Fast Hands and Dexterity.
     #[cfg(test)]
     pub fn test_kit() -> Loadout {
-        Loadout::unarmed().with_spec(BASE_KIT)
+        Loadout::unarmed().with_spec(TEST_KIT)
     }
 }
 
 /// The General's base kit — before a class lands, and what a new custom class starts from
-/// (`classmenu::Draft::default`) — as one spec, the one source of both. It is the mod's kit, not
-/// BO2's: BO2's own default class is the Assault premade (`level.defaultclass = "CLASS_ASSAULT"`,
-/// `_class.gsc:36`; `reset_classes.cfg`'s `equipdefaultclass 0 class_custom_assault`,
-/// [`crate::classes::BASIC`]`[0]`). Switching to it waits on a converter fix: with the SMAW as the
-/// base secondary the pistols' RMR lens reticle drops out of the conversion (MODLOG, code polish 3).
-pub const BASE_KIT: &str = "primary=an94_mp+gl+reflex;secondary=fnp45_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,FastHands,Dexterity";
+/// (`classmenu::Draft::default`) — as one spec, the one source of both: BO2's default class, the
+/// Assault premade (`level.defaultclass = "CLASS_ASSAULT"`, `_class.gsc:36`; `reset_classes.cfg`'s
+/// `equipdefaultclass 0 class_custom_assault`; [`crate::classes::BASIC`]`[0]`, from
+/// `mp/statstable.csv`'s default-class column): the MTAR, the SMAW, a frag, a concussion, the knife;
+/// Lightweight, Toughness, Dexterity.
+pub const BASE_KIT: &str = crate::classes::BASIC[0].2;
+
+/// The test fixture kit's spec ([`Loadout::test_kit`]).
+#[cfg(test)]
+pub const TEST_KIT: &str = "primary=an94_mp+gl+reflex;secondary=fnp45_mp;lethal=frag_grenade_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Lightweight,FastHands,Dexterity";
 
 impl Default for Loadout {
     /// The base kit ([`BASE_KIT`]); `ZHBO_LOADOUT` changes it (see [`Loadout::with_spec`]).

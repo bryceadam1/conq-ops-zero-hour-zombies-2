@@ -615,15 +615,21 @@ pub fn set_cac_slots(table: &mut Table, patch: &zhbo_formats::t6zone::Zone, name
     }
 }
 
-/// Lock the Create-a-Class items whose art did not convert: `has_art` says whether a BO2 weapon's
-/// view model has its pictures in the install. The Peacekeeper's are `,name` stubs whose pixels
-/// only the Revolution DLC zone carries, so without the pack BO2 lists it locked
-/// (`c-primary/007`) — data, not a list of DLC weapons. A locked item stays listed, cannot be
-/// picked, and a stored class drops it (`zhbo_core::classrepair`).
-pub fn lock_items_without_art(table: &mut Table, bo2: &[Weapon], has_art: impl Fn(&Weapon) -> bool) {
+/// Lock the Create-a-Class items the player cannot have: BO2 asks `Engine.HasDLCForItem`
+/// (`codbase.lua:3744`) of an item whose statstable column 15 names a DLC (`dlc1`, the
+/// Peacekeeper's Revolution) — `dlc_installed` answers it from the install (the DLC's
+/// `zone/all/<dlc>_load_mp.ff`) — and an item whose view model's art does not convert (`has_art`)
+/// is locked too. Without Revolution BO2 lists the Peacekeeper locked (`c-primary/007`): data, not a
+/// list of DLC weapons. A locked item stays listed, cannot be picked, and a stored class drops it
+/// (`zhbo_core::classrepair`).
+pub fn lock_items_without_art(table: &mut Table, bo2: &[Weapon], statstable: &[Vec<String>], has_art: impl Fn(&Weapon) -> bool, dlc_installed: impl Fn(&str) -> bool) {
+    let dlc_of = |id: &str| {
+        let reference = id.strip_suffix("_mp")?;
+        statstable.iter().find(|r| r.get(4).is_some_and(|c| c == reference)).and_then(|r| r.get(15)).map(|c| c.trim().to_string()).filter(|c| !c.is_empty())
+    };
     for d in table.weapons.iter_mut().filter(|d| !d.cac_slot.is_empty()) {
         if let Some(w) = bo2.iter().find(|w| w.name == d.id) {
-            d.cac_locked = !has_art(w);
+            d.cac_locked = !has_art(w) || dlc_of(&d.id).is_some_and(|dlc| !dlc_installed(&dlc));
         }
     }
 }
