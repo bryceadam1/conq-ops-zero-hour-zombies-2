@@ -44,9 +44,10 @@ fn custom_class_key() -> Key {
 /// `ZHBO_AUTOPILOT=equipment` runs [`Autopilot::equipment_input`] instead, for a loadout with C4 and
 /// a Trophy System or Black Hat; `ZHBO_AUTOPILOT=build` runs [`Autopilot::build_input`].
 /// `ZHBO_AUTOPILOT=classpick` runs [`Autopilot::classpick_input`]: the profile is seeded with a
-/// custom class before launch; in first person it picks that class from the spawn screen by its row
-/// key, leaves via the field computer, and on the next take-control forces the screen open and
-/// Escapes it — exercising the pick-only in-match flow end to end.
+/// custom class before launch; the first take-control Escapes the spawn screen (declining the spawn:
+/// the General goes back overhead unclassed), the next picks that class by its row key and leaves
+/// via the field computer, and the one after forces the screen open and Escapes it — exercising the
+/// pick-only in-match flow end to end.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Autopilot {
     /// Seconds in first person (logic ticks, set by the client from the sim's frame counter).
@@ -55,7 +56,8 @@ pub struct Autopilot {
     pub base_frame: u32,
     pub equipment: bool,
     pub build: bool,
-    /// The create-a-class run: pick the seeded custom, then Escape a second offer.
+    /// The create-a-class run: decline the first spawn, pick the seeded custom, then Escape a
+    /// forced re-open.
     pub classpick: bool,
     /// The scope-overlay run: the AS50 in hand, hold ADS past the hand-off and report the log line.
     pub scope: bool,
@@ -63,8 +65,8 @@ pub struct Autopilot {
     /// (a render hitch may jump `t` past several windows; one action per frame keeps every edge).
     pub(crate) classpick_step: usize,
     pub(crate) classpick_release: bool,
-    /// After the field-computer action the script waits for the next first-person session (the
-    /// clock resets on take-control), so the Escape phase cannot fire while still leaving.
+    /// After an action that leaves first person the script waits for the next first-person session
+    /// (the clock resets on take-control), so the next phase cannot fire while still leaving.
     pub(crate) classpick_wait_reset: bool,
     /// The previous `t`, to notice the reset between first-person sessions.
     pub(crate) classpick_last_t: f32,
@@ -207,10 +209,13 @@ impl Autopilot {
 
     /// The create-a-class run (`ZHBO_AUTOPILOT=classpick`). In a match the screen is pick-only:
     /// the seeded custom ("Custom 2", written to the profile before launch) leads the list
-    /// (`changeclass.lua`: the set's custom slots, then the defaults), so the script presses its
-    /// number key and the sim assumes it; no editor and no profile write.
-    /// It then opens the field computer to return overhead, and on the *next* take-control forces
-    /// the screen open (the command-bar path) and Escapes it, proving first-person play continues.
+    /// (`changeclass.lua`: the set's custom slots, then the defaults).
+    /// Phase one Escapes the first spawn screen without picking: BO2 never spawns a classless
+    /// player, so the General goes back overhead (the host takes control again).
+    /// Phase two presses the custom's number key and the sim assumes it (no editor and no profile
+    /// write), then opens the field computer to return overhead. Phase three, on the next
+    /// take-control, forces the screen open (the command-bar path) and Escapes it, proving
+    /// first-person play continues for a classed General.
     ///
     /// The schedule is a list of actions rather than time windows: a render hitch can jump the
     /// logic clock past a window (the macOS runs do), so each due action is emitted on a frame of
@@ -220,13 +225,17 @@ impl Autopilot {
     pub fn classpick_input(&mut self, b: &Bindings) -> Scripted {
         use ClasspickAction::*;
         let custom_key = custom_class_key();
-        // Phase one (this first-person session): pick the seeded class, then leave overhead.
-        // Phase two (the next take-control, t reset): force the screen open and Escape it.
-        let schedule: [(f32, ClasspickAction); 4] = [
-            (0.3, Press(custom_key)),
-            (1.6, Press(b.field_computer)),
-            (0.3, Reopen),
-            (0.9, Press(Key::Escape)),
+        // Each action, its earliest time in its session, and whether it ends the session (the
+        // General leaves first person, so the next action waits for the next take-control).
+        let schedule: [(f32, ClasspickAction, bool); 5] = [
+            // Phase one: decline the spawn.
+            (0.6, Press(Key::Escape), true),
+            // Phase two: pick the seeded class, then leave overhead.
+            (0.3, Press(custom_key), false),
+            (1.6, Press(b.field_computer), true),
+            // Phase three: force the screen open and Escape it.
+            (0.3, Reopen, false),
+            (0.9, Press(Key::Escape), false),
         ];
         // A held key gets one frame on its own, then one released frame, so the next action's
         // fresh-press edge is never merged with it.
@@ -243,14 +252,14 @@ impl Autopilot {
             return Scripted::default();
         }
         let mut scripted = Scripted::default();
-        if let Some((when, action)) = schedule.get(self.classpick_step).copied() {
+        if let Some((when, action, ends)) = schedule.get(self.classpick_step).copied() {
             if self.t >= when {
                 match action {
                     Press(k) => scripted.keys.set_down(k, true),
                     Reopen => scripted.pick_force = 1,
                 }
-                // The field computer hands the General back: the next phase is a new session.
-                if action == Press(b.field_computer) {
+                // The General goes back overhead: the next phase is a new session.
+                if ends {
                     self.classpick_wait_reset = true;
                 }
                 self.classpick_step += 1;

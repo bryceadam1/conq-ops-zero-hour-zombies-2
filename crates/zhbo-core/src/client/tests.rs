@@ -566,10 +566,13 @@
         crate::profile::reset();
     }
 
-    /// First person: an unclassed take-control offers the pick; Escape leaves the General unarmed
-    /// (knife only) and plays on, and the auto-offer stays dismissed until the *next* take-control.
+    /// First person: an unclassed take-control puts the spawn's class screen up, and it cannot be
+    /// played around. Escape declines the spawn (BO2: `back` leaves the player unspawned): the
+    /// screen closes, the view holds still with nothing in hand, only the leave press goes out, and
+    /// the sim hands the still-unclassed General back overhead. The next take-control puts the
+    /// screen up again.
     #[test]
-    fn fps_unclassed_offer_escape_dismisses_until_the_next_take_control() {
+    fn fps_unclassed_escape_declines_the_spawn_and_returns_overhead() {
         let _g = crate::profile::lock();
         crate::profile::reset();
         let host = FakeHost::default();
@@ -579,42 +582,126 @@
         let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
         sim.take_control(&host, 0, 1);
 
-        // Reach first person: the unclassed General is offered the pick, cursor free.
+        // Reach first person: the unclassed General has the screen up, cursor free, no gun.
         let out = frame_with(&mut client, &mut sim, &host, &mut inp, 60);
         assert_eq!(client.view, ViewMode::Fps);
-        assert_eq!(out.menu_open, 1, "the spawn offer is up");
+        assert_eq!(out.menu_open, 1, "the spawn's class screen is up");
         assert_eq!(out.capture_mouse, 0, "the cursor is free for the screen");
+        assert_eq!(out.viewmodel, viewmodel::NONE, "nothing in hand before the class spawns him");
+        let start = host.get(1).pos;
 
-        // Escape: the screen closes, first-person input/capture resume, and the General stays
-        // unarmed (knife only) — Escape no longer means "keep the base kit".
+        // Escape, with W and the mouse held: the screen closes, the view does not turn, nothing
+        // but the leave press reaches the sim, and he goes back overhead unclassed.
         inp.keys.set_down(Key::Escape, true);
+        inp.keys.set_down(Key::W, true);
+        inp.mouse_dx = 50.0;
+        let yaw = client.yaw;
         let out = client.frame(&mut sim, &inp);
+        assert_eq!(out.menu_open, 0, "Escape closed the screen");
+        assert!(client.class_pick_declined);
         inp.keys.set_down(Key::Escape, false);
-        let out2 = client.frame(&mut sim, &inp);
-        assert_eq!(out.menu_open, 0);
-        assert_eq!(out2.menu_open, 0);
-        assert_eq!(out2.capture_mouse, 1, "first-person play continues");
-        assert!(client.class_pick_dismissed);
-        assert!(sim.player(0).unwrap().arsenal.is_unarmed(), "Escape stays unarmed, not the stock kit");
-        // It stays dismissed for this life.
-        let out = frame_with(&mut client, &mut sim, &host, &mut inp, 20);
-        assert_eq!(out.menu_open, 0);
-
-        // Return to RTS (field computer) and take control again: the next take-control re-offers.
-        inp.keys.set_down(Key::F, true);
-        frame_with(&mut client, &mut sim, &host, &mut inp, 2);
-        inp.keys.set_down(Key::F, false);
+        let mut sent = Vec::new();
         let mut frames = 0;
-        while client.view != ViewMode::Rts && frames < 400 {
-            frame_with(&mut client, &mut sim, &host, &mut inp, 1);
+        while client.view != ViewMode::Rts && frames < 200 {
+            let out = client.frame(&mut sim, &inp);
+            assert_eq!(out.menu_open, 0, "the screen stays shut while he leaves");
+            assert_eq!(out.capture_mouse, 0);
+            assert_eq!(out.viewmodel, viewmodel::NONE);
+            if out.send_input != 0 {
+                sent.push(out.input);
+                sim.input(inp.local_player, out.input_general, out.input);
+            }
+            let f = sim.frame + 1;
+            sim.step(&host, f);
+            inp.logic_frame = f;
+            inp.dt = LOGIC_DT;
             frames += 1;
         }
         assert_eq!(client.view, ViewMode::Rts, "back overhead");
+        assert_eq!(client.yaw, yaw, "the view held still");
+        assert!(!sent.is_empty() && sent[0].pressed == buttons::FIELD_COMPUTER, "the leave press: {sent:?}");
+        assert!(sent.iter().all(|i| i.held == 0 && i.move_packed == pack_move(0.0, 0.0)), "no movement: {sent:?}");
+        assert!((host.get(1).pos - start).length_xy() < 1e-3, "he never walked");
+        let p = sim.player(0).unwrap();
+        assert!(!p.is_first_person() && p.class.is_none(), "overhead, still unclassed");
+        assert!(host.controlled.borrow().is_empty());
+        inp.keys.set_down(Key::W, false);
+        inp.mouse_dx = 0.0;
+
+        // Take control again: the screen is up again.
         sim.take_control(&host, 0, 1);
         let out = frame_with(&mut client, &mut sim, &host, &mut inp, 60);
         assert_eq!(client.view, ViewMode::Fps);
-        assert_eq!(out.menu_open, 1, "the next take-control re-offers the pick");
+        assert!(!client.class_pick_declined);
+        assert_eq!(out.menu_open, 1, "the next take-control puts the screen up again");
         assert_eq!(out.capture_mouse, 0);
+        crate::profile::reset();
+    }
+
+    /// Every way into first person with no class meets the screen, and only a class lets him play:
+    /// Take Control on a fresh General, the next General after a death, and a General whose class
+    /// came from the command bar overhead (which spawns him straight into play). Escape on a
+    /// classed General's re-open keeps playing (BO2's mid-life Back).
+    #[test]
+    fn every_unclassed_entry_meets_the_screen_and_a_class_plays() {
+        let _g = crate::profile::lock();
+        crate::profile::reset();
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        let escape = |client: &mut Client, sim: &mut Sim, inp: &mut ClientIn| {
+            inp.keys.set_down(Key::Escape, true);
+            frame_with(client, sim, &host, inp, 1);
+            inp.keys.set_down(Key::Escape, false);
+            let mut n = 0;
+            while client.view != ViewMode::Rts && n < 200 {
+                frame_with(client, sim, &host, inp, 1);
+                n += 1;
+            }
+        };
+        // A fresh General.
+        sim.take_control(&host, 0, 1);
+        assert_eq!(frame_with(&mut client, &mut sim, &host, &mut inp, 60).menu_open, 1);
+        escape(&mut client, &mut sim, &mut inp);
+        assert_eq!(client.view, ViewMode::Rts);
+        assert!(sim.player(0).unwrap().class.is_none());
+        // His class from the command bar overhead (button 1: the first preset), then Take Control.
+        inp.class_button = 1;
+        let out = client.frame(&mut sim, &inp);
+        inp.class_button = 0;
+        assert_eq!(out.menu_open, 0, "the bar picks without the screen");
+        sim.choose_class(0, out.choose_class_general, (out.choose_class - 1) as usize, &[]);
+        sim.take_control(&host, 0, 1);
+        let out = frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        assert_eq!((out.menu_open, out.capture_mouse), (0, 1), "a classed General plays at once");
+        assert_ne!(out.viewmodel, viewmodel::NONE, "his gun is up");
+        // A classed General's forced re-open: Escape keeps playing.
+        inp.class_pick_force = 1;
+        frame_with(&mut client, &mut sim, &host, &mut inp, 1);
+        inp.class_pick_force = 0;
+        inp.keys.set_down(Key::Escape, true);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 1);
+        inp.keys.set_down(Key::Escape, false);
+        let out = frame_with(&mut client, &mut sim, &host, &mut inp, 30);
+        assert_eq!(client.view, ViewMode::Fps, "a classed Back stays in first person");
+        assert_eq!((out.menu_open, out.capture_mouse), (0, 1));
+        // He dies; the next General is unclassed and meets the screen.
+        host.objects.borrow_mut()[0].flags |= crate::host::objflags::DEAD;
+        let mut n = 0;
+        while client.view != ViewMode::Rts && n < 200 {
+            frame_with(&mut client, &mut sim, &host, &mut inp, 1);
+            n += 1;
+        }
+        assert!(sim.player(0).is_none());
+        host.add(general(2, 0));
+        sim.take_control(&host, 0, 2);
+        let out = frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        assert_eq!((client.view, out.menu_open), (ViewMode::Fps, 1), "the next General meets the screen");
+        escape(&mut client, &mut sim, &mut inp);
+        assert_eq!(client.view, ViewMode::Rts, "and can decline it");
+        assert!(!sim.player(0).unwrap().is_first_person());
         crate::profile::reset();
     }
 
@@ -626,10 +713,11 @@
         assert!(f169 > 80.0 && f169 < 82.0, "{f169}");
     }
 
-    /// The `ZHBO_AUTOPILOT=classpick` script now exercises the pick-only flow: it picks the seeded
-    /// custom class by its row key (5 presets + AB), leaves first person, and after the host takes
-    /// control again forces the screen open and Escapes it, then plays on. A pick never writes the
-    /// profile.
+    /// The `ZHBO_AUTOPILOT=classpick` script exercises the pick-only flow: it Escapes the first
+    /// spawn screen (the classless General goes back overhead, never playing the knife), then on
+    /// the next take-control picks the seeded custom class by its row key (5 presets + AB), leaves
+    /// first person, and after the host takes control again forces the screen open and Escapes it,
+    /// then plays on. A pick never writes the profile.
     #[cfg(feature = "autopilot")]
     #[test]
     fn the_classpick_autopilot_picks_the_seeded_class_and_escapes_a_second_offer() {
@@ -649,15 +737,25 @@
         let mut reached_fps = false;
         let mut pick: Option<ClientOut> = None;
         let mut any_save = false;
-        let mut retook = false;
+        let mut retakes = 0;
+        let mut overhead_since = None;
+        let mut declined_unclassed = false;
         let mut reopened = false;
         let mut closed_after_escape = false;
-        for i in 0..(30 * 20) {
-            // The C++ autopilot takes control again after the field computer hands the General
-            // back; the fake host does the same when the script has left first person.
-            if client.view == ViewMode::Rts && !retook && i > 120 {
-                sim.take_control(&host, 0, 1);
-                retook = true;
+        for i in 0..(30 * 30) {
+            // The C++ autopilot takes control again (twice for this run) a while after the General
+            // is handed back; the fake host does the same when the script has left first person.
+            if client.view == ViewMode::Rts && i > 60 {
+                let since = *overhead_since.get_or_insert(i);
+                if retakes < 2 && i - since > 30 {
+                    if retakes == 0 {
+                        let p = sim.player(0).unwrap();
+                        declined_unclassed = p.class.is_none() && !p.is_first_person();
+                    }
+                    sim.take_control(&host, 0, 1);
+                    retakes += 1;
+                    overhead_since = None;
+                }
             }
             let out = client.frame(&mut sim, &inp);
             if client.view == ViewMode::Fps {
@@ -679,7 +777,8 @@
                     pick = Some(out);
                 }
             }
-            if retook && out.menu_open != 0 {
+            // The third session's forced re-open (the second session's screen is the pick's).
+            if retakes == 2 && out.menu_open != 0 {
                 reopened = true;
             }
             if reopened && out.menu_open == 0 && matches!(client.view, ViewMode::Fps) {
@@ -694,6 +793,8 @@
             inp.logic_frame = f;
         }
         assert!(reached_fps, "the script runs in first person");
+        assert!(declined_unclassed, "the first session's Escape sent the classless General back overhead");
+        assert_eq!(retakes, 2, "three first-person sessions");
         let out = pick.expect("the script picks the seeded class");
         assert_eq!(out.choose_class, CHOOSE_CLASS_CUSTOM);
         let words: Vec<u32> = out.choose_class_payload[..out.choose_class_payload_len as usize].to_vec();

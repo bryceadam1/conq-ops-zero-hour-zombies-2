@@ -1,7 +1,7 @@
 //! Fake-host tests for the Assault Shield on its bearer: the held and stowed blocks, melee into
 //! it, and blast protection.
 
-use super::tests::{general, FakeHost};
+use super::tests::{general, spawn, FakeHost};
 use super::*;
 use crate::input::buttons;
 use crate::weapons::{Arsenal, Loadout};
@@ -13,8 +13,8 @@ fn duel(held: bool, yaw: f32) -> (FakeHost, Sim) {
     host.add(general(1, 0));
     host.add(ObjInfo { pos: Vec3::new(60.0, 0.0, 0.0), ..general(2, 1) });
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
-    sim.take_control(&host, 1, 2);
+    spawn(&mut sim, &host, 0, 1);
+    spawn(&mut sim, &host, 1, 2);
     sim.choose_class(0, 1, 0, &[]);
     let p = sim.players[1].as_mut().unwrap();
     p.arsenal = Arsenal::with_loadout(Loadout { primary: "riotshield_mp".into(), secondary: "mp7_mp".into(), ..Loadout::test_kit() });

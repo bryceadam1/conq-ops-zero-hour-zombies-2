@@ -260,7 +260,9 @@ struct Autopilot
 	// process (function-local statics could not).
 	UnsignedInt buildStep; // buildAutopilotFrame
 	UnsignedInt rtsDone;	 // rtsAutopilotFrame
-	Bool manualSelected;	 // the manual scene's one selection of the General
+	Bool manualSelected;	 // the manual scene's selection of the General (again after each return)
+	Bool manualControlled; // the manual scene's General was in first person last frame
+	UnsignedInt manualFrame; // the frame the manual scene's selection becomes due
 };
 extern Autopilot s_autopilot;
 void autopilotFrame();

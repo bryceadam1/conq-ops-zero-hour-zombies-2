@@ -501,8 +501,21 @@ void autopilotFrame()
 	{
 		// The manual scene starts overhead with the General selected, so his command bar (Take
 		// Control, hotkey T) is up: the real-input test takes control by key, as a player would.
+		// Taking control deselects him, so each time he comes back overhead (the test's Escape on
+		// the class screen declines the spawn) he is selected again for the next T.
 		Object *general = TheGameLogic->findObjectByID(s_autopilot.general);
-		if (general && !s_autopilot.manualSelected && frame - s_autopilot.spawnFrame >= 15)
+		if (!general)
+			return;
+		if (s_autopilot.manualFrame == 0)
+			s_autopilot.manualFrame = s_autopilot.spawnFrame + 15;
+		const Bool controlled = zhbo_logic_is_controlled((uint32_t)s_autopilot.general);
+		if (s_autopilot.manualControlled && !controlled)
+		{
+			s_autopilot.manualSelected = FALSE;
+			s_autopilot.manualFrame = frame + 30;
+		}
+		s_autopilot.manualControlled = controlled;
+		if (!controlled && !s_autopilot.manualSelected && frame >= s_autopilot.manualFrame)
 		{
 			s_autopilot.manualSelected = TRUE;
 			TheInGameUI->deselectAllDrawables();
@@ -514,9 +527,12 @@ void autopilotFrame()
 		}
 		return;
 	}
-	// After the field computer hands the General back, take control again once (tests re-entry).
+	// After the General is handed back overhead, take control again (tests re-entry): once, or
+	// twice for the classpick run, whose first session declines the spawn (Escape on the class
+	// screen sends the unclassed General back overhead) before the pick and the forced re-open.
 	Object *general = TheGameLogic->findObjectByID(s_autopilot.general);
-	if (!general || s_autopilot.retakes >= 1)
+	const Int retakes = s_config.autopilot_classpick ? 2 : 1;
+	if (!general || s_autopilot.retakes >= retakes)
 		return;
 	if (zhbo_logic_is_controlled((uint32_t)s_autopilot.general))
 	{

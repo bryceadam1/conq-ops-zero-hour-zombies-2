@@ -463,9 +463,12 @@ pub struct Client {
     /// Create-a-Class entry). It keeps the screen up even when a class is already chosen, so a
     /// pick can be replaced, and clears once one lands or Escape closes it.
     pub class_pick_forced: bool,
-    /// After Escape closes the in-match pick while the General is still unclassed, the auto-offer
-    /// stays shut until the next take-control. The command-bar force ignores this latch.
-    pub class_pick_dismissed: bool,
+    /// Escape on the spawn's class screen (first person, no class yet) declined the spawn: BO2
+    /// never lets a player play without a class (`_menus.gsc`'s `back` only closes the menu; only
+    /// `menuclass` spawns), so the screen closes and the client sends the field-computer press that
+    /// hands the General straight back overhead (`PlayerSim::awaiting_class`). Until the sim does,
+    /// first person shows a still view with no input; the next take-control clears it.
+    pub class_pick_declined: bool,
     /// Whether the pick screen is actually up this frame (set at the end of [`Client::frame`]).
     /// The HUD draws it (and the bridge frees the cursor) only while this is true.
     pub class_pick_open: bool,
@@ -526,7 +529,7 @@ impl Client {
             hits: [ClientHit::default(); CLIENT_HITS],
             hits_len: 0,
             class_pick_forced: false,
-            class_pick_dismissed: false,
+            class_pick_declined: false,
             class_pick_open: false,
             class_pick_highlight: 0,
             class_pick_since: None,
@@ -686,15 +689,24 @@ impl Client {
         self.class_pick_forced = false;
     }
 
-    /// Close the pick screen without picking: keep the current (or base) kit and let the player
-    /// play on. Escaping while still unclassed latches the auto-offer shut until the next
-    /// take-control; the command-bar force still opens the screen regardless.
+    /// Close the pick screen without picking. A classed General keeps his kit and plays on (BO2's
+    /// mid-life Back). An unclassed one in first person is not spawned, and closing the screen
+    /// declines the spawn: the field-computer press goes out and the sim returns him overhead, where
+    /// the command bar's class set is his way back in (BO2: Back leaves you unspawned, and the
+    /// pause menu's CHOOSE CLASS reopens the list).
     fn close_pick(&mut self, unclassed: bool) {
         self.class_pick_forced = false;
-        if unclassed {
-            self.class_pick_dismissed = true;
+        if unclassed && matches!(self.view, ViewMode::Fps) {
+            self.class_pick_declined = true;
+            self.latch |= buttons::FIELD_COMPUTER;
         }
         self.cues.play(cues::BACKOUT);
+    }
+
+    /// First person with the spawn declined and the sim not yet handing the General back: the
+    /// view holds still and only the leave press is sent.
+    fn declining(&self, unclassed: bool) -> bool {
+        unclassed && self.class_pick_declined
     }
 
     /// The class screen's input, from either the overhead view or first person. Returns true while
@@ -708,14 +720,14 @@ impl Client {
     }
 
     /// Whether the pick screen is up. In the overhead view only the command-bar force opens it; in
-    /// first person the force opens it too, and an unclassed General is offered it at take-control
-    /// unless Escape dismissed the offer for this life.
+    /// first person the force opens it too, and an unclassed General always has it up (he is not
+    /// spawned without a class) until a pick lands or Escape declines the spawn.
     fn class_pick_wanted(&self, unclassed: bool) -> bool {
         match self.view {
             // Overhead: only the command bar's force opens it (an unclassed player keeps playing).
             ViewMode::Rts => self.class_pick_forced,
-            // First person: the force, or the spawn offer while unclassed and not dismissed.
-            ViewMode::Fps => self.class_pick_forced || (unclassed && !self.class_pick_dismissed),
+            // First person: the force, or the spawn's screen while unclassed and not declined.
+            ViewMode::Fps => self.class_pick_forced || (unclassed && !self.class_pick_declined),
             // Never during the camera transitions.
             ViewMode::Entering { .. } | ViewMode::Leaving { .. } => false,
         }
@@ -861,8 +873,8 @@ impl Client {
 
         // The class pick's entrance: BO2's in-game class menu opens with `uin_main_pause`
         // (`hud/class.lua`), once per open. The screen only shows when `class_pick_wanted` says so
-        // (the command-bar force in either view; first person's spawn offer while unclassed and not
-        // dismissed).
+        // (the command-bar force in either view; first person's spawn screen while unclassed and not
+        // declined).
         if self.class_pick_wanted(unclassed) {
             if !self.hud.class_pick_seen {
                 self.hud.class_pick_seen = true;
@@ -929,7 +941,8 @@ impl Client {
                     let p = player.as_ref().unwrap();
                     let in_fc = matches!(p.mode, Mode::FieldComputer { .. });
                     // The class screen takes the cursor and freezes the view behind it.
-                    let menu = self.class_pick_wanted(unclassed);
+                    // A declined spawn holds the view still too, until the sim hands him back.
+                    let menu = self.class_pick_wanted(unclassed) || self.declining(unclassed);
                     if allowed && !in_fc && !menu {
                         let zoom = hfov / base_fov;
                         // A shellshock's look control (`crate::shellshock`, t6mp `FUN_005109f0`):
@@ -973,7 +986,10 @@ impl Client {
                     // stays square to the screen.
                     out.viewmodel_angles = pose.angles + Vec3::new(0.0, 0.0, kick_roll);
                     self.cues.update(dt, p, p.input.held & buttons::FIRE != 0);
-                    if let Mode::FieldComputer { t } = p.mode {
+                    if unclassed {
+                        // Not spawned: nothing in hand behind the class screen (BO2 shows no
+                        // viewmodel before the class spawns the player).
+                    } else if let Mode::FieldComputer { t } = p.mode {
                         // A scorestreak: the tablet comes up before the view leaves.
                         let (clip, time) = viewmodel::tablet_up(t);
                         out.viewmodel = clip;
@@ -1057,8 +1073,8 @@ impl Client {
         self.vm = Viewmodel::default(); // the weapon comes up as first person starts
         self.vm_motion = viewmodel::Motion::default();
         self.vm_kick = None;
-        // A fresh take-control re-offers the spawn pick even if the last life Escaped it.
-        self.class_pick_dismissed = false;
+        // A fresh take-control puts the spawn's class screen up again if the last one was declined.
+        self.class_pick_declined = false;
         self.cues.reset();
         self.yaw = yaw;
         self.pitch = 0.0;
@@ -1086,7 +1102,13 @@ impl Client {
             self.prev_held = u32::MAX;
             return;
         }
-        if allowed && inp.wheel.abs() >= 1.0 {
+        // A declined spawn sends nothing but the leave press `close_pick` latched.
+        if self.declining(unclassed) {
+            held = 0;
+            fwd = 0.0;
+            right = 0.0;
+        }
+        if allowed && inp.wheel.abs() >= 1.0 && !self.declining(unclassed) {
             // With the hammer up the wheel turns the structure being placed (wheel up: to the left).
             self.latch |= match (hammer, inp.wheel > 0.0) {
                 (false, _) => buttons::SWAP_WEAPON,

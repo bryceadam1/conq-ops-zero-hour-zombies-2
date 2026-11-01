@@ -350,6 +350,16 @@ impl PlayerSim {
         matches!(self.mode, Mode::Fps | Mode::FieldComputer { .. })
     }
 
+    /// Taken into first person but not spawned: no class yet. BO2 never lets a player play without
+    /// a class: `_globallogic_ui.gsc`'s `menuclass` is the only path from the class menu to
+    /// `spawnclient`, and its `back` response (`_menus.gsc` `onmenuresponse`) only closes the menu,
+    /// leaving the player unspawned. Here the General stands behind the class screen: the sim
+    /// takes none of his first-person input except the field-computer key, which declines the spawn
+    /// and hands him straight back overhead (the client sends it for Escape on the screen).
+    pub fn awaiting_class(&self) -> bool {
+        matches!(self.mode, Mode::Fps) && self.class.is_none()
+    }
+
     /// 0 stand, 1 crouch, 2 prone.
     pub fn stance_index(&self) -> i32 {
         match self.body.stance {
@@ -582,8 +592,9 @@ impl Sim {
                     gun: Default::default(),
                     fire_yaw: 0.0,
                     fire_pitch: 0.0,
-                    // A General spawns unarmed: knife only until a class is picked. (The class
-                    // pick replaces this arsenal; Escape on the spawn offer leaves it.)
+                    // A General comes in unarmed and unclassed: the class screen is up and he is
+                    // not spawned until a pick replaces this arsenal ([`PlayerSim::awaiting_class`];
+                    // Escape on the screen sends him back overhead).
                     arsenal: Arsenal::unarmed(),
                     rng: Rng::new(general.wrapping_mul(2_654_435_761) ^ frame),
                     input: FpsInput { yaw, ..Default::default() },
@@ -891,6 +902,16 @@ impl Sim {
         }
     }
 
+    /// Hand a first-person General back to RTS control where he stands.
+    fn return_to_rts(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim) {
+        p.mode = Mode::Rts;
+        // The RTS weapon is the one that was in hand.
+        p.rts.lock = p.arsenal.active as i32;
+        host.set_pose(p.general, p.body.pos, p.yaw, false);
+        host.set_controlled(p.general, false);
+        self.emit(idx, EventKind::ReturnedToRts { general: p.general });
+    }
+
     fn step_player(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim) -> bool {
         let Some(info) = host.object(p.general, p.general) else {
             self.emit(idx, EventKind::GeneralDied { general: p.general });
@@ -926,6 +947,17 @@ impl Sim {
 
         let world = HostWorld { host, viewer: p.general };
         match p.mode {
+            Mode::Fps if p.awaiting_class() => {
+                if input.pressed & buttons::FIELD_COMPUTER != 0 {
+                    // Escape on the spawn's class screen: no spawn, back overhead at once (there is
+                    // nothing in hand to put away and no tablet to raise).
+                    self.return_to_rts(host, idx, p);
+                    return true;
+                }
+                // Standing behind the class screen: gravity only, nothing else of his input.
+                let idle = FpsInput { yaw: input.yaw, pitch: input.pitch, ..Default::default() };
+                movement::step(&mut p.body, &idle, MoveModifiers::default(), &self.tuning, &world, LOGIC_DT);
+            }
             Mode::Fps => {
                 // The use key works (builds or repairs) at a structure in reach, held, instead of
                 // opening the field computer.
@@ -1015,12 +1047,7 @@ impl Sim {
                 movement::step(&mut p.body, &idle, MoveModifiers::default(), &self.tuning, &world, LOGIC_DT);
                 let t = t + LOGIC_DT;
                 if t >= FIELD_COMPUTER_RAISE {
-                    p.mode = Mode::Rts;
-                    // The RTS weapon is the one that was in hand.
-                    p.rts.lock = p.arsenal.active as i32;
-                    host.set_pose(p.general, p.body.pos, p.yaw, false);
-                    host.set_controlled(p.general, false);
-                    self.emit(idx, EventKind::ReturnedToRts { general: p.general });
+                    self.return_to_rts(host, idx, p);
                     return true;
                 }
                 p.mode = Mode::FieldComputer { t };

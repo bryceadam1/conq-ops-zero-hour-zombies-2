@@ -492,10 +492,12 @@ fn log_step(s: &State, first_new_event: usize, frame: u32) {
         for (i, p) in s.sim.players.iter().enumerate() {
             if let Some(p) = p.as_ref().filter(|p| p.is_first_person()) {
                 let w = p.arsenal.current();
+                // Behind the spawn's class screen nothing is in hand (`PlayerSim::awaiting_class`).
+                let held = if p.awaiting_class() { "awaiting a class".to_string() } else { format!("{} {}|{}", w.def.display_name, w.ammo, w.reserve) };
                 s.logic.log(&format!(
-                    "player {i} pos ({:.1}, {:.1}, {:.1}) yaw {:.2} pitch {:.2} stance {:?} hp {:.0}/{:.0} {} {}|{}",
+                    "player {i} pos ({:.1}, {:.1}, {:.1}) yaw {:.2} pitch {:.2} stance {:?} hp {:.0}/{:.0} {held}",
                     p.body.pos.x, p.body.pos.y, p.body.pos.z, p.yaw, p.pitch, p.body.stance,
-                    p.health, p.max_health, w.def.display_name, w.ammo, w.reserve
+                    p.health, p.max_health
                 ));
                 let counts = &IMPACT_ACCUM[i % IMPACT_ACCUM.len()];
                 let by: Vec<(&str, u32)> = Surface::ALL

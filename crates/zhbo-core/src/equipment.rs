@@ -597,7 +597,7 @@ mod tests {
 mod sim_tests {
     use super::*;
     use crate::input::{buttons, FpsInput};
-    use crate::sim::tests::{general, FakeHost};
+    use crate::sim::tests::{general, spawn, FakeHost};
     use crate::sim::{EventKind, Sim};
     use crate::weapons::{Class, Effect, Offhand, OffhandUse, Place};
 
@@ -631,7 +631,7 @@ mod sim_tests {
     }
 
     fn ready(sim: &mut Sim, host: &FakeHost) {
-        sim.take_control(host, 0, 1);
+        spawn(sim, host, 0, 1);
         let wait = (sim.player(0).unwrap().arsenal.raise_left / crate::units::LOGIC_DT) as u32 + 2;
         for f in 0..wait {
             sim.input(0, 1, FpsInput::default());
@@ -736,7 +736,7 @@ mod sim_tests {
         let host = FakeHost::default();
         host.add(general(1, 0));
         let mut sim = Sim::new();
-        sim.take_control(&host, 0, 1);
+        spawn(&mut sim, &host, 0, 1);
         sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(c.loadout());
         ready(&mut sim, &host);
         let a = &sim.player(0).unwrap().arsenal;

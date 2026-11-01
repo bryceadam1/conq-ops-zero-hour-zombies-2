@@ -190,6 +190,19 @@ pub fn soldier(id: u32, player: i32, x: f32) -> ObjInfo {
     ObjInfo { pos: Vec3::new(x, 0.0, 0.0), health: 120.0, max_health: 120.0, ..general(id, player) }
 }
 
+/// Take control of a General who has a class: the fixture for first-person play. An unclassed one
+/// waits behind the class screen and takes no input (`PlayerSim::awaiting_class`; the class tests
+/// call `take_control` and `choose_class` themselves). The class marker leaves the arsenal as
+/// `take_control` made it (unarmed: a knife-only kit), so a test sets the kit it needs.
+pub(crate) fn spawn(sim: &mut Sim, host: &FakeHost, player: i32, general: u32) {
+    sim.take_control(host, player, general);
+    if let Some(Some(p)) = usize::try_from(player).ok().and_then(|i| sim.players.get_mut(i)) {
+        if p.general == general {
+            p.class.get_or_insert_with(|| "test".into());
+        }
+    }
+}
+
 pub(crate) fn run(sim: &mut Sim, host: &FakeHost, player: i32, general: u32, input: FpsInput, frames: u32) {
     for _ in 0..frames {
         sim.input(player, general, input);
@@ -333,7 +346,7 @@ fn identical_inputs_are_deterministic() {
             ..Default::default()
         });
         let mut sim = Sim::new();
-        sim.take_control(&host, 0, 1);
+        spawn(&mut sim, &host, 0, 1);
         // The lethal slot plants (a claymore) so the equipment path is exercised alongside the
         // thrown tactical.
         if let Some(p) = sim.players[0].as_mut() {
@@ -350,8 +363,8 @@ fn identical_inputs_are_deterministic() {
         let f = sim_a.frame + 1;
         // Take control again after the field computer's RTS handoff (tests re-entry).
         if f % 600 == 470 {
-            sim_a.take_control(&host_a, 0, 1);
-            sim_b.take_control(&host_b, 0, 1);
+            spawn(&mut sim_a, &host_a, 0, 1);
+            spawn(&mut sim_b, &host_b, 0, 1);
         }
         sim_a.input(0, 1, *input);
         sim_a.step(&host_a, f);
@@ -391,7 +404,7 @@ fn take_control_suspends_ai_and_moves_general() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     assert_eq!(*host.controlled.borrow(), vec![1]);
     run(&mut sim, &host, 0, 1, FpsInput { move_packed: pack_move(1.0, 0.0), ..Default::default() }, 30);
     assert!(host.get(1).pos.x > 20.0, "walked forward: {:?}", host.get(1).pos);
@@ -413,7 +426,7 @@ fn an_aimed_stalker_smg_walks_at_the_attachments_ads_speed() {
         let host = FakeHost::default();
         host.add(general(1, 0));
         let mut sim = Sim::new();
-        sim.take_control(&host, 0, 1);
+        spawn(&mut sim, &host, 0, 1);
         let p = sim.players[0].as_mut().unwrap();
         p.arsenal.weapons = vec![WeaponState::new(def)];
         p.arsenal.active = 0;
@@ -437,7 +450,7 @@ fn cannot_control_someone_elses_general() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 1, 1);
+    spawn(&mut sim, &host, 1, 1);
     assert!(sim.player(1).is_none());
     assert!(host.controlled.borrow().is_empty());
 }
@@ -450,7 +463,7 @@ fn a_one_gun_class_carries_the_held_knife_as_its_second_weapon() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout { primary: "mp7_mp".into(), ..crate::weapons::Loadout::test_kit().with_spec("secondary=") });
     wait_until_ready(&mut sim, &host);
     let a = &sim.player(0).unwrap().arsenal;
@@ -500,7 +513,7 @@ fn unarmed_weapon_input_is_a_no_op_and_melee_still_works() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     wait_until_ready(&mut sim, &host);
     let everything = buttons::FIRE
         | buttons::ADS
@@ -532,7 +545,7 @@ fn the_gun_fires_again_after_the_melee_and_its_re_raise() {
         let host = FakeHost::default();
         host.add(general(1, 0));
         let mut sim = Sim::new();
-        sim.take_control(&host, 0, 1);
+        spawn(&mut sim, &host, 0, 1);
         sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit().with_spec(perks));
         wait_until_ready(&mut sim, &host);
         run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::MELEE, ..Default::default() }, 1);
@@ -566,7 +579,7 @@ fn an_offhand_pressed_mid_raise_or_mid_shot_waits_that_state_out() {
         let host = FakeHost::default();
         host.add(general(1, 0));
         let mut sim = Sim::new();
-        sim.take_control(&host, 0, 1);
+        spawn(&mut sim, &host, 0, 1);
         sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
         let left = setup(&mut sim, &host);
         run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, pressed: buttons::LETHAL, ..Default::default() }, 1);
@@ -612,7 +625,7 @@ fn an_offhand_pressed_mid_raise_or_mid_shot_waits_that_state_out() {
         let host = FakeHost::default();
         host.add(general(1, 0));
         let mut sim = Sim::new();
-        sim.take_control(&host, 0, 1);
+        spawn(&mut sim, &host, 0, 1);
         sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
         run(&mut sim, &host, 0, 1, FpsInput::default(), 5);
         run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, pressed: buttons::LETHAL, ..Default::default() }, 1);
@@ -637,7 +650,7 @@ fn the_switch_button_cancels_a_held_cancelable_offhand() {
         let host = FakeHost::default();
         host.add(general(1, 0));
         let mut sim = Sim::new();
-        sim.take_control(&host, 0, 1);
+        spawn(&mut sim, &host, 0, 1);
         sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
         wait_until_ready(&mut sim, &host);
         let base = sim.player(0).unwrap().arsenal.lethal.def;
@@ -674,7 +687,7 @@ fn a_plantable_item_is_refused_in_the_air_and_over_deep_water() {
         let host = FakeHost::default();
         host.add(general(1, 0));
         let mut sim = Sim::new();
-        sim.take_control(&host, 0, 1);
+        spawn(&mut sim, &host, 0, 1);
         sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
         wait_until_ready(&mut sim, &host);
         let base = crate::weapons::weapon("claymore_mp");
@@ -731,7 +744,7 @@ fn a_switch_pressed_after_a_shot_happens_when_the_shot_ends() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
     wait_until_ready(&mut sim, &host);
     run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, pressed: buttons::FIRE, ..Default::default() }, 1);
@@ -761,7 +774,7 @@ fn the_hammer_and_field_computer_work_unarmed() {
     host.add(general(1, 0));
     host.options.borrow_mut().push(option(7, crate::building::status::OK));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     wait_until_ready(&mut sim, &host);
     assert!(sim.player(0).unwrap().arsenal.is_unarmed());
     let look = |held: u32, pressed: u32| FpsInput { held, pressed, pitch: -0.5, ..Default::default() };
@@ -772,6 +785,89 @@ fn the_hammer_and_field_computer_work_unarmed() {
     sim.events.clear();
     run(&mut sim, &host, 0, 1, look(buttons::FIELD_COMPUTER, buttons::FIELD_COMPUTER), 1);
     assert!(events(&sim).contains(&EventKind::FieldComputerOpened), "{:?}", events(&sim));
+}
+
+/// BO2 never lets a player play without a class (`_globallogic_ui.gsc` `menuclass` is the only way
+/// from the class menu to `spawnclient`; `_menus.gsc`'s `back` only closes the menu). A General
+/// taken into first person with no class waits behind the class screen: none of his input moves,
+/// fires, swings, builds or opens anything, whatever the client sends.
+#[test]
+fn an_unclassed_general_in_first_person_takes_no_input() {
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    host.options.borrow_mut().push(option(7, crate::building::status::OK));
+    let mut sim = Sim::new();
+    sim.take_control(&host, 0, 1);
+    assert!(sim.player(0).unwrap().awaiting_class());
+    let start = host.get(1).pos;
+    let all = buttons::ALL & !buttons::FIELD_COMPUTER;
+    for (held, pressed) in [(all, all), (all, 0), (0, all)] {
+        run(&mut sim, &host, 0, 1, FpsInput { held, pressed, move_packed: pack_move(1.0, 1.0), yaw: 1.0, pitch: -0.5 }, frames(1.0));
+    }
+    let kinds = events(&sim);
+    assert_eq!(kinds, [EventKind::EnteredFps { general: 1 }], "nothing but the entry: {kinds:?}");
+    let p = sim.player(0).unwrap();
+    assert!(p.awaiting_class(), "still waiting for a class");
+    assert!(p.hammer.is_none() && p.arsenal.melee_left == 0.0 && sim.projectiles.is_empty());
+    assert!((host.get(1).pos - start).length_xy() < 1e-3, "he did not move: {:?}", host.get(1).pos);
+    assert_eq!(*host.controlled.borrow(), vec![1], "still in first person");
+}
+
+/// Escape on the spawn's class screen declines the spawn: the client sends the field-computer
+/// press, and the unclassed General goes back overhead at once (no tablet: nothing to put away),
+/// still unclassed, where the command bar's class set is his way back in. The next take-control
+/// waits for a class again, and a class picked overhead spawns him straight into play.
+#[test]
+fn declining_the_spawn_returns_the_unclassed_general_overhead_at_once() {
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    let mut sim = Sim::new();
+    sim.take_control(&host, 0, 1);
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 5);
+    sim.events.clear();
+    run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::FIELD_COMPUTER, held: buttons::FIELD_COMPUTER, ..Default::default() }, 1);
+    assert_eq!(events(&sim), [EventKind::ReturnedToRts { general: 1 }], "back overhead on the press, no field computer");
+    let p = sim.player(0).unwrap();
+    assert!(matches!(p.mode, Mode::Rts) && p.class.is_none() && !p.awaiting_class());
+    assert!(host.controlled.borrow().is_empty(), "Zero Hour has him back");
+    // Taking control again: the class screen is up again.
+    sim.take_control(&host, 0, 1);
+    assert!(sim.player(0).unwrap().awaiting_class());
+    run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::FIELD_COMPUTER, ..Default::default() }, 1);
+    assert!(!sim.player(0).unwrap().is_first_person());
+    // The command bar's pick overhead, then Take Control: he plays at once.
+    sim.choose_class(0, 1, 0, &[]);
+    sim.take_control(&host, 0, 1);
+    assert!(!sim.player(0).unwrap().awaiting_class());
+    let start = host.get(1).pos;
+    run(&mut sim, &host, 0, 1, FpsInput { move_packed: pack_move(1.0, 0.0), ..Default::default() }, 30);
+    assert!((host.get(1).pos - start).length_xy() > 20.0, "a classed General walks");
+}
+
+/// The spawn's pick in first person ends the wait: the class kit comes up and the General plays.
+/// After his death the record goes, so the next General he takes into first person waits for a
+/// class of his own (and can decline it the same way).
+#[test]
+fn a_first_person_pick_spawns_him_and_the_next_general_waits_again() {
+    let host = FakeHost::default();
+    host.add(general(1, 0));
+    let mut sim = Sim::new();
+    sim.take_control(&host, 0, 1);
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 5);
+    sim.choose_class(0, 1, 0, &[]);
+    assert!(!sim.player(0).unwrap().awaiting_class());
+    wait_until_ready(&mut sim, &host);
+    sim.events.clear();
+    run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, pressed: buttons::FIRE, ..Default::default() }, 1);
+    assert!(events(&sim).iter().any(|k| matches!(k, EventKind::Shot { .. })), "the class gun fires: {:?}", events(&sim));
+    host.objects.borrow_mut()[0].flags |= objflags::DEAD;
+    run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+    assert!(sim.player(0).is_none());
+    host.add(ObjInfo { pos: Vec3::new(100.0, 0.0, 0.0), ..general(2, 0) });
+    sim.take_control(&host, 0, 2);
+    assert!(sim.player(0).unwrap().awaiting_class(), "the next General has no class yet");
+    run(&mut sim, &host, 0, 2, FpsInput { pressed: buttons::FIELD_COMPUTER, ..Default::default() }, 1);
+    assert!(events(&sim).contains(&EventKind::ReturnedToRts { general: 2 }));
 }
 
 /// Bug 1, overhead half: a classless General reports no usable slot/ammo, so the bridge's
@@ -822,7 +918,7 @@ fn an_overhead_custom_pick_keeps_its_kit_through_take_control() {
     sim.choose_class(0, 1, usize::MAX, &custom.to_wire_words());
     // In overhead the kit is ready now (no first-person raise).
     assert_eq!(sim.player(0).unwrap().arsenal.raise_left, 0.0);
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     let p = sim.player(0).unwrap();
     assert_eq!(p.class.as_deref(), Some("custom:Overhead"));
     let a = &p.arsenal;
@@ -855,7 +951,7 @@ fn custom_class_pick_logs_its_own_name() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     let custom = crate::classes::CustomClass {
         name: "Ghost Recon".into(),
         ..Default::default()
@@ -878,7 +974,7 @@ fn a_custom_class_carries_its_camo_choice() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     let custom = crate::classes::CustomClass {
         primary: "an94_mp".into(),
         secondary: "fiveseven_mp".into(),
@@ -935,7 +1031,7 @@ fn class_pick_replaces_an_existing_class() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     sim.choose_class(0, 1, 0, &[]);
     let first = sim.player(0).and_then(|p| p.class.clone());
     sim.choose_class(0, 1, 1, &[]);
@@ -949,7 +1045,7 @@ fn kick_trace(input: FpsInput, burst: u32, rest: u32) -> Vec<(ViewKick, bool, f3
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     // The stand-in AN-94 carries BO2's kick and recentre numbers.
     let rifle = crate::classes::CustomClass { name: "Rifle".into(), primary: "an94_mp".into(), secondary: "fnp45_mp".into(), ..Default::default() };
     sim.choose_class(0, 1, usize::MAX, &rifle.to_wire_words());
@@ -1064,7 +1160,7 @@ fn iron_trace() -> Vec<(f32, f32, f32, f32)> {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     scoped(&mut sim, &host);
     // Iron sights: no overlay; BO2-shaped aimed sway and idle numbers.
     let p = sim.players[0].as_mut().unwrap();
@@ -1124,7 +1220,7 @@ fn shooting_kills_an_enemy_and_reports_hitmarkers() {
     host.add(g);
     host.add(soldier(2, 1, 60.0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     // A General spawns unarmed; this test is about a gun, so pick the first preset.
     sim.choose_class(0, 1, 0, &[]);
     wait_until_ready(&mut sim, &host);
@@ -1150,7 +1246,7 @@ fn a_scavenger_kill_tops_the_reserve_up_to_the_stock_cap() {
     host.add(general(1, 0));
     host.add(soldier(2, 1, 60.0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     sim.choose_class(0, 1, 0, &[]);
     wait_until_ready(&mut sim, &host);
     let p = sim.players[0].as_mut().unwrap();
@@ -1178,7 +1274,7 @@ fn a_round_flies_bo2s_bulletrange() {
         let x = crate::units::inches(inch);
         host.add(soldier(2, 1, x));
         let mut sim = Sim::new();
-        sim.take_control(&host, 0, 1);
+        spawn(&mut sim, &host, 0, 1);
         sim.choose_class(0, 1, 0, &[]);
         wait_until_ready(&mut sim, &host);
         let pitch = -(4.0f32 / x).atan();
@@ -1197,7 +1293,7 @@ fn others_see_brass_every_shot_and_a_tracer_every_nth_bullet() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     sim.choose_class(0, 1, 0, &[]);
     wait_until_ready(&mut sim, &host);
     let w = sim.players[0].as_mut().unwrap().arsenal.current_mut();
@@ -1251,7 +1347,7 @@ fn a_landed_melee_reports_its_hit_and_a_miss_does_not() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     sim.choose_class(0, 1, 0, &[]);
     wait_until_ready(&mut sim, &host);
     sim.events.clear();
@@ -1290,7 +1386,7 @@ fn a_pellet_reports_the_surface_it_hit() {
         ..Default::default()
     });
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     sim.choose_class(0, 1, 0, &[]);
     wait_until_ready(&mut sim, &host);
     run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, ..Default::default() }, 20);
@@ -1317,7 +1413,7 @@ fn a_shot_that_hits_nothing_raises_no_impact() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     sim.choose_class(0, 1, 0, &[]);
     wait_until_ready(&mut sim, &host);
     run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, pitch: 0.3, ..Default::default() }, 10);
@@ -1333,7 +1429,7 @@ fn a_missed_shot_into_the_ground_asks_the_host_for_its_surface() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     sim.choose_class(0, 1, 0, &[]);
     wait_until_ready(&mut sim, &host);
     let down = FpsInput { held: buttons::FIRE, pitch: -0.6, ..Default::default() };
@@ -1359,7 +1455,7 @@ fn a_shot_into_two_grounds_plays_each_surfaces_hit_sound() {
         host.ground.set(Some(ground));
         host.add(general(1, 0));
         let mut sim = Sim::new();
-        sim.take_control(&host, 0, 1);
+        spawn(&mut sim, &host, 0, 1);
         sim.choose_class(0, 1, 0, &[]);
         wait_until_ready(&mut sim, &host);
         run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, pitch: -0.6, ..Default::default() }, 10);
@@ -1405,7 +1501,7 @@ fn shoot_through_wall(pen: crate::penetration::Penetrate, specs: &[Specialty], t
     });
     host.add(ObjInfo { health: 5000.0, max_health: 5000.0, ..soldier(3, 1, 60.0) });
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     sim.choose_class(0, 1, 0, &[]);
     wait_until_ready(&mut sim, &host);
     let w = sim.players[0].as_mut().unwrap().arsenal.current_mut();
@@ -1479,7 +1575,7 @@ fn a_kill_reports_a_fatal_flesh_impact() {
     host.add(general(1, 0));
     host.add(soldier(2, 1, 60.0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     sim.choose_class(0, 1, 0, &[]);
     wait_until_ready(&mut sim, &host);
     let pitch = -(4.0f32 / 60.0).atan();
@@ -1505,7 +1601,7 @@ fn bullets_pass_through_friendlies() {
     host.add(soldier(3, 0, 30.0));
     host.add(soldier(2, 1, 60.0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     sim.choose_class(0, 1, 0, &[]);
     wait_until_ready(&mut sim, &host);
     let pitch = -(4.0f32 / 60.0).atan();
@@ -1527,7 +1623,7 @@ fn the_hammer_places_a_structure_and_holding_use_builds_it() {
     host.add(general(1, 0));
     host.options.borrow_mut().extend([option(7, crate::building::status::OK), option(8, crate::building::status::OK)]);
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     wait_until_ready(&mut sim, &host);
     let ammo = sim.player(0).unwrap().arsenal.current().ammo;
     let look = |held: u32, pressed: u32| FpsInput { held, pressed, pitch: -0.5, ..Default::default() };
@@ -1579,7 +1675,7 @@ fn the_hammer_refuses_what_he_cannot_afford_and_puts_away_for_a_weapon() {
     host.add(general(1, 0));
     host.options.borrow_mut().push(option(7, crate::building::status::NO_MONEY));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     wait_until_ready(&mut sim, &host);
     run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::HAMMER, ..Default::default() }, 1);
     run(&mut sim, &host, 0, 1, FpsInput::default(), frames(crate::building::HAMMER_RAISE));
@@ -1597,7 +1693,7 @@ fn the_wheel_turns_the_structure_being_placed() {
     host.add(general(1, 0));
     host.options.borrow_mut().push(option(7, crate::building::status::OK));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     wait_until_ready(&mut sim, &host);
     run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::HAMMER, ..Default::default() }, 1);
     run(&mut sim, &host, 0, 1, FpsInput::default(), frames(crate::building::HAMMER_RAISE));
@@ -1618,7 +1714,7 @@ fn holding_use_at_a_damaged_structure_repairs_it() {
     let repair = crate::building::work::REPAIR;
     host.sites.borrow_mut().push(FakeSite { id: 5, template: 3, at: Vec3::new(30.0, 0.0, 0.0), percent: 60.0, kind: repair, ..Default::default() });
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     wait_until_ready(&mut sim, &host);
     let hold = FpsInput { held: buttons::FIELD_COMPUTER, pressed: buttons::FIELD_COMPUTER, ..Default::default() };
     run(&mut sim, &host, 0, 1, hold, 1);
@@ -1642,7 +1738,7 @@ fn field_computer_returns_control_to_rts_and_back() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::FIELD_COMPUTER, ..Default::default() }, 1);
     assert!(matches!(sim.player(0).unwrap().mode, Mode::FieldComputer { .. }));
     assert_eq!(*host.controlled.borrow(), vec![1], "still controlled while the laptop comes up");
@@ -1650,7 +1746,7 @@ fn field_computer_returns_control_to_rts_and_back() {
     assert_eq!(sim.player(0).unwrap().mode, Mode::Rts);
     assert!(host.controlled.borrow().is_empty(), "AI resumed");
     assert!(events(&sim).contains(&EventKind::ReturnedToRts { general: 1 }));
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     assert_eq!(sim.player(0).unwrap().mode, Mode::Fps);
 }
 
@@ -1662,7 +1758,7 @@ fn the_field_computer_waits_for_an_offhand_and_cuts_a_reload() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::test_kit());
     run(&mut sim, &host, 0, 1, FpsInput::default(), frames(3.0));
     let lethal = FpsInput { held: buttons::LETHAL, ..Default::default() };
@@ -1683,7 +1779,7 @@ fn the_field_computer_waits_for_an_offhand_and_cuts_a_reload() {
     assert!(opened_after_throw, "the carried press opens the laptop once the throw is done");
     // Back in first person: a reload in progress is cut short by the laptop.
     run(&mut sim, &host, 0, 1, FpsInput::default(), frames(FIELD_COMPUTER_RAISE));
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     run(&mut sim, &host, 0, 1, FpsInput::default(), frames(3.0));
     sim.players[0].as_mut().unwrap().arsenal.current_mut().ammo = 1;
     run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::RELOAD, held: buttons::RELOAD, ..Default::default() }, 2);
@@ -1699,7 +1795,7 @@ fn health_regenerates_after_delay_and_death_releases() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
     host.objects.borrow_mut()[0].health = 150.0;
     run(&mut sim, &host, 0, 1, FpsInput::default(), 30 * 4);
@@ -1719,7 +1815,7 @@ fn damage_flinches_the_view_and_toughness_cuts_it() {
         let host = FakeHost::default();
         host.add(general(1, 0));
         let mut sim = Sim::new();
-        sim.take_control(&host, 0, 1);
+        spawn(&mut sim, &host, 0, 1);
         run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
         let p = sim.players[0].as_mut().unwrap();
         p.arsenal.loadout.perks.retain(|k| *k != crate::weapons::Perk::TOUGHNESS);
@@ -1760,7 +1856,7 @@ fn rts_shots_use_the_generals_ammo_and_carry_into_first_person() {
     assert_eq!(r.lock, 1, "back to the gun after the throw");
     assert_eq!(sim.projectiles.len(), 1, "a BO2 grenade, thrown as in first person");
     // Taking control keeps the ammo and the weapon in hand.
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     let p = sim.player(0).unwrap();
     assert_eq!(p.arsenal.active, 1);
     assert_eq!(p.arsenal.weapons[1].ammo as i32, r.ammo[1]);
@@ -1799,7 +1895,7 @@ fn returning_to_rts_locks_the_weapon_in_hand() {
     let host = FakeHost::default();
     host.add(general(1, 0));
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     // The pistol is slot 1 of a class kit; the unarmed kit has only the knife.
     sim.choose_class(0, 1, 0, &[]);
     sim.players[0].as_mut().unwrap().arsenal.active = 1;
@@ -2025,7 +2121,7 @@ fn identical_inputs_give_identical_results() {
         host.add(soldier(2, 1, 80.0));
         host.add(soldier(4, 1, 90.0));
         let mut sim = Sim::new();
-        sim.take_control(&host, 0, 1);
+        spawn(&mut sim, &host, 0, 1);
         for i in 0..200u32 {
             let input = FpsInput {
                 held: if i % 7 < 4 { buttons::FIRE } else { buttons::SPRINT },
@@ -2052,7 +2148,7 @@ fn lunge(charge_range: f32) -> (f32, f32) {
     host.add(general(1, 0));
     host.add(ObjInfo { health: 5000.0, max_health: 5000.0, ..soldier(2, 1, 18.0) });
     let mut sim = Sim::new();
-    sim.take_control(&host, 0, 1);
+    spawn(&mut sim, &host, 0, 1);
     sim.choose_class(0, 1, 0, &[]);
     wait_until_ready(&mut sim, &host);
     let p = sim.players[0].as_mut().unwrap();

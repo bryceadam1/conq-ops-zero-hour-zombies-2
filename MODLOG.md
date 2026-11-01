@@ -9952,3 +9952,83 @@ classless kit: the knife (`Combat Knife 0|0`, animation set 2).
   * `render_world_weapons`: the SMAW is no longer white.
   * `render_viewmodels --reticle reticle_3 --reticle reticle_12` over the MTAR and the Five-seven:
     54 images. The DW pistol needs `ZHBO_BO2_DIR` because its combination is not in the archive.
+
+## No classless spawn: Escape on the first class screen sends the General back overhead (2026-11-01, branch `v1/no-classless-spawn`)
+
+The integrator saw it in game: a General who Escapes the first class screen without picking keeps
+the classless kit (the Combat Knife alone) and plays first person with it.
+
+**BO2.** It never lets a player play without a class:
+* `_globallogic_ui.gsc` `menuclass` is the only path from the class menu to `spawnclient`.
+  `beginclasschoice` opens `changeclass_<team>`, and a player with no `pers["class"]` is not
+  spawned.
+* `_menus.gsc` `onmenuresponse`: `back` only closes the menu, and on console it reopens the
+  `class` pause menu. The player stays unspawned, and the pause menu's `MPUI_CHOOSE_CLASS_BUTTON_CAPS`
+  (`hud/class.lua:324`) reopens the list.
+* `hud/changeclass.lua` does allow Back. The screen can be closed. What closing it never does is
+  spawn you.
+
+**Root cause.** Since Phase 6 the mod treated Escape on the spawn screen as "stay unarmed and
+play". `Client::close_pick` latched `class_pick_dismissed` and handed first-person input back,
+and the sim ran a classless General like any other. Nothing anywhere said that a General with no
+class is not spawned. Every way into first person was affected:
+* Take Control on a fresh General (the T hotkey and the command bar's button);
+* the next General after a death (the record dies with the General, so he is classless again);
+* re-entry after a field-computer exit while still classless.
+
+**The fix: the overhead view is the mod's "unspawned".**
+* **Sim.** `PlayerSim::awaiting_class()` is `Mode::Fps` with no class. In that state `step_player`
+  takes none of his input: no movement (gravity only), weapons, melee, hammer, use or hack. The
+  one exception is `buttons::FIELD_COMPUTER`, which hands him straight back to RTS control
+  (`ReturnedToRts`, no tablet, since nothing is in hand). The field computer's hand-back moved into
+  `Sim::return_to_rts`, which both paths share. The lockstep input stream carries the press, so
+  replays stay deterministic and no ABI changed.
+* **Client.** Escape on the screen while unclassed in first person sets `class_pick_declined` (it
+  replaces `class_pick_dismissed`) and latches the leave press. From then until the sim's
+  `ReturnedToRts`:
+  * the screen stays shut;
+  * the view holds still and the cursor stays free;
+  * the only input sent is the leave press.
+  
+  Unclassed in first person draws no viewmodel, so the knife is never in hand behind the screen.
+  `start_entering` clears the latch, so the next Take Control puts the screen up again. Escape on
+  a classed General's forced re-open is unchanged: BO2's mid-life Back keeps playing. So is the
+  overhead view: no screen unless forced, and the command bar's class set is the way back in.
+* **Log.** The once-a-second pose line prints `awaiting a class` instead of the weapon while he
+  waits. A `Combat Knife n|n` pose line now means someone really played classless.
+
+**Tests.**
+* sim:
+  * `an_unclassed_general_in_first_person_takes_no_input`: every button, move and look,
+    nothing happens;
+  * `declining_the_spawn_returns_the_unclassed_general_overhead_at_once`: re-entry waits again,
+    and a pick made overhead plays at once;
+  * `a_first_person_pick_spawns_him_and_the_next_general_waits_again`: covers death and the next
+    General.
+* client:
+  * `fps_unclassed_escape_declines_the_spawn_and_returns_overhead`: W and the mouse held through
+    the decline; only the leave press is sent; no viewmodel; he never walks;
+  * `every_unclassed_entry_meets_the_screen_and_a_class_plays`: fresh General, a command-bar pick
+    overhead, a classed re-open's Escape, and the next General after a death.
+* The sim fixture `sim::tests::spawn` (take control + a `test` class marker) replaces bare
+  `take_control` in the tests that drive first-person play. Their arsenals are untouched, so the
+  "unarmed" tests now exercise a knife-only class. BO2 allows one: drop both guns.
+
+**Autotests.**
+* `--classpick` gains an Escape-first leg. The script's first session Escapes the spawn screen.
+  The checks: `returned General n to RTS control` comes before any `assumed the` or `opened the
+  field computer` line, and no pose line names the Combat Knife. The bridge's autopilot retakes
+  twice for this run (`ZhboAutopilot.cpp`), and the "Escape kept playing" check now counts the
+  third entry.
+* `--input`: T, then Escape, which must hand him back overhead. The manual scene re-selects the
+  General each time he returns. Then T again, 6 for the first default class (rows 1–5 are the
+  custom slots), then W and the mouse. If Escape had also opened Zero Hour's game menu, the second
+  T would fail.
+* `inputtest.ps1` (Windows) picks with 6 before holding W. It was already stale: the class screen
+  had been eating its W. This change is unverified on Windows.
+
+**Left as is.** A General's class does not survive his death. BO2's `pers["class"]` survives a
+respawn, but the mod's record belongs to the General object. Carrying the class over to the next
+General would be a separate change (the command bar's class set and `zhbo_general_has_class` key
+off the record). A Tactical Insertion is still used at the take-control that a declined spawn
+then backs out of.

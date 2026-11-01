@@ -122,6 +122,18 @@ Ownership and rules:
 * **Unarmed until classed.** A General with no class carries the knife-only `Loadout::unarmed()`:
   no guns, no grenades, no HUD ammo/crosshair; the RTS report marks every slot empty, and the
   bridge's existing no-ammo veto keeps Zero Hour's own weapons from firing until a class lands.
+* **No first-person play without a class** (BO2: `_globallogic_ui.gsc`'s `menuclass` is the only
+  path from the class menu to `spawnclient`; `_menus.gsc`'s `back` just closes the menu and leaves
+  the player unspawned). A General taken into first person with no class is *awaiting a class*
+  (`PlayerSim::awaiting_class`): the client keeps the spawn's class screen up and draws no
+  viewmodel, and the sim ignores all of his first-person input except `buttons::FIELD_COMPUTER`,
+  which hands him straight back to RTS control (`ReturnedToRts`, no field-computer tablet). Escape
+  on that screen is how the client sends it (`Client::class_pick_declined`: the screen shuts, the
+  view holds still and only the press goes out until the sim answers). Overhead, the command bar's
+  class set is his way back in; the next Take Control puts the screen up again. Every entry —
+  Take Control on a fresh General, the next General after a death (the record dies with the
+  General), a re-entry after a declined spawn — goes through this; a class picked overhead first
+  spawns him straight into play. Escape on a classed General's forced re-open keeps playing.
 
 ## The General under RTS control: his weapons and orders
 

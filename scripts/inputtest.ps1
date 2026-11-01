@@ -32,6 +32,10 @@ for ($attempt = 0; $attempt -lt 3 -and -not $entered; $attempt++) {
 }
 if (-not $entered) { throw "the General never entered first person; see $log" }
 Start-Sleep 2
+# First person opens on the class screen and the General takes no input until a class lands (BO2
+# never spawns a classless player; Escape would send him back overhead). 6 picks the first default
+# class: rows 1-5 are the custom slots.
+um win drive --proc generalszh "focus" "scanmode on" "key 0x36" "sleep 1500" | Out-Null
 
 function Pose {
     $line = (Get-Content $log | Select-String "pos \(" | Select-Object -Last 1).Line

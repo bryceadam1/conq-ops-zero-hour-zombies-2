@@ -3,8 +3,9 @@
 #
 #   scripts/autotest-mac.sh            autopilot test (ZHBO_AUTOPILOT=1, scripted inside the mod; the
 #                                      profile is seeded with a GL custom for the alt-mode check)
-#   scripts/autotest-mac.sh --input    real-input test (ZHBO_AUTOPILOT=manual; T takes control, holds W,
-#                                      moves the mouse)
+#   scripts/autotest-mac.sh --input    real-input test (ZHBO_AUTOPILOT=manual; T takes control,
+#                                      Escape on the class screen declines the spawn (back overhead),
+#                                      T again, 6 picks the SMG class, holds W, moves the mouse)
 #   scripts/autotest-mac.sh --equipment
 #                                      C4, Trophy System and Black Hat against an enemy drone and
 #                                      rocket troopers (two runs: C4 + Trophy, C4 + Black Hat)
@@ -20,8 +21,10 @@
 #                                      overhead he is an idle worker, and repairs it again when ordered.
 #   scripts/autotest-mac.sh --classpick
 #                                      the pick-only in-match class screen: the script seeds a custom
-#                                      class ("Custom 2") in the profile, picks it by its row key, then forces
-#                                      the screen open after re-taking control and Escape-closes it
+#                                      class ("Custom 2") in the profile; Escape on the first spawn
+#                                      screen sends the classless General back overhead, the next
+#                                      take-control picks the class by its row key, then the script
+#                                      forces the screen open after re-taking control and Escape-closes it
 #   scripts/autotest-mac.sh --showcase [object]
 #                                      close-up captures of a General (idle, walk, death), no checks
 #
@@ -206,7 +209,9 @@ if [[ $mode == classpick ]]; then
     # The in-match create-a-class run is pick-only (BO2 only creates classes in the lobby): seed
     # the profile with one custom class ("Custom 2") in the active class set, then let the autopilot
     # pick it from the spawn screen by its row key (5 default classes + Custom 2). A pick must not
-    # write the profile. The script then leaves first person, takes control again, forces the
+    # write the profile. Before that, the first take-control Escapes the spawn screen: BO2 never
+    # spawns a classless player, so the General goes back overhead and the host takes control
+    # again. After the pick the script leaves first person, takes control again, forces the
     # screen open and Escapes it, proving first-person play continues. The profile file's v2
     # format: `v2`, the active set, then each set's `class`/name/spec/`end` records (profile.rs).
     profile="$userdata/ConquerOps.profile"
@@ -238,6 +243,19 @@ EOF
     check() { # name, pattern
         if grep -qE "$2" "$out/ConquerOps.log"; then printf '%-28s PASS\n' "$1"; else printf '%-28s FAIL\n' "$1"; ok=1; fi
     }
+    # The Escape-first leg: the first session ends with the General handed back overhead before
+    # any class landed and without the field computer (he was never spawned), and never with the
+    # knife in hand (the classless kit is not playable).
+    if awk '/opened the field computer|assumed the/ { exit 1 } /returned General [0-9]+ to RTS control/ { found = 1; exit 0 } END { exit !found }' "$out/ConquerOps.log"; then
+        printf '%-28s PASS\n' "Escape declined the spawn"
+    else
+        printf '%-28s FAIL\n' "Escape declined the spawn"; ok=1
+    fi
+    if grep -qE " Combat Knife [0-9]+\|" "$out/ConquerOps.log"; then
+        printf '%-28s FAIL\n' "  ...never played classless"; ok=1
+    else
+        printf '%-28s PASS\n' "  ...never played classless"
+    fi
     check "picked the seeded class" "assumed the Custom 2 class"
     # The KIT, not just the name: the seeded class's primary is the MTAR, and the sim's once-a-second
     # pose line names the weapon in hand ("... MTAR 30|120"). An older seed was the Assault kit, so a
@@ -260,10 +278,10 @@ EOF
     # The script's second phase: after the field computer hands the General back, the host takes
     # control again and the screen is forced open, then Escape closes it while first person plays.
     check "  ...re-entered first person" "taking control again"
-    # The second session: force the screen open, Escape it, then hold W. The local General's pose
-    # must change after the second entry, which only happens if the screen really closed and the
+    # The third session: force the screen open, Escape it, then hold W. The local General's pose
+    # must change after the third entry, which only happens if the screen really closed and the
     # game got the input again.
-    if awk '/entered first-person control/ { n++; next } n >= 2 && / pos \(/ { if (first == "") first = $0; last = $0 } END { exit !(first != "" && last != "" && first != last) }' "$out/ConquerOps.log"; then
+    if awk '/entered first-person control/ { n++; next } n >= 3 && / pos \(/ { if (first == "") first = $0; last = $0 } END { exit !(first != "" && last != "" && first != last) }' "$out/ConquerOps.log"; then
         printf '%-28s PASS\n' "  ...Escape kept playing"
     else
         printf '%-28s FAIL\n' "  ...Escape kept playing"; ok=1
@@ -273,7 +291,7 @@ EOF
     else
         printf '%-28s PASS\n' "  ...not as ???"
     fi
-    grep -E "create-a-class|assumed the|taking control again|first-person control" "$out/ConquerOps.log" | head -20
+    grep -E "create-a-class|assumed the|taking control again|first-person control|to RTS control" "$out/ConquerOps.log" | head -20
     echo "screenshots and log: $out"
     exit $ok
 fi
@@ -466,9 +484,19 @@ if [[ "$front" != "$pid" ]]; then
 fi
 "$drive" tap:17 sleep:500
 wait_for_log "entered first-person" 30 || { echo "T did not take control of the General; see $log" >&2; exit 1; }
-# First person opens on the class screen (pick-only in a match); Escape keeps the current kit, as a
-# player may (the --classpick leg covers picking).
-"$drive" sleep:1500 tap:53 sleep:1000
+# First person opens on the class screen (pick-only in a match). Escape on it declines the spawn
+# (BO2 never spawns a classless player): the General goes back overhead, and Escape must not also
+# open Zero Hour's game menu, or the second T could not take control. The manual scene selects him
+# again once he is back; T, then 6 picks the first default class (rows 1-5 are the custom slots;
+# macOS virtual keys: Escape 53, 6 is 22).
+"$drive" sleep:1500 tap:53 sleep:500
+wait_for_log "returned General [0-9]* to RTS control" 30 || { echo "Escape did not send the classless General back overhead; see $log" >&2; exit 1; }
+for _ in $(seq 30); do [[ "$(grep -c "autopilot: selected the General" "$log")" -ge 2 ]] && break; sleep 1; done
+"$drive" sleep:1500 tap:17 sleep:500
+for _ in $(seq 30); do [[ "$(grep -c "entered first-person" "$log")" -ge 2 ]] && break; sleep 1; done
+[[ "$(grep -c "entered first-person" "$log")" -ge 2 ]] || { echo "the second T did not take control (did Escape open the game menu?); see $log" >&2; exit 1; }
+"$drive" sleep:1500 tap:22 sleep:1000
+wait_for_log "assumed the" 30 || { echo "6 did not pick a class; see $log" >&2; exit 1; }
 screencapture -x "$out/window-before.png" 2>/dev/null || true
 # W for 2 s, then turn right with relative mouse motion. (macOS virtual key 13 is W.)
 "$drive" down:13 sleep:2000 up:13 sleep:1200 look:12,0,40 sleep:1500
