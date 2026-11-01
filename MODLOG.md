@@ -9344,3 +9344,12 @@ A general sweep for bugs outside the playtest items; one commit per fix.
   which the mod does not model; both noted for a follow-up. Tests:
   `flak_jacket_cuts_anothers_explosives_only`, `the_tactical_mask_cuts_anothers_concussion`,
   `a_flak_jacket_general_takes_less_from_anothers_frag`.
+- **A switch press with nothing to switch to was kept and fired later.** During an offhand (or a
+  melee, or a shot's time) the arsenal queues weapon-switch presses (`swaps_pending`) and applies
+  them when the hold-back ends, as BO2's command carries the request. With a single weapon — the
+  knife alone while the shield is deployed — the queue was never cleared, so picking the shield up
+  later switched straight away from it. BO2's client cycles its selection over the weapons held
+  (`FUN_00537c20` → `FUN_005378d0`) and sends a change only when it lands on a different weapon;
+  with one weapon nothing is requested. `Arsenal::can_cycle` gates the queue, and a queue is
+  dropped whenever there is no other weapon. Test: `a_switch_press_with_one_weapon_is_not_carried`
+  (fails without the fix).
