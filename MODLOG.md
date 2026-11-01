@@ -4794,3 +4794,84 @@ narrowing over the second; a sniper snapping to 15° on the frame the overlay ap
 over its 5 % fade out; Variable Zoom starting at 30° and the melee key toggling 12.5° with a 125 ms
 blend (and no knife while scoped); the Hybrid's alt toggle blending 50° → 30°; the gun magnifying
 with the zoom; Fast Mag's quick/full alternation and its `fastmag_quick` clip.
+
+## Idle sway and hold breath: the scope drifts, the bullets follow, the breath steadies it (2026-10-31, branch `v1/idle-sway`)
+
+5a carried `IdleAmount` with nothing drawing it, and `v1/alt-ads` left hold breath unported. Read
+from t6mp (read-only; dumps in the item's plan dir, `ghidra/`), ported as `weapons::idle_sway`:
+
+- **The clock** `ps+0x5c` (`FUN_008e3940`, pmove, while `posFrac != 0`): `+= breath' × dt × 1000 ×
+  speed` (`FUN_008e38a0`; `breath'` is the breath scale with anything above 1 halved, `(s − 1)·0.5 +
+  1`), and for an overlay scope (`FUN_008ed670` = the stacked overlay reticle) a second `+= breath ×
+  dt × 1000 × speed` (`FUN_008e3810`) — a scope's clock runs at twice the rate. `speed` =
+  `hipIdleSpeed` lerped to `adsIdleSpeed` by the ADS fraction (the hip speed for a def that cannot
+  aim). At the hip the client runs the same rule (`FUN_00530e70`); the sim does both.
+- **The view sway** (`FUN_008f0f00`, only aimed and only overlay scopes): `A` = `fHipIdleAmount`
+  (first attachment differing, `FUN_008ed3a0`) lerped to `fAdsIdleAmount × Π fAdsIdleAmountScale`
+  (`FUN_008ecfd0`) by the ADS fraction (80, `DAT_00b12cac`, for a non-aiming def with no hip amount)
+  × the stance factor × the ADS fraction × the breath scale; `pitch += sin(t·0.001)·A·0.01`, `yaw +=
+  sin(t·0.0007)·A·0.01` degrees (`FUN_00a23eb1` is the SSE `sinf`: its small-argument path returns
+  `x·1.0`). A DSR-like 60 sways ±0.6° on a 3.1 s × 4.5 s Lissajous. The stance factor eases to
+  `fIdleProneFactor`/`fIdleCrouchFactor`/1 at 0.5/s.
+- **It moves the aim.** The server's think (`FUN_005dc820`) adds the same idle angles to
+  `ps.viewangles` for the fire angles (`gclient+0x56ac`), so a shot lands on the drifting reticle.
+  `PlayerSim::idle`, stepped after the ADS update (`FUN_008e4da0`'s order); the frame's aim is input
+  + `PlayerSim::aim_offset` (view kick + idle, the previous frame's, as the kick); the camera draws
+  the same offset (the client's kick interpolation now carries the sum).
+- **The gun's idle** (`FUN_008eefc0`, viewmodel): the same `A` without the breath and the 80, × (1 −
+  ADS) for an overlay scope (its view sways instead); pitch `sin(t·0.001)`, yaw `sin(t·0.0007)`, roll
+  `sin(t·0.0005)`. `idle_sway::gun_angles`, added in `GunPos::step` from the sim's clock.
+- **Hold breath** (`FUN_008e4860`): the breath key (`+breath_sprint` — the sprint key; usercmd
+  0x40000) at `posFrac == 1` on a def with `bHoldBreathToSteady` holds (`ps+0x10` bit 4) **only from
+  a full breath** (`ps+0x4e4 == 0`). Held, `used` counts up; past `player_breath_hold_time` 4.5 s (+
+  `perk_extraBreath` 5 with specialty 30 `holdbreath` — Ballistics CPU's `longbreath` grants it via
+  the attachment perks) it is set to hold + `player_breath_gasp_time` (0) and the breath lets go;
+  otherwise it counts down. The scale `ps+0x4e0` approaches (`FUN_00747b40`: `(target − cur)·rate·dt`,
+  snapping inside 0.001 or on overshoot) `(target − 1)·posFrac + 1` with target 0 at
+  `player_breath_hold_lerp` 1.5 while holding, else `(gasp_scale 2.5 − 1)·used/(hold + gasp) + 1` at
+  `player_breath_gasp_lerp` 4 — so the scope sways up to 2.5× right after a full breath and settles
+  as the lungs recover (4.5 s). The fire start (`FUN_008e1b80` → `FUN_008dea30`) lets a held breath
+  go on an overlay scope at full ADS (costing `player_breath_fire_delay`, 0). All dvars are tuning
+  keys (`[Breath]`).
+- **Sounds** (`FUN_0052e3d0`, client): starting a hold notifies `playerbreathinsound`, letting go
+  after more than the hold dvar (the dvar alone — with the perk a 6 s hold still gasps) notifies
+  `playerbreathgaspsound`, earlier `playerbreathoutsound`; in/out wait `player_breath_snd_delay` 1 s
+  after the last. `clientscripts/mp/_audio.csc` plays `vox_gen_sinper_hold`/`_exhale`/`_gasp` (sic).
+  Gotcha: those aliases are in the **language** zone's voice bank (`zone/english/en_common_mp.ff`,
+  `mpl_common.english`), not `common_mp`; `sfx::From::Voice` loads it (optional, like the menu banks).
+  Their authored volume is 0.01, so the converted events land on the 5 floor — faithful, quiet.
+- **The hint** (`FUN_004dc750`, `cg_drawBreathHint`): fully aimed on an overlay scope with
+  `bHoldBreathToSteady`, not holding: `PLATFORM_HOLD_BREATH` "Press ^3&&1^7 and hold to steady" with
+  the breath key. The `holdbreathhint` menuDef lives in `common_mp` (not in the reference's `ui_mp`
+  dump), so its rect is unknown: the HUD centres it 130/480 above the bottom (medium confidence).
+- Table: the weapon block's `IdleSway` line (`adsIdleSpeed hipIdleSpeed fIdleCrouchFactor
+  fIdleProneFactor bHoldBreathToSteady`; WEAPON_FIELDS 96 → 97), `Zoom::idle_speed/idle_stance/
+  hold_breath`, read by `zhbo_formats::weapon` from the WeaponDef. No attachment stacks them.
+
+Not ported (follow-ups): anti-quickscope (`bg_aqs` 1 / `bg_aqsStyle` 2, `FUN_008dac10`: variant
+`bAntiQuickScope` + `fAntiQuickScopeTime/Scale/SwayFactor` drive `ps+0x4f4/0x4f8`, which scale or
+offset the view sway and block hold breath — needs four uncarried fields; whether any MP variant sets
+it is unchecked); the `hold_breath_mp` shellshock 1 s into a breath and the `cod_hold_breath` sound
+context (no shellshock or snd contexts in the mod); the iron-sight aim following the whole gun pose
+(`FUN_005dc820` rotates the fire angles by `FUN_008f0700`'s gun angles for an aiming non-overlay
+weapon — bob, sway and idle together; the mod fires along the view); the variable-zoom hint
+`PLATFORM_HOLD_BREATH_ZOOM` (`FUN_004dc940`); the airburst/`weapClass item` exclusions (no such
+weapons in the mod); the prone test's `ps+0xc & 0x200000` exception. The clock is not truncated per
+frame as BO2's `(int)` is (a frame-rate artifact; the sim's 30 Hz frame is not BO2's). The stance
+factor starts settled at 1 (BO2's initial value is a zeroed field; unverified).
+
+Determinism: the sway is sim state stepped on the logic frame with seeded-free math; the fake-host
+tests replay it identically and check the aim each frame is view + the previous frame's offset.
+
+Measured (conformance vs `v1/ads-zoom`): unchanged — 381,867 weapons cells / 174 clusters, cac 881,
+185 gap clusters; both diff CSVs byte-identical (`idle_amount` keeps its 400 alt-row cells, the
+alt-attachment residue; no column covers the speeds, factors or the hold-breath flag).
+Verified: cargo test --workspace green; clippy --all-targets adds no warning; the real-install
+zhbo-assets suite (31 + the new `the_breath_sounds_decode_from_the_voice_bank`) green. A
+`hud::VERSION` bump is needed (the weapon table gained the `IdleSway` line; old tables still parse,
+with no sway) — the integrator's. No ABI change.
+In-game (integrator): a DSR/Ballista scope drifting in a slow figure-of-eight (~±0.6°) with the
+shot landing on the reticle; Shift (aimed) breathing in, the drift dying over ~1 s, the breath
+running out at 4.5 s (9.5 s with Ballistics CPU) with a gasp and a harder sway that settles over
+~4.5 s; a shot letting the breath go; the hint "Press SHIFT and hold to steady" while aimed and not
+holding; crouch/prone steadier; iron-sight guns showing only the small gun idle.

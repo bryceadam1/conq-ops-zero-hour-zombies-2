@@ -460,6 +460,24 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_breath_sounds_decode_from_the_voice_bank() {
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let lib = Library::open(&dir).unwrap();
+        let zone = load_language_zone(&dir, VOICE_ZONE).unwrap();
+        let mut banks = sndalias::banks(&zone).unwrap();
+        banks.retain(|b| b.name.starts_with("mpl_common"));
+        let src = Source { banks, lib: &lib };
+        for s in SFX.iter().filter(|s| s.from == From::Voice) {
+            let a = src.alias(s.layers[0]).unwrap_or_else(|| panic!("{} missing", s.layers[0]));
+            assert!(src.decode(a.variants[0].asset_id).is_some_and(|p| !p.samples.is_empty()), "{} decodes", s.event);
+        }
+        for e in [zhbo_core::sounds::BREATH_IN, zhbo_core::sounds::BREATH_OUT, zhbo_core::sounds::BREATH_GASP] {
+            assert!(SFX.iter().any(|s| s.event == e), "{e}");
+        }
+    }
+
+    #[test]
     fn events_are_well_formed() {
         let e = audio_event("ZHBO_BO2_Fire", &["zhbo_bo2_fire_0".into()], 0.45, Kind::Player, 3);
         assert!(e.contains("Volume      = 100") && e.contains("Type        = ui player") && e.ends_with("End\n\n"));
