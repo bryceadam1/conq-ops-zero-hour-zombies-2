@@ -28,8 +28,9 @@ pub struct Part {
     pub tag: Option<String>,
     /// The part's origin in the tag's frame (BO2 inches): an attachment's view offset.
     pub offset: Xf,
-    /// Not driven by the clips: it rides its tag as modelled (the reload's incoming magazine on
-    /// `tag_clip1`, whose bones share the magazine's names).
+    /// Not driven by the clips: it rides its tag as modelled, even where its bones share names
+    /// with animated ones. The converter emits no rigid viewmodel part today (the reload's spare
+    /// magazine on `tag_clip1` is the gun model's own geometry); the third-person rig uses it.
     pub rigid: bool,
     /// The M32's `_ads` sight variant: drawn only at full ADS. The hip `_view` variant carries the
     /// same sight; the pair swaps at the ADS handoff. The W3D path draws only the hip sight.

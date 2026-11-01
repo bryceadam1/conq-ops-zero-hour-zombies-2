@@ -213,10 +213,8 @@ pub(crate) struct BasePart<'a> {
     pub model: &'a nm::Model,
     /// The authored tag; empty/absent hangs the part at the gun root (`j_gun`), like the magazine.
     pub tag: Option<String>,
-    /// The authored offset, in inches.
+    /// The authored rotation and offset (inches) from the tag.
     pub offset: zhbo_native::math::Xf,
-    /// The magazine channel: keep its rigid copy on `tag_clip1` when the gun has one.
-    pub magazine: bool,
     /// The model carries the weapon's sight: it drives the aim marker when no attachment optic is
     /// mounted.
     pub optic: bool,
@@ -236,9 +234,9 @@ pub(crate) struct DualGun<'a> {
 
 /// One manifest per faction for weapon `v`: the faction's arms, the gun on its mount tag
 /// (`tag_weapon` for primaries, `tag_knife_attach` for off-hand equipment), the base parts on the
-/// gun root (`j_gun`) at their authored offsets (the magazine and, when the combination does not
-/// replace it, the base attachment art — the magazine also keeps its rigid copy on `tag_clip1`,
-/// where the reload brings the new one in), each attachment on its `viewModelTag` (else the gun's
+/// gun root (`j_gun`) at their authored rotation and offset (the magazine and, when the
+/// combination does not replace it, the base attachment art; BO2 lists no second magazine — the
+/// reload's spare on `tag_clip1` is the gun model's own geometry), each attachment on its `viewModelTag` (else the gun's
 /// root) at its view offset (an IR mount is a second part at its add offset), and the aim marker
 /// (a base optic's window, else an attachment optic's,
 /// else the gun's own sights). Model blobs are written once each.
@@ -273,9 +271,6 @@ pub(crate) fn viewmodels(
                 optic = Some((parts.len(), bp.model.mins, bp.model.maxs, bp.model.name.as_str()));
             }
             parts.push((bp.model, Some(tag), bp.offset, false, bp.ads_only, path.clone()));
-            if bp.magazine && has("tag_clip1", &parts) {
-                parts.push((bp.model, Some("tag_clip1".into()), IDENTITY, true, false, path.clone()));
-            }
         }
         for (k, ((tag, offset, is_optic), (model, path))) in v.attachments.iter().zip(extra.iter().zip(&extra_paths)).enumerate() {
             // A missing tag mounts at the gun's root (`j_gun`), BO2's default (G10): the authored
@@ -501,6 +496,44 @@ mod tests {
         let manifest = zhbo_native::viewmodel::Viewmodel::from_bytes(out.get(&path).unwrap()).unwrap();
         let part = manifest.parts.iter().find(|p| p.tag.as_deref() == Some("j_gun")).expect("the attachment mounts at j_gun");
         assert_eq!(part.offset, authored, "the authored offset is unchanged");
+    }
+
+    /// The magazine is one part on the gun root at its authored rotation and offset (the AN-94's
+    /// −15° roll), even when the gun carries `tag_clip1`: the reload's spare magazine there is the
+    /// gun model's own geometry, and BO2 lists no second part.
+    #[test]
+    fn the_magazine_is_one_part_at_its_authored_rotation() {
+        let arms = nm::Model { name: "arms".into(), bones: vec![nm::Bone { name: "tag_weapon".into(), parent: None, local_rotation: QUAT_IDENTITY, local_position: [0.0; 3], rotation: QUAT_IDENTITY, position: [5.0, 0.0, 0.0] }], ..Default::default() };
+        let mut g = gun();
+        let roll = crate::xf::from_angles([0.0, 0.0, -15.0]);
+        g.bones.push(Bone { name: "tag_clip1".into(), parent: Some(1), local_rotation: roll, local_position: [-14.0, -1.085, -1.5], rotation: roll, position: [-13.0, -1.085, -1.5] });
+        let mut mag = gun();
+        mag.name = "t6_attach_mag_test_view".into();
+        mag.bones.truncate(1);
+        mag.bones[0].name = "tag_clip".into();
+        let nm_g = model(&g, &[None], &Looks::default());
+        let nm_mag = model(&mag, &[None], &Looks::default());
+        let authored = (roll, [4.473, -1.085, -1.5]);
+        let v = Viewmodel {
+            vm: 0,
+            id: "test_mp",
+            gun: &g,
+            gun_tag: "tag_weapon",
+            base_parts: vec![BasePart { model: &nm_mag, tag: None, offset: authored, optic: false, ads_only: false }],
+            extra_models: Vec::new(),
+            attachments: Vec::new(),
+            hide: &[],
+            clips: &[],
+            dual: None,
+        };
+        let mut out = BTreeMap::new();
+        viewmodels(&mut out, &v, &nm_g, std::slice::from_ref(&nm_mag), &[], &[('A', arms)]);
+        let manifest = zhbo_native::viewmodel::Viewmodel::from_bytes(out.get(&zhbo_native::viewmodel_path(0, 'A')).unwrap()).unwrap();
+        let mags: Vec<_> = manifest.parts.iter().filter(|p| p.model.contains("t6_attach_mag_test_view")).collect();
+        assert_eq!(mags.len(), 1, "one magazine part, no rigid copy: {:?}", manifest.parts);
+        assert_eq!(mags[0].tag.as_deref(), Some("j_gun"));
+        assert_eq!(mags[0].offset, authored, "the authored rotation and offset reach the manifest");
+        assert!(manifest.parts.iter().all(|p| p.tag.as_deref() != Some("tag_clip1") && !p.rigid), "nothing hangs on tag_clip1");
     }
 
     /// A `_scope_view` optic's marker reads the part's `tag_scope` bone, not the computed window.

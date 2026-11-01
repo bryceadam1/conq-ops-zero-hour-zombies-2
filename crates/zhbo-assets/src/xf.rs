@@ -56,3 +56,22 @@ pub fn from_angles(angles: [f32; 3]) -> [f32; 4] {
     let qx = [sr, 0.0, 0.0, cr];
     qnorm(qmul(qmul(qz, qy), qx))
 }
+
+#[cfg(test)]
+mod tests {
+    /// `from_angles` is BO2's `AnglesToAxis` (the conformance oracle's transcription): the same
+    /// rotation for each single axis and a mixed triple, including the AN-94 magazine's −15° roll.
+    #[test]
+    fn from_angles_is_the_engines_angles_to_axis() {
+        use zhbo_conformance::bo2::rows::{angles_to_quat, canonical_quat};
+        for a in [[0.0, 0.0, -15.0], [30.0, 0.0, 0.0], [0.0, 90.0, 0.0], [12.5, -40.0, 75.0], [0.0; 3]] {
+            let ours = canonical_quat(super::from_angles(a).map(|c| c as f64));
+            let engine = canonical_quat(angles_to_quat(a));
+            for k in 0..4 {
+                assert!((ours[k] - engine[k]).abs() < 1e-5, "{a:?}: {ours:?} vs {engine:?}");
+            }
+        }
+        let roll = super::from_angles([0.0, 0.0, -15.0]);
+        assert!((roll[0] + 0.130526).abs() < 1e-5 && (roll[3] - 0.991445).abs() < 1e-5, "{roll:?}");
+    }
+}

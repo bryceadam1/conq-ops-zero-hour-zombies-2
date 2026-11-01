@@ -356,6 +356,10 @@ pub struct Weapon {
     pub attach_view_models: Vec<(String, String)>,
     /// The authored view offset of each `attach_view_models` entry, in inches.
     pub attach_view_offsets: Vec<[f32; 3]>,
+    /// The authored view rotation of each `attach_view_models` entry: BO2 angles in degrees
+    /// (pitch, yaw, roll), the inline `attachViewModelRotations` array (the AN-94's magazine is
+    /// rolled −15°).
+    pub attach_view_rotations: Vec<[f32; 3]>,
     /// Attachment combinations; `kind == 0` entries are the base weapon's parts (its magazine).
     pub attachment_uniques: Vec<AttachmentUnique>,
     /// Bit `1 << eAttachment` for each attachment create-a-class offers on this weapon.
@@ -532,6 +536,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         .collect();
     let mut attach_view_models = Vec::new();
     let mut attach_view_offsets = Vec::new();
+    let mut attach_view_rotations = Vec::new();
     let (models, tags) = (z.try_u32(v + WV::attachViewModel)?, z.try_u32(v + WV::attachViewModelTag)?);
     if models != 0 {
         for i in 0..8 {
@@ -541,8 +546,11 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 let t = if tags != 0 { opt_str(z, tags + 4 * i).unwrap_or_default() } else { String::new() };
                 let at = v + WV::attachViewModelOffsets + 12 * i;
                 let off = [z.f32(at), z.f32(at + 4), z.f32(at + 8)];
+                let at = v + WV::attachViewModelRotations + 12 * i;
+                let rot = [z.f32(at), z.f32(at + 4), z.f32(at + 8)];
                 attach_view_models.push((m, t));
                 attach_view_offsets.push(off);
+                attach_view_rotations.push(rot);
             }
         }
     }
@@ -611,6 +619,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         anims,
         attach_view_models,
         attach_view_offsets,
+        attach_view_rotations,
         clip_size: int(z, v + WV::iClipSize),
         reload_time: ms(z, v + WV::iReloadTime),
         reload_empty_time: ms(z, v + WV::iReloadEmptyTime),
