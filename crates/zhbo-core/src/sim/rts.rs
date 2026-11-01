@@ -133,6 +133,7 @@ impl Sim {
                 optics: Default::default(),
                 tracer_count: 0,
                 charge: None,
+                shock: Default::default(),
             });
         }
         let Some(mut p) = self.players[idx].take() else { return RtsWeapons::default() };

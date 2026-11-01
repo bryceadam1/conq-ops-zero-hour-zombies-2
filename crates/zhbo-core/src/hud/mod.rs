@@ -185,6 +185,16 @@ pub fn scope_overlay(prims: &mut Vec<Prim>, def: &crate::weapons::WeaponDef, a: 
     }
 }
 
+/// A flashed shellshock's whiteout over the view (`crate::shellshock::Screen::white`, t6mp
+/// `FUN_005105c0`), under the HUD's own elements. BO2's other layers — the frozen screengrab and a
+/// blurred shock's blur — need a renderer pass the mod does not have yet.
+fn draw_shellshock(prims: &mut Vec<Prim>, w: f32, h: f32, screen: crate::shellshock::Screen) {
+    let a = (screen.white.clamp(0.0, 1.0) * 255.0).round() as u32;
+    if a > 0 {
+        prims.push(Prim::Rect { x: 0.0, y: 0.0, w, h, argb: (a << 24) | 0x00ff_ffff });
+    }
+}
+
 pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: &Sim, local_player: i32) {
     let player = sim.player(local_player);
     let (w, h) = host.screen_size();
@@ -211,6 +221,7 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
     };
 
     draw_low_health(prims, w, h, st.low_health.alpha(st.clock));
+    draw_shellshock(prims, w, h, p.shock.screen());
     // Under the scope overlay (BO2's reticle zoom, in this frame's zoom direction) BO2 hides the
     // damage indicators (`FUN_004adda0`), and the scoped bit hides the minimap and the compass
     // strip ([`crate::weapons::scope::scoped`]). Both switch at once, without a fade. The ammo

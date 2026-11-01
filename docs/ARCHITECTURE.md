@@ -78,7 +78,11 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   `melee_strike`, `gather_targets`, `throw_velocity`), `optics.rs` (the optic displays' rules:
   the MMS's characters, the target finder's spotting and marks), `guard.rs` (the victim's class
   perks against another General's blasts — Flak Jacket, Tactical Mask — applied where the damage
-  reaches the host, as BO2's damage callback does).
+  reaches the host, as BO2's damage callback does), `shock.rs` (which shellshock a first-person
+  General gets from a blast: the GSC's `shellshock()` sources).
+- `shellshock.rs`: BO2's shellshocks (`ShockDef`, the weapon table's `Shock` blocks converted from
+  the install's `shock/*.shock` files) and their effect while one runs — the run-speed scale (the
+  sim), the look control (the client's mouse look) and the screen layers (the HUD's whiteout).
 - `lui/`: BO2's LUI layout model shared by the HUD and the class screens: the anchor/edge
   resolution against a 720-unit root (`mod.rs`), BO2's converted UI fonts (`font.rs`), the
   BO2 materials the ports draw by name (`materials.rs`) and LUI's animation states (`anim.rs`).

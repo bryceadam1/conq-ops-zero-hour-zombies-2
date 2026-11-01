@@ -517,3 +517,20 @@ fn tab_shows_the_scoreboard_and_hides_the_hud() {
     let images = rec.images.borrow();
     assert!(!images.contains(&crate::lui::materials::image("hud_mp_vis_right_lower")), "the ammo area hides under the scoreboard");
 }
+
+/// A flashed shellshock whites the view out (`FUN_005105c0`: `min(left / whiteFade, 1)`), a full
+/// screen rectangle; none without a shock.
+#[test]
+fn a_flashed_shellshock_whites_the_view_out() {
+    let (mut sim, client) = fps_state();
+    let rec = Recorder::default();
+    let white = |prims: &[Prim]| prims.iter().find_map(|p| match p {
+        Prim::Rect { x, y, w, h, argb } if *x == 0.0 && *y == 0.0 && *w == 1280.0 && *h == 720.0 && argb & 0x00ff_ffff == 0x00ff_ffff => Some(argb >> 24),
+        _ => None,
+    });
+    assert_eq!(white(&draw_hud(&rec, &client, &sim)), None);
+    sim.players[0].as_mut().unwrap().shock.play(crate::shellshock::names::FLASHBANG, 6.0);
+    assert_eq!(white(&draw_hud(&rec, &client, &sim)), Some(255), "a full whiteout");
+    sim.players[0].as_mut().unwrap().shock.active.as_mut().unwrap().left = 1.75;
+    assert_eq!(white(&draw_hud(&rec, &client, &sim)), Some(128), "half way down its 3.5 s fade");
+}

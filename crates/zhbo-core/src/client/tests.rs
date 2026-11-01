@@ -1419,3 +1419,31 @@ fn the_own_tracers_follow_the_sims_countdown_deterministically() {
     assert_eq!(a.len(), 4, "every 2nd of 9 rounds: {a:?}");
     assert_eq!(a, run());
 }
+
+    /// A shellshock with look control caps the turn rate (`maxyawspeed` deg/s) and scales the
+    /// sensitivity (t6mp `FUN_005109f0`); the concussion's is 22°/s at full strength.
+    #[test]
+    fn a_shellshock_slows_the_look() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        assert_eq!(client.view, ViewMode::Fps);
+        let turn = |client: &mut Client, sim: &mut Sim, inp: &mut ClientIn| {
+            let before = client.yaw;
+            inp.mouse_dx = -2000.0;
+            client.frame(sim, inp);
+            inp.mouse_dx = 0.0;
+            crate::math::wrap_angle(client.yaw - before).abs()
+        };
+        let free = turn(&mut client, &mut sim, &mut inp);
+        sim.players[0].as_mut().unwrap().shock.play(crate::shellshock::names::CONCUSSION, 6.0);
+        let shocked = turn(&mut client, &mut sim, &mut inp);
+        let cap = 22f32.to_radians() * inp.dt.clamp(0.0, 0.25);
+        assert!(free > cap * 2.0, "{free}");
+        assert!((shocked - cap).abs() < 1e-5, "{shocked} vs {cap}");
+    }
