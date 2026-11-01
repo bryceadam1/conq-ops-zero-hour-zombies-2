@@ -309,6 +309,8 @@ pub struct Sim {
     /// Smoke screens: where, how wide, seconds left.
     pub smokes: Vec<(Vec3, f32, f32)>,
     pub tuning: MoveTuning,
+    /// BO2's `bulletrange` (ZH units): how far a non-spread round is traced.
+    pub bullet_range: f32,
     pub frame: u32,
     pub events: Vec<Event>,
 }
@@ -327,6 +329,7 @@ impl Sim {
             equipment: Equipment::default(),
             smokes: Vec::new(),
             tuning: MoveTuning::default(),
+            bullet_range: crate::units::inches(crate::tuning::Tuning::default().bulletrange),
             frame: 0,
             events: Vec::new(),
         }
@@ -337,6 +340,7 @@ impl Sim {
     pub fn with_tuning(t: &crate::tuning::Tuning) -> Self {
         let mut sim = Self::new();
         sim.tuning = MoveTuning::from_tuning(t);
+        sim.bullet_range = crate::units::inches(t.bulletrange);
         sim
     }
 
@@ -1748,6 +1752,28 @@ pub(crate) mod tests {
         let a = &sim.player(0).unwrap().arsenal;
         assert_eq!(a.current().reserve, 240, "topped up to the stock cap, not past it");
         assert!(a.current().ammo > 0 && a.current().ammo < 30, "the magazine is the one being fired");
+    }
+
+    /// BO2 traces a non-spread round `bulletrange` (8192 in, `Bullet_Fire`), whatever the def's
+    /// `maxRange` (a turret field, 0 on every MP gun): an enemy at 8,100 in is hit (the mod's old
+    /// 8,000 guess missed it), one at 8,300 in is not.
+    #[test]
+    fn a_round_flies_bo2s_bulletrange() {
+        for (inch, hit) in [(8100.0f32, true), (8300.0, false)] {
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            let x = crate::units::inches(inch);
+            host.add(soldier(2, 1, x));
+            let mut sim = Sim::new();
+            sim.take_control(&host, 0, 1);
+            sim.choose_class(0, 1, 0, &[]);
+            wait_until_ready(&mut sim, &host);
+            let pitch = -(4.0f32 / x).atan();
+            run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, pitch, ..Default::default() }, 20);
+            run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::FIRE, pitch, ..Default::default() }, 3);
+            let damaged = host.damage_log.borrow().iter().any(|(_, v, _)| *v == 2);
+            assert_eq!(damaged, hit, "enemy at {inch} in");
+        }
     }
 
     #[test]

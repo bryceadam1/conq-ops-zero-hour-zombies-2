@@ -31,15 +31,12 @@ pub struct AttachmentDef {
     pub full_name: String,
     /// The attachment's description line, from its `MPUI_*_DESC` key.
     pub description: String,
-    /// BO2's attribute-table deltas for the stat bars (percent 0..100), in the table's order:
-    /// damage, range, accuracy, mobility, fire rate (`mp/attributestable.csv`).
-    pub attribute_deltas: [f32; 5],
     pub point: u8,
     pub silenced: bool,
     pub laser: bool,
     /// Select fire, stacked fire: the weapon fires this way instead.
     pub fire: Option<FireMode>,
-    /// A fixed magazine (the crossbow's tri-bolt), 0 for none.
+    /// The fire-type attachment's own `iClipSize` (the tri-bolt's stack), 0 for none.
     pub clip: u16,
     pub damage_range_scale: f32,
     /// Zoomed field of view of an optic (degrees), 0 for none.
@@ -116,7 +113,6 @@ impl Default for AttachmentDef {
             display_name: String::new(),
             full_name: String::new(),
             description: String::new(),
-            attribute_deltas: [0.0; 5],
             point: 0,
             silenced: false,
             laser: false,
@@ -260,15 +256,11 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
         // The clip scales are multiplied as one product and rounded once after the loop (G14 §4).
         if let Some(f) = a.fire {
             d.fire = f;
-            if a.clip > 1 {
-                // Tri-bolt: one pull fires all three bolts of a three-bolt load, so the magazine
-                // is one shot and spare bolts count in threes.
+            // The fire-type attachment (stackfire) also replaces the clip with its own
+            // `iClipSize` (`FUN_008e5e50`, G14 §4): the tri-bolt's stack of three.
+            if a.clip > 0 {
                 clip_fixed = true;
-                d.pellets = a.clip;
-                let per = a.clip as u32;
-                d.clip = ((d.clip as u32 / per).max(1)) as u16;
-                d.start_reserve = (d.start_reserve as u32 / per) as u16;
-                d.max_reserve = (d.max_reserve as u32 / per) as u16;
+                d.clip = a.clip;
             }
         }
         d.silenced |= a.silenced;
@@ -312,7 +304,7 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
     }
     apply_handling(&mut d, &atts);
     // BO2 counts spare ammo in magazines, so a bigger magazine carries more spare rounds.
-    if d.clip != old_clip && !atts.iter().any(|a| a.fire.is_some() && a.clip > 1) {
+    if d.clip != old_clip && !clip_fixed {
         d.start_reserve = (d.start_reserve as u32 * d.clip as u32 / old_clip as u32) as u16;
         d.max_reserve = (d.max_reserve as u32 * d.clip as u32 / old_clip as u32) as u16;
     }

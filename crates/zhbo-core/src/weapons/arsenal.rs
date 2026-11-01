@@ -274,7 +274,7 @@ pub enum WeaponAction {
     /// [-1, 1), view kick (degrees pitch up, yaw, roll) and the gun kick spring's impulse.
     Fire { spread_deg: f32, jitter: (f32, f32), view_kick: (f32, f32, f32), gun_kick: (f32, f32), pellet: u16 },
     /// Launch a projectile (launchers, crossbow, ballistic knife); `pellet` numbers the bolts of
-    /// one shot (the tri-bolt's three).
+    /// a stacked pull by the rounds loaded before each, minus one (the tri-bolt's 2, 1, 0).
     Launch { def: &'static WeaponDef, pellet: u16 },
     /// Throw an offhand item; `fuse_left` is what remains after cooking.
     Throw { def: &'static WeaponDef, fuse_left: f32 },
@@ -879,6 +879,7 @@ impl Arsenal {
             FireMode::Auto => held & buttons::FIRE != 0,
             FireMode::Minigun => held & buttons::FIRE != 0 && w.spin >= def.spin_up_time,
             FireMode::Semi => pressed & buttons::FIRE != 0,
+            FireMode::Stacked => pressed & buttons::FIRE != 0,
             FireMode::Burst(n) => {
                 if pressed & buttons::FIRE != 0 && w.burst_left == 0 && w.cooldown <= 0.0 {
                     w.burst_left = n;
@@ -917,12 +918,21 @@ impl Arsenal {
         }
         let mut fired_semi = false;
         while w.cooldown <= 0.0 && w.ammo > 0 {
-            if def.fire == FireMode::Semi && fired_semi {
+            if matches!(def.fire, FireMode::Semi | FireMode::Stacked) && fired_semi {
                 break;
             }
             if def.class == Class::Launcher || (def.projectile_speed > 0.0 && def.class != Class::Shotgun && def.effect != Effect::None) {
-                for pellet in 0..def.pellets.max(1) {
-                    out.push(WeaponAction::Launch { def, pellet });
+                if def.fire == FireMode::Stacked {
+                    // A pull empties the stack: once one bolt is out, BO2 keeps firing while the
+                    // stack is part-spent (`FUN_008e1320` treats `FUN_008dc0c0` as the trigger)
+                    // with the fire delay zeroed (`FUN_008e0780`). Each bolt's event carries the
+                    // rounds loaded before it, which picks its place in the fan (`FUN_0066e320`);
+                    // `pellet` is that count - 1.
+                    for loaded in (1..=w.ammo).rev() {
+                        out.push(WeaponAction::Launch { def, pellet: loaded - 1 });
+                    }
+                } else {
+                    out.push(WeaponAction::Launch { def, pellet: 0 });
                 }
             } else {
                 let spread = spread_now + if ads < 0.5 { def.spread_move_add * (speed / 30.0).min(1.0) } else { 0.0 };
@@ -930,7 +940,7 @@ impl Arsenal {
                 // A dual-wield pair calls `shot_kick_hands` with its hands' firing states.
                 let k = super::recoil::shot_kick(def, ads, w.string, &mut w.recoil_acc, w.since_shot, rng);
                 w.since_shot = 0.0;
-                for pellet in 0..def.pellets.max(1) {
+                for pellet in 0..def.rounds_per_shot() {
                     let jitter = (rng.signed(), rng.signed());
                     let (view_kick, gun_kick) = if pellet == 0 { (k.view, k.gun) } else { ((0.0, 0.0, 0.0), (0.0, 0.0)) };
                     out.push(WeaponAction::Fire { spread_deg: spread, jitter, view_kick, gun_kick, pellet });
@@ -943,7 +953,8 @@ impl Arsenal {
             let last = w.ammo < 2 && !matches!(def.fire, FireMode::Burst(_));
             let t = &def.timing;
             w.cooldown += if last && t.last_fire_time > 0.0 { t.last_fire_time } else { def.fire_time };
-            w.ammo -= 1;
+            // A stack spends every loaded round in one pull.
+            w.ammo -= if def.fire == FireMode::Stacked { w.ammo } else { 1 };
             w.string = w.string.saturating_add(1);
             w.bloom += def.spread_fire_add;
             // A bolt or pump action owes a rechamber after every shot, or after every

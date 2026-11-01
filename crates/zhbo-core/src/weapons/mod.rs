@@ -407,10 +407,71 @@ mod tests {
         assert_eq!(shots(&out), 3, "one burst while holding");
     }
 
+    /// `Bullet_Fire`'s range rule: a spread class (by BO2's `weapClass`, not the mod's class)
+    /// traces to its curve's last range; anything else to `bulletrange`.
+    #[test]
+    fn the_bullet_range_follows_bo2s_weap_class() {
+        let shotgun = def(|d| {
+            d.weap_class = WeapClass::Spread;
+            d.damage_range = [10.0, 0.0, 0.0, 20.0, 21.0, 30.0];
+        });
+        assert_eq!(shotgun.bullet_range(500.0), crate::units::inches(30.0));
+        let judge = def(|d| {
+            d.class = Class::Pistol;
+            d.weap_class = WeapClass::PistolSpread;
+            d.damage_range = [10.0, 11.0, 0.0, 0.0, 0.0, 25.0];
+        });
+        assert_eq!(judge.bullet_range(500.0), crate::units::inches(25.0));
+        let rifle = def(|d| d.damage_range = [10.0, 11.0, 0.0, 0.0, 0.0, 25.0]);
+        assert_eq!(rifle.bullet_range(500.0), 500.0);
+    }
+
+    /// BO2's `shotCount` only counts for a spread class: a rifle authored with 8 fires one.
+    #[test]
+    fn only_a_spread_class_fires_its_shot_count() {
+        let d = def(|d| {
+            d.fire = FireMode::Semi;
+            d.pellets = 8;
+        });
+        let mut a = arsenal_with(d);
+        let mut out = Vec::new();
+        a.step(buttons::FIRE, buttons::FIRE, false, 0, 0.0, &mut Rng::new(4), &mut out);
+        assert_eq!(out.iter().filter(|x| matches!(x, WeaponAction::Fire { .. })).count(), 1);
+    }
+
+    /// The tri-bolt (`stacked`): one pull launches the whole three-bolt magazine, numbered by the
+    /// rounds loaded before each bolt; a part-loaded stack fires what it holds.
+    #[test]
+    fn a_stack_fires_its_full_magazine_at_once() {
+        let d = def(|d| {
+            d.class = Class::Special;
+            d.fire = FireMode::Stacked;
+            d.projectile_speed = 100.0;
+            d.effect = Effect::Explode;
+            d.pellets = 0;
+            d.clip = 3;
+            d.start_reserve = 3;
+        });
+        let mut a = arsenal_with(d);
+        let mut rng = Rng::new(4);
+        let mut out = Vec::new();
+        a.step(buttons::FIRE, buttons::FIRE, false, 0, 0.0, &mut rng, &mut out);
+        let bolts: Vec<u16> = out.iter().filter_map(|x| if let WeaponAction::Launch { pellet, .. } = x { Some(*pellet) } else { None }).collect();
+        assert_eq!(bolts, [2, 1, 0], "{out:?}");
+        assert_eq!(a.current().ammo, 0);
+        let mut b = arsenal_with(d);
+        b.weapons[0].ammo = 2;
+        b.weapons[0].reserve = 0;
+        let mut out = Vec::new();
+        b.step(buttons::FIRE, buttons::FIRE, false, 0, 0.0, &mut rng, &mut out);
+        assert_eq!(out.iter().filter(|x| matches!(x, WeaponAction::Launch { .. })).count(), 2, "a part-loaded stack fires its two");
+    }
+
     #[test]
     fn shotguns_fire_pellets_and_reload_shell_by_shell() {
         let d = def(|d| {
             d.class = Class::Shotgun;
+            d.weap_class = WeapClass::Spread;
             d.fire = FireMode::Semi;
             d.pellets = 8;
             d.clip = 8;

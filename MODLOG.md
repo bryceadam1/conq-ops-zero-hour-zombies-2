@@ -5192,3 +5192,87 @@ empty" when the def's `unlimitedAmmo` (+0x3e0) is set. `Traits.unlimited_ammo` (
 `UnlimitedAmmo`) carries it; `WeaponState::clip_empty` is the one test (`switch_to`, the
 viewmodel's drop clip). Only the swap timing reads it; BO2's other `unlimitedAmmo` effects
 (ammo use) are not ported.
+
+## The bullet's reach is BO2's `bulletrange`; `weapClass` and the damage curve are carried as data (2026-10-31, branch `v1/damage-identity`)
+
+* **`maxRange` is a turret field.** The only reader of `WeaponDef+0x8b0` in t6mp is the turret
+  spawn `FUN_0067ee90` (next to `toparc`/`bottomarc`/`convergencetime`/`suppressionTime`, squared
+  into the AI's engagement range); it is 0 on every MP weapon. The mod's `max_range` "bullets fly
+  8000 in" was a guess filling it. It now carries BO2's value (0) and nothing in the sim reads it.
+* **How far a round is traced** is `Bullet_Fire`'s rule (`FUN_005d0c20`, same branch in
+  `FUN_00535f80`, `FUN_005d0150`, `FUN_00538bf0`): `weapClass` spread (3) or pistol_spread (13) →
+  `shotCount` pellets traced to `damageRange[5] × Π fDamageRangeScale` (`FUN_008ed030`); every
+  other class → 1 round traced to the `bulletrange` dvar (`FUN_006e86b0`, default 8192 in, max
+  65536). `WeaponDef::bullet_range` + tuning key `bulletrange`; `Sim::bullet_range` holds it in ZH
+  units. **Feel change:** shotgun and Executioner pellets now stop at the curve's end (870 MCS
+  650 in, S12/M1216 600, KSG 1251, Executioner 500) — BO2's pellets vanish there — and rifles
+  reach 8192 in instead of 8000. The CaC range bar uses the same rule (BO2's own bar reads an
+  attribute stringtable, `weaponattributelist.lua`; not carried).
+* **`weapClass` carried** as `WeaponDef::weap_class` (`WeapClass`, table key `WeapClass`), the
+  def's own value — the `gl_*` alts are `grenade`, the Executioner `pistol_spread`. The mod's
+  `Class` stays the CaC/HUD/sound grouping; only the BO2 branches above read `weap_class`.
+* **`DamageRange` is now stored in BO2's inches** (converted in `damage_at`), not ZH units.
+  Gotcha: BO2's "no falloff" curve is `999999|0|0|0|0|999999.1`, and 999999.1 in through ZH units
+  (÷6) in an `f32` comes back 999999.19 — the old converter clamped it to 100000 in instead. Keep
+  big BO2 lengths in inches.
+
+Measured vs `v1/uncarried-fields`: weapons cells 397,145 → 386,617; gap clusters 185 → 183.
+`max_range` 9,341 → 0, `weap_class` 605 → 0, `damage_range` 1,016 → 434 (the rest are the
+select-fire/dual-optic alt rows that `v1/alt-attachments` clears).
+
+## `shotCount` is BO2's; the tri-bolt is BO2's `stacked` fire type (2026-10-31, branch `v1/damage-identity`)
+
+* `WeaponDef::pellets` now carries BO2's `shotCount` raw (0 on every projectile weapon; the
+  converter used to floor it to 1). `Bullet_Fire` (`FUN_005d0c20`) only reads it for a spread
+  `weapClass` — everything else fires one round — so the sim asks `WeaponDef::rounds_per_shot()`:
+  a stacked weapon's magazine, a spread class's `shotCount`, else 1. RTS damage and the client-hit
+  bound use the same accessor.
+* **The tri-bolt was a hack** (`pellets = attachment clip`, magazine and spares divided by three).
+  BO2: the stackfire attachment replaces the fire type with `stacked` (`FUN_008ecd90`) and the clip
+  with its own `iClipSize` (3, the crossbow's own; `FUN_008e5e50`, G14 §4); a stacked weapon fires
+  only with a full magazine (`FUN_008dc030`) and spends it in one pull; the client fans bolt i of n
+  across `stackFireSpread` degrees of yaw at spread × (i/(n−1) − 0.5) (`FUN_0066e320`; 1.5° for
+  the tri-bolt, the old fan was a fixed 0.04 rad). New `FireMode::Stacked` (table `stacked`, HUD
+  single-shot icon). Feel: the crossbow+tri-bolt holds 3 and carries BO2's spare bolts again, and a
+  partly reloaded stack will not fire until full. Not carried: `stackFireAccuracyDecay`'s spread
+  power (`FUN_008e41a0`) and the drum rotation (`FUN_0052f9b0`).
+
+Measured (this entry and the previous one, vs `v1/uncarried-fields`): weapons cells 397,145 →
+386,015, column clusters 174 → 169, gap clusters 185 → 183 → 180; `shot_count` 582 → 0,
+`fire_type` 5 → 0, `start_ammo_rounds` 5 → 0, `clip_size` 243 → 238, `max_ammo_rounds` 7,343 →
+7,338; no column regressed. Gotcha from the first push: compare a curve point in inches
+(`damage_at_inches`) — a ZH round trip turned the MK48's 45 into 44.996 at its own range point.
+
+## The create-a-class bars are BO2's attribute table; the stack's spread and emitter (2026-10-31, branch `v1/damage-identity`)
+
+* **Stat bars from `mp/attributestable.csv`** (`patch_ui_mp`), read the way
+  `weaponattributelist.lua` reads them: `TableLookup(table, 1, ref, col)` for the weapon and
+  `TableLookup(table, 1, attachment, 9, weapon, col)` for an attachment's deltas *on that weapon*.
+  Columns (0-based): accuracy 2, damage 3, range 4, and 6 for the bar MP labels FIRE RATE (the
+  Lua's "mobility" bar; column 5 is read but never drawn). Dashes are value / 5 of 20, i.e. the
+  bar is value / 100. `WeaponDef::attributes` (table `Attributes`) and `attachment_attributes`
+  (table `AttachmentAttributes`, `short=fire,damage,range,accuracy`) replace the old derived rule
+  (catalog extremes of damage, reach, RPM and hip spread) and the per-attachment
+  `AttributeDeltas`, which took the first row only and the fire-rate delta from column 5 — the
+  deltas are per weapon (`stalker` and `sf` vary). Gotcha: the Skorpion's silencer row sits under
+  `weapon_smg`; a row is an attachment's when its column 9 names a weapon, not by its group.
+  Picker before/after (headless harness): the Chicom's DAMAGE went from 1 lit segment to 12 and
+  RANGE from full to 5 — BO2's 65 and 30.
+* The screenshot harness found no texture for the standalone scope-overlay pages: their
+  MappedImage `Texture` lacks the `.tga` their file has (`hud::build_archive`). The harness now
+  tries the name with `.tga`; whether the engine resolves the extension-less name in game is
+  unverified (worth an eyeball of a sniper's ADS overlay).
+* **`stackFireAccuracyDecay`** (`FUN_008e41a0`, x87 `pow` at `0x008e4319`): a stacked weapon with a
+  stack above one round scales its hip cone min and max by `decay ^ (clip − 1)` (with
+  `tu12_zm_stack_fire_fix`, default 0, it would use the def's stack count). In `spread_range`. The
+  tri-bolt's decay is 1, so it plays the same; the rule is there for the data.
+* **The stacked pull's emitter, traced.** The fire event (`FUN_008e1b80`, `EV_FIRE_WEAPON` 0x20…
+  0x23) spends one round (`FUN_008dc5f0` is 1 for stacked) and carries the rounds loaded as its
+  parameter; the server's event loop (`FUN_005d2a30`) hands that to `FUN_0066e590` →
+  `FUN_0066e320`, which places the bolt at spread × ((k − 1)/(n − 1) − 0.5). The rest of the stack
+  follows without the trigger: `FUN_008e1320` (should-fire) is true while `FUN_008dc0c0` reports a
+  part-spent stack (stacked, rounds in the clip, clip not full — `FUN_008dc030` is "clip full"),
+  and `FUN_008e0780` zeroes the fire delay then. So one pull does launch the whole magazine, a bolt
+  per frame; the mod launches them in the same frame (a 50 ms difference at most). Corrected: a
+  part-loaded stack fires what it holds (the previous entry's full-magazine gate misread
+  `FUN_008dc030`), and each `Launch`'s `pellet` is now k − 1, so the fan is BO2's per-bolt place.

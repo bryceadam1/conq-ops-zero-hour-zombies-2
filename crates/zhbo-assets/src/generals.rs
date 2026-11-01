@@ -238,7 +238,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let bo2 = zhbo_formats::weapon::all(&common).map_err(|e| e.to_string())?;
     let atts = zhbo_formats::weapon::attachments(&common).map_err(|e| e.to_string())?;
     let names = crate::weapons::names(bo2_dir);
-    let meta = crate::weapons::attachment_metadata(&patch, &patch_ui, &names);
+    let meta = crate::weapons::attachment_metadata(&patch, &names);
     // BO2's camo choices (`mp/attachmenttable.csv`) and the 48 `camo_<weapon>` sets in
     // `common_patch_mp` (the per-weapon material swap, `WeaponCamo`).
     let camo = crate::weapons::camo_options(&patch, &names);
@@ -254,6 +254,9 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         reticle_colors: &reticle_colors,
     };
     let mut table = crate::weapons::table_with_metadata(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names, &meta, &options);
+    // The create-a-class bars (`mp/attributestable.csv`), before the combinations copy their base.
+    let (bars, att_bars) = crate::weapons::attributes(&patch_ui);
+    crate::weapons::apply_attributes(&mut table, &bars, &att_bars);
     // What each perk does: its specialty set, from the player's own statstable (Ghidra G1).
     table.perks = crate::weapons::perk_rows(&patch);
     let converted = crate::weapons::converted(&patch, &bo2);
@@ -785,7 +788,7 @@ mod tests {
         let mut buckets = std::collections::BTreeSet::new();
         for d in table.weapons.iter().filter(|d| d.class.is_gun()) {
             assert!(d.impact_type > 0, "{} has no impact type", d.id);
-            assert!(d.pellets as usize <= zhbo_core::client::CLIENT_HITS, "{} fires {} pellets", d.id, d.pellets);
+            assert!(d.rounds_per_shot() as usize <= zhbo_core::client::CLIENT_HITS, "{} fires {} rounds a shot", d.id, d.rounds_per_shot());
             // Launchers use the explosion table and the crossbow/knife's 14 is BO2's own "missing
             // impact" row; only the bullet buckets get cells here.
             if zhbo_formats::fx::bullet_entry(d.impact_type as u32).is_some() {

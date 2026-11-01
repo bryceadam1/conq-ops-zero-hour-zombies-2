@@ -309,11 +309,11 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .filter_map(|s| base_def.allowed.iter().find(|(short, _)| short == s).and_then(|(_, asset)| cat.attachment(asset)).map(|a| a.display_name.clone()))
         .collect();
     b.list("attachment_names", &names);
-    // The mod has no weapType/weapClass/inventory fields; where its own class and sim branch
+    // The mod has no weapType/inventory fields; where its own class and sim branch
     // carry the same fact it is reported (a class with no BO2 counterpart stays empty):
     // `weap_type` is how the sim delivers the shot (`Arsenal`'s Launch vs hitscan branch,
-    // `arsenal.rs` "WeaponAction::Launch"; an offhand's `Place`), `weap_class` the class the
-    // converter derived from BO2's (`class_of`), `inventory` the row's role.
+    // `arsenal.rs` "WeaponAction::Launch"; an offhand's `Place`), `inventory` the row's role.
+    // `weap_class` is carried as data (`WeaponDef::weap_class`).
     let launches = d.class == Class::Launcher || (d.projectile_speed > 0.0 && d.class != Class::Shotgun && d.effect != Effect::None);
     let weap_type = match d.class {
         Class::Melee => Some("melee"),
@@ -324,16 +324,6 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         },
         _ if launches => Some("projectile"),
         _ => Some("bullet"),
-    };
-    let weap_class = match d.class {
-        Class::Rifle | Class::Sniper => Some("rifle"),
-        Class::Smg => Some("smg"),
-        Class::Lmg => Some("mg"),
-        Class::Shotgun => Some("spread"),
-        Class::Pistol => Some("pistol"),
-        Class::Launcher => Some("rocketlauncher"),
-        Class::Melee => Some("melee"),
-        Class::Special | Class::Lethal | Class::Tactical | Class::Equipment => None,
     };
     let inventory = if j.alt {
         "altmode"
@@ -350,12 +340,13 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         Class::Equipment => "equipment",
         _ => "none",
     };
-    b.opt_text("weap_type", weap_type).opt_text("weap_class", weap_class).text("inventory", inventory).text("offhand_class", d.traits.offhand.name()).text("offhand_slot", offhand_slot);
+    b.opt_text("weap_type", weap_type).text("weap_class", d.weap_class.name()).text("inventory", inventory).text("offhand_class", d.traits.offhand.name()).text("offhand_slot", offhand_slot);
     let fire = match d.fire {
         FireMode::Auto => "fullauto".to_string(),
         FireMode::Semi => "singleshot".to_string(),
         FireMode::Burst(n) => format!("burstfire{n}"),
         FireMode::Minigun => "minigun".to_string(),
+        FireMode::Stacked => "stacked".to_string(),
     };
     b.text("fire_type", fire)
         .int("shot_count", d.pellets as i64)
@@ -435,7 +426,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
 
     // Damage.
     b.list("damage", &d.damage.map(|x| format!("{}", x as i64)))
-        .floats("damage_range", &d.damage_range.map(inch))
+        .floats("damage_range", &fls(&d.damage_range))
         .int("min_player_damage", d.traits.min_player_damage as i64)
         .int("melee_damage", knife.melee_damage as i64)
         // The mod's hits are head or body (`hitscan::trace`'s `headshot`, `sim/fire.rs`): its

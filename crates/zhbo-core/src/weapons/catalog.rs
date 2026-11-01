@@ -197,7 +197,6 @@ Attachment reflex
   DisplayName = Reflex
   FullName = Reflex Sight
   Description = Precision red dot sight.
-  AttributeDeltas = 0 5 15 0 0
   Point = 1
   Ads = 50 1 1 0
 End
@@ -211,6 +210,7 @@ End
 Weapon gl_an94_mp
   DisplayName = Grenade Launcher
   Class = launcher
+  WeapClass = grenade
   Fire = semi
   FireTime = 0.22
   Clip = 1
@@ -243,7 +243,7 @@ Weapon an94_mp
   SprintOutTime = 0.25
   Ads = 0.25 0.2 50
   Damage = 40 33 33 0 0 0
-  DamageRange = 216.7 216.8 375 0 0 0
+  DamageRange = 1300 1301 2250 0 0 0
   HeadMultiplier = 1.2
   HipSpread = 3 6.75 2.5 6 2 5
   Spread = 6 0.5 0.5 0
@@ -255,12 +255,16 @@ Weapon an94_mp
   Viewmodel = 0
   Anims = 60000ee003f007ff85005e
   Allowed = reflex=reflex gl=gl
+  Attributes = 60 60 55 50
+  AttachmentAttributes = reflex=0,0,5,15
   AltModes = gl=gl_an94_mp
 End
 
 Weapon fnp45_mp
   DisplayName = Tac-45
   Class = pistol
+  WeapClass = pistol
+  Attributes = 30 75 30 65
   Fire = semi
   FireTime = 0.096
   Clip = 10
@@ -272,7 +276,7 @@ Weapon fnp45_mp
   SprintOutTime = 0.15
   Ads = 0.12 0.1 60
   Damage = 55 45 45 0 0 0
-  DamageRange = 58.3 58.4 125 0 0 0
+  DamageRange = 350 351 750 0 0 0
   HeadMultiplier = 1.1
   HipSpread = 3 5 2.5 4.5 2 4
   Spread = 7 0.6 0.5 0.3

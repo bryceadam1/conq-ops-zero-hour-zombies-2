@@ -811,24 +811,22 @@ fn the_attachment_grid_and_lower_panel_follow_the_luas_derived_geometry() {
 
 #[test]
 fn the_attachment_panel_consumes_the_bo2_metadata() {
-    // `mp/attachmenttable.csv` row 22 and `mp/attributestable.csv`'s reflex row: the lower
-    // title is the full name, the description is the localized description key, and the four
-    // bars use the attribute deltas (damage, range, accuracy, mobility, fire rate).
+    // `mp/attachmenttable.csv` row 22: the lower title is the full name, the description is
+    // the localized description key. The bars come from `mp/attributestable.csv`: the AN-94's
+    // own row (fire rate g6 60, damage d3 60, range e4 55, accuracy c2 50) and the reflex's row
+    // keyed by the AN-94 (+15 accuracy, +5 range).
     let reflex = weapons::catalog().attachment("reflex").expect("reflex in the built-in table");
     assert_eq!(reflex.full_name, "Reflex Sight");
     assert_eq!(reflex.description, "Precision red dot sight.");
-    assert_eq!(reflex.attribute_deltas, [0.0, 5.0, 15.0, 0.0, 0.0]);
-    let base = WeaponStats { damage: 0.5, range: 0.5, fire_rate: 0.5, accuracy: 0.5 };
-    let modified = WeaponStats {
-        damage: (base.damage + reflex.attribute_deltas[0] / 100.0).clamp(0.0, 1.0),
-        range: (base.range + reflex.attribute_deltas[1] / 100.0).clamp(0.0, 1.0),
-        accuracy: (base.accuracy + reflex.attribute_deltas[2] / 100.0).clamp(0.0, 1.0),
-        fire_rate: (base.fire_rate + reflex.attribute_deltas[4] / 100.0).clamp(0.0, 1.0),
-    };
-    assert_eq!(modified.range, 0.55, "the reflex's +5 range");
+    let an94 = weapons::weapon("an94_mp");
+    let base = weapon_stats(an94);
+    assert_eq!(base, WeaponStats { fire_rate: 0.6, damage: 0.6, range: 0.55, accuracy: 0.5 });
+    let modified = weapon_stats_with(an94, "reflex");
+    assert_eq!(modified.range, 0.6, "the reflex's +5 range");
     assert_eq!(modified.accuracy, 0.65, "the reflex's +15 accuracy");
     assert_eq!(modified.damage, base.damage);
     assert_eq!(modified.fire_rate, base.fire_rate);
+    assert_eq!(weapon_stats_with(an94, "gl"), base, "no row, no change");
 }
 
 #[test]
@@ -858,10 +856,7 @@ fn the_stat_bars_are_in_bo2s_order_and_segmented() {
     assert_eq!(stat_value(&stats, 3), stats.accuracy);
     assert_eq!(stat_lit(0.0), 0);
     assert_eq!(stat_lit(1.0), STAT_SEGMENTS);
-    let (max_damage, _, _, _, _) = gun_bounds();
-    let strongest = weapons::catalog().all().iter().copied().find(|d| d.class.is_gun() && (d.damage[0] - max_damage).abs() < 1e-4).expect("a max-damage gun");
-    assert_eq!(weapon_stats(strongest).damage, 1.0);
-    assert_eq!(weapon_stats(&WeaponDef { damage: [max_damage, 1.0, 0.0, 0.0, 0.0, 0.0], ..Default::default() }).damage, 1.0);
+    assert_eq!(weapon_stats(&WeaponDef { attributes: [100.0, 120.0, 0.0, -5.0], ..Default::default() }), WeaponStats { fire_rate: 1.0, damage: 1.0, range: 0.0, accuracy: 0.0 });
 }
 
 #[test]

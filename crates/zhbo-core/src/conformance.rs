@@ -71,13 +71,14 @@ pub fn check(def: &'static WeaponDef) -> Vec<String> {
             if used.iter().any(|&j| j != i && (def.damage_range[j] - r).abs() < 1e-3) {
                 continue;
             }
-            if (def.damage_at(r) - def.damage[i]).abs() > 1e-3 {
-                fail(format!("damage {} at range point {i}, BO2 says {}", def.damage_at(r), def.damage[i]));
+            if (def.damage_at_inches(r) - def.damage[i]).abs() > 1e-3 {
+                fail(format!("damage {} at range point {i}, BO2 says {}", def.damage_at_inches(r), def.damage[i]));
             }
         }
         let last = *used.last().unwrap();
-        if bullets && (def.damage_at(def.damage_range[last] + 100.0) - def.damage[last]).abs() > 1e-3 {
-            fail(format!("damage beyond the curve {}, BO2 says {}", def.damage_at(def.damage_range[last] + 100.0), def.damage[last]));
+        let beyond = def.damage_range[last] + 100.0;
+        if bullets && (def.damage_at_inches(beyond) - def.damage[last]).abs() > 1e-3 {
+            fail(format!("damage beyond the curve {}, BO2 says {}", def.damage_at_inches(beyond), def.damage[last]));
         }
 
         // Fire mode and rate, over one magazine.
@@ -119,8 +120,8 @@ pub fn check(def: &'static WeaponDef) -> Vec<String> {
                     }
                 }
             }
-            FireMode::Semi => {
-                // Holding fires once.
+            FireMode::Semi | FireMode::Stacked => {
+                // Holding fires once (a stack fires once and empties the magazine).
                 for f in 0..frames(1.0) {
                     step(&mut a, buttons::FIRE, if f == 0 { buttons::FIRE } else { 0 }, &mut out, &mut rng);
                 }
@@ -157,8 +158,8 @@ pub fn check(def: &'static WeaponDef) -> Vec<String> {
         step(&mut a, buttons::FIRE, buttons::FIRE, &mut out, &mut rng);
         let projectiles = out.iter().filter(|x| matches!(x, WeaponAction::Fire { .. } | WeaponAction::Launch { .. })).count();
         let per_shot = projectiles / shots(&out).max(1);
-        if per_shot != def.pellets.max(1) as usize {
-            fail(format!("{per_shot} pellets per shot, BO2 has {}", def.pellets));
+        if per_shot != def.rounds_per_shot() as usize {
+            fail(format!("{per_shot} rounds per shot, BO2 has {}", def.rounds_per_shot()));
         }
 
         // Reloads (when there is more than the loaded round).

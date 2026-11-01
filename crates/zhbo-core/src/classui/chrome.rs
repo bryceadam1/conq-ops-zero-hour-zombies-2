@@ -50,8 +50,7 @@ pub(super) fn att_display(short: &str) -> String {
 // Weapon stat bars
 // ------------------------------------------------------------------------------------------------
 
-/// BO2's four menu bars, each 0..1. They are normalised against the gun catalog's own extremes, so
-/// no number is hand-copied here.
+/// BO2's four menu bars, each 0..1: the attribute table's 0..100 values over 100.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct WeaponStats {
     pub damage: f32,
@@ -82,31 +81,25 @@ pub fn stat_lit(value: f32) -> usize {
     (value.clamp(0.0, 1.0) * STAT_SEGMENTS as f32).round() as usize
 }
 
-/// The catalog's gun extremes, in one pass (no allocation).
-pub(super) fn gun_bounds() -> (f32, f32, f32, f32, f32) {
-    let guns = || weapons::catalog().all().iter().copied().filter(|d| d.class.is_gun());
-    let max_damage = guns().map(|d| d.damage[0]).fold(0.0, f32::max);
-    let max_range = guns().map(|d| d.max_range).fold(0.0, f32::max);
-    let max_rpm = guns().map(|d| d.rounds_per_minute()).fold(0.0, f32::max);
-    let min_spread = guns().map(|d| d.hip_spread[0].0).fold(f32::MAX, f32::min);
-    let max_spread = guns().map(|d| d.hip_spread[0].0).fold(0.0, f32::max);
-    (max_damage, max_range, max_rpm, min_spread, max_spread)
+/// One weapon's bars: BO2's own attribute-table values (`WeaponDef::attributes`, 0..100), as
+/// `weaponattributelist.lua` reads them.
+pub fn weapon_stats(def: &WeaponDef) -> WeaponStats {
+    from_attributes(def.attributes)
 }
 
-/// One gun's bars, derived only from its table fields: first damage point, max range, rounds per
-/// minute, and the standing hip spread (tighter is more accurate).
-pub fn weapon_stats(def: &WeaponDef) -> WeaponStats {
-    let (max_damage, max_range, max_rpm, min_spread, max_spread) = gun_bounds();
-    let ratio = |v: f32, max: f32| if max > 0.0 { (v / max).clamp(0.0, 1.0) } else { 0.0 };
-    let accuracy = if max_spread > min_spread {
-        1.0 - ((def.hip_spread[0].0 - min_spread) / (max_spread - min_spread)).clamp(0.0, 1.0)
-    } else {
-        1.0
-    };
-    WeaponStats {
-        damage: ratio(def.damage[0], max_damage),
-        range: ratio(def.max_range, max_range),
-        fire_rate: ratio(def.rounds_per_minute(), max_rpm),
-        accuracy,
+/// The bars with one attachment's deltas on this weapon added (the attachment picker's
+/// comparison; `UpdateWeaponAttributes` with an attachment index). An attachment without a row
+/// changes nothing.
+pub fn weapon_stats_with(def: &WeaponDef, short: &str) -> WeaponStats {
+    let delta = def.attachment_attributes.iter().find(|(s, _)| s == short).map_or([0.0; 4], |(_, a)| *a);
+    let mut a = def.attributes;
+    for (v, d) in a.iter_mut().zip(delta) {
+        *v += d;
     }
+    from_attributes(a)
+}
+
+fn from_attributes(a: [f32; 4]) -> WeaponStats {
+    let bar = |v: f32| (v / 100.0).clamp(0.0, 1.0);
+    WeaponStats { fire_rate: bar(a[0]), damage: bar(a[1]), range: bar(a[2]), accuracy: bar(a[3]) }
 }

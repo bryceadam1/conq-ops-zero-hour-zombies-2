@@ -8,6 +8,7 @@
 
 use super::*;
 use crate::impacts::Surface;
+use crate::weapons::FireMode;
 
 impl Sim {
     pub(super) fn apply_weapon_action(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, action: WeaponAction) {
@@ -28,9 +29,10 @@ impl Sim {
                 let radius = spread_deg.to_radians() * jitter.1.abs().sqrt();
                 let dir = dir_from_angles(p.fire_yaw + radius * angle.cos(), p.fire_pitch + radius * angle.sin());
 
-                let mut targets = gather_targets(host, eye, def.max_range, p.general);
+                let range = def.bullet_range(self.bullet_range);
+                let mut targets = gather_targets(host, eye, range, p.general);
                 let ground = |x: f32, y: f32| host.ground_height(x, y);
-                let hit = hitscan::trace(eye, dir, def.max_range, &targets, p.general, &ground);
+                let hit = hitscan::trace(eye, dir, range, &targets, p.general, &ground);
                 // One tracer and sound per shot, not per pellet.
                 let fx = if pellet == 0 { Some(def.fx_weapon.as_str()).filter(|f| !f.is_empty()) } else { None };
                 // Enemy equipment in the way takes the shot.
@@ -66,7 +68,7 @@ impl Sim {
                         // FMJ: on through the first soldier into whoever is behind.
                         if def.fmj && infantry {
                             targets.retain(|t| t.id != id);
-                            if let HitResult::Object { id: next, distance, headshot, .. } = hitscan::trace(point + dir * 0.1, dir, def.max_range - distance, &targets, p.general, &ground) {
+                            if let HitResult::Object { id: next, distance, headshot, .. } = hitscan::trace(point + dir * 0.1, dir, range - distance, &targets, p.general, &ground) {
                                 let mult = if headshot { def.head_multiplier } else { 1.0 };
                                 kill |= host.damage(p.general, next, def.damage_at(distance) * mult * PENETRATION_DAMAGE * BO2_TO_ZH_DAMAGE, damage_kind::SMALL_ARMS);
                             }
@@ -100,14 +102,18 @@ impl Sim {
             }
             WeaponAction::Launch { def, pellet } => {
                 let eye = p.body.eye();
-                // The tri-bolt's bolts fan out a little.
-                let spread = (pellet as f32 - (def.pellets.max(1) - 1) as f32 * 0.5) * 0.04;
+                // A stack's bolts fan across `stackFireSpread` degrees of yaw: the bolt fired with
+                // k rounds loaded of an n-round stack at spread × ((k - 1) / (n - 1) - 0.5)
+                // (`FUN_0066e320`; `pellet` is k - 1).
+                let n = def.rounds_per_shot();
+                let spread = if def.fire == FireMode::Stacked && n > 1 { def.traits.stack_fire.0.to_radians() * (pellet as f32 / (n - 1) as f32 - 0.5) } else { 0.0 };
                 let dir = dir_from_angles(p.fire_yaw + spread, p.fire_pitch);
                 if !def.fx_weapon.is_empty() {
                     host.fire_fx(p.general, &def.fx_weapon, 0, eye + dir * 10.0);
                 }
                 let proj = Projectile::launch(def, p.general, eye + dir * 2.0, dir, def.fuse_time, host, p.yaw);
                 self.projectiles.push((idx, proj));
+                // One launch cue per pull: the stack's last bolt, everything else's only one.
                 if pellet == 0 {
                     self.emit(idx, EventKind::Launched);
                 }
