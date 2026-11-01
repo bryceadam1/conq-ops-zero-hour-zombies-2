@@ -138,6 +138,8 @@ tuning! {
     range_finder_display_ads: "RangeFinderDisplayAds" = 0.99, "Target finder: the ADS fraction above which its display draws (`DAT_00c73584`, `FUN_00526780`).";
     range_finder_mark_height: "RangeFinderMarkHeight" = 45.0, "Target finder: inches above a standing enemy's feet its diamond is centred (70 - 25, `FUN_00526780`).";
     range_finder_trace_dist: "RangeFinderTraceDist" = 8192.0, "Target finder: inches the spotting trace reaches (`_DAT_00b12d08`, `FUN_00528ec0`).";
+    scope_overlay_width: "ScopeOverlayWidth" = 480.0, "The scope overlay's width in BO2's 640x480 virtual screen when a weapon table carries no `OverlaySize` (a stale table's 0): the `overlayWidth` every overlay weapon in BO2's install has (`WeaponDef+0x59c`, `FUN_004b4c70`).";
+    scope_overlay_height: "ScopeOverlayHeight" = 480.0, "As above, the height (`overlayHeight`, `WeaponDef+0x5a0`): a height-fit square.";
 
     // ---- Bullet penetration (t6mp `FUN_005d0350`; the table is patch_mp's `info/bullet_penetration_mp`) ----
     penetration_count: "penetrationCount" = 5.0, "Most surfaces one bullet passes through (`penetrationCount` 5, 0..5; `FUN_006e86b0`).";

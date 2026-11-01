@@ -8592,3 +8592,11 @@ nothing but fill — a black screen while scoped. The archive must be rebuilt (`
 4:3, 5:4, 21:9, 32:9; fills cover exactly the rest of the screen; the quarter mirror), the HUD test
 `the_scope_overlay_draws_a_round_scope_at_every_aspect`, the table round trip; screenshot harness
 images against a fresh archive.
+
+**Follow-up — a missing `OverlaySize` no longer blacks out the screen.** A zero size counts as
+"not carried": `weapons::scope::overlay_size` falls back to the tuning pack's `ScopeOverlayWidth`/
+`ScopeOverlayHeight` (480 × 480, the `overlayWidth`/`overlayHeight` of every overlay weapon in the
+install, `FUN_004b4c70`), and `hud::scope_overlay` logs it once to the process log. Tests:
+`a_table_without_the_size_falls_back_to_bo2s_square`, `a_stale_table_without_overlay_size_still_draws_the_scope`.
+(`ffi::tests::the_shield_hook_queues_a_deployed_shields_damage_and_passes_the_sims_own` failed once
+in four workspace runs, untouched by this branch: a shared-state flake.)

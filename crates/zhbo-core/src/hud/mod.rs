@@ -154,6 +154,9 @@ fn draw_scope_overlay(prims: &mut Vec<Prim>, w: f32, h: f32, p: &PlayerSim, zoom
     scope_overlay(prims, def, a, w, h);
 }
 
+/// Set once the missing-`OverlaySize` fallback has been logged (once per run).
+pub(crate) static SCOPE_SIZE_WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// The overlay's prims for `def` at alpha `a` (0–255) on a `w` × `h` screen (`FUN_004b4c70`);
 /// the screenshot harness renders the converted overlays through it.
 pub fn scope_overlay(prims: &mut Vec<Prim>, def: &crate::weapons::WeaponDef, a: u32, w: f32, h: f32) {
@@ -163,7 +166,12 @@ pub fn scope_overlay(prims: &mut Vec<Prim>, def: &crate::weapons::WeaponDef, a: 
     // test catches a sniper whose overlay did not convert.
     let name = crate::lui::materials::image(&def.overlay_material);
     let argb = (a << 24) | (WHITE & 0x00FF_FFFF);
-    let place = overlay_placement(def.overlay_size, w, h);
+    let (size, fell_back) = crate::weapons::scope::overlay_size(def);
+    // To the process log, like an unknown weapon id (`weapons::catalog`): the autotest captures it.
+    if fell_back && !SCOPE_SIZE_WARNED.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        eprintln!("zhbo: scope overlay of {:?} has no OverlaySize (a stale weapon table?); drawing the tuning pack's ScopeOverlayWidth/Height", def.id);
+    }
+    let place = overlay_placement(size, w, h);
     for q in &place.quads {
         let axis_aligned = q[0].0 < q[1].0 && q[0].1 < q[3].1 && q[0].1 == q[1].1 && q[0].0 == q[3].0;
         if axis_aligned {

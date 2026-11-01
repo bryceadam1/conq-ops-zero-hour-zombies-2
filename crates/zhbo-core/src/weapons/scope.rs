@@ -70,6 +70,19 @@ pub const VIRTUAL_H: f32 = 480.0;
 /// than 320 × 240 is the top-left quarter of the scope, drawn four times mirrored about the centre.
 pub const QUARTER_MAX: (f32, f32) = (320.0, 240.0);
 
+/// The overlay size to draw `def` at, and whether it fell back: a weapon table without
+/// `OverlaySize` (one written before the key existed) reads 0 × 0, which BO2's rule would draw as
+/// nothing but fill — a black screen while scoped. A zero size counts as "not carried" and takes
+/// the tuning pack's `ScopeOverlayWidth`/`ScopeOverlayHeight` (BO2's 480 × 480).
+pub fn overlay_size(def: &WeaponDef) -> ((f32, f32), bool) {
+    let (w, h) = def.overlay_size;
+    if w > 0.0 && h > 0.0 {
+        return ((w, h), false);
+    }
+    let t = crate::tuning::get();
+    ((t.scope_overlay_width, t.scope_overlay_height), true)
+}
+
 /// Where the scope overlay goes on a `screen_w` × `screen_h` screen (`FUN_004b4c70`).
 #[derive(Clone, Debug, PartialEq)]
 pub struct OverlayPlacement {
@@ -204,6 +217,18 @@ mod tests {
             assert!((qh - h.min(w * 0.75)).abs() < 1e-3, "{w}x{h}: the 480-unit square fits the 640 x 480 screen");
             assert_eq!(p.bounds, (q[0].0, q[0].1, q[1].0, q[3].1));
         }
+    }
+
+    #[test]
+    fn a_table_without_the_size_falls_back_to_bo2s_square() {
+        // A stale weapon table reads 0 x 0: not carried, so the tuning pack's 480 x 480, never an
+        // all-fill black screen.
+        let mut d = sniper(0.0, 0.05);
+        assert_eq!(overlay_size(&d), ((480.0, 480.0), true));
+        let p = overlay_placement(overlay_size(&d).0, 1280.0, 720.0);
+        assert_eq!(p.bounds, (280.0, 0.0, 1000.0, 720.0), "a height-fit square, not nothing");
+        d.overlay_size = (320.0, 240.0);
+        assert_eq!(overlay_size(&d), ((320.0, 240.0), false), "a carried size is used as is");
     }
 
     #[test]

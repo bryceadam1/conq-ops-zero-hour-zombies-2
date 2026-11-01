@@ -277,6 +277,24 @@ fn the_scope_overlay_draws_a_round_scope_at_every_aspect() {
 }
 
 #[test]
+fn a_stale_table_without_overlay_size_still_draws_the_scope() {
+    // A weapon table written before `OverlaySize` reads 0 x 0; BO2's rule would then draw only the
+    // fills (a black screen). The HUD falls back to the tuning pack's square and logs once.
+    let mut d = crate::weapons::WeaponDef { overlay_material: "scope_overlay_xpr50".into(), ..Default::default() };
+    d.zoom.overlay_alpha_scale = 1.0;
+    assert_eq!(d.overlay_size, (0.0, 0.0));
+    let mut prims = Vec::new();
+    scope_overlay(&mut prims, &d, 255, 1280.0, 720.0);
+    let name = crate::lui::materials::image("scope_overlay_xpr50");
+    let art: Vec<_> = prims.iter().filter_map(|p| match p {
+        Prim::Image { name: n, x, y, w, h, .. } if *n == name => Some((*x, *y, *w, *h)),
+        _ => None,
+    }).collect();
+    assert_eq!(art, vec![(280.0, 0.0, 720.0, 720.0)], "the 480 x 480 height-fit square");
+    assert!(SCOPE_SIZE_WARNED.load(std::sync::atomic::Ordering::Relaxed), "the fallback is logged");
+}
+
+#[test]
 fn the_scoped_hud_hides_the_map_compass_and_indicators() {
     // `CoD.BIT_IS_SCOPED` (`FUN_0055a420` → the reticle zoom) hides the minimap container, which
     // holds the map and the compass strip; the damage indicators' gate (`FUN_004adda0`) is the
