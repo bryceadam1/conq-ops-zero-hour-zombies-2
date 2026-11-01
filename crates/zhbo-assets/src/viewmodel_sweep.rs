@@ -909,13 +909,15 @@ mod tests {
                 g = state.step(def, &input, &tuning, 1.0 / 60.0);
             }
             let inch = zhbo_native::ART_SCALE;
-            let gun = GunPose::from_offset_angles([g.offset[0] * inch, -g.offset[1] * inch, g.offset[2] * inch], [g.angles[1].to_radians(), g.angles[0].to_radians(), g.angles[2].to_radians()]);
+            let (o, a) = g.view();
+            let gun = GunPose::from_offset_angles(o.map(|c| c * inch), a);
             let authored = place::sight((zhbo_native::math::QUAT_IDENTITY, [0.0; 3]), ms[aim]);
             let drawn = place::sight(gun.0, ms[aim]);
             // The shot: the view axis turned by the gun's fire angles (`PlayerSim::fire_angles` at a
-            // level view: yaw left, pitch up).
+            // level view: yaw left, pitch up — through the same `view_angles` conversion).
             let f = state.fire_angles();
-            let (yaw, pitch) = (f[1].to_radians(), f[0].to_radians());
+            let v = zhbo_core::weapons::gunpos::view_angles([f[0], f[1], 0.0]);
+            let (yaw, pitch) = (v[0], v[1]);
             let shot = [pitch.cos() * yaw.cos(), pitch.cos() * yaw.sin(), pitch.sin()];
             let (a, d, b) = (ndc(authored), ndc(drawn), ndc(shot));
             let err = ((d[0] - b[0] - a[0]).powi(2) + (d[1] - b[1] - a[1]).powi(2)).sqrt();

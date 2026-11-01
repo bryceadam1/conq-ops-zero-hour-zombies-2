@@ -417,7 +417,8 @@ impl Motion {
     /// left, pitch muzzle up): `GunPos::fire_angles`.
     pub fn fire_angles(&self) -> (f32, f32) {
         let a = self.gun.fire_angles();
-        (a[1].to_radians(), a[0].to_radians())
+        let v = crate::weapons::gunpos::view_angles([a[0], a[1], 0.0]);
+        (v[0], v[1])
     }
 
     /// One frame of `dt` seconds. `yaw`/`pitch` are the view angles this frame (radians), `fov`
@@ -471,7 +472,8 @@ impl Motion {
             sprint_weight: self.sprint,
             bob_cycle: (self.bob / std::f32::consts::TAU).rem_euclid(1.0),
             fov,
-            view: (pitch.to_degrees(), yaw.to_degrees()),
+            // BO2's view angles: its pitch is positive looking down, the sim's looking up.
+            view: (-pitch.to_degrees(), yaw.to_degrees()),
             // The landing dip stays the client's own: the fall delta `FUN_00530990` wants is not
             // in the sim's state (no `landChange`), so gunpos's dip contributes nothing.
             land_change: 0.0,
@@ -479,13 +481,10 @@ impl Motion {
             idle_time: p.idle.time,
             idle_stance: p.idle.stance,
         };
-        let pose = self.gun.step(def, &input, &p.arsenal.tuning, dt);
-        // BO2's offset is (forward, right, up) and its angles (pitch, yaw, roll); the renderer's
-        // view space is (forward, left, up) and its angles (yaw, pitch, roll).
-        Pose {
-            offset: Vec3::new(pose.offset[0] * INCH, -pose.offset[1] * INCH, (pose.offset[2] - LAND_DIP * self.land) * INCH),
-            angles: Vec3::new(pose.angles[1].to_radians(), pose.angles[0].to_radians(), pose.angles[2].to_radians()),
-        }
+        // BO2's pose (forward, left, up; pitch down) into the renderer's: `GunPose::view`, the one
+        // conversion (the sim's fire angles go through the same `view_angles`).
+        let (o, a) = self.gun.step(def, &input, &p.arsenal.tuning, dt).view();
+        Pose { offset: Vec3::new(o[0] * INCH, o[1] * INCH, (o[2] - LAND_DIP * self.land) * INCH), angles: Vec3::new(a[0], a[1], a[2]) }
     }
 }
 
@@ -686,10 +685,12 @@ mod tests {
             m.update(0.016, -0.05, 0.0, 65.0, &p, None);
         }
         assert!(m.update(0.016, -0.05, 0.0, 65.0, &p, None).angles.x.abs() < 1e-3);
-        // A shot kicks the muzzle up (the impulse the sim hands over with the recoil event), then
+        // A positive gun-kick pitch is BO2's muzzle *down* (`AnglesToAxis`: pitch positive looks
+        // down; the def's `f*GunKickPitch*` carry their own sign — the MP7's hip −25 kicks up, the
+        // KSG's 50..60 down). The impulse the sim hands over with the recoil event, then
         // the spring brings it back.
         let kicked = m.update(0.016, -0.05, 0.0, 65.0, &p, Some((8.0, 0.0)));
-        assert!(kicked.angles.y > 0.0, "{kicked:?}");
+        assert!(kicked.angles.y < 0.0, "{kicked:?}");
         for _ in 0..180 {
             m.update(0.016, -0.05, 0.0, 65.0, &p, None);
         }
@@ -722,17 +723,17 @@ mod tests {
         p.arsenal.weapons[0].main = gun_def();
         p.body.stance = Stance::Crouch;
         let mut m = Motion::default();
-        // Crouched at the hip: BO2's `vDuckedOfs` (forward, right, up) in inches, its Y flipped to
-        // the renderer's left, at the art's scale.
+        // Crouched at the hip: BO2's `vDuckedOfs` (forward, left, up — BO2's Y is the left axis) in
+        // inches, unflipped, at the art's scale.
         let hip = settle(&mut m, &p, 0.0, 0.0, None);
         assert!((hip.offset.x - 0.0).abs() < 1e-4, "{hip:?}");
-        assert!((hip.offset.y + 1.0 * INCH).abs() < 1e-4, "{hip:?}");
+        assert!((hip.offset.y - 1.0 * INCH).abs() < 1e-4, "{hip:?}");
         assert!((hip.offset.z + 2.0 * INCH).abs() < 1e-4, "{hip:?}");
         // A quarter into the aim the def's `fAdsAimPitch` dips the gun: `2° · ads` on the rotation,
         // faded like the offset (`FUN_008f0340`: `max(0, 1 − 2·ads)`) — 2 · 0.25 · 0.5.
         p.arsenal.ads = 0.25;
         let quarter = settle(&mut m, &p, 0.0, 0.0, None);
-        assert!((quarter.angles.y - 0.25f32.to_radians()).abs() < 1e-4, "{quarter:?}");
+        assert!((quarter.angles.y + 0.25f32.to_radians()).abs() < 1e-4, "a positive aim pitch dips the muzzle: {quarter:?}");
         // Half-way into the aim the positional offsets are gone (G4: `max(0, 1 - 2 * ads)`), and so
         // is the rotation: fully aimed the gun carries no `fAdsAimPitch`, so the authored aimed clip
         // alone places the sight on the axis the shot leaves along (BO2 draws and fires from the

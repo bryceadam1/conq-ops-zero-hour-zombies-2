@@ -49,7 +49,8 @@ pub struct GunInput {
     pub bob_cycle: f32,
     /// The field of view (degrees).
     pub fov: f32,
-    /// View pitch and yaw (degrees), for sway.
+    /// View pitch and yaw (degrees, **BO2's convention**: pitch positive looking down, yaw positive
+    /// turning left), for sway.
     pub view: (f32, f32),
     /// The last landing: signed fall delta (inches) and seconds since.
     pub land_change: f32,
@@ -59,13 +60,35 @@ pub struct GunInput {
     pub idle_stance: f32,
 }
 
-/// The gun's pose relative to the view.
+/// The gun's pose relative to the view, in **BO2's own convention** — every term below is the
+/// decompile's literal sign, and [`GunPose::view`] is the one conversion into the mod's.
+///
+/// BO2's frame is X forward, Y **left**, Z up (`AnglesToAxis`, `FUN_0074d870`: axis 1 is the left
+/// vector; `AngleVectors`' right, `FUN_0074d6c0`, is its negative — the lean in `FUN_008ef360`
+/// adds that right vector to this offset, and the sway subtracts its horizontal term from Y so the
+/// gun lags a turn). Angles are `AnglesToAxis`'s: pitch positive **muzzle down** (forward.z =
+/// −sin pitch), yaw positive left, roll positive right side down.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct GunPose {
-    /// Forward, right, up (inches).
+    /// Forward, left, up (inches).
     pub offset: [f32; 3],
-    /// Pitch, yaw, roll (degrees).
+    /// Pitch (down), yaw (left), roll (right side down), degrees.
     pub angles: [f32; 3],
+}
+
+/// BO2 (pitch down, yaw left, roll) degrees → the renderer's (yaw left, pitch muzzle up, roll)
+/// radians (`nativevm::GunPose::from_offset_angles`, the W3D path's `Rotate_Z(yaw)`,
+/// `Rotate_Y(−pitch)`, `Rotate_X(roll)`): the pitch is the only axis whose sign differs.
+pub fn view_angles(a: [f32; 3]) -> [f32; 3] {
+    [a[1].to_radians(), -a[0].to_radians(), a[2].to_radians()]
+}
+
+impl GunPose {
+    /// The pose in the renderer's view space: offset in inches (forward, left, up — BO2's own
+    /// axes) and angles in radians (yaw left, pitch muzzle up, roll). The only conversion.
+    pub fn view(&self) -> ([f32; 3], [f32; 3]) {
+        (self.offset, view_angles(self.angles))
+    }
 }
 
 /// The state BO2 keeps between frames (`weaponState+0x24..0x38`, the sway and the spring).
@@ -141,7 +164,9 @@ impl GunPos {
         let idle = super::idle_sway::gun_angles(def, ads, i.idle_time, i.idle_stance);
         self.sway(def, i, dt);
         self.spring.step(dt, &def.hip_gun_kick, &def.ads_gun_kick, ads, def.gun_max);
-        offset[1] += self.sway_ofs.0;
+        // The sway offset (`FUN_008f0700`): the horizontal term comes off the left axis, the
+        // vertical one is added to up — so both lag the turn.
+        offset[1] -= self.sway_ofs.0;
         offset[2] += self.sway_ofs.1;
         // The angles (`FUN_008f0340`): the rotation faded out by half-way into ADS (`1 − 2·posFrac`,
         // `DAT_00c6f6ac` = 2, the same fade as the offset), plus the kick spring, the sway, the bob
@@ -150,26 +175,29 @@ impl GunPos {
         // `AnglesToAxis(these) × AnglesToAxis(view)`) and the server's think (`FUN_005dc820`) read
         // the same output. So `fAdsAimPitch` (the MP7's 2°, the shotguns' −0.1°) and the move pose
         // dip the gun mid-transition only; at full ADS the authored aimed clip alone places the
-        // sight, on the axis the shot leaves along.
+        // sight, on the axis the shot leaves along. The sway angles are *subtracted*
+        // (`AngleNormalize180(rot·fade − sway)`, weaponState+0x54/0x58).
         let rot_fade = (1.0 - 2.0 * ads).max(0.0);
         let angles = [
-            self.cur_rot[0] * rot_fade + bob[0] + self.sway_angle.0 + self.spring.angle.0 + idle[0],
-            self.cur_rot[1] * rot_fade + bob[1] + self.sway_angle.1 + self.spring.angle.1 + idle[1],
+            self.cur_rot[0] * rot_fade - self.sway_angle.0 + bob[0] + self.spring.angle.0 + idle[0],
+            self.cur_rot[1] * rot_fade - self.sway_angle.1 + bob[1] + self.spring.angle.1 + idle[1],
             self.cur_rot[2] * rot_fade + bob[2] + idle[2],
         ];
         self.fire = [angles[0], angles[1]];
         GunPose { offset, angles }
     }
 
-    /// The gun's pitch and yaw (degrees, the drawn pose's signs) an aimed shot from a gun without an
+    /// The gun's pitch and yaw (degrees, BO2's convention like [`GunPose`]) an aimed shot from a gun without an
     /// overlay scope follows (`FUN_005dc820` composes them onto the view's fire angles): the drawn
     /// pose's own pitch and yaw, so the shot leaves along the sights.
     pub fn fire_angles(&self) -> [f32; 2] {
         self.fire
     }
 
-    /// View sway: the view's turn rate (per 60 Hz frame), clamped to the max angle and scaled,
-    /// eased in at the lerp speed. The hip and aimed parameters lerp by aim.
+    /// View sway (`FUN_008efce0`): the view's turn rate (`AnglesSubtract(view, last)`,
+    /// `FUN_0074a240`, per 60 Hz frame), clamped to the max angle and scaled, eased in at the lerp
+    /// speed. The hip and aimed parameters lerp by aim. Stored as BO2 stores them; `step` applies
+    /// them with BO2's signs.
     fn sway(&mut self, def: &WeaponDef, i: &GunInput, dt: f32) {
         let (h, a, f) = (&def.hip_sway, &def.ads_sway, i.ads.clamp(0.0, 1.0));
         let l = |x: f32, y: f32| x + (y - x) * f;
@@ -177,11 +205,9 @@ impl GunPos {
         let last = self.last_view.replace(i.view).unwrap_or(i.view);
         let rate = |d: f32| if dt > 0.0 { (d / (dt * 60.0)).clamp(-max.max(0.0), max.max(0.0)) } else { 0.0 };
         let (dp, dy) = (rate(i.view.0 - last.0), rate(wrap(i.view.1 - last.1)));
-        // The gun *lags* the view, so both the rotation and the offset are the view's turn
-        // measured back from the gun: turning left swings the muzzle right and drops a left turn's
-        // yaw onto the gun (`G4`'s delta with the sign of the offset it is paired with). Leading
-        // the view would mean the arms turn faster than the camera.
-        let target_angle = (-dp * l(h.pitch_scale, a.pitch_scale), -dy * l(h.yaw_scale, a.yaw_scale));
+        // weaponState+0x54/0x58 (angles: pitch·pitchScale, yaw·yawScale) and +0x64/0x68 (offset:
+        // yaw·horizScale, pitch·vertScale), literally.
+        let target_angle = (dp * l(h.pitch_scale, a.pitch_scale), dy * l(h.yaw_scale, a.yaw_scale));
         let target_ofs = (dy * l(h.horiz_scale, a.horiz_scale), dp * l(h.vert_scale, a.vert_scale));
         let k = (lerp_speed * dt).clamp(0.0, 1.0);
         self.sway_angle.0 += (target_angle.0 - self.sway_angle.0) * k;
@@ -216,7 +242,9 @@ pub fn bob_angles(def: &WeaponDef, i: &GunInput, t: &Tuning) -> [f32; 3] {
     };
     let vert = ((2.0 * c).sin() + 0.2 * (4.0 * c + PI / 2.0).sin()) * 0.75 * amp(false);
     let horiz = |c: f32, a: f32| c.sin() * a;
-    let mut out = [-vert, -horiz(c, amp(true)), horiz(c - 0.4712, amp(true) * t.bob_roll).max(0.0)];
+    // The roll keeps only the curve's non-positive half: `FUN_008f0160` at 0x008f02b0 negates the
+    // result, `FCOMIP`s it with 0 and stores 0 when `−f < 0` (G4's `max(0, …)` misread it).
+    let mut out = [-vert, -horiz(c, amp(true)), horiz(c - 0.4712, amp(true) * t.bob_roll).min(0.0)];
     if ads > 0.0 {
         let k = 1.0 - (1.0 - def.view_pos.ads_bob_factor) * ads;
         for a in &mut out {
@@ -289,6 +317,48 @@ mod tests {
         assert_eq!(a[0], 0.0, "standing bob is x (1 - ads)");
     }
 
+    /// Every component keeps the decompile's literal sign in BO2's frame (X forward, Y left, Z up;
+    /// pitch down, yaw left, roll right side down), and [`GunPose::view`] is the only place the
+    /// renderer's convention (pitch muzzle up) comes in.
+    #[test]
+    fn every_component_keeps_bo2s_sign_and_one_conversion_maps_it() {
+        let t = Tuning::default();
+        // The conversion: BO2 pitch down → renderer pitch up; yaw and roll unchanged.
+        let v = view_angles([2.0, 3.0, 4.0]);
+        assert!((v[0] - 3f32.to_radians()).abs() < 1e-6 && (v[1] + 2f32.to_radians()).abs() < 1e-6 && (v[2] - 4f32.to_radians()).abs() < 1e-6, "{v:?}");
+        // The move pose (`FUN_008ef850`, data added as is): BO2's walk `vStandRot` (2, 0, −2) dips
+        // the muzzle and rolls the right side up; strafing right (`velocity · right`, the
+        // `AngleVectors` right) adds `vStrafeMove` (0, 0.5, 0) to the *left* axis — the gun lags —
+        // and `vStrafeRot` (0, 0, 6) rolls the right side down, into the strafe.
+        let mut d = gun();
+        d.view_pos.stand_move = [0.0; 3];
+        d.view_pos.stand_rot = [2.0, 0.0, -2.0];
+        d.view_pos.strafe_move = [0.0, 0.5, 0.0];
+        d.view_pos.strafe_rot = [0.0, 0.0, 6.0];
+        let strafe = GunInput { speed: 190.0, run_speed: 190.0, strafe: 1.0, fov: 65.0, ..Default::default() };
+        let p = settle(&mut GunPos::default(), &d, &strafe);
+        let bob = bob_angles(&d, &strafe, &t);
+        assert!((p.offset[1] - 0.5).abs() < 0.01, "strafing right moves the gun left: {p:?}");
+        assert!((p.angles[0] - bob[0] - 2.0).abs() < 0.05 && (p.angles[2] - bob[2] - 4.0).abs() < 0.05, "{p:?} bob {bob:?}");
+        let (_, va) = p.view();
+        assert!(va[1] < 0.0, "the walk dips the muzzle on screen: {va:?}");
+        // The gun kick spring (G5: `gunKickVel.pitch += f*GunKickPitch`): a positive pitch impulse
+        // is a muzzle-down kick.
+        let mut g = GunPos::default();
+        g.spring.kick((8.0, 0.0));
+        let still = GunInput { fov: 65.0, ..Default::default() };
+        let k = g.step(&d, &still, &t, 1.0 / 60.0);
+        assert!(k.angles[0] > 0.0 && k.view().1[1] < 0.0, "{k:?}");
+        // The bob roll keeps the curve's non-positive half only (`FUN_008f0160`).
+        for n in 0..64 {
+            let walk = GunInput { speed: 190.0, bob_cycle: n as f32 / 64.0, ..Default::default() };
+            assert!(bob_angles(&d, &walk, &t)[2] <= 0.0, "cycle {n}");
+        }
+        assert!((0..64).any(|n| bob_angles(&d, &GunInput { speed: 190.0, bob_cycle: n as f32 / 64.0, ..Default::default() }, &t)[2] < -0.01));
+        // The fire angles are the drawn pitch and yaw.
+        assert_eq!(g.fire_angles(), [k.angles[0], k.angles[1]]);
+    }
+
     #[test]
     fn turning_sways_the_gun_behind_the_view() {
         let mut d = gun();
@@ -297,13 +367,20 @@ mod tests {
         let mut g = GunPos::default();
         let mut i = GunInput { fov: 65.0, ..Default::default() };
         g.step(&d, &i, &t, 1.0 / 60.0);
-        // A left turn leaves the gun behind: it hangs to the right (offset +right) and points right
-        // of the view (negative yaw). The mirror holds for a right turn.
+        // BO2's literal signs (`FUN_008efce0`/`FUN_008f0700`/`FUN_008f0340`): a left turn moves the
+        // gun's offset right (−left: it lags) and turns it by −yaw·yawScale; looking down raises it
+        // (+up: it lags) and pitches it by −pitch·pitchScale (positive scales here).
         i.view.1 = 2.0;
         let left = g.step(&d, &i, &t, 1.0 / 60.0);
-        assert!(left.angles[1] < 0.0 && left.offset[1] > 0.0, "{left:?}");
+        assert!(left.angles[1] < 0.0 && left.offset[1] < 0.0, "{left:?}");
         i.view.1 = 0.0;
         let right = g.step(&d, &i, &t, 1.0 / 60.0);
-        assert!(right.angles[1] > 0.0 && right.offset[1] < 0.0, "{right:?}");
+        assert!(right.angles[1] > 0.0 && right.offset[1] > 0.0, "{right:?}");
+        let mut g = GunPos::default();
+        let mut i = GunInput { fov: 65.0, ..Default::default() };
+        g.step(&d, &i, &t, 1.0 / 60.0);
+        i.view.0 = 2.0;
+        let down = g.step(&d, &i, &t, 1.0 / 60.0);
+        assert!(down.offset[2] > 0.0 && down.angles[0] < 0.0, "{down:?}");
     }
 }
