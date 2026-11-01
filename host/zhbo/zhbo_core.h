@@ -271,7 +271,7 @@ typedef struct ZhboClientOut
 	uint32_t save_profile_payload[1024];
 	int32_t save_profile_payload_len;
 	/* The class screen (pick or editor) is up: the bridge leaves the cursor free and swallows the
-	   game-bound mouse/key messages behind it. */
+	   game-bound mouse/key messages behind it, Escape included (the screen's Back). */
 	int32_t menu_open;
 	/* The local player's shot impacts this frame, in shot order (at most ZHBO_CLIENT_HITS). */
 	ZhboClientHit hits[ZHBO_CLIENT_HITS];

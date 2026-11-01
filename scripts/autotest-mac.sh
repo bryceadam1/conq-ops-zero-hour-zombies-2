@@ -61,7 +61,16 @@ if [[ ! -f "$userdata/Save/$save" ]]; then
     exit 2
 fi
 
-pkill -f "$dist/generalszh" 2>/dev/null || true
+# Stop the game and wait until it is gone: after SIGTERM it takes ~10 s to shut down and holds the
+# engine's single-instance lock meanwhile, so a leg launched right after an earlier one bailed with
+# "Generals is already running". SIGKILL if it outlives 30 s.
+stop_game() {
+    pkill -f "$dist/generalszh" 2>/dev/null || true
+    for _ in $(seq 60); do pgrep -f "$dist/generalszh" >/dev/null || return 0; sleep 0.5; done
+    pkill -9 -f "$dist/generalszh" 2>/dev/null || true
+    sleep 1
+}
+stop_game
 # A stale log from the previous run would satisfy the waits below too early.
 rm -f "$log"
 
@@ -74,7 +83,7 @@ wait_for_log() { # pattern, seconds
     return 1
 }
 finish() {
-    pkill -f "$dist/generalszh" 2>/dev/null || true
+    stop_game
     cp "$log" "$out/" 2>/dev/null || true
     for f in "$out"/shot.*.bmp; do
         [[ -f "$f" ]] && sips -s format png "$f" --out "${f%.bmp}.png" >/dev/null && rm "$f"
@@ -122,7 +131,7 @@ EOF
         ZHBO_LOADOUT="lethal=satchel_charge_mp;tactical=$tactical" "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
         wait_for_log "entered first-person" 120 || { echo "the General never entered first person; see $log" >&2; exit 1; }
         for _ in $(seq 60); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
-        pkill -f "$dist/generalszh" 2>/dev/null || true
+        stop_game
         cp "$log" "$out/ConquerOps-$tactical.log"
         l="$out/ConquerOps-$tactical.log"
         echo "== C4 + $tactical"
@@ -282,7 +291,7 @@ if [[ $mode == rts-dry ]]; then
         ZHBO_LOADOUT="${dry}_reserve=0" "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
         wait_for_log "autopilot: taking control" 90 || { echo "the script never reached first person; see $log" >&2; exit 1; }
         for _ in $(seq 40); do [[ -n "$(game_pid)" ]] || break; sleep 1; done
-        pkill -f "$dist/generalszh" 2>/dev/null || true
+        stop_game
         l="$out/ConquerOps-$dry.log"
         cp "$log" "$l"
         if [[ $dry == primary ]]; then
@@ -457,7 +466,9 @@ if [[ "$front" != "$pid" ]]; then
 fi
 "$drive" tap:17 sleep:500
 wait_for_log "entered first-person" 30 || { echo "T did not take control of the General; see $log" >&2; exit 1; }
-"$drive" sleep:1500
+# First person opens on the class screen (pick-only in a match); Escape keeps the current kit, as a
+# player may (the --classpick leg covers picking).
+"$drive" sleep:1500 tap:53 sleep:1000
 screencapture -x "$out/window-before.png" 2>/dev/null || true
 # W for 2 s, then turn right with relative mouse motion. (macOS virtual key 13 is W.)
 "$drive" down:13 sleep:2000 up:13 sleep:1200 look:12,0,40 sleep:1500
@@ -469,7 +480,7 @@ poses="$(grep "pos (" "$out/ConquerOps.log" || true)"
 first="$(head -1 <<<"$poses")"
 last="$(tail -1 <<<"$poses")"
 ok=0
-if grep -q "keys held: \[W\]" "$out/ConquerOps.log"; then echo "W reached the game    PASS"; else echo "W reached the game    FAIL"; ok=1; fi
+if grep -qE "keys held: \[W ?\]" "$out/ConquerOps.log"; then echo "W reached the game    PASS"; else echo "W reached the game    FAIL"; ok=1; fi
 if [[ "$(cut -d' ' -f5-6 <<<"$first")" != "$(cut -d' ' -f5-6 <<<"$last")" ]]; then echo "moved                 PASS"; else echo "moved                 FAIL"; ok=1; fi
 if [[ "$(awk '{print $9}' <<<"$first")" != "$(awk '{print $9}' <<<"$last")" ]]; then echo "turned                PASS"; else echo "turned                FAIL"; ok=1; fi
 echo "first pose: $first"

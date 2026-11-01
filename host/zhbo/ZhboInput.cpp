@@ -15,11 +15,21 @@ class ZhboTranslator : public GameMessageTranslator
 public:
 	virtual GameMessageDisposition translateGameMessage(const GameMessage *msg) override
 	{
+		const GameMessage::Type t = msg->getType();
+		const Bool isKey = t == GameMessage::MSG_RAW_KEY_DOWN || t == GameMessage::MSG_RAW_KEY_UP;
+		// While a class screen is up, from either view, Escape is its Back (BO2: the screen backs
+		// out) and must not also open Zero Hour's game menu behind it; the core reads it from the
+		// platform key state, so the engine never needs it then. The client frame that closes the
+		// screen runs before Zero Hour translates the same press, so "up" includes the last quarter
+		// second (s_classScreenSeenAt).
+		if (isKey && msg->getArgumentCount() > 0 && msg->getArgument(0)->integer == KEY_ESC
+			&& (s_out.menu_open || zhbo_platform::now() - s_classScreenSeenAt < 0.25))
+			return DESTROY_MESSAGE;
 		// First person owns the mouse/keyboard; a class screen owns them too, from either view:
-		// clicks and keys must not reach the RTS UI or the game behind it (Escape stays).
+		// clicks and keys must not reach the RTS UI or the game behind it (Escape stays, unless a
+		// class screen owns it, above).
 		if (!s_out.camera_override && !s_out.menu_open)
 			return KEEP_MESSAGE;
-		const GameMessage::Type t = msg->getType();
 		if (t == GameMessage::MSG_RAW_MOUSE_WHEEL)
 		{
 			if (msg->getArgumentCount() > 1)
@@ -28,9 +38,10 @@ public:
 		}
 		if (t > GameMessage::MSG_RAW_MOUSE_BEGIN && t < GameMessage::MSG_RAW_MOUSE_END)
 			return DESTROY_MESSAGE;
-		if (t == GameMessage::MSG_RAW_KEY_DOWN || t == GameMessage::MSG_RAW_KEY_UP)
+		if (isKey)
 		{
-			// Escape still opens the game menu; everything else belongs to first person.
+			// Escape still opens the game menu in first person; everything else belongs to first
+			// person.
 			if (msg->getArgumentCount() > 0 && msg->getArgument(0)->integer == KEY_ESC)
 				return KEEP_MESSAGE;
 			return DESTROY_MESSAGE;

@@ -99,6 +99,10 @@ void readConfig();
 // hitch log reads. Owned by ZhboBridge.cpp.
 extern ZhboClientOut s_out;
 extern Real s_wheelAccum;
+// When a class screen was last up, on either side of a client frame (zhbo_platform::now()): the
+// frame that closes it on Escape runs before Zero Hour translates that same Escape, so the input
+// filter needs "was up a moment ago", not only s_out.menu_open.
+extern double s_classScreenSeenAt;
 extern double s_lastTick;
 // The command bar's pressed class button, waiting for the next client frame: 0 none, else 1-based
 // in the class-button rows (ZhboControlBar's `chooseClass` fills it). Same one-shot discipline as

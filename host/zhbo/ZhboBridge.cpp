@@ -87,6 +87,7 @@ FILE *s_log = nullptr;
 // hitch log reads.
 ZhboClientOut s_out = {};
 Real s_wheelAccum = 0.0f;
+double s_classScreenSeenAt = -1.0;
 static Int s_classPickLatch = 0;
 // A command-bar class button pressed since the last client frame (see `chooseClass`).
 Int s_classButtonPick = 0;
@@ -418,6 +419,7 @@ void Zhbo_Reset()
 	ResetAutopilotTrackers();
 	ResetControlBarTrackers();
 	s_wheelAccum = 0.0f;
+	s_classScreenSeenAt = -1.0;
 	// A bar click from the leaving game must not arm a one-shot in the new one.
 	s_classPickLatch = 0;
 	s_classButtonPick = 0;
@@ -829,7 +831,10 @@ void Zhbo_ClientFrame()
 	ZhboClientIn in;
 	gatherClientInput(in, focused, menuUp);
 
+	const Bool classScreenWasUp = s_out.menu_open != 0;
 	zhbo_client_frame(&in, &s_out);
+	if (classScreenWasUp || s_out.menu_open)
+		s_classScreenSeenAt = zhbo_platform::now();
 	applyWorldPoses();
 	applyClientOutput(focused, menuUp);
 }
