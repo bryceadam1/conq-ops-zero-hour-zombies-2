@@ -467,6 +467,14 @@ pub struct WeaponDef {
     /// `displayName` (`display_name`) instead — the patched R870's is "Remington 870 MCS", its
     /// item "R870 MCS". Empty when it is not an item; [`WeaponDef::menu_name`] then falls back.
     pub cac_name: String,
+    /// Listed locked in Create-a-Class: visible, never selectable, and dropped from a stored class
+    /// (`classrepair`). The converter locks an item whose view model's art did not convert — BO2
+    /// shows a DLC item the install lacks the pack for this way (`IsItemLocked`,
+    /// `cacweaponsp.lua:928-945`, `c-primary/007`: the Peacekeeper without Revolution).
+    pub cac_locked: bool,
+    /// The locked item's hint (`GetUnlockStringForItemIndex`, `codbase.lua:3741-3770`: the
+    /// localized `MENU_<statstable column 15>_REQUIRED_HINT`, "Revolution DLC Pack required.").
+    pub cac_lock_hint: String,
     /// The Create-a-Class item's localized description (`mp/statstable.csv` column 7,
     /// `GetItemDesc`), the hint the weapon picker shows under the card (`cacweaponsp.lua:540-590`);
     /// empty when it is not an item. A combination inherits its base's.
@@ -923,6 +931,8 @@ impl Default for WeaponDef {
             cac_slot: String::new(),
             cac_group: String::new(),
             cac_name: String::new(),
+            cac_locked: false,
+            cac_lock_hint: String::new(),
             description: String::new(),
             cac_sort: 0,
             cac_index: 0,

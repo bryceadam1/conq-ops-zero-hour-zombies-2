@@ -785,7 +785,13 @@ weapon zones (`zhbo_formats::weapon::MP_POOL`, highest priority first: `patch_mp
 (`FUN_00597000`) keeps the asset whose zone flag ranks higher in `FUN_00596e60` (`patch_mp`'s 2 →
 0x41, 0x100 → 0x37, 0x80 → 0x36), and a `,name` reference stub never overrides. So the 79 weapons
 and 49 attachments `common_patch_mp` redefines carry BO2's post-launch balance (the M8A1's 32-round
-magazine, the SMGs' hip kick), and the Peacekeeper, defined only there, is a player weapon. The
+magazine, the SMGs' hip kick), and the Peacekeeper, defined only there, is a class item — listed
+**locked** when its art did not convert (its gun images are reference stubs only the Revolution DLC
+zone fills): the weapon table's `CacLocked`/`CacLockHint` (the hint is the localized
+`MENU_<statstable column 15>_REQUIRED_HINT`), set by `zhbo_assets::weapons::lock_items_without_art`
+from whether the view model's colour maps resolve; the picker draws BO2's lock
+(`menu_mp_lobby_locked_big`, 64 square, the picture and bars hidden, `c-primary/007`), refuses the
+pick, and `classrepair` drops a stored one. The
 converter picks them in one place (`zhbo_assets::paks::mp_weapons`; models and clips through
 `viewmodels::find_model`/`find_anim` over the same pool), and the conformance expected side reads
 the same pool (`zhbo_conformance::bo2::install::Install::pool`). The stringtables

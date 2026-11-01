@@ -30,6 +30,11 @@ impl Editor {
             Slot::Primary => {
                 let ids = self.gun_list(true);
                 if let Some(id) = ids.get(i).copied() {
+                    // A locked item is listed but never taken (BO2 removes its select button,
+                    // `cacweaponsp.lua:505-535`).
+                    if crate::weapons::weapon(id).cac_locked {
+                        return false;
+                    }
                     if self.draft.primary != id {
                         self.draft.primary = id.to_string();
                         self.draft.reset_weapon_options(true);
@@ -39,6 +44,11 @@ impl Editor {
             Slot::Secondary => {
                 let ids = self.gun_list(false);
                 if let Some(id) = ids.get(i).copied() {
+                    // A locked item is listed but never taken (BO2 removes its select button,
+                    // `cacweaponsp.lua:505-535`).
+                    if crate::weapons::weapon(id).cac_locked {
+                        return false;
+                    }
                     if self.draft.secondary != id {
                         self.draft.secondary = id.to_string();
                         self.draft.reset_weapon_options(false);

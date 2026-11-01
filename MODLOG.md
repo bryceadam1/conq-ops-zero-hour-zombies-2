@@ -8673,3 +8673,16 @@ cac 0 → 0 cells, BO2-only rows 5 → 4 (the Peacekeeper converts). Gap cluster
 
 **Versions (integrator-owned, NOT bumped):** the archive's `hud::VERSION` (the weapon table's
 values and its new `CacName` line; the Peacekeeper's viewmodel). No C ABI change.
+
+### The Peacekeeper without Revolution: listed locked, as BO2 does
+
+Manager decision: match BO2 rather than offer a grey gun. Its gun images are `,name` stubs whose
+pixels only the Revolution DLC zone carries, so the converter locks every Create-a-Class item whose
+view model's colour maps mostly fail to resolve (`weapons::lock_items_without_art`,
+`model_art_converts`) — data, no DLC list. The hint is the localized
+`MENU_<statstable column 15>_REQUIRED_HINT` (`codbase.lua:3741-3770`; column 15 is `dlc1`):
+"Revolution DLC Pack required.". The picker draws `CoD.CAC.SetLockIcon(card, 64,
+menu_mp_lobby_locked_big)` with the picture and bars hidden (`cacweaponsp.lua:505-535`, `:928-945`),
+the pick is refused, and `classrepair` drops a stored Peacekeeper. Screenshot
+`cac-editor-weapons-locked` matches `c-primary/007`. Conformance unchanged (weapons 1,994 cells,
+cac 0, gaps 12). The table gains `CacLocked`/`CacLockHint` (archive version bump, integrator).

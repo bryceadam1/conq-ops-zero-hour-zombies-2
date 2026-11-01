@@ -593,9 +593,36 @@ pub fn set_cac_slots(table: &mut Table, patch: &zhbo_formats::t6zone::Zone, name
             d.cac_name = row.and_then(|r| r.get(3)).and_then(|k| names.get(k.trim())).map(|s| s.trim().to_string()).unwrap_or_default();
             d.cac_sort = row.and_then(|r| r.get(9)).and_then(|c| c.trim().parse().ok()).unwrap_or(0);
             d.cac_index = item.index;
+            // Column 15 names the DLC that carries the item (`dlc1`, the Peacekeeper's); its
+            // unlock hint is `MENU_<DLC>_REQUIRED_HINT` (`GetUnlockStringForItemIndex`,
+            // `codbase.lua:3741-3770`). Shown only if the item is locked ([`lock_items_without_art`]).
+            let dlc = row.and_then(|r| r.get(15)).map(|c| c.trim().to_ascii_uppercase()).filter(|c| !c.is_empty());
+            d.cac_lock_hint = dlc.and_then(|dlc| names.get(&format!("MENU_{dlc}_REQUIRED_HINT"))).map(|s| s.trim().to_string()).unwrap_or_default();
             order_attachments(d, item);
         }
     }
+}
+
+/// Lock the Create-a-Class items whose art did not convert: `has_art` says whether a BO2 weapon's
+/// view model has its pictures in the install. The Peacekeeper's are `,name` stubs whose pixels
+/// only the Revolution DLC zone carries, so without the pack BO2 lists it locked
+/// (`c-primary/007`) — data, not a list of DLC weapons. A locked item stays listed, cannot be
+/// picked, and a stored class drops it (`zhbo_core::classrepair`).
+pub fn lock_items_without_art(table: &mut Table, bo2: &[Weapon], has_art: impl Fn(&Weapon) -> bool) {
+    for d in table.weapons.iter_mut().filter(|d| !d.cac_slot.is_empty()) {
+        if let Some(w) = bo2.iter().find(|w| w.name == d.id) {
+            d.cac_locked = !has_art(w);
+        }
+    }
+}
+
+/// Whether `model`'s art converts: at least half of its materials' colour maps have pixels
+/// (`resolve`). A gun whose own textures are stubs the install cannot fill fails even when a
+/// shared part (a sight's glow) resolves.
+pub fn model_art_converts(model: &zhbo_formats::xmodel::Model, resolve: impl Fn(&zhbo_formats::xmodel::Image) -> bool) -> bool {
+    let colour: Vec<&zhbo_formats::xmodel::Image> = model.materials.iter().flatten().filter_map(|m| m.color_map()).collect();
+    let found = colour.iter().filter(|i| resolve(i)).count();
+    colour.is_empty() || found * 2 >= colour.len()
 }
 
 /// Put a base weapon's offered attachments in BO2's attachment-grid order: the item's attachment
@@ -1223,6 +1250,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         cac_slot: String::new(),
         cac_group: String::new(),
         cac_name: String::new(),
+        cac_locked: false,
+        cac_lock_hint: String::new(),
         description: String::new(),
         cac_sort: 0,
         cac_index: 0,

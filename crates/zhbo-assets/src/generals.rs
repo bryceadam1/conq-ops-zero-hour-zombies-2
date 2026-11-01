@@ -277,6 +277,9 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     table.bonus_cards = crate::weapons::bonus_card_rows(&patch, &names);
     // Which weapons Create-a-Class offers, in which slot: the same statstable's weapon items.
     crate::weapons::set_cac_slots(&mut table, &patch, &names);
+    crate::weapons::lock_items_without_art(&mut table, &bo2, |w| {
+        w.view_model.as_deref().and_then(|m| viewmodels::find_model(&pool, m).ok()).is_none_or(|m| crate::weapons::model_art_converts(&m, |i| paks.resolve(i).is_some()))
+    });
     // The weapon groups' order (the editor's category order), from the UI Lua the conformance's
     // expected side reads.
     match zhbo_conformance::bo2::cac::weapon_groups(&patch, &patch_ui) {
@@ -1006,6 +1009,12 @@ mod tests {
         // R8d: every converted gun's bullet bucket has cells, and every cell names a converted
         // FXList. A row that points at nothing is a silent "no impact" in game, so it fails here.
         let table = zhbo_core::weapons::parse_full_table(&text(crate::weapons::TABLE_PATH)).unwrap();
+        // The Create-a-Class items whose art the install lacks are listed locked with their DLC's
+        // hint: the Peacekeeper's pictures are Revolution's (`c-primary/007`); every other item's
+        // art converts. Its combinations carry the base's lock, as they carry its other item fields.
+        let locked: Vec<(&str, &str)> = table.weapons.iter().filter(|d| d.cac_locked && d.attachments.is_empty()).map(|d| (d.id.as_str(), d.cac_lock_hint.as_str())).collect();
+        assert_eq!(locked, [("peacekeeper_mp", "Revolution DLC Pack required.")]);
+        assert!(table.weapons.iter().filter(|d| d.cac_locked).all(|d| zhbo_core::attachments::split_id(&d.id).0 == "peacekeeper_mp"));
         let impacts = text(zhbo_core::names::IMPACT_FX_PATH);
         let effects_ini = text("Data\\INI\\FXList\\ZHBO_BO2_Effects.ini");
         // 5b: every def-level sound the table names (raise, putaway, zoom, melee, fire start/last,

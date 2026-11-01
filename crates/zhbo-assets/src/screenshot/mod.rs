@@ -102,6 +102,7 @@ fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> 
         ("cac-editor", editor_prims()),
         ("cac-editor-empty", empty_editor_prims()),
         ("cac-editor-weapons", weapon_picker_prims()),
+        ("cac-editor-weapons-locked", locked_weapon_prims()),
         ("cac-editor-attachments", attachment_picker_prims()),
         ("cac-editor-wildcards", wildcard_picker_prims()),
         ("cac-editor-perks", perk_picker_prims()),
@@ -275,6 +276,27 @@ fn empty_editor_prims() -> Vec<Prim> {
 /// (`c-primary/001`).
 fn weapon_picker_prims() -> Vec<Prim> {
     let editor = editor_state();
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// The primary list walked right (the real edge fold) onto the first locked item: BO2's lock on the
+/// card, the picture and bars hidden, the unlock hint under it (`c-primary/007`, the Peacekeeper
+/// without Revolution). The plain list when the archive locks nothing.
+fn locked_weapon_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    let mut prev = MenuPrev::default();
+    let mut pointer = MenuPointer { screen_w: size().0, screen_h: size().1, ..Default::default() };
+    for _ in 0..16 {
+        if editor.option_weapon(editor.option).is_some_and(|d| d.cac_locked) {
+            break;
+        }
+        for down in [true, false] {
+            pointer.keys = KeySet::default();
+            pointer.keys.set_down(Key::Right, down);
+            classui::editor_frame(&mut editor, &pointer, &prev);
+            prev.update(&pointer);
+        }
+    }
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
 }
 
