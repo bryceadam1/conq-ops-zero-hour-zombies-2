@@ -634,6 +634,31 @@ mod tests {
         assert!(vol("ZHBO_BO2_Fire") > vol("ZHBO_BO2_Step"), "the shot over a footstep");
     }
 
+    /// Needs the player's BO2 install. The menu cues the converter leaves missing are in no bank
+    /// of any zone t6mp loads: its zone list (`FUN_00597ed0`) appends the mode suffix `_mp` to
+    /// `code_pre_gfx`, `code_post_gfx`, `patch`, `patch_ui`, `common`, and the shell adds `ui_mp`;
+    /// SP's `code_post_gfx` holds seven of them (`spl_code_post_gfx`), the rest exist in no zone of
+    /// the install at all. BO2's MP menus hash-miss them and play nothing, as the mod does.
+    #[test]
+    #[ignore]
+    fn the_missing_menu_cues_are_in_no_mp_zone() {
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let zones = ["code_pre_gfx_mp", "code_post_gfx_mp", "patch_mp", "patch_ui_mp", "common_mp", "ui_mp", "common_patch_mp"];
+        let banks: Vec<Bank> = zones
+            .iter()
+            .filter_map(|z| crate::generals::load_zone(&dir, z).ok())
+            .flat_map(|z| sndalias::banks(&z).unwrap_or_default())
+            .collect();
+        assert!(banks.iter().any(|b| b.name.starts_with("mpl_code_post_gfx")), "the MP shell bank loaded");
+        let present = |alias: &str| banks.iter().any(|b| b.alias(alias).is_some_and(|a| !a.variants.is_empty()));
+        let missing: Vec<&str> = zhbo_core::sounds::UiCue::ALL.iter().map(|c| c.alias()).filter(|a| !present(a)).collect();
+        assert!(missing.contains(&"uin_main_nav") && missing.contains(&"cac_cmn_item_remove"), "{missing:?}");
+        let sp = crate::generals::load_zone(&dir, "code_post_gfx").unwrap();
+        let sp_banks = sndalias::banks(&sp).unwrap();
+        assert!(sp_banks.iter().any(|b| b.name.starts_with("spl_") && b.alias("uin_main_nav").is_some()), "SP-only");
+        println!("{} menu cues in no MP zone: {missing:?}", missing.len());
+    }
+
     #[test]
     fn events_are_well_formed() {
         let e = audio_event("ZHBO_BO2_Fire", &["zhbo_bo2_fire_0".into()], 100, Kind::Player, 3, None);

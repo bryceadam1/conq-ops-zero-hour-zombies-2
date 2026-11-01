@@ -4973,3 +4973,19 @@ centre and surrounds at −3 dB, and does not mix the LFE channel (Microsoft's X
 `IXAudio2Voice::SetOutputMatrix` / default channel-mapping documentation). `mixer::stereo_fold`
 is that matrix: `front + 0.707·(back + centre)`, LFE-only pans (`wpn_*_lfe`, `*_LFE_npc`) silent.
 The thump of the LFE-layer item survives only on 5.1 output in BO2, which the mod does not have.
+
+## The 26 missing menu cues are silent in BO2's MP too (2026-10-31, `v1/sound-mixer`)
+
+The converter reports 26 `UiCue` aliases missing (`uin_main_nav`, `uin_navigation_*`,
+`uin_slider_*`, `cac_cmn_item_remove`, …). Searched every zone of the install (all 115 in
+`zone/all` plus `zone/english`): seven exist only in SP's `code_post_gfx.ff`
+(`spl_code_post_gfx.all`: `uin_main_nav`, `uin_cmn_backout`, `uin_loadout_nav`, `uin_main_enter`,
+`uin_slide_nav_*`); the other 19 are in no bank anywhere. t6mp never loads the SP zone: its zone
+list (`FUN_00597ed0`) appends the mode suffix — the 4 bytes at `PTR_DAT_00b27cb8` are `"_mp"` —
+to `code_pre_gfx`, `code_post_gfx`, `patch`, `patch_ui`, `common`, so it loads
+`code_post_gfx_mp` (`mpl_code_post_gfx.all`, 87 aliases, none of the 26). BO2's MP menus
+hash-miss them and play nothing (the explosion-sounds entry's `FUN_0082df80` negative cache),
+which is what the mod does; extending the bank search to the SP zone would add sounds BO2's MP
+never plays, so the search is unchanged. They were missing before this branch as well: the bank
+search (`UI_ZONES` + `mpl_common`) is the same, and none of those banks holds them. Real-install
+test: `the_missing_menu_cues_are_in_no_mp_zone`.
