@@ -309,8 +309,10 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   `mp/weaponoptions.csv` `reticle` rows (`t6mp` `FUN_00529360`: column 3 per optic, column 5 the
   reflex's RMR) as one material set per optic column in row order, row 0 the stock material the
   optic's model carries; `nativevm::apply_reticle` swaps each lens surface whose stock material
-  starts a set. The reticle fades with `ZhboNativeIn.ads` (BO2's `fWeaponPosFrac`); nothing in
-  the mod knocks optics out, so `optics_off` is 0. While the native viewmodel draws a lens
+  starts a set. The reticle fades with `ZhboNativeIn.ads` (BO2's `fWeaponPosFrac`). Nothing in
+  the mod knocks a player's optics out, so `optics_off` stays 0: the sim's EMP grenade
+  (`Effect::Emp`, `projectiles.rs`) disables only non-infantry objects (vehicles and structures,
+  `disable_kind::EMP`) and never the General, whom BO2's EMP would blind. While the native viewmodel draws a lens
   reticle, the HUD's 2D optic reticle (the W3D fallback's stand-in) stays out
   (`nativevm::lens_reticle_drawn`, per thread). The clan tag draws as BO2 does for a player
   without one: its shader's four glyph indices are all 0 (`FUN_0052a010`), so the converter bakes

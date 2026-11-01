@@ -4719,3 +4719,9 @@ sweep; it needs its own port.
 **Follow-up: the faction emblem** is converted from the player's Zero Hour install (CONTRACT.md):
 `MappedImage <Side>_Logo` in `Data\INI\MappedImages\TextureSize_512\SCShellUserInterface512.INI`,
 48 × 48 on `Data\English\Art\Textures\SCShellUserInterface512_006.tga` (`EnglishZH.big`).
+
+**Follow-up: the EMP.** BO2 hides the reticle while the player is EMP'd (`weaponParam0.y`, the
+`FUN_0051f0a0` player-state flag). The sim's EMP grenade (`projectiles.rs`, `Effect::Emp`) is
+Zero Hour's: it disables non-infantry objects only (`host.disable(.., disable_kind::EMP, ..)`
+skips anything with `objflags::INFANTRY`), so the General is never EMP'd and has no such state.
+`NativeFrame.optics_off` stays plumbed at 0; a player-side EMP effect would drive it.
