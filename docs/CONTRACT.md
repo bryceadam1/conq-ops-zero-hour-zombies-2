@@ -888,6 +888,10 @@ order after `ads_only`), `.zbw` `thirdperson::WEAPON_VERSION` 3 (part `camo`), `
 `model::VERSION` 4 (the camo layer, `specular`, `reticle`, `emblem`), `.zcm` `camo::VERSION` 2.
 Polish round 1 moved only the archive: `hud::VERSION` 79 (the weapon table's `OverlaySize` key and
 the atlas/backing changes); the ABI and the blob formats are unchanged.
+Polish round 2 again moved only the archive: `hud::VERSION` 80 (the weapon table's `FireSoundNpc`,
+`CacName`, `CacLocked` and `CacLockHint` keys, the weapons resolved over the `MP_POOL` zones with
+the Peacekeeper, the store reticles and the localized labels); the ABI and the blob formats are
+unchanged.
 
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 
