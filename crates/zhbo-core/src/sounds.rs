@@ -39,6 +39,16 @@ pub fn left_fire_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
         fire_for(def)
     }
 }
+
+/// A melee's swing: the melee weapon's own converted BO2 sound, else the class melee weapon's
+/// (the global swing, converted from [`crate::weapons::CLASS_MELEE`]).
+pub fn melee_for(def: &crate::weapons::WeaponDef) -> &str {
+    if !def.melee_sound.is_empty() {
+        def.melee_sound.as_str()
+    } else {
+        MELEE_SWING
+    }
+}
 /// The empty magazine's click for a weapon: its own converted BO2 sound, else the generic event.
 pub fn dry_fire_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
     if !def.empty_fire_sound.is_empty() {

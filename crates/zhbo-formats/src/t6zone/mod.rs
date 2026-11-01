@@ -524,12 +524,13 @@ impl Zone {
         name_offset(asset.structure).map(|o| self.str_ptr(asset.addr + o))
     }
 
-    /// Find an asset by type number and name (a leading ',' marks a reference and is ignored).
+    /// Find an asset by type number and name (a leading ',' marks a reference and is ignored). The
+    /// exact spelling first, then ignoring ASCII case: BO2's asset lookup folds case, and its own
+    /// data relies on it (`knife_mp` names `viewmodel_M4m203_knife_melee_1`, which `common_mp`
+    /// holds as `viewmodel_m4m203_knife_melee_1`).
     pub fn find(&self, kind: u32, name: &str) -> Option<&Asset> {
-        self.assets
-            .iter()
-            .filter(|a| a.kind == kind)
-            .find(|a| self.asset_name(a).is_some_and(|n| n.trim_start_matches(',') == name))
+        let named = |a: &&Asset, eq: &dyn Fn(&str) -> bool| a.kind == kind && self.asset_name(a).is_some_and(|n| eq(n.trim_start_matches(',')));
+        self.assets.iter().find(|a| named(a, &|n| n == name)).or_else(|| self.assets.iter().find(|a| named(a, &|n| n.eq_ignore_ascii_case(name))))
     }
 
     /// Every address holding `name` as a NUL-terminated string (an inline struct's name).
@@ -574,5 +575,18 @@ mod tests {
             assert!(loaded.trailing_bytes < 64, "{name}: {} bytes left over", loaded.trailing_bytes);
             assert!(!loaded.assets.is_empty());
         }
+    }
+
+    /// A def's anim name finds its asset whatever the case, as BO2's lookup does: `knife_mp` names
+    /// `viewmodel_M4m203_knife_melee_1`, stored lower-case. Needs the BO2 install.
+    #[test]
+    #[ignore]
+    fn an_asset_is_found_ignoring_case() {
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR");
+        let file = std::fs::read(std::path::Path::new(&dir).join("zone/all/common_mp.ff")).unwrap();
+        let zone = super::load(&crate::fastfile::read(&file).unwrap()).unwrap();
+        let exact = zone.find(crate::fastfile::ASSET_XANIM, "viewmodel_m4m203_knife_melee_1").expect("the stored spelling");
+        let folded = zone.find(crate::fastfile::ASSET_XANIM, "viewmodel_M4m203_knife_melee_1").expect("the def's spelling");
+        assert_eq!(exact.addr, folded.addr);
     }
 }

@@ -65,9 +65,11 @@ pub fn weapon_categories(editor: &Editor) -> Vec<Category> {
     let mut out: Vec<Category> = Vec::new();
     for i in 0..editor.options().len() {
         let Some(def) = editor.option_weapon(i) else { continue };
-        match out.iter_mut().find(|c| c.class == def.class) {
+        // BO2's statstable group, not the weapon's class: the Ballistic Knife is a SPECIAL.
+        let class = def.cac_class();
+        match out.iter_mut().find(|c| c.class == class) {
             Some(c) => c.options.push(i),
-            None => out.push(Category { class: def.class, name: category_name(def.class), options: vec![i] }),
+            None => out.push(Category { class, name: category_name(class), options: vec![i] }),
         }
     }
     out.sort_by_key(|c| order.iter().position(|x| *x == c.class).unwrap_or(usize::MAX));

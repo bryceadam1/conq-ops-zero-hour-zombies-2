@@ -15,18 +15,7 @@ const POINTS: [&str; 6] = ["none", "top", "bottom", "trigger", "muzzle", "gunper
 
 /// The CaC group a mod class lists under (statstable's groups).
 pub fn group_of(c: Class) -> &'static str {
-    match c {
-        Class::Rifle => "weapon_assault",
-        Class::Smg => "weapon_smg",
-        Class::Lmg => "weapon_lmg",
-        Class::Sniper => "weapon_sniper",
-        Class::Shotgun => "weapon_cqb",
-        Class::Pistol => "weapon_pistol",
-        Class::Launcher => "weapon_launcher",
-        Class::Special => "weapon_special",
-        Class::Lethal | Class::Tactical | Class::Equipment => "weapon_grenade",
-        Class::Melee => "",
-    }
+    c.cac_group()
 }
 
 /// The BO2 material a fixed CaC sprite is converted from (`cac::SPRITES`).
@@ -75,8 +64,9 @@ pub fn rows(shipped: &Shipped, bo2_dir: &std::path::Path, schema: &Schema) -> Re
                 continue;
             }
             let slots = slots_of(id);
-            let group = group_of(d.class);
-            let order = ids[..i].iter().filter(|x| cat.get(x).is_some_and(|e| group_of(e.class) == group)).count() as i64;
+            // The editor's category (`WeaponDef::cac_class`: BO2's statstable group).
+            let group = group_of(d.cac_class());
+            let order = ids[..i].iter().filter(|x| cat.get(x).is_some_and(|e| group_of(e.cac_class()) == group)).count() as i64;
             let image = shipped.has_sprite(&zhbo_core::names::cac_weapon_image(id)).then(|| images.get(&reference).cloned()).flatten();
             let cost = cost_of(|dr| if slot == "secondary" { dr.secondary = id.to_string() } else if slot == "primary" { dr.primary = id.to_string() } else if slot == "primarygrenade" { dr.lethal = id.to_string() } else { dr.tactical = id.to_string() });
             out.push(row(schema, "weapon", &reference, |b| {

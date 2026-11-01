@@ -496,6 +496,22 @@ fn the_weapon_list_opens_on_the_held_guns_category() {
     assert_eq!(cats[active].options[0], e.option, "and on the held gun itself");
 }
 
+#[test]
+fn a_weapon_lists_under_its_statstable_group_not_its_class() {
+    // The Ballistic Knife is a pistol (BO2's weapClass, its sounds and range) that BO2's
+    // statstable lists under weapon_special: the secondary list shows it among the SPECIALS.
+    let knife = weapons::weapon("knife_ballistic_mp");
+    assert_eq!((knife.class, knife.cac_class()), (WeaponClass::Pistol, WeaponClass::Special));
+    let mut e = Editor::new(Draft::default());
+    e.slot = Slot::Secondary;
+    e.picking = true;
+    let cats = weapon_categories(&e);
+    let at = |id: &str| (0..e.options().len()).find(|&i| e.option_weapon(i).is_some_and(|d| d.id == id)).expect(id);
+    let of = |id: &str| cats[category_of(&cats, at(id))].name;
+    assert_eq!(of("knife_ballistic_mp"), "SPECIALS");
+    assert_eq!(of("fiveseven_mp"), "PISTOLS");
+}
+
 /// A two-category list, as BO2's primary list is: the helpers walk it without the catalog.
 fn two_categories() -> Vec<Category> {
     vec![

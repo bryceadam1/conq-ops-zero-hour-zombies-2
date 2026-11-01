@@ -85,6 +85,32 @@ mod tests {
         catalog::clear_unresolved();
     }
 
+    /// BO2 melees with the class melee weapon (`knife_mp`, given to every class) while a gun is up,
+    /// and with the knife itself while the held knife is up.
+    #[test]
+    fn a_gun_melees_with_the_class_melee_weapon_and_the_held_knife_with_itself() {
+        let mut rng = Rng::new(1);
+        let class_melee = weapon(CLASS_MELEE);
+        let mut a = Arsenal::new();
+        a.raise_left = 0.0;
+        assert!(a.current().def.class.is_gun());
+        assert_eq!(a.class_melee.id, CLASS_MELEE);
+        let mut out = Vec::new();
+        a.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
+        assert!(out.iter().any(|x| matches!(x, WeaponAction::Melee { damage } if *damage == class_melee.melee_damage)));
+        assert_eq!(a.melee_left, class_melee.melee_time);
+        assert_eq!(a.current_weapon().id, CLASS_MELEE, "the current weapon while meleeing");
+
+        let mut k = Arsenal::unarmed();
+        let held = k.current().def;
+        assert_eq!(held.id, "knife_held_mp");
+        assert_ne!(held.melee_time, class_melee.melee_time, "the stand-ins differ");
+        out.clear();
+        k.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
+        assert_eq!(k.melee_left, held.melee_time);
+        assert_eq!(k.melee_weapon().id, "knife_held_mp");
+    }
+
     #[test]
     fn the_unarmed_kit_is_knife_only_and_the_base_kit_is_untouched() {
         let a = Arsenal::unarmed();

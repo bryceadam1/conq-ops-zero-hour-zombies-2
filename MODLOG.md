@@ -6516,3 +6516,93 @@ side reports the mod's fallback as it is; nothing was changed to match.
 else nothing; `nativevm::clip_for` no longer falls back for those left ids (other left ids keep
 the left-idle fallback). The `_lh` tables have no slot 1, so `FINALSHOT_LEFT` is empty as in BO2:
 weapons 804,389 → 804,384 (`anim_finalshot_left` 5 → 0), gap clusters 205 → 204; nothing else moved.
+
+## The class melee weapon: every class gets `knife_mp`, and a gun melees with it (2026-10-31, `v1/cac-leftovers`)
+
+BO2 gives every class two knives (`_class.gsc:586`, `:680-686`): `knife_mp`, inventory type
+*melee*, always — the weapon the melee button strikes with whatever gun is up — and
+`knife_held_mp`, inventory type *primary*, a knife in the hand (given when the class has fewer than
+two weapons). A melee weapon strikes with itself; anything else with `knife_mp`
+(`_scoreevents.gsc:375`; the oracle's rule in `bo2/rows.rs`). The mod had one knife,
+`knife_held_mp`, for both, so every gun meleed in the held knife's 450 ms with its
+`wpn_com_knife_whoosh_plr`, where BO2 takes 800 ms and plays `wpn_melee_whoosh_plr`.
+
+* Core: `weapons::CLASS_MELEE` (`knife_mp`, the script's own literal), `class_melee` (the held
+  knife when an old archive has none) and the rule `melee_weapon(held, class_melee)`.
+  `Arsenal::class_melee` / `Arsenal::melee_weapon` drive the melee's time, damage, the current
+  weapon while meleeing (the specialty test), the viewmodel (the class melee weapon's own `MELEE`
+  clip) and the swing. `Loadout::viewmodels` includes it. A built-in stand-in `knife_mp` (generic
+  values, slower than the held one) keeps the headless tests real.
+* Sounds: `WeaponDef::melee_sound` (table field `MeleeSound`): each melee weapon's own swing event
+  (`ZHBO_BO2_MeleeSwing_<id>`); the global `MELEE_SWING` is now the class melee weapon's
+  (it was the held knife's). `sounds::melee_for(def)`; the client plays it for the local
+  player's melee weapon, the overhead General's ZH melee weapon fires its own.
+* Converter: `knife_mp` is a player weapon (it was excluded) and in the base set.
+* Gotcha: `knife_mp`'s def names `viewmodel_M4m203_knife_melee_1`; `common_mp` stores it as
+  `viewmodel_m4m203_knife_melee_1`. BO2's asset lookup folds case (its own data needs it), ours
+  did not, so the clip fell back to the idle loop. `t6zone::Zone::find` now tries the exact
+  spelling, then ASCII-case-insensitively.
+* Not done here: the held knife as a second weapon when a class has fewer than two (`_class.gsc:680`
+  — the mod gives it only to a gunless kit); the 125 ms `melee_delay` (the mod strikes on the
+  press); the third-person RTS melee still shows the held knife's template.
+* The archive's weapon table gains a field (`MeleeSound`), and its weapon list a weapon: the
+  archive VERSION must bump (integrator).
+
+Measured (conformance CLI vs `v1/cac-structure`): weapons 804,392 → 781,252 cells
+(`melee_time` 11,596 → 0, `melee_swipe_sound_player` 11,596 → 0, `inventory` 1 → 0: the held knife
+is now a primary-inventory weapon; the new `knife_mp` row brings its own cells — +1 in each column
+the mod lacks for every row, plus `fire_time`/`shot_count`/`ads_in_time`/`damage_range`, which
+describe a gun-shaped knife def the mod never fires); one-sided rows 8/0 → 7/0; gap clusters 207 →
+204. `knife_mp`'s `anim_melee`/`anim_melee_charge` now hold the right clip but still differ by
+case (`viewmodel_M4m203…` vs the asset's `viewmodel_m4m203…`): the differ compares names as text.
+
+## Create-a-Class categories are BO2's statstable groups (2026-10-31, `v1/cac-leftovers`)
+
+The editor grouped its weapon lists by the weapon's class, so the Ballistic Knife (BO2 weapClass
+`pistol`) sat under PISTOLS; BO2's statstable lists it in group `weapon_special` (column 2), so
+its CaC shows it among the SPECIALS. The class stays what it is — it is BO2's `weapClass`
+(the conformance `weap_class`, the pistol shot fallback, the RTS range) — and the group is carried
+beside it: `WeaponDef::cac_group` (table field `CacGroup`), set by `set_cac_slots` from the same
+`combos::items` parse; `WeaponDef::cac_class()` maps it back to the category (`Class::cac_group`,
+the one class↔group table, which the conformance emitter now uses too). `classui::weapon_categories`
+and the conformance cac `group`/`order` follow `cac_class`. A stand-in `knife_ballistic_mp` (a
+pistol in `weapon_special`) pins it headless. The table gains a field: the archive VERSION must
+bump (integrator).
+
+Measured: weapons 781,252 → 781,251 (`cac_group` 1 → 0), cac 556 → 555 (`group` 1 → 0), gap
+clusters 204 → 202; nothing else moved.
+
+## The last BO2-only weapon rows and the wildcard slot: findings (2026-10-31, `v1/cac-leftovers`)
+
+* With `knife_mp` converted, `conformance_the_enumerator_matches_the_expected_rows` passes.
+* Six of the seven remaining BO2-only rows — claymore, Bouncing Betty, C4, Tactical Insertion,
+  Trophy System, Black Hat — are converted and played by `equipment.rs` already; the editor never
+  lists them because `classmenu::offer` filters offhands by `Class::Lethal`/`Tactical` and these are
+  `Class::Equipment` (`classrepair::repair_offhand` even clears a stored claymore). BO2 lists them
+  by statstable slot (`primarygrenade`/`specialgrenade`), which their defs already carry in
+  `cac_slot`. The Assault Shield is a BO2 *primary* (`weapon_special`) the converter excludes
+  (`EXCLUDED_WEAPONS`) and the sim has no blocking or deploy for — real new content.
+* The wildcard `slot` (statstable column 13, `bonuscard1..7`, `Engine.GetLoadoutSlotForItem`) has
+  no consumer for bonus cards: the editor equips into the class's three slots
+  (`cacutility.lua:50-52`), mutual exclusion is by name (`bonuscardgridbutton.lua:239-275`), and
+  GSC's `isbonuscardactive` indices do not follow it (`_challenges.gsc:341,730`). The mod's
+  wildcards are a core enum, so emitting it needs the statstable's bonus-card rows carried as data
+  (beside `perk_rows`) — queued as "wildcards from the statstable", not done here.
+
+## Conformance: asset names are compared in their canonical case (2026-10-31, branch `v1/asset-case`)
+
+A generator artifact, not a parity gap. BO2 resolves asset names case-insensitively (the zone
+lookup folds case — `t6zone::Zone::find` now does too — and the sound hash lowercases the name), so
+`knife_mp`'s `viewmodel_M4m203_knife_melee_1` (as its def spells it) and the zone's
+`viewmodel_m4m203_knife_melee_1` are one asset; the two sides differed only in which spelling they
+copied. Schema columns that name assets (xmodels, xanims, sound aliases, effects, materials, camos,
+tracers; the cac `image`) are now marked `asset`, and `RowBuilder` writes their cells lowercased for
+both sides — the canonical form, as rotations are canonical quaternions. Text that is not an asset
+name (localized strings, enums, tags, weapon names) keeps its case, and the differ still compares
+exactly. The schema CSV labels those columns "asset names, lowercased".
+
+Measured against `v1/cac-leftovers`: weapons 781,251 → 781,249 cells (exactly `knife_mp`'s
+`anim_melee` and `anim_melee_charge`), no cell newly differs, cac unchanged, gap clusters 202
+unchanged. Verified: `cargo test -p zhbo-conformance` (new
+`asset_names_are_written_lowercased_and_other_text_is_not`), clippy adds no warning in the crate,
+the conformance CLI as measured. Nothing the mod ships changed.

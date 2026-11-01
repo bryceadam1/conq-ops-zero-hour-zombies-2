@@ -188,7 +188,7 @@ pub fn schema() -> Schema {
         .col("projectile_speed", "damage", inch, "iProjectileSpeed (inches/s)")
         .col("projectile_speed_up", "damage", inch, "iProjectileSpeedUp")
         .col("projectile_impact_explode", "damage", Kind::Bool, "bProjImpactExplode")
-        .col("projectile_model", "damage", Kind::Text, "projectileModel")
+        .col("projectile_model", "damage", Kind::Text, "projectileModel").asset()
         .col("impact_type", "damage", Kind::Text, "ImpactType");
 
     // Spread.
@@ -249,16 +249,16 @@ pub fn schema() -> Schema {
         .col("ads_bob_factor", "viewpos", f, "fAdsBobFactor");
 
     // Crosshair and the scope overlay.
-    s.col("reticle_center", "reticle", Kind::Text, "reticleCenter material")
-        .col("reticle_side", "reticle", Kind::Text, "reticleSide material")
+    s.col("reticle_center", "reticle", Kind::Text, "reticleCenter material").asset()
+        .col("reticle_side", "reticle", Kind::Text, "reticleSide material").asset()
         .col("reticle_sizes", "reticle", Kind::List, "iReticleCenterSize, iReticleSideSize, iReticleMinOfs")
         .col("reticle_fracs", "reticle", v3, "fHipReticleSidePos, fAdsCrosshairInFrac, fAdsCrosshairOutFrac")
         .col("keep_crosshair_when_ads", "reticle", Kind::Bool, "bKeepCrosshairWhenADS")
-        .col("overlay_material", "overlay", Kind::Text, "first unique differing from the base unique, else the variant's (FUN_008ed570)")
-        .col("overlay_material_low_res", "overlay", Kind::Text, "same rule (FUN_008ed5f0)")
+        .col("overlay_material", "overlay", Kind::Text, "first unique differing from the base unique, else the variant's (FUN_008ed570)").asset()
+        .col("overlay_material_low_res", "overlay", Kind::Text, "same rule (FUN_008ed5f0)").asset()
         .col("overlay_reticle", "overlay", Kind::Text, "weapOverlayReticle_t, same rule over the def's (FUN_008ed670)")
-        .col("hud_icon", "overlay", Kind::Text, "hudIcon material")
-        .col("dpad_icon", "overlay", Kind::Text, "the variant's dpadIcon material");
+        .col("hud_icon", "overlay", Kind::Text, "hudIcon material").asset()
+        .col("dpad_icon", "overlay", Kind::Text, "the variant's dpadIcon material").asset();
 
     // Alt mode, dual wield, flags, specialties.
     s.col("alt_weapon", "alt", Kind::Text, "the first single unique's alt weapon, else the variant's (FUN_008ec9e0)")
@@ -266,7 +266,7 @@ pub fn schema() -> Schema {
         .col("alt_weapon_disable_switching", "alt", Kind::Bool, "the def's OR any attachment's (FUN_008ecb60)")
         .col("dual_wield", "dualwield", Kind::Bool, "the def's OR any attachment's (FUN_008eb9c0)")
         .col("dual_wield_weapon", "dualwield", Kind::Text, "the left gun: the first single unique's, else the def's (FUN_008eca70)")
-        .col("dual_wield_view_model", "dualwield", Kind::Text, "the left gun's gunXModel[0]")
+        .col("dual_wield_view_model", "dualwield", Kind::Text, "the left gun's gunXModel[0]").asset()
         .col("silenced", "flags", Kind::Bool, "the variant's OR any attachment's (FUN_008eba20)")
         .col("laser_sight", "flags", Kind::Bool, "the def's OR any attachment's (FUN_008ebb00)")
         .col("infrared", "flags", Kind::Bool, "the variant's OR any attachment's (FUN_008ebb70)")
@@ -277,16 +277,16 @@ pub fn schema() -> Schema {
         .col("specialties", "perks", Kind::Set, "specialty bit indices: the variant's perks OR every attachment's (FUN_008ecf10, G1)");
 
     // The first-person parts (G14 §3) and what they draw.
-    s.col("view_model", "parts", Kind::Text, "gunXModel[0]")
-        .col("view_part_models", "parts", Kind::List, "hip draw: base attachViewModel slots then each attachment's resolved unique (and its additional model)")
+    s.col("view_model", "parts", Kind::Text, "gunXModel[0]").asset()
+        .col("view_part_models", "parts", Kind::List, "hip draw: base attachViewModel slots then each attachment's resolved unique (and its additional model)").asset()
         .col("view_part_tags", "parts", Kind::List, "each part's tag (`j_gun` when the authored one is empty)")
         .col("view_part_offsets", "parts", Kind::Floats(INCH_EPS), "each part's offset, x,y,z flattened, inches")
         .col("view_part_rotations", "parts", Kind::Floats(QUAT_EPS), "each part's rotation as a unit quaternion x,y,z,w (w >= 0), flattened; BO2's pitch,yaw,roll degrees through the engine's AnglesToAxis")
-        .col("view_ads_part_models", "parts", Kind::List, "ADS draw: the same list with attachViewModel[7] / viewModelADS swaps")
+        .col("view_ads_part_models", "parts", Kind::List, "ADS draw: the same list with attachViewModel[7] / viewModelADS swaps").asset()
         .col("view_hide_tags", "hide", Kind::Set, "the merged hideTags (G14 §4, FUN_008ec1a0)")
-        .col("view_part_materials", "materials", Kind::List, "each hip part's LOD0 surface materials, `;`-joined per part")
-        .col("world_model", "worldparts", Kind::Text, "worldModel[0]")
-        .col("world_part_models", "worldparts", Kind::List, "third person: base attachWorldModel slots then each attachment's resolved unique (FUN_008ace30)")
+        .col("view_part_materials", "materials", Kind::List, "each hip part's LOD0 surface materials, `;`-joined per part").asset()
+        .col("world_model", "worldparts", Kind::Text, "worldModel[0]").asset()
+        .col("world_part_models", "worldparts", Kind::List, "third person: base attachWorldModel slots then each attachment's resolved unique (FUN_008ace30)").asset()
         .col("world_part_tags", "worldparts", Kind::List, "each world part's tag")
         .col("world_part_offsets", "worldparts", Kind::Floats(INCH_EPS), "each world part's offset, flattened, inches")
         .col("world_part_rotations", "worldparts", Kind::Floats(QUAT_EPS), "each world part's rotation as a unit quaternion x,y,z,w (w >= 0), flattened");
@@ -298,23 +298,23 @@ pub fn schema() -> Schema {
         } else {
             "the xanim this weapAnimFiles_t slot plays (G14 §5)"
         };
-        s.col(format!("anim_{name}"), "anims", Kind::Text, doc);
+        s.col(format!("anim_{name}"), "anims", Kind::Text, doc).asset();
     }
 
     // Sounds and effects.
     for name in OVERRIDE_SOUNDS {
-        s.col(name, "sounds", Kind::Text, "the def's alias unless the base unique's soundOverrides bit lets an attachment replace it (FUN_008ebe80)");
+        s.col(name, "sounds", Kind::Text, "the def's alias unless the base unique's soundOverrides bit lets an attachment replace it (FUN_008ebe80)").asset();
     }
     for name in DEF_SOUNDS {
-        s.col(name, "sounds", Kind::Text, "the def's alias");
+        s.col(name, "sounds", Kind::Text, "the def's alias").asset();
     }
     for name in EFFECTS {
-        s.col(name, "effects", Kind::Text, "the FxEffectDef; flash effects follow effectOverrides (FUN_008ec0c0)");
+        s.col(name, "effects", Kind::Text, "the FxEffectDef; flash effects follow effectOverrides (FUN_008ec0c0)").asset();
     }
-    s.col("tracer", "effects", Kind::Text, "the first unique's tracerType, else the def's (FUN_008eb420)");
+    s.col("tracer", "effects", Kind::Text, "the first unique's tracerType, else the def's (FUN_008eb420)").asset();
 
     // Camouflage and the CaC context of the row.
-    s.col("view_part_camos", "camo", Kind::List, "the WeaponCamo a class camo uses on the gun and each hip part: the def's for the gun and base parts, the attachment's single unique's for its parts (FUN_00529600)")
+    s.col("view_part_camos", "camo", Kind::List, "the WeaponCamo a class camo uses on the gun and each hip part: the def's for the gun and base parts, the attachment's single unique's for its parts (FUN_00529600)").asset()
         .col("cac_group", "cac", Kind::Text, "the CaC group the weapon lists under (statstable column 2: weapon_assault, weapon_smg, ...); `` for weapons CaC never offers")
         .col("cac_slot", "cac", Kind::Text, "statstable column 13: primary, secondary, primarygrenade, specialgrenade; `` for weapons CaC never offers")
         .col("cac_requires", "cac", Kind::Set, "the wildcards a class needs for this combination (G15: primarygunfighter for a primary's third attachment, secondarygunfighter for a secondary's second)");

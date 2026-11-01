@@ -304,7 +304,8 @@ pub fn check(def: &'static WeaponDef) -> Vec<String> {
     if def.class == Class::Melee {
         let mut a = Arsenal::new();
         a.raise_left = 0.0;
-        a.melee = def;
+        // A knife strikes with itself held, and is the class melee weapon a gun strikes with.
+        a.class_melee = def;
         let mut out = Vec::new();
         a.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
         if !out.iter().any(|x| matches!(x, WeaponAction::Melee { damage } if (*damage - def.melee_damage).abs() < 1e-3)) {

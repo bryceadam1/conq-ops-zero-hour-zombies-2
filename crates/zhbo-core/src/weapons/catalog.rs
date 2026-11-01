@@ -380,6 +380,15 @@ Weapon knife_held_mp
   Anims = 60200e6003f007f3804256
 End
 
+; The class melee weapon every class gets (BO2's `knife_mp`): a gun's melee strikes with it.
+; Generic values, slower than the held knife's so the tests tell the two apart.
+Weapon knife_mp
+  DisplayName = Knife
+  Class = melee
+  Melee = 135 0.75
+  Viewmodel = 4
+End
+
 ; `CacSlot` is the statstable slot each stand-in is a Create-a-Class item in (column 13).
 ; The five default classes (data/ConquerOps/classes.ini) name BO2's own guns, so those ids must
 ; resolve even with no converted table: they stand in at the schema's generic values (name and
@@ -427,6 +436,14 @@ Weapon fiveseven_mp
   Class = pistol
   CacSlot = secondary
   Allowed = dw=dw
+End
+
+; A pistol by class that BO2 lists under SPECIALS (its statstable group, `CacGroup`).
+Weapon knife_ballistic_mp
+  DisplayName = Ballistic Knife
+  Class = pistol
+  CacSlot = secondary
+  CacGroup = weapon_special
 End
 
 ; What a class with the Five-seven and Dual Wield gets: no CaC item of its own.
