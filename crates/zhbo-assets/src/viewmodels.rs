@@ -227,9 +227,14 @@ pub fn combo<'a>(w: &'a zhbo_formats::weapon::Weapon, atts: &[zhbo_formats::weap
     // (BO2 then plays the idle); a unique's name without its bit is never read.
     let base = w.single_unique(0);
     let optic_kind = combo_kinds.iter().find(|(_, p)| *p == 1).map(|(k, _)| *k);
-    let alt_ads_only = combo_kinds.iter().any(|(kind, _)| {
-        atts.iter().find(|a| a.kind == *kind).is_some_and(|a| a.alt_weapon_ads_only)
-    });
+    // Tier 2 is an ALT-MODE rule (`FUN_008eddb0` tests the def's `inventoryType == ALTMODE` before
+    // `FUN_008ecb00`): the parent of an ADS-only alt (`an94_mp+dualoptic`) is not an alt mode, so
+    // its alt raise/drop and ADS slots resolve through the tiers like any other slot (the dual
+    // optic's `rmr_alt_raise_up`/`rmr_top_ads_up`).
+    let alt_mode = w.inventory == zhbo_formats::weapon::inventory::ALTMODE;
+    let alt_ads_only = alt_mode
+        && (w.alt_weapon_ads_only
+            || combo_kinds.iter().any(|(kind, _)| atts.iter().find(|a| a.kind == *kind).is_some_and(|a| a.alt_weapon_ads_only)));
     let priority = |kind: u32| -> i32 {
         atts.iter().find(|a| a.kind == kind).map_or(0, |a| a.first_raise_priority)
     };
@@ -271,6 +276,15 @@ pub fn combo<'a>(w: &'a zhbo_formats::weapon::Weapon, atts: &[zhbo_formats::weap
             // 5. The base unique's own clip (not the variant's).
             base.and_then(|u| u.anims.get(s).cloned().flatten())
         };
+    }
+    // `FUN_0052d540`: after the merge an alt mode puts back its own alt raise, alt drop and ADS
+    // down (slots 0x1A, 0x1B, 0x56), whatever the attachments override.
+    if alt_mode && !singles.is_empty() {
+        for s in [0x1A, 0x1B, 0x56] {
+            if let (Some(slot), Some(own)) = (anims.get_mut(s), w.anims.get(s)) {
+                *slot = own.clone();
+            }
+        }
     }
     // The hidden bones (`FUN_008ec1a0`, G14 §4), over the single uniques as `FUN_008eb360` lists
     // them (ascending kinds; a kind without a unique stands in as the base unique, except in the
@@ -1109,11 +1123,77 @@ mod tests {
         let att = Attachment { kind: 1, alt_weapon_ads_only: true, ..Default::default() };
         let mut u = AttachmentUnique { kind: 1, ..Default::default() };
         u.anims = vec![None; 0x58]; u.anims[0x1A] = Some("unique_alt_raise".into());
-        let mut w = Weapon { attachment_variants: vec![(1, "gl".into())], attachment_uniques: vec![u], ..Default::default() };
+        let mut w = Weapon {
+            inventory: zhbo_formats::weapon::inventory::ALTMODE,
+            attachment_variants: vec![(1, "gl".into())],
+            attachment_uniques: vec![u],
+            ..Default::default()
+        };
         w.anims = vec![None; 0x58]; w.anims[0x1A] = Some("variant_alt_raise".into());
         let w = with_bits(w);
         let c = super::combo(&w, &[att], &["gl"]);
         assert_eq!(c.anims[0x1A].as_deref(), Some("variant_alt_raise"), "the alt-mode slot keeps the variant's clip");
+    }
+
+    /// The dual optic's parent (`an94_mp+dualoptic`): its attachment is alt-ADS-only, but tier 2 is
+    /// an alt-mode rule (`FUN_008eddb0` checks `inventoryType == ALTMODE` first), so the parent's
+    /// alt raise and its ADS up/down/other-scope take the dual optic's clips, and the unique's
+    /// empty alt drop overrides to empty (BO2 then plays the idle).
+    #[test]
+    fn the_dual_optic_parent_takes_the_hybrids_alt_and_ads_clips() {
+        let att = Attachment { name: "dualoptic".into(), kind: 3, point: 1, alt_weapon_ads_only: true, ..Default::default() };
+        let mut u = AttachmentUnique { kind: 3, ..Default::default() };
+        u.anims = vec![None; 0x58];
+        u.anims[0x1A] = Some("rmr_alt_raise_up".into());
+        u.anims[0x55] = Some("rmr_top_ads_up".into());
+        u.anims[0x56] = Some("rmr_top_ads_down".into());
+        u.anims[0x57] = Some("rmr_bottom_ads_up".into());
+        let mut w = Weapon {
+            inventory: zhbo_formats::weapon::inventory::PRIMARY,
+            attachment_variants: vec![(3, "dualoptic".into())],
+            attachment_uniques: vec![u],
+            ..Default::default()
+        };
+        w.anims = vec![None; 0x58];
+        w.anims[0x1A] = Some("pullout".into());
+        w.anims[0x1B] = Some("putaway".into());
+        w.anims[0x55] = Some("ads_up".into());
+        let mut w = with_bits(w);
+        w.attachment_uniques[0].anim_overrides[0] |= 1 << 0x1B; // a set bit with an empty name
+        let c = super::combo(&w, &[att], &["dualoptic"]);
+        assert_eq!(c.anims[0x1A].as_deref(), Some("rmr_alt_raise_up"));
+        assert_eq!(c.anims[0x1B], None, "the empty override wins over the variant's putaway");
+        assert_eq!(c.anims[0x55].as_deref(), Some("rmr_top_ads_up"));
+        assert_eq!(c.anims[0x56].as_deref(), Some("rmr_top_ads_down"));
+        assert_eq!(c.anims[0x57].as_deref(), Some("rmr_bottom_ads_up"));
+    }
+
+    /// A launcher's parent (`an94_mp+gl`) takes the launcher unique's alt raise/drop; its alt mode
+    /// (`gl_an94_mp`) puts its own 0x1A/0x1B/0x56 back after the merge (`FUN_0052d540`), even for
+    /// an attachment that is not ADS-only.
+    #[test]
+    fn the_launcher_parent_takes_its_clips_and_the_alt_mode_restores_its_own() {
+        let att = Attachment { name: "gl".into(), kind: 11, point: 2, ..Default::default() };
+        let mut u = AttachmentUnique { kind: 11, ..Default::default() };
+        u.anims = vec![None; 0x58];
+        u.anims[0x1A] = Some("gl_alt_raise".into());
+        u.anims[0x1B] = Some("gl_alt_drop".into());
+        u.anims[0x56] = Some("gl_ads_down".into());
+        u.anims[0x01] = Some("gl_idle".into());
+        let mut w = Weapon { attachment_variants: vec![(11, "gl".into())], attachment_uniques: vec![u], ..Default::default() };
+        w.anims = vec![None; 0x58];
+        w.anims[0x1A] = Some("own_alt_raise".into());
+        w.anims[0x1B] = Some("own_alt_drop".into());
+        let parent = with_bits(w.clone());
+        let c = super::combo(&parent, &[att.clone()], &["gl"]);
+        assert_eq!(c.anims[0x1A].as_deref(), Some("gl_alt_raise"));
+        assert_eq!(c.anims[0x1B].as_deref(), Some("gl_alt_drop"));
+        let alt = with_bits(Weapon { inventory: zhbo_formats::weapon::inventory::ALTMODE, ..w });
+        let c = super::combo(&alt, &[att], &["gl"]);
+        assert_eq!(c.anims[0x1A].as_deref(), Some("own_alt_raise"));
+        assert_eq!(c.anims[0x1B].as_deref(), Some("own_alt_drop"));
+        assert_eq!(c.anims[0x56], None, "the variant's own (empty) ADS down");
+        assert_eq!(c.anims[0x01].as_deref(), Some("gl_idle"), "other slots still merge");
     }
 
     /// G14 §5 priority 3: the aim slots take the mounted optic's resolved unique, not the grip's.

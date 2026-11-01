@@ -4637,3 +4637,38 @@ backlog. `cargo test --workspace` green; clippy adds no warning. The weapon tabl
 the integrator's archive `hud::VERSION` bump applies. In-game (integrator): AS50 scope in and out; the
 minimap, compass and damage indicators vanish under the overlay and return in the last 5 % out; the
 ammo area, score panel and hit marker stay throughout.
+
+## The alt-ADS-only rule is an alt-mode rule: the dual optic's parent plays the hybrid's clips (2026-10-31, `v1/alt-anims`)
+
+The dual optic's leftover anim rows (385 per column in `anim_alt_raise`, `anim_alt_drop`,
+`anim_ads_up`, `anim_ads_down`, `anim_ads_up_other_scope`, every `dualoptic` combo of the 13 rifles
+and LMGs) were one bug in the converter's G14 §5 tier 2, not missing clips:
+
+* **`FUN_008eddb0` tests `inventoryType == ALTMODE` before `FUN_008ecb00`** (alt ADS-only). The
+  converter's `combo()` applied "0x1A/0x1B/0x55–0x57 stay the variant's" to any weapon whose
+  attachment is alt-ADS-only, so `an94_mp+dualoptic` — a PRIMARY — kept the bare an94's
+  `pullout`/`putaway`/`ads_up`/`ads_down`/idle. BO2 resolves them through the tiers like any slot:
+  alt raise `viewmodel_<w>_rmr_alt_raise_*` (the flip back to the top sight), alt drop empty (the
+  hybrid unique's set bit with no name → the idle), ADS up/down `rmr_top_ads_*`, ADS up other scope
+  `rmr_bottom_ads_up`. The old unit fixture was the wrong shape (a non-alt weapon); it is now an
+  alt mode, with new fixtures for the dual-optic parent and the launcher parent / its alt mode.
+* `FUN_008ecb00` also ORs the def's own `bAltWeaponAdsOnly` (`WeaponDef+1628`), now parsed
+  (`Weapon::alt_weapon_ads_only`), and `FUN_0052d540` puts an alt mode's own 0x1A/0x1B/0x56 back
+  after the merge — both ported into `combo()`. The converter still writes an alt mode's raw table
+  (`viewmodels()` `alt_anims`, no merge and no `FUN_0052d470` producer drop); the alt-combo rows
+  are BO2-only today (`dualoptic_*`/`gl_*` combo bases), so that path is unmeasured.
+* The toggle path: the incoming raise plays `ALT_RAISE` from the incoming def (`viewmodel.rs`), so
+  returning from the hybrid's bottom sight now plays `rmr_alt_raise_*`. `v1/alt-timing`'s outgoing
+  `ALT_DROP` uses `or(def, ALT_DROP, DROP)`; with the hybrid's empty alt drop that falls back to
+  the putaway, while BO2 registers an empty slot as the IDLE (`FUN_0052d3e0`) — the integrator
+  should make that fallback the idle when merging alt-timing.
+
+Measured vs this branch's base (`v1/hud-zoom-hide`): weapons **647,790 → 645,894 cells (−1,896)**;
+the five columns each fall to their mod-side-empty floor (`anim_alt_raise` 1,036 → 651,
+`anim_alt_drop` 1,007 → 651, `anim_ads_up`/`anim_ads_down` 1,044 → 659, `anim_ads_up_other_scope`
+1,036 → 651); clusters 198 and gap clusters 209 unchanged (the floor rows keep the clusters); no
+cell newly differs. The 8 extra `ads_up`/`ads_down` floor rows are the offhand items (their ADS
+slots have no clip; the emitter reads 0x55/0x56 without the idle fallback) — another item.
+
+Verified: `cargo test --workspace` green; clippy adds no warning; the real-install suite
+(`--skip conformance`) green. No game launched. Manifests change: archive VERSION bump at integration.

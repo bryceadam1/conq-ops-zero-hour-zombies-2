@@ -480,6 +480,9 @@ pub struct Weapon {
     pub bolt_action: bool,
     pub cook_off_hold: bool,
     pub dual_wield: bool,
+    /// `WeaponDef.bAltWeaponAdsOnly`: the def's own alt-ADS-only flag (`FUN_008ecb00` ORs it with
+    /// every attachment's, G14 §4/§5).
+    pub alt_weapon_ads_only: bool,
     pub clip_only: bool,
     pub rifle_bullet: bool,
     pub silenced: bool,
@@ -837,6 +840,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.bolt_action = z.u8(d + WD::bBoltAction) != 0;
     w.cook_off_hold = z.u8(d + WD::bCookOffHold) != 0;
     w.dual_wield = z.u8(d + WD::bDualWield) != 0;
+    w.alt_weapon_ads_only = z.u8(d + WD::bAltWeaponAdsOnly) != 0;
     w.clip_only = z.u8(d + WD::bClipOnly) != 0;
     w.rifle_bullet = z.u8(d + WD::bRifleBullet) != 0;
     w.fire_sound = opt_str(z, d + WD::fireSound);
