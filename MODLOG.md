@@ -8642,3 +8642,6 @@ No C ABI change.
   and `cac-reticles-dlc2` (new screenshot shots) draw BO2's `reflex_N` art on all three tabs, and a
   grid-vs-lens sheet (grid `reflex_0/1/11/24` beside lens rows 0/1/11/24: stock dot, `_01` cross,
   `_12` ring, `_38` thought bubble) confirms `reticle_N` = lens row `N` shape for shape.
+* **Measured** after the follow-ups: weapons 1,897 → 1,882 cells (`fire_sound` 15 → 1, the Black
+  Hat that never fires; `display_name` 6 → 5), still 11 clusters; cac 0 cells, 5 BO2-only rows;
+  12 gap clusters. The weapon table gains `FireSoundNpc` (integrator: weapon-table/archive bump).
