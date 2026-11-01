@@ -43,6 +43,8 @@ pub struct Table {
     pub class_caps: Vec<(String, i32)>,
     /// The soldier's hit boxes per body state (`HitBox = …` lines, [`crate::hitloc::HitBox`]).
     pub hit_boxes: Vec<crate::hitloc::HitBox>,
+    /// BO2's shellshocks the mod plays (`Shock <name>` blocks, [`crate::shellshock::ShockDef`]).
+    pub shocks: Vec<crate::shellshock::ShockDef>,
 }
 
 pub(crate) fn pairs(v: &[(String, String)]) -> String {
@@ -121,6 +123,9 @@ pub fn format_full_table(t: &Table) -> String {
     for u in &t.ui_text {
         write_block(&mut s, "UiText ", &u.key, UI_TEXT_FIELDS, u);
     }
+    for k in &t.shocks {
+        write_block(&mut s, "Shock ", &k.name, crate::shellshock::SHOCK_FIELDS, k);
+    }
     for a in &t.attachments {
         write_block(&mut s, "Attachment ", &a.id, ATTACHMENT_FIELDS, a);
     }
@@ -156,6 +161,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
         Perk(Box<PerkRow>),
         BonusCard(Box<BonusCard>),
         UiText(Box<UiText>),
+        Shock(Box<crate::shellshock::ShockDef>),
     }
     let mut table = Table::default();
     let mut cur: Option<Block> = None;
@@ -193,6 +199,10 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
             cur = Some(Block::UiText(Box::new(UiText { key: key.trim().to_string(), ..Default::default() })));
             continue;
         }
+        if let Some(name) = line.strip_prefix("Shock ") {
+            cur = Some(Block::Shock(Box::new(crate::shellshock::ShockDef { name: name.trim().to_string(), ..Default::default() })));
+            continue;
+        }
         if let Some(id) = line.strip_prefix("Perk ") {
             cur = Some(Block::Perk(Box::new(PerkRow { stats: id.trim().to_string(), ..Default::default() })));
             continue;
@@ -207,6 +217,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
                 Block::Perk(p) => table.perks.push(*p),
                 Block::BonusCard(b) => table.bonus_cards.push(*b),
                 Block::UiText(u) => table.ui_text.push(*u),
+                Block::Shock(k) => table.shocks.push(*k),
             }
             continue;
         }
@@ -232,6 +243,7 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
             Some(Block::Perk(p)) => set_field(PERK_FIELDS, p, key, values).map_err(|e| err(&e))?,
             Some(Block::BonusCard(b)) => set_field(BONUS_CARD_FIELDS, b, key, values).map_err(|e| err(&e))?,
             Some(Block::UiText(u)) => set_field(UI_TEXT_FIELDS, u, key, values).map_err(|e| err(&e))?,
+            Some(Block::Shock(k)) => set_field(crate::shellshock::SHOCK_FIELDS, k, key, values).map_err(|e| err(&e))?,
             Some(Block::Weapon(d)) => set_field(WEAPON_FIELDS, d, key, values).map_err(|e| err(&e))?,
         }
     }
