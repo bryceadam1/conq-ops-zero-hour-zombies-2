@@ -728,8 +728,15 @@ mod tests {
         assert!((hip.offset.x - 0.0).abs() < 1e-4, "{hip:?}");
         assert!((hip.offset.y + 1.0 * INCH).abs() < 1e-4, "{hip:?}");
         assert!((hip.offset.z + 2.0 * INCH).abs() < 1e-4, "{hip:?}");
-        // Half-way into the aim the positional offsets are gone (G4: `max(0, 1 - 2 * ads)`), and
-        // fully aimed the gun has the def's `fAdsAimPitch` on its pitch.
+        // A quarter into the aim the def's `fAdsAimPitch` dips the gun: `2° · ads` on the rotation,
+        // faded like the offset (`FUN_008f0340`: `max(0, 1 − 2·ads)`) — 2 · 0.25 · 0.5.
+        p.arsenal.ads = 0.25;
+        let quarter = settle(&mut m, &p, 0.0, 0.0, None);
+        assert!((quarter.angles.y - 0.25f32.to_radians()).abs() < 1e-4, "{quarter:?}");
+        // Half-way into the aim the positional offsets are gone (G4: `max(0, 1 - 2 * ads)`), and so
+        // is the rotation: fully aimed the gun carries no `fAdsAimPitch`, so the authored aimed clip
+        // alone places the sight on the axis the shot leaves along (BO2 draws and fires from the
+        // same `FUN_008f0340` angles).
         p.arsenal.ads = 0.5;
         for _ in 0..120 {
             m.update(1.0 / 60.0, 0.0, 0.0, 65.0, &p, None);
@@ -737,7 +744,9 @@ mod tests {
         p.arsenal.ads = 1.0;
         let aimed = settle(&mut m, &p, 0.0, 0.0, None);
         assert!(aimed.offset.length() < 1e-4, "{aimed:?}");
-        assert!((aimed.angles.y - 2.0f32.to_radians()).abs() < 1e-4, "{aimed:?}");
+        assert!(aimed.angles.length() < 1e-4, "fully aimed the gun is not turned: {aimed:?}");
+        let (fy, fp) = m.fire_angles();
+        assert!((fy - aimed.angles.x).abs() < 1e-6 && (fp - aimed.angles.y).abs() < 1e-6, "the shot follows the drawn gun");
         // Standing and walking: `vStandMove` scaled by how far into the run the speed is.
         p.body.stance = Stance::Stand;
         p.arsenal.ads = 0.0;

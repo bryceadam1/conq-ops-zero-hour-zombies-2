@@ -13,7 +13,8 @@
 //! (`FUN_008eed00`/`008eee70`), view sway (`FUN_008efce0`), the idle sway (`FUN_008eefc0`,
 //! `idle_sway::gun_angles`) and the gun kick spring (G5). The input
 //! is what the client knows; the output is an offset (inches: forward, right, up) and angles
-//! (degrees: pitch, yaw, roll) for the renderer. Client-side only: none of it feeds the sim.
+//! (degrees: pitch, yaw, roll) for the renderer. The sim steps its own copy for the aimed fire
+//! direction ([`GunPos::fire_angles`], `sim::PlayerSim::fire_angles`): one pose draws and aims.
 //!
 //! The client's viewmodel motion (`viewmodel::Motion`) is the consumer: it builds [`GunInput`]
 //! from the local player and the weapon def each frame and turns this pose into the renderer's
@@ -142,26 +143,27 @@ impl GunPos {
         self.spring.step(dt, &def.hip_gun_kick, &def.ads_gun_kick, ads, def.gun_max);
         offset[1] += self.sway_ofs.0;
         offset[2] += self.sway_ofs.1;
-        // The fire angles (`FUN_008f0340`, the server's copy in `FUN_005dc820`): the rotation
-        // faded out by half-way into ADS (`1 − 2·posFrac`, `DAT_00c6f6ac`), plus the kick spring,
-        // the sway, the bob and the idle. The drawn pose keeps its rotation (`fAdsAimPitch`, the
-        // move pose), which the aimed clips' authored pose rests on.
+        // The angles (`FUN_008f0340`): the rotation faded out by half-way into ADS (`1 − 2·posFrac`,
+        // `DAT_00c6f6ac` = 2, the same fade as the offset), plus the kick spring, the sway, the bob
+        // and the idle. One function draws the gun and aims the shot: the client's view weapon
+        // (`FUN_005374c0` → `FUN_008f0700(.., angles)` → `FUN_00530cd0`, whose axis is
+        // `AnglesToAxis(these) × AnglesToAxis(view)`) and the server's think (`FUN_005dc820`) read
+        // the same output. So `fAdsAimPitch` (the MP7's 2°, the shotguns' −0.1°) and the move pose
+        // dip the gun mid-transition only; at full ADS the authored aimed clip alone places the
+        // sight, on the axis the shot leaves along.
         let rot_fade = (1.0 - 2.0 * ads).max(0.0);
-        for a in 0..2 {
-            let sway = if a == 0 { self.sway_angle.0 } else { self.sway_angle.1 };
-            let spring = if a == 0 { self.spring.angle.0 } else { self.spring.angle.1 };
-            self.fire[a] = self.cur_rot[a] * rot_fade + bob[a] + sway + spring + idle[a];
-        }
         let angles = [
-            self.cur_rot[0] + bob[0] + self.sway_angle.0 + self.spring.angle.0 + idle[0],
-            self.cur_rot[1] + bob[1] + self.sway_angle.1 + self.spring.angle.1 + idle[1],
-            self.cur_rot[2] + bob[2] + idle[2],
+            self.cur_rot[0] * rot_fade + bob[0] + self.sway_angle.0 + self.spring.angle.0 + idle[0],
+            self.cur_rot[1] * rot_fade + bob[1] + self.sway_angle.1 + self.spring.angle.1 + idle[1],
+            self.cur_rot[2] * rot_fade + bob[2] + idle[2],
         ];
+        self.fire = [angles[0], angles[1]];
         GunPose { offset, angles }
     }
 
     /// The gun's pitch and yaw (degrees, the drawn pose's signs) an aimed shot from a gun without an
-    /// overlay scope follows (`FUN_005dc820` composes them onto the view's fire angles).
+    /// overlay scope follows (`FUN_005dc820` composes them onto the view's fire angles): the drawn
+    /// pose's own pitch and yaw, so the shot leaves along the sights.
     pub fn fire_angles(&self) -> [f32; 2] {
         self.fire
     }
