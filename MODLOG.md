@@ -9236,3 +9236,13 @@ Verified:
 * `cargo xtask build`: OK.
 * Autotests, run one at a time: default 16/16, `--classpick` 8/8, `--rts` 15/15, `--scope` pass,
   `--w3d-ads` 2/2.
+
+## Bug sweep (2026-11-01, `v1/bug-sweep`)
+
+A general sweep for bugs outside the playtest items; one commit per fix.
+
+- **The autopilot's "keys held" log only ever looked at the A key.** `ZhboBridge.cpp` walked the key
+  bits with `k < sizeof(zhbo_platform::keys::Key)` — the size of the enum's `uint8_t` storage (1),
+  not its `Key::COUNT` (49) — so the log could only ever say `[A]` or `[]`, and
+  `autotest-mac.sh --input`'s "W reached the game" check could never pass. The loop now runs to
+  `Key::COUNT`, the bound the `keyNames` static_assert already pins.

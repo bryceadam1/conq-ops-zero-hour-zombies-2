@@ -619,7 +619,7 @@ static void gatherClientInput(ZhboClientIn &in, Bool focused, Bool menuUp)
 		char held[96];
 		Int n = 0;
 		uint32_t hash = 0;
-		for (Int k = 0; k < (Int)sizeof(zhbo_platform::keys::Key); ++k)
+		for (Int k = 0; k < (Int)zhbo_platform::keys::Key::COUNT; ++k)
 		{
 			const uint64_t bit = 1ull << (k % 64);
 			if (in.keys.bits[k / 64] & bit)
