@@ -16,7 +16,7 @@
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
    append the field here, bump both counts, bump ZHBO_ABI_VERSION, and see CONTRACT.md. */
 #define ZHBO_LOGIC_API_FIELDS 24u
-#define ZHBO_CLIENT_API_FIELDS 13u
+#define ZHBO_CLIENT_API_FIELDS 14u
 
 #ifdef __cplusplus
 extern "C" {
@@ -179,6 +179,9 @@ typedef struct ZhboClientApi
 	int32_t (*can_place)(uint32_t general, uint32_t tmpl, const ZhboVec3 *pos, float angle);
 	/* The hammer's placement ghost; tmpl 0 hides it. */
 	void (*ghost)(uint32_t tmpl, const ZhboVec3 *pos, float angle, int32_t legal);
+	/* sound at gain x the event's own volume: a third-person shot's layers at BO2's distance
+	   curve (soundlayers.rs). Appended. */
+	void (*sound_gain)(const char *event, const ZhboVec3 *at, float gain);
 } ZhboClientApi;
 
 /* The 256-bit platform-neutral key-down set (see input.rs's Key enum: low bits first, one bit
@@ -381,6 +384,9 @@ void zhbo_load_classes(const char *text);
 /* Load the converted BO2 impact table (Data\ConquerOps\impacts.txt; see impacts.rs); returns the
    number of cells, -1 for null. */
 int32_t zhbo_load_impacts(const char *text);
+/* Load the third-person shots' layer rows (Data\ConquerOps\sound_layers.txt; see soundlayers.rs);
+   returns the number of layers, -1 for null. Without it others' shots play the close mix. */
+int32_t zhbo_load_sound_layers(const char *text);
 /* Load the BO2 font metrics (see lui/font.rs); empty text leaves the engine font in use. */
 void zhbo_load_fonts(const char *text);
 /* Load the player's create-a-class profile (see profile.rs); the empty profile holds until this runs. */

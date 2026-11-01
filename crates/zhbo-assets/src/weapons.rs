@@ -465,16 +465,16 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
                 events.push(DynSfx { event: event.clone(), layers: layers(plr), kind: Kind::Player, limit: 3 });
                 d.fire_sound = event;
             }
-            let npc_event = format!("ZHBO_BO2_FireNpc_{key}");
+            let npc_event = zhbo_core::names::npc_fire_event(&key);
             if let Some(npc) = &c.fire_sound {
                 events.push(DynSfx { event: npc_event.clone(), layers: layers(npc), kind: Kind::Others, limit: 3 });
             }
-            let fx = format!("ZHBO_FX_{key}");
+            let fx = zhbo_core::names::fx_weapon(&key);
             let launcher = d.class == Class::Launcher;
             ini.push_str(&format!(
                 "Weapon {fx}\n  PrimaryDamage           = 0.0\n  PrimaryDamageRadius     = 0.0\n  AttackRange             = 1000.0\n  \
                  DamageType              = SMALL_ARMS\n  DeathType               = NORMAL\n  WeaponSpeed             = 999999.0\n  \
-                 ProjectileObject        = NONE\n  FireFX                  = {}\n  FireSound               = {npc_event}\n  \
+                 ProjectileObject        = NONE\n  FireFX                  = {}\n  FireSound               = NONE\n  \
                  RadiusDamageAffects     = ENEMIES\n  DelayBetweenShots       = 0\n  ClipSize                = 0\nEnd\n\n",
                 if launcher { "WeaponFX_RocketBuggyMissileFire" } else if d.silenced { "NONE" } else { "WeaponFX_GenericMachineGunFire" }
             ));
@@ -499,17 +499,16 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
                 d.silenced_fire_sound = event;
             }
             if let Some(Some(npc)) = sil(FIRE_SOUND_BIT, |u| &u.fire_sound) {
-                let event = format!("ZHBO_BO2_FireNpc_{key_sil}");
+                let event = zhbo_core::names::npc_fire_event(&key_sil);
                 events.push(DynSfx { event: event.clone(), layers: layers(&npc), kind: Kind::Others, limit: 3 });
                 d.silenced_fire_sound_npc = event;
             }
-            let fx_sil = format!("ZHBO_FX_{key_sil}");
+            let fx_sil = zhbo_core::names::fx_weapon(&key_sil);
             ini.push_str(&format!(
                 "Weapon {fx_sil}\n  PrimaryDamage           = 0.0\n  PrimaryDamageRadius     = 0.0\n  AttackRange             = 1000.0\n  \
                  DamageType              = SMALL_ARMS\n  DeathType               = NORMAL\n  WeaponSpeed             = 999999.0\n  \
-                 ProjectileObject        = NONE\n  FireFX                  = NONE\n  FireSound               = {}\n  \
+                 ProjectileObject        = NONE\n  FireFX                  = NONE\n  FireSound               = NONE\n  \
                  RadiusDamageAffects     = ENEMIES\n  DelayBetweenShots       = 0\n  ClipSize                = 0\nEnd\n\n",
-                d.silenced_fire_sound_npc
             ));
             d.silenced_fx_weapon = fx_sil;
         }
@@ -1003,7 +1002,7 @@ pub fn rts_weapon_edits(defs: &[WeaponDef]) -> Vec<(String, String, String)> {
         set(weapon, "ClipSize", d.clip.max(1).to_string());
         set(weapon, "ClipReloadTime", format!("{:.0}", d.reload_time * 1000.0));
         let key = id.replace(['+', '~'], "_");
-        set(weapon, "FireSound", format!("ZHBO_BO2_FireNpc_{key}"));
+        set(weapon, "FireSound", zhbo_core::names::npc_fire_event(&key));
     }
     // The third slot only stands in for the throw (zhbo-core throws the BO2 grenade).
     set("ZHBO_GeneralGrenade", "FireSound", zhbo_core::sounds::THROW.to_string());
@@ -1041,7 +1040,7 @@ pub fn rts_weapons_ini(defs: &[WeaponDef], flashes: &BTreeMap<String, String>, h
         }
         let body = if d.class.is_gun() {
             let launcher = d.class == Class::Launcher;
-            let npc = format!("ZHBO_BO2_FireNpc_{}", d.id.replace(['+', '~'], "_"));
+            let npc = zhbo_core::names::npc_fire_event(&d.id.replace(['+', '~'], "_"));
             let flash = flashes.get(&d.id).cloned().unwrap_or_else(|| {
                 if launcher { "WeaponFX_RocketBuggyMissileFire" } else if d.silenced { "NONE" } else { "WeaponFX_GenericMachineGunFire" }.to_string()
             });

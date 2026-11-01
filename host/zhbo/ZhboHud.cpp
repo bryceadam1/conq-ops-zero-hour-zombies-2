@@ -8,6 +8,7 @@
 
 // Precompiled engine headers are force-included by the z_gameengine target.
 #include "ZhboBridgeInternal.h"
+#include "Common/AudioEventInfo.h"
 namespace
 {
 struct CachedText
@@ -92,7 +93,7 @@ int32_t cbClientQuery(const ZhboVec3 *center, float radius, uint32_t viewerId, Z
 	}
 	return n;
 }
-void cbSound(const char *event, const ZhboVec3 *at)
+static void playSound(const char *event, const ZhboVec3 *at, float gain)
 {
 	if (!TheAudio || !event)
 		return;
@@ -103,10 +104,27 @@ void cbSound(const char *event, const ZhboVec3 *at)
 		pos.set(at->x, at->y, at->z);
 		sound.setPosition(&pos);
 	}
+	if (gain != 1.0f)
+	{
+		// The event's own Volume times the core's gain (setVolume overrides the INI volume).
+		TheAudio->getInfoForAudioEvent(&sound);
+		if (const AudioEventInfo *info = sound.getAudioEventInfo())
+			sound.setVolume(info->m_volume * gain);
+	}
 	const AudioHandle handle = TheAudio->addAudioEvent(&sound);
 	// Report each event once: a handle below AHSV_FirstHandle is an error (unknown event, no sound).
 	if (s_soundReported.insert(event).second)
 		logf("sound %s: %s", event, handle >= AHSV_FirstHandle ? "playing" : handle == AHSV_Muted ? "muted" : handle == AHSV_NoSound ? "no sound" : "error");
+}
+
+void cbSound(const char *event, const ZhboVec3 *at)
+{
+	playSound(event, at, 1.0f);
+}
+
+void cbSoundGain(const char *event, const ZhboVec3 *at, float gain)
+{
+	playSound(event, at, gain);
 }
 
 void cbScreenSize(float *w, float *h)

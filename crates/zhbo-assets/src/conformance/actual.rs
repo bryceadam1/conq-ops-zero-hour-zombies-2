@@ -653,8 +653,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     // `pullback_for` then `throw_for`, a melee `melee_swing_for`, a blast `explosion_for` — each the
     // def's own event, else the global one; the FX weapon's event is the shot others hear. A cue
     // the conversion never made plays nothing.
-    let key = d.fx_weapon.strip_prefix("ZHBO_FX_").unwrap_or("");
-    let npc = (!key.is_empty()).then(|| sh.sound(&format!("ZHBO_BO2_FireNpc_{key}"))).flatten();
+    let npc = zhbo_core::names::npc_fire_for_fx(&d.fx_weapon).and_then(|e| sh.sound(&e));
     let thrown = d.class.is_offhand() && d.place == Place::Throw;
     let plr = if d.class.is_offhand() {
         thrown.then(|| sh.sound(zhbo_core::sounds::throw_for(d))).flatten()

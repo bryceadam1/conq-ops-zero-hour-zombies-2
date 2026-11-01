@@ -338,6 +338,7 @@ void Zhbo_Init()
 		.build_options = cbBuildOptions,
 		.can_place = cbClientCanPlace,
 		.ghost = cbGhost,
+		.sound_gain = cbSoundGain,
 	};
 	zhbo_init(&logicApi, &clientApi);
 
@@ -362,6 +363,11 @@ void Zhbo_Init()
 		logf("impacts: %d BO2 impact cells installed", (int)zhbo_load_impacts(impacts.c_str()));
 	else
 		logLine("impacts: no converted BO2 impact table");
+	// BO2's third-person shots layer by layer (soundlayers.rs); without them others' shots play the
+	// converted close mix with Zero Hour's falloff.
+	const std::string layers = readTextFile(zhbo_names::SOUND_LAYERS_PATH);
+	if (!layers.empty())
+		logf("sound layers: %d BO2 third-person layers installed", (int)zhbo_load_sound_layers(layers.c_str()));
 	zhbo_load_fonts(readTextFile(zhbo_names::FONTS_PATH).c_str());
 	// The player's create-a-class profile: a small text file next to the mod's log, in the game's
 	// user-data directory (see zhbo_core::profile). Its custom classes join the pick screen's list.

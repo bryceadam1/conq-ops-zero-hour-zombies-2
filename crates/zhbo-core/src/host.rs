@@ -151,6 +151,11 @@ pub trait ClientHost {
     fn cash(&self, player: i32) -> i32;
     /// Play a sound event (`sounds::*`), at `at` for positional sounds.
     fn sound(&self, _event: &str, _at: Option<Vec3>) {}
+    /// Play a sound event at `gain` × its own volume (ABI: `ClientApi::sound_gain`); a host
+    /// without it plays the event at its own volume.
+    fn sound_gain(&self, event: &str, at: Option<Vec3>, _gain: f32) {
+        self.sound(event, at);
+    }
     /// Clip later 2D images to a screen rectangle; `None` turns clipping off.
     fn clip(&self, _rect: Option<(f32, f32, f32, f32)>) {}
     /// Draw Zero Hour's own radar (the whole map) in a screen rectangle, if the local player has
@@ -226,6 +231,9 @@ pub struct ClientApi {
     pub build_options: Option<extern "C" fn(general: u32, out: *mut crate::building::BuildOption, cap: i32) -> i32>,
     pub can_place: Option<extern "C" fn(general: u32, template: u32, pos: *const Vec3, angle: f32) -> i32>,
     pub ghost: Option<extern "C" fn(template: u32, pos: *const Vec3, angle: f32, legal: i32)>,
+    /// `sound` at `gain` × the event's volume (a third-person shot's layers at BO2's distance
+    /// curve, `soundlayers`). Appended after `ghost`.
+    pub sound_gain: Option<extern "C" fn(event: *const c_char, at: *const Vec3, gain: f32)>,
 }
 
 fn build_options_via(f: Option<extern "C" fn(u32, *mut crate::building::BuildOption, i32) -> i32>, general: u32) -> Vec<crate::building::BuildOption> {
@@ -415,6 +423,15 @@ impl ClientHost for CClientHost {
                 Some(p) => f(name.as_ptr(), &p),
                 None => f(name.as_ptr(), std::ptr::null()),
             }
+        }
+    }
+
+    fn sound_gain(&self, event: &str, at: Option<Vec3>, gain: f32) {
+        let Some(f) = self.0.sound_gain else { return self.sound(event, at) };
+        let name = cstring(event);
+        match at {
+            Some(p) => f(name.as_ptr(), &p, gain),
+            None => f(name.as_ptr(), std::ptr::null(), gain),
         }
     }
 

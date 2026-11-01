@@ -74,26 +74,27 @@ impl<'a> Mixer<'a> {
         speakers * 0.5 * (p.left + p.right)
     }
 
-    /// The dry distance gain at `d` inches (FUN_0083d060): inside `distMin` the min curve at
-    /// `d / distMin`, beyond it the falloff curve over `distMin..distMax`. A 2D alias is 1.
+    /// The dry distance gain at `d` inches (FUN_0083d060, `zhbo_core::soundlayers::distance_gain`):
+    /// inside `distMin` the min curve at `d / distMin`, beyond it the falloff curve over
+    /// `distMin..distMax`. A 2D alias is 1.
     pub fn distance_gain(&self, v: &Variant, d: f32) -> f32 {
         if !v.mix.positional {
             return 1.0;
         }
-        let (min, max) = v.distance;
-        let eval = |c: u8, t: f32| self.globals.curve(c).map_or(1.0, |c| c.eval(t));
-        if d < min {
-            eval(v.mix.min_falloff_curve, d / min)
-        } else {
-            let t = if max > min { (d - min) / (max - min) } else { 1.0 };
-            eval(v.mix.falloff_curve, t)
-        }
+        let (Some(min_curve), Some(curve)) = (self.globals.curve(v.mix.min_falloff_curve), self.globals.curve(v.mix.falloff_curve)) else { return 1.0 };
+        zhbo_core::soundlayers::distance_gain(v.distance.0, v.distance.1, &min_curve.points, &curve.points, d)
     }
 
-    /// The linear gain of the variant into its bus at distance `d`: volume × group chain × bus ×
-    /// stereo fold × distance curve.
+    /// The gain of the variant into its bus before distance: volume × group chain × bus × stereo
+    /// fold.
+    pub fn dry_gain(&self, v: &Variant) -> f32 {
+        v.volume.1 * self.globals.group_gain(v.mix.group as usize) * self.master.bus(self.bus(v)) * self.stereo_fold(v)
+    }
+
+    /// The linear gain of the variant into its bus at distance `d`: [`Mixer::dry_gain`] × distance
+    /// curve.
     pub fn gain(&self, v: &Variant, d: f32) -> f32 {
-        v.volume.1 * self.globals.group_gain(v.mix.group as usize) * self.master.bus(self.bus(v)) * self.stereo_fold(v) * self.distance_gain(v, d)
+        self.dry_gain(v) * self.distance_gain(v, d)
     }
 
     /// The farthest distance any of `variants` is heard at (its `distMax`; 0 for 2D only).

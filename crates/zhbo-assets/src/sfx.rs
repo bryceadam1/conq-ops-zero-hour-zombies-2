@@ -277,19 +277,19 @@ fn to_float(p: &Pcm, rate: u32, channels: u16) -> Vec<f32> {
 /// `d = 0`), from its own start delay, through the buses and master. Layers the mix silences (an
 /// LFE-only pan in stereo, the far layer of a crossfade up close) are not decoded. `None` when
 /// nothing is audible.
-fn render(mixer: &Mixer, layers: &[(&sndalias::Variant, Pcm)]) -> Option<(Vec<f32>, u16, u32)> {
+fn render(mixer: &Mixer, layers: &[(&sndalias::Variant, Pcm, f32)]) -> Option<(Vec<f32>, u16, u32)> {
     let rate = layers.iter().map(|l| l.1.rate).max()?;
     let mixer = Mixer { rate: rate as f32, ..*mixer };
     let channels = layers.iter().map(|l| l.1.channels).max()?;
-    let floats: Vec<Vec<f32>> = layers.iter().map(|(_, p)| to_float(p, rate, channels)).collect();
+    let floats: Vec<Vec<f32>> = layers.iter().map(|(_, p, _)| to_float(p, rate, channels)).collect();
     let mix: Vec<Layer> = layers
         .iter()
         .zip(&floats)
-        .map(|((v, _), samples)| Layer {
+        .map(|((v, _, gain), samples)| Layer {
             samples,
             start_frame: (v.start_delay_ms as u64 * rate as u64 / 1000) as usize,
             bus: mixer.bus(v),
-            gain: mixer.gain(v, 0.0),
+            gain: *gain,
         })
         .collect();
     let out = mixer.render(&mix, channels as usize);
@@ -308,6 +308,19 @@ fn quantize(samples: &[f32], peak: f32) -> Vec<i16> {
 fn pcm_wav(samples: &[i16], scale: f32, channels: u16, rate: u32) -> Vec<u8> {
     let bytes: Vec<u8> = samples.iter().flat_map(|&s| ((s as f32 * scale).round() as i16).to_le_bytes()).collect();
     wav_bytes(&bytes, channels, rate)
+}
+
+/// One alias of a third-person chain as a `soundlayers` row: its distances in Zero Hour units and
+/// its two dry curves; a 2D alias is flat (BO2 does not attenuate it).
+fn layer_row(mixer: &Mixer, v: &sndalias::Variant, event: &str) -> zhbo_core::soundlayers::Layer {
+    use zhbo_core::soundlayers::{Layer, FLAT};
+    let event: &'static str = Box::leak(event.to_string().into_boxed_str());
+    let curve = |c: u8| mixer.globals.curve(c).map_or(FLAT, |c| c.points);
+    if !v.mix.positional {
+        return Layer { event, min: 0.0, max: 1e9, min_curve: FLAT, curve: FLAT };
+    }
+    let units = zhbo_core::units::inches;
+    Layer { event, min: units(v.distance.0), max: units(v.distance.1), min_curve: curve(v.mix.min_falloff_curve), curve: curve(v.mix.falloff_curve) }
 }
 
 /// Zero Hour falloff for a 3D chain, in Zero Hour units: `MaxRange` where BO2's chain is last
@@ -407,6 +420,7 @@ pub fn files(
     let mut out: BTreeMap<String, Vec<u8>> = BTreeMap::new();
     let mut pending: Vec<Pending> = Vec::new();
     let mut missing: Vec<String> = Vec::new();
+    let mut layer_rows = String::from("; Third-person shots layer by layer (zhbo_core::soundlayers): layer <fx weapon> <chain> <event> <min> <max> <min curve> <curve>\n");
 
     let mut add = |event: &str, src: &Source, layers: &[&str], kind: Kind, limit: u8| -> bool {
         let aliases = src.chained(layers);
@@ -417,12 +431,13 @@ pub fn files(
         let base = aliases[0];
         let mut variants = Vec::new();
         for (i, v) in base.variants.iter().enumerate().take(8) {
-            let parts: Vec<(&sndalias::Variant, Pcm)> = aliases
+            let parts: Vec<(&sndalias::Variant, Pcm, f32)> = aliases
                 .iter()
                 .enumerate()
                 .map(|(k, a)| if k == 0 { v } else { &a.variants[0] })
-                .filter(|var| mixer.gain(var, 0.0) > 0.0)
-                .filter_map(|var| Some((var, src.decode(var.asset_id)?)))
+                .map(|var| (var, mixer.gain(var, 0.0)))
+                .filter(|(_, g)| *g > 0.0)
+                .filter_map(|(var, g)| Some((var, src.decode(var.asset_id)?, g)))
                 .collect();
             let Some((samples, channels, rate)) = render(&mixer, &parts) else { continue };
             let level = peak(&samples);
@@ -434,6 +449,38 @@ pub fn files(
         let chain: Vec<&sndalias::Variant> = aliases.iter().filter_map(|a| a.variants.first()).collect();
         let range = if kind == Kind::Player { None } else { falloff(&mixer, &chain) };
         pending.push(Pending { event: event.to_string(), kind, limit, range, variants });
+        // A converted gun's third-person shot also ships layer by layer for the client to level by
+        // BO2's distance curves (`zhbo_core::soundlayers`), keyed by the gun's FX weapon.
+        if let Some(key) = event.strip_prefix(zhbo_core::names::NPC_FIRE_PREFIX).filter(|_| kind == Kind::Others) {
+            let fx = zhbo_core::names::fx_weapon(key);
+            let reach = zhbo_core::units::inches(mixer.audible_range(&chain).max(1.0));
+            for (k, a) in aliases.iter().enumerate() {
+                let Some(first) = a.variants.first() else { continue };
+                if mixer.dry_gain(first) <= 0.0 {
+                    continue;
+                }
+                let name = zhbo_core::names::layer_event(event, k);
+                let variants: Vec<_> = a
+                    .variants
+                    .iter()
+                    .take(8)
+                    .enumerate()
+                    .filter_map(|(i, var)| {
+                        let (samples, channels, rate) = render(&mixer, &[(var, src.decode(var.asset_id)?, mixer.dry_gain(var))])?;
+                        let level = peak(&samples);
+                        Some((sound_file(&name, i), quantize(&samples, level), level, channels, rate))
+                    })
+                    .collect();
+                if variants.is_empty() {
+                    continue;
+                }
+                let layer = layer_row(&mixer, first, &name);
+                // No Zero Hour falloff inside its reach: the client applies BO2's curve.
+                let r = if first.mix.positional { layer.max.max(1.0) } else { reach };
+                layer_rows.push_str(&zhbo_core::soundlayers::format_row(&fx, event, &layer));
+                pending.push(Pending { event: name, kind, limit, range: Some((r, r)), variants });
+            }
+        }
         true
     };
 
@@ -509,6 +556,7 @@ pub fn files(
     out.insert("Data\\INI\\SoundEffects\\ZHBO_BO2.ini".into(), ini.into_bytes());
     out.insert(WEAPON_INI_PATH.into(), weapon_ini(WEAPON_INI, WEAPON_SOUNDS)?.into_bytes());
     out.insert(zhbo_core::names::VIEWMODEL_SOUNDS_PATH.into(), notes.into_bytes());
+    out.insert(zhbo_core::names::SOUND_LAYERS_PATH.into(), layer_rows.into_bytes());
     // Zero Hour allows only 4 simultaneous 2D sounds; automatic fire plus footsteps and reload
     // foley need more. The engine loads this folder after AudioSettings.ini.
     out.insert(
@@ -614,7 +662,21 @@ mod tests {
         let tail = mixer.gain(&find("wpn_an94_fire_plr_decay").unwrap().variants[0], 0.0);
         assert!(shot > 2.0 * tail, "{shot} {tail}");
 
-        let (files, summary) = files(&common, &world, &dir, &[], &[]).unwrap();
+        let extra = [DynSfx { event: zhbo_core::names::npc_fire_event("an94_mp"), layers: vec!["wpn_an94_fire_npc".into()], kind: Kind::Others, limit: 3 }];
+        let (files, summary) = files(&common, &world, &dir, &[], &extra).unwrap();
+        // The layers ship keyed by the gun's FX weapon: the close shot, the distant layer and the
+        // tail (not the LFE-only low end), each with its own curves; the client's rule on them
+        // crossfades as BO2's does.
+        let rows = files.iter().find(|f| f.0 == zhbo_core::names::SOUND_LAYERS_PATH).map(|f| String::from_utf8_lossy(&f.1).into_owned()).unwrap();
+        let table = zhbo_core::soundlayers::parse(&rows);
+        let shot = &table[&zhbo_core::names::fx_weapon("an94_mp")];
+        assert_eq!(shot.chain, "ZHBO_BO2_FireNpc_an94_mp");
+        let events: Vec<&str> = shot.layers.iter().map(|l| l.event).collect();
+        assert_eq!(events, ["ZHBO_BO2_FireNpc_an94_mp_L0", "ZHBO_BO2_FireNpc_an94_mp_L2", "ZHBO_BO2_FireNpc_an94_mp_L3"]);
+        let ft = zhbo_core::units::inches;
+        assert_eq!((shot.layers[0].gain(0.0), shot.layers[1].gain(0.0)), (1.0, 0.0), "point-blank: the close shot, no distant layer");
+        assert_eq!(shot.layers[0].gain(ft(3000.0)), 0.0);
+        assert!(shot.layers[1].gain(ft(3000.0)) > 0.5, "across the map: the distant layer");
         println!("{summary}");
         let ini = files.iter().find(|f| f.0 == "Data\\INI\\SoundEffects\\ZHBO_BO2.ini").map(|f| String::from_utf8_lossy(&f.1).into_owned()).unwrap();
         if let Ok(out) = std::env::var("ZHBO_SFX_DUMP") {
@@ -630,6 +692,7 @@ mod tests {
         let (min, max) = (field("ZHBO_BO2_FireNpc", "MinRange"), field("ZHBO_BO2_FireNpc", "MaxRange"));
         assert_eq!(max, zhbo_core::units::inches(12000.0).round(), "heard as far as the distant layer");
         assert!(min > 0.0 && min < max / 4.0, "{min} {max}");
+        assert_eq!(field("ZHBO_BO2_FireNpc_an94_mp_L2", "MinRange"), field("ZHBO_BO2_FireNpc_an94_mp_L2", "MaxRange"), "no Zero Hour falloff on a layer");
         let vol = |name: &str| field(name, "Volume");
         assert!(vol("ZHBO_BO2_Fire") > vol("ZHBO_BO2_Step"), "the shot over a footstep");
     }

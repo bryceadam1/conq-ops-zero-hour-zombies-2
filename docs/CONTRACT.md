@@ -582,6 +582,27 @@ are shared constants (`ZHBO_LOGIC_API_FIELDS`/`ZHBO_CLIENT_API_FIELDS` in the he
 `CLIENT_API_FIELDS` in `ffi.rs`), and `zhbo_abi_fields()` reports them at init: `Zhbo_Init` refuses to run
 when either the version or the counts disagree, with a message naming the mismatch.
 
+### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
+
+* **Converted.** For every converted gun's third-person chain (`ZHBO_BO2_FireNpc_<key>`) the
+  converter also ships each audible layer as its own AudioEvent `<chain>_L<k>` (k = the chain index;
+  `MinRange = MaxRange`, so Zero Hour does not attenuate it inside its reach) and a row in
+  `names::SOUND_LAYERS_PATH` (`Data\ConquerOps\sound_layers.txt`): `layer <FX weapon> <chain>
+  <event> <distMin> <distMax> <min curve: 8 x,y> <curve: 8 x,y>`, distances in Zero Hour units. The
+  gun's FX weapon (`ZHBO_FX_<key>`) now carries `FireSound = NONE`; the chain's mixed event stays.
+* **Loaded.** The bridge reads the file at init and passes it to `zhbo_load_sound_layers` (returns
+  the layer count, -1 for null). Without it the core plays nothing for others' shots (the FX
+  weapon is silent), so the file ships with the archive that sets `NONE`.
+* **Played.** The client's `consume_events` turns each other player's `Shot` into
+  `Cues::third_person_shot(def.fx_weapon, origin, listener)`: with a first-person listener, each
+  layer whose BO2 curve (`soundlayers::distance_gain`, t6mp `FUN_0083d060`) is non-zero at the
+  listener's distance, through `ClientApi::sound_gain(event, at, gain)`; with no first-person body
+  (overhead), the chain's mixed event through `sound`. Presentation only (client side, no sim input).
+* **ABI.** `ZhboClientApi.sound_gain` is appended after `ghost` (`ZHBO_CLIENT_API_FIELDS` 13 → 14 on
+  both sides); the glue's `cbSoundGain` sets the AudioEventRTS volume to the event's INI volume ×
+  gain (`setVolume` overrides). The `ZHBO_ABI_VERSION` bump is the integrator's (still 26 here).
+  A host without the field plays the layer at its own volume (`ClientHost::sound_gain`'s default).
+
 ### Adding an engine service (a new field in `ZhboLogicApi` or `ZhboClientApi`)
 
 The checklist, in order:

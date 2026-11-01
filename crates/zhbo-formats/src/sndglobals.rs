@@ -49,25 +49,8 @@ pub struct Group {
 #[derive(Clone, Debug)]
 pub struct Curve {
     pub name: String,
-    /// Eight (x, y) points, x rising 0..1.
+    /// Eight (x, y) points, x rising 0..1 (evaluated by `zhbo_core::soundlayers::curve_eval`).
     pub points: [(f32, f32); 8],
-}
-
-impl Curve {
-    /// Piecewise-linear value at `t` (clamped to 0..1): the first segment that contains `t`.
-    pub fn eval(&self, t: f32) -> f32 {
-        let t = t.clamp(0.0, 1.0);
-        for w in self.points.windows(2) {
-            let ((x0, y0), (x1, y1)) = (w[0], w[1]);
-            if t <= x1 {
-                if x1 <= x0 {
-                    return y1;
-                }
-                return y0 + (y1 - y0) * ((t - x0) / (x1 - x0)).clamp(0.0, 1.0);
-            }
-        }
-        self.points[7].1
-    }
 }
 
 #[derive(Clone, Debug)]
@@ -277,23 +260,6 @@ pub fn read(zone: &Zone) -> Result<Option<DriverGlobals>, FormatError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn curves_are_piecewise_linear() {
-        // BO2's `cosdelay`: flat to 0.3, then down to 0 at 1.
-        let c = Curve {
-            name: "cosdelay".into(),
-            points: [(0.0, 1.0), (0.3, 1.0), (0.541, 0.708), (0.645, 0.562), (0.729, 0.398), (0.803, 0.282), (0.871, 0.141), (1.0, 0.0)],
-        };
-        assert_eq!(c.eval(0.0), 1.0);
-        assert_eq!(c.eval(0.2), 1.0);
-        assert!((c.eval(0.4205) - 0.854).abs() < 0.01);
-        assert_eq!(c.eval(1.0), 0.0);
-        assert_eq!(c.eval(7.0), 0.0, "clamped");
-        // `allon`: (0,1) then six (1,1) and a closing (1,0) — 1 everywhere before the end.
-        let on = Curve { name: "allon".into(), points: [(0.0, 1.0), (1.0, 1.0), (1.0, 1.0), (1.0, 1.0), (1.0, 1.0), (1.0, 1.0), (1.0, 1.0), (1.0, 0.0)] };
-        assert_eq!(on.eval(0.5), 1.0);
-    }
 
     #[test]
     fn group_gain_walks_the_parents() {
