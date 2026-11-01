@@ -142,7 +142,13 @@ The two scripts take `-Dist` to test a given build.
   Tactical Insertion is where the next General comes in, and the Black Hat hacks enemy equipment
   and Zero Hour drones. Enemies can shoot equipment.
 * BO2's scorestreaks are left out on purpose: the Generals' own upgrades and superweapons take
-  their place. (The field computer still uses BO2's scorestreak tablet and HUD box.)
+  their place. (The field computer still uses BO2's scorestreak tablet and HUD box; the HUD's
+  streak column shows the field computer and the build menu.)
+* The HUD shows the Zero Hour faction (emblem, team colours, names) where BO2 shows its own.
+* From the overhead view the General carries out first-person actions as Zero Hour orders: he
+  attacks with his current BO2 weapon (its fire rate, magazine and reload), reloads on order, and
+  the command bar's Lethal, Tactical and Melee buttons each have their own targeted flow. The
+  primary/secondary swap is a direct toggle.
 * Explosions use BO2's own effects (its impact table's grenade and rocket explosions, flashbang,
   equipment blasts), converted into Zero Hour particle systems; BO2's flipbook animation, models and
   decals in them are not converted.

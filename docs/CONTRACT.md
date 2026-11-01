@@ -636,6 +636,27 @@ from xyz, from height, source known, kind, amount)` for the share to apply (it s
 
 Not yet covered: save/load keeps no first-person state (a loaded game starts in RTS view).
 
+### The core's lifecycle and per-frame free functions
+
+The functions the sections above do not cover, by when the bridge calls them (the header
+`host/zhbo/zhbo_core.h` carries each one's comment):
+
+| When | Function | What it does |
+|---|---|---|
+| `Zhbo_Init`, first | `zhbo_check_requirements(msg, cap)` | Both games installed? Non-zero with a message otherwise (the bridge shows it and exits). |
+| `Zhbo_Init`, data load | `zhbo_install_weapons(table)` | The weapon table (`Data\ConquerOps\weapons.ini`); returns the weapon count, or -1. |
+| | `zhbo_load_strings`, `zhbo_load_classes`, `zhbo_load_profile` | The mod's shipped strings (`strings.rs`), the class presets (`classes.rs`), the player's create-a-class profile (`profile.rs`); each module's defaults hold until its call. |
+| Lockstep (game messages) | `zhbo_logic_take_control(player, general)` | `MSG_ZHBO_TAKE_CONTROL`: the General enters first person (Lifecycle step 3). |
+| | `zhbo_logic_input(player, general, input)` | One frame's `ZhboFpsInput` for a controlled General (the event stream the sim replays). |
+| | `zhbo_logic_choose_class(player, general, index, payload, len)` | The pick menu's choice: the shared list's index, a custom class's wire words appended as `[len, word…]`. |
+| Profile writes (client) | `zhbo_profile_save(words, len)`, `zhbo_profile_write(words, len)` | Decode a saved custom class / a `save_profile` one-shot into the profile's full text for the bridge to write; null when the words do not decode. |
+| Every client frame | `zhbo_client_draw_hud(local_player)` | Draws the first-person HUD through the `ClientApi` draw callbacks. |
+| | `zhbo_client_rts_ammo(general, out)` | A General's weapon-slot ammo for the control bar (`ZhboRtsWeapons`). |
+| | `zhbo_client_world_poses(out, cap)` | The Generals' third-person weapon/tablet poses (`ZhboWorldPose`); returns how many. |
+| | `zhbo_world_mesh_count(vm)` | Third-person meshes of viewmodel `vm`'s weapon on the soldier model (-2: the tablet); cached by the bridge on first use. |
+| | `zhbo_native_body_ready(in)` | 1 when the native third-person body frame can be drawn (see "The native third person"). |
+| Building | `zhbo_general_build_rate()` | A General's building speed as a share of a dozer's (`building::GENERAL_BUILD_RATE`). |
+
 ### Engine gotchas (promoted from MODLOG)
 
 - **Objects must be created inside `GameLogic::update`** (or a logic-step callback): W3DModelDraw
@@ -862,8 +883,9 @@ The checklist, in order:
    table in `Zhbo_Init`.
 5. Declare the extern in `zhbo_core.h`, wire it into the Rust side (`host.rs`'s `LogicApi`/
    `ClientApi` and the `C*Host` impls in `ffi.rs`), keeping the table order identical.
-6. Provide a fake in the tests (zhbo-core's `FakeHost` implements both traits; extend it so sim
-   tests cover the new service).
+6. Provide a fake in the tests (zhbo-core's `FakeHost` in `sim/mod.rs`'s tests implements
+   `LogicHost`, the HUD tests' `Recorder` (`hud/tests.rs`) implements `ClientHost`; extend the one
+   the service belongs to so the tests cover it).
 
 ### Save / load: the first-person state (documented follow-up, deliberately not implemented)
 
@@ -874,7 +896,7 @@ third-person RTS control with whatever the engine persisted.
 
 What would need serializing before the feature is possible:
 
-- **`PlayerSim`** (crates/zhbo-core/src/sim.rs): position, view angles, health, stance,
+- **`PlayerSim`** (`crates/zhbo-core/src/sim/mod.rs`): position, view angles, health, stance,
   flags (`sprint`, `ads`, `on_ground`), hack/hammer timers, the active `Arsenal` (`WeaponState`:
   current weapon index, per-weapon ammo/mags, reload/offhand timers), and the RNG stream
   position (save the xorshift state so post-load rolls differ from pre-load, not repeat).
@@ -882,7 +904,7 @@ What would need serializing before the feature is possible:
   owner, and damage profile — they are pure state, no engine handles.
 - **Equipment in the world**: placed claymores/betties/C4/sensors (position, armed state,
   trigger timers) and the insertion marker state.
-- **`Client` view state** (client.rs): `ViewMode`, viewmodel selection, `HudTimers`,
+- **`Client` view state** (`client/mod.rs`): `ViewMode`, viewmodel selection, `HudTimers`,
   `Autopilot` must NOT be saved (it is a test harness).
 - **Serdes transport**: the ZH save hooks for mods are the `GameLogic::CRC`/`Save`/`Load`
   overrides on the player's logic object (see MODLOG: the same hook family that owns

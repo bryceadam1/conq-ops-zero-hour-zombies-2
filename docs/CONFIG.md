@@ -44,6 +44,16 @@ environment mid-game.
 | `ZHBO_GLUE_DIR` | Set by `cargo xtask build` for the engine build: where the bridge glue sources are copied. |
 | `ZHBO_CONVERT_ALL_WEAPONS` | Set by the converter's user: convert every BO2 player weapon, not just the loadout's kit. |
 | `ZHBO_CONVERT_ALL_COMBOS` | Set to `0` to skip the legal Create-a-Class combination sweep and build only the base set; on by default, so a locally built archive covers every legal combination (the archive stamp records the flag). |
+## Test and diagnostic knobs (test runs only; never read by the game)
+
+| Variable | Meaning |
+|---|---|
+| `ZHBO_CORE_LIB` | Set by `cargo xtask build` with `ZHBO_GLUE_DIR`: the built `zhbo_core` static library the engine links (`host/zhbo/CMakeLists.txt`). |
+| `ZHBO_BO2_ARCHIVE` | The class-screen screenshot harness's archive when `--archive` is not given (TESTING.md). |
+| `ZHBO_SWEEP_TGA` | The viewmodel sweep test also writes each composition's textures under this directory (`viewmodel_sweep.rs`). |
+| `ZHBO_SFX_DUMP` | The real-install sound test writes the converted `ZHBO_BO2.ini` sound effects to this file (`sfx.rs`). |
+| `ZHBO_DUMP_DIR` | The real-install range-finder test writes the converted display images here (`rangefinder.rs`). |
+
 ## The archive and the camo conversion
 
 `ConquerOps_BO2.big` carries the class camo art (the set images `Art\Textures\zhbo_t6_camo_*`,

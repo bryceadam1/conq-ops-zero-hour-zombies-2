@@ -8529,3 +8529,27 @@ shows "sound layers: 293 BO2 third-person layers installed"), `--classpick` 6/6,
 `--scope` pass, `--w3d-ads` 2/2. Two legs launched back-to-back first bailed with "Generals is
 already running" (the previous game still exiting); rerun serially they passed — wait for the
 previous `generalszh` to exit between legs.
+
+## Code polish: the docs describe the code again (2026-11-01)
+
+The post-integration audit (58 merged branches) found the permanent docs contradicting the code;
+fixed in one pass:
+
+- AGENTS.md named a `crates/zhbo-core/tests/` harness that never existed; the fake host is
+  `FakeHost` in `sim/mod.rs`'s tests (CONTRACT's "adding a service" checklist now says which fake
+  implements which trait: `FakeHost` the `LogicHost`, `hud/tests.rs`'s `Recorder` the `ClientHost`).
+- ARCHITECTURE's crate graph drew a core → formats edge that does not exist and left out
+  core → native; it is now a dependency list read off the `Cargo.toml`s. The core's module list gained
+  `nativebody/`, `client/`, `classmenu/`, `sim/plant.rs`/`deploy.rs`, `weapons/scope.rs`/`idle_sway.rs`
+  and the loose modules.
+- CONTRACT gained a table of the free functions no section covered (`zhbo_logic_input`,
+  `zhbo_logic_choose_class`, the profile writers, `zhbo_client_world_poses`, …).
+- CONFIG gained the test-only `ZHBO_*` knobs.
+- `docs/V1-PARITY-PLAN.md` is deleted: every track is merged. Its durable parts moved to README
+  (the deliberate differences from BO2: no scorestreaks, Zero Hour factions on the HUD, the command
+  view's orders), TESTING ("The BO2 reference": dumps-only ground truth, the G1–G17 index) and
+  RENDERER ("The W3D fallback (kept on purpose)" — the plan's "retire W3D" was overtaken: the base
+  set's W3D stays as the fallback). The plan's 0.1.0 → 1.0.0 bump is left to the integrator.
+
+**Gotcha:** a planning doc that outlives its work rots fast — this one still said "130 clippy
+warnings" (35 by now) and "retire the W3D code" after the W3D path had become a tested fallback.

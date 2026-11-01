@@ -51,7 +51,8 @@ the ground rules.
   new functions go at the end with a version bump and size asserts, per CONTRACT.md.
 - **Determinism.** The sim must stay replayable: no wall-clock or render-time inputs in the
   logic step, RNG through the seeded streams, input via the event stream. The fake-host
-  harness (`crates/zhbo-core/tests/`) is the arbiter — sim logic needs no engine.
+  harness (`FakeHost` in `crates/zhbo-core/src/sim/mod.rs`'s tests, used by the `sim/*_tests.rs`
+  and the other sim modules' `#[cfg(test)]` blocks) is the arbiter — sim logic needs no engine.
 - **Single data sources.** Gameplay numbers come from the tuning pack (`tuning.rs` defaults +
   the mod INIs) and the weapon table schema (`crates/zhbo-core/src/weapons/table.rs`);
   never hand-copy a number between sites. Input uses the `Key` enum, never raw VK codes;

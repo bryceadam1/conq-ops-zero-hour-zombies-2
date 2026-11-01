@@ -261,6 +261,15 @@ One invalid draw in a wgpu render pass invalidates the whole frame. The runtime 
   painted before the 3D pass, as in the DX8 build. In wgpu builds the bridge instead sets the scene
   view's clear colour to the sky colour while in first person.
 
+## The W3D fallback (kept on purpose)
+
+The native pass draws the first-person viewmodel and the third-person General's weapon by default
+(`ZHBO_NATIVE_VIEWMODEL`; `ZHBO_NATIVE_BODY` = 1, and 2 moves his body to it too — CONFIG.md). The W3D conversion of the base weapons is
+still built (`zhbo-assets/src/viewmodels.rs`, `write_w3d` for the base set) and stays as the
+fallback: it draws when the native pass is switched off (`ZHBO_NATIVE_VIEWMODEL=0`), when a mesh is
+refused (above), and on the DX8 reference build that has no native pass. It is tested by the W3D
+ADS-layer test (TESTING.md). Attachment combinations are native only.
+
 ## Not done yet
 
 * Render-target-sized textures (`BackbufferRatio`) are not resized on `reset`.
