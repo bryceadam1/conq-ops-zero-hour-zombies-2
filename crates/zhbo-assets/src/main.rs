@@ -416,6 +416,10 @@ fn cmd_weapons(args: &[String]) -> Result<(), String> {
                 println!("      unique {} kind {} vm {:?} tag {:?}", u.name, u.kind, u.view_model, u.view_model_tag);
             }
             println!("    sounds fire {:?} plr {:?} icon {:?} dpad {:?} world {:?} projectile {:?} impact {} icon key {:?} dpad key {:?}", w.fire_sound, w.fire_sound_player, w.hud_icon, w.dpad_icon, w.world_model, w.projectile_model, w.projectile_impact_explode, w.hud_icon_key, w.dpad_icon_key);
+            println!(
+                "    projectile speed {} up {} explosion {} impact explode {} sentient {} stickiness {} spawns {:?} activate {}",
+                w.projectile_speed, w.projectile_speed_up, w.proj_explosion, w.projectile_impact_explode, w.projectile_sentient_impact_explode, w.stickiness, w.spawned_grenade_weapon, w.projectile_activate_dist
+            );
             println!("    raise {:?} first {:?} putaway {:?} alt switch {:?}", w.raise_sound_player, w.first_raise_sound_player, w.putaway_sound_player, w.alt_switch_sound_player);
             println!("    overlay {:?} low {:?} reticle {} size {:?}", w.overlay_material, w.overlay_material_low_res, w.overlay_reticle, w.overlay_size);
             println!("    kick ads {:?} hip {:?} mult {:?}", w.ads_view_kick, w.hip_view_kick, w.location_multipliers.iter().take(7).collect::<Vec<_>>());

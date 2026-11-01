@@ -7,7 +7,7 @@
 */
 
 use super::catalog::{catalog, weapon, weapon_or_none};
-use super::def::{Class, Effect, FireMode, Place, WeaponDef};
+use super::def::{Class, FireMode, Place, WeaponDef};
 use super::loadout::{class_melee, melee_weapon, Loadout};
 use super::perks::Perk;
 use super::rng::Rng;
@@ -1012,7 +1012,7 @@ impl Arsenal {
             if matches!(def.fire, FireMode::Semi | FireMode::Stacked) && fired_semi {
                 break;
             }
-            if def.class == Class::Launcher || (def.projectile_speed > 0.0 && def.class != Class::Shotgun && def.effect != Effect::None) {
+            if def.launches() {
                 if def.fire == FireMode::Stacked {
                     // A pull empties the stack: once one bolt is out, BO2 keeps firing while the
                     // stack is part-spent (`FUN_008e1320` treats `FUN_008dc0c0` as the trigger)

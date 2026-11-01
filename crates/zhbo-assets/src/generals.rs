@@ -770,6 +770,53 @@ mod tests {
         assert!(!clips.is_empty(), "the Peacekeeper's clips convert from common_patch_mp");
     }
 
+    /// Every projectile the install converts to — the launchers, the under-barrel grenades, the
+    /// crossbow (every legal combination: stack fire's three bolts each), the ballistic knife and
+    /// every thrown offhand — hurts a BO2 soldier by BO2's own data at 150, 600 and 1200 inches
+    /// (`zhbo_core::conformance::projectile`): the strike's `iDamage`, the impact fuse and its
+    /// arming distance, a bolt's spawned grenade going off on its fuse, the blast's falloff. And the
+    /// defs carry what BO2's say: a `bolt` explosion's `szSpawnedGrenadeWeaponName` is the def's
+    /// spawned grenade and is in the table; `stickiness` all/all_orient is sticky.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn every_projectile_hurts_by_bo2s_data() {
+        use zhbo_formats::weapon::{proj_explosion, stickiness};
+        let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
+        let mp = crate::paks::MpPool::load(&bo2_dir).unwrap();
+        let (bo2, atts) = mp.weapons().unwrap();
+        let crate::paks::MpPool { patch, .. } = mp;
+        let names = crate::weapons::names(&bo2_dir);
+        let roster = crate::weapons::Roster::read(&patch);
+        let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names, &roster);
+        crate::weapons::add_variants(&mut table, &crate::weapons::converted(&patch, &bo2), &bo2);
+        let defs: &'static [zhbo_core::weapons::WeaponDef] = Box::leak(table.weapons.into_boxed_slice());
+        let resolve = |id: &str| defs.iter().find(|d| d.id == id);
+        let mut fails = Vec::new();
+        for w in bo2.iter().filter(|w| roster.is_player_weapon(w)) {
+            let Some(d) = resolve(&w.name) else { continue };
+            let spawns = (w.proj_explosion == proj_explosion::BOLT).then(|| w.spawned_grenade_weapon.clone()).flatten().unwrap_or_default();
+            if d.spawns != spawns {
+                fails.push(format!("{}: spawns {:?}, BO2's bolt spawns {spawns:?}", w.name, d.spawns));
+            }
+            if !spawns.is_empty() && resolve(&spawns).is_none() {
+                fails.push(format!("{}: its spawned grenade {spawns} is not in the table", w.name));
+            }
+            let sticks = matches!(w.stickiness, stickiness::ALL | stickiness::ALL_ORIENT) && d.effect != zhbo_core::weapons::Effect::Impact;
+            if d.sticky != sticks {
+                fails.push(format!("{}: sticky {}, BO2's stickiness {}", w.name, d.sticky, w.stickiness));
+            }
+        }
+        let swept: Vec<&str> = defs.iter().filter(|d| zhbo_core::conformance::projectile::is_projectile(d)).map(|d| d.id.as_str()).collect();
+        for d in defs.iter().filter(|d| zhbo_core::conformance::projectile::is_projectile(d)) {
+            fails.extend(zhbo_core::conformance::projectile::check(d, &resolve));
+        }
+        println!("{} projectile weapons swept: {}", swept.len(), swept.join(" "));
+        for id in ["crossbow_mp", "crossbow_mp+stackfire", "knife_ballistic_mp", "smaw_mp", "usrpg_mp", "fhj18_mp", "gl_an94_mp", "frag_grenade_mp", "sticky_grenade_mp", "hatchet_mp"] {
+            assert!(swept.contains(&id), "{id} is swept");
+        }
+        assert!(fails.is_empty(), "{fails:#?}");
+    }
+
     /// Every attachment BO2 offers on every weapon: the weapon with it (and its alt mode) plays by
     /// the attachment's numbers, and its viewmodel with the attachment's model converts.
     #[test]

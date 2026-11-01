@@ -28,7 +28,9 @@ impl Sim {
                 if !def.fx_weapon.is_empty() {
                     host.fire_fx(p.general, &def.fx_weapon, 0, eye + dir * 10.0);
                 }
-                let proj = Projectile::launch(def, p.general, eye + dir * 2.0, dir, def.fuse_time, host, p.yaw);
+                let mut proj = Projectile::launch(def, p.general, eye + dir * 2.0, dir, def.fuse_time, host, p.yaw);
+                // Flak Jacket covers a launcher's own blast (and a bolt's grenade) as a thrown one.
+                (proj.self_blast_scale, proj.self_stun_scale) = p.arsenal.self_harm_scales();
                 self.projectiles.push((idx, proj));
                 // One launch cue per pull: the stack's last bolt, everything else's only one.
                 if pellet == 0 {

@@ -360,7 +360,14 @@ pub struct WeaponDef {
     /// BO2's `WeaponDef.impactType` (+40): the impact-table bucket an impact-table lookup uses
     /// (`crates/zhbo-core/src/impacts.rs`); 0 when BO2 has none.
     pub impact_type: i32,
+    /// Sticks where it strikes and waits for its fuse or lands as equipment (BO2's `stickiness`
+    /// `ALL`/`ALL_ORIENT`); an impact weapon's hit is its damage, so it never waits.
     pub sticky: bool,
+    /// The grenade weapon this projectile becomes where it strikes, stuck to what it hit (BO2's
+    /// `projExplosion` `bolt` with `szSpawnedGrenadeWeaponName`, t6mp `FUN_00608c10`): the
+    /// crossbow's bolt deals its own `damage[0]` on the hit and leaves `explosive_bolt_mp`, which
+    /// goes off on that def's fuse. Empty for everything else.
+    pub spawns: String,
     /// Zero Hour assets made for this weapon by the converter (empty when absent).
     pub fx_weapon: String,
     /// Zero Hour FXList for the blast (grenades, rockets).
@@ -916,6 +923,7 @@ impl Default for WeaponDef {
             impact_explode: false,
             impact_type: 0,
             sticky: false,
+            spawns: String::new(),
             fx_weapon: String::new(),
             explosion_fx: String::new(),
             view_flash_fx: String::new(),
@@ -1022,6 +1030,13 @@ impl WeaponDef {
     /// else the HUD's `display_name` (a weapon no item names).
     pub fn menu_name(&self) -> &str {
         if self.cac_name.is_empty() { &self.display_name } else { &self.cac_name }
+    }
+
+    /// Whether a pull of this gun launches a projectile ([`super::WeaponAction::Launch`]) rather
+    /// than firing bullets: the launchers, and a gun whose shot is a projectile with an effect (the
+    /// crossbow, the ballistic knife).
+    pub fn launches(&self) -> bool {
+        self.class == Class::Launcher || (self.projectile_speed > 0.0 && self.class != Class::Shotgun && self.effect != Effect::None)
     }
 
     /// Rounds one full pull puts out: a stacked weapon's whole magazine; a spread class's `shotCount`

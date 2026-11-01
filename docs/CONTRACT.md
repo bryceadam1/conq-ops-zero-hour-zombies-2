@@ -590,6 +590,17 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
   rows are read cell by cell with **no default-surface fallback** (`impacts::fx_cell`; the bounce
   row has no flesh cell, so a grenade off a soldier raises nothing), and their constants live once
   in `zhbo_core::impacts` (`GRENADE_BOUNCE`, `PROJECTILE_DUD`, `DUD_HIT_SOUND_TYPE`). No ABI change.
+* **A missile's strike** (t6mp `FUN_00608c10`). Every strike of an object deals the def's `iDamage`
+  (`damage[0]`) first: a rocket's or launcher grenade's direct hit takes only that, because BO2's
+  radius damage skips the struck entity; a Semtex or C4 sticking, or a frag or flashbang bouncing
+  off a player, strikes for it before it sticks or bounces (`Projectile::struck`, a hit marker). A
+  `bolt` explosion (`projExplosion` 9, the crossbow) becomes its `szSpawnedGrenadeWeaponName`
+  (the table's `SpawnedGrenade`, `explosive_bolt_mp`) where it struck, stuck to what it hit, and
+  that goes off on its own fuse with its own blast (`Outcome::Spawned`; the sim resolves the
+  grenade through the catalog). A strike is placed where the move met the object or the ground,
+  not at the end of the logic step, and nothing is skipped near the muzzle: only the thrower is
+  never struck, as BO2's missile skips its owner. `Sticky` is BO2's `stickiness` all/all_orient
+  (not for impact weapons, whose strike is their damage). Sim only; no ABI change.
 * ABI: `surface_at` is appended to `ZhboLogicApi` (fields 23 → 24), `ZhboClientOut` grows by 324
   bytes (4508 → 4832) and `ZHBO_ABI_VERSION` goes to 26; `zhbo_load_impacts` and `zhbo_impact_fx`
   are new free functions on the append-only surface.

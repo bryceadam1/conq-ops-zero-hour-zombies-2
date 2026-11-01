@@ -6,6 +6,8 @@
 //! cooking. Used by zhbo-assets' test over every multiplayer weapon in the
 //! player's own BO2 install, and by this crate's tests on the built-in table.
 
+pub mod projectile;
+
 use crate::input::buttons;
 use crate::units::LOGIC_DT;
 use crate::weapons::{Arsenal, Class, FireMode, Offhand, Place, Rng, WeaponAction, WeaponDef, WeaponState};
