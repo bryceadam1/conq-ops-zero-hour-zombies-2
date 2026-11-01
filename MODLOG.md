@@ -4596,3 +4596,20 @@ In-game checks (integrator): AN-94 + Hybrid — aim, Shift swaps the sight with 
 and the gun never leaves the aim; Shift half-aimed or unaimed does nothing; the alt-mode key does
 nothing; let go of the aim and re-aim — the red dot stays; Shift again goes back to the 30° sight.
 
+### Follow-up: the sprint key while aimed keeps the stance; hold breath not ported (branch `v1/alt-ads`)
+
+BO2 has no "sprint press stands you up" rule of its own: the stand-up comes from a sprint *start*
+(`FUN_008c5840`; `FUN_008c57e0` traces the stand-up clearance for a ducked/prone player), and the
+start is refused by `FUN_008c3c40` while the aim button (usercmd bit 0x80) is held, the stick is
+short of `player_sprintForwardMinimum`, and several other buttons are down. `movement::change_stance`
+stood a crouched/prone player up on any sprint press; it now does so only when a sprint could start
+(forward enough, nothing blocking — `block_sprint` already carries the aim). So the Hybrid swap and
+hold breath while crouched keep the crouch, and a sprint press standing still does nothing.
+
+Hold breath (`FUN_008e4860`, called from `FUN_008e4da0`): `+breath_sprint` also presses the
+hold-breath button (usercmd 0x40000, kbutton 0x1076ca0); at `posFrac == 1` on a def with +0x5ac set
+it holds breath (ps+0x10 bit 4) for the breath-hold dvar time (+ `perk_extraBreath` with
+`holdbreath`), then gasps; ps+0x4e0 lerps the sway scale by two dvars. Not ported: the mod has no
+aimed idle sway to steady in this base (5a carries `IdleAmount` but nothing draws it). Follow-up for
+whoever ports the ADS idle sway.
+

@@ -242,9 +242,14 @@ pub fn step(
     body.held_last = input.held;
     body.time += dt;
 
-    update_stance(body, input.held, pressed, tuning);
-
     let (fwd_axis, right_axis) = input.move_axes();
+    // BO2 stands a crouched or prone player up only by starting a sprint, and the sprint start
+    // (`FUN_008c3c40`) refuses while the aim button is held (usercmd bit 0x80) or the stick is short
+    // of `player_sprintForwardMinimum` — so the sprint/hold-breath key while aimed (the Hybrid's
+    // sight swap, hold breath) leaves the stance alone.
+    let sprint_could_start = fwd_axis >= tuning.sprint_forward_min && !mods.block_sprint;
+    update_stance(body, input.held, pressed, sprint_could_start, tuning);
+
     update_sprint(body, input.held, fwd_axis, mods, tuning);
 
     // Wish direction and speed, BO2 style (`FUN_008c4110`): forward full speed, back and strafe
@@ -303,9 +308,9 @@ fn stance_scale(body: &Body, t: &MoveTuning) -> f32 {
     }
 }
 
-fn update_stance(body: &mut Body, held: u32, pressed: u32, t: &MoveTuning) {
+fn update_stance(body: &mut Body, held: u32, pressed: u32, sprint_could_start: bool, t: &MoveTuning) {
     let before = body.stance;
-    change_stance(body, held, pressed);
+    change_stance(body, held, pressed, sprint_could_start);
     if body.stance != before {
         body.stance_lerp = match (before, body.stance) {
             (_, Stance::Prone) => Some((body.time, t.crouch_scale, t.prone_scale, t.prone_down_time)),
@@ -315,7 +320,7 @@ fn update_stance(body: &mut Body, held: u32, pressed: u32, t: &MoveTuning) {
     }
 }
 
-fn change_stance(body: &mut Body, held: u32, pressed: u32) {
+fn change_stance(body: &mut Body, held: u32, pressed: u32, sprint_could_start: bool) {
     if pressed & buttons::PRONE != 0 {
         body.stance = if body.stance == Stance::Prone { Stance::Stand } else { Stance::Prone };
     } else if pressed & buttons::CROUCH != 0 {
@@ -324,8 +329,8 @@ fn change_stance(body: &mut Body, held: u32, pressed: u32) {
             Stance::Stand | Stance::Prone => Stance::Crouch,
         };
     }
-    // Sprinting always stands you up (BO2).
-    if held & buttons::SPRINT != 0 && body.stance != Stance::Stand && pressed & buttons::SPRINT != 0 {
+    // A sprint start stands you up (BO2), when one could start.
+    if sprint_could_start && held & buttons::SPRINT != 0 && body.stance != Stance::Stand && pressed & buttons::SPRINT != 0 {
         body.stance = Stance::Stand;
     }
 }
@@ -610,6 +615,27 @@ pub(crate) mod tests {
         let v = b.horizontal_speed();
         assert!((v - t.walk_speed).abs() < 0.05 * t.walk_speed, "speed {v} vs {}", t.walk_speed);
         assert!(b.pos.x > 0.0 && b.pos.y.abs() < 1e-3);
+    }
+
+    #[test]
+    fn the_sprint_key_stands_you_up_only_when_a_sprint_could_start() {
+        // FUN_008c3c40: the aim button (and a short stick) refuses the sprint start, and with it
+        // the stand-up — the Hybrid's sight swap while crouched keeps the crouch.
+        let t = MoveTuning::default();
+        let world = FlatWorld::default();
+        let press = |b: &mut Body, input: FpsInput, mods: MoveModifiers| {
+            step(b, &FpsInput { held: input.held | buttons::SPRINT, pressed: buttons::SPRINT, ..input }, mods, &t, &world, LOGIC_DT);
+        };
+        for stance in [Stance::Crouch, Stance::Prone] {
+            let mut b = Body::new(Vec3::ZERO, &t);
+            b.stance = stance;
+            press(&mut b, forward(), MoveModifiers { block_sprint: true, ..Default::default() });
+            assert_eq!(b.stance, stance, "aimed: no stand-up");
+            press(&mut b, FpsInput::default(), MoveModifiers::default());
+            assert_eq!(b.stance, stance, "standing still: no sprint, no stand-up");
+            press(&mut b, forward(), MoveModifiers::default());
+            assert_eq!(b.stance, Stance::Stand, "a sprint start stands you up");
+        }
     }
 
     #[test]
