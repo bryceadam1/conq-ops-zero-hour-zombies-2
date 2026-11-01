@@ -192,6 +192,9 @@ tuning! {
     trophy_system_range: "trophy_system_range" = 512.0, "Trophy System: how near a projectile it shoots down, inches (`_trophy_system.gsc:171`, `distancesquared < 262144`).";
     trophy_system_ammo: "trophy_system_ammo" = 2.0, "Trophy System: projectiles it shoots down before it is spent (`_trophy_system.gsc:62`, `self.ammo = 2`).";
     perk_delay_explosive_time: "perk_delayExplosiveTime" = 0.9, "`delayexplosive` (Engineer): extra seconds a tripped explosive waits (dvar default, `dvars-t6mp.tsv`; `gametypes/_weaponobjects.gsc:1550-1551`).";
+    equipment_hacker_tool_time_ms: "equipmenthackertooltimems" = 50.0, "Black Hat: the lock on equipment, milliseconds of sight (`_hacker_tool.gsc:20`; the lock loop `:293-301`).";
+    vehicle_hacker_tool_time_ms: "vehiclehackertooltimems" = 4000.0, "Black Hat: the lock on a vehicle, milliseconds of sight (`_hacker_tool.gsc:30`, `gethacktime`'s default for a vehicle); the mod's Zero Hour drones are vehicles.";
+    hacker_tool_lock_start: "hackertoollockstart" = 0.1, "Black Hat: seconds from the pull-back to the lock starting: `watchhackertooluse`'s `wait 0.05` after `grenade_pullback` (`_hacker_tool.gsc:166-170`) and the target loop's first `wait 0.05` before it picks the target (`:245`, `:330-335`).";
     hacker_tool_max_equipment_distance: "hackertoolmaxequipmentdistance" = 2000.0, "Black Hat: the farthest equipment it locks on to, inches (`_hacker_tool.gsc:12`); the mod uses it for Zero Hour drones too.";
     concussion_time_min: "concussion_time_min" = 2.0, "Stun at the blast's edge, seconds: BO2's `time = 2 + 4 * scale` (`gametypes/_weapons.gsc:1372`).";
     concussion_time_scale: "concussion_time_scale" = 4.0, "Extra stun at the blast's centre, seconds (the `4` in `gametypes/_weapons.gsc:1372`; `scale` is 1 at the centre, 0 at the edge).";
@@ -219,8 +222,6 @@ tuning! {
     projectile_bounce_along: "ProjectileBounceAlong" = 0.6, "Grenade bounce: share of the speed along the surface kept (the mod's value; BO2's `parallelBounce`).";
     projectile_rest_speed: "ProjectileRestSpeed" = 3.0, "A bouncing grenade below this speed comes to rest, Zero Hour units/s (the mod's value).";
     equipment_arm_time: "EquipmentArmTime" = 1.0, "Seconds after it is down before equipment does anything (the mod's stand-in for BO2's `waittillnotmoving` plus `activationdelay`).";
-    hack_equipment_time: "HackEquipmentTime" = 1.5, "Black Hat: seconds aimed at equipment to hack it (the mod's value: BO2's 50 ms lock, `_hacker_tool.gsc:20`, is followed by the tool's own fire).";
-    hack_drone_time: "HackDroneTime" = 3.0, "Black Hat: seconds aimed at a Zero Hour drone to hack it (the mod's value).";
 }
 
 /// Keys match case-insensitively, ignoring `_` and `.` (`perk_weapSwitchMultiplier`).
@@ -306,5 +307,6 @@ mod tests {
         assert_eq!((t.proximity_grenade_detection_radius, t.proximity_grenade_grace_period), (150.0, 0.1));
         assert_eq!((t.trophy_system_range, t.trophy_system_ammo, t.perk_delay_explosive_time), (512.0, 2.0, 0.9));
         assert_eq!((t.hacker_tool_max_equipment_distance, t.concussion_time_min, t.concussion_time_scale, t.emp_grenade_duration), (2000.0, 2.0, 4.0, 12.0));
+        assert_eq!((t.equipment_hacker_tool_time_ms, t.vehicle_hacker_tool_time_ms, t.hacker_tool_lock_start), (50.0, 4000.0, 0.1));
     }
 }

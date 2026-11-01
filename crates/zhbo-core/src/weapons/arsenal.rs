@@ -1646,6 +1646,14 @@ impl Arsenal {
         }
     }
 
+    /// The hacking tool in hand while [`Arsenal::hacking`] is `Some`.
+    pub fn hacking_def(&self) -> Option<&'static WeaponDef> {
+        match self.offhand {
+            Some(OffhandUse::Holding { lethal, .. }) => Some(self.offhand_def(lethal)).filter(|d| d.place == Place::Hack),
+            _ => None,
+        }
+    }
+
     /// The Black Hat finished a hack: it uses one charge and is put away.
     pub fn hack_done(&mut self) {
         if let Some(OffhandUse::Holding { lethal, .. }) = self.offhand {

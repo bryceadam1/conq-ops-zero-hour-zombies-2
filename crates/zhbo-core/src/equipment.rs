@@ -55,10 +55,12 @@ pub struct EquipTuning {
     pub trophy_charges: u8,
     /// `delayexplosive` (Engineer): extra seconds a tripped explosive waits.
     pub delay_explosive: f32,
-    /// Black Hat: range and hack times.
+    /// Black Hat: range; the lock on equipment and on a drone (seconds of sight); the script's
+    /// delay from the pull-back to the lock starting.
     pub hack_range: f32,
-    pub hack_time: f32,
-    pub hack_drone_time: f32,
+    pub hack_lock_equipment: f32,
+    pub hack_lock_drone: f32,
+    pub hack_lock_start: f32,
 }
 
 impl EquipTuning {
@@ -79,8 +81,9 @@ impl EquipTuning {
             trophy_charges: t.trophy_system_ammo.clamp(0.0, 255.0) as u8,
             delay_explosive: t.perk_delay_explosive_time,
             hack_range: inches(t.hacker_tool_max_equipment_distance),
-            hack_time: t.hack_equipment_time,
-            hack_drone_time: t.hack_drone_time,
+            hack_lock_equipment: t.equipment_hacker_tool_time_ms / 1000.0,
+            hack_lock_drone: t.vehicle_hacker_tool_time_ms / 1000.0,
+            hack_lock_start: t.hacker_tool_lock_start,
         }
     }
 
@@ -644,18 +647,28 @@ mod sim_tests {
         let mut sim = Sim::new();
         ready(&mut sim, &host);
         sim.equipment.add(Placed::new(equipment("claymore_mp", Place::Plant), 1, 99, 60, Vec3::new(40.0, 0.0, 0.0), 0.0, None));
-        let black_hat = equipment("pda_hack_mp", Place::Hack);
+        // The install's `pda_hack_mp`: `iHoldFireTime` 250 ms, `iFireDelay` 130 ms.
+        let mut def = equipment("pda_hack_mp", Place::Hack).clone();
+        (def.timing.hold_fire_time, def.timing.fire_delay) = (0.25, 0.13);
+        let black_hat: &'static WeaponDef = Box::leak(Box::new(def));
         sim.players[0].as_mut().unwrap().arsenal.tactical = Offhand { def: black_hat, count: 1 };
         // Aim at it (eye height 10, it sits on the ground) and hold the Black Hat up.
         let pitch = -(10.0f32 / 40.0).atan();
         run(&mut sim, &host, FpsInput { held: buttons::TACTICAL, pressed: buttons::TACTICAL, pitch, ..Default::default() }, 1);
-        let frames = (EquipTuning::default().hack_time / crate::units::LOGIC_DT) as u32 + 2;
-        let mut hacked = false;
-        for _ in 0..frames {
+        // BO2's hack on equipment: the pull-back (250 ms) outlasts the script's lock (0.1 s start +
+        // 50 ms), then the tool's fire delay (130 ms): about 0.38 s from the pull-back.
+        let t = EquipTuning::default();
+        assert!(t.hack_lock_start + t.hack_lock_equipment < black_hat.timing.hold_fire_time);
+        let expected = black_hat.timing.hold_fire_time + black_hat.timing.fire_delay;
+        let mut hacked_at = None;
+        for f in 0..40u32 {
             run(&mut sim, &host, FpsInput { held: buttons::TACTICAL, pitch, ..Default::default() }, 1);
-            hacked |= sim.events.iter().any(|e| e.kind == EventKind::Hacked);
+            if hacked_at.is_none() && sim.events.iter().any(|e| e.kind == EventKind::Hacked) {
+                hacked_at = Some(f);
+            }
         }
-        assert!(hacked, "hacked within {frames} frames");
+        let at = hacked_at.expect("hacked") as f32 * crate::units::LOGIC_DT;
+        assert!((at - expected).abs() <= 3.0 * crate::units::LOGIC_DT, "hacked {at} s after the pull-back, BO2 ~{expected} s");
         assert_eq!(sim.equipment.placed[0].owner, 0);
         assert_eq!(host.get(60).owner_player, 0, "its object is ours now");
         assert_eq!(sim.player(0).unwrap().arsenal.tactical.count, 0);

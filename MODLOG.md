@@ -8831,3 +8831,21 @@ clusters); `cargo xtask build` OK; autotests run one at a time: default 16/16, `
 - `native_encode` no longer allocates every frame: the due draws leave the queue with
   `extract_if` into a reused scratch `Vec`, and the target list and pipeline plan (now indices into
   the scratch) are reused too.
+
+## Code polish 2: the Black Hat's hack time is BO2's (2026-11-01)
+
+The hack took the mod's 1.5 s (equipment) / 3 s (drones). BO2's `_hacker_tool.gsc` makes it a
+chain: the `grenade_pullback` notify, `wait 0.05` (`:166-170`), the target loop's first `wait 0.05`
+before it picks the target (`:245`, `:330-335`), then `locklengthms` of continuous sight added
+0.05 s per server frame (`:293-301`; `equipmenthackertooltimems` 50, `vehiclehackertooltimems`
+4000, `:20`/`:30`). Locked, the tool fires; the target is hacked on the code's
+`hacker_tool_fired` (`watchhackertoolfired`), i.e. once the offhand is pulled back (the def's
+`iHoldFireTime`, 250 ms for the install's `pda_hack_mp`) and its `iFireDelay` (130 ms) has run.
+`sim::hack` now completes the hack when both hold: equipment lands at ~0.38 s (the pull-back
+outlasts the 0.15 s lock), a Zero Hour drone (a vehicle) at ~4.23 s. The times are the def's own
+fields plus three cited tuning keys (`equipmenthackertooltimems`, `vehiclehackertooltimems`,
+`hackertoollockstart`); `HackEquipmentTime`/`HackDroneTime` are gone. A new target restarts the
+lock (`clearhackertarget`), not the pull-back.
+
+**Gotcha:** `equipmenthackertooltimems = 50` alone reads as "instant"; the pull-back and fire delay
+are what make the hack take its ~0.4 s, and they live in the weapon def, not the script.
