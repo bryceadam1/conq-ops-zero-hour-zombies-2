@@ -187,6 +187,9 @@ pub struct Request {
     pub event: &'static str,
     /// Where it happens, for positional sounds; `None` plays it as the player's own sound.
     pub at: Option<Vec3>,
+    /// A multiplier on the event's own volume (1 for every cue but a third-person shot's layers,
+    /// which carry BO2's distance curve at the listener: `soundlayers`).
+    pub gain: f32,
 }
 
 /// Per-player state for the cues that depend on movement and health.
@@ -342,11 +345,32 @@ pub fn impact_cue(impact_type: i32, surface: crate::impacts::Surface) -> Option<
 
 impl Cues {
     pub fn play(&mut self, event: &'static str) {
-        self.queue.push(Request { event, at: None });
+        self.queue.push(Request { event, at: None, gain: 1.0 });
     }
 
     pub fn play_at(&mut self, event: &'static str, at: Vec3) {
-        self.queue.push(Request { event, at: Some(at) });
+        self.queue.push(Request { event, at: Some(at), gain: 1.0 });
+    }
+
+    /// A positional cue at `gain` × its event's volume.
+    pub fn play_at_gain(&mut self, event: &'static str, at: Vec3, gain: f32) {
+        self.queue.push(Request { event, at: Some(at), gain });
+    }
+
+    /// Another player's shot through FX weapon `fx` from `at`, heard from `listener` (`None` when
+    /// the local player has no first-person body, e.g. overhead): BO2's chain layer by layer, each
+    /// at its distance curve's gain (`soundlayers`), else the converted close mix with Zero Hour's
+    /// falloff. Nothing for an FX weapon without converted layers (it keeps its own `FireSound`).
+    pub fn third_person_shot(&mut self, fx: &str, at: Vec3, listener: Option<Vec3>) {
+        match crate::soundlayers::shot(fx, listener.map(|l| (at - l).length())) {
+            Some(Ok(layers)) => {
+                for (event, gain) in layers {
+                    self.play_at_gain(event, at, gain);
+                }
+            }
+            Some(Err(chain)) => self.play_at(chain, at),
+            None => {}
+        }
     }
 
     /// Forget movement history (first person starts, or the General changed).

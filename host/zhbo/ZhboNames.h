@@ -35,6 +35,7 @@ inline constexpr const char *WEAPON_TABLE_PATH = "Data\\ConquerOps\\weapons.ini"
 inline constexpr const char *RTS_FX_PATH = "Data\\ConquerOps\\rts_fx.txt";
 inline constexpr const char *IMPACT_FX_PATH = "Data\\ConquerOps\\impacts.txt";
 inline constexpr const char *VIEWMODEL_SOUNDS_PATH = "Data\\ConquerOps\\viewmodel_sounds.txt";
+inline constexpr const char *SOUND_LAYERS_PATH = "Data\\ConquerOps\\sound_layers.txt";
 inline constexpr const char *STRINGS_PATH = "ConquerOps\\strings_en.ini";
 inline constexpr const char *TUNING_PATH = "ConquerOps\\tuning.ini";
 inline constexpr const char *CLASSES_PATH = "ConquerOps\\classes.ini";

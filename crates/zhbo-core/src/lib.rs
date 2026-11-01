@@ -35,6 +35,7 @@ pub mod profile;
 pub mod projectiles;
 pub mod sim;
 pub mod shield;
+pub mod soundlayers;
 pub mod sounds;
 pub mod strings;
 pub mod tuning;

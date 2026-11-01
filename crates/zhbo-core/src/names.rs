@@ -16,6 +16,28 @@ pub const RTS_FX_PATH: &str = "Data\\ConquerOps\\rts_fx.txt";
 /// BO2's impact table, converted (see impacts.rs): `impact`/`flesh` rows of FXLists.
 pub const IMPACT_FX_PATH: &str = "Data\\ConquerOps\\impacts.txt";
 pub const VIEWMODEL_SOUNDS_PATH: &str = "Data\\ConquerOps\\viewmodel_sounds.txt";
+/// The third-person shots' per-layer distance curves (see soundlayers.rs).
+pub const SOUND_LAYERS_PATH: &str = "Data\\ConquerOps\\sound_layers.txt";
+/// A converted gun's Zero Hour FX weapon (`ZHBO_FX_an94_mp`; `key` is the weapon id with `+`/`~`
+/// as `_`, plus `_silenced` for the suppressor's), the weapon the sim fires for its flash.
+pub fn fx_weapon(key: &str) -> String {
+    format!("{FX_WEAPON_PREFIX}{key}")
+}
+pub const FX_WEAPON_PREFIX: &str = "ZHBO_FX_";
+/// The third-person shot of that gun (`ZHBO_BO2_FireNpc_an94_mp`): what others hear.
+pub fn npc_fire_event(key: &str) -> String {
+    format!("{NPC_FIRE_PREFIX}{key}")
+}
+pub const NPC_FIRE_PREFIX: &str = "ZHBO_BO2_FireNpc_";
+/// The third-person shot of the gun whose FX weapon is `fx` (the same key).
+pub fn npc_fire_for_fx(fx: &str) -> Option<String> {
+    fx.strip_prefix(FX_WEAPON_PREFIX).map(npc_fire_event)
+}
+/// One layer of a converted chain as its own event (`<chain>_L<k>`, k the chain index).
+pub fn layer_event(chain: &str, k: usize) -> String {
+    format!("{chain}_L{k}")
+}
+
 /// The shipped localised strings (see strings.rs).
 pub const STRINGS_PATH: &str = "ConquerOps\\strings_en.ini";
 /// The gameplay tuning pack (see tuning.rs).
@@ -205,6 +227,7 @@ inline constexpr const char *WEAPON_TABLE_PATH = "Data\\ConquerOps\\weapons.ini"
 inline constexpr const char *RTS_FX_PATH = "Data\\ConquerOps\\rts_fx.txt";
 inline constexpr const char *IMPACT_FX_PATH = "Data\\ConquerOps\\impacts.txt";
 inline constexpr const char *VIEWMODEL_SOUNDS_PATH = "Data\\ConquerOps\\viewmodel_sounds.txt";
+inline constexpr const char *SOUND_LAYERS_PATH = "Data\\ConquerOps\\sound_layers.txt";
 inline constexpr const char *STRINGS_PATH = "ConquerOps\\strings_en.ini";
 inline constexpr const char *TUNING_PATH = "ConquerOps\\tuning.ini";
 inline constexpr const char *CLASSES_PATH = "ConquerOps\\classes.ini";

@@ -7,6 +7,7 @@
 //! and a multi-layer event (a gunshot is shot + tail + low end) is mixed into one WAV per variant.
 //! zhbo-core plays the events by name (`zhbo_core::sounds`); `ZhboViewmodel.cpp` plays notetracks.
 
+use crate::mixer::{Layer, Mixer};
 use crate::sounds::wav_bytes;
 use std::collections::BTreeMap;
 use std::path::Path;
@@ -149,8 +150,8 @@ pub const WORLD_ZONE: &str = "mp_raid";
 /// the shell's own bank first, then the patches and the common bank for the few that live there.
 pub const UI_ZONES: &[(&str, &str)] =
     &[("code_post_gfx_mp", "mpl_code_post_gfx"), ("patch_ui_mp", "mpl_patch_ui"), ("patch_mp", "mpl_patch")];
-/// BO2's player gunshot is 0.45; scale BO2 volumes so it plays at Zero Hour's 100.
-const VOLUME_GAIN: f32 = 100.0 / 0.45;
+/// The zone whose `SndDriverGlobals` holds BO2's mixer tables (groups, curves, pans, snapshots).
+pub const MIXER_ZONE: &str = "code_post_gfx_mp";
 const NOTETRACK_PREFIX: &str = "sndnt#";
 
 /// 16-bit PCM.
@@ -249,7 +250,7 @@ impl Source<'_> {
 /// (`wpn_sig556_fire_plr` -> `wpn_sig556_LFE` -> `wpn_sig556_fire_plr_decay`: the shot, its low
 /// end, its tail). Missing aliases end their chain; each alias once (a cycle ends too), first-seen
 /// order.
-fn secondary_chain<'a>(layers: &[&str], alias: impl Fn(&str) -> Option<&'a Alias>) -> Vec<&'a Alias> {
+pub fn secondary_chain<'a>(layers: &[&str], alias: impl Fn(&str) -> Option<&'a Alias>) -> Vec<&'a Alias> {
     let mut out: Vec<&Alias> = Vec::new();
     for name in layers {
         let mut next = alias(name);
@@ -285,40 +286,113 @@ fn convert(p: &Pcm, rate: u32, channels: u16) -> Vec<i16> {
     out
 }
 
-/// Mix layers (each scaled by its BO2 volume relative to the loudest).
-fn mix(layers: &[(Pcm, f32)]) -> Pcm {
-    let rate = layers.iter().map(|l| l.0.rate).max().unwrap_or(48000);
-    let channels = layers.iter().map(|l| l.0.channels).max().unwrap_or(1);
-    let loudest = layers.iter().map(|l| l.1).fold(0.0f32, f32::max).max(1e-3);
-    let mut acc: Vec<f32> = Vec::new();
-    for (p, vol) in layers {
-        let s = convert(p, rate, channels);
-        if s.len() > acc.len() {
-            acc.resize(s.len(), 0.0);
-        }
-        for (a, v) in acc.iter_mut().zip(s) {
-            *a += v as f32 * (vol / loudest);
-        }
+/// Interleaved −1..1 samples at `rate` Hz, `channels` channels.
+fn to_float(p: &Pcm, rate: u32, channels: u16) -> Vec<f32> {
+    convert(p, rate, channels).into_iter().map(|s| s as f32 / 32768.0).collect()
+}
+
+/// One variant of an event as BO2's mixer outputs it ([`crate::mixer`]): every layer at its own
+/// gain (volume × group × bus × pan fold, and for a 3D alias its distance curve at the source,
+/// `d = 0`), from its own start delay, through the buses and master. Layers the mix silences (an
+/// LFE-only pan in stereo, the far layer of a crossfade up close) are not decoded. `None` when
+/// nothing is audible.
+fn render(mixer: &Mixer, layers: &[(&sndalias::Variant, Pcm, f32)]) -> Option<(Vec<f32>, u16, u32)> {
+    let rate = layers.iter().map(|l| l.1.rate).max()?;
+    let mixer = Mixer { rate: rate as f32, ..*mixer };
+    let channels = layers.iter().map(|l| l.1.channels).max()?;
+    let floats: Vec<Vec<f32>> = layers.iter().map(|(_, p, _)| to_float(p, rate, channels)).collect();
+    let mix: Vec<Layer> = layers
+        .iter()
+        .zip(&floats)
+        .map(|((v, _, gain), samples)| Layer {
+            samples,
+            start_frame: (v.start_delay_ms as u64 * rate as u64 / 1000) as usize,
+            bus: mixer.bus(v),
+            gain: *gain,
+        })
+        .collect();
+    let out = mixer.render(&mix, channels as usize);
+    out.iter().any(|s| *s != 0.0).then_some((out, channels, rate))
+}
+
+fn peak(samples: &[f32]) -> f32 {
+    samples.iter().fold(0.0f32, |a, s| a.max(s.abs()))
+}
+
+/// 16-bit samples of `samples` scaled so `peak` is full scale.
+fn quantize(samples: &[f32], peak: f32) -> Vec<i16> {
+    samples.iter().map(|s| (s / peak * 32767.0).round().clamp(-32768.0, 32767.0) as i16).collect()
+}
+
+fn pcm_wav(samples: &[i16], scale: f32, channels: u16, rate: u32) -> Vec<u8> {
+    let bytes: Vec<u8> = samples.iter().flat_map(|&s| ((s as f32 * scale).round() as i16).to_le_bytes()).collect();
+    wav_bytes(&bytes, channels, rate)
+}
+
+/// One alias of a third-person chain as a `soundlayers` row: its distances in Zero Hour units and
+/// its two dry curves; a 2D alias is flat (BO2 does not attenuate it).
+fn layer_row(mixer: &Mixer, v: &sndalias::Variant, event: &str) -> zhbo_core::soundlayers::Layer {
+    use zhbo_core::soundlayers::{Layer, FLAT};
+    let event: &'static str = Box::leak(event.to_string().into_boxed_str());
+    let curve = |c: u8| mixer.globals.curve(c).map_or(FLAT, |c| c.points);
+    if !v.mix.positional {
+        return Layer { event, min: 0.0, max: 1e9, min_curve: FLAT, curve: FLAT };
     }
-    Pcm { samples: acc.into_iter().map(|v| v.clamp(-32768.0, 32767.0) as i16).collect(), channels, rate }
+    let units = zhbo_core::units::inches;
+    Layer { event, min: units(v.distance.0), max: units(v.distance.1), min_curve: curve(v.mix.min_falloff_curve), curve: curve(v.mix.falloff_curve) }
 }
 
-fn pcm_wav(p: &Pcm) -> Vec<u8> {
-    let bytes: Vec<u8> = p.samples.iter().flat_map(|s| s.to_le_bytes()).collect();
-    wav_bytes(&bytes, p.channels, p.rate)
+/// Zero Hour falloff for a 3D chain, in Zero Hour units: `MaxRange` where BO2's chain is last
+/// heard (the farthest layer's `distMax`), `MinRange` half the distance at which the chain's summed
+/// curves fall to half their level at the source — Zero Hour's OpenAL falloff is `MinRange / d`
+/// (inverse distance, clamped), so the two meet at −6 dB. `None` for a chain with no 3D layer.
+fn falloff(mixer: &Mixer, chain: &[&sndalias::Variant]) -> Option<(f32, f32)> {
+    let max = mixer.audible_range(chain);
+    if max <= 0.0 {
+        return None;
+    }
+    const STEPS: usize = 400;
+    let at = |i: usize| max * i as f32 / STEPS as f32;
+    let source = mixer.chain_gain(chain, 0.0);
+    let reference = if source > 0.0 { source } else { (0..=STEPS).map(|i| mixer.chain_gain(chain, at(i))).fold(0.0, f32::max) };
+    let half = (0..=STEPS).map(at).find(|&d| mixer.chain_gain(chain, d) < 0.5 * reference).unwrap_or(max);
+    let units = zhbo_core::units::inches;
+    Some((units(half * 0.5).max(1.0), units(max)))
 }
 
-fn audio_event(name: &str, sounds: &[String], volume: f32, kind: Kind, limit: u8) -> String {
-    let volume = (volume * VOLUME_GAIN).round().clamp(5.0, 100.0) as u32;
-    let kind = match kind {
-        Kind::Player => kind.ini().to_string(),
-        _ => format!("{}\n  MinRange    = 40\n  MaxRange    = 600", kind.ini()),
+fn audio_event(name: &str, sounds: &[String], volume: u32, kind: Kind, limit: u8, range: Option<(f32, f32)>) -> String {
+    let kind = match (kind, range) {
+        (Kind::Player, _) => kind.ini().to_string(),
+        (_, Some((min, max))) => format!("{}\n  MinRange    = {min:.0}\n  MaxRange    = {max:.0}", kind.ini()),
+        (_, None) => format!("{}\n  MinRange    = 40\n  MaxRange    = 600", kind.ini()),
     };
     format!(
         "AudioEvent {name}\n  Sounds      = {}\n  Control     = interrupt random\n  Priority    = high\n  \
          Volume      = {volume}\n  Limit       = {limit}\n  Type        = {kind}\nEnd\n\n",
         sounds.join(" ")
     )
+}
+
+/// An event rendered through BO2's mixer, waiting for the one normalization every event shares.
+struct Pending {
+    event: String,
+    kind: Kind,
+    limit: u8,
+    range: Option<(f32, f32)>,
+    /// (sound file, mixer output normalized to its own peak, that peak, channels, rate).
+    variants: Vec<(String, Vec<i16>, f32, u16, u32)>,
+}
+
+impl Pending {
+    fn level(&self) -> f32 {
+        self.variants.iter().map(|v| v.2).fold(0.0, f32::max)
+    }
+}
+
+/// Zero Hour's `Volume` for an event at `level` when the loudest event is at `loudest`: the
+/// percentage rounded up (so the WAV only ever scales down) and at least 1.
+fn volume_percent(level: f32, loudest: f32) -> u32 {
+    ((100.0 * level / loudest).ceil() as u32).clamp(1, 100)
 }
 
 fn sound_file(event: &str, variant: usize) -> String {
@@ -352,38 +426,83 @@ pub fn files(
         UI_ZONES.iter().filter_map(|(z, bank)| Some((crate::generals::load_zone(bo2_dir, z).ok()?, *bank))).collect();
     let ui_banks: Vec<Source> = ui_zones.iter().filter_map(|(zone, bank)| pick(zone, bank)).collect();
     let ui_srcs: Vec<&Source> = ui_banks.iter().chain(std::iter::once(&common_src)).collect();
+    let mixer_zone = ui_zones.iter().map(|(z, _)| z).find(|z| z.name.contains(MIXER_ZONE));
+    let loaded;
+    let mixer_zone = match mixer_zone {
+        Some(z) => z,
+        None => {
+            loaded = crate::generals::load_zone(bo2_dir, MIXER_ZONE)?;
+            &loaded
+        }
+    };
+    let globals = zhbo_formats::sndglobals::read(mixer_zone)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("no SndDriverGlobals in {MIXER_ZONE}"))?;
+    let mixer = Mixer::new(&globals).ok_or("SndDriverGlobals has no master snapshot")?;
     let mut out: BTreeMap<String, Vec<u8>> = BTreeMap::new();
-    let mut ini = String::from("; Generated by Conquer Ops from the player's own Black Ops II install. Do not redistribute.\n\n");
+    let mut pending: Vec<Pending> = Vec::new();
     let mut missing: Vec<String> = Vec::new();
+    let mut layer_rows = String::from("; Third-person shots layer by layer (zhbo_core::soundlayers): layer <fx weapon> <chain> <event> <min> <max> <min curve> <curve>\n");
 
-    let mut add = |event: &str, src: &Source, layers: &[&str], kind: Kind, limit: u8, out: &mut BTreeMap<String, Vec<u8>>| -> bool {
+    let mut add = |event: &str, src: &Source, layers: &[&str], kind: Kind, limit: u8| -> bool {
         let aliases = src.chained(layers);
         if aliases.is_empty() {
             return false;
         }
         // One output variant per variant of the first layer; other layers use their first variant.
         let base = aliases[0];
-        let mut sounds = Vec::new();
+        let mut variants = Vec::new();
         for (i, v) in base.variants.iter().enumerate().take(8) {
-            let mut parts = Vec::new();
-            for (k, a) in aliases.iter().enumerate() {
-                let var = if k == 0 { v } else { &a.variants[0] };
-                if let Some(p) = src.decode(var.asset_id) {
-                    parts.push((p, var.volume.1));
-                }
-            }
-            if parts.is_empty() {
-                continue;
-            }
-            let name = sound_file(event, i);
-            out.insert(format!("Data\\Audio\\Sounds\\{name}.wav"), pcm_wav(&mix(&parts)));
-            sounds.push(name);
+            let parts: Vec<(&sndalias::Variant, Pcm, f32)> = aliases
+                .iter()
+                .enumerate()
+                .map(|(k, a)| if k == 0 { v } else { &a.variants[0] })
+                .map(|var| (var, mixer.gain(var, 0.0)))
+                .filter(|(_, g)| *g > 0.0)
+                .filter_map(|(var, g)| Some((var, src.decode(var.asset_id)?, g)))
+                .collect();
+            let Some((samples, channels, rate)) = render(&mixer, &parts) else { continue };
+            let level = peak(&samples);
+            variants.push((sound_file(event, i), quantize(&samples, level), level, channels, rate));
         }
-        if sounds.is_empty() {
+        if variants.is_empty() {
             return false;
         }
-        let volume = base.variants.iter().map(|v| v.volume.1).fold(0.0, f32::max);
-        ini.push_str(&audio_event(event, &sounds, volume, kind, limit));
+        let chain: Vec<&sndalias::Variant> = aliases.iter().filter_map(|a| a.variants.first()).collect();
+        let range = if kind == Kind::Player { None } else { falloff(&mixer, &chain) };
+        pending.push(Pending { event: event.to_string(), kind, limit, range, variants });
+        // A converted gun's third-person shot also ships layer by layer for the client to level by
+        // BO2's distance curves (`zhbo_core::soundlayers`), keyed by the gun's FX weapon.
+        if let Some(key) = event.strip_prefix(zhbo_core::names::NPC_FIRE_PREFIX).filter(|_| kind == Kind::Others) {
+            let fx = zhbo_core::names::fx_weapon(key);
+            let reach = zhbo_core::units::inches(mixer.audible_range(&chain).max(1.0));
+            for (k, a) in aliases.iter().enumerate() {
+                let Some(first) = a.variants.first() else { continue };
+                if mixer.dry_gain(first) <= 0.0 {
+                    continue;
+                }
+                let name = zhbo_core::names::layer_event(event, k);
+                let variants: Vec<_> = a
+                    .variants
+                    .iter()
+                    .take(8)
+                    .enumerate()
+                    .filter_map(|(i, var)| {
+                        let (samples, channels, rate) = render(&mixer, &[(var, src.decode(var.asset_id)?, mixer.dry_gain(var))])?;
+                        let level = peak(&samples);
+                        Some((sound_file(&name, i), quantize(&samples, level), level, channels, rate))
+                    })
+                    .collect();
+                if variants.is_empty() {
+                    continue;
+                }
+                let layer = layer_row(&mixer, first, &name);
+                // No Zero Hour falloff inside its reach: the client applies BO2's curve.
+                let r = if first.mix.positional { layer.max.max(1.0) } else { reach };
+                layer_rows.push_str(&zhbo_core::soundlayers::format_row(&fx, event, &layer));
+                pending.push(Pending { event: name, kind, limit, range: Some((r, r)), variants });
+            }
+        }
         true
     };
 
@@ -401,8 +520,8 @@ pub fn files(
         };
         // Some aliases BO2 keeps only in the map's bank (the generic dry fire): fall back to it
         // rather than dropping the event. Common first, so aliases that already resolve do not change.
-        let ok = add(s.event, src, s.layers, s.kind, s.limit, &mut out)
-            || (s.from == From::Common && add(s.event, &world_src, s.layers, s.kind, s.limit, &mut out));
+        let ok = add(s.event, src, s.layers, s.kind, s.limit)
+            || (s.from == From::Common && add(s.event, &world_src, s.layers, s.kind, s.limit));
         if !ok {
             missing.push(s.event.to_string());
         }
@@ -410,7 +529,7 @@ pub fn files(
 
     let mut ui_made = 0;
     for cue in zhbo_core::sounds::UiCue::ALL {
-        if ui_srcs.iter().any(|src| add(cue.event(), src, &[cue.alias()], Kind::Player, 2, &mut out)) {
+        if ui_srcs.iter().any(|src| add(cue.event(), src, &[cue.alias()], Kind::Player, 2)) {
             ui_made += 1;
         } else {
             missing.push(format!("menu sound {}", cue.alias()));
@@ -421,7 +540,7 @@ pub fn files(
     for e in extra {
         let layers: Vec<&str> = e.layers.iter().map(String::as_str).collect();
         // As the fixed events: some aliases live only in the map's bank (gear pull-outs).
-        if add(&e.event, &common_src, &layers, e.kind, e.limit, &mut out) || add(&e.event, &world_src, &layers, e.kind, e.limit, &mut out) {
+        if add(&e.event, &common_src, &layers, e.kind, e.limit) || add(&e.event, &world_src, &layers, e.kind, e.limit) {
             extra_made += 1;
         } else {
             missing.push(format!("weapon sound {}", e.event));
@@ -439,7 +558,7 @@ pub fn files(
             // Most foley is in the common bank; some (gear rustle) only in the map's.
             let ok = *nt_events
                 .entry(event.clone())
-                .or_insert_with(|| add(&event, &common_src, &[alias], Kind::Player, 2, &mut out) || add(&event, &world_src, &[alias], Kind::Player, 2, &mut out));
+                .or_insert_with(|| add(&event, &common_src, &[alias], Kind::Player, 2) || add(&event, &world_src, &[alias], Kind::Player, 2));
             if ok {
                 notes.push_str(&format!("{vm} {clip} {:.3} {event}\n", n.time * length));
             } else if !missing.iter().any(|m| m.ends_with(alias)) {
@@ -448,9 +567,25 @@ pub fn files(
             }
         }
     }
+    // One normalization for every event: the loudest converted sound is Zero Hour's 100, every
+    // other keeps its BO2 level relative to it. The rounded-up percentage carries the level and the
+    // WAV the remainder (a scale <= 1).
+    let loudest = pending.iter().map(Pending::level).fold(0.0f32, f32::max).max(f32::MIN_POSITIVE);
+    let mut ini = String::from("; Generated by Conquer Ops from the player's own Black Ops II install. Do not redistribute.\n\n");
+    for p in &pending {
+        let volume = volume_percent(p.level(), loudest);
+        for (name, samples, level, channels, rate) in &p.variants {
+            let scale = level / loudest / (volume as f32 / 100.0);
+            out.insert(format!("Data\\Audio\\Sounds\\{name}.wav"), pcm_wav(samples, scale, *channels, *rate));
+        }
+        let sounds: Vec<String> = p.variants.iter().map(|v| v.0.clone()).collect();
+        ini.push_str(&audio_event(&p.event, &sounds, volume, p.kind, p.limit, p.range));
+    }
+    let loudest_event = pending.iter().max_by(|a, b| a.level().total_cmp(&b.level())).map_or("", |p| p.event.as_str());
     out.insert("Data\\INI\\SoundEffects\\ZHBO_BO2.ini".into(), ini.into_bytes());
     out.insert(WEAPON_INI_PATH.into(), weapon_ini(WEAPON_INI, WEAPON_SOUNDS)?.into_bytes());
     out.insert(zhbo_core::names::VIEWMODEL_SOUNDS_PATH.into(), notes.into_bytes());
+    out.insert(zhbo_core::names::SOUND_LAYERS_PATH.into(), layer_rows.into_bytes());
     // Zero Hour allows only 4 simultaneous 2D sounds; automatic fire plus footsteps and reload
     // foley need more. The engine loads this folder after AudioSettings.ini.
     out.insert(
@@ -459,7 +594,7 @@ pub fn files(
     );
     let wavs = out.keys().filter(|k| k.ends_with(".wav")).count();
     let summary = format!(
-        "{wavs} sounds, {} events, {ui_made} menu events, {} notetrack events{}",
+        "{wavs} sounds, {} events, {ui_made} menu events, {} notetrack events, loudest {loudest_event}{}",
         SFX.len() + extra_made - missing.iter().filter(|m| SFX.iter().any(|s| s.event == m.as_str())).count(),
         nt_events.values().filter(|v| **v).count(),
         if missing.is_empty() { String::new() } else { format!(", missing {missing:?}") }
@@ -472,16 +607,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn mixes_and_resamples() {
+    fn resamples_and_remixes() {
         let a = Pcm { samples: vec![1000; 48], channels: 1, rate: 24000 };
-        let b = Pcm { samples: vec![500; 96], channels: 2, rate: 48000 };
-        let m = mix(&[(a, 1.0), (b, 0.5)]);
-        assert_eq!((m.channels, m.rate), (2, 48000));
-        // 48 mono frames at 24 kHz become 96 stereo frames (192 samples) at 48 kHz; the second
-        // layer (48 frames at half volume) covers the first half.
-        assert_eq!(m.samples.len(), 192);
-        assert!(m.samples[..96].iter().all(|&s| (1240..=1260).contains(&s)), "{:?}", &m.samples[..4]);
-        assert!(m.samples[96..].iter().all(|&s| (990..=1010).contains(&s)));
+        // 48 mono frames at 24 kHz become 96 stereo frames (192 samples) at 48 kHz.
+        let f = to_float(&a, 48000, 2);
+        assert_eq!(f.len(), 192);
+        assert!(f.iter().all(|&s| (s - 1000.0 / 32768.0).abs() < 1e-4));
+    }
+
+    /// The loudest event is 100; others keep their ratio, rounded up so the WAV only scales down.
+    #[test]
+    fn volumes_share_one_normalization() {
+        assert_eq!(volume_percent(2.0, 2.0), 100);
+        assert_eq!(volume_percent(1.0, 2.0), 50);
+        assert_eq!(volume_percent(0.501, 2.0), 26);
+        assert_eq!(volume_percent(1e-6, 2.0), 1);
+        let samples = quantize(&[0.5, -0.25], 0.5);
+        assert_eq!(samples, [32767, -16384]);
     }
 
     /// BO2 starts an alias's `secondaryName` with it, and that one's secondary, …: the burst
@@ -499,6 +641,7 @@ mod tests {
                 distance: (0.0, 0.0),
                 start_delay_ms: 0,
                 secondary: secondary.map(String::from),
+                mix: Default::default(),
             }],
         };
         let bank = [
@@ -516,6 +659,96 @@ mod tests {
         assert_eq!(names(&["wpn_sig556_fire_plr", "wpn_sig556_fire_plr_decay"]), ["wpn_sig556_fire_plr", "wpn_sig556_LFE", "wpn_sig556_fire_plr_decay"]);
         assert_eq!(names(&["loop_a"]), ["loop_a", "loop_b"]);
         assert_eq!(names(&["dangling", "missing"]), ["dangling"]);
+    }
+
+    /// Needs the player's BO2 install. The AN-94's third-person chain layer by layer as BO2's
+    /// mixer has it: up close the close shot and its tail, not the low end (LFE-only pan) nor the
+    /// distant layer (its `sindelay` min curve is 0 at the source); past 1,800" only the distant
+    /// layer, out to 12,000". The converted events carry those levels and ranges.
+    #[test]
+    #[ignore]
+    fn the_installs_chains_follow_bo2s_mixer() {
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
+        let world = crate::generals::load_zone(&dir, WORLD_ZONE).unwrap();
+        let gfx = crate::generals::load_zone(&dir, MIXER_ZONE).unwrap();
+        let globals = zhbo_formats::sndglobals::read(&gfx).unwrap().unwrap();
+        let mixer = Mixer::new(&globals).unwrap();
+        let banks = sndalias::banks(&common).unwrap();
+        let find = |n: &str| banks.iter().find_map(|b| b.alias(n));
+        let chain = secondary_chain(&["wpn_an94_fire_npc"], find);
+        let names: Vec<&str> = chain.iter().map(|a| a.name.as_str()).collect();
+        assert_eq!(names, ["wpn_an94_fire_npc", "wpn_an94_LFE_npc", "wpn_an94_fire_npc_dist", "wpn_an94_fire_npc_decay"]);
+        let g = |i: usize, d: f32| mixer.gain(&chain[i].variants[0], d);
+        assert!(g(0, 0.0) > 0.0 && g(3, 0.0) > 0.0, "close shot and tail at the source");
+        assert_eq!(g(1, 0.0), 0.0, "the low end is LFE-only: not in stereo");
+        assert_eq!(g(2, 0.0), 0.0, "the distant layer is silent at the source");
+        assert!(g(2, 3000.0) > 0.0 && g(0, 3000.0) == 0.0, "past 1800 only the distant layer");
+        assert_eq!(g(2, 12000.0), 0.0);
+        // The player's shot outweighs its own tail; a footstep's foley is far below the shot
+        // before the compressor, which makes quiet fx up.
+        let shot = mixer.gain(&find("wpn_an94_fire_plr").unwrap().variants[0], 0.0);
+        let tail = mixer.gain(&find("wpn_an94_fire_plr_decay").unwrap().variants[0], 0.0);
+        assert!(shot > 2.0 * tail, "{shot} {tail}");
+
+        let extra = [DynSfx { event: zhbo_core::names::npc_fire_event("an94_mp"), layers: vec!["wpn_an94_fire_npc".into()], kind: Kind::Others, limit: 3 }];
+        let (files, summary) = files(&common, &world, &dir, &[], &extra).unwrap();
+        // The layers ship keyed by the gun's FX weapon: the close shot, the distant layer and the
+        // tail (not the LFE-only low end), each with its own curves; the client's rule on them
+        // crossfades as BO2's does.
+        let rows = files.iter().find(|f| f.0 == zhbo_core::names::SOUND_LAYERS_PATH).map(|f| String::from_utf8_lossy(&f.1).into_owned()).unwrap();
+        let table = zhbo_core::soundlayers::parse(&rows);
+        let shot = &table[&zhbo_core::names::fx_weapon("an94_mp")];
+        assert_eq!(shot.chain, "ZHBO_BO2_FireNpc_an94_mp");
+        let events: Vec<&str> = shot.layers.iter().map(|l| l.event).collect();
+        assert_eq!(events, ["ZHBO_BO2_FireNpc_an94_mp_L0", "ZHBO_BO2_FireNpc_an94_mp_L2", "ZHBO_BO2_FireNpc_an94_mp_L3"]);
+        let ft = zhbo_core::units::inches;
+        assert_eq!((shot.layers[0].gain(0.0), shot.layers[1].gain(0.0)), (1.0, 0.0), "point-blank: the close shot, no distant layer");
+        assert_eq!(shot.layers[0].gain(ft(3000.0)), 0.0);
+        assert!(shot.layers[1].gain(ft(3000.0)) > 0.5, "across the map: the distant layer");
+        println!("{summary}");
+        let ini = files.iter().find(|f| f.0 == "Data\\INI\\SoundEffects\\ZHBO_BO2.ini").map(|f| String::from_utf8_lossy(&f.1).into_owned()).unwrap();
+        if let Ok(out) = std::env::var("ZHBO_SFX_DUMP") {
+            std::fs::write(out, &ini).unwrap();
+        }
+        let event = |name: &str| {
+            let at = ini.find(&format!("AudioEvent {name}\n")).unwrap_or_else(|| panic!("no {name}"));
+            ini[at..].split("End\n").next().unwrap().to_string()
+        };
+        let field = |name: &str, f: &str| -> f32 {
+            event(name).lines().find_map(|l| l.trim().strip_prefix(f).map(|v| v.trim_start_matches([' ', '=']).trim().parse().unwrap())).unwrap_or_else(|| panic!("{name} {f}"))
+        };
+        let (min, max) = (field("ZHBO_BO2_FireNpc", "MinRange"), field("ZHBO_BO2_FireNpc", "MaxRange"));
+        assert_eq!(max, zhbo_core::units::inches(12000.0).round(), "heard as far as the distant layer");
+        assert!(min > 0.0 && min < max / 4.0, "{min} {max}");
+        assert_eq!(field("ZHBO_BO2_FireNpc_an94_mp_L2", "MinRange"), field("ZHBO_BO2_FireNpc_an94_mp_L2", "MaxRange"), "no Zero Hour falloff on a layer");
+        let vol = |name: &str| field(name, "Volume");
+        assert!(vol("ZHBO_BO2_Fire") > vol("ZHBO_BO2_Step"), "the shot over a footstep");
+    }
+
+    /// Needs the player's BO2 install. The menu cues the converter leaves missing are in no bank
+    /// of any zone t6mp loads: its zone list (`FUN_00597ed0`) appends the mode suffix `_mp` to
+    /// `code_pre_gfx`, `code_post_gfx`, `patch`, `patch_ui`, `common`, and the shell adds `ui_mp`;
+    /// SP's `code_post_gfx` holds seven of them (`spl_code_post_gfx`), the rest exist in no zone of
+    /// the install at all. BO2's MP menus hash-miss them and play nothing, as the mod does.
+    #[test]
+    #[ignore]
+    fn the_missing_menu_cues_are_in_no_mp_zone() {
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let zones = ["code_pre_gfx_mp", "code_post_gfx_mp", "patch_mp", "patch_ui_mp", "common_mp", "ui_mp", "common_patch_mp"];
+        let banks: Vec<Bank> = zones
+            .iter()
+            .filter_map(|z| crate::generals::load_zone(&dir, z).ok())
+            .flat_map(|z| sndalias::banks(&z).unwrap_or_default())
+            .collect();
+        assert!(banks.iter().any(|b| b.name.starts_with("mpl_code_post_gfx")), "the MP shell bank loaded");
+        let present = |alias: &str| banks.iter().any(|b| b.alias(alias).is_some_and(|a| !a.variants.is_empty()));
+        let missing: Vec<&str> = zhbo_core::sounds::UiCue::ALL.iter().map(|c| c.alias()).filter(|a| !present(a)).collect();
+        assert!(missing.contains(&"uin_main_nav") && missing.contains(&"cac_cmn_item_remove"), "{missing:?}");
+        let sp = crate::generals::load_zone(&dir, "code_post_gfx").unwrap();
+        let sp_banks = sndalias::banks(&sp).unwrap();
+        assert!(sp_banks.iter().any(|b| b.name.starts_with("spl_") && b.alias("uin_main_nav").is_some()), "SP-only");
+        println!("{} menu cues in no MP zone: {missing:?}", missing.len());
     }
 
     #[test]
@@ -538,11 +771,11 @@ mod tests {
 
     #[test]
     fn events_are_well_formed() {
-        let e = audio_event("ZHBO_BO2_Fire", &["zhbo_bo2_fire_0".into()], 0.45, Kind::Player, 3);
+        let e = audio_event("ZHBO_BO2_Fire", &["zhbo_bo2_fire_0".into()], 100, Kind::Player, 3, None);
         assert!(e.contains("Volume      = 100") && e.contains("Type        = ui player") && e.ends_with("End\n\n"));
-        let w = audio_event("ZHBO_BO2_Impact", &["x".into()], 0.2, Kind::World, 4);
-        assert!(w.contains("world shrouded everyone") && w.contains("MinRange"));
-        let o = audio_event("ZHBO_BO2_FireNpc", &["x".into()], 0.2, Kind::Others, 4);
+        let w = audio_event("ZHBO_BO2_Impact", &["x".into()], 40, Kind::World, 4, Some((120.0, 900.0)));
+        assert!(w.contains("world shrouded everyone") && w.contains("MinRange    = 120") && w.contains("MaxRange    = 900"));
+        let o = audio_event("ZHBO_BO2_FireNpc", &["x".into()], 40, Kind::Others, 4, None);
         assert!(o.contains("allies enemies") && !o.contains("player"));
     }
 

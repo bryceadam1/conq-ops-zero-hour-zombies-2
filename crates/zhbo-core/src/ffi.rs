@@ -131,7 +131,7 @@ pub const ABI_VERSION: u32 = 26;
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
 pub const LOGIC_API_FIELDS: u64 = 24;
-pub const CLIENT_API_FIELDS: u64 = 13;
+pub const CLIENT_API_FIELDS: u64 = 14;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
 const _: () = {
@@ -206,6 +206,21 @@ pub unsafe extern "C" fn zhbo_load_impacts(text: *const c_char) -> i32 {
     }
     let text = unsafe { CStr::from_ptr(text).to_string_lossy() };
     crate::impacts::install(&text) as i32
+}
+
+/// Load the third-person shots' layer rows (`Data\ConquerOps\sound_layers.txt`, read by the
+/// bridge's `readTextFile`); until it runs another player's shot plays the converted close mix.
+/// See `crate::soundlayers`. Returns the number of layers installed (-1 for a null text).
+///
+/// # Safety
+/// `text` must be null or a NUL-terminated string.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_load_sound_layers(text: *const c_char) -> i32 {
+    if text.is_null() {
+        return -1;
+    }
+    let text = unsafe { CStr::from_ptr(text).to_string_lossy() };
+    crate::soundlayers::install(&text) as i32
 }
 
 /// Load the class preset list (`Data/ConquerOps/classes.ini`, read by the bridge's
@@ -871,7 +886,11 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
     let result = with_state(|s| {
         let out = s.client.frame(&mut s.sim, &inp);
         for r in std::mem::take(&mut s.client.cues.queue) {
-            s.client_host.sound(r.event, r.at);
+            if r.gain == 1.0 {
+                s.client_host.sound(r.event, r.at);
+            } else {
+                s.client_host.sound_gain(r.event, r.at, r.gain);
+            }
         }
         // The local player's class camos, for the native viewmodel's next draw: each held weapon
         // wears its own (`_class.gsc`: the primary `primarycamo`, the sidearm `secondarycamo`, the

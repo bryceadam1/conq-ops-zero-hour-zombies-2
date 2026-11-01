@@ -1098,6 +1098,14 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
     fn consume_events(&mut self, sim: &mut Sim, inp: &ClientIn, body_pos: Option<Vec3>) {
         let me = inp.local_player;
         let mine: Vec<EventKind> = sim.events.iter().filter(|e| e.player == me).map(|e| e.kind).collect();
+        // Other players' shots: BO2's third-person chain, layer by layer at the listener's distance.
+        for e in sim.events.iter().filter(|e| e.player != me) {
+            if let EventKind::Shot { origin, .. } = e.kind {
+                if let Some(p) = sim.player(e.player) {
+                    self.cues.third_person_shot(&p.arsenal.current().def.fx_weapon, origin, body_pos);
+                }
+            }
+        }
         sim.events.clear();
         self.hits_len = 0;
         // The weapon in hand after the step: its sounds for this frame's shots, swing and throws.

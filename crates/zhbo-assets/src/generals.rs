@@ -222,8 +222,9 @@ pub(crate) const OPTIC_WINDOW: f32 = 0.72;
 const SMOKE_EFFECT: &str = "weapon/grenade/fx_smoke_willy_pete";
 /// The overhead General's bullet impacts (see `ZhboBridge.cpp`, `loadRtsFx`).
 pub use zhbo_core::names::RTS_FX_PATH;
-/// The FX weapons INI: each converted gun's third-person shot (`FireFX`, `FireSound`) and the
-/// overhead General's weapons.
+/// The FX weapons INI: each converted gun's third-person flash (`FireFX`; its shot is the
+/// client's, layer by layer — `FireSound = NONE`, `zhbo_core::soundlayers`) and the overhead
+/// General's weapons.
 pub const FX_WEAPONS_INI_PATH: &str = "Data\\INI\\Weapon\\ZHBO_BO2_Weapons.ini";
 /// The box a BO2 soldier is clicked by (inches: a man standing, with some room).
 const SOLDIER_BOX_CENTRE: [f32; 3] = [0.0, 0.0, 36.0];

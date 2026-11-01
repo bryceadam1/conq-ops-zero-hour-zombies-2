@@ -28,6 +28,7 @@ pub mod playeranim;
 pub mod viewmodel_sweep;
 pub mod fx;
 pub mod shotfx;
+pub mod mixer;
 pub mod sfx;
 pub mod manifest;
 pub mod screenshot;
