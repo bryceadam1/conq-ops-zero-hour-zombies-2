@@ -6301,3 +6301,218 @@ default, since it is the only path that shows a combination's attachments and th
   `gpu::draw` takes the rig instead of reading a global. Test: `each_general_keeps_his_own_rig`.
 * `autotest-mac.sh --rts` checks for the `native body: ZW..U composed` line, so a default run now
   proves the native weapon loaded (15 checks).
+
+## Combination legality: BO2's compatibility lists replace the one-per-point rule (2026-10-26)
+
+The mod had no attachment-compatibility rule at all. The editor's `toggle_att` only capped the
+count; what went together was decided by `attachments::apply` keeping one attachment per asset
+`attachPoint`. BO2 never uses the point for legality: two attachments pair only when each one's
+`compatibleAttachments` list (`mp/attachmenttable.csv` column 11, `FUN_008e70f0`) names the other
+(`FUN_008e6b20`, G15). The converter's combo set (`all_legal_combos`) already followed BO2's rule;
+the editor, the class repair and the catalog did not. So the mod offered dualoptic+gl,
+dualoptic+sf, fmj+mms, acog+ir, … (different points, BO2 forbids them) and refused grip+sf,
+fastads+stalker, dualclip+fmj, … (one point, BO2 allows them).
+
+* Data: `AttachmentDef::compatible` (table field `Compatible`, Words), converted in
+  `attachment_metadata` through the conformance crate's own reader
+  (`zhbo_conformance::bo2::combos::table`) — one parse of the install, no list in the mod.
+* Rule: `attachments::compatible` (mutual) and `attachments::sanitize` (`FUN_008eb870`, the
+  `tu6_conflictingAttachmentCheck` pass: over the eAttachment-ordered first three, drop the third
+  if it conflicts with either, then the second if it conflicts with the first). `apply` uses it
+  instead of the point collapse.
+* Editor (`classmenu::legal`, its own file — `classmenu.rs` is at the size limit): picking an
+  attachment unequips the equipped ones it is mutually exclusive with, then needs room under the
+  cap (`cacattachmentsmenu.lua` `ContentButtonSelected` → `UnequipAttachment` over
+  `mutuallyExclusiveIndices`, filled by `attachmentgridbutton.lua` from
+  `Engine.AreAttachmentsCompatible`). `classrepair` sanitizes stored ids the same way. The
+  pairing rule is separate from the Gunfighter counts so the dual-wield/alt-base items extend
+  one place. The grid's "mutually exclusive with X" hint (`MPUI_ITEM_MUTUALLY_EXCLUSIVE*`) is not
+  drawn yet; `legal::exclusive_with` is the query for it.
+* Gotcha: the converter's `add_variants` builds every BO2-legal combo through the core's `apply`;
+  under the point collapse a legal three-attachment combo (`insas_mp+fastads+steadyaim`) came out
+  with a two-attachment id and **overwrote** that id's real def in the catalog. That is why the
+  common rows improved too (`view_model` 651 → 0, the `anim_*` columns −60–70 %). Twenty cells
+  that had matched only through a clobbered def now show their own value (`view_hide_tags`:
+  `tag_rails`/`tag_fast_mag` the mod hides and BO2 does not — the hide-tag item's).
+* Built-in stand-in table: the reflex and the grenade launcher list each other, so the default
+  AN-94 class stays legal with no install.
+
+Measured (conformance CLI vs the 2026-10-25 baseline): weapons one-sided rows 2,264 BO2-only →
+8 (equipment/knife rows the mod has none for) and 747 mod-only → 7 (five `+dw`, item 7;
+`crossbow_mp+ir+stackfire+vzoom`, the crossbow is a BO2 secondary but a mod primary;
+`m32_mp`, not a BO2 CaC item). cac `members` 316 → 0. Differing cells 706,586 → 804,416: the
+2,256 newly paired rows bring their own cells (every per-row column grew by ~2,256); on rows
+present in both runs 56,277 cells newly match and 20 newly differ. Gap clusters 214 → 212.
+The archive's weapon table gains a field, so the archive VERSION must bump (left to the
+integrator): an old archive has no `Compatible` lines and every pair would read as exclusive.
+
+Verified: `cargo test --workspace` green; clippy adds no warning; the real-install suite
+(`--skip conformance`) green, plus the new `the_converted_compatibility_matches_bo2s_rule`.
+
+## Create-a-Class items are BO2's statstable items (2026-10-27, branch `v1/cac-structure`)
+
+The editor listed every converted base weapon, sorted into the primary or secondary slot by its
+weapon class. BO2 lists `mp/statstable.csv`'s weapon rows with a non-negative allocation cost, in
+their column-13 slot (G15). So the mod offered five weapons BO2 does not (`fnp45_dw_mp` and the
+other `_dw` pistols — cost -1, they are what a pistol with the `dw` attachment *gives*; the War
+Machine `m32_mp`, cost -1, a pickup only), put the crossbow in the primary (BO2: a secondary) and
+the launchers in both slots (BO2: secondaries only).
+
+* Data: `WeaponDef::cac_slot` (table field `CacSlot`), set by the converter's `set_cac_slots` from
+  the same `zhbo_conformance::bo2::combos::items` parse the enumerator uses; a combination inherits
+  its base's. Built-in stand-ins carry the slot.
+* Editor (`classmenu::items`, its own file): the primary lists the `primary` items, the secondary
+  the `secondary` items plus the `primary` ones under Overkill; categories still group by class
+  (the crossbow lands in the secondary's SPECIALS). `wildcards_of` derives Overkill from a primary
+  *item* in the secondary slot; `classrepair` clears a weapon its slot does not offer (a pistol
+  or launcher in the primary), as `CheckItems` does — test fixtures that used the Tac-45 as a
+  primary now use the MP7.
+* The table gains fields, so the archive VERSION must bump (integrator): an old archive has no
+  `CacSlot` and the editor's weapon lists would be empty.
+
+## Dual wield is its own weapon; the alt-base and Gunfighter-3 gaps were already closed (2026-10-27, `v1/cac-structure`)
+
+**Dual wield (the N3 playtest item).** BO2's CaC offers Dual Wield as a pistol attachment, but the
+weapon a class *gets* is separate: `GetLoadoutWeapon` (`FUN_00631780`, G16) switches the `dw`
+attachment to the underscore form, `<ref>_dw_mp`, whose def names its left gun (`fnp45_lh_mp`).
+The mod gave the pistol with a `dw` part (`fnp45_mp+dw`, the core's `apply` over the base) and
+also listed the `_dw` weapons as items of their own.
+
+* Core: `classmenu::items::given_weapon`/`given_parts` mirror the rule both ways (`given_parts`
+  reads `<ref>_dw_mp` back only when `<ref>_mp` offers `dw`). Draft ids, `from_custom`, the
+  attachment panel's preview and `classrepair` go through it; the repair migrates an older
+  profile's `fnp45_mp+dw` to `fnp45_dw_mp` silently, and its trim pops Dual Wield as the
+  secondary's attachment before the pistol. The editor still offers Dual Wield in the pistol's
+  attachment grid, as BO2 does.
+* Converter: `combos::given` (conformance crate, used by the expected rows and by
+  `all_legal_combos`) names the combination, so the combo set holds `fnp45_dw_mp`, not `+dw`.
+  The viewmodel converter finds the left gun through the def's `DualWieldWeapon` (new table
+  field, from `szDualWieldWeaponName`), not the `{view}_lh` name or the `dw` short.
+* The sim still runs the `_dw_mp` def as one gun (BO2 fires two guns with their own clips) — a
+  behaviour gap, not a structure one.
+* Built-in stand-ins: a `dw` attachment, the Five-seven offering it and a `fiveseven_dw_mp`, so the
+  headless editor/repair/fake-host tests (`a_dual_wield_class_spawns_with_the_dw_weapon`) are real.
+
+**Item 8 (alt-weapon combo bases) was an agreement-test artefact.** The expected rows carry each
+combination's alt mode as its own row (`gl_an94_mp`/`sf_*`/`dualoptic_*` under the combination's
+key); the weapons conformance table had no one-sided alt row, because the converter builds each
+combination's alt def (`add_variants`, `<alt>~<combo>`). The test compared the expected rows
+against the CaC combos alone. Its "ours" side is now what the converter builds: the legal combos,
+the alt defs `add_variants` makes for them (the table built with the attachment metadata, or
+`apply`'s compatibility check shrinks the multi-attachment ids), and the loadout's melee. It leaves
+one real gap: BO2 gives every class `knife_mp` beside `knife_held_mp`; the mod has only the held
+knife (a melee item, outside Create-a-Class).
+
+**Item 9 (Gunfighter-3) needed no code**: `primary_att_max` is three with Primary Gunfighter, the
+strip draws one plate per allowed attachment, each costs a point, dropping the card truncates, and
+`wildcards_of`/`classrepair` derive and cap it; the cac `requires` gaps were only the crossbow's
+slot. A classui test now pins the third plate drawing its attachment.
+
+Measured (conformance CLI vs `v1/combo-legality`): weapons 804,416 → 804,392 cells (−24:
+`cac_slot` 14 → 0, `cac_requires` 5 → 0, `dual_wield_weapon` 5 → 0; zero newly differing cells on
+common rows); one-sided rows 8/7 → 8/0; cac 565 → 556 (`slot` 12 → 8, `value` 12 → 7), one-sided
+62/6 → 62/0; gap clusters 212 → 207. The 8 BO2-only weapon rows are content the mod has no item
+for: the placed equipment (claymore, bouncing betty, C4, tactical insertion, trophy system, black
+hat), the assault shield, and `knife_mp`.
+
+## Dual wield fires two guns (2026-10-31, `v1/dual-wield-sim`)
+
+The sim ran a `_dw_mp` weapon as one gun. BO2 runs `PM_Weapon` (`FUN_008e4da0`) **once per hand**:
+`FUN_008c8420` calls it, sets `ps+0x71` (the hand) to 1, calls it again and clears it. The left hand
+keeps its own weapon state (`ps+0x1d4`, the right's is `+0x1d0`), times (`+0x54`/`+0x58` vs
+`+0x4c`/`+0x50`) and anim (`+0x584` vs `+0x580`), and uses the def's `szDualWieldWeaponName`
+(`FUN_008eca70`) for its clip use (`FUN_008e1b80` → `FUN_008e6690`) and reload (`FUN_008dfd50`,
+`FUN_008df000`, `FUN_008dfa60`). Decompiles: `~/.opencode/plan/dual-wield-sim/dw_callers.c`,
+`dw2.c`, `dw3.c` (read-only `XrefDecomp` runs).
+
+* **Which button fires which gun** — `FUN_008dbb20(weapon, pm, hand)` returns the usercmd bit the
+  hand's trigger reads: bit 0 (attack) for a single gun and for the pair's right gun, bit `0x18`
+  for the left gun (the button a held C4 detonates with — `+speed_throw`, ADS), swapped only by a
+  usercmd flag at `pm+0x3e`. So on PC the ADS button fires the left gun, as LT does on a pad.
+  Every `_dw` def has `aimDownSight` 0 (probe), so a dual-wield weapon never aims.
+* **Ammo** — the `_dw` and `_lh` variants share `szAmmoName` (stock shared) and their clip is per
+  hand; the `_lh` def's `iClipSize` and reload times equal the pair's for all five pistols (probe:
+  `fnp45` 10/1900/2400/1300, `judge` 5, `kard` 15, `beretta93r` 15, `fiveseven` 20), so the left
+  hand's magazine is the weapon's own clip size — the `_lh` defs are not converted weapons.
+* **Reload** — each hand checks the reload button (usercmd bit 27) in its own pass, so one press
+  reloads both guns that can; an empty hand reloads by itself while the other keeps firing.
+
+**The mod.** `WeaponState::left: Option<Hand>` holds the left gun's magazine, cooldown, reload,
+burst and recoil string; `Arsenal::step` runs the reload and trigger rules per hand
+(`step_hand`), the left with its state swapped in (`WeaponState::swap_hand`) and the ADS button
+as its trigger; `reserve` is shared. Swaps, melee and offhands interrupt both hands.
+`WeaponAction::Fire` and `EventKind::Shot` carry `left`. The viewmodel gives the left gun its own
+`_LEFT` clip (`Frame::left`: fire, last shot, reload/reload-empty, idle/empty idle) while the hands
+act apart, and both hands play the base clip during raise, drop, sprint, melee and offhands; the
+client hands it to the native pass in Rust (`nativevm::ffi::set_left_clip`), so `ZhboNativeIn` is
+unchanged. The HUD draws BO2's `dw | clip / stock` (`ammoarea.lua:1144-1255`): after the right
+clip a big line, then the left clip with its own low-clip pulse.
+
+**The converter keys the `_LEFT` slots by what they play.** It matched each left clip to the right
+slot whose clip had the same name with `_right_`; Kard's and Judge's `LASTSHOT_LEFT` names their
+`left_fire` clip and Judge's `RELOAD_LEFT` and `RELOAD_EMPTY_LEFT` both name `left_reload_empty`, so
+those landed on the fire/reload slots and the left last shot played the left idle. The mapping is
+now `viewmodel::slot::left_as_right` (`FIRE_LEFT` → `FIRE`, `LASTSHOT_LEFT` → `LASTSHOT`, …), shared
+with the conformance actual side's `clip_id`.
+
+**Not done (open):** the left gun's own fire sound (`wpn_<x>_fire_plr_lh`, the `_lh` def's
+`fireSoundPlayer`) is not in the table, so both guns play the pair's `_rh` shot; the left muzzle
+flash and `tag_brass1` shell wait on a per-hand fired flag on the ABI (`viewmodel_fired` is the
+right gun's); `FINALSHOT_LEFT` is empty in BO2 (the `_lh` tables have no slot 1 to fall back to)
+while the mod's fallback reports the left idle — the mod never plays a final-shot slot.
+
+Measured (conformance CLI vs `v1/cac-structure`): weapons 804,392 → 804,389 cells (−3:
+`anim_lastshot_left` 2 → 0, `anim_reload_empty_left` 1 → 0; no other column moved), 199 → 197
+weapon clusters, one-sided rows unchanged (8/0); cac unchanged (556 cells, 6 clusters); gap
+clusters 207 → 205. `anim_finalshot_left` (5) stays, see above. Verified: `cargo test --workspace`
+green; clippy adds no warning (39 before and after); the real-install suite (`--ignored --skip
+conformance`) green. No VERSION/ABI bump (the left clip is Rust-side; `ZhboNativeIn` unchanged).
+
+## The left gun's own shot (2026-10-31, `v1/dual-wield-sim`)
+
+Each `_lh` def has its own `fireSoundPlayer` (`wpn_fnp45_fire_plr_lh`, the pair's is `_rh`; the
+Beretta's both are `wpn_beretta93r_LFE`). The table gains `LeftFireSound` (`WeaponDef::left_fire_sound`),
+which `sounds_and_fx` fills for a dual-wield weapon from the def its `szDualWieldWeaponName` names
+(event `ZHBO_BO2_FireLeft_<id>`, the same layer set as the right shot). The client plays
+`sounds::left_fire_for` for a `Shot { left: true }` (falling back to the weapon's shot when the
+table has no left sound). Tests: `weapons::tests::the_left_gun_gets_its_own_shot` (zhbo-assets),
+`client::tests::the_left_guns_shot_plays_its_own_sound`. No conformance column covers the `_lh`
+def's sound (the left def is not a row), so no cell moves.
+
+## The left gun flashes and ejects at its own tags (2026-10-31, `v1/dual-wield-sim`)
+
+`ZhboClientOut` gains `viewmodel_fired_left` (appended after `hits_len`; 4832 → 4836 bytes, the
+size asserts in `ffi.rs` and `zhbo_core.h` updated). The client sets it from `Shot { left: true }`;
+`viewmodel_fired` is now the right gun's (or a single gun's) alone. The bridge's `viewmodelFx`
+takes the hand: the right gun flashes at `tag_flash` and ejects at `tag_brass`, the left at the
+`_lh` model's `tag_flash1`/`tag_brass1` (its bones: `j_gun1 j_bolt1 j_press_rear1 tag_brass1
+tag_clip1 tag_flash1`, `zhbo-assets model common_mp.ff t6_wpn_pistol_fnp45_view_lh`). Before, every
+right shot ejected at both `tag_brass` and `tag_brass1`. **Needs `ZHBO_ABI_VERSION` 26 → 27** at
+merge (the integrator's); the C++ (`ZhboBridge.cpp/.h`, `ZhboViewmodel.cpp`) was not built here.
+Test: `client::tests::a_shot_event_for_the_local_player_sets_viewmodel_fired` covers both flags.
+
+## FINALSHOT is never played, by BO2 or the mod (2026-10-31, `v1/dual-wield-sim`)
+
+The `anim_finalshot`/`anim_finalshot_left` rows are what the slot is *registered* to, not proof
+anything plays it. BO2's viewmodel driver `WeaponRunXModelAnims` (`FUN_0052bb10`, the
+"Unknown weapon animation %i" string) maps the playerState's weapon anim (`ps+0x580` right,
+`+0x584` left) to the slot it plays through `FUN_0052b1d0`. Right: fire → slot 4 (or 3, fire
+intro), last shot → 6, rechamber → 8, ADS fire → 0x3D (or 0x3F), ADS last shot → 0x3E, ADS
+rechamber → 0x40, melee 9–0xF, reloads, raises, drops, sprint. Left: fire → 0x4E, last shot →
+0x4F, reload 0x54, reload empty 0x53, idle 0x51. The shot's anim is set by `FUN_008dc680`: hip
+fire or last shot (`FUN_008e6770`, the hand's clip ran dry), ADS fire or ADS last shot — never a
+final shot. No caller of `FUN_0052b1d0` (`FUN_0052bb10`, `FUN_0052b670`, `FUN_0052b6e0`,
+`FUN_0052d340`, `FUN_0052ba60`) passes 7 or 0x50. Dumps: `~/.opencode/plan/dual-wield-sim/fin.c`,
+`bb10.c`, `b1d0_callers.c`.
+
+So neither hand's FINALSHOT is a gap: BO2 never plays it and the mod's viewmodel never requests
+it. The five `anim_finalshot_left` cells stay: they are the registration fallback differing —
+BO2 binds an empty `_LEFT` slot to the `_lh` variant's own slot 1, which is empty, while the mod's
+`clip_for` falls back to its left idle (`IDLE_LEFT` keyed at `IDLE | INSTANCE_LEFT`). The actual
+side reports the mod's fallback as it is; nothing was changed to match.
+
+**Follow-up: the `_LEFT` fallback is BO2's registration rule.** The converter now writes each
+`_LEFT` slot as BO2 registers it (`FUN_0052d3e0`): the left variant's own clip, else its slot 1,
+else nothing; `nativevm::clip_for` no longer falls back for those left ids (other left ids keep
+the left-idle fallback). The `_lh` tables have no slot 1, so `FINALSHOT_LEFT` is empty as in BO2:
+weapons 804,389 → 804,384 (`anim_finalshot_left` 5 → 0), gap clusters 205 → 204; nothing else moved.

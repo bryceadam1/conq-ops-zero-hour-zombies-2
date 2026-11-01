@@ -215,11 +215,21 @@ Attachment reflex
   Description = Precision red dot sight.
   Point = 1
   Ads = 50 1 1 0
+  Compatible = gl
 End
 
 Attachment gl
   Short = gl
   DisplayName = Grenade Launcher
+  Point = 2
+  Compatible = reflex
+End
+
+; Dual wield pairs with nothing (its `compatibleAttachments` is empty): a pistol with it is
+; the separate `_dw_mp` weapon (G16), stood in below for the Five-seven.
+Attachment dw
+  Short = dw
+  DisplayName = Dual Wield
   Point = 2
 End
 
@@ -249,6 +259,7 @@ End
 Weapon an94_mp
   DisplayName = AN-94
   Class = rifle
+  CacSlot = primary
   Fire = auto
   FireTime = 0.096
   Clip = 30
@@ -283,6 +294,7 @@ Weapon fnp45_mp
   Class = pistol
   WeapClass = pistol
   Attributes = 30 75 30 65
+  CacSlot = secondary
   Fire = semi
   FireTime = 0.096
   Clip = 10
@@ -310,6 +322,7 @@ End
 Weapon frag_grenade_mp
   DisplayName = Grenade
   Class = lethal
+  CacSlot = primarygrenade
   Fire = semi
   FireTime = 0.6
   Clip = 1
@@ -327,6 +340,7 @@ End
 Weapon claymore_mp
   DisplayName = Claymore
   Class = lethal
+  CacSlot = primarygrenade
   Fire = semi
   FireTime = 0.6
   Clip = 1
@@ -343,6 +357,7 @@ End
 Weapon concussion_grenade_mp
   DisplayName = Concussion
   Class = tactical
+  CacSlot = specialgrenade
   Fire = semi
   FireTime = 0.6
   Clip = 2
@@ -365,6 +380,7 @@ Weapon knife_held_mp
   Anims = 60200e6003f007f3804256
 End
 
+; `CacSlot` is the statstable slot each stand-in is a Create-a-Class item in (column 13).
 ; The five default classes (data/ConquerOps/classes.ini) name BO2's own guns, so those ids must
 ; resolve even with no converted table: they stand in at the schema's generic values (name and
 ; class only — no BO2 numbers are copied here). The player's converted table replaces every one
@@ -372,37 +388,52 @@ End
 Weapon tar21_mp
   DisplayName = MTAR
   Class = rifle
+  CacSlot = primary
 End
 
 Weapon mp7_mp
   DisplayName = MP7
   Class = smg
+  CacSlot = primary
   Allowed = reflex=reflex
 End
 
 Weapon mk48_mp
   DisplayName = MK48
   Class = lmg
+  CacSlot = primary
 End
 
 Weapon 870mcs_mp
   DisplayName = 870 MCS
   Class = shotgun
+  CacSlot = primary
 End
 
 Weapon svu_mp
   DisplayName = SVU
   Class = sniper
+  CacSlot = primary
 End
 
 Weapon smaw_mp
   DisplayName = SMAW
   Class = launcher
+  CacSlot = secondary
 End
 
 Weapon fiveseven_mp
   DisplayName = Five-Seven
   Class = pistol
+  CacSlot = secondary
+  Allowed = dw=dw
+End
+
+; What a class with the Five-seven and Dual Wield gets: no CaC item of its own.
+Weapon fiveseven_dw_mp
+  DisplayName = Five-Seven Dual Wield
+  Class = pistol
+  DualWieldWeapon = fiveseven_lh_mp
 End
 ";
 #[cfg(test)]

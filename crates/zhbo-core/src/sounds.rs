@@ -30,6 +30,15 @@ pub fn fire_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
         FIRE
     }
 }
+/// The shot of a dual-wield weapon's left gun: its own converted BO2 sound (the `_lh` def's), else
+/// the weapon's shot.
+pub fn left_fire_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
+    if !def.left_fire_sound.is_empty() {
+        def.left_fire_sound.as_str()
+    } else {
+        fire_for(def)
+    }
+}
 /// The empty magazine's click for a weapon: its own converted BO2 sound, else the generic event.
 pub fn dry_fire_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
     if !def.empty_fire_sound.is_empty() {

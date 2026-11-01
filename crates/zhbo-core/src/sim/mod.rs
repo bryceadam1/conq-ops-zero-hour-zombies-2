@@ -113,7 +113,8 @@ pub enum EventKind {
     ClassChosen { general: u32, class: ClassName },
     FieldComputerOpened,
     ReturnedToRts { general: u32 },
-    Shot { origin: Vec3, end: Vec3 },
+    /// `left`: the dual-wield left gun's shot (BO2's `EV_FIRE_WEAPON_LEFT`).
+    Shot { origin: Vec3, end: Vec3, left: bool },
     /// One pellet landed on something (a miss emits nothing): where, the direction it was going,
     /// what it hit, and the shooting weapon's BO2 impact bucket. The client turns it into BO2's
     /// impact FX (through `ZhboClientOut.hits`) and the surface's impact sound.
@@ -181,6 +182,8 @@ pub struct ShotTracer {
     /// What the bullet hit (0: the ground, the air or equipment) and where it ended.
     pub target: u32,
     pub end: Vec3,
+    /// A dual-wield pair's left gun fired it: the own tracer starts at its `tag_flash1`.
+    pub left: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -758,8 +761,14 @@ impl Sim {
                         self.apply_weapon_action(host, idx, p, a);
                     }
                     // The kick recentres at the weapon in hand's speed (`FUN_0051f150`; a dual-wield
-                    // pair goes through `centre_speed_hands` with its hands' firing states).
-                    let centre = view_kick::centre_speed(p.arsenal.current().def, p.arsenal.ads, stance);
+                    // pair goes through `centre_speed_hands` with its hands' firing states: a hand
+                    // is firing while its fire cycle runs).
+                    let w = p.arsenal.current();
+                    let hands = match &w.left {
+                        Some(left) => crate::weapons::recoil::Hands::Dual { left: w.def, right_firing: w.cooldown > 0.0, left_firing: left.cooldown > 0.0 },
+                        None => crate::weapons::recoil::Hands::Single,
+                    };
+                    let centre = view_kick::centre_speed_hands(w.def, hands, p.arsenal.ads, stance);
                     p.view_kick.step(LOGIC_DT, centre);
                     // The gun's pose after the frame (the next frame's shots follow it).
                     let mut gun = std::mem::take(&mut p.gun);

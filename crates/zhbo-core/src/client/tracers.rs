@@ -37,6 +37,8 @@ pub struct Viewer {
 pub struct OwnTracer {
     pub fx_weapon: &'static str,
     pub end: Vec3,
+    /// From a dual-wield pair's left gun: drawn from the `_lh` model's `tag_flash1`.
+    pub left: bool,
 }
 
 /// The client's side of the tracers: who views, and the own gun's tracers waiting for the
@@ -60,7 +62,7 @@ impl ViewTracers {
                 continue;
             }
             if self.viewer.first_person != 0 && s.shooter == self.viewer.first_person {
-                self.pending.push(OwnTracer { fx_weapon, end: s.end });
+                self.pending.push(OwnTracer { fx_weapon, end: s.end, left: s.left });
             } else {
                 host.fire_fx(s.shooter, fx_weapon, s.target, s.end);
             }

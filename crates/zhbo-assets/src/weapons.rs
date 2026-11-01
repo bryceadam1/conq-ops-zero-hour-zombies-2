@@ -139,6 +139,10 @@ fn alt_drop_for(w: &Weapon, shorts: &[&str]) -> Option<f32> {
 pub struct AttachmentMeta {
     pub full_name: String,
     pub description: String,
+    /// The shorts it may be combined with: the `attachment` row's `compatibleAttachments`, parsed by
+    /// the conformance rule's own reader (`zhbo_conformance::bo2::combos::table`, `FUN_008e70f0`:
+    /// an unknown name sets nothing), in `eAttachment` order.
+    pub compatible: Vec<String>,
 }
 
 /// BO2's attachment metadata from the player's `mp/attachmenttable.csv` (`patch_mp`): each short
@@ -146,12 +150,17 @@ pub struct AttachmentMeta {
 pub fn attachment_metadata(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<String, String>) -> HashMap<String, AttachmentMeta> {
     let mut meta = HashMap::new();
     let Ok(Some(rows)) = zhbo_formats::stringtable::rows(patch, "mp/attachmenttable.csv") else { return meta };
+    let compat = zhbo_conformance::bo2::combos::table(&rows);
     for row in rows {
         // Column 4 is the display name key, column 5 the short name, column 8 the description key.
         let (Some(short), Some(display_key), Some(desc_key)) = (row.get(4), row.get(3), row.get(7)) else { continue };
         let full_name = names.get(display_key).map(|s| s.trim().to_string()).unwrap_or_default();
         let description = names.get(desc_key).map(|s| s.trim().to_string()).unwrap_or_default();
-        meta.insert(short.clone(), AttachmentMeta { full_name, description });
+        let compatible = zhbo_conformance::bo2::combos::kind_of(short)
+            .and_then(|k| compat.rows.get(&k))
+            .map(|(_, mask)| (0..64).filter(|b| mask & (1u64 << b) != 0).filter_map(|b| zhbo_conformance::weapons::ATTACHMENTS.get(b)).map(|s| s.to_string()).collect())
+            .unwrap_or_default();
+        meta.insert(short.clone(), AttachmentMeta { full_name, description, compatible });
     }
     meta
 }
@@ -277,6 +286,7 @@ pub fn attachment_def(a: &bo2::Attachment, default: &bo2::Attachment, names: &Ha
         stand_rot_pitch: differs(a.stand_rot[0], default.stand_rot[0]),
         stand_rot_roll: differs(a.stand_rot[2], default.stand_rot[2]),
         strafe_rot_roll: differs(a.strafe_rot_r, default.strafe_rot_r),
+        compatible: m.compatible,
     }
 }
 
@@ -467,6 +477,21 @@ pub fn add_variants(table: &mut Table, converted: &[String], bo2: &[Weapon]) {
     }
 }
 
+/// Mark the Create-a-Class items: each `mp/statstable.csv` weapon item with a non-negative
+/// allocation cost (`zhbo_conformance::bo2::combos::items`, the same parse the enumerator and the
+/// conformance expected side use) gives its variant's def the item's slot (column 13). A weapon
+/// no item names stays off the class editor's lists (the `_dw` pistols, whose rows cost -1, are
+/// what a pistol with the `dw` attachment gives; the War Machine is a pickup only).
+pub fn set_cac_slots(table: &mut Table, patch: &zhbo_formats::t6zone::Zone) {
+    let Ok(Some(statstable)) = zhbo_formats::stringtable::rows(patch, "mp/statstable.csv") else { return };
+    let items = zhbo_conformance::bo2::combos::items(&statstable);
+    for d in &mut table.weapons {
+        if let Some(item) = items.iter().find(|i| i.variant == d.id) {
+            d.cac_slot = item.slot.clone();
+        }
+    }
+}
+
 /// The alt mode entry of a converted weapon, if it has one.
 pub fn alt_of<'a>(table: &'a Table, id: &str) -> Option<&'a WeaponDef> {
     let d = table.weapons.iter().find(|d| d.id == id)?;
@@ -546,6 +571,12 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
                 let event = format!("ZHBO_BO2_Fire_{key}");
                 events.push(DynSfx { event: event.clone(), layers: layers(plr), kind: Kind::Player, limit: 3 });
                 d.fire_sound = event;
+            }
+            // A dual-wield pair's left gun shoots with its own def's player sound (`_plr_lh`).
+            if let Some(plr) = bo2.iter().find(|l| Some(l.name.as_str()) == w.dual_wield_weapon.as_deref()).and_then(|l| l.fire_sound_player.as_ref()) {
+                let event = format!("ZHBO_BO2_FireLeft_{key}");
+                events.push(DynSfx { event: event.clone(), layers: layers(plr), kind: Kind::Player, limit: 3 });
+                d.left_fire_sound = event;
             }
             let npc_event = format!("ZHBO_BO2_FireNpc_{key}");
             if let Some(npc) = &c.fire_sound {
@@ -850,6 +881,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         projectile_object: String::new(),
         fire_sound: String::new(),
         empty_fire_sound: String::new(),
+        left_fire_sound: String::new(),
         silenced_fire_sound: String::new(),
         silenced_fire_sound_npc: String::new(),
         silenced_fx_weapon: String::new(),
@@ -876,6 +908,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
             .collect(),
         alt: if w.inventory == bo2::inventory::ALTMODE { w.alt_weapon.clone().unwrap_or_default() } else { String::new() },
         alt_own_ammo: false,
+        // Set from the statstable by `set_cac_slots` (the table is not this weapon's data).
+        cac_slot: String::new(),
+        dual_wield_weapon: w.dual_wield_weapon.clone().unwrap_or_default(),
         silenced: w.silenced,
         laser: false,
         fmj: false,
@@ -1137,7 +1172,7 @@ pub fn converted_base(all: &[Weapon]) -> Vec<String> {
 /// `zhbo_conformance::bo2::combos::offered` over the parsed weapon (the conformance crate reads the
 /// raw structs; the converter's parsed `Weapon` carries the same `attachment_variants`). This is
 /// the one place the converter bridges the conformance rule to its own type; the install test
-/// `the_enumerator_matches_the_conformance_expected_rows` pins the two together.
+/// `conformance_the_enumerator_matches_the_expected_rows` pins the two together.
 fn offered_kinds(item: &zhbo_conformance::bo2::combos::Item, w: &Weapon) -> Vec<usize> {
     let mut kinds: Vec<usize> = zhbo_conformance::bo2::combos::listed(item)
         .into_iter()
@@ -1161,8 +1196,13 @@ pub fn all_legal_combos(patch: &zhbo_formats::t6zone::Zone, all: &[Weapon]) -> V
         let Some(w) = all.iter().find(|w| w.name == item.variant) else { continue };
         let kinds = offered_kinds(item, w);
         for combo in zhbo_conformance::bo2::combos::combos(item, &kinds, &t) {
-            let key = combo.key();
-            let id = if key.is_empty() { w.name.clone() } else { format!("{}+{}", w.name, key) };
+            // The weapon the class gets (`combos::given`, G16): a pistol with Dual Wield is the
+            // separate `<ref>_dw_mp` weapon, not the pistol with a `dw` part.
+            let (name, key) = zhbo_conformance::bo2::combos::given(item, &combo);
+            if !all.iter().any(|x| x.name == name) {
+                continue;
+            }
+            let id = if key.is_empty() { name } else { format!("{name}+{key}") };
             if !ids.contains(&id) {
                 ids.push(id);
             }
@@ -1266,6 +1306,27 @@ mod tests {
         assert!(combo(&["extbarrel", "dualclip"], false));
         assert!(!combo(&["extbarrel"], false));
         assert!(!combo(&["dualclip"], true), "the variant ignores its attachments");
+    }
+
+    /// A dual-wield pair's left gun shoots with its own def's player sound (`fireSoundPlayer` of the
+    /// `szDualWieldWeaponName` def, `wpn_<x>_fire_plr_lh`); a single gun has none.
+    #[test]
+    fn the_left_gun_gets_its_own_shot() {
+        let dw = Weapon {
+            name: "fnp45_dw_mp".into(),
+            class: bo2::class::PISTOL,
+            fire_sound_player: Some("wpn_fnp45_fire_plr_rh".into()),
+            dual_wield_weapon: Some("fnp45_lh_mp".into()),
+            ..Default::default()
+        };
+        let lh = Weapon { name: "fnp45_lh_mp".into(), class: bo2::class::PISTOL, fire_sound_player: Some("wpn_fnp45_fire_plr_lh".into()), ..Default::default() };
+        let single = Weapon { name: "fnp45_mp".into(), class: bo2::class::PISTOL, fire_sound_player: Some("wpn_fnp45_fire_plr".into()), ..Default::default() };
+        let mk = |id: &str| WeaponDef { id: id.into(), class: Class::Pistol, ..Default::default() };
+        let mut defs = vec![mk("fnp45_dw_mp"), mk("fnp45_mp")];
+        let (events, _) = sounds_and_fx(&[dw, lh, single], &[], &mut defs, &["fnp45_dw_mp".into(), "fnp45_mp".into()]);
+        assert_eq!(defs[0].left_fire_sound, "ZHBO_BO2_FireLeft_fnp45_dw_mp");
+        assert!(events.iter().any(|e| e.event == "ZHBO_BO2_FireLeft_fnp45_dw_mp" && e.layers[0] == "wpn_fnp45_fire_plr_lh"));
+        assert_eq!(defs[1].left_fire_sound, "");
     }
 
     #[test]
@@ -1404,7 +1465,11 @@ mod tests {
         assert_eq!(alt_drop_for(&alt, &["sf"]), None, "an alt mode always takes its own");
         let mut table = Table {
             weapons: vec![to_def(&w, &HashMap::new())],
-            attachments: ["acog", "gl", "sf"].iter().map(|s| AttachmentDef { id: s.to_string(), short: s.to_string(), ..Default::default() }).collect(),
+            // Each pairs with the others (combo-legality: both compatibility lists name the other).
+            attachments: ["acog", "gl", "sf"]
+                .iter()
+                .map(|s| AttachmentDef { id: s.to_string(), short: s.to_string(), compatible: ["acog", "gl", "sf"].iter().filter(|o| *o != s).map(|o| o.to_string()).collect(), ..Default::default() })
+                .collect(),
             ..Default::default()
         };
         add_variants(&mut table, &["hk416_mp+acog+sf".into(), "hk416_mp+gl".into()], std::slice::from_ref(&w));
@@ -1519,8 +1584,8 @@ mod tests {
                 // 27) differing from `defaultattachment` (`attachment_def` keeps only those; the
                 // core's `apply_handling` takes the first). Default (0.5, 0.05): the IR's in 0.016
                 // differs, its out does not; the swayreduc's out 0.4 does.
-                AttachmentDef { id: "ir".into(), short: "ir".into(), point: 1, kind: 14, zoom_in_frac: Some(0.016), ..Default::default() },
-                AttachmentDef { id: "swayreduc".into(), short: "swayreduc".into(), kind: 27, zoom_out_frac: Some(0.4), ..Default::default() },
+                AttachmentDef { id: "ir".into(), short: "ir".into(), point: 1, kind: 14, zoom_in_frac: Some(0.016), compatible: vec!["swayreduc".into()], ..Default::default() },
+                AttachmentDef { id: "swayreduc".into(), short: "swayreduc".into(), kind: 27, zoom_out_frac: Some(0.4), compatible: vec!["ir".into()], ..Default::default() },
             ],
             ..Default::default()
         };
@@ -1533,15 +1598,17 @@ mod tests {
         assert_eq!(d.overlay_reticle, 2);
     }
 
-    /// The converter's legal-combo set must equal the conformance expected set: the mechanical
-    /// agreement between `all_legal_combos` and BO2's own CaC rows. The variant's `_mp` suffix is
-    /// stripped so `an94_mp+reflex` compares to the conformance `item` `an94+reflex`.
+    /// The converter's built rows must equal the conformance expected set: the mechanical
+    /// agreement between what the converter makes and BO2's own CaC rows. The expected side has a
+    /// row per weapon a class can be given (`combos::given`: an item's combination, or a pistol's
+    /// separate `_dw_mp` weapon), per such row's alt mode (`gl_an94_mp` under `an94_mp+gl`, its
+    /// key the combination's), and per always-given melee weapon. So "ours" is the same three
+    /// things as the converter builds them: [`all_legal_combos`], the alt defs [`add_variants`]
+    /// adds for them (`<alt>~<combo>`), and the loadout's melee. The variant's `_mp` suffix is
+    /// stripped so `an94_mp+reflex` compares to the conformance `an94+reflex`.
     /// This is a parity-gap detector, not a unit test: it lives in the conformance family's
-    /// red-by-design set (the blocking suite runs `--skip conformance`). Its two known gaps are
-    /// tracked cycles: the alt-weapon combo bases (`dualoptic_*`/`sf_*` families, 2,379 rows —
-    /// BO2 offers the alt weapons as their own attachment bases; the mod's enumeration covers
-    /// only base weapons) and the dual-wield representation (`beretta93r_dw_mp`-style separate
-    /// weapons vs the mod's `+dw` attachment, 5 rows — the N3 item).
+    /// red-by-design set (the blocking suite runs `--skip conformance`). Its known gap: BO2 gives
+    /// every class `knife_mp` beside `knife_held_mp`; the mod's melee is the held knife only.
     #[test]
     #[ignore = "reads this machine's Black Ops II install"]
     fn conformance_the_enumerator_matches_the_expected_rows() {
@@ -1549,17 +1616,32 @@ mod tests {
         let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
         let patch = crate::generals::load_zone(&dir, crate::fx::ZONE).unwrap();
         let all = zhbo_formats::weapon::all(&common).unwrap();
-        let ours: std::collections::BTreeSet<String> = all_legal_combos(&patch, &all)
-            .into_iter()
-            .map(|id| {
-                let (base, rest) = id.split_once('+').map(|(b, r)| (b, Some(r))).unwrap_or((&id, None));
-                let base = base.strip_suffix("_mp").unwrap_or(base);
-                match rest {
-                    Some(r) => format!("{base}+{r}"),
-                    None => base.to_string(),
-                }
-            })
-            .collect();
+        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        let strip = |id: &str| -> String {
+            let (base, rest) = id.split_once('+').map(|(b, r)| (b, Some(r))).unwrap_or((id, None));
+            let base = base.strip_suffix("_mp").unwrap_or(base);
+            match rest {
+                Some(r) => format!("{base}+{r}"),
+                None => base.to_string(),
+            }
+        };
+        let combos = all_legal_combos(&patch, &all);
+        // The table as the converter builds it: the attachments carry BO2's compatibility, so
+        // `apply` keeps every legal combination whole.
+        let meta = attachment_metadata(&patch, &HashMap::new());
+        let opts = OptionTables { camo: &[], reticles: &[], reticle_colors: &[] };
+        let mut built = table_with_metadata(&all, &atts, default_attachment(&patch).as_ref(), &HashMap::new(), &meta, &opts);
+        add_variants(&mut built, &combos, &all);
+        let mut ours: std::collections::BTreeSet<String> = combos.iter().map(|id| strip(id)).collect();
+        for d in &built.weapons {
+            // An alt mode `<alt>~<combo>` is the alt variant's row under the combination's key.
+            let Some((alt, combo)) = d.id.split_once('~') else { continue };
+            if combos.iter().any(|c| c == combo) {
+                let key = combo.split_once('+').map_or("", |(_, k)| k);
+                ours.insert(strip(&format!("{alt}+{key}")));
+            }
+        }
+        ours.insert(strip(&Loadout::default().melee));
         let expected = zhbo_conformance::bo2::expected(&dir).unwrap().0;
         let theirs: std::collections::BTreeSet<String> = expected
             .iter()
@@ -1568,7 +1650,42 @@ mod tests {
                 if r.key.1.is_empty() { base.to_string() } else { format!("{base}+{}", r.key.1) }
             })
             .collect();
-        assert_eq!(ours, theirs, "the converter's legal-combo set must equal the conformance expected set");
+        let only_ours: Vec<&String> = ours.difference(&theirs).collect();
+        let only_theirs: Vec<&String> = theirs.difference(&ours).collect();
+        assert!(only_ours.is_empty() && only_theirs.is_empty(), "the converter's rows must equal the conformance expected set: only ours {only_ours:?}, only theirs {only_theirs:?}");
+    }
+
+    /// The converted attachments carry BO2's compatibility so the core's pairing rule
+    /// (`attachments::compatible`, what the editor, the class repair and the catalog decide with)
+    /// agrees with the conformance rule (`bo2::combos::Table::compatible`, `FUN_008e6b20`) on
+    /// every pair of attachment kinds the install defines — one parse, no hand-copied list.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_converted_compatibility_matches_bo2s_rule() {
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let common = crate::generals::load_zone(&dir, "common_mp").unwrap();
+        let patch = crate::generals::load_zone(&dir, crate::fx::ZONE).unwrap();
+        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        let meta = attachment_metadata(&patch, &HashMap::new());
+        let default = default_attachment(&patch).unwrap_or_default();
+        let defs: Vec<AttachmentDef> = atts.iter().filter(|a| a.kind != 0 && !a.name.starts_with(',')).map(|a| attachment_def(a, &default, &HashMap::new(), &meta)).collect();
+        let rows = zhbo_formats::stringtable::rows(&patch, "mp/attachmenttable.csv").unwrap().unwrap();
+        let t = zhbo_conformance::bo2::combos::table(&rows);
+        let kind = |d: &AttachmentDef| zhbo_conformance::bo2::combos::kind_of(&d.short).expect("a known kind");
+        let mut checked = 0;
+        for a in &defs {
+            for b in defs.iter().filter(|b| b.short != a.short) {
+                assert_eq!(zhbo_core::attachments::compatible(a, b), t.compatible(kind(a), kind(b)), "{} + {}", a.id, b.id);
+                checked += 1;
+            }
+        }
+        assert!(checked > 1000, "only {checked} pairs");
+        // The pairs this item was about: BO2 forbids dualoptic+gl and fmj+mms (the mod used to
+        // allow them: different attach points) and allows fastads+stalker (one point, gunperk).
+        let by = |s: &str| defs.iter().find(|d| d.short == s).unwrap();
+        assert!(!zhbo_core::attachments::compatible(by("dualoptic"), by("gl")));
+        assert!(!zhbo_core::attachments::compatible(by("fmj"), by("mms")));
+        assert!(zhbo_core::attachments::compatible(by("fastads"), by("stalker")));
     }
 
     /// The full set includes every statstable-backed base id and at least one combination per base
@@ -1658,6 +1775,11 @@ mod tests {
             ],
             ..Default::default()
         };
+        // Each pairs with the others (combo-legality: both compatibility lists name the other).
+        let shorts: Vec<String> = table.attachments.iter().map(|a| a.short.clone()).collect();
+        for a in &mut table.attachments {
+            a.compatible = shorts.iter().filter(|s| **s != a.short).cloned().collect();
+        }
         let own = table.weapons[1].clone();
         add_variants(&mut table, &["mp7_mp+extclip+rf+sf".into(), "mp7_mp+sf+steadyaim".into()], &[w, sf]);
         let d = table.weapons.iter().find(|d| d.id == "mp7_mp+extclip+rf+sf").expect("the combo");
@@ -1731,8 +1853,8 @@ mod tests {
         let mut table = Table {
             weapons: vec![to_def(&w, &HashMap::new()), to_def(&sf, &HashMap::new())],
             attachments: vec![
-                AttachmentDef { id: "acog".into(), short: "acog".into(), point: 1, ..Default::default() },
-                AttachmentDef { id: "fmj".into(), short: "fmj".into(), ..Default::default() },
+                AttachmentDef { id: "acog".into(), short: "acog".into(), point: 1, compatible: vec!["fmj".into()], ..Default::default() },
+                AttachmentDef { id: "fmj".into(), short: "fmj".into(), compatible: vec!["acog".into()], ..Default::default() },
             ],
             ..Default::default()
         };

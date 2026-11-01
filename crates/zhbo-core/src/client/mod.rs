@@ -267,6 +267,9 @@ pub struct ClientOut {
     /// applies `Rotate_Z(-roll)` because the camera looks down −Z, and BO2's `+roll` drops the
     /// right side — so the value passes unchanged. Appended at the end of the struct (ABI rule).
     pub view_roll: f32,
+    /// The dual-wield left gun fired this frame: its muzzle flash and brass at the `_lh` model's
+    /// `tag_flash1`/`tag_brass1` (`viewmodel_fired` is the right gun's, at `tag_flash`/`tag_brass`).
+    pub viewmodel_fired_left: i32,
 }
 
 // Manual Default: `[u32; 64]` has none (arrays above 32 don't), and the rest are plain.
@@ -303,6 +306,7 @@ impl Default for ClientOut {
             hits: [ClientHit::default(); CLIENT_HITS],
             hits_len: 0,
             view_roll: 0.0,
+            viewmodel_fired_left: 0,
         }
     }
 }
@@ -950,11 +954,13 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                         out.viewmodel_time = time;
                     } else {
                         out.viewmodel_fired = events.shot as i32;
+                        out.viewmodel_fired_left = events.left_shot as i32;
                         let f = self.vm.update(dt, p, events);
                         out.viewmodel = f.clip;
                         out.viewmodel_weapon = f.model;
                         out.viewmodel_time = f.t;
                         out.viewmodel_ads = p.arsenal.ads;
+                        crate::nativevm::ffi::set_left_clip(f.left);
                     }
                     self.build_input(inp, &mut out, allowed && !in_fc, p.hammer.is_some(), unclassed);
                 }
@@ -1090,11 +1096,13 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         sim.events.clear();
         self.hits_len = 0;
         let fire = sim.player(me).map_or(sounds::FIRE, |p| sounds::fire_for(p.arsenal.current().def));
+        let left_fire = sim.player(me).map_or(sounds::FIRE, |p| sounds::left_fire_for(p.arsenal.current().def));
         for kind in &mine {
             // The gunshot is per shot; the impact is per pellet and comes from its own event (a
-            // shot into the air no longer plays a hard-surface sound).
-            if let EventKind::Shot { .. } = kind {
-                self.cues.play(fire);
+            // shot into the air no longer plays a hard-surface sound). A dual-wield pair's left gun
+            // plays its own `_lh` shot.
+            if let EventKind::Shot { left, .. } = kind {
+                self.cues.play(if *left { left_fire } else { fire });
             }
         }
         for kind in mine {
@@ -1150,7 +1158,8 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                         self.hits_len += 1;
                     }
                 }
-                EventKind::Shot { .. } => self.vm_events.shot = true,
+                EventKind::Shot { left: false, .. } => self.vm_events.shot = true,
+                EventKind::Shot { left: true, .. } => self.vm_events.left_shot = true,
                 EventKind::ReloadStarted => self.vm_events.reload_started = true,
                 EventKind::Swapped => self.vm_events.swapped = true,
                 EventKind::FieldComputerOpened => {}

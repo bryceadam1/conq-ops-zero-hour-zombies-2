@@ -208,6 +208,10 @@ pub struct Request {
     pub eye: [f32; 3],
     pub dir: [f32; 3],
     pub gun: GunPose,
+    /// A dual-wield weapon's left gun on its own clip (`INSTANCE_LEFT` set) and seconds into it,
+    /// when the hands differ (one fires or reloads alone); `None` plays the base clip's left half
+    /// at `time`.
+    pub left: Option<(i32, f32)>,
 }
 
 /// A surface of the composed mesh, with its textures by archive path.
@@ -664,12 +668,18 @@ pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: 
 
 /// The clip a manifest shows for `clip` ([`Loaded::clip_path`]'s rule, also read by the conformance
 /// emitter): its own, else the idle of its mode, else the idle. A dual-wield clip's id carries
-/// `INSTANCE_LEFT` in its high byte; the fallbacks keep that bit.
+/// `INSTANCE_LEFT` in its high byte; the fallbacks keep that bit. The left gun's own slots (BO2's
+/// `_LEFT` set, [`crate::viewmodel::slot::left_as_right`]) never fall back here: the converter
+/// already applied BO2's registration rule to them (an empty `_LEFT` slot plays the left variant's
+/// slot 1, `FUN_0052d3e0`), so one it left out is empty in BO2 too.
 pub fn clip_for(manifest: &Viewmodel, clip: i32) -> Option<&str> {
     use zhbo_native::viewmodel::INSTANCE_LEFT;
     let alt = crate::weapons::ALT_CLIPS;
     let instance = (clip as u16) & INSTANCE_LEFT;
     let base = (clip as u16) & !INSTANCE_LEFT;
+    if instance != 0 && (0x4e..=0x54).any(|s| crate::viewmodel::slot::left_as_right(s) == Some(i32::from(base))) {
+        return manifest.clip(clip as u16);
+    }
     let mode_idle = if i32::from(base) >= alt { alt as u16 + crate::viewmodel::slot::IDLE as u16 } else { crate::viewmodel::slot::IDLE as u16 };
     [base, mode_idle, crate::viewmodel::slot::IDLE as u16].into_iter().find_map(|c| manifest.clip(c | instance))
 }
@@ -748,7 +758,10 @@ impl Loaded {
             }
         }
         if let Some(l) = left {
-            let frame = l.frame_at(time, looping);
+            let frame = match req.left {
+                Some((clip, t)) => l.frame_at(t * req.rate.max(0.0), crate::viewmodel::slot::loops(clip & !(zhbo_native::viewmodel::INSTANCE_LEFT as i32))),
+                None => l.frame_at(time, looping),
+            };
             self.skeleton.sample_over(l, frame, &mut out.local);
         }
         // The ADS layer last: a `tag_torso`-only track, so it adds the rig root over both halves

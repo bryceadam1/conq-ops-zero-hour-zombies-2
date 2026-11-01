@@ -792,6 +792,104 @@ mod tests {
         a.loadout.perks.push(Perk::EXTREME_CONDITIONING);
         assert!((a.sprint_scale() - 2.0 * base).abs() < 1e-4, "longersprint doubles the sprint");
     }
+    fn dual(f: impl FnOnce(&mut WeaponDef)) -> &'static WeaponDef {
+        def(|d| {
+            d.id = "test_dw_mp".into();
+            d.class = Class::Pistol;
+            d.fire = FireMode::Semi;
+            d.fire_time = 0.1;
+            d.clip = 10;
+            d.start_reserve = 80;
+            d.max_reserve = 160;
+            d.reload_time = 1.9;
+            d.reload_empty_time = 2.4;
+            d.reload_add_time = 1.3;
+            d.reload_empty_add_time = 1.3;
+            d.dual_wield_weapon = "test_lh_mp".into();
+            f(d)
+        })
+    }
+
+    fn fired(actions: &[WeaponAction], left: bool) -> usize {
+        actions.iter().filter(|a| matches!(a, WeaponAction::Fire { pellet: 0, left: l, .. } if *l == left)).count()
+    }
+
+    /// Press `buttons` once (one frame), then release for `n` frames.
+    fn tap(a: &mut Arsenal, buttons: u32, n: usize, rng: &mut Rng) -> Vec<WeaponAction> {
+        let mut out = frames(a, buttons, 1, rng);
+        out.extend(frames(a, 0, n, rng));
+        out
+    }
+
+    /// BO2 fires a dual-wield weapon as two guns (`PM_Weapon` once per hand): the attack button
+    /// fires the right gun from its magazine, the ADS button the left gun from its own; the spare
+    /// rounds are shared.
+    #[test]
+    fn each_hand_fires_its_own_magazine() {
+        let mut a = arsenal_with(dual(|_| {}));
+        let mut rng = Rng::new(3);
+        assert_eq!(a.current().left_ammo(), Some(10), "the left gun starts with a full magazine");
+        let out = tap(&mut a, buttons::FIRE, 10, &mut rng);
+        assert_eq!((fired(&out, false), fired(&out, true)), (1, 0));
+        assert_eq!((a.current().ammo, a.current().left_ammo()), (9, Some(10)));
+        let out = tap(&mut a, buttons::ADS, 10, &mut rng);
+        assert_eq!((fired(&out, false), fired(&out, true)), (0, 1), "the ADS button is the left trigger");
+        assert_eq!((a.current().ammo, a.current().left_ammo()), (9, Some(9)));
+        // Both triggers at once: one round from each gun, on independent timers.
+        let out = tap(&mut a, buttons::FIRE | buttons::ADS, 10, &mut rng);
+        assert_eq!((fired(&out, false), fired(&out, true)), (1, 1));
+        assert_eq!((a.current().ammo, a.current().left_ammo(), a.current().reserve), (8, Some(8), 80));
+    }
+
+    /// A dual-wield weapon has no sights (`aimDownSight` 0): holding ADS never raises the aim.
+    #[test]
+    fn a_dual_wield_weapon_never_aims() {
+        let mut a = arsenal_with(dual(|d| d.ads_in_time = 0.1));
+        let mut rng = Rng::new(4);
+        frames(&mut a, buttons::ADS, 30, &mut rng);
+        assert_eq!(a.ads, 0.0);
+    }
+
+    /// The reload button reaches both hands (`FUN_008dfd50` per hand), refilling each magazine
+    /// from the shared spare rounds; an empty hand reloads by itself while the other keeps firing.
+    #[test]
+    fn reload_refills_both_hands_and_an_empty_hand_reloads_alone() {
+        let mut a = arsenal_with(dual(|_| {}));
+        let mut rng = Rng::new(5);
+        for _ in 0..3 {
+            tap(&mut a, buttons::FIRE | buttons::ADS, 8, &mut rng);
+        }
+        assert_eq!((a.current().ammo, a.current().left_ammo()), (7, Some(7)));
+        let out = tap(&mut a, buttons::RELOAD, 200, &mut rng);
+        assert_eq!(out.iter().filter(|x| **x == WeaponAction::ReloadStarted).count(), 2, "both guns reload");
+        assert_eq!((a.current().ammo, a.current().left_ammo(), a.current().reserve), (10, Some(10), 74));
+
+        // Empty the left gun only: it reloads on its own; the right keeps firing meanwhile.
+        for _ in 0..10 {
+            tap(&mut a, buttons::ADS, 8, &mut rng);
+        }
+        assert!(a.current().left.as_ref().unwrap().is_reloading(), "the empty left gun reloads by itself");
+        assert!(!a.current().is_reloading());
+        let out = tap(&mut a, buttons::FIRE, 8, &mut rng);
+        assert_eq!(fired(&out, false), 1, "the right gun fires during the left reload");
+        frames(&mut a, 0, 200, &mut rng);
+        assert_eq!((a.current().ammo, a.current().left_ammo(), a.current().reserve), (9, Some(10), 64));
+    }
+
+    /// A single gun keeps one magazine and the ADS button aims, never fires.
+    #[test]
+    fn a_single_gun_has_no_left_hand() {
+        let mut a = arsenal_with(def(|d| {
+            d.class = Class::Pistol;
+            d.fire = FireMode::Semi;
+            d.clip = 10;
+            d.start_reserve = 40;
+        }));
+        let mut rng = Rng::new(6);
+        assert_eq!(a.current().left_ammo(), None);
+        let out = tap(&mut a, buttons::ADS, 5, &mut rng);
+        assert_eq!(shots(&out), 0);
+    }
 }
 
 #[cfg(test)]

@@ -267,6 +267,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     crate::weapons::apply_attributes(&mut table, &bars, &att_bars);
     // What each perk does: its specialty set, from the player's own statstable (Ghidra G1).
     table.perks = crate::weapons::perk_rows(&patch);
+    // Which weapons Create-a-Class offers, in which slot: the same statstable's weapon items.
+    crate::weapons::set_cac_slots(&mut table, &patch);
     let converted = crate::weapons::converted(&patch, &bo2);
     let converted_base = crate::weapons::converted_base(&bo2);
     crate::weapons::add_variants(&mut table, &converted, &bo2);

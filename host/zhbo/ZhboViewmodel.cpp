@@ -275,31 +275,27 @@ namespace
 	// The weapon's own BO2 first-person effects (Track R8) at its flash and brass tags. Brass is the
 	// def's alone: BO2 ejects a shell only when `viewShellEjectEffect` is set (41 of 172 MP defs; the
 	// AN-94 and every other AR and sniper define none), so only the muzzle flash has a fallback.
-	// `tag_brass1` is the `_lh` model's left port, present only on a dual-wield pair, so a single
-	// gun's second call is a no-op.
-	void viewmodelFx(int weapon, Bool native)
+	// A dual-wield pair's left gun (`left`) fires at the `_lh` model's own tags, `tag_flash1` and
+	// `tag_brass1`; the right gun and a single gun at `tag_flash` and `tag_brass`.
+	void viewmodelFx(int weapon, Bool native, Bool left)
 	{
+		const char *flashTag = left ? "tag_flash1" : "tag_flash";
+		const char *brassTag = left ? "tag_brass1" : "tag_brass";
 		char flash[128] = "";
 		char shell[128] = "";
 		zhbo_viewmodel_fx(weapon, flash, static_cast<int32_t>(sizeof(flash)), shell, static_cast<int32_t>(sizeof(shell)));
 		const char *flashFx = flash[0] ? flash : "ZHBO_ViewmodelMuzzle";
 		if (native)
 		{
-			nativeBoneFx(flashFx, "tag_flash");
+			nativeBoneFx(flashFx, flashTag);
 			if (shell[0])
-			{
-				nativeBoneFx(shell, "tag_brass");
-				nativeBoneFx(shell, "tag_brass1");
-			}
+				nativeBoneFx(shell, brassTag);
 		}
 		else
 		{
-			boneFx(flashFx, "tag_flash");
+			boneFx(flashFx, flashTag);
 			if (shell[0])
-			{
-				boneFx(shell, "tag_brass");
-				boneFx(shell, "tag_brass1");
-			}
+				boneFx(shell, brassTag);
 		}
 	}
 
@@ -311,8 +307,11 @@ namespace
 	{
 		char name[128];
 		ZhboVec3 end;
-		for (int32_t i = 0; zhbo_viewmodel_tracer(i, name, static_cast<int32_t>(sizeof(name)), &end); ++i)
+		int32_t left = 0;
+		for (int32_t i = 0; zhbo_viewmodel_tracer(i, name, static_cast<int32_t>(sizeof(name)), &end, &left); ++i)
 		{
+			// A dual-wield pair's left gun's tracer starts at its own flash tag, as its flash does.
+			const char *flashTag = left ? "tag_flash1" : "tag_flash";
 			const WeaponTemplate *tmpl = TheWeaponStore ? TheWeaponStore->findWeaponTemplate(name) : nullptr;
 			const FXList *fx = tmpl ? tmpl->getFireFX(LEVEL_REGULAR) : nullptr;
 			if (!fx)
@@ -321,7 +320,7 @@ namespace
 			if (native)
 			{
 				float m[12];
-				if (!zhbo_native_bone("tag_flash", m))
+				if (!zhbo_native_bone(flashTag, m))
 					continue;
 				mtx[0].Set(m[0], m[1], m[2], m[3]);
 				mtx[1].Set(m[4], m[5], m[6], m[7]);
@@ -329,7 +328,7 @@ namespace
 			}
 			else
 			{
-				const int index = s_model ? s_model->Get_Bone_Index("tag_flash") : 0;
+				const int index = s_model ? s_model->Get_Bone_Index(flashTag) : 0;
 				if (index <= 0)
 					continue;
 				mtx = s_model->Get_Bone_Transform(index);
@@ -367,7 +366,7 @@ namespace
 
 	// Draw the weapon through the native pass; TRUE when it did (the W3D model stays hidden).
 	Bool nativeViewmodel(const Coord3D &eye, const Coord3D &dir, Int clip, Int weapon, const AsciiString &name, Real time, Real ads,
-		const Coord3D &offset, const Coord3D &angles, Bool fired)
+		const Coord3D &offset, const Coord3D &angles, Bool fired, Bool firedLeft)
 	{
 		if (weapon < 0 || name.getLength() < 5 || !name.startsWith("ZV"))
 			return FALSE;
@@ -394,7 +393,9 @@ namespace
 		if (s_model)
 			s_model->Set_Hidden(true);
 		if (fired)
-			viewmodelFx(weapon, TRUE);
+			viewmodelFx(weapon, TRUE, FALSE);
+		if (firedLeft)
+			viewmodelFx(weapon, TRUE, TRUE);
 		viewmodelTracers(TRUE);
 		return TRUE;
 	}
@@ -639,11 +640,11 @@ namespace
 void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)
 {
 	Int clip = ZHBO_VM_NONE, weapon = ZHBO_VM_NONE;
-	Bool fired = FALSE;
+	Bool fired = FALSE, firedLeft = FALSE;
 	Real time = 0.0f, ads = 0.0f;
 	AsciiString name;
 	Coord3D offset, angles;
-	if (!active || !Zhbo_GetViewmodel(&clip, &weapon, &fired, &time, &ads, &name, &offset, &angles) || clip < 0)
+	if (!active || !Zhbo_GetViewmodel(&clip, &weapon, &fired, &firedLeft, &time, &ads, &name, &offset, &angles) || clip < 0)
 	{
 		if (s_model)
 			s_model->Set_Hidden(true);
@@ -653,7 +654,7 @@ void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)
 	if (!s_notesLoaded)
 		loadNotes();
 	playNotes(weapon, clip, time);
-	const Bool native = nativeViewmodel(eye, dir, clip, weapon, name, time, ads, offset, angles, fired);
+	const Bool native = nativeViewmodel(eye, dir, clip, weapon, name, time, ads, offset, angles, fired, firedLeft);
 	if (native && !compareMode())
 		return;
 	if (!poseW3d(eye, dir, clip, weapon, name, time, ads, offset, angles))
@@ -666,6 +667,8 @@ void ZhboViewmodel_Update(Bool active, const Coord3D &eye, const Coord3D &dir)
 	}
 	s_model->Set_Hidden(false);
 	if (fired)
-		viewmodelFx(weapon, FALSE);
+		viewmodelFx(weapon, FALSE, FALSE);
+	if (firedLeft)
+		viewmodelFx(weapon, FALSE, TRUE);
 	viewmodelTracers(FALSE);
 }

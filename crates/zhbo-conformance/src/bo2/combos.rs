@@ -106,6 +106,22 @@ impl Combo {
     }
 }
 
+/// `ATTACHMENT_DW`, the attachment that renames the given weapon.
+pub const DW: usize = 4;
+
+/// The weapon `GetLoadoutWeapon` (`FUN_00631780`, G16) gives a class with `item` and `combo`, as
+/// a row key: the variant and the `+`-joined attachment key. The `+` form is the item's variant
+/// with the combination (`an94_mp`, `gl+reflex`); the dual-wield attachment switches to the
+/// underscore form, `<ref>_dw[_name…]_mp`, a separate variant with no `+` part (`fnp45_dw_mp`, `""`).
+pub fn given(item: &Item, combo: &Combo) -> (String, String) {
+    if !combo.kinds.contains(&DW) {
+        return (item.variant.clone(), combo.key());
+    }
+    let others = combo.kinds.iter().filter(|&&k| k != DW).map(|&k| ATTACHMENTS[k]);
+    let name = std::iter::once(item.reference.as_str()).chain(std::iter::once("dw")).chain(others).collect::<Vec<_>>().join("_") + "_mp";
+    (name, String::new())
+}
+
 /// The attachment kinds an item lists, in its column-8 order: each token's text before the first
 /// `_` against the `eAttachment` names (`FUN_008cdfb0`'s `strtok(token, "_")`), so `grip_smg` is
 /// the grip whether or not an attachment asset of that name exists.
@@ -241,6 +257,15 @@ mod tests {
         };
         // grip (12) once, in its first place; an unknown name is no attachment.
         assert_eq!(listed(&item), vec![20, 12, 23, 21]);
+    }
+
+    #[test]
+    fn dual_wield_gives_the_underscore_variant() {
+        let item = Item { reference: "fnp45".into(), variant: "fnp45_mp".into(), group: "weapon_pistol".into(), slot: "secondary".into(), cost: 1, attachments: vec![], index: 3 };
+        let dw = Combo { kinds: vec![DW], requires: vec![] };
+        assert_eq!(given(&item, &dw), ("fnp45_dw_mp".to_string(), String::new()));
+        let fmj = Combo { kinds: vec![10], requires: vec![] };
+        assert_eq!(given(&item, &fmj), ("fnp45_mp".to_string(), "fmj".to_string()));
     }
 
     #[test]

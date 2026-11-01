@@ -592,7 +592,7 @@ mod tests {
         assert_eq!(p.customs().len(), 5);
         assert_eq!(p.by_name("Class 0").unwrap().primary, "dsr50_mp");
         // Slot saves: an existing slot is replaced in place, a past-the-end slot refused.
-        assert!(p.save_in_slot(0, 2, class("Replaced", "fnp45_mp")));
+        assert!(p.save_in_slot(0, 2, class("Replaced", "mp7_mp")));
         assert_eq!(p.customs()[2].name, "Replaced");
         assert!(!p.save_in_slot(0, 9, class("Too far", "an94_mp")));
         assert!(!p.save_in_slot(MAX_SETS, 0, class("No set", "an94_mp")));
@@ -734,10 +734,10 @@ mod tests {
         assert_eq!(p.customs().len(), 1);
         assert_eq!(p.customs()[0].name, "Good");
         // A v1 class called "v2" is not mistaken for a version marker and lost.
-        let p = Profile::from_text("v2\nprimary=fnp45_mp\n");
+        let p = Profile::from_text("v2\nprimary=mp7_mp\n");
         assert_eq!(p.customs().len(), 1);
         assert_eq!(p.customs()[0].name, "v2");
-        assert_eq!(p.customs()[0].primary, "fnp45_mp");
+        assert_eq!(p.customs()[0].primary, "mp7_mp");
     }
 
     #[test]
@@ -745,7 +745,7 @@ mod tests {
         let text = "\u{feff}v2\nactive 2\n\
                     set 1 One\nclass\nA\nprimary=an94_mp\nend\n\
                     class\n\nend\n\
-                    set 2 Two\nclass\nB\nprimary=tar21_mp\nend\nclass\nC\nprimary=fnp45_mp\nend\n\
+                    set 2 Two\nclass\nB\nprimary=tar21_mp\nend\nclass\nC\nprimary=mp7_mp\nend\n\
                     class\nD\nprimary=an94_mp\nend\nclass\nE\nprimary=an94_mp\nend\nclass\nF\nprimary=an94_mp\nend\n\
                     class\nG\nprimary=an94_mp\nend\n\
                     set 99 Not a set\nnonsense line\n";
@@ -804,7 +804,7 @@ mod tests {
         // Copies go into the set being browsed, not into a global list.
         p.set_active(4);
         assert!(p.copy("Rifle").is_none(), "the other set has no Rifle");
-        assert!(p.save(class("Rifle", "fnp45_mp")));
+        assert!(p.save(class("Rifle", "mp7_mp")));
         assert_eq!(p.copy_in_slot(0).as_deref(), Some("Rifle COPY"));
         assert_eq!(p.customs().len(), 2);
         assert_eq!(p.customs_in(0).unwrap().len(), 5, "set 1 is untouched");
@@ -814,7 +814,7 @@ mod tests {
     fn text_words_round_trip_the_whole_profile() {
         let mut p = Profile::new();
         p.save(class("My Rifle", "an94_mp+reflex"));
-        p.save(class("Support", "fnp45_mp"));
+        p.save(class("Support", "mp7_mp"));
         let text = p.to_text();
         let words = pack_text(&text);
         assert_eq!(unpack_text(&words).as_deref(), Some(text.as_str()));

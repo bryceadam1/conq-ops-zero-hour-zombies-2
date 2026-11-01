@@ -600,6 +600,8 @@ pub struct Weapon {
     pub hide_tags: Vec<String>,
     /// Alt-mode weapon (the select-fire, launcher or second optic variant `sf_an94_mp`).
     pub alt_weapon: Option<String>,
+    /// A dual-wield weapon's left gun (`szDualWieldWeaponName`, `fnp45_lh_mp`).
+    pub dual_wield_weapon: Option<String>,
     /// Viewmodel animation per `anim` slot.
     pub anims: Vec<Option<String>>,
     pub clip_size: i32,
@@ -1184,6 +1186,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.bolt_action = z.u8(d + WD::bBoltAction) != 0;
     w.cook_off_hold = z.u8(d + WD::bCookOffHold) != 0;
     w.dual_wield = z.u8(d + WD::bDualWield) != 0;
+    w.dual_wield_weapon = opt_str(z, d + WD::szDualWieldWeaponName);
     w.clip_only = z.u8(d + WD::bClipOnly) != 0;
     w.rifle_bullet = z.u8(d + WD::bRifleBullet) != 0;
     w.reload_quick_add_time = ms(z, d + WD::iReloadQuickAddTime);

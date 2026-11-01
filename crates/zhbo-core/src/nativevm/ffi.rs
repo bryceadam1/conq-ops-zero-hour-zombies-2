@@ -73,6 +73,8 @@ pub(crate) struct State {
     /// A test-only override for the weapon's ADS overlay material. Production leaves it `None`
     /// and looks the material up in the installed weapon catalog.
     pub(crate) overlay_material_override: Option<String>,
+    /// The dual-wield left gun's own clip and time this frame ([`set_left_clip`]).
+    pub(crate) left: Option<(i32, f32)>,
 }
 
 impl State {
@@ -139,7 +141,8 @@ impl State {
                 }
             }
         }
-        let req = request(inp);
+        let mut req = request(inp);
+        req.left = self.left;
         // The layer's direction: rising → up, falling → down, held keeps the last one (firing at
         // full ADS stays on the up clip's last frame). `ads` is the arsenal's own fraction.
         if req.ads < self.ads_prev - 1e-5 {
@@ -155,7 +158,7 @@ impl State {
         let left_path = self
             .loaded
             .as_ref()
-            .and_then(|l| l.clip_path(req.clip | zhbo_native::viewmodel::INSTANCE_LEFT as i32))
+            .and_then(|l| l.clip_path(req.left.map_or(req.clip | zhbo_native::viewmodel::INSTANCE_LEFT as i32, |(c, _)| c)))
             .map(str::to_string)
             .filter(|p| Some(p.as_str()) != path.as_deref());
         // Both ADS clips are asked for on the first aiming frame, so a reversal never waits for
@@ -226,7 +229,16 @@ pub(crate) fn request(inp: &ZhboNativeIn) -> Request {
         eye: inp.eye,
         dir: inp.dir,
         gun: GunPose::from_offset_angles(inp.offset, inp.angles),
+        left: None,
     }
+}
+
+/// The local client's dual-wield left-gun clip for the next native frame: its own clip id (with
+/// `INSTANCE_LEFT`) and seconds in, or `None` when it follows the base clip. Rust-side state the
+/// client sets each frame beside `ZhboClientOut.viewmodel` (it never crosses the C ABI; the
+/// engine still passes only the base clip).
+pub fn set_left_clip(left: Option<(i32, f32)>) {
+    with(|s| s.left = left);
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);

@@ -56,7 +56,7 @@ const _: () = {
     assert!(size_of::<crate::host::ObjInfo>() == 56);
     assert!(size_of::<FpsInput>() == 20);
     assert!(size_of::<ClientIn>() == 136);
-    assert!(size_of::<ClientOut>() == 4836);
+    assert!(size_of::<ClientOut>() == 4840);
     assert!(size_of::<ClientHit>() == 40);
     assert!(size_of::<crate::sim::RtsWeapons>() == 192);
     assert!(size_of::<crate::sim::RtsIcons>() == 240);
@@ -705,17 +705,23 @@ pub unsafe extern "C" fn zhbo_viewmodel_fx(vm: i32, flash: *mut c_char, flash_ca
 
 /// The `i`-th tracer of the local player's own gun this rendered frame (BO2 draws them on the same
 /// countdown as everyone's, from the viewmodel's flash tag: `FUN_00535f80`): the FX weapon whose
-/// `FireFX` draws it, and the bullet's end. Returns 0 past the last one.
+/// `FireFX` draws it, the bullet's end, and whether a dual-wield pair's left gun fired it (`left`
+/// 1: start it at the `_lh` model's `tag_flash1`, BO2's left `viewmodelFx` tag). Returns 0 past the
+/// last one.
 ///
 /// # Safety
-/// `fx_weapon` must point to `cap` writable bytes (or be null); `end` must be writable or null.
+/// `fx_weapon` must point to `cap` writable bytes (or be null); `end` and `left` must be writable or
+/// null.
 #[no_mangle]
-pub unsafe extern "C" fn zhbo_viewmodel_tracer(i: i32, fx_weapon: *mut c_char, cap: i32, end: *mut crate::math::Vec3) -> i32 {
+pub unsafe extern "C" fn zhbo_viewmodel_tracer(i: i32, fx_weapon: *mut c_char, cap: i32, end: *mut crate::math::Vec3, left: *mut i32) -> i32 {
     let Some(t) = with_state(|s| usize::try_from(i).ok().and_then(|i| s.client.tracers.frame.get(i).copied())).flatten() else { return 0 };
     unsafe {
         write_c_str(fx_weapon, cap, t.fx_weapon);
         if !end.is_null() {
             *end = t.end;
+        }
+        if !left.is_null() {
+            *left = t.left as i32;
         }
     }
     1

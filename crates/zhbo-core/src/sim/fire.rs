@@ -13,7 +13,7 @@ use crate::weapons::FireMode;
 impl Sim {
     pub(super) fn apply_weapon_action(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, action: WeaponAction) {
         match action {
-            WeaponAction::Fire { spread_deg, jitter, view_kick, gun_kick, pellet, last } => {
+            WeaponAction::Fire { spread_deg, jitter, view_kick, gun_kick, pellet, last, left } => {
                 let def = p.arsenal.current().def;
                 // The shot sets the view kick's velocity (`FUN_008e3a00`); this frame's pellets fly
                 // along the aim the kick had already moved.
@@ -54,14 +54,14 @@ impl Sim {
                         host.fire_fx(p.general, fx, 0, eye + dir * t);
                     }
                     if tracer {
-                        self.tracers.push(ShotTracer { shooter: p.general, def, target: 0, end: eye + dir * t });
+                        self.tracers.push(ShotTracer { shooter: p.general, def, target: 0, end: eye + dir * t, left });
                     }
                     let e = self.equipment.destroy(host, i, Some(idx));
                     self.equipment_events(vec![e]);
                     // BO2's equipment is metal: a spark at the round, never blood.
                     self.emit(idx, EventKind::Impact { at: eye + dir * t, dir, surface: Surface::Metal, head: false, fatal: false, impact_type: def.impact_type });
                     if pellet == 0 {
-                        self.emit(idx, EventKind::Shot { origin: eye, end: eye + dir * t });
+                        self.emit(idx, EventKind::Shot { origin: eye, end: eye + dir * t, left });
                         self.emit(idx, EventKind::Recoil { gun_kick });
                     }
                     return;
@@ -72,7 +72,7 @@ impl Sim {
                             host.fire_fx(p.general, fx, id, point);
                         }
                         if tracer {
-                            self.tracers.push(ShotTracer { shooter: p.general, def, target: id, end: point });
+                            self.tracers.push(ShotTracer { shooter: p.general, def, target: id, end: point, left });
                         }
                         let mult = if headshot { def.head_multiplier } else { 1.0 };
                         let victim = host.object(id, p.general);
@@ -102,7 +102,7 @@ impl Sim {
                             host.fire_fx(p.general, fx, 0, other.point());
                         }
                         if tracer {
-                            self.tracers.push(ShotTracer { shooter: p.general, def, target: 0, end: other.point() });
+                            self.tracers.push(ShotTracer { shooter: p.general, def, target: 0, end: other.point(), left });
                         }
                         // The ground: Zero Hour's terrain class at the point (the host's query).
                         // A shot that flew out to its full range hit nothing, so it raises nothing.
@@ -114,7 +114,7 @@ impl Sim {
                     }
                 }
                 if pellet == 0 {
-                    self.emit(idx, EventKind::Shot { origin: eye, end: hit.point() });
+                    self.emit(idx, EventKind::Shot { origin: eye, end: hit.point(), left });
                     self.emit(idx, EventKind::Recoil { gun_kick });
                 }
             }

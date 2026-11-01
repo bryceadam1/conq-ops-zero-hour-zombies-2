@@ -248,7 +248,7 @@ typedef struct ZhboClientOut
 	ZhboVec3 rts_look_at;
 	int32_t viewmodel;      /* BO2 animation slot (weapAnimFiles_t), a ZHBO_VM_TABLET_* clip, or ZHBO_VM_NONE */
 	int32_t viewmodel_weapon; /* converted weapon viewmodel (ZVnn models), ZHBO_VM_NONE for the tablet */
-	int32_t viewmodel_fired;  /* the gun fired this frame: muzzle flash and brass */
+	int32_t viewmodel_fired;  /* the (right) gun fired this frame: muzzle flash and brass */
 	float viewmodel_time;   /* seconds into the clip */
 	float viewmodel_ads;    /* 0..1 aim-down-sights */
 	ZhboVec3 viewmodel_offset; /* sway/bob/recoil: forward, left, up (world units) */
@@ -274,6 +274,9 @@ typedef struct ZhboClientOut
 	int32_t hits_len;
 	/* The camera's roll, radians, as Matrix3D::Look_At_Dir takes it (the view kick's roll axis). */
 	float view_roll;
+	/* The dual-wield left gun fired this frame: its flash and brass at tag_flash1/tag_brass1
+	   (viewmodel_fired is the right gun's, at tag_flash/tag_brass). */
+	int32_t viewmodel_fired_left;
 } ZhboClientOut;
 
 /* The shell create-a-class screen (the lobby's class menu; docs/CONTRACT.md's menu ABI): the
@@ -459,9 +462,9 @@ int32_t zhbo_loadout_viewmodels(int32_t *out, int32_t cap); /* the General's kit
    muzzle flash has a fallback). */
 int32_t zhbo_viewmodel_fx(int32_t vm, char *flash, int32_t flash_cap, char *shell, int32_t shell_cap);
 /* The `i`-th tracer of the local player's own gun this rendered frame (BO2 starts it at the
-   viewmodel's flash tag): the FX weapon whose FireFX draws it and the bullet's end. 0 past the last.
-   (New: the integrator bumps ZHBO_ABI_VERSION.) */
-int32_t zhbo_viewmodel_tracer(int32_t i, char *fx_weapon, int32_t cap, ZhboVec3 *end);
+   viewmodel's flash tag): the FX weapon whose FireFX draws it, the bullet's end, and `left` 1 when a
+   dual-wield pair's left gun fired it (start it at the _lh model's tag_flash1). 0 past the last. */
+int32_t zhbo_viewmodel_tracer(int32_t i, char *fx_weapon, int32_t cap, ZhboVec3 *end, int32_t *left);
 /* ABI 26: the FXList BO2 plays for `impact_type` on `surface` (a ZHBO_SURF_*); `head`/`fatal` pick
    the flesh variant. Non-zero when the table has the cell (an empty name means nothing converted);
    the core owns the table, so the bridge names no FXList. */
@@ -561,7 +564,7 @@ void zhbo_native_body_reset(void);
 static_assert(sizeof(ZhboObjInfo) == 56, "ZhboObjInfo layout must match host.rs");
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
 static_assert(sizeof(ZhboClientIn) == 136, "ZhboClientIn layout must match client.rs");
-static_assert(sizeof(ZhboClientOut) == 4836, "ZhboClientOut layout must match client.rs");
+static_assert(sizeof(ZhboClientOut) == 4840, "ZhboClientOut layout must match client.rs");
 static_assert(sizeof(ZhboClientHit) == 40, "ZhboClientHit layout must match client.rs");
 static_assert(sizeof(ZhboMenuIn) == 56, "ZhboMenuIn layout must match menu.rs");
 static_assert(sizeof(ZhboMenuOut) == 4108, "ZhboMenuOut layout must match menu.rs");

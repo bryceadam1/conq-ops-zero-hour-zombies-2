@@ -1,4 +1,5 @@
 use super::*;
+use super::items::cac_entries;
 
     #[test]
     fn the_default_draft_spends_the_base_kit_points() {
@@ -160,7 +161,7 @@ use super::*;
     fn weapon_lists_skip_alt_mode_variants_and_repeat_no_display_name() {
         // `gl_an94_mp` is the AN-94's under-barrel launcher, not a class weapon of its own. The
         // built-in table carries it so the assertion is real without a BO2 install.
-        let ids = gun_ids(&PRIMARY_CLASSES);
+        let ids = gun_ids(&items::slots_of(true, &[]));
         assert!(!ids.contains(&"gl_an94_mp"), "an alt-mode variant is not in the class list: {ids:?}");
         assert_eq!(ids.iter().filter(|id| **id == "an94_mp").count(), 1, "the base appears once");
         // Every listed id is a base entry (no alt back-pointer, no `+`/`~` variant id), and no
@@ -189,19 +190,19 @@ use super::*;
         let shorts = allowed_shorts(&d.primary);
         assert!(shorts.len() >= 2);
         let mut max = d.primary_att_max();
-        toggle_att(&mut d.primary_atts, shorts[0], max);
-        toggle_att(&mut d.primary_atts, shorts[1], max);
+        toggle_att(&mut d.primary_atts, shorts[0], max, |_, _| true);
+        toggle_att(&mut d.primary_atts, shorts[1], max, |_, _| true);
         // A third is refused without the wildcard.
         let third = shorts.get(2).copied();
         if let Some(t) = third {
-            toggle_att(&mut d.primary_atts, t, max);
+            toggle_att(&mut d.primary_atts, t, max, |_, _| true);
             assert_eq!(d.primary_atts.len(), 2, "capped at 2");
         }
         d.wildcards.push(Wildcard::PrimaryGunfighter);
         max = d.primary_att_max();
         assert_eq!(max, 3);
         if let Some(t) = third {
-            toggle_att(&mut d.primary_atts, t, max);
+            toggle_att(&mut d.primary_atts, t, max, |_, _| true);
             assert_eq!(d.primary_atts.len(), 3);
         }
     }
@@ -293,7 +294,7 @@ use super::*;
         let mut e = Editor::new(Draft { secondary: "fnp45_mp".into(), ..Draft::default() });
         e.slot = Slot::Secondary;
         let idx = e.current_option_index();
-        assert_eq!(gun_ids(&SECONDARY_CLASSES)[idx], "fnp45_mp");
+        assert_eq!(gun_ids(&e.secondary_slots())[idx], "fnp45_mp");
         e.picking = true;
         e.option = idx;
         // Confirming the held weapon leaves the draft unchanged.
@@ -529,18 +530,32 @@ use super::*;
     #[test]
     fn overkill_offers_primary_guns_in_the_secondary_list() {
         let mut e = Editor::new(Draft::default());
-        let base = e.secondary_classes();
-        assert_eq!(base, SECONDARY_CLASSES.to_vec(), "pistols and launchers only");
+        // The secondary lists BO2's `secondary` items: the pistols and the launchers.
+        let base = gun_ids(&e.secondary_slots());
+        assert!(base.contains(&"fnp45_mp") && base.contains(&"smaw_mp"), "{base:?}");
+        assert!(!base.contains(&"an94_mp"), "a primary item needs Overkill");
         e.draft.wildcards.push(Wildcard::Overkill);
-        let with_overkill = e.secondary_classes();
-        // The primary-class guns are offered in the secondary slot.
-        for c in PRIMARY_CLASSES {
-            assert!(with_overkill.contains(&c), "Overkill offers {c:?}");
+        let with_overkill = gun_ids(&e.secondary_slots());
+        // Every primary item is offered in the secondary slot too.
+        for id in gun_ids(&items::slots_of(true, &[])) {
+            assert!(with_overkill.contains(&id), "Overkill offers {id}");
         }
-        // The option list walks the same categories.
+        // The option list walks the same items.
         e.slot = Slot::Secondary;
         let options = e.options();
         assert!(options.contains(&weapons::weapon("an94_mp").display_name.to_string()));
+    }
+
+    #[test]
+    fn each_weapon_slot_lists_bo2s_items_of_that_slot() {
+        // The statstable's slot decides, not the weapon class: the SMAW is a `secondary` item, so
+        // the primary never lists it (BO2's launchers are secondaries only).
+        let primary = gun_ids(&items::slots_of(true, &[]));
+        assert!(primary.contains(&"an94_mp") && !primary.contains(&"smaw_mp"), "{primary:?}");
+        assert!(primary.iter().all(|id| weapons::weapon(id).cac_slot == items::PRIMARY));
+        // A weapon with no slot is no class item: the built-in launcher alt mode and the knife.
+        let all: Vec<&str> = cac_entries().iter().map(|d| d.id.as_str()).collect();
+        assert!(!all.contains(&"gl_an94_mp") && !all.contains(&"knife_held_mp"), "{all:?}");
     }
 
     #[test]
@@ -548,8 +563,7 @@ use super::*;
         let mut e = Editor::new(Draft::default());
         e.draft.wildcards.push(Wildcard::Overkill);
         e.slot = Slot::Secondary;
-        let classes = e.secondary_classes();
-        let ids = gun_ids(&classes);
+        let ids = gun_ids(&e.secondary_slots());
         // Pick the first primary-class gun offered in the secondary list.
         let target = "an94_mp";
         let i = ids.iter().position(|id| *id == target).expect("AN-94 is offered");
@@ -636,9 +650,35 @@ fn an_over_budget_save_is_denied_instead_of_closing() {
 #[test]
 fn an_attachment_at_its_cap_is_refused() {
     let mut atts = vec!["reflex".to_string(), "gl".to_string()];
-    assert!(!toggle_att(&mut atts, "stock", 2), "no room for a third");
+    assert!(!toggle_att(&mut atts, "stock", 2, |_, _| true), "no room for a third");
     assert_eq!(atts, vec!["reflex".to_string(), "gl".to_string()]);
-    assert!(toggle_att(&mut atts, "reflex", 2), "removing one frees a slot");
+    assert!(toggle_att(&mut atts, "reflex", 2, |_, _| true), "removing one frees a slot");
+}
+
+/// BO2's attachment grid: picking an attachment unequips the equipped ones it is mutually
+/// exclusive with, so a forbidden pair is never built (`cacattachmentsmenu.lua`).
+#[test]
+fn picking_an_exclusive_attachment_replaces_the_one_it_conflicts_with() {
+    // reflex–acog are exclusive (two optics); grip goes with both.
+    let ok = |a: &str, b: &str| !matches!((a, b), ("reflex", "acog") | ("acog", "reflex"));
+    let mut atts = vec!["reflex".to_string(), "grip".to_string()];
+    assert!(toggle_att(&mut atts, "acog", 2, ok), "at the cap, but the conflict frees a slot");
+    assert_eq!(atts, vec!["grip".to_string(), "acog".to_string()]);
+    // At the cap with nothing exclusive, the pick is refused untouched.
+    assert!(!toggle_att(&mut atts, "fmj", 2, ok));
+    assert_eq!(atts, vec!["grip".to_string(), "acog".to_string()]);
+}
+
+/// The installed catalog's compatibility lists drive the editor (the built-in table: the AN-94's
+/// reflex and grenade launcher list each other).
+#[test]
+fn the_catalog_decides_compatibility() {
+    assert!(legal::compatible("an94_mp", "reflex", "gl"));
+    assert!(legal::legal("an94_mp", &["gl", "reflex"]));
+    assert!(!legal::compatible("an94_mp", "reflex", "reflex"));
+    assert!(!legal::compatible("an94_mp", "reflex", "stock"), "an attachment the weapon lacks goes with nothing");
+    assert!(legal::exclusive_with("an94_mp", "gl", &["reflex".to_string()]).is_empty());
+    assert_eq!(legal::sanitize("an94_mp", &["reflex", "gl"]), vec!["gl", "reflex"]);
 }
 
 // --- The bonus-card cap (BO2's maxBonusCards) ---
@@ -794,12 +834,44 @@ fn a_grid_picker_walks_two_dimensions_and_a_wide_slot_says_so() {
 #[test]
 fn the_offer_is_the_editors_own_lists_and_caps() {
     let o = offer();
-    assert_eq!(o.primary, gun_ids(&PRIMARY_CLASSES));
-    assert_eq!(o.secondary, gun_ids(&SECONDARY_CLASSES));
+    assert_eq!(o.primary, gun_ids(&[items::PRIMARY]));
+    assert_eq!(o.secondary, gun_ids(&[items::SECONDARY]));
     assert_eq!((o.lethal.clone(), o.tactical.clone()), (equipment_ids(WeaponClass::Lethal), equipment_ids(WeaponClass::Tactical)));
     // BO2's two attachments, three with Primary Gunfighter; one, two with Secondary Gunfighter.
     assert_eq!((o.primary_caps, o.secondary_caps), ((2, 3), (1, 2)));
     let first = o.primary[0];
     assert_eq!(offered_attachments(first), allowed_shorts(first));
     assert_eq!(draft_weapon_id("an94_mp", &["reflex", "grip"]), "an94_mp+grip+reflex");
+}
+
+/// BO2's `GetLoadoutWeapon` (G16): attachments join with `+`, but Dual Wield renames the weapon
+/// to the underscore form — and the inverse reads a stored id back into the item.
+#[test]
+fn dual_wield_gives_the_dw_weapon_and_reads_back() {
+    assert_eq!(items::given_weapon("an94_mp", &["reflex", "gl"]), "an94_mp+gl+reflex");
+    assert_eq!(items::given_weapon("fiveseven_mp", &["dw"]), "fiveseven_dw_mp");
+    assert_eq!(items::given_weapon("fiveseven_mp", &[]), "fiveseven_mp");
+    assert_eq!(items::given_parts("fiveseven_dw_mp"), ("fiveseven_mp".to_string(), vec!["dw".to_string()]));
+    assert_eq!(items::given_parts("an94_mp+gl+reflex"), ("an94_mp".to_string(), vec!["gl".to_string(), "reflex".to_string()]));
+    // Only a weapon whose item offers `dw` reads as one: the Tac-45 stand-in offers none.
+    assert_eq!(items::given_parts("fnp45_dw_mp"), ("fnp45_dw_mp".to_string(), Vec::new()));
+}
+
+/// The editor picks Dual Wield like any attachment; the class it saves holds BO2's weapon, and
+/// re-opening it shows the pistol with Dual Wield equipped.
+#[test]
+fn picking_dual_wield_saves_the_dw_weapon() {
+    let mut e = Editor::new(Draft { secondary: "fiveseven_mp".into(), ..Draft::default() });
+    e.slot = Slot::SecondaryAtts;
+    let i = attachment_shorts(&e.draft.secondary, &e.draft.secondary_atts).iter().position(|s| *s == "dw").expect("Dual Wield is offered");
+    assert!(e.apply_option(i));
+    assert_eq!(e.draft.secondary_id(), "fiveseven_dw_mp");
+    let c = e.draft.to_custom();
+    assert_eq!(c.secondary, "fiveseven_dw_mp");
+    assert!(e.draft.to_spec().contains("secondary=fiveseven_dw_mp"));
+    let back = Draft::from_stored(&c);
+    assert_eq!((back.secondary.as_str(), back.secondary_atts.clone()), ("fiveseven_mp", vec!["dw".to_string()]));
+    assert_eq!(back.spent(), e.draft.spent(), "Dual Wield costs its attachment point");
+    // The `_dw` weapon is no item of its own: the secondary list never shows it.
+    assert!(!gun_ids(&[items::SECONDARY]).contains(&"fiveseven_dw_mp"));
 }

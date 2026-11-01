@@ -15,9 +15,6 @@ use crate::weapons::{self as cols, enum_name};
 use std::collections::{BTreeMap, HashMap};
 use zhbo_formats::t6zone::layouts::WeaponDef as WD;
 
-/// `ATTACHMENT_DW`.
-const DW: usize = 4;
-
 /// The always-given melee weapons (`_class.gsc:586`, `:682`).
 const KNIVES: [&str; 2] = ["knife_mp", "knife_held_mp"];
 
@@ -89,17 +86,11 @@ impl<'a> Expected<'a> {
             let Some(&v) = self.variants.get(&item.variant) else { continue };
             let kinds = combos::offered(&item, &v, &atts);
             for c in combos::combos(&item, &kinds, &att_table) {
-                // The weapon `GetLoadoutWeapon` (`FUN_00631780`) gives: `<ref>_mp+a+b` for a weapon
-                // whose variant has `attachments[0]` (`FUN_008eb260`), but the dual-wield
-                // attachment switches to the underscore form, `<ref>_dw_mp`, with no `+` part.
-                let (v, kinds, key) = if c.kinds.contains(&DW) {
-                    let others: Vec<&str> = c.kinds.iter().filter(|&&k| k != DW).map(|&k| cols::ATTACHMENTS[k]).collect();
-                    let name = std::iter::once(item.reference.as_str()).chain(std::iter::once("dw")).chain(others).collect::<Vec<_>>().join("_") + "_mp";
-                    let Some(&dv) = self.variants.get(&name) else { continue };
-                    (dv, Vec::new(), String::new())
-                } else {
-                    (v, c.kinds.clone(), c.key())
-                };
+                // The weapon `GetLoadoutWeapon` gives (`combos::given`): `<ref>_mp+a+b`, or the
+                // separate `<ref>_dw_mp` variant (no `+` part) for the dual-wield attachment.
+                let (name, key) = combos::given(&item, &c);
+                let Some(&v) = self.variants.get(&name) else { continue };
+                let kinds = if key.is_empty() { Vec::new() } else { c.kinds.clone() };
                 let Some(w) = Weapon::new(v, &kinds) else { continue };
                 if !seen.insert((v.name(), key.clone())) {
                     continue;

@@ -83,12 +83,12 @@ pub fn rows(shipped: &Shipped, bo2_dir: &std::path::Path, schema: &Schema) -> Re
                 b.text("name", &d.display_name).opt_text("image", image).text("group", group).text("slot", &slots).int("cost", cost).int("order", order);
             })?);
             // Its attachments, in the editor's order; what each can be combined with is what the
-            // runtime keeps together (`attachments::apply`: one per attach point).
+            // editor lets it share the weapon with (`classmenu::legal::compatible`).
             let shorts = offered_attachments(id);
             let att_of = |s: &str| d.allowed.iter().find(|(x, _)| x == s).and_then(|(_, asset)| cat.attachment(asset));
             for (k, &s) in shorts.iter().enumerate() {
                 let Some(a) = att_of(s) else { continue };
-                let with: Vec<&str> = shorts.iter().copied().filter(|&o| o != s && att_of(o).is_some_and(|x| x.point == 0 || x.point != a.point)).collect();
+                let with: Vec<&str> = shorts.iter().copied().filter(|&o| o != s && classmenu::legal::compatible(id, s, o)).collect();
                 let image = crate::cac::attachment_material(s).map(|(_, m)| m.to_string());
                 let cost = cost_of(|dr| {
                     dr.primary = id.to_string();

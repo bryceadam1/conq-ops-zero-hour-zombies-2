@@ -1,12 +1,13 @@
 //! `actual.csv`'s weapon rows: what the mod ships, read back from the launcher's own conversion.
 //!
 //! The rows are the mod's own create-a-class space — [`zhbo_core::classmenu::offer`]'s weapons with
-//! every attachment set the editor accepts (any offered shorts up to the slot's cap, Gunfighter
-//! included), resolved by the runtime catalog exactly as a class is (`Catalog::get`: one
-//! attachment per point), each one's alt mode, and the loadout's knife. Every fact comes from what
-//! ships: the converted weapon table (`weapons.ini`), the native viewmodel and world-weapon
-//! manifests the def's `viewmodel` names (a combination the archive has no art for draws its
-//! base's, as the game does), the model blobs, the converter's sound events and FXLists.
+//! every attachment set the editor accepts (offered shorts up to the slot's cap, Gunfighter
+//! included, no two mutually exclusive: `classmenu::legal`), resolved by the runtime catalog
+//! exactly as a class is (`Catalog::get`), each one's alt mode, and the loadout's knife. Every
+//! fact comes from what ships: the converted weapon table (`weapons.ini`), the native viewmodel
+//! and world-weapon manifests the def's `viewmodel` names (a combination the archive has no art
+//! for draws its base's, as the game does), the model blobs, the converter's sound events and
+//! FXLists.
 //!
 //! Each column carries the mod's value of the same fact in BO2's vocabulary and unit; a fact the
 //! mod does not carry is left empty (it fails, owner decision 1) — never synthesized.
@@ -237,14 +238,18 @@ fn jobs() -> Vec<Job> {
         for &base in ids {
             let slot = slots_of(base);
             let shorts = offered_attachments(base);
-            for set in subsets(&shorts, cap) {
+            // The sets the editor can build: a mutually exclusive pair is never carried together.
+            for set in subsets(&shorts, cap).into_iter().filter(|set| zhbo_core::classmenu::legal::legal(base, set)) {
                 let Some(def) = cat.get(&draft_weapon_id(base, &set)) else { continue };
                 let combo = bo2_order(&def.attachments);
-                if !seen.insert((base.to_string(), combo.clone())) {
+                // The row is the weapon the class gets: the item's (`an94_mp` + its combination),
+                // or a separate weapon (a pistol with Dual Wield is `fnp45_dw_mp`, G16).
+                let weapon = zhbo_core::attachments::split_id(&def.id).0.to_string();
+                if !seen.insert((weapon.clone(), combo.clone())) {
                     continue;
                 }
                 let requires = if set.len() > base_cap { vec![card] } else { Vec::new() };
-                out.push(Job { weapon: base.to_string(), combo: combo.clone(), def, vm_def: def, group: group_of(def.class).to_string(), slot: slot.clone(), requires: requires.clone(), alt: false });
+                out.push(Job { weapon, combo: combo.clone(), def, vm_def: def, group: group_of(def.class).to_string(), slot: slot.clone(), requires: requires.clone(), alt: false });
                 if def.alt.is_empty() {
                     continue;
                 }
@@ -307,16 +312,7 @@ fn stem(path: &str) -> String {
 /// right gun's slot on the left instance; an alt mode's clips follow its weapon's.
 fn clip_id(s: usize, base: i32) -> i32 {
     let left = |right: i32| right | INSTANCE_LEFT as i32;
-    let id = match s {
-        0x4e => left(0x04),
-        0x4f => left(0x06),
-        0x50 => left(0x07),
-        0x51 => left(0x01),
-        0x52 => left(0x02),
-        0x53 => left(0x12),
-        0x54 => left(0x10),
-        _ => s as i32,
-    };
+    let id = zhbo_core::viewmodel::slot::left_as_right(s).map_or(s as i32, left);
     // The alt offset applies to the slot, the instance bit stays in the high byte.
     ((id & !(INSTANCE_LEFT as i32)) + base) | (id & INSTANCE_LEFT as i32)
 }
@@ -577,7 +573,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .bool("alt_weapon_ads_only", d.traits.alt_ads_only)
         .bool("alt_weapon_disable_switching", d.traits.alt_disable_switching)
         .bool("dual_wield", dual)
-        .absent("dual_wield_weapon")
+        .opt_text("dual_wield_weapon", opt(&d.dual_wield_weapon))
         .opt_text("dual_wield_view_model", lh.map(|p| stem(&p.model)))
         .bool("silenced", d.silenced)
         .bool("laser_sight", d.laser)

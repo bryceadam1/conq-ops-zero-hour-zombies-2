@@ -90,13 +90,47 @@
         frame_with(&mut client, &mut sim, &host, &mut inp, 60);
         assert_eq!(client.view, ViewMode::Fps);
         // Another player's shot is not the local viewmodel's effect.
-        sim.events.push(crate::sim::Event { player: 1, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO } });
+        sim.events.push(crate::sim::Event { player: 1, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left: false } });
         let out = client.frame(&mut sim, &inp);
         assert_eq!(out.viewmodel_fired, 0);
         // The sim's own `Shot` event is what the bridge's `fired` flag comes from.
-        sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO } });
+        sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left: false } });
         let out = client.frame(&mut sim, &inp);
-        assert_eq!(out.viewmodel_fired, 1);
+        assert_eq!((out.viewmodel_fired, out.viewmodel_fired_left), (1, 0));
+        // A dual-wield pair's left shot sets the left flag only (its flash at `tag_flash1`).
+        sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left: true } });
+        let out = client.frame(&mut sim, &inp);
+        assert_eq!((out.viewmodel_fired, out.viewmodel_fired_left), (0, 1));
+    }
+
+    /// A dual-wield pair's left gun plays its own `_lh` shot; the right gun the weapon's.
+    #[test]
+    fn the_left_guns_shot_plays_its_own_sound() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef {
+            class: crate::weapons::Class::Pistol,
+            fire_sound: "ZHBO_BO2_Fire_test_dw_mp".into(),
+            left_fire_sound: "ZHBO_BO2_FireLeft_test_dw_mp".into(),
+            dual_wield_weapon: "test_lh_mp".into(),
+            ..Default::default()
+        }));
+        let p = sim.players[0].as_mut().unwrap();
+        let active = p.arsenal.active;
+        p.arsenal.weapons[active] = crate::weapons::WeaponState::new(def);
+        for (left, want) in [(true, "ZHBO_BO2_FireLeft_test_dw_mp"), (false, "ZHBO_BO2_Fire_test_dw_mp")] {
+            client.cues.queue.clear();
+            sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left } });
+            client.frame(&mut sim, &inp);
+            let cues: Vec<&str> = client.cues.queue.iter().map(|c| c.event).collect();
+            assert!(cues.contains(&want), "left {left}: {cues:?}");
+        }
     }
 
     #[test]
@@ -175,7 +209,7 @@
 
         // A shot on its own no longer plays an impact sound (the pellet's event does).
         client.cues.queue.clear();
-        sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO } });
+        sim.events.push(crate::sim::Event { player: 0, kind: crate::sim::EventKind::Shot { origin: Vec3::ZERO, end: Vec3::ZERO, left: false } });
         client.frame(&mut sim, &inp);
         let cues: Vec<&str> = client.cues.queue.iter().map(|c| c.event).collect();
         assert!(!cues.contains(&sounds::IMPACT) && !cues.contains(&sounds::IMPACT_FLESH), "{cues:?}");
@@ -531,7 +565,7 @@
         let _g = crate::profile::lock();
         crate::profile::reset();
         // Deliberately not the stock kit: the primary is the pistol and the lethal a claymore.
-        crate::profile::load("AB\nprimary=fnp45_mp;secondary=an94_mp;lethal=claymore_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Toughness,FastHands,Dexterity");
+        crate::profile::load("AB\nprimary=mp7_mp;secondary=an94_mp;lethal=claymore_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Toughness,FastHands,Dexterity");
         let host = FakeHost::default();
         host.add(general(1, 0));
         let mut sim = Sim::new();
@@ -596,7 +630,7 @@
         assert_eq!(class.name, "AB", "the seeded custom is picked by name");
         // The kit, not just the name: this is what the classpick autotest now greps for too.
         let a = &sim.player(0).expect("the General").arsenal;
-        assert_eq!(a.weapons[0].main.id, "fnp45_mp", "the seeded primary landed");
+        assert_eq!(a.weapons[0].main.id, "mp7_mp", "the seeded primary landed");
         assert_eq!(a.lethal.def.id, "claymore_mp", "the seeded lethal landed");
         assert!(a.has(crate::weapons::Perk::TOUGHNESS));
         assert!(reopened, "the script forces the screen open after the next take-control");
@@ -674,9 +708,9 @@
         crate::profile::reset();
         let custom = crate::classes::CustomClass {
             name: "Loud Kit".into(),
-            // Deliberately the reverse of the stock kit: the pistol as primary, the rifle as
+            // Deliberately unlike the stock kit: an SMG primary, the rifle as an Overkill
             // secondary, a claymore, a shorter magazine reserve, and no stock perks.
-            primary: "fnp45_mp".into(),
+            primary: "mp7_mp".into(),
             secondary: "an94_mp".into(),
             lethal: "claymore_mp".into(),
             tactical: "concussion_grenade_mp".into(),
@@ -722,7 +756,7 @@
         assert_eq!(p.class.as_deref(), Some("custom:Loud Kit"));
         let a = &p.arsenal;
         assert_eq!(a.weapons.len(), 2, "both guns came from the class");
-        assert_eq!(a.weapons[0].main.id, "fnp45_mp", "primary is the class's, not the stock AN-94");
+        assert_eq!(a.weapons[0].main.id, "mp7_mp", "primary is the class's, not the stock AN-94");
         assert_eq!(a.weapons[1].main.id, "an94_mp", "secondary is the class's");
         assert_eq!(a.weapons[0].reserve, 40, "the class's primary reserve");
         assert_eq!(a.weapons[1].reserve, 20, "the class's secondary reserve");
@@ -735,6 +769,77 @@
         crate::profile::reset();
     }
 
+    /// Dual wield is a weapon of its own (G16): a class whose pistol carries `dw` spawns holding
+    /// the `_dw_mp` weapon, not the pistol with a `dw` attachment. The class is seeded the way an
+    /// older profile stored it (`fiveseven_mp+dw`), so this also proves the load-time migration.
+    #[test]
+    fn a_dual_wield_class_spawns_with_the_dw_weapon() {
+        let _g = crate::profile::lock();
+        crate::profile::reset();
+        let legacy = crate::classes::CustomClass {
+            name: "Akimbo".into(),
+            primary: "mp7_mp".into(),
+            secondary: "fiveseven_mp+dw".into(),
+            lethal: "frag_grenade_mp".into(),
+            tactical: "concussion_grenade_mp".into(),
+            melee: "knife_held_mp".into(),
+            ..Default::default()
+        };
+        crate::profile::load(&format!("{}\n", legacy.to_wire()));
+        let stored = crate::profile::classes();
+        assert_eq!(stored[0].secondary, "fiveseven_dw_mp", "the profile migrates to BO2's weapon");
+
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        sim.take_control(&host, 0, 1);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        let rows = crate::classui::pick_rows(false);
+        let row = rows.iter().position(|r| matches!(r, crate::classui::PickRow::Custom(0))).expect("the custom row");
+        let key = crate::classui::pick_key(row).expect("a digit key");
+        inp.keys.set_down(key, true);
+        let out = client.frame(&mut sim, &inp);
+        inp.keys.set_down(key, false);
+        client.frame(&mut sim, &inp);
+        let words: Vec<u32> = out.choose_class_payload[..out.choose_class_payload_len as usize].to_vec();
+        sim.choose_class(0, out.choose_class_general, usize::MAX, &words);
+        let f = sim.frame + 1;
+        sim.step(&host, f);
+
+        let a = &sim.player(0).expect("the General is in first person").arsenal;
+        assert_eq!(a.weapons[1].main.id, "fiveseven_dw_mp", "the secondary is the dual-wield weapon");
+        assert_eq!(a.weapons[1].main.dual_wield_weapon, "fiveseven_lh_mp", "its def names the left gun");
+
+        // Through the event stream: swap to the pair, then the ADS button fires the left gun from
+        // its own magazine (BO2's left trigger) and the attack button the right gun.
+        let send = |sim: &mut Sim, held: u32, pressed: u32| {
+            sim.events.clear();
+            sim.input(0, 1, crate::input::FpsInput { held, pressed, ..Default::default() });
+            let f = sim.frame + 1;
+            sim.step(&host, f);
+            sim.events.iter().filter_map(|e| if let crate::sim::EventKind::Shot { left, .. } = e.kind { Some(left) } else { None }).collect::<Vec<bool>>()
+        };
+        send(&mut sim, 0, buttons::SWAP_WEAPON);
+        for _ in 0..120 {
+            send(&mut sim, 0, 0);
+        }
+        let full = sim.player(0).unwrap().arsenal.current().ammo;
+        assert_eq!(sim.player(0).unwrap().arsenal.current().left_ammo(), Some(full));
+        assert_eq!(send(&mut sim, buttons::ADS, buttons::ADS), vec![true], "the ADS button fires the left gun");
+        for _ in 0..30 {
+            send(&mut sim, 0, 0);
+        }
+        assert_eq!(send(&mut sim, buttons::FIRE, buttons::FIRE), vec![false], "the attack button fires the right gun");
+        let w = sim.player(0).unwrap().arsenal.current();
+        assert_eq!((w.ammo, w.left_ammo()), (full - 1, Some(full - 1)), "one round from each gun's own magazine");
+        // (Other tests share the unresolved list; only this class's ids matter here.)
+        let missing = crate::weapons::catalog::unresolved();
+        assert!(!missing.iter().any(|id| id.contains("fiveseven")), "{missing:?}");
+        crate::profile::reset();
+    }
+
     /// BO2's changeclass focuses the class the player is wearing, so the in-match panel opens on
     /// the equipped class rather than on the first row (the command bar's entry can be pressed at
     /// any time, and landing on row 1 would make the player think they wear the default).
@@ -743,7 +848,7 @@
         let _g = crate::profile::lock();
         crate::profile::reset();
         crate::profile::save(crate::classes::CustomClass { name: "First".into(), ..Default::default() });
-        crate::profile::save(crate::classes::CustomClass { name: "Second".into(), primary: "fnp45_mp".into(), ..Default::default() });
+        crate::profile::save(crate::classes::CustomClass { name: "Second".into(), primary: "mp7_mp".into(), ..Default::default() });
         let host = FakeHost::default();
         host.add(general(7, 0));
         let mut sim = Sim::new();
@@ -802,7 +907,7 @@
         crate::profile::reset();
         crate::profile::save(crate::classes::CustomClass {
             name: "Overhead Kit".into(),
-            primary: "fnp45_mp".into(),
+            primary: "mp7_mp".into(),
             secondary: "an94_mp".into(),
             lethal: "claymore_mp".into(),
             tactical: "concussion_grenade_mp".into(),
@@ -835,7 +940,7 @@
         let words: Vec<u32> = out.choose_class_payload[..out.choose_class_payload_len as usize].to_vec();
         sim.choose_class(0, out.choose_class_general, usize::MAX, &words);
         let a = &sim.player(0).expect("the record").arsenal;
-        assert_eq!(a.weapons[0].main.id, "fnp45_mp", "the overhead pick applied the custom kit");
+        assert_eq!(a.weapons[0].main.id, "mp7_mp", "the overhead pick applied the custom kit");
         assert_eq!(a.lethal.def.id, "claymore_mp");
         assert_eq!(out.choose_class_general, 7, "the pick names the General under command, not 0");
         crate::profile::reset();
@@ -890,7 +995,7 @@
         crate::profile::reset();
         let custom = crate::classes::CustomClass {
             name: "Bar Kit".into(),
-            primary: "fnp45_mp".into(),
+            primary: "mp7_mp".into(),
             secondary: "an94_mp".into(),
             lethal: "claymore_mp".into(),
             tactical: "concussion_grenade_mp".into(),
@@ -920,7 +1025,7 @@
         inp.logic_frame = f;
         let p = sim.player(0).expect("the record");
         assert_eq!(p.class.as_deref(), Some("custom:Bar Kit"));
-        assert_eq!(p.arsenal.weapons[0].main.id, "fnp45_mp", "the custom's primary landed");
+        assert_eq!(p.arsenal.weapons[0].main.id, "mp7_mp", "the custom's primary landed");
 
         // The next custom slot is empty: pressing its button must send nothing at all.
         inp.class_button = custom_button + 1;
@@ -1124,7 +1229,7 @@ fn each_viewer_sees_the_enemy_tracer_of_shooters_not_on_his_side() {
     host.add(general(2, 0));
     host.add(general(4, 1));
     let def = tracer_def();
-    let shot = |shooter| ShotTracer { shooter, def, target: 0, end: Vec3::new(100.0, 0.0, 0.0) };
+    let shot = |shooter| ShotTracer { shooter, def, target: 0, end: Vec3::new(100.0, 0.0, 0.0), left: false };
     let viewer = Viewer { player: 0, general: 1, first_person: 0 };
     let mut shots = vec![shot(1), shot(2), shot(4), shot(6)];
     play(&host, &viewer, &mut shots);
@@ -1191,17 +1296,17 @@ fn the_own_first_person_tracer_is_drawn_from_the_viewmodel_on_the_same_countdown
     let def = tracer_def();
     let end = Vec3::new(50.0, 0.0, 0.0);
     let mut view = ViewTracers { viewer: Viewer { player: 0, general: 1, first_person: 1 }, ..Default::default() };
-    let mut shots = vec![ShotTracer { shooter: 1, def, target: 0, end }, ShotTracer { shooter: 4, def, target: 0, end }];
+    let mut shots = vec![ShotTracer { shooter: 1, def, target: 0, end, left: false }, ShotTracer { shooter: 4, def, target: 0, end, left: false }];
     view.play(&host, &mut shots);
     let fired: Vec<(u32, String)> = host.fx.borrow().iter().map(|(s, w, _)| (*s, w.clone())).collect();
     assert_eq!(fired, [(4, "TRACER_ENEMY".into())], "only the other soldier's through fire_fx");
     assert!(view.frame.is_empty(), "not before the next rendered frame");
     view.begin_frame(true);
-    assert_eq!(view.frame, [OwnTracer { fx_weapon: "TRACER", end }], "his own side's tracer");
+    assert_eq!(view.frame, [OwnTracer { fx_weapon: "TRACER", end, left: false }], "his own side's tracer");
     view.begin_frame(true);
     assert!(view.frame.is_empty(), "drawn once");
     // Out of first person there is no viewmodel to draw from: the queue is dropped.
-    view.play(&host, &mut vec![ShotTracer { shooter: 1, def, target: 0, end }]);
+    view.play(&host, &mut vec![ShotTracer { shooter: 1, def, target: 0, end, left: false }]);
     view.begin_frame(false);
     view.begin_frame(true);
     assert!(view.frame.is_empty());

@@ -312,6 +312,9 @@ pub struct WeaponDef {
     pub fire_sound: String,
     /// The empty magazine's click in BO2's vocabulary (`emptyFireSoundPlayer`), as a converted event.
     pub empty_fire_sound: String,
+    /// A dual-wield weapon's left gun's shot (its own def's `fireSoundPlayer`, `wpn_<x>_fire_plr_lh`),
+    /// as a converted event; empty for a single gun (and the left gun then plays `fire_sound`).
+    pub left_fire_sound: String,
     /// The suppressed shot's player event (`AttachmentUnique.fire_sound_player`).
     pub silenced_fire_sound: String,
     /// The suppressed shot's third-person event (`AttachmentUnique.fire_sound`).
@@ -348,6 +351,14 @@ pub struct WeaponDef {
     pub alt: String,
     /// This alt mode keeps its own ammo (a grenade launcher), not the weapon's magazine.
     pub alt_own_ammo: bool,
+    /// The Create-a-Class slot BO2 offers this weapon in (`mp/statstable.csv` column 13:
+    /// `primary`, `secondary`, `primarygrenade`, `specialgrenade`); empty when it is not a
+    /// Create-a-Class item (a negative allocation cost: the `_dw` pistols, the War Machine, the
+    /// held knife). A combination inherits its base's.
+    pub cac_slot: String,
+    /// The left gun of a dual-wield weapon (BO2's `szDualWieldWeaponName`, `fnp45_lh_mp`); empty
+    /// for a single gun.
+    pub dual_wield_weapon: String,
     pub silenced: bool,
     pub laser: bool,
     /// FMJ: penetrates infantry, hits vehicles and structures harder.
@@ -584,6 +595,7 @@ impl Default for WeaponDef {
             projectile_object: String::new(),
             fire_sound: String::new(),
             empty_fire_sound: String::new(),
+            left_fire_sound: String::new(),
             silenced_fire_sound: String::new(),
             silenced_fire_sound_npc: String::new(),
             silenced_fx_weapon: String::new(),
@@ -600,6 +612,8 @@ impl Default for WeaponDef {
             alt_modes: Vec::new(),
             alt: String::new(),
             alt_own_ammo: false,
+            cac_slot: String::new(),
+            dual_wield_weapon: String::new(),
             silenced: false,
             laser: false,
             fmj: false,
@@ -721,6 +735,12 @@ impl WeaponDef {
     }
 
     /// BO2's segmented reload (`bSegmentedReload`): start, rounds per cycle, end.
+    /// A dual-wield weapon: it names its left gun (BO2's `bDualWield` with `szDualWieldWeaponName`).
+    /// It fires two guns, one per trigger, and has no sights (`aimDownSight` 0 on every BO2 `_dw`).
+    pub fn is_dual_wield(&self) -> bool {
+        !self.dual_wield_weapon.is_empty()
+    }
+
     pub fn shell_by_shell(&self) -> bool {
         self.traits.segmented_reload
     }

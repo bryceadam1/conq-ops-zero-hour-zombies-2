@@ -393,6 +393,9 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
             (a.stand_move_f, a.stand_rot_pitch, a.stand_rot_roll, a.strafe_rot_roll) = (o[0], o[1], o[2], o[3]);
             Ok(())
         }),
+    field!("Compatible", "The shorts it may be combined with (BO2's `compatibleAttachments`; pairing needs both lists).", FieldKind::Words,
+        |a: &AttachmentDef| a.compatible.join(" "),
+        |a: &mut AttachmentDef, v: Values| { a.compatible = v.text.split_whitespace().map(str::to_string).collect(); Ok(()) }),
 ];
 
 /// An optional sway block: its six numbers, or `-` for none.
@@ -660,6 +663,15 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("Alt", "The weapon this toggles to (its alt mode, or back from it).", FieldKind::Str,
         |d: &WeaponDef| d.alt.clone(),
         |d: &mut WeaponDef, v: Values| { d.alt = v.text.into(); Ok(()) }),
+    field!("CacSlot", "The Create-a-Class slot BO2 offers it in (statstable column 13); empty: not a CaC item.", FieldKind::Str,
+        |d: &WeaponDef| d.cac_slot.clone(),
+        |d: &mut WeaponDef, v: Values| { d.cac_slot = v.text.into(); Ok(()) }),
+    field!("DualWieldWeapon", "A dual-wield weapon's left gun (BO2's `szDualWieldWeaponName`).", FieldKind::Str,
+        |d: &WeaponDef| d.dual_wield_weapon.clone(),
+        |d: &mut WeaponDef, v: Values| { d.dual_wield_weapon = v.text.into(); Ok(()) }),
+    field!("LeftFireSound", "A dual-wield weapon's left gun's shot BO2 sound event.", FieldKind::Str,
+        |d: &WeaponDef| d.left_fire_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.left_fire_sound = v.text.into(); Ok(()) }),
     field!("Flags", "alt keeps its own ammo, silenced, laser, FMJ, target finder.", FieldKind::Nums(5),
         |d: &WeaponDef| format!("{} {} {} {} {}", d.alt_own_ammo as u8, d.silenced as u8, d.laser as u8, d.fmj as u8, d.target_finder as u8),
         |d: &mut WeaponDef, v: Values| {
@@ -941,9 +953,17 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 114);
-        assert_eq!(ATTACHMENT_FIELDS.len(), 29);
+        assert_eq!(WEAPON_FIELDS.len(), 117);
+        assert_eq!(ATTACHMENT_FIELDS.len(), 30);
         assert_eq!(CAMO_FIELDS.len(), 3);
+    }
+
+    #[test]
+    fn an_attachments_compatibility_list_round_trips() {
+        let a = AttachmentDef { id: "reflex".into(), short: "reflex".into(), compatible: vec!["dualclip".into(), "gl".into()], ..Default::default() };
+        let t = Table { attachments: vec![a.clone()], ..Default::default() };
+        let back = parse_full_table(&format_full_table(&t)).expect("the table re-parses");
+        assert_eq!(back.attachments[0].compatible, a.compatible);
     }
 
     #[test]
