@@ -1377,7 +1377,7 @@ fn a_shot_into_two_grounds_plays_each_surfaces_hit_sound() {
 /// A wall `thick` inches deep (enemy concrete) 40 units out and an enemy soldier 60 out behind
 /// it; the General fires one aimed round of a flat-damage gun of `pen`, with FMJ's
 /// `bulletpenetration` when `fmj`. Returns (wall damage, soldier damage, the round's events).
-fn shoot_through_wall(pen: crate::penetration::Penetrate, fmj: bool, thick: f32) -> (f32, f32, Vec<EventKind>) {
+fn shoot_through_wall(pen: crate::penetration::Penetrate, specs: &[Specialty], thick: f32) -> (f32, f32, Vec<EventKind>) {
     let host = FakeHost::default();
     host.add(general(1, 0));
     host.add(ObjInfo {
@@ -1404,7 +1404,7 @@ fn shoot_through_wall(pen: crate::penetration::Penetrate, fmj: bool, thick: f32)
     def.damage = [40.0; 6];
     def.damage_range = [0.0; 6];
     def.pellets = 1;
-    def.specialties = if fmj { crate::weapons::Specialties::of(&[Specialty::BulletPenetration]) } else { crate::weapons::Specialties::default() };
+    def.specialties = crate::weapons::Specialties::of(specs);
     let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(def));
     (w.def, w.main) = (def, def);
     let pitch = -(4.0f32 / 60.0).atan();
@@ -1423,7 +1423,7 @@ fn shoot_through_wall(pen: crate::penetration::Penetrate, fmj: bool, thick: f32)
 #[test]
 fn a_round_through_a_thin_wall_hits_the_soldier_behind_for_less() {
     use crate::penetration::Penetrate;
-    let (wall, behind, ev) = shoot_through_wall(Penetrate::Medium, false, 4.5);
+    let (wall, behind, ev) = shoot_through_wall(Penetrate::Medium, &[], 4.5);
     assert!(wall > 0.0 && (behind / wall - 0.5).abs() < 0.01, "wall {wall}, behind {behind}");
     let exits: Vec<_> = ev.iter().filter_map(|k| match *k {
         EventKind::Impact { at, surface, exit: true, .. } => Some((at, surface)),
@@ -1436,7 +1436,7 @@ fn a_round_through_a_thin_wall_hits_the_soldier_behind_for_less() {
     let entries = ev.iter().filter(|k| matches!(k, EventKind::Impact { exit: false, .. })).count();
     assert_eq!(entries, 2, "the wall and the soldier: {ev:?}");
     // No penetration type: the wall takes it all.
-    let (_, behind, ev) = shoot_through_wall(Penetrate::None, false, 4.5);
+    let (_, behind, ev) = shoot_through_wall(Penetrate::None, &[], 4.5);
     assert_eq!(behind, 0.0);
     assert!(!ev.iter().any(|k| matches!(k, EventKind::Impact { exit: true, .. })));
 }
@@ -1446,10 +1446,20 @@ fn a_round_through_a_thin_wall_hits_the_soldier_behind_for_less() {
 #[test]
 fn fmj_carries_a_round_through_a_wall_that_stops_it_without() {
     use crate::penetration::Penetrate;
-    let (_, behind, _) = shoot_through_wall(Penetrate::Small, false, 7.0);
+    let (_, behind, _) = shoot_through_wall(Penetrate::Small, &[], 7.0);
     assert_eq!(behind, 0.0, "7 in is past a small round's 6 in");
-    let (wall, behind, _) = shoot_through_wall(Penetrate::Small, true, 7.0);
+    let (wall, behind, _) = shoot_through_wall(Penetrate::Small, &[Specialty::BulletPenetration], 7.0);
     assert!((behind / wall - (1.0 - 7.0 / 12.0)).abs() < 0.01, "wall {wall}, behind {behind}");
+}
+
+/// FMJ's other specialty, `armorpiercing`: a structure (BO2's scorestreak) takes
+/// `perk_armorpiercing` (40) percent more of the round; a soldier would take none extra.
+#[test]
+fn armorpiercing_hits_a_structure_harder() {
+    use crate::penetration::Penetrate;
+    let (plain, ..) = shoot_through_wall(Penetrate::None, &[], 4.5);
+    let (pierced, ..) = shoot_through_wall(Penetrate::None, &[Specialty::ArmorPiercing], 4.5);
+    assert!((pierced / plain - 1.4).abs() < 1e-3, "plain {plain}, armour-piercing {pierced}");
 }
 
 #[test]

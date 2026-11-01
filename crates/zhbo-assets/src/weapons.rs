@@ -139,6 +139,8 @@ fn alt_drop_for(w: &Weapon, shorts: &[&str]) -> Option<f32> {
 pub struct AttachmentMeta {
     pub full_name: String,
     pub description: String,
+    /// Its create-a-class icon material (column 6, `cac_mods_red_dot`).
+    pub image: String,
     /// The shorts it may be combined with: the `attachment` row's `compatibleAttachments`, parsed by
     /// the conformance rule's own reader (`zhbo_conformance::bo2::combos::table`, `FUN_008e70f0`:
     /// an unknown name sets nothing), in `eAttachment` order.
@@ -161,7 +163,8 @@ pub fn attachment_metadata(patch: &zhbo_formats::t6zone::Zone, names: &HashMap<S
             .and_then(|k| compat.rows.get(&k))
             .map(|(_, mask)| (0..64).filter(|b| mask & (1u64 << b) != 0).filter_map(|b| zhbo_conformance::weapons::ATTACHMENTS.get(b)).map(|s| s.to_string()).collect())
             .unwrap_or_default();
-        meta.insert(short.clone(), AttachmentMeta { full_name, description, compatible });
+        let image = row.get(6).map(|s| s.trim().to_string()).unwrap_or_default();
+        meta.insert(short.clone(), AttachmentMeta { full_name, description, image, compatible });
     }
     meta
 }
@@ -240,6 +243,7 @@ pub fn attachment_def(a: &bo2::Attachment, default: &bo2::Attachment, names: &Ha
         display_name: names.get(&a.display_name).map(|s| s.trim().to_string()).unwrap_or_else(|| short.clone()),
         full_name: m.full_name,
         description: m.description,
+        image: m.image,
         point: a.point as u8,
         silenced: a.silenced,
         laser: a.laser_sight,
@@ -1242,7 +1246,6 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         dual_wield_weapon: w.dual_wield_weapon.clone().unwrap_or_default(),
         silenced: w.silenced,
         laser: false,
-        fmj: false,
         target_finder: false,
         mms_max_dist: w.mms_max_dist,
         // The weapon's own ADS recoil reduction (`fAdsRecoilReductionRate`/`Limit`: the HAMR and its

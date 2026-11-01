@@ -95,7 +95,7 @@ pub fn rows(shipped: &Shipped, bo2_dir: &std::path::Path, schema: &Schema) -> Re
             for (k, &s) in shorts.iter().enumerate() {
                 let Some(a) = att_of(s) else { continue };
                 let with: Vec<&str> = shorts.iter().copied().filter(|&o| o != s && classmenu::legal::compatible(id, s, o)).collect();
-                let image = crate::cac::attachment_material(s).map(|(_, m)| m.to_string());
+                let image = (!a.image.is_empty()).then(|| a.image.clone());
                 let cost = cost_of(|dr| {
                     dr.primary = id.to_string();
                     dr.primary_atts = vec![s.to_string()];

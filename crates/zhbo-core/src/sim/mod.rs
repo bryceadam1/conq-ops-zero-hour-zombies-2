@@ -34,7 +34,6 @@ use crate::math::{basis_xy, dir_from_angles, Vec3};
 use crate::movement::{self, Blocker, Body, MoveModifiers, MoveTuning, World};
 use crate::units::{BO2_TO_ZH_DAMAGE, LOGIC_DT};
 use crate::movement::Stance;
-use crate::attachments::FMJ_VEHICLE_DAMAGE;
 use crate::equipment::{EquipEvent, Equipment, Kind as EquipKind, Placed, HACK_COS};
 use crate::projectiles::{Outcome, Projectile};
 use crate::units::inches;

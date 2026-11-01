@@ -282,9 +282,11 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             }
         }
     }
-    // One icon per attachment in the converted table, named by the core's short-name map. BO2's
-    // variants share an art set (`silencer_smg`/`silencer` are both the suppressor); an attachment
-    // the map has no art for is reported, never fatal.
+    // One icon per attachment in the converted table: its `mp/attachmenttable.csv` image (column
+    // 6), the material the core names through `hud::sprites::attachment_icon`. BO2's variants share
+    // an art set (`silencer_smg`/`silencer` are both the suppressor); an attachment with no image
+    // row is reported, never fatal.
+    let att_meta = crate::weapons::attachment_metadata(&patch, &std::collections::HashMap::new());
     let mut seen_atts: Vec<String> = Vec::new();
     for att in attachments {
         if att.kind == 0 || att.name.starts_with(',') {
@@ -295,9 +297,9 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
             continue;
         }
         seen_atts.push(short.clone());
-        match (zhbo_core::hud::sprites::attachment_icon(&short), crate::cac::attachment_material(&short)) {
-            (Some(name), Some((zone, material))) => wanted.push((name.to_string(), Source::Material(zone, material.into()), 64)),
-            _ => report.missing.push((format!("ZHBO_BO2_Attach_{short}"), "no BO2 icon material".into())),
+        match att_meta.get(&short).map(|m| m.image.as_str()).filter(|i| !i.is_empty()) {
+            Some(image) => wanted.push((zhbo_core::lui::materials::image(image), Source::Dynamic(image.to_string()), 64)),
+            None => report.missing.push((format!("attachment {short}"), "no icon in mp/attachmenttable.csv".into())),
         }
     }
     let overlay_names: std::collections::HashSet<String> = zhbo_core::hud::OVERLAY_MATERIALS.iter().map(|(m, _)| zhbo_core::lui::materials::image(m)).collect();

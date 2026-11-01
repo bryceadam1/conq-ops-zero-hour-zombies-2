@@ -1128,8 +1128,11 @@ fn primary_gunfighter_shows_a_third_attachment_plate() {
     assert_eq!(with.draft.spent(), 11, "each attachment and the card cost a point");
     let mut prims = Vec::new();
     draw_editor(&mut prims, 1280.0, 720.0, &with, 0.0, 0.0);
-    let grip_drawn = prims.iter().any(|p| matches!(p, Prim::Image { name, .. } if name == "ZHBO_BO2_Attach_Grip"));
-    assert!(grip_drawn, "the third plate draws its attachment");
+    // Each plate draws its attachment's table icon (the built-in table has art for gl and reflex).
+    for short in ["gl", "reflex"] {
+        let icon = crate::hud::sprites::attachment_icon(short).unwrap();
+        assert!(prims.iter().any(|p| matches!(p, Prim::Image { name, .. } if *name == icon)), "{short}'s plate draws {icon}");
+    }
 }
 
 /// The wildcard grid's lower panel shows the highlighted card's name (Big) and its description

@@ -133,8 +133,11 @@ impl Sim {
         // A soldier's damage is multiplied by the weapon's for the location struck (BO2's player
         // damage, `FUN_005f05c0`); anything else takes it unscaled.
         let at = if infantry { def.location_multipliers.get(location as usize).copied().unwrap_or(1.0) } else { 1.0 };
-        let fmj = if def.fmj && !infantry { FMJ_VEHICLE_DAMAGE } else { 1.0 };
-        let amount = def.damage_at(distance) * mult * at * fmj * BO2_TO_ZH_DAMAGE;
+        // `specialty_armorpiercing` (FMJ grants it): a Zero Hour vehicle or structure takes BO2's
+        // scorestreak bonus, `damage + damage * level.cac_armorpiercing_data`
+        // (`_class.gsc:859`, `killstreaks/_ai_tank.gsc:292-293`).
+        let pierce = if !infantry && p.arsenal.has_specialty(Specialty::ArmorPiercing) { 1.0 + p.arsenal.tuning.perk_armorpiercing / 100.0 } else { 1.0 };
+        let amount = def.damage_at(distance) * mult * at * pierce * BO2_TO_ZH_DAMAGE;
         let kill = host.damage(p.general, id, amount, damage_kind::SMALL_ARMS);
         // BO2's blood is picked by the hit region and its lethality (FxFleshType); every other
         // surface comes from what was hit.

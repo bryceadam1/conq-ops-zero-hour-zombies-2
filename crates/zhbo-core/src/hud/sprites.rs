@@ -69,34 +69,6 @@ pub const WILDCARD_ICONS: [&str; 8] = [
     "ZHBO_BO2_Wildcard_Tactician",
     "ZHBO_BO2_Wildcard_DangerClose",
 ];
-/// One icon per attachment short name in the weapon table (`reflex`, `extclip`, ...).
-pub const ATTACHMENT_ICONS: &[(&str, &str)] = &[
-    ("reflex", "ZHBO_BO2_Attach_Reflex"),
-    ("steadyaim", "ZHBO_BO2_Attach_SteadyAim"),
-    ("silencer", "ZHBO_BO2_Attach_Silencer"),
-    ("dualclip", "ZHBO_BO2_Attach_DualClip"),
-    ("holo", "ZHBO_BO2_Attach_Holo"),
-    ("grip", "ZHBO_BO2_Attach_Grip"),
-    ("fastads", "ZHBO_BO2_Attach_FastAds"),
-    ("fmj", "ZHBO_BO2_Attach_Fmj"),
-    ("extbarrel", "ZHBO_BO2_Attach_ExtBarrel"),
-    ("rangefinder", "ZHBO_BO2_Attach_RangeFinder"),
-    ("stalker", "ZHBO_BO2_Attach_Stalker"),
-    ("extclip", "ZHBO_BO2_Attach_ExtClip"),
-    ("sf", "ZHBO_BO2_Attach_SelectFire"),
-    ("rf", "ZHBO_BO2_Attach_RapidFire"),
-    ("mms", "ZHBO_BO2_Attach_Mms"),
-    ("acog", "ZHBO_BO2_Attach_Acog"),
-    ("dualoptic", "ZHBO_BO2_Attach_DualOptic"),
-    ("gl", "ZHBO_BO2_Attach_GrenadeLauncher"),
-    ("vzoom", "ZHBO_BO2_Attach_VariableZoom"),
-    ("ir", "ZHBO_BO2_Attach_Ir"),
-    ("swayreduc", "ZHBO_BO2_Attach_SwayReduction"),
-    ("is", "ZHBO_BO2_Attach_IronSight"),
-    ("tacknife", "ZHBO_BO2_Attach_TacticalKnife"),
-    ("dw", "ZHBO_BO2_Attach_DualWield"),
-    ("stackfire", "ZHBO_BO2_Attach_TriBolt"),
-];
 
 // The create-a-class screen's chrome.
 pub const MENU_BACKGROUND: &str = "ZHBO_BO2_MenuBackground";
@@ -143,13 +115,6 @@ pub const ALL: &[&str] = &[
     PERK_ICONS[12], PERK_ICONS[13], PERK_ICONS[14], PERK_ICONS[15],
     WILDCARD_ICONS[0], WILDCARD_ICONS[1], WILDCARD_ICONS[2], WILDCARD_ICONS[3], WILDCARD_ICONS[4],
     WILDCARD_ICONS[5], WILDCARD_ICONS[6], WILDCARD_ICONS[7],
-    ATTACHMENT_ICONS[0].1, ATTACHMENT_ICONS[1].1, ATTACHMENT_ICONS[2].1, ATTACHMENT_ICONS[3].1,
-    ATTACHMENT_ICONS[4].1, ATTACHMENT_ICONS[5].1, ATTACHMENT_ICONS[6].1, ATTACHMENT_ICONS[7].1,
-    ATTACHMENT_ICONS[8].1, ATTACHMENT_ICONS[9].1, ATTACHMENT_ICONS[10].1, ATTACHMENT_ICONS[11].1,
-    ATTACHMENT_ICONS[12].1, ATTACHMENT_ICONS[13].1, ATTACHMENT_ICONS[14].1, ATTACHMENT_ICONS[15].1,
-    ATTACHMENT_ICONS[16].1, ATTACHMENT_ICONS[17].1, ATTACHMENT_ICONS[18].1, ATTACHMENT_ICONS[19].1,
-    ATTACHMENT_ICONS[20].1, ATTACHMENT_ICONS[21].1, ATTACHMENT_ICONS[22].1, ATTACHMENT_ICONS[23].1,
-    ATTACHMENT_ICONS[24].1,
     MENU_BACKGROUND, MENU_BACKDROP, MENU_GRID, MENU_GLOW, ROW_FILL, ROW_HIGHLIGHT, ROW_LINE,
     PANEL_FILL, PANEL_HIGHLIGHT, PANEL_LINE, PANEL_EDGE, TILE_FILL, TILE_HIGHLIGHT, WILDCARD_FILL,
     WILDCARD_HIGHLIGHT,
@@ -165,9 +130,11 @@ pub fn wildcard_icon(wildcard: Wildcard) -> &'static str {
     WILDCARD_ICONS[wildcard as usize]
 }
 
-/// The icon for an attachment short name, if the catalog's table has one.
-pub fn attachment_icon(short: &str) -> Option<&'static str> {
-    ATTACHMENT_ICONS.iter().find(|(s, _)| *s == short).map(|(_, name)| *name)
+/// The icon for an attachment short name: its create-a-class material's converted art
+/// ([`crate::weapons::Catalog::attachment_image`], BO2's `mp/attachmenttable.csv` column 6), if the
+/// table names one.
+pub fn attachment_icon(short: &str) -> Option<String> {
+    crate::weapons::catalog().attachment_image(short).map(crate::lui::materials::image)
 }
 
 /// Not BO2 art: Zero Hour's faction logo for the local player (the bridge resolves it).

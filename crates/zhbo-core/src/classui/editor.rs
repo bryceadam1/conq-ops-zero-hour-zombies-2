@@ -217,7 +217,7 @@ fn draw_cell(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor, cell: &Ed
             if let Some(short) = atts.get(cell.index) {
                 let icon = r.h - 8.0;
                 if let Some(name) = sprites::attachment_icon(short) {
-                    bo2::sprite(prims, f, name, Rect { x: r.x + (r.w - icon) * 0.5, y: r.y + 4.0, w: icon, h: icon }, argb(OFF_WHITE, 1.0), Vec::new());
+                    bo2::sprite(prims, f, &name, Rect { x: r.x + (r.w - icon) * 0.5, y: r.y + 4.0, w: icon, h: icon }, argb(OFF_WHITE, 1.0), Vec::new());
                 }
             }
             if on {
@@ -704,7 +704,7 @@ pub(super) fn option_icon(editor: &Editor, i: usize) -> Option<String> {
         return Some(format!("ZHBO_BO2_Icon_{}", base_id(&def.id)));
     }
     if let Some(short) = editor.option_attachment(i) {
-        return sprites::attachment_icon(short).map(str::to_string);
+        return sprites::attachment_icon(short);
     }
     if let Some(perk) = editor.option_perk(i) {
         return Some(sprites::perk_icon(perk).to_string());

@@ -134,7 +134,7 @@ pub fn draw(prims: &mut Vec<Prim>, f: &Frame, p: Rect, draft: Option<&Draft>) {
             let k = (n - i) as f32;
             let rect = Rect { x: r.right() - icon * k - GAP * k, y: r.y + 5.0, w: icon, h: icon };
             if let Some(name) = sprites::attachment_icon(short) {
-                bo2::sprite(prims, f, name, rect, argb(OFF_WHITE, 1.0), Vec::new());
+                bo2::sprite(prims, f, &name, rect, argb(OFF_WHITE, 1.0), Vec::new());
             }
             prims.extend(name(r, &att_display(short), Family::ExtraSmall, bo2::TEXT_EXTRA_SMALL, r.y + bo2::TEXT_EXTRA_SMALL * i as f32));
         }

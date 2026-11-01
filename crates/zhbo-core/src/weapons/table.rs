@@ -383,6 +383,9 @@ pub const ATTACHMENT_FIELDS: &[Field<AttachmentDef>] = &[
     field!("Description", "The attachment's description line.", FieldKind::Str,
         |a: &AttachmentDef| a.description.clone(),
         |a: &mut AttachmentDef, v: Values| { a.description = v.text.into(); Ok(()) }),
+    field!("Image", "Its create-a-class icon material (`mp/attachmenttable.csv` column 6).", FieldKind::Str,
+        |a: &AttachmentDef| a.image.clone(),
+        |a: &mut AttachmentDef, v: Values| { a.image = v.text.into(); Ok(()) }),
     field!("Kind", "BO2's `eAttachment`: the order a combination's attachments are walked in.", FieldKind::Num,
         |a: &AttachmentDef| a.kind.to_string(),
         |a: &mut AttachmentDef, v: Values| { a.kind = v.text_num()? as u8; Ok(()) }),
@@ -828,15 +831,14 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("LeftFireSound", "A dual-wield weapon's left gun's shot BO2 sound event.", FieldKind::Str,
         |d: &WeaponDef| d.left_fire_sound.clone(),
         |d: &mut WeaponDef, v: Values| { d.left_fire_sound = v.text.into(); Ok(()) }),
-    field!("Flags", "alt keeps its own ammo, silenced, laser, FMJ, target finder.", FieldKind::Nums(5),
-        |d: &WeaponDef| format!("{} {} {} {} {}", d.alt_own_ammo as u8, d.silenced as u8, d.laser as u8, d.fmj as u8, d.target_finder as u8),
+    field!("Flags", "alt keeps its own ammo, silenced, laser, target finder.", FieldKind::Nums(4),
+        |d: &WeaponDef| format!("{} {} {} {}", d.alt_own_ammo as u8, d.silenced as u8, d.laser as u8, d.target_finder as u8),
         |d: &mut WeaponDef, v: Values| {
-            v.need(5)?;
+            v.need(4)?;
             d.alt_own_ammo = v.flag(0);
             d.silenced = v.flag(1);
             d.laser = v.flag(2);
-            d.fmj = v.flag(3);
-            d.target_finder = v.flag(4);
+            d.target_finder = v.flag(3);
             Ok(())
         }),
     field!("MmsMaxDist", "Millimetre scanner's max distance (BO2 inches; the scanner flag is in Traits).", FieldKind::Num,
@@ -1219,7 +1221,7 @@ mod tests {
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
         assert_eq!(WEAPON_FIELDS.len(), 149);
-        assert_eq!(ATTACHMENT_FIELDS.len(), 30);
+        assert_eq!(ATTACHMENT_FIELDS.len(), 31);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }
 

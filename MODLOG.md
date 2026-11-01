@@ -9118,3 +9118,24 @@ Verified:
 * `cargo xtask build`: OK.
 * Autotests, run one at a time: default 16/16, `--classpick` 8/8, `--rts` 15/15, `--scope` pass,
   `--w3d-ads` 2/2.
+
+## Code polish 3: attachment icons and FMJ/Tactical Knife from BO2's data (2026-11-01)
+
+- **Icons.** The converter's 25-row `cac::ATTACHMENTS` (short → zone, material) and the core's
+  `hud::sprites::ATTACHMENT_ICONS` (short → sprite name) were two hand copies of
+  `mp/attachmenttable.csv` column 6. The attachment's `Image` is now a weapon-table field (from
+  that column); the converter searches the menu zones for it (`Source::Dynamic`) and the core names
+  the art `lui::materials::image(image)` (`hud::sprites::attachment_icon`). A new BO2 attachment
+  gets its icon with no code change. The sprite names change (`ZHBO_Mat_cac_mods_red_dot` instead
+  of `ZHBO_BO2_Attach_Reflex`): reconvert.
+- **FMJ.** `match short { "fmj" => d.fmj = true }` and `FMJ_VEHICLE_DAMAGE = 1.35` are gone. BO2's
+  FMJ grants `armorpiercing` + `bulletpenetration` (its `perks` bits 1 and 6, the conformance
+  `specialties` column); the script's scorestreak bonus is `damage + int(damage *
+  level.cac_armorpiercing_data)` with `perk_armorpiercing` 40 (`_class.gsc:859`,
+  `killstreaks/_ai_tank.gsc:292-293`). A shooter with the specialty (any source, G1) now does 1.4x
+  to Zero Hour vehicles and structures (tuning `perk_armorpiercing`). The table's `Flags` loses its
+  FMJ slot (4 numbers).
+- **Tactical Knife.** `TACTICAL_KNIFE_MELEE = 0.6` multiplied the melee time; BO2 has no such
+  scale — a `+tacknife` combination's own variant keeps `iMeleeTime` 800 (conformance row
+  `beretta93r_mp dualclip+tacknife`) and its quickness is its melee animation
+  (`viewmodel_*_tactical_melee`), which the combination already plays. The multiplier is removed.

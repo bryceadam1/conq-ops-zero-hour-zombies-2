@@ -31,40 +31,6 @@ pub fn wildcard_sprites(cards: &[zhbo_core::weapons::BonusCard]) -> Vec<(String,
         .collect()
 }
 
-/// BO2's attachment icon material for each catalog attachment short name.
-///
-/// The catalog's shorts come from the converted weapon table (`weapons::short_name`), so this table
-/// is looked up per attachment at conversion time: a new BO2 attachment the mod has no icon for is
-/// reported instead of silently dropped. BO2's own UI string table pairs each `MPUI_*` with these
-/// materials: `swayreduc` is `cac_mods_bors`, `ir` is `cac_mods_dual_band`, `dualoptic` is
-/// `cac_mods_combo_r_a`, and the launcher is the HUD's `hud_grenade_launcher`.
-const ATTACHMENTS: &[(&str, &str, &str)] = &[
-    ("reflex", "code_post_gfx_mp", "cac_mods_red_dot"),
-    ("steadyaim", "code_post_gfx_mp", "cac_mods_laser"),
-    ("silencer", "code_post_gfx_mp", "cac_mods_suppressor"),
-    ("dualclip", "code_post_gfx_mp", "cac_mods_dual_clip"),
-    ("holo", "code_post_gfx_mp", "cac_mods_holographic"),
-    ("grip", "code_post_gfx_mp", "cac_mods_foregrip"),
-    ("fastads", "code_post_gfx_mp", "cac_mods_pistol_grip"),
-    ("fmj", "code_post_gfx_mp", "cac_mods_fmj"),
-    ("extbarrel", "code_post_gfx_mp", "cac_mods_barrel_extend"),
-    ("rangefinder", "code_post_gfx_mp", "cac_mods_rangefinder"),
-    ("stalker", "code_post_gfx_mp", "cac_mods_extended_stock"),
-    ("extclip", "code_post_gfx_mp", "cac_mods_extended_mag"),
-    ("sf", "code_post_gfx_mp", "cac_mods_trigger_group"),
-    ("rf", "code_post_gfx_mp", "cac_mods_rapid_fire"),
-    ("mms", "code_post_gfx_mp", "cac_mods_mms"),
-    ("acog", "code_post_gfx_mp", "cac_mods_acog"),
-    ("dualoptic", "code_post_gfx_mp", "cac_mods_combo_r_a"),
-    ("gl", "ui_mp", "hud_grenade_launcher"),
-    ("vzoom", "code_post_gfx_mp", "cac_mods_var_zoom"),
-    ("ir", "code_post_gfx_mp", "cac_mods_dual_band"),
-    ("swayreduc", "code_post_gfx_mp", "cac_mods_bors"),
-    ("is", "code_post_gfx_mp", "cac_mods_ironsight"),
-    ("tacknife", "code_post_gfx_mp", "cac_mods_tact_knife"),
-    ("dw", "code_post_gfx_mp", "cac_mods_dual_wield"),
-    ("stackfire", "code_post_gfx_mp", "cac_mods_tribolt"),
-];
 
 /// Every item's image material by its reference name (`mp7` -> `menu_mp_weapons_mp7`), from the
 /// player's `mp/statstable.csv` in `patch_mp.ff` (column 4 the reference, 6 the image). Empty when
@@ -84,11 +50,6 @@ pub fn item_rows(bo2_dir: &std::path::Path) -> std::collections::HashMap<String,
         .filter_map(|r| Some((r.get(4)?.clone(), (r.get(6)?.clone(), r.get(13).cloned().unwrap_or_default()))))
         .filter(|(reference, (image, _))| !reference.is_empty() && !image.is_empty())
         .collect()
-}
-
-/// The material (zone, name) for an attachment short, if this pack has its icon.
-pub fn attachment_material(short: &str) -> Option<(&'static str, &'static str)> {
-    ATTACHMENTS.iter().find(|(s, _, _)| *s == short).map(|(_, zone, material)| (*zone, *material))
 }
 
 /// Fixed CaC art: the perk icon set plus the menu chrome. The perks are in `weapons::PERKS` order
@@ -134,17 +95,6 @@ pub const SPRITES: &[Sprite] = &[
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn every_table_short_has_one_icon_material() {
-        let names: Vec<&str> = names::ATTACHMENT_ICONS.iter().map(|(short, _)| *short).collect();
-        let materials: Vec<&str> = ATTACHMENTS.iter().map(|(short, _, _)| *short).collect();
-        assert_eq!(names, materials, "the converter table covers exactly the core icon shorts");
-        for &(short, zone, material) in ATTACHMENTS {
-            assert!(names::attachment_icon(short).is_some(), "{short}");
-            assert!(!zone.is_empty() && !material.is_empty(), "{short}");
-        }
-    }
 
     #[test]
     fn fixed_sprites_cover_the_core_name_list() {

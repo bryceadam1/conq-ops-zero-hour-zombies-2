@@ -493,9 +493,6 @@ pub struct WeaponDef {
     pub dual_wield_weapon: String,
     pub silenced: bool,
     pub laser: bool,
-    /// FMJ: hits vehicles and structures harder (its penetration is the `bulletpenetration`
-    /// specialty it grants).
-    pub fmj: bool,
     /// Target finder: enemies are marked while aiming.
     pub target_finder: bool,
     /// BO2's `mmsMaxDist` (inches): how far the millimetre scanner's screen shows characters
@@ -960,7 +957,6 @@ impl Default for WeaponDef {
             dual_wield_weapon: String::new(),
             silenced: false,
             laser: false,
-            fmj: false,
             target_finder: false,
             mms_max_dist: 0.0,
             recoil_reduction: (0.0, 0.0),

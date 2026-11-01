@@ -191,6 +191,7 @@ tuning! {
     proximity_grenade_grace_period: "scr_proximityGrenadeGracePeriod" = 0.1, "Shock Charge: seconds from the trip to the shock (`_proximity_grenade.gsc:20`).";
     trophy_system_range: "trophy_system_range" = 512.0, "Trophy System: how near a projectile it shoots down, inches (`_trophy_system.gsc:171`, `distancesquared < 262144`).";
     trophy_system_ammo: "trophy_system_ammo" = 2.0, "Trophy System: projectiles it shoots down before it is spent (`_trophy_system.gsc:62`, `self.ammo = 2`).";
+    perk_armorpiercing: "perk_armorpiercing" = 40.0, "`armorpiercing` (FMJ): percent extra bullet damage on scorestreaks — Zero Hour's vehicles and structures (`gametypes/_class.gsc:859`, `cac_get_dvar_int( \"perk_armorpiercing\", \"40\" ) / 100`; applied as `damage + int(damage * data)`, `killstreaks/_ai_tank.gsc:292-293`).";
     perk_delay_explosive_time: "perk_delayExplosiveTime" = 0.9, "`delayexplosive` (Engineer): extra seconds a tripped explosive waits (dvar default, `dvars-t6mp.tsv`; `gametypes/_weaponobjects.gsc:1550-1551`).";
     equipment_hacker_tool_time_ms: "equipmenthackertooltimems" = 50.0, "Black Hat: the lock on equipment, milliseconds of sight (`_hacker_tool.gsc:20`; the lock loop `:293-301`).";
     vehicle_hacker_tool_time_ms: "vehiclehackertooltimems" = 4000.0, "Black Hat: the lock on a vehicle, milliseconds of sight (`_hacker_tool.gsc:30`, `gethacktime`'s default for a vehicle); the mod's Zero Hour drones are vehicles.";

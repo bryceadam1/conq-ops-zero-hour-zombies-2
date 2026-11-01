@@ -119,6 +119,12 @@ impl Catalog {
         self.attachments.get(id).copied()
     }
 
+    /// The create-a-class icon material of an attachment short name (`cac_mods_red_dot` for
+    /// `reflex`): the image of its rows (BO2's variants of one short share it).
+    pub fn attachment_image(&self, short: &str) -> Option<&'static str> {
+        self.attachments.values().find(|a| a.short == short && !a.image.is_empty()).map(|a| a.image.as_str())
+    }
+
     /// A camo option by id (`camo_multicam`), with its name and thumbnail image.
     pub fn camo(&self, id: &str) -> Option<&'static CamoOption> {
         self.camo.get(id).copied()
@@ -703,6 +709,7 @@ End
 
 Attachment reflex
   Short = reflex
+  Image = cac_mods_red_dot
   DisplayName = Reflex
   FullName = Reflex Sight
   Description = Precision red dot sight.
@@ -713,6 +720,7 @@ End
 
 Attachment gl
   Short = gl
+  Image = hud_grenade_launcher
   DisplayName = Grenade Launcher
   Point = 2
   Compatible = reflex
@@ -722,6 +730,7 @@ End
 ; the separate `_dw_mp` weapon (G16), stood in below for the Five-seven.
 Attachment dw
   Short = dw
+  Image = cac_mods_dual_wield
   DisplayName = Dual Wield
   Point = 2
 End
@@ -746,7 +755,7 @@ Weapon gl_an94_mp
   Explosion = 42.7 0 135 50
   Projectile = 300 0 1 1 0
   Alt = an94_mp
-  Flags = 1 0 0 0 0
+  Flags = 1 0 0 0
 End
 
 Weapon an94_mp

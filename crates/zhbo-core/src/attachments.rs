@@ -37,6 +37,9 @@ pub struct AttachmentDef {
     pub full_name: String,
     /// The attachment's description line, from its `MPUI_*_DESC` key.
     pub description: String,
+    /// Its create-a-class icon material (`mp/attachmenttable.csv` column 6, `cac_mods_red_dot`);
+    /// the art is converted as `lui::materials::image(image)`. Empty for none.
+    pub image: String,
     pub point: u8,
     pub silenced: bool,
     pub laser: bool,
@@ -127,6 +130,7 @@ impl Default for AttachmentDef {
             display_name: String::new(),
             full_name: String::new(),
             description: String::new(),
+            image: String::new(),
             point: 0,
             silenced: false,
             laser: false,
@@ -206,11 +210,6 @@ pub fn sanitize<'a>(atts: &[&'a AttachmentDef]) -> Vec<&'a AttachmentDef> {
     v
 }
 
-/// FMJ: hits vehicles and structures harder (BO2's FMJ does extra damage to scorestreaks and
-/// equipment). Its deeper penetration is the `bulletpenetration` specialty (`crate::penetration`).
-pub const FMJ_VEHICLE_DAMAGE: f32 = 1.35;
-/// Tactical knife: melee this much quicker.
-pub const TACTICAL_KNIFE_MELEE: f32 = 0.6;
 
 /// A scale of 1 leaves the value alone; a 0 multiplies by 0 (G14 §4). BO2 authors an unused scale
 /// as 1.0, not 0.0: the install's real attachment rows all carry 1.0 in the columns they do not
@@ -326,11 +325,6 @@ pub fn apply(base: &WeaponDef, atts: &[&AttachmentDef]) -> WeaponDef {
         d.specialties = d.specialties.union(a.specialties);
         if a.recoil_reduction.1 > 0.0 {
             d.recoil_reduction = a.recoil_reduction;
-        }
-        match a.short.as_str() {
-            "fmj" => d.fmj = true,
-            "tacknife" => d.melee_time *= TACTICAL_KNIFE_MELEE,
-            _ => {}
         }
     }
     // A sound another attachment's unique overrides (`FUN_008ebe80`): the silencer's, swapped in

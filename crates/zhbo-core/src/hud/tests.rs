@@ -482,13 +482,9 @@ fn cac_sprite_names_follow_the_core_tables() {
     for w in Wildcard::ALL {
         assert_eq!(sprites::wildcard_icon(w), format!("ZHBO_BO2_Wildcard_{w:?}"), "the icon follows the wildcard's name");
     }
-    let mut shorts: Vec<&str> = sprites::ATTACHMENT_ICONS.iter().map(|(short, _)| *short).collect();
-    shorts.sort_unstable();
-    shorts.dedup();
-    assert_eq!(shorts.len(), sprites::ATTACHMENT_ICONS.len(), "attachment shorts are unique");
-    for (short, name) in sprites::ATTACHMENT_ICONS {
-        assert_eq!(sprites::attachment_icon(short), Some(*name));
-    }
+    // An attachment's icon is its table image's converted art (`attachmenttable.csv` column 6).
+    assert_eq!(sprites::attachment_icon("reflex").as_deref(), Some("ZHBO_Mat_cac_mods_red_dot"));
+    assert_eq!(sprites::attachment_icon("gl").as_deref(), Some("ZHBO_Mat_hud_grenade_launcher"));
     assert!(sprites::attachment_icon("not-an-attachment").is_none());
     // The converter's fixed-name list must not repeat a name (the atlas keys images by it).
     let mut all = sprites::ALL.to_vec();
