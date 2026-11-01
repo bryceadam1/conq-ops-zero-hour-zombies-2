@@ -272,12 +272,13 @@ pub fn build_archive(bo2_dir: &Path) -> Result<(Vec<u8>, Report), String> {
     // The wildcard grid's art: each bonus card's own image (`mp/statstable.csv` column 6), the
     // same rows the weapon table's `BonusCard` blocks carry.
     wanted.extend(crate::cac::wildcard_sprites(&crate::weapons::bonus_card_rows(&patch, &names)));
-    // The reticle grid's stock art: 11 images per optic (`code_post_gfx_mp.tsv:1073-1104`; their
-    // materials at `:2023-2054` are named `mc/mtl_t6_attach_optic_*_reticle_*`).
-    for optic in ["reflex", "holo", "acog"] {
-        for n in 1..=11 {
-            let image = format!("mtl_t6_attach_optic_{optic}_reticle_{n:02}");
-            wanted.push((image.clone(), Source::Dynamic(image), 128));
+    // The reticle grid's art: each reticle row's `<optic>_<N>` material per optic
+    // (`zhbo_core::weapons::reticle_art`, `reticlesgridbutton.lua:61-66`; `patch_ui_mp`).
+    for r in crate::weapons::reticle_options(&patch, &names) {
+        for optic in zhbo_core::weapons::RETICLE_OPTICS {
+            if let Some(image) = zhbo_core::weapons::reticle_art(optic, &r.id) {
+                wanted.push((image.clone(), Source::Dynamic(image), 128));
+            }
         }
     }
     // One icon per attachment in the converted table, named by the core's short-name map. BO2's

@@ -1673,7 +1673,9 @@ impl Default for Arsenal {
 /// the *normal* (or normal empty) reload time, and never past the end.
 fn magazine_times(d: &WeaponDef, empty: bool, quick: bool) -> (f32, f32) {
     let t = &d.timing;
-    let normal = if empty { d.reload_empty_time } else { d.reload_time };
+    // A def without an empty reload time (0: the converted offhands and the shield) reloads over
+    // the normal one.
+    let normal = if empty && d.reload_empty_time > 0.0 { d.reload_empty_time } else { d.reload_time };
     let quick_length = if empty { t.reload_quick_empty_time } else { t.reload_quick_time };
     // A table without the quick times (0) keeps the normal reload.
     let length = if quick && quick_length > 0.0 { quick_length } else { normal };

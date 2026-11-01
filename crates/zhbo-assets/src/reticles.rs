@@ -5,8 +5,9 @@
 //! BO2's rule (`t6mp` `FUN_00529360`): each row is `index, reticle, optic, material, ,
 //! material-for-the-RMR`; the engine fills one table per optic column, column 3 for every optic
 //! and column 5 for the reflex's second (the RMR's `t6_attach_optic_rmr_view`). Row 0 names the
-//! material the optic's model carries; row `n` the option's. The materials load in full from
-//! `code_post_gfx_mp` (the CaC's art zone), falling back to `common_mp`.
+//! material the optic's model carries; row `n` option `reticle_n`'s. The materials load in full from
+//! `code_post_gfx_mp` (the CaC's art zone), then `patch_mp` (the store rows 11..37, whose materials
+//! exist nowhere else), then `common_mp`.
 
 use crate::paks::Paks;
 use crate::textures::{self, Looks};
@@ -102,7 +103,7 @@ mod tests {
         let mut paks = Paks::open(&dir).unwrap();
         paks.learn(&cpg);
         let mut files = BTreeMap::new();
-        let r = reticles(&patch, &[&cpg, &common], &paks, &mut files);
+        let r = reticles(&patch, &[&cpg, &patch, &common], &paks, &mut files);
         let reflex = r.option("mc/mtl_t6_attach_optic_reflex_reticle", 0).expect("the reflex's stock lens");
         assert!(reflex.reticle.is_some(), "a projected reticle");
         let third = r.option("mc/mtl_t6_attach_optic_reflex_reticle", 3).expect("reticle option 3");
@@ -112,5 +113,10 @@ mod tests {
             let stock = format!("mc/mtl_t6_attach_optic_{optic}_reticle");
             assert!(r.option(&stock, 10).is_some_and(|m| m.reticle.is_some()), "{optic}: option 10");
         }
+        // The store rows convert from `patch_mp`, each its own material (row 23 is `_24`, whose
+        // colour is the `_25` image; row 24 is `_38`).
+        let reflex = |n: usize| r.option("mc/mtl_t6_attach_optic_reflex_reticle", n).map(|m| m.name.clone());
+        assert_eq!(reflex(24).as_deref(), Some("mc/mtl_t6_attach_optic_reflex_reticle_38"));
+        assert_eq!(reflex(37).as_deref(), Some("mc/mtl_t6_attach_optic_reflex_reticle_40"));
     }
 }

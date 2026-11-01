@@ -199,8 +199,11 @@ struct Extra {
 pub struct Combo<'a> {
     /// One per attachment: the unique BO2 draws for it in this combination — the single unique, or
     /// the combined child it resolves to (`Weapon::resolved_unique`, G14 §2/§3) — with the
-    /// attachment's point.
-    pub parts: Vec<(&'a zhbo_formats::weapon::AttachmentUnique, u32)>,
+    /// attachment's point and the attachment's own single unique, whose `weaponCamo` the part wears
+    /// (`FUN_00529600`, G16: the camo pass reads the single, never the combined child — the
+    /// `ir`+`vzoom` dual-band optic resolves its `ir` model through the combined child but wears
+    /// `camo_ir`).
+    pub parts: Vec<(&'a zhbo_formats::weapon::AttachmentUnique, u32, &'a zhbo_formats::weapon::AttachmentUnique)>,
     pub anims: Vec<Option<String>>,
     pub hide: Vec<String>,
     /// An attachment replaces the weapon's own magazine.
@@ -291,8 +294,10 @@ pub fn combo<'a>(w: &'a zhbo_formats::weapon::Weapon, atts: &[zhbo_formats::weap
     let kinds: Vec<u32> = combo_kinds.iter().map(|(k, _)| *k).collect();
     let singles: Vec<&zhbo_formats::weapon::AttachmentUnique> = kinds.iter().filter_map(|k| w.single_unique(*k)).collect();
     let resolved = |kind: u32| w.resolved_unique(kind, &kinds);
-    let parts: Vec<(&zhbo_formats::weapon::AttachmentUnique, u32)> =
-        combo_kinds.iter().filter_map(|(k, point)| resolved(*k).map(|u| (u, *point))).collect();
+    let parts: Vec<(&zhbo_formats::weapon::AttachmentUnique, u32, &zhbo_formats::weapon::AttachmentUnique)> = combo_kinds
+        .iter()
+        .filter_map(|(k, point)| resolved(*k).map(|u| (u, *point, w.single_unique(*k).unwrap_or(u))))
+        .collect();
     // The animations (G14 §5, `FUN_0052d540`/`FUN_008eddb0`): start from the variant's table; a
     // slot is a candidate only when one of the combination's SINGLE uniques sets its
     // `animationOverrides` bit (`FUN_008eb540`), and each candidate is resolved through five tiers
@@ -511,7 +516,7 @@ pub(crate) fn weapon_viewmodels(
         // unique's `weaponCamo`: BO2's camo pass reads the unique each DObj entry came from
         // (`FUN_00529600`, G16), so an optic wears its own camo asset, not the gun's.
         let mut extra: Vec<Extra> = Vec::new();
-        for (u, pt) in &c.parts {
+        for (u, pt, single) in &c.parts {
             // The list index of each of this unique's models in `extra`, for the ADS pairing.
             let mut at: Vec<Option<usize>> = Vec::new();
             for a in attachment_parts(u, *pt) {
@@ -521,7 +526,7 @@ pub(crate) fn weapon_viewmodels(
                 };
                 at.push(Some(extra.len()));
                 let ads_of = a.ads_of.and_then(|k| at.get(k).copied().flatten());
-                extra.push(Extra { model, tag: u.view_model_tag.clone(), xf: a.xf, point: a.point, ads_only: a.ads_only, ads_of, camo: u.weapon_camo.clone() });
+                extra.push(Extra { model, tag: u.view_model_tag.clone(), xf: a.xf, point: a.point, ads_only: a.ads_only, ads_of, camo: single.weapon_camo.clone() });
             }
         }
         let gun_tex = textures(&gun, paks, out, &mut looks);
@@ -1226,7 +1231,7 @@ mod tests {
         let c = super::combo(&pair, &[], &["a", "b"]);
         assert!(!c.no_base_attachment, "the combined child's flag is not read");
         assert!(!c.no_clip, "the combined child's flag is not read");
-        assert_eq!(c.parts.iter().map(|(u, _)| u.index).collect::<Vec<_>>(), [63, 11], "the drawn parts are the resolved uniques");
+        assert_eq!(c.parts.iter().map(|(u, _, _)| u.index).collect::<Vec<_>>(), [63, 11], "the drawn parts are the resolved uniques");
     }
 
     /// `viewModelOffsetBaseAttachment` applies only when the unique sets
@@ -1249,7 +1254,7 @@ mod tests {
         let pair = weapon(vec![ir, sway, combined], vec![(14, "ir".into()), (27, "swayreduc".into())]);
         let c = super::combo(&pair, &[], &["swayreduc", "ir"]);
         assert_eq!(c.base_attachment_offset, Some([9.889, 0.0, 4.253]), "the single IR unique's offset");
-        assert!(c.parts.iter().any(|(u, _)| u.index == 63), "the swayreduc draws its combined child");
+        assert!(c.parts.iter().any(|(u, _, _)| u.index == 63), "the swayreduc draws its combined child");
     }
 
     /// The IR optic's `viewModelAdditional` is a second model of the same attachment: the dual-band

@@ -563,7 +563,12 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         }
         None => (None, Vec::new()),
     };
-    let lh = parts.iter().find(|p| stem(&p.model).ends_with("_view_lh"));
+    // The left gun of a dual-wield pair rides in the manifest as a part on the left palm
+    // (`native::DualGun`); BO2 draws it as the def's dual-wield viewmodel, not an attachment part,
+    // so it is reported under `dual_wield_view_model` and kept out of the `view_part_*` columns.
+    let is_left = |p: &zhbo_native::viewmodel::Part| stem(&p.model).ends_with("_view_lh");
+    let lh = parts.iter().copied().find(|p| is_left(p));
+    let parts: Vec<&zhbo_native::viewmodel::Part> = parts.into_iter().filter(|p| !is_left(p)).collect();
     let dual = manifest.as_ref().is_some_and(|m| m.clips.iter().any(|(id, _)| id & INSTANCE_LEFT != 0)) || lh.is_some();
 
     // Alt mode, dual wield, flags, specialties.
@@ -603,10 +608,11 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
                 .floats("view_part_rotations", &parts.iter().filter(|p| !p.ads_only).flat_map(|p| quat(p.offset.0)).collect::<Vec<_>>());
             // The aimed half: the game's own part mask at full ADS.
             let aimed = zhbo_core::nativevm::visible_parts(&m.parts, zhbo_core::nativevm::OPTIC_VIEWMODEL_SWITCH);
-            let mut ads: Vec<String> = m.parts.iter().enumerate().skip(skip).filter(|(i, _)| aimed.get(*i).copied().unwrap_or(true)).map(|(_, p)| stem(&p.model)).collect();
+            let mut ads: Vec<String> =
+                m.parts.iter().enumerate().skip(skip).filter(|(i, p)| aimed.get(*i).copied().unwrap_or(true) && !is_left(p)).map(|(_, p)| stem(&p.model)).collect();
             ads.sort();
             b.list("view_ads_part_models", &ads).set("view_hide_tags", &m.hide);
-            let mut hip_idx: Vec<usize> = (2..m.parts.len()).filter(|&i| !m.parts[i].ads_only).collect();
+            let mut hip_idx: Vec<usize> = (2..m.parts.len()).filter(|&i| !m.parts[i].ads_only && !is_left(&m.parts[i])).collect();
             hip_idx.sort_by_key(|&i| cols::part_order(&stem(&m.parts[i].model), m.parts[i].tag.as_deref().unwrap_or("")));
             hip_idx.insert(0, 1);
             b.list("view_part_materials", &hip_idx.iter().map(|&i| mats(i)).collect::<Vec<_>>());
@@ -663,7 +669,12 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     let npc = zhbo_core::names::npc_fire_for_fx(&d.fx_weapon).and_then(|e| sh.sound(&e));
     let thrown = d.class.is_offhand() && d.place == Place::Throw;
     let plr = if d.class.is_offhand() {
-        thrown.then(|| sh.sound(zhbo_core::sounds::throw_for(d))).flatten()
+        match d.place {
+            Place::Throw => sh.sound(zhbo_core::sounds::throw_for(d)),
+            // A set-down item plays its own sound as it goes down (`client`'s `Planted` cue).
+            Place::Plant => sh.sound(zhbo_core::sounds::plant_for(d)),
+            Place::Hack => None,
+        }
     } else if d.class == Class::Melee || d.class == Class::Shield {
         // A knife or the Assault Shield fires no shot (the shield's trigger deploys it).
         None
@@ -719,7 +730,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     // Camo: the asset each drawn part wears (`Part::camo`, what `nativevm::load` paints it with) —
     // the gun first, then the hip parts in `view_part_materials`' order.
     let camos: Vec<String> = manifest.as_ref().map_or_else(Vec::new, |m| {
-        let mut hip: Vec<&zhbo_native::viewmodel::Part> = m.parts.iter().skip(2).filter(|p| !p.ads_only).collect();
+        let mut hip: Vec<&zhbo_native::viewmodel::Part> = m.parts.iter().skip(2).filter(|p| !p.ads_only && !is_left(p)).collect();
         hip.sort_by_key(|p| cols::part_order(&stem(&p.model), p.tag.as_deref().unwrap_or("")));
         m.parts.get(1).into_iter().chain(hip).map(|p| p.camo.clone().unwrap_or_default()).collect()
     });

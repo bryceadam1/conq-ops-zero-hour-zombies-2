@@ -1224,14 +1224,14 @@ fn diag_real_viewmodel() {
     zhgfx_shutdown();
 }
 
-/// The class's reticle option picks its `weaponoptions.csv` row: `reticle_N` is row `N + 1` (the
-/// CaC grid's `_reticle_0{N+1}` art); no choice is the optic's stock row 0.
+/// The class's reticle option picks its `weaponoptions.csv` row: `reticle_N` is row `N` (its group
+/// index, `FUN_0052a010`); `reticle_0` and no choice are the optic's stock row 0.
 #[test]
 fn the_reticle_option_is_its_table_row() {
     assert_eq!(super::reticle_row(""), 0);
-    assert_eq!(super::reticle_row("reticle_0"), 1);
-    assert_eq!(super::reticle_row("reticle_3"), 4);
-    assert_eq!(super::reticle_row("reticle_10"), 11);
+    assert_eq!(super::reticle_row("reticle_0"), 0);
+    assert_eq!(super::reticle_row("reticle_3"), 3);
+    assert_eq!(super::reticle_row("reticle_37"), 37);
     assert_eq!(super::reticle_row("nonsense"), 0);
 }
 

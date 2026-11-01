@@ -227,7 +227,7 @@ fn secondary_personalize_prims() -> Vec<Prim> {
 }
 
 /// BO2's reticle grid on the primary's optic (`cacreticles.lua:9-24`); each cell is the optic's
-/// stock reticle art (`mtl_t6_attach_optic_reflex_reticle_XX`).
+/// reticle art (`reflex_<N>`, `zhbo_core::weapons::reticle_art`).
 fn reticle_personalize_prims() -> Vec<Prim> {
     let mut editor = editor_state();
     editor.picking = false;

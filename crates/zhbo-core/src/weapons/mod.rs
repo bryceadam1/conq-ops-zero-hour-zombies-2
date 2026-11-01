@@ -27,7 +27,7 @@ pub use arsenal::*;
 pub use catalog::*;
 pub use def::*;
 pub use handling::{AntiQuickScope, CycleTimes, OffhandClass, Penetrate, Traits, WeapType, Zoom};
-pub use feel::{optic_of, reticle_art, GunKick, Reticle, Sway, ViewPos};
+pub use feel::{optic_of, reticle_art, GunKick, Reticle, Sway, ViewPos, RETICLE_OPTICS};
 pub use loadout::*;
 pub use perks::*;
 pub use rng::*;

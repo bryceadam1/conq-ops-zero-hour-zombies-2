@@ -1241,7 +1241,9 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 EventKind::Planted { kind } => {
                     use crate::equipment::Kind;
                     if matches!(kind, Kind::Claymore | Kind::Betty | Kind::Trophy | Kind::Insertion) {
-                        self.cues.play(sounds::PLANT);
+                        // The planted item's own sound: the player's lethal or tactical of that kind.
+                        let def = held.and_then(|(_, _, _, l, t)| [l, t].into_iter().find(|d| d.equipment_kind == kind));
+                        self.cues.play(def.map_or(sounds::PLANT, sounds::plant_for));
                     }
                 }
                 EventKind::Detonated => self.cues.play(sounds::DETONATE),

@@ -294,6 +294,12 @@ pub fn throw_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
     some(def.fire_sound.as_str()).unwrap_or(THROW)
 }
 
+/// A set-down item going down (Claymore, Bouncing Betty, Trophy System, Tactical Insertion): the
+/// item's own `fireSoundPlayer` — what BO2 plays when any offhand fires — else the global plant.
+pub fn plant_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
+    some(def.fire_sound.as_str()).unwrap_or(PLANT)
+}
+
 /// The pull-back: the offhand's own (`pullbackSoundPlayer`), else the pin.
 pub fn pullback_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
     some(def.pullback_sound.as_str()).unwrap_or(PULL_PIN)

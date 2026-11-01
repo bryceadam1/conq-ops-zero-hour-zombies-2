@@ -161,8 +161,7 @@ pub(crate) fn v3(n: &[f32]) -> [f32; 3] {
     [n[0], n[1], n[2]]
 }
 
-/// BO2 optics whose personalization art is the `mtl_t6_attach_optic_*_reticle_*` set
-/// (`lua-dump/assets/code_post_gfx_mp.tsv:1073-1104`; materials `:2023-2054`).
+/// BO2 optics with a reticle grid: their CaC art is the `<optic>_<N>` set (`patch_ui_mp`).
 pub const RETICLE_OPTICS: &[&str] = &["reflex", "holo", "acog"];
 
 /// The weapon's first reflex/holo/acog optic.
@@ -170,9 +169,10 @@ pub fn optic_of(attachments: &[String]) -> Option<&'static str> {
     RETICLE_OPTICS.iter().copied().find(|o| attachments.iter().any(|a| a.as_str() == *o))
 }
 
-/// The stock reticle image for `reticle_0..10` through `optic`: `reticle_0` is `_01`,
-/// `reticle_10` is `_11` (`cacreticles.lua:1150-1240,1390-1470`).
+/// The CaC art of reticle option `reticle_N` through `optic`: BO2's `<attachmentRef>_<N>` material
+/// (`reticlesgridbutton.lua:61-66`, `reticleImageName = attachmentRef .. "_" .. index`; `reflex_0`
+/// .. `reflex_37` in `patch_ui_mp`), for the base and the store rows alike.
 pub fn reticle_art(optic: &str, id: &str) -> Option<String> {
     let n: u32 = id.strip_prefix("reticle_")?.parse().ok()?;
-    (n <= 10 && RETICLE_OPTICS.contains(&optic)).then(|| format!("mtl_t6_attach_optic_{optic}_reticle_{:02}", n + 1))
+    RETICLE_OPTICS.contains(&optic).then(|| format!("{optic}_{n}"))
 }
