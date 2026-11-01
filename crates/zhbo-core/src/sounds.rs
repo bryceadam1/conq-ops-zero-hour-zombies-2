@@ -300,6 +300,12 @@ pub fn plant_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
     some(def.fire_sound.as_str()).unwrap_or(PLANT)
 }
 
+/// What everyone but the thrower hears when an offhand is thrown or set down: its third-person
+/// `fireSound` (`WeaponDef::npc_fire_sound`); nothing when it has none.
+pub fn remote_offhand(def: &'static crate::weapons::WeaponDef) -> Option<&'static str> {
+    some(def.npc_fire_sound.as_str())
+}
+
 /// The pull-back: the offhand's own (`pullbackSoundPlayer`), else the pin.
 pub fn pullback_for(def: &'static crate::weapons::WeaponDef) -> &'static str {
     some(def.pullback_sound.as_str()).unwrap_or(PULL_PIN)

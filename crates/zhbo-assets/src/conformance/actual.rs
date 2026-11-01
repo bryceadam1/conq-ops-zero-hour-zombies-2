@@ -690,6 +690,9 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     let own = |event: &str| (!event.is_empty() && event != zhbo_core::sounds::NO_SOUND).then(|| sh.sound(event)).flatten();
     for c in cols::OVERRIDE_SOUNDS {
         match c {
+            // An offhand others hear as it leaves the thrower's hand (`client`'s remote
+            // `Thrown`/`Planted` cue, `sounds::remote_offhand`); a gun through its FX weapon.
+            "fire_sound" if d.class.is_offhand() => b.opt_text(c, (d.place != Place::Hack).then(|| zhbo_core::sounds::remote_offhand(d).and_then(|e| sh.sound(e))).flatten()),
             "fire_sound" => b.opt_text(c, npc.clone()),
             "fire_sound_player" => b.opt_text(c, plr.clone()),
             "fire_start_sound_player" => b.opt_text(c, own(&d.fire_start_sound)),

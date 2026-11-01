@@ -1052,6 +1052,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             };
             Ok(())
         }),
+    field!("FireSoundNpc", "An offhand's third-person throw/plant BO2 sound event (`fireSound`): what other players hear; empty for a gun.", FieldKind::Str,
+        |d: &WeaponDef| d.npc_fire_sound.clone(),
+        |d: &mut WeaponDef, v: Values| { d.npc_fire_sound = v.text.into(); Ok(()) }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -1203,7 +1206,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 144);
+        assert_eq!(WEAPON_FIELDS.len(), 145);
         assert_eq!(ATTACHMENT_FIELDS.len(), 30);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }

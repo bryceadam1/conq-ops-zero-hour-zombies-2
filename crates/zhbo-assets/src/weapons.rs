@@ -1172,6 +1172,9 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         left_fire_sound: String::new(),
         // Set by `sounds_and_fx` (a converted event).
         silenced_fire_sound: String::new(),
+        // What others hear when it is thrown or set down (`fireSound`; `client` plays it at the
+        // thrower for every other player).
+        npc_fire_sound: if class.is_offhand() { def_sound(&w.fire_sound) } else { String::new() },
         silenced_fire_sound_npc: String::new(),
         silenced_fx_weapon: String::new(),
         silenced_view_flash_fx: String::new(),

@@ -8624,3 +8624,14 @@ new cell); cac 3 → 0 cells, BO2-only rows 32 → 5; **gap clusters 25 → 12**
 **Versions (integrator-owned, NOT bumped):** the archive's `hud::VERSION` (the reticle sprites are
 renamed and 38 per optic) and the weapon table content (recoil, raw timings, 38 reticle rows).
 No C ABI change.
+
+### Gap clean-up follow-ups (2026-11-01, same branch)
+
+* **The Tac-45 Dual Wield's trailing space** survives after all: the table already quotes a value
+  trimming would change (`table::quote`); the converter stopped trimming display names.
+* **Other players' offhands are heard.** BO2 plays an offhand's third-person `fireSound` for
+  everyone but the thrower. The def carries it (`WeaponDef::npc_fire_sound`, table key
+  `FireSoundNpc`, appended; empty for a gun, converted as a world sound with the other def-level
+  events), and the client's remote-event pass — beside `third_person_shot` for others' gunshots —
+  plays it at the thrower's eye on another player's `Thrown`, and on their `Planted` for a set-down
+  item (`sounds::remote_offhand`). RTS-controlled Generals' grenades (`sim/rts.rs`) are heard too.

@@ -372,6 +372,10 @@ pub struct WeaponDef {
     /// A dual-wield weapon's left gun's shot (its own def's `fireSoundPlayer`, `wpn_<x>_fire_plr_lh`),
     /// as a converted event; empty for a single gun (and the left gun then plays `fire_sound`).
     pub left_fire_sound: String,
+    /// What everyone else hears when an offhand is thrown or set down: its third-person
+    /// `fireSound` (`wpn_grenade_throw`, `fly_claymore_plant_npc`), as a converted event; empty
+    /// for a gun (others hear a gun's shot through its FX weapon).
+    pub npc_fire_sound: String,
     /// The suppressed shot's player event (`AttachmentUnique.fire_sound_player`).
     pub silenced_fire_sound: String,
     /// The suppressed shot's third-person event (`AttachmentUnique.fire_sound`).
@@ -882,6 +886,7 @@ impl Default for WeaponDef {
             fire_sound: String::new(),
             empty_fire_sound: String::new(),
             left_fire_sound: String::new(),
+            npc_fire_sound: String::new(),
             silenced_fire_sound: String::new(),
             silenced_fire_sound_npc: String::new(),
             silenced_fx_weapon: String::new(),
@@ -1015,6 +1020,7 @@ impl WeaponDef {
         self.view_last_shot_shell_fx.clone_from(&from.view_last_shot_shell_fx);
         self.fire_sound.clone_from(&from.fire_sound);
         self.empty_fire_sound.clone_from(&from.empty_fire_sound);
+        self.npc_fire_sound.clone_from(&from.npc_fire_sound);
         self.silenced_fire_sound.clone_from(&from.silenced_fire_sound);
         self.silenced_fire_sound_npc.clone_from(&from.silenced_fire_sound_npc);
         self.silenced_fx_weapon.clone_from(&from.silenced_fx_weapon);
@@ -1061,6 +1067,7 @@ impl WeaponDef {
             (&self.silenced_fire_start_sound, false),
             (&self.explode_sound, true),
             (&self.dud_sound, true),
+            (&self.npc_fire_sound, true),
         ]
         .into_iter()
         .map(|(e, world)| (e.as_str(), world))
