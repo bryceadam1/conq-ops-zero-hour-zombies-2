@@ -255,11 +255,6 @@ fn fs(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
 // squares the colour, scales by the fade and takes the root (its HDR encode): the colour times
 // `sqrt(fade)`. Only the dynamic technique fades in with the aim (`saturate(2 * ads)`); all but
 // ui3d fade out while the optics are knocked out (weaponParam0.y).
-// The target finder's diamond across, in lens UVs (cg_rangeFinderDiamondSize 50 / the 512-unit
-// ui3d window, `FUN_00526780`), and its line's half-width (the atlas sprite is not converted).
-const RANGE_FINDER_DIAMOND: f32 = 50.0 / 512.0;
-const RANGE_FINDER_LINE: f32 = 0.006;
-
 @fragment
 fn fs_reticle(i: VOut) -> @location(0) vec4<f32> {
     let kind = material.ret3.w;
@@ -283,6 +278,9 @@ fn fs_reticle(i: VOut) -> @location(0) vec4<f32> {
     // projected image takes its top level (the clamp's edge would blow up its derivatives), the
     // lens-UV image and the noise their mips, as BO2 samples them.
     let c = select(textureSample(color_map, samp, i.uv), textureSampleLevel(color_map, samp, ruv, 0.0), projected);
+    // The ui3d display's idle and spotted frames (the idle one is the surface's colour).
+    let frame_idle = textureSample(color_map, samp, i.uv);
+    let frame_spotted = textureSample(camo_map, samp, i.uv);
     let screen_uv = i.clip.xy / max(frame.screen.xy, vec2<f32>(1.0));
     let noise = select(textureSample(maps_map, samp, screen_uv * material.ret0.w), textureSample(maps_map, samp, i.uv * material.ret0.w), projected).r;
     let falloff = material.ret0.y;
@@ -291,17 +289,18 @@ fn fs_reticle(i: VOut) -> @location(0) vec4<f32> {
     var alpha: f32;
     var fade = 1.0 - frame.params.w;
     if (kind > 2.5) {
-        // The target finder's diamonds (BO2 draws them into the ui3d texture, `FUN_00526780`):
-        // each mark where the eye's ray to it crosses the lens, in the lens's UVs, a diamond
-        // `RANGE_FINDER_DIAMOND` (cg_rangeFinderDiamondSize 50 of the 512-unit window) across, in
-        // the alt shape and glow channels.
+        // The target finder's display (BO2 draws it into the ui3d texture, `FUN_00526780`): the
+        // converter's idle or spotted frame (`weaponParam0.z`) at the lens UVs, then the atlas's
+        // diamond on each mark, centred where the eye's ray to it crosses the lens, a
+        // `diamond_size` square of the window (the lens's UVs).
+        var code = select(frame_idle, frame_spotted, frame.screen.z > 0.5);
+        let display = material.sonar[1].y > 0.5;
         let det = dot(dp1, dp2perp);
-        // At least a pixel wide, so a small lens keeps a solid outline.
-        let line = max(RANGE_FINDER_LINE, length(abs(duv1) + abs(duv2)));
-        var marks = vec2<f32>(0.0);
-        let count = u32(frame.optics.z);
+        let count = select(0u, u32(frame.optics.z), display && abs(det) > 1e-20);
+        let size = max(material.sonar[1].x, 1e-6);
+        let rect = material.sonar[0];
         for (var m = 0u; m < 8u; m = m + 1u) {
-            if (m >= count || abs(det) < 1e-20) {
+            if (m >= count) {
                 break;
             }
             let to = frame.blips[m * 2u].xyz - frame.eye.xyz;
@@ -315,10 +314,12 @@ fn fs_reticle(i: VOut) -> @location(0) vec4<f32> {
             }
             let delta = frame.eye.xyz + to * k - i.world;
             let at = i.uv + vec2<f32>(dot(delta, t), dot(delta, b)) / det;
-            let off = abs(abs(i.uv.x - at.x) + abs(i.uv.y - at.y) - RANGE_FINDER_DIAMOND * 0.5);
-            marks = marks + vec2<f32>(1.0 - smoothstep(0.0, line, off), exp(-off / (line * 4.0)) * 0.5);
+            let local = (i.uv - at) / size + 0.5;
+            if (all(local >= vec2<f32>(0.0)) && all(local <= vec2<f32>(1.0))) {
+                code = code + textureSampleLevel(spec_map, samp, mix(rect.xy, rect.zw, local), 0.0);
+            }
         }
-        let code = vec4<f32>(c.r, c.g, min(c.b + marks.x, 1.0), min(c.a + marks.y, 1.0));
+        code = min(code, vec4<f32>(1.0));
         let shape = code.r * material.ret1.rgb + code.b * material.ret3.rgb;
         let glow = pow(max(code.g, 1e-6), falloff) * material.ret2.rgb + pow(max(code.a, 1e-6), falloff) * material.ret4.rgb;
         rgb = (shape * dim + glow * noise) * material.ret0.z;

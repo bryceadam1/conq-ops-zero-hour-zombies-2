@@ -166,12 +166,13 @@ to `Reticle_Alt_Color`/`Glow_Alt_Color` by `NativeFrame.reticle_alt`, BO2's `wea
 pixel ÷ the target's size, BO2's `renderTargetSize`, which the frame block's `screen.xy` carries,
 filled at upload — no aim fade); `Ui3d` (`reticle_ui3d`, the target finder's display: the code's
 UI render target at the lens UVs, red and blue two shapes, green and alpha two glows, alpha 1 into
-an additive blend, no fade; `color` is `INVALID`, which binds black, and the code's content is
-drawn analytically: each of the frame's `NativeOptics` marks is a diamond outline,
-`cg_rangeFinderDiamondSize` 50 of BO2's 512-unit window across, at the lens UV where the eye's ray
-to the mark crosses the lens (the ray–plane hit through the surface's UV derivatives), in the alt
-shape and glow channels — BO2 draws the atlas sprite there, `t6mp` `FUN_00526780`; the display's
-static frame sprites are not drawn). Every technique but `Ui3d` fades out with `optics_off`.
+an additive blend, no fade. The code's content is the target finder's display (`NativeReticle.display`,
+the converter's `zhbo_native::display`): the surface's `color` is the idle frame and binding 4 the
+spotted one (chosen by `reticle_alt`), both at the lens UVs; binding 5 is the sprite atlas, and
+each of the frame's `NativeOptics` marks draws the atlas's diamond rectangle as a
+`diamond_size`-square of the window centred at the lens UV where the eye's ray to the mark crosses
+the lens (the ray–plane hit through the surface's UV derivatives) — BO2's `FUN_00526780`. Without a
+display (`INVALID`) it binds black and adds nothing). Every technique but `Ui3d` fades out with `optics_off`.
 
 **The MMS screen.** `mc/mtl_t6_attach_optic_mms_display` is BO2's
 `sw4_3d_sonar_attachment_lens2`, ported from its DXBC as a third fragment stage, `fs_sonar`

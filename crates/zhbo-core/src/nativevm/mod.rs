@@ -76,7 +76,7 @@ pub(crate) fn native_cull(c: Cull) -> zhbo_gfx::runtime::NativeCull {
 /// A surface's lens reticle as the renderer takes it, its noise map by `handle`. Shared with the
 /// third person.
 #[cfg(feature = "renderer")]
-pub(crate) fn native_reticle(r: &zhbo_native::model::Reticle, handle: impl Fn(&Option<String>) -> u16) -> zhbo_gfx::runtime::NativeReticle {
+pub(crate) fn native_reticle(r: &zhbo_native::model::Reticle, display: Option<&zhbo_native::display::RangeFinderDisplay>, handle: impl Fn(&Option<String>) -> u16) -> zhbo_gfx::runtime::NativeReticle {
     zhbo_gfx::runtime::NativeReticle {
         noise: handle(&r.noise),
         scale: r.scale,
@@ -95,6 +95,7 @@ pub(crate) fn native_reticle(r: &zhbo_native::model::Reticle, handle: impl Fn(&O
         },
         color_alt: r.color_alt,
         glow_alt: r.glow_alt,
+        display: display.map(|d| zhbo_gfx::runtime::NativeDisplay { spotted: handle(&Some(d.spotted.clone())), atlas: handle(&Some(d.atlas.clone())), diamond_uv: d.diamond_uv, diamond_size: d.diamond_size }),
     }
 }
 
@@ -111,7 +112,8 @@ pub(crate) fn native_sonar(s: &zhbo_native::model::Sonar, handle: impl Fn(&Optio
 pub(crate) fn technique_files(s: &SurfaceSpec) -> impl Iterator<Item = &String> {
     let reticle = s.reticle.as_ref().and_then(|r| r.noise.as_ref());
     let sonar = s.sonar.as_ref().into_iter().flat_map(|so| [so.lookup.as_ref(), so.noise.as_ref()]).flatten();
-    reticle.into_iter().chain(sonar)
+    let display = s.display.as_ref().into_iter().flat_map(|d| [&d.spotted, &d.atlas]);
+    reticle.into_iter().chain(sonar).chain(display)
 }
 
 /// Whether the native viewmodel drew a lens reticle in its last frame: the HUD then leaves its
@@ -240,6 +242,12 @@ pub struct SurfaceSpec {
     pub emblem: bool,
     /// The MMS screen (`Material::sonar`): drawn by the pass's scanner technique.
     pub sonar: Option<zhbo_native::model::Sonar>,
+    /// The target finder's display, on its ui3d reticle (`zhbo_native::display`).
+    pub display: Option<zhbo_native::display::RangeFinderDisplay>,
+}
+
+fn is_ui3d(s: &SurfaceSpec) -> bool {
+    s.reticle.as_ref().is_some_and(|r| r.kind == zhbo_native::model::ReticleKind::Ui3d)
 }
 
 /// The composed viewmodel's one mesh: every part's LOD 0 with its bones renumbered into the
@@ -366,6 +374,7 @@ pub fn build_mesh_visible<'a>(
                 reticle: m.and_then(|m| m.reticle.clone()),
                 emblem: m.is_some_and(|m| m.emblem),
                 sonar: m.and_then(|m| m.sonar.clone()),
+                display: None,
             });
         }
     }
@@ -580,6 +589,25 @@ pub fn load(files: &mut Files, vm: i32, faction: u8, overlay_material_override: 
                 camo::apply(m, &recipe, option, wears);
             }
             applied = Some(option.to_string());
+        }
+    }
+    // The target finder's display (the converter's `zhbo_native::display`): the ui3d reticle
+    // samples the frame BO2's code draws into the ui3d texture. An archive without it draws none.
+    if mesh.surfaces.iter().any(is_ui3d) {
+        let path = zhbo_native::display::display_path();
+        if !files.is_missing(&path) {
+            match files.get(&path) {
+                Some(bytes) => {
+                    let d = zhbo_native::display::RangeFinderDisplay::from_bytes(&bytes).map_err(|e| format!("{path}: {e}"))?;
+                    for m in std::iter::once(&mut mesh).chain(mesh_aimed.as_mut()) {
+                        for s in m.surfaces.iter_mut().filter(|s| is_ui3d(s)) {
+                            s.color = Some(d.idle.clone());
+                            s.display = Some(d.clone());
+                        }
+                    }
+                }
+                None => waiting = true,
+            }
         }
     }
     // The emblem surfaces show the faction's Zero Hour logo (the converter's

@@ -94,7 +94,7 @@ fn submit(s: &mut State, inp: &ZhboNativeIn) -> i32 {
                 let surfaces: Vec<NativeSurface> = m
                     .surfaces
                     .iter()
-                    .map(|s| NativeSurface { first_index: s.first_index, index_count: s.index_count, blend: native_blend(s.blend), emissive: s.emissive, color: handle(&s.color), maps: handle(&s.maps), specular: handle(&s.specular), camo: handle(&s.camo), camo_uv: s.camo_uv, sort_key: s.sort_key, cull: native_cull(s.cull), reticle: s.reticle.as_ref().map(|r| native_reticle(r, handle)), sonar: s.sonar.as_ref().map(|so| native_sonar(so, handle)) })
+                    .map(|s| NativeSurface { first_index: s.first_index, index_count: s.index_count, blend: native_blend(s.blend), emissive: s.emissive, color: handle(&s.color), maps: handle(&s.maps), specular: handle(&s.specular), camo: handle(&s.camo), camo_uv: s.camo_uv, sort_key: s.sort_key, cull: native_cull(s.cull), reticle: s.reticle.as_ref().map(|r| native_reticle(r, s.display.as_ref(), handle)), sonar: s.sonar.as_ref().map(|so| native_sonar(so, handle)) })
                     .collect();
                 r.native_create_mesh(&vertices, &m.indices, &surfaces)
             };

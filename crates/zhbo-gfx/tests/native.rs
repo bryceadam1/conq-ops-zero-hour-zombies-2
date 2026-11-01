@@ -8,7 +8,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use zhbo_gfx::runtime::{InitDesc, NativeBlend, NativeBlip, NativeCull, NativeDraw, NativeFrame, NativeLight, NativeOptics, NativeReticle, NativeReticleKind, NativeSonar, NativeSurface, NativeVertex, Renderer, WindowKind, INVALID};
+use zhbo_gfx::runtime::{InitDesc, NativeBlend, NativeBlip, NativeCull, NativeDisplay, NativeDraw, NativeFrame, NativeLight, NativeOptics, NativeReticle, NativeReticleKind, NativeSonar, NativeSurface, NativeVertex, Renderer, WindowKind, INVALID};
 use zhbo_gfx::state;
 
 const W: u32 = 64;
@@ -431,7 +431,7 @@ fn dot_reticle(r: &mut Renderer) -> u16 {
 }
 
 fn reticle(scale: f32) -> NativeReticle {
-    NativeReticle { noise: INVALID, scale, color: [1.0, 1.0, 1.0], glow: [0.0; 3], glow_falloff: 1.0, emissive: 1.0, noise_scale: 1.0, noise_amount: 0.0, background: 0.0, kind: NativeReticleKind::Dynamic, color_alt: [0.0; 3], glow_alt: [0.0; 3] }
+    NativeReticle { noise: INVALID, scale, color: [1.0, 1.0, 1.0], glow: [0.0; 3], glow_falloff: 1.0, emissive: 1.0, noise_scale: 1.0, noise_amount: 0.0, background: 0.0, kind: NativeReticleKind::Dynamic, color_alt: [0.0; 3], glow_alt: [0.0; 3], display: None }
 }
 
 fn translate3(x: f32, y: f32, z: f32) -> [f32; 16] {
@@ -701,26 +701,28 @@ fn a_non_finite_sonar_is_skipped_not_fatal() {
     assert!(log.lock().unwrap().iter().any(|l| l.contains("non-finite sonar")));
 }
 
-/// The target finder's display marks an enemy with a diamond where the eye's ray to him crosses
-/// the lens, in the ui3d reticle's alt colour: an outline around his point, not on it.
+/// The target finder's display: the idle frame (the surface's colour) at the lens UVs, the spotted
+/// frame while `weaponParam0.z` is set, and the atlas's diamond on each mark, centred where the
+/// eye's ray to it crosses the lens, in the alt colour of its blue channel.
 #[test]
-fn the_target_finder_marks_an_enemy_on_the_lens() {
+fn the_target_finder_display_draws_its_frame_and_diamonds() {
     let Some((mut r, log, shot)) = renderer() else { return };
-    let rt = NativeReticle { kind: NativeReticleKind::Ui3d, color: [0.0, 0.0, 1.0], color_alt: [1.0, 0.0, 0.0], glow_falloff: 3.0, ..reticle(0.0) };
-    // A lens whose UVs span a fifth of their range, so the diamond (~0.1 UV) is large on it.
-    let lens: Vec<NativeVertex> = lens().iter().map(|v| NativeVertex { uv: [v.uv[0] * 0.2, v.uv[1] * 0.2], ..*v }).collect();
-    let mesh = r.native_create_mesh(&lens, &[0, 2, 1, 0, 3, 2], &[NativeSurface { blend: NativeBlend::Additive, reticle: Some(rt), ..surface(INVALID, false, 6) }]);
+    let idle = texture(&mut r, [255, 0, 0, 0]); // red: the primary shape (blue here)
+    let spotted = texture(&mut r, [0, 0, 0, 0]);
+    let atlas = texture(&mut r, [0, 0, 255, 0]); // blue: the alt shape (red here)
+    let display = NativeDisplay { spotted, atlas, diamond_uv: [0.0, 0.0, 1.0, 1.0], diamond_size: 0.1 };
+    let rt = NativeReticle { kind: NativeReticleKind::Ui3d, color: [0.0, 0.0, 1.0], color_alt: [1.0, 0.0, 0.0], display: Some(display), ..reticle(0.0) };
+    let mesh = r.native_create_mesh(&lens(), &[0, 2, 1, 0, 3, 2], &[NativeSurface { blend: NativeBlend::Additive, reticle: Some(rt), ..surface(idle, false, 6) }]);
+    let hip = NativeFrame { view_proj: Some(perspective()), eye: [0.0; 3], ..frame(0) };
+    draw_frame(&mut r, &shot, mesh, IDENTITY, hip);
+    assert!(colour_count(&shot, 0) > 200 && colour_count(&shot, 2) == 0, "the idle frame in the primary colour");
+    // A mark 100 units out, 10 right of the axis: the lens is crossed 1 unit right of centre.
     let mut optics = NativeOptics { blip_count: 1, ..Default::default() };
-    // A mark 100 units out, 1 unit right of the axis: its diamond sits right of the centre.
     optics.blips[0] = NativeBlip { pos: [10.0, 0.0, 100.0], ..Default::default() };
-    let f = NativeFrame { view_proj: Some(perspective()), eye: [0.0; 3], optics, ..frame(0) };
-    let (x, y, n) = draw_frame(&mut r, &shot, mesh, IDENTITY, f);
-    assert!(n > 4 && colour_count(&shot, 0) == 0, "a red diamond, no primary colour: {n}");
-    // 10 / 100 at a 90-degree view is a tenth of the half-width: 3.2 px right of centre.
-    assert!((x - 35.2).abs() < 1.0 && (y - 32.0).abs() < 1.0, "centred on the mark: ({x}, {y})");
-    let px = shot.lock().unwrap().clone().unwrap();
-    assert!(px[((32 * W + 35) * 4 + 2) as usize] < 128, "an outline: its centre is clear");
-    let none = NativeFrame { optics: NativeOptics::default(), ..f };
-    assert_eq!(draw_frame(&mut r, &shot, mesh, IDENTITY, none).2, 0, "no marks, nothing drawn");
+    let spotted_frame = NativeFrame { optics, reticle_alt: 1.0, ..hip };
+    let (x, y, n) = draw_frame(&mut r, &shot, mesh, IDENTITY, spotted_frame);
+    assert!(colour_count(&shot, 0) == 0, "the spotted frame replaced the idle one");
+    // The diamond square: 0.1 of the lens (0.6 units, ~2 px) around 3.2 px right of centre.
+    assert!(n > 0 && (x - 35.2).abs() < 1.0 && (y - 32.0).abs() < 1.0, "the diamond on the mark: ({x}, {y}) x{n}");
     assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
 }

@@ -298,6 +298,14 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     let reticles = crate::reticles::reticles(&patch, &reticle_zones, &paks, &mut out);
     summary.push(format!("{} reticle option sets", reticles.sets.len()));
     out.insert(zhbo_native::reticles::reticles_path(), reticles.to_bytes());
+    // The target finder's lens display: the atlas and the sprite table its code draws.
+    match crate::rangefinder::display(bo2_dir, &reticle_zones, &paks, &mut out) {
+        Ok(d) => {
+            out.insert(zhbo_native::display::display_path(), d.to_bytes());
+            summary.push("the target finder's display".into());
+        }
+        Err(e) => summary.push(format!("the target finder's display skipped: {e}")),
+    }
 
     // Track R7: the third-person body's clips. BO2's MP bodies share the player skeleton, so one
     // set serves every faction; each faction's body manifest names them (`zhbo_native::body_path`).

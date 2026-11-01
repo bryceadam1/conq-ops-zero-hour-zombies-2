@@ -4789,3 +4789,20 @@ column moved, gap clusters 213 → 213.
 **Versions (integrator-owned, NOT bumped):** `zhbo_native::model::VERSION` and
 `zhbo_native::camo::VERSION` (the material record appends `sonar`; an old archive's blobs now read
 as corrupt), the weapon table gains `Mms` fields (the archive's `hud::VERSION`). No C ABI change.
+
+**Follow-up: the target finder's frame, from BO2's data.** `zhbo_assets::rangefinder` converts
+the display `FUN_00526780` draws: the atlas `mtl_t6_attach_optic_rangefinder_ui3d_background`
+(`code_post_gfx_mp`, 256×128, its image `mtl_t6_attach_rfo_reticle`) and the sprite tables. **The
+tables are not in `.rdata` as a table**: the function builds them on the stack (`local_260`, six
+quads idle; `local_188`, ten spotted) from scattered float constants (`0x00b26e54` = 230, …), so
+the converter keeps, per slot, the address the code loads (cited from the decompile; `None` a
+literal 0) and **reads the values from the player's own `t6mp.exe`** — its `.rdata` is not
+SteamStub-encrypted (byte-identical to the unpacked reference). Each quad is `x, y, w, h, s, t, ds,
+dt, rotation` (window units of 512, atlas texels at 1/256 × 1/128, degrees; a turned quad rotates
+its texel rectangle about its centre, as the code builds the vertices); the converter bakes the two
+sets into 512² frames with the atlas material's blend. The data settles the colours: the idle
+sprites are in the atlas's red (the ui3d reticle's primary, blue-white) and the spotted ones —
+the centre, the label, the brackets and four inward arrows — and the diamond in its blue (alt,
+red), with glows in alpha. The renderer draws the atlas's diamond (`0x00b26e2c`..`38`,
+`cg_rangeFinderDiamondSize` 50 × `0x00c735e0`) per mark; the analytic outline is gone.
+`Art\Native\rangefinder.zrd` is new at v1.

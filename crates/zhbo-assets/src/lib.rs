@@ -17,6 +17,7 @@ pub mod impacts;
 pub mod ini;
 pub mod emblems;
 pub mod paks;
+pub mod rangefinder;
 pub mod reticles;
 pub mod textures;
 pub mod viewmodels;

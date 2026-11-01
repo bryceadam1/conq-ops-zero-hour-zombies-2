@@ -184,6 +184,17 @@ pub struct NativeOptics {
     pub blip_count: u32,
 }
 
+/// The target finder's display for a ui3d reticle (`zhbo_native::display`): the surface's `color`
+/// is the idle frame; these are the spotted frame, the sprite atlas and the diamond's rectangle in
+/// it and its size (a fraction of the window, i.e. of the lens's UVs).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NativeDisplay {
+    pub spotted: u16,
+    pub atlas: u16,
+    pub diamond_uv: [f32; 4],
+    pub diamond_size: f32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NativeReticle {
     /// The noise map (`Detail_Map`) handle, or `INVALID` for none (white).
@@ -200,11 +211,13 @@ pub struct NativeReticle {
     /// `Reticle_Alt_Color` / `Glow_Alt_Color` (two-colour and ui3d).
     pub color_alt: [f32; 3],
     pub glow_alt: [f32; 3],
+    /// The target finder's display (ui3d only; `None` draws the empty display).
+    pub display: Option<NativeDisplay>,
 }
 
 impl NativeReticle {
     fn finite(&self) -> bool {
-        finite(&[self.scale, self.glow_falloff, self.emissive, self.noise_scale, self.noise_amount, self.background]) && finite(&self.color) && finite(&self.glow) && finite(&self.color_alt) && finite(&self.glow_alt)
+        self.display.is_none_or(|d| finite(&d.diamond_uv) && d.diamond_size.is_finite()) && finite(&[self.scale, self.glow_falloff, self.emissive, self.noise_scale, self.noise_amount, self.background]) && finite(&self.color) && finite(&self.glow) && finite(&self.color_alt) && finite(&self.glow_alt)
     }
 }
 
@@ -629,12 +642,14 @@ impl Renderer {
                 (None, None) => (s.maps, &self.native.flat),
             };
             let color_handle = s.sonar.map_or(s.color, |so| so.lookup);
+            let display = s.reticle.and_then(|r| r.display);
             let color_fallback = if s.reticle.is_some_and(|r| r.kind == NativeReticleKind::Ui3d) { &self.native.black } else { &self.native.white };
             let (Some(color), Some(maps), Some(camo), Some(specular)) = (
                 view(self, color_handle, color_fallback),
                 view(self, maps_handle, maps_fallback),
-                view(self, s.camo, &self.native.white),
-                view(self, s.specular, &self.native.white),
+                // A display binds its spotted frame and atlas where lit surfaces bind camo/spec.
+                view(self, display.map_or(s.camo, |d| d.spotted), if display.is_some() { &self.native.black } else { &self.native.white }),
+                view(self, display.map_or(s.specular, |d| d.atlas), if display.is_some() { &self.native.black } else { &self.native.white }),
             ) else {
                 return refuse(self, format!("surface {k} names a destroyed texture"));
             };
@@ -653,7 +668,7 @@ impl Renderer {
                 0.0,
                 0.0,
             ];
-            let r = s.reticle.unwrap_or(NativeReticle { noise: INVALID, scale: 0.0, color: [0.0; 3], glow: [0.0; 3], glow_falloff: 1.0, emissive: 0.0, noise_scale: 1.0, noise_amount: 0.0, background: 0.0, kind: NativeReticleKind::Dynamic, color_alt: [0.0; 3], glow_alt: [0.0; 3] });
+            let r = s.reticle.unwrap_or(NativeReticle { noise: INVALID, scale: 0.0, color: [0.0; 3], glow: [0.0; 3], glow_falloff: 1.0, emissive: 0.0, noise_scale: 1.0, noise_amount: 0.0, background: 0.0, kind: NativeReticleKind::Dynamic, color_alt: [0.0; 3], glow_alt: [0.0; 3], display: None });
             let reticle = [
                 r.scale,
                 r.glow_falloff,
@@ -679,6 +694,9 @@ impl Renderer {
             let mut sonar = [0.0f32; 32];
             if let Some(so) = s.sonar {
                 sonar[..30].copy_from_slice(&so.constants);
+            } else if let Some(d) = display {
+                // The display's block: the diamond's atlas rectangle, its size, present.
+                sonar[..6].copy_from_slice(&[d.diamond_uv[0], d.diamond_uv[1], d.diamond_uv[2], d.diamond_uv[3], d.diamond_size, 1.0]);
             }
             let params: Vec<f32> = params.iter().chain(&reticle).chain(&sonar).copied().collect();
             let material = self.device.create_buffer(&wgpu::BufferDescriptor {

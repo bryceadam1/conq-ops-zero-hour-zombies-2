@@ -13,7 +13,7 @@ mod frame;
 pub mod math;
 mod native;
 
-pub use native::{NativeBlend, NativeBlip, NativeCull, NativeDraw, NativeFrame, NativeLight, NativeOptics, NativeReticle, NativeReticleKind, NativeSonar, NativeSurface, NativeVertex, NATIVE_MAX_BLIPS, NATIVE_MAX_BONES, NATIVE_MAX_LIGHTS};
+pub use native::{NativeBlend, NativeBlip, NativeCull, NativeDisplay, NativeDraw, NativeFrame, NativeLight, NativeOptics, NativeReticle, NativeReticleKind, NativeSonar, NativeSurface, NativeVertex, NATIVE_MAX_BLIPS, NATIVE_MAX_BONES, NATIVE_MAX_LIGHTS};
 
 use std::collections::HashMap;
 use std::sync::Arc;

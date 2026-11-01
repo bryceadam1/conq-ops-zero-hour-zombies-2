@@ -19,6 +19,7 @@
 
 pub mod anim;
 pub mod camo;
+pub mod display;
 pub mod io;
 pub mod math;
 pub mod model;

@@ -1137,6 +1137,7 @@ fn the_reticle_choice_swaps_the_lens_material_only() {
         reticle: reticle.then(|| Reticle { scale: 14.6, ..Default::default() }),
         emblem: false,
         sonar: None,
+        display: None,
     };
     let mut mesh = Mesh { surfaces: vec![surface("mc/reflex", true), surface("mc/gun", false), surface("mc/holo", true)], ..Default::default() };
     super::apply_reticle(&mut mesh, &set, 1);

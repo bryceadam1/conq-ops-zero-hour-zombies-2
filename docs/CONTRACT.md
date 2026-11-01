@@ -320,7 +320,9 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   "enemy spotted" (`FUN_00528ec0`/`FUN_00529d80`) as `Optics::alt`; `zhbo_client_frame` hands the
   local player's to the viewmodel with a presentation clock (`nativevm::update_local_optics`) —
   again **no `ZhboNativeIn` field and no ABI bump**; `NativeFrame.optics`/`reticle_alt` are
-  Rust-only. The weapon table gains `Mms` (BO2's `mmsWeapon`, `mmsMaxDist` in inches) on weapons
+  Rust-only. The converter writes `Art\Native\rangefinder.zrd` (`ZRD\0`, v1, new): the target
+  finder's display — two baked frames, the atlas, the diamond's rectangle and size
+  (`zhbo_assets::rangefinder`, read from the player's `t6mp.exe`). The weapon table gains `Mms` (BO2's `mmsWeapon`, `mmsMaxDist` in inches) on weapons
   and attachments. While the native viewmodel draws a lens
   reticle, the HUD's 2D optic reticle (the W3D fallback's stand-in) stays out, and so do its 2D
   target-finder diamonds
