@@ -145,12 +145,12 @@ impl Weapon {
         let id = r.str()?;
         let n = r.count(34)?;
         let mut parts = Vec::with_capacity(n);
-        for i in 0..n {
+        for _ in 0..n {
             let model = r.str()?;
+            // A base part's tag, when present, names the body bone it hangs from instead of the
+            // body's `weapon_tag` (the Assault Shield on `tag_weapon_left`, a stowed weapon on
+            // `tag_stowed_back`); the others' tags are bones of the parts before them.
             let tag = r.opt_str()?;
-            if i == 0 && tag.is_some() {
-                return Err(FormatError::Corrupt(format!("part {i}: only the base part has no tag")));
-            }
             parts.push(Part { model, tag, offset: (r.f32n()?, r.f32n()?), rigid: r.u8()? != 0, ads_only: r.u8()? != 0, camo: r.opt_str()?, ads_swap: None });
         }
         let nh = r.count(4)?;
@@ -213,8 +213,9 @@ mod tests {
         for n in 0..bytes.len() {
             assert!(Weapon::from_bytes(&bytes[..n]).is_err(), "{n} bytes parsed");
         }
-        let mut no_base = w.clone();
-        no_base.parts[0].tag = Some("x".into());
-        assert!(Weapon::from_bytes(&no_base.to_bytes()).is_err());
+        // A base part may name the body bone it hangs from (the Assault Shield's left hand).
+        let mut on_body_tag = w.clone();
+        on_body_tag.parts[0].tag = Some("tag_weapon_left".into());
+        assert_eq!(Weapon::from_bytes(&on_body_tag.to_bytes()).unwrap(), on_body_tag);
     }
 }

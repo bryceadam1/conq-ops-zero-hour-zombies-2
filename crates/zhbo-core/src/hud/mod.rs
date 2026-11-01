@@ -39,7 +39,7 @@ pub mod state;
 mod tests;
 
 use center::*;
-pub use center::reticle_color_rgb;
+pub use center::{reticle_color_rgb, HINT_TIME};
 use damage::*;
 use map::*;
 use panels::*;
@@ -219,6 +219,7 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
             draw_crosshair(prims, w, h, s, client, p, zoom);
             draw_hitmarker(prims, w, h, client);
             draw_score_popup(&l, prims, client);
+            draw_hint(&l, prims, client);
             draw_hack(prims, w, h, s, client);
             if p.hammer.is_none() && !p.building {
                 draw_reload_prompt(prims, w, h, s, p);

@@ -87,7 +87,7 @@ pub struct Placed {
 /// What happened to equipment this frame, for hit markers and sounds.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum EquipEvent {
-    Exploded { owner: usize, at: Vec3, hit_enemy: bool, kill: bool },
+    Exploded { owner: usize, at: Vec3, hit_enemy: bool, kill: bool, def: &'static WeaponDef },
     /// Shot or blown up by an enemy.
     Destroyed { owner: usize, by: Option<usize>, at: Vec3 },
     /// A Trophy System shot a projectile down.
@@ -143,10 +143,10 @@ impl Placed {
     }
 
     /// Blow it up where it is.
-    fn explode(&mut self, host: &dyn LogicHost) -> EquipEvent {
+    fn explode(&mut self, host: &dyn LogicHost, shields: &[crate::shield::Bearer]) -> EquipEvent {
         self.remove(host);
-        let (hit_enemy, kill) = blast(host, self.def, self.general, self.pos, None, 1.0, 1.0);
-        EquipEvent::Exploded { owner: self.owner, at: self.pos, hit_enemy, kill }
+        let (hit_enemy, kill) = blast(host, self.def, self.general, self.pos, None, 1.0, 1.0, shields);
+        EquipEvent::Exploded { owner: self.owner, at: self.pos, hit_enemy, kill, def: self.def }
     }
 }
 
@@ -154,6 +154,8 @@ impl Placed {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Equipment {
     pub placed: Vec<Placed>,
+    /// The frame's shield bearers (the sim's [`crate::sim::Sim::shields`]): blasts test them.
+    pub shields: Vec<crate::shield::Bearer>,
 }
 
 impl Equipment {
@@ -172,6 +174,7 @@ impl Equipment {
         events: &mut Vec<EquipEvent>,
     ) {
         let mut gone = Vec::new();
+        let shields = &self.shields;
         for (i, p) in self.placed.iter_mut().enumerate() {
             p.age += LOGIC_DT;
             // Riding on what it stuck to; gone with it.
@@ -200,7 +203,7 @@ impl Equipment {
                     if p.kind == Kind::Betty {
                         p.pos.z = host.ground_height(p.pos.x, p.pos.y) + BETTY_HOP;
                     }
-                    events.push(p.explode(host));
+                    events.push(p.explode(host, shields));
                     gone.push(i);
                 }
                 continue;
@@ -279,7 +282,7 @@ impl Equipment {
         while k < self.placed.len() {
             if self.placed[k].owner == owner && self.placed[k].kind == Kind::C4 {
                 let mut p = self.placed.remove(k);
-                events.push(p.explode(host));
+                events.push(p.explode(host, &self.shields));
             } else {
                 k += 1;
             }
@@ -452,7 +455,7 @@ mod sim_tests {
     use crate::input::{buttons, FpsInput};
     use crate::sim::tests::{general, FakeHost};
     use crate::sim::{EventKind, Sim};
-    use crate::weapons::{Class, Effect, Offhand, Place};
+    use crate::weapons::{Class, Effect, Offhand, OffhandUse, Place};
 
     fn equipment(id: &str, place: Place) -> &'static WeaponDef {
         Box::leak(Box::new(WeaponDef {
@@ -476,6 +479,9 @@ mod sim_tests {
             explosion_outer_damage: 100.0,
             projectile_speed: 60.0,
             sticky: true,
+            // BO2's flags for these (`hasDetonator` on C4, `isHoldUseGrenade` on the Black Hat).
+            has_detonator: id == "satchel_charge_mp",
+            hold_use: place == Place::Hack,
             ..Default::default()
         }))
     }
@@ -564,5 +570,106 @@ mod sim_tests {
         run(&mut sim, &host, FpsInput { pressed: buttons::RELOAD, ..Default::default() }, 1);
         assert!(sim.equipment.placed.is_empty(), "detonated");
         assert!(sim.events.iter().any(|e| e.kind == EventKind::Detonated));
+    }
+
+    /// A class built in the editor with a claymore and a Trophy System (BO2 lists both by their
+    /// statstable slot) keeps them through the profile repair, spawns with both and plants both.
+    #[test]
+    fn an_editor_class_with_placed_equipment_spawns_with_it_and_plants_it() {
+        let d = crate::classmenu::Draft { lethal: "claymore_mp".into(), tactical: "trophy_system_mp".into(), ..Default::default() };
+        let mut c = d.to_custom();
+        assert!(crate::classrepair::repair(&mut c).is_empty(), "the repair keeps them");
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(c.loadout());
+        ready(&mut sim, &host);
+        let a = &sim.player(0).unwrap().arsenal;
+        assert_eq!((a.lethal.def.id.as_str(), a.tactical.def.id.as_str()), ("claymore_mp", "trophy_system_mp"));
+        for button in [buttons::LETHAL, buttons::TACTICAL] {
+            run(&mut sim, &host, FpsInput { held: button, pressed: button, ..Default::default() }, 1);
+            run(&mut sim, &host, FpsInput::default(), 120);
+        }
+        let planted: Vec<Kind> = sim.events.iter().filter_map(|e| if let EventKind::Planted { kind } = e.kind { Some(kind) } else { None }).collect();
+        assert_eq!(planted, vec![Kind::Claymore, Kind::Trophy]);
+        assert_eq!(sim.equipment.placed.len(), 2);
+    }
+
+    /// BO2's offhand states for equipment (Ghidra `FUN_008e2710`..`FUN_008dcbe0`): the claymore's
+    /// own viewmodel pulls back for its `hold_fire_time`, is held while the button is, and on the
+    /// release is set down `fire_delay` later; after its `fire_time` the gun comes back up in its
+    /// quick raise. The same input replays to the same frames.
+    #[test]
+    fn a_claymore_pulls_back_is_set_down_on_the_release_and_the_gun_comes_back() {
+        let trace = || {
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            ready(&mut sim, &host);
+            let claymore = crate::weapons::weapon("claymore_mp");
+            sim.players[0].as_mut().unwrap().arsenal.lethal = Offhand { def: claymore, count: 1 };
+            let mut log = Vec::new();
+            for f in 0..90 {
+                let input = if f < 20 { FpsInput { held: buttons::LETHAL, pressed: if f == 0 { buttons::LETHAL } else { 0 }, ..Default::default() } } else { FpsInput::default() };
+                run(&mut sim, &host, input, 1);
+                let a = &sim.player(0).unwrap().arsenal;
+                let planted = sim.events.iter().any(|e| matches!(e.kind, EventKind::Planted { .. }));
+                log.push((a.offhand, planted, sim.equipment.placed.len()));
+            }
+            (claymore, log)
+        };
+        let (claymore, log) = trace();
+        assert_eq!(log, trace().1, "deterministic");
+        // Held up (its own viewmodel's hold) the whole time the button is down.
+        assert!(log[..20].iter().all(|(u, planted, _)| matches!(u, Some(OffhandUse::Holding { .. })) && !planted));
+        // Set down `fire_delay` after the release.
+        let at = log.iter().position(|(_, planted, _)| *planted).expect("planted");
+        let delay = (claymore.timing.fire_delay / crate::units::LOGIC_DT).ceil() as usize;
+        assert!((at as i64 - (20 + delay) as i64).abs() <= 1, "planted at frame {at}, want {}", 20 + delay);
+        assert_eq!(log[at].2, 1);
+        // Then the gun's quick raise, then nothing in hand.
+        assert!(log.iter().any(|(u, ..)| matches!(u, Some(OffhandUse::Raising { .. }))));
+        assert!(log.last().unwrap().0.is_none(), "back to the gun");
+        assert_eq!(sim_count(&log), 1);
+    }
+
+    fn sim_count(log: &[(Option<OffhandUse>, bool, usize)]) -> usize {
+        log.last().map_or(0, |l| l.2)
+    }
+
+    /// C4 (`hasDetonator`): with none left in hand, the lethal button fires the detonator: the
+    /// charges go off `detonate_delay` after the press and the gun is simply back after
+    /// `detonate_time`, no raise (`FUN_008dcd20`).
+    #[test]
+    fn the_c4_button_with_none_left_is_the_detonator() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        ready(&mut sim, &host);
+        let c4 = crate::weapons::weapon("satchel_charge_mp");
+        assert!(c4.has_detonator);
+        sim.players[0].as_mut().unwrap().arsenal.lethal = Offhand { def: c4, count: 1 };
+        // Throw the one in hand.
+        run(&mut sim, &host, FpsInput { held: buttons::LETHAL, pressed: buttons::LETHAL, ..Default::default() }, 1);
+        run(&mut sim, &host, FpsInput { held: buttons::LETHAL, ..Default::default() }, 5);
+        run(&mut sim, &host, FpsInput::default(), 90);
+        assert_eq!(sim.equipment.placed.len(), 1, "the C4 landed and stays");
+        assert_eq!(sim.player(0).unwrap().arsenal.lethal.count, 0);
+        // The button again: the detonator.
+        run(&mut sim, &host, FpsInput { held: buttons::LETHAL, pressed: buttons::LETHAL, ..Default::default() }, 1);
+        assert!(matches!(sim.player(0).unwrap().arsenal.offhand, Some(OffhandUse::Detonating { .. })));
+        let delay = (c4.detonate_delay / crate::units::LOGIC_DT).ceil() as usize;
+        let mut gone_at = None;
+        for f in 1..60 {
+            run(&mut sim, &host, FpsInput::default(), 1);
+            if gone_at.is_none() && sim.equipment.placed.is_empty() {
+                gone_at = Some(f);
+            }
+        }
+        let gone_at = gone_at.expect("detonated");
+        assert!((gone_at as i64 - delay as i64).abs() <= 1, "went off at frame {gone_at}, want {delay}");
+        assert!(sim.events.iter().any(|e| e.kind == EventKind::Detonated));
+        assert!(sim.player(0).unwrap().arsenal.offhand.is_none());
     }
 }

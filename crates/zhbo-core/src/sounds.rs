@@ -19,6 +19,20 @@ pub const MELEE_SWING: &str = "ZHBO_BO2_MeleeSwing";
 /// Equipment planted, and the C4 detonator.
 pub const PLANT: &str = "ZHBO_BO2_Plant";
 pub const DETONATE: &str = "ZHBO_BO2_Detonate";
+/// The Assault Shield: planted (the deploy anim's `wpn_riotshield_plant` notetrack), destroyed,
+/// and struck by a round or a knife (`fly_riotshield_impact_*`; GSC plays the knife one,
+/// `_turret_killstreak.gsc:910`).
+pub const SHIELD_PLANT: &str = "ZHBO_BO2_ShieldPlant";
+pub const SHIELD_DESTROY: &str = "ZHBO_BO2_ShieldDestroy";
+pub const SHIELD_HIT_BULLET: &str = "ZHBO_BO2_ShieldHitBullet";
+pub const SHIELD_HIT_KNIFE: &str = "ZHBO_BO2_ShieldHitKnife";
+/// Each shield cue and the BO2 alias it is converted from.
+pub const SHIELD_SOUNDS: &[(&str, &str)] = &[
+    (SHIELD_PLANT, "wpn_riotshield_plant"),
+    (SHIELD_DESTROY, "wpn_riotshield_destroy"),
+    (SHIELD_HIT_BULLET, "fly_riotshield_impact_bullet"),
+    (SHIELD_HIT_KNIFE, "fly_riotshield_impact_knife"),
+];
 
 /// The player's own gunshot for a weapon: its own converted BO2 sound, else by class.
 pub fn fire_for(def: &'static crate::weapons::WeaponDef) -> &'static str {

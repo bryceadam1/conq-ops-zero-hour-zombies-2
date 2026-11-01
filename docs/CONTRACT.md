@@ -381,6 +381,14 @@ The converter also writes the General's third-person art as native blobs, so the
 him and the weapon in his hand instead of the W3D conversion. Presentation only, as the viewmodel:
 the sim's General object is unchanged, and Zero Hour still owns his health, targeting and death.
 
+* **The Assault Shield.** Its world manifest's base part names its own body bone,
+  `tag_weapon_left`, with the script's carry model (`_riotshield.gsc` `refreshshieldattachment`); a
+  base part's tag overrides the body's `weapon_tag` (weapon-only mode ignores it). Carried with
+  another weapon up, the body also wears the shield's stowed manifest (`ZS<vm>.zbw`: the stow model
+  on `tag_stowed_back`). Which General carries a stowed shield comes from a lock-free mirror the core
+  publishes after each logic step (`Sim::stowed_weapons` → `nativebody::ffi::publish_stowed`), read
+  by `zhbo_native_body` through the frame's `general`: no ABI field. The W3D body still shows the
+  shield in the right hand.
 * **The body.** `zhbo-assets` writes each faction's MP body (`c_usa_mp_seal6_assault_fb`,
   `c_chn_mp_pla_assault_fb`, `c_mul_mp_pmc_assault_fb`) as one `.zbm` (skeleton, four-bone skin,
   surfaces and materials, in BO2 inches) and a `ZB<faction>.zbc` manifest naming it, the body bone
@@ -504,6 +512,32 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
   passes it as `Look_At_Dir`'s roll. The viewmodel is placed in the unrolled eye frame, so the core
   adds the same roll to `viewmodel_angles.z` and the gun stays square to the screen, as BO2 draws
   it in the view's axes. `ZHBO_ABI_VERSION` is not bumped on the branch (the integrator's).
+
+## The Assault Shield in Zero Hour's damage path
+
+Zero Hour owns the General's health, so a shield must act inside the engine's damage. Host patch
+`0017-assault-shield-damage.patch` calls `Zhbo_ShieldDamage(this, damageInfo)` at the top of
+`Object::attemptDamage`; the bridge maps the `DamageType` onto `ZHBO_DAMAGE_*` (rounds: small arms,
+gattling, sniper, Comanche vulcan; blows: melee; blasts: explosion, armor piercing, the missiles,
+land mine, Aurora bomb; everything else `-1`) and asks `zhbo_logic_shield_damage(victim, source,
+from xyz, from height, source known, kind, amount)` for the share to apply (it scales `m_amount`).
+
+* **Lock-free.** The hook runs inside Zero Hour's object updates — possibly inside a callback of
+  `zhbo_logic_step` (the sim's own `damage`) — so it never takes the state lock: it reads an
+  atomic mirror of `Sim::shields` (every bearer's posed box, held or stowed, and each standing
+  deployed shield with its object id) and of the four blast protections, written after each logic
+  step and on take-control/reset. Deterministic: the mirror is sim state, the engine's call order
+  is the same on every peer.
+* **Damage the sim dealt passes** (a controlled General's source): the sim already tested it.
+* **A held/stowed shield** (`shield::engine_scale`): a round or blow from a source whose line to the
+  body's middle crosses the box before the body's axis is stopped (0); a blast keeps
+  `1 − protection` with the source standing in for the blast; no source, or another kind, passes.
+* **A deployed shield's object** (attackable: `ActiveBody`, a box of the model's bounds) takes no
+  engine damage (0): the hook queues `(object, source, kind, amount)` in a fixed lock-free ring
+  (64), drained into `Sim::engine_damage_to_deployed` before the next step — the script's
+  wear-down scales on Zero Hour damage ÷ `BO2_TO_ZH_DAMAGE`.
+* `zhbo_logic_shield_damage` is appended after ABI 26 (`zhbo_core.h`); the version bump is the
+  integrator's.
 
 ## Lifecycle
 

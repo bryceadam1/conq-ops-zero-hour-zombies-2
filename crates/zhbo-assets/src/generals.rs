@@ -290,6 +290,14 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     }
 
     let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(bo2_dir, f.zone)).collect::<Result<_, _>>()?;
+    // The Assault Shield's collision boxes, posed on the MP body (the factions share its skeleton).
+    if table.weapons.iter().any(|d| crate::weapons::is_shield_id(&d.id, &bo2)) {
+        let body = xmodel::find(&zones[0], FACTIONS[0].body).map_err(|e| e.to_string())?;
+        let geometry = crate::shield::geometry(&common, &body)?;
+        for d in table.weapons.iter_mut().filter(|d| crate::weapons::is_shield_id(&d.id, &bo2)) {
+            d.shield = Some(geometry);
+        }
+    }
     let base_count = converted_base.len();
     let (vm_summary, mut clips) = viewmodels::weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &atts, &mut table.weapons, &converted, base_count)?;
     summary.push(vm_summary);
@@ -1113,8 +1121,11 @@ mod tests {
                 }
                 let mut parts: Vec<PartRef> = Vec::with_capacity(models.len() + 1);
                 parts.push(PartRef { model: &bm, tag: None, offset: crate::xf::IDENTITY, rigid: false });
-                // The world model hangs on the body's weapon tag; its attachments on its bones.
-                parts.push(PartRef { model: &models[0], tag: Some(body.weapon_tag.as_str()), offset: w.parts[0].offset, rigid: true });
+                // The world model hangs on its own body bone when it names one (the Assault Shield's
+                // `tag_weapon_left`, a stowed manifest's `tag_stowed_back`), else on the body's
+                // weapon tag; its attachments on its bones.
+                let base_tag = w.parts[0].tag.as_deref().or(Some(body.weapon_tag.as_str()));
+                parts.push(PartRef { model: &models[0], tag: base_tag, offset: w.parts[0].offset, rigid: true });
                 for (p, m) in w.parts.iter().zip(&models).skip(1) {
                     parts.push(PartRef { model: m, tag: p.tag.as_deref(), offset: p.offset, rigid: true });
                 }
@@ -1126,7 +1137,8 @@ mod tests {
         for (wpath, wbytes) in &weapons {
             let w = Weapon::from_bytes(wbytes).unwrap_or_else(|e| panic!("{wpath}: {e}"));
             let models: Vec<Model> = w.parts.iter().map(|p| model(&p.model)).collect();
-            let parts: Vec<PartRef> = w.parts.iter().zip(&models).map(|(p, m)| PartRef { model: m, tag: p.tag.as_deref(), offset: p.offset, rigid: true }).collect();
+            // Without a body the base part hangs from the model's origin (`nativebody::load`).
+            let parts: Vec<PartRef> = w.parts.iter().zip(&models).enumerate().map(|(i, (p, m))| PartRef { model: m, tag: if i == 0 { None } else { p.tag.as_deref() }, offset: p.offset, rigid: true }).collect();
             let (_, problems) = Skeleton::compose(&parts, &[], &w.hide);
             assert!(problems.is_empty(), "{wpath}: {problems:?}");
         }

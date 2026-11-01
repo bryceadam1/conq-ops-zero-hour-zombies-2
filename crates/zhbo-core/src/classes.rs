@@ -403,7 +403,7 @@ mod tests {
                 let base = id.split('+').next().unwrap_or(id);
                 let def = crate::weapons::catalog::weapon_or_none(base)
                     .unwrap_or_else(|| panic!("{}: {} id {base:?} does not resolve", c.id, slot));
-                assert!(def.class.is_gun(), "{}: {slot} {base:?} is not a gun", c.id);
+                assert!(def.class.is_slot_weapon(), "{}: {slot} {base:?} is not a gun", c.id);
                 for short in id.split('+').skip(1) {
                     assert!(
                         def.allowed.iter().any(|(s, _)| s == short),

@@ -84,6 +84,12 @@ pub fn world_weapon_path(vm: i32) -> String {
     format!("{DIR}ZW{vm:02}.zbw")
 }
 
+/// The archive path of converted weapon `vm`'s stowed manifest: what the body carries while
+/// another weapon is up (the Assault Shield on `tag_stowed_back`).
+pub fn stowed_weapon_path(vm: i32) -> String {
+    format!("{DIR}ZS{vm:02}.zbw")
+}
+
 /// A BO2 asset name as a file name: BO2 names may start with `,` or carry `/`.
 fn file_stem(name: &str) -> String {
     name.trim_start_matches(',').chars().map(|c| if c.is_ascii_alphanumeric() || c == '_' || c == '-' { c } else { '_' }).collect()

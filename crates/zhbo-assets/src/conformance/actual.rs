@@ -334,32 +334,25 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .filter_map(|s| base_def.allowed.iter().find(|(short, _)| short == s).and_then(|(_, asset)| cat.attachment(asset)).map(|a| a.display_name.clone()))
         .collect();
     b.list("attachment_names", &names);
-    // The mod has no weapType/inventory fields; where its own class and sim branch
-    // carry the same fact it is reported (a class with no BO2 counterpart stays empty):
-    // `weap_type` is how the sim delivers the shot (`Arsenal`'s Launch vs hitscan branch,
-    // `arsenal.rs` "WeaponAction::Launch"; an offhand's `Place`), `inventory` the row's role.
-    // `weap_class` is carried as data (`WeaponDef::weap_class`).
+    // Where the mod's own class and sim branch carry the fact, it is reported (a class with no BO2
+    // counterpart stays empty): `weap_type` is how the sim delivers the shot (`Arsenal`'s Launch vs
+    // hitscan branch, `arsenal.rs` "WeaponAction::Launch"; an offhand's `Place`). `weap_class` and
+    // `inventory` are BO2's own, carried as data (`WeaponDef::weap_class`, `WeaponDef::inventory`).
     let launches = d.class == Class::Launcher || (d.projectile_speed > 0.0 && d.class != Class::Shotgun && d.effect != Effect::None);
+    // Every offhand, thrown, set down or held up, runs the arsenal's one offhand state machine
+    // (`Arsenal::step_offhand`), which is BO2's grenade offhand path (`FUN_008e2bb0` takes only
+    // weapType grenade or mine there, and the arsenal has nothing mine-specific): a grenade.
+    // The Assault Shield's own branches: the sim's shield block, deploy and self-melee
+    // (`WeaponDef::is_shield`).
     let weap_type = match d.class {
+        _ if d.is_shield() => Some("riotshield"),
         Class::Melee => Some("melee"),
-        c if c.is_offhand() => match d.place {
-            Place::Throw => Some("grenade"),
-            Place::Plant => Some("mine"),
-            Place::Hack => None,
-        },
+        c if c.is_offhand() => Some("grenade"),
         _ if launches => Some("projectile"),
         _ => Some("bullet"),
     };
-    let inventory = if j.alt {
-        "altmode"
-    } else if d.id == weapons::CLASS_MELEE {
-        // The class melee weapon is the melee inventory; the held knife is a weapon in the hand.
-        "melee"
-    } else if d.class.is_offhand() {
-        "offhand"
-    } else {
-        "primary"
-    };
+    // BO2's `inventoryType`, carried on the def (combinations inherit their base's).
+    let inventory = d.inventory.name();
     let offhand_slot = match d.class {
         Class::Lethal => "lethal_grenade",
         Class::Tactical => "tactical_grenade",
@@ -381,7 +374,8 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
 
     // The arsenal melees with `Arsenal::melee_weapon` (`arsenal.rs` "Melee interrupts": its
     // `melee_time` and `melee_damage`): a knife with itself, anything else with the class melee
-    // weapon (the held knife when the table has none), striking on the press.
+    // weapon (the held knife when the table has none); the strike lands its `melee_delay` after the
+    // press (`Arsenal::step`).
     let held_knife = cat.get(&weapons::Loadout::default().melee).unwrap_or(d);
     let knife = weapons::melee_weapon(d, cat.get(weapons::CLASS_MELEE).unwrap_or(held_knife));
     // Timing.
@@ -420,7 +414,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         ("ads_in_time", Some(d.ads_in_time)),
         ("ads_out_time", Some(d.ads_out_time)),
         ("melee_time", Some(knife.melee_time.max(0.3))),
-        ("melee_delay", Some(0.0)),
+        ("melee_delay", Some(knife.melee_delay)),
         ("spin_up_time", Some(d.spin_up_time)),
         ("spin_down_time", Some(t.spin_down_time)),
         ("fuse_time", Some(d.fuse_time)),
@@ -670,7 +664,8 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     let thrown = d.class.is_offhand() && d.place == Place::Throw;
     let plr = if d.class.is_offhand() {
         thrown.then(|| sh.sound(zhbo_core::sounds::THROW)).flatten()
-    } else if d.class == Class::Melee {
+    } else if d.class == Class::Melee || d.class == Class::Shield {
+        // A knife or the Assault Shield fires no shot (the shield's trigger deploys it).
         None
     } else if launches {
         sh.sound(zhbo_core::sounds::FIRE_LAUNCHER)

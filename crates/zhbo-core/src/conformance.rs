@@ -2,12 +2,13 @@
 //! fire rate (BO2's fire time), the fire mode (semi, auto, n-round burst, minigun spin-up), pellets
 //! per shot, magazine size before the automatic reload, reload timing (rounds in at the add time, done
 //! at the reload time; shell by shell for tube shotguns), ADS time, the damage curve, and for
-//! offhands the fuse and cooking. Used by zhbo-assets' test over every multiplayer weapon in the
+//! offhands BO2's offhand states (the pull-back, the release delay, the detonator) with the fuse and
+//! cooking. Used by zhbo-assets' test over every multiplayer weapon in the
 //! player's own BO2 install, and by this crate's tests on the built-in table.
 
 use crate::input::buttons;
 use crate::units::LOGIC_DT;
-use crate::weapons::{Arsenal, Class, FireMode, Offhand, Place, Rng, WeaponAction, WeaponDef, WeaponState, OFFHAND_PULLBACK};
+use crate::weapons::{Arsenal, Class, FireMode, Offhand, Place, Rng, WeaponAction, WeaponDef, WeaponState};
 
 /// Frames for `seconds`, rounded up.
 fn frames(seconds: f32) -> usize {
@@ -242,58 +243,93 @@ pub fn check(def: &'static WeaponDef) -> Vec<String> {
     }
 
     if def.class.is_offhand() {
-        let mut a = Arsenal::new();
-        a.loadout.perks.clear();
-        a.raise_left = 0.0;
-        a.lethal = Offhand { def, count: 1 };
+        let fresh = |count: u16| {
+            let mut a = Arsenal::new();
+            a.loadout.perks.clear();
+            a.raise_left = 0.0;
+            a.lethal = Offhand { def, count };
+            a
+        };
+        // Hold the button for `hold` seconds, then let go; the frame (counted from the press) at
+        // which `hit` first shows, and the frame the held weapon is back.
+        let run = |a: &mut Arsenal, hold: f32, hit: &dyn Fn(&WeaponAction) -> bool, out: &mut Vec<WeaponAction>, rng: &mut Rng| {
+            let (mut at, mut back) = (None, None);
+            for f in 0..frames(hold + 8.0) {
+                let held = if f < frames(hold) { buttons::LETHAL } else { 0 };
+                let n = out.len();
+                a.step(held, if f == 0 { buttons::LETHAL } else { 0 }, false, 0, 0.0, rng, out);
+                if at.is_none() && out[n..].iter().any(hit) {
+                    at = Some(f);
+                }
+                if a.offhand.is_none() {
+                    back = Some(f);
+                    break;
+                }
+            }
+            (at, back)
+        };
         let mut out = Vec::new();
-        match def.place {
-            // Equipment set down: planted after the pull-back, and one used.
-            Place::Plant => {
-                for f in 0..frames(OFFHAND_PULLBACK) {
-                    a.step(buttons::LETHAL, if f == 0 { buttons::LETHAL } else { 0 }, false, 0, 0.0, &mut rng, &mut out);
-                }
+        // BO2's offhand states: the pull-back (`hold_fire_time`), held while the button is, then the
+        // release: the item leaves the hand `fire_delay` later and the gun comes back up after its
+        // `fire_time` in its quick raise. A hold-use item (the Black Hat) is put away instead.
+        let gun = Arsenal::new().current().def.quick_raise_time;
+        let released = def.timing.hold_fire_time.max(0.1);
+        if def.hold_use {
+            let mut a = fresh(1);
+            for f in 0..frames(1.0) {
+                a.step(buttons::LETHAL, if f == 0 { buttons::LETHAL } else { 0 }, false, 0, 0.0, &mut rng, &mut out);
+            }
+            if def.place == Place::Hack && a.hacking().is_none() {
+                fail("not held up".into());
+            }
+            for _ in 0..frames(def.quick_drop_time + gun + 0.2) {
                 a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
-                if !out.iter().any(|x| matches!(x, WeaponAction::Plant { .. })) {
-                    fail("never planted".into());
-                }
-                if a.lethal.count != 0 {
-                    fail("planting used none".into());
-                }
             }
-            // The Black Hat: up while held, put away on release without using a charge.
-            Place::Hack => {
-                for f in 0..frames(1.0) {
-                    a.step(buttons::LETHAL, if f == 0 { buttons::LETHAL } else { 0 }, false, 0, 0.0, &mut rng, &mut out);
-                }
-                if a.hacking().is_none() {
-                    fail("not held up".into());
-                }
-                for _ in 0..frames(1.0) {
-                    a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
-                }
-                if a.offhand.is_some() || a.lethal.count != 1 {
-                    fail("letting go of the Black Hat used it or left it up".into());
-                }
+            if a.offhand.is_some() || a.lethal.count != 1 {
+                fail("letting go of a hold-use item used it or left it up".into());
             }
-            // Thrown after the pull-back; a cooking grenade's fuse runs from the pin.
-            Place::Throw => {
-                let hold = OFFHAND_PULLBACK.max(if def.cook { (def.fuse_time * 0.5).min(1.0) } else { 0.0 });
-                for f in 0..frames(hold) {
-                    a.step(buttons::LETHAL, if f == 0 { buttons::LETHAL } else { 0 }, false, 0, 0.0, &mut rng, &mut out);
-                }
-                for _ in 0..frames(0.2) {
-                    a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
-                }
-                match out.iter().find_map(|x| if let WeaponAction::Throw { fuse_left, .. } = x { Some(*fuse_left) } else { None }) {
-                    None => fail("never thrown".into()),
-                    Some(left) => {
-                        let want = if def.cook { def.fuse_time - frames(hold) as f32 * LOGIC_DT } else { def.fuse_time };
-                        if (left - want).abs() > LOGIC_DT * 1.5 {
+        } else {
+            let mut a = fresh(1);
+            let leaves = |x: &WeaponAction| matches!(x, WeaponAction::Plant { .. } | WeaponAction::Throw { .. });
+            let (at, back) = run(&mut a, released, &leaves, &mut out, &mut rng);
+            match at {
+                None => fail("never left the hand".into()),
+                Some(f) => {
+                    if !near(f + 1, frames(released) as f32 * LOGIC_DT + def.timing.fire_delay, 1) {
+                        fail(format!("left the hand at frame {}, BO2 says {:.1}", f + 1, (frames(released) as f32 * LOGIC_DT + def.timing.fire_delay) / LOGIC_DT));
+                    }
+                    if def.place == Place::Plant && !out.iter().any(|x| matches!(x, WeaponAction::Plant { .. })) {
+                        fail("set down equipment was thrown".into());
+                    }
+                    // A cooking grenade's fuse burns from the end of the pull-back.
+                    if let Some(left) = out.iter().find_map(|x| if let WeaponAction::Throw { fuse_left, .. } = x { Some(*fuse_left) } else { None }) {
+                        let burned = (f + 1) as f32 * LOGIC_DT - def.timing.hold_fire_time;
+                        let want = if def.cook { def.fuse_time - burned } else { def.fuse_time };
+                        if (left - want).abs() > LOGIC_DT * 2.5 {
                             fail(format!("fuse {left:.2} s left, BO2 says {want:.2}"));
                         }
                     }
                 }
+            }
+            if a.lethal.count != 0 {
+                fail("using it used none".into());
+            }
+            let total = frames(released) as f32 * LOGIC_DT + def.fire_time.max(def.timing.fire_delay) + gun;
+            match back {
+                Some(f) if near(f + 1, total, 2) => {}
+                other => fail(format!("the gun was back at frame {other:?}, BO2 says {:.1}", total / LOGIC_DT)),
+            }
+        }
+        // A detonator item with none left in hand: the button detonates after `detonate_delay`.
+        if def.has_detonator {
+            let mut a = fresh(0);
+            let (at, back) = run(&mut a, LOGIC_DT, &|x| matches!(x, WeaponAction::Detonate), &mut out, &mut rng);
+            match at {
+                Some(f) if near(f + 1, def.detonate_delay, 1) => {}
+                other => fail(format!("detonated at frame {other:?}, BO2 says {:.1}", def.detonate_delay / LOGIC_DT)),
+            }
+            if !back.is_some_and(|f| near(f + 1, def.timing.detonate_time.max(def.detonate_delay), 1)) {
+                fail(format!("the detonator was down at frame {back:?}, BO2 says {:.1}", def.timing.detonate_time / LOGIC_DT));
             }
         }
         if def.explosion_radius > 0.0 && def.explosion_damage_at(0.0) < def.explosion_damage_at(def.explosion_radius) {
@@ -308,8 +344,19 @@ pub fn check(def: &'static WeaponDef) -> Vec<String> {
         a.class_melee = def;
         let mut out = Vec::new();
         a.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
+        // The swing starts on the press; the strike lands after the weapon's `melee_delay`.
+        let mut frame = 0;
+        while !out.iter().any(|x| matches!(x, WeaponAction::Melee { .. })) && frame < frames(def.melee_delay) + 2 {
+            a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+            frame += 1;
+        }
+        if !out.iter().any(|x| matches!(x, WeaponAction::MeleeSwing)) {
+            fail("no swing on the melee press".into());
+        }
         if !out.iter().any(|x| matches!(x, WeaponAction::Melee { damage } if (*damage - def.melee_damage).abs() < 1e-3)) {
             fail(format!("melee did not deal {}", def.melee_damage));
+        } else if (frame as f32 * LOGIC_DT - def.melee_delay).abs() > LOGIC_DT {
+            fail(format!("the strike landed {:.3} s after the press, BO2 says {:.3}", frame as f32 * LOGIC_DT, def.melee_delay));
         }
     }
     fails

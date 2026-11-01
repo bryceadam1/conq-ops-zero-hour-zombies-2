@@ -6,7 +6,7 @@
 ** License, or (at your option) any later version.
 */
 
-use super::def::{CamoOption, Class, Effect, FireMode, Kind, Kick, Place, WeapClass, WeaponDef};
+use super::def::{CamoOption, Class, Effect, FireMode, Inventory, Kind, Kick, Place, ShieldBox, ShieldGeometry, WeapClass, WeaponDef};
 use super::feel::{nums, v3, GunKick, Sway};
 use super::handling::{OffhandClass, Penetrate, WeapType};
 use super::specialty::Specialties;
@@ -28,7 +28,14 @@ pub struct Table {
     /// BO2's perk rows (`mp/statstable.csv`): the reference without `PERKS_` (`LIGHTWEIGHT`,
     /// `NINJA`) and the specialties it grants (`Perk <ref>` blocks).
     pub perks: Vec<(String, Specialties)>,
+    /// BO2's localized HUD strings the core draws ([`HUD_STRINGS`]), from the install's english
+    /// zones (`HudString <key> = <text>` lines).
+    pub hud_strings: Vec<(String, String)>,
 }
+
+/// The localize keys of BO2's HUD text the core draws itself; the converter copies their English
+/// text into the table.
+pub const HUD_STRINGS: &[&str] = &["WEAPON_CANT_PLANT_EQUIPMENT"];
 
 pub(crate) fn pairs(v: &[(String, String)]) -> String {
     v.iter().map(|(a, b)| format!("{a}={b}")).collect::<Vec<_>>().join(" ")
@@ -87,6 +94,12 @@ pub fn format_table(defs: &[WeaponDef]) -> String {
 pub fn format_full_table(t: &Table) -> String {
     let mut s = String::from("; Black Ops II multiplayer weapons, converted from the player's own install by zhbo-assets.\n; Private data: do not redistribute.\n\n");
     s.push_str(&format!("TabletMeshes = {}\n\n", t.tablet_meshes));
+    for (key, text) in &t.hud_strings {
+        s.push_str(&format!("HudString {key} = {text}\n"));
+    }
+    if !t.hud_strings.is_empty() {
+        s.push('\n');
+    }
     for (stats, specialties) in &t.perks {
         s.push_str(&format!("Perk {stats}\n  Specialties = {}\nEnd\n\n", specialties.format()));
     }
@@ -150,6 +163,11 @@ pub fn parse_full_table(text: &str) -> Result<Table, String> {
         }
         if let Some(id) = line.strip_prefix("ReticleColorOption ") {
             cur = Some(Block::ReticleColor(Box::new(CamoOption { id: id.trim().to_string(), ..Default::default() })));
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("HudString ") {
+            let (key, text) = rest.split_once('=').ok_or_else(|| err("expected HudString key = text"))?;
+            table.hud_strings.push((key.trim().to_string(), text.trim().to_string()));
             continue;
         }
         if let Some(id) = line.strip_prefix("Perk ") {
@@ -550,6 +568,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             (d.melee_damage, d.melee_time) = (v.num(0), v.num(1));
             Ok(())
         }),
+    field!("MeleeDelay", "Seconds from the melee press to the strike (BO2's iMeleeDelay).", FieldKind::Num,
+        |d: &WeaponDef| d.melee_delay.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.melee_delay = v.text_num()?; Ok(()) }),
     field!("Effect", "How the shot lands: explode, stun, emp, smoke, impact, none.", FieldKind::Enum,
         |d: &WeaponDef| d.effect.name().into(),
         |d: &mut WeaponDef, v: Values| { d.effect = Effect::parse(v.text).ok_or("unknown effect")?; Ok(()) }),
@@ -560,6 +581,23 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
             (d.fuse_time, d.cook) = (v.num(0), v.flag(1));
             Ok(())
         }),
+    field!("Offhand", "Offhand states: detonate delay, has detonator, hold use (the pull-back, release delay and detonate time are FireCycle's and DetonateTime).", FieldKind::Nums(3),
+        |d: &WeaponDef| format!("{} {} {}", d.detonate_delay, d.has_detonator as u8, d.hold_use as u8),
+        |d: &mut WeaponDef, v: Values| {
+            v.need(3)?;
+            d.detonate_delay = v.num(0);
+            (d.has_detonator, d.hold_use) = (v.flag(1), v.flag(2));
+            Ok(())
+        }),
+    field!("HoldCancelable", "1 if the weapon-switch button cancels the held offhand (BO2's offhandHoldIsCancelable).", FieldKind::Num,
+        |d: &WeaponDef| (d.hold_cancelable as u8).to_string(),
+        |d: &mut WeaponDef, v: Values| { d.hold_cancelable = v.text_num()? != 0.0; Ok(()) }),
+    field!("Plantable", "1 if BO2's plant check applies (its plantable flag).", FieldKind::Num,
+        |d: &WeaponDef| (d.plantable as u8).to_string(),
+        |d: &mut WeaponDef, v: Values| { d.plantable = v.text_num()? != 0.0; Ok(()) }),
+    field!("Inventory", "BO2's inventory type: primary, offhand, item, altmode, melee, dwlefthand.", FieldKind::Enum,
+        |d: &WeaponDef| d.inventory.name().into(),
+        |d: &mut WeaponDef, v: Values| { d.inventory = Inventory::parse(v.text).ok_or("unknown inventory type")?; Ok(()) }),
     field!("Explosion", "Blast radius, inner radius, inner damage, outer damage.", FieldKind::Nums(4),
         |d: &WeaponDef| format!("{} {} {} {}", d.explosion_radius, d.explosion_radius_min, d.explosion_inner_damage, d.explosion_outer_damage),
         |d: &mut WeaponDef, v: Values| {
@@ -900,6 +938,17 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("TracerInterval", "A tracer every this many bullets (`TracerDef.drawInterval`; 0: none).", FieldKind::Num,
         |d: &WeaponDef| d.tracer_interval.to_string(),
         |d: &mut WeaponDef, v: Values| { d.tracer_interval = v.text_num()? as u32; Ok(()) }),
+    field!("Shield", "An Assault Shield's held and stowed collision boxes, each rotation (x y z w), position, mins and maxs in inches on the posed body; empty for every other weapon.", FieldKind::Words,
+        |d: &WeaponDef| d.shield.map_or(String::new(), |g| nums(&[g.held.to_nums(), g.stowed.to_nums()].concat())),
+        |d: &mut WeaponDef, v: Values| {
+            d.shield = if v.text.is_empty() {
+                None
+            } else {
+                v.need(2 * ShieldBox::NUMS)?;
+                Some(ShieldGeometry { held: ShieldBox::from_nums(v.nums), stowed: ShieldBox::from_nums(&v.nums[ShieldBox::NUMS..]) })
+            };
+            Ok(())
+        }),
 ];
 
 /// The `Camo <id>` block: one BO2 camouflage option from `mp/attachmenttable.csv`'s `camo` rows.
@@ -959,9 +1008,17 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 119);
+        assert_eq!(WEAPON_FIELDS.len(), 125);
         assert_eq!(ATTACHMENT_FIELDS.len(), 30);
         assert_eq!(CAMO_FIELDS.len(), 3);
+    }
+
+    #[test]
+    fn the_hud_strings_round_trip() {
+        let t = Table { hud_strings: vec![("WEAPON_CANT_PLANT_EQUIPMENT".into(), "Cannot Plant Here".into())], ..Default::default() };
+        let back = parse_full_table(&format_full_table(&t)).expect("the table re-parses");
+        assert_eq!(back.hud_strings, t.hud_strings);
+        assert_eq!(crate::weapons::Catalog::from_table(back).hud_string("WEAPON_CANT_PLANT_EQUIPMENT"), Some("Cannot Plant Here"));
     }
 
     #[test]

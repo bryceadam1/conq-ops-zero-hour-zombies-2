@@ -72,13 +72,21 @@ impl Projectile {
         Projectile { def, owner, pos: from, vel, fuse, age: 0.0, object, stuck_to: None, resting: false, self_blast_scale: 1.0, self_stun_scale: 1.0, lands }
     }
 
-    /// Advance one logic frame. Returns `Some` when it is finished (went off or hit).
+    /// Advance one logic frame with no shields about (see [`Projectile::step_shielded`]).
     pub fn step(&mut self, host: &dyn LogicHost) -> Option<Outcome> {
+        self.step_shielded(host, &[])
+    }
+
+    /// Advance one logic frame. Returns `Some` when it is finished (went off or hit). An enemy's
+    /// Assault Shield in the way stops it (`_globallogic_player.gsc:840`: location `riotshield`):
+    /// an explosive goes off on it (its impact damage is the script's 0, its splash the blast's,
+    /// which the shield protects against), anything else falls dead.
+    pub fn step_shielded(&mut self, host: &dyn LogicHost, shields: &[crate::shield::Bearer]) -> Option<Outcome> {
         let dt = LOGIC_DT;
         self.age += dt;
         self.fuse -= dt;
         if self.fuse <= 0.0 {
-            return Some(self.go_off(host, None));
+            return Some(self.go_off(host, None, shields));
         }
         if self.lands && (self.resting || self.stuck_to.is_some()) {
             return Some(Outcome::Landed { at: self.pos, stuck_to: self.stuck_to });
@@ -93,6 +101,21 @@ impl Projectile {
                 self.vel.z -= GRAVITY * dt;
             }
             let next = self.pos + self.vel * dt;
+            // An enemy's shield along the way (what sticks or lands keeps its own path).
+            if self.age > ARM_TIME && !self.def.sticky && !self.lands {
+                let seg = next - self.pos;
+                let len = seg.length();
+                // A deployed shield (`general` 0) stops everyone's; a carried one an enemy's.
+                let enemy = |b: &crate::shield::Bearer| b.general == 0 || b.general != self.owner && host.object(b.general, self.owner).is_some_and(|o| !o.has(objflags::ALLY) && !o.has(objflags::DEAD));
+                if let Some((_, t)) = crate::shield::blocking(shields, &enemy, self.pos, seg.normalized_or_zero(), len, len, None) {
+                    self.pos += seg.normalized_or_zero() * t;
+                    if self.def.effect == Effect::Explode {
+                        return Some(self.go_off(host, None, shields));
+                    }
+                    self.remove_object(host);
+                    return Some(Outcome::Hit { at: self.pos, kill: false });
+                }
+            }
             // Objects along the way.
             if self.age > ARM_TIME {
                 if let Some(o) = self.hit_object(host, self.pos, next) {
@@ -100,7 +123,7 @@ impl Projectile {
                     if self.def.sticky {
                         self.stuck_to = Some(o.id);
                     } else if self.def.impact_explode {
-                        return Some(self.go_off(host, Some(o)));
+                        return Some(self.go_off(host, Some(o), shields));
                     } else if self.def.effect == Effect::Impact {
                         return Some(self.impact(host, o));
                     } else {
@@ -113,7 +136,7 @@ impl Projectile {
             if next.z <= ground {
                 self.pos = Vec3::new(next.x, next.y, ground);
                 if self.def.impact_explode {
-                    return Some(self.go_off(host, None));
+                    return Some(self.go_off(host, None, shields));
                 }
                 if self.def.sticky || self.def.effect == Effect::Impact {
                     self.resting = true;
@@ -170,9 +193,9 @@ impl Projectile {
     }
 
     /// The blast (or stun, EMP, smoke).
-    fn go_off(&mut self, host: &dyn LogicHost, direct: Option<ObjInfo>) -> Outcome {
+    fn go_off(&mut self, host: &dyn LogicHost, direct: Option<ObjInfo>, shields: &[crate::shield::Bearer]) -> Outcome {
         self.remove_object(host);
-        let (hit_enemy, kill) = blast(host, self.def, self.owner, self.pos, direct, self.self_blast_scale, self.self_stun_scale);
+        let (hit_enemy, kill) = blast(host, self.def, self.owner, self.pos, direct, self.self_blast_scale, self.self_stun_scale, shields);
         Outcome::Exploded { at: self.pos, hit_enemy, kill }
     }
 
@@ -190,8 +213,12 @@ impl Projectile {
 }
 
 /// `def` going off at `at` for `owner` (a General's id): explosion damage, stun, EMP or smoke over
-/// its radius, and its effect. `direct` took a direct hit. Returns (hit an enemy, killed one).
-pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct: Option<ObjInfo>, self_blast_scale: f32, self_stun_scale: f32) -> (bool, bool) {
+/// its radius, and its effect. `direct` took a direct hit. A General with a shield keeps
+/// `1 − protection` of the damage ([`crate::shield::Bearer::blast_protection`]). Returns (hit an
+/// enemy, killed one).
+#[allow(clippy::too_many_arguments)]
+pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct: Option<ObjInfo>, self_blast_scale: f32, self_stun_scale: f32, shields: &[crate::shield::Bearer]) -> (bool, bool) {
+    let tuning = crate::tuning::get();
     let d = def;
     let fx = if d.explosion_fx.is_empty() { DEFAULT_EXPLOSION_FX } else { d.explosion_fx.as_str() };
     if d.effect != Effect::None {
@@ -205,6 +232,11 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
         let ally = o.has(objflags::ALLY) && o.id != owner;
         if ally {
             continue; // no friendly fire, as in BO2's core modes
+        }
+        // A deployed shield's object: the sim wears the shield down itself
+        // (`Sim::deployed_caught_in_blast`).
+        if shields.iter().any(|b| b.object != 0 && b.object == o.id) {
+            continue;
         }
         let centre = Vec3::new(o.pos.x, o.pos.y, o.pos.z + o.height * 0.5);
         let dist = ((centre - at).length() - if o.has(objflags::INFANTRY) { 0.0 } else { o.major_radius }).max(0.0);
@@ -221,6 +253,9 @@ pub fn blast(host: &dyn LogicHost, def: &WeaponDef, owner: u32, at: Vec3, direct
                 }
                 if own {
                     amount *= self_blast_scale;
+                }
+                if let Some(b) = shields.iter().find(|b| b.general == o.id) {
+                    amount *= 1.0 - b.blast_protection(at, &tuning);
                 }
                 if amount > 0.0 {
                     let k = host.damage(owner, o.id, amount, damage_kind::EXPLOSION);

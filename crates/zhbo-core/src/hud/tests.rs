@@ -335,6 +335,29 @@ fn falls_back_to_text_without_the_art() {
     assert!(texts.iter().any(|t| t == "3") && texts.iter().any(|t| t == "0"));
 }
 
+/// The held knife of a one-gun class in the hand: BO2 hides the ammo digits for a `melee` weapType
+/// (`CoD.AmmoArea.UpdateWeapon` -> `hideAmmo`) and keeps the weapon label and offhand counters.
+#[test]
+fn the_held_knife_hides_the_ammo_digits_only() {
+    let (mut sim, _) = fps_state();
+    let mut a = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout { secondary: String::new(), ..crate::weapons::Loadout::default() });
+    a.raise_left = 0.0;
+    sim.players[0].as_mut().unwrap().arsenal = a;
+    let digits = |sim: &Sim| {
+        let mut prims = Vec::new();
+        ammo::draw(&super::frame::Lui::new(1280.0, 720.0), &mut prims, sim.player(0).unwrap(), 0.0, 0.0, "");
+        let names: Vec<String> = prims.iter().filter_map(|p| if let Prim::Image { name, .. } = p { Some(name.clone()) } else { None }).collect();
+        (names.iter().filter(|n| n.contains("hud_mp_num_big_")).count(), names.iter().any(|n| n.starts_with("ZHBO_BO2_Icon_frag")))
+    };
+    let (gun, nade) = digits(&sim);
+    assert!(gun > 0 && nade, "the gun counts its rounds ({gun})");
+    sim.players[0].as_mut().unwrap().arsenal.active = 1;
+    assert_eq!(sim.player(0).unwrap().arsenal.current().def.id, "knife_held_mp");
+    let (knife, nade) = digits(&sim);
+    assert_eq!(knife, 0, "no digits for the knife");
+    assert!(nade, "the offhand counters stay");
+}
+
 /// Bug 1's HUD sweep: an unarmed General (knife only) draws no ammo panel ("0/0", "No ammo"),
 /// no offhand counters and no gun crosshair. It must not panic on the empty gun slots.
 #[test]

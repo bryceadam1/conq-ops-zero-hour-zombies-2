@@ -366,6 +366,11 @@ fn run(args: &[String]) -> Result<(), String> {
                     }
                     println!("    sounds fire {:?} plr {:?} icon {:?} dpad {:?} world {:?} projectile {:?} impact {} icon key {:?} dpad key {:?}", w.fire_sound, w.fire_sound_player, w.hud_icon, w.dpad_icon, w.world_model, w.projectile_model, w.projectile_impact_explode, w.hud_icon_key, w.dpad_icon_key);
                     println!("    kick ads {:?} hip {:?} mult {:?}", w.ads_view_kick, w.hip_view_kick, w.location_multipliers.iter().take(7).collect::<Vec<_>>());
+                    println!(
+                        "    offhand slot {} class {} hold {:.3} delay {:.3} fire {:.3} detonate {:.3}/{:.3} quick {:.3}/{:.3} detonator {} hold_to_throw {} cancelable {} hold_use {} plantable {} cook {}",
+                        w.offhand_slot, w.offhand_class, w.hold_fire_time, w.fire_delay, w.fire_time, w.detonate_time, w.detonate_delay, w.quick_raise_time, w.quick_drop_time,
+                        w.has_detonator, w.hold_button_to_throw, w.offhand_hold_is_cancelable, w.is_hold_use_grenade, w.plantable, w.cook_off_hold
+                    );
                     for (i, a) in w.anims.iter().enumerate() {
                         if let Some(a) = a {
                             print!(" {i:#x}={a}");

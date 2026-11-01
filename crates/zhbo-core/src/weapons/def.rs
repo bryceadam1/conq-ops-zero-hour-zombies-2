@@ -26,6 +26,9 @@ pub enum Class {
     Pistol,
     Launcher,
     Special,
+    /// The Assault Shield (BO2 weapType `riotshield`): a primary that blocks, deploys and melees
+    /// with itself, never fires a round.
+    Shield,
     Melee,
     Lethal,
     Tactical,
@@ -34,7 +37,11 @@ pub enum Class {
 
 impl Class {
     pub fn is_gun(self) -> bool {
-        !matches!(self, Class::Melee | Class::Lethal | Class::Tactical | Class::Equipment)
+        !matches!(self, Class::Shield | Class::Melee | Class::Lethal | Class::Tactical | Class::Equipment)
+    }
+    /// A weapon of the primary/secondary slots: a gun or the Assault Shield.
+    pub fn is_slot_weapon(self) -> bool {
+        self.is_gun() || self == Class::Shield
     }
     pub fn is_offhand(self) -> bool {
         matches!(self, Class::Lethal | Class::Tactical | Class::Equipment)
@@ -49,6 +56,7 @@ impl Class {
             Class::Pistol => "pistol",
             Class::Launcher => "launcher",
             Class::Special => "special",
+            Class::Shield => "shield",
             Class::Melee => "melee",
             Class::Lethal => "lethal",
             Class::Tactical => "tactical",
@@ -65,7 +73,7 @@ impl Class {
             Class::Shotgun => "weapon_cqb",
             Class::Pistol => "weapon_pistol",
             Class::Launcher => "weapon_launcher",
-            Class::Special => "weapon_special",
+            Class::Special | Class::Shield => "weapon_special",
             Class::Lethal | Class::Tactical | Class::Equipment => "weapon_grenade",
             Class::Melee => "",
         }
@@ -80,6 +88,7 @@ impl Class {
             Class::Pistol,
             Class::Launcher,
             Class::Special,
+            Class::Shield,
             Class::Melee,
             Class::Lethal,
             Class::Tactical,
@@ -296,11 +305,34 @@ pub struct WeaponDef {
     pub sprint_duration_scale: f32,
     pub melee_damage: f32,
     pub melee_time: f32,
+    /// Seconds from the melee press to the strike (`iMeleeDelay`): BO2's swing starts on the press
+    /// and the hit lands when this delay runs out.
+    pub melee_delay: f32,
     /// Grenades and launchers.
     pub effect: Effect,
     pub fuse_time: f32,
-    /// Hold to cook (the fuse runs from the pin pull).
+    /// Hold to cook (the fuse runs from the end of the pull-back, `FUN_008e28a0`).
     pub cook: bool,
+    /// BO2's offhand state machine (Ghidra `FUN_008e2710`..`FUN_008dcbe0`, MODLOG "Offhands run
+    /// BO2's offhand states"): the pull-back (`timing.hold_fire_time`, `iHoldFireTime`, state 0x17),
+    /// the wait from the release to the item leaving the hand (`timing.fire_delay`, `iFireDelay`,
+    /// inside the `fire_time` of state 0x18), the detonate state (`timing.detonate_time`,
+    /// `iDetonateTime`, its charge going off at `iDetonateDelay`, 0x19) a `hasDetonator` item
+    /// enters when the button is pressed with none left in hand, and `isHoldUseGrenade`
+    /// (`hold_use`: held up while the button is, then put away in its quick drop, never thrown).
+    /// The three times are the uncarried-fields `CycleTimes` (one copy of each BO2 field).
+    pub detonate_delay: f32,
+    pub has_detonator: bool,
+    pub hold_use: bool,
+    /// `offhandHoldIsCancelable`: held up after the pull-back (0x1a), the weapon-switch button
+    /// puts it away unused (`FUN_008e28e0` → `FUN_008dcbe0`; the client's weapnext sends the
+    /// cancel instead of cycling, `FUN_00537c20`).
+    pub hold_cancelable: bool,
+    /// `plantable`: set down where it lands, so BO2's plant check (`FUN_008e1780`,
+    /// [`crate::sim::can_plant`]) can refuse it ("Cannot Plant Here").
+    pub plantable: bool,
+    /// BO2's `inventoryType` ([`Inventory`]).
+    pub inventory: Inventory,
     pub explosion_radius: f32,
     pub explosion_radius_min: f32,
     pub explosion_inner_damage: f32,
@@ -460,6 +492,41 @@ pub struct WeaponDef {
     pub enemy_tracer_fx_weapon: String,
     /// Every how-many bullets a tracer is drawn (`TracerDef.drawInterval`; `FUN_007c65c0`).
     pub tracer_interval: u32,
+    /// An Assault Shield (BO2 weapType `riotshield`): its held and stowed collision boxes, posed on
+    /// the body by the converter. `None` for every other weapon.
+    pub shield: Option<ShieldGeometry>,
+}
+
+/// One posed shield collision box: BO2's riot-shield collmap (hit-location rank 101, above every
+/// body box) as the model's bounds on its tag. Inches, in the body's model space (x forward,
+/// y left, z up from the feet); `rot` (x, y, z, w) and `pos` place the box's own frame, whose x
+/// axis is the tag's forward (the axis BO2's blast protection measures against, `FUN_0066f680`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ShieldBox {
+    pub rot: [f32; 4],
+    pub pos: [f32; 3],
+    pub mins: [f32; 3],
+    pub maxs: [f32; 3],
+}
+
+impl ShieldBox {
+    pub const NUMS: usize = 13;
+    pub fn to_nums(&self) -> Vec<f32> {
+        [&self.rot[..], &self.pos[..], &self.mins[..], &self.maxs[..]].concat()
+    }
+    pub fn from_nums(n: &[f32]) -> Self {
+        let a = |i: usize| [n[i], n[i + 1], n[i + 2]];
+        ShieldBox { rot: [n[0], n[1], n[2], n[3]], pos: a(4), mins: a(7), maxs: a(10) }
+    }
+}
+
+/// The Assault Shield's two collision boxes (`_riotshield.gsc`): `t6_wpn_shield_carry_world` on
+/// `tag_weapon_left` while it is the weapon up, `t6_wpn_shield_stow_world` on `tag_stowed_back`
+/// while it is carried but not up.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ShieldGeometry {
+    pub held: ShieldBox,
+    pub stowed: ShieldBox,
 }
 
 /// One BO2 camouflage option (`mp/attachmenttable.csv`'s rows with `camo` in column 1): the id
@@ -519,6 +586,42 @@ impl Kind {
 
 /// An alt mode's viewmodel clips are its BO2 slots plus this.
 pub const ALT_CLIPS: i32 = 0x80;
+
+/// BO2's `weapInventoryType` (`WeaponDef.inventoryType`), carried as data: no bg code branches on it
+/// (only a client HUD path, `FUN_005efeb0`), and neither does the mod.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum Inventory {
+    #[default]
+    Primary,
+    Offhand,
+    /// The placed equipment and the Black Hat.
+    Item,
+    AltMode,
+    Melee,
+    DwLeftHand,
+}
+
+impl Inventory {
+    pub const ALL: [Inventory; 6] = [Inventory::Primary, Inventory::Offhand, Inventory::Item, Inventory::AltMode, Inventory::Melee, Inventory::DwLeftHand];
+    /// BO2's name (`primary`, `offhand`, `item`, `altmode`, `melee`, `dwlefthand`).
+    pub fn name(self) -> &'static str {
+        match self {
+            Inventory::Primary => "primary",
+            Inventory::Offhand => "offhand",
+            Inventory::Item => "item",
+            Inventory::AltMode => "altmode",
+            Inventory::Melee => "melee",
+            Inventory::DwLeftHand => "dwlefthand",
+        }
+    }
+    pub fn parse(s: &str) -> Option<Inventory> {
+        Self::ALL.into_iter().find(|i| i.name() == s)
+    }
+    /// From `weapInventoryType_t`'s value (0 primary .. 5 dwlefthand).
+    pub fn from_bo2(v: u32) -> Inventory {
+        Self::ALL.get(v as usize).copied().unwrap_or_default()
+    }
+}
 
 /// How an offhand item is used.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -596,10 +699,17 @@ impl Default for WeaponDef {
             sprint_duration_scale: 1.0,
             melee_damage: MELEE_DAMAGE,
             melee_time: 0.6,
+            melee_delay: 0.0,
             effect: Effect::None,
             equipment_kind: Kind::Other,
             fuse_time: 0.0,
             cook: false,
+            detonate_delay: 0.0,
+            has_detonator: false,
+            hold_use: false,
+            hold_cancelable: false,
+            plantable: false,
+            inventory: Inventory::Primary,
             explosion_radius: 0.0,
             explosion_radius_min: 0.0,
             explosion_inner_damage: 0.0,
@@ -675,6 +785,7 @@ impl Default for WeaponDef {
             tracer_fx_weapon: String::new(),
             enemy_tracer_fx_weapon: String::new(),
             tracer_interval: 0,
+            shield: None,
         }
     }
 }
@@ -706,6 +817,11 @@ impl WeaponDef {
         } else {
             bulletrange
         }
+    }
+
+    /// An Assault Shield: a primary that blocks, deploys and melees with itself.
+    pub fn is_shield(&self) -> bool {
+        self.class == Class::Shield
     }
 
     /// The category Create-a-Class lists this weapon under: the gun class whose BO2 group is its

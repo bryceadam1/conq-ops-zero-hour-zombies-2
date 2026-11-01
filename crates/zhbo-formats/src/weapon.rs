@@ -86,6 +86,14 @@ pub mod class {
     pub const PISTOL_SPREAD: u32 = 13;
 }
 
+/// `OffhandSlot` (`WeaponDef.offhandSlot`): which offhand button carries the weapon.
+pub mod offhand_slot {
+    pub const NONE: u32 = 0;
+    pub const LETHAL: u32 = 1;
+    pub const TACTICAL: u32 = 2;
+    pub const EQUIPMENT: u32 = 3;
+}
+
 /// `weapInventoryType_t`.
 pub mod inventory {
     pub const PRIMARY: u32 = 0;
@@ -568,6 +576,9 @@ pub struct Weapon {
     pub inventory: u32,
     pub fire_type: u32,
     pub offhand_class: u32,
+    /// `offhandSlot`: 1 lethal, 2 tactical, 3 equipment (`FUN_008de050` picks the offhand buttons'
+    /// weapons from slots 1-3; G3: slot 3 runs at `perk_weapEquipmentUseMultiplier`).
+    pub offhand_slot: u32,
     /// `gunXModel[0]`: the viewmodel weapon.
     pub view_model: Option<String>,
     pub world_model: Option<String>,
@@ -655,6 +666,9 @@ pub struct Weapon {
     pub spin_down_time: f32,
     pub fuse_time: f32,
     pub detonate_time: f32,
+    /// `iDetonateDelay`: from the detonate press to the charges going off (the offhand detonate
+    /// state 0x19's `weaponDelay`, `FUN_008e2710`).
+    pub detonate_delay: f32,
     /// Damage at each of `damage_range` (inches), BO2's falloff curve.
     pub damage: [i32; 6],
     pub damage_range: [f32; 6],
@@ -704,6 +718,15 @@ pub struct Weapon {
     pub max_range: f32,
     pub bolt_action: bool,
     pub cook_off_hold: bool,
+    /// The offhand flags the offhand state machine reads (`FUN_008e2710`, `FUN_008e28e0`):
+    /// `hasDetonator` (the offhand button with none left in hand detonates), `holdButtonToThrow`,
+    /// `offhandHoldIsCancelable`, `isHoldUseGrenade` (the hold ends in a quick drop, no throw), and
+    /// `plantable` (`FUN_008e1780`: placed where it lands).
+    pub has_detonator: bool,
+    pub hold_button_to_throw: bool,
+    pub offhand_hold_is_cancelable: bool,
+    pub is_hold_use_grenade: bool,
+    pub plantable: bool,
     pub dual_wield: bool,
     pub clip_only: bool,
     pub rifle_bullet: bool,
@@ -1041,6 +1064,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.fire_type = z.u32(d + WD::fireType);
     w.offhand_class = z.u32(d + WD::offhandClass);
     w.guided_missile_type = z.u32(d + WD::guidedMissileType);
+    w.offhand_slot = z.u32(d + WD::offhandSlot);
     w.start_ammo = int(z, d + WD::iStartAmmo);
     w.max_ammo = int(z, d + WD::iMaxAmmo);
     w.ammo_clip_relative = z.u8(d + WD::ammoCountClipRelative) != 0;
@@ -1078,6 +1102,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.spin_down_time = ms(z, d + WD::iSpinDownTime);
     w.fuse_time = ms(z, d + WD::fuseTime);
     w.detonate_time = ms(z, d + WD::iDetonateTime);
+    w.detonate_delay = ms(z, d + WD::iDetonateDelay);
     for i in 0..6u32 {
         w.damage[i as usize] = int(z, d + WD::damage + 4 * i);
         w.damage_range[i as usize] = z.f32(d + WD::damageRange + 4 * i);
@@ -1185,6 +1210,11 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.max_range = z.f32(d + WD::maxRange);
     w.bolt_action = z.u8(d + WD::bBoltAction) != 0;
     w.cook_off_hold = z.u8(d + WD::bCookOffHold) != 0;
+    w.has_detonator = z.u8(d + WD::hasDetonator) != 0;
+    w.hold_button_to_throw = z.u8(d + WD::holdButtonToThrow) != 0;
+    w.offhand_hold_is_cancelable = z.u8(d + WD::offhandHoldIsCancelable) != 0;
+    w.is_hold_use_grenade = z.u8(d + WD::isHoldUseGrenade) != 0;
+    w.plantable = z.u8(d + WD::plantable) != 0;
     w.dual_wield = z.u8(d + WD::bDualWield) != 0;
     w.dual_wield_weapon = opt_str(z, d + WD::szDualWieldWeaponName);
     w.clip_only = z.u8(d + WD::bClipOnly) != 0;

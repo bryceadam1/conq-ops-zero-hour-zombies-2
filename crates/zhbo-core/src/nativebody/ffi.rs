@@ -97,7 +97,7 @@ pub(crate) struct State {
     rigs: HashMap<u32, Rig>,
     /// The General posed last: `posed` and [`zhbo_native_body_bone`] describe his rig.
     last: Option<u32>,
-    failed: HashSet<(u8, i32, u8)>,
+    failed: HashSet<super::RigKey>,
     pub(crate) posed: Posed,
     pub(crate) log: VecDeque<String>,
     logged: HashSet<String>,
@@ -151,7 +151,8 @@ impl State {
             return NOT_NATIVE;
         }
         let faction = inp.faction as u8;
-        let key = (faction, inp.vm, mode as u8);
+        let stowed = if mode == Mode::Body { stowed_of(inp.general) } else { -1 };
+        let key = (faction, inp.vm, mode as u8, stowed);
         if self.failed.contains(&key) {
             return NOT_NATIVE;
         }
@@ -205,7 +206,25 @@ fn request(inp: &ZhboNativeBodyIn, mode: Mode) -> Request {
         pos: inp.pos,
         yaw: inp.yaw,
         tag,
+        stowed: if mode == Mode::Body { stowed_of(inp.general) } else { -1 },
     }
+}
+
+/// Lock-free per-General stowed weapon (`general << 32 | vm + 1`), published by the core after each
+/// logic step (`Sim::stowed_weapons`): presentation only, read by the third-person frame.
+static STOWED: [std::sync::atomic::AtomicU64; crate::sim::MAX_PLAYERS] = [const { std::sync::atomic::AtomicU64::new(0) }; crate::sim::MAX_PLAYERS];
+
+pub(crate) fn publish_stowed(pairs: &[(u32, i32)]) {
+    use std::sync::atomic::Ordering;
+    for (i, slot) in STOWED.iter().enumerate() {
+        let v = pairs.get(i).map_or(0, |&(g, vm)| ((g as u64) << 32) | (vm + 1) as u32 as u64);
+        slot.store(v, Ordering::Relaxed);
+    }
+}
+
+fn stowed_of(general: u32) -> i32 {
+    use std::sync::atomic::Ordering;
+    STOWED.iter().map(|s| s.load(Ordering::Relaxed)).find(|&v| v != 0 && (v >> 32) as u32 == general).map_or(-1, |v| (v & 0xffff_ffff) as i32 - 1)
 }
 
 static STATE: Mutex<Option<State>> = Mutex::new(None);

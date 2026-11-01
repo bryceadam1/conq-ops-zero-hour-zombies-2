@@ -21,11 +21,11 @@ pub fn class_melee(held_knife: &'static WeaponDef) -> &'static WeaponDef {
     weapon_or_none(CLASS_MELEE).unwrap_or(held_knife)
 }
 
-/// The weapon a melee uses with `held` up: a melee weapon strikes with itself, anything else with
-/// the class melee weapon (`_scoreevents.gsc:375`: every `MOD_MELEE` kill but the riot shield's is
-/// a knife stab; the conformance oracle's rule, `bo2/rows.rs`).
+/// The weapon a melee uses with `held` up: a melee weapon or the Assault Shield strikes with itself,
+/// anything else with the class melee weapon (`_scoreevents.gsc:375`: every `MOD_MELEE` kill but
+/// the riot shield's is a knife stab; the conformance oracle's rule, `bo2/rows.rs`).
 pub fn melee_weapon<'a>(held: &'a WeaponDef, class_melee: &'a WeaponDef) -> &'a WeaponDef {
-    if held.class == Class::Melee {
+    if held.class == Class::Melee || held.is_shield() {
         held
     } else {
         class_melee

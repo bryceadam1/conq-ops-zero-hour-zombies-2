@@ -799,8 +799,8 @@ impl Editor {
             Slot::PrimaryAtts => attachment_options(&self.draft.primary, &self.draft.primary_atts),
             Slot::Secondary => weapon_options(&self.secondary_slots()),
             Slot::SecondaryAtts => attachment_options(&self.draft.secondary, &self.draft.secondary_atts),
-            Slot::Lethal => equipment_options(WeaponClass::Lethal),
-            Slot::Tactical => equipment_options(WeaponClass::Tactical),
+            Slot::Lethal => equipment_options(true),
+            Slot::Tactical => equipment_options(false),
             Slot::Perk1 | Slot::Perk1b => perk_options(1),
             Slot::Perk2 | Slot::Perk2b => perk_options(2),
             Slot::Perk3 | Slot::Perk3b => perk_options(3),
@@ -829,8 +829,8 @@ impl Editor {
             Slot::SecondaryAtts => {
                 attachment_shorts(&self.draft.secondary, &self.draft.secondary_atts).get(i).is_some_and(|s| self.draft.secondary_atts.iter().any(|a| a == s))
             }
-            Slot::Lethal => equipment_ids(WeaponClass::Lethal).get(i).is_some_and(|id| *id == self.draft.lethal),
-            Slot::Tactical => equipment_ids(WeaponClass::Tactical).get(i).is_some_and(|id| *id == self.draft.tactical),
+            Slot::Lethal => equipment_ids(true).get(i).is_some_and(|id| *id == self.draft.lethal),
+            Slot::Tactical => equipment_ids(false).get(i).is_some_and(|id| *id == self.draft.tactical),
             Slot::Perk1 | Slot::Perk2 | Slot::Perk3 | Slot::Perk1b | Slot::Perk2b | Slot::Perk3b => {
                 // The tier's list marks a perk when *either* row of the tier holds it.
                 let tier = self.slot.perk_tier().unwrap_or(1);
@@ -849,8 +849,8 @@ impl Editor {
         let id = match self.slot {
             Slot::Primary => gun_ids(&items::slots_of(true, &self.draft.wildcards)).get(i).copied(),
             Slot::Secondary => gun_ids(&self.secondary_slots()).get(i).copied(),
-            Slot::Lethal => equipment_ids(WeaponClass::Lethal).get(i).copied(),
-            Slot::Tactical => equipment_ids(WeaponClass::Tactical).get(i).copied(),
+            Slot::Lethal => equipment_ids(true).get(i).copied(),
+            Slot::Tactical => equipment_ids(false).get(i).copied(),
             _ => None,
         }?;
         Some(weapons::weapon(id))
@@ -975,10 +975,10 @@ fn attachment_options(base: &str, current: &[String]) -> Vec<String> {
     out
 }
 
-/// The display names of the equipment of a class, in catalog order. The editor opens on the held
-/// one through [`Editor::current_option_index`].
-fn equipment_options(class: WeaponClass) -> Vec<String> {
-    equipment_ids(class).iter().map(|id| weapons::weapon(id).display_name.clone()).collect()
+/// The display names of the lethal (`true`) or tactical slot's items, in catalog order. The editor
+/// opens on the held one through [`Editor::current_option_index`].
+fn equipment_options(lethal: bool) -> Vec<String> {
+    equipment_ids(lethal).iter().map(|id| weapons::weapon(id).display_name.clone()).collect()
 }
 
 /// The display names of the perks in a tier.
@@ -1314,8 +1314,8 @@ impl Editor {
             Slot::Primary => weapon_index(&items::slots_of(true, &self.draft.wildcards), &self.draft.primary),
             Slot::Secondary => weapon_index(&self.secondary_slots(), &self.draft.secondary),
             Slot::PrimaryAtts | Slot::SecondaryAtts => 0,
-            Slot::Lethal => equipment_index(WeaponClass::Lethal, &self.draft.lethal),
-            Slot::Tactical => equipment_index(WeaponClass::Tactical, &self.draft.tactical),
+            Slot::Lethal => equipment_index(true, &self.draft.lethal),
+            Slot::Tactical => equipment_index(false, &self.draft.tactical),
             Slot::Perk1 | Slot::Perk1b => perk_index(1, self.perk_held(1)),
             Slot::Perk2 | Slot::Perk2b => perk_index(2, self.perk_held(2)),
             Slot::Perk3 | Slot::Perk3b => perk_index(3, self.perk_held(3)),
@@ -1395,12 +1395,12 @@ impl Editor {
                 }
             }
             Slot::Lethal => {
-                if let Some(id) = equipment_ids(WeaponClass::Lethal).get(i).copied() {
+                if let Some(id) = equipment_ids(true).get(i).copied() {
                     self.draft.lethal = id.to_string();
                 }
             }
             Slot::Tactical => {
-                if let Some(id) = equipment_ids(WeaponClass::Tactical).get(i).copied() {
+                if let Some(id) = equipment_ids(false).get(i).copied() {
                     self.draft.tactical = id.to_string();
                 }
             }
@@ -1550,8 +1550,8 @@ pub fn offer() -> Offer {
     Offer {
         primary: gun_ids(&items::slots_of(true, &[])),
         secondary: gun_ids(&items::slots_of(false, &[])),
-        lethal: equipment_ids(WeaponClass::Lethal),
-        tactical: equipment_ids(WeaponClass::Tactical),
+        lethal: equipment_ids(true),
+        tactical: equipment_ids(false),
         primary_caps: caps(Wildcard::PrimaryGunfighter, true),
         secondary_caps: caps(Wildcard::SecondaryGunfighter, false),
     }
@@ -1577,9 +1577,9 @@ fn weapon_index(slots: &[&str], current: &str) -> usize {
     gun_ids(slots).iter().position(|id| *id == current).unwrap_or(0)
 }
 
-/// The index of the held equipment in the class list.
-fn equipment_index(class: WeaponClass, current: &str) -> usize {
-    equipment_ids(class).iter().position(|id| *id == current).unwrap_or(0)
+/// The index of the held offhand in its slot's list.
+fn equipment_index(lethal: bool, current: &str) -> usize {
+    equipment_ids(lethal).iter().position(|id| *id == current).unwrap_or(0)
 }
 
 /// The index of the perk in its tier's list (the first when unset).

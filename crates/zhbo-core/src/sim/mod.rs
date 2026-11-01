@@ -12,12 +12,15 @@
 */
 
 mod build;
+pub mod deploy;
 mod fire;
 mod hack;
 pub mod optics;
+mod plant;
 mod rts;
 
 pub use build::{placement, HostWorld, PLANT_DISTANCE};
+pub use plant::{can_plant, plant_launch, plant_point, plant_velocity, PLANT_TRACE_INCHES};
 pub use fire::{gather_targets, throw_velocity, PENETRATION_DAMAGE};
 pub use rts::{RtsIcons, RtsState, RtsWeapons, Third};
 
@@ -135,6 +138,8 @@ pub enum EventKind {
     /// Offhand pulled back (pin out); then thrown.
     OffhandReady { lethal: bool },
     Thrown { lethal: bool },
+    /// BO2's plant check refused the item (`WEAPON_CANT_PLANT_EQUIPMENT`, "Cannot Plant Here").
+    CantPlant { lethal: bool },
     /// A launcher fired.
     Launched,
     /// A grenade, rocket or other projectile went off.
@@ -162,6 +167,15 @@ pub enum EventKind {
     /// Working at a site (`building::work`), each frame while the use key is held (percent 0..100).
     Working { kind: i32, percent: f32 },
     WorkDone { kind: i32 },
+    /// The Assault Shield went down as cover (`deploy_riotshield`).
+    ShieldDeployed { at: Vec3 },
+    /// The player took their deployed shield back.
+    ShieldPickedUp,
+    /// This player's deployed shield was destroyed (by the player `by`, if one).
+    ShieldDestroyed { by: Option<i32>, at: Vec3 },
+    /// This player's round or strike met an Assault Shield (held, stowed or deployed) at `at`:
+    /// no damage to its bearer; drawn as a metal impact, heard as the shield's.
+    ShieldHit { at: Vec3, dir: Vec3, knife: bool, impact_type: i32 },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -339,6 +353,11 @@ pub struct Sim {
     pub events: Vec<Event>,
     /// This step's tracer bullets, for the host layer to draw per viewer and clear.
     pub tracers: Vec<ShotTracer>,
+    /// The Generals carrying an Assault Shield, as the frame began (held or stowed; see
+    /// [`crate::shield`]): the shots, melee strikes and blasts of this frame test them.
+    pub shields: Vec<crate::shield::Bearer>,
+    /// Deployed Assault Shields (`sim/deploy.rs`).
+    pub deployed: Vec<deploy::Deployed>,
 }
 
 impl Default for Sim {
@@ -359,7 +378,27 @@ impl Sim {
             frame: 0,
             events: Vec::new(),
             tracers: Vec::new(),
+            shields: Vec::new(),
+            deployed: Vec::new(),
         }
+    }
+
+    /// Every General's shield this frame: held while it is the weapon up, stowed on the back while
+    /// it is carried otherwise (`_riotshield.gsc` `refreshshieldattachment`).
+    /// A shield standing deployed is on neither (the deployed ones follow, `general` 0).
+    fn shield_bearers(&self) -> Vec<crate::shield::Bearer> {
+        let mut out = Vec::new();
+        for p in self.players.iter().flatten() {
+            let up = p.arsenal.current().def;
+            // A deployed shield's weapon is out of the arsenal (`Arsenal::take_shield`).
+            let stowed = || p.arsenal.weapons.iter().map(|w| w.def).find(|d| d.is_shield()).map(|d| (d, false));
+            let carried = if up.is_shield() { Some((up, true)) } else { stowed() };
+            if let Some(b) = carried.and_then(|(d, held)| crate::shield::Bearer::of(p.general, p.body.pos, p.yaw, d, held)) {
+                out.push(b);
+            }
+        }
+        out.extend(self.deployed_bearers());
+        out
     }
 
     /// A sim configured from the gameplay tuning pack (`data/ConquerOps/tuning.ini`, loaded by the
@@ -590,6 +629,8 @@ impl Sim {
     /// Once per logic frame, after the frame's messages were dispatched.
     pub fn step(&mut self, host: &dyn LogicHost, frame: u32) {
         self.frame = frame;
+        self.shields = self.shield_bearers();
+        self.equipment.shields.clone_from(&self.shields);
         for idx in 0..self.players.len() {
             let Some(mut p) = self.players[idx].take() else { continue };
             let keep = self.step_player(host, idx, &mut p);
@@ -599,6 +640,7 @@ impl Sim {
         }
         self.step_projectiles(host);
         self.step_equipment(host);
+        self.step_deployed(host);
         for s in &mut self.smokes {
             host.smoke(s.0, s.1);
             s.2 -= LOGIC_DT;
@@ -609,7 +651,7 @@ impl Sim {
     fn step_projectiles(&mut self, host: &dyn LogicHost) {
         let mut done = Vec::new();
         for (i, (owner, proj)) in self.projectiles.iter_mut().enumerate() {
-            if let Some(outcome) = proj.step(host) {
+            if let Some(outcome) = proj.step_shielded(host, &self.shields) {
                 done.push((i, *owner, outcome));
             }
         }
@@ -618,13 +660,14 @@ impl Sim {
             match *outcome {
                 Outcome::Exploded { at, hit_enemy, kill } => {
                     self.emit(*owner, EventKind::Exploded { at });
+                    self.deployed_caught_in_blast(host, *owner, proj.def, at);
                     if proj.def.effect == crate::weapons::Effect::Smoke {
                         let radius = proj.def.explosion_radius.max(crate::projectiles::SMOKE_RADIUS);
                         self.smokes.push((at, radius, crate::projectiles::SMOKE_TIME));
                     }
                     let mut ev = Vec::new();
                     self.equipment.caught_in_blast(host, *owner, proj.owner, at, proj.def.explosion_radius, &mut ev);
-                    self.equipment_events(ev);
+                    self.equipment_events(host, ev);
                     if hit_enemy {
                         self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
                     }
@@ -650,14 +693,15 @@ impl Sim {
         let engineer = |id: u32| players.iter().flatten().any(|p| p.general == id && p.arsenal.class_specialties().has(Specialty::ShowEnemyEquipment));
         let mut ev = Vec::new();
         self.equipment.step(host, &mut self.projectiles, &engineer, &mut ev);
-        self.equipment_events(ev);
+        self.equipment_events(host, ev);
     }
 
-    fn equipment_events(&mut self, events: Vec<EquipEvent>) {
+    fn equipment_events(&mut self, host: &dyn LogicHost, events: Vec<EquipEvent>) {
         for e in events {
             match e {
-                EquipEvent::Exploded { owner, at, hit_enemy, kill } => {
+                EquipEvent::Exploded { owner, at, hit_enemy, kill, def } => {
                     self.emit(owner, EventKind::Exploded { at });
+                    self.deployed_caught_in_blast(host, owner, def, at);
                     if hit_enemy {
                         self.emit(owner, EventKind::HitMarker { headshot: false, kill });
                     }
@@ -720,6 +764,11 @@ impl Sim {
                 // opening the field computer.
                 p.site = host.work_site(p.general, p.body.pos, building::REACH);
                 p.building = p.site.is_some() && (input.held | input.pressed) & buttons::FIELD_COMPUTER != 0;
+                // The use key next to the player's own deployed shield takes it back.
+                let picked_up = p.site.is_none() && input.pressed & buttons::FIELD_COMPUTER != 0 && self.use_picks_up_shield(host, idx, p);
+                if picked_up {
+                    input.pressed &= !buttons::FIELD_COMPUTER;
+                }
                 if p.site.is_none() && input.pressed & buttons::FIELD_COMPUTER != 0 {
                     p.mode = Mode::FieldComputer { t: 0.0 };
                     p.arsenal.ads = 0.0;
@@ -746,6 +795,8 @@ impl Sim {
                     // The hammer, or building, takes the hands: the gun gets no input meanwhile.
                     let busy = self.step_building(host, idx, p, &input);
                     let (held, pressed) = if busy { (0, 0) } else { (input.held, input.pressed) };
+                    // BO2's plant check, from the world, for the arsenal's plantable items.
+                    p.arsenal.plant_ok = [true, false].map(|lethal| can_plant(p.arsenal.offhand_def(lethal), &p.body, p.yaw, p.pitch, p.general, host));
                     let prev_ads = p.arsenal.ads;
                     p.arsenal.step(held, pressed, p.body.sprinting, stance, speed, &mut p.rng, &mut actions);
                     // Hold breath and the idle clock run after the ADS update, before the shot
@@ -867,6 +918,17 @@ impl Sim {
             .collect()
     }
 
+    /// Each General's weapon carried but not up that the third-person body wears stowed: the
+    /// Assault Shield on his back (its converted index), while another weapon is up.
+    pub fn stowed_weapons(&self) -> Vec<(u32, i32)> {
+        self.players
+            .iter()
+            .flatten()
+            .filter(|p| !p.arsenal.current().def.is_shield())
+            .filter_map(|p| p.arsenal.weapons.iter().map(|w| w.def).find(|d| d.is_shield() && d.viewmodel >= 0).map(|d| (p.general, d.viewmodel)))
+            .collect()
+    }
+
     /// Whether `player` sees enemies at `pos` on the minimap through the shroud: one of their
     /// Sensor Grenades.
     pub fn reveals(&self, player: i32, pos: Vec3) -> bool {
@@ -897,6 +959,20 @@ impl Sim {
 
 }
 
+/// The BO2 hint an event shows (its localize key), if it shows one: the client draws it and the
+/// log reports it.
+pub fn event_hint(kind: &EventKind) -> Option<&'static str> {
+    match kind {
+        EventKind::CantPlant { .. } => Some("WEAPON_CANT_PLANT_EQUIPMENT"),
+        _ => None,
+    }
+}
+
+/// A hint's text: BO2's localized string from the converted table, else the key itself.
+pub fn hint_text(key: &str) -> &str {
+    crate::weapons::catalog().hud_string(key).unwrap_or(key)
+}
+
 /// The log line for an event, or `None` for the quiet ones (the ffi log and the tests share this
 /// vocabulary, so the event enum has one wording).
 pub fn describe_event(e: &Event) -> Option<String> {
@@ -915,16 +991,23 @@ pub fn describe_event(e: &Event) -> Option<String> {
         Melee => format!("player {} meleed", e.player),
         Thrown { lethal } => format!("player {} threw a {}", e.player, if lethal { "lethal" } else { "tactical" }),
         Exploded { at } => format!("player {}'s grenade went off at ({:.0}, {:.0})", e.player, at.x, at.y),
+        CantPlant { .. } => format!("player {} was told \"{}\"", e.player, event_hint(&e.kind).map_or("", hint_text)),
         Planted { kind } => format!("player {} put down equipment ({kind:?})", e.player),
         Detonated => format!("player {} set off their C4", e.player),
         Intercepted { .. } => format!("player {}'s Trophy System shot down a projectile", e.player),
         DestroyedEquipment => format!("player {} destroyed enemy equipment", e.player),
         Hacked => format!("player {} hacked with the Black Hat", e.player),
         AltToggled => format!("player {} toggled the weapon's alt mode", e.player),
+        ShieldDeployed { at } => format!("player {} deployed the Assault Shield at ({:.0}, {:.0})", e.player, at.x, at.y),
+        ShieldPickedUp => format!("player {} picked the Assault Shield back up", e.player),
+        ShieldDestroyed { .. } => format!("player {}'s deployed Assault Shield was destroyed", e.player),
         _ => return None,
     };
     Some(msg)
 }
+
+#[cfg(test)]
+mod shield_tests;
 
 #[cfg(test)]
 pub(crate) mod tests {
@@ -961,6 +1044,8 @@ pub(crate) mod tests {
         /// Building: the build menu, and the structures to work on (laid out, or damaged).
         pub options: RefCell<Vec<crate::building::BuildOption>>,
         pub sites: RefCell<Vec<FakeSite>>,
+        /// Everywhere is water too deep to stand in (BO2's plant check refuses it).
+        pub deep_water: std::cell::Cell<bool>,
     }
 
     impl FakeHost {
@@ -988,10 +1073,14 @@ pub(crate) mod tests {
             0.0
         }
         fn is_walkable(&self, _x: f32, _y: f32) -> bool {
-            true
+            !self.deep_water.get()
         }
         fn surface_at(&self, _x: f32, _y: f32) -> Surface {
-            Surface::Dirt
+            if self.deep_water.get() {
+                Surface::Water
+            } else {
+                Surface::Dirt
+            }
         }
         fn extent(&self) -> (Vec3, Vec3) {
             (Vec3::new(-5000.0, -5000.0, -100.0), Vec3::new(5000.0, 5000.0, 1000.0))
@@ -1364,6 +1453,34 @@ pub(crate) mod tests {
         assert!(host.controlled.borrow().is_empty());
     }
 
+    /// BO2 gives the held knife as a second weapon to a class with fewer than two
+    /// (`_class.gsc` `giveloadout`, `initialweaponcount < 2`): a one-gun class spawns holding the
+    /// gun, and the weapon switch brings up the knife, which strikes with itself.
+    #[test]
+    fn a_one_gun_class_carries_the_held_knife_as_its_second_weapon() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout { primary: "mp7_mp".into(), ..crate::weapons::Loadout::default().with_spec("secondary=") });
+        wait_until_ready(&mut sim, &host);
+        let a = &sim.player(0).unwrap().arsenal;
+        let ids: Vec<&str> = a.weapons.iter().map(|w| w.def.id.as_str()).collect();
+        assert_eq!(ids, ["mp7_mp", "knife_held_mp"]);
+        assert_eq!(a.active, 0, "it spawns holding the gun");
+        assert!(!a.is_unarmed());
+        run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::SWAP_WEAPON, ..Default::default() }, 1);
+        run(&mut sim, &host, 0, 1, FpsInput::default(), frames(3.0));
+        let a = &sim.player(0).unwrap().arsenal;
+        assert_eq!(a.current().def.id, "knife_held_mp", "the switch brings up the knife");
+        assert_eq!(a.melee_weapon().id, "knife_held_mp", "a knife in the hand strikes with itself");
+        // Two guns: no knife in the hand (it is still the melee); no guns: the knife alone.
+        let two = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default());
+        assert!(two.weapons.iter().all(|w| w.def.class.is_gun()) && two.weapons.len() == 2);
+        let none = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::unarmed());
+        assert_eq!(none.weapons.len(), 1);
+    }
+
     /// Bug 1: a General spawns with no guns and no grenades, only the melee knife, until a class
     /// is chosen. `Loadout::default()` (the classes' base kit) is untouched.
     #[test]
@@ -1415,6 +1532,238 @@ pub(crate) mod tests {
         sim.events.clear();
         run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::MELEE, ..Default::default() }, 1);
         assert!(events(&sim).contains(&EventKind::Melee));
+    }
+
+    /// After a melee with a gun up the General's gun only fires again once the swing (plain time)
+    /// and its quick re-raise (BO2's state 0x15, Fast Melee Recovery's) are over; Dexterity
+    /// shortens only the re-raise.
+    #[test]
+    fn the_gun_fires_again_after_the_melee_and_its_re_raise() {
+        let first_shot = |perks: &str| {
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            sim.take_control(&host, 0, 1);
+            sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default().with_spec(perks));
+            wait_until_ready(&mut sim, &host);
+            run(&mut sim, &host, 0, 1, FpsInput { pressed: buttons::MELEE, ..Default::default() }, 1);
+            sim.events.clear();
+            let a = &sim.player(0).unwrap().arsenal;
+            let (swing, quick) = (a.melee_left, a.current().def.quick_raise_time);
+            for f in 1..120u32 {
+                run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, ..Default::default() }, 1);
+                if events(&sim).iter().any(|k| matches!(k, EventKind::Shot { .. })) {
+                    return (f, swing, quick);
+                }
+            }
+            panic!("never fired");
+        };
+        let (plain, swing, quick) = first_shot("perks=");
+        let (fast, ..) = first_shot("perks=Dexterity");
+        let want = |raise: f32| ((swing / LOGIC_DT - 1e-4).ceil() + (raise / LOGIC_DT - 1e-4).ceil()) as i64;
+        let m = crate::tuning::get().perk_weap_melee_multiplier;
+        assert!((plain as i64 - want(quick)).abs() <= 1, "fired at {plain}, want {}", want(quick));
+        assert!((fast as i64 - want(quick * m)).abs() <= 1, "with Dexterity fired at {fast}, want {}", want(quick * m));
+        assert!(fast < plain);
+    }
+
+    /// An offhand pressed mid-raise or mid-shot waits that state's time out (BO2's 0x16,
+    /// `FUN_008dcb70` keeps `weaponTime`), then pulls back; pressed at rest it pulls back at once.
+    #[test]
+    fn an_offhand_pressed_mid_raise_or_mid_shot_waits_that_state_out() {
+        use crate::weapons::OffhandUse;
+        // Frames from the press to the pull-back, and the time the interrupted state still had.
+        let pull_back_after = |setup: &dyn Fn(&mut Sim, &FakeHost) -> f32| {
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            sim.take_control(&host, 0, 1);
+            sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default());
+            let left = setup(&mut sim, &host);
+            run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, pressed: buttons::LETHAL, ..Default::default() }, 1);
+            for f in 0..120u32 {
+                let a = &sim.player(0).unwrap().arsenal;
+                match a.offhand {
+                    Some(OffhandUse::Holding { .. }) => return (f, left),
+                    Some(OffhandUse::Starting { .. }) => assert!(a.is_busy()),
+                    other => panic!("frame {f}: {other:?}"),
+                }
+                run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, ..Default::default() }, 1);
+            }
+            panic!("never pulled back");
+        };
+        let want = |left: f32| (left / LOGIC_DT - 1e-4).ceil() as i64 - 1;
+        // At rest: at once.
+        let (rest, _) = pull_back_after(&|sim, host| {
+            wait_until_ready(sim, host);
+            0.0
+        });
+        assert_eq!(rest, 0);
+        // Mid-raise: when the raise would have ended.
+        let (raise, left) = pull_back_after(&|sim, host| {
+            run(sim, host, 0, 1, FpsInput::default(), 5);
+            // The raise's time is left; 0x16 runs it at the offhand's (Fast Toss's) rate.
+            let a = &sim.player(0).unwrap().arsenal;
+            a.raise_left * a.multiplier(crate::weapons::Timing::Toss)
+        });
+        assert!(left > 0.1, "still raising ({left})");
+        assert!((raise as i64 - want(left)).abs() <= 1, "pulled back after {raise} frames, want {}", want(left));
+        assert_eq!(sim_replay_raise(), raise, "deterministic");
+        // Mid-shot: after the fire time.
+        let (shot, fire_time) = pull_back_after(&|sim, host| {
+            wait_until_ready(sim, host);
+            run(sim, host, 0, 1, FpsInput { held: buttons::FIRE, pressed: buttons::FIRE, ..Default::default() }, 1);
+            let a = &sim.player(0).unwrap().arsenal;
+            a.current().def.fire_time * a.multiplier(crate::weapons::Timing::Toss)
+        });
+        assert!((shot as i64 - want(fire_time)).abs() <= 1, "pulled back after {shot} frames, want {}", want(fire_time));
+        assert!(shot > 0);
+
+        fn sim_replay_raise() -> u32 {
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            sim.take_control(&host, 0, 1);
+            sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default());
+            run(&mut sim, &host, 0, 1, FpsInput::default(), 5);
+            run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, pressed: buttons::LETHAL, ..Default::default() }, 1);
+            (0..120u32)
+                .find(|_| {
+                    let holding = matches!(sim.player(0).unwrap().arsenal.offhand, Some(crate::weapons::OffhandUse::Holding { .. }));
+                    run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, ..Default::default() }, 1);
+                    holding
+                })
+                .unwrap()
+        }
+    }
+
+    /// `offhandHoldIsCancelable`: held up after the pull-back, the weapon-switch button's release
+    /// puts the item away unused (the gun's quick raise; the count and nothing thrown); an item
+    /// without it, or during the pull-back, ignores the button and throws on the release.
+    #[test]
+    fn the_switch_button_cancels_a_held_cancelable_offhand() {
+        use crate::weapons::{Offhand, OffhandUse, WeaponDef};
+        // (count left, thrown, the offhand after the switch button came up)
+        let try_cancel = |cancelable: bool, pull_back: f32, hold_frames: u32| {
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            sim.take_control(&host, 0, 1);
+            sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default());
+            wait_until_ready(&mut sim, &host);
+            let base = sim.player(0).unwrap().arsenal.lethal.def;
+            let def: &'static WeaponDef = Box::leak(Box::new(WeaponDef { hold_cancelable: cancelable, timing: crate::weapons::CycleTimes { hold_fire_time: pull_back, ..base.timing }, ..base.clone() }));
+            sim.players[0].as_mut().unwrap().arsenal.lethal = Offhand { def, count: 2 };
+            sim.events.clear();
+            let hold = |extra: u32| FpsInput { held: buttons::LETHAL | extra, ..Default::default() };
+            run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, pressed: buttons::LETHAL, ..Default::default() }, 1);
+            run(&mut sim, &host, 0, 1, hold(0), hold_frames);
+            run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL | buttons::SWAP_WEAPON, pressed: buttons::SWAP_WEAPON, ..Default::default() }, 1);
+            run(&mut sim, &host, 0, 1, hold(0), 1);
+            let after = sim.player(0).unwrap().arsenal.offhand;
+            run(&mut sim, &host, 0, 1, FpsInput::default(), 90);
+            let thrown = events(&sim).iter().any(|k| matches!(k, EventKind::Thrown { .. }));
+            (sim.player(0).unwrap().arsenal.lethal.count, thrown, after)
+        };
+        let (count, thrown, after) = try_cancel(true, 0.2, 30);
+        assert!(matches!(after, Some(OffhandUse::Raising { .. })), "put away: {after:?}");
+        assert_eq!((count, thrown), (2, false), "unused");
+        assert_eq!(try_cancel(true, 0.2, 30), (count, thrown, after), "deterministic");
+        let (count, thrown, _) = try_cancel(false, 0.2, 30);
+        assert_eq!((count, thrown), (1, true), "not cancelable: thrown on the release");
+        let (count, thrown, _) = try_cancel(true, 2.0, 0);
+        assert_eq!((count, thrown), (1, true), "during the pull-back the button does nothing");
+    }
+
+    /// BO2's plant check (`FUN_008e1780`) on a `plantable` item: refused in the air at the press
+    /// (nothing starts) and over deep water while held (put away); either way nothing is used and
+    /// "Cannot Plant Here" is reported. On dry ground it is set down as before.
+    #[test]
+    fn a_plantable_item_is_refused_in_the_air_and_over_deep_water() {
+        use crate::weapons::{Offhand, OffhandUse, WeaponDef};
+        let setup = || {
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            sim.take_control(&host, 0, 1);
+            sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default());
+            wait_until_ready(&mut sim, &host);
+            let base = crate::weapons::weapon("claymore_mp");
+            // BO2's claymore throw: 100 forward, -10000 up (straight down).
+            let def: &'static WeaponDef = Box::leak(Box::new(WeaponDef {
+                plantable: true,
+                projectile_speed: crate::units::inches(100.0),
+                projectile_speed_up: crate::units::inches(-10000.0),
+                ..base.clone()
+            }));
+            sim.players[0].as_mut().unwrap().arsenal.lethal = Offhand { def, count: 1 };
+            sim.events.clear();
+            (host, sim)
+        };
+        let press = FpsInput { held: buttons::LETHAL, pressed: buttons::LETHAL, ..Default::default() };
+        let refused = |sim: &Sim| events(sim).iter().any(|k| matches!(k, EventKind::CantPlant { lethal: true }));
+        let planted = |sim: &Sim| events(sim).iter().any(|k| matches!(k, EventKind::Planted { .. }));
+
+        // In the air: the press does nothing.
+        let (host, mut sim) = setup();
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::JUMP, pressed: buttons::JUMP, ..Default::default() }, 2);
+        assert!(!sim.player(0).unwrap().body.on_ground, "airborne");
+        run(&mut sim, &host, 0, 1, press, 1);
+        assert!(refused(&sim));
+        assert!(sim.player(0).unwrap().arsenal.offhand.is_none(), "nothing started");
+        assert_eq!(sim.player(0).unwrap().arsenal.lethal.count, 1);
+
+        // Held, then over deep water: put away unused.
+        let (host, mut sim) = setup();
+        run(&mut sim, &host, 0, 1, press, 1);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, ..Default::default() }, 30);
+        assert!(matches!(sim.player(0).unwrap().arsenal.offhand, Some(OffhandUse::Holding { .. })) && !refused(&sim));
+        host.deep_water.set(true);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, ..Default::default() }, 1);
+        assert!(refused(&sim));
+        assert!(matches!(sim.player(0).unwrap().arsenal.offhand, Some(OffhandUse::Raising { .. })));
+        run(&mut sim, &host, 0, 1, FpsInput::default(), 60);
+        assert!(!planted(&sim));
+        assert_eq!(sim.player(0).unwrap().arsenal.lethal.count, 1);
+
+        // Dry ground: set down.
+        let (host, mut sim) = setup();
+        run(&mut sim, &host, 0, 1, press, 1);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::LETHAL, ..Default::default() }, 30);
+        run(&mut sim, &host, 0, 1, FpsInput::default(), 60);
+        assert!(planted(&sim) && !refused(&sim));
+        assert_eq!(sim.player(0).unwrap().arsenal.lethal.count, 0);
+    }
+
+    /// A switch pressed right after a shot waits for the shot's time (`FUN_008e0e60` holds it in
+    /// state 6 while `weaponTime` runs), which the fire-rate specialty shortens as it does the shot.
+    #[test]
+    fn a_switch_pressed_after_a_shot_happens_when_the_shot_ends() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.players[0].as_mut().unwrap().arsenal = crate::weapons::Arsenal::with_loadout(crate::weapons::Loadout::default());
+        wait_until_ready(&mut sim, &host);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, pressed: buttons::FIRE, ..Default::default() }, 1);
+        let a = &sim.player(0).unwrap().arsenal;
+        let shot = a.current().def.fire_time * a.multiplier(crate::weapons::Timing::Fire);
+        assert!(shot > 2.0 * LOGIC_DT, "the stand-in's shot spans frames ({shot})");
+        sim.events.clear();
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::SWAP_WEAPON, pressed: buttons::SWAP_WEAPON, ..Default::default() }, 1);
+        let mut at = None;
+        for f in 1..120u32 {
+            if events(&sim).iter().any(|k| matches!(k, EventKind::Swapped)) {
+                at = Some(f);
+                break;
+            }
+            run(&mut sim, &host, 0, 1, FpsInput::default(), 1);
+        }
+        let at = at.expect("switched") as i64;
+        // The shot's frames, the press being the second.
+        let want = (shot / LOGIC_DT - 1e-4).ceil() as i64 - 1;
+        assert!((at - want).abs() <= 1, "switched {at} frames after the press, want {want}");
+        assert!(at > 1, "not on the press");
     }
 
     #[test]

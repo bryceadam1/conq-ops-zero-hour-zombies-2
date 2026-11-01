@@ -1,0 +1,22 @@
+diff --git a/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Object.cpp b/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Object.cpp
+index c3f3bcf..99ce5ac 100644
+--- a/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Object.cpp
++++ b/GeneralsMD/Code/GameEngine/Source/GameLogic/Object/Object.cpp
+@@ -111,6 +111,7 @@
+ #include "Common/MiscAudio.h"
+ #include "Common/AudioEventInfo.h"
+ #include "Common/DynamicAudioEventInfo.h"
++#include "ZhboBridge.h" // ZHBO
+ 
+ 
+ #ifdef DEBUG_OBJECT_ID_EXISTS
+@@ -1885,6 +1886,9 @@ ObjectShroudStatus Object::getShroudedStatus(Int playerIndex) const
+ //-------------------------------------------------------------------------------------------------
+ void Object::attemptDamage( DamageInfo *damageInfo )
+ {
++	// ZHBO: the Assault Shield stops or cuts this damage, or takes it for the core's wear-down
++	Zhbo_ShieldDamage(this, damageInfo);
++
+ 	BodyModuleInterface* body = getBodyModule();
+ 	if (body)
+ 		body->attemptDamage( damageInfo );

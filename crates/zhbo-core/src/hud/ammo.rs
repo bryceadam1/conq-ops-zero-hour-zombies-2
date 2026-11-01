@@ -245,9 +245,14 @@ pub fn draw(l: &Lui, prims: &mut Vec<Prim>, p: &PlayerSim, since_ms: f32, clock:
         draw_offhand(l, prims, ofs, &format!("ZHBO_BO2_Icon_{}", slot.def.id), slot.count);
     }
     let w = p.arsenal.current();
-    let red = if low_clip(w.ammo, w.def.clip) { digit::pulse(clock) } else { 0.0 };
-    let left = w.left_ammo().map(|n| (n, if low_clip(n, w.def.clip) { digit::pulse(clock) } else { 0.0 }));
-    draw_digits(l, prims, w.ammo, w.reserve, red, left);
+    // A melee weapon in the hand (the held knife a one-gun class carries) has no ammo to count:
+    // `CoD.AmmoArea.UpdateWeapon` sets `hideAmmo` for a `melee` weapType and the digits go to alpha
+    // 0; the weapon label and the offhand counters stay.
+    if w.def.class != crate::weapons::Class::Melee {
+        let red = if low_clip(w.ammo, w.def.clip) { digit::pulse(clock) } else { 0.0 };
+        let left = w.left_ammo().map(|n| (n, if low_clip(n, w.def.clip) { digit::pulse(clock) } else { 0.0 }));
+        draw_digits(l, prims, w.ammo, w.reserve, red, left);
+    }
     draw_weapon_label(l, prims, &w.def.display_name, &w.main.attachments, fire_rate_material(w.def.fire), since_ms);
     if let Some(icon) = alt_slot_icon(w.def, weapons::catalog().get(&w.def.alt)) {
         draw_alt_fire(l, prims, icon, alt_key);

@@ -57,8 +57,8 @@ impl Atlas {
         for (name, image) in parse_mapped_images(&text) {
             if !atlas.pages.contains_key(&image.texture) {
                 let texture = format!("Art\\Textures\\{}", image.texture);
-                // The standalone scope-overlay pages name their texture without the `.tga` the
-                // file carries (`hud::build_archive`).
+                // The standalone scope-overlay pages and the generated material pages (`ZHBO_Mat_*`)
+                // name their texture without the `.tga` the file carries (`hud::build_archive`).
                 let entry = big
                     .find(&texture)
                     .or_else(|| big.find(&format!("{texture}.tga")))

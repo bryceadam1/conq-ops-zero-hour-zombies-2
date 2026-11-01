@@ -36,6 +36,89 @@ fn with_state<R>(f: impl FnOnce(&mut State) -> R) -> Option<R> {
     guard.as_mut().map(f)
 }
 
+/// Lock-free mirror of the frame's shield bearers ([`Sim::shields`], `crate::shield`) for the
+/// engine's damage hook (`zhbo_logic_shield_damage`), which runs inside Zero Hour's own object
+/// updates — possibly inside a `zhbo_logic_step` callback, so it must never take the state lock.
+/// Written after each logic step from sim state only (deterministic on every peer).
+const SHIELD_SLOTS: usize = 2 * MAX_PLAYERS;
+static SHIELDS: [[AtomicU32; crate::shield::MIRROR_WORDS]; SHIELD_SLOTS] = [const { [const { AtomicU32::new(0) }; crate::shield::MIRROR_WORDS] }; SHIELD_SLOTS];
+static SHIELD_COUNT: AtomicU32 = AtomicU32::new(0);
+/// The tuning pack's four blast protections, mirrored with the bearers (no lock in the hook).
+static SHIELD_PROTECTION: [AtomicU32; 4] = [const { AtomicU32::new(0) }; 4];
+
+/// Zero Hour damage to a deployed shield's object, queued by the hook (lock-free: a fixed ring of
+/// object, source, kind, amount) and handed to the sim at the next logic step, in engine order.
+const SHIELD_HITS: usize = 64;
+static SHIELD_HIT_QUEUE: [[AtomicU32; 4]; SHIELD_HITS] = [const { [const { AtomicU32::new(0) }; 4] }; SHIELD_HITS];
+static SHIELD_HIT_COUNT: AtomicU32 = AtomicU32::new(0);
+
+fn publish_shields(sim: &Sim) {
+    let n = sim.shields.len().min(SHIELD_SLOTS);
+    for (slot, b) in SHIELDS.iter().zip(&sim.shields) {
+        for (w, v) in slot.iter().zip(b.to_words()) {
+            w.store(v, Ordering::Relaxed);
+        }
+    }
+    SHIELD_COUNT.store(n as u32, Ordering::Relaxed);
+    let t = crate::tuning::get();
+    for (a, v) in SHIELD_PROTECTION.iter().zip([t.shield_blast_protection_30, t.shield_blast_protection_60, t.shield_blast_protection_120, t.shield_blast_protection_180]) {
+        a.store(v.to_bits(), Ordering::Relaxed);
+    }
+}
+
+fn mirrored_shields() -> Vec<crate::shield::Bearer> {
+    let n = (SHIELD_COUNT.load(Ordering::Relaxed) as usize).min(SHIELD_SLOTS);
+    SHIELDS[..n]
+        .iter()
+        .map(|slot| {
+            let mut w = [0u32; crate::shield::MIRROR_WORDS];
+            for (d, s) in w.iter_mut().zip(slot) {
+                *d = s.load(Ordering::Relaxed);
+            }
+            crate::shield::Bearer::from_words(&w)
+        })
+        .collect()
+}
+
+/// Hand the queued engine damage to the deployed shields to the sim (before its step).
+fn drain_shield_hits(s: &mut State) {
+    let n = (SHIELD_HIT_COUNT.swap(0, Ordering::Relaxed) as usize).min(SHIELD_HITS);
+    for e in &SHIELD_HIT_QUEUE[..n] {
+        let w: [u32; 4] = std::array::from_fn(|k| e[k].load(Ordering::Relaxed));
+        s.sim.engine_damage_to_deployed(&s.logic, w[0], w[1], w[2] as i32, f32::from_bits(w[3]));
+    }
+}
+
+/// The Assault Shield in Zero Hour's damage path (`Object::attemptDamage`, host patch 0017): the
+/// share of `amount` the engine applies to `victim`. A deployed shield's object takes none — the
+/// damage is queued for the sim's wear-down; a first-person General's held/stowed shield stops a
+/// round or blow from its side and cuts a blast ([`crate::shield::engine_scale`]); damage the sim
+/// itself dealt (a controlled General's) passes, the sim already tested it. `kind` is the core's
+/// [`crate::host::damage_kind`] (the bridge maps Zero Hour's `DamageType`; -1 for the rest);
+/// `from` is the source's feet and height when `source_known`. Lock-free.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn zhbo_logic_shield_damage(victim: u32, source: u32, from_x: f32, from_y: f32, from_z: f32, from_height: f32, source_known: i32, kind: i32, amount: f32) -> f32 {
+    if source != 0 && zhbo_logic_is_controlled(source) != 0 {
+        return 1.0;
+    }
+    let bearers = mirrored_shields();
+    if victim != 0 && bearers.iter().any(|b| b.object == victim) {
+        let i = SHIELD_HIT_COUNT.load(Ordering::Relaxed) as usize;
+        if i < SHIELD_HITS && amount > 0.0 {
+            for (slot, v) in SHIELD_HIT_QUEUE[i].iter().zip([victim, source, kind as u32, amount.to_bits()]) {
+                slot.store(v, Ordering::Relaxed);
+            }
+            SHIELD_HIT_COUNT.store(i as u32 + 1, Ordering::Relaxed);
+        }
+        return 0.0;
+    }
+    let from = (source_known != 0).then(|| (crate::math::Vec3::new(from_x, from_y, from_z), from_height));
+    let p = |i: usize| f32::from_bits(SHIELD_PROTECTION[i].load(Ordering::Relaxed));
+    let t = crate::tuning::Tuning { shield_blast_protection_30: p(0), shield_blast_protection_60: p(1), shield_blast_protection_120: p(2), shield_blast_protection_180: p(3), ..Default::default() };
+    crate::shield::engine_scale(&bearers, victim, from, kind, &t)
+}
+
 fn publish_controlled(sim: &Sim) {
     let mut ids = sim.controlled_ids();
     for slot in CONTROLLED.iter() {
@@ -291,6 +374,8 @@ pub extern "C" fn zhbo_reset() {
         // bridge's; it goes away with the shell).
         s.menu = None;
         publish_controlled(&s.sim);
+        publish_shields(&s.sim);
+        crate::nativebody::ffi::publish_stowed(&s.sim.stowed_weapons());
     });
 }
 
@@ -299,6 +384,8 @@ pub extern "C" fn zhbo_logic_take_control(player: i32, general: u32) {
     with_state(|s| {
         s.sim.take_control(&s.logic, player, general);
         publish_controlled(&s.sim);
+        publish_shields(&s.sim);
+        crate::nativebody::ffi::publish_stowed(&s.sim.stowed_weapons());
     });
 }
 
@@ -351,10 +438,13 @@ pub unsafe extern "C" fn zhbo_logic_choose_class(player: i32, general: u32, inde
 pub extern "C" fn zhbo_logic_step(frame: u32) {
     with_state(|s| {
         let before = s.sim.events.len();
+        drain_shield_hits(s);
         s.sim.step(&s.logic, frame);
         // The step's tracer bullets, as this machine's viewer sees them (client-only FX).
         s.client.tracers.play(&s.logic, &mut s.sim.tracers);
         publish_controlled(&s.sim);
+        publish_shields(&s.sim);
+        crate::nativebody::ffi::publish_stowed(&s.sim.stowed_weapons());
         log_step(s, before, frame);
     });
 }
@@ -1097,5 +1187,22 @@ mod tests {
         assert_eq!(zhbo_general_has_class(1), 1);
         assert_eq!(zhbo_general_has_class(2), 0, "another General has no class");
         zhbo_reset();
+    }
+
+    #[test]
+    fn the_shield_hook_queues_a_deployed_shields_damage_and_passes_the_sims_own() {
+        let mut sim = Sim::new();
+        let def = crate::weapons::catalog().get("riotshield_mp").unwrap();
+        let carried = crate::shield::Bearer::of(5, crate::math::Vec3::new(0.0, 0.0, 0.0), 0.0, def, true).unwrap();
+        sim.shields = vec![carried, crate::shield::Bearer { general: 0, object: 77, ..carried }];
+        publish_shields(&sim);
+        SHIELD_HIT_COUNT.store(0, Ordering::Relaxed);
+        assert_eq!(zhbo_logic_shield_damage(77, 3, 0.0, 0.0, 0.0, 12.0, 1, crate::host::damage_kind::SMALL_ARMS, 30.0), 0.0, "the engine applies none of it");
+        assert_eq!(SHIELD_HIT_COUNT.load(Ordering::Relaxed), 1, "queued for the sim");
+        // A round from in front of General 5's held shield is stopped; from behind it is not.
+        assert_eq!(zhbo_logic_shield_damage(5, 3, 60.0, 0.0, 0.0, 12.0, 1, crate::host::damage_kind::SMALL_ARMS, 30.0), 0.0);
+        assert_eq!(zhbo_logic_shield_damage(5, 3, -60.0, 0.0, 0.0, 12.0, 1, crate::host::damage_kind::SMALL_ARMS, 30.0), 1.0);
+        SHIELD_HIT_COUNT.store(0, Ordering::Relaxed);
+        SHIELD_COUNT.store(0, Ordering::Relaxed);
     }
 }

@@ -97,8 +97,14 @@ mod tests {
         assert_eq!(a.class_melee.id, CLASS_MELEE);
         let mut out = Vec::new();
         a.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
-        assert!(out.iter().any(|x| matches!(x, WeaponAction::Melee { damage } if *damage == class_melee.melee_damage)));
         assert_eq!(a.melee_left, class_melee.melee_time);
+        let strike = |a: &mut Arsenal, rng: &mut Rng, out: &mut Vec<WeaponAction>| {
+            while !out.iter().any(|x| matches!(x, WeaponAction::Melee { .. })) {
+                a.step(0, 0, false, 0, 0.0, rng, out);
+            }
+        };
+        strike(&mut a, &mut rng, &mut out);
+        assert!(out.iter().any(|x| matches!(x, WeaponAction::Melee { damage } if *damage == class_melee.melee_damage)));
         assert_eq!(a.current_weapon().id, CLASS_MELEE, "the current weapon while meleeing");
 
         let mut k = Arsenal::unarmed();
@@ -109,6 +115,181 @@ mod tests {
         k.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
         assert_eq!(k.melee_left, held.melee_time);
         assert_eq!(k.melee_weapon().id, "knife_held_mp");
+    }
+
+    /// BO2's melee: the swing (`EV_MELEE_SWIPE`) on the press, the strike (`EV_FIRE_MELEE`) when
+    /// the melee weapon's `iMeleeDelay` has run out (`FUN_008dc770` / `FUN_008e4da0`), in plain
+    /// time — Fast Melee Recovery does not shorten the delay. A replay strikes on the same frame.
+    #[test]
+    fn the_strike_lands_after_the_melee_weapons_delay() {
+        let class_melee = weapon(CLASS_MELEE);
+        assert!(class_melee.melee_delay > LOGIC_DT, "the stand-in has a delay to wait for");
+        let swing_and_strike = |perks: &str| {
+            let mut rng = Rng::new(1);
+            let mut a = Arsenal::with_loadout(Loadout::default().with_spec(perks));
+            a.raise_left = 0.0;
+            let mut out = Vec::new();
+            a.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
+            assert!(out.contains(&WeaponAction::MeleeSwing), "the swing starts on the press");
+            assert!(!out.iter().any(|x| matches!(x, WeaponAction::Melee { .. })), "no strike on the press");
+            let mut frames = 0;
+            loop {
+                out.clear();
+                a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+                frames += 1;
+                if out.iter().any(|x| matches!(x, WeaponAction::Melee { .. })) {
+                    break;
+                }
+            }
+            frames
+        };
+        let frames = swing_and_strike("perks=");
+        assert_eq!(frames, (class_melee.melee_delay / LOGIC_DT - 1e-4).ceil() as i32, "the strike after the delay");
+        assert_eq!(swing_and_strike("perks="), frames, "deterministic");
+        assert_eq!(swing_and_strike("perks=Dexterity"), frames, "Fast Melee Recovery leaves the delay alone");
+    }
+
+    /// An offhand pressed mid-swing (0x13) takes the state over: the strike still due never lands
+    /// (0x16 zeroes `weaponDelay`) and the swing's time left is waited out first; pressed during the
+    /// sprint-out (0x26), its time left is.
+    #[test]
+    fn an_offhand_mid_swing_drops_the_strike_and_waits_the_swing_out() {
+        let mut rng = Rng::new(1);
+        let mut a = Arsenal::with_loadout(Loadout::default());
+        a.raise_left = 0.0;
+        let mut out = Vec::new();
+        a.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
+        let swing = a.melee_left;
+        assert!(a.melee_delay_left > LOGIC_DT, "the strike is still due");
+        out.clear();
+        a.step(buttons::LETHAL, buttons::LETHAL, false, 0, 0.0, &mut rng, &mut out);
+        match a.offhand {
+            // The swing ticked once more in plain time before the press.
+            Some(OffhandUse::Starting { left, .. }) => assert!((left - (swing - LOGIC_DT)).abs() < 1e-4, "{left} vs {swing}"),
+            other => panic!("{other:?}"),
+        }
+        for _ in 0..120 {
+            a.step(buttons::LETHAL, 0, false, 0, 0.0, &mut rng, &mut out);
+        }
+        assert!(!out.iter().any(|x| matches!(x, WeaponAction::Melee { .. })), "the strike never lands");
+        assert!(matches!(a.offhand, Some(OffhandUse::Holding { .. })), "then the pull-back");
+
+        let mut a = Arsenal::with_loadout(Loadout::default());
+        a.raise_left = 0.0;
+        a.since_sprint = 0.01;
+        let sprint_out = a.current().def.sprint_out_time;
+        assert!(sprint_out > 0.05, "the stand-in has a sprint-out");
+        a.step(buttons::LETHAL, buttons::LETHAL, false, 0, 0.0, &mut rng, &mut out);
+        match a.offhand {
+            Some(OffhandUse::Starting { left, .. }) => assert!(left > 0.0 && left < sprint_out, "{left}"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    /// A switch pressed mid-swing is held back, not dropped: it happens once the swing and the
+    /// gun's re-raise are done (`FUN_008e0e60` returns at 0x13-0x15 and the command keeps it).
+    #[test]
+    fn a_switch_during_a_melee_happens_after_it() {
+        let mut rng = Rng::new(1);
+        let mut a = Arsenal::with_loadout(Loadout::default());
+        a.raise_left = 0.0;
+        let mut out = Vec::new();
+        a.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
+        a.step(buttons::SWAP_WEAPON, buttons::SWAP_WEAPON, false, 0, 0.0, &mut rng, &mut out);
+        assert_eq!(a.active, 0, "not during the swing");
+        while a.melee_left > 0.0 || a.melee_recover_left > 0.0 {
+            out.clear();
+            a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+            assert!(!out.contains(&WeaponAction::Swapped) || (a.melee_left <= 0.0 && a.melee_recover_left <= 0.0));
+        }
+        a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+        assert_eq!(a.active, 1, "switched afterwards");
+    }
+
+    /// The weapon-switch key during a non-cancelable offhand (the frag): the switch is kept and
+    /// happens once the offhand is done; on a cancelable one it is the cancel, no switch.
+    #[test]
+    fn a_switch_during_a_frag_happens_after_it() {
+        let run = |cancelable: bool| {
+            let mut rng = Rng::new(1);
+            let mut a = Arsenal::with_loadout(Loadout::default());
+            a.raise_left = 0.0;
+            assert!(a.weapons.len() > 1);
+            let def: &'static WeaponDef = Box::leak(Box::new(WeaponDef { hold_cancelable: cancelable, ..a.lethal.def.clone() }));
+            a.lethal = Offhand { def, count: 2 };
+            let mut out = Vec::new();
+            a.step(buttons::LETHAL, buttons::LETHAL, false, 0, 0.0, &mut rng, &mut out);
+            for _ in 0..40 {
+                a.step(buttons::LETHAL, 0, false, 0, 0.0, &mut rng, &mut out);
+            }
+            a.step(buttons::LETHAL | buttons::SWAP_WEAPON, buttons::SWAP_WEAPON, false, 0, 0.0, &mut rng, &mut out);
+            a.step(buttons::LETHAL, 0, false, 0, 0.0, &mut rng, &mut out);
+            assert_eq!(a.active, 0, "no switch during the offhand");
+            let mut swapped_while_busy = false;
+            for _ in 0..200 {
+                let busy = a.offhand.is_some();
+                let mut step = Vec::new();
+                a.step(0, 0, false, 0, 0.0, &mut rng, &mut step);
+                swapped_while_busy |= busy && a.offhand.is_some() && step.contains(&WeaponAction::Swapped);
+                out.extend(step);
+            }
+            assert!(!swapped_while_busy);
+            (a.active, out.contains(&WeaponAction::Swapped), a.lethal.count)
+        };
+        assert_eq!(run(false), (1, true, 1), "thrown, then switched");
+        assert_eq!(run(true), (0, false, 2), "cancelled, no switch");
+    }
+
+    /// BO2 runs the swing's `iMeleeTime` in plain time, then — a gun up, so the class melee
+    /// weapon struck — brings the gun back up in its own `quickRaiseTime` (state 0x15,
+    /// `FUN_008e1f50`), the one melee state Fast Melee Recovery speeds up (G3). The held knife
+    /// strikes with itself and is simply ready again.
+    #[test]
+    fn after_a_melee_the_gun_comes_back_up_and_fast_melee_recovery_speeds_only_that() {
+        let class_melee = weapon(CLASS_MELEE);
+        // Frames of the swing, of the re-raise, and whether the trigger did anything meanwhile.
+        let melee = |perks: &str| {
+            let mut rng = Rng::new(1);
+            let mut a = Arsenal::with_loadout(Loadout::default().with_spec(perks));
+            a.raise_left = 0.0;
+            let mut out = Vec::new();
+            a.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
+            let (mut swing, mut raise) = (1, 0);
+            while a.melee_left > 0.0 {
+                a.step(buttons::FIRE, 0, false, 0, 0.0, &mut rng, &mut out);
+                swing += 1;
+            }
+            let mut fired = shots(&out) > 0;
+            while a.melee_recover_left > 0.0 {
+                let mut step = Vec::new();
+                a.step(buttons::FIRE, 0, false, 0, 0.0, &mut rng, &mut step);
+                raise += 1;
+                // The frame the re-raise ends the gun is ready and may fire.
+                fired |= a.melee_recover_left > 0.0 && shots(&step) > 0;
+            }
+            (swing, raise, fired, a.multiplier(Timing::Melee), a.current().def.quick_raise_time)
+        };
+        let (swing, raise, fired, m, quick) = melee("perks=");
+        assert_eq!(m, 1.0);
+        assert_eq!(swing, 1 + (class_melee.melee_time / LOGIC_DT - 1e-4).ceil() as i32, "the press, then the swing in plain time");
+        assert_eq!(raise, (quick / LOGIC_DT - 1e-4).ceil() as i32, "the gun's quick raise");
+        assert!(!fired, "the gun is not up until the re-raise ends");
+        assert_eq!(melee("perks="), (swing, raise, fired, m, quick), "deterministic");
+        let (fast_swing, fast_raise, _, fast, _) = melee("perks=Dexterity");
+        assert!(fast < 1.0, "Dexterity grants Fast Melee Recovery");
+        assert_eq!(fast_swing, swing, "the swing is not shortened");
+        assert_eq!(fast_raise, (quick * fast / LOGIC_DT - 1e-4).ceil() as i32, "only the re-raise is");
+
+        // The held knife: no re-raise.
+        let mut rng = Rng::new(1);
+        let mut k = Arsenal::unarmed();
+        let mut out = Vec::new();
+        k.step(0, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
+        while k.melee_left > 0.0 {
+            k.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+        }
+        assert_eq!(k.melee_recover_left, 0.0);
+        assert!(!k.is_busy());
     }
 
     #[test]
@@ -529,15 +710,28 @@ mod tests {
         let mut out = Vec::new();
         a.step(buttons::LETHAL, buttons::LETHAL, false, 0, 0.0, &mut rng, &mut out);
         assert!(out.contains(&WeaponAction::OffhandReady { lethal: true }));
-        // Hold (cook) for one second, then let go.
+        // Hold (cook) for one second, then let go: the grenade leaves the hand `fire_delay` later.
         for _ in 0..30 {
             a.step(buttons::LETHAL, 0, false, 0, 0.0, &mut rng, &mut out);
         }
-        a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
-        let throw = out.iter().find_map(|x| if let WeaponAction::Throw { fuse_left, .. } = x { Some(*fuse_left) } else { None });
-        let fuse = a.lethal.def.fuse_time;
-        let left = throw.expect("thrown");
-        assert!((left - (fuse - 1.0)).abs() < 0.1, "cooked: {left} of {fuse}");
+        let def = a.lethal.def;
+        let mut frames_held = 31;
+        let throw = loop {
+            a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+            frames_held += 1;
+            if let Some(left) = out.iter().find_map(|x| if let WeaponAction::Throw { fuse_left, .. } = x { Some(*fuse_left) } else { None }) {
+                break left;
+            }
+            assert!(frames_held < 60, "never thrown");
+        };
+        // The release is seen on the first frame the button is up; the offhand states run at the
+        // class's Dexterity rate (`fasttoss`, G3).
+        let m = a.multiplier(Timing::Toss);
+        let thrown_at = frames_held as f32 * LOGIC_DT;
+        assert!((thrown_at - (32.0 * LOGIC_DT + def.timing.fire_delay * m)).abs() <= LOGIC_DT * 1.01, "left at {thrown_at}");
+        // The fuse burned from the end of the pull-back (BO2's `FUN_008e28a0` sets it there).
+        let want = def.fuse_time - (thrown_at - def.timing.hold_fire_time * m);
+        assert!((throw - want).abs() <= LOGIC_DT * 1.5, "cooked: {throw} left, want {want}");
         assert_eq!(a.lethal.count, 0);
         // The weapon comes back after the throw.
         frames(&mut a, 0, 60, &mut rng);
@@ -967,8 +1161,32 @@ mod swap_tests {
         assert_eq!(a.active, 0);
         assert_eq!(a.current().ammo, 0, "{:?}", a.current().reload);
     }
-}
 
+    #[test]
+    fn the_assault_shield_is_a_primary_that_melees_with_itself_and_fires_nothing() {
+        let shield = catalog().get("riotshield_mp").expect("the built-in shield");
+        assert!(shield.is_shield() && shield.shield.is_some());
+        assert!(!shield.class.is_gun() && shield.class.is_slot_weapon());
+        assert_eq!(shield.cac_class(), Class::Special, "BO2 lists it under SPECIALS");
+        // `_scoreevents.gsc:375`: the shield's melee is its own, not the class knife's stab.
+        let knife = catalog().get(CLASS_MELEE).unwrap();
+        assert_eq!(melee_weapon(shield, knife).id, "riotshield_mp");
+        let mut a = Arsenal::new();
+        a.weapons[0] = WeaponState::new(shield);
+        a.raise_left = 0.0;
+        assert_eq!(a.current().ammo, 1, "its one round is the deploy");
+        let mut rng = Rng::new(1);
+        let mut out = Vec::new();
+        a.step(buttons::FIRE, buttons::FIRE, false, 0, 0.0, &mut rng, &mut out);
+        assert!(!out.iter().any(|w| matches!(w, WeaponAction::Fire { .. } | WeaponAction::Launch { .. })), "{out:?}");
+        // It raises (ADS) like a gun: BO2's `viewmodel_riotshield_ads_up`.
+        for _ in 0..30 {
+            a.step(buttons::ADS, 0, false, 0, 0.0, &mut rng, &mut out);
+        }
+        assert!(a.ads > 0.99);
+        assert_eq!(a.move_scale(), shield.ads_move_scale);
+    }
+}
 
 #[cfg(test)]
 mod zoom_tests {
@@ -998,15 +1216,17 @@ mod zoom_tests {
     fn melee_is_refused_while_a_scope_is_aimed_and_works_from_the_hip() {
         let (mut a, mut rng) = aimed(sniper());
         let mut out = Vec::new();
+        // A melee start is the swing (the strike lands after the melee weapon's delay).
+        let melee = |x: &WeaponAction| matches!(x, WeaponAction::Melee { .. } | WeaponAction::MeleeSwing);
         a.step(buttons::ADS | buttons::MELEE, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
-        assert!(!out.iter().any(|x| matches!(x, WeaponAction::Melee { .. })), "{out:?}");
+        assert!(!out.iter().any(melee), "{out:?}");
         assert_eq!(a.ads, 1.0, "the aim holds");
         for _ in 0..20 {
             a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
         }
         out.clear();
         a.step(buttons::MELEE, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
-        assert!(out.iter().any(|x| matches!(x, WeaponAction::Melee { .. })), "{out:?}");
+        assert!(out.iter().any(melee), "{out:?}");
     }
 
     #[test]

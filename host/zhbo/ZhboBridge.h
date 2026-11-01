@@ -16,6 +16,7 @@ class CommandButton;
 class GameMessage;
 class GameMessageTranslator;
 class Object;
+class DamageInfo;
 
 #include <string>
 /// A whole file from the game's file system as text (empty when missing). Shared by the glue's
@@ -49,6 +50,9 @@ void Zhbo_OnChooseClassMessage(Int playerIndex, const GameMessage *msg);
 void Zhbo_LogicStep(UnsignedInt frame);
 /// True while the object is driven by first-person input (its AI and physics must not run).
 Bool Zhbo_IsControlled(ObjectID id);
+/// The Assault Shield in the damage path (patch 0017, top of Object::attemptDamage): scales the
+/// damage a held/stowed shield stops or a deployed shield's object takes (the core wears that down).
+void Zhbo_ShieldDamage(Object *obj, DamageInfo *info);
 
 /// Force the in-game Create-a-Class pick screen open (the command bar's "Create a Class" entry;
 /// the at-spawn pick needs no forcing). One-shot latch consumed by the next client frame. The

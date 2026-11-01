@@ -30,4 +30,5 @@ pub mod shotfx;
 pub mod sfx;
 pub mod manifest;
 pub mod screenshot;
+pub mod shield;
 pub mod weapons;

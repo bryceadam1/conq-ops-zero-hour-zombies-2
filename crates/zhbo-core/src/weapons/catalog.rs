@@ -25,6 +25,7 @@ pub struct Catalog {
     reticle_colors: HashMap<String, &'static CamoOption>,
     reticle_color_order: Vec<&'static CamoOption>,
     built: Mutex<HashMap<String, &'static WeaponDef>>,
+    hud_strings: HashMap<String, &'static str>,
     pub tablet_meshes: u8,
 }
 
@@ -53,6 +54,7 @@ impl Catalog {
             reticle_color_order,
             built: Mutex::new(HashMap::new()),
             tablet_meshes: t.tablet_meshes,
+            hud_strings: t.hud_strings.into_iter().map(|(k, v)| (k, &*Box::leak(v.into_boxed_str()))).collect(),
         }
     }
 
@@ -94,6 +96,12 @@ impl Catalog {
     }
 
     /// A camo option by id (`camo_multicam`), with its name and thumbnail image.
+    /// BO2's localized HUD string for a localize key ([`super::table::HUD_STRINGS`]), if the
+    /// converted table carries it.
+    pub fn hud_string(&self, key: &str) -> Option<&'static str> {
+        self.hud_strings.get(key).copied()
+    }
+
     pub fn camo(&self, id: &str) -> Option<&'static CamoOption> {
         self.camo.get(id).copied()
     }
@@ -331,6 +339,9 @@ Weapon frag_grenade_mp
   Effect = explode
   ExplosionFx = FX_BoobyTrapExplosion
   Fuse = 3.5 1
+  ; Generic offhand states: pull-back, release-to-throw delay (no detonator).
+  FireCycle = 0 0.1 0 0 0.5 0 0
+  Offhand = 0 0 0
   Explosion = 42 0 150 50
   Projectile = 225 50 1 0 0
   Viewmodel = 2
@@ -339,7 +350,7 @@ End
 
 Weapon claymore_mp
   DisplayName = Claymore
-  Class = lethal
+  Class = equipment
   CacSlot = primarygrenade
   Fire = semi
   FireTime = 0.6
@@ -349,9 +360,34 @@ Weapon claymore_mp
   Effect = explode
   Fuse = 3.5 0
   Explosion = 42 0 150 50
+  FireCycle = 0 0.15 0 0 0.2 0 0
+  Offhand = 0 0 0
   Projectile = 0 0 0 1 0
   Viewmodel = 2
   Place = plant
+  Equipment = claymore
+End
+
+; C4 (BO2's `satchel_charge_mp`): thrown and stuck; with none left in hand its button is the
+; detonator (`hasDetonator`). Generic offhand times.
+Weapon satchel_charge_mp
+  DisplayName = C4
+  Class = equipment
+  CacSlot = primarygrenade
+  Fire = semi
+  FireTime = 0.6
+  Clip = 2
+  StartReserve = 2
+  MaxReserve = 2
+  Effect = explode
+  Fuse = 3.5 0
+  FireCycle = 0 0.15 0 0 0.1 0 0
+  DetonateTime = 0.5
+  Offhand = 0.2 1 0
+  Explosion = 42 0 150 50
+  Projectile = 100 0 1 0 1
+  Viewmodel = 2
+  Equipment = c4
 End
 
 Weapon concussion_grenade_mp
@@ -366,18 +402,57 @@ Weapon concussion_grenade_mp
   Effect = stun
   ExplosionFx = WeaponFX_RangerFlashBangGrenadeDetonation
   Fuse = 1.5 0
+  FireCycle = 0 0.1 0 0 0.5 0 0
+  Offhand = 0 0 0
   Explosion = 67 0 4 2
   Projectile = 225 50 1 0 0
   Viewmodel = 3
   Anims = e800076
 End
 
+; Placed tactical equipment (BO2's `specialgrenade` slot lists it beside the grenades).
+Weapon trophy_system_mp
+  DisplayName = Trophy System
+  Class = equipment
+  CacSlot = specialgrenade
+  Fire = semi
+  FireTime = 0.6
+  Clip = 1
+  StartReserve = 1
+  MaxReserve = 1
+  FireCycle = 0 0.1 0 0 0.5 0 0
+  Offhand = 0 0 0
+  Projectile = 0 0 0 1 0
+  Viewmodel = 3
+  Place = plant
+  Equipment = trophy
+End
+
 Weapon knife_held_mp
   DisplayName = Knife
   Class = melee
   Melee = 135 0.6
+  MeleeDelay = 0.05
   Viewmodel = 4
   Anims = 60200e6003f007f3804256
+End
+
+; The Assault Shield stand-in (a primary of class `shield`): generic boxes in front of and behind a
+; 72-inch body at generic values; the converted table poses BO2's own collmaps on the BO2 body.
+Weapon riotshield_mp
+  DisplayName = Assault Shield
+  Class = shield
+  CacSlot = primary
+  CacGroup = weapon_special
+  Fire = semi
+  FireTime = 0.5
+  Clip = 1
+  StartReserve = 0
+  MaxReserve = 0
+  Move = 0.9 0.9 1
+  Melee = 70 0.8
+  MeleeDelay = 0.1
+  Shield = 0 0 0 1 16 0 36 -4 -17 -26 4 17 26 0 0 1 0 -8 0 44 -4 -17 -14 4 17 14
 End
 
 ; The class melee weapon every class gets (BO2's `knife_mp`): a gun's melee strikes with it.
@@ -386,6 +461,7 @@ Weapon knife_mp
   DisplayName = Knife
   Class = melee
   Melee = 135 0.75
+  MeleeDelay = 0.1
   Viewmodel = 4
 End
 

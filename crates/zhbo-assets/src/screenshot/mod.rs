@@ -16,6 +16,8 @@
 //! * `cac-editor-weapons.png` — the primary weapon screen with the category column and the
 //!   segmented stat bars (`c-primary/001`);
 //! * `cac-editor-attachments.png` — the attachment picker;
+//! * `cac-editor-lethal.png` — the lethal slot's list, BO2's `primarygrenade` items with the placed
+//!   equipment among the grenades (`g-nades/`);
 //! * `cac-dialog-set.png` / `cac-dialog-class.png` — the shell's `S`/`O` dialogs
 //!   (`a-chooseclass/021`, `/023`).
 //!
@@ -96,6 +98,7 @@ fn write_shots(atlas: &Atlas, out: &Path, w: u32, h: u32) -> Result<(), String> 
         ("cac-editor-empty", empty_editor_prims()),
         ("cac-editor-weapons", weapon_picker_prims()),
         ("cac-editor-attachments", attachment_picker_prims()),
+        ("cac-editor-lethal", lethal_picker_prims()),
         ("cac-personalize", personalize_prims()),
         ("cac-reticles", reticle_personalize_prims()),
         ("cac-reticle-color", reticle_color_personalize_prims()),
@@ -231,6 +234,25 @@ fn attachment_picker_prims() -> Vec<Prim> {
     pointer.keys.set_down(Key::Enter, false);
     classui::editor_frame(&mut editor, &pointer, &prev);
     if let Some(i) = editor.options().iter().position(|o| o == "Reflex") {
+        editor.option = i;
+    }
+    draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })
+}
+
+/// The lethal slot's list open on the claymore: the statstable's `primarygrenade` items, placed
+/// equipment included (`g-nades/`).
+fn lethal_picker_prims() -> Vec<Prim> {
+    let mut editor = editor_state();
+    editor.picking = false;
+    editor.slot = Slot::Lethal;
+    let mut prev = MenuPrev::default();
+    let mut pointer = MenuPointer { screen_w: size().0, screen_h: size().1, ..Default::default() };
+    pointer.keys.set_down(Key::Enter, true);
+    classui::editor_frame(&mut editor, &pointer, &prev);
+    prev.update(&pointer);
+    pointer.keys.set_down(Key::Enter, false);
+    classui::editor_frame(&mut editor, &pointer, &prev);
+    if let Some(i) = editor.options().iter().position(|o| o == "Claymore") {
         editor.option = i;
     }
     draw(&ScreenView { highlight: 0, editor: Some(&editor), personalize: None, deny: 0.0, manage: true, now: 0.0, set_change: None, open: None })

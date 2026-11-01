@@ -31,6 +31,8 @@ impl Sim {
 
                 let range = def.bullet_range(self.bullet_range);
                 let mut targets = gather_targets(host, eye, range, p.general);
+                // A deployed shield's object is the sim's to hit (its box, below), not a target.
+                targets.retain(|t| !self.deployed.iter().any(|d| d.object != 0 && d.object == t.id));
                 let ground = |x: f32, y: f32| host.ground_height(x, y);
                 let hit = hitscan::trace(eye, dir, range, &targets, p.general, &ground);
                 // One flash and sound per shot, not per pellet.
@@ -57,11 +59,47 @@ impl Sim {
                         self.tracers.push(ShotTracer { shooter: p.general, def, target: 0, end: eye + dir * t, left });
                     }
                     let e = self.equipment.destroy(host, i, Some(idx));
-                    self.equipment_events(vec![e]);
+                    self.equipment_events(host, vec![e]);
                     // BO2's equipment is metal: a spark at the round, never blood.
                     self.emit(idx, EventKind::Impact { at: eye + dir * t, dir, surface: Surface::Metal, head: false, fatal: false, impact_type: def.impact_type });
                     if pellet == 0 {
                         self.emit(idx, EventKind::Shot { origin: eye, end: eye + dir * t, left });
+                        self.emit(idx, EventKind::Recoil { gun_kick });
+                    }
+                    return;
+                }
+                // A deployed shield on the ray takes the round (bullet-scaled damage).
+                if let Some((i, t)) = self.deployed_on_ray(eye, dir, reach) {
+                    let at = eye + dir * t;
+                    if let Some(fx) = fx {
+                        host.fire_fx(p.general, fx, 0, at);
+                    }
+                    self.damage_deployed(host, i, Some(idx), p.general, def.damage_at(t), deploy::ShieldDamage::Bullet);
+                    self.emit(idx, EventKind::ShieldHit { at, dir, knife: false, impact_type: def.impact_type });
+                    if tracer {
+                        self.tracers.push(ShotTracer { shooter: p.general, def, target: 0, end: at, left });
+                    }
+                    if pellet == 0 {
+                        self.emit(idx, EventKind::Shot { origin: eye, end: at, left });
+                        self.emit(idx, EventKind::Recoil { gun_kick });
+                    }
+                    return;
+                }
+                // An enemy's Assault Shield on the ray: location `riotshield`, which outranks the
+                // body (rank 101) and takes no damage (`_globallogic_player.gsc:840-888`).
+                let hit_id = if let HitResult::Object { id, .. } = hit { Some(id) } else { None };
+                let enemy = |b: &crate::shield::Bearer| b.general != p.general && targets.iter().any(|t| t.id == b.general);
+                if let Some((_, t)) = crate::shield::blocking(&self.shields, &enemy, eye, dir, reach, range, hit_id) {
+                    let at = eye + dir * t;
+                    if let Some(fx) = fx {
+                        host.fire_fx(p.general, fx, 0, at);
+                    }
+                    self.emit(idx, EventKind::ShieldHit { at, dir, knife: false, impact_type: def.impact_type });
+                    if tracer {
+                        self.tracers.push(ShotTracer { shooter: p.general, def, target: 0, end: at, left });
+                    }
+                    if pellet == 0 {
+                        self.emit(idx, EventKind::Shot { origin: eye, end: at, left });
                         self.emit(idx, EventKind::Recoil { gun_kick });
                     }
                     return;
@@ -154,11 +192,17 @@ impl Sim {
                 self.projectiles.push((idx, proj));
             }
             WeaponAction::OffhandReady { lethal } => self.emit(idx, EventKind::OffhandReady { lethal }),
+            WeaponAction::CantPlant { lethal } => self.emit(idx, EventKind::CantPlant { lethal }),
+            WeaponAction::MeleeSwing => self.emit(idx, EventKind::Melee),
             WeaponAction::Melee { damage } => self.melee_strike(host, idx, p, damage, MeleeReach::Body),
             WeaponAction::Plant { def } => {
-                let (fwd, _) = basis_xy(p.yaw);
-                let at = p.body.pos + fwd * PLANT_DISTANCE;
-                let at = Vec3::new(at.x, at.y, host.ground_height(at.x, at.y));
+                // Where BO2's launch sets it down, not a fixed distance in front: a lobbed item
+                // flies, bounces and is placed where it rests (the projectiles' `Landed`).
+                let Some(at) = plant_point(def, &p.body, p.yaw, p.pitch, host) else {
+                    let proj = plant_launch(def, &p.body, p.yaw, p.pitch, p.general, host);
+                    self.projectiles.push((idx, proj));
+                    return;
+                };
                 let object = if def.projectile_object.is_empty() { 0 } else { host.spawn(&def.projectile_object, p.general, at, p.yaw) };
                 let placed = Placed::new(def, idx, p.general, object, at, p.yaw, None);
                 self.emit(idx, EventKind::Planted { kind: placed.kind });
@@ -185,6 +229,7 @@ impl Sim {
             WeaponAction::AltToggled => self.emit(idx, EventKind::AltToggled),
             WeaponAction::ReloadStarted => self.emit(idx, EventKind::ReloadStarted),
             WeaponAction::Swapped => self.emit(idx, EventKind::Swapped),
+            WeaponAction::DeployShield { def } => self.deploy_shield(host, idx, p, def),
             WeaponAction::DryFire | WeaponAction::ReloadFinished => {}
         }
     }
@@ -215,8 +260,9 @@ impl MeleeReach {
 
 impl Sim {
     /// BO2's knife: the nearest enemy in front of the General and in reach takes the hit.
+    /// The swing's event (`EventKind::Melee`, the swipe sound) is the caller's: first person emits
+    /// it on the press ([`WeaponAction::MeleeSwing`]), the RTS strike with the blow.
     pub(super) fn melee_strike(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, damage: f32, reach: MeleeReach) {
-        self.emit(idx, EventKind::Melee);
         let eye = p.body.eye();
         let (fwd, _) = basis_xy(p.yaw);
         let extra = match reach {
@@ -228,6 +274,7 @@ impl Sim {
         let victim = near
             .iter()
             .filter(|o| o.id != p.general && !o.has(objflags::DEAD) && !o.has(objflags::ALLY))
+            .filter(|o| !self.deployed.iter().any(|d| d.object != 0 && d.object == o.id))
             .filter(|o| !o.has(objflags::NO_COLLIDE) && !o.has(objflags::STRUCTURE))
             .filter(|o| {
                 let to = o.pos - p.body.pos;
@@ -239,7 +286,24 @@ impl Sim {
                 let db = (b.pos - p.body.pos).length_xy();
                 da.total_cmp(&db).then(a.id.cmp(&b.id))
             });
+        // A deployed shield in front, before the victim, takes the strike (melee-scaled damage).
+        let victim_at = victim.map_or(MELEE_RANGE + extra, |v| (v.pos - p.body.pos).length_xy());
+        if let Some((i, t)) = self.deployed_on_ray(eye, fwd, (MELEE_RANGE + extra).min(victim_at)) {
+            self.damage_deployed(host, i, Some(idx), p.general, damage, deploy::ShieldDamage::Melee);
+            self.emit(idx, EventKind::ShieldHit { at: eye + fwd * t, dir: fwd, knife: true, impact_type: 0 });
+            return;
+        }
         if let Some(v) = victim {
+            // The strike at a shield bearer's body crosses the shield first: no damage
+            // (location `riotshield`, `_globallogic_player.gsc:840`).
+            let chest = Vec3::new(v.pos.x, v.pos.y, v.pos.z + v.height * 0.6);
+            let to = chest - eye;
+            let mine = |b: &crate::shield::Bearer| b.general == v.id;
+            if let Some((_, t)) = crate::shield::blocking(&self.shields, &mine, eye, to.normalized_or_zero(), to.length(), to.length(), Some(v.id)) {
+                let at = eye + to.normalized_or_zero() * t;
+                self.emit(idx, EventKind::ShieldHit { at, dir: to.normalized_or_zero(), knife: true, impact_type: 0 });
+                return;
+            }
             host.fire_fx(p.general, MELEE_FX_WEAPON, v.id, v.pos);
             let kill = host.damage(p.general, v.id, damage * BO2_TO_ZH_DAMAGE, damage_kind::MELEE);
             self.emit(idx, EventKind::HitMarker { headshot: false, kill });

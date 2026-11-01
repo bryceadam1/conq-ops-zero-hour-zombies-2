@@ -340,6 +340,9 @@ pub struct HudTimers {
     pub muzzle: f32,
     pub score_popup: f32,
     pub score_points: u32,
+    /// The weapon hint on screen (`invalidcmdhint.menu`'s ownerdraw 113): its localize key and
+    /// seconds since it was set.
+    pub hint: Option<(&'static str, f32)>,
     /// The map key is held: Zero Hour's radar over the view.
     pub map_open: bool,
     /// The scoreboard key is held.
@@ -1189,7 +1192,23 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     }
                 }
                 EventKind::Detonated => self.cues.play(sounds::DETONATE),
+                // The shield going down plays the plant (BO2's own `wpn_riotshield_plant` is a
+                // notetrack sound the mod does not convert yet).
+                EventKind::ShieldDeployed { at } => self.cues.play_at(sounds::SHIELD_PLANT, at),
+                EventKind::ShieldPickedUp => self.vm_events.swapped = true,
+                EventKind::ShieldDestroyed { at, .. } => self.cues.play_at(sounds::SHIELD_DESTROY, at),
+                // A shield hit: the shield's own impact sound and a metal spark (no blood).
+                EventKind::ShieldHit { at, dir, knife, impact_type } => {
+                    self.cues.play_at(if knife { sounds::SHIELD_HIT_KNIFE } else { sounds::SHIELD_HIT_BULLET }, at);
+                    if self.hits_len < CLIENT_HITS {
+                        let surface = crate::impacts::Surface::Metal as i32;
+                        self.hits[self.hits_len] = ClientHit { point: at, dir, surface, head: 0, fatal: 0, impact_type };
+                        self.hits_len += 1;
+                    }
+                }
                 EventKind::DestroyedEquipment => {}
+                // BO2's weapon hint ("Cannot Plant Here"): set afresh, drawn by the HUD.
+                EventKind::CantPlant { .. } => self.hud.hint = crate::sim::event_hint(&kind).map(|k| (k, 0.0)),
                 EventKind::Hammer { .. } => self.vm_events.swapped = true,
                 EventKind::BuildPlaced { .. } => {
                     self.cues.play(sounds::PLANT);
@@ -1259,6 +1278,8 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         h.death_banner = (h.death_banner - dt).max(0.0);
         h.muzzle = (h.muzzle - dt).max(0.0);
         h.score_popup = (h.score_popup - dt).max(0.0);
+        // The hint is cleared once its 1.8 s are up (`FUN_004ddc80`: start + 0x708 ms < now).
+        h.hint = h.hint.map(|(k, t)| (k, t + dt)).filter(|&(_, t)| t <= crate::hud::HINT_TIME);
         h.hack_shown = (h.hack_shown - dt).max(0.0);
         let decay = (1.0 - dt * 12.0).max(0.0);
         h.flinch_pitch *= decay;

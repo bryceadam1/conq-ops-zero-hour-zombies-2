@@ -6606,3 +6606,519 @@ Measured against `v1/cac-leftovers`: weapons 781,251 → 781,249 cells (exactly 
 unchanged. Verified: `cargo test -p zhbo-conformance` (new
 `asset_names_are_written_lowercased_and_other_text_is_not`), clippy adds no warning in the crate,
 the conformance CLI as measured. Nothing the mod ships changed.
+
+## Create-a-Class lists the placed equipment: offhands by statstable slot (2026-10-31, `v1/equipment-melee`)
+
+The claymore, Bouncing Betty, C4, Tactical Insertion, Trophy System and Black Hat were converted and
+played (`equipment.rs`) but never offered: `classmenu::items::equipment_ids` filtered the lethal and
+tactical lists by the mod's class (`Lethal`/`Tactical`), and these six are `Class::Equipment`;
+`classrepair::repair_offhand` even cleared a stored `lethal=claymore_mp`. BO2 lists offhands by
+`mp/statstable.csv` column 13 — betty, claymore, C4 are `primarygrenade` items; Black Hat, Tactical
+Insertion, Trophy System `specialgrenade` — the rule `v1/cac-structure` already applied to the guns.
+
+* `items::PRIMARY_GRENADE`/`SPECIAL_GRENADE`, `offhand_slot(lethal)`, `equipment_ids(lethal)` and
+  `fits_offhand(id, lethal)` read `WeaponDef::cac_slot`; the editor, `offer()` and the repair use
+  them (a claymore in the tactical slot still clears, as `CheckItems` does).
+* The in-match flow needed nothing: `Arsenal::with_loadout` takes whatever id the slot holds and
+  `equipment.rs` plants it. Fake-host test: an editor-built class with claymore + Trophy System
+  survives the repair, spawns with both and plants both.
+* Built-in stand-ins: the claymore is `Class = equipment` (as the converter makes it) with its
+  `Equipment = claymore`; a `trophy_system_mp` stand-in (`specialgrenade`).
+* Screenshot harness: `cac-editor-lethal.png` (the lethal list open on the claymore). The atlas
+  loader now finds the `ZHBO_Mat_*` material pages, whose MappedImage `Texture` has no `.tga`
+  (it failed on the current archive with "`ZHBO_Mat_scope_overlay_ballista` is missing").
+* Not done: BO2 makes these `item`-inventory weapons you switch to and fire to place (weapType
+  `grenade`); the mod plants them instantly from the offhand button. The conformance now shows it
+  (`inventory` item → offhand, `weap_type` grenade → mine on the planted five) — a behaviour item.
+
+Measured (conformance CLI vs `v1/cac-leftovers`): weapons BO2-only rows 7 → 1 (the Assault
+Shield); 781,251 → 781,587 cells — every added cell is on the six new rows (336; zero changed cells
+on any other row): they join the columns every row already differs in, plus two new clusters,
+`inventory` 0 → 6 and `weap_type` 0 → 5 (above). cac 555 → 572: the six new weapon rows join the
+offhands' existing `description` (+6), `image` (+6) and `order` (+5) gaps. Gap clusters 202 → 204.
+
+## A one-gun class carries the held knife as its second weapon (2026-10-31, `v1/equipment-melee`)
+
+BO2's `giveloadout` (`_class.gsc` ~680) gives the guns (secondary, then primary), counts them, and
+`if ( initialweaponcount < 2 ) giveweapon( "knife_held_mp" )` — spawning on the knife only when
+there is no gun. The mod gave the held knife only to a gunless kit, so a class with one gun had
+nothing to switch to.
+
+* `Arsenal::with_loadout` appends the held knife (`loadout.melee`) after the guns whenever there are
+  fewer than two; the spawn weapon stays the first gun (the knife only when there is none).
+  Switching brings it up and it strikes with itself (`melee_weapon`).
+* HUD: with a melee weapon in the hand the ammo digits hide (`CoD.AmmoArea.UpdateWeapon` sets
+  `hideAmmo` for weapType `melee`/`riotshield`/`grenade`); the label and offhand counters stay.
+  `is_unarmed` (no gun at all) is unchanged, so the crosshair rule for the gunless kit is too; with
+  the knife up in a one-gun class the crosshair still draws (BO2's knife crosshair is unverified).
+* RTS needs nothing: its slot templates already skip non-guns and a knife slot reads empty.
+* Tests: fake-host `a_one_gun_class_carries_the_held_knife_as_its_second_weapon`; HUD
+  `the_held_knife_hides_the_ammo_digits_only`.
+
+Measured: no conformance movement (781,587 / 572 / 204 gap clusters) — the table describes the
+defs, not what a class carries.
+
+## The melee strike lands after the melee weapon's `melee_delay` (2026-10-31, `v1/equipment-melee`)
+
+The mod struck on the melee press. BO2's state machine (read-only Ghidra, t6mp):
+`FUN_008e2070` (the melee check) calls `FUN_008dc770`, which picks the melee weapon (the held one
+when it is a melee weapon, else the class melee weapon at `ps+0x1cc` — the `melee_weapon(held,
+class_melee)` rule), sets `weaponTime = iMeleeTime` (+0x480), `weaponDelay = iMeleeDelay` (+0x434),
+weapon state 0x13, and fires event 0x27 (`EV_MELEE_SWIPE`). In `FUN_008e4da0` (the weapon frame),
+when the timer tick `FUN_008e0780` reports the delay ran out, state 0x13 becomes 0x14 and event 0x28
+(`EV_FIRE_MELEE`) fires — the strike. The delay is counted in plain time: the tick scales only
+state 0x15 by `perk_weapMeleeMultiplier`. (A lunge uses `meleeChargeTime`/`meleeChargeDelay`
+instead; the mod has no lunge.)
+
+* `WeaponDef::melee_delay` (table field `MeleeDelay`, from `iMeleeDelay`; the conformance actual
+  reads it through the same `melee_weapon` rule). `Arsenal::melee_delay_left` counts it down by
+  `LOGIC_DT`; the press emits `WeaponAction::MeleeSwing` (the sim's `EventKind::Melee`: the swipe
+  sound) and the strike `WeaponAction::Melee` lands when it runs out (immediately with no delay).
+  The RTS melee still swings and strikes together (Zero Hour drives its timing).
+* Tests: `the_strike_lands_after_the_melee_weapons_delay` (frame count, replay-identical, Dexterity
+  does not shorten it); `conformance::check` now requires the swing on the press and the strike at
+  the delay. Stand-in knives carry generic delays.
+* Found, not done: BO2's Fast Melee Recovery scales only state 0x15 — the gun coming back up after a
+  melee with a gun (`FUN_008e1f50`: `weaponTime` = the held weapon's `quickRaiseTime`, +0x4c8) — and
+  `iMeleeTime` runs unscaled; the mod scales its whole `melee_left` by the multiplier and has no
+  0x15 re-raise. A behaviour item for the melee timing.
+* The table gains a field: the archive VERSION must bump (integrator).
+
+Measured: weapons 781,587 → 769,983 (`melee_delay` 11,604 → 0); cac 572; gap clusters 204 → 203.
+
+## Offhands run BO2's offhand states; equipment is not a weapon you switch to (2026-10-31, `v1/equipment-use`)
+
+The conformance's `inventory` item / `weap_type` grenade rows on the six placed items read like
+"switch to the item and fire it". BO2's engine says otherwise (read-only Ghidra, t6mp; raw in
+`~/.opencode/plan/equipment-use/`): the frag and special-grenade buttons (`FUN_008e2bb0`) take the
+first/second offhand-slot 1..3 weapon in the inventory (`FUN_008de050`) — grenade or equipment alike;
+"Only grenades and mines are currently supported for off hand use" — and run the offhand states;
+`inventoryType` item (2) is read by no bg code (only a client HUD path, `FUN_005efeb0`). The states:
+
+* 0x16 start (`FUN_008dcb70`) → `FUN_008e2710`: a `hasDetonator` item with no ammo enters the
+  detonator, 0x19 (weaponTime `iDetonateTime`, weaponDelay `iDetonateDelay`; the delay fires the
+  detonate, the end is simply ready, `FUN_008dcd20` → `FUN_008dc9d0`, no raise); otherwise the
+  pull-back, 0x17, for `iHoldFireTime`.
+* 0x17 ends → 0x1a held (`FUN_008e28a0`), which also sets the fuse (`ps+0x60 = fuseTime`); the fuse
+  burns in plain ms (`FUN_008e2e40`, cook-off at 0).
+* 0x1a (`FUN_008e28e0`): held while the button is; on the release an `isHoldUseGrenade` item (the
+  Black Hat) is put away in its `quickDropTime` (`FUN_008dcb00`), anything else enters 0x18 with
+  weaponTime `iFireTime` and weaponDelay `iFireDelay`; the delay's end throws it (`FUN_008e2ac0`,
+  ammo −1).
+* 0x1b (`FUN_008dcbe0`) → 0x1d: the HELD weapon's `quickRaiseTime`, then ready. 0x16–0x1d all tick
+  at `fasttoss`/`fastequipmentuse` (G3); a new offhand may start during 0x1d.
+
+The mod had a hand-written 0.35 s pull-back and 0.45 s throw, the item leaving on the release, then
+the gun's full raise at the switch rate, and C4's detonator keyed on a sticky/thrown/equipment proxy.
+
+* Core: `WeaponDef::hold_fire_time`, `fire_delay`, `detonate_time`, `detonate_delay`,
+  `has_detonator`, `hold_use` (table field `Offhand`, from `iHoldFireTime`, `iFireDelay`,
+  `iDetonateTime`, `iDetonateDelay`, `hasDetonator`, `isHoldUseGrenade`; zhbo-formats now reads those
+  plus `offhandSlot`, `holdButtonToThrow`, `offhandHoldIsCancelable`, `plantable`, and
+  `zhbo-assets weapons <id> --more` prints them). `OffhandUse` is the state machine: `Holding`
+  (0x17/0x1a), `Throwing` (0x18, `fired` at `fire_delay`), `Dropping` (hold-use put-away),
+  `Detonating` (0x19), `Raising` (0x1d). `OFFHAND_PULLBACK`/`OFFHAND_THROW` are gone. The cooking
+  fuse burns from the end of the pull-back until the grenade leaves the hand.
+* Viewmodel: the item's own `HOLD_FIRE` then `FIRE`, the detonator's `DETONATE` (slot 0x3a, the C4's
+  `viewmodel_c4_t6_detonator_fire`), a hold-use item's `QUICK_DROP`, then the held gun's own
+  `QUICK_RAISE`.
+* Conformance actual: `weap_type` is `grenade` for every offhand (they all run the one offhand state
+  machine, BO2's grenade path — the old `mine` for planted items was the mod's own label);
+  `hold_fire_time`/`fire_delay` for offhands, `detonate_time` for detonator items. `inventory` stays
+  `offhand`: BO2's `item` changes nothing the mod could do differently.
+* `conformance::check` now times the pull-back + delay to the item leaving the hand, the fuse, the
+  gun back after `fire_time` + its quick raise, the hold-use put-away, and the detonator.
+  Fake-host tests: `a_claymore_pulls_back_is_set_down_on_the_release_and_the_gun_comes_back`
+  (deterministic replay), `the_c4_button_with_none_left_is_the_detonator`; stand-in C4
+  (`satchel_charge_mp`, generic times).
+* Not done: 0x16 keeps the current state's leftover weaponTime (an offhand pressed mid-raise or
+  mid-shot waits it out in BO2; the mod starts at once); `offhandHoldIsCancelable`'s cancel
+  button; `plantable`'s placement trace (`FUN_008e1780`, event 0xd5 "can't plant here"). BO2's
+  `sensor_grenade_mp` is offhand slot 3 (fastequipmentuse) while the mod's class makes it tactical.
+* The table gains a field: the archive VERSION must bump (integrator).
+
+Measured (conformance CLI vs `v1/equipment-melee` conf3): weapons 769,983 → 769,947
+(`weap_type` 5 → 0, `hold_fire_time` 11,604 → 11,589, `fire_delay` 620 → 605, `detonate_time`
+11,604 → 11,603); cac 572; gap clusters 203 → 202. `inventory` stays 6 (above).
+
+## After a melee the gun comes back up; Fast Melee Recovery speeds only that (2026-10-31, `v1/equipment-use`)
+
+The previous entry's finding, done. BO2 runs the swing's `iMeleeTime` (states 0x13/0x14) in plain
+time; when it ends `FUN_008e1f50` compares the held weapon with the melee weapon (`melee_weapon(held,
+class_melee)`) and, when they differ — a gun was up and the class melee weapon struck — enters 0x15
+with weaponTime = the HELD weapon's `quickRaiseTime` (+0x4c8); a held knife is simply ready. The tick
+(`FUN_008e0780`, G3) scales only 0x15 by `perk_weapMeleeMultiplier` (`fastmeleerecovery`). The mod
+scaled the whole `melee_left` and had no re-raise.
+
+* `Arsenal::melee_left` now counts down by `LOGIC_DT`; `Arsenal::melee_recover_left` (0x15) is set to
+  the held gun's `quick_raise_time` when a class-melee swing ends and ticks at `Timing::Melee`. It
+  blocks fire, ADS, swap, alt toggle and another melee (`FUN_008e0e60` skips 0x13-0x15); an offhand may
+  start in it (`FUN_008e2bb0` does not exclude 0x15) and its own quick raise replaces it.
+  `anim_rate` is 1 during the swing and the perk's during the re-raise; the viewmodel plays the gun's
+  `QUICK_RAISE`.
+* Tests: `after_a_melee_the_gun_comes_back_up_and_fast_melee_recovery_speeds_only_that` (arsenal:
+  swing frames equal with and without Dexterity, re-raise `quick_raise_time` vs × the multiplier, no
+  shot before it ends, the held knife has none) and fake-host
+  `the_gun_fires_again_after_the_melee_and_its_re_raise` (first shot frame with and without the perk).
+
+Measured: no conformance movement (weapons 769,947, cac 572, 202 gap clusters; the weapons diff is
+byte-identical to the previous commit's) — the table already matched `iMeleeTime` and
+`quickRaiseTime`; this is behaviour only. No table field, no archive VERSION bump.
+
+## An offhand's class is its BO2 offhand slot: the Sensor Grenade is equipment (2026-10-31, `v1/offhand-rules`)
+
+The converter's `class_of` made an offhand `Equipment` by two hand-written name lists (betty,
+claymore, C4; Trophy System, Tactical Insertion, Black Hat) and everything else on the manifest's
+lethal/tactical lists `Lethal`/`Tactical`. BO2's data has the answer: `WeaponDef.offhandSlot` (1 lethal,
+2 tactical, 3 equipment) picks the button (`FUN_008de050`) and the specialty that speeds the offhand
+states (G3: slot 3 runs at `perk_weapEquipmentUseMultiplier`). `sensor_grenade_mp` is slot 3, so in
+BO2 Fast Equipment Use speeds it; the mod's name list made it tactical (Fast Toss).
+
+* `zhbo_formats::weapon::offhand_slot` names the enum; `class_of` maps slot 3 → `Equipment`, 2 →
+  `Tactical`, 1 → `Lethal` for every manifest offhand. The six old names come out the same; the Sensor
+  Grenade becomes `Equipment`. The Create-a-Class list is unaffected: it reads the statstable slot
+  (`cac_slot`; the Sensor Grenade stays a `specialgrenade`, listed as a tactical).
+* `Arsenal::offhand_timing` already keyed `fastequipmentuse` on `Class::Equipment`; it now means the
+  slot. Test: `an_offhands_class_is_its_bo2_offhand_slot`.
+
+Measured (vs `v1/equipment-use` conf2): weapons 769,947 → 769,946 (`offhand_slot` 1 → 0); cac 572
+(identical diff); gap clusters 202 → 201. No table field (the class was already in the table); the
+archive changes content only (the Sensor Grenade's `Class`).
+
+## An offhand pressed mid-raise or mid-shot waits that state out (2026-10-31, `v1/offhand-rules`)
+
+The mod started an offhand's pull-back on the press whatever the gun was doing. BO2 (read-only
+Ghidra, t6mp; raw in `~/.opencode/plan/offhand-rules/`): `FUN_008e2bb0` accepts the press in any state
+but the drops (3-5), the offhand states 0x16-0x1c, 0x1e-0x22, 0x31-0x33 and 0x38-0x3a. It goes
+straight to `FUN_008e2710` (the pull-back or the detonator) only with no held weapon or from 0x1d (the
+offhand's own re-raise); otherwise `FUN_008dcb70` enters 0x16, zeroes `weaponDelay` and **keeps
+`weaponTime`**. The weapon frame (`FUN_008e4da0`) runs its state switch only once `weaponTime` and
+`weaponDelay` are both 0, so 0x16 first waits out what the interrupted state had left — the raise, the
+shot's fire time, the reload, the 0x15 re-raise — and counts it at the offhand's rate (0x16 is one of
+G3's 0x16-0x1d states: Fast Toss / Fast Equipment Use, not the switch or ROF rate). Then
+`case 0x16 → FUN_008e2710`.
+
+* `OffhandUse::Starting { lethal, left }` is 0x16; `Arsenal::state_time_left` is the kept
+  `weaponTime` (raise, melee re-raise, reload part — a magazine reload's whole remaining length, its
+  ammo add being `weaponDelay`; a shell reload's current start/insert/end — or the shot's cooldown
+  after this frame's tick). The interrupted state is cleared (the reload is abandoned, as before, and
+  its ammo add with it if it had not happened). From rest `left` is 0 and the pull-back starts on the
+  press frame, as before. The viewmodel holds the gun's idle meanwhile (the 0x16 weapAnim is unread).
+* Test: fake-host `an_offhand_pressed_mid_raise_or_mid_shot_waits_that_state_out` (at rest: at once;
+  mid-raise: when the raise's time left, at the toss rate, runs out; mid-shot: after the fire time;
+  deterministic).
+* Found, not done: BO2 also accepts the press during a melee swing (0x13/0x14 are not excluded) and
+  during sprint-out (0x26); the mod keeps refusing it during the swing and ignores the sprint-out.
+
+Measured: no conformance movement (weapons diff byte-identical to the previous commit's; cac 572; 201
+gap clusters) — behaviour only, no table field.
+
+## The weapon-switch button cancels a held `offhandHoldIsCancelable` offhand (2026-10-31, `v1/offhand-rules`)
+
+BO2 (read-only Ghidra, t6mp): in the held state 0x1a, `FUN_008e28e0` keeps holding while the offhand
+button is down (old and new command, and not `holdButtonToThrow`); then, if the item is
+`offhandHoldIsCancelable` and the command carries button word 1 bit `0x4000`, it goes to
+`FUN_008dcbe0` — 0x1d, the held gun's `quickRaiseTime` — with nothing thrown. That bit is set only by
+the client's weapnext (`FUN_00537c20`, run on the weapnext *release*, case 0x2e of the command
+dispatcher `FUN_0053f380`): while the predicted weapon state is 0x16-0x1b and the offhand is
+cancelable, it sets the bit **instead of** cycling weapons. The server's switch check
+(`FUN_008e0e60`) also reads the bit. So on PC the cancel is the weapon-switch key. The ammo goes
+down only in `FUN_008e2ac0` (the throw), so the count stays; the fuse (`ps+0x60`) is left to be set
+afresh at the next pull-back (`FUN_008e28a0`). BO2's data: every MP offhand is cancelable **except the
+frag grenade** (the sticky, hatchet, tacticals and all equipment are).
+
+* `WeaponDef::hold_cancelable` (table field `HoldCancelable`, from `offhandHoldIsCancelable`). In
+  `OffhandUse::Holding`, after the pull-back with the offhand button still held, the
+  `SWAP_WEAPON` release puts the item away: `Raising` (the gun's quick raise), cook reset, count
+  untouched. During the pull-back (0x17) it does nothing, as in BO2. `holdButtonToThrow` (false for
+  every MP offhand) is still not modelled.
+* Test: fake-host `the_switch_button_cancels_a_held_cancelable_offhand` (cancelled: unused and
+  raising; not cancelable or still pulling back: thrown on the release; deterministic).
+* The table gains a field: the archive VERSION must bump (integrator).
+
+Measured: no conformance movement (no column reads it; weapons/cac diffs identical to the previous
+commit's; 201 gap clusters).
+
+## The plant check: "Cannot Plant Here" in the air and over deep water (2026-10-31, `v1/offhand-rules`)
+
+BO2's `FUN_008e1780` (read-only Ghidra, t6mp) is the placement test for a `plantable` item (BO2's
+data: the claymore and the Tactical Insertion only) whose throw does not go up
+(`iProjectileSpeedUp <= 0`). It refuses when the player is off the ground (`groundEntityNum` none);
+silently on a vehicle; for the Tactical Insertion when `FUN_008e16d0` fails (on world ground, a clear
+box at the origin); and when a trace from the eye along the throw (`forward * iProjectileSpeed + up *
+iProjectileSpeedUp`, normalised, 1000 units — `DAT_00f6dbf0`; the claymore's 100/-10000 points it
+straight down) either hits a non-world entity with contents `0x200` (silent) or ends in water
+(surface type 20) deeper than `bg_plantInWaterDepth` (5) while `bg_disableWeaponPlantingInWater`
+(1) is on. It runs at the press (`FUN_008e2bb0`: event 0xd5, nothing starts), every frame of the held
+state (`FUN_008e28e0`: 0xd5, then `FUN_008dcbe0`, the gun's quick raise) and at the release's delay
+(`FUN_008e2ac0`: 0xd5, `FUN_008dcbe0`, no ammo spent). The client's hint 0xe is
+`WEAPON_CANT_PLANT_EQUIPMENT` = "Cannot Plant Here" (`FUN_004ddc80`, `en_common_mp`).
+
+* `WeaponDef::plantable` (table field `Plantable`, from `plantable`). `sim::can_plant` is the check in
+  the mod's world: off the ground, or the trace (`hitscan::trace_terrain`) ending on `Surface::Water`
+  the General cannot stand in (`is_walkable` false — the mod's water has no depth, so standable
+  water counts as shallow). The sim sets `Arsenal::plant_ok` per slot each frame; the arsenal
+  refuses at the three BO2 points and emits `WeaponAction::CantPlant` → `EventKind::CantPlant`
+  ("player N cannot plant here" via `describe_event`).
+* Not modelled: the vehicle and entity-contents refusals, and the Tactical Insertion's box test
+  beyond being on the ground. The HUD has no hint line, so "Cannot Plant Here" is not drawn yet (a
+  HUD item). Where the item lands is still the mod's `PLANT_DISTANCE` in front, not BO2's throw.
+* Test: fake-host `a_plantable_item_is_refused_in_the_air_and_over_deep_water` (the `FakeHost`
+  gains `deep_water`).
+* The table gains a field: the archive VERSION must bump (integrator).
+
+Measured: no conformance movement (no column reads `plantable`; weapons/cac diffs identical; 201 gap
+clusters).
+
+## While an offhand waits out the interrupted state, that state's clip plays on (2026-10-31, `v1/offhand-rules`)
+
+The previous entry's 0x16 wait showed the gun's idle, so a press mid-raise snapped the raise to idle.
+BO2's `FUN_008dcb70` (disassembled) sets state 0x16, zeroes `weaponDelay`, sets weapon flag `0x40000`
+when a weapon is held, fires events 0x1d (with the offhand) and 0x11 — and never writes `weapAnim`
+(`ps+0x580`), the only thing the viewmodel's clip follows. So the interrupted clip (the raise, the
+shot, the reload) keeps playing; the client rate for 0x16 is the offhand's (`FUN_0052b1d0`).
+
+* `Viewmodel::update` plays its last frame on during `OffhandUse::Starting`, at `anim_rate()`; the
+  clip picking moved to `pick`. Test: in `viewmodel` tests, a press mid-raise keeps the raise clip and
+  advances it.
+
+## An offhand pressed mid-swing drops the strike; the sprint-out is waited out too (2026-10-31, `v1/offhand-rules`)
+
+The "found, not done" of the mid-raise entry. `FUN_008e2bb0`'s state exclusions do not list the melee
+swing (0x13/0x14) or the sprint-out (0x26), so the press there enters 0x16 like anywhere else. The
+swing's strike is due when 0x13's `weaponDelay` runs out (`FUN_008e4da0`: 0x13 → 0x14 + event 0x28);
+0x16 zeroes `weaponDelay`, and the offhand check runs before the frame's state switch, so a strike not
+yet landed is dropped. The swing's `weaponTime` (`iMeleeTime` left) is waited out, at the offhand's
+rate. (Medium confidence: two weapon-flag bits the check also tests, `ps+0x10 & 0x80/0x100`, are
+unnamed.)
+
+* `Arsenal::start_offhand` no longer refuses during the swing; `state_time_left` adds the swing
+  (`melee_left`) and the sprint-out (`sprint_out_time - since_sprint`, after a sprint that ended);
+  the swing, its pending strike and the sprint-out are cleared. A press while still sprinting is
+  unchanged.
+* Test: `an_offhand_mid_swing_drops_the_strike_and_waits_the_swing_out` (and the sprint-out).
+
+## A weapon switch pressed during an offhand happens after it (2026-10-31, `v1/offhand-rules`)
+
+BO2's weapnext on the client (`FUN_00537c20`) cycles the weapon selection (`FUN_005378d0`) unless the
+offhand is cancelable and in 0x16-0x1b, when it sends the cancel bit instead. The selection rides in
+every command (`usercmd` weapon, `in_EAX[7]` in `FUN_008e0e60`); the server's switch check refuses it
+while the offhand states 0x16-0x1d run (unless an equipment item with the cancel bit) and resets
+nothing, so the switch goes through once the offhand is done. The mod dropped the press.
+
+* `Arsenal::swaps_pending` counts switch presses during an offhand that are not a cancel (a
+  non-cancelable item such as the frag, or any item in its re-raise 0x1d); once the offhand is done
+  the swap applies them (`(active + n) % len`, so two presses on a two-gun kit come back to the
+  same gun, as BO2's cycling does). Test: `a_switch_during_a_frag_happens_after_it`.
+* The melee states also refuse a switch in `FUN_008e0e60`; a press during a swing is still dropped
+  by the mod (not checked whether BO2 keeps it the same way — likely).
+
+## Planted items go down where BO2's launch puts them (2026-10-31, `v1/offhand-rules`)
+
+The mod set every `Place::Plant` item `PLANT_DISTANCE` (30 in) in front of the General. BO2 plants
+nothing itself: the offhand fire (`FUN_008e2ac0`, event 0x30) launches the item as a grenade from the
+eye with `forward * iProjectileSpeed + up * iProjectileSpeedUp` — the same vector `FUN_008e1780`
+traces — and the item's script settles it where it lands. BO2's data: the claymore 100/-10000
+(straight down, a hair in front of the feet), the Bouncing Betty 650/0 and the Trophy System 575/0
+(lobbed under gravity), the Tactical Insertion 0/0 (no launch: at the feet).
+
+* `sim::plant_point`: no launch speed → the feet; no gravity → the terrain trace along the launch;
+  gravity → the arc stepped a logic frame at a time (`projectiles::GRAVITY`) to its first ground
+  contact (no bounce). `apply_weapon_action`'s `Plant` uses it, in first person and for RTS orders
+  (`PLANT_DISTANCE` stays as the RTS approach range, the plant weapon's `AttackRange`).
+* Tests: `the_plant_point_follows_bo2s_launch` (feet; the claymore just ahead; the Betty's arc
+  distance `v·sqrt(2h/g)`; deterministic); the RTS plant test now expects the claymore at his feet.
+* Not done: BO2's bounce and settle (the grenade physics and `_claymore.gsc`'s orientation).
+
+## The HUD draws BO2's weapon hint: "Cannot Plant Here" (2026-10-31, `v1/offhand-rules`)
+
+`CantPlant` only reached the log. BO2's MP HUD draws the weapon hints from code, not LUI: the hint id
+(`cg+0x6961c`, 0xe for the plant refusal) is painted by ownerdraw 113 (`FUN_004e41d0` → `FUN_004ddc80`),
+which `invalidcmdhint.menu` hosts (dumped from `common_mp.ff` with the reference's patched OAT
+Unlinker; the menu lists `ui_mp/hud_*.txt` load it): menu `rect 0 40` align 9/9, item `textfont 1`
+(`normalFont`), `textscale 0.275`, `textstyle 3`. `FUN_004ddc80` clears the hint once start +
+0x708 ms (1.8 s) has passed, sets the colour's alpha to `((now - start) % 600) / 600` (a fade-in each
+600 ms), and centres the localized text on the rect's x (`x - width * 0.5`), pen line at its y.
+
+* The text is the install's: the weapon table gains `HudString <key> = <text>` lines
+  (`Table::hud_strings`, keys in `weapons::HUD_STRINGS`, filled by the converter from the english
+  `code_post_gfx_mp`/`patch_mp` zones it already reads for display names); `Catalog::hud_string`
+  serves them. `sim::event_hint` maps the event to its key and `sim::hint_text` to the text (the key
+  itself without a converted table); `describe_event` logs it.
+* Client: `hud.hint` (key, seconds) is set on the local `CantPlant`, ticks and clears after
+  `HINT_TIME`. HUD `draw_hint`: centred, pen line 60 LUI units (40 of 480) below the centre,
+  `48 * 0.275` lines tall in `Condensed` (normalFont), white, the 600 ms fade. Align 9/9 is read as the
+  screen centre (unverified); the `textstyle 3` shadow is not drawn.
+* Tests: `the_hint_sits_below_the_centre_and_fades_in_each_600_ms`,
+  `cant_plant_shows_the_hint_for_its_time`, `the_hud_strings_round_trip`.
+* The table format gains a line kind: the archive VERSION must bump (integrator).
+
+## The def carries BO2's `inventoryType`; the conformance reports it (2026-10-31, `v1/offhand-rules`)
+
+The conformance actual derived `inventory` from the row's role (alt → altmode, the class melee weapon
+→ melee, an offhand → offhand, else primary), so the six placed items (betty, claymore, C4, Trophy
+System, Tactical Insertion, Black Hat) read `offhand` against BO2's `item`. As the equipment-use entry
+found, no bg code branches on `inventoryType` (only a client HUD path, `FUN_005efeb0`), so it stays
+data the mod does not branch on either.
+
+* `weapons::Inventory` (`primary`/`offhand`/`item`/`altmode`/`melee`/`dwlefthand`, BO2's order),
+  `WeaponDef::inventory`, table field `Inventory`, filled by the converter from `inventoryType`;
+  attachment combinations are built from their base def and inherit it, alt modes carry their own
+  BO2 def's. The actual's `inventory` column reads it. Nothing else used the derived value.
+* Test: `the_def_carries_bo2s_inventory_type_and_combinations_inherit_it` (converter + round trip).
+* The table gains a field: the archive VERSION must bump (integrator).
+
+Measured: weapons 769,946 → 769,940 (`inventory` 6 → 0); cac 572 (identical); gap clusters 201 → 200.
+
+## A switch pressed mid-melee happens after it (2026-10-31, `v1/offhand-rules`)
+
+`FUN_008e0e60` (the switch check) returns at its top for states 0x13, 0x14 and 0x15 without touching
+the command's weapon selection — the same hold-back as during the offhand states — so a switch pressed
+during a swing or the gun's re-raise goes through once they end. The mod dropped it. Now the press
+joins `Arsenal::swaps_pending`. Test: `a_switch_during_a_melee_happens_after_it`.
+
+Found, not done: the same check also holds a switch back while a shot's `weaponTime` runs (states 6
+and 0x28 with `weaponTime != 0`); the mod switches at once mid-shot.
+
+## The plant check's vehicle, entity and Tactical Insertion refusals (2026-10-31, `v1/offhand-rules`)
+
+Correction to the plant-check entry: there are no *silent* refusals. What `FUN_008e1780` sets on
+some paths (`ps+0x580 = toggle | 0x1a`) is a weapon animation, not the hint; the hint is event 0xd5,
+which every caller fires whenever the check returns false. So all of these show "Cannot Plant Here":
+
+* On a vehicle (`ps+0xfc & 0x4000`, the bit `FUN_008deb50` reads with
+  `player_disableWeaponsOnVehicle`): in the mod, a live, grounded Zero Hour vehicle whose roof is
+  within 4 in under the feet (a short ray down, `hitscan::ray_vs_target`).
+* The trace (mask `0x800a31`) hitting a non-world entity with contents `0x200` — the IW-family
+  `CONTENTS_VEHICLECLIP` (naming inferred from the IW engines, medium confidence): in the mod the trace
+  now meets every colliding object, and a vehicle, friend or foe, refuses; a structure just stops it.
+* The Tactical Insertion (`FUN_008e16d0`): on world ground (not on an entity) with the box mins
+  (-15, -15, 0) maxs (15, 15, 70) in at its origin clear (`DAT_00bd2434`/`DAT_00bd2440`, mask
+  `0x810011`): in the mod, no colliding object but the General overlapping that box. (Its pm-flag
+  tests, `ps+0xc & 0xa0000c`, are unnamed and not modelled.)
+
+`sim::can_plant` takes the General's id. Test: `the_plant_check_refuses_on_and_into_vehicles_and_a_crowded_insertion`.
+
+## A lobbed Betty or Trophy System bounces and settles like a grenade (2026-10-31, `v1/offhand-rules`)
+
+The plant-position entry set a lobbed item down at its arc's first ground contact. BO2's offhand fire
+makes it a grenade entity, which bounces and rolls until it rests before its script places it. The
+sim already has that: `projectiles::Projectile` bounces (`BOUNCE_ALONG`/`BOUNCE_UP`, at rest below
+`REST_SPEED`) and turns a `lands` projectile (any equipment kind) into `Placed` equipment on
+`Outcome::Landed`, the path the thrown C4/Shock Charge/Sensor already use.
+
+* `sim::plant_point` now returns `None` for a lobbed item (gravity, launch not steeply down); the
+  `Plant` action then launches it with `sim::plant_launch` (BO2's launch velocity,
+  `plant_velocity`, from the eye) and the projectile step places it where it rests. The claymore
+  (straight down) and the Tactical Insertion (no speed) still go down directly.
+* Test: `a_lobbed_betty_bounces_and_settles_as_equipment` (it bounces and rests beyond the first
+  contact). This branch is not on `v1/projectile-sounds`, so no bounce event/sound is emitted here;
+  that base's bounce events apply to these projectiles once merged.
+
+## The weapon hint's shadow, and menu align 9 checked in the engine (2026-10-31, `v1/offhand-rules`)
+
+* Align 9 is not an assumption any more: `FUN_0057d900` (the menus' screen placement; the hint's text
+  draw `FUN_00709010` calls it with the item's aligns) maps horizontal/vertical align 8 to the user
+  safe area's left/top, 10 to its right/bottom and 9 to `(safeLeft + safeRight) / 2` /
+  `(safeTop + safeBottom) / 2` — the centre of the safe area, the screen centre when it is centred.
+  It agrees with the dumped HUD menus: `stance.menu` (`rect 145 -81 ... 8 10`, bottom-left) and
+  `cursorhints`/`mantlehint`/`invalidcmdhint` (9 9, below the crosshair). No in-match BO2 capture
+  exists in the reference (the captures are front-end and Create-a-Class), so the engine is the
+  check.
+* `textstyle 3` (IW's shadowed style): `draw_hint` draws the text in black one 480-line unit down and
+  right under the white text, at the same alpha (the exact T6 pixel offset is not decoded).
+* Test: `the_hint_sits_below_the_centre_and_fades_in_each_600_ms` checks the shadow.
+
+## A switch pressed mid-shot waits for the shot's time (2026-10-31, `v1/offhand-rules`)
+
+`FUN_008e0e60` also holds the switch request while `weaponTime` runs in the fire states 6 and 0x28
+(after the frame's tick, so at the fire-rate specialty's rate); the reload family (0x0b-0x12) and the
+rechamber states 7/8 do not hold it (a switch cuts them short), and any other state holds it only
+while `weaponDelay` runs (in the mod: the melee strike's and an offhand's, both already held). Its
+remaining early returns are states the mod has no counterpart of (0x1e-0x22, 0x2a/0x2b, 0x31-0x33).
+The mod switched mid-shot at once; the press now joins `swaps_pending` while the shot's cooldown
+(after this frame's fire tick) is left. Test: fake-host
+`a_switch_pressed_after_a_shot_happens_when_the_shot_ends`.
+
+## The Assault Shield: converted, blocks held and stowed, deploys as cover (2026-10-31, `v1/assault-shield`)
+
+Stacked on `v1/offhand-rules`. Scope, decompiles and poses in `~/.opencode/plan/assault-shield/`
+(`SCOPE.md`, `blast*.c`, `dvars.txt`, `held2.png`).
+
+* **Class.** `riotshield_mp` (weapType `riotshield`, inventory primary) is no longer excluded; it
+  converts as the new `Class::Shield` — not a gun (`is_gun` false: no round, no RTS weapon, no
+  stat bars), but `is_slot_weapon`, so CaC lists it in the primary slot under SPECIALS by its
+  statstable slot/group and class repair keeps it. It melees with itself (`melee_weapon`), aims
+  (`ads_up`), moves at its `move_speed_scale` 0.9 and its swing is its own sound.
+* **Collmaps.** BO2 attaches `t6_wpn_shield_carry_world` on `tag_weapon_left` (held) and
+  `t6_wpn_shield_stow_world` on `tag_stowed_back` (stowed). `zhbo-assets/src/shield.rs` poses the
+  MP body — **gotcha: the rifle stand pose holds the shield sideways (`held.png`); the torso anim
+  `pt_riotshield_stand_raise`'s last frame holds it square in front** — and writes each model's
+  bounds on its tag as the weapon table's new `Shield` field (body-space inches). Real install:
+  held box centre 24 in ahead, 52 in up, facing forward.
+* **Block.** `zhbo-core/src/shield.rs`: each frame the sim snapshots every bearer (`Sim::shields`;
+  held while the shield is up, stowed otherwise unless it is deployed). A hitscan round, melee
+  strike or projectile crossing an enemy's box is location `riotshield`, which
+  `_globallogic_player.gsc:840-888` returns from without damage (metal impact; an explosive goes
+  off on it). **The mod's body is a cylinder, so the shield on the hit entity is compared with
+  where the ray passes the body's axis, not the cylinder skin** — otherwise a held shield would
+  also stop shots in the back (the cylinder's front is behind the shield's front face).
+* **Blasts.** `FUN_005f2130` → `FUN_00670940`: damage × (1 − p), p by the cosine between the shield
+  tag's forward axis and the blast: within 15°/30°/60°/90° → `shieldBlastDamageProtection_30/60/
+  120/180` = 0.4/0.2/0.1/0 (tuning pack). The stowed tag's x axis points back-and-down, so a
+  stowed shield rarely protects — the literal rule. `shieldPlayerBulletProtectionDegrees` (60) is
+  registered but never read in MP.
+* **Deploy** (`sim/deploy.rs`): the trigger spends the one round; the shield stands under where it
+  was held, refused by the `riotshield_deploy_*` dvars (zdiff 30 in, pitch 20°, roll 25°, 100 in
+  apart) or unwalkable ground (round back, the plant hint — BO2's own fail string was not found in
+  the localize zones); shown as the converter's `ZHBO_Proj_riotshield_mp` built from the script's
+  `deployedshieldmodel` (existing `host.spawn`, no new object kind); blocks everyone's shots;
+  takes `watchdeployedriotshielddamage`'s scaled damage to `riotshield_deployed_health` 300;
+  picked up by switching to the shield or the use key beside it; owner death destroys it.
+* **Not carried:** Zero Hour units' fire at the General is engine damage (`Object::attemptDamage`)
+  and is **not** blocked yet — that needs an engine hook asking the core (a lock-free shield
+  mirror + a new `zhbo_logic_*` ABI function: VERSION bump, integrator); ZH units also ignore the
+  deployed shield (its object is `UNATTACKABLE`). Third person still draws the shield in the right
+  hand like any weapon (BO2 holds it on the left and stows it on the back). The blocked-damage
+  score, the shield-hit view events and the `riotshield_impact` rumble are not carried.
+* `WEAPON_FIELDS` 87 → 88 (`Shield`): the table VERSION bump is the integrator's. No ABI change.
+
+Measured (v1/offhand-rules conf8 → this branch): weapons rows 11604 → 11605 actual, BO2-only rows
+**1 → 0**, cells 769,940 → 769,990 (+50: the new row's cells in columns every row already
+differs on; no new column cluster, clusters 193 → 193); cac actual rows 552 → 553, one-sided
+56 → 55, cells 572 → 573 (its description); gap clusters **200 → 199**. Tests: fake-host shield
+tests (front/back/stowed blocks, knife, blast arc, deploy, pick-up, refusal, destruction),
+`cargo test --workspace`, clippy (no new warnings), real-install suite (33 passed) green.
+
+## Assault Shield follow-ups: Zero Hour fire, third person, the weapon on deploy, sounds (2026-10-31, `v1/assault-shield`)
+
+* **The weapon goes with the deployed shield.** The engine's `deployriotshield` (`FUN_009672e0`)
+  takes the weapon and leaves it as the shield's retrieve item; the script brings up
+  `lastnonshieldweapon` and gives `knife_held_mp` when nothing is left. `Arsenal::take_shield` /
+  `return_shield`; the use key beside it returns it; destroyed (or owner dead) it is gone. The
+  earlier "switching back picks it up" was wrong and is removed.
+* **Stowed blast protection stays literal.** `FUN_0066f680` takes the tag matrix of the tag the
+  shield model is attached to (the client's stored tag, `+0x57ec`; `tag_weapon` only for a script
+  mover, `FUN_00967430`), so a stowed shield measures from `tag_stowed_back`'s axis 0 (back and
+  down): it rarely protects, as in BO2.
+* **Zero Hour fire.** Host patch 0017 hooks `Object::attemptDamage` (`Zhbo_ShieldDamage`) and asks
+  the new, lock-free `zhbo_logic_shield_damage` (an atomic mirror of `Sim::shields`; a lock-free ring
+  for damage to a deployed shield's object, drained before the next step). **Gotcha: the hook can
+  run inside `zhbo_logic_step`** (the sim's own `damage` call reaches `attemptDamage`), so it must
+  never take the state lock; damage whose source is a controlled General passes untouched. The
+  deployed shield's object is now attackable (`ActiveBody`, a box of its bounds) and the sim
+  skips it as a target. Integrator: ABI append (version bump), build patch 0017, in-game checks.
+* **Third person.** The native body holds the shield on `tag_weapon_left` (a world manifest's
+  tagged base part) and wears the stow model on `tag_stowed_back` (`ZS<vm>.zbw`) while another
+  weapon is up, from a lock-free per-General mirror (no ABI field).
+* **Sounds.** `wpn_riotshield_plant`, `wpn_riotshield_destroy`, `fly_riotshield_impact_bullet` /
+  `_knife` (converted as the shield's World events; shield hits are a `ShieldHit` event).
+* **Description.** The shield's CaC description (statstable column 7) comes with `v1/cac-rules`'
+  `set_cac_slots` description pass (`bd5bb9c`), which covers every statstable weapon item; not
+  duplicated here.
+
+Measured (previous `v1/assault-shield` conf → conf2): weapons cells 769,990 → 769,991; the one
+cell is the shield's `world_model` (the column already differs on 11,543 of 11,605 rows: no new
+cluster) — BO2's def names the pickup model, the mod's in-hand model is the script's carry model.
+cac 573 → 573; gap clusters 199 → 199. The real-install conversion test now composes a tagged base
+part on its body bone (and on the model's origin without a body), as `nativebody::load` does.

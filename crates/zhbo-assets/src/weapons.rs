@@ -420,6 +420,8 @@ pub fn table_with_metadata(
         reticle_colors: opts.reticle_colors.to_vec(),
         tablet_meshes: 0,
         perks: Vec::new(),
+        // The HUD text the core draws, in the install's own English.
+        hud_strings: zhbo_core::weapons::HUD_STRINGS.iter().filter_map(|k| names.get(*k).map(|t| (k.to_string(), t.clone()))).collect(),
     }
 }
 
@@ -630,12 +632,19 @@ pub fn sounds_and_fx(bo2: &[Weapon], atts: &[bo2::Attachment], defs: &mut [Weapo
             events.extend(general(zhbo_core::sounds::PULL_PIN, &w.pullback_sound_player, Kind::Player));
             events.extend(general(zhbo_core::sounds::EXPLOSION, &w.projectile_explosion_sound, Kind::World));
         }
-        // A melee weapon swings with its own sound; the class melee weapon's is also the global
-        // swing (a gun's melee, `sounds::melee_for`).
-        if d.class == Class::Melee {
+        // A melee weapon (and the Assault Shield, which melees with itself) swings with its own
+        // sound; the class melee weapon's is also the global swing (a gun's melee,
+        // `sounds::melee_for`).
+        if d.class == Class::Melee || d.class == Class::Shield {
             if let Some(event) = general(&format!("ZHBO_BO2_MeleeSwing_{key}"), &w.melee_swipe_sound_player, Kind::Player) {
                 d.melee_sound = event.event.clone();
                 events.push(event);
+            }
+        }
+        // The Assault Shield's own cues (`sounds::SHIELD_SOUNDS`): heard where they happen.
+        if d.class == Class::Shield {
+            for &(event, alias) in zhbo_core::sounds::SHIELD_SOUNDS {
+                events.push(DynSfx { event: event.into(), layers: vec![alias.into()], kind: Kind::World, limit: 2 });
             }
         }
         if id == zhbo_core::weapons::CLASS_MELEE {
@@ -660,20 +669,45 @@ pub fn is_player_weapon(w: &Weapon) -> bool {
     if LETHALS.contains(&w.name.as_str()) || TACTICALS.contains(&w.name.as_str()) {
         return true;
     }
+    // The Assault Shield: a primary of weapType `riotshield` (not a gun to `is_gun`).
+    if is_shield(w) {
+        return !EXCLUDED_WEAPONS.contains(&w.name.as_str());
+    }
     w.is_gun() && !w.name.contains("wager") && !w.name.starts_with("inventory_") && w.view_model.is_some() && !EXCLUDED_WEAPONS.contains(&w.name.as_str())
+}
+
+/// BO2's riot shield: weapType `riotshield` in the primary inventory (`riotshield_mp`).
+pub fn is_shield(w: &Weapon) -> bool {
+    w.weap_type == bo2::kind::RIOTSHIELD && w.inventory == bo2::inventory::PRIMARY && w.view_model.is_some()
+}
+
+/// Whether the converted weapon `id` is a riot shield in BO2's data.
+pub fn is_shield_id(id: &str, all: &[Weapon]) -> bool {
+    all.iter().any(|w| w.name == id && is_shield(w))
 }
 
 fn class_of(w: &Weapon) -> Class {
     use manifest::{LETHALS, TACTICALS};
     let name = w.name.as_str();
-    if LETHALS.contains(&name) {
-        return if matches!(name, "bouncingbetty_mp" | "claymore_mp" | "satchel_charge_mp") { Class::Equipment } else { Class::Lethal };
-    }
-    if TACTICALS.contains(&name) {
-        return if matches!(name, "trophy_system_mp" | "tactical_insertion_mp" | "pda_hack_mp") { Class::Equipment } else { Class::Tactical };
+    // An offhand's class is its BO2 `offhandSlot`: the slot picks the button (`FUN_008de050`) and
+    // the specialty that speeds its states (G3: slot 3 runs at `perk_weapEquipmentUseMultiplier`).
+    // The Create-a-Class slot it is listed under is the statstable's (`cac_slot`), a separate
+    // thing: the Sensor Grenade is a `specialgrenade` item on the equipment slot.
+    if LETHALS.contains(&name) || TACTICALS.contains(&name) {
+        return match w.offhand_slot {
+            bo2::offhand_slot::EQUIPMENT => Class::Equipment,
+            bo2::offhand_slot::TACTICAL => Class::Tactical,
+            bo2::offhand_slot::LETHAL => Class::Lethal,
+            // Not on an offhand button in BO2's data: the manifest list decides.
+            _ if LETHALS.contains(&name) => Class::Lethal,
+            _ => Class::Tactical,
+        };
     }
     if w.weap_type == bo2::kind::MELEE {
         return Class::Melee;
+    }
+    if is_shield(w) {
+        return Class::Shield;
     }
     if w.view_model.as_deref().is_some_and(|m| m.contains("_sniper_")) {
         return Class::Sniper;
@@ -866,9 +900,16 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         sprint_duration_scale: if w.sprint_duration_scale > 0.0 { w.sprint_duration_scale } else { 1.0 },
         melee_damage: if w.melee_damage > 0 { w.melee_damage as f32 } else { MELEE_DAMAGE },
         melee_time: if w.melee_time > 0.0 { w.melee_time } else { 0.6 },
+        melee_delay: w.melee_delay.max(0.0),
         effect,
         fuse_time: w.fuse_time,
         cook: w.cook_off_hold,
+        detonate_delay: w.detonate_delay.max(0.0),
+        has_detonator: w.has_detonator,
+        hold_use: w.is_hold_use_grenade,
+        hold_cancelable: w.offhand_hold_is_cancelable,
+        plantable: w.plantable,
+        inventory: zhbo_core::weapons::Inventory::from_bo2(w.inventory),
         explosion_radius: inches(w.explosion_radius as f32),
         explosion_radius_min: inches(w.explosion_radius_min as f32),
         explosion_inner_damage: w.explosion_inner_damage as f32,
@@ -1022,6 +1063,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         tracer_fx_weapon: String::new(),
         enemy_tracer_fx_weapon: String::new(),
         tracer_interval: 0,
+        // Posed on the body by `shield::geometry` once the zones are open (`generals::files`).
+        shield: None,
     };
     #[cfg(debug_assertions)]
     {
@@ -1353,10 +1396,34 @@ mod tests {
         assert_eq!(class_of(&rifle), Class::Rifle);
         let sniper = Weapon { name: "dsr50_mp".into(), class: bo2::class::RIFLE, view_model: Some("t6_wpn_sniper_dsr50_view".into()), ..Default::default() };
         assert_eq!(class_of(&sniper), Class::Sniper);
-        let frag = Weapon { name: "frag_grenade_mp".into(), weap_type: bo2::kind::GRENADE, ..Default::default() };
+        let frag = Weapon { name: "frag_grenade_mp".into(), weap_type: bo2::kind::GRENADE, offhand_slot: bo2::offhand_slot::LETHAL, ..Default::default() };
         assert_eq!((class_of(&frag), effect_of(&frag)), (Class::Lethal, Effect::Explode));
-        let conc = Weapon { name: "concussion_grenade_mp".into(), weap_type: bo2::kind::GRENADE, ..Default::default() };
+        let conc = Weapon { name: "concussion_grenade_mp".into(), weap_type: bo2::kind::GRENADE, offhand_slot: bo2::offhand_slot::TACTICAL, ..Default::default() };
         assert_eq!((class_of(&conc), effect_of(&conc)), (Class::Tactical, Effect::Stun));
+    }
+
+    #[test]
+    fn an_offhands_class_is_its_bo2_offhand_slot() {
+        // The claymore (a `primarygrenade` CaC item) and the Sensor Grenade (`specialgrenade`) are
+        // both on BO2's equipment slot, so both run at Fast Equipment Use's rate.
+        for name in ["claymore_mp", "sensor_grenade_mp", "trophy_system_mp"] {
+            let w = Weapon { name: name.into(), weap_type: bo2::kind::GRENADE, offhand_slot: bo2::offhand_slot::EQUIPMENT, ..Default::default() };
+            assert_eq!(class_of(&w), Class::Equipment, "{name}");
+        }
+        let flash = Weapon { name: "flash_grenade_mp".into(), weap_type: bo2::kind::GRENADE, offhand_slot: bo2::offhand_slot::TACTICAL, ..Default::default() };
+        assert_eq!(class_of(&flash), Class::Tactical);
+    }
+
+    #[test]
+    fn the_def_carries_bo2s_inventory_type_and_combinations_inherit_it() {
+        use zhbo_core::weapons::Inventory;
+        let claymore = Weapon { name: "claymore_mp".into(), weap_type: bo2::kind::GRENADE, offhand_slot: bo2::offhand_slot::EQUIPMENT, inventory: bo2::inventory::ITEM, ..Default::default() };
+        let d = to_def(&claymore, &HashMap::new());
+        assert_eq!(d.inventory, Inventory::Item);
+        let text = zhbo_core::weapons::format_table(std::slice::from_ref(&d));
+        assert_eq!(zhbo_core::weapons::parse_table(&text).unwrap()[0].inventory, Inventory::Item, "round trip");
+        let gl = Weapon { name: "gl_an94_mp".into(), inventory: bo2::inventory::ALTMODE, ..Default::default() };
+        assert_eq!(to_def(&gl, &HashMap::new()).inventory, Inventory::AltMode);
     }
 
     #[test]

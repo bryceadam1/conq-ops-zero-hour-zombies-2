@@ -82,7 +82,9 @@ from `zhbo_logic_*` must stay deterministic. Depends on `zhbo-requirements` and 
   or concern.
 - `config.rs` (env vars parsed once at init), `names.rs` (the naming registry),
   `tuning.rs` (the gameplay tuning pack, BO2 units), `strings.rs` (the localised strings),
-  `equipment.rs` (BO2 equipment behavior, driven by the weapon table's `Equipment` block).
+  `equipment.rs` (BO2 equipment behavior, driven by the weapon table's `Equipment` block),
+  `shield.rs` (the Assault Shield on its bearer: the posed collmap box turned with the General,
+  the ray block and the blast protection; `sim/deploy.rs` plants, wears down and returns it).
 - `nativevm/`: the native first-person viewmodel (Track R, `ZHBO_NATIVE_VIEWMODEL`): files asked
   of the bridge, composition and posing (pure, tested without a GPU), the renderer upload/submit
   (`gpu.rs`, feature `renderer`), the class camo swap (`camo.rs`: the `.zcm` recipe applied to the

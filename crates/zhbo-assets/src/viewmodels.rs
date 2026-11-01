@@ -757,7 +757,11 @@ pub(crate) fn world_weapons(
     for (vm, id) in converted.iter().enumerate() {
         let (base, shorts) = zhbo_core::attachments::split_id(id);
         let Some(w) = bo2.iter().find(|w| w.name == base) else { continue };
-        let Some((world, tex, world_path)) = w.world_model.as_deref().and_then(|m| load(m, out, looks)) else { continue };
+        // The Assault Shield is carried as the script's carry model on the left hand
+        // (`_riotshield.gsc` `refreshshieldattachment`), not its pickup world model.
+        let shield = crate::weapons::is_shield(w);
+        let world_name = if shield { Some(crate::shield::CARRY_MODEL) } else { w.world_model.as_deref() };
+        let Some((world, tex, world_path)) = world_name.and_then(|m| load(m, out, looks)) else { continue };
         let c = combo(w, atts, &shorts);
         let prefix = format!("W{vm:02}");
         let write_w3d = vm < base_count;
@@ -770,7 +774,7 @@ pub(crate) fn world_weapons(
         // inches, so its offsets stay unscaled (the W3D path's are scaled above).
         let mut native_parts = vec![zhbo_native::viewmodel::Part {
             model: world_path,
-            tag: None,
+            tag: shield.then(|| crate::shield::HELD_TAG.to_string()),
             offset: crate::xf::IDENTITY,
             rigid: true,
             ads_only: false,
@@ -801,6 +805,21 @@ pub(crate) fn world_weapons(
                 camo: u.camo,
                 ads_swap: None,
             });
+        }
+        // Carried but not up, the shield hangs on the back (`tag_stowed_back`, the stow model).
+        if let Some(stow) = shield.then(|| find_model(patch, common, crate::shield::STOW_MODEL).ok()).flatten() {
+            let t = textures(&stow, paks, out, looks);
+            let part = zhbo_native::viewmodel::Part {
+                model: crate::native::put_model(out, &crate::native::model(&stow, &t, looks)),
+                tag: Some(crate::shield::STOWED_TAG.to_string()),
+                offset: crate::xf::IDENTITY,
+                rigid: true,
+                ads_only: false,
+                // The stowed shield wears the def's camo, as the held one does.
+                camo: w.weapon_camo.clone(),
+                ads_swap: None,
+            };
+            out.insert(zhbo_native::stowed_weapon_path(vm as i32), zhbo_native::thirdperson::Weapon { id: format!("{id}_stowed"), parts: vec![part], hide: Vec::new() }.to_bytes());
         }
         out.insert(
             zhbo_native::world_weapon_path(vm as i32),
@@ -854,10 +873,14 @@ pub(crate) fn projectiles(
         let Some(w) = bo2.iter().find(|w| w.name == base_id(id)) else { continue };
         let Some(d) = defs.iter_mut().find(|d| &d.id == id) else { continue };
         let throws = d.class.is_offhand() || d.class == Class::Launcher || d.projectile_speed > 0.0;
-        if !throws || d.class == Class::Melee {
+        // The Assault Shield is set down as cover in the script's deployed model
+        // (`_riotshield.gsc` `level.deployedshieldmodel`), not its pickup world model.
+        let shield = d.class == Class::Shield;
+        if !(throws || shield) || d.class == Class::Melee {
             continue;
         }
-        let Some(model_name) = w.projectile_model.clone().or_else(|| w.world_model.clone()) else { continue };
+        let model_name = if shield { Some(crate::shield::CARRY_MODEL.to_string()) } else { w.projectile_model.clone().or_else(|| w.world_model.clone()) };
+        let Some(model_name) = model_name else { continue };
         let Ok(model) = find_model(patch, common, &model_name) else { continue };
         let rig = Rig::new(&model, &[]);
         let tex = textures(&model, paks, out, &mut looks);
@@ -875,10 +898,26 @@ pub(crate) fn projectiles(
         } else {
             String::new()
         };
+        // The deployed Assault Shield is cover Zero Hour's units can shoot: solid, attackable, a box
+        // of its model's bounds (x is its facing). The engine never applies the damage — the
+        // bridge's hook hands it to the core's wear-down (`zhbo_logic_shield_damage`) — so its
+        // health only tells the AI what it is up against: the script's deployed health.
+        let body = if shield {
+            let k = character::SCALE;
+            let half = |a: usize| (model.maxs[a] - model.mins[a]) * 0.5 * k;
+            let health = crate::shield::deployed_health_zh();
+            format!(
+                "  KindOf = IMMOBILE\n  Body = ActiveBody ModuleTag_02\n    MaxHealth = {health:.1}\n    InitialHealth = {health:.1}\n  End\n{sight}  \
+                 Geometry = Box\n  GeometryMajorRadius = {:.2}\n  GeometryMinorRadius = {:.2}\n  GeometryHeight = {:.2}\n  GeometryIsSmall = No\n",
+                half(0),
+                half(1),
+                (model.maxs[2] - model.mins[2]) * k
+            )
+        } else {
+            format!("  KindOf = NO_COLLIDE INERT IMMOBILE UNATTACKABLE CLICK_THROUGH\n  Body = InactiveBody ModuleTag_02\n  End\n{sight}  Geometry = Sphere\n  GeometryMajorRadius = 1.0\n  GeometryIsSmall = Yes\n")
+        };
         ini.push_str(&format!(
-            "Object {object}\n  Draw = W3DModelDraw ModuleTag_01\n    OkToChangeModelColor = Yes\n    DefaultConditionState\n      Model = {name}\n    End\n  End\n  \
-             KindOf = NO_COLLIDE INERT IMMOBILE UNATTACKABLE CLICK_THROUGH\n  Body = InactiveBody ModuleTag_02\n  End\n{sight}  \
-             Geometry = Sphere\n  GeometryMajorRadius = 1.0\n  GeometryIsSmall = Yes\nEnd\n\n"
+            "Object {object}\n  Draw = W3DModelDraw ModuleTag_01\n    OkToChangeModelColor = Yes\n    DefaultConditionState\n      Model = {name}\n    End\n  End\n{body}End\n\n"
         ));
         d.projectile_object = object;
         models.insert(id.clone(), name.clone());
