@@ -13,8 +13,9 @@
 //! over a file lookup, so the same audit runs on a converted archive (`zhbo-assets audit-native`)
 //! and on the converter's output in memory (the real-install test).
 
+use std::collections::BTreeMap;
 use zhbo_core::nativebody::{self, Mode};
-use zhbo_core::nativevm::{self, Files};
+use zhbo_core::nativevm::{self, Files, Mesh};
 use zhbo_core::weapons::WeaponDef;
 
 /// The faction letters the converter writes arms for (`generals::FACTIONS`).
@@ -39,6 +40,67 @@ pub struct Report {
     pub first_person: usize,
     pub third_person: usize,
     pub problems: Vec<Problem>,
+}
+
+/// What a texture file the composed mesh names turned out to be, decoded once per run.
+#[derive(Clone, Debug, PartialEq)]
+enum Texture {
+    Fine,
+    /// Not in the archive: the renderer binds its 1x1 white stand-in.
+    Missing,
+    Undecodable(String),
+    /// Every pixel opaque white: the renderer's stand-in, baked into a file.
+    White,
+}
+
+/// Whether `rgba` is a solid, opaque white image (BO2's art never is: a converted colour map that
+/// is, is a placeholder that reached the archive).
+fn is_white(rgba: &[u8]) -> bool {
+    !rgba.is_empty() && rgba.as_chunks::<4>().0.iter().all(|p| p[0] >= 250 && p[1] >= 250 && p[2] >= 250 && p[3] >= 250)
+}
+
+/// The texture problems of `mesh` (`what` names the load): a surface the renderer would draw
+/// untextured (no colour map), or a texture it names that is missing, does not decode, or is a
+/// solid white colour map. Those all draw white in game — on the third-person weapon the overhead
+/// view shows, too.
+fn texture_problems(mesh: &Mesh, what: &str, read: &dyn Fn(&str) -> Option<Vec<u8>>, seen: &mut BTreeMap<String, Texture>) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut check = |path: &str, colour: bool, out: &mut Vec<String>| {
+        let t = seen
+            .entry(path.to_string())
+            .or_insert_with(|| match read(path) {
+                None => Texture::Missing,
+                Some(bytes) => match zhbo_native::tga::decode(&bytes) {
+                    Ok(img) if is_white(&img.rgba) => Texture::White,
+                    Ok(_) => Texture::Fine,
+                    Err(e) => Texture::Undecodable(e.to_string()),
+                },
+            })
+            .clone();
+        match t {
+            Texture::Fine => {}
+            Texture::White if !colour => {}
+            Texture::White => out.push(format!("{what}: {path} is solid white")),
+            Texture::Missing => out.push(format!("{what}: {path} is not in the archive")),
+            Texture::Undecodable(e) => out.push(format!("{what}: {path}: {e}")),
+        }
+    };
+    for s in &mesh.surfaces {
+        // Drawn by their own technique from code-made inputs, with no colour file of their own
+        // (`Looks::no_file`): the ui3d reticle (the code's UI texture) and the MMS screen.
+        let code_texture = s.sonar.is_some() || s.reticle.as_ref().is_some_and(|r| r.kind == zhbo_native::model::ReticleKind::Ui3d);
+        match &s.color {
+            Some(c) => check(c, true, &mut out),
+            None if !code_texture => out.push(format!("{what}: surface {} has no colour map", s.material)),
+            None => {}
+        }
+        for p in [&s.maps, &s.specular, &s.camo].into_iter().flatten() {
+            check(p, false, &mut out);
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 /// Run `step` over `files` until it finishes, answering its requests from `read`.
@@ -66,6 +128,7 @@ pub fn audit(weapons: &[WeaponDef], read: &dyn Fn(&str) -> Option<Vec<u8>>) -> R
     // the next round asks again.
     let mut files = Files::default();
     let mut seen_vm = std::collections::BTreeSet::new();
+    let mut textures = BTreeMap::new();
     for d in weapons.iter().filter(|d| d.viewmodel >= 0) {
         // Alt modes and aliases share their parent's viewmodel: one check each.
         if !seen_vm.insert(d.viewmodel) {
@@ -85,6 +148,11 @@ pub fn audit(weapons: &[WeaponDef], read: &dyn Fn(&str) -> Option<Vec<u8>>) -> R
                     if l.mesh_aimed.as_ref().unwrap_or(&l.mesh).surfaces.is_empty() {
                         fail(format!("ZV{:02}{}: no surface at full ADS", d.viewmodel, f as char));
                     }
+                    for m in std::iter::once(&l.mesh).chain(l.mesh_aimed.as_ref()) {
+                        for p in texture_problems(m, &format!("ZV{:02}{}", d.viewmodel, f as char), read, &mut textures) {
+                            fail(p);
+                        }
+                    }
                 }
                 Err(e) => fail(format!("ZV{:02}{}: {e}", d.viewmodel, f as char)),
             }
@@ -93,7 +161,11 @@ pub fn audit(weapons: &[WeaponDef], read: &dyn Fn(&str) -> Option<Vec<u8>>) -> R
         let req = nativebody::Request { vm: d.viewmodel, faction: b'U', mode: Mode::Weapon, state: 0, time: 0.0, rate: 1.0, pos: [0.0; 3], yaw: 0.0, tag: None, stowed: -1 };
         match drive(&mut files, read, |files| nativebody::load(files, &req, None)) {
             Ok(l) if l.mesh.surfaces.is_empty() => fail(format!("ZW{:02}: no surface", d.viewmodel)),
-            Ok(_) => {}
+            Ok(l) => {
+                for p in texture_problems(&l.mesh, &format!("ZW{:02}", d.viewmodel), read, &mut textures) {
+                    fail(p);
+                }
+            }
             Err(e) => fail(format!("ZW{:02}: {e}", d.viewmodel)),
         }
     }
@@ -103,7 +175,11 @@ pub fn audit(weapons: &[WeaponDef], read: &dyn Fn(&str) -> Option<Vec<u8>>) -> R
             let req = nativebody::Request { vm: d.viewmodel, faction: f, mode: Mode::Body, state: 0, time: 0.0, rate: 1.0, pos: [0.0; 3], yaw: 0.0, tag: None, stowed: -1 };
             match drive(&mut files, read, |files| nativebody::load(files, &req, None)) {
                 Ok(l) if l.mesh.surfaces.is_empty() => report.problems.push(Problem { weapon: d.id.clone(), what: format!("body {}: no surface", f as char) }),
-                Ok(_) => {}
+                Ok(l) => {
+                    for what in texture_problems(&l.mesh, &format!("body {}", f as char), read, &mut textures) {
+                        report.problems.push(Problem { weapon: d.id.clone(), what });
+                    }
+                }
                 Err(e) => report.problems.push(Problem { weapon: d.id.clone(), what: format!("body {}: {e}", f as char) }),
             }
         }

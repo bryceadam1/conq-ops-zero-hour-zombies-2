@@ -389,7 +389,10 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     hidden.extend(tablet.iter().map(|m| m.name.clone()));
     let mut ini = BASE_INI.to_string();
     for (f, zone) in FACTIONS.iter().zip(&zones) {
-        let body = xmodel::find(zone, f.body).map_err(|e| e.to_string())?;
+        let mut body = xmodel::find(zone, f.body).map_err(|e| e.to_string())?;
+        // The faction zone loads after `common_mp` and references the shared eye, mouth and
+        // datapad materials it defines.
+        viewmodels::resolve_materials(&[zone, &common], &mut body);
         let body_tex = textures::textures(&body, &paks, &mut out, &mut looks);
         // Track R7: the same body as a native blob (skeleton, skin weights and surfaces), with the
         // clip of every movement state, for the renderer's native BO2 pass.

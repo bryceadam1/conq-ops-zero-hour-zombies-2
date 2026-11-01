@@ -107,6 +107,9 @@ pub struct Material {
     /// and is dropped): which shaders draw the material.
     pub techset: String,
     pub constants: Vec<Constant>,
+    /// The zone holds only a reference to the material (`,name`: no textures, constants or
+    /// states of its own); BO2 binds the name to the material another loaded zone defines.
+    pub reference: bool,
 }
 
 impl Material {
@@ -494,7 +497,9 @@ pub fn find_inline_material(z: &Zone, name: &str) -> Option<Material> {
 }
 
 pub fn read_material(z: &Zone, m: u32) -> Material {
-    let name = z.str_ptr(m).trim_start_matches(',').to_string();
+    let raw = z.str_ptr(m);
+    let reference = raw.starts_with(',');
+    let name = raw.trim_start_matches(',').to_string();
     let count = z.u8(m + 84) as u32;
     let table = z.u32(m + 96);
     let textures = if table == 0 {
@@ -531,7 +536,7 @@ pub fn read_material(z: &Zone, m: u32) -> Material {
             })
             .collect()
     };
-    Material { name, textures, state_bits, sort_key: z.u8(m + 9), techset, constants }
+    Material { name, textures, state_bits, sort_key: z.u8(m + 9), techset, constants, reference }
 }
 
 /// Read the `GfxImage` at `g`.
@@ -709,6 +714,9 @@ mod tests {
         zone.linked = vec![asset(0x40), asset(0x100)];
         assert!(find_asset_material(&zone, "mat_ab").is_none(), "not a top-level asset");
         let m = find_linked_material(&zone, "mat_ab").expect("the nested material");
+        assert!(!m.reference, "the real material is not a reference");
+        assert!(read_material(&zone, 0x40).reference, "the `,` stub is marked a reference");
+        assert_eq!(read_material(&zone, 0x40).name, "mat_ab", "under the material's own name");
         assert_eq!(m.color_map().map(|i| i.name.as_str()), Some("helper"), "the semantic order picks the helper");
         assert_eq!(m.sampler("colorMap").map(|i| i.name.as_str()), Some("color"));
         assert_eq!(m.sampler("SpecularAndGloss").map(|i| i.name.as_str()), Some("helper"));

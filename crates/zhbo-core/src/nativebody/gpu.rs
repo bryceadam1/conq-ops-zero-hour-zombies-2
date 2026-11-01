@@ -7,7 +7,7 @@ use zhbo_gfx::ffi::with_renderer;
 use zhbo_gfx::runtime::{NativeDraw, NativeFrame, NativeLight, NativeSurface, NativeVertex, INVALID};
 
 use super::ffi::{Rig, State, ZhboNativeBodyIn, DRAWN, LOADING, NOT_NATIVE};
-use crate::nativevm::{native_blend, native_cull, native_reticle, native_sonar, technique_files};
+use crate::nativevm::{native_surface, surface_files};
 
 /// The rig's handles on the GPU.
 #[derive(Default)]
@@ -40,7 +40,7 @@ pub(crate) fn draw(s: &mut State, rig: &mut Rig, inp: &ZhboNativeBodyIn) -> i32 
         // space shading (native.wgsl): every map uploads raw.
         let mut paths: Vec<(String, bool)> = Vec::new();
         for surf in &loaded.mesh.surfaces {
-            for p in [&surf.color, &surf.maps, &surf.specular].into_iter().flatten().chain(technique_files(surf)) {
+            for p in surface_files(surf) {
                 if !paths.iter().any(|(q, _)| q == p) {
                     paths.push((p.clone(), false));
                 }
@@ -80,7 +80,7 @@ pub(crate) fn draw(s: &mut State, rig: &mut Rig, inp: &ZhboNativeBodyIn) -> i32 
             let surfaces: Vec<NativeSurface> = mesh
                 .surfaces
                 .iter()
-                .map(|s| NativeSurface { first_index: s.first_index, index_count: s.index_count, blend: native_blend(s.blend), emissive: s.emissive, color: handle(&s.color), maps: handle(&s.maps), specular: handle(&s.specular), camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: s.sort_key, cull: native_cull(s.cull), reticle: s.reticle.as_ref().map(|r| native_reticle(r, s.display.as_ref(), handle)), sonar: s.sonar.as_ref().map(|so| native_sonar(so, handle)) })
+                .map(|s| native_surface(s, handle))
                 .collect();
             let m = r.native_create_mesh(&vertices, &mesh.indices, &surfaces);
             Some((m, handles.into_iter().map(|(_, h)| h).filter(|&h| h != INVALID).collect::<Vec<_>>()))

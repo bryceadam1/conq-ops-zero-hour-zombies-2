@@ -113,7 +113,7 @@ pub(crate) fn textures(model: &xmodel::Model, paks: &Paks, files: &mut BTreeMap<
                 }));
             }
             let blend = m.blend();
-            let Some(img) = m.color_map() else {
+            let Some(img) = colour_image(m) else {
                 // A see-through surface drawn only by a special shader: nothing to draw it with.
                 if blend != w3d::Blend::Opaque {
                     let name = character::texture_file(&m.name);
@@ -132,9 +132,11 @@ pub(crate) fn textures(model: &xmodel::Model, paks: &Paks, files: &mut BTreeMap<
             }
             let path = format!("Art\\Textures\\{name}");
             if !files.contains_key(&path) {
-                let mut rgba = if neutral { datapad_off() } else { shrink(paks.image(img.key())?, MAX_TEXTURE) };
+                // A `,name` stub (a patch zone's material pointing at an image another zone
+                // streams) resolves by name, as every other texture here does.
+                let mut rgba = if neutral { datapad_off() } else { shrink(paks.resolve(img)?, MAX_TEXTURE) };
                 if blend == w3d::Blend::Opaque {
-                    let map = |semantic| m.image(semantic).and_then(|i| paks.image(i.key()));
+                    let map = |semantic| m.image(semantic).and_then(|i| paks.resolve(i));
                     put_occlusion(&mut rgba, map(xmodel::TS_OCCLUSION_MAP).as_ref());
                     let spec = map(xmodel::TS_SPECULAR_MAP);
                     let maps = surface_maps(rgba.width, rgba.height, map(xmodel::TS_NORMAL_MAP).as_ref(), spec.as_ref());
@@ -154,6 +156,13 @@ pub(crate) fn textures(model: &xmodel::Model, paks: &Paks, files: &mut BTreeMap<
             Some(name)
         })
         .collect()
+}
+
+/// The image a material's shader samples as its colour: the `colorMap` sampler, by name — the
+/// semantic order can put a helper first (the PLA head's rim mask, a `,name` stub that resolves
+/// to nothing) — or, for a material with no sampler of that name, its first colour-semantic image.
+pub(crate) fn colour_image(m: &xmodel::Material) -> Option<&xmodel::Image> {
+    m.sampler("colorMap").or_else(|| m.color_map())
 }
 
 /// A surface only the native pass draws, with its own image's colour and coverage (`*_a.tga`),
@@ -478,6 +487,70 @@ mod tests {
         assert_eq!((s.enemies, s.pulse_color, s.edge_color), ([0.607143, 0.785714, 1.0, 7.0], [0.607143, 0.689286, 1.0, 1.5], [0.75, 0.791429, 1.0, 1.0]));
         m.constants.retain(|k| k.name_hash != xmodel::sampler_hash("MinDepth"));
         assert!(sonar_constants(&m, None, None).is_none(), "no MinDepth, nothing to draw by");
+    }
+
+    /// The colour image is the `colorMap` sampler's, whatever the semantic order puts first; a
+    /// material without that sampler keeps its first colour-semantic image.
+    #[test]
+    fn the_colour_image_is_the_color_map_sampler() {
+        let img = |name: &str| Some(xmodel::Image { name: name.into(), hash: 0, stream_hash: 0, streamed_parts: 0, width: 0, height: 0 });
+        let tex = |sampler: &str, image: &str| xmodel::Texture { name_hash: xmodel::sampler_hash(sampler), semantic: xmodel::TS_COLOR_MAP, image: img(image) };
+        // The PLA head's order: the rim mask (a stub) first, then the real colour map.
+        let head = xmodel::Material { textures: vec![tex("Rim_Mask", "c_gen_arm_rim_mask_norim_c"), tex("colorMap", "c_chn_mp_pla_head_c")], ..Default::default() };
+        assert_eq!(colour_image(&head).map(|i| i.name.as_str()), Some("c_chn_mp_pla_head_c"));
+        let unnamed = xmodel::Material { textures: vec![tex("Other", "first"), tex("Another", "second")], ..Default::default() };
+        assert_eq!(colour_image(&unnamed).map(|i| i.name.as_str()), Some("first"));
+    }
+
+    /// Every model a BO2 multiplayer weapon names — the viewmodel, the third-person world model,
+    /// the projectile (the SMAW's rocket), the base parts and every attachment's view, world and
+    /// additional models — converts with a colour map on every surface it keeps. A patch zone's
+    /// model can carry only references to its materials (`common_patch_mp`'s SMAW world model,
+    /// which drew white overhead) or stub images (the Peacekeeper); both must resolve through the
+    /// pool, as BO2's asset pool binds them.
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn every_weapon_model_surface_has_its_colour_map() {
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let mp = crate::paks::MpPool::load(&dir).unwrap();
+        let (bo2, _) = mp.weapons().unwrap();
+        let pool = [&mp.patch, &mp.common_patch, &mp.common];
+        let paks = Paks::open_for(&dir, &pool).unwrap();
+        let mut names = std::collections::BTreeSet::new();
+        for w in &bo2 {
+            names.extend([&w.view_model, &w.world_model, &w.projectile_model].into_iter().flatten().cloned());
+            names.extend(w.attach_view_models.iter().map(|(m, _)| m.clone()));
+            names.extend(w.attach_world_models.iter().map(|a| a.model.clone()));
+            for u in &w.attachment_uniques {
+                names.extend([&u.view_model, &u.view_model_ads, &u.view_model_additional, &u.world_model, &u.world_model_additional].into_iter().flatten().cloned());
+            }
+        }
+        names.retain(|n| !n.is_empty());
+        let (mut files, mut looks) = (BTreeMap::new(), Looks::default());
+        let (mut checked, mut problems) = (0, Vec::new());
+        for name in &names {
+            let Ok(model) = crate::viewmodels::find_model(&pool, name) else { continue };
+            checked += 1;
+            for m in model.materials.iter().flatten().filter(|m| m.reference) {
+                problems.push(format!("{name}: {} is an unresolved reference", m.name));
+            }
+            let tex = textures(&model, &paks, &mut files, &mut looks);
+            let native = crate::native::model(&model, &tex, &looks);
+            let lod0 = native.lods.first().map_or(0..native.surfaces.len(), |l| l.first_surface as usize..(l.first_surface + l.surface_count) as usize);
+            for s in &native.surfaces[lod0] {
+                let mat = &native.materials[s.material as usize];
+                let code_drawn = mat.sonar.is_some() || mat.reticle.as_ref().is_some_and(|r| r.kind == ReticleKind::Ui3d);
+                match &mat.color {
+                    Some(c) if !files.contains_key(c) => problems.push(format!("{name}: {} names {c}, not converted", mat.name)),
+                    None if !code_drawn => problems.push(format!("{name}: {} has no colour map (draws white)", mat.name)),
+                    _ => {}
+                }
+            }
+        }
+        problems.sort();
+        problems.dedup();
+        assert!(checked > 300, "the weapon pool's models: {checked}");
+        assert!(problems.is_empty(), "{} of {checked} models' surfaces would draw white:\n{}", problems.len(), problems.join("\n"));
     }
 
     /// The technique set names the technique, the most specific prefix first.

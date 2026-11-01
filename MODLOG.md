@@ -9236,3 +9236,49 @@ Verified:
 * `cargo xtask build`: OK.
 * Autotests, run one at a time: default 16/16, `--classpick` 8/8, `--rts` 15/15, `--scope` pass,
   `--w3d-ads` 2/2.
+
+## The SMAW is no longer white overhead: patch-zone materials bind as BO2 binds them (2026-11-01)
+
+**Gotcha — a patch zone's model can carry its materials as `,name` references.** The overhead
+General's SMAW drew white (the renderer's white stand-in: no colour map). `find_model` takes
+`common_patch_mp`'s `t6_wpn_launch_smaw_world` (it has geometry), but every material of that model
+is a `,mc/mtl_...` reference with no textures; the definitions are `common_mp`'s. BO2's asset pool
+binds a reference to the loaded asset of that name; the converter read the reference as the
+material, found no colour map, and wrote the surface untextured. The viewmodel was fine
+(`common_patch_mp`'s view model is itself a reference, so `common_mp`'s full model converted).
+`xmodel::Material::reference` now marks a `,name` material and `viewmodels::resolve_materials`
+binds each to the pool's definition (highest priority first) in `find_model`, and for the faction
+bodies over `[faction zone, common_mp]`.
+
+The same cause and two siblings, found by sweeping every converted surface rather than the SMAW:
+* **References** (the cause above): the RMR sight's view model (`patch_mp`; its body and lens drew
+  white on every pistol `+reflex`), the frag grenade's world and projectile models, the Target
+  Finder, tactical insertion and PDA view models, the Peacekeeper's sight glow, bullet, emblem and
+  clan-tag surfaces, and the bodies' eyes, mouth and datapad.
+* **Stub images on the opaque colour path**: `textures` read an opaque surface's colour, normal,
+  spec and occlusion maps by their own stream key (`paks.image(img.key())`), so a `,name` image
+  stub (no stream hash) failed where every other texture path used `Paks::resolve`. The
+  Peacekeeper's `common_patch_mp` materials sample `patch_mp`'s images that way: its gun was white
+  in first and third person.
+* **The colour image is the `colorMap` sampler** (`textures::colour_image`), not the first
+  colour-semantic image: the PLA head lists its rim mask (a stub) first and drew white.
+
+**Third-person camo was dropped at draw.** `nativebody::gpu` built the renderer's surface itself
+and passed `camo: INVALID`, so the class camo `nativebody::load` painted never reached the screen.
+First and third person now share `nativevm::native_surface`/`surface_files`.
+
+**Tests.** The native audit (`audit-native`, `every_converted_weapon_draws`) now checks every
+composed mesh's textures: a surface with no colour map (bar the ui3d reticle and the MMS screen), a
+named file missing or undecodable, or a solid-white colour map. On the pre-fix archive it listed
+20,797 problems over 29,067 first-person loads and 9,689 world manifests; after, none.
+`every_weapon_model_surface_has_its_colour_map` (real install) converts every model a BO2 MP weapon
+names — view, world, projectile, base parts, every attachment's models — and requires a converted
+colour map on every kept surface; it lists 59 of 331 models without the fix.
+`render_world_weapons` (new example) draws every world manifest through `zhbo_native_body` from
+above, the way the overhead view sees it.
+
+Verified: `cargo test --workspace` 962 passed; clippy clean (also `-p zhbo-core --features renderer`);
+the real-install suites green (`zhbo-assets` 59 with `ZHBO_ZH_DIR` set, `zhbo-formats` 17);
+`audit-native` on a fresh archive lists only the MMS screen before its exemption, nothing after;
+conformance identical to the baseline (1,979 cells / 11 clusters, cac 0, 12 gap clusters). The
+converter's output changed, so `hud::VERSION` needs a bump at integration.

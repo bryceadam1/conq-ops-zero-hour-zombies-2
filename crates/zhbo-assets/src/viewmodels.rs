@@ -37,7 +37,26 @@ pub(crate) fn magazine(pool: &[&Zone], view_model: &str) -> Option<xmodel::Model
 pub(crate) fn find_model(pool: &[&Zone], name: &str) -> Result<xmodel::Model, String> {
     let (last, higher) = pool.split_last().ok_or("no zones")?;
     let patched = higher.iter().find_map(|z| xmodel::find(z, name).ok().filter(|m| !m.lods.is_empty()));
-    patched.map_or_else(|| xmodel::find(last, name).map_err(|e| format!("{name}: {e}")), Ok)
+    let mut model = patched.map_or_else(|| xmodel::find(last, name).map_err(|e| format!("{name}: {e}")), Ok)?;
+    resolve_materials(pool, &mut model);
+    Ok(model)
+}
+
+/// Bind each of `model`'s reference materials (`,name`: a patch zone's model pointing at a
+/// material it does not carry, as `common_patch_mp`'s SMAW world model does) to the material of
+/// that name a zone of `pool` defines (highest priority first), as BO2's asset pool binds a
+/// reference to the loaded asset. Left as it is, a reference has no colour map and draws white.
+pub(crate) fn resolve_materials(pool: &[&Zone], model: &mut xmodel::Model) {
+    let mut found: BTreeMap<String, Option<xmodel::Material>> = BTreeMap::new();
+    for m in model.materials.iter_mut().flatten().filter(|m| m.reference) {
+        let full = found
+            .entry(m.name.clone())
+            .or_insert_with(|| pool.iter().find_map(|z| xmodel::find_material(z, &m.name).filter(|d| !d.reference)))
+            .clone();
+        if let Some(full) = full {
+            *m = full;
+        }
+    }
 }
 
 /// An animation as the asset pool holds it over `pool` (highest priority first): the first zone
