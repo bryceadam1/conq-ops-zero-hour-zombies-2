@@ -8529,3 +8529,32 @@ shows "sound layers: 293 BO2 third-person layers installed"), `--classpick` 6/6,
 `--scope` pass, `--w3d-ads` 2/2. Two legs launched back-to-back first bailed with "Generals is
 already running" (the previous game still exiting); rerun serially they passed — wait for the
 previous `generalszh` to exit between legs.
+
+## The CaC backing tiles every 8 units, not 8 times (2026-11-01, `v1/ui-scaling`)
+
+The create-a-class screens (`classui::bo2::backdrop`: the class list, editor, pickers and
+personalize) showed eight broad vertical bands behind the menu. BO2's
+`addLargePopupBackground` (`codmenu.lua`) gives `menu_mp_cac_backing` `setupTiles(8)` and
+`setTileVertically(false)`, and the mod read the 8 as a repeat count. It is a tile *width*: the
+LUI method (`FUN_00952e20`, found through its name string at `00be2db8` and the method table at
+`0xbe3790`) stores the 8, and the image's layout hook (`FUN_00952d60`) sets `s1 = (right − left) / 8`
+(and `t1` the same way when tiling vertically). So the strip's dot column repeats every 8 units —
+160 times across the 1280-unit backing — and with its 6-texel dot rows makes BO2's fine dot grid.
+The capture `a-chooseclass/001` agrees: horizontal periodicity 21 px at 2.625 px/unit = 8 units,
+vertical ~15 px = 6 texels. Drawing 8 repeats stretched the 8-texel column 20× into bands.
+
+`bo2::tiled_h` is `setupTiles(n)` without vertical tiling: one image per repeat (the art is in the
+atlas, so the UVs cannot wrap), a partial last repeat clipped to the box. The other
+`setupTiles(8)` user, the medium popup's `menu_mp_toomany_backing`, is not ported.
+
+**Atlas padding repeats the sprite edge.** A strip repeated 160 times with linear filtering would
+fade into the atlas page's empty padding at every repeat (a seam every 8 units). The HUD atlas's
+one-texel ring round each sprite now repeats the sprite's edge texels (`hud::blit`), so an edge
+sample sees the sprite's own texture, as a standalone BO2 image would. Sprites whose border is
+transparent are unchanged.
+
+**Verified:** `bo2::tests` (160 repeats, 8 units each, contiguous, centred, at 16:9/16:10/4:3/21:9;
+a partial repeat clips), `hud::tests::the_atlas_padding_repeats_the_sprite_edge`; the CaC
+screenshot harness before/after against a fresh archive (the bands are gone; the dot pitch matches
+the capture at 3024 × 1890). The converted `menu_mp_cac_backing` is 4 × 512 (the install's largest
+mip), so its dots are softer than the capture's — the pitch and layout are BO2's.

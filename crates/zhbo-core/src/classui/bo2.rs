@@ -165,21 +165,48 @@ pub fn border(prims: &mut Vec<Prim>, f: &Frame, r: Rect, thickness: f32, argb: u
 /// `a-chooseclass/001`) stands in for it.
 pub const BACKDROP: u32 = 0xFF1B_1B1B;
 
+/// `LUI.UIImage:setupTiles(n)` with `setTileVertically(false)`: the material repeats across the
+/// box once every `n` units, each repeat the box's full height. The engine (`FUN_00952e20` stores
+/// `n`; the layout hook `FUN_00952d60`) sets the image's `s1` to `width / n`, so `n` is a tile
+/// *width*, not a tile count. The converted art sits in an atlas, so each repeat is its own image;
+/// a partial last repeat is clipped to the box, as the wrapped UVs cut it.
+pub fn tiled_h(prims: &mut Vec<Prim>, f: &Frame, material: &str, r: Rect, n: f32, argb: u32) {
+    let p = f.px(r);
+    if p.w <= 0.0 || p.h <= 0.0 || n <= 0.0 {
+        return;
+    }
+    let tile = p.w * n / r.w;
+    let count = (r.w / n).ceil() as usize;
+    let partial = r.w / n != (r.w / n).floor();
+    if partial {
+        prims.push(Prim::ClipBegin { x: p.x, y: p.y, w: p.w, h: p.h });
+    }
+    let name = materials::image(material);
+    for i in 0..count {
+        prims.push(Prim::Image { name: name.clone(), x: p.x + i as f32 * tile, y: p.y, w: tile, h: p.h, argb, fallback: Vec::new() });
+    }
+    if partial {
+        prims.push(Prim::ClipEnd);
+    }
+}
+
+/// `addLargePopupBackground`'s `dotsBG:setupTiles(8)` (`codmenu.lua`).
+pub const BACKING_TILE: f32 = 8.0;
+
 /// `CoD.Menu.addLargePopupBackground` (MP): the dotted backing (`menu_mp_cac_backing`, alpha 0.7,
-/// tiled 8 times across), and the two `menu_mp_backing_frame` rules (alpha 0.65) 16 units tall,
-/// above and below a 605-unit band shifted 19 units up from the menu's centre. The bottom rule is
-/// the top one mirrored (its LUI top is below its bottom); the converter writes that mirrored copy.
+/// `setupTiles(8)`: its 8-texel dot column repeats every 8 units across), and the two
+/// `menu_mp_backing_frame` rules (alpha 0.65) 16 units tall, above and below a 605-unit band
+/// shifted 19 units up from the menu's centre. The bottom rule is the top one mirrored (its LUI top
+/// is below its bottom); the converter writes that mirrored copy.
 pub fn backdrop(prims: &mut Vec<Prim>, f: &Frame, w: f32, h: f32) {
     prims.push(Prim::Rect { x: 0.0, y: 0.0, w, h, argb: BACKDROP });
     let band = 605.0;
     let lift = 19.0;
     let rule = 16.0;
-    // The dots: 8 tiles of the 8 x 1024 strip across the 1280-unit backing, centred.
+    // The dots: the 8 x 1024 strip repeated every 8 units across the 1280-unit backing (160
+    // repeats), centred — a fine dot grid, not eight stretched bands.
     let dots = f.in_menu(Place::new((false, false, -640.0, 640.0), (false, false, -512.0, 512.0)));
-    let tile = dots.w / 8.0;
-    for i in 0..8 {
-        image(prims, f, "menu_mp_cac_backing", Rect { x: dots.x + i as f32 * tile, y: dots.y, w: tile, h: dots.h }, argb(OFF_WHITE, 0.7), Vec::new());
-    }
+    tiled_h(prims, f, "menu_mp_cac_backing", dots, BACKING_TILE, argb(OFF_WHITE, 0.7));
     let top = f.in_menu(Place::new((false, false, -640.0, 640.0), (false, false, -band / 2.0 - lift - rule, -band / 2.0 - lift)));
     image(prims, f, "menu_mp_backing_frame", top, argb(OFF_WHITE, 0.65), rule_fallback(f, top));
     let bottom = f.in_menu(Place::new((false, false, -640.0, 640.0), (false, false, band / 2.0 - lift, band / 2.0 - lift + rule)));
@@ -304,6 +331,40 @@ mod tests {
         let f = Frame::new(3024.0, 1890.0);
         assert_eq!(f.menu, Rect { x: 144.0, y: 36.0, w: 864.0, h: 648.0 });
         assert!((f.s() - 2.625).abs() < 1e-4);
+    }
+
+    #[test]
+    fn the_backing_repeats_its_dot_column_every_8_units() {
+        // `setupTiles(8)` sets `s1 = width / 8` (`FUN_00952d60`): over the 1280-unit backing the
+        // 8-texel strip repeats 160 times, each repeat 8 units wide and the full 1024 tall. It
+        // once drew 8 repeats 160 units wide: the strip's dot column stretched into bands.
+        for (w, h) in [(1280.0, 720.0), (3024.0, 1890.0), (1024.0, 768.0), (3440.0, 1440.0)] {
+            let f = Frame::new(w, h);
+            let mut prims = Vec::new();
+            backdrop(&mut prims, &f, w, h);
+            let name = materials::image("menu_mp_cac_backing");
+            let tiles: Vec<_> = prims.iter().filter_map(|p| match p {
+                Prim::Image { name: n, x, w, h, .. } if *n == name => Some((*x, *w, *h)),
+                _ => None,
+            }).collect();
+            assert_eq!(tiles.len(), 160, "{w}x{h}");
+            let s = f.s();
+            for (i, &(x, tw, th)) in tiles.iter().enumerate() {
+                assert!((tw - 8.0 * s).abs() < 1e-3, "{w}x{h}: tile {i} is {tw} px, not 8 units");
+                assert!((th - 1024.0 * s).abs() < 1e-2);
+                assert!((x - (tiles[0].0 + i as f32 * 8.0 * s)).abs() < 1e-2, "contiguous");
+            }
+            assert!((tiles[0].0 + 640.0 * s - w / 2.0).abs() < 1e-2, "centred");
+        }
+    }
+
+    #[test]
+    fn a_partial_last_tile_is_clipped_to_the_box() {
+        let f = Frame::new(1280.0, 720.0);
+        let mut prims = Vec::new();
+        tiled_h(&mut prims, &f, "menu_mp_cac_backing", Rect { x: 0.0, y: 0.0, w: 20.0, h: 10.0 }, 8.0, 0xFFFF_FFFF);
+        assert!(matches!(prims.first(), Some(Prim::ClipBegin { .. })) && matches!(prims.last(), Some(Prim::ClipEnd)));
+        assert_eq!(prims.iter().filter(|p| matches!(p, Prim::Image { .. })).count(), 3);
     }
 
     #[test]
