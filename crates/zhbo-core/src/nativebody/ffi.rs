@@ -5,7 +5,7 @@
 //! ([`zhbo_native_take_log`]) — the same channels the viewmodel uses; [`zhbo_native_body_reset`]
 //! on a game reset.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::c_char;
 use std::sync::Mutex;
 
@@ -16,7 +16,7 @@ use crate::nativevm::ffi::ZhboNativeLight;
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ZhboNativeBodyIn {
-    /// The General object id (logging only).
+    /// The General object id: each keeps his own composed rig.
     pub general: u32,
     /// `ZHBO_NATIVE_BODY`'s mode: 1 weapon only (the W3D body draws), 2 body and weapon.
     pub mode: i32,
@@ -75,19 +75,54 @@ pub struct ZhboNativePose {
 
 const _: () = assert!(std::mem::size_of::<ZhboNativePose>() == 28);
 
-#[derive(Default)]
-pub(crate) struct State {
-    pub(crate) files: crate::nativevm::Files,
-    pub(crate) loaded: Option<Loaded>,
-    failed: HashSet<(u8, i32, u8)>,
-    pub(crate) posed: Posed,
-    pub(crate) log: VecDeque<String>,
-    logged: HashSet<String>,
+/// One General's composed rig and its GPU handles. Each General keeps his own, so several on
+/// screen with different weapons (or camos) do not evict each other's every frame.
+pub(crate) struct Rig {
+    pub(crate) loaded: Loaded,
     #[cfg(feature = "renderer")]
     pub(crate) gpu: super::gpu::Gpu,
 }
 
+impl Rig {
+    fn release(&mut self) {
+        #[cfg(feature = "renderer")]
+        self.gpu.release();
+    }
+}
+
+#[derive(Default)]
+pub(crate) struct State {
+    pub(crate) files: crate::nativevm::Files,
+    /// The rigs by General object id.
+    rigs: HashMap<u32, Rig>,
+    /// The General posed last: `posed` and [`zhbo_native_body_bone`] describe his rig.
+    last: Option<u32>,
+    failed: HashSet<(u8, i32, u8)>,
+    pub(crate) posed: Posed,
+    pub(crate) log: VecDeque<String>,
+    logged: HashSet<String>,
+}
+
 impl State {
+    /// The rig posed last (its bones are what `posed` holds).
+    pub(crate) fn loaded(&self) -> Option<&Loaded> {
+        self.last.and_then(|g| self.rigs.get(&g)).map(|r| &r.loaded)
+    }
+
+    /// How many Generals hold a rig (tests).
+    #[cfg(test)]
+    pub(crate) fn rig_count(&self) -> usize {
+        self.rigs.len()
+    }
+
+    fn release_all(&mut self) {
+        for r in self.rigs.values_mut() {
+            r.release();
+        }
+        self.rigs.clear();
+        self.last = None;
+    }
+
     /// The lines logged so far (tests).
     #[cfg(test)]
     pub(crate) fn logged(&self) -> impl Iterator<Item = &str> {
@@ -120,10 +155,12 @@ impl State {
         if self.failed.contains(&key) {
             return NOT_NATIVE;
         }
-        if self.loaded.as_ref().is_none_or(|l| l.key != key || l.camo.as_deref() != camo) {
-            #[cfg(feature = "renderer")]
-            self.gpu.release();
-            self.loaded = None;
+        let general = inp.general;
+        if self.rigs.get(&general).is_none_or(|r| r.loaded.key != key || r.loaded.camo.as_deref() != camo) {
+            // His weapon or camo changed: drop his old rig (another General's stays).
+            if let Some(mut old) = self.rigs.remove(&general) {
+                old.release();
+            }
             let req = request(inp, mode);
             match load(&mut self.files, &req, camo) {
                 Err(e) => {
@@ -134,22 +171,24 @@ impl State {
                 Ok(None) => return LOADING,
                 Ok(Some(l)) => {
                     self.log_once(format!("ZW{:02}{} composed: {} bones, {} vertices, {} surfaces", l.key.1, l.key.0 as char, l.skeleton.bones.len(), l.mesh.vertices.len(), l.mesh.surfaces.len()));
-                    self.loaded = Some(l);
+                    self.rigs.insert(general, Rig { loaded: l, #[cfg(feature = "renderer")] gpu: Default::default() });
                 }
             }
         }
         let req = request(inp, mode);
-        let Some(loaded) = self.loaded.as_ref() else { return NOT_NATIVE };
+        #[cfg_attr(not(feature = "renderer"), allow(unused_mut))]
+        let Some(mut rig) = self.rigs.remove(&general) else { return NOT_NATIVE };
         // The body clip for this movement state, or the bind pose when the weapon-only mode (or a
         // body with no clip) is drawing.
-        let clip = loaded.clip_for(inp.state as u16);
-        loaded.pose(&req, clip, &mut self.posed);
+        let clip = rig.loaded.clip_for(inp.state as u16);
+        rig.loaded.pose(&req, clip, &mut self.posed);
+        self.last = Some(general);
         #[cfg(feature = "renderer")]
-        {
-            super::gpu::draw(self, inp)
-        }
+        let answer = super::gpu::draw(self, &mut rig, inp);
         #[cfg(not(feature = "renderer"))]
-        NOT_NATIVE
+        let answer = NOT_NATIVE;
+        self.rigs.insert(general, rig);
+        answer
     }
 }
 
@@ -284,7 +323,7 @@ pub unsafe extern "C" fn zhbo_native_body_bone(name: *const c_char, out: *mut f3
     }
     let name = unsafe { std::ffi::CStr::from_ptr(name) }.to_string_lossy();
     with(|s| {
-        let Some(m) = s.loaded.as_ref().and_then(|l| l.bone_world(&s.posed, &name)) else { return 0 };
+        let Some(m) = s.loaded().and_then(|l| l.bone_world(&s.posed, &name)) else { return 0 };
         let flat: Vec<f32> = m.iter().flatten().copied().collect();
         unsafe { std::ptr::copy_nonoverlapping(flat.as_ptr(), out, 12) };
         1
@@ -295,9 +334,8 @@ pub unsafe extern "C" fn zhbo_native_body_bone(name: *const c_char, out: *mut f3
 #[no_mangle]
 pub extern "C" fn zhbo_native_body_reset() {
     let mut g = STATE.lock().unwrap_or_else(|e| e.into_inner());
-    #[cfg(feature = "renderer")]
     if let Some(s) = g.as_mut() {
-        s.gpu.release();
+        s.release_all();
     }
     *g = None;
 }

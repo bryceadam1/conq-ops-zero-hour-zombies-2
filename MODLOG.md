@@ -6284,3 +6284,20 @@ Measured: see the commit messages (conformance unchanged: the `tracer` column st
 friendly tracer, no column moved). In-game check (the integrator's): an enemy soldier's tracers in
 `gfx_tracer_enemy`'s hue vs a teammate's; your own LMG drawing a tracer every bullet, an AR every
 third, from the viewmodel's muzzle.
+
+## The native third-person weapon is the default; one rig per General (2026-10-30, branch `v1/native-body-default`)
+
+Integrator decision: the third person draws the native world weapon in the W3D body's hand by
+default, since it is the only path that shows a combination's attachments and the class camo.
+
+* `config::body_mode`: unset, empty or unrecognised `ZHBO_NATIVE_BODY` is now 1. `0`/`false`/`no`/
+  `off` opt out to the W3D weapon; `2`/`full` still adds the native body.
+* **The rig cache was per process, not per General.** With one General on screen that was
+  invisible; with several holding different weapons (or the same weapon in different camos) the
+  single cached rig was thrown away and reloaded every time the draw alternated between them. Now
+  `nativebody/ffi.rs` keeps one rig and its GPU upload per General id, replaced only when his
+  weapon, mode or camo changes, and freed together on reset. `zhbo_native_body_bone` answers from the
+  rig posed last, matching its header contract ("the last pose").
+  `gpu::draw` takes the rig instead of reading a global. Test: `each_general_keeps_his_own_rig`.
+* `autotest-mac.sh --rts` checks for the `native body: ZW..U composed` line, so a default run now
+  proves the native weapon loaded (15 checks).

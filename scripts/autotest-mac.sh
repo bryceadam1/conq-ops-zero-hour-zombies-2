@@ -314,6 +314,9 @@ if [[ $mode == rts ]]; then
     check "secondary rounds counted" "fired slot 1"
     check "first person keeps the secondary" "entered first-person control"
     check "  ...holding the SMAW" "SMAW [0-9]+\|"
+    # The native third-person weapon is the default (ZHBO_NATIVE_BODY unset = 1): the overhead
+    # General's gun composes through nativebody (ZHBO_NATIVE_BODY=0 opts out, and this fails).
+    check "native third-person weapon" "native body: ZW[0-9]+[A-Z] composed"
     echo "screenshots and log: $out"
     exit $ok
 fi
