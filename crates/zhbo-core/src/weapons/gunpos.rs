@@ -10,7 +10,8 @@
 //! `~/Documents/BO2-reference/ghidra/answers/G4.md`): the weapon's stance and movement offsets
 //! blended at its own rates (`FUN_008efa70`), faded out by half-way into ADS, pulled back at wide
 //! fields of view (`FUN_00530ba0`), dipped on landing (`FUN_00530990`), plus the bob waveform
-//! (`FUN_008eed00`/`008eee70`), view sway (`FUN_008efce0`) and the gun kick spring (G5). The input
+//! (`FUN_008eed00`/`008eee70`), view sway (`FUN_008efce0`), the idle sway (`FUN_008eefc0`,
+//! `idle_sway::gun_angles`) and the gun kick spring (G5). The input
 //! is what the client knows; the output is an offset (inches: forward, right, up) and angles
 //! (degrees: pitch, yaw, roll) for the renderer. Client-side only: none of it feeds the sim.
 //!
@@ -52,6 +53,9 @@ pub struct GunInput {
     /// The last landing: signed fall delta (inches) and seconds since.
     pub land_change: f32,
     pub since_land: f32,
+    /// The idle sway's clock and eased stance factor (the sim's `idle_sway::IdleSway`).
+    pub idle_time: f32,
+    pub idle_stance: f32,
 }
 
 /// The gun's pose relative to the view.
@@ -72,6 +76,8 @@ pub struct GunPos {
     sway_angle: (f32, f32),
     sway_ofs: (f32, f32),
     last_view: Option<(f32, f32)>,
+    /// The gun's angles the shot follows (degrees, pitch and yaw): see [`GunPos::fire_angles`].
+    fire: [f32; 2],
 }
 
 fn add(a: &mut [f32; 3], b: [f32; 3], k: f32) {
@@ -130,16 +136,34 @@ impl GunPos {
 
         // ---- Bob, sway and kick angles.
         let bob = bob_angles(def, i, t);
+        // The gun's idle sway (`FUN_008eefc0`).
+        let idle = super::idle_sway::gun_angles(def, ads, i.idle_time, i.idle_stance);
         self.sway(def, i, dt);
         self.spring.step(dt, &def.hip_gun_kick, &def.ads_gun_kick, ads, def.gun_max);
         offset[1] += self.sway_ofs.0;
         offset[2] += self.sway_ofs.1;
+        // The fire angles (`FUN_008f0340`, the server's copy in `FUN_005dc820`): the rotation
+        // faded out by half-way into ADS (`1 − 2·posFrac`, `DAT_00c6f6ac`), plus the kick spring,
+        // the sway, the bob and the idle. The drawn pose keeps its rotation (`fAdsAimPitch`, the
+        // move pose), which the aimed clips' authored pose rests on.
+        let rot_fade = (1.0 - 2.0 * ads).max(0.0);
+        for a in 0..2 {
+            let sway = if a == 0 { self.sway_angle.0 } else { self.sway_angle.1 };
+            let spring = if a == 0 { self.spring.angle.0 } else { self.spring.angle.1 };
+            self.fire[a] = self.cur_rot[a] * rot_fade + bob[a] + sway + spring + idle[a];
+        }
         let angles = [
-            self.cur_rot[0] + bob[0] + self.sway_angle.0 + self.spring.angle.0,
-            self.cur_rot[1] + bob[1] + self.sway_angle.1 + self.spring.angle.1,
-            self.cur_rot[2] + bob[2],
+            self.cur_rot[0] + bob[0] + self.sway_angle.0 + self.spring.angle.0 + idle[0],
+            self.cur_rot[1] + bob[1] + self.sway_angle.1 + self.spring.angle.1 + idle[1],
+            self.cur_rot[2] + bob[2] + idle[2],
         ];
         GunPose { offset, angles }
+    }
+
+    /// The gun's pitch and yaw (degrees, the drawn pose's signs) an aimed shot from a gun without an
+    /// overlay scope follows (`FUN_005dc820` composes them onto the view's fire angles).
+    pub fn fire_angles(&self) -> [f32; 2] {
+        self.fire
     }
 
     /// View sway: the view's turn rate (per 60 Hz frame), clamped to the max angle and scaled,

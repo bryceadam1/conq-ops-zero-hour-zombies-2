@@ -11,16 +11,21 @@ pub mod catalog;
 pub mod def;
 pub mod feel;
 pub mod gunpos;
+pub mod handling;
+pub mod idle_sway;
 pub mod loadout;
 pub mod perks;
 pub mod recoil;
 pub mod rng;
 pub mod specialty;
 pub mod table;
+pub mod view_kick;
+pub mod zoom;
 
 pub use arsenal::*;
 pub use catalog::*;
 pub use def::*;
+pub use handling::{AntiQuickScope, CycleTimes, OffhandClass, Penetrate, Traits, Zoom};
 pub use feel::{optic_of, reticle_art, GunKick, Reticle, Sway, ViewPos};
 pub use loadout::*;
 pub use perks::*;
@@ -99,6 +104,117 @@ mod tests {
         let again = parse_table(&format_table(&defs)).unwrap();
         assert_eq!(defs, again);
         assert!(catalog().get("an94_mp").is_some() && catalog().get("frag_grenade_mp").is_some());
+    }
+
+    /// Frames until the trigger fires again, holding it from a fresh shot.
+    fn frames_between_shots(a: &mut Arsenal, rng: &mut Rng) -> Vec<usize> {
+        let mut at = Vec::new();
+        for f in 0..(4.0 / LOGIC_DT) as usize {
+            let out = frames(a, buttons::FIRE, 1, rng);
+            if shots(&out) > 0 {
+                at.push(f);
+            }
+        }
+        at.windows(2).map(|w| w[1] - w[0]).collect()
+    }
+
+    /// A bolt action rechambers after every shot: the next round waits the fire time and then
+    /// `iRechamberTime` (`FUN_008dc260` sets the flag, `FUN_008db0d0` runs the rechamber).
+    #[test]
+    fn a_bolt_action_rechambers_between_shots() {
+        let d = def(|d| {
+            d.fire_time = 0.2;
+            d.timing.bolt_action = true;
+            d.timing.rechamber_time = 1.0;
+        });
+        let mut a = arsenal_with(d);
+        let gaps = frames_between_shots(&mut a, &mut Rng::new(3));
+        let want = (1.2 / LOGIC_DT).round() as usize;
+        assert!(!gaps.is_empty() && gaps.iter().all(|g| g.abs_diff(want) <= 1), "gaps {gaps:?}, want {want}");
+        // Without the flag the same times fire at the fire time.
+        let plain = def(|d| {
+            d.fire_time = 0.2;
+            d.timing.rechamber_time = 1.0;
+        });
+        let mut a = arsenal_with(plain);
+        let gaps = frames_between_shots(&mut a, &mut Rng::new(3));
+        assert!(gaps.iter().all(|g| g.abs_diff((0.2 / LOGIC_DT).round() as usize) <= 1), "gaps {gaps:?}");
+    }
+
+    /// `iShotsBeforeRechamber`: the SRM's four rounds, then a rechamber.
+    #[test]
+    fn shots_before_rechamber_counts_rounds() {
+        let d = def(|d| {
+            d.fire_time = 0.128;
+            d.timing.bolt_action = true;
+            d.timing.shots_before_rechamber = 4;
+            d.timing.rechamber_time = 0.55;
+        });
+        let mut a = arsenal_with(d);
+        let gaps = frames_between_shots(&mut a, &mut Rng::new(4));
+        let short = (0.128 / LOGIC_DT).round() as usize;
+        let long = ((0.128 + 0.55) / LOGIC_DT).round() as usize;
+        assert!(gaps.len() >= 4, "{gaps:?}");
+        for (i, g) in gaps.iter().take(8).enumerate() {
+            let want = if i % 4 == 3 { long } else { short };
+            assert!(g.abs_diff(want) <= 1, "gap {i} = {g}, want {want}: {gaps:?}");
+        }
+    }
+
+    /// Starting a reload drops the owed rechamber (`FUN_008e1510`).
+    #[test]
+    fn a_reload_drops_the_owed_rechamber() {
+        let d = def(|d| {
+            d.fire_time = 0.2;
+            d.timing.bolt_action = true;
+            d.timing.rechamber_time = 1.0;
+        });
+        let mut a = arsenal_with(d);
+        let mut rng = Rng::new(5);
+        let mut out = Vec::new();
+        a.step(buttons::FIRE, buttons::FIRE, false, 0, 0.0, &mut rng, &mut out);
+        assert!(a.current().rechamber_pending);
+        a.step(0, buttons::RELOAD, false, 0, 0.0, &mut rng, &mut out);
+        assert!(a.current().is_reloading());
+        assert!(!a.current().rechamber_pending && a.current().rechamber.is_none());
+    }
+
+    /// The magazine's last round fires over `iLastFireTime` (the pistols' slide lock, the pump's
+    /// last shell): the empty reload starts when it ends.
+    #[test]
+    fn the_last_round_uses_the_last_fire_time() {
+        let d = def(|d| {
+            d.fire_time = 0.1;
+            d.clip = 1;
+            d.timing.last_fire_time = 0.5;
+        });
+        let mut a = arsenal_with(d);
+        a.weapons[0].ammo = 1;
+        let mut rng = Rng::new(6);
+        let mut out = Vec::new();
+        a.step(buttons::FIRE, buttons::FIRE, false, 0, 0.0, &mut rng, &mut out);
+        let mut n: usize = 0;
+        while !a.current().is_reloading() && n < 100 {
+            a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+            n += 1;
+        }
+        assert!(n.abs_diff((0.5 / LOGIC_DT).round() as usize) <= 1, "the reload waits out the last-fire time: {n} frames");
+    }
+
+    /// The minigun barrels spin down over `iSpinDownTime`, not at the spin-up rate.
+    #[test]
+    fn the_minigun_spins_down_over_its_spin_down_time() {
+        let d = def(|d| {
+            d.fire = FireMode::Minigun;
+            d.spin_up_time = 1.0;
+            d.timing.spin_down_time = 2.0;
+        });
+        let mut a = arsenal_with(d);
+        let mut rng = Rng::new(7);
+        frames(&mut a, buttons::FIRE, (1.0 / LOGIC_DT) as usize + 1, &mut rng);
+        assert_eq!(a.current().spin, 1.0);
+        frames(&mut a, 0, (1.0 / LOGIC_DT).round() as usize, &mut rng);
+        assert!((a.current().spin - 0.5).abs() < 0.02, "half spun down after 1 s of 2: {}", a.current().spin);
     }
 
     #[test]
@@ -316,8 +432,14 @@ mod swap_tests {
         let mut rng = Rng::new(9);
         let mut out = Vec::new();
         a.weapons[0].ammo = 1;
-        // Fire the last round: the empty reload starts by itself.
+        // Fire the last round: the empty reload starts by itself once its fire state ends.
         a.step(buttons::FIRE, buttons::FIRE, false, 0, 0.0, &mut rng, &mut out);
+        for _ in 0..10 {
+            if a.current().is_reloading() {
+                break;
+            }
+            a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+        }
         assert!(a.current().is_reloading());
         for _ in 0..10 {
             a.step(buttons::FIRE, 0, false, 0, 0.0, &mut rng, &mut out);
@@ -335,3 +457,134 @@ mod swap_tests {
     }
 }
 
+
+#[cfg(test)]
+mod zoom_tests {
+    use super::*;
+    use crate::input::buttons;
+
+    fn sniper() -> &'static WeaponDef {
+        let mut d = WeaponDef { id: "test_sniper_mp".into(), class: Class::Sniper, ads_fov: 15.0, ads_in_time: 0.1, ads_out_time: 0.1, overlay_reticle: 1, ..Default::default() };
+        (d.zoom.fov2, d.zoom.fov3) = (15.0, 15.0);
+        Box::leak(Box::new(d))
+    }
+
+    fn aimed(def: &'static WeaponDef) -> (Arsenal, Rng) {
+        let mut a = Arsenal::new();
+        a.weapons[0] = WeaponState::new(def);
+        a.raise_left = 0.0;
+        let mut rng = Rng::new(3);
+        let mut out = Vec::new();
+        for _ in 0..20 {
+            a.step(buttons::ADS, 0, false, 0, 0.0, &mut rng, &mut out);
+        }
+        assert_eq!(a.ads, 1.0);
+        (a, rng)
+    }
+
+    #[test]
+    fn melee_is_refused_while_a_scope_is_aimed_and_works_from_the_hip() {
+        let (mut a, mut rng) = aimed(sniper());
+        let mut out = Vec::new();
+        a.step(buttons::ADS | buttons::MELEE, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
+        assert!(!out.iter().any(|x| matches!(x, WeaponAction::Melee { .. })), "{out:?}");
+        assert_eq!(a.ads, 1.0, "the aim holds");
+        for _ in 0..20 {
+            a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+        }
+        out.clear();
+        a.step(buttons::MELEE, buttons::MELEE, false, 0, 0.0, &mut rng, &mut out);
+        assert!(out.iter().any(|x| matches!(x, WeaponAction::Melee { .. })), "{out:?}");
+    }
+
+    #[test]
+    fn the_zoom_level_toggles_between_two_and_its_blend_clock_runs_in_the_sim() {
+        let (mut a, mut rng) = aimed(sniper());
+        assert_eq!(a.current().zoom.level, 0);
+        a.weapons[0].step_zoom_level();
+        assert_eq!((a.current().zoom.level, a.current().zoom.from, a.current().zoom.since), (1, 0, 0.0));
+        let mut out = Vec::new();
+        a.step(buttons::ADS, 0, false, 0, 0.0, &mut rng, &mut out);
+        assert!((a.current().zoom.since - crate::units::LOGIC_DT).abs() < 1e-6);
+        a.weapons[0].step_zoom_level();
+        assert_eq!((a.current().zoom.level, a.current().zoom.from), (0, 1), "(level + 1) % 2");
+    }
+}
+
+#[cfg(test)]
+mod quick_reload_tests {
+    use super::*;
+    use crate::input::buttons;
+
+    /// The AN-94 with Fast Mag, as converted: reload 1.67/2.095 (add 0.877), quick 1.67/2.095
+    /// (add 0.9).
+    fn fast_mag(dual_mag: bool) -> &'static WeaponDef {
+        let mut d = WeaponDef { id: "test_fastmag_mp".into(), class: Class::Rifle, clip: 30, start_reserve: 300, max_reserve: 300, ..Default::default() };
+        (d.reload_time, d.reload_empty_time, d.reload_add_time, d.reload_empty_add_time) = (1.67, 2.095, 0.877, 0.0);
+        (d.timing.reload_quick_time, d.timing.reload_quick_empty_time, d.timing.reload_quick_add_time) = (1.2, 1.5, 0.9);
+        d.traits.dual_mag = dual_mag;
+        Box::leak(Box::new(d))
+    }
+
+    fn reload(a: &mut Arsenal, rng: &mut Rng) -> Reload {
+        let mut out = Vec::new();
+        a.step(0, buttons::RELOAD, false, 0, 0.0, rng, &mut out);
+        let r = a.current().reload.expect("reloading");
+        while a.current().is_reloading() {
+            a.step(0, 0, false, 0, 0.0, rng, &mut out);
+        }
+        r
+    }
+
+    fn kit(def: &'static WeaponDef) -> (Arsenal, Rng) {
+        let mut a = Arsenal::new();
+        a.loadout.perks.clear();
+        a.weapons[0] = WeaponState::new(def);
+        a.raise_left = 0.0;
+        (a, Rng::new(5))
+    }
+
+    #[test]
+    fn fast_mag_alternates_the_quick_swap_with_a_full_reload() {
+        let (mut a, mut rng) = kit(fast_mag(true));
+        let mut kinds = Vec::new();
+        for _ in 0..4 {
+            a.weapons[0].ammo = 10;
+            let Reload::Magazine { quick, length, add_at, .. } = reload(&mut a, &mut rng) else { panic!() };
+            kinds.push((quick, length, add_at));
+            assert_eq!(a.current().ammo, 30);
+        }
+        assert_eq!(kinds, vec![(true, 1.2, 0.9), (false, 1.67, 0.877), (true, 1.2, 0.9), (false, 1.67, 0.877)], "the first reload is the quick one (FUN_008ddce0)");
+        // From empty: the quick empty length; no empty add time, so the add time (capped at the
+        // normal empty reload).
+        a.weapons[0].ammo = 0;
+        let Reload::Magazine { quick, length, add_at, empty, .. } = reload(&mut a, &mut rng) else { panic!() };
+        assert!(quick && empty);
+        assert_eq!((length, add_at), (1.5, 0.9));
+    }
+
+    #[test]
+    fn an_interrupted_reload_before_the_add_keeps_the_flag() {
+        let (mut a, mut rng) = kit(fast_mag(true));
+        a.weapons[0].ammo = 10;
+        let mut out = Vec::new();
+        a.step(0, buttons::RELOAD, false, 0, 0.0, &mut rng, &mut out);
+        a.weapons[0].reload = None; // swapped away / meleed before the rounds went in
+        assert!(a.current().quick_reload);
+        let Reload::Magazine { quick, .. } = reload(&mut a, &mut rng) else { panic!() };
+        assert!(quick);
+        assert!(!a.current().quick_reload);
+    }
+
+    #[test]
+    fn without_a_dual_mag_every_reload_is_normal_and_an_empty_one_adds_at_the_add_time() {
+        let (mut a, mut rng) = kit(fast_mag(false));
+        for _ in 0..2 {
+            a.weapons[0].ammo = 0;
+            let Reload::Magazine { quick, length, add_at, .. } = reload(&mut a, &mut rng) else { panic!() };
+            assert!(!quick);
+            // BO2 (`FUN_008dec90`): no `iReloadEmptyAddTime` → the rounds go in at `iReloadAddTime`.
+            assert_eq!((length, add_at), (2.095, 0.877));
+        }
+    }
+}

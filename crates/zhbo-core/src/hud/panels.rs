@@ -142,3 +142,14 @@ pub(super) fn draw_reload_prompt(prims: &mut Vec<Prim>, w: f32, h: f32, s: f32, 
         prims.push(Prim::Text { x: w * 0.5, y: h * 0.5 + 46.0 * s, text: text.to_string(), argb: col, size: (13.0 * s) as i32, align: 1 });
     }
 }
+
+/// Whether BO2 draws the hold-breath hint (`FUN_004dc750`, `cg_drawBreathHint`): fully aimed
+/// through an overlay scope whose def has `bHoldBreathToSteady`, while the breath is not held.
+pub(super) fn breath_hint_shown(p: &PlayerSim) -> bool {
+    let def = p.arsenal.current().def;
+    !p.idle.breath.holding
+        && def.class.is_gun()
+        && def.zoom.hold_breath
+        && crate::weapons::idle_sway::sways_view(def)
+        && p.arsenal.ads >= 1.0
+}

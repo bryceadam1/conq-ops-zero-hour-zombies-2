@@ -247,6 +247,7 @@ Weapon an94_mp
   Spread = 6 0.5 0.5 0
   AdsKick = 30 47.5 -50 50
   HipKick = 30 47.5 -50 50
+  ViewKickCenter = 1500 1500
   Move = 0.95 0.5 1
   FxWeapon = ZHBO_MTAR_FX
   Viewmodel = 0
@@ -274,6 +275,7 @@ Weapon fnp45_mp
   Spread = 7 0.6 0.5 0.3
   AdsKick = 60 80 -40 40
   HipKick = 60 80 -40 40
+  ViewKickCenter = 1100 1100
   Move = 1 0.65 1
   FxWeapon = ZHBO_B23R_FX
   Viewmodel = 1

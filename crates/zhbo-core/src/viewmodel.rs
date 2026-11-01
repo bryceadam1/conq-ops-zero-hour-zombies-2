@@ -36,6 +36,8 @@ pub mod slot {
     pub const RELOAD_EMPTY: i32 = 0x12;
     pub const RELOAD_START: i32 = 0x13;
     pub const RELOAD_END: i32 = 0x14;
+    pub const RELOAD_QUICK: i32 = 0x15;
+    pub const RELOAD_QUICK_EMPTY: i32 = 0x16;
     pub const RAISE: i32 = 0x17;
     pub const FIRST_RAISE: i32 = 0x18;
     pub const DROP: i32 = 0x19;
@@ -92,8 +94,6 @@ pub const HAMMER_SWING_TIME: f32 = 21.0 / 30.0;
 
 /// How long the fire clip owns the viewmodel after a shot before idle resumes.
 const FIRE_HOLD: f32 = 0.3;
-/// BO2's sprint-in transition before the sprint loop.
-const SPRINT_IN_TIME: f32 = 0.25;
 
 /// What happened to the local player's weapon this frame.
 #[derive(Clone, Copy, Debug, Default)]
@@ -220,7 +220,16 @@ impl Viewmodel {
             return wf(or(def, clip, slot::RAISE), a.raise_total - a.raise_left);
         }
         match w.reload {
-            Some(Reload::Magazine { t, empty, .. }) => return wf(if empty { or(def, slot::RELOAD_EMPTY, slot::RELOAD) } else { slot::RELOAD }, t),
+            Some(Reload::Magazine { t, empty, quick, .. }) => {
+                let normal = if empty { or(def, slot::RELOAD_EMPTY, slot::RELOAD) } else { slot::RELOAD };
+                // Fast Mag's quick swap plays `anim_reload_quick{,_empty}` (`weapAnimFiles_t` 0x15/0x16).
+                let clip = match (quick, empty) {
+                    (true, false) => or(def, slot::RELOAD_QUICK, normal),
+                    (true, true) => or(def, slot::RELOAD_QUICK_EMPTY, normal),
+                    _ => normal,
+                };
+                return wf(clip, t);
+            }
             Some(Reload::Shells { phase, t, .. }) => {
                 let clip = match phase {
                     ShellPhase::Start => slot::RELOAD_START,
@@ -233,14 +242,22 @@ impl Viewmodel {
         }
         if p.body.sprinting && a.ads < 0.5 {
             let (sin, sloop) = if empty { (slot::SPRINT_EMPTY_IN, slot::SPRINT_EMPTY_LOOP) } else { (slot::SPRINT_IN, slot::SPRINT_LOOP) };
-            return if self.since_sprint_start < SPRINT_IN_TIME && def.has_anim(sin as usize) {
+            let sprint_in = def.timing.sprint_in_time;
+            return if self.since_sprint_start < sprint_in && def.has_anim(sin as usize) {
                 wf(sin, self.since_sprint_start)
             } else {
-                wf(or(def, sloop, slot::SPRINT_LOOP), (self.since_sprint_start - SPRINT_IN_TIME).max(0.0))
+                wf(or(def, sloop, slot::SPRINT_LOOP), (self.since_sprint_start - sprint_in).max(0.0))
             };
         }
         if a.since_sprint < def.sprint_out_time && def.has_anim(slot::SPRINT_OUT as usize) {
             return wf(if empty { or(def, slot::SPRINT_EMPTY_OUT, slot::SPRINT_OUT) } else { slot::SPRINT_OUT }, a.since_sprint);
+        }
+        // A bolt or pump action's rechamber is the sim's (`WeaponState::rechamber`).
+        let rechamber = if self.shot_aimed { or(def, slot::ADS_RECHAMBER, slot::RECHAMBER) } else { slot::RECHAMBER };
+        if let Some(t) = w.rechamber {
+            if def.has_anim(rechamber as usize) {
+                return wf(rechamber, t);
+            }
         }
         // Fire (or the last shot), then the pump/bolt rechamber if the weapon has one.
         let fire_len = FIRE_HOLD.max(def.fire_time);
@@ -253,8 +270,7 @@ impl Viewmodel {
             };
             return wf(clip, self.since_shot);
         }
-        let rechamber = if self.shot_aimed { or(def, slot::ADS_RECHAMBER, slot::RECHAMBER) } else { slot::RECHAMBER };
-        if def.has_anim(rechamber as usize) && !self.shot_was_last && self.since_shot < fire_len + def.fire_time {
+        if !def.timing.bolt_action && def.has_anim(rechamber as usize) && !self.shot_was_last && self.since_shot < fire_len + def.fire_time {
             return wf(rechamber, self.since_shot - FIRE_HOLD.min(def.fire_time * 0.3));
         }
         wf(if empty { or(def, slot::EMPTY_IDLE, slot::IDLE) } else { slot::IDLE }, self.since_shot)
@@ -296,6 +312,13 @@ pub struct Motion {
 }
 
 impl Motion {
+    /// The gun's angles an aimed iron-sight shot follows, radians in the [`Pose`] convention (yaw
+    /// left, pitch muzzle up): `GunPos::fire_angles`.
+    pub fn fire_angles(&self) -> (f32, f32) {
+        let a = self.gun.fire_angles();
+        (a[1].to_radians(), a[0].to_radians())
+    }
+
     /// One frame of `dt` seconds. `yaw`/`pitch` are the view angles this frame (radians), `fov`
     /// the field of view `cg_fov` (degrees; G4's wide-FOV pullback), and `shot` the gun kick's
     /// impulse when a shot went off.
@@ -312,9 +335,10 @@ impl Motion {
             self.bob = (self.bob + speed_zh * dt / BOB_STRIDE * std::f32::consts::PI) % std::f32::consts::TAU;
         }
 
-        // The sprint pose comes up over the sprint-in clip and drops at the def's sprint-out time.
+        // The sprint pose comes up over the def's sprint-in time (`sprintInTime`) and drops over its
+        // sprint-out time.
         let target = if p.body.sprinting { 1.0 } else { 0.0 };
-        let rate = if target > self.sprint { 1.0 / SPRINT_IN_TIME } else { 1.0 / def.sprint_out_time.max(1e-3) };
+        let rate = if target > self.sprint { 1.0 / def.timing.sprint_in_time.max(1e-3) } else { 1.0 / def.sprint_out_time.max(1e-3) };
         let step = rate * dt;
         self.sprint = if (target - self.sprint).abs() <= step { target } else { self.sprint + step * (target - self.sprint).signum() };
 
@@ -351,6 +375,8 @@ impl Motion {
             // in the sim's state (no `landChange`), so gunpos's dip contributes nothing.
             land_change: 0.0,
             since_land: 0.0,
+            idle_time: p.idle.time,
+            idle_stance: p.idle.stance,
         };
         let pose = self.gun.step(def, &input, &p.arsenal.tuning, dt);
         // BO2's offset is (forward, right, up) and its angles (pitch, yaw, roll); the renderer's
@@ -399,10 +425,21 @@ mod tests {
         p.arsenal.since_sprint = 10.0;
         // Reloads: magazine, then empty.
         let w = p.arsenal.active;
-        p.arsenal.weapons[w].reload = Some(Reload::Magazine { t: 0.5, length: 2.0, add_at: 1.0, added: false, empty: false });
+        p.arsenal.weapons[w].reload = Some(Reload::Magazine { t: 0.5, length: 2.0, add_at: 1.0, added: false, empty: false, quick: false });
         assert_eq!(clip(&mut vm, &p, 0.05, Events::default()), slot::RELOAD);
-        p.arsenal.weapons[w].reload = Some(Reload::Magazine { t: 0.5, length: 2.0, add_at: 1.0, added: false, empty: true });
+        p.arsenal.weapons[w].reload = Some(Reload::Magazine { t: 0.5, length: 2.0, add_at: 1.0, added: false, empty: true, quick: false });
         assert_eq!(clip(&mut vm, &p, 0.05, Events::default()), slot::RELOAD_EMPTY);
+        // Fast Mag's quick swap: its own clips where the weapon has them, else the normal ones.
+        let def = p.arsenal.weapons[w].def;
+        p.arsenal.weapons[w].reload = Some(Reload::Magazine { t: 0.5, length: 2.0, add_at: 1.0, added: false, empty: false, quick: true });
+        let want = if def.has_anim(slot::RELOAD_QUICK as usize) { slot::RELOAD_QUICK } else { slot::RELOAD };
+        assert_eq!(clip(&mut vm, &p, 0.05, Events::default()), want);
+        let mut quick_def = def.clone();
+        quick_def.anims |= 1 << slot::RELOAD_QUICK_EMPTY;
+        p.arsenal.weapons[w].def = Box::leak(Box::new(quick_def));
+        p.arsenal.weapons[w].reload = Some(Reload::Magazine { t: 0.5, length: 2.0, add_at: 1.0, added: false, empty: true, quick: true });
+        assert_eq!(clip(&mut vm, &p, 0.05, Events::default()), slot::RELOAD_QUICK_EMPTY);
+        p.arsenal.weapons[w].def = def;
         p.arsenal.weapons[w].reload = None;
         // A grenade: the grenade's viewmodel pulls the pin, then throws.
         p.arsenal.offhand = Some(OffhandUse::Holding { lethal: true, held_for: 0.2 });

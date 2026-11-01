@@ -4614,3 +4614,500 @@ residual cluster). Tests: converter `max_ammo_is_the_spare_cap_beside_the_magazi
 SMAW, LMG) and the updated AN-94 pin (30/90/240); fake-host
 `a_scavenger_kill_tops_the_reserve_up_to_the_stock_cap`. The shipped table's `MaxReserve` values
 change, so the archive VERSION needs the integrator's bump.
+
+## Uncarried weapon fields: BO2's fire-cycle times, zoom levels, traits now ride the table (2026-10-26, branch `v1/uncarried-fields`)
+
+The weapon table now carries 36 BO2 fields it used to drop. The conformance gate had them all as
+"mod side empty". There are 16 new `Weapon` lines (`WEAPON_FIELDS` 78 → 94) and 8 new `Attachment`
+lines (`ATTACHMENT_FIELDS` 17 → 25). The new `weapons/handling.rs` holds the `CycleTimes`, `Zoom` and
+`Traits` groups.
+
+* **Timing:** last-fire, fire delay, rechamber, rechamber bolt, hold fire, shots before
+  rechamber, bolt action, quick reload ×3, reload start add, spin-down, detonate and sprint-in.
+* **Zoom:** zoom levels 2 and 3, zoom in/out fractions, alt-scope ADS times, ADS DOF,
+  overlay alpha and idle amount.
+* **Traits:** clip only, dual mag, infrared, MMS, use-as-melee/bayonet, rifle bullet, the
+  alt-mode flags, ignore attachments, stack fire, min player damage, penetration and offhand
+  class.
+
+`attachments::apply` combines each field with its G14 §4 rule and walks the combo in `eAttachment`
+order. That order is the new attachment `Kind` line; `apply`'s existing short-name order is left
+as it was for the old fields.
+
+* **Products:** the quick reloads are `(int)(ms × Π)`, truncated to whole ms. The aimed idle
+  amount is a plain product.
+* **First differing:** the zoom fractions, the alt-scope times and the hip idle amount.
+* **Last differing:** zoom levels 2 and 3.
+* **First positive / first non-none:** stack fire takes the first positive value; penetration
+  takes the first non-none.
+* **OR flags:** the dual mag is gated by `bIgnoreAttachments`.
+* **First single unique differing from the base unique:** the reload start add and the ADS DOF.
+  They are computed per combo in `add_variants`, like the overlay.
+
+* **Gotcha: `common_mp`'s `,defaultattachment` is a zeroed reference stub.** The real
+  `defaultattachment` is in `patch_mp`. Its zoom levels, scales and move scale are 1.0; its
+  fractions, alt-scope times and hip idle are 0. It is the "no change" sentinel of every
+  first/last-differing accessor.
+  * Reading the stub would have made every silencer's authored fov 1.0 "win" the zoom.
+  * This also explains the earlier ADS-move lesson: its sentinel was 1.0 because the default's
+    value is 1.0.
+  * The converter now loads the patch asset (`weapons::default_attachment`). It stores an
+    attachment field that equals the default as `None`, written `-` in the table.
+  * The converter still reads weapon variants from `common_mp` only, while the oracle lets
+    `patch_mp` override them. No in-scope column showed a difference from this, but it is worth
+    remembering.
+* **The projectile model followed only the base set.** Combos and `gl_*` alt modes had no
+  `projectile_object`, so `crossbow_mp+acog` and every under-barrel grenade launched an invisible
+  object.
+  * `projectiles()` now also converts the base weapons' alt modes.
+  * `share_projectiles` gives each def without an object its base weapon's object.
+* **What stays (another queue item):** the alt-mode rows. In this install, BO2's alt variants
+  (`sf_*`, `dualoptic_*`, `gl_*`) have no attachment table (`allows 0x0`), so no attachment field
+  applies on an alt row. The mod applies the parent combo's attachments.
+  * This is one structural cluster: ~2.3k cells in this item's columns (fov2/3 513 each, the
+    same rows as fov1; dual mag, quick reload ×2 and idle 210–400; MMS 117; in-frac 140).
+  * The same rows make up the existing `reload_time`, `ads_in_time`, `clip_size`, `hip_spread`
+    and `silenced` clusters.
+  * It changes alt-mode gameplay (the shared magazine's size), so it belongs to the alt-mode
+    structural cycle, not here.
+
+Measured (conformance CLI, against the 2026-10-25 baseline): weapons cells **706,586 → 397,145**
+and clusters **203 → 174**; gap clusters **214 → 185**. All in-scope columns cleared to 0, except
+the alt-row residue above. No other column moved.
+
+**The sim consumers wired.** All are ported from read-only t6mp decompiles
+(`~/.opencode/plan/uncarried-fields/dec_*.c`). Each has an arsenal test in `weapons/mod.rs`.
+
+* **Rechamber.** A shot from a `bBoltAction` weapon sets BO2's per-weapon "owes a rechamber"
+  flag (`FUN_008dc260`). This happens on every shot, or once the shot counter reaches
+  `iShotsBeforeRechamber`, as on the SRM.
+  * When the fire state ends, the rechamber runs for `iRechamberTime` (`FUN_008db0d0`), and the
+    weapon cannot fire until it ends (`FUN_008db020`).
+  * Starting a reload drops the flag (`FUN_008e1510`), and the `rof` tick scales the rechamber.
+  * `iRechamberBoltTime` only marks the 7→8 sub-state (the bolt event), so it adds no time.
+  * The viewmodel now plays the rechamber clip from the sim's `WeaponState::rechamber` for bolt
+    actions; the old fire-time heuristic stays for the rest.
+  * `conformance::check` (the real-install "plays like BO2" test) now counts the rechambers in
+    its held-fire span.
+* **Last-fire time.** The magazine's last round (`FUN_008dc1e0`: clip < 2) fires over
+  `iLastFireTime`: the pistols' 240 ms slide lock, the pump's 528 ms, the crossbow's 320 ms.
+  * The automatic empty reload now waits for that fire state to end (`WeaponState::reload_owed`)
+    instead of starting on the shot's frame. One test was updated for this.
+  * A burst's threshold is its round count + 1, and no BO2 burst weapon authors the field, so
+    bursts keep the plain fire time.
+* **Spin-down.** Minigun barrels spin down over `iSpinDownTime` rather than at the spin-up rate.
+* **Sprint-in.** The viewmodel's fixed 0.25 s sprint-in is now the def's `sprintInTime`
+  (150–500 ms). The stand-in def keeps 0.25.
+
+**Carried but unused (follow-up, each needs its consumer):**
+
+* `iFireDelay` and `iHoldFireTime`: the offhand throw's wind-up and hold. The mod's offhand flow
+  is its own and needs a port of `FUN_008dc260`'s grenade branch.
+* The quick reloads: what selects `iReloadQuick*` was not found in G3. Find its caller.
+* `fAdsZoomInFrac`/`OutFrac` and the alt-scope times: the zoom lerp `FUN_004a0380` decompiles
+  with its FOV write lost (x87). It needs a disassembly read before porting.
+* `minPlayerDamage`: 0 on every weapon in the install, so a floor is a no-op until a weapon
+  authors it.
+* `penetrateType` and DOF: the mod has no surface penetration or depth of field.
+* `idle_amount`: gunpos's idle sway does not read it yet.
+* `overlay_alpha_scale`, `clip_only`, `infrared`, `mms`, `use_as_melee`, `rifle_bullet`, the
+  alt-mode flags, `offhand_class` and `stack_fire`: carried for their features (thermal, MMS
+  marking, the tri-bolt spread, the ADS-only alt).
+
+Verified: cargo test --workspace green; clippy --all-targets adds no warning in the changed lines;
+the real-install suites (zhbo-assets `--skip conformance` incl. `every_mp_weapon_converts_and_plays_like_bo2`,
+zhbo-formats) green; the conformance CLI as measured above. The in-game autotest is the integrator's.
+An archive VERSION bump is needed (the table gained lines; old tables still parse).
+
+## Gun feel: aimed sway scales, the sway override blocks, kick-centre scale, Steady Aim's pose (2026-10-31, branch `v1/gun-feel`)
+
+Four converter gaps in the gun-feel columns, each transcribed from G14 §4:
+
+- **Aimed sway's horizontal/vertical scales live on the variant.** `WeaponVariantDef` carries
+  `fAdsSwayHorizScale`/`fAdsSwayVertScale` (+532/+536); the converter copied the def's *hip*
+  `swayHoriz/VertScale` instead, under a comment claiming BO2's ADS set had none (wrong — G4's
+  `FUN_008ec660` reads `V.fAdsSway*` when no attachment overrides). That is why the last two
+  `ads_sway` components were 0.3|0.3 on nearly every gun. `zhbo_formats::weapon::read` now reads
+  them.
+- **Sway override blocks** (`FUN_008ec590` hip / `FUN_008ec660` ADS): the first attachment in
+  `eAttachment` order with `swayOverride` (+100) / `adsSwayOverride` (+128) supplies all six
+  values. Steady Aim's hip block (1.5|5|0.5|-0.5|0.075|0.075) and the optics' aimed blocks were
+  never carried. `AttachmentDef.sway` / `ads_sway` (`SwayOverride` / `AdsSwayOverride` table lines,
+  `-` for none).
+- **Aimed view-kick centre speed** = `V.fAdsViewKickCenterSpeed` × Π `fAdsViewKickCenterSpeedScale`
+  (`FUN_008ecf70`; suppressor 0.975, ACOG 1.01, Rapid Fire 0.85); the hip one has no scale.
+  `AttachmentDef.ads_kick_center_scale` (`AdsKickCenterScale`).
+- **Movement-pose overrides** (`FUN_008ed410` / `FUN_008ed4f0`, last attachment differing from
+  `defaultattachment` wins per component): `standMoveF` → stand move forward, `vStandRot` pitch and
+  roll, `strafeRotR` → strafe roll. Steady Aim's −0.1|·|0 stand rotation and roll-1 strafe is what
+  keeps the gun level while you move. `AttachmentDef.stand_move_f/stand_rot_pitch/stand_rot_roll/
+  strafe_rot_roll` (`ViewPosOverride`).
+
+All stack in `attachments::apply_handling` (the single site). Consumers: `weapons::gunpos` already
+drives the viewmodel from `hip_sway`/`ads_sway` (lerped by aim) and `stand_rot`/`strafe_rot`, so
+Steady Aim's steadier hip sway and level move pose and the optics' aimed sway now reach the screen.
+`view_kick_center` still has **no consumer**: G5 leaves the view-kick recentring unresolved, so the
+camera kick keeps the mod's own settle; wiring it needs a Ghidra trace of the kick decay.
+
+Measured (conformance vs `v1/uncarried-fields`): weapons differing cells 397,145 → 381,867;
+`ads_sway` 9,338 → 336, `hip_sway` 1,450 → 234, `stand_rot` 1,442 → 234, `strafe_rot` 1,442 → 234,
+`view_kick_center` 3,075 → 431; every remaining row is an alt mode (`sf_*`, `dualoptic_*`). Of
+those, 1,133 are new: this base still applies the parent's attachments to alts, so an alt now takes
+Steady Aim's sway / the suppressor's kick scale too. BO2 gives alts none (`v1/alt-attachments`,
+`attachments::alt_mode`); with that branch merged they return to the alt's own values. The other
+336 (`ads_sway` on `sf_*`+optic) are the same cause and predate this branch.
+
+Verified: cargo test --workspace green; clippy --all-targets adds no warning; the real-install
+zhbo-assets suite (`--ignored --skip conformance`, 31 tests) green; the conformance CLI as above.
+`hud::VERSION` bump needed (the weapon table gained Attachment lines; old tables still parse) — the
+integrator's.
+
+## View kick: BO2's camera recoil is a velocity, recentred by the client integrator, and it moves the aim (2026-10-31, branch `v1/view-kick`)
+
+G5 left the view kick's consumer unresolved, so the mod scaled the per-shot numbers by a made-up
+`KICK_TO_DEGREES` (1/80), moved the mouse aim by a made-up 35 % "permanent" share and settled the
+rest at 12/s. Traced in t6mp (dumps and notes in the item's plan dir, `ghidra/`):
+
+- **The shot writes a velocity, and overwrites it.** The fire event `FUN_00539df0` calls
+  `FUN_008e3a00(ps, cg+0x64a68, cg+0x697bc, …)`; the third argument is the kick's angular
+  velocity and is *set*, not added: `(-|p|·s, y·s, -0.5·y·s)` deg/s. `fHipViewKickPitchMax = 47.5`
+  is 47.5 deg/s, not degrees.
+- **The integrator** `FUN_0051f150` (CG frame, after prediction) slices the frame's msec into ≤5 ms
+  steps; per axis: skip when velocity and angle are both 0; when the angle is non-zero the velocity
+  accelerates toward centre by the recentre speed (deg/s²) — a fresh kick from rest gets no pull on
+  its first slice; a displacement toward centre is multiplied by **0.06** (`DAT_00c6f680`); crossing
+  centre stops dead (angle and velocity 0); otherwise the angle is clamped to **±10°**
+  (`DAT_00c7340c`) with the velocity dropped. Constants are .rdata literals, not dvars
+  (1/-1 signs `DAT_00b0c268`/`00b0c934`, 2400 no-weapon speed `DAT_00b265ac`, 0.5 aim split
+  `DAT_00c733cc`).
+- **Which speed.** Above aim 0.5: `fAdsViewKickCenterSpeed` × Π `fAdsViewKickCenterSpeedScale`
+  (`FUN_008ecf70`) × `fAdsViewKickCenterProneScale` when `FUN_008bfa60` says 1 (prone — its caller
+  `FUN_008c64f0` sets PMF_PRONE on 1) or `…DuckedScale` on 2 (crouched). **At the hip the client
+  reads the same aimed field, unscaled** (`variant+0x21c`; verified through the disassembly's stack
+  offsets, not just the decompile) — `fHipViewKickCenterSpeed` is read only for dual wield (summed
+  when both hands fire). Gotcha: `FUN_005d6d50` is a 50 ms copy of the integrator that does use the
+  hip field — it is the bot path, not the player's; do not "fix" the port to match it.
+- **It moves the aim, never the view.** `FUN_004b0fd0` hands the kick angles to `FUN_00543220`
+  (clientActive+0x2c00) and the user-command builder `FUN_00549fb0` sends
+  `ANGLE2SHORT(viewangles + kick)`. So bullets fly along view + kick, and since `cl.viewangles`
+  never takes it, all of BO2's recoil recentres — there is no permanent share. The climb you fight
+  in a long burst is the 0.06 return being slower than the next shot's kick.
+
+Port: `weapons::view_kick` (`ViewKick`, `centre_speed`, the integrator, consts cited above) owned by
+the sim (`PlayerSim::view_kick`): the frame's aim is the input angles + the kick the previous frame
+left; the shot (pellet 0) sets the velocity; the kick steps once per logic frame after the
+weapon's actions; leaving first person zeroes it, as BO2 does out of its playing state. The client
+camera is mouse aim + the sim's kick interpolated across the logic frame (like the eye);
+`EventKind::Recoil` carries only the gun kick. The damage flinch (G7, its own cg+0x697a8 channel)
+keeps its camera-only settle as `hud.flinch_pitch`. `WeaponDef.view_kick_center.0` is now the raw
+aimed speed with the attachment product in `ads_kick_center_scale` (`ViewKickCenterScale`; the
+conformance column is still the product), plus `kick_center_stance` (`ViewKickCenterStance`); both
+lines are appended to the weapon block. Gotcha: the product must be a table line, not a derived-only
+field — the converter stacks every legal combination (`add_variants` → `attachments::apply`) and
+*serializes* the stacked def, so a field the table does not write is lost (the first measurement
+showed `view_kick_center` back at 3,075 cells until it was a line).
+
+Measured (conformance vs `v1/gun-feel`): unchanged — 381,867 weapons cells, 881 cac, 185 gap
+clusters, every column identical (no kick column covers the integrator, the stance scales or the
+fire path; the view kick's numbers were already carried).
+Verified: cargo test --workspace green; clippy --all-targets adds no warning; the real-install
+zhbo-assets suite green. `hud::VERSION` bump needed (two weapon-table lines) — the integrator's.
+Not ported (no such weapon in the mod): charge-shot fire type 8's per-queued-bullet centre speed
+(`FUN_008dab80`, `bg_chargeShot*`), dual wield, weapon type 4's −0.001 pitch nudge. The camera has
+no roll channel, so the roll axis is integrated but not drawn.
+
+Feel, for the in-game check: an AN-94 hip burst climbs ~0.5° per shot with the yaw wandering
+±0.6°, plateaus around 2° over a one-second burst (the return balances the kick), and settles
+dead-centre ~170 ms after release; ADS uses the aimed set and recentres slower or faster per the
+optic/suppressor scale; crouched/prone ADS takes the def's stance scales.
+
+### View kick follow-up: the roll axis reaches the camera (branch `v1/view-kick`)
+
+The integrator's third axis (BO2's roll, `-0.5 × yaw` per shot) was integrated but never drawn.
+`ZhboClientOut.view_roll` (appended, 4832 → 4836 bytes) carries it, interpolated like the eye;
+`Zhbo_GetCameraOverride` gained a `roll` out-parameter and the `W3DView::update` hook (patch 0001)
+passes it to `Matrix3D::Look_At_Dir`, whose third argument was always 0. Sign gotcha:
+`Look_At_Dir` applies `Rotate_Z(-roll)` because the camera looks down −Z, which makes its roll a
+right-handed turn about the forward axis — the same as Quake/BO2's `+roll` (right side down) — so
+the value passes through unnegated. The viewmodel is placed in the unrolled eye frame
+(`nativevm::place::root`, the W3D pose), so the core adds the roll to `viewmodel_angles.z`
+(`Rotate_X` about forward, the same sense) and the gun stays square to the screen. Unbuilt C++:
+the integrator checks the patch applies, the horizon tilts right-side-down on a negative-yaw
+(rightward) kick's positive roll, and the gun does not counter-rotate. `ZHBO_ABI_VERSION` bump
+needed (the integrator's).
+
+### View kick follow-up: the dual-wield reads (branch `v1/view-kick`)
+
+`FUN_008e3a00` and `FUN_0051f150` both special-case a dual-wield pair (`FUN_008eb9c0`; the left
+gun's def via `FUN_008eca70`) by the two hands' weapon states (`ps+0x1d0` right, `ps+0x1d4` left;
+6 or 0x28 = firing): both firing → the two guns' values **summed**, only the left firing → the left
+gun's, otherwise the right (own) gun's. That selection covers the hip view-kick ranges, the
+unaimed gun-kick ranges and the hip recentre speed — the one place `fHipViewKickCenterSpeed` is
+read at all. The dual view kick also skips the minimum-magnitude rescale the single gun applies.
+Ported as `recoil::Hands` (`Single` / `Dual { left, right_firing, left_firing }`, `Hands::pick`)
+with `shot_kick_hands` and `view_kick::centre_speed_hands`; the single-gun `shot_kick` /
+`centre_speed` wrap them, so this branch's sim is unchanged. Overlap with `v1/dual-wield-sim`
+(unmerged): that branch owns the per-hand state (`WeaponState::left`, `step_hand`, `Fire { left }`);
+at merge, `step_hand` passes `Hands::Dual` to `shot_kick_hands` with the left hand's def (the same
+def there) and "firing" = that hand's fire cycle still running, and the sim's recentre call does
+the same. The two branches also both edit `WeaponAction::Fire` (`left` there, `view_kick` here) —
+a one-line merge.
+
+## ADS zoom: BO2's FOV moves over the last fraction of the ADS lerp (2026-10-31, branch `v1/ads-zoom`)
+
+The camera used to scale the *horizontal* FOV linearly by `ads × ads_fov/65`. BO2's zoom function
+`FUN_004a0380` (read from the disassembly — dumps in the item's plan dir, `ghidra/zoom.asm`; the
+decompile loses the result because the function returns the FOV in `XMM0` with the player state in
+`ESI`) works on the 4:3 `cg_fov` before the Hor+ conversion (`FUN_004a0b90`: `tan(fov/2)·0.75` is
+the vertical half-angle), and its caller `FUN_004a0920` finishes with `max(cg_fovMin, fov ×
+cg_fovScale)` (10 and 1, now tuning keys `cg_fovMin`/`cg_fovScale`). Ported as `weapons::zoom`:
+
+- **The lerp.** At `posFrac` 1 the FOV is the target, at 0 the hip. Between, the direction flag
+  `cg+0x4ae38` (set at the hip, cleared at full ADS, held between — the same flag the scope
+  overlay reads) picks `fAdsZoomInFrac` or `OutFrac`, and `z = (posFrac − (1 − frac)) / frac`; the
+  FOV is `hip − (hip − target)·z` for `z > 0`, else the hip. Linear, no threshold (the overlay's
+  `FUN_004b4760` is the same window plus a 0.01 threshold, so the two compose: an ACOG's 0.5 in-frac
+  holds the hip FOV for the first half of the aim and zooms over the second; a base sniper's 0 snaps
+  on the full-ADS frame, the frame the overlay takes over; its 0.05 out-frac widens the view over the
+  first 5 % of aiming out while the overlay fades).
+- **Levels.** `FUN_008ec3f0` resolves fov1..3 (variant, then each attachment differing from
+  `defaultattachment` overrides — the table already stacks them). Gotcha: **level 0 reads fov3**,
+  1 → fov2, 2 → fov1, anything else fov3; the target is `min(level fov, hip)`. With
+  `cg_useWeaponBasedVariableZoom` (default 1) the level is the weapon's inventory slot's (`+0x10`),
+  stepped `(level + 1) % 2` (`FUN_008da3c0`) by `FUN_008de340`: a combo with `ATTACHMENT_VZOOM`
+  (0x1d, `FUN_008eb270`), the **melee** button (`0x20000000`, the bit `FUN_008e2070`'s melee start
+  reads), `posFrac >= 1`. So Variable Zoom starts on fov3 (30°) and the melee key toggles 12.5°. The
+  melee start itself is refused while `posFrac > 0` on a weapon with an overlay reticle or distinct
+  levels (`FUN_008e2070`: `posFrac <= 0 || (overlayReticle == 0 && !FUN_008dae00)`) — so a scoped
+  sniper (and the Hybrid, whose fov1 30 ≠ fov2 50) cannot knife while aimed. Sim:
+  `WeaponState::zoom` (`zoom::Level`: level, from, seconds since), `step_zoom_level`, the melee gate
+  in `Arsenal::step`; the kind is resolved through the base's allowed list and the catalog
+  (`has_attachment_kind`).
+- **Level change.** At full ADS on an overlay scope with distinct levels (`FUN_008dae80`), for
+  125 ms (`DAT_00b11258`, rate `DAT_00b11254` 0.008/ms) after a change the target blends linearly
+  from the old level's FOV.
+- **Hybrid alt scope.** `cg+0x84440` rises at `1/altScopeADSTransInTime` while the held weapon is
+  an ADS-only alt mode (`inventoryType == 3` altmode at def+0x2c and `bAltWeaponAdsOnly` +0x65c or an
+  attachment's, `FUN_008ecb00`) and falls at `1/altScopeADSTransOutTime` otherwise (both first
+  differing, `FUN_008ecbc0`/`FUN_008ecc30`); its step is capped at 0.1 s (`DAT_00b12968`). The target
+  blends toward the held weapon's fov1 by it. So the Hybrid's main mode aims at fov3 (50°, the
+  variant's — the attachment's fov3 is the 1.0 sentinel) and the `dualoptic_` alt blends to fov1 30°
+  over 0.15 s, back over 0.08 s.
+- **Not ported:** the weapon-state 0x2c branch (a lerp to 55° by `ps+0x4c / def+0x528`; no such
+  state in the mod); the third argument (forces level 0, a vehicle/turret path); the toggle's 40 ms
+  debounce and latch (the sim's press edge stands in).
+- **Viewmodel:** BO2 has no viewmodel FOV (G4) — the gun is drawn with the scene's, so it magnifies
+  with the zoom, as the renderer already does.
+
+The FOV is render-only: `Client::view_fov` steps `ZoomView` (alt fraction, direction) on the
+frame's `dt` and reads the sim's ADS fraction and zoom level. `Arsenal::ads_fov_scale` is gone.
+
+Integration risk (another queue item): the Hybrid's 30° only reaches the alt because this base
+applies the parent combo's attachments to alt rows. BO2's alt rows resolve no attachments in the
+conformance oracle (`allows 0x0`), which would give `dualoptic_*` fov1 = 50 and in/out 0 — if
+`v1/alt-attachments` lands that, the Hybrid loses its magnification. `FUN_008eb300` takes the
+attachments from the packed weapon's bits indexed into the variant's own table (`+0x18`), so how
+the alt's packed weapon carries them decides it; worth a Ghidra look before that merge.
+
+### Quick reload: Fast Mag alternates the taped magazine with a full reload (branch `v1/ads-zoom`)
+
+What selects `iReloadQuick*` (5a's open question), read-only t6mp (`ghidra/quick*.c` in the plan
+dir): the reload start `FUN_008dee50` takes `FUN_008ec8c0`/`FUN_008ec920` (`iReloadQuickTime`/
+`iReloadQuickEmptyTime` × the attachments' scale products, truncated) instead of the normal times
+when the weapon's inventory slot flag `+0x17` is set **and** `FUN_008eba90` says dual mag (variant
+`bDualMag` +0x245, or — unless `bIgnoreAttachments` — an attachment's `bDualMag` +0x2d: the
+`dualclip` attachment, Fast Mag). Giving the weapon sets the flag to dual-mag (`FUN_008ddce0`); the
+non-segmented reload's ammo transfer (`FUN_008dbc00`, right after `FUN_008e64e0`) flips it. So Fast
+Mag's first reload is the quick swap to the taped magazine, the next a full reload, and so on; a
+reload abandoned before its rounds go in leaves the flag. Not a perk — `specialty_fastreload` is the
+`Timing::Reload` rate, unchanged.
+
+The add point (`FUN_008dec90`, `ps+0x50`): `iReloadQuickAddTime` (`FUN_008ec980`) or
+`iReloadAddTime`; an empty reload takes `iReloadEmptyAddTime` when non-zero (the quick one's
+`iReloadQuickEmptyAddTime` first — def+0x4a8, not carried, follow-up), **else the same add time**;
+the result is capped at the *normal* (empty) reload time. Gotcha fixed on the way: the mod's empty
+reload put the rounds in at the very end when `iReloadEmptyAddTime` was 0 (most weapons: the AN-94's
+empty reload now adds at 1.3 s of 3.105 s, as BO2 does).
+
+Port: `WeaponState::quick_reload`, `Reload::Magazine { quick }`, `magazine_times` in `arsenal.rs`;
+the viewmodel plays `anim_reload_quick` / `anim_reload_quick_empty` (`weapAnimFiles_t` 0x15/0x16,
+`slot::RELOAD_QUICK{,_EMPTY}`; the converter already carries every slot) with the normal clip as the
+fallback. `conformance::check` now expects the quick first reload and BO2's add rule. In this install
+the Fast Mag times equal the normal ones (both × 0.675); the quick reload differs by its add time
+(an AN-94 Fast Mag puts the rounds in at 0.9 s instead of 0.877 s) and by its `fastmag_quick` clip.
+
+Measured (conformance vs `v1/view-kick`): unchanged — 381,867 weapons cells / 174 clusters, cac 881,
+185 gap clusters; both diff CSVs byte-identical (the zoom and quick reload are consumers of fields
+already carried). No table line was added, so neither commit needs a `hud::VERSION` bump.
+In-game (integrator): an ACOG's zoom holding the hip FOV for the first half of the aim and
+narrowing over the second; a sniper snapping to 15° on the frame the overlay appears and widening
+over its 5 % fade out; Variable Zoom starting at 30° and the melee key toggling 12.5° with a 125 ms
+blend (and no knife while scoped); the Hybrid's alt toggle blending 50° → 30°; the gun magnifying
+with the zoom; Fast Mag's quick/full alternation and its `fastmag_quick` clip.
+
+## Idle sway and hold breath: the scope drifts, the bullets follow, the breath steadies it (2026-10-31, branch `v1/idle-sway`)
+
+5a carried `IdleAmount` with nothing drawing it, and `v1/alt-ads` left hold breath unported. Read
+from t6mp (read-only; dumps in the item's plan dir, `ghidra/`), ported as `weapons::idle_sway`:
+
+- **The clock** `ps+0x5c` (`FUN_008e3940`, pmove, while `posFrac != 0`): `+= breath' × dt × 1000 ×
+  speed` (`FUN_008e38a0`; `breath'` is the breath scale with anything above 1 halved, `(s − 1)·0.5 +
+  1`), and for an overlay scope (`FUN_008ed670` = the stacked overlay reticle) a second `+= breath ×
+  dt × 1000 × speed` (`FUN_008e3810`) — a scope's clock runs at twice the rate. `speed` =
+  `hipIdleSpeed` lerped to `adsIdleSpeed` by the ADS fraction (the hip speed for a def that cannot
+  aim). At the hip the client runs the same rule (`FUN_00530e70`); the sim does both.
+- **The view sway** (`FUN_008f0f00`, only aimed and only overlay scopes): `A` = `fHipIdleAmount`
+  (first attachment differing, `FUN_008ed3a0`) lerped to `fAdsIdleAmount × Π fAdsIdleAmountScale`
+  (`FUN_008ecfd0`) by the ADS fraction (80, `DAT_00b12cac`, for a non-aiming def with no hip amount)
+  × the stance factor × the ADS fraction × the breath scale; `pitch += sin(t·0.001)·A·0.01`, `yaw +=
+  sin(t·0.0007)·A·0.01` degrees (`FUN_00a23eb1` is the SSE `sinf`: its small-argument path returns
+  `x·1.0`). A DSR-like 60 sways ±0.6° on a 3.1 s × 4.5 s Lissajous. The stance factor eases to
+  `fIdleProneFactor`/`fIdleCrouchFactor`/1 at 0.5/s.
+- **It moves the aim.** The server's think (`FUN_005dc820`) adds the same idle angles to
+  `ps.viewangles` for the fire angles (`gclient+0x56ac`), so a shot lands on the drifting reticle.
+  `PlayerSim::idle`, stepped after the ADS update (`FUN_008e4da0`'s order); the frame's aim is input
+  + `PlayerSim::aim_offset` (view kick + idle, the previous frame's, as the kick); the camera draws
+  the same offset (the client's kick interpolation now carries the sum).
+- **The gun's idle** (`FUN_008eefc0`, viewmodel): the same `A` without the breath and the 80, × (1 −
+  ADS) for an overlay scope (its view sways instead); pitch `sin(t·0.001)`, yaw `sin(t·0.0007)`, roll
+  `sin(t·0.0005)`. `idle_sway::gun_angles`, added in `GunPos::step` from the sim's clock.
+- **Hold breath** (`FUN_008e4860`): the breath key (`+breath_sprint` — the sprint key; usercmd
+  0x40000) at `posFrac == 1` on a def with `bHoldBreathToSteady` holds (`ps+0x10` bit 4) **only from
+  a full breath** (`ps+0x4e4 == 0`). Held, `used` counts up; past `player_breath_hold_time` 4.5 s (+
+  `perk_extraBreath` 5 with specialty 30 `holdbreath` — Ballistics CPU's `longbreath` grants it via
+  the attachment perks) it is set to hold + `player_breath_gasp_time` (0) and the breath lets go;
+  otherwise it counts down. The scale `ps+0x4e0` approaches (`FUN_00747b40`: `(target − cur)·rate·dt`,
+  snapping inside 0.001 or on overshoot) `(target − 1)·posFrac + 1` with target 0 at
+  `player_breath_hold_lerp` 1.5 while holding, else `(gasp_scale 2.5 − 1)·used/(hold + gasp) + 1` at
+  `player_breath_gasp_lerp` 4 — so the scope sways up to 2.5× right after a full breath and settles
+  as the lungs recover (4.5 s). The fire start (`FUN_008e1b80` → `FUN_008dea30`) lets a held breath
+  go on an overlay scope at full ADS (costing `player_breath_fire_delay`, 0). All dvars are tuning
+  keys (`[Breath]`).
+- **Sounds** (`FUN_0052e3d0`, client): starting a hold notifies `playerbreathinsound`, letting go
+  after more than the hold dvar (the dvar alone — with the perk a 6 s hold still gasps) notifies
+  `playerbreathgaspsound`, earlier `playerbreathoutsound`; in/out wait `player_breath_snd_delay` 1 s
+  after the last. `clientscripts/mp/_audio.csc` plays `vox_gen_sinper_hold`/`_exhale`/`_gasp` (sic).
+  Gotcha: those aliases are in the **language** zone's voice bank (`zone/english/en_common_mp.ff`,
+  `mpl_common.english`), not `common_mp`; `sfx::From::Voice` loads it (optional, like the menu banks).
+  Their authored volume is 0.01 (see the volume follow-up below).
+- **The hint** (`FUN_004dc750`, `cg_drawBreathHint`): fully aimed on an overlay scope with
+  `bHoldBreathToSteady`, not holding: `PLATFORM_HOLD_BREATH` "Press ^3&&1^7 and hold to steady" with
+  the breath key. Placed from `common_mp`'s `holdbreathhint.menu` (see the follow-up below).
+- Table: the weapon block's `IdleSway` line (`adsIdleSpeed hipIdleSpeed fIdleCrouchFactor
+  fIdleProneFactor bHoldBreathToSteady`; WEAPON_FIELDS 96 → 97), `Zoom::idle_speed/idle_stance/
+  hold_breath`, read by `zhbo_formats::weapon` from the WeaponDef. No attachment stacks them.
+
+Not ported (follow-ups): the `cod_hold_breath` sound context (no snd contexts in the mod); the variable-zoom hint
+`PLATFORM_HOLD_BREATH_ZOOM` (`FUN_004dc940`); the airburst/`weapClass item` exclusions (no such
+weapons in the mod); the prone test's `ps+0xc & 0x200000` exception. The clock is not truncated per
+frame as BO2's `(int)` is (a frame-rate artifact; the sim's 30 Hz frame is not BO2's). The stance
+factor starts settled at 1 (BO2's initial value is a zeroed field; unverified).
+
+Determinism: the sway is sim state stepped on the logic frame with seeded-free math; the fake-host
+tests replay it identically and check the aim each frame is view + the previous frame's offset.
+
+Measured (conformance vs `v1/ads-zoom`): unchanged — 381,867 weapons cells / 174 clusters, cac 881,
+185 gap clusters; both diff CSVs byte-identical (`idle_amount` keeps its 400 alt-row cells, the
+alt-attachment residue; no column covers the speeds, factors or the hold-breath flag).
+Verified: cargo test --workspace green; clippy --all-targets adds no warning; the real-install
+zhbo-assets suite (31 + the new `the_breath_sounds_decode_from_the_voice_bank`) green. A
+`hud::VERSION` bump is needed (the weapon table gained the `IdleSway` line; old tables still parse,
+with no sway) — the integrator's. No ABI change.
+In-game (integrator): a DSR/Ballista scope drifting in a slow figure-of-eight (~±0.6°) with the
+shot landing on the reticle; Shift (aimed) breathing in, the drift dying over ~1 s, the breath
+running out at 4.5 s (9.5 s with Ballistics CPU) with a gasp and a harder sway that settles over
+~4.5 s; a shot letting the breath go; the hint "Press SHIFT and hold to steady" while aimed and not
+holding; crouch/prone steadier; iron-sight guns showing only the small gun idle.
+
+### Follow-up: the hint's place is the menu's (branch `v1/idle-sway`)
+
+`holdbreathhint.menu`, dumped from `common_mp.ff` with the reference's patched OAT Unlinker (the
+dump `v1/offhand-rules` made, `~/.opencode/plan/offhand-rules/menus/common_mp/ui_mp/`): menu `rect 0
+80 0 0 9 8` (align 9 = the safe area's horizontal centre, 8 = its top, `FUN_0057d900`), one item,
+ownerdraw 71, `textfont 1`, `textscale 0.315`, `textstyle 3`. So the hint is *high* on the screen:
+its pen line 80 lines below the top, centred (`FUN_004dc750`'s `x - width * 0.5`), 0.315 × 48 lines
+tall, shadowed. `hud::center::draw_breath_hint` draws it in LUI space with the key run in `^3`
+yellow; the earlier "130 above the bottom" guess is gone. Test:
+`the_breath_hint_sits_80_lines_below_the_top_with_the_key_in_yellow`.
+
+### Follow-up: an aimed iron-sight shot follows the gun (branch `v1/idle-sway`)
+
+The server's think (`FUN_005dc820`), after the idle angles, runs the weapon pose `FUN_008f0700`
+(rates `FUN_008efba0`, view sway `FUN_008efce0`, the gun kick spring, bob `FUN_008f0160`) and its
+angles `FUN_008f0340`: the stance/move rotation × `max(0, 1 − 2·posFrac)` (`DAT_00c6f6ac` = 2), the
+kick spring, the sway (× (1 − posFrac) for an overlay scope), the bob, the gun idle `FUN_008eefc0`
+and the gun's damage flinch `FUN_008ef150`. When the def aims (`aimDownSight`), `posFrac != 0` and
+there is no overlay scope (`FUN_008ed670 == 0`), the fire angles become `AxisToAngles(axis(gun) ×
+axis(view))` (`FUN_0074d870` ×2, `FUN_00748a60`, `FUN_0074ab00`), so the bullets leave along the
+sights, not the screen centre.
+
+Port: `PlayerSim::gun` is a `viewmodel::Motion` (the same `weapons::gunpos` math the viewmodel draws,
+single source) stepped on the logic frame from sim state after the weapon actions, with the frame's
+gun-kick impulse; `GunPos::fire_angles` is `FUN_008f0340`'s sum (the rotation faded as BO2 fades it
+— the drawn pose keeps `fAdsAimPitch` and the move rotation, which the authored aimed clips rest
+on). Each frame `PlayerSim::fire_angles` composes the previous frame's gun angles onto the aim
+(exact rotation, not a sum) into `fire_yaw/fire_pitch`; hitscan pellets and launches use them, the
+camera does not. The client keeps its own `Motion` for drawing at the render rate — BO2 also runs the
+pose twice (cg and server). Not in the fire angles: the gun's damage flinch (`FUN_008ef150`; the
+mod's flinch is camera-only) and the lean roll. Test: `an_aimed_iron_sight_shot_follows_the_gun_pose`
+(an aimed burst while turning leaves off the view centre by the pose, replays identically; a
+scoped shot is the view's).
+
+### Follow-up: the XPR-50's anti-quickscope (branch `v1/idle-sway`)
+
+One MP weapon sets the variant's `bAntiQuickScope`: **`as50_mp` (XPR-50)**, with `fAntiQuickScopeTime`
+0.1, `…Scale` 4, `…SwayFactor` 20 (spread multiplier 1, spread max 25). Checked over every
+`common_mp`/`patch_mp` weapon (the OAT Unlinker's `weapon` dump in the item's plan dir, `wpn/`, and
+the real-install test `only_the_xpr_carries_the_anti_quickscope_and_snipers_hold_breath`). The DSR
+and Ballista author the times but leave the flag off. `bg_aqs` is on (1) and `bg_aqsStyle` is 2 by default.
+
+`FUN_008dac10` (pmove, after the idle clock; its second argument is the posFrac before this frame's
+ADS update): with the flag and a time of at least 1 ms, the timer `ps+0x4f8` holds the full time while the
+scope rises and counts down once fully up. It drops to 0 when the aim falls or is under 0.001. The factor
+`ps+0x4f4` eases at `player_breath_gasp_lerp` toward `(left/time)·(scale − 1)·posFrac + 1` and
+never goes below 1. In the view idle (`FUN_008f0f00`), style 1 multiplies the amount by it. Style 2 adds
+`(aqs − 1)·factor·0.01` to the pitch (the reticle starts below the target and settles up) and takes
+`(aqs − 1)·factor·sin(t·0.0007)·0.01` off the yaw: up to 0.6° on a fresh XPR scope. Hold breath is
+refused while the timer runs (`FUN_008e4860`). Carried as the weapon block's `AntiQuickScope` line
+(WEAPON_FIELDS 97 → 98, `Zoom::anti_quickscope`); `bg_aqs`/`bg_aqsStyle` are tuning keys. Not ported:
+the aimed spread's anti-quickscope term (`FUN_008e0080` → `FUN_008dbfb0`, whose result lives on the
+x87 stack and needs a disassembly read; the multiplier/max are carried for it).
+
+### Follow-up: the breath volume is read right; BO2's mixer is what the converter lacks (branch `v1/idle-sway`)
+
+The 0.01 is not a misread. `SndAlias.volMin/volMax` (+60/+62) are u16 linear gain over 65535. OAT's
+T6 dumper prints them as dBSPL (`100 + 20·log10(v)`), and its CSV of `en_common_mp`'s
+`mpl_common.english` gives `vox_gen_sinper_*` 58–60 (0.008–0.010 linear). Another well-known alias
+reads sanely the same way: `wpn_an94_fire_plr` is 93 dB = the 0.447 the converter reads, the
+Beretta's 90, `mpl_hit_alert` 83, `mpl_player_heartbeat` 75 (dumps in the item's plan dir, `snd/`).
+
+What makes BO2's breathing audible is the mix, not the alias. The aliases sit on `bus_voice` /
+`grp_voice` (attenuation 1.0 under `grp_master` 0.562), and the gunshot on `bus_fx` / `grp_weapon`
+(0.562 × 0.562). Every master snapshot in `code_post_gfx_mp`'s `snddriverglobals` has `busVoiceG`
+5.62 against `busFxG` 0.152 and `busHdrfxG` 2.89. Multiplied through naively, the breath (0.0316)
+would come out louder than the gunshot (0.0216). That cannot be right, because `bus_fx` also runs
+through BO2's HDR/compression stage, whose gain the dumps do not decode. The converter maps every
+alias as `vol × 100/0.45` and ignores bus and group gains for **all** events, so the fix is a
+converter-wide mixer port (bus gain × group chain × the HDR stage) with every event re-levelled.
+That is out of this item's scope, so the conversion is unchanged and the breath events stay on the
+volume floor of 5. Queue item: "the sound converter models BO2's mixer".
+
+### Follow-up: `hold_breath_mp` is a no-op shock (branch `v1/idle-sway`)
+
+`FUN_0052e3d0` starts the client shellshock `hold_breath_mp` (`FUN_004d2130` → `FUN_005152b0`, cg
+side only) 1 s into a breath that began with the breath-in sound. Its rawfile
+(`common_mp/shock/hold_breath_mp.shock`, OAT dump in `raw/`) asks for nothing perceivable:
+- `screenType blurred` with both blur blend times at 0.001 s;
+- no flash fade, and `viewKickRadius 0`;
+- `bg_shock_sound 0` (the sound block is off, so the `shock_flashbang` room type is unused);
+- `lookControl 0`, and no vision set.
+
+Its `bg_shock_movement 0.4` cannot touch movement, because the shock is client-only and pmove never
+sees it. Recorded and skipped: nothing to port.
+
+Measured after all follow-ups (conformance vs `v1/ads-zoom`): unchanged. Weapons 381,867 cells /
+174 clusters, cac 881, 185 gap clusters, both diff CSVs byte-identical: no column covers the
+hint, the fire angles, the AQS fields or the breath data. Verified: cargo test --workspace green;
+clippy --all-targets adds no warning; the real-install zhbo-assets suite (33, with the
+breath-sound and XPR tests) green. A `hud::VERSION` bump is needed (the weapon table gained
+`IdleSway` and `AntiQuickScope`) — the integrator's. No ABI change.

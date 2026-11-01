@@ -176,6 +176,12 @@ pub struct AttachmentUnique {
     pub overlay_material_low_res: String,
     /// `weapOverlayReticle_t`: which reticle the overlay draws (0: none).
     pub overlay_reticle: u32,
+    /// `iReloadStartAdd`: rounds the segmented reload's start adds (first single unique
+    /// differing from the base unique wins, `FUN_008ed2c0`).
+    pub reload_start_add: i32,
+    /// `adsDofStart`, `adsDofEnd` (each from the first single unique differing from the base
+    /// unique, `FUN_008ebdb0`).
+    pub ads_dof: (f32, f32),
 }
 
 /// A BO2 attachment (`WeaponAttachment`): how it changes any weapon it goes on. Scales multiply the
@@ -219,6 +225,49 @@ pub struct Attachment {
     pub first_raise_priority: i32,
     /// `bAltWeaponAdsOnly`: the alt-mode's ADS-only flag (G14 §5).
     pub alt_weapon_ads_only: bool,
+    /// `bAltWeaponDisableSwitching`, OR-ed into the weapon's (`FUN_008ecb60`).
+    pub alt_weapon_disable_switching: bool,
+    /// `fAdsZoomFov2`, `fAdsZoomFov3`: the second and third zoom levels (the last attachment
+    /// differing from `defaultattachment` wins, `FUN_008ec3f0`).
+    pub ads_zoom_fov2: f32,
+    pub ads_zoom_fov3: f32,
+    /// `fAdsZoomInFrac`, `fAdsZoomOutFrac` (first differing from `defaultattachment` wins).
+    pub ads_zoom_in_frac: f32,
+    pub ads_zoom_out_frac: f32,
+    /// `altScopeADSTransIn/OutTime`, seconds (first differing from `defaultattachment` wins).
+    pub alt_scope_ads_in_time: f32,
+    pub alt_scope_ads_out_time: f32,
+    /// `fHipIdleAmount` (first differing from `defaultattachment` wins) and
+    /// `fAdsIdleAmountScale` (a product).
+    pub hip_idle_amount: f32,
+    pub ads_idle_amount_scale: f32,
+    /// `fReloadQuick{,Empty,Add}TimeScale` (products, then truncated to whole ms).
+    pub reload_quick_scale: f32,
+    pub reload_quick_empty_scale: f32,
+    pub reload_quick_add_scale: f32,
+    /// `stackFireSpread`, `stackFireAccuracyDecay` (the first positive wins).
+    pub stack_fire_spread: f32,
+    pub stack_fire_accuracy_decay: f32,
+    /// `PenetrateType` (the first non-zero wins, `FUN_008ecec0`).
+    pub penetrate_type: u32,
+    /// OR-ed flags: `bInfraRed`, `mmsWeapon`, `bUseAsMelee`.
+    pub infrared: bool,
+    pub mms_weapon: bool,
+    pub use_as_melee: bool,
+    /// `fAdsViewKickCenterSpeedScale`: scales the aimed view-kick recentre speed (a product,
+    /// `FUN_008ecf70`).
+    pub ads_view_kick_center_scale: f32,
+    /// The sway override blocks: `swayOverride` / `adsSwayOverride` set, the attachment's own six
+    /// `sway*` / `adsSway*` values (the first attachment with the flag supplies all,
+    /// `FUN_008ec590` / `FUN_008ec660`).
+    pub sway_override: Option<Sway>,
+    pub ads_sway_override: Option<Sway>,
+    /// The view-position overrides (`FUN_008ed410` / `FUN_008ed4f0`; the last attachment
+    /// differing from `defaultattachment` wins): `strafeRotR`, `standMoveF`, `vStandRot`
+    /// (pitch and roll are read).
+    pub strafe_rot_r: f32,
+    pub stand_move_f: f32,
+    pub stand_rot: [f32; 3],
 }
 
 /// Every attachment in a loaded zone.
@@ -258,6 +307,44 @@ pub fn attachments(z: &Zone) -> Result<Vec<Attachment>, FormatError> {
                 perks: (z.u32(at + WA::perks), z.u32(at + WA::perks + 4)),
                 first_raise_priority: z.u32(at + WA::firstRaisePriority) as i32,
                 alt_weapon_ads_only: z.u8(at + WA::bAltWeaponAdsOnly) != 0,
+                alt_weapon_disable_switching: z.u8(at + WA::bAltWeaponDisableSwitching) != 0,
+                ads_zoom_fov2: z.f32(at + WA::fAdsZoomFov2),
+                ads_zoom_fov3: z.f32(at + WA::fAdsZoomFov3),
+                ads_zoom_in_frac: z.f32(at + WA::fAdsZoomInFrac),
+                ads_zoom_out_frac: z.f32(at + WA::fAdsZoomOutFrac),
+                alt_scope_ads_in_time: z.f32(at + WA::altScopeADSTransInTime),
+                alt_scope_ads_out_time: z.f32(at + WA::altScopeADSTransOutTime),
+                hip_idle_amount: z.f32(at + WA::fHipIdleAmount),
+                ads_idle_amount_scale: z.f32(at + WA::fAdsIdleAmountScale),
+                reload_quick_scale: z.f32(at + WA::fReloadQuickTimeScale),
+                reload_quick_empty_scale: z.f32(at + WA::fReloadQuickEmptyTimeScale),
+                reload_quick_add_scale: z.f32(at + WA::fReloadQuickAddTimeScale),
+                stack_fire_spread: z.f32(at + WA::stackFireSpread),
+                stack_fire_accuracy_decay: z.f32(at + WA::stackFireAccuracyDecay),
+                penetrate_type: z.u32(at + WA::penetrateType),
+                infrared: z.u8(at + WA::bInfraRed) != 0,
+                mms_weapon: z.u8(at + WA::mmsWeapon) != 0,
+                use_as_melee: z.u8(at + WA::bUseAsMelee) != 0,
+                ads_view_kick_center_scale: z.f32(at + WA::fAdsViewKickCenterSpeedScale),
+                sway_override: (z.u8(at + WA::swayOverride) != 0).then(|| Sway {
+                    max_angle: z.f32(at + WA::swayMaxAngle),
+                    lerp_speed: z.f32(at + WA::swayLerpSpeed),
+                    pitch_scale: z.f32(at + WA::swayPitchScale),
+                    yaw_scale: z.f32(at + WA::swayYawScale),
+                    horiz_scale: z.f32(at + WA::swayHorizScale),
+                    vert_scale: z.f32(at + WA::swayVertScale),
+                }),
+                ads_sway_override: (z.u8(at + WA::adsSwayOverride) != 0).then(|| Sway {
+                    max_angle: z.f32(at + WA::adsSwayMaxAngle),
+                    lerp_speed: z.f32(at + WA::adsSwayLerpSpeed),
+                    pitch_scale: z.f32(at + WA::adsSwayPitchScale),
+                    yaw_scale: z.f32(at + WA::adsSwayYawScale),
+                    horiz_scale: z.f32(at + WA::fAdsSwayHorizScale),
+                    vert_scale: z.f32(at + WA::fAdsSwayVertScale),
+                }),
+                strafe_rot_r: z.f32(at + WA::strafeRotR),
+                stand_move_f: z.f32(at + WA::standMoveF),
+                stand_rot: vec3(z, at + WA::vStandRot),
             })
         })
         .collect()
@@ -283,7 +370,8 @@ pub struct GunKick {
     pub reduced_percent: f32,
 }
 
-/// View sway (`sway*` / `adsSway*`; G4). BO2's ADS set has no horizontal/vertical scales.
+/// View sway (`sway*` / `adsSway*`; G4). The ADS set's horizontal/vertical scales live on the
+/// variant (`WeaponVariantDef.fAdsSway{Horiz,Vert}Scale`), the rest on the def.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Sway {
     pub max_angle: f32,
@@ -439,6 +527,9 @@ pub struct Weapon {
     pub view_kick_min: (f32, f32),
     /// The variant's `f{Ads,Hip}ViewKickCenterSpeed`.
     pub view_kick_center: (f32, f32),
+    /// `fAdsViewKickCenterDuckedScale`, `fAdsViewKickCenterProneScale`: the aimed recentre speed's
+    /// crouched and prone scales (the kick integrator `FUN_0051f150`).
+    pub view_kick_center_stance: (f32, f32),
     pub ads_gun_kick: GunKick,
     pub hip_gun_kick: GunKick,
     /// `fGunMaxPitch`, `fGunMaxYaw`.
@@ -491,6 +582,64 @@ pub struct Weapon {
     pub overlay_material_low_res: String,
     /// `weapOverlayReticle_t`: which reticle the overlay draws (0: none).
     pub overlay_reticle: u32,
+    // The variant's own fields.
+    /// `bIgnoreAttachments`: the variant's flags ignore its attachments' (G14 §4).
+    pub ignore_attachments: bool,
+    /// `iReloadQuickTime`, `iReloadQuickEmptyTime` (seconds; the variant's).
+    pub reload_quick_time: f32,
+    pub reload_quick_empty_time: f32,
+    /// `fAdsZoomFov2`, `fAdsZoomFov3` (the variant's second and third zoom levels).
+    pub ads_zoom_fov2: f32,
+    pub ads_zoom_fov3: f32,
+    /// `fAdsZoomInFrac`, `fAdsZoomOutFrac`.
+    pub ads_zoom_in_frac: f32,
+    pub ads_zoom_out_frac: f32,
+    /// `fOverlayAlphaScale`.
+    pub overlay_alpha_scale: f32,
+    /// `bDualMag`, `bInfraRed`, `mmsWeapon` (the variant's).
+    pub dual_mag: bool,
+    pub infrared: bool,
+    pub mms_weapon: bool,
+    // The def's fields.
+    /// `iReloadQuickAddTime` (seconds).
+    pub reload_quick_add_time: f32,
+    /// `iReloadStartAdd`: rounds the segmented reload's start adds.
+    pub reload_start_add: i32,
+    /// `PenetrateType`: 0 none, 1 small, 2 medium, 3 large.
+    pub penetrate_type: u32,
+    /// `stackFireSpread`, `stackFireAccuracyDecay`.
+    pub stack_fire_spread: f32,
+    pub stack_fire_accuracy_decay: f32,
+    /// `adsDofStart`, `adsDofEnd`.
+    pub ads_dof: (f32, f32),
+    /// `altScopeADSTransInTime`, `altScopeADSTransOutTime` (seconds, authored as floats).
+    pub alt_scope_ads_in_time: f32,
+    pub alt_scope_ads_out_time: f32,
+    /// `bAltWeaponAdsOnly`, `bAltWeaponDisableSwitching`.
+    pub alt_weapon_ads_only: bool,
+    pub alt_weapon_disable_switching: bool,
+    /// `bUseAsMelee`, `bHasBayonet`.
+    pub use_as_melee: bool,
+    pub has_bayonet: bool,
+    /// `fAdsIdleAmount`, `fHipIdleAmount`.
+    pub ads_idle_amount: f32,
+    pub hip_idle_amount: f32,
+    /// `adsIdleSpeed`, `hipIdleSpeed`: how fast the idle sway's clock runs, aimed and from the hip.
+    pub ads_idle_speed: f32,
+    pub hip_idle_speed: f32,
+    /// `fIdleCrouchFactor`, `fIdleProneFactor`: the idle sway's amount crouched and prone.
+    pub idle_crouch_factor: f32,
+    pub idle_prone_factor: f32,
+    /// `bHoldBreathToSteady`: holding breath steadies the scope.
+    pub hold_breath_to_steady: bool,
+    /// The variant's `bAntiQuickScope` and the def's `fAntiQuickScopeTime`, `…Scale`,
+    /// `…SpreadMultiplier`, `…SpreadMax`, `…SwayFactor`.
+    pub anti_quickscope: bool,
+    pub anti_quickscope_time: f32,
+    pub anti_quickscope_scale: f32,
+    pub anti_quickscope_spread_multiplier: f32,
+    pub anti_quickscope_spread_max: f32,
+    pub anti_quickscope_sway_factor: f32,
 }
 
 fn ms(z: &Zone, at: u32) -> f32 {
@@ -593,6 +742,8 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 overlay_material: named(z, u + WU::overlayMaterial).unwrap_or_default(),
                 overlay_material_low_res: named(z, u + WU::overlayMaterialLowRes).unwrap_or_default(),
                 overlay_reticle: z.u32(u + WU::overlayReticle),
+                reload_start_add: int(z, u + WU::iReloadStartAdd),
+                ads_dof: (z.f32(u + WU::adsDofStart), z.f32(u + WU::adsDofEnd)),
             });
         }
     }
@@ -649,6 +800,17 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         overlay_material,
         overlay_material_low_res,
         overlay_reticle,
+        ignore_attachments: z.u8(v + WV::bIgnoreAttachments) != 0,
+        reload_quick_time: ms(z, v + WV::iReloadQuickTime),
+        reload_quick_empty_time: ms(z, v + WV::iReloadQuickEmptyTime),
+        ads_zoom_fov2: z.f32(v + WV::fAdsZoomFov2),
+        ads_zoom_fov3: z.f32(v + WV::fAdsZoomFov3),
+        ads_zoom_in_frac: z.f32(v + WV::fAdsZoomInFrac),
+        ads_zoom_out_frac: z.f32(v + WV::fAdsZoomOutFrac),
+        overlay_alpha_scale: z.f32(v + WV::fOverlayAlphaScale),
+        dual_mag: z.u8(v + WV::bDualMag) != 0,
+        infrared: z.u8(v + WV::bInfraRed) != 0,
+        mms_weapon: z.u8(v + WV::mmsWeapon) != 0,
         ..Default::default()
     };
     if d == 0 {
@@ -742,6 +904,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         reduced_percent: z.f32(d + WD::hipGunKickReducedKickPercent),
     };
     w.gun_max = (z.f32(d + WD::fGunMaxPitch), z.f32(d + WD::fGunMaxYaw));
+    w.view_kick_center_stance = (z.f32(d + WD::fAdsViewKickCenterDuckedScale), z.f32(d + WD::fAdsViewKickCenterProneScale));
     w.recoil = (z.f32(d + WD::fAdsRecoilReductionRate), z.f32(d + WD::fAdsRecoilReductionLimit), z.f32(d + WD::fAdsRecoilReturnRate));
     w.hip_sway = Sway {
         max_angle: z.f32(d + WD::swayMaxAngle),
@@ -756,8 +919,8 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
         lerp_speed: z.f32(d + WD::adsSwayLerpSpeed),
         pitch_scale: z.f32(d + WD::adsSwayPitchScale),
         yaw_scale: z.f32(d + WD::adsSwayYawScale),
-        horiz_scale: 0.0,
-        vert_scale: 0.0,
+        horiz_scale: z.f32(v + WV::fAdsSwayHorizScale),
+        vert_scale: z.f32(v + WV::fAdsSwayVertScale),
     };
     let v2 = |at: u32| [z.f32(at), z.f32(at + 4)];
     w.view_pos = ViewPos {
@@ -805,6 +968,31 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.dual_wield = z.u8(d + WD::bDualWield) != 0;
     w.clip_only = z.u8(d + WD::bClipOnly) != 0;
     w.rifle_bullet = z.u8(d + WD::bRifleBullet) != 0;
+    w.reload_quick_add_time = ms(z, d + WD::iReloadQuickAddTime);
+    w.reload_start_add = int(z, d + WD::iReloadStartAdd);
+    w.penetrate_type = z.u32(d + WD::penetrateTWeaponAttachmentype);
+    w.stack_fire_spread = z.f32(d + WD::stackFireSpread);
+    w.stack_fire_accuracy_decay = z.f32(d + WD::stackFireAccuracyDecay);
+    w.ads_dof = (z.f32(d + WD::adsDofStart), z.f32(d + WD::adsDofEnd));
+    w.alt_scope_ads_in_time = z.f32(d + WD::altScopeADSTransInTime);
+    w.alt_scope_ads_out_time = z.f32(d + WD::altScopeADSTransOutTime);
+    w.alt_weapon_ads_only = z.u8(d + WD::bAltWeaponAdsOnly) != 0;
+    w.alt_weapon_disable_switching = z.u8(d + WD::bAltWeaponDisableSwitching) != 0;
+    w.use_as_melee = z.u8(d + WD::bUseAsMelee) != 0;
+    w.has_bayonet = z.u8(d + WD::bHasBayonet) != 0;
+    w.ads_idle_amount = z.f32(d + WD::fAdsIdleAmount);
+    w.hip_idle_amount = z.f32(d + WD::fHipIdleAmount);
+    w.ads_idle_speed = z.f32(d + WD::adsIdleSpeed);
+    w.hip_idle_speed = z.f32(d + WD::hipIdleSpeed);
+    w.idle_crouch_factor = z.f32(d + WD::fIdleCrouchFactor);
+    w.idle_prone_factor = z.f32(d + WD::fIdleProneFactor);
+    w.hold_breath_to_steady = z.u8(d + WD::bHoldBreathToSteady) != 0;
+    w.anti_quickscope = z.u8(v + WV::bAntiQuickScope) != 0;
+    w.anti_quickscope_time = z.f32(d + WD::fAntiQuickScopeTime);
+    w.anti_quickscope_scale = z.f32(d + WD::fAntiQuickScopeScale);
+    w.anti_quickscope_spread_multiplier = z.f32(d + WD::fAntiQuickScopeSpreadMultiplier);
+    w.anti_quickscope_spread_max = z.f32(d + WD::fAntiQuickScopeSpreadMax);
+    w.anti_quickscope_sway_factor = z.f32(d + WD::fAntiQuickScopeSwayFactor);
     w.fire_sound = opt_str(z, d + WD::fireSound);
     w.fire_sound_player = opt_str(z, d + WD::fireSoundPlayer);
     w.fire_last_sound_player = opt_str(z, d + WD::fireLastSoundPlayer);

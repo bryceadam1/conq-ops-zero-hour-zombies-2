@@ -7,11 +7,12 @@
 */
 
 use super::catalog::{catalog, weapon, weapon_or_none};
-use super::def::{Class, Effect, FireMode, Place, WeaponDef, KICK_TO_DEGREES};
+use super::def::{Class, Effect, FireMode, Place, WeaponDef};
 use super::loadout::Loadout;
 use super::perks::Perk;
 use super::rng::Rng;
 use super::specialty::{Specialties, Specialty};
+use super::zoom;
 use crate::input::buttons;
 use crate::tuning::Tuning;
 use crate::units::LOGIC_DT;
@@ -21,8 +22,9 @@ use crate::units::LOGIC_DT;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Reload {
-    /// Magazine swap: seconds in, total length, when the rounds go in, whether they have.
-    Magazine { t: f32, length: f32, add_at: f32, added: bool, empty: bool },
+    /// Magazine swap: seconds in, total length, when the rounds go in, whether they have, from
+    /// empty, and whether it is Fast Mag's quick reload (the taped second magazine).
+    Magazine { t: f32, length: f32, add_at: f32, added: bool, empty: bool, quick: bool },
     /// Tube shotgun: start, then one cycle per batch of shells, then end.
     Shells { phase: ShellPhase, t: f32, stop: bool },
 }
@@ -60,6 +62,23 @@ pub struct WeaponState {
     /// The grip's recoil-reduction accumulator, and seconds since the last shot (G5).
     pub recoil_acc: f32,
     pub since_shot: f32,
+    /// A bolt or pump action owes a rechamber (BO2's per-weapon flag, set by the shot in
+    /// `FUN_008dc260`, cleared when the rechamber ends `FUN_008db020` or a reload starts
+    /// `FUN_008e1510`).
+    pub rechamber_pending: bool,
+    /// Shots since the last rechamber, for `shots_before_rechamber` (`ps+0x4f0`).
+    pub rechamber_shots: u16,
+    /// Seconds into the rechamber in progress (BO2's weapon state 7/8), or `None`.
+    pub rechamber: Option<f32>,
+    /// The magazine ran dry: the reload starts once the last shot's fire state ends.
+    pub reload_owed: bool,
+    /// The variable zoom's level (BO2's inventory slot `+0x10`), the level it changed from and
+    /// the seconds since (`ps+0x5d0`/`ps+0x5d4`; `weapons::zoom`).
+    pub zoom: zoom::Level,
+    /// BO2's per-weapon quick-reload flag (inventory slot `+0x17`): set when a dual-mag weapon is
+    /// given (`FUN_008ddce0`), flipped by each of its reloads' ammo transfer (`FUN_008dbc00`), so
+    /// Fast Mag alternates the quick swap to the taped magazine with a full reload.
+    pub quick_reload: bool,
 }
 
 impl WeaponState {
@@ -84,6 +103,12 @@ impl WeaponState {
             string: 0,
             recoil_acc: 0.0,
             since_shot: 10.0,
+            rechamber_pending: false,
+            rechamber_shots: 0,
+            rechamber: None,
+            reload_owed: false,
+            zoom: zoom::Level { since: zoom::LEVEL_BLEND_TIME, ..Default::default() },
+            quick_reload: def.traits.dual_mag,
         }
         .with_alt_ammo()
     }
@@ -99,6 +124,17 @@ impl WeaponState {
 
     pub fn is_reloading(&self) -> bool {
         self.reload.is_some()
+    }
+
+    /// The alt mode is up (BO2's held weapon is the `altmode` inventory entry).
+    pub fn alt_up(&self) -> bool {
+        self.def.id != self.main.id
+    }
+
+    /// The Variable Zoom's melee press at full ADS (`FUN_008de340` → `FUN_008da3c0`, weapon-based
+    /// levels): step to the next of [`zoom::LEVELS`] and start the change's blend.
+    pub fn step_zoom_level(&mut self) {
+        self.zoom = zoom::Level { level: (self.zoom.level + 1) % zoom::LEVELS, from: self.zoom.level, since: 0.0 };
     }
 
     /// Seconds left on a magazine reload (0 when none; shell reloads report their current phase).
@@ -120,14 +156,45 @@ impl WeaponState {
         }
         let d = self.def;
         self.burst_left = 0;
+        // Starting a reload drops an owed rechamber (`FUN_008e1510`).
+        self.rechamber_pending = false;
+        self.rechamber = None;
         self.reload = Some(if d.shell_by_shell() {
             Reload::Shells { phase: ShellPhase::Start, t: 0.0, stop: false }
         } else {
             let empty = self.ammo == 0;
-            let (length, add_at) = if empty { (d.reload_empty_time, d.reload_empty_add_time) } else { (d.reload_time, d.reload_add_time) };
-            let add_at = if add_at > 0.0 { add_at } else { length };
-            Reload::Magazine { t: 0.0, length, add_at: add_at.min(length), added: false, empty }
+            let quick = self.quick_reload && d.traits.dual_mag;
+            let (length, add_at) = magazine_times(d, empty, quick);
+            Reload::Magazine { t: 0.0, length, add_at, added: false, empty, quick }
         });
+    }
+
+    /// The rechamber (`FUN_008db0d0`): once the shot's fire time has run out, an owed rechamber
+    /// runs for `iRechamberTime` and the weapon cannot fire until it ends (`FUN_008db020`). The
+    /// `rof` tick scales it like the fire state (G3: states 6, 7, 8).
+    fn step_rechamber(&mut self, tick: f32) {
+        let t = &self.def.timing;
+        if let Some(e) = self.rechamber {
+            let e = e + tick;
+            if e >= t.rechamber_time {
+                self.rechamber = None;
+                self.rechamber_pending = false;
+                // The time past the rechamber's end carries into the next shot's wait (the
+                // cooldown's own count-down during the rechamber is discarded).
+                self.cooldown = -(e - t.rechamber_time);
+            } else {
+                self.rechamber = Some(e);
+            }
+            return;
+        }
+        if self.rechamber_pending && t.bolt_action && self.cooldown <= 0.0 && !self.is_reloading() {
+            // The rechamber starts where the fire state ended, mid-frame.
+            self.rechamber_shots = 0;
+            let carried = -self.cooldown;
+            self.cooldown = 0.0;
+            self.rechamber = Some(0.0);
+            self.step_rechamber(carried);
+        }
     }
 
     fn take(&mut self, n: u16) {
@@ -141,18 +208,22 @@ impl WeaponState {
         let d = self.def;
         let Some(r) = self.reload else { return false };
         match r {
-            Reload::Magazine { t, length, add_at, added, empty } => {
+            Reload::Magazine { t, length, add_at, added, empty, quick } => {
                 let t = t + dt;
                 let mut added = added;
                 if !added && t >= add_at {
                     self.take(d.clip);
                     added = true;
+                    // The ammo transfer flips a dual-mag weapon's quick flag (`FUN_008dbc00`).
+                    if d.traits.dual_mag {
+                        self.quick_reload = !quick;
+                    }
                 }
                 if t >= length {
                     self.reload = None;
                     return true;
                 }
-                self.reload = Some(Reload::Magazine { t, length, add_at, added, empty });
+                self.reload = Some(Reload::Magazine { t, length, add_at, added, empty, quick });
             }
             Reload::Shells { phase, t, stop } => {
                 let t = t + dt;
@@ -195,7 +266,7 @@ pub struct Offhand {
 pub enum WeaponAction {
     /// Fire one round (one pellet for shotguns) with the given cone (degrees), random offsets in
     /// [-1, 1), view kick (degrees pitch up, yaw, roll) and the gun kick spring's impulse.
-    Fire { spread_deg: f32, jitter: (f32, f32), recoil: (f32, f32, f32), gun_kick: (f32, f32), pellet: u16 },
+    Fire { spread_deg: f32, jitter: (f32, f32), view_kick: (f32, f32, f32), gun_kick: (f32, f32), pellet: u16 },
     /// Launch a projectile (launchers, crossbow, ballistic knife); `pellet` numbers the bolts of
     /// one shot (the tri-bolt's three).
     Launch { def: &'static WeaponDef, pellet: u16 },
@@ -560,16 +631,6 @@ impl Arsenal {
         d * if self.has_specialty(Specialty::LongerSprint) { self.tuning.perk_sprint_multiplier } else { 1.0 }
     }
 
-    /// Field of view multiplier when fully aimed (relative to BO2's 65 degrees).
-    pub fn ads_fov_scale(&self) -> f32 {
-        let fov = self.current().def.ads_fov;
-        if fov > 0.0 {
-            (fov / 65.0).clamp(0.1, 1.0)
-        } else {
-            1.0
-        }
-    }
-
     /// The weapon is back up from a sprint: `sprintOutTime` of weapon time has passed (which
     /// `sprintrecovery` makes 0.3 of the wall time; G2 `FUN_008e4ad0`).
     fn sprint_ready(&self) -> bool {
@@ -712,8 +773,18 @@ impl Arsenal {
             out.push(WeaponAction::Swapped);
         }
 
+        // The zoom level's change blend runs in real time (the client reads `since`).
+        self.current_mut().zoom.since += dt;
+        // Aimed, the melee button is the Variable Zoom's level toggle at full ADS (`FUN_008de340`),
+        // and BO2's melee start (`FUN_008e2070`) is refused while aimed at all with an overlay
+        // reticle or distinct zoom levels.
+        let def = self.current().def;
+        if pressed & buttons::MELEE != 0 && self.ads >= 1.0 && has_attachment_kind(def, zoom::VZOOM_KIND) {
+            self.current_mut().step_zoom_level();
+        }
+        let melee_refused = zoom::melee_blocked(def, self.ads);
         // Melee interrupts a reload and firing, not a raise.
-        if pressed & buttons::MELEE != 0 && self.melee_left <= 0.0 && self.raise_left <= 0.0 && self.drop_left <= 0.0 {
+        if pressed & buttons::MELEE != 0 && !melee_refused && self.melee_left <= 0.0 && self.raise_left <= 0.0 && self.drop_left <= 0.0 {
             self.melee_left = self.melee.melee_time.max(0.3);
             let w = self.current_mut();
             w.burst_left = 0;
@@ -757,9 +828,25 @@ impl Arsenal {
         let fire_tick = self.tick(Timing::Fire);
         let w = self.current_mut();
         w.cooldown -= fire_tick;
-        // Minigun barrels spin while the trigger is held.
+        // BO2 reloads by itself when the magazine runs dry, once the last shot's fire state
+        // (`iLastFireTime` or the fire time) is over.
+        if w.reload_owed && w.cooldown <= 0.0 {
+            w.reload_owed = false;
+            if w.ammo == 0 && w.can_reload() {
+                w.start_reload();
+                out.push(WeaponAction::ReloadStarted);
+            }
+        }
+        w.step_rechamber(fire_tick);
+        // Minigun barrels spin up while the trigger is held and down over `spin_down_time`.
         if def.fire == FireMode::Minigun {
-            w.spin = if held & buttons::FIRE != 0 && !blocked { (w.spin + dt).min(def.spin_up_time) } else { (w.spin - dt).max(0.0) };
+            w.spin = if held & buttons::FIRE != 0 && !blocked {
+                (w.spin + dt).min(def.spin_up_time)
+            } else {
+                let down = def.timing.spin_down_time;
+                let rate = if down > 0.0 { def.spin_up_time / down } else { f32::INFINITY };
+                (w.spin - dt * rate).max(0.0)
+            };
         }
         // A tube-shotgun reload stops after the current shell when the trigger is pressed.
         if pressed & buttons::FIRE != 0 {
@@ -780,7 +867,7 @@ impl Arsenal {
                 w.burst_left > 0
             }
         };
-        if !trigger || blocked || w.is_reloading() {
+        if !trigger || blocked || w.is_reloading() || w.rechamber.is_some() {
             if w.cooldown < 0.0 {
                 w.cooldown = 0.0;
             }
@@ -820,24 +907,39 @@ impl Arsenal {
                 }
             } else {
                 let spread = spread_now + if ads < 0.5 { def.spread_move_add * (speed / 30.0).min(1.0) } else { 0.0 };
-                // BO2's per-shot kick (G5); the view kick's degrees scale is still the mod's
-                // (G5 leaves its consumer unresolved).
+                // BO2's per-shot kick (G5): the view kick's velocity and the gun spring's impulse.
+                // A dual-wield pair calls `shot_kick_hands` with its hands' firing states.
                 let k = super::recoil::shot_kick(def, ads, w.string, &mut w.recoil_acc, w.since_shot, rng);
                 w.since_shot = 0.0;
                 for pellet in 0..def.pellets.max(1) {
                     let jitter = (rng.signed(), rng.signed());
-                    let (recoil, gun_kick) = if pellet == 0 {
-                        ((k.view.0 * KICK_TO_DEGREES, k.view.1 * KICK_TO_DEGREES, k.view.2 * KICK_TO_DEGREES), k.gun)
-                    } else {
-                        ((0.0, 0.0, 0.0), (0.0, 0.0))
-                    };
-                    out.push(WeaponAction::Fire { spread_deg: spread, jitter, recoil, gun_kick, pellet });
+                    let (view_kick, gun_kick) = if pellet == 0 { (k.view, k.gun) } else { ((0.0, 0.0, 0.0), (0.0, 0.0)) };
+                    out.push(WeaponAction::Fire { spread_deg: spread, jitter, view_kick, gun_kick, pellet });
                 }
             }
+            // The magazine's last round fires over `iLastFireTime` when the weapon has one
+            // (`FUN_008dc260` with `FUN_008dc1e0`'s clip < 2 test). A burst's threshold is its
+            // round count + 1 there; no BO2 burst weapon authors a last-fire time, so bursts keep
+            // the plain fire time.
+            let last = w.ammo < 2 && !matches!(def.fire, FireMode::Burst(_));
+            let t = &def.timing;
+            w.cooldown += if last && t.last_fire_time > 0.0 { t.last_fire_time } else { def.fire_time };
             w.ammo -= 1;
             w.string = w.string.saturating_add(1);
             w.bloom += def.spread_fire_add;
-            w.cooldown += def.fire_time;
+            // A bolt or pump action owes a rechamber after every shot, or after every
+            // `iShotsBeforeRechamber` shots (`FUN_008dc260`).
+            if t.bolt_action {
+                if t.shots_before_rechamber == 0 {
+                    w.rechamber_pending = true;
+                } else {
+                    w.rechamber_shots = w.rechamber_shots.saturating_add(1);
+                    w.rechamber_pending |= w.rechamber_shots >= t.shots_before_rechamber;
+                }
+                if w.rechamber_pending {
+                    break;
+                }
+            }
             fired_semi = true;
             if let FireMode::Burst(_) = def.fire {
                 w.burst_left = w.burst_left.saturating_sub(1);
@@ -848,9 +950,7 @@ impl Arsenal {
             }
         }
         if w.ammo == 0 && w.reserve > 0 {
-            // BO2 reloads by itself when the magazine runs dry.
-            w.start_reload();
-            out.push(WeaponAction::ReloadStarted);
+            w.reload_owed = true;
         }
     }
 
@@ -958,4 +1058,34 @@ impl Default for Arsenal {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// A magazine reload's length and the moment its rounds go in (seconds of weapon time). The
+/// length (`FUN_008dee50`): the quick reload's `iReloadQuick{,Empty}Time` when `quick`, else the
+/// normal or empty reload. The add (`FUN_008dec90`): `iReloadQuickAddTime` or `iReloadAddTime`; an
+/// empty reload takes `iReloadEmptyAddTime` when it has one, else that same add time; capped at
+/// the *normal* (or normal empty) reload time, and never past the end.
+fn magazine_times(d: &WeaponDef, empty: bool, quick: bool) -> (f32, f32) {
+    let t = &d.timing;
+    let normal = if empty { d.reload_empty_time } else { d.reload_time };
+    let quick_length = if empty { t.reload_quick_empty_time } else { t.reload_quick_time };
+    // A table without the quick times (0) keeps the normal reload.
+    let length = if quick && quick_length > 0.0 { quick_length } else { normal };
+    let add = if quick { t.reload_quick_add_time } else { d.reload_add_time };
+    let add = if empty && d.reload_empty_add_time > 0.0 { d.reload_empty_add_time } else { add };
+    let add_at = if add > 0.0 && add < normal { add } else { normal };
+    (length, add_at.min(length))
+}
+
+/// The combination holds an attachment of BO2's `eAttachment` `kind` (`FUN_008eb270`), resolved
+/// through its base weapon's allowed list (a combination's own is cleared) and the catalog's
+/// attachment table.
+fn has_attachment_kind(def: &WeaponDef, kind: u8) -> bool {
+    if def.attachments.is_empty() {
+        return false;
+    }
+    let cat = catalog();
+    let Some(base) = cat.get(crate::attachments::split_id(&def.id).0) else { return false };
+    let shorts: Vec<&str> = def.attachments.iter().map(String::as_str).collect();
+    crate::attachments::resolve(base, &shorts, |id| cat.attachment(id)).iter().any(|a| a.kind == kind)
 }

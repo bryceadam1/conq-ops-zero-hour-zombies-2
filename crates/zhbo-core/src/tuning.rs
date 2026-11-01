@@ -100,6 +100,8 @@ tuning! {
     view_height_crouch: "ViewHeightCrouch" = 40.0, "Crouched eye height, inches (the engine's 40; G6).";
     view_height_prone: "ViewHeightProne" = 11.0, "Prone eye height, inches (the engine's 11; G6).";
     cg_fov: "cg_fov" = 65.0, "Field of view, degrees (G4).";
+    cg_fov_min: "cg_fovMin" = 10.0, "The narrowest view FOV, degrees (`FUN_004a0920`).";
+    cg_fov_scale: "cg_fovScale" = 1.0, "Scale on the view FOV after the ADS zoom (`FUN_004a0920`).";
     bg_weapon_bob_max: "bg_weaponBobMax" = 8.0, "Weapon bob amplitude cap (G4).";
     bg_weapon_bob_lag: "bg_weaponBobLag" = 0.25, "Weapon bob phase lag behind the view, x pi (G4).";
     bob_standing_h: "bg_weaponBobAmplitudeStanding.x" = 0.055, "Standing bob, horizontal (G4).";
@@ -111,6 +113,17 @@ tuning! {
     bob_sprinting_h: "bg_weaponBobAmplitudeSprinting.x" = 0.02, "Sprinting bob, horizontal, x the weapon's `vSprintBob` (G4).";
     bob_sprinting_v: "bg_weaponBobAmplitudeSprinting.y" = 0.014, "Sprinting bob, vertical (G4).";
     bob_roll: "bg_weaponBobAmplitudeRoll" = 1.5, "Bob roll multiplier (G4).";
+    // ---- Hold breath (`FUN_008e4860`, `FUN_008dea30`, `FUN_0052e3d0`; dvars-t6mp.tsv) -------------
+    player_breath_hold_time: "player_breath_hold_time" = 4.5, "The longest a breath holds, seconds.";
+    player_breath_gasp_time: "player_breath_gasp_time" = 0.0, "Extra seconds of gasping once the breath runs out.";
+    player_breath_gasp_scale: "player_breath_gasp_scale" = 2.5, "The idle sway's scale right after a breath, easing back to 1 as the breath recovers.";
+    player_breath_hold_lerp: "player_breath_hold_lerp" = 1.5, "Rate the sway scale eases to 0 while holding (per second).";
+    player_breath_gasp_lerp: "player_breath_gasp_lerp" = 4.0, "Rate the sway scale eases to its gasp target while breathing (per second).";
+    player_breath_fire_delay: "player_breath_fire_delay" = 0.0, "Seconds of breath a shot costs (the shot also lets the breath go).";
+    player_breath_snd_delay: "player_breath_snd_delay" = 1.0, "Seconds between the breath-in and breath-out sounds.";
+    perk_extra_breath: "perk_extraBreath" = 5.0, "`holdbreath`: extra seconds of breath (G1).";
+    bg_aqs: "bg_aqs" = 1.0, "Anti-quickscope on (1) or off (0) (`FUN_008dac10`, `FUN_008f0f00`).";
+    bg_aqs_style: "bg_aqsStyle" = 2.0, "Anti-quickscope style: 1 scales the scope sway, 2 offsets it by the sway factor.";
     // ---- The mod's own ------------------------------------------------------------------------
     regen_delay: "RegenDelay" = 5.0, "Seconds after the last hit before health regenerates (the mod's value).";
     regen_full_time: "RegenFullTime" = 3.0, "Seconds to regenerate from empty (the mod's value).";

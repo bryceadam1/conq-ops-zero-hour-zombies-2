@@ -216,6 +216,7 @@ pub fn draw(host: &dyn ClientHost, prims: &mut Vec<Prim>, client: &Client, sim: 
             draw_hack(prims, w, h, s, client);
             if p.hammer.is_none() && !p.building {
                 draw_reload_prompt(prims, w, h, s, p);
+                draw_breath_hint(&l, prims, p, crate::input::key_name(client.cfg.bindings.sprint));
             }
         }
         draw_build(host, prims, w, h, s, client, p, !tablet_up && !map_open);

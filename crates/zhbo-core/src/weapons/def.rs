@@ -7,6 +7,7 @@
 */
 
 use super::feel::{GunKick, Reticle, Sway, ViewPos};
+use super::handling::{CycleTimes, Traits, Zoom};
 use super::specialty::Specialties;
 use crate::units::inches;
 
@@ -258,8 +259,15 @@ pub struct WeaponDef {
     pub specialties: Specialties,
     /// `f{Ads,Hip}ViewKickMinMagnitude`: the shortest view kick a shot gives, aimed and hip (G5).
     pub view_kick_min: (f32, f32),
-    /// `f{Ads,Hip}ViewKickCenterSpeed`: how fast the view kick recentres (G5).
+    /// The variant's `f{Ads,Hip}ViewKickCenterSpeed`: the view kick's recentre acceleration
+    /// (deg/s², `view_kick::centre_speed`), unscaled.
     pub view_kick_center: (f32, f32),
+    /// Π `fAdsViewKickCenterSpeedScale` over the attachments (`FUN_008ecf70`; 1 bare), multiplied
+    /// in when the attachments are applied. Only the aimed recentre takes it.
+    pub ads_kick_center_scale: f32,
+    /// `fAdsViewKickCenter{Ducked,Prone}Scale`: the aimed recentre speed's crouched and prone
+    /// scales (`FUN_0051f150`).
+    pub kick_center_stance: (f32, f32),
     pub ads_gun_kick: GunKick,
     pub hip_gun_kick: GunKick,
     /// `fGunMaxPitch`, `fGunMaxYaw`: the gun kick spring's limits (G5).
@@ -281,6 +289,12 @@ pub struct WeaponDef {
     pub overlay_material_low_res: String,
     /// `weapOverlayReticle_t`: which reticle the overlay draws (0: none).
     pub overlay_reticle: u32,
+    /// The fire cycle's and reload's extra times (`handling::CycleTimes`).
+    pub timing: CycleTimes,
+    /// The zoom levels and fractions, depth of field and idle sway (`handling::Zoom`).
+    pub zoom: Zoom,
+    /// BO2's per-weapon flags, stack-fire spread, damage floor, penetration, offhand class.
+    pub traits: Traits,
 }
 
 /// One BO2 camouflage option (`mp/attachmenttable.csv`'s rows with `camo` in column 1): the id
@@ -457,6 +471,8 @@ impl Default for WeaponDef {
             specialties: Specialties::NONE,
             view_kick_min: (0.0, 0.0),
             view_kick_center: (0.0, 0.0),
+            ads_kick_center_scale: 1.0,
+            kick_center_stance: (1.0, 1.0),
             ads_gun_kick: GunKick::default(),
             hip_gun_kick: GunKick::default(),
             gun_max: (0.0, 0.0),
@@ -470,12 +486,13 @@ impl Default for WeaponDef {
             overlay_material: String::new(),
             overlay_material_low_res: String::new(),
             overlay_reticle: 0,
+            // The stand-in sprint-in, as `sprint_out_time` above (BO2 rifles author 200-300 ms).
+            timing: CycleTimes { sprint_in_time: 0.25, ..CycleTimes::default() },
+            zoom: Zoom::default(),
+            traits: Traits::default(),
         }
     }
 }
-
-/// BO2 view kick values are kick-physics inputs; this turns one into degrees of view per shot.
-pub const KICK_TO_DEGREES: f32 = 1.0 / 80.0;
 
 pub const MELEE_DAMAGE: f32 = 135.0;
 pub const MELEE_RANGE: f32 = inches(64.0);

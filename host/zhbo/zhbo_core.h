@@ -272,6 +272,8 @@ typedef struct ZhboClientOut
 	/* The local player's shot impacts this frame, in shot order (at most ZHBO_CLIENT_HITS). */
 	ZhboClientHit hits[ZHBO_CLIENT_HITS];
 	int32_t hits_len;
+	/* The camera's roll, radians, as Matrix3D::Look_At_Dir takes it (the view kick's roll axis). */
+	float view_roll;
 } ZhboClientOut;
 
 /* The shell create-a-class screen (the lobby's class menu; docs/CONTRACT.md's menu ABI): the
@@ -555,7 +557,7 @@ void zhbo_native_body_reset(void);
 static_assert(sizeof(ZhboObjInfo) == 56, "ZhboObjInfo layout must match host.rs");
 static_assert(sizeof(ZhboFpsInput) == 20, "ZhboFpsInput layout must match input.rs");
 static_assert(sizeof(ZhboClientIn) == 136, "ZhboClientIn layout must match client.rs");
-static_assert(sizeof(ZhboClientOut) == 4832, "ZhboClientOut layout must match client.rs");
+static_assert(sizeof(ZhboClientOut) == 4836, "ZhboClientOut layout must match client.rs");
 static_assert(sizeof(ZhboClientHit) == 40, "ZhboClientHit layout must match client.rs");
 static_assert(sizeof(ZhboMenuIn) == 56, "ZhboMenuIn layout must match menu.rs");
 static_assert(sizeof(ZhboMenuOut) == 4108, "ZhboMenuOut layout must match menu.rs");

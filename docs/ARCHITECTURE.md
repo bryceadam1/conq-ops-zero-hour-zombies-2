@@ -61,8 +61,11 @@ from `zhbo_logic_*` must stay deterministic. Depends on `zhbo-requirements` and 
 - `weapons/`: `def.rs` (WeaponDef, enums), `table.rs` (the weapon table's schema,
   parse and format), `catalog.rs` (the converted table or built-in stand-ins),
   `perks.rs` (the perk table: each perk's specialty set), `specialty.rs` (BO2's 62
-  specialty bits), `feel.rs` (gun kick, sway, viewmodel offsets, reticle data),
-  `recoil.rs` (per-shot kick, the gun kick spring, flinch, the spread cone), `gunpos.rs`
+  specialty bits), `feel.rs` (gun kick, sway, viewmodel offsets, reticle data), `handling.rs`
+  (the fire cycle's extra times, the zoom levels/fractions/DOF, BO2's per-weapon traits),
+  `recoil.rs` (per-shot kick, the gun kick spring, flinch, the spread cone), `view_kick.rs`
+  (BO2's view kick integrator: the camera recoil that moves the sim's aim), `zoom.rs` (BO2's
+  ADS zoom: the view FOV over the ADS lerp, the zoom levels, the hybrid's alt scope), `gunpos.rs`
   (the client-side gun position: offsets, bob, sway), `loadout.rs`, `rng.rs` (xorshift),
   `arsenal.rs` (WeaponState, Reload, Offhand, Arsenal with HasSpecialty and the perk-timed
   weapon states, WeaponAction).

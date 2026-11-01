@@ -21,6 +21,9 @@ use zhbo_formats::xanim;
 pub enum From {
     Common,
     World,
+    /// The language zone's voice bank (`zone/english/en_common_mp.ff`, `mpl_common.english`):
+    /// the player's own breathing.
+    Voice,
 }
 
 pub struct Sfx {
@@ -78,6 +81,11 @@ pub const SFX: &[Sfx] = &[
     Sfx { event: "ZHBO_BO2_Step", from: From::World, layers: &["fly_step_run_grass"], kind: Kind::Player, limit: 2 },
     Sfx { event: "ZHBO_BO2_SprintStep", from: From::World, layers: &["fly_step_sprint_grass", "fly_gear_sprint_plr"], kind: Kind::Player, limit: 2 },
     Sfx { event: "ZHBO_BO2_Land", from: From::World, layers: &["fly_dtp_land_plr_grass"], kind: Kind::Player, limit: 1 },
+    // Hold breath: `clientscripts/mp/_audio.csc` plays `<teamclientprefix>_sinper_*` (`vox_gen` by
+    // default) on the engine's `playerbreath*sound` notifies (`FUN_0052e3d0`).
+    Sfx { event: "ZHBO_BO2_BreathIn", from: From::Voice, layers: &["vox_gen_sinper_hold"], kind: Kind::Player, limit: 1 },
+    Sfx { event: "ZHBO_BO2_BreathOut", from: From::Voice, layers: &["vox_gen_sinper_exhale"], kind: Kind::Player, limit: 1 },
+    Sfx { event: "ZHBO_BO2_BreathGasp", from: From::Voice, layers: &["vox_gen_sinper_gasp"], kind: Kind::Player, limit: 1 },
     Sfx { event: "ZHBO_BO2_Impact", from: From::World, layers: &["prj_bullet_impact_small_dirt"], kind: Kind::World, limit: 4 },
     Sfx { event: "ZHBO_BO2_ImpactFlesh", from: From::World, layers: &["prj_bullet_impact_large_player"], kind: Kind::World, limit: 4 },
     // Third-person gunshots: the FX weapons fire these for everyone but the shooter, the RTS rifle
@@ -120,6 +128,17 @@ pub fn weapon_ini(base: &str, sounds: &[(&str, &str)]) -> Result<String, String>
         return Err(format!("rewrote {done} of {} weapon fire sounds", sounds.len()));
     }
     Ok(out)
+}
+
+/// The language zone whose `mpl_common.<language>` bank holds the player's voice (breathing).
+pub const VOICE_ZONE: &str = "common_mp";
+
+/// A language zone (`zone/english/en_<name>.ff`).
+fn load_language_zone(bo2_dir: &Path, name: &str) -> Result<Zone, String> {
+    let path = bo2_dir.join("zone").join("english").join(format!("en_{name}.ff"));
+    let file = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let ff = zhbo_formats::fastfile::read(&file).map_err(|e| format!("{name}: {e}"))?;
+    zhbo_formats::t6zone::load(&ff).map_err(|e| format!("{name}: {e}"))
 }
 
 /// The map whose bank supplies footsteps and impacts.
@@ -299,6 +318,9 @@ pub fn files(
     };
     let common_src = pick(common, "mpl_common").ok_or("no mpl_common sound bank in common_mp")?;
     let world_src = pick(world, "mpl_").ok_or_else(|| format!("no sound bank in {WORLD_ZONE}"))?;
+    // The voice bank is optional like the menu banks: without it the breath events stay missing.
+    let voice_zone = load_language_zone(bo2_dir, VOICE_ZONE).ok();
+    let voice_src = voice_zone.as_ref().and_then(|z| pick(z, "mpl_common"));
     // The menu banks are optional: without one its UI events stay on the missing list and the
     // cursor is silent rather than the whole archive failing.
     let ui_zones: Vec<(Zone, &str)> =
@@ -345,6 +367,13 @@ pub fn files(
         let src = match s.from {
             From::Common => &common_src,
             From::World => &world_src,
+            From::Voice => match &voice_src {
+                Some(v) => v,
+                None => {
+                    missing.push(s.event.to_string());
+                    continue;
+                }
+            },
         };
         // Some aliases BO2 keeps only in the map's bank (the generic dry fire): fall back to it
         // rather than dropping the event. Common first, so aliases that already resolve do not change.
@@ -428,6 +457,24 @@ mod tests {
         assert_eq!(m.samples.len(), 192);
         assert!(m.samples[..96].iter().all(|&s| (1240..=1260).contains(&s)), "{:?}", &m.samples[..4]);
         assert!(m.samples[96..].iter().all(|&s| (990..=1010).contains(&s)));
+    }
+
+    #[test]
+    #[ignore = "reads this machine's Black Ops II install"]
+    fn the_breath_sounds_decode_from_the_voice_bank() {
+        let dir = std::path::PathBuf::from(std::env::var("ZHBO_BO2_DIR").expect("set ZHBO_BO2_DIR"));
+        let lib = Library::open(&dir).unwrap();
+        let zone = load_language_zone(&dir, VOICE_ZONE).unwrap();
+        let mut banks = sndalias::banks(&zone).unwrap();
+        banks.retain(|b| b.name.starts_with("mpl_common"));
+        let src = Source { banks, lib: &lib };
+        for s in SFX.iter().filter(|s| s.from == From::Voice) {
+            let a = src.alias(s.layers[0]).unwrap_or_else(|| panic!("{} missing", s.layers[0]));
+            assert!(src.decode(a.variants[0].asset_id).is_some_and(|p| !p.samples.is_empty()), "{} decodes", s.event);
+        }
+        for e in [zhbo_core::sounds::BREATH_IN, zhbo_core::sounds::BREATH_OUT, zhbo_core::sounds::BREATH_GASP] {
+            assert!(SFX.iter().any(|s| s.event == e), "{e}");
+        }
     }
 
     #[test]

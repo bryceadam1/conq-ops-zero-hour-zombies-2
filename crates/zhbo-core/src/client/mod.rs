@@ -10,6 +10,7 @@ use crate::sim::{EventKind, Mode, Sim};
 use crate::sounds::{self, Cues};
 use crate::units::LOGIC_DT;
 use crate::viewmodel::{self, Viewmodel};
+use crate::weapons::zoom::{self, ZoomView};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Bindings {
@@ -100,8 +101,6 @@ pub const DEATH_BANNER_TIME: f32 = 3.0;
 /// The score popup's `DisplayTime` (`hud/scorepopup.lua:12`).
 pub const SCORE_POPUP_TIME: f32 = crate::hud::center::SCORE_DISPLAY;
 pub const KILL_POINTS: u32 = 100;
-/// Fraction of weapon recoil that permanently moves the aim (the rest recovers).
-pub const RECOIL_PERMANENT: f32 = 0.35;
 
 /// Horizontal FOV for a BO2 `cg_fov` (defined at 4:3) at the given aspect ratio (Hor+).
 pub fn horizontal_fov(cg_fov_deg: f32, aspect: f32) -> f32 {
@@ -263,6 +262,11 @@ pub struct ClientOut {
     pub hits: [ClientHit; CLIENT_HITS],
     /// How many `hits` are valid.
     pub hits_len: i32,
+    /// The camera's roll this frame, radians, as W3D's `Matrix3D::Look_At_Dir` takes it (the view
+    /// kick's roll axis). Both are a right-handed turn about the forward axis — `Look_At_Dir`
+    /// applies `Rotate_Z(-roll)` because the camera looks down −Z, and BO2's `+roll` drops the
+    /// right side — so the value passes unchanged. Appended at the end of the struct (ABI rule).
+    pub view_roll: f32,
 }
 
 // Manual Default: `[u32; 64]` has none (arrays above 32 don't), and the rest are plain.
@@ -298,6 +302,7 @@ impl Default for ClientOut {
             menu_open: 0,
             hits: [ClientHit::default(); CLIENT_HITS],
             hits_len: 0,
+            view_roll: 0.0,
         }
     }
 }
@@ -324,8 +329,9 @@ pub struct HudTimers {
     pub hitmarker_head: bool,
     pub damage_flash: f32,
     pub death_banner: f32,
-    pub view_kick_pitch: f32,
-    pub view_kick_yaw: f32,
+    /// The damage flinch's view pitch (degrees, G7), settling back. The weapon's view kick is the
+    /// sim's (`PlayerSim::view_kick`).
+    pub flinch_pitch: f32,
     pub muzzle: f32,
     pub score_popup: f32,
     pub score_points: u32,
@@ -414,6 +420,9 @@ pub struct Client {
     prev_held: u32,
     eye_prev: Vec3,
     eye_curr: Vec3,
+    /// The sim's view kick aim offset (yaw, pitch radians) at the last two logic frames.
+    kick_prev: (f32, f32, f32),
+    kick_curr: (f32, f32, f32),
     seen_frame: u32,
     since_logic: f32,
     pub last_hfov: f32,
@@ -428,6 +437,8 @@ pub struct Client {
     vm: Viewmodel,
     vm_motion: viewmodel::Motion,
     vm_events: viewmodel::Events,
+    /// BO2's render-only zoom state: the hybrid's alt-scope fraction and the zoom direction.
+    zoom_view: ZoomView,
     /// The last shot's gun kick impulse (`EventKind::Recoil`'s `gun_kick`), taken by the viewmodel
     /// motion next frame: G5's spring, in degrees/s of gun angle.
     vm_kick: Option<(f32, f32)>,
@@ -481,6 +492,8 @@ impl Client {
             prev_held: 0,
             eye_prev: Vec3::ZERO,
             eye_curr: Vec3::ZERO,
+            kick_prev: (0.0, 0.0, 0.0),
+            kick_curr: (0.0, 0.0, 0.0),
             seen_frame: 0,
             since_logic: 0.0,
             last_hfov: 1.0,
@@ -488,6 +501,7 @@ impl Client {
             view_eye: Vec3::ZERO,
             view_dir: Vec3::new(1.0, 0.0, 0.0),
             vm: Viewmodel::default(),
+            zoom_view: ZoomView::default(),
             vm_motion: viewmodel::Motion::default(),
             vm_events: viewmodel::Events::default(),
             vm_kick: None,
@@ -793,6 +807,10 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 self.since_logic = 0.0;
                 self.eye_prev = self.eye_curr;
                 self.eye_curr = p.body.eye();
+                self.kick_prev = self.kick_curr;
+                // The sim's aim offset: the view kick and the scope's idle sway.
+                let (yaw, pitch) = p.aim_offset();
+                self.kick_curr = (yaw, pitch, p.view_kick.roll());
             } else {
                 self.since_logic += dt;
             }
@@ -840,9 +858,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
 
         let aspect = if inp.screen_h > 0.0 { inp.screen_w / inp.screen_h } else { 16.0 / 9.0 };
         let base_fov = horizontal_fov(self.cfg.cg_fov, aspect);
-        let ads = player.as_ref().map_or(0.0, |p| p.arsenal.ads);
-        let ads_scale = player.as_ref().map_or(1.0, |p| p.arsenal.ads_fov_scale());
-        let hfov = base_fov * (1.0 + (ads_scale - 1.0) * ads);
+        let hfov = horizontal_fov(self.view_fov(dt, player.as_ref()), aspect);
         self.last_hfov = hfov;
 
         let first_person = player.as_ref().is_some_and(|p| p.is_first_person());
@@ -896,9 +912,13 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     }
                     out.camera_override = 1;
                     out.eye = eye;
-                    let kick_pitch = self.hud.view_kick_pitch.to_radians();
-                    let kick_yaw = self.hud.view_kick_yaw.to_radians();
+                    // The view kick moves the camera with the aim (BO2 adds it to the view angles):
+                    // the sim's, interpolated across the logic frame like the eye.
+                    let kick_yaw = self.kick_prev.0 + (self.kick_curr.0 - self.kick_prev.0) * alpha;
+                    let kick_pitch = self.kick_prev.1 + (self.kick_curr.1 - self.kick_prev.1) * alpha + self.hud.flinch_pitch.to_radians();
+                    let kick_roll = self.kick_prev.2 + (self.kick_curr.2 - self.kick_prev.2) * alpha;
                     out.dir = dir_from_angles(self.yaw + kick_yaw, (self.pitch + kick_pitch).clamp(-MAX_PITCH, MAX_PITCH));
+                    out.view_roll = kick_roll;
                     out.hfov = hfov;
                     out.hide_rts_ui = 1;
                     out.hide_object = self.general;
@@ -912,7 +932,10 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     // sim's own stance/speed/aim; the view's `cg_fov` is G4's wide-FOV reference.
                     let pose = self.vm_motion.update(dt, self.yaw, self.pitch, self.cfg.cg_fov, p, self.vm_kick.take());
                     out.viewmodel_offset = pose.offset;
-                    out.viewmodel_angles = pose.angles;
+                    // The gun is placed in the unrolled eye frame (`nativevm::place::root`, the W3D
+                    // pose): it rolls with the camera (BO2 draws it in the view's axes), so it
+                    // stays square to the screen.
+                    out.viewmodel_angles = pose.angles + Vec3::new(0.0, 0.0, kick_roll);
                     self.cues.update(dt, p, p.input.held & buttons::FIRE != 0);
                     if let Mode::FieldComputer { t } = p.mode {
                         // A scorestreak: the tablet comes up before the view leaves.
@@ -974,6 +997,19 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         out
     }
 
+    /// The view FOV this frame (degrees at 4:3): `cg_fov` through BO2's ADS zoom (`weapons::zoom`,
+    /// `FUN_004a0380`) on the held weapon's sim ADS fraction and zoom level, then `cg_fovScale` and
+    /// `cg_fovMin` (`FUN_004a0920`).
+    fn view_fov(&mut self, dt: f32, player: Option<&crate::sim::PlayerSim>) -> f32 {
+        let hip = self.cfg.cg_fov;
+        let Some(p) = player else { return hip };
+        let a = &p.arsenal;
+        let w = a.current();
+        self.zoom_view.step(dt, w.def, w.alt_up(), a.ads);
+        let fov = self.zoom_view.fov(hip, w.def, a.ads, w.zoom);
+        zoom::view_fov(fov, a.tuning.cg_fov_scale, a.tuning.cg_fov_min)
+    }
+
     fn start_entering(&mut self, inp: &ClientIn, general: u32, yaw: f32, eye: Vec3) {
         self.general = general;
         self.vm = Viewmodel::default(); // the weapon comes up as first person starts
@@ -986,6 +1022,8 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         self.pitch = 0.0;
         self.eye_prev = eye;
         self.eye_curr = eye;
+        self.kick_prev = (0.0, 0.0, 0.0);
+        self.kick_curr = (0.0, 0.0, 0.0);
         self.latch = 0;
         self.prev_held = u32::MAX; // ignore keys already held when entering (e.g. the click itself)
         let from_dir = if inp.rts_cam_dir.length() > 0.5 { inp.rts_cam_dir } else { Vec3::new(0.0, 0.6, -0.8) };
@@ -1081,18 +1119,13 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                         self.hud.score_popup = SCORE_POPUP_TIME;
                     }
                 }
-                EventKind::Recoil { pitch_deg, yaw_deg, gun_kick, .. } => {
-                    // BO2 assault rifles mostly recover: part of each kick moves the real aim, the
-                    // rest is a visual kick that settles back.
-                    self.pitch = (self.pitch + (pitch_deg * RECOIL_PERMANENT).to_radians()).clamp(-MAX_PITCH, MAX_PITCH);
-                    self.yaw = wrap_angle(self.yaw + (yaw_deg * RECOIL_PERMANENT).to_radians());
-                    self.hud.view_kick_pitch += pitch_deg * (1.0 - RECOIL_PERMANENT);
-                    self.hud.view_kick_yaw += yaw_deg * (1.0 - RECOIL_PERMANENT);
-                    // The gun itself kicks on G5's spring, not with the camera.
+                EventKind::Recoil { gun_kick } => {
+                    // The view kick is the sim's and never moves the mouse aim (BO2 keeps it out of
+                    // `cl.viewangles`). The gun itself kicks on G5's spring, not with the camera.
                     self.vm_kick = Some(gun_kick);
                     self.hud.muzzle = 0.05;
                 }
-                EventKind::Flinch { pitch_deg } => self.hud.view_kick_pitch += pitch_deg,
+                EventKind::Flinch { pitch_deg } => self.hud.flinch_pitch += pitch_deg,
                 EventKind::Damaged { amount } => {
                     self.cues.play(sounds::HURT);
                     self.hud.damage_flash = (self.hud.damage_flash + amount / 60.0).min(1.0);
@@ -1208,8 +1241,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
         h.score_popup = (h.score_popup - dt).max(0.0);
         h.hack_shown = (h.hack_shown - dt).max(0.0);
         let decay = (1.0 - dt * 12.0).max(0.0);
-        h.view_kick_pitch *= decay;
-        h.view_kick_yaw *= decay;
+        h.flinch_pitch *= decay;
     }
 }
 

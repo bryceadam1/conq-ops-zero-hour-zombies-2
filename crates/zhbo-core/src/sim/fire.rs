@@ -12,13 +12,21 @@ use crate::impacts::Surface;
 impl Sim {
     pub(super) fn apply_weapon_action(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, action: WeaponAction) {
         match action {
-            WeaponAction::Fire { spread_deg, jitter, recoil, gun_kick, pellet } => {
+            WeaponAction::Fire { spread_deg, jitter, view_kick, gun_kick, pellet } => {
                 let def = p.arsenal.current().def;
+                // The shot sets the view kick's velocity (`FUN_008e3a00`); this frame's pellets fly
+                // along the aim the kick had already moved.
+                if pellet == 0 {
+                    p.view_kick.kick(view_kick);
+                    // The fire start lets a held breath go (`FUN_008dea30`).
+                    let extra = p.arsenal.has_specialty(Specialty::HoldBreath);
+                    p.idle.breath.fired(def, p.arsenal.ads, &p.arsenal.tuning, extra);
+                }
                 let eye = p.body.eye();
                 // Random point in the spread cone (polar mapping of two uniform samples).
                 let angle = jitter.0 * std::f32::consts::PI;
                 let radius = spread_deg.to_radians() * jitter.1.abs().sqrt();
-                let dir = dir_from_angles(p.yaw + radius * angle.cos(), p.pitch + radius * angle.sin());
+                let dir = dir_from_angles(p.fire_yaw + radius * angle.cos(), p.fire_pitch + radius * angle.sin());
 
                 let mut targets = gather_targets(host, eye, def.max_range, p.general);
                 let ground = |x: f32, y: f32| host.ground_height(x, y);
@@ -40,7 +48,7 @@ impl Sim {
                     self.emit(idx, EventKind::Impact { at: eye + dir * t, dir, surface: Surface::Metal, head: false, fatal: false, impact_type: def.impact_type });
                     if pellet == 0 {
                         self.emit(idx, EventKind::Shot { origin: eye, end: eye + dir * t });
-                        self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1, roll_deg: recoil.2, gun_kick });
+                        self.emit(idx, EventKind::Recoil { gun_kick });
                     }
                     return;
                 }
@@ -87,14 +95,14 @@ impl Sim {
                 }
                 if pellet == 0 {
                     self.emit(idx, EventKind::Shot { origin: eye, end: hit.point() });
-                    self.emit(idx, EventKind::Recoil { pitch_deg: recoil.0, yaw_deg: recoil.1, roll_deg: recoil.2, gun_kick });
+                    self.emit(idx, EventKind::Recoil { gun_kick });
                 }
             }
             WeaponAction::Launch { def, pellet } => {
                 let eye = p.body.eye();
                 // The tri-bolt's bolts fan out a little.
                 let spread = (pellet as f32 - (def.pellets.max(1) - 1) as f32 * 0.5) * 0.04;
-                let dir = dir_from_angles(p.yaw + spread, p.pitch);
+                let dir = dir_from_angles(p.fire_yaw + spread, p.fire_pitch);
                 if !def.fx_weapon.is_empty() {
                     host.fire_fx(p.general, &def.fx_weapon, 0, eye + dir * 10.0);
                 }

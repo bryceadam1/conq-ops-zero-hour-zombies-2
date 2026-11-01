@@ -16,7 +16,7 @@ Route (in the knowledge-base vocabulary): **rebuilt guest mechanic inside a real
 | The General's position while under RTS control (field computer up) | Zero Hour AI | Control returns through `set_controlled(id, false)`, which issues `aiIdle`. |
 | Shots: when, where, what is hit, how much damage | zhbo-core | Damage is applied with `Object::attemptDamage` (`DAMAGE_SMALL_ARMS` / `DAMAGE_MELEE`), so ZH armor, retaliation and kill credit work natively. |
 | Muzzle flash, tracer, fire sound | Zero Hour | `WeaponTemplate::fireWeaponTemplate(..., inflictDamage = FALSE)` with the `ZHBO_*_FX` weapons. |
-| Camera | zhbo-core while `camera_override`, otherwise `W3DView` | Override sets view plane (FOV) and the first-person view's near plane: 0.1 units, returned by the bridge (`Zhbo_GetCameraOverride`); `setWidth()` restores the RTS FOV. The RTS view keeps its own `NearZ = MAP_XY_FACTOR = 10`. |
+| Camera | zhbo-core while `camera_override`, otherwise `W3DView` | Override sets view plane (FOV), the camera's roll (`ZhboClientOut.view_roll`, the view kick's roll axis, passed to `Matrix3D::Look_At_Dir` unchanged — both are a right-handed turn about the forward axis) and the first-person view's near plane: 0.1 units, returned by the bridge (`Zhbo_GetCameraOverride`); `setWidth()` restores the RTS FOV. The RTS view keeps its own `NearZ = MAP_XY_FACTOR = 10`. |
 | Mouse/keyboard | zhbo-core while `camera_override` | `ZhboTranslator` (priority 5, before every stock translator) destroys raw mouse/key messages except Esc. Keys are polled with `GetAsyncKeyState`; the mouse is re-centred every frame. |
 | Control bar / RTS UI | Hidden while `hide_rts_ui` | `HideControlBar` / `ShowControlBar`. |
 
@@ -231,12 +231,16 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   manifest has no ADS clip (equipment, a partial conversion) or the clip has not loaded yet, and
   it is the W3D path's rule. Applying both would double-correct mid-transition and keep the hip's
   depth forever. The clip owns the whole hip→aimed transform, eye relief and the launchers'
-  rotation included; the def's ADS time still owns FOV, the offset fade (`max(0, 1 − 2·ads)`),
+  rotation included; the def's ADS time still owns FOV (through `weapons::zoom`: the camera
+  FOV is `cg_fov` moved toward the zoom level's FOV over the last `fAdsZoomInFrac`/`OutFrac` of the
+  ADS lerp, computed client-side from the sim's ADS fraction and zoom level), the offset fade (`max(0, 1 − 2·ads)`),
   `fAdsAimPitch`, bob, sway and kick. Placement never derives an eye or axis of its own, so the
-  shot's ray and the sight picture share one axis. (The camera axis carries the client's cosmetic
-  view kick, `hud.view_kick_*`, which the sim's ray does not; the crosshair is drawn on the same
-  camera axis, so the sight picture matches the crosshair while the sim stays authoritative for
-  where the round goes.)
+  shot's ray and the sight picture share one axis. (The view kick is the sim's,
+  `PlayerSim::view_kick`: BO2 adds it to every user command's angles, so the sim's aim — the
+  ray — is the input's view angles plus the kick the previous logic frame left, and the camera
+  axis is the client's mouse aim plus the same kick, interpolated across the logic frame like the
+  eye. Only the damage flinch, `hud.flinch_pitch`, is camera-only; the crosshair is drawn on the
+  camera axis.)
   - **The engine cross-fades 0x55/0x56 by the fraction (Ghidra G12, answered).** `FUN_0052b750`
     weights slot 0x55 by `fWeaponPosFrac` and 0x56 by its complement — no time-scale into the
     def's ADS times (those live in the fraction integrator, G3), and a direction flip passes no
@@ -391,6 +395,15 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
   bytes (4508 → 4832) and `ZHBO_ABI_VERSION` goes to 26; `zhbo_load_impacts` and `zhbo_impact_fx`
   are new free functions on the append-only surface.
 
+## The view kick's roll
+
+* `ZhboClientOut.view_roll` (appended; 4832 → 4836 bytes, both size asserts) is the sim's view
+  kick roll (`PlayerSim::view_kick`, BO2's `-0.5 × yaw` axis), interpolated across the logic frame
+  like the eye. The bridge returns it from `Zhbo_GetCameraOverride` and the `W3DView::update` hook
+  passes it as `Look_At_Dir`'s roll. The viewmodel is placed in the unrolled eye frame, so the core
+  adds the same roll to `viewmodel_angles.z` and the gun stays square to the screen, as BO2 draws
+  it in the view's axes. `ZHBO_ABI_VERSION` is not bumped on the branch (the integrator's).
+
 ## Lifecycle
 
 1. `GameEngine::init` end → `Zhbo_Init`: ABI check, **requirements check (both games must be installed,
@@ -489,7 +502,7 @@ The gameplay tuning pack (`crates/zhbo-core/src/tuning.rs`, filled from
 `Data/ConquerOps/tuning.ini`) is the single source for the numbers gameplay code used to scatter
 across ~10 files (movement, regeneration, building rates, projectile physics, the field
 computer's raise time) and for BO2's engine numbers: movement, the `perk_*` multipliers, damage
-flinch, the view and bob dvars (v1.0 Track PW). BO2's numbers stay in BO2's units (inches,
+flinch, the view and bob dvars (v1.0 Track PW), the hold-breath `player_breath_*` dvars. BO2's numbers stay in BO2's units (inches,
 inches/s, seconds) under the engine's dvar names as ini keys (`g_speed`, `perk_weapSwitchMultiplier`),
 each field's doc citing the Ghidra answer it came from (`~/Documents/BO2-reference/ghidra/
 answers/G1-G7.md`); code converts at the point of use. The pack is part of the mod like

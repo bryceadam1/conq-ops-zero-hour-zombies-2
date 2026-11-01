@@ -33,6 +33,8 @@ use crate::equipment::{EquipEvent, Equipment, Kind as EquipKind, Placed, HACK_CO
 use crate::projectiles::{Outcome, Projectile};
 use crate::units::inches;
 use crate::building::{self, Hammer, Site};
+use crate::weapons::idle_sway::{BreathIn, IdleSway};
+use crate::weapons::view_kick::{self, ViewKick};
 use crate::weapons::{Arsenal, Class, Rng, Specialty, WeaponAction, MELEE_FX_WEAPON, MELEE_RANGE};
 
 pub const MAX_PLAYERS: usize = 16;
@@ -116,9 +118,9 @@ pub enum EventKind {
     /// impact FX (through `ZhboClientOut.hits`) and the surface's impact sound.
     Impact { at: Vec3, dir: Vec3, surface: Surface, head: bool, fatal: bool, impact_type: i32 },
     HitMarker { headshot: bool, kill: bool },
-    /// A shot's view kick (G5: pitch up, yaw, roll -0.5 x yaw) and the gun kick spring's impulse
-    /// (`weapons::recoil::GunKickSpring`).
-    Recoil { pitch_deg: f32, yaw_deg: f32, roll_deg: f32, gun_kick: (f32, f32) },
+    /// A shot's gun kick spring impulse (`weapons::recoil::GunKickSpring`). The view kick is the
+    /// sim's own (`PlayerSim::view_kick`): it moves the aim.
+    Recoil { gun_kick: (f32, f32) },
     /// Damage flinch (G7): the view kicks this far, the engine's no-direction branch (the sim
     /// carries no damage direction), and settles over `FlinchTime`.
     Flinch { pitch_deg: f32 },
@@ -180,8 +182,23 @@ pub struct PlayerSim {
     pub camo: String,
     pub mode: Mode,
     pub body: Body,
+    /// The aim this frame: the input's view angles plus the view kick (BO2 adds the kick to every
+    /// user command's angles, `FUN_00549fb0`) and the scope's idle sway (the server adds it to the
+    /// fire angles, `FUN_005dc820`), radians.
     pub yaw: f32,
     pub pitch: f32,
+    /// BO2's view kick (`weapons::view_kick`): shots set it, it recentres each frame.
+    pub view_kick: ViewKick,
+    /// BO2's idle sway and hold breath (`weapons::idle_sway`): the scope drifts, the aim with it.
+    pub idle: IdleSway,
+    /// The gun's pose as the server keeps it (`FUN_005dc820` runs `FUN_008f0700`): an aimed shot
+    /// from a gun without an overlay scope flies along it (`weapons::gunpos`, the viewmodel's own
+    /// math, stepped on the logic frame).
+    pub gun: crate::viewmodel::Motion,
+    /// The direction this frame's shots fly (radians): the aim, turned by the gun's pose while
+    /// aimed through iron sights.
+    pub fire_yaw: f32,
+    pub fire_pitch: f32,
     pub arsenal: Arsenal,
     pub rng: Rng,
     pub input: FpsInput,
@@ -203,6 +220,31 @@ pub struct PlayerSim {
 }
 
 impl PlayerSim {
+    /// What the sim adds to the mouse aim: the view kick and the scope's idle sway, radians (yaw
+    /// left, pitch up). The camera draws the same offset.
+    pub fn aim_offset(&self) -> (f32, f32) {
+        let (ky, kp) = self.view_kick.aim_offset();
+        let (iy, ip) = self.idle.aim_offset();
+        (ky + iy, kp + ip)
+    }
+
+    /// The fire direction (`FUN_005dc820`): the aim, and while aimed (`posFrac != 0`) with a gun
+    /// that has no overlay scope, the aim's axis turned by the gun pose's angles (the axes
+    /// multiplied, so the shot leaves along the sights the player sees).
+    pub fn fire_angles(&self) -> (f32, f32) {
+        let def = self.arsenal.current().def;
+        if !(def.class.is_gun() && self.arsenal.ads != 0.0 && !crate::weapons::idle_sway::sways_view(def)) {
+            return (self.yaw, self.pitch);
+        }
+        let (gy, gp) = self.gun.fire_angles();
+        let local = dir_from_angles(gy, gp);
+        let f = dir_from_angles(self.yaw, self.pitch);
+        let left = dir_from_angles(self.yaw + std::f32::consts::FRAC_PI_2, 0.0);
+        let up = dir_from_angles(self.yaw, self.pitch + std::f32::consts::FRAC_PI_2);
+        let w = f * local.x + left * local.y + up * local.z;
+        (w.y.atan2(w.x), w.z.clamp(-1.0, 1.0).asin())
+    }
+
     pub fn is_first_person(&self) -> bool {
         matches!(self.mode, Mode::Fps | Mode::FieldComputer { .. })
     }
@@ -219,6 +261,11 @@ impl PlayerSim {
             body: Body::new(Vec3::ZERO, &MoveTuning::default()),
             yaw: 0.0,
             pitch: 0.0,
+            view_kick: ViewKick::default(),
+            idle: IdleSway::default(),
+            gun: Default::default(),
+            fire_yaw: 0.0,
+            fire_pitch: 0.0,
             arsenal: Arsenal::new(),
             rng: Rng::new(1),
             input: FpsInput::default(),
@@ -337,6 +384,9 @@ impl Sim {
                 p.mode = Mode::Fps;
                 p.yaw = info.yaw;
                 p.pitch = 0.0;
+                p.view_kick = ViewKick::default();
+                p.idle = IdleSway::default();
+                p.gun = Default::default();
                 p.input = FpsInput { yaw: info.yaw, ..Default::default() };
                 p
             }
@@ -359,6 +409,11 @@ impl Sim {
                     body: Body::new(pos, &tuning),
                     yaw,
                     pitch: 0.0,
+                    view_kick: ViewKick::default(),
+                    idle: IdleSway::default(),
+                    gun: Default::default(),
+                    fire_yaw: 0.0,
+                    fire_pitch: 0.0,
                     // A General spawns unarmed: knife only until a class is picked. (The class
                     // pick replaces this arsenal; Escape on the spawn offer leaves it.)
                     arsenal: Arsenal::unarmed(),
@@ -422,6 +477,11 @@ impl Sim {
                     body: Body::new(Vec3::ZERO, &tuning),
                     yaw: 0.0,
                     pitch: 0.0,
+                    view_kick: ViewKick::default(),
+                    idle: IdleSway::default(),
+                    gun: Default::default(),
+                    fire_yaw: 0.0,
+                    fire_pitch: 0.0,
                     arsenal: Arsenal::unarmed(),
                     rng: Rng::new(general.wrapping_mul(2_654_435_761) ^ frame),
                     input: FpsInput::default(),
@@ -610,8 +670,11 @@ impl Sim {
         let mut input = p.input;
         input.pressed = p.pressed_accum;
         p.pressed_accum = 0;
-        p.yaw = input.yaw;
-        p.pitch = input.pitch;
+        // The aim is the view plus the kick the last frame left (`FUN_00549fb0`).
+        let (off_yaw, off_pitch) = p.aim_offset();
+        p.yaw = crate::math::wrap_angle(input.yaw + off_yaw);
+        p.pitch = (input.pitch + off_pitch).clamp(-crate::input::MAX_PITCH, crate::input::MAX_PITCH);
+        (p.fire_yaw, p.fire_pitch) = p.fire_angles();
 
         let world = HostWorld { host, viewer: p.general };
         match p.mode {
@@ -623,6 +686,10 @@ impl Sim {
                 if p.site.is_none() && input.pressed & buttons::FIELD_COMPUTER != 0 {
                     p.mode = Mode::FieldComputer { t: 0.0 };
                     p.arsenal.ads = 0.0;
+                    // Out of first person BO2 zeroes the kick (`FUN_00523070`).
+                    p.view_kick = ViewKick::default();
+                    p.idle = IdleSway::default();
+                    p.gun = Default::default();
                     self.emit(idx, EventKind::FieldComputerOpened);
                 } else {
                     let mods = MoveModifiers {
@@ -642,10 +709,28 @@ impl Sim {
                     // The hammer, or building, takes the hands: the gun gets no input meanwhile.
                     let busy = self.step_building(host, idx, p, &input);
                     let (held, pressed) = if busy { (0, 0) } else { (input.held, input.pressed) };
+                    let prev_ads = p.arsenal.ads;
                     p.arsenal.step(held, pressed, p.body.sprinting, stance, speed, &mut p.rng, &mut actions);
+                    // Hold breath and the idle clock run after the ADS update, before the shot
+                    // (`FUN_008e4da0`: `FUN_008e4470`, …, `FUN_008e4860`, `FUN_008e3940`); the
+                    // breath key is `+breath_sprint`, the sprint key.
+                    let breath = BreathIn { key: held & buttons::SPRINT != 0, extra: p.arsenal.has_specialty(Specialty::HoldBreath), aqs_block: false };
+                    p.idle.step(p.arsenal.current().def, p.arsenal.ads, prev_ads, stance, breath, &p.arsenal.tuning, LOGIC_DT);
+                    let shot = actions.iter().find_map(|a| match a {
+                        WeaponAction::Fire { gun_kick, pellet: 0, .. } => Some(*gun_kick),
+                        _ => None,
+                    });
                     for a in actions {
                         self.apply_weapon_action(host, idx, p, a);
                     }
+                    // The kick recentres at the weapon in hand's speed (`FUN_0051f150`; a dual-wield
+                    // pair goes through `centre_speed_hands` with its hands' firing states).
+                    let centre = view_kick::centre_speed(p.arsenal.current().def, p.arsenal.ads, stance);
+                    p.view_kick.step(LOGIC_DT, centre);
+                    // The gun's pose after the frame (the next frame's shots follow it).
+                    let mut gun = std::mem::take(&mut p.gun);
+                    gun.update(LOGIC_DT, p.yaw, p.pitch, p.arsenal.tuning.cg_fov, p, shot);
+                    p.gun = gun;
                     self.step_hack(host, idx, p);
                 }
             }
@@ -792,6 +877,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::input::pack_move;
     use std::cell::RefCell;
+    use crate::weapons::WeaponDef;
 
     /// A structure the fake host offers to work on.
     #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -1438,6 +1524,179 @@ pub(crate) mod tests {
         sim.choose_class(0, 1, 1, &[]);
         let second = sim.player(0).and_then(|p| p.class.clone());
         assert_ne!(first, second, "the second pick replaced the first");
+    }
+
+    /// One player firing `burst` frames then idling `rest`, from a raised gun: the view kick after
+    /// every frame, and whether the frame fired.
+    fn kick_trace(input: FpsInput, burst: u32, rest: u32) -> Vec<(ViewKick, bool, f32, f32)> {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        // The stand-in AN-94 carries BO2's kick and recentre numbers.
+        let rifle = crate::classes::CustomClass { name: "Rifle".into(), primary: "an94_mp".into(), secondary: "fnp45_mp".into(), ..Default::default() };
+        sim.choose_class(0, 1, usize::MAX, &rifle.to_wire_words());
+        wait_until_ready(&mut sim, &host);
+        let idle = FpsInput { held: input.held & buttons::ADS, ..input };
+        let mut trace = Vec::new();
+        for f in 0..burst + rest {
+            let before = sim.player(0).unwrap().view_kick;
+            let now = if f < burst { input } else { idle };
+            sim.events.clear();
+            sim.input(0, 1, now);
+            let n = sim.frame + 1;
+            sim.step(&host, n);
+            let p = sim.player(0).unwrap();
+            // The frame aimed along the view plus the kick the last frame left (`FUN_00549fb0`).
+            let (ky, kp) = before.aim_offset();
+            assert!((p.pitch - (now.pitch + kp)).abs() < 1e-6 && (p.yaw - crate::math::wrap_angle(now.yaw + ky)).abs() < 1e-6, "frame {f}");
+            let shot = sim.events.iter().any(|e| matches!(e.kind, EventKind::Shot { .. }));
+            let centre = view_kick::centre_speed(p.arsenal.current().def, p.arsenal.ads, 0);
+            if shot {
+                assert!(p.view_kick.angle[0] < before.angle[0], "a shot kicks up: frame {f} {before:?} -> {:?}", p.view_kick);
+            } else {
+                let mut want = before;
+                want.step(LOGIC_DT, centre);
+                assert_eq!(p.view_kick, want, "frame {f}: the integrator alone");
+            }
+            trace.push((p.view_kick, shot, p.arsenal.ads, centre));
+        }
+        trace
+    }
+
+    #[test]
+    fn a_burst_kicks_the_aim_up_and_recentres_on_the_integrator() {
+        let trace = kick_trace(FpsInput { held: buttons::FIRE, ..Default::default() }, 30, 45);
+        let shots = trace.iter().filter(|t| t.1).count();
+        assert!(shots >= 3, "the burst fired: {shots}");
+        let peak = trace.iter().map(|t| -t.0.angle[0]).fold(0.0f32, f32::max);
+        assert!(peak > 1.0 && peak <= view_kick::ANGLE_MAX, "the kick climbs over the burst: {peak}");
+        assert!(trace.last().unwrap().0.is_rest(), "then recentres all the way, exactly");
+        for (f, (k, shot, ads, centre)) in trace.iter().enumerate() {
+            println!("KICK {f} {} {} {} {} {ads} {centre}", -k.angle[0], k.angle[1], k.angle[2], *shot as u8);
+        }
+    }
+
+    #[test]
+    fn the_kick_replays_identically_and_aims_the_bullets() {
+        let fire = FpsInput { held: buttons::FIRE | buttons::ADS, pitch: 0.1, yaw: 0.3, ..Default::default() };
+        let a = kick_trace(fire, 20, 30);
+        let b = kick_trace(fire, 20, 30);
+        assert_eq!(a, b, "same inputs, same kick");
+        assert!(a.iter().any(|t| t.0.angle[1] != 0.0), "the yaw kicks too");
+    }
+
+    /// A raised scoped sniper (BO2-shaped idle numbers) in the player's hands.
+    fn scoped(sim: &mut Sim, host: &FakeHost) {
+        sim.take_control(host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        wait_until_ready(sim, host);
+        let mut d = WeaponDef { id: "test_scope_mp".into(), class: Class::Sniper, ads_fov: 15.0, ads_in_time: 0.1, ads_out_time: 0.1, overlay_reticle: 1, clip: 5, fire_time: 0.5, max_range: 4000.0, ..Default::default() };
+        d.zoom.idle_amount = (60.0, 20.0);
+        d.zoom.idle_speed = (1.0, 0.5);
+        d.zoom.idle_stance = (0.5, 0.25);
+        d.zoom.hold_breath = true;
+        let p = sim.players[0].as_mut().unwrap();
+        let w = p.arsenal.active;
+        p.arsenal.weapons[w].def = Box::leak(Box::new(d));
+        p.arsenal.weapons[w].ammo = 5;
+    }
+
+    /// The aim each frame while aimed for `frames`, with `held` extra buttons, and the idle sway.
+    fn sway_trace(held: u32, frames: u32) -> Vec<(f32, f32, IdleSway)> {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        scoped(&mut sim, &host);
+        let aim = FpsInput { held: buttons::ADS | held, pitch: 0.05, yaw: 0.2, ..Default::default() };
+        let mut out = Vec::new();
+        for _ in 0..frames {
+            let before = sim.player(0).unwrap().aim_offset();
+            run(&mut sim, &host, 0, 1, aim, 1);
+            let p = sim.player(0).unwrap();
+            // The frame aims along the view plus the sway the last frame left.
+            assert!((p.pitch - (aim.pitch + before.1)).abs() < 1e-6 && (p.yaw - (aim.yaw + before.0)).abs() < 1e-6);
+            out.push((p.yaw, p.pitch, p.idle));
+        }
+        out
+    }
+
+    #[test]
+    fn a_scope_sways_the_aim_and_holding_breath_steadies_it() {
+        let free = sway_trace(0, 150);
+        let swing = |t: &[(f32, f32, IdleSway)]| {
+            let p: Vec<f32> = t.iter().map(|x| x.1).collect();
+            p.iter().cloned().fold(f32::MIN, f32::max) - p.iter().cloned().fold(f32::MAX, f32::min)
+        };
+        // 60 × 0.01 = 0.6° each way at full ADS standing: the aim swings ~1.2° over a period.
+        let free_swing = swing(&free[30..]).to_degrees();
+        assert!(free_swing > 0.9 && free_swing < 1.25, "{free_swing}");
+        assert_eq!(free, sway_trace(0, 150), "replays identically");
+        // Holding the breath key (sprint) once aimed: the drift dies away while held.
+        let held = sway_trace(buttons::SPRINT, 150);
+        assert!(held[100].2.breath.holding);
+        let steady = swing(&held[80..130]).to_degrees();
+        assert!(steady < 0.05, "held breath: {steady}°");
+        // 4.5 s later the breath runs out and the gasp sways harder than at rest.
+        let long = sway_trace(buttons::SPRINT, 260);
+        assert!(!long[200].2.breath.holding && long[200].2.breath.scale > 1.5, "{:?}", long[200].2.breath);
+    }
+
+    /// An aimed iron-sight burst while turning: (aim, fire direction) per frame.
+    fn iron_trace() -> Vec<(f32, f32, f32, f32)> {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        scoped(&mut sim, &host);
+        // Iron sights: no overlay; BO2-shaped aimed sway and idle numbers.
+        let p = sim.players[0].as_mut().unwrap();
+        let w = p.arsenal.active;
+        let mut d = p.arsenal.weapons[w].def.clone();
+        (d.class, d.overlay_reticle, d.fire_time) = (Class::Rifle, 0, 0.1);
+        d.ads_sway = crate::weapons::Sway { max_angle: 5.0, lerp_speed: 8.0, pitch_scale: 0.3, yaw_scale: 0.3, horiz_scale: 0.1, vert_scale: 0.1 };
+        d.zoom.idle_amount = (10.0, 15.0);
+        p.arsenal.weapons[w].def = Box::leak(Box::new(d));
+        p.arsenal.weapons[w].ammo = 30;
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, ..Default::default() }, 20);
+        let mut out = Vec::new();
+        for f in 0..30 {
+            let yaw = f as f32 * 0.01;
+            run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::FIRE, yaw, ..Default::default() }, 1);
+            let p = sim.player(0).unwrap();
+            out.push((p.yaw, p.pitch, p.fire_yaw, p.fire_pitch));
+        }
+        out
+    }
+
+    #[test]
+    fn an_aimed_iron_sight_shot_follows_the_gun_pose() {
+        let a = iron_trace();
+        assert_eq!(a, iron_trace(), "replays identically");
+        let off = a.iter().map(|t| (t.2 - t.0).abs() + (t.3 - t.1).abs()).fold(0.0f32, f32::max);
+        // The gun kick spring and the turn's sway move the sights off the view centre a little.
+        assert!(off > 1e-4 && off < 5f32.to_radians(), "{off}");
+        // The scoped sniper's shot is the view's (its sway is the view's own).
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        scoped(&mut sim, &host);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, yaw: 0.3, ..Default::default() }, 20);
+        let p = sim.player(0).unwrap();
+        assert_eq!((p.fire_yaw, p.fire_pitch), (p.yaw, p.pitch));
+    }
+
+    #[test]
+    fn a_shot_lets_a_held_breath_go() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        scoped(&mut sim, &host);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::SPRINT, ..Default::default() }, 30);
+        assert!(sim.player(0).unwrap().idle.breath.holding);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::SPRINT | buttons::FIRE, ..Default::default() }, 1);
+        assert!(events(&sim).iter().any(|e| matches!(e, EventKind::Shot { .. })));
+        assert!(!sim.player(0).unwrap().idle.breath.holding);
     }
 
     #[test]

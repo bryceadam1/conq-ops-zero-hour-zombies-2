@@ -109,6 +109,11 @@ impl Sim {
                 body: Body::new(info.pos, &self.tuning),
                 yaw: info.yaw,
                 pitch: 0.0,
+                view_kick: crate::weapons::view_kick::ViewKick::default(),
+                idle: crate::weapons::idle_sway::IdleSway::default(),
+                gun: Default::default(),
+                fire_yaw: 0.0,
+                fire_pitch: 0.0,
                 // A classless General has no guns to fire: report nothing usable until a class
                 // lands (the bridge's empty-weapon veto stops Zero Hour's own firing).
                 arsenal: Arsenal::unarmed(),
