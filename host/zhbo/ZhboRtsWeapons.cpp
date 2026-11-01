@@ -613,6 +613,11 @@ void applyWorldPoses()
 					clr.set(bit);
 			}
 			draw->clearAndSetModelConditionFlags(clr, set);
+			// The autotest's --rts check reads this: the secondary's set raised under its condition.
+			if (want > 0 && want <= setCount && (it == s_worldLooks.end() || it->second.animSet != p.anim_set))
+				logf("General %u third-person animation set %d (%s) for weapon %d", (unsigned)obj->getID(), (int)want,
+					ModelConditionFlags::getSingleBitFromName(zhbo_names::ANIM_SET_CONDITIONS[want - 1]) >= 0 ? zhbo_names::ANIM_SET_CONDITIONS[want - 1] : "no such condition",
+					(int)p.weapon);
 		}
 		WorldLook look = { p.weapon, p.tablet, p.anim_set, nativeWeapon ? 1 : 0 };
 		s_worldLooks[p.general] = look;

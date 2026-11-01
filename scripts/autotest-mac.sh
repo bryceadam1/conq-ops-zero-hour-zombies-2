@@ -19,7 +19,7 @@
 #                                      overhead he is an idle worker, and repairs it again when ordered.
 #   scripts/autotest-mac.sh --classpick
 #                                      the pick-only in-match class screen: the script seeds a custom
-#                                      class ("AB") in the profile, picks it by its row key, then forces
+#                                      class ("Custom 2") in the profile, picks it by its row key, then forces
 #                                      the screen open after re-taking control and Escape-closes it
 #   scripts/autotest-mac.sh --showcase [object]
 #                                      close-up captures of a General (idle, walk, death), no checks
@@ -194,25 +194,28 @@ if [[ $mode == build ]]; then
 fi
 if [[ $mode == classpick ]]; then
     # The in-match create-a-class run is pick-only (BO2 only creates classes in the lobby): seed
-    # the profile with one custom class ("AB") in the active class set, then let the autopilot
-    # pick it from the spawn screen by its row key (5 default classes + AB). A pick must not
+    # the profile with one custom class ("Custom 2") in the active class set, then let the autopilot
+    # pick it from the spawn screen by its row key (5 default classes + Custom 2). A pick must not
     # write the profile. The script then leaves first person, takes control again, forces the
     # screen open and Escapes it, proving first-person play continues. The profile file's v2
     # format: `v2`, the active set, then each set's `class`/name/spec/`end` records (profile.rs).
     profile="$userdata/ConquerOps.profile"
     rm -f "$profile"
-    # Deliberately NOT the stock Assault kit: the kit check below greps for the MP7 and the
-    # claymore, so a pick that logs the name but never applies the kit cannot pass. The MP7 carries
-    # a reflex sight: an attachment combination's viewmodel has a number of three or more digits,
-    # which the base-weapon legs never exercise (the bridge once misread its faction letter and
-    # every combination drew nothing in first person).
+    # The playtest's own class (round 2: "I couldn't select my second custom class"): an
+    # attachment on each gun and all three camos, whose readable text is 258 bytes, two over the
+    # 64-word pick payload the text form used to ride (the pick now rides as catalog tokens,
+    # classwire.rs). Deliberately NOT the stock Assault kit: the kit check greps the MTAR, so a pick
+    # that logs the name but never applies the kit cannot pass. The MTAR carries the Target Finder:
+    # an attachment combination's viewmodel has a number of three or more digits, which the
+    # base-weapon legs never exercise (the bridge once misread its faction letter and every
+    # combination drew nothing in first person).
     cat >"$profile" <<'EOF'
 v2
 active 1
 set 1 CLASS SET 1
 class
-AB
-primary=mp7_mp+reflex;secondary=fnp45_mp;lethal=claymore_mp;tactical=concussion_grenade_mp;melee=knife_held_mp;perks=Toughness,FastHands,Dexterity
+Custom 2
+primary=tar21_mp+rangefinder;secondary=crossbow_mp+ir;lethal=frag_grenade_mp;tactical=willy_pete_mp;lethal_count=1;tactical_count=1;melee=knife_held_mp;perks=Lightweight,Toughness,Dexterity;camo=camo_gold;knife=camo_gold;secondary_camo=camo_artofwar
 end
 EOF
     export ZHBO_AUTOPILOT=classpick GGC_AUTO_EXIT_SECONDS=60
@@ -225,11 +228,11 @@ EOF
     check() { # name, pattern
         if grep -qE "$2" "$out/ConquerOps.log"; then printf '%-28s PASS\n' "$1"; else printf '%-28s FAIL\n' "$1"; ok=1; fi
     }
-    check "picked the seeded class" "assumed the AB class"
-    # The KIT, not just the name: the seeded class's primary is the MP7, and the sim's once-a-second
-    # pose line names the weapon in hand ("... MP7 40|80"). The old seed was the Assault kit, so a
+    check "picked the seeded class" "assumed the Custom 2 class"
+    # The KIT, not just the name: the seeded class's primary is the MTAR, and the sim's once-a-second
+    # pose line names the weapon in hand ("... MTAR 30|120"). An older seed was the Assault kit, so a
     # pick that never applied the kit still passed the name-only check.
-    check "  ...kit applied (MP7)" "MP7 [0-9]+\|"
+    check "  ...kit applied (MTAR)" "MTAR [0-9]+\|"
     # The combination's own native viewmodel composed (`ZV<vm><faction letter>`, vm >= 100), and no
     # viewmodel failed to load or got a non-letter faction.
     check "  ...combination viewmodel drawn" "native viewmodel: ZV[0-9]{3,}[UCG] composed"
@@ -323,6 +326,9 @@ if [[ $mode == rts ]]; then
     # carries the SMAW there (statstable.csv), not the base kit's Tac-45.
     check "secondary picked" "uses weapon slot 1"
     check "secondary rounds counted" "fired slot 1"
+    # BO2 animates the body by the weapon in hand (mp/playeranim.script): the SMAW raises its own
+    # animation set's model condition on the W3D body (ZhboRtsWeapons.cpp applyWorldPoses).
+    check "  ...in its own body stance" "third-person animation set [1-9] \(RIDER[1-8]\)"
     check "first person keeps the secondary" "entered first-person control"
     check "  ...holding the SMAW" "SMAW [0-9]+\|"
     # The native third-person weapon is the default (ZHBO_NATIVE_BODY unset = 1): the overhead

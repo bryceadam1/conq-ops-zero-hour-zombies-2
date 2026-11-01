@@ -206,7 +206,7 @@ impl Autopilot {
     }
 
     /// The create-a-class run (`ZHBO_AUTOPILOT=classpick`). In a match the screen is pick-only:
-    /// the seeded "AB" custom (written to the profile before launch) leads the list
+    /// the seeded custom ("Custom 2", written to the profile before launch) leads the list
     /// (`changeclass.lua`: the set's custom slots, then the defaults), so the script presses its
     /// number key and the sim assumes it; no editor and no profile write.
     /// It then opens the field computer to return overhead, and on the *next* take-control forces
