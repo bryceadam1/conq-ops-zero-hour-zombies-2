@@ -445,8 +445,9 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
   bumped whenever converter output changes.
 * **The bridge asks each frame, the core decides (M2, the weapon).** `applyWorldPoses`
   (`ZhboRtsWeapons.cpp`) calls `zhbo_client_native_poses` for the overhead Generals' poses (the sim's
-  `Sim::native_poses`: the held weapon's converted index, stance, body clip, clip time and rate, the
-  pistol stance; first-person Generals are left to the viewmodel), fills one `ZhboNativeBodyIn` per
+  `Sim::native_poses`: the held weapon's converted index, stance, body clip (the held weapon's
+  animation set and movement state, below), clip time and rate, whether the second gun is up;
+  first-person Generals are left to the viewmodel), fills one `ZhboNativeBodyIn` per
   General from the drawable's `getTransformMatrix` (feet and yaw), the drawable's
   `getCurrentWorldspaceClientBonePositions("tag_weapon_right")` (the engine's own world transform the
   W3D gun hung from), Zero Hour's global lights and the RTS camera position, and calls
@@ -465,7 +466,29 @@ the sim's General object is unchanged, and Zero Hour still owns his health, targ
   rig is placed at the General object's world transform (`pos`/`yaw` from the sim's `NativePose`);
   the bridge's tag is ignored. The body's clip is picked from the movement state with the
   run-time fallback chain (`state::fallbacks`); the full BO2 transition graph and blend times are
-  deliberately skipped. The bridge hides the whole W3D body in body mode when the native pass
+  deliberately skipped.
+* **Animation sets: the body animates by the weapon in hand.** BO2's `mp/playeranim.script` picks a
+  player's body clip by his weapon's `weapClass` and `playerAnimType` (the line of
+  `mp/playeranimtypes.txt` the def stores) as much as by stance and gait: a pistol walks
+  `pb_combatwalk_forward_loop_pistol`, a launcher `pb_walk_forward_RPG_ads`, the combat knife
+  `pb_knife_walk_forward`, the Assault Shield `pb_riotshield_walk_forward`. The converter groups
+  every weapon held in hand (BO2's primary, alt-mode and melee inventories) into **animation sets**
+  — the weapons the script animates alike in every movement state; set 0 is the rifleman's, which
+  also takes every weapon the script gives no clip of its own (the crossbow, shotguns, snipers) —
+  and stores each def's set in `WeaponDef::body_anims` (`BodyAnims` in the weapon table; a
+  combination and an alt mode keep their own def's). A clip id is `set × 16 + state`
+  (`state::id`, at most `state::MAX_SETS` = 9 sets); the body manifest lists set 0's every state
+  and another set's only where it differs, and `state::fallbacks` tries each nearer state in the
+  set, then the rifleman's same state. `NativePose.state`/`ZhboNativePose.state` and the hit boxes'
+  `HitBox` state carry the full id. **The W3D body** (the default third person) plays set `k`'s idle,
+  run, aim, fire and reload (`ZHBO_PLR_<IDL|RUN|ADS|FIR|RLD><k>`; the fire and reload are the set's
+  plain-`default` weapon's `EVENTS` torso clips over its aim and idle) under the model condition
+  `names::ANIM_SET_CONDITIONS[k − 1]` (`RIDER1..RIDER8`, which Zero Hour raises only on vehicles
+  with riders): `zhbo_client_world_poses` reports the set (`ZhboWorldPose.anim_set`, which replaced
+  the slot-based `sidearm` at the same offset) and `applyWorldPoses` raises that condition and
+  drops the others (none while the tablet is up or the General is dead). Either gun slot's
+  `FIRING`/`RELOADING`/`BETWEEN_FIRING_SHOTS` plays the set in hand. Offhands are not grouped (the
+  W3D throw plays over the held weapon's stance). The bridge hides the whole W3D body in body mode when the native pass
   returns `DRAWN`, through the draw modules (`Drawable::getDrawModules()` →
   `ObjectDrawInterface::setHidden`), not `Drawable::setDrawableHidden`. The first-person path's
   `setDrawableHidden` sets `Drawable::m_hidden`; `Drawable::updateHiddenStatus` then deselects the
@@ -531,13 +554,14 @@ The mod reproduces that split: the **sim classifies**, the **client carries**, t
 * **Soldier hit geometry and locations** (t6mp `FUN_007837a0`, `FUN_005f05c0`; `zhbo_core::hitloc`).
   An infantry target is BO2's MP body's hit boxes (`HitBox` lines of the weapon table: each bone's
   `XBoneInfo` box with `radiusSquared ≥ 4` and its `partClassification` location, posed by the
-  converter at the first frame of every body state's clip: `HitBox = <state> <loc> <bone> …`),
+  converter at the first frame of every body clip — every animation set's movement states, the
+  clip id as above: `HitBox = <state> <loc> <bone> …`),
   standing on the object's position and turned by its yaw. BO2 traces the pose the server animated
   (G_DObjCalcPose, `FUN_00649b50`); a General the sim moves takes the pose of his body state
   (`PlayerSim::body_state` = `nativebody::state_of` over the sim's stance, speed, sprint, ADS and
-  sidearm — never the render clock), at his drawn `GENERAL_SCALE`; Zero Hour infantry (no BO2
-  animation state) stand at 1.0. The state clips are BO2's `mp/playeranim.script` picks for a
-  rifleman (`zhbo_assets::playeranim`), the same clips the third-person body draws. Of the
+  the held weapon's animation set — never the render clock), at his drawn `GENERAL_SCALE`; Zero Hour infantry (no BO2
+  animation state) stand at 1.0. The state clips are BO2's `mp/playeranim.script` picks for the
+  held weapon (`zhbo_assets::playeranim`), the same clips the third-person body draws. Of the
   boxes a ray crosses the highest-ranked location wins, nearest among equals (`bRifleBullet` ranks
   the head first; other bullets rank the body alike). A soldier's damage is multiplied by the
   def's `location_multipliers[location]` (a combination's resolved by `attachments::apply`:
@@ -664,7 +688,7 @@ The functions the sections above do not cover, by when the bridge calls them (th
 | Profile writes (client) | `zhbo_profile_save(words, len)`, `zhbo_profile_write(words, len)` | Decode a saved custom class / a `save_profile` one-shot into the profile's full text for the bridge to write; null when the words do not decode. |
 | Every client frame | `zhbo_client_draw_hud(local_player)` | Draws the first-person HUD through the `ClientApi` draw callbacks. |
 | | `zhbo_client_rts_ammo(general, out)` | A General's weapon-slot ammo for the control bar (`ZhboRtsWeapons`). |
-| | `zhbo_client_world_poses(out, cap)` | The Generals' third-person weapon/tablet poses (`ZhboWorldPose`); returns how many. |
+| | `zhbo_client_world_poses(out, cap)` | The Generals' third-person weapon/tablet poses and the held weapon's animation set (`ZhboWorldPose`); returns how many. |
 | | `zhbo_world_mesh_count(vm)` | Third-person meshes of viewmodel `vm`'s weapon on the soldier model (-2: the tablet); cached by the bridge on first use. |
 | | `zhbo_native_body_ready(in)` | 1 when the native third-person body frame can be drawn (see "The native third person"). |
 | Building | `zhbo_general_build_rate()` | A General's building speed as a share of a dozer's (`building::GENERAL_BUILD_RATE`). |

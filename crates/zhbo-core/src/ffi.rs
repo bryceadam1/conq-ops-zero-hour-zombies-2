@@ -710,8 +710,10 @@ pub struct WorldPose {
     pub weapon: i32,
     /// 0 no tablet, 1 tablet coming up (`USER_1`), 2 going down (`USER_2`).
     pub tablet: i32,
-    /// The sidearm (second gun) is in hand: the soldier holds it with BO2's pistol stance.
-    pub sidearm: i32,
+    /// The held weapon's body animation set (`WeaponDef::body_anims`): 0 the rifleman's, else the
+    /// W3D body's model condition `names::ANIM_SET_CONDITIONS[anim_set - 1]` (BO2's pistol, launcher,
+    /// knife, shield, ... stance from `mp/playeranim.script`).
+    pub anim_set: i32,
 }
 
 /// Fill `out` with up to `cap` poses; returns how many.
@@ -725,8 +727,8 @@ pub unsafe extern "C" fn zhbo_client_world_poses(out: *mut WorldPose, cap: i32) 
     }
     let poses = with_state(|s| s.sim.world_poses()).unwrap_or_default();
     let n = poses.len().min(cap as usize);
-    for (i, (general, weapon, tablet, sidearm)) in poses.into_iter().take(n).enumerate() {
-        *out.add(i) = WorldPose { general, weapon, tablet, sidearm: sidearm as i32 };
+    for (i, (general, weapon, tablet, anim_set)) in poses.into_iter().take(n).enumerate() {
+        *out.add(i) = WorldPose { general, weapon, tablet, anim_set: anim_set as i32 };
     }
     n as i32
 }

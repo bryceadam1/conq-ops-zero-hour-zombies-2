@@ -17,8 +17,9 @@
 //! body when body mode draws.
 //!
 //! **The body clip.** Milestone 3 picks one clip per movement state from the sim's facts (stance,
-//! gait, ADS, pistol stance): a body's own clip for the state, else the nearest stance/gait the
-//! body has (`zhbo_native::thirdperson::state::fallbacks`). It deliberately does NOT drive BO2's
+//! gait, ADS) in the held weapon's animation set (`WeaponDef::body_anims`, BO2's
+//! `mp/playeranim.script` per `weapClass`/`playerAnimType`): a body's own clip for it, else the
+//! set's nearest, else the rifleman's (`zhbo_native::thirdperson::state::fallbacks`). It deliberately does NOT drive BO2's
 //! full transition graph: no per-state blend times, no upper-body layers (reload/throw/melee), no
 //! additive flinch. The clip plays at the request's `time` and `rate`; the bridge supplies both
 //! from the sim's movement state. Idle/walk/run/sprint/crouch/prone/ADS all loop; a one-shot clip
@@ -156,16 +157,22 @@ pub fn load(files: &mut Files, req: &Request, camo: Option<&str>) -> Result<Opti
         }
         let Some(mbytes) = files.get(&bmanifest.model) else { return Ok(None) };
         let bmodel = Model::from_bytes(&mbytes).map_err(|e| format!("{}: {e}", bmanifest.model))?;
-        // The clips: a state the archive lacks is absent (the fallback chain handles it).
+        // The clips: a state the archive lacks is absent (the fallback chain handles it). Every
+        // clip still coming is asked for in the same round (a body carries one per animation set
+        // and movement state).
         let mut clips = Vec::with_capacity(bmanifest.clips.len());
+        let mut waiting = false;
         for (state, cpath) in &bmanifest.clips {
             if files.is_missing(cpath) {
                 continue;
             }
             match files.get(cpath) {
                 Some(b) => clips.push((*state, AnimClip::from_bytes(&b).map_err(|e| format!("{cpath}: {e}"))?)),
-                None => return Ok(None),
+                None => waiting = true,
             }
+        }
+        if waiting {
+            return Ok(None);
         }
         for (_, cpath) in &bmanifest.clips {
             files.forget(cpath);
@@ -265,11 +272,12 @@ pub fn camo_for(primary: &crate::weapons::WeaponDef, camo: &str, vm: i32) -> Opt
 }
 
 impl Loaded {
-    /// The body clip for `state`: its own, else the nearest stance/gait the body has. `None` in
+    /// The body clip for clip id `state` (an animation set's movement state): its own, else the
+    /// nearest the body has (`state::fallbacks`). `None` in
     /// weapon-only mode (the gun is rigid) or when the body loaded no clip at all.
     pub fn clip_for(&self, state: u16) -> Option<&AnimClip> {
         let body = self.body.as_ref()?;
-        zhbo_native::thirdperson::state::fallbacks(state).iter().find_map(|&s| body.clips.iter().find(|c| c.0 == s).map(|c| &c.1))
+        zhbo_native::thirdperson::state::fallbacks(state).find_map(|s| body.clips.iter().find(|c| c.0 == s).map(|c| &c.1))
     }
 }
 
@@ -335,10 +343,17 @@ impl Loaded {
     }
 }
 
-/// The body clip for the General's movement state: BO2's body animation for the stance and gait.
-/// `run_speed` is the sim's own `g_speed` in world units/s (the walk/run split is a share of it),
-/// so this stays a presentation rule with a single source for the speed.
-pub fn state_of(stance: i32, speed: f32, sprinting: bool, ads: f32, sidearm: bool, moving: bool, run_speed: f32) -> u16 {
+/// The body clip for the General's movement state: BO2's body animation for the stance and gait in
+/// animation set `set` (the held weapon's `WeaponDef::body_anims`: what `mp/playeranim.script`
+/// plays for its `weapClass` and `playerAnimType`). `run_speed` is the sim's own `g_speed` in world
+/// units/s (the walk/run split is a share of it), so this stays a presentation rule with a single
+/// source for the speed.
+pub fn state_of(stance: i32, speed: f32, sprinting: bool, ads: f32, set: u8, moving: bool, run_speed: f32) -> u16 {
+    state::id(set, movement_state(stance, speed, sprinting, ads, moving, run_speed))
+}
+
+/// The movement state alone ([`state_of`] without the weapon's set).
+fn movement_state(stance: i32, speed: f32, sprinting: bool, ads: f32, moving: bool, run_speed: f32) -> u16 {
     let run = run_speed.max(1e-3);
     let moving = moving || speed > 0.2;
     match stance {
@@ -346,15 +361,13 @@ pub fn state_of(stance: i32, speed: f32, sprinting: bool, ads: f32, sidearm: boo
         1 => if moving { state::CROUCH_WALK } else if ads > 0.5 { state::CROUCH_ADS } else { state::CROUCH_IDLE },
         _ => {
             if ads > 0.5 {
-                if sidearm { state::STAND_ADS_PISTOL } else { state::STAND_ADS }
+                state::STAND_ADS
             } else if sprinting && moving {
                 state::STAND_SPRINT
             } else if speed > run * 0.6 {
                 state::STAND_RUN
             } else if moving {
                 state::STAND_WALK
-            } else if sidearm {
-                state::STAND_IDLE_PISTOL
             } else {
                 state::STAND_IDLE
             }

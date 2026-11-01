@@ -613,6 +613,9 @@ pub struct Weapon {
     pub display_name: String,
     pub weap_type: u32,
     pub class: u32,
+    /// `playerAnimType`: the line of `mp/playeranimtypes.txt` (0 `none`, 1 `default`, ...) that
+    /// `mp/playeranim.script` matches its third-person body animations on.
+    pub player_anim_type: u32,
     pub inventory: u32,
     pub fire_type: u32,
     pub offhand_class: u32,
@@ -1146,6 +1149,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.overlay_size = (z.f32(d + WD::overlayWidth), z.f32(d + WD::overlayHeight));
     w.weap_type = z.u32(d + WD::weapType);
     w.class = z.u32(d + WD::weapClass);
+    w.player_anim_type = z.u32(d + WD::playerAnimType);
     w.inventory = z.u32(d + WD::inventoryType);
     w.fire_type = z.u32(d + WD::fireType);
     w.offhand_class = z.u32(d + WD::offhandClass);

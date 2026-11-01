@@ -78,7 +78,7 @@ struct WorldLook
 {
 	int32_t weapon;
 	int32_t tablet;
-	int32_t sidearm;
+	int32_t animSet;
 	// The native third person drew the weapon last frame: when it stops succeeding, the W3D
 	// sub-objects must come back, so this is part of the change test.
 	int32_t native;
@@ -403,7 +403,8 @@ void ResetRtsWeapons()
 
 // Third person: show the weapon each General has in hand (its W<vm><k> sub-objects on the soldier
 // model) or the scorestreak tablet (TB<k>), play the tablet's raise or put-away (USER_1, USER_2),
-// and hold the secondary in BO2's sidearm stance (JAMMED). Only changes are applied.
+// and raise the held weapon's animation-set condition (zhbo_names::ANIM_SET_CONDITIONS: BO2's
+// pistol, launcher, knife, shield, ... stance from mp/playeranim.script). Only changes are applied.
 //
 // M2 (Track R7): with ZHBO_NATIVE_BODY=1 the weapon itself comes from the native BO2 path instead:
 // zhbo_client_native_poses says which General holds which converted weapon, the drawable's
@@ -564,7 +565,7 @@ void applyWorldPoses()
 		std::map<uint32_t, WorldLook>::iterator it = s_worldLooks.find(p.general);
 		// A native-state change must refresh too: when the native pass stops succeeding the W3D
 		// weapon has to come back.
-		if (it != s_worldLooks.end() && it->second.weapon == p.weapon && it->second.tablet == p.tablet && it->second.sidearm == p.sidearm
+		if (it != s_worldLooks.end() && it->second.weapon == p.weapon && it->second.tablet == p.tablet && it->second.animSet == p.anim_set
 			&& it->second.native == (nativeWeapon ? 1 : 0))
 			continue;
 		char name[16];
@@ -594,12 +595,26 @@ void applyWorldPoses()
 			draw->clearModelConditionState(MODELCONDITION_USER_1);
 			draw->clearModelConditionState(MODELCONDITION_USER_2);
 		}
-		// BO2's sidearm stance while the secondary is in hand (JAMMED: only missiles use it otherwise).
-		if (p.sidearm && p.tablet == 0 && !obj->isEffectivelyDead())
-			draw->setModelConditionState(MODELCONDITION_JAMMED);
-		else
-			draw->clearModelConditionState(MODELCONDITION_JAMMED);
-		WorldLook look = { p.weapon, p.tablet, p.sidearm, nativeWeapon ? 1 : 0 };
+		// The held weapon's animation set: its condition up (none for the rifleman's set 0, nor while
+		// the tablet is up or he is dead), every other set's down. Zero Hour sets the RIDER
+		// conditions only on vehicles with riders, never on infantry.
+		{
+			const Int setCount = (Int)(sizeof(zhbo_names::ANIM_SET_CONDITIONS) / sizeof(zhbo_names::ANIM_SET_CONDITIONS[0]));
+			const Int want = (p.tablet == 0 && !obj->isEffectivelyDead()) ? p.anim_set : 0;
+			ModelConditionFlags clr, set;
+			for (Int k = 1; k <= setCount; ++k)
+			{
+				const Int bit = ModelConditionFlags::getSingleBitFromName(zhbo_names::ANIM_SET_CONDITIONS[k - 1]);
+				if (bit < 0)
+					continue;
+				if (k == want)
+					set.set(bit);
+				else
+					clr.set(bit);
+			}
+			draw->clearAndSetModelConditionFlags(clr, set);
+		}
+		WorldLook look = { p.weapon, p.tablet, p.anim_set, nativeWeapon ? 1 : 0 };
 		s_worldLooks[p.general] = look;
 	}
 

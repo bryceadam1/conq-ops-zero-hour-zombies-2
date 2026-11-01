@@ -16,8 +16,15 @@ use crate::io::{FormatError, Reader, Writer};
 use crate::viewmodel::Part;
 
 /// The body clips a third-person General plays, picked from the sim's movement state (Track R7:
-/// idle, walk, run, sprint, crouch, prone, ADS; the pistol's own stance). The numbers are the
-/// manifest's clip ids, stable across builds.
+/// idle, walk, run, sprint, crouch, prone, ADS) and the weapon in his hand.
+///
+/// BO2 animates a player by the weapon he holds as much as by his stance: `mp/playeranim.script`
+/// matches the weapon's `weapClass` and `playerAnimType` (a pistol walks `pb_combatwalk_forward_
+/// loop_pistol`, a launcher `pb_walk_forward_RPG_ads`, the knife `pb_knife_walk_forward`). So a
+/// clip id is an **animation set** (the converter's group of weapons the script animates alike,
+/// `WeaponDef::body_anims`; set 0 is the rifleman's) and a movement state:
+/// `id = set * SET_STRIDE + state`. The state numbers are the manifest's clip ids for set 0,
+/// stable across builds.
 pub mod state {
     pub const STAND_IDLE: u16 = 1;
     pub const STAND_WALK: u16 = 2;
@@ -29,14 +36,28 @@ pub mod state {
     pub const CROUCH_ADS: u16 = 8;
     pub const PRONE_IDLE: u16 = 9;
     pub const PRONE_CRAWL: u16 = 10;
-    pub const STAND_IDLE_PISTOL: u16 = 11;
-    pub const STAND_ADS_PISTOL: u16 = 12;
-    /// One past the last state (the range the converter writes).
-    pub const COUNT: u16 = 12;
+    /// The last movement state (states are `1..=COUNT`).
+    pub const COUNT: u16 = 10;
+    /// Clip ids per animation set: `id = set * SET_STRIDE + state`.
+    pub const SET_STRIDE: u16 = 16;
+    /// The most animation sets a body carries: the rifleman's and one per model condition the W3D
+    /// body has for a set (`zhbo_core::names::ANIM_SET_CONDITIONS`).
+    pub const MAX_SETS: u8 = 9;
 
-    /// The states to try, in order, when the body has no clip for `state`: the nearest stance and
-    /// the nearest gait, so a body missing (say) its crouch walk still crouches while it moves.
-    pub fn fallbacks(state: u16) -> &'static [u16] {
+    /// The clip id of movement `state` in animation set `set`.
+    pub const fn id(set: u8, state: u16) -> u16 {
+        set as u16 * SET_STRIDE + state
+    }
+
+    /// A clip id's `(set, state)`.
+    pub const fn split(id: u16) -> (u8, u16) {
+        ((id / SET_STRIDE) as u8, id % SET_STRIDE)
+    }
+
+    /// The movement states to try, in order, when the body has no clip for `state`: the nearest
+    /// stance and the nearest gait, so a body missing (say) its crouch walk still crouches while it
+    /// moves.
+    pub fn nearest(state: u16) -> &'static [u16] {
         match state {
             STAND_WALK => &[STAND_WALK, STAND_RUN, STAND_IDLE],
             STAND_RUN => &[STAND_RUN, STAND_WALK, STAND_IDLE],
@@ -47,10 +68,16 @@ pub mod state {
             CROUCH_ADS => &[CROUCH_ADS, CROUCH_IDLE, STAND_ADS, STAND_IDLE],
             PRONE_IDLE => &[PRONE_IDLE, CROUCH_IDLE, STAND_IDLE],
             PRONE_CRAWL => &[PRONE_CRAWL, PRONE_IDLE, CROUCH_WALK, STAND_WALK, STAND_RUN, STAND_IDLE],
-            STAND_IDLE_PISTOL => &[STAND_IDLE_PISTOL, STAND_IDLE],
-            STAND_ADS_PISTOL => &[STAND_ADS_PISTOL, STAND_ADS, STAND_IDLE_PISTOL, STAND_IDLE],
             _ => &[STAND_IDLE],
         }
+    }
+
+    /// The clip ids to try, in order, for clip `id`: each nearer state in the weapon's own set,
+    /// then the rifleman's (set 0). The converter leaves out a set's clip that is the rifleman's
+    /// own, so a set falls through to set 0 state by state before it trades the gait.
+    pub fn fallbacks(id: u16) -> impl Iterator<Item = u16> {
+        let (set, st) = split(id);
+        nearest(st).iter().flat_map(move |&s| [self::id(set, s), self::id(0, s)].into_iter().take(if set == 0 { 1 } else { 2 }))
     }
 }
 
@@ -68,14 +95,14 @@ pub struct Body {
     pub model: String,
     /// The body bone a weapon hangs from (`tag_weapon_right`).
     pub weapon_tag: String,
-    /// `(state id, animation blob path)`.
+    /// `(clip id, animation blob path)`: [`state::id`] of an animation set and a movement state.
     pub clips: Vec<(u16, String)>,
 }
 
 impl Body {
-    /// The clip for `state`: its own, else the nearest one the body has ([`state::fallbacks`]).
-    pub fn clip(&self, state: u16) -> Option<&str> {
-        state::fallbacks(state).iter().find_map(|&s| self.clips.iter().find(|c| c.0 == s).map(|c| c.1.as_str()))
+    /// The clip for clip id `id`: its own, else the nearest one the body has ([`state::fallbacks`]).
+    pub fn clip(&self, id: u16) -> Option<&str> {
+        state::fallbacks(id).find_map(|s| self.clips.iter().find(|c| c.0 == s).map(|c| c.1.as_str()))
     }
 
     pub fn to_bytes(&self) -> Vec<u8> {
@@ -186,6 +213,13 @@ mod tests {
         assert_eq!(b.clip(state::STAND_SPRINT), Some("Art\\Native\\pb_combatrun_forward_loop.zba"), "sprint runs when there is no sprint");
         assert_eq!(b.clip(state::CROUCH_WALK), Some("Art\\Native\\pb_combatrun_forward_loop.zba"), "a crouch walk walks when there is no crouch");
         assert_eq!(b.clip(state::PRONE_IDLE), Some("Art\\Native\\pb_stand_alert.zba"), "prone idles standing");
+        // A weapon's set takes its own clip, else the rifleman's same state before a nearer one.
+        let mut pistol = b.clone();
+        pistol.clips.push((state::id(2, state::STAND_IDLE), "Art\\Native\\pb_stand_alert_pistol.zba".into()));
+        assert_eq!(pistol.clip(state::id(2, state::STAND_IDLE)), Some("Art\\Native\\pb_stand_alert_pistol.zba"));
+        assert_eq!(pistol.clip(state::id(2, state::STAND_RUN)), Some("Art\\Native\\pb_combatrun_forward_loop.zba"), "the rifleman's run");
+        assert_eq!(pistol.clip(state::id(2, state::STAND_WALK)), Some("Art\\Native\\pb_combatrun_forward_loop.zba"), "the rifleman's run, not the set's idle");
+        assert_eq!(pistol.clip(state::id(2, state::STAND_ADS)), Some("Art\\Native\\pb_stand_alert_pistol.zba"), "no ADS anywhere: the set's idle");
         // Every prefix is refused, and a bad magic or version is named.
         let bytes = b.to_bytes();
         for n in 0..bytes.len() {

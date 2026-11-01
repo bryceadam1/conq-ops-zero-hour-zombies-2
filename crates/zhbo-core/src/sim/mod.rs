@@ -329,11 +329,11 @@ impl PlayerSim {
         }
     }
 
-    /// The body clip his movement state picks (`nativebody::state_of`); `engine_moving`: Zero
-    /// Hour is walking him (RTS control).
+    /// The body clip his movement state picks in the held weapon's animation set
+    /// (`nativebody::state_of`); `engine_moving`: Zero Hour is walking him (RTS control).
     pub fn body_state(&self, engine_moving: bool, run_speed: f32) -> u16 {
         let a = &self.arsenal;
-        crate::nativebody::state_of(self.stance_index(), self.body.horizontal_speed(), self.body.sprinting, a.ads, a.active == 1, engine_moving, run_speed)
+        crate::nativebody::state_of(self.stance_index(), self.body.horizontal_speed(), self.body.sprinting, a.ads, a.current().def.body_anims, engine_moving, run_speed)
     }
 
     #[cfg(test)]
@@ -948,8 +948,9 @@ impl Sim {
     /// How each controlled General looks in third person: its General, the viewmodel index of the
     /// weapon in hand whose W3D world meshes are shown (`Catalog::world_viewmodel`: a combination
     /// shows its base weapon's), the tablet (0 none, 1 coming up for the field
-    /// computer, 2 going down as first person starts), and whether the sidearm is in hand.
-    pub fn world_poses(&self) -> Vec<(u32, i32, i32, bool)> {
+    /// computer, 2 going down as first person starts), and the held weapon's body animation set
+    /// (`WeaponDef::body_anims`: the W3D body's model condition, `names::ANIM_SET_CONDITIONS`).
+    pub fn world_poses(&self) -> Vec<(u32, i32, i32, u8)> {
         self.players
             .iter()
             .flatten()
@@ -960,7 +961,7 @@ impl Sim {
                     Mode::Fps if a.raise_left > a.raise_total + 1e-4 => 2,
                     _ => 0,
                 };
-                (p.general, crate::weapons::catalog().world_viewmodel(a.current().def).max(0), tablet, a.active == 1)
+                (p.general, crate::weapons::catalog().world_viewmodel(a.current().def).max(0), tablet, a.current().def.body_anims)
             })
             .collect()
     }

@@ -238,6 +238,11 @@ pub struct WeaponDef {
     pub class: Class,
     /// BO2's `weapClass_t` (the def's own, data).
     pub weap_class: WeapClass,
+    /// The third-person body's animation set (`zhbo_native::thirdperson::state`): the converter's
+    /// group of the weapons BO2's `mp/playeranim.script` animates alike, by `weapClass` and
+    /// `playerAnimType` (0, the rifleman's, for every weapon the script gives no clip of its own).
+    /// A combination and an alt mode keep their own def's.
+    pub body_anims: u8,
     pub fire: FireMode,
     pub fire_time: f32,
     /// Extra wait after a burst before the next one.
@@ -847,6 +852,7 @@ impl Default for WeaponDef {
             display_name: String::new(),
             class: Class::Rifle,
             weap_class: WeapClass::Rifle,
+            body_anims: 0,
             fire: FireMode::Auto,
             fire_time: 0.1,
             burst_delay: 0.0,

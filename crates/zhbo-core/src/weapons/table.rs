@@ -472,6 +472,9 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("WeapClass", "BO2's weapClass_t: rifle, mg, smg, spread, pistol, grenade, rocketlauncher, …, pistol_spread.", FieldKind::Enum,
         |d: &WeaponDef| d.weap_class.name().into(),
         |d: &mut WeaponDef, v: Values| { d.weap_class = WeapClass::parse(v.text).ok_or("unknown weapClass")?; Ok(()) }),
+    field!("BodyAnims", "The third-person body's animation set: the group of weapons BO2's mp/playeranim.script animates alike (by weapClass and playerAnimType); 0 the rifleman's.", FieldKind::Num,
+        |d: &WeaponDef| d.body_anims.to_string(),
+        |d: &mut WeaponDef, v: Values| { d.body_anims = v.text.parse().map_err(|_| "number")?; Ok(()) }),
     field!("Fire", "auto, semi, minigun, stacked, or `burst n`.", FieldKind::Enum,
         |d: &WeaponDef| fire_name(d.fire),
         |d: &mut WeaponDef, v: Values| { d.fire = parse_fire(v.text).ok_or("unknown fire mode")?; Ok(()) }),
@@ -1239,7 +1242,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 151);
+        assert_eq!(WEAPON_FIELDS.len(), 152);
         assert_eq!(ATTACHMENT_FIELDS.len(), 31);
         assert_eq!(CAMO_FIELDS.len(), 5);
     }

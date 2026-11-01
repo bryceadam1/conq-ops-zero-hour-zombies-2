@@ -30,6 +30,9 @@ inline void tabletMesh(char *out, size_t cap, int k)
 {
 	snprintf(out, cap, "TB%02d", k);
 }
+// The model condition of third-person animation set k (1..8) is ANIM_SET_CONDITIONS[k - 1]; set 0,
+// the rifleman's, has none (ZhboRtsWeapons applyWorldPoses raises it while the set is in hand).
+inline constexpr const char *ANIM_SET_CONDITIONS[8] = {"RIDER1", "RIDER2", "RIDER3", "RIDER4", "RIDER5", "RIDER6", "RIDER7", "RIDER8"};
 // File paths inside the mod's BIG files (written by zhbo-assets, opened here).
 inline constexpr const char *WEAPON_TABLE_PATH = "Data\\ConquerOps\\weapons.ini";
 inline constexpr const char *RTS_FX_PATH = "Data\\ConquerOps\\rts_fx.txt";

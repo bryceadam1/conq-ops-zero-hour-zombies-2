@@ -113,9 +113,10 @@ to list/export BO2 sounds, images and fonts. `fonts.rs` converts BO2's UI fonts.
 `ini.rs` (the INI rewriters), `viewmodels.rs` (the viewmodel conversion), `generals.rs`
 (the Zero Hour names, factions and the `files()` orchestrator), `camo.rs` (the camo art and the
 `.zcm` recipes for every `WeaponCamo` a def or attachment unique points at) and `paks.rs` (pack-file access, the shrinker
-and `load_zone`, over the shared `zhbo_formats::t6zone::load_file`). `thirdperson.rs` resolves the body clip of each movement state (asking
-`playeranim.rs`, BO2's `mp/playeranim.script` first-match picker) and poses the soldier's hit
-boxes in each.
+and `load_zone`, over the shared `zhbo_formats::t6zone::load_file`). `thirdperson.rs` groups the weapons held in hand into animation sets by what BO2's
+`mp/playeranim.script` plays for their `weapClass` and `playerAnimType` (`playeranim.rs`, its
+first-match picker, which also reads the `EVENTS` torso clips), resolves each set's clip per movement
+state and poses the soldier's hit boxes in each.
 
 ### `crates/zhbo-conformance`
 BO2 parity conformance (see [TESTING.md](TESTING.md) "BO2 conformance"): the shared CSV schema

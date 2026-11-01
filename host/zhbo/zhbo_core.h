@@ -374,7 +374,7 @@ typedef struct ZhboWorldPose
 	uint32_t general;
 	int32_t weapon; /* viewmodel index of the weapon in hand */
 	int32_t tablet; /* 0 none, 1 coming up (MODELCONDITION_USER_1), 2 going down (USER_2) */
-	int32_t sidearm; /* the sidearm is in hand: pistol stance (MODELCONDITION_JAMMED) */
+	int32_t anim_set; /* the held weapon's body animation set: 0 the rifleman's, else zhbo_names::ANIM_SET_CONDITIONS[anim_set - 1] */
 } ZhboWorldPose;
 
 uint32_t zhbo_abi_version(void);

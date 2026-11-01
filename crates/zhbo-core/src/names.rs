@@ -119,6 +119,13 @@ pub fn bo2_fx(effect: &str) -> String {
 pub fn world_mesh(vm: u8, k: u8) -> String {
     format!("W{vm:02}{k:02}")
 }
+/// The Zero Hour model conditions the W3D soldier body plays third-person animation sets 1.. by
+/// (`WeaponDef::body_anims`; set 0, the rifleman's, has none): the bridge raises
+/// `ANIM_SET_CONDITIONS[set - 1]` while a weapon of that set is in hand and the converter's Draw
+/// module has that set's idle, run, aim, fire and reload under it. Zero Hour sets the `RIDER`
+/// conditions only on a vehicle whose `RiderChangeContain` holds a rider, never on infantry.
+pub const ANIM_SET_CONDITIONS: [&str; 8] = ["RIDER1", "RIDER2", "RIDER3", "RIDER4", "RIDER5", "RIDER6", "RIDER7", "RIDER8"];
+
 /// The scorestreak tablet's third-person meshes (`TB01`).
 pub fn tablet_mesh(k: u8) -> String {
     format!("TB{k:02}")
@@ -222,6 +229,9 @@ inline void tabletMesh(char *out, size_t cap, int k)
 {
 	snprintf(out, cap, "TB%02d", k);
 }
+// The model condition of third-person animation set k (1..8) is ANIM_SET_CONDITIONS[k - 1]; set 0,
+// the rifleman's, has none (ZhboRtsWeapons applyWorldPoses raises it while the set is in hand).
+inline constexpr const char *ANIM_SET_CONDITIONS[8] = {"RIDER1", "RIDER2", "RIDER3", "RIDER4", "RIDER5", "RIDER6", "RIDER7", "RIDER8"};
 // File paths inside the mod's BIG files (written by zhbo-assets, opened here).
 inline constexpr const char *WEAPON_TABLE_PATH = "Data\\ConquerOps\\weapons.ini";
 inline constexpr const char *RTS_FX_PATH = "Data\\ConquerOps\\rts_fx.txt";
@@ -259,6 +269,13 @@ mod tests {
         assert_eq!(general("USA"), GENERAL_USA);
         assert_eq!(faction_viewmodel("GLA"), FACTION_VIEWMODEL_GLA);
         assert_eq!(faction_viewmodel("CHN"), FACTION_VIEWMODEL_CHN);
+    }
+
+    #[test]
+    fn the_anim_set_conditions_are_the_headers_and_cover_every_set() {
+        let quoted: Vec<String> = ANIM_SET_CONDITIONS.iter().map(|c| format!("\"{c}\"")).collect();
+        assert!(ZHBO_NAMES_H.contains(&format!("ANIM_SET_CONDITIONS[{}] = {{{}}};", ANIM_SET_CONDITIONS.len(), quoted.join(", "))));
+        assert_eq!(ANIM_SET_CONDITIONS.len() + 1, zhbo_native::thirdperson::state::MAX_SETS as usize, "a condition per set but the rifleman's");
     }
 
     #[test]
