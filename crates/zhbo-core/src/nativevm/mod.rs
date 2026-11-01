@@ -98,6 +98,21 @@ pub(crate) fn native_reticle(r: &zhbo_native::model::Reticle, handle: impl Fn(&O
     }
 }
 
+/// A surface's MMS screen as the renderer takes it, its maps by `handle`. Shared with the third
+/// person.
+#[cfg(feature = "renderer")]
+pub(crate) fn native_sonar(s: &zhbo_native::model::Sonar, handle: impl Fn(&Option<String>) -> u16) -> zhbo_gfx::runtime::NativeSonar {
+    zhbo_gfx::runtime::NativeSonar { lookup: handle(&s.lookup), noise: handle(&s.noise), constants: s.constants() }
+}
+
+/// The texture files a surface's own technique reads besides its colour and packed maps (the
+/// reticle's noise, the MMS screen's lookup and noise).
+pub(crate) fn technique_files(s: &SurfaceSpec) -> impl Iterator<Item = &String> {
+    let reticle = s.reticle.as_ref().and_then(|r| r.noise.as_ref());
+    let sonar = s.sonar.as_ref().into_iter().flat_map(|so| [so.lookup.as_ref(), so.noise.as_ref()]).flatten();
+    reticle.into_iter().chain(sonar)
+}
+
 /// Whether the native viewmodel drew a lens reticle in its last frame: the HUD then leaves its
 /// own 2D optic reticle out (BO2 has one reticle, on the lens). Presentation only; per thread,
 /// as the viewmodel and the HUD are both driven from the game thread.
@@ -222,6 +237,8 @@ pub struct SurfaceSpec {
     pub reticle: Option<zhbo_native::model::Reticle>,
     /// BO2's emblem surface (`Material::emblem`).
     pub emblem: bool,
+    /// The MMS screen (`Material::sonar`): drawn by the pass's scanner technique.
+    pub sonar: Option<zhbo_native::model::Sonar>,
 }
 
 /// The composed viewmodel's one mesh: every part's LOD 0 with its bones renumbered into the
@@ -347,6 +364,7 @@ pub fn build_mesh_visible<'a>(
                 part: i as u16,
                 reticle: m.and_then(|m| m.reticle.clone()),
                 emblem: m.is_some_and(|m| m.emblem),
+                sonar: m.and_then(|m| m.sonar.clone()),
             });
         }
     }

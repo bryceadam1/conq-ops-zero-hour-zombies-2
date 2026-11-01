@@ -5,7 +5,7 @@ use zhbo_gfx::ffi::with_renderer;
 use zhbo_gfx::runtime::{NativeDraw, NativeFrame, NativeLight, NativeSurface, NativeVertex, INVALID};
 
 use super::ffi::{State, ZhboNativeIn, DRAWN, LOADING, NOT_NATIVE};
-use super::{native_blend, native_cull, native_reticle, set_lens_reticle_drawn, Mesh};
+use super::{native_blend, native_cull, native_reticle, native_sonar, set_lens_reticle_drawn, technique_files, Mesh};
 
 /// The handles of the viewmodel on the GPU.
 #[derive(Default)]
@@ -52,12 +52,9 @@ fn submit(s: &mut State, inp: &ZhboNativeIn) -> i32 {
         let mut paths: Vec<(String, bool)> = Vec::new();
         for surf in &loaded.mesh.surfaces {
             // Display-space shading (native.wgsl): every map uploads raw.
-            let noise = surf.reticle.as_ref().map_or(&None, |r| &r.noise);
-            for (p, srgb) in [(&surf.color, false), (&surf.maps, false), (&surf.specular, false), (&surf.camo, false), (noise, false)] {
-                if let Some(p) = p {
-                    if !paths.iter().any(|(q, _)| q == p) {
-                        paths.push((p.clone(), srgb));
-                    }
+            for p in [&surf.color, &surf.maps, &surf.specular, &surf.camo].into_iter().flatten().chain(technique_files(surf)) {
+                if !paths.iter().any(|(q, _)| q == p) {
+                    paths.push((p.clone(), false));
                 }
             }
         }
@@ -97,7 +94,7 @@ fn submit(s: &mut State, inp: &ZhboNativeIn) -> i32 {
                 let surfaces: Vec<NativeSurface> = m
                     .surfaces
                     .iter()
-                    .map(|s| NativeSurface { first_index: s.first_index, index_count: s.index_count, blend: native_blend(s.blend), emissive: s.emissive, color: handle(&s.color), maps: handle(&s.maps), specular: handle(&s.specular), camo: handle(&s.camo), camo_uv: s.camo_uv, sort_key: s.sort_key, cull: native_cull(s.cull), reticle: s.reticle.as_ref().map(|r| native_reticle(r, handle)) })
+                    .map(|s| NativeSurface { first_index: s.first_index, index_count: s.index_count, blend: native_blend(s.blend), emissive: s.emissive, color: handle(&s.color), maps: handle(&s.maps), specular: handle(&s.specular), camo: handle(&s.camo), camo_uv: s.camo_uv, sort_key: s.sort_key, cull: native_cull(s.cull), reticle: s.reticle.as_ref().map(|r| native_reticle(r, handle)), sonar: s.sonar.as_ref().map(|so| native_sonar(so, handle)) })
                     .collect();
                 r.native_create_mesh(&vertices, &m.indices, &surfaces)
             };

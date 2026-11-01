@@ -30,6 +30,14 @@ struct Frame {
     // xy: the target's size in pixels (BO2's renderTargetSize), z: the two-colour reticle's alt
     // lerp (weaponParam0.z)
     screen: vec4<f32>,
+    // The MMS screen. optics: x seconds (gameTime), y BO2 inches per world unit, z blip count;
+    // forward: the view's forward (world); depth: x, y the target view's projection terms
+    // (device depth = x + y / view z); blips: per character (pos.xyz, radius), (height,
+    // intensity, -, -)
+    optics: vec4<f32>,
+    forward: vec4<f32>,
+    depth: vec4<f32>,
+    blips: array<vec4<f32>, 16>,
 };
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -56,12 +64,16 @@ struct Material {
     ret2: vec4<f32>,
     ret3: vec4<f32>,
     ret4: vec4<f32>,
+    // The MMS screen's constants (zhbo_native::model::Sonar::constants order).
+    sonar: array<vec4<f32>, 8>,
 }
 @group(1) @binding(3) var<uniform> material: Material;
 @group(1) @binding(4) var camo_map: texture_2d<f32>;
 // BO2's spec map colour (raw). Surfaces without one bind the 1x1 white texture and take the
 // packed maps' scalar level instead.
 @group(1) @binding(5) var spec_map: texture_2d<f32>;
+// The scene's device depth (resolved from the target's depth attachment; 1 is the sky).
+@group(2) @binding(0) var scene_z: texture_2d<f32>;
 
 struct VIn {
     @location(0) pos: vec3<f32>,
@@ -291,4 +303,191 @@ fn fs_reticle(i: VOut) -> @location(0) vec4<f32> {
         }
     }
     return finish(min(rgb * sqrt(fade), vec3<f32>(1.0)), select(alpha * fade, 1.0, kind > 2.5));
+}
+
+// BO2's millimetre-scanner screen (`sw4_3d_sonar_attachment_lens2`, read from the DXBC of
+// `pimp_shader_sw4_3d_sonar_attachment_lens2_c436f53e` VS / `_fc8afb12` PS). It is screen space:
+// at its pixel it reads the scene's view depth (BO2's floatZ) and draws
+// * the outlines: |depth - mean of four diagonal taps EdgeSize * 0.005 apart| * EdgeIntensity /
+//   depth, cubed, between EdgeMinDist and EdgeMaxDist, in EdgeColor, pulsed by the lookup's blue;
+// * the pulse: a ring sweeping out from the eye, phase frac(gameTime / PulseInterval) over a
+//   wavelength PulseInterval / PulseTime * MaxDepth, profiled by the lookup's red, in PulseColor,
+//   faded in over MinDepth/2..MinDepth and out over MinDepth..MaxPulseDepth;
+// * the characters the code puts on the scanner (BO2 renders them into its sonar target; here each
+//   blip is a capsule the pixel's ray is tested against), only where they stand at least 10" behind
+//   the scene (through walls), at their intensity, pulsed by the lookup's green, in EnemiesColor;
+// times the background noise (1 - 2 * BackgroundNoise * noise.z, the noise at the mesh UV /
+// ScatterSize plus a per-frame random offset), (1 - weaponParam0.y) and hdrAmount, written opaque
+// into its additive blend. BO2 squares, fogs (none on the viewmodel) and takes the root: the colour.
+fn sonar_depth(p: vec2<i32>) -> f32 {
+    let size = vec2<i32>(textureDimensions(scene_z));
+    let d = textureLoad(scene_z, clamp(p, vec2<i32>(0), size - vec2<i32>(1)), 0).r;
+    let denom = d - frame.depth.x;
+    // The sky and a target without depth are BO2's "nothing there" (floatZ 0: very far).
+    if (d >= 1.0 || abs(denom) < 1e-12 || frame.depth.y == 0.0) {
+        return 1e7;
+    }
+    return max(frame.depth.y / denom, 0.0) * frame.optics.y;
+}
+
+fn smooth01(x: f32) -> f32 {
+    return x * x * (3.0 - 2.0 * x);
+}
+
+// The VS's per-frame offset (`dp4` chain on gameTime): z, w of its output.
+fn sonar_jitter(t: f32) -> vec2<f32> {
+    let k = vec4<f32>(81.2395, 17.348, 37.3498, 59.3948);
+    var r = vec4<f32>(0.0, 0.0, 0.0, t);
+    r.x = fract(dot(vec4<f32>(t), k));
+    r.y = fract(dot(vec4<f32>(r.x, t, t, t), k));
+    r.z = fract(dot(vec4<f32>(r.x, r.y, t, t), k));
+    r.w = fract(dot(vec4<f32>(r.x, r.y, r.z, t), k));
+    r.x = fract(dot(r, k));
+    r.y = fract(dot(r, k));
+    r.z = fract(dot(r, k));
+    return vec2<f32>(r.z, fract(dot(r, k)));
+}
+
+// The nearest capsule (standing on `base`, radius `r`, height `h`) along the ray: its distance,
+// or -1 (behind the eye or missed).
+fn ray_capsule(o: vec3<f32>, d: vec3<f32>, base: vec3<f32>, r: f32, h: f32) -> f32 {
+    let a = base + vec3<f32>(0.0, 0.0, r);
+    let b = base + vec3<f32>(0.0, 0.0, max(h - r, r));
+    let ba = b - a;
+    let oa = o - a;
+    let baba = dot(ba, ba);
+    let bard = dot(ba, d);
+    let baoa = dot(ba, oa);
+    let qa = baba - bard * bard;
+    let qb = baba * dot(d, oa) - baoa * bard;
+    let qc = baba * dot(oa, oa) - baoa * baoa - r * r * baba;
+    let disc = qb * qb - qa * qc;
+    if (disc < 0.0) {
+        return -1.0;
+    }
+    var y = -1.0;
+    if (qa > 1e-9) {
+        let t = (-qb - sqrt(disc)) / qa;
+        y = baoa + t * bard;
+        if (y > 0.0 && y < baba) {
+            return t;
+        }
+    }
+    // An end cap (the sphere at the end the body hit lies past).
+    let c = select(o - b, oa, y <= 0.0);
+    let cb = dot(d, c);
+    let h2 = cb * cb - (dot(c, c) - r * r);
+    if (h2 > 0.0) {
+        return -cb - sqrt(h2);
+    }
+    return -1.0;
+}
+
+@fragment
+fn fs_sonar(i: VOut) -> @location(0) vec4<f32> {
+    let k0 = material.sonar[0];
+    let k1 = material.sonar[1];
+    let k2 = material.sonar[2];
+    let k3 = material.sonar[3];
+    let k4 = material.sonar[4];
+    let k5 = material.sonar[5];
+    let k6 = material.sonar[6];
+    let k7 = material.sonar[7];
+    let pulse_interval = max(k0.x, 1e-3);
+    let pulse_time = max(k0.y, 1e-3);
+    let max_depth = k0.z;
+    let max_pulse_depth = k0.w;
+    let min_depth = k1.x;
+    let line_noise = k1.y;
+    let background_noise = k1.z;
+    let hdr_amount = k1.w;
+    let scatter = max(k2.xy, vec2<f32>(1e-3));
+    let edge_size = k2.z;
+    let edge_intensity = k2.w;
+    let edge_min = k3.x;
+    let edge_max = k3.y;
+    let pulse_scale = k3.z;
+    let player_scale = k3.w;
+    let outline_scale = k4.x;
+    let min_player = k4.y;
+    let enemies = vec4<f32>(k4.zw, k5.xy);
+    let pulse_color = vec4<f32>(k5.zw, k6.xy);
+    let edge_color = vec4<f32>(k6.zw, k7.xy);
+
+    // The noise, at the mesh UVs plus the frame's random offset (uniform control flow first).
+    let noise = textureSample(maps_map, samp, i.uv / scatter + sonar_jitter(frame.optics.x));
+    let phase = fract(frame.optics.x / pulse_interval);
+    let wave = max(pulse_interval / pulse_time * max_depth, 1e-3);
+
+    // The characters on the scanner: the nearest blip along this pixel's ray, its view depth
+    // (inches) and intensity (BO2's sonar colour and depth targets).
+    let dir = normalize(i.world - frame.eye.xyz);
+    let along = max(dot(dir, normalize(frame.forward.xyz + vec3<f32>(0.0, 0.0, 1e-12))), 1e-4);
+    var enemy_t = 1e30;
+    var enemy_i = 0.0;
+    let count = u32(frame.optics.z);
+    for (var b = 0u; b < 8u; b = b + 1u) {
+        if (b >= count) {
+            break;
+        }
+        let p = frame.blips[b * 2u];
+        let q = frame.blips[b * 2u + 1u];
+        let t = ray_capsule(frame.eye.xyz, dir, p.xyz, p.w, q.x);
+        if (t > 0.0 && t < enemy_t) {
+            enemy_t = t;
+            enemy_i = clamp(q.y, 0.0, 1.0);
+        }
+    }
+    // BO2: zNear / sonarDepth, 0 past 10000 (no character there).
+    var enemy_depth = 0.0;
+    if (enemy_t < 1e29) {
+        enemy_depth = enemy_t * along * frame.optics.y;
+        if (enemy_depth >= 10000.0) {
+            enemy_depth = 0.0;
+        }
+    }
+    let enemy_alpha = select(0.0, 1.0, enemy_t < 1e29);
+    let enemy_lum = dot(vec3<f32>(enemy_i), vec3<f32>(0.33));
+
+    let px = vec2<i32>(i.clip.xy);
+    let size = max(frame.screen.xy, vec2<f32>(1.0));
+    let tap = edge_size * 0.005 * size;
+    let center = sonar_depth(px);
+    let d_a = sonar_depth(vec2<i32>(i.clip.xy + vec2<f32>(-tap.x, tap.y)));
+    let d_b = sonar_depth(vec2<i32>(i.clip.xy + vec2<f32>(-tap.x, -tap.y)));
+    let d_c = sonar_depth(vec2<i32>(i.clip.xy + vec2<f32>(tap.x, -tap.y)));
+    let d_d = sonar_depth(vec2<i32>(i.clip.xy + vec2<f32>(tap.x, tap.y)));
+    let nearest = min(center, min(d_d, min(d_c, min(d_b, min(d_a, 1e7)))));
+    let edge = clamp(abs(center - (d_a + d_b + d_c + d_d) * 0.25) * edge_intensity / max(center, 1e-6), 0.0, 1.0);
+
+    // The character, pulsed by its own depth.
+    let pe = fract((wave * phase - enemy_depth) / wave + 0.5) - 0.5;
+    let player_pulse = textureSampleLevel(color_map, samp, vec2<f32>(pe / max(player_scale, 1e-6) + 0.5, 0.5), 0.0).g;
+    let enemy_amount = min(enemy_alpha, max(player_pulse, min_player));
+    // Behind the scene by 10" or more (a scene nearer than 10" counts as far).
+    let scene_behind = select(center, 100000.0, center <= 10.0) + 10.0;
+    let through_wall = select(0.0, 1.0, enemy_depth >= scene_behind);
+    let enemy = enemy_lum * enemies.rgb * enemies.w * through_wall * enemy_amount;
+
+    // The pulse ring and the outline, at the nearest of the taps.
+    let ps = fract((wave * phase - nearest) / wave + 0.5) - 0.5;
+    let ring = textureSampleLevel(color_map, samp, vec2<f32>(ps / max(pulse_scale, 1e-6) + 0.5, 0.5), 0.0).r;
+    let outline = textureSampleLevel(color_map, samp, vec2<f32>(ps / max(outline_scale, 1e-6) + 0.5, 0.5), 0.0).b;
+    let jitter = (noise.g - 0.5) * line_noise + 1.0;
+    let inv_range = 1.0 / max(max_pulse_depth - min_depth, 1e-6);
+    let half_min = max(min_depth * 0.5, 1e-6);
+    let far_fade = 1.0 - smooth01(clamp((center * jitter - min_depth) * inv_range, 0.0, 1.0));
+    let near_fade = smooth01(clamp((center * jitter - half_min) / half_min, 0.0, 1.0));
+    let pulse = near_fade * far_fade * ring * pulse_color.rgb * pulse_color.w * select(0.0, 1.0, nearest >= 0.1);
+    let enemy_far = 1.0 - smooth01(clamp((enemy_depth - min_depth) * inv_range, 0.0, 1.0));
+    let enemy_near = smooth01(clamp((enemy_depth - half_min) / half_min, 0.0, 1.0));
+    var color = enemy * enemy_far * enemy_near + pulse;
+    var e = edge * edge * edge;
+    if (nearest <= edge_min || nearest >= edge_max) {
+        e = 0.0;
+    }
+    color = color + e * edge_color.rgb * edge_color.w * outline;
+    color = color * (1.0 - 2.0 * background_noise * noise.b);
+    color = color * (1.0 - frame.params.w) * hdr_amount;
+    return finish(max(color, vec3<f32>(0.0)), 1.0);
 }

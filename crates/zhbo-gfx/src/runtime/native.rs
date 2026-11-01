@@ -28,12 +28,36 @@ pub const NATIVE_MAX_BONES: usize = 256;
 /// Lights a frame may carry.
 pub const NATIVE_MAX_LIGHTS: usize = 3;
 
-const FRAME_BYTES: u64 = 256;
+/// Characters the MMS screen can show in one frame ([`NativeOptics::blips`]).
+pub const NATIVE_MAX_BLIPS: usize = 8;
+
+/// The frame block: view_proj, eye, ambient, 3 + 3 light vectors, params, screen, then the optics
+/// (`optics`, `forward`, `depth` and two vectors per blip).
+const FRAME_BYTES: u64 = (64 + 16 * 2 + 16 * 6 + 16 + 16 + 16 * 3 + 32 * NATIVE_MAX_BLIPS) as u64;
 /// Where the frame block's `screen` vector sits (after view_proj, eye, ambient, 3 + 3 light
 /// vectors and params).
 const SCREEN_OFFSET: usize = 64 + 16 * 2 + 16 * 6 + 16;
+/// Where the frame block's `depth` vector sits (the scene projection's depth terms, filled at
+/// upload): after `screen`, `optics` and `forward`.
+const DEPTH_OFFSET: usize = SCREEN_OFFSET + 16 * 3;
+/// The scene's depth as the MMS screen reads it (raw device depth, resolved from the target's
+/// depth attachment by [`DEPTH_RESOLVE`]).
+const SCENE_Z_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R32Float;
 const PALETTE_BYTES: u64 = (NATIVE_MAX_BONES * 64) as u64;
 const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+
+/// Copies a depth attachment's sample 0 into the MMS screen's `R32Float` scene depth (a full-target
+/// triangle; `TEXTURE` is the single- or multisampled depth type).
+const DEPTH_RESOLVE: &str = "
+@group(0) @binding(0) var depth: TEXTURE;
+@vertex fn vs(@builtin(vertex_index) i: u32) -> @builtin(position) vec4<f32> {
+    let p = vec2<f32>(f32((i << 1u) & 2u), f32(i & 2u));
+    return vec4<f32>(p * 2.0 - 1.0, 0.0, 1.0);
+}
+@fragment fn fs(@builtin(position) p: vec4<f32>) -> @location(0) vec4<f32> {
+    return vec4<f32>(textureLoad(depth, vec2<i32>(p.xy), 0), 0.0, 0.0, 1.0);
+}
+";
 
 /// One vertex as the core uploads it (`#[repr(C)]`, 56 bytes).
 #[repr(C)]
@@ -120,6 +144,45 @@ impl NativeReticleKind {
     }
 }
 
+/// BO2's millimetre-scanner screen on a surface (`zhbo_native::model::Sonar`; the
+/// `sw4_3d_sonar_attachment_lens2` technique): drawn in screen space from the scene's depth and
+/// the frame's [`NativeOptics`] blips, not from a colour map.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NativeSonar {
+    /// The `Lookup` profile and `Static_Noise_Map` handles (`INVALID`: white).
+    pub lookup: u16,
+    pub noise: u16,
+    /// The shader's constants in `zhbo_native::model::Sonar::constants` order: PulseInterval,
+    /// PulseTime, MaxDepth, MaxPulseDepth; MinDepth, LineNoise, BackgroundNoise, hdrAmount;
+    /// ScatterSize.xy; EdgeSize, EdgeIntensity, EdgeMinDist, EdgeMaxDist; Pulse/Player/Outline
+    /// lookup scales, Min_Player_Intensity; EnemiesColor + Player_Color_Multiplier; PulseColor +
+    /// multiplier; EdgeColor + multiplier. Distances are BO2 inches.
+    pub constants: [f32; 30],
+}
+
+/// One character on the MMS screen: a capsule standing on `pos` (world units), seen through
+/// walls at `intensity` (BO2's per-character `weaponParam0.x`, `t6mp` `FUN_004e7b40`).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct NativeBlip {
+    pub pos: [f32; 3],
+    pub radius: f32,
+    pub height: f32,
+    pub intensity: f32,
+}
+
+/// What the optic displays read besides the material: the MMS screen's clock, view and blips.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct NativeOptics {
+    /// Seconds (BO2's `gameTime`): the pulse's phase and the noise's per-frame jitter.
+    pub time: f32,
+    /// The view's forward (unit, world space): depths are along it, as the depth buffer's.
+    pub forward: [f32; 3],
+    /// BO2 inches per world unit: the screen's constants are inches.
+    pub inches_per_unit: f32,
+    pub blips: [NativeBlip; NATIVE_MAX_BLIPS],
+    pub blip_count: u32,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct NativeReticle {
     /// The noise map (`Detail_Map`) handle, or `INVALID` for none (white).
@@ -167,6 +230,8 @@ pub struct NativeSurface {
     pub cull: NativeCull,
     /// The lens reticle technique, for a reticle surface (`None`: BO2's lit shading).
     pub reticle: Option<NativeReticle>,
+    /// The MMS screen technique (takes precedence over `reticle`).
+    pub sonar: Option<NativeSonar>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -196,9 +261,11 @@ pub struct NativeFrame {
     /// 1 while the player's optics are knocked out (`weaponParam0.y`: BO2's EMP), which hides the
     /// reticle; 0 otherwise.
     pub optics_off: f32,
-    /// `weaponParam0.z`: how far a two-colour reticle has turned to its alt colours (the dual
-    /// band's "enemy spotted" colour); 0 the primary.
+    /// `weaponParam0.z`: how far a two-colour reticle has turned to its alt colours (the target
+    /// finder's "enemy spotted" colour); 0 the primary.
     pub reticle_alt: f32,
+    /// The MMS screen's inputs.
+    pub optics: NativeOptics,
 }
 
 /// One queued draw: a mesh, its palette (world-space skinning matrices, column-major), and where.
@@ -210,9 +277,28 @@ pub struct NativeDraw<'a> {
     pub frame: NativeFrame,
 }
 
-/// The shader's `Material` uniform: params, camo UV, specular flags and the reticle's five
-/// constant blocks (eight `vec4<f32>`).
-const MATERIAL_BYTES: u64 = 128;
+/// The shader's `Material` uniform: params, camo UV, specular flags, the reticle's five constant
+/// blocks and the MMS screen's eight (sixteen `vec4<f32>`).
+const MATERIAL_BYTES: u64 = 256;
+
+/// Which fragment stage a surface draws with.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+enum Stage {
+    #[default]
+    Lit,
+    Reticle,
+    Sonar,
+}
+
+impl Stage {
+    fn entry(self) -> &'static str {
+        match self {
+            Stage::Lit => "fs",
+            Stage::Reticle => "fs_reticle",
+            Stage::Sonar => "fs_sonar",
+        }
+    }
+}
 
 struct NativeTexture {
     view: wgpu::TextureView,
@@ -224,7 +310,7 @@ struct Surface {
     blend: NativeBlend,
     sort_key: u8,
     cull: NativeCull,
-    reticle: bool,
+    stage: Stage,
     bind_group: wgpu::BindGroup,
 }
 
@@ -250,8 +336,7 @@ struct Queued {
 struct PipelineKey {
     blend: NativeBlend,
     cull: NativeCull,
-    /// The lens reticle's fragment stage (`fs_reticle`) instead of the lit one.
-    reticle: bool,
+    stage: Stage,
     color: wgpu::TextureFormat,
     samples: u32,
 }
@@ -269,6 +354,14 @@ pub(crate) struct NativeState {
     layout: wgpu::PipelineLayout,
     bgl0: wgpu::BindGroupLayout,
     bgl1: wgpu::BindGroupLayout,
+    /// Group 2: the scene's depth for the MMS screen (`scene_z`).
+    bgl2: wgpu::BindGroupLayout,
+    /// The resolved scene depth (view, width, height), rebuilt on resize, and the 1x1 "sky" the
+    /// pass binds without it.
+    scene_z: Option<(wgpu::TextureView, u32, u32)>,
+    sky_z: wgpu::BindGroup,
+    /// The depth resolve: its pipelines (single-sample, multisampled; `None` failed) and layouts.
+    resolve: [Option<Option<(wgpu::RenderPipeline, wgpu::BindGroupLayout)>>; 2],
     sampler: wgpu::Sampler,
     white: wgpu::TextureView,
     /// The ui3d reticle's absent code texture: nothing added.
@@ -326,7 +419,29 @@ impl NativeState {
                 tex(5),
             ],
         });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("native"), bind_group_layouts: &[Some(&bgl0), Some(&bgl1)], immediate_size: 0 });
+        let bgl2 = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("native scene depth"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Float { filterable: false }, view_dimension: wgpu::TextureViewDimension::D2, multisampled: false },
+                count: None,
+            }],
+        });
+        let sky = device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("native sky depth"),
+            size: wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: SCENE_Z_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(sky.as_image_copy(), &1.0f32.to_le_bytes(), wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(4), rows_per_image: None }, wgpu::Extent3d { width: 1, height: 1, depth_or_array_layers: 1 });
+        let sky_view = sky.create_view(&Default::default());
+        let sky_z = device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("native sky depth"), layout: &bgl2, entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&sky_view) }] });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("native"), bind_group_layouts: &[Some(&bgl0), Some(&bgl1), Some(&bgl2)], immediate_size: 0 });
         let module = device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("native"), source: wgpu::ShaderSource::Wgsl(include_str!("native.wgsl").into()) });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             label: Some("native"),
@@ -350,6 +465,10 @@ impl NativeState {
             layout,
             bgl0,
             bgl1,
+            bgl2,
+            scene_z: None,
+            sky_z,
+            resolve: [None, None],
             sampler,
             white: one_pixel(device, queue, [255; 4], wgpu::TextureFormat::Rgba8Unorm),
             black: one_pixel(device, queue, [0; 4], wgpu::TextureFormat::Rgba8Unorm),
@@ -492,19 +611,26 @@ impl Renderer {
                     r.native.textures.get(h).map(|t| t.view.clone())
                 }
             };
+            if s.sonar.is_some_and(|so| !finite(&so.constants)) {
+                self.report(format!("zhbo-gfx: native mesh surface {k}: non-finite sonar constants; skipped"));
+                continue;
+            }
             if s.reticle.is_some_and(|r| !r.finite()) {
                 // Log-or-skip: a reticle with a broken constant is left off, the mesh still draws.
                 self.report(format!("zhbo-gfx: native mesh surface {k}: non-finite reticle constants; skipped"));
                 continue;
             }
             // A reticle surface binds its noise map where the lit surfaces bind their packed maps.
-            let (maps_handle, maps_fallback) = match s.reticle {
-                Some(r) => (r.noise, &self.native.white),
-                None => (s.maps, &self.native.flat),
+            // The MMS screen binds its lookup profile as the colour and its noise as the maps.
+            let (maps_handle, maps_fallback) = match (s.sonar, s.reticle) {
+                (Some(so), _) => (so.noise, &self.native.white),
+                (None, Some(r)) => (r.noise, &self.native.white),
+                (None, None) => (s.maps, &self.native.flat),
             };
+            let color_handle = s.sonar.map_or(s.color, |so| so.lookup);
             let color_fallback = if s.reticle.is_some_and(|r| r.kind == NativeReticleKind::Ui3d) { &self.native.black } else { &self.native.white };
             let (Some(color), Some(maps), Some(camo), Some(specular)) = (
-                view(self, s.color, color_fallback),
+                view(self, color_handle, color_fallback),
                 view(self, maps_handle, maps_fallback),
                 view(self, s.camo, &self.native.white),
                 view(self, s.specular, &self.native.white),
@@ -549,7 +675,11 @@ impl Renderer {
                 r.glow_alt[2],
                 0.0,
             ];
-            let params: Vec<f32> = params.iter().chain(&reticle).copied().collect();
+            let mut sonar = [0.0f32; 32];
+            if let Some(so) = s.sonar {
+                sonar[..30].copy_from_slice(&so.constants);
+            }
+            let params: Vec<f32> = params.iter().chain(&reticle).chain(&sonar).copied().collect();
             let material = self.device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("native material"),
                 size: MATERIAL_BYTES,
@@ -569,7 +699,14 @@ impl Renderer {
                     wgpu::BindGroupEntry { binding: 5, resource: wgpu::BindingResource::TextureView(&specular) },
                 ],
             });
-            built.push(Surface { first_index: s.first_index, index_count: s.index_count, blend: s.blend, sort_key: s.sort_key, cull: s.cull, reticle: s.reticle.is_some(), bind_group });
+            let stage = if s.sonar.is_some() {
+                Stage::Sonar
+            } else if s.reticle.is_some() {
+                Stage::Reticle
+            } else {
+                Stage::Lit
+            };
+            built.push(Surface { first_index: s.first_index, index_count: s.index_count, blend: s.blend, sort_key: s.sort_key, cull: s.cull, stage, bind_group });
         }
         if built.is_empty() {
             // `DRAWN` hides the W3D body in third person (CONTRACT.md), so a mesh that can only draw
@@ -614,7 +751,9 @@ impl Renderer {
     pub fn native_submit(&mut self, d: &NativeDraw) -> bool {
         let why = if d.target_view as usize >= MAX_VIEWS || d.before_view as usize >= MAX_VIEWS {
             Some(format!("view {} / {} out of range", d.target_view, d.before_view))
-        } else if !d.frame.view_proj.is_none_or(|m| finite(&m)) || !finite(&d.frame.eye) || !finite(&[d.frame.ads, d.frame.optics_off, d.frame.reticle_alt]) || d.palette.iter().any(|m| !finite(m)) {
+        } else if !d.frame.view_proj.is_none_or(|m| finite(&m)) || !finite(&d.frame.eye) || !finite(&[d.frame.ads, d.frame.optics_off, d.frame.reticle_alt, d.frame.optics.time, d.frame.optics.inches_per_unit])
+            || !finite(&d.frame.optics.forward)
+            || d.frame.optics.blips.iter().any(|b| !finite(&b.pos) || !finite(&[b.radius, b.height, b.intensity])) || d.palette.iter().any(|m| !finite(m)) {
             Some("non-finite matrices".into())
         } else if d.palette.len() > NATIVE_MAX_BONES {
             Some(format!("{} bones past {NATIVE_MAX_BONES}", d.palette.len()))
@@ -650,6 +789,16 @@ impl Renderer {
         block.extend([f.light_count.min(NATIVE_MAX_LIGHTS as u32) as f32, f.debug, f.ads, f.optics_off].iter().flat_map(|c| c.to_le_bytes()));
         // `screen`: the target's size (filled at upload, when the target is known), the alt lerp.
         block.extend([1.0f32, 1.0, f.reticle_alt, 0.0].iter().flat_map(|c| c.to_le_bytes()));
+        // The optics: clock, scale and blip count; the view's forward; the depth terms (filled at
+        // upload from the target view's projection); the blips.
+        let o = &f.optics;
+        let count = o.blip_count.min(NATIVE_MAX_BLIPS as u32);
+        block.extend([o.time, o.inches_per_unit, count as f32, 0.0].iter().flat_map(|c| c.to_le_bytes()));
+        block.extend([o.forward[0], o.forward[1], o.forward[2], 0.0].iter().flat_map(|c| c.to_le_bytes()));
+        block.extend([0.0f32; 4].iter().flat_map(|c| c.to_le_bytes()));
+        for b in &o.blips {
+            block.extend([b.pos[0], b.pos[1], b.pos[2], b.radius, b.height, b.intensity, 0.0, 0.0].iter().flat_map(|c| c.to_le_bytes()));
+        }
         block.resize(FRAME_BYTES as usize, 0);
         ring.extend_from_slice(&block);
         ring.resize(ring.len().next_multiple_of(align), 0);
@@ -684,6 +833,15 @@ impl Renderer {
             .collect();
         for (at, size) in sizes {
             for (k, c) in size.iter().enumerate() {
+                self.native.ring[at + 4 * k..at + 4 * k + 4].copy_from_slice(&c.to_le_bytes());
+            }
+        }
+        // The MMS screen linearizes the scene's depth with the target view's own projection
+        // (depth = p10 + p14 / z, wgpu's 0..1 depth), whatever matrix the draw itself takes.
+        for q in &self.native.queue {
+            let p = &self.views[q.target_view as usize].proj;
+            let at = q.frame_offset as usize + DEPTH_OFFSET;
+            for (k, c) in [p[10], p[14]].iter().enumerate() {
                 self.native.ring[at + 4 * k..at + 4 * k + 4].copy_from_slice(&c.to_le_bytes());
             }
         }
@@ -749,7 +907,7 @@ impl Renderer {
             multisample: wgpu::MultisampleState { count: key.samples, ..Default::default() },
             fragment: Some(wgpu::FragmentState {
                 module: &self.native.module,
-                entry_point: Some(if key.reticle { "fs_reticle" } else { "fs" }),
+                entry_point: Some(key.stage.entry()),
                 compilation_options: wgpu::PipelineCompilationOptions { constants: &constants, ..Default::default() },
                 targets: &[Some(wgpu::ColorTargetState { format: key.color, blend: key.blend.state(), write_mask: wgpu::ColorWrites::ALL })],
             }),
@@ -766,6 +924,94 @@ impl Renderer {
         };
         self.native.pipelines.insert(key, built.clone());
         built
+    }
+
+    /// The scene's depth for the MMS screen: the target's depth attachment resolved (sample 0) into
+    /// a single-sample `R32Float` the size of the target, bound as group 2. `None` (the pass then
+    /// binds the sky) when the target has no sampleable depth or the resolve cannot be built; the
+    /// screen then shows its blips and noise without the world's outlines.
+    fn native_scene_z(&mut self, encoder: &mut wgpu::CommandEncoder, fb: u16, width: u32, height: u32) -> Option<wgpu::BindGroup> {
+        let (depth, samples) = self.scene_depth_view(fb)?;
+        let ms = usize::from(samples > 1);
+        if self.native.resolve[ms].is_none() {
+            let built = self.native_resolve_pipeline(samples > 1);
+            if built.is_none() {
+                self.report(format!("zhbo-gfx: native scene-depth resolve ({samples} samples) unavailable; the MMS screen draws without the world"));
+            }
+            self.native.resolve[ms] = Some(built);
+        }
+        let Some(Some((pipeline, bgl))) = self.native.resolve[ms].clone() else { return None };
+        if self.native.scene_z.as_ref().is_none_or(|(_, w, h)| (*w, *h) != (width, height)) {
+            let view = self
+                .device
+                .create_texture(&wgpu::TextureDescriptor {
+                    label: Some("native scene depth"),
+                    size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: SCENE_Z_FORMAT,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                    view_formats: &[],
+                })
+                .create_view(&Default::default());
+            self.native.scene_z = Some((view, width, height));
+        }
+        let (scene_z, _, _) = self.native.scene_z.clone()?;
+        let input = self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("native depth resolve"), layout: &bgl, entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&depth) }] });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("native depth resolve"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment { view: &scene_z, depth_slice: None, resolve_target: None, ops: wgpu::Operations { load: wgpu::LoadOp::Clear(wgpu::Color::WHITE), store: wgpu::StoreOp::Store } })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(&pipeline);
+            pass.set_bind_group(0, &input, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        Some(self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: Some("native scene depth"), layout: &self.native.bgl2, entries: &[wgpu::BindGroupEntry { binding: 0, resource: wgpu::BindingResource::TextureView(&scene_z) }] }))
+    }
+
+    /// The depth-only, sampleable view of a frame buffer's depth attachment (the backbuffer's for
+    /// `INVALID`) and its sample count, if it has one that can be bound.
+    fn scene_depth_view(&self, fb: u16) -> Option<(wgpu::TextureView, u32)> {
+        if fb == INVALID {
+            return self.backbuffer.depth_sampled.clone().map(|v| (v, self.backbuffer.samples));
+        }
+        let (_, depth, _, _) = self.frame_buffer_targets(fb)?;
+        let d = depth?;
+        (d.texture.usage().contains(wgpu::TextureUsages::TEXTURE_BINDING) && !d.array).then(|| (d.view.clone(), d.sample_count()))
+    }
+
+    fn native_resolve_pipeline(&mut self, multisampled: bool) -> Option<(wgpu::RenderPipeline, wgpu::BindGroupLayout)> {
+        let scope = self.device.push_error_scope(wgpu::ErrorFilter::Validation);
+        let bgl = self.device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("native depth resolve"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture { sample_type: wgpu::TextureSampleType::Depth, view_dimension: wgpu::TextureViewDimension::D2, multisampled },
+                count: None,
+            }],
+        });
+        let source = DEPTH_RESOLVE.replace("TEXTURE", if multisampled { "texture_depth_multisampled_2d" } else { "texture_depth_2d" });
+        let module = self.device.create_shader_module(wgpu::ShaderModuleDescriptor { label: Some("native depth resolve"), source: wgpu::ShaderSource::Wgsl(source.into()) });
+        let layout = self.device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor { label: Some("native depth resolve"), bind_group_layouts: &[Some(&bgl)], immediate_size: 0 });
+        let pipeline = self.device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            label: Some("native depth resolve"),
+            layout: Some(&layout),
+            vertex: wgpu::VertexState { module: &module, entry_point: Some("vs"), compilation_options: Default::default(), buffers: &[] },
+            primitive: Default::default(),
+            depth_stencil: None,
+            multisample: Default::default(),
+            fragment: Some(wgpu::FragmentState { module: &module, entry_point: Some("fs"), compilation_options: Default::default(), targets: &[Some(wgpu::ColorTargetState { format: SCENE_Z_FORMAT, blend: None, write_mask: wgpu::ColorWrites::ALL })] }),
+            multiview_mask: None,
+            cache: None,
+        });
+        super::block_on(scope.pop()).is_none().then_some((pipeline, bgl))
     }
 
     fn native_depth(&mut self, width: u32, height: u32, samples: u32) -> wgpu::TextureView {
@@ -824,13 +1070,16 @@ impl Renderer {
             for blended in [false, true] {
                 for q in &draws {
                     for s in q.mesh.surfaces.iter().filter(|s| s.blend.blended() == blended) {
-                        let key = PipelineKey { blend: s.blend, cull: s.cull, reticle: s.reticle, color: color_format, samples: target.samples };
+                        let key = PipelineKey { blend: s.blend, cull: s.cull, stage: s.stage, color: color_format, samples: target.samples };
                         if let Some(p) = self.native_pipeline(key) {
                             plans.push((p, *q, s));
                         }
                     }
                 }
             }
+            // The MMS screen reads the scene's depth: resolve it first (the sky without one).
+            let scene_z = if plans.iter().any(|(_, _, s)| s.stage == Stage::Sonar) { self.native_scene_z(encoder, view.frame_buffer, target.width, target.height) } else { None };
+            let scene_group = scene_z.unwrap_or_else(|| self.native.sky_z.clone());
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("native"),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -850,6 +1099,7 @@ impl Renderer {
             });
             pass.set_viewport(x as f32, y as f32, w as f32, h as f32, 0.0, 1.0);
             pass.set_scissor_rect(x, y, w, h);
+            pass.set_bind_group(2, &scene_group, &[]);
             for (pipeline, q, s) in plans {
                 pass.set_pipeline(&pipeline);
                 pass.set_bind_group(0, &frame_group, &[q.frame_offset, q.palette_offset]);

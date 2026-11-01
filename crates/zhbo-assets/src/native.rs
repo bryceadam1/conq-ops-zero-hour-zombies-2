@@ -91,6 +91,7 @@ pub(crate) fn material_record(mat: Option<&xmodel::Material>, texture: Option<&s
         camo: mat.map_or(nm::CamoLayer::None, camo_layer),
         reticle: texture.and_then(|t| looks.reticle.get(t)).cloned(),
         emblem: texture.is_some_and(|t| looks.emblem.contains(t)),
+        sonar: texture.and_then(|t| looks.sonar.get(t)).cloned(),
     }
 }
 

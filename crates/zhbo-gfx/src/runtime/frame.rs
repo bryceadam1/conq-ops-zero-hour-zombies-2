@@ -16,7 +16,10 @@ pub(crate) struct Backbuffer {
     format: wgpu::TextureFormat,
     msaa: Option<wgpu::TextureView>,
     depth: wgpu::TextureView,
-    samples: u32,
+    /// The depth's depth-only view for sampling (the MMS screen reads the scene's depth), when
+    /// single-sampled.
+    pub(super) depth_sampled: Option<wgpu::TextureView>,
+    pub(super) samples: u32,
     width: u32,
     height: u32,
 }
@@ -266,19 +269,19 @@ pub(crate) fn build_backbuffer(device: &wgpu::Device, adapter: &wgpu::Adapter, v
             })
             .create_view(&Default::default())
     });
-    let depth = device
-        .create_texture(&wgpu::TextureDescriptor {
-            label: Some("backbuffer depth"),
-            size,
-            mip_level_count: 1,
-            sample_count: samples,
-            dimension: wgpu::TextureDimension::D2,
-            format: DEPTH_FORMAT,
-            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
-            view_formats: &[],
-        })
-        .create_view(&Default::default());
-    Backbuffer { color, target, plain, format, msaa, depth, samples, width, height }
+    let depth_texture = device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("backbuffer depth"),
+        size,
+        mip_level_count: 1,
+        sample_count: samples,
+        dimension: wgpu::TextureDimension::D2,
+        format: DEPTH_FORMAT,
+        usage: if samples == 1 { wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING } else { wgpu::TextureUsages::RENDER_ATTACHMENT },
+        view_formats: &[],
+    });
+    let depth = depth_texture.create_view(&Default::default());
+    let depth_sampled = (samples == 1).then(|| depth_texture.create_view(&wgpu::TextureViewDescriptor { aspect: wgpu::TextureAspect::DepthOnly, ..Default::default() }));
+    Backbuffer { color, target, plain, format, msaa, depth, depth_sampled, samples, width, height }
 }
 
 pub(crate) fn supported_samples_for(adapter: &wgpu::Adapter, format: wgpu::TextureFormat, wanted: u32) -> u32 {

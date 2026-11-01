@@ -34,6 +34,8 @@ pub(crate) struct Looks {
     pub(crate) reticle: BTreeMap<String, zhbo_native::model::Reticle>,
     /// The emblem surfaces, by colour map: the core paints the player's faction emblem there.
     pub(crate) emblem: BTreeSet<String>,
+    /// The MMS screen's constants and maps, by the surface's key (see [`sonar`]).
+    pub(crate) sonar: BTreeMap<String, zhbo_native::model::Sonar>,
     /// Keys of surfaces with no texture file of their own (the ui3d reticle draws a code texture):
     /// their native material names no colour map.
     pub(crate) no_file: BTreeSet<String>,
@@ -56,6 +58,8 @@ pub(crate) fn reticle_kind(techset: &str) -> Option<ReticleKind> {
         .map(|(_, k)| k)
 }
 const CLAN_TAG: &str = "sw4_3d_clan_tag";
+/// The MMS screen's technique set (`mc/mtl_t6_attach_optic_mms_display`).
+const SONAR: &str = "sw4_3d_sonar_attachment_lens";
 const PLAYER_ICON: &str = "sw4_3d_player_icon";
 
 /// BO2's wrist datapad: the campaign map/readout screen on the first-person hands. Multiplayer's
@@ -89,6 +93,8 @@ pub(crate) fn textures(model: &xmodel::Model, paks: &Paks, files: &mut BTreeMap<
             // and leaves them out (the HUD draws the reticle there); the native pass draws them.
             let engine_filled = if reticle_kind(&m.techset).is_some() {
                 Some(reticle(m, paks, files, looks))
+            } else if m.techset.contains(SONAR) {
+                Some(sonar(m, paks, files, looks))
             } else if m.techset.contains(CLAN_TAG) {
                 Some(clan_tag(m, paks, files, looks))
             } else if m.techset.contains(PLAYER_ICON) {
@@ -225,6 +231,48 @@ pub(crate) fn reticle_constants(m: &xmodel::Material, noise: Option<String>, kin
         glow_alt: rgb(c("Glow_Alt_Color")?),
     })
     .filter(|r| [r.scale, r.glow_falloff, r.emissive, r.noise_scale, r.noise_amount, r.background].iter().chain(&r.color).chain(&r.glow).chain(&r.color_alt).chain(&r.glow_alt).all(|v| v.is_finite()))
+}
+
+/// The MMS screen: no colour map of its own (the shader draws the scene's depth and the scanner's
+/// characters); its `Lookup` profile and `Static_Noise_Map`, raw, and its constants. Left out of
+/// the W3D conversion (its plain additive noise washed the lens white); the native pass draws it.
+fn sonar(m: &xmodel::Material, paks: &Paks, files: &mut BTreeMap<String, Vec<u8>>, looks: &mut Looks) -> Option<String> {
+    let mut raw = |sampler: &str| -> Option<String> {
+        let img = m.sampler(sampler)?;
+        let file = character::texture_file(&img.name);
+        let path = format!("Art\\Textures\\{file}");
+        if let std::collections::btree_map::Entry::Vacant(e) = files.entry(path.clone()) {
+            e.insert(images::tga_bytes(&shrink(paks.resolve(img)?, MAX_TEXTURE)));
+        }
+        Some(path)
+    };
+    let (lookup, noise) = (raw("Lookup"), raw("Static_Noise_Map"));
+    let constants = sonar_constants(m, lookup, noise)?;
+    let name = character::texture_file(&m.name);
+    native_only(m, &name, looks);
+    looks.no_file.insert(name.clone());
+    looks.sonar.insert(name.clone(), constants);
+    Some(name)
+}
+
+/// The MMS screen shader's constants from the material (`None` when one it reads is missing or
+/// not finite).
+pub(crate) fn sonar_constants(m: &xmodel::Material, lookup: Option<String>, noise: Option<String>) -> Option<zhbo_native::model::Sonar> {
+    let c = |n: &str| m.constant(n).filter(|v| v.iter().all(|x| x.is_finite()));
+    let x = |n: &str| c(n).map(|v| v[0]);
+    let rgb_x = |col: &str, mul: &str| -> Option<[f32; 4]> { let v = c(col)?; Some([v[0], v[1], v[2], x(mul)?]) };
+    Some(zhbo_native::model::Sonar {
+        lookup,
+        noise,
+        pulse: [x("PulseInterval")?, x("PulseTime")?, x("MaxDepth")?, x("MaxPulseDepth")?],
+        depth: [x("MinDepth")?, x("LineNoise")?, x("BackgroundNoise")?, x("hdrAmount")?],
+        scatter: { let v = c("ScatterSize")?; [v[0], v[1]] },
+        edge: [x("EdgeSize")?, x("EdgeIntensity")?, x("EdgeMinDist")?, x("EdgeMaxDist")?],
+        lookup_scale: [x("Pulse_Lookup_Scale")?, x("Player_Lookup_Scale")?, x("Outline_Lookup_Scale")?, x("Min_Player_Intensity")?],
+        enemies: rgb_x("EnemiesColor", "Player_Color_Multiplier")?,
+        pulse_color: rgb_x("PulseColor", "Pulse_Color_Multiplier")?,
+        edge_color: rgb_x("EdgeColor", "Edge_Color_Multiplier")?,
+    })
 }
 
 /// The clan tag as BO2 draws it for a player without one. Its shader picks four glyphs out of the
@@ -404,6 +452,32 @@ mod tests {
         m.constants.pop();
         assert!(reticle_constants(&m, None, ReticleKind::Dynamic).is_none(), "no Color_Map_Scale, no projection");
         assert!(reticle_constants(&m, None, ReticleKind::Static).is_some(), "the static technique does not project");
+    }
+
+    /// The MMS screen's constants, from the install's `mc/mtl_t6_attach_optic_mms_display` values
+    /// (`~/.opencode/plan/lens-reticle/probe-mms-rf.txt`); a missing one draws nothing.
+    #[test]
+    fn the_sonar_screen_reads_its_shaders_constants() {
+        let c = |n: &str, v: f32| xmodel::Constant { name_hash: xmodel::sampler_hash(n), value: [v, 0.0, 0.0, 1.0] };
+        let rgb = |n: &str, v: [f32; 3]| xmodel::Constant { name_hash: xmodel::sampler_hash(n), value: [v[0], v[1], v[2], 1.0] };
+        let mut m = xmodel::Material {
+            name: "mc/mtl_t6_attach_optic_mms_display".into(),
+            constants: vec![
+                c("hdrAmount", 1.25), rgb("EnemiesColor", [0.607143, 0.785714, 1.0]), xmodel::Constant { name_hash: xmodel::sampler_hash("ScatterSize"), value: [0.5, 0.5, 0.0, 1.0] },
+                c("Player_Lookup_Scale", 2.0), c("Edge_Color_Multiplier", 1.0), c("Min_Player_Intensity", 0.0), c("Outline_Lookup_Scale", 2.0),
+                c("PulseTime", 1.1), rgb("PulseColor", [0.607143, 0.689286, 1.0]), c("Pulse_Color_Multiplier", 1.5), c("MaxDepth", 1000.0),
+                c("Pulse_Lookup_Scale", 3.0), c("EdgeIntensity", 100.0), rgb("EdgeColor", [0.75, 0.791429, 1.0]), c("Player_Color_Multiplier", 7.0),
+                c("EdgeMinDist", 10.0), c("MaxPulseDepth", 1250.0), c("EdgeMaxDist", 1000.0), c("PulseInterval", 1.5), c("BackgroundNoise", 0.7),
+                c("EdgeSize", 0.22), c("LineNoise", 0.0), c("MinDepth", 60.0),
+            ],
+            ..Default::default()
+        };
+        let s = sonar_constants(&m, Some("l".into()), None).expect("all constants present");
+        assert_eq!((s.pulse, s.depth, s.scatter), ([1.5, 1.1, 1000.0, 1250.0], [60.0, 0.0, 0.7, 1.25], [0.5, 0.5]));
+        assert_eq!((s.edge, s.lookup_scale), ([0.22, 100.0, 10.0, 1000.0], [3.0, 2.0, 2.0, 0.0]));
+        assert_eq!((s.enemies, s.pulse_color, s.edge_color), ([0.607143, 0.785714, 1.0, 7.0], [0.607143, 0.689286, 1.0, 1.5], [0.75, 0.791429, 1.0, 1.0]));
+        m.constants.retain(|k| k.name_hash != xmodel::sampler_hash("MinDepth"));
+        assert!(sonar_constants(&m, None, None).is_none(), "no MinDepth, nothing to draw by");
     }
 
     /// The technique set names the technique, the most specific prefix first.

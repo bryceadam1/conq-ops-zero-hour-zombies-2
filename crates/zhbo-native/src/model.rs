@@ -250,6 +250,60 @@ impl Reticle {
     }
 }
 
+/// BO2's millimetre-scanner screen (the `sw4_3d_sonar_attachment_lens2` techset:
+/// `mc/mtl_t6_attach_optic_mms_display`). It is drawn in screen space from the scene's view depth
+/// (its outlines and a pulse ring sweeping out from the eye) and from the characters the code puts
+/// on the scanner (shown only behind walls); the numbers are the material's own constants, by the
+/// shader's names (DXBC of `pimp_shader_sw4_3d_sonar_attachment_lens2_fc8afb12`, MODLOG "The MMS
+/// screen"). Distances are BO2 inches.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Sonar {
+    /// `Lookup` (the pulse's profile along U: green the characters', red the ring's, blue the
+    /// outline's) and `Static_Noise_Map`, raw; `None` draws white.
+    pub lookup: Option<String>,
+    pub noise: Option<String>,
+    /// `PulseInterval`, `PulseTime`, `MaxDepth`, `MaxPulseDepth`.
+    pub pulse: [f32; 4],
+    /// `MinDepth`, `LineNoise`, `BackgroundNoise`, `hdrAmount`.
+    pub depth: [f32; 4],
+    /// `ScatterSize` (the noise's tiling over the mesh UVs).
+    pub scatter: [f32; 2],
+    /// `EdgeSize`, `EdgeIntensity`, `EdgeMinDist`, `EdgeMaxDist`.
+    pub edge: [f32; 4],
+    /// `Pulse_Lookup_Scale`, `Player_Lookup_Scale`, `Outline_Lookup_Scale`, `Min_Player_Intensity`.
+    pub lookup_scale: [f32; 4],
+    /// `EnemiesColor` and `Player_Color_Multiplier`.
+    pub enemies: [f32; 4],
+    /// `PulseColor` and `Pulse_Color_Multiplier`.
+    pub pulse_color: [f32; 4],
+    /// `EdgeColor` and `Edge_Color_Multiplier`.
+    pub edge_color: [f32; 4],
+}
+
+impl Sonar {
+    /// Every constant, in the record's order.
+    pub fn constants(&self) -> [f32; 30] {
+        let mut out = [0.0; 30];
+        let all = self.pulse.iter().chain(&self.depth).chain(&self.scatter).chain(&self.edge).chain(&self.lookup_scale).chain(&self.enemies).chain(&self.pulse_color).chain(&self.edge_color);
+        for (o, v) in out.iter_mut().zip(all) {
+            *o = *v;
+        }
+        out
+    }
+    fn write(&self, w: &mut Writer) {
+        w.opt_str(self.lookup.as_deref());
+        w.opt_str(self.noise.as_deref());
+        w.f32s(&self.constants());
+    }
+    fn read(r: &mut Reader) -> Result<Sonar, FormatError> {
+        let lookup = r.opt_str()?;
+        let noise = r.opt_str()?;
+        let c: [f32; 30] = r.f32n()?;
+        let q = |i: usize| [c[i], c[i + 1], c[i + 2], c[i + 3]];
+        Ok(Sonar { lookup, noise, pulse: q(0), depth: q(4), scatter: [c[8], c[9]], edge: q(10), lookup_scale: q(14), enemies: q(18), pulse_color: q(22), edge_color: q(26) })
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Material {
     /// BO2's material name (for logs).
@@ -280,6 +334,9 @@ pub struct Material {
     /// BO2's emblem surface (`sw4_3d_player_icon`): the core draws the player's faction emblem on
     /// it in place of the material's own stand-in (`emblem_clear`).
     pub emblem: bool,
+    /// The MMS screen's technique and constants, for its display surface (appended after
+    /// `emblem`; the model/camo `VERSION` bumps are integrator-owned).
+    pub sonar: Option<Sonar>,
 }
 
 impl Material {
@@ -303,6 +360,13 @@ impl Material {
             }
         }
         w.u8(self.emblem as u8);
+        match &self.sonar {
+            None => w.u8(0),
+            Some(s) => {
+                w.u8(1);
+                s.write(w);
+            }
+        }
     }
     /// Read one material record written by [`Self::write`].
     pub fn read(r: &mut Reader) -> Result<Material, FormatError> {
@@ -325,6 +389,11 @@ impl Material {
                 0 => false,
                 1 => true,
                 v => return Err(FormatError::Corrupt(format!("emblem flag {v}"))),
+            },
+            sonar: match r.u8()? {
+                0 => None,
+                1 => Some(Sonar::read(r)?),
+                v => return Err(FormatError::Corrupt(format!("sonar tag {v}"))),
             },
         })
     }
@@ -556,6 +625,7 @@ pub(crate) mod tests {
         let mut m = strip();
         m.materials[0].reticle = Some(Reticle { scale: 14.6, color: [0.25, 1.0, 0.0], glow: [0.0, 1.0, 0.2], glow_falloff: 3.0, emissive: 8.3, noise_scale: 4.75, noise_amount: 0.1, background: 0.0, noise: Some("Art\\Textures\\n.tga".into()), kind: ReticleKind::TwoColors, color_alt: [1.0, 0.4, 0.4], glow_alt: [1.0, 0.0, 0.0] });
         m.materials[0].emblem = true;
+        m.materials[0].sonar = Some(Sonar { lookup: Some("Art\\Textures\\l.tga".into()), noise: None, pulse: [1.5, 1.1, 1000.0, 1250.0], depth: [60.0, 0.0, 0.7, 1.25], scatter: [0.5, 0.5], edge: [0.22, 100.0, 10.0, 1000.0], lookup_scale: [3.0, 2.0, 2.0, 0.0], enemies: [0.6, 0.79, 1.0, 7.0], pulse_color: [0.6, 0.69, 1.0, 1.5], edge_color: [0.75, 0.79, 1.0, 1.0] });
         let bytes = m.to_bytes();
         assert_eq!(Model::from_bytes(&bytes).unwrap(), m);
         for n in 0..bytes.len() {

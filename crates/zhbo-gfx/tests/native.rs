@@ -8,7 +8,7 @@
 
 use std::sync::{Arc, Mutex};
 
-use zhbo_gfx::runtime::{InitDesc, NativeBlend, NativeCull, NativeDraw, NativeFrame, NativeLight, NativeReticle, NativeReticleKind, NativeSurface, NativeVertex, Renderer, WindowKind, INVALID};
+use zhbo_gfx::runtime::{InitDesc, NativeBlend, NativeBlip, NativeCull, NativeDraw, NativeFrame, NativeLight, NativeOptics, NativeReticle, NativeReticleKind, NativeSonar, NativeSurface, NativeVertex, Renderer, WindowKind, INVALID};
 use zhbo_gfx::state;
 
 const W: u32 = 64;
@@ -86,6 +86,7 @@ fn frame(lights: u32) -> NativeFrame {
         ads: 0.0,
         optics_off: 0.0,
         reticle_alt: 0.0,
+        optics: NativeOptics::default(),
     }
 }
 
@@ -95,7 +96,7 @@ fn texture(r: &mut Renderer, rgba: [u8; 4]) -> u16 {
 }
 
 fn surface(color: u16, emissive: bool, count: u32) -> NativeSurface {
-    NativeSurface { first_index: 0, index_count: count, blend: NativeBlend::Opaque, emissive, color, maps: INVALID, specular: INVALID, camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: 0, cull: NativeCull::None, reticle: None }
+    NativeSurface { first_index: 0, index_count: count, blend: NativeBlend::Opaque, emissive, color, maps: INVALID, specular: INVALID, camo: INVALID, camo_uv: [0.0, 0.0, 1.0, 1.0], sort_key: 0, cull: NativeCull::None, reticle: None, sonar: None }
 }
 
 /// A camo layer replaces the base colour at its own coverage. A multiply would leave the base
@@ -119,6 +120,7 @@ fn camo_layer_replaces_the_base_colour() {
         sort_key: 0,
         cull: NativeCull::None,
         reticle: None,
+        sonar: None,
     };
     let mesh = r.native_create_mesh(&verts, &[0, 2, 1, 0, 3, 2], &[camo_surface]);
     assert_ne!(mesh, INVALID);
@@ -620,4 +622,81 @@ fn the_ui3d_reticle_adds_nothing_without_its_code_texture() {
     let shown = r.native_create_mesh(&lens(), &[0, 2, 1, 0, 3, 2], &[ui(tex)]);
     assert!(draw_frame(&mut r, &shot, shown, IDENTITY, hip).2 > 0, "the code texture's shape");
     assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
+}
+
+/// The MMS screen's constants as the install's display material has them, with each term's colour
+/// isolated for the test: the characters blue, the pulse red, the outlines off.
+fn sonar_constants(enemies: [f32; 3], pulse: [f32; 3]) -> [f32; 30] {
+    [
+        1.5, 1.1, 1000.0, 1250.0, // PulseInterval, PulseTime, MaxDepth, MaxPulseDepth
+        60.0, 0.0, 0.0, 1.25, // MinDepth, LineNoise, BackgroundNoise, hdrAmount
+        0.5, 0.5, // ScatterSize
+        0.22, 100.0, 10.0, 1000.0, // EdgeSize, EdgeIntensity, EdgeMinDist, EdgeMaxDist
+        3.0, 2.0, 2.0, 0.0, // lookup scales, Min_Player_Intensity
+        enemies[0], enemies[1], enemies[2], 7.0, // EnemiesColor, Player_Color_Multiplier
+        pulse[0], pulse[1], pulse[2], 1.5, // PulseColor, multiplier
+        0.0, 0.0, 0.0, 0.0, // EdgeColor, multiplier
+    ]
+}
+
+/// Draw the MMS screen over a scene whose depth is cleared to view depth `wall` (world units; `None`
+/// the sky), the eye at the origin looking down +Z (`perspective`), 6 inches to the unit.
+fn draw_sonar(r: &mut Renderer, shot: &Shot, mesh: u16, wall: Option<f32>, blips: &[NativeBlip], optics_off: f32) -> Vec<u8> {
+    let p = perspective();
+    r.set_view_transform(1, Some(&IDENTITY), Some(&p));
+    // Device depth for view z: p10 + p14 / z.
+    let depth = wall.map_or(1.0, |z| p[10] + p[14] / z);
+    r.set_view_clear(1, state::CLEAR_COLOR | state::CLEAR_DEPTH, 0x000000ff, depth, 0);
+    let mut optics = NativeOptics { time: 0.4, forward: [0.0, 0.0, 1.0], inches_per_unit: 6.0, blip_count: blips.len() as u32, ..Default::default() };
+    optics.blips[..blips.len()].copy_from_slice(blips);
+    let f = NativeFrame { view_proj: Some(p), eye: [0.0; 3], optics, optics_off, ..frame(0) };
+    r.touch(1);
+    assert!(r.native_submit(&NativeDraw { target_view: 1, before_view: 2, mesh, palette: &[IDENTITY], frame: f }));
+    r.request_screenshot(INVALID, "sonar.png");
+    r.frame();
+    shot.lock().unwrap().clone().expect("a screenshot")
+}
+
+/// BO2's MMS screen reads the scene's depth: the pulse lights the scene within its range (it fades
+/// out toward MaxPulseDepth and is gone at the sky), and a character on the scanner shows only
+/// where it stands behind the scene (through a wall), not in front of it.
+#[test]
+fn the_mms_screen_pulses_the_scene_and_shows_characters_through_walls() {
+    let Some((mut r, log, shot)) = renderer() else { return };
+    let so = |enemies, pulse| NativeSonar { lookup: INVALID, noise: INVALID, constants: sonar_constants(enemies, pulse) };
+    let screen = |r: &mut Renderer, so: NativeSonar| r.native_create_mesh(&lens(), &[0, 2, 1, 0, 3, 2], &[NativeSurface { blend: NativeBlend::Additive, sonar: Some(so), ..surface(INVALID, false, 6) }]);
+    let pulse_only = screen(&mut r, so([0.0; 3], [1.0, 0.0, 0.0]));
+    let red = |px: &[u8]| px.chunks(4).filter(|p| p[2] > 128).count();
+    let blue = |px: &[u8]| px.chunks(4).filter(|p| p[0] > 128).count();
+    // A wall 20 units (120") away: inside the pulse's range, so the ring (its profile white here)
+    // lights it.
+    let wall = draw_sonar(&mut r, &shot, pulse_only, Some(20.0), &[], 0.0);
+    assert!(red(&wall) > 200, "the pulse lights the scene: {}", red(&wall));
+    assert_eq!(red(&draw_sonar(&mut r, &shot, pulse_only, None, &[], 0.0)), 0, "nothing at the sky");
+    assert_eq!(red(&draw_sonar(&mut r, &shot, pulse_only, Some(20.0), &[], 1.0)), 0, "optics knocked out");
+    // A character 40 units out on the axis, seen end-on (the capsule stands along +Z here).
+    let enemy_only = screen(&mut r, so([0.0, 0.0, 1.0], [0.0; 3]));
+    let blip = NativeBlip { pos: [0.0, 0.0, 40.0], radius: 3.0, height: 10.0, intensity: 1.0 };
+    let behind = draw_sonar(&mut r, &shot, enemy_only, Some(20.0), &[blip], 0.0);
+    let n = blue(&behind);
+    assert!(n > 0, "seen through the wall");
+    let px = |img: &[u8], x: u32, y: u32| img[((y * W + x) * 4) as usize];
+    assert!(px(&behind, 32, 32) > 128 && px(&behind, 4, 4) == 0, "on the axis, not elsewhere");
+    assert_eq!(blue(&draw_sonar(&mut r, &shot, enemy_only, Some(60.0), &[blip], 0.0)), 0, "in front of the wall: not on the scanner");
+    let faint = NativeBlip { intensity: 0.0, ..blip };
+    assert_eq!(blue(&draw_sonar(&mut r, &shot, enemy_only, Some(20.0), &[faint], 0.0)), 0, "a faded character draws nothing");
+    assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
+}
+
+/// A screen with a non-finite constant is skipped at upload, the mesh's other surfaces draw.
+#[test]
+fn a_non_finite_sonar_is_skipped_not_fatal() {
+    let Some((mut r, log, _shot)) = renderer() else { return };
+    let mut c = sonar_constants([0.0; 3], [1.0, 0.0, 0.0]);
+    c[4] = f32::NAN;
+    let bad = NativeSurface { blend: NativeBlend::Additive, sonar: Some(NativeSonar { lookup: INVALID, noise: INVALID, constants: c }), ..surface(INVALID, false, 6) };
+    let tex = texture(&mut r, [255, 255, 255, 255]);
+    let mesh = r.native_create_mesh(&lens(), &[0, 2, 1, 0, 3, 2], &[bad, surface(tex, true, 6)]);
+    assert_ne!(mesh, INVALID);
+    assert!(log.lock().unwrap().iter().any(|l| l.contains("non-finite sonar")));
 }
