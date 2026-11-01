@@ -9236,3 +9236,62 @@ Verified:
 * `cargo xtask build`: OK.
 * Autotests, run one at a time: default 16/16, `--classpick` 8/8, `--rts` 15/15, `--scope` pass,
   `--w3d-ads` 2/2.
+
+## The XPR-50's hip rig root lives in the ADS layer: the layer is on at the hip (2026-11-01, `v1/xpr-viewmodel`)
+
+Playtest report: "The XPR-50 is not being held correctly in first-person; the view is inside the
+weapon." The headless sweep reproduced it: at the hip the XPR's receiver surrounded the eye and the
+arms were behind the camera. Its aimed half looked right.
+
+* **Root cause.** BO2's `viewmodel_xpr50_*` action clips are authored against a different rig root
+  than every other gun. The hip `tag_torso` is not the hands' bind `[-4.63, 0, -1.38]`; it is
+  `[8.68, -3.97, -4.64]`, 13.3″ further forward. That value exists only in the 0x55/0x56 ADS clips
+  (`ads_up` frame 0 = `ads_down` last frame). The XPR idle's `tag_weapon` is `[1.35, -0.37, -1.23]`
+  and its shoulders sit at −17″, both relative to that root. BO2 keeps the layer on at every
+  fraction: G12 weights 0x56 by `1 − fWeaponPosFrac`, and `FUN_0052dcb0` holds it at weight 1 on a
+  switch. The native path only asked for the ADS clips when `ads > 0`, and the W3D path did the same
+  (`if (ads > 0.0f && anim)`). So at the hip both paths used the bind torso, and the XPR's rig sat
+  13″ back with the gun on the eye.
+* **Why the earlier `as50-placement` cycle missed it.** That cycle (2026-10-23, "BO2-parity, proven
+  with numbers") compared the weapon file's `view_pos` and the model bounds. Both are innocent. It
+  never looked at the clips' root, and the 42″ "aim marker at the muzzle" it recorded was a symptom
+  of the same mis-rooted pose. The install tests that came later (`the_ads_clip_reproduces_…`,
+  `the_aimed_sight_lies_on_the_shot_…`) pose only `ads = 1`, so the hip never had a check.
+* **Fix.** `nativevm/ffi.rs` requests and samples the layer at every fraction. With `ads = 0` the
+  up clip's first key is used, which equals the down clip's last key. The W3D combo drops its
+  `ads > 0` gate the same way. No converter, archive or format change. The whole-catalog probe
+  (every MP weapon's 0x55/0x56 `tag_torso` hip key against the bind) shows who moves: `as50_mp`
+  13.3″, `lsat_mp`/`dualoptic_lsat_mp` 0.8″, the minigun family 0.3″, `type95` 0.01″. Every other
+  gun's hip key is the bind, so they are byte-for-byte the same pose. No action clip of a weapon
+  with an ADS layer keys `tag_torso` itself (the equipment/grenade clips that do have no layer), so
+  the overlay at the hip replaces nothing.
+* **The metric: `nativevm::hold`.** It skins every drawn vertex of the gun parts (manifest part ≠ 0)
+  by the last pose into the eye frame and records a box per part. It also records which of the six
+  axis rays from the eye cross that part's triangles. A part *encloses* the eye when its box holds
+  the eye and at least five of the six rays are blocked (`ENCLOSED_RAYS`). The XPR-50 blocked 5,
+  because its receiver is open at one end and the nearest vertex was 0.17″ from the eye. The box alone gives false positives: the HAMR's gun part has
+  vertices 125″ behind the eye, so its box swallows the eye with 0 rays blocked, and the SMAW/FHJ-18
+  shoulder tubes pass beside the head with 1 ray blocked. `hold_of` drives the game's own frame on a
+  private state. The install-gated `every_viewmodel_is_held_in_front_of_the_eye` runs it over every
+  weapon and every attachment it offers (about 450 hip poses plus the guns' ADS poses).
+  * Before the fix it flags exactly the 10 XPR-50 rows (base and all 9 attachments). After the fix
+    it flags none.
+  * Unit tests on box fixtures cover a closed box, a held box and an open tube, plus an XPR-shaped
+    hip layer. The sweep example's manifest also notes `HIP EYE INSIDE part N`.
+* **The pistol RMR is a different issue.** Reported: the Five-seven+reflex's aimed lens "sits below
+  the eye line". It is not this root cause, and it is not a pose problem.
+  * The pistols' rows are byte-identical before and after this fix, because the layer was already
+    on at `ads > 0`.
+  * At full ADS the converter's window marker lands +0.024 NDC from the shot
+    (`the_aimed_sight_lies_on_the_shot_for_every_gun`). That is the same as fnp45/kard/beretta/judge
+    with a reflex (+0.015–0.021) and the rifle reflexes (+0.003–0.040).
+  * In the sweep image the RMR's window covers the eye line (y 168–196 of 360) but draws as a flat
+    opaque (105, 100, 97) with no dot. Every pistol with an RMR does the same; the rifle reflex lens
+    shows its dot. So it is a lens/reticle-material problem on `t6_attach_optic_rmr_view`, for the
+    reticle work.
+* **Found, not fixed:** the HAMR's (`t6_wpn_lmg_hamr_view`) gun part has vertices posed at about
+  (−125, −5, −55)″, far behind and below the eye. They are off screen, so nothing is visible, but
+  some bone of it is probably left at a bad bind/parking. The optic combinations hide it. The same
+  kind of far-off vertices show up at the hip on `fiveseven_mp` (−124″, 12 % of its vertices),
+  `fiveseven_dw_mp` (−350″), `judge_mp+dualclip` (−174″), `xm8_mp`'s GL combo (−148″) and
+  `sig556_mp` (−45″). All are off screen. The `hold-after.tsv` table lists them.

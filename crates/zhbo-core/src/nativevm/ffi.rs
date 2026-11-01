@@ -170,16 +170,19 @@ impl State {
             .and_then(|l| l.clip_path(req.left.map_or(req.clip | zhbo_native::viewmodel::INSTANCE_LEFT as i32, |(c, _)| c)))
             .map(str::to_string)
             .filter(|p| Some(p.as_str()) != path.as_deref());
-        // Both ADS clips are asked for on the first aiming frame, so a reversal never waits for
-        // its clip. A missing one is "no layer" (never the idle fallback): `ads_clip` decides.
-        let (ads_up_path, ads_down_path) = if req.ads > 0.0 {
+        // The ADS layer is on at EVERY fraction, the hip included: BO2 weights `ads_down` by
+        // `1 − fWeaponPosFrac` (`FUN_0052b750`, G12) and holds it at full weight on a switch
+        // (`FUN_0052dcb0`), so at the hip the rig root is the layer's hip key, not the hands' bind
+        // `tag_torso`. For most guns the two agree (`[-4.63, 0, -1.38]`), but the XPR-50 authors its
+        // hip 13″ forward in the layer alone (its action clips are relative to that root); without
+        // the layer at the hip its gun sat around the eye. A missing clip is "no layer" (never the
+        // idle fallback): `ads_clip` decides.
+        let (ads_up_path, ads_down_path) = {
             let loaded = self.loaded.as_ref();
             (
                 loaded.and_then(|l| l.ads_clip(req.clip, false)).map(str::to_string),
                 loaded.and_then(|l| l.ads_clip(req.clip, true)).map(str::to_string),
             )
-        } else {
-            (None, None)
         };
         if let Some(p) = &path {
             self.anim(p);
@@ -344,6 +347,12 @@ pub unsafe extern "C" fn zhbo_native_bone(name: *const c_char, out: *mut f32) ->
         unsafe { std::ptr::copy_nonoverlapping(flat.as_ptr(), out, 12) };
         1
     })
+}
+
+/// A read-only look at the composed viewmodel and its last pose (`None` before one is loaded):
+/// the hold metric (`nativevm::hold`) measures what the last frame drew.
+pub(crate) fn with_loaded<R>(f: impl FnOnce(&super::Loaded, &super::Posed) -> R) -> Option<R> {
+    with(|s| s.loaded.as_ref().map(|l| f(l, &s.posed)))
 }
 
 /// Forget everything (a game reset tears the scene down; the renderer's resources go too).

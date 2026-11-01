@@ -944,6 +944,98 @@ mod tests {
         assert!(failures.is_empty(), "{}", failures.join("\n"));
     }
 
+    /// The hold sweep: every player weapon's viewmodel, bare and with every attachment it offers,
+    /// posed by the game's own native frame (`nativevm::hold::hold_of`: the action clip, the ADS
+    /// layer at the fraction, the placement) at the hip, standing still, and measured in the eye
+    /// frame. At the hip a held gun hangs in front, to the right and below: the eye is never inside
+    /// the gun's box. The XPR-50 failed exactly this — its hip rig root lives in the ADS layer,
+    /// which the hip skipped, so the eye sat inside its receiver (`v1/xpr-viewmodel`). Prints the
+    /// table (`--nocapture`); `ZHBO_HOLD_TSV=<file>` also writes it.
+    #[test]
+    #[ignore = "needs the BO2 install: ZHBO_BO2_DIR"]
+    fn every_viewmodel_is_held_in_front_of_the_eye() {
+        use zhbo_core::nativevm::ffi::ZhboNativeIn;
+        use zhbo_core::nativevm::hold::hold_of;
+        use zhbo_core::tuning::Tuning;
+        use zhbo_core::viewmodel::slot;
+        use zhbo_core::weapons::gunpos::{GunInput, GunPos};
+
+        let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
+        let src = Source::open(Path::new(&dir)).expect("open the install");
+        let tuning = Tuning::default();
+        let only: Vec<String> = std::env::var("ZHBO_HOLD_ONLY").map(|v| v.split(',').map(str::to_string).collect()).unwrap_or_default();
+        let mut jobs = Vec::new();
+        for def in &src.defs {
+            if def.id.contains('+') || def.id.contains('~') || !def.alt.is_empty() || (!only.is_empty() && !only.contains(&def.id)) {
+                continue;
+            }
+            jobs.push((def, def.id.clone()));
+            for (short, _) in &def.allowed {
+                jobs.push((def, format!("{}+{short}", def.id)));
+            }
+        }
+        let mut rows = vec!["id\tads\tclip\tmin_x\tmin_y\tmin_z\tmax_x\tmax_y\tmax_z\tnearest_in\tbehind_pct\tboxed_parts_rays\teye_inside".to_string()];
+        let (mut failures, mut measured) = (Vec::new(), 0);
+        for (def, id) in jobs {
+            let Ok(blobs) = src.composition(&id) else { continue };
+            let Some(vm) = blobs.get(&zhbo_native::viewmodel_path(0, 'U')).and_then(|b| zhbo_native::viewmodel::Viewmodel::from_bytes(b).ok()) else { continue };
+            // The slot the game plays while the weapon is up: an off-hand item is held on
+            // `HOLD_FIRE` (`viewmodel.rs`), everything else idles.
+            let clip = if def.class.is_offhand() && def.has_anim(slot::HOLD_FIRE as usize) && vm.clip(slot::HOLD_FIRE as u16).is_some() { slot::HOLD_FIRE } else { slot::IDLE };
+            // Equipment never aims, so only the hip is a game pose for it.
+            let fractions: &[f32] = if def.class.is_gun() { &[0.0, 1.0] } else { &[0.0] };
+            for &ads in fractions {
+                let input = GunInput { stance: 0, ads, fov: tuning.cg_fov, since_land: f32::MAX, ..Default::default() };
+                let mut state = GunPos::default();
+                let mut g = zhbo_core::weapons::gunpos::GunPose::default();
+                for _ in 0..600 {
+                    g = state.step(def, &input, &tuning, 1.0 / 60.0);
+                }
+                let (o, a) = g.view();
+                let inp = ZhboNativeIn { dir: [1.0, 0.0, 0.0], offset: o.map(|c| c * zhbo_native::ART_SCALE), angles: a, clip, vm: 0, faction: b'U' as i32, ads, rate: 1.0, ..Default::default() };
+                let h = match hold_of(&inp, |p| blobs.get(p).cloned()) {
+                    Ok(h) => h,
+                    Err(e) => {
+                        failures.push(format!("{id} ads {ads}: not posed: {e}"));
+                        continue;
+                    }
+                };
+                measured += 1;
+                // The parts whose box holds the eye, with how many of the six axis rays they block:
+                // the near-misses the enclosure test separates from a real inside.
+                let boxed = h.parts.iter().filter(|b| b.contains_eye(0.25)).map(|b| format!("{}:{}", b.part, b.hits.count_ones())).collect::<Vec<_>>().join(",");
+                let inside = h.eye_inside(0.25).map(|b| {
+                    let model = vm.parts.get(b.part as usize).map_or("?", |p| p.model.rsplit('\\').next().unwrap_or(&p.model));
+                    format!("part {} {model} {:.2?}..{:.2?}", b.part, b.mins, b.maxs)
+                });
+                rows.push(format!(
+                    "{id}\t{ads}\t{clip:#x}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.2}\t{:.1}\t{}\t{}",
+                    h.mins[0],
+                    h.mins[1],
+                    h.mins[2],
+                    h.maxs[0],
+                    h.maxs[1],
+                    h.maxs[2],
+                    h.nearest_distance,
+                    100.0 * h.behind as f32 / h.vertices.max(1) as f32,
+                    if boxed.is_empty() { "-" } else { &boxed },
+                    inside.as_deref().unwrap_or("-")
+                ));
+                if let (0.0, Some(inside)) = (ads, &inside) {
+                    failures.push(format!("{id}: at the hip the eye is inside {inside} (in, eye frame)"));
+                }
+            }
+        }
+        let table = rows.join("\n");
+        println!("{table}");
+        if let Some(path) = std::env::var_os("ZHBO_HOLD_TSV") {
+            std::fs::write(path, &table).expect("write the hold table");
+        }
+        assert!(only.is_empty() || measured > 0, "nothing measured");
+        assert!(!only.is_empty() || measured > 300, "only {measured} poses measured");
+        assert!(failures.is_empty(), "{} viewmodels are not held:\n{}", failures.len(), failures.join("\n"));
+    }
+
     #[test]
     #[ignore = "probe: the flagged defects"]
     fn probe_defects() {

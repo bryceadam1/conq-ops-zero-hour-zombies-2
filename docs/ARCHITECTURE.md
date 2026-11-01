@@ -101,7 +101,9 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
 - `nativevm/`: the native first-person viewmodel (Track R, `ZHBO_NATIVE_VIEWMODEL`): files asked
   of the bridge, composition and posing (pure, tested without a GPU), the renderer upload/submit
   (`gpu.rs`, feature `renderer`), the class camo swap (`camo.rs`: the `.zcm` recipe applied to the
-  composed mesh, plus the core-global transport) and its C ABI (`ffi.rs`).
+  composed mesh, plus the core-global transport), the hold metric (`hold.rs`: the drawn gun's
+  parts in the eye frame and whether one encloses the eye — tests and the sweep, no frame path) and
+  its C ABI (`ffi.rs`).
 - `nativebody/`: the native third person (Track R7): the General's body and the weapon in his
   hand through the native pass (`ZHBO_NATIVE_BODY`), with the same pure / `gpu.rs` / `ffi.rs` split.
 
