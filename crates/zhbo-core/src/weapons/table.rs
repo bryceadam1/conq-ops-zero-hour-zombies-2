@@ -465,6 +465,13 @@ pub const WEAPON_FIELDS: &[Field<WeaponDef>] = &[
     field!("EmptySwitch", "Raise and drop with an empty clip (seconds).", FieldKind::Nums(2),
         |d: &WeaponDef| nums(&[d.empty_raise_time, d.empty_drop_time]),
         |d: &mut WeaponDef, v: Values| { v.need(2)?; (d.empty_raise_time, d.empty_drop_time) = (v.num(0), v.num(1)); Ok(()) }),
+    field!("AltSwitch", "Alt toggle: raise into this mode, drop out of this weapon.", FieldKind::Nums(2),
+        |d: &WeaponDef| format!("{} {}", d.alt_raise_time, d.alt_drop_time),
+        |d: &mut WeaponDef, v: Values| {
+            v.need(2)?;
+            (d.alt_raise_time, d.alt_drop_time) = (v.num(0), v.num(1));
+            Ok(())
+        }),
     field!("SprintOutTime", "Raising from a sprint.", FieldKind::Num,
         |d: &WeaponDef| d.sprint_out_time.to_string(),
         |d: &mut WeaponDef, v: Values| { d.sprint_out_time = v.text_num()?; Ok(()) }),
@@ -905,7 +912,7 @@ mod tests {
         check(WEAPON_FIELDS);
         check(ATTACHMENT_FIELDS);
         check(CAMO_FIELDS);
-        assert_eq!(WEAPON_FIELDS.len(), 105);
+        assert_eq!(WEAPON_FIELDS.len(), 106);
         assert_eq!(ATTACHMENT_FIELDS.len(), 28);
         assert_eq!(CAMO_FIELDS.len(), 3);
     }

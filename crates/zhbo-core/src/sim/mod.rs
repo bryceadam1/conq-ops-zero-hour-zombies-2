@@ -442,6 +442,7 @@ impl Sim {
         state.arsenal.raise_total = first;
         state.arsenal.raise_kind = crate::weapons::RaiseKind::First;
         state.arsenal.drop_left = 0.0;
+        state.arsenal.alt_pending = false;
         state.arsenal.offhand = None;
         state.arsenal.ads = 0.0;
         self.players[idx] = Some(state);
@@ -530,6 +531,7 @@ impl Sim {
             p.arsenal.raise_total = first;
             p.arsenal.raise_kind = crate::weapons::RaiseKind::First;
             p.arsenal.drop_left = 0.0;
+            p.arsenal.alt_pending = false;
             p.arsenal.offhand = None;
             p.arsenal.ads = 0.0;
         } else {

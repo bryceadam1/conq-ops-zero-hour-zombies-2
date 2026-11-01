@@ -356,7 +356,6 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
     // The arsenal melees with the loadout's knife, whatever is held (`arsenal.rs` "Melee interrupts":
     // `self.melee.melee_time`, `self.melee.melee_damage`), striking on the press.
     let knife = cat.get(&weapons::Loadout::default().melee).unwrap_or(d);
-    let alt_toggles = !d.alt.is_empty();
     // Timing.
     let t = &d.timing;
     for (c, v) in [
@@ -379,9 +378,10 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         ("raise_time", Some(d.raise_time)),
         ("first_raise_time", Some(d.first_raise_time)),
         ("drop_time", Some(d.drop_time)),
-        // An alt toggle raises the mode in max(quick raise, raise / 2) and has no drop (`toggle_alt`).
-        ("alt_raise_time", alt_toggles.then(|| d.quick_raise_time.max(d.raise_time * 0.5))),
-        ("alt_drop_time", alt_toggles.then_some(0.0)),
+        // An alt toggle drops the outgoing weapon over its alt drop and raises the incoming mode over
+        // its alt raise (`toggle_alt`/`finish_alt`); every def carries both, as BO2's do.
+        ("alt_raise_time", Some(d.alt_raise_time)),
+        ("alt_drop_time", Some(d.alt_drop_time)),
         ("quick_raise_time", Some(d.quick_raise_time)),
         ("quick_drop_time", Some(d.quick_drop_time)),
         // A swap with an empty clip raises and drops over these (`switch_to`).

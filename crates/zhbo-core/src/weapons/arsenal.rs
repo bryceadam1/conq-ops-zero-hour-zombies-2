@@ -42,6 +42,8 @@ pub struct WeaponState {
     pub def: &'static WeaponDef,
     /// The weapon itself (with its attachments), whichever mode is up.
     pub main: &'static WeaponDef,
+    /// The weapon's alt mode (`main.alt`, resolved once), if it has one.
+    pub alt_mode: Option<&'static WeaponDef>,
     pub ammo: u16,
     pub reserve: u16,
     /// Seconds until the next round may fire (can go negative within a frame for high RPM).
@@ -90,6 +92,7 @@ impl WeaponState {
         Self {
             def,
             main: def,
+            alt_mode: catalog().get(&def.alt),
             ammo: if gun { def.clip } else { 0 },
             reserve: if gun { def.start_reserve } else { 0 },
             cooldown: 0.0,
@@ -115,7 +118,7 @@ impl WeaponState {
 
     /// Load the alt mode's own magazine (an under-barrel launcher's grenades).
     fn with_alt_ammo(mut self) -> Self {
-        if let Some(alt) = catalog().get(&self.def.alt).filter(|a| a.alt_own_ammo) {
+        if let Some(alt) = self.alt_mode.filter(|a| a.alt_own_ammo) {
             self.alt_ammo = alt.clip;
             self.alt_reserve = alt.start_reserve;
         }
@@ -343,6 +346,8 @@ pub struct Arsenal {
     pub drop_total: f32,
     /// The weapon being put away.
     pub previous: usize,
+    /// The drop under way is an alt toggle's (BO2's state 5): the mode changes when it ends.
+    pub alt_pending: bool,
     pub ads: f32,
     /// Seconds since sprinting stopped (weapon comes back up over `sprint_out_time`).
     pub since_sprint: f32,
@@ -406,6 +411,7 @@ impl Arsenal {
             drop_left: 0.0,
             drop_total: 0.0,
             previous: 0,
+            alt_pending: false,
             ads: 0.0,
             since_sprint: 10.0,
             melee_left: 0.0,
@@ -477,6 +483,7 @@ impl Arsenal {
             drop_left: 0.0,
             drop_total: 0.0,
             previous: 0,
+            alt_pending: false,
             ads: 0.0,
             since_sprint: 10.0,
             melee_left: 0.0,
@@ -674,21 +681,72 @@ impl Arsenal {
         self.ads = 0.0;
     }
 
-    /// Switch the held weapon to its alt mode or back. An alt mode with its own ammo (a launcher)
-    /// trades magazines with the weapon; the others share it.
-    pub fn toggle_alt(&mut self) {
-        let w = self.current_mut();
-        let to = if w.def.id == w.main.id {
-            match catalog().get(&w.main.alt) {
-                Some(alt) => alt,
-                None => return,
-            }
+    /// The mode an alt toggle of the held weapon goes to: its alt from the weapon, the weapon from
+    /// its alt; `None` when it has none.
+    fn alt_target(&self) -> Option<&'static WeaponDef> {
+        let w = self.current();
+        let to = if w.def.id == w.main.id { w.alt_mode? } else { w.main };
+        (to.id != w.def.id).then_some(to)
+    }
+
+    /// The held mode and the one its toggle goes to are both ADS-only (`FUN_008da850`, each side
+    /// `FUN_008ecb00`: the Hybrid optic's weapon and its `dualoptic_*` alt).
+    fn ads_only_pair(&self) -> bool {
+        self.current().def.traits.alt_ads_only && self.alt_target().is_some_and(|to| to.traits.alt_ads_only)
+    }
+
+    /// Which toggle input may switch the held weapon's mode (BO2's client side). The alt-mode
+    /// action slot (`FUN_00537ff0` -> `FUN_00537ca0(.., 0)`) refuses an ADS-only target; the
+    /// sprint/hold-breath key (`+breath_sprint`, `FUN_0053f380` action 9) while the aim button is
+    /// held toggles only an ADS-only target (`FUN_00537dd0` -> `FUN_00537ca0(.., 1)`), and only
+    /// once the held ADS-only mode is fully aimed (`FUN_005313a0`: `posFrac == 1`).
+    fn alt_toggle_requested(&self, held: u32, pressed: u32) -> bool {
+        let Some(to) = self.alt_target() else { return false };
+        if to.traits.alt_ads_only {
+            pressed & buttons::SPRINT != 0 && held & buttons::ADS != 0 && self.current().def.traits.alt_ads_only && self.ads >= 1.0
         } else {
-            w.main
-        };
-        if to.id == w.def.id {
+            pressed & buttons::ALT_MODE != 0
+        }
+    }
+
+    /// Start toggling the held weapon to its alt mode or back (BO2's weapon-change begin,
+    /// `FUN_008db500`, for an alt pair `FUN_008db3f0`): the weapon goes down over the **outgoing**
+    /// weapon's alt drop time (`FUN_008ed1e0`, already resolved per combination into
+    /// `alt_drop_time`), then [`Self::finish_alt`] changes the mode. A zero drop (every launcher
+    /// pair) changes it in the same frame, as `FUN_008e4da0` finishes a zero-time change in the
+    /// same pmove. Both run in the raise/drop family (states 5 and 2), so Fast Hands speeds them (G3).
+    pub fn toggle_alt(&mut self) {
+        if self.alt_target().is_none() {
             return;
         }
+        let w = self.current_mut();
+        w.reload = None;
+        w.burst_left = 0;
+        w.string = 0;
+        let drop = w.def.alt_drop_time;
+        // An ADS-only pair stays aimed through the toggle (`FUN_008daa10` lets an ADS-only weapon
+        // aim in the alt drop and raise states, 5 and 2).
+        if !self.ads_only_pair() {
+            self.ads = 0.0;
+        }
+        self.previous = self.active;
+        self.alt_pending = true;
+        self.drop_left = drop;
+        self.drop_total = drop;
+        if drop <= 0.0 {
+            self.finish_alt();
+        }
+    }
+
+    /// The alt toggle's drop is done: swap to the other mode and raise it over the **incoming**
+    /// variant's `iAltRaiseTime` (`FUN_008df320`) — except between two ADS-only modes, where
+    /// `FUN_008da850` sets no raise at all and the weapon is ready, still aimed. An alt mode with
+    /// its own ammo (a launcher) trades magazines with the weapon; the others share it.
+    fn finish_alt(&mut self) {
+        self.alt_pending = false;
+        let ads_only = self.ads_only_pair();
+        let Some(to) = self.alt_target() else { return };
+        let w = self.current_mut();
         if to.alt_own_ammo || w.def.alt_own_ammo {
             std::mem::swap(&mut w.ammo, &mut w.alt_ammo);
             std::mem::swap(&mut w.reserve, &mut w.alt_reserve);
@@ -698,13 +756,12 @@ impl Arsenal {
         w.burst_left = 0;
         w.cooldown = w.cooldown.max(0.0);
         w.string = 0;
-        self.ads = 0.0;
-        // BO2 raises an alt toggle in max(quickRaiseTime, raiseTime / 2) — the quick raise when it
-        // is longer, never a full raise (refactor audit 0.4); Fast Hands runs it at the switch
-        // rate like every other raise (G3).
-        let t = to.quick_raise_time.max(to.raise_time * 0.5);
-        self.raise_left = t;
-        self.raise_total = t;
+        let raise = if ads_only { 0.0 } else { to.alt_raise_time };
+        if !ads_only {
+            self.ads = 0.0;
+        }
+        self.raise_left = raise;
+        self.raise_total = raise;
         self.raise_kind = RaiseKind::Alt;
     }
 
@@ -756,6 +813,9 @@ impl Arsenal {
         self.melee_left = (self.melee_left - melee_tick).max(0.0);
         if self.drop_left > 0.0 {
             self.drop_left = (self.drop_left - switch_tick).max(0.0);
+            if self.drop_left <= 0.0 && self.alt_pending {
+                self.finish_alt();
+            }
         } else {
             self.raise_left = (self.raise_left - switch_tick).max(0.0);
         }
@@ -780,13 +840,14 @@ impl Arsenal {
         }
 
         // Alt mode (select fire, grenade launcher, second optic).
-        if pressed & buttons::ALT_MODE != 0 && !self.current().main.alt.is_empty() && self.melee_left <= 0.0 && self.drop_left <= 0.0 {
+        if self.alt_toggle_requested(held, pressed) && self.melee_left <= 0.0 && self.drop_left <= 0.0 {
             self.toggle_alt();
             out.push(WeaponAction::AltToggled);
         }
 
         // Swap.
-        if pressed & buttons::SWAP_WEAPON != 0 && self.weapons.len() > 1 && self.melee_left <= 0.0 {
+        // BO2 starts no weapon change during an alt drop (`FUN_008db500` returns in states 3-5).
+        if pressed & buttons::SWAP_WEAPON != 0 && self.weapons.len() > 1 && self.melee_left <= 0.0 && !self.alt_pending {
             let next = (self.active + 1) % self.weapons.len();
             self.switch_to(next);
             out.push(WeaponAction::Swapped);
@@ -829,7 +890,12 @@ impl Arsenal {
         let def = self.current().def;
         let sprint_ready = self.sprint_ready();
         // Only a gun aims; a knife or a held offhand has no sights (and no ADS zoom).
-        let wants_ads = def.class.is_gun() && held & buttons::ADS != 0 && !sprinting && sprint_ready && self.raise_left <= 0.0 && self.drop_left <= 0.0 && !self.current().is_reloading();
+        // `FUN_008daa10`: an alt toggle's drop and raise (states 5 and 2) let only an ADS-only
+        // weapon aim; every other raise or drop refuses it.
+        let switching = self.raise_left > 0.0 || self.drop_left > 0.0;
+        let alt_switching = self.alt_pending || (self.raise_left > 0.0 && self.raise_kind == RaiseKind::Alt);
+        let switch_ok = !switching || (alt_switching && def.traits.alt_ads_only);
+        let wants_ads = def.class.is_gun() && held & buttons::ADS != 0 && !sprinting && sprint_ready && switch_ok && !self.current().is_reloading();
         let quickdraw = if self.has_specialty(Specialty::FastAds) && self.tuning.perk_weap_ads_multiplier > 0.0 { self.tuning.perk_weap_ads_multiplier } else { 1.0 };
         self.ads = if wants_ads {
             (self.ads + dt / (def.ads_in_time.max(1e-3) * quickdraw)).min(1.0)

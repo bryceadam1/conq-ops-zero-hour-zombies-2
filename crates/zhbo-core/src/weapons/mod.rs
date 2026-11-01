@@ -583,6 +583,194 @@ mod tests {
         assert!((fast as f32 - 2.0 - expect * 0.5).abs() <= 1.0, "fast hands {fast} frames vs {}", expect * 0.5);
     }
 
+    /// Frames from an alt-mode press until the toggle's drop and raise are both done, and whether
+    /// the mode had already changed on the press frame.
+    fn alt_toggle_frames(a: &mut Arsenal) -> (usize, bool) {
+        let mut out = Vec::new();
+        let mut rng = Rng::new(3);
+        let before = a.current().def.id.clone();
+        a.step(0, buttons::ALT_MODE, false, 0, 0.0, &mut rng, &mut out);
+        let swapped_now = a.current().def.id != before;
+        let mut n = 1;
+        while a.drop_left > 0.0 || a.raise_left > 0.0 {
+            a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+            n += 1;
+        }
+        (n, swapped_now)
+    }
+
+    #[test]
+    fn a_launcher_toggle_raises_the_incoming_mode_over_its_alt_raise_time() {
+        // G16 / FUN_008df320: the alt raise is the incoming variant's iAltRaiseTime; the launcher
+        // pair's alt drop is 0, so the mode changes on the press frame (FUN_008e4da0).
+        let mut a = Arsenal::new();
+        a.raise_left = 0.0;
+        a.loadout.perks.clear();
+        let gl = weapon("gl_an94_mp");
+        let (ammo, gl_ammo) = (a.current().ammo, a.current().alt_ammo);
+        let (n, now) = alt_toggle_frames(&mut a);
+        assert!(now, "a zero alt drop changes the mode at once");
+        assert_eq!(a.current().def.id, "gl_an94_mp");
+        assert_eq!((a.current().ammo, a.current().alt_ammo), (gl_ammo, ammo), "the launcher trades magazines");
+        let expect = (gl.alt_raise_time / LOGIC_DT).ceil() as usize;
+        assert!(n.abs_diff(expect + 1) <= 1, "{n} frames vs {expect}");
+        // And back: the weapon's own alt raise.
+        let (n, now) = alt_toggle_frames(&mut a);
+        assert!(now);
+        assert!(a.current().def.id.starts_with("an94_mp"));
+        assert_eq!(a.raise_kind, RaiseKind::Alt);
+        let expect = (a.current().def.alt_raise_time / LOGIC_DT).ceil() as usize;
+        assert!(n.abs_diff(expect + 1) <= 1, "{n} frames vs {expect}");
+    }
+
+    #[test]
+    fn an_alt_toggle_drops_the_outgoing_weapon_first_and_fast_hands_speeds_both() {
+        // FUN_008db500: an alt pair's change starts with the OUTGOING weapon's alt drop
+        // (FUN_008ed1e0 — select fire's unique gives `an94_mp+sf` 500 ms), the mode changes when it
+        // ends, then the incoming mode raises over its own iAltRaiseTime (0 for `sf_*`). Both are
+        // raise/drop-family states, so Fast Hands halves them (G3).
+        let sf_like = || -> &'static WeaponDef {
+            let mut d = weapon("an94_mp+gl+reflex").clone();
+            d.alt_drop_time = 0.5;
+            Box::leak(Box::new(d))
+        };
+        let run = |fast: bool| {
+            let mut a = arsenal_with(sf_like());
+            if !fast {
+                a.loadout.perks.clear();
+            }
+            let before = a.current().def.id.clone();
+            let mut out = Vec::new();
+            let mut rng = Rng::new(3);
+            a.step(buttons::FIRE, buttons::ALT_MODE, false, 0, 0.0, &mut rng, &mut out);
+            assert!(a.alt_pending && a.drop_left > 0.0);
+            assert_eq!(a.current().def.id, before, "the outgoing mode is held through the drop");
+            let mut drop_frames: usize = 1;
+            while a.alt_pending {
+                out.clear();
+                a.step(buttons::FIRE, 0, false, 0, 0.0, &mut rng, &mut out);
+                assert!(a.alt_pending || a.current().def.id == "gl_an94_mp", "the mode changes as the drop ends");
+                if a.alt_pending {
+                    assert_eq!(shots(&out), 0, "no shot during the alt drop");
+                }
+                drop_frames += 1;
+            }
+            assert_eq!(a.raise_total, weapon("gl_an94_mp").alt_raise_time, "the incoming mode's alt raise");
+            drop_frames
+        };
+        let slow = run(false);
+        let fast = run(true);
+        let expect = (0.5 / LOGIC_DT).ceil() as usize;
+        assert!(slow.abs_diff(expect + 1) <= 1, "{slow} frames vs {expect}");
+        assert!(fast.abs_diff(expect / 2 + 1) <= 1, "fast hands {fast} frames vs {}", expect / 2);
+    }
+
+    /// The Hybrid optic's pair as BO2's data has it: `an94_mp+dualoptic` (the attachment's
+    /// `bAltWeaponAdsOnly`) and its `dualoptic_*` alt (the def's own flag), both ADS-only, each with
+    /// its own alt drop and raise times (the raise must go unused).
+    fn hybrid() -> Arsenal {
+        let mut main = weapon("an94_mp").clone();
+        main.id = "an94_mp+dualoptic".into();
+        main.alt = "dualoptic_an94_mp".into();
+        main.traits.alt_ads_only = true;
+        main.alt_drop_time = 0.2;
+        main.alt_raise_time = 0.4;
+        main.ads_fov = 30.0;
+        let main: &'static WeaponDef = Box::leak(Box::new(main));
+        let mut alt = main.clone();
+        alt.id = "dualoptic_an94_mp".into();
+        alt.alt = main.id.clone();
+        alt.alt_drop_time = 0.3;
+        alt.alt_raise_time = 0.5;
+        alt.ads_fov = 50.0;
+        let alt: &'static WeaponDef = Box::leak(Box::new(alt));
+        let mut a = arsenal_with(main);
+        a.weapons[0].alt_mode = Some(alt);
+        a.loadout.perks.clear();
+        a
+    }
+
+    /// Step until the arsenal is fully aimed with nothing in progress.
+    fn aim(a: &mut Arsenal, rng: &mut Rng) {
+        let mut out = Vec::new();
+        for _ in 0..200 {
+            a.step(buttons::ADS, 0, false, 0, 0.0, rng, &mut out);
+            if a.ads >= 1.0 && a.drop_left <= 0.0 && a.raise_left <= 0.0 {
+                return;
+            }
+        }
+        panic!("never fully aimed");
+    }
+
+    /// Hold the aim and press the sprint/hold-breath key, then step until the toggle is done;
+    /// returns the frames it took and the lowest ADS fraction seen.
+    fn hybrid_toggle(a: &mut Arsenal, rng: &mut Rng) -> (usize, f32) {
+        let mut out = Vec::new();
+        a.step(buttons::ADS | buttons::SPRINT, buttons::SPRINT, false, 0, 0.0, rng, &mut out);
+        assert!(out.contains(&WeaponAction::AltToggled), "the toggle starts");
+        let (mut n, mut low) = (1, a.ads);
+        while a.alt_pending || a.drop_left > 0.0 || a.raise_left > 0.0 {
+            a.step(buttons::ADS, 0, false, 0, 0.0, rng, &mut out);
+            low = low.min(a.ads);
+            n += 1;
+            assert!(n < 200);
+        }
+        (n, low)
+    }
+
+    #[test]
+    fn the_hybrid_optic_toggles_aimed_with_no_raise() {
+        // BO2: the sprint/hold-breath key while aimed toggles an ADS-only alt (FUN_0053f380
+        // action 9 -> FUN_00537dd0, posFrac >= 1); the drop is the outgoing weapon's alt drop
+        // (FUN_008db500) and the weapon stays aimed through it (FUN_008daa10, states 5/2); two
+        // ADS-only modes set no raise (FUN_008df320 -> FUN_008da850).
+        let mut a = hybrid();
+        let mut rng = Rng::new(5);
+        aim(&mut a, &mut rng);
+        let (n, low) = hybrid_toggle(&mut a, &mut rng);
+        assert_eq!(a.current().def.id, "dualoptic_an94_mp");
+        assert_eq!(low, 1.0, "the aim holds through the toggle");
+        assert_eq!((a.raise_left, a.raise_total), (0.0, 0.0), "no raise between ADS-only modes");
+        let expect = (0.2 / LOGIC_DT).ceil() as usize;
+        assert!(n.abs_diff(expect + 1) <= 1, "{n} frames vs the 0.2 s drop");
+        // And back over the alt's own drop, still with no raise.
+        let (n, low) = hybrid_toggle(&mut a, &mut rng);
+        assert_eq!(a.current().def.id, "an94_mp+dualoptic");
+        assert_eq!((low, a.raise_total), (1.0, 0.0));
+        let expect = (0.3 / LOGIC_DT).ceil() as usize;
+        assert!(n.abs_diff(expect + 1) <= 1, "{n} frames vs the 0.3 s drop");
+    }
+
+    #[test]
+    fn the_hybrid_optic_keeps_its_mode_when_unaimed_and_refuses_the_alt_key() {
+        let mut a = hybrid();
+        let mut rng = Rng::new(6);
+        let mut out = Vec::new();
+        // The alt-mode key refuses an ADS-only target (FUN_00537ca0(.., 0)), aimed or not.
+        a.step(0, buttons::ALT_MODE, false, 0, 0.0, &mut rng, &mut out);
+        aim(&mut a, &mut rng);
+        a.step(buttons::ADS, buttons::ALT_MODE, false, 0, 0.0, &mut rng, &mut out);
+        assert!(!a.alt_pending && a.current().def.id == "an94_mp+dualoptic" && !out.contains(&WeaponAction::AltToggled));
+        // Sprint without the aim, or before the aim is full (FUN_005313a0: posFrac == 1), does nothing.
+        let mut b = hybrid();
+        b.step(0, buttons::SPRINT, false, 0, 0.0, &mut rng, &mut out);
+        b.step(buttons::ADS, 0, false, 0, 0.0, &mut rng, &mut out);
+        assert!(b.ads > 0.0 && b.ads < 1.0);
+        b.step(buttons::ADS | buttons::SPRINT, buttons::SPRINT, false, 0, 0.0, &mut rng, &mut out);
+        assert!(!b.alt_pending && !out.contains(&WeaponAction::AltToggled));
+        // Toggle, then let go of the aim: BO2 has no revert, the red dot stays up for the next aim.
+        hybrid_toggle(&mut a, &mut rng);
+        for _ in 0..60 {
+            a.step(0, 0, false, 0, 0.0, &mut rng, &mut out);
+        }
+        assert_eq!((a.ads, a.current().def.id.as_str()), (0.0, "dualoptic_an94_mp"));
+        aim(&mut a, &mut rng);
+        assert_eq!(a.current().def.id, "dualoptic_an94_mp");
+        // ads-zoom replaced the arsenal's ads_fov_scale with the zoom module's level FOV.
+        let fov = zoom::level_fov(a.current().def, 2);
+        assert!((fov - 50.0).abs() < 1e-6, "aims through the alt's own optic: {fov}");
+    }
+
     #[test]
     fn damage_curve_and_explosion_falloff() {
         let d = weapon("an94_mp");

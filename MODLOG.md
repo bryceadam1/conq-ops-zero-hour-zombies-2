@@ -5276,3 +5276,151 @@ Measured (this entry and the previous one, vs `v1/uncarried-fields`): weapons ce
   per frame; the mod launches them in the same frame (a 50 ms difference at most). Corrected: a
   part-loaded stack fires what it holds (the previous entry's full-magazine gate misread
   `FUN_008dc030`), and each `Launch`'s `pellet` is now k − 1, so the fan is BO2's per-bolt place.
+
+## Alt modes take none of the weapon's attachment numbers (2026-10-26, branch `v1/alt-attachments`)
+
+`weapons::add_variants` built a select-fire / second-optic alt mode as
+`attachments::apply(alt_base, <the weapon's other attachments>)`, so `sf_mp7_mp` under
+`mp7_mp+extclip+rf+sf` took the extended mag, rapid fire's 0.75 fire time, Quickdraw's ADS times,
+the laser, the suppressor flag, the ACOG's FOV and the attachments' specialties. BO2 does not:
+
+- `FUN_008ec9e0` gives the alt's weapon index as the parent's with **only the variant byte swapped**
+  — the three attachment kind fields stay.
+- Every accessor (`FUN_008eb300` a-list, `FUN_008eb360` singles; clip `FUN_008e5e50`, silenced
+  `FUN_008eba20`, the scale products, FOV, flags, perks) indexes the attachment table of the
+  variant in that index — the **alt's own**, which offers nothing for every BO2 alt (the expected
+  CSV: across all 37 alt weapons and 2,377 rows, no numeric or flag column varies by combo; only
+  parts, hide tags, camo and `cac_requires`, which come from the parent via `FUN_00535170` /
+  `FUN_00535540`).
+
+Fix: `zhbo_core::attachments::alt_mode(alt_base, others, lookup)` resolves the other attachments
+against the alt's own `allowed` (BO2's table, so data-driven: an alt that did offer one would take
+it — the existing `sf_as50` overlay test is that case) and applies only those. The names stay in
+the alt's `attachments`, because the alt draws the parent's parts: the HUD's reticle through the
+optic is unchanged. Launcher alts (`gl_*`, `alt_own_ammo`) already skipped `apply`. The runtime
+`Catalog::get` path already pointed at the bare alt def.
+
+Gotcha: in BO2, flipping to select fire with Rapid Fire, Fast Mag, Laser or an extended mag *loses*
+their effect (and the ACOG keeps its model but the alt's own FOV) — that is the engine, not a
+converter bug; do not "fix" it back.
+
+Measured (conformance vs the 2026-10-25 baseline): weapons differing cells 706,586 → 701,608,
+column clusters 203 → 195, gap clusters 214 → 206; no column regressed. Alt rows reach 0 in
+ads_zoom_fov1/2/3 (513 each), hip_spread (318), silenced (274), clip_size (238), laser_sight,
+ads_move_speed_scale, ads_in/out_time (234 each), specialties (223), reload/reload_empty/
+reload_add_time (210 each), fire_time (94); damage_range 992 → 558 (the rest are `gl_*`, another
+cause), ads_recoil_reduction 308 → 32 (`dualoptic_hamr_mp`'s own 0.03|0.15 is not carried by the
+base def — not attachments), reload_empty_add_time 1806 → 1790.
+
+## Alt toggles drop and raise on BO2's alt timing fields (2026-10-31, branch `v1/alt-timing`)
+
+Stacked on `v1/alt-attachments`. The sim raised an alt toggle in `max(quickRaiseTime, raiseTime / 2)`
+with no drop, and the conformance actual side reported that rule (only for weapons with an alt).
+BO2's weapon-change state machine for an alt pair (`FUN_008db3f0`), read from t6mp
+(`~/.opencode/plan/alt-timing/dec_*.c`):
+
+* **Begin** (`FUN_008db500`): state 5 with `weaponTime = FUN_008ed1e0(` the **outgoing** weapon `)`.
+  `FUN_008ed1e0`: unless the weapon is itself an alt mode (inventory ALTMODE), the first single
+  attachment unique (`FUN_008eb360`, kinds ascending, each kind's unique at its own index of
+  `attachmentUniques`) whose `iAltDropTime` (+0xd8) differs from the base unique's; else
+  `WeaponDef.iAltDropTime` (+0x4c0). Data: select fire's unique carries 500 ms (`an94_mp+sf` drops
+  500 ms into `sf_an94_mp`), qcw05's 400; the HK416 family authors 16 ms everywhere; launchers 0.
+* **Finish** (`FUN_008df320`): the **incoming** variant's `iAltRaiseTime` (+0x1f8), raw — no
+  attachment scale — set through `FUN_008db9f0` as state 2, so both halves are in the raise/drop
+  family `fastweaponswitch` speeds (G3). A zero drop finishes in the same pmove (`FUN_008e4da0`).
+  So `an94 → gl_an94` is 0 + 700 ms, back 0 + 700; `an94+sf → sf_an94` is 500 + 0, back 0 + 700.
+
+Fix: the parser reads the variant's `iAltRaiseTime`, the def's `iAltDropTime`, each unique's
+`iAltDropTime` and its `attachmentUniques` slot; `WeaponDef.alt_raise_time`/`alt_drop_time` ride the
+table as `AltSwitch = raise drop` (`WEAPON_FIELDS` 78 → 79; the built-in AN-94 pair carries 0.7 0);
+the converter resolves each combination's drop (`weapons::alt_drop_for`, in `add_variants`; alt modes
+keep their own). `Arsenal::toggle_alt` now starts the drop (`alt_pending`, the viewmodel plays the
+outgoing def's `ALT_DROP`, firing blocked, no swap may start — `FUN_008db500` returns in states
+3–5), and `finish_alt` changes the mode as it ends and raises over the incoming alt raise.
+
+Gotchas / follow-ups:
+* **ADS-only alts skip the raise.** `FUN_008df320` calls `FUN_008da850`: when both modes are
+  ADS-only (`FUN_008ecb00`: the def's `bAltWeaponAdsOnly` +0x65c or an attachment's +0x20 — the
+  dual optic), no raise state is set at all. `bAltWeaponAdsOnly` is carried by
+  `v1/uncarried-fields`, not this base; once both are in, `finish_alt` should skip the raise for that
+  pair. Until then the dual optic raises over its 16 ms (HK416) / 350–700 ms.
+* A combination the runtime `Catalog::get` builds (not converted) keeps its base's alt drop: the
+  unique data lives only in the converter. Every legal combination is converted, so none should hit it.
+* `FUN_008df320` also raises `ps+0x588` to at least a constant on an alt raise (not ported; not a
+  timing field).
+
+Measured (conformance vs the 2026-10-25 baseline; this branch includes `v1/alt-attachments`, whose
+numbers were 701,608 / 195 / 206): `alt_raise_time` 9,341 → 0, `alt_drop_time` 6,583 → 0; weapons
+differing cells 706,586 → 685,684 (−15,924 from this item), column clusters 203 → 193 (−2), gap
+clusters 214 → 204 (−2). No column regressed.
+
+## The Hybrid optic toggles aimed, on the sprint key, with no raise (2026-10-31, branch `v1/alt-ads`)
+
+Stacked on `v1/alt-timing`. The sim toggled every alt on the alt-mode key and dropped the aim
+(`ads = 0`); the Hybrid optic (`dualoptic`, alt `dualoptic_*`) does neither in BO2. Read from t6mp
+(dumps in the item's plan dir, `ghidra/`):
+
+* **ADS-only** is `FUN_008ecb00`: the def's `bAltWeaponAdsOnly` (+0x65c) or a combination
+  attachment's (+0x20). The expected CSV: every `dualoptic_*` row has it (the def's flag) and every
+  `<weapon>+dualoptic` row (the attachment's); nothing else.
+* **Which key.** The alt-mode action slot (`FUN_00537ff0`, slot type 2 → `FUN_00537ca0(.., 0)`)
+  refuses an ADS-only target. The client's action 9 (`FUN_0053f380`; the `+name` table's order gives
+  action `2i+1` = press of entry `i`, entry 4 = `+breath_sprint`) presses sprint and hold breath
+  and, when the aim kbutton (usercmd bit 0x80) is down, calls `FUN_00537dd0`: the held weapon
+  ADS-only and `posFrac >= 1` (`DAT_00b0c268` = 1.0) → `FUN_00537ca0(.., 1)`, which toggles only an
+  ADS-only target; `FUN_005313a0` also refuses while an ADS-only weapon's `posFrac != 1`. So the
+  Hybrid swaps on the sprint/hold-breath key, only fully aimed.
+* **Aim kept.** `FUN_008daa10` (can-ADS) lets an ADS-only weapon aim in weapon states 5 and 2 (the
+  alt drop and alt raise) and refuses every other raise/drop state. The drop itself is alt-timing's
+  (`FUN_008db500`, the outgoing weapon's `iAltDropTime`); firing stays blocked.
+* **No raise.** `FUN_008df320` → `FUN_008da850`: both modes ADS-only → no raise state is set.
+* **Un-aiming does not revert.** No select-weapon caller (`FUN_005347c0`'s 11 callers, the alt picks
+  `FUN_005312f0`/`FUN_005313a0`) keys on letting go of the aim; the chosen sight stays up for the
+  next aim. Hip fire in the alt is the alt.
+
+Port: `WeaponDef.alt_ads_only` / `AttachmentDef.alt_ads_only` (`AltAdsOnly` rows; WEAPON_FIELDS
+79 → 80, ATTACHMENT_FIELDS 17 → 18; `attachments::apply` ORs the attachment's; an alt mode keeps its
+own via `alt_mode`), zhbo-formats reads the def's flag. `Arsenal::alt_toggle_requested` picks the
+key, `toggle_alt`/`finish_alt` keep `ads` and skip the raise for an ADS-only pair, `wants_ads` follows
+`FUN_008daa10`. `WeaponState::alt_mode` caches the resolved alt (it was looked up per toggle; tests
+can now hand a weapon an alt outside the catalog). The viewmodel needed nothing: the outgoing def's
+`ALT_DROP` plays over the drop while the ADS pose follows `ads`, and the alt's own ADS slots are
+already taken from its variant by the converter (`viewmodels.rs`, `FUN_008eddb0`).
+
+Overlap / merge notes:
+* `v1/uncarried-fields` carries the same flag as `traits.alt_ads_only` (weapon `Traits` row) and
+  `AttachmentDef.alt_ads_only` (attachment `Traits` row), with the same OR in `apply`. On merging
+  both: keep 5a's rows and struct, drop this branch's two `AltAdsOnly` rows and
+  `WeaponDef.alt_ads_only`, and point the reads (`arsenal.rs` `ads_only_pair`,
+  `alt_toggle_requested`, `wants_ads`; `actual.rs`) at `def.traits.alt_ads_only`. The formats field
+  is the same line as 5a's.
+* `v1/ads-zoom`'s alt-scope blend (`altScopeADSTransInTime`) keys on the held weapon being an
+  ADS-only alt mode; with this sim the weapon now stays aimed across the swap, so that blend is what
+  the player sees (here, without it, the FOV steps from the parent's to the alt's).
+* The HUD's alt-fire hint still shows the alt-mode key for the Hybrid.
+* `movement::change_stance` stands a crouched player up on any sprint press, aimed or not, so the
+  Hybrid swap while crouched also stands up — whether BO2 does is unverified (follow-up).
+
+Measured (conformance vs `v1/alt-timing`'s 685,684 / 193 / 204, which itself is vs the 2026-10-25
+baseline 706,586 / 203 / 214): `alt_weapon_ads_only` 9,341 → 0; weapons differing cells 685,684 →
+676,343, column clusters 193 → 192, gap clusters 204 → 203; cac unchanged. No column regressed.
+In-game checks (integrator): AN-94 + Hybrid — aim, Shift swaps the sight with the flip animation
+and the gun never leaves the aim; Shift half-aimed or unaimed does nothing; the alt-mode key does
+nothing; let go of the aim and re-aim — the red dot stays; Shift again goes back to the 30° sight.
+
+### Follow-up: the sprint key while aimed keeps the stance; hold breath not ported (branch `v1/alt-ads`)
+
+BO2 has no "sprint press stands you up" rule of its own: the stand-up comes from a sprint *start*
+(`FUN_008c5840`; `FUN_008c57e0` traces the stand-up clearance for a ducked/prone player), and the
+start is refused by `FUN_008c3c40` while the aim button (usercmd bit 0x80) is held, the stick is
+short of `player_sprintForwardMinimum`, and several other buttons are down. `movement::change_stance`
+stood a crouched/prone player up on any sprint press; it now does so only when a sprint could start
+(forward enough, nothing blocking — `block_sprint` already carries the aim). So the Hybrid swap and
+hold breath while crouched keep the crouch, and a sprint press standing still does nothing.
+
+Hold breath (`FUN_008e4860`, called from `FUN_008e4da0`): `+breath_sprint` also presses the
+hold-breath button (usercmd 0x40000, kbutton 0x1076ca0); at `posFrac == 1` on a def with +0x5ac set
+it holds breath (ps+0x10 bit 4) for the breath-hold dvar time (+ `perk_extraBreath` with
+`holdbreath`), then gasps; ps+0x4e0 lerps the sway scale by two dvars. Not ported: the mod has no
+aimed idle sway to steady in this base (5a carries `IdleAmount` but nothing draws it). Follow-up for
+whoever ports the ADS idle sway.

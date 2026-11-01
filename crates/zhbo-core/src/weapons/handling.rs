@@ -216,7 +216,10 @@ pub struct Traits {
     pub use_as_melee: bool,
     /// `bRifleBullet`.
     pub rifle_bullet: bool,
-    /// `bAltWeaponAdsOnly`: the alt mode is only reachable while aiming (the second optic).
+    /// `bAltWeaponAdsOnly` (the def's, OR any combination attachment's, `FUN_008ecb00`): the alt
+    /// mode is only reachable while aiming (the Hybrid optic). The toggle is the sprint/hold-breath
+    /// key while fully aimed, it keeps the aim, and a pair of ADS-only modes switches with no raise
+    /// (`FUN_008da850`).
     pub alt_ads_only: bool,
     /// `bAltWeaponDisableSwitching`.
     pub alt_disable_switching: bool,

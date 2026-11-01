@@ -112,6 +112,24 @@ fn apply_unique_fields(d: &mut WeaponDef, w: &Weapon) {
     }
 }
 
+/// The alt-toggle drop time of the combination `shorts` on `w` (`FUN_008ed1e0`): for a weapon that
+/// is not itself an alt mode, the first single unique — walked in `eAttachment` order, each kind's
+/// unique at its own index of `attachmentUniques` (`FUN_008eb360`) — whose `iAltDropTime` differs
+/// from the base unique's; `None` keeps the def's own. Select fire's unique carries the 500 ms the
+/// toggle into `sf_*` takes.
+fn alt_drop_for(w: &Weapon, shorts: &[&str]) -> Option<f32> {
+    if w.inventory == bo2::inventory::ALTMODE {
+        return None;
+    }
+    let mut kinds: Vec<u32> =
+        shorts.iter().filter_map(|s| w.attachment_variants.iter().find(|(_, id)| short_name(id) == *s).map(|(k, _)| *k)).collect();
+    kinds.sort_unstable();
+    kinds.dedup();
+    let unique = |slot: u32| w.attachment_uniques.iter().find(|u| u.slot == slot);
+    let base = unique(0)?.alt_drop_time;
+    kinds.iter().take(3).filter_map(|&k| unique(k)).map(|u| u.alt_drop_time).find(|&t| t != base)
+}
+
 /// The attachment's metadata from BO2's attachment table: the full name and description keys'
 /// localized text.
 #[derive(Clone, Debug, Default)]
@@ -439,14 +457,23 @@ pub fn add_variants(table: &mut Table, converted: &[String], bo2: &[Weapon]) {
             d.overlay_material_low_res = overlay_material_low_res;
             d.overlay_reticle = overlay_reticle;
         }
+        if let Some(t) = bo2.iter().find(|w| w.name == base_id).and_then(|w| alt_drop_for(w, &combo_shorts)) {
+            d.alt_drop_time = t;
+        }
         if let Some(w) = bo2.iter().find(|w| w.name == base_id) {
             apply_unique_fields(&mut d, w);
         }
         if let Some((short, alt_id)) = base.alt_modes.iter().find(|(short, _)| d.attachments.contains(short)) {
             if let Some(alt_base) = table.weapons.iter().find(|w| &w.id == alt_id).cloned() {
-                // Select fire and the second optic keep the weapon's other attachments.
-                let others: Vec<&AttachmentDef> = atts.iter().copied().filter(|a| &a.short != short).collect();
-                let mut alt = if alt_base.alt_own_ammo { alt_base.clone() } else { attachments::apply(&alt_base, &others) };
+                // Select fire and the second optic keep the weapon's other attachments by name, but
+                // BO2 resolves them against the alt's own (empty) table: none changes its numbers
+                // (`attachments::alt_mode`, G14 `FUN_008ec9e0`).
+                let others: Vec<&str> = atts.iter().filter(|a| &a.short != short).map(|a| a.short.as_str()).collect();
+                let mut alt = if alt_base.alt_own_ammo {
+                    alt_base.clone()
+                } else {
+                    attachments::alt_mode(&alt_base, &others, |a| table.attachments.iter().find(|x| x.id == a))
+                };
                 let alt_shorts: Vec<&str> = alt.attachments.iter().map(String::as_str).collect();
                 if let Some((overlay_material, overlay_material_low_res, overlay_reticle)) =
                     bo2.iter().find(|w| &w.name == alt_id).and_then(|w| overlay_for(w, &alt_shorts))
@@ -799,6 +826,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         empty_drop_time: w.empty_drop_time,
         quick_raise_time: if w.quick_raise_time > 0.0 { w.quick_raise_time } else { w.raise_time * 0.6 },
         quick_drop_time: if w.quick_drop_time > 0.0 { w.quick_drop_time } else { w.drop_time * 0.6 },
+        alt_raise_time: w.alt_raise_time,
+        alt_drop_time: w.alt_drop_time,
         sprint_out_time: w.sprint_out_time,
         ads_in_time: w.ads_in_time.max(0.05),
         ads_out_time: w.ads_out_time.max(0.05),
@@ -1366,6 +1395,41 @@ mod tests {
     }
 
     #[test]
+    fn a_combos_alt_drop_is_its_first_unique_that_differs_from_the_base() {
+        // FUN_008ed1e0 (hk416's data): base unique and def 16 ms, select fire's unique 500 ms, the
+        // launcher's 16 ms. A combined unique past the singles never stands in for a kind.
+        let u = |slot: u32, kind: u32, ms: f32, combined: u32| bo2::AttachmentUnique { slot, kind, combined, alt_drop_time: ms / 1000.0, ..Default::default() };
+        let w = Weapon {
+            name: "hk416_mp".into(),
+            clip_size: 30,
+            start_ammo: 1,
+            max_ammo: 2,
+            fire_time: 0.1,
+            alt_raise_time: 0.016,
+            alt_drop_time: 0.016,
+            attachment_variants: vec![(1, "acog".into()), (10, "gl".into()), (20, "sf".into())],
+            attachment_uniques: vec![u(0, 0, 16.0, 0), u(1, 1, 16.0, 0), u(10, 10, 16.0, 0), u(20, 20, 500.0, 0), u(60, 1, 900.0, 0x2)],
+            ..Default::default()
+        };
+        assert_eq!(alt_drop_for(&w, &["acog", "sf"]), Some(0.5));
+        assert_eq!(alt_drop_for(&w, &["gl"]), None, "the launcher's unique keeps the def's");
+        assert_eq!(alt_drop_for(&w, &["acog"]), None, "slot 60's combined unique is not the ACOG's single");
+        let alt = Weapon { inventory: bo2::inventory::ALTMODE, ..w.clone() };
+        assert_eq!(alt_drop_for(&alt, &["sf"]), None, "an alt mode always takes its own");
+        let mut table = Table {
+            weapons: vec![to_def(&w, &HashMap::new())],
+            attachments: ["acog", "gl", "sf"].iter().map(|s| AttachmentDef { id: s.to_string(), short: s.to_string(), ..Default::default() }).collect(),
+            ..Default::default()
+        };
+        add_variants(&mut table, &["hk416_mp+acog+sf".into(), "hk416_mp+gl".into()], std::slice::from_ref(&w));
+        let def = |id: &str| table.weapons.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("no {id}"));
+        assert_eq!((def("hk416_mp").alt_raise_time, def("hk416_mp").alt_drop_time), (0.016, 0.016));
+        assert_eq!(def("hk416_mp+acog+sf").alt_drop_time, 0.5);
+        assert_eq!(def("hk416_mp+acog+sf").alt_raise_time, 0.016, "no attachment scales the alt raise");
+        assert_eq!(def("hk416_mp+gl").alt_drop_time, 0.016);
+    }
+
+    #[test]
     fn a_replacement_optic_carries_its_own_overlay() {
         let base = bo2::AttachmentUnique {
             name: "au_as50_none".into(),
@@ -1551,6 +1615,50 @@ mod tests {
         for id in &full {
             assert!(converted.contains(id), "the full set must include the legal combo {id}");
         }
+    }
+
+    /// The alt mode keeps the combination's attachment fields, but BO2 resolves them against the
+    /// alt variant's own table (`FUN_008ec9e0`, `FUN_008eb300`; G14): `sf_mp7_mp` offers none, so
+    /// `mp7_mp+extclip+rf+sf`'s select fire keeps its own clip, fire time and laser while the
+    /// weapon takes the extended mag, rapid fire and laser. The names still ride along (the parts
+    /// it draws are the parent's).
+    #[test]
+    fn an_alt_mode_takes_none_of_the_weapons_attachment_numbers() {
+        let sf_unique = bo2::AttachmentUnique { name: "au_mp7_sf".into(), kind: 22, alt_weapon: Some("sf_mp7_mp".into()), ..Default::default() };
+        let w = Weapon {
+            name: "mp7_mp".into(),
+            clip_size: 40,
+            start_ammo: 4,
+            max_ammo: 8,
+            fire_time: 0.08,
+            attachment_variants: vec![(6, "extclip".into()), (21, "rf".into()), (22, "sf".into()), (14, "steadyaim".into())],
+            attachment_uniques: vec![sf_unique],
+            ..Default::default()
+        };
+        let sf = Weapon { name: "sf_mp7_mp".into(), clip_size: 40, start_ammo: 4, max_ammo: 8, fire_time: 0.064, inventory: bo2::inventory::ALTMODE, ..Default::default() };
+        let mut table = Table {
+            weapons: vec![to_def(&w, &HashMap::new()), to_def(&sf, &HashMap::new())],
+            attachments: vec![
+                AttachmentDef { id: "extclip".into(), short: "extclip".into(), clip_scale: 1.35, ..Default::default() },
+                AttachmentDef { id: "rf".into(), short: "rf".into(), fire_time_scale: 0.75, ..Default::default() },
+                AttachmentDef { id: "sf".into(), short: "sf".into(), ..Default::default() },
+                AttachmentDef { id: "steadyaim".into(), short: "steadyaim".into(), laser: true, hip_spread_min_scale: 0.65, ..Default::default() },
+            ],
+            ..Default::default()
+        };
+        let own = table.weapons[1].clone();
+        add_variants(&mut table, &["mp7_mp+extclip+rf+sf".into(), "mp7_mp+sf+steadyaim".into()], &[w, sf]);
+        let d = table.weapons.iter().find(|d| d.id == "mp7_mp+extclip+rf+sf").expect("the combo");
+        assert_eq!(d.clip, 54);
+        assert!((d.fire_time - 0.06).abs() < 1e-6, "{}", d.fire_time);
+        let alt = table.weapons.iter().find(|a| a.id == d.alt).expect("the alt mode");
+        assert_eq!(alt.id, "sf_mp7_mp~mp7_mp+extclip+rf+sf");
+        assert_eq!((alt.clip, alt.fire_time, alt.reload_time, alt.start_reserve, alt.max_reserve), (own.clip, own.fire_time, own.reload_time, own.start_reserve, own.max_reserve));
+        assert_eq!(alt.attachments, vec!["extclip", "rf"]);
+        let d = table.weapons.iter().find(|d| d.id == "mp7_mp+sf+steadyaim").expect("the combo");
+        assert!(d.laser);
+        let alt = table.weapons.iter().find(|a| a.id == d.alt).expect("the alt mode");
+        assert!(!alt.laser && alt.hip_spread == own.hip_spread && alt.specialties == own.specialties);
     }
 
     #[test]

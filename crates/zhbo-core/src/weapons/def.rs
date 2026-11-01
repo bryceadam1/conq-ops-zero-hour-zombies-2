@@ -245,6 +245,13 @@ pub struct WeaponDef {
     pub empty_drop_time: f32,
     pub quick_raise_time: f32,
     pub quick_drop_time: f32,
+    /// An alt toggle's raise into this mode (BO2's `iAltRaiseTime` of the variant, `FUN_008df320`;
+    /// no attachment scales it).
+    pub alt_raise_time: f32,
+    /// An alt toggle's drop out of this weapon (`FUN_008ed1e0`: the first of the combination's
+    /// attachment uniques whose `iAltDropTime` differs from the base unique's, else the def's own;
+    /// an alt mode always takes its own).
+    pub alt_drop_time: f32,
     pub sprint_out_time: f32,
     pub ads_in_time: f32,
     pub ads_out_time: f32,
@@ -509,6 +516,8 @@ impl Default for WeaponDef {
             empty_drop_time: 0.4,
             quick_raise_time: 0.3,
             quick_drop_time: 0.25,
+            alt_raise_time: 0.0,
+            alt_drop_time: 0.0,
             sprint_out_time: 0.2,
             ads_in_time: 0.25,
             ads_out_time: 0.2,
