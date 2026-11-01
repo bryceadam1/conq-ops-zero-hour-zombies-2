@@ -250,6 +250,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     // Every BO2 multiplayer weapon a player can carry, with its attachments and alt modes, as the
     // core's weapon table; art for the converted ones (the loadout first, then the rest).
     let common_patch = load_zone(bo2_dir, "common_patch_mp")?;
+    // BO2's weapon asset pool, highest priority first (`zhbo_formats::weapon::MP_POOL`).
+    let pool = [&patch, &common_patch, &common];
     let (bo2, atts) = crate::paks::mp_weapons(&patch, &common_patch, &common)?;
     let names = crate::weapons::names(bo2_dir);
     let meta = crate::weapons::attachment_metadata(&patch, &names);
@@ -319,7 +321,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         }
     }
     let base_count = converted_base.len();
-    let (vm_summary, mut clips) = viewmodels::weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &atts, &mut table.weapons, &converted, base_count)?;
+    let (vm_summary, mut clips) = viewmodels::weapon_viewmodels(&pool, &zones, &paks, &mut out, &bo2, &atts, &mut table.weapons, &converted, base_count)?;
     summary.push(vm_summary);
     // The weapon emblem: each faction's Zero Hour logo, from the player's own Zero Hour install.
     match zhbo_requirements::check_requirements().zero_hour {
@@ -366,8 +368,8 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     // Every legal combination gets its native world-weapon manifest (the shared models deduped by
     // name); only the base set's meshes ride the W3D body, and a combination shows its base weapon
     // there (`Catalog::world_viewmodel`).
-    let (held, flashes) = viewmodels::world_weapons(&patch, &common, &paks, &mut out, &rig, &bo2, &atts, &mut table.weapons, &converted, base_count, &mut looks);
-    let tablet = viewmodels::tablet_world(&patch, &common, &paks, &mut out, &rig, &mut looks);
+    let (held, flashes) = viewmodels::world_weapons(&pool, &paks, &mut out, &rig, &bo2, &atts, &mut table.weapons, &converted, base_count, &mut looks);
+    let tablet = viewmodels::tablet_world(&pool, &paks, &mut out, &rig, &mut looks);
     // Each weapon's muzzle on the hand, so shots and flashes leave the gun in hand.
     let hand = rig.pivot(character::WEAPON_TAG).unwrap_or(0);
     for (vm, at) in &flashes {
@@ -433,7 +435,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         Err(e) => summary.push(format!("no hammer viewmodel: {e}")),
     }
     let mut projectile_models = BTreeMap::new();
-    summary.push(viewmodels::projectiles(&patch, &common, &paks, &mut out, &bo2, &mut table.weapons, &converted_base, &mut projectile_models));
+    summary.push(viewmodels::projectiles(&pool, &paks, &mut out, &bo2, &mut table.weapons, &converted_base, &mut projectile_models));
     viewmodels::share_projectiles(&mut table.weapons);
 
     // BO2 sound effects: the general ones, each converted weapon's own shots, and the viewmodel
@@ -562,12 +564,12 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     }
     // What others see of a shot besides the flash: the world brass and the tracer, as FX weapons
     // the sim fires (every def, combinations included).
-    let (shot_ini, placed) = crate::shotfx::convert(&mut table.weapons, &bo2, &[&patch, &common], &mut effects, &|h| paks.image(h));
+    let (shot_ini, placed) = crate::shotfx::convert(&mut table.weapons, &bo2, &pool, &mut effects, &|h| paks.image(h));
     fx_ini.push_str(&shot_ini);
     // The overhead General fires Zero Hour's own weapon: his flash, brass and tracer are one FXList.
     let mut rts_flashes = flashes.clone();
     for (id, flash) in &flashes {
-        if let Some(fx) = crate::shotfx::rts_fire_fx(id, flash, &bo2, &placed, &[&patch, &common], &mut effects, &|h| paks.image(h)) {
+        if let Some(fx) = crate::shotfx::rts_fire_fx(id, flash, &bo2, &placed, &pool, &mut effects, &|h| paks.image(h)) {
             rts_flashes.insert(id.clone(), fx);
         }
     }
@@ -646,11 +648,12 @@ mod tests {
         let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
         let common = load_zone(&bo2_dir, "common_mp").unwrap();
         let patch = load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
+        let common_patch = load_zone(&bo2_dir, "common_patch_mp").unwrap();
+        let pool = [&patch, &common_patch, &common];
         let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(&bo2_dir, f.zone).unwrap()).collect();
         let paks = Paks::open(&bo2_dir).unwrap();
         let names = crate::weapons::names(&bo2_dir);
-        let bo2 = zhbo_formats::weapon::all_in(&common, &[&patch]).unwrap();
-        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        let (bo2, atts) = crate::paks::mp_weapons(&patch, &common_patch, &common).unwrap();
         // The weapon's own first-person effects are parsed (R8) and bound as BO2's asset pool binds
         // them: `common_mp` holds `weapon/shellejects/fx_rifle` only as a reference stub, the full
         // asset is `patch_mp`'s — so the AN-94, the other ARs and the snipers DO eject brass.
@@ -684,7 +687,7 @@ mod tests {
         let ids: Vec<String> = defs.iter().map(|d| d.id.clone()).collect();
         for (i, id) in ids.iter().enumerate() {
             let mut out = BTreeMap::new();
-            match weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &atts, &mut defs, std::slice::from_ref(id), 1) {
+            match weapon_viewmodels(&pool, &zones, &paks, &mut out, &bo2, &atts, &mut defs, std::slice::from_ref(id), 1) {
                 Ok((summary, clips)) => {
                     let d = defs.iter().find(|d| &d.id == id).unwrap();
                     let models = out.keys().filter(|k| k.contains("_SKN")).count();
@@ -723,11 +726,12 @@ mod tests {
         let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
         let common = load_zone(&bo2_dir, "common_mp").unwrap();
         let patch = load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
+        let common_patch = load_zone(&bo2_dir, "common_patch_mp").unwrap();
+        let pool = [&patch, &common_patch, &common];
         let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(&bo2_dir, f.zone).unwrap()).collect();
         let paks = Paks::open(&bo2_dir).unwrap();
         let names = crate::weapons::names(&bo2_dir);
-        let bo2 = zhbo_formats::weapon::all(&common).unwrap();
-        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        let (bo2, atts) = crate::paks::mp_weapons(&patch, &common_patch, &common).unwrap();
         let table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
         let mut fails = Vec::new();
         let mut combos = 0;
@@ -751,7 +755,7 @@ mod tests {
                     fails.extend(zhbo_core::conformance::check(Box::leak(Box::new(c))));
                 }
                 let mut out = BTreeMap::new();
-                match weapon_viewmodels(&patch, &common, &zones, &paks, &mut out, &bo2, &atts, &mut t.weapons, std::slice::from_ref(&id), 1) {
+                match weapon_viewmodels(&pool, &zones, &paks, &mut out, &bo2, &atts, &mut t.weapons, std::slice::from_ref(&id), 1) {
                     Ok((summary, clips)) => {
                         let has_model = base_weapon(&bo2, &base.id).attachment_uniques.iter().any(|u| u.combined == 0 && u.view_model.is_some() && crate::weapons::short_name(&base.allowed.iter().find(|(s, _)| s == short).unwrap().1) == *short && w_kind(&bo2, &base.id, short) == Some(u.kind));
                         if has_model && !summary.contains("attachment model") {
@@ -850,9 +854,9 @@ mod tests {
         let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
         let common = load_zone(&bo2_dir, "common_mp").unwrap();
         let patch = load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
+        let common_patch = load_zone(&bo2_dir, "common_patch_mp").unwrap();
         let names = crate::weapons::names(&bo2_dir);
-        let bo2 = zhbo_formats::weapon::all(&common).unwrap();
-        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        let (bo2, atts) = crate::paks::mp_weapons(&patch, &common_patch, &common).unwrap();
         let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
         let converted = crate::weapons::converted(&patch, &bo2);
         crate::weapons::add_variants(&mut table, &converted, &bo2);
@@ -871,9 +875,9 @@ mod tests {
         let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
         let common = load_zone(&bo2_dir, "common_mp").unwrap();
         let patch = load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
+        let common_patch = load_zone(&bo2_dir, "common_patch_mp").unwrap();
         let names = crate::weapons::names(&bo2_dir);
-        let bo2 = zhbo_formats::weapon::all(&common).unwrap();
-        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        let (bo2, atts) = crate::paks::mp_weapons(&patch, &common_patch, &common).unwrap();
         let mut table = crate::weapons::table(&bo2, &atts, crate::weapons::default_attachment(&patch).as_ref(), &names);
         crate::weapons::add_variants(&mut table, &["as50_mp+acog".to_string(), "as50_mp+fmj".to_string()], &bo2);
         let def = |id: &str| table.weapons.iter().find(|d| d.id == id).unwrap_or_else(|| panic!("no {id}"));
@@ -892,10 +896,11 @@ mod tests {
         let bo2_dir = zhbo_requirements::check_requirements().black_ops2.unwrap().path;
         let common = load_zone(&bo2_dir, "common_mp").unwrap();
         let patch = load_zone(&bo2_dir, crate::fx::ZONE).unwrap();
+        let common_patch = load_zone(&bo2_dir, "common_patch_mp").unwrap();
+        let pool = [&patch, &common_patch, &common];
         let paks = Paks::open(&bo2_dir).unwrap();
         let names = crate::weapons::names(&bo2_dir);
-        let bo2 = zhbo_formats::weapon::all(&common).unwrap();
-        let atts = zhbo_formats::weapon::attachments(&common).unwrap();
+        let (bo2, atts) = crate::paks::mp_weapons(&patch, &common_patch, &common).unwrap();
         // The attachments carry BO2's compatibility lists (the metadata), as `files` builds them:
         // without them the loadout's `an94_mp+gl+reflex` sanitizes to a different combination.
         let meta = crate::weapons::attachment_metadata(&patch, &names);
@@ -909,7 +914,7 @@ mod tests {
         let hand = rig.pivot(character::WEAPON_TAG).unwrap() as u16;
         let mut out = BTreeMap::new();
         let mut looks = textures::Looks::default();
-        let (held, _) = viewmodels::world_weapons(&patch, &common, &paks, &mut out, &rig, &bo2, &atts, &mut table.weapons, &ids, ids.len(), &mut looks);
+        let (held, _) = viewmodels::world_weapons(&pool, &paks, &mut out, &rig, &bo2, &atts, &mut table.weapons, &ids, ids.len(), &mut looks);
         let mut fails = Vec::new();
         let mut shown = 0;
         for (vm, id) in ids.iter().enumerate() {

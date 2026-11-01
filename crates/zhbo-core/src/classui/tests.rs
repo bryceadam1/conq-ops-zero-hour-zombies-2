@@ -1234,7 +1234,7 @@ fn the_offhands_draw_their_cac_picture() {
     let cell = *editor_cells(&l, &e).iter().find(|c| c.slot == Slot::Lethal).unwrap();
     assert_eq!(cell_icon(&e, &cell), Some(crate::names::cac_weapon_image("frag_grenade_mp")));
     e.slot = Slot::Tactical;
-    let i = e.options().iter().position(|o| o == &weapons::weapon("concussion_grenade_mp").display_name).unwrap();
+    let i = e.options().iter().position(|o| o == weapons::weapon("concussion_grenade_mp").menu_name()).unwrap();
     assert_eq!(option_icon(&e, i), Some(crate::names::cac_weapon_image("concussion_grenade_mp")));
 }
 

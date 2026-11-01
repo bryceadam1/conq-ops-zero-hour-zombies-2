@@ -137,12 +137,11 @@ pub fn convert(
     let mut brass: BTreeMap<String, (String, String)> = BTreeMap::new();
     let mut placed: BTreeMap<String, String> = BTreeMap::new();
     let mut tracers: BTreeMap<String, String> = BTreeMap::new();
-    let (patch, common) = (zones[0], zones.get(1).copied().unwrap_or(zones[0]));
     for d in defs.iter_mut() {
         let base = crate::viewmodels::base_id(&d.id);
         let Some(w) = bo2.iter().find(|w| w.name == base) else { continue };
         let fx = brass.entry(base.to_string()).or_insert_with(|| {
-            let Some(rel) = w.world_model.as_deref().and_then(|m| crate::viewmodels::find_model(patch, common, m).ok()).and_then(|m| brass_from_flash(&m)) else {
+            let Some(rel) = w.world_model.as_deref().and_then(|m| crate::viewmodels::find_model(zones, m).ok()).and_then(|m| brass_from_flash(&m)) else {
                 return Default::default();
             };
             let mut one = |e: &zhbo_formats::fx::Effect, last: bool| -> Option<String> {

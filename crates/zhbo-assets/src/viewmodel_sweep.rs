@@ -31,6 +31,7 @@ use zhbo_formats::t6zone::Zone;
 /// The player's install, opened once: the zones and image packs the viewmodel conversion reads.
 pub struct Source {
     common: Zone,
+    common_patch: Zone,
     patch: Zone,
     zones: Vec<Zone>,
     paks: Paks,
@@ -43,6 +44,11 @@ pub struct Source {
 }
 
 impl Source {
+    /// BO2's weapon asset pool, highest priority first (`zhbo_formats::weapon::MP_POOL`).
+    fn pool(&self) -> [&Zone; 3] {
+        [&self.patch, &self.common_patch, &self.common]
+    }
+
     /// Open the game's zones (`common_mp`, the patch, the three factions' art) and build the weapon
     /// table the conversion places attachment clips from.
     pub fn open(bo2_dir: &Path) -> Result<Source, String> {
@@ -67,7 +73,7 @@ impl Source {
         if let Ok(d) = crate::rangefinder::display(bo2_dir, &reticle_zone.iter().collect::<Vec<_>>(), &paks, &mut emblems) {
             emblems.insert(zhbo_native::display::display_path(), d.to_bytes());
         }
-        Ok(Source { common, patch, zones, paks, bo2, atts, defs: table.weapons, emblems })
+        Ok(Source { common, common_patch, patch, zones, paks, bo2, atts, defs: table.weapons, emblems })
     }
 
     /// The native blobs for converted viewmodel `id` — `an94_mp` or `an94_mp+reflex` — keyed by
@@ -78,7 +84,7 @@ impl Source {
     pub fn composition(&self, id: &str) -> Result<BTreeMap<String, Vec<u8>>, String> {
         let mut out: BTreeMap<String, Vec<u8>> = BTreeMap::new();
         let mut defs = self.defs.clone();
-        weapon_viewmodels(&self.patch, &self.common, &self.zones, &self.paks, &mut out, &self.bo2, &self.atts, &mut defs, std::slice::from_ref(&id.to_string()), 0)?;
+        weapon_viewmodels(&self.pool(), &self.zones, &self.paks, &mut out, &self.bo2, &self.atts, &mut defs, std::slice::from_ref(&id.to_string()), 0)?;
         out.retain(|path, _| path.starts_with(zhbo_native::DIR) || path.starts_with("Art\\Textures\\"));
         out.extend(self.emblems.clone());
         Ok(out)
@@ -93,7 +99,7 @@ impl Source {
         let w = self.bo2.iter().find(|w| w.name == base)?;
         let view = w.view_model.as_deref()?;
         let c = crate::viewmodels::combo(w, &self.atts, &shorts);
-        Some(crate::viewmodels::base_parts(&self.patch, &self.common, w, &c, view).len())
+        Some(crate::viewmodels::base_parts(&self.pool(), w, &c, view).len())
     }
 }
 
@@ -861,7 +867,7 @@ mod tests {
         let summary = |id: &str| {
             let mut out = BTreeMap::new();
             let mut defs = src.defs.clone();
-            match crate::viewmodels::weapon_viewmodels(&src.patch, &src.common, &src.zones, &src.paks, &mut out, &src.bo2, &src.atts, &mut defs, &[id.to_string()], 0) {
+            match crate::viewmodels::weapon_viewmodels(&src.pool(), &src.zones, &src.paks, &mut out, &src.bo2, &src.atts, &mut defs, &[id.to_string()], 0) {
                 Ok((s, _)) => eprintln!("SUMMARY {id}: {s}"),
                 Err(e) => eprintln!("SUMMARY {id}: ERR {e}"),
             }
@@ -932,7 +938,7 @@ mod tests {
         let dir = std::env::var("ZHBO_BO2_DIR").expect("ZHBO_BO2_DIR");
         let src = Source::open(Path::new(&dir)).expect("open the install");
         for name in ["t6_wpn_smg_mp7_view", "t6_attach_mag_mp7_view"] {
-            if let Ok(raw) = crate::viewmodels::find_model(&src.patch, &src.common, name) {
+            if let Ok(raw) = crate::viewmodels::find_model(&src.pool(), name) {
                 eprintln!("RAW {name}:");
                 for (i, b) in raw.bones.iter().enumerate() {
                     eprintln!("  raw {i}: {} parent={:?} pos={:?}", b.name, b.parent, b.position);

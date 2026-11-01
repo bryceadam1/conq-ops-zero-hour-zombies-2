@@ -471,8 +471,8 @@ mod tests {
         let weapons = zhbo_formats::weapon::all(&common).unwrap();
         for (id, slot) in [("kard_mp", 1usize), ("kard_mp", 0x17), ("an94_mp", 1), ("an94_mp", 0x10)] {
             let w = weapons.iter().find(|w| w.name == id).unwrap();
-            let gun = crate::viewmodels::find_model(&patch, &common, w.view_model.as_deref().unwrap()).unwrap();
-            let mag = crate::viewmodels::magazine(&common, w.view_model.as_deref().unwrap());
+            let gun = crate::viewmodels::find_model(&[&patch, &common], w.view_model.as_deref().unwrap()).unwrap();
+            let mag = crate::viewmodels::magazine(&[&common], w.view_model.as_deref().unwrap());
             let mut parts: Vec<(&xmodel::Model, &str)> = vec![(&gun, "tag_weapon")];
             if let Some(m) = &mag {
                 parts.push((m, "j_gun"));

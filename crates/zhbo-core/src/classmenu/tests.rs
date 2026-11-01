@@ -272,7 +272,7 @@ use super::items::cac_entries;
             assert!(d.alt.is_empty(), "{id} is an alt variant");
             assert!(!d.id.contains(['+', '~']), "{id} is a built variant id");
         }
-        let mut names: Vec<&str> = ids.iter().map(|id| weapons::weapon(id).display_name.as_str()).collect();
+        let mut names: Vec<&str> = ids.iter().map(|id| weapons::weapon(id).menu_name()).collect();
         let n = names.len();
         names.sort_unstable();
         names.dedup();
@@ -543,8 +543,8 @@ use super::items::cac_entries;
     #[test]
     fn slot_values_read_as_the_resulting_class() {
         let d = Draft::default();
-        assert_eq!(slot_value(&d, Slot::Primary), weapons::weapon("an94_mp").display_name);
-        assert_eq!(slot_value(&d, Slot::Secondary), weapons::weapon("fnp45_mp").display_name);
+        assert_eq!(slot_value(&d, Slot::Primary), weapons::weapon("an94_mp").menu_name());
+        assert_eq!(slot_value(&d, Slot::Secondary), weapons::weapon("fnp45_mp").menu_name());
         // The attachment row lists the display names, not the shorts.
         let atts = slot_value(&d, Slot::PrimaryAtts);
         assert!(atts.contains("Grenade Launcher") && atts.contains("Reflex"), "keeps names: {atts}");

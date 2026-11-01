@@ -136,7 +136,7 @@ pub(super) fn picker_title(editor: &Editor) -> String {
         Slot::Secondary => "SECONDARY".to_string(),
         Slot::PrimaryAtts | Slot::SecondaryAtts => {
             let id = if editor.slot == Slot::PrimaryAtts { editor.draft.primary.as_str() } else { editor.draft.secondary.as_str() };
-            format!("{} ATTACHMENTS", weapons::weapon(id).display_name.to_uppercase())
+            format!("{} ATTACHMENTS", weapons::weapon(id).menu_name().to_uppercase())
         }
         Slot::Lethal => offhand_title(&editor.draft, true).to_string(),
         Slot::Tactical => offhand_title(&editor.draft, false).to_string(),
@@ -195,7 +195,7 @@ fn draw_cell(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor, cell: &Ed
                 let iw = ih * 2.0;
                 let pic = Rect { x: r.right() - 90.0 - iw, y: r.y + 10.0, w: iw, h: ih };
                 bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&def.id)), pic, argb(OFF_WHITE, 1.0), Vec::new());
-                bo2::text(prims, f, Family::Condensed, &def.display_name, Rect { x: r.x + 3.0, y: r.bottom() - bo2::TEXT_CONDENSED - 2.0, w: r.w, h: bo2::TEXT_CONDENSED }, Align::Left, argb(OFF_WHITE, 1.0));
+                bo2::text(prims, f, Family::Condensed, def.menu_name(), Rect { x: r.x + 3.0, y: r.bottom() - bo2::TEXT_CONDENSED - 2.0, w: r.w, h: bo2::TEXT_CONDENSED }, Align::Left, argb(OFF_WHITE, 1.0));
                 // The slot's camo swatch (`CACWeaponButton.GetCamoSwatch`: 32 square, its right
                 // edge `ImageBorder + 39` in, 5 up), reading `class[weaponStatName .. "camo"]`: the
                 // primary's `primarycamo`, the secondary's `secondarycamo`.
@@ -318,8 +318,8 @@ fn offhand_names(d: &Draft, lethal: bool) -> Vec<String> {
     let id = if lethal { &d.lethal } else { &d.tactical };
     match d.offhand_count(lethal) {
         0 => Vec::new(),
-        1 => vec![weapons::weapon(id).display_name.clone()],
-        n => vec![format!("{} x{n}", weapons::weapon(id).display_name)],
+        1 => vec![weapons::weapon(id).menu_name().to_string()],
+        n => vec![format!("{} x{n}", weapons::weapon(id).menu_name())],
     }
 }
 
@@ -431,7 +431,7 @@ fn draw_weapon_picker(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor) 
         let ih = iw / 2.0;
         let pic = Rect { x: card.x + (card.w - iw) * 0.5, y: card.y + 12.0, w: iw, h: ih };
         bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&def.id)), pic, argb(OFF_WHITE, 1.0), Vec::new());
-        bo2::text(prims, f, Family::Condensed, &def.display_name, Rect { x: card.x + 3.0, y: card.bottom() - bo2::TEXT_CONDENSED - 2.0, w: card.w, h: bo2::TEXT_CONDENSED }, Align::Left, argb(BOII_ORANGE, 1.0));
+        bo2::text(prims, f, Family::Condensed, def.menu_name(), Rect { x: card.x + 3.0, y: card.bottom() - bo2::TEXT_CONDENSED - 2.0, w: card.w, h: bo2::TEXT_CONDENSED }, Align::Left, argb(BOII_ORANGE, 1.0));
         // The four segmented bars, right of the card and under the tiles (`cacweaponsp.lua`'s
         // WeaponAttributeList, `b-editor/016`).
         if def.class.is_gun() {
@@ -458,7 +458,7 @@ fn draw_weapon_picker(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor) 
         let ih = iw / 2.0;
         let pic = Rect { x: r.x + (r.w - iw) * 0.5, y: r.y + 12.0, w: iw, h: ih };
         bo2::sprite(prims, f, &crate::names::cac_weapon_image(base_id(&def.id)), pic, argb(OFF_WHITE, 1.0), Vec::new());
-        bo2::text(prims, f, Family::Condensed, &def.display_name, Rect { x: r.x + 3.0, y: r.bottom() - bo2::TEXT_CONDENSED - 2.0, w: r.w, h: bo2::TEXT_CONDENSED }, Align::Left, argb(OFF_WHITE, 1.0));
+        bo2::text(prims, f, Family::Condensed, def.menu_name(), Rect { x: r.x + 3.0, y: r.bottom() - bo2::TEXT_CONDENSED - 2.0, w: r.w, h: bo2::TEXT_CONDENSED }, Align::Left, argb(OFF_WHITE, 1.0));
         if editor.option_chosen(*opt) {
             bo2::text(prims, f, Family::Condensed, "*", Rect { x: r.right() - 20.0, y: r.y + 2.0, w: 20.0, h: bo2::TEXT_CONDENSED }, Align::Center, argb(bo2::YELLOW_GLOW, 1.0));
         }
@@ -569,7 +569,7 @@ fn draw_option_grid(prims: &mut Vec<Prim>, l: &EditorLayout, editor: &Editor) {
         } else if let Some(def) = editor.option_weapon(editor.option).filter(|_| matches!(editor.slot, Slot::Lethal | Slot::Tactical)) {
             // `cacgrenades.lua:262-360`: `grenadeTitle` (Big) / `grenadeDescription` (Default,
             // 0.4, two cells and two gaps wide), set from `GetItemName` / `GetItemDesc` (`:488-567`).
-            draw_item_panel(prims, f, &def.display_name, &def.description, y);
+            draw_item_panel(prims, f, def.menu_name(), &def.description, y);
         } else {
             // The other content pickers carry only the highlighted entry's name under the grid.
             let r = f.in_menu(crate::lui::Place::new((true, false, 0.0, bo2::MENU_W * 0.5), (true, false, y, y + bo2::TEXT_CONDENSED)));

@@ -589,6 +589,8 @@ pub fn set_cac_slots(table: &mut Table, patch: &zhbo_formats::t6zone::Zone, name
             // Column 7's localized description, exactly as BO2's string table has it.
             let row = statstable.iter().find(|r| r.get(4).is_some_and(|c| *c == item.reference));
             d.description = row.and_then(|r| r.get(7)).and_then(|k| names.get(k.trim())).cloned().unwrap_or_default();
+            // Column 3's localized name: the menus' (`GetItemName`), not the HUD's `displayName`.
+            d.cac_name = row.and_then(|r| r.get(3)).and_then(|k| names.get(k.trim())).map(|s| s.trim().to_string()).unwrap_or_default();
             d.cac_sort = row.and_then(|r| r.get(9)).and_then(|c| c.trim().parse().ok()).unwrap_or(0);
             d.cac_index = item.index;
             order_attachments(d, item);
@@ -1220,6 +1222,7 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         // Set from the statstable by `set_cac_slots` (the table is not this weapon's data).
         cac_slot: String::new(),
         cac_group: String::new(),
+        cac_name: String::new(),
         description: String::new(),
         cac_sort: 0,
         cac_index: 0,
