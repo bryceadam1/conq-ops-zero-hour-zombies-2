@@ -3,7 +3,8 @@
 #
 #   scripts/autotest-mac.sh            autopilot test (ZHBO_AUTOPILOT=1, scripted inside the mod; the
 #                                      profile is seeded with a GL custom for the alt-mode check)
-#   scripts/autotest-mac.sh --input    real-input test (ZHBO_AUTOPILOT=manual; holds W, moves the mouse)
+#   scripts/autotest-mac.sh --input    real-input test (ZHBO_AUTOPILOT=manual; T takes control, holds W,
+#                                      moves the mouse)
 #   scripts/autotest-mac.sh --equipment
 #                                      C4, Trophy System and Black Hat against an enemy drone and
 #                                      rocket troopers (two runs: C4 + Trophy, C4 + Black Hat)
@@ -444,7 +445,9 @@ drive="$out/drive"
 [[ "$drive" -nt "$repo/scripts/macos/drive.swift" ]] || swiftc -O "$repo/scripts/macos/drive.swift" -o "$drive"
 export ZHBO_AUTOPILOT=manual GGC_AUTO_EXIT_SECONDS=60
 "$dist/conquerops" -win -xres 1280 -yres 720 -loadsave "$save" >"$out/stdout.txt" 2>&1
-wait_for_log "entered first-person" 90 || { echo "the General never entered first person; see $log" >&2; exit 1; }
+# The manual scene leaves the player overhead with his General selected; take control the way a
+# player does, with the Take Control button's hotkey (T, macOS virtual key 17).
+wait_for_log "autopilot: selected the General" 90 || { echo "the manual scene never selected the General; see $log" >&2; exit 1; }
 pid="$(game_pid)"
 "$drive" "focus:$pid" sleep:1500
 front="$(osascript -e 'tell application "System Events" to get unix id of first process whose frontmost is true')"
@@ -452,6 +455,9 @@ if [[ "$front" != "$pid" ]]; then
     echo "the game is not the frontmost app; not sending input" >&2
     exit 1
 fi
+"$drive" tap:17 sleep:500
+wait_for_log "entered first-person" 30 || { echo "T did not take control of the General; see $log" >&2; exit 1; }
+"$drive" sleep:1500
 screencapture -x "$out/window-before.png" 2>/dev/null || true
 # W for 2 s, then turn right with relative mouse motion. (macOS virtual key 13 is W.)
 "$drive" down:13 sleep:2000 up:13 sleep:1200 look:12,0,40 sleep:1500

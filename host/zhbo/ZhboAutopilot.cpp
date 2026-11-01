@@ -498,7 +498,22 @@ void autopilotFrame()
 		return;
 	}
 	if (s_config.autopilot_manual)
+	{
+		// The manual scene starts overhead with the General selected, so his command bar (Take
+		// Control, hotkey T) is up: the real-input test takes control by key, as a player would.
+		Object *general = TheGameLogic->findObjectByID(s_autopilot.general);
+		if (general && !s_autopilot.manualSelected && frame - s_autopilot.spawnFrame >= 15)
+		{
+			s_autopilot.manualSelected = TRUE;
+			TheInGameUI->deselectAllDrawables();
+			TheInGameUI->selectDrawable(general->getDrawable());
+			GameMessage *group = TheMessageStream->appendMessage(GameMessage::MSG_CREATE_SELECTED_GROUP);
+			group->appendBooleanArgument(TRUE);
+			group->appendObjectIDArgument(general->getID());
+			logLine("autopilot: selected the General");
+		}
 		return;
+	}
 	// After the field computer hands the General back, take control again once (tests re-entry).
 	Object *general = TheGameLogic->findObjectByID(s_autopilot.general);
 	if (!general || s_autopilot.retakes >= 1)
