@@ -37,7 +37,8 @@ pub struct Source {
     bo2: Vec<zhbo_formats::weapon::Weapon>,
     atts: Vec<zhbo_formats::weapon::Attachment>,
     defs: Vec<zhbo_core::weapons::WeaponDef>,
-    /// The faction emblems from the Zero Hour install (empty without one), as the archive has them.
+    /// The faction emblems from the Zero Hour install (empty without one) and the target finder's
+    /// display, as the archive has them.
     emblems: BTreeMap<String, Vec<u8>>,
 }
 
@@ -49,8 +50,9 @@ impl Source {
         let patch = load_zone(bo2_dir, crate::fx::ZONE)?;
         let zones: Vec<Zone> = FACTIONS.iter().map(|f| load_zone(bo2_dir, f.zone)).collect::<Result<_, _>>()?;
         let mut paks = Paks::open(bo2_dir)?;
-        if let Ok(z) = load_zone(bo2_dir, crate::textures::RETICLE_ZONE) {
-            paks.learn(&z);
+        let reticle_zone = load_zone(bo2_dir, crate::textures::RETICLE_ZONE).ok();
+        if let Some(z) = &reticle_zone {
+            paks.learn(z);
         }
         let bo2 = zhbo_formats::weapon::all(&common).map_err(|e| e.to_string())?;
         let atts = zhbo_formats::weapon::attachments(&common).map_err(|e| e.to_string())?;
@@ -60,6 +62,10 @@ impl Source {
         let mut emblems = BTreeMap::new();
         if let Ok(zh) = zhbo_requirements::check_requirements().zero_hour {
             crate::emblems::faction_emblems(&zh.path, &mut emblems);
+        }
+        // The target finder's display, as the archive has it.
+        if let Ok(d) = crate::rangefinder::display(bo2_dir, &reticle_zone.iter().collect::<Vec<_>>(), &paks, &mut emblems) {
+            emblems.insert(zhbo_native::display::display_path(), d.to_bytes());
         }
         Ok(Source { common, patch, zones, paks, bo2, atts, defs: table.weapons, emblems })
     }
