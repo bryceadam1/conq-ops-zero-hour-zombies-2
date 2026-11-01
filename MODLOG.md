@@ -4725,3 +4725,67 @@ sweep; it needs its own port.
 Zero Hour's: it disables non-infantry objects only (`host.disable(.., disable_kind::EMP, ..)`
 skips anything with `objflags::INFANTRY`), so the General is never EMP'd and has no such state.
 `NativeFrame.optics_off` stays plumbed at 0; a player-side EMP effect would drive it.
+
+## The optic displays: the MMS screen, the target finder's spotting and diamonds (2026-10-31, branch `v1/optic-displays`)
+
+Stacked on `v1/lens-reticle`. Three lens displays BO2 drives from code, now driven by the sim and
+drawn by the native pass. Research dumps: `~/.opencode/plan/optic-displays/` (`x1.c`, `x2.c`,
+`x3.c`, the DXBC listings `sonar_attachment_lens2_*.txt`).
+
+* **The MMS screen** (`mc/mtl_t6_attach_optic_mms_display`, `sw4_3d_sonar_attachment_lens2`) drew
+  as plain additive noise and washed the lens white. Ported from its DXBC as `native.wgsl`
+  `fs_sonar` (RENDERER.md "The MMS screen"): it is **screen space** — at its pixel it reads the
+  scene's view depth (BO2's `floatZ`) for outlines and a pulse ring sweeping out from the eye, and
+  BO2's sonar render target (`sonarColor`/`sonarDepth`, the characters drawn with
+  `mc/sonar_attachment_character` by `R_AddDObjSurfacesCamera sonar`, mapped by `weaponParam4`) for
+  the characters, shown **only where they stand ≥ 10" behind the scene** — through walls; a
+  character in plain view is on the scene's own depth and stays off the scanner. The mod has no
+  per-character render target: each character is a capsule the pixel's ray is tested against
+  (`NativeOptics::blips`, the closest faithful version; BO2's silhouette becomes a capsule). The
+  scene's depth is the target view's depth attachment resolved into an `R32Float` before the pass.
+* **Who is on the scanner** (`t6mp` `FUN_004e7b40`, run per character per frame; the dvars from
+  `FUN_004cc260`, now `[Optics]` in the tuning pack): teammates hidden; a character's visibility
+  (its `weaponParam0.x` on the sonar pass) is `1 −` the mean of `speed / (MaxSpeed 2.2 +
+  DistanceFactor 3 · (1 − d / mmsMaxDist))` over `SpeedDelay` 0.8 s, floored at `SpeedTimeRatio` 0;
+  beyond `mmsMaxDist` a sample counts as full speed. **Gotcha: the speeds are per 60 Hz frame** —
+  the ring holds `SpeedDelay × 60` samples (`FMUL [0x00b128e4]` = 60 before `ftol`); the 30 Hz sim
+  converts. Stationary enemies show, runners fade (BO2's own description: "lingering heat
+  signatures from stationary enemies … up to 25 meters"). `sim::optics`, deterministic, per
+  `PlayerSim`.
+* **`mmsWeapon` is weapon data.** `WeaponDef.mms`/`mms_max_dist` (table field `Mms`) from the
+  variant and the attachment (`WeaponAttachment::mmsWeapon`/`mmsMaxDist`), OR'd as BO2's
+  `FUN_008ebce0`. Conformance `mms_weapon` 9,341 → 117 rows: the rest are the select-fire alt
+  rows (`sf_*` with `mms`), where BO2's alt variant carries no attachments while the mod's alt
+  keeps the weapon's others (`weapons.rs` "Select fire and the second optic keep the weapon's
+  other attachments") — the same class as the alt rows' `silenced` diff; a separate item.
+* **"Enemy spotted"** (`weaponParam0.z`) — the writer is `FUN_00529d80`, not `FUN_00529dd0`:
+  `z = FUN_00525ad0` = spotted (`cg+0x8442c`) ∧ range ≠ −1 ∧ active (`0x84434`) ∧ now > since
+  (`0x84430`), all set by `FUN_00528ec0`: weapon flag `0x13`, **only at ADS == 1.0**, a trace 8192"
+  along the view; an enemy-team player (not `specialty_immunerangefinder`) under the crosshair is
+  spotted, the range kept in feet (`/12`), `cg_rangeFinderMinEnemySpottingDist` −1 (no limit). The
+  sim's trace (`hitscan::trace`) drives `NativeFrame.reticle_alt`; the colour turns the tick after.
+* **Naming: the `rangefinder` attachment is BO2's Target Finder**, not the dual band (`ir`); the
+  lens-reticle entry's "dual band" for `rangefinder_reticle`/`reticle2` meant this optic.
+* **The ui3d display** (`FUN_00526780`, drawn into ui3d window 5 only above 0.99 ADS): 6 (idle) or
+  10 (spotted) sprites from `mtl_t6_attach_optic_rangefinder_ui3d_background`'s 256×128 atlas
+  (a constant table in code: `x, y, w, h, s, t, ds, dt, rotation`, window 512 × 85 units), then a
+  diamond (`cg_rangeFinderDiamondSize` 50, atlas UV 0.414–0.676 × 0.273–0.797) on every enemy
+  player at 70 − 25 = 45" above his feet standing (30 crouched, 11 prone), where the eye's ray to
+  it crosses the `tag_hud` plane. **No range digits are drawn in MP** (the dvars' "display digits"
+  have no writer besides the spotting state). Ported: the diamonds, analytically — an outline in
+  the alt shape/glow channels at the lens UV where the eye's ray crosses the lens; the sim lists
+  the marks. **Not ported:** the atlas (its sprite and the static frame sprites).
+* The HUD's 2D target-finder diamonds give way while the native lens draws them (W3D fallback
+  keeps them).
+
+Sweep (`render_viewmodels --weapon an94_mp`, `ZHBO_SWEEP_CONVERT_ALL=1`; vs
+`lens-reticle/sweep-after2`, `~/.opencode/plan/optic-displays/sweep`): only `att_mms` changes
+from this work (aimed half 13,501 px: the white wash is gone, the screen shows its reticle over
+the see-through display — the sweep has no scene depth and no characters); every other image's
+1,016 hip pixels are the faction emblem, which this run's archive lacks. Conformance (vs
+`lens-reticle/conf2`): weapons cells 691,106 → 681,882 (`mms_weapon` 9,341 → 117), no other
+column moved, gap clusters 213 → 213.
+
+**Versions (integrator-owned, NOT bumped):** `zhbo_native::model::VERSION` and
+`zhbo_native::camo::VERSION` (the material record appends `sonar`; an old archive's blobs now read
+as corrupt), the weapon table gains `Mms` fields (the archive's `hud::VERSION`). No C ABI change.

@@ -312,8 +312,18 @@ native BO2 pass from the converter's `zhbo-native` blobs (`Art\Native\*.zbm/.zba
   starts a set. The reticle fades with `ZhboNativeIn.ads` (BO2's `fWeaponPosFrac`). Nothing in
   the mod knocks a player's optics out, so `optics_off` stays 0: the sim's EMP grenade
   (`Effect::Emp`, `projectiles.rs`) disables only non-infantry objects (vehicles and structures,
-  `disable_kind::EMP`) and never the General, whom BO2's EMP would blind. While the native viewmodel draws a lens
-  reticle, the HUD's 2D optic reticle (the W3D fallback's stand-in) stays out
+  `disable_kind::EMP`) and never the General, whom BO2's EMP would blind. The material record
+  then appends `sonar` (the MMS screen, `sw4_3d_sonar_attachment_lens2`: its constants, `Lookup`
+  and `Static_Noise_Map`). **The optic displays' inputs are the sim's** (`sim::optics`, per
+  `PlayerSim`, deterministic): the MMS's characters (BO2's sonar rule, `FUN_004e7b40`) or the
+  target finder's marked enemies (`FUN_00526780`) as `Optics::blips`, and the target finder's
+  "enemy spotted" (`FUN_00528ec0`/`FUN_00529d80`) as `Optics::alt`; `zhbo_client_frame` hands the
+  local player's to the viewmodel with a presentation clock (`nativevm::update_local_optics`) —
+  again **no `ZhboNativeIn` field and no ABI bump**; `NativeFrame.optics`/`reticle_alt` are
+  Rust-only. The weapon table gains `Mms` (BO2's `mmsWeapon`, `mmsMaxDist` in inches) on weapons
+  and attachments. While the native viewmodel draws a lens
+  reticle, the HUD's 2D optic reticle (the W3D fallback's stand-in) stays out, and so do its 2D
+  target-finder diamonds
   (`nativevm::lens_reticle_drawn`, per thread). The clan tag draws as BO2 does for a player
   without one: its shader's four glyph indices are all 0 (`FUN_0052a010`), so the converter bakes
   the font atlas's first cell four times across (transparent on the stock install). The emblem
@@ -531,7 +541,8 @@ The gameplay tuning pack (`crates/zhbo-core/src/tuning.rs`, filled from
 `Data/ConquerOps/tuning.ini`) is the single source for the numbers gameplay code used to scatter
 across ~10 files (movement, regeneration, building rates, projectile physics, the field
 computer's raise time) and for BO2's engine numbers: movement, the `perk_*` multipliers, damage
-flinch, the view and bob dvars (v1.0 Track PW). BO2's numbers stay in BO2's units (inches,
+flinch, the view and bob dvars (v1.0 Track PW), the optic displays' `cg_sonarAttachment*` and
+`cg_rangeFinder*` dvars (`[Optics]`, `sim::optics`). BO2's numbers stay in BO2's units (inches,
 inches/s, seconds) under the engine's dvar names as ini keys (`g_speed`, `perk_weapSwitchMultiplier`),
 each field's doc citing the Ghidra answer it came from (`~/Documents/BO2-reference/ghidra/
 answers/G1-G7.md`); code converts at the point of use. The pack is part of the mod like

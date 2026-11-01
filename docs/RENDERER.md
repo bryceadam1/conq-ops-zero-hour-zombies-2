@@ -158,16 +158,42 @@ core with its colour at the falloff, as BO2's look. The material uniform is 96 b
 frame block's `params.zw`. A reticle with a non-finite constant is skipped at upload (logged), the
 rest of the mesh draws. The material uniform is 128 bytes: two more blocks carry the alt colours
 and the technique, `NativeReticle.kind`, one per BO2 reticle technique:
-`Dynamic` (above); `TwoColors` (`reticle_dynamic_2colors`, the dual band's second reticle:
-projected, **no** aim fade, its colours lerped to `Reticle_Alt_Color`/`Glow_Alt_Color` by
-`NativeFrame.reticle_alt`, BO2's `weaponParam0.z` — the "enemy spotted" colour, 0 in the mod);
+`Dynamic` (above); `TwoColors` (`reticle_dynamic_2colors`, the target finder's second reticle —
+the `rangefinder` attachment, BO2's Target Finder: projected, **no** aim fade, its colours lerped
+to `Reticle_Alt_Color`/`Glow_Alt_Color` by `NativeFrame.reticle_alt`, BO2's `weaponParam0.z`, the
+"enemy spotted" colour the sim's `optics::Optics::alt` drives);
 `Static` (`reticle_static`, the MMS: the image at the lens's own UVs, the noise in screen space —
 pixel ÷ the target's size, BO2's `renderTargetSize`, which the frame block's `screen.xy` carries,
-filled at upload — no aim fade); `Ui3d` (`reticle_ui3d`, the dual band's display: the code's UI
-render target at the lens UVs, red and blue two shapes, green and alpha two glows, alpha 1 into an
-additive blend, no fade; the mod has no rangefinder display, so `color` is `INVALID`, which binds
-black for this technique, and it adds nothing — BO2's look with an empty display). Every
-technique but `Ui3d` fades out with `optics_off`.
+filled at upload — no aim fade); `Ui3d` (`reticle_ui3d`, the target finder's display: the code's
+UI render target at the lens UVs, red and blue two shapes, green and alpha two glows, alpha 1 into
+an additive blend, no fade; `color` is `INVALID`, which binds black, and the code's content is
+drawn analytically: each of the frame's `NativeOptics` marks is a diamond outline,
+`cg_rangeFinderDiamondSize` 50 of BO2's 512-unit window across, at the lens UV where the eye's ray
+to the mark crosses the lens (the ray–plane hit through the surface's UV derivatives), in the alt
+shape and glow channels — BO2 draws the atlas sprite there, `t6mp` `FUN_00526780`; the display's
+static frame sprites are not drawn). Every technique but `Ui3d` fades out with `optics_off`.
+
+**The MMS screen.** `mc/mtl_t6_attach_optic_mms_display` is BO2's
+`sw4_3d_sonar_attachment_lens2`, ported from its DXBC as a third fragment stage, `fs_sonar`
+(`NativeSurface.sonar: Option<NativeSonar>`, the material uniform's last eight blocks; the
+surface's `color` binding takes its `Lookup` profile, `maps` its `Static_Noise_Map`). It is screen
+space and reads the **scene's depth**: at its pixel the view depth (inches, `inches_per_unit`)
+gives the outlines (four diagonal taps `EdgeSize · 0.005` apart, `|d − mean| · EdgeIntensity / d`
+cubed, between `EdgeMinDist` and `EdgeMaxDist`, pulsed by the lookup's blue) and a pulse ring
+sweeping out from the eye (`frac(time / PulseInterval)` over `PulseInterval / PulseTime ·
+MaxDepth`, the lookup's red, faded in over `MinDepth/2..MinDepth` and out to `MaxPulseDepth`),
+times the background noise (at the mesh UV / `ScatterSize` plus the VS's per-frame hash offset).
+BO2's sonar render target (the characters drawn with `mc/sonar_attachment_character`) becomes the
+frame's blips: each a capsule the pixel's ray is tested against, shown only where it stands at
+least 10" behind the scene (through walls) at its intensity, in `EnemiesColor ·
+Player_Color_Multiplier`, pulsed by the lookup's green. The scene's depth is the target view's
+depth attachment, **resolved** before the pass (sample 0, a full-target triangle, `DEPTH_RESOLVE`)
+into an `R32Float` the size of the target and bound as group 2 for every native pass (a 1x1 "sky"
+without it); `NativeFrame` carries the target view's projection terms (`depth = p10 + p14 / z`,
+filled at upload) to linearize it. A multisampled depth gains `TEXTURE_BINDING` where a probe
+allows it (`msaa_depth_sampleable`); a target with no sampleable depth, or a device where the
+resolve cannot be built (logged once), shows the screen without the world. A screen with a
+non-finite constant is skipped at upload.
 
 ### Robustness
 
@@ -220,7 +246,9 @@ One invalid draw in a wgpu render pass invalidates the whole frame. The runtime 
   view (or at the end), and every refusal is counted without a wgpu error. The lens reticle
   stays on the screen's centre while the lens sways (a UV-painted dot moves), turns `tan(a)` with
   the optic, is sized by its scale, fades in with the aim and out with the optics knocked out, and
-  a non-finite reticle is skipped, not fatal.
+  a non-finite reticle is skipped, not fatal. The MMS screen pulses a scene in range (not the
+  sky, not with the optics knocked out) and shows a character behind a wall but not in front of
+  it; the target finder's diamond sits on its mark as an outline.
 * `tests/ffi.rs` locks the Rust side of the ABI: it mirrors the header's struct layouts and the
   API-table field counts with compile-time asserts and round-trips the encode functions through
   a `Vec<u8>` cursor, so header and Rust drift fail a plain `cargo test`.

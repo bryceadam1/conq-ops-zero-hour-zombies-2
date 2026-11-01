@@ -112,8 +112,8 @@ pub(crate) fn draw(s: &mut State, inp: &ZhboNativeBodyIn) -> i32 {
         // Nobody aims through a third-person optic: BO2 sets the reticle's fade (`weaponParam0`)
         // for the local viewmodel only, so a world model's lens reticle stays dark.
         ads: 0.0, optics_off: 0.0,
-        // The mod has no rangefinder detection: the two-colour reticle keeps its primary colours
-        // (BO2's `weaponParam0.z` = 0, nobody spotted).
+        // The optic displays' inputs (`weaponParam0.z`, the MMS's characters, the target
+        // finder's marks) are the local viewmodel's only: a world model's display stays empty.
         reticle_alt: 0.0, optics: Default::default() };
     let palette = &s.posed.palette;
     let draw = NativeDraw { target_view: inp.target_view, before_view: inp.before_view, mesh, palette, frame };

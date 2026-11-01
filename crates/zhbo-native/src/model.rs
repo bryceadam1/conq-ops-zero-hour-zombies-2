@@ -156,13 +156,13 @@ pub enum ReticleKind {
     #[default]
     Dynamic,
     /// `sw4_3d_reticle_dynamic_2colors`: projected, no aim fade, its colours lerped to the `alt`
-    /// pair by `weaponParam0.z` (the dual band's second reticle).
+    /// pair by `weaponParam0.z` (the target finder's second reticle: the `rangefinder` attachment, BO2's Target Finder).
     TwoColors,
     /// `sw4_3d_reticle_static`: the image at the lens's own UVs, screen-space noise, no aim fade
     /// (the MMS).
     Static,
     /// `sw4_3d_reticle_ui3d`: a code-drawn UI texture (`ui3dSampler`) at the lens UVs, two shapes
-    /// and two glows in its four channels, added (the dual band's display). There is no image of
+    /// and two glows in its four channels, added (the target finder's display). There is no image of
     /// its own; without the code's texture it adds nothing.
     Ui3d,
 }

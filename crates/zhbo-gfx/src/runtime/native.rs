@@ -128,8 +128,9 @@ pub enum NativeReticleKind {
     TwoColors,
     /// The image at the mesh UVs, screen-space noise, no aim fade.
     Static,
-    /// The code's UI texture at the mesh UVs (`color`; `INVALID` binds black: nothing is added),
-    /// two shapes and two glows, opaque output added.
+    /// The code's UI texture at the mesh UVs (`color`; `INVALID` binds black), two shapes and two
+    /// glows, opaque output added; the target finder's diamonds on the frame's
+    /// [`NativeOptics::blips`] are drawn into its alt channels.
     Ui3d,
 }
 
