@@ -301,9 +301,43 @@ pub fn melee_swing_for(def: &'static crate::weapons::WeaponDef) -> &'static str 
     some(def.melee_swipe_sound.as_str()).unwrap_or(MELEE_SWING)
 }
 
-/// A blast: the projectile def's own (`projExplosionSound`), else the generic one.
-pub fn explosion_for(sound: &'static str) -> &'static str {
-    some(sound).unwrap_or(EXPLOSION)
+/// A blast's cues, in BO2's order (`FUN_004c0ac0`): the impact table's sound for the def's
+/// `impactType` on `surface` (`<family>_<surface>`, `impacts::sound_name`; nothing when the install
+/// has no such alias, as in BO2), then the def's own `projExplosionSound` on top. The generic blast
+/// only when the type has no converted sounds at all and the def none (an unconverted archive, a
+/// mod-only def).
+pub fn explosion_cues(sound: &'static str, impact_type: i32, surface: crate::impacts::Surface) -> [Option<&'static str>; 2] {
+    let table = crate::impacts::sound_name(impact_type, surface).and_then(some);
+    let own = some(sound);
+    if table.is_none() && own.is_none() && !crate::impacts::type_has_sounds(impact_type) {
+        return [Some(EXPLOSION), None];
+    }
+    [table, own]
+}
+
+/// A dud's cues, in BO2's order (t6mp `FUN_004c1590` event 0x51): the large bullet's hit alias for
+/// `surface` (`prj_bullet_impact_large_<surface>`, `impacts::DUD_HIT_SOUND_TYPE`; nothing where
+/// the install has none), then the def's own `projDudSound`.
+pub fn dud_cues(sound: &'static str, surface: crate::impacts::Surface) -> [Option<&'static str>; 2] {
+    [crate::impacts::sound_name(crate::impacts::DUD_HIT_SOUND_TYPE, surface).and_then(some), some(sound)]
+}
+
+/// Where a penetrating round leaves a solid: the type's exit family alias for the surface (BO2's
+/// flag 4, `prj_bullet_impact_<size>_exit_<surface>`), nothing without a cell or on `NONE` (no
+/// fixed fallback: an unconverted archive's exits are silent).
+pub fn exit_cue(impact_type: i32, surface: crate::impacts::Surface) -> Option<&'static str> {
+    crate::impacts::exit_sound_name(impact_type, surface).and_then(some)
+}
+
+/// A pellet's hit sound: the impact table's for the gun's `impactType` on `surface` (BO2's
+/// `prj_bullet_impact_<size>_<surface>`, `FUN_00533210`), nothing where BO2 has no alias (`NONE`
+/// rows: its hash miss is silent). The fixed flesh/hard cue only when the type has no converted
+/// sound cells at all (an unconverted archive).
+pub fn impact_cue(impact_type: i32, surface: crate::impacts::Surface) -> Option<&'static str> {
+    if !crate::impacts::type_has_sounds(impact_type) {
+        return Some(if surface == crate::impacts::Surface::Flesh { IMPACT_FLESH } else { IMPACT });
+    }
+    crate::impacts::sound_name(impact_type, surface).and_then(some)
 }
 
 impl Cues {
@@ -521,7 +555,7 @@ mod tests {
         let leak = |d: crate::weapons::WeaponDef| -> &'static crate::weapons::WeaponDef { Box::leak(Box::new(d)) };
         let plain = leak(Default::default());
         assert_eq!((launch_for(plain), throw_for(plain), pullback_for(plain), melee_swing_for(plain)), (FIRE_LAUNCHER, THROW, PULL_PIN, MELEE_SWING));
-        assert_eq!(explosion_for(""), EXPLOSION);
+        assert_eq!(explosion_cues("", 0, crate::impacts::Surface::Dirt), [Some(EXPLOSION), None]);
         let strela = leak(crate::weapons::WeaponDef { fire_sound: "A".into(), fire_last_sound: "LAST".into(), ..Default::default() });
         assert_eq!(launch_for(strela), "A");
         assert_eq!(shot_for(strela, 0, "A"), "LAST", "the last round's own shot");
@@ -529,7 +563,7 @@ mod tests {
         assert_eq!(shot_for(plain, 0, FIRE), FIRE);
         let semtex = leak(crate::weapons::WeaponDef { fire_sound: "T".into(), pullback_sound: "P".into(), melee_swipe_sound: "S".into(), ..Default::default() });
         assert_eq!((throw_for(semtex), pullback_for(semtex), melee_swing_for(semtex)), ("T", "P", "S"));
-        assert_eq!(explosion_for("B"), "B");
+        assert_eq!(explosion_cues("B", 0, crate::impacts::Surface::Dirt), [None, Some("B")], "no table cell: the def's own only");
         // Overridden to nothing, or to BO2's silent alias: no cue.
         assert_eq!(some(NO_SOUND), None);
         assert_eq!(some(&crate::names::def_sound_event(NULL_SOUND_ALIAS)), None);

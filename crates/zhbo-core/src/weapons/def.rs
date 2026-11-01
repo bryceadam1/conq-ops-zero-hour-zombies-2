@@ -290,7 +290,14 @@ pub struct WeaponDef {
     /// converted where a ZH distance is compared ([`WeaponDef::damage_at`]): its "no falloff"
     /// sentinel, 999999.1 in, does not survive a trip through ZH units in an `f32`.
     pub damage_range: [f32; 6],
-    pub head_multiplier: f32,
+    /// BO2's `locationDamageMultipliers`, one per `hitLocation_t` ([`crate::hitloc`]): a bullet's
+    /// damage is multiplied by its location's (t6mp `FUN_005f05c0` via `FUN_005f0490` ->
+    /// `FUN_008ed780`). A combination's are resolved by [`crate::attachments::apply`].
+    pub location_multipliers: [f32; crate::hitloc::COUNT],
+    /// Base weapons: the location multipliers an attachment's unique sets differently from the base
+    /// unique's (`short`, `[(location, multiplier)]`, in `eAttachment` order). `FUN_008ed780` takes,
+    /// per location, the first mounted attachment's that differs, else the def's.
+    pub attachment_location_multipliers: Vec<(String, Vec<(u8, f32)>)>,
     /// BO2's `maxRange`: a turret's AI engagement range (read only by the turret spawn,
     /// `FUN_0067ee90`), 0 on every MP weapon. Not the bullet's reach: see
     /// [`WeaponDef::bullet_range`].
@@ -405,6 +412,18 @@ pub struct WeaponDef {
     /// rule; Zero Hour's `NONE` when overridden to nothing): the select fire's `null_sound`.
     pub attachment_fire_start_sounds: Vec<(String, String)>,
     pub explode_sound: String,
+    /// A bounce's sound per surface (`surface=event`, the mod's slot names): BO2's `bounceSound`
+    /// array cell for the surface struck (t6mp `FUN_004c1590` event 0x47); `NONE` or absent where
+    /// the install has no such alias (silent, as BO2's hash miss).
+    pub bounce_sounds: Vec<(String, String)>,
+    /// `iProjectileActivateDist` (ZH units): a projectile that strikes something before flying this
+    /// far is a dud — no blast (t6mp `FUN_00604280`, the path length `G_RunMissile` accumulates).
+    /// 0 = always armed.
+    pub activate_dist: f32,
+    /// A dud's own effect and sound (`projDudEffect`, `projDudSound`), on top of the impact table's
+    /// `projectile_dud` cell and the large bullet's hit sound (event 0x51).
+    pub dud_fx: String,
+    pub dud_sound: String,
     /// Viewmodel index in the converted art, or -1.
     pub viewmodel: i32,
     /// Which BO2 viewmodel animation slots (`weapAnimFiles_t`) the weapon has, as bits.
@@ -457,7 +476,8 @@ pub struct WeaponDef {
     pub dual_wield_weapon: String,
     pub silenced: bool,
     pub laser: bool,
-    /// FMJ: penetrates infantry, hits vehicles and structures harder.
+    /// FMJ: hits vehicles and structures harder (its penetration is the `bulletpenetration`
+    /// specialty it grants).
     pub fmj: bool,
     /// Target finder: enemies are marked while aiming.
     pub target_finder: bool,
@@ -817,7 +837,8 @@ impl Default for WeaponDef {
             ads_fov: 55.0,
             damage: [40.0, 30.0, 0.0, 0.0, 0.0, 0.0],
             damage_range: [1000.0, 2000.0, 0.0, 0.0, 0.0, 0.0],
-            head_multiplier: 1.0,
+            location_multipliers: [1.0; crate::hitloc::COUNT],
+            attachment_location_multipliers: Vec::new(),
             max_range: 0.0,
             hip_spread: [(3.0, 6.75), (2.5, 6.0), (2.0, 5.0)],
             spread_decay: 6.0,
@@ -879,6 +900,10 @@ impl Default for WeaponDef {
             attachment_fire_sounds: Vec::new(),
             attachment_fire_start_sounds: Vec::new(),
             explode_sound: String::new(),
+            bounce_sounds: Vec::new(),
+            activate_dist: 0.0,
+            dud_fx: String::new(),
+            dud_sound: String::new(),
             viewmodel: -1,
             anims: 0,
             clip_base: 0,
@@ -1008,6 +1033,14 @@ impl WeaponDef {
         self.silenced_fire_start_sound.clone_from(&from.silenced_fire_start_sound);
         self.attachment_fire_sounds.clone_from(&from.attachment_fire_sounds);
         self.attachment_fire_start_sounds.clone_from(&from.attachment_fire_start_sounds);
+        self.bounce_sounds.clone_from(&from.bounce_sounds);
+        self.dud_fx.clone_from(&from.dud_fx);
+        self.dud_sound.clone_from(&from.dud_sound);
+    }
+
+    /// The bounce sound for `surface` ([`Self::bounce_sounds`]), empty when there is none.
+    pub fn bounce_sound(&self, surface: crate::impacts::Surface) -> &str {
+        self.bounce_sounds.iter().find(|(s, _)| s == surface.name()).map_or("", |(_, e)| e.as_str())
     }
 
     /// Every def-level sound event this def plays (`names::def_sound_event`), with whether it is
@@ -1027,10 +1060,12 @@ impl WeaponDef {
             (&self.pullback_sound, false),
             (&self.silenced_fire_start_sound, false),
             (&self.explode_sound, true),
+            (&self.dud_sound, true),
         ]
         .into_iter()
         .map(|(e, world)| (e.as_str(), world))
         .chain(self.attachment_fire_start_sounds.iter().map(|(_, e)| (e.as_str(), false)))
+        .chain(self.bounce_sounds.iter().map(|(_, e)| (e.as_str(), true)))
     }
 
     /// Damage at `distance` (ZH units). BO2's curve has six slots: unused middle slots have no

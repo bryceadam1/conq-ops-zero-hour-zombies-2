@@ -453,7 +453,7 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
         .int("melee_damage", knife.melee_damage as i64)
         // The mod's hits are head or body (`hitscan::trace`'s `headshot`, `sim/fire.rs`): its
         // head zone covers BO2's helmet and head, every other location takes 1.
-        .floats("location_multipliers", &(0..21).map(|i| if i == 1 || i == 2 { f32_value(d.head_multiplier) } else { 1.0 }).collect::<Vec<_>>())
+        .floats("location_multipliers", &d.location_multipliers.iter().map(|m| f32_value(*m)).collect::<Vec<_>>())
         .float("max_range", inch(d.max_range))
         .text("penetrate_type", d.traits.penetrate.name())
         .float("explosion_radius", inch(d.explosion_radius))
@@ -695,7 +695,9 @@ fn row(sh: &Shipped, schema: &Schema, j: &Job) -> Result<Row, String> {
                 sh.sound(event)
             }
             "pullback_sound_player" if thrown => sh.sound(zhbo_core::sounds::pullback_for(d)),
-            "projectile_explosion_sound" if explodes => sh.sound(zhbo_core::sounds::explosion_for(d.explode_sound.as_str())),
+            // The def field only: the impact-type/surface sound BO2 plays first is the impact
+            // table's (`impacts.txt`), not `projExplosionSound`.
+            "projectile_explosion_sound" if explodes => own(&d.explode_sound),
             "melee_swipe_sound_player" => sh.sound(zhbo_core::sounds::melee_swing_for(knife)),
             "melee_hit_sound" => own(&d.melee_hit_sound),
             "raise_sound_player" => own(&d.raise_sound),

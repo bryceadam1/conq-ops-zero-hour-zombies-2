@@ -292,6 +292,8 @@ pub struct AttachmentUnique {
     pub sound_overrides: u32,
     /// The overriding fire-string start (bit 8); `None` with the bit set overrides to nothing.
     pub fire_start_sound_player: Option<String>,
+    /// `locationDamageMultipliers` ([`HIT_LOCATIONS`]), empty when the pointer is NULL.
+    pub location_multipliers: Vec<f32>,
     /// The weapon the attachment toggles to (select fire, grenade launcher, dual optic).
     pub alt_weapon: Option<String>,
     pub dual_wield_weapon: Option<String>,
@@ -768,10 +770,23 @@ pub struct Weapon {
     /// The d-pad icon's image in the `.ipak` packs (its material is inline in the variant, like
     /// the HUD icon's: `hud_gl_select` has no standalone asset in any MP zone).
     pub dpad_icon_key: Option<crate::ipak::ImageKey>,
-    /// What a projectile does when it goes off (`projExplosionEffect`), or the impact table's
-    /// effect for its `impactType` on dirt.
+    /// The def's own blast effect (`projExplosionEffect`). BO2 plays it *on top of* the impact
+    /// table's cell for the `impactType` and the surface hit (`fx::ImpactKind`), so most
+    /// explosives leave it empty.
     pub explosion_effect: Option<crate::fx::Effect>,
     pub impact_type: u32,
+    /// `bounceSound`: one alias per BO2 surface (32, indexed by `materialSurfType_t`; empty where
+    /// the def has none). A grenade's bounce event plays the cell for the surface it struck
+    /// (t6mp `FUN_004c1590` event 0x47: `bounceSound[surface]`, then the impact table's
+    /// `grenade_bounce` row cell).
+    pub bounce_sounds: Vec<Option<String>>,
+    /// `iProjectileActivateDist` (inches): a projectile that strikes something before travelling
+    /// this far is a dud (t6mp `FUN_00604280`), 0 = always armed.
+    pub projectile_activate_dist: i32,
+    /// `projDudEffect` / `projDudSound`: what a dud plays on top of the impact table's
+    /// `projectile_dud` row (t6mp `FUN_004c1590` event 0x51).
+    pub projectile_dud_effect: Option<crate::fx::Effect>,
+    pub projectile_dud_sound: Option<String>,
     /// The muzzle flash others see (`worldFlashEffect`).
     pub world_flash_effect: Option<crate::fx::Effect>,
     /// The first-person muzzle flash (`viewFlashEffect`).
@@ -976,6 +991,10 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
                 fire_sound: opt_str(z, u + WU::fireSound),
                 sound_overrides: z.u32(u + WU::soundOverrides),
                 fire_start_sound_player: opt_str(z, u + WU::fireStartSoundPlayer),
+                location_multipliers: match z.u32(u + WU::locationDamageMultipliers) {
+                    0 => Vec::new(),
+                    p => (0..HIT_LOCATIONS as u32).map(|i| z.f32(p + 4 * i)).collect(),
+                },
                 alt_weapon: opt_str(z, u + WU::szAltWeaponName),
                 dual_wield_weapon: opt_str(z, u + WU::szDualWieldWeaponName),
                 overlay_material: named(z, u + WU::overlayMaterial).unwrap_or_default(),
@@ -1239,7 +1258,6 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.rifle_bullet = z.u8(d + WD::bRifleBullet) != 0;
     w.reload_quick_add_time = ms(z, d + WD::iReloadQuickAddTime);
     w.reload_start_add = int(z, d + WD::iReloadStartAdd);
-    w.penetrate_type = z.u32(d + WD::penetrateTWeaponAttachmentype);
     w.stack_fire_spread = z.f32(d + WD::stackFireSpread);
     w.stack_fire_accuracy_decay = z.f32(d + WD::stackFireAccuracyDecay);
     w.ads_dof = (z.f32(d + WD::adsDofStart), z.f32(d + WD::adsDofEnd));
@@ -1277,6 +1295,13 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.ads_zoom_sound = opt_str(z, d + WD::adsZoomSound);
     w.fire_start_sound_player = opt_str(z, d + WD::fireStartSoundPlayer);
     w.impact_type = z.u32(d + WD::impactType);
+    w.penetrate_type = z.u32(d + WD::penetrateTWeaponAttachmentype);
+    let bounce = z.u32(d + WD::bounceSound);
+    w.bounce_sounds = if bounce == 0 { Vec::new() } else { (0..32).map(|i| opt_str(z, bounce + 4 * i)).collect() };
+    w.projectile_activate_dist = int(z, d + WD::iProjectileActivateDist);
+    w.projectile_dud_sound = opt_str(z, d + WD::projDudSound);
+    let dud = z.try_u32(d + WD::projDudEffect)?;
+    w.projectile_dud_effect = crate::fx::bind(crate::fx::read_or_stub(z, dud), &[z]);
     let flash = z.try_u32(d + WD::worldFlashEffect)?;
     w.world_flash_effect = crate::fx::read_or_stub(z, flash);
     let view_flash = z.try_u32(d + WD::viewFlashEffect)?;
@@ -1291,7 +1316,7 @@ pub fn read(z: &Zone, v: u32) -> Result<Weapon, FormatError> {
     w.tracer = read_tracer(z, d + WD::tracerType);
     w.enemy_tracer = read_tracer(z, d + WD::enemyTracerType);
     let fx = z.try_u32(d + WD::projExplosionEffect)?;
-    w.explosion_effect = crate::fx::bind(crate::fx::read_or_stub(z, fx), &[z]).or_else(|| crate::fx::explosion_entry(w.impact_type).and_then(|e| crate::fx::impact(z, e, crate::fx::surface::DIRT)));
+    w.explosion_effect = crate::fx::bind(crate::fx::read_or_stub(z, fx), &[z]);
     w.hud_icon = named(z, d + WD::hudIcon);
     w.weapon_camo = named(z, d + WD::weaponCamo);
     w.hud_icon_key = icon_key(z, z.try_u32(d + WD::hudIcon)?);
@@ -1328,6 +1353,7 @@ pub fn all_in(z: &Zone, later: &[&Zone]) -> Result<Vec<Weapon>, FormatError> {
             &mut w.view_last_shot_eject_effect,
             &mut w.world_shell_eject_effect,
             &mut w.world_last_shot_eject_effect,
+            &mut w.projectile_dud_effect,
         ] {
             *e = crate::fx::bind(e.take(), &pool);
         }

@@ -139,8 +139,8 @@ const _: () = {
     assert!(size_of::<crate::host::ObjInfo>() == 56);
     assert!(size_of::<FpsInput>() == 20);
     assert!(size_of::<ClientIn>() == 136);
-    assert!(size_of::<ClientOut>() == 4840);
-    assert!(size_of::<ClientHit>() == 40);
+    assert!(size_of::<ClientOut>() == 4872);
+    assert!(size_of::<ClientHit>() == 44);
     assert!(size_of::<crate::sim::RtsWeapons>() == 192);
     assert!(size_of::<crate::sim::RtsIcons>() == 240);
     assert!(size_of::<crate::building::BuildOption>() == 64);
@@ -828,6 +828,19 @@ pub unsafe extern "C" fn zhbo_viewmodel_tracer(i: i32, fx_weapon: *mut c_char, c
 pub unsafe extern "C" fn zhbo_impact_fx(impact_type: i32, surface: i32, head: i32, fatal: i32, out: *mut c_char, cap: i32) -> i32 {
     let surface = crate::impacts::Surface::from_i32(surface);
     let Some(name) = crate::impacts::fx_name(impact_type, surface, head != 0, fatal != 0) else { return 0 };
+    unsafe { write_c_str(out, cap, &name) };
+    1
+}
+
+/// [`zhbo_impact_fx`] for a penetrating round leaving a solid: the type's exit row (BO2's impact
+/// flag 4, `FUN_00533210`), with the same fallbacks.
+///
+/// # Safety
+/// `out` must point to `cap` writable bytes, or be null.
+#[no_mangle]
+pub unsafe extern "C" fn zhbo_impact_exit_fx(impact_type: i32, surface: i32, head: i32, fatal: i32, out: *mut c_char, cap: i32) -> i32 {
+    let surface = crate::impacts::Surface::from_i32(surface);
+    let Some(name) = crate::impacts::exit_fx_name(impact_type, surface, head != 0, fatal != 0) else { return 0 };
     unsafe { write_c_str(out, cap, &name) };
     1
 }

@@ -200,6 +200,8 @@ pub struct ClientHit {
     pub fatal: i32,
     /// BO2's `WeaponDef.impactType`: the impact-table bucket.
     pub impact_type: i32,
+    /// The round left a solid it penetrated here: the type's exit row (`zhbo_impact_exit_fx`).
+    pub exit: i32,
 }
 
 #[repr(C)]
@@ -1165,12 +1167,22 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     self.hud.damage_flash = (self.hud.damage_flash + amount / 60.0).min(1.0);
                 }
                 // A pellet landed: BO2's impact FX (the bridge plays it from `ClientOut.hits`) and
-                // the surface's sound here. Blood for a soldier, the hard-surface cue otherwise.
-                EventKind::Impact { at, dir, surface, head, fatal, impact_type } => {
-                    self.cues.play_at(if surface == crate::impacts::Surface::Flesh { sounds::IMPACT_FLESH } else { sounds::IMPACT }, at);
+                // the impact table's sound for the gun's type and the surface here (`sounds::impact_cue`).
+                EventKind::Impact { at, dir, surface, head, fatal, impact_type, exit } => {
+                    let cue = if exit { sounds::exit_cue(impact_type, surface) } else { sounds::impact_cue(impact_type, surface) };
+                    if let Some(cue) = cue {
+                        self.cues.play_at(cue, at);
+                    }
                     if self.hits_len < CLIENT_HITS {
-                        self.hits[self.hits_len] =
-                            ClientHit { point: at, dir, surface: surface as i32, head: head as i32, fatal: fatal as i32, impact_type };
+                        self.hits[self.hits_len] = ClientHit {
+                            point: at,
+                            dir,
+                            surface: surface as i32,
+                            head: head as i32,
+                            fatal: fatal as i32,
+                            impact_type,
+                            exit: exit as i32,
+                        };
                         self.hits_len += 1;
                     }
                 }
@@ -1196,7 +1208,21 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                 }
                 EventKind::Thrown { lethal } => self.cues.play(held.map_or(sounds::THROW, |(_, _, _, l, t)| sounds::throw_for(if lethal { l } else { t }))),
                 EventKind::Launched => self.cues.play(held.map_or(sounds::FIRE_LAUNCHER, |(def, ammo, ..)| sounds::shot_for(def, ammo, sounds::launch_for(def)))),
-                EventKind::Exploded { at, sound } => self.cues.play_at(sounds::explosion_for(sound), at),
+                EventKind::Exploded { at, sound, impact_type, surface } => {
+                    for cue in sounds::explosion_cues(sound, impact_type, surface).into_iter().flatten() {
+                        self.cues.play_at(cue, at);
+                    }
+                }
+                EventKind::Bounced { at, sound } => {
+                    if let Some(cue) = sounds::some(sound) {
+                        self.cues.play_at(cue, at);
+                    }
+                }
+                EventKind::Dud { at, sound, surface } => {
+                    for cue in sounds::dud_cues(sound, surface).into_iter().flatten() {
+                        self.cues.play_at(cue, at);
+                    }
+                }
                 EventKind::Intercepted { at } => self.cues.play_at(sounds::EXPLOSION, at),
                 EventKind::Hacking { progress } => {
                     self.hud.hack_progress = progress;
@@ -1221,7 +1247,7 @@ pub fn frame(&mut self, sim: &mut Sim, inp: &ClientIn) -> ClientOut {
                     self.cues.play_at(if knife { sounds::SHIELD_HIT_KNIFE } else { sounds::SHIELD_HIT_BULLET }, at);
                     if self.hits_len < CLIENT_HITS {
                         let surface = crate::impacts::Surface::Metal as i32;
-                        self.hits[self.hits_len] = ClientHit { point: at, dir, surface, head: 0, fatal: 0, impact_type };
+                        self.hits[self.hits_len] = ClientHit { point: at, dir, surface, head: 0, fatal: 0, impact_type, exit: 0 };
                         self.hits_len += 1;
                     }
                 }

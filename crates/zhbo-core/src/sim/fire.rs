@@ -9,6 +9,7 @@
 use super::*;
 use crate::impacts::Surface;
 use crate::weapons::FireMode;
+use crate::penetration;
 
 impl Sim {
     pub(super) fn apply_weapon_action(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, action: WeaponAction) {
@@ -30,7 +31,8 @@ impl Sim {
                 let dir = dir_from_angles(p.fire_yaw + radius * angle.cos(), p.fire_pitch + radius * angle.sin());
 
                 let range = def.bullet_range(self.bullet_range);
-                let mut targets = gather_targets(host, eye, range, p.general);
+                let bodies = HitBodies { poses: self.hit_body(), states: &self.hit_states() };
+                let mut targets = gather_targets(host, eye, range, p.general, &bodies, def.traits.rifle_bullet);
                 // A deployed shield's object is the sim's to hit (its box, below), not a target.
                 targets.retain(|t| !self.deployed.iter().any(|d| d.object != 0 && d.object == t.id));
                 let ground = |x: f32, y: f32| host.ground_height(x, y);
@@ -61,7 +63,7 @@ impl Sim {
                     let e = self.equipment.destroy(host, i, Some(idx));
                     self.equipment_events(host, vec![e]);
                     // BO2's equipment is metal: a spark at the round, never blood.
-                    self.emit(idx, EventKind::Impact { at: eye + dir * t, dir, surface: Surface::Metal, head: false, fatal: false, impact_type: def.impact_type });
+                    self.emit(idx, EventKind::Impact { at: eye + dir * t, dir, surface: Surface::Metal, head: false, fatal: false, impact_type: def.impact_type, exit: false });
                     if pellet == 0 {
                         self.emit(idx, EventKind::Shot { origin: eye, end: eye + dir * t, left });
                         self.emit(idx, EventKind::Recoil { gun_kick });
@@ -85,8 +87,9 @@ impl Sim {
                     }
                     return;
                 }
-                // An enemy's Assault Shield on the ray: location `riotshield`, which outranks the
-                // body (rank 101) and takes no damage (`_globallogic_player.gsc:840-888`).
+                // An enemy's Assault Shield on the ray: location `riotshield`, which outranks every
+                // body box (rank 101) and takes no damage (`_globallogic_player.gsc:840-888`); the
+                // body it is tested against is the hit-location box the trace struck.
                 let hit_id = if let HitResult::Object { id, .. } = hit { Some(id) } else { None };
                 let enemy = |b: &crate::shield::Bearer| b.general != p.general && targets.iter().any(|t| t.id == b.general);
                 if let Some((_, t)) = crate::shield::blocking(&self.shields, &enemy, eye, dir, reach, range, hit_id) {
@@ -105,34 +108,51 @@ impl Sim {
                     return;
                 }
                 match hit {
-                    HitResult::Object { id, point, distance, headshot } => {
+                    HitResult::Object { id, point, distance, location } => {
                         if let Some(fx) = fx {
                             host.fire_fx(p.general, fx, id, point);
                         }
                         if tracer {
                             self.tracers.push(ShotTracer { shooter: p.general, def, target: id, end: point, left });
                         }
-                        let mult = if headshot { def.head_multiplier } else { 1.0 };
-                        let victim = host.object(id, p.general);
-                        let infantry = victim.is_some_and(|v| v.has(objflags::INFANTRY));
-                        let fmj = if def.fmj && !infantry { FMJ_VEHICLE_DAMAGE } else { 1.0 };
-                        let amount = def.damage_at(distance) * mult * fmj * BO2_TO_ZH_DAMAGE;
-                        let mut kill = host.damage(p.general, id, amount, damage_kind::SMALL_ARMS);
-                        // FMJ: on through the first soldier into whoever is behind.
-                        if def.fmj && infantry {
-                            targets.retain(|t| t.id != id);
-                            if let HitResult::Object { id: next, distance, headshot, .. } = hitscan::trace(point + dir * 0.1, dir, range - distance, &targets, p.general, &ground) {
-                                let mult = if headshot { def.head_multiplier } else { 1.0 };
-                                kill |= host.damage(p.general, next, def.damage_at(distance) * mult * PENETRATION_DAMAGE * BO2_TO_ZH_DAMAGE, damage_kind::SMALL_ARMS);
+                        let general = p.general;
+                        let mut last = self.bullet_hit(host, idx, p, dir, Strike { id, point, distance, location, mult: 1.0, fx: true });
+                        // BO2's penetration loop (`FUN_005d0350`): on through what it hit, the
+                        // multiplier falling with each solid's thickness over its depth.
+                        let surface_of = |id: u32| Surface::of_object(host.object(id, general).as_ref());
+                        let shot = penetration::Shot {
+                            pen: def.traits.penetrate,
+                            perk: p.arsenal.has_specialty(Specialty::BulletPenetration),
+                            origin: eye,
+                            dir,
+                            range,
+                            targets: &targets,
+                            ignore: general,
+                            ground: &ground,
+                            surface_of: &surface_of,
+                        };
+                        let mut steps = Vec::new();
+                        penetration::walk(&self.penetration, &shot, (id, distance, last.surface), &mut steps);
+                        for step in steps {
+                            match step {
+                                // The exit plays the type's exit row and family (BO2's flag 4), with
+                                // the hit's own head/fatal bits for blood.
+                                penetration::Step::Exit { id, at, surface, fx: true } => {
+                                    let (head, fatal) = if id == last.id { (last.head, last.kill) } else { (false, false) };
+                                    self.emit(idx, EventKind::Impact { at, dir, surface, head, fatal, impact_type: def.impact_type, exit: true });
+                                }
+                                penetration::Step::Exit { .. } => {}
+                                penetration::Step::Enter { hit: HitResult::Object { id, point, distance, location }, mult, fx } => {
+                                    last = self.bullet_hit(host, idx, p, dir, Strike { id, point, distance, location, mult, fx });
+                                }
+                                penetration::Step::Enter { hit, fx, .. } => {
+                                    if fx && matches!(hit, HitResult::Terrain { .. }) {
+                                        let at = hit.point();
+                                        let surface = host.surface_at(at.x, at.y);
+                                        self.emit(idx, EventKind::Impact { at, dir, surface, head: false, fatal: false, impact_type: def.impact_type, exit: false });
+                                    }
+                                }
                             }
-                        }
-                        // BO2's blood is picked by the hit region and its lethality (FxFleshType);
-                        // every other surface comes from what was hit. One impact per pellet, at
-                        // its entry point (an FMJ round's exit impact is a separate feature).
-                        self.emit(idx, EventKind::Impact { at: point, dir, surface: Surface::of_object(victim.as_ref()), head: headshot, fatal: kill, impact_type: def.impact_type });
-                        self.emit(idx, EventKind::HitMarker { headshot, kill });
-                        if kill && p.arsenal.has_specialty(Specialty::Scavenger) {
-                            p.arsenal.scavenge();
                         }
                     }
                     other => {
@@ -147,7 +167,7 @@ impl Sim {
                         if matches!(other, HitResult::Terrain { .. }) {
                             let at = other.point();
                             let surface = host.surface_at(at.x, at.y);
-                            self.emit(idx, EventKind::Impact { at, dir, surface, head: false, fatal: false, impact_type: def.impact_type });
+                            self.emit(idx, EventKind::Impact { at, dir, surface, head: false, fatal: false, impact_type: def.impact_type, exit: false });
                         }
                     }
                 }
@@ -216,8 +236,8 @@ impl Sim {
                 }
                 // Points for what the C4 kills (the owner's own state is out of the table now).
                 for e in &ev {
-                    if let EquipEvent::Exploded { at, hit_enemy, kill, .. } = *e {
-                        self.emit(idx, EventKind::Exploded { at, sound: "" });
+                    if let EquipEvent::Exploded { at, hit_enemy, kill, sound, impact_type, surface, .. } = *e {
+                        self.emit(idx, EventKind::Exploded { at, sound, impact_type, surface });
                         if hit_enemy {
                             self.emit(idx, EventKind::HitMarker { headshot: false, kill });
                         }
@@ -235,8 +255,59 @@ impl Sim {
     }
 }
 
-/// FMJ: damage to the second soldier a round passes through.
-pub const PENETRATION_DAMAGE: f32 = 0.75;
+/// A bullet striking object `id` at `point`, `distance` from the muzzle, at hit `location`, with
+/// BO2's damage multiplier `mult`; `fx`: it plays its impact.
+struct Strike {
+    id: u32,
+    point: Vec3,
+    distance: f32,
+    location: u8,
+    mult: f32,
+    fx: bool,
+}
+
+/// What a bullet's hit on an object left for its exit: the object, its surface, and the head and
+/// lethal bits the exit's blood uses.
+struct BulletHit {
+    id: u32,
+    surface: Surface,
+    head: bool,
+    kill: bool,
+}
+
+impl Sim {
+    /// The soldier's hit boxes the bullets trace: the test override, else the converted table's.
+    fn hit_body(&self) -> Option<&'static crate::hitloc::Poses> {
+        self.hit_body.or_else(|| crate::weapons::catalog().hit_body())
+    }
+
+    /// A bullet strikes (`FUN_005cfc60`: the range curve's damage times the multiplier; a
+    /// penetrated round's next surface plays its impact only past `bullet_penetrationMinFxDist`).
+    fn bullet_hit(&mut self, host: &dyn LogicHost, idx: usize, p: &mut PlayerSim, dir: Vec3, s: Strike) -> BulletHit {
+        let Strike { id, point, distance, location, mult, fx } = s;
+        let def = p.arsenal.current().def;
+        let headshot = crate::hitloc::is_head(location);
+        let victim = host.object(id, p.general);
+        let infantry = victim.is_some_and(|v| v.has(objflags::INFANTRY));
+        // A soldier's damage is multiplied by the weapon's for the location struck (BO2's player
+        // damage, `FUN_005f05c0`); anything else takes it unscaled.
+        let at = if infantry { def.location_multipliers.get(location as usize).copied().unwrap_or(1.0) } else { 1.0 };
+        let fmj = if def.fmj && !infantry { FMJ_VEHICLE_DAMAGE } else { 1.0 };
+        let amount = def.damage_at(distance) * mult * at * fmj * BO2_TO_ZH_DAMAGE;
+        let kill = host.damage(p.general, id, amount, damage_kind::SMALL_ARMS);
+        // BO2's blood is picked by the hit region and its lethality (FxFleshType); every other
+        // surface comes from what was hit.
+        let surface = Surface::of_object(victim.as_ref());
+        if fx {
+            self.emit(idx, EventKind::Impact { at: point, dir, surface, head: headshot, fatal: kill, impact_type: def.impact_type, exit: false });
+        }
+        self.emit(idx, EventKind::HitMarker { headshot, kill });
+        if kill && p.arsenal.has_specialty(Specialty::Scavenger) {
+            p.arsenal.scavenge();
+        }
+        BulletHit { id, surface, head: headshot, kill }
+    }
+}
 
 /// How far a knife reaches. In first person the General is BO2's player body, so the knife reaches
 /// [`MELEE_RANGE`] past its hit radius. Under RTS control Zero Hour walked him up to the victim with
@@ -323,22 +394,47 @@ fn reach_radius(o: &ObjInfo) -> f32 {
     }
 }
 
+/// How a trace poses soldiers: the converted hit boxes per body state, and the body state of each
+/// General the sim moves (`(object, state)`); every other soldier stands.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct HitBodies<'a> {
+    pub poses: Option<&'static crate::hitloc::Poses>,
+    pub states: &'a [(u32, u16)],
+}
+
+impl HitBodies<'_> {
+    /// The boxes and their scale for soldier `id`: a General in his body state's pose at his
+    /// drawn size ([`crate::units::GENERAL_SCALE`]), Zero Hour's infantry standing at BO2's.
+    fn body(&self, id: u32) -> Option<(&'static crate::hitloc::Body, f32)> {
+        let poses = self.poses?;
+        match self.states.iter().find(|(g, _)| *g == id) {
+            Some(&(_, s)) => poses.get(s).map(|b| (b, crate::units::GENERAL_SCALE)),
+            None => poses.stand().map(|b| (b, 1.0)),
+        }
+    }
+}
+
 /// Convert nearby objects into hitscan targets. Friendlies are skipped so bullets pass through them
-/// (BO2 has no friendly fire in core modes); dead and non-colliding objects are skipped.
-pub fn gather_targets(host: &dyn LogicHost, eye: Vec3, range: f32, shooter: u32) -> Vec<Target> {
+/// (BO2 has no friendly fire in core modes); dead and non-colliding objects are skipped. Infantry
+/// are traced as BO2's hit boxes (`bodies`) when there are any, ranked as a `rifle` bullet ranks
+/// them.
+pub fn gather_targets(host: &dyn LogicHost, eye: Vec3, range: f32, shooter: u32, bodies: &HitBodies, rifle: bool) -> Vec<Target> {
     let mut objs = Vec::new();
     host.query(eye, range, shooter, &mut objs);
     let mut targets: Vec<Target> = objs
         .iter()
         .filter(|o| o.id != shooter && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE) && !o.has(objflags::ALLY))
-        .map(target_from)
+        .map(|o| target_from(o, bodies, rifle))
         .collect();
     // Deterministic order regardless of partition iteration order.
     targets.sort_by_key(|t| t.id);
     targets
 }
 
-pub fn target_from(o: &ObjInfo) -> Target {
+pub fn target_from(o: &ObjInfo, bodies: &HitBodies, rifle: bool) -> Target {
+    if let Some((body, scale)) = o.has(objflags::INFANTRY).then(|| bodies.body(o.id)).flatten() {
+        return Target { id: o.id, pos: o.pos, shape: Shape::Body { body, yaw: o.yaw, scale, rifle }, head_fraction: 0.0 };
+    }
     if o.has(objflags::INFANTRY) {
         return Target {
             id: o.id,

@@ -138,6 +138,44 @@ tuning! {
     range_finder_display_ads: "RangeFinderDisplayAds" = 0.99, "Target finder: the ADS fraction above which its display draws (`DAT_00c73584`, `FUN_00526780`).";
     range_finder_mark_height: "RangeFinderMarkHeight" = 45.0, "Target finder: inches above a standing enemy's feet its diamond is centred (70 - 25, `FUN_00526780`).";
     range_finder_trace_dist: "RangeFinderTraceDist" = 8192.0, "Target finder: inches the spotting trace reaches (`_DAT_00b12d08`, `FUN_00528ec0`).";
+
+    // ---- Bullet penetration (t6mp `FUN_005d0350`; the table is patch_mp's `info/bullet_penetration_mp`) ----
+    penetration_count: "penetrationCount" = 5.0, "Most surfaces one bullet passes through (`penetrationCount` 5, 0..5; `FUN_006e86b0`).";
+    perk_bullet_penetration_multiplier: "perk_bulletPenetrationMultiplier" = 2.0, "`bulletpenetration` (FMJ): every depth is multiplied by it (G1; `FUN_005d0350`).";
+    bullet_penetration_min_fx_dist: "bullet_penetrationMinFxDist" = 30.0, "Inches a penetrated round must fly from an exit to the next surface before either plays its impact (`FUN_008b7bb0`).";
+    pen_small_flesh: "small_flesh" = 32.0, "Penetration depth, inches: a `small` round through flesh (`info/bullet_penetration_mp`).";
+    pen_small_metal: "small_metal" = 12.0, "Penetration depth, inches: a `small` round through metal (`info/bullet_penetration_mp`).";
+    pen_small_concrete: "small_concrete" = 6.0, "Penetration depth, inches: a `small` round through concrete (`info/bullet_penetration_mp`).";
+    pen_small_dirt: "small_dirt" = 0.0, "Penetration depth, inches: a `small` round through dirt (`info/bullet_penetration_mp`).";
+    pen_small_grass: "small_grass" = 0.0, "Penetration depth, inches: a `small` round through grass (`info/bullet_penetration_mp`).";
+    pen_small_asphalt: "small_asphalt" = 6.0, "Penetration depth, inches: a `small` round through asphalt (`info/bullet_penetration_mp`).";
+    pen_small_sand: "small_sand" = 0.0, "Penetration depth, inches: a `small` round through sand (`info/bullet_penetration_mp`).";
+    pen_small_snow: "small_snow" = 72.0, "Penetration depth, inches: a `small` round through snow (`info/bullet_penetration_mp`).";
+    pen_small_rock: "small_rock" = 6.0, "Penetration depth, inches: a `small` round through rock (`info/bullet_penetration_mp`).";
+    pen_small_wood: "small_wood" = 12.0, "Penetration depth, inches: a `small` round through wood (`info/bullet_penetration_mp`).";
+    pen_small_water: "small_water" = 72.0, "Penetration depth, inches: a `small` round through water (`info/bullet_penetration_mp`).";
+    pen_medium_flesh: "medium_flesh" = 64.0, "Penetration depth, inches: a `medium` round through flesh (`info/bullet_penetration_mp`).";
+    pen_medium_metal: "medium_metal" = 16.0, "Penetration depth, inches: a `medium` round through metal (`info/bullet_penetration_mp`).";
+    pen_medium_concrete: "medium_concrete" = 9.0, "Penetration depth, inches: a `medium` round through concrete (`info/bullet_penetration_mp`).";
+    pen_medium_dirt: "medium_dirt" = 0.0, "Penetration depth, inches: a `medium` round through dirt (`info/bullet_penetration_mp`).";
+    pen_medium_grass: "medium_grass" = 0.0, "Penetration depth, inches: a `medium` round through grass (`info/bullet_penetration_mp`).";
+    pen_medium_asphalt: "medium_asphalt" = 8.0, "Penetration depth, inches: a `medium` round through asphalt (`info/bullet_penetration_mp`).";
+    pen_medium_sand: "medium_sand" = 0.0, "Penetration depth, inches: a `medium` round through sand (`info/bullet_penetration_mp`).";
+    pen_medium_snow: "medium_snow" = 72.0, "Penetration depth, inches: a `medium` round through snow (`info/bullet_penetration_mp`).";
+    pen_medium_rock: "medium_rock" = 8.0, "Penetration depth, inches: a `medium` round through rock (`info/bullet_penetration_mp`).";
+    pen_medium_wood: "medium_wood" = 8.0, "Penetration depth, inches: a `medium` round through wood (`info/bullet_penetration_mp`).";
+    pen_medium_water: "medium_water" = 72.0, "Penetration depth, inches: a `medium` round through water (`info/bullet_penetration_mp`).";
+    pen_large_flesh: "large_flesh" = 112.0, "Penetration depth, inches: a `large` round through flesh (`info/bullet_penetration_mp`).";
+    pen_large_metal: "large_metal" = 20.0, "Penetration depth, inches: a `large` round through metal (`info/bullet_penetration_mp`).";
+    pen_large_concrete: "large_concrete" = 12.0, "Penetration depth, inches: a `large` round through concrete (`info/bullet_penetration_mp`).";
+    pen_large_dirt: "large_dirt" = 0.0, "Penetration depth, inches: a `large` round through dirt (`info/bullet_penetration_mp`).";
+    pen_large_grass: "large_grass" = 0.0, "Penetration depth, inches: a `large` round through grass (`info/bullet_penetration_mp`).";
+    pen_large_asphalt: "large_asphalt" = 12.0, "Penetration depth, inches: a `large` round through asphalt (`info/bullet_penetration_mp`).";
+    pen_large_sand: "large_sand" = 0.0, "Penetration depth, inches: a `large` round through sand (`info/bullet_penetration_mp`).";
+    pen_large_snow: "large_snow" = 72.0, "Penetration depth, inches: a `large` round through snow (`info/bullet_penetration_mp`).";
+    pen_large_rock: "large_rock" = 12.0, "Penetration depth, inches: a `large` round through rock (`info/bullet_penetration_mp`).";
+    pen_large_wood: "large_wood" = 16.0, "Penetration depth, inches: a `large` round through wood (`info/bullet_penetration_mp`).";
+    pen_large_water: "large_water" = 72.0, "Penetration depth, inches: a `large` round through water (`info/bullet_penetration_mp`).";
     // ---- The mod's own ------------------------------------------------------------------------
     shield_blast_protection_30: "shieldBlastDamageProtection_30" = 0.4, "Assault Shield: share of a blast it takes away within a 30-degree arc of its forward axis (`FUN_00670940`; dvar default).";
     shield_blast_protection_60: "shieldBlastDamageProtection_60" = 0.2, "As above, within a 60-degree arc.";

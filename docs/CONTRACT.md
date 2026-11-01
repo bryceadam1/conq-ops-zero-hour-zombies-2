@@ -497,28 +497,94 @@ cell of the global `FxImpactTable` (32 surfaces, plus four body/head × nonfatal
 The mod reproduces that split: the **sim classifies**, the **client carries**, the **bridge plays**.
 
 * **The sim emits one `EventKind::Impact` per pellet that hit** (`at`, `dir`, `surface`, `head`,
-  `fatal`, `impact_type`); a shot that hits nothing emits none. `Shot` stays once per shot (the
+  `fatal`, `impact_type`, `exit`); a shot that hits nothing emits none. A penetrating round
+  (below) adds its exit impacts (`exit` set) and its onward entries. `Shot` stays once per shot (the
   gunshot and the viewmodel) and no longer names an impact.
 * **The surface is presentation data.** Objects are classified from the `objflags` the bridge
   already reports (`INFANTRY → FLESH`, `VEHICLE|AIRCRAFT → METAL`, `STRUCTURE → CONCRETE`); the
   ground from the new `LogicApi.surface_at(x, y)`, which answers Zero Hour's terrain class
   (`TheTerrainVisual->getTerrainTile`, the same query the logic's build placement uses) and a water
-  table. It is read in the logic step but **never feeds damage, movement or any other sim state**:
-  a peer whose terrain visual disagreed could only differ in its own screen.
+  table. The ground's surface is read in the logic step but **never feeds damage, movement or any other
+  sim state**: a peer whose terrain visual disagreed could only differ in its own screen. An
+  *object's* surface (its kind flags, sim state) does feed damage: bullet penetration's depth.
+* **Bullet penetration** (t6mp `FUN_005d0350`; `zhbo_core::penetration`). After its first hit a
+  round goes on through up to `penetrationCount` (5) solids while its damage multiplier (1 at the
+  muzzle) stays positive: each solid costs its chord (≥ 1 in; the targets' convex shapes, exact)
+  over the smaller of the entry and exit surfaces' depths for the def's `Penetrate` type
+  (`info/bullet_penetration_mp`, doubled by `perk_bulletPenetrationMultiplier` with
+  `bulletpenetration` — FMJ), and each next object takes `damage_at(distance) × multiplier`. The
+  exit and the next entry play their impacts only when over `bullet_penetrationMinFxDist` (30 in)
+  apart, at most two per round (the client's `FUN_00538e40` budget). The ground has no underside:
+  a round that strikes it stops. All numbers are tuning-pack keys (`[Penetration]`, BO2's own key
+  names); deterministic, sim-only inputs.
+* **Soldier hit geometry and locations** (t6mp `FUN_007837a0`, `FUN_005f05c0`; `zhbo_core::hitloc`).
+  An infantry target is BO2's MP body's hit boxes (`HitBox` lines of the weapon table: each bone's
+  `XBoneInfo` box with `radiusSquared ≥ 4` and its `partClassification` location, posed by the
+  converter at the first frame of every body state's clip: `HitBox = <state> <loc> <bone> …`),
+  standing on the object's position and turned by its yaw. BO2 traces the pose the server animated
+  (G_DObjCalcPose, `FUN_00649b50`); a General the sim moves takes the pose of his body state
+  (`PlayerSim::body_state` = `nativebody::state_of` over the sim's stance, speed, sprint, ADS and
+  sidearm — never the render clock), at his drawn `GENERAL_SCALE`; Zero Hour infantry (no BO2
+  animation state) stand at 1.0. The state clips are BO2's `mp/playeranim.script` picks for a
+  rifleman (`zhbo_assets::playeranim`), the same clips the third-person body draws. Of the
+  boxes a ray crosses the highest-ranked location wins, nearest among equals (`bRifleBullet` ranks
+  the head first; other bullets rank the body alike). A soldier's damage is multiplied by the
+  def's `location_multipliers[location]` (a combination's resolved by `attachments::apply`:
+  first mounted attachment unique differing from the base unique, `FUN_008ed780`); other objects
+  take it unscaled. Penetration's chord through a soldier is the boxes' (the onward trace skips the
+  soldier the round is inside). A table without `HitBox` lines (the built-in one) keeps the
+  16-inch cylinder with a head band. Deterministic, sim-only inputs.
 * **The client carries at most `ZHBO_CLIENT_HITS` (8) impacts per frame** in `ZhboClientOut.hits`,
   filled by `consume_events` (so the impact sound is the surface's, not a guess); a frame that
   overflows drops the extras.
 * **The bridge plays the name the core resolves.** `zhbo_impact_fx(impact_type, surface, head,
-  fatal, …)` looks the cell up in the converted `Data\ConquerOps\impacts.txt` (loaded by
+  fatal, …)` (or `zhbo_impact_exit_fx` for a hit with `ZhboClientHit.exit`: the type's exit row,
+  BO2's impact flag 4 — rows 1/4/8/10/6, `exit impact`/`exit flesh` lines) looks the cell up in the converted `Data\ConquerOps\impacts.txt` (loaded by
   `zhbo_load_impacts` at init) and the bridge calls `FXList::doFXPos` with a frame whose X is
   `-dir` (the surface's outward normal). A missing/stale archive plays nothing and is counted, never
   a bogus name — the same degrade-don't-panic rule as the renderer's draws.
-* **What is out**: other
-  players' impacts (they keep the converted `FireFX`), exit/through-and-through impacts, and
-  per-surface impact *sounds* (flesh vs hard only).
+* **What is out**: other players' impacts (they keep the converted `FireFX`).
+* **The pellet's sound is the table's too**: `consume_events` plays `sounds::impact_cue(impact_type,
+  surface)` — the `sound` row for the gun's type (`prj_bullet_impact_<size>_<surface>`), silent on a
+  `NONE` row (BO2's hash miss), and the fixed flesh/hard cue only for a type with no sound rows (an
+  unconverted archive). An exit plays `sounds::exit_cue` — the `exit sound` row of the type's exit
+  family (`prj_bullet_impact_<size>_exit_<surface>`; the shotgun's
+  `prj_bulletspray_impact_small_exit` has no alias in the install, so it is silent), nothing without
+  one.
+* **Blasts read the same table by their own impact type.** BO2's explode events (`FUN_004c0ac0`,
+  `FUN_004c1590`) call the impact routine `FUN_00533210(weapon, surface)` — the type's
+  `FxImpactTable` row and its sound family `<family>_<surface>` — then the def's own
+  `projExplosionEffect`/`projExplosionSound`. The sim takes the blast's surface (the object it hit
+  directly, else `surface_at`) and puts it in `EventKind::Exploded { at, sound, impact_type,
+  surface }` (equipment too); `projectiles::blast` plays the table cell then the def's effect
+  through `LogicApi.fx` (presentation, like every FX call), and the client's `consume_events`
+  plays `impacts::sound_name(impact_type, surface)` (`sound <type> <surface> <event>` rows of the
+  same file; every surface of a family type has one, `NONE` where the install lacks the alias)
+  then the def's own sound. A missing *FX* cell falls back to the type's default
+  surface (`SURF_TYPE_DEFAULT`); a missing *sound* cell plays nothing, as BO2's hash miss does
+  (`FUN_0082df80`); a type with no sound cells at all and no def field falls back to the generic
+  blast (an unconverted archive). The
+  `impactType` → row/family mapping lives once, in `zhbo_formats::fx::IMPACT_KINDS`. No ABI
+  change: the rows ride in the existing file and the existing `fx` callback.
+* **Bounces and duds are their own events** (t6mp `FUN_004c1590`, sent by `G_RunMissile`
+  `FUN_00608c10`). A bounce (event 0x47, each time a grenade or thrown piece of equipment rebounds)
+  plays the def's `bounceSound[surface]` and the `grenade_bounce` row's cell for the surface; a
+  projectile that strikes something before flying its `iProjectileActivateDist` of path
+  (`FUN_00604280`; the launcher grenades' 300 inches) is a **dud** (event 0x51): no blast, the
+  direct hit takes its `iDamage`, and it plays `prj_bullet_impact_large_<surface>`, the
+  `projectile_dud` row's cell, then `projDudEffect`/`projDudSound`. The sim tracks the path
+  (`Projectile::travelled`), plays the cells through `LogicApi.fx` and emits
+  `EventKind::Bounced { at, sound }` (the def's `BounceSounds` cell for the surface, resolved in the
+  sim) and `EventKind::Dud { at, sound, surface }`; the client plays them (`sounds::dud_cues`). Both
+  rows are read cell by cell with **no default-surface fallback** (`impacts::fx_cell`; the bounce
+  row has no flesh cell, so a grenade off a soldier raises nothing), and their constants live once
+  in `zhbo_core::impacts` (`GRENADE_BOUNCE`, `PROJECTILE_DUD`, `DUD_HIT_SOUND_TYPE`). No ABI change.
 * ABI: `surface_at` is appended to `ZhboLogicApi` (fields 23 → 24), `ZhboClientOut` grows by 324
   bytes (4508 → 4832) and `ZHBO_ABI_VERSION` goes to 26; `zhbo_load_impacts` and `zhbo_impact_fx`
   are new free functions on the append-only surface.
+* ABI (penetration): `ZhboClientHit` gains `exit` at its end (40 → 44 bytes; `ZhboClientOut`
+  4832 → 4864, only `hits_len` moves) and `zhbo_impact_exit_fx` is a new free function. **Needs the
+  `ZHBO_ABI_VERSION` bump with its merge** (not done on the branch).
 
 ## The view kick's roll
 

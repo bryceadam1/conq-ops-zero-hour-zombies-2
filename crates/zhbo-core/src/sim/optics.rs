@@ -26,7 +26,7 @@
 //!   centred `RangeFinderMarkHeight` above his feet (BO2's 70 − 25", standing): the marks are
 //!   [`Optics::blips`] then.
 
-use super::fire::{gather_targets, target_from};
+use super::fire::{gather_targets, target_from, HitBodies};
 use crate::hitscan::{self, HitResult};
 use crate::host::{objflags, LogicHost, ObjInfo};
 use crate::math::Vec3;
@@ -127,7 +127,8 @@ impl Optics {
             let mean = track.fractions.iter().sum::<f32>() / window as f32;
             let visibility = (1.0 - mean).clamp(0.0, 1.0).max(t.sonar_speed_time_ratio);
             if visibility > 0.0 {
-                let shape = target_from(o);
+                // The scanner draws a character's outline: the plain body cylinder (no hit boxes).
+                let shape = target_from(o, &HitBodies::default(), false);
                 let (radius, height) = match shape.shape {
                     hitscan::Shape::Cylinder { radius, height } => (radius, height),
                     _ => (o.major_radius, o.height),
@@ -177,7 +178,8 @@ fn marks(host: &dyn LogicHost, me: u32, eye: Vec3, t: &crate::tuning::Tuning) ->
 /// The range (feet) to an enemy under the crosshair, if the trace hits one.
 fn spotted(host: &dyn LogicHost, me: u32, eye: Vec3, dir: Vec3, t: &crate::tuning::Tuning) -> Option<i32> {
     let reach = inches(t.range_finder_trace_dist);
-    let targets = gather_targets(host, eye, reach, me);
+    // The spotting trace meets a character's body volume, not its hit-location boxes.
+    let targets = gather_targets(host, eye, reach, me, &HitBodies::default(), false);
     let ground = |x: f32, y: f32| host.ground_height(x, y);
     let HitResult::Object { id, distance, .. } = hitscan::trace(eye, dir, reach, &targets, me, &ground) else { return None };
     let o = host.object(id, me)?;

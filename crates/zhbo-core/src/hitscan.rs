@@ -1,7 +1,9 @@
 //! Instant-hit traces against Zero Hour objects and terrain.
 //!
 //! Zero Hour geometry is coarse (infantry are 10-unit-radius cylinders so they are easy to click),
-//! so infantry get a tighter BO2-sized hit cylinder with a head band at the top.
+//! so infantry are traced as BO2's soldier: the MP body's hit boxes ([`crate::hitloc::Body`],
+//! converted from the install), each with its hit location. Without converted boxes (the built-in
+//! table) they fall back to a BO2-sized cylinder with a head band at the top.
 
 use crate::math::Vec3;
 use crate::units::inches;
@@ -13,6 +15,10 @@ pub enum Shape {
     Cylinder { radius: f32, height: f32 },
     /// Box standing on the object's position, rotated by `yaw` about +Z.
     Box { half_x: f32, half_y: f32, height: f32, yaw: f32 },
+    /// BO2's soldier: the body's hit boxes (in the pose of his body state) standing on the
+    /// object's position, turned by `yaw` about +Z and grown by `scale` (the General's drawn
+    /// size); `rifle`: the shot ranks locations as a rifle bullet does ([`crate::hitloc::rank`]).
+    Body { body: &'static crate::hitloc::Body, yaw: f32, scale: f32, rifle: bool },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -32,7 +38,8 @@ pub const INFANTRY_HEAD_FRACTION: f32 = 0.15;
 pub enum HitResult {
     Nothing { end: Vec3 },
     Terrain { point: Vec3 },
-    Object { id: u32, point: Vec3, distance: f32, headshot: bool },
+    /// `location`: the BO2 hit location struck ([`crate::hitloc`]; `NONE` for anything but a soldier).
+    Object { id: u32, point: Vec3, distance: f32, location: u8 },
 }
 
 impl HitResult {
@@ -47,8 +54,43 @@ impl HitResult {
 
 /// Distance along the ray to the first intersection with the shape, if within `max_t`.
 pub fn ray_vs_target(origin: Vec3, dir: Vec3, max_t: f32, target: &Target) -> Option<f32> {
+    ray_location(origin, dir, max_t, target).map(|(t, _)| t)
+}
+
+/// A turn by `-yaw` about +Z: world offsets into a target's own frame.
+fn unyaw(v: Vec3, yaw: f32) -> Vec3 {
+    let (s, c) = yaw.sin_cos();
+    Vec3::new(v.x * c + v.y * s, -v.x * s + v.y * c, v.z)
+}
+
+/// Where the ray strikes the target and the hit location there: a soldier's box by BO2's pick, the
+/// fallback cylinder's head band or body (`TORSO_UPPER`), `NONE` for anything else.
+pub fn ray_location(origin: Vec3, dir: Vec3, max_t: f32, target: &Target) -> Option<(f32, u8)> {
+    use crate::hitloc::{HEAD, NONE, TORSO_UPPER};
     let o = origin - target.pos;
-    match target.shape {
+    if let Shape::Body { body, yaw, scale, rifle } = target.shape {
+        // The ray into the unscaled body's frame: positions shrink by the scale, the distance
+        // along the (unit) direction with them.
+        let k = 1.0 / scale;
+        return body.pick(unyaw(o, yaw) * k, unyaw(dir, yaw), max_t * k, rifle).map(|(t, l)| (t * scale, l));
+    }
+    let t = ray_shape(o, dir, max_t, target.shape)?;
+    let location = match target.shape {
+        Shape::Cylinder { height, .. } if target.head_fraction > 0.0 => {
+            if o.z + dir.z * t >= height * (1.0 - target.head_fraction) {
+                HEAD
+            } else {
+                TORSO_UPPER
+            }
+        }
+        _ => NONE,
+    };
+    Some((t, location))
+}
+
+fn ray_shape(o: Vec3, dir: Vec3, max_t: f32, shape: Shape) -> Option<f32> {
+    match shape {
+        Shape::Body { .. } => None,
         Shape::Sphere { radius } => {
             // Sphere centred half a radius above the ground point.
             let c = Vec3::new(0.0, 0.0, radius);
@@ -56,11 +98,9 @@ pub fn ray_vs_target(origin: Vec3, dir: Vec3, max_t: f32, target: &Target) -> Op
         }
         Shape::Cylinder { radius, height } => ray_cylinder(o, dir, radius, height).filter(|&t| t <= max_t),
         Shape::Box { half_x, half_y, height, yaw } => {
-            let (s, c) = yaw.sin_cos();
-            let rot = |v: Vec3| Vec3::new(v.x * c + v.y * s, -v.x * s + v.y * c, v.z);
             ray_aabb(
-                rot(o),
-                rot(dir),
+                unyaw(o, yaw),
+                unyaw(dir, yaw),
                 Vec3::new(-half_x, -half_y, 0.0),
                 Vec3::new(half_x, half_y, height),
             )
@@ -129,7 +169,7 @@ fn ray_cylinder(o: Vec3, d: Vec3, r: f32, h: f32) -> Option<f32> {
     best
 }
 
-fn ray_aabb(o: Vec3, d: Vec3, lo: Vec3, hi: Vec3) -> Option<f32> {
+pub(crate) fn ray_aabb(o: Vec3, d: Vec3, lo: Vec3, hi: Vec3) -> Option<f32> {
     let mut tmin = 0.0f32;
     let mut tmax = f32::INFINITY;
     for (oi, di, l, h) in [(o.x, d.x, lo.x, hi.x), (o.y, d.y, lo.y, hi.y), (o.z, d.z, lo.z, hi.z)] {
@@ -185,6 +225,21 @@ pub fn trace_terrain(origin: Vec3, dir: Vec3, max_t: f32, ground: &dyn Fn(f32, f
     None
 }
 
+/// Whether `point` is inside the target's solid (on its surface counts).
+pub fn contains(target: &Target, point: Vec3) -> bool {
+    let o = point - target.pos;
+    match target.shape {
+        Shape::Sphere { radius } => (o - Vec3::new(0.0, 0.0, radius)).length() <= radius,
+        Shape::Cylinder { radius, height } => o.x * o.x + o.y * o.y <= radius * radius && (0.0..=height).contains(&o.z),
+        Shape::Box { half_x, half_y, height, yaw } => {
+            let (s, c) = yaw.sin_cos();
+            let (x, y) = (o.x * c + o.y * s, -o.x * s + o.y * c);
+            x.abs() <= half_x && y.abs() <= half_y && (0.0..=height).contains(&o.z)
+        }
+        Shape::Body { body, yaw, scale, .. } => body.contains(unyaw(o, yaw) * (1.0 / scale)),
+    }
+}
+
 /// Full trace: nearest of terrain and targets (skipping `ignore`).
 pub fn trace(
     origin: Vec3,
@@ -194,26 +249,32 @@ pub fn trace(
     ignore: u32,
     ground: &dyn Fn(f32, f32) -> f32,
 ) -> HitResult {
+    trace_where(origin, dir, range, targets, ignore, ground, &|_| true)
+}
+
+/// [`trace`] against the targets `keep` accepts: a penetrating round's trace onward from inside
+/// the solid it entered skips the solids it starts in, as a world trace leaving a brush does.
+pub fn trace_where(
+    origin: Vec3,
+    dir: Vec3,
+    range: f32,
+    targets: &[Target],
+    ignore: u32,
+    ground: &dyn Fn(f32, f32) -> f32,
+    keep: &dyn Fn(&Target) -> bool,
+) -> HitResult {
     let terrain_t = trace_terrain(origin, dir, range, ground);
     let limit = terrain_t.unwrap_or(range);
-    let mut best: Option<(f32, &Target)> = None;
-    for t in targets.iter().filter(|t| t.id != ignore) {
-        if let Some(d) = ray_vs_target(origin, dir, limit, t) {
-            if best.is_none_or(|(bd, _)| d < bd) {
-                best = Some((d, t));
+    let mut best: Option<(f32, u32, u8)> = None;
+    for t in targets.iter().filter(|t| t.id != ignore && keep(t)) {
+        if let Some((d, location)) = ray_location(origin, dir, limit, t) {
+            if best.is_none_or(|(bd, _, _)| d < bd) {
+                best = Some((d, t.id, location));
             }
         }
     }
     match (best, terrain_t) {
-        (Some((d, t)), _) => {
-            let point = origin + dir * d;
-            let height = match t.shape {
-                Shape::Cylinder { height, .. } | Shape::Box { height, .. } => height,
-                Shape::Sphere { radius } => radius * 2.0,
-            };
-            let headshot = t.head_fraction > 0.0 && point.z >= t.pos.z + height * (1.0 - t.head_fraction);
-            HitResult::Object { id: t.id, point, distance: d, headshot }
-        }
+        (Some((d, id, location)), _) => HitResult::Object { id, point: origin + dir * d, distance: d, location },
         (None, Some(tt)) => HitResult::Terrain { point: origin + dir * tt },
         (None, None) => HitResult::Nothing { end: origin + dir * range },
     }
@@ -238,15 +299,15 @@ mod tests {
         let targets = [soldier(2, 100.0), soldier(1, 50.0)];
         let body = trace(Vec3::new(0.0, 0.0, 6.0), Vec3::new(1.0, 0.0, 0.0), 500.0, &targets, 0, &flat);
         match body {
-            HitResult::Object { id, headshot, distance, .. } => {
+            HitResult::Object { id, location, distance, .. } => {
                 assert_eq!(id, 1);
-                assert!(!headshot);
+                assert_eq!(location, crate::hitloc::TORSO_UPPER);
                 assert!((distance - (50.0 - INFANTRY_HIT_RADIUS)).abs() < 1e-3);
             }
             other => panic!("expected hit, got {other:?}"),
         }
         let head = trace(Vec3::new(0.0, 0.0, 11.5), Vec3::new(1.0, 0.0, 0.0), 500.0, &targets, 0, &flat);
-        assert!(matches!(head, HitResult::Object { id: 1, headshot: true, .. }));
+        assert!(matches!(head, HitResult::Object { id: 1, location: crate::hitloc::HEAD, .. }));
     }
 
     #[test]

@@ -8047,3 +8047,299 @@ silent; BO2 is not silent, and it is not the raise sound either.
 
 No conformance column covers `altSwitchSoundPlayer` (no movement). No ABI change; the table schema
 and archive content changed (VERSION bump is the integrator's).
+
+## Explosions play the impact table's effect and sound for their type and surface (2026-10-30, branch `v1/explosion-sounds`)
+
+Stacked on `v1/lfe-layer` (item 16's finding). The mod played the impact row on dirt as every
+blast's effect and one generic `wpn_grenade_explode`.
+
+* **BO2's rule** (t6mp): the explode events (`FUN_004c0ac0` projectile, `FUN_004c1590` grenade and
+  equipment) call `FUN_00533210(weapon, surface)` — a switch on `WeaponDef.impactType` (+0x28) that
+  picks the `FxImpactTable` row and a per-surface sound-hash table — play both, then the def's own
+  `projExplosionEffect` (+0x6f0) and `projExplosionSound` (+0x71c). The families come from
+  `FUN_004d4440`: its disassembly loads `ESI` with each table's address before
+  `FUN_004d42d0(family)`, which hashes `"%s_%s"` over the 32 surface names (`FUN_0075f150`). The
+  family list exists only in code, so it lives once: **`zhbo_formats::fx::IMPACT_KINDS`** (type →
+  row, family), which the bullet impacts, the blast FX and the blast sounds all read. Probe:
+  `zhbo-assets fx --impacts` prints every row and the types reading it.
+* **Rows from the switch, not guessed.** 1 small 0, 2 large 3, 3 AP 7, 4 xtreme 9, 5 shotgun 5,
+  7/8 grenade/rifle grenade 12, 9 rocket 13, 10 rocket xtreme 14, 12 mortar 16, 13 tank 17, 14 bolt
+  19, 15 blade 20 (1/4/6/8/10 are exit rows). **Gotcha: the small bullet used row 1 — its exit row**
+  (that is why "bucket 1 ships no nonfatal blood"); row 0 is `fx_small_*` with body-nonfatal blood,
+  so pistols/SMGs now raise the entry effect. The crossbow's 14 reads row 19 (small impacts), not
+  row 14 (`fx_missing_impact`, which is the rocket-xtreme row). `rocket_explode_xtreme` reads the
+  plain `wpn_rocket_explode` sound table (its own family is registered but unread); mortar/tank
+  prefer the def's `mortarShellSound`/`tankShellSound` (no MP def sets them, not carried);
+  `grenade_bounce`/`projectile_dud` use def fields the mod does not carry.
+* **Data path.** `impacts.txt` now carries every blast type's FX cells and `sound <type> <surface>
+  <event>` rows, one per `<family>_<surface>` alias the install has (common or map bank,
+  case-insensitive); each alias is a converted event with its secondary chain
+  (`wpn_rocket_explode_dirt` → `wpn_rocket_explode` → `_close` …). `explosion_effect`/`ExplosionFx`
+  is the def field only; `to_def`'s Zero Hour stand-ins are gone (the sim falls back to
+  `FX_BoobyTrapExplosion` only when neither the table nor the def names an effect).
+* **Deterministic split.** The sim takes the blast's surface (the object hit directly, else
+  `surface_at`; presentation only) and puts it with the def's `impactType` in `Exploded`
+  (equipment too, which used to send no sound); `projectiles::blast` plays the table cell then the
+  def's effect; the client's `sounds::explosion_cues` plays the table sound then the def's own. A
+  surface whose alias the install lacks (`wpn_rocket_explode_flesh`) falls back to the type's
+  default surface, like the FX table — BO2 would hash a missing alias and play nothing; the mod
+  chooses the default cell rather than a silent direct hit.
+* **Conformance.** `projectile_explosion_*` compare the def fields, which BO2 leaves empty for most
+  explosives; the adapter reported the fallback under them. The sound column now emits the def
+  field only, and the effect column follows the converter (def field only).
+
+Measured (v1/lfe-layer → this branch): weapons cells **550,944 → 550,355 (−589)**, gap clusters
+200 → 199, zero regressions: `projectile_explosion_effect` 576 → 2, `projectile_explosion_sound`
+15 → 0; cac unchanged. The two left: `willy_pete_mp` (BO2's smoke cloud is played by script, the
+mod names it on the def) and `sensor_grenade_mp` (lands as equipment, its effect is not converted).
+No ABI change (rows ride in the existing file and `fx` callback); the archive content changed
+(VERSION bump is the integrator's). In-game check owed: a frag on concrete vs grass sounds and
+looks different; pistol hits show the entry-row effect.
+
+## A blast sound with no alias for the surface is silent, as in BO2 (2026-10-30, `v1/explosion-sounds`)
+
+Corrects the previous entry's fallback choice (parity over a mod-side choice). BO2's play path:
+`FUN_005152b0` → `FUN_00837d20` → `FUN_00837b50` queues a play command; the sound thread's
+`FUN_00839c10` case 2 runs `FUN_008352b0(aliasHash, …)`, which asks `FUN_0082df80` for the alias.
+That function looks in a 1024-slot hash cache. On a miss it walks every loaded bank's hash chain
+(`FUN_0082dec0`), and a hash no bank holds is negative-cached and returns 0. `FUN_008352b0` then
+calls `FUN_00a06580`, a 1-byte empty function, and plays nothing. There is no default-surface
+fallback anywhere on the path. So `impacts::find_sound` is exact-only now:
+`wpn_rocket_explode_flesh` (absent from the install) is silent. The generic blast still plays, but
+only for an impact type with no converted sound cells at all and no def sound (an unconverted
+archive or a mod-only def): `impacts::type_has_sounds`. The FX table's default-surface fallback is
+unchanged (that one is BO2's `SURF_TYPE_DEFAULT` cell rule). Decompiles:
+`~/.opencode/plan/explosion-sounds/sndplay*.c`, `sndlookup*.c`, `sndq*.c`.
+
+## Bullet hits play BO2's per-type, per-surface impact sound (2026-10-30, `v1/explosion-sounds`)
+
+The first-person pellet used to play one of two fixed cues (flesh or hard). BO2 uses the same rule
+for a bullet as for a blast: `FUN_00533210` takes the type's family (`prj_bullet_impact_small`,
+`_large`, `_ap`, `_xtreme`, and `prj_bulletspray_small` for the shotgun) and plays its alias for the
+surface. `impacts::sound_rows` now covers the gun buckets as well as the blast types, using the
+same `IMPACT_KINDS` and the same `sound` rows. It writes a row for every mod surface of every family
+type, and `NONE` where the install lacks the alias, so the table itself encodes BO2's silent hash
+miss. The client's `sounds::impact_cue` plays the row, or nothing on `NONE`; the fixed cue remains
+only for a type with no rows (an unconverted archive). Blasts read `NONE` rows the same way.
+**Gotcha: the bullet families live only in the map bank (`mp_raid`).** `common_mp` holds just
+`_riotshield`, so the alias check spans both banks. **The shotgun's entry family is empty in the
+install**: `prj_bulletspray_small` ships only `exit_*` and `ricochet`, so a shotgun pellet's entry
+hit is silent, as in BO2. Not carried: the exit sounds (`_exit_<surface>`, the routine's exit flag)
+and the vehicle overrides (flags 0x10/0x20 → `prj_impact_veh_armor`/`_locomotion` per impact type).
+The mod has no exit hits, and which callers set the vehicle flags is unverified (a follow-up).
+* **Gotcha: an alias can exist with no sound.** `prj_bullet_impact_small_snow` is in the map bank
+  with asset 0 and no secondary. BO2 finds the alias and plays nothing audible, so the converter
+  treats it as a `NONE` row, not a missing event. Only aliases with a variant asset or a secondary
+  count as present.
+
+## Grenade bounces and launcher duds play BO2's sounds and effects (2026-10-31, `v1/projectile-sounds`)
+
+Stacked on `v1/explosion-sounds`. The two impact types that branch left without a sound family —
+`grenade_bounce` (6) and `projectile_dud` (11) — are not weapon impact types at all (no MP def
+carries either): they are the rows two client events read.
+
+* **Bounce** (t6mp `FUN_004c1590` case 0x47, sent by `G_RunMissile` `FUN_00608c10` at every
+  rebound with the surface struck): `bounceSound` is a **per-surface array**, not a name with a
+  suffix — `WeaponDef+0x1b4` points at 32 xstrings (`wpn_grenade_bounce_<surface>`,
+  `wpn_smoke_bounce_*`, `wpn_sticky_gren_bounce_*`, `wpn_satchel_plant_*`, …) and the event plays
+  `bounceSound[surface]`, then `FxImpactTable[11].nonflesh[surface]` (footstep dust; none on flesh)
+  only when the cell is set. The parser reads the array; the def carries `BounceSounds`
+  (`surface=event` for the mod's slots); a cell whose alias no bank holds is `NONE`
+  (`impacts::silence_missing`, BO2's hash miss).
+* **Dud** (`FUN_00604280`): `G_RunMissile` sums the path each frame (`+0x238`) while the def has
+  `iProjectileActivateDist`; striking anything short of it turns the explosion type into `dud`
+  (`FUN_00608c10`: `local_2c = 4`) and sends event 0x51, which plays `prj_bullet_impact_large_<surface>`
+  (the table at `0x1061f88`), `FxImpactTable[15].nonflesh[surface]`, `projDudEffect` and
+  `projDudSound`. The direct hit still takes `iDamage` (`+0x3e4`, `damage[0]`). Only the launcher
+  grenades set it (every `gl_*` and the M32: 300 inches, `impacts/fx_dud_m203`,
+  `wpn_grenade_bounce_flesh`); the rockets do not. The mod had no arming at all: a point-blank
+  noob tube now thuds instead of exploding.
+* **Exact cells.** Both events index the row directly; the converter writes rows 6/11 with
+  `fx::impact_cell` for every slot (flesh included) and no default row, and the sim reads them with
+  `impacts::fx_cell`. **Gotcha: `FUN_00533210` itself indexes exact cells too** — the blast/bullet
+  default-surface fallback (`fx::impact`) is the mod's reading of the loader, not of this function;
+  left as it was.
+* Sim/client split as before: `Projectile::bounced`/`travelled`, `Outcome::Dud`,
+  `EventKind::Bounced { at, sound }` and `EventKind::Dud { at, sound, surface }`, `sounds::dud_cues`.
+  Combinations inherit the new fields through `take_converted_assets`. `WEAPON_FIELDS` 90 → 94
+  (`BounceSounds`, `ActivateDist`, `DudFx`, `DudSound`).
+* Probe: `zhbo-assets fx --impacts` prints rows 11/15 cell by cell and each projectile def's
+  activation distance, dud effect/sound and bounce array.
+
+## Exit hits and the vehicle overrides: who sets BO2's impact flags (2026-10-31, `v1/projectile-sounds`)
+
+The two flags the bullet-impact entry left open, traced to their callers (t6mp; probes in
+`~/.opencode/plan/projectile-sounds/`).
+
+* **Exit (flag 4).** `FUN_00533210` takes the exit row (small 1, large 4, AP 8, xtreme 10, shotgun 6,
+  bolt 19 with the flag) and the exit family: `prj_bullet_impact_{small,large,ap,xtreme}_exit`,
+  `prj_bulletspray_impact_small_exit`, `prj_bolt_impact_exit` (`FUN_004d4440`, strings at
+  `0xb1a530`…`0xb1a498`), alias `<family>_<surface>`. Set at **penetration exits only**: the
+  client's bullet loop `FUN_00538e40` (through `FUN_00538b80`) and the server's `FUN_005d0350`
+  (`FUN_005cf860(…, flags | 4)`) send one at the far side of each penetrated surface, at most two
+  per shot; `FUN_005385e0` adds a water exit (surface 20) for a downward shot. The mod models no
+  wall penetration, and its FMJ pass-through of a soldier emits only the entry impact. Carrying an
+  exit hit needs an exit bit on the ABI's impact record (`zhbo_impact_fx`'s row lookup), so it is
+  left to the integrator — not done here.
+* **Vehicle (flags 0x10/0x20)** replace the sound with `prj_impact_veh_armor_<impactType name>` /
+  `prj_impact_veh_locomotion_<…>` (`FUN_004d43a0`, `%s_%s` over the 16 type names). **No MP caller
+  sets either**: the server's flag byte (`+0xf6`, written by `FUN_005cf860` and ORed only in
+  `FUN_005cfc60`) carries bit 0 (hit location 1/2) and bit 4; the client trace passes `{0,1} | 4`;
+  every other writer of `+0xf6` belongs to another entity type. The override is unreachable in
+  t6mp, so the mod's metal-surface hit on a Zero Hour vehicle is BO2's behavior and nothing changes.
+
+Measured (v1/explosion-sounds conf2 → this branch): weapons **550,355 → 550,355**, cac 881 → 881,
+gap clusters 199 → 199, every column identical — the schema has no bounce/dud/activation column,
+as expected.  No ABI change; `WEAPON_FIELDS` 90 → 94 and the archive
+content changed (VERSION bump is the integrator's). In-game check owed: a frag rattles per surface,
+a point-blank noob tube thuds as a dud.
+
+## Bullets penetrate by BO2's rule (2026-10-31, `v1/penetration`)
+
+Stacked on `v1/projectile-sounds`. The mod had one FMJ special case (through the first soldier at
+0.75 damage) and no exits. BO2's walk is t6mp `FUN_005d0350` (server; the client's `FUN_00538e40`
+is its FX twin); decompiles and the scope in `~/.opencode/plan/penetration/` (`pen1-3.c`,
+`SCOPE.md`).
+
+* **The rule.** After the first hit (`FUN_005cfc60`: damage = `damage_at(|hit - muzzle|) ×
+  damageMultiplier`, the multiplier 1 at the muzzle) the round loops up to `penetrationCount` (5):
+  depth = `table[penetrateType][entry surface]` (`FUN_008da6d0`; surface 0 reads 0), × 2 with
+  `bulletpenetration` (`perk_bulletPenetrationMultiplier`, perk index 6 — FMJ grants it; it
+  replaces, it does not add); ≤ 0 stops. Step 0.135 in past the entry, trace on to the next
+  surface, trace back from 0.01 in short of it to the exit; thickness `max(chord, 1 in)` over
+  `min(entry depth, exit depth)` comes off the multiplier; ≤ 0 stops. The exit and the next entry
+  play their impacts only past `bullet_penetrationMinFxDist` (30 in) apart; the client plays at
+  most **two** such effects per round (`local_ec < 2`).
+* **The data.** The table is the rawfile `info/bullet_penetration_mp` in **patch_mp** (an infostring
+  `BULLET_PEN_TABLE\small_asphalt\6.0\…`, loaded by `FUN_008da530`/`FUN_008da460` as `%s_%s` over
+  the 32 surface names). **Gotcha: code_post_gfx carries a different `BULLET_PEN_TABLE`** (SP's;
+  `zhbo-assets find` shows both) — dirt, grass, mud, sand and painted metal are 0 in MP. The depths
+  and the dvars are tuning-pack keys under `[Penetration]` with BO2's own key names
+  (`small_flesh = 32`…); the real-install test `the_penetration_table_is_the_installs` holds them
+  equal to the rawfile. `penetrateType` is `WeaponDef+0x24` (pistols small, most SMG/AR medium,
+  LMG/snipers large, shotguns none), carried as the def's `Penetrate` field. **No MP attachment
+  sets `penetrateType`** (every `WeaponAttachment+0x10` is 0), so a combination keeps its base's;
+  the unmerged `v1/uncarried-fields` carries the attachment side and the same `Penetrate` enum —
+  the integrator unifies the two.
+* **The mod's world.** The solids are `hitscan`'s convex target shapes, so the chord is exact
+  (`hitscan::contains` + `trace_where` skip the solid a round is inside, as a world trace leaving a
+  brush does; the exit is a reverse trace). The ground is a heightfield with no underside, so a
+  round that strikes it stops. Surfaces come from the objects' kind flags (sim state), so the walk
+  is deterministic; the ground's `surface_at` still never feeds damage. **Gotcha: the mod's soldier
+  is a 16-in-radius cylinder**, so a centre shot crosses 32 in of flesh — a small round's whole
+  depth: a pistol stops in a soldier, medium keeps half after one, large ~71 %. BO2's torso hitbox
+  is thinner. Buildings are solid boxes far deeper than any depth: a round passes only a corner.
+* **Exit hits.** `EventKind::Impact.exit`; the converter writes the exit rows (small 1, large 4,
+  AP 8, xtreme 10, shotgun 6) as `exit impact`/`exit flesh` lines and the exit families as
+  `exit sound` lines (`IMPACT_KINDS.exit`). The client plays `sounds::exit_cue`; the bridge asks
+  `zhbo_impact_exit_fx` when `ZhboClientHit.exit` is set. **The shotgun's exit family is silent**:
+  the exe hashes `prj_bulletspray_impact_small_exit_<surface>` (`0xb1a4b0`), the bank ships
+  `prj_bulletspray_small_exit_*`. An exit's blood uses the hit's own head/fatal bits.
+* Not carried: `bBulletImpactExplode` (+0x72f skips the loop), glass (surface flag 4: depth 100),
+  the charge-shot multiplier (fireType 8), riot-shield stops, and BO2's integer truncation of each
+  hit's damage (the mod's damage curve is float throughout).
+* ABI: `ZhboClientHit` 40 → 44 (`exit` appended), `ZhboClientOut` 4832 → 4864, new free function
+  `zhbo_impact_exit_fx`; **`ZHBO_ABI_VERSION` bump owed by the integrator**. `WEAPON_FIELDS` 94 → 95
+  and the archive changed (exit rows, exit aliases): VERSION bump is the integrator's too.
+
+Measured (v1/projectile-sounds conf → this branch): weapons **550,355 → 541,014 (−9,341)**,
+clusters 188 → 187, gap clusters **199 → 198**; the one column that moved is `penetrate_type`
+9,341 → 0 (the adapter reports the def's `Penetrate` instead of `absent`); cac 881 → 881; every
+other column identical. Fake-host tests: a medium round through 4.5 in of concrete hits the
+soldier behind for half and plays the wall's exit; 7 in stops a small round but not a small FMJ
+round. In-game check owed: an exit puff on the far side of a thin structure corner, FMJ hits behind.
+Real-install suite green (`converts_from_real_install` now reads the `exit`-prefixed rows).
+
+## Soldiers are BO2's hit boxes; damage takes the location's multiplier (2026-10-31, `v1/hit-geometry`)
+
+Stacked on `v1/penetration`. The mod traced infantry as a 16-in cylinder with a head band, and
+damage took only `head_multiplier` on a headshot. Scope and decompiles in
+`~/.opencode/plan/hit-geometry/` (`SCOPE.md`, `g1-6.c`).
+
+* **The trace.** The bullet trace (`FUN_005cf2f0` → `FUN_006f43c0` → entity walk `FUN_006ba610` →
+  `FUN_006f2910`) poses a client's DObj from the server's animation and runs **`FUN_007837a0`
+  (DObjTraceline)**: every bone with `XBoneInfo.radiusSquared ≥ 4` (`0x00ca6094`) is an OBB
+  (`bounds[0..1]` in the bone's frame) whose location is `XModel.partClassification[bone]`. The
+  caller passes a rank per location: `bRifleBullet` (+0x631) → `0x00c8bcfc` (head/helmet/neck 11,
+  torso 10/9/8, arms 7/6, hands 5, legs 4, feet 3), else `0x00c8bce4` (every body location 3).
+  Ranks under 2 (none, gun) never hit; 101 is the riot shield's collmap path (not carried). **A
+  box of higher rank than the current best wins wherever it is on the ray; equal rank must be
+  nearer** — a rifle round through a hand into the head is a headshot; an SMG's is a hand.
+* **The damage.** `FUN_005f05c0` (G_Damage's client path): except melee (MOD 7), `damage =
+  ftol(damage × FUN_005f0490(loc))`, min 1; bullet/grenade/projectile weapons read
+  `FUN_008ed780` (the def's `locationDamageMultipliers`; per location the first mounted
+  attachment's single unique differing from the base unique), others the global
+  `info/mp_lochit_dmgtable`. **Only players** take the multiplier — vehicles/objects don't (some
+  defs have `none` = 0), so the mod applies it to infantry only. The mod keeps float damage.
+* **The geometry.** `zhbo-assets model <ff> <body> --hitboxes` dumps them. **Gotcha: the three
+  faction bodies carry identical boxes** (20 usable: head, j_helmet — classed head, not helmet —
+  neck, clavicles, back_mid, back_low, pelvis, the arms and legs), so one set serves; no MP body
+  bone is classed `helmet`, which is why the ARs' helmet multiplier of 0 never matters. The
+  converter poses them at the first frame of the stand-idle clip (`pb_stand_alert`, through
+  `zhbo_native::pose` — the same pose the renderer draws) and writes `HitBox = <loc> <bone> <quat>
+  <pos> <mins> <maxs>` lines (inches, model space) into the weapon table; the catalog builds
+  `hitloc::Body`. **Pose is fixed**: BO2 poses from the server's animation (stance, aim pitch,
+  gait); the mod's targets are Zero Hour infantry with no BO2 animation state, so standing idle it
+  is (deterministic, never render-time). Head 57–66 in, waist ~13 in deep (vs the cylinder's 32):
+  a pistol's 32 in of flesh no longer stops in one soldier.
+* **The data.** WeaponDef `location_multipliers[21]`, `attachment_location_multipliers`
+  (`short=loc:mult,…`, eAttachment order; `attachments::apply` resolves a combination's),
+  `rifle_bullet`; `HeadMultiplier` is gone. `HitResult::Object.location` replaces `headshot`
+  (`hitloc::is_head`: head or helmet). A table without `HitBox` lines (the built-in) keeps the
+  cylinder: head band = head, the rest torso_upper.
+* Not carried: the per-stance/animated pose, the riot-shield collmap ranks, the global
+  `mp_lochit_dmgtable` (no non-bullet weapon reaches the per-location path in the mod), damage
+  truncation.
+* `WEAPON_FIELDS` 95 → 97 and the table gains `HitBox` lines: the archive/table VERSION bump is the
+  integrator's. No ABI change.
+
+Measured (v1/penetration conf → this branch): weapons **541,014 → 522,332 (−18,682)**, clusters
+187 → 185, gap clusters **198 → 196**; the columns that moved are `location_multipliers`
+9,341 → 0 and `rifle_bullet` 9,341 → 0; cac 881 → 881; every other column identical. Fake-host
+tests: a head box takes ×2, a leg box ×0.5 (4:1), the gap between them misses; a medium round
+through a 10-in torso box keeps `1 − 10/cos(pitch)/64` for the soldier behind. Real-install suite
+green, incl. the new `the_soldier_hit_boxes_are_the_mp_bodys_standing`. In-game check owed:
+headshots land on the drawn head of Zero Hour's infantry (their W3D heads stand 14.3–16 units,
+taller than the 72-in body), body shots near the arms.
+
+## Hit boxes follow the General's stance; body clips are BO2's playeranim picks (2026-10-31, `v1/stance-hitboxes`)
+
+Stacked on `v1/hit-geometry`, which traced every soldier as the MP body's boxes fixed at the stand
+idle. Notes and the dumped script in `~/.opencode/plan/stance-hitboxes/`.
+
+* **BO2's pose source.** The player trace (`FUN_006f2910`) builds the part bits
+  (`FUN_00782930`: bones with `radiusSquared ≥ 4`, not hidden) and calls `FUN_00649b50`
+  (G_DObjCalcPose: the entity handler's controller, then DObjCalcSkel) — the pose the server
+  animated, not a per-stance table. The server's player animation comes from
+  `mp/playeranim.script` (a common_mp rawfile): per movement type the first entry whose
+  conditions (stance, weapon_position, weaponclass, playerAnimType, direction, movestatus, perk…)
+  hold.
+* **The mod.** The converter poses the boxes at the first frame of each of the 12 body states'
+  clips (`HitBox = <state> <loc> <bone> …`); `hitloc::Poses` groups them (a missing state takes
+  the clip fallbacks' nearest stance). A General the sim moves is traced in the pose of
+  `PlayerSim::body_state` (`nativebody::state_of` over the sim's stance, speed, sprint, ADS,
+  sidearm — deterministic, never the render clock) at his drawn `GENERAL_SCALE` (`Shape::Body`
+  gained `scale`); everything else stands. Only Generals the sim moves have the state, so this
+  matters when a sim player's rounds meet another sim player's General.
+* **Zero Hour infantry stand.** ZH's only prone mechanism, `ProneUpdate`, is commented out in
+  every object of `INIZH.big`; there is no ZH state to map.
+* **Gotcha: the body clips were partly wrong.** Posing per state exposed that sprint had resolved
+  to `viewmodel_mp7_sprint_loop` (a viewmodel clip on the body skeleton: near bind pose, head at
+  67 in), and walk / crouch walk / prone idle / prone crawl had no name in the candidate lists
+  (prone idle scanned to the dual-wield `pb_prone_dw_idle_v1`). `zhbo_assets::playeranim` parses
+  the script (DEFINES incl. `all NOT`, `AND` alternatives, first `both`/`legs` clip) and
+  `thirdperson::clips` asks it first, as a rifleman (prone movement = `walk`, the script having
+  no prone run; crouched movement = `run`): stand `pb_stand_alert`, walk
+  `pb_stand_shoot_walk_forward`, run `pb_combatrun_forward_loop`, sprint `pb_sprint`, crouch
+  `pb_crouch_alert` / `pb_crouch_run_forward`, prone `pb_prone_aim` / `pb_prone_crawl`, ADS and
+  pistol as before. The plausible scan now needs a `pb_` clip. The third-person body draws the same
+  clips, so it changes too (in-game look owed). Head centres: stand 59.9 in, crouch 44.1, prone
+  14.7 (up on the elbows), sprint 53.5.
+* **`info/mp_lochit_dmgtable` not ported:** `FUN_005f0490` reads it only for weapons whose type is
+  not bullet/grenade/projectile, or for no weapon; melee (MOD 7) skips the multiplier entirely, and
+  every explosive def's body slots are 1 — no mod damage path reaches it.
+* Not carried: the aim-pitch torso/head controllers, strafe/back directions (the sim's body state
+  is forward-only), prone ADS (`pb_prone_aim_ads`, no state), per-weapon-class clips (SMG/LMG
+  sprint).
+* The table's `HitBox` line format changed (state prefix, 16 tokens) and the table now holds
+  12 × 20 boxes: the archive/table VERSION bump is the integrator's. No ABI change.

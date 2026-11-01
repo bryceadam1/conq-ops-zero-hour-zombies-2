@@ -8,7 +8,7 @@
 
 use crate::host::{objflags, LogicHost};
 use crate::hitscan::{ray_vs_target, trace, trace_terrain, HitResult, Shape, Target};
-use crate::sim::fire::target_from;
+use crate::sim::fire::{target_from, HitBodies};
 use crate::impacts::Surface;
 use crate::math::{dir_from_angles, Vec3};
 use crate::movement::Body;
@@ -56,12 +56,12 @@ pub fn can_plant(def: &WeaponDef, body: &Body, yaw: f32, pitch: f32, general: u3
     // Everything the traces could meet (dead and non-colliding objects never block, `NO_COLLIDE`).
     let mut objs = Vec::new();
     host.query(body.pos, reach + body.eye_height, general, &mut objs);
-    let mut solids: Vec<Target> = objs.iter().filter(|o| o.id != general && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE)).map(target_from).collect();
+    let mut solids: Vec<Target> = objs.iter().filter(|o| o.id != general && !o.has(objflags::DEAD) && !o.has(objflags::NO_COLLIDE)).map(|o| target_from(o, &HitBodies::default(), false)).collect();
     solids.sort_by_key(|t| t.id);
     let vehicles: Vec<Target> = objs
         .iter()
         .filter(|o| o.id != general && o.has(objflags::VEHICLE) && !o.has(objflags::DEAD) && !o.has(objflags::AIRBORNE))
-        .map(target_from)
+        .map(|o| target_from(o, &HitBodies::default(), false))
         .collect();
     // On a vehicle: a roof right under the feet (a short ray down from just above them).
     let down = Vec3::new(0.0, 0.0, -1.0);
@@ -97,6 +97,8 @@ fn ti_box_clear(body: &Body, solids: &[Target]) -> bool {
             Shape::Cylinder { radius, height } => (radius, height),
             Shape::Box { half_x, half_y, height, .. } => (half_x.max(half_y), height),
             Shape::Sphere { radius } => (radius, radius * 2.0),
+            // The plant traces build no hit-box bodies (`HitBodies::default()` above).
+            Shape::Body { .. } => return false,
         };
         let d = t.pos - body.pos;
         d.x.abs() < half + reach && d.y.abs() < half + reach && t.pos.z < hi && t.pos.z + top > lo

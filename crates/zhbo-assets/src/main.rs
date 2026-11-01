@@ -199,6 +199,11 @@ fn run(args: &[String]) -> Result<(), String> {
                     println!("  surface {i}: {} verts, bones {bones:?}, centroid {:>7.2?}", s.vertices.len(), [c[0] / n, c[1] / n, c[2] / n]);
                 }
             }
+            if args.iter().any(|a| a == "--hitboxes") {
+                for (i, h) in model.hit_boxes.iter().enumerate().filter(|(_, h)| h.radius_squared > 0.0 || h.location != 0) {
+                    println!("  hit {i:>3} {:<24} loc {:>2} r2 {:>8.2} mins {:>7.2?} maxs {:>7.2?} offset {:>7.2?}", model.bones[i].name, h.location, h.radius_squared, h.mins, h.maxs, h.offset);
+                }
+            }
             if let Some(out) = flag(args, "--png") {
                 let textures = color_maps(&model, &paks);
                 preview::render(&model, &textures, Path::new(out)).map_err(|e| e.to_string())?;
@@ -440,12 +445,26 @@ fn run(args: &[String]) -> Result<(), String> {
                 return Ok(());
             }
             if name == "--impacts" {
-                for t in 0..20u32 {
-                    let n = fx::impact(&zone, t, fx::surface::DIRT).map(|e| e.name).unwrap_or_default();
-                    println!("impact type {t}: {n}");
+                // Every table row on dirt and concrete, its first blood cell, and the impact type
+                // that reads it (`fx::IMPACT_KINDS`).
+                for row in 0..24u32 {
+                    let n = |s| fx::impact(&zone, row, s).map(|e| e.name).unwrap_or_default();
+                    let blood = fx::impact_flesh(&zone, row).map(|e| e.name).unwrap_or_default();
+                    let types: Vec<u32> = fx::IMPACT_KINDS.iter().filter(|k| k.row == row).map(|k| k.impact_type).collect();
+                    println!("row {row} (impact types {types:?}): dirt {} concrete {} blood {blood}", n(fx::surface::DIRT), n(fx::surface::CONCRETE));
                 }
-                for w in weapon::all(&zone).map_err(|e| e.to_string())?.iter().filter(|w| ["frag_grenade_mp", "claymore_mp", "gl_an94_mp", "m32_mp", "satchel_charge_mp", "usrpg_mp", "an94_mp", "fnp45_mp", "bouncingbetty_mp", "sticky_grenade_mp"].contains(&w.name.as_str())) {
-                    println!("{} impact type {}", w.name, w.impact_type);
+                // The bounce and dud rows' own cells per surface (no default fallback).
+                for row in [11u32, 15] {
+                    let cells: Vec<String> = (0..32).map(|s| format!("{s}={}", fx::impact_cell(&zone, row, s).map(|e| e.name).unwrap_or_else(|| "-".into()))).collect();
+                    println!("row {row} cells: {}", cells.join(" "));
+                }
+                for w in weapon::all(&zone).map_err(|e| e.to_string())?.iter().filter(|w| !fx::is_bullet(w.impact_type)) {
+                    let own = w.explosion_effect.as_ref().map(|e| e.name.as_str()).unwrap_or("-");
+                    println!("{} impact type {} own effect {own} own sound {}", w.name, w.impact_type, w.projectile_explosion_sound.as_deref().unwrap_or("-"));
+                    // The bounce and dud fields (`FUN_004c1590` events 0x47 and 0x51).
+                    let bounce: Vec<String> = w.bounce_sounds.iter().enumerate().filter_map(|(i, a)| a.as_ref().map(|a| format!("{i}={a}"))).collect();
+                    let dud = w.projectile_dud_effect.as_ref().map(|e| e.name.as_str()).unwrap_or("-");
+                    println!("  activate dist {} dud effect {dud} dud sound {} bounce [{}]", w.projectile_activate_dist, w.projectile_dud_sound.as_deref().unwrap_or("-"), bounce.join(" "));
                 }
                 return Ok(());
             }

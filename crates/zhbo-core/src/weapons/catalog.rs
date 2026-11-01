@@ -32,6 +32,8 @@ pub struct Catalog {
     class_caps: HashMap<String, i32>,
     built: Mutex<HashMap<String, &'static WeaponDef>>,
     pub tablet_meshes: u8,
+    /// The soldier's hit boxes per body state (`HitBox` lines), `None` in a table without them.
+    hit_body: Option<&'static crate::hitloc::Poses>,
 }
 
 impl Catalog {
@@ -72,6 +74,7 @@ impl Catalog {
             class_caps: t.class_caps.into_iter().collect(),
             built: Mutex::new(HashMap::new()),
             tablet_meshes: t.tablet_meshes,
+            hit_body: (!t.hit_boxes.is_empty()).then(|| &*Box::leak(Box::new(crate::hitloc::Poses::new(&t.hit_boxes)))),
         }
     }
 
@@ -180,6 +183,11 @@ impl Catalog {
     /// A perk's statstable row by its reference without `PERKS_` (`LIGHTWEIGHT`, `NINJA`).
     pub fn perk(&self, stats: &str) -> Option<&'static PerkRow> {
         self.perks.get(stats).copied()
+    }
+
+    /// The soldier's hit boxes per body state, when the table carries them.
+    pub fn hit_body(&self) -> Option<&'static crate::hitloc::Poses> {
+        self.hit_body
     }
 
     pub fn all(&self) -> &[&'static WeaponDef] {
@@ -582,7 +590,7 @@ Weapon an94_mp
   Ads = 0.25 0.2 50
   Damage = 40 33 33 0 0 0
   DamageRange = 1300 1301 2250 0 0 0
-  HeadMultiplier = 1.2
+  LocationMultipliers = 1 1.2 1.2 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
   HipSpread = 3 6.75 2.5 6 2 5
   Spread = 6 0.5 0.5 0
   AdsKick = 30 47.5 -50 50
@@ -616,7 +624,7 @@ Weapon fnp45_mp
   Ads = 0.12 0.1 60
   Damage = 55 45 45 0 0 0
   DamageRange = 350 351 750 0 0 0
-  HeadMultiplier = 1.1
+  LocationMultipliers = 1 1.1 1.1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1 1
   HipSpread = 3 5 2.5 4.5 2 4
   Spread = 7 0.6 0.5 0.3
   AdsKick = 60 80 -40 40

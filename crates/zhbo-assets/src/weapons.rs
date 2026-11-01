@@ -476,6 +476,7 @@ pub fn table_with_metadata(
         ui_text: ui_text(names),
         weapon_groups: Vec::new(),
         class_caps: Vec::new(),
+        hit_boxes: Vec::new(),
     }
 }
 
@@ -886,6 +887,31 @@ pub fn is_shield_id(id: &str, all: &[Weapon]) -> bool {
     all.iter().any(|w| w.name == id && is_shield(w))
 }
 
+/// Per attachment (`eAttachment` order), the location multipliers its single unique sets
+/// differently from the base unique's — what `FUN_008ed780` takes over the def's. Empty when the
+/// weapon has no base unique (the def's stand alone).
+fn attachment_location_multipliers(w: &Weapon) -> Vec<(String, Vec<(u8, f32)>)> {
+    let single = |k: u32| w.attachment_uniques.iter().find(|u| u.kind == k && u.combined == 0);
+    let Some(u0) = single(0) else { return Vec::new() };
+    let mut kinds: Vec<(u32, String)> = w.attachment_variants.iter().map(|(k, id)| (*k, short_name(id))).collect();
+    kinds.sort();
+    kinds.dedup();
+    kinds
+        .into_iter()
+        .filter_map(|(k, short)| {
+            let u = single(k)?;
+            let differs: Vec<(u8, f32)> = u
+                .location_multipliers
+                .iter()
+                .enumerate()
+                .filter(|(p, m)| u0.location_multipliers.get(*p) != Some(*m))
+                .map(|(p, m)| (p as u8, *m))
+                .collect();
+            (!differs.is_empty()).then_some((short, differs))
+        })
+        .collect()
+}
+
 fn class_of(w: &Weapon) -> Class {
     use manifest::{LETHALS, TACTICALS};
     let name = w.name.as_str();
@@ -1051,7 +1077,6 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         // spread weapon's pellet range, `Bullet_Fire`).
         damage_range[i] = w.damage_range[i].max(0.0);
     }
-    let mult = |i: usize| w.location_multipliers.get(i).copied().filter(|m| *m > 0.0).unwrap_or(1.0);
     let d = WeaponDef {
         id: w.name.clone(),
         equipment_kind: manifest::equipment_kind_of(&w.name),
@@ -1089,7 +1114,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         ads_fov: w.ads_zoom_fov,
         damage,
         damage_range,
-        head_multiplier: mult(bo2::HIT_LOCATION_HEAD),
+        location_multipliers: std::array::from_fn(|i| w.location_multipliers.get(i).copied().unwrap_or(1.0)),
+        attachment_location_multipliers: attachment_location_multipliers(w),
         max_range: inches(w.max_range),
         hip_spread: [w.hip_spread_stand, w.hip_spread_ducked, w.hip_spread_prone],
         spread_decay: w.hip_spread_decay,
@@ -1131,14 +1157,11 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         view_flash_fx: String::new(),
         view_shell_fx: String::new(),
         view_last_shot_shell_fx: String::new(),
-        explosion_fx: match effect {
-            Effect::Explode => "FX_BoobyTrapExplosion",
-            Effect::Stun => "WeaponFX_RangerFlashBangGrenadeDetonation",
-            Effect::Emp => "WeaponFX_EMPPulseImpact",
-            Effect::Smoke => "FX_OverlordSmoke",
-            Effect::Impact | Effect::None => "",
-        }
-        .to_string(),
+        // The def's own `projExplosionEffect` only (set by the effects pass): BO2 plays the impact
+        // table's cell for the `impactType` and surface first (`impacts.txt`), and the sim falls
+        // back to a stand-in only when neither exists. The smoke screen keeps Zero Hour's cloud
+        // until the effects pass names BO2's.
+        explosion_fx: if effect == Effect::Smoke { "FX_OverlordSmoke".to_string() } else { String::new() },
         projectile_object: String::new(),
         // A gun's shot is its own `ZHBO_BO2_Fire_<id>` mix (`sounds_and_fx`); an offhand's throw is
         // its def-level alias.
@@ -1151,6 +1174,15 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         silenced_fx_weapon: String::new(),
         silenced_view_flash_fx: String::new(),
         explode_sound: def_sound(&w.projectile_explosion_sound),
+        // BO2's `bounceSound[surface]` for each of the mod's slots (event 0x47); the converter
+        // makes the cells the install has no alias for `NONE` (`generals`).
+        bounce_sounds: zhbo_core::impacts::Surface::ALL
+            .into_iter()
+            .filter_map(|s| w.bounce_sounds.get(crate::impacts::bo2_surface(s)).cloned().flatten().map(|a| (s.name().to_string(), zhbo_core::names::def_sound_event(&a))))
+            .collect(),
+        activate_dist: inches(w.projectile_activate_dist.max(0) as f32),
+        dud_fx: String::new(),
+        dud_sound: def_sound(&w.projectile_dud_sound),
         raise_sound: def_sound(&w.raise_sound_player),
         first_raise_sound: def_sound(&w.first_raise_sound_player),
         alt_switch_sound: def_sound(&w.alt_switch_sound_player),
@@ -1729,6 +1761,38 @@ mod tests {
         let lmg = Weapon { name: "lsat_mp".into(), clip_size: 100, start_ammo: 3, max_ammo: 4, ammo_clip_relative: true, fire_time: 0.1, ..Default::default() };
         let d = to_def(&lmg, &HashMap::new());
         assert_eq!((d.clip, d.start_reserve, d.max_reserve), (100, 200, 400));
+    }
+
+    /// `bounceSound` is per BO2 surface; the def carries the mod's slots' cells by name, and the dud
+    /// fields with the activation distance in ZH units.
+    #[test]
+    fn bounce_cells_map_by_surface_and_the_dud_fields_carry() {
+        let mut bounce = vec![None; 32];
+        bounce[zhbo_formats::fx::surface::CONCRETE] = Some("wpn_grenade_bounce_concrete".to_string());
+        bounce[zhbo_formats::fx::surface::FLESH] = Some("wpn_grenade_bounce_flesh".to_string());
+        bounce[zhbo_formats::fx::surface::BRICK] = Some("wpn_grenade_bounce_brick".to_string());
+        let w = Weapon {
+            name: "gl_test_mp".into(),
+            clip_size: 1,
+            fire_time: 0.1,
+            bounce_sounds: bounce,
+            projectile_activate_dist: 300,
+            projectile_dud_sound: Some("wpn_grenade_bounce_flesh".into()),
+            ..Default::default()
+        };
+        let d = to_def(&w, &HashMap::new());
+        use zhbo_core::impacts::Surface;
+        assert_eq!(d.bounce_sound(Surface::Concrete), "ZHBO_BO2_Snd_wpn_grenade_bounce_concrete");
+        assert_eq!(d.bounce_sound(Surface::Flesh), "ZHBO_BO2_Snd_wpn_grenade_bounce_flesh");
+        assert_eq!(d.bounce_sound(Surface::Dirt), "");
+        assert_eq!(d.bounce_sounds.len(), 2, "brick is no mod slot");
+        assert_eq!(d.activate_dist, zhbo_core::units::inches(300.0));
+        assert_eq!(d.dud_sound, "ZHBO_BO2_Snd_wpn_grenade_bounce_flesh");
+        assert!(d.def_sound_events().any(|(e, world)| e == d.dud_sound && world));
+        // A combination takes them from its base like every converted asset.
+        let mut combo = zhbo_core::weapons::WeaponDef::default();
+        combo.take_converted_assets(&d);
+        assert_eq!((combo.bounce_sounds.clone(), combo.dud_sound.clone()), (d.bounce_sounds.clone(), d.dud_sound.clone()));
     }
 
     /// The regression pin: a replacement optic's unique supplies the combo's overlay, and an empty

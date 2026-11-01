@@ -18,10 +18,12 @@ mod hack;
 pub mod optics;
 mod plant;
 mod rts;
+#[cfg(test)]
+mod hit_tests;
 
 pub use build::{placement, HostWorld, PLANT_DISTANCE};
 pub use plant::{can_plant, plant_launch, plant_point, plant_velocity, PLANT_TRACE_INCHES};
-pub use fire::{gather_targets, throw_velocity, PENETRATION_DAMAGE};
+pub use fire::{gather_targets, throw_velocity, HitBodies};
 pub use rts::{RtsIcons, RtsState, RtsWeapons, Third};
 
 use crate::host::{damage_kind, geom, objflags, LogicHost, ObjInfo};
@@ -120,8 +122,9 @@ pub enum EventKind {
     Shot { origin: Vec3, end: Vec3, left: bool },
     /// One pellet landed on something (a miss emits nothing): where, the direction it was going,
     /// what it hit, and the shooting weapon's BO2 impact bucket. The client turns it into BO2's
-    /// impact FX (through `ZhboClientOut.hits`) and the surface's impact sound.
-    Impact { at: Vec3, dir: Vec3, surface: Surface, head: bool, fatal: bool, impact_type: i32 },
+    /// impact FX (through `ZhboClientOut.hits`) and the surface's impact sound. `exit`: the round
+    /// left a solid it penetrated here (BO2's impact flag 4: the type's exit row and family).
+    Impact { at: Vec3, dir: Vec3, surface: Surface, head: bool, fatal: bool, impact_type: i32, exit: bool },
     HitMarker { headshot: bool, kill: bool },
     /// A shot's gun kick spring impulse (`weapons::recoil::GunKickSpring`). The view kick is the
     /// sim's own (`PlayerSim::view_kick`): it moves the aim.
@@ -144,9 +147,18 @@ pub enum EventKind {
     CantPlant { lethal: bool },
     /// A launcher fired.
     Launched,
-    /// A grenade, rocket or other projectile went off; `sound` is its def's blast event
-    /// (`projExplosionSound`), empty when it has none (equipment, or a def BO2 gives none).
-    Exploded { at: Vec3, sound: &'static str },
+    /// A grenade, rocket, other projectile or piece of equipment went off on `surface` (what it hit
+    /// directly, else the ground). `sound` is its def's own blast event (`projExplosionSound`, empty
+    /// when it has none) and `impact_type` its `impactType`: the client plays the impact table's
+    /// sound for the type and surface, then the def's own (`sounds::explosion_cues`).
+    Exploded { at: Vec3, sound: &'static str, impact_type: i32, surface: crate::impacts::Surface },
+    /// A grenade bounced off something: `sound` is its def's `bounceSound` cell for the surface
+    /// (empty or `NONE`: silent), BO2's event 0x47.
+    Bounced { at: Vec3, sound: &'static str },
+    /// A projectile struck `surface` before arming and did not go off (BO2's event 0x51): the
+    /// client plays the large bullet's hit sound for the surface, then `sound`, its def's own
+    /// `projDudSound` (`sounds::dud_cues`).
+    Dud { at: Vec3, sound: &'static str, surface: crate::impacts::Surface },
     /// Equipment set down (planted, or a thrown piece came to rest).
     Planted { kind: EquipKind },
     /// The player's C4 went off.
@@ -307,6 +319,22 @@ impl PlayerSim {
         matches!(self.mode, Mode::Fps | Mode::FieldComputer { .. })
     }
 
+    /// 0 stand, 1 crouch, 2 prone.
+    pub fn stance_index(&self) -> i32 {
+        match self.body.stance {
+            movement::Stance::Stand => 0,
+            movement::Stance::Crouch => 1,
+            movement::Stance::Prone => 2,
+        }
+    }
+
+    /// The body clip his movement state picks (`nativebody::state_of`); `engine_moving`: Zero
+    /// Hour is walking him (RTS control).
+    pub fn body_state(&self, engine_moving: bool, run_speed: f32) -> u16 {
+        let a = &self.arsenal;
+        crate::nativebody::state_of(self.stance_index(), self.body.horizontal_speed(), self.body.sprinting, a.ads, a.active == 1, engine_moving, run_speed)
+    }
+
     #[cfg(test)]
     pub fn spawn_for_tests() -> PlayerSim {
         PlayerSim {
@@ -373,6 +401,11 @@ pub struct Sim {
     pub tuning: MoveTuning,
     /// BO2's `bulletrange` (ZH units): how far a non-spread round is traced.
     pub bullet_range: f32,
+    /// BO2's bullet penetration table and dvars (`crate::penetration`, from the tuning pack).
+    pub penetration: crate::penetration::Penetration,
+    /// The soldier's hit boxes per body state, when not the installed table's (the tests set
+    /// their own).
+    pub hit_body: Option<&'static crate::hitloc::Poses>,
     pub frame: u32,
     pub events: Vec<Event>,
     /// This step's tracer bullets, for the host layer to draw per viewer and clear.
@@ -399,6 +432,8 @@ impl Sim {
             smokes: Vec::new(),
             tuning: MoveTuning::default(),
             bullet_range: crate::units::inches(crate::tuning::Tuning::default().bulletrange),
+            penetration: crate::penetration::Penetration::default(),
+            hit_body: None,
             frame: 0,
             events: Vec::new(),
             tracers: Vec::new(),
@@ -431,6 +466,7 @@ impl Sim {
         let mut sim = Self::new();
         sim.tuning = MoveTuning::from_tuning(t);
         sim.bullet_range = crate::units::inches(t.bulletrange);
+        sim.penetration = crate::penetration::Penetration::from_tuning(t);
         sim
     }
 
@@ -680,17 +716,26 @@ impl Sim {
 
     fn step_projectiles(&mut self, host: &dyn LogicHost) {
         let mut done = Vec::new();
+        let mut bounces = Vec::new();
         for (i, (owner, proj)) in self.projectiles.iter_mut().enumerate() {
-            if let Some(outcome) = proj.step_shielded(host, &self.shields) {
+            let outcome = proj.step_shielded(host, &self.shields);
+            if let Some((at, surface)) = proj.bounced {
+                bounces.push((*owner, at, proj.def.bounce_sound(surface)));
+            }
+            if let Some(outcome) = outcome {
                 done.push((i, *owner, outcome));
             }
+        }
+        for (owner, at, sound) in bounces {
+            self.emit(owner, EventKind::Bounced { at, sound });
         }
         for (i, owner, outcome) in done.iter().rev() {
             let (_, proj) = self.projectiles.remove(*i);
             match *outcome {
-                Outcome::Exploded { at, hit_enemy, kill } => {
-                    self.emit(*owner, EventKind::Exploded { at, sound: proj.def.explode_sound.as_str() });
-                    self.deployed_caught_in_blast(host, *owner, proj.def, at);
+                Outcome::Exploded { at, hit_enemy, kill, surface } => {
+                    let d = proj.def;
+                    self.emit(*owner, EventKind::Exploded { at, sound: d.explode_sound.as_str(), impact_type: d.impact_type, surface });
+                    self.deployed_caught_in_blast(host, *owner, d, at);
                     if proj.def.effect == crate::weapons::Effect::Smoke {
                         let radius = proj.def.explosion_radius.max(crate::projectiles::SMOKE_RADIUS);
                         self.smokes.push((at, radius, crate::projectiles::SMOKE_TIME));
@@ -700,6 +745,15 @@ impl Sim {
                     self.equipment_events(host, ev);
                     if hit_enemy {
                         self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
+                    }
+                }
+                Outcome::Dud { at, hit_enemy, kill, surface } => {
+                    self.emit(*owner, EventKind::Dud { at, sound: proj.def.dud_sound.as_str(), surface });
+                    if hit_enemy {
+                        self.emit(*owner, EventKind::HitMarker { headshot: false, kill });
+                    }
+                    if kill {
+                        self.scavenge(*owner);
                     }
                 }
                 Outcome::Hit { kill, .. } => {
@@ -729,8 +783,8 @@ impl Sim {
     fn equipment_events(&mut self, host: &dyn LogicHost, events: Vec<EquipEvent>) {
         for e in events {
             match e {
-                EquipEvent::Exploded { owner, at, hit_enemy, kill, def } => {
-                    self.emit(owner, EventKind::Exploded { at, sound: "" });
+                EquipEvent::Exploded { owner, at, hit_enemy, kill, def, sound, impact_type, surface } => {
+                    self.emit(owner, EventKind::Exploded { at, sound, impact_type, surface });
                     self.deployed_caught_in_blast(host, owner, def, at);
                     if hit_enemy {
                         self.emit(owner, EventKind::HitMarker { headshot: false, kill });
@@ -928,18 +982,12 @@ impl Sim {
             .filter(|p| !p.is_first_person())
             .map(|p| {
                 let a = &p.arsenal;
-                let stance = match p.body.stance {
-                    movement::Stance::Stand => 0,
-                    movement::Stance::Crouch => 1,
-                    movement::Stance::Prone => 2,
-                };
                 let engine_moving = moving.is_some_and(|(g, m)| g == p.general && m) && !p.is_first_person();
-                let speed = p.body.horizontal_speed();
                 NativePose {
                     general: p.general,
                     weapon: a.current().def.viewmodel,
-                    stance,
-                    state: crate::nativebody::state_of(stance, speed, p.body.sprinting, a.ads, a.active == 1, engine_moving, run_speed),
+                    stance: p.stance_index(),
+                    state: p.body_state(engine_moving, run_speed),
                     time,
                     rate: 1.0,
                     sidearm: a.active == 1,
@@ -957,6 +1005,13 @@ impl Sim {
             .filter(|p| !p.arsenal.current().def.is_shield())
             .filter_map(|p| p.arsenal.weapons.iter().map(|w| w.def).find(|d| d.is_shield() && d.viewmodel >= 0).map(|d| (p.general, d.viewmodel)))
             .collect()
+    }
+
+    /// Every General's body state now (`nativebody::state_of`, from the sim's own stance, gait,
+    /// sprint and ADS — never the render clock): the pose his hit boxes take in a trace.
+    pub(super) fn hit_states(&self) -> Vec<(u32, u16)> {
+        let run_speed = self.tuning.run_speed(false);
+        self.players.iter().flatten().map(|p| (p.general, p.body_state(false, run_speed))).collect()
     }
 
     /// Whether `player` sees enemies at `pos` on the minimap through the shroud: one of their
@@ -1023,6 +1078,7 @@ pub fn describe_event(e: &Event) -> Option<String> {
         Thrown { lethal } => format!("player {} threw a {}", e.player, if lethal { "lethal" } else { "tactical" }),
         Exploded { at, .. } => format!("player {}'s grenade went off at ({:.0}, {:.0})", e.player, at.x, at.y),
         CantPlant { .. } => format!("player {} was told \"{}\"", e.player, event_hint(&e.kind).map_or("", hint_text)),
+        Dud { at, .. } => format!("player {}'s projectile struck unarmed (a dud) at ({:.0}, {:.0})", e.player, at.x, at.y),
         Planted { kind } => format!("player {} put down equipment ({kind:?})", e.player),
         Detonated => format!("player {} set off their C4", e.player),
         Intercepted { .. } => format!("player {}'s Trophy System shot down a projectile", e.player),
@@ -1077,6 +1133,8 @@ pub(crate) mod tests {
         pub sites: RefCell<Vec<FakeSite>>,
         /// Everywhere is water too deep to stand in (BO2's plant check refuses it).
         pub deep_water: std::cell::Cell<bool>,
+        /// The ground's surface (`surface_at`); dirt when unset.
+        pub ground: std::cell::Cell<Option<Surface>>,
     }
 
     impl FakeHost {
@@ -1110,7 +1168,7 @@ pub(crate) mod tests {
             if self.deep_water.get() {
                 Surface::Water
             } else {
-                Surface::Dirt
+                self.ground.get().unwrap_or(Surface::Dirt)
             }
         }
         fn extent(&self) -> (Vec3, Vec3) {
@@ -1232,7 +1290,7 @@ pub(crate) mod tests {
         ObjInfo { pos: Vec3::new(x, 0.0, 0.0), health: 120.0, max_health: 120.0, ..general(id, player) }
     }
 
-    fn run(sim: &mut Sim, host: &FakeHost, player: i32, general: u32, input: FpsInput, frames: u32) {
+    pub(crate) fn run(sim: &mut Sim, host: &FakeHost, player: i32, general: u32, input: FpsInput, frames: u32) {
         for _ in 0..frames {
             sim.input(player, general, input);
             let f = sim.frame + 1;
@@ -1246,7 +1304,7 @@ pub(crate) mod tests {
     }
 
     /// Let the camera fly in, the tablet go down and the weapon come up.
-    fn wait_until_ready(sim: &mut Sim, host: &FakeHost) {
+    pub(crate) fn wait_until_ready(sim: &mut Sim, host: &FakeHost) {
         let ready = sim.player(0).unwrap().arsenal.raise_left;
         run(sim, host, 0, 1, FpsInput::default(), frames(ready));
     }
@@ -2381,6 +2439,119 @@ pub(crate) mod tests {
         assert!(impacts.iter().all(|s| *s == Surface::Dirt), "{impacts:?}");
     }
 
+    /// A pellet's sound is BO2's `prj_bullet_impact_<size>_<surface>` for the gun's type: the sim
+    /// reports the ground's surface, the client's cue follows it (`sounds::impact_cue`).
+    #[test]
+    fn a_shot_into_two_grounds_plays_each_surfaces_hit_sound() {
+        crate::impacts::install(crate::impacts::TEST_TABLE);
+        let fire_into = |ground: Surface| {
+            let host = FakeHost::default();
+            host.ground.set(Some(ground));
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            sim.take_control(&host, 0, 1);
+            sim.choose_class(0, 1, 0, &[]);
+            wait_until_ready(&mut sim, &host);
+            run(&mut sim, &host, 0, 1, FpsInput { held: buttons::FIRE, pitch: -0.6, ..Default::default() }, 10);
+            let surfaces: Vec<Surface> = events(&sim)
+                .into_iter()
+                .filter_map(|k| match k {
+                    EventKind::Impact { surface, .. } => Some(surface),
+                    _ => None,
+                })
+                .collect();
+            assert!(!surfaces.is_empty(), "the ground took pellets");
+            surfaces
+        };
+        let (concrete, dirt, water) = (fire_into(Surface::Concrete), fire_into(Surface::Dirt), fire_into(Surface::Water));
+        assert!(concrete.iter().all(|s| *s == Surface::Concrete) && dirt.iter().all(|s| *s == Surface::Dirt));
+        // The cue for a bullet type with converted sounds (78 in the test table).
+        let cue = |s: &[Surface]| crate::sounds::impact_cue(78, s[0]);
+        assert_eq!((cue(&concrete), cue(&dirt)), (Some("HIT_CONCRETE"), Some("HIT_DIRT")));
+        assert_eq!(cue(&water), None, "no alias for the surface: silent, as BO2's hash miss");
+        // A type with no converted sounds keeps the fixed cues (an unconverted archive).
+        assert_eq!(crate::sounds::impact_cue(79, Surface::Concrete), Some(crate::sounds::IMPACT));
+        assert_eq!(crate::sounds::impact_cue(79, Surface::Flesh), Some(crate::sounds::IMPACT_FLESH));
+    }
+
+    /// A wall `thick` inches deep (enemy concrete) 40 units out and an enemy soldier 60 out behind
+    /// it; the General fires one aimed round of a flat-damage gun of `pen`, with FMJ's
+    /// `bulletpenetration` when `fmj`. Returns (wall damage, soldier damage, the round's events).
+    fn shoot_through_wall(pen: crate::penetration::Penetrate, fmj: bool, thick: f32) -> (f32, f32, Vec<EventKind>) {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.add(ObjInfo {
+            id: 2,
+            owner_player: 1,
+            flags: objflags::STRUCTURE,
+            geom_type: geom::BOX,
+            major_radius: crate::units::inches(thick) * 0.5,
+            minor_radius: 30.0,
+            height: 40.0,
+            health: 5000.0,
+            max_health: 5000.0,
+            pos: Vec3::new(40.0, 0.0, 0.0),
+            ..Default::default()
+        });
+        host.add(ObjInfo { health: 5000.0, max_health: 5000.0, ..soldier(3, 1, 60.0) });
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        wait_until_ready(&mut sim, &host);
+        let w = sim.players[0].as_mut().unwrap().arsenal.current_mut();
+        let mut def = w.def.clone();
+        def.traits.penetrate = pen;
+        def.damage = [40.0; 6];
+        def.damage_range = [0.0; 6];
+        def.pellets = 1;
+        def.specialties = if fmj { crate::weapons::Specialties::of(&[Specialty::BulletPenetration]) } else { crate::weapons::Specialties::default() };
+        let def: &'static crate::weapons::WeaponDef = Box::leak(Box::new(def));
+        (w.def, w.main) = (def, def);
+        let pitch = -(4.0f32 / 60.0).atan();
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, pitch, ..Default::default() }, 20);
+        sim.events.clear();
+        host.damage_log.borrow_mut().clear();
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::FIRE, pitch, ..Default::default() }, 1);
+        let log = host.damage_log.borrow().clone();
+        let to = |id: u32| log.iter().filter(|d| d.1 == id).map(|d| d.2).sum::<f32>();
+        assert_eq!(log.iter().filter(|d| d.1 == 2).count(), 1, "one round on the wall: {log:?}");
+        (to(2), to(3), events(&sim))
+    }
+
+    /// BO2's penetration (`FUN_005d0350`): 4.5 in of concrete costs a medium round half its damage
+    /// (9 in deep), and the soldier behind takes the rest; the wall's far face plays the exit row.
+    #[test]
+    fn a_round_through_a_thin_wall_hits_the_soldier_behind_for_less() {
+        use crate::penetration::Penetrate;
+        let (wall, behind, ev) = shoot_through_wall(Penetrate::Medium, false, 4.5);
+        assert!(wall > 0.0 && (behind / wall - 0.5).abs() < 0.01, "wall {wall}, behind {behind}");
+        let exits: Vec<_> = ev.iter().filter_map(|k| match *k {
+            EventKind::Impact { at, surface, exit: true, .. } => Some((at, surface)),
+            _ => None,
+        }).collect();
+        // The soldier's 32 in through the middle spends the other half (64 in deep): no exit there.
+        assert_eq!(exits.len(), 1, "the wall's far face: {ev:?}");
+        assert_eq!(exits[0].1, Surface::Concrete);
+        assert!((exits[0].0.x - (40.0 + crate::units::inches(2.25))).abs() < 0.05, "{exits:?}");
+        let entries = ev.iter().filter(|k| matches!(k, EventKind::Impact { exit: false, .. })).count();
+        assert_eq!(entries, 2, "the wall and the soldier: {ev:?}");
+        // No penetration type: the wall takes it all.
+        let (_, behind, ev) = shoot_through_wall(Penetrate::None, false, 4.5);
+        assert_eq!(behind, 0.0);
+        assert!(!ev.iter().any(|k| matches!(k, EventKind::Impact { exit: true, .. })));
+    }
+
+    /// FMJ grants `bulletpenetration`: `perk_bulletPenetrationMultiplier` (2) doubles every depth,
+    /// so 7 in of concrete stops a small round (6 in) but not a small FMJ round (12 in).
+    #[test]
+    fn fmj_carries_a_round_through_a_wall_that_stops_it_without() {
+        use crate::penetration::Penetrate;
+        let (_, behind, _) = shoot_through_wall(Penetrate::Small, false, 7.0);
+        assert_eq!(behind, 0.0, "7 in is past a small round's 6 in");
+        let (wall, behind, _) = shoot_through_wall(Penetrate::Small, true, 7.0);
+        assert!((behind / wall - (1.0 - 7.0 / 12.0)).abs() < 0.01, "wall {wall}, behind {behind}");
+    }
+
     #[test]
     fn a_kill_reports_a_fatal_flesh_impact() {
         // The template test's shot, asserting the record's blood bits: body (not head), fatal.
@@ -2677,6 +2848,157 @@ pub(crate) mod tests {
         assert_eq!(sim.player(0).unwrap().mode, Mode::Rts);
         assert_eq!(sim.rts_update(&host, 0, 1, 0, [0, 0, 0], None).lock, 1, "the pistol, which was in hand");
         assert_eq!(sim.rts_update(&host, 0, 1, 1, [0, 0, 0], None).lock, -1, "once");
+    }
+
+    /// BO2's blast is the impact table's for the def's `impactType` and the surface it went off on
+    /// (`FUN_004c0ac0` -> `FUN_00533210`): the sim reports the surface in the event, the effect and
+    /// the client's cues follow it.
+    #[test]
+    fn a_blast_on_two_surfaces_plays_their_own_effect_and_sound() {
+        crate::impacts::install(crate::impacts::TEST_TABLE);
+        let frag: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef {
+            id: "test_frag_mp".into(),
+            effect: crate::weapons::Effect::Explode,
+            impact_type: 77,
+            explode_sound: "OWN".into(),
+            fuse_time: 0.1,
+            ..Default::default()
+        }));
+        let blast_on = |ground: Surface| {
+            let host = FakeHost::default();
+            host.ground.set(Some(ground));
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            sim.projectiles.push((0, Projectile::launch(frag, 1, Vec3::new(0.0, 0.0, 1.0), Vec3::new(1.0, 0.0, 0.0), 0.1, &host, 0.0)));
+            run(&mut sim, &host, 0, 1, FpsInput::default(), frames(0.5));
+            let ev = events(&sim)
+                .into_iter()
+                .find_map(|k| match k {
+                    EventKind::Exploded { sound, impact_type, surface, .. } => Some((sound, impact_type, surface)),
+                    _ => None,
+                })
+                .expect("it went off");
+            let fx = host.played_fx.borrow().clone();
+            (ev, fx)
+        };
+        let ((sound, t, on_concrete), fx_concrete) = blast_on(Surface::Concrete);
+        assert_eq!((sound, t, on_concrete), ("OWN", 77, Surface::Concrete));
+        let ((_, _, on_dirt), fx_dirt) = blast_on(Surface::Dirt);
+        assert_eq!(on_dirt, Surface::Dirt);
+        // The table's cell, then the def's own: dirt has no cell of its own and takes the default.
+        assert_eq!(fx_concrete, vec!["FX_C".to_string()]);
+        assert_eq!(fx_dirt, vec!["FX_D".to_string()]);
+        assert_eq!(crate::sounds::explosion_cues(sound, t, on_concrete), [Some("SND_C"), Some("OWN")]);
+        assert_eq!(crate::sounds::explosion_cues(sound, t, on_dirt), [Some("SND_D"), Some("OWN")]);
+        // A surface the family has no alias for plays no table sound (BO2's hash miss is silent),
+        // and not the generic blast either: the type's sounds are converted.
+        assert_eq!(crate::sounds::explosion_cues(sound, t, Surface::Water), [None, Some("OWN")]);
+        assert_eq!(crate::sounds::explosion_cues("", t, Surface::Water), [None, None]);
+    }
+
+    /// BO2's event 0x47 (`G_RunMissile` at each bounce): the def's `bounceSound[surface]` and the
+    /// `grenade_bounce` row's cell for the surface, exact (none on dirt here, and no fallback).
+    #[test]
+    fn a_bounce_plays_the_defs_sound_and_the_bounce_cell_for_the_surface() {
+        crate::impacts::install(crate::impacts::TEST_TABLE);
+        let frag: &'static crate::weapons::WeaponDef = Box::leak(Box::new(crate::weapons::WeaponDef {
+            id: "test_bouncer_mp".into(),
+            effect: crate::weapons::Effect::Explode,
+            impact_type: 77,
+            fuse_time: 5.0,
+            projectile_gravity: true,
+            bounce_sounds: vec![("concrete".into(), "BOUNCE_C".into()), ("water".into(), crate::sounds::NO_SOUND.into())],
+            ..Default::default()
+        }));
+        let bounce_on = |ground: Surface| {
+            let host = FakeHost::default();
+            host.ground.set(Some(ground));
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            let mut p = Projectile::launch(frag, 1, Vec3::new(0.0, 0.0, 2.0), Vec3::new(1.0, 0.0, 0.0), 5.0, &host, 0.0);
+            p.vel = Vec3::new(4.0, 0.0, -10.0);
+            sim.projectiles.push((0, p));
+            run(&mut sim, &host, 0, 1, FpsInput::default(), frames(1.0));
+            let sounds: Vec<&str> = events(&sim)
+                .into_iter()
+                .filter_map(|k| match k {
+                    EventKind::Bounced { sound, .. } => Some(sound),
+                    _ => None,
+                })
+                .collect();
+            let fx = host.played_fx.borrow().clone();
+            (sounds, fx)
+        };
+        let (concrete, fx_concrete) = bounce_on(Surface::Concrete);
+        assert!(!concrete.is_empty() && concrete.iter().all(|s| *s == "BOUNCE_C"), "{concrete:?}");
+        assert_eq!(fx_concrete.len(), concrete.len());
+        assert!(fx_concrete.iter().all(|f| f == "FX_BOUNCE_C"), "{fx_concrete:?}");
+        let (dirt, fx_dirt) = bounce_on(Surface::Dirt);
+        assert!(!dirt.is_empty() && dirt.iter().all(|s| s.is_empty()), "no cell for dirt: silent {dirt:?}");
+        assert!(fx_dirt.is_empty(), "the bounce row's default cell is not a fallback: {fx_dirt:?}");
+        assert_eq!(crate::sounds::some(concrete[0]), Some("BOUNCE_C"));
+        assert_eq!(crate::sounds::some(crate::sounds::NO_SOUND), None);
+    }
+
+    /// BO2's dud (`FUN_00604280`: struck before `iProjectileActivateDist` of path): no blast, the
+    /// direct hit's impact damage only, and event 0x51's effects and sounds for the surface.
+    #[test]
+    fn a_launcher_grenade_inside_its_arming_distance_is_a_dud() {
+        crate::impacts::install(crate::impacts::TEST_TABLE);
+        let gl = |activate_dist: f32| -> &'static crate::weapons::WeaponDef {
+            let mut damage = [0.0; 6];
+            damage[0] = 75.0;
+            Box::leak(Box::new(crate::weapons::WeaponDef {
+                id: "test_gl_mp".into(),
+                effect: crate::weapons::Effect::Explode,
+                impact_type: 77,
+                impact_explode: true,
+                projectile_speed: 20.0,
+                explosion_radius: 10.0,
+                explosion_inner_damage: 200.0,
+                explosion_outer_damage: 50.0,
+                damage,
+                activate_dist,
+                dud_fx: "OWN_DUD_FX".into(),
+                dud_sound: "OWN_DUD".into(),
+                ..Default::default()
+            }))
+        };
+        let shoot = |def: &'static crate::weapons::WeaponDef, target: bool| {
+            let host = FakeHost::default();
+            host.ground.set(Some(Surface::Concrete));
+            host.add(general(1, 0));
+            if target {
+                host.add(soldier(5, 1, 3.0));
+            }
+            let mut sim = Sim::new();
+            let dir = if target { Vec3::new(1.0, 0.0, 0.0) } else { Vec3::new(1.0, 0.0, -1.0).normalized_or_zero() };
+            sim.projectiles.push((0, Projectile::launch(def, 1, Vec3::new(0.0, 0.0, 1.0), dir, f32::INFINITY, &host, 0.0)));
+            run(&mut sim, &host, 0, 1, FpsInput::default(), frames(1.0));
+            let damage = host.damage_log.borrow().clone();
+            let fx = host.played_fx.borrow().clone();
+            (events(&sim), damage, fx)
+        };
+        // Into the ground a step away, well inside 100 units of path: a dud on concrete.
+        let (ev, damage, fx) = shoot(gl(100.0), false);
+        assert!(!ev.iter().any(|k| matches!(k, EventKind::Exploded { .. })), "a dud does not go off");
+        let dud = ev.iter().find_map(|k| match *k {
+            EventKind::Dud { sound, surface, .. } => Some((sound, surface)),
+            _ => None,
+        });
+        assert_eq!(dud, Some(("OWN_DUD", Surface::Concrete)));
+        assert!(damage.is_empty(), "nothing hit directly, no blast");
+        assert_eq!(fx, vec!["FX_DUD_C".to_string(), "OWN_DUD_FX".to_string()], "the dud row's cell, then the def's own");
+        assert_eq!(crate::sounds::dud_cues("OWN_DUD", Surface::Concrete), [Some("DUD_HIT_C"), Some("OWN_DUD")]);
+        assert_eq!(crate::sounds::dud_cues("OWN_DUD", Surface::Dirt), [None, Some("OWN_DUD")], "no large-bullet alias on dirt: silent");
+        // A direct hit before arming: the impact damage (`iDamage`) only, no splash.
+        let (ev, damage, _) = shoot(gl(100.0), true);
+        assert!(ev.iter().any(|k| matches!(k, EventKind::Dud { surface: Surface::Flesh, .. })), "{ev:?}");
+        assert_eq!(damage.len(), 1, "{damage:?}");
+        assert_eq!((damage[0].1, damage[0].2), (5, 75.0 * crate::units::BO2_TO_ZH_DAMAGE));
+        // Armed (no activation distance): the same shot goes off.
+        let (ev, _, _) = shoot(gl(0.0), false);
+        assert!(ev.iter().any(|k| matches!(k, EventKind::Exploded { .. })) && !ev.iter().any(|k| matches!(k, EventKind::Dud { .. })));
     }
 
     #[test]
