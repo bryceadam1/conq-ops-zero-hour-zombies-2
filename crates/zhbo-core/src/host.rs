@@ -156,6 +156,10 @@ pub trait ClientHost {
     fn sound_gain(&self, event: &str, at: Option<Vec3>, _gain: f32) {
         self.sound(event, at);
     }
+    /// Set looping sound event `event` (a 2D `LOOP` event) to `gain` × its own volume, starting it
+    /// if it is not playing; `gain <= 0` stops it (ABI: `ClientApi::sound_loop`). A host without it
+    /// plays no loops.
+    fn sound_loop(&self, _event: &str, _gain: f32) {}
     /// Clip later 2D images to a screen rectangle; `None` turns clipping off.
     fn clip(&self, _rect: Option<(f32, f32, f32, f32)>) {}
     /// Draw Zero Hour's own radar (the whole map) in a screen rectangle, if the local player has
@@ -234,6 +238,9 @@ pub struct ClientApi {
     /// `sound` at `gain` × the event's volume (a third-person shot's layers at BO2's distance
     /// curve, `soundlayers`). Appended after `ghost`.
     pub sound_gain: Option<extern "C" fn(event: *const c_char, at: *const Vec3, gain: f32)>,
+    /// A looping 2D event at `gain` × its volume, started if needed; `gain <= 0` stops it (a
+    /// shellshock's ringing, `shellshock::Presented`). Appended after `sound_gain`.
+    pub sound_loop: Option<extern "C" fn(event: *const c_char, gain: f32)>,
 }
 
 fn build_options_via(f: Option<extern "C" fn(u32, *mut crate::building::BuildOption, i32) -> i32>, general: u32) -> Vec<crate::building::BuildOption> {
@@ -423,6 +430,12 @@ impl ClientHost for CClientHost {
                 Some(p) => f(name.as_ptr(), &p),
                 None => f(name.as_ptr(), std::ptr::null()),
             }
+        }
+    }
+
+    fn sound_loop(&self, event: &str, gain: f32) {
+        if let Some(f) = self.0.sound_loop {
+            f(cstring(event).as_ptr(), gain);
         }
     }
 

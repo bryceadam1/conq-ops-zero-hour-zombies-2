@@ -2,7 +2,7 @@
 //! once per viewmodel, submit the posed palette each frame.
 
 use zhbo_gfx::ffi::with_renderer;
-use zhbo_gfx::runtime::{NativeBlip, NativeDraw, NativeFrame, NativeLight, NativeOptics, NativeSurface, NativeVertex, INVALID, NATIVE_MAX_BLIPS};
+use zhbo_gfx::runtime::{NativeBlip, NativeDraw, NativeFrame, NativeLight, NativeOptics, NativeSurface, NativeVertex, ShockDraw, ShockLayer, INVALID, NATIVE_MAX_BLIPS};
 
 use super::ffi::{State, ZhboNativeIn, DRAWN, LOADING, NOT_NATIVE};
 use super::{local_optics, native_surface, set_lens_reticle_drawn, Mesh, ART_SCALE};
@@ -33,6 +33,31 @@ impl Gpu {
             }
         });
     }
+}
+
+/// Queue this frame's shellshock screen layer ([`super::local_shock`]) into the scene the viewmodel
+/// draws in: a flashed shock grabs on the first frame of each new shock (by its serial) and adds
+/// the grab and the white after it; a blurred one lays its saved screen over at its alpha.
+pub(crate) fn shock(inp: &ZhboNativeIn) {
+    static GRABBED: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    use std::sync::atomic::Ordering::Relaxed;
+    // Between shocks the grab is forgotten, so a new game's first shock (serials restart) grabs.
+    let Some(s) = super::local_shock().filter(|s| s.flashed || s.blur_alpha > 0.0) else {
+        GRABBED.store(0, Relaxed);
+        return;
+    };
+    let layer = if s.flashed {
+        if GRABBED.swap(s.serial, Relaxed) != s.serial {
+            ShockLayer::Grab
+        } else {
+            ShockLayer::Flashed { white: s.white.clamp(0.0, 1.0), shot: s.shot.clamp(0.0, 1.0) }
+        }
+    } else {
+        GRABBED.store(0, Relaxed);
+        ShockLayer::Blurred { alpha: s.blur_alpha.clamp(0.0, 1.0) }
+    };
+    let draw = ShockDraw { target_view: inp.target_view, before_view: inp.before_view, layer };
+    super::set_shock_layer_drawn(with_renderer(false, |r| r.shock_submit(&draw)));
 }
 
 /// Upload (once its textures are in) and submit. `LOADING` while textures are still coming.

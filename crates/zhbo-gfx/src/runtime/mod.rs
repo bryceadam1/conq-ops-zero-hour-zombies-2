@@ -14,7 +14,9 @@ mod frame;
 pub mod math;
 mod native;
 mod resources;
+mod shock;
 
+pub use shock::{ShockDraw, ShockLayer};
 pub use native::{NativeBlend, NativeBlip, NativeCull, NativeDisplay, NativeDraw, NativeFrame, NativeLight, NativeOptics, NativeReticle, NativeReticleKind, NativeSonar, NativeSurface, NativeVertex, NATIVE_MAX_BLIPS, NATIVE_MAX_BONES, NATIVE_MAX_LIGHTS};
 
 use std::collections::HashMap;
@@ -616,6 +618,8 @@ pub struct Renderer {
     pub(crate) cache: frame::Caches,
     /// The native BO2 model pass (`native.rs`).
     pub(crate) native: native::NativeState,
+    /// BO2's shellshock screen layers (`shock.rs`).
+    pub(crate) shock: shock::ShockState,
 }
 
 /// Run a wgpu future to completion. wgpu's native futures are ready immediately or after a
@@ -763,6 +767,7 @@ impl Renderer {
             stats: Stats::default(),
             cache,
             native,
+            shock: Default::default(),
         };
         r.reset(desc.width, desc.height, desc.reset);
         Ok(r)

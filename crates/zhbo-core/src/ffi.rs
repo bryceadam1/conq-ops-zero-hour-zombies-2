@@ -131,7 +131,7 @@ pub const ABI_VERSION: u32 = 28;
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
 pub const LOGIC_API_FIELDS: u64 = 24;
-pub const CLIENT_API_FIELDS: u64 = 14;
+pub const CLIENT_API_FIELDS: u64 = 15;
 
 // Layouts shared with host/zhbo/zhbo_core.h (which asserts the same sizes on the C++ side).
 const _: () = {
@@ -904,6 +904,9 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
                 s.client_host.sound_gain(r.event, r.at, r.gain);
             }
         }
+        for (event, gain) in s.client.cues.loops.drain(..) {
+            s.client_host.sound_loop(event, gain);
+        }
         // The local player's class camos, for the native viewmodel's next draw: each held weapon
         // wears its own (`_class.gsc`: the primary `primarycamo`, the sidearm `secondarycamo`, the
         // melee weapon `knifecamo`).
@@ -919,6 +922,13 @@ pub unsafe extern "C" fn zhbo_client_frame(input: *const ClientIn, out: *mut Cli
         // And what the optic displays show (the MMS's characters, the target finder's colour).
         let optics = s.sim.player(inp.local_player).map(|p| (p.optics.alt, p.optics.blips.clone()));
         crate::nativevm::update_local_optics(inp.dt, optics);
+        // And its shellshock's screen layers (blur, grab, white) for the scene.
+        let shock = s.sim.player(inp.local_player).filter(|p| p.is_first_person()).and_then(|p| {
+            let a = p.shock.active.as_ref()?;
+            let sc = p.shock.screen();
+            Some(crate::nativevm::LocalShock { serial: a.serial, flashed: a.def.flashed, white: sc.white, shot: sc.shot, blur_alpha: crate::shellshock::blur_alpha(sc.blur, inp.dt) })
+        });
+        crate::nativevm::set_local_shock(shock);
         out
     })
     .unwrap_or_default();

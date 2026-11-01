@@ -82,7 +82,10 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   General gets from a blast: the GSC's `shellshock()` sources).
 - `shellshock.rs`: BO2's shellshocks (`ShockDef`, the weapon table's `Shock` blocks converted from
   the install's `shock/*.shock` files) and their effect while one runs — the run-speed scale (the
-  sim), the look control (the client's mouse look) and the screen layers (the HUD's whiteout).
+  sim), the look control (the client's mouse look), and the presentation: the screen layers (the
+  renderer's shock layer through `nativevm::set_local_shock`, the HUD's whiteout as its fallback),
+  the view kick (the client's camera only) and the ringing loop (`Presented`, through
+  `ClientHost::sound_loop`).
 - `lui/`: BO2's LUI layout model shared by the HUD and the class screens: the anchor/edge
   resolution against a 720-unit root (`mod.rs`), BO2's converted UI fonts (`font.rs`), the
   BO2 materials the ports draw by name (`materials.rs`) and LUI's animation states (`anim.rs`).

@@ -9,6 +9,8 @@
 // Precompiled engine headers are force-included by the z_gameengine target.
 #include "ZhboBridgeInternal.h"
 #include "Common/AudioEventInfo.h"
+#include <algorithm>
+#include <cmath>
 namespace
 {
 struct CachedText
@@ -27,6 +29,14 @@ std::map<std::string, const Image *> s_images;
 
 // Sound events already reported once (cbSound); cleared in Zhbo_Reset.
 std::set<std::string> s_soundReported;
+
+// The looping events the core keeps playing (cbSoundLoop): the handle and the gain last set.
+struct PlayingLoop
+{
+	AudioHandle handle;
+	float gain;
+};
+std::map<std::string, PlayingLoop> s_loops;
 
 } // namespace
 const char *hudFontName()
@@ -125,6 +135,43 @@ void cbSound(const char *event, const ZhboVec3 *at)
 void cbSoundGain(const char *event, const ZhboVec3 *at, float gain)
 {
 	playSound(event, at, gain);
+}
+
+void cbSoundLoop(const char *event, float gain)
+{
+	if (!TheAudio || !event)
+		return;
+	auto it = s_loops.find(event);
+	const bool playing = it != s_loops.end() && TheAudio->isCurrentlyPlaying(it->second.handle);
+	if (!(gain > 0.0f))
+	{
+		if (it != s_loops.end())
+		{
+			TheAudio->removeAudioEvent(it->second.handle);
+			s_loops.erase(it);
+		}
+		return;
+	}
+	AudioEventRTS sound((AsciiString(event)));
+	TheAudio->getInfoForAudioEvent(&sound);
+	const AudioEventInfo *info = sound.getAudioEventInfo();
+	const Real volume = (info ? info->m_volume : 1.0f) * std::min(gain, 1.0f);
+	if (playing)
+	{
+		// Only a change worth hearing: the core sets the gain every frame of a fade.
+		if (std::fabs(it->second.gain - gain) > 0.005f)
+		{
+			TheAudio->adjustVolumeOfPlayingAudio(AsciiString(event), volume);
+			it->second.gain = gain;
+		}
+		return;
+	}
+	sound.setVolume(volume);
+	const AudioHandle handle = TheAudio->addAudioEvent(&sound);
+	if (s_soundReported.insert(event).second)
+		logf("sound loop %s: %s", event, handle >= AHSV_FirstHandle ? "playing" : handle == AHSV_Muted ? "muted" : handle == AHSV_NoSound ? "no sound" : "error");
+	if (handle >= AHSV_FirstHandle)
+		s_loops[event] = PlayingLoop{ handle, gain };
 }
 
 void cbScreenSize(float *w, float *h)
@@ -241,6 +288,11 @@ void ResetHud()
 	// stale, and the misses too. The text cache survives (DisplayStrings do not reset).
 	s_images.clear();
 	s_soundReported.clear();
+	// A loop still playing (a shellshock's ringing) ends with the game.
+	if (TheAudio)
+		for (const auto &l : s_loops)
+			TheAudio->removeAudioEvent(l.second.handle);
+	s_loops.clear();
 }
 
 void advanceDrawFrame()

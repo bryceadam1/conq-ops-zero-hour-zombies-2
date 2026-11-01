@@ -1513,6 +1513,42 @@ fn the_own_tracers_follow_the_sims_countdown_deterministically() {
     /// A shellshock with look control caps the turn rate (`maxyawspeed` deg/s) and scales the
     /// sensitivity (t6mp `FUN_005109f0`); the concussion's is 22°/s at full strength.
     #[test]
+    fn a_shellshock_kicks_the_view_not_the_aim_and_rings() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        let mut sim = Sim::new();
+        let mut client = Client::default();
+        let mut inp = ClientIn { input_allowed: 1, ..Default::default() };
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        let calm = frame_with(&mut client, &mut sim, &host, &mut inp, 60);
+        let aim = (client.yaw, client.pitch);
+        let looks = |o: &ClientOut| (o.dir.y.atan2(o.dir.x), o.dir.z.asin());
+        // The flashbang: a 0.05 kick radius and BO2 MP's one ringing loop.
+        sim.players[0].as_mut().unwrap().shock.play(crate::shellshock::names::FLASHBANG, 3.0);
+        client.cues.loops.clear();
+        let mut moved = 0.0f32;
+        for _ in 0..30 {
+            let out = frame_with(&mut client, &mut sim, &host, &mut inp, 1);
+            let (y, p) = (looks(&out), looks(&calm));
+            moved = moved.max(crate::math::wrap_angle(y.0 - p.0).abs()).max((y.1 - p.1).abs());
+        }
+        assert!(moved > 1e-3 && moved < 0.1, "the camera wobbles within the radius: {moved}");
+        assert_eq!((client.yaw, client.pitch), aim, "the aim the input carries is untouched");
+        let ring = crate::shellshock::loop_event("chr_flashbang_tinnitus_loop");
+        let gains: Vec<f32> = client.cues.loops.iter().filter(|(e, _)| *e == ring).map(|(_, g)| *g).collect();
+        assert!(gains.len() == 30 && gains[0] > 0.0 && gains[0] < 1.0 && *gains.last().unwrap() == 1.0, "fades in over 0.25 s: {gains:?}");
+        // Leaving first person stops the ringing at once.
+        client.cues.loops.clear();
+        inp.keys.set_down(Key::F, true);
+        frame_with(&mut client, &mut sim, &host, &mut inp, 2);
+        inp.keys.set_down(Key::F, false);
+        frame_with(&mut client, &mut sim, &host, &mut inp, (crate::sim::FIELD_COMPUTER_RAISE / LOGIC_DT) as usize + 5);
+        assert!(!matches!(client.view, ViewMode::Fps));
+        assert_eq!(client.cues.loops.iter().rfind(|(e, _)| *e == ring), Some(&(ring, 0.0)), "{:?}", client.cues.loops);
+    }
+
+    #[test]
     fn a_shellshock_slows_the_look() {
         let host = FakeHost::default();
         host.add(general(1, 0));

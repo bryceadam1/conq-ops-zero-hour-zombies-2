@@ -158,6 +158,47 @@ pub(crate) fn set_lens_reticle_drawn(drawn: bool) {
 
 thread_local! {
     static LENS_RETICLE: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    static SHOCK_LAYER: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The local player's shellshock screen this frame ([`crate::shellshock::screen`]), for the
+/// renderer's shock layer. Presentation only.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct LocalShock {
+    /// The shock's `shellshock` serial: a new flashed shock grabs a new frame.
+    pub serial: u32,
+    pub flashed: bool,
+    pub white: f32,
+    pub shot: f32,
+    /// A blurred shock's saved-screen alpha this frame ([`crate::shellshock::blur_alpha`]).
+    pub blur_alpha: f32,
+}
+
+static LOCAL_SHOCK: Mutex<Option<LocalShock>> = Mutex::new(None);
+
+/// Set the local player's shock screen for this frame's scene (`None`: no shock). Called by
+/// `ffi::zhbo_client_frame`; read by the viewmodel draw, which queues the renderer's shock layer.
+/// Until that draw queues one, the HUD draws the whiteout itself ([`shock_layer_drawn`]).
+pub fn set_local_shock(shock: Option<LocalShock>) {
+    *LOCAL_SHOCK.lock().unwrap_or_else(|e| e.into_inner()) = shock;
+    SHOCK_LAYER.with(|d| d.set(false));
+}
+
+#[cfg_attr(not(feature = "renderer"), allow(dead_code))]
+pub(crate) fn local_shock() -> Option<LocalShock> {
+    *LOCAL_SHOCK.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Whether the renderer took this frame's shock layer (then the HUD leaves the whiteout to it: the
+/// renderer adds it as BO2 does, the HUD's is only the fallback). Per thread, as
+/// [`lens_reticle_drawn`].
+pub fn shock_layer_drawn() -> bool {
+    SHOCK_LAYER.with(|d| d.get())
+}
+
+#[cfg_attr(not(feature = "renderer"), allow(dead_code))]
+pub(crate) fn set_shock_layer_drawn(drawn: bool) {
+    SHOCK_LAYER.with(|d| d.set(drawn));
 }
 
 /// Files the core asked the bridge for, and what came back.

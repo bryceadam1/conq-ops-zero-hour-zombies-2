@@ -204,6 +204,9 @@ pub struct Cues {
     breath: BreathSounds,
     weapon: WeaponCues,
     pub queue: Vec<Request>,
+    /// Looping events' gains this frame (`ClientHost::sound_loop`; 0 stops one): a shellshock's
+    /// ringing (`shellshock::Presented`).
+    pub loops: Vec<(&'static str, f32)>,
 }
 
 /// The hold-breath sounds' state (`FUN_0052e3d0`, the client frame): how long the current breath
@@ -387,8 +390,8 @@ impl Cues {
 
     /// Forget movement history (first person starts, or the General changed).
     pub fn reset(&mut self) {
-        let queue = std::mem::take(&mut self.queue);
-        *self = Cues { queue, ..Default::default() };
+        let (queue, loops) = (std::mem::take(&mut self.queue), std::mem::take(&mut self.loops));
+        *self = Cues { queue, loops, ..Default::default() };
     }
 
     /// Footsteps, landing, heartbeat and dry fire for this frame.

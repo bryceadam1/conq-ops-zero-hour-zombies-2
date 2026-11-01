@@ -108,6 +108,9 @@ impl State {
     /// One frame, when `enabled` (`ZHBO_NATIVE_VIEWMODEL`). Pure apart from the renderer submit
     /// (`gpu`); without the renderer it loads and poses, then answers "not native".
     pub(crate) fn frame(&mut self, inp: &ZhboNativeIn, enabled: bool) -> i32 {
+        // The shellshock's screen layer runs in the scene this draws in, whatever the viewmodel does.
+        #[cfg(feature = "renderer")]
+        super::gpu::shock(inp);
         if !enabled {
             return NOT_NATIVE;
         }

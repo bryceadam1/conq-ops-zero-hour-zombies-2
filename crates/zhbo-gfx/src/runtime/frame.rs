@@ -317,6 +317,16 @@ instances: u32,
 }
 
 impl Renderer {
+    /// The single-sample texture a view's first colour resolves into (the backbuffer's for
+    /// `INVALID`): what the shellshock's saved screen copies.
+    pub(super) fn color_source(&self, fb: u16) -> Option<wgpu::Texture> {
+        if fb == INVALID {
+            return Some(self.backbuffer.color.clone());
+        }
+        let (colors, _, _, _) = self.frame_buffer_targets(fb)?;
+        colors.first().filter(|c| !c.array).map(|c| c.texture.clone())
+    }
+
     pub(super) fn target_for(&self, fb: u16) -> Option<Target> {
         if fb == INVALID {
             let bb = &self.backbuffer;
@@ -405,8 +415,10 @@ impl Renderer {
                 continue;
             }
             visited[v] = true;
-            // Native BO2 models queued to draw before this view (the scene composite).
+            // Native BO2 models queued to draw before this view (the scene composite), then the
+            // shellshock's screen layer over them.
             self.native_encode(&mut encoder, Some(v as u16));
+            self.shock_encode(&mut encoder, Some(v as u16));
 
             for b in self.blits.iter().filter(|b| b.view as usize == v) {
                 encoder.copy_texture_to_texture(
@@ -498,8 +510,10 @@ impl Renderer {
             }
         }
 
-        // Native draws whose view never came this frame still draw, at the end.
+        // Native draws whose view never came this frame still draw, at the end (and the shock
+        // layer after them).
         self.native_encode(&mut encoder, None);
+        self.shock_encode(&mut encoder, None);
 
         // Screenshots: copy into readback buffers now, map after submit.
         let mut readbacks = Vec::new();
@@ -603,6 +617,7 @@ impl Renderer {
         self.stats.cpu_frame_ns = started.elapsed().as_nanos() as u64;
         self.stats.native_skipped = std::mem::take(&mut self.native.skipped);
         self.native_end_frame();
+        self.shock_end_frame();
         self.draws.clear();
         self.blits.clear();
         self.transforms.clear();

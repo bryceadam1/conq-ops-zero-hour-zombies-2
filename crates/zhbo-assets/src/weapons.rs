@@ -677,19 +677,27 @@ pub(crate) use zhbo_core::weapons::ADS_MOVE_BASE;
 /// Where the weapon table goes in the archive (the bridge hands it to the core).
 pub use zhbo_core::names::WEAPON_TABLE_PATH as TABLE_PATH;
 
-/// BO2's localized strings for the display names: `zone/<language>/<lang>_code_post_gfx_mp.ff`
-/// with `<lang>_patch_mp.ff` over it. Empty if the language zones can't be read.
 /// The shellshocks the mod plays ([`zhbo_core::shellshock::names::ALL`]), from their
 /// `shock/<name>.shock` files in the weapon pool (highest priority first), as the table's
-/// `Shock` blocks. A missing file is an error: the core's shocks would silently do nothing.
+/// `Shock` blocks. A missing file is an error: the core's shocks would silently do nothing. A
+/// `soundLoop` alias none of the pool's sound banks holds is dropped: BO2 finds no alias and plays
+/// nothing (MP has `chr_flashbang_tinnitus_loop`, not the concussion's `chr_tinitus_loop`).
 pub fn shocks(pool: &[&zhbo_formats::t6zone::Zone]) -> Result<Vec<zhbo_core::shellshock::ShockDef>, String> {
+    let banks: Vec<zhbo_formats::sndalias::Bank> = pool.iter().filter_map(|z| zhbo_formats::sndalias::banks(z).ok()).flatten().collect();
     zhbo_core::shellshock::names::ALL
         .iter()
-        .map(|name| zhbo_formats::shock::find(pool, name).map(|s| shock_def(&s)).ok_or(format!("{}: not in the weapon pool", zhbo_formats::shock::path(name))))
+        .map(|name| {
+            let s = zhbo_formats::shock::find(pool, name).ok_or(format!("{}: not in the weapon pool", zhbo_formats::shock::path(name)))?;
+            let mut d = shock_def(&s);
+            if !banks.iter().any(|b| b.alias(&d.sound_loop).is_some()) {
+                d.sound_loop.clear();
+            }
+            Ok(d)
+        })
         .collect()
 }
 
-/// A parsed shock file as the table's `Shock` block.
+/// A parsed shock file as the table's `Shock` block. `bg_shock_sound` 0 plays no loop.
 pub fn shock_def(s: &zhbo_formats::shock::Shock) -> zhbo_core::shellshock::ShockDef {
     zhbo_core::shellshock::ShockDef {
         name: s.name.clone(),
@@ -704,10 +712,17 @@ pub fn shock_def(s: &zhbo_formats::shock::Shock) -> zhbo_core::shellshock::Shock
         sensitivity: s.look_sensitivity_scale,
         look_fade: s.look_fade_time,
         movement: s.movement,
-        sound_loop: s.sound_loop.clone(),
+        kick_period: s.view_kick_period,
+        kick_radius: s.view_kick_radius,
+        sound_fade_in: s.sound_fade_in_time,
+        sound_fade_out: s.sound_fade_out_time,
+        sound_mod_end: s.sound_mod_end_delay,
+        sound_loop: if s.sound { s.sound_loop.clone() } else { String::new() },
     }
 }
 
+/// BO2's localized strings for the display names: `zone/<language>/<lang>_code_post_gfx_mp.ff`
+/// with `<lang>_patch_mp.ff` over it. Empty if the language zones can't be read.
 pub fn names(bo2_dir: &std::path::Path) -> HashMap<String, String> {
     zhbo_formats::localize::install_strings(bo2_dir, &["code_post_gfx_mp", "patch_mp"])
 }

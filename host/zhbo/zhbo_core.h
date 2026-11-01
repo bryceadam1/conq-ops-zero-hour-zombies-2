@@ -16,7 +16,7 @@
    zhbo_abi_fields() from the same numbers; Zhbo_Init refuses a mismatch. When adding a service:
    append the field here, bump both counts, bump ZHBO_ABI_VERSION, and see CONTRACT.md. */
 #define ZHBO_LOGIC_API_FIELDS 24u
-#define ZHBO_CLIENT_API_FIELDS 14u
+#define ZHBO_CLIENT_API_FIELDS 15u
 
 #ifdef __cplusplus
 extern "C" {
@@ -182,6 +182,9 @@ typedef struct ZhboClientApi
 	/* sound at gain x the event's own volume: a third-person shot's layers at BO2's distance
 	   curve (soundlayers.rs). Appended. */
 	void (*sound_gain)(const char *event, const ZhboVec3 *at, float gain);
+	/* a looping 2D event (Control = loop, LoopCount = 0) at gain x its volume, started if it is not
+	   playing; gain <= 0 stops it: a shellshock's ringing (shellshock.rs). Appended. */
+	void (*sound_loop)(const char *event, float gain);
 } ZhboClientApi;
 
 /* The 256-bit platform-neutral key-down set (see input.rs's Key enum: low bits first, one bit

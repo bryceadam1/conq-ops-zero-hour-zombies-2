@@ -28,14 +28,29 @@ pub struct Shock {
     /// and the screengrab start blending out.
     pub flash_white_fade_time: f32,
     pub flash_shot_fade_time: f32,
+    /// `viewKickPeriod` (s) and `viewKickRadius`: the view kick's noise period and strength.
     pub view_kick_period: f32,
     pub view_kick_radius: f32,
+    /// `viewKickFadeTime`: registered, but t6mp's loader never copies it (`FUN_008bca80` writes a
+    /// constant 3000 ms in its place), so the engine does not use it.
     pub view_kick_fade_time: f32,
     pub sound: bool,
     pub sound_loop: String,
     pub sound_loop_silent: String,
+    /// `soundEnd` / `soundEndAbort`: the aliases played when the loop ends / is cut short.
+    pub sound_end: String,
+    pub sound_end_abort: String,
     pub sound_fade_in_time: f32,
     pub sound_fade_out_time: f32,
+    pub sound_loop_fade_time: f32,
+    pub sound_loop_end_delay: f32,
+    /// `soundRoomType`, `soundDryLevel`, `soundWetLevel`: the reverb room the shock switches to.
+    pub sound_room: String,
+    pub sound_dry_level: f32,
+    pub sound_wet_level: f32,
+    /// `soundModEndDelay`: how long past the shock's end the sound modification lasts.
+    pub sound_mod_end_delay: f32,
+    /// `soundSnapshot`: the sound duck the shock applies (`FUN_008381e0`: "Could not find duck").
     pub sound_snapshot: String,
     /// `lookControl`: whether the look is limited (the rest of the `lookControl_*` keys).
     pub look_control: bool,
@@ -82,8 +97,16 @@ pub fn parse(name: &str, text: &str) -> Shock {
             "sound" => s.sound = flag(),
             "soundLoop" => s.sound_loop = value.into(),
             "soundLoopSilent" => s.sound_loop_silent = value.into(),
+            "soundEnd" => s.sound_end = value.into(),
+            "soundEndAbort" => s.sound_end_abort = value.into(),
             "soundFadeInTime" => s.sound_fade_in_time = num(),
             "soundFadeOutTime" => s.sound_fade_out_time = num(),
+            "soundLoopFadeTime" => s.sound_loop_fade_time = num(),
+            "soundLoopEndDelay" => s.sound_loop_end_delay = num(),
+            "soundRoomType" => s.sound_room = value.into(),
+            "soundDryLevel" => s.sound_dry_level = num(),
+            "soundWetLevel" => s.sound_wet_level = num(),
+            "soundModEndDelay" => s.sound_mod_end_delay = num(),
             "soundSnapshot" => s.sound_snapshot = value.into(),
             "lookControl" => s.look_control = flag(),
             "lookControl_maxpitchspeed" => s.look_max_pitch_speed = num(),
@@ -116,13 +139,15 @@ mod tests {
         let text = "bg_shock_screenType \"flashed\"\nbg_shock_screenBlurBlendTime \"0.4\"\n\
                     bg_shock_screenFlashWhiteFadeTime \"7.5\"\n\nbg_shock_lookControl \"1\"\n\
                     bg_shock_lookControl_maxyawspeed \"22\"\nbg_shock_lookControl_mousesensitivityscale \"0.1\"\n\
-                    bg_shock_movement \"0.32\"\nbg_shock_soundLoop \"chr_tinitus_loop\"\nbg_shock_viewKickPeriod \".75\"\n";
+                    bg_shock_movement \"0.32\"\nbg_shock_soundLoop \"chr_tinitus_loop\"\nbg_shock_viewKickPeriod \".75\"\n\
+                    bg_shock_soundModEndDelay \"0.1\"\nbg_shock_soundRoomType \"shock_flashbang\"\nbg_shock_soundEnd \"\"\n";
         let s = parse("concussion_grenade_mp", text);
         assert_eq!(s.screen_type, ScreenType::Flashed);
         assert_eq!((s.blur_blend_time, s.flash_white_fade_time, s.view_kick_period), (0.4, 7.5, 0.75));
         assert!(s.look_control);
         assert_eq!((s.look_max_yaw_speed, s.look_sensitivity_scale, s.movement), (22.0, 0.1, 0.32));
         assert_eq!(s.sound_loop, "chr_tinitus_loop");
+        assert_eq!((s.sound_mod_end_delay, s.sound_room.as_str(), s.sound_end.as_str()), (0.1, "shock_flashbang", ""));
         assert_eq!(path("flashbang"), "shock/flashbang.shock");
     }
 

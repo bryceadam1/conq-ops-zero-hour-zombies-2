@@ -556,6 +556,12 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         kind: crate::sfx::Kind::World,
         limit: 2,
     }));
+    // The shellshocks' ringing loops (`Shock … SoundLoop`), each a looping 2D event the client
+    // starts and stops (`shellshock::Presented`).
+    let mut loops: Vec<&str> = table.shocks.iter().map(|s| s.sound_loop.as_str()).filter(|a| !a.is_empty()).collect();
+    loops.sort_unstable();
+    loops.dedup();
+    extra.extend(loops.into_iter().map(|a| crate::sfx::DynSfx { event: zhbo_core::shellshock::loop_event(a).to_string(), layers: vec![a.to_string()], kind: crate::sfx::Kind::PlayerLoop, limit: 1 }));
     let (sound_files, sound_summary) = crate::sfx::files(&common, &world, bo2_dir, &clips, &extra)?;
     out.extend(sound_files);
     summary.push(sound_summary);
