@@ -655,7 +655,7 @@ pub fn lock_items_without_art(table: &mut Table, bo2: &[Weapon], statstable: &[V
 /// (`resolve`). A gun whose own textures are stubs the install cannot fill fails even when a
 /// shared part (a sight's glow) resolves.
 pub fn model_art_converts(model: &zhbo_formats::xmodel::Model, resolve: impl Fn(&zhbo_formats::xmodel::Image) -> bool) -> bool {
-    let colour: Vec<&zhbo_formats::xmodel::Image> = model.materials.iter().flatten().filter_map(|m| m.color_map()).collect();
+    let colour: Vec<&zhbo_formats::xmodel::Image> = model.materials.iter().flatten().filter_map(crate::textures::colour_image).collect();
     let found = colour.iter().filter(|i| resolve(i)).count();
     colour.is_empty() || found * 2 >= colour.len()
 }

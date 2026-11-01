@@ -116,6 +116,35 @@ pub(crate) fn technique_files(s: &SurfaceSpec) -> impl Iterator<Item = &String> 
     reticle.into_iter().chain(sonar).chain(display)
 }
 
+/// Every texture file a surface draws with: its colour, packed maps, specular colour, camo layer
+/// and its technique's own ([`technique_files`]). Shared with the third person.
+#[cfg(feature = "renderer")]
+pub(crate) fn surface_files(s: &SurfaceSpec) -> impl Iterator<Item = &String> {
+    [&s.color, &s.maps, &s.specular, &s.camo].into_iter().flatten().chain(technique_files(s))
+}
+
+/// A composed surface as the renderer takes it, its textures by `handle`. Shared with the third
+/// person, so the two native paths cannot drift (the third person once dropped the camo layer
+/// here).
+#[cfg(feature = "renderer")]
+pub(crate) fn native_surface(s: &SurfaceSpec, handle: impl Fn(&Option<String>) -> u16) -> zhbo_gfx::runtime::NativeSurface {
+    zhbo_gfx::runtime::NativeSurface {
+        first_index: s.first_index,
+        index_count: s.index_count,
+        blend: native_blend(s.blend),
+        emissive: s.emissive,
+        color: handle(&s.color),
+        maps: handle(&s.maps),
+        specular: handle(&s.specular),
+        camo: handle(&s.camo),
+        camo_uv: s.camo_uv,
+        sort_key: s.sort_key,
+        cull: native_cull(s.cull),
+        reticle: s.reticle.as_ref().map(|r| native_reticle(r, s.display.as_ref(), &handle)),
+        sonar: s.sonar.as_ref().map(|so| native_sonar(so, &handle)),
+    }
+}
+
 /// Whether the native viewmodel drew a lens reticle in its last frame: the HUD then leaves its
 /// own 2D optic reticle out (BO2 has one reticle, on the lens). Presentation only; per thread,
 /// as the viewmodel and the HUD are both driven from the game thread.
@@ -215,7 +244,7 @@ pub struct Request {
 }
 
 /// A surface of the composed mesh, with its textures by archive path.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct SurfaceSpec {
     pub first_index: u32,
     pub index_count: u32,

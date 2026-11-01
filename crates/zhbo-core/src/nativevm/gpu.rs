@@ -5,7 +5,7 @@ use zhbo_gfx::ffi::with_renderer;
 use zhbo_gfx::runtime::{NativeBlip, NativeDraw, NativeFrame, NativeLight, NativeOptics, NativeSurface, NativeVertex, INVALID, NATIVE_MAX_BLIPS};
 
 use super::ffi::{State, ZhboNativeIn, DRAWN, LOADING, NOT_NATIVE};
-use super::{local_optics, native_blend, native_cull, native_reticle, native_sonar, set_lens_reticle_drawn, technique_files, Mesh, ART_SCALE};
+use super::{local_optics, native_surface, set_lens_reticle_drawn, surface_files, Mesh, ART_SCALE};
 
 /// The handles of the viewmodel on the GPU.
 #[derive(Default)]
@@ -51,7 +51,7 @@ fn submit(s: &mut State, inp: &ZhboNativeIn) -> i32 {
         let mut paths: Vec<(String, bool)> = Vec::new();
         for surf in &loaded.mesh.surfaces {
             // Display-space shading (native.wgsl): every map uploads raw.
-            for p in [&surf.color, &surf.maps, &surf.specular, &surf.camo].into_iter().flatten().chain(technique_files(surf)) {
+            for p in surface_files(surf) {
                 if !paths.iter().any(|(q, _)| q == p) {
                     paths.push((p.clone(), false));
                 }
@@ -93,12 +93,12 @@ fn submit(s: &mut State, inp: &ZhboNativeIn) -> i32 {
                 let surfaces: Vec<NativeSurface> = m
                     .surfaces
                     .iter()
-                    .map(|s| NativeSurface { first_index: s.first_index, index_count: s.index_count, blend: native_blend(s.blend), emissive: s.emissive, color: handle(&s.color), maps: handle(&s.maps), specular: handle(&s.specular), camo: handle(&s.camo), camo_uv: s.camo_uv, sort_key: s.sort_key, cull: native_cull(s.cull), reticle: s.reticle.as_ref().map(|r| native_reticle(r, s.display.as_ref(), handle)), sonar: s.sonar.as_ref().map(|so| native_sonar(so, handle)) })
+                    .map(|s| native_surface(s, handle))
                     .collect();
                 r.native_create_mesh(&vertices, &m.indices, &surfaces)
             };
             let m = upload(mesh);
-            let aimed = loaded.mesh_aimed.as_ref().map(|m| upload(m));
+            let aimed = loaded.mesh_aimed.as_ref().map(upload);
             Some((m, aimed, handles.into_iter().map(|(_, h)| h).filter(|&h| h != INVALID).collect::<Vec<_>>()))
         });
         for (p, _) in &paths {

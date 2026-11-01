@@ -27,6 +27,11 @@ zhbo-gfx = { path = "../zhbo-gfx", optional = true }
 name = "render_viewmodels"
 required-features = ["renderer"]
 
+[[example]]
+# The headless third-person sweep (docs/TESTING.md): the overhead General's weapon, natively.
+name = "render_world_weapons"
+required-features = ["renderer"]
+
 [dev-dependencies]
 zhbo-assets = { path = "../zhbo-assets" }
 zhbo-formats = { path = "../zhbo-formats" }

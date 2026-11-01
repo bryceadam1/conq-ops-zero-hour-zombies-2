@@ -1077,6 +1077,28 @@ fn gun_pose_matches_the_w3d_rotation_order() {
     assert!(zhbo_native::math::apply(pitch.0, [1.0, 0.0, 0.0])[2] > 0.2, "muzzle up");
 }
 
+/// The renderer's surface carries every texture the composed surface names — the camo layer and
+/// its UV transform too — and the file list the upload decodes names each of them. One mapping
+/// for the first and the third person (`nativebody::gpu`, which once dropped the camo layer).
+#[cfg(feature = "renderer")]
+#[test]
+fn the_native_surface_carries_every_texture() {
+    let s = SurfaceSpec {
+        color: Some("c.tga".into()),
+        maps: Some("m.tga".into()),
+        specular: Some("s.tga".into()),
+        camo: Some("camo.tga".into()),
+        camo_uv: [0.25, 0.5, 2.0, 1.5],
+        ..Default::default()
+    };
+    let names = ["c.tga", "m.tga", "s.tga", "camo.tga"];
+    let handle = |p: &Option<String>| p.as_deref().and_then(|p| names.iter().position(|n| *n == p)).map_or(zhbo_gfx::runtime::INVALID, |i| i as u16 + 1);
+    let n = native_surface(&s, handle);
+    assert_eq!((n.color, n.maps, n.specular, n.camo), (1, 2, 3, 4));
+    assert_eq!(n.camo_uv, [0.25, 0.5, 2.0, 1.5]);
+    assert_eq!(surface_files(&s).map(String::as_str).collect::<Vec<_>>(), names);
+}
+
 /// End to end on a headless renderer (wgpu builds): the core composes, uploads and submits the
 /// fixture, and the frame's pixels show it in front of the cleared scene.
 #[cfg(feature = "renderer")]
