@@ -279,6 +279,7 @@ fn to_float(p: &Pcm, rate: u32, channels: u16) -> Vec<f32> {
 /// nothing is audible.
 fn render(mixer: &Mixer, layers: &[(&sndalias::Variant, Pcm)]) -> Option<(Vec<f32>, u16, u32)> {
     let rate = layers.iter().map(|l| l.1.rate).max()?;
+    let mixer = Mixer { rate: rate as f32, ..*mixer };
     let channels = layers.iter().map(|l| l.1.channels).max()?;
     let floats: Vec<Vec<f32>> = layers.iter().map(|(_, p)| to_float(p, rate, channels)).collect();
     let mix: Vec<Layer> = layers

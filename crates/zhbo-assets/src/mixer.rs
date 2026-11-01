@@ -17,11 +17,12 @@
 //! peak envelope `e += a·max(|y| − e, 0) − r·e`, gain `max(e, T)^(1/R − 1)`, output `y·gain·MG·0.5`.
 //! Here it is evaluated statically for the sound alone: the gain at the envelope's peak over the
 //! sound (in game the envelope is shared with everything else playing, so the per-sample pumping of
-//! a lone sound is not BO2's either). The EQ, reverb send, futz and the voice side-chain duck are
-//! not modelled.
+//! a lone sound is not BO2's either). The master EQ (FUN_006f5040) is `eqG` then four RBJ biquads
+//! (low shelf, two peaks, high shelf: FUN_00833e50/00833fc2/00833ce8) on what has passed the
+//! compressor and the HDR bus. The reverb send, futz and the voice side-chain duck are not modelled.
 
 use zhbo_formats::sndalias::Variant;
-use zhbo_formats::sndglobals::{Bus, DriverGlobals, Dynamics, Master};
+use zhbo_formats::sndglobals::{Band, BandKind, Bus, DriverGlobals, Dynamics, Master};
 
 /// The DSP's sample rate (`DAT_00b81514`): the kernel's time constants are in samples at it.
 const DSP_RATE: f32 = 48000.0;
@@ -36,6 +37,8 @@ const FOLD: f32 = std::f32::consts::FRAC_1_SQRT_2;
 pub struct Mixer<'a> {
     pub globals: &'a DriverGlobals,
     pub master: &'a Master,
+    /// The sample rate the EQ's filters are designed at (the rendered sound's).
+    pub rate: f32,
 }
 
 /// One layer to render: interleaved samples (−1..1) at the event's rate and channel count.
@@ -48,7 +51,7 @@ pub struct Layer<'a> {
 
 impl<'a> Mixer<'a> {
     pub fn new(globals: &'a DriverGlobals) -> Option<Mixer<'a>> {
-        Some(Mixer { globals, master: globals.default_master()? })
+        Some(Mixer { globals, master: globals.default_master()?, rate: DSP_RATE })
     }
 
     pub fn bus(&self, v: &Variant) -> Bus {
@@ -139,7 +142,11 @@ impl<'a> Mixer<'a> {
             add(&mut fx, hdr.take().unwrap_or_default());
         }
         dynamics(&m.compressor, &mut fx, channels);
+        if m.voice_eq {
+            add(&mut fx, voice.take().unwrap_or_default());
+        }
         add(&mut fx, hdr.take().unwrap_or_default());
+        equalize(m, &mut fx, channels, self.rate);
         add(&mut fx, voice.take().unwrap_or_default());
         add(&mut fx, take(&mut bus, Bus::Ui));
         add(&mut fx, take(&mut bus, Bus::Pfutz));
@@ -149,6 +156,57 @@ impl<'a> Mixer<'a> {
         }
         fx.resize(len, 0.0);
         fx
+    }
+}
+
+/// The RBJ-cookbook biquad of one EQ band at `rate`, normalized: `[b0, b1, b2, a1, a2]`.
+pub fn biquad(b: &Band, rate: f32) -> [f32; 5] {
+    let a = 10f32.powf(b.gain_db / 40.0);
+    let w = std::f32::consts::PI * (2.0 * b.freq / rate).clamp(1e-6, 1.0);
+    let (sin, cos) = w.sin_cos();
+    let alpha = sin / (2.0 * b.q.max(1e-3));
+    let sq = 2.0 * a.sqrt() * alpha;
+    let (b0, b1, b2, a0, a1, a2) = match b.kind {
+        BandKind::Peak => (1.0 + alpha * a, -2.0 * cos, 1.0 - alpha * a, 1.0 + alpha / a, -2.0 * cos, 1.0 - alpha / a),
+        BandKind::LowShelf => (
+            a * ((a + 1.0) - (a - 1.0) * cos + sq),
+            2.0 * a * ((a - 1.0) - (a + 1.0) * cos),
+            a * ((a + 1.0) - (a - 1.0) * cos - sq),
+            (a + 1.0) + (a - 1.0) * cos + sq,
+            -2.0 * ((a - 1.0) + (a + 1.0) * cos),
+            (a + 1.0) + (a - 1.0) * cos - sq,
+        ),
+        BandKind::HighShelf => (
+            a * ((a + 1.0) + (a - 1.0) * cos + sq),
+            -2.0 * a * ((a - 1.0) + (a + 1.0) * cos),
+            a * ((a + 1.0) + (a - 1.0) * cos - sq),
+            (a + 1.0) - (a - 1.0) * cos + sq,
+            2.0 * ((a - 1.0) - (a + 1.0) * cos),
+            (a + 1.0) - (a - 1.0) * cos - sq,
+        ),
+    };
+    [b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0]
+}
+
+/// The master EQ on `x` (interleaved): `eqG`, then each enabled band per channel.
+fn equalize(m: &Master, x: &mut [f32], channels: usize, rate: f32) {
+    if x.is_empty() {
+        return;
+    }
+    for s in x.iter_mut() {
+        *s *= m.eq_gain;
+    }
+    let ch = channels.max(1);
+    for band in m.eq.iter().filter(|b| b.enabled) {
+        let [b0, b1, b2, a1, a2] = biquad(band, rate);
+        for c in 0..ch {
+            let (mut x1, mut x2, mut y1, mut y2) = (0.0f32, 0.0f32, 0.0f32, 0.0f32);
+            for s in x.iter_mut().skip(c).step_by(ch) {
+                let y = b0 * *s + b1 * x1 + b2 * x2 - a1 * y1 - a2 * y2;
+                (x2, x1, y2, y1) = (x1, *s, y1, y);
+                *s = y;
+            }
+        }
     }
 }
 
@@ -218,6 +276,13 @@ mod tests {
             pans: vec![pan("default", 1.0, 0.0, 0.0), pan("front_mostly", 1.0, 0.281838, 0.0), pan("lfe", 0.0, 0.0, 1.0)],
             masters: vec![Master {
                 name: "default".into(),
+                eq: [
+                    Band { kind: BandKind::LowShelf, enabled: true, gain_db: 5.0, freq: 132.3088, q: 1.168478 },
+                    Band { kind: BandKind::Peak, enabled: true, gain_db: 5.0, freq: 357.8922, q: 0.221001 },
+                    Band { kind: BandKind::Peak, enabled: true, gain_db: -8.0, freq: 2772.543, q: 9.795492 },
+                    Band { kind: BandKind::HighShelf, enabled: true, gain_db: 3.0, freq: 4621.938, q: 1.754375 },
+                ],
+                eq_gain: 1.0,
                 compressor: dyn_(3.431997, 0.26298, 0.013275, 22.36621),
                 limiter: dyn_(1.104993, 0.816788, 0.066117, 1.290039),
                 bus_gain: [0.202214, 0.152477, 5.615831, 0.642844, 2.88864, 2.735035, 2.258948, 1.0, 1.0],
@@ -303,6 +368,28 @@ mod tests {
         assert!((m.distance_gain(&v, 100.0 + 1000.0 * 0.142857) - 0.630957).abs() < 1e-3);
         assert_eq!(m.distance_gain(&v, 5000.0), 0.0);
         assert_eq!(m.audible_range(&[&v]), 1100.0);
+    }
+
+    /// The master EQ shapes what passes the compressor (the 132 Hz shelf lifts the lows, the
+    /// 2.8 kHz notch cuts) and leaves the voice bus alone.
+    #[test]
+    fn the_master_eq_shapes_fx_but_not_voice() {
+        let dg = globals();
+        let mut flat_dg = globals();
+        flat_dg.masters[0].eq.iter_mut().for_each(|b| b.enabled = false);
+        let amp = |dg: &DriverGlobals, hz: f32, bus: Bus| {
+            let m = Mixer::new(dg).unwrap();
+            let s: Vec<f32> = (0..48000).map(|i| 0.05 * (std::f32::consts::TAU * hz * i as f32 / 48000.0).sin()).collect();
+            let out = m.render(&[Layer { samples: &s, start_frame: 0, bus, gain: 1.0 }], 1);
+            out[24000..].iter().fold(0.0f32, |a, s| a.max(s.abs()))
+        };
+        let db = |hz: f32, bus: Bus| 20.0 * (amp(&dg, hz, bus) / amp(&flat_dg, hz, bus)).log10();
+        assert!(db(60.0, Bus::Hdrfx) > 4.0, "the 132 Hz shelf lifts the lows: {}", db(60.0, Bus::Hdrfx));
+        assert!(db(2772.5, Bus::Hdrfx) < -6.0, "the 2.8 kHz peak cuts: {}", db(2772.5, Bus::Hdrfx));
+        assert!(db(60.0, Bus::Voice).abs() < 0.01 && db(2772.5, Bus::Voice).abs() < 0.01, "voice skips the EQ");
+        // A 0 dB band is flat.
+        let flat = biquad(&Band { kind: BandKind::Peak, enabled: true, gain_db: 0.0, freq: 1000.0, q: 1.0 }, 48000.0);
+        assert!((flat[0] - 1.0).abs() < 1e-6 && (flat[1] - flat[3]).abs() < 1e-6 && (flat[2] - flat[4]).abs() < 1e-6);
     }
 
     #[test]

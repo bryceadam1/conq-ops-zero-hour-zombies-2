@@ -93,9 +93,32 @@ pub struct Dynamics {
     pub release: f32,
 }
 
+/// The master EQ's band shapes, in the snapshot's order (`FUN_006f5040`: `FUN_00833e50` low
+/// shelf, `FUN_00833fc2` peak twice, `FUN_00833ce8` high shelf — RBJ cookbook biquads).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BandKind {
+    LowShelf,
+    Peak,
+    HighShelf,
+}
+
+/// One EQ band: `[E, G (dB), F (Hz), Q]`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Band {
+    pub kind: BandKind,
+    pub enabled: bool,
+    pub gain_db: f32,
+    pub freq: f32,
+    pub q: f32,
+}
+
 #[derive(Clone, Debug)]
 pub struct Master {
     pub name: String,
+    /// `low`, `peak1`, `peak2`, `hi`.
+    pub eq: [Band; 4],
+    /// `eqG`: the linear gain the EQ applies first.
+    pub eq_gain: f32,
     pub compressor: Dynamics,
     pub limiter: Dynamics,
     /// `bus*G` gated by `bus*E` (a disabled bus is silent, `FUN_0082fc60`), in [`Bus`] order for
@@ -223,8 +246,22 @@ pub fn read(zone: &Zone) -> Result<Option<DriverGlobals>, FormatError> {
                 let on = zone.u32(m + SM::busReverbE + 4 * i as u32) != 0;
                 *g = if on { zone.f32(m + SM::busReverbG + 4 * i as u32) } else { 0.0 };
             }
+            let band = |e: u32, kind| Band {
+                kind,
+                enabled: zone.u32(m + e) != 0,
+                gain_db: zone.f32(m + e + 4),
+                freq: zone.f32(m + e + 8),
+                q: zone.f32(m + e + 12),
+            };
             Master {
                 name: fixed_str(zone, m + SM::name, 32),
+                eq: [
+                    band(SM::lowE, BandKind::LowShelf),
+                    band(SM::peak1E, BandKind::Peak),
+                    band(SM::peak2E, BandKind::Peak),
+                    band(SM::hiE, BandKind::HighShelf),
+                ],
+                eq_gain: zone.f32(m + SM::eqG),
                 compressor: dynamics(SM::compE),
                 limiter: dynamics(SM::limitE),
                 bus_gain,
@@ -298,5 +335,9 @@ mod tests {
         assert!((m.bus(Bus::Hdrfx) - 2.88864).abs() < 1e-5);
         assert!(m.compressor.enabled && (m.compressor.ratio - 22.36621).abs() < 1e-4);
         assert!(!m.hdrfx_compressed && !m.voice_compressed && !m.voice_eq);
+        // master.csv: low +5 dB at 132.3 Hz, peak1 +5 at 357.9, peak2 -8 at 2772.5 (Q 9.80), hi +3.
+        let eq: Vec<(bool, f32, f32)> = m.eq.iter().map(|b| (b.enabled, b.gain_db, b.freq.round())).collect();
+        assert_eq!(eq, [(true, 5.0, 132.0), (true, 5.0, 358.0), (true, -8.0, 2773.0), (true, 3.0, 4622.0)]);
+        assert_eq!(m.eq_gain, 1.0);
     }
 }
