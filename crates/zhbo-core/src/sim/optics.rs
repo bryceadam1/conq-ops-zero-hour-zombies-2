@@ -21,7 +21,10 @@
 //! * **The target finder** (`FUN_00528ec0` / `FUN_00529d80` / `FUN_00525ad0`): only fully aimed,
 //!   a trace along the view (8192"); an enemy under the crosshair, within
 //!   `cg_rangeFinderMinEnemySpottingDist` feet (−1: no limit), is spotted, and from the next frame
-//!   on the reticle takes its alt colour (`weaponParam0.z`).
+//!   on the reticle takes its alt colour (`weaponParam0.z`). Its display (`FUN_00526780`, drawn
+//!   into the code's ui3d texture only above 0.99 ADS) marks every enemy player with a diamond
+//!   centred `RangeFinderMarkHeight` above his feet (BO2's 70 − 25", standing): the marks are
+//!   [`Optics::blips`] then.
 
 use super::fire::{gather_targets, target_from};
 use crate::hitscan::{self, HitResult};
@@ -57,7 +60,9 @@ struct Track {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Optics {
     tracks: Vec<Track>,
-    /// The scanner's characters this tick (empty unless an MMS is in hand), nearest first.
+    /// What the lens display shows this tick, nearest first: the scanner's characters with an MMS
+    /// in hand, the target finder's marked enemies (a point: `pos` the diamond's centre, no
+    /// capsule) with one fully aimed; empty otherwise.
     pub blips: Vec<Blip>,
     /// The target finder: the range under the crosshair in feet (BO2's display digits), when an
     /// enemy is spotted.
@@ -87,6 +92,9 @@ impl Optics {
             self.blips.clear();
         }
         self.step_finder(host, me, eye, dir, ads, def.target_finder, frame, &t);
+        if def.target_finder && !def.mms {
+            self.blips = if ads >= t.range_finder_display_ads { marks(host, me, eye, &t) } else { Vec::new() };
+        }
     }
 
     fn step_scanner(&mut self, host: &dyn LogicHost, me: u32, eye: Vec3, max_dist: f32, t: &crate::tuning::Tuning) {
@@ -147,6 +155,23 @@ impl Optics {
         self.spotted_range = range.filter(|_| within);
         self.alt = if self.spotted_since.is_some_and(|s| frame > s) { 1.0 } else { 0.0 };
     }
+}
+
+/// The target finder's diamonds: every live enemy soldier in reach (BO2 marks every enemy player
+/// it draws), at his chest, the nearest [`MAX_BLIPS`].
+fn marks(host: &dyn LogicHost, me: u32, eye: Vec3, t: &crate::tuning::Tuning) -> Vec<Blip> {
+    let mut objs = Vec::new();
+    host.query(eye, inches(t.range_finder_trace_dist), me, &mut objs);
+    let mut out: Vec<(f32, Blip)> = objs
+        .iter()
+        .filter(|o| o.id != me && o.has(objflags::ENEMY) && o.has(objflags::INFANTRY) && !o.has(objflags::DEAD))
+        .map(|o| {
+            let pos = o.pos + Vec3::new(0.0, 0.0, inches(t.range_finder_mark_height));
+            ((pos - eye).length(), Blip { id: o.id, pos, radius: 0.0, height: 0.0, intensity: 1.0 })
+        })
+        .collect();
+    out.sort_by(|a, b| a.0.total_cmp(&b.0).then(a.1.id.cmp(&b.1.id)));
+    out.into_iter().take(MAX_BLIPS).map(|(_, b)| b).collect()
 }
 
 /// The range (feet) to an enemy under the crosshair, if the trace hits one.
@@ -228,7 +253,12 @@ mod tests {
         assert_eq!(o.alt, 1.0);
         // 60 units at 6" each is 360" = 30 ft, less the hit cylinder's radius.
         assert!((27..=30).contains(&o.spotted_range.unwrap()), "{:?}", o.spotted_range);
+        assert_eq!(o.blips.len(), 1, "the enemy is marked on the display");
+        assert!((o.blips[0].pos.z - inches(45.0)).abs() < 1e-4, "at his chest");
         o.step(&host, 1, eye, Vec3::new(0.0, 1.0, 0.0), 1.0, &def, 4);
         assert_eq!((o.spotted_range, o.alt), (None, 0.0), "looked away");
+        assert_eq!(o.blips.len(), 1, "still marked: the display marks every enemy, not just the aimed one");
+        o.step(&host, 1, eye, along, 0.5, &def, 5);
+        assert!(o.blips.is_empty(), "the display draws only fully aimed");
     }
 }

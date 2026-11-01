@@ -119,6 +119,8 @@ tuning! {
     sonar_hide_friendlies: "cg_sonarAttachmentHideFriendlies" = 1.0, "MMS: teammates are left off the scanner (1) (`FUN_004e7b40`).";
     sonar_frames_per_second: "SonarFramesPerSecond" = 60.0, "MMS: BO2's frame for its per-frame speeds; the speed ring holds `SpeedDelay x 60` samples (`0x00b128e4`).";
     range_finder_min_enemy_spotting_dist: "cg_rangeFinderMinEnemySpottingDist" = -1.0, "Target finder: feet beyond which a spotted enemy does not turn the reticle; -1 no limit (`FUN_00528ec0`).";
+    range_finder_display_ads: "RangeFinderDisplayAds" = 0.99, "Target finder: the ADS fraction above which its display draws (`DAT_00c73584`, `FUN_00526780`).";
+    range_finder_mark_height: "RangeFinderMarkHeight" = 45.0, "Target finder: inches above a standing enemy's feet its diamond is centred (70 - 25, `FUN_00526780`).";
     range_finder_trace_dist: "RangeFinderTraceDist" = 8192.0, "Target finder: inches the spotting trace reaches (`_DAT_00b12d08`, `FUN_00528ec0`).";
     // ---- The mod's own ------------------------------------------------------------------------
     regen_delay: "RegenDelay" = 5.0, "Seconds after the last hit before health regenerates (the mod's value).";

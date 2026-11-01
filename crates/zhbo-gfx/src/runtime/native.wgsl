@@ -255,6 +255,11 @@ fn fs(i: VOut, @builtin(front_facing) front: bool) -> @location(0) vec4<f32> {
 // squares the colour, scales by the fade and takes the root (its HDR encode): the colour times
 // `sqrt(fade)`. Only the dynamic technique fades in with the aim (`saturate(2 * ads)`); all but
 // ui3d fade out while the optics are knocked out (weaponParam0.y).
+// The target finder's diamond across, in lens UVs (cg_rangeFinderDiamondSize 50 / the 512-unit
+// ui3d window, `FUN_00526780`), and its line's half-width (the atlas sprite is not converted).
+const RANGE_FINDER_DIAMOND: f32 = 50.0 / 512.0;
+const RANGE_FINDER_LINE: f32 = 0.006;
+
 @fragment
 fn fs_reticle(i: VOut) -> @location(0) vec4<f32> {
     let kind = material.ret3.w;
@@ -286,8 +291,36 @@ fn fs_reticle(i: VOut) -> @location(0) vec4<f32> {
     var alpha: f32;
     var fade = 1.0 - frame.params.w;
     if (kind > 2.5) {
-        let shape = c.r * material.ret1.rgb + c.b * material.ret3.rgb;
-        let glow = pow(max(c.g, 1e-6), falloff) * material.ret2.rgb + pow(max(c.a, 1e-6), falloff) * material.ret4.rgb;
+        // The target finder's diamonds (BO2 draws them into the ui3d texture, `FUN_00526780`):
+        // each mark where the eye's ray to it crosses the lens, in the lens's UVs, a diamond
+        // `RANGE_FINDER_DIAMOND` (cg_rangeFinderDiamondSize 50 of the 512-unit window) across, in
+        // the alt shape and glow channels.
+        let det = dot(dp1, dp2perp);
+        // At least a pixel wide, so a small lens keeps a solid outline.
+        let line = max(RANGE_FINDER_LINE, length(abs(duv1) + abs(duv2)));
+        var marks = vec2<f32>(0.0);
+        let count = u32(frame.optics.z);
+        for (var m = 0u; m < 8u; m = m + 1u) {
+            if (m >= count || abs(det) < 1e-20) {
+                break;
+            }
+            let to = frame.blips[m * 2u].xyz - frame.eye.xyz;
+            let denom = dot(to, n);
+            if (abs(denom) < 1e-9) {
+                continue;
+            }
+            let k = dot(i.world - frame.eye.xyz, n) / denom;
+            if (k <= 0.0) {
+                continue;
+            }
+            let delta = frame.eye.xyz + to * k - i.world;
+            let at = i.uv + vec2<f32>(dot(delta, t), dot(delta, b)) / det;
+            let off = abs(abs(i.uv.x - at.x) + abs(i.uv.y - at.y) - RANGE_FINDER_DIAMOND * 0.5);
+            marks = marks + vec2<f32>(1.0 - smoothstep(0.0, line, off), exp(-off / (line * 4.0)) * 0.5);
+        }
+        let code = vec4<f32>(c.r, c.g, min(c.b + marks.x, 1.0), min(c.a + marks.y, 1.0));
+        let shape = code.r * material.ret1.rgb + code.b * material.ret3.rgb;
+        let glow = pow(max(code.g, 1e-6), falloff) * material.ret2.rgb + pow(max(code.a, 1e-6), falloff) * material.ret4.rgb;
         rgb = (shape * dim + glow * noise) * material.ret0.z;
         alpha = 1.0;
         fade = 1.0;

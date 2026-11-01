@@ -700,3 +700,27 @@ fn a_non_finite_sonar_is_skipped_not_fatal() {
     assert_ne!(mesh, INVALID);
     assert!(log.lock().unwrap().iter().any(|l| l.contains("non-finite sonar")));
 }
+
+/// The target finder's display marks an enemy with a diamond where the eye's ray to him crosses
+/// the lens, in the ui3d reticle's alt colour: an outline around his point, not on it.
+#[test]
+fn the_target_finder_marks_an_enemy_on_the_lens() {
+    let Some((mut r, log, shot)) = renderer() else { return };
+    let rt = NativeReticle { kind: NativeReticleKind::Ui3d, color: [0.0, 0.0, 1.0], color_alt: [1.0, 0.0, 0.0], glow_falloff: 3.0, ..reticle(0.0) };
+    // A lens whose UVs span a fifth of their range, so the diamond (~0.1 UV) is large on it.
+    let lens: Vec<NativeVertex> = lens().iter().map(|v| NativeVertex { uv: [v.uv[0] * 0.2, v.uv[1] * 0.2], ..*v }).collect();
+    let mesh = r.native_create_mesh(&lens, &[0, 2, 1, 0, 3, 2], &[NativeSurface { blend: NativeBlend::Additive, reticle: Some(rt), ..surface(INVALID, false, 6) }]);
+    let mut optics = NativeOptics { blip_count: 1, ..Default::default() };
+    // A mark 100 units out, 1 unit right of the axis: its diamond sits right of the centre.
+    optics.blips[0] = NativeBlip { pos: [10.0, 0.0, 100.0], ..Default::default() };
+    let f = NativeFrame { view_proj: Some(perspective()), eye: [0.0; 3], optics, ..frame(0) };
+    let (x, y, n) = draw_frame(&mut r, &shot, mesh, IDENTITY, f);
+    assert!(n > 4 && colour_count(&shot, 0) == 0, "a red diamond, no primary colour: {n}");
+    // 10 / 100 at a 90-degree view is a tenth of the half-width: 3.2 px right of centre.
+    assert!((x - 35.2).abs() < 1.0 && (y - 32.0).abs() < 1.0, "centred on the mark: ({x}, {y})");
+    let px = shot.lock().unwrap().clone().unwrap();
+    assert!(px[((32 * W + 35) * 4 + 2) as usize] < 128, "an outline: its centre is clear");
+    let none = NativeFrame { optics: NativeOptics::default(), ..f };
+    assert_eq!(draw_frame(&mut r, &shot, mesh, IDENTITY, none).2, 0, "no marks, nothing drawn");
+    assert_eq!(r.stats().errors, 0, "wgpu errors:\n{}", log.lock().unwrap().join("\n"));
+}
