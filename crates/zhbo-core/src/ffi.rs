@@ -126,7 +126,7 @@ fn publish_controlled(sim: &Sim) {
     }
 }
 
-pub const ABI_VERSION: u32 = 27;
+pub const ABI_VERSION: u32 = 28;
 
 /// Field counts of the two API tables (`host.rs`'s `LogicApi`/`ClientApi`). `host/zhbo/zhbo_core.h`
 /// defines the same numbers; both sides' layout asserts and `zhbo_abi_fields` derive from them.
@@ -148,6 +148,7 @@ const _: () = {
     assert!(size_of::<crate::menu::MenuIn>() == 56);
     assert!(size_of::<crate::menu::MenuOut>() == 4108);
     assert!(size_of::<ClassButton>() == 756);
+    assert!(size_of::<WorldPose>() == 16);
     // host/zhbo/zhbo_core.h's ZHBO_CLASS_BUTTONS (the bridge's fixed array).
     assert!(crate::classicons::BUTTONS == 15);
     assert!(size_of::<LogicApi>() == (LOGIC_API_FIELDS as usize) * size_of::<usize>());

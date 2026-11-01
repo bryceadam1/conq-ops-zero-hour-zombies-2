@@ -953,6 +953,17 @@ Polish round 3 again moved only the archive: `hud::VERSION` 81 (the weapon table
 statstable-derived roster, the order-independent texture conversion, the Assault premade base kit); the ABI and the
 blob formats are unchanged.
 
+**ABI 28** (playtest round 2's integration): no layout moves, only meanings. `ZhboWorldPose`'s
+fourth field is `anim_set` (the held weapon's body animation set, 0 the rifleman's, else the W3D
+condition `names::ANIM_SET_CONDITIONS[anim_set − 1]`), replacing the slot flag `sidearm` at the same
+offset (16 bytes, now asserted on both sides); `zhbo_logic_choose_class`'s custom payload is the
+`classwire` token form (the 64-word size is unchanged; the text form still decodes); the menu's
+`save_profile` one-shot may carry length `-1` (`profile::PROFILE_LIVE`: write the core's live
+profile). Archive `hud::VERSION` 82 at the same point (the weapon table's `SpawnedGrenade`,
+`BodyAnims` and `ExplodeOnGround` keys, `explosive_bolt_mp` converted beside the crossbow, the
+per-optic reticle names and art, the patch-zone reference materials, the body's per-set W3D clips
+and INI); the native blob formats are unchanged.
+
 ### Third-person shots: BO2's chain, layer by layer (`soundlayers.rs`)
 
 * **Converted.** For every converted gun's third-person chain (`ZHBO_BO2_FireNpc_<key>`) the
