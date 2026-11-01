@@ -8460,3 +8460,72 @@ Two of the sound-mixer entry's "not modelled" items, done on the coordinator's c
   `zhbo_core::soundlayers` (the converter's mixer calls it); `sndglobals::Curve` is data only.**
   ABI: `ClientApi` 13 → 14 fields, `zhbo_load_sound_layers`; the `ZHBO_ABI_VERSION` bump and the
   C++ build (`cbSoundGain`, the bridge's load) are the integrator's.
+
+## Integration of the parity burn-down (2026-10-31)
+
+All 58 `v1/*` burn-down branches merged onto main fc03d7b in eight stacks on `v1/integration`
+(standalone; the 5a gun-feel stack, switch-timing, damage-identity; the alt modes; the
+combined/ADS/scope stack; camo; third person; legality, CaC rules and the CaC UI; the sounds,
+penetration and hit-geometry line, then sound-mixer). Each stack: build, `cargo test
+--workspace` green, clippy no new warning; each merge commit names its conflicts and calls.
+
+**Measured** (conformance CLI over the install, vs the 2026-10-25 baseline): weapons
+706,586 → 2,327 differing cells, 203 → 23 clusters, one-sided rows 2,264/747 → 0/0; cac 881 → 3
+cells, 7 → 1 cluster (32 BO2-only rows); **214 → 25 gap clusters**. Per area (cells): timing
+165,337 → 42, anims 78,787 → 20, sounds 66,689 → 29, ads 59,849 → 0, effects 59,665 → 4,
+worldparts 45,959 → 68, damage 38,947 → 0, flags 37,872 → 0, ammo 26,273 → 0, sway 20,129 → 0,
+spread 19,000 → 0, fire 19,269 → 0, alt 18,682 → 0, identity 9,948 → 0, parts 9,561 → 25,
+materials 9,331 → 5, camo 7,301 → 42, hide 4,228 → 0, kick 3,595 → 312, overlay 3,028 → 1,774,
+viewpos 2,884 → 0. What remains: `hud_icon` on the `sf_`/`dualoptic_` alt modes (mod side empty;
+more rows now that every combo is two-sided), the dual-optic alts' `ads_recoil_reduction`
+(`0.03|0.15` → `0|0`), 68 `world_model`, 42 `view_part_camos`, and small anim/sound/ADS clusters.
+
+**Semantic calls** (details in each merge commit):
+- One loader of `defaultattachment` (`weapons::default_attachment(&patch)`, passed to `table()`);
+  scope-overlay-parts' third copy (`zoom_fracs_for`) folded into 5a's first-differing rule.
+- One field per BO2 fact where branches duplicated one: `bAltWeaponAdsOnly`, `mmsWeapon`,
+  `penetrateType` (`crate::penetration::Penetrate` re-exports `weapons::Penetrate`),
+  `bRifleBullet` → `traits.*`; the zoom fractions and overlay alpha → `zoom.*`; the offhand
+  `iHoldFireTime`/`iFireDelay`/`iDetonateTime` → `timing.*`; the melee swing → `melee_swipe_sound`;
+  the HUD hint text → `UiText`; unique `slot`/`index` → `index`; `HeadMultiplier` gone (location
+  multipliers).
+- view-kick × dual-wield-sim: `shot_kick_hands`/`centre_speed_hands` with both hands' firing
+  states; the fire-cycle states (rechamber, owed reload) are per hand.
+- tracers-view × dual-wield-sim: `zhbo_viewmodel_tracer` gains `left`; the left gun's tracer
+  starts at `tag_flash1`.
+- alt-anims × alt-timing: a missing alt-drop clip plays the idle. alt-raise-sound × alt-timing:
+  a toggle with an alt drop plays `altSwitchSound` as the drop begins.
+- attach-camo × cac-camo: an attachment's camo asset takes every camo row (DLC camos paint the
+  optic); `offer_what_converted` keys on the def's `weaponCamo`.
+- `.zbv` Part record: `…, rigid, ads_only, camo, ads_swap`; `.zbw` parts carry camo; mag-rotation's
+  removal of the rigid `tag_clip1` magazine copy stands.
+- cac-rules split `classmenu.rs` into modules; cac-navigation/cac-camo/cac-save-rename and
+  knife-camo/secondary-camo edited the old file, so their hunks were ported into the modules.
+- `Arsenal::step` and the Fire arm were merged by hand (assault-shield's melee/swap states and
+  shield, penetration's walk and hit boxes, plus every other branch's additions).
+- Fixtures written before combo-legality pair their attachments (`apply_paired`).
+
+**Bumps** (one each): `ZHBO_ABI_VERSION` 26 → 27 (CONTRACT.md "Versioning" lists it), archive
+`hud::VERSION` 77 → 78, `viewmodel::VERSION` 2 → 3, `thirdperson::WEAPON_VERSION` 2 → 3,
+`model::VERSION` 3 → 4, `camo::VERSION` 1 → 2. `ZhboClientOut` 4832 → 4872 bytes, `ZhboClientHit`
+40 → 44, `ZHBO_CLIENT_API_FIELDS` 14.
+
+**Gotcha — the autotest's flesh check and BO2's hit boxes.** With hit-geometry the rebels are
+traced as BO2's 72 in soldier boxes, not Zero Hour's tall cylinder: the autopilot's level rifle
+burst from the eye skimmed or passed over their heads (one hit marker, on a structure) and
+`impacts: flesh` failed while everything else passed. The autopilot now sweeps its aim ~6° down
+and back during the burst (`client/autopilot.rs`), which crosses the bodies wherever the terrain
+puts them. Real-install tests the merges left stale were fixed:
+`every_world_weapon_shows_all_its_meshes` (its table needs the attachment metadata, or the
+loadout's `an94_mp+gl+reflex` sanitizes to another id) and the UiText stand-in for the hint.
+
+**Verified:** `cargo test --workspace` (935) and `cargo clippy --workspace --all-targets` (no new
+warning) after every stack; the real-install suites (`-p zhbo-assets -- --ignored --skip
+conformance` 53 passed, `-p zhbo-formats -- --ignored` 17 passed); `cargo xtask build` (patches
+0001 and 0017 apply; the new C++ — command bar, dual-wield fired flag, the tracer pull with its
+left flag, the exit FX, the shield damage hook, `cbSoundGain` and the sound-layer load — builds);
+`cargo xtask names` up to date. Autotests on macOS: default 16/16 (after the aim sweep; the log
+shows "sound layers: 293 BO2 third-person layers installed"), `--classpick` 6/6, `--rts` 15/15,
+`--scope` pass, `--w3d-ads` 2/2. Two legs launched back-to-back first bailed with "Generals is
+already running" (the previous game still exiting); rerun serially they passed — wait for the
+previous `generalszh` to exit between legs.

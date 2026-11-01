@@ -137,6 +137,17 @@ impl Autopilot {
         if (5.0..7.0).contains(&t) {
             keys.set_down(b.fire, true);
         }
+        // The rifle burst sweeps the aim down and back up across the rebels ahead: BO2's hit boxes
+        // (`hitloc`, a 72 in soldier) are the body's own, so a level shot from the eye skims the
+        // heads and passes over them on lower ground; the sweep crosses their bodies wherever the
+        // terrain puts them (about 6 degrees at the default sensitivity and the ADS zoom).
+        let mut dy = 0.0;
+        if (5.0..6.0).contains(&t) {
+            dy = 3.0;
+        }
+        if (6.0..7.0).contains(&t) {
+            dy = -3.0;
+        }
         if (7.2..7.3).contains(&t) || (10.0..10.1).contains(&t) {
             keys.set_down(b.swap, true);
         }
@@ -164,7 +175,7 @@ impl Autopilot {
         if (16.1..16.2).contains(&t) {
             keys.set_down(b.field_computer, true);
         }
-        Scripted { keys, dx, class_pick: pick, ..Default::default() }
+        Scripted { keys, dx, dy, class_pick: pick, ..Default::default() }
     }
 
     /// Building in first person (facing open ground): the hammer up, look down (the structure goes
