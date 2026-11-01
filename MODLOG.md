@@ -8862,3 +8862,17 @@ Mechanical moves, no behaviour change (test counts identical before and after):
 - `zhbo-assets`' 767-line `run` is a dispatch table over one `cmd_<subcommand>` function each.
 Not split (yet): `zhbo-formats/src/weapon.rs`'s 416-line `read`, and `weapons/arsenal.rs` (with
 batch 9's fire-cycle work).
+
+## Code polish 2: the arsenal and the client frame (2026-11-01)
+
+- `weapons/arsenal.rs` 1,705 → 1,342 lines: one weapon's state (`WeaponState`, `Reload`,
+  `ShellPhase`, the dual-wield `Hand`, `magazine_times`) is `weapons/weapon_state.rs`; the
+  `Arsenal` (offhands, raise/drop, the fire cycle across hands) stays.
+- `Client::frame`'s autopilot block, which needed `#[allow(unused_mut, unused_assignments)]` to
+  compile with and without the `autopilot` feature, is `Client::autopilot_input` (one cfg'd
+  function each way). The frame's signature had lost its indentation in a merge; fixed.
+- The melee numbers are named and cited (`sim/fire.rs` `MELEE_QUERY_SLACK`, `MELEE_FACING_COS`;
+  `weapons::MELEE_RANGE`). **Decision:** the reach stays 64 in. BO2's base `player_meleeRange` is
+  55 in, but its knife lunges (`meleeChargeRange`, a weapon-def field the table does not carry
+  yet); shortening the reach to 55 without the lunge would make the knife worse than BO2's, so the
+  change waits for the field to reach the weapon table (with the schema work of batches 4/6).

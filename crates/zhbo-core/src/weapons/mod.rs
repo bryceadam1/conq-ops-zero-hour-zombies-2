@@ -7,6 +7,7 @@
 */
 
 pub mod arsenal;
+pub mod weapon_state;
 pub mod catalog;
 pub mod def;
 pub mod feel;
@@ -24,6 +25,7 @@ pub mod view_kick;
 pub mod zoom;
 
 pub use arsenal::*;
+pub use weapon_state::*;
 pub use catalog::*;
 pub use def::*;
 pub use handling::{AntiQuickScope, CycleTimes, OffhandClass, Penetrate, Traits, WeapType, Zoom};

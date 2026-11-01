@@ -67,13 +67,14 @@ optionally (feature `renderer`) `zhbo-gfx`. After Phase 2.3:
   ADS zoom: the view FOV over the ADS lerp, the zoom levels, the hybrid's alt scope), `scope.rs`
   (the reticle zoom: when a 2D-overlay scope is looked through), `idle_sway.rs` (BO2's idle sway
   and hold breath), `gunpos.rs` (the client-side gun position: offsets, bob, sway), `loadout.rs`, `rng.rs` (xorshift),
-  `arsenal.rs` (WeaponState, Reload, Offhand, Arsenal with HasSpecialty and the perk-timed
-  weapon states, WeaponAction).
+  `weapon_state.rs` (one weapon's WeaponState: ammo, fire-cycle timers, the Reload in
+  progress, the dual-wield hands), `arsenal.rs` (Offhand, Arsenal with HasSpecialty and the
+  perk-timed weapon states, WeaponAction).
 - `sim/`: `mod.rs` (Sim, PlayerSim, Event, the top-level `step` orchestration),
   `hack.rs` (Black Hat), `build.rs` (hammer/site), `plant.rs` (BO2's plant check for planted
   equipment), `deploy.rs` (the deployed Assault Shield), `rts.rs` (the overhead General:
   `rts_update`, the third slot's orders `rts_offhand`/`Third`, `rts_reload`, `RtsWeapons`
-  with each slot's Zero Hour weapon, `RtsIcons`), `fire.rs` (`apply_weapon_action`,
+  with each slot's Zero Hour weapon, `RtsIcons`), `fire.rs` (`apply_weapon_action`, `fire_round` (one bullet, to its end and through penetration),
   `melee_strike`, `gather_targets`, `throw_velocity`), `optics.rs` (the optic displays' rules:
   the MMS's characters, the target finder's spotting and marks).
 - `lui/`: BO2's LUI layout model shared by the HUD and the class screens: the anchor/edge

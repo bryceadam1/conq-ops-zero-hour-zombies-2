@@ -160,6 +160,13 @@ pub enum MeleeReach {
     Footprint(f32),
 }
 
+/// How much wider than the reach the melee's object query is (the reach test then decides);
+/// Zero Hour units.
+const MELEE_QUERY_SLACK: f32 = 12.0;
+/// The knife's facing cone (cosine, about 53 degrees): the mod's stand-in for BO2's melee trace
+/// box (`player_meleeWidth`/`player_meleeHeight` 10 in) plus its lunge's aim assist.
+const MELEE_FACING_COS: f32 = 0.6;
+
 impl MeleeReach {
     fn reaches(self, from: Vec3, o: &ObjInfo) -> bool {
         let d = (o.pos - from).length_xy();
@@ -178,8 +185,8 @@ impl Sim {
         let eye = p.body.eye();
         let (fwd, _) = basis_xy(p.yaw);
         let extra = match reach {
-            MeleeReach::Body => 12.0,
-            MeleeReach::Footprint(own) => own + 12.0,
+            MeleeReach::Body => MELEE_QUERY_SLACK,
+            MeleeReach::Footprint(own) => own + MELEE_QUERY_SLACK,
         };
         let mut near = Vec::new();
         host.query(eye, MELEE_RANGE + extra, p.general, &mut near);
@@ -191,7 +198,7 @@ impl Sim {
             .filter(|o| {
                 let to = o.pos - p.body.pos;
                 let d = to.length_xy();
-                reach.reaches(p.body.pos, o) && (d < 1e-3 || (to.x * fwd.x + to.y * fwd.y) / d > 0.6)
+                reach.reaches(p.body.pos, o) && (d < 1e-3 || (to.x * fwd.x + to.y * fwd.y) / d > MELEE_FACING_COS)
             })
             .min_by(|a, b| {
                 let da = (a.pos - p.body.pos).length_xy();

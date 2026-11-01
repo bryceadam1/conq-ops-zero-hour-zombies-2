@@ -967,6 +967,10 @@ impl Default for WeaponDef {
 }
 
 pub const MELEE_DAMAGE: f32 = 135.0;
+/// The knife's reach past the victim's hit radius: the mod's value. BO2's base melee range is
+/// `player_meleeRange` 55 in (`dvars-t6mp.tsv`), but its knife also lunges (`meleeChargeRange` in
+/// the weapon def, not converted yet); 64 in stands for the two until the lunge is in the weapon
+/// table. The converter bakes it into the RTS knife's `AttackRange`.
 pub const MELEE_RANGE: f32 = inches(64.0);
 pub const MELEE_FX_WEAPON: &str = "ZHBO_Knife_FX";
 
