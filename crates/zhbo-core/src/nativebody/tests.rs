@@ -181,23 +181,24 @@ fn the_body_clip_follows_the_stance_gait_and_sights() {
     let run = 31.7; // the sim's g_speed, world units/s
     use zhbo_native::thirdperson::state;
     // Standing still, then each gait.
-    assert_eq!(state_of(0, 0.0, false, 0.0, false, false, run), state::STAND_IDLE);
-    assert_eq!(state_of(0, 4.0, false, 0.0, false, false, run), state::STAND_WALK);
-    assert_eq!(state_of(0, run, false, 0.0, false, false, run), state::STAND_RUN);
-    assert_eq!(state_of(0, run, true, 0.0, false, false, run), state::STAND_SPRINT);
-    // ADS and the pistol's own stance.
-    assert_eq!(state_of(0, 0.0, false, 1.0, false, false, run), state::STAND_ADS);
-    assert_eq!(state_of(0, 0.0, false, 1.0, true, false, run), state::STAND_ADS_PISTOL);
-    assert_eq!(state_of(0, 0.0, false, 0.0, true, false, run), state::STAND_IDLE_PISTOL);
+    assert_eq!(state_of(0, 0.0, false, 0.0, 0, false, run), state::STAND_IDLE);
+    assert_eq!(state_of(0, 4.0, false, 0.0, 0, false, run), state::STAND_WALK);
+    assert_eq!(state_of(0, run, false, 0.0, 0, false, run), state::STAND_RUN);
+    assert_eq!(state_of(0, run, true, 0.0, 0, false, run), state::STAND_SPRINT);
+    // ADS, and the held weapon's own animation set for every state.
+    assert_eq!(state_of(0, 0.0, false, 1.0, 0, false, run), state::STAND_ADS);
+    assert_eq!(state_of(0, 0.0, false, 1.0, 3, false, run), state::id(3, state::STAND_ADS));
+    assert_eq!(state_of(0, 4.0, false, 0.0, 3, false, run), state::id(3, state::STAND_WALK), "a pistol walks its own walk");
+    assert_eq!(state_of(2, 4.0, false, 0.0, 5, false, run), state::id(5, state::PRONE_CRAWL));
     // Crouch: idle, walk, ADS.
-    assert_eq!(state_of(1, 0.0, false, 0.0, false, false, run), state::CROUCH_IDLE);
-    assert_eq!(state_of(1, 4.0, false, 0.0, false, false, run), state::CROUCH_WALK);
-    assert_eq!(state_of(1, 0.0, false, 1.0, false, false, run), state::CROUCH_ADS);
+    assert_eq!(state_of(1, 0.0, false, 0.0, 0, false, run), state::CROUCH_IDLE);
+    assert_eq!(state_of(1, 4.0, false, 0.0, 0, false, run), state::CROUCH_WALK);
+    assert_eq!(state_of(1, 0.0, false, 1.0, 0, false, run), state::CROUCH_ADS);
     // Prone: idle and crawl.
-    assert_eq!(state_of(2, 0.0, false, 0.0, false, false, run), state::PRONE_IDLE);
-    assert_eq!(state_of(2, 4.0, false, 0.0, false, false, run), state::PRONE_CRAWL);
+    assert_eq!(state_of(2, 0.0, false, 0.0, 0, false, run), state::PRONE_IDLE);
+    assert_eq!(state_of(2, 4.0, false, 0.0, 0, false, run), state::PRONE_CRAWL);
     // Under RTS the bridge's "moving" runs even though the sim's speed is zero.
-    assert_eq!(state_of(0, 0.0, false, 0.0, false, true, run), state::STAND_WALK);
+    assert_eq!(state_of(0, 0.0, false, 0.0, 0, true, run), state::STAND_WALK);
 }
 
 #[test]

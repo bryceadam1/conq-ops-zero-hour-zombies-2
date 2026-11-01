@@ -136,27 +136,17 @@ pub fn hammer_model(viewmodel: &str) -> String {
 
 /// How a third-person clip is made from BO2's (all in common_mp). BO2 layers a player's torso
 /// animations (`pt_*`) over body animations (`pb_*`); Zero Hour plays one at a time.
-pub enum BodyClip {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BodyClip<'a> {
     /// One body animation as it is.
-    Body(&'static str),
+    Body(&'a str),
     /// A torso animation over a stance (its first frame) for the legs.
-    Torso(&'static str, &'static str),
-    /// A body animation's legs under a stance's upper body (its first frame).
-    Legs(&'static str, &'static str),
+    Torso(&'a str, &'a str),
 }
 
-/// (W3D animation name, how it is made). The Draw module (`draw_module`) plays them by state.
-pub const ANIMS: &[(&str, BodyClip)] = &[
-    ("ZHBO_PLR_IDL", BodyClip::Body("pb_stand_alert")),
-    ("ZHBO_PLR_RUN", BodyClip::Body("pb_combatrun_forward_loop")),
-    ("ZHBO_PLR_ADS", BodyClip::Body("pb_stand_ads")),
-    ("ZHBO_PLR_FIR", BodyClip::Torso("pt_rifle_fire_ads", "pb_stand_ads")),
-    ("ZHBO_PLR_RLD", BodyClip::Torso("pt_reload_stand_rifle", "pb_stand_alert")),
-    // The sidearm: BO2's pistol stance, aim and reload, and the run's legs under the pistol stance.
-    ("ZHBO_PLR_PID", BodyClip::Body("pb_stand_alert_pistol")),
-    ("ZHBO_PLR_PRN", BodyClip::Legs("pb_combatrun_forward_loop", "pb_stand_alert_pistol")),
-    ("ZHBO_PLR_PAD", BodyClip::Body("pb_stand_ads_pistol")),
-    ("ZHBO_PLR_PRL", BodyClip::Torso("pt_reload_stand_pistol", "pb_stand_alert_pistol")),
+/// (W3D animation name, how it is made): the clips every animation set shares. The Draw module
+/// (`draw_module`) plays them by state; each set's own are [`set_anims`].
+pub const ANIMS: &[(&str, BodyClip<'static>)] = &[
     // A grenade thrown (the lethal or the tactical).
     ("ZHBO_PLR_THR", BodyClip::Torso("pt_grenade_stand_throw", "pb_stand_alert")),
     ("ZHBO_PLR_DTA", BodyClip::Body("pb_death_faceplant")),
@@ -166,18 +156,61 @@ pub const ANIMS: &[(&str, BodyClip)] = &[
     ("ZHBO_PLR_TBD", BodyClip::Torso("pt_tablet_stand_putaway", "pb_stand_alert")),
 ];
 
-/// BO2's leg and hip bones (`BodyClip::Legs` takes these from the moving animation).
-fn is_leg_bone(name: &str) -> bool {
-    ["mainroot", "hip", "knee", "ankle", "ball", "toe", "spinelower"].iter().any(|k| name.contains(k))
+/// The W3D body's clips of one animation set, in the Draw module's order: idle, run, aim, fire,
+/// reload.
+pub const SET_CLIPS: [&str; 5] = ["IDL", "RUN", "ADS", "FIR", "RLD"];
+
+/// The W3D name of animation set `set`'s clip `what` ([`SET_CLIPS`]): the rifleman's
+/// `ZHBO_PLR_IDL`, set 3's `ZHBO_PLR_IDL3`.
+pub fn set_anim(what: &str, set: usize) -> String {
+    if set == 0 {
+        format!("ZHBO_PLR_{what}")
+    } else {
+        format!("ZHBO_PLR_{what}{set}")
+    }
 }
 
-/// Build a clip from BO2's animations.
+/// [`set_anims`]: per set the W3D clip names ([`SET_CLIPS`] order), and the clips to convert.
+pub(crate) type SetAnims<'a> = (Vec<[String; 5]>, Vec<(String, BodyClip<'a>)>);
+
+/// How the W3D body makes animation set `s`'s clips ([`SET_CLIPS`] order): BO2's stand idle, run
+/// and ADS of the set (`thirdperson::SetNames`), and its aimed fire and reload torso over the aim
+/// and the idle. A clip the set lacks is the idle's (the W3D body has no fallback chain).
+pub(crate) fn set_clips<'a>(s: &'a crate::thirdperson::SetNames) -> Option<[BodyClip<'a>; 5]> {
+    use zhbo_native::thirdperson::state;
+    let idle = s.state(state::STAND_IDLE)?;
+    let run = s.state(state::STAND_RUN).unwrap_or(idle);
+    let aim = s.state(state::STAND_ADS).unwrap_or(idle);
+    let over = |torso: Option<&'a str>, stance: &'a str| torso.map_or(BodyClip::Body(stance), |t| BodyClip::Torso(t, stance));
+    Some([BodyClip::Body(idle), BodyClip::Body(run), BodyClip::Body(aim), over(s.fire.as_deref(), aim), over(s.reload.as_deref(), idle)])
+}
+
+/// Every animation set's W3D clips: the names the Draw module plays per set (a set's clip made the
+/// same way as the rifleman's is the rifleman's), and the clips to convert (name, how).
+pub(crate) fn set_anims(sets: &[crate::thirdperson::SetNames]) -> Result<SetAnims<'_>, String> {
+    let mut names = Vec::new();
+    let mut convert: Vec<(String, BodyClip)> = Vec::new();
+    let rifle = sets.first().and_then(set_clips).ok_or("the rifleman's animation set has no stand idle")?;
+    for (k, s) in sets.iter().enumerate() {
+        let clips = set_clips(s).unwrap_or(rifle);
+        let mut row: [String; 5] = Default::default();
+        for (i, how) in clips.into_iter().enumerate() {
+            let own = k == 0 || how != rifle[i];
+            row[i] = set_anim(SET_CLIPS[i], if own { k } else { 0 });
+            if own {
+                convert.push((row[i].clone(), how));
+            }
+        }
+        names.push(row);
+    }
+    Ok((names, convert))
+}
+
 fn body_clip(common: &Zone, c: &BodyClip) -> Result<xanim::Anim, String> {
     let find = |n: &str| xanim::find(common, n).map_err(|e| e.to_string());
     Ok(match c {
         BodyClip::Body(n) => find(n)?,
         BodyClip::Torso(torso, stance) => find(torso)?.layered_over(&find(stance)?),
-        BodyClip::Legs(legs, stance) => find(legs)?.legs_under(&find(stance)?, is_leg_bone),
     })
 }
 
@@ -314,6 +347,13 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         |w| w.view_model.as_deref().and_then(|m| viewmodels::find_model(&pool, m).ok()).is_none_or(|m| crate::weapons::model_art_converts(&m, |i| paks.resolve(i).is_some())),
         |dlc| zhbo_formats::t6zone::install_path(bo2_dir, &format!("{dlc}_load_mp")).is_file(),
     );
+    // The third-person body's animation sets: what BO2's player animation script plays for each
+    // weapon's weapClass and playerAnimType. The combinations built next copy their base's set.
+    let body_sets = crate::thirdperson::assign_sets(&common, &bo2, &mut table.weapons);
+    if !body_sets.dropped().is_empty() {
+        let keys: Vec<String> = body_sets.dropped().iter().map(|k| format!("{}/{}", k.class, k.anim_type)).collect();
+        summary.push(format!("third-person animation sets past the body's {}: {} keep the rifleman's", zhbo_native::thirdperson::state::MAX_SETS, keys.join(" ")));
+    }
     let converted = crate::weapons::converted(&patch, &bo2);
     let converted_base = crate::weapons::converted_base(&bo2, &roster);
     crate::weapons::add_variants(&mut table, &converted, &bo2);
@@ -369,13 +409,17 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
 
     // Track R7: the third-person body's clips. BO2's MP bodies share the player skeleton, so one
     // set serves every faction; each faction's body manifest names them (`zhbo_native::body_path`).
-    let (body_clips, body_unresolved) = crate::thirdperson::clips(&common);
+    let (body_clips, body_unresolved) = crate::thirdperson::clips(&common, &body_sets);
     for c in &body_clips {
         crate::native::put_anim(&mut out, &c.anim);
     }
     if !body_unresolved.is_empty() {
         summary.push(format!("native body clips missing for states {body_unresolved:?}"));
     }
+    summary.push(format!(
+        "third-person animation sets: {}",
+        (0..body_sets.sets.len()).map(|k| format!("{k}={}", body_sets.keys().filter(|(_, s)| *s as usize == k).map(|(key, _)| format!("{}/{}", key.class, key.anim_type)).collect::<Vec<_>>().join(","))).collect::<Vec<_>>().join(" ")
+    ));
     summary.push(format!("native body clips: {}", body_clips.iter().map(|c| format!("{}=`{}`", c.state, c.anim.name)).collect::<Vec<_>>().join(", ")));
     // The soldier's hit boxes (the MP bodies share them) in every body state, for the sim's trace;
     // standing is the one every soldier without a sim body state takes.
@@ -405,6 +449,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
     // Shown at first: the primary (viewmodel 0).
     let mut hidden: Vec<String> = held.iter().map(|m| m.name.clone()).filter(|n| !n.starts_with("W00")).collect();
     hidden.extend(tablet.iter().map(|m| m.name.clone()));
+    let (set_names, set_convert) = set_anims(&body_sets.sets)?;
     let mut ini = BASE_INI.to_string();
     for (f, zone) in FACTIONS.iter().zip(&zones) {
         let mut body = xmodel::find(zone, f.body).map_err(|e| e.to_string())?;
@@ -430,7 +475,7 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         // A box around the standing soldier to click him by (his skin is unposed by the feet).
         let pick = (character::scaled(SOLDIER_BOX_CENTRE), character::scaled(SOLDIER_BOX_EXTENT));
         out.insert(format!("Art\\W3D\\{}.w3d", f.model), w3d::skin_model_with_box(f.model, HIERARCHY, &meshes, Some(pick)));
-        ini = replace_draw(&ini, f.object, &draw_module(f.model, &hidden, guns))?;
+        ini = replace_draw(&ini, f.object, &draw_module(f.model, &hidden, guns, &set_names))?;
         summary.push(format!("{} = {} ({} meshes)", f.object, f.body, meshes.len()));
     }
     summary.push(format!("third person: {} weapon meshes, {} tablet meshes", held.len(), tablet.len()));
@@ -438,8 +483,9 @@ pub fn files(bo2_dir: &Path) -> Result<(Files, String), String> {
         summary.push(format!("surfaces left out: {}", looks.dropped.iter().cloned().collect::<Vec<_>>().join(" ")));
     }
     out.insert(format!("Art\\W3D\\{HIERARCHY}.w3d"), rig.hierarchy_file(HIERARCHY));
-    for (w3d_name, how) in ANIMS {
-        let anim = body_clip(&common, how)?;
+    for (w3d_name, how) in ANIMS.iter().map(|(n, h)| (n.to_string(), *h)).chain(set_convert) {
+        let w3d_name = w3d_name.as_str();
+        let anim = body_clip(&common, &how)?;
         let (frames, channels) = character::animate(&rig, &anim);
         let fps = anim.frame_rate.round().max(1.0) as u32;
         out.insert(format!("Art\\W3D\\{w3d_name}.w3d"), w3d::animation(w3d_name, HIERARCHY, frames, fps, &channels));
@@ -949,8 +995,9 @@ mod tests {
 
     #[test]
     fn replaces_only_the_named_draw_module() {
+        let sets: Vec<[String; 5]> = (0..2).map(|k| SET_CLIPS.map(|c| set_anim(c, k))).collect();
         for f in FACTIONS {
-            let out = replace_draw(BASE_INI, f.object, &draw_module(f.model, &["W0100".to_string()], (0, 1))).unwrap();
+            let out = replace_draw(BASE_INI, f.object, &draw_module(f.model, &["W0100".to_string()], (0, 1), &sets)).unwrap();
             assert!(out.contains("WeaponFireFXBone    = PRIMARY ZF00") && out.contains("WeaponFireFXBone    = SECONDARY ZF01"));
             assert!(out.contains(&format!("Model               = {}", f.model)));
             // The rest of the object (weapons, body, locomotor) is untouched.
@@ -962,6 +1009,36 @@ mod tests {
         }
         assert!(FACTIONS.iter().all(|f| f.model.len() <= 15));
         assert!(ANIMS.iter().all(|a| a.0.len() <= 15) && HIERARCHY.len() <= 15);
+        let most = zhbo_native::thirdperson::state::MAX_SETS as usize - 1;
+        assert!(SET_CLIPS.iter().all(|c| set_anim(c, most).len() <= 15), "a set's W3D clip names fit W3D's 15 characters");
+    }
+
+    /// The Draw module plays each animation set's clips under its model condition, before the
+    /// rifleman's: Zero Hour takes the state matching the most of the unit's conditions, so a set's
+    /// state (its flag on top of the rifleman's conditions) wins while the flag is up, and a
+    /// shared state (dying, throwing) gets the flag too so it still wins over the set's idle.
+    #[test]
+    fn each_animation_set_has_its_own_states_under_its_condition() {
+        let sets: Vec<[String; 5]> = (0..3).map(|k| SET_CLIPS.map(|c| set_anim(c, k))).collect();
+        let d = draw_module("M", &[], (0, 1), &sets);
+        let anim_of = |cond: &str| {
+            let at = d.find(&format!("ConditionState        = {cond}\n")).or_else(|| d.find(&format!("AliasConditionState   = {cond}\n")).map(|alias| d[..alias].rfind("ConditionState        = ").unwrap()))?;
+            let block = &d[at..];
+            let anim = block.lines().find_map(|l| l.trim().strip_prefix("Animation           = "))?;
+            Some(anim.trim_start_matches(&format!("{HIERARCHY}.")).to_string())
+        };
+        let flag = |k: usize| zhbo_core::names::ANIM_SET_CONDITIONS[k - 1];
+        assert_eq!(anim_of("MOVING").as_deref(), Some("ZHBO_PLR_RUN"));
+        assert_eq!(anim_of(&format!("MOVING {}", flag(1))).as_deref(), Some("ZHBO_PLR_RUN1"), "set 1 runs its own run");
+        assert_eq!(anim_of(&format!("MOVING FIRING_B {}", flag(2))).as_deref(), Some("ZHBO_PLR_RUN2"));
+        assert_eq!(anim_of(flag(2)).as_deref(), Some("ZHBO_PLR_IDL2"));
+        assert_eq!(anim_of(&format!("FIRING_B {}", flag(1))).as_deref(), Some("ZHBO_PLR_FIR1"), "either gun slot fires the weapon in hand");
+        assert_eq!(anim_of("RELOADING_B").as_deref(), Some("ZHBO_PLR_RLD"), "a rifle in the second slot reloads as a rifle");
+        assert_eq!(anim_of(&format!("DYING {}", flag(2))).as_deref(), Some("ZHBO_PLR_DTA"));
+        assert_eq!(anim_of(&format!("PREATTACK_C {}", flag(1))).as_deref(), Some("ZHBO_PLR_THR"));
+        // A set's states come before the rifleman's (ties go to the first).
+        assert!(d.find(&format!("= MOVING {}\n", flag(1))).unwrap() < d.find("= MOVING\n").unwrap());
+        assert!(!d.contains("JAMMED"), "the sidearm's old condition is gone");
     }
 
     /// The converter's whole table (weapons, attachments, alt-mode variants) formatted and parsed
@@ -1175,7 +1252,21 @@ mod tests {
         let rifle = &weapons[weapons.find("Weapon ZHBO_GeneralRifle").unwrap()..];
         assert!(rifle[..rifle.find("\nEnd").unwrap()].contains("FireFX                  = ZHBO_BO2FX_") || rifle[..rifle.find("\nEnd").unwrap()].contains("FireFX = ZHBO_BO2FX_"), "{rifle}");
         let draw = text(INI_PATH);
-        assert!(draw.contains("WeaponFireFXBone    = SECONDARY ZF01") && draw.contains("ZHBO_PLR_PRL"));
+        assert!(draw.contains("WeaponFireFXBone    = SECONDARY ZF01"));
+        // Every animation set past the rifleman's runs its own clip under its condition, and its
+        // W3D clips are in the archive.
+        let table = zhbo_core::weapons::parse_full_table(&text(crate::weapons::TABLE_PATH)).unwrap();
+        let sets = table.weapons.iter().map(|d| d.body_anims).max().unwrap_or(0) as usize;
+        assert!(sets >= 5, "{sets} animation sets past the rifleman's (pistol, launcher, knife, shield, dual wield, ...)");
+        for k in 1..=sets {
+            let cond = zhbo_core::names::ANIM_SET_CONDITIONS[k - 1];
+            assert!(draw.contains(&format!("ConditionState        = MOVING {cond}\n")), "set {k}: no {cond} run state");
+            // A set's own W3D clips are those made differently from the rifleman's (the LMG set
+            // differs only in its sprint, which the W3D body lacks, and its fire and reload).
+            assert!(SET_CLIPS.iter().any(|c| files.iter().any(|(p, _)| p == &format!("Art\\W3D\\{}.w3d", set_anim(c, k)))), "set {k}: no W3D clip of its own");
+        }
+        let pistol = table.weapons.iter().find(|d| d.id == "fnp45_mp").unwrap().body_anims;
+        assert!(pistol > 0 && files.iter().any(|(p, _)| p == &format!("Art\\W3D\\{}.w3d", set_anim("RUN", pistol as usize))), "the pistol runs its own run");
         // Every player weapon has the overhead General's Zero Hour weapon, and its name fits the
         // ABI's slot (`ZhboRtsWeapons::templates`).
         let rts = text(FX_WEAPONS_INI_PATH);

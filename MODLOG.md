@@ -9602,3 +9602,48 @@ A 60″ radius with "ahead of the eye" was tried first. It flagged the Five-seve
 which is out of the frustum, and the suppressed AS50, which is real geometry. Unit tests cover a
 far box in view (its extent 2/99), a parked box behind and below, and one ahead but out of the
 frustum.
+
+## Third person animates by the weapon in hand: BO2's animation sets (2026-11-01, `v1/tp-secondary-anim`)
+
+Playtest: "walking around with the secondary weapon looks strange in the overhead view". Notes,
+renders and the full sweep in `~/.opencode/plan/tp-secondary-anim/`.
+
+* **Root cause.** BO2's `mp/playeranim.script` picks a player's body clip by the held weapon's
+  `weapClass` and `playerAnimType` (the def's int at +0x18, a 0-based line of
+  `mp/playeranimtypes.txt`; checked against the weapon files for all 172 common_mp weapons) as much
+  as by stance. The mod asked the script only as a rifleman, and keyed the one exception on the
+  *slot*: the W3D body (the default third person) raised `JAMMED` for whatever was in slot 2 and
+  ran it as `ZHBO_PLR_PRN` — the rifle run's legs under the first frame of the pistol stance, so
+  the torso pitched forward over a frozen, down-pointed pistol. Every secondary got it: the
+  pistols, the launchers (SMAW/FHJ/RPG), the combat and ballistic knives, the shield, dual wield —
+  and an Overkill primary in slot 2. The native body (`ZHBO_NATIVE_BODY=2`) and the hit boxes
+  walked, ran, sprinted, crouched and crawled every weapon as a rifle.
+* **Animation sets.** `thirdperson::assign_sets` groups every weapon held in hand (BO2's primary,
+  alt-mode and melee inventories) by the clips the script plays it in the ten movement states; set 0
+  is the rifleman's (which also takes the crossbow, shotguns, snipers, the GL alts: the script has
+  no clip of their own). This install: 0 rifle, 1 shield, 2 combat knife, 3 LMG (sprint), 4
+  ballistic knife, 5 pistol (incl. the Executioner), 6 dual wield, 7 launcher, 8 SMG (sprint).
+  `WeaponDef::body_anims` (`BodyAnims`) carries it; combinations and alts clone their def's. A clip
+  id is `set × 16 + state` (`state::id`; the pistol-only states 11/12 are gone), the body manifest
+  lists a set's clips only where they differ from set 0, and `state::fallbacks` tries each nearer
+  state in the set then the rifleman's same one. Hit boxes are posed for every clip id.
+* **W3D body.** Per set `ZHBO_PLR_{IDL,RUN,ADS,FIR,RLD}<k>` (the stand idle/run/ADS, and the
+  `EVENTS` `fireweapon`/`reload` torso — `playeranim.rs` now parses the events — over aim/idle),
+  played under `RIDER<k>` (`names::ANIM_SET_CONDITIONS`; Zero Hour sets RIDER only on vehicles with
+  riders). `ZhboWorldPose.sidearm` became `anim_set` (same offset); `applyWorldPoses` raises the
+  set's condition and drops the others. Either gun slot's fire/reload plays the set in hand.
+* **Not carried.** The W3D body has one fire and one reload torso per set (the set's plain
+  `default` weapon's: the SMG set reloads `pt_reload_stand_auto_mp40`, not the MP7's handle-clip
+  reload; the Executioner reloads as a pistol); strafe/back directions; offhands' own sets (cooking
+  a grenade keeps the held weapon's stance; the W3D throw is unchanged); more than 9 sets (a key
+  past them keeps set 0, named in the converter summary).
+* **Gotcha: the body loaded one clip per file round.** `nativebody::load` returned at the first clip
+  still coming, so a body with ~45 clips needed ~45 rounds (frames) and the audit's 64-round cap
+  failed `every_converted_weapon_draws`. It now asks for every missing clip in the same round.
+* Verified: `every_weapon_takes_the_body_animations_bo2_gives_it` (84 held weapons × 10 states =
+  the script's pick through def → clip id → fallback; 16 BO2 spot picks; every combination keeps
+  its base's set), the Draw-module and fallback unit tests, CPU renders before/after per set.
+  Real-install suite green (with `ZHBO_ZH_DIR` for the emblem test); conformance unchanged
+  (weapons 1,979 cells / 11 clusters, cac 0 + 4 BO2-only rows, 12 gap clusters).
+  Bumps owed: `hud::VERSION` (table field, body manifest clip ids, INI, new W3D clips) and
+  `ZHBO_ABI_VERSION` (`ZhboWorldPose.sidearm` → `anim_set` meaning).

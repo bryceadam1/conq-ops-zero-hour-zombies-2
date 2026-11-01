@@ -202,7 +202,7 @@ impl Poses {
     /// fallbacks the body clips use), else any.
     pub fn get(&self, s: u16) -> Option<&Body> {
         let find = |s: u16| self.by_state.iter().find(|(k, _)| *k == s).map(|(_, b)| b);
-        state::fallbacks(s).iter().find_map(|&s| find(s)).or_else(|| self.by_state.first().map(|(_, b)| b))
+        state::fallbacks(s).find_map(find).or_else(|| self.by_state.first().map(|(_, b)| b))
     }
 
     /// The standing pose (Zero Hour's infantry).

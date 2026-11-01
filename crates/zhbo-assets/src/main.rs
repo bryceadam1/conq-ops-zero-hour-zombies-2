@@ -380,11 +380,12 @@ fn cmd_weapons(args: &[String]) -> Result<(), String> {
             continue;
         }
         println!(
-            "{:<24} {:<18} type {} class {:>2} inv {} fire {} clip {:>3} start {:<3} max {:<3} rpm {:>5.0} dmg {:?}@{:?} reload {:.2}/{:.2} add {:.2} ads {:.2} raise {:.2} drop {:.2} spread hip {:?} ads {:.2} move {:.2} pellets {} fuse {:.2} expl {}/{}-{} vm {:?} anims {}",
+            "{:<24} {:<18} type {} class {:>2} pat {:>2} inv {} fire {} clip {:>3} start {:<3} max {:<3} rpm {:>5.0} dmg {:?}@{:?} reload {:.2}/{:.2} add {:.2} ads {:.2} raise {:.2} drop {:.2} spread hip {:?} ads {:.2} move {:.2} pellets {} fuse {:.2} expl {}/{}-{} vm {:?} anims {}",
             w.name,
             w.display_name,
             w.weap_type,
             w.class,
+            w.player_anim_type,
             w.inventory,
             w.fire_type,
             w.clip_size,

@@ -16,6 +16,14 @@ use std::collections::HashMap;
 
 /// The script's path in `common_mp`.
 pub const PATH: &str = "mp/playeranim.script";
+/// The `playerAnimType` names, one per line: a weapon def's `playerAnimType` is its line number
+/// from 0 (`none`, `default`, `other`, ...).
+pub const TYPES_PATH: &str = "mp/playeranimtypes.txt";
+
+/// The `playerAnimType` names of [`TYPES_PATH`], in order (blank lines and comments skipped).
+pub fn anim_types(text: &str) -> Vec<String> {
+    text.lines().map(|l| l.split("//").next().unwrap_or("").trim()).filter(|l| !l.is_empty()).map(str::to_ascii_lowercase).collect()
+}
 
 /// One entry: its conditions (`key -> accepted values`; empty for `default`) and the animation.
 #[derive(Clone, Debug, PartialEq)]
@@ -24,6 +32,11 @@ struct Entry {
     anim: String,
 }
 
+/// An entry's conditions: `key -> accepted values`.
+type Conditions = Vec<(String, Vec<String>)>;
+/// An event entry: its conditions and its torso clip (`None`: it plays nothing).
+type EventEntry = (Conditions, Option<String>);
+
 /// A `set <key> <name> = ...` define: the values it stands for, or `all NOT ...` (every value but).
 #[derive(Clone, Debug, PartialEq)]
 enum Define {
@@ -31,10 +44,12 @@ enum Define {
     AllBut(Vec<String>),
 }
 
-/// The parsed script: the movement types of the `ANIMATIONS` section (every `STATE`) in order.
+/// The parsed script: the movement types of the `ANIMATIONS` section (every `STATE`) in order,
+/// and the events of the `EVENTS` section (an entry with no torso line plays nothing).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Script {
     moves: Vec<(String, Vec<Entry>)>,
+    events: Vec<(String, Vec<EventEntry>)>,
     defines: HashMap<(String, String), Define>,
 }
 
@@ -55,11 +70,19 @@ impl Script {
                 continue;
             }
             if depth == 0 && matches!(line, "DEFINES" | "ANIMATIONS" | "EVENTS") {
-                section = if line == "DEFINES" { "defines" } else if line == "ANIMATIONS" { "anims" } else { "" };
+                section = match line {
+                    "DEFINES" => "defines",
+                    "ANIMATIONS" => "anims",
+                    _ => "events",
+                };
                 continue;
             }
             if section == "defines" {
                 s.define(line);
+                continue;
+            }
+            if section == "events" {
+                s.event_line(line, &mut depth, &mut header);
                 continue;
             }
             if section != "anims" {
@@ -100,6 +123,39 @@ impl Script {
         s
     }
 
+    /// One line of the `EVENTS` section: `<event> { <conditions> { torso <clip> ... } ... }` (one
+    /// level shallower than a movement type, which sits inside its `STATE`).
+    fn event_line(&mut self, line: &str, depth: &mut usize, header: &mut Option<String>) {
+        match line {
+            "{" => {
+                *depth += 1;
+                if *depth == 2 {
+                    let c = header.take().map(|h| conditions(&h)).unwrap_or_default();
+                    if let Some((_, entries)) = self.events.last_mut() {
+                        entries.push((c, None));
+                    }
+                }
+            }
+            "}" => *depth = depth.saturating_sub(1),
+            _ => match *depth {
+                0 => self.events.push((line.to_ascii_lowercase(), Vec::new())),
+                1 => *header = Some(line.to_string()),
+                2 => {
+                    // The entry's first `torso` line is its clip.
+                    let mut w = line.split_whitespace();
+                    if let (Some("torso"), Some(anim)) = (w.next(), w.next()) {
+                        if let Some((_, Some(last))) = self.events.last_mut().map(|(n, e)| (n, e.last_mut())) {
+                            if last.1.is_none() {
+                                last.1 = Some(anim.to_string());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            },
+        }
+    }
+
     fn define(&mut self, line: &str) {
         // `set <key> <name> = v AND v` or `set <key> <name> = all NOT v NOT v`.
         let Some(rest) = line.strip_prefix("set ") else { return };
@@ -121,6 +177,13 @@ impl Script {
     pub fn pick(&self, mv: &str, ctx: Context) -> Option<&str> {
         let (_, entries) = self.moves.iter().find(|(m, _)| m == mv)?;
         entries.iter().find(|e| e.conditions.iter().all(|(k, vals)| self.holds(k, vals, ctx))).map(|e| e.anim.as_str())
+    }
+
+    /// The torso clip event `ev` plays in context `ctx`: the first entry whose every condition
+    /// holds, `None` when that entry plays nothing (or none holds).
+    pub fn event(&self, ev: &str, ctx: Context) -> Option<&str> {
+        let (_, entries) = self.events.iter().find(|(e, _)| e == ev)?;
+        entries.iter().find(|(c, _)| c.iter().all(|(k, vals)| self.holds(k, vals, ctx))).and_then(|(_, a)| a.as_deref())
     }
 
     fn holds(&self, key: &str, values: &[String], ctx: Context) -> bool {
@@ -200,6 +263,15 @@ STATE COMBAT
 EVENTS
 fireweapon
 {
+	playerAnimType dualwield, movestatus moving
+	{
+		// play no animations to prevent blend problems
+	}
+	weaponclass pistol AND pistol_spread, weapon_position ads
+	{
+		torso pt_stand_shoot_ads_pistol
+		torso pt_other
+	}
 	default
 	{
 		torso pt_fire
@@ -223,5 +295,24 @@ fireweapon
         assert_eq!(s.pick("run", &rifle("stand")), Some("pb_combatrun_forward_loop"));
         assert_eq!(s.pick("sprint", &rifle("stand")), None);
         assert_eq!(s.pick("fireweapon", &rifle("stand")), None, "events are not movement types");
+    }
+
+    #[test]
+    fn events_pick_their_torso_clip_and_an_empty_entry_plays_nothing() {
+        let s = Script::parse(SCRIPT);
+        let ads_pistol = [("weaponclass", "pistol"), ("weapon_position", "ads"), ("movestatus", "stationary"), ("playeranimtype", "default")];
+        assert_eq!(s.event("fireweapon", &ads_pistol), Some("pt_stand_shoot_ads_pistol"), "the entry's first torso line");
+        let rifle = [("weaponclass", "rifle"), ("weapon_position", "hip"), ("movestatus", "stationary"), ("playeranimtype", "default")];
+        assert_eq!(s.event("fireweapon", &rifle), Some("pt_fire"));
+        let dw = [("weaponclass", "pistol"), ("weapon_position", "ads"), ("movestatus", "run"), ("playeranimtype", "dualwield")];
+        assert_eq!(s.event("fireweapon", &dw), None, "the first match plays nothing");
+        assert_eq!(s.event("reload", &rifle), None, "no such event");
+        assert!(s.pick("idle", &rifle).is_some(), "the movement types still parse after the events");
+    }
+
+    #[test]
+    fn anim_types_are_numbered_by_line() {
+        let t = anim_types("none\r\ndefault\r\n\r\nother // a comment\nsniper\n");
+        assert_eq!(t, ["none", "default", "other", "sniper"]);
     }
 }

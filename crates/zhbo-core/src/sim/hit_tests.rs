@@ -183,3 +183,17 @@ fn zero_hour_infantry_stand() {
     let hit = crate::hitscan::ray_location(o, Vec3::new(1.0, 0.0, 0.0), 1000.0, &t);
     assert_eq!(hit.map(|h| h.1), Some(hitloc::HEAD), "{hit:?}");
 }
+
+/// The body (and so the hit boxes and the third-person clip) takes the held weapon's animation
+/// set: a weapon BO2's script animates as a pistol poses the pistol's clip ids, the rifle set 0's.
+#[test]
+fn the_body_state_takes_the_held_weapons_animation_set() {
+    let mut p = PlayerSim::spawn_for_tests();
+    let run = 31.7;
+    assert_eq!(p.body_state(false, run), state::id(p.arsenal.current().def.body_anims, state::STAND_IDLE));
+    let mut pistol = p.arsenal.current().def.clone();
+    pistol.body_anims = 5;
+    p.arsenal.current_mut().def = Box::leak(Box::new(pistol));
+    assert_eq!(p.body_state(false, run), state::id(5, state::STAND_IDLE));
+    assert_eq!(p.body_state(true, run), state::id(5, state::STAND_WALK), "moving under RTS control walks the set's walk");
+}

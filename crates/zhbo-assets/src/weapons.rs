@@ -1150,6 +1150,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         display_name,
         class,
         weap_class: WeapClass::from_bo2(w.class),
+        // The third-person animation set needs the player animation script: `thirdperson::assign_sets`.
+        body_anims: 0,
         fire: fire_mode(w),
         // BO2's own times, unclamped: the knife's `iFireTime` and the offhands' ADS times are 0 (they
         // never fire a cycle or aim; the sim's divisions guard their zero).
