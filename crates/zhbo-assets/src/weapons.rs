@@ -109,8 +109,16 @@ pub fn attachment_metadata(
     meta
 }
 
-/// The core's definition of a BO2 attachment. `names` maps localize keys to text.
-pub fn attachment_def(a: &bo2::Attachment, names: &HashMap<String, String>, meta: &HashMap<String, AttachmentMeta>) -> AttachmentDef {
+/// BO2's `defaultattachment`, the asset the stacking accessors compare each attachment's field
+/// against (`DAT_0316fc84`, e.g. `FUN_008ed080`). It lives in `patch_mp`: `common_mp` carries only
+/// a zeroed `,defaultattachment` reference stub, whose 0.0s are not the engine's values.
+pub fn default_attachment(patch: &zhbo_formats::t6zone::Zone) -> Option<bo2::Attachment> {
+    bo2::attachments(patch).ok()?.into_iter().find(|a| a.name == "defaultattachment")
+}
+
+/// The core's definition of a BO2 attachment. `names` maps localize keys to text; `default` is
+/// [`default_attachment`] (without it every authored value counts as a change).
+pub fn attachment_def(a: &bo2::Attachment, default: Option<&bo2::Attachment>, names: &HashMap<String, String>, meta: &HashMap<String, AttachmentMeta>) -> AttachmentDef {
     let short = short_name(&a.name);
     let m = meta.get(&short).cloned().unwrap_or_default();
     let fire = a.fire_type.map(|f| match f {
@@ -134,7 +142,9 @@ pub fn attachment_def(a: &bo2::Attachment, names: &HashMap<String, String>, meta
         ads_fov: if a.ads_zoom_fov > 1.0 { a.ads_zoom_fov } else { 0.0 },
         ads_in_scale: a.ads_in_scale,
         ads_out_scale: a.ads_out_scale,
-        ads_move_scale: a.ads_move_scale,
+        // Kept only when it differs from `defaultattachment`'s: that is when BO2 lets it replace
+        // the weapon's ADS walk (`FUN_008ed080`); 0 leaves the weapon's own.
+        ads_move_scale: if default.is_some_and(|d| d.ads_move_scale == a.ads_move_scale) { 0.0 } else { a.ads_move_scale },
         hip_spread_min_scale: a.hip_spread_min_scale,
         hip_spread_max_scale: a.hip_spread_max_scale,
         fire_time_scale: a.fire_time_scale,
@@ -244,11 +254,11 @@ pub struct OptionTables<'a> {
 }
 
 /// The whole table: every player weapon, the alt modes their attachments add, and every
-/// attachment.
-pub fn table(bo2: &[Weapon], atts: &[bo2::Attachment], names: &HashMap<String, String>) -> Table {
+/// attachment. `default_att` is [`default_attachment`].
+pub fn table(bo2: &[Weapon], atts: &[bo2::Attachment], default_att: Option<&bo2::Attachment>, names: &HashMap<String, String>) -> Table {
     let sets = HashSet::new();
     let opts = OptionTables { camo: &[], camo_sets: &sets, reticles: &[], reticle_colors: &[] };
-    table_with_metadata(bo2, atts, names, &HashMap::new(), &opts)
+    table_with_metadata(bo2, atts, default_att, names, &HashMap::new(), &opts)
 }
 
 /// The whole table with attachment metadata (full name, description and attribute-table deltas)
@@ -256,6 +266,7 @@ pub fn table(bo2: &[Weapon], atts: &[bo2::Attachment], names: &HashMap<String, S
 pub fn table_with_metadata(
     bo2: &[Weapon],
     atts: &[bo2::Attachment],
+    default_att: Option<&bo2::Attachment>,
     names: &HashMap<String, String>,
     meta: &HashMap<String, AttachmentMeta>,
     opts: &OptionTables,
@@ -275,16 +286,17 @@ pub fn table_with_metadata(
                 // A launcher alt mode has its own grenades; select fire and a second optic share
                 // the weapon's magazine.
                 d.alt_own_ammo = d.class == Class::Launcher;
-                // BO2 counts the alt launcher's grenades as rounds, not magazines.
+                // BO2 counts the alt launcher's grenades as rounds, not magazines: the start count
+                // includes the loaded one, the max is the spare cap (`FUN_005e08d0`; G16).
                 if d.alt_own_ammo {
                     d.start_reserve = (w.start_ammo - w.clip_size).max(0) as u16;
-                    d.max_reserve = ((w.max_ammo - w.clip_size).max(0) as u16).max(d.start_reserve);
+                    d.max_reserve = (w.max_ammo.max(0) as u16).max(d.start_reserve);
                 }
             }
             weapons.push(d);
         }
     }
-    let attachments = atts.iter().filter(|a| a.kind != 0 && !a.name.starts_with(',')).map(|a| attachment_def(a, names, meta)).collect();
+    let attachments = atts.iter().filter(|a| a.kind != 0 && !a.name.starts_with(',')).map(|a| attachment_def(a, default_att, names, meta)).collect();
     for d in &mut weapons {
         d.camo = opts.camo.iter().take(BASE_CAMO_OPTIONS).map(|c| c.id.clone()).collect();
         d.camo_material = camo_material_for(&d.id, opts.camo_sets).unwrap_or_default();
@@ -619,11 +631,14 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         // Offhands: how many you spawn with, and carry at most.
         (w.start_ammo.max(1) as u16, w.max_ammo.max(w.start_ammo).max(1) as u16)
     } else if w.ammo_clip_relative || (w.start_ammo > 0 && w.start_ammo < w.clip_size) {
-        // BO2 multiplayer counts gun ammo in magazines (the loaded one included): the AN-94's 4/8
-        // is 30/90 at spawn and 210 spare at most.
-        (((w.start_ammo - 1).max(0) * w.clip_size) as u16, ((w.max_ammo - 1).max(0) * w.clip_size) as u16)
+        // BO2 multiplayer counts gun ammo in magazines. `iStartAmmo` is what a spawn tops up to,
+        // the loaded magazine included (`FUN_005e0910`); `iMaxAmmo` is the stock cap, the spare
+        // rounds beside the magazine (`FUN_005e08d0`; G16): the AN-94's 4/8 is 30 + 90 at spawn
+        // and 240 spare at most.
+        (((w.start_ammo - 1).max(0) * w.clip_size) as u16, (w.max_ammo.max(0) * w.clip_size) as u16)
     } else {
-        ((w.start_ammo - w.clip_size).max(0) as u16, (w.max_ammo - w.clip_size).max(0) as u16)
+        // The same in rounds: the crossbow's start 6 is 3 loaded + 3 spare, its max 3 spare.
+        ((w.start_ammo - w.clip_size).max(0) as u16, w.max_ammo.max(0) as u16)
     };
     let range = |r: f32| if r >= 999_999.0 { inches(100_000.0) } else { inches(r) };
     let key = manifest::display_name_key(w.display_name.trim_start_matches("WEAPON_"));
@@ -686,7 +701,8 @@ pub fn to_def(w: &Weapon, names: &HashMap<String, String>) -> WeaponDef {
         move_scale: if w.move_speed_scale > 0.0 { w.move_speed_scale } else { 1.0 },
         // BO2's adsMoveSpeedScale multiplies the base ADS walk speed (rifles 1, LMGs 0.8, SMGs,
         // pistols and shotguns 2); the base itself is engine tuning, about a third of a walk.
-        ads_move_scale: (ADS_MOVE_BASE * if w.ads_move_speed_scale > 0.0 { w.ads_move_speed_scale } else { 1.0 }).min(1.0),
+        // `FUN_008ed080` starts from it (1 when unset) and clamps nothing.
+        ads_move_scale: ADS_MOVE_BASE * if w.ads_move_speed_scale > 0.0 { w.ads_move_speed_scale } else { 1.0 },
         sprint_duration_scale: if w.sprint_duration_scale > 0.0 { w.sprint_duration_scale } else { 1.0 },
         melee_damage: if w.melee_damage > 0 { w.melee_damage as f32 } else { MELEE_DAMAGE },
         melee_time: if w.melee_time > 0.0 { w.melee_time } else { 0.6 },
@@ -1007,12 +1023,49 @@ mod tests {
         assert_eq!(dry_fire_event(None), "ZHBO_BO2_DryFireGeneric");
     }
 
+    /// An attachment's ADS walk is kept only when it differs from `defaultattachment`'s (the
+    /// install's: 1.0 everywhere but the stalker variants), so the generic 1.0 never replaces a
+    /// weapon's own value (`FUN_008ed080`); the zeroed `,defaultattachment` stub is not the default.
+    #[test]
+    fn the_ads_move_override_is_what_differs_from_defaultattachment() {
+        let default = bo2::Attachment { name: "defaultattachment".into(), ads_move_scale: 1.0, ..Default::default() };
+        let att = |name: &str, kind: u32, ads_move_scale: f32| bo2::Attachment { name: name.into(), kind, ads_move_scale, ..Default::default() };
+        let names = HashMap::new();
+        let meta = HashMap::new();
+        assert_eq!(attachment_def(&att("dualclip", 2, 1.0), Some(&default), &names, &meta).ads_move_scale, 0.0);
+        assert_eq!(attachment_def(&att("stalker_smg", 25, 2.55), Some(&default), &names, &meta).ads_move_scale, 2.55);
+        // The whole table drops the stub and keeps the comparison.
+        let atts = [att(",defaultattachment", 0, 0.0), att("dualclip", 2, 1.0), att("stalker_lmg", 25, 1.8)];
+        let t = table(&[], &atts, Some(&default), &names);
+        let by = |id: &str| t.attachments.iter().find(|a| a.id == id).unwrap().ads_move_scale;
+        assert_eq!(t.attachments.len(), 2);
+        assert_eq!((by("dualclip"), by("stalker_lmg")), (0.0, 1.8));
+    }
+
     #[test]
     fn clip_relative_ammo_counts_magazines() {
         let w = Weapon { name: "an94_mp".into(), clip_size: 30, start_ammo: 4, max_ammo: 8, ammo_clip_relative: false, fire_time: 0.096, ..Default::default() };
         let d = to_def(&w, &HashMap::new());
-        assert_eq!((d.clip, d.start_reserve, d.max_reserve), (30, 90, 210));
+        assert_eq!((d.clip, d.start_reserve, d.max_reserve), (30, 90, 240));
         assert_eq!(d.display_name, "AN94");
+    }
+
+    /// `iMaxAmmo` is the spare cap beside the magazine, never minus one (`FUN_005e08d0`; G16): the
+    /// crossbow (start 6, clip 3, max 3, in rounds) starts and caps at 3 spare; the SMAW's 1/1/1
+    /// keeps one spare rocket at most (it was 0); an LMG's 3/4 magazines of 100 are 200 spare at
+    /// spawn and 400 at most.
+    #[test]
+    fn max_ammo_is_the_spare_cap_beside_the_magazine() {
+        let rounds = |name: &str, clip_size, start_ammo, max_ammo| {
+            let w = Weapon { name: name.into(), clip_size, start_ammo, max_ammo, fire_time: 0.1, ..Default::default() };
+            let d = to_def(&w, &HashMap::new());
+            (d.clip, d.start_reserve, d.max_reserve)
+        };
+        assert_eq!(rounds("crossbow_mp", 3, 6, 3), (3, 3, 3));
+        assert_eq!(rounds("smaw_mp", 1, 1, 1), (1, 0, 1));
+        let lmg = Weapon { name: "lsat_mp".into(), clip_size: 100, start_ammo: 3, max_ammo: 4, ammo_clip_relative: true, fire_time: 0.1, ..Default::default() };
+        let d = to_def(&lmg, &HashMap::new());
+        assert_eq!((d.clip, d.start_reserve, d.max_reserve), (100, 200, 400));
     }
 
     /// The regression pin: a replacement optic's unique supplies the combo's overlay, and an empty
@@ -1366,7 +1419,7 @@ mod tests {
         };
         let sets = HashSet::new();
         let opts = OptionTables { camo: &camo, camo_sets: &sets, reticles: &[], reticle_colors: &[] };
-        let table = table_with_metadata(&[w], &[], &HashMap::new(), &HashMap::new(), &opts);
+        let table = table_with_metadata(&[w], &[], None, &HashMap::new(), &HashMap::new(), &opts);
         assert_eq!(table.weapons.len(), 1);
         assert_eq!(table.weapons[0].camo.len(), BASE_CAMO_OPTIONS, "the base tab is camo_none + 18");
         assert_eq!(table.camo.len(), 25, "the table keeps every row for the DLC tabs");

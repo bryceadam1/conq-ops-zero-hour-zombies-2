@@ -1180,6 +1180,40 @@ pub(crate) mod tests {
         assert_eq!(sim.controlled_ids().collect::<Vec<_>>(), vec![1]);
     }
 
+    /// The ADS walk through the whole sim: an SMG (BO2 `adsMoveSpeedScale` 2.0) with Stalker
+    /// (`stalker_smg` 2.55) walks aimed at 2.55/2.0 of the plain SMG's aimed speed — the
+    /// attachment replaces the weapon's value (`FUN_008ed080`), it does not multiply it.
+    #[test]
+    fn an_aimed_stalker_smg_walks_at_the_attachments_ads_speed() {
+        use crate::attachments::{apply, AttachmentDef};
+        use crate::weapons::{Class, WeaponDef, WeaponState, ADS_MOVE_BASE};
+        let smg = WeaponDef { id: "smg_mp".into(), class: Class::Smg, ads_move_scale: ADS_MOVE_BASE * 2.0, ads_in_time: 0.2, ..Default::default() };
+        let stalker = AttachmentDef { id: "stalker_smg".into(), short: "stalker".into(), ads_move_scale: 2.55, point: 5, ..Default::default() };
+        let with_stalker = apply(&smg, &[&stalker]);
+        let aimed_walk = |def: WeaponDef| {
+            let def: &'static WeaponDef = Box::leak(Box::new(def));
+            let host = FakeHost::default();
+            host.add(general(1, 0));
+            let mut sim = Sim::new();
+            sim.take_control(&host, 0, 1);
+            let p = sim.players[0].as_mut().unwrap();
+            p.arsenal.weapons = vec![WeaponState::new(def)];
+            p.arsenal.active = 0;
+            p.arsenal.raise_left = 0.0;
+            let aim = FpsInput { held: buttons::ADS, move_packed: pack_move(1.0, 0.0), ..Default::default() };
+            // Fully aimed and up to speed, then measure a second of walking.
+            run(&mut sim, &host, 0, 1, aim, frames(1.0));
+            assert_eq!(sim.player(0).unwrap().arsenal.ads, 1.0, "fully aimed");
+            let from = host.get(1).pos.x;
+            run(&mut sim, &host, 0, 1, aim, frames(1.0));
+            host.get(1).pos.x - from
+        };
+        let plain = aimed_walk(smg.clone());
+        let stalked = aimed_walk(with_stalker);
+        assert!(plain > 0.0, "walked aimed: {plain}");
+        assert!((stalked / plain - 2.55 / 2.0).abs() < 0.01, "stalker {stalked} vs plain {plain}");
+    }
+
     #[test]
     fn cannot_control_someone_elses_general() {
         let host = FakeHost::default();
@@ -1429,6 +1463,32 @@ pub(crate) mod tests {
         let ev = events(&sim);
         assert!(ev.iter().any(|e| matches!(e, EventKind::HitMarker { kill: true, .. })));
         assert!(host.fx.borrow().iter().all(|(s, w, _)| *s == 1 && w == "ZHBO_MTAR_FX"));
+    }
+
+    /// Scavenger tops the reserve up to BO2's stock cap: `iMaxAmmo` spare rounds beside the
+    /// magazine (`FUN_005e08d0`; a rifle's 8 magazines of 30 = 240), not a magazine fewer. The
+    /// magazine is untouched; the HUD's reserve is that number.
+    #[test]
+    fn a_scavenger_kill_tops_the_reserve_up_to_the_stock_cap() {
+        let host = FakeHost::default();
+        host.add(general(1, 0));
+        host.add(soldier(2, 1, 60.0));
+        let mut sim = Sim::new();
+        sim.take_control(&host, 0, 1);
+        sim.choose_class(0, 1, 0, &[]);
+        wait_until_ready(&mut sim, &host);
+        let p = sim.players[0].as_mut().unwrap();
+        p.arsenal.loadout.perks.push(crate::weapons::Perk::SCAVENGER);
+        let w = p.arsenal.current_mut();
+        assert_eq!((w.def.clip, w.def.max_reserve), (30, 240), "{}: BO2's 30-round magazine, 8 of them spare", w.def.id);
+        w.reserve = 230;
+        let pitch = -(4.0f32 / 60.0).atan();
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS, pitch, ..Default::default() }, 20);
+        run(&mut sim, &host, 0, 1, FpsInput { held: buttons::ADS | buttons::FIRE, pitch, ..Default::default() }, 20);
+        assert!(host.get(2).has(objflags::DEAD), "enemy killed");
+        let a = &sim.player(0).unwrap().arsenal;
+        assert_eq!(a.current().reserve, 240, "topped up to the stock cap, not past it");
+        assert!(a.current().ammo > 0 && a.current().ammo < 30, "the magazine is the one being fired");
     }
 
     #[test]
